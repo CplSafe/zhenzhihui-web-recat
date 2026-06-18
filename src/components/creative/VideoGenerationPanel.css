@@ -1,0 +1,9 @@
+.video-side-panel {
+  right: 0 !important;
+  width: 480px !important;
+}
+
+.video-side-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}

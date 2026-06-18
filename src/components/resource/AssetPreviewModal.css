@@ -1,0 +1,263 @@
+/* ================================================================
+   全屏遮罩层 — 仿 ElImageViewer 风格
+   ================================================================ */
+
+.asset-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  /* 高于 el-dialog 的 z-index */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  /* 半透明遮罩 */
+  outline: 0;
+  animation: preview-fade-in 0.18s ease;
+}
+
+/* 打开淡入动画，关闭时直接移除 DOM，无闪烁 */
+@keyframes preview-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* ================================================================
+   工具栏 — 固定顶部
+   ================================================================ */
+
+.asset-preview-toolbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 52px;
+  padding: 0 20px;
+}
+
+.asset-preview-counter {
+  margin-right: auto;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  user-select: none;
+}
+
+.asset-preview-close-btn {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.asset-preview-close-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.asset-preview-close-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ================================================================
+   主体预览区 — 固定最大尺寸，防止切换时布局跳动
+   ================================================================ */
+
+.asset-preview-body {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 56px 64px;
+}
+
+/* 媒体容器 — 固定宽高上限，object-fit: contain 居中显示 */
+.asset-preview-media-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 固定上限：切换不同比例的图片不会撑大缩小 */
+  width: min(88vw, calc(100vh - 140px));
+  max-width: 1200px;
+  height: min(82vh, calc(100vw - 180px));
+  max-height: 800px;
+}
+
+.asset-preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.asset-preview-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  outline: 0;
+  border-radius: 6px;
+}
+
+/* ================================================================
+   导航箭头
+   ================================================================ */
+
+.asset-preview-arrow {
+  position: fixed;
+  /* 改为固定定位，直接相对于视口 */
+  top: 50%;
+  z-index: 20;
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: background 0.2s, box-shadow 0.2s;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.asset-preview-arrow:hover {
+  background: rgba(255, 255, 255, 0.38);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+}
+
+.asset-preview-arrow--left {
+  left: 16px;
+}
+
+.asset-preview-arrow--right {
+  right: 16px;
+}
+
+.asset-preview-arrow svg {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
+}
+
+/* ================================================================
+   无预览降级
+   ================================================================ */
+
+.asset-preview-fallback {
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.35);
+  text-align: center;
+  user-select: none;
+}
+
+.asset-preview-fallback span {
+  font-size: 13px;
+}
+
+.asset-preview-fallback b {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* ================================================================
+   底部信息栏
+   ================================================================ */
+
+.asset-preview-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  padding: 20px 24px 28px;
+  text-align: center;
+}
+
+.asset-preview-title {
+  margin: 0;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.asset-preview-tags {
+  margin: 4px 0 0;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* ================================================================
+   响应式
+   ================================================================ */
+
+@media (max-width: 768px) {
+  .asset-preview-body {
+    padding: 52px 8px;
+  }
+
+  .asset-preview-media-wrap {
+    width: 96vw;
+    height: 70vh;
+    max-width: none;
+    max-height: none;
+  }
+
+  .asset-preview-arrow {
+    width: 40px;
+    height: 40px;
+  }
+
+  .asset-preview-arrow--left {
+    left: 6px;
+  }
+
+  .asset-preview-arrow--right {
+    right: 6px;
+  }
+
+  .asset-preview-arrow svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .asset-preview-footer {
+    padding: 12px 16px 24px;
+  }
+}

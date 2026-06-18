@@ -1,0 +1,109 @@
+.agreement-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.agreement-panel {
+  width: min(90vw, 560px);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.agreement-title {
+  margin: 0;
+  padding: 24px 24px 0;
+  font-size: 20px;
+  font-weight: 600;
+  text-align: center;
+  color: #1f2937;
+}
+
+.agreement-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 24px 24px;
+  font-size: 13px;
+  line-height: 22px;
+  color: #4b5563;
+}
+
+.agreement-body h3 {
+  margin: 16px 0 8px;
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.agreement-body p {
+  margin: 0 0 6px;
+}
+
+.agreement-update {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.agreement-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  font-size: 14px;
+  color: #374151;
+  border-top: 1px solid #f0f0f0;
+  cursor: pointer;
+}
+
+.agreement-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: #5767e5;
+  cursor: pointer;
+}
+
+.agreement-actions {
+  display: flex;
+  gap: 12px;
+  padding: 0 24px 24px;
+}
+
+.agreement-btn {
+  flex: 1;
+  height: 42px;
+  border: none;
+  border-radius: 999px;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.agreement-btn--cancel {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.agreement-btn--cancel:hover {
+  background: #e5e7eb;
+}
+
+.agreement-btn--confirm {
+  background: #5767e5;
+  color: #fff;
+}
+
+.agreement-btn--confirm:hover {
+  background: #4d5fe0;
+}
+
+.agreement-btn--confirm:disabled {
+  background: #a5b4fc;
+  cursor: not-allowed;
+}

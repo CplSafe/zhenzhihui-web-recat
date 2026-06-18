@@ -1,0 +1,33 @@
+@import './styles/tokens.css';
+
+:root {
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* Use :focus-visible for keyboard navigation accessibility.
+   Mouse users won't see focus rings; keyboard users will get a visible brand-colored ring. */
+:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 2px;
+}
