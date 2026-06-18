@@ -674,6 +674,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     handleSelectVideoHistory,
     deleteVideoHistoryItem,
     refreshGeneratedVideoUrl,
+    refreshAllHistoryUrls,
     handleVideoNotify,
     saveVideoDraft,
     publishVideo,
@@ -4031,6 +4032,17 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     if (storyboardGeneratingRef.current) return
     if (!storyboardItemsRef.current.length) return
     hydrateStoryboardUrls()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep])
+
+  // ── watch(currentStep) 进入「视频生成」步骤 → 刷新视频签名 URL ──
+  // 同分镜图：OSS/S3 预签名地址会过期，历史视频与当前视频在往返后需按 assetId 重新签名，
+  // 否则点击播放/缩略图失败。refreshAllHistoryUrls 之前已实现但从未被调用。
+  useEffect(() => {
+    if (currentStep !== 'video') return
+    if (isVideoGeneratingRef.current) return
+    refreshAllHistoryUrls()
+    if (generatedVideoAssetIdRef.current) refreshGeneratedVideoUrl(generatedVideoAssetIdRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStep])
 

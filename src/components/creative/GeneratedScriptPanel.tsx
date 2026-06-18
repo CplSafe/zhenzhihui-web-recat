@@ -738,7 +738,7 @@ export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {
                         {canEditScript ? (
                           <textarea
                             className="storyboard-inline-textarea storyboard-prompt-input"
-                            value={item.prompt}
+                            value={item.prompt ?? ''}
                             rows={2}
                             aria-label="编辑分镜画面描述"
                             onClick={(e) => e.stopPropagation()}

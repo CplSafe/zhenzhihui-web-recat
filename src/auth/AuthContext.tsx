@@ -3,7 +3,7 @@
  * 由原 App.vue 的会话初始化/刷新/登录登出逻辑移植而来。
  * 在路由根（App）下提供，路由视图经 useAuth() 读取 authSession 及 login/logout 处理器。
  */
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -137,15 +137,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const value: AuthContextValue = {
-    authSession,
-    isAuthenticated,
-    isCheckingSession,
-    authCheckError,
-    loadAuthSession,
-    handleLoginSuccess,
-    handleLogoutSuccess,
-  }
+  // 用 useMemo 固定 value 引用：否则每次渲染都是新对象，会让所有 useAuth() 消费者
+  // （AuthProvider 包住整个路由树）连带全树重渲染。回调已是 useCallback 稳定引用。
+  const value: AuthContextValue = useMemo(
+    () => ({
+      authSession,
+      isAuthenticated,
+      isCheckingSession,
+      authCheckError,
+      loadAuthSession,
+      handleLoginSuccess,
+      handleLogoutSuccess,
+    }),
+    [
+      authSession,
+      isAuthenticated,
+      isCheckingSession,
+      authCheckError,
+      loadAuthSession,
+      handleLoginSuccess,
+      handleLogoutSuccess,
+    ],
+  )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

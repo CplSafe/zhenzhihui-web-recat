@@ -578,8 +578,9 @@ export default function TeamManagementModal({
     }
     loadMembers()
     loadInvitations()
+    // 含 workspaceId：弹窗打开期间切换空间时需重新拉取成员/邀请，避免显示上一个团队的数据
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open, workspaceId])
 
   // onMounted / onBeforeUnmount —— Escape 关闭
   useEffect(() => {

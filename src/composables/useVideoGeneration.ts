@@ -85,6 +85,7 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
   // ---- 视图需要渲染的状态 ----
   const [generatedVideoUrl, setGeneratedVideoUrlState] = useState<string>('')
   const [generatedVideoTask, setGeneratedVideoTaskState] = useState<any>(null)
+  const [generatedVideoAssetId, setGeneratedVideoAssetIdState] = useState<number>(0)
   const [videoHistoryList, setVideoHistoryListState] = useState<any[]>([])
   const [activeVideoHistoryId, setActiveVideoHistoryIdState] = useState<string>('')
   const [isVideoGenerating, setIsVideoGeneratingState] = useState<boolean>(false)
@@ -114,6 +115,7 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
   }, [])
   const setGeneratedVideoAssetId = useCallback((value: number) => {
     generatedVideoAssetIdRef.current = value
+    setGeneratedVideoAssetIdState(value)
   }, [])
   const setVideoHistoryList = useCallback((value: any[]) => {
     videoHistoryListRef.current = value
@@ -522,7 +524,7 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
     // state
     generatedVideoUrl,
     generatedVideoTask,
-    generatedVideoAssetId: generatedVideoAssetIdRef.current,
+    generatedVideoAssetId,
     videoHistoryList,
     activeVideoHistoryId,
     isVideoGenerating,

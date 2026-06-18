@@ -382,7 +382,7 @@ export const useCurrentWorkspace = () => useWorkspaceSessionStore(deriveCurrentW
 export const useCurrentUser = () => useWorkspaceSessionStore(deriveCurrentUser)
 export const useCurrentMember = () => useWorkspaceSessionStore(deriveCurrentMember)
 export const useWorkspaceId = () => useWorkspaceSessionStore(deriveWorkspaceId)
-export const useAllWorkspaces = () => useWorkspaceSessionStore(deriveAllWorkspaces)
+export const useAllWorkspaces = () => useWorkspaceSessionStore(useShallow(deriveAllWorkspaces))
 export const useActiveSubscription = () => useWorkspaceSessionStore(deriveActiveSubscription)
 export const useCurrentPlanName = () => useWorkspaceSessionStore(deriveCurrentPlanName)
 export const useCurrentPlanExpiresAt = () => useWorkspaceSessionStore(deriveCurrentPlanExpiresAt)

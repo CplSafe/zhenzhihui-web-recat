@@ -536,7 +536,7 @@ export default function VideoGenerationPanel(props: VideoGenerationPanelProps) {
                   type="button"
                   className="video-side-history-select"
                   aria-label={history.name}
-                  onClick={() => selectHistory({ id: history.id, ...history.raw })}
+                  onClick={() => selectHistory({ ...history.raw, id: history.id })}
                 >
                   {history.src ? (
                     <video src={history.src} muted playsInline preload="metadata"></video>
@@ -550,7 +550,7 @@ export default function VideoGenerationPanel(props: VideoGenerationPanelProps) {
                   aria-label={`删除${history.name}`}
                   onClick={(e) => {
                     e.stopPropagation()
-                    removeHistory({ id: history.id, ...history.raw })
+                    removeHistory({ ...history.raw, id: history.id })
                   }}
                 >
                   <svg viewBox="0 0 12 12" aria-hidden="true">

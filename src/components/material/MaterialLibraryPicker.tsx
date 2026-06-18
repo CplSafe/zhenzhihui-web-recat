@@ -862,7 +862,6 @@ export default function MaterialLibraryPicker({
 
                   <label className="mlp-toolbar-select">
                     <select value={timeSort} aria-label="时间排序" onChange={(e) => setTimeSort(e.target.value)}>
-                      <option value="desc">时间排序</option>
                       <option value="desc">最新优先</option>
                       <option value="asc">最早优先</option>
                     </select>
