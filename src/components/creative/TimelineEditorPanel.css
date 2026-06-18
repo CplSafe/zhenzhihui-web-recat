@@ -344,7 +344,6 @@
   height: 8px;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.32);
-  overflow: hidden;
   cursor: pointer;
 }
 
@@ -354,6 +353,36 @@
   bottom: 0;
   border-radius: 999px;
   background: #5767e5;
+}
+
+/* 选中镜头段高亮两端的拖拽把手：拖动可调整该段时长/与相邻段的边界。 */
+.timeline-scale-handle {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  border-radius: 4px;
+  background: #5767e5;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.25);
+  cursor: ew-resize;
+  z-index: 3;
+  touch-action: none;
+}
+
+.timeline-scale-handle--start {
+  left: 0;
+}
+
+.timeline-scale-handle--end {
+  left: 100%;
+}
+
+.timeline-scale-handle::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
 }
 
 .timeline-scale-cursor {

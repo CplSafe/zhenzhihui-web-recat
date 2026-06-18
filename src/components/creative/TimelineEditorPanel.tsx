@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import playIcon from '@/img/image copy 2.png'
 import './TimelineEditorPanel.css'
@@ -595,8 +596,37 @@ export default function TimelineEditorPanel(props: TimelineEditorPanelProps) {
     window.removeEventListener('pointerup', endDrag)
     window.removeEventListener('pointercancel', endDrag)
     emitChange()
-     
+
   }, [handleDragMove, emitChange])
+
+  // 在刻度条上拖拽「选中镜头段高亮」的左右把手来调整该段时长/边界。
+  // 复用已完整实现的 handleDragMove（segments 轨道的 resize-start/resize-end），
+  // 监听器用每次手势内新建的闭包 add/remove，规避 handleDragMove 引用随渲染变化导致的解绑泄漏。
+  function startSegmentResize(event: ReactPointerEvent, mode: 'resize-start' | 'resize-end') {
+    const segment = selectedSegment
+    if (!segment) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragStateRef.current = {
+      trackName: 'segments',
+      blockId: segment.id,
+      mode,
+      startPointerX: event.clientX,
+      initialStart: segment.start,
+      initialEnd: segment.end,
+    }
+    const move = (e: PointerEvent) => handleDragMove(e)
+    const end = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+      dragStateRef.current = null
+      emitChange()
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+  }
 
   // ============================================================
   // 选择 / 编辑器操作
@@ -1016,7 +1046,7 @@ export default function TimelineEditorPanel(props: TimelineEditorPanelProps) {
               </div>
               <div className="timeline-scale" aria-label="时间刻度条">
                 <div
-                  className="timeline-scale-track"
+                  className="timeline-scale-track timeline-ruler-hitbox"
                   role="button"
                   tabIndex={0}
                   onClick={handleScaleClick}
@@ -1024,7 +1054,26 @@ export default function TimelineEditorPanel(props: TimelineEditorPanelProps) {
                   <span
                     className="timeline-scale-highlight"
                     style={{ left: `${selectedRangePct.left}%`, width: `${selectedRangePct.width}%` }}
-                  ></span>
+                  >
+                    {selectedSegment && (
+                      <>
+                        <span
+                          className="timeline-scale-handle timeline-scale-handle--start"
+                          role="slider"
+                          aria-label="调整镜头起始时间"
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => startSegmentResize(e, 'resize-start')}
+                        ></span>
+                        <span
+                          className="timeline-scale-handle timeline-scale-handle--end"
+                          role="slider"
+                          aria-label="调整镜头结束时间"
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => startSegmentResize(e, 'resize-end')}
+                        ></span>
+                      </>
+                    )}
+                  </span>
                   <span
                     className="timeline-scale-cursor"
                     style={{ left: `${scaleCursorPct}%` }}
