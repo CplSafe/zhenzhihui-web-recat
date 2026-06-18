@@ -27,10 +27,12 @@ export default function CreativeEntryView() {
   const didCreateRef = useRef(false)
 
   useEffect(() => {
+    // didCreateRef 守卫已能防止 StrictMode 双调用 / remount 重复创建孤儿项目；
+    // 不再用 cleanup 里的 cancelled 标志，否则 StrictMode 的瞬时卸载会把唯一一次创建的跳转也取消掉，
+    // 导致卡在「正在创建创意项目…」永不跳转。
     if (didCreateRef.current) return
     didCreateRef.current = true
 
-    let cancelled = false
     async function createAndEnter() {
       if (!workspaceId) {
         showToast('workspace_id 缺失，请重新登录或切换工作空间', 'error')
@@ -43,15 +45,12 @@ export default function CreativeEntryView() {
         if (!id) {
           throw new Error('创建项目失败：缺少项目 ID')
         }
-        if (!cancelled) navigate(`/creative/${id}`, { replace: true })
+        navigate(`/creative/${id}`, { replace: true })
       } catch (error: any) {
-        if (!cancelled) showToast(getBusinessErrorMessage(error, error?.message || '创建项目失败，请稍后重试'), 'error')
+        showToast(getBusinessErrorMessage(error, error?.message || '创建项目失败，请稍后重试'), 'error')
       }
     }
     createAndEnter()
-    return () => {
-      cancelled = true
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

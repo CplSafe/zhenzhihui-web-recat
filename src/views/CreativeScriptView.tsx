@@ -107,7 +107,34 @@ function useStateRef<T>(
       return next
     })
   }, [])
+  // composable（useScriptPrompts / useStoryboardGeneration / useVideoGeneration）按原 Vue 的
+  // RefLike（{ value }）契约读写依赖；这里给 ref 附加 .value 桥：读取 live current，
+  // 写入经 set 触发 re-render（并同步更新 current 以便同一 tick 内回读）。
+  defineValueAlias(ref, set)
   return [state, set, ref]
+}
+
+// 给普通 useRef 附加只读 .value（= .current），兼容 composable 的 RefLike 读取契约。
+function useValueAlias<T>(value: T): React.MutableRefObject<T> {
+  const ref = useRef<T>(value)
+  ref.current = value
+  defineValueAlias(ref)
+  return ref
+}
+
+// 在 ref 对象上挂 .value 访问器（幂等：ref 跨渲染稳定，只定义一次）。
+function defineValueAlias<T>(ref: React.MutableRefObject<T>, set?: (v: T) => void) {
+  if (Object.prototype.hasOwnProperty.call(ref, 'value')) return
+  Object.defineProperty(ref, 'value', {
+    configurable: true,
+    get() {
+      return ref.current
+    },
+    set(v: T) {
+      ref.current = typeof v === 'function' ? (v as (p: T) => T)(ref.current) : v
+      set?.(ref.current)
+    },
+  })
 }
 
 // 按视频总时长把各分镜 duration 等比缩放到合计为 totalSec，再交给 buildTimelineTracks。
@@ -230,8 +257,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
   // libraryOpen 在 store 中没有直接 setter，用 open/close 模拟 v-model:libraryOpen
   const setLibraryOpen = (v: boolean) => (v ? openLibraryAction() : closeLibraryAction())
   // 同步读取最新 selectedMaterials
-  const selectedMaterialsRef = useRef(selectedMaterials)
-  selectedMaterialsRef.current = selectedMaterials
+  const selectedMaterialsRef = useValueAlias(selectedMaterials)
 
   // ── Task abort ──
   const { createTaskAbortController, releaseTaskAbortController, abortAllPendingTasks } = useTaskAbort()
@@ -319,14 +345,12 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
 
   // ── 工作空间 / 计费 状态（共享 store）──
   const workspaceId = useWorkspaceId()
-  const workspaceIdRef = useRef(workspaceId)
-  workspaceIdRef.current = workspaceId
+  const workspaceIdRef = useValueAlias(workspaceId)
   const allWorkspaces = useAllWorkspaces()
   const allWorkspacesRef = useRef(allWorkspaces)
   allWorkspacesRef.current = allWorkspaces
   const modelPlanCandidates = useModelPlanCandidates()
-  const modelPlanCandidatesRef = useRef(modelPlanCandidates)
-  modelPlanCandidatesRef.current = modelPlanCandidates
+  const modelPlanCandidatesRef = useValueAlias(modelPlanCandidates)
   const currentConcurrencyLimit = useCurrentConcurrencyLimit()
   const loadWorkspaces = useWorkspaceSessionStore((s) => s.loadWorkspaces)
   const switchWorkspace = useWorkspaceSessionStore((s) => s.switchWorkspace)
@@ -418,8 +442,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     () => getStoryboardGenerationBlockReason(storyboardGenerationState),
     [storyboardGenerationState],
   )
-  const storyboardGenerationBlockReasonRef = useRef(storyboardGenerationBlockReason)
-  storyboardGenerationBlockReasonRef.current = storyboardGenerationBlockReason
+  const storyboardGenerationBlockReasonRef = useValueAlias(storyboardGenerationBlockReason)
   const canGenerateStoryboard = useMemo(
     () => canStartStoryboardGeneration(storyboardGenerationState),
     [storyboardGenerationState],
@@ -3999,6 +4022,17 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
+
+  // ── watch(currentStep) 进入「分镜图片」步骤 → 刷新分镜图签名 URL ──
+  // OSS 预签名地址会过期：最早生成的几张分镜（典型如走完视频生成再跳回分镜步骤）
+  // 签名会先失效导致图片空白。每次进入该步骤按 assetId 重新签名，自愈过期 URL。
+  useEffect(() => {
+    if (currentStep !== 'storyboard') return
+    if (storyboardGeneratingRef.current) return
+    if (!storyboardItemsRef.current.length) return
+    hydrateStoryboardUrls()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep])
 
   // ── watch(description) → 自动同步项目标题 ──
   const prevDescriptionRef = useRef<string | undefined>(undefined)

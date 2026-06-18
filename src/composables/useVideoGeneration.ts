@@ -545,5 +545,11 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
     isEstimatingVideoCost,
     videoCostEstimateError,
     estimateVideoCost,
+
+    // setters（草稿恢复 applyWorkflowSnapshot 等处需要直接写回状态）
+    setGeneratedVideoUrl,
+    setGeneratedVideoTask,
+    setGeneratedVideoAssetId,
+    setVideoHistoryList,
   }
 }
