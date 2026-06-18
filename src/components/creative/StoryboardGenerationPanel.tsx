@@ -686,7 +686,7 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
   }
 
   function getInsertSlotStyle(slot: any): CSSProperties {
-    insertSlotLayoutToken // 触发依赖，确保布局 token 变化时重算
+    // 注：原 Vue 在此读取 insertSlotLayoutToken 注册响应式依赖；React 中本函数每次渲染都会执行，无需手动触发。
     const track = trackRef.current
     const anchorId = String(slot?.anchorId || '').trim()
     if (!track || !anchorId) return {}
@@ -733,7 +733,7 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
   }
 
   function getDeleteButtonStyle(): CSSProperties {
-    insertSlotLayoutToken
+    // 同上：原 Vue 响应式依赖触发，React 无需。
     const track = trackRef.current
     const id = String(activeCardId || '').trim()
     if (!track || !id) return {}
