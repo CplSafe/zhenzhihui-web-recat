@@ -310,10 +310,7 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
           break
         } catch (error: any) {
           lastError = error
-          if (!/SensitiveContentDetected|PrivacyInformation/i.test(String(error?.message || ''))) {
-            throw error
-          }
-          // 内容审核拦截：换下一张候选图再试
+          // 仅内容审核拦截才换下一张候选图重试，其它错误直接抛出。
           if (!/SensitiveContentDetected|PrivacyInformation/i.test(String(error?.message || ''))) {
             throw error
           }

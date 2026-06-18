@@ -3,7 +3,7 @@
   负责创建新项目或选择已有项目，然后跳转到 CreativeScriptView 进入编辑流程。
   也会承接首页"开始创作"按钮的路由跳转。
 */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import '@/styles/creative.css'
 import AppToast from '@/components/AppToast'
@@ -22,8 +22,15 @@ export default function CreativeEntryView() {
   const navigate = useNavigate()
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
+  // createCreativeProject 是非幂等 POST：用 ref 守卫，避免 StrictMode 开发态双调用
+  // （或任何 remount）创建出多余的孤儿项目。
+  const didCreateRef = useRef(false)
 
   useEffect(() => {
+    if (didCreateRef.current) return
+    didCreateRef.current = true
+
+    let cancelled = false
     async function createAndEnter() {
       if (!workspaceId) {
         showToast('workspace_id 缺失，请重新登录或切换工作空间', 'error')
@@ -36,12 +43,15 @@ export default function CreativeEntryView() {
         if (!id) {
           throw new Error('创建项目失败：缺少项目 ID')
         }
-        navigate(`/creative/${id}`, { replace: true })
+        if (!cancelled) navigate(`/creative/${id}`, { replace: true })
       } catch (error: any) {
-        showToast(getBusinessErrorMessage(error, error?.message || '创建项目失败，请稍后重试'), 'error')
+        if (!cancelled) showToast(getBusinessErrorMessage(error, error?.message || '创建项目失败，请稍后重试'), 'error')
       }
     }
     createAndEnter()
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

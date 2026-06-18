@@ -6,6 +6,7 @@
  * （derive*）+ selector hooks，`ref` 状态为 store 字段，`let` 闭包变量保留为模块级变量。
  */
 import { create } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
 import {
   createWorkspace,
   extractPageItems,
@@ -391,4 +392,5 @@ export const useCurrentConcurrencyLimit = () => useWorkspaceSessionStore(deriveC
 export const useCurrentBillingPeriod = () => useWorkspaceSessionStore(deriveCurrentBillingPeriod)
 export const useCurrentMaxMembers = () => useWorkspaceSessionStore(deriveCurrentMaxMembers)
 export const useCurrentMemberCount = () => useWorkspaceSessionStore(deriveCurrentMemberCount)
-export const useModelPlanCandidates = () => useWorkspaceSessionStore(deriveModelPlanCandidates)
+export const useModelPlanCandidates = () =>
+  useWorkspaceSessionStore(useShallow(deriveModelPlanCandidates))

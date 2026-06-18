@@ -1622,12 +1622,15 @@ export async function uploadAssetFile({ workspaceId, file, prompt = '' }) {
     uploadResponse = await fetch(upload.url, {
       method: 'POST',
       body: formData,
+      // 预签名上传不应发生跳转；fail-closed 避免被允许的存储域 3xx 重定向到
+      // 内网/任意主机后浏览器自动跟随并把文件体重新 POST 过去（绕过上方 allowlist）。
+      redirect: 'error',
     })
   } catch (error) {
     const isFetchTypeError = typeof TypeError !== 'undefined' && error instanceof TypeError
     throw new BusinessApiError(
       isFetchTypeError
-        ? '素材文件上传失败（可能是对象存储未配置 CORS 或被浏览器拦截）'
+        ? '素材文件上传失败（可能是对象存储未配置 CORS、发生了非预期跳转，或被浏览器拦截）'
         : '素材文件上传失败，请检查对象存储服务',
       { response: error },
     )

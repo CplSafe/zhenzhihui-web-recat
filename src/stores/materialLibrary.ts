@@ -3,6 +3,7 @@
  * 管理素材库抽屉/弹窗的开关状态和已选素材列表。
  */
 import { create } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
 
 export interface MaterialItem {
   id: string | number
@@ -65,4 +66,4 @@ export const useMaterialLibraryStore = create<MaterialLibraryState>((set, get) =
 
 // 便捷 selector，对应原 getter selectedMaterialIds
 export const useSelectedMaterialIds = () =>
-  useMaterialLibraryStore((s) => s.selectedMaterials.map((item) => item.id))
+  useMaterialLibraryStore(useShallow((s) => s.selectedMaterials.map((item) => item.id)))

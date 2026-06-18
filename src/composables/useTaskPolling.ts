@@ -108,6 +108,8 @@ export function useTaskPolling(options: TaskPollingOptions = {}) {
   const controllerRef = useRef<AbortController | null>(null)
   const animFrameIdRef = useRef<number | null>(null)
   const animTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 待结算的收口动画 resolve：取消时需主动 resolve，否则 await animateTo100 会永久挂起。
+  const animResolveRef = useRef<(() => void) | null>(null)
 
   // ---- 取消机制 ----
   const cancelAnimationFrames = useCallback(() => {
@@ -118,6 +120,12 @@ export function useTaskPolling(options: TaskPollingOptions = {}) {
     if (animTimeoutRef.current != null) {
       clearTimeout(animTimeoutRef.current)
       animTimeoutRef.current = null
+    }
+    // 清掉定时器后 step 不会再被调度，主动结算挂起的 animateTo100。
+    if (animResolveRef.current) {
+      const resolvePending = animResolveRef.current
+      animResolveRef.current = null
+      resolvePending()
     }
   }, [])
 
@@ -132,11 +140,16 @@ export function useTaskPolling(options: TaskPollingOptions = {}) {
       cancelAnimationFrames()
       let from = fromInput
       return new Promise<void>((resolve) => {
+        const done = () => {
+          animResolveRef.current = null
+          resolve()
+        }
+        animResolveRef.current = resolve
         function step() {
           const remaining = 100 - from
           if (remaining <= 0.5) {
             setProgress(100)
-            resolve()
+            done()
             return
           }
           from += Math.ceil(remaining * 0.35)
@@ -212,7 +225,7 @@ export function useTaskPolling(options: TaskPollingOptions = {}) {
           let res: any
           try {
             res = await fetchTask(taskId)
-          } catch (err) {
+          } catch {
             // 网络错误不中断，等下一次轮询
             await sleep(Math.min(pollAfterMs, 5000))
             continue
@@ -240,6 +253,8 @@ export function useTaskPolling(options: TaskPollingOptions = {}) {
           if (isSuccessStatus(res.status)) {
             // 收口到 100%
             await animateTo100(currentProgress)
+            // 动画期间可能被取消：此时不应再提交成功结果（否则已取消的任务仍会进历史）。
+            if (signal.aborted) return { success: false, cancelled: true }
             setPhase('success')
             setResult(res)
             onProgress?.(100)
@@ -283,6 +298,7 @@ export function useTaskPolling(options: TaskPollingOptions = {}) {
 
                 if (isSuccessStatus(extraRes.status)) {
                   await animateTo100(currentProgress)
+                  if (signal.aborted) return { success: false, cancelled: true }
                   setPhase('success')
                   setResult(extraRes)
                   onProgress?.(100)

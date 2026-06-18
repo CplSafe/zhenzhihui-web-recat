@@ -30,17 +30,19 @@ export default defineConfig(({ mode }) => {
             proxy.on('proxyRes', (proxyRes, req) => {
               const location = proxyRes.headers.location
               if (!location) return
+              if (!location.startsWith('http://') && !location.startsWith('https://')) return
 
               const devOrigin = getDevOrigin(req)
 
-              // /auth/callback 完成后跳回前端 → 保留路径，只改域名
-              if (location.startsWith('http://') || location.startsWith('https://')) {
-                try {
-                  const url = new URL(location)
+              // 仅改写指向业务域自身的回跳（/auth/callback 完成后跳回前端）→ 保留路径只改域名。
+              // 其它跨域跳转（如真正的第三方 SSO 跳转）原样透传，避免被错误地改写成同源 404。
+              try {
+                const url = new URL(location)
+                if (normalizeBaseUrl(url.origin) === normalizeBaseUrl(businessTarget)) {
                   proxyRes.headers.location = url.pathname + url.search + url.hash || '/'
-                } catch {
-                  proxyRes.headers.location = `${devOrigin}/`
                 }
+              } catch {
+                proxyRes.headers.location = `${devOrigin}/`
               }
             })
           },

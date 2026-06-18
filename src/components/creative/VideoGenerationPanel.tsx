@@ -342,6 +342,11 @@ export default function VideoGenerationPanel(props: VideoGenerationPanelProps) {
     }
   }
 
+  // 播放事件处理函数：使用稳定引用，便于在 configurePlyr 中先解绑再重新绑定。
+  const handlePlyrPlay = useCallback(() => setIsPlaying(true), [])
+  const handlePlyrPause = useCallback(() => setIsPlaying(false), [])
+  const handlePlyrEnded = useCallback(() => setIsPlaying(false), [])
+
   // 配置 Plyr 实例：注册播放事件、强制非静音满音量。
   const configurePlyr = useCallback(() => {
     const instance = plyrRef.current?.plyr
@@ -357,10 +362,15 @@ export default function VideoGenerationPanel(props: VideoGenerationPanelProps) {
       el.muted = false
       el.volume = 1
     }
-    instance.on('play', () => setIsPlaying(true))
-    instance.on('pause', () => setIsPlaying(false))
-    instance.on('ended', () => setIsPlaying(false))
-  }, [])
+    // configurePlyr 会在每次 videoUrl 变化时对同一个复用的 Plyr 实例重新执行，
+    // 若不先解绑同名事件，监听器会不断累积导致泄漏；这里先用相同的处理函数解绑旧的再重新注册。
+    instance.off('play', handlePlyrPlay)
+    instance.off('pause', handlePlyrPause)
+    instance.off('ended', handlePlyrEnded)
+    instance.on('play', handlePlyrPlay)
+    instance.on('pause', handlePlyrPause)
+    instance.on('ended', handlePlyrEnded)
+  }, [handlePlyrPlay, handlePlyrPause, handlePlyrEnded])
 
   // 视频地址变化时：复位播放状态、重新配置 Plyr、后台预热缓存。
   useEffect(() => {

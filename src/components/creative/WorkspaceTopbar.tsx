@@ -136,7 +136,7 @@ export default function WorkspaceTopbar({
         topbarResizeObserver = null
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [])
 
   // 以下几个方法统一负责关闭菜单并把操作交还给父级。

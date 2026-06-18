@@ -562,7 +562,7 @@ export default function LoginView() {
       setAgreed(true)
       sessionStorage.setItem('zzh_sso_pending', '1')
       // 直接跳后端，不走 Vite 代理。DeepAuth 登录页在 DeepAuth 自己的域名上显示
-      const baseUrl = (import.meta as any).env.VITE_ZZH_REMOTE_ORIGIN || window.location.origin
+      const baseUrl = import.meta.env.VITE_ZZH_REMOTE_ORIGIN || window.location.origin
       const redirectTo = `${window.location.origin}/creative`
       const loginUrl = `${baseUrl}/auth/login?${new URLSearchParams({ redirect_to: redirectTo })}`
       window.location.href = loginUrl
@@ -712,7 +712,7 @@ export default function LoginView() {
       clearRegisterCodeTimer()
     }
     // 仅在挂载/卸载时运行
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [])
 
   return (

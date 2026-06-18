@@ -324,6 +324,8 @@ export default function BillingModal(props: BillingModalProps) {
   const PERIOD_LABELS: Record<string, string> = { year: '年', week: '周', month: '月' }
   const periodLabel = (period: any) => PERIOD_LABELS[period] || '月'
 
+  // periodLabel 为稳定的纯函数，刻意省略以保持依赖最小，复刻原 Vue computed 语义
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const subscriptionPeriod = useMemo(() => periodLabel(subscription?.period), [subscription])
   const canCancelCurrentSubscription = !!subscription?.active
   const subscriptionCancelHint = useMemo(() => {
@@ -503,6 +505,8 @@ export default function BillingModal(props: BillingModalProps) {
         setAdminAuditLoading(false)
       }
     },
+    // normalizeAdminAuditLog 为稳定的纯函数，刻意省略以避免回调频繁重建
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
 

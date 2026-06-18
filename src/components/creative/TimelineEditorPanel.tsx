@@ -190,7 +190,7 @@ export default function TimelineEditorPanel(props: TimelineEditorPanelProps) {
   const [timelineDraft, setTimelineDraft] = useState('')
   const timelineOriginalRef = useRef('')
   const [isApplyingDraft, setIsApplyingDraft] = useState(false)
-  const [syncedBlockKey, setSyncedBlockKey] = useState('')
+  const [, setSyncedBlockKey] = useState('')
   const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const editorCardRef = useRef<HTMLElement | null>(null)
 
@@ -263,7 +263,7 @@ export default function TimelineEditorPanel(props: TimelineEditorPanelProps) {
   // 当前选中的镜头段与其派生展示状态。
   const selectedSegment = useMemo<TimelineSegment | null>(
     () => segments.find((segment) => segment.id === selectedSegmentId) || segments[0] || null,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
     [selectedSegmentId, segments],
   )
 
@@ -310,7 +310,7 @@ export default function TimelineEditorPanel(props: TimelineEditorPanelProps) {
     if (!trackName || !blockId) return null
     const list = getTrackList(trackName)
     return list.find((block) => block.id === blockId) || null
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selectedTrackName, selectedTrackBlockId, getTrackList])
 
   // 右侧编辑卡标题与时间范围文案。
@@ -336,7 +336,7 @@ export default function TimelineEditorPanel(props: TimelineEditorPanelProps) {
     if (block) return formatRange(block)
     if (selectedSegment) return formatRange(selectedSegment)
     return ''
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selectedTrackBlock, selectedSegment])
 
   // 费用估算区的派生显示值。
@@ -440,7 +440,7 @@ export default function TimelineEditorPanel(props: TimelineEditorPanelProps) {
     window.removeEventListener('pointerup', endBoundaryDrag)
     window.removeEventListener('pointercancel', endBoundaryDrag)
     emitChange()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [handleBoundaryMove, emitChange])
 
   // ============================================================
@@ -595,7 +595,7 @@ export default function TimelineEditorPanel(props: TimelineEditorPanelProps) {
     window.removeEventListener('pointerup', endDrag)
     window.removeEventListener('pointercancel', endDrag)
     emitChange()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [handleDragMove, emitChange])
 
   // ============================================================
