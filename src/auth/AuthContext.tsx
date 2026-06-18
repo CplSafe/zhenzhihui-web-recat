@@ -46,6 +46,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authCheckError, setAuthCheckError] = useState('')
 
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  // loadAuthSession 的最新引用（供刷新失败回调调用，规避与 startSessionRefresh 的循环依赖）。
+  const loadAuthSessionRef = useRef<() => Promise<void>>(async () => {})
+  // 并发序号：仅最新一次会话检查的结果可写回 state，避免慢请求覆盖快请求。
+  const loadSeqRef = useRef(0)
 
   const stopSessionRefresh = useCallback(() => {
     if (refreshTimer.current) {
@@ -60,17 +64,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         await refreshSession()
       } catch {
-        // 刷新失败 → 会话可能已过期，交由后续 API 调用或下次 loadAuthSession 处理跳转。
+        // 刷新失败 → 会话可能已过期：立即重新校验会话；若确已失效会清掉登录态，
+        // 由 App 的中央守卫跳转登录，而不是停留在"已登录"的死会话上。
         stopSessionRefresh()
+        loadAuthSessionRef.current()
       }
     }, REFRESH_INTERVAL_MS)
   }, [stopSessionRefresh])
 
   const loadAuthSession = useCallback(async () => {
+    const seq = ++loadSeqRef.current
+    const isStale = () => seq !== loadSeqRef.current
     setIsCheckingSession(true)
     setAuthCheckError('')
     try {
       const session = await getAuthenticatedSession()
+      if (isStale()) return // 已有更新的检查在进行，丢弃本次结果
       setSession(session)
       setIsAuthenticated(true)
       setAuthSession(session)
@@ -78,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sessionStorage.removeItem('zzh_sso_pending')
       startSessionRefresh()
     } catch (error: any) {
+      if (isStale()) return
       stopSessionRefresh()
       setSession(null)
       setIsAuthenticated(false)
@@ -93,9 +103,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAuthCheckError(getAuthErrorMessage(error, '登录状态检查失败，请检查代理或接口服务'))
       }
     } finally {
-      setIsCheckingSession(false)
+      if (!isStale()) setIsCheckingSession(false)
     }
   }, [setAuthSession, startSessionRefresh, stopSessionRefresh])
+
+  loadAuthSessionRef.current = loadAuthSession
 
   const handleLoginSuccess = useCallback(
     (session?: any) => {

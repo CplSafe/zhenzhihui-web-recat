@@ -198,6 +198,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
   const [isGenerating, setIsGenerating] = useStateRef(false)
   const [, setIsSavingDraft, isSavingDraftRef] = useStateRef(false)
   const [draftSavedDialogOpen, setDraftSavedDialogOpen] = useState(false)
+  const isSavingVideoRef = useRef(false)
   const draftRevisionRef = useRef(0)
   const serverProjectTitleRef = useRef('')
   const [serverProjectTitle, setServerProjectTitleState] = useState('')
@@ -709,7 +710,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     releaseTaskAbortController,
     abortAllPendingTasks,
     // 视频生成成功后自动保存到项目管理
-    onGenerated: () => handleSaveVideo(),
+    onGenerated: () => handleSaveVideo({ auto: true }),
   } as any) as any
 
   const generatedVideoUrlRef = useRef(generatedVideoUrl)
@@ -3103,19 +3104,23 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     }
   }
 
-  async function handleSaveVideo() {
+  async function handleSaveVideo({ auto = false }: { auto?: boolean } = {}) {
+    // auto=true 为视频生成成功后的自动保存：不满足前置条件时静默跳过，不向用户弹错误。
+    if (isSavingVideoRef.current) return
     if (isBlankModeRef.current) {
-      showToastRef.current('当前是空白页，请先从「历史草稿」进入项目后再保存视频', 'info' as any)
+      if (!auto) showToastRef.current('当前是空白页，请先从「历史草稿」进入项目后再保存视频', 'info' as any)
       return
     }
     if (!projectIdRef.current) {
-      showToastRef.current('缺少项目 ID，无法保存视频', 'error')
+      if (!auto) showToastRef.current('缺少项目 ID，无法保存视频', 'error')
       return
     }
     if (!generatedVideoUrlRef.current) {
-      showToastRef.current('暂无可保存的视频，请先生成视频', 'error')
+      if (!auto) showToastRef.current('暂无可保存的视频，请先生成视频', 'error')
       return
     }
+    isSavingVideoRef.current = true
+    try {
 
     // 1. 先保存到本地历史记录
     saveVideoDraft()
@@ -3154,6 +3159,9 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
       setDirty(false)
     } catch (error) {
       showToastRef.current(getBusinessErrorMessage(error, '视频保存失败，请稍后重试'), 'error')
+    }
+    } finally {
+      isSavingVideoRef.current = false
     }
   }
 
@@ -3891,6 +3899,10 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     selectedStyles,
     styleOptions,
     selectedMaterials,
+    // 这些字段也进入 getSnapshot，必须纳入依赖，否则只改它们时防抖落盘不触发
+    selectedPlatform,
+    customStyle,
+    storyboardEditHistory,
   ])
 
   // ── Dirty tracking ──
@@ -3914,6 +3926,9 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     timelineState,
     generatedVideoUrl,
     selectedMaterials,
+    selectedPlatform,
+    customStyle,
+    storyboardEditHistory,
   ])
 
   // ── Page-close guard (browser-native prompt) ──

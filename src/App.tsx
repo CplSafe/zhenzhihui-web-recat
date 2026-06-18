@@ -37,7 +37,7 @@ function AppShell() {
     <>
       {isCheckingSession ? (
         <div className="auth-session-loading" aria-label="登录状态检查中" />
-      ) : authCheckError ? (
+      ) : authCheckError && requiresAuth ? (
         <div className="auth-session-error">
           <div className="auth-session-error__card">
             <strong>登录状态检查失败</strong>
