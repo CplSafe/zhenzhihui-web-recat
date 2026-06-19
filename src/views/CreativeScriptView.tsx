@@ -41,14 +41,8 @@ import {
   getAssetDownloadUrl,
   getBusinessErrorMessage,
   getCreativeProject,
-  getCreativeProjectVersion,
-  listCreativeProjects,
-  listCreativeProjectVersions,
   createCreativeProjectVersion,
-  deleteCreativeProject,
-  deleteCreativeProjectVersion,
   deleteAsset,
-  restoreCreativeProjectVersion,
   patchCreativeProject,
   updateCreativeProjectDraft,
   listAssets,
@@ -70,6 +64,8 @@ import { useVideoGeneration } from '@/composables/useVideoGeneration'
 import { useStoryboardGeneration } from '@/composables/useStoryboardGeneration'
 import { useScriptPrompts } from '@/composables/useScriptPrompts'
 import { useWorkflowPersistence } from '@/composables/useWorkflowPersistence'
+import { useCreativeVersions } from '@/composables/useCreativeVersions'
+import { useCreativeDraftHistory } from '@/composables/useCreativeDraftHistory'
 import {
   SEEDANCE_DURATION_OPTIONS,
   SEEDANCE_RATIO_OPTIONS,
@@ -143,29 +139,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
   }
   const projectTitleSyncedRef = useRef(false)
   const projectTitleSyncTimerRef = useRef<ReturnType<typeof setTimeout> | 0>(0)
-  const [versionDrawerOpen, setVersionDrawerOpen, versionDrawerOpenRef] = useStateRef(false)
-  const [isLoadingVersions, setIsLoadingVersions, isLoadingVersionsRef] = useStateRef(false)
-  const [isSavingVersion, setIsSavingVersion, isSavingVersionRef] = useStateRef(false)
-  const [isDeletingVersion, setIsDeletingVersion, isDeletingVersionRef] = useStateRef(false)
-  const [isRestoringVersion, setIsRestoringVersion, isRestoringVersionRef] = useStateRef(false)
-  const [isLoadingVersionDetail, setIsLoadingVersionDetail] = useState(false)
-  const [versionHistoryList, setVersionHistoryList] = useState<any[]>([])
-  const [selectedVersionId, setSelectedVersionId, selectedVersionIdRef] = useStateRef(0)
-  const [selectedVersionDetail, setSelectedVersionDetail] = useState<any>(null)
-  const versionTargetProjectIdRef = useRef(0)
-  const [versionTargetProjectId, setVersionTargetProjectIdState] = useState(0)
-  const setVersionTargetProjectId = (v: number) => {
-    versionTargetProjectIdRef.current = v
-    setVersionTargetProjectIdState(v)
-  }
-  const versionTargetWorkspaceIdRef = useRef(0)
-  const setVersionTargetWorkspaceId = (v: number) => {
-    versionTargetWorkspaceIdRef.current = v
-  }
-  const [draftHistoryOpen, setDraftHistoryOpen] = useState(false)
-  const [draftHistoryLoading, setDraftHistoryLoading, draftHistoryLoadingRef] = useStateRef(false)
-  const [draftHistoryProjects, setDraftHistoryProjects] = useState<any[]>([])
-  const [isDeletingDraftProject, setIsDeletingDraftProject, isDeletingDraftProjectRef] = useStateRef(false)
+  // 版本历史 / 草稿历史 state 已抽到 useCreativeVersions / useCreativeDraftHistory（下方）。
   const [currentStep, setCurrentStep, currentStepRef] = useStateRef('script')
   const [maxStepIndex, setMaxStepIndex, maxStepIndexRef] = useStateRef(0)
   const [previewMaterial, setPreviewMaterial, previewMaterialRef] = useStateRef<any>(null)
@@ -509,7 +483,6 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
   const projectCoverDraftSyncTimerRef = useRef<ReturnType<typeof setTimeout> | 0>(0)
   const projectCoverDraftSyncInFlightRef = useRef(false)
   const lastProjectCoverDraftSyncKeyRef = useRef('')
-  const versionDetailRequestTokenRef = useRef(0)
 
   // watch(selectedRatio): 比例切换后自动同步更新分镜图片
   const prevRatioRef = useRef(selectedRatio)
@@ -3158,58 +3131,8 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     return 0
   }
 
-  function normalizeCreativeProjectVersions(payload: any): any[] {
-    const raw = normalizeJsonPayload(payload) ?? payload
-    const list = Array.isArray(raw)
-      ? raw
-      : Array.isArray(raw?.items)
-        ? raw.items
-        : Array.isArray(raw?.list)
-          ? raw.list
-          : Array.isArray(raw?.versions)
-            ? raw.versions
-            : []
-    return list.filter((item: any) => item && typeof item === 'object')
-  }
-
-  function normalizeCreativeProjectVersionDetail(payload: any, fallback: any = null) {
-    const raw = normalizeJsonPayload(payload) ?? payload
-    const version =
-      (raw?.version && typeof raw.version === 'object'
-        ? raw.version
-        : raw?.data?.version && typeof raw.data.version === 'object'
-          ? raw.data.version
-          : raw?.data && typeof raw.data === 'object'
-            ? raw.data
-            : raw && typeof raw === 'object'
-              ? raw
-              : {}) || {}
-
-    const draft =
-      normalizeCreativeProjectDraft(version) ||
-      normalizeCreativeProjectDraft(raw) ||
-      normalizeJsonPayload(version?.snapshot_json) ||
-      normalizeJsonPayload(version?.snapshotJson) ||
-      normalizeJsonPayload(version?.snapshot) ||
-      null
-
-    return {
-      version: {
-        ...(fallback && typeof fallback === 'object' ? fallback : {}),
-        ...version,
-      },
-      draft: draft && typeof draft === 'object' ? draft : null,
-      raw,
-    }
-  }
-
-  function resolveVersionId(item: any): number {
-    return Number(item?.vid || item?.version_id || item?.versionId || item?.id || item?.version_no || 0)
-  }
-
-  function resolveVersionLabel(item: any): string {
-    return String(item?.label || item?.name || item?.title || '').trim()
-  }
+  // 版本专用 helper（normalizeCreativeProjectVersions / normalizeCreativeProjectVersionDetail /
+  // resolveVersionId / resolveVersionLabel）已迁入 useCreativeVersions。
 
   function isDraftSnapshotEmpty(snapshot: any): boolean {
     const s = snapshot && typeof snapshot === 'object' ? snapshot : {}
@@ -3359,402 +3282,6 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
       }
     } finally {
       projectCoverDraftSyncInFlightRef.current = false
-    }
-  }
-
-  async function loadCreativeProjectVersions({ silent = false }: { silent?: boolean } = {}) {
-    const pid = Number(versionTargetProjectIdRef.current || projectIdRef.current || 0)
-    if (!pid) {
-      if (!silent) showToastRef.current('缺少项目 ID，无法加载历史记录', 'error')
-      return
-    }
-    if (isLoadingVersionsRef.current) return
-    setIsLoadingVersions(true)
-    try {
-      const wsId = await resolveWorkspaceIdForProject(pid, {
-        silent: true,
-        preferredWorkspaceId: versionTargetWorkspaceIdRef.current,
-      })
-      if (!wsId) {
-        if (!silent) showToastRef.current('workspace_id 缺失，无法加载历史记录', 'error')
-        return
-      }
-      const payload = await listCreativeProjectVersions({
-        projectId: pid,
-        workspaceId: wsId,
-      })
-      const list = normalizeCreativeProjectVersions(payload)
-      const sorted = list.slice().sort((a: any, b: any) => {
-        const ano = Number(a?.version_no || a?.versionNo || 0)
-        const bno = Number(b?.version_no || b?.versionNo || 0)
-        if (Number.isFinite(ano) && Number.isFinite(bno) && (ano || bno)) {
-          return bno - ano
-        }
-        const at = new Date(a?.created_at || a?.createdAt || 0).getTime()
-        const bt = new Date(b?.created_at || b?.createdAt || 0).getTime()
-        if (Number.isFinite(at) && Number.isFinite(bt) && (at || bt)) return bt - at
-        return resolveVersionId(b) - resolveVersionId(a)
-      })
-      setVersionHistoryList(sorted)
-      const currentSelected = Number(selectedVersionIdRef.current || 0)
-      const nextSelected = sorted.find((item: any) => resolveVersionId(item) === currentSelected) || sorted[0] || null
-      if (nextSelected) {
-        await loadCreativeProjectVersionDetail(nextSelected, { silent: true })
-      } else {
-        setSelectedVersionId(0)
-        setSelectedVersionDetail(null)
-        setIsLoadingVersionDetail(false)
-      }
-    } catch (error) {
-      if (!silent) showToastRef.current(getBusinessErrorMessage(error, '历史记录加载失败，请稍后重试'), 'error')
-    } finally {
-      setIsLoadingVersions(false)
-    }
-  }
-
-  async function loadCreativeProjectVersionDetail(item: any, { silent = false }: { silent?: boolean } = {}) {
-    const pid = Number(versionTargetProjectIdRef.current || projectIdRef.current || 0)
-    const vid = resolveVersionId(item)
-    if (!pid || !vid) {
-      if (!silent) showToastRef.current('版本 ID 无效，无法加载版本详情', 'error')
-      return
-    }
-
-    const wsId = await resolveWorkspaceIdForProject(pid, {
-      silent: true,
-      preferredWorkspaceId: versionTargetWorkspaceIdRef.current,
-    })
-    if (!wsId) {
-      if (!silent) showToastRef.current('workspace_id 缺失，无法加载版本详情', 'error')
-      return
-    }
-
-    const requestToken = ++versionDetailRequestTokenRef.current
-    setSelectedVersionId(vid)
-    setIsLoadingVersionDetail(true)
-
-    try {
-      const payload = await getCreativeProjectVersion({
-        projectId: pid,
-        workspaceId: wsId,
-        vid,
-      })
-      if (requestToken !== versionDetailRequestTokenRef.current) return
-      setSelectedVersionDetail(normalizeCreativeProjectVersionDetail(payload, item))
-    } catch (error) {
-      if (requestToken !== versionDetailRequestTokenRef.current) return
-      setSelectedVersionDetail(normalizeCreativeProjectVersionDetail(item, item))
-      if (!silent) showToastRef.current(getBusinessErrorMessage(error, '版本详情加载失败，请稍后重试'), 'error')
-    } finally {
-      if (requestToken === versionDetailRequestTokenRef.current) {
-        setIsLoadingVersionDetail(false)
-      }
-    }
-  }
-
-  function openVersionHistoryForDraft(item: any) {
-    const pid = Number(item?.id || 0)
-    const wsId = Number(item?.workspaceId || 0)
-    if (!pid) return
-    setDraftHistoryOpen(false)
-    setVersionTargetProjectId(pid)
-    setVersionTargetWorkspaceId(wsId)
-    setVersionDrawerOpen(true)
-    setSelectedVersionId(0)
-    setSelectedVersionDetail(null)
-    loadCreativeProjectVersions()
-  }
-
-  function closeVersionHistoryDrawer() {
-    setVersionDrawerOpen(false)
-    versionDetailRequestTokenRef.current += 1
-    setSelectedVersionId(0)
-    setSelectedVersionDetail(null)
-    setIsLoadingVersionDetail(false)
-    setVersionTargetProjectId(0)
-    setVersionTargetWorkspaceId(0)
-  }
-
-  async function loadDraftHistoryProjects({ silent = false }: { silent?: boolean } = {}) {
-    if (draftHistoryLoadingRef.current) return
-    let workspaceList = Array.isArray(allWorkspacesRef.current) ? allWorkspacesRef.current : []
-    let ids = workspaceList.length ? workspaceList.map((w: any) => Number(w?.id || 0)).filter((id: number) => id > 0) : []
-    let uniqueIds = [...new Set(ids)]
-
-    if (!uniqueIds.length && typeof loadWorkspaces === 'function') {
-      await loadWorkspaces()
-      workspaceList = Array.isArray(allWorkspacesRef.current) ? allWorkspacesRef.current : []
-      ids = workspaceList.length ? workspaceList.map((w: any) => Number(w?.id || 0)).filter((id: number) => id > 0) : []
-      uniqueIds = [...new Set(ids)]
-    }
-
-    if (!uniqueIds.length && !workspaceIdRef.current) {
-      if (!silent) showToastRef.current('workspace_id 缺失，无法加载历史草稿', 'error')
-      return
-    }
-
-    setDraftHistoryLoading(true)
-    try {
-      const tasks = (uniqueIds.length ? uniqueIds : [workspaceIdRef.current]).map((id: number) =>
-        listCreativeProjects({ workspaceId: id, limit: 50 }).then((items: any) => ({ id, items })),
-      )
-      const settled = await Promise.allSettled(tasks)
-      const merged: any[] = []
-      settled.forEach((res: any) => {
-        if (res.status !== 'fulfilled') return
-        const wsId = Number(res.value?.id || 0)
-        const items = Array.isArray(res.value?.items) ? res.value.items : []
-        const ws = workspaceList.find((w: any) => Number(w?.id || 0) === wsId)
-        items.forEach((item: any) => {
-          if (!item || typeof item !== 'object') return
-          merged.push({
-            ...item,
-            workspaceId: wsId,
-            workspaceName: ws?.name || '',
-          })
-        })
-      })
-      merged.sort((a: any, b: any) => {
-        const at = new Date(a?.updated_at || a?.updatedAt || a?.created_at || a?.createdAt || 0).getTime()
-        const bt = new Date(b?.updated_at || b?.updatedAt || b?.created_at || b?.createdAt || 0).getTime()
-        if (Number.isFinite(at) && Number.isFinite(bt) && (at || bt)) return bt - at
-        return Number(b?.id || 0) - Number(a?.id || 0)
-      })
-      setDraftHistoryProjects(merged)
-    } catch (error) {
-      if (!silent) showToastRef.current(getBusinessErrorMessage(error, '历史草稿加载失败，请稍后重试'), 'error')
-    } finally {
-      setDraftHistoryLoading(false)
-    }
-  }
-
-  function openDraftHistory() {
-    setDraftHistoryOpen(true)
-    loadDraftHistoryProjects({ silent: false })
-  }
-
-  function continueFromDraftProject(item: any) {
-    const id = Number(item?.id || 0)
-    const wsId = Number(item?.workspaceId || 0)
-    if (!id) return
-    setDraftHistoryOpen(false)
-    if (wsId && wsId !== workspaceIdRef.current) {
-      switchWorkspace(wsId)
-    }
-    navigate(`/creative/${id}`)
-  }
-
-  async function deleteDraftProject(item: any) {
-    if (isDeletingDraftProjectRef.current) return
-    const id = Number(item?.id || 0)
-    const wsId = Number(item?.workspaceId || 0)
-    if (!id) return
-    if (!wsId) {
-      showToastRef.current('workspace_id 缺失，无法删除草稿', 'error')
-      return
-    }
-    const title = String(item?.name || item?.title || `项目 #${id}`).trim()
-    const confirmed = await requestConfirm(`确定删除「${title}」吗？删除后不可恢复。`, { danger: true })
-    if (!confirmed) return
-    setIsDeletingDraftProject(true)
-    try {
-      await deleteCreativeProject({ projectId: id, workspaceId: wsId })
-      if (projectIdRef.current && id === projectIdRef.current) {
-        navigate('/creative/blank', { replace: true })
-      }
-      await loadDraftHistoryProjects({ silent: true })
-      showToastRef.current('历史草稿已删除', 'success')
-    } catch (error) {
-      showToastRef.current(getBusinessErrorMessage(error, '历史草稿删除失败，请稍后重试'), 'error')
-    } finally {
-      setIsDeletingDraftProject(false)
-    }
-  }
-
-  async function deleteDraftProjects(items: any) {
-    if (isDeletingDraftProjectRef.current) return
-    const list = Array.isArray(items) ? items : []
-    const normalized = list
-      .map((item: any) => ({
-        projectId: Number(item?.id || 0),
-        workspaceId: Number(item?.workspaceId || 0),
-        title: String(item?.name || item?.title || '').trim(),
-      }))
-      .filter((row: any) => row.projectId > 0 && row.workspaceId > 0)
-    if (!normalized.length) return
-
-    const confirmed = await requestConfirm(`确定批量删除 ${normalized.length} 个草稿吗？删除后不可恢复。`, {
-      danger: true,
-    })
-    if (!confirmed) return
-
-    setIsDeletingDraftProject(true)
-    try {
-      const tasks = normalized.map((row: any) =>
-        deleteCreativeProject({ projectId: row.projectId, workspaceId: row.workspaceId }).then(
-          () => ({ ok: true, row }),
-          (error: any) => ({ ok: false, row, error }),
-        ),
-      )
-      const settled = await Promise.all(tasks)
-      const okCount = settled.filter((res: any) => res.ok).length
-      const failCount = settled.length - okCount
-
-      if (projectIdRef.current && normalized.some((row: any) => row.projectId === projectIdRef.current)) {
-        navigate('/creative/blank', { replace: true })
-      }
-
-      await loadDraftHistoryProjects({ silent: true })
-
-      if (!failCount) {
-        showToastRef.current(`已删除 ${okCount} 个草稿`, 'success')
-      } else {
-        showToastRef.current(`已删除 ${okCount} 个，失败 ${failCount} 个`, 'error')
-      }
-    } catch (error) {
-      showToastRef.current(getBusinessErrorMessage(error, '批量删除失败，请稍后重试'), 'error')
-    } finally {
-      setIsDeletingDraftProject(false)
-    }
-  }
-
-  async function saveCreativeProjectVersion({ label, silent = false }: any = {}): Promise<boolean> {
-    if (isSavingVersionRef.current) return false
-    if (!projectIdRef.current) {
-      if (!silent) showToastRef.current('缺少项目 ID，无法保存版本', 'error')
-      return false
-    }
-    const wsId = await resolveProjectWorkspaceId({ silent: true })
-    if (!wsId) {
-      if (!silent) showToastRef.current('workspace_id 缺失，无法保存版本', 'error')
-      return false
-    }
-    const note = String(label || '').trim()
-    if (!note) {
-      if (!silent) showToastRef.current('请输入版本备注', 'error')
-      return false
-    }
-    const snapshot = buildDraftSnapshot()
-    if (isDraftSnapshotEmpty(snapshot)) {
-      if (!silent) showToastRef.current('版本内容为空，无法保存', 'error')
-      return false
-    }
-
-    setIsSavingVersion(true)
-    try {
-      const ok = await putDraftSnapshot(snapshot, { silent })
-      if (!ok) return false
-      await createCreativeProjectVersion({
-        projectId: projectIdRef.current,
-        workspaceId: wsId,
-        label: note,
-      })
-      await loadCreativeProjectVersions({ silent: true })
-      if (!silent) showToastRef.current('版本已保存', 'success')
-      return true
-    } catch (error) {
-      if (!silent) showToastRef.current(getBusinessErrorMessage(error, '版本保存失败，请稍后重试'), 'error')
-      return false
-    } finally {
-      setIsSavingVersion(false)
-    }
-  }
-
-  async function deleteCreativeProjectVersionByItem(item: any) {
-    if (isDeletingVersionRef.current) return
-    const pid = Number(versionTargetProjectIdRef.current || projectIdRef.current || 0)
-    if (!pid) {
-      showToastRef.current('缺少项目 ID，无法删除历史记录', 'error')
-      return
-    }
-    const wsId = await resolveWorkspaceIdForProject(pid, {
-      silent: true,
-      preferredWorkspaceId: versionTargetWorkspaceIdRef.current,
-    })
-    if (!wsId) {
-      showToastRef.current('workspace_id 缺失，无法删除历史记录', 'error')
-      return
-    }
-    const vid = resolveVersionId(item)
-    if (!vid) {
-      showToastRef.current('版本 ID 无效，无法删除', 'error')
-      return
-    }
-    const label = resolveVersionLabel(item) || `版本 ${vid}`
-    const confirmed = await requestConfirm(`确定删除「${label}」吗？删除后不可恢复。`, { danger: true })
-    if (!confirmed) return
-    setIsDeletingVersion(true)
-    try {
-      await deleteCreativeProjectVersion({
-        projectId: pid,
-        workspaceId: wsId,
-        vid,
-      })
-      await loadCreativeProjectVersions({ silent: true })
-      showToastRef.current('历史记录已删除', 'success')
-    } catch (error) {
-      showToastRef.current(getBusinessErrorMessage(error, '历史记录删除失败，请稍后重试'), 'error')
-    } finally {
-      setIsDeletingVersion(false)
-    }
-  }
-
-  async function restoreCreativeProjectVersionByItem(item: any) {
-    if (isRestoringVersionRef.current) return
-    const pid = Number(versionTargetProjectIdRef.current || projectIdRef.current || 0)
-    const restoringFromDraft = Boolean(versionTargetProjectIdRef.current && pid !== projectIdRef.current)
-    if (!pid) {
-      showToastRef.current('缺少项目 ID，无法恢复版本', 'error')
-      return
-    }
-    const wsId = await resolveWorkspaceIdForProject(pid, {
-      silent: true,
-      preferredWorkspaceId: versionTargetWorkspaceIdRef.current,
-    })
-    if (!wsId) {
-      showToastRef.current('workspace_id 缺失，无法恢复版本', 'error')
-      return
-    }
-    const vid = resolveVersionId(item)
-    if (!vid) {
-      showToastRef.current('版本 ID 无效，无法恢复', 'error')
-      return
-    }
-
-    const label = resolveVersionLabel(item) || `版本 ${vid}`
-    const confirmed = await requestConfirm(`确定恢复到「${label}」吗？当前未保存的内容将丢失。`)
-    if (!confirmed) return
-
-    setIsRestoringVersion(true)
-    try {
-      await restoreCreativeProjectVersion({
-        projectId: pid,
-        workspaceId: wsId,
-        vid,
-      })
-      setVersionDrawerOpen(false)
-      if (restoringFromDraft || isBlankModeRef.current) {
-        if (wsId && wsId !== workspaceIdRef.current) {
-          switchWorkspace(wsId)
-        }
-        navigate(`/creative/${pid}`)
-        showToastRef.current(`已恢复到「${label}」`, 'success')
-        return
-      }
-
-      const meta = await loadProjectDraftMeta({ silent: true, apply: false })
-      const restored = normalizeCreativeProjectDraft(meta?.project)
-      if (!restored || !meta?.project) {
-        throw new Error('未获取到草稿内容')
-      }
-      applyWorkflowSnapshot(restored)
-      draftRevisionRef.current = normalizeCreativeProjectDraftRevision(meta.project)
-      persistWorkflowSnapshot()
-      showToastRef.current(`已恢复到「${label}」`, 'success')
-    } catch (error) {
-      showToastRef.current(getBusinessErrorMessage(error, '版本恢复失败，请稍后重试'), 'error')
-    } finally {
-      setIsRestoringVersion(false)
     }
   }
 
@@ -4047,6 +3574,70 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId])
+
+  // ── 草稿历史 composable ──
+  const {
+    draftHistoryOpen,
+    setDraftHistoryOpen,
+    draftHistoryLoading,
+    draftHistoryProjects,
+    isDeletingDraftProject,
+    openDraftHistory,
+    continueFromDraftProject,
+    deleteDraftProject,
+    deleteDraftProjects,
+  } = useCreativeDraftHistory({
+    getWorkspaceId: () => workspaceIdRef.current,
+    getProjectId: () => projectIdRef.current,
+    allWorkspacesRef,
+    loadWorkspaces,
+    switchWorkspace,
+    navigate,
+    showToast,
+    requestConfirm,
+  })
+
+  // ── 版本历史 composable ──
+  const {
+    versionDrawerOpen,
+    versionDrawerOpenRef,
+    isLoadingVersions,
+    isSavingVersion,
+    isDeletingVersion,
+    isRestoringVersion,
+    isLoadingVersionDetail,
+    versionHistoryList,
+    selectedVersionId,
+    selectedVersionDetail,
+    versionTargetProjectId,
+    openVersionHistoryForDraft,
+    closeVersionHistoryDrawer,
+    loadCreativeProjectVersions,
+    loadCreativeProjectVersionDetail,
+    saveCreativeProjectVersion,
+    restoreCreativeProjectVersionByItem,
+    deleteCreativeProjectVersionByItem,
+  } = useCreativeVersions({
+    getProjectId: () => projectIdRef.current,
+    getWorkspaceId: () => workspaceIdRef.current,
+    draftRevisionRef,
+    resolveProjectWorkspaceId,
+    resolveWorkspaceIdForProject,
+    applyWorkflowSnapshot,
+    loadProjectDraftMeta,
+    persistWorkflowSnapshot,
+    buildDraftSnapshot,
+    putDraftSnapshot,
+    isDraftSnapshotEmpty,
+    normalizeCreativeProjectDraft,
+    normalizeCreativeProjectDraftRevision,
+    isBlankMode: () => isBlankModeRef.current,
+    switchWorkspace,
+    navigate,
+    closeDraftHistory: () => setDraftHistoryOpen(false),
+    showToast,
+    requestConfirm,
+  })
 
   // dirtyRef 与 store 同步（供潜在用途）
   dirtyRef.current = getDirty()
