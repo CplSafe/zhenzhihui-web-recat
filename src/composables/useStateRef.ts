@@ -34,13 +34,15 @@ export function useStateRef<T>(
   const ref = useRef<T>(state)
   ref.current = state
   const set = useCallback((v: T | ((prev: T) => T)) => {
-    setState((prev) => {
-      const next = typeof v === 'function' ? (v as (p: T) => T)(prev) : v
-      ref.current = next
-      return next
-    })
+    // 同步更新 ref.current（对应原 Vue 的 `.value = x` 语义）：代码各处在 setX 之后会立即读
+    // xRef.current（如 switchToStep 后读 currentStepRef、setCreativeStoryboards 后读其 length）。
+    // 不能依赖 React 的 eager-state 优化在 updater 里更新 ref——那个时序不可靠（容器 hook 重构后即失效）。
+    // 从 ref.current（始终等于最新 state）派生，再以值形式 setState 触发渲染。
+    const next = typeof v === 'function' ? (v as (p: T) => T)(ref.current) : v
+    ref.current = next
+    setState(next)
   }, [])
-  // 读取 live current；写入经 set 触发 re-render（并同步更新 current 以便同一 tick 内回读）。
+  // 读取 live current；写入同样同步更新 current（与上面的 set 一致）。
   defineValueAlias(ref, set)
   return [state, set, ref]
 }
