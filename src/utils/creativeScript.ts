@@ -382,3 +382,25 @@ function clampDuration(value, fallback) {
 
   return Math.min(Math.max(num, 0.5), 12)
 }
+
+// 按视频总时长把各分镜 duration 等比缩放到合计为 totalSec（buildTimelineTracks 仅按 duration 顺序铺排，
+// 故归一化在调用前完成）。
+export function normalizeStoryboardDurations<T extends { duration?: number }>(
+  storyboards: T[],
+  totalSec: number,
+): T[] {
+  if (!Array.isArray(storyboards) || !storyboards.length) return storyboards
+  const target = Number(totalSec)
+  if (!Number.isFinite(target) || target <= 0) return storyboards
+  const current = storyboards.reduce((sum, board) => {
+    const d = Number(board?.duration)
+    return sum + (Number.isFinite(d) && d > 0 ? d : 2)
+  }, 0)
+  if (current <= 0) return storyboards
+  const scale = target / current
+  return storyboards.map((board) => {
+    const d = Number(board?.duration)
+    const base = Number.isFinite(d) && d > 0 ? d : 2
+    return { ...board, duration: Number((base * scale).toFixed(2)) }
+  })
+}

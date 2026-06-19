@@ -62,6 +62,7 @@ import {
   buildTimelineTracks,
   extractStoryboardPayload,
   getTimelineDuration,
+  normalizeStoryboardDurations,
 } from '@/utils/creativeScript'
 import { toPositiveInt } from '@/utils/common'
 import { useTaskAbort } from '@/composables/useTaskAbort'
@@ -90,74 +91,8 @@ import {
 } from '@/stores/workspaceSession'
 import { useUiStore } from '@/stores/ui'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
+import { useStateRef, useValueAlias } from '@/composables/useStateRef'
 import { saveLastCreativeProjectId } from '@/utils/creativeStorage'
-
-// 小工具：返回 [state, setState, ref]。ref.current 始终与最新 state 同步，
-// 供在异步回调里同步读取最新值（对应原 Vue 里直接读取 ref.value 的行为）。
-function useStateRef<T>(
-  initial: T,
-): [T, (v: T | ((prev: T) => T)) => void, React.MutableRefObject<T>] {
-  const [state, setState] = useState<T>(initial)
-  const ref = useRef<T>(state)
-  ref.current = state
-  const set = useCallback((v: T | ((prev: T) => T)) => {
-    setState((prev) => {
-      const next = typeof v === 'function' ? (v as (p: T) => T)(prev) : v
-      ref.current = next
-      return next
-    })
-  }, [])
-  // composable（useScriptPrompts / useStoryboardGeneration / useVideoGeneration）按原 Vue 的
-  // RefLike（{ value }）契约读写依赖；这里给 ref 附加 .value 桥：读取 live current，
-  // 写入经 set 触发 re-render（并同步更新 current 以便同一 tick 内回读）。
-  defineValueAlias(ref, set)
-  return [state, set, ref]
-}
-
-// 给普通 useRef 附加只读 .value（= .current），兼容 composable 的 RefLike 读取契约。
-function useValueAlias<T>(value: T): React.MutableRefObject<T> {
-  const ref = useRef<T>(value)
-  ref.current = value
-  defineValueAlias(ref)
-  return ref
-}
-
-// 在 ref 对象上挂 .value 访问器（幂等：ref 跨渲染稳定，只定义一次）。
-function defineValueAlias<T>(ref: React.MutableRefObject<T>, set?: (v: T) => void) {
-  if (Object.prototype.hasOwnProperty.call(ref, 'value')) return
-  Object.defineProperty(ref, 'value', {
-    configurable: true,
-    get() {
-      return ref.current
-    },
-    set(v: T) {
-      ref.current = typeof v === 'function' ? (v as (p: T) => T)(ref.current) : v
-      set?.(ref.current)
-    },
-  })
-}
-
-// 按视频总时长把各分镜 duration 等比缩放到合计为 totalSec，再交给 buildTimelineTracks。
-// buildTimelineTracks 仅按各分镜 duration 顺序铺排时间线，故归一化在调用前完成。
-function normalizeStoryboardDurations<T extends { duration?: number }>(
-  storyboards: T[],
-  totalSec: number,
-): T[] {
-  if (!Array.isArray(storyboards) || !storyboards.length) return storyboards
-  const target = Number(totalSec)
-  if (!Number.isFinite(target) || target <= 0) return storyboards
-  const current = storyboards.reduce((sum, board) => {
-    const d = Number(board?.duration)
-    return sum + (Number.isFinite(d) && d > 0 ? d : 2)
-  }, 0)
-  if (current <= 0) return storyboards
-  const scale = target / current
-  return storyboards.map((board) => {
-    const d = Number(board?.duration)
-    const base = Number.isFinite(d) && d > 0 ? d : 2
-    return { ...board, duration: Number((base * scale).toFixed(2)) }
-  })
-}
 
 const DEFAULT_GENERATING_PROMPT = '结合提供的素材图片，我要做一个买菜APP的五一宣传视频'
 const MAX_STORYBOARDS = 9
