@@ -12,7 +12,7 @@ import CreateTeamDialog from './CreateTeamDialog'
 import JoinTeamDialog from './JoinTeamDialog'
 import TeamManagementModal from '@/components/team/TeamManagementModal'
 import { getAuthErrorMessage, logoutSession } from '@/api/auth'
-import { createWorkspaceInvitation } from '@/api/business'
+import { createWorkspaceInvitation, getBusinessErrorMessage } from '@/api/business'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { useUiStore } from '@/stores/ui'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
@@ -28,7 +28,6 @@ import {
   useCurrentPlanExpiresAt,
   useWalletCredits,
   usePlanBaseCredits,
-  getBusinessErrorMessage,
 } from '@/stores/workspaceSession'
 import { useAuth } from '@/auth/AuthContext'
 import './AppLayout.css'

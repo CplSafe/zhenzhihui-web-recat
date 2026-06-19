@@ -2,7 +2,6 @@
  * CreativeSidebar — 创意工作流左侧步骤导航
  * 显示 Prompt → 脚本 → 分镜 → 时间线 → 视频 五个步骤，高亮当前步骤，支持点击跳转。
  */
-import { useMemo } from 'react'
 import logoUrl from '@/img/image copy 6.png'
 import navDashboard from '@/assets/icons/nav-dashboard.svg'
 import navSteps from '@/assets/icons/nav-steps.svg'
@@ -61,13 +60,6 @@ export default function CreativeSidebar({
   onJoinTeam,
   onDeleteWorkspace,
 }: CreativeSidebarProps) {
-  // id 可能来自接口（字符串）或父级（数字），统一按数字比较，避免恒不匹配。
-  // 注：此派生值原 Vue 中为 computed，但模板未直接使用，保留逻辑等价。
-  useMemo(
-    () => workspaces.find((w) => Number(w.id) === Number(activeWorkspaceId)) || null,
-    [workspaces, activeWorkspaceId],
-  )
-
   // 选择空间时，只有与当前空间不一致才通知父级切换。
   function pickWorkspace(id: number) {
     if (Number(id) !== Number(activeWorkspaceId)) onSwitchWorkspace?.(id)

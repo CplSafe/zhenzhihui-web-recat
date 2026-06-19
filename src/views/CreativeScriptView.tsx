@@ -3503,17 +3503,6 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     }
   }
 
-   
-  function _openVersionHistory() {
-    setVersionDrawerOpen(true)
-    setVersionTargetProjectId(0)
-    setVersionTargetWorkspaceId(0)
-    setSelectedVersionId(0)
-    setSelectedVersionDetail(null)
-    loadProjectDraftMeta({ silent: true })
-    loadCreativeProjectVersions()
-  }
-
   function openVersionHistoryForDraft(item: any) {
     const pid = Number(item?.id || 0)
     const wsId = Number(item?.workspaceId || 0)

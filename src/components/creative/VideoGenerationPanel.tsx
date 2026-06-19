@@ -153,7 +153,6 @@ export default function VideoGenerationPanel(props: VideoGenerationPanelProps) {
   const [selectedPublishPlatform, setSelectedPublishPlatform] = useState('抖音')
   const [styleMenuOpen, setStyleMenuOpen] = useState(false)
   const [publishPanelOpen, setPublishPanelOpen] = useState(false)
-  const [fullscreenOpen, setFullscreenOpen] = useState(false)
 
   const plyrRef = useRef<any>(null)
   const videoPromptElement = useRef<HTMLTextAreaElement | null>(null)
@@ -857,21 +856,6 @@ export default function VideoGenerationPanel(props: VideoGenerationPanelProps) {
         </div>
       )}
 
-      {fullscreenOpen && (
-        <div
-          className="video-fullscreen-overlay"
-          aria-label="全屏预览"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setFullscreenOpen(false)
-          }}
-        >
-          {hasVideoUrl ? (
-            <video src={videoUrl} controls autoPlay playsInline></video>
-          ) : (
-            <img src={videoPreview} alt="视频全屏预览" draggable={false} />
-          )}
-        </div>
-      )}
     </section>
   )
 }

@@ -10,7 +10,6 @@ import { useShallow } from 'zustand/react/shallow'
 import {
   createWorkspace,
   extractPageItems,
-  getBusinessErrorMessage,
   getSubscription,
   getWallet,
   leaveWorkspace,
@@ -142,11 +141,6 @@ export const deriveCurrentConcurrencyLimit = (s: S): number => {
   )
   return limit > 0 ? limit : 1
 }
-
-export const deriveCurrentBillingPeriod = (s: S): string => String(deriveActiveSubscription(s)?.period || '')
-export const deriveCurrentMaxMembers = (s: S): number => Number(deriveActiveSubscription(s)?.max_members ?? 0)
-export const deriveCurrentMemberCount = (s: S): number =>
-  Number(deriveActiveSubscription(s)?.current_member_count ?? 0)
 
 export const deriveModelPlanCandidates = (s: S): any[] => {
   const sessionCandidates = buildModelPlanCandidatesFromSession(
@@ -375,22 +369,16 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
   }
 })
 
-export { getBusinessErrorMessage }
-
 // ---- Selector hooks（组件侧便捷读取派生值，保持响应式订阅）------------------
 export const useCurrentWorkspace = () => useWorkspaceSessionStore(deriveCurrentWorkspace)
 export const useCurrentUser = () => useWorkspaceSessionStore(deriveCurrentUser)
 export const useCurrentMember = () => useWorkspaceSessionStore(deriveCurrentMember)
 export const useWorkspaceId = () => useWorkspaceSessionStore(deriveWorkspaceId)
 export const useAllWorkspaces = () => useWorkspaceSessionStore(useShallow(deriveAllWorkspaces))
-export const useActiveSubscription = () => useWorkspaceSessionStore(deriveActiveSubscription)
 export const useCurrentPlanName = () => useWorkspaceSessionStore(deriveCurrentPlanName)
 export const useCurrentPlanExpiresAt = () => useWorkspaceSessionStore(deriveCurrentPlanExpiresAt)
 export const useWalletCredits = () => useWorkspaceSessionStore(deriveWalletCredits)
 export const usePlanBaseCredits = () => useWorkspaceSessionStore(derivePlanBaseCredits)
 export const useCurrentConcurrencyLimit = () => useWorkspaceSessionStore(deriveCurrentConcurrencyLimit)
-export const useCurrentBillingPeriod = () => useWorkspaceSessionStore(deriveCurrentBillingPeriod)
-export const useCurrentMaxMembers = () => useWorkspaceSessionStore(deriveCurrentMaxMembers)
-export const useCurrentMemberCount = () => useWorkspaceSessionStore(deriveCurrentMemberCount)
 export const useModelPlanCandidates = () =>
   useWorkspaceSessionStore(useShallow(deriveModelPlanCandidates))
