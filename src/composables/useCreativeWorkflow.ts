@@ -1763,6 +1763,12 @@ export function useCreativeWorkflow(props: UseCreativeWorkflowProps) {
         return
       }
 
+      // 已有生成好的分镜图(如完成过的项目从「创意脚本」步进入「分镜图片」步):
+      // 只切过去查看,不重新生成,避免覆盖已完成内容。要重做请用分镜步的「重新生成」。
+      if (storyboardItemsRef.current.some((item: any) => String(item?.src || '').trim())) {
+        return
+      }
+
       cancelInFlightStoryboard()
       resetStoryboard()
 
