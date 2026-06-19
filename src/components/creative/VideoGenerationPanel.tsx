@@ -155,6 +155,8 @@ export default function VideoGenerationPanel(props: VideoGenerationPanelProps) {
   const [publishPanelOpen, setPublishPanelOpen] = useState(false)
 
   const plyrRef = useRef<any>(null)
+  // 记录已绑定播放事件的 Plyr 实例,确保每个实例只绑定一次(避免重复累积,且不依赖 .off)。
+  const boundPlyrRef = useRef<any>(null)
   const videoPromptElement = useRef<HTMLTextAreaElement | null>(null)
 
   // 当前是否已有可预览/可复制的视频地址。
@@ -361,14 +363,15 @@ export default function VideoGenerationPanel(props: VideoGenerationPanelProps) {
       el.muted = false
       el.volume = 1
     }
-    // configurePlyr 会在每次 videoUrl 变化时对同一个复用的 Plyr 实例重新执行，
-    // 若不先解绑同名事件，监听器会不断累积导致泄漏；这里先用相同的处理函数解绑旧的再重新注册。
-    instance.off('play', handlePlyrPlay)
-    instance.off('pause', handlePlyrPause)
-    instance.off('ended', handlePlyrEnded)
-    instance.on('play', handlePlyrPlay)
-    instance.on('pause', handlePlyrPause)
-    instance.on('ended', handlePlyrEnded)
+    // 每个 Plyr 实例只绑定一次事件：configurePlyr 会随 videoUrl 变化多次执行，但若复用同一实例
+    // 则跳过重复绑定，避免监听器累积；换了新实例才重新绑定。
+    // （不用 instance.off：该实例在某些时机/版本下并无 .off 方法，调用会抛 TypeError。）
+    if (boundPlyrRef.current !== instance && typeof instance.on === 'function') {
+      boundPlyrRef.current = instance
+      instance.on('play', handlePlyrPlay)
+      instance.on('pause', handlePlyrPause)
+      instance.on('ended', handlePlyrEnded)
+    }
   }, [handlePlyrPlay, handlePlyrPause, handlePlyrEnded])
 
   // 视频地址变化时：复位播放状态、重新配置 Plyr、后台预热缓存。
