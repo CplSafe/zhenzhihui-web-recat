@@ -119,6 +119,36 @@ export function useCreativeProjectTitle(deps: CreativeProjectTitleDeps) {
     }
   }
 
+  // ── 手动重命名（顶部项目名编辑按钮）──
+  async function renameProject(rawName: string): Promise<boolean> {
+    const name = String(rawName || '').trim()
+    if (!name) {
+      showToastRef.current('项目名称不能为空', 'error')
+      return false
+    }
+    if (name === String(serverProjectTitleRef.current || '').trim()) return true // 未改动
+    if (!getProjectId()) {
+      showToastRef.current('缺少项目 ID，无法重命名', 'error')
+      return false
+    }
+    const wsId = await resolveProjectWorkspaceId({ silent: true })
+    if (!wsId) {
+      showToastRef.current('workspace_id 缺失，无法重命名', 'error')
+      return false
+    }
+    try {
+      const payload = await patchCreativeProject({ projectId: getProjectId(), workspaceId: wsId, title: name })
+      setServerProjectTitle(normalizeProjectTitle(payload) || name)
+      // 手动命名后置位，避免随后被「按描述自动同步」覆盖。
+      projectTitleSyncedRef.current = true
+      showToastRef.current('项目已重命名', 'success')
+      return true
+    } catch {
+      showToastRef.current('重命名失败，请稍后重试', 'error')
+      return false
+    }
+  }
+
   // ── watch(description) → 自动同步项目标题 ──
   const prevDescriptionRef = useRef<string | undefined>(undefined)
   useEffect(() => {
@@ -172,5 +202,6 @@ export function useCreativeProjectTitle(deps: CreativeProjectTitleDeps) {
     isUnnamedProjectTitle,
     deriveProjectTitleFromDescription,
     syncProjectTitleByDescription,
+    renameProject,
   }
 }

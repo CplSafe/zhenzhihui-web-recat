@@ -10,10 +10,12 @@ interface CreativeTopbarProps {
   maxStepIndex?: number
   disableSaveDraft?: boolean
   projectName?: string
+  canRename?: boolean
   onSaveDraft?: () => void
   onOpenDrafts?: () => void
   onRedraw?: () => void
   onSwitchStep?: (step: string) => void
+  onRename?: (name: string) => void | Promise<unknown>
 }
 
 const stepOrder = ['script', 'storyboard', 'timeline', 'video']
@@ -23,16 +25,50 @@ export default function CreativeTopbar({
   maxStepIndex = 0,
   disableSaveDraft = false,
   projectName = '',
+  canRename = false,
   onSaveDraft,
   onOpenDrafts,
   onRedraw,
   onSwitchStep,
+  onRename,
 }: CreativeTopbarProps) {
   const activeStepIndex = useMemo(() => stepOrder.indexOf(activeStep), [activeStep])
   const displayProjectName = useMemo(
     () => String(projectName || '').trim() || '未命名项目',
     [projectName],
   )
+
+  // ── 项目名行内编辑 ──
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const nameInputRef = useRef<HTMLInputElement>(null)
+
+  function startRename() {
+    if (!canRename || !onRename) return
+    setNameDraft(displayProjectName)
+    setEditingName(true)
+  }
+
+  function cancelRename() {
+    setEditingName(false)
+  }
+
+  function commitRename() {
+    if (!editingName) return
+    setEditingName(false)
+    const next = nameDraft.trim()
+    if (!next || next === displayProjectName) return
+    onRename?.(next)
+  }
+
+  // 进入编辑态后自动聚焦并选中文本
+  useEffect(() => {
+    if (editingName) {
+      const el = nameInputRef.current
+      el?.focus()
+      el?.select()
+    }
+  }, [editingName])
 
   function canSelectStep(step: string) {
     const targetIndex = stepOrder.indexOf(step)
@@ -121,13 +157,49 @@ export default function CreativeTopbar({
       <div className="project-name">
         <span>项目</span>
         <b>/</b>
-        <em title={displayProjectName}>{displayProjectName}</em>
-        <svg viewBox="0 0 14 14" aria-hidden="true">
-          <path
-            d="M6.41667 1.75C6.57136 1.75002 6.71971 1.81149 6.82909 1.92089C6.93846 2.03028 6.99991 2.17864 6.99991 2.33333C6.99991 2.48803 6.93846 2.63639 6.82909 2.74578C6.71971 2.85517 6.57136 2.91664 6.41667 2.91667H2.91667V11.0833H11.0833V7.58333L11.0874 7.51508C11.105 7.36744 11.1783 7.23208 11.2923 7.13665C11.4063 7.04123 11.5524 6.99294 11.7009 7.00165C11.8493 7.01036 11.9888 7.07542 12.0908 7.18354C12.1929 7.29165 12.2498 7.43465 12.25 7.58333V11.0833C12.25 11.3928 12.1271 11.6895 11.9083 11.9083C11.6895 12.1271 11.3928 12.25 11.0833 12.25H2.91667C2.60725 12.25 2.3105 12.1271 2.09171 11.9083C1.87292 11.6895 1.75 11.3928 1.75 11.0833V2.91667C1.75 2.60725 1.87292 2.3105 2.09171 2.09171C2.3105 1.87292 2.60725 1.75 2.91667 1.75H6.41667ZM12.0867 1.92092C12.196 2.03031 12.2575 2.17865 12.2575 2.33333C12.2575 2.48801 12.196 2.63636 12.0867 2.74575L6.72467 8.10833C6.61465 8.21459 6.4673 8.27339 6.31435 8.27206C6.1614 8.27073 6.01509 8.20938 5.90694 8.10123C5.79878 7.99307 5.73744 7.84677 5.73611 7.69382C5.73478 7.54087 5.79357 7.39352 5.89983 7.2835L11.2618 1.9215C11.3712 1.81214 11.5196 1.75071 11.6742 1.75071C11.8289 1.75071 11.9773 1.81214 12.0867 1.9215V1.92092Z"
-            fill="#666666"
+        {editingName ? (
+          <input
+            ref={nameInputRef}
+            className="project-name-input"
+            value={nameDraft}
+            maxLength={60}
+            aria-label="编辑项目名称"
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commitRename()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                cancelRename()
+              }
+            }}
           />
-        </svg>
+        ) : (
+          <em
+            title={canRename ? '点击重命名' : displayProjectName}
+            className={canRename ? 'is-editable' : ''}
+            onClick={startRename}
+          >
+            {displayProjectName}
+          </em>
+        )}
+        {canRename && !editingName && (
+          <button
+            type="button"
+            className="project-name-edit"
+            aria-label="重命名项目"
+            onClick={startRename}
+          >
+            <svg viewBox="0 0 14 14" aria-hidden="true">
+              <path
+                d="M6.41667 1.75C6.57136 1.75002 6.71971 1.81149 6.82909 1.92089C6.93846 2.03028 6.99991 2.17864 6.99991 2.33333C6.99991 2.48803 6.93846 2.63639 6.82909 2.74578C6.71971 2.85517 6.57136 2.91664 6.41667 2.91667H2.91667V11.0833H11.0833V7.58333L11.0874 7.51508C11.105 7.36744 11.1783 7.23208 11.2923 7.13665C11.4063 7.04123 11.5524 6.99294 11.7009 7.00165C11.8493 7.01036 11.9888 7.07542 12.0908 7.18354C12.1929 7.29165 12.2498 7.43465 12.25 7.58333V11.0833C12.25 11.3928 12.1271 11.6895 11.9083 11.9083C11.6895 12.1271 11.3928 12.25 11.0833 12.25H2.91667C2.60725 12.25 2.3105 12.1271 2.09171 11.9083C1.87292 11.6895 1.75 11.3928 1.75 11.0833V2.91667C1.75 2.60725 1.87292 2.3105 2.09171 2.09171C2.3105 1.87292 2.60725 1.75 2.91667 1.75H6.41667ZM12.0867 1.92092C12.196 2.03031 12.2575 2.17865 12.2575 2.33333C12.2575 2.48801 12.196 2.63636 12.0867 2.74575L6.72467 8.10833C6.61465 8.21459 6.4673 8.27339 6.31435 8.27206C6.1614 8.27073 6.01509 8.20938 5.90694 8.10123C5.79878 7.99307 5.73744 7.84677 5.73611 7.69382C5.73478 7.54087 5.79357 7.39352 5.89983 7.2835L11.2618 1.9215C11.3712 1.81214 11.5196 1.75071 11.6742 1.75071C11.8289 1.75071 11.9773 1.81214 12.0867 1.9215V1.92092Z"
+                fill="#666666"
+              />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div className="flow" aria-label="创作流程">

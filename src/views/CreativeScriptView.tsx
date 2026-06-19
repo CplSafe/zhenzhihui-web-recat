@@ -109,6 +109,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     canGenerateTimeline,
     projectTitle,
     displayProjectName,
+    renameProject,
     removeStoryboardItem,
     stepStoryboardVersionFromPanel,
     setStoryboardVersionFromPanel,
@@ -229,10 +230,12 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
           maxStepIndex={maxStepIndex}
           projectName={displayProjectName}
           disableSaveDraft={isBlankMode}
+          canRename={!isBlankMode}
           onSaveDraft={handleSaveDraft}
           onOpenDrafts={openDraftHistory}
           onRedraw={handleRedraw}
           onSwitchStep={switchToStep}
+          onRename={renameProject}
         />
 
         <CreativeDraftHistoryDrawer

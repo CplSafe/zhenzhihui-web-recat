@@ -426,6 +426,7 @@ export function useCreativeWorkflow(props: UseCreativeWorkflowProps) {
     isUnnamedProjectTitle,
     deriveProjectTitleFromDescription,
     syncProjectTitleByDescription,
+    renameProject,
   } = useCreativeProjectTitle({
     getProjectId: () => projectIdRef.current,
     description,
@@ -3244,6 +3245,7 @@ export function useCreativeWorkflow(props: UseCreativeWorkflowProps) {
     // 项目标题
     projectTitle,
     displayProjectName,
+    renameProject,
     // 分镜版本操作
     removeStoryboardItem,
     stepStoryboardVersionFromPanel,
