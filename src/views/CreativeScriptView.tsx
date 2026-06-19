@@ -12,11 +12,6 @@ import '@/styles/creative.css'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import library1 from '@/assets/creative/library-1.png'
-import library2 from '@/assets/creative/library-2.png'
-import library3 from '@/assets/creative/library-3.png'
-import library4 from '@/assets/creative/library-4.png'
-import library5 from '@/assets/creative/library-5.png'
 import AppLayout from '@/components/layout/AppLayout'
 import AppToast from '@/components/AppToast'
 import CreativeHeroTitle from '@/components/creative/CreativeHeroTitle'
@@ -35,21 +30,17 @@ import TimelineEditorPanel from '@/components/creative/TimelineEditorPanel'
 import VideoGenerationPanel from '@/components/creative/VideoGenerationPanel'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import {
-  extractAssetPageItems,
   createAiResponse,
   downloadAssetFile,
   getAssetDownloadUrl,
   getBusinessErrorMessage,
   getCreativeProject,
   createCreativeProjectVersion,
-  deleteAsset,
   patchCreativeProject,
   updateCreativeProjectDraft,
-  listAssets,
   streamAiResponse,
   uploadAssetFile,
 } from '@/api/business'
-import { createMaterialFromAsset, isSupportedMaterialFile, mergeMaterials } from '@/utils/materials'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import {
   buildFallbackStoryboards,
@@ -65,6 +56,7 @@ import { useStoryboardGeneration } from '@/composables/useStoryboardGeneration'
 import { useScriptPrompts } from '@/composables/useScriptPrompts'
 import { useWorkflowPersistence } from '@/composables/useWorkflowPersistence'
 import { useCreativeVersions } from '@/composables/useCreativeVersions'
+import { useCreativeMaterials } from '@/composables/useCreativeMaterials'
 import { useCreativeDraftHistory } from '@/composables/useCreativeDraftHistory'
 import {
   SEEDANCE_DURATION_OPTIONS,
@@ -92,7 +84,6 @@ import { saveLastCreativeProjectId } from '@/utils/creativeStorage'
 
 const DEFAULT_GENERATING_PROMPT = '结合提供的素材图片，我要做一个买菜APP的五一宣传视频'
 const MAX_STORYBOARDS = 9
-const MAX_SELECTED_MATERIALS = 4
 const CREATIVE_DEBUG_KEY = '__creativeScriptDebug__'
 
 interface CreativeScriptViewProps {
@@ -117,15 +108,8 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
   const [generationPending, setGenerationPending] = useStateRef(false)
   const [isSubmittingScript, setIsSubmittingScript, isSubmittingScriptRef] = useStateRef(false)
   const [isScriptStreaming, setIsScriptStreaming] = useState(false)
-  const [isUploadingSelected, setIsUploadingSelected, isUploadingSelectedRef] = useStateRef(false)
-  const [isUploadingLibrary, setIsUploadingLibrary, isUploadingLibraryRef] = useStateRef(false)
-  const [isLoadingLibrary, setIsLoadingLibrary, isLoadingLibraryRef] = useStateRef(false)
-  const assetsLoadedRef = useRef(false)
-  const [, forceAssetsLoaded] = useState(0)
-  const setAssetsLoaded = (v: boolean) => {
-    assetsLoadedRef.current = v
-    forceAssetsLoaded((n) => n + 1)
-  }
+  // 上传/素材库 state（isUploadingSelected/isUploadingLibrary/isLoadingLibrary、
+  // assetsLoaded、libraryMaterials）已抽到 useCreativeMaterials（下方）。
   const [isGenerating, setIsGenerating] = useStateRef(false)
   const [, setIsSavingDraft, isSavingDraftRef] = useStateRef(false)
   const [draftSavedDialogOpen, setDraftSavedDialogOpen] = useState(false)
@@ -208,13 +192,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     '治愈',
   ])
 
-  const [libraryMaterials, setLibraryMaterials, libraryMaterialsRef] = useStateRef<any[]>([
-    { id: 'library-1', src: library1, name: '蔬菜主图' },
-    { id: 'library-2', src: library2, name: '促销场景' },
-    { id: 'library-3', src: library3, name: '人物素材' },
-    { id: 'library-4', src: library4, name: '生鲜组合' },
-    { id: 'library-5', src: library5, name: '海报素材' },
-  ])
+  // libraryMaterials（含默认示例素材）已抽到 useCreativeMaterials（下方）。
 
   const [creativeStoryboards, setCreativeStoryboards, creativeStoryboardsRef] = useStateRef<any[]>([])
   const [editingStoryboardId, setEditingStoryboardId, editingStoryboardIdRef] = useStateRef('')
@@ -323,11 +301,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     [timelineState, selectedDuration],
   )
 
-  const filteredLibraryMaterials = useMemo(() => {
-    const keyword = libraryQuery.trim().toLowerCase()
-    if (!keyword) return libraryMaterials
-    return libraryMaterials.filter((material: any) => material.name.toLowerCase().includes(keyword))
-  }, [libraryQuery, libraryMaterials])
+  // filteredLibraryMaterials 依赖 useCreativeMaterials 返回的 libraryMaterials，移到 hook 调用之后。
 
   const [storyboardEditHistory, setStoryboardEditHistory, storyboardEditHistoryRef] = useStateRef<Record<string, any[]>>({})
   const storyboardHistoryItems = useMemo(() => {
@@ -2206,221 +2180,8 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     }
   }
 
-  async function uploadFiles(files: any, { addToSelected = false }: { addToSelected?: boolean } = {}) {
-    const id = getWorkspaceIdOrNotify()
-
-    if (!id) {
-      return { materials: [], failedCount: 0 }
-    }
-
-    const supportedFiles = Array.from(files || []).filter(isSupportedMaterialFile) as File[]
-
-    if (!supportedFiles.length) {
-      showToastRef.current('请选择图片或视频文件', 'error')
-      return { materials: [], failedCount: 0 }
-    }
-
-    let filesToUpload = supportedFiles
-    if (addToSelected) {
-      const remaining = Math.max(0, MAX_SELECTED_MATERIALS - selectedMaterialsRef.current.length)
-      if (remaining <= 0) {
-        showToastRef.current(`最多只能添加 ${MAX_SELECTED_MATERIALS} 个素材`, 'error')
-        return { materials: [], failedCount: 0 }
-      }
-      if (supportedFiles.length > remaining) {
-        filesToUpload = supportedFiles.slice(0, remaining)
-        showToastRef.current(
-          `最多只能添加 ${MAX_SELECTED_MATERIALS} 个素材，本次仅上传前 ${remaining} 个`,
-          'error',
-        )
-      }
-    }
-
-    const uploadedMaterials: any[] = []
-    const failedFiles: string[] = []
-
-    for (const file of filesToUpload) {
-      const localSrc = URL.createObjectURL(file)
-
-      try {
-        const { asset } = await uploadAssetFile({
-          workspaceId: id,
-          file,
-          prompt: descriptionRef.current.trim(),
-        })
-
-        createdObjectUrlsRef.current.push(localSrc)
-        uploadedMaterials.push(createMaterialFromAsset(asset, localSrc))
-      } catch (error: any) {
-        URL.revokeObjectURL(localSrc)
-        const name = file.name || '未命名文件'
-        const reason = getBusinessErrorMessage(error, error?.message || '上传失败')
-        failedFiles.push(`${name}（${reason}）`)
-      }
-    }
-
-    if (!uploadedMaterials.length && failedFiles.length) {
-      throw new Error(
-        failedFiles.length === 1
-          ? `${failedFiles[0]}`
-          : `${failedFiles.length} 个文件上传失败（示例：${failedFiles[0]}）`,
-      )
-    }
-
-    setLibraryMaterials(mergeMaterials(uploadedMaterials, libraryMaterialsRef.current))
-    setAssetsLoaded(true)
-
-    if (addToSelected) {
-      addSelectedMaterialsAction(uploadedMaterials, { prepend: true })
-    }
-
-    return {
-      materials: uploadedMaterials,
-      failedCount: failedFiles.length,
-    }
-  }
-
-  async function handleSelectedFiles(files: any) {
-    if (isUploadingSelectedRef.current) {
-      return
-    }
-
-    setIsUploadingSelected(true)
-
-    try {
-      const { materials, failedCount } = await uploadFiles(files, { addToSelected: true })
-
-      if (materials.length) {
-        showToastRef.current(
-          failedCount ? `已上传 ${materials.length} 个文件，${failedCount} 个失败` : `已上传 ${materials.length} 个文件`,
-          failedCount ? 'error' : 'success',
-        )
-      }
-    } catch (error: any) {
-      showToastRef.current(getBusinessErrorMessage(error, error.message || '素材上传失败'), 'error')
-    } finally {
-      setIsUploadingSelected(false)
-    }
-  }
-
-  async function handleLibraryFiles(files: any) {
-    if (isUploadingLibraryRef.current) {
-      return
-    }
-
-    setIsUploadingLibrary(true)
-
-    try {
-      const shouldAddToSelected = libraryContextRef.current !== 'storyboard-editor'
-      const { materials, failedCount } = await uploadFiles(files, { addToSelected: shouldAddToSelected })
-
-      if (materials.length) {
-        if (libraryContextRef.current === 'storyboard-editor') {
-          const existing = new Set(storyboardPreviewMaterialsRef.current.map((item: any) => item.id))
-          const appended = [...storyboardPreviewMaterialsRef.current]
-          materials.forEach((item: any) => {
-            if (item?.id && !existing.has(item.id)) {
-              existing.add(item.id)
-              appended.push(item)
-            }
-          })
-          setStoryboardPreviewMaterials(appended.slice(-3))
-          showToastRef.current(
-            failedCount
-              ? `已上传并添加 ${materials.length} 个素材，${failedCount} 个失败`
-              : `已上传并添加 ${materials.length} 个素材`,
-            failedCount ? 'error' : 'success',
-          )
-          closeLibrary()
-          libraryContextRef.current = 'default'
-        } else {
-          showToastRef.current(
-            failedCount
-              ? `已上传并添加 ${materials.length} 个素材，${failedCount} 个失败`
-              : `已上传并添加 ${materials.length} 个素材`,
-            failedCount ? 'error' : 'success',
-          )
-        }
-      }
-    } catch (error: any) {
-      showToastRef.current(getBusinessErrorMessage(error, error.message || '素材上传失败'), 'error')
-    } finally {
-      setIsUploadingLibrary(false)
-    }
-  }
-
-  async function materialFromRemoteAsset(asset: any) {
-    let src = ''
-
-    try {
-      src = await getAssetDownloadUrl({ workspaceId: workspaceIdRef.current, assetId: asset.id })
-    } catch {
-      src = ''
-    }
-
-    if (!src) {
-      src = asset?.thumbnail_url || asset?.preview_url || asset?.cover_url || asset?.url || ''
-    }
-
-    return createMaterialFromAsset(asset, src)
-  }
-
-  function getMaterialAssetId(material: any): number {
-    const candidate = material?.assetId || material?.serverAsset?.id || material?.serverAsset?.asset_id || 0
-    const id = Number(candidate || 0)
-    return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
-  }
-
-  function shouldRefreshMaterialSrc(material: any): boolean {
-    const src = String(material?.src || '')
-    if (!src) return true
-    if (src.startsWith('blob:')) return true
-    return false
-  }
-
-  async function hydrateSelectedMaterialUrls({ silent = true }: { silent?: boolean } = {}) {
-    const wsId = workspaceIdRef.current
-    if (!wsId) return
-
-    const hydrateList = async (list: any[]) => {
-      const items = Array.isArray(list) ? list : []
-      if (!items.length) return items
-
-      const settled = await Promise.allSettled(
-        items.map(async (material: any) => {
-          const assetId = getMaterialAssetId(material)
-          if (!assetId) return material
-          if (!shouldRefreshMaterialSrc(material)) return material
-
-          let src = ''
-          try {
-            src = await getAssetDownloadUrl({ workspaceId: wsId, assetId })
-          } catch {
-            src = ''
-          }
-
-          if (!src) {
-            const asset = material?.serverAsset || null
-            src = asset?.thumbnail_url || asset?.preview_url || asset?.cover_url || asset?.url || ''
-          }
-
-          return { ...material, src }
-        }),
-      )
-
-      return settled.map((result, index) => (result.status === 'fulfilled' ? result.value : items[index]))
-    }
-
-    try {
-      const nextSelected = await hydrateList(selectedMaterialsRef.current)
-      setSelectedMaterialsAction(nextSelected)
-      setStoryboardPreviewMaterials(await hydrateList(storyboardPreviewMaterialsRef.current))
-    } catch (error) {
-      if (!silent) {
-        showToastRef.current(getBusinessErrorMessage(error, '素材预览地址刷新失败'), 'error')
-      }
-    }
-  }
+  // 素材上传/库加载/hydrate/预览/移除已迁入 useCreativeMaterials（下方 hook 调用处接线）。
+  // 注意：hydrateStoryboardUrls 属分镜（被 currentStep 步骤 effect 使用），留在组件，未迁入。
 
   async function hydrateStoryboardUrls() {
     const wsId = workspaceIdRef.current
@@ -2464,96 +2225,61 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     )
   }
 
-  function hydrateMaterialsFromLibrary(materials: any[]) {
-    const index = new Map((materials || []).map((material: any) => [material?.id, material]))
-    const hydrateList = (list: any[]) =>
-      (list || []).map((material: any) => {
-        if (!material?.id) return material
-        const next = index.get(material.id)
-        if (next?.src) return next
-        if (String(material.src || '').startsWith('blob:')) {
-          return { ...material, src: '' }
-        }
-        return material
-      })
-
-    setSelectedMaterialsAction(hydrateList(selectedMaterialsRef.current))
-    setStoryboardPreviewMaterials(hydrateList(storyboardPreviewMaterialsRef.current))
-  }
-
-  async function loadWorkspaceAssets({ silent = false }: { silent?: boolean } = {}) {
-    const id = workspaceIdRef.current
-
-    if (!id || isLoadingLibraryRef.current) {
-      return
-    }
-
-    setIsLoadingLibrary(true)
-
-    try {
-      const payload = await listAssets({ workspaceId: id, limit: 100 })
-      const remoteAssets = extractAssetPageItems(payload).filter(
-        (asset: any) => asset?.id && ['image', 'video'].includes(asset.type),
-      )
-      const remoteMaterials = await Promise.all(remoteAssets.map(materialFromRemoteAsset))
-      const visibleRemoteMaterials = remoteMaterials.filter((material: any) => material.src)
-
-      const nextLibraryMaterials = mergeMaterials(visibleRemoteMaterials, libraryMaterialsRef.current)
-      setLibraryMaterials(nextLibraryMaterials)
-      hydrateMaterialsFromLibrary(nextLibraryMaterials)
-      setAssetsLoaded(true)
-    } catch (error) {
-      if (!silent) {
-        showToastRef.current(getBusinessErrorMessage(error, '素材库加载失败'), 'error')
-      }
-    } finally {
-      setIsLoadingLibrary(false)
-    }
-  }
-
-  function previewSelectedMaterial(material: any) {
-    setPreviewMaterial(material)
-  }
-
   function closePreview() {
     setPreviewMaterial(null)
   }
 
-  function removeSelectedMaterial(materialId: any) {
-    removeSelectedMaterialAction(materialId)
+  // ── 素材管理 composable（上传/库加载/hydrate/库抽屉/预览）──
+  // 交叉依赖（storyboardPreviewMaterials / previewMaterial / closePreview / libraryContextRef /
+  // createdObjectUrlsRef 等）留在组件，经 deps 传入；selectedMaterials 由 hook 直接读写 store。
+  const {
+    isUploadingSelected,
+    isUploadingLibrary,
+    isLoadingLibrary,
+    libraryMaterials,
+    assetsLoadedRef,
+    setIsUploadingSelected,
+    setIsUploadingLibrary,
+    setIsLoadingLibrary,
+    setAssetsLoaded,
+    handleSelectedFiles,
+    handleLibraryFiles,
+    hydrateSelectedMaterialUrls,
+    loadWorkspaceAssets,
+    previewSelectedMaterial,
+    removeSelectedMaterial,
+    openLibrary,
+    openLibraryForStoryboardEditor,
+    addMaterialsFromLibrary,
+    removeMaterialsFromLibrary,
+    removeStoryboardPreviewMaterial,
+  } = useCreativeMaterials({
+    workspaceIdRef,
+    getWorkspaceIdOrNotify,
+    showToast,
+    createdObjectUrlsRef,
+    libraryContextRef,
+    setLibraryTab,
+    descriptionRef,
+    selectedMaterialsRef,
+    setSelectedMaterialsAction,
+    addSelectedMaterialsAction,
+    removeSelectedMaterialAction,
+    openLibraryAction,
+    closeLibraryAction,
+    setActiveMenu,
+    storyboardPreviewMaterialsRef,
+    setStoryboardPreviewMaterials,
+    setPreviewMaterial,
+    previewMaterialRef,
+    closePreview,
+  })
 
-    if (previewMaterialRef.current?.id === materialId) {
-      closePreview()
-    }
-
-    showToastRef.current('素材已移除', 'success')
-  }
-
-  function openLibrary() {
-    libraryContextRef.current = 'default'
-    openLibraryAction()
-    setActiveMenu('')
-    setLibraryTab('mine')
-
-    if (!assetsLoadedRef.current) {
-      loadWorkspaceAssets()
-    }
-  }
-
-  function openLibraryForStoryboardEditor() {
-    libraryContextRef.current = 'storyboard-editor'
-    openLibraryAction()
-    setActiveMenu('')
-    setLibraryTab('mine')
-    if (!assetsLoadedRef.current) {
-      loadWorkspaceAssets()
-    }
-  }
-
-  function closeLibrary() {
-    closeLibraryAction()
-    setActiveMenu('')
-  }
+  const filteredLibraryMaterials = useMemo(() => {
+    const keyword = libraryQuery.trim().toLowerCase()
+    if (!keyword) return libraryMaterials
+    return libraryMaterials.filter((material: any) => material.name.toLowerCase().includes(keyword))
+  }, [libraryQuery, libraryMaterials])
 
   // watch(libraryOpen)
   useEffect(() => {
@@ -2568,117 +2294,6 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     setActiveMenu('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryOpen])
-
-  function addMaterialsFromLibrary(materials: any) {
-    const list = Array.isArray(materials) ? materials : []
-
-    if (libraryContextRef.current === 'storyboard-editor') {
-      const existing = new Set(storyboardPreviewMaterialsRef.current.map((item: any) => item.id))
-      const appended = [...storyboardPreviewMaterialsRef.current]
-      list.forEach((item: any) => {
-        if (item?.id && !existing.has(item.id)) {
-          existing.add(item.id)
-          appended.push(item)
-        }
-      })
-      const nextPreview = appended.slice(-3)
-      setStoryboardPreviewMaterials(nextPreview)
-      showToastRef.current(`已添加 ${nextPreview.length} 个素材`, 'success')
-      closeLibrary()
-      libraryContextRef.current = 'default'
-      return
-    }
-
-    const existing = new Set(selectedMaterialsRef.current.map((item: any) => item?.id).filter(Boolean))
-    const remaining = Math.max(0, MAX_SELECTED_MATERIALS - existing.size)
-    if (remaining <= 0) {
-      showToastRef.current(`最多只能添加 ${MAX_SELECTED_MATERIALS} 个素材`, 'error')
-      return
-    }
-
-    const picked: any[] = []
-    list.forEach((item: any) => {
-      if (picked.length >= remaining) return
-      if (item?.id && !existing.has(item.id)) {
-        existing.add(item.id)
-        picked.push(item)
-      }
-    })
-
-    addSelectedMaterialsAction(picked)
-    if (picked.length) {
-      const overflow = list.length > picked.length
-      showToastRef.current(
-        overflow
-          ? `最多只能添加 ${MAX_SELECTED_MATERIALS} 个素材，本次添加 ${picked.length} 个`
-          : `已添加 ${picked.length} 个素材`,
-        overflow ? 'error' : 'success',
-      )
-    }
-  }
-
-  async function removeMaterialsFromLibrary(ids: any) {
-    const list = Array.isArray(ids) ? ids : []
-    if (!list.length) return
-
-    const wsId = Number(workspaceIdRef.current || 0)
-    if (!wsId) {
-      showToastRef.current('workspace_id 缺失，无法删除素材', 'error')
-      return
-    }
-
-    const removeIdSet = new Set(list)
-    const materialIndex = new Map((libraryMaterialsRef.current || []).map((item: any) => [item?.id, item]))
-
-    const targets = list
-      .map((id: any) => {
-        const material = materialIndex.get(id)
-        if (!material) return null
-        const assetId = getMaterialAssetId(material)
-        return assetId ? { id, assetId } : null
-      })
-      .filter(Boolean) as any[]
-
-    const failed: any[] = []
-
-    await Promise.all(
-      targets.map(async (row: any) => {
-        try {
-          await deleteAsset({ workspaceId: wsId, assetId: row.assetId })
-        } catch (error) {
-          failed.push(row.id)
-          if (import.meta.env.DEV) {
-            console.warn('[delete asset failed]', row, error)
-          }
-        }
-      }),
-    )
-
-    setLibraryMaterials((libraryMaterialsRef.current || []).filter((item: any) => !removeIdSet.has(item.id)))
-    list.forEach((id: any) => removeSelectedMaterialAction(id))
-    setStoryboardPreviewMaterials(
-      storyboardPreviewMaterialsRef.current.filter((item: any) => !removeIdSet.has(item.id)),
-    )
-
-    const okCount = list.length - failed.length
-    if (!failed.length) {
-      showToastRef.current(`已删除 ${okCount} 个素材`, 'success')
-      return
-    }
-    if (!okCount) {
-      showToastRef.current('素材删除失败，请稍后重试', 'error')
-      return
-    }
-    showToastRef.current(`已删除 ${okCount} 个，失败 ${failed.length} 个`, 'error')
-  }
-
-  function removeStoryboardPreviewMaterial(id: any) {
-    if (!id) return
-    const next = storyboardPreviewMaterialsRef.current.filter((item: any) => item.id !== id)
-    if (next.length === storyboardPreviewMaterialsRef.current.length) return
-    setStoryboardPreviewMaterials(next)
-    showToastRef.current(`已添加 ${next.length} 个素材`, 'success')
-  }
 
   function applyWorkflowSnapshot(snapshot: any) {
     if (!snapshot || typeof snapshot !== 'object') return
