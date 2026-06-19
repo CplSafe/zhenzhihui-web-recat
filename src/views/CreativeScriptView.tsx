@@ -2026,6 +2026,11 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     setIsScriptStreaming(true)
     showToastRef.current('分镜脚本重新生成中', 'success')
 
+    // 与 generateScript 一致：注册可中止控制器，重绘/卸载/再次触发时经 abortAllPendingTasks() 中止本流，
+    // 防止残留 onDelta/结果覆盖已被新流程重置的脚本与分镜状态。
+    const scriptAbortController = createTaskAbortController()
+    const scriptSignal = scriptAbortController.signal
+
     const run = async () => {
       try {
         await ensureModelPlanCandidatesLoaded()
@@ -2036,10 +2041,14 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
           workspaceId: id,
           prompt: scriptPrompt,
           inputAssets: scriptInputAssets,
+          signal: scriptSignal,
           onDelta: (_delta: any, aggregated: any) => {
+            if (scriptSignal.aborted) return
             setGeneratedScript(aggregated)
           },
         })
+
+        if (scriptSignal.aborted) return
 
         const scriptText = result?.text || generatedScriptRef.current
         if (!scriptText) {
@@ -2053,6 +2062,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
           setCreativeStoryboards(buildFallbackStoryboards())
         }
       } catch (error) {
+        if (scriptSignal.aborted) return
         if (generatedScriptRef.current && generatedScriptRef.current.length > 0) {
           applyParsedStoryboards(generatedScriptRef.current)
           if (!creativeStoryboardsRef.current.length) {
@@ -2064,15 +2074,20 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
           throw error
         }
       } finally {
-        setIsSubmittingScript(false)
-        setIsScriptStreaming(false)
-        stopGenerationPending()
+        releaseTaskAbortController(scriptAbortController)
+        // 已被取消时 UI 标志由接管方负责，避免覆盖其新状态。
+        if (!scriptSignal.aborted) {
+          setIsSubmittingScript(false)
+          setIsScriptStreaming(false)
+          stopGenerationPending()
+        }
       }
     }
 
     return Promise.resolve()
       .then(run)
       .then(async () => {
+        if (scriptSignal.aborted) return
         if (!creativeStoryboardsRef.current.length) {
           showToastRef.current('分镜脚本为空，无法生成分镜图片', 'error')
           return
@@ -2081,11 +2096,10 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
         resetStoryboard()
         showToastRef.current('分镜图片生成中', 'success')
         await startStoryboardGeneration()
-      })
-      .then(() => {
         showToastRef.current('分镜已重新生成', 'success')
       })
       .catch((error: any) => {
+        if (scriptSignal.aborted) return
         showToastRef.current(getBusinessErrorMessage(error, error.message || '分镜重新生成失败'), 'error')
       })
   }

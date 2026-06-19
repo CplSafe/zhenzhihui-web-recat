@@ -3,18 +3,7 @@
  * 网格展示用户选择的参考图片/视频素材，支持移除操作。
  */
 import type { CSSProperties } from 'react'
-
-// 素材缩略图优先取服务端生成的缩略图或视频封面。
-function getMaterialPoster(material: any): string {
-  const asset = material?.serverAsset
-  return asset?.thumbnail_url || asset?.cover_url || ''
-}
-
-// 判断素材是否为视频，用于切换 video / img 的渲染方式。
-function isVideoMaterial(material: any): boolean {
-  const mimeType = String(material?.mimeType || material?.serverAsset?.mime_type || '')
-  return material?.type === 'video' || mimeType.startsWith('video/')
-}
+import { getMaterialPoster, isVideoMaterial } from '@/utils/materials'
 
 interface SelectedMaterialsProps {
   // 外部传入的已选素材列表与面板样式。

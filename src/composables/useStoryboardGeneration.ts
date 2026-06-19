@@ -25,6 +25,7 @@ import { resolveGeneratedMediaUrls } from '../utils/taskMedia'
 import { buildFallbackStoryboards } from '../utils/creativeScript'
 import { buildStoryboardEditInputAssets, buildStoryboardImageParams } from '../utils/storyboardTasks'
 import { sanitizeMediaUrl } from '../utils/urlSafety'
+import { isImageMaterial } from '../utils/materials'
 
 const STORYBOARD_MODEL_KEYWORDS = ['seedream', 'seeddream', 'doubao-seedream']
 const STORYBOARD_POLL_INTERVAL_MS = 2000
@@ -168,11 +169,6 @@ function findLastAssetId(materials: any, predicate: (m: any) => boolean = () => 
   return 0
 }
 
-const isImageMaterial = (material: any) => {
-  const type = String(material?.type || '')
-  const mimeType = String(material?.mimeType || material?.serverAsset?.mime_type || '')
-  return type === 'image' || mimeType.startsWith('image/')
-}
 
 // Encapsulates chained image-to-image storyboard generation:
 //  - first frame: text-to-image

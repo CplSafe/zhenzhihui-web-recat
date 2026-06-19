@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef } from 'react'
 import type { CSSProperties } from 'react'
+import { getRatioIconStyle } from '@/utils/videoOptions'
 
 // 外部传入的面板状态与表单数据。
 // 这个组件本身不持有业务数据，所有选中值、加载状态和面板开关都由父级维护。
@@ -114,22 +115,6 @@ export default function PromptComposer({
     updateDurationIndicators()
   }
 
-  // 按比例值生成下拉菜单里比例图标的宽高。
-  // 例如 16:9、9:16、1:1 会生成不同的示意图尺寸，方便用户直观看到比例差异。
-  function getRatioIconStyle(value: string): CSSProperties {
-    const [rwRaw, rhRaw] = String(value || '').split(':')
-    const rw = Number.parseFloat(rwRaw)
-    const rh = Number.parseFloat(rhRaw)
-    if (!Number.isFinite(rw) || !Number.isFinite(rh) || rw <= 0 || rh <= 0) {
-      return { width: '22px', height: '14px' }
-    }
-    const maxWidth = 26
-    const maxHeight = 14
-    const scale = Math.min(maxWidth / rw, maxHeight / rh)
-    const width = Math.max(8, Math.round(rw * scale))
-    const height = Math.max(8, Math.round(rh * scale))
-    return { width: `${width}px`, height: `${height}px` }
-  }
 
   // 切到时长菜单时，同步刷新滚动位置与渐隐状态。
   // 这里监听 activeMenu，是为了只在真正展开"时长"菜单时做 DOM 计算。
