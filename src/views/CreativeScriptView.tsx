@@ -56,6 +56,7 @@ import { useStoryboardGeneration } from '@/composables/useStoryboardGeneration'
 import { useScriptPrompts } from '@/composables/useScriptPrompts'
 import { useWorkflowPersistence } from '@/composables/useWorkflowPersistence'
 import { useCreativeVersions } from '@/composables/useCreativeVersions'
+import { useCreativeProjectTitle } from '@/composables/useCreativeProjectTitle'
 import { useCreativeMaterials } from '@/composables/useCreativeMaterials'
 import { useCreativeDraftHistory } from '@/composables/useCreativeDraftHistory'
 import {
@@ -115,14 +116,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
   const [draftSavedDialogOpen, setDraftSavedDialogOpen] = useState(false)
   const isSavingVideoRef = useRef(false)
   const draftRevisionRef = useRef(0)
-  const serverProjectTitleRef = useRef('')
-  const [serverProjectTitle, setServerProjectTitleState] = useState('')
-  const setServerProjectTitle = (v: string) => {
-    serverProjectTitleRef.current = v
-    setServerProjectTitleState(v)
-  }
-  const projectTitleSyncedRef = useRef(false)
-  const projectTitleSyncTimerRef = useRef<ReturnType<typeof setTimeout> | 0>(0)
+  // 项目标题同步 state/ref/timer + 派生 + helper 已抽到 useCreativeProjectTitle（下方）。
   // 版本历史 / 草稿历史 state 已抽到 useCreativeVersions / useCreativeDraftHistory（下方）。
   const [currentStep, setCurrentStep, currentStepRef] = useStateRef('script')
   const [maxStepIndex, setMaxStepIndex, maxStepIndexRef] = useStateRef(0)
@@ -214,22 +208,8 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
   const [timelineReloadReady, setTimelineReloadReady, timelineReloadReadyRef] = useStateRef(false)
   const timelineDirtyForVideoRef = useRef(false)
 
-  // ── 标题派生 ──
-  const projectTitle = useMemo(() => {
-    const desc = (description || '').trim()
-    if (!desc) return '当前创意项目'
-    return desc.length > 24 ? desc.slice(0, 24) + '…' : desc
-  }, [description])
-  const projectTitleRef = useRef(projectTitle)
-  projectTitleRef.current = projectTitle
-
-  const displayProjectName = useMemo(() => {
-    const serverTitle = String(serverProjectTitle || '').trim()
-    if (serverTitle) return serverTitle
-    const draftTitle = String(projectTitle || '').trim()
-    if (draftTitle) return draftTitle
-    return '未命名项目'
-  }, [serverProjectTitle, projectTitle])
+  // 项目标题同步 composable（useCreativeProjectTitle）的调用下移到
+  // restoringWorkflowFromStorageRef 定义之后，避免 const TDZ。
 
   // ── 工作空间 / 计费 状态（共享 store）──
   const workspaceId = useWorkspaceId()
@@ -458,6 +438,32 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
   const projectCoverDraftSyncInFlightRef = useRef(false)
   const lastProjectCoverDraftSyncKeyRef = useRef('')
 
+  // ── 项目标题同步 composable ──
+  // projectTitle / displayProjectName 派生 + serverProjectTitle/同步守卫/helper
+  // 全部抽到 useCreativeProjectTitle；留在组件的持久化代码经返回的 ref/setter 读写。
+  const {
+    serverProjectTitle,
+    projectTitle,
+    displayProjectName,
+    serverProjectTitleRef,
+    setServerProjectTitle,
+    projectTitleSyncedRef,
+    projectTitleSyncTimerRef,
+    normalizeProjectTitle,
+    isUnnamedProjectTitle,
+    deriveProjectTitleFromDescription,
+    syncProjectTitleByDescription,
+  } = useCreativeProjectTitle({
+    getProjectId: () => projectIdRef.current,
+    description,
+    isBlankModeRef,
+    restoringWorkflowFromStorageRef,
+    resolveProjectWorkspaceId,
+    showToast,
+  })
+  // serverProjectTitle 仅触发依赖它的派生重算，无需在此显式引用
+  void serverProjectTitle
+
   // watch(selectedRatio): 比例切换后自动同步更新分镜图片
   const prevRatioRef = useRef(selectedRatio)
   useEffect(() => {
@@ -669,54 +675,6 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     }
     showToastRef.current('当前登录空间不可用，请刷新后重试', 'error')
     return 0
-  }
-
-  function normalizeProjectTitle(payload: any): string {
-    const candidates = [payload?.title, payload?.name, payload?.project_name, payload?.projectName]
-    const picked = candidates.find((value) => typeof value === 'string' && value.trim())
-    return String(picked || '').trim()
-  }
-
-  function isUnnamedProjectTitle(title: any): boolean {
-    const t = String(title || '').trim()
-    if (!t) return true
-    return t.includes('未命名')
-  }
-
-  function deriveProjectTitleFromDescription(text: any): string {
-    const raw = String(text || '').trim()
-    if (!raw) return ''
-    const firstLine =
-      raw
-        .split('\n')
-        .map((s) => s.trim())
-        .find(Boolean) || ''
-    if (!firstLine) return ''
-    return firstLine.length > 32 ? firstLine.slice(0, 32) : firstLine
-  }
-
-  async function syncProjectTitleByDescription(text: any) {
-    if (projectTitleSyncedRef.current) return
-    if (isBlankModeRef.current) return
-    if (!projectIdRef.current) return
-
-    const title = deriveProjectTitleFromDescription(text)
-    if (!title) return
-    if (!isUnnamedProjectTitle(serverProjectTitleRef.current)) {
-      projectTitleSyncedRef.current = true
-      return
-    }
-
-    const wsId = await resolveProjectWorkspaceId({ silent: true })
-    if (!wsId) return
-
-    try {
-      const payload = await patchCreativeProject({ projectId: projectIdRef.current, workspaceId: wsId, title })
-      setServerProjectTitle(normalizeProjectTitle(payload) || title)
-      projectTitleSyncedRef.current = true
-    } catch {
-      projectTitleSyncedRef.current = true
-    }
   }
 
   async function resolveProjectWorkspaceId({ silent = false }: { silent?: boolean } = {}): Promise<number> {
@@ -3141,33 +3099,7 @@ function CreativeScriptViewBody(props: CreativeScriptViewProps): ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStep])
 
-  // ── watch(description) → 自动同步项目标题 ──
-  const prevDescriptionRef = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    const next = description
-    const prev = prevDescriptionRef.current
-    prevDescriptionRef.current = next
-    if (prev === undefined) return // 跳过初始挂载
-    if (isBlankModeRef.current) return
-    if (!projectIdRef.current) return
-    if (restoringWorkflowFromStorageRef.current) return
-    if (projectTitleSyncedRef.current) return
-    if (!isUnnamedProjectTitle(serverProjectTitleRef.current)) {
-      projectTitleSyncedRef.current = true
-      return
-    }
-
-    const nextText = String(next || '').trim()
-    if (!nextText) return
-
-    if (projectTitleSyncTimerRef.current) clearTimeout(projectTitleSyncTimerRef.current)
-    const shouldTreatAsFirstFill = !String(prev || '').trim()
-    if (!shouldTreatAsFirstFill && serverProjectTitleRef.current) return
-    projectTitleSyncTimerRef.current = setTimeout(() => {
-      syncProjectTitleByDescription(nextText)
-    }, 600)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [description])
+  // watch(description) → 自动同步项目标题：已抽到 useCreativeProjectTitle。
 
   // ── watch(workspaceId) ── 切换空间：素材按空间隔离，需重置并重新拉取。
   const prevWorkspaceIdRef = useRef<number | undefined>(undefined)
