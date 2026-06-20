@@ -58,35 +58,49 @@
 .sbt__row .sbt__c--no,
 .sbt__row .sbt__c--dur,
 .sbt__row .sbt__c--desc {
-  padding-top: 22px;
-  padding-bottom: 22px;
+  padding-top: 16px;
+  padding-bottom: 16px;
   align-items: flex-start;
 }
 
-/* 主体行 */
+/* 主体行(紧凑) */
 .sbt__subj {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
+  gap: 12px;
+  padding: 9px 16px;
   border-bottom: 1px solid #f3f4f6;
 }
 .sbt__subj:last-child {
   border-bottom: none;
 }
-.sbt__subj-tag {
+.sbt__subj-info {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sbt__subj-tag {
+  font-size: 14px;
   color: #333;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.sbt__subj-kind {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #9aa3af;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
 .sbt__upload {
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border: 1px dashed #dcdfe4;
   border-radius: 8px;
   background: #fafbfc;
@@ -103,8 +117,8 @@
 }
 .sbt__thumb {
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border: 1px solid #d5f3ec;
   border-radius: 8px;
   overflow: hidden;

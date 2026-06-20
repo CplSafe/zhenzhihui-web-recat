@@ -55,9 +55,10 @@ export default function ScriptStoryboardTable({
           <div className="sbt__c sbt__c--mat">
             {shot.subjects.map((s, idx) => (
               <div className="sbt__subj" key={`${s.tag}-${idx}`}>
-                <span className="sbt__subj-tag" title={s.kind}>
-                  {s.tag}
-                </span>
+                <div className="sbt__subj-info">
+                  <span className="sbt__subj-tag">{s.tag}</span>
+                  {s.kind && <span className="sbt__subj-kind">{s.kind}</span>}
+                </div>
                 {s.image ? (
                   <button
                     type="button"

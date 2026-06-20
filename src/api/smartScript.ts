@@ -22,6 +22,7 @@ interface GenerateArgs {
   ratio?: string
   duration?: string
   images?: string[] // objectURL 或 data URL,自动转 base64 后多模态送入
+  signal?: AbortSignal
 }
 
 const SYSTEM =
@@ -97,23 +98,8 @@ function salvageObjects(raw: string): any[] {
   return objs
 }
 
-function parseShots(text: string, images: string[] = []): Shot[] {
-  let raw = String(text || '').trim()
-  if (!raw) return []
-  raw = raw
-    .replace(/^```(json)?/i, '')
-    .replace(/```$/i, '')
-    .trim()
-  const m = raw.match(/\{[\s\S]*\}/)
-  let list: any[] = []
-  try {
-    const parsed = JSON.parse(m ? m[0] : raw)
-    list = Array.isArray(parsed) ? parsed : parsed?.shots || parsed?.storyboards || []
-  } catch {
-    /* 下面走容错抢救 */
-  }
-  // 解析失败/为空(常因 max_tokens 截断)→ 抢救已完整的分镜对象
-  if (!Array.isArray(list) || !list.length) list = salvageObjects(raw)
+// 原始分镜对象数组 → Shot[](主体映射 + 文本类过滤)
+function mapShots(list: any[], images: string[] = []): Shot[] {
   if (!Array.isArray(list)) return []
   return list.map((s: any, i: number) => ({
     id: i + 1,
@@ -131,10 +117,28 @@ function parseShots(text: string, images: string[] = []): Shot[] {
               image,
             }
           })
-          // 兜底:过滤文本类元素(文案/字幕/口号/CTA…),它们不需要上传素材
           .filter((s: any) => !TEXT_SUBJECT_RE.test(s.tag) && !TEXT_SUBJECT_RE.test(s.kind))
       : [],
   }))
+}
+
+function parseShots(text: string, images: string[] = []): Shot[] {
+  let raw = String(text || '').trim()
+  if (!raw) return []
+  raw = raw
+    .replace(/^```(json)?/i, '')
+    .replace(/```$/i, '')
+    .trim()
+  const m = raw.match(/\{[\s\S]*\}/)
+  let list: any[] = []
+  try {
+    const parsed = JSON.parse(m ? m[0] : raw)
+    list = Array.isArray(parsed) ? parsed : parsed?.shots || parsed?.storyboards || []
+  } catch {
+    /* 下面走容错抢救 */
+  }
+  if (!Array.isArray(list) || !list.length) list = salvageObjects(raw)
+  return mapShots(list, images)
 }
 
 /** 生成分镜脚本,返回 Shot[](失败抛错)。 */
@@ -172,6 +176,84 @@ export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
   const shots = parseShots(text, args.images || [])
   if (!shots.length) throw new Error('未能解析分镜脚本,请重试')
   return shots
+}
+
+/**
+ * 流式生成分镜脚本:边生成边增量解析,每当多出一个「完整」分镜就回调 onShots,
+ * 用户看到镜头1即可开始修改。返回最终 Shot[]。
+ */
+export async function generateScriptShotsStream(
+  args: GenerateArgs,
+  onShots: (shots: Shot[]) => void,
+): Promise<Shot[]> {
+  if (!args.requirement.trim()) throw new Error('创作需求为空')
+  const images = args.images || []
+  const dataUrls = (await Promise.all(images.slice(0, 6).map((u) => urlToDataUrl(u)))).filter(Boolean) as string[]
+  const userText = buildUserText(args)
+  const useVl = dataUrls.length > 0
+  const userContent: any = useVl
+    ? [{ type: 'text', text: userText }, ...dataUrls.map((u) => ({ type: 'image_url', image_url: { url: u } }))]
+    : userText
+
+  const res = await fetch(useVl ? VL_ENDPOINT : ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal: args.signal,
+    body: JSON.stringify({
+      model: useVl ? VL_MODEL_NAME : MODEL_NAME,
+      messages: [
+        { role: 'system', content: SYSTEM },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.8,
+      max_tokens: 4000,
+      stream: true,
+      chat_template_kwargs: { enable_thinking: false },
+    }),
+  })
+  if (!res.ok || !res.body) throw new Error(`脚本生成服务异常(${res.status})`)
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let acc = ''
+  let lastCount = 0
+
+  const flush = () => {
+    const shots = mapShots(salvageObjects(acc), images)
+    if (shots.length > lastCount) {
+      lastCount = shots.length
+      onShots(shots)
+    }
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const lines = buf.split('\n')
+    buf = lines.pop() || ''
+    for (const line of lines) {
+      const t = line.trim()
+      if (!t.startsWith('data:')) continue
+      const payload = t.slice(5).trim()
+      if (!payload || payload === '[DONE]') continue
+      try {
+        const j = JSON.parse(payload)
+        const delta = j?.choices?.[0]?.delta?.content || j?.choices?.[0]?.message?.content || ''
+        if (delta) acc += delta
+      } catch {
+        /* 跳过不完整的 SSE 块 */
+      }
+    }
+    flush()
+  }
+
+  // 收尾:用完整解析兜底(可能比增量多解析出最后一个)
+  const finalShots = parseShots(acc, images)
+  const result = finalShots.length >= lastCount ? finalShots : mapShots(salvageObjects(acc), images)
+  if (!result.length) throw new Error('未能解析分镜脚本,请重试')
+  return result
 }
 
 /*

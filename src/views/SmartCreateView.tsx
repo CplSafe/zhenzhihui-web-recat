@@ -17,7 +17,7 @@ import MaterialPickerDialog from '@/components/smart/MaterialPickerDialog'
 import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
-import { generateScriptShots } from '@/api/smartScript'
+import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { createCreativeProject, patchCreativeProject } from '@/api/business'
 import { useWorkspaceId } from '@/stores/workspaceSession'
@@ -103,7 +103,22 @@ export default function SmartCreateView() {
     const key = `${shot.id}:${idx}`
     if (genMap[key]) return
     const name = String(subject?.tag || '').replace(/^@/, '').trim()
-    const prompt = [name, shot.desc, `${entryMeta?.style || '商业'}风格`, '广告级高质量配图,无文字水印']
+    const kind = String(subject?.kind || '')
+    // 以「主体」为中心组织提示词(而非整段镜头描述),保证不同主体出图不同
+    const probe = name + kind
+    const frame = /人物|角色|人|男|女|主角|闺蜜|宝妈|宝爸|学生|白领|model|girl|boy/i.test(probe)
+      ? '人物角色形象,单人,半身肖像,表情自然,简洁背景'
+      : /场景|街道|背景|环境|室内|室外|校园|店|路|空间|夜景/i.test(probe)
+        ? '场景空镜,无人物,环境氛围,广角'
+        : '产品/物体特写,主体居中,简洁背景'
+    const theme = (reqSummary || '').slice(0, 40)
+    const prompt = [
+      name,
+      frame,
+      `${entryMeta?.style || '商业'}风格`,
+      theme && `广告主题:${theme}`,
+      '高清广告级配图,无文字无水印',
+    ]
       .filter(Boolean)
       .join(',')
     setGenMap((m) => ({ ...m, [key]: true }))
@@ -172,22 +187,29 @@ export default function SmartCreateView() {
   }
 
   // 入口页发送:记录需求/选项,进入流程,并据需求自动命名项目。
-  // 生成分镜脚本(本地多模态模型,可结合素材图);失败置错误态,可重试
+  // 生成分镜脚本(本地多模态模型,流式:边生成边显示);失败置错误态,可重试
   const generateScript = async (req: string, meta: EntryMeta) => {
     setScriptLoading(true)
     setScriptError('')
+    setShots([])
+    let got = 0
     try {
-      const result = await generateScriptShots({
-        requirement: req,
-        style: meta.style,
-        ratio: meta.ratio,
-        duration: meta.duration,
-        images: meta.images,
-      })
+      const result = await generateScriptShotsStream(
+        {
+          requirement: req,
+          style: meta.style,
+          ratio: meta.ratio,
+          duration: meta.duration,
+          images: meta.images,
+        },
+        (partial) => {
+          got = partial.length
+          setShots(partial)
+        },
+      )
       setShots(result)
     } catch (e: any) {
-      setShots([])
-      setScriptError(e?.message || '脚本生成失败,请重试')
+      if (!got) setScriptError(e?.message || '脚本生成失败,请重试')
     } finally {
       setScriptLoading(false)
     }
@@ -329,7 +351,19 @@ export default function SmartCreateView() {
             <span className="smart__script-done-icon" aria-hidden="true">💡</span>
             {scriptLoading ? '分镜脚本生成中…' : scriptError ? '分镜脚本生成失败' : '分镜脚本生成完成'}
           </div>
-          {scriptLoading ? (
+          {shots.length ? (
+            <>
+              <ScriptStoryboardTable
+                shots={shots}
+                generating={genMap}
+                onUpload={openMaterialPicker}
+                onAiGenerate={handleAiGenerate}
+              />
+              {scriptLoading && (
+                <div className="smart__placeholder smart__placeholder--xs">分镜持续生成中…</div>
+              )}
+            </>
+          ) : scriptLoading ? (
             <div className="smart__placeholder smart__placeholder--sm">正在根据创作需求生成分镜脚本…</div>
           ) : scriptError ? (
             <div className="smart__script-error">
@@ -342,13 +376,6 @@ export default function SmartCreateView() {
                 重新生成
               </button>
             </div>
-          ) : shots.length ? (
-            <ScriptStoryboardTable
-              shots={shots}
-              generating={genMap}
-              onUpload={openMaterialPicker}
-              onAiGenerate={handleAiGenerate}
-            />
           ) : (
             <div className="smart__placeholder smart__placeholder--sm">暂无分镜,点击下方「重新生成」</div>
           )}
