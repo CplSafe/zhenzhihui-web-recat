@@ -212,6 +212,18 @@
 .smart__script-done-icon {
   font-size: 18px;
 }
+.smart__script-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 40px;
+  border: 1.5px dashed #f0c4c4;
+  border-radius: 14px;
+  background: #fff;
+  color: #e54d42;
+  font-size: 14px;
+}
 
 /* 创作需求:展示 ≤100 字 AI 摘要,完整需求可展开 */
 .smart__req-readonly {
