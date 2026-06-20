@@ -4,7 +4,7 @@
  * 上一张已生成的分镜图作为参考图。本地图片(objectURL/dataURL)会先上传成 asset 取得 asset_id。
  */
 // @ts-nocheck
-import { createAiTask, waitForAiTask, uploadAssetFile, extractTaskMediaUrls, getModelForCapability } from './business'
+import { createAiTask, waitForAiTask, uploadAssetFile, extractTaskMediaUrls } from './business'
 
 /** 把图片(objectURL / dataURL / http)上传为后端素材,返回 asset_id;带缓存避免重复上传。 */
 export async function ensureAssetId(
@@ -46,37 +46,15 @@ export async function generateShotImage(args: {
 }): Promise<{ url: string; assetId: number }> {
   const refs = (args.refAssetIds || []).filter((n) => Number(n) > 0)
   const operationCode = refs.length ? 'image.image_to_image' : 'image.text_to_image'
-  const buildArgs = (withKeywords: boolean) => ({
+  const task = await createAiTask({
     workspaceId: args.workspaceId,
     capability: 'image',
     operationCode,
-    ...(withKeywords ? { preferredModelKeywords: STORYBOARD_MODEL_KEYWORDS } : {}),
+    preferredModelKeywords: STORYBOARD_MODEL_KEYWORDS,
     ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
     prompt: args.prompt,
     inputAssets: refs.map((id) => ({ asset_id: id, role: 'reference_image' })),
   })
-  // 三级回退:Seedream偏好 → 去关键词(该 op 任意) → 按 image 能力选任意图像模型(显式 modelId)
-  const attempts = [
-    () => createAiTask(buildArgs(true)),
-    () => createAiTask(buildArgs(false)),
-    async () => {
-      const model = await getModelForCapability('image', operationCode, [], args.modelPlanCandidates)
-      if (!model?.id) throw new Error('未找到可用的图像模型')
-      return createAiTask({ ...buildArgs(false), modelVersionId: model.id })
-    },
-  ]
-  let task: any
-  let lastErr: any
-  for (const run of attempts) {
-    try {
-      task = await run()
-      break
-    } catch (e: any) {
-      lastErr = e
-      if (e?.code !== 'MODEL_NOT_FOUND') throw e
-    }
-  }
-  if (!task) throw lastErr
   const completed = await waitForAiTask({ workspaceId: args.workspaceId, task })
   const url = extractTaskMediaUrls(completed)[0] || ''
   if (!url) throw new Error('未生成分镜图')
