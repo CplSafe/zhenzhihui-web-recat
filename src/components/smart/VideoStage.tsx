@@ -19,8 +19,7 @@ interface VideoStageProps {
   videoGenerating?: boolean
   onShotsChange: (shots: Shot[]) => void
   onOpenElement?: (name: string) => void
-  onUploadElement?: (name: string, file: File) => void
-  onRegenerateImage: (shot: Shot, opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] }) => void
+  onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
   /** 重新生成整片(note=对整片的修改意见) */
   onRegenerateVideo: (note?: string) => void
   /** 保存视频到项目管理 */
@@ -36,7 +35,6 @@ export default function VideoStage({
   videoGenerating,
   onShotsChange,
   onOpenElement,
-  onUploadElement,
   onRegenerateImage,
   onRegenerateVideo,
   onSaveVideo,
@@ -132,7 +130,6 @@ export default function VideoStage({
           shot={selected}
           regenerating={!!generating[selected.id]}
           onOpenElement={onOpenElement}
-          onUploadElement={onUploadElement}
           onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}
         />

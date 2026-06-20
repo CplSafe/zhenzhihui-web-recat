@@ -8,85 +8,54 @@
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
 }
-.sedit__sec-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1f2937;
-  margin: 8px 0 6px;
+.sedit__sub {
+  font-size: 12px;
+  color: #9aa3af;
+  margin: 0 0 6px;
 }
 
-/* 元素列表(横向,逐个列出) */
-.sedit__elements {
+/* ── 分镜图修改区:两栏 ── */
+.sedit__editrow {
   display: flex;
-  gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 4px;
+  gap: 18px;
+  align-items: flex-start;
 }
-.sedit__el {
+.sedit__left {
+  flex: 1 1 56%;
+  min-width: 0;
+}
+.sedit__right {
+  flex: 1 1 44%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  width: 130px;
-  flex: 0 0 auto;
 }
-.sedit__el-thumb {
-  width: 130px;
-  height: 88px;
-  border-radius: 10px;
-  border: 1px solid #eef0f4;
-  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+
+/* 左:当前分镜图(大)+ 历史版本 */
+.sedit__cur {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
   overflow: hidden;
-  cursor: pointer;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #b0b4ba;
-  font-size: 22px;
-  padding: 0;
 }
-.sedit__el-thumb img {
+.sedit__cur img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.sedit__el-meta {
+.sedit__cur-ph {
   display: flex;
   align-items: center;
-  gap: 4px;
-  max-width: 130px;
-}
-.sedit__el-name {
-  font-size: 12px;
-  color: #374151;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sedit__el-kind {
-  font-size: 10px;
-  color: #9aa3af;
-  background: #f1f3f6;
-  border-radius: 4px;
-  padding: 0 4px;
-  flex: 0 0 auto;
-}
-.sedit__el-upload {
-  font-size: 11px;
-  color: #11a98a;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-}
-.sedit__el-empty {
+  gap: 8px;
+  color: #aab0b8;
   font-size: 13px;
-  color: #9aa3af;
-  padding: 8px 0;
 }
-
 .sedit__spin {
   width: 16px;
   height: 16px;
@@ -99,13 +68,6 @@
   to {
     transform: rotate(360deg);
   }
-}
-
-/* 素材历史 */
-.sedit__hist-title {
-  font-size: 12px;
-  color: #9aa3af;
-  margin: 8px 0 4px;
 }
 .sedit__hist-row {
   display: flex;
@@ -132,98 +94,124 @@
 .sedit__hist.is-active {
   border-color: #1fcfa9;
 }
-.sedit__hist--gen {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.sedit__left .sedit__sub {
+  margin-top: 10px;
 }
 
-/* 当前分镜图预览(中等尺寸,限高不霸屏) */
-.sedit__cur {
-  width: 100%;
-  max-height: 240px;
-  min-height: 120px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.sedit__cur img {
-  max-width: 100%;
-  max-height: 240px;
-  object-fit: contain;
-}
-.sedit__cur-ph {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #aab0b8;
-  font-size: 13px;
-  padding: 40px 0;
-}
-
-/* 文字+图改图:参考图行 */
-.sedit__refrow {
+/* 右:素材 */
+.sedit__els {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 10px;
+  margin-bottom: 12px;
 }
-.sedit__ref {
+.sedit__el {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 84px;
+}
+.sedit__el-thumb {
   position: relative;
-  width: 64px;
-  height: 44px;
-  border-radius: 8px;
+  width: 84px;
+  height: 60px;
+  border-radius: 9px;
+  border: 2px solid #eef0f4;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
   overflow: hidden;
-  border: 1px solid #eef0f4;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #b0b4ba;
+  font-size: 20px;
+  padding: 0;
 }
-.sedit__ref img {
+.sedit__el-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.sedit__ref button {
+.sedit__el-thumb.is-on {
+  border-color: #1fcfa9;
+  box-shadow: 0 0 0 2px rgba(31, 207, 169, 0.18);
+}
+.sedit__el-check {
   position: absolute;
   top: 2px;
   right: 2px;
   width: 16px;
   height: 16px;
-  border: none;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
+  background: #1fcfa9;
   color: #fff;
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+.sedit__el-meta {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 3px;
+  max-width: 84px;
 }
-.sedit__ref-add {
-  height: 44px;
-  padding: 0 12px;
+.sedit__el-name {
+  font-size: 11px;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sedit__el-kind {
+  font-size: 9px;
+  color: #9aa3af;
+  background: #f1f3f6;
+  border-radius: 4px;
+  padding: 0 3px;
+  flex: 0 0 auto;
+}
+.sedit__el-mng {
+  font-size: 11px;
+  color: #11a98a;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.sedit__el-add {
+  width: 84px;
+  height: 60px;
+  border-radius: 9px;
   border: 1px dashed #d8dce3;
-  border-radius: 8px;
   background: #fafbfc;
   color: #11a98a;
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
-}
-
-/* 输入框块 */
-.sedit__field {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
 }
+.sedit__el-add span {
+  font-size: 18px;
+  line-height: 1;
+}
+.sedit__el-empty {
+  font-size: 12px;
+  color: #9aa3af;
+  padding: 6px 0;
+}
+
+/* 文本域 */
 .sedit__ta {
   width: 100%;
-  min-height: 64px;
+  box-sizing: border-box;
   resize: vertical;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   font-size: 13px;
   line-height: 1.6;
   color: #1f2937;
@@ -233,31 +221,81 @@
 .sedit__ta:focus {
   border-color: #1fcfa9;
 }
-.sedit__field-foot {
+.sedit__ta--prompt {
+  min-height: 88px;
+  margin-bottom: 10px;
+}
+.sedit__carry {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 6px;
-}
-.sedit__count {
+  gap: 6px;
   font-size: 12px;
-  color: #b0b4ba;
+  color: #4b5563;
+  cursor: pointer;
+  margin-bottom: 12px;
 }
-.sedit__submit {
-  height: 30px;
-  padding: 0 16px;
+.sedit__carry input {
+  accent-color: #1fcfa9;
+}
+.sedit__gen {
+  align-self: flex-start;
+  height: 38px;
+  padding: 0 22px;
   border: none;
-  border-radius: 8px;
+  border-radius: 9px;
   background: #1fcfa9;
   color: #fff;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
 }
-.sedit__submit:hover:not(:disabled) {
+.sedit__gen:hover:not(:disabled) {
   background: #1bb897;
 }
-.sedit__submit:disabled {
+.sedit__gen:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* ── 台词 / 字幕 / 音效:全宽三列(窄屏堆叠)── */
+.sedit__texts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  border-top: 1px solid #f0f2f5;
+  padding-top: 14px;
+}
+.sedit__tf {
+  display: flex;
+  flex-direction: column;
+}
+.sedit__tf-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 6px;
+}
+.sedit__tf-icon {
+  display: inline-flex;
+  color: #1fcfa9;
+}
+.sedit__texts .sedit__ta {
+  min-height: 72px;
+}
+
+@media (max-width: 1280px) {
+  .sedit__editrow {
+    flex-direction: column;
+  }
+  .sedit__left,
+  .sedit__right {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .sedit__texts {
+    grid-template-columns: 1fr;
+  }
 }

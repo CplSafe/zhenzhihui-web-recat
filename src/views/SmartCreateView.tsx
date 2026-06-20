@@ -21,7 +21,6 @@ import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { generateShotImage, ensureAssetId, persistImageAsset, refreshAssetUrl } from '@/api/smartShotImage'
 import { generateFullVideo } from '@/api/smartVideo'
-import { fileToDataUrl } from '@/utils/imageFile'
 import VideoStage from '@/components/smart/VideoStage'
 import {
   createCreativeProject,
@@ -249,13 +248,15 @@ export default function SmartCreateView() {
     theme: string,
     plans: string[],
     feedback?: string,
-    opts: { editPrompt?: string; extraRefUrls?: string[] } = {},
+    opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean } = {},
   ) => {
-    const isEdit = !!(feedback || opts.editPrompt)
-    // 元素(素材)组合:把该镜各元素图作参考,保证同一元素跨镜一致
-    const subjUrls = Array.from(new Set(sh.subjects.map((s) => s.image).filter(Boolean))) as string[]
+    // manual=面板手动出图(指定素材 + 是否携带当前图);否则=批量自动(用全部元素 + 上一张连贯)
+    const manual = opts.refUrls !== undefined
+    const elUrls = manual
+      ? opts.refUrls!
+      : (Array.from(new Set(sh.subjects.map((s) => s.image).filter(Boolean))) as string[])
     const refIds: number[] = []
-    for (const u of subjUrls) {
+    for (const u of elUrls) {
       try {
         const id = await ensureAssetId(ws, u, cache)
         if (id) refIds.push(id)
@@ -263,20 +264,12 @@ export default function SmartCreateView() {
         /* 单张参考上传失败则跳过 */
       }
     }
-    // 改图:以当前分镜图为底图(img2img);否则用上一张做连贯参考
-    const baseUrl = isEdit ? sh.image || '' : prevUrl
+    // 是否携带当前分镜图作底图(img2img):manual 看 carryCurrent;批量靠 prevUrl 连贯
+    const carry = manual ? !!opts.carryCurrent : !!(feedback || opts.editPrompt)
+    const baseUrl = carry ? sh.image || '' : manual ? '' : prevUrl
     if (baseUrl) {
       try {
         const id = await ensureAssetId(ws, baseUrl, cache)
-        if (id) refIds.push(id)
-      } catch {
-        /* ignore */
-      }
-    }
-    // 方式2:用户额外上传的参考图(文字+图改图)
-    for (const u of opts.extraRefUrls || []) {
-      try {
-        const id = await ensureAssetId(ws, u, cache)
         if (id) refIds.push(id)
       } catch {
         /* ignore */
@@ -290,7 +283,7 @@ export default function SmartCreateView() {
           feedback && `修改要求:${feedback}`,
           theme && `整体广告主题:${theme}`,
           entryMeta?.style && `${entryMeta.style}风格`,
-          isEdit
+          carry
             ? '在当前画面基础上按修改要求调整,保持其余部分一致'
             : prevUrl && '与上一镜头保持人物形象、场景、配色、画风一致',
           '画面比例 ' + (entryMeta?.ratio || '16:9'),
@@ -351,12 +344,10 @@ export default function SmartCreateView() {
     }
   }
 
-  // 单镜分镜图重生成:
-  //  - 方式1:editPrompt(用户编辑过的"生成提示词")→ 直接按它重生成
-  //  - 方式2:feedback(文字修改意见)+ extraRefUrls(额外参考图)→ 以当前图 img2img
+  // 单镜分镜图重生成(面板统一流程):提示词 + 选中的素材(refUrls)+ 是否携带当前分镜图
   const regenerateShotImage = async (
     sh: Shot,
-    opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] } = {},
+    opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean } = {},
   ) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
@@ -367,21 +358,16 @@ export default function SmartCreateView() {
     setShotGen((m) => ({ ...m, [sh.id]: true }))
     try {
       const plans = await resolvePlanCandidates()
-      await genShotFrame(ws, sh, '', {}, (reqSummary || '').slice(0, 60), plans, opts.feedback || undefined, {
+      await genShotFrame(ws, sh, '', {}, (reqSummary || '').slice(0, 60), plans, undefined, {
         editPrompt: opts.editPrompt,
-        extraRefUrls: opts.extraRefUrls,
+        refUrls: opts.refUrls || [],
+        carryCurrent: opts.carryCurrent,
       })
     } catch (e: any) {
       showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
     } finally {
       setShotGen((m) => ({ ...m, [sh.id]: false }))
     }
-  }
-
-  // 上传替换某元素(素材),写回所有同名 subject
-  const uploadElement = async (name: string, file: File) => {
-    const url = await fileToDataUrl(file).catch(() => '')
-    if (url) uploadForSubject(name, url)
   }
 
   // 进入镜头编排:若分镜图尚未生成,则自动串行逐个生成(左侧缩略图转圈)
@@ -966,7 +952,6 @@ export default function SmartCreateView() {
           generating={shotGen}
           onShotsChange={setShots}
           onOpenElement={openSubject}
-          onUploadElement={uploadElement}
           onRegenerateImage={regenerateShotImage}
         />
       )
@@ -980,7 +965,6 @@ export default function SmartCreateView() {
         videoGenerating={vidGenRunning}
         onShotsChange={setShots}
         onOpenElement={openSubject}
-        onUploadElement={uploadElement}
         onRegenerateImage={regenerateShotImage}
         onRegenerateVideo={runFullVideo}
         onSaveVideo={handleSaveVideo}

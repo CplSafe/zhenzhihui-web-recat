@@ -17,9 +17,7 @@ interface ShotArrangeProps {
   onShotsChange: (shots: Shot[]) => void
   /** 点元素 → 打开版本管理 */
   onOpenElement?: (name: string) => void
-  /** 上传替换某元素 */
-  onUploadElement?: (name: string, file: File) => void
-  /** 重新生成分镜图(方式1 editPrompt / 方式2 feedback+extraRefUrls) */
+  /** 重新生成分镜图(统一:提示词 + 选中素材 + 是否携带当前图) */
   onRegenerateImage: (shot: Shot, opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] }) => void
 }
 
@@ -28,7 +26,6 @@ export default function ShotArrange({
   generating = {},
   onShotsChange,
   onOpenElement,
-  onUploadElement,
   onRegenerateImage,
 }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
@@ -56,7 +53,6 @@ export default function ShotArrange({
           shot={selected}
           regenerating={!!generating[selected.id]}
           onOpenElement={onOpenElement}
-          onUploadElement={onUploadElement}
           onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}
         />
