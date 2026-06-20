@@ -91,7 +91,7 @@ function subjectPrompt(name: string, kind: string, style?: string, context?: str
     frame,
     context && `需贴合以下广告语境与用途(据此选择最贴切的具体形态,但画面仍只含该单一元素):${context}`,
     style && `${style}视觉风格`,
-    '高清,单一主体,主体居中,便于后续合成',
+    '高清,单一主体',
   ]
     .filter(Boolean)
     .join(',')

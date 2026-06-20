@@ -97,21 +97,8 @@ export default function ShotEditPanel({
         )}
       </div>
 
-      {/* ── 分镜图(元素组合结果)+ 素材历史(版本切换) ── */}
-      <div className="sedit__sec-title">分镜图</div>
-      <div className="sedit__frame">
-        {regenerating ? (
-          <span className="sedit__frame-ph">
-            <span className="sedit__spin" aria-hidden="true" />
-            生成中…
-          </span>
-        ) : current ? (
-          <img src={current} alt="" />
-        ) : (
-          <span className="sedit__frame-ph">暂无分镜图</span>
-        )}
-      </div>
-      {versions.length > 1 && (
+      {/* 素材历史(点击切换)= 该镜分镜图的多个版本 */}
+      {versions.length > 0 && (
         <>
           <div className="sedit__hist-title">素材历史（点击切换）</div>
           <div className="sedit__hist-row">
@@ -125,17 +112,22 @@ export default function ShotEditPanel({
                 <img src={url} alt="" />
               </button>
             ))}
+            {regenerating && (
+              <span className="sedit__hist sedit__hist--gen">
+                <span className="sedit__spin" aria-hidden="true" />
+              </span>
+            )}
           </div>
         </>
       )}
 
-      {/* 描述 / 修改建议 → 重组生成 */}
+      {/* 描述 / 修改建议 → 用元素 + 当前画面重新组合生成分镜图 */}
       <div className="sedit__field">
         <textarea
           className="sedit__ta"
           value={feedback}
           maxLength={500}
-          placeholder="请输入素材的描述或修改建议…(基于当前画面 + 元素重新组合生成)"
+          placeholder="请输入素材的描述或修改建议…(据此重新组合元素生成分镜图)"
           onChange={(e) => setFeedback(e.target.value)}
         />
         <div className="sedit__field-foot">

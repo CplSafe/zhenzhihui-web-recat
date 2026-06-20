@@ -17,22 +17,24 @@
   margin: 8px 0 6px;
 }
 
-/* 元素列表 */
+/* 元素列表(横向,逐个列出) */
 .sedit__elements {
   display: flex;
-  flex-wrap: wrap;
   gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
 .sedit__el {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  width: 92px;
+  width: 130px;
+  flex: 0 0 auto;
 }
 .sedit__el-thumb {
-  width: 92px;
-  height: 92px;
+  width: 130px;
+  height: 88px;
   border-radius: 10px;
   border: 1px solid #eef0f4;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
@@ -54,7 +56,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  max-width: 92px;
+  max-width: 130px;
 }
 .sedit__el-name {
   font-size: 12px;
@@ -85,29 +87,6 @@
   padding: 8px 0;
 }
 
-/* 分镜图预览 */
-.sedit__frame {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: 12px;
-  overflow: hidden;
-  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.sedit__frame img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.sedit__frame-ph {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #aab0b8;
-  font-size: 13px;
-}
 .sedit__spin {
   width: 16px;
   height: 16px;
@@ -152,6 +131,11 @@
 }
 .sedit__hist.is-active {
   border-color: #1fcfa9;
+}
+.sedit__hist--gen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* 输入框块 */
