@@ -8,6 +8,7 @@ import './ScriptStoryboardTable.css'
 export interface ShotSubject {
   tag: string // 如 @小雅 / @室内场景
   kind?: string // 人物 / 场景
+  image?: string // AI 匹配到的素材图(或用户上传);无则展示「+」
 }
 export interface Shot {
   id: string | number
@@ -19,8 +20,8 @@ export interface Shot {
 
 interface ScriptStoryboardTableProps {
   shots: Shot[]
-  onUpload?: (shot: Shot, subject: ShotSubject) => void
-  onAiGenerate?: (shot: Shot, subject: ShotSubject) => void
+  onUpload?: (shot: Shot, subject: ShotSubject, subjectIndex: number) => void
+  onAiGenerate?: (shot: Shot, subject: ShotSubject, subjectIndex: number) => void
 }
 
 export default function ScriptStoryboardTable({ shots, onUpload, onAiGenerate }: ScriptStoryboardTableProps) {
@@ -44,17 +45,28 @@ export default function ScriptStoryboardTable({ shots, onUpload, onAiGenerate }:
                 <span className="sbt__subj-tag" title={s.kind}>
                   {s.tag}
                 </span>
-                <button
-                  type="button"
-                  className="sbt__upload"
-                  onClick={() => onUpload?.(shot, s)}
-                  aria-label={`为 ${s.tag} 上传素材`}
-                >
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                </button>
-                <button type="button" className="sbt__aigen" onClick={() => onAiGenerate?.(shot, s)}>
+                {s.image ? (
+                  <button
+                    type="button"
+                    className="sbt__thumb"
+                    onClick={() => onUpload?.(shot, s, idx)}
+                    title="点击替换素材"
+                  >
+                    <img src={s.image} alt="" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="sbt__upload"
+                    onClick={() => onUpload?.(shot, s, idx)}
+                    aria-label={`为 ${s.tag} 上传素材`}
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </button>
+                )}
+                <button type="button" className="sbt__aigen" onClick={() => onAiGenerate?.(shot, s, idx)}>
                   AI自动生成
                 </button>
               </div>

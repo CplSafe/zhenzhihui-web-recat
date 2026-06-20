@@ -13,6 +13,7 @@ import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import EditField from '@/components/smart/EditField'
 import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
 import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStoryboardTable'
+import MaterialPickerDialog from '@/components/smart/MaterialPickerDialog'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
 import { generateScriptShots } from '@/api/smartScript'
@@ -93,6 +94,25 @@ export default function SmartCreateView() {
   const [projectId, setProjectId] = useState(0)
   const projectIdRef = useRef(0)
   const titlePatchedRef = useRef(false)
+
+  // 准备素材:为某主体选/传素材
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const pickerTargetRef = useRef<{ shotId: any; subjIdx: number } | null>(null)
+  const openMaterialPicker = (shot: Shot, _subject: any, subjIdx: number) => {
+    pickerTargetRef.current = { shotId: shot.id, subjIdx }
+    setPickerOpen(true)
+  }
+  const pickMaterial = (url: string) => {
+    const t = pickerTargetRef.current
+    if (!t) return
+    setShots((prev) =>
+      prev.map((sh) =>
+        sh.id === t.shotId
+          ? { ...sh, subjects: sh.subjects.map((su, i) => (i === t.subjIdx ? { ...su, image: url } : su)) }
+          : sh,
+      ),
+    )
+  }
 
   // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
   const [fields, setFields] = useState<Record<string, string>>({})
@@ -302,7 +322,7 @@ export default function SmartCreateView() {
           ) : shots.length ? (
             <ScriptStoryboardTable
               shots={shots}
-              onUpload={() => showToast('为该主体上传素材(待接入)', 'info')}
+              onUpload={openMaterialPicker}
               onAiGenerate={() => showToast('AI 自动生成该主体素材(待接入)', 'info')}
             />
           ) : (
@@ -482,6 +502,13 @@ export default function SmartCreateView() {
           </>
         )}
       </div>
+
+      <MaterialPickerDialog
+        open={pickerOpen}
+        materials={entryMeta?.images || []}
+        onClose={() => setPickerOpen(false)}
+        onPick={pickMaterial}
+      />
     </div>
   )
 }

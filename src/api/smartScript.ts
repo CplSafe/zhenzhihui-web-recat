@@ -24,9 +24,10 @@ interface GenerateArgs {
 const SYSTEM =
   '你是资深短视频(信息流广告)分镜脚本师。根据创作需求(及可能提供的素材图片)生成一条可执行的分镜脚本。' +
   '为每个镜头给出:镜头时长(如 5s)、画面描述(中文,具体、可拍摄),并拆分该镜头涉及的主体(人物/场景),用于后续素材准备。' +
-  '若提供了素材图片,请结合图片内容来设定主体与画面。' +
+  '若提供了素材图片,请结合图片内容来设定主体与画面;并判断每个主体是否与某张素材图对应,' +
+  '若对应,在该主体加 imageIndex 字段(从1开始,表示第几张素材图);不对应则省略该字段。' +
   '严格只输出 JSON(不要解释、不要 markdown 代码块),格式:' +
-  '{"shots":[{"duration":"5s","desc":"画面描述","subjects":[{"name":"小雅","kind":"人物"},{"name":"室内场景","kind":"场景"}]}]}'
+  '{"shots":[{"duration":"5s","desc":"画面描述","subjects":[{"name":"小雅","kind":"人物","imageIndex":2},{"name":"室内场景","kind":"场景"}]}]}'
 
 /** objectURL → 缩放后的 base64 data url(控制体积) */
 function urlToDataUrl(url: string, max = 1024): Promise<string | null> {
@@ -62,7 +63,7 @@ function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): s
   ].join('\n')
 }
 
-function parseShots(text: string): Shot[] {
+function parseShots(text: string, images: string[] = []): Shot[] {
   let raw = String(text || '').trim()
   if (!raw) return []
   raw = raw
@@ -84,10 +85,15 @@ function parseShots(text: string): Shot[] {
     duration: String(s?.duration || s?.dur || '5s').trim() || '5s',
     desc: String(s?.desc || s?.prompt || s?.description || '').trim() || '画面描述',
     subjects: Array.isArray(s?.subjects)
-      ? s.subjects.map((x: any) => ({
-          tag: '@' + String(x?.name || x?.tag || x?.subject || '主体').replace(/^@/, '').trim(),
-          kind: String(x?.kind || x?.type || '').trim(),
-        }))
+      ? s.subjects.map((x: any) => {
+          const idx = Number(x?.imageIndex || x?.image_index || 0)
+          const image = idx >= 1 && images[idx - 1] ? images[idx - 1] : undefined
+          return {
+            tag: '@' + String(x?.name || x?.tag || x?.subject || '主体').replace(/^@/, '').trim(),
+            kind: String(x?.kind || x?.type || '').trim(),
+            image,
+          }
+        })
       : [],
   }))
 }
@@ -122,7 +128,8 @@ export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
   if (!res.ok) throw new Error(`脚本生成服务异常(${res.status})`)
   const data = await res.json()
   const text = data?.choices?.[0]?.message?.content || ''
-  const shots = parseShots(text)
+  // 用原始 objectURL(args.images)做展示映射(顺序与送模型的一致)
+  const shots = parseShots(text, args.images || [])
   if (!shots.length) throw new Error('未能解析分镜脚本,请重试')
   return shots
 }
