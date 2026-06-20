@@ -124,22 +124,17 @@ export default function SmartCreateView() {
   }
 
   // 入口页发送:记录需求/选项,进入流程,并据需求自动命名项目。
-  // 生成分镜脚本(走后端 /ai/responses);失败置错误态,可重试
+  // 生成分镜脚本(本地多模态模型,可结合素材图);失败置错误态,可重试
   const generateScript = async (req: string, meta: EntryMeta) => {
-    const wsId = Number(workspaceId || 0)
-    if (!wsId) {
-      setScriptError('未选择工作空间,无法生成脚本')
-      return
-    }
     setScriptLoading(true)
     setScriptError('')
     try {
       const result = await generateScriptShots({
-        workspaceId: wsId,
         requirement: req,
         style: meta.style,
         ratio: meta.ratio,
         duration: meta.duration,
+        images: meta.images,
       })
       setShots(result)
     } catch (e: any) {

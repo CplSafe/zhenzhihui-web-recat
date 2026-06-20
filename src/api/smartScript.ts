@@ -1,29 +1,64 @@
 /**
- * 智能成片 — 分镜脚本生成(走业务后端 AI 网关 /ai/responses, operationCode: responses.multimodal)。
- * 输入创作需求 + 约束,返回分镜列表(镜头时长/画面描述/拆分主体),映射为表格用的 Shot[]。
+ * 智能成片 — 分镜脚本生成。
+ *
+ * 当前走「本地多模态模型」(Qwen, /aimodel 代理),可结合上传素材图片生成更贴合的分镜。
+ * 业务后端的 AI 网关(/ai/responses, operationCode: responses.multimodal)需先在管理后台
+ * 启用对应模型才能用;待其就绪后可切回(见文件末尾注释)。
+ *
+ * 返回映射为表格用的 Shot[](镜头/时长/画面描述/拆分主体)。
  */
 // @ts-nocheck
-import { createAiResponse, getBusinessErrorMessage } from './business'
 import type { Shot } from '@/components/smart/ScriptStoryboardTable'
 
+const MODEL_NAME = (import.meta.env.VITE_AI_MODEL_NAME as string) || 'Qwen3.6-35B-A3B'
+const ENDPOINT = '/aimodel/v1/chat/completions'
+
 interface GenerateArgs {
-  workspaceId: number
   requirement: string
   style?: string
   ratio?: string
   duration?: string
-  signal?: AbortSignal
+  images?: string[] // objectURL 或 data URL,自动转 base64 后多模态送入
 }
 
-function buildPrompt({ requirement, style, ratio, duration }: GenerateArgs): string {
+const SYSTEM =
+  '你是资深短视频(信息流广告)分镜脚本师。根据创作需求(及可能提供的素材图片)生成一条可执行的分镜脚本。' +
+  '为每个镜头给出:镜头时长(如 5s)、画面描述(中文,具体、可拍摄),并拆分该镜头涉及的主体(人物/场景),用于后续素材准备。' +
+  '若提供了素材图片,请结合图片内容来设定主体与画面。' +
+  '严格只输出 JSON(不要解释、不要 markdown 代码块),格式:' +
+  '{"shots":[{"duration":"5s","desc":"画面描述","subjects":[{"name":"小雅","kind":"人物"},{"name":"室内场景","kind":"场景"}]}]}'
+
+/** objectURL → 缩放后的 base64 data url(控制体积) */
+function urlToDataUrl(url: string, max = 1024): Promise<string | null> {
+  if (url.startsWith('data:')) return Promise.resolve(url)
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height))
+      const w = Math.max(1, Math.round(img.width * scale))
+      const h = Math.max(1, Math.round(img.height * scale))
+      const c = document.createElement('canvas')
+      c.width = w
+      c.height = h
+      const ctx = c.getContext('2d')
+      if (!ctx) return resolve(null)
+      ctx.drawImage(img, 0, 0, w, h)
+      try {
+        resolve(c.toDataURL('image/jpeg', 0.82))
+      } catch {
+        resolve(null)
+      }
+    }
+    img.onerror = () => resolve(null)
+    img.src = url
+  })
+}
+
+function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): string {
   return [
-    '你是资深短视频(信息流广告)分镜脚本师。根据创作需求生成一条可执行的分镜脚本。',
     `创作需求:${requirement}`,
     `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'},单个镜头时长约 ${duration || '5s'}。`,
-    '为每个镜头给出:镜头时长(如 5s)、画面描述(中文,具体、可拍摄),',
-    '并拆分出该镜头涉及的主体(人物/场景),用于后续素材准备。',
-    '严格只输出 JSON(不要解释、不要 markdown 代码块),格式:',
-    '{"shots":[{"duration":"5s","desc":"画面描述","subjects":[{"name":"小雅","kind":"人物"},{"name":"室内场景","kind":"场景"}]}]}',
+    '请按要求输出分镜 JSON。',
   ].join('\n')
 }
 
@@ -57,26 +92,45 @@ function parseShots(text: string): Shot[] {
   }))
 }
 
-/** 生成分镜脚本,返回 Shot[](失败抛错,message 已业务化)。 */
+/** 生成分镜脚本,返回 Shot[](失败抛错)。 */
 export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
-  const wsId = Number(args.workspaceId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) throw new Error('未选择工作空间,无法生成脚本')
   if (!args.requirement.trim()) throw new Error('创作需求为空')
 
-  let result: any
-  try {
-    result = await createAiResponse({
-      workspaceId: wsId,
-      operationCode: 'responses.multimodal',
-      prompt: buildPrompt(args),
-      params: { temperature: 0.8, max_output_tokens: 4000 },
-    })
-  } catch (e) {
-    throw new Error(getBusinessErrorMessage(e, '脚本生成失败,请重试'))
-  }
+  const dataUrls = (
+    await Promise.all((args.images || []).slice(0, 6).map((u) => urlToDataUrl(u)))
+  ).filter(Boolean) as string[]
 
-  const text = String(result?.text || '').trim()
+  const userText = buildUserText(args)
+  const userContent: any = dataUrls.length
+    ? [{ type: 'text', text: userText }, ...dataUrls.map((u) => ({ type: 'image_url', image_url: { url: u } }))]
+    : userText
+
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: MODEL_NAME,
+      messages: [
+        { role: 'system', content: SYSTEM },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.8,
+      max_tokens: 2000,
+      chat_template_kwargs: { enable_thinking: false },
+    }),
+  })
+  if (!res.ok) throw new Error(`脚本生成服务异常(${res.status})`)
+  const data = await res.json()
+  const text = data?.choices?.[0]?.message?.content || ''
   const shots = parseShots(text)
   if (!shots.length) throw new Error('未能解析分镜脚本,请重试')
   return shots
 }
+
+/*
+ * 切回业务后端网关(待管理后台启用 responses.multimodal 模型后):
+ *   import { createAiResponse, getBusinessErrorMessage } from './business'
+ *   const result = await createAiResponse({ workspaceId, operationCode: 'responses.multimodal',
+ *     prompt: SYSTEM + '\n' + userText, params: { temperature: 0.8, max_output_tokens: 4000 } })
+ *   const shots = parseShots(String(result?.text || ''))
+ */
