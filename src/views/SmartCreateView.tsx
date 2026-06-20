@@ -9,6 +9,7 @@ import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
+import EditField from '@/components/smart/EditField'
 import { useToast } from '@/composables/useToast'
 import './SmartCreateView.css'
 
@@ -42,6 +43,10 @@ export default function SmartCreateView() {
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState('')
   const nameInputRef = useRef<HTMLInputElement | null>(null)
+
+  // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
+  const [fields, setFields] = useState<Record<string, string>>({})
+  const setField = (key: string) => (v: string) => setFields((f) => ({ ...f, [key]: v }))
 
   const goStep = (i: number) => {
     const next = Math.max(0, Math.min(STEPS.length - 1, i))
@@ -97,11 +102,110 @@ export default function SmartCreateView() {
     }
   })()
 
-  const placeholder: Record<number, string> = {
-    0: '分镜脚本：输入需求 → 生成分镜脚本（可编辑、拆分人物/场景主体）。建设中',
-    1: '准备素材：按主体自动匹配已上传素材；缺失主体可补充上传或 AI 生成。建设中',
-    2: '镜头编排：分镜列表（hover 编辑/删除、+插入、拖拽排序、… 菜单）+ 镜头内容修改。建设中',
-    3: '视频生成：分镜列表 + 视频内容修改（帧选择/片段编辑/AI 润色）+ 素材修改。建设中',
+  // 各步骤内容。0/1 暂为占位(等 Figma/后端);2/3 已接入「修改框 + AI 润色(本地模型)」。
+  const renderStepBody = () => {
+    if (step === 0) {
+      return (
+        <div className="smart__placeholder">
+          分镜脚本：输入需求 → 生成分镜脚本（可编辑、拆分人物/场景主体）。建设中
+        </div>
+      )
+    }
+    if (step === 1) {
+      return (
+        <div className="smart__placeholder">
+          准备素材：按主体自动匹配已上传素材；缺失主体可补充上传或 AI 生成。建设中
+        </div>
+      )
+    }
+    if (step === 2) {
+      // 镜头编排:左为分镜列表(占位),右为镜头内容修改框(已接 AI 润色)
+      return (
+        <div className="smart__cols">
+          <div className="smart__col smart__col--list">
+            <div className="smart__panel-title">分镜列表</div>
+            <div className="smart__placeholder smart__placeholder--sm">
+              分镜列表（hover 居中放大编辑/删除、+ 插入、拖拽排序、… 菜单）。建设中
+            </div>
+          </div>
+          <div className="smart__col smart__col--edit">
+            <div className="smart__panel-title">镜头内容修改</div>
+            <EditField
+              label="镜头描述 / 分镜脚本"
+              value={fields.shotDesc || ''}
+              onChange={setField('shotDesc')}
+              kind="script"
+              placeholder="描述这一镜头的画面、运镜、节奏…"
+              rows={5}
+            />
+            <EditField
+              label="台词"
+              value={fields.shotLine || ''}
+              onChange={setField('shotLine')}
+              kind="line"
+              placeholder="这一镜头的台词…"
+            />
+          </div>
+        </div>
+      )
+    }
+    // step === 3 视频生成:左分镜列表 + 中视频(占位),右素材修改(已接 AI 润色)
+    return (
+      <div className="smart__cols">
+        <div className="smart__col smart__col--list">
+          <div className="smart__panel-title">分镜列表</div>
+          <div className="smart__placeholder smart__placeholder--sm">分镜列表。建设中</div>
+        </div>
+        <div className="smart__col smart__col--video">
+          <div className="smart__panel-title">视频内容修改</div>
+          <div className="smart__video-ph">视频播放 + 帧选择 / 片段编辑。建设中</div>
+          <EditField
+            label="对整段视频提出修改意见"
+            value={fields.videoAll || ''}
+            onChange={setField('videoAll')}
+            kind="segment"
+            placeholder="对整段视频的修改诉求…"
+            rows={3}
+          />
+        </div>
+        <div className="smart__col smart__col--edit">
+          <div className="smart__panel-title">
+            素材修改 <span className="smart__panel-hint">（分镜 1）</span>
+          </div>
+          <div className="smart__placeholder smart__placeholder--xs">素材 + 上传 + 素材历史。建设中</div>
+          {/* 规范第 4 条:素材下方补回缺失的「素材描述」修改框 */}
+          <EditField
+            label="素材描述"
+            value={fields.matDesc || ''}
+            onChange={setField('matDesc')}
+            kind="generic"
+            placeholder="这张素材的核心信息 / 描述…"
+            rows={2}
+          />
+          <EditField
+            label="台词"
+            value={fields.line || ''}
+            onChange={setField('line')}
+            kind="line"
+            placeholder="分镜中识别到的台词文本…"
+          />
+          <EditField
+            label="字幕"
+            value={fields.subtitle || ''}
+            onChange={setField('subtitle')}
+            kind="subtitle"
+            placeholder="分镜中识别到的字幕文本…"
+          />
+          <EditField
+            label="音效"
+            value={fields.sound || ''}
+            onChange={setField('sound')}
+            kind="sound"
+            placeholder="分镜中识别到的音效文本…"
+          />
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -152,10 +256,8 @@ export default function SmartCreateView() {
           )}
         </div>
 
-        {/* 步骤内容（占位） */}
-        <div className="smart__body">
-          <div className="smart__placeholder">{placeholder[step]}</div>
-        </div>
+        {/* 步骤内容 */}
+        <div className="smart__body">{renderStepBody()}</div>
 
         {/* 底部总按钮 */}
         <footer className="smart__footer">
