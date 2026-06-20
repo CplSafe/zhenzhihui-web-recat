@@ -81,3 +81,45 @@ export async function polishText(text: string, opts: PolishOptions = {}): Promis
   if (!out) throw new Error('润色结果为空,请重试')
   return out
 }
+
+/**
+ * 低层:发一轮 chat,返回纯文本(供起名等复用)。
+ */
+async function chatOnce(system: string, user: string, signal?: AbortSignal, maxTokens = 64): Promise<string> {
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify({
+      model: MODEL_NAME,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      temperature: 0.6,
+      max_tokens: maxTokens,
+      chat_template_kwargs: { enable_thinking: false },
+    }),
+  })
+  if (!res.ok) throw new Error(`模型服务异常(${res.status})`)
+  const data = (await res.json()) as ChatResponse
+  return data?.choices?.[0]?.message?.content?.trim() || ''
+}
+
+/**
+ * 根据用户的创作需求,自动生成简洁贴切的项目名称(本地 Qwen)。
+ * 失败抛错;调用方自行兜底(保留原名)。
+ */
+export async function generateProjectName(requirement: string, signal?: AbortSignal): Promise<string> {
+  const req = (requirement || '').trim()
+  if (!req) throw new Error('请输入创作需求')
+  const system =
+    '你是项目命名助手。根据用户的短视频创作需求,起一个简洁、贴切、有吸引力的中文项目名称。' +
+    '要求:4到12个字,不含标点、引号、书名号、空格、序号,不要任何解释。只输出名称本身。'
+  let name = await chatOnce(system, req, signal, 48)
+  // 兜底清洗:去引号/标点/空白,截断到 16 字
+  name = name.replace(/["'《》「」“”‘’\s]/g, '').replace(/[。,，.!！?？:：;；]/g, '').trim()
+  name = name.split('\n')[0].slice(0, 16)
+  if (!name) throw new Error('生成名称为空,请重试')
+  return name
+}

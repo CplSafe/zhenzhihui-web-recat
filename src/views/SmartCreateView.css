@@ -91,6 +91,12 @@
 .smart__name:hover svg {
   color: #1fcfa9;
 }
+.smart__name-naming {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #11a98a;
+}
 .smart__name-input {
   font-size: 16px;
   font-weight: 600;
@@ -134,6 +140,44 @@
   padding: 18px;
   font-size: 13px;
   margin-bottom: 16px;
+}
+
+/* 第一步:创作需求输入 */
+.smart__script {
+  max-width: 860px;
+  margin: 0 auto;
+}
+.smart__req-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 140px;
+  resize: vertical;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #1f2937;
+  font-family: inherit;
+  outline: none;
+  background: #fff;
+  transition: border-color 0.15s;
+}
+.smart__req-input:focus {
+  border-color: #1fcfa9;
+}
+.smart__req-input::placeholder {
+  color: #b0b4ba;
+}
+.smart__req-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 14px 0 18px;
+}
+.smart__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* 多列布局(镜头编排 / 视频生成) */
