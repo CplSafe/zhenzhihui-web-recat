@@ -29,7 +29,12 @@ import {
   updateCreativeProjectDraft,
   createCreativeProjectVersion,
 } from '@/api/business'
-import { useWorkspaceId, useModelPlanCandidates } from '@/stores/workspaceSession'
+import {
+  useWorkspaceId,
+  useModelPlanCandidates,
+  useWorkspaceSessionStore,
+  deriveModelPlanCandidates,
+} from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import {
   loadSmartDraft,
@@ -97,6 +102,18 @@ export default function SmartCreateView() {
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
   const modelPlanCandidates = useModelPlanCandidates() as string[]
+  const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
+
+  // 生成前确保工作空间真实套餐候选已加载,并读最新值(否则只有默认候选,列不到付费套餐里的 seedance/seedream)。
+  // 与 2.0 useVideoGeneration 一致:先 ensure,再用 getState 读最新,避免闭包拿到旧的 modelPlanCandidates。
+  const resolvePlanCandidates = async (): Promise<string[]> => {
+    try {
+      await ensureModelPlanCandidatesLoaded()
+    } catch {
+      /* 加载失败则退回当前已有候选 */
+    }
+    return (deriveModelPlanCandidates(useWorkspaceSessionStore.getState()) as string[]) || modelPlanCandidates
+  }
 
   const [started, setStarted] = useState(false) // false=入口输入页, true=进入 4 步流程
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -218,6 +235,7 @@ export default function SmartCreateView() {
     prevUrl: string,
     cache: Record<string, number>,
     theme: string,
+    plans: string[],
   ) => {
     const subjUrls = Array.from(new Set(sh.subjects.map((s) => s.image).filter(Boolean))) as string[]
     const refIds: number[] = []
@@ -249,7 +267,7 @@ export default function SmartCreateView() {
     let url = ''
     try {
       // 优先后端文/图生图(带素材组合 + 连贯)
-      url = (await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates })).url
+      url = (await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates: plans })).url
     } catch {
       // 后端未启用图像模型等失败 → 退化本地 Qwen-Image(文生图,暂无参考/连贯)
       url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
@@ -271,12 +289,13 @@ export default function SmartCreateView() {
     setShotGenRunning(true)
     const cache: Record<string, number> = {}
     const theme = (reqSummary || '').slice(0, 60)
+    const plans = await resolvePlanCandidates()
     let prevUrl = ''
     try {
       for (const sh of shots) {
         setShotGen((m) => ({ ...m, [sh.id]: true }))
         try {
-          prevUrl = await genShotFrame(ws, sh, prevUrl, cache, theme)
+          prevUrl = await genShotFrame(ws, sh, prevUrl, cache, theme, plans)
         } catch (e: any) {
           showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
         } finally {
@@ -300,7 +319,8 @@ export default function SmartCreateView() {
     const prevUrl = idx > 0 ? shots[idx - 1]?.image || '' : ''
     setShotGen((m) => ({ ...m, [sh.id]: true }))
     try {
-      await genShotFrame(ws, sh, prevUrl, {}, (reqSummary || '').slice(0, 60))
+      const plans = await resolvePlanCandidates()
+      await genShotFrame(ws, sh, prevUrl, {}, (reqSummary || '').slice(0, 60), plans)
     } catch (e: any) {
       showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
     } finally {
@@ -340,7 +360,7 @@ export default function SmartCreateView() {
   const [vidGenRunning, setVidGenRunning] = useState(false)
   const autoVidRef = useRef(false)
 
-  const genClip = async (ws: number, sh: Shot, cache: Record<string, number>, note?: string) => {
+  const genClip = async (ws: number, sh: Shot, cache: Record<string, number>, plans: string[], note?: string) => {
     const img = sh.image || sh.subjects.find((x) => x.image)?.image || ''
     let imageAssetId = 0
     if (img) {
@@ -364,7 +384,7 @@ export default function SmartCreateView() {
       imageAssetId,
       durationSec: parseInt(String(sh.duration || ''), 10) || 5,
       ratio: entryMeta?.ratio,
-      modelPlanCandidates,
+      modelPlanCandidates: plans,
     })
     setShots((prev) => prev.map((x) => (x.id === sh.id ? { ...x, videoUrl: url, videoAssetId: assetId } : x)))
   }
@@ -378,11 +398,12 @@ export default function SmartCreateView() {
     if (vidGenRunning) return
     setVidGenRunning(true)
     const cache: Record<string, number> = {}
+    const plans = await resolvePlanCandidates()
     try {
       for (const sh of shots) {
         setVidGen((m) => ({ ...m, [sh.id]: true }))
         try {
-          await genClip(ws, sh, cache)
+          await genClip(ws, sh, cache, plans)
         } catch (e: any) {
           showToast(`分镜「${sh.no}」视频生成失败:${e?.message || ''}`, 'error')
         } finally {
@@ -403,7 +424,8 @@ export default function SmartCreateView() {
     if (vidGen[sh.id]) return
     setVidGen((m) => ({ ...m, [sh.id]: true }))
     try {
-      await genClip(ws, sh, {}, note)
+      const plans = await resolvePlanCandidates()
+      await genClip(ws, sh, {}, plans, note)
     } catch (e: any) {
       showToast(`分镜「${sh.no}」视频生成失败:${e?.message || ''}`, 'error')
     } finally {
