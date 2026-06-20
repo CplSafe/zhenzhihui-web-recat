@@ -9,7 +9,8 @@ import AppSidebar from '@/components/home/AppSidebar'
 import { useCurrentUser, useWorkspaceId, useCurrentPlanName } from '@/stores/workspaceSession'
 import { listCreativeProjects } from '@/api/business'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
-import bannerImg from '@/assets/home/banner.png'
+import bannerLeft from '@/assets/home/banner-left.png'
+import bannerRight from '@/assets/home/banner-right.png'
 import quick1 from '@/assets/home/quick-1.png'
 import quick2 from '@/assets/home/quick-2.png'
 import quick3 from '@/assets/home/quick-3.png'
@@ -158,34 +159,37 @@ export default function HomeView() {
         </header>
 
         <div className="home__content">
-          {/* 轮播 Banner（Figma 导出图;点击进入教程） */}
+          {/* 轮播 Banner（按图层还原:左右真实产品照 + CSS 磨砂卡 + 真文字/按钮;圆点在下方） */}
           <section className="home__banner">
+            <img className="home__banner-photo home__banner-photo--left" src={bannerLeft} alt="" />
+            <img className="home__banner-photo home__banner-photo--right" src={bannerRight} alt="" />
+            <div className="home__banner-card">
+              <h2 className="home__banner-title">
+                新手<span className="home__banner-em">快速入门</span>指南
+              </h2>
+              <p className="home__banner-sub">从零开始，在 3 分钟内生成您的第一条 AI 大片</p>
+              <button type="button" className="home__banner-btn" onClick={() => handleNavigate('tutorial')}>
+                立即开启体验
+              </button>
+            </div>
             <button type="button" className="home__banner-arrow home__banner-arrow--left" onClick={prevBanner} aria-label="上一张">
               ‹
-            </button>
-            <button
-              type="button"
-              className="home__banner-slide"
-              onClick={() => handleNavigate('tutorial')}
-              aria-label="新手快速入门指南"
-            >
-              <img src={bannerImg} alt="新手快速入门指南" />
             </button>
             <button type="button" className="home__banner-arrow home__banner-arrow--right" onClick={nextBanner} aria-label="下一张">
               ›
             </button>
-            <div className="home__banner-dots">
-              {BANNERS.map((b, i) => (
-                <button
-                  key={b.id}
-                  type="button"
-                  className={`home__dot${i === bannerIndex ? ' is-active' : ''}`}
-                  onClick={() => setBannerIndex(i)}
-                  aria-label={`第 ${i + 1} 张`}
-                />
-              ))}
-            </div>
           </section>
+          <div className="home__banner-dots">
+            {BANNERS.map((b, i) => (
+              <button
+                key={b.id}
+                type="button"
+                className={`home__dot${i === bannerIndex ? ' is-active' : ''}`}
+                onClick={() => setBannerIndex(i)}
+                aria-label={`第 ${i + 1} 张`}
+              />
+            ))}
+          </div>
 
           {/* 快捷入口 */}
           <section className="home__section">
@@ -291,7 +295,8 @@ export default function HomeView() {
                           : { background: tpl.grad }
                       }
                     >
-                      <span className="home__template-caption">{tpl.title}</span>
+                      {/* 真实模板图已含文字,不再叠加标题;仅占位卡显示 */}
+                      {!(tpl as any).img && <span className="home__template-caption">{tpl.title}</span>}
                     </div>
                   </div>
                 ))}
