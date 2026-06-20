@@ -3,11 +3,34 @@
  * 组合 <AppSidebar/> + 内容区：简洁顶栏 / 轮播 Banner / 快捷入口 / 标签切换 + 搜索 / 模板网格。
  * 导航跳转用 react-router useNavigate；已存在路由直接跳转，未实现的项 console 占位。
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
-import { useCurrentUser } from '@/stores/workspaceSession'
+import { useCurrentUser, useWorkspaceId, useCurrentPlanName } from '@/stores/workspaceSession'
+import { listCreativeProjects } from '@/api/business'
+import { isSafeMediaUrl } from '@/utils/urlSafety'
+import bannerImg from '@/assets/home/banner.png'
+import quick1 from '@/assets/home/quick-1.png'
+import quick2 from '@/assets/home/quick-2.png'
+import quick3 from '@/assets/home/quick-3.png'
+import quick4 from '@/assets/home/quick-4.png'
+import tpl1 from '@/assets/home/tpl-1.png'
+import tpl2 from '@/assets/home/tpl-2.png'
+import tpl3 from '@/assets/home/tpl-3.png'
+import tpl4 from '@/assets/home/tpl-4.png'
 import './HomeView.css'
+
+/* 从项目记录里取标题 / 封面 / id（字段名后端不统一，做兜底） */
+function projectTitle(p: any): string {
+  return String(p?.title || p?.name || p?.project_name || '').trim() || '未命名项目'
+}
+function projectCover(p: any): string {
+  const url = p?.thumbnailUrl || p?.thumbnail_url || p?.coverUrl || p?.cover_url || p?.cover || ''
+  return isSafeMediaUrl(url) ? url : ''
+}
+function projectId(p: any): number {
+  return Number(p?.id || p?.project_id || p?.projectId || 0)
+}
 
 /* 侧栏 / 快捷入口 key → 路由映射（已存在的路由）*/
 const ROUTE_MAP: Record<string, string> = {
@@ -24,27 +47,20 @@ const BANNERS = [
   { id: 2, grad: 'linear-gradient(120deg, #ffe9d7 0%, #fff4ea 55%, #fffaf5 100%)' },
 ]
 
-/* 快捷入口 4 卡 */
+/* 快捷入口 4 卡（图标为 Figma 导出）*/
 const QUICK_ENTRIES = [
-  { key: 'creative', title: '智能成片', desc: '输入灵感，秒出大片', grad: 'linear-gradient(135deg, #e6fbf4, #f4fffc)' },
-  { key: 'hot-copy', title: '爆款复制', desc: '海量爆款，生成同款', grad: 'linear-gradient(135deg, #e3f9f1, #f2fffb)' },
-  { key: 'hot-split', title: '爆款裂变', desc: '一个爆款，裂变出N个', grad: 'linear-gradient(135deg, #e6fbf4, #f4fffc)' },
-  { key: 'ip-video', title: 'IP视频', desc: '打造出属于你的个人IP', grad: 'linear-gradient(135deg, #e3f9f1, #f2fffb)' },
+  { key: 'creative', title: '智能成片', desc: '输入灵感，秒出大片', icon: quick1, grad: 'linear-gradient(135deg, #e6fbf4, #f4fffc)' },
+  { key: 'hot-copy', title: '爆款复制', desc: '海量爆款，生成同款', icon: quick2, grad: 'linear-gradient(135deg, #e3f9f1, #f2fffb)' },
+  { key: 'hot-split', title: '爆款裂变', desc: '一个爆款，裂变出N个', icon: quick3, grad: 'linear-gradient(135deg, #e6fbf4, #f4fffc)' },
+  { key: 'ip-video', title: 'IP视频', desc: '打造出属于你的个人IP', icon: quick4, grad: 'linear-gradient(135deg, #e3f9f1, #f2fffb)' },
 ]
 
-const QuickIcon = (
-  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#1fcfa9" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
-    <path d="m6.5 6.5 2.5 2.5M15 15l2.5 2.5M17.5 6.5 15 9M9 15l-2.5 2.5" />
-  </svg>
-)
-
-/* 模板网格占位（标题 + 渐变底）*/
+/* 模板网格（前 4 张用 Figma 导出真图，其余渐变占位）*/
 const TEMPLATES = [
-  { id: 1, title: '健康饮食 均衡生活', grad: 'linear-gradient(160deg, #c9efc2, #eafbe4)' },
-  { id: 2, title: '春日限定 焕新出发', grad: 'linear-gradient(160deg, #f8d6e3, #fdeef3)' },
-  { id: 3, title: '活力运动 开启新旅程', grad: 'linear-gradient(160deg, #7fd6b0, #c4f0df)' },
-  { id: 4, title: '自然之露 润养身心', grad: 'linear-gradient(160deg, #bfe4d8, #e7f6f0)' },
+  { id: 1, title: '健康饮食 均衡生活', img: tpl1, grad: 'linear-gradient(160deg, #c9efc2, #eafbe4)' },
+  { id: 2, title: '春日限定 焕新出发', img: tpl2, grad: 'linear-gradient(160deg, #f8d6e3, #fdeef3)' },
+  { id: 3, title: '活力运动 开启新旅程', img: tpl3, grad: 'linear-gradient(160deg, #7fd6b0, #c4f0df)' },
+  { id: 4, title: '自然之露 润养身心', img: tpl4, grad: 'linear-gradient(160deg, #bfe4d8, #e7f6f0)' },
   { id: 5, title: '都市夜色 灵感闪现', grad: 'linear-gradient(160deg, #b6c4f0, #e2e9fb)' },
   { id: 6, title: '简约家居 美学生活', grad: 'linear-gradient(160deg, #f0e2c4, #fbf3e2)' },
   { id: 7, title: '潮流穿搭 个性表达', grad: 'linear-gradient(160deg, #e2c4f0, #f4e7fb)' },
@@ -64,14 +80,50 @@ const TABS = [
 export default function HomeView() {
   const navigate = useNavigate()
   const currentUser = useCurrentUser() as any
+  const workspaceId = useWorkspaceId()
+  const planName = useCurrentPlanName() as any
   const [bannerIndex, setBannerIndex] = useState(0)
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
+
+  // 历史项目（接后端 listCreativeProjects）
+  const [historyItems, setHistoryItems] = useState<any[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
 
   const userName = useMemo(
     () => currentUser?.nickname || currentUser?.name || currentUser?.username || '用户',
     [currentUser],
   )
+
+  // 切到「历史项目」标签且有工作空间时拉取真实项目（首次/切空间时）。
+  useEffect(() => {
+    if (activeTab !== 'history') return
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) return
+    let cancelled = false
+    setHistoryLoading(true)
+    setHistoryError('')
+    listCreativeProjects({ workspaceId: wsId, limit: 24 })
+      .then((items: any) => {
+        if (!cancelled) setHistoryItems(Array.isArray(items) ? items : [])
+      })
+      .catch(() => {
+        if (!cancelled) setHistoryError('历史项目加载失败')
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, workspaceId])
+
+  const keywordTrim = keyword.trim()
+  const filteredHistory = useMemo(() => {
+    if (!keywordTrim) return historyItems
+    return historyItems.filter((p) => projectTitle(p).includes(keywordTrim))
+  }, [historyItems, keywordTrim])
 
   const handleNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
@@ -95,7 +147,8 @@ export default function HomeView() {
         <header className="home__topbar">
           <div className="home__topbar-right">
             <button type="button" className="home__member" onClick={() => handleNavigate('member')}>
-              <span className="home__member-icon">★</span>会员中心
+              <span className="home__member-icon">★</span>
+              {planName ? String(planName) : '会员中心'}
             </button>
             <div className="home__user">
               <span className="home__avatar">{userName.slice(0, 1)}</span>
@@ -105,22 +158,19 @@ export default function HomeView() {
         </header>
 
         <div className="home__content">
-          {/* 轮播 Banner */}
-          <section className="home__banner" style={{ background: BANNERS[bannerIndex].grad }}>
+          {/* 轮播 Banner（Figma 导出图;点击进入教程） */}
+          <section className="home__banner">
             <button type="button" className="home__banner-arrow home__banner-arrow--left" onClick={prevBanner} aria-label="上一张">
               ‹
             </button>
-            <div className="home__banner-inner">
-              <div className="home__banner-card">
-                <h2 className="home__banner-title">
-                  新手<span className="home__banner-em">快速入门</span>指南
-                </h2>
-                <p className="home__banner-sub">三步上手帧智汇，快速生成你的第一条作品</p>
-                <button type="button" className="home__banner-btn" onClick={() => handleNavigate('tutorial')}>
-                  立即查看教程
-                </button>
-              </div>
-            </div>
+            <button
+              type="button"
+              className="home__banner-slide"
+              onClick={() => handleNavigate('tutorial')}
+              aria-label="新手快速入门指南"
+            >
+              <img src={bannerImg} alt="新手快速入门指南" />
+            </button>
             <button type="button" className="home__banner-arrow home__banner-arrow--right" onClick={nextBanner} aria-label="下一张">
               ›
             </button>
@@ -155,7 +205,9 @@ export default function HomeView() {
                     <div className="home__quick-title">{q.title}</div>
                     <div className="home__quick-desc">{q.desc}</div>
                   </div>
-                  <div className="home__quick-icon">{QuickIcon}</div>
+                  <div className="home__quick-icon">
+                    <img src={q.icon} alt="" />
+                  </div>
                 </button>
               ))}
             </div>
@@ -190,16 +242,61 @@ export default function HomeView() {
               </div>
             </div>
 
-            {/* 模板网格 */}
-            <div className="home__template-grid">
-              {TEMPLATES.map((tpl) => (
-                <div key={tpl.id} className="home__template-card">
-                  <div className="home__template-thumb" style={{ background: tpl.grad }}>
-                    <span className="home__template-caption">{tpl.title}</span>
-                  </div>
+            {/* 内容网格：历史项目接真实数据;模板库/IP 暂为占位 */}
+            {activeTab === 'history' ? (
+              historyLoading ? (
+                <div className="home__placeholder">加载中…</div>
+              ) : historyError ? (
+                <div className="home__placeholder">{historyError}</div>
+              ) : filteredHistory.length ? (
+                <div className="home__template-grid">
+                  {filteredHistory.map((p) => {
+                    const id = projectId(p)
+                    const cover = projectCover(p)
+                    return (
+                      <button
+                        key={id || projectTitle(p)}
+                        type="button"
+                        className="home__template-card"
+                        onClick={() => id && navigate(`/creative/${id}`)}
+                      >
+                        <div
+                          className="home__template-thumb"
+                          style={
+                            cover
+                              ? { backgroundImage: `url(${cover})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+                              : { background: 'linear-gradient(160deg, #cfe9e0, #eef7f3)' }
+                          }
+                        >
+                          <span className="home__template-caption">{projectTitle(p)}</span>
+                        </div>
+                      </button>
+                    )
+                  })}
                 </div>
-              ))}
-            </div>
+              ) : (
+                <div className="home__placeholder">暂无历史项目</div>
+              )
+            ) : activeTab === 'ip' ? (
+              <div className="home__placeholder">IP 功能敬请期待</div>
+            ) : (
+              <div className="home__template-grid">
+                {TEMPLATES.map((tpl) => (
+                  <div key={tpl.id} className="home__template-card">
+                    <div
+                      className="home__template-thumb"
+                      style={
+                        (tpl as any).img
+                          ? { backgroundImage: `url(${(tpl as any).img})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+                          : { background: tpl.grad }
+                      }
+                    >
+                      <span className="home__template-caption">{tpl.title}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       </div>

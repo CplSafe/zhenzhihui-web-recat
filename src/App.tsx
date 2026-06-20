@@ -29,7 +29,7 @@ function AppShell() {
       return
     }
     if (!requiresAuth && isAuthenticated && location.pathname === '/login') {
-      navigate('/creative/blank', { replace: true })
+      navigate('/home', { replace: true })
     }
   }, [isAuthenticated, isCheckingSession, authCheckError, requiresAuth, location.pathname, navigate])
 

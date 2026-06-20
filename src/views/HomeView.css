@@ -84,6 +84,22 @@
   overflow: hidden;
   margin-bottom: 24px;
 }
+.home__banner-slide {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.home__banner-slide img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .home__banner-inner {
   display: flex;
   align-items: center;
@@ -229,6 +245,11 @@
   background: rgba(255, 255, 255, 0.7);
   flex-shrink: 0;
 }
+.home__quick-icon img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
 
 /* 标签 + 搜索 */
 .home__tabs-bar {
@@ -344,4 +365,23 @@
   .home__search {
     max-width: 50%;
   }
+}
+
+/* 历史项目卡片作为按钮时去掉默认样式 */
+button.home__template-card {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* 空态 / 加载态占位 */
+.home__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  color: #909090;
+  font-size: 15px;
 }

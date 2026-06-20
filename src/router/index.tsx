@@ -73,7 +73,7 @@ export const router = createBrowserRouter([
     element: <App />,
     errorElement: <RouteErrorBoundary />,
     children: [
-      { index: true, element: <Navigate to="/creative" replace /> },
+      { index: true, element: <Navigate to="/home" replace /> },
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },
       { path: 'home', element: lazyPage(<HomeView />) },
       { path: 'workbench', element: lazyPage(<WorkbenchView />) },
@@ -82,7 +82,7 @@ export const router = createBrowserRouter([
       { path: 'creative/:id', element: lazyPage(<CreativeScriptView />) },
       { path: 'projects', element: lazyPage(<ProjectManagementView />) },
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
-      { path: '*', element: <Navigate to="/creative" replace /> },
+      { path: '*', element: <Navigate to="/home" replace /> },
     ],
   },
 ])
