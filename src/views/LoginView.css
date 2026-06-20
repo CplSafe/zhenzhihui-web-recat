@@ -179,12 +179,19 @@
 
 .zlogin-eye {
   flex: none;
-  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 100%;
+  padding: 0;
   background: none;
   border: none;
   color: #999;
   cursor: pointer;
-  line-height: 0;
+}
+.zlogin-eye:hover {
+  color: #333;
 }
 
 .zlogin-code-btn {
@@ -286,12 +293,74 @@
   text-decoration: underline;
 }
 
-/* 窄屏：隐藏大图，表单铺满 */
-@media (max-width: 860px) {
+/* 平板及以下：缩小左图占比 */
+@media (max-width: 1100px) {
+  .zlogin-hero {
+    flex-basis: 42%;
+  }
+  .zlogin-nav {
+    gap: 24px;
+    left: 24px;
+    right: 24px;
+  }
+  .zlogin-nav-item {
+    font-size: 16px;
+  }
+}
+
+/* 移动端：隐藏大图，表单铺满、自适应字号与间距 */
+@media (max-width: 768px) {
+  .zlogin {
+    min-height: 100svh;
+  }
   .zlogin-hero {
     display: none;
   }
   .zlogin-panel {
     flex: 1 1 100%;
+    align-items: flex-start;
+    padding: 56px 20px 32px;
+  }
+  .zlogin-form {
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  .zlogin-title {
+    font-size: 28px;
+  }
+  .zlogin-field {
+    height: 52px;
+  }
+  .zlogin-submit {
+    height: 52px;
+    font-size: 18px;
+    border-radius: 14px;
+  }
+  .zlogin-agree {
+    margin-top: 28px;
+  }
+}
+
+/* 小屏手机：进一步压缩 */
+@media (max-width: 380px) {
+  .zlogin-panel {
+    padding: 40px 16px 24px;
+  }
+  .zlogin-title {
+    font-size: 24px;
+  }
+  .zlogin-tabs {
+    gap: 18px;
+  }
+}
+
+/* 触屏:加大可点击区域 */
+@media (hover: none) {
+  .zlogin-code-btn,
+  .zlogin-forgot,
+  .zlogin-link {
+    padding-top: 6px;
+    padding-bottom: 6px;
   }
 }
