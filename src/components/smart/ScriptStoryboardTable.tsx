@@ -17,10 +17,11 @@ export interface Shot {
   desc: string // 画面描述
   subjects: ShotSubject[]
   // 镜头编排阶段可编辑的脚本词
+  matDesc?: string // 素材描述/修改建议
   line?: string // 台词/旁白
   subtitle?: string // 字幕
   sfx?: string // 音效
-  image?: string // 分镜图(生成或选用)
+  image?: string // 选用的素材图(素材历史可切换)
 }
 
 interface ScriptStoryboardTableProps {

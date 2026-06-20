@@ -1,0 +1,95 @@
+/* 素材修改面板 */
+.medit__head {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 14px;
+}
+.medit__mat {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-bottom: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid #eef0f4;
+}
+.medit__main {
+  flex: 0 0 auto;
+  width: 150px;
+  height: 96px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.medit__main img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.medit__main-ph {
+  font-size: 12px;
+  color: #aab0b8;
+}
+.medit__upload {
+  flex: 0 0 auto;
+  width: 88px;
+  height: 96px;
+  border: 1px dashed #dcdfe4;
+  border-radius: 10px;
+  background: #fafbfc;
+  color: #8a93a0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.medit__upload:hover {
+  border-color: #1fcfa9;
+  color: #1fcfa9;
+}
+.medit__history {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.medit__history-title {
+  font-size: 12px;
+  color: #909090;
+  margin-bottom: 8px;
+}
+.medit__history-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.medit__hist {
+  flex: 0 0 auto;
+  width: 72px;
+  height: 60px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  background: #f3f4f6;
+}
+.medit__hist.is-active {
+  border-color: #1fcfa9;
+}
+.medit__hist img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.medit__history-empty {
+  font-size: 12px;
+  color: #aab0b8;
+}

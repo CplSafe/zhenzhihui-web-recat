@@ -23,14 +23,14 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import './SmartCreateView.css'
 
+// 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
 const STEPS: StepItem[] = [
   { key: 'script', label: '分镜脚本' },
-  { key: 'material', label: '准备素材' },
   { key: 'shots', label: '镜头编排' },
   { key: 'video', label: '生成视频' },
 ]
 // 各步「当前进行中」时的子状态文案(进度条展示)
-const ACTIVE_STATUS = ['脚本生成中', '素材准备中', '镜头编排中', '视频生成中']
+const ACTIVE_STATUS = ['脚本生成中', '镜头编排中', '视频生成中']
 
 // 从 createCreativeProject 返回里取项目 id(字段名后端不统一,做兜底)
 function resolveProjectId(payload: any): number {
@@ -235,7 +235,7 @@ export default function SmartCreateView() {
 
   const bottomButtons: BottomButton[] = (() => {
     switch (step) {
-      case 0:
+      case 0: // 分镜脚本
         return [
           { label: '上一步', variant: 'ghost', action: () => setStarted(false) },
           {
@@ -243,22 +243,17 @@ export default function SmartCreateView() {
             variant: 'ghost',
             action: () => entryMeta && generateScript(requirement, entryMeta),
           },
-          { label: '生成镜头编排', variant: 'primary', action: () => goStep(2) },
+          { label: '生成镜头编排', variant: 'primary', action: () => goStep(1) },
         ]
-      case 1:
+      case 1: // 镜头编排
         return [
           { label: '上一步', variant: 'ghost', action: () => goStep(0) },
-          { label: '生成镜头编排', variant: 'primary', action: () => goStep(2) },
+          { label: '重新生成镜头编排', variant: 'ghost', action: todo('重新生成镜头编排(待接入)') },
+          { label: '生成视频', variant: 'primary', action: () => goStep(2) },
         ]
-      case 2:
+      case 2: // 生成视频
         return [
           { label: '上一步', variant: 'ghost', action: () => goStep(1) },
-          { label: '重新生成镜头编排', variant: 'ghost', action: todo('重新生成镜头编排(待接入)') },
-          { label: '生成视频', variant: 'primary', action: () => goStep(3) },
-        ]
-      case 3:
-        return [
-          { label: '上一步', variant: 'ghost', action: () => goStep(2) },
           { label: '保存视频', variant: 'ghost', action: todo('保存视频至 项目管理-待归类(待接入)') },
           { label: '重新生成视频', variant: 'primary', action: todo('重新生成视频(待接入)') },
         ]
@@ -333,15 +328,8 @@ export default function SmartCreateView() {
       )
     }
     if (step === 1) {
-      return (
-        <div className="smart__placeholder">
-          准备素材：按主体自动匹配已上传素材；缺失主体可补充上传或 AI 生成。建设中
-        </div>
-      )
-    }
-    if (step === 2) {
-      // 镜头编排:分镜列表(选中/插入/复制/删除/…菜单)+ 镜头内容修改(画面描述/台词/字幕/音效)
-      return <ShotArrange shots={shots} onShotsChange={setShots} />
+      // 镜头编排:分镜列表(选中/插入/复制/删除/…菜单)+ 素材修改(素材/历史/描述/台词/字幕/音效)
+      return <ShotArrange shots={shots} materials={entryMeta?.images || []} onShotsChange={setShots} />
     }
     // step === 3 视频生成:左分镜列表 + 中视频(占位),右素材修改(已接 AI 润色)
     return (

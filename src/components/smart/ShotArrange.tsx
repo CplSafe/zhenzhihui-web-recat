@@ -6,11 +6,12 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
-import EditField from './EditField'
+import MaterialEditPanel from './MaterialEditPanel'
 import './ShotArrange.css'
 
 interface ShotArrangeProps {
   shots: Shot[]
+  materials?: string[]
   onShotsChange: (shots: Shot[]) => void
 }
 
@@ -24,7 +25,7 @@ function blankShot(): Shot {
   return { id: newId(), no: '镜头', duration: '5s', desc: '', subjects: [] }
 }
 
-export default function ShotArrange({ shots, onShotsChange }: ShotArrangeProps) {
+export default function ShotArrange({ shots, materials = [], onShotsChange }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
@@ -170,43 +171,10 @@ export default function ShotArrange({ shots, onShotsChange }: ShotArrangeProps) 
         {!shots.length && <div className="shotarr__empty">暂无分镜</div>}
       </div>
 
-      {/* 右:镜头内容修改 */}
+      {/* 右:素材修改(素材/历史/素材描述/台词/字幕/音效) */}
       <div className="shotarr__editor">
-        <div className="shotarr__list-title">
-          镜头内容修改 {selected && <span className="shotarr__editor-hint">（{selected.no}）</span>}
-        </div>
         {selected ? (
-          <>
-            <EditField
-              label="画面描述"
-              value={selected.desc || ''}
-              onChange={(v) => patchSelected({ desc: v })}
-              kind="script"
-              placeholder="这一镜头的画面、运镜、节奏…"
-              rows={4}
-            />
-            <EditField
-              label="台词 / 旁白"
-              value={selected.line || ''}
-              onChange={(v) => patchSelected({ line: v })}
-              kind="line"
-              placeholder="这一镜头的台词/旁白…"
-            />
-            <EditField
-              label="字幕"
-              value={selected.subtitle || ''}
-              onChange={(v) => patchSelected({ subtitle: v })}
-              kind="subtitle"
-              placeholder="这一镜头的字幕…"
-            />
-            <EditField
-              label="音效"
-              value={selected.sfx || ''}
-              onChange={(v) => patchSelected({ sfx: v })}
-              kind="sound"
-              placeholder="这一镜头的音效…"
-            />
-          </>
+          <MaterialEditPanel shot={selected} materials={materials} onPatch={patchSelected} />
         ) : (
           <div className="shotarr__empty">请选择左侧分镜进行编辑</div>
         )}
