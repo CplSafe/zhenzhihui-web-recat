@@ -5,6 +5,7 @@
  * 提交 → 调 onSubmit(需求文本, 选项),由父级进入分镜脚本流程。
  */
 import { useRef, useState } from 'react'
+import EntryDropdown from './EntryDropdown'
 import { useToast } from '@/composables/useToast'
 import './SmartEntry.css'
 
@@ -127,45 +128,37 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
 
           <div className="screate__toolbar">
             <div className="screate__tools">
-              <label className="screate__pill">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
-                </svg>
-                <select value={style} onChange={(e) => setStyle(e.target.value)}>
-                  {STYLE_OPTIONS.map((o) => (
-                    <option key={o} value={o}>
-                      {o}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="screate__pill">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7">
-                  <rect x="3" y="6" width="18" height="12" rx="2" />
-                </svg>
-                <select value={ratio} onChange={(e) => setRatio(e.target.value)}>
-                  {RATIO_OPTIONS.map((o) => (
-                    <option key={o} value={o}>
-                      {o}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="screate__pill">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="8" />
-                  <path d="M12 8v4l3 2" />
-                </svg>
-                <select value={duration} onChange={(e) => setDuration(e.target.value)}>
-                  {DURATION_OPTIONS.map((o) => (
-                    <option key={o} value={o}>
-                      {o}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <EntryDropdown
+                value={style}
+                options={STYLE_OPTIONS}
+                onChange={setStyle}
+                icon={
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                  </svg>
+                }
+              />
+              <EntryDropdown
+                value={ratio}
+                options={RATIO_OPTIONS}
+                onChange={setRatio}
+                icon={
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7">
+                    <rect x="3" y="6" width="18" height="12" rx="2" />
+                  </svg>
+                }
+              />
+              <EntryDropdown
+                value={duration}
+                options={DURATION_OPTIONS}
+                onChange={setDuration}
+                icon={
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="8" />
+                    <path d="M12 8v4l3 2" />
+                  </svg>
+                }
+              />
 
               <button
                 type="button"
