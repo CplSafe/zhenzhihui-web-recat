@@ -147,6 +147,72 @@
   max-width: 860px;
   margin: 0 auto;
 }
+/* 脚本页:需求 prompt + 素材 + 完成标题 */
+.smart__script {
+  max-width: 1240px;
+  margin: 0 auto;
+}
+.smart__prompt {
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.7;
+  color: #333;
+  margin-bottom: 16px;
+}
+.smart__ref {
+  color: #1fcfa9;
+  font-weight: 600;
+}
+.smart__mats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 26px;
+}
+.smart__mat {
+  width: 108px;
+  height: 108px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f3f4f6;
+  flex: 0 0 auto;
+}
+.smart__mat img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.smart__mat-add {
+  width: 108px;
+  height: 108px;
+  flex: 0 0 auto;
+  border: 1px dashed #dcdfe4;
+  border-radius: 12px;
+  background: #fafbfc;
+  color: #b0b4ba;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.smart__mat-add:hover {
+  border-color: #1fcfa9;
+  color: #1fcfa9;
+}
+.smart__script-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 14px;
+}
+.smart__script-done-icon {
+  font-size: 18px;
+}
+
 /* 创作需求:展示 ≤100 字 AI 摘要,完整需求可展开 */
 .smart__req-readonly {
   background: #fff;

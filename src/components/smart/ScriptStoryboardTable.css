@@ -1,0 +1,131 @@
+/* 分镜脚本表 */
+.sbt {
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.sbt__head,
+.sbt__row {
+  display: flex;
+  align-items: stretch;
+}
+.sbt__head {
+  padding: 18px 0;
+  border-bottom: 1px solid #eef0f4;
+}
+.sbt__row {
+  border-bottom: 1px solid #eef0f4;
+}
+.sbt__row:last-child {
+  border-bottom: none;
+}
+
+.sbt__c {
+  font-size: 15px;
+  color: #333;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+}
+.sbt__head .sbt__c {
+  font-weight: 500;
+  color: #333;
+  align-items: center;
+}
+.sbt__c--no {
+  flex: 0 0 130px;
+}
+.sbt__c--dur {
+  flex: 0 0 120px;
+}
+.sbt__c--desc {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 准备素材列:左侧分隔竖线,内部主体分行 */
+.sbt__c--mat {
+  flex: 0 0 460px;
+  flex-direction: column;
+  padding: 0;
+  border-left: 1px solid #eef0f4;
+}
+.sbt__head .sbt__c--mat {
+  justify-content: center;
+  align-items: center;
+  flex-direction: row;
+}
+.sbt__row .sbt__c--no,
+.sbt__row .sbt__c--dur,
+.sbt__row .sbt__c--desc {
+  padding-top: 22px;
+  padding-bottom: 22px;
+  align-items: flex-start;
+}
+
+/* 主体行 */
+.sbt__subj {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #f3f4f6;
+}
+.sbt__subj:last-child {
+  border-bottom: none;
+}
+.sbt__subj-tag {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sbt__upload {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 1px dashed #dcdfe4;
+  border-radius: 8px;
+  background: #fafbfc;
+  color: #b0b4ba;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sbt__upload:hover {
+  border-color: #1fcfa9;
+  color: #1fcfa9;
+}
+.sbt__aigen {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  background: #fff;
+  color: #4b5563;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sbt__aigen:hover {
+  border-color: #1fcfa9;
+  color: #11a98a;
+  background: #f3fffc;
+}
+
+@media (max-width: 1100px) {
+  .sbt__c--mat {
+    flex-basis: 320px;
+  }
+  .sbt__c--no {
+    flex-basis: 90px;
+  }
+  .sbt__c--dur {
+    flex-basis: 84px;
+  }
+}

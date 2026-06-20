@@ -12,6 +12,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import EditField from '@/components/smart/EditField'
 import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
+import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStoryboardTable'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
@@ -21,7 +22,33 @@ const STEPS: StepItem[] = [
   { key: 'script', label: '分镜脚本' },
   { key: 'material', label: '准备素材' },
   { key: 'shots', label: '镜头编排' },
-  { key: 'video', label: '视频生成' },
+  { key: 'video', label: '生成视频' },
+]
+// 各步「当前进行中」时的子状态文案(进度条展示)
+const ACTIVE_STATUS = ['脚本生成中', '素材准备中', '镜头编排中', '视频生成中']
+
+// 占位分镜数据(脚本后端接入前展示结构;接 /ai/responses 后替换)
+const SAMPLE_SHOTS: Shot[] = [
+  {
+    id: 1,
+    no: '镜头1',
+    duration: '5s',
+    desc: '画面描述',
+    subjects: [
+      { tag: '@小雅', kind: '人物' },
+      { tag: '@室内场景', kind: '场景' },
+    ],
+  },
+  {
+    id: 2,
+    no: '镜头2',
+    duration: '5s',
+    desc: '画面描述',
+    subjects: [
+      { tag: '@小雅', kind: '人物' },
+      { tag: '@室内场景', kind: '场景' },
+    ],
+  },
 ]
 
 const ROUTE_MAP: Record<string, string> = {
@@ -35,6 +62,19 @@ interface BottomButton {
   label: string
   variant: 'ghost' | 'primary'
   action: () => void
+}
+
+// 把 prompt 里的 @引用(如 @图片1 / @小雅)高亮成绿色
+function renderPrompt(text: string) {
+  return text.split(/(@[一-龥A-Za-z0-9_]+)/g).map((p, i) =>
+    p.startsWith('@') ? (
+      <span key={i} className="smart__ref">
+        {p}
+      </span>
+    ) : (
+      <span key={i}>{p}</span>
+    ),
+  )
 }
 
 export default function SmartCreateView() {
@@ -137,8 +177,9 @@ export default function SmartCreateView() {
     switch (step) {
       case 0:
         return [
+          { label: '上一步', variant: 'ghost', action: () => setStarted(false) },
           { label: '重新生成', variant: 'ghost', action: todo('重新生成脚本(待接入)') },
-          { label: '确认脚本', variant: 'primary', action: () => goStep(1) },
+          { label: '生成镜头编排', variant: 'primary', action: () => goStep(2) },
         ]
       case 1:
         return [
@@ -165,11 +206,12 @@ export default function SmartCreateView() {
   // 各步骤内容。0/1 暂为占位(等 Figma/后端);2/3 已接入「修改框 + AI 润色(本地模型)」。
   const renderStepBody = () => {
     if (step === 0) {
+      const promptText = reqSummary || requirement || '（未填写需求）'
       return (
         <div className="smart__script">
-          <div className="smart__panel-title">创作需求</div>
-          <div className="smart__req-readonly">
-            {summarizing ? '生成摘要中…' : reqSummary || requirement || '（未填写需求）'}
+          {/* 需求 prompt(@图片N 高亮) */}
+          <div className="smart__prompt">
+            {summarizing ? '生成摘要中…' : renderPrompt(promptText)}
           </div>
           {requirement && requirement !== reqSummary && (
             <button type="button" className="smart__req-toggle" onClick={() => setShowFullReq((v) => !v)}>
@@ -181,18 +223,31 @@ export default function SmartCreateView() {
               <Streamdown>{requirement}</Streamdown>
             </div>
           )}
-          {entryMeta && (
-            <div className="smart__req-meta">
-              <span>{entryMeta.mode === 'video' ? '制作视频' : '制作图片'}</span>
-              <span>风格:{entryMeta.style}</span>
-              <span>比例:{entryMeta.ratio}</span>
-              <span>时长:{entryMeta.duration}</span>
-              {entryMeta.imageCount > 0 && <span>素材:{entryMeta.imageCount} 张</span>}
-            </div>
-          )}
-          <div className="smart__script-result smart__placeholder smart__placeholder--sm">
-            分镜脚本生成结果(可编辑、拆分人物/场景主体)将显示在这里。建设中
+
+          {/* 素材缩略图 + 继续添加 */}
+          <div className="smart__mats">
+            {(entryMeta?.images || []).map((url, i) => (
+              <div className="smart__mat" key={i}>
+                <img src={url} alt="" />
+              </div>
+            ))}
+            <button type="button" className="smart__mat-add" onClick={todo('添加素材(待接入)')} aria-label="添加素材">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
           </div>
+
+          {/* 生成完成 + 分镜表 */}
+          <div className="smart__script-done">
+            <span className="smart__script-done-icon" aria-hidden="true">💡</span>
+            分镜脚本生成完成
+          </div>
+          <ScriptStoryboardTable
+            shots={SAMPLE_SHOTS}
+            onUpload={() => showToast('为该主体上传素材(待接入)', 'info')}
+            onAiGenerate={() => showToast('AI 自动生成该主体素材(待接入)', 'info')}
+          />
         </div>
       )
     }
@@ -310,7 +365,13 @@ export default function SmartCreateView() {
           <>
             {/* 进度条 */}
             <div className="smart__progress">
-              <StepProgress steps={STEPS} current={step} maxReached={maxReached} onStepClick={goStep} />
+              <StepProgress
+                steps={STEPS}
+                current={step}
+                statuses={STEPS.map((_, i) => (i < step ? '已完成' : i === step ? ACTIVE_STATUS[i] : '待生成'))}
+                maxReached={maxReached}
+                onStepClick={goStep}
+              />
             </div>
 
             {/* 项目名 + 改名 */}

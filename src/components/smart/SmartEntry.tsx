@@ -16,6 +16,7 @@ export interface EntryMeta {
   ratio: string
   duration: string
   imageCount: number
+  images: string[]
 }
 
 interface SmartEntryProps {
@@ -100,7 +101,7 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   const canSubmit = text.trim().length > 0 || images.length > 0
   const submit = () => {
     if (!canSubmit) return
-    onSubmit(text.trim(), { mode, style, ratio, duration, imageCount: images.length })
+    onSubmit(text.trim(), { mode, style, ratio, duration, imageCount: images.length, images })
   }
 
   return (
