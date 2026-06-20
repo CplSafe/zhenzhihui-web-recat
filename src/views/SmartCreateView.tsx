@@ -17,7 +17,7 @@ import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import SubjectMaterialBoard, { type BoardSubject } from '@/components/smart/SubjectMaterialBoard'
 import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
-import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
+import { generateProjectName, summarizeRequirement, generateShotCopy } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { generateShotImage, ensureAssetId } from '@/api/smartShotImage'
@@ -268,6 +268,19 @@ export default function SmartCreateView() {
       showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
     } finally {
       setShotGen((m) => ({ ...m, [sh.id]: false }))
+    }
+  }
+
+  // 镜头编排:按整体剧情 + 画面描述,生成该镜头的台词/字幕/音效并填入
+  const genShotCopy = async (sh: Shot) => {
+    try {
+      const c = await generateShotCopy({ requirement: reqSummary || requirement, desc: sh.desc })
+      setShots((prev) =>
+        prev.map((x) => (x.id === sh.id ? { ...x, line: c.line, subtitle: c.subtitle, sfx: c.sfx } : x)),
+      )
+      showToast('已生成台词/字幕/音效', 'success')
+    } catch (e: any) {
+      showToast(e?.message || '文案生成失败,请重试', 'error')
     }
   }
 
@@ -596,6 +609,7 @@ export default function SmartCreateView() {
           onOpenSubject={openSubject}
           onShotsChange={setShots}
           onRegenerateShot={regenerateShot}
+          onGenCopy={genShotCopy}
         />
       )
     }

@@ -19,6 +19,7 @@ interface ShotArrangeProps {
   onOpenSubject?: (name: string) => void
   onShotsChange: (shots: Shot[]) => void
   onRegenerateShot?: (shot: Shot) => void
+  onGenCopy?: (shot: Shot) => void
 }
 
 let uid = 1
@@ -47,6 +48,7 @@ export default function ShotArrange({
   onOpenSubject,
   onShotsChange,
   onRegenerateShot,
+  onGenCopy,
 }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   const [menuId, setMenuId] = useState<string | number | null>(null)
@@ -209,6 +211,7 @@ export default function ShotArrange({
             onPatch={patchSelected}
             onRegenerate={onRegenerateShot}
             regenerating={!!generating[selected.id]}
+            onGenCopy={onGenCopy}
           />
         ) : (
           <div className="shotarr__empty">请选择左侧分镜进行编辑</div>

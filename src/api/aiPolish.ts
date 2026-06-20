@@ -259,6 +259,35 @@ export async function analyzeForGuide(
 }
 
 /**
+ * 镜头编排:根据整体需求 + 该镜头画面描述,生成该镜头的 台词/旁白、字幕、音效。
+ */
+export async function generateShotCopy(
+  input: { requirement?: string; desc: string },
+  signal?: AbortSignal,
+): Promise<{ line: string; subtitle: string; sfx: string }> {
+  const system =
+    '你是短视频(信息流广告)文案。根据【整体需求】和【该镜头画面描述】,为这个镜头写出贴合的:' +
+    '台词/旁白(line)、字幕(subtitle)、音效说明(sfx)。没有就给空字符串。' +
+    '只输出严格 JSON:{"line":"...","subtitle":"...","sfx":"..."},不要解释、不要代码块标记。'
+  const user = `【整体需求】${input.requirement || ''}\n【画面描述】${input.desc || ''}`
+  const raw = (await chatOnce(system, user, signal, 300))
+    .replace(/^```(json)?/i, '')
+    .replace(/```$/i, '')
+    .trim()
+  const m = raw.match(/\{[\s\S]*\}/)
+  try {
+    const o = JSON.parse(m ? m[0] : raw)
+    return {
+      line: String(o?.line || o?.voiceover || '').trim(),
+      subtitle: String(o?.subtitle || '').trim(),
+      sfx: String(o?.sfx || o?.sound || '').trim(),
+    }
+  } catch {
+    throw new Error('文案生成解析失败,请重试')
+  }
+}
+
+/**
  * 把(可能很长的)创作需求浓缩成 100 字以内的核心摘要(纯文本,用于页面展示)。
  */
 export async function summarizeRequirement(text: string, signal?: AbortSignal): Promise<string> {

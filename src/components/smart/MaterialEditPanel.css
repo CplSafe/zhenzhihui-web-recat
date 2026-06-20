@@ -74,6 +74,39 @@
 .medit__history {
   margin-top: 14px;
 }
+.medit__copybar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 6px 0 10px;
+}
+.medit__copybar-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+.medit__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: 1px solid #bdeee3;
+  border-radius: 16px;
+  background: #ebfffb;
+  color: #11a98a;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.medit__copy:hover:not(:disabled) {
+  background: #1fcfa9;
+  color: #fff;
+}
+.medit__copy:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
 .medit__history-title {
   font-size: 12px;
   color: #909090;

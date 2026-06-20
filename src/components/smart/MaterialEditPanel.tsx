@@ -3,7 +3,7 @@
  * 分镜图 = 用画面描述 + 素材生成;此处可预览、切换历史版本、上传替换、重新生成。
  * 每个修改框无提交、改动即时保存,并带 AI 润色。
  */
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
 import EditField from './EditField'
 import { fileToDataUrl } from '@/utils/imageFile'
@@ -14,10 +14,21 @@ interface MaterialEditPanelProps {
   onPatch: (patch: Partial<Shot>) => void
   onRegenerate?: (shot: Shot) => void
   regenerating?: boolean
+  onGenCopy?: (shot: Shot) => void | Promise<void>
 }
 
-export default function MaterialEditPanel({ shot, onPatch, onRegenerate, regenerating }: MaterialEditPanelProps) {
+export default function MaterialEditPanel({ shot, onPatch, onRegenerate, regenerating, onGenCopy }: MaterialEditPanelProps) {
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const [copying, setCopying] = useState(false)
+  const handleGenCopy = async () => {
+    if (copying || !onGenCopy) return
+    setCopying(true)
+    try {
+      await onGenCopy(shot)
+    } finally {
+      setCopying(false)
+    }
+  }
   const current = shot.image || ''
   const history = shot.imageVersions || []
 
@@ -94,6 +105,14 @@ export default function MaterialEditPanel({ shot, onPatch, onRegenerate, regener
         placeholder="这一镜头的画面、运镜、节奏…(改后可重新生成分镜图)"
         rows={3}
       />
+      {onGenCopy && (
+        <div className="medit__copybar">
+          <span className="medit__copybar-label">台词 / 字幕 / 音效</span>
+          <button type="button" className="medit__copy" onClick={handleGenCopy} disabled={copying}>
+            {copying ? '生成中…' : '✦ AI 生成文案'}
+          </button>
+        </div>
+      )}
       <EditField
         label="台词"
         value={shot.line || ''}
