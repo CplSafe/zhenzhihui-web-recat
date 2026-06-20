@@ -131,15 +131,17 @@ export async function generateProjectName(requirement: string, signal?: AbortSig
  * 为引导某一项生成「最可能的 5 个」简短候选(纯文本模型),可排除已展示项(换一批)。
  */
 export async function suggestOptions(
-  input: { label: string; context?: string; exclude?: string[] },
+  input: { label: string; hint?: string; context?: string; exclude?: string[] },
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const { label, context = '', exclude = [] } = input
+  const { label, hint = '', context = '', exclude = [] } = input
   const system =
-    '你是信息流广告策划助手。针对给定的「要素」,结合已知信息给出最可能的 5 个简短候选(每个不超过 8 个字,中文,彼此不同)。' +
+    '你是信息流广告策划助手。针对给定的「要素」给出最可能的 5 个简短候选(每个不超过 8 个字,中文,彼此不同)。' +
+    '务必紧扣该要素的定义与已知产品/语境,候选要具体、可直接使用,且只属于这个要素本身——' +
+    '不要给放之四海而皆准的促销口号(如"限时优惠/官方正品"),也不要和其他要素混淆。' +
     '只输出 JSON 数组,例如 ["A","B","C","D","E"];不要解释、不要代码块标记。'
   const user =
-    `要素:${label}\n已知信息:${context || '(暂无,请基于常见信息流广告场景给通用候选)'}` +
+    `要素:${label}${hint ? `(${hint})` : ''}\n已知信息:${context || '(暂无,请结合该要素定义给通用但具体的候选)'}` +
     (exclude.length ? `\n请避免与这些重复:${exclude.join('、')}` : '')
   let raw = ''
   try {

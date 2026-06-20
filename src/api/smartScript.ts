@@ -70,6 +70,33 @@ function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): s
 // 文本类"主体"(无需上传素材)关键词
 const TEXT_SUBJECT_RE = /文案|字幕|标语|口号|标题|文字|台词|旁白|cta|slogan|字样/i
 
+// 容错:从(可能被截断的)文本里抢救出所有「完整」的顶层 {…} 对象
+function salvageObjects(raw: string): any[] {
+  const objs: any[] = []
+  const arrStart = raw.indexOf('[')
+  if (arrStart < 0) return objs
+  let depth = 0
+  let start = -1
+  for (let i = arrStart + 1; i < raw.length; i++) {
+    const ch = raw[i]
+    if (ch === '{') {
+      if (depth === 0) start = i
+      depth++
+    } else if (ch === '}') {
+      depth--
+      if (depth === 0 && start >= 0) {
+        try {
+          objs.push(JSON.parse(raw.slice(start, i + 1)))
+        } catch {
+          /* 跳过坏块 */
+        }
+        start = -1
+      }
+    }
+  }
+  return objs
+}
+
 function parseShots(text: string, images: string[] = []): Shot[] {
   let raw = String(text || '').trim()
   if (!raw) return []
@@ -78,13 +105,15 @@ function parseShots(text: string, images: string[] = []): Shot[] {
     .replace(/```$/i, '')
     .trim()
   const m = raw.match(/\{[\s\S]*\}/)
-  let parsed: any = null
+  let list: any[] = []
   try {
-    parsed = JSON.parse(m ? m[0] : raw)
+    const parsed = JSON.parse(m ? m[0] : raw)
+    list = Array.isArray(parsed) ? parsed : parsed?.shots || parsed?.storyboards || []
   } catch {
-    return []
+    /* 下面走容错抢救 */
   }
-  const list = Array.isArray(parsed) ? parsed : parsed?.shots || parsed?.storyboards || []
+  // 解析失败/为空(常因 max_tokens 截断)→ 抢救已完整的分镜对象
+  if (!Array.isArray(list) || !list.length) list = salvageObjects(raw)
   if (!Array.isArray(list)) return []
   return list.map((s: any, i: number) => ({
     id: i + 1,
@@ -132,7 +161,7 @@ export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
         { role: 'user', content: userContent },
       ],
       temperature: 0.8,
-      max_tokens: 2000,
+      max_tokens: 4000,
       chat_template_kwargs: { enable_thinking: false },
     }),
   })
