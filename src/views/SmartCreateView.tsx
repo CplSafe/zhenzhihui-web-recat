@@ -56,15 +56,15 @@ interface BottomButton {
 
 const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
 
-// 以「主体」为中心组织出图提示词(人物/场景/产品分别给取景框架),保证不同主体出图不同
-function subjectPrompt(name: string, kind: string, style?: string, theme?: string) {
+// 准备素材:每个主体只出「单一独立元素」(供镜头编排时再组合),简洁背景、便于抠图合成
+function subjectPrompt(name: string, kind: string, style?: string) {
   const probe = name + kind
   const frame = /人物|角色|人|男|女|主角|闺蜜|宝妈|宝爸|学生|白领|model|girl|boy/i.test(probe)
-    ? '人物角色形象,单人,半身肖像,表情自然,简洁背景'
-    : /场景|街道|背景|环境|室内|室外|校园|店|路|空间|夜景/i.test(probe)
-      ? '场景空镜,无人物,环境氛围,广角'
-      : '产品/物体特写,主体居中,简洁背景'
-  return [name, frame, `${style || '商业'}风格`, theme && `广告主题:${theme}`, '高清广告级配图,无文字无水印']
+    ? '只有一个人物,单人,全身或半身,正面清晰,纯色简洁背景,不要其他人物、不要文字'
+    : /场景|街道|背景|环境|室内|室外|校园|店|路|空间|夜景|门口|广场/i.test(probe)
+      ? '空场景/空镜,只有环境与背景,无任何人物、无产品,干净简洁'
+      : '只有这一个物体,单个产品特写,白色/纯色背景,不要其他物体、不要文字'
+  return [name, frame, style && `${style}视觉风格`, '高清,单一主体,主体居中,便于后续合成']
     .filter(Boolean)
     .join(',')
 }
@@ -630,7 +630,7 @@ export default function SmartCreateView() {
         versions={subjectAssets[subjectDlg.name]?.versions || []}
         defaultPrompt={
           subjectAssets[subjectDlg.name]?.prompt ||
-          subjectPrompt(subjectDlg.name, subjectDlg.kind, entryMeta?.style, (reqSummary || '').slice(0, 40))
+          subjectPrompt(subjectDlg.name, subjectDlg.kind, entryMeta?.style)
         }
         autoGen={subjectDlg.autoGen}
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
