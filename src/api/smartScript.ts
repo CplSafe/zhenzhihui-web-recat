@@ -62,9 +62,13 @@ function urlToDataUrl(url: string, max = 1024): Promise<string | null> {
 }
 
 function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): string {
+  const totalSec = parseInt(String(duration || '10'), 10) || 10
+  const approxShots = Math.max(1, Math.round(totalSec / 4)) // 每镜约 4 秒估算镜头数
   return [
     `创作需求:${requirement}`,
-    `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'},单个镜头时长约 ${duration || '5s'}。`,
+    `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'}。`,
+    `视频总时长约 ${totalSec} 秒:请切分为约 ${approxShots} 个镜头,每个镜头不少于 3 秒(通常 3~5 秒),` +
+      `各镜头 duration 之和约等于总时长;不要切得过碎。`,
     '请按要求输出分镜 JSON。',
   ].join('\n')
 }

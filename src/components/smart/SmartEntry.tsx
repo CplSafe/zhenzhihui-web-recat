@@ -38,7 +38,7 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   const [text, setText] = useState('')
   const [style, setStyle] = useState('商业')
   const [ratio, setRatio] = useState('16:9')
-  const [duration, setDuration] = useState('5s')
+  const [duration, setDuration] = useState('10s')
   const [images, setImages] = useState<string[]>([])
   const [guideOpen, setGuideOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
