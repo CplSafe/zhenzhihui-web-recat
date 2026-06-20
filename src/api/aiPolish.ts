@@ -143,6 +143,78 @@ export async function guideRequirement(text: string, signal?: AbortSignal): Prom
   return out
 }
 
+export interface GuideSuggestions {
+  product?: string
+  sellpoint?: string
+  audience?: string
+  pain?: string
+  scene?: string
+  goal?: string
+  plot?: string
+  tone?: string
+}
+
+/**
+ * 智能预填:根据用户的想法(文字)+ 素材图片(多模态),推断信息流广告各要素的建议,
+ * 用于 AI 引导对话框的预填(因材施教,不再千篇一律)。images 传 base64 data URL。
+ */
+export async function analyzeForGuide(
+  input: { text?: string; images?: string[] },
+  signal?: AbortSignal,
+): Promise<GuideSuggestions> {
+  const text = (input.text || '').trim()
+  const images = input.images || []
+  if (!text && !images.length) return {}
+
+  const userContent: any[] = [
+    {
+      type: 'text',
+      text:
+        `用户的创作想法:${text || '(未填写)'}\n` +
+        (images.length ? '用户还上传了素材图片(见下)。请务必结合图片中实际出现的物体/场景/人物来推断。' : '') +
+        '请为这条信息流广告推断各要素建议。',
+    },
+  ]
+  for (const u of images) userContent.push({ type: 'image_url', image_url: { url: u } })
+
+  const system =
+    '你是资深信息流广告策划。根据用户的想法和(若有)素材图片,推断以下要素并给出简短建议(中文,每项不超过20字):' +
+    'product(产品/品牌)、sellpoint(核心卖点)、audience(目标人群)、pain(用户痛点)、scene(使用场景)、' +
+    'goal(营销目标与CTA)、plot(表现形式/剧情类型)、tone(风格调性)。' +
+    '紧扣用户素材与想法,不要臆造;某项看不出就留空字符串。' +
+    '只输出严格 JSON 对象(键为上述英文,值为字符串),不要解释、不要代码块标记。'
+
+  const res = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify({
+      model: MODEL_NAME,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.5,
+      max_tokens: 400,
+      chat_template_kwargs: { enable_thinking: false },
+    }),
+  })
+  if (!res.ok) throw new Error(`分析服务异常(${res.status})`)
+  const data = (await res.json()) as ChatResponse
+  let raw = data?.choices?.[0]?.message?.content?.trim() || ''
+  raw = raw
+    .replace(/^```(json)?/i, '')
+    .replace(/```$/, '')
+    .trim()
+  const m = raw.match(/\{[\s\S]*\}/)
+  if (!m) return {}
+  try {
+    return JSON.parse(m[0]) as GuideSuggestions
+  } catch {
+    return {}
+  }
+}
+
 /**
  * 把(可能很长的)创作需求浓缩成 100 字以内的核心摘要(纯文本,用于页面展示)。
  */

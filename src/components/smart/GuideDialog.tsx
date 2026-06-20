@@ -5,11 +5,38 @@
  * 模式记忆:先存 localStorage(后端就绪后改为后端记录用户上次行为)。
  * 流程:答题 → 生成「创作需求」建议预览 → 用户确认「应用到输入框」才回填(不擅自改原文)。
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { guideRequirement } from '@/api/aiPolish'
+import { guideRequirement, analyzeForGuide } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
 import './GuideDialog.css'
+
+/** 把素材的 objectURL 缩放并转 base64 data url(控制体积后再喂给多模态模型) */
+function urlToDataUrl(url: string, max = 768): Promise<string | null> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height))
+      const w = Math.max(1, Math.round(img.width * scale))
+      const h = Math.max(1, Math.round(img.height * scale))
+      const c = document.createElement('canvas')
+      c.width = w
+      c.height = h
+      const ctx = c.getContext('2d')
+      if (!ctx) return resolve(null)
+      ctx.drawImage(img, 0, 0, w, h)
+      try {
+        resolve(c.toDataURL('image/jpeg', 0.82))
+      } catch {
+        resolve(null)
+      }
+    }
+    img.onerror = () => resolve(null)
+    img.src = url
+  })
+}
+
+const FIELD_KEYS = ['product', 'sellpoint', 'audience', 'pain', 'scene', 'goal', 'plot', 'tone'] as const
 
 interface Question {
   key: string
@@ -97,17 +124,60 @@ function readMode(): 'wizard' | 'all' {
 interface GuideDialogProps {
   open: boolean
   initialText: string
+  images?: string[]
   onClose: () => void
   onApply: (brief: string) => void
 }
 
-export default function GuideDialog({ open, initialText, onClose, onApply }: GuideDialogProps) {
+export default function GuideDialog({ open, initialText, images = [], onClose, onApply }: GuideDialogProps) {
   const { showToast } = useToast()
   const [mode, setMode] = useState<'wizard' | 'all'>(readMode)
   const [step, setStep] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState('')
+  const [analyzing, setAnalyzing] = useState(false)
+  const [prefillDone, setPrefillDone] = useState(false)
+  const prefilledRef = useRef(false)
+
+  // 打开时:若有文字/素材,用多模态模型智能预填各要素(只填空字段,不覆盖用户已填)
+  useEffect(() => {
+    if (!open) {
+      prefilledRef.current = false
+      setPrefillDone(false)
+      return
+    }
+    if (prefilledRef.current) return
+    if (!initialText.trim() && !images.length) return
+    prefilledRef.current = true
+    let cancelled = false
+    ;(async () => {
+      setAnalyzing(true)
+      try {
+        const dataUrls = (await Promise.all(images.slice(0, 6).map((u) => urlToDataUrl(u)))).filter(
+          Boolean,
+        ) as string[]
+        const sug = await analyzeForGuide({ text: initialText, images: dataUrls })
+        if (cancelled) return
+        setAnswers((prev) => {
+          const next = { ...prev }
+          FIELD_KEYS.forEach((k) => {
+            const v = (sug as any)[k]
+            if (v && !((next[k] || '').trim())) next[k] = String(v).trim()
+          })
+          return next
+        })
+        setPrefillDone(true)
+      } catch {
+        /* 静默:预填失败不影响手动引导 */
+      } finally {
+        if (!cancelled) setAnalyzing(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, initialText, images])
 
   if (!open) return null
 
@@ -237,6 +307,14 @@ export default function GuideDialog({ open, initialText, onClose, onApply }: Gui
             </div>
           ) : (
             <>
+              {analyzing ? (
+                <div className="gdlg__ai-note is-busy">
+                  <span className="gdlg__ai-spin" aria-hidden="true" />
+                  正在根据你的内容/素材智能预填…
+                </div>
+              ) : (
+                prefillDone && <div className="gdlg__ai-note">✦ 已根据你的内容/素材智能预填,可修改</div>
+              )}
               {initialText.trim() && <div className="gdlg__idea">你的想法:{initialText.trim()}</div>}
               {mode === 'all' ? (
                 QUESTIONS.map(renderQuestion)

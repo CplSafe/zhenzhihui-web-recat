@@ -12,6 +12,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import EditField from '@/components/smart/EditField'
 import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
+import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
 import './SmartCreateView.css'
@@ -175,7 +176,11 @@ export default function SmartCreateView() {
               {showFullReq ? '收起完整需求' : '展开完整需求'}
             </button>
           )}
-          {showFullReq && <div className="smart__req-full">{requirement}</div>}
+          {showFullReq && (
+            <div className="smart__req-full smart__md">
+              <Streamdown>{requirement}</Streamdown>
+            </div>
+          )}
           {entryMeta && (
             <div className="smart__req-meta">
               <span>{entryMeta.mode === 'video' ? '制作视频' : '制作图片'}</span>

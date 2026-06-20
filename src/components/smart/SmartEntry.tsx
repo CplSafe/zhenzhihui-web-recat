@@ -289,6 +289,7 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
       <GuideDialog
         open={guideOpen}
         initialText={text}
+        images={images}
         onClose={() => setGuideOpen(false)}
         onApply={applyGuide}
       />
