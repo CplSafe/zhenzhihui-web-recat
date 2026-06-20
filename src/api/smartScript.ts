@@ -23,7 +23,8 @@ interface GenerateArgs {
 
 const SYSTEM =
   '你是资深短视频(信息流广告)分镜脚本师。根据创作需求(及可能提供的素材图片)生成一条可执行的分镜脚本。' +
-  '为每个镜头给出:镜头时长(如 5s)、画面描述(中文,具体、可拍摄),并拆分该镜头涉及的主体(人物/场景),用于后续素材准备。' +
+  '为每个镜头给出:镜头时长(如 5s)、画面描述(中文,具体、可拍摄),并拆分该镜头涉及的【视觉主体】(人物/场景/物体/产品),用于后续素材准备。' +
+  '注意:只拆需要视觉素材的主体;不要把台词、旁白、字幕、文案、标语、口号、CTA、标题等文本类元素列为主体。' +
   '若提供了素材图片,请结合图片内容来设定主体与画面;并判断每个主体是否与某张素材图对应,' +
   '若对应,在该主体加 imageIndex 字段(从1开始,表示第几张素材图);不对应则省略该字段。' +
   '严格只输出 JSON(不要解释、不要 markdown 代码块),格式:' +
@@ -63,6 +64,9 @@ function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): s
   ].join('\n')
 }
 
+// 文本类"主体"(无需上传素材)关键词
+const TEXT_SUBJECT_RE = /文案|字幕|标语|口号|标题|文字|台词|旁白|cta|slogan|字样/i
+
 function parseShots(text: string, images: string[] = []): Shot[] {
   let raw = String(text || '').trim()
   if (!raw) return []
@@ -85,15 +89,18 @@ function parseShots(text: string, images: string[] = []): Shot[] {
     duration: String(s?.duration || s?.dur || '5s').trim() || '5s',
     desc: String(s?.desc || s?.prompt || s?.description || '').trim() || '画面描述',
     subjects: Array.isArray(s?.subjects)
-      ? s.subjects.map((x: any) => {
-          const idx = Number(x?.imageIndex || x?.image_index || 0)
-          const image = idx >= 1 && images[idx - 1] ? images[idx - 1] : undefined
-          return {
-            tag: '@' + String(x?.name || x?.tag || x?.subject || '主体').replace(/^@/, '').trim(),
-            kind: String(x?.kind || x?.type || '').trim(),
-            image,
-          }
-        })
+      ? s.subjects
+          .map((x: any) => {
+            const idx = Number(x?.imageIndex || x?.image_index || 0)
+            const image = idx >= 1 && images[idx - 1] ? images[idx - 1] : undefined
+            return {
+              tag: '@' + String(x?.name || x?.tag || x?.subject || '主体').replace(/^@/, '').trim(),
+              kind: String(x?.kind || x?.type || '').trim(),
+              image,
+            }
+          })
+          // 兜底:过滤文本类元素(文案/字幕/口号/CTA…),它们不需要上传素材
+          .filter((s: any) => !TEXT_SUBJECT_RE.test(s.tag) && !TEXT_SUBJECT_RE.test(s.kind))
       : [],
   }))
 }
