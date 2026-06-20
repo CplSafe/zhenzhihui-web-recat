@@ -10,6 +10,9 @@
 // dev 默认走代理前缀;如配置了完整 origin(且非本地代理)也可直连。
 const MODEL_NAME = (import.meta.env.VITE_AI_MODEL_NAME as string) || 'Qwen3.6-35B-A3B'
 const ENDPOINT = '/aimodel/v1/chat/completions'
+// 专用视觉模型(图片解析更准),用于素材分析/智能预填
+const VL_MODEL_NAME = (import.meta.env.VITE_AI_VL_NAME as string) || 'Qwen3-VL-30B-A3B'
+const VL_ENDPOINT = '/aimodel-vl/v1/chat/completions'
 
 /** 不同修改框的润色侧重,用于系统提示词。 */
 export type PolishKind = 'script' | 'line' | 'subtitle' | 'sound' | 'segment' | 'generic'
@@ -184,12 +187,14 @@ export async function analyzeForGuide(
     '紧扣用户素材与想法,不要臆造;某项看不出就留空字符串。' +
     '只输出严格 JSON 对象(键为上述英文,值为字符串),不要解释、不要代码块标记。'
 
-  const res = await fetch(ENDPOINT, {
+  // 有图片走专用视觉模型(VL),纯文字走通用模型
+  const useVl = images.length > 0
+  const res = await fetch(useVl ? VL_ENDPOINT : ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     signal,
     body: JSON.stringify({
-      model: MODEL_NAME,
+      model: useVl ? VL_MODEL_NAME : MODEL_NAME,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: userContent },

@@ -12,6 +12,9 @@ import type { Shot } from '@/components/smart/ScriptStoryboardTable'
 
 const MODEL_NAME = (import.meta.env.VITE_AI_MODEL_NAME as string) || 'Qwen3.6-35B-A3B'
 const ENDPOINT = '/aimodel/v1/chat/completions'
+// 专用视觉模型:带素材图生成时用它,图片理解更准
+const VL_MODEL_NAME = (import.meta.env.VITE_AI_VL_NAME as string) || 'Qwen3-VL-30B-A3B'
+const VL_ENDPOINT = '/aimodel-vl/v1/chat/completions'
 
 interface GenerateArgs {
   requirement: string
@@ -118,11 +121,12 @@ export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
     ? [{ type: 'text', text: userText }, ...dataUrls.map((u) => ({ type: 'image_url', image_url: { url: u } }))]
     : userText
 
-  const res = await fetch(ENDPOINT, {
+  const useVl = dataUrls.length > 0
+  const res = await fetch(useVl ? VL_ENDPOINT : ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: MODEL_NAME,
+      model: useVl ? VL_MODEL_NAME : MODEL_NAME,
       messages: [
         { role: 'system', content: SYSTEM },
         { role: 'user', content: userContent },

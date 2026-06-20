@@ -9,8 +9,10 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const businessTarget = env.VITE_ZZH_REMOTE_ORIGIN || 'http://localhost:9000'
   const deepAuthTarget = env.VITE_DEEPAUTH_REMOTE_ORIGIN || 'http://localhost:8080'
-  // AI 润色:本地部署的 vLLM(OpenAI 兼容)模型,后端就绪后改 VITE_AI_MODEL_ORIGIN 即可
+  // AI 润色/文本:本地部署的 vLLM(OpenAI 兼容)模型,后端就绪后改 VITE_AI_MODEL_ORIGIN 即可
   const aiModelTarget = env.VITE_AI_MODEL_ORIGIN || 'http://172.10.0.102:8001'
+  // AI 视觉(图片解析):专用 VL 模型(Qwen3-VL),用于素材分析/智能预填/带图脚本
+  const aiVlTarget = env.VITE_AI_VL_ORIGIN || 'http://172.10.0.102:8003'
   const businessCallbackUrl = `${normalizeBaseUrl(businessTarget)}/auth/callback`
 
   return {
@@ -52,6 +54,16 @@ export default defineConfig(({ mode }) => {
         '/zzh-api': {
           ...createBusinessProxy(businessTarget),
           rewrite: (p) => p.replace(/^\/zzh-api/, ''),
+        },
+        '/aimodel-vl': {
+          target: aiVlTarget,
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/aimodel-vl/, ''),
+          configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq) => {
+              proxyReq.removeHeader('origin')
+            })
+          },
         },
         '/aimodel': {
           target: aiModelTarget,
