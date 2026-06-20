@@ -84,7 +84,7 @@
   height: 320px;
   overflow: hidden;
   margin-bottom: 14px;
-  background: linear-gradient(180deg, #f4f2ee, #eef1f4);
+  background: #fff;
   perspective: 1400px;
 }
 /* 左右两块产品照:绕纵轴旋转形成 coverflow 透视
@@ -93,7 +93,7 @@
   position: absolute;
   top: 0;
   height: 100%;
-  width: 42%;
+  width: 46%;
   object-fit: cover;
   border-radius: 16px;
   z-index: 1;
@@ -102,12 +102,12 @@
 .home__banner-photo--left {
   left: 0;
   transform-origin: left center;
-  transform: rotateY(18deg);
+  transform: rotateY(13deg);
 }
 .home__banner-photo--right {
   right: 0;
   transform-origin: right center;
-  transform: rotateY(-18deg);
+  transform: rotateY(-13deg);
 }
 /* 中间一块:满高、前置的磨砂卡,左右压住两侧图内沿 → 强化透视 */
 .home__banner-card {
