@@ -5,6 +5,7 @@
  * 图标统一用简单 inline SVG（24x24, stroke=currentColor），避免引入新依赖。
  */
 import brandLogo from '@/img/image copy 6.png'
+import { APP_VERSION } from '@/version'
 import './AppSidebar.css'
 
 export interface SidebarItem {
@@ -192,6 +193,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
       <div className="app-sidebar__brand">
         <img src={brandLogo} alt="帧智汇" className="app-sidebar__logo" />
         <span className="app-sidebar__brand-name">帧智汇</span>
+        <span className="app-sidebar__version">v{APP_VERSION}</span>
       </div>
 
       <nav className="app-sidebar__nav">

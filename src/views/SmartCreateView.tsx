@@ -8,8 +8,10 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
+import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import EditField from '@/components/smart/EditField'
+import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
 import { generateProjectName } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
 import './SmartCreateView.css'
@@ -38,6 +40,9 @@ export default function SmartCreateView() {
   const navigate = useNavigate()
   const { showToast } = useToast()
 
+  const [started, setStarted] = useState(false) // false=入口输入页, true=进入 4 步流程
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [entryMeta, setEntryMeta] = useState<EntryMeta | null>(null)
   const [step, setStep] = useState(0)
   const [maxReached, setMaxReached] = useState(0)
   const [projectName, setProjectName] = useState('未命名项目')
@@ -80,9 +85,19 @@ export default function SmartCreateView() {
     setEditingName(false)
   }
 
+  // 入口页发送:记录需求/选项,进入流程,并据需求自动命名项目。
+  const handleStart = (req: string, meta: EntryMeta) => {
+    setRequirement(req)
+    setEntryMeta(meta)
+    setStarted(true)
+    setStep(0)
+    setMaxReached(0)
+    if (req) void autoNameProject(req)
+  }
+
   // 根据需求自动命名项目(本地 Qwen)。用户已手动改名 / 正在命名 / 需求为空 则跳过。
-  const autoNameProject = async () => {
-    const req = requirement.trim()
+  const autoNameProject = async (reqArg?: string) => {
+    const req = (reqArg ?? requirement).trim()
     if (!req || nameTouched || naming) return
     nameAbortRef.current?.abort()
     const ctrl = new AbortController()
@@ -138,34 +153,16 @@ export default function SmartCreateView() {
       return (
         <div className="smart__script">
           <div className="smart__panel-title">创作需求</div>
-          <textarea
-            className="smart__req-input"
-            value={requirement}
-            placeholder="描述你想要的视频:主题、风格、时长、要点…(输入后将据此生成分镜脚本,并自动命名项目)"
-            onChange={(e) => setRequirement(e.target.value)}
-            onBlur={autoNameProject}
-          />
-          <div className="smart__req-actions">
-            <button
-              type="button"
-              className="smart__btn smart__btn--ghost"
-              disabled={!requirement.trim() || naming}
-              onClick={autoNameProject}
-            >
-              {naming ? 'AI 命名中…' : 'AI 命名项目'}
-            </button>
-            <button
-              type="button"
-              className="smart__btn smart__btn--primary"
-              disabled={!requirement.trim()}
-              onClick={() => {
-                autoNameProject()
-                showToast('分镜脚本生成(待接入后端)', 'info')
-              }}
-            >
-              生成分镜脚本
-            </button>
-          </div>
+          <div className="smart__req-readonly">{requirement || '（未填写需求）'}</div>
+          {entryMeta && (
+            <div className="smart__req-meta">
+              <span>{entryMeta.mode === 'video' ? '制作视频' : '制作图片'}</span>
+              <span>风格:{entryMeta.style}</span>
+              <span>比例:{entryMeta.ratio}</span>
+              <span>时长:{entryMeta.duration}</span>
+              {entryMeta.imageCount > 0 && <span>素材:{entryMeta.imageCount} 张</span>}
+            </div>
+          )}
           <div className="smart__script-result smart__placeholder smart__placeholder--sm">
             分镜脚本生成结果(可编辑、拆分人物/场景主体)将显示在这里。建设中
           </div>
@@ -271,26 +268,26 @@ export default function SmartCreateView() {
 
   return (
     <div className="smart">
-      <AppSidebar activeKey="creative" onNavigate={onNavigate} />
+      <AppSidebar
+        activeKey="creative"
+        onNavigate={onNavigate}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
       <div className="smart__main">
-        {/* 顶栏 */}
-        <header className="smart__topbar">
-          <div className="smart__brand-spacer" />
-          <div className="smart__top-actions">
-            <button type="button" className="smart__top-link" onClick={() => navigate('/projects')}>
-              会员中心
-            </button>
-            <span className="smart__user">张小明</span>
-          </div>
-        </header>
+        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
 
-        {/* 进度条 */}
-        <div className="smart__progress">
-          <StepProgress steps={STEPS} current={step} maxReached={maxReached} onStepClick={goStep} />
-        </div>
+        {!started ? (
+          <SmartEntry onSubmit={handleStart} />
+        ) : (
+          <>
+            {/* 进度条 */}
+            <div className="smart__progress">
+              <StepProgress steps={STEPS} current={step} maxReached={maxReached} onStepClick={goStep} />
+            </div>
 
-        {/* 项目名 + 改名 */}
-        <div className="smart__projbar">
+            {/* 项目名 + 改名 */}
+            <div className="smart__projbar">
           <button type="button" className="smart__home-link" onClick={() => navigate('/home')}>
             ← 首页
           </button>
@@ -318,22 +315,24 @@ export default function SmartCreateView() {
           )}
         </div>
 
-        {/* 步骤内容 */}
-        <div className="smart__body">{renderStepBody()}</div>
+            {/* 步骤内容 */}
+            <div className="smart__body">{renderStepBody()}</div>
 
-        {/* 底部总按钮 */}
-        <footer className="smart__footer">
-          {bottomButtons.map((b) => (
-            <button
-              key={b.label}
-              type="button"
-              className={`smart__btn smart__btn--${b.variant}`}
-              onClick={b.action}
-            >
-              {b.label}
-            </button>
-          ))}
-        </footer>
+            {/* 底部总按钮 */}
+            <footer className="smart__footer">
+              {bottomButtons.map((b) => (
+                <button
+                  key={b.label}
+                  type="button"
+                  className={`smart__btn smart__btn--${b.variant}`}
+                  onClick={b.action}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </footer>
+          </>
+        )}
       </div>
     </div>
   )

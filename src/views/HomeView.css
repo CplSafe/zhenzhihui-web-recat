@@ -178,27 +178,27 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 10%;
-  width: 80%;
+  left: 0;
+  width: 100%;
   perspective: 1400px;
   transition:
     transform 0.5s ease,
     opacity 0.5s ease;
   will-change: transform, opacity;
 }
-/* 中间(聚焦) / 左 / 右(两侧缩小半透,内沿露出) / 其余隐藏待入场 */
+/* 中间(聚焦):满宽满高,保留内部两侧照片 rotateY 的 3D 透视;两侧缩小后退仅露内沿 */
 .home__banner-slide.is-center {
   transform: translateX(0) scale(1);
   opacity: 1;
   z-index: 3;
 }
 .home__banner-slide.is-left {
-  transform: translateX(-104%) scale(0.86);
+  transform: translateX(-82%) scale(0.82);
   opacity: 0.5;
   z-index: 2;
 }
 .home__banner-slide.is-right {
-  transform: translateX(104%) scale(0.86);
+  transform: translateX(82%) scale(0.82);
   opacity: 0.5;
   z-index: 2;
 }
@@ -540,7 +540,7 @@ button.home__template-card {
   font-size: 15px;
 }
 
-/* ── 模板库/历史项目:独立可滚动框(约 40vh,核心仍是上方快捷入口) ── */
+/* ── 模板库/历史项目:填满 banner/快捷入口下方剩余高度,内部滚动(桌面端唯一滚动区) ── */
 .home__tab-box {
   flex: 1 1 auto;
   min-height: 160px;

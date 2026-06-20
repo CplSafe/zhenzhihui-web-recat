@@ -33,6 +33,12 @@
   color: #1fcfa9;
   letter-spacing: 1px;
 }
+.app-sidebar__version {
+  font-size: 11px;
+  color: #aab0b8;
+  align-self: flex-end;
+  margin-bottom: 3px;
+}
 
 /* 导航主体（可滚动）*/
 .app-sidebar__nav {

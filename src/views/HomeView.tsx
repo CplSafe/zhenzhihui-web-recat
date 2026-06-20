@@ -3,15 +3,12 @@
  * 组合 <AppSidebar/> + 内容区：简洁顶栏 / 轮播 Banner / 快捷入口 / 标签切换 + 搜索 / 模板网格。
  * 导航跳转用 react-router useNavigate；已存在路由直接跳转，未实现的项 console 占位。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
-import { useCurrentUser, useWorkspaceId, useCurrentPlanName } from '@/stores/workspaceSession'
+import AppTopbar from '@/components/layout/AppTopbar'
+import { useWorkspaceId } from '@/stores/workspaceSession'
 import { listCreativeProjects } from '@/api/business'
-import { logoutSession, getAuthErrorMessage } from '@/api/auth'
-import { useAuth } from '@/auth/AuthContext'
-import { useToast } from '@/composables/useToast'
-import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import bannerLeft from '@/assets/home/banner-left.png'
 import bannerRight from '@/assets/home/banner-right.png'
@@ -115,29 +112,17 @@ const TABS = [
 
 export default function HomeView() {
   const navigate = useNavigate()
-  const currentUser = useCurrentUser() as any
   const workspaceId = useWorkspaceId()
-  const planName = useCurrentPlanName() as any
   const [bannerIndex, setBannerIndex] = useState(0)
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
   const [comingSoonOpen, setComingSoonOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [isLoggingOut, setIsLoggingOut] = useState(false)
-  const userBoxRef = useRef<HTMLDivElement>(null)
-  const { handleLogoutSuccess } = useAuth()
-  const { showToast } = useToast()
 
   // 历史项目（接后端 listCreativeProjects）
   const [historyItems, setHistoryItems] = useState<any[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState('')
-
-  const userName = useMemo(
-    () => currentUser?.nickname || currentUser?.name || currentUser?.username || '用户',
-    [currentUser],
-  )
 
   // 切到「历史项目」标签且有工作空间时拉取真实项目（首次/切空间时）。
   useEffect(() => {
@@ -188,39 +173,6 @@ export default function HomeView() {
     return () => window.clearInterval(t)
   }, [])
 
-  // 用户菜单:点击外部关闭
-  useEffect(() => {
-    if (!userMenuOpen) return
-    function onDown(e: PointerEvent) {
-      if (userBoxRef.current && !userBoxRef.current.contains(e.target as Node)) {
-        setUserMenuOpen(false)
-      }
-    }
-    window.addEventListener('pointerdown', onDown, true)
-    return () => window.removeEventListener('pointerdown', onDown, true)
-  }, [userMenuOpen])
-
-  async function handleLogout() {
-    if (isLoggingOut) return
-    setUserMenuOpen(false)
-    setIsLoggingOut(true)
-    try {
-      await logoutSession()
-      showToast('已退出登录', 'success')
-      setIsLoggingOut(false)
-      handleLogoutSuccess()
-    } catch (error) {
-      // 部分后端登出失败但会话实际已失效:按既有策略仍清理本地并跳登录
-      if (shouldClearSessionAfterLogoutFailure(error)) {
-        setIsLoggingOut(false)
-        handleLogoutSuccess()
-        return
-      }
-      showToast(getAuthErrorMessage(error, '退出登录失败，请稍后重试'), 'error')
-      setIsLoggingOut(false)
-    }
-  }
-
   return (
     <div className="home">
       <AppSidebar
@@ -231,63 +183,7 @@ export default function HomeView() {
       />
 
       <div className="home__main">
-        {/* 简洁顶栏 */}
-        <header className="home__topbar">
-          {/* 汉堡按钮:仅移动端显示,打开侧栏抽屉 */}
-          <button
-            type="button"
-            className="home__hamburger"
-            aria-label="打开菜单"
-            onClick={() => setSidebarOpen(true)}
-          >
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M4 7h16M4 12h16M4 17h16" />
-            </svg>
-          </button>
-          <div className="home__topbar-right">
-            <button type="button" className="home__member" onClick={() => handleNavigate('member')}>
-              <span className="home__member-icon">★</span>
-              {planName ? String(planName) : '会员中心'}
-            </button>
-            <div className="home__user" ref={userBoxRef}>
-              <button
-                type="button"
-                className="home__user-btn"
-                aria-haspopup="menu"
-                aria-expanded={userMenuOpen}
-                onClick={() => setUserMenuOpen((v) => !v)}
-              >
-                <span className="home__avatar">{userName.slice(0, 1)}</span>
-                <span className="home__user-name">{userName}</span>
-                <span className={`home__user-caret${userMenuOpen ? ' is-open' : ''}`}>⌄</span>
-              </button>
-              {userMenuOpen && (
-                <div className="home__user-menu" role="menu">
-                  <button
-                    type="button"
-                    className="home__user-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setUserMenuOpen(false)
-                      handleNavigate('member')
-                    }}
-                  >
-                    会员中心
-                  </button>
-                  <button
-                    type="button"
-                    className="home__user-menu-item home__user-menu-item--danger"
-                    role="menuitem"
-                    onClick={handleLogout}
-                    disabled={isLoggingOut}
-                  >
-                    {isLoggingOut ? '退出中…' : '退出登录'}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
+        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => setComingSoonOpen(true)} />
 
         <div className="home__content">
           {/* 轮播 Banner:coverflow(中/左/右三屏),箭头/圆点旋转,自动播放;后端接入后传多条 */}
