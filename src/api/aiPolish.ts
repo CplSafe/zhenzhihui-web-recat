@@ -268,10 +268,10 @@ export async function summarizeRequirement(text: string, signal?: AbortSignal): 
     '你是文案助手。把下面的创作需求浓缩成一段核心摘要,100字以内,点明产品+人群+核心卖点+目标即可。' +
     '纯文本,不要 markdown 符号(不要 *、#、- 等)、不要标题、不要分点,直接输出摘要。'
   const out = await chatOnce(system, req, signal, 200)
+  // 不再清洗 markdown(前端按 md 渲染),仅去代码块围栏与裁剪长度
   return out
-    .replace(/^[\s>*-]+/gm, '') // 去每行行首的 markdown 项目符号(- > *),保留行内连字符
-    .replace(/[*#`]/g, '') // 去行内 markdown 符号(不动 -,避免把 20-35 变成 2035)
-    .replace(/\s+/g, ' ')
+    .replace(/^```(json)?/i, '')
+    .replace(/```$/i, '')
     .trim()
-    .slice(0, 120)
+    .slice(0, 160)
 }

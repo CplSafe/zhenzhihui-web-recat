@@ -25,7 +25,7 @@ interface SmartEntryProps {
 
 const STYLE_OPTIONS = ['叫卖', '幽默', '商业', '治愈', '科技感', '剧情']
 const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
-const DURATION_OPTIONS = ['5s', '10s', '15s', '30s']
+const DURATION_OPTIONS = ['5s', '10s', '15s']
 const MAX_IMAGES = 9
 
 const PLACEHOLDER =

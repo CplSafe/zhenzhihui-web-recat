@@ -14,6 +14,7 @@ import EditField from '@/components/smart/EditField'
 import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
 import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStoryboardTable'
 import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
+import SubjectMaterialBoard, { type BoardSubject } from '@/components/smart/SubjectMaterialBoard'
 import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
@@ -67,19 +68,6 @@ function subjectPrompt(name: string, kind: string, style?: string, theme?: strin
     .join(',')
 }
 
-// 把 prompt 里的 @引用(如 @图片1 / @小雅)高亮成绿色
-function renderPrompt(text: string) {
-  return text.split(/(@[一-龥A-Za-z0-9_]+)/g).map((p, i) =>
-    p.startsWith('@') ? (
-      <span key={i} className="smart__ref">
-        {p}
-      </span>
-    ) : (
-      <span key={i}>{p}</span>
-    ),
-  )
-}
-
 export default function SmartCreateView() {
   const navigate = useNavigate()
   const { showToast } = useToast()
@@ -114,7 +102,9 @@ export default function SmartCreateView() {
 
   // ── 主体素材统一管理:同名主体(@闺蜜A)共享素材,选定后所有同名处联动 ──
   // 版本/提示词存 registry;选定的图写回所有同名 subject(供表格 + 镜头编排一致展示)
-  const [subjectAssets, setSubjectAssets] = useState<Record<string, { versions: string[]; prompt?: string }>>({})
+  const [subjectAssets, setSubjectAssets] = useState<
+    Record<string, { versions: string[]; prompt?: string; sources?: Record<string, 'ai' | 'upload'> }>
+  >({})
   const [subjectDlg, setSubjectDlg] = useState<{ open: boolean; name: string; kind: string; autoGen: boolean }>({
     open: false,
     name: '',
@@ -139,11 +129,20 @@ export default function SmartCreateView() {
   }
   const genForSubject = async (name: string, prompt: string) => {
     const url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
-    setSubjectAssets((a) => ({ ...a, [name]: { versions: [...(a[name]?.versions || []), url], prompt } }))
+    setSubjectAssets((a) => {
+      const e = a[name] || { versions: [] }
+      return { ...a, [name]: { versions: [...e.versions, url], prompt, sources: { ...(e.sources || {}), [url]: 'ai' } } }
+    })
     applySubjectImage(name, url)
   }
   const uploadForSubject = (name: string, url: string) => {
-    setSubjectAssets((a) => ({ ...a, [name]: { versions: [...(a[name]?.versions || []), url], prompt: a[name]?.prompt } }))
+    setSubjectAssets((a) => {
+      const e = a[name] || { versions: [] }
+      return {
+        ...a,
+        [name]: { versions: [...e.versions, url], prompt: e.prompt, sources: { ...(e.sources || {}), [url]: 'upload' } },
+      }
+    })
     applySubjectImage(name, url)
   }
   const openSubject = (name: string, autoGen = false) =>
@@ -158,9 +157,14 @@ export default function SmartCreateView() {
         sh.subjects.forEach((su) => {
           if (!su.image) return
           const n = stripAt(su.tag)
-          const cur = next[n]?.versions || []
-          if (!cur.includes(su.image)) {
-            next[n] = { versions: [...cur, su.image], prompt: next[n]?.prompt }
+          const e = next[n] || { versions: [] }
+          if (!e.versions.includes(su.image)) {
+            // 分镜里已有/匹配的素材默认视为「用户上传」(入口素材匹配而来)
+            next[n] = {
+              versions: [...e.versions, su.image],
+              prompt: e.prompt,
+              sources: { ...(e.sources || {}), [su.image]: e.sources?.[su.image] || 'upload' },
+            }
             changed = true
           }
         }),
@@ -327,11 +331,26 @@ export default function SmartCreateView() {
   const renderStepBody = () => {
     if (step === 0) {
       const promptText = reqSummary || requirement || '（未填写需求）'
+      // 汇总去重后的主体素材(供顶部总览)
+      const subjMap = new Map<string, BoardSubject>()
+      shots.forEach((sh) =>
+        sh.subjects.forEach((su) => {
+          const n = stripAt(su.tag)
+          const cur = subjMap.get(n) || { name: n, kind: su.kind || '', image: '', source: null }
+          if (!cur.image && su.image) cur.image = su.image
+          if (!cur.kind && su.kind) cur.kind = su.kind
+          subjMap.set(n, cur)
+        }),
+      )
+      const boardSubjects = [...subjMap.values()].map((s) => ({
+        ...s,
+        source: s.image ? subjectAssets[s.name]?.sources?.[s.image] || 'upload' : null,
+      }))
       return (
         <div className="smart__script">
-          {/* 需求 prompt(@图片N 高亮) */}
-          <div className="smart__prompt">
-            {summarizing ? '生成摘要中…' : renderPrompt(promptText)}
+          {/* 需求摘要(markdown 渲染) */}
+          <div className="smart__prompt smart__md">
+            {summarizing ? '生成摘要中…' : <Streamdown>{promptText}</Streamdown>}
           </div>
           {requirement && requirement !== reqSummary && (
             <button type="button" className="smart__req-toggle" onClick={() => setShowFullReq((v) => !v)}>
@@ -357,6 +376,9 @@ export default function SmartCreateView() {
               </svg>
             </button>
           </div>
+
+          {/* 顶部素材主体总览(左用户上传 / 右 AI 生成,点开统一管理) */}
+          <SubjectMaterialBoard subjects={boardSubjects} onOpen={(name) => openSubject(name)} />
 
           {/* 生成状态 + 分镜表 */}
           <div className="smart__script-done">

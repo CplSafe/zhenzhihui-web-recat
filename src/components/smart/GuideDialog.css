@@ -323,13 +323,35 @@
   padding-top: 16px;
 }
 .gdlg__preview-text {
-  white-space: pre-wrap;
   background: #f7fffd;
   border: 1px solid #d5f3ec;
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 6px 14px;
   font-size: 13px;
   line-height: 1.7;
+  color: #1f2937;
+}
+/* markdown 排版(引导需求预览) */
+.gdlg__md h1,
+.gdlg__md h2,
+.gdlg__md h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 12px 0 6px;
+}
+.gdlg__md p {
+  margin: 6px 0;
+}
+.gdlg__md ul,
+.gdlg__md ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.gdlg__md li {
+  margin: 3px 0;
+}
+.gdlg__md strong {
   color: #1f2937;
 }
 .gdlg__foot {
