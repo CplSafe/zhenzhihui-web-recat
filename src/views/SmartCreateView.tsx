@@ -24,6 +24,7 @@ import { generateShotImage, ensureAssetId } from '@/api/smartShotImage'
 import { createCreativeProject, patchCreativeProject } from '@/api/business'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
+import { loadSmartDraft, saveSmartDraft, clearSmartDraft } from '@/utils/smartDraft'
 import './SmartCreateView.css'
 
 // 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
@@ -231,6 +232,51 @@ export default function SmartCreateView() {
   // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
   const [fields, setFields] = useState<Record<string, string>>({})
   const setField = (key: string) => (v: string) => setFields((f) => ({ ...f, [key]: v }))
+
+  // ── 本地草稿:自动保存 + 进入时恢复(便于测试不用从头) ──
+  const hydratedRef = useRef(false)
+  useEffect(() => {
+    const d = loadSmartDraft()
+    if (d && d.started) {
+      setStarted(true)
+      setRequirement(d.requirement || '')
+      setReqSummary(d.reqSummary || '')
+      if (d.entryMeta) setEntryMeta(d.entryMeta)
+      if (d.projectName) setProjectName(d.projectName)
+      setNameTouched(!!d.nameTouched)
+      setStep(Math.min(STEPS.length - 1, Math.max(0, d.step || 0)))
+      setMaxReached(d.maxReached || 0)
+      setShots(Array.isArray(d.shots) ? d.shots : [])
+      setSubjectAssets(d.subjectAssets || {})
+      setFields(d.fields || {})
+      if (d.projectId) {
+        setProjectId(d.projectId)
+        projectIdRef.current = d.projectId
+      }
+    }
+    hydratedRef.current = true
+  }, [])
+
+  useEffect(() => {
+    if (!hydratedRef.current) return
+    const t = window.setTimeout(() => {
+      saveSmartDraft({
+        started,
+        requirement,
+        reqSummary,
+        entryMeta,
+        projectName,
+        nameTouched,
+        step,
+        maxReached,
+        shots,
+        subjectAssets,
+        fields,
+        projectId,
+      })
+    }, 600)
+    return () => window.clearTimeout(t)
+  }, [started, requirement, reqSummary, entryMeta, projectName, nameTouched, step, maxReached, shots, subjectAssets, fields, projectId])
 
   const goStep = (i: number) => {
     const next = Math.max(0, Math.min(STEPS.length - 1, i))
@@ -577,6 +623,28 @@ export default function SmartCreateView() {
             <div className="smart__projbar">
           <button type="button" className="smart__home-link" onClick={() => navigate('/home')}>
             ← 首页
+          </button>
+          <button
+            type="button"
+            className="smart__home-link"
+            onClick={() => {
+              clearSmartDraft()
+              setStarted(false)
+              setShots([])
+              setRequirement('')
+              setReqSummary('')
+              setEntryMeta(null)
+              setProjectName('未命名项目')
+              setNameTouched(false)
+              setStep(0)
+              setMaxReached(0)
+              setSubjectAssets({})
+              setFields({})
+              projectIdRef.current = 0
+              setProjectId(0)
+            }}
+          >
+            ＋ 新建
           </button>
           {editingName ? (
             <input
