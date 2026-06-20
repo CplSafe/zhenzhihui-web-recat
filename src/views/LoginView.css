@@ -1,0 +1,297 @@
+/* 登录页（按 Figma「帧智汇 2.1」还原）：左大图 + 右账号/短信表单。响应式全屏铺满。 */
+.zlogin {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  background: #fff;
+  color: #000;
+}
+
+/* 左：品牌大图 + 顶部分类导航 */
+.zlogin-hero {
+  position: relative;
+  flex: 1 1 50%;
+  min-width: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.zlogin-hero::before {
+  /* 顶部渐变，保证导航文字可读（对应 Figma 顶部 200px 渐变） */
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 200px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0));
+  pointer-events: none;
+}
+
+.zlogin-nav {
+  position: absolute;
+  top: 28px;
+  left: 40px;
+  right: 40px;
+  display: flex;
+  gap: 40px;
+  z-index: 1;
+}
+
+.zlogin-nav-item {
+  position: relative;
+  padding: 4px 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: rgba(217, 217, 217, 0.9);
+  background: none;
+  border: none;
+  cursor: default;
+}
+
+.zlogin-nav-item.is-active {
+  color: #fff;
+}
+
+.zlogin-nav-item.is-active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -4px;
+  width: 80px;
+  height: 2px;
+  border-radius: 2px;
+  background: #fff;
+}
+
+/* 右：表单区 */
+.zlogin-panel {
+  flex: 1 1 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+.zlogin-form {
+  width: 410px;
+  max-width: 100%;
+}
+
+.zlogin-title {
+  margin: 0;
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #000;
+}
+
+.zlogin-sub {
+  margin: 12px 0 0;
+  font-size: 16px;
+  color: #000;
+}
+
+.zlogin-link {
+  margin-left: 4px;
+  padding: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #5767e5;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.zlogin-link:hover {
+  text-decoration: underline;
+}
+
+/* 密码 / 短信 切换 */
+.zlogin-tabs {
+  display: flex;
+  gap: 24px;
+  margin: 28px 0 16px;
+}
+
+.zlogin-tab {
+  position: relative;
+  padding: 4px 0;
+  font-size: 16px;
+  color: #999;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.zlogin-tab.is-active {
+  color: #333;
+  font-weight: 600;
+}
+
+.zlogin-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -6px;
+  width: 100%;
+  height: 2px;
+  border-radius: 2px;
+  background: #333;
+}
+
+.zlogin-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.zlogin-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 60px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #fff;
+  transition: border-color 0.15s;
+}
+.zlogin-field:focus-within {
+  border-color: #5767e5;
+}
+.zlogin-field.has-error {
+  border-color: #e54d42;
+}
+
+.zlogin-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 16px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 16px;
+  color: #333;
+  border-radius: 6px;
+}
+.zlogin-field input::placeholder {
+  color: #666;
+}
+
+.zlogin-eye {
+  flex: none;
+  padding: 0 14px;
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.zlogin-code-btn {
+  flex: none;
+  margin-right: 8px;
+  padding: 0 12px;
+  height: 36px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #5767e5;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.zlogin-code-btn:disabled {
+  color: #bbb;
+  cursor: not-allowed;
+}
+
+.zlogin-captcha-img {
+  flex: none;
+  height: 40px;
+  margin-right: 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.zlogin-err {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: #e54d42;
+}
+
+.zlogin-submit {
+  width: 100%;
+  height: 60px;
+  margin-top: 24px;
+  border: none;
+  border-radius: 16px;
+  background: #333;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.zlogin-submit:hover {
+  background: #1f1f1f;
+}
+.zlogin-submit:disabled {
+  background: #999;
+  cursor: not-allowed;
+}
+
+.zlogin-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.zlogin-forgot {
+  padding: 0;
+  font-size: 16px;
+  color: #666;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.zlogin-forgot:hover {
+  color: #333;
+}
+
+.zlogin-agree {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 40px;
+  font-size: 14px;
+  color: #333;
+  line-height: 1.5;
+}
+
+.zlogin-agree input {
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  accent-color: #5767e5;
+  cursor: pointer;
+  flex: none;
+}
+
+.zlogin-agree a {
+  color: #5767e5;
+  cursor: pointer;
+}
+.zlogin-agree a:hover {
+  text-decoration: underline;
+}
+
+/* 窄屏：隐藏大图，表单铺满 */
+@media (max-width: 860px) {
+  .zlogin-hero {
+    display: none;
+  }
+  .zlogin-panel {
+    flex: 1 1 100%;
+  }
+}

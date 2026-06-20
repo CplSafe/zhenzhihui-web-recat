@@ -14,6 +14,7 @@ import navSparkActive from '@/assets/icons/nav-spark-active.svg'
 import navFolderActive from '@/assets/icons/nav-folder-active.svg'
 import navShopActive from '@/assets/icons/nav-shop-active.svg'
 import SpaceSelectPanel from '@/components/space/SpaceSelectPanel'
+import { APP_VERSION } from '@/version'
 
 // 左侧导航栏（Figma「导航栏」176px，浅色 #f5f5f5）：logo + 创作/管理/团队 三组。
 // 能用的导航跳转，其余 coming-soon。团队是一个下拉选择框（Figma 设计稿）：框内
@@ -89,7 +90,7 @@ export default function CreativeSidebar({
         <img className="brand-logo" src={logoUrl} alt="帧智汇" width={42} height={42} />
         <span className="brand-copy">
           <strong>帧智汇</strong>
-          <em>Betav2.0.1</em>
+          <em>v{APP_VERSION}</em>
         </span>
       </button>
 
