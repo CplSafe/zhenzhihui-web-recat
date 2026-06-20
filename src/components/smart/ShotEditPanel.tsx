@@ -17,8 +17,10 @@ import './ShotEditPanel.css'
 interface ShotEditPanelProps {
   shot: Shot
   regenerating?: boolean
+  /** compact=视频生成页:只留 分镜图缩略 + 素材 + 台词/字幕/音效(分镜图编辑在镜头编排页做) */
+  compact?: boolean
   onOpenElement?: (name: string) => void
-  /** 即时保存字段(台词/字幕/音效/生成提示词/切换分镜图版本) */
+  /** 即时保存字段(台词/字幕/音效/生成提示词/切换分镜图版本/画面描述) */
   onPatch: (patch: Partial<Shot>) => void
   /** 出图:editPrompt 提示词 + refUrls 选中素材 + carryCurrent 是否带当前图 */
   onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
@@ -26,25 +28,58 @@ interface ShotEditPanelProps {
 
 const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
 
-export default function ShotEditPanel({ shot, regenerating, onOpenElement, onPatch, onRegenerateImage }: ShotEditPanelProps) {
+export default function ShotEditPanel({ shot, regenerating, compact, onOpenElement, onPatch, onRegenerateImage }: ShotEditPanelProps) {
   const refFileRef = useRef<HTMLInputElement | null>(null)
 
   const current = shot.image || ''
   const versions = shot.imageVersions || []
   const elUrls = Array.from(new Set(shot.subjects.map((s) => s.image).filter(Boolean))) as string[]
 
-  // 本地草稿(切换分镜时重置):提示词 / 选中的素材 / 额外上传素材 / 是否携带当前图
-  const [imgPrompt, setImgPrompt] = useState(shot.imagePrompt || '')
+  // 本地草稿(切换分镜时重置):提示词(默认回退到画面描述,生成前也能看/改)/ 选中素材 / 额外上传 / 是否携带当前图
+  const [imgPrompt, setImgPrompt] = useState(shot.imagePrompt || shot.desc || '')
   const [selected, setSelected] = useState<Set<string>>(new Set(elUrls))
   const [extraRefs, setExtraRefs] = useState<string[]>([])
   const [carry, setCarry] = useState(!!current)
   useEffect(() => {
-    setImgPrompt(shot.imagePrompt || '')
+    setImgPrompt(shot.imagePrompt || shot.desc || '')
     setSelected(new Set(Array.from(new Set(shot.subjects.map((s) => s.image).filter(Boolean))) as string[]))
     setExtraRefs([])
     setCarry(!!shot.image)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shot.id])
+  }, [shot.id, shot.imagePrompt])
+
+  // 台词/字幕/音效(两种布局共用)
+  const texts = (
+    <div className={`sedit__texts${compact ? ' sedit__texts--col' : ''}`}>
+      <TextField icon={ICON.line} title="台词" value={shot.line || ''} placeholder={`${shot.no}的台词/旁白…`} onChange={(v) => onPatch({ line: v })} />
+      <TextField icon={ICON.subtitle} title="字幕" value={shot.subtitle || ''} placeholder={`${shot.no}的字幕…`} onChange={(v) => onPatch({ subtitle: v })} />
+      <TextField icon={ICON.sfx} title="音效" value={shot.sfx || ''} placeholder={`${shot.no}的音效…`} onChange={(v) => onPatch({ sfx: v })} />
+    </div>
+  )
+
+  // 视频生成页:精简(视频才是重点,分镜图编辑放镜头编排页)
+  if (compact) {
+    return (
+      <div className="sedit sedit--compact">
+        <div className="sedit__sub">分镜图</div>
+        <div className="sedit__cur sedit__cur--sm">
+          {current ? <img src={current} alt="" /> : <span className="sedit__cur-ph">暂无分镜图</span>}
+        </div>
+        <div className="sedit__sub">素材</div>
+        <div className="sedit__els">
+          {shot.subjects.map((su, i) => {
+            const name = stripAt(su.tag)
+            return (
+              <button key={`${su.tag}-${i}`} type="button" className="sedit__el-thumb" title={name} onClick={() => onOpenElement?.(name)}>
+                {su.image ? <img src={su.image} alt={name} /> : <span>+</span>}
+              </button>
+            )
+          })}
+        </div>
+        {texts}
+      </div>
+    )
+  }
 
   const toggle = (url: string) =>
     setSelected((s) => {
@@ -200,29 +235,7 @@ export default function ShotEditPanel({ shot, regenerating, onOpenElement, onPat
       </div>
 
       {/* ── 台词 / 字幕 / 音效(全宽,即时自动保存)── */}
-      <div className="sedit__texts">
-        <TextField
-          icon={ICON.line}
-          title="台词"
-          value={shot.line || ''}
-          placeholder={`${shot.no}的台词/旁白…`}
-          onChange={(v) => onPatch({ line: v })}
-        />
-        <TextField
-          icon={ICON.subtitle}
-          title="字幕"
-          value={shot.subtitle || ''}
-          placeholder={`${shot.no}的字幕…`}
-          onChange={(v) => onPatch({ subtitle: v })}
-        />
-        <TextField
-          icon={ICON.sfx}
-          title="音效"
-          value={shot.sfx || ''}
-          placeholder={`${shot.no}的音效…`}
-          onChange={(v) => onPatch({ sfx: v })}
-        />
-      </div>
+      {texts}
 
       <input
         ref={refFileRef}

@@ -16,6 +16,14 @@
   display: flex;
   flex-direction: column;
 }
+/* 视频生成页:左列表与右素材面板收窄,中间视频占主导(视频才是重点) */
+.vstage .shotlist {
+  flex: 0 0 240px;
+}
+.vstage .sedit--compact {
+  flex: 0 0 320px;
+  max-width: 320px;
+}
 .vstage__title {
   font-size: 15px;
   font-weight: 600;

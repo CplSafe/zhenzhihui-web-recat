@@ -128,6 +128,7 @@ export default function VideoStage({
       {selected ? (
         <ShotEditPanel
           shot={selected}
+          compact
           regenerating={!!generating[selected.id]}
           onOpenElement={onOpenElement}
           onPatch={patchSel}

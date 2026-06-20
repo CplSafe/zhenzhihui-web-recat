@@ -89,7 +89,13 @@ export async function generateFullVideo(args: {
         generateAudio: true,
       }),
   })
-  const completed = await waitForAiTask({ workspaceId: args.workspaceId, task })
+  // 视频生成耗时长,放宽轮询超时(实际不会误触发;默认 120s 会把正常生成判成超时)
+  const completed = await waitForAiTask({
+    workspaceId: args.workspaceId,
+    task,
+    intervalMs: 4000,
+    timeoutMs: 60 * 60 * 1000,
+  })
   const assetId = extractVideoAssetId(completed)
   const [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')

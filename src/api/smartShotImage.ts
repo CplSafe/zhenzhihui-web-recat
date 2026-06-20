@@ -92,7 +92,8 @@ export async function generateShotImage(args: {
     prompt: args.prompt,
     inputAssets: refs.map((id) => ({ asset_id: id, role: 'reference_image' })),
   })
-  const completed = await waitForAiTask({ workspaceId: args.workspaceId, task })
+  // 分镜图生成放宽轮询超时(默认 120s 偏短)
+  const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 30 * 60 * 1000 })
   const url = extractTaskMediaUrls(completed)[0] || ''
   if (!url) throw new Error('未生成分镜图')
   return { url, assetId: outputAssetId(completed) }

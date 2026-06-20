@@ -59,6 +59,20 @@
   color: #aab0b8;
   font-size: 13px;
 }
+/* 视频生成页:精简面板 */
+.sedit--compact {
+  gap: 12px;
+}
+.sedit__cur--sm {
+  max-height: 170px;
+}
+/* 视频生成页:台词/字幕/音效 竖排三行(面板窄,不挤一行)。用复合选择器保证覆盖默认三列 */
+.sedit--compact .sedit__texts {
+  grid-template-columns: 1fr;
+  gap: 12px;
+  border-top: none;
+  padding-top: 0;
+}
 .sedit__spin {
   width: 16px;
   height: 16px;
