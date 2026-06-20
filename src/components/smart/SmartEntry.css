@@ -6,8 +6,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center; /* 垂直居中,避免内容偏上、下方大片空白 */
-  padding: 40px 24px;
+  /* 黄金分割:内容居上约 38.2%(1 - 0.618),比居中略上,符合常见落地页视觉重心 */
+  justify-content: flex-start;
+  padding: clamp(56px, 18vh, 220px) 24px 48px;
   /* 彩色渐变光晕(底部) + 青色线性 tint + 浅底 */
   background:
     radial-gradient(120% 78% at 50% 118%, rgba(58, 227, 97, 0.18), rgba(77, 149, 232, 0.13) 45%, rgba(96, 224, 196, 0) 74%),

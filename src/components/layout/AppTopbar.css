@@ -1,5 +1,7 @@
 /* 共享顶栏 */
 .apptop {
+  position: relative;
+  z-index: 200; /* 确保头像下拉浮层在页面内容之上,不被遮挡 */
   height: 60px;
   flex: 0 0 60px;
   display: flex;

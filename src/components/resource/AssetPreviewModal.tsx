@@ -7,9 +7,11 @@
  * · 媒体区域固定最大尺寸，切换时不会撑起跳动
  * · 左右箭头 + 键盘导航 + Esc 关闭
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import type { AssetPreviewState } from '@/composables/useAssetPreview'
+import { useWorkspaceId } from '@/stores/workspaceSession'
+import { getAssetDownloadUrl } from '@/api/business'
 import './AssetPreviewModal.css'
 
 interface AssetPreviewModalProps {
@@ -19,7 +21,64 @@ interface AssetPreviewModalProps {
   onNext?: () => void
 }
 
+/**
+ * 预览媒体:签名地址可能过期 → 加载失败时按 assetId 拉一次新签名地址重试(与列表缩略图一致)。
+ */
+function PreviewMedia({ item, workspaceId, videoKey }: { item: any; workspaceId: any; videoKey: number }) {
+  const [src, setSrc] = useState<string>(item?.mediaUrl || '')
+  const triedRef = useRef(false)
+
+  useEffect(() => {
+    setSrc(item?.mediaUrl || '')
+    triedRef.current = false
+  }, [item?.mediaUrl])
+
+  const handleError = useCallback(async () => {
+    if (triedRef.current) {
+      setSrc('')
+      return
+    }
+    triedRef.current = true
+    const id = item?.id
+    if (!id || String(id).startsWith('asset-')) {
+      setSrc('')
+      return
+    }
+    try {
+      const fresh = await getAssetDownloadUrl({ workspaceId, assetId: id })
+      setSrc(fresh || '')
+    } catch {
+      setSrc('')
+    }
+  }, [item?.id, workspaceId])
+
+  if (item?.mediaKind === 'image' && src) {
+    return <img src={src} alt={item.title} className="asset-preview-image" onError={handleError} />
+  }
+  if (item?.mediaKind === 'video' && src) {
+    return (
+      <video
+        key={'v' + videoKey}
+        src={src}
+        poster={item.posterUrl || undefined}
+        controls
+        playsInline
+        preload="metadata"
+        className="asset-preview-video"
+        onError={handleError}
+      />
+    )
+  }
+  return (
+    <div className="asset-preview-fallback">
+      <span>{item?.type || '素材'}</span>
+      <b>暂无预览</b>
+    </div>
+  )
+}
+
 export default function AssetPreviewModal({ state, onClose, onPrev, onNext }: AssetPreviewModalProps) {
+  const workspaceId = useWorkspaceId()
   // ---- 派生值 ----
   const activeIndex = Number(state?.activeIndex) || 0
   const items = useMemo(() => (Array.isArray(state?.items) ? state.items : []), [state?.items])
@@ -51,9 +110,11 @@ export default function AssetPreviewModal({ state, onClose, onPrev, onNext }: As
     onClose?.()
   }
 
-  /** 点击遮罩背景关闭 */
+  /** 点击空白处关闭:除图片/视频本体、箭头、按钮外,点任意位置都关闭 */
   function onMaskClick(e: MouseEvent<HTMLDivElement>) {
-    if (e.target === e.currentTarget) handleClose()
+    const t = e.target as HTMLElement
+    if (t.closest('.asset-preview-image, .asset-preview-video, button')) return
+    handleClose()
   }
 
   // 关闭时直接移除 DOM，无闪烁
@@ -91,24 +152,7 @@ export default function AssetPreviewModal({ state, onClose, onPrev, onNext }: As
 
         {/* 图片 / 视频 — 容器尺寸固定 */}
         <div className="asset-preview-media-wrap">
-          {activeItem?.mediaKind === 'image' && activeItem?.mediaUrl ? (
-            <img src={activeItem.mediaUrl} alt={activeItem.title} className="asset-preview-image" />
-          ) : activeItem?.mediaKind === 'video' && activeItem?.mediaUrl ? (
-            <video
-              key={'v' + videoKey}
-              src={activeItem.mediaUrl}
-              poster={activeItem.posterUrl || undefined}
-              controls
-              playsInline
-              preload="metadata"
-              className="asset-preview-video"
-            />
-          ) : (
-            <div className="asset-preview-fallback">
-              <span>{activeItem?.type || '素材'}</span>
-              <b>暂无预览</b>
-            </div>
-          )}
+          <PreviewMedia item={activeItem} workspaceId={workspaceId} videoKey={videoKey} />
         </div>
 
         {/* 右箭头 */}
