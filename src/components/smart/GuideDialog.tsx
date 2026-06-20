@@ -42,74 +42,95 @@ interface Question {
   key: string
   label: string
   hint?: string
+  aiHint?: string // 给 AI 的维度定义+示例,确保候选具体且互相区分
   placeholder: string
   rows?: number
   required?: boolean
   suggestions: string[]
 }
 
-// 按"信息流需求三角(创造需求→介绍产品→呼吁行动)"组织,产品为根(必填)。
 const QUESTIONS: Question[] = [
   {
     key: 'product',
-    label: '产品 / 品牌简介',
-    hint: '必填 · 一句话说清是什么',
-    placeholder: '例:XX 控油洗发水(日化),主打去屑控油。或点下方品类快速填入',
+    label: '产品 / 品牌',
+    hint: '必填',
+    aiHint: '产品品类或一句话定位,如 控油洗发水/智能电动车/在线少儿英语',
+    placeholder: '一句话说清是什么。例:雅迪智能电动车。或点下方建议',
     required: true,
     rows: 2,
-    suggestions: ['美妆护肤', '日化清洁', '食品饮料', '3C数码', '服饰鞋包', '家居家电', '母婴用品', '保健健康', '教育课程', '本地服务', 'APP/小程序', '金融理财'],
+    suggestions: ['美妆护肤', '日化清洁', '食品饮料', '3C数码', '服饰鞋包', '家居家电', '母婴用品', '教育课程', 'APP/小程序'],
   },
   {
     key: 'sellpoint',
-    label: '核心卖点 / 利益点',
-    hint: '为什么选它',
-    placeholder: '产品最打动人的点,或点下方建议',
-    suggestions: ['效果显著', '成分安全', '性价比高', '大牌平替', '操作简单', '省时省力', '专利技术', '独家配方', '明星同款'],
+    label: '核心卖点',
+    hint: '凭什么打动人',
+    aiHint: '产品最打动人的具体功能或利益点(紧扣该产品),如 一次充电跑100公里/0硅油不伤发/外教1对1',
+    placeholder: '最打动人的点,或点下方建议',
+    suggestions: ['效果显著', '成分安全', '性价比高', '大牌平替', '操作简单', '省时省力', '专利技术'],
   },
   {
     key: 'audience',
     label: '目标人群',
-    hint: '给谁看 · 可多个',
-    placeholder: '描述目标人群,或点下方建议',
-    suggestions: ['宝妈', 'Z世代', '职场白领', '银发人群', '小镇青年', '学生党', '新手宝爸', '都市女性', '油皮人群', '敏感肌'],
+    hint: '给谁看',
+    aiHint: '具体人群画像(年龄/身份/特征),如 25-35岁宝妈/大学新生/油痘肌女生',
+    placeholder: '具体人群,或点下方建议',
+    suggestions: ['宝妈', 'Z世代', '职场白领', '银发人群', '小镇青年', '学生党', '油皮人群'],
   },
   {
     key: 'pain',
-    label: '用户痛点 / 想解决的问题',
-    hint: '创造需求',
-    placeholder: '用户当下的烦恼/顾虑,或点下方建议',
-    suggestions: ['价格太贵', '效果不好', '太麻烦', '没时间', '不会挑选', '踩过坑', '担心安全', '反复复购'],
+    label: '用户痛点',
+    hint: '戳中什么',
+    aiHint: '该人群面对该产品的真实烦恼/顾虑,如 续航焦虑/头发出油快/孩子不敢开口',
+    placeholder: '用户的烦恼/顾虑,或点下方建议',
+    suggestions: ['续航焦虑', '太麻烦', '没时间', '不会挑选', '踩过坑', '担心安全', '反复复购'],
   },
   {
     key: 'scene',
     label: '使用场景',
-    hint: '什么时候用',
-    placeholder: '在什么场景下使用/出现,或点下方建议',
-    suggestions: ['通勤路上', '居家日常', '办公室', '健身运动', '聚会出游', '睡前', '带娃时', '换季'],
+    hint: '什么场景',
+    aiHint: '产品被使用或出现的具体场景,如 早晚通勤/健身房/睡前护理/带娃时',
+    placeholder: '使用/出现场景,或点下方建议',
+    suggestions: ['通勤路上', '居家日常', '办公室', '健身运动', '聚会出游', '睡前', '换季'],
   },
   {
     key: 'goal',
     label: '营销目标 & 行动号召',
-    hint: '呼吁行动',
-    placeholder: '希望用户做什么 + 给什么利益,或点下方建议',
-    suggestions: ['转化下单', '留资获客', '涨粉引流', '促活复购', '下载APP', '到店核销', '限时五折', '下单送赠品', '点击领券'],
+    hint: '想让用户做什么',
+    aiHint: '希望用户采取的行动+给的利益(CTA),如 限时5折下单/到店试驾/点击领试听课',
+    placeholder: '目标 + 利益,或点下方建议',
+    suggestions: ['转化下单', '留资获客', '涨粉引流', '到店核销', '限时五折', '下单送赠品', '点击领券'],
   },
   {
     key: 'plot',
-    label: '表现形式 / 剧情类型',
-    hint: '怎么演',
-    placeholder: '想要的叙事/表现方式,或点下方建议',
-    suggestions: ['单人口播', '情景剧', '商品展示', '痛点解决', '剧情反转', '测评种草', '开箱体验', '对比测评', '街头采访', '专家背书'],
+    label: '表现形式 / 剧情',
+    hint: '怎么拍',
+    aiHint: '短视频广告的拍法/叙事套路,如 单人口播/情景剧/痛点解决/剧情反转/测评种草',
+    placeholder: '叙事/表现方式,或点下方建议',
+    suggestions: ['单人口播', '情景剧', '商品展示', '痛点解决', '剧情反转', '测评种草', '开箱体验'],
   },
   {
     key: 'tone',
-    label: '风格调性 & 信任背书',
-    hint: '选填',
-    placeholder: '想要的氛围/可用的背书(销量、好评、资质…)',
-    rows: 2,
-    suggestions: ['真实质朴', '幽默搞笑', '高端精致', '温情治愈', '专业权威', '叫卖促销', '销量数据', '用户好评', '资质认证', '明星代言'],
+    label: '风格调性',
+    hint: '什么氛围',
+    aiHint: '画面/语气的氛围调性,如 真实质朴/幽默搞笑/高端精致/温情治愈/专业权威',
+    placeholder: '想要的氛围,或点下方建议',
+    suggestions: ['真实质朴', '幽默搞笑', '高端精致', '温情治愈', '专业权威', '叫卖促销', '青春活力'],
   },
 ]
+
+// 8 个维度按主题合并为 4 个步骤(每步 2 个相关字段,降低认知负担、各步区分清晰)
+interface StepGroup {
+  title: string
+  desc: string
+  keys: string[]
+}
+const GROUPS: StepGroup[] = [
+  { title: '产品 & 卖点', desc: '它是什么 · 凭什么打动人', keys: ['product', 'sellpoint'] },
+  { title: '人群 & 痛点', desc: '给谁看 · 戳中什么', keys: ['audience', 'pain'] },
+  { title: '场景 & 目标', desc: '什么场景 · 想让用户做什么', keys: ['scene', 'goal'] },
+  { title: '表现 & 风格', desc: '怎么拍 · 什么调性', keys: ['plot', 'tone'] },
+]
+const Q_BY_KEY: Record<string, Question> = Object.fromEntries(QUESTIONS.map((q) => [q.key, q]))
 
 // 本地记忆上次模式(后端就绪后改为后端记录用户上次行为)
 const MODE_KEY = 'smart_guide_mode'
@@ -175,7 +196,7 @@ export default function GuideDialog({
     setSuggLoading((m) => ({ ...m, [qKey]: true }))
     try {
       const exclude = replace ? suggs[qKey] || [] : []
-      const out = await suggestOptions({ label: q.label, context: buildSuggContext(qKey), exclude })
+      const out = await suggestOptions({ label: q.label, hint: q.aiHint, context: buildSuggContext(qKey), exclude })
       setSuggs((m) => ({ ...m, [qKey]: out.length ? out : q.suggestions.slice(0, 5) }))
     } catch {
       setSuggs((m) => ({ ...m, [qKey]: q.suggestions.slice(0, 5) }))
@@ -187,7 +208,8 @@ export default function GuideDialog({
   // 为当前可见的问题按需加载候选(向导=当前步;全部=全部)
   useEffect(() => {
     if (!open) return
-    const targets = mode === 'all' ? QUESTIONS : QUESTIONS[step] ? [QUESTIONS[step]] : []
+    const targets =
+      mode === 'all' ? QUESTIONS : (GROUPS[step]?.keys || []).map((k) => Q_BY_KEY[k]).filter(Boolean)
     targets.forEach((q) => {
       if (!suggs[q.key] && !suggLoading[q.key]) void loadSuggs(q.key)
     })
@@ -250,7 +272,7 @@ export default function GuideDialog({
 
   if (!open) return null
 
-  const last = QUESTIONS.length - 1
+  const last = GROUPS.length - 1
 
   const switchMode = (m: 'wizard' | 'all') => {
     setMode(m)
@@ -281,9 +303,12 @@ export default function GuideDialog({
   }
 
   const goNext = () => {
-    const q = QUESTIONS[step]
-    if (q.required && !(answers[q.key] || '').trim()) {
-      showToast(`请先填写${q.label}`, 'info')
+    const g = GROUPS[step]
+    const missing = g.keys
+      .map((k) => Q_BY_KEY[k])
+      .find((q) => q?.required && !(answers[q.key] || '').trim())
+    if (missing) {
+      showToast(`请先填写${missing.label}`, 'info')
       return
     }
     setStep(step + 1)
@@ -439,18 +464,27 @@ export default function GuideDialog({
 
               {initialText.trim() && <div className="gdlg__idea">你的想法:{initialText.trim()}</div>}
               {mode === 'all' ? (
-                QUESTIONS.map(renderQuestion)
+                GROUPS.map((g) => (
+                  <div className="gdlg__group" key={g.title}>
+                    <div className="gdlg__group-title">
+                      {g.title}
+                      <span>{g.desc}</span>
+                    </div>
+                    {g.keys.map((k) => renderQuestion(Q_BY_KEY[k]))}
+                  </div>
+                ))
               ) : (
                 <>
                   <div className="gdlg__steps">
-                    第 {step + 1} / {QUESTIONS.length} 步
+                    第 {step + 1} / {GROUPS.length} 步 · {GROUPS[step]?.title}
                     <span className="gdlg__dots">
-                      {QUESTIONS.map((q, i) => (
-                        <i key={q.key} className={i === step ? 'is-on' : i < step ? 'is-done' : ''} />
+                      {GROUPS.map((g, i) => (
+                        <i key={g.title} className={i === step ? 'is-on' : i < step ? 'is-done' : ''} />
                       ))}
                     </span>
                   </div>
-                  {renderQuestion(QUESTIONS[step])}
+                  <div className="gdlg__group-desc">{GROUPS[step]?.desc}</div>
+                  {(GROUPS[step]?.keys || []).map((k) => renderQuestion(Q_BY_KEY[k]))}
                 </>
               )}
             </>

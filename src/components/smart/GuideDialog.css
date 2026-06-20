@@ -104,6 +104,32 @@
   line-height: 1.6;
   margin-bottom: 18px;
 }
+/* 全部模式:分组标题 */
+.gdlg__group {
+  margin-bottom: 8px;
+}
+.gdlg__group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2530;
+  margin: 4px 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f1f3;
+}
+.gdlg__group-title span {
+  font-size: 12px;
+  font-weight: 400;
+  color: #9aa3af;
+}
+/* 向导模式:当前步描述 */
+.gdlg__group-desc {
+  font-size: 13px;
+  color: #9aa3af;
+  margin-bottom: 14px;
+}
 .gdlg__q {
   margin-bottom: 18px;
 }
