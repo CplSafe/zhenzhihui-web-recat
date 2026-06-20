@@ -294,27 +294,54 @@ export default function SmartCreateView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, shots])
 
-  // 把分镜里已有的素材图(AI 匹配/已选)纳入对应主体的版本库
+  // 同名主体素材联动 + 纳入版本库:
+  // 脚本只在部分镜头(常仅镜头1)匹配到 imageIndex,这里把每个主体已有的图回填到所有同名缺图的分镜。
   useEffect(() => {
+    // 1) name -> 已有图(取第一个非空)
+    const imgByName = new Map<string, string>()
+    shots.forEach((sh) =>
+      sh.subjects.forEach((su) => {
+        const n = stripAt(su.tag)
+        if (su.image && !imgByName.has(n)) imgByName.set(n, su.image)
+      }),
+    )
+    // 2) 回填到所有同名缺图的 subject
+    let shotsChanged = false
+    const nextShots = shots.map((sh) => {
+      let touched = false
+      const subjects = sh.subjects.map((su) => {
+        const img = imgByName.get(stripAt(su.tag))
+        if (img && !su.image) {
+          touched = true
+          return { ...su, image: img }
+        }
+        return su
+      })
+      if (touched) {
+        shotsChanged = true
+        return { ...sh, subjects }
+      }
+      return sh
+    })
+    if (shotsChanged) {
+      setShots(nextShots)
+      return // 本次先回填,下一轮再并入版本库(避免重复计算)
+    }
+    // 3) 纳入对应主体版本库
     setSubjectAssets((prev) => {
       let changed = false
       const next = { ...prev }
-      shots.forEach((sh) =>
-        sh.subjects.forEach((su) => {
-          if (!su.image) return
-          const n = stripAt(su.tag)
-          const e = next[n] || { versions: [] }
-          if (!e.versions.includes(su.image)) {
-            // 分镜里已有/匹配的素材默认视为「用户上传」(入口素材匹配而来)
-            next[n] = {
-              versions: [...e.versions, su.image],
-              prompt: e.prompt,
-              sources: { ...(e.sources || {}), [su.image]: e.sources?.[su.image] || 'upload' },
-            }
-            changed = true
+      imgByName.forEach((img, n) => {
+        const e = next[n] || { versions: [] }
+        if (!e.versions.includes(img)) {
+          next[n] = {
+            versions: [...e.versions, img],
+            prompt: e.prompt,
+            sources: { ...(e.sources || {}), [img]: e.sources?.[img] || 'upload' },
           }
-        }),
-      )
+          changed = true
+        }
+      })
       return changed ? next : prev
     })
   }, [shots])
