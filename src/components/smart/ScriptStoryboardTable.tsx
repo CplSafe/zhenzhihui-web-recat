@@ -23,6 +23,8 @@ export interface Shot {
   sfx?: string // 音效
   image?: string // 当前分镜图(成片画面)
   imageVersions?: string[] // 分镜图历史版本
+  videoUrl?: string // 该镜生成的视频片段
+  videoAssetId?: number
 }
 
 interface ScriptStoryboardTableProps {

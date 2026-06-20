@@ -10,7 +10,6 @@ import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
-import EditField from '@/components/smart/EditField'
 import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
 import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStoryboardTable'
 import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
@@ -21,6 +20,8 @@ import { generateProjectName, summarizeRequirement, generateShotCopy } from '@/a
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { generateShotImage, ensureAssetId } from '@/api/smartShotImage'
+import { generateClip } from '@/api/smartVideo'
+import VideoStage from '@/components/smart/VideoStage'
 import { createCreativeProject, patchCreativeProject } from '@/api/business'
 import { useWorkspaceId, useModelPlanCandidates } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
@@ -318,6 +319,92 @@ export default function SmartCreateView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, shots])
 
+  // ── 生成视频:逐镜「分镜图 → 视频片段」(后端 Seedance video.generate)──
+  const [vidGen, setVidGen] = useState<Record<string, boolean>>({})
+  const [vidGenRunning, setVidGenRunning] = useState(false)
+  const autoVidRef = useRef(false)
+
+  const genClip = async (ws: number, sh: Shot, cache: Record<string, number>, note?: string) => {
+    const img = sh.image || sh.subjects.find((x) => x.image)?.image || ''
+    let imageAssetId = 0
+    if (img) {
+      try {
+        imageAssetId = await ensureAssetId(ws, img, cache)
+      } catch {
+        /* 无参考图则走纯文生视频 */
+      }
+    }
+    const prompt = [
+      sh.desc,
+      sh.line && `台词:${sh.line}`,
+      entryMeta?.style && `${entryMeta.style}风格`,
+      note && `额外修改要求:${note}`,
+    ]
+      .filter(Boolean)
+      .join(';')
+    const { url, assetId } = await generateClip({
+      workspaceId: ws,
+      prompt,
+      imageAssetId,
+      durationSec: parseInt(String(sh.duration || ''), 10) || 5,
+      ratio: entryMeta?.ratio,
+      modelPlanCandidates,
+    })
+    setShots((prev) => prev.map((x) => (x.id === sh.id ? { ...x, videoUrl: url, videoAssetId: assetId } : x)))
+  }
+
+  const generateVideos = async () => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法生成视频', 'error')
+      return
+    }
+    if (vidGenRunning) return
+    setVidGenRunning(true)
+    const cache: Record<string, number> = {}
+    try {
+      for (const sh of shots) {
+        setVidGen((m) => ({ ...m, [sh.id]: true }))
+        try {
+          await genClip(ws, sh, cache)
+        } catch (e: any) {
+          showToast(`分镜「${sh.no}」视频生成失败:${e?.message || ''}`, 'error')
+        } finally {
+          setVidGen((m) => ({ ...m, [sh.id]: false }))
+        }
+      }
+    } finally {
+      setVidGenRunning(false)
+    }
+  }
+
+  const regenerateClip = async (sh: Shot, note?: string) => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法生成视频', 'error')
+      return
+    }
+    if (vidGen[sh.id]) return
+    setVidGen((m) => ({ ...m, [sh.id]: true }))
+    try {
+      await genClip(ws, sh, {}, note)
+    } catch (e: any) {
+      showToast(`分镜「${sh.no}」视频生成失败:${e?.message || ''}`, 'error')
+    } finally {
+      setVidGen((m) => ({ ...m, [sh.id]: false }))
+    }
+  }
+
+  // 进入生成视频:若视频尚未生成,则自动串行逐镜生成
+  useEffect(() => {
+    if (step !== 2 || !shots.length || vidGenRunning) return
+    if (autoVidRef.current) return
+    if (shots.some((s) => s.videoUrl)) return
+    autoVidRef.current = true
+    void generateVideos()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, shots])
+
   // 同名主体素材联动 + 纳入版本库:
   // 脚本只在部分镜头(常仅镜头1)匹配到 imageIndex,这里把每个主体已有的图回填到所有同名缺图的分镜。
   useEffect(() => {
@@ -372,7 +459,6 @@ export default function SmartCreateView() {
 
   // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
   const [fields, setFields] = useState<Record<string, string>>({})
-  const setField = (key: string) => (v: string) => setFields((f) => ({ ...f, [key]: v }))
 
   // ── 本地草稿:自动保存 + 进入时恢复(便于测试不用从头) ──
   const hydratedRef = useRef(false)
@@ -568,13 +654,24 @@ export default function SmartCreateView() {
             variant: 'ghost',
             action: () => generateShotImages(),
           },
-          { label: '生成视频', variant: 'primary', action: () => goStep(2) },
+          {
+            label: '生成视频',
+            variant: 'primary',
+            action: () => {
+              autoVidRef.current = false
+              goStep(2)
+            },
+          },
         ]
       case 2: // 生成视频
         return [
           { label: '上一步', variant: 'ghost', action: () => goStep(1) },
           { label: '保存视频', variant: 'ghost', action: todo('保存视频至 项目管理-待归类(待接入)') },
-          { label: '重新生成视频', variant: 'primary', action: todo('重新生成视频(待接入)') },
+          {
+            label: vidGenRunning ? '生成中…' : '重新生成视频',
+            variant: 'primary',
+            action: () => generateVideos(),
+          },
         ]
       default:
         return []
@@ -664,63 +761,8 @@ export default function SmartCreateView() {
         />
       )
     }
-    // step === 3 视频生成:左分镜列表 + 中视频(占位),右素材修改(已接 AI 润色)
-    return (
-      <div className="smart__cols">
-        <div className="smart__col smart__col--list">
-          <div className="smart__panel-title">分镜列表</div>
-          <div className="smart__placeholder smart__placeholder--sm">分镜列表。建设中</div>
-        </div>
-        <div className="smart__col smart__col--video">
-          <div className="smart__panel-title">视频内容修改</div>
-          <div className="smart__video-ph">视频播放 + 帧选择 / 片段编辑。建设中</div>
-          <EditField
-            label="对整段视频提出修改意见"
-            value={fields.videoAll || ''}
-            onChange={setField('videoAll')}
-            kind="segment"
-            placeholder="对整段视频的修改诉求…"
-            rows={3}
-          />
-        </div>
-        <div className="smart__col smart__col--edit">
-          <div className="smart__panel-title">
-            素材修改 <span className="smart__panel-hint">（分镜 1）</span>
-          </div>
-          <div className="smart__placeholder smart__placeholder--xs">素材 + 上传 + 素材历史。建设中</div>
-          {/* 规范第 4 条:素材下方补回缺失的「素材描述」修改框 */}
-          <EditField
-            label="素材描述"
-            value={fields.matDesc || ''}
-            onChange={setField('matDesc')}
-            kind="generic"
-            placeholder="这张素材的核心信息 / 描述…"
-            rows={2}
-          />
-          <EditField
-            label="台词"
-            value={fields.line || ''}
-            onChange={setField('line')}
-            kind="line"
-            placeholder="分镜中识别到的台词文本…"
-          />
-          <EditField
-            label="字幕"
-            value={fields.subtitle || ''}
-            onChange={setField('subtitle')}
-            kind="subtitle"
-            placeholder="分镜中识别到的字幕文本…"
-          />
-          <EditField
-            label="音效"
-            value={fields.sound || ''}
-            onChange={setField('sound')}
-            kind="sound"
-            placeholder="分镜中识别到的音效文本…"
-          />
-        </div>
-      </div>
-    )
+    // step === 2 生成视频:左分镜列表 + 右视频预览/重生成(逐镜图生视频)
+    return <VideoStage shots={shots} generating={vidGen} onRegenerateClip={regenerateClip} />
   }
 
   return (
