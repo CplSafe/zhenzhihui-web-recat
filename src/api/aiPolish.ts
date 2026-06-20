@@ -123,3 +123,21 @@ export async function generateProjectName(requirement: string, signal?: AbortSig
   if (!name) throw new Error('生成名称为空,请重试')
   return name
 }
+
+/**
+ * AI 引导(入口页):把用户粗略的创作需求梳理、补全成更清晰可执行的"创作需求"。
+ * 注意:这不是写分镜脚本/台词,只是帮用户把 brief 想得更专业完整(信息流广告视角)。
+ */
+export async function guideRequirement(text: string, signal?: AbortSignal): Promise<string> {
+  const req = (text || '').trim()
+  if (!req) throw new Error('请先输入创作需求')
+  const system =
+    '你是资深信息流广告策划。用户会给一段粗略的视频创作需求。请帮他把需求梳理、补全得更清晰可执行:' +
+    '点明【目标人群】【核心痛点/诉求】【主要卖点(利益点)】【建议的剧情方向】【营销目标】等关键要素;' +
+    '用户没提到的,基于信息流广告经验给出合理建议。' +
+    '输出一段更完整、结构清晰的"创作需求"(供后续生成分镜使用),用简洁的要点或短段落;' +
+    '不要写分镜脚本、不要写台词或镜头画面、不要额外解释说明。'
+  const out = await chatOnce(system, req, signal, 600)
+  if (!out) throw new Error('生成为空,请重试')
+  return out
+}

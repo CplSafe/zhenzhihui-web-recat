@@ -199,28 +199,42 @@
   background: #f3fffc;
 }
 
-/* AI 润色按钮(青色强调) */
-.screate__polish {
+/* AI 引导按钮(青色强调) */
+.screate__guide {
   border-color: #bdeee3;
   color: #11a98a;
   font-weight: 600;
 }
-.screate__polish:hover:not(:disabled) {
+.screate__guide:hover:not(:disabled) {
   background: #1fcfa9;
   border-color: #1fcfa9;
   color: #fff;
 }
-.screate__polish:disabled {
+.screate__guide:disabled {
   opacity: 0.7;
   cursor: default;
 }
-.screate__polish-spin {
+.screate__guide-spin {
   width: 13px;
   height: 13px;
   border: 2px solid rgba(31, 207, 169, 0.35);
   border-top-color: #11a98a;
   border-radius: 50%;
   animation: screate-spin 0.7s linear infinite;
+}
+
+/* 撤销/重做图标按钮 */
+.screate__icon-btn {
+  padding: 0;
+  width: 38px;
+  justify-content: center;
+}
+.screate__icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  border-color: #eef0f2;
+  color: #b0b4ba;
+  background: #fafbfc;
 }
 @keyframes screate-spin {
   to {

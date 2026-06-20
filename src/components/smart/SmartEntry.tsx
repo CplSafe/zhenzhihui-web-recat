@@ -6,7 +6,7 @@
  */
 import { useRef, useState } from 'react'
 import EntryDropdown from './EntryDropdown'
-import { polishText } from '@/api/aiPolish'
+import { guideRequirement } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
 import './SmartEntry.css'
 
@@ -38,25 +38,59 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   const [ratio, setRatio] = useState('16:9')
   const [duration, setDuration] = useState('5s')
   const [images, setImages] = useState<string[]>([])
-  const [polishing, setPolishing] = useState(false)
+  const [guiding, setGuiding] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
-  // AI 润色:把用户的粗略需求扩写润色成更完整的创作 brief(本地 Qwen)。
-  const handlePolish = async () => {
-    if (polishing) return
+  // ── 需求文本的撤销/重做历史(AI 引导会改写文本,需可回退/前进)──
+  const histRef = useRef<string[]>([''])
+  const idxRef = useRef(0)
+  const [, bumpHist] = useState(0)
+  const commitText = (val: string) => {
+    if (histRef.current[idxRef.current] === val) return
+    const next = histRef.current.slice(0, idxRef.current + 1)
+    next.push(val)
+    histRef.current = next
+    idxRef.current = next.length - 1
+    bumpHist((v) => v + 1)
+  }
+  const undo = () => {
+    // 有未提交的手动编辑 → 先回到最近快照;否则回退一步
+    if (text !== histRef.current[idxRef.current]) {
+      setText(histRef.current[idxRef.current])
+    } else if (idxRef.current > 0) {
+      idxRef.current -= 1
+      setText(histRef.current[idxRef.current])
+    }
+    bumpHist((v) => v + 1)
+  }
+  const redo = () => {
+    if (text === histRef.current[idxRef.current] && idxRef.current < histRef.current.length - 1) {
+      idxRef.current += 1
+      setText(histRef.current[idxRef.current])
+      bumpHist((v) => v + 1)
+    }
+  }
+  const canUndo = idxRef.current > 0 || text !== histRef.current[idxRef.current]
+  const canRedo = text === histRef.current[idxRef.current] && idxRef.current < histRef.current.length - 1
+
+  // AI 引导:帮用户把粗略需求梳理、补全得更专业完整(不写脚本)。结果可撤销/重做。
+  const handleGuide = async () => {
+    if (guiding) return
     if (!text.trim()) {
       showToast('请先输入创作需求', 'info')
       return
     }
-    setPolishing(true)
+    setGuiding(true)
     try {
-      const out = await polishText(text, { kind: 'script' })
+      commitText(text) // 先快照当前输入,便于回退
+      const out = await guideRequirement(text)
       setText(out)
-      showToast('已润色', 'success')
+      commitText(out) // 快照 AI 结果,便于重做
+      showToast('已按信息流广告思路补全需求', 'success')
     } catch (e: any) {
-      showToast(e?.message || '润色失败,请重试', 'error')
+      showToast(e?.message || '引导失败,请重试', 'error')
     } finally {
-      setPolishing(false)
+      setGuiding(false)
     }
   }
 
@@ -207,23 +241,51 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
                 @
               </button>
 
-              {/* AI 润色:把需求扩写润色得更完整 */}
+              {/* AI 引导:帮用户把需求想得更专业完整(不写脚本) */}
               <button
                 type="button"
-                className="screate__pill screate__polish"
-                onClick={handlePolish}
-                disabled={polishing}
-                title="AI 润色:把你的需求扩写得更完整"
+                className="screate__pill screate__guide"
+                onClick={handleGuide}
+                disabled={guiding}
+                title="AI 引导:按信息流广告思路帮你补全需求(人群/痛点/卖点/剧情/目标)"
               >
-                {polishing ? (
-                  <span className="screate__polish-spin" aria-hidden="true" />
+                {guiding ? (
+                  <span className="screate__guide-spin" aria-hidden="true" />
                 ) : (
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
                     <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
                   </svg>
                 )}
-                {polishing ? '润色中…' : 'AI 润色'}
+                {guiding ? '引导中…' : 'AI 引导'}
+              </button>
+
+              {/* 撤销 / 重做(主要用于回退 AI 引导的改动) */}
+              <button
+                type="button"
+                className="screate__pill screate__icon-btn"
+                onClick={undo}
+                disabled={!canUndo}
+                title="撤销"
+                aria-label="撤销"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 7H5V3" />
+                  <path d="M5 7a8 8 0 1 1-2 5.3" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="screate__pill screate__icon-btn"
+                onClick={redo}
+                disabled={!canRedo}
+                title="重做"
+                aria-label="重做"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 7h4V3" />
+                  <path d="M19 7a8 8 0 1 0 2 5.3" />
+                </svg>
               </button>
             </div>
 
