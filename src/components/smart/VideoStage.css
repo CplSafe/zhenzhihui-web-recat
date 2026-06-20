@@ -1,116 +1,25 @@
-/* 生成视频步骤 */
+/* 视频生成:左 分镜列表 + 中 完整视频 + 右 素材面板 */
 .vstage {
   display: flex;
   gap: 18px;
-  align-items: flex-start;
+  align-items: stretch;
 }
-.vstage__list {
-  flex: 0 0 260px;
-  background: #fff;
-  border: 1px solid #eef0f4;
-  border-radius: 14px;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.vstage__main {
+.vstage__center {
   flex: 1 1 auto;
   min-width: 0;
   background: #fff;
   border: 1px solid #eef0f4;
   border-radius: 14px;
   padding: 16px;
+  display: flex;
+  flex-direction: column;
 }
 .vstage__title {
   font-size: 15px;
   font-weight: 600;
   color: #1f2937;
-  margin-bottom: 4px;
+  margin-bottom: 10px;
 }
-.vstage__hint {
-  font-size: 13px;
-  font-weight: 400;
-  color: #9aa3af;
-}
-
-/* 左卡 */
-.vstage__card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border: 1px solid #eef0f4;
-  border-radius: 12px;
-  padding: 10px;
-  background: #fff;
-  cursor: pointer;
-  text-align: left;
-  transition: all 0.15s;
-}
-.vstage__card.is-active {
-  border-color: #1fcfa9;
-  box-shadow: 0 0 0 2px rgba(31, 207, 169, 0.14);
-}
-.vstage__info {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.vstage__no {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-}
-.vstage__badge {
-  font-size: 11px;
-  color: #909090;
-}
-.vstage__card.is-active .vstage__badge {
-  color: #11a98a;
-}
-.vstage__thumb {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: 8px;
-  overflow: hidden;
-  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.vstage__thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.vstage__thumb-ph {
-  color: #aab0b8;
-  font-size: 13px;
-}
-.vstage__gen {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.8);
-}
-.vstage__gen-spin {
-  width: 18px;
-  height: 18px;
-  border: 2px solid rgba(31, 207, 169, 0.35);
-  border-top-color: #11a98a;
-  border-radius: 50%;
-  animation: vstage-spin 0.7s linear infinite;
-}
-@keyframes vstage-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* 右:播放器 */
 .vstage__player {
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -120,7 +29,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 10px 0 14px;
+  margin-bottom: 14px;
 }
 .vstage__player video {
   width: 100%;
@@ -135,19 +44,25 @@
   color: #aab0b8;
   font-size: 14px;
 }
-.vstage__meta {
-  font-size: 13px;
-  color: #4b5563;
-  line-height: 1.8;
-  margin-bottom: 14px;
+.vstage__spin {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: vstage-spin 0.7s linear infinite;
 }
-.vstage__meta b {
-  color: #1f2937;
+@keyframes vstage-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
+
 .vstage__modify {
   display: flex;
   gap: 10px;
   align-items: flex-end;
+  margin-bottom: 14px;
 }
 .vstage__note {
   flex: 1 1 auto;
@@ -165,19 +80,55 @@
 .vstage__note:focus {
   border-color: #1fcfa9;
 }
-.vstage__btn {
+.vstage__send {
   flex: 0 0 auto;
-  height: 40px;
-  padding: 0 18px;
-  border: 1px solid #1fcfa9;
-  border-radius: 9px;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 10px;
   background: #1fcfa9;
   color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+}
+.vstage__send:hover:not(:disabled) {
+  background: #1bb897;
+}
+.vstage__send:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.vstage__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+.vstage__btn {
+  height: 40px;
+  padding: 0 20px;
+  border-radius: 9px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
 }
-.vstage__btn:hover:not(:disabled) {
+.vstage__btn--ghost {
+  border: 1px solid #d8dce3;
+  background: #fff;
+  color: #4b5563;
+}
+.vstage__btn--ghost:hover:not(:disabled) {
+  border-color: #1fcfa9;
+  color: #1fcfa9;
+}
+.vstage__btn--primary {
+  border: 1px solid #1fcfa9;
+  background: #1fcfa9;
+  color: #fff;
+}
+.vstage__btn--primary:hover:not(:disabled) {
   background: #1bb897;
 }
 .vstage__btn:disabled {
@@ -185,7 +136,11 @@
   cursor: default;
 }
 .vstage__empty {
-  padding: 30px;
+  flex: 1 1 auto;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 60px 30px;
   text-align: center;
   color: #9aa3af;
   font-size: 14px;
@@ -195,8 +150,10 @@
   .vstage {
     flex-wrap: wrap;
   }
-  .vstage__list,
-  .vstage__main {
+  .vstage .shotlist,
+  .vstage__center,
+  .vstage .sedit,
+  .vstage__empty {
     flex: 1 1 100%;
   }
 }

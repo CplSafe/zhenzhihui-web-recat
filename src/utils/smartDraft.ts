@@ -18,6 +18,9 @@ export interface SmartDraft {
   subjectAssets?: Record<string, any>
   fields?: Record<string, string>
   projectId?: number
+  /** 整片视频(seedance 一次生成) */
+  fullVideoUrl?: string
+  fullVideoAssetId?: number
 }
 
 const killBlob = (u: any) => (typeof u === 'string' && u.startsWith('blob:') ? '' : u)
@@ -134,10 +137,8 @@ export function buildSmartSnapshot(d: SmartDraft): any {
     currentImage: s.image ? { url: s.image } : null,
     versionHistory: (s.imageVersions || []).map((u: string) => ({ url: u })),
   }))
-  const clips = shots
-    .filter((s: any) => s.videoUrl)
-    .map((s: any) => ({ url: s.videoUrl, assetId: Number(s.videoAssetId || 0) || 0, no: s.no }))
-  const firstClip = clips[0] || { url: '', assetId: 0 }
+  const fvUrl = killHeavy(clean.fullVideoUrl || '')
+  const fvId = Number(clean.fullVideoAssetId || 0) || 0
   return {
     flow: 'smart',
     title: clean.projectName || '',
@@ -148,9 +149,9 @@ export function buildSmartSnapshot(d: SmartDraft): any {
     selectedRatio: clean.entryMeta?.ratio || '',
     selectedStyles: clean.entryMeta?.style ? [clean.entryMeta.style] : [],
     storyboardItems,
-    generatedVideoUrl: firstClip.url,
-    generatedVideoAssetId: firstClip.assetId,
-    videoHistoryList: clips,
+    generatedVideoUrl: fvUrl,
+    generatedVideoAssetId: fvId,
+    videoHistoryList: fvUrl || fvId ? [{ url: fvUrl, assetId: fvId }] : [],
     // 智能成片原生快照(精确回填,见 parseSmartSnapshot)
     smart: clean,
   }

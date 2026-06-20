@@ -1,0 +1,205 @@
+/* 右侧素材修改面板(镜头编排 / 视频生成 共用) */
+.sedit {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sedit__sec-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 8px 0 6px;
+}
+
+/* 元素列表 */
+.sedit__elements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.sedit__el {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 92px;
+}
+.sedit__el-thumb {
+  width: 92px;
+  height: 92px;
+  border-radius: 10px;
+  border: 1px solid #eef0f4;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #b0b4ba;
+  font-size: 22px;
+  padding: 0;
+}
+.sedit__el-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sedit__el-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 92px;
+}
+.sedit__el-name {
+  font-size: 12px;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sedit__el-kind {
+  font-size: 10px;
+  color: #9aa3af;
+  background: #f1f3f6;
+  border-radius: 4px;
+  padding: 0 4px;
+  flex: 0 0 auto;
+}
+.sedit__el-upload {
+  font-size: 11px;
+  color: #11a98a;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.sedit__el-empty {
+  font-size: 13px;
+  color: #9aa3af;
+  padding: 8px 0;
+}
+
+/* 分镜图预览 */
+.sedit__frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sedit__frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sedit__frame-ph {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #aab0b8;
+  font-size: 13px;
+}
+.sedit__spin {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: sedit-spin 0.7s linear infinite;
+}
+@keyframes sedit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 素材历史 */
+.sedit__hist-title {
+  font-size: 12px;
+  color: #9aa3af;
+  margin: 8px 0 4px;
+}
+.sedit__hist-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.sedit__hist {
+  flex: 0 0 auto;
+  width: 76px;
+  height: 48px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: #f0f2f5;
+  cursor: pointer;
+  padding: 0;
+}
+.sedit__hist img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sedit__hist.is-active {
+  border-color: #1fcfa9;
+}
+
+/* 输入框块 */
+.sedit__field {
+  display: flex;
+  flex-direction: column;
+}
+.sedit__ta {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #1f2937;
+  font-family: inherit;
+  outline: none;
+}
+.sedit__ta:focus {
+  border-color: #1fcfa9;
+}
+.sedit__field-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+.sedit__count {
+  font-size: 12px;
+  color: #b0b4ba;
+}
+.sedit__submit {
+  height: 30px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 8px;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.sedit__submit:hover:not(:disabled) {
+  background: #1bb897;
+}
+.sedit__submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

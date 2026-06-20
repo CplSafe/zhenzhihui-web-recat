@@ -1,109 +1,145 @@
 /**
- * 生成视频步骤:左=分镜列表(每镜的分镜图 + 视频状态),右=选中镜头的视频预览 + 修改/重生成。
- * 每镜视频由该镜分镜图(图生视频)生成。
+ * VideoStage — 视频生成(2.1)。
+ * 左:分镜列表(ShotList);中:完整视频(未生成时为空)+ 对整片提修改意见 + 总按钮;右:素材修改面板。
+ * 视频是「整片」一次生成(所有分镜图+脚本+台词+字幕+音效 → seedance),非逐镜。
  */
 import { useEffect, useState } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
+import ShotList from './ShotList'
+import ShotEditPanel from './ShotEditPanel'
 import './VideoStage.css'
 
 interface VideoStageProps {
   shots: Shot[]
-  /** 正在生成视频的镜头(键为 shot.id) */
+  /** 正在生成分镜图的镜头(右面板/左列表转圈) */
   generating?: Record<string | number, boolean>
-  onRegenerateClip?: (shot: Shot, note?: string) => void
+  /** 当前整片视频 url */
+  videoUrl?: string
+  /** 整片生成中 */
+  videoGenerating?: boolean
+  onShotsChange: (shots: Shot[]) => void
+  onOpenElement?: (name: string) => void
+  onUploadElement?: (name: string, file: File) => void
+  onRegenerateImage: (shot: Shot, feedback: string) => void
+  /** 重新生成整片(note=对整片的修改意见) */
+  onRegenerateVideo: (note?: string) => void
+  /** 保存视频到项目管理 */
+  onSaveVideo: () => void
+  savingVideo?: boolean
+  onPrev?: () => void
 }
 
-export default function VideoStage({ shots, generating = {}, onRegenerateClip }: VideoStageProps) {
+export default function VideoStage({
+  shots,
+  generating = {},
+  videoUrl,
+  videoGenerating,
+  onShotsChange,
+  onOpenElement,
+  onUploadElement,
+  onRegenerateImage,
+  onRegenerateVideo,
+  onSaveVideo,
+  savingVideo,
+  onPrev,
+}: VideoStageProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   const [note, setNote] = useState('')
-
   useEffect(() => {
     if (!shots.some((s) => s.id === selectedId)) setSelectedId(shots[0]?.id ?? null)
   }, [shots, selectedId])
 
   const selected = shots.find((s) => s.id === selectedId) || null
+  const patchSel = (patch: Partial<Shot>) => {
+    if (!selected) return
+    onShotsChange(shots.map((s) => (s.id === selected.id ? { ...s, ...patch } : s)))
+  }
 
   return (
     <div className="vstage">
-      {/* 左:分镜列表 */}
-      <div className="vstage__list">
-        <div className="vstage__title">分镜列表</div>
-        {shots.map((s) => {
-          const thumb = s.image || s.subjects.find((x) => x.image)?.image
-          return (
-            <button
-              key={s.id}
-              type="button"
-              className={`vstage__card${s.id === selectedId ? ' is-active' : ''}`}
-              onClick={() => setSelectedId(s.id)}
-            >
-              <div className="vstage__info">
-                <span className="vstage__no">{s.no}</span>
-                <span className="vstage__badge">
-                  {generating[s.id] ? '生成中…' : s.videoUrl ? '✓ 已生成' : '待生成'}
-                </span>
-              </div>
-              <div className="vstage__thumb">
-                {thumb ? <img src={thumb} alt="" /> : <span className="vstage__thumb-ph">{s.no}</span>}
-                {generating[s.id] && (
-                  <div className="vstage__gen">
-                    <span className="vstage__gen-spin" aria-hidden="true" />
-                  </div>
-                )}
-              </div>
+      <ShotList
+        shots={shots}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        generating={generating}
+        onShotsChange={onShotsChange}
+      />
+
+      {/* 中:完整视频 + 修改意见 + 总按钮 */}
+      <div className="vstage__center">
+        <div className="vstage__title">视频内容修改</div>
+        <div className="vstage__player">
+          {videoGenerating ? (
+            <div className="vstage__player-ph">
+              <span className="vstage__spin" aria-hidden="true" />
+              视频生成中…
+            </div>
+          ) : videoUrl ? (
+            <video src={videoUrl} controls playsInline preload="metadata" />
+          ) : (
+            <div className="vstage__player-ph">暂无视频,点下方「重新生成视频」生成整片</div>
+          )}
+        </div>
+
+        <div className="vstage__modify">
+          <textarea
+            className="vstage__note"
+            value={note}
+            placeholder="对这条视频提出修改意见(可选)…"
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <button
+            type="button"
+            className="vstage__send"
+            disabled={!!videoGenerating}
+            title="按此意见重新生成整片"
+            onClick={() => onRegenerateVideo(note.trim() || undefined)}
+            aria-label="按修改意见重新生成"
+          >
+            ➤
+          </button>
+        </div>
+
+        {/* 总按钮 */}
+        <div className="vstage__actions">
+          {onPrev && (
+            <button type="button" className="vstage__btn vstage__btn--ghost" onClick={onPrev}>
+              上一步
             </button>
-          )
-        })}
-        {!shots.length && <div className="vstage__empty">暂无分镜</div>}
+          )}
+          <button
+            type="button"
+            className="vstage__btn vstage__btn--ghost"
+            onClick={onSaveVideo}
+            disabled={!!savingVideo}
+          >
+            {savingVideo ? '保存中…' : '保存视频'}
+          </button>
+          <button
+            type="button"
+            className="vstage__btn vstage__btn--primary"
+            onClick={() => onRegenerateVideo()}
+            disabled={!!videoGenerating}
+          >
+            {videoGenerating ? '生成中…' : '重新生成视频'}
+          </button>
+        </div>
       </div>
 
-      {/* 右:视频预览 + 修改 */}
-      <div className="vstage__main">
-        {selected ? (
-          <>
-            <div className="vstage__title">
-              视频预览 <span className="vstage__hint">（{selected.no}）</span>
-            </div>
-            <div className="vstage__player">
-              {generating[selected.id] ? (
-                <div className="vstage__player-ph">
-                  <span className="vstage__gen-spin" aria-hidden="true" />
-                  视频生成中…
-                </div>
-              ) : selected.videoUrl ? (
-                <video src={selected.videoUrl} controls playsInline preload="metadata" />
-              ) : (
-                <div className="vstage__player-ph">暂无视频,点下方「重新生成此镜」</div>
-              )}
-            </div>
-
-            <div className="vstage__meta">
-              {selected.line && <div><b>台词</b>:{selected.line}</div>}
-              {selected.subtitle && <div><b>字幕</b>:{selected.subtitle}</div>}
-              {selected.sfx && <div><b>音效</b>:{selected.sfx}</div>}
-            </div>
-
-            <div className="vstage__modify">
-              <textarea
-                className="vstage__note"
-                value={note}
-                placeholder="对该镜视频提出修改意见(可选)…"
-                onChange={(e) => setNote(e.target.value)}
-              />
-              <button
-                type="button"
-                className="vstage__btn"
-                disabled={!!generating[selected.id]}
-                onClick={() => onRegenerateClip?.(selected, note.trim() || undefined)}
-              >
-                {generating[selected.id] ? '生成中…' : '重新生成此镜'}
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className="vstage__empty">请选择左侧分镜</div>
-        )}
-      </div>
+      {/* 右:素材修改面板(无底部按钮,总控在中间) */}
+      {selected ? (
+        <ShotEditPanel
+          shot={selected}
+          regenerating={!!generating[selected.id]}
+          onOpenElement={onOpenElement}
+          onUploadElement={onUploadElement}
+          onSwitchImageVersion={(url) => patchSel({ image: url })}
+          onRegenerateImage={onRegenerateImage}
+          onSubmitField={(field, value) => patchSel({ [field]: value })}
+        />
+      ) : (
+        <div className="vstage__empty">请选择左侧分镜</div>
+      )}
     </div>
   )
 }

@@ -16,11 +16,12 @@ import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import SubjectMaterialBoard, { type BoardSubject } from '@/components/smart/SubjectMaterialBoard'
 import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
-import { generateProjectName, summarizeRequirement, generateShotCopy } from '@/api/aiPolish'
+import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { generateShotImage, ensureAssetId } from '@/api/smartShotImage'
-import { generateClip } from '@/api/smartVideo'
+import { generateFullVideo } from '@/api/smartVideo'
+import { fileToDataUrl } from '@/utils/imageFile'
 import VideoStage from '@/components/smart/VideoStage'
 import {
   createCreativeProject,
@@ -236,7 +237,9 @@ export default function SmartCreateView() {
     cache: Record<string, number>,
     theme: string,
     plans: string[],
+    feedback?: string,
   ) => {
+    // 元素(素材)组合:把该镜各元素图作参考,保证同一元素跨镜一致
     const subjUrls = Array.from(new Set(sh.subjects.map((s) => s.image).filter(Boolean))) as string[]
     const refIds: number[] = []
     for (const u of subjUrls) {
@@ -247,9 +250,11 @@ export default function SmartCreateView() {
         /* 单张参考上传失败则跳过 */
       }
     }
-    if (prevUrl) {
+    // 带修改意见重生成 → 以当前分镜图为底图(img2img);否则用上一张做连贯参考
+    const baseUrl = feedback ? sh.image || '' : prevUrl
+    if (baseUrl) {
       try {
-        const id = await ensureAssetId(ws, prevUrl, cache)
+        const id = await ensureAssetId(ws, baseUrl, cache)
         if (id) refIds.push(id)
       } catch {
         /* ignore */
@@ -257,9 +262,12 @@ export default function SmartCreateView() {
     }
     const prompt = [
       sh.desc,
+      feedback && `修改要求:${feedback}`,
       theme && `整体广告主题:${theme}`,
       entryMeta?.style && `${entryMeta.style}风格`,
-      prevUrl && '与上一镜头保持人物形象、场景、配色、画风一致',
+      feedback
+        ? '在当前画面基础上按修改要求调整,保持其余部分一致'
+        : prevUrl && '与上一镜头保持人物形象、场景、配色、画风一致',
       '画面比例 ' + (entryMeta?.ratio || '16:9'),
     ]
       .filter(Boolean)
@@ -307,20 +315,18 @@ export default function SmartCreateView() {
     }
   }
 
-  // 单镜重生成(用前一镜当前图做连贯参考)
-  const regenerateShot = async (sh: Shot) => {
+  // 单镜分镜图重生成:用当前图作底图(img2img)+ 元素组合 + 修改意见 → 新版本
+  const regenerateShotImage = async (sh: Shot, feedback?: string) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成', 'error')
       return
     }
     if (shotGen[sh.id]) return
-    const idx = shots.findIndex((x) => x.id === sh.id)
-    const prevUrl = idx > 0 ? shots[idx - 1]?.image || '' : ''
     setShotGen((m) => ({ ...m, [sh.id]: true }))
     try {
       const plans = await resolvePlanCandidates()
-      await genShotFrame(ws, sh, prevUrl, {}, (reqSummary || '').slice(0, 60), plans)
+      await genShotFrame(ws, sh, '', {}, (reqSummary || '').slice(0, 60), plans, feedback || undefined)
     } catch (e: any) {
       showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
     } finally {
@@ -328,21 +334,10 @@ export default function SmartCreateView() {
     }
   }
 
-  // 镜头编排:按整体剧情 + 画面描述,生成该镜头的台词/字幕/音效并填入
-  const genShotCopy = async (sh: Shot) => {
-    try {
-      const c = await generateShotCopy({
-        requirement: reqSummary || requirement,
-        desc: sh.desc,
-        durationSec: parseInt(String(sh.duration || ''), 10) || 0,
-      })
-      setShots((prev) =>
-        prev.map((x) => (x.id === sh.id ? { ...x, line: c.line, subtitle: c.subtitle, sfx: c.sfx } : x)),
-      )
-      showToast('已生成台词/字幕/音效', 'success')
-    } catch (e: any) {
-      showToast(e?.message || '文案生成失败,请重试', 'error')
-    }
+  // 上传替换某元素(素材),写回所有同名 subject
+  const uploadElement = async (name: string, file: File) => {
+    const url = await fileToDataUrl(file).catch(() => '')
+    if (url) uploadForSubject(name, url)
   }
 
   // 进入镜头编排:若分镜图尚未生成,则自动串行逐个生成(左侧缩略图转圈)
@@ -355,91 +350,63 @@ export default function SmartCreateView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, shots])
 
-  // ── 生成视频:逐镜「分镜图 → 视频片段」(后端 Seedance video.generate)──
-  const [vidGen, setVidGen] = useState<Record<string, boolean>>({})
+  // ── 生成视频:整片一次生成(所有分镜图+脚本+台词+字幕+音效 → seedance)──
+  const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [vidGenRunning, setVidGenRunning] = useState(false)
   const autoVidRef = useRef(false)
 
-  const genClip = async (ws: number, sh: Shot, cache: Record<string, number>, plans: string[], note?: string) => {
-    const img = sh.image || sh.subjects.find((x) => x.image)?.image || ''
-    let imageAssetId = 0
-    if (img) {
-      try {
-        imageAssetId = await ensureAssetId(ws, img, cache)
-      } catch {
-        /* 无参考图则走纯文生视频 */
-      }
-    }
-    const prompt = [
-      sh.desc,
-      sh.line && `台词:${sh.line}`,
-      entryMeta?.style && `${entryMeta.style}风格`,
-      note && `额外修改要求:${note}`,
-    ]
-      .filter(Boolean)
-      .join(';')
-    const { url, assetId } = await generateClip({
-      workspaceId: ws,
-      prompt,
-      imageAssetId,
-      durationSec: parseInt(String(sh.duration || ''), 10) || 5,
-      ratio: entryMeta?.ratio,
-      modelPlanCandidates: plans,
-    })
-    setShots((prev) => prev.map((x) => (x.id === sh.id ? { ...x, videoUrl: url, videoAssetId: assetId } : x)))
-  }
-
-  const generateVideos = async () => {
+  // 生成/重生成整片;note=对整片的修改意见(有意见且已有整片时,用上次整片作 video 输入)
+  const runFullVideo = async (note?: string) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
       return
     }
+    if (!shots.length) {
+      showToast('暂无分镜,无法生成视频', 'error')
+      return
+    }
     if (vidGenRunning) return
     setVidGenRunning(true)
-    const cache: Record<string, number> = {}
-    const plans = await resolvePlanCandidates()
     try {
-      for (const sh of shots) {
-        setVidGen((m) => ({ ...m, [sh.id]: true }))
+      const plans = await resolvePlanCandidates()
+      const cache: Record<string, number> = {}
+      // 取第一张分镜图作参考(seedance 只收一张)
+      const firstImg = shots.find((s) => s.image)?.image || ''
+      let imageAssetId = 0
+      if (firstImg) {
         try {
-          await genClip(ws, sh, cache, plans)
-        } catch (e: any) {
-          showToast(`分镜「${sh.no}」视频生成失败:${e?.message || ''}`, 'error')
-        } finally {
-          setVidGen((m) => ({ ...m, [sh.id]: false }))
+          imageAssetId = await ensureAssetId(ws, firstImg, cache)
+        } catch {
+          /* 无参考图则纯文生视频 */
         }
       }
+      const { url, assetId } = await generateFullVideo({
+        workspaceId: ws,
+        shots,
+        basePrompt: reqSummary || requirement,
+        ratio: entryMeta?.ratio,
+        style: entryMeta?.style,
+        imageAssetId,
+        prevVideoAssetId: fullVideo.assetId,
+        note,
+        modelPlanCandidates: plans,
+      })
+      setFullVideo({ url, assetId })
+    } catch (e: any) {
+      showToast(`视频生成失败:${e?.message || ''}`, 'error')
     } finally {
       setVidGenRunning(false)
     }
   }
 
-  const regenerateClip = async (sh: Shot, note?: string) => {
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      showToast('未选择工作空间,无法生成视频', 'error')
-      return
-    }
-    if (vidGen[sh.id]) return
-    setVidGen((m) => ({ ...m, [sh.id]: true }))
-    try {
-      const plans = await resolvePlanCandidates()
-      await genClip(ws, sh, {}, plans, note)
-    } catch (e: any) {
-      showToast(`分镜「${sh.no}」视频生成失败:${e?.message || ''}`, 'error')
-    } finally {
-      setVidGen((m) => ({ ...m, [sh.id]: false }))
-    }
-  }
-
-  // 进入生成视频:若视频尚未生成,则自动串行逐镜生成
+  // 进入生成视频:若整片尚未生成,则自动生成一次
   useEffect(() => {
     if (step !== 2 || !shots.length || vidGenRunning) return
     if (autoVidRef.current) return
-    if (shots.some((s) => s.videoUrl)) return
+    if (fullVideo.url) return
     autoVidRef.current = true
-    void generateVideos()
+    void runFullVideo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, shots])
 
@@ -513,6 +480,8 @@ export default function SmartCreateView() {
     subjectAssets,
     fields,
     projectId,
+    fullVideoUrl: fullVideo.url,
+    fullVideoAssetId: fullVideo.assetId,
   })
   // 把草稿回填到页面状态(本地恢复 / 后端恢复共用)
   const applyDraft = (d: SmartDraft) => {
@@ -527,6 +496,7 @@ export default function SmartCreateView() {
     setShots(Array.isArray(d.shots) ? d.shots : [])
     setSubjectAssets(d.subjectAssets || {})
     setFields(d.fields || {})
+    setFullVideo({ url: d.fullVideoUrl || '', assetId: d.fullVideoAssetId || 0 })
     autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
     autoVidRef.current = true
   }
@@ -606,7 +576,7 @@ export default function SmartCreateView() {
       window.clearTimeout(remote)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [started, requirement, reqSummary, entryMeta, projectName, nameTouched, step, maxReached, shots, subjectAssets, fields, projectId])
+  }, [started, requirement, reqSummary, entryMeta, projectName, nameTouched, step, maxReached, shots, subjectAssets, fields, projectId, fullVideo])
 
   const goStep = (i: number) => {
     const next = Math.max(0, Math.min(STEPS.length - 1, i))
@@ -740,7 +710,7 @@ export default function SmartCreateView() {
       showToast('项目尚未建立,无法保存', 'error')
       return
     }
-    if (!shots.some((s) => s.videoUrl)) {
+    if (!fullVideo.url) {
       showToast('请先生成视频再保存', 'info')
       return
     }
@@ -797,16 +767,8 @@ export default function SmartCreateView() {
             },
           },
         ]
-      case 2: // 生成视频
-        return [
-          { label: '上一步', variant: 'ghost', action: () => goStep(1) },
-          { label: savingVideo ? '保存中…' : '保存视频', variant: 'ghost', action: handleSaveVideo },
-          {
-            label: vidGenRunning ? '生成中…' : '重新生成视频',
-            variant: 'primary',
-            action: () => generateVideos(),
-          },
-        ]
+      case 2: // 生成视频:总按钮已移到中间 VideoStage,这里不再渲染底部条
+        return []
       default:
         return []
     }
@@ -882,21 +844,35 @@ export default function SmartCreateView() {
       )
     }
     if (step === 1) {
-      // 镜头编排:分镜列表(选中/插入/复制/删除/…菜单)+ 素材修改(素材/历史/描述/台词/字幕/音效)
+      // 镜头编排:左 分镜列表 + 右 素材修改(元素/分镜图版本/描述修改/台词/字幕/音效)
       return (
         <ShotArrange
           shots={shots}
           generating={shotGen}
-          subjects={boardSubjects}
-          onOpenSubject={openSubject}
           onShotsChange={setShots}
-          onRegenerateShot={regenerateShot}
-          onGenCopy={genShotCopy}
+          onOpenElement={openSubject}
+          onUploadElement={uploadElement}
+          onRegenerateImage={regenerateShotImage}
         />
       )
     }
-    // step === 2 生成视频:左分镜列表 + 右视频预览/重生成(逐镜图生视频)
-    return <VideoStage shots={shots} generating={vidGen} onRegenerateClip={regenerateClip} />
+    // step === 2 生成视频:左 分镜列表 + 中 整片视频 + 右 素材修改;总按钮在中间
+    return (
+      <VideoStage
+        shots={shots}
+        generating={shotGen}
+        videoUrl={fullVideo.url}
+        videoGenerating={vidGenRunning}
+        onShotsChange={setShots}
+        onOpenElement={openSubject}
+        onUploadElement={uploadElement}
+        onRegenerateImage={regenerateShotImage}
+        onRegenerateVideo={runFullVideo}
+        onSaveVideo={handleSaveVideo}
+        savingVideo={savingVideo}
+        onPrev={() => goStep(1)}
+      />
+    )
   }
 
   return (
@@ -982,19 +958,21 @@ export default function SmartCreateView() {
             {/* 步骤内容 */}
             <div className="smart__body">{renderStepBody()}</div>
 
-            {/* 底部总按钮 */}
-            <footer className="smart__footer">
-              {bottomButtons.map((b) => (
-                <button
-                  key={b.label}
-                  type="button"
-                  className={`smart__btn smart__btn--${b.variant}`}
-                  onClick={b.action}
-                >
-                  {b.label}
-                </button>
-              ))}
-            </footer>
+            {/* 底部总按钮(视频生成步的总按钮在中间 VideoStage 内) */}
+            {bottomButtons.length > 0 && (
+              <footer className="smart__footer">
+                {bottomButtons.map((b) => (
+                  <button
+                    key={b.label}
+                    type="button"
+                    className={`smart__btn smart__btn--${b.variant}`}
+                    onClick={b.action}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </footer>
+            )}
           </>
         )}
       </div>
