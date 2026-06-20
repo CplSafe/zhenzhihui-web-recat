@@ -269,7 +269,8 @@ export async function summarizeRequirement(text: string, signal?: AbortSignal): 
     '纯文本,不要 markdown 符号(不要 *、#、- 等)、不要标题、不要分点,直接输出摘要。'
   const out = await chatOnce(system, req, signal, 200)
   return out
-    .replace(/[*#`>-]/g, '')
+    .replace(/^[\s>*-]+/gm, '') // 去每行行首的 markdown 项目符号(- > *),保留行内连字符
+    .replace(/[*#`]/g, '') // 去行内 markdown 符号(不动 -,避免把 20-35 变成 2035)
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 120)
