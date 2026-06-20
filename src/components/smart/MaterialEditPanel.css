@@ -15,9 +15,9 @@
 }
 .medit__main {
   flex: 0 0 auto;
-  width: 150px;
-  height: 96px;
-  border-radius: 10px;
+  width: 232px;
+  height: 130px;
+  border-radius: 12px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
   display: flex;
@@ -35,8 +35,8 @@
 }
 .medit__upload {
   flex: 0 0 auto;
-  width: 88px;
-  height: 96px;
+  width: 110px;
+  height: 130px;
   border: 1px dashed #dcdfe4;
   border-radius: 10px;
   background: #fafbfc;
@@ -71,8 +71,8 @@
 }
 .medit__hist {
   flex: 0 0 auto;
-  width: 72px;
-  height: 60px;
+  width: 96px;
+  height: 72px;
   border: 2px solid transparent;
   border-radius: 8px;
   overflow: hidden;

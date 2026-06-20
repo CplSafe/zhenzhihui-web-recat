@@ -18,6 +18,15 @@ interface ShotArrangeProps {
 let uid = 1
 const newId = () => `s_${uid++}`
 
+// "5s" / "08" → "0:05"(mm:ss)
+function formatDur(d: string): string {
+  const n = parseInt(String(d || '').replace(/[^0-9]/g, ''), 10)
+  if (!Number.isFinite(n) || n <= 0) return '0:05'
+  const mm = Math.floor(n / 60)
+  const ss = n % 60
+  return `${mm}:${String(ss).padStart(2, '0')}`
+}
+
 function renumber(list: Shot[]): Shot[] {
   return list.map((s, i) => ({ ...s, no: `镜头${i + 1}` }))
 }
@@ -81,93 +90,91 @@ export default function ShotArrange({ shots, materials = [], onShotsChange }: Sh
       {/* 左:分镜列表 */}
       <div className="shotarr__list">
         <div className="shotarr__list-title">分镜列表</div>
-        {shots.map((s, i) => (
-          <div key={s.id}>
-            <div
-              className={`shotarr__card${s.id === selectedId ? ' is-active' : ''}`}
-              onClick={() => setSelectedId(s.id)}
-            >
-              <div className="shotarr__thumb">
-                {s.image || s.subjects.find((x) => x.image)?.image ? (
-                  <img src={s.image || s.subjects.find((x) => x.image)?.image} alt="" />
-                ) : (
-                  <span className="shotarr__thumb-ph">{s.no}</span>
-                )}
-                {/* hover:编辑/删除 居中放大并排 */}
-                <div className="shotarr__hover">
-                  <button
-                    type="button"
-                    className="shotarr__hover-btn"
-                    title="编辑"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSelectedId(s.id)
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.83-2.83L5 17v3z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="shotarr__hover-btn shotarr__hover-btn--danger"
-                    title="删除"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      remove(s.id)
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
-                    </svg>
-                  </button>
+        {shots.map((s, i) => {
+          const thumb = s.image || s.subjects.find((x) => x.image)?.image
+          return (
+            <div key={s.id}>
+              <div
+                className={`shotarr__card${s.id === selectedId ? ' is-active' : ''}`}
+                onClick={() => setSelectedId(s.id)}
+              >
+                {/* 左:分镜N | 时长 */}
+                <div className="shotarr__info">
+                  <span className="shotarr__no">{s.no}</span>
+                  <span className="shotarr__sep">|</span>
+                  <span className="shotarr__dur">{formatDur(s.duration)}</span>
                 </div>
-              </div>
-              <div className="shotarr__meta">
-                <span className="shotarr__no">{s.no}</span>
-                <span className="shotarr__dur">{s.duration}</span>
-              </div>
-              <div className="shotarr__desc" title={s.desc}>
-                {s.desc || '画面描述'}
-              </div>
 
-              {/* … 菜单 */}
-              <div className="shotarr__more-wrap" ref={s.id === menuId ? menuWrapRef : undefined}>
-                <button
-                  type="button"
-                  className="shotarr__more"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setMenuId(s.id === menuId ? null : s.id)
-                  }}
-                  aria-label="更多"
-                >
-                  ⋯
-                </button>
-                {s.id === menuId && (
-                  <div className="shotarr__menu" onClick={(e) => e.stopPropagation()}>
-                    <button type="button" onClick={() => insertAt(i)}>
-                      向上插入分镜
+                {/* 右:缩略图 + 右下角 编辑/删除(hover) */}
+                <div className="shotarr__thumb">
+                  {thumb ? <img src={thumb} alt="" /> : <span className="shotarr__thumb-ph">{s.no}</span>}
+                  <div className="shotarr__thumb-actions">
+                    <button
+                      type="button"
+                      title="编辑"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setSelectedId(s.id)
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.83-2.83L5 17v3z" />
+                      </svg>
                     </button>
-                    <button type="button" onClick={() => insertAt(i + 1)}>
-                      向下插入分镜
-                    </button>
-                    <button type="button" onClick={() => duplicate(s.id)}>
-                      复制分镜
-                    </button>
-                    <button type="button" className="is-danger" onClick={() => remove(s.id)}>
-                      删除分镜
+                    <button
+                      type="button"
+                      className="is-danger"
+                      title="删除"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        remove(s.id)
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
+                      </svg>
                     </button>
                   </div>
-                )}
+                </div>
+
+                {/* … 菜单 */}
+                <div className="shotarr__more-wrap" ref={s.id === menuId ? menuWrapRef : undefined}>
+                  <button
+                    type="button"
+                    className="shotarr__more"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setMenuId(s.id === menuId ? null : s.id)
+                    }}
+                    aria-label="更多"
+                  >
+                    ⋯
+                  </button>
+                  {s.id === menuId && (
+                    <div className="shotarr__menu" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" onClick={() => insertAt(i)}>
+                        向上插入分镜
+                      </button>
+                      <button type="button" onClick={() => insertAt(i + 1)}>
+                        向下插入分镜
+                      </button>
+                      <button type="button" onClick={() => duplicate(s.id)}>
+                        复制分镜
+                      </button>
+                      <button type="button" className="is-danger" onClick={() => remove(s.id)}>
+                        删除分镜
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
+              {/* 两分镜间 + 插入 */}
+              <button type="button" className="shotarr__insert" onClick={() => insertAt(i + 1)} aria-label="插入分镜">
+                +
+              </button>
             </div>
-            {/* 两分镜间 + 插入 */}
-            <button type="button" className="shotarr__insert" onClick={() => insertAt(i + 1)} aria-label="插入分镜">
-              +
-            </button>
-          </div>
-        ))}
+          )
+        })}
         {!shots.length && <div className="shotarr__empty">暂无分镜</div>}
       </div>
 
