@@ -308,3 +308,41 @@ export async function summarizeRequirement(text: string, signal?: AbortSignal): 
     .trim()
     .slice(0, 160)
 }
+
+/**
+ * 把"生成某个独立元素(素材)的意图/目的/语境"交给本地 Qwen,
+ * 润成一版**干净、可直接用于文生图模型**的画面提示词。
+ * 关键:只保留画面本身(主体/外形/材质/姿态/光线/纯色简洁背景/便于抠图),
+ * 剔除"广告目的、用途、营销、为了…"等会干扰出图的非画面性文字。
+ * 失败由调用方兜底(退回原意图文本)。
+ */
+export async function refineElementPrompt(
+  intent: string,
+  opts: { name?: string; kind?: string; style?: string; signal?: AbortSignal } = {},
+): Promise<string> {
+  const src = (intent || '').trim()
+  if (!src) return ''
+  const system =
+    '你是 AI 绘画提示词专家。下面是用户对【一个独立元素】的生成意图(可能含广告目的、用途、语境等说明)。' +
+    '请据此输出一段简洁、具体、可直接用于文生图模型的中文画面提示词。要求:' +
+    '①只描述这一个元素本身——主体、外形、材质、颜色、姿态/形态、景别、光线氛围、关键细节;' +
+    '②纯色/简洁背景,画面只含该单一元素,主体居中,便于后续抠图合成;' +
+    '③不要出现"广告/营销/目的/用途/为了/吸引/卖点"等与画面无关的词;' +
+    '④不要编号、不要引号、不要解释、不要换行,直接输出一段提示词。'
+  const user = [
+    opts.name && `元素:${opts.name}`,
+    opts.kind && `类型:${opts.kind}`,
+    opts.style && `视觉风格:${opts.style}`,
+    `生成意图:${src}`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+  const out = await chatOnce(system, user, opts.signal, 220)
+  const cleaned = out
+    .replace(/^```(\w+)?/i, '')
+    .replace(/```$/i, '')
+    .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
+    .replace(/\s*\n+\s*/g, ',')
+    .trim()
+  return cleaned || src
+}

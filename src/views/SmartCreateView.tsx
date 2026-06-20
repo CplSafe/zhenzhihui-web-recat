@@ -16,7 +16,7 @@ import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import SubjectMaterialBoard, { type BoardSubject } from '@/components/smart/SubjectMaterialBoard'
 import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
-import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
+import { generateProjectName, summarizeRequirement, refineElementPrompt } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { generateShotImage, ensureAssetId } from '@/api/smartShotImage'
@@ -173,9 +173,17 @@ export default function SmartCreateView() {
     return ''
   }
   const genForSubject = async (name: string, prompt: string) => {
-    const url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
+    // 先把意图/目的交给本地 Qwen 润成干净画面提示词,再喂图像模型(目的性文字会干扰出图)
+    let imgPrompt = prompt
+    try {
+      imgPrompt = await refineElementPrompt(prompt, { name, kind: subjectKindOf(name), style: entryMeta?.style })
+    } catch {
+      /* 润色失败则退回原意图 */
+    }
+    const url = await generateImage({ prompt: imgPrompt, size: sizeForRatio(entryMeta?.ratio) })
     setSubjectAssets((a) => {
       const e = a[name] || { versions: [] }
+      // 存原始意图 prompt(便于再次编辑/重生成时仍走润色)
       return { ...a, [name]: { versions: [...e.versions, url], prompt, sources: { ...(e.sources || {}), [url]: 'ai' } } }
     })
     applySubjectImage(name, url)
