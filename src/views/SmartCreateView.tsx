@@ -12,7 +12,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import EditField from '@/components/smart/EditField'
 import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
-import { generateProjectName } from '@/api/aiPolish'
+import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
 import './SmartCreateView.css'
 
@@ -54,6 +54,9 @@ export default function SmartCreateView() {
 
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)
   const [requirement, setRequirement] = useState('')
+  const [reqSummary, setReqSummary] = useState('') // ≤100字核心摘要,用于页面展示
+  const [summarizing, setSummarizing] = useState(false)
+  const [showFullReq, setShowFullReq] = useState(false)
   const nameAbortRef = useRef<AbortController | null>(null)
 
   // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
@@ -92,7 +95,18 @@ export default function SmartCreateView() {
     setStarted(true)
     setStep(0)
     setMaxReached(0)
+    setShowFullReq(false)
     if (req) void autoNameProject(req)
+    // 长需求 → AI 摘要成 ≤100 字展示;短需求直接用原文
+    if (req.trim().length > 90) {
+      setSummarizing(true)
+      summarizeRequirement(req)
+        .then((s) => setReqSummary(s || req))
+        .catch(() => setReqSummary(req))
+        .finally(() => setSummarizing(false))
+    } else {
+      setReqSummary(req)
+    }
   }
 
   // 根据需求自动命名项目(本地 Qwen)。用户已手动改名 / 正在命名 / 需求为空 则跳过。
@@ -153,7 +167,15 @@ export default function SmartCreateView() {
       return (
         <div className="smart__script">
           <div className="smart__panel-title">创作需求</div>
-          <div className="smart__req-readonly">{requirement || '（未填写需求）'}</div>
+          <div className="smart__req-readonly">
+            {summarizing ? '生成摘要中…' : reqSummary || requirement || '（未填写需求）'}
+          </div>
+          {requirement && requirement !== reqSummary && (
+            <button type="button" className="smart__req-toggle" onClick={() => setShowFullReq((v) => !v)}>
+              {showFullReq ? '收起完整需求' : '展开完整需求'}
+            </button>
+          )}
+          {showFullReq && <div className="smart__req-full">{requirement}</div>}
           {entryMeta && (
             <div className="smart__req-meta">
               <span>{entryMeta.mode === 'video' ? '制作视频' : '制作图片'}</span>

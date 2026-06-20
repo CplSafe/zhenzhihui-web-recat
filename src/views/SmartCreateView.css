@@ -147,33 +147,48 @@
   max-width: 860px;
   margin: 0 auto;
 }
-.smart__req-input {
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 140px;
-  resize: vertical;
-  border: 1px solid #e5e7eb;
+/* 创作需求:展示 ≤100 字 AI 摘要,完整需求可展开 */
+.smart__req-readonly {
+  background: #fff;
+  border: 1px solid #eef0f4;
   border-radius: 12px;
   padding: 14px 16px;
   font-size: 14px;
-  line-height: 1.7;
-  color: #1f2937;
-  font-family: inherit;
-  outline: none;
-  background: #fff;
-  transition: border-color 0.15s;
+  line-height: 1.8;
+  color: #374151;
 }
-.smart__req-input:focus {
-  border-color: #1fcfa9;
+.smart__req-toggle {
+  margin-top: 8px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: #11a98a;
+  font-size: 13px;
+  cursor: pointer;
 }
-.smart__req-input::placeholder {
-  color: #b0b4ba;
+.smart__req-toggle:hover {
+  text-decoration: underline;
 }
-.smart__req-actions {
+.smart__req-full {
+  margin-top: 8px;
+  background: #f7fffd;
+  border: 1px solid #d5f3ec;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #4b5563;
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.smart__req-meta {
   display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin: 14px 0 18px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0 18px;
+  font-size: 13px;
+  color: #8a93a0;
 }
 .smart__btn:disabled {
   opacity: 0.55;

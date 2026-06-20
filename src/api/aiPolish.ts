@@ -142,3 +142,20 @@ export async function guideRequirement(text: string, signal?: AbortSignal): Prom
   if (!out) throw new Error('生成为空,请重试')
   return out
 }
+
+/**
+ * 把(可能很长的)创作需求浓缩成 100 字以内的核心摘要(纯文本,用于页面展示)。
+ */
+export async function summarizeRequirement(text: string, signal?: AbortSignal): Promise<string> {
+  const req = (text || '').trim()
+  if (!req) return ''
+  const system =
+    '你是文案助手。把下面的创作需求浓缩成一段核心摘要,100字以内,点明产品+人群+核心卖点+目标即可。' +
+    '纯文本,不要 markdown 符号(不要 *、#、- 等)、不要标题、不要分点,直接输出摘要。'
+  const out = await chatOnce(system, req, signal, 200)
+  return out
+    .replace(/[*#`>-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120)
+}
