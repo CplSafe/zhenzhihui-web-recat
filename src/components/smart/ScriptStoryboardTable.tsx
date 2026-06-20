@@ -16,6 +16,11 @@ export interface Shot {
   duration: string // 5s
   desc: string // 画面描述
   subjects: ShotSubject[]
+  // 镜头编排阶段可编辑的脚本词
+  line?: string // 台词/旁白
+  subtitle?: string // 字幕
+  sfx?: string // 音效
+  image?: string // 分镜图(生成或选用)
 }
 
 interface ScriptStoryboardTableProps {

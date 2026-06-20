@@ -14,6 +14,7 @@ import EditField from '@/components/smart/EditField'
 import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
 import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStoryboardTable'
 import MaterialPickerDialog from '@/components/smart/MaterialPickerDialog'
+import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
 import { generateScriptShots } from '@/api/smartScript'
@@ -339,35 +340,8 @@ export default function SmartCreateView() {
       )
     }
     if (step === 2) {
-      // 镜头编排:左为分镜列表(占位),右为镜头内容修改框(已接 AI 润色)
-      return (
-        <div className="smart__cols">
-          <div className="smart__col smart__col--list">
-            <div className="smart__panel-title">分镜列表</div>
-            <div className="smart__placeholder smart__placeholder--sm">
-              分镜列表（hover 居中放大编辑/删除、+ 插入、拖拽排序、… 菜单）。建设中
-            </div>
-          </div>
-          <div className="smart__col smart__col--edit">
-            <div className="smart__panel-title">镜头内容修改</div>
-            <EditField
-              label="镜头描述 / 分镜脚本"
-              value={fields.shotDesc || ''}
-              onChange={setField('shotDesc')}
-              kind="script"
-              placeholder="描述这一镜头的画面、运镜、节奏…"
-              rows={5}
-            />
-            <EditField
-              label="台词"
-              value={fields.shotLine || ''}
-              onChange={setField('shotLine')}
-              kind="line"
-              placeholder="这一镜头的台词…"
-            />
-          </div>
-        </div>
-      )
+      // 镜头编排:分镜列表(选中/插入/复制/删除/…菜单)+ 镜头内容修改(画面描述/台词/字幕/音效)
+      return <ShotArrange shots={shots} onShotsChange={setShots} />
     }
     // step === 3 视频生成:左分镜列表 + 中视频(占位),右素材修改(已接 AI 润色)
     return (
