@@ -22,7 +22,7 @@ import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { generateShotImage, ensureAssetId } from '@/api/smartShotImage'
 import { createCreativeProject, patchCreativeProject } from '@/api/business'
-import { useWorkspaceId } from '@/stores/workspaceSession'
+import { useWorkspaceId, useModelPlanCandidates } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { loadSmartDraft, saveSmartDraft, clearSmartDraft } from '@/utils/smartDraft'
 import './SmartCreateView.css'
@@ -74,6 +74,7 @@ export default function SmartCreateView() {
   const navigate = useNavigate()
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
+  const modelPlanCandidates = useModelPlanCandidates() as string[]
 
   const [started, setStarted] = useState(false) // false=入口输入页, true=进入 4 步流程
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -190,7 +191,14 @@ export default function SmartCreateView() {
     ]
       .filter(Boolean)
       .join(';')
-    const { url } = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds })
+    let url = ''
+    try {
+      // 优先后端文/图生图(带素材组合 + 连贯)
+      url = (await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates })).url
+    } catch {
+      // 后端未启用图像模型等失败 → 退化本地 Qwen-Image(文生图,暂无参考/连贯)
+      url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
+    }
     setShots((prev) =>
       prev.map((x) => (x.id === sh.id ? { ...x, image: url, imageVersions: [...(x.imageVersions || []), url] } : x)),
     )

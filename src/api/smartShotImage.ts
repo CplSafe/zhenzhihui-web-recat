@@ -30,20 +30,28 @@ function outputAssetId(task: any): number {
   return Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
 }
 
+// 分镜图模型偏好(与 2.0 一致:火山 Doubao-Seedream)
+const STORYBOARD_MODEL_KEYWORDS = ['seedream', 'seeddream', 'doubao-seedream']
+
 /**
  * 生成一张分镜图。refAssetIds 为参考图 asset_id(该镜头素材 + 上一张分镜图)。
+ * modelPlanCandidates 需传当前工作空间真实套餐候选(否则默认 free 查不到付费图像模型)。
  * 返回 { url, assetId }。
  */
 export async function generateShotImage(args: {
   workspaceId: number
   prompt: string
   refAssetIds?: number[]
+  modelPlanCandidates?: string[]
 }): Promise<{ url: string; assetId: number }> {
   const refs = (args.refAssetIds || []).filter((n) => Number(n) > 0)
   const operationCode = refs.length ? 'image.image_to_image' : 'image.text_to_image'
   const task = await createAiTask({
     workspaceId: args.workspaceId,
+    capability: 'image',
     operationCode,
+    preferredModelKeywords: STORYBOARD_MODEL_KEYWORDS,
+    ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
     prompt: args.prompt,
     inputAssets: refs.map((id) => ({ asset_id: id, role: 'reference_image' })),
   })
