@@ -158,6 +158,64 @@ function resolveAssetPreview(asset: any, downloadUrl: string) {
   }
 }
 
+/**
+ * 素材缩略图:内联签名地址可能过期/未签名导致 403 → 加载失败时按 assetId 拉一次
+ * 新的签名 download-url 重试,仍失败才显示占位。修复「部分素材图显示不出来」。
+ */
+function AssetThumb({ card, workspaceId }: { card: any; workspaceId: any }) {
+  const [src, setSrc] = useState<string>(card.mediaUrl || '')
+  const triedRef = useRef(false)
+
+  useEffect(() => {
+    setSrc(card.mediaUrl || '')
+    triedRef.current = false
+  }, [card.mediaUrl])
+
+  const handleError = useCallback(async () => {
+    if (triedRef.current) {
+      setSrc('')
+      return
+    }
+    triedRef.current = true
+    const id = card?.id
+    if (!id || String(id).startsWith('asset-')) {
+      setSrc('')
+      return
+    }
+    try {
+      const fresh = await getAssetDownloadUrl({ workspaceId, assetId: id })
+      setSrc(fresh || '')
+    } catch {
+      setSrc('')
+    }
+  }, [card?.id, workspaceId])
+
+  if (!src || !card.mediaKind) {
+    return (
+      <div className="resource-asset-cover-placeholder">
+        <span>{card.type}</span>
+        <b>暂无预览</b>
+      </div>
+    )
+  }
+  if (card.mediaKind === 'video') {
+    return (
+      <video
+        src={src}
+        poster={card.posterUrl || undefined}
+        aria-label={card.title}
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        onError={handleError}
+      />
+    )
+  }
+  return <img src={src} alt={card.title} loading="lazy" onError={handleError} />
+}
+
 export default function ResourceManagementView() {
   // 工作空间状态来自共享 store（与 AppLayout 同一份，不依赖组件层级）。
   const workspaceId = useWorkspaceId()
@@ -429,25 +487,7 @@ export default function ResourceManagementView() {
             {displayedResourceCards.map((card) => (
               <article key={card.id} className="resource-asset-card">
                 <div className="resource-asset-cover" onClick={() => previewCard(card)}>
-                  {card.mediaKind === 'image' && card.mediaUrl ? (
-                    <img src={card.mediaUrl} alt={card.title} />
-                  ) : card.mediaKind === 'video' && card.mediaUrl ? (
-                    <video
-                      src={card.mediaUrl}
-                      poster={card.posterUrl || undefined}
-                      aria-label={card.title}
-                      autoPlay
-                      muted
-                      loop
-                      playsInline
-                      preload="metadata"
-                    />
-                  ) : (
-                    <div className="resource-asset-cover-placeholder">
-                      <span>{card.type}</span>
-                      <b>暂无预览</b>
-                    </div>
-                  )}
+                  <AssetThumb card={card} workspaceId={workspaceId} />
                   <span className="resource-asset-type">{card.type}</span>
 
                   <button
