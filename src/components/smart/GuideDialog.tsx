@@ -17,37 +17,70 @@ interface Question {
   hint?: string
   placeholder: string
   rows?: number
+  required?: boolean
   suggestions: string[]
 }
 
+// 按"信息流需求三角(创造需求→介绍产品→呼吁行动)"组织,产品为根(必填)。
 const QUESTIONS: Question[] = [
   {
-    key: 'audience',
-    label: '给谁看?',
-    hint: '目标人群 · 可多个',
-    placeholder: '描述目标人群,或点下方建议自动填入,也可继续补充',
-    suggestions: ['宝妈', 'Z世代', '职场白领', '银发人群', '小镇青年', '学生党', '新手宝爸', '都市女性'],
-  },
-  {
-    key: 'plot',
-    label: '想要的剧情套路?',
-    hint: '可多写',
-    placeholder: '想要的叙事方式,或点下方建议',
-    suggestions: ['痛点解决', '剧情反转', '测评种草', '口播带货', '悬念揭秘', '福利促销', '第一人称vlog', '对比测评'],
-  },
-  {
-    key: 'goal',
-    label: '营销目标?',
-    placeholder: '希望这条广告达成什么,或点下方建议',
-    suggestions: ['转化下单', '涨粉引流', '留资获客', '促活复购', '品牌曝光'],
+    key: 'product',
+    label: '产品 / 品牌简介',
+    hint: '必填 · 一句话说清是什么',
+    placeholder: '例:XX 控油洗发水(日化),主打去屑控油。或点下方品类快速填入',
+    required: true,
+    rows: 2,
+    suggestions: ['美妆护肤', '日化清洁', '食品饮料', '3C数码', '服饰鞋包', '家居家电', '母婴用品', '保健健康', '教育课程', '本地服务', 'APP/小程序', '金融理财'],
   },
   {
     key: 'sellpoint',
-    label: '核心卖点 / 补充信息',
+    label: '核心卖点 / 利益点',
+    hint: '为什么选它',
+    placeholder: '产品最打动人的点,或点下方建议',
+    suggestions: ['效果显著', '成分安全', '性价比高', '大牌平替', '操作简单', '省时省力', '专利技术', '独家配方', '明星同款'],
+  },
+  {
+    key: 'audience',
+    label: '目标人群',
+    hint: '给谁看 · 可多个',
+    placeholder: '描述目标人群,或点下方建议',
+    suggestions: ['宝妈', 'Z世代', '职场白领', '银发人群', '小镇青年', '学生党', '新手宝爸', '都市女性', '油皮人群', '敏感肌'],
+  },
+  {
+    key: 'pain',
+    label: '用户痛点 / 想解决的问题',
+    hint: '创造需求',
+    placeholder: '用户当下的烦恼/顾虑,或点下方建议',
+    suggestions: ['价格太贵', '效果不好', '太麻烦', '没时间', '不会挑选', '踩过坑', '担心安全', '反复复购'],
+  },
+  {
+    key: 'scene',
+    label: '使用场景',
+    hint: '什么时候用',
+    placeholder: '在什么场景下使用/出现,或点下方建议',
+    suggestions: ['通勤路上', '居家日常', '办公室', '健身运动', '聚会出游', '睡前', '带娃时', '换季'],
+  },
+  {
+    key: 'goal',
+    label: '营销目标 & 行动号召',
+    hint: '呼吁行动',
+    placeholder: '希望用户做什么 + 给什么利益,或点下方建议',
+    suggestions: ['转化下单', '留资获客', '涨粉引流', '促活复购', '下载APP', '到店核销', '限时五折', '下单送赠品', '点击领券'],
+  },
+  {
+    key: 'plot',
+    label: '表现形式 / 剧情类型',
+    hint: '怎么演',
+    placeholder: '想要的叙事/表现方式,或点下方建议',
+    suggestions: ['单人口播', '情景剧', '商品展示', '痛点解决', '剧情反转', '测评种草', '开箱体验', '对比测评', '街头采访', '专家背书'],
+  },
+  {
+    key: 'tone',
+    label: '风格调性 & 信任背书',
     hint: '选填',
-    placeholder: '如:主打性价比、限时五折、独家配方…',
-    rows: 3,
-    suggestions: ['性价比高', '限时优惠', '独家配方', '明星同款', '大牌平替', '效果显著'],
+    placeholder: '想要的氛围/可用的背书(销量、好评、资质…)',
+    rows: 2,
+    suggestions: ['真实质朴', '幽默搞笑', '高端精致', '温情治愈', '专业权威', '叫卖促销', '销量数据', '用户好评', '资质认证', '明星代言'],
   },
 ]
 
@@ -108,8 +141,22 @@ export default function GuideDialog({ open, initialText, onClose, onApply }: Gui
     return lines.join('\n')
   }
 
+  const goNext = () => {
+    const q = QUESTIONS[step]
+    if (q.required && !(answers[q.key] || '').trim()) {
+      showToast(`请先填写${q.label}`, 'info')
+      return
+    }
+    setStep(step + 1)
+  }
+
   const generate = async () => {
     if (loading) return
+    if (!(answers.product || '').trim()) {
+      showToast('请先填写产品 / 品牌简介(必填)', 'info')
+      if (mode === 'wizard') setStep(0)
+      return
+    }
     setLoading(true)
     try {
       const out = await guideRequirement(compose())
@@ -131,6 +178,7 @@ export default function GuideDialog({ open, initialText, onClose, onApply }: Gui
     <div className="gdlg__q" key={q.key}>
       <div className="gdlg__label">
         {q.label}
+        {q.required && <i className="gdlg__req">*</i>}
         {q.hint && <span>{q.hint}</span>}
       </div>
       <textarea
@@ -244,7 +292,7 @@ export default function GuideDialog({ open, initialText, onClose, onApply }: Gui
               </button>
               <span className="gdlg__foot-gap" />
               {step < last ? (
-                <button type="button" className="gdlg__btn gdlg__btn--primary" onClick={() => setStep(step + 1)}>
+                <button type="button" className="gdlg__btn gdlg__btn--primary" onClick={goNext}>
                   下一步
                 </button>
               ) : (

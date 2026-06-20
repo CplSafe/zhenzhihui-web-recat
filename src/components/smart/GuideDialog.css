@@ -94,6 +94,11 @@
   font-weight: 400;
   color: #9aa3af;
 }
+.gdlg__req {
+  color: #ff4d4f;
+  margin-left: 3px;
+  font-style: normal;
+}
 /* 每题的自由填写框 */
 .gdlg__field {
   width: 100%;
