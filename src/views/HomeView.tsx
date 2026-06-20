@@ -363,7 +363,7 @@ export default function HomeView() {
           </section>
 
           {/* 标签 + 搜索 */}
-          <section className="home__section">
+          <section className="home__section home__section--grow">
             <div className="home__tabs-bar">
               <div className="home__tabs">
                 {TABS.map((t) => (

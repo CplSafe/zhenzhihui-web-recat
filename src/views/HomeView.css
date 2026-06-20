@@ -138,16 +138,26 @@
 }
 
 /* 内容区（可滚动；限宽并居中，避免超宽屏把卡片拉得过长）*/
+/* 桌面端:内容区不整页滚动,仅下方「模板库」框内部滚动(见 .home__section--grow / .home__tab-box) */
 .home__content {
   flex: 1;
-  min-height: 0; /* 配合父级有界高度,使本区可纵向滚动 */
+  min-height: 0;
   width: 100%;
   max-width: 1480px;
   margin: 0 auto;
   box-sizing: border-box;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch; /* iOS 惯性滚动 */
-  padding: 22px 28px 40px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 22px 28px 24px;
+}
+/* 最后一个区块(标签+模板库)占满剩余高度,使其内部的 tab-box 成为唯一滚动区 */
+.home__section--grow {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
 }
 
 /* 轮播 Banner */
@@ -532,8 +542,8 @@ button.home__template-card {
 
 /* ── 模板库/历史项目:独立可滚动框(约 40vh,核心仍是上方快捷入口) ── */
 .home__tab-box {
-  max-height: 40vh;
-  min-height: 220px;
+  flex: 1 1 auto;
+  min-height: 160px;
   overflow-y: auto;
   padding: 4px 6px 8px;
   border-radius: 12px;
@@ -726,8 +736,23 @@ button.home__template-card {
   .home__topbar {
     padding: 0 14px;
   }
+  /* 移动端:恢复整页滚动(内容比视口高,内部框收纳不现实) */
   .home__content {
+    display: block;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     padding: 16px 14px 32px;
+  }
+  .home__section--grow {
+    flex: none;
+    display: block;
+  }
+  .home__tab-box {
+    flex: none;
+    min-height: 0;
+    overflow: visible;
+    -webkit-mask-image: none;
+    mask-image: none;
   }
   /* Banner:降低高度、卡片解除最小宽度并加宽、字号收敛 */
   .home__banner {
