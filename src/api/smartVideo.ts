@@ -3,7 +3,7 @@
  * 以该镜「分镜图」为参考图(图生视频),prompt 带画面描述/台词,参数含时长/分辨率/比例/音频。
  */
 // @ts-nocheck
-import { createAiTask, waitForAiTask } from './business'
+import { createAiTask, waitForAiTask, getModelForCapability } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
 import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
@@ -11,9 +11,6 @@ import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 const VIDEO_MODEL_KEYWORDS = ['seedance', 'seedance 2.0', 'doubao-seedance-2-0']
 const extractVideoAssetId = (task: any): number =>
   Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
-
-const isKeywordModelMissing = (e: any) =>
-  e?.code === 'MODEL_NOT_FOUND' || /没有启用匹配/.test(String(e?.message || ''))
 
 export async function generateClip(args: {
   workspaceId: number
@@ -39,14 +36,28 @@ export async function generateClip(args: {
         generateAudio: true,
       }),
   })
-  // 优先 Seedance;匹配不到则去掉关键词,用 video.generate 下任意可用模型
+  // 三级回退:Seedance偏好 → 去关键词(video.generate 任意) → 按 video 能力选任意视频模型(显式 modelId)
+  const attempts = [
+    () => createAiTask(buildArgs(true)),
+    () => createAiTask(buildArgs(false)),
+    async () => {
+      const model = await getModelForCapability('video', 'video.generate', [], args.modelPlanCandidates)
+      if (!model?.id) throw new Error('未找到可用的视频模型')
+      return createAiTask({ ...buildArgs(false), modelVersionId: model.id })
+    },
+  ]
   let task: any
-  try {
-    task = await createAiTask(buildArgs(true))
-  } catch (e) {
-    if (!isKeywordModelMissing(e)) throw e
-    task = await createAiTask(buildArgs(false))
+  let lastErr: any
+  for (const run of attempts) {
+    try {
+      task = await run()
+      break
+    } catch (e: any) {
+      lastErr = e
+      if (e?.code !== 'MODEL_NOT_FOUND') throw e
+    }
   }
+  if (!task) throw lastErr
   const completed = await waitForAiTask({ workspaceId: args.workspaceId, task })
   const assetId = extractVideoAssetId(completed)
   const [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })

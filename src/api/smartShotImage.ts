@@ -4,7 +4,7 @@
  * 上一张已生成的分镜图作为参考图。本地图片(objectURL/dataURL)会先上传成 asset 取得 asset_id。
  */
 // @ts-nocheck
-import { createAiTask, waitForAiTask, uploadAssetFile, extractTaskMediaUrls } from './business'
+import { createAiTask, waitForAiTask, uploadAssetFile, extractTaskMediaUrls, getModelForCapability } from './business'
 
 /** 把图片(objectURL / dataURL / http)上传为后端素材,返回 asset_id;带缓存避免重复上传。 */
 export async function ensureAssetId(
@@ -32,8 +32,6 @@ function outputAssetId(task: any): number {
 
 // 分镜图模型偏好(与 2.0 一致:火山 Doubao-Seedream)
 const STORYBOARD_MODEL_KEYWORDS = ['seedream', 'seeddream', 'doubao-seedream']
-const isKeywordModelMissing = (e: any) =>
-  e?.code === 'MODEL_NOT_FOUND' || /没有启用匹配/.test(String(e?.message || ''))
 
 /**
  * 生成一张分镜图。refAssetIds 为参考图 asset_id(该镜头素材 + 上一张分镜图)。
@@ -57,14 +55,28 @@ export async function generateShotImage(args: {
     prompt: args.prompt,
     inputAssets: refs.map((id) => ({ asset_id: id, role: 'reference_image' })),
   })
-  // 优先 Seedream;匹配不到则去掉关键词,用该 operation 下任意可用模型
+  // 三级回退:Seedream偏好 → 去关键词(该 op 任意) → 按 image 能力选任意图像模型(显式 modelId)
+  const attempts = [
+    () => createAiTask(buildArgs(true)),
+    () => createAiTask(buildArgs(false)),
+    async () => {
+      const model = await getModelForCapability('image', operationCode, [], args.modelPlanCandidates)
+      if (!model?.id) throw new Error('未找到可用的图像模型')
+      return createAiTask({ ...buildArgs(false), modelVersionId: model.id })
+    },
+  ]
   let task: any
-  try {
-    task = await createAiTask(buildArgs(true))
-  } catch (e) {
-    if (!isKeywordModelMissing(e)) throw e
-    task = await createAiTask(buildArgs(false))
+  let lastErr: any
+  for (const run of attempts) {
+    try {
+      task = await run()
+      break
+    } catch (e: any) {
+      lastErr = e
+      if (e?.code !== 'MODEL_NOT_FOUND') throw e
+    }
   }
+  if (!task) throw lastErr
   const completed = await waitForAiTask({ workspaceId: args.workspaceId, task })
   const url = extractTaskMediaUrls(completed)[0] || ''
   if (!url) throw new Error('未生成分镜图')
