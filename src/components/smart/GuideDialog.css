@@ -22,14 +22,38 @@
 .gdlg__head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
+  gap: 12px;
+  padding: 14px 18px;
   border-bottom: 1px solid #f0f1f3;
 }
 .gdlg__title {
   font-size: 16px;
   font-weight: 600;
   color: #1f2530;
+  margin-right: auto;
+}
+/* 模式切换:向导 / 全部 */
+.gdlg__mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: #eef0f2;
+  border-radius: 9px;
+}
+.gdlg__mode-btn {
+  border: none;
+  background: none;
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: #8a909a;
+  cursor: pointer;
+}
+.gdlg__mode-btn.is-on {
+  background: #fff;
+  color: #11a98a;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 .gdlg__x {
   border: none;
@@ -70,35 +94,10 @@
   font-weight: 400;
   color: #9aa3af;
 }
-.gdlg__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.gdlg__chip {
-  padding: 7px 14px;
-  border: 1px solid #e5e7eb;
-  border-radius: 18px;
-  background: #fafbfc;
-  color: #4b5563;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.gdlg__chip:hover {
-  border-color: #1fcfa9;
-  color: #11a98a;
-}
-.gdlg__chip.is-on {
-  border-color: #1fcfa9;
-  background: #ebfffb;
-  color: #11a98a;
-  font-weight: 600;
-}
-.gdlg__extra {
+/* 每题的自由填写框 */
+.gdlg__field {
   width: 100%;
   box-sizing: border-box;
-  min-height: 64px;
   resize: vertical;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
@@ -108,9 +107,62 @@
   color: #1f2937;
   font-family: inherit;
   outline: none;
+  margin-bottom: 10px;
 }
-.gdlg__extra:focus {
+.gdlg__field:focus {
   border-color: #1fcfa9;
+}
+.gdlg__field::placeholder {
+  color: #b0b4ba;
+}
+.gdlg__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* 建议项:点击追加进输入框 */
+.gdlg__chip {
+  padding: 6px 12px;
+  border: 1px dashed #d6dae1;
+  border-radius: 16px;
+  background: #fafbfc;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.gdlg__chip:hover {
+  border-style: solid;
+  border-color: #1fcfa9;
+  color: #11a98a;
+  background: #f3fffc;
+}
+/* 向导步骤指示 */
+.gdlg__steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #8a909a;
+  margin-bottom: 14px;
+}
+.gdlg__dots {
+  display: inline-flex;
+  gap: 6px;
+}
+.gdlg__dots i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e1e4e8;
+}
+.gdlg__dots i.is-on {
+  background: #1fcfa9;
+  width: 20px;
+  border-radius: 4px;
+}
+.gdlg__dots i.is-done {
+  background: #9be3d4;
 }
 .gdlg__preview {
   border-top: 1px dashed #e5e7eb;
@@ -129,10 +181,12 @@
 .gdlg__foot {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 10px;
   padding: 14px 20px;
   border-top: 1px solid #f0f1f3;
+}
+.gdlg__foot-gap {
+  flex: 1;
 }
 .gdlg__btn {
   min-width: 96px;
