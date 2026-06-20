@@ -6,6 +6,7 @@
 import { useRef } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
 import EditField from './EditField'
+import { fileToDataUrl } from '@/utils/imageFile'
 import './MaterialEditPanel.css'
 
 interface MaterialEditPanelProps {
@@ -20,10 +21,10 @@ export default function MaterialEditPanel({ shot, onPatch, onRegenerate, regener
   const current = shot.image || ''
   const history = shot.imageVersions || []
 
-  const onFile = (files: FileList | null) => {
+  const onFile = async (files: FileList | null) => {
     if (!files?.length) return
-    const url = URL.createObjectURL(files[0])
-    onPatch({ image: url, imageVersions: [...history, url] })
+    const url = await fileToDataUrl(files[0]).catch(() => '')
+    if (url) onPatch({ image: url, imageVersions: [...history, url] })
   }
 
   return (

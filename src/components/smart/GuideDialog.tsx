@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Streamdown } from 'streamdown'
 import { guideRequirement, analyzeForGuide, suggestOptions } from '@/api/aiPolish'
+import { fileToDataUrl } from '@/utils/imageFile'
 import { useToast } from '@/composables/useToast'
 import './GuideDialog.css'
 
@@ -263,9 +264,12 @@ export default function GuideDialog({
 
   // 在对话框内上传素材 → 立即据新素材预填。
   // 有父级回调则只交给父级(由 images prop 反映,避免与本地重复计数);否则本地保存。
-  const onPickFiles = (files: FileList | null) => {
+  const onPickFiles = async (files: FileList | null) => {
     if (!files?.length) return
-    const urls = Array.from(files).map((f) => URL.createObjectURL(f))
+    const urls = (await Promise.all(Array.from(files).map((f) => fileToDataUrl(f).catch(() => null)))).filter(
+      Boolean,
+    ) as string[]
+    if (!urls.length) return
     if (onAddImages) {
       onAddImages(urls)
     } else {

@@ -7,6 +7,7 @@
 import { useRef, useState } from 'react'
 import EntryDropdown from './EntryDropdown'
 import GuideDialog from './GuideDialog'
+import { fileToDataUrl } from '@/utils/imageFile'
 import { useToast } from '@/composables/useToast'
 import './SmartEntry.css'
 
@@ -81,17 +82,18 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
     commitText(brief) // 快照引导结果,便于重做
   }
 
-  const pickImages = (files: FileList | null) => {
+  const pickImages = async (files: FileList | null) => {
     if (!files?.length) return
     const room = MAX_IMAGES - images.length
     if (room <= 0) {
       showToast(`最多上传 ${MAX_IMAGES} 张图片`, 'info')
       return
     }
-    const picked = Array.from(files)
-      .slice(0, room)
-      .map((f) => URL.createObjectURL(f))
-    setImages((prev) => [...prev, ...picked])
+    const sel = Array.from(files).slice(0, room)
+    const picked = (await Promise.all(sel.map((f) => fileToDataUrl(f).catch(() => null)))).filter(
+      Boolean,
+    ) as string[]
+    if (picked.length) setImages((prev) => [...prev, ...picked])
   }
   const removeImage = (url: string) => {
     setImages((prev) => prev.filter((u) => u !== url))

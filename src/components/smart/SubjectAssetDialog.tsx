@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { fileToDataUrl } from '@/utils/imageFile'
 import './SubjectAssetDialog.css'
 
 interface SubjectAssetDialogProps {
@@ -116,7 +117,7 @@ export default function SubjectAssetDialog({
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0]
-                if (f) onUpload(URL.createObjectURL(f))
+                if (f) fileToDataUrl(f).then(onUpload).catch(() => {})
                 e.target.value = ''
               }}
             />
