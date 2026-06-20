@@ -57,15 +57,22 @@ interface BottomButton {
 
 const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
 
-// 准备素材:每个主体只出「单一独立元素」(供镜头编排时再组合),简洁背景、便于抠图合成
-function subjectPrompt(name: string, kind: string, style?: string) {
+// 准备素材:每个主体只出「单一独立元素」(供镜头编排时再组合),简洁背景、便于抠图合成。
+// context = 广告主题 + 该元素出现的画面语境/用途,帮模型选对具体形态(如伞广告里的「地铁站」应是雨天出入口而非大厅)。
+function subjectPrompt(name: string, kind: string, style?: string, context?: string) {
   const probe = name + kind
   const frame = /人物|角色|人|男|女|主角|闺蜜|宝妈|宝爸|学生|白领|model|girl|boy/i.test(probe)
     ? '只有一个人物,单人,全身或半身,正面清晰,纯色简洁背景,不要其他人物、不要文字'
     : /场景|街道|背景|环境|室内|室外|校园|店|路|空间|夜景|门口|广场/i.test(probe)
       ? '空场景/空镜,只有环境与背景,无任何人物、无产品,干净简洁'
       : '只有这一个物体,单个产品特写,白色/纯色背景,不要其他物体、不要文字'
-  return [name, frame, style && `${style}视觉风格`, '高清,单一主体,主体居中,便于后续合成']
+  return [
+    `只画「${name}」这一个元素`,
+    frame,
+    context && `需贴合以下广告语境与用途(据此选择最贴切的具体形态,但画面仍只含该单一元素):${context}`,
+    style && `${style}视觉风格`,
+    '高清,单一主体,主体居中,便于后续合成',
+  ]
     .filter(Boolean)
     .join(',')
 }
@@ -150,6 +157,19 @@ export default function SmartCreateView() {
   }
   const openSubject = (name: string, autoGen = false) =>
     setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
+
+  // 该主体的广告语境:整体主题 + 它出现的分镜画面描述(帮模型选对元素的具体形态)
+  const subjectContext = (name: string) => {
+    const theme = (reqSummary || requirement || '').slice(0, 80)
+    const descs: string[] = []
+    for (const sh of shots) {
+      if (sh.subjects.some((su) => stripAt(su.tag) === name) && sh.desc) descs.push(sh.desc)
+      if (descs.length >= 2) break
+    }
+    return [theme && `广告主题:${theme}`, descs.length && `该元素出现的画面:${descs.join(';').slice(0, 160)}`]
+      .filter(Boolean)
+      .join('。')
+  }
 
   // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
   const boardSubjects: BoardSubject[] = (() => {
@@ -804,7 +824,7 @@ export default function SmartCreateView() {
         versions={subjectAssets[subjectDlg.name]?.versions || []}
         defaultPrompt={
           subjectAssets[subjectDlg.name]?.prompt ||
-          subjectPrompt(subjectDlg.name, subjectDlg.kind, entryMeta?.style)
+          subjectPrompt(subjectDlg.name, subjectDlg.kind, entryMeta?.style, subjectContext(subjectDlg.name))
         }
         autoGen={subjectDlg.autoGen}
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
