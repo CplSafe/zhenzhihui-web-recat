@@ -325,18 +325,20 @@ export default function GuideDialog({
         placeholder={q.placeholder}
       />
       <div className="gdlg__chips">
-        {suggLoading[q.key] && !suggs[q.key] ? (
-          <span className="gdlg__sugg-loading">
-            <span className="gdlg__sugg-spin" aria-hidden="true" />
-            AI 生成建议中…
-          </span>
-        ) : (
-          (suggs[q.key] || q.suggestions.slice(0, 5)).map((s) => (
-            <button key={s} type="button" className="gdlg__chip" onClick={() => appendChip(q.key, s)}>
-              + {s}
-            </button>
-          ))
-        )}
+        <div className="gdlg__chip-list">
+          {suggLoading[q.key] && !suggs[q.key] ? (
+            <span className="gdlg__sugg-loading">
+              <span className="gdlg__sugg-spin" aria-hidden="true" />
+              AI 生成建议中…
+            </span>
+          ) : (
+            (suggs[q.key] || q.suggestions.slice(0, 5)).map((s) => (
+              <button key={s} type="button" className="gdlg__chip" onClick={() => appendChip(q.key, s)}>
+                {s}
+              </button>
+            ))
+          )}
+        </div>
         <button
           type="button"
           className="gdlg__refresh"
@@ -344,7 +346,10 @@ export default function GuideDialog({
           disabled={!!suggLoading[q.key]}
           title="换一批建议"
         >
-          {suggLoading[q.key] ? '…' : '↻ 换一批'}
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
+          </svg>
+          换一批
         </button>
       </div>
     </div>

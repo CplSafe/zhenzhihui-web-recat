@@ -199,8 +199,14 @@
 }
 .gdlg__chips {
   display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.gdlg__chip-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
   flex-wrap: wrap;
-  align-items: center;
   gap: 8px;
 }
 .gdlg__sugg-loading {
@@ -218,19 +224,25 @@
   border-radius: 50%;
   animation: gdlg-spin 0.7s linear infinite;
 }
+/* 换一批:固定在右侧、醒目(青色实底),不与建议标签混淆 */
 .gdlg__refresh {
-  padding: 6px 12px;
-  border: 1px solid #e5e7eb;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  border: none;
   border-radius: 16px;
-  background: #fff;
-  color: #6b7280;
+  background: #ebfffb;
+  color: #11a98a;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
 }
 .gdlg__refresh:hover:not(:disabled) {
-  border-color: #1fcfa9;
-  color: #11a98a;
+  background: #1fcfa9;
+  color: #fff;
 }
 .gdlg__refresh:disabled {
   opacity: 0.6;
