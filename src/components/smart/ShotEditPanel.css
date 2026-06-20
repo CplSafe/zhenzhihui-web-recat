@@ -15,6 +15,9 @@
   color: #9aa3af;
   margin: 0 0 6px;
 }
+.sedit__script .sedit__ta {
+  min-height: 64px;
+}
 
 /* ── 分镜图修改区:两栏 ── */
 .sedit__editrow {

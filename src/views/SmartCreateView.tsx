@@ -764,6 +764,9 @@ export default function SmartCreateView() {
           const id = resolveProjectId(p)
           projectIdRef.current = id
           setProjectId(id)
+          // 对齐 2.0(CreativeEntryView router.replace /creative/:id):跳到 /smart/:id,
+          // 之后刷新走「后端草稿」恢复(可靠、有 asset_id、不受 localStorage 配额限制)
+          if (id) navigate(`/smart/${id}`, { replace: true })
         })
         .catch(() => {})
     }

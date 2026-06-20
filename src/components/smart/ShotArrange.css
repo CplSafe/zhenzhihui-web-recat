@@ -3,6 +3,8 @@
   display: flex;
   gap: 18px;
   align-items: stretch;
+  max-width: 1480px; /* 超宽屏不被拉满,居中更舒适 */
+  margin: 0 auto;
 }
 .shotarr__empty {
   flex: 1 1 auto;

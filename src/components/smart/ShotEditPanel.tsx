@@ -68,6 +68,20 @@ export default function ShotEditPanel({ shot, regenerating, onOpenElement, onPat
 
   return (
     <div className="sedit">
+      {/* ── 画面描述(脚本):这一镜的剧情源头,也是出图依据 ── */}
+      <div className="sedit__script">
+        <div className="sedit__tf-head">
+          <span className="sedit__tf-icon">{ICON.script}</span>
+          画面描述（脚本）
+        </div>
+        <textarea
+          className="sedit__ta"
+          value={shot.desc || ''}
+          placeholder="该镜头的画面 / 剧情描述…"
+          onChange={(e) => onPatch({ desc: e.target.value })}
+        />
+      </div>
+
       {/* ── 分镜图修改区(两栏)── */}
       <div className="sedit__editrow">
         {/* 左:当前分镜图 + 历史版本 */}
@@ -226,6 +240,12 @@ export default function ShotEditPanel({ shot, regenerating, onOpenElement, onPat
 }
 
 const ICON = {
+  script: (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6M8 13h8M8 17h6" />
+    </svg>
+  ),
   line: (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 9 9 0 0 1-4-1L3 20l1-3.5a8.38 8.38 0 0 1-1-4A8.5 8.5 0 0 1 21 11.5z" />

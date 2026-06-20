@@ -83,7 +83,8 @@ export default function ShotList({
     <div className="shotlist">
       <div className="shotlist__title">分镜列表</div>
       {shots.map((s, i) => {
-        const thumb = s.image || s.subjects.find((x) => x.image)?.image
+        // 只用「分镜图」做缩略图;没有则显示等待态(不退回素材图,避免误以为已生成)
+        const thumb = s.image
         return (
           <div key={s.id}>
             <div
@@ -98,7 +99,11 @@ export default function ShotList({
               </div>
 
               <div className="shotlist__thumb">
-                {thumb ? <img src={thumb} alt="" /> : <span className="shotlist__thumb-ph">{s.no}</span>}
+                {thumb ? (
+                  <img src={thumb} alt="" />
+                ) : (
+                  <span className="shotlist__thumb-ph">{generating[s.id] ? '生成中…' : '待生成'}</span>
+                )}
                 {generating[s.id] && (
                   <div className="shotlist__gen">
                     <span className="shotlist__gen-spin" aria-hidden="true" />

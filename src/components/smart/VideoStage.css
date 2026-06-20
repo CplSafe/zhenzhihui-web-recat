@@ -3,6 +3,8 @@
   display: flex;
   gap: 18px;
   align-items: stretch;
+  max-width: 1600px; /* 超宽屏居中,不被拉满 */
+  margin: 0 auto;
 }
 .vstage__center {
   flex: 1 1 auto;

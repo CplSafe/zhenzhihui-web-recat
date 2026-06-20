@@ -61,17 +61,21 @@ export function loadSmartDraft(): SmartDraft | null {
 }
 
 export function saveSmartDraft(state: SmartDraft) {
+  // 与 2.0 一致:草稿不存 data:/blob:(体积大且会撑爆 localStorage 配额导致整盘清空);
+  // 只存可持久的 http 图 + asset_id,刷新后按 asset_id 重换签名URL(见 SmartCreateView hydrate)。
+  const lean = stripHeavy(state)
   try {
-    localStorage.setItem(KEY, JSON.stringify(state))
+    localStorage.setItem(KEY, JSON.stringify(lean))
   } catch {
-    // 配额超限:退化为只存文本结构(去掉所有图)
+    // 仍超限(极端):退化为只存文本结构
     try {
       const light: SmartDraft = {
-        ...state,
-        entryMeta: state.entryMeta ? { ...state.entryMeta, images: [] } : state.entryMeta,
-        shots: (state.shots || []).map((s: any) => ({
+        ...lean,
+        entryMeta: lean.entryMeta ? { ...lean.entryMeta, images: [] } : lean.entryMeta,
+        shots: (lean.shots || []).map((s: any) => ({
           ...s,
           image: '',
+          imageVersions: [],
           subjects: (s.subjects || []).map((x: any) => ({ ...x, image: '' })),
         })),
         subjectAssets: {},
