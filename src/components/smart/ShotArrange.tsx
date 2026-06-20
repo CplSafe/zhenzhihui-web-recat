@@ -7,12 +7,16 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
 import MaterialEditPanel from './MaterialEditPanel'
+import SubjectMaterialBoard, { type BoardSubject } from './SubjectMaterialBoard'
 import './ShotArrange.css'
 
 interface ShotArrangeProps {
   shots: Shot[]
   /** 正在生成分镜图的镜头(键为 shot.id) */
   generating?: Record<string | number, boolean>
+  /** 顶部素材主体总览(可新增/编辑/重生成素材) */
+  subjects?: BoardSubject[]
+  onOpenSubject?: (name: string) => void
   onShotsChange: (shots: Shot[]) => void
   onRegenerateShot?: (shot: Shot) => void
 }
@@ -36,7 +40,14 @@ function blankShot(): Shot {
   return { id: newId(), no: '镜头', duration: '5s', desc: '', subjects: [] }
 }
 
-export default function ShotArrange({ shots, generating = {}, onShotsChange, onRegenerateShot }: ShotArrangeProps) {
+export default function ShotArrange({
+  shots,
+  generating = {},
+  subjects = [],
+  onOpenSubject,
+  onShotsChange,
+  onRegenerateShot,
+}: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
@@ -88,7 +99,11 @@ export default function ShotArrange({ shots, generating = {}, onShotsChange, onR
   }
 
   return (
-    <div className="shotarr">
+    <div className="shotarr-wrap">
+      {/* 顶部素材主体总览(可新增/编辑/重生成素材,再回去重生成分镜图) */}
+      {onOpenSubject && <SubjectMaterialBoard subjects={subjects} onOpen={onOpenSubject} />}
+
+      <div className="shotarr">
       {/* 左:分镜列表 */}
       <div className="shotarr__list">
         <div className="shotarr__list-title">分镜列表</div>
@@ -198,6 +213,7 @@ export default function ShotArrange({ shots, generating = {}, onShotsChange, onR
         ) : (
           <div className="shotarr__empty">请选择左侧分镜进行编辑</div>
         )}
+      </div>
       </div>
     </div>
   )

@@ -151,6 +151,24 @@ export default function SmartCreateView() {
   const openSubject = (name: string, autoGen = false) =>
     setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
 
+  // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
+  const boardSubjects: BoardSubject[] = (() => {
+    const m = new Map<string, BoardSubject>()
+    shots.forEach((sh) =>
+      sh.subjects.forEach((su) => {
+        const n = stripAt(su.tag)
+        const cur = m.get(n) || { name: n, kind: su.kind || '', image: '', source: null }
+        if (!cur.image && su.image) cur.image = su.image
+        if (!cur.kind && su.kind) cur.kind = su.kind
+        m.set(n, cur)
+      }),
+    )
+    return [...m.values()].map((s) => ({
+      ...s,
+      source: s.image ? subjectAssets[s.name]?.sources?.[s.image] || 'upload' : null,
+    }))
+  })()
+
   // ── 镜头编排:按 画面描述 + 该镜头素材 + 上一张分镜图(连贯)+ 项目摘要 生成分镜图(后端文/图生图) ──
   const [shotGen, setShotGen] = useState<Record<string, boolean>>({})
   const [shotGenRunning, setShotGenRunning] = useState(false)
@@ -503,21 +521,6 @@ export default function SmartCreateView() {
   const renderStepBody = () => {
     if (step === 0) {
       const promptText = reqSummary || requirement || '（未填写需求）'
-      // 汇总去重后的主体素材(供顶部总览)
-      const subjMap = new Map<string, BoardSubject>()
-      shots.forEach((sh) =>
-        sh.subjects.forEach((su) => {
-          const n = stripAt(su.tag)
-          const cur = subjMap.get(n) || { name: n, kind: su.kind || '', image: '', source: null }
-          if (!cur.image && su.image) cur.image = su.image
-          if (!cur.kind && su.kind) cur.kind = su.kind
-          subjMap.set(n, cur)
-        }),
-      )
-      const boardSubjects = [...subjMap.values()].map((s) => ({
-        ...s,
-        source: s.image ? subjectAssets[s.name]?.sources?.[s.image] || 'upload' : null,
-      }))
       return (
         <div className="smart__script">
           {/* 需求摘要(markdown 渲染) */}
@@ -589,6 +592,8 @@ export default function SmartCreateView() {
         <ShotArrange
           shots={shots}
           generating={shotGen}
+          subjects={boardSubjects}
+          onOpenSubject={openSubject}
           onShotsChange={setShots}
           onRegenerateShot={regenerateShot}
         />
