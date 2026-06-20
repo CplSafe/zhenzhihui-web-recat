@@ -32,6 +32,8 @@ function outputAssetId(task: any): number {
 
 // 分镜图模型偏好(与 2.0 一致:火山 Doubao-Seedream)
 const STORYBOARD_MODEL_KEYWORDS = ['seedream', 'seeddream', 'doubao-seedream']
+const isKeywordModelMissing = (e: any) =>
+  e?.code === 'MODEL_NOT_FOUND' || /没有启用匹配/.test(String(e?.message || ''))
 
 /**
  * 生成一张分镜图。refAssetIds 为参考图 asset_id(该镜头素材 + 上一张分镜图)。
@@ -46,15 +48,23 @@ export async function generateShotImage(args: {
 }): Promise<{ url: string; assetId: number }> {
   const refs = (args.refAssetIds || []).filter((n) => Number(n) > 0)
   const operationCode = refs.length ? 'image.image_to_image' : 'image.text_to_image'
-  const task = await createAiTask({
+  const buildArgs = (withKeywords: boolean) => ({
     workspaceId: args.workspaceId,
     capability: 'image',
     operationCode,
-    preferredModelKeywords: STORYBOARD_MODEL_KEYWORDS,
+    ...(withKeywords ? { preferredModelKeywords: STORYBOARD_MODEL_KEYWORDS } : {}),
     ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
     prompt: args.prompt,
     inputAssets: refs.map((id) => ({ asset_id: id, role: 'reference_image' })),
   })
+  // 优先 Seedream;匹配不到则去掉关键词,用该 operation 下任意可用模型
+  let task: any
+  try {
+    task = await createAiTask(buildArgs(true))
+  } catch (e) {
+    if (!isKeywordModelMissing(e)) throw e
+    task = await createAiTask(buildArgs(false))
+  }
   const completed = await waitForAiTask({ workspaceId: args.workspaceId, task })
   const url = extractTaskMediaUrls(completed)[0] || ''
   if (!url) throw new Error('未生成分镜图')
