@@ -291,6 +291,7 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
         open={guideOpen}
         initialText={text}
         images={images}
+        onAddImages={(urls) => setImages((prev) => [...prev, ...urls].slice(0, MAX_IMAGES))}
         onClose={() => setGuideOpen(false)}
         onApply={applyGuide}
       />

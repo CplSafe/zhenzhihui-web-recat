@@ -128,6 +128,42 @@ export async function generateProjectName(requirement: string, signal?: AbortSig
 }
 
 /**
+ * 为引导某一项生成「最可能的 5 个」简短候选(纯文本模型),可排除已展示项(换一批)。
+ */
+export async function suggestOptions(
+  input: { label: string; context?: string; exclude?: string[] },
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const { label, context = '', exclude = [] } = input
+  const system =
+    '你是信息流广告策划助手。针对给定的「要素」,结合已知信息给出最可能的 5 个简短候选(每个不超过 8 个字,中文,彼此不同)。' +
+    '只输出 JSON 数组,例如 ["A","B","C","D","E"];不要解释、不要代码块标记。'
+  const user =
+    `要素:${label}\n已知信息:${context || '(暂无,请基于常见信息流广告场景给通用候选)'}` +
+    (exclude.length ? `\n请避免与这些重复:${exclude.join('、')}` : '')
+  let raw = ''
+  try {
+    raw = await chatOnce(system, user, signal, 200)
+  } catch {
+    return []
+  }
+  raw = raw.replace(/^```(json)?/i, '').replace(/```$/i, '').trim()
+  const m = raw.match(/\[[\s\S]*\]/)
+  try {
+    const arr = JSON.parse(m ? m[0] : raw)
+    if (Array.isArray(arr)) {
+      return arr
+        .map((x) => String(x).replace(/["'\s]/g, '').trim())
+        .filter(Boolean)
+        .slice(0, 5)
+    }
+  } catch {
+    /* ignore */
+  }
+  return []
+}
+
+/**
  * AI 引导(入口页):把用户粗略的创作需求梳理、补全成更清晰可执行的"创作需求"。
  * 注意:这不是写分镜脚本/台词,只是帮用户把 brief 想得更专业完整(信息流广告视角)。
  */

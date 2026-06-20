@@ -7,7 +7,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { guideRequirement, analyzeForGuide } from '@/api/aiPolish'
+import { guideRequirement, analyzeForGuide, suggestOptions } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
 import './GuideDialog.css'
 
@@ -127,9 +127,18 @@ interface GuideDialogProps {
   images?: string[]
   onClose: () => void
   onApply: (brief: string) => void
+  /** 在对话框内上传的素材回传给父级(并入流程素材) */
+  onAddImages?: (urls: string[]) => void
 }
 
-export default function GuideDialog({ open, initialText, images = [], onClose, onApply }: GuideDialogProps) {
+export default function GuideDialog({
+  open,
+  initialText,
+  images = [],
+  onClose,
+  onApply,
+  onAddImages,
+}: GuideDialogProps) {
   const { showToast } = useToast()
   const [mode, setMode] = useState<'wizard' | 'all'>(readMode)
   const [step, setStep] = useState(0)
@@ -139,45 +148,102 @@ export default function GuideDialog({ open, initialText, images = [], onClose, o
   const [analyzing, setAnalyzing] = useState(false)
   const [prefillDone, setPrefillDone] = useState(false)
   const prefilledRef = useRef(false)
+  // 在对话框内上传的素材
+  const [extraImages, setExtraImages] = useState<string[]>([])
+  const fileRef = useRef<HTMLInputElement | null>(null)
+  // AI 生成的候选(每题 5 个)+ 加载态
+  const [suggs, setSuggs] = useState<Record<string, string[]>>({})
+  const [suggLoading, setSuggLoading] = useState<Record<string, boolean>>({})
 
-  // 打开时:若有文字/素材,用多模态模型智能预填各要素(只填空字段,不覆盖用户已填)
+  const allImages = [...images, ...extraImages]
+  const noContext = !initialText.trim() && !allImages.length
+
+  const buildSuggContext = (qKey: string) => {
+    const parts: string[] = []
+    if (initialText.trim()) parts.push(`想法:${initialText.trim()}`)
+    QUESTIONS.forEach((q) => {
+      if (q.key === qKey) return
+      const v = (answers[q.key] || '').trim()
+      if (v) parts.push(`${q.label.replace(/[?? ]/g, '')}:${v}`)
+    })
+    return parts.join(';')
+  }
+
+  const loadSuggs = async (qKey: string, replace = false) => {
+    const q = QUESTIONS.find((x) => x.key === qKey)
+    if (!q || suggLoading[qKey]) return
+    setSuggLoading((m) => ({ ...m, [qKey]: true }))
+    try {
+      const exclude = replace ? suggs[qKey] || [] : []
+      const out = await suggestOptions({ label: q.label, context: buildSuggContext(qKey), exclude })
+      setSuggs((m) => ({ ...m, [qKey]: out.length ? out : q.suggestions.slice(0, 5) }))
+    } catch {
+      setSuggs((m) => ({ ...m, [qKey]: q.suggestions.slice(0, 5) }))
+    } finally {
+      setSuggLoading((m) => ({ ...m, [qKey]: false }))
+    }
+  }
+
+  // 为当前可见的问题按需加载候选(向导=当前步;全部=全部)
+  useEffect(() => {
+    if (!open) return
+    const targets = mode === 'all' ? QUESTIONS : QUESTIONS[step] ? [QUESTIONS[step]] : []
+    targets.forEach((q) => {
+      if (!suggs[q.key] && !suggLoading[q.key]) void loadSuggs(q.key)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode, step])
+
+  // 智能预填:用多模态模型据 文字+素材 填空(不覆盖用户已填)
+  const runPrefill = async (imgs: string[]) => {
+    if (!initialText.trim() && !imgs.length) return
+    setAnalyzing(true)
+    try {
+      const dataUrls = (await Promise.all(imgs.slice(0, 6).map((u) => urlToDataUrl(u)))).filter(Boolean) as string[]
+      const sug = await analyzeForGuide({ text: initialText, images: dataUrls })
+      setAnswers((prev) => {
+        const next = { ...prev }
+        FIELD_KEYS.forEach((k) => {
+          const v = (sug as any)[k]
+          if (v && !((next[k] || '').trim())) next[k] = String(v).trim()
+        })
+        return next
+      })
+      setPrefillDone(true)
+    } catch {
+      /* 静默:预填失败不影响手动引导 */
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  // 打开时:有文字/素材则自动预填一次
   useEffect(() => {
     if (!open) {
       prefilledRef.current = false
       setPrefillDone(false)
+      setSuggs({})
+      setSuggLoading({})
+      setExtraImages([])
       return
     }
     if (prefilledRef.current) return
     if (!initialText.trim() && !images.length) return
     prefilledRef.current = true
-    let cancelled = false
-    ;(async () => {
-      setAnalyzing(true)
-      try {
-        const dataUrls = (await Promise.all(images.slice(0, 6).map((u) => urlToDataUrl(u)))).filter(
-          Boolean,
-        ) as string[]
-        const sug = await analyzeForGuide({ text: initialText, images: dataUrls })
-        if (cancelled) return
-        setAnswers((prev) => {
-          const next = { ...prev }
-          FIELD_KEYS.forEach((k) => {
-            const v = (sug as any)[k]
-            if (v && !((next[k] || '').trim())) next[k] = String(v).trim()
-          })
-          return next
-        })
-        setPrefillDone(true)
-      } catch {
-        /* 静默:预填失败不影响手动引导 */
-      } finally {
-        if (!cancelled) setAnalyzing(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
+    void runPrefill(images)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialText, images])
+
+  // 在对话框内上传素材 → 回传父级 + 立即据新素材预填
+  const onPickFiles = (files: FileList | null) => {
+    if (!files?.length) return
+    const urls = Array.from(files).map((f) => URL.createObjectURL(f))
+    const next = [...extraImages, ...urls]
+    setExtraImages(next)
+    onAddImages?.(urls)
+    prefilledRef.current = true
+    void runPrefill([...images, ...next])
+  }
 
   if (!open) return null
 
@@ -259,11 +325,27 @@ export default function GuideDialog({ open, initialText, images = [], onClose, o
         placeholder={q.placeholder}
       />
       <div className="gdlg__chips">
-        {q.suggestions.map((s) => (
-          <button key={s} type="button" className="gdlg__chip" onClick={() => appendChip(q.key, s)}>
-            + {s}
-          </button>
-        ))}
+        {suggLoading[q.key] && !suggs[q.key] ? (
+          <span className="gdlg__sugg-loading">
+            <span className="gdlg__sugg-spin" aria-hidden="true" />
+            AI 生成建议中…
+          </span>
+        ) : (
+          (suggs[q.key] || q.suggestions.slice(0, 5)).map((s) => (
+            <button key={s} type="button" className="gdlg__chip" onClick={() => appendChip(q.key, s)}>
+              + {s}
+            </button>
+          ))
+        )}
+        <button
+          type="button"
+          className="gdlg__refresh"
+          onClick={() => loadSuggs(q.key, true)}
+          disabled={!!suggLoading[q.key]}
+          title="换一批建议"
+        >
+          {suggLoading[q.key] ? '…' : '↻ 换一批'}
+        </button>
       </div>
     </div>
   )
@@ -315,6 +397,38 @@ export default function GuideDialog({ open, initialText, images = [], onClose, o
               ) : (
                 prefillDone && <div className="gdlg__ai-note">✦ 已根据你的内容/素材智能预填,可修改</div>
               )}
+
+              {/* 素材上传区(随时可加,加完即用 AI 预填) */}
+              <div className="gdlg__upload">
+                <div className="gdlg__upload-thumbs">
+                  {allImages.map((url, i) => (
+                    <div className="gdlg__upthumb" key={i}>
+                      <img src={url} alt="" />
+                    </div>
+                  ))}
+                  <button type="button" className="gdlg__upbtn" onClick={() => fileRef.current?.click()}>
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
+                    </svg>
+                    上传素材
+                  </button>
+                </div>
+                {noContext && (
+                  <div className="gdlg__upload-hint">还没素材/想法?在此上传素材,AI 帮你预填(也可直接在下方填写)</div>
+                )}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    onPickFiles(e.target.files)
+                    e.target.value = ''
+                  }}
+                />
+              </div>
+
               {initialText.trim() && <div className="gdlg__idea">你的想法:{initialText.trim()}</div>}
               {mode === 'all' ? (
                 QUESTIONS.map(renderQuestion)
