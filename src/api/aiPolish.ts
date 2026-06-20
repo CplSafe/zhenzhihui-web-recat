@@ -262,12 +262,16 @@ export async function analyzeForGuide(
  * 镜头编排:根据整体需求 + 该镜头画面描述,生成该镜头的 台词/旁白、字幕、音效。
  */
 export async function generateShotCopy(
-  input: { requirement?: string; desc: string },
+  input: { requirement?: string; desc: string; durationSec?: number },
   signal?: AbortSignal,
 ): Promise<{ line: string; subtitle: string; sfx: string }> {
+  const dur = Number(input.durationSec || 0)
+  const maxLine = dur > 0 ? dur * 4 : 0
   const system =
     '你是短视频(信息流广告)文案。根据【整体需求】和【该镜头画面描述】,为这个镜头写出贴合的:' +
-    '台词/旁白(line)、字幕(subtitle)、音效说明(sfx)。没有就给空字符串。' +
+    '台词/旁白(line)、字幕(subtitle)、音效说明(sfx)。' +
+    (maxLine ? `镜头时长约 ${dur} 秒,台词/旁白不超过 ${maxLine} 个字(避免语速过快);` : '') +
+    '字幕要简短(不超过台词、通常 ≤15 个字);没有就给空字符串。' +
     '只输出严格 JSON:{"line":"...","subtitle":"...","sfx":"..."},不要解释、不要代码块标记。'
   const user = `【整体需求】${input.requirement || ''}\n【画面描述】${input.desc || ''}`
   const raw = (await chatOnce(system, user, signal, 300))

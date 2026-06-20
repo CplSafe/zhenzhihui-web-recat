@@ -294,7 +294,11 @@ export default function SmartCreateView() {
   // 镜头编排:按整体剧情 + 画面描述,生成该镜头的台词/字幕/音效并填入
   const genShotCopy = async (sh: Shot) => {
     try {
-      const c = await generateShotCopy({ requirement: reqSummary || requirement, desc: sh.desc })
+      const c = await generateShotCopy({
+        requirement: reqSummary || requirement,
+        desc: sh.desc,
+        durationSec: parseInt(String(sh.duration || ''), 10) || 0,
+      })
       setShots((prev) =>
         prev.map((x) => (x.id === sh.id ? { ...x, line: c.line, subtitle: c.subtitle, sfx: c.sfx } : x)),
       )
