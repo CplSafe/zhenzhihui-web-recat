@@ -20,6 +20,7 @@ import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateImage, sizeForRatio } from '@/api/smartImage'
+import { generateShotImage, ensureAssetId } from '@/api/smartShotImage'
 import { createCreativeProject, patchCreativeProject } from '@/api/business'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
@@ -147,6 +148,60 @@ export default function SmartCreateView() {
   }
   const openSubject = (name: string, autoGen = false) =>
     setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
+
+  // ── 镜头编排:按 画面描述 + 该镜头素材 + 上一张分镜图(连贯)+ 项目摘要 生成分镜图(后端文/图生图) ──
+  const [shotGen, setShotGen] = useState<Record<string, boolean>>({})
+  const [shotGenRunning, setShotGenRunning] = useState(false)
+  const generateShotImages = async () => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法生成分镜图', 'error')
+      return
+    }
+    if (shotGenRunning) return
+    setShotGenRunning(true)
+    const cache: Record<string, number> = {}
+    const theme = (reqSummary || '').slice(0, 60)
+    let prevAssetId = 0
+    try {
+      for (const sh of shots) {
+        setShotGen((m) => ({ ...m, [sh.id]: true }))
+        try {
+          // 该镜头素材(去重)→ 参考图
+          const subjUrls = Array.from(new Set(sh.subjects.map((s) => s.image).filter(Boolean))) as string[]
+          const refIds: number[] = []
+          for (const u of subjUrls) {
+            try {
+              const id = await ensureAssetId(ws, u, cache)
+              if (id) refIds.push(id)
+            } catch {
+              /* 单张参考上传失败则跳过 */
+            }
+          }
+          if (prevAssetId) refIds.push(prevAssetId) // 连贯:带上一张分镜图
+          const prompt = [
+            sh.desc,
+            theme && `整体广告主题:${theme}`,
+            entryMeta?.style && `${entryMeta.style}风格`,
+            prevAssetId && '与上一镜头保持人物形象、场景、配色、画风一致',
+            '画面比例 ' + (entryMeta?.ratio || '16:9'),
+          ]
+            .filter(Boolean)
+            .join(';')
+          const { url, assetId } = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds })
+          setShots((prev) => prev.map((x) => (x.id === sh.id ? { ...x, image: url } : x)))
+          // 下一镜头的连贯参考:优先用输出 asset_id,否则回传上传
+          prevAssetId = assetId || (await ensureAssetId(ws, url, cache).catch(() => 0)) || prevAssetId
+        } catch (e: any) {
+          showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
+        } finally {
+          setShotGen((m) => ({ ...m, [sh.id]: false }))
+        }
+      }
+    } finally {
+      setShotGenRunning(false)
+    }
+  }
 
   // 把分镜里已有的素材图(AI 匹配/已选)纳入对应主体的版本库
   useEffect(() => {
@@ -308,12 +363,23 @@ export default function SmartCreateView() {
             variant: 'ghost',
             action: () => entryMeta && generateScript(requirement, entryMeta),
           },
-          { label: '生成镜头编排', variant: 'primary', action: () => goStep(1) },
+          {
+            label: '生成镜头编排',
+            variant: 'primary',
+            action: () => {
+              goStep(1)
+              void generateShotImages()
+            },
+          },
         ]
       case 1: // 镜头编排
         return [
           { label: '上一步', variant: 'ghost', action: () => goStep(0) },
-          { label: '重新生成镜头编排', variant: 'ghost', action: todo('重新生成镜头编排(待接入)') },
+          {
+            label: shotGenRunning ? '生成中…' : '重新生成镜头编排',
+            variant: 'ghost',
+            action: () => generateShotImages(),
+          },
           { label: '生成视频', variant: 'primary', action: () => goStep(2) },
         ]
       case 2: // 生成视频
@@ -413,7 +479,14 @@ export default function SmartCreateView() {
     }
     if (step === 1) {
       // 镜头编排:分镜列表(选中/插入/复制/删除/…菜单)+ 素材修改(素材/历史/描述/台词/字幕/音效)
-      return <ShotArrange shots={shots} materials={entryMeta?.images || []} onShotsChange={setShots} />
+      return (
+        <ShotArrange
+          shots={shots}
+          materials={entryMeta?.images || []}
+          generating={shotGen}
+          onShotsChange={setShots}
+        />
+      )
     }
     // step === 3 视频生成:左分镜列表 + 中视频(占位),右素材修改(已接 AI 润色)
     return (

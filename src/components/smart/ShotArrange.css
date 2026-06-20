@@ -92,6 +92,31 @@
   color: #aab0b8;
   font-size: 13px;
 }
+.shotarr__gen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #11a98a;
+  font-size: 12px;
+}
+.shotarr__gen-spin {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: shotarr-gen-spin 0.7s linear infinite;
+}
+@keyframes shotarr-gen-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 /* 缩略图右下角 编辑/删除(hover 出现) */
 .shotarr__thumb-actions {
   position: absolute;

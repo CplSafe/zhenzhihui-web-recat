@@ -12,6 +12,8 @@ import './ShotArrange.css'
 interface ShotArrangeProps {
   shots: Shot[]
   materials?: string[]
+  /** 正在生成分镜图的镜头(键为 shot.id) */
+  generating?: Record<string | number, boolean>
   onShotsChange: (shots: Shot[]) => void
 }
 
@@ -34,7 +36,7 @@ function blankShot(): Shot {
   return { id: newId(), no: '镜头', duration: '5s', desc: '', subjects: [] }
 }
 
-export default function ShotArrange({ shots, materials = [], onShotsChange }: ShotArrangeProps) {
+export default function ShotArrange({ shots, materials = [], generating = {}, onShotsChange }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
@@ -108,6 +110,12 @@ export default function ShotArrange({ shots, materials = [], onShotsChange }: Sh
                 {/* 右:缩略图 + 右下角 编辑/删除(hover) */}
                 <div className="shotarr__thumb">
                   {thumb ? <img src={thumb} alt="" /> : <span className="shotarr__thumb-ph">{s.no}</span>}
+                  {generating[s.id] && (
+                    <div className="shotarr__gen">
+                      <span className="shotarr__gen-spin" aria-hidden="true" />
+                      生成中…
+                    </div>
+                  )}
                   <div className="shotarr__thumb-actions">
                     <button
                       type="button"
