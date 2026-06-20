@@ -234,15 +234,18 @@ export default function GuideDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialText, images])
 
-  // 在对话框内上传素材 → 回传父级 + 立即据新素材预填
+  // 在对话框内上传素材 → 立即据新素材预填。
+  // 有父级回调则只交给父级(由 images prop 反映,避免与本地重复计数);否则本地保存。
   const onPickFiles = (files: FileList | null) => {
     if (!files?.length) return
     const urls = Array.from(files).map((f) => URL.createObjectURL(f))
-    const next = [...extraImages, ...urls]
-    setExtraImages(next)
-    onAddImages?.(urls)
+    if (onAddImages) {
+      onAddImages(urls)
+    } else {
+      setExtraImages((prev) => [...prev, ...urls])
+    }
     prefilledRef.current = true
-    void runPrefill([...images, ...next])
+    void runPrefill([...allImages, ...urls])
   }
 
   if (!open) return null
