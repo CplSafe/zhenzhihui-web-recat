@@ -36,7 +36,7 @@ function projectId(p: any): number {
 /* 侧栏 / 快捷入口 key → 路由映射（已存在的路由）*/
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
-  creative: '/creative',
+  creative: '/smart',
   projects: '/projects',
   resources: '/resources',
   templates: '/templates',

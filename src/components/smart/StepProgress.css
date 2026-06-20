@@ -1,0 +1,88 @@
+/* 智能成片 2.1 进度条 */
+.step-progress {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 4px 0;
+}
+
+.step-progress__node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  width: 96px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: #9aa3af;
+  transition: color 0.2s;
+}
+.step-progress__node:disabled {
+  cursor: default;
+}
+
+.step-progress__circle {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  background: #eef0f4;
+  color: #9aa3af;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.step-progress__label {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* 当前步骤 */
+.step-progress__node.is-active {
+  color: #111827;
+}
+.step-progress__node.is-active .step-progress__circle {
+  background: #1fcfa9;
+  color: #fff;
+  box-shadow: 0 0 0 4px rgba(31, 207, 169, 0.18);
+}
+
+/* 已完成 */
+.step-progress__node.is-done {
+  color: #111827;
+}
+.step-progress__node.is-done .step-progress__circle {
+  background: #1fcfa9;
+  color: #fff;
+}
+
+.step-progress__node:not(:disabled):hover .step-progress__circle {
+  border-color: #1fcfa9;
+}
+
+/* 连接线 */
+.step-progress__line {
+  flex: 1 1 auto;
+  height: 2px;
+  margin-top: 14px;
+  min-width: 32px;
+  background: #e5e7eb;
+  border-radius: 2px;
+  transition: background 0.3s;
+}
+.step-progress__line.is-done {
+  background: #1fcfa9;
+}

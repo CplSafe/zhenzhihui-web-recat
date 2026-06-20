@@ -9,7 +9,7 @@ import './HomeView.css'
 
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
-  creative: '/creative',
+  creative: '/smart',
   projects: '/projects',
   resources: '/resources',
 }
