@@ -26,18 +26,11 @@ export interface Shot {
 
 interface ScriptStoryboardTableProps {
   shots: Shot[]
-  /** 正在 AI 生成的主体,键为 `${shotId}:${subjectIndex}` */
-  generating?: Record<string, boolean>
-  onUpload?: (shot: Shot, subject: ShotSubject, subjectIndex: number) => void
-  onAiGenerate?: (shot: Shot, subject: ShotSubject, subjectIndex: number) => void
+  /** 打开某主体的素材管理弹窗(同名主体共享);autoGen=true 表示无版本时自动生成一次 */
+  onOpenSubject?: (name: string, autoGen?: boolean) => void
 }
 
-export default function ScriptStoryboardTable({
-  shots,
-  generating = {},
-  onUpload,
-  onAiGenerate,
-}: ScriptStoryboardTableProps) {
+export default function ScriptStoryboardTable({ shots, onOpenSubject }: ScriptStoryboardTableProps) {
   return (
     <div className="sbt">
       <div className="sbt__head">
@@ -53,43 +46,36 @@ export default function ScriptStoryboardTable({
           <div className="sbt__c sbt__c--dur">{shot.duration}</div>
           <div className="sbt__c sbt__c--desc">{shot.desc}</div>
           <div className="sbt__c sbt__c--mat">
-            {shot.subjects.map((s, idx) => (
-              <div className="sbt__subj" key={`${s.tag}-${idx}`}>
-                <div className="sbt__subj-info">
-                  <span className="sbt__subj-tag">{s.tag}</span>
-                  {s.kind && <span className="sbt__subj-kind">{s.kind}</span>}
+            {shot.subjects.map((s, idx) => {
+              const name = s.tag.replace(/^@/, '').trim()
+              return (
+                <div className="sbt__subj" key={`${s.tag}-${idx}`}>
+                  <div className="sbt__subj-info">
+                    <span className="sbt__subj-tag">{s.tag}</span>
+                    {s.kind && <span className="sbt__subj-kind">{s.kind}</span>}
+                  </div>
+                  {s.image ? (
+                    <button type="button" className="sbt__thumb" onClick={() => onOpenSubject?.(name)} title="管理素材">
+                      <img src={s.image} alt="" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="sbt__upload"
+                      onClick={() => onOpenSubject?.(name)}
+                      aria-label={`为 ${s.tag} 准备素材`}
+                    >
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                        <path d="M12 5v14M5 12h14" />
+                      </svg>
+                    </button>
+                  )}
+                  <button type="button" className="sbt__aigen" onClick={() => onOpenSubject?.(name, true)}>
+                    AI自动生成
+                  </button>
                 </div>
-                {s.image ? (
-                  <button
-                    type="button"
-                    className="sbt__thumb"
-                    onClick={() => onUpload?.(shot, s, idx)}
-                    title="点击替换素材"
-                  >
-                    <img src={s.image} alt="" />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="sbt__upload"
-                    onClick={() => onUpload?.(shot, s, idx)}
-                    aria-label={`为 ${s.tag} 上传素材`}
-                  >
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="sbt__aigen"
-                  disabled={!!generating[`${shot.id}:${idx}`]}
-                  onClick={() => onAiGenerate?.(shot, s, idx)}
-                >
-                  {generating[`${shot.id}:${idx}`] ? '生成中…' : 'AI自动生成'}
-                </button>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       ))}

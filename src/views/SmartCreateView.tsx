@@ -13,7 +13,7 @@ import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import EditField from '@/components/smart/EditField'
 import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
 import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStoryboardTable'
-import MaterialPickerDialog from '@/components/smart/MaterialPickerDialog'
+import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
@@ -50,6 +50,21 @@ interface BottomButton {
   label: string
   variant: 'ghost' | 'primary'
   action: () => void
+}
+
+const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
+
+// 以「主体」为中心组织出图提示词(人物/场景/产品分别给取景框架),保证不同主体出图不同
+function subjectPrompt(name: string, kind: string, style?: string, theme?: string) {
+  const probe = name + kind
+  const frame = /人物|角色|人|男|女|主角|闺蜜|宝妈|宝爸|学生|白领|model|girl|boy/i.test(probe)
+    ? '人物角色形象,单人,半身肖像,表情自然,简洁背景'
+    : /场景|街道|背景|环境|室内|室外|校园|店|路|空间|夜景/i.test(probe)
+      ? '场景空镜,无人物,环境氛围,广角'
+      : '产品/物体特写,主体居中,简洁背景'
+  return [name, frame, `${style || '商业'}风格`, theme && `广告主题:${theme}`, '高清广告级配图,无文字无水印']
+    .filter(Boolean)
+    .join(',')
 }
 
 // 把 prompt 里的 @引用(如 @图片1 / @小雅)高亮成绿色
@@ -97,65 +112,62 @@ export default function SmartCreateView() {
   const projectIdRef = useRef(0)
   const titlePatchedRef = useRef(false)
 
-  // AI 自动生成素材(Qwen-Image)
-  const [genMap, setGenMap] = useState<Record<string, boolean>>({})
-  const handleAiGenerate = async (shot: Shot, subject: any, idx: number) => {
-    const key = `${shot.id}:${idx}`
-    if (genMap[key]) return
-    const name = String(subject?.tag || '').replace(/^@/, '').trim()
-    const kind = String(subject?.kind || '')
-    // 以「主体」为中心组织提示词(而非整段镜头描述),保证不同主体出图不同
-    const probe = name + kind
-    const frame = /人物|角色|人|男|女|主角|闺蜜|宝妈|宝爸|学生|白领|model|girl|boy/i.test(probe)
-      ? '人物角色形象,单人,半身肖像,表情自然,简洁背景'
-      : /场景|街道|背景|环境|室内|室外|校园|店|路|空间|夜景/i.test(probe)
-        ? '场景空镜,无人物,环境氛围,广角'
-        : '产品/物体特写,主体居中,简洁背景'
-    const theme = (reqSummary || '').slice(0, 40)
-    const prompt = [
-      name,
-      frame,
-      `${entryMeta?.style || '商业'}风格`,
-      theme && `广告主题:${theme}`,
-      '高清广告级配图,无文字无水印',
-    ]
-      .filter(Boolean)
-      .join(',')
-    setGenMap((m) => ({ ...m, [key]: true }))
-    try {
-      const url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
-      setShots((prev) =>
-        prev.map((sh) =>
-          sh.id === shot.id
-            ? { ...sh, subjects: sh.subjects.map((su, i) => (i === idx ? { ...su, image: url } : su)) }
-            : sh,
-        ),
-      )
-    } catch (e: any) {
-      showToast(e?.message || 'AI 生成失败,请重试', 'error')
-    } finally {
-      setGenMap((m) => ({ ...m, [key]: false }))
-    }
-  }
+  // ── 主体素材统一管理:同名主体(@闺蜜A)共享素材,选定后所有同名处联动 ──
+  // 版本/提示词存 registry;选定的图写回所有同名 subject(供表格 + 镜头编排一致展示)
+  const [subjectAssets, setSubjectAssets] = useState<Record<string, { versions: string[]; prompt?: string }>>({})
+  const [subjectDlg, setSubjectDlg] = useState<{ open: boolean; name: string; kind: string; autoGen: boolean }>({
+    open: false,
+    name: '',
+    kind: '',
+    autoGen: false,
+  })
 
-  // 准备素材:为某主体选/传素材
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const pickerTargetRef = useRef<{ shotId: any; subjIdx: number } | null>(null)
-  const openMaterialPicker = (shot: Shot, _subject: any, subjIdx: number) => {
-    pickerTargetRef.current = { shotId: shot.id, subjIdx }
-    setPickerOpen(true)
-  }
-  const pickMaterial = (url: string) => {
-    const t = pickerTargetRef.current
-    if (!t) return
+  const applySubjectImage = (name: string, url: string) =>
     setShots((prev) =>
-      prev.map((sh) =>
-        sh.id === t.shotId
-          ? { ...sh, subjects: sh.subjects.map((su, i) => (i === t.subjIdx ? { ...su, image: url } : su)) }
-          : sh,
-      ),
+      prev.map((sh) => ({
+        ...sh,
+        subjects: sh.subjects.map((su) => (stripAt(su.tag) === name ? { ...su, image: url } : su)),
+      })),
     )
+  const subjectKindOf = (name: string) => {
+    for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.kind) return su.kind
+    return ''
   }
+  const subjectImageOf = (name: string) => {
+    for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.image) return su.image
+    return ''
+  }
+  const genForSubject = async (name: string, prompt: string) => {
+    const url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
+    setSubjectAssets((a) => ({ ...a, [name]: { versions: [...(a[name]?.versions || []), url], prompt } }))
+    applySubjectImage(name, url)
+  }
+  const uploadForSubject = (name: string, url: string) => {
+    setSubjectAssets((a) => ({ ...a, [name]: { versions: [...(a[name]?.versions || []), url], prompt: a[name]?.prompt } }))
+    applySubjectImage(name, url)
+  }
+  const openSubject = (name: string, autoGen = false) =>
+    setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
+
+  // 把分镜里已有的素材图(AI 匹配/已选)纳入对应主体的版本库
+  useEffect(() => {
+    setSubjectAssets((prev) => {
+      let changed = false
+      const next = { ...prev }
+      shots.forEach((sh) =>
+        sh.subjects.forEach((su) => {
+          if (!su.image) return
+          const n = stripAt(su.tag)
+          const cur = next[n]?.versions || []
+          if (!cur.includes(su.image)) {
+            next[n] = { versions: [...cur, su.image], prompt: next[n]?.prompt }
+            changed = true
+          }
+        }),
+      )
+      return changed ? next : prev
+    })
+  }, [shots])
 
   // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
   const [fields, setFields] = useState<Record<string, string>>({})
@@ -353,12 +365,7 @@ export default function SmartCreateView() {
           </div>
           {shots.length ? (
             <>
-              <ScriptStoryboardTable
-                shots={shots}
-                generating={genMap}
-                onUpload={openMaterialPicker}
-                onAiGenerate={handleAiGenerate}
-              />
+              <ScriptStoryboardTable shots={shots} onOpenSubject={openSubject} />
               {scriptLoading && (
                 <div className="smart__placeholder smart__placeholder--xs">分镜持续生成中…</div>
               )}
@@ -520,11 +527,21 @@ export default function SmartCreateView() {
         )}
       </div>
 
-      <MaterialPickerDialog
-        open={pickerOpen}
-        materials={entryMeta?.images || []}
-        onClose={() => setPickerOpen(false)}
-        onPick={pickMaterial}
+      <SubjectAssetDialog
+        open={subjectDlg.open}
+        name={subjectDlg.name}
+        kind={subjectDlg.kind}
+        currentImage={subjectImageOf(subjectDlg.name)}
+        versions={subjectAssets[subjectDlg.name]?.versions || []}
+        defaultPrompt={
+          subjectAssets[subjectDlg.name]?.prompt ||
+          subjectPrompt(subjectDlg.name, subjectDlg.kind, entryMeta?.style, (reqSummary || '').slice(0, 40))
+        }
+        autoGen={subjectDlg.autoGen}
+        onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
+        onGenerate={(p) => genForSubject(subjectDlg.name, p)}
+        onSelect={(url) => applySubjectImage(subjectDlg.name, url)}
+        onUpload={(url) => uploadForSubject(subjectDlg.name, url)}
       />
     </div>
   )
