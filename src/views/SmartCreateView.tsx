@@ -173,17 +173,11 @@ export default function SmartCreateView() {
     return ''
   }
   const genForSubject = async (name: string, prompt: string) => {
-    // 先把意图/目的交给本地 Qwen 润成干净画面提示词,再喂图像模型(目的性文字会干扰出图)
-    let imgPrompt = prompt
-    try {
-      imgPrompt = await refineElementPrompt(prompt, { name, kind: subjectKindOf(name), style: entryMeta?.style })
-    } catch {
-      /* 润色失败则退回原意图 */
-    }
-    const url = await generateImage({ prompt: imgPrompt, size: sizeForRatio(entryMeta?.ratio) })
+    // prompt 已是弹窗里(经 Qwen 润色或用户编辑过的)干净画面提示词,直接出图;不再二次润色
+    const url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
     setSubjectAssets((a) => {
       const e = a[name] || { versions: [] }
-      // 存原始意图 prompt(便于再次编辑/重生成时仍走润色)
+      // 存这版干净提示词:下次打开直接显示,不再重复润色
       return { ...a, [name]: { versions: [...e.versions, url], prompt, sources: { ...(e.sources || {}), [url]: 'ai' } } }
     })
     applySubjectImage(name, url)
@@ -996,6 +990,16 @@ export default function SmartCreateView() {
           subjectPrompt(subjectDlg.name, subjectDlg.kind, entryMeta?.style, subjectContext(subjectDlg.name))
         }
         autoGen={subjectDlg.autoGen}
+        refinePrompt={
+          subjectAssets[subjectDlg.name]?.prompt
+            ? undefined // 已有润色过/编辑过的提示词,直接显示,不再润色
+            : (intent: string) =>
+                refineElementPrompt(intent, {
+                  name: subjectDlg.name,
+                  kind: subjectDlg.kind,
+                  style: entryMeta?.style,
+                })
+        }
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
         onGenerate={(p) => genForSubject(subjectDlg.name, p)}
         onSelect={(url) => applySubjectImage(subjectDlg.name, url)}

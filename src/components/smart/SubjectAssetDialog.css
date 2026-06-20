@@ -104,6 +104,10 @@
   color: #374151;
   margin: 12px 0 8px;
 }
+.sad__refining {
+  font-weight: 400;
+  color: #11a98a;
+}
 .sad__prompt {
   width: 100%;
   box-sizing: border-box;
