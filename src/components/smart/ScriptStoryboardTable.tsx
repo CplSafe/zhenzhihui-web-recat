@@ -21,7 +21,8 @@ export interface Shot {
   line?: string // 台词/旁白
   subtitle?: string // 字幕
   sfx?: string // 音效
-  image?: string // 选用的素材图(素材历史可切换)
+  image?: string // 当前分镜图(成片画面)
+  imageVersions?: string[] // 分镜图历史版本
 }
 
 interface ScriptStoryboardTableProps {

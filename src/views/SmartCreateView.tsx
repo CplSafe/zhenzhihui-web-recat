@@ -153,6 +153,51 @@ export default function SmartCreateView() {
   // ── 镜头编排:按 画面描述 + 该镜头素材 + 上一张分镜图(连贯)+ 项目摘要 生成分镜图(后端文/图生图) ──
   const [shotGen, setShotGen] = useState<Record<string, boolean>>({})
   const [shotGenRunning, setShotGenRunning] = useState(false)
+  const autoGenRef = useRef(false)
+
+  // 生成单个分镜图:画面描述 + 该镜头素材(多参考图)+ 上一张分镜图(连贯);返回新图 url
+  const genShotFrame = async (
+    ws: number,
+    sh: Shot,
+    prevUrl: string,
+    cache: Record<string, number>,
+    theme: string,
+  ) => {
+    const subjUrls = Array.from(new Set(sh.subjects.map((s) => s.image).filter(Boolean))) as string[]
+    const refIds: number[] = []
+    for (const u of subjUrls) {
+      try {
+        const id = await ensureAssetId(ws, u, cache)
+        if (id) refIds.push(id)
+      } catch {
+        /* 单张参考上传失败则跳过 */
+      }
+    }
+    if (prevUrl) {
+      try {
+        const id = await ensureAssetId(ws, prevUrl, cache)
+        if (id) refIds.push(id)
+      } catch {
+        /* ignore */
+      }
+    }
+    const prompt = [
+      sh.desc,
+      theme && `整体广告主题:${theme}`,
+      entryMeta?.style && `${entryMeta.style}风格`,
+      prevUrl && '与上一镜头保持人物形象、场景、配色、画风一致',
+      '画面比例 ' + (entryMeta?.ratio || '16:9'),
+    ]
+      .filter(Boolean)
+      .join(';')
+    const { url } = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds })
+    setShots((prev) =>
+      prev.map((x) => (x.id === sh.id ? { ...x, image: url, imageVersions: [...(x.imageVersions || []), url] } : x)),
+    )
+    return url
+  }
+
+  // 串行生成全部分镜图
   const generateShotImages = async () => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
@@ -163,36 +208,12 @@ export default function SmartCreateView() {
     setShotGenRunning(true)
     const cache: Record<string, number> = {}
     const theme = (reqSummary || '').slice(0, 60)
-    let prevAssetId = 0
+    let prevUrl = ''
     try {
       for (const sh of shots) {
         setShotGen((m) => ({ ...m, [sh.id]: true }))
         try {
-          // 该镜头素材(去重)→ 参考图
-          const subjUrls = Array.from(new Set(sh.subjects.map((s) => s.image).filter(Boolean))) as string[]
-          const refIds: number[] = []
-          for (const u of subjUrls) {
-            try {
-              const id = await ensureAssetId(ws, u, cache)
-              if (id) refIds.push(id)
-            } catch {
-              /* 单张参考上传失败则跳过 */
-            }
-          }
-          if (prevAssetId) refIds.push(prevAssetId) // 连贯:带上一张分镜图
-          const prompt = [
-            sh.desc,
-            theme && `整体广告主题:${theme}`,
-            entryMeta?.style && `${entryMeta.style}风格`,
-            prevAssetId && '与上一镜头保持人物形象、场景、配色、画风一致',
-            '画面比例 ' + (entryMeta?.ratio || '16:9'),
-          ]
-            .filter(Boolean)
-            .join(';')
-          const { url, assetId } = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds })
-          setShots((prev) => prev.map((x) => (x.id === sh.id ? { ...x, image: url } : x)))
-          // 下一镜头的连贯参考:优先用输出 asset_id,否则回传上传
-          prevAssetId = assetId || (await ensureAssetId(ws, url, cache).catch(() => 0)) || prevAssetId
+          prevUrl = await genShotFrame(ws, sh, prevUrl, cache, theme)
         } catch (e: any) {
           showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
         } finally {
@@ -203,6 +224,36 @@ export default function SmartCreateView() {
       setShotGenRunning(false)
     }
   }
+
+  // 单镜重生成(用前一镜当前图做连贯参考)
+  const regenerateShot = async (sh: Shot) => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法生成', 'error')
+      return
+    }
+    if (shotGen[sh.id]) return
+    const idx = shots.findIndex((x) => x.id === sh.id)
+    const prevUrl = idx > 0 ? shots[idx - 1]?.image || '' : ''
+    setShotGen((m) => ({ ...m, [sh.id]: true }))
+    try {
+      await genShotFrame(ws, sh, prevUrl, {}, (reqSummary || '').slice(0, 60))
+    } catch (e: any) {
+      showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
+    } finally {
+      setShotGen((m) => ({ ...m, [sh.id]: false }))
+    }
+  }
+
+  // 进入镜头编排:若分镜图尚未生成,则自动串行逐个生成(左侧缩略图转圈)
+  useEffect(() => {
+    if (step !== 1 || !shots.length || shotGenRunning) return
+    if (autoGenRef.current) return
+    if (shots.some((s) => s.image)) return // 已有分镜图(含草稿恢复)→ 不自动重生成
+    autoGenRef.current = true
+    void generateShotImages()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, shots])
 
   // 把分镜里已有的素材图(AI 匹配/已选)纳入对应主体的版本库
   useEffect(() => {
@@ -309,6 +360,7 @@ export default function SmartCreateView() {
     setScriptLoading(true)
     setScriptError('')
     setShots([])
+    autoGenRef.current = false // 新脚本 → 进入镜头编排时重新自动生成分镜图
     let got = 0
     try {
       const result = await generateScriptShotsStream(
@@ -413,8 +465,8 @@ export default function SmartCreateView() {
             label: '生成镜头编排',
             variant: 'primary',
             action: () => {
+              autoGenRef.current = false // 允许进入后自动生成
               goStep(1)
-              void generateShotImages()
             },
           },
         ]
@@ -528,9 +580,9 @@ export default function SmartCreateView() {
       return (
         <ShotArrange
           shots={shots}
-          materials={entryMeta?.images || []}
           generating={shotGen}
           onShotsChange={setShots}
+          onRegenerateShot={regenerateShot}
         />
       )
     }

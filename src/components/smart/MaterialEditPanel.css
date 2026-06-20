@@ -6,17 +6,14 @@
   margin-bottom: 14px;
 }
 .medit__mat {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
   padding-bottom: 18px;
   margin-bottom: 18px;
   border-bottom: 1px solid #eef0f4;
 }
 .medit__main {
-  flex: 0 0 auto;
-  width: 232px;
-  height: 130px;
+  width: 100%;
+  max-width: 380px;
+  aspect-ratio: 16 / 9;
   border-radius: 12px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
@@ -30,33 +27,52 @@
   object-fit: cover;
 }
 .medit__main-ph {
-  font-size: 12px;
+  font-size: 13px;
   color: #aab0b8;
 }
-.medit__upload {
-  flex: 0 0 auto;
-  width: 110px;
-  height: 130px;
-  border: 1px dashed #dcdfe4;
-  border-radius: 10px;
-  background: #fafbfc;
-  color: #8a93a0;
+.medit__frame-actions {
   display: flex;
-  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.medit__upload {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 6px;
-  font-size: 12px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid #d6dae1;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b5563;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
 }
 .medit__upload:hover {
   border-color: #1fcfa9;
-  color: #1fcfa9;
+  color: #11a98a;
+}
+.medit__regen {
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid #1fcfa9;
+  border-radius: 8px;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.medit__regen:hover:not(:disabled) {
+  background: #1bb897;
+}
+.medit__regen:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .medit__history {
-  flex: 1 1 auto;
-  min-width: 0;
+  margin-top: 14px;
 }
 .medit__history-title {
   font-size: 12px;

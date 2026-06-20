@@ -11,10 +11,10 @@ import './ShotArrange.css'
 
 interface ShotArrangeProps {
   shots: Shot[]
-  materials?: string[]
   /** 正在生成分镜图的镜头(键为 shot.id) */
   generating?: Record<string | number, boolean>
   onShotsChange: (shots: Shot[]) => void
+  onRegenerateShot?: (shot: Shot) => void
 }
 
 let uid = 1
@@ -36,7 +36,7 @@ function blankShot(): Shot {
   return { id: newId(), no: '镜头', duration: '5s', desc: '', subjects: [] }
 }
 
-export default function ShotArrange({ shots, materials = [], generating = {}, onShotsChange }: ShotArrangeProps) {
+export default function ShotArrange({ shots, generating = {}, onShotsChange, onRegenerateShot }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
@@ -189,7 +189,12 @@ export default function ShotArrange({ shots, materials = [], generating = {}, on
       {/* 右:素材修改(素材/历史/素材描述/台词/字幕/音效) */}
       <div className="shotarr__editor">
         {selected ? (
-          <MaterialEditPanel shot={selected} materials={materials} onPatch={patchSelected} />
+          <MaterialEditPanel
+            shot={selected}
+            onPatch={patchSelected}
+            onRegenerate={onRegenerateShot}
+            regenerating={!!generating[selected.id]}
+          />
         ) : (
           <div className="shotarr__empty">请选择左侧分镜进行编辑</div>
         )}

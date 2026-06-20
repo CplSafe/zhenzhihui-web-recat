@@ -1,7 +1,7 @@
 /**
- * MaterialEditPanel — 选中分镜的「素材修改」面板(镜头编排 / 视频生成 复用)。
- * 素材预览 + 上传素材 + 素材历史(点击切换)+ 素材描述 / 台词 / 字幕 / 音效。
- * 每个修改框无提交按钮、改动即时回写(自动保存),并带 AI 润色(EditField)。
+ * 镜头编排右侧面板:编辑选中分镜的「分镜图」(成片画面)+ 画面描述 + 台词/字幕/音效。
+ * 分镜图 = 用画面描述 + 素材生成;此处可预览、切换历史版本、上传替换、重新生成。
+ * 每个修改框无提交、改动即时保存,并带 AI 润色。
  */
 import { useRef } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
@@ -10,52 +10,67 @@ import './MaterialEditPanel.css'
 
 interface MaterialEditPanelProps {
   shot: Shot
-  /** 可切换的素材历史(objectURL) */
-  materials: string[]
   onPatch: (patch: Partial<Shot>) => void
+  onRegenerate?: (shot: Shot) => void
+  regenerating?: boolean
 }
 
-export default function MaterialEditPanel({ shot, materials, onPatch }: MaterialEditPanelProps) {
+export default function MaterialEditPanel({ shot, onPatch, onRegenerate, regenerating }: MaterialEditPanelProps) {
   const fileRef = useRef<HTMLInputElement | null>(null)
-  const current = shot.image || shot.subjects.find((s) => s.image)?.image || ''
-  // 历史 = 已有素材 ∪ 当前(去重)
-  const history = Array.from(new Set([...(materials || []), ...shot.subjects.map((s) => s.image).filter(Boolean) as string[], current].filter(Boolean)))
+  const current = shot.image || ''
+  const history = shot.imageVersions || []
 
   const onFile = (files: FileList | null) => {
     if (!files?.length) return
-    onPatch({ image: URL.createObjectURL(files[0]) })
+    const url = URL.createObjectURL(files[0])
+    onPatch({ image: url, imageVersions: [...history, url] })
   }
 
   return (
     <div className="medit">
-      <div className="medit__head">素材</div>
+      <div className="medit__head">分镜图</div>
 
       <div className="medit__mat">
         <div className="medit__main">
-          {current ? <img src={current} alt="" /> : <span className="medit__main-ph">暂无素材</span>}
+          {regenerating ? (
+            <span className="medit__main-ph">生成中…</span>
+          ) : current ? (
+            <img src={current} alt="" />
+          ) : (
+            <span className="medit__main-ph">暂无分镜图</span>
+          )}
         </div>
-        <button type="button" className="medit__upload" onClick={() => fileRef.current?.click()}>
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 16V4M7 9l5-5 5 5" />
-            <path d="M5 20h14" />
-          </svg>
-          上传素材
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={(e) => {
-            onFile(e.target.files)
-            e.target.value = ''
-          }}
-        />
-        <div className="medit__history">
-          <div className="medit__history-title">素材历史（点击切换）</div>
-          <div className="medit__history-row">
-            {history.length ? (
-              history.map((url, i) => (
+        <div className="medit__frame-actions">
+          <button type="button" className="medit__upload" onClick={() => fileRef.current?.click()}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
+            </svg>
+            上传替换
+          </button>
+          <button
+            type="button"
+            className="medit__regen"
+            onClick={() => onRegenerate?.(shot)}
+            disabled={!!regenerating}
+          >
+            {regenerating ? '生成中…' : '重新生成'}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              onFile(e.target.files)
+              e.target.value = ''
+            }}
+          />
+        </div>
+        {history.length > 1 && (
+          <div className="medit__history">
+            <div className="medit__history-title">历史版本（点击切换）</div>
+            <div className="medit__history-row">
+              {history.map((url, i) => (
                 <button
                   key={i}
                   type="button"
@@ -64,42 +79,40 @@ export default function MaterialEditPanel({ shot, materials, onPatch }: Material
                 >
                   <img src={url} alt="" />
                 </button>
-              ))
-            ) : (
-              <span className="medit__history-empty">暂无</span>
-            )}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <EditField
-        label="素材描述"
-        value={shot.matDesc || ''}
-        onChange={(v) => onPatch({ matDesc: v })}
-        kind="generic"
-        placeholder="请输入素材的描述或修改建议…"
-        rows={2}
+        label="画面描述"
+        value={shot.desc || ''}
+        onChange={(v) => onPatch({ desc: v })}
+        kind="script"
+        placeholder="这一镜头的画面、运镜、节奏…(改后可重新生成分镜图)"
+        rows={3}
       />
       <EditField
         label="台词"
         value={shot.line || ''}
         onChange={(v) => onPatch({ line: v })}
         kind="line"
-        placeholder={`${shot.no}中识别到的台词文本…`}
+        placeholder={`${shot.no}的台词/旁白…`}
       />
       <EditField
         label="字幕"
         value={shot.subtitle || ''}
         onChange={(v) => onPatch({ subtitle: v })}
         kind="subtitle"
-        placeholder={`${shot.no}中识别到的字幕文本…`}
+        placeholder={`${shot.no}的字幕…`}
       />
       <EditField
         label="音效"
         value={shot.sfx || ''}
         onChange={(v) => onPatch({ sfx: v })}
         kind="sound"
-        placeholder={`${shot.no}中识别到的音效文本…`}
+        placeholder={`${shot.no}的音效…`}
       />
     </div>
   )
