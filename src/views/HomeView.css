@@ -1,6 +1,7 @@
 /* 2.1 首页样式 */
 .home {
   display: flex;
+  height: 100vh; /* 视口锁高,内部 content 区滚动(body overflow:hidden) */
   min-height: 100vh;
   background: #f8f9fa;
 }
@@ -8,6 +9,7 @@
 .home__main {
   flex: 1;
   min-width: 0;
+  min-height: 0; /* 允许 flex 子项收缩,使 content 获得有界高度可滚动 */
   display: flex;
   flex-direction: column;
 }
@@ -138,11 +140,13 @@
 /* 内容区（可滚动；限宽并居中，避免超宽屏把卡片拉得过长）*/
 .home__content {
   flex: 1;
+  min-height: 0; /* 配合父级有界高度,使本区可纵向滚动 */
   width: 100%;
   max-width: 1480px;
   margin: 0 auto;
   box-sizing: border-box;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch; /* iOS 惯性滚动 */
   padding: 22px 28px 40px;
 }
 
@@ -155,19 +159,48 @@
   margin-bottom: 14px;
   background: #fff;
 }
-/* 轮播轨道 + 每屏一张 slide */
-.home__banner-track {
-  display: flex;
-  height: 100%;
-  transition: transform 0.5s ease;
-  will-change: transform;
+/* coverflow 舞台:slide 绝对定位,按与中心的相对位置摆放(中/左/右),旋转时平滑过渡 */
+.home__banner-stage {
+  position: absolute;
+  inset: 0;
 }
 .home__banner-slide {
-  position: relative;
-  flex: 0 0 100%;
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 10%;
+  width: 80%;
   perspective: 1400px;
+  transition:
+    transform 0.5s ease,
+    opacity 0.5s ease;
+  will-change: transform, opacity;
+}
+/* 中间(聚焦) / 左 / 右(两侧缩小半透,内沿露出) / 其余隐藏待入场 */
+.home__banner-slide.is-center {
+  transform: translateX(0) scale(1);
+  opacity: 1;
+  z-index: 3;
+}
+.home__banner-slide.is-left {
+  transform: translateX(-104%) scale(0.86);
+  opacity: 0.5;
+  z-index: 2;
+}
+.home__banner-slide.is-right {
+  transform: translateX(104%) scale(0.86);
+  opacity: 0.5;
+  z-index: 2;
+}
+.home__banner-slide.is-hidden {
+  transform: scale(0.78);
+  opacity: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+/* 仅中间卡可交互,避免误点两侧 */
+.home__banner-slide:not(.is-center) {
+  pointer-events: none;
 }
 /* 左右两块产品照:绕纵轴旋转形成 coverflow 透视
    左图:绕左沿转 → 左边高、右边低(右沿后退);右图:绕右沿转 → 左边低、右边高(左沿后退) */
@@ -452,14 +485,29 @@
   }
 }
 @media (max-width: 560px) {
+  /* 快捷入口:窄屏 2×2 紧凑卡(原单列过空) */
   .home__quick-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  .home__quick-card {
+    padding: 14px 14px;
+    border-radius: 12px;
+  }
+  .home__quick-title {
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  .home__quick-desc {
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .home__quick-icon img {
+    width: 46px;
+    height: 46px;
   }
   .home__template-grid {
     grid-template-columns: 1fr;
-  }
-  .home__search {
-    max-width: 50%;
   }
 }
 
@@ -699,6 +747,23 @@ button.home__template-card {
   .home__banner-photo {
     width: 40%;
   }
+  /* 移动端:slide 占满,两侧整屏滑入滑出(不留缩小的内沿,避免拥挤) */
+  .home__banner-slide {
+    left: 0;
+    width: 100%;
+  }
+  .home__banner-slide.is-center {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+  .home__banner-slide.is-left {
+    transform: translateX(-100%) scale(1);
+    opacity: 1;
+  }
+  .home__banner-slide.is-right {
+    transform: translateX(100%) scale(1);
+    opacity: 1;
+  }
   /* 标签栏换行,搜索框占满一行 */
   .home__tabs-bar {
     flex-wrap: wrap;
@@ -750,6 +815,23 @@ button.home__template-card {
     max-height: none;
     -webkit-mask-image: none;
     mask-image: none;
+  }
+  /* 模板瀑布流 / 历史项目:窄屏 2 列(原列宽 200px 在手机上只剩 1 列,卡片过大) */
+  .home__masonry {
+    column-width: auto;
+    column-count: 2;
+    column-gap: 10px;
+  }
+  .home__tpl {
+    margin-bottom: 10px;
+  }
+  .home__proj-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .home__tpl-action {
+    padding: 8px 16px;
+    font-size: 13px;
   }
 }
 

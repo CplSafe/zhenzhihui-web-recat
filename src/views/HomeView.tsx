@@ -178,12 +178,13 @@ export default function HomeView() {
     }
   }
 
-  const prevBanner = () => setBannerIndex((i) => (i - 1 + BANNERS.length) % BANNERS.length)
-  const nextBanner = () => setBannerIndex((i) => (i + 1) % BANNERS.length)
+  // coverflow 旋转:按右箭头 → 整体右移(左→中、中→右、新卡从左进) ⇒ 中心索引 -1;左箭头相反
+  const rotateRight = () => setBannerIndex((i) => (i - 1 + BANNERS.length) % BANNERS.length)
+  const rotateLeft = () => setBannerIndex((i) => (i + 1) % BANNERS.length)
 
-  // Banner 自动轮播
+  // Banner 自动轮播(与右箭头同向)
   useEffect(() => {
-    const t = window.setInterval(() => setBannerIndex((i) => (i + 1) % BANNERS.length), 6000)
+    const t = window.setInterval(() => setBannerIndex((i) => (i - 1 + BANNERS.length) % BANNERS.length), 6000)
     return () => window.clearInterval(t)
   }, [])
 
@@ -289,34 +290,37 @@ export default function HomeView() {
         </header>
 
         <div className="home__content">
-          {/* 轮播 Banner:track + 多 slide,点击圆点/箭头切换,自动播放;后端接入后传多条 */}
+          {/* 轮播 Banner:coverflow(中/左/右三屏),箭头/圆点旋转,自动播放;后端接入后传多条 */}
           <section className="home__banner">
-            <div
-              className="home__banner-track"
-              style={{ transform: `translateX(-${bannerIndex * 100}%)` }}
-            >
-              {BANNERS.map((b) => (
-                <div className="home__banner-slide" key={b.id}>
-                  <img className="home__banner-photo home__banner-photo--left" src={b.left} alt="" />
-                  <img className="home__banner-photo home__banner-photo--right" src={b.right} alt="" />
-                  <div className="home__banner-card">
-                    <h2 className="home__banner-title">
-                      {b.pre}
-                      <span className="home__banner-em">{b.em}</span>
-                      {b.post}
-                    </h2>
-                    <p className="home__banner-sub">{b.sub}</p>
-                    <button type="button" className="home__banner-btn" onClick={() => handleNavigate(b.action)}>
-                      {b.btn}
-                    </button>
+            <div className="home__banner-stage">
+              {BANNERS.map((b, i) => {
+                let rel = i - bannerIndex
+                if (rel > BANNERS.length / 2) rel -= BANNERS.length
+                if (rel < -BANNERS.length / 2) rel += BANNERS.length
+                const pos = rel === 0 ? 'center' : rel === -1 ? 'left' : rel === 1 ? 'right' : 'hidden'
+                return (
+                  <div className={`home__banner-slide is-${pos}`} key={b.id} aria-hidden={pos !== 'center'}>
+                    <img className="home__banner-photo home__banner-photo--left" src={b.left} alt="" />
+                    <img className="home__banner-photo home__banner-photo--right" src={b.right} alt="" />
+                    <div className="home__banner-card">
+                      <h2 className="home__banner-title">
+                        {b.pre}
+                        <span className="home__banner-em">{b.em}</span>
+                        {b.post}
+                      </h2>
+                      <p className="home__banner-sub">{b.sub}</p>
+                      <button type="button" className="home__banner-btn" onClick={() => handleNavigate(b.action)}>
+                        {b.btn}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
-            <button type="button" className="home__banner-arrow home__banner-arrow--left" onClick={prevBanner} aria-label="上一张">
+            <button type="button" className="home__banner-arrow home__banner-arrow--left" onClick={rotateLeft} aria-label="上一张">
               ‹
             </button>
-            <button type="button" className="home__banner-arrow home__banner-arrow--right" onClick={nextBanner} aria-label="下一张">
+            <button type="button" className="home__banner-arrow home__banner-arrow--right" onClick={rotateRight} aria-label="下一张">
               ›
             </button>
           </section>
