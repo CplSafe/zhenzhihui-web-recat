@@ -4,7 +4,7 @@
  * 上一张已生成的分镜图作为参考图。本地图片(objectURL/dataURL)会先上传成 asset 取得 asset_id。
  */
 // @ts-nocheck
-import { createAiTask, waitForAiTask, uploadAssetFile, extractTaskMediaUrls } from './business'
+import { createAiTask, waitForAiTask, uploadAssetFile, extractTaskMediaUrls, getAssetDownloadUrl } from './business'
 
 /** 把图片(objectURL / dataURL / http)上传为后端素材,返回 asset_id;带缓存避免重复上传。 */
 export async function ensureAssetId(
@@ -23,6 +23,43 @@ export async function ensureAssetId(
   const id = Number(out?.asset?.id || 0)
   if (id) cache[url] = id
   return id
+}
+
+/**
+ * 把图片落库成后端 asset(供持久化):dataURL/blob 会上传取得 asset_id + 签名URL;
+ * 已是 http 的原样返回。这样草稿里存的是可持久的 http URL,刷新/重进不丢图。
+ */
+export async function persistImageAsset(
+  workspaceId: number,
+  url: string,
+  cache: Record<string, number> = {},
+): Promise<{ url: string; assetId: number }> {
+  if (!url) return { url: '', assetId: 0 }
+  if (!/^(data:|blob:)/.test(url)) return { url, assetId: 0 } // 已是后端/外链 http,无需上传
+  let assetId = 0
+  try {
+    assetId = await ensureAssetId(workspaceId, url, cache)
+  } catch {
+    return { url, assetId: 0 } // 上传失败:本会话内仍用 dataURL
+  }
+  if (!assetId) return { url, assetId: 0 }
+  let hosted = url
+  try {
+    hosted = (await getAssetDownloadUrl({ workspaceId, assetId })) || url
+  } catch {
+    /* 取签名URL失败,保留原 url */
+  }
+  return { url: hosted, assetId }
+}
+
+/** 按 asset_id 重新取签名URL(签名会过期,加载时刷新)。失败返回空。 */
+export async function refreshAssetUrl(workspaceId: number, assetId: number): Promise<string> {
+  if (!assetId) return ''
+  try {
+    return (await getAssetDownloadUrl({ workspaceId, assetId })) || ''
+  } catch {
+    return ''
+  }
 }
 
 /** 取已完成任务输出图的 asset_id(供下一镜头连贯参考)。 */

@@ -19,8 +19,8 @@ interface ShotArrangeProps {
   onOpenElement?: (name: string) => void
   /** 上传替换某元素 */
   onUploadElement?: (name: string, file: File) => void
-  /** 描述/修改建议 → 重组生成新分镜图 */
-  onRegenerateImage: (shot: Shot, feedback: string) => void
+  /** 重新生成分镜图(方式1 editPrompt / 方式2 feedback+extraRefUrls) */
+  onRegenerateImage: (shot: Shot, opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] }) => void
 }
 
 export default function ShotArrange({
@@ -57,9 +57,8 @@ export default function ShotArrange({
           regenerating={!!generating[selected.id]}
           onOpenElement={onOpenElement}
           onUploadElement={onUploadElement}
-          onSwitchImageVersion={(url) => patchSel({ image: url })}
+          onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}
-          onSubmitField={(field, value) => patchSel({ [field]: value })}
         />
       ) : (
         <div className="shotarr__empty">请选择左侧分镜进行编辑</div>

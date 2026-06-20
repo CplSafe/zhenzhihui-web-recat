@@ -19,7 +19,7 @@ import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement, refineElementPrompt } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateImage, sizeForRatio } from '@/api/smartImage'
-import { generateShotImage, ensureAssetId } from '@/api/smartShotImage'
+import { generateShotImage, ensureAssetId, persistImageAsset, refreshAssetUrl } from '@/api/smartShotImage'
 import { generateFullVideo } from '@/api/smartVideo'
 import { fileToDataUrl } from '@/utils/imageFile'
 import VideoStage from '@/components/smart/VideoStage'
@@ -147,8 +147,9 @@ export default function SmartCreateView() {
 
   // ── 主体素材统一管理:同名主体(@闺蜜A)共享素材,选定后所有同名处联动 ──
   // 版本/提示词存 registry;选定的图写回所有同名 subject(供表格 + 镜头编排一致展示)
+  // 版本图 url + 其 asset_id(ids[url]=assetId,用于刷新签名URL/持久化,见 hydrate)
   const [subjectAssets, setSubjectAssets] = useState<
-    Record<string, { versions: string[]; prompt?: string; sources?: Record<string, 'ai' | 'upload'> }>
+    Record<string, { versions: string[]; prompt?: string; sources?: Record<string, 'ai' | 'upload'>; ids?: Record<string, number> }>
   >({})
   const [subjectDlg, setSubjectDlg] = useState<{ open: boolean; name: string; kind: string; autoGen: boolean }>({
     open: false,
@@ -157,13 +158,30 @@ export default function SmartCreateView() {
     autoGen: false,
   })
 
-  const applySubjectImage = (name: string, url: string) =>
+  // 把某元素的选定图(url+assetId)写回所有同名 subject
+  const applySubjectImage = (name: string, url: string, assetId = 0) =>
     setShots((prev) =>
       prev.map((sh) => ({
         ...sh,
-        subjects: sh.subjects.map((su) => (stripAt(su.tag) === name ? { ...su, image: url } : su)),
+        subjects: sh.subjects.map((su) => (stripAt(su.tag) === name ? { ...su, image: url, assetId } : su)),
       })),
     )
+  // 把生成/上传的图落库(dataURL→后端 asset,得签名URL+assetId),写入版本库 + 同名联动
+  const addSubjectVersion = (name: string, url: string, assetId: number, source: 'ai' | 'upload', prompt?: string) => {
+    setSubjectAssets((a) => {
+      const e = a[name] || { versions: [] }
+      return {
+        ...a,
+        [name]: {
+          versions: [...e.versions, url],
+          prompt: prompt ?? e.prompt,
+          sources: { ...(e.sources || {}), [url]: source },
+          ids: { ...(e.ids || {}), [url]: assetId },
+        },
+      }
+    })
+    applySubjectImage(name, url, assetId)
+  }
   const subjectKindOf = (name: string) => {
     for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.kind) return su.kind
     return ''
@@ -174,23 +192,14 @@ export default function SmartCreateView() {
   }
   const genForSubject = async (name: string, prompt: string) => {
     // prompt 已是弹窗里(经 Qwen 润色或用户编辑过的)干净画面提示词,直接出图;不再二次润色
-    const url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
-    setSubjectAssets((a) => {
-      const e = a[name] || { versions: [] }
-      // 存这版干净提示词:下次打开直接显示,不再重复润色
-      return { ...a, [name]: { versions: [...e.versions, url], prompt, sources: { ...(e.sources || {}), [url]: 'ai' } } }
-    })
-    applySubjectImage(name, url)
+    const raw = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
+    // 落库:dataURL → 后端 asset,刷新后不丢图
+    const { url, assetId } = await persistImageAsset(Number(workspaceId || 0), raw)
+    addSubjectVersion(name, url, assetId, 'ai', prompt)
   }
-  const uploadForSubject = (name: string, url: string) => {
-    setSubjectAssets((a) => {
-      const e = a[name] || { versions: [] }
-      return {
-        ...a,
-        [name]: { versions: [...e.versions, url], prompt: e.prompt, sources: { ...(e.sources || {}), [url]: 'upload' } },
-      }
-    })
-    applySubjectImage(name, url)
+  const uploadForSubject = async (name: string, url: string) => {
+    const out = await persistImageAsset(Number(workspaceId || 0), url)
+    addSubjectVersion(name, out.url, out.assetId, 'upload')
   }
   const openSubject = (name: string, autoGen = false) =>
     setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
@@ -240,7 +249,9 @@ export default function SmartCreateView() {
     theme: string,
     plans: string[],
     feedback?: string,
+    opts: { editPrompt?: string; extraRefUrls?: string[] } = {},
   ) => {
+    const isEdit = !!(feedback || opts.editPrompt)
     // 元素(素材)组合:把该镜各元素图作参考,保证同一元素跨镜一致
     const subjUrls = Array.from(new Set(sh.subjects.map((s) => s.image).filter(Boolean))) as string[]
     const refIds: number[] = []
@@ -252,8 +263,8 @@ export default function SmartCreateView() {
         /* 单张参考上传失败则跳过 */
       }
     }
-    // 带修改意见重生成 → 以当前分镜图为底图(img2img);否则用上一张做连贯参考
-    const baseUrl = feedback ? sh.image || '' : prevUrl
+    // 改图:以当前分镜图为底图(img2img);否则用上一张做连贯参考
+    const baseUrl = isEdit ? sh.image || '' : prevUrl
     if (baseUrl) {
       try {
         const id = await ensureAssetId(ws, baseUrl, cache)
@@ -262,28 +273,51 @@ export default function SmartCreateView() {
         /* ignore */
       }
     }
-    const prompt = [
-      sh.desc,
-      feedback && `修改要求:${feedback}`,
-      theme && `整体广告主题:${theme}`,
-      entryMeta?.style && `${entryMeta.style}风格`,
-      feedback
-        ? '在当前画面基础上按修改要求调整,保持其余部分一致'
-        : prevUrl && '与上一镜头保持人物形象、场景、配色、画风一致',
-      '画面比例 ' + (entryMeta?.ratio || '16:9'),
-    ]
-      .filter(Boolean)
-      .join(';')
+    // 方式2:用户额外上传的参考图(文字+图改图)
+    for (const u of opts.extraRefUrls || []) {
+      try {
+        const id = await ensureAssetId(ws, u, cache)
+        if (id) refIds.push(id)
+      } catch {
+        /* ignore */
+      }
+    }
+    // 提示词:① 用户编辑过的 imagePrompt 直接用;② 否则按 画面描述+主题+风格 组合
+    const prompt = opts.editPrompt
+      ? [opts.editPrompt, feedback && `修改要求:${feedback}`].filter(Boolean).join(';')
+      : [
+          sh.desc,
+          feedback && `修改要求:${feedback}`,
+          theme && `整体广告主题:${theme}`,
+          entryMeta?.style && `${entryMeta.style}风格`,
+          isEdit
+            ? '在当前画面基础上按修改要求调整,保持其余部分一致'
+            : prevUrl && '与上一镜头保持人物形象、场景、配色、画风一致',
+          '画面比例 ' + (entryMeta?.ratio || '16:9'),
+        ]
+          .filter(Boolean)
+          .join(';')
     let url = ''
+    let assetId = 0
     try {
       // 优先后端文/图生图(带素材组合 + 连贯)
-      url = (await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates: plans })).url
+      const r = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates: plans })
+      url = r.url
+      assetId = Number(r.assetId || 0) || 0
     } catch {
       // 后端未启用图像模型等失败 → 退化本地 Qwen-Image(文生图,暂无参考/连贯)
       url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
     }
+    // 落库:本地兜底的 dataURL → 后端 asset(刷新不丢图);后端图已是 http,保留其 assetId
+    const persisted = await persistImageAsset(ws, url, cache)
+    url = persisted.url
+    if (persisted.assetId) assetId = persisted.assetId
     setShots((prev) =>
-      prev.map((x) => (x.id === sh.id ? { ...x, image: url, imageVersions: [...(x.imageVersions || []), url] } : x)),
+      prev.map((x) =>
+        x.id === sh.id
+          ? { ...x, image: url, imageAssetId: assetId, imagePrompt: prompt, imageVersions: [...(x.imageVersions || []), url] }
+          : x,
+      ),
     )
     return url
   }
@@ -317,8 +351,13 @@ export default function SmartCreateView() {
     }
   }
 
-  // 单镜分镜图重生成:用当前图作底图(img2img)+ 元素组合 + 修改意见 → 新版本
-  const regenerateShotImage = async (sh: Shot, feedback?: string) => {
+  // 单镜分镜图重生成:
+  //  - 方式1:editPrompt(用户编辑过的"生成提示词")→ 直接按它重生成
+  //  - 方式2:feedback(文字修改意见)+ extraRefUrls(额外参考图)→ 以当前图 img2img
+  const regenerateShotImage = async (
+    sh: Shot,
+    opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] } = {},
+  ) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成', 'error')
@@ -328,7 +367,10 @@ export default function SmartCreateView() {
     setShotGen((m) => ({ ...m, [sh.id]: true }))
     try {
       const plans = await resolvePlanCandidates()
-      await genShotFrame(ws, sh, '', {}, (reqSummary || '').slice(0, 60), plans, feedback || undefined)
+      await genShotFrame(ws, sh, '', {}, (reqSummary || '').slice(0, 60), plans, opts.feedback || undefined, {
+        editPrompt: opts.editPrompt,
+        extraRefUrls: opts.extraRefUrls,
+      })
     } catch (e: any) {
       showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
     } finally {
@@ -415,23 +457,23 @@ export default function SmartCreateView() {
   // 同名主体素材联动 + 纳入版本库:
   // 脚本只在部分镜头(常仅镜头1)匹配到 imageIndex,这里把每个主体已有的图回填到所有同名缺图的分镜。
   useEffect(() => {
-    // 1) name -> 已有图(取第一个非空)
-    const imgByName = new Map<string, string>()
+    // 1) name -> 已有图(取第一个非空){url, assetId}
+    const imgByName = new Map<string, { url: string; assetId: number }>()
     shots.forEach((sh) =>
       sh.subjects.forEach((su) => {
         const n = stripAt(su.tag)
-        if (su.image && !imgByName.has(n)) imgByName.set(n, su.image)
+        if (su.image && !imgByName.has(n)) imgByName.set(n, { url: su.image, assetId: Number(su.assetId || 0) || 0 })
       }),
     )
-    // 2) 回填到所有同名缺图的 subject
+    // 2) 回填到所有同名缺图的 subject(图 + assetId)
     let shotsChanged = false
     const nextShots = shots.map((sh) => {
       let touched = false
       const subjects = sh.subjects.map((su) => {
-        const img = imgByName.get(stripAt(su.tag))
-        if (img && !su.image) {
+        const got = imgByName.get(stripAt(su.tag))
+        if (got && !su.image) {
           touched = true
-          return { ...su, image: img }
+          return { ...su, image: got.url, assetId: got.assetId }
         }
         return su
       })
@@ -449,13 +491,15 @@ export default function SmartCreateView() {
     setSubjectAssets((prev) => {
       let changed = false
       const next = { ...prev }
-      imgByName.forEach((img, n) => {
+      imgByName.forEach((got, n) => {
+        const img = got.url
         const e = next[n] || { versions: [] }
         if (!e.versions.includes(img)) {
           next[n] = {
             versions: [...e.versions, img],
             prompt: e.prompt,
             sources: { ...(e.sources || {}), [img]: e.sources?.[img] || 'upload' },
+            ids: { ...(e.ids || {}), [img]: got.assetId },
           }
           changed = true
         }
@@ -466,6 +510,75 @@ export default function SmartCreateView() {
 
   // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
   const [fields, setFields] = useState<Record<string, string>>({})
+
+  // ── 加载后水合签名URL(对齐 2.0):草稿里存的签名URL会过期,按 asset_id 重新取新签名URL ──
+  const hydratedUrlsRef = useRef(false)
+  useEffect(() => {
+    if (!hydratedRef.current || hydratedUrlsRef.current) return
+    const ws = Number(workspaceId || 0)
+    if (!ws || !started) return
+    // 收集所有 asset_id(分镜图 + 元素图 + 版本库)
+    const ids = new Set<number>()
+    shots.forEach((sh) => {
+      if (sh.imageAssetId) ids.add(Number(sh.imageAssetId))
+      sh.subjects.forEach((su) => {
+        if (su.assetId) ids.add(Number(su.assetId))
+      })
+    })
+    Object.values(subjectAssets).forEach((e: any) =>
+      Object.values(e?.ids || {}).forEach((id: any) => {
+        if (id) ids.add(Number(id))
+      }),
+    )
+    if (!ids.size) return // 暂无 asset_id(数据可能还没装载完)→ 下一轮再试
+    hydratedUrlsRef.current = true
+    void (async () => {
+      const map = new Map<number, string>()
+      await Promise.all(
+        [...ids].map(async (id) => {
+          const u = await refreshAssetUrl(ws, id)
+          if (u) map.set(id, u)
+        }),
+      )
+      if (!map.size) return
+      setShots((prev) =>
+        prev.map((sh) => ({
+          ...sh,
+          image: sh.imageAssetId && map.get(Number(sh.imageAssetId)) ? map.get(Number(sh.imageAssetId))! : sh.image,
+          subjects: sh.subjects.map((su) =>
+            su.assetId && map.get(Number(su.assetId)) ? { ...su, image: map.get(Number(su.assetId))! } : su,
+          ),
+        })),
+      )
+      setSubjectAssets((prev) => {
+        const next: any = { ...prev }
+        for (const [name, e] of Object.entries(prev) as any) {
+          const oldIds = e.ids || {}
+          let changed = false
+          const versions = e.versions.map((u: string) => {
+            const id = oldIds[u]
+            const nu = id && map.get(Number(id))
+            if (nu) {
+              changed = true
+              return nu
+            }
+            return u
+          })
+          if (!changed) continue
+          const ids2: Record<string, number> = {}
+          const sources2: Record<string, any> = {}
+          e.versions.forEach((u: string, i: number) => {
+            const id = oldIds[u] || 0
+            const nu = versions[i]
+            ids2[nu] = id
+            if (e.sources?.[u]) sources2[nu] = e.sources[u]
+          })
+          next[name] = { ...e, versions, ids: ids2, sources: sources2 }
+        }
+        return next
+      })
+    })()
+  }, [workspaceId, started, shots, subjectAssets])
 
   // ── 草稿:本地(localStorage)+ 后端(/creative/projects/:id/draft)双层持久化 ──
   // 把当前页面状态打包成草稿对象(localStorage 与后端快照共用)
@@ -1002,7 +1115,7 @@ export default function SmartCreateView() {
         }
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
         onGenerate={(p) => genForSubject(subjectDlg.name, p)}
-        onSelect={(url) => applySubjectImage(subjectDlg.name, url)}
+        onSelect={(url) => applySubjectImage(subjectDlg.name, url, subjectAssets[subjectDlg.name]?.ids?.[url] || 0)}
         onUpload={(url) => uploadForSubject(subjectDlg.name, url)}
       />
     </div>

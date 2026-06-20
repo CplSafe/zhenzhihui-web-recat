@@ -20,7 +20,7 @@ interface VideoStageProps {
   onShotsChange: (shots: Shot[]) => void
   onOpenElement?: (name: string) => void
   onUploadElement?: (name: string, file: File) => void
-  onRegenerateImage: (shot: Shot, feedback: string) => void
+  onRegenerateImage: (shot: Shot, opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] }) => void
   /** 重新生成整片(note=对整片的修改意见) */
   onRegenerateVideo: (note?: string) => void
   /** 保存视频到项目管理 */
@@ -133,9 +133,8 @@ export default function VideoStage({
           regenerating={!!generating[selected.id]}
           onOpenElement={onOpenElement}
           onUploadElement={onUploadElement}
-          onSwitchImageVersion={(url) => patchSel({ image: url })}
+          onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}
-          onSubmitField={(field, value) => patchSel({ [field]: value })}
         />
       ) : (
         <div className="vstage__empty">请选择左侧分镜</div>

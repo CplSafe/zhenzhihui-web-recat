@@ -9,6 +9,7 @@ export interface ShotSubject {
   tag: string // 如 @小雅 / @室内场景
   kind?: string // 人物 / 场景
   image?: string // AI 匹配到的素材图(或用户上传);无则展示「+」
+  assetId?: number // 该素材图的后端 asset_id(持久化/刷新签名URL用)
 }
 export interface Shot {
   id: string | number
@@ -22,6 +23,8 @@ export interface Shot {
   subtitle?: string // 字幕
   sfx?: string // 音效
   image?: string // 当前分镜图(成片画面)
+  imageAssetId?: number // 当前分镜图的后端 asset_id
+  imagePrompt?: string // 生成该分镜图实际用到的提示词(可见/可编辑/可重生成)
   imageVersions?: string[] // 分镜图历史版本
   videoUrl?: string // 该镜生成的视频片段
   videoAssetId?: number

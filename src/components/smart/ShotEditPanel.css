@@ -138,6 +138,80 @@
   justify-content: center;
 }
 
+/* 当前分镜图预览(中等尺寸,限高不霸屏) */
+.sedit__cur {
+  width: 100%;
+  max-height: 240px;
+  min-height: 120px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sedit__cur img {
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
+.sedit__cur-ph {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #aab0b8;
+  font-size: 13px;
+  padding: 40px 0;
+}
+
+/* 文字+图改图:参考图行 */
+.sedit__refrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.sedit__ref {
+  position: relative;
+  width: 64px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #eef0f4;
+}
+.sedit__ref img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sedit__ref button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sedit__ref-add {
+  height: 44px;
+  padding: 0 12px;
+  border: 1px dashed #d8dce3;
+  border-radius: 8px;
+  background: #fafbfc;
+  color: #11a98a;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 /* 输入框块 */
 .sedit__field {
   display: flex;
