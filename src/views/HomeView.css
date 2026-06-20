@@ -45,9 +45,61 @@
   font-size: 12px;
 }
 .home__user {
+  position: relative;
+}
+.home__user-btn {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  border-radius: 20px;
+  cursor: pointer;
+}
+.home__user-btn:hover {
+  background: #f3f4f6;
+}
+.home__user-caret {
+  color: #999;
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+.home__user-caret.is-open {
+  transform: rotate(180deg);
+}
+.home__user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 140px;
+  background: #fff;
+  border: 1px solid #eef0f2;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 50;
+}
+.home__user-menu-item {
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+}
+.home__user-menu-item:hover {
+  background: #f5f6f8;
+}
+.home__user-menu-item--danger {
+  color: #e54d42;
+}
+.home__user-menu-item:disabled {
+  color: #bbb;
+  cursor: not-allowed;
 }
 .home__avatar {
   width: 30px;
@@ -85,6 +137,19 @@
   overflow: hidden;
   margin-bottom: 14px;
   background: #fff;
+}
+/* 轮播轨道 + 每屏一张 slide */
+.home__banner-track {
+  display: flex;
+  height: 100%;
+  transition: transform 0.5s ease;
+  will-change: transform;
+}
+.home__banner-slide {
+  position: relative;
+  flex: 0 0 100%;
+  width: 100%;
+  height: 100%;
   perspective: 1400px;
 }
 /* 左右两块产品照:绕纵轴旋转形成 coverflow 透视

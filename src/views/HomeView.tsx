@@ -3,11 +3,15 @@
  * 组合 <AppSidebar/> + 内容区：简洁顶栏 / 轮播 Banner / 快捷入口 / 标签切换 + 搜索 / 模板网格。
  * 导航跳转用 react-router useNavigate；已存在路由直接跳转，未实现的项 console 占位。
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import { useCurrentUser, useWorkspaceId, useCurrentPlanName } from '@/stores/workspaceSession'
 import { listCreativeProjects } from '@/api/business'
+import { logoutSession, getAuthErrorMessage } from '@/api/auth'
+import { useAuth } from '@/auth/AuthContext'
+import { useToast } from '@/composables/useToast'
+import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import bannerLeft from '@/assets/home/banner-left.png'
 import bannerRight from '@/assets/home/banner-right.png'
@@ -35,13 +39,44 @@ const ROUTE_MAP: Record<string, string> = {
   creative: '/creative',
   projects: '/projects',
   resources: '/resources',
+  templates: '/templates',
 }
 
-/* 轮播 Banner 占位（3 张渐变色块）*/
+/* 轮播 Banner（占位多条;后端接入后替换 left/right 为视频/图、并补真实文案与跳转） */
 const BANNERS = [
-  { id: 0, grad: 'linear-gradient(120deg, #d7f5ec 0%, #eafff9 55%, #f5fffd 100%)' },
-  { id: 1, grad: 'linear-gradient(120deg, #dde3ff 0%, #eef1ff 55%, #f7f9ff 100%)' },
-  { id: 2, grad: 'linear-gradient(120deg, #ffe9d7 0%, #fff4ea 55%, #fffaf5 100%)' },
+  {
+    id: 0,
+    left: bannerLeft,
+    right: bannerRight,
+    pre: '新手',
+    em: '快速入门',
+    post: '指南',
+    sub: '从零开始，在 3 分钟内生成您的第一条 AI 大片',
+    btn: '立即开启体验',
+    action: 'tutorial',
+  },
+  {
+    id: 1,
+    left: bannerRight,
+    right: bannerLeft,
+    pre: '海量',
+    em: '爆款模板',
+    post: '随心选',
+    sub: '一键复制热门同款，创作效率翻倍',
+    btn: '去逛模板库',
+    action: 'templates',
+  },
+  {
+    id: 2,
+    left: bannerLeft,
+    right: bannerRight,
+    pre: 'AI',
+    em: '智能成片',
+    post: '秒出大片',
+    sub: '输入灵感或上传素材，自动生成高质量广告视频',
+    btn: '立即体验',
+    action: 'creative',
+  },
 ]
 
 /* 快捷入口 4 卡（图标为 Figma 导出）*/
@@ -87,6 +122,11 @@ export default function HomeView() {
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
   const [comingSoonOpen, setComingSoonOpen] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const userBoxRef = useRef<HTMLDivElement>(null)
+  const { handleLogoutSuccess } = useAuth()
+  const { showToast } = useToast()
 
   // 历史项目（接后端 listCreativeProjects）
   const [historyItems, setHistoryItems] = useState<any[]>([])
@@ -140,6 +180,45 @@ export default function HomeView() {
   const prevBanner = () => setBannerIndex((i) => (i - 1 + BANNERS.length) % BANNERS.length)
   const nextBanner = () => setBannerIndex((i) => (i + 1) % BANNERS.length)
 
+  // Banner 自动轮播
+  useEffect(() => {
+    const t = window.setInterval(() => setBannerIndex((i) => (i + 1) % BANNERS.length), 6000)
+    return () => window.clearInterval(t)
+  }, [])
+
+  // 用户菜单:点击外部关闭
+  useEffect(() => {
+    if (!userMenuOpen) return
+    function onDown(e: PointerEvent) {
+      if (userBoxRef.current && !userBoxRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false)
+      }
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [userMenuOpen])
+
+  async function handleLogout() {
+    if (isLoggingOut) return
+    setUserMenuOpen(false)
+    setIsLoggingOut(true)
+    try {
+      await logoutSession()
+      showToast('已退出登录', 'success')
+      setIsLoggingOut(false)
+      handleLogoutSuccess()
+    } catch (error) {
+      // 部分后端登出失败但会话实际已失效:按既有策略仍清理本地并跳登录
+      if (shouldClearSessionAfterLogoutFailure(error)) {
+        setIsLoggingOut(false)
+        handleLogoutSuccess()
+        return
+      }
+      showToast(getAuthErrorMessage(error, '退出登录失败，请稍后重试'), 'error')
+      setIsLoggingOut(false)
+    }
+  }
+
   return (
     <div className="home">
       <AppSidebar activeKey="home" onNavigate={handleNavigate} />
@@ -152,26 +231,70 @@ export default function HomeView() {
               <span className="home__member-icon">★</span>
               {planName ? String(planName) : '会员中心'}
             </button>
-            <div className="home__user">
-              <span className="home__avatar">{userName.slice(0, 1)}</span>
-              <span className="home__user-name">{userName}</span>
+            <div className="home__user" ref={userBoxRef}>
+              <button
+                type="button"
+                className="home__user-btn"
+                aria-haspopup="menu"
+                aria-expanded={userMenuOpen}
+                onClick={() => setUserMenuOpen((v) => !v)}
+              >
+                <span className="home__avatar">{userName.slice(0, 1)}</span>
+                <span className="home__user-name">{userName}</span>
+                <span className={`home__user-caret${userMenuOpen ? ' is-open' : ''}`}>⌄</span>
+              </button>
+              {userMenuOpen && (
+                <div className="home__user-menu" role="menu">
+                  <button
+                    type="button"
+                    className="home__user-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setUserMenuOpen(false)
+                      handleNavigate('member')
+                    }}
+                  >
+                    会员中心
+                  </button>
+                  <button
+                    type="button"
+                    className="home__user-menu-item home__user-menu-item--danger"
+                    role="menuitem"
+                    onClick={handleLogout}
+                    disabled={isLoggingOut}
+                  >
+                    {isLoggingOut ? '退出中…' : '退出登录'}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>
 
         <div className="home__content">
-          {/* 轮播 Banner（按图层还原:左右真实产品照 + CSS 磨砂卡 + 真文字/按钮;圆点在下方） */}
+          {/* 轮播 Banner:track + 多 slide,点击圆点/箭头切换,自动播放;后端接入后传多条 */}
           <section className="home__banner">
-            <img className="home__banner-photo home__banner-photo--left" src={bannerLeft} alt="" />
-            <img className="home__banner-photo home__banner-photo--right" src={bannerRight} alt="" />
-            <div className="home__banner-card">
-              <h2 className="home__banner-title">
-                新手<span className="home__banner-em">快速入门</span>指南
-              </h2>
-              <p className="home__banner-sub">从零开始，在 3 分钟内生成您的第一条 AI 大片</p>
-              <button type="button" className="home__banner-btn" onClick={() => handleNavigate('tutorial')}>
-                立即开启体验
-              </button>
+            <div
+              className="home__banner-track"
+              style={{ transform: `translateX(-${bannerIndex * 100}%)` }}
+            >
+              {BANNERS.map((b) => (
+                <div className="home__banner-slide" key={b.id}>
+                  <img className="home__banner-photo home__banner-photo--left" src={b.left} alt="" />
+                  <img className="home__banner-photo home__banner-photo--right" src={b.right} alt="" />
+                  <div className="home__banner-card">
+                    <h2 className="home__banner-title">
+                      {b.pre}
+                      <span className="home__banner-em">{b.em}</span>
+                      {b.post}
+                    </h2>
+                    <p className="home__banner-sub">{b.sub}</p>
+                    <button type="button" className="home__banner-btn" onClick={() => handleNavigate(b.action)}>
+                      {b.btn}
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
             <button type="button" className="home__banner-arrow home__banner-arrow--left" onClick={prevBanner} aria-label="上一张">
               ‹
