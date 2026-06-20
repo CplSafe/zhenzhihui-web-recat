@@ -18,15 +18,32 @@
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   padding: 0 28px;
   background: #fff;
   border-bottom: 1px solid #f0f1f3;
+}
+/* 汉堡按钮:桌面端隐藏 */
+.home__hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  margin-left: -8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #444;
+  cursor: pointer;
+}
+.home__hamburger:hover {
+  background: #f3f4f6;
 }
 .home__topbar-right {
   display: flex;
   align-items: center;
   gap: 18px;
+  margin-left: auto;
 }
 .home__member {
   display: inline-flex;
@@ -651,6 +668,89 @@ button.home__template-card {
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* ── 移动端适配 ── */
+@media (max-width: 900px) {
+  .home__hamburger {
+    display: flex;
+  }
+  .home__topbar {
+    padding: 0 14px;
+  }
+  .home__content {
+    padding: 16px 14px 32px;
+  }
+  /* Banner:降低高度、卡片解除最小宽度并加宽、字号收敛 */
+  .home__banner {
+    height: 220px;
+  }
+  .home__banner-card {
+    width: 78%;
+    min-width: 0;
+    padding: 16px 20px;
+  }
+  .home__banner-title {
+    font-size: 22px;
+  }
+  .home__banner-sub {
+    font-size: 12px;
+  }
+  .home__banner-photo {
+    width: 40%;
+  }
+  /* 标签栏换行,搜索框占满一行 */
+  .home__tabs-bar {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .home__search {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .home__member {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  .home__user-name {
+    display: none;
+  }
+  /* 超窄屏:Banner 只留中间卡片,隐藏两侧透视图,避免拥挤 */
+  .home__banner {
+    height: 178px;
+  }
+  .home__banner-photo {
+    display: none;
+  }
+  .home__banner-card {
+    width: 90%;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(255, 255, 255, 0.92);
+  }
+  .home__banner-title {
+    font-size: 19px;
+  }
+  .home__banner-arrow {
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+  }
+  .home__banner-arrow--left {
+    left: 8px;
+  }
+  .home__banner-arrow--right {
+    right: 8px;
+  }
+  /* 内容框:移动端取消限高与渐隐,直接顺排滚动 */
+  .home__tab-box {
+    max-height: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
 }
 
 /* 瀑布流列宽由 column-width 自动按屏宽适配,无需固定列数媒体查询 */

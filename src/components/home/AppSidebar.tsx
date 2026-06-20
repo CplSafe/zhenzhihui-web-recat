@@ -21,6 +21,10 @@ export interface SidebarGroup {
 interface AppSidebarProps {
   activeKey?: string
   onNavigate?: (key: string) => void
+  /** 移动端抽屉是否展开（桌面端忽略，始终常驻） */
+  open?: boolean
+  /** 移动端抽屉请求关闭（点遮罩 / 点导航项后） */
+  onClose?: () => void
 }
 
 /* ---- inline SVG 图标（统一 currentColor，随选中态变色）------------------ */
@@ -154,8 +158,11 @@ const GROUPS: SidebarGroup[] = [
   },
 ]
 
-export default function AppSidebar({ activeKey = 'home', onNavigate }: AppSidebarProps) {
-  const go = (key: string) => onNavigate?.(key)
+export default function AppSidebar({ activeKey = 'home', onNavigate, open = false, onClose }: AppSidebarProps) {
+  const go = (key: string) => {
+    onNavigate?.(key)
+    onClose?.() // 移动端抽屉：点导航后收起（桌面端 onClose 通常不传，无副作用）
+  }
 
   const renderItem = (item: SidebarItem) => {
     const active = activeKey === item.key
@@ -173,7 +180,14 @@ export default function AppSidebar({ activeKey = 'home', onNavigate }: AppSideba
   }
 
   return (
-    <aside className="app-sidebar">
+    <>
+      {/* 移动端抽屉遮罩（桌面端 CSS 隐藏）*/}
+      <div
+        className={`app-sidebar__backdrop${open ? ' is-open' : ''}`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside className={`app-sidebar${open ? ' is-open' : ''}`}>
       {/* 品牌 */}
       <div className="app-sidebar__brand">
         <img src={brandLogo} alt="帧智汇" className="app-sidebar__logo" />
@@ -214,6 +228,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate }: AppSideba
       <div className="app-sidebar__footer">
         {renderItem({ key: 'settings', label: '设置', icon: IconSettings })}
       </div>
-    </aside>
+      </aside>
+    </>
   )
 }

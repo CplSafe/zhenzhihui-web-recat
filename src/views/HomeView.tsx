@@ -122,6 +122,7 @@ export default function HomeView() {
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
   const [comingSoonOpen, setComingSoonOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
   const userBoxRef = useRef<HTMLDivElement>(null)
@@ -221,11 +222,27 @@ export default function HomeView() {
 
   return (
     <div className="home">
-      <AppSidebar activeKey="home" onNavigate={handleNavigate} />
+      <AppSidebar
+        activeKey="home"
+        onNavigate={handleNavigate}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
 
       <div className="home__main">
         {/* 简洁顶栏 */}
         <header className="home__topbar">
+          {/* 汉堡按钮:仅移动端显示,打开侧栏抽屉 */}
+          <button
+            type="button"
+            className="home__hamburger"
+            aria-label="打开菜单"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
           <div className="home__topbar-right">
             <button type="button" className="home__member" onClick={() => handleNavigate('member')}>
               <span className="home__member-icon">★</span>

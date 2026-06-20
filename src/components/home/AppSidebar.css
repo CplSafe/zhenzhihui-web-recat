@@ -115,9 +115,38 @@
   border-top: 1px solid #f4f5f7;
 }
 
-/* 响应式：窄屏隐藏侧栏 */
+/* 遮罩：桌面端隐藏，移动端抽屉打开时显示 */
+.app-sidebar__backdrop {
+  display: none;
+}
+
+/* 响应式：窄屏侧栏改为左侧滑入抽屉 */
 @media (max-width: 900px) {
   .app-sidebar {
-    display: none;
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    z-index: 300;
+    transform: translateX(-100%);
+    transition: transform 0.26s ease;
+    box-shadow: 0 0 32px rgba(0, 0, 0, 0.18);
+  }
+  .app-sidebar.is-open {
+    transform: translateX(0);
+  }
+  .app-sidebar__backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 290;
+    background: rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.26s ease;
+  }
+  .app-sidebar__backdrop.is-open {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
