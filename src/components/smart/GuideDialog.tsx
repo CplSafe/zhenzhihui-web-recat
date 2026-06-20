@@ -213,8 +213,9 @@ export default function GuideDialog({
     targets.forEach((q) => {
       if (!suggs[q.key] && !suggLoading[q.key]) void loadSuggs(q.key)
     })
+    // prefillDone 加入依赖:预填完成清空候选后,这里按新解析上下文重新拉取
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, mode, step])
+  }, [open, mode, step, prefillDone])
 
   // 智能预填:用多模态模型据 文字+素材 填空(不覆盖用户已填)
   const runPrefill = async (imgs: string[]) => {
@@ -232,6 +233,9 @@ export default function GuideDialog({
         return next
       })
       setPrefillDone(true)
+      // 预填带来了新上下文(产品/素材等)→ 候选作废,触发按新信息重拉
+      setSuggs({})
+      setSuggLoading({})
     } catch {
       /* 静默:预填失败不影响手动引导 */
     } finally {

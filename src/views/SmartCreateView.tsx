@@ -18,6 +18,7 @@ import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement } from '@/api/aiPolish'
 import { generateScriptShots } from '@/api/smartScript'
+import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { createCreativeProject, patchCreativeProject } from '@/api/business'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
@@ -95,6 +96,32 @@ export default function SmartCreateView() {
   const [projectId, setProjectId] = useState(0)
   const projectIdRef = useRef(0)
   const titlePatchedRef = useRef(false)
+
+  // AI 自动生成素材(Qwen-Image)
+  const [genMap, setGenMap] = useState<Record<string, boolean>>({})
+  const handleAiGenerate = async (shot: Shot, subject: any, idx: number) => {
+    const key = `${shot.id}:${idx}`
+    if (genMap[key]) return
+    const name = String(subject?.tag || '').replace(/^@/, '').trim()
+    const prompt = [name, shot.desc, `${entryMeta?.style || '商业'}风格`, '广告级高质量配图,无文字水印']
+      .filter(Boolean)
+      .join(',')
+    setGenMap((m) => ({ ...m, [key]: true }))
+    try {
+      const url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
+      setShots((prev) =>
+        prev.map((sh) =>
+          sh.id === shot.id
+            ? { ...sh, subjects: sh.subjects.map((su, i) => (i === idx ? { ...su, image: url } : su)) }
+            : sh,
+        ),
+      )
+    } catch (e: any) {
+      showToast(e?.message || 'AI 生成失败,请重试', 'error')
+    } finally {
+      setGenMap((m) => ({ ...m, [key]: false }))
+    }
+  }
 
   // 准备素材:为某主体选/传素材
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -318,8 +345,9 @@ export default function SmartCreateView() {
           ) : shots.length ? (
             <ScriptStoryboardTable
               shots={shots}
+              generating={genMap}
               onUpload={openMaterialPicker}
-              onAiGenerate={() => showToast('AI 自动生成该主体素材(待接入)', 'info')}
+              onAiGenerate={handleAiGenerate}
             />
           ) : (
             <div className="smart__placeholder smart__placeholder--sm">暂无分镜,点击下方「重新生成」</div>

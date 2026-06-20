@@ -13,6 +13,8 @@ export default defineConfig(({ mode }) => {
   const aiModelTarget = env.VITE_AI_MODEL_ORIGIN || 'http://172.10.0.102:8001'
   // AI 视觉(图片解析):专用 VL 模型(Qwen3-VL),用于素材分析/智能预填/带图脚本
   const aiVlTarget = env.VITE_AI_VL_ORIGIN || 'http://172.10.0.102:8003'
+  // AI 图片生成(Qwen-Image),用于「AI 自动生成」素材/分镜图
+  const aiImgTarget = env.VITE_AI_IMG_ORIGIN || 'http://172.10.0.102:8004'
   const businessCallbackUrl = `${normalizeBaseUrl(businessTarget)}/auth/callback`
 
   return {
@@ -59,6 +61,16 @@ export default defineConfig(({ mode }) => {
           target: aiVlTarget,
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/aimodel-vl/, ''),
+          configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq) => {
+              proxyReq.removeHeader('origin')
+            })
+          },
+        },
+        '/aimodel-img': {
+          target: aiImgTarget,
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/aimodel-img/, ''),
           configure: (proxy) => {
             proxy.on('proxyReq', (proxyReq) => {
               proxyReq.removeHeader('origin')

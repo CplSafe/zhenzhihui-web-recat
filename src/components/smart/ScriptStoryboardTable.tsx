@@ -26,11 +26,18 @@ export interface Shot {
 
 interface ScriptStoryboardTableProps {
   shots: Shot[]
+  /** 正在 AI 生成的主体,键为 `${shotId}:${subjectIndex}` */
+  generating?: Record<string, boolean>
   onUpload?: (shot: Shot, subject: ShotSubject, subjectIndex: number) => void
   onAiGenerate?: (shot: Shot, subject: ShotSubject, subjectIndex: number) => void
 }
 
-export default function ScriptStoryboardTable({ shots, onUpload, onAiGenerate }: ScriptStoryboardTableProps) {
+export default function ScriptStoryboardTable({
+  shots,
+  generating = {},
+  onUpload,
+  onAiGenerate,
+}: ScriptStoryboardTableProps) {
   return (
     <div className="sbt">
       <div className="sbt__head">
@@ -72,8 +79,13 @@ export default function ScriptStoryboardTable({ shots, onUpload, onAiGenerate }:
                     </svg>
                   </button>
                 )}
-                <button type="button" className="sbt__aigen" onClick={() => onAiGenerate?.(shot, s, idx)}>
-                  AI自动生成
+                <button
+                  type="button"
+                  className="sbt__aigen"
+                  disabled={!!generating[`${shot.id}:${idx}`]}
+                  onClick={() => onAiGenerate?.(shot, s, idx)}
+                >
+                  {generating[`${shot.id}:${idx}`] ? '生成中…' : 'AI自动生成'}
                 </button>
               </div>
             ))}
