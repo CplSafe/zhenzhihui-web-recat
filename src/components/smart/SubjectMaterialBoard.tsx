@@ -33,56 +33,13 @@ function Card({ s, onOpen }: { s: BoardSubject; onOpen: (n: string) => void }) {
 
 export default function SubjectMaterialBoard({ subjects, onOpen }: SubjectMaterialBoardProps) {
   if (!subjects.length) return null
-  const unprepared = subjects.filter((s) => !s.image)
-  const uploaded = subjects.filter((s) => s.image && s.source !== 'ai')
-  const ai = subjects.filter((s) => s.image && s.source === 'ai')
-
   return (
     <div className="smb">
       <div className="smb__title">素材主体</div>
-
-      {unprepared.length > 0 && (
-        <div className="smb__pending">
-          <span className="smb__pending-label">待准备</span>
-          <div className="smb__grid">
-            {unprepared.map((s) => (
-              <Card key={s.name} s={s} onOpen={onOpen} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="smb__cols">
-        <div className="smb__col">
-          <div className="smb__col-head">
-            <span className="smb__dot smb__dot--upload" />
-            用户上传素材
-          </div>
-          {uploaded.length ? (
-            <div className="smb__grid">
-              {uploaded.map((s) => (
-                <Card key={s.name} s={s} onOpen={onOpen} />
-              ))}
-            </div>
-          ) : (
-            <div className="smb__empty">暂无</div>
-          )}
-        </div>
-        <div className="smb__col">
-          <div className="smb__col-head">
-            <span className="smb__dot smb__dot--ai" />
-            AI 生成素材
-          </div>
-          {ai.length ? (
-            <div className="smb__grid">
-              {ai.map((s) => (
-                <Card key={s.name} s={s} onOpen={onOpen} />
-              ))}
-            </div>
-          ) : (
-            <div className="smb__empty">暂无</div>
-          )}
-        </div>
+      <div className="smb__grid">
+        {subjects.map((s) => (
+          <Card key={s.name} s={s} onOpen={onOpen} />
+        ))}
       </div>
     </div>
   )
