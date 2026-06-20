@@ -15,10 +15,6 @@ import quick1 from '@/assets/home/quick-1.png'
 import quick2 from '@/assets/home/quick-2.png'
 import quick3 from '@/assets/home/quick-3.png'
 import quick4 from '@/assets/home/quick-4.png'
-import tpl1 from '@/assets/home/tpl-1.png'
-import tpl2 from '@/assets/home/tpl-2.png'
-import tpl3 from '@/assets/home/tpl-3.png'
-import tpl4 from '@/assets/home/tpl-4.png'
 import './HomeView.css'
 
 /* 从项目记录里取标题 / 封面 / id（字段名后端不统一，做兜底） */
@@ -56,20 +52,24 @@ const QUICK_ENTRIES = [
   { key: 'ip-video', title: 'IP视频', desc: '打造出属于你的个人IP', icon: quick4, grad: 'linear-gradient(135deg, #e3f9f1, #f2fffb)' },
 ]
 
-/* 模板网格（前 4 张用 Figma 导出真图，其余渐变占位）*/
+/* 模板占位卡(不同比例 → 瀑布流自动排布;真实模板待接后端,按 热度>时间倒序) */
 const TEMPLATES = [
-  { id: 1, title: '健康饮食 均衡生活', img: tpl1, grad: 'linear-gradient(160deg, #c9efc2, #eafbe4)' },
-  { id: 2, title: '春日限定 焕新出发', img: tpl2, grad: 'linear-gradient(160deg, #f8d6e3, #fdeef3)' },
-  { id: 3, title: '活力运动 开启新旅程', img: tpl3, grad: 'linear-gradient(160deg, #7fd6b0, #c4f0df)' },
-  { id: 4, title: '自然之露 润养身心', img: tpl4, grad: 'linear-gradient(160deg, #bfe4d8, #e7f6f0)' },
-  { id: 5, title: '都市夜色 灵感闪现', grad: 'linear-gradient(160deg, #b6c4f0, #e2e9fb)' },
-  { id: 6, title: '简约家居 美学生活', grad: 'linear-gradient(160deg, #f0e2c4, #fbf3e2)' },
-  { id: 7, title: '潮流穿搭 个性表达', grad: 'linear-gradient(160deg, #e2c4f0, #f4e7fb)' },
-  { id: 8, title: '清新茶饮 慢享时光', grad: 'linear-gradient(160deg, #c4f0e8, #e2fbf6)' },
-  { id: 9, title: '旅行日记 远方在召唤', grad: 'linear-gradient(160deg, #c4dff0, #e2f1fb)' },
-  { id: 10, title: '美妆教程 妆点自信', grad: 'linear-gradient(160deg, #f0c4d2, #fbe2eb)' },
-  { id: 11, title: '科技数码 智享未来', grad: 'linear-gradient(160deg, #c4ccf0, #e2e6fb)' },
-  { id: 12, title: '宠物日常 萌动每一刻', grad: 'linear-gradient(160deg, #f0dcc4, #fbf0e2)' },
+  { id: 1, title: '健康饮食 均衡生活', grad: 'linear-gradient(160deg, #c9efc2, #eafbe4)', ratio: '9 / 16' },
+  { id: 2, title: '未来科技 智能生活', grad: 'linear-gradient(160deg, #b6c4f0, #e2e9fb)', ratio: '3 / 4' },
+  { id: 3, title: '美味直击 舌尖诱惑', grad: 'linear-gradient(160deg, #f0d6b8, #fbeede)', ratio: '1 / 1' },
+  { id: 4, title: '温暖相伴 情感故事', grad: 'linear-gradient(160deg, #f8d6e3, #fdeef3)', ratio: '4 / 5' },
+  { id: 5, title: '活力无限 运动人生', grad: 'linear-gradient(160deg, #ffd2b0, #ffeede)', ratio: '9 / 16' },
+  { id: 6, title: '春日限定 焕新出发', grad: 'linear-gradient(160deg, #d7f0c4, #eefbe2)', ratio: '16 / 9' },
+  { id: 7, title: '潮流穿搭 个性表达', grad: 'linear-gradient(160deg, #e2c4f0, #f4e7fb)', ratio: '3 / 4' },
+  { id: 8, title: '清新茶饮 慢享时光', grad: 'linear-gradient(160deg, #c4f0e8, #e2fbf6)', ratio: '1 / 1' },
+  { id: 9, title: '旅行日记 远方在召唤', grad: 'linear-gradient(160deg, #c4dff0, #e2f1fb)', ratio: '9 / 16' },
+  { id: 10, title: '美妆教程 妆点自信', grad: 'linear-gradient(160deg, #f0c4d2, #fbe2eb)', ratio: '4 / 5' },
+  { id: 11, title: '科技数码 智享未来', grad: 'linear-gradient(160deg, #c4ccf0, #e2e6fb)', ratio: '3 / 4' },
+  { id: 12, title: '宠物日常 萌动每一刻', grad: 'linear-gradient(160deg, #f0dcc4, #fbf0e2)', ratio: '1 / 1' },
+  { id: 13, title: '都市夜色 灵感闪现', grad: 'linear-gradient(160deg, #b9c0e8, #e3e7fb)', ratio: '9 / 16' },
+  { id: 14, title: '简约家居 美学生活', grad: 'linear-gradient(160deg, #f0e2c4, #fbf3e2)', ratio: '16 / 9' },
+  { id: 15, title: '萌宠时刻 治愈日常', grad: 'linear-gradient(160deg, #cdeccb, #ecf8ea)', ratio: '3 / 4' },
+  { id: 16, title: '国风新潮 东方美学', grad: 'linear-gradient(160deg, #eccfcf, #f8eaea)', ratio: '4 / 5' },
 ]
 
 const TABS = [
@@ -86,6 +86,7 @@ export default function HomeView() {
   const [bannerIndex, setBannerIndex] = useState(0)
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
+  const [comingSoonOpen, setComingSoonOpen] = useState(false)
 
   // 历史项目（接后端 listCreativeProjects）
   const [historyItems, setHistoryItems] = useState<any[]>([])
@@ -131,8 +132,8 @@ export default function HomeView() {
     if (path) {
       navigate(path)
     } else {
-      // 暂无对应路由的项：占位，不报错、不乱建路由
-      console.info('[home] 导航项暂未实现：', key)
+      // 未实现的功能（爆款裂变 / IP视频 / 爆款复制 等）：弹「功能待开放」
+      setComingSoonOpen(true)
     }
   }
 
@@ -284,27 +285,56 @@ export default function HomeView() {
             ) : activeTab === 'ip' ? (
               <div className="home__placeholder">IP 功能敬请期待</div>
             ) : (
-              <div className="home__template-grid">
-                {TEMPLATES.map((tpl) => (
-                  <div key={tpl.id} className="home__template-card">
-                    <div
-                      className="home__template-thumb"
-                      style={
-                        (tpl as any).img
-                          ? { backgroundImage: `url(${(tpl as any).img})`, backgroundSize: 'cover', backgroundPosition: 'center' }
-                          : { background: tpl.grad }
-                      }
-                    >
-                      {/* 真实模板图已含文字,不再叠加标题;仅占位卡显示 */}
-                      {!(tpl as any).img && <span className="home__template-caption">{tpl.title}</span>}
-                    </div>
+              <>
+                {/* 模板库:独立可滚动框 + 瀑布流(不同比例自动排布),最多 20 个
+                    (热度>时间倒序,接后端后排序);hover 出「做同款」→ 爆款复制 */}
+                <div className="home__tpl-box">
+                  <div className="home__masonry">
+                    {TEMPLATES.slice(0, 20).map((tpl) => (
+                      <div key={tpl.id} className="home__tpl">
+                        <div
+                          className="home__tpl-thumb"
+                          style={{ aspectRatio: tpl.ratio, background: tpl.grad }}
+                        >
+                          <span className="home__template-caption">{tpl.title}</span>
+                          <div className="home__tpl-mask">
+                            <button
+                              type="button"
+                              className="home__tpl-action"
+                              onClick={() => handleNavigate('hot-copy')}
+                            >
+                              做同款
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+                <div className="home__more">
+                  <button type="button" className="home__more-btn" onClick={() => navigate('/templates')}>
+                    查看更多
+                  </button>
+                </div>
+              </>
             )}
           </section>
         </div>
       </div>
+
+      {/* 功能待开放弹窗 */}
+      {comingSoonOpen && (
+        <div className="home__modal-mask" onClick={() => setComingSoonOpen(false)}>
+          <div className="home__modal" onClick={(e) => e.stopPropagation()}>
+            <div className="home__modal-icon">🚧</div>
+            <div className="home__modal-title">功能待开放</div>
+            <div className="home__modal-desc">该功能正在打磨中，敬请期待</div>
+            <button type="button" className="home__modal-btn" onClick={() => setComingSoonOpen(false)}>
+              我知道了
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
