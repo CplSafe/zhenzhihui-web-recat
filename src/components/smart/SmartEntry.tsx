@@ -6,7 +6,7 @@
  */
 import { useRef, useState } from 'react'
 import EntryDropdown from './EntryDropdown'
-import { guideRequirement } from '@/api/aiPolish'
+import GuideDialog from './GuideDialog'
 import { useToast } from '@/composables/useToast'
 import './SmartEntry.css'
 
@@ -38,7 +38,7 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   const [ratio, setRatio] = useState('16:9')
   const [duration, setDuration] = useState('5s')
   const [images, setImages] = useState<string[]>([])
-  const [guiding, setGuiding] = useState(false)
+  const [guideOpen, setGuideOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
   // ── 需求文本的撤销/重做历史(AI 引导会改写文本,需可回退/前进)──
@@ -73,25 +73,11 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   const canUndo = idxRef.current > 0 || text !== histRef.current[idxRef.current]
   const canRedo = text === histRef.current[idxRef.current] && idxRef.current < histRef.current.length - 1
 
-  // AI 引导:帮用户把粗略需求梳理、补全得更专业完整(不写脚本)。结果可撤销/重做。
-  const handleGuide = async () => {
-    if (guiding) return
-    if (!text.trim()) {
-      showToast('请先输入创作需求', 'info')
-      return
-    }
-    setGuiding(true)
-    try {
-      commitText(text) // 先快照当前输入,便于回退
-      const out = await guideRequirement(text)
-      setText(out)
-      commitText(out) // 快照 AI 结果,便于重做
-      showToast('已按信息流广告思路补全需求', 'success')
-    } catch (e: any) {
-      showToast(e?.message || '引导失败,请重试', 'error')
-    } finally {
-      setGuiding(false)
-    }
+  // AI 引导:打开交互式对话框(问人群/剧情/目标…),用户确认后再回填(不擅自改原文)。
+  const applyGuide = (brief: string) => {
+    commitText(text) // 快照当前输入,便于回退
+    setText(brief)
+    commitText(brief) // 快照引导结果,便于重做
   }
 
   const pickImages = (files: FileList | null) => {
@@ -241,23 +227,18 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
                 @
               </button>
 
-              {/* AI 引导:帮用户把需求想得更专业完整(不写脚本) */}
+              {/* AI 引导:打开交互式引导对话框(询问人群/剧情/目标…) */}
               <button
                 type="button"
                 className="screate__pill screate__guide"
-                onClick={handleGuide}
-                disabled={guiding}
-                title="AI 引导:按信息流广告思路帮你补全需求(人群/痛点/卖点/剧情/目标)"
+                onClick={() => setGuideOpen(true)}
+                title="AI 引导:按信息流广告思路问几个问题,帮你把需求想得更专业"
               >
-                {guiding ? (
-                  <span className="screate__guide-spin" aria-hidden="true" />
-                ) : (
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
-                    <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
-                  </svg>
-                )}
-                {guiding ? '引导中…' : 'AI 引导'}
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                  <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                </svg>
+                AI 引导
               </button>
 
               {/* 撤销 / 重做(主要用于回退 AI 引导的改动) */}
@@ -304,6 +285,13 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
           </div>
         </div>
       </div>
+
+      <GuideDialog
+        open={guideOpen}
+        initialText={text}
+        onClose={() => setGuideOpen(false)}
+        onApply={applyGuide}
+      />
     </div>
   )
 }
