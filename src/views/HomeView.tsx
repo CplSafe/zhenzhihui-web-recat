@@ -247,14 +247,15 @@ export default function HomeView() {
               </div>
             </div>
 
-            {/* 内容网格：历史项目接真实数据;模板库/IP 暂为占位 */}
+            {/* 内容框:模板库/历史项目/IP —— 限高约 40vh 可滚动,底部渐隐提示可下滑 */}
+            <div className="home__tab-box">
             {activeTab === 'history' ? (
               historyLoading ? (
                 <div className="home__placeholder">加载中…</div>
               ) : historyError ? (
                 <div className="home__placeholder">{historyError}</div>
               ) : filteredHistory.length ? (
-                <div className="home__template-grid">
+                <div className="home__proj-grid">
                   {filteredHistory.map((p) => {
                     const id = projectId(p)
                     const cover = projectCover(p)
@@ -262,18 +263,21 @@ export default function HomeView() {
                       <button
                         key={id || projectTitle(p)}
                         type="button"
-                        className="home__template-card"
+                        className="home__proj"
                         onClick={() => id && navigate(`/creative/${id}`)}
                       >
                         <div
-                          className="home__template-thumb"
+                          className="home__proj-thumb"
                           style={
                             cover
                               ? { backgroundImage: `url(${cover})`, backgroundSize: 'cover', backgroundPosition: 'center' }
-                              : { background: 'linear-gradient(160deg, #cfe9e0, #eef7f3)' }
+                              : undefined
                           }
                         >
-                          <span className="home__template-caption">{projectTitle(p)}</span>
+                          {!cover && <span className="home__proj-thumb-ph">🎬</span>}
+                        </div>
+                        <div className="home__proj-title" title={projectTitle(p)}>
+                          {projectTitle(p)}
                         </div>
                       </button>
                     )
@@ -285,38 +289,43 @@ export default function HomeView() {
             ) : activeTab === 'ip' ? (
               <div className="home__placeholder">IP 功能敬请期待</div>
             ) : (
-              <>
-                {/* 模板库:独立可滚动框 + 瀑布流(不同比例自动排布),最多 20 个
-                    (热度>时间倒序,接后端后排序);hover 出「做同款」→ 爆款复制 */}
-                <div className="home__tpl-box">
-                  <div className="home__masonry">
-                    {TEMPLATES.slice(0, 20).map((tpl) => (
-                      <div key={tpl.id} className="home__tpl">
-                        <div
-                          className="home__tpl-thumb"
-                          style={{ aspectRatio: tpl.ratio, background: tpl.grad }}
+              /* 模板库:瀑布流(不同比例自动排布),最多 20 个;图片占位(后端拉取视频/图后替换);
+                 hover 出「做同款」→ 爆款复制 */
+              <div className="home__masonry">
+                {TEMPLATES.slice(0, 20).map((tpl) => (
+                  <div key={tpl.id} className="home__tpl">
+                    <div
+                      className="home__tpl-thumb"
+                      style={{ aspectRatio: tpl.ratio, background: tpl.grad }}
+                    >
+                      <span className="home__tpl-media" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="34" height="34" fill="none">
+                          <circle cx="12" cy="12" r="11" fill="rgba(255,255,255,0.55)" />
+                          <path d="M10 8.5l6 3.5-6 3.5z" fill="#fff" />
+                        </svg>
+                      </span>
+                      <span className="home__template-caption">{tpl.title}</span>
+                      <div className="home__tpl-mask">
+                        <button
+                          type="button"
+                          className="home__tpl-action"
+                          onClick={() => handleNavigate('hot-copy')}
                         >
-                          <span className="home__template-caption">{tpl.title}</span>
-                          <div className="home__tpl-mask">
-                            <button
-                              type="button"
-                              className="home__tpl-action"
-                              onClick={() => handleNavigate('hot-copy')}
-                            >
-                              做同款
-                            </button>
-                          </div>
-                        </div>
+                          做同款
+                        </button>
                       </div>
-                    ))}
+                    </div>
                   </div>
-                </div>
-                <div className="home__more">
-                  <button type="button" className="home__more-btn" onClick={() => navigate('/templates')}>
-                    查看更多
-                  </button>
-                </div>
-              </>
+                ))}
+              </div>
+            )}
+            </div>
+            {activeTab === 'template' && (
+              <div className="home__more">
+                <button type="button" className="home__more-btn" onClick={() => navigate('/templates')}>
+                  查看更多
+                </button>
+              </div>
             )}
           </section>
         </div>
