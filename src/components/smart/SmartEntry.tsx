@@ -6,6 +6,7 @@
  */
 import { useRef, useState } from 'react'
 import EntryDropdown from './EntryDropdown'
+import { polishText } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
 import './SmartEntry.css'
 
@@ -37,7 +38,27 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   const [ratio, setRatio] = useState('16:9')
   const [duration, setDuration] = useState('5s')
   const [images, setImages] = useState<string[]>([])
+  const [polishing, setPolishing] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
+
+  // AI 润色:把用户的粗略需求扩写润色成更完整的创作 brief(本地 Qwen)。
+  const handlePolish = async () => {
+    if (polishing) return
+    if (!text.trim()) {
+      showToast('请先输入创作需求', 'info')
+      return
+    }
+    setPolishing(true)
+    try {
+      const out = await polishText(text, { kind: 'script' })
+      setText(out)
+      showToast('已润色', 'success')
+    } catch (e: any) {
+      showToast(e?.message || '润色失败,请重试', 'error')
+    } finally {
+      setPolishing(false)
+    }
+  }
 
   const pickImages = (files: FileList | null) => {
     if (!files?.length) return
@@ -86,18 +107,35 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
         </div>
 
         <div className="screate__card">
-          <div className="screate__card-body">
-            {/* 已选图片缩略图 */}
-            {images.map((url) => (
-              <div className="screate__thumb" key={url}>
-                <img src={url} alt="" />
-                <button type="button" className="screate__thumb-x" onClick={() => removeImage(url)} aria-label="移除">
-                  ×
+          {/* 已选图片:独立成一行(可换行),不挤压文本框;参考主流 AI 输入框做法 */}
+          {images.length > 0 && (
+            <div className="screate__attachments">
+              {images.map((url) => (
+                <div className="screate__thumb" key={url}>
+                  <img src={url} alt="" />
+                  <button type="button" className="screate__thumb-x" onClick={() => removeImage(url)} aria-label="移除">
+                    ×
+                  </button>
+                </div>
+              ))}
+              {images.length < MAX_IMAGES && (
+                <button
+                  type="button"
+                  className="screate__add"
+                  onClick={() => fileRef.current?.click()}
+                  aria-label="继续上传"
+                >
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
                 </button>
-              </div>
-            ))}
-            {/* 上传 + 框 */}
-            {images.length < MAX_IMAGES && (
+              )}
+            </div>
+          )}
+
+          <div className="screate__card-body">
+            {/* 无图时:左侧上传框(Figma 初始态);有图时上传入口在上方缩略图行 */}
+            {images.length === 0 && (
               <button type="button" className="screate__upload" onClick={() => fileRef.current?.click()} aria-label="上传图片">
                 <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                   <path d="M12 5v14M5 12h14" />
@@ -167,6 +205,25 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
                 title="引用参考素材"
               >
                 @
+              </button>
+
+              {/* AI 润色:把需求扩写润色得更完整 */}
+              <button
+                type="button"
+                className="screate__pill screate__polish"
+                onClick={handlePolish}
+                disabled={polishing}
+                title="AI 润色:把你的需求扩写得更完整"
+              >
+                {polishing ? (
+                  <span className="screate__polish-spin" aria-hidden="true" />
+                ) : (
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                    <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                  </svg>
+                )}
+                {polishing ? '润色中…' : 'AI 润色'}
               </button>
             </div>
 

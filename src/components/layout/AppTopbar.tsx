@@ -4,6 +4,7 @@
  * 用户信息来自 workspaceSession;退出走 logoutSession + AuthContext。
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useCurrentUser, useCurrentPlanName } from '@/stores/workspaceSession'
 import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
@@ -25,18 +26,35 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   const { showToast } = useToast()
 
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const userName = useMemo(
     () => currentUser?.nickname || currentUser?.name || currentUser?.username || '用户',
     [currentUser],
   )
 
+  // 下拉用 portal 渲染到 body,避免被任何祖先的层叠/overflow 截断;打开时按按钮位置定位。
+  const toggleMenu = () => {
+    setMenuOpen((v) => {
+      const next = !v
+      if (next && btnRef.current) {
+        const r = btnRef.current.getBoundingClientRect()
+        setMenuPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) })
+      }
+      return next
+    })
+  }
+
   useEffect(() => {
     if (!menuOpen) return
     function onDown(e: PointerEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setMenuOpen(false)
+      const t = e.target as Node
+      if (boxRef.current?.contains(t) || menuRef.current?.contains(t)) return
+      setMenuOpen(false)
     }
     window.addEventListener('pointerdown', onDown, true)
     return () => window.removeEventListener('pointerdown', onDown, true)
@@ -71,7 +89,7 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   return (
     <header className="apptop">
       {onMenu && (
-        <button type="button" className="apptop__menu" aria-label="打开菜单" onClick={onMenu}>
+        <button type="button" className="apptop__hamburger" aria-label="打开菜单" onClick={onMenu}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M4 7h16M4 12h16M4 17h16" />
           </svg>
@@ -84,34 +102,44 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
         </button>
         <div className="apptop__user" ref={boxRef}>
           <button
+            ref={btnRef}
             type="button"
             className="apptop__user-btn"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((v) => !v)}
+            onClick={toggleMenu}
           >
             <span className="apptop__avatar">{userName.slice(0, 1)}</span>
             <span className="apptop__user-name">{userName}</span>
             <span className={`apptop__caret${menuOpen ? ' is-open' : ''}`}>⌄</span>
           </button>
-          {menuOpen && (
-            <div className="apptop__menu" role="menu">
-              <button type="button" className="apptop__menu-item" role="menuitem" onClick={handleMember}>
-                会员中心
-              </button>
-              <button
-                type="button"
-                className="apptop__menu-item apptop__menu-item--danger"
-                role="menuitem"
-                onClick={handleLogout}
-                disabled={isLoggingOut}
-              >
-                {isLoggingOut ? '退出中…' : '退出登录'}
-              </button>
-            </div>
-          )}
         </div>
       </div>
+
+      {menuOpen &&
+        menuPos &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="apptop__menu"
+            role="menu"
+            style={{ top: menuPos.top, right: menuPos.right }}
+          >
+            <button type="button" className="apptop__menu-item" role="menuitem" onClick={handleMember}>
+              会员中心
+            </button>
+            <button
+              type="button"
+              className="apptop__menu-item apptop__menu-item--danger"
+              role="menuitem"
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+            >
+              {isLoggingOut ? '退出中…' : '退出登录'}
+            </button>
+          </div>,
+          document.body,
+        )}
     </header>
   )
 }

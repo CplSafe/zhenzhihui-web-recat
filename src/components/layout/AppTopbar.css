@@ -10,7 +10,7 @@
   background: #fff;
   border-bottom: 1px solid #f0f1f3;
 }
-.apptop__menu {
+.apptop__hamburger {
   display: none;
   align-items: center;
   justify-content: center;
@@ -23,7 +23,7 @@
   color: #444;
   cursor: pointer;
 }
-.apptop__menu:hover {
+.apptop__hamburger:hover {
   background: #f3f4f6;
 }
 .apptop__right {
@@ -88,17 +88,16 @@
 .apptop__caret.is-open {
   transform: rotate(180deg);
 }
+/* 下拉浮层:portal 到 body,fixed 定位(top/right 由内联样式给) */
 .apptop__menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  min-width: 140px;
+  position: fixed;
+  min-width: 150px;
   background: #fff;
   border: 1px solid #eef0f2;
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   padding: 6px;
-  z-index: 50;
+  z-index: 3000;
 }
 .apptop__menu-item {
   width: 100%;

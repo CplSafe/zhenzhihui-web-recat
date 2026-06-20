@@ -115,11 +115,11 @@ export async function generateProjectName(requirement: string, signal?: AbortSig
   if (!req) throw new Error('请输入创作需求')
   const system =
     '你是项目命名助手。根据用户的短视频创作需求,起一个简洁、贴切、有吸引力的中文项目名称。' +
-    '要求:4到12个字,不含标点、引号、书名号、空格、序号,不要任何解释。只输出名称本身。'
-  let name = await chatOnce(system, req, signal, 48)
-  // 兜底清洗:去引号/标点/空白,截断到 16 字
+    '要求:4到8个字,不含标点、引号、书名号、空格、序号,不要任何解释。只输出名称本身。'
+  let name = await chatOnce(system, req, signal, 32)
+  // 兜底清洗:去引号/标点/空白,截断到 8 字
   name = name.replace(/["'《》「」“”‘’\s]/g, '').replace(/[。,，.!！?？:：;；]/g, '').trim()
-  name = name.split('\n')[0].slice(0, 16)
+  name = name.split('\n')[0].slice(0, 8)
   if (!name) throw new Error('生成名称为空,请重试')
   return name
 }
