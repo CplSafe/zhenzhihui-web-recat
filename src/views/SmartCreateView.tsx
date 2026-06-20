@@ -6,7 +6,7 @@
  * 大量编排逻辑可复用现有 useCreativeWorkflow / useStoryboard* / useVideoGeneration。
  */
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
@@ -22,10 +22,23 @@ import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { generateShotImage, ensureAssetId } from '@/api/smartShotImage'
 import { generateClip } from '@/api/smartVideo'
 import VideoStage from '@/components/smart/VideoStage'
-import { createCreativeProject, patchCreativeProject } from '@/api/business'
+import {
+  createCreativeProject,
+  patchCreativeProject,
+  getCreativeProject,
+  updateCreativeProjectDraft,
+  createCreativeProjectVersion,
+} from '@/api/business'
 import { useWorkspaceId, useModelPlanCandidates } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
-import { loadSmartDraft, saveSmartDraft, clearSmartDraft } from '@/utils/smartDraft'
+import {
+  loadSmartDraft,
+  saveSmartDraft,
+  clearSmartDraft,
+  buildSmartSnapshot,
+  parseSmartSnapshot,
+  type SmartDraft,
+} from '@/utils/smartDraft'
 import './SmartCreateView.css'
 
 // 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
@@ -80,6 +93,7 @@ function subjectPrompt(name: string, kind: string, style?: string, context?: str
 
 export default function SmartCreateView() {
   const navigate = useNavigate()
+  const { id: routeId } = useParams()
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
   const modelPlanCandidates = useModelPlanCandidates() as string[]
@@ -110,6 +124,8 @@ export default function SmartCreateView() {
   const [projectId, setProjectId] = useState(0)
   const projectIdRef = useRef(0)
   const titlePatchedRef = useRef(false)
+  const draftRevisionRef = useRef(0) // 后端草稿版本号(乐观并发)
+  const [savingVideo, setSavingVideo] = useState(false)
 
   // ── 主体素材统一管理:同名主体(@闺蜜A)共享素材,选定后所有同名处联动 ──
   // 版本/提示词存 registry;选定的图写回所有同名 subject(供表格 + 镜头编排一致展示)
@@ -460,49 +476,114 @@ export default function SmartCreateView() {
   // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
   const [fields, setFields] = useState<Record<string, string>>({})
 
-  // ── 本地草稿:自动保存 + 进入时恢复(便于测试不用从头) ──
-  const hydratedRef = useRef(false)
-  useEffect(() => {
-    const d = loadSmartDraft()
-    if (d && d.started) {
-      setStarted(true)
-      setRequirement(d.requirement || '')
-      setReqSummary(d.reqSummary || '')
-      if (d.entryMeta) setEntryMeta(d.entryMeta)
-      if (d.projectName) setProjectName(d.projectName)
-      setNameTouched(!!d.nameTouched)
-      setStep(Math.min(STEPS.length - 1, Math.max(0, d.step || 0)))
-      setMaxReached(d.maxReached || 0)
-      setShots(Array.isArray(d.shots) ? d.shots : [])
-      setSubjectAssets(d.subjectAssets || {})
-      setFields(d.fields || {})
-      if (d.projectId) {
-        setProjectId(d.projectId)
-        projectIdRef.current = d.projectId
+  // ── 草稿:本地(localStorage)+ 后端(/creative/projects/:id/draft)双层持久化 ──
+  // 把当前页面状态打包成草稿对象(localStorage 与后端快照共用)
+  const currentDraft = (): SmartDraft => ({
+    started,
+    requirement,
+    reqSummary,
+    entryMeta,
+    projectName,
+    nameTouched,
+    step,
+    maxReached,
+    shots,
+    subjectAssets,
+    fields,
+    projectId,
+  })
+  // 把草稿回填到页面状态(本地恢复 / 后端恢复共用)
+  const applyDraft = (d: SmartDraft) => {
+    setStarted(true)
+    setRequirement(d.requirement || '')
+    setReqSummary(d.reqSummary || '')
+    if (d.entryMeta) setEntryMeta(d.entryMeta)
+    if (d.projectName) setProjectName(d.projectName)
+    setNameTouched(!!d.nameTouched)
+    setStep(Math.min(STEPS.length - 1, Math.max(0, d.step || 0)))
+    setMaxReached(d.maxReached || 0)
+    setShots(Array.isArray(d.shots) ? d.shots : [])
+    setSubjectAssets(d.subjectAssets || {})
+    setFields(d.fields || {})
+    autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
+    autoVidRef.current = true
+  }
+
+  // 把当前草稿写到后端(带 draft_revision 乐观并发;409 冲突拉新版本号重试一次)。返回是否成功。
+  const putSmartDraftToBackend = async (): Promise<boolean> => {
+    const id = projectIdRef.current
+    const ws = Number(workspaceId || 0)
+    if (!id || !ws) return false
+    const snapshot = buildSmartSnapshot(currentDraft())
+    const apply = (payload: any) => {
+      const next = Number(payload?.draft_revision ?? payload?.data?.draft_revision)
+      if (Number.isFinite(next)) draftRevisionRef.current = next
+    }
+    try {
+      apply(await updateCreativeProjectDraft({ projectId: id, workspaceId: ws, draft: snapshot, draftRevision: draftRevisionRef.current }))
+      return true
+    } catch (e: any) {
+      if (e?.status !== 409) return false
+      // 草稿在别处更新:重新拉版本号后重试一次
+      try {
+        const proj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
+        draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
+        apply(await updateCreativeProjectDraft({ projectId: id, workspaceId: ws, draft: snapshot, draftRevision: draftRevisionRef.current }))
+        return true
+      } catch {
+        return false
       }
     }
-    hydratedRef.current = true
-  }, [])
+  }
 
+  const hydratedRef = useRef(false)
+  // 进入:有 /smart/:id → 从后端恢复;否则恢复 localStorage 草稿
+  useEffect(() => {
+    if (hydratedRef.current) return
+    const rid = Number(routeId || 0)
+    if (rid > 0) {
+      const ws = Number(workspaceId || 0)
+      if (!ws) return // 等工作空间就绪
+      hydratedRef.current = true
+      projectIdRef.current = rid
+      setProjectId(rid)
+      titlePatchedRef.current = true // 既有项目,标题不自动回写
+      getCreativeProject({ projectId: rid, workspaceId: ws })
+        .then((proj: any) => {
+          draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
+          const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
+          const d = parseSmartSnapshot(draftJson)
+          if (d) applyDraft(d)
+          const t = String(proj?.title || proj?.name || '').trim()
+          if (t) setProjectName(t)
+        })
+        .catch(() => showToast('项目加载失败', 'error'))
+    } else {
+      hydratedRef.current = true
+      const d = loadSmartDraft()
+      if (d && d.started) {
+        applyDraft(d)
+        if (d.projectId) {
+          setProjectId(d.projectId)
+          projectIdRef.current = d.projectId
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeId, workspaceId])
+
+  // 自动保存:本地立即(600ms 防抖)+ 后端(1.5s 防抖,仅在已建项目时)
   useEffect(() => {
     if (!hydratedRef.current) return
-    const t = window.setTimeout(() => {
-      saveSmartDraft({
-        started,
-        requirement,
-        reqSummary,
-        entryMeta,
-        projectName,
-        nameTouched,
-        step,
-        maxReached,
-        shots,
-        subjectAssets,
-        fields,
-        projectId,
-      })
-    }, 600)
-    return () => window.clearTimeout(t)
+    const local = window.setTimeout(() => saveSmartDraft(currentDraft()), 600)
+    const remote = window.setTimeout(() => {
+      if (projectIdRef.current) void putSmartDraftToBackend()
+    }, 1500)
+    return () => {
+      window.clearTimeout(local)
+      window.clearTimeout(remote)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [started, requirement, reqSummary, entryMeta, projectName, nameTouched, step, maxReached, shots, subjectAssets, fields, projectId])
 
   const goStep = (i: number) => {
@@ -583,6 +664,8 @@ export default function SmartCreateView() {
     // 后端建项目(best-effort,使其出现在项目管理/历史)
     const wsId = Number(workspaceId || 0)
     if (wsId && !projectIdRef.current) {
+      draftRevisionRef.current = 0
+      titlePatchedRef.current = false
       createCreativeProject({ workspace_id: wsId })
         .then((p: any) => {
           const id = resolveProjectId(p)
@@ -627,6 +710,35 @@ export default function SmartCreateView() {
   // TODO(后续阶段): 接真实生成/保存逻辑;现仅占位提示。
   const todo = (msg: string) => () => showToast(msg, 'info')
 
+  // 保存视频:先把草稿写后端,再建「视频保存 …」版本(项目管理页据此展示成片,见 ProjectManagementView)
+  const handleSaveVideo = async () => {
+    const ws = Number(workspaceId || 0)
+    const id = projectIdRef.current
+    if (!ws || !id) {
+      showToast('项目尚未建立,无法保存', 'error')
+      return
+    }
+    if (!shots.some((s) => s.videoUrl)) {
+      showToast('请先生成视频再保存', 'info')
+      return
+    }
+    if (savingVideo) return
+    setSavingVideo(true)
+    try {
+      const ok = await putSmartDraftToBackend()
+      if (!ok) throw new Error('草稿保存失败')
+      const now = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+      await createCreativeProjectVersion({ projectId: id, workspaceId: ws, label: `视频保存 ${stamp}` })
+      showToast('已保存到 项目管理', 'success')
+    } catch (e: any) {
+      showToast(e?.message || '保存失败,请重试', 'error')
+    } finally {
+      setSavingVideo(false)
+    }
+  }
+
   const bottomButtons: BottomButton[] = (() => {
     switch (step) {
       case 0: // 分镜脚本
@@ -666,7 +778,7 @@ export default function SmartCreateView() {
       case 2: // 生成视频
         return [
           { label: '上一步', variant: 'ghost', action: () => goStep(1) },
-          { label: '保存视频', variant: 'ghost', action: todo('保存视频至 项目管理-待归类(待接入)') },
+          { label: savingVideo ? '保存中…' : '保存视频', variant: 'ghost', action: handleSaveVideo },
           {
             label: vidGenRunning ? '生成中…' : '重新生成视频',
             variant: 'primary',
@@ -814,6 +926,9 @@ export default function SmartCreateView() {
               setFields({})
               projectIdRef.current = 0
               setProjectId(0)
+              draftRevisionRef.current = 0
+              titlePatchedRef.current = false
+              navigate('/smart')
             }}
           >
             ＋ 新建

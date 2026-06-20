@@ -488,6 +488,7 @@ export default function ProjectManagementView() {
         statusKey: statusMeta.key,
         statusLabel: statusMeta.label,
         coverUrl: coverMeta.url || '',
+        flow: String(coverMeta.flow || ''),
         storyboardCount,
         memberCount,
         itemCount: Number(coverMeta.videoSaveCount || 0),
@@ -623,7 +624,12 @@ export default function ProjectManagementView() {
         const label = v?.label || ''
         return label.startsWith('视频保存')
       }).length
-      nextMap[result.projectId] = { url: coverUrl, storyboardCount, videoSaveCount }
+      nextMap[result.projectId] = {
+        url: coverUrl,
+        storyboardCount,
+        videoSaveCount,
+        flow: String(draft?.flow || ''), // 'smart' → 智能成片项目,打开走 /smart/:id
+      }
     }
 
     setCoverMetaById(nextMap)
@@ -796,7 +802,7 @@ export default function ProjectManagementView() {
         workspaceId: wsId,
         vid: selected.id,
       })
-      navigate(`/creative/${parent.id}`)
+      navigate(parent.flow === 'smart' ? `/smart/${parent.id}` : `/creative/${parent.id}`)
     } catch (error) {
       showToast(getBusinessErrorMessage(error, '打开保存项目失败，请稍后重试'), 'error')
     } finally {

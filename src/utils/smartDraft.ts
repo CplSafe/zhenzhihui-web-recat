@@ -87,3 +87,87 @@ export function clearSmartDraft() {
     /* ignore */
   }
 }
+
+// ── 后端草稿快照(写入 /creative/projects/:id/draft 的 draft_json)──
+// 与 2.0 项目管理页(ProjectManagementView)的读取契约对齐:
+//   - storyboardItems[].currentImage / versionHistory → 取封面 + 统计分镜数
+//   - generatedVideoUrl / generatedVideoAssetId → 封面降级 + 版本预览取视频
+//   - videoHistoryList → 多片段
+// 另存原生 smart 块用于精确回填。data:/blob: 体积大且仅本地可用,后端快照里剥离,只留 http 图。
+const killHeavy = (u: any) =>
+  typeof u === 'string' && (u.startsWith('blob:') || u.startsWith('data:')) ? '' : u
+
+function stripHeavy(d: SmartDraft): SmartDraft {
+  const next = sanitize(d)
+  if (next.entryMeta?.images) {
+    next.entryMeta = { ...next.entryMeta, images: (next.entryMeta.images || []).map(killHeavy).filter(Boolean) }
+  }
+  if (Array.isArray(next.shots)) {
+    next.shots = next.shots.map((s: any) => ({
+      ...s,
+      image: killHeavy(s.image),
+      imageVersions: Array.isArray(s.imageVersions) ? s.imageVersions.map(killHeavy).filter(Boolean) : s.imageVersions,
+      subjects: Array.isArray(s.subjects) ? s.subjects.map((x: any) => ({ ...x, image: killHeavy(x.image) })) : [],
+    }))
+  }
+  if (next.subjectAssets && typeof next.subjectAssets === 'object') {
+    const sa: Record<string, any> = {}
+    for (const [k, v] of Object.entries(next.subjectAssets)) {
+      const versions = (v?.versions || []).map(killHeavy).filter(Boolean)
+      const sources: Record<string, any> = {}
+      if (v?.sources) for (const [u, src] of Object.entries(v.sources)) if (killHeavy(u)) sources[u] = src
+      sa[k] = { ...v, versions, sources }
+    }
+    next.subjectAssets = sa
+  }
+  return next
+}
+
+const STEP_CODES = ['script', 'storyboard', 'video']
+
+export function buildSmartSnapshot(d: SmartDraft): any {
+  const clean = stripHeavy(d)
+  const shots = clean.shots || []
+  const storyboardItems = shots.map((s: any, i: number) => ({
+    id: s.id ?? i,
+    index: i,
+    currentImage: s.image ? { url: s.image } : null,
+    versionHistory: (s.imageVersions || []).map((u: string) => ({ url: u })),
+  }))
+  const clips = shots
+    .filter((s: any) => s.videoUrl)
+    .map((s: any) => ({ url: s.videoUrl, assetId: Number(s.videoAssetId || 0) || 0, no: s.no }))
+  const firstClip = clips[0] || { url: '', assetId: 0 }
+  return {
+    flow: 'smart',
+    title: clean.projectName || '',
+    currentStep: STEP_CODES[clean.step || 0] || 'script',
+    description: clean.requirement || '',
+    reqSummary: clean.reqSummary || '',
+    selectedDuration: clean.entryMeta?.duration || '',
+    selectedRatio: clean.entryMeta?.ratio || '',
+    selectedStyles: clean.entryMeta?.style ? [clean.entryMeta.style] : [],
+    storyboardItems,
+    generatedVideoUrl: firstClip.url,
+    generatedVideoAssetId: firstClip.assetId,
+    videoHistoryList: clips,
+    // 智能成片原生快照(精确回填,见 parseSmartSnapshot)
+    smart: clean,
+  }
+}
+
+/** 从后端 draft_json 还原智能成片草稿。draft_json 可能是字符串或对象。 */
+export function parseSmartSnapshot(draftJson: any): SmartDraft | null {
+  let obj = draftJson
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj)
+    } catch {
+      return null
+    }
+  }
+  if (!obj || typeof obj !== 'object') return null
+  const smart = obj.smart
+  if (smart && typeof smart === 'object') return sanitize(smart as SmartDraft)
+  return null
+}

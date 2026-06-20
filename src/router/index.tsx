@@ -81,6 +81,7 @@ export const router = createBrowserRouter([
       { path: 'templates', element: lazyPage(<TemplatesView />) },
       { path: 'workbench', element: lazyPage(<WorkbenchView />) },
       { path: 'smart', element: lazyPage(<SmartCreateView />) },
+      { path: 'smart/:id', element: lazyPage(<SmartCreateView />) },
       { path: 'creative/blank', element: lazyPage(<CreativeScriptView />) },
       { path: 'creative', element: lazyPage(<CreativeEntryView />) },
       { path: 'creative/:id', element: lazyPage(<CreativeScriptView />) },
