@@ -565,10 +565,13 @@ export default function SmartCreateView() {
         prev.map((sh) => ({
           ...sh,
           image: sh.imageAssetId && map.get(Number(sh.imageAssetId)) ? map.get(Number(sh.imageAssetId))! : sh.image,
-          imageVersions: (sh.imageVersions || []).map((v: any) => {
-            const o = typeof v === 'string' ? { url: v, assetId: 0 } : v
-            const nu = o.assetId && map.get(Number(o.assetId))
-            return nu ? { ...o, url: nu } : o
+          imageVersions: (sh.imageVersions || []).map((v: any, i: number, arr: any[]) => {
+            const o = typeof v === 'string' ? { url: v, assetId: 0 } : { ...v }
+            // 老草稿未存版本 asset_id:把最后一版(通常即当前图)按 shot.imageAssetId 刷新
+            let aid = Number(o.assetId || 0)
+            if (!aid && i === arr.length - 1) aid = Number(sh.imageAssetId || 0)
+            const nu = aid && map.get(aid)
+            return nu ? { ...o, url: nu, assetId: aid } : o
           }),
           subjects: sh.subjects.map((su) =>
             su.assetId && map.get(Number(su.assetId)) ? { ...su, image: map.get(Number(su.assetId))! } : su,
