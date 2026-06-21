@@ -12,6 +12,7 @@ import { useAuth } from '@/auth/AuthContext'
 import { getAssetDownloadUrl, getCreativeProject, listCreativeProjects } from '@/api/business'
 import { useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
+import { resolveProjectPath } from '@/utils/projectRoute'
 import library1 from '@/assets/creative/library-1.png'
 import library2 from '@/assets/creative/library-2.png'
 import library3 from '@/assets/creative/library-3.png'
@@ -504,7 +505,8 @@ export default function WorkbenchView() {
   function enterProject(project: any) {
     const id = Number(project?.id || 0)
     if (!id) return
-    navigate(`/creative/${id}`)
+    // 按草稿 flow 路由:智能成片→/smart/:id,2.0→/creative/:id
+    resolveProjectPath(id, Number(workspaceId || 0)).then((p) => navigate(p))
   }
 
   return (

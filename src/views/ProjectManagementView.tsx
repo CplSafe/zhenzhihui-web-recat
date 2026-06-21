@@ -813,7 +813,7 @@ export default function ProjectManagementView() {
   function openParentProjectDirectly() {
     const parent = currentParentProject
     if (!parent?.id) return
-    navigate(`/creative/${parent.id}`)
+    navigate(parent.flow === 'smart' ? `/smart/${parent.id}` : `/creative/${parent.id}`)
   }
 
   async function resolveVideoUrlFromVersion(project: any): Promise<string | null> {

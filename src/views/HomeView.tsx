@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { useWorkspaceId } from '@/stores/workspaceSession'
+import { resolveProjectPath } from '@/utils/projectRoute'
 import { listCreativeProjects } from '@/api/business'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import bannerLeft from '@/assets/home/banner-left.png'
@@ -304,7 +305,7 @@ export default function HomeView() {
                         key={id || projectTitle(p)}
                         type="button"
                         className="home__proj"
-                        onClick={() => id && navigate(`/creative/${id}`)}
+                        onClick={() => id && resolveProjectPath(id, Number(workspaceId || 0)).then((path) => navigate(path))}
                       >
                         <div
                           className="home__proj-thumb"
