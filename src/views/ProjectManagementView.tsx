@@ -169,6 +169,57 @@ function parseProjectDetail(draft: any): { shots: DetailShot[]; videos: DetailVi
   return { shots, videos, flow }
 }
 
+// 从草稿里取若干「预览图」(优先用户上传的入口素材 → 元素图 → 分镜图),供项目文件夹拼图预览
+function extractPreviewCandidates(draft: any): { url: string; assetId: number }[] {
+  const smart = draft?.smart && typeof draft.smart === 'object' ? draft.smart : draft
+  const out: { url: string; assetId: number }[] = []
+  // ① 入口上传的素材(用户上传)
+  const em = smart?.entryMeta || {}
+  const imgs = normalizeArray(em.images)
+  const aids = normalizeArray(em.imageAssetIds || em.imageAssetIDs)
+  imgs.forEach((u: any, i: number) => {
+    const url = String(u || '').trim()
+    if (url) out.push({ url, assetId: Number(aids[i] || 0) || 0 })
+  })
+  // ② 元素(素材主体)
+  normalizeArray(smart?.shots).forEach((s: any) =>
+    normalizeArray(s.subjects).forEach((su: any) => {
+      const im = imgOf(su.image ? { url: su.image, assetId: su.assetId } : su)
+      if (im.url || im.assetId) out.push(im)
+    }),
+  )
+  // ③ 分镜图(兜底)
+  normalizeArray(smart?.shots).forEach((s: any) => {
+    const im = imgOf(s.image ? { url: s.image, assetId: s.imageAssetId } : s)
+    if (im.url || im.assetId) out.push(im)
+  })
+  // 去重(按 assetId 优先,否则按 url)
+  const seen = new Set<string>()
+  const uniq: { url: string; assetId: number }[] = []
+  for (const c of out) {
+    const key = c.assetId ? `a${c.assetId}` : `u${c.url}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    uniq.push(c)
+    if (uniq.length >= 4) break
+  }
+  return uniq
+}
+
+// 修进度条 bug:部分 MP4 初始 duration=Infinity(moov 在文件尾),进度条会从中间窜到结尾。
+// 跳到极大时间强制浏览器算出真实时长,再跳回 0。
+function fixVideoDuration(e: React.SyntheticEvent<HTMLVideoElement>) {
+  const v = e.currentTarget
+  if (!Number.isFinite(v.duration)) {
+    const back = () => {
+      v.currentTime = 0
+      v.removeEventListener('timeupdate', back)
+    }
+    v.addEventListener('timeupdate', back)
+    v.currentTime = 1e7
+  }
+}
+
 function PlayIcon() {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -185,6 +236,20 @@ function FolderGlyph() {
       />
       <rect x="10" y="30" width="80" height="36" rx="6" fill="rgba(255,255,255,0.55)" />
     </svg>
+  )
+}
+
+// 项目封面:有预览图则拼图展示(最多 4 张),图片失效/缺失时回退为渐变文件夹图标
+function FolderThumb({ urls }: { urls: string[] }) {
+  const [broken, setBroken] = useState(false)
+  const list = urls.slice(0, 4)
+  if (!list.length || broken) return <FolderGlyph />
+  return (
+    <span className="pm2-folder-collage" data-n={list.length}>
+      {list.map((u, i) => (
+        <img key={i} src={u} alt="" loading="lazy" onError={() => setBroken(true)} />
+      ))}
+    </span>
   )
 }
 
@@ -223,11 +288,33 @@ export default function ProjectManagementView() {
 
   const folders = useMemo(() => {
     return projectItems
-      .map((project) => ({
-        id: Number(project?.id || 0),
-        title: String(project?.title || project?.name || '').trim() || '未命名项目',
-        updatedAt: getProjectTimestamp(project, ['updated_at', 'updatedAt', 'last_saved_at', 'created_at', 'createdAt']),
-      }))
+      .map((project) => {
+        // 预览图只用「列表已返回」的内容(封面字段 / 内联草稿),不为此发额外请求,保证列表快
+        const coverFields = [
+          project?.cover_url,
+          project?.coverUrl,
+          project?.thumbnail_url,
+          project?.thumbnailUrl,
+          project?.cover,
+        ]
+          .map((v) => String(v || '').trim())
+          .filter(Boolean)
+        const draftInline = normalizeCreativeProjectDraft(project)
+        const draftUrls = draftInline ? extractPreviewCandidates(draftInline).map((c) => c.url).filter(Boolean) : []
+        const preview = (coverFields.length ? coverFields : draftUrls).slice(0, 4)
+        return {
+          id: Number(project?.id || 0),
+          title: String(project?.title || project?.name || '').trim() || '未命名项目',
+          updatedAt: getProjectTimestamp(project, [
+            'updated_at',
+            'updatedAt',
+            'last_saved_at',
+            'created_at',
+            'createdAt',
+          ]),
+          preview,
+        }
+      })
       .filter((p) => p.id > 0)
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }, [projectItems])
@@ -250,6 +337,7 @@ export default function ProjectManagementView() {
     }
     setLoading(true)
     try {
+      // 只拉「项目列表」这一项核心数据(单次请求);素材/分镜/视频等点进项目再拉
       const items = await listCreativeProjects({ workspaceId: wsId, limit: 60 })
       if (Number(workspaceIdRef.current || 0) !== wsId) return
       setProjectItems(Array.isArray(items) ? items : [])
@@ -509,7 +597,7 @@ export default function ProjectManagementView() {
                         }}
                       >
                         <span className={`pm2-folder-icon pm2-tone-${toneOf(i)}`}>
-                          <FolderGlyph />
+                          <FolderThumb urls={folder.preview} />
                           <button
                             type="button"
                             className="pm2-folder-more"
@@ -606,7 +694,7 @@ export default function ProjectManagementView() {
                       <div className="pm2-detail-video">
                         <div className="pm2-detail-player">
                           {activeVideo.url ? (
-                            <video src={activeVideo.url} controls playsInline />
+                            <video src={activeVideo.url} controls playsInline preload="metadata" onLoadedMetadata={fixVideoDuration} />
                           ) : (
                             <div className="pm2-hint">该版本视频暂时无法播放</div>
                           )}
@@ -631,7 +719,7 @@ export default function ProjectManagementView() {
                                     className={`pm2-detail-history-item${i === activeVideoIdx ? ' is-active' : ''}`}
                                     onClick={() => setActiveVideoIdx(i)}
                                   >
-                                    {v.url ? <video src={v.url} muted /> : <span className="pm2-vid-play"><PlayIcon /></span>}
+                                    {v.url ? <video src={v.url} muted preload="metadata" /> : <span className="pm2-vid-play"><PlayIcon /></span>}
                                     <span>{v.label}</span>
                                   </button>
                                 ))}

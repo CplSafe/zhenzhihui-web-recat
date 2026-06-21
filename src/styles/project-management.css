@@ -1627,3 +1627,33 @@
   line-height: 1;
   cursor: pointer;
 }
+
+/* 项目封面拼图(最多 4 张,基于列表已返回内容,无额外请求) */
+.pm2-folder-collage {
+  position: absolute;
+  inset: 7px;
+  border-radius: 10px;
+  overflow: hidden;
+  display: grid;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.5);
+}
+.pm2-folder-collage img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pm2-folder-collage[data-n='1'] {
+  grid-template-columns: 1fr;
+}
+.pm2-folder-collage[data-n='2'] {
+  grid-template-columns: 1fr 1fr;
+}
+.pm2-folder-collage[data-n='3'],
+.pm2-folder-collage[data-n='4'] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.pm2-folder-collage[data-n='3'] img:first-child {
+  grid-column: span 2;
+}
