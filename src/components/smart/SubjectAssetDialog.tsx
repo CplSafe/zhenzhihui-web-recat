@@ -18,9 +18,11 @@ interface SubjectAssetDialogProps {
   autoGen?: boolean
   /** 打开时把(原始意图)defaultPrompt 交本地 Qwen 润成干净画面提示词后回显;不传则原样显示 */
   refinePrompt?: (intent: string) => Promise<string>
+  /** 当前项目内所有图(去重):供"添加参考图/替换"从项目里选 */
+  projectImages?: string[]
   onClose: () => void
-  /** 生成:prompt + 可选参考图(产品真实照片,用于 VL 优化提示词 + 图生图) */
-  onGenerate: (prompt: string, refImageUrl?: string) => Promise<void>
+  /** 生成:prompt + 选项(refImageUrl 参考图;carryCurrent 携带当前图=修改/不带=重新生成) */
+  onGenerate: (prompt: string, opts: { refImageUrl?: string; carryCurrent?: boolean }) => Promise<void>
   onSelect: (url: string) => void
   /** 上传素材:直接交 File,由父级经后端 uploadAssetFile 存服务器取 asset_id */
   onUpload: (file: File) => void
@@ -35,6 +37,7 @@ export default function SubjectAssetDialog({
   defaultPrompt,
   autoGen,
   refinePrompt,
+  projectImages = [],
   onClose,
   onGenerate,
   onSelect,
@@ -44,9 +47,23 @@ export default function SubjectAssetDialog({
   const [generating, setGenerating] = useState(false)
   const [refining, setRefining] = useState(false)
   const [refImage, setRefImage] = useState('') // 参考图(产品真实照片)dataURL
+  const [carryCurrent, setCarryCurrent] = useState(false) // 携带当前图(修改)/ 不带(重新生成)
+  const [picker, setPicker] = useState<null | 'ref' | 'use'>(null) // 项目图片选择器目标
   const fileRef = useRef<HTMLInputElement | null>(null)
-  const refFileRef = useRef<HTMLInputElement | null>(null)
+  const uploadModeRef = useRef<'version' | 'ref'>('version')
   const autoRef = useRef(false)
+
+  // 触发文件上传:mode=version → onUpload(新版本);mode=ref → 设为参考图
+  const triggerUpload = (mode: 'version' | 'ref') => {
+    uploadModeRef.current = mode
+    fileRef.current?.click()
+  }
+  // 项目图片选择器选中某图:ref→参考图;use→设为当前版本(同名联动)
+  const pickProjectImage = (url: string) => {
+    if (picker === 'ref') setRefImage(url)
+    else if (picker === 'use') onSelect(url)
+    setPicker(null)
+  }
 
   // 打开时:先回显原始意图,若提供 refinePrompt 则用本地 Qwen 润成干净提示词后替换;
   // autoGen 且无版本则在(润色后的)提示词就绪后自动生成一次。
@@ -58,6 +75,8 @@ export default function SubjectAssetDialog({
     let cancelled = false
     setPrompt(defaultPrompt)
     setRefImage('')
+    setCarryCurrent(false)
+    setPicker(null)
     ;(async () => {
       let p = defaultPrompt
       if (refinePrompt) {
@@ -88,7 +107,7 @@ export default function SubjectAssetDialog({
     if (!p.trim()) return
     setGenerating(true)
     try {
-      await onGenerate(p, refImage || undefined)
+      await onGenerate(p, { refImageUrl: refImage || undefined, carryCurrent })
     } finally {
       setGenerating(false)
     }
@@ -115,7 +134,7 @@ export default function SubjectAssetDialog({
         </div>
 
         <div className="sad__body">
-          {/* 大图预览(当前选定) */}
+          {/* 大图预览(当前选定);hover 显示 替换/上传 */}
           <div className="sad__preview">
             {generating ? (
               <div className="sad__preview-loading">
@@ -125,8 +144,16 @@ export default function SubjectAssetDialog({
             ) : currentImage ? (
               <img src={currentImage} alt="" />
             ) : (
-              <span className="sad__preview-ph">还没有素材,输入提示词生成,或上传</span>
+              <span className="sad__preview-ph">还没有素材,输入提示词生成,或上传/替换</span>
             )}
+            <div className="sad__img-actions">
+              <button type="button" onClick={() => setPicker('use')}>
+                替换
+              </button>
+              <button type="button" onClick={() => triggerUpload('version')}>
+                上传
+              </button>
+            </div>
           </div>
 
           {/* 提示词 */}
@@ -142,7 +169,7 @@ export default function SubjectAssetDialog({
             onChange={(e) => setPrompt(e.target.value)}
             placeholder={refining ? '正在把生成意图优化为更干净的画面提示词…' : '描述这个主体的样子…'}
           />
-          {/* 参考图:用产品真实照片,AI 据此优化提示词并图生图(保证用你的产品) */}
+          {/* 参考图:从项目选 或 上传;AI 据此优化提示词并图生图(保证用你的产品) */}
           <div className="sad__ref">
             {refImage ? (
               <div className="sad__ref-thumb">
@@ -152,12 +179,20 @@ export default function SubjectAssetDialog({
                 </button>
               </div>
             ) : (
-              <button type="button" className="sad__ref-add" onClick={() => refFileRef.current?.click()}>
+              <button type="button" className="sad__ref-add" onClick={() => setPicker('ref')}>
                 + 添加参考图
               </button>
             )}
-            <span className="sad__ref-hint">加参考图后,会按图中产品外观优化提示词并图生图</span>
+            <span className="sad__ref-hint">可从项目里选图或上传;按其产品外观优化提示词并图生图</span>
           </div>
+
+          {/* 携带当前图:勾上=在当前图基础上「修改」;不勾=「重新生成」(可带参考图) */}
+          {currentImage && (
+            <label className="sad__carry">
+              <input type="checkbox" checked={carryCurrent} onChange={(e) => setCarryCurrent(e.target.checked)} />
+              携带当前图(在此基础上修改;不勾则重新生成)
+            </label>
+          )}
 
           <div className="sad__actions">
             <input
@@ -167,52 +202,81 @@ export default function SubjectAssetDialog({
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0]
-                if (f) onUpload(f) // 直接交 File 上传到后端,拿 asset_id
+                if (f) {
+                  if (uploadModeRef.current === 'ref') fileToDataUrl(f).then(setRefImage).catch(() => {})
+                  else onUpload(f) // 上传成新版本(后端 asset)
+                }
                 e.target.value = ''
               }}
             />
-            <input
-              ref={refFileRef}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (f) fileToDataUrl(f).then(setRefImage).catch(() => {})
-                e.target.value = ''
-              }}
-            />
-            <button type="button" className="sad__btn sad__btn--ghost" onClick={() => fileRef.current?.click()}>
-              上传素材
-            </button>
             <button
               type="button"
               className="sad__btn sad__btn--primary"
               onClick={() => runGen(prompt)}
               disabled={generating || refining}
             >
-              {generating ? '生成中…' : refining ? '优化中…' : versions.length ? '重新生成' : '生成'}
+              {generating
+                ? '生成中…'
+                : refining
+                  ? '优化中…'
+                  : carryCurrent
+                    ? '修改生成'
+                    : versions.length
+                      ? '重新生成'
+                      : '生成'}
             </button>
           </div>
 
-          {/* 版本图 */}
+          {/* 版本图;每张 hover 显示 替换/上传 */}
           {versions.length > 0 && (
             <>
               <label className="sad__label">版本图(点击选用,同名主体将同步更新)</label>
               <div className="sad__versions">
                 {versions.map((url, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    className={`sad__ver${url === currentImage ? ' is-active' : ''}`}
-                    onClick={() => onSelect(url)}
-                    title={`版本 ${i + 1}`}
-                  >
-                    <img src={url} alt="" />
-                  </button>
+                  <div key={i} className={`sad__ver${url === currentImage ? ' is-active' : ''}`}>
+                    <button type="button" className="sad__ver-pick" onClick={() => onSelect(url)} title={`版本 ${i + 1}`}>
+                      <img src={url} alt="" />
+                    </button>
+                    <div className="sad__img-actions">
+                      <button type="button" onClick={() => setPicker('use')}>
+                        替换
+                      </button>
+                      <button type="button" onClick={() => triggerUpload('version')}>
+                        上传
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
             </>
+          )}
+
+          {/* 项目图片选择器(添加参考图 / 替换) */}
+          {picker && (
+            <div className="sad__picker">
+              <div className="sad__picker-head">
+                {picker === 'ref' ? '选择参考图' : '选择要使用的图'}
+                <button type="button" onClick={() => setPicker(null)} aria-label="关闭">
+                  ×
+                </button>
+              </div>
+              <div className="sad__picker-grid">
+                <button
+                  type="button"
+                  className="sad__picker-up"
+                  onClick={() => triggerUpload(picker === 'ref' ? 'ref' : 'version')}
+                >
+                  ↑<br />
+                  上传
+                </button>
+                {projectImages.map((url, i) => (
+                  <button key={i} type="button" className="sad__picker-item" onClick={() => pickProjectImage(url)}>
+                    <img src={url} alt="" />
+                  </button>
+                ))}
+                {!projectImages.length && <span className="sad__picker-empty">项目里暂无可选图片</span>}
+              </div>
+            </div>
           )}
         </div>
 

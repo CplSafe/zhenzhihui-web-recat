@@ -188,9 +188,15 @@ export default function SmartCreateView() {
     for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.image) return su.image
     return ''
   }
-  // refImageUrl:用户加的参考图(产品真实照片)→ VL 读图优化提示词 + 图生图,保证用其产品
-  const genForSubject = async (name: string, prompt: string, refImageUrl?: string) => {
-    // 全云端:走后端文/图生图,产出即后端 asset(http url + asset_id),天然持久化
+  // 素材出图:
+  //  - carryCurrent=true(修改):带上当前这张图作 img2img 底图,在其基础上改;
+  //  - carryCurrent=false(重新生成):不带当前图,从头生成;
+  //  - refImageUrl(参考图,产品真实照片):VL 读图优化提示词 + 作图生图参考(保证用你的产品)。
+  const genForSubject = async (
+    name: string,
+    prompt: string,
+    opts: { refImageUrl?: string; carryCurrent?: boolean } = {},
+  ) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成素材', 'error')
@@ -200,10 +206,11 @@ export default function SmartCreateView() {
       const plans = await resolvePlanCandidates()
       let finalPrompt = prompt
       const refAssetIds: number[] = []
-      if (refImageUrl) {
-        // ① VL 按参考图内容优化提示词(忠实还原产品外观)
+      const cache: Record<string, number> = {}
+      // 参考图:VL 优化提示词 + 作参考
+      if (opts.refImageUrl) {
         try {
-          finalPrompt = await refineElementPromptWithImage(prompt, refImageUrl, {
+          finalPrompt = await refineElementPromptWithImage(prompt, opts.refImageUrl, {
             name,
             kind: subjectKindOf(name),
             style: entryMeta?.style,
@@ -211,12 +218,23 @@ export default function SmartCreateView() {
         } catch {
           /* 优化失败则用原提示词 */
         }
-        // ② 参考图上传成 asset 作图生图输入
         try {
-          const id = await ensureAssetId(ws, refImageUrl, {})
+          const id = await ensureAssetId(ws, opts.refImageUrl, cache)
           if (id) refAssetIds.push(id)
         } catch {
-          /* 上传失败则退回纯文生 */
+          /* ignore */
+        }
+      }
+      // 修改:把当前这张图作底图(img2img)
+      if (opts.carryCurrent) {
+        const cur = subjectImageOf(name)
+        if (cur) {
+          try {
+            const id = await ensureAssetId(ws, cur, cache)
+            if (id) refAssetIds.push(id)
+          } catch {
+            /* ignore */
+          }
         }
       }
       const { url, assetId } = await generateShotImage({
@@ -229,7 +247,6 @@ export default function SmartCreateView() {
       })
       addSubjectVersion(name, url, assetId, 'ai', prompt)
     } catch (e: any) {
-      // 不再静默:把后端错误(如未启用图像模型)显示出来
       showToast(`素材「${name}」生成失败:${e?.message || '请重试'}`, 'error')
     }
   }
@@ -268,6 +285,18 @@ export default function SmartCreateView() {
   }
 
   // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
+  // 当前项目内所有图(去重):入口上传的原图 + 各元素版本(AI/上传) + 分镜图。供"添加参考图/替换"选择。
+  const projectImages: string[] = (() => {
+    const set = new Set<string>()
+    ;(entryMeta?.images || []).forEach((u: string) => u && set.add(u))
+    Object.values(subjectAssets).forEach((e: any) => (e?.versions || []).forEach((u: string) => u && set.add(u)))
+    shots.forEach((sh) => {
+      if (sh.image) set.add(sh.image)
+      sh.subjects.forEach((su) => su.image && set.add(su.image))
+    })
+    return [...set].filter((u) => /^(https?:|data:)/.test(u))
+  })()
+
   const boardSubjects: BoardSubject[] = (() => {
     const m = new Map<string, BoardSubject>()
     shots.forEach((sh) =>
@@ -1232,8 +1261,9 @@ export default function SmartCreateView() {
                   style: entryMeta?.style,
                 })
         }
+        projectImages={projectImages}
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
-        onGenerate={(p, refImageUrl) => genForSubject(subjectDlg.name, p, refImageUrl)}
+        onGenerate={(p, opts) => genForSubject(subjectDlg.name, p, opts)}
         onSelect={(url) => applySubjectImage(subjectDlg.name, url, subjectAssets[subjectDlg.name]?.ids?.[url] || 0)}
         onUpload={(file) => uploadForSubject(subjectDlg.name, file)}
       />

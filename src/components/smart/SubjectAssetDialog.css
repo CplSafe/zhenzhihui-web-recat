@@ -58,6 +58,7 @@
   overflow-y: auto;
 }
 .sad__preview {
+  position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
   border-radius: 12px;
@@ -67,6 +68,37 @@
   align-items: center;
   justify-content: center;
   margin-bottom: 14px;
+}
+/* 图上 hover 的 替换/上传 浮层(预览图 + 版本图共用) */
+.sad__img-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.42);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.sad__preview:hover .sad__img-actions,
+.sad__ver:hover .sad__img-actions {
+  opacity: 1;
+}
+.sad__img-actions button {
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #1f2937;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sad__ver .sad__img-actions button {
+  height: 20px;
+  padding: 0 6px;
+  font-size: 10px;
 }
 .sad__preview img {
   width: 100%;
@@ -186,22 +218,104 @@
   gap: 10px;
 }
 .sad__ver {
+  position: relative;
   aspect-ratio: 1 / 1;
   border: 2px solid transparent;
   border-radius: 10px;
   overflow: hidden;
-  padding: 0;
-  cursor: pointer;
   background: #f3f4f6;
 }
 .sad__ver.is-active {
   border-color: #1fcfa9;
+}
+.sad__ver-pick {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: block;
 }
 .sad__ver img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* 携带当前图 */
+.sad__carry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
+  margin: 10px 0 4px;
+}
+.sad__carry input {
+  accent-color: #1fcfa9;
+}
+
+/* 项目图片选择器 */
+.sad__picker {
+  margin-top: 12px;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fafbfc;
+}
+.sad__picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 8px;
+}
+.sad__picker-head button {
+  border: none;
+  background: none;
+  font-size: 18px;
+  line-height: 1;
+  color: #9aa3af;
+  cursor: pointer;
+}
+.sad__picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+}
+.sad__picker-up {
+  aspect-ratio: 1 / 1;
+  border: 1px dashed #d8dce3;
+  border-radius: 8px;
+  background: #fff;
+  color: #11a98a;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sad__picker-item {
+  aspect-ratio: 1 / 1;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  background: #f3f4f6;
+}
+.sad__picker-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sad__picker-empty {
+  font-size: 12px;
+  color: #9aa3af;
+  grid-column: 1 / -1;
+  padding: 8px 0;
 }
 .sad__foot {
   display: flex;
