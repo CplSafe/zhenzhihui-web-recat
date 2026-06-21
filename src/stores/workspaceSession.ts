@@ -177,6 +177,9 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       billingPlansLoadedWorkspaceId = targetWorkspaceId
     } catch {
       if (deriveWorkspaceId(get()) === targetWorkspaceId) set({ billingPlanCandidates: [] })
+      // 失败也标记「已尝试」:否则 ensureModelPlanCandidatesLoaded 的 while 会无限重试 →
+      // 疯狂刷 /billing/plans、且 resolvePlanCandidates 永不返回(视频一直卡"生成中")。
+      billingPlansLoadedWorkspaceId = targetWorkspaceId
     }
   }
 
