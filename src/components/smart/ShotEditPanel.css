@@ -15,6 +15,27 @@
   color: #9aa3af;
   margin: 0 0 6px;
 }
+.sedit__sub--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sedit__optimize {
+  border: 1px solid #1fcfa9;
+  background: #fff;
+  color: #11a98a;
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.sedit__optimize:hover:not(:disabled) {
+  background: #e8faf5;
+}
+.sedit__optimize:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .sedit__script .sedit__ta {
   min-height: 64px;
 }

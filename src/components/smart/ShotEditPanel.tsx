@@ -26,6 +26,8 @@ interface ShotEditPanelProps {
   onPatch: (patch: Partial<Shot>) => void
   /** 出图:editPrompt 提示词 + refUrls 选中素材 + carryCurrent 是否带当前图 */
   onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
+  /** 据当前画面描述+元素优化生成提示词,返回优化后的提示词 */
+  onOptimizePrompt?: (shot: Shot) => Promise<string>
 }
 
 const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
@@ -38,9 +40,11 @@ export default function ShotEditPanel({
   onOpenElement,
   onPatch,
   onRegenerateImage,
+  onOptimizePrompt,
 }: ShotEditPanelProps) {
   const refFileRef = useRef<HTMLInputElement | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [optimizing, setOptimizing] = useState(false)
   const pickFromProject = (url: string) => {
     setExtraRefs((a) => (a.includes(url) ? a : [...a, url]))
     setSelected((s) => new Set(s).add(url))
@@ -260,11 +264,34 @@ export default function ShotEditPanel({
             </div>
           )}
 
-          <div className="sedit__sub">生成提示词</div>
+          <div className="sedit__sub sedit__sub--row">
+            生成提示词
+            {onOptimizePrompt && (
+              <button
+                type="button"
+                className="sedit__optimize"
+                disabled={optimizing}
+                onClick={async () => {
+                  setOptimizing(true)
+                  try {
+                    const p = await onOptimizePrompt(shot)
+                    if (p) {
+                      setImgPrompt(p)
+                      onPatch({ imagePrompt: p })
+                    }
+                  } finally {
+                    setOptimizing(false)
+                  }
+                }}
+              >
+                {optimizing ? '优化中…' : '✦ 优化提示词'}
+              </button>
+            )}
+          </div>
           <textarea
             className="sedit__ta sedit__ta--prompt"
             value={imgPrompt}
-            placeholder="该分镜图的生成提示词,可修改…"
+            placeholder="该分镜图的生成提示词,可修改…(改了素材可点「优化提示词」)"
             onChange={(e) => setImgPrompt(e.target.value)}
             onBlur={() => imgPrompt !== (shot.imagePrompt || '') && onPatch({ imagePrompt: imgPrompt })}
           />

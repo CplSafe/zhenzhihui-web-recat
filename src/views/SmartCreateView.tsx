@@ -16,7 +16,13 @@ import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import SubjectMaterialBoard, { type BoardSubject } from '@/components/smart/SubjectMaterialBoard'
 import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
-import { generateProjectName, summarizeRequirement, refineElementPrompt, refineElementPromptWithImage } from '@/api/aiPolish'
+import {
+  generateProjectName,
+  summarizeRequirement,
+  refineElementPrompt,
+  refineElementPromptWithImage,
+  refineShotPrompt,
+} from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
 import { generateFullVideo, buildTimelinePrompt } from '@/api/smartVideo'
@@ -408,13 +414,16 @@ export default function SmartCreateView() {
         /* ignore */
       }
     }
-    // 提示词:① 用户编辑过的 imagePrompt 直接用;② 否则按 画面描述+主题+风格 组合
+    // 该镜元素名(锚定画面只含这些主体,避免把无关产品/主题塞进来)
+    const elNames = Array.from(new Set(sh.subjects.map((s) => stripAt(s.tag)).filter(Boolean))).join('、')
+    // 提示词:① 用户编辑过的 imagePrompt 直接用;② 否则按 该镜画面描述 + 该镜元素 + 风格 组合
+    // 注意:不再注入"整体广告主题",否则会把全局产品(如雅迪车)塞进每个无关镜头。
     const prompt = opts.editPrompt
       ? [opts.editPrompt, feedback && `修改要求:${feedback}`].filter(Boolean).join(';')
       : [
           sh.desc,
           feedback && `修改要求:${feedback}`,
-          theme && `整体广告主题:${theme}`,
+          elNames && `画面主体仅含:${elNames}(不要出现其它无关物体)`,
           entryMeta?.style && `${entryMeta.style}风格`,
           carry
             ? '在当前画面基础上按修改要求调整,保持其余部分一致'
@@ -1175,6 +1184,14 @@ export default function SmartCreateView() {
           onOpenElement={openSubject}
           projectImages={projectImages}
           onRegenerateImage={regenerateShotImage}
+          onOptimizePrompt={(sh) =>
+            refineShotPrompt({
+              desc: sh.desc,
+              elements: Array.from(new Set(sh.subjects.map((s) => stripAt(s.tag)).filter(Boolean))),
+              style: entryMeta?.style,
+              ratio: entryMeta?.ratio,
+            })
+          }
         />
       )
     }

@@ -21,6 +21,8 @@ interface ShotArrangeProps {
   projectImages?: { url: string; source: 'ai' | 'upload' }[]
   /** 重新生成分镜图(统一:提示词 + 选中素材 + 是否携带当前图) */
   onRegenerateImage: (shot: Shot, opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] }) => void
+  /** 优化该镜生成提示词 */
+  onOptimizePrompt?: (shot: Shot) => Promise<string>
 }
 
 export default function ShotArrange({
@@ -30,6 +32,7 @@ export default function ShotArrange({
   onOpenElement,
   projectImages,
   onRegenerateImage,
+  onOptimizePrompt,
 }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   useEffect(() => {
@@ -59,6 +62,7 @@ export default function ShotArrange({
           onOpenElement={onOpenElement}
           onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}
+          onOptimizePrompt={onOptimizePrompt}
         />
       ) : (
         <div className="shotarr__empty">请选择左侧分镜进行编辑</div>

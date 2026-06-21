@@ -292,6 +292,40 @@ export async function generateShotCopy(
 }
 
 /**
+ * 优化「分镜图」的生成提示词:据该镜画面描述 + 包含的主体元素,产出干净可用的画面提示词。
+ * 只含给定主体,不臆造无关产品(避免把全局产品塞进无关镜头)。失败由调用方兜底。
+ */
+export async function refineShotPrompt(
+  input: { desc?: string; elements?: string[]; style?: string; ratio?: string },
+  signal?: AbortSignal,
+): Promise<string> {
+  const desc = (input.desc || '').trim()
+  const els = (input.elements || []).filter(Boolean)
+  if (!desc && !els.length) return desc
+  const system =
+    '你是 AI 绘画提示词专家。根据「这一个分镜」的画面描述和它包含的主体元素,输出一段简洁、具体、' +
+    '可直接用于文生图/图生图的中文画面提示词:①紧扣画面描述;②只包含给定的主体元素,' +
+    '绝不加入未提到的产品/物体/品牌;③描述主体、动作、场景、构图景别、光线氛围、关键细节;' +
+    '不要编号、不要引号、不要解释、不要换行,直接输出提示词。'
+  const user = [
+    `画面描述:${desc || '(未填写)'}`,
+    els.length && `画面只含这些主体:${els.join('、')}`,
+    input.style && `风格:${input.style}`,
+    input.ratio && `画面比例:${input.ratio}`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+  const out = await chatOnce(system, user, signal, 280)
+  const cleaned = out
+    .replace(/^```(\w+)?/i, '')
+    .replace(/```$/i, '')
+    .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
+    .replace(/\s*\n+\s*/g, ',')
+    .trim()
+  return cleaned || desc
+}
+
+/**
  * 按【参考图】(真实产品/主体照片)+ 意图,用 VL 模型读图后产出"图生图"提示词。
  * 忠实还原参考图中主体外观(品牌/logo/配色/造型/材质),只调背景/光线/角度。失败由调用方兜底。
  */
