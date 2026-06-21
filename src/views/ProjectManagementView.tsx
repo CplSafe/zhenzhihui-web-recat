@@ -28,6 +28,7 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
   creative: '/smart',
+  'hot-copy': '/hot-copy',
   projects: '/projects',
   resources: '/resources',
   templates: '/templates',
