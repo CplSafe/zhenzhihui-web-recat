@@ -31,7 +31,17 @@ function PreviewMedia({ item, workspaceId, videoKey }: { item: any; workspaceId:
   useEffect(() => {
     setSrc(item?.mediaUrl || '')
     triedRef.current = false
-  }, [item?.mediaUrl])
+    // 无内联地址:按 assetId 取签名地址(否则永远显示「暂无预览」)
+    if (!item?.mediaUrl) {
+      const id = item?.id
+      if (id && !String(id).startsWith('asset-')) {
+        triedRef.current = true
+        getAssetDownloadUrl({ workspaceId, assetId: id })
+          .then((u) => setSrc(u || ''))
+          .catch(() => {})
+      }
+    }
+  }, [item?.mediaUrl, item?.id, workspaceId])
 
   const handleError = useCallback(async () => {
     if (triedRef.current) {

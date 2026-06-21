@@ -135,7 +135,17 @@ function AssetThumb({ card, workspaceId }: { card: any; workspaceId: any }) {
   useEffect(() => {
     setSrc(card.mediaUrl || '')
     triedRef.current = false
-  }, [card.mediaUrl])
+    // 无内联地址:直接按 assetId 取签名地址(否则 img 不渲染、永远占位)
+    if (!card.mediaUrl) {
+      const id = card?.id
+      if (id && !String(id).startsWith('asset-')) {
+        triedRef.current = true
+        getAssetDownloadUrl({ workspaceId, assetId: id })
+          .then((u) => setSrc(u || ''))
+          .catch(() => {})
+      }
+    }
+  }, [card.mediaUrl, card?.id, workspaceId])
   const handleError = useCallback(async () => {
     if (triedRef.current) {
       setSrc('')
@@ -218,20 +228,28 @@ export default function ResourceManagementView() {
 
   const cards = useMemo(
     () =>
-      rawAssets.map((asset, i) => ({
-        id: asset?.id ?? `asset-${i}`,
-        title: asset?.name || `素材 ${i + 1}`,
-        type: mapAssetTypeLabel(asset),
-        tags: buildAssetTags(asset),
-        duration: asset?.duration || asset?.ratio || '3:4',
-        size: formatBytes(asset?.size_bytes),
-        source: String(asset?.source || ''),
-        kind: assetKindOf(asset),
-        roleScene: assetSceneRole(asset),
-        isAi: !!asset?.source && asset.source !== 'upload',
-        ts: assetTimestamp(asset),
-        ...resolveAssetPreview(asset),
-      })),
+      rawAssets.map((asset, i) => {
+        const prev = resolveAssetPreview(asset)
+        const kind = assetKindOf(asset)
+        // mediaKind 始终按资产类型给出(即使暂无内联地址),保证 img/video 元素渲染 → 失败时按 assetId 重取
+        const mediaKind = kind === 'image' ? 'image' : kind === 'video' ? 'video' : prev.mediaKind
+        return {
+          id: asset?.id ?? `asset-${i}`,
+          title: asset?.name || `素材 ${i + 1}`,
+          type: mapAssetTypeLabel(asset),
+          tags: buildAssetTags(asset),
+          duration: asset?.duration || asset?.ratio || '3:4',
+          size: formatBytes(asset?.size_bytes),
+          source: String(asset?.source || ''),
+          kind,
+          roleScene: assetSceneRole(asset),
+          isAi: !!asset?.source && asset.source !== 'upload',
+          ts: assetTimestamp(asset),
+          mediaKind,
+          mediaUrl: prev.mediaUrl,
+          posterUrl: prev.posterUrl,
+        }
+      }),
     [rawAssets],
   )
 
