@@ -81,13 +81,16 @@ export async function generateFullVideo(args: {
     ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
     prompt,
     inputAssets,
-    params: (model: any) =>
-      buildVideoGenerationParams(model, {
+    params: (model: any) => ({
+      // 强制带音频:部分模型 schema 没声明 audio 字段会被丢弃,这里兜底显式带上 generate_audio
+      generate_audio: true,
+      ...buildVideoGenerationParams(model, {
         duration: normalizeSeedanceDuration(totalDurationSec(args.shots) || 10),
         resolution: '720p',
         ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
         generateAudio: true,
       }),
+    }),
   })
   // 视频生成耗时长,放宽轮询超时(实际不会误触发;默认 120s 会把正常生成判成超时)
   const completed = await waitForAiTask({

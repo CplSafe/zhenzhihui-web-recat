@@ -6,6 +6,32 @@
 // @ts-nocheck
 import { createAiTask, waitForAiTask, uploadAssetFile, extractTaskMediaUrls, getAssetDownloadUrl } from './business'
 import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
+import { buildStoryboardImageParams } from '@/utils/storyboardTasks'
+import { getModelParamFields } from '@/utils/modelSchema'
+
+// 选出最小尺寸档(支持 "1024x1024" / "1K"/"2K" / 纯数字 等写法)
+function smallestSize(options: string[]): string {
+  const score = (s: string) => {
+    const px = s.match(/(\d+)\s*[x×]\s*(\d+)/i)
+    if (px) return Number(px[1]) * Number(px[2])
+    const k = s.match(/(\d+(?:\.\d+)?)\s*k/i)
+    if (k) return Number(k[1]) * 1e6
+    const n = Number(s.replace(/[^\d.]/g, ''))
+    return Number.isFinite(n) && n > 0 ? n : Number.POSITIVE_INFINITY
+  }
+  return [...options].sort((a, b) => score(a) - score(b))[0]
+}
+
+// 图像出图参数:复用 2.0 的比例/尺寸逻辑;lowRes 时把 size 强制为最小档
+function buildImageParams(model: any, ratio?: string, lowRes?: boolean) {
+  const params: any = buildStoryboardImageParams(model, ratio)
+  if (lowRes) {
+    const sizeField = getModelParamFields(model).find((f: any) => f?.name === 'size')
+    const opts = Array.isArray(sizeField?.options) ? sizeField.options.map(String) : []
+    if (opts.length) params[sizeField.name] = smallestSize(opts)
+  }
+  return params
+}
 
 /** 把图片(objectURL / dataURL / http)上传为后端素材,返回 asset_id;带缓存避免重复上传。 */
 export async function ensureAssetId(
@@ -81,6 +107,9 @@ export async function generateShotImage(args: {
   prompt: string
   refAssetIds?: number[]
   modelPlanCandidates?: string[]
+  ratio?: string
+  /** 最低分辨率出图(素材元素用,省时省额度) */
+  lowRes?: boolean
 }): Promise<{ url: string; assetId: number }> {
   const refs = (args.refAssetIds || []).filter((n) => Number(n) > 0)
   const operationCode = refs.length ? 'image.image_to_image' : 'image.text_to_image'
@@ -92,6 +121,7 @@ export async function generateShotImage(args: {
     ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
     prompt: args.prompt,
     inputAssets: refs.map((id) => ({ asset_id: id, role: 'reference_image' })),
+    params: (model: any) => buildImageParams(model, args.ratio, args.lowRes),
   })
   // 分镜图生成放宽轮询超时(默认 120s 偏短)
   const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 30 * 60 * 1000 })

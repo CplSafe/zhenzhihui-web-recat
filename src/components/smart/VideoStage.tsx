@@ -26,6 +26,12 @@ interface VideoStageProps {
   onSaveVideo: () => void
   savingVideo?: boolean
   onPrev?: () => void
+  /** 调试:实际喂给视频模型的提示词/参考图/各分镜文本(开发可见,正式隐藏) */
+  debug?: {
+    prompt: string
+    firstImage: string
+    shots: { no: string; duration: string; desc?: string; line?: string; subtitle?: string; sfx?: string; image?: string }[]
+  }
 }
 
 export default function VideoStage({
@@ -40,9 +46,12 @@ export default function VideoStage({
   onSaveVideo,
   savingVideo,
   onPrev,
+  debug,
 }: VideoStageProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   const [note, setNote] = useState('')
+  const [showDebug, setShowDebug] = useState(false)
+  const debugEnabled = import.meta.env.DEV // 正式版自动隐藏
   useEffect(() => {
     if (!shots.some((s) => s.id === selectedId)) setSelectedId(shots[0]?.id ?? null)
   }, [shots, selectedId])
@@ -65,7 +74,14 @@ export default function VideoStage({
 
       {/* 中:完整视频 + 修改意见 + 总按钮 */}
       <div className="vstage__center">
-        <div className="vstage__title">视频内容修改</div>
+        <div className="vstage__title">
+          视频内容修改
+          {debugEnabled && debug && (
+            <button type="button" className="vstage__debug-btn" onClick={() => setShowDebug(true)}>
+              🐞 调试信息
+            </button>
+          )}
+        </div>
         <div className="vstage__player">
           {videoGenerating ? (
             <div className="vstage__player-ph">
@@ -136,6 +152,49 @@ export default function VideoStage({
         />
       ) : (
         <div className="vstage__empty">请选择左侧分镜</div>
+      )}
+
+      {/* 调试弹框:实际喂给视频模型的内容(开发可见) */}
+      {debugEnabled && showDebug && debug && (
+        <div className="vdbg-mask" onClick={(e) => e.target === e.currentTarget && setShowDebug(false)}>
+          <div className="vdbg" role="dialog" aria-label="视频生成调试信息">
+            <div className="vdbg__head">
+              <span>视频生成 · 调试信息</span>
+              <button type="button" onClick={() => setShowDebug(false)} aria-label="关闭">
+                ×
+              </button>
+            </div>
+            <div className="vdbg__body">
+              <div className="vdbg__sec-title">① 提示词(整片时间线,送给 seedance)</div>
+              <pre className="vdbg__pre">{debug.prompt}</pre>
+
+              <div className="vdbg__sec-title">② 参考图(首张分镜图,图生视频)</div>
+              {debug.firstImage ? (
+                <img className="vdbg__img" src={debug.firstImage} alt="" />
+              ) : (
+                <div className="vdbg__muted">无</div>
+              )}
+
+              <div className="vdbg__sec-title">③ 各分镜(画面/台词/字幕/音效 + 分镜图)</div>
+              {debug.shots.map((s, i) => (
+                <div className="vdbg__shot" key={i}>
+                  <div className="vdbg__shot-no">
+                    {s.no} · {s.duration}
+                  </div>
+                  <div className="vdbg__shot-body">
+                    {s.image ? <img src={s.image} alt="" /> : <div className="vdbg__noimg">无图</div>}
+                    <div className="vdbg__shot-text">
+                      <div><b>画面</b>:{s.desc || '—'}</div>
+                      <div><b>台词</b>:{s.line || '—'}</div>
+                      <div><b>字幕</b>:{s.subtitle || '—'}</div>
+                      <div><b>音效</b>:{s.sfx || '—'}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -19,7 +19,7 @@ import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement, refineElementPrompt } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, persistImageAsset, refreshAssetUrl } from '@/api/smartShotImage'
-import { generateFullVideo } from '@/api/smartVideo'
+import { generateFullVideo, buildTimelinePrompt } from '@/api/smartVideo'
 import VideoStage from '@/components/smart/VideoStage'
 import {
   createCreativeProject,
@@ -197,7 +197,15 @@ export default function SmartCreateView() {
     }
     try {
       const plans = await resolvePlanCandidates()
-      const { url, assetId } = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: [], modelPlanCandidates: plans })
+      // 素材元素用最低分辨率出图(省时省额度;仅作组合参考)
+      const { url, assetId } = await generateShotImage({
+        workspaceId: ws,
+        prompt,
+        refAssetIds: [],
+        modelPlanCandidates: plans,
+        ratio: entryMeta?.ratio,
+        lowRes: true,
+      })
       addSubjectVersion(name, url, assetId, 'ai', prompt)
     } catch (e: any) {
       // 不再静默:把后端错误(如未启用图像模型)显示出来
@@ -299,7 +307,7 @@ export default function SmartCreateView() {
           .filter(Boolean)
           .join(';')
     // 全云端:后端文/图生图(带素材组合 + 连贯),产出即后端 asset(http + asset_id),天然持久
-    const r = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates: plans })
+    const r = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates: plans, ratio: entryMeta?.ratio })
     const url = r.url
     const assetId = Number(r.assetId || 0) || 0
     setShots((prev) =>
@@ -990,6 +998,24 @@ export default function SmartCreateView() {
         onSaveVideo={handleSaveVideo}
         savingVideo={savingVideo}
         onPrev={() => goStep(1)}
+        debug={{
+          prompt: buildTimelinePrompt({
+            shots,
+            basePrompt: reqSummary || requirement,
+            ratio: entryMeta?.ratio,
+            style: entryMeta?.style,
+          }),
+          firstImage: shots.find((s) => s.image)?.image || '',
+          shots: shots.map((s) => ({
+            no: s.no,
+            duration: s.duration,
+            desc: s.desc,
+            line: s.line,
+            subtitle: s.subtitle,
+            sfx: s.sfx,
+            image: s.image,
+          })),
+        }}
       />
     )
   }
