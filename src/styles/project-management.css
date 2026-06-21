@@ -1489,18 +1489,28 @@
 .pm2-detail-history-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   border: 1.5px solid transparent;
   border-radius: 10px;
   padding: 4px;
   background: #fff;
-  cursor: pointer;
-  text-align: left;
 }
 .pm2-detail-history-item.is-active {
   border-color: #6d7bf0;
 }
-.pm2-detail-history-item video {
+.pm2-detail-history-pick {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.pm2-detail-history-pick video {
   width: 64px;
   height: 40px;
   object-fit: cover;
@@ -1508,9 +1518,34 @@
   background: #000;
   flex: 0 0 auto;
 }
-.pm2-detail-history-item span {
+.pm2-detail-history-pick > span {
   font-size: 13px;
   color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 历史版本右侧:常显下载图标 */
+.pm2-detail-dl {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: #f1f3f6;
+  color: #6b7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pm2-detail-dl:hover:not(:disabled) {
+  background: #e7ecfb;
+  color: #5767e5;
+}
+.pm2-detail-dl:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* 分镜网格 */

@@ -227,6 +227,20 @@ function PlayIcon() {
     </svg>
   )
 }
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path
+        d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11M5 7l3 3 3-3M8 2.5V10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
 function FolderGlyph() {
   return (
     <svg className="pm2-folder-glyph" viewBox="0 0 100 76" aria-hidden="true">
@@ -466,23 +480,37 @@ export default function ProjectManagementView() {
       const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
       const safeName = String(title || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'
       const fileName = `${safeName}_${dateStr}.mp4`
-      const isSameOrigin = (() => {
+
+      // ① 「另存为」对话框必须在用户手势内先弹出(放在 fetch 之前,避免手势失效)
+      let fileHandle: any = null
+      if ((window as any).showSaveFilePicker) {
         try {
-          return new URL(url, window.location.href).origin === window.location.origin
-        } catch {
-          return false
-        }
-      })()
-      if ((window as any).showSaveFilePicker && isSameOrigin) {
-        try {
-          const fileHandle = await (window as any).showSaveFilePicker({
+          fileHandle = await (window as any).showSaveFilePicker({
             suggestedName: fileName,
             types: [{ description: 'MP4 视频', accept: { 'video/mp4': ['.mp4'] } }],
           })
-          showToast('视频下载中…', 'success')
-          const response = await fetch(url)
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
-          const blob = new Blob([await response.blob()], { type: 'video/mp4' })
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return // 用户取消
+        }
+      }
+
+      // ② 取视频数据(资源域名允许 CORS,与上传 ensureAssetId 同样 fetch)
+      let blob: Blob | null = null
+      try {
+        showToast('视频下载中…', 'success')
+        const response = await fetch(url)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        blob = new Blob([await response.blob()], { type: 'video/mp4' })
+      } catch {
+        // 取不到(CORS/网络)→ 新标签打开兜底,用户可右键另存
+        window.open(url, '_blank', 'noopener')
+        showToast('无法直接下载,已在新标签打开,可右键另存', 'info')
+        return
+      }
+
+      // ③ 写入:优先 showSaveFilePicker,否则 a[download](blob: 同源,download 一定生效)
+      if (fileHandle) {
+        try {
           const writable = await fileHandle.createWritable()
           await writable.write(blob)
           await writable.close()
@@ -492,11 +520,14 @@ export default function ProjectManagementView() {
           if (err?.name === 'AbortError') return
         }
       }
-      const iframe = document.createElement('iframe')
-      iframe.style.display = 'none'
-      iframe.src = url
-      document.body.appendChild(iframe)
-      setTimeout(() => document.body.removeChild(iframe), 3000)
+      const objUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objUrl
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(objUrl), 4000)
       showToast('视频已开始下载', 'success')
     },
     [showToast],
@@ -700,32 +731,40 @@ export default function ProjectManagementView() {
                           )}
                         </div>
                         <div className="pm2-detail-video-side">
-                          <button
-                            type="button"
-                            className="pm2-open-editor"
-                            disabled={!activeVideo.url}
-                            onClick={() => downloadFromUrl(activeVideo.url, `${activeProject?.title || '视频'}-${activeVideo.label}`)}
-                          >
-                            下载视频
-                          </button>
-                          {detailVideos.length > 1 && (
-                            <div className="pm2-detail-history">
-                              <div className="pm2-detail-history-title">历史版本</div>
-                              <div className="pm2-detail-history-list">
-                                {detailVideos.map((v, i) => (
-                                  <button
-                                    key={i}
-                                    type="button"
-                                    className={`pm2-detail-history-item${i === activeVideoIdx ? ' is-active' : ''}`}
-                                    onClick={() => setActiveVideoIdx(i)}
-                                  >
-                                    {v.url ? <video src={v.url} muted preload="metadata" /> : <span className="pm2-vid-play"><PlayIcon /></span>}
-                                    <span>{v.label}</span>
-                                  </button>
-                                ))}
+                          <div className="pm2-detail-history-title">
+                            {detailVideos.length > 1 ? '历史版本' : '视频'}
+                          </div>
+                          <div className="pm2-detail-history-list">
+                            {detailVideos.map((v, i) => (
+                              <div
+                                key={i}
+                                className={`pm2-detail-history-item${i === activeVideoIdx ? ' is-active' : ''}`}
+                              >
+                                <button
+                                  type="button"
+                                  className="pm2-detail-history-pick"
+                                  onClick={() => setActiveVideoIdx(i)}
+                                >
+                                  {v.url ? (
+                                    <video src={v.url} muted preload="metadata" />
+                                  ) : (
+                                    <span className="pm2-vid-play"><PlayIcon /></span>
+                                  )}
+                                  <span>{v.label}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="pm2-detail-dl"
+                                  aria-label="下载视频"
+                                  title="下载视频"
+                                  disabled={!v.url}
+                                  onClick={() => downloadFromUrl(v.url, `${activeProject?.title || '视频'}-${v.label}`)}
+                                >
+                                  <DownloadIcon />
+                                </button>
                               </div>
-                            </div>
-                          )}
+                            ))}
+                          </div>
                         </div>
                       </div>
                     ) : (
