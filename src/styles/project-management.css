@@ -1035,8 +1035,13 @@
    ====================================================================== */
 .pm2-main {
   position: absolute;
-  inset: 0;
+  left: var(--sidebar-width);
+  top: var(--top-shift);
+  width: calc(100% - var(--sidebar-width));
+  height: calc(100% - var(--top-shift));
+  box-sizing: border-box;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 28px 36px 56px;
 }
 .pm2-section {
