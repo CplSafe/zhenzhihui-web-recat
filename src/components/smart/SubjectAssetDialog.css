@@ -108,6 +108,56 @@
   font-weight: 400;
   color: #11a98a;
 }
+
+/* 参考图 */
+.sad__ref {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 4px;
+}
+.sad__ref-add {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px dashed #d8dce3;
+  border-radius: 8px;
+  background: #fafbfc;
+  color: #11a98a;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sad__ref-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #eef0f4;
+  flex: 0 0 auto;
+}
+.sad__ref-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sad__ref-thumb button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sad__ref-hint {
+  font-size: 11px;
+  color: #9aa3af;
+}
 .sad__prompt {
   width: 100%;
   box-sizing: border-box;

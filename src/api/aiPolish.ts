@@ -292,6 +292,65 @@ export async function generateShotCopy(
 }
 
 /**
+ * 按【参考图】(真实产品/主体照片)+ 意图,用 VL 模型读图后产出"图生图"提示词。
+ * 忠实还原参考图中主体外观(品牌/logo/配色/造型/材质),只调背景/光线/角度。失败由调用方兜底。
+ */
+export async function refineElementPromptWithImage(
+  intent: string,
+  imageUrl: string,
+  opts: { name?: string; kind?: string; style?: string; signal?: AbortSignal } = {},
+): Promise<string> {
+  const src = (intent || '').trim()
+  if (!imageUrl) return src
+  const system =
+    '你是 AI 绘画提示词专家。用户提供了一张【参考图】(通常是真实产品/主体照片)和生成意图。' +
+    '请仔细观察参考图中该主体的真实外观——品牌标识/logo、颜色、造型、材质、关键细节,' +
+    '据此输出一段简洁、可直接用于「图生图」的中文画面提示词:' +
+    '①忠实还原参考图中主体的外观特征(尤其品牌/logo/配色/造型),不得臆造或改变产品本身;' +
+    '②可结合生成意图调整背景、光线、角度、氛围;' +
+    '③画面只含该单一主体,背景简洁干净;' +
+    '④不要出现"广告/营销/目的/用途"等与画面无关的词;不要编号、不要引号、不要换行,直接输出提示词。'
+  const userContent: any[] = [
+    {
+      type: 'text',
+      text: [
+        opts.name && `主体:${opts.name}`,
+        opts.kind && `类型:${opts.kind}`,
+        opts.style && `视觉风格:${opts.style}`,
+        `生成意图:${src}`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    },
+    { type: 'image_url', image_url: { url: imageUrl } },
+  ]
+  const res = await fetch(VL_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal: opts.signal,
+    body: JSON.stringify({
+      model: VL_MODEL_NAME,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.5,
+      max_tokens: 280,
+      chat_template_kwargs: { enable_thinking: false },
+    }),
+  })
+  if (!res.ok) throw new Error(`分析服务异常(${res.status})`)
+  const data = (await res.json()) as ChatResponse
+  const out = (data?.choices?.[0]?.message?.content || '')
+    .replace(/^```(\w+)?/i, '')
+    .replace(/```$/i, '')
+    .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
+    .replace(/\s*\n+\s*/g, ',')
+    .trim()
+  return out || src
+}
+
+/**
  * 把(可能很长的)创作需求浓缩成 100 字以内的核心摘要(纯文本,用于页面展示)。
  */
 export async function summarizeRequirement(text: string, signal?: AbortSignal): Promise<string> {

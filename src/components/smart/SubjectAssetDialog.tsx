@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { fileToDataUrl } from '@/utils/imageFile'
 import './SubjectAssetDialog.css'
 
 interface SubjectAssetDialogProps {
@@ -18,7 +19,8 @@ interface SubjectAssetDialogProps {
   /** 打开时把(原始意图)defaultPrompt 交本地 Qwen 润成干净画面提示词后回显;不传则原样显示 */
   refinePrompt?: (intent: string) => Promise<string>
   onClose: () => void
-  onGenerate: (prompt: string) => Promise<void>
+  /** 生成:prompt + 可选参考图(产品真实照片,用于 VL 优化提示词 + 图生图) */
+  onGenerate: (prompt: string, refImageUrl?: string) => Promise<void>
   onSelect: (url: string) => void
   /** 上传素材:直接交 File,由父级经后端 uploadAssetFile 存服务器取 asset_id */
   onUpload: (file: File) => void
@@ -41,7 +43,9 @@ export default function SubjectAssetDialog({
   const [prompt, setPrompt] = useState(defaultPrompt)
   const [generating, setGenerating] = useState(false)
   const [refining, setRefining] = useState(false)
+  const [refImage, setRefImage] = useState('') // 参考图(产品真实照片)dataURL
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const refFileRef = useRef<HTMLInputElement | null>(null)
   const autoRef = useRef(false)
 
   // 打开时:先回显原始意图,若提供 refinePrompt 则用本地 Qwen 润成干净提示词后替换;
@@ -53,6 +57,7 @@ export default function SubjectAssetDialog({
     }
     let cancelled = false
     setPrompt(defaultPrompt)
+    setRefImage('')
     ;(async () => {
       let p = defaultPrompt
       if (refinePrompt) {
@@ -83,7 +88,7 @@ export default function SubjectAssetDialog({
     if (!p.trim()) return
     setGenerating(true)
     try {
-      await onGenerate(p)
+      await onGenerate(p, refImage || undefined)
     } finally {
       setGenerating(false)
     }
@@ -137,6 +142,23 @@ export default function SubjectAssetDialog({
             onChange={(e) => setPrompt(e.target.value)}
             placeholder={refining ? '正在把生成意图优化为更干净的画面提示词…' : '描述这个主体的样子…'}
           />
+          {/* 参考图:用产品真实照片,AI 据此优化提示词并图生图(保证用你的产品) */}
+          <div className="sad__ref">
+            {refImage ? (
+              <div className="sad__ref-thumb">
+                <img src={refImage} alt="参考图" />
+                <button type="button" onClick={() => setRefImage('')} aria-label="移除参考图">
+                  ×
+                </button>
+              </div>
+            ) : (
+              <button type="button" className="sad__ref-add" onClick={() => refFileRef.current?.click()}>
+                + 添加参考图
+              </button>
+            )}
+            <span className="sad__ref-hint">加参考图后,会按图中产品外观优化提示词并图生图</span>
+          </div>
+
           <div className="sad__actions">
             <input
               ref={fileRef}
@@ -146,6 +168,17 @@ export default function SubjectAssetDialog({
               onChange={(e) => {
                 const f = e.target.files?.[0]
                 if (f) onUpload(f) // 直接交 File 上传到后端,拿 asset_id
+                e.target.value = ''
+              }}
+            />
+            <input
+              ref={refFileRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) fileToDataUrl(f).then(setRefImage).catch(() => {})
                 e.target.value = ''
               }}
             />

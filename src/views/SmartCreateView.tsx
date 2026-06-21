@@ -16,7 +16,7 @@ import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import SubjectMaterialBoard, { type BoardSubject } from '@/components/smart/SubjectMaterialBoard'
 import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
-import { generateProjectName, summarizeRequirement, refineElementPrompt } from '@/api/aiPolish'
+import { generateProjectName, summarizeRequirement, refineElementPrompt, refineElementPromptWithImage } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl } from '@/api/smartShotImage'
 import { generateFullVideo, buildTimelinePrompt } from '@/api/smartVideo'
@@ -188,8 +188,9 @@ export default function SmartCreateView() {
     for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.image) return su.image
     return ''
   }
-  const genForSubject = async (name: string, prompt: string) => {
-    // 全云端:走后端文生图(image.text_to_image),产出即后端 asset(http url + asset_id),天然持久化
+  // refImageUrl:用户加的参考图(产品真实照片)→ VL 读图优化提示词 + 图生图,保证用其产品
+  const genForSubject = async (name: string, prompt: string, refImageUrl?: string) => {
+    // 全云端:走后端文/图生图,产出即后端 asset(http url + asset_id),天然持久化
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成素材', 'error')
@@ -197,11 +198,31 @@ export default function SmartCreateView() {
     }
     try {
       const plans = await resolvePlanCandidates()
-      // 素材元素用最低分辨率出图(省时省额度;仅作组合参考)
+      let finalPrompt = prompt
+      const refAssetIds: number[] = []
+      if (refImageUrl) {
+        // ① VL 按参考图内容优化提示词(忠实还原产品外观)
+        try {
+          finalPrompt = await refineElementPromptWithImage(prompt, refImageUrl, {
+            name,
+            kind: subjectKindOf(name),
+            style: entryMeta?.style,
+          })
+        } catch {
+          /* 优化失败则用原提示词 */
+        }
+        // ② 参考图上传成 asset 作图生图输入
+        try {
+          const id = await ensureAssetId(ws, refImageUrl, {})
+          if (id) refAssetIds.push(id)
+        } catch {
+          /* 上传失败则退回纯文生 */
+        }
+      }
       const { url, assetId } = await generateShotImage({
         workspaceId: ws,
-        prompt,
-        refAssetIds: [],
+        prompt: finalPrompt,
+        refAssetIds,
         modelPlanCandidates: plans,
         ratio: entryMeta?.ratio,
         lowRes: true,
@@ -1212,7 +1233,7 @@ export default function SmartCreateView() {
                 })
         }
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
-        onGenerate={(p) => genForSubject(subjectDlg.name, p)}
+        onGenerate={(p, refImageUrl) => genForSubject(subjectDlg.name, p, refImageUrl)}
         onSelect={(url) => applySubjectImage(subjectDlg.name, url, subjectAssets[subjectDlg.name]?.ids?.[url] || 0)}
         onUpload={(file) => uploadForSubject(subjectDlg.name, file)}
       />
