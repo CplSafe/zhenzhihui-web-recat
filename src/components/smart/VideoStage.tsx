@@ -92,7 +92,25 @@ export default function VideoStage({
               视频生成中…
             </div>
           ) : videoUrl ? (
-            <video src={videoUrl} controls playsInline preload="metadata" />
+            <video
+              src={videoUrl}
+              controls
+              playsInline
+              preload="metadata"
+              onLoadedMetadata={(e) => {
+                // 修进度条 bug:部分 MP4 初始 duration=Infinity(moov 在文件尾),
+                // 进度条会从中间窜到结尾。跳到极大时间强制浏览器算出真实时长,再跳回 0。
+                const v = e.currentTarget
+                if (!Number.isFinite(v.duration)) {
+                  const back = () => {
+                    v.currentTime = 0
+                    v.removeEventListener('timeupdate', back)
+                  }
+                  v.addEventListener('timeupdate', back)
+                  v.currentTime = 1e7
+                }
+              }}
+            />
           ) : (
             <div className="vstage__player-ph">暂无视频,点下方「重新生成视频」生成整片</div>
           )}

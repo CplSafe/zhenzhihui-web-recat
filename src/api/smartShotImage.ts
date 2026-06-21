@@ -46,6 +46,9 @@ function smallestSize(options: string[]): string {
 // 图像出图参数:复用 2.0 的比例/尺寸逻辑;lowRes 时把 size 强制为最小档
 function buildImageParams(model: any, ratio?: string, lowRes?: boolean) {
   const params: any = buildStoryboardImageParams(model, ratio)
+  // 强制关闭"AI生成"水印:模型无 params_schema 时上面的逻辑不会带 watermark → 默认带水印。
+  // doubao-seedream 支持 watermark 参数,显式置 false。
+  params.watermark = false
   if (lowRes) {
     const sizeField = getModelParamFields(model).find((f: any) => f?.name === 'size')
     const opts = Array.isArray(sizeField?.options) ? sizeField.options.map(String) : []
