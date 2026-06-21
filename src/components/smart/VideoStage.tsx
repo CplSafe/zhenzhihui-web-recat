@@ -22,6 +22,7 @@ interface VideoStageProps {
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
   onShotsChange: (shots: Shot[]) => void
   onOpenElement?: (name: string) => void
+  projectImages?: { url: string; source: 'ai' | 'upload' }[]
   onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
   /** 重新生成整片(note=对整片的修改意见) */
   onRegenerateVideo: (note?: string) => void
@@ -45,6 +46,7 @@ export default function VideoStage({
   onSwitchVideo,
   onShotsChange,
   onOpenElement,
+  projectImages,
   onRegenerateImage,
   onRegenerateVideo,
   onDownloadVideo,
@@ -189,6 +191,7 @@ export default function VideoStage({
           shot={selected}
           compact
           regenerating={!!generating[selected.id]}
+          projectImages={projectImages}
           onOpenElement={onOpenElement}
           onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}

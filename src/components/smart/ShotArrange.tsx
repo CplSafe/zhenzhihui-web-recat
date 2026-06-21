@@ -17,6 +17,8 @@ interface ShotArrangeProps {
   onShotsChange: (shots: Shot[]) => void
   /** 点元素 → 打开版本管理 */
   onOpenElement?: (name: string) => void
+  /** 当前项目所有图(供"从项目素材添加") */
+  projectImages?: { url: string; source: 'ai' | 'upload' }[]
   /** 重新生成分镜图(统一:提示词 + 选中素材 + 是否携带当前图) */
   onRegenerateImage: (shot: Shot, opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] }) => void
 }
@@ -26,6 +28,7 @@ export default function ShotArrange({
   generating = {},
   onShotsChange,
   onOpenElement,
+  projectImages,
   onRegenerateImage,
 }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
@@ -52,6 +55,7 @@ export default function ShotArrange({
         <ShotEditPanel
           shot={selected}
           regenerating={!!generating[selected.id]}
+          projectImages={projectImages}
           onOpenElement={onOpenElement}
           onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}

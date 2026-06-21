@@ -19,6 +19,8 @@ interface ShotEditPanelProps {
   regenerating?: boolean
   /** compact=视频生成页:只留 分镜图缩略 + 素材 + 台词/字幕/音效(分镜图编辑在镜头编排页做) */
   compact?: boolean
+  /** 当前项目所有图(带来源),供"从项目素材添加" */
+  projectImages?: { url: string; source: 'ai' | 'upload' }[]
   onOpenElement?: (name: string) => void
   /** 即时保存字段(台词/字幕/音效/生成提示词/切换分镜图版本/画面描述) */
   onPatch: (patch: Partial<Shot>) => void
@@ -28,8 +30,22 @@ interface ShotEditPanelProps {
 
 const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
 
-export default function ShotEditPanel({ shot, regenerating, compact, onOpenElement, onPatch, onRegenerateImage }: ShotEditPanelProps) {
+export default function ShotEditPanel({
+  shot,
+  regenerating,
+  compact,
+  projectImages = [],
+  onOpenElement,
+  onPatch,
+  onRegenerateImage,
+}: ShotEditPanelProps) {
   const refFileRef = useRef<HTMLInputElement | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const pickFromProject = (url: string) => {
+    setExtraRefs((a) => (a.includes(url) ? a : [...a, url]))
+    setSelected((s) => new Set(s).add(url))
+    setPickerOpen(false)
+  }
 
   const current = shot.image || ''
   // 兼容旧草稿(字符串)与新结构({url, assetId})
@@ -215,7 +231,34 @@ export default function ShotEditPanel({ shot, regenerating, compact, onOpenEleme
               <span>+</span>
               上传素材
             </button>
+            <button type="button" className="sedit__el-add" onClick={() => setPickerOpen((v) => !v)}>
+              <span>⊞</span>
+              项目素材
+            </button>
           </div>
+
+          {/* 从当前项目素材里选(上传的 / AI 生成的) */}
+          {pickerOpen && (
+            <div className="sedit__picker">
+              {(['upload', 'ai'] as const).map((src) => {
+                const list = projectImages.filter((p) => p.source === src)
+                if (!list.length) return null
+                return (
+                  <div key={src}>
+                    <div className="sedit__picker-title">{src === 'upload' ? '我上传的图' : 'AI 生成的图'}</div>
+                    <div className="sedit__picker-grid">
+                      {list.map((p, i) => (
+                        <button key={i} type="button" className="sedit__picker-item" onClick={() => pickFromProject(p.url)}>
+                          <img src={p.url} alt="" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+              {!projectImages.length && <div className="sedit__picker-empty">项目里暂无可选图片</div>}
+            </div>
+          )}
 
           <div className="sedit__sub">生成提示词</div>
           <textarea

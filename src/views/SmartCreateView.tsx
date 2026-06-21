@@ -28,6 +28,8 @@ import {
   updateCreativeProjectDraft,
   uploadAssetFile,
   getAssetDownloadUrl,
+  listAssets,
+  extractAssetPageItems,
 } from '@/api/business'
 import {
   useWorkspaceId,
@@ -285,18 +287,63 @@ export default function SmartCreateView() {
   }
 
   // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
-  // 当前项目内所有图(去重,标注来源):入口上传原图 + 各元素版本(AI/上传) + 分镜图。
-  // 供"添加参考图/替换"选择;弹窗按 source 区分「上传」与「AI生成」。
-  const projectImages: { url: string; source: 'ai' | 'upload' }[] = (() => {
-    const m = new Map<string, 'ai' | 'upload'>()
-    ;(entryMeta?.images || []).forEach((u: string) => u && m.set(u, 'upload'))
+  // 后端"上传类"asset 的 id 集合(asset.source==='upload');用于可靠区分 上传/AI(对齐 2.0)
+  const [uploadAssetIds, setUploadAssetIds] = useState<Set<number>>(new Set())
+  useEffect(() => {
+    const ws = Number(workspaceId || 0)
+    if (!ws || !started) return
+    let cancelled = false
+    listAssets({ workspaceId: ws, type: 'image', limit: 300 })
+      .then((payload: any) => {
+        if (cancelled) return
+        const ids = new Set<number>()
+        extractAssetPageItems(payload).forEach((a: any) => {
+          if (String(a?.source || '') === 'upload' && Number(a?.id)) ids.add(Number(a.id))
+        })
+        setUploadAssetIds(ids)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, started, subjectAssets, entryMeta])
+
+  // url → asset_id(各来源汇总),供按后端 source 判定
+  const urlAssetId = (() => {
+    const map = new Map<string, number>()
+    ;(entryMeta?.images || []).forEach((u: string, i: number) => {
+      const id = Number((entryMeta as any)?.imageAssetIds?.[i] || 0)
+      if (u && id) map.set(u, id)
+    })
     Object.values(subjectAssets).forEach((e: any) =>
-      (e?.versions || []).forEach((u: string) => {
-        if (u) m.set(u, e?.sources?.[u] || 'upload')
+      Object.entries(e?.ids || {}).forEach(([u, id]: any) => {
+        if (Number(id)) map.set(u, Number(id))
       }),
     )
     shots.forEach((sh) => {
-      if (sh.image) m.set(sh.image, 'ai') // 分镜图为 AI 生成
+      if (sh.image && sh.imageAssetId) map.set(sh.image, Number(sh.imageAssetId))
+    })
+    return map
+  })()
+
+  // 当前项目内所有图(去重,标注来源):入口上传原图 + 各元素版本 + 分镜图。
+  // 来源判定优先用后端 asset.source(uploadAssetIds);未知时回退创建时的客户端标记。
+  const projectImages: { url: string; source: 'ai' | 'upload' }[] = (() => {
+    const classify = (url: string, guess: 'ai' | 'upload'): 'ai' | 'upload' => {
+      const id = urlAssetId.get(url)
+      if (id && uploadAssetIds.has(id)) return 'upload'
+      if (id && uploadAssetIds.size) return 'ai' // 已加载 asset 列表、该 id 不在 upload 集 → AI
+      return guess
+    }
+    const m = new Map<string, 'ai' | 'upload'>()
+    ;(entryMeta?.images || []).forEach((u: string) => u && m.set(u, classify(u, 'upload')))
+    Object.values(subjectAssets).forEach((e: any) =>
+      (e?.versions || []).forEach((u: string) => {
+        if (u) m.set(u, classify(u, e?.sources?.[u] || 'upload'))
+      }),
+    )
+    shots.forEach((sh) => {
+      if (sh.image) m.set(sh.image, classify(sh.image, 'ai'))
     })
     return [...m.entries()]
       .filter(([u]) => /^(https?:|data:)/.test(u))
@@ -1126,6 +1173,7 @@ export default function SmartCreateView() {
           generating={shotGen}
           onShotsChange={setShots}
           onOpenElement={openSubject}
+          projectImages={projectImages}
           onRegenerateImage={regenerateShotImage}
         />
       )
@@ -1141,6 +1189,7 @@ export default function SmartCreateView() {
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
         onShotsChange={setShots}
         onOpenElement={openSubject}
+        projectImages={projectImages}
         onRegenerateImage={regenerateShotImage}
         onRegenerateVideo={runFullVideo}
         onDownloadVideo={handleDownloadVideo}

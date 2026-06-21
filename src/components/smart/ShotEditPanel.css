@@ -221,6 +221,44 @@
   padding: 6px 0;
 }
 
+/* 从项目素材选择器 */
+.sedit__picker {
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fafbfc;
+  margin-bottom: 12px;
+}
+.sedit__picker-title {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 6px 0;
+}
+.sedit__picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 8px;
+}
+.sedit__picker-item {
+  aspect-ratio: 1 / 1;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  background: #f3f4f6;
+}
+.sedit__picker-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sedit__picker-empty {
+  font-size: 12px;
+  color: #9aa3af;
+  padding: 6px 0;
+}
+
 /* 文本域 */
 .sedit__ta {
   width: 100%;
