@@ -95,6 +95,54 @@
 .sedit__cur--sm {
   max-height: 170px;
 }
+.sedit__cur--zoom {
+  cursor: zoom-in;
+}
+/* 只读素材缩略(视频生成页) */
+.sedit__el-thumb--ro {
+  cursor: default;
+}
+.sedit__el-thumb--ro.is-on,
+.sedit__el-thumb--ro:hover {
+  border-color: #eef0f4;
+  box-shadow: none;
+}
+/* 分镜图放大查看 */
+.sedit__lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  cursor: zoom-out;
+}
+.sedit__lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  border-radius: 8px;
+  cursor: default;
+}
+.sedit__lightbox-close {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sedit__lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
 /* 视频生成页:台词/字幕/音效 竖排三行(面板窄,不挤一行)。用复合选择器保证覆盖默认三列 */
 .sedit--compact .sedit__texts {
   grid-template-columns: 1fr;

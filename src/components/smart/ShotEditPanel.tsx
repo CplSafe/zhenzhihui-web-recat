@@ -105,6 +105,7 @@ export default function ShotEditPanel({
     Object.fromEntries((shot.extraRefs || []).map((r) => [r.url, r.assetId || 0])),
   )
   const [carry, setCarry] = useState(!!current)
+  const [bigImg, setBigImg] = useState('') // 放大查看分镜图(视频生成页)
   // 把「选中素材 + 额外参考图」写回分镜(随 shots 进本地+云端草稿),供刷新/切换还原
   const persistRefs = (sel: Set<string>, ex: string[], exIds: Record<string, number>) =>
     onPatch({
@@ -137,26 +138,38 @@ export default function ShotEditPanel({
     </div>
   )
 
-  // 视频生成页:精简(视频才是重点,分镜图编辑放镜头编排页)
+  // 视频生成页:精简(视频才是重点;此步只改台词/字幕/音效,分镜图/素材只读)
   if (compact) {
     return (
       <div className="sedit sedit--compact">
-        <div className="sedit__sub">分镜图</div>
-        <div className="sedit__cur sedit__cur--sm">
+        <div className="sedit__sub">分镜图（点击放大）</div>
+        <div
+          className={`sedit__cur sedit__cur--sm${current ? ' sedit__cur--zoom' : ''}`}
+          onClick={() => current && setBigImg(current)}
+          title={current ? '点击放大查看' : ''}
+        >
           {current ? <img src={current} alt="" /> : <span className="sedit__cur-ph">暂无分镜图</span>}
         </div>
-        <div className="sedit__sub">素材</div>
+        <div className="sedit__sub">素材（此步只读）</div>
         <div className="sedit__els">
           {shot.subjects.map((su, i) => {
             const name = stripAt(su.tag)
             return (
-              <button key={`${su.tag}-${i}`} type="button" className="sedit__el-thumb" title={name} onClick={() => onOpenElement?.(name)}>
-                {su.image ? <img src={su.image} alt={name} /> : <span>+</span>}
-              </button>
+              <div key={`${su.tag}-${i}`} className="sedit__el-thumb sedit__el-thumb--ro" title={name}>
+                {su.image ? <img src={su.image} alt={name} /> : <span>—</span>}
+              </div>
             )
           })}
         </div>
         {texts}
+        {bigImg && (
+          <div className="sedit__lightbox" onClick={() => setBigImg('')} role="dialog" aria-label="分镜图放大">
+            <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
+            <button type="button" className="sedit__lightbox-close" onClick={() => setBigImg('')} aria-label="关闭">
+              ×
+            </button>
+          </div>
+        )}
       </div>
     )
   }

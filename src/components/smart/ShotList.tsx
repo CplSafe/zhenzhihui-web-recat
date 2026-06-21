@@ -16,6 +16,11 @@ interface ShotListProps {
   onShotsChange: (shots: Shot[]) => void
   /** 卡右下角状态角标(如视频生成页:待生成/已生成) */
   badgeOf?: (shot: Shot) => string
+  /** 锁定(视频生成页):禁用插入/复制/删除,仅保留选择查看 */
+  locked?: boolean
+  /** 该镜是否勾选「参与视频生成」(配合 onToggleInclude 在锁定态显示勾选框) */
+  includeOf?: (shot: Shot) => boolean
+  onToggleInclude?: (id: string | number) => void
 }
 
 let uid = 1
@@ -41,6 +46,9 @@ export default function ShotList({
   generating = {},
   onShotsChange,
   badgeOf,
+  locked,
+  includeOf,
+  onToggleInclude,
 }: ShotListProps) {
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
@@ -85,10 +93,13 @@ export default function ShotList({
       {shots.map((s, i) => {
         // 只用「分镜图」做缩略图;没有则显示等待态(不退回素材图,避免误以为已生成)
         const thumb = s.image
+        const included = includeOf ? includeOf(s) : true
         return (
           <div key={s.id}>
             <div
-              className={`shotlist__card${s.id === selectedId ? ' is-active' : ''}`}
+              className={`shotlist__card${s.id === selectedId ? ' is-active' : ''}${
+                locked && includeOf && !included ? ' is-excluded' : ''
+              }`}
               onClick={() => onSelect(s.id)}
             >
               <div className="shotlist__info">
@@ -96,6 +107,19 @@ export default function ShotList({
                 <span className="shotlist__sep">|</span>
                 <span className="shotlist__dur">{formatDur(s.duration)}</span>
                 {badgeOf && <span className="shotlist__badge">{badgeOf(s)}</span>}
+                {locked && includeOf && onToggleInclude && (
+                  <label
+                    className="shotlist__pick"
+                    title={included ? '取消勾选则不参与视频生成' : '勾选以参与视频生成'}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={included}
+                      onChange={() => onToggleInclude(s.id)}
+                    />
+                  </label>
+                )}
               </div>
 
               <div className="shotlist__thumb">
@@ -109,68 +133,74 @@ export default function ShotList({
                     <span className="shotlist__gen-spin" aria-hidden="true" />
                   </div>
                 )}
-                <div className="shotlist__thumb-actions">
-                  <button
-                    type="button"
-                    title="编辑"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onSelect(s.id)
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.83-2.83L5 17v3z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="is-danger"
-                    title="删除"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      remove(s.id)
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              <div className="shotlist__more-wrap" ref={s.id === menuId ? menuWrapRef : undefined}>
-                <button
-                  type="button"
-                  className="shotlist__more"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setMenuId(s.id === menuId ? null : s.id)
-                  }}
-                  aria-label="更多"
-                >
-                  ⋯
-                </button>
-                {s.id === menuId && (
-                  <div className="shotlist__menu" onClick={(e) => e.stopPropagation()}>
-                    <button type="button" onClick={() => insertAt(i)}>
-                      向上插入分镜
+                {!locked && (
+                  <div className="shotlist__thumb-actions">
+                    <button
+                      type="button"
+                      title="编辑"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onSelect(s.id)
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.83-2.83L5 17v3z" />
+                      </svg>
                     </button>
-                    <button type="button" onClick={() => insertAt(i + 1)}>
-                      向下插入分镜
-                    </button>
-                    <button type="button" onClick={() => duplicate(s.id)}>
-                      复制分镜
-                    </button>
-                    <button type="button" className="is-danger" onClick={() => remove(s.id)}>
-                      删除分镜
+                    <button
+                      type="button"
+                      className="is-danger"
+                      title="删除"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        remove(s.id)
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
+                      </svg>
                     </button>
                   </div>
                 )}
               </div>
+
+              {!locked && (
+                <div className="shotlist__more-wrap" ref={s.id === menuId ? menuWrapRef : undefined}>
+                  <button
+                    type="button"
+                    className="shotlist__more"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setMenuId(s.id === menuId ? null : s.id)
+                    }}
+                    aria-label="更多"
+                  >
+                    ⋯
+                  </button>
+                  {s.id === menuId && (
+                    <div className="shotlist__menu" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" onClick={() => insertAt(i)}>
+                        向上插入分镜
+                      </button>
+                      <button type="button" onClick={() => insertAt(i + 1)}>
+                        向下插入分镜
+                      </button>
+                      <button type="button" onClick={() => duplicate(s.id)}>
+                        复制分镜
+                      </button>
+                      <button type="button" className="is-danger" onClick={() => remove(s.id)}>
+                        删除分镜
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            <button type="button" className="shotlist__insert" onClick={() => insertAt(i + 1)} aria-label="插入分镜">
-              +
-            </button>
+            {!locked && (
+              <button type="button" className="shotlist__insert" onClick={() => insertAt(i + 1)} aria-label="插入分镜">
+                +
+              </button>
+            )}
           </div>
         )
       })}

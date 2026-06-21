@@ -37,6 +37,8 @@ export interface Shot {
   blurredFromAssetId?: number // 该脱敏版对应的原图 asset_id;原图变了(重生成)则缓存失效需重做
   videoUrl?: string // 该镜生成的视频片段
   videoAssetId?: number
+  // 视频生成页:是否勾选「参与视频生成」(undefined/true=参与,false=不参与)
+  includeInVideo?: boolean
 }
 
 interface ScriptStoryboardTableProps {

@@ -561,13 +561,19 @@ export default function SmartCreateView() {
       return
     }
     if (vidGenRunning) return
+    // 仅勾选「参与视频生成」的分镜进入视频(未勾选的跳过)
+    const activeShots = shots.filter((s) => s.includeInVideo !== false)
+    if (!activeShots.length) {
+      showToast('请至少勾选一个分镜参与视频生成', 'error')
+      return
+    }
     setVidGenRunning(true)
     try {
       const plans = await resolvePlanCandidates()
       const cache: Record<string, number> = {}
       // ① 先确定每镜「原始分镜图」asset_id(按镜头顺序):优先已有 imageAssetId,缺则现传一次
       const srcIds: { shotId: string | number; id: number }[] = []
-      for (const sh of shots) {
+      for (const sh of activeShots) {
         let id = Number(sh.imageAssetId || 0) || 0
         if (!id && sh.image) {
           try {
@@ -613,7 +619,7 @@ export default function SmartCreateView() {
       setBlurPhase('')
       const { url, assetId } = await generateFullVideo({
         workspaceId: ws,
-        shots,
+        shots: activeShots,
         basePrompt: reqSummary || requirement,
         ratio: entryMeta?.ratio,
         style: entryMeta?.style,

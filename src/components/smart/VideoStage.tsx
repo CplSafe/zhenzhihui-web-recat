@@ -92,6 +92,13 @@ export default function VideoStage({
         onSelect={setSelectedId}
         generating={generating}
         onShotsChange={onShotsChange}
+        locked
+        includeOf={(s) => s.includeInVideo !== false}
+        onToggleInclude={(id) =>
+          onShotsChange(
+            shots.map((s) => (s.id === id ? { ...s, includeInVideo: !(s.includeInVideo !== false) } : s)),
+          )
+        }
       />
 
       {/* 中:完整视频 + 修改意见 + 总按钮 */}

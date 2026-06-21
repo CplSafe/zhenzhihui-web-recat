@@ -140,6 +140,29 @@
   top: 8px;
   right: 10px;
 }
+/* 视频生成页:右上角「参与生成」勾选框 */
+.shotlist__pick {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.shotlist__pick input {
+  width: 17px;
+  height: 17px;
+  accent-color: #1fcfa9;
+  cursor: pointer;
+  margin: 0;
+}
+/* 未勾选(不参与生成)的分镜:整卡淡化 */
+.shotlist__card.is-excluded {
+  opacity: 0.45;
+}
+.shotlist__card.is-excluded .shotlist__thumb img {
+  filter: grayscale(0.6);
+}
 .shotlist__more {
   width: 26px;
   height: 26px;
