@@ -13,7 +13,15 @@ import { useEffect, useRef, useState } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
 import { fileToDataUrl } from '@/utils/imageFile'
 import AiBadge from '@/components/common/AiBadge'
+import InlineEdit from '@/components/common/InlineEdit'
 import './ShotEditPanel.css'
+
+// 缩略图:签名URL过期等导致加载失败时回退占位,不显示破图
+function Thumb({ src, alt, fallback }: { src?: string; alt?: string; fallback?: React.ReactNode }) {
+  const [broken, setBroken] = useState(false)
+  if (!src || broken) return <>{fallback ?? <span>—</span>}</>
+  return <img src={src} alt={alt || ''} onError={() => setBroken(true)} />
+}
 
 interface ShotEditPanelProps {
   shot: Shot
@@ -164,7 +172,7 @@ export default function ShotEditPanel({
             const name = stripAt(su.tag)
             return (
               <div key={`${su.tag}-${i}`} className="sedit__el-thumb sedit__el-thumb--ro" title={name}>
-                {su.image ? <img src={su.image} alt={name} /> : <span>—</span>}
+                <Thumb src={su.image} alt={name} />
               </div>
             )
           })}
@@ -239,11 +247,13 @@ export default function ShotEditPanel({
           <span className="sedit__tf-icon">{ICON.script}</span>
           画面描述（脚本）
         </div>
-        <textarea
-          className="sedit__ta"
+        <InlineEdit
+          className="sedit__ie"
+          trigger="click"
+          multiline
           value={shot.desc || ''}
-          placeholder="该镜头的画面 / 剧情描述…"
-          onChange={(e) => onPatch({ desc: e.target.value })}
+          placeholder="点击填写画面描述…"
+          onCommit={(v) => onPatch({ desc: v })}
         />
       </div>
 
@@ -317,19 +327,17 @@ export default function ShotEditPanel({
                   <button
                     type="button"
                     className={`sedit__el-thumb${on ? ' is-on' : ''}`}
-                    title={url ? '点选/取消参与出图' : '生成/上传该元素'}
+                    title="双击编辑"
                     onClick={() => (url ? toggle(url) : onOpenElement?.(name))}
+                    onDoubleClick={() => onOpenElement?.(name)}
                   >
-                    {url ? <img src={url} alt={name} /> : <span>+</span>}
+                    <Thumb src={url} alt={name} fallback={<span>+</span>} />
                     {on && <span className="sedit__el-check">✓</span>}
                   </button>
                   <div className="sedit__el-meta">
                     <span className="sedit__el-name">{name || '元素'}</span>
                     {su.kind && <span className="sedit__el-kind">{su.kind}</span>}
                   </div>
-                  <button type="button" className="sedit__el-mng" onClick={() => onOpenElement?.(name)}>
-                    管理
-                  </button>
                 </div>
               )
             })}
@@ -342,7 +350,7 @@ export default function ShotEditPanel({
                   onClick={() => toggle(u)}
                   title="点选/取消参与出图"
                 >
-                  <img src={u} alt="" />
+                  <Thumb src={u} />
                   {selected.has(u) && <span className="sedit__el-check">✓</span>}
                 </button>
                 <div className="sedit__el-meta">
@@ -353,13 +361,9 @@ export default function ShotEditPanel({
                 </button>
               </div>
             ))}
-            <button type="button" className="sedit__el-add" onClick={() => refFileRef.current?.click()}>
-              <span>+</span>
-              上传素材
-            </button>
             <button type="button" className="sedit__el-add" onClick={openPicker}>
-              <span>⊞</span>
-              项目素材
+              <span>+</span>
+              添加素材
             </button>
           </div>
 
@@ -367,7 +371,9 @@ export default function ShotEditPanel({
           {pickerOpen && (
             <div className="sedit__picker">
               <div className="sedit__picker-bar">
-                <span>点选可多选,选好点添加</span>
+                <button type="button" className="sedit__picker-upload" onClick={() => refFileRef.current?.click()}>
+                  <span>⬆</span> 上传本地
+                </button>
                 <span>
                   <button type="button" className="sedit__picker-cancel" onClick={() => setPickerOpen(false)}>
                     取消
@@ -391,7 +397,7 @@ export default function ShotEditPanel({
                           className={`sedit__picker-item${picked.has(p.url) ? ' is-picked' : ''}`}
                           onClick={() => togglePicked(p.url)}
                         >
-                          <img src={p.url} alt="" />
+                          <Thumb src={p.url} />
                           {src === 'ai' && <AiBadge size={15} />}
                           {picked.has(p.url) && <span className="sedit__picker-check">✓</span>}
                         </button>
@@ -443,12 +449,16 @@ export default function ShotEditPanel({
             )}
             </span>
           </div>
-          <textarea
-            className="sedit__ta sedit__ta--prompt"
+          <InlineEdit
+            className="sedit__ie sedit__ie--prompt"
+            trigger="click"
+            multiline
             value={imgPrompt}
-            placeholder="该分镜图的生成提示词,可修改…(改了素材可点「优化提示词」)"
-            onChange={(e) => setImgPrompt(e.target.value)}
-            onBlur={() => imgPrompt !== (shot.imagePrompt || '') && onPatch({ imagePrompt: imgPrompt })}
+            placeholder="点击填写生成提示词…(改了素材可点「优化提示词」)"
+            onCommit={(v) => {
+              setImgPrompt(v)
+              if (v !== (shot.imagePrompt || '')) onPatch({ imagePrompt: v })
+            }}
           />
           {optimizing && (
             <div className="sedit__opt-status">
@@ -573,12 +583,14 @@ function TextField({
         <span className="sedit__tf-icon">{icon}</span>
         {title}
       </div>
-      <textarea
-        className="sedit__ta"
+      <InlineEdit
+        className="sedit__ie"
+        trigger="click"
+        multiline
         value={value}
         maxLength={500}
         placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
+        onCommit={onChange}
       />
     </div>
   )

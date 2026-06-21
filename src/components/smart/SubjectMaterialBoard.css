@@ -143,3 +143,21 @@
 .smb__card--upload {
   cursor: default;
 }
+
+/* 用户上传素材:浅色边框 + 角标,与 AI 图区分 */
+.smb__thumb--user {
+  border: 1.5px solid #c7d2fe;
+  box-shadow: 0 0 0 2px rgba(199, 210, 254, 0.25);
+}
+.smb__user-tag {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  font-size: 10px;
+  line-height: 1;
+  color: #4f46e5;
+  background: rgba(238, 242, 255, 0.92);
+  border: 1px solid #c7d2fe;
+  border-radius: 5px;
+  padding: 2px 5px;
+}

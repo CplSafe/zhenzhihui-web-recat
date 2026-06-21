@@ -17,6 +17,8 @@ interface InlineEditProps {
   className?: string
   editable?: boolean
   maxLength?: number
+  /** 进入编辑的方式:单击 / 双击(默认双击) */
+  trigger?: 'click' | 'dblclick'
 }
 
 export default function InlineEdit({
@@ -28,6 +30,7 @@ export default function InlineEdit({
   className = '',
   editable = true,
   maxLength,
+  trigger = 'dblclick',
 }: InlineEditProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -47,8 +50,9 @@ export default function InlineEdit({
     return (
       <span
         className={`ie ie-display ${className}`}
-        onDoubleClick={start}
-        title={editable ? '双击修改' : undefined}
+        onClick={trigger === 'click' ? start : undefined}
+        onDoubleClick={trigger === 'dblclick' ? start : undefined}
+        title={editable ? (trigger === 'click' ? '点击修改' : '双击修改') : undefined}
         role={editable ? 'button' : undefined}
         tabIndex={editable ? 0 : undefined}
       >

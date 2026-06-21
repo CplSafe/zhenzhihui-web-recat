@@ -31,11 +31,13 @@ function Thumb({ src, alt }: { src?: string; alt?: string }) {
 }
 
 function SubjectCard({ s, onOpen }: { s: BoardSubject; onOpen: (n: string) => void }) {
+  const isUser = s.source === 'upload'
   return (
     <button type="button" className="smb__card" onClick={() => onOpen(s.name)} title="管理素材">
-      <div className="smb__thumb">
+      <div className={`smb__thumb${isUser && s.image ? ' smb__thumb--user' : ''}`}>
         <Thumb src={s.image} alt={s.name} />
         {s.image && s.source === 'ai' && <AiBadge size={16} />}
+        {isUser && s.image && <span className="smb__user-tag">用户</span>}
       </div>
       <div className="smb__meta">
         <span className="smb__name">@{s.name}</span>
@@ -68,12 +70,13 @@ export default function SubjectMaterialBoard({ subjects, onOpen, uploads = [], o
           </button>
         )}
         {dedupUploads.map((url, i) => (
-          <div className="smb__card smb__card--upload" key={`up-${i}`} title="用户上传">
-            <div className="smb__thumb">
+          <div className="smb__card smb__card--upload" key={`up-${i}`} title="用户上传素材">
+            <div className="smb__thumb smb__thumb--user">
               <Thumb src={url} />
+              <span className="smb__user-tag">用户</span>
             </div>
             <div className="smb__meta">
-              <span className="smb__name">上传素材</span>
+              <span className="smb__name">用户素材</span>
             </div>
           </div>
         ))}
