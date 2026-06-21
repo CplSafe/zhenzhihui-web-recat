@@ -47,11 +47,31 @@ export default function ShotEditPanel({
 }: ShotEditPanelProps) {
   const refFileRef = useRef<HTMLInputElement | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set()) // 选择器内多选暂存
   const [optimizing, setOptimizing] = useState(false)
-  const pickFromProject = (url: string) => {
-    setExtraRefs((a) => (a.includes(url) ? a : [...a, url]))
-    setSelected((s) => new Set(s).add(url))
+  const togglePicked = (url: string) =>
+    setPicked((s) => {
+      const n = new Set(s)
+      if (n.has(url)) n.delete(url)
+      else n.add(url)
+      return n
+    })
+  const confirmPicked = () => {
+    const urls = [...picked]
+    if (urls.length) {
+      setExtraRefs((a) => [...a, ...urls.filter((u) => !a.includes(u))])
+      setSelected((s) => {
+        const n = new Set(s)
+        urls.forEach((u) => n.add(u))
+        return n
+      })
+    }
+    setPicked(new Set())
     setPickerOpen(false)
+  }
+  const openPicker = () => {
+    setPicked(new Set())
+    setPickerOpen((v) => !v)
   }
 
   const current = shot.image || ''
@@ -245,15 +265,26 @@ export default function ShotEditPanel({
               <span>+</span>
               上传素材
             </button>
-            <button type="button" className="sedit__el-add" onClick={() => setPickerOpen((v) => !v)}>
+            <button type="button" className="sedit__el-add" onClick={openPicker}>
               <span>⊞</span>
               项目素材
             </button>
           </div>
 
-          {/* 从当前项目素材里选(上传的 / AI 生成的) */}
+          {/* 从当前项目素材里多选(上传的 / AI 生成的),选好点「添加」 */}
           {pickerOpen && (
             <div className="sedit__picker">
+              <div className="sedit__picker-bar">
+                <span>点选可多选,选好点添加</span>
+                <span>
+                  <button type="button" className="sedit__picker-cancel" onClick={() => setPickerOpen(false)}>
+                    取消
+                  </button>
+                  <button type="button" className="sedit__picker-ok" disabled={!picked.size} onClick={confirmPicked}>
+                    添加{picked.size ? `(${picked.size})` : ''}
+                  </button>
+                </span>
+              </div>
               {(['upload', 'ai'] as const).map((src) => {
                 const list = projectImages.filter((p) => p.source === src)
                 if (!list.length) return null
@@ -262,8 +293,14 @@ export default function ShotEditPanel({
                     <div className="sedit__picker-title">{src === 'upload' ? '我上传的图' : 'AI 生成的图'}</div>
                     <div className="sedit__picker-grid">
                       {list.map((p, i) => (
-                        <button key={i} type="button" className="sedit__picker-item" onClick={() => pickFromProject(p.url)}>
+                        <button
+                          key={i}
+                          type="button"
+                          className={`sedit__picker-item${picked.has(p.url) ? ' is-picked' : ''}`}
+                          onClick={() => togglePicked(p.url)}
+                        >
                           <img src={p.url} alt="" />
+                          {picked.has(p.url) && <span className="sedit__picker-check">✓</span>}
                         </button>
                       ))}
                     </div>

@@ -269,8 +269,9 @@
   gap: 8px;
 }
 .sedit__picker-item {
+  position: relative;
   aspect-ratio: 1 / 1;
-  border: 1px solid #eef0f4;
+  border: 2px solid #eef0f4;
   border-radius: 8px;
   overflow: hidden;
   padding: 0;
@@ -281,6 +282,51 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+.sedit__picker-item.is-picked {
+  border-color: #1fcfa9;
+}
+.sedit__picker-check {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+.sedit__picker-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #9aa3af;
+  margin-bottom: 8px;
+}
+.sedit__picker-cancel {
+  border: none;
+  background: none;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: 8px;
+}
+.sedit__picker-ok {
+  border: none;
+  border-radius: 6px;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 12px;
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.sedit__picker-ok:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .sedit__picker-empty {
   font-size: 12px;
