@@ -296,20 +296,24 @@ export async function generateShotCopy(
  * 只含给定主体,不臆造无关产品(避免把全局产品塞进无关镜头)。失败由调用方兜底。
  */
 export async function refineShotPrompt(
-  input: { desc?: string; elements?: string[]; style?: string; ratio?: string },
+  input: { desc?: string; elements?: string[]; outline?: string; style?: string; ratio?: string },
   signal?: AbortSignal,
 ): Promise<string> {
   const desc = (input.desc || '').trim()
   const els = (input.elements || []).filter(Boolean)
+  const outline = (input.outline || '').trim()
   if (!desc && !els.length) return desc
   const system =
-    '你是 AI 绘画提示词专家。根据「这一个分镜」的画面描述和它包含的主体元素,输出一段简洁、具体、' +
-    '可直接用于文生图/图生图的中文画面提示词:①紧扣画面描述;②只包含给定的主体元素,' +
-    '绝不加入未提到的产品/物体/品牌;③描述主体、动作、场景、构图景别、光线氛围、关键细节;' +
+    '你是 AI 绘画提示词专家。下面给出【整体创作大纲】(仅供理解产品调性/受众/风格)、' +
+    '【这一个分镜的画面描述】和【该镜包含的主体元素】。请综合这三者,为「这一个分镜」' +
+    '输出一段简洁、具体、可直接用于文生图/图生图的中文画面提示词:' +
+    '①紧扣该镜画面描述;②画面只包含给定的主体元素,绝不把大纲里其它产品/物体/品牌强加进本镜;' +
+    '③结合大纲的整体调性/风格保持系列一致;④描述主体、动作、场景、构图景别、光线氛围、关键细节;' +
     '不要编号、不要引号、不要解释、不要换行,直接输出提示词。'
   const user = [
-    `画面描述:${desc || '(未填写)'}`,
-    els.length && `画面只含这些主体:${els.join('、')}`,
+    outline && `整体创作大纲:${outline}`,
+    `该镜画面描述:${desc || '(未填写)'}`,
+    els.length && `该镜画面只含这些主体:${els.join('、')}`,
     input.style && `风格:${input.style}`,
     input.ratio && `画面比例:${input.ratio}`,
   ]

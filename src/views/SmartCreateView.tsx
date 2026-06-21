@@ -1188,6 +1188,7 @@ export default function SmartCreateView() {
             refineShotPrompt({
               desc: sh.desc,
               elements: Array.from(new Set(sh.subjects.map((s) => stripAt(s.tag)).filter(Boolean))),
+              outline: reqSummary || requirement, // 整体大纲/需求,供综合考虑
               style: entryMeta?.style,
               ratio: entryMeta?.ratio,
             })
