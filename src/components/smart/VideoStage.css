@@ -111,8 +111,13 @@
   margin: 0;
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
+.vdbg__imgrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .vdbg__img {
-  max-width: 240px;
+  width: 150px;
   border-radius: 8px;
 }
 .vdbg__muted {

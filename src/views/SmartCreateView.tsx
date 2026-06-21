@@ -406,15 +406,18 @@ export default function SmartCreateView() {
     try {
       const plans = await resolvePlanCandidates()
       const cache: Record<string, number> = {}
-      // 取第一张分镜图作参考(seedance 只收一张)
-      const firstImg = shots.find((s) => s.image)?.image || ''
-      let imageAssetId = 0
-      if (firstImg) {
-        try {
-          imageAssetId = await ensureAssetId(ws, firstImg, cache)
-        } catch {
-          /* 无参考图则纯文生视频 */
+      // 携带「所有」分镜图(按镜头顺序):优先用已有 imageAssetId,缺则现传一次
+      const imageAssetIds: number[] = []
+      for (const sh of shots) {
+        let id = Number(sh.imageAssetId || 0) || 0
+        if (!id && sh.image) {
+          try {
+            id = await ensureAssetId(ws, sh.image, cache)
+          } catch {
+            /* 单张失败跳过 */
+          }
         }
+        if (id) imageAssetIds.push(id)
       }
       const { url, assetId } = await generateFullVideo({
         workspaceId: ws,
@@ -422,7 +425,7 @@ export default function SmartCreateView() {
         basePrompt: reqSummary || requirement,
         ratio: entryMeta?.ratio,
         style: entryMeta?.style,
-        imageAssetId,
+        imageAssetIds,
         prevVideoAssetId: fullVideo.assetId,
         note,
         modelPlanCandidates: plans,

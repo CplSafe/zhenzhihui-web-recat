@@ -4,8 +4,29 @@
  * 上一张已生成的分镜图作为参考图。本地图片(objectURL/dataURL)会先上传成 asset 取得 asset_id。
  */
 // @ts-nocheck
-import { createAiTask, waitForAiTask, uploadAssetFile, extractTaskMediaUrls, getAssetDownloadUrl } from './business'
+import {
+  createAiTask,
+  waitForAiTask,
+  uploadAssetFile,
+  extractTaskMediaUrls,
+  getAssetDownloadUrl,
+  listAssets,
+  extractAssetPageItems,
+} from './business'
 import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
+
+// 对齐 2.0:outputs 里没带 asset_id 时,按 task_id 去资产列表里反查(否则 assetId=0 → 刷新水合换不了URL → 破图)
+async function findAssetIdByTaskId(workspaceId: number, taskId: any): Promise<number> {
+  const tId = Number(taskId || 0)
+  if (!workspaceId || !tId) return 0
+  try {
+    const payload = await listAssets({ workspaceId, type: 'image', limit: 100 })
+    const hit = extractAssetPageItems(payload).find((a: any) => Number(a?.task_id) === tId)
+    return Number(hit?.id || 0) || 0
+  } catch {
+    return 0
+  }
+}
 import { buildStoryboardImageParams } from '@/utils/storyboardTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
 
@@ -125,7 +146,9 @@ export async function generateShotImage(args: {
   })
   // 分镜图生成放宽轮询超时(默认 120s 偏短)
   const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 30 * 60 * 1000 })
-  const assetId = outputAssetId(completed)
+  // 取 asset_id:outputs 优先;没有则按 task_id 反查(否则刷新水合换不了URL → 破图)
+  let assetId = outputAssetId(completed)
+  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
   // 对齐 2.0 runImageTask:优先 resolveGeneratedMediaUrls(可用 asset_id 换签名URL),
   // 再退回 outputs[].url / asset 下载地址,避免后端只返回 asset_id 时取不到图
   let url = (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''

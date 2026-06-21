@@ -56,8 +56,8 @@ export async function generateFullVideo(args: {
   basePrompt?: string
   ratio?: string
   style?: string
-  /** 第一张分镜图的 asset_id(图生视频参考) */
-  imageAssetId?: number
+  /** 所有分镜图的 asset_id(按镜头顺序;全部作为图生视频的参考帧) */
+  imageAssetIds?: number[]
   /** 上次生成的整片 asset_id(带修改意见重生成时用) */
   prevVideoAssetId?: number
   /** 对整片的修改意见 */
@@ -67,12 +67,12 @@ export async function generateFullVideo(args: {
   const prompt =
     buildTimelinePrompt({ shots: args.shots, basePrompt: args.basePrompt, ratio: args.ratio, style: args.style }) +
     (args.note ? `\n额外修改要求:${args.note}` : '')
+  const imgIds = (args.imageAssetIds || []).filter((n) => Number(n) > 0)
+  // 携带全部分镜图(按镜头顺序),让模型逐段对齐;带修改意见且有上次整片时改用该视频作输入
   const inputAssets =
     args.note && args.prevVideoAssetId
       ? [{ asset_id: args.prevVideoAssetId, role: 'video' }]
-      : args.imageAssetId
-        ? [{ asset_id: args.imageAssetId, role: 'image' }]
-        : []
+      : imgIds.map((id, i) => ({ asset_id: id, role: 'image', index: i }))
   const task = await createAiTask({
     workspaceId: args.workspaceId,
     capability: 'video',
