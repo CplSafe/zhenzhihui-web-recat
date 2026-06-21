@@ -63,13 +63,20 @@ export default function ShotEditPanel({
   const [selected, setSelected] = useState<Set<string>>(new Set(elUrls))
   const [extraRefs, setExtraRefs] = useState<string[]>([])
   const [carry, setCarry] = useState(!!current)
+  // 仅「切换分镜」时重置选择/上传/携带等本地态(不能依赖 imagePrompt,否则点"优化提示词"
+  // 改了 imagePrompt → 重置 → 刚选的素材/刚加的图被清掉)
   useEffect(() => {
     setImgPrompt(shot.imagePrompt || shot.desc || '')
     setSelected(new Set(Array.from(new Set(shot.subjects.map((s) => s.image).filter(Boolean))) as string[]))
     setExtraRefs([])
     setCarry(!!shot.image)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shot.id, shot.imagePrompt])
+  }, [shot.id])
+  // 提示词外部变化(生成完成/优化)单独同步到输入框,不影响素材选择
+  useEffect(() => {
+    setImgPrompt(shot.imagePrompt || shot.desc || '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shot.imagePrompt])
 
   // 台词/字幕/音效(两种布局共用)
   const texts = (
