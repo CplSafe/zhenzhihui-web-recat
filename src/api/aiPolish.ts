@@ -312,37 +312,45 @@ export async function refineShotPrompt(
   const withImg = mats.filter((m) => m.url)
   if (!desc && !mats.length) return { prompt: desc, debug: { note: '无可用输入' } }
 
-  const system =
-    '你是 AI 绘画提示词专家。下面给出【整体创作大纲】(仅供理解产品调性/受众/风格,不可照搬其产品)、' +
-    '【这一个分镜的画面描述=脚本】和【该镜选中的素材图(逐张看图识别其真实外观/类型)】。' +
-    '请综合三者,为「这一个分镜」输出一段【只描述画面正向内容】的中文文生图提示词:' +
-    '①【选中的素材图里的每一个主体都必须正向出现在画面中】,按其真实外观如实描述(普通/破旧的就如实写,' +
-    '也照样放进画面,不要因为它不够高端就排除);即使脚本文字没提到该素材,也要把它自然地组织进画面;' +
-    '②以画面描述(脚本)作为场景/动作/氛围与本镜意图的依据(如对比镜要体现对比关系);' +
-    '③大纲只作调性参考,不要把大纲里"未被选中"的其它产品/品牌加进来;' +
-    '④【严禁出现任何否定/排除表述】——不得包含"不包含/不要/没有/排除/避免/无X"之类词语(否定词会干扰文生图),只写画面里有什么;' +
-    '⑤描述主体、动作、场景、构图景别、光线氛围、关键细节;' +
-    '不要编号、不要引号、不要解释、不要换行,直接输出提示词。'
-
   const useVl = withImg.length > 0
-  const textPart =
-    [
-      outline && `整体创作大纲(仅调性参考):${outline}`,
-      `该镜画面描述(脚本,以此为准):${desc || '(未填写)'}`,
-      mats.length && `该镜选中素材:${mats.map((m) => `${m.name || '素材'}${m.kind ? `(${m.kind})` : ''}`).join('、')}`,
+  const clean = (s: string) =>
+    s
+      .replace(/^```(\w+)?/i, '')
+      .replace(/```$/i, '')
+      .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
+      .replace(/\s*\n+\s*/g, ',')
+      .trim()
+
+  let system = ''
+  let textPart = ''
+  let raw = ''
+  let prompt = ''
+
+  if (useVl) {
+    // 让 VL 看清每张素材,写出「有故事性、连贯」的单幅画面,把所有选中素材有机编织进本镜叙事意图
+    system =
+      '你是资深分镜师 + AI 绘画提示词专家。下面给【整体大纲(仅调性参考,不可照搬其产品)】、' +
+      '【这一个分镜的画面描述=脚本(它体现本镜的叙事意图,如对比/转折/情绪)】和【按顺序的选中素材图】。' +
+      '请写出一段【有故事性、连贯的单幅画面】中文文生图提示词:' +
+      '①逐张看素材图,如实理解每个主体的真实外观(普通/破旧就如实写,不要美化成大纲里的高端产品);' +
+      '②把每一张素材主体都自然、有机地编织进这一个画面,服务于本镜的叙事意图(如对比镜要让两者在画面里形成对比关系),' +
+      '一张素材都不能遗漏;③但不要写成"画面包含A、B、C"式的罗列,要像描述一个真实发生的场景那样,' +
+      '让主体之间有主次、有位置关系、有情绪与故事感;④描述主体、动作、相互关系、场景、构图景别、光线氛围、关键细节;' +
+      '⑤只写画面里正向有什么,严禁"不/不要/没有/排除/避免/无"等否定词;不要编号、引号、解释、换行,直接输出一段提示词。'
+    textPart = [
+      outline && `整体大纲(仅调性参考):${outline}`,
+      `画面描述/脚本(本镜叙事意图,以此为准):${desc || '(未填写)'}`,
       input.style && `风格:${input.style}`,
       input.ratio && `画面比例:${input.ratio}`,
+      `下面按顺序是 ${withImg.length} 张选中素材图(都要编织进画面,一张都别漏),请逐张看清真实外观:`,
     ]
       .filter(Boolean)
-      .join('\n') + (useVl ? '\n下面附上各选中素材图,请逐张看清其真实外观再下笔。' : '')
-
-  let raw = ''
-  if (useVl) {
+      .join('\n')
     const userContent: any[] = [{ type: 'text', text: textPart }]
-    for (const m of withImg) {
-      userContent.push({ type: 'text', text: `素材「${m.name || ''}${m.kind ? `/${m.kind}` : ''}」:` })
+    withImg.forEach((m, i) => {
+      userContent.push({ type: 'text', text: `第${i + 1}张素材(${m.name || ''}${m.kind ? `/${m.kind}` : ''}):` })
       userContent.push({ type: 'image_url', image_url: { url: m.url } })
-    }
+    })
     const res = await fetch(VL_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -353,24 +361,32 @@ export async function refineShotPrompt(
           { role: 'system', content: system },
           { role: 'user', content: userContent },
         ],
-        temperature: 0.5,
-        max_tokens: 300,
+        temperature: 0.6,
+        max_tokens: 400,
         chat_template_kwargs: { enable_thinking: false },
       }),
     })
     if (!res.ok) throw new Error(`分析服务异常(${res.status})`)
     const data = (await res.json()) as ChatResponse
     raw = data?.choices?.[0]?.message?.content || ''
+    prompt = clean(raw) || desc
   } else {
+    // 无素材图:纯文本据脚本+大纲生成
+    system =
+      '你是 AI 绘画提示词专家。据【整体大纲(仅调性)】和【这一个分镜的画面描述】输出一段只含正向内容的中文文生图提示词:' +
+      '紧扣画面描述,描述主体/动作/场景/构图景别/光线氛围;不把大纲里的产品强塞;严禁"不/不要/没有/排除"等否定词;' +
+      '不要编号、引号、解释、换行,直接输出。'
+    textPart = [
+      outline && `整体大纲(仅调性):${outline}`,
+      `画面描述:${desc || '(未填写)'}`,
+      input.style && `风格:${input.style}`,
+      input.ratio && `画面比例:${input.ratio}`,
+    ]
+      .filter(Boolean)
+      .join('\n')
     raw = await chatOnce(system, textPart, signal, 300)
+    prompt = clean(raw) || desc
   }
-  const cleaned = raw
-    .replace(/^```(\w+)?/i, '')
-    .replace(/```$/i, '')
-    .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
-    .replace(/\s*\n+\s*/g, ',')
-    .trim()
-  const prompt = cleaned || desc
   return {
     prompt,
     debug: {
