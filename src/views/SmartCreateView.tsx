@@ -918,6 +918,36 @@ export default function SmartCreateView() {
     }
   }
 
+  // 下载当前整片视频:优先按 asset_id 取新签名URL → fetch 成 blob 下载;CORS 失败则新标签打开
+  const handleDownloadVideo = async () => {
+    if (!fullVideo.url) {
+      showToast('请先生成视频', 'info')
+      return
+    }
+    const ws = Number(workspaceId || 0)
+    let url = fullVideo.url
+    if (ws && fullVideo.assetId) {
+      const fresh = await refreshAssetUrl(ws, fullVideo.assetId)
+      if (fresh) url = fresh
+    }
+    const fileName = `${(projectName || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'}.mp4`
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(String(res.status))
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+    } catch {
+      // 跨域无法 fetch → 退而求其次,新标签打开让用户右键保存
+      window.open(url, '_blank')
+    }
+  }
+
   const bottomButtons: BottomButton[] = (() => {
     switch (step) {
       case 0: // 分镜脚本
@@ -1056,6 +1086,7 @@ export default function SmartCreateView() {
         onRegenerateImage={regenerateShotImage}
         onRegenerateVideo={runFullVideo}
         onSaveVideo={handleSaveVideo}
+        onDownloadVideo={handleDownloadVideo}
         savingVideo={savingVideo}
         onPrev={() => goStep(1)}
         debug={{

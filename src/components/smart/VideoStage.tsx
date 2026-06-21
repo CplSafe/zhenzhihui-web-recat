@@ -27,6 +27,8 @@ interface VideoStageProps {
   onRegenerateVideo: (note?: string) => void
   /** 保存视频到项目管理 */
   onSaveVideo: () => void
+  /** 下载当前整片视频 */
+  onDownloadVideo?: () => void
   savingVideo?: boolean
   onPrev?: () => void
   /** 调试:实际喂给视频模型的提示词/参考图/各分镜文本(开发可见,正式隐藏) */
@@ -49,6 +51,7 @@ export default function VideoStage({
   onRegenerateImage,
   onRegenerateVideo,
   onSaveVideo,
+  onDownloadVideo,
   savingVideo,
   onPrev,
   debug,
@@ -142,6 +145,16 @@ export default function VideoStage({
           {onPrev && (
             <button type="button" className="vstage__btn vstage__btn--ghost" onClick={onPrev}>
               上一步
+            </button>
+          )}
+          {onDownloadVideo && (
+            <button
+              type="button"
+              className="vstage__btn vstage__btn--ghost"
+              onClick={onDownloadVideo}
+              disabled={!videoUrl || !!videoGenerating}
+            >
+              下载视频
             </button>
           )}
           <button
