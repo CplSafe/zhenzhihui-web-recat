@@ -12,6 +12,13 @@ import AppToast from '@/components/AppToast'
 import EntryDropdown from '@/components/smart/EntryDropdown'
 import { useToast } from '@/composables/useToast'
 import { fileToDataUrl } from '@/utils/imageFile'
+import {
+  useWorkspaceId,
+  useModelPlanCandidates,
+  useWorkspaceSessionStore,
+  deriveModelPlanCandidates,
+} from '@/stores/workspaceSession'
+import { replicateHotVideo, uploadHotCopyAsset } from '@/api/hotCopy'
 import './HotCopyView.css'
 
 const ROUTE_MAP: Record<string, string> = {
@@ -34,30 +41,58 @@ const DURATION_OPTIONS = ['5s', '10s', '15s']
 const LINK_PLATFORMS = '抖音 / 快手 / 小红书 / 视频号'
 const MAX_PRODUCTS = 9
 
+// 修进度条 bug:部分 MP4 初始 duration=Infinity → 进度条从中间开始
+function fixVideoDuration(e: React.SyntheticEvent<HTMLVideoElement>) {
+  const v = e.currentTarget
+  if (!Number.isFinite(v.duration)) {
+    const back = () => {
+      v.currentTime = 0
+      v.removeEventListener('timeupdate', back)
+    }
+    v.addEventListener('timeupdate', back)
+    v.currentTime = 1e7
+  }
+}
+
 export default function HotCopyView() {
   const navigate = useNavigate()
   const { showToast } = useToast()
+  const workspaceId = useWorkspaceId()
+  const modelPlanCandidates = useModelPlanCandidates() as string[]
+  const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [tab, setTab] = useState<(typeof TABS)[number]['key']>('remake')
 
   // 爆款视频来源(本地/素材库/链接,三选一)
   const [videoMenuOpen, setVideoMenuOpen] = useState(false)
   const [videoSource, setVideoSource] = useState<'' | 'local' | 'library' | 'link'>('')
+  const [videoFile, setVideoFile] = useState<File | null>(null)
   const [videoFileName, setVideoFileName] = useState('')
   const [videoLink, setVideoLink] = useState('')
   const [linkInputOpen, setLinkInputOpen] = useState(false)
   const videoFileRef = useRef<HTMLInputElement | null>(null)
   const videoMenuRef = useRef<HTMLDivElement | null>(null)
 
-  // 替换素材(产品多图)
-  const [products, setProducts] = useState<string[]>([])
+  // 替换素材(产品多图):保留 File 以便上传
+  const [products, setProducts] = useState<{ url: string; file: File }[]>([])
   const productFileRef = useRef<HTMLInputElement | null>(null)
 
   const [text, setText] = useState('')
   const [style, setStyle] = useState('商业')
-  const [ratio, setRatio] = useState('16:9')
+  const [ratio, setRatio] = useState('9:16')
   const [duration, setDuration] = useState('10s')
   const [creating, setCreating] = useState(false)
+  const [phase, setPhase] = useState('')
+  const [resultUrl, setResultUrl] = useState('')
+
+  const resolvePlanCandidates = async (): Promise<string[]> => {
+    try {
+      await ensureModelPlanCandidatesLoaded()
+    } catch {
+      /* 失败用兜底候选 */
+    }
+    return (deriveModelPlanCandidates(useWorkspaceSessionStore.getState()) as string[]) || modelPlanCandidates
+  }
 
   useEffect(() => {
     if (!videoMenuOpen) return
@@ -89,6 +124,7 @@ export default function HotCopyView() {
     const f = files?.[0]
     if (!f) return
     setVideoSource('local')
+    setVideoFile(f)
     setVideoFileName(f.name)
     setVideoLink('')
     setLinkInputOpen(false)
@@ -96,6 +132,7 @@ export default function HotCopyView() {
 
   const clearVideo = () => {
     setVideoSource('')
+    setVideoFile(null)
     setVideoFileName('')
     setVideoLink('')
     setLinkInputOpen(false)
@@ -109,23 +146,75 @@ export default function HotCopyView() {
       return
     }
     const sel = Array.from(files).slice(0, room)
-    const picked = (await Promise.all(sel.map((f) => fileToDataUrl(f).catch(() => null)))).filter(Boolean) as string[]
+    const picked = (
+      await Promise.all(sel.map(async (f) => ({ url: (await fileToDataUrl(f).catch(() => '')) || '', file: f })))
+    ).filter((p) => p.url)
     if (picked.length) setProducts((prev) => [...prev, ...picked])
   }
 
   const videoLabel =
     videoSource === 'local' ? videoFileName : videoSource === 'library' ? '素材库视频' : videoSource === 'link' ? (videoLink.trim() || '视频链接') : ''
-  const hasHotVideo = (videoSource === 'local' || videoSource === 'library') && !!videoFileName || (videoSource === 'link' && !!videoLink.trim())
+  const hasHotVideo = (videoSource === 'local' && !!videoFile) || (videoSource === 'link' && !!videoLink.trim())
 
-  const createTask = () => {
+  const createTask = async () => {
+    if (creating) return
     if (!hasHotVideo) {
       showToast('请先上传爆款视频(本地 / 素材库 / 视频链接)', 'error')
       return
     }
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间', 'error')
+      return
+    }
+    // 当前直连 video.replicate 仅支持「本地上传」的源视频;链接/素材库待后端解析接口
+    if (videoSource !== 'local' || !videoFile) {
+      showToast('暂仅支持「本地上传」的爆款视频(链接/素材库待接入)', 'info')
+      return
+    }
     setCreating(true)
-    // TODO: 接入复刻任务创建,进入分镜流程(与智能成片一致)
-    showToast('复刻任务已创建,进入分镜流程…', 'success')
-    setTimeout(() => navigate('/smart'), 600)
+    setResultUrl('')
+    try {
+      const plans = await resolvePlanCandidates()
+      setPhase('上传源视频…')
+      const videoAssetId = await uploadHotCopyAsset(ws, videoFile)
+      if (!videoAssetId) throw new Error('源视频上传失败')
+      setPhase('上传替换素材…')
+      const productAssetIds: number[] = []
+      for (const p of products) {
+        try {
+          const id = await uploadHotCopyAsset(ws, p.file)
+          if (id) productAssetIds.push(id)
+        } catch {
+          /* 单张失败跳过 */
+        }
+      }
+      const prompt = [
+        text.trim(),
+        productAssetIds.length ? '把源视频中的主体替换为参考图中的产品,保留原视频的镜头节奏与爆点结构。' : '',
+        tab === 'replica' ? '尽量 1:1 还原原视频画面与运镜。' : '',
+        style && `整体风格:${style}。`,
+      ]
+        .filter(Boolean)
+        .join('\n')
+      setPhase('AI 拆解源视频并复刻生成中…(耗时较长)')
+      const { url } = await replicateHotVideo({
+        workspaceId: ws,
+        videoAssetId,
+        productAssetIds,
+        prompt,
+        ratio,
+        durationSec: parseInt(duration, 10) || 10,
+        modelPlanCandidates: plans,
+      })
+      setResultUrl(url)
+      showToast('复刻完成', 'success')
+    } catch (e: any) {
+      showToast(`复刻失败:${e?.message || '请稍后重试'}`, 'error')
+    } finally {
+      setPhase('')
+      setCreating(false)
+    }
   }
 
   const activeTab = TABS.find((t) => t.key === tab)!
@@ -220,10 +309,10 @@ export default function HotCopyView() {
                   {/* 替换素材缩略 */}
                   {products.length > 0 && (
                     <div className="hotcopy__products">
-                      {products.map((url, i) => (
+                      {products.map((p, i) => (
                         <div className="hotcopy__product" key={i}>
-                          <img src={url} alt="" />
-                          <button type="button" onClick={() => setProducts((p) => p.filter((_, j) => j !== i))} aria-label="移除">×</button>
+                          <img src={p.url} alt="" />
+                          <button type="button" onClick={() => setProducts((arr) => arr.filter((_, j) => j !== i))} aria-label="移除">×</button>
                         </div>
                       ))}
                     </div>
@@ -252,6 +341,26 @@ export default function HotCopyView() {
               </div>
             </div>
           </div>
+
+          {/* 生成中 / 成片结果 */}
+          {(creating || resultUrl) && (
+            <div className="hotcopy__result">
+              {creating ? (
+                <div className="hotcopy__result-wait">
+                  <span className="hotcopy__spin" aria-hidden="true" />
+                  {phase || '复刻生成中…'}
+                </div>
+              ) : (
+                <>
+                  <video className="hotcopy__result-video" src={resultUrl} controls playsInline preload="metadata" onLoadedMetadata={fixVideoDuration} />
+                  <div className="hotcopy__result-actions">
+                    <a className="hotcopy__result-dl" href={resultUrl} target="_blank" rel="noopener">下载视频</a>
+                    <button type="button" className="hotcopy__create" onClick={createTask}>重新生成</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           <p className="hotcopy__hint">{activeTab.sub}</p>
         </section>
