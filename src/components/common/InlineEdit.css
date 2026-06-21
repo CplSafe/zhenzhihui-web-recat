@@ -1,0 +1,29 @@
+/* InlineEdit 基础样式(双击编辑) */
+.ie-display {
+  border-radius: 6px;
+  transition: background 0.12s;
+}
+.ie-display[role='button'] {
+  cursor: text;
+}
+.ie-display[role='button']:hover {
+  background: rgba(31, 207, 169, 0.1);
+}
+.ie-ph {
+  color: #b8bfc9;
+}
+.ie-input {
+  font: inherit;
+  color: #1f2937;
+  border: 1px solid #1fcfa9;
+  border-radius: 8px;
+  padding: 4px 8px;
+  outline: none;
+  background: #fff;
+  box-sizing: border-box;
+}
+textarea.ie-input {
+  width: 100%;
+  resize: vertical;
+  line-height: 1.6;
+}

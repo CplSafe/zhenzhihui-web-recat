@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
 import AiBadge from '@/components/common/AiBadge'
+import InlineEdit from '@/components/common/InlineEdit'
 import './ShotList.css'
 
 interface ShotListProps {
@@ -107,6 +108,17 @@ export default function ShotList({
                 <span className="shotlist__no">{s.no}</span>
                 <span className="shotlist__sep">|</span>
                 <span className="shotlist__dur">{formatDur(s.duration)}</span>
+                {/* 标题/备注:双击编辑、回车确认(空时显示「添加标题」),镜头编号固定不可改 */}
+                <span className="shotlist__note" onClick={(e) => e.stopPropagation()}>
+                  <InlineEdit
+                    className="shotlist__note-ie"
+                    value={s.title || ''}
+                    placeholder="添加标题"
+                    editable={!!onShotsChange}
+                    maxLength={20}
+                    onCommit={(v) => onShotsChange(shots.map((x) => (x.id === s.id ? { ...x, title: v.trim() } : x)))}
+                  />
+                </span>
                 {badgeOf && <span className="shotlist__badge">{badgeOf(s)}</span>}
                 {locked && includeOf && onToggleInclude && (
                   <label

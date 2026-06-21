@@ -3,6 +3,7 @@
  * 每个分镜一张卡:镜头名称 / 时长(秒) / 画面描述 均可改;准备素材(@主体)可增删、改名、选类型、出图。
  * 受控:shots + onShotsChange(整列回写,父级持久化)。onOpenSubject 用于打开素材管理/AI生成。
  */
+import InlineEdit from '@/components/common/InlineEdit'
 import './ScriptStoryboardTable.css'
 
 export interface ShotSubject {
@@ -13,7 +14,8 @@ export interface ShotSubject {
 }
 export interface Shot {
   id: string | number
-  no: string // 镜头1
+  no: string // 镜头1(固定,定顺序,不可改)
+  title?: string // 用户给该镜头的标题/备注(默认空,可在脚本/编排/视频步添加)
   duration: string // 5s
   desc: string // 画面描述
   subjects: ShotSubject[]
@@ -61,45 +63,44 @@ export default function ScriptStoryboardTable({ shots, onOpenSubject, onShotsCha
     <div className="sbc">
       {shots.map((shot) => (
         <div className="sbc__card" key={shot.id}>
-          {/* 头部:镜头名称 + 时长(秒) */}
+          {/* 头部:镜头编号(固定,定顺序)+ 标题(可双击编辑)+ 时长(秒) */}
           <div className="sbc__head">
-            <input
-              className="sbc__no"
-              value={shot.no}
-              readOnly={!editable}
-              placeholder="镜头名称"
-              onChange={(e) => patchShot(shot.id, { no: e.target.value })}
+            <span className="sbc__no">{shot.no}</span>
+            <InlineEdit
+              className="sbc__title"
+              value={shot.title || ''}
+              placeholder="添加标题"
+              editable={editable}
+              maxLength={20}
+              onCommit={(v) => patchShot(shot.id, { title: v.trim() })}
             />
-            <label className="sbc__dur">
-              <input
-                className="sbc__dur-input"
-                type="number"
-                min={1}
+            <span className="sbc__dur">
+              <InlineEdit
+                className="sbc__dur-val"
                 value={String(shot.duration || '').replace(/[^0-9.]/g, '')}
-                readOnly={!editable}
-                placeholder="5"
-                onChange={(e) => {
-                  const v = e.target.value.replace(/[^0-9.]/g, '')
-                  patchShot(shot.id, { duration: v ? `${v}s` : '' })
-                }}
+                numeric
+                placeholder="—"
+                editable={editable}
+                onCommit={(v) => patchShot(shot.id, { duration: v ? `${v}s` : '' })}
               />
-              <span>秒</span>
-            </label>
+              <span className="sbc__dur-unit">秒</span>
+            </span>
           </div>
 
-          {/* 画面描述 */}
+          {/* 画面描述(双击编辑,回车确认) */}
           <div className="sbc__field">
             <div className="sbc__label">画面描述</div>
-            <textarea
+            <InlineEdit
               className="sbc__desc"
               value={shot.desc || ''}
-              readOnly={!editable}
-              placeholder="这一镜的画面 / 剧情描述…"
-              onChange={(e) => patchShot(shot.id, { desc: e.target.value })}
+              multiline
+              placeholder="双击添加画面描述…"
+              editable={editable}
+              onCommit={(v) => patchShot(shot.id, { desc: v })}
             />
           </div>
 
-          {/* 准备素材(@主体,可增删改) */}
+          {/* 准备素材(@主体,卡片网格,可增删改) */}
           <div className="sbc__field">
             <div className="sbc__label">准备素材</div>
             <div className="sbc__subjects">
@@ -107,6 +108,17 @@ export default function ScriptStoryboardTable({ shots, onOpenSubject, onShotsCha
                 const name = stripAt(su.tag)
                 return (
                   <div className="sbc__subj" key={`${su.tag}-${idx}`}>
+                    {editable && (
+                      <button
+                        type="button"
+                        className="sbc__subj-del"
+                        aria-label="删除主体"
+                        title="删除主体"
+                        onClick={() => patchSubjects(shot, shot.subjects.filter((_, i) => i !== idx))}
+                      >
+                        ×
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="sbc__subj-thumb"
@@ -116,27 +128,28 @@ export default function ScriptStoryboardTable({ shots, onOpenSubject, onShotsCha
                       {su.image ? (
                         <img src={su.image} alt={name} />
                       ) : (
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                           <path d="M12 5v14M5 12h14" />
                         </svg>
                       )}
                     </button>
-                    <div className="sbc__subj-info">
-                      <div className="sbc__subj-tagline">
-                        <span className="sbc__at">@</span>
-                        <input
-                          className="sbc__subj-name"
-                          value={name}
-                          readOnly={!editable}
-                          placeholder="主体名"
-                          onChange={(e) =>
-                            patchSubjects(
-                              shot,
-                              shot.subjects.map((x, i) => (i === idx ? { ...x, tag: `@${e.target.value.replace(/^@/, '')}` } : x)),
-                            )
-                          }
-                        />
-                      </div>
+                    <div className="sbc__subj-tagline">
+                      <span className="sbc__at">@</span>
+                      <InlineEdit
+                        className="sbc__subj-name"
+                        value={name}
+                        placeholder="主体名"
+                        editable={editable}
+                        maxLength={16}
+                        onCommit={(v) =>
+                          patchSubjects(
+                            shot,
+                            shot.subjects.map((x, i) => (i === idx ? { ...x, tag: `@${v.replace(/^@/, '').trim()}` } : x)),
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="sbc__subj-foot">
                       {editable ? (
                         <select
                           className="sbc__subj-kind"
@@ -153,24 +166,11 @@ export default function ScriptStoryboardTable({ shots, onOpenSubject, onShotsCha
                           ))}
                         </select>
                       ) : (
-                        su.kind && <span className="sbc__subj-kindtag">{su.kind}</span>
+                        <span className="sbc__subj-kindtag">{su.kind || ''}</span>
                       )}
-                    </div>
-                    <div className="sbc__subj-actions">
                       <button type="button" className="sbc__subj-ai" onClick={() => onOpenSubject?.(name, true)}>
                         AI生成
                       </button>
-                      {editable && (
-                        <button
-                          type="button"
-                          className="sbc__subj-del"
-                          aria-label="删除主体"
-                          title="删除主体"
-                          onClick={() => patchSubjects(shot, shot.subjects.filter((_, i) => i !== idx))}
-                        >
-                          ×
-                        </button>
-                      )}
                     </div>
                   </div>
                 )
