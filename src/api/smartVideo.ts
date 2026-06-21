@@ -60,6 +60,13 @@ export function buildTimelinePrompt(args: {
   if (t > 0) lines.push(`总时长:${t}s。`)
   if (args.ratio) lines.push(`画面比例:${args.ratio}。`)
   if (args.style) lines.push(`整体风格:${args.style}。`)
+  // 通用物理合理性约束(避免违反物理规律/形变穿模等)
+  lines.push(
+    '硬性要求:画面必须符合真实物理规律——运动自然连贯,遵循重力、惯性与碰撞;' +
+      '物体的形状、数量、比例、材质在镜头内保持稳定一致,不变形、不融化、不穿模、不凭空出现或消失;' +
+      '人物与动物结构正常(四肢/手指数量正确、关节弯曲合理,不扭曲、不多肢);' +
+      '镜头运动与光影自然平滑,避免瞬移、抖动、鬼影、画面撕裂或不合理的速度突变。',
+  )
   return lines.filter(Boolean).join('\n')
 }
 
