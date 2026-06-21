@@ -602,26 +602,46 @@ export default function SmartCreateView() {
     autoVidRef.current = true
   }
 
-  // 把当前草稿写到后端(带 draft_revision 乐观并发;409 冲突拉新版本号重试一次)。返回是否成功。
+  // 从任意返回体里取 draft_revision(后端字段有下划线/驼峰/嵌套 data 多种写法,对齐 2.0)
+  const normRev = (p: any): number => {
+    const v = Number(
+      p?.draft_revision ?? p?.draftRevision ?? p?.data?.draft_revision ?? p?.data?.draftRevision ?? NaN,
+    )
+    return Number.isFinite(v) && v >= 0 ? Math.floor(v) : NaN
+  }
+  const fetchRevision = async (id: number, ws: number) => {
+    try {
+      const proj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
+      const r = normRev(proj)
+      if (Number.isFinite(r)) draftRevisionRef.current = r
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 把当前草稿写到后端。对齐 2.0 putDraftSnapshot:保存前先确保有当前 revision,
+  // 保存后用返回的 revision 同步;返回体没带 revision 则重新拉一次;409 冲突→拉新 revision 重试。
   const putSmartDraftToBackend = async (): Promise<boolean> => {
     const id = projectIdRef.current
     const ws = Number(workspaceId || 0)
     if (!id || !ws) return false
     const snapshot = buildSmartSnapshot(currentDraft())
-    const apply = (payload: any) => {
-      const next = Number(payload?.draft_revision ?? payload?.data?.draft_revision)
-      if (Number.isFinite(next)) draftRevisionRef.current = next
-    }
+    // 首次/未知 revision:先拉一次,避免用错版本号导致 409 把后续(含图)的保存全部打掉
+    if (!draftRevisionRef.current) await fetchRevision(id, ws)
     try {
-      apply(await updateCreativeProjectDraft({ projectId: id, workspaceId: ws, draft: snapshot, draftRevision: draftRevisionRef.current }))
+      const payload: any = await updateCreativeProjectDraft({ projectId: id, workspaceId: ws, draft: snapshot, draftRevision: draftRevisionRef.current })
+      const next = normRev(payload)
+      if (Number.isFinite(next)) draftRevisionRef.current = next
+      else await fetchRevision(id, ws) // 返回体没带 revision → 重新拉,保持同步
       return true
     } catch (e: any) {
       if (e?.status !== 409) return false
-      // 草稿在别处更新:重新拉版本号后重试一次
+      await fetchRevision(id, ws)
       try {
-        const proj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
-        draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
-        apply(await updateCreativeProjectDraft({ projectId: id, workspaceId: ws, draft: snapshot, draftRevision: draftRevisionRef.current }))
+        const payload: any = await updateCreativeProjectDraft({ projectId: id, workspaceId: ws, draft: snapshot, draftRevision: draftRevisionRef.current })
+        const next = normRev(payload)
+        if (Number.isFinite(next)) draftRevisionRef.current = next
+        else await fetchRevision(id, ws)
         return true
       } catch {
         return false
