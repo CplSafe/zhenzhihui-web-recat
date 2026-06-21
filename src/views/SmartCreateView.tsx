@@ -1059,7 +1059,14 @@ export default function SmartCreateView() {
               <StepProgress
                 steps={STEPS}
                 current={step}
-                statuses={STEPS.map((_, i) => (i < step ? '已完成' : i === step ? ACTIVE_STATUS[i] : '待生成'))}
+                statuses={(() => {
+                  // 各步是否已完成(基于产物,而非位置):脚本有分镜 / 有任一分镜图 / 有整片视频
+                  const done = [shots.length > 0, shots.some((s) => s.image), !!fullVideo.url]
+                  const running = [scriptLoading, shotGenRunning, vidGenRunning]
+                  return STEPS.map((_, i) =>
+                    running[i] ? ACTIVE_STATUS[i] : done[i] ? '已完成' : i === step ? ACTIVE_STATUS[i] : '待生成',
+                  )
+                })()}
                 maxReached={maxReached}
                 onStepClick={goStep}
               />

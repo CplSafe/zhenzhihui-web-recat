@@ -1608,7 +1608,15 @@ export async function uploadAssetFile({ workspaceId, file, prompt = '' }) {
   }
 
   if (!isAllowedUploadUrl(upload.url)) {
-    throw new BusinessApiError('素材上传地址不在受信任的存储域名列表中')
+    let blockedHost = upload.url
+    try {
+      blockedHost = new URL(upload.url).host
+    } catch {
+      /* ignore */
+    }
+    throw new BusinessApiError(
+      `素材上传地址不在受信任的存储域名列表中:${blockedHost}（请把该域名加入 .env 的 VITE_ZZH_ALLOWED_UPLOAD_ORIGINS）`,
+    )
   }
 
   const formData = new FormData()
