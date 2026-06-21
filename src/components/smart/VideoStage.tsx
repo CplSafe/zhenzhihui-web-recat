@@ -17,6 +17,9 @@ interface VideoStageProps {
   videoUrl?: string
   /** 整片生成中 */
   videoGenerating?: boolean
+  /** 整片历史版本(点击切换) */
+  videoVersions?: { url: string; assetId: number }[]
+  onSwitchVideo?: (v: { url: string; assetId: number }) => void
   onShotsChange: (shots: Shot[]) => void
   onOpenElement?: (name: string) => void
   onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
@@ -39,6 +42,8 @@ export default function VideoStage({
   generating = {},
   videoUrl,
   videoGenerating,
+  videoVersions = [],
+  onSwitchVideo,
   onShotsChange,
   onOpenElement,
   onRegenerateImage,
@@ -94,6 +99,24 @@ export default function VideoStage({
             <div className="vstage__player-ph">暂无视频,点下方「重新生成视频」生成整片</div>
           )}
         </div>
+
+        {videoVersions.length > 1 && (
+          <div className="vstage__versions">
+            <span className="vstage__versions-title">视频版本(点击切换)</span>
+            <div className="vstage__versions-row">
+              {videoVersions.map((v, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className={`vstage__ver${v.url === videoUrl ? ' is-active' : ''}`}
+                  onClick={() => onSwitchVideo?.(v)}
+                >
+                  版本{i + 1}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="vstage__modify">
           <textarea

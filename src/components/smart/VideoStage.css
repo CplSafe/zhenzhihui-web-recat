@@ -204,6 +204,35 @@
   }
 }
 
+.vstage__versions {
+  margin-bottom: 12px;
+}
+.vstage__versions-title {
+  font-size: 12px;
+  color: #9aa3af;
+}
+.vstage__versions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.vstage__ver {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid #d8dce3;
+  border-radius: 7px;
+  background: #fff;
+  color: #4b5563;
+  font-size: 12px;
+  cursor: pointer;
+}
+.vstage__ver.is-active {
+  border-color: #1fcfa9;
+  color: #11a98a;
+  background: #e8faf5;
+}
+
 .vstage__modify {
   display: flex;
   gap: 10px;

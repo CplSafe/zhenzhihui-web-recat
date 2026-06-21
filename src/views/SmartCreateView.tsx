@@ -409,6 +409,7 @@ export default function SmartCreateView() {
 
   // ── 生成视频:整片一次生成(所有分镜图+脚本+台词+字幕+音效 → seedance)──
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
+  const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
   const autoVidRef = useRef(false)
 
@@ -453,6 +454,7 @@ export default function SmartCreateView() {
         modelPlanCandidates: plans,
       })
       setFullVideo({ url, assetId })
+      setVideoVersions((prev) => [...prev, { url, assetId }])
     } catch (e: any) {
       showToast(`视频生成失败:${e?.message || ''}`, 'error')
     } finally {
@@ -550,6 +552,10 @@ export default function SmartCreateView() {
         if (id) ids.add(Number(id))
       }),
     )
+    if (fullVideo.assetId) ids.add(Number(fullVideo.assetId))
+    videoVersions.forEach((v) => {
+      if (v.assetId) ids.add(Number(v.assetId))
+    })
     if (!ids.size) return // 暂无 asset_id(数据可能还没装载完)→ 下一轮再试
     hydratedUrlsRef.current = true
     void (async () => {
@@ -602,8 +608,15 @@ export default function SmartCreateView() {
         }
         return next
       })
+      // 整片视频:按 asset_id 刷新当前 + 各历史版本签名URL
+      setFullVideo((prev) =>
+        prev.assetId && map.get(Number(prev.assetId)) ? { ...prev, url: map.get(Number(prev.assetId))! } : prev,
+      )
+      setVideoVersions((prev) =>
+        prev.map((v) => (v.assetId && map.get(Number(v.assetId)) ? { ...v, url: map.get(Number(v.assetId))! } : v)),
+      )
     })()
-  }, [workspaceId, started, shots, subjectAssets])
+  }, [workspaceId, started, shots, subjectAssets, fullVideo, videoVersions])
 
   // ── 草稿:本地(localStorage)+ 后端(/creative/projects/:id/draft)双层持久化 ──
   // 把当前页面状态打包成草稿对象(localStorage 与后端快照共用)
@@ -622,6 +635,7 @@ export default function SmartCreateView() {
     projectId,
     fullVideoUrl: fullVideo.url,
     fullVideoAssetId: fullVideo.assetId,
+    videoVersions,
   })
   // 把草稿回填到页面状态(本地恢复 / 后端恢复共用)
   const applyDraft = (d: SmartDraft) => {
@@ -637,6 +651,7 @@ export default function SmartCreateView() {
     setSubjectAssets(d.subjectAssets || {})
     setFields(d.fields || {})
     setFullVideo({ url: d.fullVideoUrl || '', assetId: d.fullVideoAssetId || 0 })
+    setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
     autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
     autoVidRef.current = true
   }
@@ -658,9 +673,18 @@ export default function SmartCreateView() {
     }
   }
 
+  // 串行化所有后端草稿保存:排队执行,前一个完成(并更新 revision)再执行下一个,
+  // 杜绝并发 PUT 用同一 revision 互相打架导致的 409 DRAFT_CONFLICT。
+  const saveChainRef = useRef<Promise<any>>(Promise.resolve())
+  const putSmartDraftToBackend = (): Promise<boolean> => {
+    const run = saveChainRef.current.catch(() => {}).then(() => doPutDraft())
+    saveChainRef.current = run
+    return run
+  }
+
   // 把当前草稿写到后端。对齐 2.0 putDraftSnapshot:保存前先确保有当前 revision,
   // 保存后用返回的 revision 同步;返回体没带 revision 则重新拉一次;409 冲突→拉新 revision 重试。
-  const putSmartDraftToBackend = async (): Promise<boolean> => {
+  const doPutDraft = async (): Promise<boolean> => {
     const id = projectIdRef.current
     const ws = Number(workspaceId || 0)
     if (!id || !ws) return false
@@ -736,7 +760,7 @@ export default function SmartCreateView() {
       window.clearTimeout(remote)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [started, requirement, reqSummary, entryMeta, projectName, nameTouched, step, maxReached, shots, subjectAssets, fields, projectId, fullVideo])
+  }, [started, requirement, reqSummary, entryMeta, projectName, nameTouched, step, maxReached, shots, subjectAssets, fields, projectId, fullVideo, videoVersions])
 
   const goStep = (i: number) => {
     const next = Math.max(0, Math.min(STEPS.length - 1, i))
@@ -1025,6 +1049,8 @@ export default function SmartCreateView() {
         generating={shotGen}
         videoUrl={fullVideo.url}
         videoGenerating={vidGenRunning}
+        videoVersions={videoVersions}
+        onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
         onShotsChange={setShots}
         onOpenElement={openSubject}
         onRegenerateImage={regenerateShotImage}
@@ -1108,6 +1134,8 @@ export default function SmartCreateView() {
               setMaxReached(0)
               setSubjectAssets({})
               setFields({})
+              setFullVideo({ url: '', assetId: 0 })
+              setVideoVersions([])
               projectIdRef.current = 0
               setProjectId(0)
               draftRevisionRef.current = 0

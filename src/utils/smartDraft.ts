@@ -21,6 +21,8 @@ export interface SmartDraft {
   /** 整片视频(seedance 一次生成) */
   fullVideoUrl?: string
   fullVideoAssetId?: number
+  /** 整片视频历史版本(每版带 asset_id,供水合刷新签名URL) */
+  videoVersions?: { url: string; assetId: number }[]
 }
 
 const killBlob = (u: any) => (typeof u === 'string' && u.startsWith('blob:') ? '' : u)
@@ -121,6 +123,11 @@ function stripHeavy(d: SmartDraft): SmartDraft {
       subjects: Array.isArray(s.subjects) ? s.subjects.map((x: any) => ({ ...x, image: killHeavy(x.image) })) : [],
     }))
   }
+  if (Array.isArray(next.videoVersions)) {
+    next.videoVersions = next.videoVersions
+      .map((v: any) => (typeof v === 'string' ? { url: killHeavy(v), assetId: 0 } : { ...v, url: killHeavy(v?.url) }))
+      .filter((v: any) => v.url)
+  }
   if (next.subjectAssets && typeof next.subjectAssets === 'object') {
     const sa: Record<string, any> = {}
     for (const [k, v] of Object.entries(next.subjectAssets)) {
@@ -149,6 +156,10 @@ export function buildSmartSnapshot(d: SmartDraft): any {
   }))
   const fvUrl = killHeavy(clean.fullVideoUrl || '')
   const fvId = Number(clean.fullVideoAssetId || 0) || 0
+  const videoVersions = (clean.videoVersions || []).map((v: any) => ({
+    url: typeof v === 'string' ? v : v?.url,
+    assetId: typeof v === 'string' ? 0 : v?.assetId,
+  }))
   return {
     flow: 'smart',
     title: clean.projectName || '',
@@ -161,7 +172,7 @@ export function buildSmartSnapshot(d: SmartDraft): any {
     storyboardItems,
     generatedVideoUrl: fvUrl,
     generatedVideoAssetId: fvId,
-    videoHistoryList: fvUrl || fvId ? [{ url: fvUrl, assetId: fvId }] : [],
+    videoHistoryList: videoVersions.length ? videoVersions : fvUrl || fvId ? [{ url: fvUrl, assetId: fvId }] : [],
     // 智能成片原生快照(精确回填,见 parseSmartSnapshot)
     smart: clean,
   }
