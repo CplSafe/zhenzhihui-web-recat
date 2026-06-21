@@ -26,7 +26,6 @@ import {
   patchCreativeProject,
   getCreativeProject,
   updateCreativeProjectDraft,
-  createCreativeProjectVersion,
   uploadAssetFile,
   getAssetDownloadUrl,
 } from '@/api/business'
@@ -143,7 +142,6 @@ export default function SmartCreateView() {
   const projectIdRef = useRef(0)
   const titlePatchedRef = useRef(false)
   const draftRevisionRef = useRef(0) // 后端草稿版本号(乐观并发)
-  const [savingVideo, setSavingVideo] = useState(false)
 
   // ── 主体素材统一管理:同名主体(@闺蜜A)共享素材,选定后所有同名处联动 ──
   // 版本/提示词存 registry;选定的图写回所有同名 subject(供表格 + 镜头编排一致展示)
@@ -889,34 +887,6 @@ export default function SmartCreateView() {
   // TODO(后续阶段): 接真实生成/保存逻辑;现仅占位提示。
   const todo = (msg: string) => () => showToast(msg, 'info')
 
-  // 保存视频:先把草稿写后端,再建「视频保存 …」版本(项目管理页据此展示成片,见 ProjectManagementView)
-  const handleSaveVideo = async () => {
-    const ws = Number(workspaceId || 0)
-    const id = projectIdRef.current
-    if (!ws || !id) {
-      showToast('项目尚未建立,无法保存', 'error')
-      return
-    }
-    if (!fullVideo.url) {
-      showToast('请先生成视频再保存', 'info')
-      return
-    }
-    if (savingVideo) return
-    setSavingVideo(true)
-    try {
-      const ok = await putSmartDraftToBackend()
-      if (!ok) throw new Error('草稿保存失败')
-      const now = new Date()
-      const pad = (n: number) => String(n).padStart(2, '0')
-      const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
-      await createCreativeProjectVersion({ projectId: id, workspaceId: ws, label: `视频保存 ${stamp}` })
-      showToast('已保存到 项目管理', 'success')
-    } catch (e: any) {
-      showToast(e?.message || '保存失败,请重试', 'error')
-    } finally {
-      setSavingVideo(false)
-    }
-  }
 
   // 下载当前整片视频:优先按 asset_id 取新签名URL → fetch 成 blob 下载;CORS 失败则新标签打开
   const handleDownloadVideo = async () => {
@@ -1085,9 +1055,7 @@ export default function SmartCreateView() {
         onOpenElement={openSubject}
         onRegenerateImage={regenerateShotImage}
         onRegenerateVideo={runFullVideo}
-        onSaveVideo={handleSaveVideo}
         onDownloadVideo={handleDownloadVideo}
-        savingVideo={savingVideo}
         onPrev={() => goStep(1)}
         debug={{
           prompt: buildTimelinePrompt({

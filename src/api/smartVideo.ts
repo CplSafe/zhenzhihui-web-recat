@@ -81,11 +81,15 @@ export async function generateFullVideo(args: {
     buildTimelinePrompt({ shots: args.shots, basePrompt: args.basePrompt, ratio: args.ratio, style: args.style }) +
     (args.note ? `\n额外修改要求:${args.note}` : '')
   const imgIds = (args.imageAssetIds || []).filter((n) => Number(n) > 0)
-  // 携带全部分镜图(按镜头顺序),让模型逐段对齐;带修改意见且有上次整片时改用该视频作输入
+  // seedance 图生视频只收「一张首帧」:多传会被后端判为非法参数,createAiTask 会把图全丢掉
+  // → 退化成纯文生视频、和分镜差别巨大。故对齐 2.0:只取第一张分镜图作首帧,其余靠时间线提示词描述。
+  // 带修改意见且有上次整片时,改用该视频作输入(role:'video')。
   const inputAssets =
     args.note && args.prevVideoAssetId
       ? [{ asset_id: args.prevVideoAssetId, role: 'video' }]
-      : imgIds.map((id, i) => ({ asset_id: id, role: 'image', index: i }))
+      : imgIds.length
+        ? [{ asset_id: imgIds[0], role: 'image' }]
+        : []
   const task = await createAiTask({
     workspaceId: args.workspaceId,
     capability: 'video',

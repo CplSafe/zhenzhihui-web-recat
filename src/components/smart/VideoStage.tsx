@@ -25,11 +25,8 @@ interface VideoStageProps {
   onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
   /** 重新生成整片(note=对整片的修改意见) */
   onRegenerateVideo: (note?: string) => void
-  /** 保存视频到项目管理 */
-  onSaveVideo: () => void
   /** 下载当前整片视频 */
   onDownloadVideo?: () => void
-  savingVideo?: boolean
   onPrev?: () => void
   /** 调试:实际喂给视频模型的提示词/参考图/各分镜文本(开发可见,正式隐藏) */
   debug?: {
@@ -50,9 +47,7 @@ export default function VideoStage({
   onOpenElement,
   onRegenerateImage,
   onRegenerateVideo,
-  onSaveVideo,
   onDownloadVideo,
-  savingVideo,
   onPrev,
   debug,
 }: VideoStageProps) {
@@ -159,14 +154,6 @@ export default function VideoStage({
           )}
           <button
             type="button"
-            className="vstage__btn vstage__btn--ghost"
-            onClick={onSaveVideo}
-            disabled={!!savingVideo}
-          >
-            {savingVideo ? '保存中…' : '保存视频'}
-          </button>
-          <button
-            type="button"
             className="vstage__btn vstage__btn--primary"
             onClick={() => onRegenerateVideo()}
             disabled={!!videoGenerating}
@@ -204,11 +191,11 @@ export default function VideoStage({
               <div className="vdbg__sec-title">① 提示词(整片时间线,送给 seedance)</div>
               <pre className="vdbg__pre">{debug.prompt}</pre>
 
-              <div className="vdbg__sec-title">② 参考图(所有分镜图,按镜头顺序送入图生视频)</div>
-              {debug.shots.some((s) => s.image) ? (
-                <div className="vdbg__imgrow">
-                  {debug.shots.map((s, i) => (s.image ? <img key={i} className="vdbg__img" src={s.image} alt={s.no} /> : null))}
-                </div>
+              <div className="vdbg__sec-title">
+                ② 首帧参考图(seedance 图生视频只收第一张作首帧;其余分镜靠提示词描述)
+              </div>
+              {debug.shots.find((s) => s.image)?.image ? (
+                <img className="vdbg__img" src={debug.shots.find((s) => s.image)!.image} alt="首帧" />
               ) : (
                 <div className="vdbg__muted">无</div>
               )}
