@@ -276,6 +276,25 @@ export default function SmartCreateView() {
       showToast(`素材上传失败:${e?.message || '请检查存储配置/网络'}`, 'error')
     }
   }
+  // 上传「额外参考图」(镜头编排面板用):直传后端成 asset(http url + asset_id),供云端草稿持久化
+  const uploadRef = async (file: File): Promise<{ url: string; assetId?: number }> => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法上传参考图', 'error')
+      return { url: '' }
+    }
+    try {
+      const out: any = await uploadAssetFile({ workspaceId: ws, file })
+      const assetId = Number(out?.asset?.id || 0) || 0
+      if (!assetId) throw new Error('未取得 asset_id')
+      const url = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
+      if (!url) throw new Error('未取得素材地址')
+      return { url, assetId }
+    } catch (e: any) {
+      showToast(`参考图上传失败:${e?.message || '请检查存储配置/网络'}`, 'error')
+      return { url: '' }
+    }
+  }
   const openSubject = (name: string, autoGen = false) =>
     setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
 
@@ -332,9 +351,9 @@ export default function SmartCreateView() {
     return map
   })()
 
-  // 当前项目内所有图(去重,标注来源):入口上传原图 + 各元素版本 + 分镜图。
+  // 当前项目内所有图(去重,标注来源 + asset_id):入口上传原图 + 各元素版本 + 分镜图。
   // 来源判定优先用后端 asset.source(uploadAssetIds);未知时回退创建时的客户端标记。
-  const projectImages: { url: string; source: 'ai' | 'upload' }[] = (() => {
+  const projectImages: { url: string; source: 'ai' | 'upload'; assetId?: number }[] = (() => {
     const classify = (url: string, guess: 'ai' | 'upload'): 'ai' | 'upload' => {
       const id = urlAssetId.get(url)
       if (id && uploadAssetIds.has(id)) return 'upload'
@@ -353,7 +372,7 @@ export default function SmartCreateView() {
     })
     return [...m.entries()]
       .filter(([u]) => /^(https?:|data:)/.test(u))
-      .map(([url, source]) => ({ url, source }))
+      .map(([url, source]) => ({ url, source, assetId: urlAssetId.get(url) || 0 }))
   })()
 
   const boardSubjects: BoardSubject[] = (() => {
@@ -444,7 +463,10 @@ export default function SmartCreateView() {
               image: url,
               imageAssetId: assetId,
               imagePrompt: prompt,
-              imageVersions: [...(x.imageVersions || []), { url, assetId }],
+              // 每版记录自己用到的提示词与素材 url,切换历史版本可还原
+              imageVersions: [...(x.imageVersions || []), { url, assetId, prompt, refs: elUrls }],
+              // 手动出图:把这次选中的素材固化为该镜的选中态(随草稿持久)
+              ...(manual ? { selectedRefs: elUrls } : {}),
             }
           : x,
       ),
@@ -656,6 +678,9 @@ export default function SmartCreateView() {
       sh.subjects.forEach((su) => {
         if (su.assetId) ids.add(Number(su.assetId))
       })
+      ;(sh.extraRefs || []).forEach((r: any) => {
+        if (r?.assetId) ids.add(Number(r.assetId))
+      })
     })
     Object.values(subjectAssets).forEach((e: any) =>
       Object.values(e?.ids || {}).forEach((id: any) => {
@@ -681,18 +706,41 @@ export default function SmartCreateView() {
       )
       if (!map.size) return
       setShots((prev) =>
-        prev.map((sh) => ({
-          ...sh,
-          image: sh.imageAssetId && map.get(Number(sh.imageAssetId)) ? map.get(Number(sh.imageAssetId))! : sh.image,
-          imageVersions: (sh.imageVersions || []).map((v: any) => {
-            const o = typeof v === 'string' ? { url: v, assetId: 0 } : v
-            const nu = o.assetId && map.get(Number(o.assetId))
-            return nu ? { ...o, url: nu } : o
-          }),
-          subjects: sh.subjects.map((su) =>
-            su.assetId && map.get(Number(su.assetId)) ? { ...su, image: map.get(Number(su.assetId))! } : su,
-          ),
-        })),
+        prev.map((sh) => {
+          // 该镜内 旧url→新url 映射(元素/额外参考/版本/当前图各自带 asset_id),用于刷新 selectedRefs/版本refs
+          const urlRemap = new Map<string, string>()
+          const note = (oldUrl: string | undefined, id: any) => {
+            const nu = id && map.get(Number(id))
+            if (oldUrl && nu) urlRemap.set(oldUrl, nu)
+          }
+          note(sh.image, sh.imageAssetId)
+          sh.subjects.forEach((su) => note(su.image, su.assetId))
+          ;(sh.extraRefs || []).forEach((r: any) => note(r?.url, r?.assetId))
+          ;(sh.imageVersions || []).forEach((v: any) => {
+            if (v && typeof v !== 'string') note(v.url, v.assetId)
+          })
+          const remap = (u: string) => urlRemap.get(u) || u
+          return {
+            ...sh,
+            image: sh.imageAssetId && map.get(Number(sh.imageAssetId)) ? map.get(Number(sh.imageAssetId))! : sh.image,
+            imageVersions: (sh.imageVersions || []).map((v: any) => {
+              const o = typeof v === 'string' ? { url: v, assetId: 0 } : v
+              const nu = o.assetId && map.get(Number(o.assetId))
+              return {
+                ...o,
+                url: nu || o.url,
+                ...(o.refs ? { refs: o.refs.map(remap) } : {}),
+              }
+            }),
+            subjects: sh.subjects.map((su) =>
+              su.assetId && map.get(Number(su.assetId)) ? { ...su, image: map.get(Number(su.assetId))! } : su,
+            ),
+            extraRefs: (sh.extraRefs || []).map((r: any) =>
+              r?.assetId && map.get(Number(r.assetId)) ? { ...r, url: map.get(Number(r.assetId))! } : r,
+            ),
+            selectedRefs: sh.selectedRefs ? sh.selectedRefs.map(remap) : sh.selectedRefs,
+          }
+        }),
       )
       setSubjectAssets((prev) => {
         const next: any = { ...prev }
@@ -1183,6 +1231,7 @@ export default function SmartCreateView() {
           onShotsChange={setShots}
           onOpenElement={openSubject}
           projectImages={projectImages}
+          onUploadRef={uploadRef}
           onRegenerateImage={regenerateShotImage}
           onOptimizePrompt={(sh, materials) =>
             refineShotPrompt({

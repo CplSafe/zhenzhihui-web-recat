@@ -25,7 +25,12 @@ export interface Shot {
   image?: string // 当前分镜图(成片画面)
   imageAssetId?: number // 当前分镜图的后端 asset_id
   imagePrompt?: string // 生成该分镜图实际用到的提示词(可见/可编辑/可重生成)
-  imageVersions?: { url: string; assetId: number }[] // 分镜图历史版本(每版带 asset_id,供水合刷新签名URL)
+  // 该镜「素材编辑态」(持久化,刷新/切换不丢):选中参与出图的素材 url + 额外添加的素材
+  selectedRefs?: string[] // 当前选中参与出图的素材 url(元素图 + extraRefs)
+  extraRefs?: { url: string; assetId?: number }[] // 额外添加的素材(项目选/上传)
+  // 分镜图历史版本:每版记录自己用到的提示词与素材,切换可还原
+  // 每版带 asset_id(供水合刷新签名URL)+ 该版用到的提示词与素材 url
+  imageVersions?: { url: string; assetId: number; prompt?: string; refs?: string[] }[]
   videoUrl?: string // 该镜生成的视频片段
   videoAssetId?: number
 }

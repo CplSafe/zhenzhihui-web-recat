@@ -37,6 +37,12 @@ function sanitize(d: SmartDraft): SmartDraft {
       ...s,
       image: killBlob(s.image),
       subjects: Array.isArray(s.subjects) ? s.subjects.map((x: any) => ({ ...x, image: killBlob(x.image) })) : [],
+      extraRefs: Array.isArray(s.extraRefs)
+        ? s.extraRefs.map((r: any) => ({ ...r, url: killBlob(r?.url) })).filter((r: any) => r.url)
+        : s.extraRefs,
+      selectedRefs: Array.isArray(s.selectedRefs)
+        ? s.selectedRefs.map(killBlob).filter(Boolean)
+        : s.selectedRefs,
     }))
   }
   if (next.subjectAssets && typeof next.subjectAssets === 'object') {
@@ -117,10 +123,20 @@ function stripHeavy(d: SmartDraft): SmartDraft {
       image: killHeavy(s.image),
       imageVersions: Array.isArray(s.imageVersions)
         ? s.imageVersions
-            .map((v: any) => (typeof v === 'string' ? { url: killHeavy(v), assetId: 0 } : { ...v, url: killHeavy(v?.url) }))
+            .map((v: any) =>
+              typeof v === 'string'
+                ? { url: killHeavy(v), assetId: 0 }
+                : { ...v, url: killHeavy(v?.url), ...(v?.refs ? { refs: v.refs.map(killHeavy).filter(Boolean) } : {}) },
+            )
             .filter((v: any) => v.url)
         : s.imageVersions,
       subjects: Array.isArray(s.subjects) ? s.subjects.map((x: any) => ({ ...x, image: killHeavy(x.image) })) : [],
+      extraRefs: Array.isArray(s.extraRefs)
+        ? s.extraRefs.map((r: any) => ({ ...r, url: killHeavy(r?.url) })).filter((r: any) => r.url)
+        : s.extraRefs,
+      selectedRefs: Array.isArray(s.selectedRefs)
+        ? s.selectedRefs.map(killHeavy).filter(Boolean)
+        : s.selectedRefs,
     }))
   }
   if (Array.isArray(next.videoVersions)) {

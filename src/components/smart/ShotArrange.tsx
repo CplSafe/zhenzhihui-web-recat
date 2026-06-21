@@ -18,7 +18,9 @@ interface ShotArrangeProps {
   /** 点元素 → 打开版本管理 */
   onOpenElement?: (name: string) => void
   /** 当前项目所有图(供"从项目素材添加") */
-  projectImages?: { url: string; source: 'ai' | 'upload' }[]
+  projectImages?: { url: string; source: 'ai' | 'upload'; assetId?: number }[]
+  /** 上传额外参考图 → 直传后端成 asset(http url + asset_id) */
+  onUploadRef?: (file: File) => Promise<{ url: string; assetId?: number }>
   /** 重新生成分镜图(统一:提示词 + 选中素材 + 是否携带当前图) */
   onRegenerateImage: (shot: Shot, opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] }) => void
   /** 优化该镜生成提示词(据画面描述+大纲+选中素材),返回 {prompt, debug} */
@@ -34,6 +36,7 @@ export default function ShotArrange({
   onShotsChange,
   onOpenElement,
   projectImages,
+  onUploadRef,
   onRegenerateImage,
   onOptimizePrompt,
 }: ShotArrangeProps) {
@@ -62,6 +65,7 @@ export default function ShotArrange({
           shot={selected}
           regenerating={!!generating[selected.id]}
           projectImages={projectImages}
+          onUploadRef={onUploadRef}
           onOpenElement={onOpenElement}
           onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}

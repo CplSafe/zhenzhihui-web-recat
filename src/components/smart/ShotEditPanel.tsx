@@ -19,8 +19,10 @@ interface ShotEditPanelProps {
   regenerating?: boolean
   /** compact=视频生成页:只留 分镜图缩略 + 素材 + 台词/字幕/音效(分镜图编辑在镜头编排页做) */
   compact?: boolean
-  /** 当前项目所有图(带来源),供"从项目素材添加" */
-  projectImages?: { url: string; source: 'ai' | 'upload' }[]
+  /** 当前项目所有图(带来源+asset_id),供"从项目素材添加" */
+  projectImages?: { url: string; source: 'ai' | 'upload'; assetId?: number }[]
+  /** 上传额外参考图 → 直传后端成 asset(返回 http url + asset_id,供云端持久化);缺省回退本地 dataURL */
+  onUploadRef?: (file: File) => Promise<{ url: string; assetId?: number }>
   onOpenElement?: (name: string) => void
   /** 即时保存字段(台词/字幕/音效/生成提示词/切换分镜图版本/画面描述) */
   onPatch: (patch: Partial<Shot>) => void
@@ -40,6 +42,7 @@ export default function ShotEditPanel({
   regenerating,
   compact,
   projectImages = [],
+  onUploadRef,
   onOpenElement,
   onPatch,
   onRegenerateImage,
@@ -62,12 +65,18 @@ export default function ShotEditPanel({
   const confirmPicked = () => {
     const urls = [...picked]
     if (urls.length) {
-      setExtraRefs((a) => [...a, ...urls.filter((u) => !a.includes(u))])
-      setSelected((s) => {
-        const n = new Set(s)
-        urls.forEach((u) => n.add(u))
-        return n
+      const nextExtra = [...extraRefs, ...urls.filter((u) => !extraRefs.includes(u))]
+      const nextIds = { ...extraRefIds }
+      urls.forEach((u) => {
+        const found = projectImages.find((p) => p.url === u)
+        if (found?.assetId) nextIds[u] = found.assetId
       })
+      const nextSel = new Set(selected)
+      urls.forEach((u) => nextSel.add(u))
+      setExtraRefs(nextExtra)
+      setExtraRefIds(nextIds)
+      setSelected(nextSel)
+      persistRefs(nextSel, nextExtra, nextIds)
     }
     setPicked(new Set())
     setPickerOpen(false)
@@ -84,17 +93,32 @@ export default function ShotEditPanel({
   )
   const elUrls = Array.from(new Set(shot.subjects.map((s) => s.image).filter(Boolean))) as string[]
 
-  // 本地草稿(切换分镜时重置):提示词(默认回退到画面描述,生成前也能看/改)/ 选中素材 / 额外上传 / 是否携带当前图
+  // 本地草稿:提示词(默认回退到画面描述,生成前也能看/改)/ 选中素材 / 额外参考图 / 是否携带当前图。
+  // 初值取自分镜已持久化的字段(selectedRefs/extraRefs),刷新/切换/重进都能还原。
   const [imgPrompt, setImgPrompt] = useState(shot.imagePrompt || shot.desc || '')
-  const [selected, setSelected] = useState<Set<string>>(new Set(elUrls))
-  const [extraRefs, setExtraRefs] = useState<string[]>([])
+  const [selected, setSelected] = useState<Set<string>>(
+    new Set(shot.selectedRefs && shot.selectedRefs.length ? shot.selectedRefs : elUrls),
+  )
+  const [extraRefs, setExtraRefs] = useState<string[]>((shot.extraRefs || []).map((r) => r.url))
+  // 额外参考图的 asset_id(持久化用):url → assetId
+  const [extraRefIds, setExtraRefIds] = useState<Record<string, number>>(
+    Object.fromEntries((shot.extraRefs || []).map((r) => [r.url, r.assetId || 0])),
+  )
   const [carry, setCarry] = useState(!!current)
-  // 仅「切换分镜」时重置选择/上传/携带等本地态(不能依赖 imagePrompt,否则点"优化提示词"
+  // 把「选中素材 + 额外参考图」写回分镜(随 shots 进本地+云端草稿),供刷新/切换还原
+  const persistRefs = (sel: Set<string>, ex: string[], exIds: Record<string, number>) =>
+    onPatch({
+      selectedRefs: [...sel],
+      extraRefs: ex.map((u) => ({ url: u, assetId: exIds[u] || 0 })),
+    })
+  // 仅「切换分镜」时从该镜已存字段重置本地态(不能依赖 imagePrompt,否则点"优化提示词"
   // 改了 imagePrompt → 重置 → 刚选的素材/刚加的图被清掉)
   useEffect(() => {
+    const els = Array.from(new Set(shot.subjects.map((s) => s.image).filter(Boolean))) as string[]
     setImgPrompt(shot.imagePrompt || shot.desc || '')
-    setSelected(new Set(Array.from(new Set(shot.subjects.map((s) => s.image).filter(Boolean))) as string[]))
-    setExtraRefs([])
+    setSelected(new Set(shot.selectedRefs && shot.selectedRefs.length ? shot.selectedRefs : els))
+    setExtraRefs((shot.extraRefs || []).map((r) => r.url))
+    setExtraRefIds(Object.fromEntries((shot.extraRefs || []).map((r) => [r.url, r.assetId || 0])))
     setCarry(!!shot.image)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shot.id])
@@ -137,23 +161,52 @@ export default function ShotEditPanel({
     )
   }
 
-  const toggle = (url: string) =>
-    setSelected((s) => {
-      const n = new Set(s)
-      if (n.has(url)) n.delete(url)
-      else n.add(url)
-      return n
-    })
+  const toggle = (url: string) => {
+    const n = new Set(selected)
+    if (n.has(url)) n.delete(url)
+    else n.add(url)
+    setSelected(n)
+    persistRefs(n, extraRefs, extraRefIds)
+  }
+  const removeExtra = (url: string) => {
+    const nextExtra = extraRefs.filter((u) => u !== url)
+    const nextIds = { ...extraRefIds }
+    delete nextIds[url]
+    const nextSel = new Set(selected)
+    nextSel.delete(url)
+    setExtraRefs(nextExtra)
+    setExtraRefIds(nextIds)
+    setSelected(nextSel)
+    persistRefs(nextSel, nextExtra, nextIds)
+  }
   const addExtra = async (f: File) => {
-    const url = await fileToDataUrl(f).catch(() => '')
-    if (url) {
-      setExtraRefs((a) => [...a, url])
-      setSelected((s) => new Set(s).add(url))
+    // 优先直传后端成 asset(http url + asset_id),才能存进云端草稿;失败/未提供回退本地 dataURL
+    let url = ''
+    let assetId = 0
+    if (onUploadRef) {
+      const r = await onUploadRef(f).catch(() => null)
+      if (r?.url) {
+        url = r.url
+        assetId = r.assetId || 0
+      }
     }
+    if (!url) url = await fileToDataUrl(f).catch(() => '')
+    if (!url) return
+    const nextExtra = [...extraRefs, url]
+    const nextIds = { ...extraRefIds, [url]: assetId }
+    const nextSel = new Set(selected).add(url)
+    setExtraRefs(nextExtra)
+    setExtraRefIds(nextIds)
+    setSelected(nextSel)
+    persistRefs(nextSel, nextExtra, nextIds)
   }
   const doGenerate = () => {
     const refUrls = [...elUrls.filter((u) => selected.has(u)), ...extraRefs.filter((u) => selected.has(u))]
-    onPatch({ imagePrompt: imgPrompt })
+    onPatch({
+      imagePrompt: imgPrompt,
+      selectedRefs: [...selected],
+      extraRefs: extraRefs.map((u) => ({ url: u, assetId: extraRefIds[u] || 0 })),
+    })
     onRegenerateImage(shot, { editPrompt: imgPrompt.trim() || undefined, refUrls, carryCurrent: carry })
   }
 
@@ -198,7 +251,22 @@ export default function ShotEditPanel({
                     key={i}
                     type="button"
                     className={`sedit__hist${v.url === current ? ' is-active' : ''}`}
-                    onClick={() => onPatch({ image: v.url, imageAssetId: v.assetId })}
+                    onClick={() => {
+                      // 切到该历史版本:同时还原它当时用到的提示词与选中素材
+                      const refs = v.refs && v.refs.length ? v.refs : undefined
+                      if (refs) {
+                        const nextExtra = Array.from(new Set([...extraRefs, ...refs.filter((u) => !elUrls.includes(u))]))
+                        setExtraRefs(nextExtra)
+                        setSelected(new Set(refs))
+                      }
+                      if (v.prompt) setImgPrompt(v.prompt)
+                      onPatch({
+                        image: v.url,
+                        imageAssetId: v.assetId,
+                        ...(v.prompt ? { imagePrompt: v.prompt } : {}),
+                        ...(refs ? { selectedRefs: refs } : {}),
+                      })
+                    }}
                   >
                     <img src={v.url} alt="" />
                   </button>
@@ -255,11 +323,7 @@ export default function ShotEditPanel({
                 <div className="sedit__el-meta">
                   <span className="sedit__el-name">上传</span>
                 </div>
-                <button
-                  type="button"
-                  className="sedit__el-mng"
-                  onClick={() => setExtraRefs((a) => a.filter((_, j) => j !== i))}
-                >
+                <button type="button" className="sedit__el-mng" onClick={() => removeExtra(u)}>
                   移除
                 </button>
               </div>
