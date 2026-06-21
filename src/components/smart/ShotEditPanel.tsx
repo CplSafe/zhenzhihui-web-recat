@@ -26,11 +26,11 @@ interface ShotEditPanelProps {
   onPatch: (patch: Partial<Shot>) => void
   /** 出图:editPrompt 提示词 + refUrls 选中素材 + carryCurrent 是否带当前图 */
   onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
-  /** 据画面描述+大纲+选中素材(看图)优化生成提示词,返回优化后的提示词 */
+  /** 据画面描述+大纲+选中素材(看图)优化生成提示词,返回 {prompt, debug} */
   onOptimizePrompt?: (
     shot: Shot,
     materials: { name?: string; kind?: string; url?: string }[],
-  ) => Promise<string>
+  ) => Promise<{ prompt: string; debug?: any }>
 }
 
 const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
@@ -49,6 +49,9 @@ export default function ShotEditPanel({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState<Set<string>>(new Set()) // 选择器内多选暂存
   const [optimizing, setOptimizing] = useState(false)
+  const [optDebug, setOptDebug] = useState<any>(null) // 优化提示词调试信息
+  const [showOptDebug, setShowOptDebug] = useState(false)
+  const debugEnabled = import.meta.env.DEV
   const togglePicked = (url: string) =>
     setPicked((s) => {
       const n = new Set(s)
@@ -313,6 +316,12 @@ export default function ShotEditPanel({
 
           <div className="sedit__sub sedit__sub--row">
             生成提示词
+            <span style={{ display: 'flex', gap: 6 }}>
+              {debugEnabled && optDebug && (
+                <button type="button" className="sedit__optimize" onClick={() => setShowOptDebug(true)}>
+                  🐞 调试
+                </button>
+              )}
             {onOptimizePrompt && (
               <button
                 type="button"
@@ -328,11 +337,12 @@ export default function ShotEditPanel({
                         .map((su) => ({ name: stripAt(su.tag), kind: su.kind, url: su.image })),
                       ...extraRefs.filter((u) => selected.has(u)).map((u) => ({ name: '参考素材', url: u })),
                     ]
-                    const p = await onOptimizePrompt(shot, mats)
-                    if (p) {
-                      setImgPrompt(p)
-                      onPatch({ imagePrompt: p })
+                    const r = await onOptimizePrompt(shot, mats)
+                    if (r?.prompt) {
+                      setImgPrompt(r.prompt)
+                      onPatch({ imagePrompt: r.prompt })
                     }
+                    setOptDebug(r?.debug || null)
                   } finally {
                     setOptimizing(false)
                   }
@@ -341,6 +351,7 @@ export default function ShotEditPanel({
                 {optimizing ? '优化中…' : '✦ 优化提示词'}
               </button>
             )}
+            </span>
           </div>
           <textarea
             className="sedit__ta sedit__ta--prompt"
@@ -381,6 +392,48 @@ export default function ShotEditPanel({
           e.target.value = ''
         }}
       />
+
+      {/* 优化提示词 · 调试弹窗(开发可见) */}
+      {debugEnabled && showOptDebug && optDebug && (
+        <div className="sedit-dbg-mask" onClick={(e) => e.target === e.currentTarget && setShowOptDebug(false)}>
+          <div className="sedit-dbg" role="dialog" aria-label="优化提示词调试">
+            <div className="sedit-dbg__head">
+              <span>优化提示词 · 调试</span>
+              <button type="button" onClick={() => setShowOptDebug(false)} aria-label="关闭">
+                ×
+              </button>
+            </div>
+            <div className="sedit-dbg__body">
+              <div className="sedit-dbg__t">模型 / 通道</div>
+              <pre className="sedit-dbg__pre">{`${optDebug.model || ''}  ·  ${optDebug.endpoint || ''}`}</pre>
+              <div className="sedit-dbg__t">① 选中素材(交给模型看图的)</div>
+              {optDebug.materials?.length ? (
+                <div className="sedit-dbg__imgs">
+                  {optDebug.materials.map((m: any, i: number) => (
+                    <figure key={i}>
+                      {m.url ? <img src={m.url} alt="" /> : <span className="sedit-dbg__noimg">无图</span>}
+                      <figcaption>
+                        {m.name || '素材'}
+                        {m.kind ? `/${m.kind}` : ''}
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              ) : (
+                <div className="sedit-dbg__muted">无</div>
+              )}
+              <div className="sedit-dbg__t">② System(规则)</div>
+              <pre className="sedit-dbg__pre">{optDebug.system}</pre>
+              <div className="sedit-dbg__t">③ 输入(大纲 + 脚本 + 素材列表)</div>
+              <pre className="sedit-dbg__pre">{optDebug.userText}</pre>
+              <div className="sedit-dbg__t">④ 模型原始返回</div>
+              <pre className="sedit-dbg__pre">{optDebug.raw || '(空)'}</pre>
+              <div className="sedit-dbg__t">⑤ 清洗后写入的提示词</div>
+              <pre className="sedit-dbg__pre">{optDebug.prompt || '(空)'}</pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

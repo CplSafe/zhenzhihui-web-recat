@@ -305,22 +305,23 @@ export async function refineShotPrompt(
     materials?: { name?: string; kind?: string; url?: string }[]
   },
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<{ prompt: string; debug: any }> {
   const desc = (input.desc || '').trim()
   const outline = (input.outline || '').trim()
   const mats = (input.materials || []).filter((m) => m && (m.name || m.url))
   const withImg = mats.filter((m) => m.url)
-  if (!desc && !mats.length) return desc
+  if (!desc && !mats.length) return { prompt: desc, debug: { note: '无可用输入' } }
 
   const system =
     '你是 AI 绘画提示词专家。下面给出【整体创作大纲】(仅供理解产品调性/受众/风格,不可照搬其产品)、' +
     '【这一个分镜的画面描述=脚本】和【该镜选中的素材图(逐张看图识别其真实外观/类型)】。' +
-    '请综合三者,为「这一个分镜」输出一段简洁、具体、可直接用于文生图/图生图的中文画面提示词:' +
-    '①【选中的素材图里的每一个主体都必须出现在画面中】,按其真实外观描述(普通的就写普通,' +
-    '不要把它说成大纲里的高端产品);即使脚本文字没提到该素材,也要把它自然地组织进画面;' +
+    '请综合三者,为「这一个分镜」输出一段【只描述画面正向内容】的中文文生图提示词:' +
+    '①【选中的素材图里的每一个主体都必须正向出现在画面中】,按其真实外观如实描述(普通/破旧的就如实写,' +
+    '也照样放进画面,不要因为它不够高端就排除);即使脚本文字没提到该素材,也要把它自然地组织进画面;' +
     '②以画面描述(脚本)作为场景/动作/氛围与本镜意图的依据(如对比镜要体现对比关系);' +
-    '③绝不把大纲里"未被选中"的其它产品/品牌强加进本镜;' +
-    '④结合大纲调性/风格保持系列一致;⑤描述主体、动作、场景、构图景别、光线氛围、关键细节;' +
+    '③大纲只作调性参考,不要把大纲里"未被选中"的其它产品/品牌加进来;' +
+    '④【严禁出现任何否定/排除表述】——不得包含"不包含/不要/没有/排除/避免/无X"之类词语(否定词会干扰文生图),只写画面里有什么;' +
+    '⑤描述主体、动作、场景、构图景别、光线氛围、关键细节;' +
     '不要编号、不要引号、不要解释、不要换行,直接输出提示词。'
 
   const useVl = withImg.length > 0
@@ -369,7 +370,19 @@ export async function refineShotPrompt(
     .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
     .replace(/\s*\n+\s*/g, ',')
     .trim()
-  return cleaned || desc
+  const prompt = cleaned || desc
+  return {
+    prompt,
+    debug: {
+      model: useVl ? VL_MODEL_NAME : MODEL_NAME,
+      endpoint: useVl ? 'VL(读图)' : '纯文本',
+      system,
+      userText: textPart,
+      materials: mats.map((m) => ({ name: m.name, kind: m.kind, url: m.url })),
+      raw,
+      prompt,
+    },
+  }
 }
 
 /**
