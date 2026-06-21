@@ -18,7 +18,6 @@ import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement, refineElementPrompt } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
-import { generateImage, sizeForRatio } from '@/api/smartImage'
 import { generateShotImage, ensureAssetId, persistImageAsset, refreshAssetUrl } from '@/api/smartShotImage'
 import { generateFullVideo } from '@/api/smartVideo'
 import VideoStage from '@/components/smart/VideoStage'
@@ -190,10 +189,14 @@ export default function SmartCreateView() {
     return ''
   }
   const genForSubject = async (name: string, prompt: string) => {
-    // prompt 已是弹窗里(经 Qwen 润色或用户编辑过的)干净画面提示词,直接出图;不再二次润色
-    const raw = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
-    // 落库:dataURL → 后端 asset,刷新后不丢图
-    const { url, assetId } = await persistImageAsset(Number(workspaceId || 0), raw)
+    // 全云端:走后端文生图(image.text_to_image),产出即后端 asset(http url + asset_id),天然持久化
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法生成素材', 'error')
+      return
+    }
+    const plans = await resolvePlanCandidates()
+    const { url, assetId } = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: [], modelPlanCandidates: plans })
     addSubjectVersion(name, url, assetId, 'ai', prompt)
   }
   const uploadForSubject = async (name: string, url: string) => {
@@ -290,21 +293,10 @@ export default function SmartCreateView() {
         ]
           .filter(Boolean)
           .join(';')
-    let url = ''
-    let assetId = 0
-    try {
-      // 优先后端文/图生图(带素材组合 + 连贯)
-      const r = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates: plans })
-      url = r.url
-      assetId = Number(r.assetId || 0) || 0
-    } catch {
-      // 后端未启用图像模型等失败 → 退化本地 Qwen-Image(文生图,暂无参考/连贯)
-      url = await generateImage({ prompt, size: sizeForRatio(entryMeta?.ratio) })
-    }
-    // 落库:本地兜底的 dataURL → 后端 asset(刷新不丢图);后端图已是 http,保留其 assetId
-    const persisted = await persistImageAsset(ws, url, cache)
-    url = persisted.url
-    if (persisted.assetId) assetId = persisted.assetId
+    // 全云端:后端文/图生图(带素材组合 + 连贯),产出即后端 asset(http + asset_id),天然持久
+    const r = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates: plans })
+    const url = r.url
+    const assetId = Number(r.assetId || 0) || 0
     setShots((prev) =>
       prev.map((x) =>
         x.id === sh.id
