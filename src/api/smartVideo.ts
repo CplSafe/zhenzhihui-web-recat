@@ -81,15 +81,15 @@ export async function generateFullVideo(args: {
     buildTimelinePrompt({ shots: args.shots, basePrompt: args.basePrompt, ratio: args.ratio, style: args.style }) +
     (args.note ? `\n额外修改要求:${args.note}` : '')
   const imgIds = (args.imageAssetIds || []).filter((n) => Number(n) > 0)
-  // seedance 图生视频只收「一张首帧」:多传会被后端判为非法参数,createAiTask 会把图全丢掉
-  // → 退化成纯文生视频、和分镜差别巨大。故对齐 2.0:只取第一张分镜图作首帧,其余靠时间线提示词描述。
-  // 带修改意见且有上次整片时,改用该视频作输入(role:'video')。
+
+  // 输入参考:带修改意见+有上次整片→用该视频(role:'video');否则把「全部分镜图」按镜头顺序
+  // 作参考帧送入(干净格式 {asset_id, role:'image'},不加非标准字段)。
   const inputAssets =
     args.note && args.prevVideoAssetId
       ? [{ asset_id: args.prevVideoAssetId, role: 'video' }]
-      : imgIds.length
-        ? [{ asset_id: imgIds[0], role: 'image' }]
-        : []
+      : imgIds.map((id) => ({ asset_id: id, role: 'image' }))
+
+  // 只跑一次,不做静默重试(视频模型很贵,失败直接抛错由用户决定)
   const task = await createAiTask({
     workspaceId: args.workspaceId,
     capability: 'video',
@@ -99,8 +99,7 @@ export async function generateFullVideo(args: {
     prompt,
     inputAssets,
     params: (model: any) => ({
-      // 强制带音频:部分模型 schema 没声明 audio 字段会被丢弃,这里兜底显式带上 generate_audio
-      generate_audio: true,
+      generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
       ...buildVideoGenerationParams(model, {
         duration: normalizeSeedanceDuration(totalDurationSec(args.shots) || 10),
         resolution: '720p',
@@ -109,7 +108,6 @@ export async function generateFullVideo(args: {
       }),
     }),
   })
-  // 视频生成耗时长,放宽轮询超时(实际不会误触发;默认 120s 会把正常生成判成超时)
   const completed = await waitForAiTask({
     workspaceId: args.workspaceId,
     task,

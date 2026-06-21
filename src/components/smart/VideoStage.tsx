@@ -191,11 +191,11 @@ export default function VideoStage({
               <div className="vdbg__sec-title">① 提示词(整片时间线,送给 seedance)</div>
               <pre className="vdbg__pre">{debug.prompt}</pre>
 
-              <div className="vdbg__sec-title">
-                ② 首帧参考图(seedance 图生视频只收第一张作首帧;其余分镜靠提示词描述)
-              </div>
-              {debug.shots.find((s) => s.image)?.image ? (
-                <img className="vdbg__img" src={debug.shots.find((s) => s.image)!.image} alt="首帧" />
+              <div className="vdbg__sec-title">② 参考帧(全部分镜图按镜头顺序送入图生视频)</div>
+              {debug.shots.some((s) => s.image) ? (
+                <div className="vdbg__imgrow">
+                  {debug.shots.map((s, i) => (s.image ? <img key={i} className="vdbg__img" src={s.image} alt={s.no} /> : null))}
+                </div>
               ) : (
                 <div className="vdbg__muted">无</div>
               )}
