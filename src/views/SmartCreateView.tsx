@@ -195,9 +195,14 @@ export default function SmartCreateView() {
       showToast('未选择工作空间,无法生成素材', 'error')
       return
     }
-    const plans = await resolvePlanCandidates()
-    const { url, assetId } = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: [], modelPlanCandidates: plans })
-    addSubjectVersion(name, url, assetId, 'ai', prompt)
+    try {
+      const plans = await resolvePlanCandidates()
+      const { url, assetId } = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: [], modelPlanCandidates: plans })
+      addSubjectVersion(name, url, assetId, 'ai', prompt)
+    } catch (e: any) {
+      // 不再静默:把后端错误(如未启用图像模型)显示出来
+      showToast(`素材「${name}」生成失败:${e?.message || '请重试'}`, 'error')
+    }
   }
   const uploadForSubject = async (name: string, url: string) => {
     const out = await persistImageAsset(Number(workspaceId || 0), url)

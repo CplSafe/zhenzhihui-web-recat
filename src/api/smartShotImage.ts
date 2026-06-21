@@ -5,6 +5,7 @@
  */
 // @ts-nocheck
 import { createAiTask, waitForAiTask, uploadAssetFile, extractTaskMediaUrls, getAssetDownloadUrl } from './business'
+import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 
 /** 把图片(objectURL / dataURL / http)上传为后端素材,返回 asset_id;带缓存避免重复上传。 */
 export async function ensureAssetId(
@@ -94,7 +95,12 @@ export async function generateShotImage(args: {
   })
   // 分镜图生成放宽轮询超时(默认 120s 偏短)
   const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 30 * 60 * 1000 })
-  const url = extractTaskMediaUrls(completed)[0] || ''
+  const assetId = outputAssetId(completed)
+  // 对齐 2.0 runImageTask:优先 resolveGeneratedMediaUrls(可用 asset_id 换签名URL),
+  // 再退回 outputs[].url / asset 下载地址,避免后端只返回 asset_id 时取不到图
+  let url = (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
+  if (!url) url = extractTaskMediaUrls(completed)[0] || ''
+  if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('未生成分镜图')
-  return { url, assetId: outputAssetId(completed) }
+  return { url, assetId }
 }
