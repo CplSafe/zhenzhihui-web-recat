@@ -17,6 +17,20 @@ interface VideoStageProps {
   videoUrl?: string
   /** 整片生成中 */
   videoGenerating?: boolean
+  /** 生成中的阶段文案(如「人脸脱敏 2/9…」),缺省显示「视频生成中…」 */
+  videoStatusText?: string
+  /** 人脸脱敏调试:每镜的输入/输出/模型/状态(开发可见) */
+  faceBlurDebug?: {
+    no?: string
+    srcAssetId?: number
+    outAssetId?: number
+    outUrl?: string
+    model?: number
+    status?: string
+    error?: string
+    ok?: boolean
+    cached?: boolean
+  }[]
   /** 整片历史版本(点击切换) */
   videoVersions?: { url: string; assetId: number }[]
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
@@ -42,6 +56,8 @@ export default function VideoStage({
   generating = {},
   videoUrl,
   videoGenerating,
+  videoStatusText,
+  faceBlurDebug,
   videoVersions = [],
   onSwitchVideo,
   onShotsChange,
@@ -56,6 +72,7 @@ export default function VideoStage({
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   const [note, setNote] = useState('')
   const [showDebug, setShowDebug] = useState(false)
+  const [showBlurDebug, setShowBlurDebug] = useState(false)
   const debugEnabled = import.meta.env.DEV // 正式版自动隐藏
   useEffect(() => {
     if (!shots.some((s) => s.id === selectedId)) setSelectedId(shots[0]?.id ?? null)
@@ -86,12 +103,17 @@ export default function VideoStage({
               🐞 调试信息
             </button>
           )}
+          {debugEnabled && faceBlurDebug && faceBlurDebug.length > 0 && (
+            <button type="button" className="vstage__debug-btn" onClick={() => setShowBlurDebug(true)}>
+              🐞 脱敏调试
+            </button>
+          )}
         </div>
         <div className="vstage__player">
           {videoGenerating ? (
             <div className="vstage__player-ph">
               <span className="vstage__spin" aria-hidden="true" />
-              视频生成中…
+              {videoStatusText || '视频生成中…'}
             </div>
           ) : videoUrl ? (
             <video
@@ -236,6 +258,43 @@ export default function VideoStage({
                       <div><b>台词</b>:{s.line || '—'}</div>
                       <div><b>字幕</b>:{s.subtitle || '—'}</div>
                       <div><b>音效</b>:{s.sfx || '—'}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 脱敏调试弹框:正式出视频前对每张分镜图的人脸脱敏结果(开发可见) */}
+      {debugEnabled && showBlurDebug && faceBlurDebug && faceBlurDebug.length > 0 && (
+        <div className="vdbg-mask" onClick={(e) => e.target === e.currentTarget && setShowBlurDebug(false)}>
+          <div className="vdbg" role="dialog" aria-label="人脸脱敏调试信息">
+            <div className="vdbg__head">
+              <span>人脸脱敏 · 调试信息</span>
+              <button type="button" onClick={() => setShowBlurDebug(false)} aria-label="关闭">
+                ×
+              </button>
+            </div>
+            <div className="vdbg__body">
+              <div className="vdbg__sec-title">
+                能力 image.face_detect · 共 {faceBlurDebug.length} 张 · 成功{' '}
+                {faceBlurDebug.filter((b) => b.ok).length} 张
+              </div>
+              {faceBlurDebug.map((b, i) => (
+                <div className="vdbg__shot" key={i}>
+                  <div className="vdbg__shot-no">
+                    {b.no || `图${i + 1}`} · {b.ok ? (b.cached ? '✓ 复用缓存' : '✓ 脱敏成功') : '✗ 失败(回退原图)'}
+                  </div>
+                  <div className="vdbg__shot-body">
+                    {b.outUrl ? <img src={b.outUrl} alt="" /> : <div className="vdbg__noimg">无图</div>}
+                    <div className="vdbg__shot-text">
+                      <div><b>模型ID</b>:{b.model || '—'}</div>
+                      <div><b>原图 asset</b>:{b.srcAssetId || '—'}</div>
+                      <div><b>脱敏 asset</b>:{b.outAssetId || '—'}</div>
+                      <div><b>任务状态</b>:{b.status || '—'}</div>
+                      {b.error ? <div><b>错误</b>:{b.error}</div> : null}
                     </div>
                   </div>
                 </div>

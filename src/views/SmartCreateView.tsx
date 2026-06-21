@@ -26,6 +26,7 @@ import {
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
 import { generateFullVideo, buildTimelinePrompt } from '@/api/smartVideo'
+import { blurFacesOnAsset } from '@/api/smartFaceBlur'
 import VideoStage from '@/components/smart/VideoStage'
 import {
   createCreativeProject,
@@ -544,6 +545,9 @@ export default function SmartCreateView() {
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
   const autoVidRef = useRef(false)
+  // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
+  const [blurPhase, setBlurPhase] = useState('')
+  const [blurDebug, setBlurDebug] = useState<any[]>([])
 
   // 生成/重生成整片;note=对整片的修改意见(有意见且已有整片时,用上次整片作 video 输入)
   const runFullVideo = async (note?: string) => {
@@ -561,8 +565,8 @@ export default function SmartCreateView() {
     try {
       const plans = await resolvePlanCandidates()
       const cache: Record<string, number> = {}
-      // 携带「所有」分镜图(按镜头顺序):优先用已有 imageAssetId,缺则现传一次
-      const imageAssetIds: number[] = []
+      // ① 先确定每镜「原始分镜图」asset_id(按镜头顺序):优先已有 imageAssetId,缺则现传一次
+      const srcIds: { shotId: string | number; id: number }[] = []
       for (const sh of shots) {
         let id = Number(sh.imageAssetId || 0) || 0
         if (!id && sh.image) {
@@ -572,8 +576,41 @@ export default function SmartCreateView() {
             /* 单张失败跳过 */
           }
         }
-        if (id) imageAssetIds.push(id)
+        if (id) srcIds.push({ shotId: sh.id, id })
       }
+      // ② 正式生成前:对每张进入视频的分镜图做人脸脱敏,用脱敏版喂 seedance(失败回退原图)
+      const dbg: any[] = []
+      const imageAssetIds: number[] = []
+      const blurPatch: Record<string, Partial<Shot>> = {}
+      for (let i = 0; i < srcIds.length; i++) {
+        const { shotId, id } = srcIds[i]
+        const sh = shots.find((s) => s.id === shotId)
+        setBlurPhase(`人脸脱敏 ${i + 1}/${srcIds.length}…`)
+        // 缓存命中(同一原图已脱敏过)→ 直接复用,不重复调用
+        if (sh?.blurredImageAssetId && Number(sh.blurredFromAssetId || 0) === id) {
+          imageAssetIds.push(Number(sh.blurredImageAssetId))
+          dbg.push({ no: sh.no, srcAssetId: id, cached: true, outAssetId: sh.blurredImageAssetId, outUrl: sh.blurredImageUrl, ok: true })
+          continue
+        }
+        const r = await blurFacesOnAsset({ workspaceId: ws, assetId: id, modelPlanCandidates: plans })
+        dbg.push({ no: sh?.no || '', ...r.debug, ok: r.ok, cached: false })
+        if (r.ok && r.assetId) {
+          imageAssetIds.push(r.assetId)
+          blurPatch[String(shotId)] = {
+            blurredImageUrl: r.url,
+            blurredImageAssetId: r.assetId,
+            blurredFromAssetId: id,
+          }
+        } else {
+          imageAssetIds.push(id) // 脱敏失败:回退原图,不阻塞出片
+        }
+      }
+      setBlurDebug(dbg)
+      // 把脱敏结果缓存回分镜(随草稿持久,重试/重进不重复脱敏)
+      if (Object.keys(blurPatch).length) {
+        setShots((prev) => prev.map((s) => (blurPatch[String(s.id)] ? { ...s, ...blurPatch[String(s.id)] } : s)))
+      }
+      setBlurPhase('')
       const { url, assetId } = await generateFullVideo({
         workspaceId: ws,
         shots,
@@ -590,6 +627,7 @@ export default function SmartCreateView() {
     } catch (e: any) {
       showToast(`视频生成失败:${e?.message || ''}`, 'error')
     } finally {
+      setBlurPhase('')
       setVidGenRunning(false)
     }
   }
@@ -681,6 +719,7 @@ export default function SmartCreateView() {
       ;(sh.extraRefs || []).forEach((r: any) => {
         if (r?.assetId) ids.add(Number(r.assetId))
       })
+      if (sh.blurredImageAssetId) ids.add(Number(sh.blurredImageAssetId))
     })
     Object.values(subjectAssets).forEach((e: any) =>
       Object.values(e?.ids || {}).forEach((id: any) => {
@@ -739,6 +778,10 @@ export default function SmartCreateView() {
               r?.assetId && map.get(Number(r.assetId)) ? { ...r, url: map.get(Number(r.assetId))! } : r,
             ),
             selectedRefs: sh.selectedRefs ? sh.selectedRefs.map(remap) : sh.selectedRefs,
+            blurredImageUrl:
+              sh.blurredImageAssetId && map.get(Number(sh.blurredImageAssetId))
+                ? map.get(Number(sh.blurredImageAssetId))!
+                : sh.blurredImageUrl,
           }
         }),
       )
@@ -1252,6 +1295,8 @@ export default function SmartCreateView() {
         generating={shotGen}
         videoUrl={fullVideo.url}
         videoGenerating={vidGenRunning}
+        videoStatusText={blurPhase || undefined}
+        faceBlurDebug={blurDebug}
         videoVersions={videoVersions}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
         onShotsChange={setShots}

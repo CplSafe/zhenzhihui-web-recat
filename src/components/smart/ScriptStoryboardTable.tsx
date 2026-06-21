@@ -31,6 +31,10 @@ export interface Shot {
   // 分镜图历史版本:每版记录自己用到的提示词与素材,切换可还原
   // 每版带 asset_id(供水合刷新签名URL)+ 该版用到的提示词与素材 url
   imageVersions?: { url: string; assetId: number; prompt?: string; refs?: string[] }[]
+  // 人脸脱敏(正式出视频前对分镜图脱敏):脱敏版图 + asset_id,以及它脱敏自哪张原图(缓存有效性判定)
+  blurredImageUrl?: string
+  blurredImageAssetId?: number
+  blurredFromAssetId?: number // 该脱敏版对应的原图 asset_id;原图变了(重生成)则缓存失效需重做
   videoUrl?: string // 该镜生成的视频片段
   videoAssetId?: number
 }
