@@ -218,19 +218,35 @@
   margin-top: 6px;
 }
 .vstage__ver {
-  height: 28px;
-  padding: 0 12px;
-  border: 1px solid #d8dce3;
-  border-radius: 7px;
-  background: #fff;
-  color: #4b5563;
-  font-size: 12px;
+  position: relative;
+  width: 84px;
+  height: 50px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0d1117;
   cursor: pointer;
+}
+.vstage__ver video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.vstage__ver-no {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  padding: 0 4px;
 }
 .vstage__ver.is-active {
   border-color: #1fcfa9;
-  color: #11a98a;
-  background: #e8faf5;
 }
 
 .vstage__modify {

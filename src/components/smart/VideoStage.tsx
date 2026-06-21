@@ -108,8 +108,10 @@ export default function VideoStage({
                   type="button"
                   className={`vstage__ver${v.url === videoUrl ? ' is-active' : ''}`}
                   onClick={() => onSwitchVideo?.(v)}
+                  title={`版本${i + 1}`}
                 >
-                  版本{i + 1}
+                  <video src={v.url} muted preload="metadata" playsInline />
+                  <span className="vstage__ver-no">{i + 1}</span>
                 </button>
               ))}
             </div>
