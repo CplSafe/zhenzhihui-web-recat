@@ -120,19 +120,6 @@ export default function ShotList({
                   />
                 </span>
                 {badgeOf && <span className="shotlist__badge">{badgeOf(s)}</span>}
-                {locked && includeOf && onToggleInclude && (
-                  <label
-                    className="shotlist__pick"
-                    title={included ? '取消勾选则不参与视频生成' : '勾选以参与视频生成'}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={included}
-                      onChange={() => onToggleInclude(s.id)}
-                    />
-                  </label>
-                )}
               </div>
 
               <div className="shotlist__thumb">
@@ -143,6 +130,15 @@ export default function ShotList({
                   </>
                 ) : (
                   <span className="shotlist__thumb-ph">{generating[s.id] ? '生成中…' : '待生成'}</span>
+                )}
+                {locked && includeOf && onToggleInclude && (
+                  <label
+                    className="shotlist__pick"
+                    title={included ? '取消勾选则不参与视频生成' : '勾选以参与视频生成'}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input type="checkbox" checked={included} onChange={() => onToggleInclude(s.id)} />
+                  </label>
                 )}
                 {generating[s.id] && (
                   <div className="shotlist__gen">

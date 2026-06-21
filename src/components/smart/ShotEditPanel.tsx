@@ -467,14 +467,15 @@ export default function ShotEditPanel({
             </div>
           )}
 
-          <label className="sedit__carry">
-            <input type="checkbox" checked={carry} onChange={(e) => setCarry(e.target.checked)} />
-            携带当前分镜图(在现有画面上修改)
-          </label>
-
-          <button type="button" className="sedit__gen" disabled={!!regenerating} onClick={doGenerate}>
-            {regenerating ? '生成中…' : '✦ 生成分镜图'}
-          </button>
+          <div className="sedit__genrow">
+            <label className="sedit__carry">
+              <input type="checkbox" checked={carry} onChange={(e) => setCarry(e.target.checked)} />
+              携带当前分镜图(在现有画面上修改)
+            </label>
+            <button type="button" className="sedit__gen" disabled={!!regenerating} onClick={doGenerate}>
+              {regenerating ? '生成中…' : '✦ 生成分镜图'}
+            </button>
+          </div>
         </div>
       </div>
 

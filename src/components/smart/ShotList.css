@@ -140,16 +140,16 @@
   bottom: 8px;
   right: 10px;
 }
-/* 视频生成页:左上角「参与生成」勾选框(避开右上角 AI 标识) */
+/* 视频生成页:分镜图左上角「参与生成」勾选框(避开右上角 AI 标识) */
 .shotlist__pick {
   position: absolute;
-  top: 8px;
-  left: 10px;
+  top: 5px;
+  left: 5px;
   z-index: 2;
   display: inline-flex;
   align-items: center;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.92);
   border-radius: 5px;
   padding: 1px;
 }
