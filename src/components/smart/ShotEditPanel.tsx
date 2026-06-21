@@ -26,8 +26,11 @@ interface ShotEditPanelProps {
   onPatch: (patch: Partial<Shot>) => void
   /** 出图:editPrompt 提示词 + refUrls 选中素材 + carryCurrent 是否带当前图 */
   onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
-  /** 据当前画面描述+元素优化生成提示词,返回优化后的提示词 */
-  onOptimizePrompt?: (shot: Shot) => Promise<string>
+  /** 据画面描述+大纲+选中素材(看图)优化生成提示词,返回优化后的提示词 */
+  onOptimizePrompt?: (
+    shot: Shot,
+    materials: { name?: string; kind?: string; url?: string }[],
+  ) => Promise<string>
 }
 
 const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
@@ -281,7 +284,14 @@ export default function ShotEditPanel({
                 onClick={async () => {
                   setOptimizing(true)
                   try {
-                    const p = await onOptimizePrompt(shot)
+                    // 只把「当前选中参与出图」的素材交给优化(看图分析其真实外观)
+                    const mats = [
+                      ...shot.subjects
+                        .filter((su) => su.image && selected.has(su.image))
+                        .map((su) => ({ name: stripAt(su.tag), kind: su.kind, url: su.image })),
+                      ...extraRefs.filter((u) => selected.has(u)).map((u) => ({ name: '参考素材', url: u })),
+                    ]
+                    const p = await onOptimizePrompt(shot, mats)
                     if (p) {
                       setImgPrompt(p)
                       onPatch({ imagePrompt: p })

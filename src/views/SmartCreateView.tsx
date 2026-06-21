@@ -1184,11 +1184,11 @@ export default function SmartCreateView() {
           onOpenElement={openSubject}
           projectImages={projectImages}
           onRegenerateImage={regenerateShotImage}
-          onOptimizePrompt={(sh) =>
+          onOptimizePrompt={(sh, materials) =>
             refineShotPrompt({
               desc: sh.desc,
-              elements: Array.from(new Set(sh.subjects.map((s) => stripAt(s.tag)).filter(Boolean))),
-              outline: reqSummary || requirement, // 整体大纲/需求,供综合考虑
+              outline: reqSummary || requirement, // 整体大纲(仅调性参考)
+              materials, // 该镜选中的素材(看图分析真实外观)
               style: entryMeta?.style,
               ratio: entryMeta?.ratio,
             })

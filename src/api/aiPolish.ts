@@ -296,31 +296,73 @@ export async function generateShotCopy(
  * 只含给定主体,不臆造无关产品(避免把全局产品塞进无关镜头)。失败由调用方兜底。
  */
 export async function refineShotPrompt(
-  input: { desc?: string; elements?: string[]; outline?: string; style?: string; ratio?: string },
+  input: {
+    desc?: string
+    outline?: string
+    style?: string
+    ratio?: string
+    /** 该镜「选中参与出图」的素材:看图识别真实外观;有 url 走 VL 读图 */
+    materials?: { name?: string; kind?: string; url?: string }[]
+  },
   signal?: AbortSignal,
 ): Promise<string> {
   const desc = (input.desc || '').trim()
-  const els = (input.elements || []).filter(Boolean)
   const outline = (input.outline || '').trim()
-  if (!desc && !els.length) return desc
+  const mats = (input.materials || []).filter((m) => m && (m.name || m.url))
+  const withImg = mats.filter((m) => m.url)
+  if (!desc && !mats.length) return desc
+
   const system =
-    '你是 AI 绘画提示词专家。下面给出【整体创作大纲】(仅供理解产品调性/受众/风格)、' +
-    '【这一个分镜的画面描述】和【该镜包含的主体元素】。请综合这三者,为「这一个分镜」' +
-    '输出一段简洁、具体、可直接用于文生图/图生图的中文画面提示词:' +
-    '①紧扣该镜画面描述;②画面只包含给定的主体元素,绝不把大纲里其它产品/物体/品牌强加进本镜;' +
-    '③结合大纲的整体调性/风格保持系列一致;④描述主体、动作、场景、构图景别、光线氛围、关键细节;' +
+    '你是 AI 绘画提示词专家。下面给出【整体创作大纲】(仅供理解产品调性/受众/风格,不可照搬其产品)、' +
+    '【这一个分镜的画面描述=脚本,最高优先级】和【该镜选中的素材图(逐张看图识别其真实外观/类型)】。' +
+    '请综合三者,为「这一个分镜」输出一段简洁、具体、可直接用于文生图/图生图的中文画面提示词:' +
+    '①以该镜画面描述(脚本)为准,理解本镜真实意图(如对比镜应体现对比);' +
+    '②画面主体严格按"选中素材图里看到的真实样子"描述(普通的就写普通,不要把它说成大纲里的高端产品);' +
+    '③只包含该镜该有的主体,绝不把大纲里其它产品/品牌强加进本镜;' +
+    '④结合大纲调性/风格保持系列一致;⑤描述主体、动作、场景、构图景别、光线氛围、关键细节;' +
     '不要编号、不要引号、不要解释、不要换行,直接输出提示词。'
-  const user = [
-    outline && `整体创作大纲:${outline}`,
-    `该镜画面描述:${desc || '(未填写)'}`,
-    els.length && `该镜画面只含这些主体:${els.join('、')}`,
-    input.style && `风格:${input.style}`,
-    input.ratio && `画面比例:${input.ratio}`,
-  ]
-    .filter(Boolean)
-    .join('\n')
-  const out = await chatOnce(system, user, signal, 280)
-  const cleaned = out
+
+  const useVl = withImg.length > 0
+  const textPart =
+    [
+      outline && `整体创作大纲(仅调性参考):${outline}`,
+      `该镜画面描述(脚本,以此为准):${desc || '(未填写)'}`,
+      mats.length && `该镜选中素材:${mats.map((m) => `${m.name || '素材'}${m.kind ? `(${m.kind})` : ''}`).join('、')}`,
+      input.style && `风格:${input.style}`,
+      input.ratio && `画面比例:${input.ratio}`,
+    ]
+      .filter(Boolean)
+      .join('\n') + (useVl ? '\n下面附上各选中素材图,请逐张看清其真实外观再下笔。' : '')
+
+  let raw = ''
+  if (useVl) {
+    const userContent: any[] = [{ type: 'text', text: textPart }]
+    for (const m of withImg) {
+      userContent.push({ type: 'text', text: `素材「${m.name || ''}${m.kind ? `/${m.kind}` : ''}」:` })
+      userContent.push({ type: 'image_url', image_url: { url: m.url } })
+    }
+    const res = await fetch(VL_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      body: JSON.stringify({
+        model: VL_MODEL_NAME,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userContent },
+        ],
+        temperature: 0.5,
+        max_tokens: 300,
+        chat_template_kwargs: { enable_thinking: false },
+      }),
+    })
+    if (!res.ok) throw new Error(`分析服务异常(${res.status})`)
+    const data = (await res.json()) as ChatResponse
+    raw = data?.choices?.[0]?.message?.content || ''
+  } else {
+    raw = await chatOnce(system, textPart, signal, 300)
+  }
+  const cleaned = raw
     .replace(/^```(\w+)?/i, '')
     .replace(/```$/i, '')
     .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')

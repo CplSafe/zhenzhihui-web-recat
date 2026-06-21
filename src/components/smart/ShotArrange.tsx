@@ -21,8 +21,11 @@ interface ShotArrangeProps {
   projectImages?: { url: string; source: 'ai' | 'upload' }[]
   /** 重新生成分镜图(统一:提示词 + 选中素材 + 是否携带当前图) */
   onRegenerateImage: (shot: Shot, opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] }) => void
-  /** 优化该镜生成提示词 */
-  onOptimizePrompt?: (shot: Shot) => Promise<string>
+  /** 优化该镜生成提示词(据画面描述+大纲+选中素材) */
+  onOptimizePrompt?: (
+    shot: Shot,
+    materials: { name?: string; kind?: string; url?: string }[],
+  ) => Promise<string>
 }
 
 export default function ShotArrange({
