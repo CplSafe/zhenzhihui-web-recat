@@ -312,6 +312,12 @@ export default function ShotEditPanel({
             onChange={(e) => setImgPrompt(e.target.value)}
             onBlur={() => imgPrompt !== (shot.imagePrompt || '') && onPatch({ imagePrompt: imgPrompt })}
           />
+          {optimizing && (
+            <div className="sedit__opt-status">
+              <span className="sedit__spin" aria-hidden="true" />
+              正在读取选中素材图,并结合脚本/大纲优化提示词…(看图较慢,请稍候)
+            </div>
+          )}
 
           <label className="sedit__carry">
             <input type="checkbox" checked={carry} onChange={(e) => setCarry(e.target.checked)} />

@@ -36,6 +36,14 @@
   opacity: 0.6;
   cursor: default;
 }
+.sedit__opt-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #11a98a;
+  margin-top: 6px;
+}
 .sedit__script .sedit__ta {
   min-height: 64px;
 }
