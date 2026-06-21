@@ -4,7 +4,6 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { fileToDataUrl } from '@/utils/imageFile'
 import './SubjectAssetDialog.css'
 
 interface SubjectAssetDialogProps {
@@ -21,7 +20,8 @@ interface SubjectAssetDialogProps {
   onClose: () => void
   onGenerate: (prompt: string) => Promise<void>
   onSelect: (url: string) => void
-  onUpload: (url: string) => void
+  /** 上传素材:直接交 File,由父级经后端 uploadAssetFile 存服务器取 asset_id */
+  onUpload: (file: File) => void
 }
 
 export default function SubjectAssetDialog({
@@ -145,7 +145,7 @@ export default function SubjectAssetDialog({
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0]
-                if (f) fileToDataUrl(f).then(onUpload).catch(() => {})
+                if (f) onUpload(f) // 直接交 File 上传到后端,拿 asset_id
                 e.target.value = ''
               }}
             />

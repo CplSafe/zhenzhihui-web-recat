@@ -18,7 +18,7 @@ import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement, refineElementPrompt } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
-import { generateShotImage, ensureAssetId, persistImageAsset, refreshAssetUrl } from '@/api/smartShotImage'
+import { generateShotImage, ensureAssetId, refreshAssetUrl } from '@/api/smartShotImage'
 import { generateFullVideo, buildTimelinePrompt } from '@/api/smartVideo'
 import VideoStage from '@/components/smart/VideoStage'
 import {
@@ -27,6 +27,8 @@ import {
   getCreativeProject,
   updateCreativeProjectDraft,
   createCreativeProjectVersion,
+  uploadAssetFile,
+  getAssetDownloadUrl,
 } from '@/api/business'
 import {
   useWorkspaceId,
@@ -212,9 +214,23 @@ export default function SmartCreateView() {
       showToast(`素材「${name}」生成失败:${e?.message || '请重试'}`, 'error')
     }
   }
-  const uploadForSubject = async (name: string, url: string) => {
-    const out = await persistImageAsset(Number(workspaceId || 0), url)
-    addSubjectVersion(name, out.url, out.assetId, 'upload')
+  // 上传素材:直接把 File 经后端 uploadAssetFile 存到服务器,拿 asset_id + 签名URL(失败明确报错)
+  const uploadForSubject = async (name: string, file: File) => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法上传素材', 'error')
+      return
+    }
+    try {
+      const out: any = await uploadAssetFile({ workspaceId: ws, file })
+      const assetId = Number(out?.asset?.id || 0) || 0
+      if (!assetId) throw new Error('未取得素材 asset_id')
+      const url = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
+      if (!url) throw new Error('未取得素材地址')
+      addSubjectVersion(name, url, assetId, 'upload')
+    } catch (e: any) {
+      showToast(`素材上传失败:${e?.message || '请检查存储配置/网络'}`, 'error')
+    }
   }
   const openSubject = (name: string, autoGen = false) =>
     setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
@@ -1149,7 +1165,7 @@ export default function SmartCreateView() {
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
         onGenerate={(p) => genForSubject(subjectDlg.name, p)}
         onSelect={(url) => applySubjectImage(subjectDlg.name, url, subjectAssets[subjectDlg.name]?.ids?.[url] || 0)}
-        onUpload={(url) => uploadForSubject(subjectDlg.name, url)}
+        onUpload={(file) => uploadForSubject(subjectDlg.name, file)}
       />
     </div>
   )
