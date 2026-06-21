@@ -113,7 +113,11 @@ function stripHeavy(d: SmartDraft): SmartDraft {
     next.shots = next.shots.map((s: any) => ({
       ...s,
       image: killHeavy(s.image),
-      imageVersions: Array.isArray(s.imageVersions) ? s.imageVersions.map(killHeavy).filter(Boolean) : s.imageVersions,
+      imageVersions: Array.isArray(s.imageVersions)
+        ? s.imageVersions
+            .map((v: any) => (typeof v === 'string' ? { url: killHeavy(v), assetId: 0 } : { ...v, url: killHeavy(v?.url) }))
+            .filter((v: any) => v.url)
+        : s.imageVersions,
       subjects: Array.isArray(s.subjects) ? s.subjects.map((x: any) => ({ ...x, image: killHeavy(x.image) })) : [],
     }))
   }
@@ -139,7 +143,9 @@ export function buildSmartSnapshot(d: SmartDraft): any {
     id: s.id ?? i,
     index: i,
     currentImage: s.image ? { url: s.image } : null,
-    versionHistory: (s.imageVersions || []).map((u: string) => ({ url: u })),
+    versionHistory: (s.imageVersions || []).map((v: any) =>
+      typeof v === 'string' ? { url: v } : { url: v?.url, assetId: v?.assetId },
+    ),
   }))
   const fvUrl = killHeavy(clean.fullVideoUrl || '')
   const fvId = Number(clean.fullVideoAssetId || 0) || 0

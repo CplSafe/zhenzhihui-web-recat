@@ -25,7 +25,7 @@ export interface Shot {
   image?: string // 当前分镜图(成片画面)
   imageAssetId?: number // 当前分镜图的后端 asset_id
   imagePrompt?: string // 生成该分镜图实际用到的提示词(可见/可编辑/可重生成)
-  imageVersions?: string[] // 分镜图历史版本
+  imageVersions?: { url: string; assetId: number }[] // 分镜图历史版本(每版带 asset_id,供水合刷新签名URL)
   videoUrl?: string // 该镜生成的视频片段
   videoAssetId?: number
 }

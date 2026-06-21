@@ -329,7 +329,13 @@ export default function SmartCreateView() {
     setShots((prev) =>
       prev.map((x) =>
         x.id === sh.id
-          ? { ...x, image: url, imageAssetId: assetId, imagePrompt: prompt, imageVersions: [...(x.imageVersions || []), url] }
+          ? {
+              ...x,
+              image: url,
+              imageAssetId: assetId,
+              imagePrompt: prompt,
+              imageVersions: [...(x.imageVersions || []), { url, assetId }],
+            }
           : x,
       ),
     )
@@ -531,6 +537,10 @@ export default function SmartCreateView() {
     const ids = new Set<number>()
     shots.forEach((sh) => {
       if (sh.imageAssetId) ids.add(Number(sh.imageAssetId))
+      ;(sh.imageVersions || []).forEach((v: any) => {
+        const id = typeof v === 'string' ? 0 : Number(v?.assetId || 0)
+        if (id) ids.add(id)
+      })
       sh.subjects.forEach((su) => {
         if (su.assetId) ids.add(Number(su.assetId))
       })
@@ -555,6 +565,11 @@ export default function SmartCreateView() {
         prev.map((sh) => ({
           ...sh,
           image: sh.imageAssetId && map.get(Number(sh.imageAssetId)) ? map.get(Number(sh.imageAssetId))! : sh.image,
+          imageVersions: (sh.imageVersions || []).map((v: any) => {
+            const o = typeof v === 'string' ? { url: v, assetId: 0 } : v
+            const nu = o.assetId && map.get(Number(o.assetId))
+            return nu ? { ...o, url: nu } : o
+          }),
           subjects: sh.subjects.map((su) =>
             su.assetId && map.get(Number(su.assetId)) ? { ...su, image: map.get(Number(su.assetId))! } : su,
           ),

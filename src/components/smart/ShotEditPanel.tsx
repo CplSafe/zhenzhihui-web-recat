@@ -32,7 +32,10 @@ export default function ShotEditPanel({ shot, regenerating, compact, onOpenEleme
   const refFileRef = useRef<HTMLInputElement | null>(null)
 
   const current = shot.image || ''
-  const versions = shot.imageVersions || []
+  // 兼容旧草稿(字符串)与新结构({url, assetId})
+  const versions = (shot.imageVersions || []).map((v: any) =>
+    typeof v === 'string' ? { url: v, assetId: 0 } : v,
+  )
   const elUrls = Array.from(new Set(shot.subjects.map((s) => s.image).filter(Boolean))) as string[]
 
   // 本地草稿(切换分镜时重置):提示词(默认回退到画面描述,生成前也能看/改)/ 选中素材 / 额外上传 / 是否携带当前图
@@ -137,14 +140,14 @@ export default function ShotEditPanel({ shot, regenerating, compact, onOpenEleme
             <>
               <div className="sedit__sub">历史版本（点击切换）</div>
               <div className="sedit__hist-row">
-                {versions.map((url, i) => (
+                {versions.map((v, i) => (
                   <button
                     key={i}
                     type="button"
-                    className={`sedit__hist${url === current ? ' is-active' : ''}`}
-                    onClick={() => onPatch({ image: url })}
+                    className={`sedit__hist${v.url === current ? ' is-active' : ''}`}
+                    onClick={() => onPatch({ image: v.url, imageAssetId: v.assetId })}
                   >
-                    <img src={url} alt="" />
+                    <img src={v.url} alt="" />
                   </button>
                 ))}
               </div>
