@@ -172,6 +172,11 @@ export default function HotCopyView() {
       showToast('暂仅支持「本地上传」的爆款视频(链接/素材库待接入)', 'info')
       return
     }
+    // video.replicate 后端要求:源视频 + 1~9 张主体图(替换素材)均必填
+    if (!products.length) {
+      showToast('请至少上传 1 张替换素材(产品主体图)', 'error')
+      return
+    }
     setCreating(true)
     setResultUrl('')
     try {
@@ -282,11 +287,12 @@ export default function HotCopyView() {
                   </div>
 
                   {/* 上传替换素材 */}
-                  <button type="button" className="hotcopy__upbtn" onClick={() => productFileRef.current?.click()}>
+                  <button type="button" className={`hotcopy__upbtn${products.length ? ' is-done' : ''}`} onClick={() => productFileRef.current?.click()}>
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M4 5h6l2 2h8v10a2 2 0 0 1-2 2H4z" />
                     </svg>
                     上传替换素材
+                    <span className="hotcopy__req">*</span>
                   </button>
 
                   {/* 已选爆款视频 chip */}
