@@ -45,6 +45,7 @@ export default function SubjectAssetDialog({
   onUpload,
 }: SubjectAssetDialogProps) {
   const [prompt, setPrompt] = useState(defaultPrompt)
+  const [editingPrompt, setEditingPrompt] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [refining, setRefining] = useState(false)
   const [refImage, setRefImage] = useState('') // 参考图(产品真实照片)dataURL
@@ -162,14 +163,42 @@ export default function SubjectAssetDialog({
             生成提示词(可修改)
             {refining && <span className="sad__refining"> · AI 优化提示词中…</span>}
           </label>
-          <textarea
-            className="sad__prompt"
-            rows={3}
-            value={refining ? '' : prompt}
-            disabled={refining}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={refining ? '正在把生成意图优化为更干净的画面提示词…' : '描述这个主体的样子…'}
-          />
+          {editingPrompt && !refining ? (
+            <textarea
+              className="sad__prompt sad__prompt--edit"
+              rows={3}
+              autoFocus
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onBlur={() => setEditingPrompt(false)}
+              placeholder="描述这个主体的样子…"
+            />
+          ) : (
+            <div
+              className="sad__prompt sad__prompt--view"
+              role="button"
+              tabIndex={0}
+              title={refining ? '' : '点击修改提示词'}
+              onClick={() => !refining && setEditingPrompt(true)}
+              onKeyDown={(e) => e.key === 'Enter' && !refining && setEditingPrompt(true)}
+            >
+              {refining ? (
+                <span className="sad__prompt-ph">正在把生成意图优化为更干净的画面提示词…</span>
+              ) : prompt ? (
+                prompt
+              ) : (
+                <span className="sad__prompt-ph">描述这个主体的样子…</span>
+              )}
+              {!refining && (
+                <span className="sad__prompt-edit" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                </span>
+              )}
+            </div>
+          )}
           {/* 参考图:从项目选 或 上传;AI 据此优化提示词并图生图(保证用你的产品) */}
           <div className="sad__ref">
             {refImage ? (

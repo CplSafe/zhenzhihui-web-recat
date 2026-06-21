@@ -206,6 +206,41 @@
 .sad__prompt:focus {
   border-color: #1fcfa9;
 }
+/* 浏览态:无边框,像普通文本;右下角铅笔标识可改;hover 浅底提示 */
+.sad__prompt--view {
+  position: relative;
+  border-color: transparent;
+  background: #fafbfc;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+  padding-right: 30px;
+  min-height: 64px;
+}
+.sad__prompt--view:hover {
+  background: #f3f5f8;
+}
+.sad__prompt-ph {
+  color: #b8bfc9;
+}
+.sad__prompt-edit {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  color: #6b7280;
+}
+.sad__prompt--view:hover .sad__prompt-edit {
+  color: #11a98a;
+  border-color: #1fcfa9;
+}
 .sad__actions {
   display: flex;
   justify-content: flex-end;
