@@ -13,6 +13,7 @@ import {
   extractAssetPageItems,
 } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
+import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
 import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 
@@ -67,15 +68,18 @@ export async function replicateHotVideo(args: {
     ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
     prompt: args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。',
     inputAssets,
-    params: (model: any) => ({
-      generate_audio: true,
-      ...buildVideoGenerationParams(model, {
+    // video.replicate 的画面/时长主要由源视频决定:仅按模型 params_schema 填字段,
+    // 无 schema 时不塞 duration/resolution/ratio 等(否则 provider 报「参数有误」)。
+    params: (model: any) => {
+      const fields = getModelParamFields(model)
+      if (!fields.length) return {}
+      return buildVideoGenerationParams(model, {
         duration: normalizeSeedanceDuration(args.durationSec || 10),
         resolution: '720p',
         ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
         generateAudio: true,
-      }),
-    }),
+      })
+    },
   })
   const completed = await waitForAiTask({
     workspaceId: args.workspaceId,
