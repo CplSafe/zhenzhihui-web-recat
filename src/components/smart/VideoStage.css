@@ -348,3 +348,43 @@
     flex: 1 1 100%;
   }
 }
+
+/* 生成等待:状态 + 备注 + 轮播小技巧 */
+.vstage__waiting {
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.vstage__waiting-status {
+  font-size: 14px;
+  color: #4b5563;
+}
+.vstage__waiting-note {
+  font-size: 12px;
+  color: #9aa3af;
+  max-width: 360px;
+  line-height: 1.6;
+}
+.vstage__waiting-tip {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #11a98a;
+  background: #f0fbf8;
+  border: 1px solid #d3f1ea;
+  border-radius: 10px;
+  padding: 8px 14px;
+  max-width: 400px;
+  line-height: 1.6;
+  animation: vstage-tip-fade 0.5s ease;
+}
+@keyframes vstage-tip-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

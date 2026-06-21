@@ -9,6 +9,17 @@ import ShotList from './ShotList'
 import ShotEditPanel from './ShotEditPanel'
 import './VideoStage.css'
 
+// 等待时轮播的「视频制作小技巧」
+const VIDEO_TIPS = [
+  '分镜图越清晰、主体越一致,成片的人物/产品就越稳定。',
+  '台词、字幕、音效都会一起送进生成,先补全文案再出片效果更好。',
+  '不参与生成的分镜可在左侧取消勾选,聚焦核心镜头更快出片。',
+  '镜头时长建议 2–5 秒,节奏更紧凑、更适合短视频平台。',
+  '想换风格?回到分镜编排调整提示词与素材,再重新生成整片。',
+  '生成的视频会进入项目「历史版本」,可随时切换、下载。',
+  '人物镜头建议用同一张参考图,跨镜头形象更统一。',
+]
+
 interface VideoStageProps {
   shots: Shot[]
   /** 正在生成分镜图的镜头(右面板/左列表转圈) */
@@ -73,10 +84,17 @@ export default function VideoStage({
   const [note, setNote] = useState('')
   const [showDebug, setShowDebug] = useState(false)
   const [showBlurDebug, setShowBlurDebug] = useState(false)
+  const [tipIdx, setTipIdx] = useState(0)
   const debugEnabled = import.meta.env.DEV // 正式版自动隐藏
   useEffect(() => {
     if (!shots.some((s) => s.id === selectedId)) setSelectedId(shots[0]?.id ?? null)
   }, [shots, selectedId])
+  // 生成等待时轮播小技巧(等待较久,给用户一点收获)
+  useEffect(() => {
+    if (!videoGenerating) return
+    const t = window.setInterval(() => setTipIdx((i) => (i + 1) % VIDEO_TIPS.length), 4500)
+    return () => window.clearInterval(t)
+  }, [videoGenerating])
 
   const selected = shots.find((s) => s.id === selectedId) || null
   const patchSel = (patch: Partial<Shot>) => {
@@ -118,9 +136,13 @@ export default function VideoStage({
         </div>
         <div className="vstage__player">
           {videoGenerating ? (
-            <div className="vstage__player-ph">
+            <div className="vstage__player-ph vstage__waiting">
               <span className="vstage__spin" aria-hidden="true" />
-              {videoStatusText || '视频生成中…'}
+              <div className="vstage__waiting-status">{videoStatusText || '视频生成中…'}</div>
+              <div className="vstage__waiting-note">
+                视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。
+              </div>
+              <div className="vstage__waiting-tip" key={tipIdx}>💡 {VIDEO_TIPS[tipIdx]}</div>
             </div>
           ) : videoUrl ? (
             <video
