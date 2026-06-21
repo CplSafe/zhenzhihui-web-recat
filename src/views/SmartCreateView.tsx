@@ -1247,7 +1247,7 @@ export default function SmartCreateView() {
           </div>
           {shots.length ? (
             <>
-              <ScriptStoryboardTable shots={shots} onOpenSubject={openSubject} />
+              <ScriptStoryboardTable shots={shots} onOpenSubject={openSubject} onShotsChange={setShots} />
               {scriptLoading && (
                 <div className="smart__placeholder smart__placeholder--xs">分镜持续生成中…</div>
               )}

@@ -1,13 +1,13 @@
 /**
- * ScriptStoryboardTable — 分镜脚本表(按 Figma 79:4123)。
- * 列:镜头编号 / 镜头时长 / 画面描述 / 准备素材。
- * 准备素材按脚本拆出的主体(人物/场景)分行,每行:@主体 + 上传(+) + AI自动生成。
+ * ScriptStoryboardTable — 分镜脚本(卡片式,可编辑)。
+ * 每个分镜一张卡:镜头名称 / 时长(秒) / 画面描述 均可改;准备素材(@主体)可增删、改名、选类型、出图。
+ * 受控:shots + onShotsChange(整列回写,父级持久化)。onOpenSubject 用于打开素材管理/AI生成。
  */
 import './ScriptStoryboardTable.css'
 
 export interface ShotSubject {
   tag: string // 如 @小雅 / @室内场景
-  kind?: string // 人物 / 场景
+  kind?: string // 人物 / 物体 / 场景
   image?: string // AI 匹配到的素材图(或用户上传);无则展示「+」
   assetId?: number // 该素材图的后端 asset_id(持久化/刷新签名URL用)
 }
@@ -28,7 +28,6 @@ export interface Shot {
   // 该镜「素材编辑态」(持久化,刷新/切换不丢):选中参与出图的素材 url + 额外添加的素材
   selectedRefs?: string[] // 当前选中参与出图的素材 url(元素图 + extraRefs)
   extraRefs?: { url: string; assetId?: number }[] // 额外添加的素材(项目选/上传)
-  // 分镜图历史版本:每版记录自己用到的提示词与素材,切换可还原
   // 每版带 asset_id(供水合刷新签名URL)+ 该版用到的提示词与素材 url
   imageVersions?: { url: string; assetId: number; prompt?: string; refs?: string[] }[]
   // 人脸脱敏(正式出视频前对分镜图脱敏):脱敏版图 + asset_id,以及它脱敏自哪张原图(缓存有效性判定)
@@ -45,54 +44,148 @@ interface ScriptStoryboardTableProps {
   shots: Shot[]
   /** 打开某主体的素材管理弹窗(同名主体共享);autoGen=true 表示无版本时自动生成一次 */
   onOpenSubject?: (name: string, autoGen?: boolean) => void
+  /** 编辑回写(镜头名/时长/画面描述/主体增删改);缺省则只读 */
+  onShotsChange?: (next: Shot[]) => void
 }
 
-export default function ScriptStoryboardTable({ shots, onOpenSubject }: ScriptStoryboardTableProps) {
-  return (
-    <div className="sbt">
-      <div className="sbt__head">
-        <div className="sbt__c sbt__c--no">镜头编号</div>
-        <div className="sbt__c sbt__c--dur">镜头时长</div>
-        <div className="sbt__c sbt__c--desc">画面描述</div>
-        <div className="sbt__c sbt__c--mat">准备素材</div>
-      </div>
+const KIND_OPTIONS = ['人物', '物体', '场景']
+const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
 
+export default function ScriptStoryboardTable({ shots, onOpenSubject, onShotsChange }: ScriptStoryboardTableProps) {
+  const editable = !!onShotsChange
+  const patchShot = (id: Shot['id'], p: Partial<Shot>) =>
+    onShotsChange?.(shots.map((s) => (s.id === id ? { ...s, ...p } : s)))
+  const patchSubjects = (shot: Shot, subjects: ShotSubject[]) => patchShot(shot.id, { subjects })
+
+  return (
+    <div className="sbc">
       {shots.map((shot) => (
-        <div className="sbt__row" key={shot.id}>
-          <div className="sbt__c sbt__c--no">{shot.no}</div>
-          <div className="sbt__c sbt__c--dur">{shot.duration}</div>
-          <div className="sbt__c sbt__c--desc">{shot.desc}</div>
-          <div className="sbt__c sbt__c--mat">
-            {shot.subjects.map((s, idx) => {
-              const name = s.tag.replace(/^@/, '').trim()
-              return (
-                <div className="sbt__subj" key={`${s.tag}-${idx}`}>
-                  <div className="sbt__subj-info">
-                    <span className="sbt__subj-tag">{s.tag}</span>
-                    {s.kind && <span className="sbt__subj-kind">{s.kind}</span>}
-                  </div>
-                  {s.image ? (
-                    <button type="button" className="sbt__thumb" onClick={() => onOpenSubject?.(name)} title="管理素材">
-                      <img src={s.image} alt="" />
-                    </button>
-                  ) : (
+        <div className="sbc__card" key={shot.id}>
+          {/* 头部:镜头名称 + 时长(秒) */}
+          <div className="sbc__head">
+            <input
+              className="sbc__no"
+              value={shot.no}
+              readOnly={!editable}
+              placeholder="镜头名称"
+              onChange={(e) => patchShot(shot.id, { no: e.target.value })}
+            />
+            <label className="sbc__dur">
+              <input
+                className="sbc__dur-input"
+                type="number"
+                min={1}
+                value={String(shot.duration || '').replace(/[^0-9.]/g, '')}
+                readOnly={!editable}
+                placeholder="5"
+                onChange={(e) => {
+                  const v = e.target.value.replace(/[^0-9.]/g, '')
+                  patchShot(shot.id, { duration: v ? `${v}s` : '' })
+                }}
+              />
+              <span>秒</span>
+            </label>
+          </div>
+
+          {/* 画面描述 */}
+          <div className="sbc__field">
+            <div className="sbc__label">画面描述</div>
+            <textarea
+              className="sbc__desc"
+              value={shot.desc || ''}
+              readOnly={!editable}
+              placeholder="这一镜的画面 / 剧情描述…"
+              onChange={(e) => patchShot(shot.id, { desc: e.target.value })}
+            />
+          </div>
+
+          {/* 准备素材(@主体,可增删改) */}
+          <div className="sbc__field">
+            <div className="sbc__label">准备素材</div>
+            <div className="sbc__subjects">
+              {shot.subjects.map((su, idx) => {
+                const name = stripAt(su.tag)
+                return (
+                  <div className="sbc__subj" key={`${su.tag}-${idx}`}>
                     <button
                       type="button"
-                      className="sbt__upload"
+                      className="sbc__subj-thumb"
+                      title={su.image ? '管理素材' : '生成 / 上传该主体素材'}
                       onClick={() => onOpenSubject?.(name)}
-                      aria-label={`为 ${s.tag} 准备素材`}
                     >
-                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                        <path d="M12 5v14M5 12h14" />
-                      </svg>
+                      {su.image ? (
+                        <img src={su.image} alt={name} />
+                      ) : (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                          <path d="M12 5v14M5 12h14" />
+                        </svg>
+                      )}
                     </button>
-                  )}
-                  <button type="button" className="sbt__aigen" onClick={() => onOpenSubject?.(name, true)}>
-                    AI自动生成
-                  </button>
-                </div>
-              )
-            })}
+                    <div className="sbc__subj-info">
+                      <div className="sbc__subj-tagline">
+                        <span className="sbc__at">@</span>
+                        <input
+                          className="sbc__subj-name"
+                          value={name}
+                          readOnly={!editable}
+                          placeholder="主体名"
+                          onChange={(e) =>
+                            patchSubjects(
+                              shot,
+                              shot.subjects.map((x, i) => (i === idx ? { ...x, tag: `@${e.target.value.replace(/^@/, '')}` } : x)),
+                            )
+                          }
+                        />
+                      </div>
+                      {editable ? (
+                        <select
+                          className="sbc__subj-kind"
+                          value={su.kind && KIND_OPTIONS.includes(su.kind) ? su.kind : ''}
+                          onChange={(e) =>
+                            patchSubjects(shot, shot.subjects.map((x, i) => (i === idx ? { ...x, kind: e.target.value } : x)))
+                          }
+                        >
+                          <option value="">类型</option>
+                          {KIND_OPTIONS.map((k) => (
+                            <option key={k} value={k}>
+                              {k}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        su.kind && <span className="sbc__subj-kindtag">{su.kind}</span>
+                      )}
+                    </div>
+                    <div className="sbc__subj-actions">
+                      <button type="button" className="sbc__subj-ai" onClick={() => onOpenSubject?.(name, true)}>
+                        AI生成
+                      </button>
+                      {editable && (
+                        <button
+                          type="button"
+                          className="sbc__subj-del"
+                          aria-label="删除主体"
+                          title="删除主体"
+                          onClick={() => patchSubjects(shot, shot.subjects.filter((_, i) => i !== idx))}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+              {editable && (
+                <button
+                  type="button"
+                  className="sbc__subj-add"
+                  onClick={() => patchSubjects(shot, [...shot.subjects, { tag: '@新主体', kind: '' }])}
+                >
+                  <span>+</span>
+                  添加主体
+                </button>
+              )}
+            </div>
           </div>
         </div>
       ))}

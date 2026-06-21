@@ -1,162 +1,232 @@
-/* 分镜脚本表 */
-.sbt {
+/* 分镜脚本 — 卡片式(可编辑) */
+.sbc {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+.sbc__card {
   background: #fff;
   border: 1px solid #eef0f4;
-  border-radius: 16px;
-  overflow: hidden;
-}
-.sbt__head,
-.sbt__row {
+  border-radius: 14px;
+  padding: 16px 18px;
   display: flex;
-  align-items: stretch;
-}
-.sbt__head {
-  padding: 18px 0;
-  border-bottom: 1px solid #eef0f4;
-}
-.sbt__row {
-  border-bottom: 1px solid #eef0f4;
-}
-.sbt__row:last-child {
-  border-bottom: none;
-}
-
-.sbt__c {
-  font-size: 15px;
-  color: #333;
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
-}
-.sbt__head .sbt__c {
-  font-weight: 500;
-  color: #333;
-  align-items: center;
-}
-.sbt__c--no {
-  flex: 0 0 130px;
-}
-.sbt__c--dur {
-  flex: 0 0 120px;
-}
-.sbt__c--desc {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-/* 准备素材列:左侧分隔竖线,内部主体分行 */
-.sbt__c--mat {
-  flex: 0 0 460px;
   flex-direction: column;
-  padding: 0;
-  border-left: 1px solid #eef0f4;
-}
-.sbt__head .sbt__c--mat {
-  justify-content: center;
-  align-items: center;
-  flex-direction: row;
-}
-.sbt__row .sbt__c--no,
-.sbt__row .sbt__c--dur,
-.sbt__row .sbt__c--desc {
-  padding-top: 16px;
-  padding-bottom: 16px;
-  align-items: flex-start;
+  gap: 14px;
 }
 
-/* 主体行(紧凑) */
-.sbt__subj {
+/* 头部:镜头名称 + 时长 */
+.sbc__head {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 16px;
-  border-bottom: 1px solid #f3f4f6;
 }
-.sbt__subj:last-child {
-  border-bottom: none;
-}
-.sbt__subj-info {
+.sbc__no {
   flex: 1 1 auto;
   min-width: 0;
-  display: flex;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2330;
+  background: transparent;
+  outline: none;
+}
+.sbc__no:hover:not([readonly]),
+.sbc__no:focus {
+  border-color: #e5e7eb;
+}
+.sbc__no:focus {
+  border-color: #1fcfa9;
+}
+.sbc__dur {
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #6b7280;
+}
+.sbc__dur-input {
+  width: 48px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: #1f2937;
+  outline: none;
+  text-align: center;
+}
+.sbc__dur-input:focus {
+  border-color: #1fcfa9;
+}
+
+/* 字段 */
+.sbc__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sbc__label {
+  font-size: 12px;
+  color: #9aa3af;
+}
+.sbc__desc {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 76px;
+  resize: vertical;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #374151;
+  font-family: inherit;
+  outline: none;
+}
+.sbc__desc:focus {
+  border-color: #1fcfa9;
+}
+.sbc__desc[readonly] {
+  background: #fafbfc;
+}
+
+/* 主体 */
+.sbc__subjects {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
-.sbt__subj-tag {
-  font-size: 14px;
-  color: #333;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sbc__subj {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  padding: 6px 8px;
+  background: #fafbfc;
 }
-.sbt__subj-kind {
-  flex: 0 0 auto;
-  font-size: 11px;
-  color: #9aa3af;
-  background: #f3f4f6;
-  border-radius: 4px;
-  padding: 1px 6px;
-}
-.sbt__upload {
+.sbc__subj-thumb {
   flex: 0 0 auto;
   width: 40px;
   height: 40px;
-  border: 1px dashed #dcdfe4;
   border-radius: 8px;
-  background: #fafbfc;
+  overflow: hidden;
+  border: 1px solid #eef0f4;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
   color: #b0b4ba;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s;
-}
-.sbt__upload:hover {
-  border-color: #1fcfa9;
-  color: #1fcfa9;
-}
-.sbt__thumb {
-  flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
-  border: 1px solid #d5f3ec;
-  border-radius: 8px;
-  overflow: hidden;
   padding: 0;
-  cursor: pointer;
-  background: #f3fffc;
 }
-.sbt__thumb img {
+.sbc__subj-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
 }
-.sbt__aigen {
-  flex: 0 0 auto;
-  padding: 8px 16px;
-  border: 1px solid #e5e7eb;
-  border-radius: 18px;
-  background: #fff;
-  color: #4b5563;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
+.sbc__subj-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
-.sbt__aigen:hover {
-  border-color: #1fcfa9;
+.sbc__subj-tagline {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sbc__at {
   color: #11a98a;
-  background: #f3fffc;
+  font-size: 13px;
 }
-
-@media (max-width: 1100px) {
-  .sbt__c--mat {
-    flex-basis: 320px;
-  }
-  .sbt__c--no {
-    flex-basis: 90px;
-  }
-  .sbt__c--dur {
-    flex-basis: 84px;
-  }
+.sbc__subj-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 13px;
+  color: #1f2937;
+  background: transparent;
+  outline: none;
+}
+.sbc__subj-name:hover:not([readonly]),
+.sbc__subj-name:focus {
+  border-color: #e5e7eb;
+}
+.sbc__subj-name:focus {
+  border-color: #1fcfa9;
+}
+.sbc__subj-kind {
+  align-self: flex-start;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: #6b7280;
+  background: #fff;
+  outline: none;
+  cursor: pointer;
+}
+.sbc__subj-kindtag {
+  font-size: 11px;
+  color: #9aa3af;
+}
+.sbc__subj-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sbc__subj-ai {
+  border: 1px solid #d8e9ff;
+  background: #f3f8ff;
+  color: #3b82f6;
+  border-radius: 7px;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.sbc__subj-ai:hover {
+  background: #e7f1ff;
+}
+.sbc__subj-del {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: #f1f3f6;
+  color: #9aa3af;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sbc__subj-del:hover {
+  background: #ffe9ea;
+  color: #e5484d;
+}
+.sbc__subj-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  border: 1px dashed #d8dce3;
+  background: #fff;
+  color: #11a98a;
+  border-radius: 9px;
+  font-size: 13px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.sbc__subj-add span {
+  font-size: 16px;
+  line-height: 1;
+}
+.sbc__subj-add:hover {
+  border-color: #1fcfa9;
+  background: #f0fbf8;
 }
