@@ -50,7 +50,6 @@ interface ScriptStoryboardTableProps {
   onShotsChange?: (next: Shot[]) => void
 }
 
-const KIND_OPTIONS = ['人物', '物体', '场景']
 const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
 
 export default function ScriptStoryboardTable({ shots, onOpenSubject, onShotsChange }: ScriptStoryboardTableProps) {
@@ -106,71 +105,44 @@ export default function ScriptStoryboardTable({ shots, onOpenSubject, onShotsCha
             <div className="sbc__subjects">
               {shot.subjects.map((su, idx) => {
                 const name = stripAt(su.tag)
+                // 浏览态:整卡点击进入素材管理(改类型 / 替换 / 生成);不在卡上放下拉框与 AI 按钮
                 return (
-                  <div className="sbc__subj" key={`${su.tag}-${idx}`}>
+                  <div
+                    className="sbc__subj"
+                    key={`${su.tag}-${idx}`}
+                    role="button"
+                    tabIndex={0}
+                    title="点击管理该主体素材"
+                    onClick={() => onOpenSubject?.(name)}
+                    onKeyDown={(e) => e.key === 'Enter' && onOpenSubject?.(name)}
+                  >
                     {editable && (
                       <button
                         type="button"
                         className="sbc__subj-del"
                         aria-label="删除主体"
                         title="删除主体"
-                        onClick={() => patchSubjects(shot, shot.subjects.filter((_, i) => i !== idx))}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          patchSubjects(shot, shot.subjects.filter((_, i) => i !== idx))
+                        }}
                       >
                         ×
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className="sbc__subj-thumb"
-                      title={su.image ? '管理素材' : '生成 / 上传该主体素材'}
-                      onClick={() => onOpenSubject?.(name)}
-                    >
+                    <div className="sbc__subj-thumb">
                       {su.image ? (
                         <img src={su.image} alt={name} />
                       ) : (
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                           <path d="M12 5v14M5 12h14" />
                         </svg>
                       )}
-                    </button>
+                    </div>
                     <div className="sbc__subj-tagline">
                       <span className="sbc__at">@</span>
-                      <InlineEdit
-                        className="sbc__subj-name"
-                        value={name}
-                        placeholder="主体名"
-                        editable={editable}
-                        maxLength={16}
-                        onCommit={(v) =>
-                          patchSubjects(
-                            shot,
-                            shot.subjects.map((x, i) => (i === idx ? { ...x, tag: `@${v.replace(/^@/, '').trim()}` } : x)),
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="sbc__subj-foot">
-                      {editable ? (
-                        <select
-                          className="sbc__subj-kind"
-                          value={su.kind && KIND_OPTIONS.includes(su.kind) ? su.kind : ''}
-                          onChange={(e) =>
-                            patchSubjects(shot, shot.subjects.map((x, i) => (i === idx ? { ...x, kind: e.target.value } : x)))
-                          }
-                        >
-                          <option value="">类型</option>
-                          {KIND_OPTIONS.map((k) => (
-                            <option key={k} value={k}>
-                              {k}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="sbc__subj-kindtag">{su.kind || ''}</span>
-                      )}
-                      <button type="button" className="sbc__subj-ai" onClick={() => onOpenSubject?.(name, true)}>
-                        AI生成
-                      </button>
+                      <span className="sbc__subj-name">{name}</span>
+                      {su.kind && <span className="sbc__subj-kindtag">{su.kind}</span>}
                     </div>
                   </div>
                 )

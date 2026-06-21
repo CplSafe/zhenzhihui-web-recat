@@ -88,40 +88,52 @@
 .sbc__subjects {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
+/* 紧凑横排:小缩略图 + 名称(可上面看,点进去看大图/管理) */
 .sbc__subj {
   position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
   border: 1px solid #eef0f4;
   border-radius: 10px;
-  padding: 8px;
+  padding: 6px 8px;
   background: #fafbfc;
+  cursor: pointer;
+}
+.sbc__subj:hover {
+  border-color: #d5f3ec;
 }
 .sbc__subj-del {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 3px;
+  right: 3px;
   z-index: 2;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border: none;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.85);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.9);
   color: #9aa3af;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.sbc__subj:hover .sbc__subj-del {
+  opacity: 1;
 }
 .sbc__subj-del:hover {
   background: #ffe9ea;
   color: #e5484d;
 }
 .sbc__subj-thumb {
-  width: 100%;
-  aspect-ratio: 4 / 3;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid #eef0f4;
@@ -130,7 +142,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
   padding: 0;
 }
 .sbc__subj-thumb img {
@@ -139,10 +150,11 @@
   object-fit: cover;
 }
 .sbc__subj-tagline {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 2px;
-  min-width: 0;
+  gap: 3px;
 }
 .sbc__at {
   color: #11a98a;
@@ -150,66 +162,38 @@
   flex: 0 0 auto;
 }
 .sbc__subj-name {
-  flex: 1 1 auto;
   min-width: 0;
   font-size: 13px;
   color: #1f2937;
-  padding: 2px 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sbc__subj-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-.sbc__subj-kind {
-  flex: 0 0 auto;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  padding: 1px 4px;
-  font-size: 11px;
-  color: #6b7280;
-  background: #fff;
-  outline: none;
-  cursor: pointer;
-  max-width: 64px;
-}
 .sbc__subj-kindtag {
+  flex: 0 0 auto;
   font-size: 11px;
   color: #9aa3af;
-}
-.sbc__subj-ai {
-  flex: 0 0 auto;
-  border: 1px solid #d8e9ff;
-  background: #f3f8ff;
-  color: #3b82f6;
-  border-radius: 7px;
-  font-size: 12px;
-  padding: 3px 9px;
-  cursor: pointer;
-}
-.sbc__subj-ai:hover {
-  background: #e7f1ff;
+  background: #f1f3f6;
+  border-radius: 5px;
+  padding: 0 5px;
 }
 .sbc__subj-add {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  min-height: 120px;
+  gap: 4px;
   border: 1px dashed #d8dce3;
   background: #fff;
   color: #11a98a;
   border-radius: 10px;
   font-size: 13px;
+  padding: 6px 8px;
+  min-height: 56px;
   cursor: pointer;
 }
 .sbc__subj-add span {
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
 }
 .sbc__subj-add:hover {

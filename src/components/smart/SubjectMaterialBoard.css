@@ -128,3 +128,18 @@
     gap: 14px;
   }
 }
+
+/* 合并行:添加素材 / 上传素材 卡片变体 */
+.smb__card--add .smb__thumb--add,
+.smb__thumb--add {
+  border: 1.5px dashed #d8dce3;
+  background: #fff;
+  color: #11a98a;
+}
+.smb__card--add:hover .smb__thumb--add {
+  border-color: #1fcfa9;
+  background: #f0fbf8;
+}
+.smb__card--upload {
+  cursor: default;
+}

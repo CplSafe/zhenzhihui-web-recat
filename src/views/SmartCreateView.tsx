@@ -1223,22 +1223,13 @@ export default function SmartCreateView() {
             </div>
           )}
 
-          {/* 素材缩略图 + 继续添加 */}
-          <div className="smart__mats">
-            {(entryMeta?.images || []).map((url, i) => (
-              <div className="smart__mat" key={i}>
-                <img src={url} alt="" />
-              </div>
-            ))}
-            <button type="button" className="smart__mat-add" onClick={todo('添加素材(待接入)')} aria-label="添加素材">
-              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-            </button>
-          </div>
-
-          {/* 顶部素材主体总览(左用户上传 / 右 AI 生成,点开统一管理) */}
-          <SubjectMaterialBoard subjects={boardSubjects} onOpen={(name) => openSubject(name)} />
+          {/* 素材(用户上传 + 主体 + 添加,合并一行,点开统一管理) */}
+          <SubjectMaterialBoard
+            subjects={boardSubjects}
+            uploads={entryMeta?.images || []}
+            onAdd={todo('添加素材(待接入)')}
+            onOpen={(name) => openSubject(name)}
+          />
 
           {/* 生成状态 + 分镜表 */}
           <div className="smart__script-done">
