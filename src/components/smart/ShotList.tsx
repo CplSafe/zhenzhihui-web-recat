@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
+import AiBadge from '@/components/common/AiBadge'
 import './ShotList.css'
 
 interface ShotListProps {
@@ -124,7 +125,10 @@ export default function ShotList({
 
               <div className="shotlist__thumb">
                 {thumb ? (
-                  <img src={thumb} alt="" />
+                  <>
+                    <img src={thumb} alt="" />
+                    <AiBadge />
+                  </>
                 ) : (
                   <span className="shotlist__thumb-ph">{generating[s.id] ? '生成中…' : '待生成'}</span>
                 )}

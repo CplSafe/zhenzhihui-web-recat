@@ -1,0 +1,20 @@
+/* AI 生成标识:右上角小机器人徽标(全系统统一) */
+.ai-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #fff;
+  background: linear-gradient(135deg, #5767e5, #8b5cf6);
+  box-shadow: 0 1px 3px rgba(20, 20, 40, 0.32);
+  pointer-events: none; /* 不挡点击/hover 操作 */
+}
+.ai-badge svg {
+  width: 68%;
+  height: 68%;
+  display: block;
+}

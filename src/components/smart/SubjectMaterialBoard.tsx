@@ -3,6 +3,7 @@
  * 把本页所有去重后的主体素材汇总:左=用户上传、右=AI 生成,未准备的单列一行。
  * 点任一主体卡 → 打开统一素材弹窗管理(与分镜里同源,同名联动)。
  */
+import AiBadge from '@/components/common/AiBadge'
 import './SubjectMaterialBoard.css'
 
 export interface BoardSubject {
@@ -22,6 +23,7 @@ function Card({ s, onOpen }: { s: BoardSubject; onOpen: (n: string) => void }) {
     <button type="button" className="smb__card" onClick={() => onOpen(s.name)} title="管理素材">
       <div className="smb__thumb">
         {s.image ? <img src={s.image} alt="" /> : <span className="smb__plus">+</span>}
+        {s.image && s.source === 'ai' && <AiBadge />}
       </div>
       <div className="smb__meta">
         <span className="smb__name">@{s.name}</span>

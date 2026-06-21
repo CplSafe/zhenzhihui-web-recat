@@ -298,6 +298,7 @@
   cursor: pointer;
 }
 .sad__picker-item {
+  position: relative;
   aspect-ratio: 1 / 1;
   border: 1px solid #eef0f4;
   border-radius: 8px;

@@ -67,6 +67,7 @@
 
 /* 左:当前分镜图(大)+ 历史版本 */
 .sedit__cur {
+  position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
   border-radius: 12px;
@@ -170,6 +171,7 @@
   padding-bottom: 4px;
 }
 .sedit__hist {
+  position: relative;
   flex: 0 0 auto;
   width: 76px;
   height: 48px;

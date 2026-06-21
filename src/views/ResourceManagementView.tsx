@@ -11,6 +11,7 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import ResourceAddMaterialModal from '@/components/resource/ResourceAddMaterialModal'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
+import AiBadge from '@/components/common/AiBadge'
 import { useAssetPreview } from '@/composables/useAssetPreview'
 import { extractAssetPage, getAssetDownloadUrl, getBusinessErrorMessage, listAssets } from '@/api/business'
 
@@ -293,6 +294,8 @@ export default function ResourceManagementView() {
         tags: buildAssetTags(asset, downloadUrl),
         duration: asset?.duration || asset?.ratio || '3:4',
         size: formatBytes(asset?.size_bytes),
+        // AI 生成判定:有 source 且非「上传」即视为生成类(用于右上角 AI 标识)
+        isAi: !!asset?.source && asset.source !== 'upload',
         ...resolveAssetPreview(asset, downloadUrl),
       }
     },
@@ -488,6 +491,7 @@ export default function ResourceManagementView() {
               <article key={card.id} className="resource-asset-card">
                 <div className="resource-asset-cover" onClick={() => previewCard(card)}>
                   <AssetThumb card={card} workspaceId={workspaceId} />
+                  {card.isAi && card.mediaKind === 'image' && <AiBadge />}
                   <span className="resource-asset-type">{card.type}</span>
 
                   <button

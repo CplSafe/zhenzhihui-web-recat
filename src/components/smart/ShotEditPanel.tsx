@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Shot } from './ScriptStoryboardTable'
 import { fileToDataUrl } from '@/utils/imageFile'
+import AiBadge from '@/components/common/AiBadge'
 import './ShotEditPanel.css'
 
 interface ShotEditPanelProps {
@@ -148,7 +149,14 @@ export default function ShotEditPanel({
           onClick={() => current && setBigImg(current)}
           title={current ? '点击放大查看' : ''}
         >
-          {current ? <img src={current} alt="" /> : <span className="sedit__cur-ph">暂无分镜图</span>}
+          {current ? (
+            <>
+              <img src={current} alt="" />
+              <AiBadge />
+            </>
+          ) : (
+            <span className="sedit__cur-ph">暂无分镜图</span>
+          )}
         </div>
         <div className="sedit__sub">素材（此步只读）</div>
         <div className="sedit__els">
@@ -250,7 +258,10 @@ export default function ShotEditPanel({
                 生成中…
               </span>
             ) : current ? (
-              <img src={current} alt="" />
+              <>
+                <img src={current} alt="" />
+                <AiBadge />
+              </>
             ) : (
               <span className="sedit__cur-ph">暂无分镜图</span>
             )}
@@ -282,6 +293,7 @@ export default function ShotEditPanel({
                     }}
                   >
                     <img src={v.url} alt="" />
+                    <AiBadge size={14} />
                   </button>
                 ))}
               </div>
@@ -380,6 +392,7 @@ export default function ShotEditPanel({
                           onClick={() => togglePicked(p.url)}
                         >
                           <img src={p.url} alt="" />
+                          {src === 'ai' && <AiBadge size={15} />}
                           {picked.has(p.url) && <span className="sedit__picker-check">✓</span>}
                         </button>
                       ))}

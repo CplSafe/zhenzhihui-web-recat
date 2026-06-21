@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { fileToDataUrl } from '@/utils/imageFile'
+import AiBadge from '@/components/common/AiBadge'
 import './SubjectAssetDialog.css'
 
 interface SubjectAssetDialogProps {
@@ -285,6 +286,7 @@ export default function SubjectAssetDialog({
                           onClick={() => pickProjectImage(p.url)}
                         >
                           <img src={p.url} alt="" />
+                          {src === 'ai' && <AiBadge size={15} />}
                         </button>
                       ))}
                     </div>
