@@ -1,29 +1,37 @@
 /*
   ProjectManagementView — 项目管理(2.1 新版)
-  - 我的项目:每个创意项目以「渐变彩色文件夹」展示;首格「创建项目」点击弹窗填项目名。点文件夹进入查看其中视频。
-  - 待归类:智能成片 / 爆款复制保存的视频先落在这里(后端暂无该概念,先用占位假数据);可拖进上方项目文件夹。
-  - 视频卡:hover 显示下载;点击播放(预览弹窗)。
+  - 壳:与首页一致的 AppSidebar + AppTopbar(不再用旧 2.0 CreativeSidebar)。
+  - 我的项目:渐变彩色文件夹,首格「创建项目」弹窗填名。点文件夹进入项目详情。
+  - 待归类:智能成片 / 爆款复制保存的视频(后端暂无该概念,先占位假数据);可拖入上方项目。
+  - 项目详情:① 最终视频(含历史,可播放/下载) ② 分镜(每个分镜图 + 用到的元素)。
 */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import '@/styles/creative.css'
 import '@/styles/project-management.css'
-import AppLayout from '@/components/layout/AppLayout'
+import AppSidebar from '@/components/home/AppSidebar'
+import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
+import AiBadge from '@/components/common/AiBadge'
 import {
   createCreativeProject,
   deleteCreativeProject,
-  deleteCreativeProjectVersion,
   getAssetDownloadUrl,
   getBusinessErrorMessage,
   getCreativeProject,
-  getCreativeProjectVersion,
   listCreativeProjects,
-  listCreativeProjectVersions,
 } from '@/api/business'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
+
+const ROUTE_MAP: Record<string, string> = {
+  home: '/home',
+  creative: '/smart',
+  projects: '/projects',
+  resources: '/resources',
+  templates: '/templates',
+}
 
 // ---- 纯函数工具 ----
 function toPlainObject(value: any): any {
@@ -39,12 +47,8 @@ function toPlainObject(value: any): any {
   return null
 }
 
-function pickFirstText(...candidates: any[]): string {
-  for (const candidate of candidates) {
-    const value = String(candidate ?? '').trim()
-    if (value) return value
-  }
-  return ''
+function normalizeArray(value: any): any[] {
+  return Array.isArray(value) ? value : []
 }
 
 function normalizeCreativeProjectDraft(payload: any): any {
@@ -62,32 +66,13 @@ function normalizeCreativeProjectDraft(payload: any): any {
   return null
 }
 
-function normalizeCreativeProjectVersions(payload: any): any[] {
-  const raw = toPlainObject(payload) ?? payload
-  const list = Array.isArray(raw)
-    ? raw
-    : Array.isArray(raw?.items)
-      ? raw.items
-      : Array.isArray(raw?.list)
-        ? raw.list
-        : Array.isArray(raw?.versions)
-          ? raw.versions
-          : []
-  return list.filter((item: any) => item && typeof item === 'object')
-}
-
-function resolveVersionId(item: any): number {
-  return Number(item?.vid || item?.version_id || item?.versionId || item?.id || item?.version_no || 0)
-}
-
-function resolveVersionLabel(item: any, fallbackTitle = '未命名视频'): string {
-  const explicit = pickFirstText(item?.label, item?.name, item?.title)
-  if (explicit) return explicit
-  const versionNo = Number(item?.version_no || item?.versionNo || 0)
-  if (Number.isFinite(versionNo) && versionNo > 0) return `视频保存 ${versionNo}`
-  const versionId = resolveVersionId(item)
-  if (versionId > 0) return `视频保存 ${versionId}`
-  return fallbackTitle
+function imgOf(value: any): { url: string; assetId: number } {
+  if (typeof value === 'string') return { url: value.trim(), assetId: 0 }
+  if (!value || typeof value !== 'object') return { url: '', assetId: 0 }
+  const url = String(
+    value.src || value.url || value.image || value.imageUrl || value.image_url || value.thumbnailUrl || value.thumbnail_url || '',
+  ).trim()
+  return { url, assetId: Number(value.assetId || value.asset_id || 0) || 0 }
 }
 
 function getProjectTimestamp(project: any, keys: string[]): number {
@@ -108,8 +93,90 @@ const PLACEHOLDER_UNCLASSIFIED = [
   { id: 'ph-5', title: '禧悦造型发布会V1' },
 ]
 
+interface DetailElement {
+  tag: string
+  kind: string
+  url: string
+  assetId: number
+}
+interface DetailShot {
+  id: string | number
+  no: string
+  duration: string
+  url: string
+  assetId: number
+  elements: DetailElement[]
+}
+interface DetailVideo {
+  url: string
+  assetId: number
+  label: string
+}
+
+// 从项目草稿解析「分镜 + 元素 + 视频历史」(优先 smart 原生块,降级 storyboardItems)
+function parseProjectDetail(draft: any): { shots: DetailShot[]; videos: DetailVideo[]; flow: string } {
+  const flow = String(draft?.flow || draft?.smart?.flow || '')
+  const smart = draft?.smart && typeof draft.smart === 'object' ? draft.smart : null
+
+  // 分镜
+  let shots: DetailShot[] = []
+  const smartShots = normalizeArray(smart?.shots)
+  if (smartShots.length) {
+    shots = smartShots.map((s: any, i: number) => {
+      const cur = imgOf(s.image ? { url: s.image, assetId: s.imageAssetId } : s)
+      return {
+        id: s.id ?? i,
+        no: String(s.no || `镜头${i + 1}`),
+        duration: String(s.duration || ''),
+        url: cur.url,
+        assetId: cur.assetId,
+        elements: normalizeArray(s.subjects).map((su: any) => {
+          const img = imgOf(su.image ? { url: su.image, assetId: su.assetId } : su)
+          return {
+            tag: String(su.tag || '').replace(/^@/, '').trim() || '元素',
+            kind: String(su.kind || ''),
+            url: img.url,
+            assetId: img.assetId,
+          }
+        }),
+      }
+    })
+  } else {
+    shots = normalizeArray(draft?.storyboardItems || draft?.storyboard_items).map((s: any, i: number) => {
+      const cur = imgOf(s.currentImage || s.current_image || s)
+      return { id: s.id ?? i, no: `镜头${i + 1}`, duration: '', url: cur.url, assetId: cur.assetId, elements: [] }
+    })
+  }
+
+  // 视频历史:smart.videoVersions 优先,降级 videoHistoryList / generatedVideo*
+  let videos: DetailVideo[] = []
+  const vv = normalizeArray(smart?.videoVersions)
+  const vh = normalizeArray(draft?.videoHistoryList || draft?.video_history_list)
+  const src = vv.length ? vv : vh
+  videos = src
+    .map((v: any, i: number) => {
+      const img = imgOf(v)
+      return { url: img.url, assetId: img.assetId, label: `版本 ${src.length - i}` }
+    })
+    .filter((v) => v.url || v.assetId)
+  if (!videos.length) {
+    const url = String(draft?.generatedVideoUrl || draft?.generated_video_url || smart?.fullVideoUrl || '')
+    const assetId = Number(draft?.generatedVideoAssetId || smart?.fullVideoAssetId || 0) || 0
+    if (url || assetId) videos = [{ url, assetId, label: '当前成片' }]
+  }
+  // 最新的放最前
+  videos.reverse()
+  return { shots, videos, flow }
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
+    </svg>
+  )
+}
 function FolderGlyph() {
-  // 白色半透明文件夹图标,叠在渐变底色上
   return (
     <svg className="pm2-folder-glyph" viewBox="0 0 100 76" aria-hidden="true">
       <path
@@ -121,35 +188,13 @@ function FolderGlyph() {
   )
 }
 
-function PlayIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
-    </svg>
-  )
-}
-
-function DownloadIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-      <path
-        d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11M5 7l3 3 3-3M8 2.5V10"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
 export default function ProjectManagementView() {
   const navigate = useNavigate()
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const workspaceId = useWorkspaceId()
 
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [projectItems, setProjectItems] = useState<any[]>([])
   const [openMenuId, setOpenMenuId] = useState(0)
@@ -161,18 +206,15 @@ export default function ProjectManagementView() {
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
 
-  // 文件夹(项目)内视频
-  const [viewMode, setViewMode] = useState<'root' | 'folder'>('root')
-  const [activeProject, setActiveProject] = useState<{ id: number; title: string; flow: string } | null>(null)
-  const [projectVersions, setProjectVersions] = useState<any[]>([])
-  const [versionsLoading, setVersionsLoading] = useState(false)
-  const [deletingVersionId, setDeletingVersionId] = useState(0)
-
-  // 视频预览
-  const [videoPreviewOpen, setVideoPreviewOpen] = useState(false)
-  const [videoPreviewUrl, setVideoPreviewUrl] = useState('')
-  const [videoPreviewLoading, setVideoPreviewLoading] = useState(false)
-  const [videoPreviewTitle, setVideoPreviewTitle] = useState('')
+  // 项目详情
+  const [viewMode, setViewMode] = useState<'root' | 'detail'>('root')
+  const [activeProject, setActiveProject] = useState<{ id: number; title: string } | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailShots, setDetailShots] = useState<DetailShot[]>([])
+  const [detailVideos, setDetailVideos] = useState<DetailVideo[]>([])
+  const [detailFlow, setDetailFlow] = useState('')
+  const [activeVideoIdx, setActiveVideoIdx] = useState(0)
+  const [bigImg, setBigImg] = useState('')
 
   const workspaceIdRef = useRef(0)
   useEffect(() => {
@@ -190,18 +232,14 @@ export default function ProjectManagementView() {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }, [projectItems])
 
-  const folderVideos = useMemo(() => {
-    return projectVersions
-      .map((item, index) => ({
-        id: resolveVersionId(item),
-        title: resolveVersionLabel(item, `${activeProject?.title || '视频'} ${index + 1}`),
-        createdAt: getProjectTimestamp(item, ['created_at', 'createdAt', 'updated_at', 'updatedAt']),
-        tone: toneOf(index),
-        raw: item,
-      }))
-      .filter((item) => item.id > 0 && String(item.raw?.label || '').startsWith('视频保存'))
-      .sort((a, b) => b.createdAt - a.createdAt || b.id - a.id)
-  }, [projectVersions, activeProject])
+  const handleNavigate = useCallback(
+    (key: string) => {
+      const path = ROUTE_MAP[key]
+      if (path) navigate(path)
+      else showToast('功能待开放', 'info')
+    },
+    [navigate, showToast],
+  )
 
   const loadProjects = useCallback(async () => {
     const wsId = Number(workspaceIdRef.current || 0)
@@ -228,7 +266,6 @@ export default function ProjectManagementView() {
   useEffect(() => {
     setViewMode('root')
     setActiveProject(null)
-    setProjectVersions([])
     loadProjects()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId])
@@ -242,7 +279,6 @@ export default function ProjectManagementView() {
     return () => document.removeEventListener('click', onDocClick)
   }, [openMenuId])
 
-  // 创建项目:弹窗填名 → 调后端建空项目 → 刷新列表
   const submitCreate = useCallback(async () => {
     const name = newName.trim()
     if (!name) {
@@ -268,6 +304,7 @@ export default function ProjectManagementView() {
     }
   }, [newName, workspaceId, showToast, loadProjects])
 
+  // 进入项目详情:取草稿 → 解析分镜/元素/视频 → 按 assetId 刷新过期签名URL
   const openFolder = useCallback(
     async (folder: { id: number; title: string }) => {
       const wsId = Number(workspaceId || 0)
@@ -275,23 +312,47 @@ export default function ProjectManagementView() {
         showToast('workspace_id 缺失,无法打开项目', 'error')
         return
       }
-      setActiveProject({ id: folder.id, title: folder.title, flow: '' })
-      setProjectVersions([])
-      setViewMode('folder')
-      setVersionsLoading(true)
+      setActiveProject({ id: folder.id, title: folder.title })
+      setViewMode('detail')
+      setDetailLoading(true)
+      setDetailShots([])
+      setDetailVideos([])
+      setDetailFlow('')
+      setActiveVideoIdx(0)
       try {
-        const [versions, detail] = await Promise.all([
-          listCreativeProjectVersions({ projectId: folder.id, workspaceId: wsId, limit: 100 }).catch(() => []),
-          getCreativeProject({ projectId: folder.id, workspaceId: wsId }).catch(() => null),
-        ])
-        const flow = String(normalizeCreativeProjectDraft(detail || {})?.flow || '')
-        setActiveProject((prev) => (prev && prev.id === folder.id ? { ...prev, flow } : prev))
-        setProjectVersions(normalizeCreativeProjectVersions(versions))
+        const project = await getCreativeProject({ projectId: folder.id, workspaceId: wsId })
+        if (Number(workspaceIdRef.current || 0) !== wsId) return
+        const draft = normalizeCreativeProjectDraft(project || {})
+        const { shots, videos, flow } = parseProjectDetail(draft || {})
+        // 收集 assetId 刷新签名URL(分镜图 + 元素 + 视频)
+        const ids = new Set<number>()
+        shots.forEach((s) => {
+          if (s.assetId) ids.add(s.assetId)
+          s.elements.forEach((e) => e.assetId && ids.add(e.assetId))
+        })
+        videos.forEach((v) => v.assetId && ids.add(v.assetId))
+        const map = new Map<number, string>()
+        await Promise.all(
+          [...ids].map(async (id) => {
+            const u = await getAssetDownloadUrl({ workspaceId: wsId, assetId: id }).catch(() => '')
+            if (u) map.set(id, u)
+          }),
+        )
+        if (Number(workspaceIdRef.current || 0) !== wsId) return
+        const fix = (url: string, assetId: number) => (assetId && map.get(assetId)) || url
+        setDetailShots(
+          shots.map((s) => ({
+            ...s,
+            url: fix(s.url, s.assetId),
+            elements: s.elements.map((e) => ({ ...e, url: fix(e.url, e.assetId) })),
+          })),
+        )
+        setDetailVideos(videos.map((v) => ({ ...v, url: fix(v.url, v.assetId) })))
+        setDetailFlow(flow)
       } catch (error) {
-        setProjectVersions([])
         showToast(getBusinessErrorMessage(error, '项目内容加载失败,请稍后重试'), 'error')
       } finally {
-        setVersionsLoading(false)
+        if (Number(workspaceIdRef.current || 0) === wsId) setDetailLoading(false)
       }
     },
     [workspaceId, showToast],
@@ -300,75 +361,13 @@ export default function ProjectManagementView() {
   const backToRoot = useCallback(() => {
     setViewMode('root')
     setActiveProject(null)
-    setProjectVersions([])
   }, [])
 
   const openProjectEditor = useCallback(() => {
     if (!activeProject?.id) return
-    navigate(activeProject.flow === 'smart' ? `/smart/${activeProject.id}` : `/creative/${activeProject.id}`)
-  }, [activeProject, navigate])
+    navigate(detailFlow === 'smart' ? `/smart/${activeProject.id}` : `/creative/${activeProject.id}`)
+  }, [activeProject, detailFlow, navigate])
 
-  const resolveVideoUrl = useCallback(
-    async (versionId: number): Promise<string> => {
-      const wsId = Number(workspaceId || 0)
-      if (!activeProject?.id || !versionId || !wsId) return ''
-      try {
-        const detail = await getCreativeProjectVersion({
-          projectId: activeProject.id,
-          versionId,
-          vid: versionId,
-          workspaceId: wsId,
-        })
-        const raw = toPlainObject(detail) ?? detail
-        const versionObj =
-          (raw?.version && typeof raw.version === 'object'
-            ? raw.version
-            : raw?.data?.version && typeof raw.data.version === 'object'
-              ? raw.data.version
-              : raw?.data && typeof raw.data === 'object'
-                ? raw.data
-                : raw) || {}
-        const draft =
-          normalizeCreativeProjectDraft(versionObj) ||
-          normalizeCreativeProjectDraft(raw) ||
-          toPlainObject(versionObj?.snapshot_json) ||
-          toPlainObject(versionObj?.snapshotJson) ||
-          null
-        if (!draft) return ''
-        let url = String(draft.generatedVideoUrl || draft.generated_video_url || '')
-        const assetId = Number(draft.generatedVideoAssetId || draft.generated_video_asset_id || 0)
-        if (assetId > 0) {
-          const fresh = await getAssetDownloadUrl({ workspaceId: wsId, assetId }).catch(() => '')
-          if (fresh) url = fresh
-        }
-        return url || ''
-      } catch {
-        return ''
-      }
-    },
-    [activeProject, workspaceId],
-  )
-
-  const previewVideo = useCallback(
-    async (video: { id: number; title: string }) => {
-      if (videoPreviewLoading) return
-      setVideoPreviewLoading(true)
-      setVideoPreviewTitle(video.title || '视频预览')
-      setVideoPreviewUrl('')
-      const url = await resolveVideoUrl(video.id)
-      if (!url) {
-        setVideoPreviewLoading(false)
-        showToast('该视频暂时无法播放', 'info')
-        return
-      }
-      setVideoPreviewUrl(url)
-      setVideoPreviewOpen(true)
-      setVideoPreviewLoading(false)
-    },
-    [videoPreviewLoading, resolveVideoUrl, showToast],
-  )
-
-  // 把已解析出的视频 URL 触发下载(同源支持「另存为」,跨域走隐藏 iframe)
   const downloadFromUrl = useCallback(
     async (url: string, title: string) => {
       if (!url) {
@@ -379,7 +378,6 @@ export default function ProjectManagementView() {
       const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
       const safeName = String(title || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'
       const fileName = `${safeName}_${dateStr}.mp4`
-
       const isSameOrigin = (() => {
         try {
           return new URL(url, window.location.href).origin === window.location.origin
@@ -387,7 +385,6 @@ export default function ProjectManagementView() {
           return false
         }
       })()
-
       if ((window as any).showSaveFilePicker && isSameOrigin) {
         try {
           const fileHandle = await (window as any).showSaveFilePicker({
@@ -407,7 +404,6 @@ export default function ProjectManagementView() {
           if (err?.name === 'AbortError') return
         }
       }
-
       const iframe = document.createElement('iframe')
       iframe.style.display = 'none'
       iframe.src = url
@@ -416,43 +412,6 @@ export default function ProjectManagementView() {
       showToast('视频已开始下载', 'success')
     },
     [showToast],
-  )
-
-  const downloadVideo = useCallback(
-    async (video: { id: number; title: string }) => {
-      const url = await resolveVideoUrl(video.id)
-      await downloadFromUrl(url, video.title)
-    },
-    [resolveVideoUrl, downloadFromUrl],
-  )
-
-  const deleteFolderVideo = useCallback(
-    async (video: { id: number; title: string }) => {
-      if (deletingVersionId || !activeProject?.id) return
-      const confirmed = await requestConfirm(`确定删除「${video.title}」吗?删除后不可恢复。`)
-      if (!confirmed) return
-      const wsId = Number(workspaceId || 0)
-      if (!wsId) {
-        showToast('workspace_id 缺失,无法删除', 'error')
-        return
-      }
-      setDeletingVersionId(video.id)
-      try {
-        await deleteCreativeProjectVersion({
-          projectId: activeProject.id,
-          versionId: video.id,
-          vid: video.id,
-          workspaceId: wsId,
-        })
-        setProjectVersions((prev) => prev.filter((item) => resolveVersionId(item) !== video.id))
-        showToast('已删除', 'success')
-      } catch (error) {
-        showToast(getBusinessErrorMessage(error, '删除失败,请稍后重试'), 'error')
-      } finally {
-        setDeletingVersionId(0)
-      }
-    },
-    [deletingVersionId, activeProject, requestConfirm, workspaceId, showToast],
   )
 
   const deleteProject = useCallback(
@@ -482,7 +441,6 @@ export default function ProjectManagementView() {
     [deletingProjectId, requestConfirm, workspaceId, showToast],
   )
 
-  // 把「待归类」视频拖入项目文件夹(后端暂无归类接口,先占位提示;接口好了在此调用)
   const handleDropToFolder = useCallback(
     (folder: { id: number; title: string }, payload: string) => {
       setDragOverFolderId(0)
@@ -498,195 +456,246 @@ export default function ProjectManagementView() {
     [showToast],
   )
 
-  const closeVideoPreview = useCallback(() => {
-    setVideoPreviewOpen(false)
-    setVideoPreviewUrl('')
-  }, [])
-
-  // 视频卡(待归类 / 文件夹内共用)。placeholder=占位假数据(无真实视频)
-  const renderVideoCard = (
-    video: { id: any; title: string; tone?: string },
-    index: number,
-    opts: { placeholder?: boolean } = {},
-  ) => {
-    const tone = video.tone || toneOf(index)
-    const isPlaceholder = !!opts.placeholder
-    const realVideo = { id: Number(video.id) || 0, title: video.title }
-    return (
-      <div
-        key={video.id}
-        className="pm2-vid"
-        draggable
-        onDragStart={(e) => e.dataTransfer.setData('text/plain', JSON.stringify({ id: video.id, title: video.title }))}
-      >
-        <span
-          className={`pm2-vid-thumb pm2-tone-${tone}`}
-          role="button"
-          tabIndex={0}
-          onClick={() => (isPlaceholder ? showToast('占位视频,接口接入后可播放', 'info') : previewVideo(realVideo))}
-          onKeyDown={(e) =>
-            e.key === 'Enter' && (isPlaceholder ? showToast('占位视频,接口接入后可播放', 'info') : previewVideo(realVideo))
-          }
-        >
-          <span className="pm2-vid-play">
-            <PlayIcon />
-          </span>
-          {/* hover 下载 */}
-          <button
-            type="button"
-            className="pm2-vid-dl"
-            aria-label="下载视频"
-            title="下载视频"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (isPlaceholder) showToast('占位视频,暂不可下载', 'info')
-              else downloadVideo(realVideo)
-            }}
-          >
-            <DownloadIcon />
-          </button>
-        </span>
-        <span className="pm2-vid-title" title={video.title}>
-          {video.title}
-        </span>
-      </div>
-    )
-  }
+  const activeVideo = detailVideos[activeVideoIdx] || null
 
   return (
-    <AppLayout activeNav="项目管理">
-      <AppToast />
+    <div className="pm2-page">
+      <AppSidebar
+        activeKey="projects"
+        onNavigate={handleNavigate}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
 
-      <section className="pm2-main" aria-label="项目管理">
-        {viewMode === 'root' ? (
-          <>
-            {/* 我的项目 */}
-            <section className="pm2-section">
-              <h2 className="pm2-section-title">我的项目</h2>
-              <div className="pm2-folder-grid">
-                <button type="button" className="pm2-folder pm2-folder--create" onClick={() => setCreateOpen(true)}>
-                  <span className="pm2-folder-icon pm2-folder-icon--create">
-                    <svg viewBox="0 0 48 48" width="34" height="34" aria-hidden="true">
-                      <path d="M24 14v20M14 24h20" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                    </svg>
-                  </span>
-                  <span className="pm2-folder-name">创建项目</span>
-                </button>
+      <div className="pm2-shell">
+        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
+        <AppToast />
 
-                {loading && !folders.length ? (
-                  <div className="pm2-hint">正在加载项目…</div>
-                ) : (
-                  folders.map((folder, i) => (
+        <section className="pm2-main" aria-label="项目管理">
+          {viewMode === 'root' ? (
+            <>
+              {/* 我的项目 */}
+              <section className="pm2-section">
+                <h2 className="pm2-section-title">我的项目</h2>
+                <div className="pm2-folder-grid">
+                  <button type="button" className="pm2-folder pm2-folder--create" onClick={() => setCreateOpen(true)}>
+                    <span className="pm2-folder-icon pm2-folder-icon--create">
+                      <svg viewBox="0 0 48 48" width="34" height="34" aria-hidden="true">
+                        <path d="M24 14v20M14 24h20" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
+                    </span>
+                    <span className="pm2-folder-name">创建项目</span>
+                  </button>
+
+                  {loading && !folders.length ? (
+                    <div className="pm2-hint">正在加载项目…</div>
+                  ) : (
+                    folders.map((folder, i) => (
+                      <div
+                        key={folder.id}
+                        className={`pm2-folder${dragOverFolderId === folder.id ? ' is-dropover' : ''}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openFolder(folder)}
+                        onKeyDown={(e) => e.key === 'Enter' && openFolder(folder)}
+                        onDragOver={(e) => {
+                          e.preventDefault()
+                          if (dragOverFolderId !== folder.id) setDragOverFolderId(folder.id)
+                        }}
+                        onDragLeave={() => dragOverFolderId === folder.id && setDragOverFolderId(0)}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          handleDropToFolder(folder, e.dataTransfer.getData('text/plain'))
+                        }}
+                      >
+                        <span className={`pm2-folder-icon pm2-tone-${toneOf(i)}`}>
+                          <FolderGlyph />
+                          <button
+                            type="button"
+                            className="pm2-folder-more"
+                            aria-label="更多操作"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setOpenMenuId((prev) => (prev === folder.id ? 0 : folder.id))
+                            }}
+                          >
+                            <svg viewBox="0 0 20 20" aria-hidden="true" width="18" height="18">
+                              <circle cx="4" cy="10" r="1.4" fill="currentColor" />
+                              <circle cx="10" cy="10" r="1.4" fill="currentColor" />
+                              <circle cx="16" cy="10" r="1.4" fill="currentColor" />
+                            </svg>
+                            {openMenuId === folder.id && (
+                              <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  className="pm2-folder-menu-item is-danger"
+                                  disabled={deletingProjectId === folder.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    deleteProject(folder)
+                                  }}
+                                >
+                                  {deletingProjectId === folder.id ? '删除中…' : '删除项目'}
+                                </button>
+                              </div>
+                            )}
+                          </button>
+                        </span>
+                        <span className="pm2-folder-name" title={folder.title}>
+                          {folder.title}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              {/* 待归类(占位假数据,可拖入上方项目) */}
+              <section className="pm2-section">
+                <h2 className="pm2-section-title">待归类</h2>
+                <div className="pm2-video-grid">
+                  {PLACEHOLDER_UNCLASSIFIED.map((video, i) => (
                     <div
-                      key={folder.id}
-                      className={`pm2-folder${dragOverFolderId === folder.id ? ' is-dropover' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openFolder(folder)}
-                      onKeyDown={(e) => e.key === 'Enter' && openFolder(folder)}
-                      onDragOver={(e) => {
-                        e.preventDefault()
-                        if (dragOverFolderId !== folder.id) setDragOverFolderId(folder.id)
-                      }}
-                      onDragLeave={() => dragOverFolderId === folder.id && setDragOverFolderId(0)}
-                      onDrop={(e) => {
-                        e.preventDefault()
-                        handleDropToFolder(folder, e.dataTransfer.getData('text/plain'))
-                      }}
+                      key={video.id}
+                      className="pm2-vid"
+                      draggable
+                      onDragStart={(e) => e.dataTransfer.setData('text/plain', JSON.stringify(video))}
                     >
-                      <span className={`pm2-folder-icon pm2-tone-${toneOf(i)}`}>
-                        <FolderGlyph />
-                        <button
-                          type="button"
-                          className="pm2-folder-more"
-                          aria-label="更多操作"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setOpenMenuId((prev) => (prev === folder.id ? 0 : folder.id))
-                          }}
-                        >
-                          <svg viewBox="0 0 20 20" aria-hidden="true" width="18" height="18">
-                            <circle cx="4" cy="10" r="1.4" fill="currentColor" />
-                            <circle cx="10" cy="10" r="1.4" fill="currentColor" />
-                            <circle cx="16" cy="10" r="1.4" fill="currentColor" />
-                          </svg>
-                          {openMenuId === folder.id && (
-                            <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="pm2-folder-menu-item is-danger"
-                                disabled={deletingProjectId === folder.id}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  deleteProject(folder)
-                                }}
-                              >
-                                {deletingProjectId === folder.id ? '删除中…' : '删除项目'}
-                              </button>
-                            </div>
-                          )}
-                        </button>
+                      <span
+                        className={`pm2-vid-thumb pm2-tone-${toneOf(i)}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => showToast('占位视频,接口接入后可播放', 'info')}
+                      >
+                        <span className="pm2-vid-play">
+                          <PlayIcon />
+                        </span>
                       </span>
-                      <span className="pm2-folder-name" title={folder.title}>
-                        {folder.title}
+                      <span className="pm2-vid-title" title={video.title}>
+                        {video.title}
                       </span>
                     </div>
-                  ))
-                )}
+                  ))}
+                </div>
+              </section>
+            </>
+          ) : (
+            /* 项目详情:最终视频 + 分镜(含元素) */
+            <>
+              <div className="pm2-detail-head">
+                <button type="button" className="pm2-back" onClick={backToRoot}>
+                  <svg viewBox="0 0 12 12" aria-hidden="true" width="12" height="12">
+                    <path d="M7.5 2.5 4 6l3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  返回
+                </button>
+                <h2 className="pm2-section-title pm2-section-title--inline">{activeProject?.title || '项目'}</h2>
+                <button type="button" className="pm2-open-editor" onClick={openProjectEditor}>
+                  进入编辑
+                </button>
               </div>
-            </section>
 
-            {/* 待归类(占位假数据,可拖入上方项目) */}
-            <section className="pm2-section">
-              <h2 className="pm2-section-title">待归类</h2>
-              <div className="pm2-video-grid">
-                {PLACEHOLDER_UNCLASSIFIED.map((video, i) => renderVideoCard(video, i, { placeholder: true }))}
-              </div>
-            </section>
-          </>
-        ) : (
-          /* 文件夹内:项目视频 */
-          <section className="pm2-section">
-            <div className="pm2-folder-head">
-              <button type="button" className="pm2-back" onClick={backToRoot}>
-                <svg viewBox="0 0 12 12" aria-hidden="true" width="12" height="12">
-                  <path d="M7.5 2.5 4 6l3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                返回
-              </button>
-              <h2 className="pm2-section-title pm2-section-title--inline">{activeProject?.title || '项目'}</h2>
-              <span className="pm2-folder-count">
-                {versionsLoading ? '加载中…' : `共 ${folderVideos.length} 个视频`}
-              </span>
-              <button type="button" className="pm2-open-editor" onClick={openProjectEditor}>
-                进入编辑
-              </button>
-            </div>
-
-            <div className="pm2-video-grid">
-              {versionsLoading ? (
-                <div className="pm2-hint">正在加载项目内的视频…</div>
-              ) : !folderVideos.length ? (
-                <div className="pm2-hint">这个项目还没有保存的视频,生成视频后点击「保存视频」即可。</div>
+              {detailLoading ? (
+                <div className="pm2-hint">正在加载项目内容…</div>
               ) : (
-                folderVideos.map((video, i) => (
-                  <div key={video.id} className="pm2-vid-wrap">
-                    {renderVideoCard(video, i)}
-                    <button
-                      type="button"
-                      className="pm2-vid-del"
-                      disabled={deletingVersionId === video.id}
-                      onClick={() => deleteFolderVideo(video)}
-                    >
-                      {deletingVersionId === video.id ? '删除中…' : '删除'}
-                    </button>
-                  </div>
-                ))
+                <>
+                  {/* 最终视频(含历史) */}
+                  <section className="pm2-section">
+                    <h3 className="pm2-section-sub">最终视频</h3>
+                    {activeVideo ? (
+                      <div className="pm2-detail-video">
+                        <div className="pm2-detail-player">
+                          {activeVideo.url ? (
+                            <video src={activeVideo.url} controls playsInline />
+                          ) : (
+                            <div className="pm2-hint">该版本视频暂时无法播放</div>
+                          )}
+                        </div>
+                        <div className="pm2-detail-video-side">
+                          <button
+                            type="button"
+                            className="pm2-open-editor"
+                            disabled={!activeVideo.url}
+                            onClick={() => downloadFromUrl(activeVideo.url, `${activeProject?.title || '视频'}-${activeVideo.label}`)}
+                          >
+                            下载视频
+                          </button>
+                          {detailVideos.length > 1 && (
+                            <div className="pm2-detail-history">
+                              <div className="pm2-detail-history-title">历史版本</div>
+                              <div className="pm2-detail-history-list">
+                                {detailVideos.map((v, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    className={`pm2-detail-history-item${i === activeVideoIdx ? ' is-active' : ''}`}
+                                    onClick={() => setActiveVideoIdx(i)}
+                                  >
+                                    {v.url ? <video src={v.url} muted /> : <span className="pm2-vid-play"><PlayIcon /></span>}
+                                    <span>{v.label}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="pm2-hint">这个项目还没有生成视频。</div>
+                    )}
+                  </section>
+
+                  {/* 分镜(每个分镜图 + 用到的元素) */}
+                  <section className="pm2-section">
+                    <h3 className="pm2-section-sub">分镜 · 共 {detailShots.length} 个</h3>
+                    {detailShots.length ? (
+                      <div className="pm2-shot-grid">
+                        {detailShots.map((shot, i) => (
+                          <div className="pm2-shot-card" key={shot.id}>
+                            <div
+                              className={`pm2-shot-thumb pm2-tone-${toneOf(i)}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => shot.url && setBigImg(shot.url)}
+                            >
+                              {shot.url ? (
+                                <>
+                                  <img src={shot.url} alt={shot.no} loading="lazy" />
+                                  <AiBadge />
+                                </>
+                              ) : (
+                                <span className="pm2-shot-empty">暂无分镜图</span>
+                              )}
+                            </div>
+                            <div className="pm2-shot-meta">
+                              <strong>{shot.no}</strong>
+                              {shot.duration && <span>{shot.duration}</span>}
+                            </div>
+                            {shot.elements.length > 0 && (
+                              <div className="pm2-shot-els">
+                                {shot.elements.map((el, j) => (
+                                  <span className="pm2-shot-el" key={j} title={`${el.tag}${el.kind ? ' · ' + el.kind : ''}`}>
+                                    <span className="pm2-shot-el-thumb">
+                                      {el.url ? <img src={el.url} alt={el.tag} loading="lazy" /> : <span>@</span>}
+                                    </span>
+                                    <span className="pm2-shot-el-name">@{el.tag}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="pm2-hint">这个项目还没有分镜。</div>
+                    )}
+                  </section>
+                </>
               )}
-            </div>
-          </section>
-        )}
-      </section>
+            </>
+          )}
+        </section>
+      </div>
 
       {/* 创建项目弹窗(基础版,后续由设计稿细化) */}
       {createOpen &&
@@ -729,46 +738,17 @@ export default function ProjectManagementView() {
           document.body,
         )}
 
-      {/* 视频预览弹窗 */}
-      {videoPreviewOpen &&
+      {/* 分镜图放大 */}
+      {bigImg &&
         createPortal(
-          <div
-            className="pm-video-overlay"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) closeVideoPreview()
-            }}
-          >
-            <div className="pm-video-modal">
-              <div className="pm-video-modal-header">
-                <span>{videoPreviewTitle}</span>
-                <button type="button" className="pm-video-modal-close" aria-label="关闭" onClick={closeVideoPreview}>
-                  <svg viewBox="0 0 14 14" aria-hidden="true" width="16" height="16">
-                    <path d="M4 4l6 6M10 4l-6 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                  </svg>
-                </button>
-              </div>
-              <div className="pm-video-modal-body">
-                {videoPreviewUrl ? (
-                  <video src={videoPreviewUrl} controls autoPlay playsInline />
-                ) : (
-                  <div className="pm-video-modal-loading">加载中...</div>
-                )}
-                {videoPreviewUrl && (
-                  <div className="pm-video-modal-actions">
-                    <button
-                      type="button"
-                      className="pm2-modal-btn pm2-modal-btn--primary"
-                      onClick={() => downloadFromUrl(videoPreviewUrl, videoPreviewTitle)}
-                    >
-                      下载视频
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
+          <div className="pm2-lightbox" onClick={() => setBigImg('')} role="dialog" aria-label="分镜图放大">
+            <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
+            <button type="button" className="pm2-lightbox-close" aria-label="关闭" onClick={() => setBigImg('')}>
+              ×
+            </button>
           </div>,
           document.body,
         )}
-    </AppLayout>
+    </div>
   )
 }
