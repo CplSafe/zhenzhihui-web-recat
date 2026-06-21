@@ -1,10 +1,9 @@
-/* 爆款复制(2.1)—— 粉色系入口 */
+/* 爆款复制(2.1)入口 —— 粉色系,紧凑面板 */
 .hotcopy {
   display: flex;
   height: 100vh;
   min-height: 100vh;
-  /* 粉色系底色 */
-  background: linear-gradient(160deg, #fff1f4 0%, #fdeef6 45%, #f6eefc 100%);
+  background: linear-gradient(160deg, #fff1f4 0%, #fdeef6 45%, #f3eefc 100%);
 }
 .hotcopy__shell {
   flex: 1;
@@ -17,171 +16,178 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 36px 40px 56px;
+  padding: 48px 40px 56px;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 .hotcopy__title {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 700;
   color: #2a2230;
-  margin: 8px 0 26px;
+  margin: 12px 0 30px;
   text-align: center;
 }
+.hotcopy__panel {
+  width: 100%;
+  max-width: 940px;
+}
 
-/* 两 Tab(主标题 + 副标题) */
+/* 两 Tab:名称 + ? + 副标题(同排) */
 .hotcopy__tabs {
   display: flex;
-  gap: 14px;
-  width: 100%;
-  max-width: 980px;
-  margin-bottom: 14px;
+  gap: 28px;
+  padding: 0 6px 10px;
 }
 .hotcopy__tab {
-  flex: 1 1 0;
-  text-align: left;
-  border: 1px solid #f3d7e3;
-  background: rgba(255, 255, 255, 0.72);
-  border-radius: 14px;
-  padding: 12px 16px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  transition: all 0.15s;
-}
-.hotcopy__tab:hover {
-  border-color: #f0a9c6;
-}
-.hotcopy__tab.is-active {
-  border-color: transparent;
-  background: linear-gradient(135deg, #ffe3ee, #fbe0f3);
-  box-shadow: 0 4px 16px rgba(232, 120, 170, 0.18);
-}
-.hotcopy__tab-head {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  border: none;
+  background: none;
+  padding: 4px 0;
+  cursor: pointer;
+  position: relative;
+}
+.hotcopy__tab-name {
   font-size: 16px;
   font-weight: 600;
-  color: #2a2230;
+  color: #9b8a93;
 }
-.hotcopy__tab.is-active .hotcopy__tab-head {
+.hotcopy__tab.is-active .hotcopy__tab-name {
   color: #d6357f;
+}
+.hotcopy__tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -2px;
+  width: 44px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #ff7eb0, #e35aa0);
 }
 .hotcopy__tab-sub {
   font-size: 12px;
-  color: #9b8a93;
+  color: #b7a6ae;
 }
 .hotcopy__tip {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
   border: 1px solid #e6a9c4;
   color: #d6357f;
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 10px;
+  line-height: 13px;
   text-align: center;
   cursor: help;
+  flex: 0 0 auto;
 }
 
-/* 主面板 */
-.hotcopy__panel {
-  width: 100%;
-  max-width: 980px;
-  background: rgba(255, 255, 255, 0.82);
+/* 卡片 */
+.hotcopy__card {
+  background: rgba(255, 255, 255, 0.9);
   border: 1px solid #f6dbe6;
   border-radius: 18px;
-  padding: 20px;
-  box-shadow: 0 8px 28px rgba(232, 120, 170, 0.1);
+  padding: 18px;
+  box-shadow: 0 10px 30px rgba(232, 120, 170, 0.12);
 }
-.hotcopy__uploads {
+.hotcopy__card-body {
   display: flex;
   gap: 16px;
-  margin-bottom: 16px;
+  align-items: flex-start;
 }
-.hotcopy__upbox {
-  flex: 1 1 0;
-  min-width: 0;
-  border: 1px solid #f3e3ea;
-  border-radius: 12px;
-  padding: 14px;
-  background: #fff;
-}
-.hotcopy__upbox--req {
-  border-color: #f6ccdd;
-}
-.hotcopy__upbox-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #2a2230;
-  margin-bottom: 10px;
-}
-.hotcopy__req {
-  color: #e5484d;
-}
-.hotcopy__src-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.hotcopy__src {
-  border: 1px solid #eee0e6;
-  background: #fff;
-  border-radius: 14px;
-  padding: 3px 12px;
-  font-size: 12px;
-  color: #8a7c83;
-  cursor: pointer;
-}
-.hotcopy__src.is-active {
-  border-color: transparent;
-  background: linear-gradient(135deg, #ffe3ee, #fbe0f3);
-  color: #d6357f;
-}
-.hotcopy__drop {
-  width: 100%;
-  min-height: 96px;
-  border: 1.5px dashed #eccfdc;
-  border-radius: 10px;
-  background: #fffafc;
-  color: #b78aa0;
-  font-size: 13px;
-  cursor: pointer;
+.hotcopy__uploads {
+  flex: 0 0 200px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+  gap: 10px;
 }
-.hotcopy__drop:hover {
+.hotcopy__videowrap {
+  position: relative;
+}
+.hotcopy__upbtn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #f0dbe5;
+  background: #fff;
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-size: 13px;
+  color: #5b4d55;
+  cursor: pointer;
+}
+.hotcopy__upbtn:hover {
   border-color: #f0a9c6;
   color: #d6357f;
 }
-.hotcopy__drop--sm {
-  min-height: 76px;
-  width: 92px;
-  flex: 0 0 auto;
-  gap: 2px;
+.hotcopy__upbtn.is-done {
+  border-color: #f0a9c6;
+  background: #fff5f9;
+  color: #d6357f;
 }
-.hotcopy__drop-plus {
-  font-size: 24px;
+.hotcopy__req {
+  color: #e5484d;
+  margin-left: auto;
+}
+.hotcopy__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #f3e3ea;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(20, 20, 50, 0.14);
+  padding: 4px;
+}
+.hotcopy__menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 9px 12px;
+  font-size: 13px;
+  color: #4b3f46;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.hotcopy__menu button:hover {
+  background: #fdeef5;
+  color: #d6357f;
+}
+.hotcopy__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  font-size: 12px;
+  color: #6b5a62;
+  background: #fbeef4;
+  border: 1px solid #f3d7e3;
+  border-radius: 8px;
+  padding: 4px 8px;
+  overflow: hidden;
+}
+.hotcopy__chip button {
+  border: none;
+  background: none;
+  color: #b78aa0;
+  font-size: 14px;
   line-height: 1;
-}
-.hotcopy__drop-file {
-  color: #2a2230;
-  word-break: break-all;
-  padding: 0 8px;
-  text-align: center;
+  cursor: pointer;
 }
 .hotcopy__link {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid #eccfdc;
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 13px;
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 12px;
   outline: none;
 }
 .hotcopy__link:focus {
@@ -190,13 +196,13 @@
 .hotcopy__products {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 .hotcopy__product {
   position: relative;
-  width: 76px;
-  height: 76px;
-  border-radius: 10px;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
   overflow: hidden;
   border: 1px solid #f3e3ea;
 }
@@ -205,41 +211,71 @@
   height: 100%;
   object-fit: cover;
 }
-.hotcopy__product-x {
+.hotcopy__product button {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 18px;
-  height: 18px;
+  top: 1px;
+  right: 1px;
+  width: 16px;
+  height: 16px;
   border: none;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
 }
 
-/* 文案 + 创建 */
-.hotcopy__compose {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-}
+/* 文案 */
 .hotcopy__text {
   flex: 1 1 auto;
-  min-height: 56px;
+  min-width: 0;
+  min-height: 92px;
   resize: vertical;
   border: 1px solid #f0e2e8;
   border-radius: 12px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.7;
   font-family: inherit;
+  color: #3a2f36;
   outline: none;
+  background: #fffdfe;
 }
 .hotcopy__text:focus {
   border-color: #f0a9c6;
+}
+
+/* 底部工具栏 */
+.hotcopy__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+.hotcopy__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hotcopy__tool-i {
+  font-size: 13px;
+}
+.hotcopy__at {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #f0dbe5;
+  background: #fff;
+  border-radius: 8px;
+  color: #b78aa0;
+  font-size: 15px;
+  cursor: pointer;
+}
+.hotcopy__at:hover {
+  border-color: #f0a9c6;
+  color: #d6357f;
 }
 .hotcopy__create {
   flex: 0 0 auto;
@@ -249,7 +285,7 @@
   color: #fff;
   font-size: 15px;
   font-weight: 500;
-  padding: 12px 24px;
+  padding: 11px 24px;
   cursor: pointer;
 }
 .hotcopy__create:hover:not(:disabled) {
@@ -260,7 +296,7 @@
   cursor: default;
 }
 .hotcopy__hint {
-  margin-top: 14px;
+  margin-top: 16px;
   font-size: 12px;
   color: #b09aa3;
 }
