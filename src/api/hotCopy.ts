@@ -65,6 +65,12 @@ export async function replicateHotVideo(args: {
     capability: 'video',
     operationCode: 'video.replicate',
     preferredModelKeywords: VIDEO_MODEL_KEYWORDS,
+    // 仅允许真正支持 video.replicate 的模型;否则后端会回退到任意视频模型(如只支持
+    // video.generate 的 Seedance)→ 提交后 provider 直接 PROVIDER_FAILED。
+    modelValidator: (model: any) =>
+      Array.isArray(model?.operation_codes) && model.operation_codes.includes('video.replicate')
+        ? true
+        : '当前工作空间/套餐暂无「爆款复刻(video.replicate)」可用模型,请联系管理员开通',
     ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
     prompt: args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。',
     inputAssets,
