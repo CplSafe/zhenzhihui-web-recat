@@ -61,6 +61,12 @@ function isAllowedUploadUrl(url) {
     return false
   }
 
+  // 开发环境:本机连的是开发者自己的后端/对象存储,放行任意 http(s) 上传地址
+  // (省去为每个后端的 MinIO 端口手配白名单)。生产构建仍走下面的严格白名单。
+  if (import.meta.env.DEV) {
+    return true
+  }
+
   const normalizedOrigin = normalizeBaseUrl(parsed.origin)
   const hostname = parsed.hostname
 
