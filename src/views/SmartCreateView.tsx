@@ -18,7 +18,7 @@ import ShotArrange from '@/components/smart/ShotArrange'
 import { Streamdown } from 'streamdown'
 import { generateProjectName, summarizeRequirement, refineElementPrompt, refineElementPromptWithImage } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
-import { generateShotImage, ensureAssetId, refreshAssetUrl } from '@/api/smartShotImage'
+import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
 import { generateFullVideo, buildTimelinePrompt } from '@/api/smartVideo'
 import VideoStage from '@/components/smart/VideoStage'
 import {
@@ -285,16 +285,22 @@ export default function SmartCreateView() {
   }
 
   // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
-  // 当前项目内所有图(去重):入口上传的原图 + 各元素版本(AI/上传) + 分镜图。供"添加参考图/替换"选择。
-  const projectImages: string[] = (() => {
-    const set = new Set<string>()
-    ;(entryMeta?.images || []).forEach((u: string) => u && set.add(u))
-    Object.values(subjectAssets).forEach((e: any) => (e?.versions || []).forEach((u: string) => u && set.add(u)))
+  // 当前项目内所有图(去重,标注来源):入口上传原图 + 各元素版本(AI/上传) + 分镜图。
+  // 供"添加参考图/替换"选择;弹窗按 source 区分「上传」与「AI生成」。
+  const projectImages: { url: string; source: 'ai' | 'upload' }[] = (() => {
+    const m = new Map<string, 'ai' | 'upload'>()
+    ;(entryMeta?.images || []).forEach((u: string) => u && m.set(u, 'upload'))
+    Object.values(subjectAssets).forEach((e: any) =>
+      (e?.versions || []).forEach((u: string) => {
+        if (u) m.set(u, e?.sources?.[u] || 'upload')
+      }),
+    )
     shots.forEach((sh) => {
-      if (sh.image) set.add(sh.image)
-      sh.subjects.forEach((su) => su.image && set.add(su.image))
+      if (sh.image) m.set(sh.image, 'ai') // 分镜图为 AI 生成
     })
-    return [...set].filter((u) => /^(https?:|data:)/.test(u))
+    return [...m.entries()]
+      .filter(([u]) => /^(https?:|data:)/.test(u))
+      .map(([url, source]) => ({ url, source }))
   })()
 
   const boardSubjects: BoardSubject[] = (() => {
@@ -604,6 +610,9 @@ export default function SmartCreateView() {
     videoVersions.forEach((v) => {
       if (v.assetId) ids.add(Number(v.assetId))
     })
+    ;((entryMeta as any)?.imageAssetIds || []).forEach((id: any) => {
+      if (id) ids.add(Number(id))
+    })
     if (!ids.size) return // 暂无 asset_id(数据可能还没装载完)→ 下一轮再试
     hydratedUrlsRef.current = true
     void (async () => {
@@ -656,6 +665,16 @@ export default function SmartCreateView() {
         }
         return next
       })
+      // 入口上传图:按 asset_id 刷新签名URL
+      setEntryMeta((prev: any) => {
+        const aids = prev?.imageAssetIds || []
+        if (!Array.isArray(prev?.images) || !aids.length) return prev
+        const images = prev.images.map((u: string, i: number) => {
+          const nu = aids[i] && map.get(Number(aids[i]))
+          return nu || u
+        })
+        return { ...prev, images }
+      })
       // 整片视频:按 asset_id 刷新当前 + 各历史版本签名URL
       setFullVideo((prev) =>
         prev.assetId && map.get(Number(prev.assetId)) ? { ...prev, url: map.get(Number(prev.assetId))! } : prev,
@@ -664,7 +683,7 @@ export default function SmartCreateView() {
         prev.map((v) => (v.assetId && map.get(Number(v.assetId)) ? { ...v, url: map.get(Number(v.assetId))! } : v)),
       )
     })()
-  }, [workspaceId, started, shots, subjectAssets, fullVideo, videoVersions])
+  }, [workspaceId, started, shots, subjectAssets, fullVideo, videoVersions, entryMeta])
 
   // ── 草稿:本地(localStorage)+ 后端(/creative/projects/:id/draft)双层持久化 ──
   // 把当前页面状态打包成草稿对象(localStorage 与后端快照共用)
@@ -885,8 +904,27 @@ export default function SmartCreateView() {
     setShots([])
     setScriptError('')
     if (req) void autoNameProject(req)
-    // 后端建项目(best-effort,使其出现在项目管理/历史)
+    // 入口上传的素材图(dataURL)落库成后端 asset,否则刷新会丢(stripHeavy 剥 dataURL)
     const wsId = Number(workspaceId || 0)
+    if (wsId && meta.images?.length) {
+      void (async () => {
+        const cache: Record<string, number> = {}
+        const urls: string[] = []
+        const ids: number[] = []
+        for (const u of meta.images!) {
+          try {
+            const out = await persistImageAsset(wsId, u, cache)
+            urls.push(out.url)
+            ids.push(out.assetId || 0)
+          } catch {
+            urls.push(u)
+            ids.push(0)
+          }
+        }
+        setEntryMeta((m: any) => (m ? { ...m, images: urls, imageAssetIds: ids } : m))
+      })()
+    }
+    // 后端建项目(best-effort,使其出现在项目管理/历史)
     if (wsId && !projectIdRef.current) {
       draftRevisionRef.current = 0
       titlePatchedRef.current = false

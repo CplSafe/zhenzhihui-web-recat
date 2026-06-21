@@ -18,8 +18,8 @@ interface SubjectAssetDialogProps {
   autoGen?: boolean
   /** 打开时把(原始意图)defaultPrompt 交本地 Qwen 润成干净画面提示词后回显;不传则原样显示 */
   refinePrompt?: (intent: string) => Promise<string>
-  /** 当前项目内所有图(去重):供"添加参考图/替换"从项目里选 */
-  projectImages?: string[]
+  /** 当前项目内所有图(带来源):供"添加参考图/替换"从项目里选,按上传/AI生成分组 */
+  projectImages?: { url: string; source: 'ai' | 'upload' }[]
   onClose: () => void
   /** 生成:prompt + 选项(refImageUrl 参考图;carryCurrent 携带当前图=修改/不带=重新生成) */
   onGenerate: (prompt: string, opts: { refImageUrl?: string; carryCurrent?: boolean }) => Promise<void>
@@ -269,13 +269,29 @@ export default function SubjectAssetDialog({
                   ↑<br />
                   上传
                 </button>
-                {projectImages.map((url, i) => (
-                  <button key={i} type="button" className="sad__picker-item" onClick={() => pickProjectImage(url)}>
-                    <img src={url} alt="" />
-                  </button>
-                ))}
-                {!projectImages.length && <span className="sad__picker-empty">项目里暂无可选图片</span>}
               </div>
+              {(['upload', 'ai'] as const).map((src) => {
+                const list = projectImages.filter((p) => p.source === src)
+                if (!list.length) return null
+                return (
+                  <div key={src} className="sad__picker-group">
+                    <div className="sad__picker-group-title">{src === 'upload' ? '我上传的图' : 'AI 生成的图'}</div>
+                    <div className="sad__picker-grid">
+                      {list.map((p, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          className="sad__picker-item"
+                          onClick={() => pickProjectImage(p.url)}
+                        >
+                          <img src={p.url} alt="" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+              {!projectImages.length && <span className="sad__picker-empty">项目里暂无可选图片,可点上方「上传」</span>}
             </div>
           )}
         </div>
