@@ -17,6 +17,7 @@ import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { useUiStore } from '@/stores/ui'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
 import { loadLastCreativeProjectId } from '@/utils/creativeStorage'
+import { markDevLogout } from '@/App'
 import {
   useWorkspaceSessionStore,
   useCurrentUser,
@@ -376,15 +377,20 @@ export default function AppLayout(props: AppLayoutProps) {
           danger: false,
         },
       )
-      // choice: true = 直接退出, false/null = 取消
       if (choice === false || choice === null) {
-        return // User cancelled
+        return
       }
-      // User chose to leave without saving — proceed with logout
       setDirty(false)
     }
 
     setIsLoggingOut(true)
+
+    if (import.meta.env.DEV) {
+      setIsLoggingOut(false)
+      markDevLogout()
+      handleLogoutSuccess()
+      return
+    }
 
     try {
       await logoutSession()
@@ -397,7 +403,6 @@ export default function AppLayout(props: AppLayoutProps) {
         handleLogoutSuccess()
         return
       }
-
       showToast(getAuthErrorMessage(error, '退出登录失败，请稍后重试'), 'error')
       setIsLoggingOut(false)
     }

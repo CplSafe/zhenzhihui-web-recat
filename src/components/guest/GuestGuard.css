@@ -1,0 +1,27 @@
+/* GuestGuard — 游客模式半透明遮罩 */
+.guest-guard {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 40px;
+}
+
+.guest-guard-hint {
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  padding: 10px 24px;
+  border-radius: 20px;
+  font-size: 14px;
+  backdrop-filter: blur(8px);
+  animation: guest-pulse 2s ease-in-out infinite;
+}
+
+@keyframes guest-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}

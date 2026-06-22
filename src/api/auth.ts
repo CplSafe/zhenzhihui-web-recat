@@ -9,12 +9,14 @@ const AUTH_SESSION_MARKER_KEY = 'zzh_has_auth_session'
 
 const businessRemoteOrigin = readBaseUrl('VITE_ZZH_REMOTE_ORIGIN', '')
 const deepAuthRemoteOrigin = readBaseUrl('VITE_DEEPAUTH_REMOTE_ORIGIN', '')
+const ssoRemoteOrigin = readBaseUrl('VITE_SSO_REMOTE_ORIGIN', '')
 const businessApiBaseUrl = resolveProxyFriendlyBaseUrl(import.meta.env.VITE_ZZH_API_BASE_URL, '', businessRemoteOrigin)
 const deepAuthApiBaseUrl = resolveProxyFriendlyBaseUrl(
   import.meta.env.VITE_DEEPAUTH_API_BASE_URL,
   '/deepauth',
   deepAuthRemoteOrigin,
 )
+const ssoApiBaseUrl = resolveProxyFriendlyBaseUrl('', '/sso', ssoRemoteOrigin)
 
 export class AuthApiError extends Error {
   constructor(message, { status = 0, code = null, requestId = '', response = null }: any = {}) {
@@ -187,7 +189,9 @@ export function isCaptchaChallengeError(error) {
 }
 
 export function isUnauthorizedAuthError(error) {
-  return error instanceof AuthApiError && error.status === 401
+  if (!(error instanceof AuthApiError)) return false
+  // HTTP 401 或业务层 code_string === 'UNAUTHORIZED'（后端可能返回 200 + 业务错误码 10101）
+  return error.status === 401 || error.code === 'UNAUTHORIZED'
 }
 
 function authStartContext(authStart) {
@@ -224,6 +228,16 @@ async function getCurrentWorkspaceMember(authContext) {
 
 function requestDeepAuth(url, body) {
   return requestJson(toProxiedUrl(url, deepAuthApiBaseUrl, deepAuthRemoteOrigin), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(removeEmptyFields(body)),
+  })
+}
+
+// 直接向 SSO(8001) 发送请求，login/sms/register 统一走 /sso 代理，
+// 让 8001 直接认证并设置 cookie，后续 /sso OAuth 跳转即可跳过二次登录。
+function requestSso(url, body) {
+  return requestJson(toProxiedUrl(url, ssoApiBaseUrl, ssoRemoteOrigin), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(removeEmptyFields(body)),
@@ -310,6 +324,10 @@ function toNavigationUrl(url, authStart) {
     if (origin === businessRemoteOrigin) {
       return pathAndQuery
     }
+
+    if (origin === ssoRemoteOrigin) {
+      return buildUrl(ssoApiBaseUrl, pathAndQuery)
+    }
   } catch {
     return authStart?.authorize_url ? toNavigationUrl(authStart.authorize_url, null) : '/'
   }
@@ -338,6 +356,11 @@ function toProxiedUrl(url, localBaseUrl, remoteOrigin) {
 
     if (origin === businessRemoteOrigin) {
       return buildUrl(businessApiBaseUrl, pathAndQuery)
+    }
+
+    // SSO(8001) 的请求也走代理，确保 cookie 同域
+    if (origin === ssoRemoteOrigin) {
+      return buildUrl(ssoApiBaseUrl, pathAndQuery)
     }
   } catch {
     return buildUrl(localBaseUrl, url)

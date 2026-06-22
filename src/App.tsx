@@ -8,7 +8,15 @@ import { Outlet, useLocation, useMatches, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import AppToast from './components/AppToast'
 import AppConfirmDialog from './components/AppConfirmDialog'
+import GuestGuard, { isGuestMode } from './components/guest/GuestGuard'
 import './App.css'
+
+// 退出登录标记：dev 模式下 AuthContext 用 mock session 绕过 API 检查，
+// 此时主动退出需清除 mock 标记，让守卫正常跳转到 /login。
+export const DEV_LOGOUT_FLAG = '__zzh_dev_logout__'
+export function markDevLogout() {
+  ;(window as any)[DEV_LOGOUT_FLAG] = true
+}
 
 function AppShell() {
   const navigate = useNavigate()
@@ -16,19 +24,17 @@ function AppShell() {
   const matches = useMatches()
   const { isAuthenticated, isCheckingSession, authCheckError, loadAuthSession } = useAuth()
 
-  // 当前路由是否需要鉴权（默认 true，仅 login 标记 requiresAuth:false）。
   const requiresAuth = !matches.some((m) => (m.handle as any)?.requiresAuth === false)
 
-  // 中央跳转守卫（对应原 App.vue 的 watch）。
   useEffect(() => {
     if (isCheckingSession) return
     if (authCheckError) return
 
-    if (requiresAuth && !isAuthenticated) {
-      navigate('/login', { replace: true })
+    if (requiresAuth && !isAuthenticated && !isGuestMode()) {
+      navigate('/welcome', { replace: true })
       return
     }
-    if (!requiresAuth && isAuthenticated && location.pathname === '/login') {
+    if (!requiresAuth && isAuthenticated && (location.pathname === '/login' || location.pathname === '/welcome')) {
       navigate('/home', { replace: true })
     }
   }, [isAuthenticated, isCheckingSession, authCheckError, requiresAuth, location.pathname, navigate])
@@ -46,17 +52,19 @@ function AppShell() {
               <button type="button" onClick={() => loadAuthSession()}>
                 重新检查
               </button>
-              <button type="button" className="ghost" onClick={() => navigate('/login', { replace: true })}>
-                前往登录
+              <button type="button" className="ghost" onClick={() => navigate('/welcome', { replace: true })}>
+                前往开屏页
               </button>
             </div>
           </div>
         </div>
       ) : (
-        <Outlet />
+        <>
+          <Outlet />
+          {isGuestMode() && !isAuthenticated && <GuestGuard />}
+        </>
       )}
 
-      {/* 全局单例 */}
       <AppToast />
       <AppConfirmDialog />
     </>

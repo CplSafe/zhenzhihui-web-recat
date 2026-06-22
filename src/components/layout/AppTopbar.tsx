@@ -10,6 +10,7 @@ import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
+import { markDevLogout } from '@/App'
 import './AppTopbar.css'
 
 interface AppTopbarProps {
@@ -70,6 +71,14 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
     if (isLoggingOut) return
     setMenuOpen(false)
     setIsLoggingOut(true)
+
+    if (import.meta.env.DEV) {
+      setIsLoggingOut(false)
+      markDevLogout()
+      handleLogoutSuccess()
+      return
+    }
+
     try {
       await logoutSession()
       showToast('已退出登录', 'success')

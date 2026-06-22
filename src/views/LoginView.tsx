@@ -10,8 +10,8 @@ import './LoginView.css'
 import loginHero from '@/assets/login-hero.png'
 import AgreementModal from '@/components/auth/AgreementModal'
 import {
-  getAuthNavigationUrl,
   getAuthErrorMessage,
+  getAuthenticatedSession,
   getCaptcha,
   isCaptchaChallengeError,
   loginWithPassword,
@@ -20,6 +20,7 @@ import {
   sendAuthSms,
   startOAuth,
 } from '@/api/auth'
+import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 
 interface CaptchaState {
@@ -32,6 +33,9 @@ const NAV_ITEMS = ['母婴宠物', '视频饮料', '生活服务', '家居建材
 
 export default function LoginView() {
   const { showToast, clearToast } = useToast()
+  const { handleLoginSuccess } = useAuth()
+
+  const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
 
   const [loginMode, setLoginMode] = useState<'password' | 'sms'>('password')
   const [phone, setPhone] = useState('')
@@ -73,9 +77,20 @@ export default function LoginView() {
   function getRedirectTo() {
     return `${window.location.origin}/`
   }
-  function completeAuthFlow(oauth: any, authResult: any) {
+  // 凭据验证成功后直接获取会话进入首页，不走 SSO 重定向。
+  // 登录 API 已通过 /sso 代理设置 cookie，getAuthenticatedSession 可直接拿到会话。
+  async function handleLoginFlowComplete(_oauth: any, _authResult?: any) {
     markAuthSessionExpected()
-    window.location.href = getAuthNavigationUrl(oauth, authResult)
+    if (import.meta.env.DEV && !hasRemoteBackend) {
+      handleLoginSuccess()
+      return
+    }
+    try {
+      const session = await getAuthenticatedSession()
+      handleLoginSuccess(session)
+    } catch (error: any) {
+      setNoticeMessage(getAuthErrorMessage(error, '登录失败，请稍后重试'), 'error')
+    }
   }
 
   async function refreshCaptcha({ silent = false } = {}) {
@@ -203,15 +218,26 @@ export default function LoginView() {
   // 实际提交（协议已确认后调用）。
   async function submitLogin(mobile: string, credential: string) {
     setIsSubmitting(true)
+
+    // 仅在未配置远程后端时跳过真实 API 调用（走本地 mock 登录）。
+    if (import.meta.env.DEV && !hasRemoteBackend) {
+      setIsSubmitting(false)
+      setNoticeMessage('登录成功', 'success')
+      handleLoginFlowComplete(null as any)
+      return
+    }
+
     try {
       const oauth = await ensureAuthStart()
       const common = { authStart: oauth, mobile, captchaId: captcha.id, captchaAnswer: captcha.answer.trim() }
-      const result =
-        loginMode === 'password'
-          ? await loginWithPassword({ ...common, password: credential })
-          : await loginWithSmsCode({ ...common, smsCode: credential })
+      let loginResult: any
+      if (loginMode === 'password') {
+        loginResult = await loginWithPassword({ ...common, password: credential })
+      } else {
+        loginResult = await loginWithSmsCode({ ...common, smsCode: credential })
+      }
       setNoticeMessage('登录成功', 'success')
-      completeAuthFlow(oauth, result)
+      handleLoginFlowComplete(oauth, loginResult)
     } catch (error) {
       if (await handleCaptchaError(error)) {
         setNoticeMessage(getAuthErrorMessage(error, '请输入图形验证码'), 'error')

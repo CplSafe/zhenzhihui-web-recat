@@ -4,6 +4,7 @@
  * 在路由根（App）下提供，路由视图经 useAuth() 读取 authSession 及 login/logout 处理器。
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -77,9 +78,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const isStale = () => seq !== loadSeqRef.current
     setIsCheckingSession(true)
     setAuthCheckError('')
+
+    // 开发模式：仅在未配置远程后端时用 mock session 跳过鉴权。
+    // 配置了 VITE_ZZH_REMOTE_ORIGIN 时走真实认证流程。
+    const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
+    if (import.meta.env.DEV && !hasRemoteBackend) {
+      const justLoggedOut = (window as any).__zzh_dev_logout__
+      delete (window as any).__zzh_dev_logout__
+      if (justLoggedOut) {
+        // 主动退出：不 mock，走正常未登录流程 → 跳 /login
+        if (!isStale()) {
+          setSession(null)
+          setIsAuthenticated(false)
+          setAuthSession(null)
+          setIsCheckingSession(false)
+          clearAuthSessionMarker()
+        }
+        return
+      }
+      const mock = { user: { id: 1, nickname: 'dev' }, workspaces: [{ id: 1, name: 'dev' }] }
+      setSession(mock)
+      setIsAuthenticated(true)
+      setAuthSession(mock)
+      if (!isStale()) setIsCheckingSession(false)
+      return
+    }
+
     try {
       const session = await getAuthenticatedSession()
-      if (isStale()) return // 已有更新的检查在进行，丢弃本次结果
+      if (isStale()) return
       setSession(session)
       setIsAuthenticated(true)
       setAuthSession(session)
@@ -113,16 +140,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (session?: any) => {
       sessionStorage.removeItem('zzh_sso_pending')
       if (session) {
-        setSession(session)
-        setIsAuthenticated(true)
-        setAuthCheckError('')
-        setAuthSession(session)
+        flushSync(() => {
+          setSession(session)
+          setIsAuthenticated(true)
+          setAuthCheckError('')
+          setAuthSession(session)
+        })
+        markAuthSessionExpected()
+        navigate('/home', { replace: true })
+        return
+      }
+      if (import.meta.env.DEV && !Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)) {
+        const mock = { user: { id: 1, nickname: 'dev' }, workspaces: [{ id: 1, name: 'dev' }] }
+        flushSync(() => {
+          setSession(mock)
+          setIsAuthenticated(true)
+          setAuthCheckError('')
+          setAuthSession(mock)
+        })
         markAuthSessionExpected()
         navigate('/home', { replace: true })
         return
       }
       loadAuthSession().then(() => {
-        // isAuthenticated 更新是异步的；用 store/重新取值判断后再导航。
         if (useWorkspaceSessionStore.getState().authSession) {
           navigate('/home', { replace: true })
         }

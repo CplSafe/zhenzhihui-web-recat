@@ -56,6 +56,7 @@ function RouteErrorBoundary() {
   )
 }
 
+const SplashView = lazy(() => import('../views/SplashView'))
 const LoginView = lazy(() => import('../views/LoginView'))
 const HomeView = lazy(() => import('../views/HomeView'))
 const TemplatesView = lazy(() => import('../views/TemplatesView'))
@@ -77,6 +78,7 @@ export const router = createBrowserRouter([
     errorElement: <RouteErrorBoundary />,
     children: [
       { index: true, element: <Navigate to="/home" replace /> },
+      { path: 'welcome', element: lazyPage(<SplashView />), handle: { requiresAuth: false } },
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },
       { path: 'home', element: lazyPage(<HomeView />) },
       { path: 'templates', element: lazyPage(<TemplatesView />) },
