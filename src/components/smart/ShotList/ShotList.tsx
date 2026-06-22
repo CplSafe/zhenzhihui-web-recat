@@ -148,7 +148,7 @@ export default function ShotList({
                     <span className={styles.genSpin} aria-hidden="true" />
                   </div>
                 )}
-                {!locked && (
+                {!locked && !generating[s.id] && (
                   <div className={styles.thumbActions}>
                     <button
                       type="button"
@@ -197,7 +197,7 @@ export default function ShotList({
                 )}
               </div>
 
-              {!locked && (
+              {!locked && !generating[s.id] && (
                 <div className={styles.moreWrap} ref={s.id === menuId ? menuWrapRef : undefined}>
                   <button
                     type="button"

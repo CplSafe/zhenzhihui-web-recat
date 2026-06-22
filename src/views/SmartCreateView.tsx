@@ -83,6 +83,7 @@ interface BottomButton {
   label: string
   variant: 'ghost' | 'primary'
   action: () => void
+  disabled?: boolean
 }
 
 const stripAt = (t: string) =>
@@ -140,6 +141,7 @@ export default function SmartCreateView() {
   const [nameTouched, setNameTouched] = useState(false) // 用户手动改过名后不再自动覆盖
   const [naming, setNaming] = useState(false)
   const nameInputRef = useRef<HTMLInputElement | null>(null)
+  const materialFileRef = useRef<HTMLInputElement | null>(null)
 
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)
   const [requirement, setRequirement] = useState('')
@@ -284,6 +286,38 @@ export default function SmartCreateView() {
     } catch (e: any) {
       showToast(`素材上传失败:${e?.message || '请检查存储配置/网络'}`, 'error')
     }
+  }
+  // 脚本步「添加素材」:上传图片直传后端成 asset,加入 entryMeta.images(与入口上传同一来源)
+  const handleMaterialFiles = async (files: FileList | null) => {
+    if (!files?.length) return
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法上传素材', 'error')
+      return
+    }
+    const urls: string[] = []
+    const ids: number[] = []
+    for (const file of Array.from(files)) {
+      try {
+        const out: any = await uploadAssetFile({ workspaceId: ws, file })
+        const assetId = Number(out?.asset?.id || 0) || 0
+        if (!assetId) continue
+        const url = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
+        if (url) {
+          urls.push(url)
+          ids.push(assetId)
+        }
+      } catch {
+        /* 单张失败跳过 */
+      }
+    }
+    if (!urls.length) {
+      showToast('素材上传失败:请检查存储配置/网络', 'error')
+      return
+    }
+    setEntryMeta((m: any) =>
+      m ? { ...m, images: [...(m.images || []), ...urls], imageAssetIds: [...(m.imageAssetIds || []), ...ids] } : m,
+    )
   }
   // 上传「额外参考图」(镜头编排面板用):直传后端成 asset(http url + asset_id),供云端草稿持久化
   const uploadRef = async (file: File): Promise<{ url: string; assetId?: number }> => {
@@ -663,7 +697,6 @@ export default function SmartCreateView() {
         ratio: entryMeta?.ratio,
         style: entryMeta?.style,
         imageAssetIds,
-        prevVideoAssetId: fullVideo.assetId,
         note,
         modelPlanCandidates: plans,
       })
@@ -1221,6 +1254,8 @@ export default function SmartCreateView() {
   }
 
   const bottomButtons: BottomButton[] = (() => {
+    // 任意分镜图生成中(批量 shotGenRunning 或单张 shotGen[id])→ 禁用镜头编排步的生成类按钮
+    const anyShotGenerating = shotGenRunning || Object.values(shotGen).some(Boolean)
     switch (step) {
       case 0: // 分镜脚本
         return [
@@ -1229,6 +1264,7 @@ export default function SmartCreateView() {
             label: scriptLoading ? '生成中…' : '重新生成',
             variant: 'ghost',
             action: () => entryMeta && generateScript(requirement, entryMeta),
+            disabled: scriptLoading,
           },
           {
             label: '生成镜头编排',
@@ -1237,6 +1273,7 @@ export default function SmartCreateView() {
               autoGenRef.current = false // 允许进入后自动生成
               goStep(1)
             },
+            disabled: scriptLoading,
           },
         ]
       case 1: // 镜头编排
@@ -1246,6 +1283,7 @@ export default function SmartCreateView() {
             label: shotGenRunning ? '生成中…' : '重新生成镜头编排',
             variant: 'ghost',
             action: () => generateShotImages(),
+            disabled: anyShotGenerating,
           },
           {
             label: '生成视频',
@@ -1254,6 +1292,7 @@ export default function SmartCreateView() {
               autoVidRef.current = false
               goStep(2)
             },
+            disabled: anyShotGenerating,
           },
         ]
       case 2: // 生成视频:总按钮已移到中间 VideoStage,这里不再渲染底部条
@@ -1288,8 +1327,19 @@ export default function SmartCreateView() {
           <SubjectMaterialBoard
             subjects={boardSubjects}
             uploads={entryMeta?.images || []}
-            onAdd={todo('添加素材(待接入)')}
+            onAdd={() => materialFileRef.current?.click()}
             onOpen={(name) => openSubject(name)}
+          />
+          <input
+            ref={materialFileRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              handleMaterialFiles(e.target.files)
+              e.target.value = ''
+            }}
           />
 
           {/* 生成状态 + 分镜表 */}
@@ -1491,6 +1541,7 @@ export default function SmartCreateView() {
                     type="button"
                     className={`smart__btn smart__btn--${b.variant}`}
                     onClick={b.action}
+                    disabled={b.disabled}
                   >
                     {b.label}
                   </button>

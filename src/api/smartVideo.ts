@@ -1,7 +1,7 @@
 /**
  * 智能成片 — 生成视频:把「所有分镜图 + 脚本 + 台词(旁白) + 字幕 + 音效 + 总时长」
  * 一次性喂给 seedance 出**整片**(对齐 2.0 useVideoGeneration,不是逐镜一段)。
- * 参考图取第一张分镜图(seedance 只收一张);带修改意见时把上次生成的整片当 role:'video' 输入再生成。
+ * 输入参考始终用当前分镜图,确保每次生成都基于最新镜头编排;修改意见只拼进 prompt,不复用旧视频。
  */
 // @ts-nocheck
 import { createAiTask, waitForAiTask, listAssets, extractAssetPageItems } from './business'
@@ -11,8 +11,7 @@ import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 
 // 目前线上只有 Seedance 2.0
 const VIDEO_MODEL_KEYWORDS = ['seedance']
-const extractVideoAssetId = (task: any): number =>
-  Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
+const extractVideoAssetId = (task: any): number => Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
 
 // outputs 没带 asset_id 时按 task_id 反查视频资产(否则刷新水合换不了URL → 视频丢失)
 async function findVideoAssetIdByTaskId(workspaceId: number, taskId: any): Promise<number> {
@@ -78,8 +77,6 @@ export async function generateFullVideo(args: {
   style?: string
   /** 所有分镜图的 asset_id(按镜头顺序;全部作为图生视频的参考帧) */
   imageAssetIds?: number[]
-  /** 上次生成的整片 asset_id(带修改意见重生成时用) */
-  prevVideoAssetId?: number
   /** 对整片的修改意见 */
   note?: string
   modelPlanCandidates?: string[]
@@ -89,12 +86,9 @@ export async function generateFullVideo(args: {
     (args.note ? `\n额外修改要求:${args.note}` : '')
   const imgIds = (args.imageAssetIds || []).filter((n) => Number(n) > 0)
 
-  // 输入参考:带修改意见+有上次整片→用该视频(role:'video');否则把「全部分镜图」按镜头顺序
-  // 作参考帧送入(干净格式 {asset_id, role:'image'},不加非标准字段)。
-  const inputAssets =
-    args.note && args.prevVideoAssetId
-      ? [{ asset_id: args.prevVideoAssetId, role: 'video' }]
-      : imgIds.map((id) => ({ asset_id: id, role: 'image' }))
+  // 输入参考:始终把「全部当前分镜图」按镜头顺序作参考帧送入(干净格式 {asset_id, role:'image'},
+  // 不加非标准字段)。即便带修改意见也不复用上次整片,确保每次都基于最新镜头编排重新出片。
+  const inputAssets = imgIds.map((id) => ({ asset_id: id, role: 'image' }))
 
   // 只跑一次,不做静默重试(视频模型很贵,失败直接抛错由用户决定)
   const task = await createAiTask({

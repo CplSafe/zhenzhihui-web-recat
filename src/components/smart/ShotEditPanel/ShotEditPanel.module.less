@@ -676,18 +676,26 @@
 /* 点击编辑的文本字段(画面描述 / 台词 / 字幕 / 音效 / 生成提示词):平时纯文本,点击出输入框。
    ie-display / ie-input 是 InlineEdit 输出的全局类名,用 :global 引用 */
 .seditIe {
-  &:global(.ie-display) {
+
+  /* 显示态/编辑态共用尺寸,保证台词/字幕/音效三框高度与内边距完全一致,切换态不跳变 */
+  &:global(.ie-display),
+  &:global(.ie-input) {
     display: block;
-    min-height: 40px;
-    white-space: pre-wrap;
-    word-break: break-word;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 60px;
     padding: 8px 10px;
-    background: #fafbfc;
-    border: 1px solid #f0f2f5;
     border-radius: 10px;
     font-size: 13px;
     line-height: 1.6;
     color: #374151;
+  }
+
+  &:global(.ie-display) {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #fafbfc;
+    border: 1px solid #f0f2f5;
     cursor: text;
 
     &:hover {
@@ -695,11 +703,11 @@
     }
   }
 
+  /* 编辑态仅以边框颜色区分(品牌绿),尺寸与显示态保持一致 */
   &:global(.ie-input) {
-    width: 100%;
-    min-height: 64px;
-    font-size: 13px;
-    line-height: 1.6;
+    background: #fff;
+    border: 1px solid #1fcfa9;
+    resize: vertical;
   }
 }
 
@@ -716,6 +724,7 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  margin-top: 6px;
 
   .seditCarry {
     margin-bottom: 0;

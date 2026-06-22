@@ -67,7 +67,7 @@ function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): s
   const totalSec = parseInt(String(duration || '10'), 10) || 10
   const approxShots = Math.max(1, Math.round(totalSec / 4)) // 每镜约 4 秒估算镜头数
   return [
-    `创作需求:${requirement}`,
+    `创作需求:${requirement || '(未提供文字,请根据上传的参考图片构思一支完整广告短视频的分镜)'}`,
     `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'}。`,
     `视频总时长约 ${totalSec} 秒:请切分为约 ${approxShots} 个镜头,每个镜头不少于 3 秒(通常 3~5 秒),` +
       `各镜头 duration 之和约等于总时长;不要切得过碎。`,
@@ -122,7 +122,11 @@ function mapShots(list: any[], images: string[] = []): Shot[] {
             const idx = Number(x?.imageIndex || x?.image_index || 0)
             const image = idx >= 1 && images[idx - 1] ? images[idx - 1] : undefined
             return {
-              tag: '@' + String(x?.name || x?.tag || x?.subject || '主体').replace(/^@/, '').trim(),
+              tag:
+                '@' +
+                String(x?.name || x?.tag || x?.subject || '主体')
+                  .replace(/^@/, '')
+                  .trim(),
               kind: String(x?.kind || x?.type || '').trim(),
               image,
             }
@@ -153,11 +157,11 @@ function parseShots(text: string, images: string[] = []): Shot[] {
 
 /** 生成分镜脚本,返回 Shot[](失败抛错)。 */
 export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
-  if (!args.requirement.trim()) throw new Error('创作需求为空')
+  if (!args.requirement.trim() && !args.images?.length) throw new Error('请至少输入文案或上传图片')
 
-  const dataUrls = (
-    await Promise.all((args.images || []).slice(0, 6).map((u) => urlToDataUrl(u)))
-  ).filter(Boolean) as string[]
+  const dataUrls = (await Promise.all((args.images || []).slice(0, 6).map((u) => urlToDataUrl(u)))).filter(
+    Boolean,
+  ) as string[]
 
   const userText = buildUserText(args)
   const userContent: any = dataUrls.length
@@ -192,11 +196,8 @@ export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
  * 流式生成分镜脚本:边生成边增量解析,每当多出一个「完整」分镜就回调 onShots,
  * 用户看到镜头1即可开始修改。返回最终 Shot[]。
  */
-export async function generateScriptShotsStream(
-  args: GenerateArgs,
-  onShots: (shots: Shot[]) => void,
-): Promise<Shot[]> {
-  if (!args.requirement.trim()) throw new Error('创作需求为空')
+export async function generateScriptShotsStream(args: GenerateArgs, onShots: (shots: Shot[]) => void): Promise<Shot[]> {
+  if (!args.requirement.trim() && !args.images?.length) throw new Error('请至少输入文案或上传图片')
   const images = args.images || []
   const dataUrls = (await Promise.all(images.slice(0, 6).map((u) => urlToDataUrl(u)))).filter(Boolean) as string[]
   const userText = buildUserText(args)
