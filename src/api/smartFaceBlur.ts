@@ -25,11 +25,12 @@ async function getFaceDetectModelId(): Promise<number> {
       list.find((m: any) => String(m?.name || '').includes('人脸检测抠图')) ||
       list.find((m: any) => String(m?.name || '').includes('人脸')) ||
       list[0]
-    cachedFaceModelId = Number(hit?.id || 0) || 0
+    // 只在查到时缓存(对齐 Vue):失败/异常不写 0,避免首次失败后永久返回 0、下次还能重试
+    if (hit?.id) cachedFaceModelId = Number(hit.id) || 0
   } catch {
-    cachedFaceModelId = 0
+    /* 查不到/异常:不写缓存,下次重试 */
   }
-  return cachedFaceModelId
+  return cachedFaceModelId || 0
 }
 
 function outputAssetId(task: any): number {
@@ -86,12 +87,13 @@ export async function blurFacesOnAsset(args: {
   }
   try {
     if (!args.workspaceId || !args.assetId) throw new Error('缺少工作空间或图片 asset_id')
+    // 对齐 Vue 版:无条件传 modelVersionId,走 createAiTask 的显式模型分支(resolveExplicitTaskModel),
+    // 绕过 plan 候选 + pickModel —— 避免套餐/能力不匹配时误报"没有启用支持 image.face_detect 的模型"。
+    // 不再传 capability / modelPlanCandidates(那会把任务推向 plan 分支)。
     const task = await createAiTask({
       workspaceId: args.workspaceId,
-      capability: 'image',
       operationCode: 'image.face_detect',
-      ...(model ? { modelVersionId: model } : {}),
-      ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
+      modelVersionId: model,
       prompt: '人脸检测脱敏',
       inputAssets: [{ asset_id: args.assetId, role: 'image' }],
     } as any)
@@ -99,8 +101,10 @@ export async function blurFacesOnAsset(args: {
     debug.status = completed?.status || ''
     let outId = outputAssetId(completed)
     if (!outId) outId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
-    let url = (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
-    if (!url && outId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId: outId }).catch(() => '')
+    let url =
+      (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
+    if (!url && outId)
+      url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId: outId }).catch(() => '')
     debug.outUrl = url
     debug.outAssetId = outId
     if (!url || !outId) throw new Error('脱敏任务未返回结果')

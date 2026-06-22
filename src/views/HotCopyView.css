@@ -242,9 +242,7 @@
   outline: none;
   background: #fffdfe;
 }
-.hotcopy__text:focus {
-  border-color: #f0a9c6;
-}
+/* 输入框聚焦边框由 tokens.css 全局统一处理(input/textarea:focus-visible) */
 
 /* 底部工具栏 */
 .hotcopy__toolbar {

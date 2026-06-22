@@ -6,9 +6,9 @@
   transform: translateX(-50%);
   display: inline-flex;
   min-width: 150px;
-  max-width: 320px;
+  max-width: min(440px, calc(100vw - 32px));
   min-height: 42px;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   box-sizing: border-box;
   border: 1px solid #2fbd66;
@@ -19,7 +19,9 @@
   color: #333333;
   font-size: 14px;
   line-height: 20px;
-  white-space: nowrap;
+  /* 长文案换行,不再横向撑破(原 nowrap 导致溢出) */
+  white-space: normal;
+  word-break: break-word;
   animation: toast-enter 0.2s ease;
 }
 
@@ -36,6 +38,8 @@
   flex: 0 0 auto;
   width: 18px;
   height: 18px;
+  /* 多行文案时图标对齐首行(line-height 20 与 icon 18 居中差 1px) */
+  margin-top: 1px;
   place-items: center;
 }
 

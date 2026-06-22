@@ -110,6 +110,16 @@
   outline-offset: 2px;
 }
 
+/* 输入类控件聚焦不显示品牌环(光标本身即焦点提示);按钮/链接等仍保留无障碍聚焦环。
+   用标签选择器全局统一处理,对普通 CSS 与 CSS Module 组件的 <input>/<textarea> 一致生效。 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[contenteditable='true']:focus-visible,
+[contenteditable='plaintext-only']:focus-visible {
+  outline: none;
+}
+
 /* Glass panel — repeated backdrop-filter pattern */
 .glass-panel {
   background: var(--glass-bg);

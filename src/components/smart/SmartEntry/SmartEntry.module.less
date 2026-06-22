@@ -228,12 +228,7 @@
   font-family: inherit;
   padding-top: 2px;
 
-  /* 覆盖全局 :focus-visible 品牌聚焦环(tokens.css):输入区在卡片内,聚焦不需额外边框 */
-  &:focus,
-  &:focus-visible {
-    outline: none;
-  }
-
+  /* 聚焦不显示边框:已由 tokens.css 全局 input/textarea:focus-visible 统一处理 */
   &::placeholder {
     color: #909090;
   }

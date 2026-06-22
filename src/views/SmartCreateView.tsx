@@ -85,7 +85,10 @@ interface BottomButton {
   action: () => void
 }
 
-const stripAt = (t: string) => String(t || '').replace(/^@/, '').trim()
+const stripAt = (t: string) =>
+  String(t || '')
+    .replace(/^@/, '')
+    .trim()
 
 // 准备素材:每个主体只出「单一独立元素」(供镜头编排时再组合),简洁背景、便于抠图合成。
 // context = 广告主题 + 该元素出现的画面语境/用途,帮模型选对具体形态(如伞广告里的「地铁站」应是雨天出入口而非大厅)。
@@ -158,7 +161,10 @@ export default function SmartCreateView() {
   // 版本/提示词存 registry;选定的图写回所有同名 subject(供表格 + 镜头编排一致展示)
   // 版本图 url + 其 asset_id(ids[url]=assetId,用于刷新签名URL/持久化,见 hydrate)
   const [subjectAssets, setSubjectAssets] = useState<
-    Record<string, { versions: string[]; prompt?: string; sources?: Record<string, 'ai' | 'upload'>; ids?: Record<string, number> }>
+    Record<
+      string,
+      { versions: string[]; prompt?: string; sources?: Record<string, 'ai' | 'upload'>; ids?: Record<string, number> }
+    >
   >({})
   const [subjectDlg, setSubjectDlg] = useState<{ open: boolean; name: string; kind: string; autoGen: boolean }>({
     open: false,
@@ -455,7 +461,13 @@ export default function SmartCreateView() {
           .filter(Boolean)
           .join(';')
     // 全云端:后端文/图生图(带素材组合 + 连贯),产出即后端 asset(http + asset_id),天然持久
-    const r = await generateShotImage({ workspaceId: ws, prompt, refAssetIds: refIds, modelPlanCandidates: plans, ratio: entryMeta?.ratio })
+    const r = await generateShotImage({
+      workspaceId: ws,
+      prompt,
+      refAssetIds: refIds,
+      modelPlanCandidates: plans,
+      ratio: entryMeta?.ratio,
+    })
     const url = r.url
     const assetId = Number(r.assetId || 0) || 0
     setShots((prev) =>
@@ -474,6 +486,24 @@ export default function SmartCreateView() {
           : x,
       ),
     )
+    // 镜头编排即脱敏(对齐 Vue 2.0):生成分镜图后立即人脸脱敏,结果缓存到分镜,供视频生成直接复用。
+    // 脱敏失败/后端未配 image.face_detect 模型则静默跳过,视频生成时回退原图,不阻塞镜头编排。
+    if (assetId) {
+      try {
+        const blur = await blurFacesOnAsset({ workspaceId: ws, assetId, modelPlanCandidates: plans })
+        if (blur.ok && blur.assetId) {
+          setShots((prev) =>
+            prev.map((x) =>
+              x.id === sh.id
+                ? { ...x, blurredImageUrl: blur.url, blurredImageAssetId: blur.assetId, blurredFromAssetId: assetId }
+                : x,
+            ),
+          )
+        }
+      } catch {
+        /* 脱敏失败不阻塞镜头编排 */
+      }
+    }
     return url
   }
 
@@ -597,7 +627,14 @@ export default function SmartCreateView() {
         // 缓存命中(同一原图已脱敏过)→ 直接复用,不重复调用
         if (sh?.blurredImageAssetId && Number(sh.blurredFromAssetId || 0) === id) {
           imageAssetIds.push(Number(sh.blurredImageAssetId))
-          dbg.push({ no: sh.no, srcAssetId: id, cached: true, outAssetId: sh.blurredImageAssetId, outUrl: sh.blurredImageUrl, ok: true })
+          dbg.push({
+            no: sh.no,
+            srcAssetId: id,
+            cached: true,
+            outAssetId: sh.blurredImageAssetId,
+            outUrl: sh.blurredImageUrl,
+            ok: true,
+          })
           continue
         }
         const r = await blurFacesOnAsset({ workspaceId: ws, assetId: id, modelPlanCandidates: plans })
@@ -880,9 +917,7 @@ export default function SmartCreateView() {
 
   // 从任意返回体里取 draft_revision(后端字段有下划线/驼峰/嵌套 data 多种写法,对齐 2.0)
   const normRev = (p: any): number => {
-    const v = Number(
-      p?.draft_revision ?? p?.draftRevision ?? p?.data?.draft_revision ?? p?.data?.draftRevision ?? NaN,
-    )
+    const v = Number(p?.draft_revision ?? p?.draftRevision ?? p?.data?.draft_revision ?? p?.data?.draftRevision ?? NaN)
     return Number.isFinite(v) && v >= 0 ? Math.floor(v) : NaN
   }
   const fetchRevision = async (id: number, ws: number) => {
@@ -914,7 +949,12 @@ export default function SmartCreateView() {
     // 首次/未知 revision:先拉一次,避免用错版本号导致 409 把后续(含图)的保存全部打掉
     if (!draftRevisionRef.current) await fetchRevision(id, ws)
     try {
-      const payload: any = await updateCreativeProjectDraft({ projectId: id, workspaceId: ws, draft: snapshot, draftRevision: draftRevisionRef.current })
+      const payload: any = await updateCreativeProjectDraft({
+        projectId: id,
+        workspaceId: ws,
+        draft: snapshot,
+        draftRevision: draftRevisionRef.current,
+      })
       const next = normRev(payload)
       if (Number.isFinite(next)) draftRevisionRef.current = next
       else await fetchRevision(id, ws) // 返回体没带 revision → 重新拉,保持同步
@@ -923,7 +963,12 @@ export default function SmartCreateView() {
       if (e?.status !== 409) return false
       await fetchRevision(id, ws)
       try {
-        const payload: any = await updateCreativeProjectDraft({ projectId: id, workspaceId: ws, draft: snapshot, draftRevision: draftRevisionRef.current })
+        const payload: any = await updateCreativeProjectDraft({
+          projectId: id,
+          workspaceId: ws,
+          draft: snapshot,
+          draftRevision: draftRevisionRef.current,
+        })
         const next = normRev(payload)
         if (Number.isFinite(next)) draftRevisionRef.current = next
         else await fetchRevision(id, ws)
@@ -982,7 +1027,22 @@ export default function SmartCreateView() {
       window.clearTimeout(remote)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [started, requirement, reqSummary, entryMeta, projectName, nameTouched, step, maxReached, shots, subjectAssets, fields, projectId, fullVideo, videoVersions])
+  }, [
+    started,
+    requirement,
+    reqSummary,
+    entryMeta,
+    projectName,
+    nameTouched,
+    step,
+    maxReached,
+    shots,
+    subjectAssets,
+    fields,
+    projectId,
+    fullVideo,
+    videoVersions,
+  ])
 
   const goStep = (i: number) => {
     const next = Math.max(0, Math.min(STEPS.length - 1, i))
@@ -1130,7 +1190,6 @@ export default function SmartCreateView() {
   // TODO(后续阶段): 接真实生成/保存逻辑;现仅占位提示。
   const todo = (msg: string) => () => showToast(msg, 'info')
 
-
   // 下载当前整片视频:优先按 asset_id 取新签名URL → fetch 成 blob 下载;CORS 失败则新标签打开
   const handleDownloadVideo = async () => {
     if (!fullVideo.url) {
@@ -1235,15 +1294,15 @@ export default function SmartCreateView() {
 
           {/* 生成状态 + 分镜表 */}
           <div className="smart__script-done">
-            <span className="smart__script-done-icon" aria-hidden="true">💡</span>
+            <span className="smart__script-done-icon" aria-hidden="true">
+              💡
+            </span>
             {scriptLoading ? '分镜脚本生成中…' : scriptError ? '分镜脚本生成失败' : '分镜脚本生成完成'}
           </div>
           {shots.length ? (
             <>
               <ScriptStoryboardTable shots={shots} onOpenSubject={openSubject} onShotsChange={setShots} />
-              {scriptLoading && (
-                <div className="smart__placeholder smart__placeholder--xs">分镜持续生成中…</div>
-              )}
+              {scriptLoading && <div className="smart__placeholder smart__placeholder--xs">分镜持续生成中…</div>}
             </>
           ) : scriptLoading ? (
             <div className="smart__placeholder smart__placeholder--sm">正在根据创作需求生成分镜脚本…</div>
@@ -1362,59 +1421,63 @@ export default function SmartCreateView() {
 
             {/* 项目名 + 改名 */}
             <div className="smart__projbar">
-          <button type="button" className="smart__home-link" onClick={() => navigate('/home')}>
-            ← 首页
-          </button>
-          <button
-            type="button"
-            className="smart__home-link"
-            onClick={() => {
-              clearSmartDraft()
-              setStarted(false)
-              setShots([])
-              setRequirement('')
-              setReqSummary('')
-              setEntryMeta(null)
-              setProjectName('未命名项目')
-              setNameTouched(false)
-              setStep(0)
-              setMaxReached(0)
-              setSubjectAssets({})
-              setFields({})
-              setFullVideo({ url: '', assetId: 0 })
-              setVideoVersions([])
-              projectIdRef.current = 0
-              setProjectId(0)
-              draftRevisionRef.current = 0
-              titlePatchedRef.current = false
-              navigate('/smart')
-            }}
-          >
-            ＋ 新建
-          </button>
-          {editingName ? (
-            <input
-              ref={nameInputRef}
-              className="smart__name-input"
-              value={draftName}
-              autoFocus
-              onChange={(e) => setDraftName(e.target.value)}
-              onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitRename()
-                if (e.key === 'Escape') setEditingName(false)
-              }}
-            />
-          ) : (
-            <button type="button" className="smart__name" onClick={startRename} title="点击修改项目名">
-              <span>{projectName}</span>
-              {naming && <span className="smart__name-naming">AI 命名中…</span>}
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.83-2.83L5 17v3z" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-          )}
-        </div>
+              <button type="button" className="smart__home-link" onClick={() => navigate('/home')}>
+                ← 首页
+              </button>
+              <button
+                type="button"
+                className="smart__home-link"
+                onClick={() => {
+                  clearSmartDraft()
+                  setStarted(false)
+                  setShots([])
+                  setRequirement('')
+                  setReqSummary('')
+                  setEntryMeta(null)
+                  setProjectName('未命名项目')
+                  setNameTouched(false)
+                  setStep(0)
+                  setMaxReached(0)
+                  setSubjectAssets({})
+                  setFields({})
+                  setFullVideo({ url: '', assetId: 0 })
+                  setVideoVersions([])
+                  projectIdRef.current = 0
+                  setProjectId(0)
+                  draftRevisionRef.current = 0
+                  titlePatchedRef.current = false
+                  navigate('/smart')
+                }}
+              >
+                ＋ 新建
+              </button>
+              {editingName ? (
+                <input
+                  ref={nameInputRef}
+                  className="smart__name-input"
+                  value={draftName}
+                  autoFocus
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitRename()
+                    if (e.key === 'Escape') setEditingName(false)
+                  }}
+                />
+              ) : (
+                <button type="button" className="smart__name" onClick={startRename} title="点击修改项目名">
+                  <span>{projectName}</span>
+                  {naming && <span className="smart__name-naming">AI 命名中…</span>}
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path
+                      d="M4 20h4L18.5 9.5a2 2 0 0 0-2.83-2.83L5 17v3z"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
 
             {/* 步骤内容 */}
             <div className="smart__body">{renderStepBody()}</div>
