@@ -107,6 +107,12 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
 
   return (
     <div className={styles.screate}>
+      {/* 背景三层(Figma):大椭圆 + 小椭圆 + 白雾蒙层 */}
+      <div className={styles.bg} aria-hidden="true">
+        <div className={styles.bgEllipseLg} />
+        <div className={styles.bgVeil} />
+      </div>
+
       <h1 className={styles.title}>让每一帧创意，都成为转化利器！</h1>
 
       <div className={styles.panel}>

@@ -2,22 +2,63 @@
 
 /* 智能成片 入口/需求输入页 */
 .screate {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
   /* 黄金分割:内容居上约 38.2%(1 - 0.618),比居中略上,符合常见落地页视觉重心 */
   justify-content: flex-start;
   padding: clamp(56px, 18vh, 220px) 24px 48px;
-  /* 柔和通透的薄荷渐变 + 底部弥散光晕(贴近 Figma 的清爽质感) */
-  background:
-    radial-gradient(130% 80% at 50% 122%, rgba(86, 220, 190, 0.3), rgba(110, 170, 235, 0.14) 45%, rgba(255, 255, 255, 0) 75%),
-    linear-gradient(180deg, #ffffff 0%, #f7fbfa 58%, #ecf7f2 100%);
+  background: #f8f9fa;
+}
+
+/* 背景(Figma 三层叠加):大椭圆(绿蓝紫)+ 小椭圆(青)弥散于底部,上覆白雾蒙层柔化 */
+.bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bgEllipseLg {
+  position: absolute;
+  left: 50%;
+  top: 60%;
+  transform: translate(-50%, 0%);
+  width: min(1958px, 150vw);
+  aspect-ratio: 1;
+  border-radius: 10%;
+  background: radial-gradient(50% 50% at 100% 100%,
+      rgba(59, 56, 218, 0.2) 0%,
+      rgba(58, 227, 97, 0.2) 100%);
+  filter: blur(80px);
+}
+
+
+.bgVeil {
+  position: absolute;
+  left: 50%;
+  top: 57%;
+  transform: translate(-50%, -50%);
+  /* 宽 > 高 + border-radius:50% → 横向椭圆 */
+  width: min(1600px, 130vw);
+  height: min(660px, 46vh);
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 50%,
+      rgba(58, 227, 97, 0.2) 0%,
+      rgba(77, 149, 232, 0.2) 50%,
+      rgba(59, 56, 218, 0.3) 100%);
+  filter: blur(80px);
 }
 
 .title {
+  position: relative;
+  z-index: 1;
   margin: 0 0 34px;
   font-size: clamp(28px, 3.6vw, 46px);
   font-weight: 500;
@@ -27,6 +68,8 @@
 }
 
 .panel {
+  position: relative;
+  z-index: 1;
   width: min(920px, 94%);
 }
 
