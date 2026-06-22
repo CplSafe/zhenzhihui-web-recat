@@ -1,0 +1,30 @@
+/* 镜头编排:左 分镜列表 + 右 素材修改面板 */
+.shotarr {
+  display: flex;
+  gap: 18px;
+  align-items: stretch;
+  max-width: 1480px; /* 超宽屏不被拉满,居中更舒适 */
+  margin: 0 auto;
+}
+
+.empty {
+  flex: 1 1 auto;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 60px 30px;
+  text-align: center;
+  color: #9aa3af;
+  font-size: 14px;
+}
+
+@media (max-width: 1100px) {
+  .shotarr {
+    flex-wrap: wrap;
+
+    /* 子面板(分镜列表 / 素材修改面板 / 空态)换行后各占满整行 */
+    > * {
+      flex: 1 1 100%;
+    }
+  }
+}

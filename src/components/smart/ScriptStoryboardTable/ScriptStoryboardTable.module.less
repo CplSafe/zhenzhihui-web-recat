@@ -1,0 +1,227 @@
+/* 分镜脚本 — 卡片式(可编辑) */
+.sbc {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.sbcCard {
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 头部:镜头编号(固定)+ 标题 + 时长 */
+.sbcHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sbcNo {
+  flex: 0 0 auto;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2330;
+}
+
+.sbcTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: #6b7280;
+  padding: 3px 8px;
+}
+
+.sbcDur {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.sbcDurVal {
+  min-width: 36px;
+  text-align: center;
+  color: #1f2937;
+  font-weight: 500;
+  padding: 3px 6px;
+
+  &:global(.ie-input) {
+    width: 48px;
+  }
+}
+
+.sbcDurUnit {
+  color: #9aa3af;
+}
+
+/* 字段 */
+.sbcField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sbcLabel {
+  font-size: 12px;
+  color: #9aa3af;
+}
+
+.sbcDesc {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #374151;
+
+  &:global(.ie-display) {
+    display: block;
+    min-height: 40px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: 8px 10px;
+    background: #fafbfc;
+    border: 1px solid #f0f2f5;
+    border-radius: 10px;
+  }
+
+  &:global(.ie-input) {
+    min-height: 76px;
+  }
+}
+
+/* 准备素材:卡片网格(一行多个,省空间) */
+.sbcSubjects {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+/* 紧凑横排:小缩略图 + 名称(可上面看,点进去看大图/管理) */
+.sbcSubj {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  padding: 6px 8px;
+  background: #fafbfc;
+  cursor: pointer;
+
+  &:hover {
+    border-color: #d5f3ec;
+
+    .sbcSubjDel {
+      opacity: 1;
+    }
+  }
+}
+
+.sbcSubjDel {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #9aa3af;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+
+  &:hover {
+    background: #ffe9ea;
+    color: #e5484d;
+  }
+}
+
+.sbcSubjThumb {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #eef0f4;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  color: #b0b4ba;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.sbcSubjTagline {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.sbcAt {
+  color: #11a98a;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+.sbcSubjName {
+  min-width: 0;
+  font-size: 13px;
+  color: #1f2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sbcSubjKindtag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #9aa3af;
+  background: #f1f3f6;
+  border-radius: 5px;
+  padding: 0 5px;
+}
+
+.sbcSubjAdd {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px dashed #d8dce3;
+  background: #fff;
+  color: #11a98a;
+  border-radius: 10px;
+  font-size: 13px;
+  padding: 6px 8px;
+  min-height: 56px;
+  cursor: pointer;
+
+  span {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  &:hover {
+    border-color: #1fcfa9;
+    background: #f0fbf8;
+  }
+}

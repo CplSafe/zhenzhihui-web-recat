@@ -1,0 +1,314 @@
+@import '../styles/mixins.less';
+
+/* 智能成片 入口/需求输入页 */
+.screate {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 黄金分割:内容居上约 38.2%(1 - 0.618),比居中略上,符合常见落地页视觉重心 */
+  justify-content: flex-start;
+  padding: clamp(56px, 18vh, 220px) 24px 48px;
+  /* 柔和通透的薄荷渐变 + 底部弥散光晕(贴近 Figma 的清爽质感) */
+  background:
+    radial-gradient(130% 80% at 50% 122%, rgba(86, 220, 190, 0.3), rgba(110, 170, 235, 0.14) 45%, rgba(255, 255, 255, 0) 75%),
+    linear-gradient(180deg, #ffffff 0%, #f7fbfa 58%, #ecf7f2 100%);
+}
+
+.title {
+  margin: 0 0 34px;
+  font-size: clamp(28px, 3.6vw, 46px);
+  font-weight: 500;
+  color: #333333;
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+
+.panel {
+  width: min(920px, 94%);
+}
+
+/* Tab(浅灰标签栏:左边缘与卡片齐边、底边接卡片;选中态为白色药丸) */
+.tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 26px;
+  margin: 0;
+  background: rgba(244, 244, 244, 0.6);
+  border-radius: 8px 8px 0 0;
+  position: relative;
+  z-index: 0;
+  bottom: -20px;
+}
+
+.tab {
+  padding: 10px 23px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: #666666;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover:not(.active) {
+    color: #333333;
+  }
+
+  &.active {
+    background: #fff;
+    color: #333333;
+    /* 四周柔和阴影,呈白色药丸质感(对齐 effect 0 0 10px) */
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  }
+}
+
+/* 输入卡片 */
+.card {
+  background: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 30px;
+  padding: 20px 24px;
+  box-shadow:
+    0 24px 60px rgba(31, 41, 55, 0.1),
+    0 2px 8px rgba(31, 41, 55, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+}
+
+.cardBody {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-height: 108px;
+}
+
+.upload {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+
+  &:hover {
+    filter: brightness(0.97);
+    transform: scale(1.03);
+  }
+}
+
+.uploadCard {
+  display: block;
+}
+
+/* 已选图片缩略图行(独立成行,可换行) */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.add {
+  flex: 0 0 auto;
+  width: 76px;
+  height: 76px;
+  border: 1px dashed #dcdfe4;
+  border-radius: 12px;
+  background: #fafbfc;
+  color: #b0b4ba;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: #1fcfa9;
+    color: #1fcfa9;
+    background: #f3fffc;
+  }
+}
+
+.thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 76px;
+  height: 76px;
+  border-radius: 12px;
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.thumbX {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.input {
+  flex: 1 1 240px;
+  min-width: 0;
+  min-height: 108px;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font-size: 15px;
+  line-height: 1.7;
+  color: #333;
+  font-family: inherit;
+  padding-top: 2px;
+
+  &::placeholder {
+    color: #909090;
+  }
+}
+
+/* 工具栏 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  .pill-base();
+}
+
+/* @ 等:略大字号的 pill 按钮 */
+.pillBtn {
+  .pill-base();
+  font-size: 18px;
+  color: #333;
+  padding: 0 14px;
+}
+
+/* AI 引导按钮(青色强调) */
+.guide {
+  .pill-base();
+  border-color: #bdeee3;
+  color: #11a98a;
+  font-weight: 600;
+
+  &:hover:not(:disabled) {
+    background: #1fcfa9;
+    border-color: #1fcfa9;
+    color: #fff;
+  }
+
+  &:disabled {
+    opacity: 0.7;
+    cursor: default;
+  }
+}
+
+.guideSpin {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* 撤销/重做图标按钮 */
+.iconBtn {
+  .pill-base();
+  padding: 0;
+  width: 38px;
+  justify-content: center;
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+    border-color: #eef0f2;
+    color: #b0b4ba;
+    background: #fafbfc;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.send {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #60e0c4, #1fcfa9);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(31, 207, 169, 0.32);
+  transition: all 0.15s;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.05);
+  }
+
+  &:disabled {
+    background: #d9d9d9;
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+}
+
+@media (max-width: 560px) {
+  .screate {
+    padding: 36px 14px 40px;
+  }
+
+  .card {
+    border-radius: 18px;
+    padding: 14px;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .send {
+    align-self: flex-end;
+  }
+}

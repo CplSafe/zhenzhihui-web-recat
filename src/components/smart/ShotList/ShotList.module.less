@@ -1,0 +1,294 @@
+/* 分镜列表(镜头编排 / 视频生成 共用) */
+.shotlist {
+  flex: 0 0 320px;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 16px;
+  align-self: stretch;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 14px;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: #d5f3ec;
+  }
+
+  &.active {
+    border-color: #1fcfa9;
+    box-shadow: 0 0 0 2px rgba(31, 207, 169, 0.14);
+  }
+
+  /* 未勾选(不参与生成)的分镜:整卡淡化 */
+  &.excluded {
+    opacity: 0.45;
+
+    .thumb img {
+      filter: grayscale(0.6);
+    }
+  }
+}
+
+.info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 18px;
+  flex-wrap: wrap;
+}
+
+.no {
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+}
+
+.sep {
+  color: #d4dbe0;
+}
+
+.dur {
+  font-size: 14px;
+  color: #909090;
+}
+
+.badge {
+  font-size: 11px;
+  color: #11a98a;
+  background: #e8faf5;
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+.thumb {
+  position: relative;
+  flex: 0 0 132px;
+  width: 132px;
+  aspect-ratio: 16 / 10;
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  &:hover .thumbActions {
+    opacity: 1;
+  }
+}
+
+.thumbPh {
+  color: #aab0b8;
+  font-size: 13px;
+}
+
+.gen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.genSpin {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: shotlistSpin 0.7s linear infinite;
+}
+
+@keyframes shotlistSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.thumbActions {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity 0.15s;
+
+  button {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.96);
+    color: #374151;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.22);
+
+    &.danger {
+      color: #e54d42;
+    }
+
+    &:hover {
+      transform: scale(1.08);
+    }
+  }
+}
+
+.moreWrap {
+  position: absolute;
+  bottom: 8px;
+  right: 10px;
+}
+
+/* 视频生成页:分镜图左上角「参与生成」勾选框(小巧、带柔和阴影,不抢眼) */
+.pick {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+
+  input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: #1fcfa9;
+    cursor: pointer;
+    border-radius: 4px;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+  }
+}
+
+.more {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #555;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    background: #fff;
+  }
+}
+
+.menu {
+  position: absolute;
+  bottom: 30px;
+  right: 0;
+  min-width: 150px;
+  background: #fff;
+  border: 1px solid #eef0f2;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  padding: 6px;
+  z-index: 20;
+
+  button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 9px 12px;
+    border: none;
+    background: none;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #333;
+    cursor: pointer;
+
+    &:hover {
+      background: #f5f6f8;
+    }
+
+    &.danger {
+      color: #e54d42;
+    }
+  }
+}
+
+.insert {
+  display: block;
+  width: 100%;
+  margin: 6px 0;
+  border: 1px dashed #dcdfe4;
+  border-radius: 8px;
+  background: #fafbfc;
+  color: #b0b4ba;
+  font-size: 16px;
+  line-height: 1;
+  padding: 5px 0;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: #1fcfa9;
+    color: #1fcfa9;
+  }
+}
+
+.empty {
+  padding: 30px;
+  text-align: center;
+  color: #9aa3af;
+  font-size: 14px;
+}
+
+/* 镜头标题/备注(可双击编辑;镜头编号固定不可改) */
+.note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: #6b7280;
+  overflow: hidden;
+}
+
+/* InlineEdit 内部自带 .ie-display / .ie-input(全局类),与本类组合 */
+.noteIe:global(.ie-display) {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 1px 5px;
+}
+
+.noteIe:global(.ie-input) {
+  width: 100%;
+  font-size: 12px;
+  padding: 2px 6px;
+}

@@ -1,0 +1,456 @@
+/* 主体素材管理弹窗 */
+.sadMask {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(17, 24, 39, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.sad {
+  width: min(560px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+
+.sadHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #f0f1f3;
+}
+
+.sadTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2530;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sadKind {
+  font-size: 12px;
+  font-weight: 400;
+  color: #9aa3af;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.sadX {
+  border: none;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  color: #9aa3af;
+  cursor: pointer;
+
+  &:hover {
+    color: #4b5563;
+  }
+}
+
+.sadBody {
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+.sadPreview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  &:hover .sadImgActions {
+    opacity: 1;
+  }
+}
+
+/* 图上 hover 的 替换/上传 浮层(预览图 + 版本图共用) */
+.sadImgActions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.42);
+  opacity: 0;
+  transition: opacity 0.15s;
+
+  button {
+    height: 26px;
+    padding: 0 10px;
+    border: none;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.95);
+    color: #1f2937;
+    font-size: 12px;
+    cursor: pointer;
+  }
+}
+
+.sadPreviewPh {
+  font-size: 13px;
+  color: #9aa3af;
+}
+
+.sadPreviewLoading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #11a98a;
+}
+
+.sadSpin {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: sadSpin 0.7s linear infinite;
+}
+
+@keyframes sadSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sadLabel {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin: 12px 0 8px;
+}
+
+.sadRefining {
+  font-weight: 400;
+  color: #11a98a;
+}
+
+/* 参考图 */
+.sadRef {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 4px;
+}
+
+.sadRefAdd {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px dashed #d8dce3;
+  border-radius: 8px;
+  background: #fafbfc;
+  color: #11a98a;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sadRefThumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #eef0f4;
+  flex: 0 0 auto;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  button {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+}
+
+.sadRefHint {
+  font-size: 11px;
+  color: #9aa3af;
+}
+
+.sadPrompt {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #1f2937;
+  font-family: inherit;
+  outline: none;
+
+  &:focus {
+    border-color: #1fcfa9;
+  }
+}
+
+/* 浏览态:无边框,像普通文本;右下角铅笔标识可改;hover 浅底提示 */
+.sadPromptView {
+  position: relative;
+  border-color: transparent;
+  background: #fafbfc;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+  padding-right: 30px;
+  min-height: 64px;
+
+  &:hover {
+    background: #f3f5f8;
+  }
+
+  &:hover .sadPromptEdit {
+    color: #11a98a;
+    border-color: #1fcfa9;
+  }
+}
+
+.sadPromptPh {
+  color: #b8bfc9;
+}
+
+.sadPromptEdit {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  color: #6b7280;
+}
+
+.sadActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.sadVersions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 10px;
+}
+
+.sadVer {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f3f4f6;
+
+  &.active {
+    border-color: #1fcfa9;
+  }
+
+  &:hover .sadImgActions {
+    opacity: 1;
+  }
+
+  .sadImgActions button {
+    height: 20px;
+    padding: 0 6px;
+    font-size: 10px;
+  }
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+}
+
+.sadVerPick {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: block;
+}
+
+/* 携带当前图 */
+.sadCarry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
+  margin: 10px 0 4px;
+
+  input {
+    accent-color: #1fcfa9;
+  }
+}
+
+/* 项目图片选择器 */
+.sadPicker {
+  margin-top: 12px;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fafbfc;
+}
+
+.sadPickerHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 8px;
+
+  button {
+    border: none;
+    background: none;
+    font-size: 18px;
+    line-height: 1;
+    color: #9aa3af;
+    cursor: pointer;
+  }
+}
+
+.sadPickerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+}
+
+.sadPickerUp {
+  aspect-ratio: 1 / 1;
+  border: 1px dashed #d8dce3;
+  border-radius: 8px;
+  background: #fff;
+  color: #11a98a;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sadPickerItem {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  background: #f3f4f6;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.sadPickerEmpty {
+  font-size: 12px;
+  color: #9aa3af;
+  padding: 8px 0;
+  display: block;
+}
+
+.sadPickerGroup {
+  margin-top: 10px;
+}
+
+.sadPickerGroupTitle {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 6px;
+}
+
+.sadFoot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid #f0f1f3;
+}
+
+.sadBtn {
+  min-width: 96px;
+  height: 38px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 16px;
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+.sadBtnGhost {
+  background: #fff;
+  border: 1px solid #d6dae1;
+  color: #374151;
+
+  &:hover {
+    border-color: #1fcfa9;
+    color: #1fcfa9;
+  }
+}
+
+.sadBtnPrimary {
+  background: #1fcfa9;
+  border: 1px solid #1fcfa9;
+  color: #fff;
+
+  &:hover {
+    background: #1bb897;
+  }
+}
