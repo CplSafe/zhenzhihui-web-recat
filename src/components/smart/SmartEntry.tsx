@@ -36,9 +36,10 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   const { showToast } = useToast()
   const [mode, setMode] = useState<'video' | 'image'>('video')
   const [text, setText] = useState('')
-  const [style, setStyle] = useState('商业')
+  // 风格支持多选(可叠加多种调性),提交时合并成一个风格描述串
+  const [styles, setStyles] = useState<string[]>(['叫卖', '幽默', '商业'])
   const [ratio, setRatio] = useState('16:9')
-  const [duration, setDuration] = useState('10s')
+  const [duration, setDuration] = useState('5s')
   const [images, setImages] = useState<string[]>([])
   const [guideOpen, setGuideOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -103,7 +104,7 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   const canSubmit = text.trim().length > 0 || images.length > 0
   const submit = () => {
     if (!canSubmit) return
-    onSubmit(text.trim(), { mode, style, ratio, duration, imageCount: images.length, images })
+    onSubmit(text.trim(), { mode, style: styles.join('、'), ratio, duration, imageCount: images.length, images })
   }
 
   return (
@@ -160,8 +161,10 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
             {/* 无图时:左侧上传框(Figma 初始态);有图时上传入口在上方缩略图行 */}
             {images.length === 0 && (
               <button type="button" className="screate__upload" onClick={() => fileRef.current?.click()} aria-label="上传图片">
-                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                  <path d="M12 5v14M5 12h14" />
+                {/* 倾斜浅灰卡片 + 加号(还原 Figma Group 388,无虚线边) */}
+                <svg className="screate__upload-card" width="96" height="117" viewBox="0 0 109 133" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="-0.635504" y="15.0473" width="90.3131" height="120.417" rx="4" transform="rotate(-10 -0.635504 15.0473)" fill="#F8F8F8" />
+                  <path d="M52.5478 56.6177C52.839 56.5663 53.1387 56.6327 53.381 56.8024C53.6232 56.972 53.7881 57.2309 53.8395 57.5221L55.1948 65.2083L62.881 63.853C63.1722 63.8017 63.4719 63.8681 63.7142 64.0377C63.9564 64.2074 64.1213 64.4663 64.1727 64.7575C64.224 65.0487 64.1576 65.3484 63.988 65.5906C63.8184 65.8328 63.5595 65.9978 63.2683 66.0491L55.582 67.4044L56.9373 75.0907C56.9886 75.3819 56.9222 75.6816 56.7526 75.9238C56.583 76.166 56.3241 76.331 56.0329 76.3823C55.7416 76.4337 55.442 76.3672 55.1997 76.1976C54.9575 76.028 54.7926 75.7691 54.7412 75.4779L53.3859 67.7916L45.6997 69.1469C45.4084 69.1983 45.1087 69.1318 44.8665 68.9622C44.6243 68.7926 44.4594 68.5337 44.408 68.2425C44.3567 67.9513 44.4231 67.6516 44.5927 67.4094C44.7623 67.1671 45.0212 67.0022 45.3124 66.9509L52.9987 65.5956L51.6434 57.9093C51.592 57.6181 51.6585 57.3184 51.8281 57.0762C51.9977 56.8339 52.2566 56.669 52.5478 56.6177Z" fill="#909090" />
                 </svg>
               </button>
             )}
@@ -190,9 +193,11 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
           <div className="screate__toolbar">
             <div className="screate__tools">
               <EntryDropdown
-                value={style}
+                multiple
+                placeholder="风格"
+                value={styles}
                 options={STYLE_OPTIONS}
-                onChange={setStyle}
+                onChange={setStyles}
                 icon={
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
