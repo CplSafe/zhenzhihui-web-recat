@@ -23,6 +23,10 @@ interface ShotArrangeProps {
   onUploadRef?: (file: File) => Promise<{ url: string; assetId?: number }>
   /** 重新生成分镜图(统一:提示词 + 选中素材 + 是否携带当前图) */
   onRegenerateImage: (shot: Shot, opts: { feedback?: string; editPrompt?: string; extraRefUrls?: string[] }) => void
+  /** 「插入的新分镜」点「生成分镜」:带该镜新描述,结合其他分镜全量重生成 */
+  onRegenerateAll?: (shotId: string | number, desc: string) => void
+  /** 是否正在全量重生成(禁用「生成分镜」按钮) */
+  onRegenerateAllRunning?: boolean
   /** 优化该镜生成提示词(据画面描述+大纲+选中素材),返回 {prompt, debug} */
   onOptimizePrompt?: (
     shot: Shot,
@@ -40,6 +44,8 @@ export default function ShotArrange({
   projectImages,
   onUploadRef,
   onRegenerateImage,
+  onRegenerateAll,
+  onRegenerateAllRunning,
   onOptimizePrompt,
   onPolishText,
 }: ShotArrangeProps) {
@@ -72,6 +78,8 @@ export default function ShotArrange({
           onOpenElement={onOpenElement}
           onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}
+          onRegenerateAll={onRegenerateAll}
+          busy={onRegenerateAllRunning || Object.values(generating).some(Boolean)}
           onOptimizePrompt={onOptimizePrompt}
           onPolishText={onPolishText}
         />

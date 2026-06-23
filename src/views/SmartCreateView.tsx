@@ -548,6 +548,8 @@ export default function SmartCreateView() {
               image: url,
               imageAssetId: assetId,
               imagePrompt: prompt,
+              // 出图即不再是「插入的新分镜」(清除「生成分镜」按钮)
+              isNew: false,
               // 每版记录自己用到的提示词与素材 url,切换历史版本可还原
               imageVersions: [...(x.imageVersions || []), { url, assetId, prompt, refs: elUrls }],
               // 手动出图:把这次选中的素材固化为该镜的选中态(随草稿持久)
@@ -577,8 +579,8 @@ export default function SmartCreateView() {
     return url
   }
 
-  // 串行生成全部分镜图
-  const generateShotImages = async () => {
+  // 串行生成全部分镜图。list 缺省取当前 shots;插入新分镜后传入「已写入新描述」的列表,避免读到旧 state
+  const generateShotImages = async (list: Shot[] = shots) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成分镜图', 'error')
@@ -591,7 +593,7 @@ export default function SmartCreateView() {
     const plans = await resolvePlanCandidates()
     let prevUrl = ''
     try {
-      for (const sh of shots) {
+      for (const sh of list) {
         setShotGen((m) => ({ ...m, [sh.id]: true }))
         try {
           prevUrl = await genShotFrame(ws, sh, prevUrl, cache, theme, plans)
@@ -604,6 +606,17 @@ export default function SmartCreateView() {
     } finally {
       setShotGenRunning(false)
     }
+  }
+
+  // 「插入的新分镜」点「生成分镜」:把新描述写入该镜(desc + imagePrompt),再结合其他分镜全量重生成
+  const regenerateAllWithNewShot = async (shotId: string | number, desc: string) => {
+    if (shotGenRunning) return
+    const next = desc.trim()
+    const list = shots.map((s) =>
+      s.id === shotId ? { ...s, desc: next || s.desc, imagePrompt: next || s.imagePrompt, isNew: false } : s,
+    )
+    setShots(list)
+    await generateShotImages(list)
   }
 
   // 单镜分镜图重生成(面板统一流程):提示词 + 选中的素材(refUrls)+ 是否携带当前分镜图
@@ -1305,6 +1318,16 @@ export default function SmartCreateView() {
     }
   }
 
+  // 保存视频:本步「仅按钮 + 提示」。内容本就随草稿自动保存(本地+后端),这里再 best-effort 立即落库一次。
+  const saveVideoNow = () => {
+    if (!fullVideo.url) {
+      showToast('请先生成视频', 'info')
+      return
+    }
+    if (projectIdRef.current) void putSmartDraftToBackend()
+    showToast('视频已保存', 'success')
+  }
+
   const bottomButtons: BottomButton[] = (() => {
     // 任意分镜图生成中(批量 shotGenRunning 或单张 shotGen[id])→ 禁用镜头编排步的生成类按钮
     const anyShotGenerating = shotGenRunning || Object.values(shotGen).some(Boolean)
@@ -1368,7 +1391,8 @@ export default function SmartCreateView() {
       const promptText = reqSummary || requirement || '（未填写需求）'
       return (
         <div className="smart__script">
-          {/* 需求摘要(markdown 渲染) */}
+          {/* 我的描述:标签(Figma 299-2310)+ 需求摘要(markdown 渲染) */}
+          <div className="smart__prompt-label">我的描述：</div>
           <div className="smart__prompt smart__md">
             {summarizing ? '生成摘要中…' : <Streamdown>{promptText}</Streamdown>}
           </div>
@@ -1459,6 +1483,8 @@ export default function SmartCreateView() {
           projectImages={projectImages}
           onUploadRef={uploadRef}
           onRegenerateImage={regenerateShotImage}
+          onRegenerateAll={regenerateAllWithNewShot}
+          onRegenerateAllRunning={shotGenRunning}
           onOptimizePrompt={(sh, materials) =>
             refineShotPrompt({
               desc: sh.desc,
@@ -1472,22 +1498,18 @@ export default function SmartCreateView() {
         />
       )
     }
-    // step === 3 生成视频:左 分镜列表 + 中 整片视频 + 右 素材修改;总按钮在中间
+    // step === 3 生成视频(第四步):整片视频 + 时间轴选片段 + 片段/整段修改框 + 总按钮(本步不再改分镜)
     return (
       <VideoStage
         shots={shots}
-        generating={shotGen}
         videoUrl={fullVideo.url}
         videoGenerating={vidGenRunning}
         videoStatusText={blurPhase || undefined}
         faceBlurDebug={blurDebug}
         videoVersions={videoVersions}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
-        onShotsChange={setShots}
-        onOpenElement={openSubject}
-        projectImages={projectImages}
-        onRegenerateImage={regenerateShotImage}
         onRegenerateVideo={runFullVideo}
+        onSaveVideo={saveVideoNow}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
         debug={{
@@ -1616,26 +1638,41 @@ export default function SmartCreateView() {
 
             {/* 底部总按钮(视频生成步的总按钮在中间 VideoStage 内) */}
             {bottomButtons.length > 0 && (
-              <footer className="smart__footer">
+              <footer className={`smart__footer${step === 2 ? ' smart__footer--center' : ''}`}>
                 <div className="smart__footer-inner">
-                  {(['left', 'right'] as const).map((side) => (
-                    <div className="smart__footer-group" key={side}>
-                      {bottomButtons
-                        .filter((b) => (b.align ?? 'right') === side)
-                        .map((b) => (
-                          <button
-                            key={b.label}
-                            type="button"
-                            className={`smart__btn smart__btn--${b.variant}`}
-                            onClick={b.action}
-                            disabled={b.disabled}
-                          >
-                            {b.icon}
-                            {b.label}
-                          </button>
-                        ))}
-                    </div>
-                  ))}
+                  {step === 2
+                    ? // 镜头编排:整组居中
+                      bottomButtons.map((b) => (
+                        <button
+                          key={b.label}
+                          type="button"
+                          className={`smart__btn smart__btn--${b.variant}`}
+                          onClick={b.action}
+                          disabled={b.disabled}
+                        >
+                          {b.icon}
+                          {b.label}
+                        </button>
+                      ))
+                    : // 分镜脚本 / 准备素材:沿用原左右分组(右对齐)
+                      (['left', 'right'] as const).map((side) => (
+                        <div className="smart__footer-group" key={side}>
+                          {bottomButtons
+                            .filter((b) => (b.align ?? 'right') === side)
+                            .map((b) => (
+                              <button
+                                key={b.label}
+                                type="button"
+                                className={`smart__btn smart__btn--${b.variant}`}
+                                onClick={b.action}
+                                disabled={b.disabled}
+                              >
+                                {b.icon}
+                                {b.label}
+                              </button>
+                            ))}
+                        </div>
+                      ))}
                 </div>
               </footer>
             )}

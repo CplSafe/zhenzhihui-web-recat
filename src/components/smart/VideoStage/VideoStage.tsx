@@ -1,29 +1,42 @@
 /**
- * VideoStage — 视频生成(2.1)。
- * 左:分镜列表(ShotList);中:完整视频(未生成时为空)+ 对整片提修改意见 + 总按钮;右:素材修改面板。
- * 视频是「整片」一次生成(所有分镜图+脚本+台词+字幕+音效 → seedance),非逐镜。
+ * VideoStage — 第四步「生成视频」(2.1 改版,Figma 441-5139)。
+ *
+ * 本步仅支持对【整片视频的具体帧】做修改,不再支持改分镜(增/删/改分镜均已移除)。
+ * 布局:左 = 视频播放器 + 时间轴(时间刻度按视频真实秒数 + 帧缩略条);右 = 片段/整段修改框。
+ * 交互:
+ *  - 在时间轴上拖选(或点选某分镜片段)得到一段「具体帧」;选区蓝色描边 + 居中铅笔「修改」按钮。
+ *    点铅笔在右侧新增一个【片段N修改】框(标题带该段秒数),最多 5 个,含 AI一键润色。
+ *  - 片段框下方是「整段视频修改」框(含 AI一键润色,无提交按钮)。
+ *  - 底部总按钮:上一步 / 保存视频 / 重新生成视频。重新生成把所有片段修改 + 整段修改合并成一段说明整片重生成。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Shot } from '../ScriptStoryboardTable'
-import ShotList from '../ShotList'
-import ShotEditPanel from '../ShotEditPanel'
+import { polishText } from '@/api/aiPolish'
+import { useToast } from '@/composables/useToast'
 import styles from './VideoStage.module.less'
+
+const MAX_SEGMENTS = 5
 
 // 等待时轮播的「视频制作小技巧」
 const VIDEO_TIPS = [
   '分镜图越清晰、主体越一致,成片的人物/产品就越稳定。',
   '台词、字幕、音效都会一起送进生成,先补全文案再出片效果更好。',
-  '不参与生成的分镜可在左侧取消勾选,聚焦核心镜头更快出片。',
   '镜头时长建议 2–5 秒,节奏更紧凑、更适合短视频平台。',
   '想换风格?回到分镜编排调整提示词与素材,再重新生成整片。',
-  '生成的视频会进入项目「历史版本」,可随时切换、下载。',
-  '人物镜头建议用同一张参考图,跨镜头形象更统一。',
+  '生成的视频会进入项目「历史版本」,可随时切换。',
+  '选中时间轴上的片段,可以只对这一段提修改意见,描述越具体越好。',
 ]
+
+interface ModSegment {
+  id: string
+  /** 选中片段在视频里的起止(秒) */
+  start: number
+  end: number
+  text: string
+}
 
 interface VideoStageProps {
   shots: Shot[]
-  /** 正在生成分镜图的镜头(右面板/左列表转圈) */
-  generating?: Record<string | number, boolean>
   /** 当前整片视频 url */
   videoUrl?: string
   /** 整片生成中 */
@@ -45,13 +58,11 @@ interface VideoStageProps {
   /** 整片历史版本(点击切换) */
   videoVersions?: { url: string; assetId: number }[]
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
-  onShotsChange: (shots: Shot[]) => void
-  onOpenElement?: (name: string) => void
-  projectImages?: { url: string; source: 'ai' | 'upload' }[]
-  onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
-  /** 重新生成整片(note=对整片的修改意见) */
+  /** 重新生成整片(note=对整片/各片段的修改意见,合并成一段) */
   onRegenerateVideo: (note?: string) => void
-  /** 下载当前整片视频 */
+  /** 保存视频(交父级:提示 + 落库草稿) */
+  onSaveVideo?: () => void
+  /** 下载当前整片视频(保留能力;本步默认不展示按钮) */
   onDownloadVideo?: () => void
   onPrev?: () => void
   /** 调试:实际喂给视频模型的提示词/参考图/各分镜文本(开发可见,正式隐藏) */
@@ -70,196 +81,419 @@ interface VideoStageProps {
   }
 }
 
+const parseDur = (d: string): number => {
+  const n = parseFloat(String(d || '').replace(/[^0-9.]/g, ''))
+  return Number.isFinite(n) && n > 0 ? n : 5
+}
+// 秒 → "0:05" 播放时间;一位小数 → "2.5s" 片段范围
+const fmtClock = (s: number) => {
+  const t = Math.max(0, Math.floor(s))
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`
+}
+const fmtSec = (s: number) => `${s.toFixed(1)}s`
+
 export default function VideoStage({
   shots,
-  generating = {},
   videoUrl,
   videoGenerating,
   videoStatusText,
   faceBlurDebug,
   videoVersions = [],
   onSwitchVideo,
-  onShotsChange,
-  onOpenElement,
-  projectImages,
-  onRegenerateImage,
   onRegenerateVideo,
-  onDownloadVideo,
+  onSaveVideo,
   onPrev,
   debug,
 }: VideoStageProps) {
-  const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
-  const [note, setNote] = useState('')
+  const { showToast } = useToast()
+  const [segments, setSegments] = useState<ModSegment[]>([])
+  const [overallNote, setOverallNote] = useState('')
+  const [sel, setSel] = useState<{ start: number; end: number } | null>(null) // 时间轴待确认选区(秒)
+  const [playSec, setPlaySec] = useState(0) // 播放头位置(秒)
+  const [dur, setDur] = useState(0) // 视频真实时长(秒),0=未知
+  const [frameThumbs, setFrameThumbs] = useState<string[] | null>(null) // 逐秒抓取的帧缩略图(CORS 失败则 null,回退占位)
+  const [tipIdx, setTipIdx] = useState(0)
   const [showDebug, setShowDebug] = useState(false)
   const [showBlurDebug, setShowBlurDebug] = useState(false)
-  const [tipIdx, setTipIdx] = useState(0)
   const debugEnabled = import.meta.env.DEV // 正式版自动隐藏
-  useEffect(() => {
-    if (!shots.some((s) => s.id === selectedId)) setSelectedId(shots[0]?.id ?? null)
-  }, [shots, selectedId])
-  // 生成等待时轮播小技巧(等待较久,给用户一点收获)
+
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const trackRef = useRef<HTMLDivElement | null>(null)
+  const dragRef = useRef<{ s0: number } | null>(null)
+
+  // 时长:优先视频真实时长;未知时回退分镜时长之和
+  const shotsTotal = useMemo(
+    () => shots.filter((s) => s.includeInVideo !== false).reduce((a, s) => a + parseDur(s.duration), 0),
+    [shots],
+  )
+  const total = dur || shotsTotal || 10
+  // 帧条:按视频真实时长「1 帧/秒」切分(15s 视频 = 15 帧),封顶 60 帧
+  const frameCount = Math.max(1, Math.min(60, Math.round(total)))
+  // 每帧覆盖 1 秒:[i, i+1)(末帧裁到总时长);缩略图来自逐秒抓帧,失败则显示秒标占位
+  const frames = useMemo(
+    () =>
+      Array.from({ length: frameCount }, (_, i) => ({
+        i,
+        start: i,
+        end: Math.min(i + 1, total),
+        thumb: frameThumbs?.[i] || '',
+      })),
+    [frameCount, total, frameThumbs],
+  )
+
+  // 时间刻度(整秒;过长时按步长抽稀,约 10 个标签)
+  const ticks = useMemo(() => {
+    const step = total <= 12 ? 1 : Math.ceil(total / 10)
+    const out: number[] = []
+    for (let t = 0; t <= total + 0.001; t += step) out.push(Math.round(t))
+    return out
+  }, [total])
+
+  // 生成等待时轮播小技巧
   useEffect(() => {
     if (!videoGenerating) return
     const t = window.setInterval(() => setTipIdx((i) => (i + 1) % VIDEO_TIPS.length), 4500)
     return () => window.clearInterval(t)
   }, [videoGenerating])
+  // 切换视频源 → 重置时长/选区/播放头/帧缩略图
+  useEffect(() => {
+    setDur(0)
+    setSel(null)
+    setPlaySec(0)
+    setFrameThumbs(null)
+  }, [videoUrl])
 
-  const selected = shots.find((s) => s.id === selectedId) || null
-  const patchSel = (patch: Partial<Shot>) => {
-    if (!selected) return
-    onShotsChange(shots.map((s) => (s.id === selected.id ? { ...s, ...patch } : s)))
+  // 逐秒抓取视频帧(1 帧/秒)用独立隐藏 <video>,不打扰主播放器。
+  // 跨域无 CORS 头时 crossOrigin 会导致 canvas 被污染/加载失败 → 保持 null,渲染秒标占位。
+  useEffect(() => {
+    if (!videoUrl || total <= 0) return
+    let cancelled = false
+    const v = document.createElement('video')
+    v.crossOrigin = 'anonymous'
+    v.muted = true
+    v.preload = 'auto'
+    v.src = videoUrl
+    const canvas = document.createElement('canvas')
+    const thumbs: string[] = []
+    const capture = async () => {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          v.onloadeddata = () => resolve()
+          v.onerror = () => reject(new Error('load'))
+        })
+        if (cancelled) return
+        const W = 160
+        const H = Math.max(1, Math.round((v.videoHeight / (v.videoWidth || 1)) * W)) || 90
+        canvas.width = W
+        canvas.height = H
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+        for (let i = 0; i < frameCount; i++) {
+          if (cancelled) return
+          const t = Math.min(i + 0.5, Math.max(0, total - 0.05))
+          await new Promise<void>((resolve) => {
+            const onSeeked = () => {
+              v.removeEventListener('seeked', onSeeked)
+              resolve()
+            }
+            v.addEventListener('seeked', onSeeked)
+            v.currentTime = t
+          })
+          if (cancelled) return
+          ctx.drawImage(v, 0, 0, W, H)
+          thumbs.push(canvas.toDataURL('image/jpeg', 0.6)) // canvas 被污染会抛错 → 落到 catch
+          if (!cancelled) setFrameThumbs(thumbs.slice()) // 渐进显示
+        }
+      } catch {
+        if (!cancelled) setFrameThumbs(null) // CORS/解码失败 → 用秒标占位
+      }
+    }
+    void capture()
+    return () => {
+      cancelled = true
+      v.removeAttribute('src')
+      v.load()
+    }
+  }, [videoUrl, total, frameCount])
+
+  // 时间轴上的像素 → 秒(以视频真实时长为基准,做到「秒数一一对应」)
+  const secFromEvent = (e: { clientX: number }) => {
+    const rect = trackRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0) return 0
+    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+    return frac * total
   }
+  const onTrackPointerDown = (e: React.PointerEvent) => {
+    if (!videoUrl) return
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+    const s = secFromEvent(e)
+    dragRef.current = { s0: s }
+    setSel({ start: s, end: s })
+  }
+  const onTrackPointerMove = (e: React.PointerEvent) => {
+    if (!dragRef.current) return
+    const s = secFromEvent(e)
+    const { s0 } = dragRef.current
+    setSel({ start: Math.min(s0, s), end: Math.max(s0, s) })
+  }
+  const onTrackPointerUp = (e: React.PointerEvent) => {
+    if (!dragRef.current) return
+    const s = secFromEvent(e)
+    const { s0 } = dragRef.current
+    dragRef.current = null
+    // 几乎没拖动 → 视为「点选」:选中光标所在的那一帧(1 秒)
+    if (Math.abs(s - s0) < total * 0.012) {
+      const i = Math.min(frameCount - 1, Math.max(0, Math.floor(s)))
+      setSel({ start: i, end: Math.min(total, i + 1) })
+      if (videoRef.current && Number.isFinite(videoRef.current.duration)) videoRef.current.currentTime = s
+    } else {
+      // 拖选 → 对齐到整秒(帧)边界
+      const a = Math.max(0, Math.floor(Math.min(s0, s)))
+      const b = Math.min(total, Math.ceil(Math.max(s0, s)))
+      setSel({ start: a, end: b > a ? b : Math.min(total, a + 1) })
+    }
+  }
+
+  const addSegment = () => {
+    if (!sel || sel.end <= sel.start) return
+    if (segments.length >= MAX_SEGMENTS) {
+      showToast(`最多新增 ${MAX_SEGMENTS} 个片段修改`, 'info')
+      return
+    }
+    setSegments((prev) => [
+      ...prev,
+      { id: `seg_${Date.now()}_${prev.length}`, start: +sel.start.toFixed(1), end: +sel.end.toFixed(1), text: '' },
+    ])
+    setSel(null)
+  }
+
+  // 合并所有修改为一段说明,送整片重生成
+  const buildNote = (): string | undefined => {
+    const parts: string[] = []
+    segments.forEach((s, i) => {
+      const t = s.text.trim()
+      if (t) parts.push(`【片段${i + 1} ${fmtSec(s.start)}-${fmtSec(s.end)}】${t}`)
+    })
+    const ov = overallNote.trim()
+    if (ov) parts.push(`【整段视频】${ov}`)
+    return parts.length ? parts.join('\n') : undefined
+  }
+
+  const showTimeline = !!videoUrl && !videoGenerating
+  const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
 
   return (
     <div className={styles.vstage}>
-      <ShotList
-        className={styles.colList}
-        shots={shots}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        generating={generating}
-        onShotsChange={onShotsChange}
-        locked
-        includeOf={(s) => s.includeInVideo !== false}
-        onToggleInclude={(id) =>
-          onShotsChange(shots.map((s) => (s.id === id ? { ...s, includeInVideo: !(s.includeInVideo !== false) } : s)))
-        }
-      />
-
-      {/* 中:完整视频 + 修改意见 + 总按钮 */}
-      <div className={styles.vstageCenter}>
-        <div className={styles.vstageTitle}>
-          视频内容修改
-          {debugEnabled && debug && (
+      {(debugEnabled && (debug || (faceBlurDebug && faceBlurDebug.length > 0)) && (
+        <div className={styles.vstageDebugBar}>
+          {debug && (
             <button type="button" className={styles.vstageDebugBtn} onClick={() => setShowDebug(true)}>
               🐞 调试信息
             </button>
           )}
-          {debugEnabled && faceBlurDebug && faceBlurDebug.length > 0 && (
+          {faceBlurDebug && faceBlurDebug.length > 0 && (
             <button type="button" className={styles.vstageDebugBtn} onClick={() => setShowBlurDebug(true)}>
               🐞 脱敏调试
             </button>
           )}
         </div>
-        <div className={styles.vstagePlayer}>
-          {videoGenerating ? (
-            <div className={`${styles.vstagePlayerPh} ${styles.vstageWaiting}`}>
-              <span className={styles.vstageSpin} aria-hidden="true" />
-              <div className={styles.vstageWaitingStatus}>{videoStatusText || '视频生成中…'}</div>
-              <div className={styles.vstageWaitingNote}>
-                视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。
+      )) ||
+        null}
+
+      <div className={styles.vstageMain}>
+        {/* 左:视频播放器 + 时间轴 */}
+        <div className={styles.vstageLeft}>
+          <div className={styles.vstagePlayer}>
+            {videoGenerating ? (
+              <div className={`${styles.vstagePlayerPh} ${styles.vstageWaiting}`}>
+                <span className={styles.vstageSpin} aria-hidden="true" />
+                <div className={styles.vstageWaitingStatus}>{videoStatusText || '视频生成中…'}</div>
+                <div className={styles.vstageWaitingNote}>
+                  视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。
+                </div>
+                <div className={styles.vstageWaitingTip} key={tipIdx}>
+                  💡 {VIDEO_TIPS[tipIdx]}
+                </div>
               </div>
-              <div className={styles.vstageWaitingTip} key={tipIdx}>
-                💡 {VIDEO_TIPS[tipIdx]}
-              </div>
-            </div>
-          ) : videoUrl ? (
-            <video
-              src={videoUrl}
-              controls
-              playsInline
-              preload="metadata"
-              onLoadedMetadata={(e) => {
-                // 修进度条 bug:部分 MP4 初始 duration=Infinity(moov 在文件尾),
-                // 进度条会从中间窜到结尾。跳到极大时间强制浏览器算出真实时长,再跳回 0。
-                const v = e.currentTarget
-                if (!Number.isFinite(v.duration)) {
-                  const back = () => {
-                    v.currentTime = 0
-                    v.removeEventListener('timeupdate', back)
+            ) : videoUrl ? (
+              <video
+                ref={videoRef}
+                src={videoUrl}
+                controls
+                playsInline
+                preload="metadata"
+                onLoadedMetadata={(e) => {
+                  // 修进度条 bug:部分 MP4 初始 duration=Infinity(moov 在文件尾),
+                  // 跳到极大时间强制浏览器算出真实时长,再跳回 0。
+                  const v = e.currentTarget
+                  if (!Number.isFinite(v.duration)) {
+                    const back = () => {
+                      v.currentTime = 0
+                      v.removeEventListener('timeupdate', back)
+                    }
+                    v.addEventListener('timeupdate', back)
+                    v.currentTime = 1e7
+                  } else {
+                    setDur(v.duration)
                   }
-                  v.addEventListener('timeupdate', back)
-                  v.currentTime = 1e7
-                }
-              }}
-            />
-          ) : (
-            <div className={styles.vstagePlayerPh}>暂无视频,点下方「重新生成视频」生成整片</div>
-          )}
-        </div>
-
-        {videoVersions.length > 1 && (
-          <div className={styles.vstageVersions}>
-            <span className={styles.vstageVersionsTitle}>视频版本(点击切换)</span>
-            <div className={styles.vstageVersionsRow}>
-              {videoVersions.map((v, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  className={`${styles.vstageVer}${v.url === videoUrl ? ' ' + styles.active : ''}`}
-                  onClick={() => onSwitchVideo?.(v)}
-                  title={`版本${i + 1}`}
-                >
-                  <video src={v.url} muted preload="metadata" playsInline />
-                  <span className={styles.vstageVerNo}>{i + 1}</span>
-                </button>
-              ))}
-            </div>
+                }}
+                onDurationChange={(e) => {
+                  const d = e.currentTarget.duration
+                  if (Number.isFinite(d) && d > 0) setDur(d)
+                }}
+                onTimeUpdate={(e) => setPlaySec(e.currentTarget.currentTime || 0)}
+              />
+            ) : (
+              <div className={styles.vstagePlayerPh}>暂无视频,点下方「重新生成视频」生成整片</div>
+            )}
           </div>
-        )}
 
-        <div className={styles.vstageModify}>
-          <textarea
-            className={styles.vstageNote}
-            value={note}
-            placeholder="对这条视频提出修改意见(可选)…"
-            onChange={(e) => setNote(e.target.value)}
-          />
-          <button
-            type="button"
-            className={styles.vstageSend}
-            disabled={!!videoGenerating}
-            title="按此意见重新生成整片"
-            onClick={() => onRegenerateVideo(note.trim() || undefined)}
-            aria-label="按修改意见重新生成"
-          >
-            ➤
-          </button>
+          {/* 时间轴:时间刻度(真实秒数)+ 帧缩略条 + 拖选/点选片段 */}
+          {showTimeline && (
+            <div className={styles.vstageTimeline}>
+              <div className={styles.vstageRuler}>
+                {ticks.map((t) => (
+                  <span key={t} className={styles.vstageTick} style={{ left: pct(t) }}>
+                    <i className={styles.vstageTickMark} />
+                    <em className={styles.vstageTickLabel}>{t}s</em>
+                  </span>
+                ))}
+              </div>
+              <div
+                ref={trackRef}
+                className={styles.vstageTrack}
+                onPointerDown={onTrackPointerDown}
+                onPointerMove={onTrackPointerMove}
+                onPointerUp={onTrackPointerUp}
+                title="拖动框选若干帧,或点击选中某一帧(1 秒)"
+              >
+                {frames.map((f) => (
+                  <div
+                    key={f.i}
+                    className={styles.vstageFrame}
+                    style={{ left: pct(f.start), width: pct(f.end - f.start) }}
+                  >
+                    {f.thumb ? <img src={f.thumb} alt="" draggable={false} /> : <span>{f.i}s</span>}
+                  </div>
+                ))}
+                {/* 选区:蓝色描边 + 左右把手 + 居中铅笔「修改」 */}
+                {sel && sel.end > sel.start && (
+                  <div
+                    className={styles.vstageSel}
+                    style={{ left: pct(sel.start), width: pct(sel.end - sel.start) }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <span className={`${styles.vstageSelHandle} ${styles.vstageSelHandleL}`} />
+                    <span className={`${styles.vstageSelHandle} ${styles.vstageSelHandleR}`} />
+                    <button
+                      type="button"
+                      className={styles.vstageSelEdit}
+                      onClick={addSegment}
+                      title="对选中的这段提修改意见"
+                      aria-label="修改这段"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+                {/* 播放头 */}
+                <span className={styles.vstagePlayhead} style={{ left: pct(playSec) }} />
+              </div>
+              <div className={styles.vstageTimeHint}>
+                {sel && sel.end > sel.start
+                  ? `已选 ${fmtSec(sel.start)} – ${fmtSec(sel.end)}(${Math.round(sel.end - sel.start)} 帧),点选区上的铅笔即可针对这些帧提修改意见`
+                  : `${fmtClock(playSec)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧或点选单帧来修改`}
+              </div>
+            </div>
+          )}
+
+          {videoVersions.length > 1 && (
+            <div className={styles.vstageVersions}>
+              <span className={styles.vstageVersionsTitle}>视频版本(点击切换)</span>
+              <div className={styles.vstageVersionsRow}>
+                {videoVersions.map((v, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`${styles.vstageVer}${v.url === videoUrl ? ' ' + styles.active : ''}`}
+                    onClick={() => onSwitchVideo?.(v)}
+                    title={`版本${i + 1}`}
+                  >
+                    <video src={v.url} muted preload="metadata" playsInline />
+                    <span className={styles.vstageVerNo}>{i + 1}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* 总按钮 */}
-        <div className={styles.vstageActions}>
-          {onPrev && (
-            <button type="button" className={`${styles.vstageBtn} ${styles.vstageBtnGhost}`} onClick={onPrev}>
-              上一步
-            </button>
+        {/* 右:片段修改框 + 整段视频修改框 */}
+        <div className={styles.vstageRight}>
+          {showTimeline ? (
+            <>
+              {segments.map((seg, i) => (
+                <ModBox
+                  key={seg.id}
+                  title={`片段${i + 1}修改`}
+                  range={`${fmtSec(seg.start)} – ${fmtSec(seg.end)}`}
+                  value={seg.text}
+                  polishKind="segment"
+                  onChange={(v) => setSegments((prev) => prev.map((s) => (s.id === seg.id ? { ...s, text: v } : s)))}
+                  onRemove={() => setSegments((prev) => prev.filter((s) => s.id !== seg.id))}
+                />
+              ))}
+              <ModBox title="整段视频修改" value={overallNote} polishKind="generic" onChange={setOverallNote} />
+              {!segments.length && (
+                <div className={styles.vstageRightHint}>
+                  在左侧帧条上拖选若干帧或点选单帧,点铅笔即可新增片段修改(最多 5 个)。
+                </div>
+              )}
+            </>
+          ) : (
+            <div className={styles.vstageRightHint}>视频生成后,可在此对整段或具体片段提修改意见。</div>
           )}
-          {onDownloadVideo && (
-            <button
-              type="button"
-              className={`${styles.vstageBtn} ${styles.vstageBtnGhost}`}
-              onClick={onDownloadVideo}
-              disabled={!videoUrl || !!videoGenerating}
-            >
-              下载视频
-            </button>
-          )}
-          <button
-            type="button"
-            className={`${styles.vstageBtn} ${styles.vstageBtnPrimary}`}
-            onClick={() => onRegenerateVideo()}
-            disabled={!!videoGenerating}
-          >
-            {videoGenerating ? '生成中…' : '重新生成视频'}
-          </button>
         </div>
       </div>
 
-      {/* 右:素材修改面板(无底部按钮,总控在中间) */}
-      {selected ? (
-        <ShotEditPanel
-          className={styles.colEdit}
-          shot={selected}
-          compact
-          regenerating={!!generating[selected.id]}
-          projectImages={projectImages}
-          onOpenElement={onOpenElement}
-          onPatch={patchSel}
-          onRegenerateImage={onRegenerateImage}
-        />
-      ) : (
-        <div className={styles.vstageEmpty}>请选择左侧分镜</div>
-      )}
+      {/* 底部总按钮:上一步 / 保存视频 / 重新生成视频(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
+      <div className={styles.vstageActions}>
+        {onPrev && (
+          <button type="button" className="smart__btn smart__btn--ghost" onClick={onPrev}>
+            上一步
+          </button>
+        )}
+        {onSaveVideo && (
+          <button
+            type="button"
+            className="smart__btn smart__btn--ghost"
+            onClick={onSaveVideo}
+            disabled={!videoUrl || !!videoGenerating}
+          >
+            保存视频
+          </button>
+        )}
+        <button
+          type="button"
+          className="smart__btn smart__btn--primary"
+          onClick={() => onRegenerateVideo(buildNote())}
+          disabled={!!videoGenerating}
+        >
+          {videoGenerating ? '生成中…' : '重新生成视频'}
+        </button>
+      </div>
 
       {/* 调试弹框:实际喂给视频模型的内容(开发可见) */}
       {debugEnabled && showDebug && debug && (
@@ -364,6 +598,67 @@ export default function VideoStage({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/** 单个修改框:标题在上(片段框带秒数范围 + 移除);框内 自然语言输入 + 右侧 AI一键润色 */
+function ModBox({
+  title,
+  range,
+  value,
+  polishKind,
+  onChange,
+  onRemove,
+}: {
+  title: string
+  range?: string
+  value: string
+  polishKind: 'segment' | 'generic'
+  onChange: (v: string) => void
+  onRemove?: () => void
+}) {
+  const { showToast } = useToast()
+  const [polishing, setPolishing] = useState(false)
+  const doPolish = async () => {
+    if (!value.trim() || polishing) return
+    setPolishing(true)
+    try {
+      const out = await polishText(value, { kind: polishKind })
+      if (out) onChange(out)
+    } catch (e: any) {
+      showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')
+    } finally {
+      setPolishing(false)
+    }
+  }
+  return (
+    <div className={styles.vstageModItem}>
+      <div className={styles.vstageModTitle}>
+        <span>{title}</span>
+        {range && <span className={styles.vstageModRange}>{range}</span>}
+        {onRemove && (
+          <button type="button" className={styles.vstageModRemove} onClick={onRemove} aria-label="移除该片段修改">
+            ×
+          </button>
+        )}
+      </div>
+      <div className={styles.vstageModBox}>
+        <textarea
+          className={styles.vstageModInput}
+          value={value}
+          placeholder="输入你的分镜图片修改描述..."
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button
+          type="button"
+          className={styles.vstageModPolish}
+          disabled={polishing || !value.trim()}
+          onClick={doPolish}
+        >
+          {polishing ? '润色中…' : 'AI一键润色'}
+        </button>
+      </div>
     </div>
   )
 }

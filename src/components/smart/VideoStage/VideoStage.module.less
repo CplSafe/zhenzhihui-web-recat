@@ -1,42 +1,14 @@
-/* 视频生成:左 分镜列表 + 中 完整视频 + 右 素材面板 */
+/* 第四步「生成视频」:左 播放器+时间轴,右 片段/整段修改框,底部总按钮 */
 .vstage {
-  display: flex;
-  gap: 18px;
-  align-items: stretch;
-  max-width: 1600px; /* 超宽屏居中,不被拉满 */
+  max-width: 1400px;
   margin: 0 auto;
-
-  /* 视频生成页:左列表与右素材面板收窄,中间视频占主导(视频才是重点)。
-     通过子组件 className prop 注入;`.vstage .colXxx`(0,2,0)优先级高于子组件自带宽度类。 */
-  .colList {
-    flex: 0 0 300px;
-  }
-
-  .colEdit {
-    flex: 0 0 320px;
-    max-width: 320px;
-  }
 }
 
-.vstageCenter {
-  flex: 1 1 auto;
-  min-width: 0;
-  background: #fff;
-  border: 1px solid #eef0f4;
-  border-radius: 14px;
-  padding: 16px;
+.vstageDebugBar {
   display: flex;
-  flex-direction: column;
-}
-
-.vstageTitle {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1f2937;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .vstageDebugBtn {
@@ -54,7 +26,447 @@
   }
 }
 
-/* 调试弹框 */
+.vstageMain {
+  display: flex;
+  gap: 28px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.vstageLeft {
+  flex: 1 1 480px;
+  min-width: 0;
+  max-width: 680px;
+}
+
+.vstageRight {
+  flex: 1 1 420px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.vstageRightHint {
+  color: #9aa3af;
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 4px 2px;
+}
+
+/* ── 播放器 ── */
+.vstagePlayer {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0d1117;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+  }
+}
+
+.vstagePlayerPh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #aab0b8;
+  font-size: 14px;
+}
+
+.vstageSpin {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: vstageSpin 0.7s linear infinite;
+}
+
+@keyframes vstageSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── 时间轴:刻度(真实秒数)+ 帧缩略条 + 选区 ── */
+.vstageTimeline {
+  margin-top: 14px;
+  user-select: none;
+}
+
+.vstageRuler {
+  position: relative;
+  height: 22px;
+  margin: 0 0 6px;
+}
+
+.vstageTick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  &:first-child {
+    transform: translateX(0);
+    align-items: flex-start;
+  }
+
+  &:last-child {
+    transform: translateX(-100%);
+    align-items: flex-end;
+  }
+}
+
+.vstageTickMark {
+  width: 1px;
+  height: 5px;
+  background: #d0d3d8;
+  margin-bottom: 2px;
+}
+
+.vstageTickLabel {
+  font-size: 11px;
+  font-style: normal;
+  line-height: 14px;
+  color: #909090;
+  white-space: nowrap;
+}
+
+.vstageTrack {
+  position: relative;
+  height: 96px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(51, 51, 51, 0.04);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.vstageFrame {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-right: 2px solid rgba(255, 255, 255, 0.9);
+  background: #e7eaef;
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+  }
+
+  span {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    color: #aab0b8;
+    font-size: 12px;
+  }
+}
+
+/* 选区:蓝色描边 + 左右白把手 + 居中铅笔按钮 */
+.vstageSel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  border: 3px solid #5767e5;
+  border-radius: 10px;
+  background: rgba(87, 103, 229, 0.14);
+}
+
+.vstageSelHandle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 38px;
+  background: #fff;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(87, 103, 229, 0.35);
+}
+
+.vstageSelHandleL {
+  left: 3px;
+}
+
+.vstageSelHandleR {
+  right: 3px;
+}
+
+.vstageSelEdit {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(51, 51, 51, 0.78);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(20, 20, 20, 0.9);
+  }
+}
+
+.vstagePlayhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #5767e5;
+  pointer-events: none;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #5767e5;
+  }
+}
+
+.vstageTimeHint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #9aa3af;
+}
+
+/* ── 视频历史版本 ── */
+.vstageVersions {
+  margin-top: 14px;
+}
+
+.vstageVersionsTitle {
+  font-size: 12px;
+  color: #9aa3af;
+}
+
+.vstageVersionsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.vstageVer {
+  position: relative;
+  width: 84px;
+  height: 50px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0d1117;
+  cursor: pointer;
+
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+  }
+
+  &.active {
+    border-color: #1fcfa9;
+  }
+}
+
+.vstageVerNo {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* ── 修改框:片段N修改 / 整段视频修改(标题在上,框内输入 + 右侧 AI一键润色)── */
+.vstageModItem {
+  display: flex;
+  flex-direction: column;
+}
+
+.vstageModTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.vstageModRange {
+  font-size: 12px;
+  font-weight: 400;
+  color: #11a98a;
+  background: #e8faf5;
+  border-radius: 6px;
+  padding: 1px 8px;
+}
+
+.vstageModRemove {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    background: #fde8e7;
+    color: #e54d42;
+  }
+}
+
+.vstageModBox {
+  position: relative;
+  height: 100px;
+  box-sizing: border-box;
+  border: 1px solid rgba(51, 51, 51, 0.2);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #fff;
+  transition: border-color 0.15s;
+
+  &:focus-within {
+    border-color: #1fcfa9;
+  }
+}
+
+.vstageModInput {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0 100px 0 0;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
+  font-family: inherit;
+
+  &::placeholder {
+    color: #c0c0c0;
+  }
+}
+
+.vstageModPolish {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  color: #32c7a6;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+/* ── 底部总按钮:整组居中(按钮样式复用全局 .smart__btn 药丸,与镜头编排底栏统一)── */
+.vstageActions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+@media (max-width: 900px) {
+  .vstageLeft,
+  .vstageRight {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+}
+
+/* ── 生成等待:状态 + 备注 + 轮播小技巧 ── */
+.vstageWaiting {
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.vstageWaitingStatus {
+  font-size: 14px;
+  color: #e5e7eb;
+}
+
+.vstageWaitingNote {
+  font-size: 12px;
+  color: #9aa3af;
+  max-width: 360px;
+  line-height: 1.6;
+}
+
+.vstageWaitingTip {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #11a98a;
+  background: rgba(17, 169, 138, 0.12);
+  border: 1px solid rgba(17, 169, 138, 0.3);
+  border-radius: 10px;
+  padding: 8px 14px;
+  max-width: 400px;
+  line-height: 1.6;
+  animation: vstageTipFade 0.5s ease;
+}
+
+@keyframes vstageTipFade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── 调试弹框(开发可见)── */
 .vdbgMask {
   position: fixed;
   inset: 0;
@@ -174,7 +586,6 @@
   flex: 0 0 120px;
   width: 120px;
   height: 68px;
-  object-fit: cover;
   border-radius: 6px;
   background: #f0f2f5;
   display: flex;
@@ -193,258 +604,5 @@
 
   b {
     color: #1f2937;
-  }
-}
-
-.vstagePlayer {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: 12px;
-  overflow: hidden;
-  background: #0d1117;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 14px;
-
-  video {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    background: #000;
-  }
-}
-
-.vstagePlayerPh {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #aab0b8;
-  font-size: 14px;
-}
-
-.vstageSpin {
-  width: 18px;
-  height: 18px;
-  border: 2px solid rgba(31, 207, 169, 0.35);
-  border-top-color: #11a98a;
-  border-radius: 50%;
-  animation: vstageSpin 0.7s linear infinite;
-}
-
-@keyframes vstageSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.vstageVersions {
-  margin-bottom: 12px;
-}
-
-.vstageVersionsTitle {
-  font-size: 12px;
-  color: #9aa3af;
-}
-
-.vstageVersionsRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.vstageVer {
-  position: relative;
-  width: 84px;
-  height: 50px;
-  padding: 0;
-  border: 2px solid transparent;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #0d1117;
-  cursor: pointer;
-
-  video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    pointer-events: none;
-  }
-
-  &.active {
-    border-color: #1fcfa9;
-  }
-}
-
-.vstageVerNo {
-  position: absolute;
-  left: 3px;
-  bottom: 2px;
-  font-size: 10px;
-  line-height: 1.4;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.5);
-  border-radius: 4px;
-  padding: 0 4px;
-}
-
-.vstageModify {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-  margin-bottom: 14px;
-}
-
-.vstageNote {
-  flex: 1 1 auto;
-  min-height: 56px;
-  resize: vertical;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #1f2937;
-  font-family: inherit;
-  outline: none;
-
-  &:focus {
-    border-color: #1fcfa9;
-  }
-}
-
-.vstageSend {
-  flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
-  border: none;
-  border-radius: 10px;
-  background: #1fcfa9;
-  color: #fff;
-  font-size: 16px;
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    background: #1bb897;
-  }
-
-  &:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-}
-
-.vstageActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: auto;
-  padding-top: 8px;
-}
-
-.vstageBtn {
-  height: 40px;
-  padding: 0 20px;
-  border-radius: 9px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-
-  &:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-}
-
-.vstageBtnGhost {
-  border: 1px solid #d8dce3;
-  background: #fff;
-  color: #4b5563;
-
-  &:hover:not(:disabled) {
-    border-color: #1fcfa9;
-    color: #1fcfa9;
-  }
-}
-
-.vstageBtnPrimary {
-  border: 1px solid #1fcfa9;
-  background: #1fcfa9;
-  color: #fff;
-
-  &:hover:not(:disabled) {
-    background: #1bb897;
-  }
-}
-
-.vstageEmpty {
-  flex: 1 1 auto;
-  background: #fff;
-  border: 1px solid #eef0f4;
-  border-radius: 14px;
-  padding: 60px 30px;
-  text-align: center;
-  color: #9aa3af;
-  font-size: 14px;
-}
-
-@media (max-width: 1100px) {
-  .vstage {
-    flex-wrap: wrap;
-
-    .colList,
-    .colEdit {
-      flex: 1 1 100%;
-    }
-  }
-
-  .vstageCenter,
-  .vstageEmpty {
-    flex: 1 1 100%;
-  }
-}
-
-/* 生成等待:状态 + 备注 + 轮播小技巧 */
-.vstageWaiting {
-  flex-direction: column;
-  gap: 12px;
-  padding: 24px;
-  text-align: center;
-}
-
-.vstageWaitingStatus {
-  font-size: 14px;
-  color: #4b5563;
-}
-
-.vstageWaitingNote {
-  font-size: 12px;
-  color: #9aa3af;
-  max-width: 360px;
-  line-height: 1.6;
-}
-
-.vstageWaitingTip {
-  margin-top: 6px;
-  font-size: 13px;
-  color: #11a98a;
-  background: #f0fbf8;
-  border: 1px solid #d3f1ea;
-  border-radius: 10px;
-  padding: 8px 14px;
-  max-width: 400px;
-  line-height: 1.6;
-  animation: vstageTipFade 0.5s ease;
-}
-
-@keyframes vstageTipFade {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
   }
 }
