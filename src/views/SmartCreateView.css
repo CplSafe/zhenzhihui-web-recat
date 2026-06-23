@@ -178,6 +178,31 @@
   margin-bottom: 16px;
 }
 
+/* 分镜流式生成中:轻量内联提示(青色小转圈 + 文案),不占大块空间 */
+.smart__gen-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 0;
+  font-size: 13px;
+  color: #11a98a;
+}
+.smart__gen-spin {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(31, 207, 169, 0.25);
+  border-top-color: #1fcfa9;
+  border-radius: 50%;
+  animation: smart-spin 0.7s linear infinite;
+}
+@keyframes smart-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* 第一步:创作需求输入 */
 .smart__script {
   max-width: 860px;

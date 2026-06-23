@@ -214,24 +214,120 @@
   justify-content: center;
 }
 
-.input {
+/* 输入区:高亮层(渲染 @图片N 绿色)在底,透明文字的 textarea 叠在上,光标可见 */
+.inputWrap {
   flex: 1 1 240px;
   min-width: 0;
+  position: relative;
+  min-height: 108px;
+}
+
+.inputHl,
+.input {
+  font-size: 15px;
+  line-height: 1.7;
+  font-family: inherit;
+  padding: 2px 0 0;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.inputHl {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #333;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.refTag {
+  color: #1fcfa9;
+  font-weight: 600;
+}
+
+.input {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
   min-height: 108px;
   border: none;
   outline: none;
   resize: none;
   background: transparent;
-  font-size: 15px;
-  line-height: 1.7;
-  color: #333;
-  font-family: inherit;
-  padding-top: 2px;
+  color: transparent; /* 文字透明,显示底层高亮文本 */
+  caret-color: #333; /* 但光标保持可见 */
 
   /* 聚焦不显示边框:已由 tokens.css 全局 input/textarea:focus-visible 统一处理 */
   &::placeholder {
     color: #909090;
+    -webkit-text-fill-color: #909090; /* color:transparent 时仍显示占位符 */
   }
+}
+
+/* @ 素材选择:在 @ 按钮附近(上方)弹出,展示历史上传素材 */
+.atAnchor {
+  position: relative;
+  display: inline-flex;
+}
+.atMask {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+.atMenu {
+  position: absolute;
+  z-index: 31;
+  bottom: calc(100% + 8px); /* 在 @ 按钮上方 */
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  padding: 10px;
+}
+.atMenuTitle {
+  font-size: 12px;
+  color: #8a93a0;
+  margin-bottom: 8px;
+}
+.atMenuGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 300px;
+}
+.atItem {
+  width: 72px;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: border-color 0.15s;
+
+  img {
+    width: 72px;
+    height: 56px;
+    object-fit: cover;
+    display: block;
+  }
+  &:hover {
+    border-color: #1fcfa9;
+  }
+}
+.atItemName {
+  font-size: 11px;
+  color: #333;
+  padding: 3px 0;
 }
 
 /* 工具栏 */

@@ -4,7 +4,7 @@
  * 风格(叫卖/幽默/商业)/比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
  * 提交 → 调 onSubmit(需求文本, 选项),由父级进入分镜脚本流程。
  */
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import EntryDropdown from '../EntryDropdown'
 import GuideDialog from '../GuideDialog'
 import { fileToDataUrl } from '@/utils/imageFile'
@@ -22,6 +22,18 @@ export interface EntryMeta {
 
 interface SmartEntryProps {
   onSubmit: (requirement: string, meta: EntryMeta) => void
+  /**
+   * 回填初始值:从分镜脚本「上一步」返回输入框时,恢复上次输入(需求文本/图片/风格/比例/时长/模式)。
+   * 仅在挂载时生效(useState 初值);路由切换会卸载本组件,数据随之清空。
+   */
+  initial?: {
+    mode?: 'video' | 'image'
+    text?: string
+    styleTags?: string[]
+    ratio?: string
+    duration?: string
+    images?: string[]
+  }
 }
 
 const STYLE_OPTIONS = ['叫卖', '幽默', '商业', '治愈', '科技感', '剧情']
@@ -32,20 +44,29 @@ const MAX_IMAGES = 9
 const PLACEHOLDER =
   '最多上传9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 
-export default function SmartEntry({ onSubmit }: SmartEntryProps) {
+// 引用素材标记:@图片1、@图片2 …(用于高亮渲染与匹配)
+const REF_RE = /@图片\d+/g
+
+export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
   const { showToast } = useToast()
-  const [mode, setMode] = useState<'video' | 'image'>('video')
-  const [text, setText] = useState('')
+  const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? 'video')
+  const [text, setText] = useState(initial?.text ?? '')
   // 风格支持多选(可叠加多种调性),提交时合并成一个风格描述串
-  const [styleTags, setStyleTags] = useState<string[]>(['叫卖', '幽默', '商业'])
-  const [ratio, setRatio] = useState('16:9')
-  const [duration, setDuration] = useState('10s')
-  const [images, setImages] = useState<string[]>([])
+  const [styleTags, setStyleTags] = useState<string[]>(initial?.styleTags ?? ['叫卖', '幽默', '商业'])
+  const [ratio, setRatio] = useState(initial?.ratio ?? '16:9')
+  const [duration, setDuration] = useState(initial?.duration ?? '10s')
+  const [images, setImages] = useState<string[]>(initial?.images ?? [])
   const [guideOpen, setGuideOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
+  // ── @ 引用素材:点击 @ 在光标处弹出已上传素材;选中插入「@图片N」;无素材则直接插入「@」──
+  const taRef = useRef<HTMLTextAreaElement | null>(null)
+  const hlRef = useRef<HTMLDivElement | null>(null)
+  const caretRef = useRef(0) // 最近一次光标位置(点 @ 按钮会失焦,需提前记下)
+  const [atOpen, setAtOpen] = useState(false)
+
   // ── 需求文本的撤销/重做历史(AI 引导会改写文本,需可回退/前进)──
-  const histRef = useRef<string[]>([''])
+  const histRef = useRef<string[]>([initial?.text ?? ''])
   const idxRef = useRef(0)
   const [, bumpHist] = useState(0)
   const commitText = (val: string) => {
@@ -97,6 +118,59 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   const removeImage = (url: string) => {
     setImages((prev) => prev.filter((u) => u !== url))
     URL.revokeObjectURL(url)
+  }
+
+  // 在记录的光标位置插入文本,并把光标移到插入内容之后,回焦
+  const insertAtCaret = (snippet: string) => {
+    const pos = Math.min(caretRef.current, text.length)
+    const next = text.slice(0, pos) + snippet + text.slice(pos)
+    setText(next)
+    const newPos = pos + snippet.length
+    caretRef.current = newPos
+    requestAnimationFrame(() => {
+      const ta = taRef.current
+      if (ta) {
+        ta.focus()
+        ta.setSelectionRange(newPos, newPos)
+      }
+    })
+  }
+
+  // 点击 @:记录光标 → 无素材直接插「@」;有素材在光标处弹出素材选择
+  const handleAt = () => {
+    const ta = taRef.current
+    caretRef.current = ta ? (ta.selectionStart ?? text.length) : text.length
+    if (images.length === 0) {
+      insertAtCaret('@') // 无上传素材 → 直接在光标处插入 @
+      return
+    }
+    setAtOpen(true) // 有素材 → 在 @ 按钮附近弹出素材选择
+  }
+
+  // 选中某张已上传素材 → 在光标处插入「@图片N 」(高亮渲染由 hl 层处理)
+  const pickRef = (index: number) => {
+    insertAtCaret(`@图片${index + 1} `)
+    setAtOpen(false)
+  }
+
+  // 高亮渲染:把 @图片N 渲染成绿色标记,其余为普通文本(textarea 文字透明,叠在此层上)
+  const renderHighlight = (t: string) => {
+    if (!t) return null
+    const out: ReactNode[] = []
+    let last = 0
+    let m: RegExpExecArray | null
+    REF_RE.lastIndex = 0
+    while ((m = REF_RE.exec(t))) {
+      if (m.index > last) out.push(t.slice(last, m.index))
+      out.push(
+        <span className={styles.refTag} key={m.index}>
+          {m[0]}
+        </span>,
+      )
+      last = m.index + m[0].length
+    }
+    out.push(t.slice(last))
+    return out
   }
 
   const canSubmit = text.trim().length > 0 || images.length > 0
@@ -214,15 +288,31 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
                 e.target.value = ''
               }}
             />
-            <textarea
-              className={styles.input}
-              value={text}
-              placeholder={PLACEHOLDER}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
-              }}
-            />
+            <div className={styles.inputWrap}>
+              {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
+              <div className={styles.inputHl} ref={hlRef} aria-hidden="true">
+                {renderHighlight(text)}
+              </div>
+              <textarea
+                ref={taRef}
+                className={styles.input}
+                value={text}
+                placeholder={PLACEHOLDER}
+                onChange={(e) => {
+                  setText(e.target.value)
+                  caretRef.current = e.target.selectionStart ?? e.target.value.length
+                }}
+                onScroll={(e) => {
+                  if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop
+                }}
+                onSelect={(e) => {
+                  caretRef.current = e.currentTarget.selectionStart ?? 0
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
+                }}
+              />
+            </div>
           </div>
 
           <div className={styles.toolbar}>
@@ -272,14 +362,28 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
                 }
               />
 
-              <button
-                type="button"
-                className={styles.pillBtn}
-                onClick={() => showToast('@参考素材(待接入)', 'info')}
-                title="引用参考素材"
-              >
-                @
-              </button>
+              <span className={styles.atAnchor}>
+                <button type="button" className={styles.pillBtn} onClick={handleAt} title="引用参考素材">
+                  @
+                </button>
+                {/* @ 素材选择:在 @ 按钮附近(上方)弹出,展示历史上传素材 */}
+                {atOpen && (
+                  <>
+                    <div className={styles.atMask} onClick={() => setAtOpen(false)} />
+                    <div className={styles.atMenu}>
+                      <div className={styles.atMenuTitle}>选择参考素材</div>
+                      <div className={styles.atMenuGrid}>
+                        {images.map((url, i) => (
+                          <button type="button" className={styles.atItem} key={url} onClick={() => pickRef(i)}>
+                            <img src={url} alt="" />
+                            <span className={styles.atItemName}>@图片{i + 1}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </span>
 
               {/* AI 引导:打开交互式引导对话框(询问人群/剧情/目标…) */}
               <button

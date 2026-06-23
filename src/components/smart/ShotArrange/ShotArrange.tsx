@@ -28,6 +28,8 @@ interface ShotArrangeProps {
     shot: Shot,
     materials: { name?: string; kind?: string; url?: string }[],
   ) => Promise<{ prompt: string; debug?: any }>
+  /** 台词/字幕/音效 的「AI一键润色」 */
+  onPolishText?: (kind: 'line' | 'subtitle' | 'sound', text: string) => Promise<string>
 }
 
 export default function ShotArrange({
@@ -39,6 +41,7 @@ export default function ShotArrange({
   onUploadRef,
   onRegenerateImage,
   onOptimizePrompt,
+  onPolishText,
 }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   useEffect(() => {
@@ -70,6 +73,7 @@ export default function ShotArrange({
           onPatch={patchSel}
           onRegenerateImage={onRegenerateImage}
           onOptimizePrompt={onOptimizePrompt}
+          onPolishText={onPolishText}
         />
       ) : (
         <div className={styles.empty}>请选择左侧分镜进行编辑</div>

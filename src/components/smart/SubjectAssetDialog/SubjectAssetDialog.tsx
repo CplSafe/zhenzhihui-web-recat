@@ -165,7 +165,7 @@ export default function SubjectAssetDialog({
           </label>
           {editingPrompt && !refining ? (
             <textarea
-              className={`${styles.sadPrompt} ${styles.sadPromptEdit}`}
+              className={`${styles.sadPrompt} ${styles.sadPromptEditing}`}
               rows={3}
               autoFocus
               value={prompt}
@@ -269,30 +269,21 @@ export default function SubjectAssetDialog({
             </button>
           </div>
 
-          {/* 版本图;每张 hover 显示 替换/上传 */}
+          {/* 版本图:直接点击选用(上传/替换在上方大图预览处统一处理,此处不再重复) */}
           {versions.length > 0 && (
             <>
               <label className={styles.sadLabel}>版本图(点击选用,同名主体将同步更新)</label>
               <div className={styles.sadVersions}>
                 {versions.map((url, i) => (
-                  <div key={i} className={`${styles.sadVer}${url === currentImage ? ' ' + styles.active : ''}`}>
-                    <button
-                      type="button"
-                      className={styles.sadVerPick}
-                      onClick={() => onSelect(url)}
-                      title={`版本 ${i + 1}`}
-                    >
-                      <img src={url} alt="" />
-                    </button>
-                    <div className={styles.sadImgActions}>
-                      <button type="button" onClick={() => setPicker('use')}>
-                        替换
-                      </button>
-                      <button type="button" onClick={() => triggerUpload('version')}>
-                        上传
-                      </button>
-                    </div>
-                  </div>
+                  <button
+                    key={i}
+                    type="button"
+                    className={`${styles.sadVer}${url === currentImage ? ' ' + styles.active : ''}`}
+                    onClick={() => onSelect(url)}
+                    title={`版本 ${i + 1}`}
+                  >
+                    <img src={url} alt="" />
+                  </button>
                 ))}
               </div>
             </>

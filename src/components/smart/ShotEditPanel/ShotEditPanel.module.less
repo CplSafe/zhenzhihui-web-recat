@@ -2,8 +2,6 @@
 .sedit {
   flex: 1 1 auto;
   min-width: 0;
-  background: #fff;
-  border: 1px solid #eef0f4;
   border-radius: 14px;
   padding: 18px 20px;
   display: flex;
@@ -514,32 +512,48 @@
   }
 }
 
-/* ── 台词 / 字幕 / 音效:全宽三列(窄屏堆叠)── */
+/* ── 台词修改 / 字幕修改 / 音效修改:全宽卡片纵向堆叠(对齐 Figma)── */
 .seditTexts {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-  border-top: 1px solid #f0f2f5;
-  padding-top: 14px;
-
-  .seditTa {
-    min-height: 72px;
-  }
-}
-
-.seditTf {
   display: flex;
   flex-direction: column;
+  gap: 14px;
+}
+/* 视频生成页(compact)仍纵向,但卡更紧凑 */
+.seditTextsCol {
+  gap: 10px;
 }
 
-.seditTfHead {
+/* 台词/字幕/音效:左(标题+文本)右(AI一键润色,垂直居中),靠留白分区无分割线 */
+.seditTf {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-radius: 14px;
+  background: #fff;
+  padding: 20px 28px;
+}
+
+.seditTfMain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 右侧「AI一键润色」:贴右,单行不换行 */
+.seditTfAside {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  white-space: nowrap;
+}
+
+.seditTfTitle {
+  display: block;
+  font-size: 14px;
   font-weight: 600;
-  color: #1f2937;
-  margin-bottom: 6px;
+  color: #333;
+  margin-bottom: 8px;
 }
 
 .seditTfIcon {
@@ -717,21 +731,176 @@
   }
 }
 
-/* 生成分镜图按钮与「携带当前分镜图」同排(按钮靠右) */
+/* 分镜描述 / 台词 / 字幕 / 音效:显示态为纯文本(无边框/无底色),与标题左对齐,点击才出输入框 */
+.seditIePlain {
+  &:global(.ie-display) {
+    min-height: 0;
+    padding: 6px 0;
+    background: transparent;
+    border-color: transparent;
+    color: #333;
+
+    &:hover {
+      background: #f7f8fa;
+    }
+  }
+}
+
+/* 底部操作行:AI一键润色 + 生成分镜(整体靠右) */
 .seditGenrow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
-  margin-top: 6px;
-
-  .seditCarry {
-    margin-bottom: 0;
-  }
+  margin-top: 16px;
 
   .seditGen {
     align-self: auto;
     flex: 0 0 auto;
+  }
+}
+
+/* ════ 镜头编排右栏(还原 Figma 421-3105)════ */
+
+/* 顶部:当前分镜图(大)+ 历史生成 */
+.seTop {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.seCurBox {
+  flex: 0 0 auto;
+}
+.seCurBox .seditCur {
+  width: 220px;
+  height: 220px;
+  aspect-ratio: auto; /* 覆盖默认 16:9 → 正方形(对齐 Figma 220×220) */
+}
+.seHistory {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.seHistTitle {
+  font-size: 18px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 12px;
+}
+.seHistGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+/* 单个版本:缩略图 + 下方 V 标号 */
+.seHistCell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.seHistItem {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  &:hover {
+    border-color: #bdeee3;
+  }
+  &.active {
+    border-color: #1fcfa9;
+  }
+}
+.seHistLabel {
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+  line-height: 1;
+}
+.seHistEmpty {
+  font-size: 13px;
+  color: #9aa3af;
+  padding: 12px 0;
+}
+
+/* 上传素材:顶部行里的高方框(与分镜图同高,对齐 Figma) */
+.seUploadBox {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 150px;
+  height: 220px;
+  border: 1px solid #e6e8ec;
+  border-radius: 14px;
+  background: #fff;
+  color: #909090;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: #1fcfa9;
+    color: #1fcfa9;
+    background: #f7fffd;
+  }
+}
+
+/* 镜头N 卡片(图片修改描述) */
+.seCard {
+  border-radius: 14px;
+  padding: 22px 28px;
+  background: #fff;
+}
+.seCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.seCardTitle {
+  font-size: 18px;
+  font-weight: 500;
+  color: #333;
+}
+.seCardActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* AI一键润色:青色文字按钮 */
+.seditPolish {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #32c7a6;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: #11a98a;
+    text-decoration: underline;
+  }
+  &:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
 }

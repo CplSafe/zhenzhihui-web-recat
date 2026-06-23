@@ -60,7 +60,7 @@ export default function SubjectMaterialBoard({ subjects, onOpen, uploads = [], o
 
   return (
     <div className={styles.smb}>
-      <div className={styles.smbTitle}>素材</div>
+      {/* <div className={styles.smbTitle}>素材</div> */}
       <div className={styles.smbGrid}>
         {onAdd && (
           <button type="button" className={`${styles.smbCard} ${styles.smbCardAdd}`} onClick={onAdd} title="添加素材">
@@ -77,20 +77,20 @@ export default function SubjectMaterialBoard({ subjects, onOpen, uploads = [], o
                 <path d="M12 5v14M5 12h14" />
               </svg>
             </div>
-            <div className={styles.smbMeta}>
+            {/* <div className={styles.smbMeta}>
               <span className={styles.smbName}>添加素材</span>
-            </div>
+            </div> */}
           </button>
         )}
         {dedupUploads.map((url, i) => (
           <div className={`${styles.smbCard} ${styles.smbCardUpload}`} key={`up-${i}`} title="用户上传素材">
             <div className={`${styles.smbThumb} ${styles.smbThumbUser}`}>
               <Thumb src={url} />
-              <span className={styles.smbUserTag}>用户</span>
+              {/* <span className={styles.smbUserTag}>用户</span> */}
             </div>
-            <div className={styles.smbMeta}>
+            {/* <div className={styles.smbMeta}>
               <span className={styles.smbName}>用户素材</span>
-            </div>
+            </div> */}
           </div>
         ))}
         {subjects.map((s) => (

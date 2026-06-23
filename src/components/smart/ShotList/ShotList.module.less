@@ -1,42 +1,83 @@
-/* 分镜列表(镜头编排 / 视频生成 共用) */
+/* 分镜列表(镜头编排 / 视频生成 共用,UI 还原 Figma 343-3740) */
 .shotlist {
-  flex: 0 0 320px;
+  flex: 0 0 340px;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: #fff;
   border: 1px solid #eef0f4;
   border-radius: 14px;
-  padding: 16px;
-  align-self: stretch;
-  /* 统一卡片间距:标题与各卡、卡与卡之间均为 12px */
+  overflow: hidden;
+}
+
+/* 头部:渐变条 + 标题 + 数量徽标 */
+.header {
+  flex: 0 0 auto;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 20px;
+  background: linear-gradient(90deg, #f4fdfb 0%, #f8fefd 100%);
+  border-bottom: 0.8px solid #f0f8f5;
 }
-
 .title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1f2937;
+  font-size: 18px;
+  font-weight: 500;
+  color: #333;
+}
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #60e0c4 0%, #3dcdb0 100%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
 }
 
+/* 列表滚动区 */
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+/* 每行:序号圆标 + 100×100 缩略图 + 分镜N/时长 */
 .card {
   position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
-  border: 1px solid #eef0f4;
-  border-radius: 14px;
-  padding: 14px 16px;
-  background: #fff;
+  min-height: 124px;
+  padding: 12px 20px;
   cursor: pointer;
-  transition: all 0.15s;
+  border-left: 2.4px solid transparent;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 
   &:hover {
-    border-color: #d5f3ec;
+    background: #fafdfc;
+  }
+
+  /* 拖拽中:抬起、半透明、盖住相邻卡 */
+  &.dragging {
+    z-index: 30;
+    opacity: 0.92;
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(31, 207, 169, 0.22);
+    cursor: grabbing;
   }
 
   &.active {
-    border-color: #1fcfa9;
-    box-shadow: 0 0 0 2px rgba(31, 207, 169, 0.14);
+    background: linear-gradient(90deg, #eafcf7 0%, #f4fefb 100%);
+    border-left-color: #60e0c4;
   }
 
   /* 未勾选(不参与生成)的分镜:整卡淡化 */
@@ -49,44 +90,29 @@
   }
 }
 
-.info {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
+.num {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding-right: 18px;
-  flex-wrap: wrap;
-}
-
-.no {
-  font-size: 15px;
-  font-weight: 600;
-  color: #333;
-}
-
-.sep {
-  color: #d4dbe0;
-}
-
-.dur {
-  font-size: 14px;
-  color: #909090;
-}
-
-.badge {
+  justify-content: center;
+  background: #f0f0f4;
+  color: #999;
   font-size: 11px;
-  color: #11a98a;
-  background: #e8faf5;
-  border-radius: 6px;
-  padding: 1px 6px;
+  font-weight: 500;
+}
+.card.active .num {
+  background: linear-gradient(135deg, #60e0c4 0%, #3dcdb0 100%);
+  color: #fff;
 }
 
 .thumb {
   position: relative;
-  flex: 0 0 132px;
-  width: 132px;
-  aspect-ratio: 16 / 10;
+  flex: 0 0 auto;
+  width: 100px;
+  height: 100px;
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
@@ -99,12 +125,7 @@
     height: 100%;
     object-fit: cover;
   }
-
-  &:hover .thumbActions {
-    opacity: 1;
-  }
 }
-
 .thumbPh {
   color: #aab0b8;
   font-size: 13px;
@@ -118,7 +139,6 @@
   justify-content: center;
   background: rgba(255, 255, 255, 0.82);
 }
-
 .genSpin {
   width: 18px;
   height: 18px;
@@ -127,52 +147,13 @@
   border-radius: 50%;
   animation: shotlistSpin 0.7s linear infinite;
 }
-
 @keyframes shotlistSpin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.thumbActions {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  display: flex;
-  gap: 8px;
-  opacity: 0;
-  transition: opacity 0.15s;
-
-  button {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: none;
-    background: rgba(255, 255, 255, 0.96);
-    color: #374151;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.22);
-
-    &.danger {
-      color: #e54d42;
-    }
-
-    &:hover {
-      transform: scale(1.08);
-    }
-  }
-}
-
-.moreWrap {
-  position: absolute;
-  bottom: 8px;
-  right: 10px;
-}
-
-/* 视频生成页:分镜图左上角「参与生成」勾选框(小巧、带柔和阴影,不抢眼) */
+/* 视频生成页:分镜图左上角「参与生成」勾选框 */
 .pick {
   position: absolute;
   top: 6px;
@@ -193,6 +174,57 @@
   }
 }
 
+/* 分镜N + 时长药丸 */
+.meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  padding-left: 4px;
+}
+.no {
+  font-size: 18px;
+  font-weight: 500;
+  color: #333;
+}
+.card.active .no {
+  color: #1a9d87;
+}
+.dur {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #f4f4f6;
+  color: #999;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 14px;
+}
+.card.active .dur {
+  background: rgba(96, 224, 196, 0.15);
+  color: #1a9d87;
+}
+.badge {
+  font-size: 11px;
+  color: #11a98a;
+  background: #e8faf5;
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+/* 「⋯」更多菜单:hover 显示 */
+.moreWrap {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.card:hover .moreWrap,
+.card.active .moreWrap {
+  opacity: 1;
+}
 .more {
   width: 26px;
   height: 26px;
@@ -208,10 +240,9 @@
     background: #fff;
   }
 }
-
 .menu {
   position: absolute;
-  bottom: 30px;
+  top: 30px;
   right: 0;
   min-width: 150px;
   background: #fff;
@@ -243,24 +274,37 @@
   }
 }
 
+/* 两分镜之间的小加号:坐在分隔线上,hover 显示 */
 .insert {
-  display: block;
-  width: 100%;
-  margin: 6px 0;
-  border: 1px dashed #dcdfe4;
-  border-radius: 8px;
-  background: #fafbfc;
-  color: #b0b4ba;
+  position: absolute;
+  bottom: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  width: 32px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: #c2c9d2;
+  color: #fff;
   font-size: 16px;
   line-height: 1;
-  padding: 5px 0;
   cursor: pointer;
-  transition: all 0.15s;
-
-  &:hover {
-    border-color: #1fcfa9;
-    color: #1fcfa9;
-  }
+  opacity: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+.card:hover .insert,
+.insert:hover {
+  opacity: 1;
+}
+.insert:hover {
+  background: #1fcfa9;
 }
 
 .empty {
@@ -268,30 +312,4 @@
   text-align: center;
   color: #9aa3af;
   font-size: 14px;
-}
-
-/* 镜头标题/备注(可双击编辑;镜头编号固定不可改) */
-.note {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  color: #6b7280;
-  overflow: hidden;
-}
-
-/* InlineEdit 内部自带 .ie-display / .ie-input(全局类),与本类组合 */
-.noteIe:global(.ie-display) {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
-  padding: 1px 5px;
-}
-
-.noteIe:global(.ie-input) {
-  width: 100%;
-  font-size: 12px;
-  padding: 2px 6px;
 }
