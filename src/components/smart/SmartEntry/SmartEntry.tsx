@@ -39,7 +39,7 @@ export default function SmartEntry({ onSubmit }: SmartEntryProps) {
   // 风格支持多选(可叠加多种调性),提交时合并成一个风格描述串
   const [styleTags, setStyleTags] = useState<string[]>(['叫卖', '幽默', '商业'])
   const [ratio, setRatio] = useState('16:9')
-  const [duration, setDuration] = useState('5s')
+  const [duration, setDuration] = useState('10s')
   const [images, setImages] = useState<string[]>([])
   const [guideOpen, setGuideOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)

@@ -5,6 +5,7 @@
  */
 import { useState } from 'react'
 import AiBadge from '@/components/common/AiBadge'
+import EllipsisText from '@/components/common/EllipsisText'
 import styles from './SubjectMaterialBoard.module.less'
 
 export interface BoardSubject {
@@ -40,7 +41,11 @@ function SubjectCard({ s, onOpen }: { s: BoardSubject; onOpen: (n: string) => vo
         {isUser && s.image && <span className={styles.smbUserTag}>用户</span>}
       </div>
       <div className={styles.smbMeta}>
-        <span className={styles.smbName}>@{s.name}</span>
+        <EllipsisText
+          className={styles.smbName}
+          text={`@${s.name}`}
+          title={s.kind ? `@${s.name}（${s.kind}）` : `@${s.name}`}
+        />
         {s.kind && <span className={styles.smbKind}>{s.kind}</span>}
       </div>
     </button>

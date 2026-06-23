@@ -29,7 +29,7 @@ export default function StepProgress({ steps, current, statuses, maxReached = 0,
         const sub = statuses?.[i] ?? (state === 'done' ? '已完成' : state === 'active' ? '进行中' : '待生成')
         return (
           <Fragment key={s.key}>
-            {i > 0 && <span className={`${styles.line}${i <= current ? ' ' + styles.done : ''}`} aria-hidden="true" />}
+            {i > 0 && <span className={styles.line} aria-hidden="true" />}
             <button
               type="button"
               role="listitem"

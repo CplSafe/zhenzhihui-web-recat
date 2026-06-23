@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Shot } from '../ScriptStoryboardTable'
 import { fileToDataUrl } from '@/utils/imageFile'
 import AiBadge from '@/components/common/AiBadge'
+import EllipsisText from '@/components/common/EllipsisText'
 import InlineEdit from '@/components/common/InlineEdit'
 import styles from './ShotEditPanel.module.less'
 
@@ -359,7 +360,11 @@ export default function ShotEditPanel({
                     {on && <span className={styles.seditElCheck}>✓</span>}
                   </button>
                   <div className={styles.seditElMeta}>
-                    <span className={styles.seditElName}>{name || '元素'}</span>
+                    <EllipsisText
+                      className={styles.seditElName}
+                      text={name || '元素'}
+                      title={su.kind ? `${name || '元素'}（${su.kind}）` : name || '元素'}
+                    />
                     {su.kind && <span className={styles.seditElKind}>{su.kind}</span>}
                   </div>
                 </div>

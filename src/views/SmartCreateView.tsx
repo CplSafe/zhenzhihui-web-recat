@@ -5,7 +5,7 @@
  * 各步具体内容(脚本编辑/素材匹配/镜头编排/视频生成)在后续阶段填充,
  * 大量编排逻辑可复用现有 useCreativeWorkflow / useStoryboard* / useVideoGeneration。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
@@ -15,6 +15,7 @@ import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStory
 import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import SubjectMaterialBoard, { type BoardSubject } from '@/components/smart/SubjectMaterialBoard'
 import ShotArrange from '@/components/smart/ShotArrange'
+import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import { Streamdown } from 'streamdown'
 import {
   generateProjectName,
@@ -70,6 +71,12 @@ function resolveProjectId(payload: any): number {
   return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
 }
 
+// 是否「未命名」标题(对齐 Vue isUnnamedProjectTitle):空 或 含「未命名」都视为未命名
+function isUnnamedTitle(title: string): boolean {
+  const t = String(title || '').trim()
+  return !t || t.includes('未命名')
+}
+
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
   creative: '/smart',
@@ -81,10 +88,23 @@ const ROUTE_MAP: Record<string, string> = {
 
 interface BottomButton {
   label: string
-  variant: 'ghost' | 'primary'
+  variant: 'ghost' | 'primary' | 'text'
   action: () => void
   disabled?: boolean
+  icon?: ReactNode
+  /** 底栏对齐:重新生成靠左,其余靠右(默认右) */
+  align?: 'left' | 'right'
 }
+
+// 重新生成图标(还原 Figma 344:4298 刷新图标,用 currentColor 跟随按钮文字色)
+const RegenIcon = (
+  <svg className="smart__btn-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+    <path
+      d="M9.35127 3.20312C13.0427 3.20312 16.0443 6.15619 16.1228 9.82877L16.3975 9.55414L16.409 9.54289C16.6539 9.31014 17.0411 9.31387 17.2813 9.55414C17.5216 9.79439 17.5254 10.1816 17.2926 10.4265L17.2813 10.438L16.5057 11.2137C15.9565 11.7628 15.0661 11.7628 14.517 11.2137L13.7413 10.438C13.4972 10.1939 13.4972 9.79822 13.7413 9.55414C13.9854 9.31006 14.3811 9.31006 14.6252 9.55414L14.8717 9.80061C14.7789 6.83154 12.3429 4.45312 9.35127 4.45312C6.30092 4.45312 3.82813 6.92592 3.82813 9.97627C3.82813 13.0266 6.30092 15.4994 9.35127 15.4994C10.8697 15.4994 12.2441 14.8875 13.2431 13.8953C13.488 13.652 13.8838 13.6534 14.127 13.8983C14.3702 14.1432 14.3689 14.539 14.1239 14.7822C12.9003 15.9975 11.213 16.7494 9.35127 16.7494C5.61057 16.7494 2.57812 13.717 2.57812 9.97627C2.57812 6.23557 5.61057 3.20312 9.35127 3.20312Z"
+      fill="currentColor"
+    />
+  </svg>
+)
 
 const stripAt = (t: string) =>
   String(t || '')
@@ -156,7 +176,8 @@ export default function SmartCreateView() {
   const [scriptError, setScriptError] = useState('')
   const [projectId, setProjectId] = useState(0)
   const projectIdRef = useRef(0)
-  const titlePatchedRef = useRef(false)
+  // 后端当前的项目标题(对齐 Vue serverProjectTitle):用于判断是否需要回写、避免覆盖已有真实标题
+  const serverTitleRef = useRef('')
   const draftRevisionRef = useRef(0) // 后端草稿版本号(乐观并发)
 
   // ── 主体素材统一管理:同名主体(@闺蜜A)共享素材,选定后所有同名处联动 ──
@@ -1023,7 +1044,6 @@ export default function SmartCreateView() {
       hydratedRef.current = true
       projectIdRef.current = rid
       setProjectId(rid)
-      titlePatchedRef.current = true // 既有项目,标题不自动回写
       getCreativeProject({ projectId: rid, workspaceId: ws })
         .then((proj: any) => {
           draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
@@ -1031,7 +1051,10 @@ export default function SmartCreateView() {
           const d = parseSmartSnapshot(draftJson)
           if (d) applyDraft(d)
           const t = String(proj?.title || proj?.name || '').trim()
-          if (t) setProjectName(t)
+          if (t) {
+            setProjectName(t)
+            serverTitleRef.current = t // 既有标题已在后端,避免加载后又重复回写
+          }
         })
         .catch(() => showToast('项目加载失败', 'error'))
     } else {
@@ -1132,15 +1155,25 @@ export default function SmartCreateView() {
     }
   }
 
-  // 项目名就绪后回写后端标题(best-effort,一次)
+  // 项目名变化时回写后端标题(防抖)。对齐 Vue CreativeScriptView:
+  // - title 与 name 一并回写(后端两字段都用,列表/历史才会同步)
+  // - 已同步过相同标题则跳过,避免重复 PATCH
+  // - 后端已有真实标题时,自动/AI 命名不覆盖;仅用户手动改名(nameTouched)才覆盖
+  // best-effort:失败则清掉记录,下次名字再变时重试。
   useEffect(() => {
     const wsId = Number(workspaceId || 0)
-    if (!projectId || !wsId || titlePatchedRef.current) return
+    if (!projectId || !wsId) return
     const t = projectName.trim()
-    if (!t || t === '未命名项目') return
-    titlePatchedRef.current = true
-    patchCreativeProject({ projectId, workspaceId: wsId, title: t }).catch(() => {})
-  }, [projectId, projectName, workspaceId])
+    if (!t || isUnnamedTitle(t) || t === serverTitleRef.current) return
+    if (!nameTouched && !isUnnamedTitle(serverTitleRef.current)) return
+    const timer = window.setTimeout(() => {
+      serverTitleRef.current = t
+      patchCreativeProject({ projectId, workspaceId: wsId, title: t, name: t }).catch(() => {
+        serverTitleRef.current = ''
+      })
+    }, 600)
+    return () => window.clearTimeout(timer)
+  }, [projectId, projectName, nameTouched, workspaceId])
 
   const handleStart = (req: string, meta: EntryMeta) => {
     setRequirement(req)
@@ -1175,7 +1208,7 @@ export default function SmartCreateView() {
     // 后端建项目(best-effort,使其出现在项目管理/历史)
     if (wsId && !projectIdRef.current) {
       draftRevisionRef.current = 0
-      titlePatchedRef.current = false
+      serverTitleRef.current = ''
       createCreativeProject({ workspace_id: wsId })
         .then((p: any) => {
           const id = resolveProjectId(p)
@@ -1262,7 +1295,9 @@ export default function SmartCreateView() {
           { label: '上一步', variant: 'ghost', action: () => setStarted(false) },
           {
             label: scriptLoading ? '生成中…' : '重新生成',
-            variant: 'ghost',
+            variant: 'text',
+            align: 'left',
+            icon: scriptLoading ? undefined : RegenIcon,
             action: () => entryMeta && generateScript(requirement, entryMeta),
             disabled: scriptLoading,
           },
@@ -1281,7 +1316,9 @@ export default function SmartCreateView() {
           { label: '上一步', variant: 'ghost', action: () => goStep(0) },
           {
             label: shotGenRunning ? '生成中…' : '重新生成镜头编排',
-            variant: 'ghost',
+            variant: 'text',
+            align: 'left',
+            icon: shotGenRunning ? undefined : RegenIcon,
             action: () => generateShotImages(),
             disabled: anyShotGenerating,
           },
@@ -1471,7 +1508,7 @@ export default function SmartCreateView() {
 
             {/* 项目名 + 改名 */}
             <div className="smart__projbar">
-              <button type="button" className="smart__home-link" onClick={() => navigate('/home')}>
+              {/* <button type="button" className="smart__home-link" onClick={() => navigate('/home')}>
                 ← 首页
               </button>
               <button
@@ -1495,12 +1532,12 @@ export default function SmartCreateView() {
                   projectIdRef.current = 0
                   setProjectId(0)
                   draftRevisionRef.current = 0
-                  titlePatchedRef.current = false
+                  serverTitleRef.current = ''
                   navigate('/smart')
                 }}
               >
                 ＋ 新建
-              </button>
+              </button> */}
               {editingName ? (
                 <input
                   ref={nameInputRef}
@@ -1516,15 +1553,10 @@ export default function SmartCreateView() {
                 />
               ) : (
                 <button type="button" className="smart__name" onClick={startRename} title="点击修改项目名">
-                  <span>{projectName}</span>
+                  <span className="smart__name-label">项目</span>
+                  <span className="smart__name-text">/{projectName}</span>
                   {naming && <span className="smart__name-naming">AI 命名中…</span>}
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path
-                      d="M4 20h4L18.5 9.5a2 2 0 0 0-2.83-2.83L5 17v3z"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  <img className="smart__name-edit" src={iconProjectEdit} alt="" width={20} height={20} />
                 </button>
               )}
             </div>
@@ -1535,17 +1567,26 @@ export default function SmartCreateView() {
             {/* 底部总按钮(视频生成步的总按钮在中间 VideoStage 内) */}
             {bottomButtons.length > 0 && (
               <footer className="smart__footer">
-                {bottomButtons.map((b) => (
-                  <button
-                    key={b.label}
-                    type="button"
-                    className={`smart__btn smart__btn--${b.variant}`}
-                    onClick={b.action}
-                    disabled={b.disabled}
-                  >
-                    {b.label}
-                  </button>
-                ))}
+                <div className="smart__footer-inner">
+                  {(['left', 'right'] as const).map((side) => (
+                    <div className="smart__footer-group" key={side}>
+                      {bottomButtons
+                        .filter((b) => (b.align ?? 'right') === side)
+                        .map((b) => (
+                          <button
+                            key={b.label}
+                            type="button"
+                            className={`smart__btn smart__btn--${b.variant}`}
+                            onClick={b.action}
+                            disabled={b.disabled}
+                          >
+                            {b.icon}
+                            {b.label}
+                          </button>
+                        ))}
+                    </div>
+                  ))}
+                </div>
               </footer>
             )}
           </>

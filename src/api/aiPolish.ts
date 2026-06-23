@@ -18,12 +18,15 @@ const VL_ENDPOINT = '/aimodel-vl/v1/chat/completions'
 export type PolishKind = 'script' | 'line' | 'subtitle' | 'sound' | 'segment' | 'generic'
 
 const SYSTEM_PROMPTS: Record<PolishKind, string> = {
-  script: '你是专业的短视频分镜脚本润色助手。在保持原意与画面信息的前提下,让文案更生动、专业、有镜头感。只输出润色后的脚本正文,不要加解释、不要加引号。',
+  script:
+    '你是专业的短视频分镜脚本润色助手。在保持原意与画面信息的前提下,让文案更生动、专业、有镜头感。只输出润色后的脚本正文,不要加解释、不要加引号。',
   line: '你是专业的影视台词润色助手。在保持原意的前提下,让台词更自然、口语化、有感染力。只输出润色后的台词,不要解释、不要引号。',
   subtitle: '你是专业的视频字幕润色助手。让字幕更简洁、准确、易读,长度适合屏幕显示。只输出润色后的字幕文本,不要解释。',
   sound: '你是专业的音效描述润色助手。让音效/配乐描述更具体、专业、可执行。只输出润色后的描述,不要解释。',
-  segment: '你是专业的视频片段编辑助手。根据用户对这一片段的修改诉求,润色为清晰、可执行的画面编辑指令。只输出润色后的指令,不要解释。',
-  generic: '你是专业的中文文案润色助手。在保持原意的前提下让表达更清晰、生动、专业。只输出润色后的文本,不要解释、不要引号。',
+  segment:
+    '你是专业的视频片段编辑助手。根据用户对这一片段的修改诉求,润色为清晰、可执行的画面编辑指令。只输出润色后的指令,不要解释。',
+  generic:
+    '你是专业的中文文案润色助手。在保持原意的前提下让表达更清晰、生动、专业。只输出润色后的文本,不要解释、不要引号。',
 }
 
 export interface PolishOptions {
@@ -118,11 +121,14 @@ export async function generateProjectName(requirement: string, signal?: AbortSig
   if (!req) throw new Error('请输入创作需求')
   const system =
     '你是项目命名助手。根据用户的短视频创作需求,起一个简洁、贴切、有吸引力的中文项目名称。' +
-    '要求:4到8个字,不含标点、引号、书名号、空格、序号,不要任何解释。只输出名称本身。'
+    '要求:尽量简洁(大约 6 到 12 个字,完整表达即可),不含标点、引号、书名号、空格、序号,不要任何解释。只输出名称本身。'
   let name = await chatOnce(system, req, signal, 32)
-  // 兜底清洗:去引号/标点/空白,截断到 8 字
-  name = name.replace(/["'《》「」“”‘’\s]/g, '').replace(/[。,，.!！?？:：;；]/g, '').trim()
-  name = name.split('\n')[0].slice(0, 8)
+  // 兜底清洗:去引号/标点/空白,只取首行(不截断字数,保留完整名称)
+  name = name
+    .replace(/["'《》「」“”‘’\s]/g, '')
+    .replace(/[。,，.!！?？:：;；]/g, '')
+    .trim()
+  name = name.split('\n')[0]
   if (!name) throw new Error('生成名称为空,请重试')
   return name
 }
@@ -149,13 +155,20 @@ export async function suggestOptions(
   } catch {
     return []
   }
-  raw = raw.replace(/^```(json)?/i, '').replace(/```$/i, '').trim()
+  raw = raw
+    .replace(/^```(json)?/i, '')
+    .replace(/```$/i, '')
+    .trim()
   const m = raw.match(/\[[\s\S]*\]/)
   try {
     const arr = JSON.parse(m ? m[0] : raw)
     if (Array.isArray(arr)) {
       return arr
-        .map((x) => String(x).replace(/["'\s]/g, '').trim())
+        .map((x) =>
+          String(x)
+            .replace(/["'\s]/g, '')
+            .trim(),
+        )
         .filter(Boolean)
         .slice(0, 5)
     }

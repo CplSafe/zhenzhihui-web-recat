@@ -4,6 +4,7 @@
  * 受控:shots + onShotsChange(整列回写,父级持久化)。onOpenSubject 用于打开素材管理/AI生成。
  */
 import InlineEdit from '@/components/common/InlineEdit'
+import EllipsisText from '@/components/common/EllipsisText'
 import styles from './ScriptStoryboardTable.module.less'
 
 export interface ShotSubject {
@@ -155,7 +156,11 @@ export default function ScriptStoryboardTable({ shots, onOpenSubject, onShotsCha
                     </div>
                     <div className={styles.sbcSubjTagline}>
                       <span className={styles.sbcAt}>@</span>
-                      <span className={styles.sbcSubjName}>{name}</span>
+                      <EllipsisText
+                        className={styles.sbcSubjName}
+                        text={name}
+                        title={su.kind ? `@${name}（${su.kind}）` : `@${name}`}
+                      />
                       {su.kind && <span className={styles.sbcSubjKindtag}>{su.kind}</span>}
                     </div>
                   </div>
