@@ -1,7 +1,12 @@
-/* 第四步「生成视频」:左 播放器+时间轴,右 片段/整段修改框,底部总按钮 */
+/* 第四步「生成视频」:左 播放器+时间轴,右 片段/整段修改框,底部总按钮
+   整步纵向填满 body:主体区填满剩余并内部滚动,底部按钮组永远沉底(对齐镜头编排) */
 .vstage {
   max-width: 1400px;
   margin: 0 auto;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .vstageDebugBar {
@@ -27,6 +32,9 @@
 }
 
 .vstageMain {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   gap: 28px;
   align-items: flex-start;
@@ -408,10 +416,12 @@
 
 /* ── 底部总按钮:整组居中(按钮样式复用全局 .smart__btn 药丸,与镜头编排底栏统一)── */
 .vstageActions {
+  flex: 0 0 auto;
   display: flex;
   justify-content: center;
   gap: 16px;
   margin-top: 24px;
+  padding-top: 8px;
 }
 
 @media (max-width: 900px) {
