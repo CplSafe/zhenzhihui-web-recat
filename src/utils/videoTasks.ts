@@ -3,6 +3,7 @@
  * 根据不同 AI 模型的 schema 构建视频生成请求参数。
  */
 import { normalizeSeedanceRatio } from './videoOptions.js'
+import { getModelParamFields, findFirstField } from './modelSchema.js'
 
 export function buildVideoGenerationParams(model, params) {
   const fields = getModelParamFields(model)
@@ -45,25 +46,6 @@ export function buildVideoGenerationParams(model, params) {
   return payload
 }
 
-function getModelParamFields(model) {
-  const schema = parseParamsSchema(model?.params_schema ?? model?.paramsSchema)
-  return Array.isArray(schema?.fields) ? schema.fields : []
-}
-
-function parseParamsSchema(schema) {
-  if (!schema) return null
-  if (typeof schema !== 'string') return schema
-  try {
-    return JSON.parse(schema)
-  } catch {
-    return null
-  }
-}
-
-function findFirstField(fields, names) {
-  const set = new Set(names)
-  return fields.find((field) => set.has(field?.name)) || null
-}
 
 function normalizeDuration(value) {
   const seconds = Number(value)

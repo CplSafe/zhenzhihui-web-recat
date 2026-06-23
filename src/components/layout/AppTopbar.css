@@ -1,0 +1,140 @@
+/* 共享顶栏 */
+.apptop {
+  position: relative;
+  z-index: 200; /* 确保头像下拉浮层在页面内容之上,不被遮挡 */
+  height: 60px;
+  flex: 0 0 60px;
+  display: flex;
+  align-items: center;
+  padding: 0 28px;
+  background: #fff;
+  border-bottom: 1px solid #f0f1f3;
+}
+.apptop__hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  margin-left: -8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #444;
+  cursor: pointer;
+}
+.apptop__hamburger:hover {
+  background: #f3f4f6;
+}
+.apptop__right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-left: auto;
+}
+.apptop__member {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: none;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #ffe9a8, #ffd766);
+  color: #7a5a00;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.apptop__member-icon {
+  font-size: 12px;
+}
+.apptop__user {
+  position: relative;
+}
+.apptop__user-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  border-radius: 20px;
+  cursor: pointer;
+}
+.apptop__user-btn:hover {
+  background: #f3f4f6;
+}
+.apptop__avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #1fcfa9;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+.apptop__user-name {
+  font-size: 14px;
+  color: #333;
+}
+.apptop__caret {
+  color: #999;
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+.apptop__caret.is-open {
+  transform: rotate(180deg);
+}
+/* 下拉浮层:portal 到 body,fixed 定位(top/right 由内联样式给) */
+.apptop__menu {
+  position: fixed;
+  min-width: 150px;
+  background: #fff;
+  border: 1px solid #eef0f2;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 3000;
+}
+.apptop__menu-item {
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+}
+.apptop__menu-item:hover {
+  background: #f5f6f8;
+}
+.apptop__menu-item--danger {
+  color: #e54d42;
+}
+.apptop__menu-item:disabled {
+  color: #bbb;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .apptop {
+    padding: 0 14px;
+  }
+  .apptop__menu {
+    display: flex;
+  }
+}
+@media (max-width: 560px) {
+  .apptop__member {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  .apptop__user-name {
+    display: none;
+  }
+}

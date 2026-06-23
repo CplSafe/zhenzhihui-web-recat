@@ -57,6 +57,10 @@ function RouteErrorBoundary() {
 }
 
 const LoginView = lazy(() => import('../views/LoginView'))
+const HomeView = lazy(() => import('../views/HomeView'))
+const TemplatesView = lazy(() => import('../views/TemplatesView'))
+const SmartCreateView = lazy(() => import('../views/SmartCreateView'))
+const HotCopyView = lazy(() => import('../views/HotCopyView'))
 const CreativeEntryView = lazy(() => import('../views/CreativeEntryView'))
 const CreativeScriptView = lazy(() => import('../views/CreativeScriptView'))
 const ProjectManagementView = lazy(() => import('../views/ProjectManagementView'))
@@ -72,15 +76,20 @@ export const router = createBrowserRouter([
     element: <App />,
     errorElement: <RouteErrorBoundary />,
     children: [
-      { index: true, element: <Navigate to="/creative" replace /> },
+      { index: true, element: <Navigate to="/home" replace /> },
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },
+      { path: 'home', element: lazyPage(<HomeView />) },
+      { path: 'templates', element: lazyPage(<TemplatesView />) },
       { path: 'workbench', element: lazyPage(<WorkbenchView />) },
+      { path: 'smart', element: lazyPage(<SmartCreateView />) },
+      { path: 'smart/:id', element: lazyPage(<SmartCreateView />) },
+      { path: 'hot-copy', element: lazyPage(<HotCopyView />) },
       { path: 'creative/blank', element: lazyPage(<CreativeScriptView />) },
       { path: 'creative', element: lazyPage(<CreativeEntryView />) },
       { path: 'creative/:id', element: lazyPage(<CreativeScriptView />) },
       { path: 'projects', element: lazyPage(<ProjectManagementView />) },
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
-      { path: '*', element: <Navigate to="/creative" replace /> },
+      { path: '*', element: <Navigate to="/home" replace /> },
     ],
   },
 ])

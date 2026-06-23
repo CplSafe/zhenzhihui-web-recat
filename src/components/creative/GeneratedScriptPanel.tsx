@@ -9,6 +9,8 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import { extractStoryboardPayload } from '@/utils/creativeScript'
+import { getMaterialPoster, isVideoMaterial } from '@/utils/materials'
+import { getRatioIconStyle } from '@/utils/videoOptions'
 import './GeneratedScriptPanel.css'
 
 const MARKER_OPEN = '<<<STORYBOARD_JSON>>>'
@@ -51,34 +53,6 @@ interface GeneratedScriptPanelProps {
   onStoryboardsParsed?: (items: any[]) => void
   onStoryboardsUpdated?: (items: any[]) => void
   onRemoveMaterial?: (id: any) => void
-}
-
-// 素材展示时，优先取服务端缩略图或封面图。
-function getMaterialPoster(material: any): string {
-  const asset = material?.serverAsset
-  return asset?.thumbnail_url || asset?.cover_url || ''
-}
-
-// 用 mimeType 和 type 双重判断当前素材是否是视频。
-function isVideoMaterial(material: any): boolean {
-  const mimeType = String(material?.mimeType || material?.serverAsset?.mime_type || '')
-  return material?.type === 'video' || mimeType.startsWith('video/')
-}
-
-// 比例下拉里的示意图尺寸计算。
-function getRatioIconStyle(value: string): { width: string; height: string } {
-  const [rwRaw, rhRaw] = String(value || '').split(':')
-  const rw = Number.parseFloat(rwRaw)
-  const rh = Number.parseFloat(rhRaw)
-  if (!Number.isFinite(rw) || !Number.isFinite(rh) || rw <= 0 || rh <= 0) {
-    return { width: '22px', height: '14px' }
-  }
-  const maxWidth = 26
-  const maxHeight = 14
-  const scale = Math.min(maxWidth / rw, maxHeight / rh)
-  const width = Math.max(8, Math.round(rw * scale))
-  const height = Math.max(8, Math.round(rh * scale))
-  return { width: `${width}px`, height: `${height}px` }
 }
 
 export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {

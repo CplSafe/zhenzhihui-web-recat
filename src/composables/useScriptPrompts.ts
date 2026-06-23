@@ -7,6 +7,7 @@
 import { streamAiResponse, createAiResponse, getBusinessErrorMessage } from '@/api/business'
 import { buildVideoPromptFromTimeline, extractStoryboardPayload } from '@/utils/creativeScript'
 import { normalizeSeedanceRatio } from '@/utils/videoOptions'
+import { isImageMaterial } from '@/utils/materials'
 
 const MAX_STORYBOARDS = 9
 
@@ -48,12 +49,6 @@ export function useScriptPrompts(deps: ScriptPromptDeps) {
   function resolveStoryboardItems(): any[] {
     const items = typeof getStoryboardItems === 'function' ? getStoryboardItems() : []
     return Array.isArray(items) ? items : []
-  }
-
-  function isImageMaterial(material: any): boolean {
-    const type = String(material?.type || '')
-    const mimeType = String(material?.mimeType || material?.serverAsset?.mime_type || '')
-    return type === 'image' || mimeType.startsWith('image/')
   }
 
   function getMaterialAssetId(material: any): number {

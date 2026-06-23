@@ -1,5 +1,24 @@
 // Pure helpers for selected / library material objects.
 
+// 视频素材预览时优先用服务端封面图。
+export function getMaterialPoster(material) {
+  const asset = material?.serverAsset
+  return asset?.thumbnail_url || asset?.cover_url || ''
+}
+
+// 判断素材是否为视频（决定 video / img 渲染）。
+export function isVideoMaterial(material) {
+  const mimeType = String(material?.mimeType || material?.serverAsset?.mime_type || '')
+  return material?.type === 'video' || mimeType.startsWith('video/')
+}
+
+// 判断素材是否为图片（脚本/分镜参考图筛选用）。
+export function isImageMaterial(material) {
+  const type = String(material?.type || '')
+  const mimeType = String(material?.mimeType || material?.serverAsset?.mime_type || '')
+  return type === 'image' || mimeType.startsWith('image/')
+}
+
 export function isSupportedMaterialFile(file) {
   const type = file?.type
   if (typeof type !== 'string') return false

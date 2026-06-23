@@ -1,0 +1,315 @@
+/* 分镜列表(镜头编排 / 视频生成 共用,UI 还原 Figma 343-3740) */
+.shotlist {
+  flex: 0 0 340px;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+/* 头部:渐变条 + 标题 + 数量徽标 */
+.header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 20px;
+  background: linear-gradient(90deg, #f4fdfb 0%, #f8fefd 100%);
+  border-bottom: 0.8px solid #f0f8f5;
+}
+.title {
+  font-size: 18px;
+  font-weight: 500;
+  color: #333;
+}
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #60e0c4 0%, #3dcdb0 100%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* 列表滚动区 */
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+/* 每行:序号圆标 + 100×100 缩略图 + 分镜N/时长 */
+.card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 124px;
+  padding: 12px 20px;
+  cursor: pointer;
+  border-left: 2.4px solid transparent;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+
+  &:hover {
+    background: #fafdfc;
+  }
+
+  /* 拖拽中:抬起、半透明、盖住相邻卡 */
+  &.dragging {
+    z-index: 30;
+    opacity: 0.92;
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(31, 207, 169, 0.22);
+    cursor: grabbing;
+  }
+
+  &.active {
+    background: linear-gradient(90deg, #eafcf7 0%, #f4fefb 100%);
+    border-left-color: #60e0c4;
+  }
+
+  /* 未勾选(不参与生成)的分镜:整卡淡化 */
+  &.excluded {
+    opacity: 0.45;
+
+    .thumb img {
+      filter: grayscale(0.6);
+    }
+  }
+}
+
+.num {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0f0f4;
+  color: #999;
+  font-size: 11px;
+  font-weight: 500;
+}
+.card.active .num {
+  background: linear-gradient(135deg, #60e0c4 0%, #3dcdb0 100%);
+  color: #fff;
+}
+
+.thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100px;
+  height: 100px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+.thumbPh {
+  color: #aab0b8;
+  font-size: 13px;
+}
+
+.gen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.82);
+}
+.genSpin {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: shotlistSpin 0.7s linear infinite;
+}
+@keyframes shotlistSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 视频生成页:分镜图左上角「参与生成」勾选框 */
+.pick {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+
+  input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: #1fcfa9;
+    cursor: pointer;
+    border-radius: 4px;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+  }
+}
+
+/* 分镜N + 时长药丸 */
+.meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  padding-left: 4px;
+}
+.no {
+  font-size: 18px;
+  font-weight: 500;
+  color: #333;
+}
+.card.active .no {
+  color: #1a9d87;
+}
+.dur {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #f4f4f6;
+  color: #999;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 14px;
+}
+.card.active .dur {
+  background: rgba(96, 224, 196, 0.15);
+  color: #1a9d87;
+}
+.badge {
+  font-size: 11px;
+  color: #11a98a;
+  background: #e8faf5;
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+/* 「⋯」更多菜单:hover 显示 */
+.moreWrap {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.card:hover .moreWrap,
+.card.active .moreWrap {
+  opacity: 1;
+}
+.more {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #555;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    background: #fff;
+  }
+}
+.menu {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  min-width: 150px;
+  background: #fff;
+  border: 1px solid #eef0f2;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  padding: 6px;
+  z-index: 20;
+
+  button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 9px 12px;
+    border: none;
+    background: none;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #333;
+    cursor: pointer;
+
+    &:hover {
+      background: #f5f6f8;
+    }
+
+    &.danger {
+      color: #e54d42;
+    }
+  }
+}
+
+/* 两分镜之间的小加号:坐在分隔线上,hover 显示 */
+.insert {
+  position: absolute;
+  bottom: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  width: 32px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: #c2c9d2;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+.card:hover .insert,
+.insert:hover {
+  opacity: 1;
+}
+.insert:hover {
+  background: #1fcfa9;
+}
+
+.empty {
+  padding: 30px;
+  text-align: center;
+  color: #9aa3af;
+  font-size: 14px;
+}

@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from 'antd'
 import { createCreativeProject, getBusinessErrorMessage, listCreativeProjects } from '@/api/business'
+import { getMaterialPoster, isVideoMaterial } from '@/utils/materials'
 import folderPurpleIcon from '@/img/595d866d18aa16996c24488624357662.png'
 import folderGrayIcon from '@/img/a8f65f05b65174e6022127353290899a.png'
 import actionCardVisual from '@/img/d35650818c74e6f9dd90befc870a0ec8.png'
@@ -53,15 +54,6 @@ function resolveMaterialId(material: any): number {
   return Number(material?.serverAsset?.id || material?.assetId || 0) || 0
 }
 
-function getMaterialPoster(material: any): string {
-  const asset = material?.serverAsset
-  return asset?.thumbnail_url || asset?.cover_url || ''
-}
-
-function isVideoMaterial(material: any): boolean {
-  const mimeType = String(material?.mimeType || material?.serverAsset?.mime_type || '')
-  return material?.type === 'video' || mimeType.startsWith('video/')
-}
 
 function resolveProjectFolderTab(project: any): string {
   const raw = String(project?.workspace_type || project?.type || '').trim().toLowerCase()

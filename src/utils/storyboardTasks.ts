@@ -3,6 +3,7 @@
  * 根据不同 AI 模型的 schema 构建图片生成请求参数（尺寸/比例/风格等）。
  */
 import { normalizeImageRatio } from './videoOptions.js'
+import { getModelParamFields, findFirstField } from './modelSchema.js'
 
 export function buildStoryboardImageParams(model, ratio) {
   const fields = getModelParamFields(model)
@@ -79,16 +80,6 @@ export function buildStoryboardEditInputAssets(item, materials = [], model = nul
   return assetIds.map((id) => ({ asset_id: id, role: 'reference_image' }))
 }
 
-function getModelParamFields(model) {
-  const schema = parseParamsSchema(model?.params_schema ?? model?.paramsSchema)
-  return Array.isArray(schema?.fields) ? schema.fields : []
-}
-
-function findFirstField(fields, names) {
-  const nameSet = new Set(names)
-  return fields.find((field) => nameSet.has(field?.name)) || null
-}
-
 function hasParam(fields, name) {
   return fields.some((field) => field?.name === name)
 }
@@ -108,21 +99,6 @@ function getPreferredSize(fields, ratio) {
   return pickClosestRatioOption(ratio, options) || options[0]
 }
 
-function parseParamsSchema(schema) {
-  if (!schema) {
-    return null
-  }
-
-  if (typeof schema !== 'string') {
-    return schema
-  }
-
-  try {
-    return JSON.parse(schema)
-  } catch {
-    return null
-  }
-}
 
 function parseRatioToken(value) {
   if (value === null || value === undefined) {

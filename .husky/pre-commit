@@ -1,1 +1,17 @@
+# 确保用 Node 20+ 运行钩子(项目要求见 .nvmrc)。
+# 背景:git 调用钩子时走的是非交互 shell,不会加载 nvm,可能落到系统 Node 18;
+# 而 lint-staged 依赖的 listr2 需要 Node 20.12+ 的 node:util.styleText,在 18 下会崩溃。
+# 对策:若当前 Node < 20,则从 nvm 中挑选最新的 Node 20+ 注入 PATH;
+# 没装 nvm 的环境会跳过(此时若系统 Node 已 ≥20 亦可正常运行)。
+node_major="$(node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1)"
+if [ -z "$node_major" ] || [ "$node_major" -lt 20 ]; then
+  if [ -d "$HOME/.nvm/versions/node" ]; then
+    nvm_node="$(ls -1 "$HOME/.nvm/versions/node" 2>/dev/null | grep -E '^v(2[0-9]|[3-9][0-9])\.' | sort -V | tail -1)"
+    if [ -n "$nvm_node" ]; then
+      PATH="$HOME/.nvm/versions/node/$nvm_node/bin:$PATH"
+      export PATH
+    fi
+  fi
+fi
+
 npx lint-staged

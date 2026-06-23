@@ -61,6 +61,12 @@ function isAllowedUploadUrl(url) {
     return false
   }
 
+  // 开发环境:本机连的是开发者自己的后端/对象存储,放行任意 http(s) 上传地址
+  // (省去为每个后端的 MinIO 端口手配白名单)。生产构建仍走下面的严格白名单。
+  if (import.meta.env.DEV) {
+    return true
+  }
+
   const normalizedOrigin = normalizeBaseUrl(parsed.origin)
   const hostname = parsed.hostname
 
@@ -1608,7 +1614,15 @@ export async function uploadAssetFile({ workspaceId, file, prompt = '' }) {
   }
 
   if (!isAllowedUploadUrl(upload.url)) {
-    throw new BusinessApiError('素材上传地址不在受信任的存储域名列表中')
+    let blockedHost = upload.url
+    try {
+      blockedHost = new URL(upload.url).host
+    } catch {
+      /* ignore */
+    }
+    throw new BusinessApiError(
+      `素材上传地址不在受信任的存储域名列表中:${blockedHost}（请把该域名加入 .env 的 VITE_ZZH_ALLOWED_UPLOAD_ORIGINS）`,
+    )
   }
 
   const formData = new FormData()

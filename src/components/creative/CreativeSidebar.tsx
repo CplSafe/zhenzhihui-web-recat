@@ -2,7 +2,6 @@
  * CreativeSidebar — 创意工作流左侧步骤导航
  * 显示 Prompt → 脚本 → 分镜 → 时间线 → 视频 五个步骤，高亮当前步骤，支持点击跳转。
  */
-import { useMemo } from 'react'
 import logoUrl from '@/img/image copy 6.png'
 import navDashboard from '@/assets/icons/nav-dashboard.svg'
 import navSteps from '@/assets/icons/nav-steps.svg'
@@ -15,6 +14,7 @@ import navSparkActive from '@/assets/icons/nav-spark-active.svg'
 import navFolderActive from '@/assets/icons/nav-folder-active.svg'
 import navShopActive from '@/assets/icons/nav-shop-active.svg'
 import SpaceSelectPanel from '@/components/space/SpaceSelectPanel'
+import { APP_VERSION } from '@/version'
 
 // 左侧导航栏（Figma「导航栏」176px，浅色 #f5f5f5）：logo + 创作/管理/团队 三组。
 // 能用的导航跳转，其余 coming-soon。团队是一个下拉选择框（Figma 设计稿）：框内
@@ -61,13 +61,6 @@ export default function CreativeSidebar({
   onJoinTeam,
   onDeleteWorkspace,
 }: CreativeSidebarProps) {
-  // id 可能来自接口（字符串）或父级（数字），统一按数字比较，避免恒不匹配。
-  // 注：此派生值原 Vue 中为 computed，但模板未直接使用，保留逻辑等价。
-  useMemo(
-    () => workspaces.find((w) => Number(w.id) === Number(activeWorkspaceId)) || null,
-    [workspaces, activeWorkspaceId],
-  )
-
   // 选择空间时，只有与当前空间不一致才通知父级切换。
   function pickWorkspace(id: number) {
     if (Number(id) !== Number(activeWorkspaceId)) onSwitchWorkspace?.(id)
@@ -97,7 +90,7 @@ export default function CreativeSidebar({
         <img className="brand-logo" src={logoUrl} alt="帧智汇" width={42} height={42} />
         <span className="brand-copy">
           <strong>帧智汇</strong>
-          <em>Betav2.0.1</em>
+          <em>v{APP_VERSION}</em>
         </span>
       </button>
 

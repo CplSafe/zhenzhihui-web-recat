@@ -118,13 +118,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAuthCheckError('')
         setAuthSession(session)
         markAuthSessionExpected()
-        navigate('/creative/blank', { replace: true })
+        navigate('/home', { replace: true })
         return
       }
       loadAuthSession().then(() => {
         // isAuthenticated 更新是异步的；用 store/重新取值判断后再导航。
         if (useWorkspaceSessionStore.getState().authSession) {
-          navigate('/creative/blank', { replace: true })
+          navigate('/home', { replace: true })
         }
       })
     },

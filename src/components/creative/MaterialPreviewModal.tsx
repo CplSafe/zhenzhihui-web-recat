@@ -2,18 +2,7 @@
  * MaterialPreviewModal — 素材快速预览弹窗
  * 点击素材缩略图时弹出，展示大图/视频预览和基本信息。
  */
-
-// 预览视频素材时优先使用服务端返回的封面图。
-function getMaterialPoster(material: any): string {
-  const asset = material?.serverAsset
-  return asset?.thumbnail_url || asset?.cover_url || ''
-}
-
-// 判断当前素材是否为视频，以便在弹窗里切换 video / img 渲染。
-function isVideoMaterial(material: any): boolean {
-  const mimeType = String(material?.mimeType || material?.serverAsset?.mime_type || '')
-  return material?.type === 'video' || mimeType.startsWith('video/')
-}
+import { getMaterialPoster, isVideoMaterial } from '@/utils/materials'
 
 interface MaterialPreviewModalProps {
   // 外部传入的当前预览素材。
