@@ -1,0 +1,28 @@
+/* 模板库页面 */
+.templates-topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.templates-page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.templates-count {
+  font-size: 13px;
+  color: #999;
+}
+
+.templates-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 8px;
+}
+
+.templates-grid-body {
+  margin-top: 16px;
+}

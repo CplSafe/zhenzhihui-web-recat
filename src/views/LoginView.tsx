@@ -6,11 +6,13 @@
  * 保留图形验证码挑战、用户协议确认、OAuth start 等既有认证逻辑;移除扫码/SSO/独立注册页。
  */
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import './LoginView.css'
 import loginHero from '@/assets/login-hero.png'
 import AgreementModal from '@/components/auth/AgreementModal'
 import {
   getAuthErrorMessage,
+  getAuthNavigationUrl,
   getAuthenticatedSession,
   getCaptcha,
   isCaptchaChallengeError,
@@ -32,6 +34,7 @@ interface CaptchaState {
 const NAV_ITEMS = ['母婴宠物', '视频饮料', '生活服务', '家居建材']
 
 export default function LoginView() {
+  const navigate = useNavigate()
   const { showToast, clearToast } = useToast()
   const { handleLoginSuccess } = useAuth()
 
@@ -77,9 +80,9 @@ export default function LoginView() {
   function getRedirectTo() {
     return `${window.location.origin}/`
   }
-  // 凭据验证成功后直接获取会话进入首页，不走 SSO 重定向。
-  // 登录 API 已通过 /sso 代理设置 cookie，getAuthenticatedSession 可直接拿到会话。
-  async function handleLoginFlowComplete(_oauth: any, _authResult?: any) {
+  // 登录成功后优先直接获取会话；失败则走 SSO 重定向（SSO 桥接必需，不可跳过）。
+  // SSO 改为弹窗模式：避免整页跳转导致用户看到 SSO 中转页，登录体验更顺畅。
+  async function handleLoginFlowComplete(oauth: any, authResult?: any) {
     markAuthSessionExpected()
     if (import.meta.env.DEV && !hasRemoteBackend) {
       handleLoginSuccess()
@@ -88,9 +91,59 @@ export default function LoginView() {
     try {
       const session = await getAuthenticatedSession()
       handleLoginSuccess(session)
-    } catch (error: any) {
-      setNoticeMessage(getAuthErrorMessage(error, '登录失败，请稍后重试'), 'error')
+      return
+    } catch {
+      // 直接获取失败，走 SSO 弹窗兜底
     }
+    const navUrl = getAuthNavigationUrl(oauth, authResult)
+    if (!navUrl || navUrl === '/') {
+      setNoticeMessage('登录失败，请稍后重试', 'error')
+      return
+    }
+
+    // 标记 SSO 进行中，便于 getAuthenticatedSession 内识别重试场景
+    sessionStorage.setItem('zzh_sso_pending', '1')
+
+    const popup = window.open(navUrl, 'sso-auth', 'width=600,height=700')
+
+    if (!popup) {
+      // 弹窗被浏览器拦截，回退到整页跳转（原有行为）
+      window.location.href = navUrl
+      return
+    }
+
+    // 轮询等待弹窗完成 SSO（弹窗重定向回我们域后即可获取 session）
+    const POLL_INTERVAL_MS = 2000
+    const POLL_TIMEOUT_MS = 120_000 // 2 分钟超时
+    const pollStart = Date.now()
+
+    const pollTimer = setInterval(async () => {
+      // 弹窗被用户手动关闭
+      if (popup.closed && Date.now() - pollStart > POLL_INTERVAL_MS * 2) {
+        clearInterval(pollTimer)
+        sessionStorage.removeItem('zzh_sso_pending')
+        setNoticeMessage('登录已取消', 'info')
+        return
+      }
+
+      try {
+        const session = await getAuthenticatedSession()
+        clearInterval(pollTimer)
+        sessionStorage.removeItem('zzh_sso_pending')
+        if (!popup.closed) popup.close()
+        handleLoginSuccess(session)
+      } catch {
+        // session 尚未就绪，继续轮询
+      }
+
+      // 超时
+      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+        clearInterval(pollTimer)
+        sessionStorage.removeItem('zzh_sso_pending')
+        if (!popup.closed) popup.close()
+        setNoticeMessage('登录超时，请重试', 'error')
+      }
+    }, POLL_INTERVAL_MS)
   }
 
   async function refreshCaptcha({ silent = false } = {}) {
@@ -294,11 +347,7 @@ export default function LoginView() {
 
   return (
     <main className="zlogin">
-      <aside
-        className="zlogin-hero"
-        style={{ backgroundImage: `url(${loginHero})` }}
-        aria-hidden="true"
-      >
+      <aside className="zlogin-hero" style={{ backgroundImage: `url(${loginHero})` }} aria-hidden="true">
         <nav className="zlogin-nav">
           {NAV_ITEMS.map((item) => (
             <span key={item} className={`zlogin-nav-item${item === '生活服务' ? ' is-active' : ''}`}>
@@ -309,6 +358,17 @@ export default function LoginView() {
       </aside>
 
       <section className="zlogin-panel" aria-label="帧智汇登录">
+        <button type="button" className="zlogin-back" onClick={() => navigate(-1)} aria-label="返回上一页">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
+            <path
+              d="M15 18l-6-6 6-6"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
         <div className="zlogin-form">
           <h1 className="zlogin-title">欢迎加入帧智汇</h1>
           <p className="zlogin-sub">
@@ -474,9 +534,7 @@ export default function LoginView() {
         </div>
       </section>
 
-      {showAgreementModal && (
-        <AgreementModal onAgree={handleAgreementAgree} onCancel={handleAgreementCancel} />
-      )}
+      {showAgreementModal && <AgreementModal onAgree={handleAgreementAgree} onCancel={handleAgreementCancel} />}
     </main>
   )
 }
