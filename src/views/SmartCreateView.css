@@ -306,6 +306,74 @@
   font-size: 14px;
 }
 
+/* 营销思路拆解步:整步纵向填满 body —— 描述/标题在上,建议正文填满剩余并内部滚动,底部按钮常驻 */
+.smart__mkt-step {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.smart__marketing {
+  margin-top: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.smart__marketing-title {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #11a98a;
+  margin-bottom: 12px;
+}
+
+/* 建议正文容器:占据剩余空间(供文本域/占位/错误态填充) */
+.smart__marketing-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 营销建议:可编辑文本域(填满容器,文案超长时内部滚动) */
+.smart__marketing-edit {
+  flex: 1 1 auto;
+  display: block;
+  width: 100%;
+  min-height: 160px;
+  resize: none;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 18px 20px;
+  color: #333;
+  font-size: 15px;
+  line-height: 1.8;
+  font-family: inherit;
+  white-space: pre-wrap;
+  box-sizing: border-box;
+}
+
+.smart__marketing-edit:focus-visible {
+  border-color: #1fcfa9;
+  outline: none;
+}
+
+.smart__marketing-foot {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
+}
+
 /* 创作需求:展示 ≤100 字 AI 摘要,完整需求可展开 */
 .smart__req-readonly {
   background: #fff;

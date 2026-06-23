@@ -23,6 +23,24 @@
   transition: transform 0.15s ease;
 }
 
+/* 清空叉号(可清空下拉,已选中时显示) */
+.clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: #999;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: #555;
+  }
+}
+
 .menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -46,6 +64,7 @@
   border-radius: 6px;
   font-size: 14px;
   color: #333;
+  white-space: nowrap; /* 选项不换行,菜单按最长项自适应宽度 */
   cursor: pointer;
 
   &:hover {
