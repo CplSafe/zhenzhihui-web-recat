@@ -11,6 +11,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
 import EntryDropdown from '@/components/smart/EntryDropdown'
 import { useToast } from '@/composables/useToast'
+import { addToDraftBox } from '@/utils/draftStorage'
 import { fileToDataUrl } from '@/utils/imageFile'
 import {
   useWorkspaceId,
@@ -31,8 +32,18 @@ const ROUTE_MAP: Record<string, string> = {
 }
 
 const TABS = [
-  { key: 'remake', title: '同款翻拍', sub: '拆解爆点逻辑,保留节奏换产品', tip: '保留原视频镜头节奏与爆点结构,把主体替换为你的产品。(案例示例待补充)' },
-  { key: 'replica', title: '精准复刻', sub: '还原爆款巅峰,复刻热门原版', tip: '尽量 1:1 还原原视频画面与运镜,适合高度复用爆款模板。(案例示例待补充)' },
+  {
+    key: 'remake',
+    title: '同款翻拍',
+    sub: '拆解爆点逻辑,保留节奏换产品',
+    tip: '保留原视频镜头节奏与爆点结构,把主体替换为你的产品。(案例示例待补充)',
+  },
+  {
+    key: 'replica',
+    title: '精准复刻',
+    sub: '还原爆款巅峰,复刻热门原版',
+    tip: '尽量 1:1 还原原视频画面与运镜,适合高度复用爆款模板。(案例示例待补充)',
+  },
 ] as const
 
 const STYLE_OPTIONS = ['叫卖', '幽默', '商业', '治愈', '科技感', '剧情']
@@ -153,7 +164,13 @@ export default function HotCopyView() {
   }
 
   const videoLabel =
-    videoSource === 'local' ? videoFileName : videoSource === 'library' ? '素材库视频' : videoSource === 'link' ? (videoLink.trim() || '视频链接') : ''
+    videoSource === 'local'
+      ? videoFileName
+      : videoSource === 'library'
+        ? '素材库视频'
+        : videoSource === 'link'
+          ? videoLink.trim() || '视频链接'
+          : ''
   const hasHotVideo = (videoSource === 'local' && !!videoFile) || (videoSource === 'link' && !!videoLink.trim())
 
   const createTask = async () => {
@@ -214,6 +231,8 @@ export default function HotCopyView() {
       })
       setResultUrl(url)
       showToast('复刻完成', 'success')
+      // 生成成功 → 自动保存到草稿箱
+      if (url) addToDraftBox({ id: 0, title: `爆款复刻 · ${text.trim().slice(0, 20) || '未命名'}`, videoUrl: url })
     } catch (e: any) {
       showToast(`复刻失败:${e?.message || '请稍后重试'}`, 'error')
     } finally {
@@ -251,7 +270,14 @@ export default function HotCopyView() {
                   onClick={() => setTab(t.key)}
                 >
                   <span className="hotcopy__tab-name">{t.title}</span>
-                  <span className="hotcopy__tip" title={t.tip} onClick={(e) => { e.stopPropagation(); showToast(t.tip, 'info') }}>
+                  <span
+                    className="hotcopy__tip"
+                    title={t.tip}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      showToast(t.tip, 'info')
+                    }}
+                  >
                     ?
                   </span>
                   <span className="hotcopy__tab-sub">{t.sub}</span>
@@ -270,7 +296,16 @@ export default function HotCopyView() {
                       className={`hotcopy__upbtn${hasHotVideo ? ' is-done' : ''}`}
                       onClick={() => setVideoMenuOpen((v) => !v)}
                     >
-                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.7"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
                         <rect x="3" y="6" width="13" height="12" rx="2" />
                         <path d="m16 10 5-3v10l-5-3z" />
                       </svg>
@@ -279,16 +314,35 @@ export default function HotCopyView() {
                     </button>
                     {videoMenuOpen && (
                       <div className="hotcopy__menu" onClick={(e) => e.stopPropagation()}>
-                        <button type="button" onClick={() => chooseSource('local')}>本地上传</button>
-                        <button type="button" onClick={() => chooseSource('library')}>素材库</button>
-                        <button type="button" onClick={() => chooseSource('link')}>视频链接</button>
+                        <button type="button" onClick={() => chooseSource('local')}>
+                          本地上传
+                        </button>
+                        <button type="button" onClick={() => chooseSource('library')}>
+                          素材库
+                        </button>
+                        <button type="button" onClick={() => chooseSource('link')}>
+                          视频链接
+                        </button>
                       </div>
                     )}
                   </div>
 
                   {/* 上传替换素材 */}
-                  <button type="button" className={`hotcopy__upbtn${products.length ? ' is-done' : ''}`} onClick={() => productFileRef.current?.click()}>
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <button
+                    type="button"
+                    className={`hotcopy__upbtn${products.length ? ' is-done' : ''}`}
+                    onClick={() => productFileRef.current?.click()}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M4 5h6l2 2h8v10a2 2 0 0 1-2 2H4z" />
                     </svg>
                     上传替换素材
@@ -299,7 +353,9 @@ export default function HotCopyView() {
                   {videoLabel && (
                     <span className="hotcopy__chip" title={videoLabel}>
                       🎬 {videoLabel}
-                      <button type="button" onClick={clearVideo} aria-label="移除">×</button>
+                      <button type="button" onClick={clearVideo} aria-label="移除">
+                        ×
+                      </button>
                     </span>
                   )}
                   {/* 视频链接输入 */}
@@ -318,7 +374,13 @@ export default function HotCopyView() {
                       {products.map((p, i) => (
                         <div className="hotcopy__product" key={i}>
                           <img src={p.url} alt="" />
-                          <button type="button" onClick={() => setProducts((arr) => arr.filter((_, j) => j !== i))} aria-label="移除">×</button>
+                          <button
+                            type="button"
+                            onClick={() => setProducts((arr) => arr.filter((_, j) => j !== i))}
+                            aria-label="移除"
+                          >
+                            ×
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -336,10 +398,32 @@ export default function HotCopyView() {
               {/* 底部工具 + 创建 */}
               <div className="hotcopy__toolbar">
                 <div className="hotcopy__tools">
-                  <EntryDropdown value={style} options={STYLE_OPTIONS} onChange={setStyle} icon={<span className="hotcopy__tool-i">✦</span>} />
-                  <EntryDropdown value={ratio} options={RATIO_OPTIONS} onChange={setRatio} icon={<span className="hotcopy__tool-i">▭</span>} />
-                  <EntryDropdown value={duration} options={DURATION_OPTIONS} onChange={setDuration} icon={<span className="hotcopy__tool-i">◷</span>} />
-                  <button type="button" className="hotcopy__at" onClick={() => showToast('@参考素材(待接入)', 'info')} title="引用参考素材">@</button>
+                  <EntryDropdown
+                    value={style}
+                    options={STYLE_OPTIONS}
+                    onChange={setStyle}
+                    icon={<span className="hotcopy__tool-i">✦</span>}
+                  />
+                  <EntryDropdown
+                    value={ratio}
+                    options={RATIO_OPTIONS}
+                    onChange={setRatio}
+                    icon={<span className="hotcopy__tool-i">▭</span>}
+                  />
+                  <EntryDropdown
+                    value={duration}
+                    options={DURATION_OPTIONS}
+                    onChange={setDuration}
+                    icon={<span className="hotcopy__tool-i">◷</span>}
+                  />
+                  <button
+                    type="button"
+                    className="hotcopy__at"
+                    onClick={() => showToast('@参考素材(待接入)', 'info')}
+                    title="引用参考素材"
+                  >
+                    @
+                  </button>
                 </div>
                 <button type="button" className="hotcopy__create" disabled={creating} onClick={createTask}>
                   {creating ? '创建中…' : '创建复刻任务'}
@@ -358,10 +442,21 @@ export default function HotCopyView() {
                 </div>
               ) : (
                 <>
-                  <video className="hotcopy__result-video" src={resultUrl} controls playsInline preload="metadata" onLoadedMetadata={fixVideoDuration} />
+                  <video
+                    className="hotcopy__result-video"
+                    src={resultUrl}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    onLoadedMetadata={fixVideoDuration}
+                  />
                   <div className="hotcopy__result-actions">
-                    <a className="hotcopy__result-dl" href={resultUrl} target="_blank" rel="noopener">下载视频</a>
-                    <button type="button" className="hotcopy__create" onClick={createTask}>重新生成</button>
+                    <a className="hotcopy__result-dl" href={resultUrl} target="_blank" rel="noopener">
+                      下载视频
+                    </a>
+                    <button type="button" className="hotcopy__create" onClick={createTask}>
+                      重新生成
+                    </button>
                   </div>
                 </>
               )}

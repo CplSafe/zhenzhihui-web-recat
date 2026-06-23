@@ -22,6 +22,7 @@ import {
   getCreativeProject,
   listCreativeProjects,
 } from '@/api/business'
+import { listProjectVideos, type ProjectVideo } from '@/api/projectVideos'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 
@@ -89,8 +90,7 @@ function getProjectTimestamp(project: any, keys: string[]): number {
   return Number.isFinite(timestamp) ? timestamp : 0
 }
 
-const TONES = ['a', 'b', 'c', 'd', 'e', 'f']
-const toneOf = (i: number) => TONES[i % TONES.length]
+const toneOf = (_i: number) => 'a' as const
 
 // 从项目列表中提取有生成视频的项目作为「待归类」
 function extractUnclassified(projectItems: any[]): { id: number; title: string; videoUrl: string }[] {

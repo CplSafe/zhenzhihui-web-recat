@@ -1,0 +1,444 @@
+import { getCreativeProject } from '@/api/business'
+
+export type ProjectVideoStatus = 'draft' | 'processing' | 'published'
+export type ProjectVideoSourceType = 'smart' | 'creative'
+
+export interface ProjectVideo {
+  id: string
+  projectId: number
+  workspaceId: number
+  title: string
+  coverUrl: string
+  videoUrl: string
+  durationSeconds: number
+  status: ProjectVideoStatus
+  createdByName: string
+  createdAt: string
+  updatedAt: string
+  sourceType: ProjectVideoSourceType
+  publishUrl?: string
+  localOnly?: boolean
+}
+
+const LOCAL_KEY_PREFIX = 'zzh_project_video_module'
+
+interface LocalProjectVideoRecord extends ProjectVideo {
+  localOnly: true
+}
+
+interface ProjectVideoOverride {
+  hidden?: boolean
+  status?: ProjectVideoStatus
+  title?: string
+  updatedAt?: string
+}
+
+interface ProjectVideoStore {
+  records: LocalProjectVideoRecord[]
+  overrides: Record<string, ProjectVideoOverride>
+}
+
+function toPlainObject(value: any): any {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function normalizeArray(value: any): any[] {
+  return Array.isArray(value) ? value : []
+}
+
+function normalizeCreativeProjectDraft(payload: any): any {
+  const candidates = [
+    payload?.draft_json,
+    payload?.draftJson,
+    payload?.draft,
+    payload?.data?.draft_json,
+    payload?.data?.draft,
+  ]
+  for (const item of candidates) {
+    const parsed = toPlainObject(item)
+    if (parsed) return parsed
+  }
+  return null
+}
+
+function resolveStorageKey(workspaceId: number, projectId: number): string {
+  return `${LOCAL_KEY_PREFIX}:${workspaceId}:${projectId}`
+}
+
+function loadStore(workspaceId: number, projectId: number): ProjectVideoStore {
+  if (typeof window === 'undefined') return { records: [], overrides: {} }
+  try {
+    const raw = window.localStorage.getItem(resolveStorageKey(workspaceId, projectId))
+    if (!raw) return { records: [], overrides: {} }
+    const parsed = JSON.parse(raw)
+    return {
+      records: normalizeArray(parsed?.records),
+      overrides:
+        parsed?.overrides && typeof parsed.overrides === 'object' && !Array.isArray(parsed.overrides)
+          ? parsed.overrides
+          : {},
+    }
+  } catch {
+    return { records: [], overrides: {} }
+  }
+}
+
+function saveStore(workspaceId: number, projectId: number, store: ProjectVideoStore) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(resolveStorageKey(workspaceId, projectId), JSON.stringify(store))
+}
+
+function pickString(...values: any[]): string {
+  for (const value of values) {
+    const text = String(value || '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+function pickDateString(...values: any[]): string {
+  for (const value of values) {
+    const text = String(value || '').trim()
+    if (text && !Number.isNaN(Date.parse(text))) return text
+  }
+  return ''
+}
+
+function toTimestamp(value: string): number {
+  const time = Date.parse(String(value || ''))
+  return Number.isFinite(time) ? time : 0
+}
+
+function formatDateTime(value: string): string {
+  const time = toTimestamp(value)
+  if (!time) return '--'
+  const date = new Date(time)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(
+    2,
+    '0',
+  )} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+export function formatVideoDuration(durationSeconds: number): string {
+  const total = Math.max(0, Math.floor(Number(durationSeconds || 0)))
+  if (!total) return '--:--'
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+function parseDurationSeconds(value: any): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value)
+  const text = String(value || '').trim()
+  if (!text) return 0
+  if (/^\d+$/.test(text)) return Math.floor(Number(text))
+  const parts = text.split(':').map((part) => Number(part))
+  if (parts.length === 2 && parts.every((part) => Number.isFinite(part))) {
+    return Math.max(0, parts[0] * 60 + parts[1])
+  }
+  return 0
+}
+
+function normalizeStatus(value: any, hasVideoUrl: boolean): ProjectVideoStatus {
+  const text = String(value || '')
+    .trim()
+    .toLowerCase()
+  if (text.includes('publish')) return 'published'
+  if (text.includes('processing') || text.includes('pending') || text.includes('running') || text.includes('queue')) {
+    return 'processing'
+  }
+  return hasVideoUrl ? 'published' : 'draft'
+}
+
+function resolveProjectSourceType(draft: any): ProjectVideoSourceType {
+  const flow = pickString(draft?.flow, draft?.smart?.flow).toLowerCase()
+  return flow && flow !== 'smart' ? 'creative' : 'smart'
+}
+
+function resolveProjectCoverUrl(project: any, draft: any): string {
+  const fromProject = pickString(
+    project?.cover_url,
+    project?.coverUrl,
+    project?.thumbnail_url,
+    project?.thumbnailUrl,
+    project?.cover,
+  )
+  if (fromProject) return fromProject
+
+  const smart = toPlainObject(draft?.smart) || draft
+  const entryMeta = toPlainObject(smart?.entryMeta) || {}
+  const entryImages = normalizeArray(entryMeta?.images)
+  const entryImage = pickString(entryImages[0])
+  if (entryImage) return entryImage
+
+  const firstShot = normalizeArray(smart?.shots)[0]
+  const shotImage = pickString(
+    firstShot?.cover_url,
+    firstShot?.thumbnail_url,
+    firstShot?.poster,
+    firstShot?.image,
+    firstShot?.src,
+  )
+  return shotImage
+}
+
+function buildDerivedVideos({
+  project,
+  workspaceId,
+  currentUserName,
+}: {
+  project: any
+  workspaceId: number
+  currentUserName?: string
+}): ProjectVideo[] {
+  const draft = normalizeCreativeProjectDraft(project) || {}
+  const smart = toPlainObject(draft?.smart) || draft
+  const sourceType = resolveProjectSourceType(draft)
+  const projectTitle = pickString(project?.title, project?.name, '未命名项目')
+  const projectCoverUrl = resolveProjectCoverUrl(project, draft)
+  const createdAt = pickDateString(project?.created_at, project?.createdAt)
+  const updatedAt = pickDateString(project?.updated_at, project?.updatedAt, project?.last_saved_at, createdAt)
+  const createdByName = pickString(
+    project?.owner_name,
+    project?.ownerName,
+    project?.created_by_name,
+    currentUserName,
+    '当前用户',
+  )
+
+  const candidates = normalizeArray(smart?.videoVersions)
+  const historyList =
+    candidates.length > 0
+      ? candidates
+      : normalizeArray(draft?.videoHistoryList).length > 0
+        ? normalizeArray(draft?.videoHistoryList)
+        : normalizeArray(draft?.video_history_list)
+
+  const records: ProjectVideo[] = historyList
+    .map((item: any, index: number) => {
+      const videoUrl = pickString(item?.url, item?.src, item?.video_url)
+      const coverUrl = pickString(
+        item?.cover_url,
+        item?.coverUrl,
+        item?.thumbnail_url,
+        item?.thumbnailUrl,
+        item?.poster,
+        projectCoverUrl,
+      )
+      const durationSeconds = parseDurationSeconds(item?.duration_seconds ?? item?.durationSeconds ?? item?.duration)
+      const status = normalizeStatus(item?.status, Boolean(videoUrl))
+      const itemCreatedAt = pickDateString(item?.created_at, item?.createdAt, createdAt)
+      const itemUpdatedAt = pickDateString(item?.updated_at, item?.updatedAt, updatedAt, itemCreatedAt)
+      const rawId = pickString(item?.id, item?.assetId, item?.asset_id, item?.videoId, index + 1)
+      const label = pickString(item?.label, item?.title, item?.name, `视频 ${index + 1}`)
+      return {
+        id: `derived-${rawId}-${index + 1}`,
+        projectId: Number(project?.id || 0),
+        workspaceId,
+        title: label === projectTitle ? label : `${projectTitle} · ${label}`,
+        coverUrl,
+        videoUrl,
+        durationSeconds,
+        status,
+        createdByName,
+        createdAt: itemCreatedAt || createdAt,
+        updatedAt: itemUpdatedAt || updatedAt || itemCreatedAt,
+        sourceType,
+        publishUrl: pickString(item?.publish_url, item?.publishUrl),
+      }
+    })
+    .filter((item) => item.videoUrl || item.coverUrl)
+
+  if (records.length) return records
+
+  const generatedVideoUrl = pickString(
+    draft?.generatedVideoUrl,
+    draft?.generated_video_url,
+    smart?.fullVideoUrl,
+    smart?.videoUrl,
+  )
+  if (!generatedVideoUrl) return []
+
+  return [
+    {
+      id: `derived-generated-${project?.id || 0}`,
+      projectId: Number(project?.id || 0),
+      workspaceId,
+      title: `${projectTitle} · 最终视频`,
+      coverUrl: projectCoverUrl,
+      videoUrl: generatedVideoUrl,
+      durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
+      status: 'published',
+      createdByName,
+      createdAt,
+      updatedAt,
+      sourceType,
+      publishUrl: pickString(draft?.publishUrl, smart?.publishUrl),
+    },
+  ]
+}
+
+function applyOverrides(item: ProjectVideo, overrides: ProjectVideoOverride | undefined): ProjectVideo | null {
+  if (!overrides) return item
+  if (overrides.hidden) return null
+  return {
+    ...item,
+    title: pickString(overrides.title, item.title),
+    status: overrides.status || item.status,
+    updatedAt: pickString(overrides.updatedAt, item.updatedAt),
+  }
+}
+
+function sortByUpdatedAt(list: ProjectVideo[]): ProjectVideo[] {
+  return [...list].sort((a, b) => {
+    const at = toTimestamp(a.updatedAt) || toTimestamp(a.createdAt)
+    const bt = toTimestamp(b.updatedAt) || toTimestamp(b.createdAt)
+    return bt - at
+  })
+}
+
+export async function listProjectVideos({
+  projectId,
+  workspaceId,
+  currentUserName,
+}: {
+  projectId: number
+  workspaceId: number
+  currentUserName?: string
+}): Promise<{ project: any; videos: ProjectVideo[] }> {
+  const project = await getCreativeProject({ projectId, workspaceId })
+  const derived = buildDerivedVideos({ project, workspaceId, currentUserName })
+  const store = loadStore(workspaceId, projectId)
+  const merged = [
+    ...derived
+      .map((item) => applyOverrides(item, store.overrides[item.id]))
+      .filter(Boolean)
+      .map((item) => item as ProjectVideo),
+    ...store.records.filter((item) => !store.overrides[item.id]?.hidden),
+  ]
+  return {
+    project,
+    videos: sortByUpdatedAt(merged),
+  }
+}
+
+export async function getProjectVideo({
+  projectId,
+  workspaceId,
+  videoId,
+  currentUserName,
+}: {
+  projectId: number
+  workspaceId: number
+  videoId: string
+  currentUserName?: string
+}): Promise<{ project: any; video: ProjectVideo | null }> {
+  const payload = await listProjectVideos({ projectId, workspaceId, currentUserName })
+  return {
+    project: payload.project,
+    video: payload.videos.find((item) => item.id === String(videoId)) || null,
+  }
+}
+
+export async function createProjectVideo({
+  projectId,
+  workspaceId,
+  title,
+  currentUserName,
+}: {
+  projectId: number
+  workspaceId: number
+  title?: string
+  currentUserName?: string
+}): Promise<ProjectVideo> {
+  const now = new Date().toISOString()
+  const store = loadStore(workspaceId, projectId)
+  const record: LocalProjectVideoRecord = {
+    id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    projectId,
+    workspaceId,
+    title: pickString(title, '新建视频'),
+    coverUrl: '',
+    videoUrl: '',
+    durationSeconds: 0,
+    status: 'draft',
+    createdByName: pickString(currentUserName, '当前用户'),
+    createdAt: now,
+    updatedAt: now,
+    sourceType: 'smart',
+    localOnly: true,
+  }
+  store.records.unshift(record)
+  saveStore(workspaceId, projectId, store)
+  return record
+}
+
+export async function publishProjectVideo({
+  projectId,
+  workspaceId,
+  videoId,
+}: {
+  projectId: number
+  workspaceId: number
+  videoId: string
+}): Promise<void> {
+  const store = loadStore(workspaceId, projectId)
+  const index = store.records.findIndex((item) => item.id === videoId)
+  const now = new Date().toISOString()
+  if (index >= 0) {
+    store.records[index] = {
+      ...store.records[index],
+      status: 'published',
+      updatedAt: now,
+    }
+  } else {
+    store.overrides[videoId] = {
+      ...(store.overrides[videoId] || {}),
+      status: 'published',
+      updatedAt: now,
+    }
+  }
+  saveStore(workspaceId, projectId, store)
+}
+
+export async function deleteProjectVideo({
+  projectId,
+  workspaceId,
+  videoId,
+}: {
+  projectId: number
+  workspaceId: number
+  videoId: string
+}): Promise<void> {
+  const store = loadStore(workspaceId, projectId)
+  const index = store.records.findIndex((item) => item.id === videoId)
+  if (index >= 0) {
+    store.records.splice(index, 1)
+  } else {
+    store.overrides[videoId] = {
+      ...(store.overrides[videoId] || {}),
+      hidden: true,
+      updatedAt: new Date().toISOString(),
+    }
+  }
+  saveStore(workspaceId, projectId, store)
+}
+
+export function getVideoStatusText(status: ProjectVideoStatus): string {
+  if (status === 'published') return '已发布'
+  if (status === 'processing') return '制作中'
+  return '草稿'
+}
+
+export function formatVideoDate(value: string): string {
+  return formatDateTime(value)
+}

@@ -9,6 +9,8 @@ import { listTemplates, type TemplateItem } from '@/api/templates'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
+import { useRequireAuth } from '@/composables/useRequireAuth'
+import { useAuth } from '@/auth/AuthContext'
 import './HomeView.css'
 import './TemplatesView.css'
 
@@ -34,6 +36,8 @@ const ROUTE_MAP: Record<string, string> = {
 export default function TemplatesView() {
   const navigate = useNavigate()
   const workspaceId = useWorkspaceId()
+  const requireAuth = useRequireAuth()
+  const { isAuthenticated } = useAuth()
 
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -41,14 +45,21 @@ export default function TemplatesView() {
   const [keyword, setKeyword] = useState('')
   const [ratioFilter, setRatioFilter] = useState('')
   const [retry, setRetry] = useState(0)
+  const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
 
   useEffect(() => {
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) return
+    if (!isAuthenticated) {
+      setTemplates([])
+      setLoading(false)
+      setError('unauth')
+      return
+    }
     let cancelled = false
     setLoading(true)
     setError('')
-    const wsId = Number(workspaceId || 0)
-    const fetcher = wsId ? listTemplates({ workspaceId: wsId, limit: 200 }) : Promise.reject(new Error('无工作空间'))
-    fetcher
+    listTemplates({ workspaceId: wsId, limit: 200 })
       .then(({ items }) => {
         if (!cancelled) {
           setTemplates(items)
@@ -64,7 +75,7 @@ export default function TemplatesView() {
     return () => {
       cancelled = true
     }
-  }, [workspaceId, retry])
+  }, [workspaceId, isAuthenticated, retry])
 
   const keywordTrim = keyword.trim()
 
@@ -91,6 +102,17 @@ export default function TemplatesView() {
       <AppSidebar activeKey="templates" onNavigate={onNavigate} />
       <div className="home__main">
         <header className="home__topbar templates-topbar">
+          <button type="button" className="templates-back" onClick={() => navigate('/home')} aria-label="返回首页">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+              <path
+                d="M15 18l-6-6 6-6"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
           <h2 className="templates-page-title">模板库</h2>
           <span className="templates-count">共 {templates.length} 个模板</span>
         </header>
@@ -137,6 +159,13 @@ export default function TemplatesView() {
           <div className="templates-grid-body">
             {loading ? (
               <div className="home__placeholder">加载中…</div>
+            ) : error === 'unauth' ? (
+              <div className="home__placeholder">
+                请先登录后查看模板库
+                <button type="button" className="home__retry-btn" onClick={() => navigate('/login')}>
+                  去登录
+                </button>
+              </div>
             ) : error === 'api' ? (
               <div className="home__placeholder">
                 模板加载失败
@@ -147,52 +176,146 @@ export default function TemplatesView() {
             ) : error === 'empty' || !filtered.length ? (
               <div className="home__placeholder">暂无模板数据</div>
             ) : (
-              <div className="home__proj-grid">
-                {filtered.map((tpl, i) => (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    className="home__proj"
-                    onClick={() => resolveProjectPath(tpl.id, Number(workspaceId || 0)).then((path) => navigate(path))}
-                  >
-                    <div className="home__proj-thumb" style={{ aspectRatio: tpl.ratio || '9 / 16' }}>
-                      <video
-                        className="home__proj-video"
-                        src={tpl.videoUrl}
-                        poster={tpl.thumbnailUrl && isSafeMediaUrl(tpl.thumbnailUrl) ? tpl.thumbnailUrl : undefined}
-                        preload="metadata"
-                        muted
-                        playsInline
-                        controls
-                        crossOrigin="anonymous"
-                        onClick={(e) => e.stopPropagation()}
-                        onError={(e) => {
-                          const el = e.currentTarget
-                          el.style.display = 'none'
-                          const poster = el.getAttribute('poster')
-                          if (poster) {
-                            const img = document.createElement('img')
-                            img.src = poster
-                            img.className = 'home__proj-img'
-                            el.parentElement?.appendChild(img)
-                          }
-                        }}
-                      />
+              <div className="home__proj-waterfall">
+                {filtered.map((tpl, i) => {
+                  const span = (() => {
+                    const r = (tpl.ratio || '').replace(/\s+/g, '')
+                    if (r === '9/16' || r === '3/4' || r === '4/5') return 3
+                    if (r === '1/1') return 4
+                    if (r === '16/9') return 6
+                    return 4
+                  })()
+                  return (
+                    <div
+                      key={tpl.id}
+                      className="home__proj"
+                      style={{ gridColumn: `span ${span}` }}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() =>
+                        resolveProjectPath(tpl.id, Number(workspaceId || 0)).then((path) => navigate(path))
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter')
+                          resolveProjectPath(tpl.id, Number(workspaceId || 0)).then((path) => navigate(path))
+                      }}
+                    >
+                      <div className="home__proj-thumb" style={{ aspectRatio: tpl.ratio || '9 / 16' }}>
+                        <span className="home__proj-thumb-ph">🎬</span>
+                        {tpl.videoUrl && (
+                          <video
+                            className="home__proj-video"
+                            src={tpl.videoUrl}
+                            muted
+                            loop
+                            playsInline
+                            preload="none"
+                            style={{ position: 'absolute', inset: 0, zIndex: 0 }}
+                            onLoadedData={(e) => {
+                              ;(e.currentTarget as HTMLVideoElement).play().catch(() => {})
+                            }}
+                            onError={(e) => {
+                              ;(e.currentTarget as HTMLVideoElement).style.display = 'none'
+                            }}
+                          />
+                        )}
+                        <div className="home__proj-overlay">
+                          <span className="home__proj-overlay-text">{tpl.title}</span>
+                          <div className="home__proj-actions">
+                            <button
+                              type="button"
+                              className="home__proj-action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setWatching({ url: tpl.videoUrl, poster: tpl.thumbnailUrl || '' })
+                              }}
+                            >
+                              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                                <path d="M8 5v14l11-7z" />
+                              </svg>
+                              播放
+                            </button>
+                            <button
+                              type="button"
+                              className="home__proj-action-btn"
+                              onClick={async (e) => {
+                                e.stopPropagation()
+                                try {
+                                  const res = await fetch(tpl.videoUrl)
+                                  const blob = await res.blob()
+                                  const url = URL.createObjectURL(blob)
+                                  const a = document.createElement('a')
+                                  a.href = url
+                                  a.download = `${tpl.title || '视频'}.mp4`
+                                  document.body.appendChild(a)
+                                  a.click()
+                                  document.body.removeChild(a)
+                                  URL.revokeObjectURL(url)
+                                } catch {
+                                  window.open(tpl.videoUrl, '_blank')
+                                }
+                              }}
+                            >
+                              <svg
+                                viewBox="0 0 24 24"
+                                width="14"
+                                height="14"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                              </svg>
+                              下载
+                            </button>
+                            <button
+                              type="button"
+                              className="home__proj-action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                requireAuth(() => navigate('/hot-copy'))
+                              }}
+                            >
+                              做同款
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="home__proj-title">
+                        <span className="home__proj-title-text" title={tpl.title}>
+                          {tpl.title}
+                        </span>
+                        {tpl.ratio && <span className="home__proj-ratio">{tpl.ratio.replace(/\s*\/\s*/g, ':')}</span>}
+                      </div>
+                      <div className="home__proj-category">{tpl.style || '通用'}</div>
                     </div>
-                    <div className="home__proj-title">
-                      <span className="home__proj-title-text" title={tpl.title}>
-                        {tpl.title}
-                      </span>
-                      {tpl.ratio && <span className="home__proj-ratio">{tpl.ratio.replace(/\s*\/\s*/g, ':')}</span>}
-                    </div>
-                    <div className="home__proj-category">{tpl.style || '通用'}</div>
-                  </button>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* 全屏视频播放弹窗 */}
+      {watching && (
+        <div className="home__video-modal-mask" onClick={() => setWatching(null)}>
+          <div className="home__video-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="home__video-modal-close" onClick={() => setWatching(null)}>
+              ✕
+            </button>
+            <video
+              className="home__video-modal-player"
+              src={watching.url}
+              poster={watching.poster || undefined}
+              controls
+              autoPlay
+              playsInline
+              crossOrigin="anonymous"
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

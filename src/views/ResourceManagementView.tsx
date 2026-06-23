@@ -29,9 +29,34 @@ const ROUTE_MAP: Record<string, string> = {
 
 // 三个主 Tab + 各自子分类
 const MAIN_TABS = [
-  { key: 'upload', label: '我上传的', subs: [{ k: 'all', l: '全部' }, { k: 'image', l: '图片' }, { k: 'video', l: '视频' }] },
-  { key: 'generated', label: '我生成的', subs: [{ k: 'all', l: '全部' }, { k: 'role', l: '角色' }, { k: 'scene', l: '场景' }, { k: 'video', l: '视频' }] },
-  { key: 'collected', label: '我收藏的', subs: [{ k: 'all', l: '全部' }, { k: 'template', l: '模板' }, { k: 'ip', l: 'IP' }] },
+  {
+    key: 'upload',
+    label: '我上传的',
+    subs: [
+      { k: 'all', l: '全部' },
+      { k: 'image', l: '图片' },
+      { k: 'video', l: '视频' },
+    ],
+  },
+  {
+    key: 'generated',
+    label: '我生成的',
+    subs: [
+      { k: 'all', l: '全部' },
+      { k: 'role', l: '角色' },
+      { k: 'scene', l: '场景' },
+      { k: 'video', l: '视频' },
+    ],
+  },
+  {
+    key: 'collected',
+    label: '我收藏的',
+    subs: [
+      { k: 'all', l: '全部' },
+      { k: 'template', l: '模板' },
+      { k: 'ip', l: 'IP' },
+    ],
+  },
 ] as const
 
 // ---- 纯函数工具 ----
@@ -103,12 +128,7 @@ function buildAssetTags(asset: any) {
 
 function assetInlineUrl(asset: any) {
   return (
-    asset?.thumbnail_url ||
-    asset?.preview_url ||
-    asset?.cover_url ||
-    asset?.meta_json?.source_url ||
-    asset?.url ||
-    ''
+    asset?.thumbnail_url || asset?.preview_url || asset?.cover_url || asset?.meta_json?.source_url || asset?.url || ''
   )
 }
 
@@ -174,7 +194,19 @@ function AssetThumb({ card, workspaceId }: { card: any; workspaceId: any }) {
     )
   }
   if (card.mediaKind === 'video') {
-    return <video src={src} poster={card.posterUrl || undefined} aria-label={card.title} autoPlay muted loop playsInline preload="metadata" onError={handleError} />
+    return (
+      <video
+        src={src}
+        poster={card.posterUrl || undefined}
+        aria-label={card.title}
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        onError={handleError}
+      />
+    )
   }
   return <img src={src} alt={card.title} loading="lazy" onError={handleError} />
 }
@@ -262,7 +294,8 @@ export default function ResourceManagementView() {
       if (subTab === 'image') base = base.filter((c) => c.kind === 'image')
       else if (subTab === 'video') base = base.filter((c) => c.kind === 'video')
     } else if (mainTab === 'generated') {
-      base = cards.filter((c) => c.source && c.source !== 'upload')
+      // AI 生成素材 source 可能是 'generated'/'ai'/空，排除明确标记 'upload' 的即可
+      base = cards.filter((c) => c.source !== 'upload')
       if (subTab === 'video') base = base.filter((c) => c.kind === 'video')
       else if (subTab === 'role') base = base.filter((c) => c.roleScene === 'role')
       else if (subTab === 'scene') base = base.filter((c) => c.roleScene === 'scene')
@@ -294,11 +327,15 @@ export default function ResourceManagementView() {
 
   return (
     <div className="rm2-page">
-      <AppSidebar activeKey="resources" onNavigate={handleNavigate} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <AppSidebar
+        activeKey="resources"
+        onNavigate={handleNavigate}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
 
       <div className="rm2-shell">
         <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
-        <AppToast />
 
         <section className="rm2-main" aria-label="素材市场">
           {/* 三个主 Tab */}
@@ -315,7 +352,13 @@ export default function ResourceManagementView() {
             ))}
             <label className="rm2-search">
               <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="M13.9 13.1 17 16.2M15.4 8.7a6.7 6.7 0 1 1-13.4 0 6.7 6.7 0 0 1 13.4 0Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                <path
+                  d="M13.9 13.1 17 16.2M15.4 8.7a6.7 6.7 0 1 1-13.4 0 6.7 6.7 0 0 1 13.4 0Z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
               </svg>
               <input
                 value={searchQuery}

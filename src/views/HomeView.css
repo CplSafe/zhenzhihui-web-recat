@@ -492,10 +492,13 @@
     grid-template-columns: repeat(2, 1fr);
   }
   /* 瀑布流:平板 3 列 */
-  .home__masonry,
-  .home__proj-waterfall {
+  .home__masonry {
     column-count: 3;
     column-gap: 14px;
+  }
+  .home__proj-waterfall {
+    grid-template-columns: repeat(12, 1fr);
+    gap: 12px;
   }
   .home__template-grid {
     grid-template-columns: repeat(3, 1fr);
@@ -624,9 +627,94 @@ button.home__template-card {
   object-fit: cover;
   display: block;
 }
-/* 视频控件在小卡上精简 */
-.home__proj-video::-webkit-media-controls-panel {
-  /* retain default */
+/* 视频底部渐变遮罩 + 标题覆盖（素材市场风格） */
+.home__proj-overlay {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 24px 10px 8px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.home__proj:hover .home__proj-overlay {
+  opacity: 1;
+}
+.home__proj-overlay-text {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 视频卡操作按钮（播放 / 做同款） */
+.home__proj-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  pointer-events: auto;
+}
+.home__proj-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s;
+}
+.home__proj-action-btn:hover {
+  background: rgba(0, 0, 0, 0.55);
+  border-color: #fff;
+}
+
+/* 全屏视频播放弹窗 */
+.home__video-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.home__video-modal {
+  position: relative;
+  width: 90vw;
+  max-width: 960px;
+  max-height: 90vh;
+}
+.home__video-modal-close {
+  position: absolute;
+  top: -36px;
+  right: 0;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.home__video-modal-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+.home__video-modal-player {
+  width: 100%;
+  max-height: 80vh;
+  border-radius: 12px;
+  display: block;
 }
 .home__proj-thumb-ph {
   font-size: 30px;
@@ -704,14 +792,18 @@ button.home__template-card {
 }
 
 /* ── 瀑布流布局:每行最多 4 列，卡片自上而下自然排列 ── */
-.home__masonry,
-.home__proj-waterfall {
+.home__masonry {
   column-count: 4;
   column-gap: 16px;
 }
+/* 视频瀑布流：12 列细粒度 grid + grid-auto-flow dense，按比例 span 不同列数 */
+.home__proj-waterfall {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 16px;
+  grid-auto-flow: dense;
+}
 .home__proj-waterfall .home__proj {
-  break-inside: avoid;
-  margin-bottom: 16px;
 }
 .home__tpl {
   break-inside: avoid;
@@ -933,10 +1025,13 @@ button.home__template-card {
     mask-image: none;
   }
   /* 瀑布流:窄屏 2 列 */
-  .home__masonry,
-  .home__proj-waterfall {
+  .home__masonry {
     column-count: 2;
     column-gap: 10px;
+  }
+  .home__proj-waterfall {
+    grid-template-columns: repeat(6, 1fr);
+    gap: 10px;
   }
   .home__proj-grid {
     grid-template-columns: repeat(2, 1fr);

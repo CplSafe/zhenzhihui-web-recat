@@ -366,7 +366,13 @@ function toProxiedUrl(url, localBaseUrl, remoteOrigin) {
     return buildUrl(localBaseUrl, url)
   }
 
-  return url
+  // origin 未匹配任何已知远程 → 走本地代理兜底，避免直连外网失败
+  try {
+    const parsedUrl = new URL(url)
+    return buildUrl(localBaseUrl, `${parsedUrl.pathname}${parsedUrl.search}`)
+  } catch {
+    return buildUrl(localBaseUrl, url)
+  }
 }
 
 function buildUrl(baseUrl, path) {

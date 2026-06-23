@@ -61,7 +61,7 @@ function AppShell() {
       ) : (
         <>
           <Outlet />
-          {isGuestMode() && !isAuthenticated && <GuestGuard />}
+          {isGuestMode() && !isAuthenticated && requiresAuth && <GuestGuard />}
         </>
       )}
 

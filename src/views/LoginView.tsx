@@ -80,8 +80,7 @@ export default function LoginView() {
   function getRedirectTo() {
     return `${window.location.origin}/`
   }
-  // 登录成功后优先直接获取会话；失败则走 SSO 重定向（SSO 桥接必需，不可跳过）。
-  // SSO 改为弹窗模式：避免整页跳转导致用户看到 SSO 中转页，登录体验更顺畅。
+  // 登录成功后优先直接获取会话；失败则走 SSO 重定向（SSO 桥接必需，不可跳过）
   async function handleLoginFlowComplete(oauth: any, authResult?: any) {
     markAuthSessionExpected()
     if (import.meta.env.DEV && !hasRemoteBackend) {
@@ -93,57 +92,14 @@ export default function LoginView() {
       handleLoginSuccess(session)
       return
     } catch {
-      // 直接获取失败，走 SSO 弹窗兜底
+      // 直接获取失败，走 SSO 重定向兜底
     }
     const navUrl = getAuthNavigationUrl(oauth, authResult)
-    if (!navUrl || navUrl === '/') {
-      setNoticeMessage('登录失败，请稍后重试', 'error')
-      return
-    }
-
-    // 标记 SSO 进行中，便于 getAuthenticatedSession 内识别重试场景
-    sessionStorage.setItem('zzh_sso_pending', '1')
-
-    const popup = window.open(navUrl, 'sso-auth', 'width=600,height=700')
-
-    if (!popup) {
-      // 弹窗被浏览器拦截，回退到整页跳转（原有行为）
+    if (navUrl && navUrl !== '/') {
       window.location.href = navUrl
-      return
+    } else {
+      setNoticeMessage('登录失败，请稍后重试', 'error')
     }
-
-    // 轮询等待弹窗完成 SSO（弹窗重定向回我们域后即可获取 session）
-    const POLL_INTERVAL_MS = 2000
-    const POLL_TIMEOUT_MS = 120_000 // 2 分钟超时
-    const pollStart = Date.now()
-
-    const pollTimer = setInterval(async () => {
-      // 弹窗被用户手动关闭
-      if (popup.closed && Date.now() - pollStart > POLL_INTERVAL_MS * 2) {
-        clearInterval(pollTimer)
-        sessionStorage.removeItem('zzh_sso_pending')
-        setNoticeMessage('登录已取消', 'info')
-        return
-      }
-
-      try {
-        const session = await getAuthenticatedSession()
-        clearInterval(pollTimer)
-        sessionStorage.removeItem('zzh_sso_pending')
-        if (!popup.closed) popup.close()
-        handleLoginSuccess(session)
-      } catch {
-        // session 尚未就绪，继续轮询
-      }
-
-      // 超时
-      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
-        clearInterval(pollTimer)
-        sessionStorage.removeItem('zzh_sso_pending')
-        if (!popup.closed) popup.close()
-        setNoticeMessage('登录超时，请重试', 'error')
-      }
-    }, POLL_INTERVAL_MS)
   }
 
   async function refreshCaptcha({ silent = false } = {}) {
