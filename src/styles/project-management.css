@@ -1692,3 +1692,331 @@
 .pm2-folder-collage[data-n='3'] img:first-child {
   grid-column: span 2;
 }
+
+/* ===== 项目详情:项目内视频列表(2.1,对齐 Figma 432:4334)===== */
+.pm2-vl-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 18px;
+  font-size: 14px;
+  color: #8a8f9f;
+}
+.pm2-crumb {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: #8a8f9f;
+  font-size: 14px;
+  cursor: pointer;
+}
+.pm2-crumb:hover {
+  color: #6d6de3;
+}
+.pm2-crumb-sep {
+  color: #c4c8d2;
+}
+.pm2-crumb-cur {
+  color: #333333;
+  font-weight: 600;
+}
+
+.pm2-vl-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.pm2-vl-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pm2-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px 0 12px;
+  border: 1px solid #e6e8ef;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #8a8f9f;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pm2-select select {
+  border: 0;
+  background: none;
+  outline: none;
+  color: #333333;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pm2-vl-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #1fcfa8;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(31, 207, 168, 0.28);
+}
+.pm2-vl-new:hover {
+  background: #1bbd99;
+}
+
+.pm2-vl-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+}
+@media (max-width: 1280px) {
+  .pm2-vl-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (max-width: 980px) {
+  .pm2-vl-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.pm2-vcard {
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  overflow: hidden;
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+.pm2-vcard:hover {
+  box-shadow: 0 10px 26px rgba(33, 40, 80, 0.1);
+  transform: translateY(-2px);
+}
+.pm2-vcard-thumb {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  background: #0e1116;
+  cursor: pointer;
+  overflow: hidden;
+}
+.pm2-vcard-thumb video,
+.pm2-vcard-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pm2-vcard-flag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #1fcfa8;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pm2-vcard-play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.42);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pm2-vcard-dur {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #ffffff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.pm2-vcard-body {
+  padding: 10px 12px 12px;
+}
+.pm2-vcard-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pm2-vcard-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pm2-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 11px;
+  font-size: 12px;
+}
+.pm2-status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pm2-status.is-published {
+  color: #1fcfa8;
+  background: rgba(31, 207, 168, 0.16);
+}
+.pm2-status.is-draft {
+  color: #f68b19;
+  background: rgba(246, 139, 25, 0.16);
+}
+.pm2-vcard-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: #9aa0af;
+  font-size: 12px;
+}
+.pm2-vcard-no {
+  font-variant-numeric: tabular-nums;
+}
+.pm2-vcard-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #7b8195;
+}
+.pm2-vcard-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #b79cff, #9b8af8);
+  color: #ffffff;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pm2-vcard-date {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.pm2-vcard-dl {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: #f3f4f8;
+  color: #6d6de3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.pm2-vcard-dl:hover {
+  background: #e9eaff;
+}
+.pm2-vcard-dl:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pm2-vl-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 24px;
+  color: #5a6072;
+  font-size: 13px;
+}
+.pm2-page-btn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #e6e8ef;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #5a6072;
+  cursor: pointer;
+}
+.pm2-page-btn:hover:not(:disabled) {
+  border-color: #6d6de3;
+  color: #6d6de3;
+}
+.pm2-page-btn.is-active {
+  background: #6d6de3;
+  border-color: #6d6de3;
+  color: #ffffff;
+}
+.pm2-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pm2-page-ellipsis {
+  padding: 0 4px;
+  color: #b0b4c0;
+}
+.pm2-page-size {
+  margin-left: 12px;
+}
+
+.pm2-videobox {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+.pm2-videobox video {
+  max-width: 90vw;
+  max-height: 86vh;
+  border-radius: 10px;
+  background: #000000;
+}
+.pm2-videobox-close {
+  position: absolute;
+  top: 22px;
+  right: 26px;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-size: 22px;
+  cursor: pointer;
+}
