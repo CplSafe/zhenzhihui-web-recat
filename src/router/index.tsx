@@ -5,8 +5,56 @@
  */
 import { lazy, Suspense } from 'react'
 import type { ReactNode } from 'react'
-import { createBrowserRouter, Navigate } from 'react-router-dom'
+import { createBrowserRouter, Navigate, useRouteError } from 'react-router-dom'
 import App from '../App'
+
+// 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
+// 避免整页白屏无任何恢复入口。
+function RouteErrorBoundary() {
+  const error = useRouteError() as any
+  return (
+    <div
+      role="alert"
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 420,
+          textAlign: 'center',
+          padding: 24,
+          borderRadius: 12,
+          border: '1px solid #eee',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
+        }}
+      >
+        <strong style={{ fontSize: 16 }}>页面加载失败</strong>
+        <p style={{ color: '#666', margin: '12px 0 16px' }}>
+          {String(error?.message || error || '发生未知错误，请刷新重试')}
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          style={{
+            padding: '8px 20px',
+            borderRadius: 8,
+            border: 'none',
+            background: '#5767e5',
+            color: '#fff',
+            cursor: 'pointer',
+          }}
+        >
+          刷新重试
+        </button>
+      </div>
+    </div>
+  )
+}
 
 const LoginView = lazy(() => import('../views/LoginView'))
 const CreativeEntryView = lazy(() => import('../views/CreativeEntryView'))
@@ -22,6 +70,7 @@ function lazyPage(node: ReactNode): ReactNode {
 export const router = createBrowserRouter([
   {
     element: <App />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       { index: true, element: <Navigate to="/creative" replace /> },
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },

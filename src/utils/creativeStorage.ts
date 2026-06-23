@@ -25,7 +25,15 @@ export function loadCreativeWorkflowState() {
 }
 
 export function saveCreativeWorkflowState(state) {
-  withStorage((storage) => storage.setItem(STORAGE_KEY, JSON.stringify(state)))
+  if (typeof window === 'undefined') return false
+  try {
+    window.localStorage?.setItem(STORAGE_KEY, JSON.stringify(state))
+    return true
+  } catch (error) {
+    // 配额超限/隐私模式导致本地草稿写入失败：后端草稿才是主存储，这里仅告警不阻塞流程。
+    console.warn('[creativeStorage] 工作流快照写入 localStorage 失败（可能超出配额）', error)
+    return false
+  }
 }
 
 export function clearCreativeWorkflowState() {

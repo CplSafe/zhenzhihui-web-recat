@@ -16,7 +16,6 @@ import {
   useState,
 } from 'react'
 import type { CSSProperties } from 'react'
-import { extractStoryboardPayload } from '../../utils/creativeScript'
 import './StoryboardGenerationPanel.css'
 
 // 与分镜舞台布局相关的基础常量。
@@ -109,7 +108,6 @@ function clampNumber(value: any, min: number, max: number) {
 export default function StoryboardGenerationPanel(props: StoryboardGenerationPanelProps) {
   const {
     panelStyle,
-    isLibraryOpen = false,
     selectedRatio = '9:16',
     items,
     total,
@@ -128,7 +126,6 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
     onSetImageVersion,
     onRemoveImageVersion,
     onInsertItem,
-    onSuggestInsertIdea,
     onResetInsertIdea,
     onOpenLibrary,
     onRemoveMaterial,
@@ -169,7 +166,7 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
   const [trackInnerWidth, setTrackInnerWidth] = useState(0)
   const [stageScale, setStageScale] = useState(1)
   const [activeCardId, setActiveCardId] = useState('')
-  const [actionOverlayPos, setActionOverlayPos] = useState({ left: 0, bottom: 0 })
+  const [, setActionOverlayPos] = useState({ left: 0, bottom: 0 })
   const [previewExpanded, setPreviewExpanded] = useState(false)
   const [imageStatusById, setImageStatusById] = useState<Record<string, string>>({})
 
@@ -188,6 +185,11 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
   const dragArmTimerRef = useRef(0)
   const activePointerIdRef = useRef<number | null>(null)
   const activePointerCaptureElRef = useRef<any>(null)
+  // 记录实际绑定到 window 的拖拽处理函数实例：这些函数是普通函数声明，每次渲染都会重新创建，
+  // 若直接用渲染时的标识 add/remove，跨渲染（含卸载清理）时标识不一致会导致监听器无法移除而泄漏。
+  const attachedPointerMoveRef = useRef<((event: any) => void) | null>(null)
+  const attachedPointerUpRef = useRef<((event: any) => void) | null>(null)
+  const attachedPointerCancelRef = useRef<(() => void) | null>(null)
   const stageScaleRef = useRef(1)
   const pendingInsertHintRef = useRef(false)
   const editorModeRef = useRef('')
@@ -251,13 +253,6 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
     setStageScale(final)
   }, [])
 
-  // ======== AI 插入建议派生 ========
-  const insertIdeaRawText = String(insertIdeaDraft || insertIdeaText || '')
-  const insertIdeaStoryboards = useMemo(
-    () => extractStoryboardPayload(insertIdeaRawText).storyboards || [],
-    [insertIdeaRawText],
-  )
-
   // 右侧参考素材预览栈
   const previewStackMaterials = useMemo(() => {
     const list = Array.isArray(selectedMaterials) ? selectedMaterials : []
@@ -265,18 +260,6 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
   }, [selectedMaterials])
 
   // ======== 版本状态工具 ========
-  function getStoryboardVersionState(item: any) {
-    const history = Array.isArray(item?.versionHistory) ? item.versionHistory : []
-    const index = Number(item?.currentVersionIndex || 0)
-    const currentVersionIndex = Number.isFinite(index) ? Math.max(0, Math.floor(index)) : 0
-    const lastIndex = Math.max(history.length - 1, 0)
-    return {
-      historyLength: history.length,
-      currentVersionIndex: Math.min(currentVersionIndex, lastIndex),
-      lastIndex,
-    }
-  }
-
   // ======== 展示派生量 ========
   const displayTotal = Math.min(Math.max(total, 1), MAX_STORYBOARD_IMAGES)
   const displayGeneratedCount = Math.min(Math.max(generatedCount, 0), displayTotal)
@@ -544,9 +527,19 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
 
   // ======== 插入编排弹层定位 ========
   function resetPointerDrag() {
-    window.removeEventListener('pointermove', handleGlobalPointerMove)
-    window.removeEventListener('pointerup', handleGlobalPointerUp)
-    window.removeEventListener('pointercancel', resetPointerDrag)
+    // 用实际绑定时保存的函数实例移除，避免跨渲染标识不一致导致移除失败。
+    if (attachedPointerMoveRef.current) {
+      window.removeEventListener('pointermove', attachedPointerMoveRef.current)
+      attachedPointerMoveRef.current = null
+    }
+    if (attachedPointerUpRef.current) {
+      window.removeEventListener('pointerup', attachedPointerUpRef.current)
+      attachedPointerUpRef.current = null
+    }
+    if (attachedPointerCancelRef.current) {
+      window.removeEventListener('pointercancel', attachedPointerCancelRef.current)
+      attachedPointerCancelRef.current = null
+    }
     if (activePointerCaptureElRef.current && activePointerIdRef.current !== null) {
       try {
         activePointerCaptureElRef.current.releasePointerCapture?.(activePointerIdRef.current)
@@ -774,30 +767,6 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
     })
   }
 
-  function confirmInsertIdea() {
-    const anchorId = String(insertAnchorId || '').trim()
-    if (!anchorId || isGenerating) return
-    const parsed = insertIdeaStoryboards
-    const first = parsed?.[0] || null
-    const prompt = String(first?.prompt || first?.title || insertIdeaRawText || '').trim()
-    if (!prompt) return
-
-    const board = {
-      title: String(first?.title || prompt).trim(),
-      prompt,
-      duration: Number.isFinite(Number(first?.duration)) ? Number(first.duration) : 2,
-      voiceover: String(first?.voiceover || '').trim(),
-      subtitle: String(first?.subtitle || '').trim(),
-      sfx: String(first?.sfx || '').trim(),
-    }
-
-    onInsertItem?.({ anchorId, side: insertSide, board })
-    onResetInsertIdea?.()
-    setInsertIdeaDraft('')
-    setEditorMode('modify')
-    moveComposerToBottomDock()
-  }
-
   // ======== 拖拽排序（pointer）========
   function getDraggingLayoutRect() {
     if (!pointerDraggingIdRef.current) return null
@@ -939,6 +908,10 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
       if (!pointerDraggingIdRef.current || pointerWasDraggedRef.current) return
       dragArmedRef.current = true
     }, 160)
+    // 保存实际绑定的函数实例，确保后续（含卸载）能用相同标识精确移除，避免监听器泄漏。
+    attachedPointerMoveRef.current = handleGlobalPointerMove
+    attachedPointerUpRef.current = handleGlobalPointerUp
+    attachedPointerCancelRef.current = resetPointerDrag
     window.addEventListener('pointermove', handleGlobalPointerMove)
     window.addEventListener('pointerup', handleGlobalPointerUp)
     window.addEventListener('pointercancel', resetPointerDrag)
@@ -1206,7 +1179,7 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
     if (editorModeRef.current === 'modify') {
       setEditorText('')
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [activeCardId])
 
   // watch: isGenerating 由 true→false 且有待显示提示
@@ -1232,7 +1205,7 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
   // watch: activeCardId / activeItem.src → 刷新操作浮层位置
   useEffect(() => {
     requestAnimationFrame(() => updateActionOverlayPosition())
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [activeCardId, activeItem?.src])
 
   // watch: activeCardId / ratio / items.length → 刷新插槽布局 token
@@ -1240,7 +1213,7 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
     requestAnimationFrame(() => {
       setInsertSlotLayoutToken((t) => t + 1)
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [activeCardId, selectedRatio, items.length])
 
   // watch: ratio / items.length / placeholder → 刷新 track 内宽
@@ -1260,7 +1233,7 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
     requestAnimationFrame(() => {
       setInsertSlotLayoutToken((t) => t + 1)
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isStackMode])
 
   // ======== onMounted / onBeforeUnmount ========
@@ -1273,11 +1246,15 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
     window.addEventListener('scroll', updateActionOverlayPosition, true)
     window.addEventListener('pointerdown', handleGlobalPointerDown, true)
 
+    // 复制到局部变量，供 cleanup 使用（避免 cleanup 时 trackRef.current 已变化）
+    let trackEl: HTMLDivElement | null = null
+
     const raf = requestAnimationFrame(() => {
       const container = containerRef.current
       updateTrackInnerWidth()
       updateActionOverlayPosition()
       const track = trackRef.current
+      trackEl = track
       track?.addEventListener?.('scroll', updateActionOverlayPosition, { passive: true })
       if (container && typeof ResizeObserver !== 'undefined') {
         containerResizeObserverRef.current = new ResizeObserver(() => {
@@ -1302,7 +1279,7 @@ export default function StoryboardGenerationPanel(props: StoryboardGenerationPan
       window.removeEventListener('resize', handleWindowResize)
       window.removeEventListener('scroll', updateActionOverlayPosition, true)
       window.removeEventListener('pointerdown', handleGlobalPointerDown, true)
-      trackRef.current?.removeEventListener?.('scroll', updateActionOverlayPosition)
+      trackEl?.removeEventListener?.('scroll', updateActionOverlayPosition)
       if (containerResizeObserverRef.current) {
         try {
           containerResizeObserverRef.current.disconnect()

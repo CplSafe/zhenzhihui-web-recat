@@ -72,6 +72,12 @@ export default function ResourceAddMaterialModal({
   const projectTotal = filteredProjects.length
   const totalPages = Math.max(1, Math.ceil(projectTotal / PROJECTS_PER_PAGE))
 
+  // 列表缩小（如删除最后一页的最后一项）后把 currentPage 收敛回有效范围，
+  // 避免页码 state 与实际页数失配。
+  useEffect(() => {
+    setCurrentPage((p) => Math.min(Math.max(1, p), totalPages))
+  }, [totalPages])
+
   const projectCards = useMemo(() => {
     const pool = previewPool
     const poolLength = pool.length
@@ -167,7 +173,7 @@ export default function ResourceAddMaterialModal({
     if (!confirmed) return
     deleteResourceProject(projectId)
     reloadProjects()
-    setCurrentPage((p) => Math.min(p, totalPages))
+    // 页码收敛交由 totalPages 的 effect 处理（此处 totalPages 仍是删除前的旧值）
   }
 
   function handleProjectSelect(project: any) {

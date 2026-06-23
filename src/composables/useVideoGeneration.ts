@@ -85,6 +85,7 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
   // ---- 视图需要渲染的状态 ----
   const [generatedVideoUrl, setGeneratedVideoUrlState] = useState<string>('')
   const [generatedVideoTask, setGeneratedVideoTaskState] = useState<any>(null)
+  const [generatedVideoAssetId, setGeneratedVideoAssetIdState] = useState<number>(0)
   const [videoHistoryList, setVideoHistoryListState] = useState<any[]>([])
   const [activeVideoHistoryId, setActiveVideoHistoryIdState] = useState<string>('')
   const [isVideoGenerating, setIsVideoGeneratingState] = useState<boolean>(false)
@@ -114,6 +115,7 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
   }, [])
   const setGeneratedVideoAssetId = useCallback((value: number) => {
     generatedVideoAssetIdRef.current = value
+    setGeneratedVideoAssetIdState(value)
   }, [])
   const setVideoHistoryList = useCallback((value: any[]) => {
     videoHistoryListRef.current = value
@@ -310,10 +312,7 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
           break
         } catch (error: any) {
           lastError = error
-          if (!/SensitiveContentDetected|PrivacyInformation/i.test(String(error?.message || ''))) {
-            throw error
-          }
-          // 内容审核拦截：换下一张候选图再试
+          // 仅内容审核拦截才换下一张候选图重试，其它错误直接抛出。
           if (!/SensitiveContentDetected|PrivacyInformation/i.test(String(error?.message || ''))) {
             throw error
           }
@@ -525,7 +524,7 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
     // state
     generatedVideoUrl,
     generatedVideoTask,
-    generatedVideoAssetId: generatedVideoAssetIdRef.current,
+    generatedVideoAssetId,
     videoHistoryList,
     activeVideoHistoryId,
     isVideoGenerating,
@@ -548,5 +547,11 @@ export function useVideoGeneration(deps: VideoGenerationDeps) {
     isEstimatingVideoCost,
     videoCostEstimateError,
     estimateVideoCost,
+
+    // setters（草稿恢复 applyWorkflowSnapshot 等处需要直接写回状态）
+    setGeneratedVideoUrl,
+    setGeneratedVideoTask,
+    setGeneratedVideoAssetId,
+    setVideoHistoryList,
   }
 }

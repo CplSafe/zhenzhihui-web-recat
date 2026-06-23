@@ -290,7 +290,7 @@ export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {
     if (editingStoryboardsRef.current) return
     const list = Array.isArray(storyboardPreview.items) ? storyboardPreview.items : []
     setEditableStoryboards(list.map((item: any) => ({ ...item })))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [storyboardPreview.items])
 
   function updateStoryboardField(index: number, field: string, value: any) {
@@ -723,7 +723,7 @@ export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {
                           {canEditScript ? (
                             <input
                               className="storyboard-inline-input storyboard-title-input"
-                              value={item.title}
+                              value={item.title ?? ''}
                               type="text"
                               aria-label="编辑分镜标题"
                               onClick={(e) => e.stopPropagation()}
@@ -738,7 +738,7 @@ export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {
                         {canEditScript ? (
                           <textarea
                             className="storyboard-inline-textarea storyboard-prompt-input"
-                            value={item.prompt}
+                            value={item.prompt ?? ''}
                             rows={2}
                             aria-label="编辑分镜画面描述"
                             onClick={(e) => e.stopPropagation()}

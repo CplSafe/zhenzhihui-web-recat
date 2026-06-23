@@ -7,6 +7,7 @@
 import { MODEL_NOT_FOUND_CODE, chooseModelCandidate, isRetryableModelSelectionError } from '../utils/modelSelection'
 import { DEFAULT_MODEL_PLAN_CANDIDATES, normalizePlanCandidates } from '../utils/modelPlans'
 import { sleep } from '../utils/common'
+import { sanitizeMediaUrl } from '../utils/urlSafety'
 
 const DEFAULT_BUSINESS_API_BASE_URL = ''
 const DEFAULT_BUSINESS_REMOTE_ORIGIN = ''
@@ -1622,12 +1623,15 @@ export async function uploadAssetFile({ workspaceId, file, prompt = '' }) {
     uploadResponse = await fetch(upload.url, {
       method: 'POST',
       body: formData,
+      // 预签名上传不应发生跳转；fail-closed 避免被允许的存储域 3xx 重定向到
+      // 内网/任意主机后浏览器自动跟随并把文件体重新 POST 过去（绕过上方 allowlist）。
+      redirect: 'error',
     })
   } catch (error) {
     const isFetchTypeError = typeof TypeError !== 'undefined' && error instanceof TypeError
     throw new BusinessApiError(
       isFetchTypeError
-        ? '素材文件上传失败（可能是对象存储未配置 CORS 或被浏览器拦截）'
+        ? '素材文件上传失败（可能是对象存储未配置 CORS、发生了非预期跳转，或被浏览器拦截）'
         : '素材文件上传失败，请检查对象存储服务',
       { response: error },
     )
@@ -1661,9 +1665,9 @@ export async function getAssetDownloadUrl({ workspaceId, assetId }) {
   const payload = await requestJson(`/api/v1/assets/${assetId}/download-url?workspace_id=${workspaceId}`)
   // 服务端可能返回 JSON { download_url: "..." } 或直接返回 URL 字符串
   if (typeof payload === 'string' && payload.trim()) {
-    return payload.trim()
+    return sanitizeMediaUrl(payload.trim())
   }
-  return payload?.download_url || payload?.url || ''
+  return sanitizeMediaUrl(payload?.download_url || payload?.url || '')
 }
 
 export async function downloadAssetFile({ workspaceId, assetId }) {
@@ -2080,7 +2084,8 @@ async function requestJson(path, options = {}) {
     })
   }
 
-  return payload?.data ?? payload
+  // 用字段存在性判断而非 ?? ：避免把合法的 data:null（成功但无数据）回退成整个包裹对象。
+  return payload && typeof payload === 'object' && 'data' in payload ? payload.data : payload
 }
 
 async function readJsonResponse(response) {

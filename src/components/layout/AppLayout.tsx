@@ -410,10 +410,19 @@ export default function AppLayout(props: AppLayoutProps) {
       setViewportWidth(window.innerWidth)
       setViewportHeight(window.innerHeight)
     }
+    // 拖拽改变窗口大小会高频触发 resize；防抖避免每帧 setState 引发重渲染风暴。
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null
+    function onResize() {
+      if (resizeTimer) clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(updateViewportMetrics, 120)
+    }
     updateViewportMetrics()
-    window.addEventListener('resize', updateViewportMetrics)
+    window.addEventListener('resize', onResize)
     void syncWorkspaceRuntime({ reloadWorkspaces: true })
-    return () => window.removeEventListener('resize', updateViewportMetrics)
+    return () => {
+      if (resizeTimer) clearTimeout(resizeTimer)
+      window.removeEventListener('resize', onResize)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

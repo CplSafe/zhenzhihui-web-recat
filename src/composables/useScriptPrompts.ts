@@ -39,9 +39,6 @@ export function useScriptPrompts(deps: ScriptPromptDeps) {
     getStoryboardItems,
     timelineState,
     modelPlanCandidates,
-    // Callbacks
-    getWorkspaceIdOrNotify,
-    showToast,
   } = deps
 
   const DEFAULT_GENERATING_PROMPT =
@@ -238,7 +235,7 @@ export function useScriptPrompts(deps: ScriptPromptDeps) {
   }
 
   /** Request AI creative script: try streaming first, fall back to non-streaming on 5xx/stream errors. */
-  async function requestCreativeScriptWithFallback({ workspaceId, prompt, inputAssets, onDelta }: any = {}) {
+  async function requestCreativeScriptWithFallback({ workspaceId, prompt, inputAssets, onDelta, signal }: any = {}) {
     const requestPayload = {
       workspaceId,
       operationCode: 'responses.multimodal',
@@ -252,8 +249,10 @@ export function useScriptPrompts(deps: ScriptPromptDeps) {
     }
 
     try {
-      return await streamAiResponse({ ...requestPayload, onDelta })
+      return await streamAiResponse({ ...requestPayload, onDelta, signal })
     } catch (error) {
+      // 已被取消（重绘/卸载）：不要再走非流式兜底，避免残留请求覆盖已重置的状态。
+      if (signal?.aborted) throw error
       if (!shouldFallbackToNonStreamResponse(error)) throw error
       return createAiResponse(requestPayload)
     }

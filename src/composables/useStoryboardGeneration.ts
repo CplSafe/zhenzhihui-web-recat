@@ -1138,5 +1138,8 @@ export function useStoryboardGeneration(deps: UseStoryboardGenerationDeps) {
     adoptRestoredStoryboardItems,
     cancelInFlightStoryboard: bumpRunId,
     resetStoryboard,
+    // setters（CreativeScriptView 直接写回分镜状态时需要；内部名为 setItems/setGenerating）
+    setStoryboardItems: setItems,
+    setStoryboardGenerating: setGenerating,
   }
 }

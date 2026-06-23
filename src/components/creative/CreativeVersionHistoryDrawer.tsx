@@ -134,7 +134,7 @@ export default function CreativeVersionHistoryDrawer({
   const selectedVersion = useMemo<VersionItem | null>(() => {
     const currentId = Number(selectedVersionId || 0)
     if (currentId > 0) {
-      const matched = versions.find((item) => resolveVersionId(item) === currentId)
+      const matched = versions.find((item) => Number(resolveVersionId(item)) === currentId)
       if (matched) return matched
     }
     return detail?.version || null
@@ -263,7 +263,7 @@ export default function CreativeVersionHistoryDrawer({
                     <li
                       key={resolveVersionId(item) || index}
                       className={`vh-item${
-                        resolveVersionId(item) === Number(selectedVersionId || 0) ? ' active' : ''
+                        Number(resolveVersionId(item)) === Number(selectedVersionId || 0) ? ' active' : ''
                       }`}
                     >
                       <button

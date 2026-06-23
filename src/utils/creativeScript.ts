@@ -276,7 +276,7 @@ export function getTimelineDuration(timeline) {
   return sources.reduce((max, item) => Math.max(max, Number(item?.end) || 0), 0)
 }
 
-export function buildVideoPromptFromTimeline({ basePrompt, storyboards, timeline, ratio, styleText }) {
+export function buildVideoPromptFromTimeline({ basePrompt, storyboards = [], timeline, ratio, styleText }) {
   const segments = timeline?.segments || []
 
   const lines = [

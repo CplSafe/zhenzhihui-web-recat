@@ -252,7 +252,8 @@ async function requestJson(url, options = {}) {
     })
   }
 
-  return payload?.data ?? payload
+  // 用字段存在性判断而非 ?? ：避免把合法的 data:null（成功但无数据）回退成整个包裹对象。
+  return payload && typeof payload === 'object' && 'data' in payload ? payload.data : payload
 }
 
 async function readJsonResponse(response) {
