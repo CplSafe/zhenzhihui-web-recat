@@ -5,6 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import { useCurrentUser, useCurrentPlanName } from '@/stores/workspaceSession'
 import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
@@ -20,7 +21,8 @@ interface AppTopbarProps {
   onMember?: () => void
 }
 
-export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
+export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProps) {
+  const navigate = useNavigate()
   const currentUser = useCurrentUser() as any
   const planName = useCurrentPlanName() as any
   const { handleLogoutSuccess } = useAuth()
@@ -63,8 +65,7 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
 
   const handleMember = () => {
     setMenuOpen(false)
-    if (onMember) onMember()
-    else showToast('会员中心待开放', 'info')
+    navigate('/member')
   }
 
   async function handleLogout() {
