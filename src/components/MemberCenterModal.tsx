@@ -1,25 +1,13 @@
 /**
- * MemberCenterView — 会员中心(2.1,按 Figma 521:3541)。
- * 顶部 个人版 / 团队版 Tab;每类展示套餐卡片:名称 + 副标题 + 价格(可带折扣)+ 积分/月
- * + 生成额度 + 立即开通 + 功能清单(✓/✗)+ 1积分=0.09元。
- * 套餐为前端占位数据(个人版还原设计稿;团队版为占位),接入计费接口后替换。
+ * MemberCenterModal — 会员中心(弹窗,按 Figma 521:3541)。
+ * 覆盖在当前页之上(portal),关闭即回到原页面。
+ * 个人版/团队版 Tab + 套餐卡片(名称/副标题/价格[含折扣]/积分/额度/立即开通/功能✓✗/1积分=0.09元)。
+ * 套餐为前端占位数据,接计费接口后替换。
  */
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import AppSidebar from '@/components/home/AppSidebar'
-import AppTopbar from '@/components/layout/AppTopbar'
-import AppToast from '@/components/AppToast'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useToast } from '@/composables/useToast'
-import './MemberCenterView.css'
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
+import './MemberCenterModal.css'
 
 interface Feature {
   text: string
@@ -31,15 +19,12 @@ interface Plan {
   subtitle: string
   price: string
   unit: string
-  /** 原价(划线) */
   origin?: string
-  /** 折扣角标 */
   discount?: string
   credits: string
   creditUnit: string
   quota: string
   features: Feature[]
-  /** 推荐(紫色高亮)*/
   recommend?: boolean
 }
 
@@ -83,7 +68,6 @@ const PERSONAL: Plan[] = [
   },
 ]
 
-// 团队版:设计稿未给出,先占位(接计费后替换真实套餐)
 const TEAM: Plan[] = [
   {
     id: 'team-month',
@@ -142,25 +126,21 @@ function PlanCard({ plan, onBuy }: { plan: Plan; onBuy: (p: Plan) => void }) {
       {plan.discount && <span className="mc-card-badge">{plan.discount}</span>}
       <div className="mc-card-name">{plan.name}</div>
       <div className="mc-card-sub">{plan.subtitle}</div>
-
       <div className="mc-card-price">
         <span className="mc-card-cny">￥</span>
         <span className="mc-card-num">{plan.price}</span>
         <span className="mc-card-unit">{plan.unit}</span>
         {plan.origin && <span className="mc-card-origin">{plan.origin}</span>}
       </div>
-
       <div className="mc-card-credits">
         <span className="mc-card-credit-num">{plan.credits}</span>
         <span className="mc-card-credit-unit">{plan.creditUnit}</span>
         <span className="mc-card-rate">1积分=0.09元</span>
       </div>
       <div className="mc-card-quota">{plan.quota}</div>
-
       <button type="button" className="mc-card-buy" onClick={() => onBuy(plan)}>
         立即开通
       </button>
-
       <div className="mc-card-divider" />
       <ul className="mc-card-feats">
         {plan.features.map((f, i) => (
@@ -174,44 +154,51 @@ function PlanCard({ plan, onBuy }: { plan: Plan; onBuy: (p: Plan) => void }) {
   )
 }
 
-export default function MemberCenterView() {
-  const navigate = useNavigate()
+interface MemberCenterModalProps {
+  open: boolean
+  onClose: () => void
+}
+
+export default function MemberCenterModal({ open, onClose }: MemberCenterModalProps) {
   const { showToast } = useToast()
-  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [tab, setTab] = useState<'personal' | 'team'>('personal')
 
+  // Esc 关闭
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  if (!open) return null
   const plans = tab === 'personal' ? PERSONAL : TEAM
   const onBuy = (p: Plan) => showToast(`「${p.name}」开通功能待接入支付`, 'info')
 
-  return (
-    <div className="mc-page">
-      <AppSidebar
-        activeKey=""
-        onNavigate={(k) => (ROUTE_MAP[k] ? navigate(ROUTE_MAP[k]) : showToast('功能待开放', 'info'))}
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-      />
-      <div className="mc-shell">
-        <AppTopbar onMenu={() => setSidebarOpen(true)} />
-        <AppToast />
-        <section className="mc-main" aria-label="会员中心">
-          <h1 className="mc-title">会员中心</h1>
-          <div className="mc-tabs">
-            <button type="button" className={`mc-tab${tab === 'personal' ? ' is-active' : ''}`} onClick={() => setTab('personal')}>
-              个人版
-            </button>
-            <button type="button" className={`mc-tab${tab === 'team' ? ' is-active' : ''}`} onClick={() => setTab('team')}>
-              团队版
-            </button>
-          </div>
-
-          <div className="mc-cards">
-            {plans.map((p) => (
-              <PlanCard key={p.id} plan={p} onBuy={onBuy} />
-            ))}
-          </div>
-        </section>
+  return createPortal(
+    <div className="mcm-mask" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="mcm" role="dialog" aria-label="会员中心">
+        <button type="button" className="mcm-close" aria-label="关闭" onClick={onClose}>
+          <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+            <path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+          </svg>
+        </button>
+        <h2 className="mcm-title">会员中心</h2>
+        <div className="mcm-tabs">
+          <button type="button" className={`mcm-tab${tab === 'personal' ? ' is-active' : ''}`} onClick={() => setTab('personal')}>
+            个人版
+          </button>
+          <button type="button" className={`mcm-tab${tab === 'team' ? ' is-active' : ''}`} onClick={() => setTab('team')}>
+            团队版
+          </button>
+        </div>
+        <div className="mcm-cards">
+          {plans.map((p) => (
+            <PlanCard key={p.id} plan={p} onBuy={onBuy} />
+          ))}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
