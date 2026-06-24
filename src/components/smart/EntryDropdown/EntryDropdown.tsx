@@ -15,6 +15,10 @@ interface EntryDropdownProps {
   onChange: (v: any) => void
   multiple?: boolean
   placeholder?: string
+  /** 只读/禁用:按钮不可点击、不弹出浮层(用于只读复用场景) */
+  disabled?: boolean
+  /** 单选可清空:再次点击已选项则清空(onChange('')) */
+  clearable?: boolean
 }
 
 export default function EntryDropdown({
@@ -24,6 +28,8 @@ export default function EntryDropdown({
   onChange,
   multiple = false,
   placeholder = '请选择',
+  disabled = false,
+  clearable = false,
 }: EntryDropdownProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -40,7 +46,8 @@ export default function EntryDropdown({
   // 多选时把 value 规整成数组;单选时按字符串处理
   const selected = multiple ? (Array.isArray(value) ? value : value ? [String(value)] : []) : []
   const isSel = (o: string) => (multiple ? selected.includes(o) : o === value)
-  const label = multiple ? (selected.length ? selected.join(' ') : placeholder) : String(value ?? '')
+  // 单选未选中时,按钮文字回退到 placeholder(如「SKILLS」)
+  const label = multiple ? (selected.length ? selected.join(' ') : placeholder) : String(value || placeholder)
 
   const handlePick = (o: string) => {
     if (multiple) {
@@ -48,7 +55,8 @@ export default function EntryDropdown({
       const next = selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o]
       onChange(next)
     } else {
-      onChange(o)
+      // 可清空:再次点击当前已选项则清空
+      onChange(clearable && o === value ? '' : o)
       setOpen(false)
     }
   }
@@ -58,12 +66,31 @@ export default function EntryDropdown({
       <button
         type="button"
         className={`${styles.btn}${open ? ' ' + styles.open : ''}`}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => !disabled && setOpen((o) => !o)}
+        disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         {icon}
         <span className={styles.val}>{label}</span>
+        {/* 可清空且已选中:显示叉号,点击清空(阻止冒泡,避免触发展开) */}
+        {clearable && !multiple && value && !disabled && (
+          <span
+            className={styles.clear}
+            role="button"
+            aria-label="清空"
+            title="清空"
+            onClick={(e) => {
+              e.stopPropagation()
+              onChange('')
+              setOpen(false)
+            }}
+          >
+            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+              <path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </span>
+        )}
         <svg className={styles.caret} viewBox="0 0 10 6" width="10" height="6" aria-hidden="true">
           <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>

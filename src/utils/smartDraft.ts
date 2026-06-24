@@ -23,6 +23,9 @@ export interface SmartDraft {
   fullVideoAssetId?: number
   /** 整片视频历史版本(每版带 asset_id,供水合刷新签名URL) */
   videoVersions?: { url: string; assetId: number }[]
+  /** 营销思路拆解(选中 SKILL 时多出的第 1 步):是否停留在该步 + 生成的建议正文 */
+  marketingOpen?: boolean
+  marketingText?: string
 }
 
 const killBlob = (u: any) => (typeof u === 'string' && u.startsWith('blob:') ? '' : u)
@@ -40,9 +43,7 @@ function sanitize(d: SmartDraft): SmartDraft {
       extraRefs: Array.isArray(s.extraRefs)
         ? s.extraRefs.map((r: any) => ({ ...r, url: killBlob(r?.url) })).filter((r: any) => r.url)
         : s.extraRefs,
-      selectedRefs: Array.isArray(s.selectedRefs)
-        ? s.selectedRefs.map(killBlob).filter(Boolean)
-        : s.selectedRefs,
+      selectedRefs: Array.isArray(s.selectedRefs) ? s.selectedRefs.map(killBlob).filter(Boolean) : s.selectedRefs,
     }))
   }
   if (next.subjectAssets && typeof next.subjectAssets === 'object') {
@@ -50,7 +51,8 @@ function sanitize(d: SmartDraft): SmartDraft {
     for (const [k, v] of Object.entries(next.subjectAssets)) {
       const versions = (v?.versions || []).map(killBlob).filter(Boolean)
       const sources: Record<string, any> = {}
-      if (v?.sources) for (const [u, src] of Object.entries(v.sources)) if (!String(u).startsWith('blob:')) sources[u] = src
+      if (v?.sources)
+        for (const [u, src] of Object.entries(v.sources)) if (!String(u).startsWith('blob:')) sources[u] = src
       sa[k] = { ...v, versions, sources }
     }
     next.subjectAssets = sa
@@ -109,8 +111,7 @@ export function clearSmartDraft() {
 //   - generatedVideoUrl / generatedVideoAssetId → 封面降级 + 版本预览取视频
 //   - videoHistoryList → 多片段
 // 另存原生 smart 块用于精确回填。data:/blob: 体积大且仅本地可用,后端快照里剥离,只留 http 图。
-const killHeavy = (u: any) =>
-  typeof u === 'string' && (u.startsWith('blob:') || u.startsWith('data:')) ? '' : u
+const killHeavy = (u: any) => (typeof u === 'string' && (u.startsWith('blob:') || u.startsWith('data:')) ? '' : u)
 
 function stripHeavy(d: SmartDraft): SmartDraft {
   const next = sanitize(d)
@@ -134,9 +135,7 @@ function stripHeavy(d: SmartDraft): SmartDraft {
       extraRefs: Array.isArray(s.extraRefs)
         ? s.extraRefs.map((r: any) => ({ ...r, url: killHeavy(r?.url) })).filter((r: any) => r.url)
         : s.extraRefs,
-      selectedRefs: Array.isArray(s.selectedRefs)
-        ? s.selectedRefs.map(killHeavy).filter(Boolean)
-        : s.selectedRefs,
+      selectedRefs: Array.isArray(s.selectedRefs) ? s.selectedRefs.map(killHeavy).filter(Boolean) : s.selectedRefs,
     }))
   }
   if (Array.isArray(next.videoVersions)) {

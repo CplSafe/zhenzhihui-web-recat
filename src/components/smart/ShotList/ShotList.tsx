@@ -45,7 +45,8 @@ function renumber(list: Shot[]): Shot[] {
   return list.map((s, i) => ({ ...s, no: `镜头${i + 1}` }))
 }
 function blankShot(): Shot {
-  return { id: newId(), no: '镜头', duration: '5s', desc: '', subjects: [] }
+  // isNew:插入的新分镜 → 右侧面板显示「生成分镜」(带新描述全量重生成),出图后清除
+  return { id: newId(), no: '镜头', duration: '5s', desc: '', subjects: [], isNew: true }
 }
 
 /** 单行分镜卡(可拖拽);抽成模块级组件以便每行各自调用 useSortable 钩子 */
@@ -107,39 +108,99 @@ function SortableCard({
       {...attributes}
       {...listeners}
     >
-      <span className={styles.num}>{i + 1}</span>
-
-      <div className={styles.thumb}>
-        {thumb ? (
-          <>
-            <img src={thumb} alt="" draggable={false} />
-            <AiBadge />
-          </>
-        ) : (
-          <span className={styles.thumbPh}>{generating[s.id] ? '生成中…' : '待生成'}</span>
-        )}
-        {locked && includeOf && onToggleInclude && (
-          <label
-            className={styles.pick}
-            title={included ? '取消勾选则不参与视频生成' : '勾选以参与视频生成'}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <input type="checkbox" checked={included} onChange={() => onToggleInclude(s.id)} />
-          </label>
-        )}
-        {generating[s.id] && (
-          <div className={styles.gen}>
-            <span className={styles.genSpin} aria-hidden="true" />
-          </div>
-        )}
-      </div>
-
+      {/* 左:分镜N + 时长药丸 */}
       <div className={styles.meta}>
         <span className={styles.no}>{s.no}</span>
         <span className={styles.dur}>{formatDur(s.duration)}</span>
         {badgeOf && <span className={styles.badge}>{badgeOf(s)}</span>}
       </div>
 
+      {/* 右:缩略图(hover/选中 显示 编辑菜单 + 删除) */}
+      <div className={styles.thumbWrap}>
+        <div className={styles.thumb}>
+          {thumb ? (
+            <>
+              <img src={thumb} alt="" draggable={false} />
+              <AiBadge />
+            </>
+          ) : (
+            <span className={styles.thumbPh}>{generating[s.id] ? '生成中…' : '待生成'}</span>
+          )}
+          {locked && includeOf && onToggleInclude && (
+            <label
+              className={styles.pick}
+              title={included ? '取消勾选则不参与视频生成' : '勾选以参与视频生成'}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <input type="checkbox" checked={included} onChange={() => onToggleInclude(s.id)} />
+            </label>
+          )}
+          {generating[s.id] && (
+            <div className={styles.gen}>
+              <span className={styles.genSpin} aria-hidden="true" />
+            </div>
+          )}
+        </div>
+
+        {/* 缩略图上的快捷动作:仅 hover 显示 编辑 + 删除 */}
+        {!locked && !generating[s.id] && (
+          <div className={styles.thumbActions} onPointerDown={(e) => e.stopPropagation()}>
+            {/* 编辑 = 当前激活的交互:选中该分镜,在右侧面板编辑 */}
+            <button
+              type="button"
+              className={styles.act}
+              onClick={(e) => {
+                e.stopPropagation()
+                onSelect(s.id)
+              }}
+              aria-label="编辑该分镜"
+              title="编辑该分镜"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+            {/* 删除该分镜 */}
+            <button
+              type="button"
+              className={`${styles.act} ${styles.actDanger}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                remove(s.id)
+              }}
+              aria-label="删除分镜"
+              title="删除分镜"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 6h18" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 「⋯」更多菜单(恢复原样:卡片右上角,hover/选中显示):向上/向下插入、复制、删除 */}
       {!locked && !generating[s.id] && (
         <div className={styles.moreWrap} ref={s.id === menuId ? menuWrapRef : undefined}>
           <button

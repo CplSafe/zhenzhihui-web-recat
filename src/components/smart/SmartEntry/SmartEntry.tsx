@@ -18,12 +18,14 @@ export interface EntryMeta {
   duration: string
   imageCount: number
   images: string[]
+  /** 选中的营销 SKILL(空=不使用,走现有逻辑;非空=多一步「营销思路拆解」) */
+  skill?: string
 }
 
 interface SmartEntryProps {
   onSubmit: (requirement: string, meta: EntryMeta) => void
   /**
-   * 回填初始值:从分镜脚本「上一步」返回输入框时,恢复上次输入(需求文本/图片/风格/比例/时长/模式)。
+   * 回填初始值:从分镜脚本「上一步」返回输入框时,恢复上次输入(需求文本/图片/风格/比例/时长/模式/skill)。
    * 仅在挂载时生效(useState 初值);路由切换会卸载本组件,数据随之清空。
    */
   initial?: {
@@ -33,29 +35,43 @@ interface SmartEntryProps {
     ratio?: string
     duration?: string
     images?: string[]
+    skill?: string
   }
 }
 
 const STYLE_OPTIONS = ['叫卖', '幽默', '商业', '治愈', '科技感', '剧情']
 const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
 const DURATION_OPTIONS = ['5s', '10s', '15s']
+const SKILL_OPTIONS = ['电商营销广告skills', '本地餐饮营销skills']
 const MAX_IMAGES = 9
 
 const PLACEHOLDER =
   '最多上传9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 
-// 引用素材标记:@图片1、@图片2 …(用于高亮渲染与匹配)
-const REF_RE = /@图片\d+/g
+// 选中 SKILL 后插入到输入框的提示语(高亮显示)。提交/展示前会被剥离,保持需求正文干净。
+const skillLine = (s: string) => `使用${s}帮我优化`
+const stripSkillLine = (t: string) =>
+  SKILL_OPTIONS.reduce((acc, opt) => acc.split(skillLine(opt)).join(''), t)
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t\n]+$/, '')
+// 把 skill 提示语拼到正文后面(正文非空时空一行)
+const composeWithSkill = (base: string, s: string) => (s ? (base ? `${base}\n\n${skillLine(s)}` : skillLine(s)) : base)
+
+// 高亮渲染匹配:@图片N(绿) + 使用×××skills帮我优化(skill 提示语,着色)
+const HL_RE = new RegExp(`@图片\\d+|${SKILL_OPTIONS.map((s) => skillLine(s)).join('|')}`, 'g')
 
 export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
   const { showToast } = useToast()
   const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? 'video')
-  const [text, setText] = useState(initial?.text ?? '')
+  // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
+  const [text, setText] = useState(() => composeWithSkill(initial?.text ?? '', initial?.skill ?? ''))
   // 风格支持多选(可叠加多种调性),提交时合并成一个风格描述串
   const [styleTags, setStyleTags] = useState<string[]>(initial?.styleTags ?? ['叫卖', '幽默', '商业'])
   const [ratio, setRatio] = useState(initial?.ratio ?? '16:9')
   const [duration, setDuration] = useState(initial?.duration ?? '10s')
   const [images, setImages] = useState<string[]>(initial?.images ?? [])
+  // 选中的营销 SKILL(单选,空=不使用)
+  const [skill, setSkill] = useState(initial?.skill ?? '')
   const [guideOpen, setGuideOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
@@ -77,25 +93,6 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
     idxRef.current = next.length - 1
     bumpHist((v) => v + 1)
   }
-  const undo = () => {
-    // 有未提交的手动编辑 → 先回到最近快照;否则回退一步
-    if (text !== histRef.current[idxRef.current]) {
-      setText(histRef.current[idxRef.current])
-    } else if (idxRef.current > 0) {
-      idxRef.current -= 1
-      setText(histRef.current[idxRef.current])
-    }
-    bumpHist((v) => v + 1)
-  }
-  const redo = () => {
-    if (text === histRef.current[idxRef.current] && idxRef.current < histRef.current.length - 1) {
-      idxRef.current += 1
-      setText(histRef.current[idxRef.current])
-      bumpHist((v) => v + 1)
-    }
-  }
-  const canUndo = idxRef.current > 0 || text !== histRef.current[idxRef.current]
-  const canRedo = text === histRef.current[idxRef.current] && idxRef.current < histRef.current.length - 1
 
   // AI 引导:打开交互式对话框(问人群/剧情/目标…),用户确认后再回填(不擅自改原文)。
   const applyGuide = (brief: string) => {
@@ -153,17 +150,18 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
     setAtOpen(false)
   }
 
-  // 高亮渲染:把 @图片N 渲染成绿色标记,其余为普通文本(textarea 文字透明,叠在此层上)
+  // 高亮渲染:@图片N 标绿 + 「使用×××skills帮我优化」着色,其余为普通文本(textarea 文字透明,叠在此层上)
   const renderHighlight = (t: string) => {
     if (!t) return null
     const out: ReactNode[] = []
     let last = 0
     let m: RegExpExecArray | null
-    REF_RE.lastIndex = 0
-    while ((m = REF_RE.exec(t))) {
+    HL_RE.lastIndex = 0
+    while ((m = HL_RE.exec(t))) {
       if (m.index > last) out.push(t.slice(last, m.index))
+      const isRef = m[0].startsWith('@图片')
       out.push(
-        <span className={styles.refTag} key={m.index}>
+        <span className={isRef ? styles.refTag : styles.skillTag} key={m.index}>
           {m[0]}
         </span>,
       )
@@ -173,10 +171,26 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
     return out
   }
 
-  const canSubmit = text.trim().length > 0 || images.length > 0
+  // 正文(剥离 skill 提示语后)用于提交/校验,保证需求干净
+  const cleanText = stripSkillLine(text).trim()
+  const canSubmit = cleanText.length > 0 || images.length > 0
   const submit = () => {
     if (!canSubmit) return
-    onSubmit(text.trim(), { mode, style: styleTags.join('、'), ratio, duration, imageCount: images.length, images })
+    onSubmit(cleanText, {
+      mode,
+      style: styleTags.join('、'),
+      ratio,
+      duration,
+      imageCount: images.length,
+      images,
+      skill: skill || undefined,
+    })
+  }
+
+  // 选中/切换 SKILL:把提示语插入输入框(替换旧的);未选则移除
+  const pickSkill = (s: string) => {
+    setText((cur) => composeWithSkill(stripSkillLine(cur), s))
+    setSkill(s)
   }
 
   return (
@@ -186,7 +200,6 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
         <div className={styles.bgEllipseLg} />
         <div className={styles.bgVeil} />
       </div>
-
       <h1 className={styles.title}>让每一帧创意，都成为转化利器！</h1>
 
       <div className={styles.panel}>
@@ -385,81 +398,36 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
                 )}
               </span>
 
-              {/* AI 引导:打开交互式引导对话框(询问人群/剧情/目标…) */}
-              <button
-                type="button"
-                className={styles.guide}
-                onClick={() => setGuideOpen(true)}
-                title="AI 引导:按信息流广告思路问几个问题,帮你把需求想得更专业"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="20"
-                  height="20"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.7"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
-                  <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
-                </svg>
-                AI 引导
-              </button>
-
-              {/* 撤销 / 重做(主要用于回退 AI 引导的改动) */}
-              <button
-                type="button"
-                className={styles.iconBtn}
-                onClick={undo}
-                disabled={!canUndo}
-                title="撤销"
-                aria-label="撤销"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="20"
-                  height="20"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M9 7H5V3" />
-                  <path d="M5 7a8 8 0 1 1-2 5.3" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className={styles.iconBtn}
-                onClick={redo}
-                disabled={!canRedo}
-                title="重做"
-                aria-label="重做"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="20"
-                  height="20"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M15 7h4V3" />
-                  <path d="M19 7a8 8 0 1 0 2 5.3" />
-                </svg>
-              </button>
+              {/* SKILLS:营销技能包单选(沿用 AI 引导的闪光图标)。选中后卡片内出现「使用×××skills帮我优化」高亮 */}
+              <EntryDropdown
+                clearable
+                placeholder="SKILLS"
+                value={skill}
+                options={SKILL_OPTIONS}
+                onChange={pickSkill}
+                icon={
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                    <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                  </svg>
+                }
+              />
             </div>
 
             <button
               type="button"
               className={styles.send}
               disabled={!canSubmit}
-              onClick={submit}
+              onClick={() => submit()}
               aria-label="生成"
               title="生成(Ctrl/⌘ + Enter)"
             >

@@ -41,6 +41,10 @@ interface ShotEditPanelProps {
   onPatch: (patch: Partial<Shot>) => void
   /** 出图:editPrompt 提示词 + refUrls 选中素材 + carryCurrent 是否带当前图 */
   onRegenerateImage: (shot: Shot, opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean }) => void
+  /** 「插入的新分镜」点「生成分镜」:带该镜新描述,结合其他分镜全量重生成(仅 isNew 分镜可见) */
+  onRegenerateAll?: (shotId: string | number, desc: string) => void
+  /** 是否正在(全量/单镜)生成,禁用「生成分镜」按钮 */
+  busy?: boolean
   /** 据画面描述+大纲+选中素材(看图)优化生成提示词,返回 {prompt, debug} */
   onOptimizePrompt?: (
     shot: Shot,
@@ -64,6 +68,8 @@ export default function ShotEditPanel({
   onUploadRef,
   onPatch,
   onRegenerateImage,
+  onRegenerateAll,
+  busy,
   onOptimizePrompt,
   onPolishText,
 }: ShotEditPanelProps) {
@@ -86,11 +92,6 @@ export default function ShotEditPanel({
     new Set(shot.selectedRefs && shot.selectedRefs.length ? shot.selectedRefs : elUrls),
   )
   const [extraRefs, setExtraRefs] = useState<string[]>((shot.extraRefs || []).map((r) => r.url))
-  // 额外参考图的 asset_id(持久化用):url → assetId
-  const [extraRefIds, setExtraRefIds] = useState<Record<string, number>>(
-    Object.fromEntries((shot.extraRefs || []).map((r) => [r.url, r.assetId || 0])),
-  )
-  const [carry, setCarry] = useState(!!current)
   const [bigImg, setBigImg] = useState('') // 放大查看分镜图(视频生成页)
   // 仅「切换分镜」时从该镜已存字段重置本地态(不能依赖 imagePrompt,否则点"优化提示词"
   // 改了 imagePrompt → 重置 → 刚选的素材/刚加的图被清掉)
@@ -99,8 +100,6 @@ export default function ShotEditPanel({
     setImgPrompt(shot.imagePrompt || shot.desc || '')
     setSelected(new Set(shot.selectedRefs && shot.selectedRefs.length ? shot.selectedRefs : els))
     setExtraRefs((shot.extraRefs || []).map((r) => r.url))
-    setExtraRefIds(Object.fromEntries((shot.extraRefs || []).map((r) => [r.url, r.assetId || 0])))
-    setCarry(!!shot.image)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shot.id])
   // 提示词外部变化(生成完成/优化)单独同步到输入框,不影响素材选择
@@ -191,16 +190,6 @@ export default function ShotEditPanel({
         )}
       </div>
     )
-  }
-
-  const doGenerate = () => {
-    const refUrls = [...elUrls.filter((u) => selected.has(u)), ...extraRefs.filter((u) => selected.has(u))]
-    onPatch({
-      imagePrompt: imgPrompt,
-      selectedRefs: [...selected],
-      extraRefs: extraRefs.map((u) => ({ url: u, assetId: extraRefIds[u] || 0 })),
-    })
-    onRegenerateImage(shot, { editPrompt: imgPrompt.trim() || undefined, refUrls, carryCurrent: carry })
   }
 
   // 切到某历史版本:还原其当时用到的提示词与选中素材(面板缩略图与弹窗共用)
@@ -385,9 +374,21 @@ export default function ShotEditPanel({
                 {optimizing ? '润色中…' : 'AI一键润色'}
               </button>
             )}
-            <button type="button" className={styles.seditGen} disabled={!!regenerating} onClick={doGenerate}>
-              {regenerating ? '生成中…' : '生成分镜'}
-            </button>
+            {/* 「生成分镜」仅插入的新分镜显示:带这条新描述,结合其他分镜全量重生成 */}
+            {shot.isNew && onRegenerateAll && (
+              <button
+                type="button"
+                className={styles.seditGen}
+                disabled={!!busy || !!regenerating}
+                onClick={() => {
+                  if (imgPrompt !== (shot.imagePrompt || '')) onPatch({ imagePrompt: imgPrompt })
+                  onRegenerateAll(shot.id, imgPrompt)
+                }}
+                title="根据这条新分镜描述,结合其他分镜重新生成全部分镜"
+              >
+                {busy || regenerating ? '生成中…' : '生成分镜'}
+              </button>
+            )}
           </span>
         </div>
       </div>

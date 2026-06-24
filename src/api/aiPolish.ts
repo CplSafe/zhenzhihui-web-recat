@@ -197,6 +197,75 @@ export async function guideRequirement(text: string, signal?: AbortSignal): Prom
   return out
 }
 
+/**
+ * 营销 SKILLS:可选的营销技能包。key 为下拉选项文案,system 为该技能的拆解侧重。
+ * 选择某 skill 后,把「用户想法 + 素材」交给对应技能,自动拆分生成「营销思路拆解」建议。
+ */
+export const SKILL_OPTIONS = ['电商营销广告skills', '本地餐饮营销skills'] as const
+export type SkillOption = (typeof SKILL_OPTIONS)[number]
+
+const SKILL_SYSTEM: Record<SkillOption, string> = {
+  电商营销广告skills:
+    '你是资深电商营销操盘手,擅长信息流/短视频电商广告。请基于「人货场 + 前3秒钩子→痛点→卖点→信任→促单CTA」的电商带货逻辑,' +
+    '把用户的想法与素材拆解成可执行的营销思路。',
+  本地餐饮营销skills:
+    '你是资深本地生活/餐饮营销策划,擅长到店引流与门店短视频。请基于「门店人群 + 到店动机(味/价/景/聚)→种草→信任(真实出品)→到店核销CTA」的本地餐饮逻辑,' +
+    '把用户的想法与素材拆解成可执行的营销思路。',
+}
+
+/**
+ * 用所选 SKILL 把「用户想法 + 素材」自动拆解成「营销思路拆解」建议。
+ * 产出与 AI 引导的「创作需求」同类:结构清晰、可直接用于后续生成分镜脚本。
+ * images 传 base64 data URL(有图走视觉模型 VL)。
+ */
+export async function skillBreakdown(
+  input: { skill: string; requirement: string; images?: string[] },
+  signal?: AbortSignal,
+): Promise<string> {
+  const req = (input.requirement || '').trim()
+  const images = input.images || []
+  if (!req && !images.length) throw new Error('请先输入想法或上传素材')
+  const skillSystem = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['电商营销广告skills']
+  const system =
+    skillSystem +
+    '请输出一份结构清晰的「营销思路拆解」,用要点分条呈现,至少覆盖:' +
+    '【核心洞察】(目标人群+真实痛点/动机的洞察)、【创意概念】(一句话主创意/记忆点)、' +
+    '【卖点&信任】(核心卖点与信任背书)、【行动号召CTA】、【表现形式/风格调性】。' +
+    '紧扣用户的产品与素材,不要脱离产品臆造;不要直接写分镜脚本/台词/镜头画面,不要额外解释说明。'
+
+  const userContent: any[] = [
+    {
+      type: 'text',
+      text:
+        `用户的想法:${req || '(未填写,请基于素材给出合理方向)'}\n` +
+        (images.length ? '用户还上传了素材图片(见下),请务必结合图片中实际出现的物体/场景/人物来拆解。' : ''),
+    },
+  ]
+  for (const u of images) userContent.push({ type: 'image_url', image_url: { url: u } })
+
+  const useVl = images.length > 0
+  const res = await fetch(useVl ? VL_ENDPOINT : ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify({
+      model: useVl ? VL_MODEL_NAME : MODEL_NAME,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.6,
+      max_tokens: 800,
+      chat_template_kwargs: { enable_thinking: false },
+    }),
+  })
+  if (!res.ok) throw new Error(`营销拆解服务异常(${res.status})`)
+  const data = (await res.json()) as ChatResponse
+  const out = data?.choices?.[0]?.message?.content?.trim() || ''
+  if (!out) throw new Error('生成为空,请重试')
+  return out
+}
+
 export interface GuideSuggestions {
   product?: string
   sellpoint?: string

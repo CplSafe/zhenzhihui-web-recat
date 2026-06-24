@@ -5,8 +5,6 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: #fff;
-  border: 1px solid #eef0f4;
   border-radius: 14px;
   overflow: hidden;
 }
@@ -48,14 +46,14 @@
   padding: 8px 0;
 }
 
-/* 每行:序号圆标 + 100×100 缩略图 + 分镜N/时长 */
+/* 每行:左 分镜N/时长,右 缩略图(无序号圆标,Figma 476-5611) */
 .card {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 124px;
-  padding: 12px 20px;
+  gap: 14px;
+  min-height: 140px;
+  padding: 16px 20px;
   cursor: pointer;
   border-left: 2.4px solid transparent;
   transition:
@@ -90,29 +88,18 @@
   }
 }
 
-.num {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: #f0f0f4;
-  color: #999;
-  font-size: 11px;
-  font-weight: 500;
-}
-.card.active .num {
-  background: linear-gradient(135deg, #60e0c4 0%, #3dcdb0 100%);
-  color: #fff;
+/* 右侧缩略图容器(撑满文字右侧剩余宽度);不裁切,便于动作菜单溢出显示 */
+.thumbWrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 108px;
 }
 
 .thumb {
   position: relative;
-  flex: 0 0 auto;
-  width: 100px;
-  height: 100px;
+  width: 100%;
+  height: 100%;
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
@@ -174,15 +161,14 @@
   }
 }
 
-/* 分镜N + 时长药丸 */
+/* 左:分镜N + 时长药丸(贴左、纵向堆叠) */
 .meta {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: 48px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 16px;
-  padding-left: 4px;
+  gap: 14px;
 }
 .no {
   font-size: 18px;
@@ -213,13 +199,51 @@
   padding: 1px 6px;
 }
 
-/* 「⋯」更多菜单:hover 显示 */
+/* 缩略图上的快捷动作:仅 hover 显示「编辑(铅笔)+ 删除(垃圾桶)」浮层 */
+.thumbActions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.card:hover .thumbActions {
+  opacity: 1;
+}
+.act {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: rgba(30, 30, 30, 0.62);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s;
+
+  &:hover {
+    background: rgba(15, 15, 15, 0.86);
+  }
+}
+.actDanger:hover {
+  background: #e54d42;
+}
+
+/* 「⋯」更多菜单:卡片右上角,hover/选中显示(恢复原样) */
 .moreWrap {
   position: absolute;
   top: 10px;
   right: 12px;
   opacity: 0;
   transition: opacity 0.15s;
+  z-index: 8;
 }
 .card:hover .moreWrap,
 .card.active .moreWrap {

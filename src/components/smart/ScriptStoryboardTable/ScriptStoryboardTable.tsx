@@ -45,6 +45,9 @@ export interface Shot {
   videoAssetId?: number
   // 视频生成页:是否勾选「参与视频生成」(undefined/true=参与,false=不参与)
   includeInVideo?: boolean
+  // 镜头编排阶段「插入的新分镜」标记:仅这类分镜显示「生成分镜」按钮(带新描述全量重生成);
+  // 一旦该镜生成出图即清除。
+  isNew?: boolean
 }
 
 interface ScriptStoryboardTableProps {

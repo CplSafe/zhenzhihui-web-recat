@@ -24,6 +24,7 @@ import {
   refineElementPromptWithImage,
   refineShotPrompt,
   polishText,
+  skillBreakdown,
 } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
@@ -65,6 +66,8 @@ const STEPS: StepItem[] = [
 ]
 // 各步「当前进行中」时的子状态文案(进度条展示)
 const ACTIVE_STATUS = ['脚本生成中', '素材上传中', '镜头编排中', '视频生成中']
+// 选中 SKILL 时,在最前面多出的「营销思路拆解」步
+const MARKETING_STEP: StepItem = { key: 'marketing', label: '营销思路拆解' }
 
 // 从 createCreativeProject 返回里取项目 id(字段名后端不统一,做兜底)
 function resolveProjectId(payload: any): number {
@@ -160,6 +163,13 @@ export default function SmartCreateView() {
   const [summarizing, setSummarizing] = useState(false)
   const [showFullReq, setShowFullReq] = useState(false)
   const nameAbortRef = useRef<AbortController | null>(null)
+
+  // ── 营销思路拆解(选中 SKILL 时,在分镜脚本前多出的第 1 步)──
+  // marketingOpen=停留在该步;marketingText=skill 拆解出的营销建议(只读展示);确认后才进入分镜脚本流程。
+  const [marketingOpen, setMarketingOpen] = useState(false)
+  const [marketingText, setMarketingText] = useState('')
+  const [marketingLoading, setMarketingLoading] = useState(false)
+  const [marketingError, setMarketingError] = useState('')
 
   // 分镜脚本(后端 /ai/responses 生成)
   const [shots, setShots] = useState<Shot[]>([])
@@ -548,6 +558,8 @@ export default function SmartCreateView() {
               image: url,
               imageAssetId: assetId,
               imagePrompt: prompt,
+              // 出图即不再是「插入的新分镜」(清除「生成分镜」按钮)
+              isNew: false,
               // 每版记录自己用到的提示词与素材 url,切换历史版本可还原
               imageVersions: [...(x.imageVersions || []), { url, assetId, prompt, refs: elUrls }],
               // 手动出图:把这次选中的素材固化为该镜的选中态(随草稿持久)
@@ -577,8 +589,8 @@ export default function SmartCreateView() {
     return url
   }
 
-  // 串行生成全部分镜图
-  const generateShotImages = async () => {
+  // 串行生成全部分镜图。list 缺省取当前 shots;插入新分镜后传入「已写入新描述」的列表,避免读到旧 state
+  const generateShotImages = async (list: Shot[] = shots) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成分镜图', 'error')
@@ -591,7 +603,7 @@ export default function SmartCreateView() {
     const plans = await resolvePlanCandidates()
     let prevUrl = ''
     try {
-      for (const sh of shots) {
+      for (const sh of list) {
         setShotGen((m) => ({ ...m, [sh.id]: true }))
         try {
           prevUrl = await genShotFrame(ws, sh, prevUrl, cache, theme, plans)
@@ -604,6 +616,17 @@ export default function SmartCreateView() {
     } finally {
       setShotGenRunning(false)
     }
+  }
+
+  // 「插入的新分镜」点「生成分镜」:把新描述写入该镜(desc + imagePrompt),再结合其他分镜全量重生成
+  const regenerateAllWithNewShot = async (shotId: string | number, desc: string) => {
+    if (shotGenRunning) return
+    const next = desc.trim()
+    const list = shots.map((s) =>
+      s.id === shotId ? { ...s, desc: next || s.desc, imagePrompt: next || s.imagePrompt, isNew: false } : s,
+    )
+    setShots(list)
+    await generateShotImages(list)
   }
 
   // 单镜分镜图重生成(面板统一流程):提示词 + 选中的素材(refUrls)+ 是否携带当前分镜图
@@ -973,6 +996,8 @@ export default function SmartCreateView() {
     fullVideoUrl: fullVideo.url,
     fullVideoAssetId: fullVideo.assetId,
     videoVersions,
+    marketingOpen,
+    marketingText,
   })
   // 把草稿回填到页面状态(本地恢复 / 后端恢复共用)
   const applyDraft = (d: SmartDraft) => {
@@ -989,6 +1014,8 @@ export default function SmartCreateView() {
     setFields(d.fields || {})
     setFullVideo({ url: d.fullVideoUrl || '', assetId: d.fullVideoAssetId || 0 })
     setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
+    setMarketingOpen(!!d.marketingOpen)
+    setMarketingText(d.marketingText || '')
     autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
     autoVidRef.current = true
   }
@@ -1117,6 +1144,8 @@ export default function SmartCreateView() {
     projectId,
     fullVideo,
     videoVersions,
+    marketingOpen,
+    marketingText,
   ])
 
   const goStep = (i: number) => {
@@ -1194,6 +1223,40 @@ export default function SmartCreateView() {
     return () => window.clearTimeout(timer)
   }, [projectId, projectName, nameTouched, workspaceId])
 
+  // 选中 SKILL:把「想法 + 素材」交给技能包,自动拆解出营销思路建议(只读展示在营销思路拆解步)。
+  // 此时 meta.images 多为入口刚转好的 dataURL(尚未落库),正好可直接喂多模态视觉模型。
+  const runSkillBreakdown = async (req: string, meta: EntryMeta) => {
+    if (!meta.skill) return
+    setMarketingLoading(true)
+    setMarketingError('')
+    setMarketingText('')
+    try {
+      const out = await skillBreakdown({ skill: meta.skill, requirement: req, images: (meta.images || []).slice(0, 6) })
+      setMarketingText(out)
+    } catch (e: any) {
+      setMarketingError(e?.message || '营销思路拆解失败,请重试')
+    } finally {
+      setMarketingLoading(false)
+    }
+  }
+
+  // 营销思路拆解「确认」→ 用拆解结果生成分镜脚本,进入分镜脚本步。
+  const confirmMarketing = () => {
+    if (marketingLoading) return
+    setMarketingOpen(false)
+    setStep(0)
+    setMaxReached(0)
+    autoGenRef.current = false
+    // 拆解结果作为脚本生成输入(更完整);页面「我的描述」仍展示原始需求。
+    if (entryMeta) void generateScript(marketingText || requirement, entryMeta)
+  }
+
+  // 营销思路拆解「上一步 / 取消」→ 回到最初输入框(保留上次输入,含已选 SKILL)。
+  const cancelMarketing = () => {
+    setMarketingOpen(false)
+    setStarted(false)
+  }
+
   const handleStart = (req: string, meta: EntryMeta) => {
     setRequirement(req)
     setEntryMeta(meta)
@@ -1203,6 +1266,10 @@ export default function SmartCreateView() {
     setShowFullReq(false)
     setShots([])
     setScriptError('')
+    // 选中 SKILL → 先进「营销思路拆解」步(不立即生成脚本);未选 → 走现有逻辑直接生成脚本。
+    setMarketingOpen(!!meta.skill)
+    setMarketingText('')
+    setMarketingError('')
     if (req) void autoNameProject(req)
     // 入口上传的素材图(dataURL)落库成后端 asset,否则刷新会丢(stripHeavy 剥 dataURL)
     const wsId = Number(workspaceId || 0)
@@ -1239,7 +1306,9 @@ export default function SmartCreateView() {
         })
         .catch(() => {})
     }
-    void generateScript(req, meta)
+    // 选中 SKILL:先做营销思路拆解,确认后再生成脚本;未选:立即生成脚本。
+    if (meta.skill) void runSkillBreakdown(req, meta)
+    else void generateScript(req, meta)
     // 长需求 → AI 摘要成 ≤100 字展示;短需求直接用原文
     if (req.trim().length > 90) {
       setSummarizing(true)
@@ -1305,13 +1374,28 @@ export default function SmartCreateView() {
     }
   }
 
+  // 保存视频:本步「仅按钮 + 提示」。内容本就随草稿自动保存(本地+后端),这里再 best-effort 立即落库一次。
+  const saveVideoNow = () => {
+    if (!fullVideo.url) {
+      showToast('请先生成视频', 'info')
+      return
+    }
+    if (projectIdRef.current) void putSmartDraftToBackend()
+    showToast('视频已保存', 'success')
+  }
+
   const bottomButtons: BottomButton[] = (() => {
     // 任意分镜图生成中(批量 shotGenRunning 或单张 shotGen[id])→ 禁用镜头编排步的生成类按钮
     const anyShotGenerating = shotGenRunning || Object.values(shotGen).some(Boolean)
     switch (step) {
       case 0: // 分镜脚本:重新生成在表头(见 ScriptStoryboardTable),底栏只有 上一步 + 确认脚本
         return [
-          { label: '上一步', variant: 'ghost', action: () => setStarted(false) },
+          // 用了 SKILL → 上一步回到「营销思路拆解」;否则回到最初输入框
+          {
+            label: '上一步',
+            variant: 'ghost',
+            action: () => (entryMeta?.skill ? setMarketingOpen(true) : setStarted(false)),
+          },
           {
             // 确认脚本 → 进入「准备素材」,此时 AI 生成的主体素材回填到对应分镜
             label: '确认脚本',
@@ -1359,6 +1443,74 @@ export default function SmartCreateView() {
     }
   })()
 
+  // 营销思路拆解步(选中 SKILL 时的第 1 步):我的描述(只读,与分镜脚本步一致)+ skill 拆解建议(可编辑)+ 确认/上一步。
+  const renderMarketingBody = () => {
+    const promptText = reqSummary || requirement || '（未填写需求）'
+    return (
+      <div className="smart__script smart__mkt-step">
+        {/* 我的描述:与分镜脚本/准备素材步一致(标签 + 需求摘要),只读展示 */}
+        <div className="smart__prompt-label">我的描述：</div>
+        <div className="smart__prompt smart__md">
+          {summarizing ? '生成摘要中…' : <Streamdown>{promptText}</Streamdown>}
+        </div>
+        {requirement && requirement !== reqSummary && (
+          <button type="button" className="smart__req-toggle" onClick={() => setShowFullReq((v) => !v)}>
+            {showFullReq ? '收起完整需求' : '展开完整需求'}
+          </button>
+        )}
+        {showFullReq && (
+          <div className="smart__req-full smart__md">
+            <Streamdown>{requirement}</Streamdown>
+          </div>
+        )}
+
+        {/* skill 拆解出的营销建议:可编辑;正文区填满剩余空间并内部滚动,底部按钮常驻可见 */}
+        <div className="smart__marketing">
+          <div className="smart__marketing-title">
+            <span aria-hidden="true">💡</span>
+            {entryMeta?.skill}建议：
+          </div>
+          <div className="smart__marketing-content">
+            {marketingLoading ? (
+              <div className="smart__placeholder smart__placeholder--sm">正在拆解营销思路…</div>
+            ) : marketingError ? (
+              <div className="smart__script-error">
+                {marketingError}
+                <button
+                  type="button"
+                  className="smart__btn smart__btn--primary"
+                  onClick={() => entryMeta && runSkillBreakdown(requirement, entryMeta)}
+                >
+                  重新生成
+                </button>
+              </div>
+            ) : (
+              <textarea
+                className="smart__marketing-edit"
+                value={marketingText}
+                onChange={(e) => setMarketingText(e.target.value)}
+                placeholder="营销思路拆解建议…"
+              />
+            )}
+          </div>
+          <div className="smart__marketing-foot">
+            <button type="button" className="smart__btn smart__btn--ghost" onClick={cancelMarketing}>
+              上一步
+            </button>
+            <button
+              type="button"
+              className="smart__btn smart__btn--primary"
+              onClick={confirmMarketing}
+              disabled={marketingLoading || !marketingText.trim()}
+            >
+              确认
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // 各步骤内容。0/1 暂为占位(等 Figma/后端);2/3 已接入「修改框 + AI 润色(本地模型)」。
   const renderStepBody = () => {
     // 分镜脚本(step0)/ 准备素材(step1):共用「需求摘要 + 用户上传素材 + 分镜表」。
@@ -1368,7 +1520,8 @@ export default function SmartCreateView() {
       const promptText = reqSummary || requirement || '（未填写需求）'
       return (
         <div className="smart__script">
-          {/* 需求摘要(markdown 渲染) */}
+          {/* 我的描述:标签(Figma 299-2310)+ 需求摘要(markdown 渲染) */}
+          <div className="smart__prompt-label">我的描述：</div>
           <div className="smart__prompt smart__md">
             {summarizing ? '生成摘要中…' : <Streamdown>{promptText}</Streamdown>}
           </div>
@@ -1459,6 +1612,8 @@ export default function SmartCreateView() {
           projectImages={projectImages}
           onUploadRef={uploadRef}
           onRegenerateImage={regenerateShotImage}
+          onRegenerateAll={regenerateAllWithNewShot}
+          onRegenerateAllRunning={shotGenRunning}
           onOptimizePrompt={(sh, materials) =>
             refineShotPrompt({
               desc: sh.desc,
@@ -1472,22 +1627,18 @@ export default function SmartCreateView() {
         />
       )
     }
-    // step === 3 生成视频:左 分镜列表 + 中 整片视频 + 右 素材修改;总按钮在中间
+    // step === 3 生成视频(第四步):整片视频 + 时间轴选片段 + 片段/整段修改框 + 总按钮(本步不再改分镜)
     return (
       <VideoStage
         shots={shots}
-        generating={shotGen}
         videoUrl={fullVideo.url}
         videoGenerating={vidGenRunning}
         videoStatusText={blurPhase || undefined}
         faceBlurDebug={blurDebug}
         videoVersions={videoVersions}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
-        onShotsChange={setShots}
-        onOpenElement={openSubject}
-        projectImages={projectImages}
-        onRegenerateImage={regenerateShotImage}
         onRegenerateVideo={runFullVideo}
+        onSaveVideo={saveVideoNow}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
         debug={{
@@ -1512,6 +1663,9 @@ export default function SmartCreateView() {
     )
   }
 
+  // 是否使用了营销 SKILL(决定流程是否多出「营销思路拆解」步、进度条是否整体后移)
+  const usedSkill = !!entryMeta?.skill
+
   return (
     <div className="smart">
       <AppSidebar
@@ -1534,25 +1688,42 @@ export default function SmartCreateView() {
               ratio: entryMeta?.ratio,
               duration: entryMeta?.duration,
               images: entryMeta?.images,
+              skill: entryMeta?.skill,
             }}
           />
         ) : (
           <>
-            {/* 进度条 */}
+            {/* 进度条:用了 SKILL 时在最前面加一步「营销思路拆解」,索引整体后移 1 */}
             <div className="smart__progress">
               <StepProgress
-                steps={STEPS}
-                current={step}
+                steps={usedSkill ? [MARKETING_STEP, ...STEPS] : STEPS}
+                current={usedSkill ? (marketingOpen ? 0 : step + 1) : step}
                 statuses={(() => {
-                  // 各步是否已完成(基于产物/进度):脚本有分镜 / 已进入镜头编排(素材就绪) / 有任一分镜图 / 有整片视频
+                  // 4 个流程步的子状态:脚本有分镜 / 已进入镜头编排(素材就绪) / 有任一分镜图 / 有整片视频
                   const done = [shots.length > 0, maxReached >= 2, shots.some((s) => s.image), !!fullVideo.url]
                   const running = [scriptLoading, false, shotGenRunning, vidGenRunning]
-                  return STEPS.map((_, i) =>
-                    running[i] ? ACTIVE_STATUS[i] : done[i] ? '已完成' : i === step ? ACTIVE_STATUS[i] : '待生成',
+                  const flow = STEPS.map((_, i) =>
+                    running[i]
+                      ? ACTIVE_STATUS[i]
+                      : done[i]
+                        ? '已完成'
+                        : !marketingOpen && i === step
+                          ? ACTIVE_STATUS[i]
+                          : '待生成',
                   )
+                  if (!usedSkill) return flow
+                  const mkt = marketingLoading ? '思路拆解中' : marketingText ? '已完成' : '待生成'
+                  return [mkt, ...flow]
                 })()}
-                maxReached={maxReached}
-                onStepClick={goStep}
+                maxReached={usedSkill ? (marketingOpen ? 0 : maxReached + 1) : maxReached}
+                onStepClick={(i) => {
+                  if (!usedSkill) return goStep(i)
+                  if (i === 0) setMarketingOpen(true)
+                  else {
+                    setMarketingOpen(false)
+                    goStep(i - 1)
+                  }
+                }}
               />
             </div>
 
@@ -1611,31 +1782,46 @@ export default function SmartCreateView() {
               )}
             </div>
 
-            {/* 步骤内容 */}
-            <div className="smart__body">{renderStepBody()}</div>
+            {/* 步骤内容:营销思路拆解步 / 现有流程步 */}
+            <div className="smart__body">{marketingOpen ? renderMarketingBody() : renderStepBody()}</div>
 
-            {/* 底部总按钮(视频生成步的总按钮在中间 VideoStage 内) */}
-            {bottomButtons.length > 0 && (
-              <footer className="smart__footer">
+            {/* 底部总按钮(营销思路拆解步的按钮在其卡片下方;视频生成步的总按钮在中间 VideoStage 内) */}
+            {!marketingOpen && bottomButtons.length > 0 && (
+              <footer className={`smart__footer${step === 2 ? ' smart__footer--center' : ''}`}>
                 <div className="smart__footer-inner">
-                  {(['left', 'right'] as const).map((side) => (
-                    <div className="smart__footer-group" key={side}>
-                      {bottomButtons
-                        .filter((b) => (b.align ?? 'right') === side)
-                        .map((b) => (
-                          <button
-                            key={b.label}
-                            type="button"
-                            className={`smart__btn smart__btn--${b.variant}`}
-                            onClick={b.action}
-                            disabled={b.disabled}
-                          >
-                            {b.icon}
-                            {b.label}
-                          </button>
-                        ))}
-                    </div>
-                  ))}
+                  {step === 2
+                    ? // 镜头编排:整组居中
+                      bottomButtons.map((b) => (
+                        <button
+                          key={b.label}
+                          type="button"
+                          className={`smart__btn smart__btn--${b.variant}`}
+                          onClick={b.action}
+                          disabled={b.disabled}
+                        >
+                          {b.icon}
+                          {b.label}
+                        </button>
+                      ))
+                    : // 分镜脚本 / 准备素材:沿用原左右分组(右对齐)
+                      (['left', 'right'] as const).map((side) => (
+                        <div className="smart__footer-group" key={side}>
+                          {bottomButtons
+                            .filter((b) => (b.align ?? 'right') === side)
+                            .map((b) => (
+                              <button
+                                key={b.label}
+                                type="button"
+                                className={`smart__btn smart__btn--${b.variant}`}
+                                onClick={b.action}
+                                disabled={b.disabled}
+                              >
+                                {b.icon}
+                                {b.label}
+                              </button>
+                            ))}
+                        </div>
+                      ))}
                 </div>
               </footer>
             )}
