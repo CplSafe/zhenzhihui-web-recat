@@ -1,7 +1,7 @@
 /**
  * 智能成片「入口/需求输入」页(2.1,按 Figma 79:3966 还原)。
  * 大标题 + 制作视频/制作图片 Tab + 上传&提示词卡片 +
- * 风格(叫卖/幽默/商业)/比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
+ * 比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
  * 提交 → 调 onSubmit(需求文本, 选项),由父级进入分镜脚本流程。
  */
 import { useRef, useState, type ReactNode } from 'react'
@@ -31,7 +31,6 @@ interface SmartEntryProps {
   initial?: {
     mode?: 'video' | 'image'
     text?: string
-    styleTags?: string[]
     ratio?: string
     duration?: string
     images?: string[]
@@ -39,7 +38,6 @@ interface SmartEntryProps {
   }
 }
 
-const STYLE_OPTIONS = ['叫卖', '幽默', '商业', '治愈', '科技感', '剧情']
 const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
 const DURATION_OPTIONS = ['5s', '10s', '15s']
 const SKILL_OPTIONS = ['电商营销广告skills', '本地餐饮营销skills']
@@ -63,10 +61,15 @@ const HL_RE = new RegExp(`@图片\\d+|${SKILL_OPTIONS.map((s) => skillLine(s)).j
 export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
   const { showToast } = useToast()
   const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? 'video')
+  // Tab 切换计数:每次切换 +1,用作背景「光晕涟漪」层的 key,使其重挂载并重播一次扩散动画
+  const [switchCount, setSwitchCount] = useState(0)
+  const switchMode = (m: 'video' | 'image') => {
+    if (m === mode) return
+    setMode(m)
+    setSwitchCount((c) => c + 1)
+  }
   // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
   const [text, setText] = useState(() => composeWithSkill(initial?.text ?? '', initial?.skill ?? ''))
-  // 风格支持多选(可叠加多种调性),提交时合并成一个风格描述串
-  const [styleTags, setStyleTags] = useState<string[]>(initial?.styleTags ?? ['叫卖', '幽默', '商业'])
   const [ratio, setRatio] = useState(initial?.ratio ?? '16:9')
   const [duration, setDuration] = useState(initial?.duration ?? '10s')
   const [images, setImages] = useState<string[]>(initial?.images ?? [])
@@ -178,7 +181,7 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
     if (!canSubmit) return
     onSubmit(cleanText, {
       mode,
-      style: styleTags.join('、'),
+      style: '',
       ratio,
       duration,
       imageCount: images.length,
@@ -194,11 +197,13 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
   }
 
   return (
-    <div className={styles.screate}>
-      {/* 背景三层(Figma):大椭圆 + 小椭圆 + 白雾蒙层 */}
+    <div className={styles.screate} data-mode={mode}>
+      {/* 背景三层(Figma):大椭圆 + 小椭圆 + 白雾蒙层。data-mode 切换时整层平滑变色相 */}
       <div className={styles.bg} aria-hidden="true">
         <div className={styles.bgEllipseLg} />
         <div className={styles.bgVeil} />
+        {/* 切换反馈:从中心扩散一圈光晕涟漪。key 随切换变化触发重挂载 → 重播动画(首次挂载不放) */}
+        {switchCount > 0 && <div className={styles.bgRipple} key={switchCount} />}
       </div>
       <h1 className={styles.title}>让每一帧创意，都成为转化利器！</h1>
 
@@ -208,14 +213,14 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
           <button
             type="button"
             className={`${styles.tab}${mode === 'video' ? ' ' + styles.active : ''}`}
-            onClick={() => setMode('video')}
+            onClick={() => switchMode('video')}
           >
             制作视频
           </button>
           <button
             type="button"
             className={`${styles.tab}${mode === 'image' ? ' ' + styles.active : ''}`}
-            onClick={() => setMode('image')}
+            onClick={() => switchMode('image')}
           >
             制作图片
           </button>
@@ -330,21 +335,6 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
 
           <div className={styles.toolbar}>
             <div className={styles.tools}>
-              <EntryDropdown
-                multiple
-                placeholder="风格"
-                value={styleTags}
-                options={STYLE_OPTIONS}
-                onChange={setStyleTags}
-                icon={
-                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path
-                      d="M9.75 2C12.0706 2 14.2962 2.92187 15.9372 4.56282C17.5781 6.20376 18.5 8.42936 18.5 10.75C18.5 13.1838 17.2038 13.38 15.65 13.295L14.4325 13.2075C13.3888 13.1425 12.3488 13.1675 11.595 13.8113C9.33625 15.1213 15.4825 19.5 9.75 19.5C7.42936 19.5 5.20376 18.5781 3.56282 16.9372C1.92187 15.2962 1 13.0706 1 10.75C1 8.42936 1.92187 6.20376 3.56282 4.56282C5.20376 2.92187 7.42936 2 9.75 2ZM9.75 3.25C8.76509 3.25 7.78982 3.44399 6.87987 3.8209C5.96993 4.19781 5.14314 4.75026 4.4467 5.4467C3.75026 6.14314 3.19781 6.96993 2.8209 7.87987C2.44399 8.78982 2.25 9.76509 2.25 10.75C2.25 11.7349 2.44399 12.7102 2.8209 13.6201C3.19781 14.5301 3.75026 15.3569 4.4467 16.0533C5.14314 16.7497 5.96993 17.3022 6.87987 17.6791C7.78982 18.056 8.76509 18.25 9.75 18.25C10.245 18.25 10.62 18.2125 10.8725 18.1538L11.0075 18.1162L10.9363 17.9175C10.8434 17.6818 10.7429 17.4492 10.635 17.22L10.535 17.0087C9.53375 14.9012 9.335 13.7662 10.7975 12.8337L10.8787 12.7825L10.895 12.77L10.965 12.7137L10.98 12.7013C11.845 12.0525 12.8225 11.8837 14.2263 11.945L14.5588 11.9637L15.5113 12.0325C16.3238 12.0837 16.675 12.0612 16.9088 11.9563C17.1187 11.8625 17.25 11.5988 17.25 10.75C17.25 8.76088 16.4598 6.85322 15.0533 5.4467C13.6468 4.04018 11.7391 3.25 9.75 3.25ZM6.625 12.0562C7.12228 12.0562 7.59919 12.2538 7.95083 12.6054C8.30246 12.9571 8.5 13.434 8.5 13.9312C8.5 14.4285 8.30246 14.9054 7.95083 15.2571C7.59919 15.6087 7.12228 15.8062 6.625 15.8062C6.12772 15.8062 5.65081 15.6087 5.29917 15.2571C4.94754 14.9054 4.75 14.4285 4.75 13.9312C4.75 13.434 4.94754 12.9571 5.29917 12.6054C5.65081 12.2538 6.12772 12.0563 6.625 12.0562ZM6.625 13.3062C6.45924 13.3062 6.30027 13.3721 6.18306 13.4893C6.06585 13.6065 6 13.7655 6 13.9312C6 14.097 6.06585 14.256 6.18306 14.3732C6.30027 14.4904 6.45924 14.5562 6.625 14.5562C6.79076 14.5562 6.94973 14.4904 7.06694 14.3732C7.18415 14.256 7.25 14.097 7.25 13.9312C7.25 13.7655 7.18415 13.6065 7.06694 13.4893C6.94973 13.3721 6.79076 13.3062 6.625 13.3062ZM12.8763 5.7525C13.1225 5.7525 13.3663 5.801 13.5938 5.89523C13.8213 5.98945 14.028 6.12756 14.2021 6.30167C14.3762 6.47578 14.5143 6.68248 14.6085 6.90997C14.7028 7.13745 14.7513 7.38127 14.7513 7.6275C14.7513 7.87373 14.7028 8.11755 14.6085 8.34503C14.5143 8.57252 14.3762 8.77922 14.2021 8.95333C14.028 9.12744 13.8213 9.26555 13.5938 9.35977C13.3663 9.454 13.1225 9.5025 12.8763 9.5025C12.379 9.5025 11.9021 9.30496 11.5504 8.95333C11.1988 8.60169 11.0013 8.12478 11.0013 7.6275C11.0013 7.13022 11.1988 6.65331 11.5504 6.30167C11.9021 5.95004 12.379 5.7525 12.8763 5.7525ZM6.625 5.75C6.87123 5.75 7.11505 5.7985 7.34253 5.89273C7.57002 5.98695 7.77672 6.12506 7.95083 6.29917C8.12494 6.47328 8.26305 6.67998 8.35727 6.90747C8.4515 7.13495 8.5 7.37877 8.5 7.625C8.5 7.87123 8.4515 8.11505 8.35727 8.34253C8.26305 8.57002 8.12494 8.77672 7.95083 8.95083C7.77672 9.12494 7.57002 9.26305 7.34253 9.35727C7.11505 9.4515 6.87123 9.5 6.625 9.5C6.12772 9.5 5.65081 9.30246 5.29917 8.95083C4.94754 8.59919 4.75 8.12228 4.75 7.625C4.75 7.12772 4.94754 6.65081 5.29917 6.29917C5.65081 5.94754 6.12772 5.75 6.625 5.75ZM12.8763 7.0025C12.7105 7.0025 12.5515 7.06835 12.4343 7.18556C12.3171 7.30277 12.2513 7.46174 12.2513 7.6275C12.2513 7.79326 12.3171 7.95223 12.4343 8.06944C12.5515 8.18665 12.7105 8.2525 12.8763 8.2525C13.042 8.2525 13.201 8.18665 13.3182 8.06944C13.4354 7.95223 13.5013 7.79326 13.5013 7.6275C13.5013 7.46174 13.4354 7.30277 13.3182 7.18556C13.201 7.06835 13.042 7.0025 12.8763 7.0025ZM6.625 7C6.45924 7 6.30027 7.06585 6.18306 7.18306C6.06585 7.30027 6 7.45924 6 7.625C6 7.79076 6.06585 7.94973 6.18306 8.06694C6.30027 8.18415 6.45924 8.25 6.625 8.25C6.79076 8.25 6.94973 8.18415 7.06694 8.06694C7.18415 7.94973 7.25 7.79076 7.25 7.625C7.25 7.45924 7.18415 7.30027 7.06694 7.18306C6.94973 7.06585 6.79076 7 6.625 7Z"
-                      fill="#333333"
-                    />
-                  </svg>
-                }
-              />
               <EntryDropdown
                 value={ratio}
                 options={RATIO_OPTIONS}

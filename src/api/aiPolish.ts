@@ -1,18 +1,11 @@
 /**
- * AI 文案润色客户端。
+ * AI 文案/提示词辅助客户端。
  *
- * 当前对接「本地部署模型」(vLLM,OpenAI 兼容 /v1/chat/completions)。
- * dev 经 Vite `/aimodel` 代理转发以规避浏览器 CORS;后端正式接入后,
- * 改 VITE_AI_MODEL_ORIGIN / VITE_AI_MODEL_NAME(或把 BASE 换成业务网关)即可,
- * 调用方(EditField 等)无需改动。
+ * 统一走业务后端 AI 网关(/api/v1/ai/responses,operation_code: responses.multimodal),
+ * 见 ./aiResponses。workspaceId / 套餐候选由其内部从 store 读取,调用方无需关心。
+ * (此前为临时直连「本地 vLLM Qwen」,现已对齐 Vue 切回后端网关。)
  */
-
-// dev 默认走代理前缀;如配置了完整 origin(且非本地代理)也可直连。
-const MODEL_NAME = (import.meta.env.VITE_AI_MODEL_NAME as string) || 'Qwen3.6-35B-A3B'
-const ENDPOINT = '/aimodel/v1/chat/completions'
-// 专用视觉模型(图片解析更准),用于素材分析/智能预填
-const VL_MODEL_NAME = (import.meta.env.VITE_AI_VL_NAME as string) || 'Qwen3-VL-30B-A3B'
-const VL_ENDPOINT = '/aimodel-vl/v1/chat/completions'
+import { runResponseText } from './aiResponses'
 
 /** 不同修改框的润色侧重,用于系统提示词。 */
 export type PolishKind = 'script' | 'line' | 'subtitle' | 'sound' | 'segment' | 'generic'
@@ -37,14 +30,6 @@ export interface PolishOptions {
   maxTokens?: number
 }
 
-interface ChatChoice {
-  message?: { content?: string }
-}
-interface ChatResponse {
-  choices?: ChatChoice[]
-  error?: { message?: string }
-}
-
 /**
  * 润色一段文本,返回润色后的结果(失败抛错,调用方提示并保留原文)。
  */
@@ -55,65 +40,26 @@ export async function polishText(text: string, opts: PolishOptions = {}): Promis
   const kind = opts.kind || 'generic'
   const userContent = opts.context ? `【上下文】${opts.context}\n【待润色文本】${input}` : input
 
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const out = await runResponseText({
+    system: SYSTEM_PROMPTS[kind],
+    user: userContent,
+    temperature: 0.7,
+    maxTokens: opts.maxTokens ?? 512,
     signal: opts.signal,
-    body: JSON.stringify({
-      model: MODEL_NAME,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPTS[kind] },
-        { role: 'user', content: userContent },
-      ],
-      temperature: 0.7,
-      max_tokens: opts.maxTokens ?? 512,
-      // Qwen3 关闭思考链,直接输出结果(避免返回 reasoning)
-      chat_template_kwargs: { enable_thinking: false },
-    }),
   })
-
-  if (!res.ok) {
-    let detail = ''
-    try {
-      detail = (await res.json())?.error?.message || ''
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `润色服务异常(${res.status})`)
-  }
-
-  const data = (await res.json()) as ChatResponse
-  const out = data?.choices?.[0]?.message?.content?.trim()
   if (!out) throw new Error('润色结果为空,请重试')
   return out
 }
 
 /**
- * 低层:发一轮 chat,返回纯文本(供起名等复用)。
+ * 低层:发一轮纯文本对话,返回纯文本(供起名等复用)。
  */
 async function chatOnce(system: string, user: string, signal?: AbortSignal, maxTokens = 64): Promise<string> {
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal,
-    body: JSON.stringify({
-      model: MODEL_NAME,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      temperature: 0.6,
-      max_tokens: maxTokens,
-      chat_template_kwargs: { enable_thinking: false },
-    }),
-  })
-  if (!res.ok) throw new Error(`模型服务异常(${res.status})`)
-  const data = (await res.json()) as ChatResponse
-  return data?.choices?.[0]?.message?.content?.trim() || ''
+  return runResponseText({ system, user, temperature: 0.6, maxTokens, signal })
 }
 
 /**
- * 根据用户的创作需求,自动生成简洁贴切的项目名称(本地 Qwen)。
+ * 根据用户的创作需求,自动生成简洁贴切的项目名称。
  * 失败抛错;调用方自行兜底(保留原名)。
  */
 export async function generateProjectName(requirement: string, signal?: AbortSignal): Promise<string> {
@@ -134,7 +80,7 @@ export async function generateProjectName(requirement: string, signal?: AbortSig
 }
 
 /**
- * 为引导某一项生成「最可能的 5 个」简短候选(纯文本模型),可排除已展示项(换一批)。
+ * 为引导某一项生成「最可能的 5 个」简短候选(纯文本),可排除已展示项(换一批)。
  */
 export async function suggestOptions(
   input: { label: string; hint?: string; context?: string; exclude?: string[] },
@@ -216,14 +162,14 @@ const SKILL_SYSTEM: Record<SkillOption, string> = {
 /**
  * 用所选 SKILL 把「用户想法 + 素材」自动拆解成「营销思路拆解」建议。
  * 产出与 AI 引导的「创作需求」同类:结构清晰、可直接用于后续生成分镜脚本。
- * images 传 base64 data URL(有图走视觉模型 VL)。
+ * images 传图片地址(url/dataURL),会随请求作为素材附上(有图走多模态)。
  */
 export async function skillBreakdown(
   input: { skill: string; requirement: string; images?: string[] },
   signal?: AbortSignal,
 ): Promise<string> {
   const req = (input.requirement || '').trim()
-  const images = input.images || []
+  const images = (input.images || []).filter(Boolean)
   if (!req && !images.length) throw new Error('请先输入想法或上传素材')
   const skillSystem = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['电商营销广告skills']
   const system =
@@ -233,35 +179,18 @@ export async function skillBreakdown(
     '【卖点&信任】(核心卖点与信任背书)、【行动号召CTA】、【表现形式/风格调性】。' +
     '紧扣用户的产品与素材,不要脱离产品臆造;不要直接写分镜脚本/台词/镜头画面,不要额外解释说明。'
 
-  const userContent: any[] = [
-    {
-      type: 'text',
-      text:
-        `用户的想法:${req || '(未填写,请基于素材给出合理方向)'}\n` +
-        (images.length ? '用户还上传了素材图片(见下),请务必结合图片中实际出现的物体/场景/人物来拆解。' : ''),
-    },
-  ]
-  for (const u of images) userContent.push({ type: 'image_url', image_url: { url: u } })
+  const user =
+    `用户的想法:${req || '(未填写,请基于素材给出合理方向)'}\n` +
+    (images.length ? '用户还上传了素材图片(已随请求附上),请务必结合图片中实际出现的物体/场景/人物来拆解。' : '')
 
-  const useVl = images.length > 0
-  const res = await fetch(useVl ? VL_ENDPOINT : ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const out = await runResponseText({
+    system,
+    user,
+    images: images.length ? images : undefined,
+    temperature: 0.6,
+    maxTokens: 10000,
     signal,
-    body: JSON.stringify({
-      model: useVl ? VL_MODEL_NAME : MODEL_NAME,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: userContent },
-      ],
-      temperature: 0.6,
-      max_tokens: 800,
-      chat_template_kwargs: { enable_thinking: false },
-    }),
   })
-  if (!res.ok) throw new Error(`营销拆解服务异常(${res.status})`)
-  const data = (await res.json()) as ChatResponse
-  const out = data?.choices?.[0]?.message?.content?.trim() || ''
   if (!out) throw new Error('生成为空,请重试')
   return out
 }
@@ -279,26 +208,20 @@ export interface GuideSuggestions {
 
 /**
  * 智能预填:根据用户的想法(文字)+ 素材图片(多模态),推断信息流广告各要素的建议,
- * 用于 AI 引导对话框的预填(因材施教,不再千篇一律)。images 传 base64 data URL。
+ * 用于 AI 引导对话框的预填(因材施教,不再千篇一律)。images 传图片地址(url/dataURL)。
  */
 export async function analyzeForGuide(
   input: { text?: string; images?: string[] },
   signal?: AbortSignal,
 ): Promise<GuideSuggestions> {
   const text = (input.text || '').trim()
-  const images = input.images || []
+  const images = (input.images || []).filter(Boolean)
   if (!text && !images.length) return {}
 
-  const userContent: any[] = [
-    {
-      type: 'text',
-      text:
-        `用户的创作想法:${text || '(未填写)'}\n` +
-        (images.length ? '用户还上传了素材图片(见下)。请务必结合图片中实际出现的物体/场景/人物来推断。' : '') +
-        '请为这条信息流广告推断各要素建议。',
-    },
-  ]
-  for (const u of images) userContent.push({ type: 'image_url', image_url: { url: u } })
+  const user =
+    `用户的创作想法:${text || '(未填写)'}\n` +
+    (images.length ? '用户还上传了素材图片(已随请求附上)。请务必结合图片中实际出现的物体/场景/人物来推断。' : '') +
+    '请为这条信息流广告推断各要素建议。'
 
   const system =
     '你是资深信息流广告策划。根据用户的想法和(若有)素材图片,推断以下要素并给出简短建议(中文,每项不超过20字):' +
@@ -307,26 +230,19 @@ export async function analyzeForGuide(
     '紧扣用户素材与想法,不要臆造;某项看不出就留空字符串。' +
     '只输出严格 JSON 对象(键为上述英文,值为字符串),不要解释、不要代码块标记。'
 
-  // 有图片走专用视觉模型(VL),纯文字走通用模型
-  const useVl = images.length > 0
-  const res = await fetch(useVl ? VL_ENDPOINT : ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal,
-    body: JSON.stringify({
-      model: useVl ? VL_MODEL_NAME : MODEL_NAME,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: userContent },
-      ],
+  let raw = ''
+  try {
+    raw = await runResponseText({
+      system,
+      user,
+      images: images.length ? images : undefined,
       temperature: 0.5,
-      max_tokens: 400,
-      chat_template_kwargs: { enable_thinking: false },
-    }),
-  })
-  if (!res.ok) throw new Error(`分析服务异常(${res.status})`)
-  const data = (await res.json()) as ChatResponse
-  let raw = data?.choices?.[0]?.message?.content?.trim() || ''
+      maxTokens: 400,
+      signal,
+    })
+  } catch {
+    return {}
+  }
   raw = raw
     .replace(/^```(json)?/i, '')
     .replace(/```$/, '')
@@ -383,7 +299,7 @@ export async function refineShotPrompt(
     outline?: string
     style?: string
     ratio?: string
-    /** 该镜「选中参与出图」的素材:看图识别真实外观;有 url 走 VL 读图 */
+    /** 该镜「选中参与出图」的素材:看图识别真实外观;有 url 走多模态读图 */
     materials?: { name?: string; kind?: string; url?: string }[]
   },
   signal?: AbortSignal,
@@ -409,7 +325,7 @@ export async function refineShotPrompt(
   let prompt = ''
 
   if (useVl) {
-    // 让 VL 看清每张素材,写出「有故事性、连贯」的单幅画面,把所有选中素材有机编织进本镜叙事意图
+    // 让模型看清每张素材,写出「有故事性、连贯」的单幅画面,把所有选中素材有机编织进本镜叙事意图
     system =
       '你是资深分镜师 + AI 绘画提示词专家。下面给【整体大纲(仅调性参考,不可照搬其产品)】、' +
       '【这一个分镜的画面描述=脚本(它体现本镜的叙事意图,如对比/转折/情绪)】和【按顺序的选中素材图】。' +
@@ -424,33 +340,19 @@ export async function refineShotPrompt(
       `画面描述/脚本(本镜叙事意图,以此为准):${desc || '(未填写)'}`,
       input.style && `风格:${input.style}`,
       input.ratio && `画面比例:${input.ratio}`,
-      `下面按顺序是 ${withImg.length} 张选中素材图(都要编织进画面,一张都别漏),请逐张看清真实外观:`,
+      `随请求附上 ${withImg.length} 张选中素材图(顺序如下,都要编织进画面,一张都别漏),请逐张看清真实外观:`,
+      ...withImg.map((m, i) => `第${i + 1}张素材:${m.name || ''}${m.kind ? `/${m.kind}` : ''}`),
     ]
       .filter(Boolean)
       .join('\n')
-    const userContent: any[] = [{ type: 'text', text: textPart }]
-    withImg.forEach((m, i) => {
-      userContent.push({ type: 'text', text: `第${i + 1}张素材(${m.name || ''}${m.kind ? `/${m.kind}` : ''}):` })
-      userContent.push({ type: 'image_url', image_url: { url: m.url } })
-    })
-    const res = await fetch(VL_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    raw = await runResponseText({
+      system,
+      user: textPart,
+      images: withImg.map((m) => m.url as string),
+      temperature: 0.6,
+      maxTokens: 400,
       signal,
-      body: JSON.stringify({
-        model: VL_MODEL_NAME,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: userContent },
-        ],
-        temperature: 0.6,
-        max_tokens: 400,
-        chat_template_kwargs: { enable_thinking: false },
-      }),
     })
-    if (!res.ok) throw new Error(`分析服务异常(${res.status})`)
-    const data = (await res.json()) as ChatResponse
-    raw = data?.choices?.[0]?.message?.content || ''
     prompt = clean(raw) || desc
   } else {
     // 无素材图:纯文本据脚本+大纲生成
@@ -472,8 +374,7 @@ export async function refineShotPrompt(
   return {
     prompt,
     debug: {
-      model: useVl ? VL_MODEL_NAME : MODEL_NAME,
-      endpoint: useVl ? 'VL(读图)' : '纯文本',
+      endpoint: useVl ? '后端 responses.multimodal(含素材图)' : '后端 responses.multimodal(纯文本)',
       system,
       userText: textPart,
       materials: mats.map((m) => ({ name: m.name, kind: m.kind, url: m.url })),
@@ -484,7 +385,7 @@ export async function refineShotPrompt(
 }
 
 /**
- * 按【参考图】(真实产品/主体照片)+ 意图,用 VL 模型读图后产出"图生图"提示词。
+ * 按【参考图】(真实产品/主体照片)+ 意图,读图后产出"图生图"提示词。
  * 忠实还原参考图中主体外观(品牌/logo/配色/造型/材质),只调背景/光线/角度。失败由调用方兜底。
  */
 export async function refineElementPromptWithImage(
@@ -502,38 +403,25 @@ export async function refineElementPromptWithImage(
     '②可结合生成意图调整背景、光线、角度、氛围;' +
     '③画面只含该单一主体,背景简洁干净;' +
     '④不要出现"广告/营销/目的/用途"等与画面无关的词;不要编号、不要引号、不要换行,直接输出提示词。'
-  const userContent: any[] = [
-    {
-      type: 'text',
-      text: [
-        opts.name && `主体:${opts.name}`,
-        opts.kind && `类型:${opts.kind}`,
-        opts.style && `视觉风格:${opts.style}`,
-        `生成意图:${src}`,
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    },
-    { type: 'image_url', image_url: { url: imageUrl } },
+  const user = [
+    opts.name && `主体:${opts.name}`,
+    opts.kind && `类型:${opts.kind}`,
+    opts.style && `视觉风格:${opts.style}`,
+    `生成意图:${src}`,
+    '参考图已随请求附上。',
   ]
-  const res = await fetch(VL_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal: opts.signal,
-    body: JSON.stringify({
-      model: VL_MODEL_NAME,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: userContent },
-      ],
+    .filter(Boolean)
+    .join('\n')
+  const out = (
+    await runResponseText({
+      system,
+      user,
+      images: [imageUrl],
       temperature: 0.5,
-      max_tokens: 280,
-      chat_template_kwargs: { enable_thinking: false },
-    }),
-  })
-  if (!res.ok) throw new Error(`分析服务异常(${res.status})`)
-  const data = (await res.json()) as ChatResponse
-  const out = (data?.choices?.[0]?.message?.content || '')
+      maxTokens: 280,
+      signal: opts.signal,
+    })
+  )
     .replace(/^```(\w+)?/i, '')
     .replace(/```$/i, '')
     .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
@@ -561,8 +449,7 @@ export async function summarizeRequirement(text: string, signal?: AbortSignal): 
 }
 
 /**
- * 把"生成某个独立元素(素材)的意图/目的/语境"交给本地 Qwen,
- * 润成一版**干净、可直接用于文生图模型**的画面提示词。
+ * 把"生成某个独立元素(素材)的意图/目的/语境"润成一版**干净、可直接用于文生图模型**的画面提示词。
  * 关键:只保留画面本身(主体/外形/材质/姿态/光线/纯色简洁背景/便于抠图),
  * 剔除"广告目的、用途、营销、为了…"等会干扰出图的非画面性文字。
  * 失败由调用方兜底(退回原意图文本)。

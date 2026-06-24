@@ -58,11 +58,13 @@ interface VideoStageProps {
   /** 整片历史版本(点击切换) */
   videoVersions?: { url: string; assetId: number }[]
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
-  /** 重新生成整片(note=对整片/各片段的修改意见,合并成一段) */
-  onRegenerateVideo: (note?: string) => void
-  /** 保存视频(交父级:提示 + 落库草稿) */
-  onSaveVideo?: () => void
-  /** 下载当前整片视频(保留能力;本步默认不展示按钮) */
+  /**
+   * 重新生成 / 确认修改整片。
+   * note=对整片/各片段的修改意见(合并成一段);opts.edit=true 表示「确认修改」——
+   * 父级应基于原视频做修改(而非从分镜图重出整片)。
+   */
+  onRegenerateVideo: (note?: string, opts?: { edit?: boolean }) => void
+  /** 下载当前整片视频(由父级弹本地保存位置后下载) */
   onDownloadVideo?: () => void
   onPrev?: () => void
   /** 调试:实际喂给视频模型的提示词/参考图/各分镜文本(开发可见,正式隐藏) */
@@ -101,7 +103,7 @@ export default function VideoStage({
   videoVersions = [],
   onSwitchVideo,
   onRegenerateVideo,
-  onSaveVideo,
+  onDownloadVideo,
   onPrev,
   debug,
 }: VideoStageProps) {
@@ -278,6 +280,9 @@ export default function VideoStage({
     if (ov) parts.push(`【整段视频】${ov}`)
     return parts.length ? parts.join('\n') : undefined
   }
+
+  // 是否存在「片段/整段」修改:有则主按钮显示「确认修改」(基于原视频改),无则「重新生成视频」
+  const hasMods = segments.some((s) => s.text.trim()) || overallNote.trim().length > 0
 
   const showTimeline = !!videoUrl && !videoGenerating
   const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
@@ -468,30 +473,30 @@ export default function VideoStage({
         </div>
       </div>
 
-      {/* 底部总按钮:上一步 / 保存视频 / 重新生成视频(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
+      {/* 底部总按钮:上一步 / 下载视频 / 重新生成视频|确认修改(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
       <div className={styles.vstageActions}>
         {onPrev && (
           <button type="button" className="smart__btn smart__btn--ghost" onClick={onPrev}>
             上一步
           </button>
         )}
-        {onSaveVideo && (
+        {onDownloadVideo && (
           <button
             type="button"
             className="smart__btn smart__btn--ghost"
-            onClick={onSaveVideo}
+            onClick={onDownloadVideo}
             disabled={!videoUrl || !!videoGenerating}
           >
-            保存视频
+            下载视频
           </button>
         )}
         <button
           type="button"
           className="smart__btn smart__btn--primary"
-          onClick={() => onRegenerateVideo(buildNote())}
+          onClick={() => onRegenerateVideo(buildNote(), { edit: hasMods })}
           disabled={!!videoGenerating}
         >
-          {videoGenerating ? '生成中…' : '重新生成视频'}
+          {videoGenerating ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
         </button>
       </div>
 

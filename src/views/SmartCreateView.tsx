@@ -28,7 +28,8 @@ import {
 } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
-import { generateFullVideo, buildTimelinePrompt } from '@/api/smartVideo'
+import { generateFullVideo, buildTimelinePrompt, totalDurationSec } from '@/api/smartVideo'
+import { replicateHotVideo } from '@/api/hotCopy'
 import { blurFacesOnAsset } from '@/api/smartFaceBlur'
 import VideoStage from '@/components/smart/VideoStage'
 import {
@@ -55,6 +56,7 @@ import {
   parseSmartSnapshot,
   type SmartDraft,
 } from '@/utils/smartDraft'
+import { downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
 
 // 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
@@ -643,8 +645,9 @@ export default function SmartCreateView() {
   const [blurPhase, setBlurPhase] = useState('')
   const [blurDebug, setBlurDebug] = useState<any[]>([])
 
-  // 生成/重生成整片;note=对整片的修改意见(有意见且已有整片时,用上次整片作 video 输入)
-  const runFullVideo = async (note?: string) => {
+  // 生成/重生成整片;note=修改意见。opts.edit=true(「确认修改」)且已有整片时:
+  // 基于原视频做修改(video.replicate:原视频 role:video + 修改提示),不从分镜图重出整片。
+  const runFullVideo = async (note?: string, opts?: { edit?: boolean }) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
@@ -655,6 +658,36 @@ export default function SmartCreateView() {
       return
     }
     if (vidGenRunning) return
+
+    // 「确认修改」:把上次整片当 video 输入,按修改提示在原视频基础上改(片段时间段写进提示)
+    if (opts?.edit && fullVideo.assetId) {
+      setVidGenRunning(true)
+      try {
+        const plans = await resolvePlanCandidates()
+        const editPrompt = [
+          '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
+          note || '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+        const { url, assetId } = await replicateHotVideo({
+          workspaceId: ws,
+          videoAssetId: fullVideo.assetId,
+          prompt: editPrompt,
+          ratio: entryMeta?.ratio,
+          durationSec: totalDurationSec(shots) || 10,
+          modelPlanCandidates: plans,
+        })
+        setFullVideo({ url, assetId })
+        setVideoVersions((prev) => [...prev, { url, assetId }])
+      } catch (e: any) {
+        showToast(`视频修改失败:${e?.message || ''}`, 'error')
+      } finally {
+        setVidGenRunning(false)
+      }
+      return
+    }
+
     // 仅勾选「参与视频生成」的分镜进入视频(未勾选的跳过)
     const activeShots = shots.filter((s) => s.includeInVideo !== false)
     if (!activeShots.length) {
@@ -1311,43 +1344,29 @@ export default function SmartCreateView() {
   const todo = (msg: string) => () => showToast(msg, 'info')
 
   // 下载当前整片视频:优先按 asset_id 取新签名URL → fetch 成 blob 下载;CORS 失败则新标签打开
+  // 下载视频:弹「另存为」让用户自选保存位置(不支持的浏览器回退自动下载)。
+  // 解析 URL 时按 asset_id 刷新签名 URL,避免过期下载失败。
   const handleDownloadVideo = async () => {
     if (!fullVideo.url) {
       showToast('请先生成视频', 'info')
       return
     }
-    const ws = Number(workspaceId || 0)
-    let url = fullVideo.url
-    if (ws && fullVideo.assetId) {
-      const fresh = await refreshAssetUrl(ws, fullVideo.assetId)
-      if (fresh) url = fresh
-    }
-    const fileName = `${(projectName || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'}.mp4`
-    try {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(String(res.status))
-      const blob = await res.blob()
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000)
-    } catch {
-      // 跨域无法 fetch → 退而求其次,新标签打开让用户右键保存
-      window.open(url, '_blank')
-    }
-  }
-
-  // 保存视频:本步「仅按钮 + 提示」。内容本就随草稿自动保存(本地+后端),这里再 best-effort 立即落库一次。
-  const saveVideoNow = () => {
-    if (!fullVideo.url) {
-      showToast('请先生成视频', 'info')
-      return
-    }
-    if (projectIdRef.current) void putSmartDraftToBackend()
-    showToast('视频已保存', 'success')
+    const safeName = (projectName || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'
+    const d = new Date()
+    const dateStr = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+    const fileName = `${safeName}_${dateStr}.mp4`
+    await downloadToDisk({
+      fileName,
+      resolveUrl: async () => {
+        const ws = Number(workspaceId || 0)
+        let url = fullVideo.url
+        if (ws && fullVideo.assetId) {
+          const fresh = await refreshAssetUrl(ws, fullVideo.assetId)
+          if (fresh) url = fresh
+        }
+        return url
+      },
+    })
   }
 
   const bottomButtons: BottomButton[] = (() => {
@@ -1582,7 +1601,6 @@ export default function SmartCreateView() {
         videoVersions={videoVersions}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
         onRegenerateVideo={runFullVideo}
-        onSaveVideo={saveVideoNow}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
         debug={{
@@ -1628,7 +1646,6 @@ export default function SmartCreateView() {
             initial={{
               mode: entryMeta?.mode,
               text: requirement,
-              styleTags: entryMeta?.style ? entryMeta.style.split('、').filter(Boolean) : undefined,
               ratio: entryMeta?.ratio,
               duration: entryMeta?.duration,
               images: entryMeta?.images,

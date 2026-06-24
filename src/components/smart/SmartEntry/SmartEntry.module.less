@@ -37,8 +37,13 @@
       rgba(59, 56, 218, 0.2) 0%,
       rgba(58, 227, 97, 0.2) 100%);
   filter: blur(80px);
+  /* 切换时大椭圆轻微上浮+放大,强化「整片背景在动」的感知 */
+  transition: transform 1.6s cubic-bezier(0.25, 0.8, 0.3, 1);
 }
 
+.screate[data-mode='image'] .bgEllipseLg {
+  transform: translate(-50%, -4%) scale(1.06);
+}
 
 .bgVeil {
   position: absolute;
@@ -54,6 +59,57 @@
       rgba(77, 149, 232, 0.2) 50%,
       rgba(59, 56, 218, 0.3) 100%);
   filter: blur(80px);
+  transition: transform 1.6s cubic-bezier(0.25, 0.8, 0.3, 1);
+}
+
+.screate[data-mode='image'] .bgVeil {
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
+/* 切换瞬间从中心扩散一圈光晕涟漪(一次性,key 变化重播)。与背景同色系,不改背景本色 */
+.bgRipple {
+  position: absolute;
+  left: 50%;
+  top: 60%;
+  width: min(1100px, 95vw);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 50%,
+      rgba(31, 207, 169, 0.28) 0%,
+      rgba(77, 149, 232, 0.18) 45%,
+      rgba(77, 149, 232, 0) 72%);
+  filter: blur(50px);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.4);
+  animation: bgRipple 1.8s cubic-bezier(0.22, 0.7, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes bgRipple {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.5);
+  }
+}
+
+/* 无障碍:用户偏好减少动效时,关闭涟漪与位移,仅保留即时色相切换 */
+@media (prefers-reduced-motion: reduce) {
+  .bg,
+  .bgEllipseLg,
+  .bgVeil {
+    transition: none;
+  }
+  .bgRipple {
+    animation: none;
+    display: none;
+  }
 }
 
 .title {

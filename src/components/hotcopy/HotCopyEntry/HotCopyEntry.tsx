@@ -17,18 +17,20 @@ import helpIcon from '@/assets/icons/help-circle.svg'
 import './HotCopyEntry.css'
 
 export type HotCopyTab = 'remake' | 'replica'
-export type HotCopyVideoSource = '' | 'local' | 'library' | 'link'
+export type HotCopyVideoSource = '' | 'local' | 'library'
 export interface HotCopyProduct {
   url: string
-  file: File
+  /** 本地选择带 File(待上传);素材库选择无 File(已有 assetId) */
+  file: File | null
   isVideo: boolean
+  /** 素材库选中的替换素材已有 asset_id;本地上传的留空,出片前再上传 */
+  assetId?: number
 }
 export interface HotCopyEntryPayload {
   tab: HotCopyTab
   videoSource: HotCopyVideoSource
   videoFile: File | null
   libraryVideo: { assetId: number; src: string } | null
-  videoLink: string
   videoFileName: string
   videoPreview: string
   products: HotCopyProduct[]
@@ -56,21 +58,26 @@ const TABS = [
   },
 ] as const
 
-const LINK_PLATFORMS = '抖音 / 快手 / 小红书 / 视频号'
 const MAX_PRODUCTS = 9
 
 export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
   const [tab, setTab] = useState<HotCopyTab>((initial?.tab as HotCopyTab) ?? 'remake')
+  // Tab 切换计数:每次切换 +1,用作背景「光晕涟漪」层的 key,使其重挂载并重播一次扩散动画
+  const [switchCount, setSwitchCount] = useState(0)
+  const switchTab = (k: HotCopyTab) => {
+    if (k === tab) return
+    setTab(k)
+    setSwitchCount((c) => c + 1)
+  }
 
-  // 爆款视频来源(本地/素材库/链接,三选一)
+  // 爆款视频来源(本地 / 素材库,二选一)
   const [videoMenuOpen, setVideoMenuOpen] = useState(false)
   const [videoSource, setVideoSource] = useState<HotCopyVideoSource>(initial?.videoSource ?? '')
   const [videoFile, setVideoFile] = useState<File | null>(initial?.videoFile ?? null)
   const [videoFileName, setVideoFileName] = useState(initial?.videoFileName ?? '')
   const [videoPreview, setVideoPreview] = useState(initial?.videoPreview ?? '')
-  const [videoLink, setVideoLink] = useState(initial?.videoLink ?? '')
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [libraryMaterials, setLibraryMaterials] = useState<any[]>([])
   const [libraryLoading, setLibraryLoading] = useState(false)
@@ -79,13 +86,20 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
   const [libraryVideo, setLibraryVideo] = useState<{ assetId: number; src: string } | null>(
     initial?.libraryVideo ?? null,
   )
-  const [linkInputOpen, setLinkInputOpen] = useState(initial?.videoSource === 'link')
   const videoFileRef = useRef<HTMLInputElement | null>(null)
   const videoMenuRef = useRef<HTMLDivElement | null>(null)
 
-  // 替换素材(产品图/视频):保留 File 以便上传;isVideo 决定缩略图用 <video> 还是 <img>
+  // 替换素材(仅图片):本地上传保留 File 待上传;素材库选择带 assetId
   const [products, setProducts] = useState<HotCopyProduct[]>(initial?.products ?? [])
   const productFileRef = useRef<HTMLInputElement | null>(null)
+  // 替换素材来源菜单(本地 / 素材库)+ 素材库选图弹窗
+  const [productMenuOpen, setProductMenuOpen] = useState(false)
+  const productMenuRef = useRef<HTMLDivElement | null>(null)
+  const [productLibOpen, setProductLibOpen] = useState(false)
+  const [productLibMaterials, setProductLibMaterials] = useState<any[]>([])
+  const [productLibLoading, setProductLibLoading] = useState(false)
+  const [productLibTab, setProductLibTab] = useState('mine')
+  const [productLibQuery, setProductLibQuery] = useState('')
 
   const [text, setText] = useState(initial?.text ?? '')
   // @ 引用替换素材(交互对齐智能成片;数据源是上传的替换素材 products)
@@ -95,13 +109,14 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
   const [atOpen, setAtOpen] = useState(false)
 
   useEffect(() => {
-    if (!videoMenuOpen) return
+    if (!videoMenuOpen && !productMenuOpen) return
     const onDown = (e: PointerEvent) => {
       if (videoMenuRef.current && !videoMenuRef.current.contains(e.target as Node)) setVideoMenuOpen(false)
+      if (productMenuRef.current && !productMenuRef.current.contains(e.target as Node)) setProductMenuOpen(false)
     }
     window.addEventListener('pointerdown', onDown, true)
     return () => window.removeEventListener('pointerdown', onDown, true)
-  }, [videoMenuOpen])
+  }, [videoMenuOpen, productMenuOpen])
 
   // 加载素材库里的视频素材(复用现有 listAssets + 签名URL + material 映射)
   const loadLibraryVideos = async () => {
@@ -155,23 +170,77 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
       if (prev.startsWith('blob:')) URL.revokeObjectURL(prev)
       return v?.src || ''
     })
-    setVideoLink('')
-    setLinkInputOpen(false)
     setLibraryOpen(false)
   }
 
-  const chooseSource = (src: 'local' | 'library' | 'link') => {
+  const chooseSource = (src: 'local' | 'library') => {
     setVideoMenuOpen(false)
     if (src === 'local') {
       videoFileRef.current?.click()
-    } else if (src === 'library') {
+    } else {
       setLibraryOpen(true)
       void loadLibraryVideos()
-    } else {
-      setVideoSource('link')
-      setLinkInputOpen(true)
-      setVideoFileName('')
     }
+  }
+
+  // 加载素材库里的图片素材(替换素材只用图片)
+  const loadLibraryImages = async () => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间', 'error')
+      return
+    }
+    setProductLibLoading(true)
+    try {
+      const payload = await listAssets({ workspaceId: ws, type: 'image', limit: 100 })
+      const assets = extractAssetPageItems(payload).filter((a: any) => a?.id && a.type === 'image')
+      const mats = await Promise.all(
+        assets.map(async (a: any) => {
+          let src = ''
+          try {
+            src = await getAssetDownloadUrl({ workspaceId: ws, assetId: a.id })
+          } catch {
+            /* 取签名URL失败则回退缩略图 */
+          }
+          if (!src) src = a?.thumbnail_url || a?.preview_url || a?.url || ''
+          return createMaterialFromAsset(a, src)
+        }),
+      )
+      setProductLibMaterials(mats.filter((m: any) => m.src))
+    } catch (e: any) {
+      showToast(e?.message || '素材库加载失败', 'error')
+    } finally {
+      setProductLibLoading(false)
+    }
+  }
+
+  // 替换素材来源:本地上传 / 素材库选图
+  const chooseProductSource = (src: 'local' | 'library') => {
+    setProductMenuOpen(false)
+    if (src === 'local') {
+      productFileRef.current?.click()
+    } else {
+      setProductLibOpen(true)
+      void loadLibraryImages()
+    }
+  }
+
+  // 素材库确认:把选中的图片素材(带 assetId)加入替换素材
+  const confirmLibraryProducts = (picked: any[]) => {
+    const room = MAX_PRODUCTS - products.length
+    const imgs = (picked || [])
+      .filter((m: any) => !/video/i.test(String(m?.type || m?.serverAsset?.type || '')))
+      .slice(0, Math.max(0, room))
+      .map((m: any) => ({
+        url: m?.src || '',
+        file: null as File | null,
+        isVideo: false,
+        assetId: Number(m?.assetId || m?.serverAsset?.id || m?.id || 0) || 0,
+      }))
+      .filter((p: HotCopyProduct) => p.url && p.assetId)
+    if (imgs.length) setProducts((prev) => [...prev, ...imgs])
+    if (room <= 0) showToast(`最多上传 ${MAX_PRODUCTS} 张替换素材`, 'info')
+    setProductLibOpen(false)
   }
 
   const pickVideo = (files: FileList | null) => {
@@ -184,8 +253,6 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
       if (prev.startsWith('blob:')) URL.revokeObjectURL(prev)
       return URL.createObjectURL(f)
     })
-    setVideoLink('')
-    setLinkInputOpen(false)
   }
 
   const clearVideo = () => {
@@ -196,11 +263,10 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
       if (prev.startsWith('blob:')) URL.revokeObjectURL(prev)
       return ''
     })
-    setVideoLink('')
-    setLinkInputOpen(false)
     setLibraryVideo(null)
   }
 
+  // 替换素材本地上传:仅图片,缩放成 dataURL 预览,留 File 待出片前上传成 asset
   const pickProducts = async (files: FileList | null) => {
     if (!files?.length) return
     const room = MAX_PRODUCTS - products.length
@@ -208,27 +274,18 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
       showToast(`最多上传 ${MAX_PRODUCTS} 张替换素材`, 'info')
       return
     }
-    const sel = Array.from(files).slice(0, room)
+    const sel = Array.from(files)
+      .filter((f) => /^image\//.test(f.type))
+      .slice(0, room)
     const picked = (
       await Promise.all(
-        sel.map(async (f) => {
-          const isVideo = /^video\//.test(f.type)
-          // 视频用 objectURL 预览(fileToDataUrl 走 <img>,视频会读取失败);图片仍缩放成 dataURL
-          const url = isVideo ? URL.createObjectURL(f) : (await fileToDataUrl(f).catch(() => '')) || ''
-          return { url, file: f, isVideo }
-        }),
+        sel.map(async (f) => ({ url: (await fileToDataUrl(f).catch(() => '')) || '', file: f, isVideo: false })),
       )
     ).filter((p) => p.url)
     if (picked.length) setProducts((prev) => [...prev, ...picked])
   }
 
-  // 移除替换素材:视频的 objectURL 需回收,避免内存泄漏
-  const removeProduct = (i: number) =>
-    setProducts((arr) => {
-      const p = arr[i]
-      if (p?.isVideo && p.url.startsWith('blob:')) URL.revokeObjectURL(p.url)
-      return arr.filter((_, j) => j !== i)
-    })
+  const removeProduct = (i: number) => setProducts((arr) => arr.filter((_, j) => j !== i))
 
   // ── @ 引用替换素材(对齐智能成片)──
   const insertAtCaret = (snippet: string) => {
@@ -286,27 +343,14 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
   }
 
   const videoLabel =
-    videoSource === 'local'
-      ? videoFileName
-      : videoSource === 'library'
-        ? videoFileName || '素材库视频'
-        : videoSource === 'link'
-          ? videoLink.trim() || '视频链接'
-          : ''
-  const hasHotVideo =
-    (videoSource === 'local' && !!videoFile) ||
-    (videoSource === 'library' && !!libraryVideo) ||
-    (videoSource === 'link' && !!videoLink.trim())
+    videoSource === 'local' ? videoFileName : videoSource === 'library' ? videoFileName || '素材库视频' : ''
+  const hasHotVideo = (videoSource === 'local' && !!videoFile) || (videoSource === 'library' && !!libraryVideo)
   // 可进入下一步:爆款视频必传;替换素材可选
   const canSend = hasHotVideo
 
   const submit = () => {
     if (!hasHotVideo) {
-      showToast('请先上传爆款视频(本地 / 素材库 / 视频链接)', 'error')
-      return
-    }
-    if (videoSource === 'link') {
-      showToast('暂不支持「视频链接」(需后端解析),请用本地上传或素材库', 'info')
+      showToast('请先上传爆款视频(本地上传 / 素材库)', 'error')
       return
     }
     onSubmit({
@@ -314,7 +358,6 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
       videoSource,
       videoFile,
       libraryVideo,
-      videoLink,
       videoFileName,
       videoPreview,
       products,
@@ -323,11 +366,13 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
   }
 
   return (
-    <section className="hotcopy__main">
+    <section className="hotcopy__main" data-tab={tab}>
       {/* 背景渐变光晕(对齐智能成片做法,配色用本页 Figma 的粉紫) */}
       <div className="hotcopy__bg" aria-hidden="true">
         <div className="hotcopy__bg-lg" />
         <div className="hotcopy__bg-veil" />
+        {/* 切换反馈:从中心扩散一圈光晕涟漪。key 随切换变化触发重挂载 → 重播动画(首次挂载不放) */}
+        {switchCount > 0 && <div className="hotcopy__bg-ripple" key={switchCount} />}
       </div>
 
       <h1 className="hotcopy__title">爆款作业直接抄,你的产品当主角!</h1>
@@ -340,7 +385,7 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
               key={t.key}
               type="button"
               className={`hotcopy__tab${tab === t.key ? ' is-active' : ''}`}
-              onClick={() => setTab(t.key)}
+              onClick={() => switchTab(t.key)}
             >
               <span className="hotcopy__tab-head">
                 <span className="hotcopy__tab-name">{t.title}</span>
@@ -383,23 +428,32 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
                     <button type="button" onClick={() => chooseSource('library')}>
                       素材库
                     </button>
-                    <button type="button" onClick={() => chooseSource('link')}>
-                      视频链接
-                    </button>
                   </div>
                 )}
               </div>
 
-              {/* 上传替换素材(产品图/视频) */}
-              <button
-                type="button"
-                className={`hotcopy__tile${products.length ? ' is-done' : ''}`}
-                onClick={() => productFileRef.current?.click()}
-              >
-                <img className="hotcopy__tile-icon" src={materialIcon} alt="" />
-                <span className="hotcopy__tile-label">上传替换素材</span>
-                {products.length > 0 && <span className="hotcopy__tile-badge">{products.length}</span>}
-              </button>
+              {/* 上传替换素材(仅图片,点选 本地 / 素材库) */}
+              <div className="hotcopy__tilewrap" ref={productMenuRef}>
+                <button
+                  type="button"
+                  className={`hotcopy__tile${products.length ? ' is-done' : ''}`}
+                  onClick={() => setProductMenuOpen((v) => !v)}
+                >
+                  <img className="hotcopy__tile-icon" src={materialIcon} alt="" />
+                  <span className="hotcopy__tile-label">上传替换素材</span>
+                  {products.length > 0 && <span className="hotcopy__tile-badge">{products.length}</span>}
+                </button>
+                {productMenuOpen && (
+                  <div className="hotcopy__menu" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" onClick={() => chooseProductSource('local')}>
+                      本地上传
+                    </button>
+                    <button type="button" onClick={() => chooseProductSource('library')}>
+                      素材库
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="hotcopy__inputWrap">
@@ -429,10 +483,10 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
             </div>
           </div>
 
-          {/* 已选爆款视频 / 视频链接 / 替换素材缩略(有内容才显示) */}
-          {(videoLabel || linkInputOpen || products.length > 0) && (
+          {/* 已选爆款视频 / 替换素材缩略(有内容才显示) */}
+          {(videoLabel || products.length > 0) && (
             <div className="hotcopy__selected">
-              {/* 爆款视频:有预览(本地/素材库)用缩略图,否则(链接)用文字 chip */}
+              {/* 爆款视频:有预览(本地/素材库)用缩略图,否则用文字 chip */}
               {videoPreview ? (
                 <div className="hotcopy__product hotcopy__product--hot" title={videoLabel}>
                   <video src={videoPreview} muted playsInline />
@@ -451,20 +505,11 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
                   </span>
                 )
               )}
-              {linkInputOpen && (
-                <input
-                  className="hotcopy__link"
-                  value={videoLink}
-                  autoFocus
-                  placeholder={`粘贴视频链接(${LINK_PLATFORMS})`}
-                  onChange={(e) => setVideoLink(e.target.value)}
-                />
-              )}
               {products.length > 0 && (
                 <div className="hotcopy__products">
                   {products.map((p, i) => (
                     <div className="hotcopy__product" key={i}>
-                      {p.isVideo ? <video src={p.url} muted playsInline /> : <img src={p.url} alt="" />}
+                      <img src={p.url} alt="" />
                       <button type="button" onClick={() => removeProduct(i)} aria-label="移除">
                         ×
                       </button>
@@ -490,7 +535,7 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
                     <div className="hotcopy__atMenuGrid">
                       {products.map((p, i) => (
                         <button type="button" className="hotcopy__atItem" key={i} onClick={() => pickRef(i)}>
-                          {p.isVideo ? <video src={p.url} muted playsInline /> : <img src={p.url} alt="" />}
+                          <img src={p.url} alt="" />
                           <span className="hotcopy__atItemName">{refLabel(i)}</span>
                         </button>
                       ))}
@@ -539,7 +584,7 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
       <input
         ref={productFileRef}
         type="file"
-        accept="image/*,video/*"
+        accept="image/*"
         multiple
         hidden
         onChange={(e) => {
@@ -548,7 +593,7 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
         }}
       />
 
-      {/* 素材库选择器(选爆款视频):直接复用现有 MaterialLibraryPicker */}
+      {/* 素材库选择器(选爆款视频) */}
       <MaterialLibraryPicker
         modelValue={libraryOpen}
         onModelValueChange={setLibraryOpen}
@@ -561,6 +606,21 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
         onTabChange={setLibraryTab}
         onQueryChange={setLibraryQuery}
         onConfirm={confirmLibraryVideo}
+      />
+
+      {/* 素材库选择器(选替换素材图片,可多选) */}
+      <MaterialLibraryPicker
+        modelValue={productLibOpen}
+        onModelValueChange={setProductLibOpen}
+        workspaceId={Number(workspaceId || 0)}
+        projectName="替换素材"
+        materials={productLibMaterials}
+        tab={productLibTab}
+        query={productLibQuery}
+        isLoading={productLibLoading}
+        onTabChange={setProductLibTab}
+        onQueryChange={setProductLibQuery}
+        onConfirm={confirmLibraryProducts}
       />
     </section>
   )
