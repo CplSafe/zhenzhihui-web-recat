@@ -328,7 +328,7 @@ export default function WorkbenchView() {
       title: '分步创作',
       desc: '故事脚本+分镜图片，随时修改',
       cta: '创建项目 →',
-      action: () => navigate('/creative'),
+      action: () => navigate('/smart'),
     },
     {
       key: 'spark',
@@ -829,16 +829,8 @@ export default function WorkbenchView() {
               <div className="wb-project-empty">当前团队还没有项目，先创建一个试试。</div>
             ) : (
               recentProjects.map((project) => (
-                <button
-                  key={project.id}
-                  type="button"
-                  className="wb-project"
-                  onClick={() => enterProject(project)}
-                >
-                  <div
-                    className={`wb-project-cover${project.coverUrl ? ' has-image' : ''}`}
-                    aria-hidden="true"
-                  >
+                <button key={project.id} type="button" className="wb-project" onClick={() => enterProject(project)}>
+                  <div className={`wb-project-cover${project.coverUrl ? ' has-image' : ''}`} aria-hidden="true">
                     {project.coverUrl ? <img src={project.coverUrl} alt="" loading="lazy" /> : null}
                     {project.coverCount > 0 ? (
                       <span className="wb-project-cover-badge">{project.coverCount} 张分镜</span>

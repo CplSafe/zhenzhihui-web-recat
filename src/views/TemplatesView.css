@@ -1,0 +1,48 @@
+/* 模板库页面 */
+.templates-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.templates-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.templates-back:hover {
+  border-color: #5767e5;
+  color: #5767e5;
+  background: #f5f6ff;
+}
+
+.templates-page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.templates-count {
+  font-size: 13px;
+  color: #999;
+}
+
+.templates-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 8px;
+}
+
+.templates-grid-body {
+  margin-top: 16px;
+}
