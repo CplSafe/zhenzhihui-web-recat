@@ -126,6 +126,44 @@ function subjectPrompt(name: string, kind: string, style?: string, context?: str
     .join(',')
 }
 
+/**
+ * 兜底:从后端项目 draft_json 里抽取「整片视频」(最近一版 + 历史版本)。
+ * 用于智能成片快照(obj.smart)里没有整片视频、但视频结果由后端写到了项目级字段
+ * (generatedVideoUrl / videoHistoryList,常见于上次在「生成视频」中途切走、完成时组件已卸载)
+ * 的场景——和项目管理页读取同一批字段,保证「生成视频」步骤能把视频加载出来。
+ */
+function extractProjectVideoFallback(draftJson: any): {
+  latest: { url: string; assetId: number }
+  versions: { url: string; assetId: number }[]
+} {
+  let obj = draftJson
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj)
+    } catch {
+      return { latest: { url: '', assetId: 0 }, versions: [] }
+    }
+  }
+  if (!obj || typeof obj !== 'object') return { latest: { url: '', assetId: 0 }, versions: [] }
+  const smart = obj.smart && typeof obj.smart === 'object' ? obj.smart : obj
+  const vv = Array.isArray(smart?.videoVersions) ? smart.videoVersions : []
+  const vh = Array.isArray(obj?.videoHistoryList || obj?.video_history_list)
+    ? obj.videoHistoryList || obj.video_history_list
+    : []
+  const src = vv.length ? vv : vh
+  const versions: { url: string; assetId: number }[] = []
+  for (const v of src) {
+    const url = String((typeof v === 'string' ? v : v?.url || v?.src) || '').trim()
+    const assetId = Number((typeof v === 'string' ? 0 : v?.assetId || v?.asset_id) || 0) || 0
+    if (url || assetId) versions.push({ url, assetId })
+  }
+  const gvUrl = String(obj?.generatedVideoUrl || obj?.generated_video_url || smart?.fullVideoUrl || '').trim()
+  const gvId = Number(obj?.generatedVideoAssetId || obj?.generated_video_asset_id || smart?.fullVideoAssetId || 0) || 0
+  if (!versions.length && (gvUrl || gvId)) versions.push({ url: gvUrl, assetId: gvId })
+  const latest = versions.length ? versions[versions.length - 1] : { url: gvUrl, assetId: gvId }
+  return { latest: { url: latest.url || '', assetId: latest.assetId || 0 }, versions }
+}
+
 export default function SmartCreateView() {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
@@ -775,7 +813,8 @@ export default function SmartCreateView() {
   useEffect(() => {
     if (step !== 3 || !shots.length || vidGenRunning) return
     if (autoVidRef.current) return
-    if (fullVideo.url) return
+    // 已有整片(url 或仅 assetId——可能正等签名URL刷新)就不再自动重生成,避免重复出片 / 误判「没视频」
+    if (fullVideo.url || fullVideo.assetId) return
     autoVidRef.current = true
     void runFullVideo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1103,6 +1142,15 @@ export default function SmartCreateView() {
           const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
           const d = parseSmartSnapshot(draftJson)
           if (d) applyDraft(d)
+          // 兜底:智能成片快照里没有整片视频(上次在「生成视频」中途切走,完成结果由后端落到了项目级字段),
+          // 从项目数据补出最近一版视频 + 历史版本,保证「生成视频」步骤能加载出来(URL 过期由下面的签名刷新兜底)。
+          if (!d?.fullVideoUrl && !d?.fullVideoAssetId) {
+            const fb = extractProjectVideoFallback(draftJson)
+            if (fb.latest.url || fb.latest.assetId) {
+              setFullVideo(fb.latest)
+              if (fb.versions.length) setVideoVersions(fb.versions)
+            }
+          }
           const t = String(proj?.title || proj?.name || '').trim()
           if (t) {
             setProjectName(t)
