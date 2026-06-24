@@ -1,0 +1,590 @@
+/* 爆款复刻(2.1)入口 —— 样式对齐「智能成片」入口(Figma 36:151),配色用本页粉紫渐变 */
+.hotcopy {
+  display: flex;
+  height: 100vh;
+  min-height: 100vh;
+  background: #f8f9fa;
+}
+.hotcopy__shell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.hotcopy__main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: clamp(48px, 18vh, 220px) 24px 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #f8f9fa;
+}
+
+/* 背景两层渐变光晕(对齐智能成片 .bg;配色取自本页 Figma 的粉紫)*/
+.hotcopy__bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.hotcopy__bg-lg {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  transform: translate(-50%, 0);
+  width: min(1958px, 150vw);
+  aspect-ratio: 1958 / 588;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(255, 178, 208, 0.2) 0%,
+    rgba(217, 131, 237, 0.2) 48%,
+    rgba(170, 85, 227, 0.2) 100%
+  );
+  filter: blur(80px);
+}
+.hotcopy__bg-veil {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(1300px, 120vw);
+  height: min(420px, 36vh);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, rgba(242, 192, 225, 0.48) 0%, rgba(252, 188, 230, 0) 100%);
+  filter: blur(80px);
+}
+
+.hotcopy__title {
+  position: relative;
+  z-index: 1;
+  font-size: clamp(28px, 3.6vw, 46px);
+  font-weight: 500;
+  color: #333;
+  letter-spacing: 0.5px;
+  margin: 0 0 36px;
+  text-align: center;
+}
+.hotcopy__panel {
+  position: relative;
+  z-index: 1;
+  width: min(1180px, 94%);
+}
+
+/* 分段 Tab(对齐智能成片 .tabs):灰底条在卡片下层,bottom:-20px 把底部塞进主卡,
+   卡片(z-index:1)盖住灰条底部 → 无缝「文件夹页签」;选中态为白色圆角卡 */
+.hotcopy__tabs {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 8px;
+  background: rgba(244, 244, 244, 0.6);
+  border-radius: 8px 8px 0 0;
+  padding: 6px 6px 26px;
+  position: relative;
+  z-index: 0;
+  bottom: -20px;
+}
+.hotcopy__tab {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 205px;
+  border: none;
+  background: transparent;
+  border-radius: 12px;
+  padding: 10px 16px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
+}
+.hotcopy__tab:hover:not(.is-active) .hotcopy__tab-name {
+  color: #333;
+}
+.hotcopy__tab.is-active {
+  background: #fff;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+.hotcopy__tab-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hotcopy__tab-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: #666;
+}
+.hotcopy__tab.is-active .hotcopy__tab-name {
+  color: #333;
+}
+.hotcopy__tip {
+  width: 16px;
+  height: 16px;
+  cursor: help;
+  flex: 0 0 auto;
+  opacity: 0.5;
+}
+.hotcopy__tab.is-active .hotcopy__tip {
+  opacity: 0.85;
+}
+.hotcopy__tab-sub {
+  font-size: 14px;
+  color: #666;
+}
+
+/* 主卡片(对齐智能成片 .card:30px 圆角 + 柔和投影 + 浅白描边) */
+.hotcopy__card {
+  background: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 30px;
+  padding: 24px 28px;
+  box-shadow:
+    0 24px 60px rgba(31, 41, 55, 0.1),
+    0 2px 8px rgba(31, 41, 55, 0.04);
+  position: relative;
+  z-index: 1;
+}
+.hotcopy__body {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+/* 左侧两个上传方块 */
+.hotcopy__tiles {
+  display: flex;
+  gap: 20px;
+  flex: 0 0 auto;
+}
+.hotcopy__tilewrap {
+  position: relative;
+}
+.hotcopy__tile {
+  width: 150px;
+  height: 110px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  position: relative;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.hotcopy__tile:hover {
+  border-color: #1fcfa9;
+  background: #f3fffc;
+}
+.hotcopy__tile.is-done {
+  border-color: #1fcfa9;
+  background: #f3fffc;
+}
+.hotcopy__tile-icon {
+  width: 40px;
+  height: 40px;
+}
+.hotcopy__tile-label {
+  font-size: 16px;
+  font-weight: 500;
+  color: #555;
+}
+.hotcopy__tile-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* 视频来源菜单 */
+.hotcopy__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  min-width: 100%;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(20, 20, 50, 0.14);
+  padding: 4px;
+}
+.hotcopy__menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 9px 14px;
+  font-size: 14px;
+  color: #444;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.hotcopy__menu button:hover {
+  background: #f3fffc;
+  color: #11a98a;
+}
+
+/* 右侧文案输入:高亮层(@图片N 绿)在底,透明文字 textarea 叠上,光标可见(对齐智能成片)*/
+.hotcopy__inputWrap {
+  flex: 1 1 240px;
+  min-width: 0;
+  position: relative;
+  min-height: 110px;
+}
+.hotcopy__inputHl,
+.hotcopy__text {
+  font-size: 18px;
+  line-height: 1.5;
+  font-family: inherit;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  padding: 6px 4px;
+}
+.hotcopy__inputHl {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #333;
+  pointer-events: none;
+  z-index: 0;
+}
+.hotcopy__refTag {
+  color: #1fcfa9;
+  font-weight: 600;
+}
+.hotcopy__text {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  min-height: 110px;
+  max-height: 260px;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: transparent; /* 文字透明,显示底层高亮文本 */
+  caret-color: #333; /* 但光标保持可见 */
+}
+.hotcopy__text::placeholder {
+  color: #909090;
+  -webkit-text-fill-color: #909090; /* color:transparent 时仍显示占位符 */
+}
+
+/* 已选素材区(爆款视频 chip / 链接 / 替换素材缩略) */
+.hotcopy__selected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.hotcopy__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  font-size: 13px;
+  color: #555;
+  background: #f3fffc;
+  border: 1px solid #cdeee5;
+  border-radius: 8px;
+  padding: 5px 10px;
+  overflow: hidden;
+}
+.hotcopy__chip button {
+  border: none;
+  background: none;
+  color: #88b3a9;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.hotcopy__link {
+  flex: 1 1 240px;
+  min-width: 200px;
+  box-sizing: border-box;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+}
+.hotcopy__link:focus {
+  border-color: #1fcfa9;
+}
+.hotcopy__products {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hotcopy__product {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+}
+.hotcopy__product img,
+.hotcopy__product video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.hotcopy__product button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+/* 爆款视频缩略图:绿色描边 + 左下角「爆款」角标,与替换素材区分 */
+.hotcopy__product--hot {
+  border-color: #1fcfa9;
+}
+.hotcopy__hotTag {
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(31, 207, 169, 0.92);
+  color: #fff;
+  font-size: 10px;
+  line-height: 15px;
+  pointer-events: none;
+}
+
+/* 底部:@ 参考素材(左) + 圆形发送(右) */
+.hotcopy__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18px;
+}
+.hotcopy__at {
+  width: 44px;
+  height: 44px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  color: #333;
+  font-size: 20px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+.hotcopy__at:hover {
+  border-color: #1fcfa9;
+  color: #11a98a;
+}
+
+/* @ 素材选择:在 @ 按钮上方弹出,数据源是上传的替换素材(对齐智能成片 .atMenu) */
+.hotcopy__atAnchor {
+  position: relative;
+  display: inline-flex;
+}
+.hotcopy__atMask {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+.hotcopy__atMenu {
+  position: absolute;
+  z-index: 31;
+  bottom: calc(100% + 8px);
+  left: 0;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  padding: 10px;
+}
+.hotcopy__atMenuTitle {
+  font-size: 12px;
+  color: #8a93a0;
+  margin-bottom: 8px;
+}
+.hotcopy__atMenuGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 320px;
+}
+.hotcopy__atItem {
+  width: 72px;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: border-color 0.15s;
+}
+.hotcopy__atItem img,
+.hotcopy__atItem video {
+  width: 72px;
+  height: 56px;
+  object-fit: cover;
+  display: block;
+}
+.hotcopy__atItem:hover {
+  border-color: #1fcfa9;
+}
+.hotcopy__atItemName {
+  font-size: 11px;
+  color: #333;
+  padding: 3px 0;
+}
+/* 发送按钮:仅作点击容器,圆底与灰/绿两态由 SVG fill 切换(对齐智能成片 .send) */
+.hotcopy__send {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+.hotcopy__send:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.hotcopy__send:disabled {
+  cursor: not-allowed;
+}
+
+/* 生成中 / 成片结果 */
+.hotcopy__result {
+  position: relative;
+  z-index: 1;
+  width: min(1180px, 94%);
+  margin-top: 20px;
+  background: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 20px;
+  box-shadow:
+    0 24px 60px rgba(31, 41, 55, 0.1),
+    0 2px 8px rgba(31, 41, 55, 0.04);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.hotcopy__result-wait {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #11a98a;
+  font-size: 14px;
+  padding: 40px 0;
+}
+.hotcopy__spin {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(31, 207, 169, 0.3);
+  border-top-color: #1fcfa9;
+  border-radius: 50%;
+  animation: hotcopy-spin 0.7s linear infinite;
+}
+@keyframes hotcopy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.hotcopy__result-video {
+  width: 100%;
+  max-height: 60vh;
+  border-radius: 12px;
+  background: #000;
+}
+.hotcopy__result-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.hotcopy__result-dl {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #1fcfa9;
+  color: #11a98a;
+  border-radius: 12px;
+  padding: 10px 20px;
+  font-size: 14px;
+  text-decoration: none;
+}
+.hotcopy__result-dl:hover {
+  background: #f3fffc;
+}
+.hotcopy__create {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 12px;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 11px 24px;
+  cursor: pointer;
+}
+.hotcopy__create:hover:not(:disabled) {
+  background: #11a98a;
+}
+.hotcopy__create:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 640px) {
+  .hotcopy__body {
+    flex-direction: column;
+  }
+  .hotcopy__tabs {
+    margin-left: 0;
+  }
+  .hotcopy__tab {
+    min-width: 0;
+    flex: 1;
+  }
+}

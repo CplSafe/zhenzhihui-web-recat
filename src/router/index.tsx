@@ -60,7 +60,7 @@ const LoginView = lazy(() => import('../views/LoginView'))
 const HomeView = lazy(() => import('../views/HomeView'))
 const TemplatesView = lazy(() => import('../views/TemplatesView'))
 const SmartCreateView = lazy(() => import('../views/SmartCreateView'))
-const HotCopyView = lazy(() => import('../views/HotCopyView'))
+const HotCopyCreateView = lazy(() => import('../views/HotCopyCreateView'))
 const CreativeEntryView = lazy(() => import('../views/CreativeEntryView'))
 const CreativeScriptView = lazy(() => import('../views/CreativeScriptView'))
 const ProjectManagementView = lazy(() => import('../views/ProjectManagementView'))
@@ -83,7 +83,7 @@ export const router = createBrowserRouter([
       { path: 'workbench', element: lazyPage(<WorkbenchView />) },
       { path: 'smart', element: lazyPage(<SmartCreateView />) },
       { path: 'smart/:id', element: lazyPage(<SmartCreateView />) },
-      { path: 'hot-copy', element: lazyPage(<HotCopyView />) },
+      { path: 'hot-copy', element: lazyPage(<HotCopyCreateView />) },
       { path: 'creative/blank', element: lazyPage(<CreativeScriptView />) },
       { path: 'creative', element: lazyPage(<CreativeEntryView />) },
       { path: 'creative/:id', element: lazyPage(<CreativeScriptView />) },

@@ -194,9 +194,6 @@ export default function SmartCreateView() {
     kind: '',
     autoGen: false,
   })
-  // 准备素材阶段:点击主体的「AI自动生成」按画面描述出图。subjectGen[name]=该主体正在生成(列内转圈)
-  const [subjectGen, setSubjectGen] = useState<Record<string, boolean>>({})
-
   // 把某元素的选定图(url+assetId)写回所有同名 subject
   const applySubjectImage = (name: string, url: string, assetId = 0) =>
     setShots((prev) =>
@@ -387,32 +384,6 @@ export default function SmartCreateView() {
       prev.map((sh) => (sh.id === shot.id ? { ...sh, subjects: [...sh.subjects, { tag: `@${name}`, kind: '' }] } : sh)),
     )
     openSubject(name)
-  }
-
-  // 准备素材:点击某主体的「AI自动生成」时,按画面描述为它出图(点一个生成一个,结果联动所有同名主体)。
-  // 与素材弹窗的 AI 自动生成同一套流程:subjectPrompt(含画面描述语境) → refineElementPrompt 润色 → genForSubject 出图。
-  const generateOneSubject = async (name: string, kind: string) => {
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      showToast('未选择工作空间,无法生成素材', 'error')
-      return
-    }
-    if (subjectGen[name]) return // 该主体正在生成,忽略重复点击
-    setSubjectGen((m) => ({ ...m, [name]: true }))
-    try {
-      // 按画面描述构造意图提示词,再本地润色成干净的单主体出图提示词
-      let prompt = subjectPrompt(name, kind || subjectKindOf(name), entryMeta?.style, subjectContext(name))
-      try {
-        prompt = await refineElementPrompt(prompt, { name, kind, style: entryMeta?.style })
-      } catch {
-        /* 润色失败用原提示词 */
-      }
-      await genForSubject(name, prompt, {})
-    } catch (e: any) {
-      showToast(`素材「${name}」生成失败:${e?.message || '请重试'}`, 'error')
-    } finally {
-      setSubjectGen((m) => ({ ...m, [name]: false }))
-    }
   }
 
   // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
@@ -1542,8 +1513,6 @@ export default function SmartCreateView() {
               <ScriptStoryboardTable
                 shots={shots}
                 showSubjects={materialMode}
-                generating={subjectGen}
-                onGenerateSubject={generateOneSubject}
                 onAddMaterial={addShotMaterial}
                 onOpenSubject={openSubject}
                 onShotsChange={setShots}
