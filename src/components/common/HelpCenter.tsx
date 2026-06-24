@@ -6,8 +6,12 @@
  * - 内容暂为前端占位,后端就绪后替换;搜索为占位。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useToast } from '@/composables/useToast'
 import './HelpCenter.css'
+
+// 进入这些页面时自动弹开 AI 助手:首页 / 智能成片主页 / 爆款复制
+const AUTO_OPEN_PATHS = ['/home', '/smart', '/hot-copy']
 
 const POS_KEY = 'zzh_help_ball_pos'
 const BALL = 56
@@ -95,6 +99,7 @@ const IconChat = () => (
 
 export default function HelpCenter() {
   const { showToast } = useToast()
+  const { pathname } = useLocation()
   const [pos, setPos] = useState<Pos | null>(null)
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<View>('home')
@@ -136,6 +141,14 @@ export default function HelpCenter() {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [setPosBoth])
+
+  // 进入 首页 / 智能成片主页 / 爆款复制 时自动弹开,并回到首屏
+  useEffect(() => {
+    if (AUTO_OPEN_PATHS.includes(pathname)) {
+      setView('home')
+      setOpen(true)
+    }
+  }, [pathname])
 
   useEffect(() => {
     if (!open) return
@@ -377,16 +390,19 @@ export default function HelpCenter() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       >
-        {open ? (
-          <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-            <path d="M6 14l6-6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-            <path d="M12 3l1.7 4.1L18 8.8l-4.3 1.7L12 15l-1.7-4.5L6 8.8l4.3-1.7z" fill="currentColor" />
-            <circle cx="18" cy="16.5" r="1.6" fill="currentColor" />
-          </svg>
-        )}
+        {/* 与 Figma 一致:白色圆角上箭头(⌃);展开时旋转 180° 表示收起 */}
+        <svg
+          className={`hc-ball-caret${open ? ' is-open' : ''}`}
+          viewBox="0 0 70 70"
+          width="30"
+          height="30"
+          aria-hidden="true"
+        >
+          <path
+            d="M22.475 39.0107C22.0934 39.3791 21.8778 39.8854 21.875 40.415C21.9247 41.6104 22.9297 42.5413 24.125 42.4991C24.7438 42.5019 25.3372 42.2572 25.775 41.8204L35 32.6591L44.225 41.8204C44.6628 42.2572 45.2563 42.5019 45.875 42.4991C47.0703 42.5413 48.0753 41.6104 48.125 40.415C48.1222 39.8854 47.9066 39.3791 47.525 39.0107L36.65 28.175C35.7341 27.275 34.2659 27.275 33.35 28.175L22.475 39.0107Z"
+            fill="currentColor"
+          />
+        </svg>
       </button>
     </div>
   )

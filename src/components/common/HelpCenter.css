@@ -498,3 +498,11 @@
   height: 28px;
   background: #f1f0f5;
 }
+
+/* 悬浮球内的 Figma 上箭头:展开时旋转 180° 表示「收起」 */
+.hc-ball-caret {
+  transition: transform 0.2s ease;
+}
+.hc-ball-caret.is-open {
+  transform: rotate(180deg);
+}
