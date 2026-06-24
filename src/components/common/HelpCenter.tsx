@@ -8,10 +8,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useToast } from '@/composables/useToast'
+import { fileToDataUrl } from '@/utils/imageFile'
 import './HelpCenter.css'
 
 // 进入这些页面时自动弹开 AI 助手:首页 / 智能成片主页 / 爆款复制
 const AUTO_OPEN_PATHS = ['/home', '/smart', '/hot-copy']
+const FB_TYPES = [
+  { k: 'feature', l: '功能反馈' },
+  { k: 'optimize', l: '优化建议' },
+  { k: 'other', l: '其他反馈' },
+] as const
+const FB_MAX_IMAGES = 3
+const FB_MAX_LEN = 200
 
 const POS_KEY = 'zzh_help_ball_pos'
 const BALL = 56
@@ -107,6 +115,9 @@ export default function HelpCenter() {
   const [feedback, setFeedback] = useState('')
   const [contact, setContact] = useState('')
   const [search, setSearch] = useState('')
+  const [fbType, setFbType] = useState<'feature' | 'optimize' | 'other'>('feature')
+  const [fbImages, setFbImages] = useState<string[]>([])
+  const fbFileRef = useRef<HTMLInputElement>(null)
 
   const ballRef = useRef<HTMLButtonElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -210,6 +221,8 @@ export default function HelpCenter() {
     showToast('感谢反馈,我们会尽快处理', 'success')
     setFeedback('')
     setContact('')
+    setFbImages([])
+    setFbType('feature')
     setView('home')
   }, [feedback, showToast])
 
@@ -354,22 +367,94 @@ export default function HelpCenter() {
                 )}
 
                 {view === 'feedback' && (
-                  <div className="hc-feedback">
+                  <div className="hc-fb">
+                    <div className="hc-fb-tabs">
+                      <button type="button" className="hc-fb-tab is-active">
+                        提交反馈
+                      </button>
+                      <button type="button" className="hc-fb-tab" onClick={() => showToast('反馈历史待开放', 'info')}>
+                        反馈历史
+                      </button>
+                    </div>
+
+                    <div className="hc-fb-label">反馈类型</div>
+                    <div className="hc-fb-chips">
+                      {FB_TYPES.map((t) => (
+                        <button
+                          key={t.k}
+                          type="button"
+                          className={`hc-fb-chip${fbType === t.k ? ' is-active' : ''}`}
+                          onClick={() => setFbType(t.k)}
+                        >
+                          {t.l}
+                          {fbType === t.k && (
+                            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                              <path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="hc-fb-label hc-fb-label--row">
+                      反馈内容
+                      <span className="hc-fb-count">
+                        {feedback.length}/{FB_MAX_LEN}
+                      </span>
+                    </div>
                     <textarea
-                      className="hc-textarea"
+                      className="hc-fb-textarea"
                       value={feedback}
-                      maxLength={500}
-                      placeholder="遇到的问题或建议,越具体我们越能帮上忙…"
+                      maxLength={FB_MAX_LEN}
+                      placeholder="请输入您的反馈与建议,我们将作为功能优化的主要参考"
                       onChange={(e) => setFeedback(e.target.value)}
                     />
+
+                    <div className="hc-fb-uploads">
+                      {fbImages.map((u, i) => (
+                        <div className="hc-fb-thumb" key={i}>
+                          <img src={u} alt="" />
+                          <button type="button" onClick={() => setFbImages((a) => a.filter((_, j) => j !== i))} aria-label="移除">
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                      {fbImages.length < FB_MAX_IMAGES && (
+                        <button type="button" className="hc-fb-up" onClick={() => fbFileRef.current?.click()}>
+                          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                            <path d="M12 5v14M5 12h14" />
+                          </svg>
+                          <span>仅限3张图片</span>
+                        </button>
+                      )}
+                      <input
+                        ref={fbFileRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        hidden
+                        onChange={async (e) => {
+                          const files = Array.from(e.target.files || [])
+                          e.target.value = ''
+                          const room = FB_MAX_IMAGES - fbImages.length
+                          const picked = (
+                            await Promise.all(files.slice(0, room).map((f) => fileToDataUrl(f).catch(() => '')))
+                          ).filter(Boolean) as string[]
+                          if (picked.length) setFbImages((a) => [...a, ...picked])
+                        }}
+                      />
+                    </div>
+
+                    <div className="hc-fb-label">联系方式</div>
                     <input
-                      className="hc-input"
+                      className="hc-fb-input"
                       value={contact}
-                      maxLength={60}
-                      placeholder="联系方式(选填,便于回复)"
+                      maxLength={20}
+                      placeholder="请输入您的手机号"
                       onChange={(e) => setContact(e.target.value)}
                     />
-                    <button type="button" className="hc-submit" onClick={submitFeedback}>
+
+                    <button type="button" className="hc-fb-submit" onClick={submitFeedback}>
                       提交反馈
                     </button>
                   </div>
