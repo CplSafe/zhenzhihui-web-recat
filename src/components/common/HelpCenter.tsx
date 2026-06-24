@@ -238,7 +238,7 @@ export default function HelpCenter() {
               </button>
 
               <div className="hc-ai-greet">
-                你好!我是你的智能助手小峰峰,
+                你好!我是智能客服小峰峰
                 <br />
                 我能帮上什么忙?
               </div>
