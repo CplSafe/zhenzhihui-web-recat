@@ -16,6 +16,7 @@ import HotCopyEntry, { type HotCopyEntryPayload } from '@/components/hotcopy/Hot
 import VideoStage from '@/components/smart/VideoStage'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import { replicateHotVideo, uploadHotCopyAsset } from '@/api/hotCopy'
+import { editFullVideo } from '@/api/smartVideo'
 import { refreshAssetUrl } from '@/api/smartShotImage'
 import { generateProjectName } from '@/api/aiPolish'
 import {
@@ -181,18 +182,52 @@ export default function HotCopyCreateView() {
     }
   }
 
-  // VideoStage「重新生成 / 确认修改」:基于已上传的源视频 + 替换素材重跑 replicate(note=片段/整段修改意见)
-  const regenerate = async (note?: string) => {
+  // VideoStage「重新生成 / 确认修改」:
+  //  - opts.edit=true(「确认修改」)且已有整片时:走视频编辑(video.edit,模型 happyhorse-1.0-video-edit),
+  //    在已生成的整片基础上按修改意见微调(与智能成片一致),不再用 video.replicate 从源视频重做同款。
+  //  - 否则(「重新生成」):基于已上传的源视频 + 替换素材重跑 replicate。
+  const regenerate = async (note?: string, opts?: { edit?: boolean }) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
       return
     }
+    if (vidGenRunning) return
+
+    // 「确认修改」:把当前整片当 video 输入,按修改提示在原视频基础上改
+    if (opts?.edit && fullVideo.assetId) {
+      setVidGenRunning(true)
+      try {
+        const plans = await resolvePlanCandidates()
+        const editPrompt = [
+          '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
+          note || '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+        const { url, assetId } = await editFullVideo({
+          workspaceId: ws,
+          videoAssetId: fullVideo.assetId,
+          prompt: editPrompt,
+          ratio: DEFAULT_RATIO,
+          durationSec: DEFAULT_DURATION_SEC,
+          modelPlanCandidates: plans,
+        })
+        setFullVideo({ url, assetId })
+        setVideoVersions((prev) => [...prev, { url, assetId }])
+      } catch (e: any) {
+        showToast(`视频修改失败:${e?.message || '请重试'}`, 'error')
+      } finally {
+        setVidGenRunning(false)
+      }
+      return
+    }
+
+    // 「重新生成」:基于已上传的源视频 + 替换素材重跑 replicate(note=片段/整段修改意见)
     if (!sourceVideo.assetId) {
       showToast('请先上传爆款视频', 'error')
       return
     }
-    if (vidGenRunning) return
     setVidGenRunning(true)
     try {
       const prompt = [basePrompt, note && `修改要求:${note}`].filter(Boolean).join('\n')
@@ -331,7 +366,7 @@ export default function HotCopyCreateView() {
                 videoStatusText={vidGenRunning ? '爆款复制生成中…' : undefined}
                 videoVersions={videoVersions}
                 onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
-                onRegenerateVideo={(note) => regenerate(note)}
+                onRegenerateVideo={(note, opts) => regenerate(note, opts)}
                 onDownloadVideo={handleDownloadVideo}
                 onPrev={() => goStep(0)}
               />

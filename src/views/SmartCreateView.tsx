@@ -28,8 +28,7 @@ import {
 } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
-import { generateFullVideo, buildTimelinePrompt, totalDurationSec } from '@/api/smartVideo'
-import { replicateHotVideo } from '@/api/hotCopy'
+import { generateFullVideo, editFullVideo, buildTimelinePrompt, totalDurationSec } from '@/api/smartVideo'
 import { blurFacesOnAsset } from '@/api/smartFaceBlur'
 import VideoStage from '@/components/smart/VideoStage'
 import {
@@ -646,7 +645,8 @@ export default function SmartCreateView() {
   const [blurDebug, setBlurDebug] = useState<any[]>([])
 
   // 生成/重生成整片;note=修改意见。opts.edit=true(「确认修改」)且已有整片时:
-  // 基于原视频做修改(video.replicate:原视频 role:video + 修改提示),不从分镜图重出整片。
+  // 走视频编辑(video.edit,模型 happyhorse-1.0-video-edit):原视频 role:video + 修改提示,
+  // 不复用爆款复制(video.replicate)逻辑,也不从分镜图重出整片。
   const runFullVideo = async (note?: string, opts?: { edit?: boolean }) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
@@ -670,7 +670,7 @@ export default function SmartCreateView() {
         ]
           .filter(Boolean)
           .join('\n')
-        const { url, assetId } = await replicateHotVideo({
+        const { url, assetId } = await editFullVideo({
           workspaceId: ws,
           videoAssetId: fullVideo.assetId,
           prompt: editPrompt,

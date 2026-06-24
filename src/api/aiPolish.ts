@@ -17,9 +17,11 @@ const SYSTEM_PROMPTS: Record<PolishKind, string> = {
   subtitle: '你是专业的视频字幕润色助手。让字幕更简洁、准确、易读,长度适合屏幕显示。只输出润色后的字幕文本,不要解释。',
   sound: '你是专业的音效描述润色助手。让音效/配乐描述更具体、专业、可执行。只输出润色后的描述,不要解释。',
   segment:
-    '你是专业的视频片段编辑助手。根据用户对这一片段的修改诉求,润色为清晰、可执行的画面编辑指令。只输出润色后的指令,不要解释。',
+    '你是专业的视频片段编辑助手。根据用户对这一片段的修改诉求,润色为一句话清晰、可执行的画面编辑指令。' +
+    '只输出这一句润色后的纯文本指令,严禁输出 JSON、数组、代码块、分镜脚本或 <<<STORYBOARD_JSON>>> 等任何标记,不要解释、不要引号。',
   generic:
-    '你是专业的中文文案润色助手。在保持原意的前提下让表达更清晰、生动、专业。只输出润色后的文本,不要解释、不要引号。',
+    '你是专业的中文文案润色助手。在保持原意的前提下让表达更清晰、生动、专业。' +
+    '只输出润色后的纯文本,严禁输出 JSON、数组、代码块、分镜脚本或 <<<STORYBOARD_JSON>>> 等任何标记,不要解释、不要引号。',
 }
 
 export interface PolishOptions {
@@ -28,6 +30,44 @@ export interface PolishOptions {
   context?: string
   signal?: AbortSignal
   maxTokens?: number
+}
+
+/**
+ * 统一清洗润色输出,保证只返回纯文案。
+ * 共享网关模型有时会"惯性"吐出旧版分镜脚本(<<<STORYBOARD_JSON>>>[{prompt,voiceover,...}])或代码块,
+ * 这里剥掉标记/围栏;若仍是分镜 JSON,则解析出其中可读字段(prompt/voiceover/subtitle...)拼成纯文本。
+ */
+function cleanPolishOutput(raw: string): string {
+  let s = (raw || '').trim()
+  if (!s) return ''
+  // 1) 去掉 <<<STORYBOARD_JSON>>> ... <<<END_STORYBOARD_JSON>>> 标记(保留中间内容待进一步解析)
+  s = s
+    .replace(/<<<\s*STORYBOARD_JSON\s*>>>/gi, '')
+    .replace(/<<<\s*END_STORYBOARD_JSON\s*>>>/gi, '')
+    .trim()
+  // 2) 去掉代码块围栏
+  s = s
+    .replace(/^```(\w+)?/i, '')
+    .replace(/```$/i, '')
+    .trim()
+  // 3) 若是分镜 JSON(数组/对象,含 prompt/voiceover 等),解析出可读文案
+  if (/^[[{]/.test(s)) {
+    const m = s.match(/[[{][\s\S]*[\]}]/)
+    if (m) {
+      try {
+        const parsed = JSON.parse(m[0])
+        const arr = Array.isArray(parsed) ? parsed : [parsed]
+        const pick = (o: any) =>
+          String(o?.prompt || o?.voiceover || o?.line || o?.subtitle || o?.desc || o?.title || '').trim()
+        const texts = arr.map(pick).filter(Boolean)
+        if (texts.length) return texts.join('\n')
+      } catch {
+        /* 解析失败则走兜底:返回去标记后的文本 */
+      }
+    }
+  }
+  // 4) 去掉首尾包裹引号
+  return s.replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '').trim()
 }
 
 /**
@@ -47,8 +87,9 @@ export async function polishText(text: string, opts: PolishOptions = {}): Promis
     maxTokens: opts.maxTokens ?? 512,
     signal: opts.signal,
   })
-  if (!out) throw new Error('润色结果为空,请重试')
-  return out
+  const cleaned = cleanPolishOutput(out)
+  if (!cleaned) throw new Error('润色结果为空,请重试')
+  return cleaned
 }
 
 /**
