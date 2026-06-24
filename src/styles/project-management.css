@@ -1035,9 +1035,10 @@
    ====================================================================== */
 /* 新壳:AppSidebar + AppTopbar(与首页一致) */
 .pm2-page {
+  position: fixed;
+  inset: 0;
   display: flex;
-  height: 100vh;
-  min-height: 100vh;
+  overflow: hidden;
   background: #f8f9fa;
 }
 .pm2-shell {
@@ -1323,13 +1324,13 @@
   filter: brightness(1.05);
 }
 
-/* ---- 渐变色板(文件夹 / 视频缩略共用)---- */
-.pm2-tone-a { background: linear-gradient(135deg, #bfe9c9, #91d7ad); }
-.pm2-tone-b { background: linear-gradient(135deg, #f7cdd9, #f1adc3); }
-.pm2-tone-c { background: linear-gradient(135deg, #d8c9f5, #bda6ef); }
-.pm2-tone-d { background: linear-gradient(135deg, #fbd9b8, #f6c393); }
-.pm2-tone-e { background: linear-gradient(135deg, #bfe7e0, #97d6cb); }
-.pm2-tone-f { background: linear-gradient(135deg, #c9d2f5, #aab9ef); }
+/* ---- 统一渐变色（文件夹 / 视频缩略共用）---- */
+.pm2-tone-a,
+.pm2-tone-b,
+.pm2-tone-c,
+.pm2-tone-d,
+.pm2-tone-e,
+.pm2-tone-f { background: linear-gradient(135deg, #bfe9c9, #91d7ad); }
 
 /* ---- 创建项目弹窗 ---- */
 .pm2-modal-mask {

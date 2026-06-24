@@ -100,20 +100,6 @@ const IconUser = (
     <path d="M5 20a7 7 0 0 1 14 0" />
   </svg>
 )
-const IconAgent = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <rect x="4" y="8" width="16" height="11" rx="2" />
-    <path d="M12 4v4M8 13h.01M16 13h.01" />
-    <path d="M9 16h6" />
-  </svg>
-)
-const IconGift = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <rect x="4" y="9" width="16" height="11" rx="1.5" />
-    <path d="M3 9h18M12 9v11" />
-    <path d="M12 9C9 9 7.5 4 12 4s3 5 0 5" />
-  </svg>
-)
 const IconSettings = (
   <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
     <circle cx="12" cy="12" r="3" />
@@ -150,13 +136,6 @@ const GROUPS: SidebarGroup[] = [
       { key: 'dashboard', label: '数据看板', icon: IconDashboard },
     ],
   },
-  {
-    title: '其他',
-    items: [
-      { key: 'agent-join', label: '代理商入驻', icon: IconAgent },
-      { key: 'invite', label: '邀请返利', icon: IconGift },
-    ],
-  },
 ]
 
 export default function AppSidebar({ activeKey = 'home', onNavigate, open = false, onClose }: AppSidebarProps) {
@@ -183,53 +162,47 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
   return (
     <>
       {/* 移动端抽屉遮罩（桌面端 CSS 隐藏）*/}
-      <div
-        className={`app-sidebar__backdrop${open ? ' is-open' : ''}`}
-        onClick={onClose}
-        aria-hidden="true"
-      />
+      <div className={`app-sidebar__backdrop${open ? ' is-open' : ''}`} onClick={onClose} aria-hidden="true" />
       <aside className={`app-sidebar${open ? ' is-open' : ''}`}>
-      {/* 品牌 */}
-      <div className="app-sidebar__brand">
-        <img src={brandLogo} alt="帧智汇" className="app-sidebar__logo" />
-        <span className="app-sidebar__brand-name">帧智汇</span>
-        <span className="app-sidebar__version">v{APP_VERSION}</span>
-      </div>
-
-      <nav className="app-sidebar__nav">
-        {/* 首页 单独一项 */}
-        <div className="app-sidebar__group">{renderItem({ key: 'home', label: '首页', icon: IconHome })}</div>
-
-        {/* 创作 / 管理 / 发布 / 其他 */}
-        {GROUPS.slice(0, 3).map((group) => (
-          <div className="app-sidebar__group" key={group.title}>
-            <div className="app-sidebar__group-title">{group.title}</div>
-            {group.items.map(renderItem)}
-          </div>
-        ))}
-
-        {/* 团队：个人空间（静态下拉样式）*/}
-        <div className="app-sidebar__group">
-          <div className="app-sidebar__group-title">团队</div>
-          <button type="button" className="app-sidebar__item app-sidebar__item--dropdown" onClick={() => go('team')}>
-            <span className="app-sidebar__icon">{IconUser}</span>
-            <span className="app-sidebar__label">个人空间</span>
-            <span className="app-sidebar__chevron">{IconChevron}</span>
-          </button>
+        {/* 品牌 */}
+        <div className="app-sidebar__brand">
+          <img src={brandLogo} alt="帧智汇" className="app-sidebar__logo" />
+          <span className="app-sidebar__brand-name">帧智汇</span>
+          <span className="app-sidebar__version">v{APP_VERSION}</span>
         </div>
 
-        {GROUPS.slice(3).map((group) => (
-          <div className="app-sidebar__group" key={group.title}>
-            <div className="app-sidebar__group-title">{group.title}</div>
-            {group.items.map(renderItem)}
-          </div>
-        ))}
-      </nav>
+        <nav className="app-sidebar__nav">
+          {/* 首页 单独一项 */}
+          <div className="app-sidebar__group">{renderItem({ key: 'home', label: '首页', icon: IconHome })}</div>
 
-      {/* 底部：设置 */}
-      <div className="app-sidebar__footer">
-        {renderItem({ key: 'settings', label: '设置', icon: IconSettings })}
-      </div>
+          {/* 创作 / 管理 / 发布 / 其他 */}
+          {GROUPS.slice(0, 3).map((group) => (
+            <div className="app-sidebar__group" key={group.title}>
+              <div className="app-sidebar__group-title">{group.title}</div>
+              {group.items.map(renderItem)}
+            </div>
+          ))}
+
+          {/* 团队：个人空间（静态下拉样式）*/}
+          <div className="app-sidebar__group">
+            <div className="app-sidebar__group-title">团队</div>
+            <button type="button" className="app-sidebar__item app-sidebar__item--dropdown" onClick={() => go('team')}>
+              <span className="app-sidebar__icon">{IconUser}</span>
+              <span className="app-sidebar__label">个人空间</span>
+              <span className="app-sidebar__chevron">{IconChevron}</span>
+            </button>
+          </div>
+
+          {GROUPS.slice(3).map((group) => (
+            <div className="app-sidebar__group" key={group.title}>
+              <div className="app-sidebar__group-title">{group.title}</div>
+              {group.items.map(renderItem)}
+            </div>
+          ))}
+        </nav>
+
+        {/* 底部：设置 */}
+        <div className="app-sidebar__footer">{renderItem({ key: 'settings', label: '设置', icon: IconSettings })}</div>
       </aside>
     </>
   )

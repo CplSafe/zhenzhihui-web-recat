@@ -427,9 +427,10 @@
 
 /* ===== 素材市场 2.1(三 Tab + 子分类)===== */
 .rm2-page {
+  position: fixed;
+  inset: 0;
   display: flex;
-  height: 100vh;
-  min-height: 100vh;
+  overflow: hidden;
   background: #f8f9fa;
 }
 .rm2-shell {

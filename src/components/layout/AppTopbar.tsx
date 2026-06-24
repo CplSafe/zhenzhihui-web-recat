@@ -10,6 +10,7 @@ import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
+import { markDevLogout } from '@/App'
 import './AppTopbar.css'
 
 interface AppTopbarProps {
@@ -70,6 +71,14 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
     if (isLoggingOut) return
     setMenuOpen(false)
     setIsLoggingOut(true)
+
+    if (import.meta.env.DEV) {
+      setIsLoggingOut(false)
+      markDevLogout()
+      handleLogoutSuccess()
+      return
+    }
+
     try {
       await logoutSession()
       showToast('已退出登录', 'success')
@@ -90,7 +99,15 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
     <header className="apptop">
       {onMenu && (
         <button type="button" className="apptop__hamburger" aria-label="打开菜单" onClick={onMenu}>
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <svg
+            viewBox="0 0 24 24"
+            width="22"
+            height="22"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
             <path d="M4 7h16M4 12h16M4 17h16" />
           </svg>
         </button>
@@ -119,12 +136,7 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
       {menuOpen &&
         menuPos &&
         createPortal(
-          <div
-            ref={menuRef}
-            className="apptop__menu"
-            role="menu"
-            style={{ top: menuPos.top, right: menuPos.right }}
-          >
+          <div ref={menuRef} className="apptop__menu" role="menu" style={{ top: menuPos.top, right: menuPos.right }}>
             <button type="button" className="apptop__menu-item" role="menuitem" onClick={handleMember}>
               会员中心
             </button>

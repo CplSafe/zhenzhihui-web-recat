@@ -6,12 +6,14 @@
  * 保留图形验证码挑战、用户协议确认、OAuth start 等既有认证逻辑;移除扫码/SSO/独立注册页。
  */
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import './LoginView.css'
 import loginHero from '@/assets/login-hero.png'
 import AgreementModal from '@/components/auth/AgreementModal'
 import {
-  getAuthNavigationUrl,
   getAuthErrorMessage,
+  getAuthNavigationUrl,
+  getAuthenticatedSession,
   getCaptcha,
   isCaptchaChallengeError,
   loginWithPassword,
@@ -20,6 +22,7 @@ import {
   sendAuthSms,
   startOAuth,
 } from '@/api/auth'
+import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 
 interface CaptchaState {
@@ -31,7 +34,11 @@ interface CaptchaState {
 const NAV_ITEMS = ['母婴宠物', '视频饮料', '生活服务', '家居建材']
 
 export default function LoginView() {
+  const navigate = useNavigate()
   const { showToast, clearToast } = useToast()
+  const { handleLoginSuccess } = useAuth()
+
+  const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
 
   const [loginMode, setLoginMode] = useState<'password' | 'sms'>('password')
   const [phone, setPhone] = useState('')
@@ -73,9 +80,26 @@ export default function LoginView() {
   function getRedirectTo() {
     return `${window.location.origin}/`
   }
-  function completeAuthFlow(oauth: any, authResult: any) {
+  // 登录成功后优先直接获取会话；失败则走 SSO 重定向（SSO 桥接必需，不可跳过）
+  async function handleLoginFlowComplete(oauth: any, authResult?: any) {
     markAuthSessionExpected()
-    window.location.href = getAuthNavigationUrl(oauth, authResult)
+    if (import.meta.env.DEV && !hasRemoteBackend) {
+      handleLoginSuccess()
+      return
+    }
+    try {
+      const session = await getAuthenticatedSession()
+      handleLoginSuccess(session)
+      return
+    } catch {
+      // 直接获取失败，走 SSO 重定向兜底
+    }
+    const navUrl = getAuthNavigationUrl(oauth, authResult)
+    if (navUrl && navUrl !== '/') {
+      window.location.href = navUrl
+    } else {
+      setNoticeMessage('登录失败，请稍后重试', 'error')
+    }
   }
 
   async function refreshCaptcha({ silent = false } = {}) {
@@ -203,15 +227,26 @@ export default function LoginView() {
   // 实际提交（协议已确认后调用）。
   async function submitLogin(mobile: string, credential: string) {
     setIsSubmitting(true)
+
+    // 仅在未配置远程后端时跳过真实 API 调用（走本地 mock 登录）。
+    if (import.meta.env.DEV && !hasRemoteBackend) {
+      setIsSubmitting(false)
+      setNoticeMessage('登录成功', 'success')
+      handleLoginFlowComplete(null as any)
+      return
+    }
+
     try {
       const oauth = await ensureAuthStart()
       const common = { authStart: oauth, mobile, captchaId: captcha.id, captchaAnswer: captcha.answer.trim() }
-      const result =
-        loginMode === 'password'
-          ? await loginWithPassword({ ...common, password: credential })
-          : await loginWithSmsCode({ ...common, smsCode: credential })
+      let loginResult: any
+      if (loginMode === 'password') {
+        loginResult = await loginWithPassword({ ...common, password: credential })
+      } else {
+        loginResult = await loginWithSmsCode({ ...common, smsCode: credential })
+      }
       setNoticeMessage('登录成功', 'success')
-      completeAuthFlow(oauth, result)
+      handleLoginFlowComplete(oauth, loginResult)
     } catch (error) {
       if (await handleCaptchaError(error)) {
         setNoticeMessage(getAuthErrorMessage(error, '请输入图形验证码'), 'error')
@@ -268,11 +303,7 @@ export default function LoginView() {
 
   return (
     <main className="zlogin">
-      <aside
-        className="zlogin-hero"
-        style={{ backgroundImage: `url(${loginHero})` }}
-        aria-hidden="true"
-      >
+      <aside className="zlogin-hero" style={{ backgroundImage: `url(${loginHero})` }} aria-hidden="true">
         <nav className="zlogin-nav">
           {NAV_ITEMS.map((item) => (
             <span key={item} className={`zlogin-nav-item${item === '生活服务' ? ' is-active' : ''}`}>
@@ -283,6 +314,17 @@ export default function LoginView() {
       </aside>
 
       <section className="zlogin-panel" aria-label="帧智汇登录">
+        <button type="button" className="zlogin-back" onClick={() => navigate(-1)} aria-label="返回上一页">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
+            <path
+              d="M15 18l-6-6 6-6"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
         <div className="zlogin-form">
           <h1 className="zlogin-title">欢迎加入帧智汇</h1>
           <p className="zlogin-sub">
@@ -448,9 +490,7 @@ export default function LoginView() {
         </div>
       </section>
 
-      {showAgreementModal && (
-        <AgreementModal onAgree={handleAgreementAgree} onCancel={handleAgreementCancel} />
-      )}
+      {showAgreementModal && <AgreementModal onAgree={handleAgreementAgree} onCancel={handleAgreementCancel} />}
     </main>
   )
 }

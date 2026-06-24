@@ -14,15 +14,20 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+html,
 body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
 #app {
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* Use :focus-visible for keyboard navigation accessibility.

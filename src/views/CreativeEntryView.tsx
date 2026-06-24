@@ -44,7 +44,7 @@ export default function CreativeEntryView() {
         if (!id) {
           throw new Error('创建项目失败：缺少项目 ID')
         }
-        navigate(`/creative/${id}`, { replace: true })
+        navigate(`/smart/${id}`, { replace: true })
       } catch (error: any) {
         showToast(getBusinessErrorMessage(error, error?.message || '创建项目失败，请稍后重试'), 'error')
       }
