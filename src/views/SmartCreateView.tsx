@@ -159,9 +159,7 @@ export default function SmartCreateView() {
 
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)
   const [requirement, setRequirement] = useState('')
-  const [reqSummary, setReqSummary] = useState('') // ≤100字核心摘要,用于页面展示
-  const [summarizing, setSummarizing] = useState(false)
-  const [showFullReq, setShowFullReq] = useState(false)
+  const [reqSummary, setReqSummary] = useState('') // ≤100字核心摘要,仅用于生成(basePrompt/大纲),不再展示
   const nameAbortRef = useRef<AbortController | null>(null)
 
   // ── 营销思路拆解(选中 SKILL 时,在分镜脚本前多出的第 1 步)──
@@ -1263,7 +1261,6 @@ export default function SmartCreateView() {
     setStarted(true)
     setStep(0)
     setMaxReached(0)
-    setShowFullReq(false)
     setShots([])
     setScriptError('')
     // 选中 SKILL → 先进「营销思路拆解」步(不立即生成脚本);未选 → 走现有逻辑直接生成脚本。
@@ -1311,11 +1308,9 @@ export default function SmartCreateView() {
     else void generateScript(req, meta)
     // 长需求 → AI 摘要成 ≤100 字展示;短需求直接用原文
     if (req.trim().length > 90) {
-      setSummarizing(true)
       summarizeRequirement(req)
         .then((s) => setReqSummary(s || req))
         .catch(() => setReqSummary(req))
-        .finally(() => setSummarizing(false))
     } else {
       setReqSummary(req)
     }
@@ -1445,24 +1440,14 @@ export default function SmartCreateView() {
 
   // 营销思路拆解步(选中 SKILL 时的第 1 步):我的描述(只读,与分镜脚本步一致)+ skill 拆解建议(可编辑)+ 确认/上一步。
   const renderMarketingBody = () => {
-    const promptText = reqSummary || requirement || '（未填写需求）'
+    const promptText = requirement || '（未填写需求）'
     return (
       <div className="smart__script smart__mkt-step">
-        {/* 我的描述:与分镜脚本/准备素材步一致(标签 + 需求摘要),只读展示 */}
+        {/* 我的描述:直接展示上一步输入框的原始需求,只读 */}
         <div className="smart__prompt-label">我的描述：</div>
         <div className="smart__prompt smart__md">
-          {summarizing ? '生成摘要中…' : <Streamdown>{promptText}</Streamdown>}
+          <Streamdown>{promptText}</Streamdown>
         </div>
-        {requirement && requirement !== reqSummary && (
-          <button type="button" className="smart__req-toggle" onClick={() => setShowFullReq((v) => !v)}>
-            {showFullReq ? '收起完整需求' : '展开完整需求'}
-          </button>
-        )}
-        {showFullReq && (
-          <div className="smart__req-full smart__md">
-            <Streamdown>{requirement}</Streamdown>
-          </div>
-        )}
 
         {/* skill 拆解出的营销建议:可编辑;正文区填满剩余空间并内部滚动,底部按钮常驻可见 */}
         <div className="smart__marketing">
@@ -1517,24 +1502,14 @@ export default function SmartCreateView() {
     // step0 隐藏「准备素材」列;确认脚本后进入 step1,才把 AI 生成的主体素材回填、按图二样式展示。
     if (step === 0 || step === 1) {
       const materialMode = step === 1
-      const promptText = reqSummary || requirement || '（未填写需求）'
+      const promptText = requirement || '（未填写需求）'
       return (
         <div className="smart__script">
-          {/* 我的描述:标签(Figma 299-2310)+ 需求摘要(markdown 渲染) */}
+          {/* 我的描述:直接展示上一步输入框的原始需求(markdown 渲染),只读 */}
           <div className="smart__prompt-label">我的描述：</div>
           <div className="smart__prompt smart__md">
-            {summarizing ? '生成摘要中…' : <Streamdown>{promptText}</Streamdown>}
+            <Streamdown>{promptText}</Streamdown>
           </div>
-          {requirement && requirement !== reqSummary && (
-            <button type="button" className="smart__req-toggle" onClick={() => setShowFullReq((v) => !v)}>
-              {showFullReq ? '收起完整需求' : '展开完整需求'}
-            </button>
-          )}
-          {showFullReq && (
-            <div className="smart__req-full smart__md">
-              <Streamdown>{requirement}</Streamdown>
-            </div>
-          )}
 
           {/* 素材:只展示用户上传的素材(AI 生成的主体不在此展示,见准备素材列)+ 添加 */}
           <SubjectMaterialBoard
