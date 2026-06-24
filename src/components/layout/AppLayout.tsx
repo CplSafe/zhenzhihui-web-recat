@@ -17,6 +17,7 @@ import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { useUiStore } from '@/stores/ui'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
 import { loadLastCreativeProjectId } from '@/utils/creativeStorage'
+import { markDevLogout } from '@/App'
 import {
   useWorkspaceSessionStore,
   useCurrentUser,
@@ -84,9 +85,7 @@ export default function AppLayout(props: AppLayoutProps) {
     setAuthSession(authSession)
   }, [authSession, setAuthSession])
 
-  const [viewportWidth, setViewportWidth] = useState(
-    typeof window !== 'undefined' ? window.innerWidth : DESIGN_WIDTH,
-  )
+  const [viewportWidth, setViewportWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : DESIGN_WIDTH)
   const [viewportHeight, setViewportHeight] = useState(
     typeof window !== 'undefined' ? window.innerHeight : DESIGN_HEIGHT,
   )
@@ -107,12 +106,12 @@ export default function AppLayout(props: AppLayoutProps) {
   const [deletingWorkspace, setDeletingWorkspace] = useState(false)
   const [workspacePendingDelete, setWorkspacePendingDelete] = useState<any>(null)
 
-  // 路由名映射：creative-workbench = /creative/:id, creative-entry = /creative, creative-blank = /creative/blank。
+  // 路由名映射：smart-workbench = /smart/:id（智能成片编辑页）
   const isCreativeWorkbench = useMemo(() => {
     const path = location.pathname
-    return /^\/creative\/[^/]+$/.test(path) && path !== '/creative/blank'
+    return /^\/smart\/[^/]+$/.test(path)
   }, [location.pathname])
-  const isCreativeEntry = useMemo(() => location.pathname === '/creative', [location.pathname])
+  const isCreativeEntry = useMemo(() => location.pathname === '/smart', [location.pathname])
 
   const isTabletViewport = viewportWidth <= 1280
   const isMobileViewport = viewportWidth <= 900
@@ -197,7 +196,7 @@ export default function AppLayout(props: AppLayoutProps) {
   function switchWorkspace(id: any) {
     switchWorkspaceAction(id)
     if (isCreativeWorkbench || isCreativeEntry) {
-      navigate('/creative/blank', { replace: true })
+      navigate('/smart', { replace: true })
     }
   }
 
@@ -266,7 +265,7 @@ export default function AppLayout(props: AppLayoutProps) {
       showToast('已加入新团队', 'success')
       setJoinTeamOpen(false)
       if (isCreativeWorkbench || isCreativeEntry) {
-        navigate('/creative/blank', { replace: true })
+        navigate('/smart', { replace: true })
       }
     } catch (error: any) {
       showToast(getBusinessErrorMessage(error, error.message || '加入团队失败'), 'error')
@@ -301,7 +300,7 @@ export default function AppLayout(props: AppLayoutProps) {
       setDeleteTeamConfirmOpen(false)
       setWorkspacePendingDelete(null)
       if (wasActiveWorkspace && (isCreativeWorkbench || isCreativeEntry)) {
-        navigate('/creative/blank', { replace: true })
+        navigate('/smart', { replace: true })
       }
     } catch (error: any) {
       showToast(getBusinessErrorMessage(error, error.message || '删除团队失败'), 'error')
@@ -350,10 +349,10 @@ export default function AppLayout(props: AppLayoutProps) {
       if (isCreativeWorkbench) return
       const lastProjectId = loadLastCreativeProjectId(workspaceId)
       if (lastProjectId) {
-        navigate(`/creative/${lastProjectId}`)
+        navigate(`/smart/${lastProjectId}`)
         return
       }
-      navigate('/creative/blank')
+      navigate('/smart')
       return
     }
 
@@ -367,24 +366,26 @@ export default function AppLayout(props: AppLayoutProps) {
 
     // If there are unsaved draft changes, prompt the user before logging out
     if (dirty) {
-      const choice = await requestConfirm(
-        '当前创意项目有未保存的修改，退出登录后修改可能丢失。是否保存后再退出？',
-        {
-          title: '未保存的修改',
-          confirmLabel: '直接退出',
-          cancelLabel: '取消',
-          danger: false,
-        },
-      )
-      // choice: true = 直接退出, false/null = 取消
+      const choice = await requestConfirm('当前创意项目有未保存的修改，退出登录后修改可能丢失。是否保存后再退出？', {
+        title: '未保存的修改',
+        confirmLabel: '直接退出',
+        cancelLabel: '取消',
+        danger: false,
+      })
       if (choice === false || choice === null) {
-        return // User cancelled
+        return
       }
-      // User chose to leave without saving — proceed with logout
       setDirty(false)
     }
 
     setIsLoggingOut(true)
+
+    if (import.meta.env.DEV) {
+      setIsLoggingOut(false)
+      markDevLogout()
+      handleLogoutSuccess()
+      return
+    }
 
     try {
       await logoutSession()
@@ -397,7 +398,6 @@ export default function AppLayout(props: AppLayoutProps) {
         handleLogoutSuccess()
         return
       }
-
       showToast(getAuthErrorMessage(error, '退出登录失败，请稍后重试'), 'error')
       setIsLoggingOut(false)
     }
@@ -511,12 +511,7 @@ export default function AppLayout(props: AppLayoutProps) {
       </section>
 
       {deleteTeamConfirmOpen && (
-        <div
-          className="delete-team-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="删除团队确认"
-        >
+        <div className="delete-team-overlay" role="dialog" aria-modal="true" aria-label="删除团队确认">
           <button
             type="button"
             className="delete-team-backdrop"
