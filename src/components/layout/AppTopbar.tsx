@@ -5,7 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import MemberCenterModal from '@/components/MemberCenterModal'
+import { useNavigate } from 'react-router-dom'
 import { useCurrentUser, useCurrentPlanName } from '@/stores/workspaceSession'
 import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
@@ -22,7 +22,7 @@ interface AppTopbarProps {
 }
 
 export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProps) {
-  const [memberOpen, setMemberOpen] = useState(false)
+  const navigate = useNavigate()
   const currentUser = useCurrentUser() as any
   const planName = useCurrentPlanName() as any
   const { handleLogoutSuccess } = useAuth()
@@ -65,7 +65,7 @@ export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProp
 
   const handleMember = () => {
     setMenuOpen(false)
-    setMemberOpen(true)
+    navigate('/membership')
   }
 
   async function handleLogout() {
@@ -153,8 +153,6 @@ export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProp
           </div>,
           document.body,
         )}
-
-      <MemberCenterModal open={memberOpen} onClose={() => setMemberOpen(false)} />
     </header>
   )
 }

@@ -268,7 +268,8 @@ function BannerVideo({ src, active, onDone }: { src: string; active: boolean; on
       src={src}
       muted
       playsInline
-      preload="auto"
+      /* 只让焦点视频整段缓冲,其余只取首帧,避免多路视频同时下载导致卡顿 */
+      preload={active ? 'auto' : 'metadata'}
       autoPlay={active}
       controls={false}
       disablePictureInPicture
@@ -321,16 +322,6 @@ const QUICK_ENTRIES = [
 ]
 
 import { listTemplates, type TemplateItem } from '@/api/templates'
-
-const RATIO_LABELS: Record<string, string> = {
-  '': '全部',
-  '9 / 16': '9:16',
-  '16 / 9': '16:9',
-  '4 / 5': '4:5',
-  '1 / 1': '1:1',
-  '3 / 4': '3:4',
-}
-const RATIO_KEYS = Object.keys(RATIO_LABELS)
 
 const TABS = [
   { key: 'template', label: '模板库' },
@@ -568,7 +559,6 @@ export default function HomeView() {
   const [templateItems, setTemplateItems] = useState<TemplateItem[]>([])
   const [templateLoading, setTemplateLoading] = useState(false)
   const [templateError, setTemplateError] = useState('')
-  const [ratioFilter, setRatioFilter] = useState('')
   const [templateRetry, setTemplateRetry] = useState(0)
 
   // 模板收藏(localStorage 占位):收藏的视频进素材市场「我收藏的」
@@ -632,20 +622,12 @@ export default function HomeView() {
 
   const keywordTrim = keyword.trim()
 
-  // 按比例和关键词过滤模板
+  // 按关键词过滤模板(比例筛选 chips 已按设计稿移除)
   const filteredTemplates = useMemo(() => {
     let list = templateItems
-    if (ratioFilter) list = list.filter((t) => t.ratio === ratioFilter)
     if (keywordTrim) list = list.filter((t) => t.title.includes(keywordTrim))
     return list
-  }, [templateItems, ratioFilter, keywordTrim])
-
-  // 模板中出现的比例选项（动态生成筛选栏）
-  const availableRatios = useMemo(() => {
-    const seen = new Set<string>()
-    templateItems.forEach((t) => seen.add(t.ratio))
-    return RATIO_KEYS.filter((k) => k === '' || seen.has(k))
-  }, [templateItems])
+  }, [templateItems, keywordTrim])
 
   // 切到「历史项目」标签且有工作空间时拉取真实项目（首次/切空间时）。
   // 游客模式不请求数据（API 会 401）
@@ -877,21 +859,6 @@ export default function HomeView() {
                   </button>
                 ))}
               </div>
-              {/* 比例筛选 — 仅模板 tab 显示，与 tabs 同行 */}
-              {activeTab === 'template' && availableRatios.length > 1 && (
-                <div className="home__ratio-bar">
-                  {availableRatios.map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      className={`home__ratio-chip${ratioFilter === r ? ' is-active' : ''}`}
-                      onClick={() => setRatioFilter(r)}
-                    >
-                      {RATIO_LABELS[r] || r}
-                    </button>
-                  ))}
-                </div>
-              )}
               <div className="home__search">
                 <svg
                   viewBox="0 0 24 24"
@@ -1038,7 +1005,6 @@ export default function HomeView() {
                               </svg>
                             </button>
                           )}
-                          <span className="home__template-caption">{tpl.title}</span>
                           <div className="home__tpl-mask">
                             <button
                               type="button"
@@ -1048,10 +1014,6 @@ export default function HomeView() {
                               做同款
                             </button>
                           </div>
-                        </div>
-                        <div className="home__tpl-meta">
-                          <span className="home__tpl-ratio">{RATIO_LABELS[tpl.ratio] || tpl.ratio}</span>
-                          {tpl.duration ? <span className="home__tpl-dur">{tpl.duration}s</span> : null}
                         </div>
                       </div>
                     ))}

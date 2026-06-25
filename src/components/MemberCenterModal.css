@@ -11,13 +11,25 @@
 }
 .mcm {
   position: relative;
-  width: min(880px, 96vw);
+  width: min(980px, 96vw);
   max-height: 90vh;
   overflow-y: auto;
   background: #f8f9fa;
   border-radius: 20px;
   padding: 28px 32px 32px;
   box-shadow: 0 24px 60px rgba(20, 20, 50, 0.28);
+}
+/* 页面模式:填满内容区、去掉弹窗外观 */
+.mcm--embedded {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  max-height: none;
+  overflow: visible;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
 }
 .mcm-close {
   position: absolute;
@@ -45,10 +57,45 @@
   text-align: center;
 }
 .mcm-balance {
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   text-align: center;
   font-size: 13px;
   color: #8a8f9f;
+}
+/* 当前订阅信息条(套餐 / 席位 / 并发) */
+.mcm-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 14px;
+  margin: 0 auto 18px;
+  max-width: 560px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: #f1f3ff;
+  border: 1px solid #e3e6ff;
+  font-size: 13px;
+  color: #5b6072;
+}
+.mcm-sub-plan {
+  font-weight: 600;
+  color: #4b59d6;
+}
+.mcm-sub-item {
+  position: relative;
+  padding-left: 14px;
+}
+.mcm-sub-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #c2c7e6;
 }
 .mcm-hint {
   padding: 48px 0;
@@ -62,6 +109,15 @@
   gap: 56px;
   border-bottom: 1px solid #ededf0;
   margin-bottom: 26px;
+}
+/* 套餐下的「个人版 / 团队版」二级 tab:字号小一点,与顶层区分 */
+.mcm-tabs--sub {
+  gap: 40px;
+  margin-top: -6px;
+}
+.mcm-tabs--sub .mcm-tab {
+  font-size: 15px;
+  padding: 6px 4px 12px;
 }
 .mcm-tab {
   position: relative;
@@ -173,22 +229,75 @@
 .mcm-pay-done:hover {
   filter: brightness(1.05);
 }
+.mcm-pay-done:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.mcm-pay-polling {
+  color: #8a8f9f;
+}
+/* 支付成功态 */
+.mcm-pay-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+.mcm-pay-success-text {
+  font-size: 17px;
+  font-weight: 600;
+  color: #1f2330;
+}
+.mcm-pay-success-sub {
+  font-size: 13px;
+  color: #5b6072;
+}
 
 /* 套餐卡片 */
 .mc-card {
   position: relative;
-  width: 360px;
+  width: 218px;
   box-sizing: border-box;
-  padding: 26px 26px 24px;
+  padding: 20px 18px 18px;
   border: 1px solid rgba(217, 217, 217, 0.5);
-  border-radius: 20px;
-  background: linear-gradient(
-    225deg,
-    rgba(91, 107, 232, 0.05) 0%,
-    rgba(91, 107, 232, 0.01) 36%,
-    rgba(91, 107, 232, 0.05) 100%
-  );
+  border-radius: 18px;
+  background: #fff;
   overflow: hidden;
+}
+/* 4 张卡顶部柔和配色(蓝 / 绿 / 橙 / 紫),按图 */
+.mcm-cards .mc-card:nth-child(4n + 1) {
+  background: linear-gradient(180deg, #eef0ff 0%, #ffffff 42%);
+}
+.mcm-cards .mc-card:nth-child(4n + 2) {
+  background: linear-gradient(180deg, #e8f7f0 0%, #ffffff 42%);
+}
+.mcm-cards .mc-card:nth-child(4n + 3) {
+  background: linear-gradient(180deg, #fdf1e7 0%, #ffffff 42%);
+}
+.mcm-cards .mc-card:nth-child(4n + 4) {
+  background: linear-gradient(180deg, #f2ecfc 0%, #ffffff 42%);
+}
+/* 浅色「立即开通」按钮,跟随卡顶色 */
+.mcm-cards .mc-card .mc-card-buy {
+  background: #eef0f6;
+  color: #5b6072;
+}
+.mcm-cards .mc-card:nth-child(4n + 1) .mc-card-buy {
+  background: #e6e9fb;
+  color: #4b59d6;
+}
+.mcm-cards .mc-card:nth-child(4n + 2) .mc-card-buy {
+  background: #dcf2e8;
+  color: #1f9c78;
+}
+.mcm-cards .mc-card:nth-child(4n + 3) .mc-card-buy {
+  background: #fbe6d4;
+  color: #cf7a2c;
+}
+.mcm-cards .mc-card:nth-child(4n + 4) .mc-card-buy {
+  background: #ece1fb;
+  color: #8b5cf6;
 }
 .mc-card--rec {
   border-color: rgba(194, 122, 255, 0.5);
@@ -211,7 +320,7 @@
   padding: 3px 10px;
 }
 .mc-card-name {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
   color: #1f2330;
 }
@@ -224,24 +333,24 @@
 .mc-card-price {
   display: flex;
   align-items: flex-end;
-  gap: 6px;
-  margin-top: 18px;
+  gap: 4px;
+  margin-top: 14px;
 }
 .mc-card-cny {
-  font-size: 24px;
+  font-size: 16px;
   color: #1f2330;
-  padding-bottom: 6px;
+  padding-bottom: 5px;
 }
 .mc-card-num {
-  font-size: 46px;
-  font-weight: 600;
+  font-size: 30px;
+  font-weight: 700;
   line-height: 1;
   color: #1f2330;
 }
 .mc-card-unit {
-  font-size: 22px;
+  font-size: 14px;
   color: #1f2330;
-  padding-bottom: 4px;
+  padding-bottom: 3px;
 }
 .mc-card-origin {
   margin-left: 8px;
@@ -253,11 +362,12 @@
 .mc-card-credits {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  margin-top: 24px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 14px;
 }
 .mc-card-credit-num {
-  font-size: 26px;
+  font-size: 18px;
   font-weight: 600;
   color: #666;
 }
@@ -277,13 +387,14 @@
 }
 .mc-card-buy {
   width: 100%;
-  margin-top: 18px;
-  height: 46px;
+  margin-top: 16px;
+  height: 40px;
   border: none;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #6d7bf0, #8b5cf6);
-  color: #fff;
-  font-size: 17px;
+  border-radius: 12px;
+  background: #eef0f6;
+  color: #5b6072;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
 }
 .mc-card--rec .mc-card-buy {

@@ -7,21 +7,53 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useToast } from '@/composables/useToast'
-import { fileToDataUrl } from '@/utils/imageFile'
+import { uploadAssetFile } from '@/api/business'
+import {
+  listFeedbackTypes,
+  listMyFeedback,
+  submitFeedback as apiSubmitFeedback,
+  type FeedbackRecord,
+} from '@/api/feedback'
+import { useWorkspaceId } from '@/stores/workspaceSession'
 import './HelpCenter.css'
 
-const FB_TYPES = [
-  { k: 'feature', l: '功能反馈' },
-  { k: 'optimize', l: '优化建议' },
-  { k: 'other', l: '其他反馈' },
-] as const
-// 根据所选反馈类型动态提示用户该填什么
-const FB_HINTS: Record<'feature' | 'optimize' | 'other', string> = {
-  feature: '请描述遇到的功能问题:在哪个页面、怎么操作、期望结果与实际结果,方便我们定位。',
-  optimize: '请说说希望优化的地方:当前体验如何、你期望改成什么样。',
-  other: '其他想告诉我们的内容都可以写在这里,越具体我们越能帮上忙。',
+// 固定反馈类型(按设计):功能反馈带子分类下拉,优化建议 / 其他反馈为普通项。
+// 后端 feedback_type 仍按名称匹配 /feedback-types 的 id(匹配不到用首个兜底,完整分类写进 content)。
+const FB_TOP: { k: string; label: string; subs: string[] }[] = [
+  { k: 'feature', label: '功能反馈', subs: ['生成效果不佳', '生成失败或异常', '工具使用问题', '账户与权益'] },
+  { k: 'optimize', label: '优化建议', subs: [] },
+  { k: 'other', label: '其他反馈', subs: [] },
+]
+// 各类型(按名称匹配)的动态追问 + 多选项 + 提示;多选项会拼进 content 一起提交
+const FB_DETAILS: Record<string, { q: string; opts: string[]; hint: string }> = {
+  生成效果不佳: {
+    q: '具体是哪里不满意?',
+    opts: ['人物脸部崩坏', '肢体扭曲', '画面闪烁', '运镜混乱', '风格不符', '声音/口型问题'],
+    hint: '可补充:出问题的分镜、所用提示词,有截图更好。',
+  },
+  生成失败或异常: {
+    q: '遇到的是哪种情况?',
+    opts: ['一直排队', '生成中断', '报错提示', '下载失败'],
+    hint: '可补充:报错文案、发生时间、所在项目。',
+  },
+  工具使用问题: {
+    q: '哪个环节出了问题?',
+    opts: ['时间轴卡顿', '素材无法上传', '特效不生效', '预览黑屏'],
+    hint: '可补充:所在页面、操作步骤、浏览器。',
+  },
+  账户与权益: {
+    q: '具体是什么问题?',
+    opts: ['积分/算力扣除异常', '会员未生效', '充值问题'],
+    hint: '可补充:订单号、扣费时间、预期与实际。',
+  },
+  产品建议与需求: {
+    q: '你的诉求是?',
+    opts: ['希望增加某功能', '优化某流程', '求新增某模板'],
+    hint: '说说你的使用场景和期望效果,越具体越好。',
+  },
 }
-const FB_MAX_IMAGES = 3
+const FB_MAX_IMAGES = 3 // 附件数量上限(图片 / 短视频)
+const FB_MAX_FILE_MB = 50 // 单个附件大小上限
 const FB_MAX_LEN = 200
 
 const POS_KEY = 'zzh_help_ball_pos'
@@ -163,6 +195,7 @@ const IconChat = () => (
 
 export default function HelpCenter() {
   const { showToast } = useToast()
+  const workspaceId = Number(useWorkspaceId() || 0)
   const [pos, setPos] = useState<Pos | null>(null)
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<View>('home')
@@ -170,8 +203,17 @@ export default function HelpCenter() {
   const [feedback, setFeedback] = useState('')
   const [contact, setContact] = useState('')
   const [search, setSearch] = useState('')
-  const [fbType, setFbType] = useState<'feature' | 'optimize' | 'other'>('feature')
-  const [fbImages, setFbImages] = useState<string[]>([])
+  // 反馈类型来自接口(/feedback-types);为空时用 FB_FALLBACK_TYPES 兜底
+  const [fbTypes, setFbTypes] = useState<{ id: number; name: string }[]>([])
+  const [fbTop, setFbTop] = useState('feature') // 选中的顶层类型 key
+  const [fbSub, setFbSub] = useState(FB_TOP[0].subs[0]) // 功能反馈下的子分类
+  const [fbDropOpen, setFbDropOpen] = useState(false) // 功能反馈子分类下拉是否展开
+  const [fbTags, setFbTags] = useState<string[]>([])
+  const [fbImages, setFbImages] = useState<{ url: string; file: File }[]>([])
+  const [fbTab, setFbTab] = useState<'submit' | 'history'>('submit')
+  const [fbSubmitting, setFbSubmitting] = useState(false)
+  const [fbHistory, setFbHistory] = useState<FeedbackRecord[]>([])
+  const [fbHistoryLoading, setFbHistoryLoading] = useState(false)
   const fbFileRef = useRef<HTMLInputElement>(null)
 
   const ballRef = useRef<HTMLButtonElement>(null)
@@ -260,21 +302,118 @@ export default function HelpCenter() {
   }, [])
 
   const goHome = useCallback(() => setView('home'), [])
-  const submitFeedback = useCallback(() => {
+  // 点顶层类型:功能反馈 → 选中并切换下拉;其余 → 选中并收起下拉。切换时清空多选标签
+  const pickTop = useCallback((k: string) => {
+    setFbTags([])
+    setFbDropOpen((prev) => (k === 'feature' ? !prev : false))
+    setFbTop(k)
+  }, [])
+  // 选子分类:归到功能反馈,收起下拉
+  const pickSub = useCallback((name: string) => {
+    setFbSub(name)
+    setFbTop('feature')
+    setFbDropOpen(false)
+    setFbTags([])
+  }, [])
+  const toggleTag = useCallback((tag: string) => {
+    setFbTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]))
+  }, [])
+
+  // 进入反馈页拉取类型列表(空时用兜底名),并默认选中第一个
+  useEffect(() => {
+    if (view !== 'feedback') return
+    let alive = true
+    // 仍拉取后端类型,仅用于把固定分类按名称映射成 feedback_type id
+    listFeedbackTypes().then((list) => {
+      if (alive) setFbTypes(list)
+    })
+    return () => {
+      alive = false
+    }
+  }, [view])
+
+  // 切到「反馈历史」tab 时拉取历史
+  useEffect(() => {
+    if (view !== 'feedback' || fbTab !== 'history') return
+    let alive = true
+    setFbHistoryLoading(true)
+    listMyFeedback({ limit: 20 })
+      .then((list) => alive && setFbHistory(list))
+      .finally(() => alive && setFbHistoryLoading(false))
+    return () => {
+      alive = false
+    }
+  }, [view, fbTab])
+
+  const submitFeedback = useCallback(async () => {
+    if (fbSubmitting) return
     if (!feedback.trim()) {
       showToast('请先填写反馈内容', 'info')
       return
     }
-    showToast('感谢反馈,我们会尽快处理', 'success')
-    setFeedback('')
-    setContact('')
-    setFbImages([])
-    setFbType('feature')
-    setView('home')
-  }, [feedback, showToast])
+    const topDef = FB_TOP.find((t) => t.k === fbTop) || FB_TOP[0]
+    const selectedName = fbTop === 'feature' ? fbSub : topDef.label
+    // 后端 feedback_type id:按名称匹配(子分类 → 顶层名),都没有则用首个可用类型兜底
+    const typeId =
+      fbTypes.find((t) => t.name === selectedName)?.id ||
+      fbTypes.find((t) => t.name === topDef.label)?.id ||
+      fbTypes[0]?.id ||
+      0
+    if (!typeId) {
+      showToast('反馈类型暂未配置,暂时无法提交,请联系管理员', 'info')
+      return
+    }
+    setFbSubmitting(true)
+    try {
+      // ① 反馈图先上传成 asset(source=feedback)拿 asset_id
+      let assetIds: number[] = []
+      if (fbImages.length) {
+        if (!workspaceId) {
+          showToast('缺少 workspace,本次不带图提交', 'info')
+        } else {
+          const results = await Promise.all(
+            fbImages.map((img) =>
+              uploadAssetFile({ workspaceId, file: img.file, source: 'feedback' })
+                .then((r: any) => Number(r?.asset?.id || 0) || 0)
+                .catch(() => 0),
+            ),
+          )
+          assetIds = results.filter(Boolean)
+        }
+      }
+      // ② 把所选分类 + 多选标签拼进 content(后端类型粒度不够,避免丢信息)
+      const catLine = fbTop === 'feature' ? `【功能反馈 / ${fbSub}】` : `【${topDef.label}】`
+      const tagPart = fbTags.length ? ` ${fbTags.join('、')}` : ''
+      const content = [catLine + tagPart, feedback.trim()].filter(Boolean).join('\n')
+      await apiSubmitFeedback({ feedbackType: typeId, content, contact, assetIds })
+      showToast('感谢反馈,我们会尽快处理', 'success')
+      setFeedback('')
+      setContact('')
+      fbImages.forEach((img) => {
+        try {
+          URL.revokeObjectURL(img.url)
+        } catch {
+          /* ignore */
+        }
+      })
+      setFbImages([])
+      setFbTags([])
+      setFbTop('feature')
+      setFbSub(FB_TOP[0].subs[0])
+      setFbDropOpen(false)
+      setView('home')
+    } catch (e: any) {
+      showToast(e?.message || '提交失败,请稍后重试', 'error')
+    } finally {
+      setFbSubmitting(false)
+    }
+  }, [fbSubmitting, feedback, fbTop, fbSub, fbTypes, fbImages, workspaceId, fbTags, contact, showToast])
 
   if (!pos) return null
 
+  const fbTopDef = FB_TOP.find((t) => t.k === fbTop) || FB_TOP[0]
+  const fbSelectedName = fbTop === 'feature' ? fbSub : fbTopDef.label
+  const fbDetail = FB_DETAILS[fbSelectedName] || { q: '', opts: [], hint: '' }
   const openLeft = pos.x + BALL / 2 > window.innerWidth / 2
   const openUp = pos.y + BALL / 2 > window.innerHeight / 2
   const cardStyle: React.CSSProperties = {
@@ -290,7 +429,7 @@ export default function HelpCenter() {
     <div ref={rootRef} className="hc-root">
       {open && (
         <div
-          className={`hc-card${view === 'home' ? ' hc-card--ai' : ''}`}
+          className={`hc-card${view === 'home' ? ' hc-card--ai' : ''}${view === 'feedback' ? ' hc-card--fb' : ''}`}
           style={cardStyle}
           role="dialog"
           aria-label="AI 助手"
@@ -481,115 +620,221 @@ export default function HelpCenter() {
                 {view === 'feedback' && (
                   <div className="hc-fb">
                     <div className="hc-fb-tabs">
-                      <button type="button" className="hc-fb-tab is-active">
+                      <button
+                        type="button"
+                        className={`hc-fb-tab${fbTab === 'submit' ? ' is-active' : ''}`}
+                        onClick={() => setFbTab('submit')}
+                      >
                         提交反馈
                       </button>
-                      <button type="button" className="hc-fb-tab" onClick={() => showToast('反馈历史待开放', 'info')}>
+                      <button
+                        type="button"
+                        className={`hc-fb-tab${fbTab === 'history' ? ' is-active' : ''}`}
+                        onClick={() => setFbTab('history')}
+                      >
                         反馈历史
                       </button>
                     </div>
 
-                    <div className="hc-fb-label">反馈类型</div>
-                    <div className="hc-fb-chips">
-                      {FB_TYPES.map((t) => (
-                        <button
-                          key={t.k}
-                          type="button"
-                          className={`hc-fb-chip${fbType === t.k ? ' is-active' : ''}`}
-                          onClick={() => setFbType(t.k)}
-                        >
-                          {t.l}
-                          {fbType === t.k && (
-                            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-                              <path
-                                d="M3 8.5l3.2 3.2L13 5"
+                    {fbTab === 'submit' ? (
+                      <>
+                        <div className="hc-fb-label">反馈类型</div>
+                        <div className="hc-fb-chips">
+                          {FB_TOP.map((t) => {
+                            const isFeature = t.k === 'feature'
+                            // 功能反馈选中态:其子分类被选中(顶层=feature);其余:顶层 key 匹配
+                            const active = isFeature ? fbTop === 'feature' : fbTop === t.k
+                            // 功能反馈 chip 上显示当前选中的子分类名
+                            const chipLabel = isFeature && fbTop === 'feature' ? fbSub : t.label
+                            return (
+                              <div key={t.k} className={`hc-fb-chip-wrap${isFeature ? ' has-drop' : ''}`}>
+                                <button
+                                  type="button"
+                                  className={`hc-fb-chip${active ? ' is-active' : ''}`}
+                                  onClick={() => pickTop(t.k)}
+                                >
+                                  {chipLabel}
+                                  {isFeature && (
+                                    <svg
+                                      className={`hc-fb-caret${fbDropOpen ? ' is-open' : ''}`}
+                                      viewBox="0 0 16 16"
+                                      width="12"
+                                      height="12"
+                                      aria-hidden="true"
+                                    >
+                                      <path
+                                        d="M4 6l4 4 4-4"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="1.6"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
+                                  )}
+                                </button>
+                                {isFeature && fbDropOpen && (
+                                  <div className="hc-fb-dropdown">
+                                    {t.subs.map((s) => (
+                                      <button
+                                        type="button"
+                                        key={s}
+                                        className={`hc-fb-drop-item${fbTop === 'feature' && fbSub === s ? ' is-active' : ''}`}
+                                        onClick={() => pickSub(s)}
+                                      >
+                                        {s}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        <div className="hc-fb-label hc-fb-label--row">
+                          <span>
+                            反馈内容<em className="hc-fb-req">（必填）</em>
+                          </span>
+                          <span className="hc-fb-count">
+                            {feedback.length}/{FB_MAX_LEN}
+                          </span>
+                        </div>
+                        <textarea
+                          className="hc-fb-textarea"
+                          value={feedback}
+                          maxLength={FB_MAX_LEN}
+                          placeholder="请输入您的反馈与建议,我们将作为功能优化的主要参考"
+                          onChange={(e) => setFeedback(e.target.value)}
+                        />
+
+                        {/* 多选标签:去掉追问标题,放在反馈内容下方;选中项拼进 content 提交 */}
+                        {fbDetail.opts.length > 0 && (
+                          <div className="hc-fb-tags">
+                            {fbDetail.opts.map((opt) => (
+                              <button
+                                key={opt}
+                                type="button"
+                                className={`hc-fb-tag${fbTags.includes(opt) ? ' is-active' : ''}`}
+                                onClick={() => toggleTag(opt)}
+                              >
+                                {opt}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {fbDetail.hint && <p className="hc-fb-hint">{fbDetail.hint}</p>}
+
+                        <div className="hc-fb-label">
+                          附件<em className="hc-fb-opt">（选填）</em>
+                        </div>
+                        <p className="hc-fb-hint hc-fb-attach-tip">上传截图或录屏,能帮我们快 3 倍解决问题哦!</p>
+                        <div className="hc-fb-uploads">
+                          {fbImages.map((img, i) => {
+                            const isVideo = img.file.type.startsWith('video')
+                            return (
+                              <div className="hc-fb-thumb" key={i}>
+                                {isVideo ? (
+                                  <video src={img.url} muted playsInline preload="metadata" />
+                                ) : (
+                                  <img src={img.url} alt="" />
+                                )}
+                                {isVideo && <span className="hc-fb-thumb-badge">视频</span>}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    try {
+                                      URL.revokeObjectURL(img.url)
+                                    } catch {
+                                      /* ignore */
+                                    }
+                                    setFbImages((a) => a.filter((_, j) => j !== i))
+                                  }}
+                                  aria-label="移除"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            )
+                          })}
+                          {fbImages.length < FB_MAX_IMAGES && (
+                            <button type="button" className="hc-fb-up" onClick={() => fbFileRef.current?.click()}>
+                              <svg
+                                viewBox="0 0 24 24"
+                                width="22"
+                                height="22"
                                 fill="none"
                                 stroke="currentColor"
-                                strokeWidth="1.8"
+                                strokeWidth="1.6"
                                 strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                            </svg>
+                              >
+                                <path d="M12 5v14M5 12h14" />
+                              </svg>
+                              <span>图片/视频 ≤{FB_MAX_FILE_MB}MB</span>
+                            </button>
                           )}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="hc-fb-label hc-fb-label--row">
-                      反馈内容
-                      <span className="hc-fb-count">
-                        {feedback.length}/{FB_MAX_LEN}
-                      </span>
-                    </div>
-                    <textarea
-                      className="hc-fb-textarea"
-                      value={feedback}
-                      maxLength={FB_MAX_LEN}
-                      placeholder="请输入您的反馈与建议,我们将作为功能优化的主要参考"
-                      onChange={(e) => setFeedback(e.target.value)}
-                    />
-
-                    <p className="hc-fb-hint">{FB_HINTS[fbType]}</p>
-
-                    <div className="hc-fb-uploads">
-                      {fbImages.map((u, i) => (
-                        <div className="hc-fb-thumb" key={i}>
-                          <img src={u} alt="" />
-                          <button
-                            type="button"
-                            onClick={() => setFbImages((a) => a.filter((_, j) => j !== i))}
-                            aria-label="移除"
-                          >
-                            ×
-                          </button>
+                          <input
+                            ref={fbFileRef}
+                            type="file"
+                            accept="image/*,video/*"
+                            multiple
+                            hidden
+                            onChange={(e) => {
+                              const files = Array.from(e.target.files || [])
+                              e.target.value = ''
+                              const room = FB_MAX_IMAGES - fbImages.length
+                              const picked: { url: string; file: File }[] = []
+                              let tooBig = false
+                              for (const f of files) {
+                                if (picked.length >= room) break
+                                if (f.size > FB_MAX_FILE_MB * 1024 * 1024) {
+                                  tooBig = true
+                                  continue
+                                }
+                                picked.push({ url: URL.createObjectURL(f), file: f })
+                              }
+                              if (tooBig) showToast(`单个附件不能超过 ${FB_MAX_FILE_MB}MB`, 'info')
+                              if (picked.length) setFbImages((a) => [...a, ...picked])
+                            }}
+                          />
                         </div>
-                      ))}
-                      {fbImages.length < FB_MAX_IMAGES && (
-                        <button type="button" className="hc-fb-up" onClick={() => fbFileRef.current?.click()}>
-                          <svg
-                            viewBox="0 0 24 24"
-                            width="22"
-                            height="22"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.6"
-                            strokeLinecap="round"
-                          >
-                            <path d="M12 5v14M5 12h14" />
-                          </svg>
-                          <span>仅限3张图片</span>
+
+                        <div className="hc-fb-label">联系方式</div>
+                        <input
+                          className="hc-fb-input"
+                          value={contact}
+                          maxLength={20}
+                          placeholder="请输入您的手机号"
+                          onChange={(e) => setContact(e.target.value)}
+                        />
+
+                        <button type="button" className="hc-fb-submit" disabled={fbSubmitting} onClick={submitFeedback}>
+                          {fbSubmitting ? '提交中…' : '提交反馈'}
                         </button>
-                      )}
-                      <input
-                        ref={fbFileRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        hidden
-                        onChange={async (e) => {
-                          const files = Array.from(e.target.files || [])
-                          e.target.value = ''
-                          const room = FB_MAX_IMAGES - fbImages.length
-                          const picked = (
-                            await Promise.all(files.slice(0, room).map((f) => fileToDataUrl(f).catch(() => '')))
-                          ).filter(Boolean) as string[]
-                          if (picked.length) setFbImages((a) => [...a, ...picked])
-                        }}
-                      />
-                    </div>
-
-                    <div className="hc-fb-label">联系方式</div>
-                    <input
-                      className="hc-fb-input"
-                      value={contact}
-                      maxLength={20}
-                      placeholder="请输入您的手机号"
-                      onChange={(e) => setContact(e.target.value)}
-                    />
-
-                    <button type="button" className="hc-fb-submit" onClick={submitFeedback}>
-                      提交反馈
-                    </button>
+                      </>
+                    ) : (
+                      <div className="hc-fb-history">
+                        {fbHistoryLoading ? (
+                          <p className="hc-fb-hint">加载中…</p>
+                        ) : !fbHistory.length ? (
+                          <p className="hc-fb-hint">暂无反馈记录</p>
+                        ) : (
+                          fbHistory.map((f) => (
+                            <div className="hc-fb-hitem" key={f.id}>
+                              <div className="hc-fb-item-head">
+                                <span className="hc-fb-item-type">
+                                  {fbTypes.find((t) => t.id === f.feedbackType)?.name || '反馈'}
+                                </span>
+                                {f.status && <span className="hc-fb-item-status">{f.status}</span>}
+                              </div>
+                              <p className="hc-fb-item-content">{f.content}</p>
+                              {f.createdAt && <span className="hc-fb-item-time">{f.createdAt.slice(0, 10)}</span>}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
@@ -32,6 +32,8 @@ export default function ProjectVideoDetailView() {
   const { requestConfirm } = useConfirmDialog()
   const currentUser = useCurrentUser() as any
   const workspaceId = useWorkspaceId()
+  const [searchParams] = useSearchParams()
+  const fromUnclassified = searchParams.get('from') === 'unclassified' // 来自「待归类」:换面包屑、隐藏发布
   const projectId = Number(params.projectId || 0)
   const videoId = String(params.videoId || '')
   const userName =
@@ -82,8 +84,9 @@ export default function ProjectVideoDetailView() {
   }, [loadDetail])
 
   const backToList = useCallback(() => {
-    navigate(`/projects/${projectId}/videos`)
-  }, [navigate, projectId])
+    // 待归类来源没有「项目视频列表」上下文,返回项目管理页
+    navigate(fromUnclassified ? '/projects' : `/projects/${projectId}/videos`)
+  }, [navigate, projectId, fromUnclassified])
 
   const openEditor = useCallback(() => {
     if (!detail) return
@@ -158,7 +161,7 @@ export default function ProjectVideoDetailView() {
             </button>
             <span>/</span>
             <button type="button" className="pvdetail-breadcrumb__link" onClick={backToList}>
-              {projectTitle || '项目视频'}
+              {fromUnclassified ? '待归类' : projectTitle || '项目视频'}
             </button>
             <span>/</span>
             <span className="pvdetail-breadcrumb__current">{detail?.title || '视频详情'}</span>
@@ -185,14 +188,16 @@ export default function ProjectVideoDetailView() {
                   <button type="button" className="pvdetail-action" onClick={downloadVideo}>
                     下载视频
                   </button>
-                  <button
-                    type="button"
-                    className="pvdetail-action pvdetail-action--primary"
-                    onClick={handlePublish}
-                    disabled={publishing}
-                  >
-                    {publishing ? '发布中...' : '发布视频'}
-                  </button>
+                  {!fromUnclassified && (
+                    <button
+                      type="button"
+                      className="pvdetail-action pvdetail-action--primary"
+                      onClick={handlePublish}
+                      disabled={publishing}
+                    >
+                      {publishing ? '发布中...' : '发布视频'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="pvdetail-action pvdetail-action--danger"

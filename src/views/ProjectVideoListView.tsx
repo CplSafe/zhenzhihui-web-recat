@@ -50,6 +50,71 @@ function isVideoCover(url: string): boolean {
   return /\.(mp4|mov|webm|m4v)(\?|$)/i.test(String(url || ''))
 }
 
+// ── 卡片小图标(描边 currentColor)──
+const IcoClock = () => (
+  <svg
+    viewBox="0 0 24 24"
+    width="13"
+    height="13"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7.5V12l3 1.8" />
+  </svg>
+)
+const IcoUser = () => (
+  <svg
+    viewBox="0 0 24 24"
+    width="13"
+    height="13"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <circle cx="12" cy="8" r="3.4" />
+    <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
+  </svg>
+)
+const IcoCalendar = () => (
+  <svg
+    viewBox="0 0 24 24"
+    width="13"
+    height="13"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="4" y="5.5" width="16" height="15" rx="2.5" />
+    <path d="M4 9.5h16M8 3.5v4M16 3.5v4" />
+  </svg>
+)
+const IcoDownload = () => (
+  <svg
+    viewBox="0 0 24 24"
+    width="18"
+    height="18"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14" />
+  </svg>
+)
+
 export default function ProjectVideoListView() {
   const navigate = useNavigate()
   const params = useParams()
@@ -326,7 +391,42 @@ export default function ProjectVideoListView() {
                         ) : (
                           <span className="pvlist-card__placeholder">视频</span>
                         )}
-                        <span className="pvlist-card__play">▶</span>
+                        <span className={`pvlist-card__flag is-${item.status}`} aria-hidden="true">
+                          {item.status === 'published' ? (
+                            <i className="pvlist-card__flag-dot" />
+                          ) : item.status === 'processing' ? (
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="13"
+                              height="13"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <circle cx="12" cy="12" r="8.5" />
+                              <path d="M12 7.5V12l3 1.8" />
+                            </svg>
+                          ) : (
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="13"
+                              height="13"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.4"
+                              strokeLinecap="round"
+                            >
+                              <path d="M7 12h10" />
+                            </svg>
+                          )}
+                        </span>
+                        <span className="pvlist-card__play" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" width="18" height="18">
+                            <path d="M9 7.2 17 12l-8 4.8z" fill="#fff" />
+                          </svg>
+                        </span>
                         <span className="pvlist-card__duration">{formatVideoDuration(item.durationSeconds)}</span>
                       </button>
                       <div className="pvlist-card__menu-wrap">
@@ -336,7 +436,11 @@ export default function ProjectVideoListView() {
                           aria-label="更多操作"
                           onClick={() => setOpenMenuId((prev) => (prev === item.id ? '' : item.id))}
                         >
-                          ...
+                          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                            <circle cx="4" cy="10" r="1.5" fill="currentColor" />
+                            <circle cx="10" cy="10" r="1.5" fill="currentColor" />
+                            <circle cx="16" cy="10" r="1.5" fill="currentColor" />
+                          </svg>
                         </button>
                         {openMenuId === item.id ? (
                           <div className="pvlist-card__menu">
@@ -360,19 +464,38 @@ export default function ProjectVideoListView() {
                       </div>
                     </div>
                     <div className="pvlist-card__body">
-                      <button type="button" className="pvlist-card__title" onClick={() => openDetail(item)}>
-                        {item.title}
-                      </button>
-                      <div className="pvlist-card__meta">
-                        <span>{formatVideoDate(item.createdAt)}</span>
-                        <span className="pvlist-card__meta-dot">·</span>
-                        <span>{item.createdByName}</span>
-                      </div>
-                      <div className="pvlist-card__footer">
-                        <span className="pvlist-card__updated">更新于 {formatVideoDate(item.updatedAt)}</span>
+                      <div className="pvlist-card__head">
+                        <button type="button" className="pvlist-card__title" onClick={() => openDetail(item)}>
+                          {item.title}
+                        </button>
                         <span className={`pvlist-card__status is-${item.status}`}>
                           {getVideoStatusText(item.status)}
                         </span>
+                      </div>
+                      <div className="pvlist-card__info">
+                        <span className="pvlist-card__info-item">
+                          <IcoClock />
+                          {formatVideoDuration(item.durationSeconds)}
+                        </span>
+                        <span className="pvlist-card__info-item pvlist-card__info-item--author">
+                          <IcoUser />
+                          {item.createdByName}
+                        </span>
+                      </div>
+                      <div className="pvlist-card__info pvlist-card__info--row2">
+                        <span className="pvlist-card__info-item">
+                          <IcoCalendar />
+                          {formatVideoDate(item.createdAt)}
+                        </span>
+                        <button
+                          type="button"
+                          className={`pvlist-card__download${item.videoUrl ? '' : ' is-disabled'}`}
+                          aria-label="下载视频"
+                          title="下载视频"
+                          onClick={() => downloadVideo(item)}
+                        >
+                          <IcoDownload />
+                        </button>
                       </div>
                     </div>
                   </article>
