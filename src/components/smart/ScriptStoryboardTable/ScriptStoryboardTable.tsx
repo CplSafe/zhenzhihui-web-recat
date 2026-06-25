@@ -67,6 +67,10 @@ interface ScriptStoryboardTableProps {
   regenerating?: boolean
   /** 该镜头没有主体素材时,点击「上传图片」为它添加一个素材(准备素材阶段) */
   onAddMaterial?: (shot: Shot) => void
+  /** 提供则「AI自动生成」直接后台生成该主体(可并发,不阻塞);缺省回退打开素材弹窗 */
+  onGenerateSubject?: (name: string) => void
+  /** 各主体是否正在生成(键为主体名),用于显示「生成中…」 */
+  subjectGenerating?: Record<string, boolean>
 }
 
 const stripAt = (t: string) =>
@@ -82,6 +86,8 @@ export default function ScriptStoryboardTable({
   onRegenerate,
   regenerating = false,
   onAddMaterial,
+  onGenerateSubject,
+  subjectGenerating,
 }: ScriptStoryboardTableProps) {
   const editable = !!onShotsChange
   const patchShot = (id: Shot['id'], p: Partial<Shot>) =>
@@ -133,6 +139,7 @@ export default function ScriptStoryboardTable({
                 <div className={styles.sbcMatList}>
                   {shot.subjects.map((su, idx) => {
                     const name = stripAt(su.tag)
+                    const genning = !!subjectGenerating?.[name]
                     return (
                       <div className={styles.sbcMatRow} key={`${su.tag}-${idx}`}>
                         <div className={styles.sbcMatInfo}>
@@ -144,11 +151,14 @@ export default function ScriptStoryboardTable({
                           <button
                             type="button"
                             className={styles.sbcMatBadge}
-                            title="打开素材弹窗,在弹窗内生成该素材"
-                            onClick={() => onOpenSubject?.(name)}
+                            disabled={genning}
+                            title={
+                              onGenerateSubject ? '后台生成该主体(可同时生成多个)' : '打开素材弹窗,在弹窗内生成该素材'
+                            }
+                            onClick={() => (onGenerateSubject ? onGenerateSubject(name) : onOpenSubject?.(name, true))}
                           >
                             <img className={styles.sbcMatBadgeIcon} src={aiSparkIcon} alt="" width={12} height={12} />
-                            AI自动生成
+                            {genning ? '生成中…' : 'AI自动生成'}
                           </button>
                         </div>
                         <button
@@ -157,7 +167,9 @@ export default function ScriptStoryboardTable({
                           title="打开素材弹窗(上传 / 生成)"
                           onClick={() => onOpenSubject?.(name)}
                         >
-                          {su.image ? (
+                          {genning ? (
+                            <span className={styles.sbcMatSpin} aria-hidden="true" />
+                          ) : su.image ? (
                             <img className={styles.sbcMatUploadImg} src={su.image} alt={name} />
                           ) : (
                             <>

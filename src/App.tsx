@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from './auth/AuthContext'
 import AppToast from './components/AppToast'
 import AppConfirmDialog from './components/AppConfirmDialog'
 import GuestGuard, { isGuestMode } from './components/guest/GuestGuard'
+import HelpCenter from './components/common/HelpCenter'
 import './App.css'
 
 // 退出登录标记：dev 模式下 AuthContext 用 mock session 绕过 API 检查，
@@ -67,6 +68,8 @@ function AppShell() {
 
       <AppToast />
       <AppConfirmDialog />
+      {/* 帮助中心悬浮球:仅在已登录的业务页显示,登录/开屏页不显示 */}
+      {requiresAuth && isAuthenticated && !isCheckingSession && <HelpCenter />}
     </>
   )
 }

@@ -399,6 +399,17 @@ export default function SmartCreateView() {
   const openSubject = (name: string, autoGen = false) =>
     setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
 
+  // 准备素材:后台并发生成单个主体——点一个就开始生成,等待时可继续点下一个(互不阻塞)。
+  const [subjectGen, setSubjectGen] = useState<Record<string, boolean>>({})
+  const genSubjectBackground = (name: string) => {
+    if (subjectGen[name]) return // 该主体已在生成中,忽略重复点击
+    const kind = subjectKindOf(name)
+    const prompt = subjectAssets[name]?.prompt || subjectPrompt(name, kind, entryMeta?.style, subjectContext(name))
+    setSubjectGen((m) => ({ ...m, [name]: true }))
+    // 不 await:每次点击各自独立异步,允许多个主体并发生成
+    void genForSubject(name, prompt).finally(() => setSubjectGen((m) => ({ ...m, [name]: false })))
+  }
+
   // 该主体的广告语境:整体主题 + 它出现的分镜画面描述(帮模型选对元素的具体形态)
   const subjectContext = (name: string) => {
     const theme = (reqSummary || requirement || '').slice(0, 80)
@@ -1597,6 +1608,8 @@ export default function SmartCreateView() {
                 showSubjects={materialMode}
                 onAddMaterial={addShotMaterial}
                 onOpenSubject={openSubject}
+                onGenerateSubject={materialMode ? genSubjectBackground : undefined}
+                subjectGenerating={subjectGen}
                 onShotsChange={setShots}
                 onRegenerate={materialMode ? undefined : () => entryMeta && generateScript(requirement, entryMeta)}
                 regenerating={scriptLoading}
