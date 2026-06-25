@@ -61,10 +61,6 @@ interface ScriptStoryboardTableProps {
    * 列内每个主体按图二「@名称 + AI自动生成 + 上传图片」展示。默认显示。
    */
   showSubjects?: boolean
-  /** 正在 AI 自动出图的主体名集合(按画面描述生成时,上传框显示转圈) */
-  generating?: Record<string, boolean>
-  /** 点击主体的「AI自动生成」:按画面描述为该主体出图(点一个生成一个) */
-  onGenerateSubject?: (name: string, kind: string) => void
   /** 提供则在「画面描述」表头右侧显示「↻ 重新生成」(分镜脚本阶段;准备素材阶段不传) */
   onRegenerate?: () => void
   /** 重新生成进行中:禁用表头的重新生成按钮 */
@@ -83,8 +79,6 @@ export default function ScriptStoryboardTable({
   onOpenSubject,
   onShotsChange,
   showSubjects = true,
-  generating = {},
-  onGenerateSubject,
   onRegenerate,
   regenerating = false,
   onAddMaterial,
@@ -150,9 +144,8 @@ export default function ScriptStoryboardTable({
                           <button
                             type="button"
                             className={styles.sbcMatBadge}
-                            disabled={generating[name]}
-                            title="按画面描述生成该素材"
-                            onClick={() => onGenerateSubject?.(name, su.kind || '')}
+                            title="打开素材弹窗,在弹窗内生成该素材"
+                            onClick={() => onOpenSubject?.(name)}
                           >
                             <img className={styles.sbcMatBadgeIcon} src={aiSparkIcon} alt="" width={12} height={12} />
                             AI自动生成
@@ -161,15 +154,10 @@ export default function ScriptStoryboardTable({
                         <button
                           type="button"
                           className={styles.sbcMatUpload}
-                          title={generating[name] ? 'AI 生成中…' : '上传图片'}
+                          title="打开素材弹窗(上传 / 生成)"
                           onClick={() => onOpenSubject?.(name)}
                         >
-                          {generating[name] ? (
-                            <>
-                              <span className={styles.sbcMatSpin} aria-hidden="true" />
-                              <span className={styles.sbcMatUploadText}>生成中…</span>
-                            </>
-                          ) : su.image ? (
+                          {su.image ? (
                             <img className={styles.sbcMatUploadImg} src={su.image} alt={name} />
                           ) : (
                             <>

@@ -62,7 +62,9 @@ const LoginView = lazy(() => import('../views/LoginView'))
 const HomeView = lazy(() => import('../views/HomeView'))
 const TemplatesView = lazy(() => import('../views/TemplatesView'))
 const SmartCreateView = lazy(() => import('../views/SmartCreateView'))
-const HotCopyView = lazy(() => import('../views/HotCopyView'))
+const HotCopyCreateView = lazy(() => import('../views/HotCopyCreateView'))
+const CreativeEntryView = lazy(() => import('../views/CreativeEntryView'))
+const CreativeScriptView = lazy(() => import('../views/CreativeScriptView'))
 const ProjectManagementView = lazy(() => import('../views/ProjectManagementView'))
 const ProjectVideoListView = lazy(() => import('../views/ProjectVideoListView'))
 const ProjectVideoDetailView = lazy(() => import('../views/ProjectVideoDetailView'))
@@ -94,12 +96,12 @@ export const router = createBrowserRouter([
       { path: 'home', element: lazyPage(<HomeView />), handle: { requiresAuth: false } },
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },
       { path: 'workbench', element: lazyPage(<WorkbenchView />) },
-      { path: 'smart', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
-      { path: 'smart/:id', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
-      { path: 'hot-copy', element: lazyPage(<HotCopyView />), handle: { requiresAuth: false } },
-      { path: 'creative', element: <Navigate to="/smart" replace /> },
-      { path: 'creative/blank', element: <Navigate to="/smart" replace /> },
-      { path: 'creative/:id', element: <Navigate to="/smart" replace /> },
+      { path: 'smart', element: lazyPage(<SmartCreateView />) },
+      { path: 'smart/:id', element: lazyPage(<SmartCreateView />) },
+      { path: 'hot-copy', element: lazyPage(<HotCopyCreateView />) },
+      { path: 'creative/blank', element: lazyPage(<CreativeScriptView />) },
+      { path: 'creative', element: lazyPage(<CreativeEntryView />) },
+      { path: 'creative/:id', element: lazyPage(<CreativeScriptView />) },
       { path: 'projects', element: lazyPage(<ProjectManagementView />) },
       { path: 'projects/:projectId/videos', element: lazyPage(<ProjectVideoListView />) },
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },

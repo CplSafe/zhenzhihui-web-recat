@@ -28,7 +28,7 @@ import {
 } from '@/api/aiPolish'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
-import { generateFullVideo, buildTimelinePrompt } from '@/api/smartVideo'
+import { generateFullVideo, editFullVideo, buildTimelinePrompt, totalDurationSec } from '@/api/smartVideo'
 import { blurFacesOnAsset } from '@/api/smartFaceBlur'
 import VideoStage from '@/components/smart/VideoStage'
 import {
@@ -55,6 +55,7 @@ import {
   parseSmartSnapshot,
   type SmartDraft,
 } from '@/utils/smartDraft'
+import { downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
 
 // 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
@@ -125,6 +126,44 @@ function subjectPrompt(name: string, kind: string, style?: string, context?: str
     .join(',')
 }
 
+/**
+ * 兜底:从后端项目 draft_json 里抽取「整片视频」(最近一版 + 历史版本)。
+ * 用于智能成片快照(obj.smart)里没有整片视频、但视频结果由后端写到了项目级字段
+ * (generatedVideoUrl / videoHistoryList,常见于上次在「生成视频」中途切走、完成时组件已卸载)
+ * 的场景——和项目管理页读取同一批字段,保证「生成视频」步骤能把视频加载出来。
+ */
+function extractProjectVideoFallback(draftJson: any): {
+  latest: { url: string; assetId: number }
+  versions: { url: string; assetId: number }[]
+} {
+  let obj = draftJson
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj)
+    } catch {
+      return { latest: { url: '', assetId: 0 }, versions: [] }
+    }
+  }
+  if (!obj || typeof obj !== 'object') return { latest: { url: '', assetId: 0 }, versions: [] }
+  const smart = obj.smart && typeof obj.smart === 'object' ? obj.smart : obj
+  const vv = Array.isArray(smart?.videoVersions) ? smart.videoVersions : []
+  const vh = Array.isArray(obj?.videoHistoryList || obj?.video_history_list)
+    ? obj.videoHistoryList || obj.video_history_list
+    : []
+  const src = vv.length ? vv : vh
+  const versions: { url: string; assetId: number }[] = []
+  for (const v of src) {
+    const url = String((typeof v === 'string' ? v : v?.url || v?.src) || '').trim()
+    const assetId = Number((typeof v === 'string' ? 0 : v?.assetId || v?.asset_id) || 0) || 0
+    if (url || assetId) versions.push({ url, assetId })
+  }
+  const gvUrl = String(obj?.generatedVideoUrl || obj?.generated_video_url || smart?.fullVideoUrl || '').trim()
+  const gvId = Number(obj?.generatedVideoAssetId || obj?.generated_video_asset_id || smart?.fullVideoAssetId || 0) || 0
+  if (!versions.length && (gvUrl || gvId)) versions.push({ url: gvUrl, assetId: gvId })
+  const latest = versions.length ? versions[versions.length - 1] : { url: gvUrl, assetId: gvId }
+  return { latest: { url: latest.url || '', assetId: latest.assetId || 0 }, versions }
+}
+
 export default function SmartCreateView() {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
@@ -159,9 +198,7 @@ export default function SmartCreateView() {
 
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)
   const [requirement, setRequirement] = useState('')
-  const [reqSummary, setReqSummary] = useState('') // ≤100字核心摘要,用于页面展示
-  const [summarizing, setSummarizing] = useState(false)
-  const [showFullReq, setShowFullReq] = useState(false)
+  const [reqSummary, setReqSummary] = useState('') // ≤100字核心摘要,仅用于生成(basePrompt/大纲),不再展示
   const nameAbortRef = useRef<AbortController | null>(null)
 
   // ── 营销思路拆解(选中 SKILL 时,在分镜脚本前多出的第 1 步)──
@@ -196,9 +233,6 @@ export default function SmartCreateView() {
     kind: '',
     autoGen: false,
   })
-  // 准备素材阶段:点击主体的「AI自动生成」按画面描述出图。subjectGen[name]=该主体正在生成(列内转圈)
-  const [subjectGen, setSubjectGen] = useState<Record<string, boolean>>({})
-
   // 把某元素的选定图(url+assetId)写回所有同名 subject
   const applySubjectImage = (name: string, url: string, assetId = 0) =>
     setShots((prev) =>
@@ -389,32 +423,6 @@ export default function SmartCreateView() {
       prev.map((sh) => (sh.id === shot.id ? { ...sh, subjects: [...sh.subjects, { tag: `@${name}`, kind: '' }] } : sh)),
     )
     openSubject(name)
-  }
-
-  // 准备素材:点击某主体的「AI自动生成」时,按画面描述为它出图(点一个生成一个,结果联动所有同名主体)。
-  // 与素材弹窗的 AI 自动生成同一套流程:subjectPrompt(含画面描述语境) → refineElementPrompt 润色 → genForSubject 出图。
-  const generateOneSubject = async (name: string, kind: string) => {
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      showToast('未选择工作空间,无法生成素材', 'error')
-      return
-    }
-    if (subjectGen[name]) return // 该主体正在生成,忽略重复点击
-    setSubjectGen((m) => ({ ...m, [name]: true }))
-    try {
-      // 按画面描述构造意图提示词,再本地润色成干净的单主体出图提示词
-      let prompt = subjectPrompt(name, kind || subjectKindOf(name), entryMeta?.style, subjectContext(name))
-      try {
-        prompt = await refineElementPrompt(prompt, { name, kind, style: entryMeta?.style })
-      } catch {
-        /* 润色失败用原提示词 */
-      }
-      await genForSubject(name, prompt, {})
-    } catch (e: any) {
-      showToast(`素材「${name}」生成失败:${e?.message || '请重试'}`, 'error')
-    } finally {
-      setSubjectGen((m) => ({ ...m, [name]: false }))
-    }
   }
 
   // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
@@ -681,8 +689,10 @@ export default function SmartCreateView() {
     faceBlurEnabledRef.current = faceBlurEnabled
   }, [faceBlurEnabled])
 
-  // 生成/重生成整片;note=对整片的修改意见(有意见且已有整片时,用上次整片作 video 输入)
-  const runFullVideo = async (note?: string) => {
+  // 生成/重生成整片;note=修改意见。opts.edit=true(「确认修改」)且已有整片时:
+  // 走视频编辑(video.edit,模型 happyhorse-1.0-video-edit):原视频 role:video + 修改提示,
+  // 不复用爆款复制(video.replicate)逻辑,也不从分镜图重出整片。
+  const runFullVideo = async (note?: string, opts?: { edit?: boolean }) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
@@ -693,6 +703,36 @@ export default function SmartCreateView() {
       return
     }
     if (vidGenRunning) return
+
+    // 「确认修改」:把上次整片当 video 输入,按修改提示在原视频基础上改(片段时间段写进提示)
+    if (opts?.edit && fullVideo.assetId) {
+      setVidGenRunning(true)
+      try {
+        const plans = await resolvePlanCandidates()
+        const editPrompt = [
+          '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
+          note || '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+        const { url, assetId } = await editFullVideo({
+          workspaceId: ws,
+          videoAssetId: fullVideo.assetId,
+          prompt: editPrompt,
+          ratio: entryMeta?.ratio,
+          durationSec: totalDurationSec(shots) || 10,
+          modelPlanCandidates: plans,
+        })
+        setFullVideo({ url, assetId })
+        setVideoVersions((prev) => [...prev, { url, assetId }])
+      } catch (e: any) {
+        showToast(`视频修改失败:${e?.message || ''}`, 'error')
+      } finally {
+        setVidGenRunning(false)
+      }
+      return
+    }
+
     // 仅勾选「参与视频生成」的分镜进入视频(未勾选的跳过)
     const activeShots = shots.filter((s) => s.includeInVideo !== false)
     if (!activeShots.length) {
@@ -786,7 +826,8 @@ export default function SmartCreateView() {
   useEffect(() => {
     if (step !== 3 || !shots.length || vidGenRunning) return
     if (autoVidRef.current) return
-    if (fullVideo.url) return
+    // 已有整片(url 或仅 assetId——可能正等签名URL刷新)就不再自动重生成,避免重复出片 / 误判「没视频」
+    if (fullVideo.url || fullVideo.assetId) return
     autoVidRef.current = true
     void runFullVideo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1116,6 +1157,15 @@ export default function SmartCreateView() {
           const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
           const d = parseSmartSnapshot(draftJson)
           if (d) applyDraft(d)
+          // 兜底:智能成片快照里没有整片视频(上次在「生成视频」中途切走,完成结果由后端落到了项目级字段),
+          // 从项目数据补出最近一版视频 + 历史版本,保证「生成视频」步骤能加载出来(URL 过期由下面的签名刷新兜底)。
+          if (!d?.fullVideoUrl && !d?.fullVideoAssetId) {
+            const fb = extractProjectVideoFallback(draftJson)
+            if (fb.latest.url || fb.latest.assetId) {
+              setFullVideo(fb.latest)
+              if (fb.versions.length) setVideoVersions(fb.versions)
+            }
+          }
           const t = String(proj?.title || proj?.name || '').trim()
           if (t) {
             setProjectName(t)
@@ -1278,7 +1328,6 @@ export default function SmartCreateView() {
     setStarted(true)
     setStep(0)
     setMaxReached(0)
-    setShowFullReq(false)
     setShots([])
     setScriptError('')
     // 选中 SKILL → 先进「营销思路拆解」步(不立即生成脚本);未选 → 走现有逻辑直接生成脚本。
@@ -1326,11 +1375,9 @@ export default function SmartCreateView() {
     else void generateScript(req, meta)
     // 长需求 → AI 摘要成 ≤100 字展示;短需求直接用原文
     if (req.trim().length > 90) {
-      setSummarizing(true)
       summarizeRequirement(req)
         .then((s) => setReqSummary(s || req))
         .catch(() => setReqSummary(req))
-        .finally(() => setSummarizing(false))
     } else {
       setReqSummary(req)
     }
@@ -1360,43 +1407,29 @@ export default function SmartCreateView() {
   const todo = (msg: string) => () => showToast(msg, 'info')
 
   // 下载当前整片视频:优先按 asset_id 取新签名URL → fetch 成 blob 下载;CORS 失败则新标签打开
+  // 下载视频:弹「另存为」让用户自选保存位置(不支持的浏览器回退自动下载)。
+  // 解析 URL 时按 asset_id 刷新签名 URL,避免过期下载失败。
   const handleDownloadVideo = async () => {
     if (!fullVideo.url) {
       showToast('请先生成视频', 'info')
       return
     }
-    const ws = Number(workspaceId || 0)
-    let url = fullVideo.url
-    if (ws && fullVideo.assetId) {
-      const fresh = await refreshAssetUrl(ws, fullVideo.assetId)
-      if (fresh) url = fresh
-    }
-    const fileName = `${(projectName || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'}.mp4`
-    try {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(String(res.status))
-      const blob = await res.blob()
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000)
-    } catch {
-      // 跨域无法 fetch → 退而求其次,新标签打开让用户右键保存
-      window.open(url, '_blank')
-    }
-  }
-
-  // 保存视频:本步「仅按钮 + 提示」。内容本就随草稿自动保存(本地+后端),这里再 best-effort 立即落库一次。
-  const saveVideoNow = () => {
-    if (!fullVideo.url) {
-      showToast('请先生成视频', 'info')
-      return
-    }
-    if (projectIdRef.current) void putSmartDraftToBackend()
-    showToast('视频已保存', 'success')
+    const safeName = (projectName || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'
+    const d = new Date()
+    const dateStr = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+    const fileName = `${safeName}_${dateStr}.mp4`
+    await downloadToDisk({
+      fileName,
+      resolveUrl: async () => {
+        const ws = Number(workspaceId || 0)
+        let url = fullVideo.url
+        if (ws && fullVideo.assetId) {
+          const fresh = await refreshAssetUrl(ws, fullVideo.assetId)
+          if (fresh) url = fresh
+        }
+        return url
+      },
+    })
   }
 
   const bottomButtons: BottomButton[] = (() => {
@@ -1460,24 +1493,14 @@ export default function SmartCreateView() {
 
   // 营销思路拆解步(选中 SKILL 时的第 1 步):我的描述(只读,与分镜脚本步一致)+ skill 拆解建议(可编辑)+ 确认/上一步。
   const renderMarketingBody = () => {
-    const promptText = reqSummary || requirement || '（未填写需求）'
+    const promptText = requirement || '（未填写需求）'
     return (
       <div className="smart__script smart__mkt-step">
-        {/* 我的描述:与分镜脚本/准备素材步一致(标签 + 需求摘要),只读展示 */}
+        {/* 我的描述:直接展示上一步输入框的原始需求,只读 */}
         <div className="smart__prompt-label">我的描述：</div>
         <div className="smart__prompt smart__md">
-          {summarizing ? '生成摘要中…' : <Streamdown>{promptText}</Streamdown>}
+          <Streamdown>{promptText}</Streamdown>
         </div>
-        {requirement && requirement !== reqSummary && (
-          <button type="button" className="smart__req-toggle" onClick={() => setShowFullReq((v) => !v)}>
-            {showFullReq ? '收起完整需求' : '展开完整需求'}
-          </button>
-        )}
-        {showFullReq && (
-          <div className="smart__req-full smart__md">
-            <Streamdown>{requirement}</Streamdown>
-          </div>
-        )}
 
         {/* skill 拆解出的营销建议:可编辑;正文区填满剩余空间并内部滚动,底部按钮常驻可见 */}
         <div className="smart__marketing">
@@ -1532,24 +1555,14 @@ export default function SmartCreateView() {
     // step0 隐藏「准备素材」列;确认脚本后进入 step1,才把 AI 生成的主体素材回填、按图二样式展示。
     if (step === 0 || step === 1) {
       const materialMode = step === 1
-      const promptText = reqSummary || requirement || '（未填写需求）'
+      const promptText = requirement || '（未填写需求）'
       return (
         <div className="smart__script">
-          {/* 我的描述:标签(Figma 299-2310)+ 需求摘要(markdown 渲染) */}
+          {/* 我的描述:直接展示上一步输入框的原始需求(markdown 渲染),只读 */}
           <div className="smart__prompt-label">我的描述：</div>
           <div className="smart__prompt smart__md">
-            {summarizing ? '生成摘要中…' : <Streamdown>{promptText}</Streamdown>}
+            <Streamdown>{promptText}</Streamdown>
           </div>
-          {requirement && requirement !== reqSummary && (
-            <button type="button" className="smart__req-toggle" onClick={() => setShowFullReq((v) => !v)}>
-              {showFullReq ? '收起完整需求' : '展开完整需求'}
-            </button>
-          )}
-          {showFullReq && (
-            <div className="smart__req-full smart__md">
-              <Streamdown>{requirement}</Streamdown>
-            </div>
-          )}
 
           {/* 素材:只展示用户上传的素材(AI 生成的主体不在此展示,见准备素材列)+ 添加 */}
           <SubjectMaterialBoard
@@ -1582,8 +1595,6 @@ export default function SmartCreateView() {
               <ScriptStoryboardTable
                 shots={shots}
                 showSubjects={materialMode}
-                generating={subjectGen}
-                onGenerateSubject={generateOneSubject}
                 onAddMaterial={addShotMaterial}
                 onOpenSubject={openSubject}
                 onShotsChange={setShots}
@@ -1655,7 +1666,6 @@ export default function SmartCreateView() {
         onRegenerateVideo={runFullVideo}
         faceBlur={faceBlurEnabled}
         onFaceBlurChange={setFaceBlurEnabled}
-        onSaveVideo={saveVideoNow}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
         debug={{
@@ -1701,7 +1711,6 @@ export default function SmartCreateView() {
             initial={{
               mode: entryMeta?.mode,
               text: requirement,
-              styleTags: entryMeta?.style ? entryMeta.style.split('、').filter(Boolean) : undefined,
               ratio: entryMeta?.ratio,
               duration: entryMeta?.duration,
               images: entryMeta?.images,

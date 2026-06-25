@@ -43,14 +43,16 @@ function smallestSize(options: string[]): string {
   return [...options].sort((a, b) => score(a) - score(b))[0]
 }
 
-// 图像出图参数:复用 2.0 的比例/尺寸逻辑;lowRes 时把 size 强制为最小档
+// 图像出图参数:严格按模型 params_schema 构建(buildStoryboardImageParams 只填模型声明的字段)。
+// gpt-image-2 仅声明 ratio/quality/count → 只发这三个;不塞 watermark/size/generate_audio 等未声明字段
+// (发未声明参数会被 provider 报「参数有误」)。lowRes 时若模型支持 size 才强制最小档。
 function buildImageParams(model: any, ratio?: string, lowRes?: boolean) {
   const params: any = buildStoryboardImageParams(model, ratio)
-  // 强制关闭"AI生成"水印:模型无 params_schema 时上面的逻辑不会带 watermark → 默认带水印。
-  // doubao-seedream 支持 watermark 参数,显式置 false。
-  params.watermark = false
+  const fields = getModelParamFields(model)
+  // 仅当模型声明了 watermark 字段才显式关水印(如 doubao-seedream);gpt-image-2 无此字段则不下发。
+  if (fields.some((f: any) => f?.name === 'watermark')) params.watermark = false
   if (lowRes) {
-    const sizeField = getModelParamFields(model).find((f: any) => f?.name === 'size')
+    const sizeField = fields.find((f: any) => f?.name === 'size')
     const opts = Array.isArray(sizeField?.options) ? sizeField.options.map(String) : []
     if (opts.length) params[sizeField.name] = smallestSize(opts)
   }
@@ -118,8 +120,8 @@ function outputAssetId(task: any): number {
   return Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
 }
 
-// 分镜图模型偏好(与 2.0 一致:火山 Doubao-Seedream)
-const STORYBOARD_MODEL_KEYWORDS = ['seedream', 'seeddream', 'doubao-seedream']
+// 分镜图模型偏好:GPT Image 2(openai gpt-image-2,支持 image.text_to_image / image.image_to_image)
+const STORYBOARD_MODEL_KEYWORDS = ['gpt-image-2', 'gpt-image', 'gpt image']
 
 /**
  * 生成一张分镜图。refAssetIds 为参考图 asset_id(该镜头素材 + 上一张分镜图)。
@@ -154,7 +156,8 @@ export async function generateShotImage(args: {
   if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
   // 对齐 2.0 runImageTask:优先 resolveGeneratedMediaUrls(可用 asset_id 换签名URL),
   // 再退回 outputs[].url / asset 下载地址,避免后端只返回 asset_id 时取不到图
-  let url = (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
+  let url =
+    (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
   if (!url) url = extractTaskMediaUrls(completed)[0] || ''
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('未生成分镜图')

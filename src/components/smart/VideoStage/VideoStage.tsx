@@ -17,6 +17,22 @@ import styles from './VideoStage.module.less'
 
 const MAX_SEGMENTS = 5
 
+// 帧缩略图缓存(模块级):key = `${videoUrl}::${帧数}`。
+// 切步骤再回来 / 切视频版本再切回 时直接复用,避免重复逐秒抓帧(很慢)。
+// 视频较多时限制条目数,避免内存膨胀(超出后淘汰最早的)。
+const FRAME_THUMB_CACHE = new Map<string, string[]>()
+const FRAME_THUMB_CACHE_MAX = 16
+const frameThumbKey = (url: string, count: number) => `${url}::${count}`
+function putFrameThumbCache(key: string, thumbs: string[]) {
+  if (FRAME_THUMB_CACHE.has(key)) FRAME_THUMB_CACHE.delete(key)
+  FRAME_THUMB_CACHE.set(key, thumbs)
+  while (FRAME_THUMB_CACHE.size > FRAME_THUMB_CACHE_MAX) {
+    const oldest = FRAME_THUMB_CACHE.keys().next().value
+    if (oldest === undefined) break
+    FRAME_THUMB_CACHE.delete(oldest)
+  }
+}
+
 // 等待时轮播的「视频制作小技巧」
 const VIDEO_TIPS = [
   '分镜图越清晰、主体越一致,成片的人物/产品就越稳定。',
@@ -58,11 +74,13 @@ interface VideoStageProps {
   /** 整片历史版本(点击切换) */
   videoVersions?: { url: string; assetId: number }[]
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
-  /** 重新生成整片(note=对整片/各片段的修改意见,合并成一段) */
-  onRegenerateVideo: (note?: string) => void
-  /** 保存视频(交父级:提示 + 落库草稿) */
-  onSaveVideo?: () => void
-  /** 下载当前整片视频(保留能力;本步默认不展示按钮) */
+  /**
+   * 重新生成 / 确认修改整片。
+   * note=对整片/各片段的修改意见(合并成一段);opts.edit=true 表示「确认修改」——
+   * 父级应基于原视频做修改(而非从分镜图重出整片)。
+   */
+  onRegenerateVideo: (note?: string, opts?: { edit?: boolean }) => void
+  /** 下载当前整片视频(由父级弹本地保存位置后下载) */
   onDownloadVideo?: () => void
   onPrev?: () => void
   /** 人脸脱敏开关(默认开;关闭后用原图生成,成片人脸清晰但失去隐私脱敏) */
@@ -104,7 +122,7 @@ export default function VideoStage({
   videoVersions = [],
   onSwitchVideo,
   onRegenerateVideo,
-  onSaveVideo,
+  onDownloadVideo,
   onPrev,
   faceBlur = true,
   onFaceBlurChange,
@@ -160,18 +178,29 @@ export default function VideoStage({
     const t = window.setInterval(() => setTipIdx((i) => (i + 1) % VIDEO_TIPS.length), 4500)
     return () => window.clearInterval(t)
   }, [videoGenerating])
-  // 切换视频源 → 重置时长/选区/播放头/帧缩略图
+  // 切换视频源 → 重置时长/选区/播放头(帧缩略图交由下面的抓帧 effect 按缓存处理,不在此清空)
   useEffect(() => {
     setDur(0)
     setSel(null)
     setPlaySec(0)
-    setFrameThumbs(null)
   }, [videoUrl])
 
   // 逐秒抓取视频帧(1 帧/秒)用独立隐藏 <video>,不打扰主播放器。
   // 跨域无 CORS 头时 crossOrigin 会导致 canvas 被污染/加载失败 → 保持 null,渲染秒标占位。
+  // 命中模块级缓存(同一 url + 帧数)时直接复用,切步骤/切版本回来秒显,不再重抓。
   useEffect(() => {
-    if (!videoUrl || total <= 0) return
+    if (!videoUrl) {
+      setFrameThumbs(null)
+      return
+    }
+    const key = frameThumbKey(videoUrl, frameCount)
+    const cached = FRAME_THUMB_CACHE.get(key)
+    if (cached) {
+      setFrameThumbs(cached)
+      return
+    }
+    if (total <= 0) return
+    setFrameThumbs(null)
     let cancelled = false
     const v = document.createElement('video')
     v.crossOrigin = 'anonymous'
@@ -187,8 +216,9 @@ export default function VideoStage({
           v.onerror = () => reject(new Error('load'))
         })
         if (cancelled) return
-        const W = 160
-        const H = Math.max(1, Math.round((v.videoHeight / (v.videoWidth || 1)) * W)) || 90
+        // 帧条缩略图无需高清:96px 宽 + 较低 jpeg 质量,抓取更快、内存与 dataURL 更省
+        const W = 96
+        const H = Math.max(1, Math.round((v.videoHeight / (v.videoWidth || 1)) * W)) || 54
         canvas.width = W
         canvas.height = H
         const ctx = canvas.getContext('2d')
@@ -206,9 +236,11 @@ export default function VideoStage({
           })
           if (cancelled) return
           ctx.drawImage(v, 0, 0, W, H)
-          thumbs.push(canvas.toDataURL('image/jpeg', 0.6)) // canvas 被污染会抛错 → 落到 catch
+          thumbs.push(canvas.toDataURL('image/jpeg', 0.5)) // canvas 被污染会抛错 → 落到 catch
           if (!cancelled) setFrameThumbs(thumbs.slice()) // 渐进显示
         }
+        // 完整抓完才写入缓存,供切步骤/切版本回来复用
+        if (!cancelled && thumbs.length === frameCount) putFrameThumbCache(key, thumbs.slice())
       } catch {
         if (!cancelled) setFrameThumbs(null) // CORS/解码失败 → 用秒标占位
       }
@@ -283,6 +315,9 @@ export default function VideoStage({
     if (ov) parts.push(`【整段视频】${ov}`)
     return parts.length ? parts.join('\n') : undefined
   }
+
+  // 是否存在「片段/整段」修改:有则主按钮显示「确认修改」(基于原视频改),无则「重新生成视频」
+  const hasMods = segments.some((s) => s.text.trim()) || overallNote.trim().length > 0
 
   const showTimeline = !!videoUrl && !videoGenerating
   const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
@@ -492,30 +527,30 @@ export default function VideoStage({
         </label>
       )}
 
-      {/* 底部总按钮:上一步 / 保存视频 / 重新生成视频(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
+      {/* 底部总按钮:上一步 / 下载视频 / 重新生成视频|确认修改(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
       <div className={styles.vstageActions}>
         {onPrev && (
           <button type="button" className="smart__btn smart__btn--ghost" onClick={onPrev}>
             上一步
           </button>
         )}
-        {onSaveVideo && (
+        {onDownloadVideo && (
           <button
             type="button"
             className="smart__btn smart__btn--ghost"
-            onClick={onSaveVideo}
+            onClick={onDownloadVideo}
             disabled={!videoUrl || !!videoGenerating}
           >
-            保存视频
+            下载视频
           </button>
         )}
         <button
           type="button"
           className="smart__btn smart__btn--primary"
-          onClick={() => onRegenerateVideo(buildNote())}
+          onClick={() => onRegenerateVideo(buildNote(), { edit: hasMods })}
           disabled={!!videoGenerating}
         >
-          {videoGenerating ? '生成中…' : '重新生成视频'}
+          {videoGenerating ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
         </button>
       </div>
 

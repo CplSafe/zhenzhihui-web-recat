@@ -4,13 +4,16 @@
  * 输入参考始终用当前分镜图,确保每次生成都基于最新镜头编排;修改意见只拼进 prompt,不复用旧视频。
  */
 // @ts-nocheck
-import { createAiTask, waitForAiTask, listAssets, extractAssetPageItems } from './business'
+import { createAiTask, waitForAiTask, listAssets, extractAssetPageItems, getAssetDownloadUrl } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
+import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
 import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 
 // 目前线上只有 Seedance 2.0
 const VIDEO_MODEL_KEYWORDS = ['seedance']
+// 视频编辑能力:在原视频基础上按提示微调(happyhorse-1.0-video-edit)
+const VIDEO_EDIT_MODEL_KEYWORDS = ['happyhorse']
 const extractVideoAssetId = (task: any): number => Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
 
 // outputs 没带 asset_id 时按 task_id 反查视频资产(否则刷新水合换不了URL → 视频丢失)
@@ -119,5 +122,62 @@ export async function generateFullVideo(args: {
   if (!assetId) assetId = await findVideoAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
   const [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')
+  return { url, assetId }
+}
+
+/**
+ * 视频编辑(「确认修改」):在已生成的整片基础上,按修改提示微调画面。
+ * 走后端 video.edit 能力(模型 happyhorse-1.0-video-edit):
+ * 源视频 role:video + 修改提示 prompt;不复用爆款复制(video.replicate)逻辑,也不从分镜图重出整片。
+ * 返回 { url, assetId }(编辑后的视频)。
+ */
+export async function editFullVideo(args: {
+  workspaceId: number
+  /** 待编辑的源视频 asset_id(上一次生成的整片) */
+  videoAssetId: number
+  /** 修改提示 */
+  prompt?: string
+  ratio?: string
+  durationSec?: number
+  modelPlanCandidates?: string[]
+}): Promise<{ url: string; assetId: number }> {
+  const inputAssets = [{ asset_id: args.videoAssetId, role: 'video' }]
+  const task = await createAiTask({
+    workspaceId: args.workspaceId,
+    capability: 'video',
+    operationCode: 'video.edit',
+    preferredModelKeywords: VIDEO_EDIT_MODEL_KEYWORDS,
+    // 仅允许真正支持 video.edit 的模型(happyhorse-1.0-video-edit);
+    // 否则后端会回退到任意视频模型 → 提交后 provider 直接失败。
+    modelValidator: (model: any) =>
+      Array.isArray(model?.operation_codes) && model.operation_codes.includes('video.edit')
+        ? true
+        : '当前工作空间/套餐暂无「视频编辑(video.edit)」可用模型(happyhorse-1.0-video-edit),请联系管理员开通',
+    ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
+    prompt: args.prompt || '在保留原视频镜头内容、顺序与节奏的前提下,按要求微调画面(只改提到的部分,其余保持不变)。',
+    inputAssets,
+    // 画面/时长主要由源视频决定:仅按模型 params_schema 填字段,无 schema 时不塞参数(否则 provider 报「参数有误」)。
+    params: (model: any) => {
+      const fields = getModelParamFields(model)
+      if (!fields.length) return {}
+      return buildVideoGenerationParams(model, {
+        duration: normalizeSeedanceDuration(args.durationSec || 10),
+        resolution: '720p',
+        ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
+        generateAudio: true,
+      })
+    },
+  })
+  const completed = await waitForAiTask({
+    workspaceId: args.workspaceId,
+    task,
+    intervalMs: 4000,
+    timeoutMs: 60 * 60 * 1000,
+  })
+  let assetId = extractVideoAssetId(completed)
+  if (!assetId) assetId = await findVideoAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
+  let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
+  if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
+  if (!url) throw new Error('视频编辑已完成,暂未返回可预览地址')
   return { url, assetId }
 }
