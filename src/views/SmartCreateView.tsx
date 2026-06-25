@@ -15,6 +15,7 @@ import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStory
 import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import SubjectMaterialBoard from '@/components/smart/SubjectMaterialBoard'
 import ShotArrange from '@/components/smart/ShotArrange'
+import ImageChat, { type ChatMessage } from '@/components/smart/ImageChat'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import { Streamdown } from 'streamdown'
 import {
@@ -184,8 +185,17 @@ export default function SmartCreateView() {
   }
 
   const [started, setStarted] = useState(false) // false=入口输入页, true=进入 4 步流程
+  const [entryKey, setEntryKey] = useState(0) // 「制作新视频」自增 → 重挂载入口页,清空其内部输入状态
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [entryMeta, setEntryMeta] = useState<EntryMeta | null>(null)
+  // ── 制作图片(chat 形式):消息流。image 模式不走分镜/视频 4 步,改为对话出图 ──
+  const [imageMessages, setImageMessages] = useState<ChatMessage[]>([])
+  const msgIdRef = useRef(0)
+  const nextMsgId = () => `m${++msgIdRef.current}-${Date.now()}`
+  const imgMsgHydratedRef = useRef(false)
+  // 是否处于「制作图片」对话模式;有一轮正在出图(禁用发送)
+  const isImageMode = entryMeta?.mode === 'image'
+  const imageBusy = imageMessages.some((m) => m.role === 'assistant' && m.status === 'pending')
   const [step, setStep] = useState(0)
   const [maxReached, setMaxReached] = useState(0)
   const [projectName, setProjectName] = useState('未命名项目')
@@ -1019,6 +1029,35 @@ export default function SmartCreateView() {
     })()
   }, [workspaceId, started, shots, subjectAssets, fullVideo, videoVersions, entryMeta])
 
+  // ── 制作图片对话:加载后按 asset_id 重换图片签名URL(草稿里存的签名URL会过期)──
+  useEffect(() => {
+    if (!hydratedRef.current || imgMsgHydratedRef.current) return
+    const ws = Number(workspaceId || 0)
+    if (!ws || !started || !isImageMode) return
+    const ids = new Set<number>()
+    imageMessages.forEach((m) => (m.images || []).forEach((im) => im.assetId && ids.add(Number(im.assetId))))
+    if (!ids.size) return
+    imgMsgHydratedRef.current = true
+    void (async () => {
+      const map = new Map<number, string>()
+      await Promise.all(
+        [...ids].map(async (id) => {
+          const u = await refreshAssetUrl(ws, id)
+          if (u) map.set(id, u)
+        }),
+      )
+      if (!map.size) return
+      setImageMessages((prev) =>
+        prev.map((m) => ({
+          ...m,
+          images: (m.images || []).map((im) =>
+            im.assetId && map.get(Number(im.assetId)) ? { ...im, url: map.get(Number(im.assetId))! } : im,
+          ),
+        })),
+      )
+    })()
+  }, [workspaceId, started, isImageMode, imageMessages])
+
   // ── 草稿:本地(localStorage)+ 后端(/creative/projects/:id/draft)双层持久化 ──
   // 把当前页面状态打包成草稿对象(localStorage 与后端快照共用)
   const currentDraft = (): SmartDraft => ({
@@ -1039,6 +1078,7 @@ export default function SmartCreateView() {
     videoVersions,
     marketingOpen,
     marketingText,
+    imageMessages,
   })
   // 把草稿回填到页面状态(本地恢复 / 后端恢复共用)
   const applyDraft = (d: SmartDraft) => {
@@ -1057,6 +1097,8 @@ export default function SmartCreateView() {
     setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
     setMarketingOpen(!!d.marketingOpen)
     setMarketingText(d.marketingText || '')
+    setImageMessages(Array.isArray(d.imageMessages) ? (d.imageMessages as ChatMessage[]) : [])
+    imgMsgHydratedRef.current = false // 恢复后按 asset_id 重换图片签名URL
     autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
     autoVidRef.current = true
   }
@@ -1196,6 +1238,7 @@ export default function SmartCreateView() {
     videoVersions,
     marketingOpen,
     marketingText,
+    imageMessages,
   ])
 
   const goStep = (i: number) => {
@@ -1207,6 +1250,41 @@ export default function SmartCreateView() {
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
+  }
+
+  // 「制作新视频」:把整个智能成片流程初始化为全新空白页(等同切换路由再切回来)。
+  // 清空本地草稿 + 所有页面状态 + 项目引用,回到入口输入页;入口页 key 自增以重挂载、清空其内部输入。
+  const resetToNewVideo = (entryMode?: 'video' | 'image') => {
+    clearSmartDraft()
+    setStarted(false)
+    setShots([])
+    setRequirement('')
+    setReqSummary('')
+    // 回到入口:默认全清(视频 tab);image=保持「制作图片」tab(供「创建新对话」)
+    setEntryMeta(
+      entryMode === 'image'
+        ? { mode: 'image', style: '', ratio: '16:9', duration: '10s', imageCount: 0, images: [] }
+        : null,
+    )
+    setProjectName('未命名项目')
+    setNameTouched(false)
+    setStep(0)
+    setMaxReached(0)
+    setSubjectAssets({})
+    setFields({})
+    setFullVideo({ url: '', assetId: 0 })
+    setVideoVersions([])
+    setMarketingOpen(false)
+    setMarketingText('')
+    setImageMessages([])
+    imgMsgHydratedRef.current = false
+    projectIdRef.current = 0
+    setProjectId(0)
+    draftRevisionRef.current = 0
+    serverTitleRef.current = ''
+    autoVidRef.current = false
+    setEntryKey((k) => k + 1)
+    navigate('/smart')
   }
 
   const startRename = () => {
@@ -1307,6 +1385,55 @@ export default function SmartCreateView() {
     setStarted(false)
   }
 
+  // 发送一轮对话:追加 用户消息(文本 + 参考图)+ assistant 占位,后台出图后回填。
+  // 有参考图(上传 / @图片N)→ image_to_image;无参考图 → text_to_image(均走 generateShotImage)。
+  const sendImageChat = (text: string, refUrls: string[], ratio: string) => {
+    const uid = nextMsgId()
+    const aid = nextMsgId()
+    setImageMessages((m) => [
+      ...m,
+      { id: uid, role: 'user', text, images: refUrls.map((u) => ({ url: u })) },
+      { id: aid, role: 'assistant', status: 'pending' },
+    ])
+    const patch = (id: string, next: Partial<ChatMessage>) =>
+      setImageMessages((m) => m.map((x) => (x.id === id ? { ...x, ...next } : x)))
+    void (async () => {
+      const ws = Number(workspaceId || 0)
+      if (!ws) {
+        patch(aid, { status: 'error', error: '未选择工作空间,无法生成图片' })
+        return
+      }
+      try {
+        const plans = await resolvePlanCandidates()
+        // 参考图落库取 asset_id(并回填到用户消息,供刷新后按 asset_id 重换签名URL)
+        const cache: Record<string, number> = {}
+        const refIds: number[] = []
+        const userImgs: { url: string; assetId: number }[] = []
+        for (const u of refUrls) {
+          let id = 0
+          try {
+            id = await ensureAssetId(ws, u, cache)
+          } catch {
+            /* 单张失败跳过 */
+          }
+          userImgs.push({ url: u, assetId: id })
+          if (id) refIds.push(id)
+        }
+        if (userImgs.length) patch(uid, { images: userImgs })
+        const { url, assetId } = await generateShotImage({
+          workspaceId: ws,
+          prompt: text || '生成一张营销广告图片',
+          refAssetIds: refIds,
+          modelPlanCandidates: plans,
+          ratio,
+        })
+        patch(aid, { status: 'done', images: [{ url, assetId }] })
+      } catch (e: any) {
+        patch(aid, { status: 'error', error: `图片生成失败:${e?.message || '请重试'}` })
+      }
+    })()
+  }
+
   const handleStart = (req: string, meta: EntryMeta) => {
     setRequirement(req)
     setEntryMeta(meta)
@@ -1315,8 +1442,12 @@ export default function SmartCreateView() {
     setMaxReached(0)
     setShots([])
     setScriptError('')
+    const imageMode = meta.mode === 'image'
+    // 制作图片:对话模式,清空旧会话,不进「营销思路拆解」步。
+    if (imageMode) setImageMessages([])
+    imgMsgHydratedRef.current = false
     // 选中 SKILL → 先进「营销思路拆解」步(不立即生成脚本);未选 → 走现有逻辑直接生成脚本。
-    setMarketingOpen(!!meta.skill)
+    setMarketingOpen(imageMode ? false : !!meta.skill)
     setMarketingText('')
     setMarketingError('')
     if (req) void autoNameProject(req)
@@ -1354,6 +1485,11 @@ export default function SmartCreateView() {
           if (id) navigate(`/smart/${id}`, { replace: true })
         })
         .catch(() => {})
+    }
+    // 制作图片:直接以入口需求 + 上传素材发起第一轮对话出图,不走分镜/脚本/视频流程。
+    if (imageMode) {
+      sendImageChat(req, meta.images || [], meta.ratio)
+      return
     }
     // 选中 SKILL:先做营销思路拆解,确认后再生成脚本;未选:立即生成脚本。
     if (meta.skill) void runSkillBreakdown(req, meta)
@@ -1690,7 +1826,9 @@ export default function SmartCreateView() {
         {!started ? (
           // 「上一步」返回输入框时回填上次输入(数据存在本视图 state,路由切换卸载即清空)
           <SmartEntry
+            key={entryKey}
             onSubmit={handleStart}
+            onNewVideo={resetToNewVideo}
             initial={{
               mode: entryMeta?.mode,
               text: requirement,
@@ -1699,6 +1837,15 @@ export default function SmartCreateView() {
               images: entryMeta?.images,
               skill: entryMeta?.skill,
             }}
+          />
+        ) : isImageMode ? (
+          // 制作图片:chat 对话视图(消息流 + 沉底输入框,工具栏仅比例 + @)
+          <ImageChat
+            messages={imageMessages}
+            initialRatio={entryMeta?.ratio || '16:9'}
+            busy={imageBusy}
+            onSend={(text, imgs, r) => sendImageChat(text, imgs, r)}
+            onNewChat={() => resetToNewVideo('image')}
           />
         ) : (
           <>

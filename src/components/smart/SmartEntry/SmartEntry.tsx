@@ -5,6 +5,7 @@
  * 提交 → 调 onSubmit(需求文本, 选项),由父级进入分镜脚本流程。
  */
 import { useRef, useState, type ReactNode } from 'react'
+import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import GuideDialog from '../GuideDialog'
 import { fileToDataUrl } from '@/utils/imageFile'
@@ -24,6 +25,8 @@ export interface EntryMeta {
 
 interface SmartEntryProps {
   onSubmit: (requirement: string, meta: EntryMeta) => void
+  /** 「制作新视频」:清空输入/项目,初始化为全新空白页(等同切换路由再回来)。 */
+  onNewVideo?: () => void
   /**
    * 回填初始值:从分镜脚本「上一步」返回输入框时,恢复上次输入(需求文本/图片/风格/比例/时长/模式/skill)。
    * 仅在挂载时生效(useState 初值);路由切换会卸载本组件,数据随之清空。
@@ -43,8 +46,10 @@ const DURATION_OPTIONS = ['5s', '10s', '15s']
 const SKILL_OPTIONS = ['电商营销广告skills', '本地餐饮营销skills']
 const MAX_IMAGES = 9
 
-const PLACEHOLDER =
+const PLACEHOLDER_VIDEO =
   '最多上传9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
+const PLACEHOLDER_IMAGE =
+  '最多上传9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 
 // 选中 SKILL 后插入到输入框的提示语(高亮显示)。提交/展示前会被剥离,保持需求正文干净。
 const skillLine = (s: string) => `使用${s}帮我优化`
@@ -58,15 +63,13 @@ const composeWithSkill = (base: string, s: string) => (s ? (base ? `${base}\n\n$
 // 高亮渲染匹配:@图片N(绿) + 使用×××skills帮我优化(skill 提示语,着色)
 const HL_RE = new RegExp(`@图片\\d+|${SKILL_OPTIONS.map((s) => skillLine(s)).join('|')}`, 'g')
 
-export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
+export default function SmartEntry({ onSubmit, onNewVideo, initial }: SmartEntryProps) {
   const { showToast } = useToast()
   const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? 'video')
-  // Tab 切换计数:每次切换 +1,用作背景「光晕涟漪」层的 key,使其重挂载并重播一次扩散动画
-  const [switchCount, setSwitchCount] = useState(0)
+  // 切换 Tab:背景弥散位移 + 涟漪动画由 <EntryCanvasBg mode> 监听 mode 变化驱动(Canvas 实现,不卡)
   const switchMode = (m: 'video' | 'image') => {
     if (m === mode) return
     setMode(m)
-    setSwitchCount((c) => c + 1)
   }
   // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
   const [text, setText] = useState(() => composeWithSkill(initial?.text ?? '', initial?.skill ?? ''))
@@ -198,16 +201,21 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
 
   return (
     <div className={styles.screate} data-mode={mode}>
-      {/* 背景三层(Figma):大椭圆 + 小椭圆 + 白雾蒙层。data-mode 切换时整层平滑变色相 */}
+      {/* 背景弥散:Canvas 精确复刻 UI 设计「背景颜色」(Figma 677:3996)三层叠加;只绘制一次,
+          切换 mode 时对画布做纯位移动画(GPU 合成,不卡) */}
       <div className={styles.bg} aria-hidden="true">
-        <div className={styles.bgEllipseLg} />
-        <div className={styles.bgVeil} />
-        {/* 切换反馈:从中心扩散一圈光晕涟漪。key 随切换变化触发重挂载 → 重播动画(首次挂载不放) */}
-        {switchCount > 0 && <div className={styles.bgRipple} key={switchCount} />}
+        <EntryCanvasBg index={mode === 'image' ? 1 : 0} count={2} anim="glide" />
       </div>
-      <h1 className={styles.title}>让每一帧创意，都成为转化利器！</h1>
+
+      <h1 className={styles.title}>{mode === 'image' ? '想打造什么样的营销图片？' : '想打造什么样的爆款短视频？'}</h1>
 
       <div className={styles.panel}>
+        {/* 右上角:与 Tab 同一行、右对齐卡片;点击初始化为全新空白页(等同切换路由再回来) */}
+        {onNewVideo && (
+          <button type="button" className={styles.newVideoBtn} onClick={onNewVideo}>
+            {mode === 'image' ? '创建新对话' : '制作新视频'}
+          </button>
+        )}
         {/* Tab:制作视频 / 制作图片 */}
         <div className={styles.tabs}>
           <button
@@ -315,7 +323,7 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
                 ref={taRef}
                 className={styles.input}
                 value={text}
-                placeholder={PLACEHOLDER}
+                placeholder={mode === 'image' ? PLACEHOLDER_IMAGE : PLACEHOLDER_VIDEO}
                 onChange={(e) => {
                   setText(e.target.value)
                   caretRef.current = e.target.selectionStart ?? e.target.value.length
@@ -345,25 +353,28 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
                   </svg>
                 }
               />
-              <EntryDropdown
-                value={duration}
-                options={DURATION_OPTIONS}
-                onChange={setDuration}
-                icon={
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                  >
-                    <circle cx="12" cy="12" r="8" />
-                    <path d="M12 8v4l3 2" />
-                  </svg>
-                }
-              />
+              {/* 时长仅「制作视频」需要;「制作图片」隐藏(对齐设计) */}
+              {mode === 'video' && (
+                <EntryDropdown
+                  value={duration}
+                  options={DURATION_OPTIONS}
+                  onChange={setDuration}
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="20"
+                      height="20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                    >
+                      <circle cx="12" cy="12" r="8" />
+                      <path d="M12 8v4l3 2" />
+                    </svg>
+                  }
+                />
+              )}
 
               <span className={styles.atAnchor}>
                 <button type="button" className={styles.pillBtn} onClick={handleAt} title="引用参考素材">
@@ -388,29 +399,31 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
                 )}
               </span>
 
-              {/* SKILLS:营销技能包单选(沿用 AI 引导的闪光图标)。选中后卡片内出现「使用×××skills帮我优化」高亮 */}
-              <EntryDropdown
-                clearable
-                placeholder="SKILLS"
-                value={skill}
-                options={SKILL_OPTIONS}
-                onChange={pickSkill}
-                icon={
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
-                    <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
-                  </svg>
-                }
-              />
+              {/* SKILLS:营销技能包(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
+              {mode === 'video' && (
+                <EntryDropdown
+                  clearable
+                  placeholder="SKILLS"
+                  value={skill}
+                  options={SKILL_OPTIONS}
+                  onChange={pickSkill}
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="20"
+                      height="20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                      <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                    </svg>
+                  }
+                />
+              )}
             </div>
 
             <button

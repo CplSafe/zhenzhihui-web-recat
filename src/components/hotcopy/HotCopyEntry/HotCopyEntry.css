@@ -25,95 +25,13 @@
   background: #f8f9fa;
 }
 
-/* 背景两层渐变光晕(对齐智能成片 .bg;配色取自本页 Figma 的粉紫)*/
+/* 背景容器:Canvas 弥散背景铺满(实现见 EntryCanvasBg,配色用本页粉紫) */
 .hotcopy__bg {
   position: absolute;
   inset: 0;
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-}
-.hotcopy__bg-lg {
-  position: absolute;
-  left: 50%;
-  top: 52%;
-  transform: translate(-50%, 0);
-  width: min(1958px, 150vw);
-  aspect-ratio: 1958 / 588;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 50% 50%,
-    rgba(255, 178, 208, 0.2) 0%,
-    rgba(217, 131, 237, 0.2) 48%,
-    rgba(170, 85, 227, 0.2) 100%
-  );
-  filter: blur(80px);
-  /* 切换时大椭圆轻微上浮+放大,强化「整片背景在动」的感知 */
-  transition: transform 1.6s cubic-bezier(0.25, 0.8, 0.3, 1);
-}
-.hotcopy__main[data-tab='replica'] .hotcopy__bg-lg {
-  transform: translate(-50%, -4%) scale(1.06);
-}
-.hotcopy__bg-veil {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(1300px, 120vw);
-  height: min(420px, 36vh);
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 50%, rgba(242, 192, 225, 0.48) 0%, rgba(252, 188, 230, 0) 100%);
-  filter: blur(80px);
-  transition: transform 1.6s cubic-bezier(0.25, 0.8, 0.3, 1);
-}
-.hotcopy__main[data-tab='replica'] .hotcopy__bg-veil {
-  transform: translate(-50%, -50%) scale(1.08);
-}
-
-/* 切换瞬间从中心扩散一圈光晕涟漪(一次性,key 变化重播)。本页粉紫色系,不改背景本色 */
-.hotcopy__bg-ripple {
-  position: absolute;
-  left: 50%;
-  top: 52%;
-  width: min(1100px, 95vw);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 50% 50%,
-    rgba(217, 131, 237, 0.28) 0%,
-    rgba(255, 178, 208, 0.18) 45%,
-    rgba(255, 178, 208, 0) 72%
-  );
-  filter: blur(50px);
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(0.4);
-  animation: hotcopy-bg-ripple 1.8s cubic-bezier(0.22, 0.7, 0.3, 1) forwards;
-  will-change: transform, opacity;
-}
-@keyframes hotcopy-bg-ripple {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.4);
-  }
-  30% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(1.5);
-  }
-}
-
-/* 无障碍:用户偏好减少动效时,关闭涟漪与位移 */
-@media (prefers-reduced-motion: reduce) {
-  .hotcopy__bg-lg,
-  .hotcopy__bg-veil {
-    transition: none;
-  }
-  .hotcopy__bg-ripple {
-    animation: none;
-    display: none;
-  }
 }
 
 .hotcopy__title {

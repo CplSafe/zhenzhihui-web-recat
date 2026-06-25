@@ -26,9 +26,35 @@ export interface SmartDraft {
   /** 营销思路拆解(选中 SKILL 时多出的第 1 步):是否停留在该步 + 生成的建议正文 */
   marketingOpen?: boolean
   marketingText?: string
+  /** 制作图片(chat 模式)的消息流(用户提问 + AI 生成图,图带 asset_id 供水合) */
+  imageMessages?: any[]
 }
 
 const killBlob = (u: any) => (typeof u === 'string' && u.startsWith('blob:') ? '' : u)
+
+// 清洗对话消息:去掉失效图 url(保留 assetId 供按需重换签名URL);
+// 保存时仍在出图的 assistant(pending)落库会卡死「生成中」,转为可重试的错误态。
+function cleanMessages(arr: any, killFn: (u: any) => any): any {
+  if (!Array.isArray(arr)) return arr
+  return arr
+    .map((m: any) => {
+      const images = Array.isArray(m?.images)
+        ? m.images.map((im: any) => ({ ...im, url: killFn(im?.url) })).filter((im: any) => im.url || im.assetId)
+        : m?.images
+      const broken = m?.role === 'assistant' && m?.status === 'pending'
+      return {
+        ...m,
+        images,
+        ...(broken ? { status: 'error', error: '生成已中断,请重试' } : {}),
+      }
+    })
+    .filter(
+      (m: any) =>
+        (typeof m?.text === 'string' && m.text.trim()) ||
+        (Array.isArray(m?.images) && m.images.length) ||
+        m?.status === 'error',
+    )
+}
 
 function sanitize(d: SmartDraft): SmartDraft {
   const next: SmartDraft = { ...d }
@@ -57,6 +83,7 @@ function sanitize(d: SmartDraft): SmartDraft {
     }
     next.subjectAssets = sa
   }
+  if (Array.isArray(next.imageMessages)) next.imageMessages = cleanMessages(next.imageMessages, killBlob)
   return next
 }
 
@@ -153,6 +180,7 @@ function stripHeavy(d: SmartDraft): SmartDraft {
     }
     next.subjectAssets = sa
   }
+  if (Array.isArray(next.imageMessages)) next.imageMessages = cleanMessages(next.imageMessages, killHeavy)
   return next
 }
 

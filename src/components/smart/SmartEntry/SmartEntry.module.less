@@ -16,100 +16,35 @@
   background: #f8f9fa;
 }
 
-/* 背景(Figma 三层叠加):大椭圆(绿蓝紫)+ 小椭圆(青)弥散于底部,上覆白雾蒙层柔化 */
+/* 「制作新视频」(Figma 79:4049 → 652:2494):纯文字,与 Tab 同一行、右对齐卡片右缘。点击初始化为全新空白页 */
+.newVideoBtn {
+  position: absolute;
+  /* 与 Tab 药丸同一视觉行(.tabs 用 bottom:-20px 整体下移,故按钮也相应下移对齐) */
+  top: 30px;
+  right: 0;
+  z-index: 2;
+  padding: 6px 4px;
+  border: none;
+  background: transparent;
+  color: #333;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.0625em;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.newVideoBtn:hover {
+  color: #1fcfa9;
+}
+
+/* 背景容器:Canvas 弥散背景铺满(实现见 EntryCanvasBg) */
 .bg {
   position: absolute;
   inset: 0;
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-}
-
-.bgEllipseLg {
-  position: absolute;
-  left: 50%;
-  top: 60%;
-  transform: translate(-50%, 0%);
-  width: min(1958px, 150vw);
-  aspect-ratio: 1;
-  border-radius: 10%;
-  background: radial-gradient(50% 50% at 100% 100%,
-      rgba(59, 56, 218, 0.2) 0%,
-      rgba(58, 227, 97, 0.2) 100%);
-  filter: blur(80px);
-  /* 切换时大椭圆轻微上浮+放大,强化「整片背景在动」的感知 */
-  transition: transform 1.6s cubic-bezier(0.25, 0.8, 0.3, 1);
-}
-
-.screate[data-mode='image'] .bgEllipseLg {
-  transform: translate(-50%, -4%) scale(1.06);
-}
-
-.bgVeil {
-  position: absolute;
-  left: 50%;
-  top: 60%;
-  transform: translate(-50%, -50%);
-  /* 宽 > 高 + border-radius:50% → 横向椭圆 */
-  width: min(1600px, 130vw);
-  height: min(660px, 46vh);
-  border-radius: 50%;
-  background: radial-gradient(50% 50% at 50% 50%,
-      rgba(58, 227, 97, 0.2) 0%,
-      rgba(77, 149, 232, 0.2) 50%,
-      rgba(59, 56, 218, 0.3) 100%);
-  filter: blur(80px);
-  transition: transform 1.6s cubic-bezier(0.25, 0.8, 0.3, 1);
-}
-
-.screate[data-mode='image'] .bgVeil {
-  transform: translate(-50%, -50%) scale(1.08);
-}
-
-/* 切换瞬间从中心扩散一圈光晕涟漪(一次性,key 变化重播)。与背景同色系,不改背景本色 */
-.bgRipple {
-  position: absolute;
-  left: 50%;
-  top: 60%;
-  width: min(1100px, 95vw);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: radial-gradient(50% 50% at 50% 50%,
-      rgba(31, 207, 169, 0.28) 0%,
-      rgba(77, 149, 232, 0.18) 45%,
-      rgba(77, 149, 232, 0) 72%);
-  filter: blur(50px);
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(0.4);
-  animation: bgRipple 1.8s cubic-bezier(0.22, 0.7, 0.3, 1) forwards;
-  will-change: transform, opacity;
-}
-
-@keyframes bgRipple {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.4);
-  }
-  30% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(1.5);
-  }
-}
-
-/* 无障碍:用户偏好减少动效时,关闭涟漪与位移,仅保留即时色相切换 */
-@media (prefers-reduced-motion: reduce) {
-  .bg,
-  .bgEllipseLg,
-  .bgVeil {
-    transition: none;
-  }
-  .bgRipple {
-    animation: none;
-    display: none;
-  }
 }
 
 .title {

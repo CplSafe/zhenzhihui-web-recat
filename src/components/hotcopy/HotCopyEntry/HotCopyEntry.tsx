@@ -11,6 +11,7 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 import { listAssets, extractAssetPageItems, getAssetDownloadUrl } from '@/api/business'
 import { createMaterialFromAsset } from '@/utils/materials'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
+import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
 import videoIcon from '@/assets/icons/hotcopy-video.svg'
 import materialIcon from '@/assets/icons/hotcopy-material.svg'
 import helpIcon from '@/assets/icons/help-circle.svg'
@@ -60,16 +61,34 @@ const TABS = [
 
 const MAX_PRODUCTS = 9
 
+// 爆款复制背景配色(粉紫,取自本页 Figma):底部粉 + 紫色光晕 + 淡粉核
+const HOTCOPY_LAYERS: BgLayerStops = {
+  bottom: [
+    [0, 'rgba(217,131,237,0)'],
+    [0.38, 'rgba(217,131,237,0.12)'], // 紫
+    [0.72, 'rgba(255,178,208,0.14)'], // 过渡粉
+    [1, 'rgba(255,178,208,0.3)'], // 底部粉
+  ],
+  halo: [
+    [0, 'rgba(217,131,237,0.08)'], // 紫核
+    [0.45, 'rgba(190,108,233,0.12)'], // 紫
+    [0.78, 'rgba(170,85,227,0.12)'], // 紫环
+    [1, 'rgba(170,85,227,0)'],
+  ],
+  core: [
+    [0, 'rgba(255,178,208,0.16)'], // 淡粉
+    [1, 'rgba(255,178,208,0)'],
+  ],
+}
+
 export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
   const [tab, setTab] = useState<HotCopyTab>((initial?.tab as HotCopyTab) ?? 'remake')
-  // Tab 切换计数:每次切换 +1,用作背景「光晕涟漪」层的 key,使其重挂载并重播一次扩散动画
-  const [switchCount, setSwitchCount] = useState(0)
+  // 切换 Tab:背景的位移/上升动画由 <EntryCanvasBg mode={tab}> 监听 tab 变化驱动
   const switchTab = (k: HotCopyTab) => {
     if (k === tab) return
     setTab(k)
-    setSwitchCount((c) => c + 1)
   }
 
   // 爆款视频来源(本地 / 素材库,二选一)
@@ -367,12 +386,9 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
 
   return (
     <section className="hotcopy__main" data-tab={tab}>
-      {/* 背景渐变光晕(对齐智能成片做法,配色用本页 Figma 的粉紫) */}
+      {/* 背景弥散:Canvas 实现(与智能成片同一套),配色用本页粉紫;切 Tab 时从底部上升 */}
       <div className="hotcopy__bg" aria-hidden="true">
-        <div className="hotcopy__bg-lg" />
-        <div className="hotcopy__bg-veil" />
-        {/* 切换反馈:从中心扩散一圈光晕涟漪。key 随切换变化触发重挂载 → 重播动画(首次挂载不放) */}
-        {switchCount > 0 && <div className="hotcopy__bg-ripple" key={switchCount} />}
+        <EntryCanvasBg index={tab === 'replica' ? 1 : 0} count={2} anim="bloom" layers={HOTCOPY_LAYERS} />
       </div>
 
       <h1 className="hotcopy__title">爆款作业直接抄,你的产品当主角!</h1>
