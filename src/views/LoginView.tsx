@@ -77,8 +77,10 @@ export default function LoginView() {
   function normalizeMobile(value: string) {
     return value.replace(/\s/g, '')
   }
+  // 登录成功后的 SSO 回跳地址:直接落到首页。
+  // 不能用 `${origin}/`,根路径会被路由重定向到开屏页 /welcome(详见 router/index.tsx 的 index 路由)。
   function getRedirectTo() {
-    return `${window.location.origin}/`
+    return `${window.location.origin}/home`
   }
   // 登录成功后优先直接获取会话；失败则走 SSO 重定向（SSO 桥接必需，不可跳过）
   async function handleLoginFlowComplete(oauth: any, authResult?: any) {
@@ -338,20 +340,20 @@ export default function LoginView() {
             <button
               type="button"
               role="tab"
-              aria-selected={loginMode === 'password'}
-              className={`zlogin-tab${loginMode === 'password' ? ' is-active' : ''}`}
-              onClick={() => switchMode('password')}
-            >
-              密码登录
-            </button>
-            <button
-              type="button"
-              role="tab"
               aria-selected={loginMode === 'sms'}
               className={`zlogin-tab${loginMode === 'sms' ? ' is-active' : ''}`}
               onClick={() => switchMode('sms')}
             >
               短信登录
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={loginMode === 'password'}
+              className={`zlogin-tab${loginMode === 'password' ? ' is-active' : ''}`}
+              onClick={() => switchMode('password')}
+            >
+              密码登录
             </button>
           </div>
 

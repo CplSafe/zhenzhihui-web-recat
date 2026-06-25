@@ -23,6 +23,8 @@ export interface SmartDraft {
   fullVideoAssetId?: number
   /** 整片视频历史版本(每版带 asset_id,供水合刷新签名URL) */
   videoVersions?: { url: string; assetId: number }[]
+  /** 人脸脱敏开关(默认开;关闭后出片用原图,成片人脸清晰) */
+  faceBlurEnabled?: boolean
   /** 营销思路拆解(选中 SKILL 时多出的第 1 步):是否停留在该步 + 生成的建议正文 */
   marketingOpen?: boolean
   marketingText?: string

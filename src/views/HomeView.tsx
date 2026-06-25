@@ -11,7 +11,9 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 import { useAuth } from '@/auth/AuthContext'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { listCreativeProjects, getAssetDownloadUrl } from '@/api/business'
+import { listBanners, type Banner } from '@/api/banners'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
+import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import bannerLeft from '@/assets/home/banner-left.png'
 import bannerRight from '@/assets/home/banner-right.png'
@@ -196,6 +198,95 @@ const BANNERS = [
     action: 'creative',
   },
 ]
+
+/* 轮播统一渲染结构:兼容后端 /api/v1/banners(视频/图 + 外链)与本地占位兜底 */
+interface Slide {
+  id: number | string
+  mediaUrl: string
+  mediaType: 'image' | 'video'
+  /** 占位用:带强调色的三段式标题 */
+  pre?: string
+  em?: string
+  post?: string
+  /** 后端用:整段标题 */
+  title?: string
+  sub: string
+  /** 后端外链 */
+  linkUrl?: string
+  /** 占位站内跳转 */
+  action?: string
+  /** 占位 CTA 文案 */
+  btn?: string
+}
+
+// 本地占位 → Slide(后端拉取失败时兜底)
+const PLACEHOLDER_SLIDES: Slide[] = BANNERS.map((b) => ({
+  id: b.id,
+  mediaUrl: b.left,
+  mediaType: 'image',
+  pre: b.pre,
+  em: b.em,
+  post: b.post,
+  sub: b.sub,
+  action: b.action,
+  btn: b.btn,
+}))
+
+// 后端 Banner → Slide
+function bannerToSlide(b: Banner): Slide {
+  return {
+    id: b.id,
+    mediaUrl: b.mediaUrl,
+    mediaType: b.mediaType,
+    title: b.title,
+    sub: b.description,
+    linkUrl: b.linkUrl,
+  }
+}
+
+/* 轮播视频:成为焦点(active)时从头静音播放;播放结束 / 出错回调 onDone 切下一张,非焦点暂停 */
+function BannerVideo({ src, active, onDone }: { src: string; active: boolean; onDone: () => void }) {
+  const ref = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    const v = ref.current
+    if (!v) return
+    if (active) {
+      try {
+        v.currentTime = 0
+      } catch {
+        /* 某些浏览器元数据未就绪时设置会抛错,忽略 */
+      }
+      v.play().catch(() => {})
+    } else {
+      v.pause()
+    }
+  }, [active])
+  return (
+    <video
+      ref={ref}
+      className="home__bcard-video"
+      src={src}
+      muted
+      playsInline
+      preload="auto"
+      autoPlay={active}
+      controls={false}
+      disablePictureInPicture
+      controlsList="nodownload nofullscreen noremoteplayback noplaybackrate"
+      onContextMenu={(e) => e.preventDefault()}
+      onLoadedData={(e) => {
+        if (active) (e.currentTarget as HTMLVideoElement).play().catch(() => {})
+      }}
+      onEnded={() => {
+        if (active) onDone()
+      }}
+      onError={() => {
+        console.warn('[banner] 视频加载失败:', src)
+        if (active) onDone()
+      }}
+    />
+  )
+}
 
 /* 快捷入口 4 卡（图标为 Figma 导出）*/
 const QUICK_ENTRIES = [
@@ -462,6 +553,7 @@ export default function HomeView() {
   const requireAuth = useRequireAuth()
   const { isAuthenticated } = useAuth()
   const [bannerIndex, setBannerIndex] = useState(0)
+  const [apiBanners, setApiBanners] = useState<Banner[] | null>(null)
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
   const [comingSoonOpen, setComingSoonOpen] = useState(false)
@@ -472,12 +564,37 @@ export default function HomeView() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState('')
 
-  // 模板库（接后端 listTemplates，失败回退 mock）
+  // 模板库（接后端 listTemplates → /api/v1/creative/projects，仅展示有视频的项目）
   const [templateItems, setTemplateItems] = useState<TemplateItem[]>([])
   const [templateLoading, setTemplateLoading] = useState(false)
   const [templateError, setTemplateError] = useState('')
   const [ratioFilter, setRatioFilter] = useState('')
   const [templateRetry, setTemplateRetry] = useState(0)
+
+  // 模板收藏(localStorage 占位):收藏的视频进素材市场「我收藏的」
+  const [favKeys, setFavKeys] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    setFavKeys(loadFavoriteKeys(Number(workspaceId || 0)))
+  }, [workspaceId])
+  const toggleFav = (tpl: TemplateItem) => {
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) return
+    const key = favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl)
+    const on = toggleFavorite(wsId, {
+      key,
+      title: tpl.title || '未命名视频',
+      videoUrl: tpl.videoUrl || '',
+      thumbnailUrl: tpl.thumbnailUrl || '',
+      ratio: tpl.ratio || '',
+      ts: Date.now(),
+    })
+    setFavKeys((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }
 
   useEffect(() => {
     if (activeTab !== 'template') return
@@ -492,7 +609,7 @@ export default function HomeView() {
     let cancelled = false
     setTemplateLoading(true)
     setTemplateError('')
-    const fetcher = listTemplates({ workspaceId: wsId, limit: 24 })
+    const fetcher = listTemplates({ workspaceId: wsId, limit: 100 })
     fetcher
       .then(({ items }) => {
         if (!cancelled) {
@@ -590,15 +707,42 @@ export default function HomeView() {
     }
   }
 
-  // coverflow 旋转:按右箭头 → 整体右移(左→中、中→右、新卡从左进) ⇒ 中心索引 -1;左箭头相反
-  const rotateRight = () => setBannerIndex((i) => (i - 1 + BANNERS.length) % BANNERS.length)
-  const rotateLeft = () => setBannerIndex((i) => (i + 1) % BANNERS.length)
-
-  // Banner 自动轮播(与右箭头同向)
+  // 拉取后端轮播图(/api/v1/banners);失败 / 为空时用本地占位兜底
   useEffect(() => {
-    const t = window.setInterval(() => setBannerIndex((i) => (i - 1 + BANNERS.length) % BANNERS.length), 6000)
-    return () => window.clearInterval(t)
+    let cancelled = false
+    listBanners()
+      .then((list) => {
+        if (!cancelled) setApiBanners(list)
+      })
+      .catch(() => {
+        if (!cancelled) setApiBanners([])
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
+
+  // 优先用后端数据;为空则回退占位
+  const slides = useMemo<Slide[]>(
+    () => (apiBanners && apiBanners.length ? apiBanners.map(bannerToSlide) : PLACEHOLDER_SLIDES),
+    [apiBanners],
+  )
+
+  // slides 数量变化时把焦点夹回有效范围
+  useEffect(() => {
+    setBannerIndex((i) => (i < slides.length ? i : 0))
+  }, [slides.length])
+
+  // 居中卡片式焦点轮播(自定义 coverflow,对 3 张最稳):左右箭头切换 + 自动播放,取模实现无缝循环
+  const bannerPrev = () => setBannerIndex((i) => (i - 1 + slides.length) % slides.length)
+  const bannerNext = () => setBannerIndex((i) => (i + 1) % slides.length)
+  // 自动切换:视频幻灯片由其播放结束(BannerVideo 的 onEnded)驱动,播完才切;图片幻灯片用 5 秒定时兜底。
+  useEffect(() => {
+    if (slides.length < 2) return
+    if (slides[bannerIndex]?.mediaType === 'video') return
+    const t = window.setTimeout(() => setBannerIndex((i) => (i + 1) % slides.length), 5000)
+    return () => window.clearTimeout(t)
+  }, [slides, bannerIndex])
 
   return (
     <div className="home">
@@ -610,31 +754,54 @@ export default function HomeView() {
       />
 
       <div className="home__main">
-        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => setComingSoonOpen(true)} />
+        <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
         <div className="home__content">
-          {/* 轮播 Banner:coverflow(中/左/右三屏),箭头/圆点旋转,自动播放;后端接入后传多条 */}
+          {/* 居中卡片式焦点轮播(自定义 coverflow):中间卡片最大为焦点,左右缩小遮挡,箭头切换 + 自动播放 */}
           <section className="home__banner">
-            <div className="home__banner-stage">
-              {BANNERS.map((b, i) => {
+            <div className="home__cf-stage">
+              {slides.map((b, i) => {
+                const n = slides.length
                 let rel = i - bannerIndex
-                if (rel > BANNERS.length / 2) rel -= BANNERS.length
-                if (rel < -BANNERS.length / 2) rel += BANNERS.length
+                if (rel > n / 2) rel -= n
+                if (rel < -n / 2) rel += n
                 const pos = rel === 0 ? 'center' : rel === -1 ? 'left' : rel === 1 ? 'right' : 'hidden'
+                const cta = b.btn || (b.linkUrl ? '查看详情' : '')
+                const onCta = () => {
+                  if (b.linkUrl) window.open(b.linkUrl, '_blank', 'noopener')
+                  else if (b.action) handleNavigate(b.action)
+                }
                 return (
-                  <div className={`home__banner-slide is-${pos}`} key={b.id} aria-hidden={pos !== 'center'}>
-                    <img className="home__banner-photo home__banner-photo--left" src={b.left} alt="" />
-                    <img className="home__banner-photo home__banner-photo--right" src={b.right} alt="" />
-                    <div className="home__banner-card">
-                      <h2 className="home__banner-title">
-                        {b.pre}
-                        <span className="home__banner-em">{b.em}</span>
-                        {b.post}
-                      </h2>
-                      <p className="home__banner-sub">{b.sub}</p>
-                      <button type="button" className="home__banner-btn" onClick={() => handleNavigate(b.action)}>
-                        {b.btn}
-                      </button>
+                  <div className={`home__cf-card is-${pos}`} key={b.id} aria-hidden={pos !== 'center'}>
+                    <div
+                      className="home__bcard"
+                      style={b.mediaType === 'image' ? { backgroundImage: `url(${b.mediaUrl})` } : undefined}
+                    >
+                      {b.mediaType === 'video' && (
+                        <BannerVideo src={b.mediaUrl} active={pos === 'center'} onDone={bannerNext} />
+                      )}
+                      {/* 视频幻灯片只展示视频,不叠加文字层;图片占位仍带文案 */}
+                      {b.mediaType !== 'video' && (
+                        <div className="home__bcard-panel">
+                          <h2 className="home__bcard-title">
+                            {b.title ? (
+                              b.title
+                            ) : (
+                              <>
+                                {b.pre}
+                                <span className="home__bcard-em">{b.em}</span>
+                                {b.post}
+                              </>
+                            )}
+                          </h2>
+                          {b.sub && <p className="home__bcard-sub">{b.sub}</p>}
+                          {cta && (
+                            <button type="button" className="home__bcard-btn" onClick={onCta}>
+                              {cta}
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )
@@ -642,27 +809,27 @@ export default function HomeView() {
             </div>
             <button
               type="button"
-              className="home__banner-arrow home__banner-arrow--left"
-              onClick={rotateLeft}
+              className="home__cf-arrow home__cf-arrow--left"
+              onClick={bannerPrev}
               aria-label="上一张"
             >
               ‹
             </button>
             <button
               type="button"
-              className="home__banner-arrow home__banner-arrow--right"
-              onClick={rotateRight}
+              className="home__cf-arrow home__cf-arrow--right"
+              onClick={bannerNext}
               aria-label="下一张"
             >
               ›
             </button>
           </section>
-          <div className="home__banner-dots">
-            {BANNERS.map((b, i) => (
+          <div className="home__banner-bars">
+            {slides.map((b, i) => (
               <button
                 key={b.id}
                 type="button"
-                className={`home__dot${i === bannerIndex ? ' is-active' : ''}`}
+                className={`home__bar${i === bannerIndex ? ' is-active' : ''}`}
                 onClick={() => setBannerIndex(i)}
                 aria-label={`第 ${i + 1} 张`}
               />
@@ -826,13 +993,27 @@ export default function HomeView() {
               ) : (
                 <>
                   <div className="home__masonry">
-                    {filteredTemplates.map((tpl) => (
-                      <div key={tpl.id} className="home__tpl">
+                    {filteredTemplates.map((tpl, tplIdx) => (
+                      <div key={`${tpl.id}-${tplIdx}`} className="home__tpl">
                         <div
-                          className={`home__tpl-thumb${tpl.thumbnailUrl ? ' has-image' : ''}`}
+                          className={`home__tpl-thumb${tpl.videoUrl || tpl.thumbnailUrl ? ' has-image' : ''}`}
                           style={{ aspectRatio: tpl.ratio, background: tpl.grad }}
                         >
-                          {tpl.thumbnailUrl ? (
+                          {tpl.videoUrl ? (
+                            // 封面=视频本身(首帧/循环),与「历史项目」一致,不依赖会过期的封面图
+                            <video
+                              className="home__tpl-video"
+                              src={tpl.videoUrl}
+                              autoPlay
+                              muted
+                              loop
+                              playsInline
+                              preload="metadata"
+                              onError={(e) => {
+                                ;(e.currentTarget as HTMLVideoElement).style.display = 'none'
+                              }}
+                            />
+                          ) : tpl.thumbnailUrl ? (
                             <img src={tpl.thumbnailUrl} alt={tpl.title} loading="lazy" className="home__tpl-img" />
                           ) : (
                             <span className="home__tpl-media" aria-hidden="true">
@@ -841,6 +1022,21 @@ export default function HomeView() {
                                 <path d="M10 8.5l6 3.5-6 3.5z" fill="#fff" />
                               </svg>
                             </span>
+                          )}
+                          {tpl.videoUrl && (
+                            <button
+                              type="button"
+                              className={`home__tpl-fav${favKeys.has(favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl)) ? ' is-on' : ''}`}
+                              aria-label="收藏"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                toggleFav(tpl)
+                              }}
+                            >
+                              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                              </svg>
+                            </button>
                           )}
                           <span className="home__template-caption">{tpl.title}</span>
                           <div className="home__tpl-mask">

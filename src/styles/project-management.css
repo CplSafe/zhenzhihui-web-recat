@@ -1078,8 +1078,13 @@
 /* ---- 文件夹网格 ---- */
 .pm2-folder-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 22px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 28px 26px;
+}
+.pm2-pager {
+  display: flex;
+  justify-content: center;
+  margin-top: 24px;
 }
 .pm2-folder {
   display: flex;
@@ -1125,7 +1130,7 @@
   color: #5767e5;
 }
 .pm2-folder-name {
-  font-size: 14px;
+  font-size: 15px;
   color: #333;
   max-width: 100%;
   white-space: nowrap;
@@ -1220,6 +1225,15 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+/* 真实视频封面(取首帧),铺满缩略图、不拦截点击,加载失败时露出底部渐变兜底 */
+.pm2-vid-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
 }
 .pm2-vid-play {
   width: 46px;
@@ -1662,34 +1676,4 @@
   font-size: 26px;
   line-height: 1;
   cursor: pointer;
-}
-
-/* 项目封面拼图(最多 4 张,基于列表已返回内容,无额外请求) */
-.pm2-folder-collage {
-  position: absolute;
-  inset: 7px;
-  border-radius: 10px;
-  overflow: hidden;
-  display: grid;
-  gap: 2px;
-  background: rgba(255, 255, 255, 0.5);
-}
-.pm2-folder-collage img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.pm2-folder-collage[data-n='1'] {
-  grid-template-columns: 1fr;
-}
-.pm2-folder-collage[data-n='2'] {
-  grid-template-columns: 1fr 1fr;
-}
-.pm2-folder-collage[data-n='3'],
-.pm2-folder-collage[data-n='4'] {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-}
-.pm2-folder-collage[data-n='3'] img:first-child {
-  grid-column: span 2;
 }

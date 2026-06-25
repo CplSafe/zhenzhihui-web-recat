@@ -9,6 +9,7 @@ import { listTemplates, type TemplateItem } from '@/api/templates'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
+import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useAuth } from '@/auth/AuthContext'
 import './HomeView.css'
@@ -47,6 +48,31 @@ export default function TemplatesView() {
   const [retry, setRetry] = useState(0)
   const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
 
+  // 模板收藏(localStorage 占位):收藏的视频进素材市场「我收藏的」
+  const [favKeys, setFavKeys] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    setFavKeys(loadFavoriteKeys(Number(workspaceId || 0)))
+  }, [workspaceId])
+  const toggleFav = (tpl: TemplateItem) => {
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) return
+    const key = favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl)
+    const on = toggleFavorite(wsId, {
+      key,
+      title: tpl.title || '未命名视频',
+      videoUrl: tpl.videoUrl || '',
+      thumbnailUrl: tpl.thumbnailUrl || '',
+      ratio: tpl.ratio || '',
+      ts: Date.now(),
+    })
+    setFavKeys((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }
+
   useEffect(() => {
     const wsId = Number(workspaceId || 0)
     if (!wsId) return
@@ -80,7 +106,8 @@ export default function TemplatesView() {
   const keywordTrim = keyword.trim()
 
   const filtered = useMemo(() => {
-    let list = templates.filter((t) => Boolean(t.videoUrl))
+    // 有视频(url 或 assetId)即展示;签名 URL 没换到的也显示(缩略图),与历史项目一致
+    let list = templates.filter((t) => Boolean(t.videoUrl) || Boolean(t.videoAssetId))
     if (ratioFilter) list = list.filter((t) => t.ratio === ratioFilter)
     if (keywordTrim) list = list.filter((t) => t.title.includes(keywordTrim))
     return list
@@ -176,20 +203,12 @@ export default function TemplatesView() {
             ) : error === 'empty' || !filtered.length ? (
               <div className="home__placeholder">暂无模板数据</div>
             ) : (
-              <div className="home__proj-waterfall">
+              <div className="templates-grid">
                 {filtered.map((tpl, i) => {
-                  const span = (() => {
-                    const r = (tpl.ratio || '').replace(/\s+/g, '')
-                    if (r === '9/16' || r === '3/4' || r === '4/5') return 3
-                    if (r === '1/1') return 4
-                    if (r === '16/9') return 6
-                    return 4
-                  })()
                   return (
                     <div
-                      key={tpl.id}
-                      className="home__proj"
-                      style={{ gridColumn: `span ${span}` }}
+                      key={`${tpl.id}-${i}`}
+                      className="home__proj templates-card"
                       role="button"
                       tabIndex={0}
                       onClick={() =>
@@ -200,24 +219,39 @@ export default function TemplatesView() {
                           resolveProjectPath(tpl.id, Number(workspaceId || 0)).then((path) => navigate(path))
                       }}
                     >
-                      <div className="home__proj-thumb" style={{ aspectRatio: tpl.ratio || '9 / 16' }}>
+                      {/* 统一横向缩略图(对标 Figma 网格) */}
+                      <div className="home__proj-thumb" style={{ aspectRatio: '16 / 10' }}>
                         <span className="home__proj-thumb-ph">🎬</span>
+                        {tpl.duration ? <span className="tpl-dur">{Math.round(tpl.duration)}S</span> : null}
                         {tpl.videoUrl && (
                           <video
                             className="home__proj-video"
                             src={tpl.videoUrl}
+                            autoPlay
                             muted
                             loop
                             playsInline
-                            preload="none"
+                            preload="metadata"
                             style={{ position: 'absolute', inset: 0, zIndex: 0 }}
-                            onLoadedData={(e) => {
-                              ;(e.currentTarget as HTMLVideoElement).play().catch(() => {})
-                            }}
                             onError={(e) => {
                               ;(e.currentTarget as HTMLVideoElement).style.display = 'none'
                             }}
                           />
+                        )}
+                        {tpl.videoUrl && (
+                          <button
+                            type="button"
+                            className={`home__tpl-fav${favKeys.has(favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl)) ? ' is-on' : ''}`}
+                            aria-label="收藏"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleFav(tpl)
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                              <path d="M12 20.3l-1.45-1.32C5.4 14.36 2 11.28 2 7.5 2 4.42 4.42 2 7.5 2c1.74 0 3.41.81 4.5 2.09C13.09 2.81 14.76 2 16.5 2 19.58 2 22 4.42 22 7.5c0 3.78-3.4 6.86-8.55 11.54L12 20.3z" />
+                            </svg>
+                          </button>
                         )}
                         <div className="home__proj-overlay">
                           <span className="home__proj-overlay-text">{tpl.title}</span>

@@ -243,7 +243,7 @@ export default function ProjectVideoListView() {
         onClose={() => setSidebarOpen(false)}
       />
       <div className="pvlist-shell">
-        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
+        <AppTopbar onMenu={() => setSidebarOpen(true)} />
         <main className="pvlist-main">
           <div className="pvlist-container">
             <div className="pvlist-breadcrumb">

@@ -1,7 +1,7 @@
 /**
  * ScriptStoryboardTable — 分镜脚本(表格式,还原 Figma 299:2524)。
  * 圆角卡片容器 + 渐变表头(镜头编号/时长/画面描述[/准备素材]) + 行(圆形序号+镜头名、时长药丸、画面描述) + 表尾「共 N 个镜头」。
- * 时长/画面描述双击可编辑(受控 onShotsChange,缺省只读)。
+ * 时长只读(纯展示,不可双击修改);画面描述双击可编辑(受控 onShotsChange,缺省只读)。
  * showSubjects=false:分镜脚本阶段隐藏「准备素材」列;materialMode:准备素材阶段每个主体「@名称 + AI自动生成 + 上传图片」(图二)。
  */
 import InlineEdit from '@/components/common/InlineEdit'
@@ -67,6 +67,10 @@ interface ScriptStoryboardTableProps {
   regenerating?: boolean
   /** 该镜头没有主体素材时,点击「上传图片」为它添加一个素材(准备素材阶段) */
   onAddMaterial?: (shot: Shot) => void
+  /** 提供则「AI自动生成」直接后台生成该主体(可并发,不阻塞);缺省回退打开素材弹窗 */
+  onGenerateSubject?: (name: string) => void
+  /** 各主体是否正在生成(键为主体名),用于显示「生成中…」 */
+  subjectGenerating?: Record<string, boolean>
 }
 
 const stripAt = (t: string) =>
@@ -82,6 +86,8 @@ export default function ScriptStoryboardTable({
   onRegenerate,
   regenerating = false,
   onAddMaterial,
+  onGenerateSubject,
+  subjectGenerating,
 }: ScriptStoryboardTableProps) {
   const editable = !!onShotsChange
   const patchShot = (id: Shot['id'], p: Partial<Shot>) =>
@@ -107,17 +113,10 @@ export default function ScriptStoryboardTable({
               <span className={styles.sbNoLabel}>{shot.no}</span>
             </div>
 
-            {/* 时长:青色药丸(可编辑) */}
+            {/* 时长:青色药丸(只读;分镜脚本/准备素材阶段不可双击修改) */}
             <div className={`${styles.sbCell} ${styles.sbColDur}`}>
               <span className={styles.sbDurPill}>
-                <InlineEdit
-                  className={styles.sbDurVal}
-                  value={String(shot.duration || '').replace(/[^0-9.]/g, '')}
-                  numeric
-                  placeholder="—"
-                  editable={editable}
-                  onCommit={(v) => patchShot(shot.id, { duration: v ? `${v}s` : '' })}
-                />
+                <span className={styles.sbDurVal}>{String(shot.duration || '').replace(/[^0-9.]/g, '') || '—'}</span>
                 <span className={styles.sbDurUnit}>s</span>
               </span>
             </div>
@@ -140,6 +139,7 @@ export default function ScriptStoryboardTable({
                 <div className={styles.sbcMatList}>
                   {shot.subjects.map((su, idx) => {
                     const name = stripAt(su.tag)
+                    const genning = !!subjectGenerating?.[name]
                     return (
                       <div className={styles.sbcMatRow} key={`${su.tag}-${idx}`}>
                         <div className={styles.sbcMatInfo}>
@@ -151,11 +151,14 @@ export default function ScriptStoryboardTable({
                           <button
                             type="button"
                             className={styles.sbcMatBadge}
-                            title="打开素材弹窗,在弹窗内生成该素材"
-                            onClick={() => onOpenSubject?.(name)}
+                            disabled={genning}
+                            title={
+                              onGenerateSubject ? '后台生成该主体(可同时生成多个)' : '打开素材弹窗,在弹窗内生成该素材'
+                            }
+                            onClick={() => (onGenerateSubject ? onGenerateSubject(name) : onOpenSubject?.(name, true))}
                           >
                             <img className={styles.sbcMatBadgeIcon} src={aiSparkIcon} alt="" width={12} height={12} />
-                            AI自动生成
+                            {genning ? '生成中…' : 'AI自动生成'}
                           </button>
                         </div>
                         <button
@@ -164,7 +167,9 @@ export default function ScriptStoryboardTable({
                           title="打开素材弹窗(上传 / 生成)"
                           onClick={() => onOpenSubject?.(name)}
                         >
-                          {su.image ? (
+                          {genning ? (
+                            <span className={styles.sbcMatSpin} aria-hidden="true" />
+                          ) : su.image ? (
                             <img className={styles.sbcMatUploadImg} src={su.image} alt={name} />
                           ) : (
                             <>

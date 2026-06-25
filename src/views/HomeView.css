@@ -1085,6 +1085,51 @@ button.home__template-card {
   z-index: 0;
   animation: tplFadeIn 0.3s ease both;
 }
+.home__tpl-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 14px;
+  z-index: 0;
+  background: #000;
+}
+.home__tpl-fav {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.32);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    background 0.15s ease;
+}
+.home__tpl-fav svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+.home__tpl-fav:hover {
+  transform: scale(1.1);
+}
+.home__tpl-fav.is-on {
+  background: rgba(255, 255, 255, 0.92);
+  color: #ff4d6d;
+}
+.home__tpl-fav.is-on svg {
+  fill: #ff4d6d;
+  stroke: #ff4d6d;
+}
 @keyframes tplFadeIn {
   from {
     opacity: 0;
@@ -1139,3 +1184,183 @@ button.home__template-card {
 }
 
 /* 瀑布流列宽由 column-width 自动按屏宽适配,无需固定列数媒体查询 */
+
+/* ===== 居中卡片式焦点轮播(自定义 coverflow,对 3 张最稳)===== */
+.home__cf-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* 3D 画廊轮播:透视空间,两侧卡 rotateY 向内倾斜 */
+  perspective: 1600px;
+  perspective-origin: center center;
+}
+.home__cf-card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 64%;
+  height: 88%;
+  transform: translate(-50%, -50%) scale(0.8);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+  transition:
+    transform 0.5s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.4s ease;
+}
+/* coverflow:中间焦点正对、两侧缩小 + 变暗 + rotateY 向内倾斜(3D 透视) */
+.home__cf-card.is-center {
+  transform: translate(-50%, -50%) scale(1) rotateY(0deg);
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 3;
+}
+.home__cf-card.is-left {
+  transform: translate(-92%, -50%) scale(0.82) rotateY(38deg);
+  opacity: 0.55;
+  z-index: 1;
+}
+.home__cf-card.is-right {
+  transform: translate(-8%, -50%) scale(0.82) rotateY(-38deg);
+  opacity: 0.55;
+  z-index: 1;
+}
+.home__bcard {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  overflow: hidden;
+  background-size: cover;
+  background-position: center;
+  background-color: #e8ecf5;
+  box-shadow: 0 14px 36px rgba(20, 28, 70, 0.16);
+}
+/* 视频型 Banner:铺满卡片,置于文案面板之下 */
+.home__bcard-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  /* 纯展示视频:鼠标不与之交互,避免浏览器悬停弹出原生控件(画中画/下载/更多) */
+  pointer-events: none;
+}
+/* 中间磨砂玻璃文字面板(深字 + 青绿强调 + 紫色按钮),只在焦点卡显示 */
+.home__bcard-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: 300px;
+  max-width: 48%;
+  padding: 30px 44px;
+  text-align: center;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.66);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 10px 30px rgba(30, 38, 90, 0.12);
+  transition: opacity 0.3s ease;
+}
+.home__cf-card:not(.is-center) .home__bcard-panel {
+  opacity: 0;
+}
+.home__bcard-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #2b2f3a;
+}
+.home__bcard-em {
+  margin: 0 2px;
+  color: #18c2a0;
+}
+.home__bcard-sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #6b7180;
+}
+.home__bcard-btn {
+  margin-top: 8px;
+  height: 38px;
+  padding: 0 26px;
+  border: 0;
+  border-radius: 19px;
+  background: linear-gradient(135deg, #8b7bff 0%, #6d6de3 100%);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(109, 109, 227, 0.32);
+}
+.home__bcard-btn:hover {
+  filter: brightness(1.05);
+}
+/* 左右箭头(深色半透明圆形) */
+.home__cf-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(28, 32, 60, 0.42);
+  color: #ffffff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+.home__cf-arrow:hover {
+  background: rgba(28, 32, 60, 0.6);
+  transform: translateY(-50%) scale(1.08);
+}
+.home__cf-arrow--left {
+  left: 16px;
+}
+.home__cf-arrow--right {
+  right: 16px;
+}
+/* 分段药丸分页(对标 Figma):当前一条长深色,其余短灰条 */
+.home__banner-bars {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+.home__bar {
+  width: 16px;
+  height: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: #d4d7e3;
+  cursor: pointer;
+  transition:
+    width 0.25s ease,
+    background 0.2s ease;
+}
+.home__bar.is-active {
+  width: 30px;
+  background: #2b2f55;
+}
