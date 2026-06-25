@@ -6,18 +6,21 @@
  * - 内容暂为前端占位,后端就绪后替换;搜索为占位。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
 import { useToast } from '@/composables/useToast'
 import { fileToDataUrl } from '@/utils/imageFile'
 import './HelpCenter.css'
 
-// 进入这些页面时自动弹开 AI 助手:首页 / 智能成片主页 / 爆款复制
-const AUTO_OPEN_PATHS = ['/home', '/smart', '/hot-copy']
 const FB_TYPES = [
   { k: 'feature', l: '功能反馈' },
   { k: 'optimize', l: '优化建议' },
   { k: 'other', l: '其他反馈' },
 ] as const
+// 根据所选反馈类型动态提示用户该填什么
+const FB_HINTS: Record<'feature' | 'optimize' | 'other', string> = {
+  feature: '请描述遇到的功能问题:在哪个页面、怎么操作、期望结果与实际结果,方便我们定位。',
+  optimize: '请说说希望优化的地方:当前体验如何、你期望改成什么样。',
+  other: '其他想告诉我们的内容都可以写在这里,越具体我们越能帮上忙。',
+}
 const FB_MAX_IMAGES = 3
 const FB_MAX_LEN = 200
 
@@ -160,7 +163,6 @@ const IconChat = () => (
 
 export default function HelpCenter() {
   const { showToast } = useToast()
-  const { pathname } = useLocation()
   const [pos, setPos] = useState<Pos | null>(null)
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<View>('home')
@@ -205,14 +207,6 @@ export default function HelpCenter() {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [setPosBoth])
-
-  // 进入 首页 / 智能成片主页 / 爆款复制 时自动弹开,并回到首屏
-  useEffect(() => {
-    if (AUTO_OPEN_PATHS.includes(pathname)) {
-      setView('home')
-      setOpen(true)
-    }
-  }, [pathname])
 
   useEffect(() => {
     if (!open) return
@@ -534,6 +528,8 @@ export default function HelpCenter() {
                       placeholder="请输入您的反馈与建议,我们将作为功能优化的主要参考"
                       onChange={(e) => setFeedback(e.target.value)}
                     />
+
+                    <p className="hc-fb-hint">{FB_HINTS[fbType]}</p>
 
                     <div className="hc-fb-uploads">
                       {fbImages.map((u, i) => (

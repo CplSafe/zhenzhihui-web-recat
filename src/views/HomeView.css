@@ -1248,6 +1248,8 @@ button.home__template-card {
   height: 100%;
   object-fit: cover;
   z-index: 0;
+  /* 纯展示视频:鼠标不与之交互,避免浏览器悬停弹出原生控件(画中画/下载/更多) */
+  pointer-events: none;
 }
 /* 中间磨砂玻璃文字面板(深字 + 青绿强调 + 紫色按钮),只在焦点卡显示 */
 .home__bcard-panel {

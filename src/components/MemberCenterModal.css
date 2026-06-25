@@ -41,8 +41,20 @@
   font-size: 22px;
   font-weight: 600;
   color: #1f2330;
+  margin: 0 0 8px;
+  text-align: center;
+}
+.mcm-balance {
   margin: 0 0 16px;
   text-align: center;
+  font-size: 13px;
+  color: #8a8f9f;
+}
+.mcm-hint {
+  padding: 48px 0;
+  text-align: center;
+  font-size: 14px;
+  color: #9aa3af;
 }
 .mcm-tabs {
   display: flex;
@@ -80,6 +92,86 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: 24px;
+}
+
+/* 立即开通后的支付步骤 */
+.mcm-pay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0 12px;
+}
+.mcm-pay-back {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  color: #5b6072;
+  font-size: 14px;
+  cursor: pointer;
+}
+.mcm-pay-back:hover {
+  color: #6a5be7;
+}
+.mcm-pay-plan {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 4px 0 18px;
+}
+.mcm-pay-plan-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2330;
+}
+.mcm-pay-plan-price {
+  font-size: 22px;
+  font-weight: 700;
+  color: #f0506e;
+}
+.mcm-pay-plan-price i {
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 500;
+  color: #9aa0ad;
+  margin-left: 2px;
+}
+.mcm-pay-qr {
+  padding: 14px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid #eef0f6;
+  box-shadow: 0 4px 16px rgba(70, 60, 130, 0.08);
+  line-height: 0;
+}
+.mcm-pay-tip {
+  margin-top: 14px;
+  font-size: 14px;
+  color: #5b6072;
+}
+.mcm-pay-demo {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #f0904a;
+}
+.mcm-pay-done {
+  margin-top: 22px;
+  min-width: 200px;
+  height: 44px;
+  border: 0;
+  border-radius: 22px;
+  background: linear-gradient(90deg, #6d7bf0, #8b5cf6);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mcm-pay-done:hover {
+  filter: brightness(1.05);
 }
 
 /* 套餐卡片 */
