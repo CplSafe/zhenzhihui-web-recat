@@ -80,12 +80,6 @@ const IconShield = (
     <path d="m9 12 2 2 4-4" />
   </svg>
 )
-const IconSend = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <path d="M21 4 3 11l7 3 3 7z" />
-    <path d="m10 14 11-10" />
-  </svg>
-)
 const IconDashboard = (
   <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
     <rect x="3" y="3" width="7" height="9" rx="1.5" />
@@ -132,7 +126,6 @@ const GROUPS: SidebarGroup[] = [
     title: '发布',
     items: [
       { key: 'pre-review', label: '投前预审', icon: IconShield },
-      { key: 'publish', label: '一键发布', icon: IconSend },
       { key: 'dashboard', label: '数据看板', icon: IconDashboard },
     ],
   },

@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
+import { Pagination } from 'antd'
 import '@/styles/creative.css'
 import '@/styles/project-management.css'
 import AppSidebar from '@/components/home/AppSidebar'
@@ -22,7 +23,8 @@ import {
   getCreativeProject,
   listCreativeProjects,
 } from '@/api/business'
-import { listProjectVideos, type ProjectVideo } from '@/api/projectVideos'
+import { listProjectVideos, addClassifiedVideo, type ProjectVideo } from '@/api/projectVideos'
+import { loadClassifiedKeys, markVideoClassified, videoKeyOf } from '@/utils/unclassifiedVideos'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 
@@ -92,9 +94,22 @@ function getProjectTimestamp(project: any, keys: string[]): number {
 
 const toneOf = (_i: number) => 'a' as const
 
+// 鉴权直传地址:cookie 鉴权、非预签名,永不过期。替换草稿里会过期(X-Amz-Expires=900)的 S3 URL。
+function assetStreamUrl(assetId: number, workspaceId: number): string {
+  return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
+}
+
 // 从项目列表中提取有生成视频的项目作为「待归类」
-function extractUnclassified(projectItems: any[]): { id: number; title: string; videoUrl: string }[] {
+function extractUnclassified(
+  projectItems: any[],
+  workspaceId: number,
+): { id: number; title: string; videoUrl: string }[] {
   const out: { id: number; title: string; videoUrl: string }[] = []
+  // 优先用 asset 直传地址(不过期);没有 assetId 才退回草稿里的(可能已过期的)URL
+  const resolveUrl = (v: any, rawUrl: string): string => {
+    const assetId = Number(v?.assetId || v?.asset_id || v?.videoAssetId || 0) || 0
+    return assetId && workspaceId ? assetStreamUrl(assetId, workspaceId) : rawUrl
+  }
   for (const project of projectItems) {
     const draft = normalizeCreativeProjectDraft(project)
     if (!draft) continue
@@ -110,17 +125,18 @@ function extractUnclassified(projectItems: any[]): { id: number; title: string; 
         out.push({
           id: Number(project?.id || 0),
           title: String(project?.title || project?.name || '').trim() || '未命名项目',
-          videoUrl: url,
+          videoUrl: resolveUrl(v, url),
         })
       }
     }
     if (!src.length) {
       const gv = String(draft?.generatedVideoUrl || draft?.generated_video_url || smart?.fullVideoUrl || '').trim()
       if (gv) {
+        const gAssetId = Number(draft?.generatedVideoAssetId || smart?.fullVideoAssetId || 0) || 0
         out.push({
           id: Number(project?.id || 0),
           title: String(project?.title || project?.name || '').trim() || '未命名项目',
-          videoUrl: gv,
+          videoUrl: gAssetId && workspaceId ? assetStreamUrl(gAssetId, workspaceId) : gv,
         })
       }
     }
@@ -207,43 +223,6 @@ function parseProjectDetail(draft: any): { shots: DetailShot[]; videos: DetailVi
   return { shots, videos, flow }
 }
 
-// 从草稿里取若干「预览图」(优先用户上传的入口素材 → 元素图 → 分镜图),供项目文件夹拼图预览
-function extractPreviewCandidates(draft: any): { url: string; assetId: number }[] {
-  const smart = draft?.smart && typeof draft.smart === 'object' ? draft.smart : draft
-  const out: { url: string; assetId: number }[] = []
-  // ① 入口上传的素材(用户上传)
-  const em = smart?.entryMeta || {}
-  const imgs = normalizeArray(em.images)
-  const aids = normalizeArray(em.imageAssetIds || em.imageAssetIDs)
-  imgs.forEach((u: any, i: number) => {
-    const url = String(u || '').trim()
-    if (url) out.push({ url, assetId: Number(aids[i] || 0) || 0 })
-  })
-  // ② 元素(素材主体)
-  normalizeArray(smart?.shots).forEach((s: any) =>
-    normalizeArray(s.subjects).forEach((su: any) => {
-      const im = imgOf(su.image ? { url: su.image, assetId: su.assetId } : su)
-      if (im.url || im.assetId) out.push(im)
-    }),
-  )
-  // ③ 分镜图(兜底)
-  normalizeArray(smart?.shots).forEach((s: any) => {
-    const im = imgOf(s.image ? { url: s.image, assetId: s.imageAssetId } : s)
-    if (im.url || im.assetId) out.push(im)
-  })
-  // 去重(按 assetId 优先,否则按 url)
-  const seen = new Set<string>()
-  const uniq: { url: string; assetId: number }[] = []
-  for (const c of out) {
-    const key = c.assetId ? `a${c.assetId}` : `u${c.url}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    uniq.push(c)
-    if (uniq.length >= 4) break
-  }
-  return uniq
-}
-
 // 修进度条 bug:部分 MP4 初始 duration=Infinity(moov 在文件尾),进度条会从中间窜到结尾。
 // 跳到极大时间强制浏览器算出真实时长,再跳回 0。
 function fixVideoDuration(e: React.SyntheticEvent<HTMLVideoElement>) {
@@ -291,20 +270,6 @@ function FolderGlyph() {
   )
 }
 
-// 项目封面:有预览图则拼图展示(最多 4 张),图片失效/缺失时回退为渐变文件夹图标
-function FolderThumb({ urls }: { urls: string[] }) {
-  const [broken, setBroken] = useState(false)
-  const list = urls.slice(0, 4)
-  if (!list.length || broken) return <FolderGlyph />
-  return (
-    <span className="pm2-folder-collage" data-n={list.length}>
-      {list.map((u, i) => (
-        <img key={i} src={u} alt="" loading="lazy" onError={() => setBroken(true)} />
-      ))}
-    </span>
-  )
-}
-
 export default function ProjectManagementView() {
   const navigate = useNavigate()
   const { showToast } = useToast()
@@ -317,6 +282,11 @@ export default function ProjectManagementView() {
   const [openMenuId, setOpenMenuId] = useState(0)
   const [deletingProjectId, setDeletingProjectId] = useState(0)
   const [dragOverFolderId, setDragOverFolderId] = useState(0)
+
+  // 我的项目分页:只展示两行,其余分页。列数随容器宽度变化,运行时实测。
+  const gridRef = useRef<HTMLDivElement>(null)
+  const [cols, setCols] = useState(4)
+  const [page, setPage] = useState(1)
 
   // 创建项目弹窗
   const [createOpen, setCreateOpen] = useState(false)
@@ -341,23 +311,7 @@ export default function ProjectManagementView() {
   const folders = useMemo(() => {
     return projectItems
       .map((project) => {
-        // 预览图只用「列表已返回」的内容(封面字段 / 内联草稿),不为此发额外请求,保证列表快
-        const coverFields = [
-          project?.cover_url,
-          project?.coverUrl,
-          project?.thumbnail_url,
-          project?.thumbnailUrl,
-          project?.cover,
-        ]
-          .map((v) => String(v || '').trim())
-          .filter(Boolean)
-        const draftInline = normalizeCreativeProjectDraft(project)
-        const draftUrls = draftInline
-          ? extractPreviewCandidates(draftInline)
-              .map((c) => c.url)
-              .filter(Boolean)
-          : []
-        const preview = (coverFields.length ? coverFields : draftUrls).slice(0, 4)
+        // 文件夹统一用文件夹图标展示,不再做封面拼图预览。
         return {
           id: Number(project?.id || 0),
           title: String(project?.title || project?.name || '').trim() || '未命名项目',
@@ -368,14 +322,50 @@ export default function ProjectManagementView() {
             'created_at',
             'createdAt',
           ]),
-          preview,
         }
       })
       .filter((p) => p.id > 0)
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }, [projectItems])
 
-  const unclassified = useMemo(() => extractUnclassified(projectItems), [projectItems])
+  // 实测网格列数(auto-fill 解析后的轨道数),用于「两行」分页
+  useEffect(() => {
+    if (viewMode !== 'root') return
+    const el = gridRef.current
+    if (!el) return
+    const measure = () => {
+      const tracks = getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length
+      setCols(Math.max(1, tracks))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [viewMode])
+
+  // 每页 = 两行容量,首格固定是「创建项目」,故每页项目数 = 列数 × 2 − 1
+  const pageSize = Math.max(1, cols * 2 - 1)
+  const totalPages = Math.max(1, Math.ceil(folders.length / pageSize))
+  const pagedFolders = useMemo(() => folders.slice((page - 1) * pageSize, page * pageSize), [folders, page, pageSize])
+
+  // 列数变化 / 项目减少导致当前页越界时,夹回最后一页
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
+
+  // 已归类(拖入项目)的视频 → 从待归类隐藏。纯前端 localStorage 占位。
+  const [classifiedKeys, setClassifiedKeys] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    setClassifiedKeys(loadClassifiedKeys(Number(workspaceId || 0)))
+  }, [workspaceId])
+
+  const unclassified = useMemo(
+    () =>
+      extractUnclassified(projectItems, Number(workspaceId || 0)).filter(
+        (v) => !classifiedKeys.has(videoKeyOf(v.id, v.videoUrl)),
+      ),
+    [projectItems, classifiedKeys, workspaceId],
+  )
 
   const handleNavigate = useCallback(
     (key: string) => {
@@ -427,6 +417,7 @@ export default function ProjectManagementView() {
   useEffect(() => {
     setViewMode('root')
     setActiveProject(null)
+    setPage(1)
     loadProjects()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId])
@@ -608,10 +599,26 @@ export default function ProjectManagementView() {
       } catch {
         video = null
       }
-      if (!video?.title) return
-      showToast(`「${video.title}」已移动到「${folder.title}」(归类接口待接入)`, 'success')
+      if (!video?.videoUrl) return
+      const wsId = Number(workspaceId || 0)
+      if (!wsId || !folder.id) {
+        showToast('workspace_id 缺失,无法归类', 'error')
+        return
+      }
+      // ① 写入目标项目的本地视频清单(占位),使其出现在该项目里
+      addClassifiedVideo({
+        projectId: folder.id,
+        workspaceId: wsId,
+        title: video.title,
+        videoUrl: video.videoUrl,
+      })
+      // ② 标记已归类 → 从待归类隐藏
+      const key = videoKeyOf(Number(video.id || 0), video.videoUrl)
+      markVideoClassified(wsId, key)
+      setClassifiedKeys((prev) => new Set(prev).add(key))
+      showToast(`已归类到「${folder.title}」`, 'success')
     },
-    [showToast],
+    [workspaceId, showToast],
   )
 
   const activeVideo = detailVideos[activeVideoIdx] || null
@@ -644,7 +651,7 @@ export default function ProjectManagementView() {
               {/* 我的项目 */}
               <section className="pm2-section">
                 <h2 className="pm2-section-title">我的项目</h2>
-                <div className="pm2-folder-grid">
+                <div className="pm2-folder-grid" ref={gridRef}>
                   <button type="button" className="pm2-folder pm2-folder--create" onClick={() => setCreateOpen(true)}>
                     <span className="pm2-folder-icon pm2-folder-icon--create">
                       <svg viewBox="0 0 48 48" width="34" height="34" aria-hidden="true">
@@ -663,7 +670,7 @@ export default function ProjectManagementView() {
                   {loading && !folders.length ? (
                     <div className="pm2-hint">正在加载项目…</div>
                   ) : (
-                    folders.map((folder, i) => (
+                    pagedFolders.map((folder, i) => (
                       <div
                         key={folder.id}
                         className={`pm2-folder${dragOverFolderId === folder.id ? ' is-dropover' : ''}`}
@@ -682,7 +689,7 @@ export default function ProjectManagementView() {
                         }}
                       >
                         <span className={`pm2-folder-icon pm2-tone-${toneOf(i)}`}>
-                          <FolderThumb urls={folder.preview} />
+                          <FolderGlyph />
                           <button
                             type="button"
                             className="pm2-folder-more"
@@ -721,6 +728,17 @@ export default function ProjectManagementView() {
                     ))
                   )}
                 </div>
+                {totalPages > 1 && (
+                  <div className="pm2-pager">
+                    <Pagination
+                      current={page}
+                      pageSize={pageSize}
+                      total={folders.length}
+                      showSizeChanger={false}
+                      onChange={setPage}
+                    />
+                  </div>
+                )}
               </section>
 
               {/* 待归类:有生成视频的项目 */}
@@ -747,6 +765,15 @@ export default function ProjectManagementView() {
                               else showToast('无法打开视频', 'info')
                             }}
                           >
+                            {video.videoUrl && (
+                              <video
+                                className="pm2-vid-media"
+                                src={`${video.videoUrl}#t=0.1`}
+                                muted
+                                playsInline
+                                preload="metadata"
+                              />
+                            )}
                             <span className="pm2-vid-play">
                               <PlayIcon />
                             </span>

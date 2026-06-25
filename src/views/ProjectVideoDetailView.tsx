@@ -146,7 +146,7 @@ export default function ProjectVideoDetailView() {
         onClose={() => setSidebarOpen(false)}
       />
       <div className="pvdetail-shell">
-        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
+        <AppTopbar onMenu={() => setSidebarOpen(true)} />
         <main className="pvdetail-main">
           <div className="pvdetail-breadcrumb">
             <button type="button" className="pvdetail-breadcrumb__link" onClick={() => navigate('/home')}>

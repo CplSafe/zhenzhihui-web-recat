@@ -570,7 +570,8 @@ export default function SmartCreateView() {
     )
     // 镜头编排即脱敏(对齐 Vue 2.0):生成分镜图后立即人脸脱敏,结果缓存到分镜,供视频生成直接复用。
     // 脱敏失败/后端未配 image.face_detect 模型则静默跳过,视频生成时回退原图,不阻塞镜头编排。
-    if (assetId) {
+    // 脱敏开关关闭则跳过(出片直接用原图)。
+    if (assetId && faceBlurEnabledRef.current) {
       try {
         const blur = await blurFacesOnAsset({ workspaceId: ws, assetId, modelPlanCandidates: plans })
         if (blur.ok && blur.assetId) {
@@ -673,6 +674,12 @@ export default function SmartCreateView() {
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
   const [blurPhase, setBlurPhase] = useState('')
   const [blurDebug, setBlurDebug] = useState<any[]>([])
+  // 人脸脱敏开关(默认开,保护隐私;关闭后出片用原图,成片人脸清晰)。ref 供异步流程读最新值
+  const [faceBlurEnabled, setFaceBlurEnabled] = useState(true)
+  const faceBlurEnabledRef = useRef(true)
+  useEffect(() => {
+    faceBlurEnabledRef.current = faceBlurEnabled
+  }, [faceBlurEnabled])
 
   // 生成/重生成整片;note=对整片的修改意见(有意见且已有整片时,用上次整片作 video 输入)
   const runFullVideo = async (note?: string) => {
@@ -709,44 +716,50 @@ export default function SmartCreateView() {
         }
         if (id) srcIds.push({ shotId: sh.id, id })
       }
-      // ② 正式生成前:对每张进入视频的分镜图做人脸脱敏,用脱敏版喂 seedance(失败回退原图)
-      const dbg: any[] = []
+      // ② 正式生成前:对每张进入视频的分镜图做人脸脱敏,用脱敏版喂 seedance(失败回退原图)。
+      // 脱敏开关关闭 → 跳过脱敏,直接用原图,成片人脸清晰。
       const imageAssetIds: number[] = []
-      const blurPatch: Record<string, Partial<Shot>> = {}
-      for (let i = 0; i < srcIds.length; i++) {
-        const { shotId, id } = srcIds[i]
-        const sh = shots.find((s) => s.id === shotId)
-        setBlurPhase(`人脸脱敏 ${i + 1}/${srcIds.length}…`)
-        // 缓存命中(同一原图已脱敏过)→ 直接复用,不重复调用
-        if (sh?.blurredImageAssetId && Number(sh.blurredFromAssetId || 0) === id) {
-          imageAssetIds.push(Number(sh.blurredImageAssetId))
-          dbg.push({
-            no: sh.no,
-            srcAssetId: id,
-            cached: true,
-            outAssetId: sh.blurredImageAssetId,
-            outUrl: sh.blurredImageUrl,
-            ok: true,
-          })
-          continue
-        }
-        const r = await blurFacesOnAsset({ workspaceId: ws, assetId: id, modelPlanCandidates: plans })
-        dbg.push({ no: sh?.no || '', ...r.debug, ok: r.ok, cached: false })
-        if (r.ok && r.assetId) {
-          imageAssetIds.push(r.assetId)
-          blurPatch[String(shotId)] = {
-            blurredImageUrl: r.url,
-            blurredImageAssetId: r.assetId,
-            blurredFromAssetId: id,
+      if (faceBlurEnabledRef.current) {
+        const dbg: any[] = []
+        const blurPatch: Record<string, Partial<Shot>> = {}
+        for (let i = 0; i < srcIds.length; i++) {
+          const { shotId, id } = srcIds[i]
+          const sh = shots.find((s) => s.id === shotId)
+          setBlurPhase(`人脸脱敏 ${i + 1}/${srcIds.length}…`)
+          // 缓存命中(同一原图已脱敏过)→ 直接复用,不重复调用
+          if (sh?.blurredImageAssetId && Number(sh.blurredFromAssetId || 0) === id) {
+            imageAssetIds.push(Number(sh.blurredImageAssetId))
+            dbg.push({
+              no: sh.no,
+              srcAssetId: id,
+              cached: true,
+              outAssetId: sh.blurredImageAssetId,
+              outUrl: sh.blurredImageUrl,
+              ok: true,
+            })
+            continue
           }
-        } else {
-          imageAssetIds.push(id) // 脱敏失败:回退原图,不阻塞出片
+          const r = await blurFacesOnAsset({ workspaceId: ws, assetId: id, modelPlanCandidates: plans })
+          dbg.push({ no: sh?.no || '', ...r.debug, ok: r.ok, cached: false })
+          if (r.ok && r.assetId) {
+            imageAssetIds.push(r.assetId)
+            blurPatch[String(shotId)] = {
+              blurredImageUrl: r.url,
+              blurredImageAssetId: r.assetId,
+              blurredFromAssetId: id,
+            }
+          } else {
+            imageAssetIds.push(id) // 脱敏失败:回退原图,不阻塞出片
+          }
         }
-      }
-      setBlurDebug(dbg)
-      // 把脱敏结果缓存回分镜(随草稿持久,重试/重进不重复脱敏)
-      if (Object.keys(blurPatch).length) {
-        setShots((prev) => prev.map((s) => (blurPatch[String(s.id)] ? { ...s, ...blurPatch[String(s.id)] } : s)))
+        setBlurDebug(dbg)
+        // 把脱敏结果缓存回分镜(随草稿持久,重试/重进不重复脱敏)
+        if (Object.keys(blurPatch).length) {
+          setShots((prev) => prev.map((s) => (blurPatch[String(s.id)] ? { ...s, ...blurPatch[String(s.id)] } : s)))
+        }
+      } else {
+        // 不脱敏:直接用原图 assetId 出片
+        for (const s of srcIds) imageAssetIds.push(s.id)
       }
       setBlurPhase('')
       const { url, assetId } = await generateFullVideo({
@@ -996,6 +1009,7 @@ export default function SmartCreateView() {
     fullVideoUrl: fullVideo.url,
     fullVideoAssetId: fullVideo.assetId,
     videoVersions,
+    faceBlurEnabled,
     marketingOpen,
     marketingText,
   })
@@ -1014,6 +1028,7 @@ export default function SmartCreateView() {
     setFields(d.fields || {})
     setFullVideo({ url: d.fullVideoUrl || '', assetId: d.fullVideoAssetId || 0 })
     setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
+    setFaceBlurEnabled((d as any).faceBlurEnabled !== false)
     setMarketingOpen(!!d.marketingOpen)
     setMarketingText(d.marketingText || '')
     autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
@@ -1638,6 +1653,8 @@ export default function SmartCreateView() {
         videoVersions={videoVersions}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
         onRegenerateVideo={runFullVideo}
+        faceBlur={faceBlurEnabled}
+        onFaceBlurChange={setFaceBlurEnabled}
         onSaveVideo={saveVideoNow}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
@@ -1675,7 +1692,7 @@ export default function SmartCreateView() {
         onClose={() => setSidebarOpen(false)}
       />
       <div className="smart__main">
-        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
+        <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
         {!started ? (
           // 「上一步」返回输入框时回填上次输入(数据存在本视图 state,路由切换卸载即清空)

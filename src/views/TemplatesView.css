@@ -46,3 +46,32 @@
 .templates-grid-body {
   margin-top: 16px;
 }
+
+/* 统一网格(对标 Figma):等大卡片,横向 16:10 缩略图 */
+.templates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(218px, 1fr));
+  gap: 20px 16px;
+}
+.templates-card {
+  width: 100%;
+}
+/* 缩略图左上角时长徽标 */
+.tpl-dur {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(20, 24, 45, 0.55);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 1280px) {
+  .templates-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+}

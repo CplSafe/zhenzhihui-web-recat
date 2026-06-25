@@ -1,7 +1,7 @@
 /**
  * ScriptStoryboardTable — 分镜脚本(表格式,还原 Figma 299:2524)。
  * 圆角卡片容器 + 渐变表头(镜头编号/时长/画面描述[/准备素材]) + 行(圆形序号+镜头名、时长药丸、画面描述) + 表尾「共 N 个镜头」。
- * 时长/画面描述双击可编辑(受控 onShotsChange,缺省只读)。
+ * 时长只读(纯展示,不可双击修改);画面描述双击可编辑(受控 onShotsChange,缺省只读)。
  * showSubjects=false:分镜脚本阶段隐藏「准备素材」列;materialMode:准备素材阶段每个主体「@名称 + AI自动生成 + 上传图片」(图二)。
  */
 import InlineEdit from '@/components/common/InlineEdit'
@@ -113,17 +113,10 @@ export default function ScriptStoryboardTable({
               <span className={styles.sbNoLabel}>{shot.no}</span>
             </div>
 
-            {/* 时长:青色药丸(可编辑) */}
+            {/* 时长:青色药丸(只读;分镜脚本/准备素材阶段不可双击修改) */}
             <div className={`${styles.sbCell} ${styles.sbColDur}`}>
               <span className={styles.sbDurPill}>
-                <InlineEdit
-                  className={styles.sbDurVal}
-                  value={String(shot.duration || '').replace(/[^0-9.]/g, '')}
-                  numeric
-                  placeholder="—"
-                  editable={editable}
-                  onCommit={(v) => patchShot(shot.id, { duration: v ? `${v}s` : '' })}
-                />
+                <span className={styles.sbDurVal}>{String(shot.duration || '').replace(/[^0-9.]/g, '') || '—'}</span>
                 <span className={styles.sbDurUnit}>s</span>
               </span>
             </div>

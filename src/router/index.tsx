@@ -7,6 +7,7 @@ import { lazy, Suspense } from 'react'
 import type { ReactNode } from 'react'
 import { createBrowserRouter, Navigate, useRouteError } from 'react-router-dom'
 import App from '../App'
+import { hasAuthSessionMarker } from '../api/auth'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
@@ -72,13 +73,23 @@ function lazyPage(node: ReactNode): ReactNode {
   return <Suspense fallback={<div className="route-loading" aria-label="加载中" />}>{node}</Suspense>
 }
 
+// 已登录(本地标记)用户不进开屏页,直接去首页;游客才看开屏。
+// 同步读 localStorage 标记,避免异步会话检查前先闪一帧开屏;全程 replace,不在历史里留开屏/根路径条目。
+function IndexRedirect() {
+  return <Navigate to={hasAuthSessionMarker() ? '/home' : '/welcome'} replace />
+}
+function WelcomeRoute() {
+  if (hasAuthSessionMarker()) return <Navigate to="/home" replace />
+  return <>{lazyPage(<SplashView />)}</>
+}
+
 export const router = createBrowserRouter([
   {
     element: <App />,
     errorElement: <RouteErrorBoundary />,
     children: [
-      { index: true, element: <Navigate to="/home" replace /> },
-      { path: 'welcome', element: lazyPage(<SplashView />), handle: { requiresAuth: false } },
+      { index: true, element: <IndexRedirect /> },
+      { path: 'welcome', element: <WelcomeRoute />, handle: { requiresAuth: false } },
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },
       { path: 'home', element: lazyPage(<HomeView />), handle: { requiresAuth: false } },
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },

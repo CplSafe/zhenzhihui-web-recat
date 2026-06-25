@@ -1,6 +1,6 @@
 /**
  * SplashView — 开屏页
- * 点击"开始创作"后进入 /login 登录页。
+ * 流程:开屏页 → 点击"开始创作"进入 /login 登录页 → 登录成功进 /home 首页。
  */
 import { useNavigate } from 'react-router-dom'
 import './SplashView.css'
@@ -9,7 +9,6 @@ import brandLogo from '@/assets/logo/image.png'
 import topLogo from '@/assets/logo/343bca61596faf452e963d62cd6fd37f.png'
 import topLogo2 from '@/assets/logo/image copy.png'
 import topLogoRight from '@/assets/logo/image copy 2.png'
-import { setGuestMode } from '@/components/guest/GuestGuard'
 
 export default function SplashView() {
   const navigate = useNavigate()
@@ -30,14 +29,7 @@ export default function SplashView() {
 
       {/* 操作按钮 */}
       <div className="splash-actions">
-        <button
-          type="button"
-          className="splash-btn-register"
-          onClick={() => {
-            setGuestMode()
-            navigate('/home')
-          }}
-        >
+        <button type="button" className="splash-btn-register" onClick={() => navigate('/login')}>
           开始创作
         </button>
       </div>

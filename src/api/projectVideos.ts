@@ -70,6 +70,11 @@ function normalizeCreativeProjectDraft(payload: any): any {
   return null
 }
 
+// 鉴权直传地址:cookie 鉴权、非预签名,永不过期。用它替换草稿里会过期(X-Amz-Expires=900)的 S3 视频 URL。
+function assetStreamUrl(assetId: number, workspaceId: number): string {
+  return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
+}
+
 function resolveStorageKey(workspaceId: number, projectId: number): string {
   return `${LOCAL_KEY_PREFIX}:${workspaceId}:${projectId}`
 }
@@ -225,15 +230,26 @@ function buildDerivedVideos({
 
   const records: ProjectVideo[] = historyList
     .map((item: any, index: number) => {
-      const videoUrl = pickString(item?.url, item?.src, item?.video_url)
-      const coverUrl = pickString(
-        item?.cover_url,
-        item?.coverUrl,
-        item?.thumbnail_url,
-        item?.thumbnailUrl,
-        item?.poster,
-        projectCoverUrl,
-      )
+      // 优先用 asset 直传地址(不过期);没有 assetId 才退回草稿里的(可能已过期的)URL
+      const videoAssetId = Number(item?.assetId || item?.asset_id || item?.videoAssetId || 0) || 0
+      const videoUrl =
+        videoAssetId && workspaceId
+          ? assetStreamUrl(videoAssetId, workspaceId)
+          : pickString(item?.url, item?.src, item?.video_url)
+      const coverAssetId =
+        Number(item?.cover_asset_id || item?.coverAssetId || item?.thumbnail_asset_id || item?.thumbnailAssetId || 0) ||
+        0
+      const coverUrl =
+        coverAssetId && workspaceId
+          ? assetStreamUrl(coverAssetId, workspaceId)
+          : pickString(
+              item?.cover_url,
+              item?.coverUrl,
+              item?.thumbnail_url,
+              item?.thumbnailUrl,
+              item?.poster,
+              projectCoverUrl,
+            )
       const durationSeconds = parseDurationSeconds(item?.duration_seconds ?? item?.durationSeconds ?? item?.duration)
       const status = normalizeStatus(item?.status, Boolean(videoUrl))
       const itemCreatedAt = pickDateString(item?.created_at, item?.createdAt, createdAt)
@@ -260,12 +276,12 @@ function buildDerivedVideos({
 
   if (records.length) return records
 
-  const generatedVideoUrl = pickString(
-    draft?.generatedVideoUrl,
-    draft?.generated_video_url,
-    smart?.fullVideoUrl,
-    smart?.videoUrl,
-  )
+  const generatedVideoAssetId =
+    Number(draft?.generatedVideoAssetId || draft?.generated_video_asset_id || smart?.fullVideoAssetId || 0) || 0
+  const generatedVideoUrl =
+    generatedVideoAssetId && workspaceId
+      ? assetStreamUrl(generatedVideoAssetId, workspaceId)
+      : pickString(draft?.generatedVideoUrl, draft?.generated_video_url, smart?.fullVideoUrl, smart?.videoUrl)
   if (!generatedVideoUrl) return []
 
   return [
@@ -380,6 +396,49 @@ export async function createProjectVideo({
   store.records.unshift(record)
   saveStore(workspaceId, projectId, store)
   return record
+}
+
+/**
+ * 把「待归类」里的一条视频归类(写入)到目标项目的本地视频清单(localStorage 占位)。
+ * 后端暂无「归类」接口,先本地落库,使该视频出现在目标项目的视频列表里。
+ */
+export function addClassifiedVideo({
+  projectId,
+  workspaceId,
+  title,
+  videoUrl,
+  coverUrl,
+  createdByName,
+}: {
+  projectId: number
+  workspaceId: number
+  title?: string
+  videoUrl?: string
+  coverUrl?: string
+  createdByName?: string
+}): void {
+  const now = new Date().toISOString()
+  const store = loadStore(workspaceId, projectId)
+  const url = pickString(videoUrl)
+  // 同一视频已在该项目本地清单里则不重复添加
+  if (url && store.records.some((item) => item.videoUrl === url)) return
+  const record: LocalProjectVideoRecord = {
+    id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    projectId,
+    workspaceId,
+    title: pickString(title, '归类视频'),
+    coverUrl: pickString(coverUrl),
+    videoUrl: url,
+    durationSeconds: 0,
+    status: 'draft',
+    createdByName: pickString(createdByName, '当前用户'),
+    createdAt: now,
+    updatedAt: now,
+    sourceType: 'smart',
+    localOnly: true,
+  }
+  store.records.unshift(record)
+  saveStore(workspaceId, projectId, store)
 }
 
 export async function publishProjectVideo({

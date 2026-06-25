@@ -321,7 +321,7 @@ export default function HotCopyView() {
       />
 
       <div className="hotcopy__shell">
-        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
+        <AppTopbar onMenu={() => setSidebarOpen(true)} />
         <AppToast />
 
         <section className="hotcopy__main">
