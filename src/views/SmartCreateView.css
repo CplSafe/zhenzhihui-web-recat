@@ -64,12 +64,18 @@
   border-bottom: 1px solid #eef0f4;
 }
 
-/* 项目名 */
+/* 项目名:单独一行,横向内边距与正文 .smart__body 一致(28px) */
 .smart__projbar {
+  padding: 16px 28px 4px;
+}
+
+/* 内层与正文(.smart__script)同宽居中(1240),使项目名与「我的描述」左缘对齐 */
+.smart__projbar-inner {
+  max-width: 1240px;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 16px 28px 4px;
 }
 
 .smart__home-link {
@@ -306,7 +312,7 @@
   font-size: 14px;
 }
 
-/* 营销思路拆解步:整步纵向填满 body —— 描述/标题在上,建议正文填满剩余并内部滚动,底部按钮常驻 */
+/* 营销思路拆解步:整步填满 body —— 我的描述/标题在上固定,中间表格滚动,底部按钮常驻 */
 .smart__mkt-step {
   display: flex;
   flex-direction: column;
@@ -333,12 +339,13 @@
   margin-bottom: 12px;
 }
 
-/* 建议正文容器:占据剩余空间(供文本域/占位/错误态填充) */
+/* 建议正文容器:占据剩余空间,内容(拆解表格)超长时在此内部滚动;底部按钮不随之滚动 */
 .smart__marketing-content {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
 }
 
 /* 营销建议:可编辑文本域(填满容器,文案超长时内部滚动) */
@@ -369,6 +376,7 @@
 .smart__marketing-foot {
   flex: 0 0 auto;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 12px;
   margin-top: 18px;
@@ -555,6 +563,11 @@
 /* 镜头编排(及生成视频)底栏:整组水平居中,与 VideoStage 统一 */
 .smart__footer--center .smart__footer-inner {
   justify-content: center;
+}
+
+/* 分镜脚本 / 准备素材底栏:整组靠右 */
+.smart__footer--right .smart__footer-inner {
+  justify-content: flex-end;
 }
 
 /* 上一步 / 下一步 导航箭头:裸图标按钮 + 悬停深色 tooltip(下一步前沿时置灰) */

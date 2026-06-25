@@ -25,9 +25,11 @@ export interface SmartDraft {
   videoVersions?: { url: string; assetId: number }[]
   /** 人脸脱敏开关(默认开;关闭后出片用原图,成片人脸清晰) */
   faceBlurEnabled?: boolean
-  /** 营销思路拆解(选中 SKILL 时多出的第 1 步):是否停留在该步 + 生成的建议正文 */
+  /** 营销思路拆解(选中 SKILL 时多出的第 1 步):是否停留在该步 + 生成的建议正文 + 结构化数据 */
   marketingOpen?: boolean
   marketingText?: string
+  /** 结构化拆解(8 维度 desc+tags),用于「营销思路拆解」步表格回填 */
+  marketingData?: any
   /** 制作图片(chat 模式)的消息流(用户提问 + AI 生成图,图带 asset_id 供水合) */
   imageMessages?: any[]
 }

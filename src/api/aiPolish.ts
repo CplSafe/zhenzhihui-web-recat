@@ -248,6 +248,133 @@ export async function skillBreakdown(
   return out
 }
 
+/**
+ * 营销思路拆解(结构化,动态):由模型按产品 / skill 自行拆出若干「分类 → 维度」。
+ * 不再写死固定 8 维度——不同产品/skill 可拆出不同的模块。组件只按返回结构渲染(保留表格样式)。
+ */
+export interface MarketingField {
+  /** 稳定标识(按位置生成 g{gi}-f{fi}),用于定位编辑 / 换一批 */
+  key: string
+  label: string
+  hint?: string
+  desc: string
+  tags: string[]
+}
+export interface MarketingGroup {
+  label: string
+  fields: MarketingField[]
+}
+export interface MarketingBreakdownData {
+  groups: MarketingGroup[]
+}
+/** 字段 key:动态结构里就是字符串 */
+export type MarketingFieldKey = string
+
+/** 按 key 找字段 */
+export function marketingFieldByKey(data: MarketingBreakdownData | null, key: string): MarketingField | undefined {
+  if (!data) return undefined
+  for (const g of data.groups || []) for (const f of g.fields || []) if (f.key === key) return f
+  return undefined
+}
+
+/** 按 key 局部更新某字段,返回新数据(不可变) */
+export function patchMarketingField(
+  data: MarketingBreakdownData,
+  key: string,
+  patch: Partial<MarketingField>,
+): MarketingBreakdownData {
+  return {
+    groups: (data.groups || []).map((g) => ({
+      ...g,
+      fields: g.fields.map((f) => (f.key === key ? { ...f, ...patch } : f)),
+    })),
+  }
+}
+
+/**
+ * 方案 A(多模态直喂)结构化版:把 说明书(system)+ 产品信息(文字+素材图,多模态)交给模型,
+ * 由模型按产品 / skill 自行拆出若干「分类 → 维度」,每维度 {label, hint, desc:一句话, tags:候选标签[]}。
+ * 维度不写死——不同产品/skill 拆出的模块可不同;前端只按返回结构渲染(保留表格样式)。
+ */
+export async function skillBreakdownStructured(
+  input: { skill: string; requirement: string; images?: string[] },
+  signal?: AbortSignal,
+): Promise<MarketingBreakdownData> {
+  const req = (input.requirement || '').trim()
+  const images = (input.images || []).filter(Boolean)
+  if (!req && !images.length) throw new Error('请先输入想法或上传素材')
+
+  const manual = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['电商营销广告skills']
+  const system =
+    manual +
+    '\n你只能依据用户提供的【产品信息】(下方文字 + 随请求附上的素材图)来分析,严禁脱离素材臆造。' +
+    '请把产品信息拆解成若干「营销点」:先分成 2~4 个【分类】,每个分类下 1~3 个【维度】;' +
+    '分类名与维度名请结合该产品 / 该 skill 自行确定(不同产品/skill 拆出的维度可不同,不必套用固定模板)。' +
+    '每个维度给:label=维度名(≤8字)、hint=一句提示(≤12字,可留空)、desc=一句话描述(≤30字,具体紧扣素材)、' +
+    'tags=3~4个候选短标签(每个≤8字,互不相同,可直接选用)。' +
+    '只输出严格 JSON:{"groups":[{"label":"分类名","fields":[{"label":"维度名","hint":"提示","desc":"一句话","tags":["",""]}]}]};不要解释、不要代码块标记。'
+  const user =
+    '【产品信息】\n' +
+    `· 用户文字:${req || '(未填写,请基于素材图给出合理方向)'}\n` +
+    (images.length
+      ? `· 素材:已随请求附上 ${images.length} 张产品/场景图,请逐张看清实际物体/品牌/场景/人物。`
+      : '· 素材:无(仅据文字)')
+
+  let raw = await runResponseText({
+    system,
+    user,
+    images: images.length ? images : undefined,
+    temperature: 0.6,
+    maxTokens: 2200,
+    signal,
+  })
+  raw = (raw || '')
+    .replace(/^```(json)?/i, '')
+    .replace(/```$/i, '')
+    .trim()
+  const m = raw.match(/\{[\s\S]*\}/)
+  try {
+    const parsed = JSON.parse(m ? m[0] : raw)
+    const groupsRaw = Array.isArray(parsed?.groups) ? parsed.groups : []
+    const groups: MarketingGroup[] = groupsRaw
+      .map((g: any, gi: number) => ({
+        label: String(g?.label || `分类${gi + 1}`).trim(),
+        fields: (Array.isArray(g?.fields) ? g.fields : []).map((f: any, fi: number) => ({
+          key: `g${gi}-f${fi}`,
+          label: String(f?.label || `维度${fi + 1}`).trim(),
+          hint: String(f?.hint || '').trim() || undefined,
+          desc: String(f?.desc || '').trim(),
+          tags: Array.isArray(f?.tags)
+            ? f.tags
+                .map((t: any) =>
+                  String(t)
+                    .replace(/["'\s]/g, '')
+                    .trim(),
+                )
+                .filter(Boolean)
+                .slice(0, 4)
+            : [],
+        })),
+      }))
+      .filter((g: MarketingGroup) => g.fields.length)
+    if (!groups.length) throw new Error('empty')
+    return { groups }
+  } catch {
+    throw new Error('营销思路拆解解析失败,请重试')
+  }
+}
+
+/** 把结构化拆解拼成纯文本,作为后续「生成分镜脚本」的输入(比原始需求更完整)。 */
+export function marketingDataToText(data: MarketingBreakdownData): string {
+  const lines: string[] = []
+  for (const g of data?.groups || [])
+    for (const f of g.fields || []) {
+      const d = (f.desc || '').trim()
+      if (d) lines.push(`${f.label}:${d}`)
+    }
+  return lines.join('\n')
+}
+
 export interface GuideSuggestions {
   product?: string
   sellpoint?: string

@@ -25,8 +25,15 @@ import {
   refineElementPromptWithImage,
   refineShotPrompt,
   polishText,
-  skillBreakdown,
+  skillBreakdownStructured,
+  marketingDataToText,
+  marketingFieldByKey,
+  patchMarketingField,
+  suggestOptions,
+  type MarketingBreakdownData,
+  type MarketingFieldKey,
 } from '@/api/aiPolish'
+import MarketingBreakdown from '@/components/smart/MarketingBreakdown'
 import { generateScriptShotsStream, generateShotInfo } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
 import { generateFullVideo, editFullVideo, buildTimelinePrompt, totalDurationSec } from '@/api/smartVideo'
@@ -215,6 +222,9 @@ export default function SmartCreateView() {
   // marketingOpen=停留在该步;marketingText=skill 拆解出的营销建议(只读展示);确认后才进入分镜脚本流程。
   const [marketingOpen, setMarketingOpen] = useState(false)
   const [marketingText, setMarketingText] = useState('')
+  // 结构化拆解(8 维度 desc+tags)→ 表格展示;marketingText 由它派生,供脚本生成/持久化/续接判断复用
+  const [marketingData, setMarketingData] = useState<MarketingBreakdownData | null>(null)
+  const [marketingTagBusy, setMarketingTagBusy] = useState<Partial<Record<MarketingFieldKey, boolean>>>({})
   const [marketingLoading, setMarketingLoading] = useState(false)
   const [marketingError, setMarketingError] = useState('')
 
@@ -1179,6 +1189,7 @@ export default function SmartCreateView() {
     faceBlurEnabled,
     marketingOpen,
     marketingText,
+    marketingData,
     imageMessages,
   })
   // 把草稿回填到页面状态(本地恢复 / 后端恢复共用)
@@ -1199,6 +1210,7 @@ export default function SmartCreateView() {
     setFaceBlurEnabled((d as any).faceBlurEnabled !== false)
     setMarketingOpen(!!d.marketingOpen)
     setMarketingText(d.marketingText || '')
+    setMarketingData((d.marketingData as MarketingBreakdownData) || null)
     setImageMessages(Array.isArray(d.imageMessages) ? (d.imageMessages as ChatMessage[]) : [])
     imgMsgHydratedRef.current = false // 恢复后按 asset_id 重换图片签名URL
     autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
@@ -1344,6 +1356,7 @@ export default function SmartCreateView() {
     videoVersions,
     marketingOpen,
     marketingText,
+    marketingData,
     imageMessages,
   ])
 
@@ -1382,6 +1395,7 @@ export default function SmartCreateView() {
     setVideoVersions([])
     setMarketingOpen(false)
     setMarketingText('')
+    setMarketingData(null)
     setImageMessages([])
     imgMsgHydratedRef.current = false
     projectIdRef.current = 0
@@ -1464,14 +1478,52 @@ export default function SmartCreateView() {
     setMarketingLoading(true)
     setMarketingError('')
     setMarketingText('')
+    setMarketingData(null)
     try {
-      // 产品信息:用户文字 + 全部上传素材(最多 9 张,与入口上限一致)一并喂入(方案 A 多模态)
-      const out = await skillBreakdown({ skill: meta.skill, requirement: req, images: (meta.images || []).slice(0, 9) })
-      setMarketingText(out)
+      // 产品信息:用户文字 + 全部上传素材(最多 9 张,与入口上限一致)一并喂入(方案 A 多模态),结构化产出
+      const data = await skillBreakdownStructured({
+        skill: meta.skill,
+        requirement: req,
+        images: (meta.images || []).slice(0, 9),
+      })
+      setMarketingData(data)
+      setMarketingText(marketingDataToText(data)) // 派生纯文本,供脚本生成/持久化/续接判断复用
     } catch (e: any) {
       setMarketingError(e?.message || '营销思路拆解失败,请重试')
     } finally {
       setMarketingLoading(false)
+    }
+  }
+
+  // 表格内编辑某维度描述 / 采用候选标签:更新结构化数据,并同步派生 marketingText
+  const updateMarketingField = (key: MarketingFieldKey, desc: string) => {
+    setMarketingData((prev) => {
+      if (!prev) return prev
+      const next = patchMarketingField(prev, key, { desc })
+      setMarketingText(marketingDataToText(next))
+      return next
+    })
+  }
+  // 换一批:重新生成某维度的候选标签(轻量,据该维度名/描述 + 原始需求 + 已展示项排除)
+  const refreshMarketingTags = async (key: MarketingFieldKey) => {
+    if (marketingTagBusy[key]) return
+    const field = marketingFieldByKey(marketingData, key)
+    if (!field) return
+    const label = field.desc || field.label || key
+    setMarketingTagBusy((m) => ({ ...m, [key]: true }))
+    try {
+      const opts = await suggestOptions({
+        label,
+        context: [field.label, reqSummary || requirement, entryMeta?.skill].filter(Boolean).join(' / '),
+        exclude: field.tags || [],
+      })
+      if (opts.length) {
+        setMarketingData((prev) => (prev ? patchMarketingField(prev, key, { tags: opts }) : prev))
+      }
+    } catch {
+      /* 换一批失败:静默,保留原标签 */
+    } finally {
+      setMarketingTagBusy((m) => ({ ...m, [key]: false }))
     }
   }
 
@@ -1556,6 +1608,7 @@ export default function SmartCreateView() {
     // 选中 SKILL → 先进「营销思路拆解」步(不立即生成脚本);未选 → 走现有逻辑直接生成脚本。
     setMarketingOpen(imageMode ? false : !!meta.skill)
     setMarketingText('')
+    setMarketingData(null)
     setMarketingError('')
     if (req) void autoNameProject(req)
     // 入口上传的素材图(dataURL)落库成后端 asset,否则刷新会丢(stripHeavy 剥 dataURL)
@@ -1756,7 +1809,10 @@ export default function SmartCreateView() {
           </div>
           <div className="smart__marketing-content">
             {marketingLoading ? (
-              <div className="smart__placeholder smart__placeholder--sm">正在拆解营销思路…</div>
+              <div className="smart__gen-hint">
+                <span className="smart__gen-spin" aria-hidden="true" />
+                正在拆解营销思路…
+              </div>
             ) : marketingError ? (
               <div className="smart__script-error">
                 {marketingError}
@@ -1768,18 +1824,49 @@ export default function SmartCreateView() {
                   重新生成
                 </button>
               </div>
-            ) : (
-              <textarea
-                className="smart__marketing-edit"
-                value={marketingText}
-                onChange={(e) => setMarketingText(e.target.value)}
-                placeholder="营销思路拆解建议…"
+            ) : marketingData ? (
+              <MarketingBreakdown
+                data={marketingData}
+                onChangeDesc={updateMarketingField}
+                onPickTag={(k, tag) => updateMarketingField(k, tag)}
+                onRefreshTags={refreshMarketingTags}
+                refreshing={marketingTagBusy}
               />
+            ) : (
+              <div className="smart__placeholder smart__placeholder--sm">暂无拆解结果</div>
             )}
           </div>
           <div className="smart__marketing-foot">
-            <button type="button" className="smart__btn smart__btn--ghost" onClick={cancelMarketing}>
-              上一步
+            {/* 上一步:返回入口(与后面步骤一致的箭头按钮 + tooltip) */}
+            <button
+              type="button"
+              className="smart__nav-btn"
+              onClick={cancelMarketing}
+              aria-label="上一步"
+              data-tip="上一步"
+            >
+              <svg width="26" height="21" viewBox="0 0 29 23" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M27.8881 22.0104L28.1187 21.8116C28.3625 21.6053 28.5088 21.4777 27.5336 17.4193C25.8513 10.3938 19.1616 5.85705 11.6728 5.18001V0L0 9.06596L11.6728 18.1319V12.95C16.5247 12.5824 20.7876 13.0063 23.6458 16.0708C25.0542 17.588 26.7515 20.585 27.1585 21.4684C27.2166 21.594 27.3217 21.8247 27.5786 21.911L27.8881 22.0104Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+            {/* 下一步:分镜脚本已生成则前进(不重生成),未生成(前沿)置灰,首次走「确认营销思路」 */}
+            <button
+              type="button"
+              className="smart__nav-btn"
+              onClick={() => setMarketingOpen(false)}
+              disabled={shots.length === 0}
+              aria-label="下一步"
+              data-tip="下一步"
+            >
+              <svg width="27" height="27" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
+                  fill="currentColor"
+                />
+              </svg>
             </button>
             <button
               type="button"
@@ -1787,7 +1874,7 @@ export default function SmartCreateView() {
               onClick={confirmMarketing}
               disabled={marketingLoading || !marketingText.trim()}
             >
-              确认
+              确认营销思路
             </button>
           </div>
         </div>
@@ -2009,59 +2096,31 @@ export default function SmartCreateView() {
               />
             </div>
 
-            {/* 项目名 + 改名 */}
+            {/* 项目名 + 改名:单独一行,内层与正文同宽居中(1240),使项目名与「我的描述」左缘对齐 */}
             <div className="smart__projbar">
-              {/* <button type="button" className="smart__home-link" onClick={() => navigate('/home')}>
-                ← 首页
-              </button>
-              <button
-                type="button"
-                className="smart__home-link"
-                onClick={() => {
-                  clearSmartDraft()
-                  setStarted(false)
-                  setShots([])
-                  setRequirement('')
-                  setReqSummary('')
-                  setEntryMeta(null)
-                  setProjectName('未命名项目')
-                  setNameTouched(false)
-                  setStep(0)
-                  setMaxReached(0)
-                  setSubjectAssets({})
-                  setFields({})
-                  setFullVideo({ url: '', assetId: 0 })
-                  setVideoVersions([])
-                  projectIdRef.current = 0
-                  setProjectId(0)
-                  draftRevisionRef.current = 0
-                  serverTitleRef.current = ''
-                  navigate('/smart')
-                }}
-              >
-                ＋ 新建
-              </button> */}
-              {editingName ? (
-                <input
-                  ref={nameInputRef}
-                  className="smart__name-input"
-                  value={draftName}
-                  autoFocus
-                  onChange={(e) => setDraftName(e.target.value)}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitRename()
-                    if (e.key === 'Escape') setEditingName(false)
-                  }}
-                />
-              ) : (
-                <button type="button" className="smart__name" onClick={startRename} title="点击修改项目名">
-                  <span className="smart__name-label">项目</span>
-                  <span className="smart__name-text">/{projectName}</span>
-                  {naming && <span className="smart__name-naming">AI 命名中…</span>}
-                  <img className="smart__name-edit" src={iconProjectEdit} alt="" width={20} height={20} />
-                </button>
-              )}
+              <div className="smart__projbar-inner">
+                {editingName ? (
+                  <input
+                    ref={nameInputRef}
+                    className="smart__name-input"
+                    value={draftName}
+                    autoFocus
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitRename()
+                      if (e.key === 'Escape') setEditingName(false)
+                    }}
+                  />
+                ) : (
+                  <button type="button" className="smart__name" onClick={startRename} title="点击修改项目名">
+                    <span className="smart__name-label">项目</span>
+                    <span className="smart__name-text">/{projectName}</span>
+                    {naming && <span className="smart__name-naming">AI 命名中…</span>}
+                    <img className="smart__name-edit" src={iconProjectEdit} alt="" width={20} height={20} />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* 步骤内容:营销思路拆解步 / 现有流程步 */}
@@ -2070,7 +2129,7 @@ export default function SmartCreateView() {
             {/* 底栏:上一步/下一步 导航箭头 + 各步主操作按钮(整组居中)。
                 视频生成步(step3)总按钮在中间 VideoStage 内,这里不渲染。 */}
             {!marketingOpen && step !== 3 && (
-              <footer className="smart__footer smart__footer--center">
+              <footer className={`smart__footer ${step === 2 ? 'smart__footer--center' : 'smart__footer--right'}`}>
                 <div className="smart__footer-inner">
                   {/* 上一步(悬停 tooltip:上一步) */}
                   <button
