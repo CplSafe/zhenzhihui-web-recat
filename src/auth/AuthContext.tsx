@@ -17,7 +17,8 @@ import {
 } from '../api/auth'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
 
-const REFRESH_INTERVAL_MS = 20 * 60 * 1000 // 20 minutes
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes(原 20min,缩短以更早续期,给较短的会话 TTL 留余量)
+const VISIBILITY_REFRESH_GAP_MS = 2 * 60 * 1000 // 回到页面时:距上次续期超过 2 分钟才再续,避免频繁刷新
 
 export interface AuthContextValue {
   authSession: any
@@ -51,6 +52,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadAuthSessionRef = useRef<() => Promise<void>>(async () => {})
   // 并发序号：仅最新一次会话检查的结果可写回 state，避免慢请求覆盖快请求。
   const loadSeqRef = useRef(0)
+  // 上次成功续期的时间戳，供「回到页面时续期」节流用。
+  const lastRefreshRef = useRef(0)
 
   const stopSessionRefresh = useCallback(() => {
     if (refreshTimer.current) {
@@ -61,9 +64,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const startSessionRefresh = useCallback(() => {
     stopSessionRefresh()
+    lastRefreshRef.current = Date.now()
     refreshTimer.current = setInterval(async () => {
       try {
         await refreshSession()
+        lastRefreshRef.current = Date.now()
       } catch {
         // 刷新失败 → 会话可能已过期：立即重新校验会话；若确已失效会清掉登录态，
         // 由 App 的中央守卫跳转登录，而不是停留在"已登录"的死会话上。
@@ -188,6 +193,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => stopSessionRefresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 回到页面 / 窗口重新聚焦时主动续期一次(后台标签页计时器会被节流,切回来可能已临近过期)。
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const maybeRefresh = () => {
+      if (document.visibilityState !== 'visible') return
+      const now = Date.now()
+      if (now - lastRefreshRef.current < VISIBILITY_REFRESH_GAP_MS) return
+      lastRefreshRef.current = now
+      refreshSession()
+        .then(() => {
+          lastRefreshRef.current = Date.now()
+        })
+        .catch(() => {
+          stopSessionRefresh()
+          loadAuthSessionRef.current()
+        })
+    }
+    document.addEventListener('visibilitychange', maybeRefresh)
+    window.addEventListener('focus', maybeRefresh)
+    return () => {
+      document.removeEventListener('visibilitychange', maybeRefresh)
+      window.removeEventListener('focus', maybeRefresh)
+    }
+  }, [isAuthenticated, stopSessionRefresh])
 
   // 用 useMemo 固定 value 引用：否则每次渲染都是新对象，会让所有 useAuth() 消费者
   // （AuthProvider 包住整个路由树）连带全树重渲染。回调已是 useCallback 稳定引用。

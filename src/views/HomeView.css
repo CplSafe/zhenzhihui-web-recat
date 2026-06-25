@@ -815,18 +815,17 @@ button.home__template-card {
   border-radius: 14px;
   overflow: hidden;
   background: #f0f3f5;
-  display: flex;
-  align-items: flex-start;
-  padding: 14px;
-  box-sizing: border-box;
 }
 .home__tpl-mask {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.28);
+  padding: 14px;
+  box-sizing: border-box;
+  z-index: 2;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0) 42%);
   opacity: 0;
   transition: opacity 0.18s ease;
 }
@@ -834,15 +833,18 @@ button.home__template-card {
   opacity: 1;
 }
 .home__tpl-action {
-  padding: 10px 26px;
+  width: 100%;
+  padding: 11px 0;
   border: none;
-  border-radius: 20px;
-  background: linear-gradient(135deg, #60e0c4, #1fcfa9);
+  border-radius: 12px;
+  background: rgba(34, 34, 38, 0.82);
   color: #fff;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 6px 16px rgba(31, 207, 169, 0.4);
+}
+.home__tpl-action:hover {
+  background: rgba(34, 34, 38, 0.95);
 }
 
 /* ── 查看更多 ── */
@@ -1038,7 +1040,7 @@ button.home__template-card {
     gap: 10px;
   }
   .home__tpl-action {
-    padding: 8px 16px;
+    padding: 9px 0;
     font-size: 13px;
   }
 }

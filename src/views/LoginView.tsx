@@ -40,7 +40,7 @@ export default function LoginView() {
 
   const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
 
-  const [loginMode, setLoginMode] = useState<'password' | 'sms'>('password')
+  const [loginMode, setLoginMode] = useState<'password' | 'sms'>('sms')
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
   const [smsCode, setSmsCode] = useState('')
@@ -82,26 +82,67 @@ export default function LoginView() {
   function getRedirectTo() {
     return `${window.location.origin}/home`
   }
-  // 登录成功后优先直接获取会话；失败则走 SSO 重定向（SSO 桥接必需，不可跳过）
+  // 登录成功后获取会话进首页。业务会话需经 OAuth 回调建立(login 200 不一定直接下发 cookie)。
+  // 策略:① 先直接重试取会话(cookie 已就绪即直接进);② 拿不到 → 用【隐藏 iframe 静默跑完 SSO 桥接】
+  // (authorize 地址同源经代理,cookie 共享),期间轮询会话,全程不弹出 DeepAuth 页;
+  // ③ 静默被拦/超时 → 兜底回退到可见重定向,保证一定能登录。
   async function handleLoginFlowComplete(oauth: any, authResult?: any) {
     markAuthSessionExpected()
     if (import.meta.env.DEV && !hasRemoteBackend) {
       handleLoginSuccess()
       return
     }
-    try {
-      const session = await getAuthenticatedSession()
-      handleLoginSuccess(session)
-      return
-    } catch {
-      // 直接获取失败，走 SSO 重定向兜底
+    const trySession = async () => {
+      try {
+        const session = await getAuthenticatedSession()
+        handleLoginSuccess(session)
+        return true
+      } catch {
+        return false
+      }
+    }
+    // ① 直接重试(cookie 就绪即可)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (await trySession()) return
+      await new Promise((resolve) => setTimeout(resolve, 300))
     }
     const navUrl = getAuthNavigationUrl(oauth, authResult)
-    if (navUrl && navUrl !== '/') {
-      window.location.href = navUrl
-    } else {
+    if (!navUrl || navUrl === '/') {
       setNoticeMessage('登录失败，请稍后重试', 'error')
+      return
     }
+    // ② 隐藏 iframe 静默桥接:后台跑完 OAuth 回调种 cookie,同时轮询会话
+    const silentOk = await new Promise<boolean>((resolve) => {
+      const iframe = document.createElement('iframe')
+      iframe.style.display = 'none'
+      iframe.setAttribute('aria-hidden', 'true')
+      iframe.src = navUrl
+      document.body.appendChild(iframe)
+      let settled = false
+      const finish = (ok: boolean) => {
+        if (settled) return
+        settled = true
+        iframe.remove()
+        resolve(ok)
+      }
+      const deadline = Date.now() + 6000
+      const poll = async () => {
+        if (settled) return
+        if (await trySession()) {
+          finish(true)
+          return
+        }
+        if (Date.now() >= deadline) {
+          finish(false)
+          return
+        }
+        setTimeout(poll, 500)
+      }
+      setTimeout(poll, 700) // 给 iframe 一点时间跑完重定向链
+    })
+    if (silentOk) return
+    // ③ 静默失败(被 X-Frame-Options 拦截 / 超时)→ 兜底可见重定向,保证能登录
+    window.location.href = navUrl
   }
 
   async function refreshCaptcha({ silent = false } = {}) {

@@ -361,7 +361,8 @@ export async function getProjectVideo({
   const payload = await listProjectVideos({ projectId, workspaceId, currentUserName })
   return {
     project: payload.project,
-    video: payload.videos.find((item) => item.id === String(videoId)) || null,
+    // 精确匹配 videoId;匹配不到时回退到该项目第一条视频(供「待归类」用哨兵 id 直接打开主视频)
+    video: payload.videos.find((item) => item.id === String(videoId)) || payload.videos[0] || null,
   }
 }
 
