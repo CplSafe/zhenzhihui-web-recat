@@ -21,7 +21,7 @@
   position: absolute;
   /* 与 Tab 药丸同一视觉行(.tabs 用 bottom:-20px 整体下移,故按钮也相应下移对齐) */
   top: 30px;
-  right: 0;
+  right: 15px;
   z-index: 2;
   padding: 6px 4px;
   border: none;
@@ -404,23 +404,59 @@
   }
 }
 
-/* 发送按钮:图标自带圆底与灰/绿两态(由 SVG fill 切换),按钮本身只作点击容器 */
+/* 发送区:恢复态下「重新生成」+「下一步」并排,右对齐 */
+.sendArea {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 重新生成(恢复态显示):刷新图标 + 文字,无边框(对齐设计) */
+.regen {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: #333;
+  font-size: 16px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: color 0.15s;
+
+  &:hover:not(:disabled) {
+    color: #1fcfa9;
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+/* 发送按钮:绿色圆底 + 白色箭头(可点=品牌绿,不可点=禁用灰) */
 .send {
   flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
   border: none;
-  background: none;
   padding: 0;
+  background: #1fcfa9;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: filter 0.15s;
+  transition: background 0.15s, filter 0.15s;
 
   &:hover:not(:disabled) {
     filter: brightness(1.05);
   }
 
   &:disabled {
+    background: #d9d9d9;
     cursor: not-allowed;
   }
 }

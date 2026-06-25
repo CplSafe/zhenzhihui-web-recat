@@ -454,7 +454,7 @@ export default function VideoStage({
               <div className={styles.vstageTimeHint}>
                 {sel && sel.end > sel.start
                   ? `已选 ${fmtSec(sel.start)} – ${fmtSec(sel.end)}(${Math.round(sel.end - sel.start)} 帧),点选区上的铅笔即可针对这些帧提修改意见`
-                  : `${fmtClock(playSec)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧或点选单帧来修改`}
+                  : `${fmtClock(playSec)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧或点选单帧来修改(最多可改 ${MAX_SEGMENTS} 个)`}
               </div>
             </div>
           )}
@@ -498,7 +498,7 @@ export default function VideoStage({
               <ModBox title="整段视频修改" value={overallNote} polishKind="generic" onChange={setOverallNote} />
               {!segments.length && (
                 <div className={styles.vstageRightHint}>
-                  在左侧帧条上拖选若干帧或点选单帧,点铅笔即可新增片段修改(最多 5 个)。
+                  💡 提示:AI视频修改技术仍在发展中,局部细节可能无法做到绝对精准,底层模型正持续优化中。
                 </div>
               )}
             </>

@@ -557,6 +557,78 @@
   justify-content: center;
 }
 
+/* 上一步 / 下一步 导航箭头:裸图标按钮 + 悬停深色 tooltip(下一步前沿时置灰) */
+.smart__nav-btn {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #333; /* 可操作:黑色 */
+  cursor: pointer;
+  transition:
+    color 0.18s,
+    transform 0.18s;
+}
+
+.smart__nav-btn:hover:not(:disabled) {
+  transform: scale(1.08);
+}
+
+.smart__nav-btn:disabled {
+  color: #c8c8c8; /* 禁止操作:灰色 */
+  cursor: not-allowed;
+}
+
+/* 悬停 tooltip:深色圆角气泡(气泡 + 下方小三角) */
+.smart__nav-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  padding: 7px 16px;
+  background: #2b2b2b;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  white-space: nowrap;
+  border-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+  z-index: 5;
+}
+
+.smart__nav-btn::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  border: 6px solid transparent;
+  border-top-color: #2b2b2b;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+  z-index: 5;
+}
+
+.smart__nav-btn:hover:not(:disabled)::after,
+.smart__nav-btn:hover:not(:disabled)::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 .smart__btn {
   display: inline-flex;
   align-items: center;

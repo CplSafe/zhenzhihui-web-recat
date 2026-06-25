@@ -27,7 +27,7 @@ import {
   polishText,
   skillBreakdown,
 } from '@/api/aiPolish'
-import { generateScriptShotsStream } from '@/api/smartScript'
+import { generateScriptShotsStream, generateShotInfo } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
 import { generateFullVideo, editFullVideo, buildTimelinePrompt, totalDurationSec } from '@/api/smartVideo'
 import { blurFacesOnAsset } from '@/api/smartFaceBlur'
@@ -409,17 +409,6 @@ export default function SmartCreateView() {
   const openSubject = (name: string, autoGen = false) =>
     setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
 
-  // 准备素材:后台并发生成单个主体——点一个就开始生成,等待时可继续点下一个(互不阻塞)。
-  const [subjectGen, setSubjectGen] = useState<Record<string, boolean>>({})
-  const genSubjectBackground = (name: string) => {
-    if (subjectGen[name]) return // 该主体已在生成中,忽略重复点击
-    const kind = subjectKindOf(name)
-    const prompt = subjectAssets[name]?.prompt || subjectPrompt(name, kind, entryMeta?.style, subjectContext(name))
-    setSubjectGen((m) => ({ ...m, [name]: true }))
-    // 不 await:每次点击各自独立异步,允许多个主体并发生成
-    void genForSubject(name, prompt).finally(() => setSubjectGen((m) => ({ ...m, [name]: false })))
-  }
-
   // 该主体的广告语境:整体主题 + 它出现的分镜画面描述(帮模型选对元素的具体形态)
   const subjectContext = (name: string) => {
     const theme = (reqSummary || requirement || '').slice(0, 80)
@@ -514,6 +503,42 @@ export default function SmartCreateView() {
   const [shotGen, setShotGen] = useState<Record<string, boolean>>({})
   const [shotGenRunning, setShotGenRunning] = useState(false)
   const autoGenRef = useRef(false)
+  // 上次「分镜图 / 整片视频」生成时的输入签名:用于区分「草稿恢复/未改动(沿用旧结果)」与
+  // 「上游改动(需重新生成)」。进入下一步时输入签名变了 → 重新生成,与产品逻辑一致。
+  const shotGenSigRef = useRef('')
+  const videoGenSigRef = useRef('')
+
+  // 分镜图的生成输入:每镜「画面描述 + 该镜素材(subjects 选定图)」+ 风格/比例。
+  // 改了脚本描述 / 换了素材后再进镜头编排,签名变化 → 重新生成分镜图(否则沿用旧图,与产品逻辑冲突)。
+  const shotImageInputSig = (list: Shot[], meta: EntryMeta | null) =>
+    JSON.stringify({
+      ratio: meta?.ratio || '',
+      style: meta?.style || '',
+      shots: (list || []).map((s) => ({
+        id: s.id,
+        desc: s.desc || '',
+        subjects: s.subjects.map((su) => su.image || ''),
+      })),
+    })
+
+  // 整片视频的生成输入:参与视频的分镜(分镜图 + 时长 + 台词 + 字幕 + 音效 + 顺序)+ 风格/比例/大纲。
+  // 镜头编排里改了任意分镜(图/时长/文案/顺序/勾选)后再进生成视频,签名变化 → 重新出片。
+  const videoInputSig = (list: Shot[], meta: EntryMeta | null, base: string) =>
+    JSON.stringify({
+      ratio: meta?.ratio || '',
+      style: meta?.style || '',
+      base: base || '',
+      shots: (list || [])
+        .filter((s) => s.includeInVideo !== false)
+        .map((s) => ({
+          id: s.id,
+          image: s.image || '',
+          duration: s.duration || '',
+          line: s.line || '',
+          subtitle: s.subtitle || '',
+          sfx: s.sfx || '',
+        })),
+    })
 
   // 生成单个分镜图:画面描述 + 该镜头素材(多参考图)+ 上一张分镜图(连贯);返回新图 url
   const genShotFrame = async (
@@ -628,6 +653,8 @@ export default function SmartCreateView() {
     }
     if (shotGenRunning) return
     setShotGenRunning(true)
+    // 记录本次出图所依据的输入签名(供「下次进镜头编排时输入未变则不重生成」判断)
+    shotGenSigRef.current = shotImageInputSig(list, entryMeta)
     const cache: Record<string, number> = {}
     const theme = (reqSummary || '').slice(0, 60)
     const plans = await resolvePlanCandidates()
@@ -648,48 +675,90 @@ export default function SmartCreateView() {
     }
   }
 
-  // 「插入的新分镜」点「生成分镜」:把新描述写入该镜(desc + imagePrompt),再结合其他分镜全量重生成
-  const regenerateAllWithNewShot = async (shotId: string | number, desc: string) => {
-    if (shotGenRunning) return
-    const next = desc.trim()
-    const list = shots.map((s) =>
-      s.id === shotId ? { ...s, desc: next || s.desc, imagePrompt: next || s.imagePrompt, isNew: false } : s,
-    )
-    setShots(list)
-    await generateShotImages(list)
-  }
-
-  // 单镜分镜图重生成(面板统一流程):提示词 + 选中的素材(refUrls)+ 是否携带当前分镜图
-  const regenerateShotImage = async (
+  // 单镜「编辑 / 新增」弹框统一生成(返回是否成功,供弹框「后端真正返回成功才关闭」)。
+  // 重点:把【全部现有分镜的完整信息】作上下文 + 用户描述 + 上传素材,
+  //   先由 LLM 产出/修改该镜头完整内容(画面描述 + 台词/字幕/音效 + 主体),与前后连贯,
+  //   再据此 + 上传素材出分镜图。这样新分镜不再与其它无关,且台词/字幕/音效会一并补全。
+  const generateShotFromDialog = async (
     sh: Shot,
-    opts: { editPrompt?: string; refUrls?: string[]; carryCurrent?: boolean } = {},
-  ) => {
+    opts: { mode: 'edit' | 'insert'; intent: string; uploadRefUrls: string[] },
+  ): Promise<boolean> => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成', 'error')
-      return
+      return false
     }
-    if (shotGen[sh.id]) return
+    if (shotGen[sh.id]) return false
     setShotGen((m) => ({ ...m, [sh.id]: true }))
     try {
       const plans = await resolvePlanCandidates()
-      await genShotFrame(ws, sh, '', {}, (reqSummary || '').slice(0, 60), plans, undefined, {
-        editPrompt: opts.editPrompt,
-        refUrls: opts.refUrls || [],
-        carryCurrent: opts.carryCurrent,
+      const intent = (opts.intent || '').trim()
+      const doText = opts.mode === 'insert' || intent.length > 0
+      let target = sh
+      if (doText) {
+        const idx = shots.findIndex((s) => s.id === sh.id)
+        // 上下文带「全部分镜」:新增时排除自身这条占位空分镜
+        const ctxShots = opts.mode === 'insert' ? shots.filter((s) => s.id !== sh.id) : shots
+        const info = await generateShotInfo({
+          shots: ctxShots,
+          targetIndex: idx < 0 ? ctxShots.length : idx,
+          mode: opts.mode,
+          intent,
+          style: entryMeta?.style,
+          ratio: entryMeta?.ratio,
+          images: opts.uploadRefUrls,
+        })
+        // 文本字段一律回填(台词/字幕/音效);主体与时长仅新增时采用 LLM 结果,编辑保留原有
+        const nextSubjects =
+          opts.mode === 'insert' ? (info.subjects?.length ? info.subjects : sh.subjects) : sh.subjects
+        target = {
+          ...sh,
+          desc: info.desc || sh.desc,
+          line: info.line,
+          subtitle: info.subtitle,
+          sfx: info.sfx,
+          duration: opts.mode === 'insert' ? info.duration || sh.duration : sh.duration,
+          subjects: nextSubjects,
+          isNew: false,
+        }
+        setShots((prev) =>
+          prev.map((x) =>
+            x.id === sh.id
+              ? {
+                  ...x,
+                  desc: target.desc,
+                  line: target.line,
+                  subtitle: target.subtitle,
+                  sfx: target.sfx,
+                  duration: target.duration,
+                  subjects: target.subjects,
+                }
+              : x,
+          ),
+        )
+      }
+      // 出图:已有主体素材 + 本次上传素材作参考;编辑在当前图基础上改(img2img)
+      const subjectUrls = (target.subjects || []).map((s) => s.image).filter(Boolean) as string[]
+      const refUrls = Array.from(new Set([...subjectUrls, ...opts.uploadRefUrls]))
+      await genShotFrame(ws, target, '', {}, (reqSummary || '').slice(0, 60), plans, undefined, {
+        refUrls,
+        carryCurrent: opts.mode === 'edit',
       })
+      return true
     } catch (e: any) {
       showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
+      return false
     } finally {
       setShotGen((m) => ({ ...m, [sh.id]: false }))
     }
   }
 
-  // 进入镜头编排:若分镜图尚未生成,则自动串行逐个生成(左侧缩略图转圈)
+  // 进入镜头编排:分镜图未生成、或上游(脚本描述/素材)已改动则自动串行逐个生成(左侧缩略图转圈)。
+  // 已有分镜图且输入签名未变(草稿恢复 / 未改动)→ 不重生成;改了脚本或素材 → 输入签名变化 → 重新生成。
   useEffect(() => {
     if (step !== 2 || !shots.length || shotGenRunning) return
     if (autoGenRef.current) return
-    if (shots.some((s) => s.image)) return // 已有分镜图(含草稿恢复)→ 不自动重生成
+    if (shots.some((s) => s.image) && shotImageInputSig(shots, entryMeta) === shotGenSigRef.current) return
     autoGenRef.current = true
     void generateShotImages()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -761,6 +830,8 @@ export default function SmartCreateView() {
       return
     }
     setVidGenRunning(true)
+    // 记录本次出片所依据的分镜签名(供「下次进生成视频时分镜未变则不重生成」判断)
+    videoGenSigRef.current = videoInputSig(shots, entryMeta, reqSummary || requirement)
     try {
       const plans = await resolvePlanCandidates()
       const cache: Record<string, number> = {}
@@ -843,12 +914,17 @@ export default function SmartCreateView() {
     }
   }
 
-  // 进入生成视频:若整片尚未生成,则自动生成一次
+  // 进入生成视频:整片未生成、或镜头编排已改动(分镜图/时长/文案/顺序/勾选)则自动生成一次。
+  // 已有整片且分镜签名未变(草稿恢复 / 未改动)→ 不重生成;改了镜头编排 → 签名变化 → 重新出片。
   useEffect(() => {
     if (step !== 3 || !shots.length || vidGenRunning) return
     if (autoVidRef.current) return
-    // 已有整片(url 或仅 assetId——可能正等签名URL刷新)就不再自动重生成,避免重复出片 / 误判「没视频」
-    if (fullVideo.url || fullVideo.assetId) return
+    // 已有整片(url 或仅 assetId——可能正等签名URL刷新)且分镜未变 → 不再自动重生成,避免重复出片 / 误判「没视频」
+    if (
+      (fullVideo.url || fullVideo.assetId) &&
+      videoInputSig(shots, entryMeta, reqSummary || requirement) === videoGenSigRef.current
+    )
+      return
     autoVidRef.current = true
     void runFullVideo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1127,6 +1203,10 @@ export default function SmartCreateView() {
     imgMsgHydratedRef.current = false // 恢复后按 asset_id 重换图片签名URL
     autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
     autoVidRef.current = true
+    // 以恢复时的状态作为「已生成」基线签名:之后未改动就不重生成,改了上游再进下一步才重新生成
+    const restoredShots = Array.isArray(d.shots) ? d.shots : []
+    shotGenSigRef.current = shotImageInputSig(restoredShots, d.entryMeta || null)
+    videoGenSigRef.current = videoInputSig(restoredShots, d.entryMeta || null, d.reqSummary || d.requirement || '')
   }
 
   // 从任意返回体里取 draft_revision(后端字段有下划线/驼峰/嵌套 data 多种写法,对齐 2.0)
@@ -1385,7 +1465,8 @@ export default function SmartCreateView() {
     setMarketingError('')
     setMarketingText('')
     try {
-      const out = await skillBreakdown({ skill: meta.skill, requirement: req, images: (meta.images || []).slice(0, 6) })
+      // 产品信息:用户文字 + 全部上传素材(最多 9 张,与入口上限一致)一并喂入(方案 A 多模态)
+      const out = await skillBreakdown({ skill: meta.skill, requirement: req, images: (meta.images || []).slice(0, 9) })
       setMarketingText(out)
     } catch (e: any) {
       setMarketingError(e?.message || '营销思路拆解失败,请重试')
@@ -1579,18 +1660,30 @@ export default function SmartCreateView() {
     })
   }
 
+  // ── 底栏导航箭头(上一步 / 下一步),与各步「主操作按钮」分离 ──
+  // 上一步:step0 → 营销拆解(用了 skill)/ 入口;其余 → 上一步骤(纯导航,不重生成)。
+  const goPrev = () => {
+    if (step === 0) {
+      if (entryMeta?.skill) setMarketingOpen(true)
+      else setStarted(false)
+    } else {
+      goStep(step - 1)
+    }
+  }
+  // 下一步:仅在「已生成过」的步骤之间向前导航(step < maxReached);前沿(下一步尚未生成)置灰,
+  // 首次生成只走主按钮(确认脚本 / 镜头编排 / 生成视频)。
+  const canGoNext = step < maxReached
+  const goNext = () => {
+    if (canGoNext) goStep(step + 1)
+  }
+
+  // 各步「主操作按钮」(不含上一步/下一步,导航箭头单独渲染)
   const bottomButtons: BottomButton[] = (() => {
     // 任意分镜图生成中(批量 shotGenRunning 或单张 shotGen[id])→ 禁用镜头编排步的生成类按钮
     const anyShotGenerating = shotGenRunning || Object.values(shotGen).some(Boolean)
     switch (step) {
-      case 0: // 分镜脚本:重新生成在表头(见 ScriptStoryboardTable),底栏只有 上一步 + 确认脚本
+      case 0: // 分镜脚本:重新生成在表头(见 ScriptStoryboardTable),底栏只有 确认脚本
         return [
-          // 用了 SKILL → 上一步回到「营销思路拆解」;否则回到最初输入框
-          {
-            label: '上一步',
-            variant: 'ghost',
-            action: () => (entryMeta?.skill ? setMarketingOpen(true) : setStarted(false)),
-          },
           {
             // 确认脚本 → 进入「准备素材」,此时 AI 生成的主体素材回填到对应分镜
             label: '确认脚本',
@@ -1599,9 +1692,8 @@ export default function SmartCreateView() {
             disabled: scriptLoading,
           },
         ]
-      case 1: // 准备素材:无重新生成,底栏只有 上一步 + 镜头编排(镜头数在表尾「共 N 个镜头」)
+      case 1: // 准备素材:底栏只有 镜头编排(镜头数在表尾「共 N 个镜头」)
         return [
-          { label: '上一步', variant: 'ghost', action: () => goStep(0) },
           {
             label: '镜头编排',
             variant: 'primary',
@@ -1612,9 +1704,8 @@ export default function SmartCreateView() {
             disabled: scriptLoading,
           },
         ]
-      case 2: // 镜头编排:上一步 + 重新生成 + 生成视频(同组靠右)
+      case 2: // 镜头编排:重新生成 + 生成视频
         return [
-          { label: '上一步', variant: 'ghost', action: () => goStep(1) },
           {
             label: shotGenRunning ? '生成中…' : '重新生成',
             variant: 'ghost',
@@ -1637,6 +1728,14 @@ export default function SmartCreateView() {
         return []
     }
   })()
+
+  // 入口「下一步」:从入口回到已生成的流程,只往前一步(进入分镜脚本 / 用了 skill 则进营销拆解),不重生成。
+  const resumeFlow = () => {
+    setStarted(true)
+    if (entryMeta?.skill && marketingText) setMarketingOpen(true)
+  }
+  // 入口是否可「恢复/下一步」:视频模式且已有生成结果(分镜脚本 或 营销拆解)
+  const canResumeFlow = entryMeta?.mode !== 'image' && (shots.length > 0 || !!marketingText)
 
   // 营销思路拆解步(选中 SKILL 时的第 1 步):我的描述(只读,与分镜脚本步一致)+ skill 拆解建议(可编辑)+ 确认/上一步。
   const renderMarketingBody = () => {
@@ -1744,8 +1843,7 @@ export default function SmartCreateView() {
                 showSubjects={materialMode}
                 onAddMaterial={addShotMaterial}
                 onOpenSubject={openSubject}
-                onGenerateSubject={materialMode ? genSubjectBackground : undefined}
-                subjectGenerating={subjectGen}
+                /* AI自动生成:不后台直生,改为唤起素材弹窗并在弹窗内自动生成(autoGen),与「上传图片」一致 */
                 onShotsChange={setShots}
                 onRegenerate={materialMode ? undefined : () => entryMeta && generateScript(requirement, entryMeta)}
                 regenerating={scriptLoading}
@@ -1783,20 +1881,16 @@ export default function SmartCreateView() {
           shots={shots}
           generating={shotGen}
           onShotsChange={setShots}
-          onOpenElement={openSubject}
-          projectImages={projectImages}
           onUploadRef={uploadRef}
-          onRegenerateImage={regenerateShotImage}
-          onRegenerateAll={regenerateAllWithNewShot}
-          onRegenerateAllRunning={shotGenRunning}
-          onOptimizePrompt={(sh, materials) =>
+          onGenerateShot={generateShotFromDialog}
+          onPolishPrompt={(text) =>
             refineShotPrompt({
-              desc: sh.desc,
+              desc: text,
               outline: reqSummary || requirement, // 整体大纲(仅调性参考)
-              materials, // 该镜选中的素材(看图分析真实外观)
+              materials: [],
               style: entryMeta?.style,
               ratio: entryMeta?.ratio,
-            })
+            }).then((r: any) => r?.prompt || text)
           }
           onPolishText={(kind, text) => polishText(text, { kind })}
         />
@@ -1859,6 +1953,8 @@ export default function SmartCreateView() {
             key={entryKey}
             onSubmit={handleStart}
             onNewVideo={resetToNewVideo}
+            canResume={canResumeFlow}
+            onResume={resumeFlow}
             initial={{
               mode: entryMeta?.mode,
               text: requirement,
@@ -1971,43 +2067,55 @@ export default function SmartCreateView() {
             {/* 步骤内容:营销思路拆解步 / 现有流程步 */}
             <div className="smart__body">{marketingOpen ? renderMarketingBody() : renderStepBody()}</div>
 
-            {/* 底部总按钮(营销思路拆解步的按钮在其卡片下方;视频生成步的总按钮在中间 VideoStage 内) */}
-            {!marketingOpen && bottomButtons.length > 0 && (
-              <footer className={`smart__footer${step === 2 ? ' smart__footer--center' : ''}`}>
+            {/* 底栏:上一步/下一步 导航箭头 + 各步主操作按钮(整组居中)。
+                视频生成步(step3)总按钮在中间 VideoStage 内,这里不渲染。 */}
+            {!marketingOpen && step !== 3 && (
+              <footer className="smart__footer smart__footer--center">
                 <div className="smart__footer-inner">
-                  {step === 2
-                    ? // 镜头编排:整组居中
-                      bottomButtons.map((b) => (
-                        <button
-                          key={b.label}
-                          type="button"
-                          className={`smart__btn smart__btn--${b.variant}`}
-                          onClick={b.action}
-                          disabled={b.disabled}
-                        >
-                          {b.icon}
-                          {b.label}
-                        </button>
-                      ))
-                    : // 分镜脚本 / 准备素材:沿用原左右分组(右对齐)
-                      (['left', 'right'] as const).map((side) => (
-                        <div className="smart__footer-group" key={side}>
-                          {bottomButtons
-                            .filter((b) => (b.align ?? 'right') === side)
-                            .map((b) => (
-                              <button
-                                key={b.label}
-                                type="button"
-                                className={`smart__btn smart__btn--${b.variant}`}
-                                onClick={b.action}
-                                disabled={b.disabled}
-                              >
-                                {b.icon}
-                                {b.label}
-                              </button>
-                            ))}
-                        </div>
-                      ))}
+                  {/* 上一步(悬停 tooltip:上一步) */}
+                  <button
+                    type="button"
+                    className="smart__nav-btn"
+                    onClick={goPrev}
+                    aria-label="上一步"
+                    data-tip="上一步"
+                  >
+                    <svg width="26" height="21" viewBox="0 0 29 23" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path
+                        d="M27.8881 22.0104L28.1187 21.8116C28.3625 21.6053 28.5088 21.4777 27.5336 17.4193C25.8513 10.3938 19.1616 5.85705 11.6728 5.18001V0L0 9.06596L11.6728 18.1319V12.95C16.5247 12.5824 20.7876 13.0063 23.6458 16.0708C25.0542 17.588 26.7515 20.585 27.1585 21.4684C27.2166 21.594 27.3217 21.8247 27.5786 21.911L27.8881 22.0104Z"
+                        fill="currentColor"
+                      />
+                    </svg>
+                  </button>
+                  {/* 下一步:仅在已生成的步骤间导航;前沿置灰(悬停 tooltip:下一步) */}
+                  <button
+                    type="button"
+                    className="smart__nav-btn"
+                    onClick={goNext}
+                    disabled={!canGoNext}
+                    aria-label="下一步"
+                    data-tip="下一步"
+                  >
+                    <svg width="27" height="27" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path
+                        d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
+                        fill="currentColor"
+                      />
+                    </svg>
+                  </button>
+                  {/* 各步主操作按钮 */}
+                  {bottomButtons.map((b) => (
+                    <button
+                      key={b.label}
+                      type="button"
+                      className={`smart__btn smart__btn--${b.variant}`}
+                      onClick={b.action}
+                      disabled={b.disabled}
+                    >
+                      {b.icon}
+                      {b.label}
+                    </button>
+                  ))}
                 </div>
               </footer>
             )}
@@ -2016,6 +2124,8 @@ export default function SmartCreateView() {
       </div>
 
       <SubjectAssetDialog
+        /* 按主体名隔离实例:某主体生成/优化中,切到别的主体不会串状态(各自独立) */
+        key={subjectDlg.name}
         open={subjectDlg.open}
         name={subjectDlg.name}
         kind={subjectDlg.kind}

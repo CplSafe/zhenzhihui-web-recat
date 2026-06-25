@@ -30,6 +30,10 @@ interface ShotListProps {
   /** 该镜是否勾选「参与视频生成」(配合 onToggleInclude 在锁定态显示勾选框) */
   includeOf?: (shot: Shot) => boolean
   onToggleInclude?: (id: string | number) => void
+  /** 「编辑该分镜」(铅笔):走编辑弹框(传入则替代默认的选中行为) */
+  onEditShot?: (shot: Shot) => void
+  /** 「向上/向下插入分镜」「+」:走新增弹框(传入则替代默认的直接插入空分镜);index=插入位置 */
+  onInsertShot?: (index: number) => void
 }
 
 let uid = 1
@@ -68,6 +72,8 @@ interface SortableCardProps {
   insertAt: (idx: number) => void
   duplicate: (id: string | number) => void
   remove: (id: string | number) => void
+  onEditShot?: (shot: Shot) => void
+  onInsertShot?: (index: number) => void
 }
 
 function SortableCard({
@@ -88,6 +94,8 @@ function SortableCard({
   insertAt,
   duplicate,
   remove,
+  onEditShot,
+  onInsertShot,
 }: SortableCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: s.id,
@@ -145,13 +153,14 @@ function SortableCard({
         {/* 缩略图上的快捷动作:仅 hover 显示 编辑 + 删除 */}
         {!locked && !generating[s.id] && (
           <div className={styles.thumbActions} onPointerDown={(e) => e.stopPropagation()}>
-            {/* 编辑 = 当前激活的交互:选中该分镜,在右侧面板编辑 */}
+            {/* 编辑该分镜:走编辑弹框(描述 + 上传素材 → 仅更新本分镜) */}
             <button
               type="button"
               className={styles.act}
               onClick={(e) => {
                 e.stopPropagation()
-                onSelect(s.id)
+                if (onEditShot) onEditShot(s)
+                else onSelect(s.id)
               }}
               aria-label="编辑该分镜"
               title="编辑该分镜"
@@ -216,10 +225,24 @@ function SortableCard({
           </button>
           {s.id === menuId && (
             <div className={styles.menu} onClick={(e) => e.stopPropagation()}>
-              <button type="button" onClick={() => insertAt(i)}>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuId(null)
+                  if (onInsertShot) onInsertShot(i)
+                  else insertAt(i)
+                }}
+              >
                 向上插入分镜
               </button>
-              <button type="button" onClick={() => insertAt(i + 1)}>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuId(null)
+                  if (onInsertShot) onInsertShot(i + 1)
+                  else insertAt(i + 1)
+                }}
+              >
                 向下插入分镜
               </button>
               <button type="button" onClick={() => duplicate(s.id)}>
@@ -244,7 +267,8 @@ function SortableCard({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation()
-            insertAt(i + 1)
+            if (onInsertShot) onInsertShot(i + 1)
+            else insertAt(i + 1)
           }}
         >
           +
@@ -265,6 +289,8 @@ export default function ShotList({
   locked,
   includeOf,
   onToggleInclude,
+  onEditShot,
+  onInsertShot,
 }: ShotListProps) {
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
@@ -350,6 +376,8 @@ export default function ShotList({
                 insertAt={insertAt}
                 duplicate={duplicate}
                 remove={remove}
+                onEditShot={onEditShot}
+                onInsertShot={onInsertShot}
               />
             ))}
           </SortableContext>

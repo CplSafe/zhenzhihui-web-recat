@@ -25,8 +25,16 @@ export interface EntryMeta {
 
 interface SmartEntryProps {
   onSubmit: (requirement: string, meta: EntryMeta) => void
-  /** 「制作新视频」:清空输入/项目,初始化为全新空白页(等同切换路由再回来)。 */
-  onNewVideo?: () => void
+  /** 「制作新视频」/「创建新对话」:清空输入/项目,初始化为全新空白页(保留当前 Tab 模式)。 */
+  onNewVideo?: (mode: 'video' | 'image') => void
+  /**
+   * 是否可「下一步/恢复」:从流程里点上一步退回入口、且已有生成结果时为 true(仅制作视频)。
+   * 为 true 时(且当前在视频 Tab):发送按钮变「下一步」(onResume,回到已生成流程,不重生成);
+   * 并显示「重新生成」(走 onSubmit,按当前输入重新生成)。
+   */
+  canResume?: boolean
+  /** 「下一步」:回到已生成的流程(只往前一步),不重新生成。 */
+  onResume?: () => void
   /**
    * 回填初始值:从分镜脚本「上一步」返回输入框时,恢复上次输入(需求文本/图片/风格/比例/时长/模式/skill)。
    * 仅在挂载时生效(useState 初值);路由切换会卸载本组件,数据随之清空。
@@ -63,12 +71,17 @@ const composeWithSkill = (base: string, s: string) => (s ? (base ? `${base}\n\n$
 // 高亮渲染匹配:@图片N(绿) + 使用×××skills帮我优化(skill 提示语,着色)
 const HL_RE = new RegExp(`@图片\\d+|${SKILL_OPTIONS.map((s) => skillLine(s)).join('|')}`, 'g')
 
-export default function SmartEntry({ onSubmit, onNewVideo, initial }: SmartEntryProps) {
+export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, initial }: SmartEntryProps) {
   const { showToast } = useToast()
   const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? 'video')
   // 切换 Tab:背景弥散位移 + 涟漪动画由 <EntryCanvasBg mode> 监听 mode 变化驱动(Canvas 实现,不卡)
   const switchMode = (m: 'video' | 'image') => {
     if (m === mode) return
+    // 「制作图片」暂未开放:点击只提示,不切换;图片模式原逻辑代码保留,开放时去掉此拦截即可
+    if (m === 'image') {
+      showToast('功能暂未开放', 'info')
+      return
+    }
     setMode(m)
   }
   // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
@@ -180,6 +193,8 @@ export default function SmartEntry({ onSubmit, onNewVideo, initial }: SmartEntry
   // 正文(剥离 skill 提示语后)用于提交/校验,保证需求干净
   const cleanText = stripSkillLine(text).trim()
   const canSubmit = cleanText.length > 0 || images.length > 0
+  // 恢复态:已有生成结果且当前在视频 Tab → 发送按钮变「下一步」,并显示「重新生成」
+  const resumeMode = !!canResume && mode === 'video'
   const submit = () => {
     if (!canSubmit) return
     onSubmit(cleanText, {
@@ -212,7 +227,7 @@ export default function SmartEntry({ onSubmit, onNewVideo, initial }: SmartEntry
       <div className={styles.panel}>
         {/* 右上角:与 Tab 同一行、右对齐卡片;点击初始化为全新空白页(等同切换路由再回来) */}
         {onNewVideo && (
-          <button type="button" className={styles.newVideoBtn} onClick={onNewVideo}>
+          <button type="button" className={styles.newVideoBtn} onClick={() => onNewVideo(mode)}>
             {mode === 'image' ? '创建新对话' : '制作新视频'}
           </button>
         )}
@@ -403,7 +418,7 @@ export default function SmartEntry({ onSubmit, onNewVideo, initial }: SmartEntry
               {mode === 'video' && (
                 <EntryDropdown
                   clearable
-                  placeholder="SKILLS"
+                  placeholder="SKILL"
                   value={skill}
                   options={SKILL_OPTIONS}
                   onChange={pickSkill}
@@ -426,29 +441,57 @@ export default function SmartEntry({ onSubmit, onNewVideo, initial }: SmartEntry
               )}
             </div>
 
-            <button
-              type="button"
-              className={styles.send}
-              disabled={!canSubmit}
-              onClick={() => submit()}
-              aria-label="生成"
-              title="生成(Ctrl/⌘ + Enter)"
-            >
-              {/* 发送图标:有输入=品牌绿(#1FCFA9),无输入=禁用灰(#D9D9D9) */}
-              <svg
-                width="40"
-                height="40"
-                viewBox="0 0 40 40"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden="true"
+            <div className={styles.sendArea}>
+              {/* 恢复态:重新生成(按当前输入重新走流程) */}
+              {resumeMode && (
+                <button
+                  type="button"
+                  className={styles.regen}
+                  disabled={!canSubmit}
+                  onClick={() => submit()}
+                  title="按当前输入重新生成"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+                    <path d="M20 4v4h-4" />
+                  </svg>
+                  重新生成
+                </button>
+              )}
+              <button
+                type="button"
+                className={styles.send}
+                // 恢复态(下一步)始终可点;普通发送需有输入
+                disabled={resumeMode ? false : !canSubmit}
+                onClick={() => (resumeMode ? onResume?.() : submit())}
+                aria-label={resumeMode ? '下一步' : '生成'}
+                title={resumeMode ? '下一步' : '生成(Ctrl/⌘ + Enter)'}
               >
-                <path
-                  d="M34.1395 5.85926C26.3291 -1.95309 13.6662 -1.95309 5.85779 5.85926C-1.95064 13.6716 -1.95455 26.332 5.85779 34.1424C13.6701 41.9528 26.3305 41.9523 34.1409 34.1424C41.9513 26.3325 41.9494 13.6677 34.1395 5.85926ZM30.6669 18.5416L22.8687 24.4673C22.8072 24.5144 22.7338 24.5435 22.6567 24.5512C22.5796 24.5589 22.5019 24.545 22.4323 24.5109C22.3627 24.4769 22.304 24.4241 22.2627 24.3585C22.2215 24.2929 22.1993 24.2171 22.1988 24.1397V21.4981C22.1983 21.3926 22.1577 21.2911 22.0851 21.2145C22.0126 21.1378 21.9135 21.0917 21.8082 21.0855C18.2711 20.8629 15.1711 21.2349 13.072 23.4409C11.9978 24.5703 10.7024 26.81 10.3924 27.4672C10.3484 27.56 10.2674 27.7319 10.0721 27.7968L10.055 27.8022C9.98791 27.8233 9.9166 27.8271 9.84765 27.8134C9.77869 27.7997 9.71431 27.7688 9.66045 27.7236C9.47589 27.5688 9.36407 27.475 10.1058 24.4468C11.3631 19.3199 16.2702 15.9689 21.8282 15.3527C21.9297 15.3421 22.0238 15.2944 22.0923 15.2187C22.1607 15.143 22.1989 15.0447 22.1993 14.9426V12.2883C22.2002 12.2111 22.2227 12.1357 22.264 12.0704C22.3054 12.0052 22.3641 11.9528 22.4335 11.919C22.503 11.8852 22.5804 11.8714 22.6573 11.8791C22.7341 11.8868 22.8073 11.9157 22.8687 11.9627L30.6669 17.8864C30.7176 17.9246 30.7588 17.9741 30.7872 18.0309C30.8155 18.0878 30.8303 18.1505 30.8303 18.214C30.8303 18.2775 30.8155 18.3402 30.7872 18.3971C30.7588 18.4539 30.7176 18.5034 30.6669 18.5416Z"
-                  fill={canSubmit ? '#1FCFA9' : '#D9D9D9'}
-                />
-              </svg>
-            </button>
+                {/* 白色右箭头;圆底由 .send 控制(可点=品牌绿,不可点=禁用灰) */}
+                <svg
+                  width="20"
+                  height="14"
+                  viewBox="0 0 20 14"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M1.05649 8.0251H16.5914L12.2367 12.2495C12.0385 12.4418 11.9271 12.7025 11.9271 12.9745C11.927 13.2464 12.0383 13.5072 12.2364 13.6995C12.4346 13.8919 12.7034 13.9999 12.9836 14C13.2639 14.0001 13.5327 13.8921 13.7309 13.6998L19.7078 7.90093C19.9614 7.65491 20.0398 7.3181 19.9819 7.00004C20.0398 6.68257 19.9608 6.34518 19.7078 6.09916L13.7309 0.300249C13.5328 0.108003 13.2641 0 12.9838 0C12.7036 0 12.4349 0.108003 12.2367 0.300249C12.0386 0.492495 11.9273 0.753236 11.9273 1.02511C11.9273 1.29699 12.0386 1.55773 12.2367 1.74998L16.5914 5.97498H1.05649C0.776285 5.97498 0.507557 6.08298 0.309422 6.27522C0.111287 6.46745 -2.3859e-05 6.72818 -2.3859e-05 7.00004C-2.3859e-05 7.27191 0.111287 7.53263 0.309422 7.72487C0.507557 7.91711 0.776285 8.0251 1.05649 8.0251Z"
+                    fill="white"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>

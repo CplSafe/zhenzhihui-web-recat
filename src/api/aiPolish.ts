@@ -201,9 +201,14 @@ const SKILL_SYSTEM: Record<SkillOption, string> = {
 }
 
 /**
- * 用所选 SKILL 把「用户想法 + 素材」自动拆解成「营销思路拆解」建议。
+ * 用所选 SKILL 把「产品信息」拆解成「营销思路拆解」建议。
+ *
+ * 方案 A(多模态直喂):把
+ *   - 说明书(该 skill 的营销方法论 → system)
+ *   - 产品信息 = 用户文字 + 上传素材图(user 文本 + 图片随请求作多模态附上)
+ * 一次性交给后端 responses.multimodal,据说明书 + 产品信息产出拆解(不臆造、不脱离素材)。
  * 产出与 AI 引导的「创作需求」同类:结构清晰、可直接用于后续生成分镜脚本。
- * images 传图片地址(url/dataURL),会随请求作为素材附上(有图走多模态)。
+ * images 传图片地址(url/dataURL)。
  */
 export async function skillBreakdown(
   input: { skill: string; requirement: string; images?: string[] },
@@ -212,24 +217,31 @@ export async function skillBreakdown(
   const req = (input.requirement || '').trim()
   const images = (input.images || []).filter(Boolean)
   if (!req && !images.length) throw new Error('请先输入想法或上传素材')
-  const skillSystem = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['电商营销广告skills']
-  const system =
-    skillSystem +
-    '请输出一份结构清晰的「营销思路拆解」,用要点分条呈现,至少覆盖:' +
-    '【核心洞察】(目标人群+真实痛点/动机的洞察)、【创意概念】(一句话主创意/记忆点)、' +
-    '【卖点&信任】(核心卖点与信任背书)、【行动号召CTA】、【表现形式/风格调性】。' +
-    '紧扣用户的产品与素材,不要脱离产品臆造;不要直接写分镜脚本/台词/镜头画面,不要额外解释说明。'
 
+  // 说明书:该 skill 对应的营销方法论(主导 system)
+  const manual = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['电商营销广告skills']
+  const system =
+    manual +
+    '\n你只能依据用户提供的【产品信息】(下方文字 + 随请求附上的素材图)来分析,严禁脱离素材臆造不存在的产品/卖点;素材里没有的信息不要编。' +
+    '请输出一份结构清晰的「营销思路拆解」,用要点分条呈现,至少覆盖:' +
+    '【核心洞察】(目标人群+真实痛点/动机)、【创意概念】(一句话主创意/记忆点)、' +
+    '【卖点&信任】(核心卖点与信任背书)、【行动号召CTA】、【表现形式/风格调性】。' +
+    '不要直接写分镜脚本/台词/镜头画面,不要额外解释说明。'
+
+  // 产品信息:用户文字 + 素材说明(图片随请求作多模态附上)
   const user =
-    `用户的想法:${req || '(未填写,请基于素材给出合理方向)'}\n` +
-    (images.length ? '用户还上传了素材图片(已随请求附上),请务必结合图片中实际出现的物体/场景/人物来拆解。' : '')
+    '【产品信息】\n' +
+    `· 用户文字:${req || '(未填写,请基于素材图给出合理方向)'}\n` +
+    (images.length
+      ? `· 素材:已随请求附上 ${images.length} 张产品/场景图,请逐张看清实际出现的物体/品牌/场景/人物,据此拆解。`
+      : '· 素材:无(仅据文字)')
 
   const out = await runResponseText({
     system,
     user,
-    images: images.length ? images : undefined,
+    images: images.length ? images : undefined, // 多模态:说明书(system)+文字(user)+图片 一次性喂入
     temperature: 0.6,
-    maxTokens: 10000,
+    maxTokens: 4000,
     signal,
   })
   if (!out) throw new Error('生成为空,请重试')
