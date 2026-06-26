@@ -12,9 +12,10 @@ export function buildStoryboardImageParams(model, ratio) {
   if (!fields.length) {
     // No provider schema to validate against — fall back to the safe
     // image-ratio whitelist so we never send an unsupported value.
+    // quality 用 'low' 加速出图(模型没声明 schema,按最低档发)。
     return {
       ratio: normalizeImageRatio(ratio),
-      quality: 'standard',
+      quality: 'low',
       count: 1,
     }
   }
@@ -32,7 +33,7 @@ export function buildStoryboardImageParams(model, ratio) {
   }
 
   if (hasParam(fields, 'quality')) {
-    params.quality = 'standard'
+    params.quality = 'low'
   }
 
   if (hasParam(fields, 'size')) {
@@ -98,7 +99,6 @@ function getPreferredSize(fields, ratio) {
 
   return pickClosestRatioOption(ratio, options) || options[0]
 }
-
 
 function parseRatioToken(value) {
   if (value === null || value === undefined) {
