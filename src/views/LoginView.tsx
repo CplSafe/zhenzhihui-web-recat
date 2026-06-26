@@ -6,12 +6,15 @@
  * 保留图形验证码挑战、用户协议确认、OAuth start 等既有认证逻辑;移除扫码/SSO/独立注册页。
  */
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import './LoginView.css'
 import loginHero from '@/assets/login-hero.png'
 import AgreementModal from '@/components/auth/AgreementModal'
 import {
-  getAuthNavigationUrl,
+  clearExistingSession,
   getAuthErrorMessage,
+  getAuthNavigationUrl,
+  getAuthenticatedSession,
   getCaptcha,
   isCaptchaChallengeError,
   loginWithPassword,
@@ -20,6 +23,7 @@ import {
   sendAuthSms,
   startOAuth,
 } from '@/api/auth'
+import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 
 interface CaptchaState {
@@ -31,9 +35,13 @@ interface CaptchaState {
 const NAV_ITEMS = ['母婴宠物', '视频饮料', '生活服务', '家居建材']
 
 export default function LoginView() {
+  const navigate = useNavigate()
   const { showToast, clearToast } = useToast()
+  const { handleLoginSuccess } = useAuth()
 
-  const [loginMode, setLoginMode] = useState<'password' | 'sms'>('password')
+  const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
+
+  const [loginMode, setLoginMode] = useState<'password' | 'sms'>('sms')
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
   const [smsCode, setSmsCode] = useState('')
@@ -70,12 +78,72 @@ export default function LoginView() {
   function normalizeMobile(value: string) {
     return value.replace(/\s/g, '')
   }
+  // 登录成功后的 SSO 回跳地址:直接落到首页。
+  // 不能用 `${origin}/`,根路径会被路由重定向到开屏页 /welcome(详见 router/index.tsx 的 index 路由)。
   function getRedirectTo() {
-    return `${window.location.origin}/`
+    return `${window.location.origin}/home`
   }
-  function completeAuthFlow(oauth: any, authResult: any) {
+  // 登录成功后获取会话进首页。业务会话需经 OAuth 回调建立(login 200 不一定直接下发 cookie)。
+  // 策略:① 先直接重试取会话(cookie 已就绪即直接进);② 拿不到 → 用【隐藏 iframe 静默跑完 SSO 桥接】
+  // (authorize 地址同源经代理,cookie 共享),期间轮询会话,全程不弹出 DeepAuth 页;
+  // ③ 静默被拦/超时 → 兜底回退到可见重定向,保证一定能登录。
+  async function handleLoginFlowComplete(oauth: any, authResult?: any) {
     markAuthSessionExpected()
-    window.location.href = getAuthNavigationUrl(oauth, authResult)
+    if (import.meta.env.DEV && !hasRemoteBackend) {
+      handleLoginSuccess()
+      return
+    }
+    const trySession = async () => {
+      try {
+        const session = await getAuthenticatedSession()
+        handleLoginSuccess(session)
+        return true
+      } catch {
+        return false
+      }
+    }
+    // ① 直接重试(cookie 就绪即可)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (await trySession()) return
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
+    const navUrl = getAuthNavigationUrl(oauth, authResult)
+    if (!navUrl || navUrl === '/') {
+      setNoticeMessage('登录失败，请稍后重试', 'error')
+      return
+    }
+    // ② 隐藏 iframe 静默桥接:后台跑完 OAuth 回调种 cookie,同时轮询会话
+    const silentOk = await new Promise<boolean>((resolve) => {
+      const iframe = document.createElement('iframe')
+      iframe.style.display = 'none'
+      iframe.setAttribute('aria-hidden', 'true')
+      iframe.src = navUrl
+      document.body.appendChild(iframe)
+      let settled = false
+      const finish = (ok: boolean) => {
+        if (settled) return
+        settled = true
+        iframe.remove()
+        resolve(ok)
+      }
+      const deadline = Date.now() + 6000
+      const poll = async () => {
+        if (settled) return
+        if (await trySession()) {
+          finish(true)
+          return
+        }
+        if (Date.now() >= deadline) {
+          finish(false)
+          return
+        }
+        setTimeout(poll, 500)
+      }
+      setTimeout(poll, 700) // 给 iframe 一点时间跑完重定向链
+    })
+    if (silentOk) return
+    // ③ 静默失败(被 X-Frame-Options 拦截 / 超时)→ 兜底可见重定向,保证能登录
+    window.location.href = navUrl
   }
 
   async function refreshCaptcha({ silent = false } = {}) {
@@ -203,15 +271,32 @@ export default function LoginView() {
   // 实际提交（协议已确认后调用）。
   async function submitLogin(mobile: string, credential: string) {
     setIsSubmitting(true)
+
+    // 仅在未配置远程后端时跳过真实 API 调用（走本地 mock 登录）。
+    if (import.meta.env.DEV && !hasRemoteBackend) {
+      setIsSubmitting(false)
+      setNoticeMessage('登录成功', 'success')
+      handleLoginFlowComplete(null as any)
+      return
+    }
+
     try {
+      // 换账号关键：先登出旧业务会话，否则登录后立即 getSession() 会读回旧账号。
+      // 必须在 oauth-start 之前，否则会清掉本次 OAuth 的 state 导致回调 400。
+      await clearExistingSession()
+      // 发短信时可能已生成过 authStart（其 state 绑定旧会话），登出后需重新获取。
+      authStartRef.current = null
+      authStartPromiseRef.current = null
       const oauth = await ensureAuthStart()
       const common = { authStart: oauth, mobile, captchaId: captcha.id, captchaAnswer: captcha.answer.trim() }
-      const result =
-        loginMode === 'password'
-          ? await loginWithPassword({ ...common, password: credential })
-          : await loginWithSmsCode({ ...common, smsCode: credential })
+      let loginResult: any
+      if (loginMode === 'password') {
+        loginResult = await loginWithPassword({ ...common, password: credential })
+      } else {
+        loginResult = await loginWithSmsCode({ ...common, smsCode: credential })
+      }
       setNoticeMessage('登录成功', 'success')
-      completeAuthFlow(oauth, result)
+      handleLoginFlowComplete(oauth, loginResult)
     } catch (error) {
       if (await handleCaptchaError(error)) {
         setNoticeMessage(getAuthErrorMessage(error, '请输入图形验证码'), 'error')
@@ -268,11 +353,7 @@ export default function LoginView() {
 
   return (
     <main className="zlogin">
-      <aside
-        className="zlogin-hero"
-        style={{ backgroundImage: `url(${loginHero})` }}
-        aria-hidden="true"
-      >
+      <aside className="zlogin-hero" style={{ backgroundImage: `url(${loginHero})` }} aria-hidden="true">
         <nav className="zlogin-nav">
           {NAV_ITEMS.map((item) => (
             <span key={item} className={`zlogin-nav-item${item === '生活服务' ? ' is-active' : ''}`}>
@@ -283,6 +364,17 @@ export default function LoginView() {
       </aside>
 
       <section className="zlogin-panel" aria-label="帧智汇登录">
+        <button type="button" className="zlogin-back" onClick={() => navigate(-1)} aria-label="返回上一页">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
+            <path
+              d="M15 18l-6-6 6-6"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
         <div className="zlogin-form">
           <h1 className="zlogin-title">欢迎加入帧智汇</h1>
           <p className="zlogin-sub">
@@ -296,20 +388,20 @@ export default function LoginView() {
             <button
               type="button"
               role="tab"
-              aria-selected={loginMode === 'password'}
-              className={`zlogin-tab${loginMode === 'password' ? ' is-active' : ''}`}
-              onClick={() => switchMode('password')}
-            >
-              密码登录
-            </button>
-            <button
-              type="button"
-              role="tab"
               aria-selected={loginMode === 'sms'}
               className={`zlogin-tab${loginMode === 'sms' ? ' is-active' : ''}`}
               onClick={() => switchMode('sms')}
             >
               短信登录
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={loginMode === 'password'}
+              className={`zlogin-tab${loginMode === 'password' ? ' is-active' : ''}`}
+              onClick={() => switchMode('password')}
+            >
+              密码登录
             </button>
           </div>
 
@@ -448,9 +540,7 @@ export default function LoginView() {
         </div>
       </section>
 
-      {showAgreementModal && (
-        <AgreementModal onAgree={handleAgreementAgree} onCancel={handleAgreementCancel} />
-      )}
+      {showAgreementModal && <AgreementModal onAgree={handleAgreementAgree} onCancel={handleAgreementCancel} />}
     </main>
   )
 }

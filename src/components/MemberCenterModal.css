@@ -1,0 +1,326 @@
+/* 会员中心弹窗 */
+.mcm-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  background: rgba(20, 20, 40, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+.mcm {
+  position: relative;
+  width: min(1200px, 96vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: #f8f9fa;
+  border-radius: 20px;
+  padding: 28px 32px 32px;
+  box-shadow: 0 24px 60px rgba(20, 20, 50, 0.28);
+}
+/* 页面模式:填满内容区、去掉弹窗外观 */
+.mcm--embedded {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  max-height: none;
+  overflow: visible;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
+.mcm-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.05);
+  color: #555;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mcm-close:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+.mcm-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: #1f2330;
+  margin: 0 0 8px;
+  text-align: center;
+}
+.mcm-balance {
+  margin: 0 0 12px;
+  text-align: center;
+  font-size: 13px;
+  color: #8a8f9f;
+}
+/* 当前订阅信息条(套餐 / 席位 / 并发) */
+.mcm-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 14px;
+  margin: 0 auto 18px;
+  max-width: 560px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: #f1f3ff;
+  border: 1px solid #e3e6ff;
+  font-size: 13px;
+  color: #5b6072;
+}
+.mcm-sub-plan {
+  font-weight: 600;
+  color: #4b59d6;
+}
+.mcm-sub-item {
+  position: relative;
+  padding-left: 14px;
+}
+.mcm-sub-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #c2c7e6;
+}
+.mcm-hint {
+  padding: 48px 0;
+  text-align: center;
+  font-size: 14px;
+  color: #9aa3af;
+}
+.mcm-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 56px;
+  border-bottom: 1px solid #ededf0;
+  margin-bottom: 26px;
+}
+.mcm-tab {
+  position: relative;
+  border: none;
+  background: none;
+  padding: 8px 4px 14px;
+  font-size: 17px;
+  font-weight: 600;
+  color: #9aa3af;
+  cursor: pointer;
+}
+.mcm-tab.is-active {
+  color: #1f2330;
+}
+.mcm-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #6d7bf0, #8b5cf6);
+}
+.mcm-cards {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 24px;
+}
+
+/* 套餐卡片(按 Figma 384×720 等比缩到 272 宽,scale≈0.71)*/
+.mc-card {
+  position: relative;
+  width: 272px;
+  box-sizing: border-box;
+  padding: 22px 22px 20px;
+  border: 1px solid rgba(217, 217, 217, 0.5);
+  border-radius: 18px;
+  background: #fff;
+  overflow: hidden;
+}
+/* 4 张卡底色(按 Figma:整卡 225° 低透明 accent 渐变,叠在白底上;蓝/绿/橙/紫)*/
+.mcm-cards .mc-card:nth-child(4n + 1) {
+  background:
+    linear-gradient(225deg, rgba(91, 107, 232, 0.12) 0%, rgba(91, 107, 232, 0.04) 36%, rgba(91, 107, 232, 0.12) 100%),
+    #ffffff;
+  border-color: rgba(91, 107, 232, 0.18);
+}
+.mcm-cards .mc-card:nth-child(4n + 2) {
+  background:
+    linear-gradient(225deg, rgba(50, 199, 166, 0.12) 0%, rgba(50, 199, 166, 0.02) 36%, rgba(50, 199, 166, 0.12) 100%),
+    #ffffff;
+  border-color: rgba(50, 199, 166, 0.18);
+}
+.mcm-cards .mc-card:nth-child(4n + 3) {
+  background:
+    linear-gradient(225deg, rgba(255, 186, 97, 0.12) 0%, rgba(255, 186, 97, 0.02) 36%, rgba(255, 186, 97, 0.12) 100%),
+    #ffffff;
+  border-color: rgba(255, 186, 97, 0.22);
+}
+.mcm-cards .mc-card:nth-child(4n + 4) {
+  background:
+    linear-gradient(
+      225deg,
+      rgba(194, 122, 255, 0.12) 0%,
+      rgba(194, 122, 255, 0.02) 36%,
+      rgba(194, 122, 255, 0.12) 100%
+    ),
+    #ffffff;
+  border-color: rgba(194, 122, 255, 0.18);
+}
+/* 立即开通按钮(按 Figma:浅 accent 渐变,文字用 accent 深色)*/
+.mcm-cards .mc-card .mc-card-buy {
+  background: #eef0f6;
+  color: #5b6072;
+}
+.mcm-cards .mc-card:nth-child(4n + 1) .mc-card-buy {
+  background: linear-gradient(90deg, rgba(213, 218, 255, 0.5), rgba(213, 218, 255, 0.95)), #ffffff;
+  color: #4b59d6;
+}
+.mcm-cards .mc-card:nth-child(4n + 2) .mc-card-buy {
+  background: linear-gradient(90deg, rgba(50, 199, 166, 0.12), rgba(50, 199, 166, 0.32)), #ffffff;
+  color: #1f9c78;
+}
+.mcm-cards .mc-card:nth-child(4n + 3) .mc-card-buy {
+  background: linear-gradient(90deg, rgba(255, 186, 97, 0.12), rgba(255, 186, 97, 0.32)), #ffffff;
+  color: #cf7a2c;
+}
+.mcm-cards .mc-card:nth-child(4n + 4) .mc-card-buy {
+  background: linear-gradient(90deg, rgba(194, 122, 255, 0.1), rgba(194, 122, 255, 0.26)), #ffffff;
+  color: #8b5cf6;
+}
+/* 套餐名 + 折扣药丸同一行 */
+.mc-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mc-card-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: #333333;
+}
+/* 折扣药丸(8.8折):渐变底 + 白字,紧跟套餐名 */
+.mc-card-discount {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ffa86b, #ff6f97);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.mc-card-sub {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #666666;
+  min-height: 18px;
+}
+.mc-card-price {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  margin-top: 14px;
+}
+.mc-card-cny {
+  font-size: 22px;
+  color: #333333;
+  padding-bottom: 5px;
+}
+.mc-card-num {
+  font-size: 38px;
+  font-weight: 600;
+  line-height: 1;
+  color: #333333;
+}
+.mc-card-unit {
+  font-size: 20px;
+  color: #333333;
+  padding-bottom: 4px;
+}
+.mc-card-origin {
+  margin-left: 8px;
+  font-size: 18px;
+  color: #909090;
+  text-decoration: line-through;
+  padding-bottom: 5px;
+}
+.mc-card-credits {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 16px;
+}
+.mc-card-credit-num {
+  font-size: 19px;
+  font-weight: 600;
+  color: #666666;
+}
+.mc-card-credit-unit {
+  font-size: 14px;
+  color: #666666;
+}
+.mc-card-rate {
+  margin-left: auto;
+  font-size: 13px;
+  color: #909090;
+}
+.mc-card-quota {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #666666;
+}
+.mc-card-buy {
+  width: 100%;
+  margin-top: 18px;
+  height: 44px;
+  border: none;
+  border-radius: 14px;
+  background: #eef0f6;
+  color: #5b6072;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mc-card-buy:hover {
+  filter: brightness(1.05);
+}
+.mc-card-divider {
+  height: 1px;
+  background: rgba(102, 102, 102, 0.1);
+  margin: 20px 0 16px;
+}
+.mc-card-feats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mc-card-feats li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #666;
+}
+.mc-card-feats li.is-off {
+  color: rgba(102, 102, 102, 0.4);
+}

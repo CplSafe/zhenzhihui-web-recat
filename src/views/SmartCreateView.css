@@ -64,12 +64,18 @@
   border-bottom: 1px solid #eef0f4;
 }
 
-/* 项目名 */
+/* 项目名:单独一行,横向内边距与正文 .smart__body 一致(28px) */
 .smart__projbar {
+  padding: 16px 28px 4px;
+}
+
+/* 内层与正文(.smart__script)同宽居中(1240),使项目名与「我的描述」左缘对齐 */
+.smart__projbar-inner {
+  max-width: 1240px;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 16px 28px 4px;
 }
 
 .smart__home-link {
@@ -215,6 +221,15 @@
   margin: 0 auto;
 }
 
+/* 「我的描述:」标签(Figma 299-2310) */
+.smart__prompt-label {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 20px;
+  color: #333;
+  margin-bottom: 12px;
+}
+
 .smart__prompt {
   font-size: 17px;
   font-weight: 500;
@@ -295,6 +310,76 @@
   background: #fff;
   color: #e54d42;
   font-size: 14px;
+}
+
+/* 营销思路拆解步:整步填满 body —— 我的描述/标题在上固定,中间表格滚动,底部按钮常驻 */
+.smart__mkt-step {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.smart__marketing {
+  margin-top: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.smart__marketing-title {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #11a98a;
+  margin-bottom: 12px;
+}
+
+/* 建议正文容器:占据剩余空间,内容(拆解表格)超长时在此内部滚动;底部按钮不随之滚动 */
+.smart__marketing-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* 营销建议:可编辑文本域(填满容器,文案超长时内部滚动) */
+.smart__marketing-edit {
+  flex: 1 1 auto;
+  display: block;
+  width: 100%;
+  min-height: 160px;
+  resize: none;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 18px 20px;
+  color: #333;
+  font-size: 15px;
+  line-height: 1.8;
+  font-family: inherit;
+  white-space: pre-wrap;
+  box-sizing: border-box;
+}
+
+.smart__marketing-edit:focus-visible {
+  border-color: #1fcfa9;
+  outline: none;
+}
+
+.smart__marketing-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
 }
 
 /* 创作需求:展示 ≤100 字 AI 摘要,完整需求可展开 */
@@ -459,7 +544,7 @@
   padding: 16px 28px 24px;
 }
 
-/* 内容居中,最大宽度对齐正文 1240 列;重新生成靠左、上一步+主按钮靠右 */
+/* 内容居中,最大宽度对齐正文 1240 列;分镜脚本/准备素材沿用原样(右对齐) */
 .smart__footer-inner {
   width: 100%;
   max-width: 1040px;
@@ -473,6 +558,88 @@
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+/* 镜头编排(及生成视频)底栏:整组水平居中,与 VideoStage 统一 */
+.smart__footer--center .smart__footer-inner {
+  justify-content: center;
+}
+
+/* 分镜脚本 / 准备素材底栏:整组靠右 */
+.smart__footer--right .smart__footer-inner {
+  justify-content: flex-end;
+}
+
+/* 上一步 / 下一步 导航箭头:裸图标按钮 + 悬停深色 tooltip(下一步前沿时置灰) */
+.smart__nav-btn {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #333; /* 可操作:黑色 */
+  cursor: pointer;
+  transition:
+    color 0.18s,
+    transform 0.18s;
+}
+
+.smart__nav-btn:hover:not(:disabled) {
+  transform: scale(1.08);
+}
+
+.smart__nav-btn:disabled {
+  color: #c8c8c8; /* 禁止操作:灰色 */
+  cursor: not-allowed;
+}
+
+/* 悬停 tooltip:深色圆角气泡(气泡 + 下方小三角) */
+.smart__nav-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  padding: 7px 16px;
+  background: #2b2b2b;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  white-space: nowrap;
+  border-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+  z-index: 5;
+}
+
+.smart__nav-btn::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  border: 6px solid transparent;
+  border-top-color: #2b2b2b;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+  z-index: 5;
+}
+
+.smart__nav-btn:hover:not(:disabled)::after,
+.smart__nav-btn:hover:not(:disabled)::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .smart__btn {

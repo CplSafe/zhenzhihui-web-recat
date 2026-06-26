@@ -1,7 +1,7 @@
 /**
  * ScriptStoryboardTable — 分镜脚本(表格式,还原 Figma 299:2524)。
  * 圆角卡片容器 + 渐变表头(镜头编号/时长/画面描述[/准备素材]) + 行(圆形序号+镜头名、时长药丸、画面描述) + 表尾「共 N 个镜头」。
- * 时长/画面描述双击可编辑(受控 onShotsChange,缺省只读)。
+ * 时长只读(纯展示,不可双击修改);画面描述双击可编辑(受控 onShotsChange,缺省只读)。
  * showSubjects=false:分镜脚本阶段隐藏「准备素材」列;materialMode:准备素材阶段每个主体「@名称 + AI自动生成 + 上传图片」(图二)。
  */
 import InlineEdit from '@/components/common/InlineEdit'
@@ -45,6 +45,9 @@ export interface Shot {
   videoAssetId?: number
   // 视频生成页:是否勾选「参与视频生成」(undefined/true=参与,false=不参与)
   includeInVideo?: boolean
+  // 镜头编排阶段「插入的新分镜」标记:仅这类分镜显示「生成分镜」按钮(带新描述全量重生成);
+  // 一旦该镜生成出图即清除。
+  isNew?: boolean
 }
 
 interface ScriptStoryboardTableProps {
@@ -58,16 +61,16 @@ interface ScriptStoryboardTableProps {
    * 列内每个主体按图二「@名称 + AI自动生成 + 上传图片」展示。默认显示。
    */
   showSubjects?: boolean
-  /** 正在 AI 自动出图的主体名集合(按画面描述生成时,上传框显示转圈) */
-  generating?: Record<string, boolean>
-  /** 点击主体的「AI自动生成」:按画面描述为该主体出图(点一个生成一个) */
-  onGenerateSubject?: (name: string, kind: string) => void
   /** 提供则在「画面描述」表头右侧显示「↻ 重新生成」(分镜脚本阶段;准备素材阶段不传) */
   onRegenerate?: () => void
   /** 重新生成进行中:禁用表头的重新生成按钮 */
   regenerating?: boolean
   /** 该镜头没有主体素材时,点击「上传图片」为它添加一个素材(准备素材阶段) */
   onAddMaterial?: (shot: Shot) => void
+  /** 提供则「AI自动生成」直接后台生成该主体(可并发,不阻塞);缺省回退打开素材弹窗 */
+  onGenerateSubject?: (name: string) => void
+  /** 各主体是否正在生成(键为主体名),用于显示「生成中…」 */
+  subjectGenerating?: Record<string, boolean>
 }
 
 const stripAt = (t: string) =>
@@ -80,11 +83,11 @@ export default function ScriptStoryboardTable({
   onOpenSubject,
   onShotsChange,
   showSubjects = true,
-  generating = {},
-  onGenerateSubject,
   onRegenerate,
   regenerating = false,
   onAddMaterial,
+  onGenerateSubject,
+  subjectGenerating,
 }: ScriptStoryboardTableProps) {
   const editable = !!onShotsChange
   const patchShot = (id: Shot['id'], p: Partial<Shot>) =>
@@ -110,17 +113,10 @@ export default function ScriptStoryboardTable({
               <span className={styles.sbNoLabel}>{shot.no}</span>
             </div>
 
-            {/* 时长:青色药丸(可编辑) */}
+            {/* 时长:青色药丸(只读;分镜脚本/准备素材阶段不可双击修改) */}
             <div className={`${styles.sbCell} ${styles.sbColDur}`}>
               <span className={styles.sbDurPill}>
-                <InlineEdit
-                  className={styles.sbDurVal}
-                  value={String(shot.duration || '').replace(/[^0-9.]/g, '')}
-                  numeric
-                  placeholder="—"
-                  editable={editable}
-                  onCommit={(v) => patchShot(shot.id, { duration: v ? `${v}s` : '' })}
-                />
+                <span className={styles.sbDurVal}>{String(shot.duration || '').replace(/[^0-9.]/g, '') || '—'}</span>
                 <span className={styles.sbDurUnit}>s</span>
               </span>
             </div>
@@ -143,6 +139,7 @@ export default function ScriptStoryboardTable({
                 <div className={styles.sbcMatList}>
                   {shot.subjects.map((su, idx) => {
                     const name = stripAt(su.tag)
+                    const genning = !!subjectGenerating?.[name]
                     return (
                       <div className={styles.sbcMatRow} key={`${su.tag}-${idx}`}>
                         <div className={styles.sbcMatInfo}>
@@ -154,25 +151,24 @@ export default function ScriptStoryboardTable({
                           <button
                             type="button"
                             className={styles.sbcMatBadge}
-                            disabled={generating[name]}
-                            title="按画面描述生成该素材"
-                            onClick={() => onGenerateSubject?.(name, su.kind || '')}
+                            disabled={genning}
+                            title={
+                              onGenerateSubject ? '后台生成该主体(可同时生成多个)' : '打开素材弹窗,在弹窗内生成该素材'
+                            }
+                            onClick={() => (onGenerateSubject ? onGenerateSubject(name) : onOpenSubject?.(name, true))}
                           >
                             <img className={styles.sbcMatBadgeIcon} src={aiSparkIcon} alt="" width={12} height={12} />
-                            AI自动生成
+                            {genning ? '生成中…' : 'AI自动生成'}
                           </button>
                         </div>
                         <button
                           type="button"
                           className={styles.sbcMatUpload}
-                          title={generating[name] ? 'AI 生成中…' : '上传图片'}
+                          title="打开素材弹窗(上传 / 生成)"
                           onClick={() => onOpenSubject?.(name)}
                         >
-                          {generating[name] ? (
-                            <>
-                              <span className={styles.sbcMatSpin} aria-hidden="true" />
-                              <span className={styles.sbcMatUploadText}>生成中…</span>
-                            </>
+                          {genning ? (
+                            <span className={styles.sbcMatSpin} aria-hidden="true" />
                           ) : su.image ? (
                             <img className={styles.sbcMatUploadImg} src={su.image} alt={name} />
                           ) : (

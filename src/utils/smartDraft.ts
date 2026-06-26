@@ -23,9 +23,42 @@ export interface SmartDraft {
   fullVideoAssetId?: number
   /** 整片视频历史版本(每版带 asset_id,供水合刷新签名URL) */
   videoVersions?: { url: string; assetId: number }[]
+  /** 人脸脱敏开关(默认开;关闭后出片用原图,成片人脸清晰) */
+  faceBlurEnabled?: boolean
+  /** 营销思路拆解(选中 SKILL 时多出的第 1 步):是否停留在该步 + 生成的建议正文 + 结构化数据 */
+  marketingOpen?: boolean
+  marketingText?: string
+  /** 结构化拆解(8 维度 desc+tags),用于「营销思路拆解」步表格回填 */
+  marketingData?: any
+  /** 制作图片(chat 模式)的消息流(用户提问 + AI 生成图,图带 asset_id 供水合) */
+  imageMessages?: any[]
 }
 
 const killBlob = (u: any) => (typeof u === 'string' && u.startsWith('blob:') ? '' : u)
+
+// 清洗对话消息:去掉失效图 url(保留 assetId 供按需重换签名URL);
+// 保存时仍在出图的 assistant(pending)落库会卡死「生成中」,转为可重试的错误态。
+function cleanMessages(arr: any, killFn: (u: any) => any): any {
+  if (!Array.isArray(arr)) return arr
+  return arr
+    .map((m: any) => {
+      const images = Array.isArray(m?.images)
+        ? m.images.map((im: any) => ({ ...im, url: killFn(im?.url) })).filter((im: any) => im.url || im.assetId)
+        : m?.images
+      const broken = m?.role === 'assistant' && m?.status === 'pending'
+      return {
+        ...m,
+        images,
+        ...(broken ? { status: 'error', error: '生成已中断,请重试' } : {}),
+      }
+    })
+    .filter(
+      (m: any) =>
+        (typeof m?.text === 'string' && m.text.trim()) ||
+        (Array.isArray(m?.images) && m.images.length) ||
+        m?.status === 'error',
+    )
+}
 
 function sanitize(d: SmartDraft): SmartDraft {
   const next: SmartDraft = { ...d }
@@ -40,9 +73,7 @@ function sanitize(d: SmartDraft): SmartDraft {
       extraRefs: Array.isArray(s.extraRefs)
         ? s.extraRefs.map((r: any) => ({ ...r, url: killBlob(r?.url) })).filter((r: any) => r.url)
         : s.extraRefs,
-      selectedRefs: Array.isArray(s.selectedRefs)
-        ? s.selectedRefs.map(killBlob).filter(Boolean)
-        : s.selectedRefs,
+      selectedRefs: Array.isArray(s.selectedRefs) ? s.selectedRefs.map(killBlob).filter(Boolean) : s.selectedRefs,
     }))
   }
   if (next.subjectAssets && typeof next.subjectAssets === 'object') {
@@ -50,11 +81,13 @@ function sanitize(d: SmartDraft): SmartDraft {
     for (const [k, v] of Object.entries(next.subjectAssets)) {
       const versions = (v?.versions || []).map(killBlob).filter(Boolean)
       const sources: Record<string, any> = {}
-      if (v?.sources) for (const [u, src] of Object.entries(v.sources)) if (!String(u).startsWith('blob:')) sources[u] = src
+      if (v?.sources)
+        for (const [u, src] of Object.entries(v.sources)) if (!String(u).startsWith('blob:')) sources[u] = src
       sa[k] = { ...v, versions, sources }
     }
     next.subjectAssets = sa
   }
+  if (Array.isArray(next.imageMessages)) next.imageMessages = cleanMessages(next.imageMessages, killBlob)
   return next
 }
 
@@ -109,8 +142,7 @@ export function clearSmartDraft() {
 //   - generatedVideoUrl / generatedVideoAssetId → 封面降级 + 版本预览取视频
 //   - videoHistoryList → 多片段
 // 另存原生 smart 块用于精确回填。data:/blob: 体积大且仅本地可用,后端快照里剥离,只留 http 图。
-const killHeavy = (u: any) =>
-  typeof u === 'string' && (u.startsWith('blob:') || u.startsWith('data:')) ? '' : u
+const killHeavy = (u: any) => (typeof u === 'string' && (u.startsWith('blob:') || u.startsWith('data:')) ? '' : u)
 
 function stripHeavy(d: SmartDraft): SmartDraft {
   const next = sanitize(d)
@@ -134,9 +166,7 @@ function stripHeavy(d: SmartDraft): SmartDraft {
       extraRefs: Array.isArray(s.extraRefs)
         ? s.extraRefs.map((r: any) => ({ ...r, url: killHeavy(r?.url) })).filter((r: any) => r.url)
         : s.extraRefs,
-      selectedRefs: Array.isArray(s.selectedRefs)
-        ? s.selectedRefs.map(killHeavy).filter(Boolean)
-        : s.selectedRefs,
+      selectedRefs: Array.isArray(s.selectedRefs) ? s.selectedRefs.map(killHeavy).filter(Boolean) : s.selectedRefs,
     }))
   }
   if (Array.isArray(next.videoVersions)) {
@@ -154,6 +184,7 @@ function stripHeavy(d: SmartDraft): SmartDraft {
     }
     next.subjectAssets = sa
   }
+  if (Array.isArray(next.imageMessages)) next.imageMessages = cleanMessages(next.imageMessages, killHeavy)
   return next
 }
 

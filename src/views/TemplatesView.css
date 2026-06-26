@@ -1,0 +1,77 @@
+/* 模板库页面 */
+.templates-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.templates-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.templates-back:hover {
+  border-color: #5767e5;
+  color: #5767e5;
+  background: #f5f6ff;
+}
+
+.templates-page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.templates-count {
+  font-size: 13px;
+  color: #999;
+}
+
+.templates-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 8px;
+}
+
+.templates-grid-body {
+  margin-top: 16px;
+}
+
+/* 统一网格(对标 Figma):等大卡片,横向 16:10 缩略图 */
+.templates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(218px, 1fr));
+  gap: 20px 16px;
+}
+.templates-card {
+  width: 100%;
+}
+/* 缩略图左上角时长徽标 */
+.tpl-dur {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(20, 24, 45, 0.55);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 1280px) {
+  .templates-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+}

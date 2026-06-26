@@ -25,8 +25,9 @@ export default function StepProgress({ steps, current, statuses, maxReached = 0,
     <div className={styles.stepProgress} role="list">
       {steps.map((s, i) => {
         const state = i < current ? 'done' : i === current ? 'active' : 'todo'
-        const clickable = i <= reachable
         const sub = statuses?.[i] ?? (state === 'done' ? '已完成' : state === 'active' ? '进行中' : '待生成')
+        // 已到达/当前步可点;另外只要该步状态是「已完成」就一律可点,支持来回切换查看
+        const clickable = i <= reachable || sub === '已完成'
         return (
           <Fragment key={s.key}>
             {i > 0 && <span className={styles.line} aria-hidden="true" />}

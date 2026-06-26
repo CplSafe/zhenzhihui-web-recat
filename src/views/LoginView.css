@@ -70,6 +70,32 @@
   align-items: center;
   justify-content: center;
   padding: 48px 24px;
+  position: relative;
+}
+
+.zlogin-back {
+  position: absolute;
+  top: 28px;
+  left: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #fff;
+  color: #333;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.zlogin-back:hover {
+  border-color: #5767e5;
+  color: #5767e5;
+  background: #f5f6ff;
 }
 
 .zlogin-form {
@@ -320,6 +346,10 @@
     flex: 1 1 100%;
     align-items: flex-start;
     padding: 56px 20px 32px;
+  }
+  .zlogin-back {
+    top: 16px;
+    left: 16px;
   }
   .zlogin-form {
     width: 100%;

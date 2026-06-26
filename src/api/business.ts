@@ -136,7 +136,29 @@ export function getBusinessErrorMessage(error, fallback = '业务接口请求失
   return fallback
 }
 
+// 仅开发环境:无真实订阅时手测「席位限制 / 模型限制」UI。浏览器控制台设置后刷新即可,测完清除:
+//   localStorage.setItem('zzh_mock', 'seat-full')      → 席位满(getSubscription 返回 3/3)
+//   localStorage.setItem('zzh_mock', 'model-locked')   → 模型受限(listAiModels 抛 403)
+//   两个一起:localStorage.setItem('zzh_mock', 'seat-full,model-locked')
+//   清除:localStorage.removeItem('zzh_mock')
+function devMock(flag) {
+  if (!import.meta.env.DEV) return false
+  try {
+    return String(window.localStorage.getItem('zzh_mock') || '').includes(flag)
+  } catch {
+    return false
+  }
+}
+
 export async function listAiModels({ capability = '', operationCode = '', plan = 'pro' }: any = {}) {
+  // 开发 mock:模拟"当前套餐不允许该模型"(用于手测前端受限 UI / 报错提示)
+  if (devMock('model-locked')) {
+    throw new BusinessApiError('当前模型需要开通对应套餐后才能使用（mock）', {
+      status: 403,
+      code: 'MODEL_NOT_ALLOWED_BY_PLAN',
+    })
+  }
+
   const query = new URLSearchParams()
 
   if (plan) {
@@ -1504,6 +1526,20 @@ export function listCreditPackages() {
  * @returns {Promise<{ active: boolean, plan_code: string, plan_name: string, current_period_end: string, period?: string, base_credits?: number, concurrency?: number, max_members?: number, current_member_count?: number }>}
  */
 export function getSubscription(workspaceId) {
+  // 开发 mock:模拟"团队套餐 + 席位已满 3/3"(用于手测席位限制 UI)
+  if (devMock('seat-full')) {
+    return Promise.resolve({
+      active: true,
+      plan_code: 'team-mock',
+      plan_name: '团队版（mock）',
+      current_period_end: '',
+      period: 'month',
+      base_credits: 8000,
+      concurrency: 3,
+      max_members: 3,
+      current_member_count: 3,
+    })
+  }
   return requestJson(`/api/v1/billing/subscription?workspace_id=${encodeURIComponent(String(workspaceId))}`)
 }
 
@@ -1530,6 +1566,46 @@ export function createRechargeOrder({ workspaceId, creditPackageId }) {
       workspace_id: Number(workspaceId),
       credit_package_id: Number(creditPackageId),
     }),
+  })
+}
+
+/**
+ * 开通普通订阅(一次性付款)。返回订单 + 支付宝 pay_url(一次性网站支付,非周期扣款签约)。
+ * 这是会员套餐「立即开通」用的接口;签约(sign-url)是周期扣款,暂未开通权限。
+ * @param {{ workspaceId: number, planId: number }} params
+ * @returns {Promise<{ order: object, pay_url: string }>}
+ */
+export function createSubscriptionOrder({ workspaceId, planId }) {
+  return requestJson('/api/v1/billing/subscription-orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      workspace_id: Number(workspaceId),
+      plan_id: Number(planId),
+    }),
+  })
+}
+
+/**
+ * 待支付续费账单列表(订阅周期到期 / 待支付的续费单)。
+ * @param {number} workspaceId
+ * @returns {Promise<Array<object>>}
+ */
+export function listRenewalOrders(workspaceId) {
+  return requestJson(`/api/v1/billing/renewal-orders?workspace_id=${encodeURIComponent(String(workspaceId))}`)
+}
+
+/**
+ * 为某条待支付续费账单生成支付链接,返回支付宝 pay_url。
+ * @param {{ workspaceId: number, renewalOrderId: number }} params
+ * @returns {Promise<{ order?: object, pay_url: string }>}
+ */
+export function createRenewalPayUrl({ workspaceId, renewalOrderId }) {
+  const wsq = workspaceId ? `?workspace_id=${encodeURIComponent(String(workspaceId))}` : ''
+  return requestJson(`/api/v1/billing/renewal-orders/${Math.floor(Number(renewalOrderId))}/pay-url${wsq}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace_id: Number(workspaceId) }),
   })
 }
 
@@ -1587,7 +1663,7 @@ export function listAssets({ workspaceId, type = '', status = 'active', source =
   return requestJson(`/api/v1/assets?${query}`)
 }
 
-export async function uploadAssetFile({ workspaceId, file, prompt = '' }) {
+export async function uploadAssetFile({ workspaceId, file, prompt = '', source = 'upload' }) {
   const created = await requestJson('/api/v1/assets', {
     method: 'POST',
     headers: {
@@ -1596,7 +1672,7 @@ export async function uploadAssetFile({ workspaceId, file, prompt = '' }) {
     body: JSON.stringify({
       workspace_id: workspaceId,
       type: inferAssetType(file),
-      source: 'upload',
+      source,
       name: file.name || '未命名素材',
       mime_type: file.type || 'application/octet-stream',
       size_bytes: file.size || 0,
@@ -1696,9 +1772,12 @@ export async function downloadAssetFile({ workspaceId, assetId }) {
 
   let response
   try {
-    response = await fetch(buildUrl(businessApiBaseUrl, `/api/v1/assets/${Math.floor(id)}/download?workspace_id=${Math.floor(wsId)}`), {
-      credentials: 'include',
-    })
+    response = await fetch(
+      buildUrl(businessApiBaseUrl, `/api/v1/assets/${Math.floor(id)}/download?workspace_id=${Math.floor(wsId)}`),
+      {
+        credentials: 'include',
+      },
+    )
   } catch (error) {
     throw new BusinessApiError('网络请求失败，请检查接口服务或本地代理配置', {
       response: error,
@@ -2074,7 +2153,26 @@ async function getCachedModel(cacheKey, loader) {
   return promise
 }
 
-async function requestJson(path, options = {}) {
+const AUTH_REFRESH_PATH = '/api/v1/auth/refresh'
+// 401 自动续期:同一时刻多个请求都 401 时共用一次刷新,避免并发刷新风暴。
+let sessionRefreshPromise = null
+function refreshBusinessSession() {
+  if (!sessionRefreshPromise) {
+    sessionRefreshPromise = fetch(buildUrl(businessApiBaseUrl, AUTH_REFRESH_PATH), {
+      method: 'POST',
+      credentials: 'include',
+    })
+      .then((res) => res.ok)
+      .catch(() => false)
+    // 结束后清空,后续再 401 可再次触发刷新
+    sessionRefreshPromise.finally(() => {
+      sessionRefreshPromise = null
+    })
+  }
+  return sessionRefreshPromise
+}
+
+async function requestJson(path, options = {}, _retried = false) {
   let response
 
   try {
@@ -2086,6 +2184,13 @@ async function requestJson(path, options = {}) {
     throw new BusinessApiError('网络请求失败，请检查接口服务或本地代理配置', {
       response: error,
     })
+  }
+
+  // 401 → 先静默续期一次再重试原请求;排除续期接口本身,避免死循环。
+  // 这样短命 access token 过期时用户无感(自动续上重试),只有续期也失败才真正报「登录失效」。
+  if (response.status === 401 && !_retried && !String(path).includes(AUTH_REFRESH_PATH)) {
+    const ok = await refreshBusinessSession()
+    if (ok) return requestJson(path, options, true)
   }
 
   const payload = await readJsonResponse(response)

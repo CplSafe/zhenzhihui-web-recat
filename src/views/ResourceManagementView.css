@@ -349,6 +349,8 @@
   box-sizing: border-box;
   height: 60px;
   padding: 10px 12px 10px;
+  display: flex;
+  align-items: center;
 }
 
 .resource-asset-info h3 {
@@ -361,10 +363,23 @@
 
 .resource-asset-meta {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-top: 6px;
+  width: 100%;
+}
+
+.resource-asset-ratio {
+  color: #333333;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.resource-asset-size {
+  color: #b0b0b7;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
 }
 
 .resource-asset-tags {
@@ -427,9 +442,10 @@
 
 /* ===== 素材市场 2.1(三 Tab + 子分类)===== */
 .rm2-page {
+  position: fixed;
+  inset: 0;
   display: flex;
-  height: 100vh;
-  min-height: 100vh;
+  overflow: hidden;
   background: #f8f9fa;
 }
 .rm2-shell {
@@ -530,4 +546,100 @@
   text-align: center;
   color: #9aa3af;
   font-size: 14px;
+}
+
+/* 我上传的/我生成的:按项目分组 */
+.rm2-proj-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+.rm2-proj-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 0 4px;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  background: #ffffff;
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+.rm2-proj-card:hover {
+  box-shadow: 0 10px 26px rgba(33, 40, 80, 0.1);
+  transform: translateY(-2px);
+}
+.rm2-proj-cover {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  background: linear-gradient(135deg, #f1f2ff, #fff1f2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.rm2-proj-cover-inner {
+  width: 100%;
+  height: 100%;
+}
+.rm2-proj-cover img,
+.rm2-proj-cover video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 懒加载未进视口时的轻量占位 */
+.resource-asset-cover-lazy {
+  width: 100%;
+  height: 100%;
+  background: #f0f3f5;
+}
+.rm2-proj-cover-ph {
+  font-size: 30px;
+  opacity: 0.5;
+}
+.rm2-proj-name {
+  padding: 4px 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rm2-proj-count {
+  padding: 0 12px 8px;
+  font-size: 12px;
+  color: #9aa0af;
+}
+
+/* 项目详情头(返回 + 项目名) */
+.rm2-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.rm2-back {
+  border: 1px solid #e6e8ef;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #5a6072;
+  font-size: 13px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.rm2-back:hover {
+  border-color: #6d6de3;
+  color: #6d6de3;
+}
+.rm2-detail-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #333333;
 }

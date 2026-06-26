@@ -9,12 +9,14 @@ const AUTH_SESSION_MARKER_KEY = 'zzh_has_auth_session'
 
 const businessRemoteOrigin = readBaseUrl('VITE_ZZH_REMOTE_ORIGIN', '')
 const deepAuthRemoteOrigin = readBaseUrl('VITE_DEEPAUTH_REMOTE_ORIGIN', '')
+const ssoRemoteOrigin = readBaseUrl('VITE_SSO_REMOTE_ORIGIN', '')
 const businessApiBaseUrl = resolveProxyFriendlyBaseUrl(import.meta.env.VITE_ZZH_API_BASE_URL, '', businessRemoteOrigin)
 const deepAuthApiBaseUrl = resolveProxyFriendlyBaseUrl(
   import.meta.env.VITE_DEEPAUTH_API_BASE_URL,
   '/deepauth',
   deepAuthRemoteOrigin,
 )
+const ssoApiBaseUrl = resolveProxyFriendlyBaseUrl('', '/sso', ssoRemoteOrigin)
 
 export class AuthApiError extends Error {
   constructor(message, { status = 0, code = null, requestId = '', response = null }: any = {}) {
@@ -88,6 +90,19 @@ export function refreshSession() {
 
 export function logoutSession() {
   return businessPost('/api/v1/auth/logout')
+}
+
+// 登录前清掉旧的业务会话：换账号时旧的会话 cookie（DEEPAUTH_SID，24h）仍有效，
+// 若不先登出，登录后立即 getSession() 会直接读回旧账号 → 「换账号仍是旧账号」。
+// 必须在 oauth-start 之前调用，否则会把本次 OAuth 的 state 一并清掉导致回调 400。
+// 全程容错（未登录/已失效都忽略），不阻断后续登录。
+export async function clearExistingSession() {
+  try {
+    await logoutSession()
+  } catch {
+    // 未登录或会话已失效：忽略即可
+  }
+  clearAuthSessionMarker()
 }
 
 export function getCurrentUser() {
@@ -187,7 +202,9 @@ export function isCaptchaChallengeError(error) {
 }
 
 export function isUnauthorizedAuthError(error) {
-  return error instanceof AuthApiError && error.status === 401
+  if (!(error instanceof AuthApiError)) return false
+  // HTTP 401 或业务层 code_string === 'UNAUTHORIZED'（后端可能返回 200 + 业务错误码 10101）
+  return error.status === 401 || error.code === 'UNAUTHORIZED'
 }
 
 function authStartContext(authStart) {
@@ -224,6 +241,16 @@ async function getCurrentWorkspaceMember(authContext) {
 
 function requestDeepAuth(url, body) {
   return requestJson(toProxiedUrl(url, deepAuthApiBaseUrl, deepAuthRemoteOrigin), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(removeEmptyFields(body)),
+  })
+}
+
+// 直接向 SSO(8001) 发送请求，login/sms/register 统一走 /sso 代理，
+// 让 8001 直接认证并设置 cookie，后续 /sso OAuth 跳转即可跳过二次登录。
+function requestSso(url, body) {
+  return requestJson(toProxiedUrl(url, ssoApiBaseUrl, ssoRemoteOrigin), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(removeEmptyFields(body)),
@@ -310,6 +337,10 @@ function toNavigationUrl(url, authStart) {
     if (origin === businessRemoteOrigin) {
       return pathAndQuery
     }
+
+    if (origin === ssoRemoteOrigin) {
+      return buildUrl(ssoApiBaseUrl, pathAndQuery)
+    }
   } catch {
     return authStart?.authorize_url ? toNavigationUrl(authStart.authorize_url, null) : '/'
   }
@@ -339,11 +370,22 @@ function toProxiedUrl(url, localBaseUrl, remoteOrigin) {
     if (origin === businessRemoteOrigin) {
       return buildUrl(businessApiBaseUrl, pathAndQuery)
     }
+
+    // SSO(8001) 的请求也走代理，确保 cookie 同域
+    if (origin === ssoRemoteOrigin) {
+      return buildUrl(ssoApiBaseUrl, pathAndQuery)
+    }
   } catch {
     return buildUrl(localBaseUrl, url)
   }
 
-  return url
+  // origin 未匹配任何已知远程 → 走本地代理兜底，避免直连外网失败
+  try {
+    const parsedUrl = new URL(url)
+    return buildUrl(localBaseUrl, `${parsedUrl.pathname}${parsedUrl.search}`)
+  } catch {
+    return buildUrl(localBaseUrl, url)
+  }
 }
 
 function buildUrl(baseUrl, path) {

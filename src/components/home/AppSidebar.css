@@ -1,6 +1,6 @@
-/* 2.1 左侧导航栏样式（约 210px 浅色窄侧栏）*/
+/* 2.1 左侧导航栏样式（约 240px 浅色侧栏）*/
 .app-sidebar {
-  width: 210px;
+  width: 240px;
   flex-shrink: 0;
   height: 100vh;
   position: sticky;
@@ -17,20 +17,21 @@
 .app-sidebar__brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 60px;
+  gap: 12px;
+  height: 72px;
   padding: 0 18px;
   flex-shrink: 0;
 }
 .app-sidebar__logo {
-  width: 26px;
-  height: 26px;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   object-fit: contain;
 }
 .app-sidebar__brand-name {
   font-size: 18px;
   font-weight: 700;
-  color: #1fcfa9;
+  color: #333;
   letter-spacing: 1px;
 }
 .app-sidebar__version {
@@ -111,7 +112,7 @@
   color: #b8bdc4;
 }
 .app-sidebar__item--dropdown {
-  background: #f6f7f9;
+  background: #fff;
 }
 
 /* 底部设置 */

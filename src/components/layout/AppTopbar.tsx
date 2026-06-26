@@ -5,11 +5,13 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import { useCurrentUser, useCurrentPlanName } from '@/stores/workspaceSession'
 import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
+import { markDevLogout } from '@/App'
 import './AppTopbar.css'
 
 interface AppTopbarProps {
@@ -19,7 +21,8 @@ interface AppTopbarProps {
   onMember?: () => void
 }
 
-export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
+export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProps) {
+  const navigate = useNavigate()
   const currentUser = useCurrentUser() as any
   const planName = useCurrentPlanName() as any
   const { handleLogoutSuccess } = useAuth()
@@ -62,14 +65,21 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
 
   const handleMember = () => {
     setMenuOpen(false)
-    if (onMember) onMember()
-    else showToast('会员中心待开放', 'info')
+    navigate('/membership')
   }
 
   async function handleLogout() {
     if (isLoggingOut) return
     setMenuOpen(false)
     setIsLoggingOut(true)
+
+    if (import.meta.env.DEV) {
+      setIsLoggingOut(false)
+      markDevLogout()
+      handleLogoutSuccess()
+      return
+    }
+
     try {
       await logoutSession()
       showToast('已退出登录', 'success')
@@ -90,7 +100,15 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
     <header className="apptop">
       {onMenu && (
         <button type="button" className="apptop__hamburger" aria-label="打开菜单" onClick={onMenu}>
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <svg
+            viewBox="0 0 24 24"
+            width="22"
+            height="22"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
             <path d="M4 7h16M4 12h16M4 17h16" />
           </svg>
         </button>
@@ -119,12 +137,7 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
       {menuOpen &&
         menuPos &&
         createPortal(
-          <div
-            ref={menuRef}
-            className="apptop__menu"
-            role="menu"
-            style={{ top: menuPos.top, right: menuPos.right }}
-          >
+          <div ref={menuRef} className="apptop__menu" role="menu" style={{ top: menuPos.top, right: menuPos.right }}>
             <button type="button" className="apptop__menu-item" role="menuitem" onClick={handleMember}>
               会员中心
             </button>

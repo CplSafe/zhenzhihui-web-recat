@@ -1,10 +1,11 @@
 /**
  * 智能成片「入口/需求输入」页(2.1,按 Figma 79:3966 还原)。
  * 大标题 + 制作视频/制作图片 Tab + 上传&提示词卡片 +
- * 风格(叫卖/幽默/商业)/比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
+ * 比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
  * 提交 → 调 onSubmit(需求文本, 选项),由父级进入分镜脚本流程。
  */
 import { useRef, useState, type ReactNode } from 'react'
+import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import GuideDialog from '../GuideDialog'
 import { fileToDataUrl } from '@/utils/imageFile'
@@ -18,44 +19,78 @@ export interface EntryMeta {
   duration: string
   imageCount: number
   images: string[]
+  /** 选中的营销 SKILL(空=不使用,走现有逻辑;非空=多一步「营销思路拆解」) */
+  skill?: string
 }
 
 interface SmartEntryProps {
   onSubmit: (requirement: string, meta: EntryMeta) => void
+  /** 「制作新视频」/「创建新对话」:清空输入/项目,初始化为全新空白页(保留当前 Tab 模式)。 */
+  onNewVideo?: (mode: 'video' | 'image') => void
   /**
-   * 回填初始值:从分镜脚本「上一步」返回输入框时,恢复上次输入(需求文本/图片/风格/比例/时长/模式)。
+   * 是否可「下一步/恢复」:从流程里点上一步退回入口、且已有生成结果时为 true(仅制作视频)。
+   * 为 true 时(且当前在视频 Tab):发送按钮变「下一步」(onResume,回到已生成流程,不重生成);
+   * 并显示「重新生成」(走 onSubmit,按当前输入重新生成)。
+   */
+  canResume?: boolean
+  /** 「下一步」:回到已生成的流程(只往前一步),不重新生成。 */
+  onResume?: () => void
+  /**
+   * 回填初始值:从分镜脚本「上一步」返回输入框时,恢复上次输入(需求文本/图片/风格/比例/时长/模式/skill)。
    * 仅在挂载时生效(useState 初值);路由切换会卸载本组件,数据随之清空。
    */
   initial?: {
     mode?: 'video' | 'image'
     text?: string
-    styleTags?: string[]
     ratio?: string
     duration?: string
     images?: string[]
+    skill?: string
   }
 }
 
-const STYLE_OPTIONS = ['叫卖', '幽默', '商业', '治愈', '科技感', '剧情']
 const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
 const DURATION_OPTIONS = ['5s', '10s', '15s']
+const SKILL_OPTIONS = ['电商营销广告skills', '本地餐饮营销skills']
 const MAX_IMAGES = 9
 
-const PLACEHOLDER =
+const PLACEHOLDER_VIDEO =
   '最多上传9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
+const PLACEHOLDER_IMAGE =
+  '最多上传9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 
-// 引用素材标记:@图片1、@图片2 …(用于高亮渲染与匹配)
-const REF_RE = /@图片\d+/g
+// 选中 SKILL 后插入到输入框的提示语(高亮显示)。提交/展示前会被剥离,保持需求正文干净。
+const skillLine = (s: string) => `使用${s}帮我优化`
+const stripSkillLine = (t: string) =>
+  SKILL_OPTIONS.reduce((acc, opt) => acc.split(skillLine(opt)).join(''), t)
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t\n]+$/, '')
+// 把 skill 提示语拼到正文后面(正文非空时空一行)
+const composeWithSkill = (base: string, s: string) => (s ? (base ? `${base}\n\n${skillLine(s)}` : skillLine(s)) : base)
 
-export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
+// 高亮渲染匹配:@图片N(绿) + 使用×××skills帮我优化(skill 提示语,着色)
+const HL_RE = new RegExp(`@图片\\d+|${SKILL_OPTIONS.map((s) => skillLine(s)).join('|')}`, 'g')
+
+export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, initial }: SmartEntryProps) {
   const { showToast } = useToast()
   const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? 'video')
-  const [text, setText] = useState(initial?.text ?? '')
-  // 风格支持多选(可叠加多种调性),提交时合并成一个风格描述串
-  const [styleTags, setStyleTags] = useState<string[]>(initial?.styleTags ?? ['叫卖', '幽默', '商业'])
+  // 切换 Tab:背景弥散位移 + 涟漪动画由 <EntryCanvasBg mode> 监听 mode 变化驱动(Canvas 实现,不卡)
+  const switchMode = (m: 'video' | 'image') => {
+    if (m === mode) return
+    // 「制作图片」暂未开放:点击只提示,不切换;图片模式原逻辑代码保留,开放时去掉此拦截即可
+    if (m === 'image') {
+      showToast('功能暂未开放', 'info')
+      return
+    }
+    setMode(m)
+  }
+  // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
+  const [text, setText] = useState(() => composeWithSkill(initial?.text ?? '', initial?.skill ?? ''))
   const [ratio, setRatio] = useState(initial?.ratio ?? '16:9')
   const [duration, setDuration] = useState(initial?.duration ?? '10s')
   const [images, setImages] = useState<string[]>(initial?.images ?? [])
+  // 选中的营销 SKILL(单选,空=不使用)
+  const [skill, setSkill] = useState(initial?.skill ?? '')
   const [guideOpen, setGuideOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
@@ -77,25 +112,6 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
     idxRef.current = next.length - 1
     bumpHist((v) => v + 1)
   }
-  const undo = () => {
-    // 有未提交的手动编辑 → 先回到最近快照;否则回退一步
-    if (text !== histRef.current[idxRef.current]) {
-      setText(histRef.current[idxRef.current])
-    } else if (idxRef.current > 0) {
-      idxRef.current -= 1
-      setText(histRef.current[idxRef.current])
-    }
-    bumpHist((v) => v + 1)
-  }
-  const redo = () => {
-    if (text === histRef.current[idxRef.current] && idxRef.current < histRef.current.length - 1) {
-      idxRef.current += 1
-      setText(histRef.current[idxRef.current])
-      bumpHist((v) => v + 1)
-    }
-  }
-  const canUndo = idxRef.current > 0 || text !== histRef.current[idxRef.current]
-  const canRedo = text === histRef.current[idxRef.current] && idxRef.current < histRef.current.length - 1
 
   // AI 引导:打开交互式对话框(问人群/剧情/目标…),用户确认后再回填(不擅自改原文)。
   const applyGuide = (brief: string) => {
@@ -153,17 +169,18 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
     setAtOpen(false)
   }
 
-  // 高亮渲染:把 @图片N 渲染成绿色标记,其余为普通文本(textarea 文字透明,叠在此层上)
+  // 高亮渲染:@图片N 标绿 + 「使用×××skills帮我优化」着色,其余为普通文本(textarea 文字透明,叠在此层上)
   const renderHighlight = (t: string) => {
     if (!t) return null
     const out: ReactNode[] = []
     let last = 0
     let m: RegExpExecArray | null
-    REF_RE.lastIndex = 0
-    while ((m = REF_RE.exec(t))) {
+    HL_RE.lastIndex = 0
+    while ((m = HL_RE.exec(t))) {
       if (m.index > last) out.push(t.slice(last, m.index))
+      const isRef = m[0].startsWith('@图片')
       out.push(
-        <span className={styles.refTag} key={m.index}>
+        <span className={isRef ? styles.refTag : styles.skillTag} key={m.index}>
           {m[0]}
         </span>,
       )
@@ -173,36 +190,60 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
     return out
   }
 
-  const canSubmit = text.trim().length > 0 || images.length > 0
+  // 正文(剥离 skill 提示语后)用于提交/校验,保证需求干净
+  const cleanText = stripSkillLine(text).trim()
+  const canSubmit = cleanText.length > 0 || images.length > 0
+  // 恢复态:已有生成结果且当前在视频 Tab → 发送按钮变「下一步」,并显示「重新生成」
+  const resumeMode = !!canResume && mode === 'video'
   const submit = () => {
     if (!canSubmit) return
-    onSubmit(text.trim(), { mode, style: styleTags.join('、'), ratio, duration, imageCount: images.length, images })
+    onSubmit(cleanText, {
+      mode,
+      style: '',
+      ratio,
+      duration,
+      imageCount: images.length,
+      images,
+      skill: skill || undefined,
+    })
+  }
+
+  // 选中/切换 SKILL:把提示语插入输入框(替换旧的);未选则移除
+  const pickSkill = (s: string) => {
+    setText((cur) => composeWithSkill(stripSkillLine(cur), s))
+    setSkill(s)
   }
 
   return (
-    <div className={styles.screate}>
-      {/* 背景三层(Figma):大椭圆 + 小椭圆 + 白雾蒙层 */}
+    <div className={styles.screate} data-mode={mode}>
+      {/* 背景弥散:Canvas 精确复刻 UI 设计「背景颜色」(Figma 677:3996)三层叠加;只绘制一次,
+          切换 mode 时对画布做纯位移动画(GPU 合成,不卡) */}
       <div className={styles.bg} aria-hidden="true">
-        <div className={styles.bgEllipseLg} />
-        <div className={styles.bgVeil} />
+        <EntryCanvasBg index={mode === 'image' ? 1 : 0} count={2} anim="glide" />
       </div>
 
-      <h1 className={styles.title}>让每一帧创意，都成为转化利器！</h1>
+      <h1 className={styles.title}>{mode === 'image' ? '想打造什么样的营销图片？' : '想打造什么样的爆款短视频？'}</h1>
 
       <div className={styles.panel}>
+        {/* 右上角:与 Tab 同一行、右对齐卡片;点击初始化为全新空白页(等同切换路由再回来) */}
+        {onNewVideo && (
+          <button type="button" className={styles.newVideoBtn} onClick={() => onNewVideo(mode)}>
+            {mode === 'image' ? '创建新对话' : '制作新视频'}
+          </button>
+        )}
         {/* Tab:制作视频 / 制作图片 */}
         <div className={styles.tabs}>
           <button
             type="button"
             className={`${styles.tab}${mode === 'video' ? ' ' + styles.active : ''}`}
-            onClick={() => setMode('video')}
+            onClick={() => switchMode('video')}
           >
             制作视频
           </button>
           <button
             type="button"
             className={`${styles.tab}${mode === 'image' ? ' ' + styles.active : ''}`}
-            onClick={() => setMode('image')}
+            onClick={() => switchMode('image')}
           >
             制作图片
           </button>
@@ -297,7 +338,7 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
                 ref={taRef}
                 className={styles.input}
                 value={text}
-                placeholder={PLACEHOLDER}
+                placeholder={mode === 'image' ? PLACEHOLDER_IMAGE : PLACEHOLDER_VIDEO}
                 onChange={(e) => {
                   setText(e.target.value)
                   caretRef.current = e.target.selectionStart ?? e.target.value.length
@@ -318,21 +359,6 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
           <div className={styles.toolbar}>
             <div className={styles.tools}>
               <EntryDropdown
-                multiple
-                placeholder="风格"
-                value={styleTags}
-                options={STYLE_OPTIONS}
-                onChange={setStyleTags}
-                icon={
-                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path
-                      d="M9.75 2C12.0706 2 14.2962 2.92187 15.9372 4.56282C17.5781 6.20376 18.5 8.42936 18.5 10.75C18.5 13.1838 17.2038 13.38 15.65 13.295L14.4325 13.2075C13.3888 13.1425 12.3488 13.1675 11.595 13.8113C9.33625 15.1213 15.4825 19.5 9.75 19.5C7.42936 19.5 5.20376 18.5781 3.56282 16.9372C1.92187 15.2962 1 13.0706 1 10.75C1 8.42936 1.92187 6.20376 3.56282 4.56282C5.20376 2.92187 7.42936 2 9.75 2ZM9.75 3.25C8.76509 3.25 7.78982 3.44399 6.87987 3.8209C5.96993 4.19781 5.14314 4.75026 4.4467 5.4467C3.75026 6.14314 3.19781 6.96993 2.8209 7.87987C2.44399 8.78982 2.25 9.76509 2.25 10.75C2.25 11.7349 2.44399 12.7102 2.8209 13.6201C3.19781 14.5301 3.75026 15.3569 4.4467 16.0533C5.14314 16.7497 5.96993 17.3022 6.87987 17.6791C7.78982 18.056 8.76509 18.25 9.75 18.25C10.245 18.25 10.62 18.2125 10.8725 18.1538L11.0075 18.1162L10.9363 17.9175C10.8434 17.6818 10.7429 17.4492 10.635 17.22L10.535 17.0087C9.53375 14.9012 9.335 13.7662 10.7975 12.8337L10.8787 12.7825L10.895 12.77L10.965 12.7137L10.98 12.7013C11.845 12.0525 12.8225 11.8837 14.2263 11.945L14.5588 11.9637L15.5113 12.0325C16.3238 12.0837 16.675 12.0612 16.9088 11.9563C17.1187 11.8625 17.25 11.5988 17.25 10.75C17.25 8.76088 16.4598 6.85322 15.0533 5.4467C13.6468 4.04018 11.7391 3.25 9.75 3.25ZM6.625 12.0562C7.12228 12.0562 7.59919 12.2538 7.95083 12.6054C8.30246 12.9571 8.5 13.434 8.5 13.9312C8.5 14.4285 8.30246 14.9054 7.95083 15.2571C7.59919 15.6087 7.12228 15.8062 6.625 15.8062C6.12772 15.8062 5.65081 15.6087 5.29917 15.2571C4.94754 14.9054 4.75 14.4285 4.75 13.9312C4.75 13.434 4.94754 12.9571 5.29917 12.6054C5.65081 12.2538 6.12772 12.0563 6.625 12.0562ZM6.625 13.3062C6.45924 13.3062 6.30027 13.3721 6.18306 13.4893C6.06585 13.6065 6 13.7655 6 13.9312C6 14.097 6.06585 14.256 6.18306 14.3732C6.30027 14.4904 6.45924 14.5562 6.625 14.5562C6.79076 14.5562 6.94973 14.4904 7.06694 14.3732C7.18415 14.256 7.25 14.097 7.25 13.9312C7.25 13.7655 7.18415 13.6065 7.06694 13.4893C6.94973 13.3721 6.79076 13.3062 6.625 13.3062ZM12.8763 5.7525C13.1225 5.7525 13.3663 5.801 13.5938 5.89523C13.8213 5.98945 14.028 6.12756 14.2021 6.30167C14.3762 6.47578 14.5143 6.68248 14.6085 6.90997C14.7028 7.13745 14.7513 7.38127 14.7513 7.6275C14.7513 7.87373 14.7028 8.11755 14.6085 8.34503C14.5143 8.57252 14.3762 8.77922 14.2021 8.95333C14.028 9.12744 13.8213 9.26555 13.5938 9.35977C13.3663 9.454 13.1225 9.5025 12.8763 9.5025C12.379 9.5025 11.9021 9.30496 11.5504 8.95333C11.1988 8.60169 11.0013 8.12478 11.0013 7.6275C11.0013 7.13022 11.1988 6.65331 11.5504 6.30167C11.9021 5.95004 12.379 5.7525 12.8763 5.7525ZM6.625 5.75C6.87123 5.75 7.11505 5.7985 7.34253 5.89273C7.57002 5.98695 7.77672 6.12506 7.95083 6.29917C8.12494 6.47328 8.26305 6.67998 8.35727 6.90747C8.4515 7.13495 8.5 7.37877 8.5 7.625C8.5 7.87123 8.4515 8.11505 8.35727 8.34253C8.26305 8.57002 8.12494 8.77672 7.95083 8.95083C7.77672 9.12494 7.57002 9.26305 7.34253 9.35727C7.11505 9.4515 6.87123 9.5 6.625 9.5C6.12772 9.5 5.65081 9.30246 5.29917 8.95083C4.94754 8.59919 4.75 8.12228 4.75 7.625C4.75 7.12772 4.94754 6.65081 5.29917 6.29917C5.65081 5.94754 6.12772 5.75 6.625 5.75ZM12.8763 7.0025C12.7105 7.0025 12.5515 7.06835 12.4343 7.18556C12.3171 7.30277 12.2513 7.46174 12.2513 7.6275C12.2513 7.79326 12.3171 7.95223 12.4343 8.06944C12.5515 8.18665 12.7105 8.2525 12.8763 8.2525C13.042 8.2525 13.201 8.18665 13.3182 8.06944C13.4354 7.95223 13.5013 7.79326 13.5013 7.6275C13.5013 7.46174 13.4354 7.30277 13.3182 7.18556C13.201 7.06835 13.042 7.0025 12.8763 7.0025ZM6.625 7C6.45924 7 6.30027 7.06585 6.18306 7.18306C6.06585 7.30027 6 7.45924 6 7.625C6 7.79076 6.06585 7.94973 6.18306 8.06694C6.30027 8.18415 6.45924 8.25 6.625 8.25C6.79076 8.25 6.94973 8.18415 7.06694 8.06694C7.18415 7.94973 7.25 7.79076 7.25 7.625C7.25 7.45924 7.18415 7.30027 7.06694 7.18306C6.94973 7.06585 6.79076 7 6.625 7Z"
-                      fill="#333333"
-                    />
-                  </svg>
-                }
-              />
-              <EntryDropdown
                 value={ratio}
                 options={RATIO_OPTIONS}
                 onChange={setRatio}
@@ -342,25 +368,28 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
                   </svg>
                 }
               />
-              <EntryDropdown
-                value={duration}
-                options={DURATION_OPTIONS}
-                onChange={setDuration}
-                icon={
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                  >
-                    <circle cx="12" cy="12" r="8" />
-                    <path d="M12 8v4l3 2" />
-                  </svg>
-                }
-              />
+              {/* 时长仅「制作视频」需要;「制作图片」隐藏(对齐设计) */}
+              {mode === 'video' && (
+                <EntryDropdown
+                  value={duration}
+                  options={DURATION_OPTIONS}
+                  onChange={setDuration}
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="20"
+                      height="20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                    >
+                      <circle cx="12" cy="12" r="8" />
+                      <path d="M12 8v4l3 2" />
+                    </svg>
+                  }
+                />
+              )}
 
               <span className={styles.atAnchor}>
                 <button type="button" className={styles.pillBtn} onClick={handleAt} title="引用参考素材">
@@ -385,99 +414,84 @@ export default function SmartEntry({ onSubmit, initial }: SmartEntryProps) {
                 )}
               </span>
 
-              {/* AI 引导:打开交互式引导对话框(询问人群/剧情/目标…) */}
-              <button
-                type="button"
-                className={styles.guide}
-                onClick={() => setGuideOpen(true)}
-                title="AI 引导:按信息流广告思路问几个问题,帮你把需求想得更专业"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="20"
-                  height="20"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.7"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
-                  <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
-                </svg>
-                AI 引导
-              </button>
+              {/* SKILLS:营销技能包(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
+              {mode === 'video' && (
+                <EntryDropdown
+                  clearable
+                  placeholder="SKILL"
+                  value={skill}
+                  options={SKILL_OPTIONS}
+                  onChange={pickSkill}
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="20"
+                      height="20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                      <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                    </svg>
+                  }
+                />
+              )}
+            </div>
 
-              {/* 撤销 / 重做(主要用于回退 AI 引导的改动) */}
+            <div className={styles.sendArea}>
+              {/* 恢复态:重新生成(按当前输入重新走流程) */}
+              {resumeMode && (
+                <button
+                  type="button"
+                  className={styles.regen}
+                  disabled={!canSubmit}
+                  onClick={() => submit()}
+                  title="按当前输入重新生成"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+                    <path d="M20 4v4h-4" />
+                  </svg>
+                  重新生成
+                </button>
+              )}
               <button
                 type="button"
-                className={styles.iconBtn}
-                onClick={undo}
-                disabled={!canUndo}
-                title="撤销"
-                aria-label="撤销"
+                className={styles.send}
+                // 恢复态(下一步)始终可点;普通发送需有输入
+                disabled={resumeMode ? false : !canSubmit}
+                onClick={() => (resumeMode ? onResume?.() : submit())}
+                aria-label={resumeMode ? '下一步' : '生成'}
+                title={resumeMode ? '下一步' : '生成(Ctrl/⌘ + Enter)'}
               >
+                {/* 白色右箭头;圆底由 .send 控制(可点=品牌绿,不可点=禁用灰) */}
                 <svg
-                  viewBox="0 0 24 24"
                   width="20"
-                  height="20"
+                  height="14"
+                  viewBox="0 0 20 14"
                   fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden="true"
                 >
-                  <path d="M9 7H5V3" />
-                  <path d="M5 7a8 8 0 1 1-2 5.3" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className={styles.iconBtn}
-                onClick={redo}
-                disabled={!canRedo}
-                title="重做"
-                aria-label="重做"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="20"
-                  height="20"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M15 7h4V3" />
-                  <path d="M19 7a8 8 0 1 0 2 5.3" />
+                  <path
+                    d="M1.05649 8.0251H16.5914L12.2367 12.2495C12.0385 12.4418 11.9271 12.7025 11.9271 12.9745C11.927 13.2464 12.0383 13.5072 12.2364 13.6995C12.4346 13.8919 12.7034 13.9999 12.9836 14C13.2639 14.0001 13.5327 13.8921 13.7309 13.6998L19.7078 7.90093C19.9614 7.65491 20.0398 7.3181 19.9819 7.00004C20.0398 6.68257 19.9608 6.34518 19.7078 6.09916L13.7309 0.300249C13.5328 0.108003 13.2641 0 12.9838 0C12.7036 0 12.4349 0.108003 12.2367 0.300249C12.0386 0.492495 11.9273 0.753236 11.9273 1.02511C11.9273 1.29699 12.0386 1.55773 12.2367 1.74998L16.5914 5.97498H1.05649C0.776285 5.97498 0.507557 6.08298 0.309422 6.27522C0.111287 6.46745 -2.3859e-05 6.72818 -2.3859e-05 7.00004C-2.3859e-05 7.27191 0.111287 7.53263 0.309422 7.72487C0.507557 7.91711 0.776285 8.0251 1.05649 8.0251Z"
+                    fill="white"
+                  />
                 </svg>
               </button>
             </div>
-
-            <button
-              type="button"
-              className={styles.send}
-              disabled={!canSubmit}
-              onClick={submit}
-              aria-label="生成"
-              title="生成(Ctrl/⌘ + Enter)"
-            >
-              {/* 发送图标:有输入=品牌绿(#1FCFA9),无输入=禁用灰(#D9D9D9) */}
-              <svg
-                width="40"
-                height="40"
-                viewBox="0 0 40 40"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden="true"
-              >
-                <path
-                  d="M34.1395 5.85926C26.3291 -1.95309 13.6662 -1.95309 5.85779 5.85926C-1.95064 13.6716 -1.95455 26.332 5.85779 34.1424C13.6701 41.9528 26.3305 41.9523 34.1409 34.1424C41.9513 26.3325 41.9494 13.6677 34.1395 5.85926ZM30.6669 18.5416L22.8687 24.4673C22.8072 24.5144 22.7338 24.5435 22.6567 24.5512C22.5796 24.5589 22.5019 24.545 22.4323 24.5109C22.3627 24.4769 22.304 24.4241 22.2627 24.3585C22.2215 24.2929 22.1993 24.2171 22.1988 24.1397V21.4981C22.1983 21.3926 22.1577 21.2911 22.0851 21.2145C22.0126 21.1378 21.9135 21.0917 21.8082 21.0855C18.2711 20.8629 15.1711 21.2349 13.072 23.4409C11.9978 24.5703 10.7024 26.81 10.3924 27.4672C10.3484 27.56 10.2674 27.7319 10.0721 27.7968L10.055 27.8022C9.98791 27.8233 9.9166 27.8271 9.84765 27.8134C9.77869 27.7997 9.71431 27.7688 9.66045 27.7236C9.47589 27.5688 9.36407 27.475 10.1058 24.4468C11.3631 19.3199 16.2702 15.9689 21.8282 15.3527C21.9297 15.3421 22.0238 15.2944 22.0923 15.2187C22.1607 15.143 22.1989 15.0447 22.1993 14.9426V12.2883C22.2002 12.2111 22.2227 12.1357 22.264 12.0704C22.3054 12.0052 22.3641 11.9528 22.4335 11.919C22.503 11.8852 22.5804 11.8714 22.6573 11.8791C22.7341 11.8868 22.8073 11.9157 22.8687 11.9627L30.6669 17.8864C30.7176 17.9246 30.7588 17.9741 30.7872 18.0309C30.8155 18.0878 30.8303 18.1505 30.8303 18.214C30.8303 18.2775 30.8155 18.3402 30.7872 18.3971C30.7588 18.4539 30.7176 18.5034 30.6669 18.5416Z"
-                  fill={canSubmit ? '#1FCFA9' : '#D9D9D9'}
-                />
-              </svg>
-            </button>
           </div>
         </div>
       </div>

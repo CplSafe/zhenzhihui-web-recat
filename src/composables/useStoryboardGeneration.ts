@@ -27,7 +27,8 @@ import { buildStoryboardEditInputAssets, buildStoryboardImageParams } from '../u
 import { sanitizeMediaUrl } from '../utils/urlSafety'
 import { isImageMaterial } from '../utils/materials'
 
-const STORYBOARD_MODEL_KEYWORDS = ['seedream', 'seeddream', 'doubao-seedream']
+// 生图模型偏好:GPT Image 2(openai gpt-image-2,支持 image.text_to_image / image.image_to_image)
+const STORYBOARD_MODEL_KEYWORDS = ['gpt-image-2', 'gpt-image', 'gpt image']
 const STORYBOARD_POLL_INTERVAL_MS = 2000
 const STORYBOARD_POLL_TIMEOUT_MS = 5 * 60 * 1000
 const MAX_STORYBOARDS = 9
@@ -131,7 +132,11 @@ async function findAssetIdByTaskId({ workspaceId, taskId }: { workspaceId?: any;
   }
 }
 
-async function uploadImageUrlAsAsset({ workspaceId, url, name = '' }: { workspaceId?: any; url?: any; name?: string } = {}) {
+async function uploadImageUrlAsAsset({
+  workspaceId,
+  url,
+  name = '',
+}: { workspaceId?: any; url?: any; name?: string } = {}) {
   const wsId = toPositiveInt(workspaceId)
   if (!wsId || !url) return 0
   const response = await fetch(url)
@@ -168,7 +173,6 @@ function findLastAssetId(materials: any, predicate: (m: any) => boolean = () => 
   }
   return 0
 }
-
 
 // Encapsulates chained image-to-image storyboard generation:
 //  - first frame: text-to-image
@@ -340,7 +344,10 @@ export function useStoryboardGeneration(deps: UseStoryboardGenerationDeps) {
     return itemsRef.current.find((board) => board.id === itemId)
   }
 
-  function withItemHistory(itemId: string, mutate: (board: StoryboardItem, history: ImageVersion[]) => StoryboardItem | void) {
+  function withItemHistory(
+    itemId: string,
+    mutate: (board: StoryboardItem, history: ImageVersion[]) => StoryboardItem | void,
+  ) {
     updateItem(itemId, (board) => {
       const history = asArray(board.versionHistory)
       if (!history.length) return board

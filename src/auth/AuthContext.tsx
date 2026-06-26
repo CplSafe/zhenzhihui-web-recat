@@ -4,6 +4,7 @@
  * 在路由根（App）下提供，路由视图经 useAuth() 读取 authSession 及 login/logout 处理器。
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -16,7 +17,8 @@ import {
 } from '../api/auth'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
 
-const REFRESH_INTERVAL_MS = 20 * 60 * 1000 // 20 minutes
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes(原 20min,缩短以更早续期,给较短的会话 TTL 留余量)
+const VISIBILITY_REFRESH_GAP_MS = 2 * 60 * 1000 // 回到页面时:距上次续期超过 2 分钟才再续,避免频繁刷新
 
 export interface AuthContextValue {
   authSession: any
@@ -50,6 +52,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadAuthSessionRef = useRef<() => Promise<void>>(async () => {})
   // 并发序号：仅最新一次会话检查的结果可写回 state，避免慢请求覆盖快请求。
   const loadSeqRef = useRef(0)
+  // 上次成功续期的时间戳，供「回到页面时续期」节流用。
+  const lastRefreshRef = useRef(0)
 
   const stopSessionRefresh = useCallback(() => {
     if (refreshTimer.current) {
@@ -60,9 +64,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const startSessionRefresh = useCallback(() => {
     stopSessionRefresh()
+    lastRefreshRef.current = Date.now()
     refreshTimer.current = setInterval(async () => {
       try {
         await refreshSession()
+        lastRefreshRef.current = Date.now()
       } catch {
         // 刷新失败 → 会话可能已过期：立即重新校验会话；若确已失效会清掉登录态，
         // 由 App 的中央守卫跳转登录，而不是停留在"已登录"的死会话上。
@@ -77,9 +83,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const isStale = () => seq !== loadSeqRef.current
     setIsCheckingSession(true)
     setAuthCheckError('')
+
+    // 开发模式：仅在未配置远程后端时用 mock session 跳过鉴权。
+    // 配置了 VITE_ZZH_REMOTE_ORIGIN 时走真实认证流程。
+    const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
+    if (import.meta.env.DEV && !hasRemoteBackend) {
+      const justLoggedOut = (window as any).__zzh_dev_logout__
+      delete (window as any).__zzh_dev_logout__
+      if (justLoggedOut) {
+        // 主动退出：不 mock，走正常未登录流程 → 跳 /welcome（开屏页）
+        if (!isStale()) {
+          setSession(null)
+          setIsAuthenticated(false)
+          setAuthSession(null)
+          setIsCheckingSession(false)
+          clearAuthSessionMarker()
+        }
+        return
+      }
+      const mock = { user: { id: 1, nickname: 'dev' }, workspaces: [{ id: 1, name: 'dev' }] }
+      setSession(mock)
+      setIsAuthenticated(true)
+      setAuthSession(mock)
+      if (!isStale()) setIsCheckingSession(false)
+      return
+    }
+
     try {
       const session = await getAuthenticatedSession()
-      if (isStale()) return // 已有更新的检查在进行，丢弃本次结果
+      if (isStale()) return
       setSession(session)
       setIsAuthenticated(true)
       setAuthSession(session)
@@ -113,16 +145,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (session?: any) => {
       sessionStorage.removeItem('zzh_sso_pending')
       if (session) {
-        setSession(session)
-        setIsAuthenticated(true)
-        setAuthCheckError('')
-        setAuthSession(session)
+        flushSync(() => {
+          setSession(session)
+          setIsAuthenticated(true)
+          setAuthCheckError('')
+          setAuthSession(session)
+        })
+        markAuthSessionExpected()
+        navigate('/home', { replace: true })
+        return
+      }
+      if (import.meta.env.DEV && !import.meta.env.VITE_ZZH_REMOTE_ORIGIN) {
+        const mock = { user: { id: 1, nickname: 'dev' }, workspaces: [{ id: 1, name: 'dev' }] }
+        flushSync(() => {
+          setSession(mock)
+          setIsAuthenticated(true)
+          setAuthCheckError('')
+          setAuthSession(mock)
+        })
         markAuthSessionExpected()
         navigate('/home', { replace: true })
         return
       }
       loadAuthSession().then(() => {
-        // isAuthenticated 更新是异步的；用 store/重新取值判断后再导航。
         if (useWorkspaceSessionStore.getState().authSession) {
           navigate('/home', { replace: true })
         }
@@ -139,7 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthCheckError('')
     setAuthSession(null)
     clearAuthSessionMarker()
-    navigate('/login', { replace: true })
+    navigate('/welcome', { replace: true })
   }, [navigate, setAuthSession, stopSessionRefresh])
 
   // 首次挂载执行会话检查；卸载时停止刷新计时器。
@@ -148,6 +193,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => stopSessionRefresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 回到页面 / 窗口重新聚焦时主动续期一次(后台标签页计时器会被节流,切回来可能已临近过期)。
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const maybeRefresh = () => {
+      if (document.visibilityState !== 'visible') return
+      const now = Date.now()
+      if (now - lastRefreshRef.current < VISIBILITY_REFRESH_GAP_MS) return
+      lastRefreshRef.current = now
+      refreshSession()
+        .then(() => {
+          lastRefreshRef.current = Date.now()
+        })
+        .catch(() => {
+          stopSessionRefresh()
+          loadAuthSessionRef.current()
+        })
+    }
+    document.addEventListener('visibilitychange', maybeRefresh)
+    window.addEventListener('focus', maybeRefresh)
+    return () => {
+      document.removeEventListener('visibilitychange', maybeRefresh)
+      window.removeEventListener('focus', maybeRefresh)
+    }
+  }, [isAuthenticated, stopSessionRefresh])
 
   // 用 useMemo 固定 value 引用：否则每次渲染都是新对象，会让所有 useAuth() 消费者
   // （AuthProvider 包住整个路由树）连带全树重渲染。回调已是 useCallback 稳定引用。
