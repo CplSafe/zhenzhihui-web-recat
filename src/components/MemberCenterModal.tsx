@@ -16,6 +16,7 @@ import { useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import {
   createRechargeOrder,
+  createRenewalPayUrl,
   createSubscriptionOrder,
   getBusinessErrorMessage,
   getSubscription,
@@ -23,6 +24,7 @@ import {
   listBillingPlans,
   listCreditPackages,
   listPaymentOrders,
+  listRenewalOrders,
 } from '@/api/business'
 import './MemberCenterModal.css'
 
@@ -32,6 +34,7 @@ interface Feature {
 }
 
 // 后端 domain.Plan(已由 requestJson 解包 data)
+// 设计稿需要的「副标题/划线原价/折扣/生成额度」若后端未返回则降级不显示。
 interface ApiPlan {
   id: number
   code: string
@@ -40,6 +43,14 @@ interface ApiPlan {
   price_cents: number
   base_credits: number
   status?: string
+  description?: string
+  subtitle?: string
+  original_price_cents?: number
+  list_price_cents?: number
+  origin_price_cents?: number
+  discount?: string | number
+  quota?: string
+  display?: any
 }
 
 // 卡片视图模型
@@ -47,11 +58,15 @@ interface PlanVM {
   id: number
   code: string
   name: string
+  subtitle: string
   price: string
   unit: string
+  origin: string // 划线原价(￥899),无则空
+  discount: string // 折扣(8.8折),无则空
   credits: string
   creditUnit: string
   rate: string // 1积分≈X元
+  quota: string // 最多生成约 X 张图片,无则空
   features: Feature[]
   isTeam: boolean
 }
@@ -90,19 +105,53 @@ function periodLabel(p: ApiPlan): { unit: string; creditUnit: string } {
 }
 
 function toVM(p: ApiPlan): PlanVM {
-  const isTeam = /团队|team/i.test(`${p.name || ''} ${p.code || ''}`)
+  const s = `${p.name || ''} ${p.code || ''}`
+  const isTeam = /团队|team/i.test(s)
   const { unit, creditUnit } = periodLabel(p)
   const credits = Number(p.base_credits ?? 0)
-  const rate = credits > 0 ? `1积分≈${(Number(p.price_cents || 0) / 100 / credits).toFixed(2)}元` : ''
+  const priceCents = Number(p.price_cents || 0)
+  const rate = credits > 0 ? `1积分≈${(priceCents / 100 / credits).toFixed(2)}元` : ''
+  const periodKey = /7\s*天|试用|trial|week/i.test(s)
+    ? 'trial'
+    : /季|quarter/i.test(s)
+      ? 'quarter'
+      : /年|year/i.test(s) || p.period === 'year'
+        ? 'year'
+        : 'month'
+
+  // 划线原价 + 折扣:① 后端字段优先;② 暂未返回时按设计稿规则「写死」(按周期固定折扣,原价由现价反推)。
+  const originCents = Number(p.original_price_cents || p.list_price_cents || p.origin_price_cents || 0) || 0
+  let origin = originCents > priceCents ? `￥${yuan(originCents)}` : ''
+  let discount = p.discount ? String(p.discount) : ''
+  if (!origin && !discount) {
+    const ratio = periodKey === 'quarter' ? 0.75 : periodKey === 'year' ? 0.7 : periodKey === 'month' ? 0.88 : 0
+    if (ratio && priceCents > 0) {
+      discount = `${Math.round((ratio * 100) / 10)}折` // 0.88 → 8.8折
+      origin = `￥${Math.round(priceCents / 100 / ratio)}`
+    }
+  }
+
+  const subtitle =
+    String(p.subtitle || p.description || p.display?.subtitle || '').trim() ||
+    (isTeam ? '多成员共享创作,素材高效管理' : '解锁全量核心功能,高效产出')
+
+  // 生成额度:后端字段优先;否则按积分估算(试用档 800积分≈24张/10条,反推 33积分/张、80积分/条)
+  const quota =
+    String(p.quota || p.display?.quota || '').trim() ||
+    (credits > 0 ? `最多生成约 ${Math.round(credits / 33)} 张图片 | ${Math.round(credits / 80)} 个视频` : '')
   return {
     id: Number(p.id),
     code: p.code || '',
     name: p.name || '套餐',
+    subtitle,
     price: yuan(p.price_cents),
     unit,
+    origin,
+    discount,
     credits: String(credits),
     creditUnit,
     rate,
+    quota,
     features: isTeam ? FEATURES_TEAM : FEATURES_PERSONAL,
     isTeam,
   }
@@ -130,17 +179,23 @@ function Check({ ok }: { ok: boolean }) {
 function PlanCard({ plan, buying, onBuy }: { plan: PlanVM; buying: boolean; onBuy: (p: PlanVM) => void }) {
   return (
     <div className="mc-card">
-      <div className="mc-card-name">{plan.name}</div>
+      <div className="mc-card-head">
+        <span className="mc-card-name">{plan.name}</span>
+        {plan.discount && <span className="mc-card-discount">{plan.discount}</span>}
+      </div>
+      <div className="mc-card-sub">{plan.subtitle}</div>
       <div className="mc-card-price">
         <span className="mc-card-cny">￥</span>
         <span className="mc-card-num">{plan.price}</span>
         <span className="mc-card-unit">{plan.unit}</span>
+        {plan.origin && <span className="mc-card-origin">{plan.origin}</span>}
       </div>
       <div className="mc-card-credits">
         <span className="mc-card-credit-num">{plan.credits}</span>
         <span className="mc-card-credit-unit">{plan.creditUnit}</span>
         {plan.rate && <span className="mc-card-rate">{plan.rate}</span>}
       </div>
+      {plan.quota && <div className="mc-card-quota">{plan.quota}</div>}
       <button type="button" className="mc-card-buy" disabled={buying} onClick={() => onBuy(plan)}>
         {buying ? '处理中…' : '立即开通'}
       </button>
@@ -169,30 +224,38 @@ interface ApiPackage {
 interface PackageVM {
   id: number
   name: string
+  subtitle: string
   credits: string
   price: string
+  rate: string
 }
 function toPkgVM(p: ApiPackage): PackageVM {
+  const credits = Number(p.credits ?? 0)
+  const rate = credits > 0 ? `1积分≈${(Number(p.amount_cents || 0) / 100 / credits).toFixed(2)}元` : ''
   return {
     id: Number(p.id),
     name: p.name || '积分包',
-    credits: String(p.credits ?? 0),
+    subtitle: '一次性充值,积分永久有效',
+    credits: String(credits),
     price: yuan(p.amount_cents),
+    rate,
   }
 }
 
+// 积分充值卡复用套餐卡的视觉(同样的 .mc-card 外观与配色)
 function PackageCard({ pkg, buying, onBuy }: { pkg: PackageVM; buying: boolean; onBuy: (p: PackageVM) => void }) {
   return (
     <div className="mc-card">
       <div className="mc-card-name">{pkg.name}</div>
-      <div className="mc-card-credits">
-        <span className="mc-card-credit-num">{pkg.credits}</span>
-        <span className="mc-card-credit-unit">积分</span>
-        <span className="mc-card-rate">1积分=0.09元</span>
-      </div>
+      <div className="mc-card-sub">{pkg.subtitle}</div>
       <div className="mc-card-price">
         <span className="mc-card-cny">￥</span>
         <span className="mc-card-num">{pkg.price}</span>
+      </div>
+      <div className="mc-card-credits">
+        <span className="mc-card-credit-num">{pkg.credits}</span>
+        <span className="mc-card-credit-unit">积分</span>
+        {pkg.rate && <span className="mc-card-rate">{pkg.rate}</span>}
       </div>
       <button type="button" className="mc-card-buy" disabled={buying} onClick={() => onBuy(pkg)}>
         {buying ? '处理中…' : '立即充值'}
@@ -211,7 +274,8 @@ interface MemberCenterModalProps {
 export default function MemberCenterModal({ open, onClose, embedded = false }: MemberCenterModalProps) {
   const { showToast } = useToast()
   const workspaceId = Number(useWorkspaceId() || 0)
-  const [mainTab, setMainTab] = useState<'plan' | 'recharge'>('recharge')
+  // 顶层 tab:基础版(个人套餐)/ 团队版(团队套餐)/ 积分充值
+  const [mainTab, setMainTab] = useState<'basic' | 'team' | 'recharge'>('basic')
   const [plans, setPlans] = useState<PlanVM[]>([])
   const [packages, setPackages] = useState<PackageVM[]>([])
   const [loading, setLoading] = useState(false)
@@ -234,6 +298,8 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   // 支付状态轮询(payment-orders / subscription / wallet)
   const [paid, setPaid] = useState(false)
   const [checking, setChecking] = useState(false)
+  // 待支付续费账单
+  const [renewals, setRenewals] = useState<any[]>([])
 
   // Esc 关闭(仅弹窗模式;页面模式不拦 Esc)
   useEffect(() => {
@@ -251,7 +317,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     setStep('plans')
     setPayInfo(null)
     setPaid(false)
-    setMainTab('recharge')
+    setMainTab('basic')
     setLoading(true)
     setError('')
     listBillingPlans()
@@ -276,9 +342,17 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       getSubscription(workspaceId)
         .then((s: any) => alive && setSubscription(s))
         .catch(() => alive && setSubscription(null))
+      // 待支付续费账单
+      listRenewalOrders(workspaceId)
+        .then(
+          (list: any) =>
+            alive && setRenewals(Array.isArray(list) ? list : Array.isArray(list?.items) ? list.items : []),
+        )
+        .catch(() => alive && setRenewals([]))
     } else {
       setBalance(null)
       setSubscription(null)
+      setRenewals([])
     }
     return () => {
       alive = false
@@ -312,7 +386,8 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
 
   if (!open) return null
 
-  const visible = plans // 基础版/团队版已合并,所有套餐一起展示
+  // 基础版 = 非团队套餐;团队版 = 团队套餐
+  const visible = mainTab === 'team' ? plans.filter((p) => p.isTeam) : plans.filter((p) => !p.isTeam)
 
   // 会员开通:普通订阅(一次性付款,pay_url);签约(sign-url)是周期扣款,暂未开通权限
   const onBuy = async (p: PlanVM) => {
@@ -391,6 +466,45 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         setStep('pay')
       } else {
         showToast(getBusinessErrorMessage(e, '充值失败,请稍后重试'), 'error')
+      }
+    } finally {
+      setBuyingId(0)
+    }
+  }
+
+  // 待支付续费账单:生成支付链接 → 进扫码支付
+  const onPayRenewal = async (order: any) => {
+    if (buyingId) return
+    const orderId = Number(order?.id ?? order?.order_id ?? 0) || 0
+    if (!workspaceId || !orderId) {
+      showToast('账单信息缺失,无法支付', 'error')
+      return
+    }
+    const amountCents = Number(order?.amount_cents ?? order?.amount ?? 0) || 0
+    const title = String(order?.plan_name ?? order?.title ?? '续费账单')
+    setBuyingId(orderId)
+    setPaid(false)
+    try {
+      const res: any = await createRenewalPayUrl({ workspaceId, renewalOrderId: orderId })
+      const url = String(res?.pay_url || '')
+      if (url) {
+        setPayInfo({ kind: 'plan', title, price: amountCents ? `￥${yuan(amountCents)}` : '', url, demo: false })
+        setStep('pay')
+      } else {
+        showToast('未获取到支付链接,请稍后重试', 'error')
+      }
+    } catch (e) {
+      if (import.meta.env.DEV) {
+        setPayInfo({
+          kind: 'plan',
+          title,
+          price: amountCents ? `￥${yuan(amountCents)}` : '',
+          url: `https://example.com/pay/preview?renewal=${orderId}`,
+          demo: true,
+        })
+        setStep('pay')
+      } else {
+        showToast(getBusinessErrorMessage(e, '生成支付链接失败,请稍后重试'), 'error')
       }
     } finally {
       setBuyingId(0)
@@ -510,7 +624,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           ) : (
             <>
               <div className="mcm-pay-qr">
-                <QRCodeCanvas value={payInfo.url} size={196} marginSize={1} fgColor="#333333" bgColor="#ffffff" />
+                <QRCodeCanvas value={payInfo.url} size={260} marginSize={1} fgColor="#333333" bgColor="#ffffff" />
               </div>
               <div className="mcm-pay-tip">请使用支付宝扫码完成支付</div>
               {payInfo.demo ? (
@@ -528,6 +642,33 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         <>
           <h2 className="mcm-title">会员中心</h2>
           {balance !== null && <div className="mcm-balance">当前积分余额:{balance}</div>}
+
+          {/* 待支付续费账单:有则置顶提醒,点「去支付」走扫码 */}
+          {renewals.length > 0 && (
+            <div className="mcm-renewals">
+              {renewals.map((order: any) => {
+                const oid = Number(order?.id ?? order?.order_id ?? 0) || 0
+                const amt = Number(order?.amount_cents ?? order?.amount ?? 0) || 0
+                const name = String(order?.plan_name ?? order?.title ?? '续费账单')
+                return (
+                  <div className="mcm-renewal" key={oid || name}>
+                    <span className="mcm-renewal-info">
+                      待支付:{name}
+                      {amt > 0 && <b> ￥{yuan(amt)}</b>}
+                    </span>
+                    <button
+                      type="button"
+                      className="mcm-renewal-pay"
+                      disabled={buyingId === oid}
+                      onClick={() => onPayRenewal(order)}
+                    >
+                      {buyingId === oid ? '处理中…' : '去支付'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {/* 当前订阅信息(套餐 / 席位 / 并发);未订阅不显示 */}
           {subscription?.active && (
@@ -547,8 +688,22 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
             </div>
           )}
 
-          {/* 顶层:会员套餐 / 积分充值 */}
+          {/* 顶层:基础版 / 团队版 / 积分充值 */}
           <div className="mcm-tabs">
+            <button
+              type="button"
+              className={`mcm-tab${mainTab === 'basic' ? ' is-active' : ''}`}
+              onClick={() => setMainTab('basic')}
+            >
+              基础版
+            </button>
+            <button
+              type="button"
+              className={`mcm-tab${mainTab === 'team' ? ' is-active' : ''}`}
+              onClick={() => setMainTab('team')}
+            >
+              团队版
+            </button>
             <button
               type="button"
               className={`mcm-tab${mainTab === 'recharge' ? ' is-active' : ''}`}
@@ -556,16 +711,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
             >
               积分充值
             </button>
-            <button
-              type="button"
-              className={`mcm-tab${mainTab === 'plan' ? ' is-active' : ''}`}
-              onClick={() => setMainTab('plan')}
-            >
-              会员套餐
-            </button>
           </div>
 
-          {mainTab === 'plan' ? (
+          {mainTab !== 'recharge' ? (
             <>
               {loading ? (
                 <div className="mcm-hint">套餐加载中…</div>

@@ -140,22 +140,19 @@
 }
 
 /* 内容区（可滚动；限宽并居中，避免超宽屏把卡片拉得过长）*/
-/* 桌面端:内容区不整页滚动,仅下方「模板库」框内部滚动(见 .home__section--grow / .home__tab-box) */
+/* 整页滚动:内容区作为唯一滚动容器,滚动条在最右(模板库不再内部滚动) */
 .home__content {
   flex: 1;
   min-height: 0;
   width: 100%;
-  max-width: 1480px;
-  margin: 0 auto;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   padding: 22px 28px 24px;
+  overflow-y: auto;
 }
-/* 最后一个区块(标签+模板库)占满剩余高度,使其内部的 tab-box 成为唯一滚动区 */
+/* 模板库区块随内容自然撑高,不再占满剩余高度 / 不再内部滚动 */
 .home__section--grow {
-  flex: 1 1 0%;
-  min-height: 0;
   display: flex;
   flex-direction: column;
   margin-bottom: 0;
@@ -569,22 +566,10 @@ button.home__template-card {
   cursor: pointer;
 }
 
-/* ── 模板库/历史项目:填满 banner/快捷入口下方剩余高度,内部滚动(桌面端唯一滚动区) ── */
+/* ── 模板库/历史项目:随内容自然撑高,不再内部滚动(整页滚动见 .home__content) ── */
 .home__tab-box {
-  flex: 1 1 0%;
-  min-height: 160px;
-  overflow-y: auto;
   padding: 4px 6px 8px;
   border-radius: 12px;
-  scrollbar-width: thin;
-  scrollbar-color: #d4dbe0 transparent;
-}
-.home__tab-box::-webkit-scrollbar {
-  width: 6px;
-}
-.home__tab-box::-webkit-scrollbar-thumb {
-  background: #d4dbe0;
-  border-radius: 3px;
 }
 
 /* 历史项目卡:封面 + 下方深色标题;auto-fill 按屏宽自适应,卡片不随大屏放大 */

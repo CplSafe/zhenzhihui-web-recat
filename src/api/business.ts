@@ -1587,6 +1587,29 @@ export function createSubscriptionOrder({ workspaceId, planId }) {
 }
 
 /**
+ * 待支付续费账单列表(订阅周期到期 / 待支付的续费单)。
+ * @param {number} workspaceId
+ * @returns {Promise<Array<object>>}
+ */
+export function listRenewalOrders(workspaceId) {
+  return requestJson(`/api/v1/billing/renewal-orders?workspace_id=${encodeURIComponent(String(workspaceId))}`)
+}
+
+/**
+ * 为某条待支付续费账单生成支付链接,返回支付宝 pay_url。
+ * @param {{ workspaceId: number, renewalOrderId: number }} params
+ * @returns {Promise<{ order?: object, pay_url: string }>}
+ */
+export function createRenewalPayUrl({ workspaceId, renewalOrderId }) {
+  const wsq = workspaceId ? `?workspace_id=${encodeURIComponent(String(workspaceId))}` : ''
+  return requestJson(`/api/v1/billing/renewal-orders/${Math.floor(Number(renewalOrderId))}/pay-url${wsq}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace_id: Number(workspaceId) }),
+  })
+}
+
+/**
  * Creates a recurring-subscription sign URL. Returns the plan plus an Alipay
  * agreement sign_url the caller opens in the system browser.
  * @param {{ workspaceId: number, planId: number }} params
