@@ -88,21 +88,25 @@
   }
 }
 
-/* 右侧缩略图容器:按项目比例自适应(横屏宽、竖屏窄),以固定高度为基准、宽度随比例,
-   这样竖屏不会把卡片撑得过宽。不裁切,便于动作菜单溢出显示 */
+/* 右侧缩略图容器:占据文字右侧剩余宽度,内部缩略图按项目比例居中。
+   横屏 → 缩略图填满宽度;竖屏 → 手机比例的窄盒子居中(不再又窄又贴右、留大片空白)。 */
 .thumbWrap {
   position: relative;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  height: 108px;
-  aspect-ratio: var(--frame-ratio, 16 / 9);
-  margin-left: auto;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
+/* 缩略图本体:以容器高度为基准、宽度随项目比例;横屏过宽时受 max-width 收住并仍保持比例 */
 .thumb {
   position: relative;
-  width: 100%;
   height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
