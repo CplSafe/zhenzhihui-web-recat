@@ -711,7 +711,6 @@ export default function HotCopyCreateView() {
                 steps={STEPS}
                 current={step}
                 statuses={['已完成', vidGenRunning ? '视频生成中' : fullVideo.url ? '已完成' : '待生成']}
-                maxReached={maxReached}
                 onStepClick={(i) => goStep(i)}
               />
             </div>

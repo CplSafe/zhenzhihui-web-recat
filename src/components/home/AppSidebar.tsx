@@ -4,7 +4,7 @@
  * props: activeKey 当前选中项；onNavigate(key) 点击回调（跳转由父级接线）。
  * 图标统一用简单 inline SVG（24x24, stroke=currentColor），避免引入新依赖。
  */
-import brandLogo from '@/img/image copy 6.png'
+import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
 import './AppSidebar.css'
 

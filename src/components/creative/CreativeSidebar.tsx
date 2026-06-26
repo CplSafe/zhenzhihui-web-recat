@@ -2,7 +2,7 @@
  * CreativeSidebar — 创意工作流左侧步骤导航
  * 显示 Prompt → 脚本 → 分镜 → 时间线 → 视频 五个步骤，高亮当前步骤，支持点击跳转。
  */
-import logoUrl from '@/img/image copy 6.png'
+import logoUrl from '@/img/image copy 7.png'
 import navDashboard from '@/assets/icons/nav-dashboard.svg'
 import navSteps from '@/assets/icons/nav-steps.svg'
 import navSpark from '@/assets/icons/nav-spark.svg'
@@ -95,12 +95,7 @@ export default function CreativeSidebar({
       </button>
 
       {!collapsed && (
-        <button
-          type="button"
-          className="sidebar-toggle"
-          aria-label="收起导航栏"
-          onClick={() => onToggleSidebar?.()}
-        >
+        <button type="button" className="sidebar-toggle" aria-label="收起导航栏" onClick={() => onToggleSidebar?.()}>
           <svg
             xmlns="http://www.w3.org/2000/svg"
             width="20"
