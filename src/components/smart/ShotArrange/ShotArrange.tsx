@@ -27,8 +27,8 @@ interface ShotArrangeProps {
     shot: Shot,
     opts: { mode: 'edit' | 'insert'; intent: string; uploadRefUrls: string[] },
   ) => Promise<boolean>
-  /** 弹框「AI一键润色」:润色描述文本 */
-  onPolishPrompt?: (text: string) => Promise<string>
+  /** 弹框「AI一键润色」:润色描述文本(带本次上传素材 → VL 读图理解诉求) */
+  onPolishPrompt?: (text: string, uploadRefUrls: string[]) => Promise<string>
   /** 台词/字幕/音效 的「AI一键润色」 */
   onPolishText?: (kind: 'line' | 'subtitle' | 'sound', text: string) => Promise<string>
 }

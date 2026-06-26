@@ -2367,11 +2367,12 @@ export default function SmartCreateView() {
           onShotsChange={setShots}
           onUploadRef={uploadRef}
           onGenerateShot={generateShotFromDialog}
-          onPolishPrompt={(text) =>
+          onPolishPrompt={(text, uploadRefUrls) =>
             refineShotPrompt({
               desc: text,
               outline: reqSummary || requirement, // 整体大纲(仅调性参考)
-              materials: [],
+              // 把本次上传的素材图作为 materials(带 url → VL 读图),让润色理解用户上传的素材
+              materials: (uploadRefUrls || []).filter(Boolean).map((url) => ({ url })),
               style: entryMeta?.style,
               ratio: entryMeta?.ratio,
             }).then((r: any) => r?.prompt || text)
