@@ -892,8 +892,9 @@ export default function SmartCreateView() {
     }
     if (shotGenRunning) return
     setShotGenRunning(true)
-    // 记录本次出图所依据的输入签名(供「下次进镜头编排时输入未变则不重生成」判断)
-    shotGenSigRef.current = shotImageInputSig(list, entryMeta)
+    // 记录本次出图所依据的输入签名(供「下次进镜头编排时输入未变则不重生成」判断)。
+    // 始终按【全部分镜】算签名:即便本次只续作部分(list 为缺图子集),签名仍代表完整输入,避免误判为「改动」而全量重生成。
+    shotGenSigRef.current = shotImageInputSig(shots, entryMeta)
     const cache: Record<string, number> = {}
     const theme = (reqSummary || '').slice(0, 60)
     const plans = await resolvePlanCandidates()
@@ -992,14 +993,16 @@ export default function SmartCreateView() {
     }
   }
 
-  // 进入镜头编排:分镜图未生成、或上游(脚本描述/素材)已改动则自动串行逐个生成(左侧缩略图转圈)。
-  // 已有分镜图且输入签名未变(草稿恢复 / 未改动)→ 不重生成;改了脚本或素材 → 输入签名变化 → 重新生成。
+  // 进入/返回镜头编排:上游(脚本描述/素材)改动 → 全量重生成;否则只补「还没出图」的分镜。
+  // 关键:不再用 autoGenRef 一次性闸门 —— 否则生成中离开镜头编排再回来时,被中断的镜头会永远卡在「待生成」。
+  // 现在按「缺图」续作:离开导致暂停 → 回到本步会自动把没出图的几张补齐。
   useEffect(() => {
     if (step !== 2 || !shots.length || shotGenRunning) return
-    if (autoGenRef.current) return
-    if (shots.some((s) => s.image) && shotImageInputSig(shots, entryMeta) === shotGenSigRef.current) return
-    autoGenRef.current = true
-    void generateShotImages()
+    const sig = shotImageInputSig(shots, entryMeta)
+    const changed = sig !== shotGenSigRef.current
+    const missing = shots.filter((s) => !s.image)
+    if (!changed && missing.length === 0) return // 全部已出图且上游未改动 → 不动(草稿恢复/未改动)
+    void generateShotImages(changed ? shots : missing)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, shots])
 
@@ -2449,6 +2452,7 @@ export default function SmartCreateView() {
               <StepProgress
                 steps={usedSkill ? [MARKETING_STEP, ...STEPS] : STEPS}
                 current={usedSkill ? (marketingOpen ? 0 : step + 1) : step}
+                clickableMax={usedSkill ? maxReached + 1 : maxReached}
                 statuses={(() => {
                   // 4 个流程步的子状态:脚本有分镜 / 已进入镜头编排(素材就绪) / 有任一分镜图 / 有整片视频
                   const done = [shots.length > 0, maxReached >= 2, shots.some((s) => s.image), !!fullVideo.url]
