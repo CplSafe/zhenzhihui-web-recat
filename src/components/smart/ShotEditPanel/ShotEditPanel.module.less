@@ -970,3 +970,32 @@
     cursor: default;
   }
 }
+/* ── 放大查看(主体素材 / 当前分镜图 / 历史版本)── */
+.zoomable {
+  cursor: zoom-in;
+}
+.seHistThumb {
+  position: relative;
+}
+/* hover 显示在图片右上角的放大图标;点击仅放大查看 */
+.seZoom {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: zoom-in;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.zoomable:hover .seZoom,
+.seHistThumb:hover .seZoom {
+  opacity: 1;
+}

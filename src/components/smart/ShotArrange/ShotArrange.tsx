@@ -48,6 +48,7 @@ export default function ShotArrange({
   onPolishText,
 }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
+  const [bigImg, setBigImg] = useState('') // 点击分镜缩略图 → 放大查看
   useEffect(() => {
     if (!shots.some((s) => s.id === selectedId)) setSelectedId(shots[0]?.id ?? null)
   }, [shots, selectedId])
@@ -108,6 +109,7 @@ export default function ShotArrange({
         onShotsChange={onShotsChange}
         onEditShot={openEditShot}
         onInsertShot={openInsertShot}
+        onPreview={setBigImg}
       />
       {selected ? (
         <ShotEditPanel
@@ -128,6 +130,16 @@ export default function ShotArrange({
         onGenerate={handleDialogGenerate}
         onClose={closeDlg}
       />
+
+      {/* 分镜缩略图放大查看灯箱 */}
+      {bigImg && (
+        <div className={styles.lightbox} onClick={() => setBigImg('')} role="dialog" aria-label="分镜图放大">
+          <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
+          <button type="button" className={styles.lightboxClose} onClick={() => setBigImg('')} aria-label="关闭">
+            ×
+          </button>
+        </div>
+      )}
     </div>
   )
 }
