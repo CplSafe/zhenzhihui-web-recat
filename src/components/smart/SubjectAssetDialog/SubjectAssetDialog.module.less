@@ -68,14 +68,16 @@
 .sadPreview {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  /* 按项目比例自适应(横屏/竖屏);竖屏过高用 max-height 收住并居中 */
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+  max-height: 56vh;
+  margin: 0 auto 14px;
   border-radius: 12px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 14px;
 
   img {
     width: 100%;

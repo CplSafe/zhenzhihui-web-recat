@@ -88,12 +88,15 @@
   }
 }
 
-/* 右侧缩略图容器(撑满文字右侧剩余宽度);不裁切,便于动作菜单溢出显示 */
+/* 右侧缩略图容器:按项目比例自适应(横屏宽、竖屏窄),以固定高度为基准、宽度随比例,
+   这样竖屏不会把卡片撑得过宽。不裁切,便于动作菜单溢出显示 */
 .thumbWrap {
   position: relative;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   height: 108px;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+  margin-left: auto;
 }
 
 .thumb {

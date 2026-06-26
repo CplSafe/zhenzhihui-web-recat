@@ -67,7 +67,10 @@
 /* ── 播放器 ── */
 .vstagePlayer {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  /* 按项目比例自适应(横屏/竖屏);竖屏过高用 max-height 收住并居中 */
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+  max-height: 64vh;
+  margin: 0 auto;
   border-radius: 12px;
   overflow: hidden;
   background: #0d1117;

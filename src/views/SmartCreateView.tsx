@@ -374,6 +374,15 @@ export default function SmartCreateView() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subjectDlg.open, subjectDlg.name, workspaceId])
+  // 横屏/竖屏适配:把项目比例(如 9:16 / 16:9)写成全局 CSS 变量 --frame-ratio,
+  // 各处分镜图/视频预览/缩略图据它设 aspect-ratio(默认 16/9)。卸载时清理。
+  useEffect(() => {
+    const r = String(entryMeta?.ratio || '16:9').replace(':', ' / ')
+    document.documentElement.style.setProperty('--frame-ratio', r)
+    return () => {
+      document.documentElement.style.removeProperty('--frame-ratio')
+    }
+  }, [entryMeta?.ratio])
   // 素材出图:
   //  - carryCurrent=true(修改):带上当前这张图作 img2img 底图,在其基础上改;
   //  - carryCurrent=false(重新生成):不带当前图,从头生成;
