@@ -66,8 +66,11 @@ function AppShell() {
 
       <AppToast />
       <AppConfirmDialog />
-      {/* 帮助中心悬浮球:仅在已登录的业务页显示,登录/开屏页不显示 */}
-      {requiresAuth && isAuthenticated && !isCheckingSession && <HelpCenter />}
+      {/* 帮助中心悬浮球:登录后所有业务页都显示(含 requiresAuth:false 的 /smart、/hot-copy),登录/开屏页不显示 */}
+      {isAuthenticated &&
+        !isCheckingSession &&
+        location.pathname !== '/login' &&
+        location.pathname !== '/welcome' && <HelpCenter />}
     </>
   )
 }

@@ -19,6 +19,8 @@ import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import Markdown from '@/components/common/Markdown'
 import {
   generateProjectName,
+  generateProjectNameFromImages,
+  matchUploadsToSubjects,
   summarizeRequirement,
   refineElementPrompt,
   refineElementPromptWithImage,
@@ -33,7 +35,7 @@ import {
   type MarketingFieldKey,
 } from '@/api/aiPolish'
 import MarketingBreakdown from '@/components/smart/MarketingBreakdown'
-import { generateScriptShotsStream, generateShotInfo, extractSubjects } from '@/api/smartScript'
+import { generateScriptShotsStream, generateShotInfo, extractSubjects, mergeSingleUseSubjects } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
 import {
   generateFullVideo,
@@ -111,6 +113,8 @@ interface BottomButton {
   variant: 'ghost' | 'primary' | 'text'
   action: () => void
   disabled?: boolean
+  /** 禁用时的悬停提示(说明为什么不可点) */
+  tip?: string
   icon?: ReactNode
   /** 底栏对齐:重新生成靠左,其余靠右(默认右) */
   align?: 'left' | 'right'
@@ -260,6 +264,8 @@ export default function SmartCreateView() {
     kind: '',
     autoGen: false,
   })
+  // 已选参考图(主推产品锚定的上传素材)的展示 URL 列表:打开弹窗时按 refAssetIds 解析(草稿恢复后也能显示多张)
+  const [anchorRefs, setAnchorRefs] = useState<string[]>([])
   // 准备素材「一键生成」:逐个主体生成时的 loading(键=主体名),以及整体批量进行中标记
   const [subjectGenerating, setSubjectGenerating] = useState<Record<string, boolean>>({})
   const [batchGenning, setBatchGenning] = useState(false)
@@ -327,6 +333,47 @@ export default function SmartCreateView() {
     for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.image) return su.image
     return ''
   }
+  // 主体锚定的上传素材(主推产品):有则该主体生成时走「图生图保真」(从上传素材抠成干净单品)。
+  // 多图归同一产品时返回全部 assetIds(都作图生图参考),url 取第一张供展示/VL 优化提示词。
+  const subjectRefOf = (name: string): { url?: string; assetId?: number; assetIds?: number[] } => {
+    for (const sh of shots)
+      for (const su of sh.subjects)
+        if (stripAt(su.tag) === name && (su.refImage || su.refAssetId || su.refAssetIds?.length))
+          return {
+            url: su.refImage,
+            assetId: Number(su.refAssetId || 0) || undefined,
+            assetIds: su.refAssetIds?.length ? su.refAssetIds : su.refAssetId ? [su.refAssetId] : undefined,
+          }
+    return {}
+  }
+  // 注入的主推产品(VL 没匹配上时):须用户手动生成,排除出「AI一键生成」批量。
+  const subjectManualOf = (name: string): boolean => {
+    for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.manualGen) return true
+    return false
+  }
+  // 打开素材弹窗时:把该主体锚定的多张上传素材按 refAssetIds 解析出展示 URL(草稿恢复后 refImage 被剥离,靠 assetId 取回)。
+  useEffect(() => {
+    if (!subjectDlg.open) {
+      setAnchorRefs([])
+      return
+    }
+    const ref = subjectRefOf(subjectDlg.name)
+    const ids = ref.assetIds && ref.assetIds.length ? ref.assetIds : ref.assetId ? [ref.assetId] : []
+    const ws = Number(workspaceId || 0)
+    if (!ids.length || !ws) {
+      setAnchorRefs(ref.url ? [ref.url] : [])
+      return
+    }
+    let alive = true
+    void (async () => {
+      const urls = (await Promise.all(ids.map((id) => refreshAssetUrl(ws, id).catch(() => '')))).filter(Boolean)
+      if (alive) setAnchorRefs(urls.length ? urls : ref.url ? [ref.url] : [])
+    })()
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subjectDlg.open, subjectDlg.name, workspaceId])
   // 素材出图:
   //  - carryCurrent=true(修改):带上当前这张图作 img2img 底图,在其基础上改;
   //  - carryCurrent=false(重新生成):不带当前图,从头生成;
@@ -346,8 +393,12 @@ export default function SmartCreateView() {
       let finalPrompt = prompt
       const refAssetIds: number[] = []
       const cache: Record<string, number> = {}
-      // 参考图:VL 优化提示词 + 作参考
+      // 参考图:显式传入(弹窗手动加)优先;否则用该主体锚定的上传素材(主推产品 → 图生图保真,支持多张)。
+      const anchored = subjectRefOf(name)
+      const anchoredIds =
+        anchored.assetIds && anchored.assetIds.length ? anchored.assetIds : anchored.assetId ? [anchored.assetId] : []
       if (opts.refImageUrl) {
+        // 弹窗手动加的参考图:VL 优化提示词 + 作图生图参考
         try {
           finalPrompt = await refineElementPromptWithImage(prompt, opts.refImageUrl, {
             name,
@@ -363,6 +414,26 @@ export default function SmartCreateView() {
         } catch {
           /* ignore */
         }
+      } else if (anchoredIds.length) {
+        // 锚定的上传素材:取第一张刷新出 URL 给 VL 优化提示词;全部 assetId 作图生图参考(草稿恢复后按 assetId 取最新)
+        let refUrl = anchored.url
+        try {
+          refUrl = await refreshAssetUrl(ws, anchoredIds[0])
+        } catch {
+          /* 刷新失败则沿用 refImage 原值 */
+        }
+        if (refUrl) {
+          try {
+            finalPrompt = await refineElementPromptWithImage(prompt, refUrl, {
+              name,
+              kind: subjectKindOf(name),
+              style: entryMeta?.style,
+            })
+          } catch {
+            /* 优化失败则用原提示词 */
+          }
+        }
+        refAssetIds.push(...anchoredIds)
       }
       // 修改:把当前这张图作底图(img2img)
       if (opts.carryCurrent) {
@@ -388,6 +459,81 @@ export default function SmartCreateView() {
     } catch (e: any) {
       showToast(`素材「${name}」生成失败:${e?.message || '请重试'}`, 'error')
     }
+  }
+  // 主推产品锚定(支持多张上传素材):一次 VL 看全部上传图 + 主体清单 → 产品分组。
+  //  - 同一产品的多张图归一组,该组所有命中主体「产品合一」成 1 个产品素材,组内多张图都作图生图参考(保真);
+  //  - 不同产品 → 各自一个素材;主体归属互斥(由 VL 统一裁决);场景/背景/无关道具不锚定,保持 AI 文生图;
+  //  - 某产品在分镜清单里没有对应主体(matches 空)→ 注入该「主推产品」并标 manualGen(排除批量、须手动生成)。
+  const anchorUploadsToSubjects = async (list: Shot[], images: string[], assetIds?: number[]): Promise<Shot[]> => {
+    const ws = Number(workspaceId || 0)
+    const imgs = (images || []).filter(Boolean)
+    if (!imgs.length || !list.length) return list
+    const allNames = Array.from(
+      new Set(list.flatMap((sh) => (sh.subjects || []).map((su) => stripAt(su.tag)).filter(Boolean))),
+    )
+    // 1) 持久化全部上传图,拿 durable {url, assetId}(已给 assetId 则复用)
+    const cache: Record<string, number> = {}
+    const persisted = await Promise.all(
+      imgs.map(async (url, i) => {
+        let u = url
+        let aid = Number(assetIds?.[i] || 0) || 0
+        if (!aid && ws) {
+          try {
+            const out: any = await persistImageAsset(ws, url, cache)
+            u = out?.url || url
+            aid = Number(out?.assetId || 0) || 0
+          } catch {
+            /* 持久化失败:仍用原 url,生成时再 ensureAssetId */
+          }
+        }
+        return { url: u, assetId: aid }
+      }),
+    )
+    // 2) 一次 VL 看全部图 → 产品分组(同产品多图归组、主体互斥)
+    let products: { product: string; kind: string; imageIndexes: number[]; matches: string[] }[] = []
+    try {
+      products = (await matchUploadsToSubjects(persisted.map((p) => p.url), allNames)).products
+    } catch {
+      /* VL 失败 → 下面兜底成一个「主推产品」 */
+    }
+    // VL 完全没结果:兜底成一个引用全部上传图的「主推产品」(注入、手动生成),至少把素材锚上
+    if (!products.length) {
+      products = [{ product: '主推产品', kind: '产品', imageIndexes: persisted.map((_, i) => i + 1), matches: [] }]
+    }
+    // 3) 逐产品组:命中 → 产品合一合并;未命中 → 注入
+    let out = list.map((sh) => ({ ...sh, subjects: (sh.subjects || []).map((su) => ({ ...su })) }))
+    const injections: { tag: string; kind: string; refImage?: string; refAssetId?: number; refAssetIds?: number[] }[] =
+      []
+    for (const p of products) {
+      const groupIds = (p.imageIndexes || []).map((i) => persisted[i - 1]?.assetId || 0).filter(Boolean)
+      const refImage = persisted[(p.imageIndexes?.[0] || 1) - 1]?.url || persisted[0]?.url
+      const refAssetId = groupIds[0] || persisted[0]?.assetId || 0
+      const refAssetIds = groupIds.length ? groupIds : refAssetId ? [refAssetId] : undefined
+      const prodName = p.product || p.matches[0] || '主推产品'
+      const prodKind = p.kind || '产品'
+      if (p.matches.length) {
+        const set = new Set(p.matches)
+        out = out.map((sh) => {
+          if (!sh.subjects.some((su) => set.has(stripAt(su.tag)))) return sh
+          const kept = sh.subjects.filter((su) => !set.has(stripAt(su.tag)))
+          const already = kept.some((su) => stripAt(su.tag) === prodName)
+          const productSubject = { tag: '@' + prodName, kind: prodKind, refImage, refAssetId, refAssetIds }
+          return { ...sh, subjects: already ? kept : [productSubject, ...kept] }
+        })
+      } else {
+        injections.push({ tag: '@' + prodName, kind: prodKind, refImage, refAssetId, refAssetIds })
+      }
+    }
+    if (injections.length) {
+      out = out.map((sh) => {
+        const have = new Set(sh.subjects.map((su) => stripAt(su.tag)))
+        const add = injections
+          .filter((inj) => !have.has(stripAt(inj.tag)))
+          .map((inj) => ({ ...inj, manualGen: true })) // 注入的主推产品:排除批量、须手动生成
+        return add.length ? { ...sh, subjects: [...add, ...sh.subjects] } : sh
+      })
+    }
+    return out
   }
   // 上传「额外参考图」(镜头编排面板用):直传后端成 asset(http url + asset_id),供云端草稿持久化
   const uploadRef = async (file: File): Promise<{ url: string; assetId?: number }> => {
@@ -472,7 +618,9 @@ export default function SmartCreateView() {
           names.push(n)
         }
       }
-    const targets = names.filter((n) => !subjectImageOf(n))
+    // 排除:已有图的;以及「注入的主推产品(manualGen)」——后者须用户手动生成,不进一键批量。
+    // 注:VL 命中的产品主体(有 refImage 但非 manualGen)仍进批量,自动走图生图保真(从上传素材抠成单品)。
+    const targets = names.filter((n) => !subjectImageOf(n) && !subjectManualOf(n))
     if (!targets.length) {
       setMaterialBatchPending(false) // 没有要生成的:清掉续作标记
       return
@@ -1611,6 +1759,7 @@ export default function SmartCreateView() {
       setShots(result)
       // 兜底:对没拆出主体的镜头(弱模型常整体不给 subjects),单独聚焦提取主体后回填。
       // best-effort、并发、不阻塞主流程展示;失败的镜头保持空(可在准备素材步手动补)。
+      let withSubjects = result
       const needFill = result.filter((s) => !s.subjects?.length && s.desc)
       if (needFill.length) {
         const filled = await Promise.all(
@@ -1618,8 +1767,28 @@ export default function SmartCreateView() {
         )
         const subsById = new Map(filled.filter((f) => f.subs.length).map((f) => [f.id, f.subs]))
         if (subsById.size) {
-          setShots((prev) => prev.map((s) => (subsById.has(s.id) ? { ...s, subjects: subsById.get(s.id)! } : s)))
+          withSubjects = result.map((s) => (subsById.has(s.id) ? { ...s, subjects: subsById.get(s.id)! } : s))
+          setShots(withSubjects)
         }
+      }
+      // 主推产品锚定:用上传素材识别主推产品并绑定到对应主体(后续走图生图保真、不合并、不进一键批量);
+      // 匹配不到则注入「主推产品」主体到所有镜头。best-effort,失败则用原结果。
+      let anchored = withSubjects
+      if (meta.images?.length) {
+        try {
+          anchored = await anchorUploadsToSubjects(withSubjects, meta.images, (meta as any).imageAssetIds)
+          setShots(anchored)
+        } catch {
+          /* 锚定失败 → 用原结果 */
+        }
+      }
+      // 主体合并:把「仅单镜出现一次」的多个主体按画面语义并成 1 个组合主体,减少不必要的素材生成
+      //(跨镜复用 / 已绑定上传图 / 主推产品锚定的主体保持独立,确保一致性)。best-effort,失败则保持原拆分结果。
+      try {
+        const merged = await mergeSingleUseSubjects(anchored)
+        setShots(merged)
+      } catch {
+        /* 合并失败 → 保持拆分结果 */
       }
     } catch (e: any) {
       if (!got) setScriptError(e?.message || '脚本生成失败,请重试')
@@ -1810,7 +1979,9 @@ export default function SmartCreateView() {
     setMarketingText('')
     setMarketingData(null)
     setMarketingError('')
+    // 命名:有需求 → 按需求命名;无需求但上传了素材 → 据素材图命名(否则保留默认名)
     if (req) void autoNameProject(req)
+    else if (meta.images?.length) void autoNameProject('', meta.images)
     // 入口上传的素材图(dataURL)落库成后端 asset,否则刷新会丢(stripHeavy 剥 dataURL)
     const wsId = Number(workspaceId || 0)
     if (wsId && meta.images?.length) {
@@ -1864,16 +2035,21 @@ export default function SmartCreateView() {
     }
   }
 
-  // 根据需求自动命名项目(本地 Qwen)。用户已手动改名 / 正在命名 / 需求为空 则跳过。
-  const autoNameProject = async (reqArg?: string) => {
+  // 自动命名项目:有需求 → 按需求命名(generateProjectName);无需求但有上传素材 → 据素材图命名
+  // (generateProjectNameFromImages,多模态读图)。用户已手动改名 / 正在命名 / 需求与素材皆空 则跳过。
+  const autoNameProject = async (reqArg?: string, imagesArg?: string[]) => {
     const req = (reqArg ?? requirement).trim()
-    if (!req || nameTouched || naming) return
+    const images = (imagesArg || []).filter(Boolean)
+    if (nameTouched || naming) return
+    if (!req && !images.length) return
     nameAbortRef.current?.abort()
     const ctrl = new AbortController()
     nameAbortRef.current = ctrl
     setNaming(true)
     try {
-      const nm = await generateProjectName(req, ctrl.signal)
+      const nm = req
+        ? await generateProjectName(req, ctrl.signal)
+        : await generateProjectNameFromImages(images, '', ctrl.signal)
       if (!nameTouched) setProjectName(nm)
     } catch (e: any) {
       if (e?.name !== 'AbortError') {
@@ -1939,6 +2115,13 @@ export default function SmartCreateView() {
   const bottomButtons: BottomButton[] = (() => {
     // 任意分镜图生成中(批量 shotGenRunning 或单张 shotGen[id])→ 禁用镜头编排步的生成类按钮
     const anyShotGenerating = shotGenRunning || Object.values(shotGen).some(Boolean)
+    // 准备素材:所有主体素材是否都已就绪 —— 每个主体名都要有图;批量/单体生成中视为未完成。
+    // 含主推产品(refImage 锚定)主体:它不进一键批量,须用户手动生成,这里同样要求它有图才放行。
+    const subjNames = Array.from(
+      new Set(shots.flatMap((sh) => sh.subjects.map((su) => stripAt(su.tag)).filter(Boolean))),
+    )
+    const anySubjectGenerating = batchGenning || Object.values(subjectGenerating).some(Boolean)
+    const materialsAllReady = !anySubjectGenerating && subjNames.every((n) => !!subjectImageOf(n))
     switch (step) {
       case 0: // 分镜脚本:重新生成在表头(见 ScriptStoryboardTable),底栏只有 确认脚本
         return [
@@ -1959,7 +2142,13 @@ export default function SmartCreateView() {
               autoGenRef.current = false // 允许进入镜头编排后自动生成分镜图
               goStep(2)
             },
-            disabled: scriptLoading,
+            // 素材未全部生成完毕不可进入镜头编排(含主推产品需手动生成)
+            disabled: scriptLoading || !materialsAllReady,
+            tip: anySubjectGenerating
+              ? '素材生成中,请稍候…'
+              : !materialsAllReady
+                ? '请先完成所有素材的生成(主推产品需手动点击生成)再进入镜头编排'
+                : undefined,
           },
         ]
       case 2: // 镜头编排:重新生成 + 生成视频
@@ -2362,6 +2551,7 @@ export default function SmartCreateView() {
                       className={`smart__btn smart__btn--${b.variant}`}
                       onClick={b.action}
                       disabled={b.disabled}
+                      title={b.disabled ? b.tip : undefined}
                     >
                       {b.icon}
                       {b.label}
@@ -2381,6 +2571,7 @@ export default function SmartCreateView() {
         name={subjectDlg.name}
         kind={subjectDlg.kind}
         currentImage={subjectImageOf(subjectDlg.name)}
+        anchorRefImages={anchorRefs}
         versions={subjectAssets[subjectDlg.name]?.versions || []}
         defaultPrompt={
           subjectAssets[subjectDlg.name]?.prompt ||
