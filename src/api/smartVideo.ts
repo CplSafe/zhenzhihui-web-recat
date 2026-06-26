@@ -83,6 +83,8 @@ export async function generateFullVideo(args: {
   /** 对整片的修改意见 */
   note?: string
   modelPlanCandidates?: string[]
+  /** 任务一创建就回调 task_id,供上层持久化(切路由/刷新后凭它续轮询,不重新生成) */
+  onTask?: (taskId: number) => void
 }): Promise<{ url: string; assetId: number }> {
   const prompt =
     buildTimelinePrompt({ shots: args.shots, basePrompt: args.basePrompt, ratio: args.ratio, style: args.style }) +
@@ -112,17 +114,45 @@ export async function generateFullVideo(args: {
       }),
     }),
   })
+  // 任务一创建就把 task_id 抛给上层持久化(中途切路由/刷新后可凭它续轮询,而非重新生成)
+  args.onTask?.(Number((task as any)?.id) || 0)
   const completed = await waitForAiTask({
     workspaceId: args.workspaceId,
     task,
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
   })
+  return resolveVideoTaskResult(args.workspaceId, completed, (task as any)?.id)
+}
+
+// 把已完成的视频任务解析成 { url, assetId }(generate 与 resume 共用)
+async function resolveVideoTaskResult(
+  workspaceId: number,
+  completed: any,
+  fallbackTaskId: any,
+): Promise<{ url: string; assetId: number }> {
   let assetId = extractVideoAssetId(completed)
-  if (!assetId) assetId = await findVideoAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
-  const [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
+  if (!assetId) assetId = await findVideoAssetIdByTaskId(workspaceId, completed?.id || fallbackTaskId)
+  const [url] = await resolveGeneratedMediaUrls({ workspaceId, task: completed, type: 'video' })
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')
   return { url, assetId }
+}
+
+/**
+ * 续接一个【已提交但前端中途离开】的整片生成任务:不重新建任务,只按 taskId 继续轮询到完成,
+ * 解析出 { url, assetId }。用于切路由/刷新后恢复「生成中」的项目。
+ */
+export async function resumeFullVideo(args: {
+  workspaceId: number
+  taskId: number
+}): Promise<{ url: string; assetId: number }> {
+  const completed = await waitForAiTask({
+    workspaceId: args.workspaceId,
+    task: { id: args.taskId },
+    intervalMs: 4000,
+    timeoutMs: 60 * 60 * 1000,
+  })
+  return resolveVideoTaskResult(args.workspaceId, completed, args.taskId)
 }
 
 /**

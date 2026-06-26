@@ -26,9 +26,11 @@ const SYSTEM =
   '同时,结合整体剧情与该镜头画面,为每个镜头写出:台词/旁白(voiceover)、字幕(subtitle)、音效(sfx);没有就给空字符串。' +
   '台词字数必须 ≤ 该镜头时长(秒)×4(避免语速过快,如 5 秒镜头台词不超过 20 字);字幕要简短(通常 ≤15 字,不超过台词)。' +
   '【硬性要求】每个镜头的 subjects 数组都不能为空:必须列出该画面里出现的全部独立视觉元素(人物/场景/物体/产品),至少 1 个,通常 2~4 个;subjects 字段一律不可省略。' +
+  '【命名硬性要求】每个主体的 name 必须是【具体名词】(如「年轻女性」「皮肤管理师」「护肤仪器」「咨询区」「精华液瓶」),' +
+  '严禁使用「素材」「主体」「元素」「图片」「画面」「对象」「内容」这类泛指词,也不要只写编号(素材1/素材2);否则视为无效。' +
   '注意:只拆需要视觉素材的主体;不要把台词、旁白、字幕、文案、标语、口号、CTA、标题等文本类元素列为主体。' +
-  '若提供了素材图片,请结合图片内容来设定主体与画面;并判断每个主体是否与某张素材图对应,' +
-  '若对应,在该主体加 imageIndex 字段(从1开始,表示第几张素材图);不对应则省略该字段。' +
+  '若提供了素材图片,务必逐张判断它对应哪个主体:对应的主体必须加 imageIndex 字段(从1开始,表示第几张素材图),' +
+  '尽量让每张素材图都被某个主体引用(场景图配场景主体、产品图配产品主体);确实无对应的主体才省略该字段。' +
   '严格只输出 JSON(不要解释、不要 markdown 代码块),格式:' +
   '{"shots":[{"duration":"5s","desc":"画面描述","voiceover":"台词/旁白","subtitle":"字幕","sfx":"音效","subjects":[{"name":"小雅","kind":"人物","imageIndex":2},{"name":"室内场景","kind":"场景"}]}]}'
 
@@ -272,4 +274,58 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
   const result = finalShots.length >= lastCount ? finalShots : mapShots(salvageObjects(finalText), images)
   if (!result.length) throw new Error('未能解析分镜脚本,请重试')
   return result
+}
+
+// ── 主体提取兜底 ──
+// 弱模型生成整条脚本 JSON 时,常整体不给 / 给空 subjects(导致表格里每镜没主体)。
+// 对这类镜头单独跑一个【聚焦的小任务】:只从一句画面描述里抽主体——简单任务弱模型也能稳定完成。
+const SUBJECT_SYSTEM =
+  '你是分镜「视觉主体」提取器。给你一句镜头画面描述,提取其中出现的、需要准备视觉素材的主体(人物/场景/物体/产品)。' +
+  '命名必须是【具体名词】(如「年轻女性」「皮肤管理师」「护肤仪器」「咨询区」「精华液瓶」),' +
+  '严禁使用「素材/主体/元素/图片/画面/对象/内容」等泛指词,也不要只写编号。' +
+  '不要提取台词/字幕/文案/标语/口号/CTA/标题等文本类元素。通常 1~4 个。' +
+  '严格只输出 JSON(无解释、无 markdown):{"subjects":[{"name":"年轻女性","kind":"人物"},{"name":"咨询区","kind":"场景"}]}'
+
+// 纯泛指词(可带编号)——这类不算有效主体,过滤掉
+const GENERIC_SUBJECT_RE = /^(素材|主体|元素|图片|画面|对象|内容|视觉元素|物体|场景|产品|人物)\d*$/
+
+export async function extractSubjects(desc: string, signal?: AbortSignal): Promise<Shot['subjects']> {
+  const d = String(desc || '').trim()
+  if (!d) return []
+  let text = ''
+  try {
+    text = await runResponseText({
+      system: SUBJECT_SYSTEM,
+      user: `镜头画面描述:${d}`,
+      temperature: 0.4,
+      maxTokens: 300,
+      signal,
+    })
+  } catch {
+    return []
+  }
+  let arr: any[] = []
+  try {
+    const m = String(text).match(/\{[\s\S]*\}/)
+    const parsed = JSON.parse(m ? m[0] : text)
+    arr = Array.isArray(parsed) ? parsed : parsed?.subjects || []
+  } catch {
+    arr = salvageObjects(text)
+  }
+  return (Array.isArray(arr) ? arr : [])
+    .map((x: any) => ({
+      tag:
+        '@' +
+        String(x?.name || x?.tag || x?.subject || '')
+          .replace(/^@/, '')
+          .trim(),
+      kind: String(x?.kind || x?.type || '').trim(),
+    }))
+    .filter(
+      (s: any) =>
+        s.tag.length > 1 &&
+        !TEXT_SUBJECT_RE.test(s.tag) &&
+        !TEXT_SUBJECT_RE.test(s.kind) &&
+        !GENERIC_SUBJECT_RE.test(s.tag.replace(/^@/, '')),
+    )
 }

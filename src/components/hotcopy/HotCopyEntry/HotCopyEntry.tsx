@@ -11,6 +11,7 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 import { listAssets, extractAssetPageItems, getAssetDownloadUrl } from '@/api/business'
 import { createMaterialFromAsset } from '@/utils/materials'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
+import HotCopyCaseModal, { type HotCopyCaseTab } from '@/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
 import videoIcon from '@/assets/icons/hotcopy-video.svg'
 import materialIcon from '@/assets/icons/hotcopy-material.svg'
@@ -85,6 +86,8 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
   const [tab, setTab] = useState<HotCopyTab>((initial?.tab as HotCopyTab) ?? 'remake')
+  // 点击 Tab 旁的「?」打开对应案例弹窗(Figma 还原);null=关闭
+  const [caseTab, setCaseTab] = useState<HotCopyCaseTab | null>(null)
   // 切换 Tab:背景的位移/上升动画由 <EntryCanvasBg mode={tab}> 监听 tab 变化驱动
   const switchTab = (k: HotCopyTab) => {
     if (k === tab) return
@@ -409,10 +412,10 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
                   className="hotcopy__tip"
                   src={helpIcon}
                   alt=""
-                  title={t.tip}
+                  title={`查看${t.title}案例`}
                   onClick={(e) => {
                     e.stopPropagation()
-                    showToast(t.tip, 'info')
+                    setCaseTab(t.key as HotCopyCaseTab)
                   }}
                 />
               </span>
@@ -638,6 +641,9 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
         onQueryChange={setProductLibQuery}
         onConfirm={confirmLibraryProducts}
       />
+
+      {/* 同款翻拍 / 精准复刻 案例弹窗(点 Tab 旁「?」打开) */}
+      <HotCopyCaseModal tab={caseTab} onClose={() => setCaseTab(null)} />
     </section>
   )
 }

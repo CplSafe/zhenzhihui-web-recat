@@ -4,7 +4,7 @@
  * 支持编辑后回写 generatedScript 文本。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Streamdown } from 'streamdown'
+import Markdown from '@/components/common/Markdown'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -121,10 +121,7 @@ export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {
   // Prompt 富文本编辑器（原 contenteditable，改用 @tiptap/react）。
   // 将父级最新 Prompt 文本同步到编辑器；当用户正在编辑时不强行覆盖，避免输入中的内容跳动。
   const promptEditor = useEditor({
-    extensions: [
-      StarterKit,
-      Placeholder.configure({ placeholder: '修改广告描述' }),
-    ],
+    extensions: [StarterKit, Placeholder.configure({ placeholder: '修改广告描述' })],
     editable: canEditPrompt,
     content: String(promptText || ''),
     onFocus: () => {
@@ -264,7 +261,6 @@ export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {
     if (editingStoryboardsRef.current) return
     const list = Array.isArray(storyboardPreview.items) ? storyboardPreview.items : []
     setEditableStoryboards(list.map((item: any) => ({ ...item })))
-     
   }, [storyboardPreview.items])
 
   function updateStoryboardField(index: number, field: string, value: any) {
@@ -333,10 +329,7 @@ export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {
         {compactMaterialStack.length ? (
           <div className="compact-material-stack" aria-hidden="true">
             {compactMaterialStack.map((material, index) => (
-              <figure
-                key={material.id}
-                style={{ left: `${index * 10}px`, top: `${index === 2 ? 24 : 14}px` }}
-              >
+              <figure key={material.id} style={{ left: `${index * 10}px`, top: `${index === 2 ? 24 : 14}px` }}>
                 <button
                   type="button"
                   className="compact-material-remove"
@@ -636,10 +629,7 @@ export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {
 
         <div className="generated-script-wrap">
           <div className="generated-script-render" aria-label="创意脚本内容" spellCheck={false}>
-            <div
-              className={`script-markdown-area${canEditScript ? ' clickable' : ''}`}
-              onClick={openScriptEditor}
-            >
+            <div className={`script-markdown-area${canEditScript ? ' clickable' : ''}`} onClick={openScriptEditor}>
               {editingScript ? (
                 <textarea
                   ref={scriptEditorRef}
@@ -654,7 +644,7 @@ export default function GeneratedScriptPanel(props: GeneratedScriptPanelProps) {
                   onBlur={closeScriptEditor}
                 ></textarea>
               ) : markdownText ? (
-                <Streamdown>{markdownText}</Streamdown>
+                <Markdown>{markdownText}</Markdown>
               ) : (
                 <p className="generated-script-empty">
                   {isStreaming

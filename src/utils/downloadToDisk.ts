@@ -48,19 +48,36 @@ export async function downloadToDisk(opts: {
     }
   })()
 
-  // ③ 路径1:同源 + 已选文件夹 → fetch + 直接写入
+  // ③ 路径1:同源 + 已选文件夹 → fetch + 校验内容 + 直接写入
   if (fileHandle && isSameOrigin) {
     try {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const blob = new Blob([await res.blob()], { type: mime })
+      // 内容校验:视频流不应是 0 字节(资源尚未写完),也不应是 JSON/HTML/纯文本(被包成 200 的错误体)。
+      // 「刚生成还没落库」是时序竞态 → 命中空内容时自动等待重试几次,多数能自愈,避免存出空 mp4。
+      let blob: Blob | null = null
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await fetch(url, { cache: 'no-store' })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const ct = res.headers.get('content-type') || ''
+        const raw = await res.blob()
+        if (raw.size > 0 && !/application\/json|text\/html|text\/plain/i.test(ct)) {
+          blob = new Blob([raw], { type: mime })
+          break
+        }
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500)) // 等待后端写完再重试
+      }
+      if (!blob) {
+        const empty = new Error('视频内容为空或尚未就绪,请稍后重试')
+        empty.name = 'EmptyContentError'
+        throw empty
+      }
       const writable = await fileHandle.createWritable()
       await writable.write(blob)
       await writable.close()
       return 'done'
     } catch (err: any) {
       if (err?.name === 'AbortError') return 'cancelled'
-      // 写入失败 → 落到路径2
+      if (err?.name === 'EmptyContentError') throw err // 空内容:别静默回退到 iframe(同样是空),交给调用方提示
+      // 其它(网络等)失败 → 落到路径2(iframe 下载)
     }
   }
 

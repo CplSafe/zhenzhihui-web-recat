@@ -21,6 +21,10 @@ export interface SmartDraft {
   /** 整片视频(seedance 一次生成) */
   fullVideoUrl?: string
   fullVideoAssetId?: number
+  /** 进行中的整片生成任务 id:中途切路由/刷新后凭它续轮询(不重新生成);完成后清 0 */
+  vidGenTaskId?: number
+  /** 准备素材「一键生成」是否进行中:中途切走再回来据此自动续作未出图的素材 */
+  materialBatchPending?: boolean
   /** 整片视频历史版本(每版带 asset_id,供水合刷新签名URL) */
   videoVersions?: { url: string; assetId: number }[]
   /** 人脸脱敏开关(默认开;关闭后出片用原图,成片人脸清晰) */

@@ -138,6 +138,9 @@ export default function ProjectVideoListView() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [openMenuId, setOpenMenuId] = useState('')
+  // 后端视频版本常不带时长 → 从 <video> 元数据里读真实时长(键为卡片 id),展示时优先用它
+  const [durations, setDurations] = useState<Record<string, number>>({})
+  const durationOf = (item: ProjectVideo) => durations[item.id] || Number(item.durationSeconds || 0)
 
   const handleNavigate = useCallback(
     (key: string) => {
@@ -383,51 +386,44 @@ export default function ProjectVideoListView() {
                 {pagedVideos.map((item) => (
                   <article className="pvlist-card" key={item.id}>
                     <div className="pvlist-card__media">
-                      <button type="button" className="pvlist-card__cover" onClick={() => openDetail(item)}>
-                        {item.coverUrl && !isVideoCover(item.coverUrl) ? (
-                          <img src={item.coverUrl} alt={item.title} />
-                        ) : item.videoUrl ? (
-                          <video src={item.videoUrl} muted playsInline preload="metadata" />
+                      <button
+                        type="button"
+                        className="pvlist-card__cover"
+                        onClick={() => (item.videoUrl ? openDetail(item) : openEditor(item))}
+                      >
+                        {item.videoUrl ? (
+                          // 优先用视频流取首帧(同源 /download,不过期),比可能损坏/过期的封面图可靠;
+                          // 同时从元数据读真实时长,补上后端缺失的时长(--:--)
+                          <video
+                            src={`${item.videoUrl}#t=0.1`}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            onLoadedMetadata={(e) => {
+                              const d = Math.round((e.currentTarget as HTMLVideoElement).duration)
+                              if (Number.isFinite(d) && d > 0) {
+                                setDurations((prev) => (prev[item.id] === d ? prev : { ...prev, [item.id]: d }))
+                              }
+                            }}
+                          />
+                        ) : item.coverUrl && !isVideoCover(item.coverUrl) ? (
+                          <img
+                            src={item.coverUrl}
+                            alt={item.title}
+                            onError={(e) => {
+                              // 封面图加载失败(过期/失效)→ 隐藏裂图,露出灰底占位,不再显示破图
+                              ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                            }}
+                          />
                         ) : (
                           <span className="pvlist-card__placeholder">视频</span>
                         )}
-                        <span className={`pvlist-card__flag is-${item.status}`} aria-hidden="true">
-                          {item.status === 'published' ? (
-                            <i className="pvlist-card__flag-dot" />
-                          ) : item.status === 'processing' ? (
-                            <svg
-                              viewBox="0 0 24 24"
-                              width="13"
-                              height="13"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <circle cx="12" cy="12" r="8.5" />
-                              <path d="M12 7.5V12l3 1.8" />
-                            </svg>
-                          ) : (
-                            <svg
-                              viewBox="0 0 24 24"
-                              width="13"
-                              height="13"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.4"
-                              strokeLinecap="round"
-                            >
-                              <path d="M7 12h10" />
-                            </svg>
-                          )}
-                        </span>
                         <span className="pvlist-card__play" aria-hidden="true">
                           <svg viewBox="0 0 24 24" width="18" height="18">
                             <path d="M9 7.2 17 12l-8 4.8z" fill="#fff" />
                           </svg>
                         </span>
-                        <span className="pvlist-card__duration">{formatVideoDuration(item.durationSeconds)}</span>
+                        <span className="pvlist-card__duration">{formatVideoDuration(durationOf(item))}</span>
                       </button>
                       <div className="pvlist-card__menu-wrap">
                         <button
@@ -465,7 +461,11 @@ export default function ProjectVideoListView() {
                     </div>
                     <div className="pvlist-card__body">
                       <div className="pvlist-card__head">
-                        <button type="button" className="pvlist-card__title" onClick={() => openDetail(item)}>
+                        <button
+                          type="button"
+                          className="pvlist-card__title"
+                          onClick={() => (item.videoUrl ? openDetail(item) : openEditor(item))}
+                        >
                           {item.title}
                         </button>
                         <span className={`pvlist-card__status is-${item.status}`}>
@@ -475,7 +475,7 @@ export default function ProjectVideoListView() {
                       <div className="pvlist-card__info">
                         <span className="pvlist-card__info-item">
                           <IcoClock />
-                          {formatVideoDuration(item.durationSeconds)}
+                          {formatVideoDuration(durationOf(item))}
                         </span>
                         <span className="pvlist-card__info-item pvlist-card__info-item--author">
                           <IcoUser />

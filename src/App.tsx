@@ -8,7 +8,6 @@ import { Outlet, useLocation, useMatches, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import AppToast from './components/AppToast'
 import AppConfirmDialog from './components/AppConfirmDialog'
-import GuestGuard, { isGuestMode } from './components/guest/GuestGuard'
 import HelpCenter from './components/common/HelpCenter'
 import './App.css'
 
@@ -31,8 +30,10 @@ function AppShell() {
     if (isCheckingSession) return
     if (authCheckError) return
 
-    if (requiresAuth && !isAuthenticated && !isGuestMode()) {
-      navigate('/welcome', { replace: true })
+    // 受保护页(项目管理 / 素材市场等)未登录 → 直接去登录页(「需登录」)。
+    // 不再用全屏游客遮罩(它会盖住侧边栏导致无法切换其它菜单)。
+    if (requiresAuth && !isAuthenticated) {
+      navigate('/login', { replace: true })
       return
     }
     if (!requiresAuth && isAuthenticated && (location.pathname === '/login' || location.pathname === '/welcome')) {
@@ -60,10 +61,7 @@ function AppShell() {
           </div>
         </div>
       ) : (
-        <>
-          <Outlet />
-          {isGuestMode() && !isAuthenticated && requiresAuth && <GuestGuard />}
-        </>
+        <Outlet />
       )}
 
       <AppToast />

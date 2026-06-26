@@ -1459,6 +1459,20 @@
   justify-content: center;
   padding-left: 3px;
 }
+/* 待归类草稿角标 */
+.pm2-vid-draft-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(255, 159, 28, 0.92);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  pointer-events: none;
+}
 .pm2-vid-dl {
   position: absolute;
   top: 8px;

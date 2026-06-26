@@ -282,7 +282,32 @@ function buildDerivedVideos({
     generatedVideoAssetId && workspaceId
       ? assetStreamUrl(generatedVideoAssetId, workspaceId)
       : pickString(draft?.generatedVideoUrl, draft?.generated_video_url, smart?.fullVideoUrl, smart?.videoUrl)
-  if (!generatedVideoUrl) return []
+  if (!generatedVideoUrl) {
+    // 没有最终视频,但草稿里有在制内容(分镜 / 进行中的生成任务)→ 返回一个「草稿」占位项,
+    // 让项目在管理页可见、可点进编辑续作(进入后由 SmartCreateView 续轮询生成中的任务)。
+    const hasWork =
+      Number(smart?.vidGenTaskId || 0) > 0 ||
+      normalizeArray(smart?.shots).length > 0 ||
+      normalizeArray(draft?.storyboardItems).length > 0
+    if (!hasWork) return []
+    return [
+      {
+        id: `derived-draft-${project?.id || 0}`,
+        projectId: Number(project?.id || 0),
+        workspaceId,
+        title: `${projectTitle} · 草稿`,
+        coverUrl: projectCoverUrl,
+        videoUrl: '',
+        durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
+        status: 'draft',
+        createdByName,
+        createdAt,
+        updatedAt,
+        sourceType,
+        publishUrl: '',
+      },
+    ]
+  }
 
   return [
     {

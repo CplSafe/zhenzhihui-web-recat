@@ -7,7 +7,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Streamdown } from 'streamdown'
+import Markdown from '@/components/common/Markdown'
 import { guideRequirement, analyzeForGuide, suggestOptions } from '@/api/aiPolish'
 import { fileToDataUrl } from '@/utils/imageFile'
 import { useToast } from '@/composables/useToast'
@@ -444,7 +444,7 @@ export default function GuideDialog({
             <div className={styles.gdlgPreview}>
               <div className={styles.gdlgLabel}>建议的创作需求 · 确认后才会填入输入框</div>
               <div className={`${styles.gdlgPreviewText} ${styles.gdlgMd}`}>
-                <Streamdown>{preview}</Streamdown>
+                <Markdown>{preview}</Markdown>
               </div>
             </div>
           ) : (

@@ -6,6 +6,9 @@
  * (此前为临时直连「本地 vLLM Qwen」,现已对齐 Vue 切回后端网关。)
  */
 import { runResponseText } from './aiResponses'
+// skill 方法论说明书(原样导入 .md,不在此硬编码长文本,便于维护)
+import skillEcommerceManual from './skills/信息电商.md?raw'
+import skillLocalLifeManual from './skills/本地生活.md?raw'
 
 /** 不同修改框的润色侧重,用于系统提示词。 */
 export type PolishKind = 'script' | 'line' | 'subtitle' | 'sound' | 'segment' | 'generic'
@@ -188,16 +191,13 @@ export async function guideRequirement(text: string, signal?: AbortSignal): Prom
  * 营销 SKILLS:可选的营销技能包。key 为下拉选项文案,system 为该技能的拆解侧重。
  * 选择某 skill 后,把「用户想法 + 素材」交给对应技能,自动拆分生成「营销思路拆解」建议。
  */
-export const SKILL_OPTIONS = ['电商营销广告skills', '本地餐饮营销skills'] as const
+export const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill'] as const
 export type SkillOption = (typeof SKILL_OPTIONS)[number]
 
+// 每个 skill 的完整方法论说明书(角色/铁律/五段框架/标签库/输出格式/示例),作为 system 提示词。
 const SKILL_SYSTEM: Record<SkillOption, string> = {
-  电商营销广告skills:
-    '你是资深电商营销操盘手,擅长信息流/短视频电商广告。请基于「人货场 + 前3秒钩子→痛点→卖点→信任→促单CTA」的电商带货逻辑,' +
-    '把用户的想法与素材拆解成可执行的营销思路。',
-  本地餐饮营销skills:
-    '你是资深本地生活/餐饮营销策划,擅长到店引流与门店短视频。请基于「门店人群 + 到店动机(味/价/景/聚)→种草→信任(真实出品)→到店核销CTA」的本地餐饮逻辑,' +
-    '把用户的想法与素材拆解成可执行的营销思路。',
+  信息电商Skill: skillEcommerceManual,
+  本地生活Skill: skillLocalLifeManual,
 }
 
 /**
@@ -219,7 +219,7 @@ export async function skillBreakdown(
   if (!req && !images.length) throw new Error('请先输入想法或上传素材')
 
   // 说明书:该 skill 对应的营销方法论(主导 system)
-  const manual = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['电商营销广告skills']
+  const manual = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['信息电商Skill']
   const system =
     manual +
     '\n你只能依据用户提供的【产品信息】(下方文字 + 随请求附上的素材图)来分析,严禁脱离素材臆造不存在的产品/卖点;素材里没有的信息不要编。' +
@@ -259,6 +259,8 @@ export interface MarketingField {
   hint?: string
   desc: string
   tags: string[]
+  /** 用户点击候选后选中的标签:展示在标题行右侧(不改动 desc 原文案) */
+  picked?: string[]
 }
 export interface MarketingGroup {
   label: string
@@ -304,15 +306,9 @@ export async function skillBreakdownStructured(
   const images = (input.images || []).filter(Boolean)
   if (!req && !images.length) throw new Error('请先输入想法或上传素材')
 
-  const manual = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['电商营销广告skills']
-  const system =
-    manual +
-    '\n你只能依据用户提供的【产品信息】(下方文字 + 随请求附上的素材图)来分析,严禁脱离素材臆造。' +
-    '请把产品信息拆解成若干「营销点」:先分成 2~4 个【分类】,每个分类下 1~3 个【维度】;' +
-    '分类名与维度名请结合该产品 / 该 skill 自行确定(不同产品/skill 拆出的维度可不同,不必套用固定模板)。' +
-    '每个维度给:label=维度名(≤8字)、hint=一句提示(≤12字,可留空)、desc=一句话描述(≤30字,具体紧扣素材)、' +
-    'tags=3~4个候选短标签(每个≤8字,互不相同,可直接选用)。' +
-    '只输出严格 JSON:{"groups":[{"label":"分类名","fields":[{"label":"维度名","hint":"提示","desc":"一句话","tags":["",""]}]}]};不要解释、不要代码块标记。'
+  // skill 说明书本身已包含【拆解方法 + 维度字段规则 + 严格 JSON 输出格式 + 示例】,直接作为 system,
+  // 不再叠加旧的格式说明(避免与说明书里的规则重复打架)。
+  const system = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['信息电商Skill']
   const user =
     '【产品信息】\n' +
     `· 用户文字:${req || '(未填写,请基于素材图给出合理方向)'}\n` +
@@ -370,7 +366,9 @@ export function marketingDataToText(data: MarketingBreakdownData): string {
   for (const g of data?.groups || [])
     for (const f of g.fields || []) {
       const d = (f.desc || '').trim()
-      if (d) lines.push(`${f.label}:${d}`)
+      const picked = (f.picked || []).filter(Boolean)
+      const body = [d, ...picked].filter(Boolean).join('、')
+      if (body) lines.push(`${f.label}:${body}`)
     }
   return lines.join('\n')
 }

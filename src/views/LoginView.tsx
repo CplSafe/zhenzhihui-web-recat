@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import './LoginView.css'
-import loginHero from '@/assets/login-hero.png'
+import loginHero from '@/assets/login-hero.jpg'
 import AgreementModal from '@/components/auth/AgreementModal'
 import {
   clearExistingSession,
@@ -36,6 +36,10 @@ const NAV_ITEMS = ['母婴宠物', '视频饮料', '生活服务', '家居建材
 
 export default function LoginView() {
   const navigate = useNavigate()
+  // 「返回」写死:始终回到开屏页 /welcome。
+  const goBack = () => {
+    navigate('/welcome', { replace: true })
+  }
   const { showToast, clearToast } = useToast()
   const { handleLoginSuccess } = useAuth()
 
@@ -368,7 +372,7 @@ export default function LoginView() {
       </aside>
 
       <section className="zlogin-panel" aria-label="帧智汇登录">
-        <button type="button" className="zlogin-back" onClick={() => navigate(-1)} aria-label="返回上一页">
+        <button type="button" className="zlogin-back" onClick={goBack} aria-label="返回上一页">
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
             <path
               d="M15 18l-6-6 6-6"

@@ -9,8 +9,10 @@ import styles from './MarketingBreakdown.module.less'
 interface MarketingBreakdownProps {
   data: MarketingBreakdownData
   onChangeDesc: (key: MarketingFieldKey, desc: string) => void
-  /** 点击候选标签:把该维度的描述设为该标签 */
+  /** 点击候选标签:把该标签作为「已选」徽章放到描述句子后面(不替换原文案) */
   onPickTag: (key: MarketingFieldKey, tag: string) => void
+  /** 移除已选标签 */
+  onRemoveTag: (key: MarketingFieldKey, tag: string) => void
   /** 换一批:重新生成该维度的候选标签 */
   onRefreshTags: (key: MarketingFieldKey) => void
   refreshing?: Partial<Record<string, boolean>>
@@ -20,6 +22,7 @@ export default function MarketingBreakdown({
   data,
   onChangeDesc,
   onPickTag,
+  onRemoveTag,
   onRefreshTags,
   refreshing,
 }: MarketingBreakdownProps) {
@@ -40,25 +43,48 @@ export default function MarketingBreakdown({
                   {f.hint && <span className={styles.mktFieldHint}>{f.hint}</span>}
                 </div>
                 <div className={styles.mktBox}>
-                  <textarea
-                    className={styles.mktDesc}
-                    value={f.desc}
-                    rows={1}
-                    placeholder={`${f.label}…`}
-                    onChange={(e) => onChangeDesc(f.key, e.target.value)}
-                  />
+                  <div className={styles.mktDescRow}>
+                    <textarea
+                      className={styles.mktDesc}
+                      value={f.desc}
+                      rows={1}
+                      placeholder={`${f.label}…`}
+                      onChange={(e) => onChangeDesc(f.key, e.target.value)}
+                    />
+                    {(f.picked || []).length > 0 && (
+                      <div className={styles.mktPickedWrap}>
+                        {(f.picked || []).map((t, i) => (
+                          <button
+                            type="button"
+                            key={`picked-${t}-${i}`}
+                            className={styles.mktPicked}
+                            title="点击移除"
+                            onClick={() => onRemoveTag(f.key, t)}
+                          >
+                            {t}
+                            <span className={styles.mktPickedX} aria-hidden="true">
+                              ×
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className={styles.mktTags}>
-                    {f.tags.map((t, i) => (
-                      <button
-                        type="button"
-                        key={`${t}-${i}`}
-                        className={styles.mktTag}
-                        title="点击采用该候选"
-                        onClick={() => onPickTag(f.key, t)}
-                      >
-                        {t}
-                      </button>
-                    ))}
+                    {f.tags.map((t, i) => {
+                      const active = (f.picked || []).includes(t)
+                      return (
+                        <button
+                          type="button"
+                          key={`${t}-${i}`}
+                          className={`${styles.mktTag} ${active ? styles.mktTagActive : ''}`}
+                          title={active ? '已添加,点击移除' : '点击添加到标题右侧'}
+                          onClick={() => (active ? onRemoveTag(f.key, t) : onPickTag(f.key, t))}
+                        >
+                          {t}
+                        </button>
+                      )
+                    })}
                     <button
                       type="button"
                       className={styles.mktRefresh}

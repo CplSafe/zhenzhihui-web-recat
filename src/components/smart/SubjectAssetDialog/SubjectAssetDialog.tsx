@@ -25,8 +25,9 @@ interface SubjectAssetDialogProps {
   /** 生成:prompt + 选项(refImageUrl 参考图;carryCurrent 携带当前图=修改/不带=重新生成) */
   onGenerate: (prompt: string, opts: { refImageUrl?: string; carryCurrent?: boolean }) => Promise<void>
   onSelect: (url: string) => void
-  /** 上传素材:直接交 File,由父级经后端 uploadAssetFile 存服务器取 asset_id */
-  onUpload: (file: File) => void
+  /** 上传素材:直接交 File,由父级经后端 uploadAssetFile 存服务器取 asset_id。
+   *  不传 → 视为「用户上传已下线」,弹窗内不显示任何「上传」入口,仅 AI 生成 / 从项目选。 */
+  onUpload?: (file: File) => void
 }
 
 export default function SubjectAssetDialog({
@@ -152,9 +153,11 @@ export default function SubjectAssetDialog({
               <button type="button" onClick={() => setPicker('use')}>
                 替换
               </button>
-              <button type="button" onClick={() => triggerUpload('version')}>
-                上传
-              </button>
+              {onUpload && (
+                <button type="button" onClick={() => triggerUpload('version')}>
+                  上传
+                </button>
+              )}
             </div>
           </div>
 
@@ -298,16 +301,18 @@ export default function SubjectAssetDialog({
                   ×
                 </button>
               </div>
-              <div className={styles.sadPickerGrid}>
-                <button
-                  type="button"
-                  className={styles.sadPickerUp}
-                  onClick={() => triggerUpload(picker === 'ref' ? 'ref' : 'version')}
-                >
-                  ↑<br />
-                  上传
-                </button>
-              </div>
+              {onUpload && (
+                <div className={styles.sadPickerGrid}>
+                  <button
+                    type="button"
+                    className={styles.sadPickerUp}
+                    onClick={() => triggerUpload(picker === 'ref' ? 'ref' : 'version')}
+                  >
+                    ↑<br />
+                    上传
+                  </button>
+                </div>
+              )}
               {(['upload', 'ai'] as const).map((src) => {
                 const list = projectImages.filter((p) => p.source === src)
                 if (!list.length) return null

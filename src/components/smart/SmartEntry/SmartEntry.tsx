@@ -51,7 +51,7 @@ interface SmartEntryProps {
 
 const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
 const DURATION_OPTIONS = ['5s', '10s', '15s']
-const SKILL_OPTIONS = ['电商营销广告skills', '本地餐饮营销skills']
+const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill']
 const MAX_IMAGES = 9
 
 const PLACEHOLDER_VIDEO =
@@ -418,7 +418,7 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
               {mode === 'video' && (
                 <EntryDropdown
                   clearable
-                  placeholder="SKILL"
+                  placeholder="SKILLS"
                   value={skill}
                   options={SKILL_OPTIONS}
                   onChange={pickSkill}

@@ -17,8 +17,49 @@ import {
 } from '../api/auth'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
 
-const REFRESH_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes(原 20min,缩短以更早续期,给较短的会话 TTL 留余量)
+// 续期调度:优先按【后端返回的 TTL】在到期前续期;拿不到 TTL 时用兜底间隔。
+const REFRESH_DEFAULT_MS = 4 * 60 * 1000 // TTL 未知时的兜底间隔:4 分钟(稳在常见短 access-token TTL 内)
+const REFRESH_SAFETY_RATIO = 0.7 // 在 TTL 的 70% 处续期,留出余量(到期前就换好新 token)
+const REFRESH_MIN_MS = 60 * 1000 // 续期最短间隔 1 分钟(防止极短 TTL 触发刷新风暴)
+const REFRESH_MAX_MS = 10 * 60 * 1000 // 续期最长间隔 10 分钟
 const VISIBILITY_REFRESH_GAP_MS = 2 * 60 * 1000 // 回到页面时:距上次续期超过 2 分钟才再续,避免频繁刷新
+
+// 从 session/refresh 响应里尽量解析出 access-token 的剩余有效期(毫秒)。
+// 兼容多种后端字段名:相对秒数(expires_in 等)或绝对过期时间戳/ISO(expires_at 等)。拿不到返回 0。
+function extractSessionTtlMs(resp: any): number {
+  if (!resp || typeof resp !== 'object') return 0
+  const inSec = Number(
+    resp.expires_in ??
+      resp.access_expires_in ??
+      resp.expire_in ??
+      resp.ttl ??
+      resp.session?.expires_in ??
+      resp.data?.expires_in ??
+      0,
+  )
+  if (inSec > 0) return inSec * 1000
+  const at =
+    resp.expires_at ?? resp.expire_at ?? resp.access_expires_at ?? resp.expiresAt ?? resp.session?.expires_at ?? null
+  if (at != null) {
+    let ms = 0
+    if (typeof at === 'number')
+      ms = at < 1e12 ? at * 1000 : at // 10 位秒 / 13 位毫秒
+    else {
+      const t = new Date(at).getTime()
+      if (!Number.isNaN(t)) ms = t
+    }
+    const delta = ms - Date.now()
+    if (delta > 0) return delta
+  }
+  return 0
+}
+
+// 据响应 TTL 计算下次续期延迟:有 TTL → TTL×70%(clamp 到 [1min,10min]);无 → 4min 兜底。
+function computeRefreshDelay(resp?: any): number {
+  const ttl = extractSessionTtlMs(resp)
+  if (ttl > 0) return Math.min(REFRESH_MAX_MS, Math.max(REFRESH_MIN_MS, Math.floor(ttl * REFRESH_SAFETY_RATIO)))
+  return REFRESH_DEFAULT_MS
+}
 
 export interface AuthContextValue {
   authSession: any
@@ -47,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isCheckingSession, setIsCheckingSession] = useState(true)
   const [authCheckError, setAuthCheckError] = useState('')
 
-  const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // loadAuthSession 的最新引用（供刷新失败回调调用，规避与 startSessionRefresh 的循环依赖）。
   const loadAuthSessionRef = useRef<() => Promise<void>>(async () => {})
   // 并发序号：仅最新一次会话检查的结果可写回 state，避免慢请求覆盖快请求。
@@ -57,26 +98,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const stopSessionRefresh = useCallback(() => {
     if (refreshTimer.current) {
-      clearInterval(refreshTimer.current)
+      clearTimeout(refreshTimer.current)
       refreshTimer.current = null
     }
   }, [])
 
-  const startSessionRefresh = useCallback(() => {
-    stopSessionRefresh()
-    lastRefreshRef.current = Date.now()
-    refreshTimer.current = setInterval(async () => {
-      try {
-        await refreshSession()
-        lastRefreshRef.current = Date.now()
-      } catch {
-        // 刷新失败 → 会话可能已过期：立即重新校验会话；若确已失效会清掉登录态，
-        // 由 App 的中央守卫跳转登录，而不是停留在"已登录"的死会话上。
-        stopSessionRefresh()
-        loadAuthSessionRef.current()
+  // 自重排续期:每次续期成功后,按【本次响应的 TTL】安排下一次,确保始终在 token 到期前换好新 token。
+  // initialResp 为初次会话响应(loadAuthSession 传入),用它的 TTL 决定首次续期时机。
+  const startSessionRefresh = useCallback(
+    (initialResp?: any) => {
+      stopSessionRefresh()
+      lastRefreshRef.current = Date.now()
+      const scheduleNext = (resp?: any) => {
+        refreshTimer.current = setTimeout(async () => {
+          try {
+            const next = await refreshSession()
+            lastRefreshRef.current = Date.now()
+            scheduleNext(next) // 按本次 refresh 返回的 TTL 安排下一次
+          } catch {
+            // 刷新失败 → 会话可能已过期：立即重新校验会话；若确已失效会清掉登录态,
+            // 由 App 的中央守卫跳转登录,而不是停留在"已登录"的死会话上。
+            stopSessionRefresh()
+            loadAuthSessionRef.current()
+          }
+        }, computeRefreshDelay(resp))
       }
-    }, REFRESH_INTERVAL_MS)
-  }, [stopSessionRefresh])
+      scheduleNext(initialResp)
+    },
+    [stopSessionRefresh],
+  )
 
   const loadAuthSession = useCallback(async () => {
     const seq = ++loadSeqRef.current
@@ -117,7 +167,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAuthSession(session)
       markAuthSessionExpected()
       sessionStorage.removeItem('zzh_sso_pending')
-      startSessionRefresh()
+      startSessionRefresh(session) // 用初次会话的 TTL(若有)决定首次续期时机
     } catch (error: any) {
       if (isStale()) return
       stopSessionRefresh()

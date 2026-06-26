@@ -26,6 +26,43 @@
 .sbHead .sbHeadCell:last-child {
   border-right: none;
 }
+/* 准备素材表头:标题 + 右侧「AI一键生成图片」 */
+.sbHead .sbColMat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* AI一键生成图片(表头药丸,按 Figma:浅青描边 + 闪光图标 + 青字) */
+.sbHeadGen {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid rgba(96, 224, 196, 0.55);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  color: #2bb89b;
+  white-space: nowrap;
+  background: #fff;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sbHeadGen:hover:not(:disabled) {
+  background: rgba(96, 224, 196, 0.1);
+  border-color: #60e0c4;
+}
+.sbHeadGen:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.sbHeadGenIcon {
+  width: 16px;
+  height: 16px;
+}
 
 /* 分镜脚本表尾的「重新生成」 */
 .sbRegen {
@@ -232,6 +269,34 @@
 .sbcMatBadge:hover:not(:disabled) {
   background: rgba(96, 224, 196, 0.1);
   border-color: rgba(96, 224, 196, 0.6);
+}
+/* 去掉图片的「×」(缩略图右上角):默认隐藏,滑过该素材行才显示 */
+.sbcMatImgX {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+/* 鼠标滑过该素材行 → 显示「去图 ×」 */
+.sbcMatRow:hover .sbcMatImgX {
+  opacity: 1;
+  pointer-events: auto;
 }
 .sbcMatBadge:disabled {
   cursor: default;

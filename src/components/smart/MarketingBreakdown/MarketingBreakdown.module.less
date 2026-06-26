@@ -71,6 +71,46 @@
   color: #909090;
   font-size: 12px;
 }
+/* 描述行:左侧描述文本,右侧已选标签徽章 */
+/* 描述 + 已选徽章同一行,徽章紧跟句末(左对齐,不右靠) */
+.mktDescRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+}
+.mktPickedWrap {
+  flex: 0 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* 已选标签徽章:放在描述右侧,点击可移除 */
+.mktPicked {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 6px 0 10px;
+  background: rgba(31, 207, 169, 0.1);
+  border: 1px solid rgba(31, 207, 169, 0.4);
+  border-radius: 11px;
+  color: #11a98a;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+  &:hover {
+    background: rgba(31, 207, 169, 0.18);
+    border-color: #1fcfa9;
+  }
+}
+.mktPickedX {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.7;
+}
 
 /* 内容框 */
 .mktBox {
@@ -81,7 +121,12 @@
 }
 .mktDesc {
   display: block;
-  width: 100%;
+  /* 按内容宽度自适应:句子多长就多宽,徽章才能紧跟句末。不支持 field-sizing 的浏览器回退占满整行 */
+  field-sizing: content;
+  flex: 0 1 auto;
+  min-width: 120px;
+  max-width: 100%;
+  width: auto;
   border: none;
   outline: none;
   resize: none;
@@ -93,6 +138,13 @@
   overflow: hidden;
   &::placeholder {
     color: #b0b4ba;
+  }
+}
+/* 不支持 field-sizing 时:textarea 占满整行,徽章自然落到下一行紧跟其后(仍在句子区域内) */
+@supports not (field-sizing: content) {
+  .mktDesc {
+    flex: 1 1 100%;
+    width: 100%;
   }
 }
 
@@ -119,6 +171,18 @@
     border-color 0.15s,
     color 0.15s;
   &:hover {
+    border-color: #1fcfa9;
+    color: #11a98a;
+  }
+}
+/* 已被选中的候选标签:高亮成与已选徽章一致的绿色,提示「已添加」 */
+.mktTagActive {
+  background: rgba(31, 207, 169, 0.1);
+  border-color: #1fcfa9;
+  color: #11a98a;
+  font-weight: 600;
+  &:hover {
+    background: rgba(31, 207, 169, 0.18);
     border-color: #1fcfa9;
     color: #11a98a;
   }
