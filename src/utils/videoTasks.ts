@@ -21,7 +21,7 @@ export function buildVideoGenerationParams(model, params) {
     }
   }
 
-  const payload = {}
+  const payload: Record<string, any> = {}
 
   const durationField = findFirstField(fields, ['duration', 'seconds'])
   if (durationField) {
@@ -41,11 +41,13 @@ export function buildVideoGenerationParams(model, params) {
   const audioField = findFirstField(fields, ['generate_audio', 'generateAudio'])
   if (audioField) {
     payload[audioField.name] = generateAudio
+  } else if (generateAudio) {
+    // 模型 schema 没声明 audio 字段时也要带上(否则成片无声):按标准名 generate_audio 下发
+    payload.generate_audio = true
   }
 
   return payload
 }
-
 
 function normalizeDuration(value) {
   const seconds = Number(value)
