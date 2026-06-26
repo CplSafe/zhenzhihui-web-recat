@@ -2041,11 +2041,15 @@ export default function SmartCreateView() {
                 />
               </svg>
             </button>
-            {/* 下一步:分镜脚本已生成则前进(不重生成),未生成(前沿)置灰,首次走「确认营销思路」 */}
+            {/* 下一步:营销拆解是叠在当前 step 上的浮层,关闭时必须显式落到它后面那一步=分镜脚本(step0),
+                否则若用户是从靠后的步骤(如镜头编排)跳进来的,关闭会回到那一步而非紧接着的分镜脚本。 */}
             <button
               type="button"
               className="smart__nav-btn"
-              onClick={() => setMarketingOpen(false)}
+              onClick={() => {
+                setMarketingOpen(false)
+                goStep(0)
+              }}
               disabled={shots.length === 0}
               aria-label="下一步"
               data-tip="下一步"
@@ -2258,7 +2262,6 @@ export default function SmartCreateView() {
                   const mkt = marketingLoading ? '思路拆解中' : marketingText ? '已完成' : '待生成'
                   return [mkt, ...flow]
                 })()}
-                maxReached={usedSkill ? (marketingOpen ? 0 : maxReached + 1) : maxReached}
                 onStepClick={(i) => {
                   if (!usedSkill) return goStep(i)
                   if (i === 0) setMarketingOpen(true)

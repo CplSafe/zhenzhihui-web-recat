@@ -4,7 +4,7 @@
  * props: activeKey 当前选中项；onNavigate(key) 点击回调（跳转由父级接线）。
  * 图标统一用简单 inline SVG（24x24, stroke=currentColor），避免引入新依赖。
  */
-import brandLogo from '@/img/image copy 6.png'
+import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
 import './AppSidebar.css'
 
@@ -160,8 +160,10 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
         {/* 品牌 */}
         <div className="app-sidebar__brand">
           <img src={brandLogo} alt="帧智汇" className="app-sidebar__logo" />
-          <span className="app-sidebar__brand-name">帧智汇</span>
-          <span className="app-sidebar__version">v{APP_VERSION}</span>
+          <div className="app-sidebar__brand-text">
+            <span className="app-sidebar__brand-name">帧智汇</span>
+            <span className="app-sidebar__version">v{APP_VERSION}</span>
+          </div>
         </div>
 
         <nav className="app-sidebar__nav">
