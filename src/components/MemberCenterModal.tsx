@@ -16,7 +16,6 @@ import { useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import {
   createRechargeOrder,
-  createRenewalPayUrl,
   createSubscriptionOrder,
   getBusinessErrorMessage,
   getSubscription,
@@ -24,7 +23,6 @@ import {
   listBillingPlans,
   listCreditPackages,
   listPaymentOrders,
-  listRenewalOrders,
 } from '@/api/business'
 import './MemberCenterModal.css'
 
@@ -135,10 +133,8 @@ function toVM(p: ApiPlan): PlanVM {
     String(p.subtitle || p.description || p.display?.subtitle || '').trim() ||
     (isTeam ? '多成员共享创作,素材高效管理' : '解锁全量核心功能,高效产出')
 
-  // 生成额度:后端字段优先;否则按积分估算(试用档 800积分≈24张/10条,反推 33积分/张、80积分/条)
-  const quota =
-    String(p.quota || p.display?.quota || '').trim() ||
-    (credits > 0 ? `最多生成约 ${Math.round(credits / 33)} 张图片 | ${Math.round(credits / 80)} 个视频` : '')
+  // 生成额度:只用后端真实字段,后端没返回就不显示(不再写死估算)
+  const quota = String(p.quota || p.display?.quota || '').trim()
   return {
     id: Number(p.id),
     code: p.code || '',
@@ -298,8 +294,6 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   // 支付状态轮询(payment-orders / subscription / wallet)
   const [paid, setPaid] = useState(false)
   const [checking, setChecking] = useState(false)
-  // 待支付续费账单
-  const [renewals, setRenewals] = useState<any[]>([])
 
   // Esc 关闭(仅弹窗模式;页面模式不拦 Esc)
   useEffect(() => {
@@ -342,17 +336,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       getSubscription(workspaceId)
         .then((s: any) => alive && setSubscription(s))
         .catch(() => alive && setSubscription(null))
-      // 待支付续费账单
-      listRenewalOrders(workspaceId)
-        .then(
-          (list: any) =>
-            alive && setRenewals(Array.isArray(list) ? list : Array.isArray(list?.items) ? list.items : []),
-        )
-        .catch(() => alive && setRenewals([]))
     } else {
       setBalance(null)
       setSubscription(null)
-      setRenewals([])
     }
     return () => {
       alive = false
@@ -408,20 +394,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         showToast('未获取到支付链接,请稍后重试', 'error')
       }
     } catch (e) {
-      // 开发环境(未接通后端/未登录)展示占位二维码,方便预览支付步骤;线上仍提示错误
-      if (import.meta.env.DEV) {
-        setPayInfo({
-          kind: 'plan',
-          title: p.name,
-          price: `￥${p.price}${p.unit}`,
-          url: `https://example.com/pay/preview?plan=${p.id}`,
-          demo: true,
-          planCode: p.code,
-        })
-        setStep('pay')
-      } else {
-        showToast(getBusinessErrorMessage(e, '开通失败,请稍后重试'), 'error')
-      }
+      showToast(getBusinessErrorMessage(e, '开通失败,请稍后重试'), 'error')
     } finally {
       setBuyingId(0)
     }
@@ -455,57 +428,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         showToast('未获取到支付链接,请稍后重试', 'error')
       }
     } catch (e) {
-      if (import.meta.env.DEV) {
-        setPayInfo({
-          kind: 'recharge',
-          title: pkg.name,
-          price: `￥${pkg.price}`,
-          url: `https://example.com/pay/preview?pkg=${pkg.id}`,
-          demo: true,
-        })
-        setStep('pay')
-      } else {
-        showToast(getBusinessErrorMessage(e, '充值失败,请稍后重试'), 'error')
-      }
-    } finally {
-      setBuyingId(0)
-    }
-  }
-
-  // 待支付续费账单:生成支付链接 → 进扫码支付
-  const onPayRenewal = async (order: any) => {
-    if (buyingId) return
-    const orderId = Number(order?.id ?? order?.order_id ?? 0) || 0
-    if (!workspaceId || !orderId) {
-      showToast('账单信息缺失,无法支付', 'error')
-      return
-    }
-    const amountCents = Number(order?.amount_cents ?? order?.amount ?? 0) || 0
-    const title = String(order?.plan_name ?? order?.title ?? '续费账单')
-    setBuyingId(orderId)
-    setPaid(false)
-    try {
-      const res: any = await createRenewalPayUrl({ workspaceId, renewalOrderId: orderId })
-      const url = String(res?.pay_url || '')
-      if (url) {
-        setPayInfo({ kind: 'plan', title, price: amountCents ? `￥${yuan(amountCents)}` : '', url, demo: false })
-        setStep('pay')
-      } else {
-        showToast('未获取到支付链接,请稍后重试', 'error')
-      }
-    } catch (e) {
-      if (import.meta.env.DEV) {
-        setPayInfo({
-          kind: 'plan',
-          title,
-          price: amountCents ? `￥${yuan(amountCents)}` : '',
-          url: `https://example.com/pay/preview?renewal=${orderId}`,
-          demo: true,
-        })
-        setStep('pay')
-      } else {
-        showToast(getBusinessErrorMessage(e, '生成支付链接失败,请稍后重试'), 'error')
-      }
+      showToast(getBusinessErrorMessage(e, '充值失败,请稍后重试'), 'error')
     } finally {
       setBuyingId(0)
     }
@@ -642,33 +565,6 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         <>
           <h2 className="mcm-title">会员中心</h2>
           {balance !== null && <div className="mcm-balance">当前积分余额:{balance}</div>}
-
-          {/* 待支付续费账单:有则置顶提醒,点「去支付」走扫码 */}
-          {renewals.length > 0 && (
-            <div className="mcm-renewals">
-              {renewals.map((order: any) => {
-                const oid = Number(order?.id ?? order?.order_id ?? 0) || 0
-                const amt = Number(order?.amount_cents ?? order?.amount ?? 0) || 0
-                const name = String(order?.plan_name ?? order?.title ?? '续费账单')
-                return (
-                  <div className="mcm-renewal" key={oid || name}>
-                    <span className="mcm-renewal-info">
-                      待支付:{name}
-                      {amt > 0 && <b> ￥{yuan(amt)}</b>}
-                    </span>
-                    <button
-                      type="button"
-                      className="mcm-renewal-pay"
-                      disabled={buyingId === oid}
-                      onClick={() => onPayRenewal(order)}
-                    >
-                      {buyingId === oid ? '处理中…' : '去支付'}
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-          )}
 
           {/* 当前订阅信息(套餐 / 席位 / 并发);未订阅不显示 */}
           {subscription?.active && (

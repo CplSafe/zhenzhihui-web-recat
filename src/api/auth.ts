@@ -92,6 +92,19 @@ export function logoutSession() {
   return businessPost('/api/v1/auth/logout')
 }
 
+// 登录前清掉旧的业务会话：换账号时旧的会话 cookie（DEEPAUTH_SID，24h）仍有效，
+// 若不先登出，登录后立即 getSession() 会直接读回旧账号 → 「换账号仍是旧账号」。
+// 必须在 oauth-start 之前调用，否则会把本次 OAuth 的 state 一并清掉导致回调 400。
+// 全程容错（未登录/已失效都忽略），不阻断后续登录。
+export async function clearExistingSession() {
+  try {
+    await logoutSession()
+  } catch {
+    // 未登录或会话已失效：忽略即可
+  }
+  clearAuthSessionMarker()
+}
+
 export function getCurrentUser() {
   return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/me'))
 }

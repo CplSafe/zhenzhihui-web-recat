@@ -11,6 +11,7 @@ import './LoginView.css'
 import loginHero from '@/assets/login-hero.png'
 import AgreementModal from '@/components/auth/AgreementModal'
 import {
+  clearExistingSession,
   getAuthErrorMessage,
   getAuthNavigationUrl,
   getAuthenticatedSession,
@@ -280,6 +281,12 @@ export default function LoginView() {
     }
 
     try {
+      // 换账号关键：先登出旧业务会话，否则登录后立即 getSession() 会读回旧账号。
+      // 必须在 oauth-start 之前，否则会清掉本次 OAuth 的 state 导致回调 400。
+      await clearExistingSession()
+      // 发短信时可能已生成过 authStart（其 state 绑定旧会话），登出后需重新获取。
+      authStartRef.current = null
+      authStartPromiseRef.current = null
       const oauth = await ensureAuthStart()
       const common = { authStart: oauth, mobile, captchaId: captcha.id, captchaAnswer: captcha.answer.trim() }
       let loginResult: any
