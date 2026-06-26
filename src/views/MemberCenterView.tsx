@@ -1,6 +1,6 @@
 /**
  * MemberCenterView — 会员中心(独立页面)。
- * 复用 MemberCenterModal 的全部逻辑(套餐 / 积分充值 / 扫码支付 / 支付轮询),以 embedded 模式内联渲染,
+ * 复用 MemberCenterModal 的全部逻辑(套餐 / 续费 / 积分充值 / 直跳支付宝支付),以 embedded 模式内联渲染,
  * 由本页提供 AppSidebar + AppTopbar 页面外壳。
  */
 import { useState } from 'react'
