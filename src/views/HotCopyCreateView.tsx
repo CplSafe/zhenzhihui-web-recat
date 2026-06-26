@@ -26,6 +26,7 @@ import {
   deriveModelPlanCandidates,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
+import { useRequireAuth } from '@/composables/useRequireAuth'
 import { downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
 
@@ -59,6 +60,7 @@ function buildBasePrompt(tab: 'remake' | 'replica', text: string): string {
 export default function HotCopyCreateView() {
   const navigate = useNavigate()
   const { showToast } = useToast()
+  const requireAuth = useRequireAuth()
   const workspaceId = useWorkspaceId()
   const modelPlanCandidates = useModelPlanCandidates() as string[]
   const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
@@ -249,21 +251,29 @@ export default function HotCopyCreateView() {
     const d = new Date()
     const dateStr = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
     const fileName = `${safeName}_${dateStr}.mp4`
-    await downloadToDisk({
-      fileName,
-      resolveUrl: async () => {
-        const ws = Number(workspaceId || 0)
-        let url = fullVideo.url
-        if (ws && fullVideo.assetId) {
-          const fresh = await refreshAssetUrl(ws, fullVideo.assetId)
-          if (fresh) url = fresh
-        }
-        return url
-      },
-    })
+    try {
+      await downloadToDisk({
+        fileName,
+        resolveUrl: async () => {
+          const ws = Number(workspaceId || 0)
+          let url = fullVideo.url
+          if (ws && fullVideo.assetId) {
+            const fresh = await refreshAssetUrl(ws, fullVideo.assetId)
+            if (fresh) url = fresh
+          }
+          return url
+        },
+      })
+    } catch (e: any) {
+      showToast(e?.message || '视频下载失败,请稍后重试', 'error')
+    }
   }
 
+  // 入口提交「做同款/生成视频」→ 需登录(免登录可进页面/上传,但生成需登录)
   const handleStart = (payload: HotCopyEntryPayload) => {
+    void requireAuth(() => startGenerate(payload))
+  }
+  const startGenerate = (payload: HotCopyEntryPayload) => {
     const prompt = buildBasePrompt(payload.tab, payload.text)
     setEntryInitial(payload)
     setBasePrompt(prompt)

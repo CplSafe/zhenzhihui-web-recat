@@ -1752,12 +1752,14 @@ export function completeAssetUpload({ workspaceId, assetId }) {
 }
 
 export async function getAssetDownloadUrl({ workspaceId, assetId }) {
-  const payload = await requestJson(`/api/v1/assets/${assetId}/download-url?workspace_id=${workspaceId}`)
-  // 服务端可能返回 JSON { download_url: "..." } 或直接返回 URL 字符串
-  if (typeof payload === 'string' && payload.trim()) {
-    return sanitizeMediaUrl(payload.trim())
-  }
-  return sanitizeMediaUrl(payload?.download_url || payload?.url || '')
+  // 直接返回【同源流式地址】(/download,后端鉴权流式返回),而非 OSS 预签名(/download-url)。
+  // 预签名 URL 是 http + IP 主机:① 在 HTTPS 页面会被浏览器当 Mixed Content 拦掉(IP 主机不自动升级)→ 破图;
+  // ② 带 X-Amz-Expires 短期过期 → 一会儿就 403。流式地址同源、走 HTTPS、不过期,从根上规避这两个问题。
+  // 仅用于浏览器内显示/下载(本函数所有调用点都是 img/video src 与封面刷新),不作为传给后端的生成输入。
+  const id = Math.floor(Number(assetId) || 0)
+  const ws = Math.floor(Number(workspaceId) || 0)
+  if (!id) return ''
+  return `/api/v1/assets/${id}/download?workspace_id=${ws}`
 }
 
 export async function downloadAssetFile({ workspaceId, assetId }) {

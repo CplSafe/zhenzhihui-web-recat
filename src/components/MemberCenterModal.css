@@ -152,6 +152,56 @@
   background: #fff;
   overflow: hidden;
 }
+/* 卡片内容压在光晕之上 */
+.mc-card > * {
+  position: relative;
+  z-index: 1;
+}
+/* 右上角同心圆装饰(还原 Figma Group 350 三层椭圆:外圈淡→中圈→内圈亮核),
+   中心落在卡片右上角内侧,被卡片圆角裁切只露出 1/4。每卡用 --glow-rgb / --glow-core-rgb 配色。 */
+.mc-card::after {
+  content: '';
+  position: absolute;
+  top: -78px;
+  right: -78px;
+  width: 170px;
+  height: 170px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  /* 还原 Figma Group 350 三层椭圆的真实透明度(组 0.6 × fill 0.6/0.3/0.2 ≈ 0.36/0.18/0.12),
+     所以是很淡的浅色光晕,而非实色靶心。外→中→内由下到上叠放。 */
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(var(--glow-core-rgb), 0.12) 0%,
+      rgba(var(--glow-rgb), 0.12) 32%,
+      transparent 33%
+    ),
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(var(--glow-rgb), 0.18) 0%,
+      rgba(var(--glow-rgb), 0.04) 66%,
+      transparent 67%
+    ),
+    radial-gradient(circle at 50% 50%, rgba(var(--glow-rgb), 0.36) 0%, transparent 100%);
+}
+.mcm-cards .mc-card:nth-child(4n + 1)::after {
+  --glow-rgb: 129, 163, 242;
+  --glow-core-rgb: 159, 187, 252;
+}
+.mcm-cards .mc-card:nth-child(4n + 2)::after {
+  --glow-rgb: 50, 199, 166;
+  --glow-core-rgb: 125, 230, 207;
+}
+.mcm-cards .mc-card:nth-child(4n + 3)::after {
+  --glow-rgb: 255, 177, 76;
+  --glow-core-rgb: 255, 216, 165;
+}
+.mcm-cards .mc-card:nth-child(4n + 4)::after {
+  --glow-rgb: 194, 122, 255;
+  --glow-core-rgb: 216, 171, 254;
+}
 /* 4 张卡底色(按 Figma:整卡 225° 低透明 accent 渐变,叠在白底上;蓝/绿/橙/紫)*/
 .mcm-cards .mc-card:nth-child(4n + 1) {
   background:
@@ -182,26 +232,35 @@
     #ffffff;
   border-color: rgba(194, 122, 255, 0.18);
 }
-/* 立即开通按钮(按 Figma:浅 accent 渐变,文字用 accent 深色)*/
+/* 折扣药丸底色 = 该卡 accent 渐变(还原 Figma Rectangle 383,白字)*/
+.mcm-cards .mc-card:nth-child(4n + 1) .mc-card-discount {
+  background: linear-gradient(135deg, #aeb7ff, #5b6be8);
+}
+.mcm-cards .mc-card:nth-child(4n + 2) .mc-card-discount {
+  background: linear-gradient(135deg, rgb(98, 235, 204), rgb(50, 199, 166));
+}
+.mcm-cards .mc-card:nth-child(4n + 3) .mc-card-discount {
+  background: linear-gradient(135deg, rgb(250, 207, 153), rgb(255, 177, 76));
+}
+.mcm-cards .mc-card:nth-child(4n + 4) .mc-card-discount {
+  background: linear-gradient(135deg, rgb(219, 177, 255), rgb(194, 122, 255));
+}
+/* 立即开通按钮(按 Figma:浅 accent 渐变,文字统一 #666)*/
 .mcm-cards .mc-card .mc-card-buy {
   background: #eef0f6;
-  color: #5b6072;
+  color: #666666;
 }
 .mcm-cards .mc-card:nth-child(4n + 1) .mc-card-buy {
-  background: linear-gradient(90deg, rgba(213, 218, 255, 0.5), rgba(213, 218, 255, 0.95)), #ffffff;
-  color: #4b59d6;
+  background: linear-gradient(90deg, rgba(213, 218, 255, 0.3), rgba(213, 218, 255, 0.8)), #ffffff;
 }
 .mcm-cards .mc-card:nth-child(4n + 2) .mc-card-buy {
-  background: linear-gradient(90deg, rgba(50, 199, 166, 0.12), rgba(50, 199, 166, 0.32)), #ffffff;
-  color: #1f9c78;
+  background: linear-gradient(90deg, rgba(50, 199, 166, 0.1), rgba(50, 199, 166, 0.3)), #ffffff;
 }
 .mcm-cards .mc-card:nth-child(4n + 3) .mc-card-buy {
-  background: linear-gradient(90deg, rgba(255, 186, 97, 0.12), rgba(255, 186, 97, 0.32)), #ffffff;
-  color: #cf7a2c;
+  background: linear-gradient(90deg, rgba(255, 186, 97, 0.1), rgba(255, 186, 97, 0.3)), #ffffff;
 }
 .mcm-cards .mc-card:nth-child(4n + 4) .mc-card-buy {
-  background: linear-gradient(90deg, rgba(194, 122, 255, 0.1), rgba(194, 122, 255, 0.26)), #ffffff;
-  color: #8b5cf6;
+  background: linear-gradient(90deg, rgba(194, 122, 255, 0.08), rgba(194, 122, 255, 0.24)), #ffffff;
 }
 /* 套餐名 + 折扣药丸同一行 */
 .mc-card-head {
@@ -214,12 +273,11 @@
   font-weight: 600;
   color: #333333;
 }
-/* 折扣药丸(8.8折):渐变底 + 白字,紧跟套餐名 */
+/* 折扣药丸(8.8折):底色 = 该卡 accent 渐变(见下方 nth-child),白字,紧跟套餐名 */
 .mc-card-discount {
   flex: none;
   padding: 2px 9px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #ffa86b, #ff6f97);
+  border-radius: 6px;
   color: #ffffff;
   font-size: 12px;
   font-weight: 600;

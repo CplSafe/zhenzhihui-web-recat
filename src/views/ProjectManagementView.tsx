@@ -138,47 +138,32 @@ function relativeUpdated(ts: number): string {
   return mo < 12 ? `${mo}个月前更新` : `${Math.floor(mo / 12)}年前更新`
 }
 
-// 从项目列表中提取有生成视频的项目作为「待归类」
-function extractUnclassified(
-  projectItems: any[],
-  workspaceId: number,
-): { id: number; title: string; videoUrl: string }[] {
-  const out: { id: number; title: string; videoUrl: string }[] = []
-  // 优先用 asset 直传地址(不过期);没有 assetId 才退回草稿里的(可能已过期的)URL
-  const resolveUrl = (v: any, rawUrl: string): string => {
-    const assetId = Number(v?.assetId || v?.asset_id || v?.videoAssetId || 0) || 0
-    return assetId && workspaceId ? assetStreamUrl(assetId, workspaceId) : rawUrl
-  }
+// 从项目列表中提取「待归类」=【草稿状态】项目:有在制内容(分镜/入口素材)但【还没有成片视频】。
+// 已生成成片视频的项目视为已完成,不进待归类;封面用图片(extractCover),不用视频。
+function extractUnclassified(projectItems: any[], workspaceId: number): { id: number; title: string; cover: string }[] {
+  const out: { id: number; title: string; cover: string }[] = []
+  const hasUrl = (list: any[]) => normalizeArray(list).some((v: any) => String(v?.url || v?.src || '').trim())
   for (const project of projectItems) {
     const draft = normalizeCreativeProjectDraft(project)
     if (!draft) continue
     const smart = toPlainObject(draft.smart) || draft
-    const vv = Array.isArray(smart?.videoVersions) ? smart.videoVersions : []
-    const vh = Array.isArray(draft?.videoHistoryList || draft?.video_history_list)
-      ? draft.videoHistoryList || draft.video_history_list
-      : []
-    const src = vv.length ? vv : vh
-    for (const v of src) {
-      const url = String(v?.url || v?.src || '').trim()
-      if (url) {
-        out.push({
-          id: Number(project?.id || 0),
-          title: String(project?.title || project?.name || '').trim() || '未命名项目',
-          videoUrl: resolveUrl(v, url),
-        })
-      }
-    }
-    if (!src.length) {
-      const gv = String(draft?.generatedVideoUrl || draft?.generated_video_url || smart?.fullVideoUrl || '').trim()
-      if (gv) {
-        const gAssetId = Number(draft?.generatedVideoAssetId || smart?.fullVideoAssetId || 0) || 0
-        out.push({
-          id: Number(project?.id || 0),
-          title: String(project?.title || project?.name || '').trim() || '未命名项目',
-          videoUrl: gAssetId && workspaceId ? assetStreamUrl(gAssetId, workspaceId) : gv,
-        })
-      }
-    }
+    // 已有成片视频(版本/历史/最终)→ 已完成,不算待归类草稿
+    const hasFinalVideo =
+      hasUrl(smart?.videoVersions) ||
+      hasUrl(draft?.videoHistoryList || draft?.video_history_list) ||
+      !!String(draft?.generatedVideoUrl || draft?.generated_video_url || smart?.fullVideoUrl || '').trim()
+    if (hasFinalVideo) continue
+    // 草稿:有在制内容(分镜 / 旧版分镜 / 入口素材)才展示
+    const hasWork =
+      normalizeArray(smart?.shots).length > 0 ||
+      normalizeArray(draft?.storyboardItems || draft?.storyboard_items).length > 0 ||
+      normalizeArray(smart?.entryMeta?.images).length > 0
+    if (!hasWork) continue
+    out.push({
+      id: Number(project?.id || 0),
+      title: String(project?.title || project?.name || '').trim() || '未命名项目',
+      cover: extractCover(project, workspaceId),
+    })
   }
   return out
 }
@@ -437,7 +422,7 @@ export default function ProjectManagementView() {
   const unclassified = useMemo(
     () =>
       extractUnclassified(projectItems, Number(workspaceId || 0)).filter(
-        (v) => !classifiedKeys.has(videoKeyOf(v.id, v.videoUrl)),
+        (v) => !classifiedKeys.has(videoKeyOf(v.id, v.cover)),
       ),
     [projectItems, classifiedKeys, workspaceId],
   )
@@ -701,21 +686,21 @@ export default function ProjectManagementView() {
       } catch {
         video = null
       }
-      if (!video?.videoUrl) return
+      if (!video?.id) return
       const wsId = Number(workspaceId || 0)
       if (!wsId || !folder.id) {
         showToast('workspace_id 缺失,无法归类', 'error')
         return
       }
-      // ① 写入目标项目的本地视频清单(占位),使其出现在该项目里
+      // ① 写入目标项目的本地清单(占位草稿,带封面图),使其出现在该项目里
       addClassifiedVideo({
         projectId: folder.id,
         workspaceId: wsId,
         title: video.title,
-        videoUrl: video.videoUrl,
+        videoUrl: video.cover || '',
       })
       // ② 标记已归类 → 从待归类隐藏
-      const key = videoKeyOf(Number(video.id || 0), video.videoUrl)
+      const key = videoKeyOf(Number(video.id || 0), video.cover || '')
       markVideoClassified(wsId, key)
       setClassifiedKeys((prev) => new Set(prev).add(key))
       showToast(`已归类到「${folder.title}」`, 'success')
@@ -931,11 +916,11 @@ export default function ProjectManagementView() {
                 )}
               </section>
 
-              {/* 待归类:有生成视频的项目 */}
+              {/* 待归类:草稿状态项目(未出成片);封面用图片,点击进编辑续作 */}
               <section className="pm2-section">
                 <h2 className="pm2-section-title">待归类</h2>
                 {!unclassified.length ? (
-                  <div className="pm2-hint">暂无待归类视频，生成视频后将出现在这里</div>
+                  <div className="pm2-hint">暂无待归类草稿，未完成的创作会出现在这里</div>
                 ) : (
                   <div className="pm2-video-grid" ref={vidGridRef}>
                     {pagedUnclassified.map((video, i) => (
@@ -950,22 +935,18 @@ export default function ProjectManagementView() {
                             role="button"
                             tabIndex={0}
                             onClick={() => {
-                              // 跳到项目视频详情(播放)页;视频详情接口匹配不到该哨兵 id 时回退到项目主视频
-                              if (video.id) navigate(`/projects/${video.id}/videos/latest?from=unclassified`)
-                              else showToast('无法打开视频', 'info')
+                              // 草稿 → 进智能成片编辑页续作
+                              if (video.id) navigate(`/smart/${video.id}`)
+                              else showToast('无法打开草稿', 'info')
                             }}
                           >
-                            {video.videoUrl ? (
-                              <video
+                            {video.cover ? (
+                              <img
                                 className="pm2-vid-media"
-                                src={video.videoUrl}
-                                autoPlay
-                                muted
-                                loop
-                                playsInline
-                                preload="auto"
-                                onLoadedData={(e) => {
-                                  ;(e.currentTarget as HTMLVideoElement).play().catch(() => {})
+                                src={video.cover}
+                                alt={video.title}
+                                onError={(e) => {
+                                  ;(e.currentTarget as HTMLImageElement).style.display = 'none'
                                 }}
                               />
                             ) : (
@@ -973,18 +954,7 @@ export default function ProjectManagementView() {
                                 <PlayIcon />
                               </span>
                             )}
-                            <button
-                              type="button"
-                              className="pm2-vid-dl"
-                              aria-label="下载视频"
-                              title="下载视频"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                downloadFromUrl(video.videoUrl, `${video.title}.mp4`)
-                              }}
-                            >
-                              <DownloadIcon />
-                            </button>
+                            <span className="pm2-vid-draft-tag">草稿</span>
                           </span>
                           <span className="pm2-vid-title" title={video.title}>
                             {video.title}

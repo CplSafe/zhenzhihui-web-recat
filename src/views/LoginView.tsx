@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import './LoginView.css'
-import loginHero from '@/assets/login-hero.png'
+import loginHero from '@/assets/login-hero.jpg'
 import AgreementModal from '@/components/auth/AgreementModal'
 import {
   clearExistingSession,
@@ -36,6 +36,10 @@ const NAV_ITEMS = ['母婴宠物', '视频饮料', '生活服务', '家居建材
 
 export default function LoginView() {
   const navigate = useNavigate()
+  // 「返回」写死:始终回到开屏页 /welcome。
+  const goBack = () => {
+    navigate('/welcome', { replace: true })
+  }
   const { showToast, clearToast } = useToast()
   const { handleLoginSuccess } = useAuth()
 
@@ -90,12 +94,15 @@ export default function LoginView() {
   async function handleLoginFlowComplete(oauth: any, authResult?: any) {
     markAuthSessionExpected()
     if (import.meta.env.DEV && !hasRemoteBackend) {
+      setNoticeMessage('登录成功', 'success')
       handleLoginSuccess()
       return
     }
+    // 仅在真正拿到业务会话后才提示「登录成功」并进首页(避免先成功后失败的误导)
     const trySession = async () => {
       try {
         const session = await getAuthenticatedSession()
+        setNoticeMessage('登录成功', 'success')
         handleLoginSuccess(session)
         return true
       } catch {
@@ -109,7 +116,8 @@ export default function LoginView() {
     }
     const navUrl = getAuthNavigationUrl(oauth, authResult)
     if (!navUrl || navUrl === '/') {
-      setNoticeMessage('登录失败，请稍后重试', 'error')
+      console.warn('[login] 取会话失败且无 SSO 跳转地址 navUrl=%o', navUrl, { authResult, oauth })
+      setNoticeMessage('登录失败:未获取到会话,且缺少 SSO 跳转地址,请稍后重试或联系管理员', 'error')
       return
     }
     // ② 隐藏 iframe 静默桥接:后台跑完 OAuth 回调种 cookie,同时轮询会话
@@ -143,6 +151,7 @@ export default function LoginView() {
     })
     if (silentOk) return
     // ③ 静默失败(被 X-Frame-Options 拦截 / 超时)→ 兜底可见重定向,保证能登录
+    console.warn('[login] 静默会话桥接失败/超时,回退可见重定向:', navUrl)
     window.location.href = navUrl
   }
 
@@ -275,7 +284,6 @@ export default function LoginView() {
     // 仅在未配置远程后端时跳过真实 API 调用（走本地 mock 登录）。
     if (import.meta.env.DEV && !hasRemoteBackend) {
       setIsSubmitting(false)
-      setNoticeMessage('登录成功', 'success')
       handleLoginFlowComplete(null as any)
       return
     }
@@ -295,7 +303,7 @@ export default function LoginView() {
       } else {
         loginResult = await loginWithSmsCode({ ...common, smsCode: credential })
       }
-      setNoticeMessage('登录成功', 'success')
+      // 不再在此提前弹「登录成功」——改由 handleLoginFlowComplete 确认会话后再弹
       handleLoginFlowComplete(oauth, loginResult)
     } catch (error) {
       if (await handleCaptchaError(error)) {
@@ -364,7 +372,7 @@ export default function LoginView() {
       </aside>
 
       <section className="zlogin-panel" aria-label="帧智汇登录">
-        <button type="button" className="zlogin-back" onClick={() => navigate(-1)} aria-label="返回上一页">
+        <button type="button" className="zlogin-back" onClick={goBack} aria-label="返回上一页">
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
             <path
               d="M15 18l-6-6 6-6"

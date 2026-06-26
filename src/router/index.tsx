@@ -97,9 +97,10 @@ export const router = createBrowserRouter([
       { path: 'home', element: lazyPage(<HomeView />), handle: { requiresAuth: false } },
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },
       { path: 'workbench', element: lazyPage(<WorkbenchView />) },
-      { path: 'smart', element: lazyPage(<SmartCreateView />) },
-      { path: 'smart/:id', element: lazyPage(<SmartCreateView />) },
-      { path: 'hot-copy', element: lazyPage(<HotCopyCreateView />) },
+      // 智能成片 / 爆款复制:免登录可进入并交互,仅「生成」动作需登录(组件内拦截)
+      { path: 'smart', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
+      { path: 'smart/:id', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
+      { path: 'hot-copy', element: lazyPage(<HotCopyCreateView />), handle: { requiresAuth: false } },
       { path: 'creative/blank', element: lazyPage(<CreativeScriptView />) },
       { path: 'creative', element: lazyPage(<CreativeEntryView />) },
       { path: 'creative/:id', element: lazyPage(<CreativeScriptView />) },

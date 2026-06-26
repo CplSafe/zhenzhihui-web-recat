@@ -5,7 +5,7 @@
  * 各步具体内容(脚本编辑/素材匹配/镜头编排/视频生成)在后续阶段填充,
  * 大量编排逻辑可复用现有 useCreativeWorkflow / useStoryboard* / useVideoGeneration。
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
@@ -13,11 +13,10 @@ import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import SmartEntry, { type EntryMeta } from '@/components/smart/SmartEntry'
 import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStoryboardTable'
 import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
-import SubjectMaterialBoard from '@/components/smart/SubjectMaterialBoard'
 import ShotArrange from '@/components/smart/ShotArrange'
 import ImageChat, { type ChatMessage } from '@/components/smart/ImageChat'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
-import { Streamdown } from 'streamdown'
+import Markdown from '@/components/common/Markdown'
 import {
   generateProjectName,
   summarizeRequirement,
@@ -34,9 +33,15 @@ import {
   type MarketingFieldKey,
 } from '@/api/aiPolish'
 import MarketingBreakdown from '@/components/smart/MarketingBreakdown'
-import { generateScriptShotsStream, generateShotInfo } from '@/api/smartScript'
+import { generateScriptShotsStream, generateShotInfo, extractSubjects } from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
-import { generateFullVideo, editFullVideo, buildTimelinePrompt, totalDurationSec } from '@/api/smartVideo'
+import {
+  generateFullVideo,
+  editFullVideo,
+  resumeFullVideo,
+  buildTimelinePrompt,
+  totalDurationSec,
+} from '@/api/smartVideo'
 import { blurFacesOnAsset } from '@/api/smartFaceBlur'
 import VideoStage from '@/components/smart/VideoStage'
 import {
@@ -56,8 +61,10 @@ import {
   deriveModelPlanCandidates,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
+import { useRequireAuth } from '@/composables/useRequireAuth'
 import {
   saveSmartDraft,
+  loadSmartDraft,
   clearSmartDraft,
   buildSmartSnapshot,
   parseSmartSnapshot,
@@ -176,6 +183,7 @@ export default function SmartCreateView() {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
   const { showToast } = useToast()
+  const requireAuth = useRequireAuth()
   const workspaceId = useWorkspaceId()
   const modelPlanCandidates = useModelPlanCandidates() as string[]
   const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
@@ -211,7 +219,6 @@ export default function SmartCreateView() {
   const [nameTouched, setNameTouched] = useState(false) // 用户手动改过名后不再自动覆盖
   const [naming, setNaming] = useState(false)
   const nameInputRef = useRef<HTMLInputElement | null>(null)
-  const materialFileRef = useRef<HTMLInputElement | null>(null)
 
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)
   const [requirement, setRequirement] = useState('')
@@ -253,6 +260,12 @@ export default function SmartCreateView() {
     kind: '',
     autoGen: false,
   })
+  // 准备素材「一键生成」:逐个主体生成时的 loading(键=主体名),以及整体批量进行中标记
+  const [subjectGenerating, setSubjectGenerating] = useState<Record<string, boolean>>({})
+  const [batchGenning, setBatchGenning] = useState(false)
+  // 「一键生成」是否在进行中(持久化进草稿):切到别的页面再回来,据此【自动续作】还没出图的素材,不被截断
+  const [materialBatchPending, setMaterialBatchPending] = useState(false)
+  const batchRunningRef = useRef(false)
   // 把某元素的选定图(url+assetId)写回所有同名 subject
   const applySubjectImage = (name: string, url: string, assetId = 0) =>
     setShots((prev) =>
@@ -261,6 +274,17 @@ export default function SmartCreateView() {
         subjects: sh.subjects.map((su) => (stripAt(su.tag) === name ? { ...su, image: url, assetId } : su)),
       })),
     )
+  // 准备素材:去掉某主体当前应用的图 → 回到占位「上传图片」,可重新生成 / 上传。
+  // 必须同时清掉版本库该条,否则「同名素材图同步」effect 会用版本库里的图把它又补回来(× 看似无效)。
+  const removeSubjectImage = (name: string) => {
+    applySubjectImage(name, '', 0)
+    setSubjectAssets((a) => {
+      if (!a[name]) return a
+      const next = { ...a }
+      delete next[name]
+      return next
+    })
+  }
   // 把生成/上传的图落库(dataURL→后端 asset,得签名URL+assetId),写入版本库 + 同名联动
   const addSubjectVersion = (name: string, url: string, assetId: number, source: 'ai' | 'upload', prompt?: string) => {
     setSubjectAssets((a) => {
@@ -347,56 +371,6 @@ export default function SmartCreateView() {
       showToast(`素材「${name}」生成失败:${e?.message || '请重试'}`, 'error')
     }
   }
-  // 上传素材:直接把 File 经后端 uploadAssetFile 存到服务器,拿 asset_id + 签名URL(失败明确报错)
-  const uploadForSubject = async (name: string, file: File) => {
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      showToast('未选择工作空间,无法上传素材', 'error')
-      return
-    }
-    try {
-      const out: any = await uploadAssetFile({ workspaceId: ws, file })
-      const assetId = Number(out?.asset?.id || 0) || 0
-      if (!assetId) throw new Error('未取得素材 asset_id')
-      const url = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
-      if (!url) throw new Error('未取得素材地址')
-      addSubjectVersion(name, url, assetId, 'upload')
-    } catch (e: any) {
-      showToast(`素材上传失败:${e?.message || '请检查存储配置/网络'}`, 'error')
-    }
-  }
-  // 脚本步「添加素材」:上传图片直传后端成 asset,加入 entryMeta.images(与入口上传同一来源)
-  const handleMaterialFiles = async (files: FileList | null) => {
-    if (!files?.length) return
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      showToast('未选择工作空间,无法上传素材', 'error')
-      return
-    }
-    const urls: string[] = []
-    const ids: number[] = []
-    for (const file of Array.from(files)) {
-      try {
-        const out: any = await uploadAssetFile({ workspaceId: ws, file })
-        const assetId = Number(out?.asset?.id || 0) || 0
-        if (!assetId) continue
-        const url = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
-        if (url) {
-          urls.push(url)
-          ids.push(assetId)
-        }
-      } catch {
-        /* 单张失败跳过 */
-      }
-    }
-    if (!urls.length) {
-      showToast('素材上传失败:请检查存储配置/网络', 'error')
-      return
-    }
-    setEntryMeta((m: any) =>
-      m ? { ...m, images: [...(m.images || []), ...urls], imageAssetIds: [...(m.imageAssetIds || []), ...ids] } : m,
-    )
-  }
   // 上传「额外参考图」(镜头编排面板用):直传后端成 asset(http url + asset_id),供云端草稿持久化
   const uploadRef = async (file: File): Promise<{ url: string; assetId?: number }> => {
     const ws = Number(workspaceId || 0)
@@ -432,8 +406,9 @@ export default function SmartCreateView() {
       .join('。')
   }
 
-  // 准备素材:某镜头脚本没给出主体素材时,点「上传图片」给它加一个占位主体(全局唯一名),并打开素材弹窗上传/AI生成
-  const addShotMaterial = (shot: Shot) => {
+  // 准备素材:某镜头脚本没给出主体素材时,给它加一个占位主体(全局唯一名)并打开素材弹窗。
+  // autoGen=true 时进弹窗即自动生成一次(供「AI自动生成」用);false 仅打开等用户上传/操作。
+  const addShotMaterial = (shot: Shot, autoGen = false) => {
     const used = new Set<string>()
     shots.forEach((sh) => sh.subjects.forEach((su) => used.add(stripAt(su.tag))))
     let name = '素材'
@@ -442,8 +417,96 @@ export default function SmartCreateView() {
     setShots((prev) =>
       prev.map((sh) => (sh.id === shot.id ? { ...sh, subjects: [...sh.subjects, { tag: `@${name}`, kind: '' }] } : sh)),
     )
-    openSubject(name)
+    openSubject(name, autoGen)
   }
+
+  // 无弹窗后台生成单个主体素材(与弹窗 autoGen 一致:构造默认提示词→润色→出图)。
+  const generateSubjectAuto = async (name: string) => {
+    const kind = subjectKindOf(name)
+    const saved = subjectAssets[name]?.prompt
+    let prompt = saved || subjectPrompt(name, kind, entryMeta?.style, subjectContext(name))
+    if (!saved) {
+      try {
+        prompt = await refineElementPrompt(prompt, { name, kind, style: entryMeta?.style })
+      } catch {
+        /* 润色失败用原提示词 */
+      }
+    }
+    await genForSubject(name, prompt)
+  }
+
+  // 真正执行批量:把所有还没有图的主体,每批并发 3 张后台生成(本批完成再下一批),逐个显示「生成中…」。
+  // 由下方 effect 据 materialBatchPending 触发(点按钮 / 切回来续作 都走这里)。
+  const runBatchGenerate = async () => {
+    if (batchRunningRef.current) return
+    if (!Number(workspaceId || 0)) {
+      setMaterialBatchPending(false)
+      return
+    }
+    // 去重主体名(按出现顺序),只生成还没有图的
+    const names: string[] = []
+    const seen = new Set<string>()
+    for (const sh of shots)
+      for (const su of sh.subjects) {
+        const n = stripAt(su.tag)
+        if (n && !seen.has(n)) {
+          seen.add(n)
+          names.push(n)
+        }
+      }
+    const targets = names.filter((n) => !subjectImageOf(n))
+    if (!targets.length) {
+      setMaterialBatchPending(false) // 没有要生成的:清掉续作标记
+      return
+    }
+    batchRunningRef.current = true
+    setBatchGenning(true)
+    try {
+      const BATCH = 3
+      for (let i = 0; i < targets.length; i += BATCH) {
+        const batch = targets.slice(i, i + BATCH)
+        setSubjectGenerating((m) => {
+          const next = { ...m }
+          batch.forEach((name) => (next[name] = true))
+          return next
+        })
+        await Promise.all(
+          batch.map(async (name) => {
+            try {
+              await generateSubjectAuto(name)
+            } catch {
+              /* genForSubject 内已 toast,单张失败不影响同批其它张 */
+            } finally {
+              setSubjectGenerating((m) => ({ ...m, [name]: false }))
+            }
+          }),
+        )
+      }
+      showToast('素材生成完成', 'success')
+    } finally {
+      batchRunningRef.current = false
+      setBatchGenning(false)
+      setMaterialBatchPending(false)
+    }
+  }
+
+  // 点「一键生成」:只置「批量进行中」标记并持久化进草稿,真正生成由下方 effect 启动。
+  // 这样中途切走再回来(草稿恢复标记)会自动续作未出图的素材,不被截断。
+  const generateAllSubjects = () => {
+    if (!Number(workspaceId || 0)) {
+      showToast('未选择工作空间,无法生成素材', 'error')
+      return
+    }
+    setMaterialBatchPending(true)
+  }
+
+  // 批量(续作)驱动:在准备素材步且标记为「批量进行中」时,自动(继续)生成未出图的素材。
+  useEffect(() => {
+    if (materialBatchPending && step === 1 && shots.length > 0 && !batchRunningRef.current) {
+      void runBatchGenerate()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [materialBatchPending, step, shots.length])
 
   // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
   // 后端"上传类"asset 的 id 集合(asset.source==='upload');用于可靠区分 上传/AI(对齐 2.0)
@@ -778,6 +841,8 @@ export default function SmartCreateView() {
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
+  // 进行中的整片生成任务 id:生成开始即记录并随草稿持久化,切路由/刷新后凭它续轮询(不重新生成)
+  const [vidGenTaskId, setVidGenTaskId] = useState(0)
   const autoVidRef = useRef(false)
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
   const [blurPhase, setBlurPhase] = useState('')
@@ -913,6 +978,8 @@ export default function SmartCreateView() {
         imageAssetIds,
         note,
         modelPlanCandidates: plans,
+        // 任务一创建就记录 task_id 并随草稿持久化:中途切路由/刷新后可凭它续轮询
+        onTask: (id) => setVidGenTaskId(Number(id) || 0),
       })
       setFullVideo({ url, assetId })
       setVideoVersions((prev) => [...prev, { url, assetId }])
@@ -921,6 +988,26 @@ export default function SmartCreateView() {
     } finally {
       setBlurPhase('')
       setVidGenRunning(false)
+      setVidGenTaskId(0) // 生成结束(成功/失败)清掉进行中标记,避免恢复时误续
+    }
+  }
+
+  // 恢复一个【已提交但前端中途离开】的整片生成任务:不重新建任务,凭 taskId 续轮询到完成。
+  const resumePendingVideo = async (taskId: number) => {
+    const ws = Number(workspaceId || 0)
+    if (!ws || !taskId || vidGenRunning) return
+    autoVidRef.current = true // 防止「自动生成」effect 同时再触发一次
+    setVidGenRunning(true)
+    setVidGenTaskId(taskId)
+    try {
+      const { url, assetId } = await resumeFullVideo({ workspaceId: ws, taskId })
+      setFullVideo({ url, assetId })
+      setVideoVersions((prev) => [...prev, { url, assetId }])
+    } catch (e: any) {
+      showToast(`恢复视频生成失败:${e?.message || '请重试'}`, 'error')
+    } finally {
+      setVidGenRunning(false)
+      setVidGenTaskId(0)
     }
   }
 
@@ -1002,6 +1089,42 @@ export default function SmartCreateView() {
     })
     // subjectAssets 入依赖:脚本重生成后由版本库回填(步骤 1b);step3 幂等(已含则不改),不会死循环
   }, [shots, subjectAssets])
+
+  // ② 上传素材「保守按 kind 自动带入」:模型常不回传 imageIndex,导致顶部上传的素材一张都没绑到主体。
+  // 直接用入口/脚本步上传的素材池(entryMeta.images + 平行 imageAssetIds,不依赖来源分类,避免误判漏掉),
+  // 把【未被任何主体用到的上传图】按顺序填给【缺图、且 kind 不是人物】的主体
+  // (人物脸部敏感,不拿真实环境图顶替;仅 场景/物体/产品/占位 主体接收);匹配不上的留空。
+  // 受限:上传图本身无 kind 标注,只能用「主体的 kind」作闸门,故为 best-effort,错配可手动改。
+  useEffect(() => {
+    if (step !== 1) return // 仅准备素材步(step===1,见下方 materialMode 定义)
+    const imgs = (entryMeta?.images || []).filter((u: string) => /^(https?:|data:)/.test(u))
+    if (!imgs.length) return
+    const aids = (entryMeta as any)?.imageAssetIds || []
+    const usedImgs = new Set<string>()
+    shots.forEach((sh) => sh.subjects.forEach((su) => su.image && usedImgs.add(su.image)))
+    const free = imgs
+      .map((url: string, i: number) => ({ url, assetId: Number(aids[i] || 0) || 0 }))
+      .filter((f) => !usedImgs.has(f.url))
+    if (!free.length) return
+    let fi = 0
+    let changed = false
+    const next = shots.map((sh) => {
+      let touched = false
+      const subjects = sh.subjects.map((su) => {
+        if (su.image || fi >= free.length) return su
+        if (/人物|人像|人|角色|model/i.test(su.kind || '')) return su // 跳过人物主体
+        touched = true
+        const f = free[fi++]
+        return { ...su, image: f.url, assetId: f.assetId || 0 }
+      })
+      if (touched) {
+        changed = true
+        return { ...sh, subjects }
+      }
+      return sh
+    })
+    if (changed) setShots(next)
+  }, [step, shots, entryMeta])
 
   // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
   const [fields, setFields] = useState<Record<string, string>>({})
@@ -1185,6 +1308,8 @@ export default function SmartCreateView() {
     projectId,
     fullVideoUrl: fullVideo.url,
     fullVideoAssetId: fullVideo.assetId,
+    vidGenTaskId,
+    materialBatchPending,
     videoVersions,
     faceBlurEnabled,
     marketingOpen,
@@ -1207,6 +1332,14 @@ export default function SmartCreateView() {
     setFields(d.fields || {})
     setFullVideo({ url: d.fullVideoUrl || '', assetId: d.fullVideoAssetId || 0 })
     setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
+    // 恢复「一键生成」进行中标记 → 进准备素材步会由 effect 自动续作未出图的素材(不被截断)
+    setMaterialBatchPending(!!d.materialBatchPending)
+    // 恢复「生成中」:草稿里有进行中的任务 id → 续轮询同一个后端任务(不重新生成)。
+    // 注意:不要求"没有旧视频"——重新生成/确认修改时会有上一轮旧视频,但新任务仍在跑,照样要续上。
+    const pendingTask = Number(d.vidGenTaskId || 0) || 0
+    if (pendingTask > 0) {
+      void resumePendingVideo(pendingTask)
+    }
     setFaceBlurEnabled((d as any).faceBlurEnabled !== false)
     setMarketingOpen(!!d.marketingOpen)
     setMarketingText(d.marketingText || '')
@@ -1286,8 +1419,9 @@ export default function SmartCreateView() {
   }
 
   const hydratedRef = useRef(false)
-  // 进入:有 /smart/:id → 从后端恢复;否则恢复 localStorage 草稿
-  useEffect(() => {
+  // 进入:有 /smart/:id → 从后端恢复;否则恢复 localStorage 草稿。
+  // 用 useLayoutEffect:在浏览器【绘制前】完成"空白 /smart→/smart/:id"的跳转,避免先闪一下初始页。
+  useLayoutEffect(() => {
     if (hydratedRef.current) return
     const rid = Number(routeId || 0)
     if (rid > 0) {
@@ -1319,6 +1453,18 @@ export default function SmartCreateView() {
         })
         .catch(() => showToast('项目加载失败', 'error'))
     } else {
+      // 点回空白 /smart 时:若本地草稿是个【在制项目】(已建项目、还没出整片,且正在生成或已有分镜)
+      // → 自动跳回那个 /smart/:id,避免回到空白初始页。用本地草稿判断(autosave 一直在写,可靠);
+      // 不死等 vidGenTaskId(它可能因时序还没存进),改用"有分镜"兜底——生成中必然已有分镜。
+      const d = loadSmartDraft()
+      const pendingPid = Number(d?.projectId || 0) || 0
+      const hasPendingTask = Number(d?.vidGenTaskId || 0) > 0 // 正在生成(可能有上一轮旧视频)
+      const unfinished = !d?.fullVideoUrl && !d?.fullVideoAssetId && Array.isArray(d?.shots) && d.shots.length > 0
+      const inProgress = !!d?.started && pendingPid > 0 && (hasPendingTask || unfinished)
+      if (inProgress) {
+        navigate(`/smart/${pendingPid}`, { replace: true })
+        return // 不置 hydratedRef,等重定向到 /smart/:id 再水合 + 续轮询
+      }
       // 空白 /smart:始终以最初的空输入框进入,不恢复本地草稿。
       // (同一次进入内点「上一步」回到输入框会保留历史输入——那是组件 state,不依赖这里;
       //  切换路由再回来则会重新挂载、state 清空,故得到全新空白页。)
@@ -1354,6 +1500,8 @@ export default function SmartCreateView() {
     projectId,
     fullVideo,
     videoVersions,
+    vidGenTaskId, // 任务 id 变化(生成开始)也要触发保存,否则长轮询期间不存盘 → 切走后无法恢复
+    materialBatchPending, // 一键生成标记变化要存盘,切走再回来才能续作
     marketingOpen,
     marketingText,
     marketingData,
@@ -1444,6 +1592,18 @@ export default function SmartCreateView() {
         },
       )
       setShots(result)
+      // 兜底:对没拆出主体的镜头(弱模型常整体不给 subjects),单独聚焦提取主体后回填。
+      // best-effort、并发、不阻塞主流程展示;失败的镜头保持空(可在准备素材步手动补)。
+      const needFill = result.filter((s) => !s.subjects?.length && s.desc)
+      if (needFill.length) {
+        const filled = await Promise.all(
+          needFill.map(async (s) => ({ id: s.id, subs: await extractSubjects(s.desc).catch(() => []) })),
+        )
+        const subsById = new Map(filled.filter((f) => f.subs.length).map((f) => [f.id, f.subs]))
+        if (subsById.size) {
+          setShots((prev) => prev.map((s) => (subsById.has(s.id) ? { ...s, subjects: subsById.get(s.id)! } : s)))
+        }
+      }
     } catch (e: any) {
       if (!got) setScriptError(e?.message || '脚本生成失败,请重试')
     } finally {
@@ -1495,13 +1655,32 @@ export default function SmartCreateView() {
     }
   }
 
-  // 表格内编辑某维度描述 / 采用候选标签:更新结构化数据,并同步派生 marketingText
+  // marketingText 始终由 marketingData 派生(供脚本生成/持久化复用)。放 effect 里,
+  // 不在事件处理中手动同步,避免和「换一批」等更新方式不一致。
+  useEffect(() => {
+    if (marketingData) setMarketingText(marketingDataToText(marketingData))
+  }, [marketingData])
+
+  // 以下三个均用函数式 updater(与「换一批」完全一致的写法,确保拿到最新 state、可靠触发重渲染)
+  // 表格内编辑某维度描述
   const updateMarketingField = (key: MarketingFieldKey, desc: string) => {
+    setMarketingData((prev) => (prev ? patchMarketingField(prev, key, { desc }) : prev))
+  }
+  // 点击候选标签:不改动原描述,把标签作为「已选」徽章追加(已选则忽略)
+  const pickMarketingTag = (key: MarketingFieldKey, tag: string) => {
     setMarketingData((prev) => {
       if (!prev) return prev
-      const next = patchMarketingField(prev, key, { desc })
-      setMarketingText(marketingDataToText(next))
-      return next
+      const picked = marketingFieldByKey(prev, key)?.picked || []
+      if (picked.includes(tag)) return prev
+      return patchMarketingField(prev, key, { picked: [...picked, tag] })
+    })
+  }
+  // 移除某维度已选的标签(点击徽章上的 ×)
+  const removeMarketingTag = (key: MarketingFieldKey, tag: string) => {
+    setMarketingData((prev) => {
+      if (!prev) return prev
+      const picked = (marketingFieldByKey(prev, key)?.picked || []).filter((t) => t !== tag)
+      return patchMarketingField(prev, key, { picked })
     })
   }
   // 换一批:重新生成某维度的候选标签(轻量,据该维度名/描述 + 原始需求 + 已展示项排除)
@@ -1593,7 +1772,11 @@ export default function SmartCreateView() {
     })()
   }
 
+  // 入口提交「输入文字生成」→ 需登录(免登录可进页面/输入,但生成需登录)
   const handleStart = (req: string, meta: EntryMeta) => {
+    void requireAuth(() => startCreation(req, meta))
+  }
+  const startCreation = (req: string, meta: EntryMeta) => {
     setRequirement(req)
     setEntryMeta(meta)
     setStarted(true)
@@ -1699,18 +1882,23 @@ export default function SmartCreateView() {
     const d = new Date()
     const dateStr = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
     const fileName = `${safeName}_${dateStr}.mp4`
-    await downloadToDisk({
-      fileName,
-      resolveUrl: async () => {
-        const ws = Number(workspaceId || 0)
-        let url = fullVideo.url
-        if (ws && fullVideo.assetId) {
-          const fresh = await refreshAssetUrl(ws, fullVideo.assetId)
-          if (fresh) url = fresh
-        }
-        return url
-      },
-    })
+    try {
+      await downloadToDisk({
+        fileName,
+        resolveUrl: async () => {
+          const ws = Number(workspaceId || 0)
+          let url = fullVideo.url
+          if (ws && fullVideo.assetId) {
+            const fresh = await refreshAssetUrl(ws, fullVideo.assetId)
+            if (fresh) url = fresh
+          }
+          return url
+        },
+      })
+    } catch (e: any) {
+      // 内容为空/未就绪等:明确提示,避免用户拿到空 mp4 还不知情
+      showToast(e?.message || '视频下载失败,请稍后重试', 'error')
+    }
   }
 
   // ── 底栏导航箭头(上一步 / 下一步),与各步「主操作按钮」分离 ──
@@ -1798,7 +1986,7 @@ export default function SmartCreateView() {
         {/* 我的描述:直接展示上一步输入框的原始需求,只读 */}
         <div className="smart__prompt-label">我的描述：</div>
         <div className="smart__prompt smart__md">
-          <Streamdown>{promptText}</Streamdown>
+          <Markdown>{promptText}</Markdown>
         </div>
 
         {/* skill 拆解出的营销建议:可编辑;正文区填满剩余空间并内部滚动,底部按钮常驻可见 */}
@@ -1828,7 +2016,8 @@ export default function SmartCreateView() {
               <MarketingBreakdown
                 data={marketingData}
                 onChangeDesc={updateMarketingField}
-                onPickTag={(k, tag) => updateMarketingField(k, tag)}
+                onPickTag={pickMarketingTag}
+                onRemoveTag={removeMarketingTag}
                 onRefreshTags={refreshMarketingTags}
                 refreshing={marketingTagBusy}
               />
@@ -1894,27 +2083,8 @@ export default function SmartCreateView() {
           {/* 我的描述:直接展示上一步输入框的原始需求(markdown 渲染),只读 */}
           <div className="smart__prompt-label">我的描述：</div>
           <div className="smart__prompt smart__md">
-            <Streamdown>{promptText}</Streamdown>
+            <Markdown>{promptText}</Markdown>
           </div>
-
-          {/* 素材:只展示用户上传的素材(AI 生成的主体不在此展示,见准备素材列)+ 添加 */}
-          <SubjectMaterialBoard
-            subjects={[]}
-            uploads={entryMeta?.images || []}
-            onAdd={() => materialFileRef.current?.click()}
-            onOpen={(name) => openSubject(name)}
-          />
-          <input
-            ref={materialFileRef}
-            type="file"
-            accept="image/*"
-            multiple
-            hidden
-            onChange={(e) => {
-              handleMaterialFiles(e.target.files)
-              e.target.value = ''
-            }}
-          />
 
           {/* 生成状态 + 分镜表 */}
           <div className="smart__script-done">
@@ -1928,7 +2098,11 @@ export default function SmartCreateView() {
               <ScriptStoryboardTable
                 shots={shots}
                 showSubjects={materialMode}
-                onAddMaterial={addShotMaterial}
+                subjectGenerating={subjectGenerating}
+                onGenerateAll={materialMode ? generateAllSubjects : undefined}
+                batchGenning={batchGenning}
+                onRemoveSubject={removeSubjectImage}
+                onGenerateMaterial={(s) => addShotMaterial(s, true)}
                 onOpenSubject={openSubject}
                 /* AI自动生成:不后台直生,改为唤起素材弹窗并在弹窗内自动生成(autoGen),与「上传图片」一致 */
                 onShotsChange={setShots}
@@ -2209,7 +2383,7 @@ export default function SmartCreateView() {
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
         onGenerate={(p, opts) => genForSubject(subjectDlg.name, p, opts)}
         onSelect={(url) => applySubjectImage(subjectDlg.name, url, subjectAssets[subjectDlg.name]?.ids?.[url] || 0)}
-        onUpload={(file) => uploadForSubject(subjectDlg.name, file)}
+        /* 用户上传素材已下线:不传 onUpload → 弹窗内不再显示「上传」入口,仅 AI 生成 */
       />
     </div>
   )

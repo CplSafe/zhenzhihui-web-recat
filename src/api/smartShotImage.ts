@@ -154,12 +154,12 @@ export async function generateShotImage(args: {
   // 取 asset_id:outputs 优先;没有则按 task_id 反查(否则刷新水合换不了URL → 破图)
   let assetId = outputAssetId(completed)
   if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
-  // 对齐 2.0 runImageTask:优先 resolveGeneratedMediaUrls(可用 asset_id 换签名URL),
-  // 再退回 outputs[].url / asset 下载地址,避免后端只返回 asset_id 时取不到图
-  let url =
-    (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
+  // 有 asset_id → 优先用同源流式地址(getAssetDownloadUrl 已改为返回 /download,同源 HTTPS、不过期),
+  // 避免直接用 outputs[].url 的 OSS 原始地址(http + IP 主机,在 HTTPS 页会 Mixed Content 破图)。
+  let url = assetId ? await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '') : ''
+  if (!url)
+    url = (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
   if (!url) url = extractTaskMediaUrls(completed)[0] || ''
-  if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('未生成分镜图')
   return { url, assetId }
 }

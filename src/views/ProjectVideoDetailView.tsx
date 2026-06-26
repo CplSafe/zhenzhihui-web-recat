@@ -11,7 +11,6 @@ import {
   formatVideoDuration,
   getProjectVideo,
   getVideoStatusText,
-  publishProjectVideo,
   type ProjectVideo,
 } from '@/api/projectVideos'
 import './ProjectVideoDetailView.css'
@@ -43,7 +42,6 @@ export default function ProjectVideoDetailView() {
   const [loading, setLoading] = useState(false)
   const [projectTitle, setProjectTitle] = useState('')
   const [detail, setDetail] = useState<ProjectVideo | null>(null)
-  const [publishing, setPublishing] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
   const handleNavigate = useCallback(
@@ -106,21 +104,6 @@ export default function ProjectVideoDetailView() {
     window.open(detail.videoUrl, '_blank', 'noopener')
     showToast('已在新标签打开视频，可直接下载', 'success')
   }, [detail, showToast])
-
-  const handlePublish = useCallback(async () => {
-    const wsId = Number(workspaceId || 0)
-    if (!detail || !projectId || !wsId || publishing) return
-    setPublishing(true)
-    try {
-      await publishProjectVideo({ projectId, workspaceId: wsId, videoId: detail.id })
-      showToast('视频已发布', 'success')
-      await loadDetail()
-    } catch (error: any) {
-      showToast(error?.message || '发布失败，请稍后重试', 'error')
-    } finally {
-      setPublishing(false)
-    }
-  }, [detail, projectId, workspaceId, publishing, showToast, loadDetail])
 
   const handleDelete = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
@@ -188,16 +171,6 @@ export default function ProjectVideoDetailView() {
                   <button type="button" className="pvdetail-action" onClick={downloadVideo}>
                     下载视频
                   </button>
-                  {!fromUnclassified && (
-                    <button
-                      type="button"
-                      className="pvdetail-action pvdetail-action--primary"
-                      onClick={handlePublish}
-                      disabled={publishing}
-                    >
-                      {publishing ? '发布中...' : '发布视频'}
-                    </button>
-                  )}
                   <button
                     type="button"
                     className="pvdetail-action pvdetail-action--danger"

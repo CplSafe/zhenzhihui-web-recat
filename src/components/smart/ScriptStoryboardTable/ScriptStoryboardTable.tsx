@@ -7,7 +7,6 @@
 import InlineEdit from '@/components/common/InlineEdit'
 import EllipsisText from '@/components/common/EllipsisText'
 import aiSparkIcon from '@/assets/icons/ai-spark.svg'
-import materialUploadIcon from '@/assets/icons/material-upload.svg'
 import regenerateIcon from '@/assets/icons/regenerate.svg'
 import styles from './ScriptStoryboardTable.module.less'
 
@@ -65,12 +64,18 @@ interface ScriptStoryboardTableProps {
   onRegenerate?: () => void
   /** 重新生成进行中:禁用表头的重新生成按钮 */
   regenerating?: boolean
-  /** 该镜头没有主体素材时,点击「上传图片」为它添加一个素材(准备素材阶段) */
-  onAddMaterial?: (shot: Shot) => void
+  /** 该镜头没有主体素材时,点击「AI自动生成」为它加占位主体并自动生成(准备素材阶段) */
+  onGenerateMaterial?: (shot: Shot) => void
   /** 提供则「AI自动生成」直接后台生成该主体(可并发,不阻塞);缺省回退打开素材弹窗 */
   onGenerateSubject?: (name: string) => void
   /** 各主体是否正在生成(键为主体名),用于显示「生成中…」 */
   subjectGenerating?: Record<string, boolean>
+  /** 提供则在「准备素材」表头右侧显示「AI一键生成图片」:批量为【还没有图】的主体生成(已上传/已生成的跳过) */
+  onGenerateAll?: () => void
+  /** 一键批量生成进行中:按钮置「生成中…」并禁用 */
+  batchGenning?: boolean
+  /** 提供则在已有图的素材缩略图右上角显示「×」,点击去掉该主体当前的图(回到占位,可重新生成/上传) */
+  onRemoveSubject?: (name: string) => void
 }
 
 const stripAt = (t: string) =>
@@ -85,9 +90,12 @@ export default function ScriptStoryboardTable({
   showSubjects = true,
   onRegenerate,
   regenerating = false,
-  onAddMaterial,
+  onGenerateMaterial,
   onGenerateSubject,
   subjectGenerating,
+  onGenerateAll,
+  batchGenning = false,
+  onRemoveSubject,
 }: ScriptStoryboardTableProps) {
   const editable = !!onShotsChange
   const patchShot = (id: Shot['id'], p: Partial<Shot>) =>
@@ -100,7 +108,23 @@ export default function ScriptStoryboardTable({
         <div className={`${styles.sbHeadCell} ${styles.sbColNo}`}>镜头编号</div>
         <div className={`${styles.sbHeadCell} ${styles.sbColDur}`}>时长</div>
         <div className={`${styles.sbHeadCell} ${styles.sbColDesc}`}>画面描述</div>
-        {showSubjects && <div className={`${styles.sbHeadCell} ${styles.sbColMat}`}>准备素材</div>}
+        {showSubjects && (
+          <div className={`${styles.sbHeadCell} ${styles.sbColMat}`}>
+            <span>准备素材</span>
+            {onGenerateAll && (
+              <button
+                type="button"
+                className={styles.sbHeadGen}
+                disabled={batchGenning}
+                onClick={onGenerateAll}
+                title="为所有还没有图的主体批量生成(已上传 / 已生成的会自动跳过,不覆盖)"
+              >
+                <img className={styles.sbHeadGenIcon} src={aiSparkIcon} alt="" width={16} height={16} />
+                {batchGenning ? '生成中…' : 'AI一键生成图片'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 行 */}
@@ -161,37 +185,70 @@ export default function ScriptStoryboardTable({
                             {genning ? '生成中…' : 'AI自动生成'}
                           </button>
                         </div>
-                        <button
-                          type="button"
-                          className={styles.sbcMatUpload}
-                          title="打开素材弹窗(上传 / 生成)"
-                          onClick={() => onOpenSubject?.(name)}
-                        >
-                          {genning ? (
-                            <span className={styles.sbcMatSpin} aria-hidden="true" />
-                          ) : su.image ? (
-                            <img className={styles.sbcMatUploadImg} src={su.image} alt={name} />
-                          ) : (
-                            <>
-                              <img src={materialUploadIcon} alt="" width={20} height={20} />
-                              <span className={styles.sbcMatUploadText}>上传图片</span>
-                            </>
+                        <span style={{ position: 'relative', display: 'inline-flex' }}>
+                          <button
+                            type="button"
+                            className={styles.sbcMatUpload}
+                            title={su.image ? '查看 / 重新生成该素材' : '点击 AI 生成该素材'}
+                            onClick={() => onOpenSubject?.(name, !su.image)}
+                          >
+                            {genning ? (
+                              <span className={styles.sbcMatSpin} aria-hidden="true" />
+                            ) : su.image ? (
+                              <img className={styles.sbcMatUploadImg} src={su.image} alt={name} />
+                            ) : (
+                              <>
+                                <img src={aiSparkIcon} alt="" width={20} height={20} />
+                                <span className={styles.sbcMatUploadText}>AI生成</span>
+                              </>
+                            )}
+                          </button>
+                          {su.image && !genning && onRemoveSubject && (
+                            <button
+                              type="button"
+                              className={styles.sbcMatImgX}
+                              title="去掉这张图"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onRemoveSubject(name)
+                              }}
+                            >
+                              ×
+                            </button>
                           )}
-                        </button>
+                        </span>
                       </div>
                     )
                   })}
-                  {/* 该镜头无主体素材:给一个上传入口,点击后为它添加素材 */}
-                  {shot.subjects.length === 0 && onAddMaterial && (
-                    <button
-                      type="button"
-                      className={styles.sbcMatUpload}
-                      title="为该镜头上传素材"
-                      onClick={() => onAddMaterial(shot)}
-                    >
-                      <img src={materialUploadIcon} alt="" width={20} height={20} />
-                      <span className={styles.sbcMatUploadText}>上传图片</span>
-                    </button>
+                  {/* 该镜头无主体素材:加占位主体并 AI 自动生成(用户上传已下线) */}
+                  {shot.subjects.length === 0 && onGenerateMaterial && (
+                    <div className={styles.sbcMatRow}>
+                      <div className={styles.sbcMatInfo}>
+                        <EllipsisText
+                          className={styles.sbcMatName}
+                          text="@待补充"
+                          title="该镜头脚本未拆出主体,可补充素材"
+                        />
+                        <button
+                          type="button"
+                          className={styles.sbcMatBadge}
+                          title="为该镜头加一个素材并自动生成"
+                          onClick={() => onGenerateMaterial(shot)}
+                        >
+                          <img className={styles.sbcMatBadgeIcon} src={aiSparkIcon} alt="" width={12} height={12} />
+                          AI自动生成
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.sbcMatUpload}
+                        title="点击 AI 生成该素材"
+                        onClick={() => onGenerateMaterial(shot)}
+                      >
+                        <img src={aiSparkIcon} alt="" width={20} height={20} />
+                        <span className={styles.sbcMatUploadText}>AI生成</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
