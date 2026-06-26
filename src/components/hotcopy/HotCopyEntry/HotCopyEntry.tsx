@@ -367,12 +367,18 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
   const videoLabel =
     videoSource === 'local' ? videoFileName : videoSource === 'library' ? videoFileName || '素材库视频' : ''
   const hasHotVideo = (videoSource === 'local' && !!videoFile) || (videoSource === 'library' && !!libraryVideo)
-  // 可进入下一步:爆款视频必传;替换素材可选
-  const canSend = hasHotVideo
+  // 至少一张替换素材【图片】(products 里 isVideo=false 的)
+  const hasProductImage = products.some((p) => !p.isVideo)
+  // 齐全(视频 + 图片都有)才点亮发送图标;但按钮始终可点,缺哪个由 submit 弹提示
+  const canSend = hasHotVideo && hasProductImage
 
   const submit = () => {
     if (!hasHotVideo) {
       showToast('请先上传爆款视频(本地上传 / 素材库)', 'error')
+      return
+    }
+    if (!hasProductImage) {
+      showToast('请至少上传一张替换素材图片', 'error')
       return
     }
     onSubmit({
@@ -496,7 +502,8 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
                   caretRef.current = e.currentTarget.selectionStart ?? 0
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canSend) submit()
+                  // Ctrl/Cmd+Enter 也走 submit:缺视频/图片会弹提示(校验在 submit 内)
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
                 }}
               />
             </div>
@@ -566,10 +573,10 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
             <button
               type="button"
               className="hotcopy__send"
-              disabled={!canSend}
+              /* 不禁用:缺视频/图片时点击会弹提示(校验在 submit 内);图标颜色仍按 canSend 变绿/灰 */
               onClick={submit}
               aria-label="下一步"
-              title="下一步:准备素材(需先上传爆款视频)"
+              title="下一步:生成视频(需先上传爆款视频 + 至少一张替换素材图片)"
             >
               {/* 发送图标:就绪=品牌绿(#1FCFA9),否则禁用灰(#D9D9D9)——与智能成片一致 */}
               <svg

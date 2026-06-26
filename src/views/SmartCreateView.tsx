@@ -301,6 +301,24 @@ export default function SmartCreateView() {
     })
     applySubjectImage(name, url, assetId)
   }
+  // 弹窗内上传素材:File → 后端 asset → 加为该主体新版本(并应用到同名主体)
+  const uploadForSubject = async (name: string, file: File) => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法上传素材', 'error')
+      return
+    }
+    try {
+      const out: any = await uploadAssetFile({ workspaceId: ws, file })
+      const assetId = Number(out?.asset?.id || 0) || 0
+      if (!assetId) throw new Error('未取得素材 asset_id')
+      const url = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
+      if (!url) throw new Error('未取得素材地址')
+      addSubjectVersion(name, url, assetId, 'upload')
+    } catch (e: any) {
+      showToast(`素材上传失败:${e?.message || '请检查存储配置/网络'}`, 'error')
+    }
+  }
   const subjectKindOf = (name: string) => {
     for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.kind) return su.kind
     return ''
@@ -847,9 +865,9 @@ export default function SmartCreateView() {
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
   const [blurPhase, setBlurPhase] = useState('')
   const [blurDebug, setBlurDebug] = useState<any[]>([])
-  // 人脸脱敏开关(默认开,保护隐私;关闭后出片用原图,成片人脸清晰)。ref 供异步流程读最新值
-  const [faceBlurEnabled, setFaceBlurEnabled] = useState(true)
-  const faceBlurEnabledRef = useRef(true)
+  // 人脸脱敏已下线(去掉开关):统一不脱敏,出片用原图,成片人脸清晰。保留 ref 供既有脱敏分支判断(恒 false=跳过)。
+  const [faceBlurEnabled] = useState(false)
+  const faceBlurEnabledRef = useRef(false)
   useEffect(() => {
     faceBlurEnabledRef.current = faceBlurEnabled
   }, [faceBlurEnabled])
@@ -1340,7 +1358,6 @@ export default function SmartCreateView() {
     if (pendingTask > 0) {
       void resumePendingVideo(pendingTask)
     }
-    setFaceBlurEnabled((d as any).faceBlurEnabled !== false)
     setMarketingOpen(!!d.marketingOpen)
     setMarketingText(d.marketingText || '')
     setMarketingData((d.marketingData as MarketingBreakdownData) || null)
@@ -2172,8 +2189,6 @@ export default function SmartCreateView() {
         videoVersions={videoVersions}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
         onRegenerateVideo={runFullVideo}
-        faceBlur={faceBlurEnabled}
-        onFaceBlurChange={setFaceBlurEnabled}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
         debug={{
@@ -2386,7 +2401,7 @@ export default function SmartCreateView() {
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
         onGenerate={(p, opts) => genForSubject(subjectDlg.name, p, opts)}
         onSelect={(url) => applySubjectImage(subjectDlg.name, url, subjectAssets[subjectDlg.name]?.ids?.[url] || 0)}
-        /* 用户上传素材已下线:不传 onUpload → 弹窗内不再显示「上传」入口,仅 AI 生成 */
+        onUpload={(file) => uploadForSubject(subjectDlg.name, file)}
       />
     </div>
   )

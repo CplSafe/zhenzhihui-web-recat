@@ -65,6 +65,12 @@ function buildBasePrompt(tab: 'remake' | 'replica', text: string): string {
   return [text.trim(), intent].filter(Boolean).join(';') || '做同款-爆款复制'
 }
 
+// 默认/未命名标题:不回写后端(避免无意义的 PATCH 撞草稿保存的 draft_revision → 409)
+function isUnnamedTitle(title: string): boolean {
+  const t = String(title || '').trim()
+  return !t || t.includes('未命名')
+}
+
 // 从 createCreativeProject 返回里取项目 id(字段名后端不统一,做兜底)
 function resolveProjectId(payload: any): number {
   return (
@@ -409,12 +415,12 @@ export default function HotCopyCreateView() {
     vidGenTaskId,
   ])
 
-  // 项目名变化回写后端标题(防抖;与已同步标题相同则跳过)
+  // 项目名变化回写后端标题(防抖;默认/未命名标题不回写,避免 PATCH 撞草稿 revision → 409;与已同步标题相同也跳过)
   useEffect(() => {
     const wsId = Number(workspaceId || 0)
     if (!projectId || !wsId) return
     const t = projectName.trim()
-    if (!t || t === serverTitleRef.current) return
+    if (!t || isUnnamedTitle(t) || t === serverTitleRef.current) return
     const timer = window.setTimeout(() => {
       serverTitleRef.current = t
       patchCreativeProject({ projectId, workspaceId: wsId, title: t, name: t }).catch(() => {
