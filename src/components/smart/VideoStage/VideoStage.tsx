@@ -83,9 +83,6 @@ interface VideoStageProps {
   /** 下载当前整片视频(由父级弹本地保存位置后下载) */
   onDownloadVideo?: () => void
   onPrev?: () => void
-  /** 人脸脱敏开关(默认开;关闭后用原图生成,成片人脸清晰但失去隐私脱敏) */
-  faceBlur?: boolean
-  onFaceBlurChange?: (v: boolean) => void
   /** 调试:实际喂给视频模型的提示词/参考图/各分镜文本(开发可见,正式隐藏) */
   debug?: {
     prompt: string
@@ -124,8 +121,6 @@ export default function VideoStage({
   onRegenerateVideo,
   onDownloadVideo,
   onPrev,
-  faceBlur = true,
-  onFaceBlurChange,
   debug,
 }: VideoStageProps) {
   const { showToast } = useToast()
@@ -507,25 +502,6 @@ export default function VideoStage({
           )}
         </div>
       </div>
-
-      {/* 人脸脱敏开关:默认开(保护隐私);关闭后重新生成,成片人脸清晰 */}
-      {onFaceBlurChange && (
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            margin: '0 0 10px',
-            fontSize: 13,
-            color: '#5a6072',
-            cursor: 'pointer',
-          }}
-        >
-          <input type="checkbox" checked={faceBlur} onChange={(e) => onFaceBlurChange(e.target.checked)} />
-          人脸脱敏(关闭后重新生成,成片人脸清晰,但不再保护隐私)
-        </label>
-      )}
 
       {/* 底部总按钮:上一步 / 下载视频 / 重新生成视频|确认修改(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
       <div className={styles.vstageActions}>

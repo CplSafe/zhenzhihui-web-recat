@@ -7,6 +7,7 @@
 import InlineEdit from '@/components/common/InlineEdit'
 import EllipsisText from '@/components/common/EllipsisText'
 import aiSparkIcon from '@/assets/icons/ai-spark.svg'
+import materialUploadIcon from '@/assets/icons/material-upload.svg'
 import regenerateIcon from '@/assets/icons/regenerate.svg'
 import styles from './ScriptStoryboardTable.module.less'
 
@@ -189,8 +190,8 @@ export default function ScriptStoryboardTable({
                           <button
                             type="button"
                             className={styles.sbcMatUpload}
-                            title={su.image ? '查看 / 重新生成该素材' : '点击 AI 生成该素材'}
-                            onClick={() => onOpenSubject?.(name, !su.image)}
+                            title={su.image ? '查看 / 重新生成该素材' : '点击上传 / 生成该素材'}
+                            onClick={() => onOpenSubject?.(name)}
                           >
                             {genning ? (
                               <span className={styles.sbcMatSpin} aria-hidden="true" />
@@ -198,8 +199,8 @@ export default function ScriptStoryboardTable({
                               <img className={styles.sbcMatUploadImg} src={su.image} alt={name} />
                             ) : (
                               <>
-                                <img src={aiSparkIcon} alt="" width={20} height={20} />
-                                <span className={styles.sbcMatUploadText}>AI生成</span>
+                                <img src={materialUploadIcon} alt="" width={20} height={20} />
+                                <span className={styles.sbcMatUploadText}>上传图片</span>
                               </>
                             )}
                           </button>
