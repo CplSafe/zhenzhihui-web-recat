@@ -19,8 +19,7 @@ import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 
 const VIDEO_MODEL_KEYWORDS = ['seedance']
 
-const extractVideoAssetId = (task: any): number =>
-  Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
+const extractVideoAssetId = (task: any): number => Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
 
 async function findVideoAssetIdByTaskId(workspaceId: number, taskId: any): Promise<number> {
   const tId = Number(taskId || 0)
@@ -54,6 +53,8 @@ export async function replicateHotVideo(args: {
   ratio?: string
   durationSec?: number
   modelPlanCandidates?: string[]
+  /** 任务创建后回调 task_id:供前端持久化,刷新/切换后用 awaitHotVideoResult 续轮询(不丢在途生成) */
+  onTask?: (taskId: number) => void
 }): Promise<{ url: string; assetId: number }> {
   const products = (args.productAssetIds || []).filter((n) => Number(n) > 0).slice(0, 9)
   const inputAssets = [
@@ -87,6 +88,7 @@ export async function replicateHotVideo(args: {
       })
     },
   })
+  args.onTask?.(Number(task?.id || 0) || 0)
   const completed = await waitForAiTask({
     workspaceId: args.workspaceId,
     task,
@@ -98,5 +100,27 @@ export async function replicateHotVideo(args: {
   let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('复刻任务已完成,暂未返回可预览地址')
+  return { url, assetId }
+}
+
+/**
+ * 按 task_id 续等一个【已创建】的视频任务结果(刷新/切换页面后恢复在途生成用)。
+ * 与 replicateHotVideo / editFullVideo 的收尾一致:轮询到完成 → 取 asset_id + 可预览地址。
+ */
+export async function awaitHotVideoResult(args: {
+  workspaceId: number
+  taskId: number
+}): Promise<{ url: string; assetId: number }> {
+  const completed = await waitForAiTask({
+    workspaceId: args.workspaceId,
+    task: { id: args.taskId, status: 'processing' },
+    intervalMs: 4000,
+    timeoutMs: 60 * 60 * 1000,
+  })
+  let assetId = extractVideoAssetId(completed)
+  if (!assetId) assetId = await findVideoAssetIdByTaskId(args.workspaceId, completed?.id || args.taskId)
+  let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
+  if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
+  if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')
   return { url, assetId }
 }

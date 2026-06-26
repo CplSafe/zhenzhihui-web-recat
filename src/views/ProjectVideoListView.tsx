@@ -225,11 +225,9 @@ export default function ProjectVideoListView() {
   const openEditor = useCallback(
     (video: ProjectVideo) => {
       const qs = workspaceId ? `?workspace_id=${workspaceId}` : ''
-      if (video.sourceType === 'creative') {
-        navigate(`/smart/${projectId}${qs}`)
-        return
-      }
-      navigate(`/smart/${projectId}${qs}`)
+      // 按真实流程分流编辑器:爆款复制 → /hot-copy/:id;其余(智能成片/旧创作)→ /smart/:id
+      const base = video.flow === 'hot-copy' ? '/hot-copy' : '/smart'
+      navigate(`${base}/${projectId}${qs}`)
     },
     [navigate, projectId, workspaceId],
   )

@@ -97,6 +97,29 @@ function yuan(cents: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(2)
 }
 
+// 订阅到期展示:剩余天数 +「到期日期」。兼容多种字段名;无有效日期则返回空串。
+function formatExpiry(sub: any): string {
+  const raw =
+    sub?.current_period_end ||
+    sub?.currentPeriodEnd ||
+    sub?.expire_at ||
+    sub?.expires_at ||
+    sub?.expired_at ||
+    sub?.end_at ||
+    sub?.end_time ||
+    ''
+  if (!raw) return ''
+  // 兼容秒级时间戳(数字)与 ISO 字符串
+  const ms = typeof raw === 'number' ? (raw < 1e12 ? raw * 1000 : raw) : Date.parse(String(raw))
+  const end = new Date(ms)
+  if (isNaN(end.getTime())) return ''
+  const ymd = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`
+  const days = Math.ceil((end.getTime() - Date.now()) / 86400000)
+  if (days < 0) return `已于 ${ymd} 到期`
+  if (days === 0) return `今天到期（${ymd}）`
+  return `${days} 天后到期（${ymd}）`
+}
+
 // 从套餐名/code 推断周期文案(接口 period 只有 month|year,7天/季 从名称识别)
 function periodLabel(p: ApiPlan): { unit: string; creditUnit: string } {
   const s = `${p.name || ''} ${p.code || ''}`
@@ -442,6 +465,10 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
             {Number(subscription.base_credits) > 0 && (
               <span className="mcm-sub-item">赠 {Number(subscription.base_credits)} 积分</span>
             )}
+            {(() => {
+              const exp = formatExpiry(subscription)
+              return exp ? <span className="mcm-sub-item mcm-sub-expiry">{exp}</span> : null
+            })()}
           </div>
         )}
 

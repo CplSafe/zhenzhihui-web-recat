@@ -97,6 +97,11 @@
   border-radius: 50%;
   background: #c2c7e6;
 }
+/* 到期时间:橙色加粗,提醒用户关注续费时机 */
+.mcm-sub-expiry {
+  color: #e8833a;
+  font-weight: 600;
+}
 .mcm-hint {
   padding: 48px 0;
   text-align: center;
