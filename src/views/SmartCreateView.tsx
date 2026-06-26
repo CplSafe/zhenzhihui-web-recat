@@ -993,6 +993,12 @@ export default function SmartCreateView() {
         refUrls,
         carryCurrent: opts.mode === 'edit',
       })
+      // 单镜编辑/新增后,把「已生成」基线签名更新成当前最新 shots:
+      // 否则之后离开再回到镜头编排,会因签名变化被判为「上游改动」而整列重生成。
+      setShots((prev) => {
+        shotGenSigRef.current = shotImageInputSig(prev, entryMeta)
+        return prev
+      })
       return true
     } catch (e: any) {
       showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
@@ -1002,14 +1008,22 @@ export default function SmartCreateView() {
     }
   }
 
-  // 进入/返回镜头编排:上游(脚本描述/素材)改动 → 全量重生成;否则只补「还没出图」的分镜。
-  // 关键:不再用 autoGenRef 一次性闸门 —— 否则生成中离开镜头编排再回来时,被中断的镜头会永远卡在「待生成」。
-  // 现在按「缺图」续作:离开导致暂停 → 回到本步会自动把没出图的几张补齐。
+  // 每次「进入」镜头编排(step→2)重置闸门,允许做一次自动生成/续作评估。
+  useEffect(() => {
+    if (step === 2) autoGenRef.current = false
+  }, [step])
+
+  // 进入/返回镜头编排时评估【一次】:上游(脚本描述/素材)改动 → 全量重生成;否则只补「还没出图」的分镜
+  //(续作被中断的那几张)。用 autoGenRef 闸门保证「本次进入只评估一次」:
+  //  - 避免在镜头编排内「单镜编辑」改了 shots(签名变化)而触发整列重生成 + 把刚生成的那张又重生成一次;
+  //  - 生成中离开再回来 → step→2 重置闸门 → 重新评估 → 自动续作未出图的。
   useEffect(() => {
     if (step !== 2 || !shots.length || shotGenRunning) return
+    if (autoGenRef.current) return
     const sig = shotImageInputSig(shots, entryMeta)
     const changed = sig !== shotGenSigRef.current
     const missing = shots.filter((s) => !s.image)
+    autoGenRef.current = true // 本次进入已评估,后续单镜编辑/补图不再触发整列重生成
     if (!changed && missing.length === 0) return // 全部已出图且上游未改动 → 不动(草稿恢复/未改动)
     void generateShotImages(changed ? shots : missing)
     // eslint-disable-next-line react-hooks/exhaustive-deps
