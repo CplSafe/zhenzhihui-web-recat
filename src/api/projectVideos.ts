@@ -16,6 +16,8 @@ export interface ProjectVideo {
   createdAt: string
   updatedAt: string
   sourceType: ProjectVideoSourceType
+  /** 真实创作流程标识(draft.flow):'smart' | 'hot-copy' | 'creative' …,用于「进入编辑」路由分流 */
+  flow: string
   publishUrl?: string
   localOnly?: boolean
 }
@@ -169,6 +171,11 @@ function resolveProjectSourceType(draft: any): ProjectVideoSourceType {
   return flow && flow !== 'smart' ? 'creative' : 'smart'
 }
 
+// 真实流程标识(原样返回,小写):smart / hot-copy / creative …,缺省按 smart
+function resolveProjectFlow(draft: any): string {
+  return pickString(draft?.flow, draft?.smart?.flow).toLowerCase() || 'smart'
+}
+
 function resolveProjectCoverUrl(project: any, draft: any): string {
   const fromProject = pickString(
     project?.cover_url,
@@ -208,6 +215,7 @@ function buildDerivedVideos({
   const draft = normalizeCreativeProjectDraft(project) || {}
   const smart = toPlainObject(draft?.smart) || draft
   const sourceType = resolveProjectSourceType(draft)
+  const flow = resolveProjectFlow(draft)
   const projectTitle = pickString(project?.title, project?.name, '未命名项目')
   const projectCoverUrl = resolveProjectCoverUrl(project, draft)
   const createdAt = pickDateString(project?.created_at, project?.createdAt)
@@ -269,6 +277,7 @@ function buildDerivedVideos({
         createdAt: itemCreatedAt || createdAt,
         updatedAt: itemUpdatedAt || updatedAt || itemCreatedAt,
         sourceType,
+        flow,
         publishUrl: pickString(item?.publish_url, item?.publishUrl),
       }
     })
@@ -304,6 +313,7 @@ function buildDerivedVideos({
         createdAt,
         updatedAt,
         sourceType,
+        flow,
         publishUrl: '',
       },
     ]
@@ -323,6 +333,7 @@ function buildDerivedVideos({
       createdAt,
       updatedAt,
       sourceType,
+      flow,
       publishUrl: pickString(draft?.publishUrl, smart?.publishUrl),
     },
   ]
@@ -417,6 +428,7 @@ export async function createProjectVideo({
     createdAt: now,
     updatedAt: now,
     sourceType: 'smart',
+    flow: 'smart',
     localOnly: true,
   }
   store.records.unshift(record)
@@ -461,6 +473,7 @@ export function addClassifiedVideo({
     createdAt: now,
     updatedAt: now,
     sourceType: 'smart',
+    flow: 'smart',
     localOnly: true,
   }
   store.records.unshift(record)

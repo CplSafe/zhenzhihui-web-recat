@@ -580,8 +580,9 @@ export default function ProjectManagementView() {
     if (!activeProject?.id) return
     const wsId = Number(workspaceId || 0)
     const qs = wsId ? `?workspace_id=${wsId}` : ''
-    // 2.1 统一走智能成片
-    navigate(`/smart/${activeProject.id}${qs}`)
+    // 按流程分流:爆款复制 → /hot-copy/:id;其余 → /smart/:id
+    const base = String(detailFlow || '').toLowerCase() === 'hot-copy' ? '/hot-copy' : '/smart'
+    navigate(`${base}/${activeProject.id}${qs}`)
   }, [activeProject, detailFlow, workspaceId, navigate])
 
   const downloadFromUrl = useCallback(

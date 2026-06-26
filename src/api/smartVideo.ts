@@ -170,6 +170,8 @@ export async function editFullVideo(args: {
   ratio?: string
   durationSec?: number
   modelPlanCandidates?: string[]
+  /** 任务创建后回调 task_id(供前端持久化、刷新/切换后续轮询) */
+  onTask?: (taskId: number) => void
 }): Promise<{ url: string; assetId: number }> {
   const inputAssets = [{ asset_id: args.videoAssetId, role: 'video' }]
   const task = await createAiTask({
@@ -198,6 +200,7 @@ export async function editFullVideo(args: {
       })
     },
   })
+  args.onTask?.(Number(task?.id || 0) || 0)
   const completed = await waitForAiTask({
     workspaceId: args.workspaceId,
     task,

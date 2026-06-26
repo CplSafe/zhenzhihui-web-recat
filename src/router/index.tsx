@@ -101,6 +101,7 @@ export const router = createBrowserRouter([
       { path: 'smart', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
       { path: 'smart/:id', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
       { path: 'hot-copy', element: lazyPage(<HotCopyCreateView />), handle: { requiresAuth: false } },
+      { path: 'hot-copy/:id', element: lazyPage(<HotCopyCreateView />), handle: { requiresAuth: false } },
       { path: 'creative/blank', element: lazyPage(<CreativeScriptView />) },
       { path: 'creative', element: lazyPage(<CreativeEntryView />) },
       { path: 'creative/:id', element: lazyPage(<CreativeScriptView />) },
