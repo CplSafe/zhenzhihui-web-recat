@@ -160,8 +160,10 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
         {/* 品牌 */}
         <div className="app-sidebar__brand">
           <img src={brandLogo} alt="帧智汇" className="app-sidebar__logo" />
-          <span className="app-sidebar__brand-name">帧智汇</span>
-          <span className="app-sidebar__version">v{APP_VERSION}</span>
+          <div className="app-sidebar__brand-text">
+            <span className="app-sidebar__brand-name">帧智汇</span>
+            <span className="app-sidebar__version">v{APP_VERSION}</span>
+          </div>
         </div>
 
         <nav className="app-sidebar__nav">
