@@ -1694,6 +1694,7 @@ export default function SmartCreateView() {
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
+    else showToast('功能待开放', 'info') // 视频编辑/投前预审/数据看板等未开放:提示,避免点了无反应
   }
 
   // 「制作新视频」:把整个智能成片流程初始化为全新空白页(等同切换路由再切回来)。
