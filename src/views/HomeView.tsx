@@ -653,9 +653,9 @@ export default function HomeView() {
     }
   }, [])
 
-  // 轮播强制用这批演示视频;仅当演示为空时才回退后端 banner(当前不为空 → 始终用演示)
+  // 轮播优先用后端轮播图接口(/api/v1/banners);接口为空(或加载中)时回退本地演示视频兜底
   const slides = useMemo<Slide[]>(
-    () => (DEMO_SLIDES.length ? DEMO_SLIDES : apiBanners && apiBanners.length ? apiBanners.map(bannerToSlide) : []),
+    () => (apiBanners && apiBanners.length ? apiBanners.map(bannerToSlide) : DEMO_SLIDES),
     [apiBanners],
   )
 
