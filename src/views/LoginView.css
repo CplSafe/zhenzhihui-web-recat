@@ -476,6 +476,22 @@
 .zauth-field--ro input {
   color: #6b7280;
 }
+/* 去掉浏览器记住密码 / 自动填充时的蓝(或黄)色底,保持与输入框一致的白底 */
+.zauth-field input:-webkit-autofill,
+.zauth-field input:-webkit-autofill:hover,
+.zauth-field input:-webkit-autofill:focus,
+.zauth-field input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #fff inset;
+  box-shadow: 0 0 0 1000px #fff inset;
+  -webkit-text-fill-color: #1f2530;
+  caret-color: #1f2530;
+  transition: background-color 9999s ease-in-out 0s;
+}
+.zauth-field--ro input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px #f5f6f8 inset;
+  box-shadow: 0 0 0 1000px #f5f6f8 inset;
+  -webkit-text-fill-color: #6b7280;
+}
 .zauth-eye {
   flex: 0 0 auto;
   display: inline-flex;

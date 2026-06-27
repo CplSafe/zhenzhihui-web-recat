@@ -176,6 +176,7 @@ export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProp
           title="修改密码"
           ensureAuthStart={async () => null}
           prefill={{ mobile: userMobile }}
+          lockMobile={!!userMobile}
           onClose={() => setPwdModalOpen(false)}
           onResetDone={() => setPwdModalOpen(false)}
         />

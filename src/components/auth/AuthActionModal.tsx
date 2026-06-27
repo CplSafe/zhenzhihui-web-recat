@@ -28,6 +28,8 @@ interface AuthActionModalProps {
   /** sms-register:复用登录时已生成的 authStart(其 state 与登录一致),以及预填手机号/验证码 */
   authStart?: any
   prefill?: { mobile?: string; smsCode?: string }
+  /** 锁定手机号为只读(登录态下「修改密码」已知手机号,不允许改) */
+  lockMobile?: boolean
   onClose: () => void
   /** 注册/补全注册成功 → 父级走登录流程(OAuth 桥接);forgot 模式不需要 */
   onAuthed?: (authStart: any, result: any) => void
@@ -55,6 +57,7 @@ export default function AuthActionModal({
   ensureAuthStart,
   authStart,
   prefill,
+  lockMobile,
   onClose,
   onAuthed,
   onResetDone,
@@ -73,6 +76,7 @@ export default function AuthActionModal({
   const timerRef = useRef<number | null>(null)
 
   const needsMobileInput = mode !== 'sms-register'
+  const mobileLocked = mode === 'sms-register' || !!lockMobile // 只读手机号
   const needsCodeInput = mode !== 'sms-register' // sms-register 复用登录时的验证码
   const pwdRequired = mode !== 'sms-register' // sms-register 密码可不填
   const smsPurpose = mode === 'forgot' ? 'reset_password' : 'register'
@@ -198,7 +202,7 @@ export default function AuthActionModal({
         )}
 
         <div className="zauth-fields">
-          {needsMobileInput ? (
+          {!mobileLocked ? (
             <div className="zauth-field">
               <input
                 type="tel"
@@ -213,7 +217,7 @@ export default function AuthActionModal({
             </div>
           ) : (
             <div className="zauth-field zauth-field--ro">
-              <input type="tel" value={prefill?.mobile || ''} readOnly aria-label="手机号" />
+              <input type="tel" value={mobile || prefill?.mobile || ''} readOnly aria-label="手机号" />
             </div>
           )}
 
