@@ -11,9 +11,18 @@ import { resolveProjectPath } from '@/utils/projectRoute'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+import { openComingSoon } from '@/stores/ui'
 import { useAuth } from '@/auth/AuthContext'
+// 列表走 SWR 缓存(按 workspace,先返缓存秒出、后台刷新);加载后预热首屏视频首帧,见下方接入处。
+import { swrFetch, peekCache } from '@/utils/swrCache'
+import { preloadMedia, type MediaItem } from '@/utils/mediaPreload'
 import './HomeView.css'
 import './TemplatesView.css'
+
+/** 模板库列表的 SWR 缓存键(按 workspace 区分) */
+const templatesCacheKey = (workspaceId: number) => `templates:${workspaceId}`
+/** 加载后预热首屏的卡片视频首帧数量(只热前几个,避免一次拉太多) */
+const PRELOAD_FIRSTSCREEN_COUNT = 8
 
 const RATIO_KEYS = ['', '9 / 16', '16 / 9', '4 / 5', '1 / 1', '3 / 4']
 const RATIO_LABELS: Record<string, string> = {
@@ -40,12 +49,17 @@ export default function TemplatesView() {
   const requireAuth = useRequireAuth()
   const { isAuthenticated } = useAuth()
 
-  const [templates, setTemplates] = useState<TemplateItem[]>([])
+  // 初始值从缓存秒出(再进模板库不闪空、不重拉);无缓存为空数组。
+  const [templates, setTemplates] = useState<TemplateItem[]>(
+    () => peekCache<TemplateItem[]>(templatesCacheKey(Number(workspaceId || 0))) ?? [],
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [keyword, setKeyword] = useState('')
   const [ratioFilter, setRatioFilter] = useState('')
   const [retry, setRetry] = useState(0)
+  // 移动端侧栏抽屉开关(<=900px)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
 
   // 模板收藏(localStorage 占位):收藏的视频进素材市场「我收藏的」
@@ -83,15 +97,31 @@ export default function TemplatesView() {
       return
     }
     let cancelled = false
-    setLoading(true)
+    const cacheKey = templatesCacheKey(wsId)
+    // 有缓存就先用缓存(initial state 已秒出),不显示「加载中」;无缓存才转圈。
+    const hasCache = peekCache<TemplateItem[]>(cacheKey) !== undefined
+    setLoading(!hasCache)
     setError('')
-    listTemplates({ workspaceId: wsId, limit: 200 })
-      .then(({ items }) => {
-        if (!cancelled) {
-          setTemplates(items)
-          if (!items.length) setError('empty')
-        }
-      })
+
+    // 列表走 SWR:有缓存立即用缓存,后台静默刷新;新数据回来再更新。
+    // 「重试」按钮通过 retry 变化触发本 effect;若需强制绕过缓存可在此 invalidate(当前后台刷新已足够)。
+    const applyItems = (items: TemplateItem[]) => {
+      if (cancelled) return
+      setTemplates(items)
+      setError(items.length ? '' : 'empty')
+      // 加载完成后预热首屏前几张卡片的视频首帧,滚动/播放更顺(幂等、并发限流)。
+      const targets: MediaItem[] = items
+        .filter((t) => Boolean(t.videoUrl))
+        .slice(0, PRELOAD_FIRSTSCREEN_COUNT)
+        .map((t) => ({ url: t.videoUrl, type: 'video' as const }))
+      if (targets.length) preloadMedia(targets)
+    }
+
+    swrFetch(cacheKey, () => listTemplates({ workspaceId: wsId, limit: 200 }).then((r) => r.items), {
+      ttl: 5 * 60_000,
+      onRevalidate: applyItems, // 后台刷新到的最新列表
+    })
+      .then(({ data }) => applyItems(data))
       .catch(() => {
         if (!cancelled) setError('api')
       })
@@ -122,13 +152,32 @@ export default function TemplatesView() {
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
+    else openComingSoon() // 设置等未上线项:弹全局「功能待开放」弹窗
   }
 
   return (
     <div className="home">
-      <AppSidebar activeKey="templates" onNavigate={onNavigate} />
+      <AppSidebar
+        activeKey="templates"
+        onNavigate={onNavigate}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
       <div className="home__main">
         <header className="home__topbar templates-topbar">
+          {/* 窄屏汉堡:唤出侧栏抽屉(桌面端 CSS 隐藏) */}
+          <button type="button" className="templates-menu" onClick={() => setSidebarOpen(true)} aria-label="打开菜单">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="22"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="m11.666 12.669.135.013a.665.665 0 0 1 0 1.303l-.135.014H3.333a.665.665 0 0 1 0-1.33zm5-6.667.135.013a.665.665 0 0 1 0 1.303l-.135.014H3.333a.665.665 0 0 1 0-1.33z" />
+            </svg>
+          </button>
           <button type="button" className="templates-back" onClick={() => navigate('/home')} aria-label="返回首页">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
               <path

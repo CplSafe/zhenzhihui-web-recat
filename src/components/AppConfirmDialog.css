@@ -1,7 +1,8 @@
 .confirm-overlay {
   position: fixed;
   inset: 0;
-  z-index: 200;
+  /* 全局确认弹窗:高于会员中心弹窗(2100),避免被其遮罩盖住;仍低于 Toast(2200) */
+  z-index: 2150;
   display: flex;
   align-items: center;
   justify-content: center;
