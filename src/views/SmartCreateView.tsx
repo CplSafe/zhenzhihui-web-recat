@@ -223,8 +223,15 @@ export default function SmartCreateView() {
   const [draftName, setDraftName] = useState('')
   const [nameTouched, setNameTouched] = useState(false) // 用户手动改过名后不再自动覆盖
   const [naming, setNaming] = useState(false)
-  // 从「项目管理 → 新建视频」携带过来的、该项目上传过的素材图(预填入口);见下方绑定 effect
-  const [carriedImages, setCarriedImages] = useState<string[]>([])
+  // 从「项目管理 → 新建视频」携带过来的、该项目上传过的素材图(预填入口)。
+  // 关键:必须在【首帧】就就绪(SmartEntry 的 images 只在挂载时从 initial.images 初始化一次),
+  // 所以用 useState 初始化器同步读 location.state,而不是挂载后再 setState(那样太晚,入口已用空数组初始化)。
+  const [carriedImages] = useState<string[]>(() => {
+    const st = (location.state as any) || {}
+    return Array.isArray(st.carryImages)
+      ? st.carryImages.map((m: any) => (typeof m === 'string' ? m : m?.url)).filter(Boolean)
+      : []
+  })
   const nameInputRef = useRef<HTMLInputElement | null>(null)
 
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)
@@ -261,9 +268,7 @@ export default function SmartCreateView() {
       setProjectName(st.newProjectName.trim())
       setNameTouched(true)
     }
-    if (Array.isArray(st.carryImages) && st.carryImages.length) {
-      setCarriedImages(st.carryImages.map((m: any) => (typeof m === 'string' ? m : m?.url)).filter(Boolean))
-    }
+    // carriedImages 已在 useState 初始化器同步读入(见上),此处不再 setState
     if (Number(st.restartProjectId)) {
       projectIdRef.current = Number(st.restartProjectId)
       setProjectId(Number(st.restartProjectId))

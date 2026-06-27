@@ -119,7 +119,30 @@ export default function HotCopyCreateView() {
   const [maxReached, setMaxReached] = useState(0)
 
   // 入口回填(返回上一步用)
-  const [entryInitial, setEntryInitial] = useState<Partial<HotCopyEntryPayload> | undefined>(undefined)
+  // 从「项目管理 → 新建视频」携带的上传素材,需在【首帧】就绪(HotCopyEntry 内部状态只初始化一次),
+  // 故用 useState 初始化器同步读 location.state(而非挂载后 setState)。
+  const [entryInitial, setEntryInitial] = useState<Partial<HotCopyEntryPayload> | undefined>(() => {
+    const st = (location.state as any) || {}
+    const imgs = (Array.isArray(st.carryImages) ? st.carryImages : []).filter((m: any) => m && m.url)
+    const vid = st.carryVideo && st.carryVideo.url ? st.carryVideo : null
+    if (!imgs.length && !vid) return undefined
+    return {
+      tab: 'remake',
+      products: imgs.map((m: any) => ({
+        url: m.url,
+        file: null,
+        isVideo: false,
+        assetId: Number(m.assetId || 0) || undefined,
+      })),
+      ...(vid
+        ? {
+            videoSource: 'library' as const,
+            videoPreview: vid.url,
+            libraryVideo: { assetId: Number(vid.assetId || 0), src: vid.url },
+          }
+        : {}),
+    } as any
+  })
   const [basePrompt, setBasePrompt] = useState('')
 
   // replicate 输入:源视频 + 替换素材(asset_id)
@@ -160,21 +183,7 @@ export default function HotCopyCreateView() {
       setProjectName(st.newProjectName.trim())
       setNameTouched(true)
     }
-    const imgs = (Array.isArray(st.carryImages) ? st.carryImages : []).filter((m: any) => m && m.url)
-    const vid = st.carryVideo && st.carryVideo.url ? st.carryVideo : null
-    if (imgs.length || vid) {
-      setEntryInitial({
-        tab: 'remake',
-        products: imgs.map((m: any) => ({ url: m.url, file: null, isVideo: false, assetId: Number(m.assetId || 0) || undefined })),
-        ...(vid
-          ? {
-              videoSource: 'library' as const,
-              videoPreview: vid.url,
-              libraryVideo: { assetId: Number(vid.assetId || 0), src: vid.url },
-            }
-          : {}),
-      } as any)
-    }
+    // 上传素材已在 entryInitial 初始化器同步读入(见上),此处不再 setEntryInitial
     if (Number(st.restartProjectId)) {
       projectIdRef.current = Number(st.restartProjectId)
       setProjectId(Number(st.restartProjectId))
