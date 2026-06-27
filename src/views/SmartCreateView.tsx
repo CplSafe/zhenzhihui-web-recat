@@ -6,7 +6,7 @@
  * 大量编排逻辑可复用现有 useCreativeWorkflow / useStoryboard* / useVideoGeneration。
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
@@ -187,6 +187,7 @@ function extractProjectVideoFallback(draftJson: any): {
 export default function SmartCreateView() {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
+  const location = useLocation()
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
   const workspaceId = useWorkspaceId()
@@ -223,6 +224,15 @@ export default function SmartCreateView() {
   const [draftName, setDraftName] = useState('')
   const [nameTouched, setNameTouched] = useState(false) // 用户手动改过名后不再自动覆盖
   const [naming, setNaming] = useState(false)
+  // 从「项目管理 → 新建视频」携带过来的、该项目上传过的素材图(预填入口)。
+  // 关键:必须在【首帧】就就绪(SmartEntry 的 images 只在挂载时从 initial.images 初始化一次),
+  // 所以用 useState 初始化器同步读 location.state,而不是挂载后再 setState(那样太晚,入口已用空数组初始化)。
+  const [carriedImages] = useState<string[]>(() => {
+    const st = (location.state as any) || {}
+    return Array.isArray(st.carryImages)
+      ? st.carryImages.map((m: any) => (typeof m === 'string' ? m : m?.url)).filter(Boolean)
+      : []
+  })
   const nameInputRef = useRef<HTMLInputElement | null>(null)
 
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)
@@ -249,6 +259,25 @@ export default function SmartCreateView() {
   // 后端当前的项目标题(对齐 Vue serverProjectTitle):用于判断是否需要回写、避免覆盖已有真实标题
   const serverTitleRef = useRef('')
   const draftRevisionRef = useRef(0) // 后端草稿版本号(乐观并发)
+
+  // 从「项目管理 → 新建视频」进入:沿用原项目名 + 携带上传素材 + 绑定到同一项目(归同一项目,不新建重复项目)。
+  // 全程「全新流程」:不恢复旧的已生成草稿,只把上传素材预填入口;生成后保存到同一 projectId(覆盖其草稿)。
+  useEffect(() => {
+    const st = location.state as any
+    if (!st) return
+    if (typeof st.newProjectName === 'string' && st.newProjectName.trim()) {
+      setProjectName(st.newProjectName.trim())
+      setNameTouched(true)
+    }
+    // carriedImages 已在 useState 初始化器同步读入(见上),此处不再 setState
+    if (Number(st.restartProjectId)) {
+      projectIdRef.current = Number(st.restartProjectId)
+      setProjectId(Number(st.restartProjectId))
+      serverTitleRef.current = '' // 让沿用的项目名回写;draftRevisionRef 保持 0 → 首次保存自动拉取(防 409)
+    }
+    // 仅 mount 时注入一次([] 依赖),无需清 location.state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── 主体素材统一管理:同名主体(@闺蜜A)共享素材,选定后所有同名处联动 ──
   // 版本/提示词存 registry;选定的图写回所有同名 subject(供表格 + 镜头编排一致展示)
@@ -747,7 +776,8 @@ export default function SmartCreateView() {
       if (sh.image) m.set(sh.image, classify(sh.image, 'ai'))
     })
     return [...m.entries()]
-      .filter(([u]) => /^(https?:|data:)/.test(u))
+      // 接受 http(s) / data: / 同源绝对路径(如 /api/v1/assets/:id/download —— 新建视频携带的素材就是这种)
+      .filter(([u]) => /^(https?:|data:|\/)/.test(u))
       .map(([url, source]) => ({ url, source, assetId: urlAssetId.get(url) || 0 }))
   })()
 
@@ -1043,9 +1073,10 @@ export default function SmartCreateView() {
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
   const [blurPhase, setBlurPhase] = useState('')
   const [blurDebug, setBlurDebug] = useState<any[]>([])
-  // 人脸脱敏已下线(去掉开关):统一不脱敏,出片用原图,成片人脸清晰。保留 ref 供既有脱敏分支判断(恒 false=跳过)。
-  const [faceBlurEnabled] = useState(false)
-  const faceBlurEnabledRef = useRef(false)
+  // 人脸脱敏恒开(不提供开关):正式出片前先对每张进入视频的分镜图抠人脸/脱敏,再喂 seedance。
+  // 脱敏失败 / 后端未配 image.face_detect 模型 → 静默回退原图,不阻塞出片。
+  const [faceBlurEnabled] = useState(true)
+  const faceBlurEnabledRef = useRef(true)
   useEffect(() => {
     faceBlurEnabledRef.current = faceBlurEnabled
   }, [faceBlurEnabled])
@@ -1618,6 +1649,14 @@ export default function SmartCreateView() {
   // 用 useLayoutEffect:在浏览器【绘制前】完成"空白 /smart→/smart/:id"的跳转,避免先闪一下初始页。
   useLayoutEffect(() => {
     if (hydratedRef.current) return
+    // 从「项目管理 → 新建视频」进入(携带 restartProjectId):全新流程。
+    // 不恢复本地草稿、也不跳回旧 /smart/:id;并清掉旧的本地在制草稿,避免它把页面带回上次未完成的步骤。
+    // 项目绑定 + 携带素材由 carry effect / useState 初始化器处理。
+    if (Number((location.state as any)?.restartProjectId)) {
+      clearSmartDraft()
+      hydratedRef.current = true
+      return
+    }
     const rid = Number(routeId || 0)
     if (rid > 0) {
       const ws = Number(workspaceId || 0)
@@ -2461,7 +2500,7 @@ export default function SmartCreateView() {
               text: requirement,
               ratio: entryMeta?.ratio,
               duration: entryMeta?.duration,
-              images: entryMeta?.images,
+              images: entryMeta?.images ?? (carriedImages.length ? carriedImages : undefined),
               skill: entryMeta?.skill,
             }}
           />

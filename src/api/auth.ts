@@ -35,8 +35,20 @@ export async function startOAuth({ redirectTo }: any = {}) {
   return requestJson(buildUrl(businessApiBaseUrl, `/api/v1/auth/oauth-start${query}`))
 }
 
+// 统一直接走「公开认证 API」(DeepAuth /api/v1/public/auth/*),不再依赖 oauth-start 返回的
+// 各 *_api_url(它们可能指向别的 host/路径,易踩跨域 cookie / redirect_uri 问题)。
+// 各接口请求体字段以 swagger 为准:login 支持 client_id+return_to;register 仅 return_to(无 client_id);
+// password/forgot 与 sms/send 二者皆不需要。
+const PUBLIC_AUTH = {
+  login: '/api/v1/public/auth/login',
+  register: '/api/v1/public/auth/register',
+  forgot: '/api/v1/public/auth/password/forgot',
+  smsSend: '/api/v1/public/auth/sms/send',
+}
+
 export function sendAuthSms({ authStart, mobile, purpose, captchaId, captchaAnswer }) {
-  return requestDeepAuth(authStart?.sms_send_api_url || '/api/v1/public/auth/sms/send', {
+  void authStart // 保留入参兼容旧调用;短信接口本身不需要 authStart
+  return requestDeepAuth(PUBLIC_AUTH.smsSend, {
     mobile,
     purpose,
     captcha_id: captchaId,
@@ -45,7 +57,7 @@ export function sendAuthSms({ authStart, mobile, purpose, captchaId, captchaAnsw
 }
 
 export function loginWithPassword({ authStart, mobile, password, captchaId, captchaAnswer }) {
-  return requestDeepAuth(authStart?.login_api_url || '/api/v1/public/auth/login', {
+  return requestDeepAuth(PUBLIC_AUTH.login, {
     ...authStartContext(authStart),
     mobile,
     password,
@@ -56,7 +68,7 @@ export function loginWithPassword({ authStart, mobile, password, captchaId, capt
 }
 
 export function loginWithSmsCode({ authStart, mobile, smsCode, captchaId, captchaAnswer }) {
-  return requestDeepAuth(authStart?.login_api_url || '/api/v1/public/auth/login', {
+  return requestDeepAuth(PUBLIC_AUTH.login, {
     ...authStartContext(authStart),
     mobile,
     sms_code: smsCode,
@@ -67,12 +79,22 @@ export function loginWithSmsCode({ authStart, mobile, smsCode, captchaId, captch
 }
 
 export function registerAccount({ authStart, mobile, password, smsCode, termsAccepted }) {
-  return requestDeepAuth(authStart?.register_api_url || '/api/v1/public/auth/register', {
-    ...authStartContext(authStart),
+  return requestDeepAuth(PUBLIC_AUTH.register, {
+    return_to: authStart?.return_to, // register 字段无 client_id,只带 return_to(空则被 removeEmptyFields 去掉)
     mobile,
     password,
     sms_code: smsCode,
     terms_accepted: termsAccepted,
+  })
+}
+
+// 找回/重置密码:手机号 + 新密码 + 验证码(短信 purpose=reset_password)。成功后用新密码重新登录。
+export function resetPassword({ authStart, mobile, newPassword, smsCode }) {
+  void authStart // 保留入参兼容旧调用;找回密码接口本身不需要 authStart
+  return requestDeepAuth(PUBLIC_AUTH.forgot, {
+    mobile,
+    new_password: newPassword,
+    sms_code: smsCode,
   })
 }
 
