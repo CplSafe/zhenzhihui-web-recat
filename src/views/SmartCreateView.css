@@ -152,6 +152,8 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* 常驻滚动条占位:切换分镜/内容高度变化时不再因滚动条出现/消失而整体横向抖动 */
+  scrollbar-gutter: stable;
   padding: 20px 28px;
 }
 
@@ -202,20 +204,6 @@
   border-top-color: #1fcfa9;
   border-radius: 50%;
   animation: smart-spin 0.7s linear infinite;
-}
-/* 水合占位:填满内容区、居中转圈,水合完成前替代初始输入页,避免「闪初始页」 */
-.smart__hydrating {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #f8f9fa;
-}
-.smart__hydrating .smart__gen-spin {
-  width: 28px;
-  height: 28px;
-  border-width: 3px;
 }
 @keyframes smart-spin {
   to {

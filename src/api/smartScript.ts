@@ -87,21 +87,18 @@ function mapShots(list: any[], images: string[] = []): Shot[] {
     line: String(s?.line || s?.voiceover || s?.dialogue || '').trim(),
     subtitle: String(s?.subtitle || s?.caption || '').trim(),
     sfx: String(s?.sfx || s?.sound || s?.audio || '').trim(),
+    // 注意:不再用 imageIndex 把上传图直接绑成 image(否则一张产品海报会被模型标到几乎所有主体上 →「全是产品图」)。
+    // 上传素材改由 anchorUploadsToSubjects(VL 识别主推产品)决定绑到哪些主体的 refImage,再图生图抠成干净单品。
     subjects: Array.isArray(s?.subjects)
       ? s.subjects
-          .map((x: any) => {
-            const idx = Number(x?.imageIndex || x?.image_index || 0)
-            const image = idx >= 1 && images[idx - 1] ? images[idx - 1] : undefined
-            return {
-              tag:
-                '@' +
-                String(x?.name || x?.tag || x?.subject || '主体')
-                  .replace(/^@/, '')
-                  .trim(),
-              kind: String(x?.kind || x?.type || '').trim(),
-              image,
-            }
-          })
+          .map((x: any) => ({
+            tag:
+              '@' +
+              String(x?.name || x?.tag || x?.subject || '主体')
+                .replace(/^@/, '')
+                .trim(),
+            kind: String(x?.kind || x?.type || '').trim(),
+          }))
           .filter((s: any) => !TEXT_SUBJECT_RE.test(s.tag) && !TEXT_SUBJECT_RE.test(s.kind))
       : [],
   }))
@@ -328,4 +325,81 @@ export async function extractSubjects(desc: string, signal?: AbortSignal): Promi
         !TEXT_SUBJECT_RE.test(s.kind) &&
         !GENERIC_SUBJECT_RE.test(s.tag.replace(/^@/, '')),
     )
+}
+
+// ── 主体合并:把「只在单个镜头里出现一次」的多个主体,按该镜画面语义合并成 1 个组合主体 ──
+// 动机:主体拆得过细 → 素材生成变多,但很多主体只服务于某一帧画面(最终都是为合成镜头),没必要单独出图。
+// 规则:
+//  - 跨镜复用的主体(出现在 ≥2 个不同镜头)必须保持独立 —— 否则无法保证它在各镜里是同一个人/物(一致性);
+//  - 已绑定用户上传图(su.image)的主体不合并 —— 那是用户指定的真实产品/人物,合进场景会丢真实性;
+//  - 同一镜头里「仅出现一次、且未绑定上传图」的主体若 ≥2 个 → 合并成 1 个组合主体(据画面描述命名)。
+const MERGE_NAME_SYSTEM =
+  '你是分镜主体命名助手。给你一句镜头画面描述,以及该镜头里若干「只在这一个镜头出现」的视觉主体名。' +
+  '请把它们合并成【一个】能直接合成该画面的组合主体名:用中文具体短语体现主体之间的关系/动作/场景' +
+  '(例如把「学生」「台灯」合成「在台灯下看书的学生」),而不是简单罗列堆砌。' +
+  '只输出这个组合主体名本身,不超过 16 个字,不含标点、引号、书名号、空格、序号,不要任何解释。'
+
+// 据画面描述 + 待合并主体名,生成一个组合主体名(失败返回空,调用方用模板兜底)
+async function mergeNameFor(desc: string, names: string[], signal?: AbortSignal): Promise<string> {
+  const user = `画面描述:${String(desc || '').trim() || '(无)'}\n要合并的主体:${names.join('、')}`
+  let name = ''
+  try {
+    name = await runResponseText({ system: MERGE_NAME_SYSTEM, user, temperature: 0.5, maxTokens: 48, signal })
+  } catch {
+    return ''
+  }
+  return (name || '')
+    .replace(/["'《》「」“”‘’\s]/g, '')
+    .replace(/[。,，.!！?？:：;；]/g, '')
+    .trim()
+    .split('\n')[0]
+}
+
+/**
+ * 合并各镜头里「单次出现」的主体(减少不必要的素材)。在脚本生成 + 主体兜底之后、展示给「准备素材」之前调用。
+ * 跨镜统计需要完整 Shot[];失败/无可合并则原样返回。组合命名为各镜并发,降低延迟。
+ */
+export async function mergeSingleUseSubjects(shots: Shot[], signal?: AbortSignal): Promise<Shot[]> {
+  if (!Array.isArray(shots) || shots.length < 1) return shots
+  const norm = (t: string) =>
+    String(t || '')
+      .replace(/^@/, '')
+      .trim()
+
+  // 1) 统计每个主体名出现在多少个【不同镜头】
+  const shotCount = new Map<string, number>()
+  for (const sh of shots) {
+    const seen = new Set<string>()
+    for (const su of sh.subjects || []) {
+      const n = norm(su.tag)
+      if (!n || seen.has(n)) continue
+      seen.add(n)
+      shotCount.set(n, (shotCount.get(n) || 0) + 1)
+    }
+  }
+
+  // 2) 逐镜算出「保留」与「待合并」的主体:待合并 = 跨镜只出现 1 次 且 未绑定上传图
+  const plans = shots.map((sh) => {
+    const subs = sh.subjects || []
+    // 可合并 = 跨镜只出现 1 次 且 未绑定上传图(image)且 非主推产品锚定(refImage)
+    const mergeable = subs.filter((su) => (shotCount.get(norm(su.tag)) || 0) <= 1 && !su.image && !su.refImage)
+    const keep = subs.filter((su) => !mergeable.includes(su))
+    return { sh, keep, mergeable }
+  })
+
+  // 3) 并发为需要合并(待合并 ≥2)的镜头生成组合名
+  const names = await Promise.all(
+    plans.map(async (p) => {
+      if (p.mergeable.length < 2) return ''
+      const ns = p.mergeable.map((su) => norm(su.tag)).filter(Boolean)
+      const nm = await mergeNameFor(p.sh.desc, ns, signal)
+      return nm || ns.join('的') // 模板兜底:如「台灯的学生」
+    }),
+  )
+
+  // 4) 组装:不足 2 个可合并的镜头原样;其余把待合并主体替换为 1 个组合主体(置于保留主体之后)
+  return plans.map((p, i) => {
+    if (p.mergeable.length < 2 || !names[i]) return p.sh
+    return { ...p.sh, subjects: [...p.keep, { tag: '@' + names[i], kind: '场景' }] }
+  })
 }

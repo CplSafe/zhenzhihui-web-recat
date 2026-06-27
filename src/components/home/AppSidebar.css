@@ -43,6 +43,7 @@
   color: #333;
   letter-spacing: 1px;
 }
+/* 版本徽章:黄底胶囊(用户指定 #F1EC00,80×20) */
 .app-sidebar__version {
   width: 80px;
   height: 20px;
@@ -53,6 +54,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  white-space: nowrap;
 }
 
 /* 导航主体（可滚动）*/

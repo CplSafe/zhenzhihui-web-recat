@@ -12,15 +12,12 @@ import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } 
 import { CSS } from '@dnd-kit/utilities'
 import type { Shot } from '../ScriptStoryboardTable'
 import AiBadge from '@/components/common/AiBadge'
-import { ratioToAspect } from '@/utils/aspectRatio'
 import styles from './ShotList.module.less'
 
 interface ShotListProps {
   /** 额外类名:父组件控制布局(如 VideoStage 收窄列宽) */
   className?: string
   shots: Shot[]
-  /** 画面比例:缩略图按此显示(竖屏窄、横屏宽) */
-  ratio?: string
   selectedId: string | number | null
   onSelect: (id: string | number) => void
   /** 正在生成分镜图/视频的镜头(键为 shot.id),显示转圈 */
@@ -37,6 +34,8 @@ interface ShotListProps {
   onEditShot?: (shot: Shot) => void
   /** 「向上/向下插入分镜」「+」:走新增弹框(传入则替代默认的直接插入空分镜);index=插入位置 */
   onInsertShot?: (index: number) => void
+  /** 点击缩略图(非修改/删除区)→ 放大查看该分镜图 */
+  onPreview?: (url: string) => void
 }
 
 let uid = 1
@@ -59,7 +58,6 @@ function blankShot(): Shot {
 /** 单行分镜卡(可拖拽);抽成模块级组件以便每行各自调用 useSortable 钩子 */
 interface SortableCardProps {
   shot: Shot
-  ratio?: string
   index: number
   total: number
   selectedId: string | number | null
@@ -78,11 +76,11 @@ interface SortableCardProps {
   remove: (id: string | number) => void
   onEditShot?: (shot: Shot) => void
   onInsertShot?: (index: number) => void
+  onPreview?: (url: string) => void
 }
 
 function SortableCard({
   shot: s,
-  ratio,
   index: i,
   total,
   selectedId,
@@ -101,6 +99,7 @@ function SortableCard({
   remove,
   onEditShot,
   onInsertShot,
+  onPreview,
 }: SortableCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: s.id,
@@ -129,8 +128,20 @@ function SortableCard({
       </div>
 
       {/* 右:缩略图(hover/选中 显示 编辑菜单 + 删除) */}
-      <div className={styles.thumbWrap} style={{ aspectRatio: ratioToAspect(ratio) }}>
-        <div className={styles.thumb}>
+      <div className={styles.thumbWrap}>
+        <div
+          className={`${styles.thumb}${thumb && onPreview ? ' ' + styles.thumbZoom : ''}`}
+          onClick={
+            thumb && onPreview
+              ? (e) => {
+                  // 点击缩略图(非修改/删除按钮区)→ 放大查看;不触发选中
+                  e.stopPropagation()
+                  onPreview(thumb)
+                }
+              : undefined
+          }
+          title={thumb && onPreview ? '点击放大查看' : undefined}
+        >
           {thumb ? (
             <>
               <img src={thumb} alt="" draggable={false} />
@@ -286,7 +297,6 @@ function SortableCard({
 export default function ShotList({
   className,
   shots,
-  ratio,
   selectedId,
   onSelect,
   generating = {},
@@ -297,6 +307,7 @@ export default function ShotList({
   onToggleInclude,
   onEditShot,
   onInsertShot,
+  onPreview,
 }: ShotListProps) {
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
@@ -366,7 +377,6 @@ export default function ShotList({
               <SortableCard
                 key={s.id}
                 shot={s}
-                ratio={ratio}
                 index={i}
                 total={shots.length}
                 selectedId={selectedId}
@@ -385,6 +395,7 @@ export default function ShotList({
                 remove={remove}
                 onEditShot={onEditShot}
                 onInsertShot={onInsertShot}
+                onPreview={onPreview}
               />
             ))}
           </SortableContext>

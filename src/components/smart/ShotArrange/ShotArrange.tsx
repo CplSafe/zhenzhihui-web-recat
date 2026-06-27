@@ -14,8 +14,6 @@ import styles from './ShotArrange.module.less'
 
 interface ShotArrangeProps {
   shots: Shot[]
-  /** 画面比例('16:9' / '9:16' / '1:1'…):分镜图预览/缩略图按此显示,避免竖屏被塞进横屏框 */
-  ratio?: string
   /** 正在生成分镜图的镜头(键为 shot.id) */
   generating?: Record<string | number, boolean>
   onShotsChange: (shots: Shot[]) => void
@@ -29,8 +27,8 @@ interface ShotArrangeProps {
     shot: Shot,
     opts: { mode: 'edit' | 'insert'; intent: string; uploadRefUrls: string[] },
   ) => Promise<boolean>
-  /** 弹框「AI一键润色」:润色描述文本 */
-  onPolishPrompt?: (text: string) => Promise<string>
+  /** 弹框「AI一键润色」:润色描述文本(带本次上传素材 → VL 读图理解诉求) */
+  onPolishPrompt?: (text: string, uploadRefUrls: string[]) => Promise<string>
   /** 台词/字幕/音效 的「AI一键润色」 */
   onPolishText?: (kind: 'line' | 'subtitle' | 'sound', text: string) => Promise<string>
 }
@@ -42,7 +40,6 @@ const blankShot = (): Shot => ({ id: newShotId(), no: '镜头', duration: '5s', 
 
 export default function ShotArrange({
   shots,
-  ratio,
   generating = {},
   onShotsChange,
   onUploadRef,
@@ -51,6 +48,7 @@ export default function ShotArrange({
   onPolishText,
 }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
+  const [bigImg, setBigImg] = useState('') // 点击分镜缩略图 → 放大查看
   useEffect(() => {
     if (!shots.some((s) => s.id === selectedId)) setSelectedId(shots[0]?.id ?? null)
   }, [shots, selectedId])
@@ -105,18 +103,17 @@ export default function ShotArrange({
     <div className={styles.shotarr}>
       <ShotList
         shots={shots}
-        ratio={ratio}
         selectedId={selectedId}
         onSelect={setSelectedId}
         generating={generating}
         onShotsChange={onShotsChange}
         onEditShot={openEditShot}
         onInsertShot={openInsertShot}
+        onPreview={setBigImg}
       />
       {selected ? (
         <ShotEditPanel
           shot={selected}
-          ratio={ratio}
           regenerating={!!generating[selected.id]}
           onPatch={patchSel}
           onPolishText={onPolishText}
@@ -133,6 +130,16 @@ export default function ShotArrange({
         onGenerate={handleDialogGenerate}
         onClose={closeDlg}
       />
+
+      {/* 分镜缩略图放大查看灯箱 */}
+      {bigImg && (
+        <div className={styles.lightbox} onClick={() => setBigImg('')} role="dialog" aria-label="分镜图放大">
+          <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
+          <button type="button" className={styles.lightboxClose} onClick={() => setBigImg('')} aria-label="关闭">
+            ×
+          </button>
+        </div>
+      )}
     </div>
   )
 }

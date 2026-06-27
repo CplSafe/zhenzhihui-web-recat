@@ -44,14 +44,6 @@
   min-height: 0;
   overflow-y: auto;
   padding: 8px 0;
-  /* 可独立纵向滚动,但隐藏滚动条 */
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE / 旧 Edge */
-  &::-webkit-scrollbar {
-    width: 0;
-    height: 0;
-    display: none;
-  }
 }
 
 /* 每行:左 分镜N/时长,右 缩略图(无序号圆标,Figma 476-5611) */
@@ -96,20 +88,25 @@
   }
 }
 
-/* 右侧缩略图容器:定高,宽由 aspect-ratio(用户所选比例)决定 —— 竖屏窄、横屏宽,不再写死横向撑满 */
+/* 右侧缩略图容器:占据文字右侧剩余宽度,内部缩略图按项目比例居中。
+   横屏 → 缩略图填满宽度;竖屏 → 手机比例的窄盒子居中(不再又窄又贴右、留大片空白)。 */
 .thumbWrap {
   position: relative;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  height: 108px;
-  width: auto;
-  max-width: 100%;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
+/* 缩略图本体:以容器高度为基准、宽度随项目比例;横屏过宽时受 max-width 收住并仍保持比例 */
 .thumb {
   position: relative;
-  width: 100%;
   height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
@@ -346,4 +343,9 @@
   text-align: center;
   color: #9aa3af;
   font-size: 14px;
+}
+
+/* 缩略图可放大查看:cursor 提示 */
+.thumbZoom {
+  cursor: zoom-in;
 }

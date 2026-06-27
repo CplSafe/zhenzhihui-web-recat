@@ -13,7 +13,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Shot } from '../ScriptStoryboardTable'
 import { polishText } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
-import { ratioToAspect, ratioIsPortrait } from '@/utils/aspectRatio'
 import styles from './VideoStage.module.less'
 
 const MAX_SEGMENTS = 5
@@ -54,8 +53,6 @@ interface ModSegment {
 
 interface VideoStageProps {
   shots: Shot[]
-  /** 画面比例:播放器按此显示(竖屏按高约束居中,横屏满宽) */
-  ratio?: string
   /** 当前整片视频 url */
   videoUrl?: string
   /** 整片生成中 */
@@ -115,7 +112,6 @@ const fmtSec = (s: number) => `${s.toFixed(1)}s`
 
 export default function VideoStage({
   shots,
-  ratio,
   videoUrl,
   videoGenerating,
   videoStatusText,
@@ -128,16 +124,6 @@ export default function VideoStage({
   debug,
 }: VideoStageProps) {
   const { showToast } = useToast()
-  // 播放器按比例显示:竖屏按高约束并居中(避免满宽后过高),横屏/方形满宽
-  const playerStyle: React.CSSProperties = ratioIsPortrait(ratio)
-    ? {
-        aspectRatio: ratioToAspect(ratio),
-        height: 'min(64vh, 560px)',
-        width: 'auto',
-        maxWidth: '100%',
-        margin: '0 auto',
-      }
-    : { aspectRatio: ratioToAspect(ratio), width: '100%', height: 'auto' }
   const [segments, setSegments] = useState<ModSegment[]>([])
   const [overallNote, setOverallNote] = useState('')
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null) // 时间轴待确认选区(秒)
@@ -352,7 +338,7 @@ export default function VideoStage({
       <div className={styles.vstageMain}>
         {/* 左:视频播放器 + 时间轴 */}
         <div className={styles.vstageLeft}>
-          <div className={styles.vstagePlayer} style={playerStyle}>
+          <div className={styles.vstagePlayer}>
             {videoGenerating ? (
               <div className={`${styles.vstagePlayerPh} ${styles.vstageWaiting}`}>
                 <span className={styles.vstageSpin} aria-hidden="true" />

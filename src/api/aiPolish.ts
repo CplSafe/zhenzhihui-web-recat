@@ -124,6 +124,165 @@ export async function generateProjectName(requirement: string, signal?: AbortSig
 }
 
 /**
+ * 据用户上传的素材图(多模态)自动生成项目名称。
+ * 用于「未填写创作需求、仅上传了素材」时:看图识别实际产品/主体/场景后命名。
+ * 可选附上需求文字作为补充语境。失败抛错;调用方自行兜底(保留原名)。
+ */
+export async function generateProjectNameFromImages(
+  images: string[],
+  requirement?: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const imgs = (images || []).filter(Boolean)
+  if (!imgs.length) throw new Error('请先上传素材')
+  const system =
+    '你是项目命名助手。下面随请求附上了用户上传的素材图(产品/主体/场景)。请逐张看清图中实际出现的物体/品牌/场景,' +
+    '据此为这条短视频项目起一个简洁、贴切、有吸引力的中文项目名称。' +
+    '要求:紧扣素材实际内容、不臆造;尽量简洁(大约 6 到 12 个字,完整表达即可),不含标点、引号、书名号、空格、序号,不要任何解释。只输出名称本身。'
+  const user =
+    (requirement?.trim() ? `用户补充想法:${requirement.trim()}\n` : '') +
+    `已随请求附上 ${imgs.length} 张素材图,请据图为项目命名。`
+  let name = await runResponseText({ system, user, images: imgs, temperature: 0.6, maxTokens: 48, signal })
+  // 与 generateProjectName 一致的兜底清洗:去引号/标点/空白,只取首行
+  name = name
+    .replace(/["'《》「」“”‘’\s]/g, '')
+    .replace(/[。,，.!！?？:：;；]/g, '')
+    .trim()
+  name = name.split('\n')[0]
+  if (!name) throw new Error('生成名称为空,请重试')
+  return name
+}
+
+/**
+ * 主推产品锚定:看一张用户上传的素材图(多模态),识别其主推产品/主体,并从给定的分镜主体名清单里
+ * 选出该素材【应当复用】到的主体(应当用这张真实素材做图生图、保证产品一致,而非凭空文生图)。
+ * 返回 { product:识别到的产品名, kind:类型, matches:命中的主体名[] }。失败/无图返回空匹配。
+ */
+export async function matchUploadToSubjects(
+  imageUrl: string,
+  subjectNames: string[],
+  signal?: AbortSignal,
+): Promise<{ product: string; kind: string; matches: string[] }> {
+  const empty = { product: '', kind: '', matches: [] as string[] }
+  if (!imageUrl) return empty
+  const names = (subjectNames || []).map((n) => String(n || '').trim()).filter(Boolean)
+  const system =
+    '你是电商短视频「主推产品」识别助手。下面随请求附上一张用户上传的素材图(通常是要推广的产品)。' +
+    '请:①识别这张图里的【主推产品】,给出简短具体的中文名称(product)与类型(kind,如 服饰/数码/食品);' +
+    '②从给定的【分镜主体清单】里,选出所有「就是这件主推产品本身、或它的局部/细节/穿戴它的人」的主体名(matches)——' +
+    '例如产品是旗袍时:旗袍、立领、盘扣、印花、面料特写、以及穿着该旗袍的模特,都算同一产品,应全部选入' +
+    '(它们后续会合并成一个产品素材、复用这张真实素材以保证一致);' +
+    '但【场景/背景/与产品无关的道具】(如室内背景、桌子、团扇等)不要选。选不到就给空数组。' +
+    '只输出严格 JSON:{"product":"...","kind":"...","matches":["...","..."]},不要解释、不要代码块标记。'
+  const user =
+    `分镜主体清单(可多选,只选与素材同一对象的):${names.length ? names.join('、') : '(空)'}\n` +
+    '素材图已随请求附上,请据图判断。'
+  let raw = ''
+  try {
+    raw = await runResponseText({ system, user, images: [imageUrl], temperature: 0.3, maxTokens: 200, signal })
+  } catch {
+    return empty
+  }
+  raw = raw
+    .replace(/^```(json)?/i, '')
+    .replace(/```$/i, '')
+    .trim()
+  const m = raw.match(/\{[\s\S]*\}/)
+  try {
+    const o = JSON.parse(m ? m[0] : raw)
+    const product = String(o?.product || '')
+      .replace(/["'《》「」“”‘’\s]/g, '')
+      .trim()
+    const kind = String(o?.kind || '').trim()
+    const matchesRaw = Array.isArray(o?.matches) ? o.matches : []
+    // 模糊匹配回真实主体名:精确相等优先,否则包含关系(容忍 VL 措辞差异,但仍防臆造)
+    const matches: string[] = []
+    for (const raw of matchesRaw) {
+      const x = String(raw || '')
+        .replace(/^@/, '')
+        .trim()
+      if (!x) continue
+      const hit = names.find((n) => n === x) || names.find((n) => n.includes(x) || x.includes(n))
+      if (hit && !matches.includes(hit)) matches.push(hit)
+    }
+    return { product, kind, matches }
+  } catch {
+    return empty
+  }
+}
+
+/**
+ * 主推产品锚定(多图版):一次性看用户上传的【多张】素材图 + 分镜主体清单,综合判断:
+ *  - 把同一件产品的多张图归为一组(imageIndexes,1-based);不同产品分到不同组;
+ *  - 每组给出 product 名称、kind,以及命中的主体名 matches(产品本身/局部/细节/穿戴它的人;场景/背景/无关道具不算);
+ *  - 每个主体最多归一个产品(互斥)。
+ * 返回 { products: [{ product, kind, imageIndexes, matches }] }。失败返回空。
+ */
+export async function matchUploadsToSubjects(
+  images: string[],
+  subjectNames: string[],
+  signal?: AbortSignal,
+): Promise<{ products: { product: string; kind: string; imageIndexes: number[]; matches: string[] }[] }> {
+  const imgs = (images || []).filter(Boolean)
+  if (!imgs.length) return { products: [] }
+  const names = (subjectNames || []).map((n) => String(n || '').trim()).filter(Boolean)
+  const system =
+    '你是电商短视频「主推产品」识别助手。下面随请求按顺序附上用户上传的多张素材图(第1张、第2张…)。请综合所有图:' +
+    '①把【同一件产品】的多张图归为一组(它们的序号写进同一个 imageIndexes 数组,从1开始);不同产品分到不同组;' +
+    '②为每组给出简短具体的中文名称 product 与类型 kind(如 服饰/数码/食品/箱包);' +
+    '③从给定【分镜主体清单】里,为每组选出「就是该产品本身、或它的局部/细节/穿戴它的人」的主体名 matches——' +
+    '例如产品是旗袍:旗袍、立领、盘扣、印花、面料特写、穿着它的模特,都算同一产品;但场景/背景/与产品无关的道具(室内背景、桌子、团扇等)不算;' +
+    '每个主体最多归一个产品,选不到就给空数组。' +
+    '只输出严格 JSON:{"products":[{"product":"...","kind":"...","imageIndexes":[1,2],"matches":["..."]}]},不要解释、不要代码块标记。'
+  const user = `共 ${imgs.length} 张素材图(按顺序附上)。分镜主体清单:${names.length ? names.join('、') : '(空)'}`
+  let raw = ''
+  try {
+    raw = await runResponseText({ system, user, images: imgs, temperature: 0.3, maxTokens: 500, signal })
+  } catch {
+    return { products: [] }
+  }
+  raw = raw
+    .replace(/^```(json)?/i, '')
+    .replace(/```$/i, '')
+    .trim()
+  const m = raw.match(/\{[\s\S]*\}/)
+  try {
+    const o = JSON.parse(m ? m[0] : raw)
+    const arr = Array.isArray(o?.products) ? o.products : []
+    const used = new Set<string>() // 主体互斥:已归某产品的不再归其它
+    const products = arr
+      .map((p: any) => {
+        const product = String(p?.product || '')
+          .replace(/["'《》「」“”‘’\s]/g, '')
+          .trim()
+        const kind = String(p?.kind || '').trim()
+        const imageIndexes = (Array.isArray(p?.imageIndexes) ? p.imageIndexes : [])
+          .map((x: any) => Number(x) || 0)
+          .filter((n: number) => n >= 1 && n <= imgs.length)
+        const matchesRaw = Array.isArray(p?.matches) ? p.matches : []
+        const matches: string[] = []
+        for (const rawN of matchesRaw) {
+          const x = String(rawN || '')
+            .replace(/^@/, '')
+            .trim()
+          if (!x) continue
+          const hit = names.find((n) => n === x) || names.find((n) => n.includes(x) || x.includes(n))
+          if (hit && !used.has(hit)) {
+            used.add(hit)
+            matches.push(hit)
+          }
+        }
+        // 兜底:没给 imageIndexes 时,默认整组用全部图(单产品场景最常见)
+        return { product, kind, imageIndexes: imageIndexes.length ? imageIndexes : imgs.map((_, i) => i + 1), matches }
+      })
+      .filter((p: any) => p.product || p.matches.length)
+    return { products }
+  } catch {
+    return { products: [] }
+  }
+}
+
+/**
  * 为引导某一项生成「最可能的 5 个」简短候选(纯文本),可排除已展示项(换一批)。
  */
 export async function suggestOptions(

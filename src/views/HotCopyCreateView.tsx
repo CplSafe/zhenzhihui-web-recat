@@ -681,6 +681,7 @@ export default function HotCopyCreateView() {
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
+    else showToast('功能待开放', 'info') // 视频编辑/投前预审/数据看板等未开放:提示,避免点了无反应
   }
 
   const startRename = () => {

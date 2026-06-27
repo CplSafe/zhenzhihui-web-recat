@@ -5,9 +5,6 @@
   align-items: stretch;
   max-width: 1480px; /* 超宽屏不被拉满,居中更舒适 */
   margin: 0 auto;
-  /* 填满步骤区有界高度:左侧分镜列表 / 右侧面板各自内部滚动(整体不再随页面滚) */
-  height: 100%;
-  min-height: 0;
 }
 
 .empty {
@@ -29,5 +26,44 @@
     > * {
       flex: 1 1 100%;
     }
+  }
+}
+
+/* 分镜缩略图放大查看灯箱 */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  cursor: zoom-out;
+
+  img {
+    max-width: 92vw;
+    max-height: 92vh;
+    object-fit: contain;
+    border-radius: 8px;
+    cursor: default;
+  }
+}
+.lightboxClose {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.3);
   }
 }

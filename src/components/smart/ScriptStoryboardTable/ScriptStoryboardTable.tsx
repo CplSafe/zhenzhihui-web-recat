@@ -16,6 +16,13 @@ export interface ShotSubject {
   kind?: string // 人物 / 物体 / 场景
   image?: string // AI 匹配到的素材图(或用户上传);无则展示「+」
   assetId?: number // 该素材图的后端 asset_id(持久化/刷新签名URL用)
+  // 主推产品锚定:该主体应「以这张用户上传素材为参考做图生图」(保真还原产品),而非纯文生图。
+  // 有 refImage 的主体:不参与合并;生成时走图生图(从上传素材抠成干净单品)。
+  refImage?: string // 参考用的上传素材图(签名URL/ dataURL);多张时取第一张供展示
+  refAssetId?: number // 主参考图的后端 asset_id(持久化/刷新签名URL用)
+  refAssetIds?: number[] // 同一产品的多张上传素材 asset_id(多图归组时全部作图生图参考)
+  // VL 没能把上传素材匹配到任何现有主体时「注入的主推产品」标记:排除出「AI一键生成」批量,须用户手动生成。
+  manualGen?: boolean
 }
 export interface Shot {
   id: string | number
@@ -204,32 +211,6 @@ export default function ScriptStoryboardTable({
                               </>
                             )}
                           </button>
-                          {su.image && !genning && (
-                            <button
-                              type="button"
-                              className={styles.sbcMatImgEdit}
-                              title="点击修改该素材"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                onOpenSubject?.(name)
-                              }}
-                            >
-                              <svg
-                                viewBox="0 0 24 24"
-                                width="16"
-                                height="16"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                aria-hidden="true"
-                              >
-                                <path d="M12 20h9" />
-                                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                              </svg>
-                            </button>
-                          )}
                           {su.image && !genning && onRemoveSubject && (
                             <button
                               type="button"

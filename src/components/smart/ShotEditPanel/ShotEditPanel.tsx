@@ -14,7 +14,6 @@ import type { Shot } from '../ScriptStoryboardTable'
 import AiBadge from '@/components/common/AiBadge'
 import InlineEdit from '@/components/common/InlineEdit'
 import { useToast } from '@/composables/useToast'
-import { ratioToAspect } from '@/utils/aspectRatio'
 import styles from './ShotEditPanel.module.less'
 
 // 缩略图:签名URL过期等导致加载失败时回退占位,不显示破图
@@ -24,12 +23,27 @@ function Thumb({ src, alt, fallback }: { src?: string; alt?: string; fallback?: 
   return <img src={src} alt={alt || ''} onError={() => setBroken(true)} />
 }
 
+// 放大图标(hover 时显示在图片右上角,点击放大查看)
+const ZoomIcon = (
+  <svg
+    viewBox="0 0 24 24"
+    width="15"
+    height="15"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.2-3.2M11 8v6M8 11h6" />
+  </svg>
+)
+
 interface ShotEditPanelProps {
   /** 额外类名:父组件控制布局(如 VideoStage 收窄面板宽) */
   className?: string
   shot: Shot
-  /** 画面比例:分镜图预览/历史版本按此显示(竖屏不被塞进横屏框) */
-  ratio?: string
   regenerating?: boolean
   /** compact=视频生成页:只留 分镜图缩略 + 素材 + 台词/字幕/音效(分镜图编辑在镜头编排页做) */
   compact?: boolean
@@ -46,7 +60,6 @@ const stripAt = (t: string) =>
 
 export default function ShotEditPanel({
   shot,
-  ratio,
   regenerating,
   className,
   compact,
@@ -55,7 +68,6 @@ export default function ShotEditPanel({
 }: ShotEditPanelProps) {
   const { showToast } = useToast()
 
-  const aspect = ratioToAspect(ratio)
   const current = shot.image || ''
   // 兼容旧草稿(字符串)与新结构({url, assetId})
   const versions = (shot.imageVersions || []).map((v: any) => (typeof v === 'string' ? { url: v, assetId: 0 } : v))
@@ -109,7 +121,6 @@ export default function ShotEditPanel({
         <div className={styles.seditSub}>分镜图（点击放大）</div>
         <div
           className={`${styles.seditCur} ${styles.seditCurSm}${current ? ' ' + styles.seditCurZoom : ''}`}
-          style={{ aspectRatio: aspect }}
           onClick={() => current && setBigImg(current)}
           title={current ? '点击放大查看' : ''}
         >
@@ -166,12 +177,17 @@ export default function ShotEditPanel({
               const name = stripAt(su.tag)
               return (
                 <div className={styles.seMatCell} key={`${su.tag}-${i}`}>
-                  <div className={styles.seMatThumb} title={name}>
+                  <div
+                    className={`${styles.seMatThumb}${su.image ? ' ' + styles.zoomable : ''}`}
+                    title={su.image ? '点击放大查看' : name}
+                    onClick={() => su.image && setBigImg(su.image)}
+                  >
                     <Thumb
                       src={su.image}
                       alt={name}
                       fallback={<span className={styles.seMatPh}>{name || '素材'}</span>}
                     />
+                    {su.image && <span className={styles.seZoom}>{ZoomIcon}</span>}
                   </div>
                   <span className={styles.seMatLabel}>{name || '素材'}</span>
                 </div>
@@ -184,7 +200,11 @@ export default function ShotEditPanel({
       {/* ── 顶部:当前分镜图 + 历史生成 ── */}
       <div className={styles.seTop}>
         <div className={styles.seCurBox}>
-          <div className={styles.seditCur} style={{ aspectRatio: aspect }}>
+          <div
+            className={`${styles.seditCur}${current && !regenerating ? ' ' + styles.zoomable : ''}`}
+            title={current && !regenerating ? '点击放大查看' : ''}
+            onClick={() => current && !regenerating && setBigImg(current)}
+          >
             {regenerating ? (
               <span className={styles.seditCurPh}>
                 <span className={styles.seditSpin} aria-hidden="true" />
@@ -211,14 +231,27 @@ export default function ShotEditPanel({
                   const i = versions.length - 1 - ri
                   return (
                     <div className={styles.seHistCell} key={i}>
-                      <button
-                        type="button"
-                        className={`${styles.seHistItem}${v.url === current ? ' ' + styles.active : ''}`}
-                        style={{ aspectRatio: aspect }}
-                        onClick={() => pickVersion(v)}
-                      >
-                        <img src={v.url} alt="" />
-                      </button>
+                      <div className={styles.seHistThumb}>
+                        <button
+                          type="button"
+                          className={`${styles.seHistItem}${v.url === current ? ' ' + styles.active : ''}`}
+                          onClick={() => pickVersion(v)}
+                        >
+                          <img src={v.url} alt="" />
+                        </button>
+                        {/* hover 显示放大图标:点击仅放大查看,不切换版本 */}
+                        <span
+                          className={styles.seZoom}
+                          role="button"
+                          title="放大查看"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setBigImg(v.url)
+                          }}
+                        >
+                          {ZoomIcon}
+                        </span>
+                      </div>
                       <span className={styles.seHistLabel}>V{i + 1}</span>
                     </div>
                   )
@@ -240,6 +273,16 @@ export default function ShotEditPanel({
 
       {/* ── 台词 / 字幕 / 音效(全宽,即时自动保存)── */}
       {texts}
+
+      {/* 放大查看灯箱(主体素材 / 当前分镜图 / 历史版本 共用) */}
+      {bigImg && (
+        <div className={styles.seditLightbox} onClick={() => setBigImg('')} role="dialog" aria-label="图片放大">
+          <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
+          <button type="button" className={styles.seditLightboxClose} onClick={() => setBigImg('')} aria-label="关闭">
+            ×
+          </button>
+        </div>
+      )}
     </div>
   )
 }

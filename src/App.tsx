@@ -75,9 +75,12 @@ function AppShell() {
 
       <AppToast />
       <AppConfirmDialog />
-      {/* 帮助中心悬浮球:仅在已登录的业务页显示,登录/开屏页不显示。用 hasChecked 而非 !isCheckingSession,
-          避免后台续期时跟着闪一下 */}
-      {requiresAuth && isAuthenticated && hasChecked && <HelpCenter />}
+      {/* 帮助中心悬浮球:登录后所有业务页都显示(含 requiresAuth:false 的 /smart、/hot-copy),登录/开屏页不显示。
+          用 hasChecked 而非 !isCheckingSession —— 后台续期/再校验时不跟着闪、也不被卸载。 */}
+      {isAuthenticated &&
+        hasChecked &&
+        location.pathname !== '/login' &&
+        location.pathname !== '/welcome' && <HelpCenter />}
     </>
   )
 }

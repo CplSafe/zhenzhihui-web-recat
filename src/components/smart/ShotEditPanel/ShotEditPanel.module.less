@@ -2,20 +2,11 @@
 .sedit {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 0; /* 配合 .shotarr 有界高度,内容超出时本面板内部滚动(整体不随页面滚) */
-  overflow-y: auto;
   border-radius: 14px;
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  &::-webkit-scrollbar {
-    width: 0;
-    height: 0;
-    display: none;
-  }
 }
 
 .seditSub {
@@ -89,7 +80,10 @@
 .seditCur {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  /* 按项目比例自适应(横屏/竖屏);竖屏过高时用 max-height 收住并居中 */
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+  max-height: 56vh;
+  margin: 0 auto;
   border-radius: 12px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
@@ -126,9 +120,7 @@
 }
 
 .seditCurSm {
-  height: 180px;
-  width: auto; /* 宽由 aspect-ratio(用户所选比例)决定 */
-  margin: 0 auto;
+  max-height: 170px;
 }
 
 .seditCurZoom {
@@ -838,8 +830,9 @@
   flex: 0 0 auto;
 }
 .seCurBox .seditCur {
+  width: 220px;
   height: 220px;
-  width: auto; /* 宽由 aspect-ratio(用户所选比例)决定:竖屏窄、横屏宽、方形则 220×220 */
+  aspect-ratio: auto; /* 覆盖默认 16:9 → 正方形(对齐 Figma 220×220) */
 }
 .seHistory {
   flex: 1 1 auto;
@@ -865,8 +858,8 @@
 }
 .seHistItem {
   position: relative;
+  width: 120px;
   height: 120px;
-  width: auto; /* 宽由 aspect-ratio 决定,与主预览同比例 */
   border-radius: 10px;
   overflow: hidden;
   border: 2px solid transparent;
@@ -976,4 +969,33 @@
     opacity: 0.55;
     cursor: default;
   }
+}
+/* ── 放大查看(主体素材 / 当前分镜图 / 历史版本)── */
+.zoomable {
+  cursor: zoom-in;
+}
+.seHistThumb {
+  position: relative;
+}
+/* hover 显示在图片右上角的放大图标;点击仅放大查看 */
+.seZoom {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: zoom-in;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.zoomable:hover .seZoom,
+.seHistThumb:hover .seZoom {
+  opacity: 1;
 }
