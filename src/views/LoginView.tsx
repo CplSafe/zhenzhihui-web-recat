@@ -26,6 +26,9 @@ import {
 } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
+import { listBanners } from '@/api/banners'
+import { useSwr } from '@/composables/useSwr' // 复用首页同一套 SWR 缓存(先返缓存秒出、后台刷新)
+import { isPreloaded } from '@/utils/mediaPreload'
 
 interface CaptchaState {
   id: string
@@ -33,6 +36,11 @@ interface CaptchaState {
   answer: string
 }
 
+// 登录页大图轮播数据的 SWR 缓存键(slug=login)
+const LOGIN_BANNERS_CACHE_KEY = 'login-banners'
+// 图片幻灯片自动切换间隔(视频则播完即切)
+const IMAGE_AUTOPLAY_MS = 3000
+// 接口无数据时的兜底标题(保持原静态四项)
 const NAV_ITEMS = ['食品饮料', '生活服务', '餐饮美食', '丽人服务']
 
 export default function LoginView() {
@@ -46,7 +54,12 @@ export default function LoginView() {
 
   const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
 
-  const [activeNav, setActiveNav] = useState(NAV_ITEMS[1]) // 左侧大图标签:默认高亮「生活服务」,可点击切换
+  // 左侧大图轮播:数据来自 /api/v1/banners?slug=login。useSwr 负责缓存秒出 + 后台刷新。
+  const { data: loginBanners } = useSwr(LOGIN_BANNERS_CACHE_KEY, () => listBanners('login'), { fallback: [] })
+  // 当前高亮/展示的幻灯片下标(标题与媒体联动);默认第 2 项(对齐原「生活服务」高亮)。
+  const [heroIndex, setHeroIndex] = useState(1)
+  // 当前幻灯片媒体是否可显示(视频 canplay / 图 onload):未就绪时显示浅绿骨架屏,就绪后淡入。
+  const [mediaReady, setMediaReady] = useState(false)
   const [loginMode, setLoginMode] = useState<'password' | 'sms'>('sms')
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
@@ -369,18 +382,96 @@ export default function LoginView() {
     return () => clearCodeTimer()
   }, [])
 
+  // ── 登录页大图轮播(slug=login)──────────────────────────────────────
+  // 有数据用 banner 列表;为空回退到静态四项(只有标题、无媒体)。
+  const hasBanners = Array.isArray(loginBanners) && loginBanners.length > 0
+  // 标题用 banner.title;为空时给可读兜底名(避免出现无障碍名称为空的按钮)
+  const navTitles = hasBanners ? loginBanners!.map((b, i) => b.title?.trim() || `第 ${i + 1} 张`) : NAV_ITEMS
+  // heroIndex 夹回有效范围
+  const safeIndex = navTitles.length ? Math.min(heroIndex, navTitles.length - 1) : 0
+  const activeBanner = hasBanners ? loginBanners![safeIndex] : null
+
+  const heroVideoRef = useRef<HTMLVideoElement | null>(null)
+  // 切下一张:基于「钳位后的当前索引」推进,避免列表长度变化后 heroIndex 越界导致跳/重。
+  const goNextHero = () =>
+    setHeroIndex((i) => {
+      const len = navTitles.length
+      if (!len) return 0
+      return (Math.min(i, len - 1) + 1) % len
+    })
+  // 媒体加载失败:多张则切下一张(单张则保持,透出静态底图)。
+  const handleMediaError = () => {
+    if (navTitles.length > 1) goNextHero()
+  }
+
+  // 自动轮播:视频幻灯片由「播放结束」驱动;图片幻灯片用 3s 定时;<2 张不轮播。
+  useEffect(() => {
+    if (!hasBanners || navTitles.length < 2) return
+    if (activeBanner?.mediaType === 'video') return // 视频靠 onEnded 切换
+    const t = window.setTimeout(goNextHero, IMAGE_AUTOPLAY_MS)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasBanners, navTitles.length, safeIndex, activeBanner?.mediaType])
+
+  // 切到新幻灯片:若该媒体已预加载(welcome 阶段已预热)则直接 ready、不闪骨架;
+  // 否则先显骨架屏,等 onCanPlay/onLoad 再 ready。视频则从头播放。
+  useEffect(() => {
+    setMediaReady(activeBanner ? isPreloaded(activeBanner.mediaUrl) : false)
+    const v = heroVideoRef.current
+    if (v && activeBanner?.mediaType === 'video') {
+      try {
+        v.currentTime = 0
+      } catch {
+        /* 元数据未就绪时忽略 */
+      }
+      v.play().catch(() => {})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [safeIndex, activeBanner?.mediaUrl])
+
   return (
     <main className="zlogin">
-      <aside className="zlogin-hero" style={{ backgroundImage: `url(${loginHero})` }} aria-hidden="true">
+      {/* 始终铺静态 login-hero 背景图:既是无数据时的兜底,也是 banner 图/视频加载失败时透出的底图。 */}
+      <aside className="zlogin-hero" style={{ backgroundImage: `url(${loginHero})` }}>
+        {/* 大图媒体:有 banner 数据时按当前幻灯片展示(图=图层,视频=播放并播完切下一张);
+            加载失败时:多张→切下一张,单张→隐藏(透出静态底图)。 */}
+        {hasBanners && activeBanner && (
+          <div className={`zlogin-hero-media${mediaReady ? ' is-ready' : ''}`} aria-hidden="true">
+            {/* 媒体可显示前的浅绿骨架屏(渐变微动);就绪后媒体淡入盖住它 */}
+            <div className="zlogin-hero-skeleton" />
+            {activeBanner.mediaType === 'video' ? (
+              <video
+                ref={heroVideoRef}
+                className="zlogin-hero-video"
+                src={activeBanner.mediaUrl}
+                muted
+                playsInline
+                autoPlay
+                preload="auto"
+                onCanPlay={() => setMediaReady(true)}
+                onEnded={goNextHero}
+                onError={handleMediaError}
+              />
+            ) : (
+              <img
+                className="zlogin-hero-img"
+                src={activeBanner.mediaUrl}
+                alt=""
+                onLoad={() => setMediaReady(true)}
+                onError={handleMediaError}
+              />
+            )}
+          </div>
+        )}
         <nav className="zlogin-nav">
-          {NAV_ITEMS.map((item) => (
+          {navTitles.map((title, i) => (
             <button
               type="button"
-              key={item}
-              className={`zlogin-nav-item${item === activeNav ? ' is-active' : ''}`}
-              onClick={() => setActiveNav(item)}
+              key={`${title}-${i}`}
+              className={`zlogin-nav-item${i === safeIndex ? ' is-active' : ''}`}
+              onClick={() => setHeroIndex(i)}
             >
-              {item}
+              {title}
             </button>
           ))}
         </nav>

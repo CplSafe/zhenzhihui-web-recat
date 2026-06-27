@@ -96,6 +96,23 @@
   flex: none;
   display: block;
 }
+/* 匿名访问:右上角「登录」按钮,主题浅绿渐变 */
+.apptop__signin {
+  height: 32px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #60e0c4, #1fcfa9);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+.apptop__signin:hover {
+  filter: brightness(1.04);
+}
+
 .apptop__user {
   position: relative;
 }

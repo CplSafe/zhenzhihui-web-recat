@@ -74,7 +74,11 @@ export function preloadImage(url: string): Promise<void> {
   return p
 }
 
-/** 预热单个视频:加载元数据 / 首帧(preload=metadata),不整段下载。 */
+/**
+ * 预加载单个视频「到可播放」(preload=auto + 等 canplay)。
+ * 与只取首帧不同:这里会缓冲到浏览器认为可流畅播放(canplay),
+ * 这样真正展示该视频时直接能播、不再转圈。字节进入浏览器 HTTP 缓存供后续复用。
+ */
 export function preloadVideo(url: string): Promise<void> {
   if (!url) return Promise.resolve()
   const hit = cache.get(url)
@@ -82,22 +86,23 @@ export function preloadVideo(url: string): Promise<void> {
 
   const p = new Promise<void>((resolve) => {
     const v = document.createElement('video')
-    v.preload = 'metadata'
+    v.preload = 'auto'
     v.muted = true
-    // 不挂到 DOM 上,纯粹触发浏览器拉取元数据/首帧
+    // 不挂到 DOM 上,纯粹触发浏览器缓冲到可播
     let done = false
     const finish = () => {
       if (done) return
       done = true
-      // 解除引用,便于 GC;已拉到的字节仍在浏览器 HTTP 缓存里
+      // 解除引用,便于 GC;已缓冲字节仍在浏览器 HTTP 缓存里
       v.removeAttribute('src')
+      v.load()
       resolve()
     }
-    v.onloadeddata = finish // 首帧可用
-    v.onloadedmetadata = finish // 退化:至少拿到元数据也算就绪
+    v.oncanplaythrough = finish // 可流畅播放到底(最佳)
+    v.oncanplay = finish // 可开始播放(足够展示)
     v.onerror = finish // 失败不抛错
-    // 安全兜底:某些浏览器不触发事件时 8s 后放行,避免 Promise 永挂
-    setTimeout(finish, 8000)
+    // 安全兜底:某些浏览器不触发事件时 12s 后放行,避免 Promise 永挂
+    setTimeout(finish, 12000)
     v.src = url
   })
 
