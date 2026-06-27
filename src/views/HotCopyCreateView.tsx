@@ -132,15 +132,6 @@ export default function HotCopyCreateView() {
   const [draftName, setDraftName] = useState('')
   const [nameTouched, setNameTouched] = useState(false)
   const [naming, setNaming] = useState(false)
-  // 从「项目管理 → 新建视频」进入:沿用原项目名(一模一样),标记已命名避免被 AI 自动命名覆盖
-  useEffect(() => {
-    const nm = (location.state as any)?.newProjectName
-    if (typeof nm === 'string' && nm.trim()) {
-      setProjectName(nm.trim())
-      setNameTouched(true)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
   const nameInputRef = useRef<HTMLInputElement | null>(null)
   const nameAbortRef = useRef<AbortController | null>(null)
 
@@ -159,6 +150,39 @@ export default function HotCopyCreateView() {
   const draftRevisionRef = useRef(0) // 后端草稿版本号(防 409)
   const serverTitleRef = useRef('') // 已同步到后端的标题(去重)
   const saveChainRef = useRef<Promise<any>>(Promise.resolve()) // 串行化草稿保存
+
+  // 从「项目管理 → 新建视频」进入:沿用原项目名 + 携带上传素材(源视频/替换素材)+ 绑定同一项目(不新建重复项目)。
+  // 全新流程:不恢复旧草稿,仅把素材预填入口;生成保存到同一 projectId(覆盖其草稿)。
+  useEffect(() => {
+    const st = location.state as any
+    if (!st || routeId > 0) return // /hot-copy/:id 走恢复;此分支仅用于无 id 的全新流程
+    if (typeof st.newProjectName === 'string' && st.newProjectName.trim()) {
+      setProjectName(st.newProjectName.trim())
+      setNameTouched(true)
+    }
+    const imgs = (Array.isArray(st.carryImages) ? st.carryImages : []).filter((m: any) => m && m.url)
+    const vid = st.carryVideo && st.carryVideo.url ? st.carryVideo : null
+    if (imgs.length || vid) {
+      setEntryInitial({
+        tab: 'remake',
+        products: imgs.map((m: any) => ({ url: m.url, file: null, isVideo: false, assetId: Number(m.assetId || 0) || undefined })),
+        ...(vid
+          ? {
+              videoSource: 'library' as const,
+              videoPreview: vid.url,
+              libraryVideo: { assetId: Number(vid.assetId || 0), src: vid.url },
+            }
+          : {}),
+      } as any)
+    }
+    if (Number(st.restartProjectId)) {
+      projectIdRef.current = Number(st.restartProjectId)
+      setProjectId(Number(st.restartProjectId))
+      serverTitleRef.current = ''
+    }
+    // 仅 mount 注入一次([] 依赖)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 续等在途视频任务并回填(本地恢复 / 后端恢复共用)
   const resumeVideoTask = (ws: number, taskId: number) => {

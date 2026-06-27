@@ -223,15 +223,8 @@ export default function SmartCreateView() {
   const [draftName, setDraftName] = useState('')
   const [nameTouched, setNameTouched] = useState(false) // 用户手动改过名后不再自动覆盖
   const [naming, setNaming] = useState(false)
-  // 从「项目管理 → 新建视频」进入:沿用原项目名(一模一样),标记已命名避免被 AI 自动命名覆盖
-  useEffect(() => {
-    const nm = (location.state as any)?.newProjectName
-    if (typeof nm === 'string' && nm.trim()) {
-      setProjectName(nm.trim())
-      setNameTouched(true)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // 从「项目管理 → 新建视频」携带过来的、该项目上传过的素材图(预填入口);见下方绑定 effect
+  const [carriedImages, setCarriedImages] = useState<string[]>([])
   const nameInputRef = useRef<HTMLInputElement | null>(null)
 
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)
@@ -258,6 +251,27 @@ export default function SmartCreateView() {
   // 后端当前的项目标题(对齐 Vue serverProjectTitle):用于判断是否需要回写、避免覆盖已有真实标题
   const serverTitleRef = useRef('')
   const draftRevisionRef = useRef(0) // 后端草稿版本号(乐观并发)
+
+  // 从「项目管理 → 新建视频」进入:沿用原项目名 + 携带上传素材 + 绑定到同一项目(归同一项目,不新建重复项目)。
+  // 全程「全新流程」:不恢复旧的已生成草稿,只把上传素材预填入口;生成后保存到同一 projectId(覆盖其草稿)。
+  useEffect(() => {
+    const st = location.state as any
+    if (!st) return
+    if (typeof st.newProjectName === 'string' && st.newProjectName.trim()) {
+      setProjectName(st.newProjectName.trim())
+      setNameTouched(true)
+    }
+    if (Array.isArray(st.carryImages) && st.carryImages.length) {
+      setCarriedImages(st.carryImages.map((m: any) => (typeof m === 'string' ? m : m?.url)).filter(Boolean))
+    }
+    if (Number(st.restartProjectId)) {
+      projectIdRef.current = Number(st.restartProjectId)
+      setProjectId(Number(st.restartProjectId))
+      serverTitleRef.current = '' // 让沿用的项目名回写;draftRevisionRef 保持 0 → 首次保存自动拉取(防 409)
+    }
+    // 仅 mount 时注入一次([] 依赖),无需清 location.state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── 主体素材统一管理:同名主体(@闺蜜A)共享素材,选定后所有同名处联动 ──
   // 版本/提示词存 registry;选定的图写回所有同名 subject(供表格 + 镜头编排一致展示)
@@ -2467,7 +2481,7 @@ export default function SmartCreateView() {
               text: requirement,
               ratio: entryMeta?.ratio,
               duration: entryMeta?.duration,
-              images: entryMeta?.images,
+              images: entryMeta?.images ?? (carriedImages.length ? carriedImages : undefined),
               skill: entryMeta?.skill,
             }}
           />

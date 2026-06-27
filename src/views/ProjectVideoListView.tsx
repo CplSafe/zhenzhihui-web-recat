@@ -14,7 +14,43 @@ import {
   publishProjectVideo,
   type ProjectVideo,
 } from '@/api/projectVideos'
+import { getCreativeProject } from '@/api/business'
 import './ProjectVideoListView.css'
+
+type CarryMat = { url: string; assetId: number }
+// 从项目草稿里抽取「用户上传的素材」(图片资产 id + 源视频),兼容 智能成片 / 爆款复制 两种草稿结构
+function extractUploadedMaterials(draftJson: any, wsId: number): { images: CarryMat[]; video: CarryMat | null } {
+  let d = draftJson
+  if (typeof d === 'string') {
+    try {
+      d = JSON.parse(d)
+    } catch {
+      d = null
+    }
+  }
+  if (!d || typeof d !== 'object') return { images: [], video: null }
+  const smart = d.smart && typeof d.smart === 'object' ? d.smart : d
+  const url = (id: number) => `/api/v1/assets/${Math.floor(id)}/download?workspace_id=${Math.floor(wsId)}`
+  const imgIds = new Set<number>()
+  // 智能成片:入口上传图(entryMeta.imageAssetIds)
+  const em = d.entryMeta || smart.entryMeta
+  ;(em?.imageAssetIds || []).forEach((id: any) => Number(id) && imgIds.add(Number(id)))
+  // 爆款复制:替换素材(productAssetIds)
+  ;(smart.productAssetIds || d.productAssetIds || []).forEach((id: any) => Number(id) && imgIds.add(Number(id)))
+  const images: CarryMat[] = [...imgIds].map((id) => ({ url: url(id), assetId: id }))
+  // 兜底:无 assetId 时用 entryMeta.images 里的 http/api 地址
+  if (!images.length && Array.isArray(em?.images)) {
+    em.images.forEach((u: any) => {
+      const s = typeof u === 'string' ? u : u?.url
+      if (s && /^(https?:|\/api)/.test(s)) images.push({ url: s, assetId: 0 })
+    })
+  }
+  // 爆款复制源视频
+  const sv = smart.sourceVideo || d.sourceVideo
+  const svId = Number(sv?.assetId || 0)
+  const video: CarryMat | null = svId ? { url: url(svId), assetId: svId } : null
+  return { images, video }
+}
 
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
@@ -244,13 +280,33 @@ export default function ProjectVideoListView() {
     [showToast],
   )
 
-  // 新建视频:弹窗选择「智能成片 / 爆款复制」,进入对应流程并沿用当前项目名(一模一样)
+  // 新建视频:弹窗选「智能成片 / 爆款复制」→ 进入全新创作流程,携带该项目【上传的素材】,
+  // 并绑定到【同一项目】(归同一项目、不新建重复项目;重新生成会覆盖该项目当前草稿)。
   const goCreateVia = useCallback(
-    (kind: 'smart' | 'hot') => {
+    async (kind: 'smart' | 'hot') => {
       setNewVideoOpen(false)
-      navigate(kind === 'smart' ? '/smart' : '/hot-copy', { state: { newProjectName: projectTitle || '' } })
+      const wsId = Number(workspaceId || 0)
+      let carryImages: CarryMat[] = []
+      let carryVideo: CarryMat | null = null
+      try {
+        const proj: any = await getCreativeProject({ projectId, workspaceId: wsId })
+        const draft = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
+        const mats = extractUploadedMaterials(draft, wsId)
+        carryImages = mats.images
+        carryVideo = mats.video
+      } catch {
+        /* 取草稿失败:仍进入流程(不带素材),不阻断 */
+      }
+      navigate(kind === 'smart' ? '/smart' : '/hot-copy', {
+        state: {
+          newProjectName: projectTitle || '',
+          restartProjectId: projectId,
+          carryImages,
+          carryVideo,
+        },
+      })
     },
-    [navigate, projectTitle],
+    [navigate, projectTitle, projectId, workspaceId],
   )
 
   const handlePublish = useCallback(
