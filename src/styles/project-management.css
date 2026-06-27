@@ -1221,6 +1221,7 @@
 .pm2-pcard-cover {
   position: relative;
   aspect-ratio: 16 / 10;
+  overflow: hidden;
   background:
     var(--c, none),
     linear-gradient(135deg, #e7eafc, #f1f3ff);
@@ -1230,8 +1231,29 @@
   align-items: center;
   justify-content: center;
 }
-.pm2-pcard-cover .pm2-folder-glyph {
-  width: 40%;
+/* 真实图片 / 视频首帧封面:铺满封面区 */
+.pm2-pcard-cover-media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 空项目占位封面:渐变上居中显示完整项目标题(多行截断,避免溢出) */
+.pm2-pcard-cover-ph {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0 16px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: rgba(91, 107, 232, 0.7);
+  text-align: center;
+  user-select: none;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  word-break: break-word;
 }
 .pm2-pcard-body {
   padding: 12px 14px 14px;

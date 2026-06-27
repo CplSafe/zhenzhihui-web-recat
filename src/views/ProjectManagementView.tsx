@@ -107,8 +107,13 @@ function extractCover(project: any, wsId: number): string {
   const draft = normalizeCreativeProjectDraft(project)
   if (draft) {
     const smart = toPlainObject(draft.smart) || draft
-    for (const u of normalizeArray(smart?.entryMeta?.images)) {
-      const s = String(u || '').trim()
+    // 入口素材:优先用平行的 imageAssetIds → 直传地址(草稿里的 images 可能是已过期 S3 预签名或 blob:,会破图)
+    const entryImgs = normalizeArray(smart?.entryMeta?.images)
+    const entryIds = normalizeArray(smart?.entryMeta?.imageAssetIds)
+    for (let i = 0; i < entryImgs.length; i++) {
+      const aid = Number(entryIds[i] || 0) || 0
+      if (aid && wsId) return assetStreamUrl(aid, wsId)
+      const s = String(entryImgs[i] || '').trim()
       if (s) return s
     }
     for (const sh of normalizeArray(smart?.shots)) {
@@ -122,6 +127,24 @@ function extractCover(project: any, wsId: number): string {
     if (u) return u
   }
   return ''
+}
+
+// 没图时的视频封面:取项目已生成的整片视频(版本/历史/最终任一),用 <video> 首帧当封面。
+// 优先 assetId → 直传地址(永不过期);否则用原始 url。
+function extractCoverVideo(project: any, wsId: number): string {
+  const draft = normalizeCreativeProjectDraft(project)
+  if (!draft) return ''
+  const smart = toPlainObject(draft.smart) || draft
+  for (const list of [smart?.videoVersions, draft?.videoHistoryList, draft?.video_history_list]) {
+    for (const v of normalizeArray(list)) {
+      const im = imgOf(v)
+      if (im.assetId && wsId) return assetStreamUrl(im.assetId, wsId)
+      if (im.url) return im.url
+    }
+  }
+  const aid = Number(draft?.generatedVideoAssetId || smart?.fullVideoAssetId || 0) || 0
+  if (aid && wsId) return assetStreamUrl(aid, wsId)
+  return String(draft?.generatedVideoUrl || draft?.generated_video_url || smart?.fullVideoUrl || '').trim()
 }
 
 // 相对更新时间:「X分钟前更新」
@@ -280,18 +303,6 @@ function DownloadIcon() {
     </svg>
   )
 }
-function FolderGlyph() {
-  return (
-    <svg className="pm2-folder-glyph" viewBox="0 0 100 76" aria-hidden="true">
-      <path
-        d="M10 22c0-4 3-7 7-7h18l7 7h34c4 0 7 3 7 7v33c0 4-3 7-7 7H17c-4 0-7-3-7-7V22z"
-        fill="rgba(255,255,255,0.92)"
-      />
-      <rect x="10" y="30" width="80" height="36" rx="6" fill="rgba(255,255,255,0.55)" />
-    </svg>
-  )
-}
-
 export default function ProjectManagementView() {
   const navigate = useNavigate()
   const { showToast } = useToast()
@@ -304,6 +315,8 @@ export default function ProjectManagementView() {
   const [openMenuId, setOpenMenuId] = useState(0)
   const [deletingProjectId, setDeletingProjectId] = useState(0)
   const [dragOverFolderId, setDragOverFolderId] = useState(0)
+  // 封面图加载失败的项目 id(过期/坏图)→ 回退占位封面,保证卡片始终有图
+  const [coverError, setCoverError] = useState<Set<number>>(new Set())
 
   // 我的项目分页:固定每行 3 个、每页 3 行(共 9 个),不随屏幕改变列数。
   const gridRef = useRef<HTMLDivElement>(null)
@@ -345,6 +358,7 @@ export default function ProjectManagementView() {
         // 作品数 = 点开项目后实际看到的视频条数(派生成片/草稿占位 + 本地归类),
         // 与 listProjectVideos 同口径;不再用分镜数(shots.length),避免「卡片显示 3、点开只有 1」。
         const worksCount = countProjectVideos({ project, workspaceId: wsId })
+        const cover = extractCover(project, wsId)
         return {
           id: Number(project?.id || 0),
           title: String(project?.title || project?.name || '').trim() || '未命名项目',
@@ -355,7 +369,9 @@ export default function ProjectManagementView() {
             'created_at',
             'createdAt',
           ]),
-          cover: extractCover(project, wsId),
+          cover,
+          // 没有图片封面时,退而用已出片视频的首帧当封面
+          coverVideo: cover ? '' : extractCoverVideo(project, wsId),
           members,
           type: members > 1 ? '协作项目' : '个人项目',
           works: worksCount,
@@ -814,11 +830,29 @@ export default function ProjectManagementView() {
                           handleDropToFolder(folder, e.dataTransfer.getData('text/plain'))
                         }}
                       >
-                        <div
-                          className="pm2-pcard-cover"
-                          style={folder.cover ? { backgroundImage: `url(${folder.cover})` } : undefined}
-                        >
-                          {!folder.cover && <FolderGlyph />}
+                        <div className="pm2-pcard-cover">
+                          {folder.cover && !coverError.has(folder.id) ? (
+                            // ① 真实图片封面(入口素材 / 分镜图 / 封面字段)
+                            <img
+                              className="pm2-pcard-cover-media"
+                              src={folder.cover}
+                              alt=""
+                              loading="lazy"
+                              onError={() => setCoverError((prev) => new Set(prev).add(folder.id))}
+                            />
+                          ) : folder.coverVideo ? (
+                            // ② 没图但已出片:用整片视频首帧当封面
+                            <video
+                              className="pm2-pcard-cover-media"
+                              src={folder.coverVideo}
+                              muted
+                              playsInline
+                              preload="metadata"
+                            />
+                          ) : (
+                            // ③ 空项目兜底:渐变 + 完整项目标题占位封面
+                            <span className="pm2-pcard-cover-ph">{folder.title}</span>
+                          )}
                         </div>
                         <div className="pm2-pcard-body">
                           <div className="pm2-pcard-head">
