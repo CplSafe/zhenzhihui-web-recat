@@ -350,8 +350,8 @@ export default function LoginView() {
 
   function handleAgreementAgree() {
     setShowAgreementModal(false)
+    setAgreed(true) // 「同意并继续」即勾选(与表单复选框联动)
     if (agreementModalContextRef.current === 'login') {
-      setAgreed(true)
       // setAgreed 异步,这里走不依赖该 state 的提交路径。
       const valid = validateLogin()
       if (valid) void submitLogin(valid.mobile, valid.credential)
@@ -557,7 +557,14 @@ export default function LoginView() {
         </div>
       </section>
 
-      {showAgreementModal && <AgreementModal onAgree={handleAgreementAgree} onCancel={handleAgreementCancel} />}
+      {showAgreementModal && (
+        <AgreementModal
+          agreed={agreed}
+          onAgreedChange={setAgreed}
+          onAgree={handleAgreementAgree}
+          onCancel={handleAgreementCancel}
+        />
+      )}
 
       {/* 注册 / 重置密码 弹窗 */}
       {authModal && (

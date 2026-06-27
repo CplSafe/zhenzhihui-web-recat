@@ -6,12 +6,21 @@ import { useState } from 'react'
 import './AgreementModal.css'
 
 export interface AgreementModalProps {
+  /** 受控勾选状态:与登录页的「已阅读并同意」复选框联动(传入则受控,否则用内部状态) */
+  agreed?: boolean
+  onAgreedChange?: (value: boolean) => void
   onAgree?: () => void
   onCancel?: () => void
 }
 
 export default function AgreementModal(props: AgreementModalProps) {
-  const [agreed, setAgreed] = useState(false)
+  const [internalAgreed, setInternalAgreed] = useState(false)
+  const controlled = props.agreed !== undefined
+  const agreed = controlled ? !!props.agreed : internalAgreed
+  const setAgreed = (value: boolean) => {
+    props.onAgreedChange?.(value)
+    if (!controlled) setInternalAgreed(value)
+  }
 
   function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>) {
     // 仅当点击遮罩自身（而非内部面板）时关闭
