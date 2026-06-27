@@ -772,7 +772,8 @@ export default function SmartCreateView() {
       if (sh.image) m.set(sh.image, classify(sh.image, 'ai'))
     })
     return [...m.entries()]
-      .filter(([u]) => /^(https?:|data:)/.test(u))
+      // 接受 http(s) / data: / 同源绝对路径(如 /api/v1/assets/:id/download —— 新建视频携带的素材就是这种)
+      .filter(([u]) => /^(https?:|data:|\/)/.test(u))
       .map(([url, source]) => ({ url, source, assetId: urlAssetId.get(url) || 0 }))
   })()
 
