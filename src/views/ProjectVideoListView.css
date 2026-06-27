@@ -247,6 +247,9 @@
 .pvlist-card__flag.is-draft {
   color: #9aa1ad;
 }
+.pvlist-card__flag.is-failed {
+  color: #e5484d;
+}
 .pvlist-card__flag-dot {
   width: 11px;
   height: 11px;
@@ -386,6 +389,10 @@
 .pvlist-card__status.is-processing {
   background: #fff4de;
   color: #d68a00;
+}
+.pvlist-card__status.is-failed {
+  background: #fdeaea;
+  color: #e5484d;
 }
 
 /* 信息行:⏱ 时长 · 👤 作者 / 📅 日期 + 下载 */

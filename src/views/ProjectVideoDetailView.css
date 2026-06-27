@@ -91,6 +91,10 @@
   background: #fff4de;
   color: #d68a00;
 }
+.pvdetail-status.is-failed {
+  background: #fdeaea;
+  color: #e5484d;
+}
 
 .pvdetail-header__actions {
   display: flex;
