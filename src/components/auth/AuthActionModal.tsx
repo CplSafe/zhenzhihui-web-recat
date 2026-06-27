@@ -118,6 +118,24 @@ export default function AuthActionModal({
     return true
   }
 
+  // 注册前置判重:register 接口先校验手机号是否已存在(10401)再校验验证码(10003),
+  // 故用占位验证码探测——既不会真正注册,也不会发送短信。返回 true 表示已注册(已处理跳转)。
+  const checkAlreadyRegistered = async (m: string): Promise<boolean> => {
+    try {
+      const as = await ensureAuthStart()
+      await registerAccount({ authStart: as, mobile: m, password: 'Zzh000000', smsCode: '000000', termsAccepted: true })
+      return false // 理论不可达(占位码必然失败)
+    } catch (e: any) {
+      if (Number(e?.code) === 10401) {
+        showToast('该手机号已被注册,请直接登录', 'info')
+        onAlreadyRegistered?.(m)
+        onClose()
+        return true
+      }
+      return false // 10003(验证码错=未注册)或其他错误 → 放行继续发码
+    }
+  }
+
   const sendCode = async () => {
     if (countdown > 0) return
     const m = mobile.replace(/\s/g, '')
@@ -126,6 +144,8 @@ export default function AuthActionModal({
     setSending(true)
     setErr('')
     try {
+      // 注册:先判断是否已注册,已注册则提示直接登录,不再发送验证码
+      if (mode === 'register' && (await checkAlreadyRegistered(m))) return
       const as = await ensureAuthStart()
       await sendAuthSms({
         authStart: as,
