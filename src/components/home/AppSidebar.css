@@ -147,13 +147,15 @@
   color: #333;
   letter-spacing: 1px;
 }
-/* 版本徽章:黄底胶囊(haoran 版,用户指定 #F1EC00,80×20) */
+/* 版本徽章:青蓝(teal)渐变胶囊(#60E0C4,断点 0%/14% · 50%/4% · 100%/14%,叠白底),80×20 */
 .app-sidebar__version {
   width: 80px;
   height: 20px;
   font-size: 11px;
-  color: #333;
-  background: #f1ec00;
+  color: #1aa489;
+  background:
+    linear-gradient(to right, rgba(96, 224, 196, 0.14) 0%, rgba(96, 224, 196, 0.04) 50%, rgba(96, 224, 196, 0.14) 100%),
+    #fff;
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
