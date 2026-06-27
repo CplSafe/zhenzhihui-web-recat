@@ -152,6 +152,8 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* 常驻滚动条占位:切换分镜/内容高度变化时不再因滚动条出现/消失而整体横向抖动 */
+  scrollbar-gutter: stable;
   padding: 20px 28px;
 }
 

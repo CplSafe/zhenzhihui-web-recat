@@ -3,7 +3,7 @@
  * 管理鉴权会话初始化、页面级跳转守卫（登录页 vs 受保护页）、全局 Toast/Confirm 挂载。
  * 由原 App.vue 移植。RouterView → <Outlet/>。
  */
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Outlet, useLocation, useMatches, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import AppToast from './components/AppToast'
@@ -26,6 +26,15 @@ function AppShell() {
 
   const requiresAuth = !matches.some((m) => (m.handle as any)?.requiresAuth === false)
 
+  // 首次会话检查是否已完成。完成后:后台续期/再校验(focus / 定时)即使再把 isCheckingSession 翻 true,
+  // 也【不再卸载页面】——否则当前页会被换成空白 loading 再挂回,导致正在进行的点击丢失(点一下"刷新"、要点两次)。
+  // 真的失效(isAuthenticated 变 false)由下方守卫跳登录处理,而不是闪白整页。
+  const [hasChecked, setHasChecked] = useState(false)
+  useEffect(() => {
+    // 仅在「检查结束且无错误」(即首次成功渲染过页面)后置位;首次失败保持 false 以便展示错误卡 + 重试。
+    if (!isCheckingSession && !authCheckError) setHasChecked(true)
+  }, [isCheckingSession, authCheckError])
+
   useEffect(() => {
     if (isCheckingSession) return
     if (authCheckError) return
@@ -43,9 +52,9 @@ function AppShell() {
 
   return (
     <>
-      {isCheckingSession ? (
+      {!hasChecked && isCheckingSession ? (
         <div className="auth-session-loading" aria-label="登录状态检查中" />
-      ) : authCheckError && requiresAuth ? (
+      ) : !hasChecked && authCheckError && requiresAuth ? (
         <div className="auth-session-error">
           <div className="auth-session-error__card">
             <strong>登录状态检查失败</strong>
@@ -66,8 +75,12 @@ function AppShell() {
 
       <AppToast />
       <AppConfirmDialog />
-      {/* 帮助中心悬浮球:仅在已登录的业务页显示,登录/开屏页不显示 */}
-      {requiresAuth && isAuthenticated && !isCheckingSession && <HelpCenter />}
+      {/* 帮助中心悬浮球:登录后所有业务页都显示(含 requiresAuth:false 的 /smart、/hot-copy),登录/开屏页不显示。
+          用 hasChecked 而非 !isCheckingSession —— 后台续期/再校验时不跟着闪、也不被卸载。 */}
+      {isAuthenticated &&
+        hasChecked &&
+        location.pathname !== '/login' &&
+        location.pathname !== '/welcome' && <HelpCenter />}
     </>
   )
 }

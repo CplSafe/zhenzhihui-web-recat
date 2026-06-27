@@ -18,7 +18,7 @@ export interface ShotEditDialogProps {
   /** 上传素材:直传后端取 http url + asset_id(失败回退本地 dataURL 由父级处理) */
   onUpload?: (file: File) => Promise<{ url: string; assetId?: number }>
   /** AI一键润色:润色当前描述文本,返回润色后的文本 */
-  onPolish?: (text: string) => Promise<string>
+  onPolish?: (text: string, uploadRefUrls: string[]) => Promise<string>
   /** 生成分镜:把描述 + 上传素材 url 交给父级出图;返回 true=成功(随后关闭弹框) */
   onGenerate: (text: string, uploadRefUrls: string[]) => Promise<boolean>
   onClose: () => void
@@ -66,7 +66,11 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
     if (!onPolish || !text.trim() || polishing) return
     setPolishing(true)
     try {
-      const out = await onPolish(text)
+      // 带上本次上传的素材图 → 润色时 VL 读图理解诉求(如「把产品换成这张图里的」)
+      const out = await onPolish(
+        text,
+        uploads.map((u) => u.url),
+      )
       if (out) setText(out)
     } catch (e: any) {
       showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')

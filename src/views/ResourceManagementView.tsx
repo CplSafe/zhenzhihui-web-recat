@@ -558,7 +558,9 @@ export default function ResourceManagementView() {
           source: String(asset?.source || ''),
           kind,
           roleScene: assetSceneRole(asset),
-          isAi: !!asset?.source && asset.source !== 'upload',
+          // 非「上传」即视为 AI 生成(source 可能是 'ai'/'generated'/空,与「我生成的」tab 的过滤口径一致),
+          // 修复:空 source 的 AI 素材之前漏了徽章。
+          isAi: asset?.source !== 'upload',
           ts: assetTimestamp(asset),
           mediaKind,
           mediaUrl: prev.mediaUrl,

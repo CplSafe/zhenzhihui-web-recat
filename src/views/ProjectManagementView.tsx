@@ -23,7 +23,7 @@ import {
   getCreativeProject,
   listCreativeProjects,
 } from '@/api/business'
-import { listProjectVideos, addClassifiedVideo, type ProjectVideo } from '@/api/projectVideos'
+import { listProjectVideos, addClassifiedVideo, countProjectVideos, type ProjectVideo } from '@/api/projectVideos'
 import { loadClassifiedKeys, markVideoClassified, videoKeyOf } from '@/utils/unclassifiedVideos'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
@@ -345,13 +345,9 @@ export default function ProjectManagementView() {
       .map((project) => {
         // 成员数/项目数:后端列表暂未稳定提供,按可用字段取,缺省给 1 / 草稿作品数
         const members = Number(project?.member_count || project?.members?.length || 1) || 1
-        const draft = normalizeCreativeProjectDraft(project)
-        const smart = draft ? toPlainObject(draft.smart) || draft : null
-        const worksCount =
-          normalizeArray(smart?.videoVersions).length ||
-          normalizeArray(draft?.videoHistoryList || draft?.video_history_list).length ||
-          normalizeArray(smart?.shots).length ||
-          0
+        // 作品数 = 点开项目后实际看到的视频条数(派生成片/草稿占位 + 本地归类),
+        // 与 listProjectVideos 同口径;不再用分镜数(shots.length),避免「卡片显示 3、点开只有 1」。
+        const worksCount = countProjectVideos({ project, workspaceId: wsId })
         return {
           id: Number(project?.id || 0),
           title: String(project?.title || project?.name || '').trim() || '未命名项目',
@@ -426,6 +422,27 @@ export default function ProjectManagementView() {
       ),
     [projectItems, classifiedKeys, workspaceId],
   )
+
+  // 待归类里的草稿本身就是各自的项目(同 id),打开项目卡即可在其下看到草稿(buildDerivedVideos 派生占位)。
+  // 因此项目加载后自动把每个待归类草稿归类到它对应的项目 → 待归类恒为空,草稿仍在其项目下可续作。
+  // 只标记「已归类」隐藏即可,不写入本地视频清单(否则会与派生的草稿占位重复)。
+  useEffect(() => {
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) return
+    const raw = extractUnclassified(projectItems, wsId)
+    if (!raw.length) return
+    const next = loadClassifiedKeys(wsId)
+    let changed = false
+    for (const v of raw) {
+      const key = videoKeyOf(v.id, v.cover)
+      if (!next.has(key)) {
+        markVideoClassified(wsId, key)
+        next.add(key)
+        changed = true
+      }
+    }
+    if (changed) setClassifiedKeys(new Set(next))
+  }, [projectItems, workspaceId])
 
   // 待归类:实测视频网格列数(grid 仅在有数据时渲染,故依赖 unclassified.length 重新挂载观察)
   useEffect(() => {
@@ -892,7 +909,7 @@ export default function ProjectManagementView() {
                               {folder.type}
                             </span>
                             <span className="pm2-pcard-counts">
-                              {folder.members} 成员 · {folder.works} 项目
+                              {folder.members} 成员 · {folder.works} 作品
                             </span>
                           </div>
                           <div className="pm2-pcard-foot">
