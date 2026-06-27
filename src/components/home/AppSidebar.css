@@ -18,22 +18,23 @@
   width: 100%;
   display: flex;
   align-items: center;
+  justify-content: flex-start; /* logo + 文字整体向左对齐 */
   gap: 12px;
-  height: 72px;
+  height: 84px;
   padding: 0 18px;
   flex-shrink: 0;
 }
 .app-sidebar__logo {
-  width: 44px;
-  height: 44px;
+  width: 60px;
+  height: 60px;
   flex-shrink: 0;
   object-fit: contain;
 }
-/* 帧智汇 + 版本号:竖排,左对齐 */
+/* 帧智汇 + 版本号:竖排,两者居中对齐 */
 .app-sidebar__brand-text {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 4px;
 }
 .app-sidebar__brand-name {

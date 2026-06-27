@@ -204,6 +204,32 @@ export default function ScriptStoryboardTable({
                               </>
                             )}
                           </button>
+                          {su.image && !genning && (
+                            <button
+                              type="button"
+                              className={styles.sbcMatImgEdit}
+                              title="点击修改该素材"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onOpenSubject?.(name)
+                              }}
+                            >
+                              <svg
+                                viewBox="0 0 24 24"
+                                width="16"
+                                height="16"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M12 20h9" />
+                                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                              </svg>
+                            </button>
+                          )}
                           {su.image && !genning && onRemoveSubject && (
                             <button
                               type="button"

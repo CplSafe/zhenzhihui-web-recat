@@ -200,6 +200,15 @@ export default function SmartCreateView() {
   }
 
   const [started, setStarted] = useState(false) // false=入口输入页, true=进入 4 步流程
+  // 水合中:挂载在 /smart/:id(需拉后端草稿),或空白 /smart 但本地草稿是「在制项目」(将被重定向到 /smart/:id)。
+  // 这两种情况在水合完成前渲染占位、不渲染初始输入页,避免「先闪初始页再跳回在制页」。
+  const [hydrating, setHydrating] = useState(() => {
+    if (Number(routeId || 0) > 0) return true
+    const d = loadSmartDraft()
+    const pid = Number(d?.projectId || 0) || 0
+    const unfinished = !d?.fullVideoUrl && !d?.fullVideoAssetId && Array.isArray(d?.shots) && d.shots.length > 0
+    return !!d?.started && pid > 0 && (Number(d?.vidGenTaskId || 0) > 0 || unfinished)
+  })
   const [entryKey, setEntryKey] = useState(0) // 「制作新视频」自增 → 重挂载入口页,清空其内部输入状态
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [entryMeta, setEntryMeta] = useState<EntryMeta | null>(null)
@@ -266,6 +275,8 @@ export default function SmartCreateView() {
   // 「一键生成」是否在进行中(持久化进草稿):切到别的页面再回来,据此【自动续作】还没出图的素材,不被截断
   const [materialBatchPending, setMaterialBatchPending] = useState(false)
   const batchRunningRef = useRef(false)
+  // 点「AI一键生成图片」=强制全量重生成(含已有图);切走自动续作时则只补缺图(false)
+  const forceRegenRef = useRef(false)
   // 把某元素的选定图(url+assetId)写回所有同名 subject
   const applySubjectImage = (name: string, url: string, assetId = 0) =>
     setShots((prev) =>
@@ -453,7 +464,8 @@ export default function SmartCreateView() {
     await genForSubject(name, prompt)
   }
 
-  // 真正执行批量:把所有还没有图的主体,每批并发 3 张后台生成(本批完成再下一批),逐个显示「生成中…」。
+  // 真正执行批量:每批并发 5 张后台生成(本批完成再下一批),逐个显示「生成中…」。
+  // forceRegenRef=true(点按钮)→ 全部主体重生成;否则(切回来自动续作)→ 只补还没有图的。
   // 由下方 effect 据 materialBatchPending 触发(点按钮 / 切回来续作 都走这里)。
   const runBatchGenerate = async () => {
     if (batchRunningRef.current) return
@@ -472,15 +484,17 @@ export default function SmartCreateView() {
           names.push(n)
         }
       }
-    const targets = names.filter((n) => !subjectImageOf(n))
+    // 强制全量(点按钮)→ 所有主体重生成;自动续作 → 只补还没有图的
+    const targets = forceRegenRef.current ? names : names.filter((n) => !subjectImageOf(n))
     if (!targets.length) {
       setMaterialBatchPending(false) // 没有要生成的:清掉续作标记
+      forceRegenRef.current = false
       return
     }
     batchRunningRef.current = true
     setBatchGenning(true)
     try {
-      const BATCH = 3
+      const BATCH = 5
       for (let i = 0; i < targets.length; i += BATCH) {
         const batch = targets.slice(i, i + BATCH)
         setSubjectGenerating((m) => {
@@ -505,6 +519,7 @@ export default function SmartCreateView() {
       batchRunningRef.current = false
       setBatchGenning(false)
       setMaterialBatchPending(false)
+      forceRegenRef.current = false
     }
   }
 
@@ -515,6 +530,7 @@ export default function SmartCreateView() {
       showToast('未选择工作空间,无法生成素材', 'error')
       return
     }
+    forceRegenRef.current = true // 点按钮:强制全部重生成(含已有图)
     setMaterialBatchPending(true)
   }
 
@@ -1469,6 +1485,7 @@ export default function SmartCreateView() {
           }
         })
         .catch(() => showToast('项目加载失败', 'error'))
+        .finally(() => setHydrating(false)) // 水合结束(成功/失败均)→ 解除占位,渲染流程或入口
     } else {
       // 点回空白 /smart 时:若本地草稿是个【在制项目】(已建项目、还没出整片,且正在生成或已有分镜)
       // → 自动跳回那个 /smart/:id,避免回到空白初始页。用本地草稿判断(autosave 一直在写,可靠);
@@ -1480,15 +1497,23 @@ export default function SmartCreateView() {
       const inProgress = !!d?.started && pendingPid > 0 && (hasPendingTask || unfinished)
       if (inProgress) {
         navigate(`/smart/${pendingPid}`, { replace: true })
-        return // 不置 hydratedRef,等重定向到 /smart/:id 再水合 + 续轮询
+        return // 不置 hydratedRef / 不解除 hydrating,等重定向到 /smart/:id 再水合 + 续轮询(占位持续到那时)
       }
       // 空白 /smart:始终以最初的空输入框进入,不恢复本地草稿。
       // (同一次进入内点「上一步」回到输入框会保留历史输入——那是组件 state,不依赖这里;
       //  切换路由再回来则会重新挂载、state 清空,故得到全新空白页。)
       hydratedRef.current = true
+      setHydrating(false) // 确认是空白入口(非在制)→ 解除占位,渲染初始输入页
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeId, workspaceId])
+
+  // 安全兜底:水合占位不可永久卡住(如游客直开 /smart/:id 长时间拿不到工作空间)。超时后解除,退回正常渲染。
+  useEffect(() => {
+    if (!hydrating) return
+    const t = window.setTimeout(() => setHydrating(false), 8000)
+    return () => window.clearTimeout(t)
+  }, [hydrating])
 
   // 自动保存:本地立即(600ms 防抖)+ 后端(1.5s 防抖,仅在已建项目时)
   useEffect(() => {
@@ -1532,6 +1557,12 @@ export default function SmartCreateView() {
   }
 
   const onNavigate = (key: string) => {
+    // 点「智能成片」时直达在制项目(/smart/:id),避免先去空白 /smart 再被重定向 → 多一次重挂载 + 闪初始页。
+    if (key === 'creative') {
+      const pid = projectId || Number(loadSmartDraft()?.projectId || 0) || 0
+      navigate(pid > 0 ? `/smart/${pid}` : '/smart')
+      return
+    }
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
   }
@@ -2161,6 +2192,7 @@ export default function SmartCreateView() {
       return (
         <ShotArrange
           shots={shots}
+          ratio={entryMeta?.ratio}
           generating={shotGen}
           onShotsChange={setShots}
           onUploadRef={uploadRef}
@@ -2182,6 +2214,7 @@ export default function SmartCreateView() {
     return (
       <VideoStage
         shots={shots}
+        ratio={entryMeta?.ratio}
         videoUrl={fullVideo.url}
         videoGenerating={vidGenRunning}
         videoStatusText={blurPhase || undefined}
@@ -2227,7 +2260,12 @@ export default function SmartCreateView() {
       <div className="smart__main">
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
-        {!started ? (
+        {hydrating ? (
+          // 水合中(拉后端草稿 / 即将重定向到在制页):渲染占位,不渲染初始输入页,避免「闪初始页再跳回」
+          <div className="smart__hydrating">
+            <span className="smart__gen-spin" aria-hidden="true" />
+          </div>
+        ) : !started ? (
           // 「上一步」返回输入框时回填上次输入(数据存在本视图 state,路由切换卸载即清空)
           <SmartEntry
             key={entryKey}

@@ -14,6 +14,8 @@ import styles from './ShotArrange.module.less'
 
 interface ShotArrangeProps {
   shots: Shot[]
+  /** 画面比例('16:9' / '9:16' / '1:1'…):分镜图预览/缩略图按此显示,避免竖屏被塞进横屏框 */
+  ratio?: string
   /** 正在生成分镜图的镜头(键为 shot.id) */
   generating?: Record<string | number, boolean>
   onShotsChange: (shots: Shot[]) => void
@@ -40,6 +42,7 @@ const blankShot = (): Shot => ({ id: newShotId(), no: '镜头', duration: '5s', 
 
 export default function ShotArrange({
   shots,
+  ratio,
   generating = {},
   onShotsChange,
   onUploadRef,
@@ -102,6 +105,7 @@ export default function ShotArrange({
     <div className={styles.shotarr}>
       <ShotList
         shots={shots}
+        ratio={ratio}
         selectedId={selectedId}
         onSelect={setSelectedId}
         generating={generating}
@@ -112,6 +116,7 @@ export default function ShotArrange({
       {selected ? (
         <ShotEditPanel
           shot={selected}
+          ratio={ratio}
           regenerating={!!generating[selected.id]}
           onPatch={patchSel}
           onPolishText={onPolishText}

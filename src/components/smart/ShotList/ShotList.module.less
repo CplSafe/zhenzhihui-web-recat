@@ -44,6 +44,14 @@
   min-height: 0;
   overflow-y: auto;
   padding: 8px 0;
+  /* 可独立纵向滚动,但隐藏滚动条 */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE / 旧 Edge */
+  &::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
 }
 
 /* 每行:左 分镜N/时长,右 缩略图(无序号圆标,Figma 476-5611) */
@@ -88,12 +96,14 @@
   }
 }
 
-/* 右侧缩略图容器(撑满文字右侧剩余宽度);不裁切,便于动作菜单溢出显示 */
+/* 右侧缩略图容器:定高,宽由 aspect-ratio(用户所选比例)决定 —— 竖屏窄、横屏宽,不再写死横向撑满 */
 .thumbWrap {
   position: relative;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   height: 108px;
+  width: auto;
+  max-width: 100%;
 }
 
 .thumb {

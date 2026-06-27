@@ -12,12 +12,15 @@ import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } 
 import { CSS } from '@dnd-kit/utilities'
 import type { Shot } from '../ScriptStoryboardTable'
 import AiBadge from '@/components/common/AiBadge'
+import { ratioToAspect } from '@/utils/aspectRatio'
 import styles from './ShotList.module.less'
 
 interface ShotListProps {
   /** 额外类名:父组件控制布局(如 VideoStage 收窄列宽) */
   className?: string
   shots: Shot[]
+  /** 画面比例:缩略图按此显示(竖屏窄、横屏宽) */
+  ratio?: string
   selectedId: string | number | null
   onSelect: (id: string | number) => void
   /** 正在生成分镜图/视频的镜头(键为 shot.id),显示转圈 */
@@ -56,6 +59,7 @@ function blankShot(): Shot {
 /** 单行分镜卡(可拖拽);抽成模块级组件以便每行各自调用 useSortable 钩子 */
 interface SortableCardProps {
   shot: Shot
+  ratio?: string
   index: number
   total: number
   selectedId: string | number | null
@@ -78,6 +82,7 @@ interface SortableCardProps {
 
 function SortableCard({
   shot: s,
+  ratio,
   index: i,
   total,
   selectedId,
@@ -124,7 +129,7 @@ function SortableCard({
       </div>
 
       {/* 右:缩略图(hover/选中 显示 编辑菜单 + 删除) */}
-      <div className={styles.thumbWrap}>
+      <div className={styles.thumbWrap} style={{ aspectRatio: ratioToAspect(ratio) }}>
         <div className={styles.thumb}>
           {thumb ? (
             <>
@@ -281,6 +286,7 @@ function SortableCard({
 export default function ShotList({
   className,
   shots,
+  ratio,
   selectedId,
   onSelect,
   generating = {},
@@ -360,6 +366,7 @@ export default function ShotList({
               <SortableCard
                 key={s.id}
                 shot={s}
+                ratio={ratio}
                 index={i}
                 total={shots.length}
                 selectedId={selectedId}

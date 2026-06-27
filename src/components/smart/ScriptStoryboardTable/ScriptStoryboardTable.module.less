@@ -293,8 +293,34 @@
   pointer-events: none;
   transition: opacity 0.15s;
 }
-/* 鼠标滑过该素材行 → 显示「去图 ×」 */
-.sbcMatRow:hover .sbcMatImgX {
+/* 修改铅笔(缩略图正中央):默认隐藏,滑过该素材行才显示,点击打开素材弹窗修改 */
+.sbcMatImgEdit {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.sbcMatImgEdit:hover {
+  background: rgba(0, 0, 0, 0.72);
+}
+/* 鼠标滑过该素材行 → 显示「去图 ×」+「修改铅笔」 */
+.sbcMatRow:hover .sbcMatImgX,
+.sbcMatRow:hover .sbcMatImgEdit {
   opacity: 1;
   pointer-events: auto;
 }
