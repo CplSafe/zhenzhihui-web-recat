@@ -10,8 +10,14 @@
   background: #fff;
   border-bottom: 1px solid #eef1f5;
 }
-.apptop__hamburger {
+/* 窄屏左上角:汉堡 + LOGO。桌面端整体隐藏。 */
+.apptop__mobile-lead {
   display: none;
+  align-items: center;
+  gap: 8px;
+}
+.apptop__hamburger {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 38px;
@@ -26,6 +32,43 @@
 .apptop__hamburger:hover {
   background: #f3f4f6;
 }
+.apptop__logo {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+.apptop__brand-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1;
+}
+.apptop__brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #333;
+  letter-spacing: 0.5px;
+}
+.apptop__brand-version {
+  padding: 1px 6px;
+  border-radius: 5px;
+  /* 青绿线性渐变(#60E0C4,断点 0%/14% · 50%/4% · 100%/14%);叠在白底上保证可读 */
+  background:
+    linear-gradient(to right, rgba(96, 224, 196, 0.14) 0%, rgba(96, 224, 196, 0.04) 50%, rgba(96, 224, 196, 0.14) 100%),
+    #fff;
+  color: #1aa489;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.4;
+}
+/* 极窄屏(≤420px)隐藏品牌文字,只留汉堡 + LOGO,避免和右侧拥挤 */
+@media (max-width: 420px) {
+  .apptop__brand-text {
+    display: none;
+  }
+}
 .apptop__right {
   display: flex;
   align-items: center;
@@ -39,8 +82,11 @@
   padding: 5px 12px;
   border: none;
   border-radius: 999px;
-  background: linear-gradient(135deg, #ffe9a8, #ffd766);
-  color: #7a5a00;
+  /* 青绿线性渐变(#60E0C4,断点 0%/14% · 50%/4% · 100%/14%);叠在白底上保证可读 */
+  background:
+    linear-gradient(to right, rgba(96, 224, 196, 0.14) 0%, rgba(96, 224, 196, 0.04) 50%, rgba(96, 224, 196, 0.14) 100%),
+    #fff;
+  color: #1aa489;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -129,8 +175,9 @@
   .apptop {
     padding: 0 14px;
   }
-  .apptop__menu {
-    display: flex;
+  /* 显示左上角汉堡 + LOGO,使窄屏可唤出侧栏抽屉 */
+  .apptop__mobile-lead {
+    display: inline-flex;
   }
 }
 @media (max-width: 560px) {

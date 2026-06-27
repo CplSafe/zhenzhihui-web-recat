@@ -13,6 +13,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
+import { openComingSoon } from '@/stores/ui'
 import { loadFavorites } from '@/utils/favoriteVideos'
 import ResourceAddMaterialModal from '@/components/resource/ResourceAddMaterialModal'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
@@ -492,7 +493,7 @@ export default function ResourceManagementView() {
   const handleNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
-    else showToast('功能待开放', 'info')
+    else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
   }
 
   // 一次拉取当前工作空间素材(核心数据单次请求),客户端按 Tab/子分类分流

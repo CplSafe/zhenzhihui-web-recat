@@ -69,7 +69,6 @@ const ProjectManagementView = lazy(() => import('../views/ProjectManagementView'
 const ProjectVideoListView = lazy(() => import('../views/ProjectVideoListView'))
 const ProjectVideoDetailView = lazy(() => import('../views/ProjectVideoDetailView'))
 const ResourceManagementView = lazy(() => import('../views/ResourceManagementView'))
-const MemberCenterView = lazy(() => import('../views/MemberCenterView'))
 const WorkbenchView = lazy(() => import('../views/WorkbenchView'))
 
 function lazyPage(node: ReactNode): ReactNode {
@@ -109,7 +108,6 @@ export const router = createBrowserRouter([
       { path: 'projects/:projectId/videos', element: lazyPage(<ProjectVideoListView />) },
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
-      { path: 'membership', element: lazyPage(<MemberCenterView />) },
       { path: '*', element: <Navigate to="/home" replace /> },
     ],
   },

@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import './LoginView.css'
 import loginHero from '@/assets/login-hero.jpg'
 import AgreementModal from '@/components/auth/AgreementModal'
+import AuthActionModal, { type AuthActionMode } from '@/components/auth/AuthActionModal'
 import {
   clearExistingSession,
   getAuthErrorMessage,
@@ -58,6 +59,9 @@ export default function LoginView() {
   const [isSendingCode, setIsSendingCode] = useState(false)
   const [loginErrors, setLoginErrors] = useState({ phone: '', password: '', code: '', captcha: '' })
   const [showAgreementModal, setShowAgreementModal] = useState(false)
+  // 注册 / 重置密码 弹窗;以及「验证码登录时手机号未注册」触发的补全注册弹窗
+  const [authModal, setAuthModal] = useState<AuthActionMode | null>(null)
+  const [smsRegister, setSmsRegister] = useState<{ mobile: string; smsCode: string } | null>(null)
 
   // 'login' | 'view'：协议弹窗的来源上下文
   const agreementModalContextRef = useRef('login')
@@ -311,6 +315,11 @@ export default function LoginView() {
         setNoticeMessage(getAuthErrorMessage(error, '请输入图形验证码'), 'error')
         return
       }
+      // 验证码登录 + 该手机号未注册(后端 code 20003)→ 弹「设置密码完成注册并登录」(密码可不填)
+      if (loginMode === 'sms' && Number((error as any)?.code) === 20003) {
+        setSmsRegister({ mobile, smsCode: credential })
+        return
+      }
       const fallback = loginMode === 'password' ? '手机号或密码错误' : '手机号或验证码错误'
       setNoticeMessage(getAuthErrorMessage(error, fallback), 'error')
     } finally {
@@ -342,8 +351,8 @@ export default function LoginView() {
 
   function handleAgreementAgree() {
     setShowAgreementModal(false)
+    setAgreed(true) // 「同意并继续」即勾选(与表单复选框联动)
     if (agreementModalContextRef.current === 'login') {
-      setAgreed(true)
       // setAgreed 异步,这里走不依赖该 state 的提交路径。
       const valid = validateLogin()
       if (valid) void submitLogin(valid.mobile, valid.credential)
@@ -393,7 +402,7 @@ export default function LoginView() {
           <h1 className="zlogin-title">欢迎加入帧智汇</h1>
           <p className="zlogin-sub">
             还没有账号？
-            <button type="button" className="zlogin-link" onClick={() => switchMode('sms')}>
+            <button type="button" className="zlogin-link" onClick={() => setAuthModal('register')}>
               免费注册
             </button>
           </p>
@@ -538,7 +547,7 @@ export default function LoginView() {
           </button>
 
           <div className="zlogin-foot">
-            <button type="button" className="zlogin-forgot" onClick={() => switchMode('sms')}>
+            <button type="button" className="zlogin-forgot" onClick={() => setAuthModal('forgot')}>
               忘记密码？
             </button>
           </div>
@@ -547,14 +556,78 @@ export default function LoginView() {
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
             <span>
               已经阅读并同意
-              <a onClick={() => handleLink('用户协议')}>《用户协议》</a>及
-              <a onClick={() => handleLink('隐私政策')}>《隐私政策》</a>
+              {/* 链接在 label 内,且无 href 不算交互内容 → 点击会连带切换复选框;阻止默认/冒泡避免误改勾选 */}
+              <a
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  handleLink('用户协议')
+                }}
+              >
+                《用户协议》
+              </a>
+              及
+              <a
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  handleLink('隐私政策')
+                }}
+              >
+                《隐私政策》
+              </a>
             </span>
           </label>
         </div>
       </section>
 
-      {showAgreementModal && <AgreementModal onAgree={handleAgreementAgree} onCancel={handleAgreementCancel} />}
+      {showAgreementModal && (
+        <AgreementModal
+          agreed={agreed}
+          onAgreedChange={setAgreed}
+          onAgree={handleAgreementAgree}
+          onCancel={handleAgreementCancel}
+        />
+      )}
+
+      {/* 注册 / 重置密码 弹窗 */}
+      {authModal && (
+        <AuthActionModal
+          mode={authModal}
+          ensureAuthStart={ensureAuthStart}
+          onClose={() => setAuthModal(null)}
+          onAuthed={(as, result) => {
+            setAuthModal(null)
+            void handleLoginFlowComplete(as, result)
+          }}
+          onResetDone={(m) => {
+            setAuthModal(null)
+            switchMode('password')
+            setPhone(m)
+            setNoticeMessage('重置密码成功,请用新密码登录', 'success')
+          }}
+          onAlreadyRegistered={(m) => {
+            setAuthModal(null)
+            switchMode('password')
+            setPhone(m)
+          }}
+        />
+      )}
+
+      {/* 验证码登录·手机号未注册 → 设置密码完成注册并登录 */}
+      {smsRegister && (
+        <AuthActionModal
+          mode="sms-register"
+          ensureAuthStart={ensureAuthStart}
+          authStart={authStartRef.current}
+          prefill={smsRegister}
+          onClose={() => setSmsRegister(null)}
+          onAuthed={(as, result) => {
+            setSmsRegister(null)
+            void handleLoginFlowComplete(as, result)
+          }}
+        />
+      )}
     </main>
   )
 }

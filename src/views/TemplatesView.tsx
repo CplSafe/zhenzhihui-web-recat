@@ -12,6 +12,7 @@ import { resolveProjectPath } from '@/utils/projectRoute'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+import { openComingSoon } from '@/stores/ui'
 import './HomeView.css'
 import './TemplatesView.css'
 
@@ -45,6 +46,8 @@ export default function TemplatesView() {
   const [keyword, setKeyword] = useState('')
   const [ratioFilter, setRatioFilter] = useState('')
   const [retry, setRetry] = useState(0)
+  // 移动端侧栏抽屉开关(<=900px)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
 
   // 模板收藏(localStorage 占位):收藏的视频进素材市场「我收藏的」
@@ -98,13 +101,32 @@ export default function TemplatesView() {
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
+    else openComingSoon() // 设置等未上线项:弹全局「功能待开放」弹窗
   }
 
   return (
     <div className="home">
-      <AppSidebar activeKey="templates" onNavigate={onNavigate} />
+      <AppSidebar
+        activeKey="templates"
+        onNavigate={onNavigate}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
       <div className="home__main">
         <header className="home__topbar templates-topbar">
+          {/* 窄屏汉堡:唤出侧栏抽屉(桌面端 CSS 隐藏) */}
+          <button type="button" className="templates-menu" onClick={() => setSidebarOpen(true)} aria-label="打开菜单">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="22"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="m11.666 12.669.135.013a.665.665 0 0 1 0 1.303l-.135.014H3.333a.665.665 0 0 1 0-1.33zm5-6.667.135.013a.665.665 0 0 1 0 1.303l-.135.014H3.333a.665.665 0 0 1 0-1.33z" />
+            </svg>
+          </button>
           <button type="button" className="templates-back" onClick={() => navigate('/home')} aria-label="返回首页">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
               <path
@@ -291,7 +313,11 @@ export default function TemplatesView() {
                               className="home__proj-action-btn"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                requireAuth(() => navigate('/hot-copy'))
+                                requireAuth(() =>
+                                  navigate('/hot-copy', {
+                                    state: { carryVideo: { url: tpl.videoUrl || '', assetId: tpl.videoAssetId || 0 } },
+                                  }),
+                                )
                               }}
                             >
                               做同款

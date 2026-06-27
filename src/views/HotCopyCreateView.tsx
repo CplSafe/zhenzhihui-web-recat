@@ -9,7 +9,7 @@
  * (恢复到生成步并用 task id 续轮询),与智能成片一致;暂不接后端项目 CRUD。
  */
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
@@ -18,7 +18,7 @@ import VideoStage from '@/components/smart/VideoStage'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import { replicateHotVideo, uploadHotCopyAsset, awaitHotVideoResult } from '@/api/hotCopy'
 import { editFullVideo } from '@/api/smartVideo'
-import { saveHotCopyDraft, loadHotCopyDraft, type HotCopyDraft } from '@/utils/hotCopyDraft'
+import { saveHotCopyDraft, loadHotCopyDraft, clearHotCopyDraft, type HotCopyDraft } from '@/utils/hotCopyDraft'
 import { refreshAssetUrl } from '@/api/smartShotImage'
 import { generateProjectName } from '@/api/aiPolish'
 import {
@@ -34,6 +34,7 @@ import {
   deriveModelPlanCandidates,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
+import { openComingSoon } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
@@ -97,6 +98,7 @@ function parseHotCopyDraft(draftJson: any): { obj: any; smart: any } | null {
 
 export default function HotCopyCreateView() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
   const workspaceId = useWorkspaceId()
@@ -118,7 +120,30 @@ export default function HotCopyCreateView() {
   const [maxReached, setMaxReached] = useState(0)
 
   // 入口回填(返回上一步用)
-  const [entryInitial, setEntryInitial] = useState<Partial<HotCopyEntryPayload> | undefined>(undefined)
+  // 从「项目管理 → 新建视频」携带的上传素材,需在【首帧】就绪(HotCopyEntry 内部状态只初始化一次),
+  // 故用 useState 初始化器同步读 location.state(而非挂载后 setState)。
+  const [entryInitial, setEntryInitial] = useState<Partial<HotCopyEntryPayload> | undefined>(() => {
+    const st = (location.state as any) || {}
+    const imgs = (Array.isArray(st.carryImages) ? st.carryImages : []).filter((m: any) => m && m.url)
+    const vid = st.carryVideo && (st.carryVideo.url || st.carryVideo.assetId) ? st.carryVideo : null
+    if (!imgs.length && !vid) return undefined
+    return {
+      tab: 'remake',
+      products: imgs.map((m: any) => ({
+        url: m.url,
+        file: null,
+        isVideo: false,
+        assetId: Number(m.assetId || 0) || undefined,
+      })),
+      ...(vid
+        ? {
+            videoSource: 'library' as const,
+            videoPreview: vid.url || '',
+            libraryVideo: { assetId: Number(vid.assetId || 0), src: vid.url || '' },
+          }
+        : {}),
+    } as any
+  })
   const [basePrompt, setBasePrompt] = useState('')
 
   // replicate 输入:源视频 + 替换素材(asset_id)
@@ -150,6 +175,25 @@ export default function HotCopyCreateView() {
   const serverTitleRef = useRef('') // 已同步到后端的标题(去重)
   const saveChainRef = useRef<Promise<any>>(Promise.resolve()) // 串行化草稿保存
 
+  // 从「项目管理 → 新建视频」进入:沿用原项目名 + 携带上传素材(源视频/替换素材)+ 绑定同一项目(不新建重复项目)。
+  // 全新流程:不恢复旧草稿,仅把素材预填入口;生成保存到同一 projectId(覆盖其草稿)。
+  useEffect(() => {
+    const st = location.state as any
+    if (!st || routeId > 0) return // /hot-copy/:id 走恢复;此分支仅用于无 id 的全新流程
+    if (typeof st.newProjectName === 'string' && st.newProjectName.trim()) {
+      setProjectName(st.newProjectName.trim())
+      setNameTouched(true)
+    }
+    // 上传素材已在 entryInitial 初始化器同步读入(见上),此处不再 setEntryInitial
+    if (Number(st.restartProjectId)) {
+      projectIdRef.current = Number(st.restartProjectId)
+      setProjectId(Number(st.restartProjectId))
+      serverTitleRef.current = ''
+    }
+    // 仅 mount 注入一次([] 依赖)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // 续等在途视频任务并回填(本地恢复 / 后端恢复共用)
   const resumeVideoTask = (ws: number, taskId: number) => {
     if (!ws || !taskId) return
@@ -174,6 +218,19 @@ export default function HotCopyCreateView() {
   useEffect(() => {
     const ws = Number(workspaceId || 0)
     if (!ws || hydratedRef.current) return
+
+    // 全新流程,不恢复本地在制草稿、不跳回旧进度(清掉旧本地草稿,避免把页面带回上次未完成的步骤):
+    //   ① 项目管理 → 新建视频(restartProjectId);② 主页/模板「做同款」(carryVideo / carryImages)。
+    // 绑定项目 + 携带素材由 初始化器 / 上面的注入 effect 处理。
+    const navSt = (location.state as any) || {}
+    const hasCarry =
+      (navSt.carryVideo && (navSt.carryVideo.url || navSt.carryVideo.assetId)) ||
+      (Array.isArray(navSt.carryImages) && navSt.carryImages.length > 0)
+    if (routeId === 0 && (Number(navSt.restartProjectId) || hasCarry)) {
+      clearHotCopyDraft(ws)
+      hydratedRef.current = true
+      return
+    }
 
     if (routeId > 0) {
       hydratedRef.current = true
@@ -681,7 +738,7 @@ export default function HotCopyCreateView() {
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
-    else showToast('功能待开放', 'info') // 视频编辑/投前预审/数据看板等未开放:提示,避免点了无反应
+    else openComingSoon() // 设置/视频编辑/投前预审/数据看板等未上线项:弹全局「功能待开放」弹窗
   }
 
   const startRename = () => {
@@ -707,7 +764,7 @@ export default function HotCopyCreateView() {
         onClose={() => setSidebarOpen(false)}
       />
       <div className="smart__main">
-        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
+        <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
         {!started ? (
           <HotCopyEntry onSubmit={handleStart} initial={entryInitial} />

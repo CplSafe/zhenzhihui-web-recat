@@ -67,10 +67,11 @@
 
 .sadPreview {
   position: relative;
-  width: 100%;
-  /* 按项目比例自适应(横屏/竖屏);竖屏过高用 max-height 收住并居中 */
+  /* 以高度为主、宽度按项目比例自适应:竖屏(9:16)变成窄而居中的小图,而非铺满整宽的大长条 */
+  height: min(38vh, 300px);
+  width: auto;
+  max-width: 100%;
   aspect-ratio: var(--frame-ratio, 16 / 9);
-  max-height: 56vh;
   margin: 0 auto 14px;
   border-radius: 12px;
   overflow: hidden;

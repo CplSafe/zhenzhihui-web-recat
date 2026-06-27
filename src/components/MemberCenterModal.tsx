@@ -375,10 +375,13 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     !!subscription?.active && (subscription.plan_code === p.code || subscription.plan_name === p.name)
 
   // 取到支付宝 pay_url 后直接打开支付页(去掉站内扫码步骤)。
-  // 新标签打开;若被浏览器拦截则当前页跳转兜底。
+  // 只在新标签页打开,绝不跳转当前页;若被浏览器拦截则提示用户允许弹窗后重试。
   const openAlipay = (url: string) => {
     const win = window.open(url, '_blank', 'noopener,noreferrer')
-    if (!win) window.location.href = url
+    if (!win) {
+      showToast('支付页面被浏览器拦截,请允许弹出窗口后重试', 'error')
+      return
+    }
     showToast('已打开支付宝支付页面,完成支付后可刷新查看', 'info')
   }
 
