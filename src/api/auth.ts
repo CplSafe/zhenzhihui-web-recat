@@ -76,6 +76,15 @@ export function registerAccount({ authStart, mobile, password, smsCode, termsAcc
   })
 }
 
+// 找回/重置密码:手机号 + 新密码 + 验证码(短信 purpose=reset_password)。成功后用新密码重新登录。
+export function resetPassword({ authStart, mobile, newPassword, smsCode }) {
+  return requestDeepAuth(authStart?.forgot_password_api_url || '/api/v1/public/auth/password/forgot', {
+    mobile,
+    new_password: newPassword,
+    sms_code: smsCode,
+  })
+}
+
 export function getCaptcha() {
   return requestJson(buildUrl(deepAuthApiBaseUrl, '/captcha'))
 }
