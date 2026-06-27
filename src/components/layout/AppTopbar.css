@@ -46,7 +46,11 @@
   cursor: pointer;
 }
 .apptop__member-icon {
-  font-size: 10px;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  flex: none;
+  display: block;
 }
 .apptop__user {
   position: relative;

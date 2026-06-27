@@ -16,58 +16,84 @@
   overflow: hidden;
 }
 
-/* 顶部半透明毛玻璃层 */
+/* 全屏深色蒙版(Figma Rectangle 351:#333 @40%) */
+.splash-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(51, 51, 51, 0.4);
+  z-index: 0;
+}
+
+/* 顶部磨砂条(Figma Rectangle 337:1920×100 #333 @60% + 背景模糊);全 vmin 等比 */
 .splash-overlay {
   position: absolute;
   inset: 0 0 auto 0;
-  height: 8vmin;
-  background: rgba(0, 0, 0, 0.15);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  z-index: 0;
+  height: 9.26vmin; /* 100/1080 */
+  background: rgba(51, 51, 51, 0.6);
+  backdrop-filter: blur(2vmin);
+  -webkit-backdrop-filter: blur(2vmin);
+  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 1.5vmin;
-  padding: 0 2vmin;
+  justify-content: space-between;
+  padding: 0 4.6vmin;
 }
 
-.splash-overlay-logo {
+/* 顶部条:左侧 logo + 帧智汇 */
+.splash-overlay-brand {
+  display: flex;
+  align-items: center;
+  gap: 1.1vmin;
+}
+.splash-overlay-mark {
+  width: 5vmin;
   height: 5vmin;
-  width: auto;
+  object-fit: contain;
+}
+.splash-overlay-name {
+  font-size: 2.6vmin;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.1vmin;
 }
 
-.splash-overlay-logo2 {
-  height: 3vmin;
-  width: auto;
-}
-
-.splash-overlay-logo-right {
-  height: 5vmin;
-  width: auto;
-  margin-left: auto;
-  margin-right: 75px;
+/* 顶部条:右侧「登录」文字胶囊(Figma Group 392:90×50 r20 #333 @20%) */
+.splash-login {
+  height: 4.6vmin;
+  padding: 0 2.4vmin;
+  border: none;
+  border-radius: 1.85vmin;
+  background: rgba(51, 51, 51, 0.2);
+  color: #fff;
+  font-size: 1.67vmin;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 0.15s;
+}
+.splash-login:hover {
+  background: rgba(51, 51, 51, 0.35);
 }
 
-/* 确保内容在遮罩之上 */
-.splash > :not(.splash-overlay) {
+/* 内容(品牌字标 / 操作按钮)压在蒙版之上 */
+.splash-brand,
+.splash-actions {
   position: relative;
   z-index: 1;
 }
 
-/* ---- 品牌区 ---- */
+/* ---- 中央品牌字标 ---- */
 .splash-brand {
   margin-bottom: 3vmin;
 }
 
 .splash-brand-logo {
   display: block;
-  max-width: 40vmin;
+  width: 51vmin; /* Figma ~555px / 1080 */
   height: auto;
   margin: 0 auto;
 }
 
-/* ---- 操作按钮 ---- */
+/* ---- 操作按钮(玻璃拟态,Figma Group 394:250×70 r20 #252525 @20% GLASS) ---- */
 .splash-actions {
   display: flex;
   gap: 1.6vmin;
@@ -75,20 +101,21 @@
 }
 
 .splash-btn-register {
-  padding: 1.2vmin 5vmin;
-  border: 1.5px solid rgba(255, 255, 255, 0.5);
-  border-radius: 1.3vmin;
-  background: transparent;
+  min-width: 23vmin;
+  height: 6.5vmin;
+  padding: 0 5vmin;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 1.85vmin;
+  background: rgba(37, 37, 37, 0.2);
+  backdrop-filter: blur(0.8vmin);
+  -webkit-backdrop-filter: blur(0.8vmin);
   color: #fff;
-  font-size: 2vmin;
+  font-size: 1.85vmin;
   font-weight: 500;
   cursor: pointer;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
+  transition: background 0.15s;
   white-space: nowrap;
 }
 .splash-btn-register:hover {
-  border-color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(37, 37, 37, 0.35);
 }

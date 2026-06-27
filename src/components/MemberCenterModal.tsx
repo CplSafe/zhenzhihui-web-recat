@@ -42,6 +42,8 @@ interface ApiPlan {
   code: string
   name: string
   period: string // month | year
+  plan_type?: string // team | personal(后端区分团队/个人套餐)
+  planType?: string
   price_cents: number
   base_credits: number
   status?: string
@@ -131,7 +133,9 @@ function periodLabel(p: ApiPlan): { unit: string; creditUnit: string } {
 
 function toVM(p: ApiPlan): PlanVM {
   const s = `${p.name || ''} ${p.code || ''}`
-  const isTeam = /团队|team/i.test(s)
+  // 优先用后端 plan_type 区分团队/个人;没有该字段再退回按名称/code 猜
+  const planType = String(p.plan_type ?? p.planType ?? '').toLowerCase()
+  const isTeam = planType ? planType === 'team' : /团队|team/i.test(s)
   const { unit, creditUnit } = periodLabel(p)
   const credits = Number(p.base_credits ?? 0)
   const priceCents = Number(p.price_cents || 0)
@@ -213,7 +217,7 @@ function PlanCard({
   return (
     <div className="mc-card">
       <div className="mc-card-head">
-        <span className="mc-card-name">{plan.name}</span>
+        <span className="mc-card-name">{(plan.isTeam ? '团队版/' : '个人版/') + plan.name}</span>
         {plan.discount && <span className="mc-card-discount">{plan.discount}</span>}
       </div>
       <div className="mc-card-sub">{plan.subtitle}</div>
@@ -226,7 +230,6 @@ function PlanCard({
       <div className="mc-card-credits">
         <span className="mc-card-credit-num">{plan.credits}</span>
         <span className="mc-card-credit-unit">{plan.creditUnit}</span>
-        {plan.rate && <span className="mc-card-rate">{plan.rate}</span>}
       </div>
       {plan.quota && <div className="mc-card-quota">{plan.quota}</div>}
       <button type="button" className="mc-card-buy" disabled={buying} onClick={() => onBuy(plan)}>
@@ -288,7 +291,6 @@ function PackageCard({ pkg, buying, onBuy }: { pkg: PackageVM; buying: boolean; 
       <div className="mc-card-credits">
         <span className="mc-card-credit-num">{pkg.credits}</span>
         <span className="mc-card-credit-unit">积分</span>
-        {pkg.rate && <span className="mc-card-rate">{pkg.rate}</span>}
       </div>
       <button type="button" className="mc-card-buy" disabled={buying} onClick={() => onBuy(pkg)}>
         {buying ? '处理中…' : '立即充值'}
@@ -453,7 +455,23 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         {/* 当前订阅信息(套餐 / 席位 / 并发);未订阅不显示 */}
         {subscription?.active && (
           <div className="mcm-sub">
-            <span className="mcm-sub-plan">{subscription.plan_name || subscription.plan_code || '当前套餐'}</span>
+            <span className="mcm-sub-plan">
+              {(() => {
+                const name = subscription.plan_name || subscription.plan_code || '当前套餐'
+                // 判断当前订阅是 团队 还是 个人:优先订阅自带 plan_type,
+                // 否则按 plan_code/name 匹配到套餐看 isTeam,再否则按席位>1 兜底
+                const matched = plans.find(
+                  (p) => subscription.plan_code === p.code || subscription.plan_name === p.name,
+                )
+                const t = String(
+                  subscription.plan_type ??
+                    subscription.planType ??
+                    (matched ? (matched.isTeam ? 'team' : 'personal') : ''),
+                ).toLowerCase()
+                const isTeam = t ? t === 'team' : Number(subscription.max_members) > 1
+                return `${isTeam ? '团队版/' : '个人版/'}${name}`
+              })()}
+            </span>
             {Number(subscription.max_members) > 0 && (
               <span className="mcm-sub-item">
                 席位 {Number(subscription.current_member_count || 0)}/{Number(subscription.max_members)}

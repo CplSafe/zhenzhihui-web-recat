@@ -19,7 +19,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-start; /* logo + 文字整体向左对齐 */
-  gap: 12px;
+  gap: 2px; /* 文字盒贴住 logo(logo 位置不变) */
   height: 84px;
   padding: 0 18px;
   flex-shrink: 0;

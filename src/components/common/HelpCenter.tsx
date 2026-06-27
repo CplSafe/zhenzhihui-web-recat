@@ -17,6 +17,12 @@ import {
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import './HelpCenter.css'
 
+// 使用教程:跳转外部飞书文档(「2分钟学会使用帧智汇」「3分钟上手智能成片」共用)
+const FEISHU_GUIDE_URL = 'https://zcnyqlah2rse.feishu.cn/wiki/LeMwwtrRQiJyxKkMepOcnbIDnvg'
+// 爆款复制实操指南(飞书文档)
+const HOTCOPY_GUIDE_URL = 'https://zcnyqlah2rse.feishu.cn/wiki/EuaXw2pNHin1abkRVx5ci1yVnhd'
+const openGuideDoc = () => window.open(FEISHU_GUIDE_URL, '_blank', 'noopener,noreferrer')
+
 // 固定反馈类型(按设计):功能反馈带子分类下拉,优化建议 / 其他反馈为普通项。
 // 后端 feedback_type 仍按名称匹配 /feedback-types 的 id(匹配不到用首个兜底,完整分类写进 content)。
 const FB_TOP: { k: string; label: string; subs: string[] }[] = [
@@ -91,7 +97,14 @@ const FAQ: { q: string; a: string }[] = [
   },
 ]
 
-const TUTORIALS = ['3 分钟上手智能成片', '如何编排镜头与时间线', '如何替换 / 编辑分镜图', '爆款复制实操指南']
+// 学习中心条目;有 url 的可点开飞书文档,无 url 显示「即将上线」。
+// 「爆款复制实操指南」(带新链接)已移到第 2 位。
+const TUTORIALS: { title: string; url?: string }[] = [
+  { title: '3 分钟上手智能成片', url: FEISHU_GUIDE_URL },
+  { title: '爆款复制实操指南', url: HOTCOPY_GUIDE_URL },
+  { title: '如何编排镜头与时间线' },
+  { title: '如何替换 / 编辑分镜图' },
+]
 
 function clampPos(p: Pos): Pos {
   const maxX = Math.max(MARGIN, window.innerWidth - BALL - MARGIN)
@@ -467,7 +480,7 @@ export default function HelpCenter() {
               </label>
 
               <div className="hc-ai-card">
-                <button type="button" className="hc-ai-row" onClick={() => showToast('教程视频即将上线', 'info')}>
+                <button type="button" className="hc-ai-row" onClick={openGuideDoc}>
                   <span className="hc-ai-row-ic">
                     <IconPlay />
                   </span>
@@ -570,10 +583,14 @@ export default function HelpCenter() {
                         <button
                           type="button"
                           className="hc-list-item"
-                          onClick={() => showToast('教程即将上线', 'info')}
+                          onClick={() =>
+                            t.url
+                              ? window.open(t.url, '_blank', 'noopener,noreferrer')
+                              : showToast('教程即将上线', 'info')
+                          }
                         >
                           <span className="hc-list-no">{i + 1}</span>
-                          <span className="hc-list-text">{t}</span>
+                          <span className="hc-list-text">{t.title}</span>
                           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                             <path
                               d="M6 3l5 5-5 5"

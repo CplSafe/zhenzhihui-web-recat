@@ -5,13 +5,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
-import { listTemplates, type TemplateItem } from '@/api/templates'
+import { type TemplateItem } from '@/api/templates'
+import { DEMO_TEMPLATES } from '@/data/demoTemplates'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useRequireAuth } from '@/composables/useRequireAuth'
-import { useAuth } from '@/auth/AuthContext'
 import './HomeView.css'
 import './TemplatesView.css'
 
@@ -38,9 +38,8 @@ export default function TemplatesView() {
   const navigate = useNavigate()
   const workspaceId = useWorkspaceId()
   const requireAuth = useRequireAuth()
-  const { isAuthenticated } = useAuth()
 
-  const [templates, setTemplates] = useState<TemplateItem[]>([])
+  const [templates, setTemplates] = useState<TemplateItem[]>(DEMO_TEMPLATES)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -73,35 +72,12 @@ export default function TemplatesView() {
     })
   }
 
+  // 模板库展示固定的 18 条演示视频(替换后端数据);不再依赖登录/工作空间
   useEffect(() => {
-    const wsId = Number(workspaceId || 0)
-    if (!wsId) return
-    if (!isAuthenticated) {
-      setTemplates([])
-      setLoading(false)
-      setError('unauth')
-      return
-    }
-    let cancelled = false
-    setLoading(true)
-    setError('')
-    listTemplates({ workspaceId: wsId, limit: 200 })
-      .then(({ items }) => {
-        if (!cancelled) {
-          setTemplates(items)
-          if (!items.length) setError('empty')
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setError('api')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [workspaceId, isAuthenticated, retry])
+    setTemplates(DEMO_TEMPLATES)
+    setLoading(false)
+    setError(DEMO_TEMPLATES.length ? '' : 'empty')
+  }, [retry])
 
   const keywordTrim = keyword.trim()
 
@@ -233,6 +209,14 @@ export default function TemplatesView() {
                             playsInline
                             preload="metadata"
                             style={{ position: 'absolute', inset: 0, zIndex: 0 }}
+                            onLoadedMetadata={(e) => {
+                              // 卡片比例跟随视频真实宽高
+                              const v = e.currentTarget
+                              if (v.videoWidth && v.videoHeight) {
+                                const thumb = v.closest('.home__proj-thumb') as HTMLElement | null
+                                if (thumb) thumb.style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`
+                              }
+                            }}
                             onError={(e) => {
                               ;(e.currentTarget as HTMLVideoElement).style.display = 'none'
                             }}

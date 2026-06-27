@@ -8,12 +8,39 @@
 }
 
 .smart__main {
+  position: relative; /* 供「创建新视频」按钮绝对定位到最右上 */
   flex: 1;
   min-width: 0;
   min-height: 0;
   /* 允许 flex 子项收缩,使 body 获得有界高度可滚动 */
   display: flex;
   flex-direction: column;
+}
+
+/* 创建新视频:流程区最右上(复用入口「制作新视频」样式),点击重置为全新入口、重新走一遍 */
+.smart__newvideo {
+  position: absolute;
+  top: 68px;
+  right: 24px;
+  z-index: 5;
+  padding: 7px 16px;
+  border: 1px solid #1fcfa9;
+  border-radius: 10px;
+  background: #f3fffb;
+  color: #1fcfa9;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.0625em;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background 0.15s;
+}
+.smart__newvideo:hover {
+  color: #11a98a;
+  border-color: #11a98a;
+  background: #e8fbf5;
 }
 
 /* 顶栏 */

@@ -15,8 +15,6 @@ import { polishText } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
 import styles from './VideoStage.module.less'
 
-const MAX_SEGMENTS = 5
-
 // 帧缩略图缓存(模块级):key = `${videoUrl}::${帧数}`。
 // 切步骤再回来 / 切视频版本再切回 时直接复用,避免重复逐秒抓帧(很慢)。
 // 视频较多时限制条目数,避免内存膨胀(超出后淘汰最早的)。
@@ -42,14 +40,6 @@ const VIDEO_TIPS = [
   '生成的视频会进入项目「历史版本」,可随时切换。',
   '选中时间轴上的片段,可以只对这一段提修改意见,描述越具体越好。',
 ]
-
-interface ModSegment {
-  id: string
-  /** 选中片段在视频里的起止(秒) */
-  start: number
-  end: number
-  text: string
-}
 
 interface VideoStageProps {
   shots: Shot[]
@@ -124,8 +114,16 @@ export default function VideoStage({
   debug,
 }: VideoStageProps) {
   const { showToast } = useToast()
-  const [segments, setSegments] = useState<ModSegment[]>([])
   const [overallNote, setOverallNote] = useState('')
+  // 片段修改:固定两个框,各自独立保存「自己选中的帧范围 + 修改文案」(互不同步)
+  const [frameSlots, setFrameSlots] = useState<{ start: number | null; end: number | null; text: string }[]>([
+    { start: null, end: null, text: '' },
+    { start: null, end: null, text: '' },
+  ])
+  // 视频修改描述:按「视频版本 url」记忆——每条历史版本各自带自己的修改说明,切换历史时跟着走
+  const [noteByUrl, setNoteByUrl] = useState<Record<string, string>>({})
+  // 本次点击「确认修改/生成」时的描述:点下立即显示,生成中也显示;生成完成后绑定到新版本 url
+  const [pendingNote, setPendingNote] = useState('')
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null) // 时间轴待确认选区(秒)
   const [playSec, setPlaySec] = useState(0) // 播放头位置(秒)
   const [dur, setDur] = useState(0) // 视频真实时长(秒),0=未知
@@ -286,25 +284,31 @@ export default function VideoStage({
     }
   }
 
-  const addSegment = () => {
-    if (!sel || sel.end <= sel.start) return
-    if (segments.length >= MAX_SEGMENTS) {
-      showToast(`最多新增 ${MAX_SEGMENTS} 个片段修改`, 'info')
+  // 时间轴上当前拖选的帧范围文案(供「框选这段」按钮提示用)
+  const selRangeText = sel && sel.end > sel.start ? `${fmtSec(sel.start)} – ${fmtSec(sel.end)}` : ''
+
+  // 单个片段框的范围文案
+  const slotRangeText = (slot: { start: number | null; end: number | null }) =>
+    slot.start != null && slot.end != null ? `${fmtSec(slot.start)} – ${fmtSec(slot.end)}` : '未选帧'
+
+  // 把当前时间轴选区写入指定片段框(两个框各自独立,互不同步)
+  const captureSelToSlot = (idx: number) => {
+    if (!sel || sel.end <= sel.start) {
+      showToast('请先在时间轴上拖选要修改的帧', 'info')
       return
     }
-    setSegments((prev) => [
-      ...prev,
-      { id: `seg_${Date.now()}_${prev.length}`, start: +sel.start.toFixed(1), end: +sel.end.toFixed(1), text: '' },
-    ])
+    setFrameSlots((prev) => prev.map((s, i) => (i === idx ? { ...s, start: sel.start, end: sel.end } : s)))
     setSel(null)
   }
 
   // 合并所有修改为一段说明,送整片重生成
   const buildNote = (): string | undefined => {
     const parts: string[] = []
-    segments.forEach((s, i) => {
-      const t = s.text.trim()
-      if (t) parts.push(`【片段${i + 1} ${fmtSec(s.start)}-${fmtSec(s.end)}】${t}`)
+    frameSlots.forEach((s, i) => {
+      const x = s.text.trim()
+      if (!x) return
+      const r = s.start != null && s.end != null ? `${fmtSec(s.start)} – ${fmtSec(s.end)}` : ''
+      parts.push(r ? `【片段${i + 1} ${r}】${x}` : `【片段${i + 1}】${x}`)
     })
     const ov = overallNote.trim()
     if (ov) parts.push(`【整段视频】${ov}`)
@@ -312,9 +316,21 @@ export default function VideoStage({
   }
 
   // 是否存在「片段/整段」修改:有则主按钮显示「确认修改」(基于原视频改),无则「重新生成视频」
-  const hasMods = segments.some((s) => s.text.trim()) || overallNote.trim().length > 0
+  const hasMods = frameSlots.some((s) => s.text.trim()) || overallNote.trim().length > 0
 
-  const showTimeline = !!videoUrl && !videoGenerating
+  // 生成完成(videoUrl 变化且不在生成中)→ 把本次修改描述绑定到这条新版本上
+  useEffect(() => {
+    if (!videoUrl || videoGenerating || !pendingNote) return
+    setNoteByUrl((prev) => (prev[videoUrl] === pendingNote ? prev : { ...prev, [videoUrl]: pendingNote }))
+    setPendingNote('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoUrl, videoGenerating])
+
+  // 左侧「视频修改描述」:生成中显示本次描述;否则显示当前版本(含切到的历史版本)绑定的描述
+  const displayNote = videoGenerating ? pendingNote : videoUrl ? noteByUrl[videoUrl] || '' : ''
+
+  // 生成中也展示时间轴/修改区/视频修改描述(基于上一版视频);仅首次无视频时隐藏
+  const showTimeline = !!videoUrl
   const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
 
   return (
@@ -411,7 +427,7 @@ export default function VideoStage({
                     {f.thumb ? <img src={f.thumb} alt="" draggable={false} /> : <span>{f.i}s</span>}
                   </div>
                 ))}
-                {/* 选区:蓝色描边 + 左右把手 + 居中铅笔「修改」 */}
+                {/* 选区:蓝色描边 + 左右把手(拖选要修改的帧;修改意见填右侧「选中帧修改」框)*/}
                 {sel && sel.end > sel.start && (
                   <div
                     className={styles.vstageSel}
@@ -420,43 +436,31 @@ export default function VideoStage({
                   >
                     <span className={`${styles.vstageSelHandle} ${styles.vstageSelHandleL}`} />
                     <span className={`${styles.vstageSelHandle} ${styles.vstageSelHandleR}`} />
-                    <button
-                      type="button"
-                      className={styles.vstageSelEdit}
-                      onClick={addSegment}
-                      title="对选中的这段提修改意见"
-                      aria-label="修改这段"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        width="16"
-                        height="16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M12 20h9" />
-                        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                      </svg>
-                    </button>
                   </div>
                 )}
                 {/* 播放头 */}
                 <span className={styles.vstagePlayhead} style={{ left: pct(playSec) }} />
               </div>
               <div className={styles.vstageTimeHint}>
-                {sel && sel.end > sel.start
-                  ? `已选 ${fmtSec(sel.start)} – ${fmtSec(sel.end)}(${Math.round(sel.end - sel.start)} 帧),点选区上的铅笔即可针对这些帧提修改意见`
-                  : `${fmtClock(playSec)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧或点选单帧来修改(最多可改 ${MAX_SEGMENTS} 个)`}
+                {selRangeText
+                  ? `已选 ${selRangeText}(${Math.round((sel as { end: number; start: number }).end - (sel as { end: number; start: number }).start)} 帧),点右侧某个片段框的「框选这段」即可应用到该片段`
+                  : `${fmtClock(playSec)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧,再点右侧片段框的「框选这段」`}
               </div>
+              {displayNote && (
+                <div className={styles.vstageLastNote}>
+                  <div className={styles.vstageLastNoteTitle}>视频修改描述</div>
+                  <pre className={styles.vstageLastNoteBody}>{displayNote}</pre>
+                </div>
+              )}
             </div>
           )}
+        </div>
 
+        {/* 右:历史记录 + 整段视频修改 + 选中帧修改 */}
+        <div className={styles.vstageRight}>
           {videoVersions.length > 1 && (
             <div className={styles.vstageVersions}>
-              <span className={styles.vstageVersionsTitle}>视频版本(点击切换)</span>
+              <span className={styles.vstageVersionsTitle}>历史生成</span>
               <div className={styles.vstageVersionsRow}>
                 {videoVersions.map((v, i) => (
                   <button
@@ -473,29 +477,41 @@ export default function VideoStage({
               </div>
             </div>
           )}
-        </div>
-
-        {/* 右:片段修改框 + 整段视频修改框 */}
-        <div className={styles.vstageRight}>
           {showTimeline ? (
             <>
-              {segments.map((seg, i) => (
-                <ModBox
-                  key={seg.id}
-                  title={`片段${i + 1}修改`}
-                  range={`${fmtSec(seg.start)} – ${fmtSec(seg.end)}`}
-                  value={seg.text}
-                  polishKind="segment"
-                  onChange={(v) => setSegments((prev) => prev.map((s) => (s.id === seg.id ? { ...s, text: v } : s)))}
-                  onRemove={() => setSegments((prev) => prev.filter((s) => s.id !== seg.id))}
-                />
-              ))}
               <ModBox title="整段视频修改" value={overallNote} polishKind="generic" onChange={setOverallNote} />
-              {!segments.length && (
-                <div className={styles.vstageRightHint}>
-                  💡 提示:AI视频修改技术仍在发展中,局部细节可能无法做到绝对精准,底层模型正持续优化中。
-                </div>
-              )}
+              <ModBox
+                title="片段1修改"
+                range={slotRangeText(frameSlots[0])}
+                value={frameSlots[0].text}
+                polishKind="segment"
+                onChange={(v) => setFrameSlots((prev) => prev.map((s, i) => (i === 0 ? { ...s, text: v } : s)))}
+                onCapture={() => captureSelToSlot(0)}
+                onRemove={
+                  frameSlots[0].start != null
+                    ? () =>
+                        setFrameSlots((prev) => prev.map((s, i) => (i === 0 ? { ...s, start: null, end: null } : s)))
+                    : undefined
+                }
+              />
+              <ModBox
+                title="片段2修改"
+                range={slotRangeText(frameSlots[1])}
+                value={frameSlots[1].text}
+                polishKind="segment"
+                onChange={(v) => setFrameSlots((prev) => prev.map((s, i) => (i === 1 ? { ...s, text: v } : s)))}
+                onCapture={() => captureSelToSlot(1)}
+                onRemove={
+                  frameSlots[1].start != null
+                    ? () =>
+                        setFrameSlots((prev) => prev.map((s, i) => (i === 1 ? { ...s, start: null, end: null } : s)))
+                    : undefined
+                }
+              />
+              <div className={styles.vstageRightHint}>
+                💡
+                在时间轴上拖选要改的帧,点对应片段框的「框选这段」,再写修改意见;两个片段可分别选不同的帧。AI视频修改仍在优化中,局部细节可能不够精准。
+              </div>
             </>
           ) : (
             <div className={styles.vstageRightHint}>视频生成后,可在此对整段或具体片段提修改意见。</div>
@@ -523,7 +539,12 @@ export default function VideoStage({
         <button
           type="button"
           className="smart__btn smart__btn--primary"
-          onClick={() => onRegenerateVideo(buildNote(), { edit: hasMods })}
+          onClick={() => {
+            const note = buildNote()
+            // 点下立即把本次修改描述放到左侧;生成完成后会绑定到新版本上(切历史时跟随)
+            setPendingNote(hasMods ? note || '' : '')
+            onRegenerateVideo(note, { edit: hasMods })
+          }}
           disabled={!!videoGenerating}
         >
           {videoGenerating ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
@@ -645,6 +666,7 @@ function ModBox({
   polishKind,
   onChange,
   onRemove,
+  onCapture,
 }: {
   title: string
   range?: string
@@ -652,6 +674,8 @@ function ModBox({
   polishKind: 'segment' | 'generic'
   onChange: (v: string) => void
   onRemove?: () => void
+  /** 片段框:点击把当前时间轴选区写入本框 */
+  onCapture?: () => void
 }) {
   const { showToast } = useToast()
   const [polishing, setPolishing] = useState(false)
@@ -672,6 +696,11 @@ function ModBox({
       <div className={styles.vstageModTitle}>
         <span>{title}</span>
         {range && <span className={styles.vstageModRange}>{range}</span>}
+        {onCapture && (
+          <button type="button" className={styles.vstageModCapture} onClick={onCapture}>
+            框选这段
+          </button>
+        )}
         {onRemove && (
           <button type="button" className={styles.vstageModRemove} onClick={onRemove} aria-label="移除该片段修改">
             ×
