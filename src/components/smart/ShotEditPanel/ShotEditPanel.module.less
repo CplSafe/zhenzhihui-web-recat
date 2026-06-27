@@ -830,9 +830,11 @@
   flex: 0 0 auto;
 }
 .seCurBox .seditCur {
-  width: 220px;
+  /* 定高 220,宽按项目比例(--frame-ratio):竖屏窄、横屏宽、方形 220×220。
+     不再写死方形,使大图预览与所选比例一致。 */
   height: 220px;
-  aspect-ratio: auto; /* 覆盖默认 16:9 → 正方形(对齐 Figma 220×220) */
+  width: auto;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
 }
 .seHistory {
   flex: 1 1 auto;

@@ -17,6 +17,9 @@ interface ShotArrangeProps {
   /** 正在生成分镜图的镜头(键为 shot.id) */
   generating?: Record<string | number, boolean>
   onShotsChange: (shots: Shot[]) => void
+  /** 分镜缩略图加载失败/成功回调(用于「图未加载成功不能生成视频」) */
+  onShotImgError?: (id: string | number) => void
+  onShotImgLoad?: (id: string | number) => void
   /** 上传素材 → 直传后端成 asset(http url + asset_id) */
   onUploadRef?: (file: File) => Promise<{ url: string; assetId?: number }>
   /**
@@ -42,6 +45,8 @@ export default function ShotArrange({
   shots,
   generating = {},
   onShotsChange,
+  onShotImgError,
+  onShotImgLoad,
   onUploadRef,
   onGenerateShot,
   onPolishPrompt,
@@ -94,8 +99,10 @@ export default function ShotArrange({
     if (!onGenerateShot || dlg.shotId == null) return false
     const sh = shots.find((s) => s.id === dlg.shotId)
     if (!sh) return false
+    // 弹框点生成后立即关闭(后台生成)。插入模式须在 await 前【同步】提交占位,
+    // 否则关闭(closeDlg)时占位空分镜会被当作「未提交」删掉,导致后台生成无处回填。
+    if (dlg.mode === 'insert') insertCommittedRef.current = true
     const ok = await onGenerateShot(sh, { mode: dlg.mode, intent: text, uploadRefUrls })
-    if (ok && dlg.mode === 'insert') insertCommittedRef.current = true
     return ok
   }
 
@@ -110,6 +117,8 @@ export default function ShotArrange({
         onEditShot={openEditShot}
         onInsertShot={openInsertShot}
         onPreview={setBigImg}
+        onImgError={onShotImgError}
+        onImgLoad={onShotImgLoad}
       />
       {selected ? (
         <ShotEditPanel

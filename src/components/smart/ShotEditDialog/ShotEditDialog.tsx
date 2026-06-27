@@ -79,18 +79,14 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
     }
   }
 
-  const doGenerate = async () => {
+  const doGenerate = () => {
     if (!canGenerate) return
-    setGenerating(true)
-    try {
-      const ok = await onGenerate(
-        text.trim(),
-        uploads.map((u) => u.url),
-      )
-      if (ok) onClose() // 后端真正返回成功后才关闭
-    } finally {
-      setGenerating(false)
-    }
+    // 触发生成后立即关闭弹框:生成在后台进行,分镜列表对应镜头显示「生成中」,出图后自动回填。
+    void onGenerate(
+      text.trim(),
+      uploads.map((u) => u.url),
+    )
+    onClose()
   }
 
   return createPortal(

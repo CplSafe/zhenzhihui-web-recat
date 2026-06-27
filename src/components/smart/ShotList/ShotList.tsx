@@ -36,6 +36,9 @@ interface ShotListProps {
   onInsertShot?: (index: number) => void
   /** 点击缩略图(非修改/删除区)→ 放大查看该分镜图 */
   onPreview?: (url: string) => void
+  /** 缩略图加载失败/成功(用于「图未加载成功不能生成视频」) */
+  onImgError?: (id: string | number) => void
+  onImgLoad?: (id: string | number) => void
 }
 
 let uid = 1
@@ -77,6 +80,8 @@ interface SortableCardProps {
   onEditShot?: (shot: Shot) => void
   onInsertShot?: (index: number) => void
   onPreview?: (url: string) => void
+  onImgError?: (id: string | number) => void
+  onImgLoad?: (id: string | number) => void
 }
 
 function SortableCard({
@@ -100,6 +105,8 @@ function SortableCard({
   onEditShot,
   onInsertShot,
   onPreview,
+  onImgError,
+  onImgLoad,
 }: SortableCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: s.id,
@@ -144,7 +151,13 @@ function SortableCard({
         >
           {thumb ? (
             <>
-              <img src={thumb} alt="" draggable={false} />
+              <img
+                src={thumb}
+                alt=""
+                draggable={false}
+                onError={() => onImgError?.(s.id)}
+                onLoad={() => onImgLoad?.(s.id)}
+              />
               <AiBadge />
             </>
           ) : (
@@ -308,6 +321,8 @@ export default function ShotList({
   onEditShot,
   onInsertShot,
   onPreview,
+  onImgError,
+  onImgLoad,
 }: ShotListProps) {
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
@@ -396,6 +411,8 @@ export default function ShotList({
                 onEditShot={onEditShot}
                 onInsertShot={onInsertShot}
                 onPreview={onPreview}
+                onImgError={onImgError}
+                onImgLoad={onImgLoad}
               />
             ))}
           </SortableContext>

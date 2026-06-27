@@ -144,6 +144,19 @@
   background: #000;
 }
 
+/* 竖屏:不再按宽撑(否则会被屏幕宽撑得巨高),改为按屏幕高展示、居中、两侧留黑边 */
+.pvdetail-player.is-portrait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pvdetail-player.is-portrait video {
+  width: auto;
+  height: min(70vh, 560px);
+  min-height: 0;
+  max-width: 100%;
+}
+
 .pvdetail-player__empty {
   min-height: 460px;
   display: flex;
