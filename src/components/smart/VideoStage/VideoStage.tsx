@@ -682,7 +682,9 @@ function ModBox({
         <textarea
           className={styles.vstageModInput}
           value={value}
-          placeholder="输入你的分镜图片修改描述..."
+          placeholder={
+            polishKind === 'segment' ? '输入对这一片段的视频修改描述...' : '输入对整段视频的修改描述...'
+          }
           onChange={(e) => onChange(e.target.value)}
         />
         <button
