@@ -431,7 +431,8 @@ function HistoryVideoCard({
 
   const handleHotCopy = (e: React.MouseEvent) => {
     e.stopPropagation()
-    requireAuth(() => nav('/hot-copy'))
+    // 做同款:把该视频作为「源爆款视频」带入爆款复制页(url 用于预览,assetId 用于 replicate)
+    requireAuth(() => nav('/hot-copy', { state: { carryVideo: { url: displayUrl, assetId: videoAssetId || 0 } } }))
   }
 
   const handleDownload = async (e: React.MouseEvent) => {
@@ -1009,7 +1010,13 @@ export default function HomeView() {
                             <button
                               type="button"
                               className="home__tpl-action"
-                              onClick={() => requireAuth(() => handleNavigate('hot-copy'))}
+                              onClick={() =>
+                                requireAuth(() =>
+                                  navigate('/hot-copy', {
+                                    state: { carryVideo: { url: tpl.videoUrl || '', assetId: tpl.videoAssetId || 0 } },
+                                  }),
+                                )
+                              }
                             >
                               做同款
                             </button>

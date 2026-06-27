@@ -124,7 +124,7 @@ export default function HotCopyCreateView() {
   const [entryInitial, setEntryInitial] = useState<Partial<HotCopyEntryPayload> | undefined>(() => {
     const st = (location.state as any) || {}
     const imgs = (Array.isArray(st.carryImages) ? st.carryImages : []).filter((m: any) => m && m.url)
-    const vid = st.carryVideo && st.carryVideo.url ? st.carryVideo : null
+    const vid = st.carryVideo && (st.carryVideo.url || st.carryVideo.assetId) ? st.carryVideo : null
     if (!imgs.length && !vid) return undefined
     return {
       tab: 'remake',
@@ -137,8 +137,8 @@ export default function HotCopyCreateView() {
       ...(vid
         ? {
             videoSource: 'library' as const,
-            videoPreview: vid.url,
-            libraryVideo: { assetId: Number(vid.assetId || 0), src: vid.url },
+            videoPreview: vid.url || '',
+            libraryVideo: { assetId: Number(vid.assetId || 0), src: vid.url || '' },
           }
         : {}),
     } as any
@@ -218,9 +218,14 @@ export default function HotCopyCreateView() {
     const ws = Number(workspaceId || 0)
     if (!ws || hydratedRef.current) return
 
-    // 从「项目管理 → 新建视频」进入(携带 restartProjectId):全新流程,不恢复本地在制草稿、不跳回旧进度;
-    // 清掉旧本地草稿,避免它把页面带回上次未完成的步骤。绑定项目 + 携带素材由初始化器/carry effect 处理。
-    if (Number((location.state as any)?.restartProjectId)) {
+    // 全新流程,不恢复本地在制草稿、不跳回旧进度(清掉旧本地草稿,避免把页面带回上次未完成的步骤):
+    //   ① 项目管理 → 新建视频(restartProjectId);② 主页/模板「做同款」(carryVideo / carryImages)。
+    // 绑定项目 + 携带素材由 初始化器 / 上面的注入 effect 处理。
+    const navSt = (location.state as any) || {}
+    const hasCarry =
+      (navSt.carryVideo && (navSt.carryVideo.url || navSt.carryVideo.assetId)) ||
+      (Array.isArray(navSt.carryImages) && navSt.carryImages.length > 0)
+    if (routeId === 0 && (Number(navSt.restartProjectId) || hasCarry)) {
       clearHotCopyDraft(ws)
       hydratedRef.current = true
       return
