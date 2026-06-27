@@ -4,27 +4,32 @@
 .mcm-mask {
   position: fixed;
   inset: 0;
-  /* 保留 dev 的高层级,避免被其它弹窗盖住 */
   z-index: 2100;
-  /* haoran 旧版:深色半透明遮罩(还原背景) */
-  background: rgba(20, 20, 40, 0.45);
+  /* 浅绿毛玻璃:强模糊 + 一层淡绿染色(品牌青绿 #60E0C4),背景隐约可见 */
+  background: rgba(96, 224, 196, 0.14);
+  backdrop-filter: blur(70px);
+  -webkit-backdrop-filter: blur(70px);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px;
+  align-items: stretch;
+  justify-content: stretch;
+  /* 铺满:无留边 */
+  padding: 0;
 }
 
 .mcm {
   position: relative;
-  /* haoran 旧版:居中浅灰卡片(还原背景颜色) */
-  width: min(1200px, 96vw);
-  max-height: 90vh;
+  /* 上下左右铺满视口 */
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
   box-sizing: border-box;
   overflow-y: auto;
-  background: #f8f9fa;
-  border-radius: 20px;
+  /* 内容区本身透明:卡片/文字浮在透明层上,可见后面页面 */
+  background: transparent;
+  border-radius: 0;
   padding: 28px 32px 32px;
-  box-shadow: 0 24px 60px rgba(20, 20, 50, 0.28);
+  box-shadow: none;
 }
 
 /* 页面模式:填满内容区、去掉弹窗外观 */
@@ -40,9 +45,9 @@
   box-shadow: none;
 }
 
-/* 关闭 X:居中卡片右上角(还原 haoran 版定位) */
+/* 关闭 X:透明铺满布局下需明显可见,固定在视口右上角(不随内容滚动) */
 .mcm-close {
-  position: absolute;
+  position: fixed;
   top: 18px;
   right: 18px;
   z-index: 1;
@@ -174,6 +179,30 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: 24px;
+}
+
+/* 积分充值:一行最多三个,超过自动换行(3 列等宽网格)。 */
+.mcm-cards--recharge {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.mcm-cards--recharge .mc-card {
+  width: auto;
+  min-width: 0;
+}
+/* 窄屏退化:中屏两列、小屏一列,避免挤压 */
+@media (max-width: 720px) {
+  .mcm-cards--recharge {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .mcm-cards--recharge {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* 套餐卡片(按 Figma 384×720 等比缩到 272 宽,scale≈0.71)*/
