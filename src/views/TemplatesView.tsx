@@ -356,7 +356,11 @@ export default function TemplatesView() {
                               className="home__proj-action-btn"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                requireAuth(() => navigate('/hot-copy'))
+                                requireAuth(() =>
+                                  navigate('/hot-copy', {
+                                    state: { carryVideo: { url: tpl.videoUrl || '', assetId: tpl.videoAssetId || 0 } },
+                                  }),
+                                )
                               }}
                             >
                               做同款

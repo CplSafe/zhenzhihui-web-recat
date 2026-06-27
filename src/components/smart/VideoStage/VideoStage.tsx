@@ -506,8 +506,13 @@ export default function VideoStage({
       {/* 底部总按钮:上一步 / 下载视频 / 重新生成视频|确认修改(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
       <div className={styles.vstageActions}>
         {onPrev && (
-          <button type="button" className="smart__btn smart__btn--ghost" onClick={onPrev}>
-            上一步
+          <button type="button" className="smart__nav-btn" onClick={onPrev} aria-label="上一步" data-tip="上一步">
+            <svg width="26" height="21" viewBox="0 0 29 23" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path
+                d="M27.8881 22.0104L28.1187 21.8116C28.3625 21.6053 28.5088 21.4777 27.5336 17.4193C25.8513 10.3938 19.1616 5.85705 11.6728 5.18001V0L0 9.06596L11.6728 18.1319V12.95C16.5247 12.5824 20.7876 13.0063 23.6458 16.0708C25.0542 17.588 26.7515 20.585 27.1585 21.4684C27.2166 21.594 27.3217 21.8247 27.5786 21.911L27.8881 22.0104Z"
+                fill="currentColor"
+              />
+            </svg>
           </button>
         )}
         {onDownloadVideo && (
@@ -682,7 +687,9 @@ function ModBox({
         <textarea
           className={styles.vstageModInput}
           value={value}
-          placeholder="输入你的分镜图片修改描述..."
+          placeholder={
+            polishKind === 'segment' ? '输入对这一片段的视频修改描述...' : '输入对整段视频的修改描述...'
+          }
           onChange={(e) => onChange(e.target.value)}
         />
         <button
