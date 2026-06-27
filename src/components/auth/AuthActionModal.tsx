@@ -16,6 +16,7 @@ import {
   sendAuthSms,
 } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
+import './AuthActionModal.css'
 
 export type AuthActionMode = 'register' | 'forgot' | 'sms-register'
 
