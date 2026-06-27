@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { useWorkspaceId } from '@/stores/workspaceSession'
+import { openComingSoon } from '@/stores/ui'
 import { useAuth } from '@/auth/AuthContext'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { listCreativeProjects, getAssetDownloadUrl } from '@/api/business'
@@ -15,6 +16,12 @@ import { listBanners, type Banner } from '@/api/banners'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+// banner 数据走 SWR 缓存(先返缓存秒出、后台刷新);切换前预取相邻媒体,见下方接入处。
+import { swrFetch, peekCache } from '@/utils/swrCache'
+import { preloadMedia, type MediaItem } from '@/utils/mediaPreload'
+
+/** 首页轮播数据的 SWR 缓存键 */
+const BANNERS_CACHE_KEY = 'home-banners'
 import bannerLeft from '@/assets/home/banner-left.png'
 import bannerRight from '@/assets/home/banner-right.png'
 import quick1 from '@/assets/home/quick-1.png'
@@ -544,10 +551,10 @@ export default function HomeView() {
   const requireAuth = useRequireAuth()
   const { isAuthenticated } = useAuth()
   const [bannerIndex, setBannerIndex] = useState(0)
-  const [apiBanners, setApiBanners] = useState<Banner[] | null>(null)
+  // 初始值从缓存秒出(有上次数据就不闪空),无缓存为 null 走占位兜底。
+  const [apiBanners, setApiBanners] = useState<Banner[] | null>(() => peekCache<Banner[]>(BANNERS_CACHE_KEY) ?? null)
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
-  const [comingSoonOpen, setComingSoonOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   // 历史项目（接后端 listCreativeProjects）
@@ -684,17 +691,25 @@ export default function HomeView() {
     if (path) {
       navigate(path)
     } else {
-      // 未实现的功能（爆款裂变 / IP视频 / 爆款复制 等）：弹「功能待开放」
-      setComingSoonOpen(true)
+      // 未实现的功能（爆款裂变 / IP视频 / 爆款复制 / 设置 等）：弹全局「功能待开放」弹窗
+      openComingSoon()
     }
   }
 
-  // 拉取后端轮播图(/api/v1/banners);失败 / 为空时用本地占位兜底
+  // 拉取后端轮播图(/api/v1/banners),走 SWR 缓存:
+  //   - 有缓存 → 立即用缓存渲染(上面 useState 已秒出),同时后台刷新,新数据回来再更新;
+  //   - 无缓存 → 等首个请求结果。
+  //   失败 / 为空时由下方 slides 计算回退到本地占位。
   useEffect(() => {
     let cancelled = false
-    listBanners()
-      .then((list) => {
-        if (!cancelled) setApiBanners(list)
+    swrFetch(BANNERS_CACHE_KEY, () => listBanners(), {
+      ttl: 5 * 60_000, // 5 分钟内视为新鲜,不重复后台刷新
+      onRevalidate: (fresh) => {
+        if (!cancelled) setApiBanners(fresh) // 后台刷新到的最新数据
+      },
+    })
+      .then(({ data }) => {
+        if (!cancelled) setApiBanners(data)
       })
       .catch(() => {
         if (!cancelled) setApiBanners([])
@@ -714,6 +729,18 @@ export default function HomeView() {
   useEffect(() => {
     setBannerIndex((i) => (i < slides.length ? i : 0))
   }, [slides.length])
+
+  // 预取「相邻」幻灯片的媒体(下一张 + 上一张),让左右切换/自动播放时直接命中缓存、不再现加载。
+  // preloadMedia 幂等且带并发上限,重复调用安全;图片整张预取、视频只预热首帧。
+  useEffect(() => {
+    if (slides.length < 2) return
+    const nextIdx = (bannerIndex + 1) % slides.length
+    const prevIdx = (bannerIndex - 1 + slides.length) % slides.length
+    const targets: MediaItem[] = [slides[nextIdx], slides[prevIdx]]
+      .filter((s) => s && s.mediaUrl)
+      .map((s) => ({ url: s.mediaUrl, type: s.mediaType }))
+    preloadMedia(targets)
+  }, [slides, bannerIndex])
 
   // 居中卡片式焦点轮播(自定义 coverflow,对 3 张最稳):左右箭头切换 + 自动播放,取模实现无缝循环
   const bannerPrev = () => setBannerIndex((i) => (i - 1 + slides.length) % slides.length)
@@ -1024,20 +1051,6 @@ export default function HomeView() {
           </section>
         </div>
       </div>
-
-      {/* 功能待开放弹窗 */}
-      {comingSoonOpen && (
-        <div className="home__modal-mask" onClick={() => setComingSoonOpen(false)}>
-          <div className="home__modal" onClick={(e) => e.stopPropagation()}>
-            <div className="home__modal-icon">🚧</div>
-            <div className="home__modal-title">功能待开放</div>
-            <div className="home__modal-desc">该功能正在打磨中，敬请期待</div>
-            <button type="button" className="home__modal-btn" onClick={() => setComingSoonOpen(false)}>
-              我知道了
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

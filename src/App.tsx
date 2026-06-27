@@ -9,6 +9,9 @@ import { AuthProvider, useAuth } from './auth/AuthContext'
 import AppToast from './components/AppToast'
 import AppConfirmDialog from './components/AppConfirmDialog'
 import HelpCenter from './components/common/HelpCenter'
+import MemberCenterModal from './components/MemberCenterModal'
+import ComingSoonDialog from './components/ComingSoonDialog'
+import { useUiStore } from './stores/ui'
 import './App.css'
 
 // 退出登录标记：dev 模式下 AuthContext 用 mock session 绕过 API 检查，
@@ -23,6 +26,10 @@ function AppShell() {
   const location = useLocation()
   const matches = useMatches()
   const { isAuthenticated, isCheckingSession, authCheckError, loadAuthSession } = useAuth()
+
+  // 会员中心:全局单例弹窗,任意页面顶栏点「会员中心」均可唤出(取代原 /membership 路由页)。
+  const memberCenterOpen = useUiStore((s) => s.memberCenterOpen)
+  const closeMemberCenter = useUiStore((s) => s.closeMemberCenter)
 
   const requiresAuth = !matches.some((m) => (m.handle as any)?.requiresAuth === false)
 
@@ -63,6 +70,12 @@ function AppShell() {
       ) : (
         <Outlet />
       )}
+
+      {/* 会员中心全局弹窗:最高优先级全屏遮罩 + 右上角 X 关闭,任意页面可唤出 */}
+      <MemberCenterModal open={memberCenterOpen} onClose={closeMemberCenter} />
+
+      {/* 「功能待开放」全局弹窗:任意页面点未上线项时统一弹出 */}
+      <ComingSoonDialog />
 
       <AppToast />
       <AppConfirmDialog />

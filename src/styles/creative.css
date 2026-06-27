@@ -83,6 +83,39 @@ button {
   height: 60px;
   flex: none;
   object-fit: contain;
+  transition: opacity 0.2s ease;
+}
+
+/* LOGO 区域既是品牌位，也是边栏展开/收起开关：hover 时 LOGO 淡出、浮出侧栏图标提示可点击。 */
+.product-mark-toggle {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  display: grid;
+  width: 60px;
+  height: 60px;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(87, 103, 229, 0.1);
+  color: var(--color-brand);
+  opacity: 0;
+  transform: translateY(-50%);
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.product-mark:hover .brand-logo {
+  opacity: 0;
+}
+
+.product-mark:hover .product-mark-toggle {
+  opacity: 1;
+}
+
+/* 折叠态下 LOGO 区域居中收窄，hover 图标随之对齐。 */
+.sidebar-collapsed .product-mark-toggle {
+  width: 44px;
+  height: 44px;
 }
 
 .brand-copy {
@@ -116,36 +149,56 @@ button {
   line-height: 15px;
 }
 
-.sidebar-toggle {
-  position: absolute;
-  right: 18px;
-  top: 24px;
-  z-index: 2;
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border: 0;
-  border-radius: 8px;
-  padding: 0;
-  /* background: rgba(255, 255, 255, 0.46); */
-  color: var(--color-text-secondary);
-  transition:
-    background 0.2s ease,
-    color 0.2s ease,
-    left 0.2s ease,
-    right 0.2s ease,
-    top 0.2s ease;
+/* 窄屏（≤900px）常驻顶部的 LOGO + 汉堡按钮。桌面端隐藏。 */
+.mobile-topbar {
+  display: none;
 }
 
-.sidebar-toggle:hover {
+.mobile-topbar-logo {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  object-fit: contain;
+}
+
+.mobile-menu-btn {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  padding: 0;
+  background: transparent;
+  color: var(--color-heading);
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.mobile-menu-btn:hover {
   background: rgba(87, 103, 229, 0.12);
   color: var(--color-brand);
 }
 
-.sidebar-toggle svg {
-  width: 20px;
-  height: 20px;
+/* 抽屉遮罩：默认隐藏，仅窄屏抽屉展开时淡入。 */
+.sidebar-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 38;
+  border: 0;
+  padding: 0;
+  background: rgba(17, 24, 39, 0.34);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.2s ease,
+    visibility 0.2s ease;
+}
+
+.sidebar-drawer-backdrop.visible {
+  opacity: 1;
+  visibility: visible;
 }
 
 .navigation {
@@ -4528,33 +4581,52 @@ button {
   }
 }
 
-@media (max-width: 760px) {
+/* ≤900px：左侧栏改为抽屉。常驻左上角 LOGO + 汉堡，点击从左滑出完整导航。 */
+@media (max-width: 900px) {
+  /* 常驻顶部条：LOGO + 汉堡按钮，固定左上角，盖在内容之上。 */
+  .mobile-topbar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 39;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 70px;
+    padding: 0 12px;
+  }
+
+  /* 侧栏脱离文档流，作为抽屉：默认移出屏幕左侧，展开时滑入。 */
   .sidebar {
-    width: 100%;
-    height: auto;
-    min-height: 72px;
-    border-right: 0;
-    border-bottom: 1px solid rgba(51, 51, 51, 0.08);
-    z-index: 40;
+    width: 220px;
+    z-index: 44;
+    border-right: 1px solid rgba(51, 51, 51, 0.08);
+    box-shadow: 0 12px 40px rgba(16, 24, 40, 0.18);
+    transform: translateX(-100%);
+    transition:
+      transform 0.24s cubic-bezier(0.16, 1, 0.3, 1),
+      width 0.2s ease;
   }
 
-  .navigation {
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  /* 抽屉内 LOGO 区域恢复常规宽度，且不再承担折叠开关（窄屏用汉堡/遮罩控制）。 */
+  .sidebar .product-mark {
+    pointer-events: none;
+  }
+
+  .sidebar .product-mark-toggle {
     display: none;
   }
 
-  .team-section {
-    display: none;
+  .sidebar .product-mark:hover .brand-logo {
+    opacity: 1;
   }
+}
 
-  .product-mark {
-    width: auto;
-    margin-right: 52px;
-  }
-
-  .sidebar-toggle {
-    top: 20px;
-  }
-
+@media (max-width: 760px) {
   .topbar {
     left: 0;
     top: calc(var(--top-shift) + 72px);

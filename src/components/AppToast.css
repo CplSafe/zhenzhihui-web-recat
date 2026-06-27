@@ -1,6 +1,7 @@
 .toast-message {
   position: fixed;
-  z-index: 2000;
+  /* 高于会员中心弹窗(2100),确保支付/操作反馈始终可见 */
+  z-index: 2200;
   top: 24px;
   left: 50%;
   transform: translateX(-50%);

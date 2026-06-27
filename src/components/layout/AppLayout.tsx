@@ -90,6 +90,8 @@ export default function AppLayout(props: AppLayoutProps) {
     typeof window !== 'undefined' ? window.innerHeight : DESIGN_HEIGHT,
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // 窄屏（≤900px）抽屉导航是否展开。
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
 
   const [billingOpen, setBillingOpen] = useState(false)
@@ -116,15 +118,13 @@ export default function AppLayout(props: AppLayoutProps) {
   const isTabletViewport = viewportWidth <= 1280
   const isMobileViewport = viewportWidth <= 900
   const expandedSidebarWidth = useMemo(() => {
-    if (isMobileViewport) {
-      return SIDEBAR_COLLAPSED_WIDTH
-    }
     if (isTabletViewport) {
       return Math.round(Math.min(Math.max(viewportWidth * 0.16, 184), 208))
     }
     return SIDEBAR_WIDTH
-  }, [isMobileViewport, isTabletViewport, viewportWidth])
-  const currentSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
+  }, [isTabletViewport, viewportWidth])
+  // 窄屏侧栏改为抽屉（脱离文档流），内容区按 0 宽侧栏占满；抽屉自身宽度由 CSS 固定。
+  const currentSidebarWidth = isMobileViewport ? 0 : sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
   const layoutWidth = viewportWidth
   const layoutHeight = Math.max(viewportHeight, DESIGN_HEIGHT)
   const libraryWidth = useMemo(() => {
@@ -195,6 +195,7 @@ export default function AppLayout(props: AppLayoutProps) {
   // 切换活跃空间：store 改 override，workspaceId 变化由下方 effect 统一刷新订阅/钱包。
   function switchWorkspace(id: any) {
     switchWorkspaceAction(id)
+    if (mobileDrawerOpen) setMobileDrawerOpen(false)
     if (isCreativeWorkbench || isCreativeEntry) {
       navigate('/smart', { replace: true })
     }
@@ -319,13 +320,23 @@ export default function AppLayout(props: AppLayoutProps) {
     [loadWorkspaces, loadSubscriptionLabel],
   )
 
-  // 进入移动端断点时强制折叠侧边栏。
+  // 离开窄屏断点时关闭抽屉，避免桌面态残留遮罩。
   useEffect(() => {
-    if (isMobileViewport) setSidebarCollapsed(true)
+    if (!isMobileViewport) setMobileDrawerOpen(false)
   }, [isMobileViewport])
 
   function toggleSidebar() {
     setSidebarCollapsed((prev) => !prev)
+  }
+
+  function toggleMobileDrawer() {
+    setMobileDrawerOpen((prev) => !prev)
+  }
+
+  // 窄屏抽屉里点导航项：先关抽屉再跳转。
+  function handleNavClick(label: string) {
+    if (mobileDrawerOpen) setMobileDrawerOpen(false)
+    showComingSoon(label)
   }
 
   function showComingSoon(label: string) {
@@ -477,11 +488,13 @@ export default function AppLayout(props: AppLayoutProps) {
         <div className={`creative-frame${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
           <CreativeSidebar
             collapsed={sidebarCollapsed}
+            mobileOpen={mobileDrawerOpen}
             sections={navSections}
             workspaces={allWorkspaces}
             activeWorkspaceId={workspaceId}
             onToggleSidebar={toggleSidebar}
-            onNavClick={showComingSoon}
+            onToggleMobileDrawer={toggleMobileDrawer}
+            onNavClick={handleNavClick}
             onSwitchWorkspace={switchWorkspace}
             onCreateTeam={openCreateTeam}
             onJoinTeam={openJoinTeam}

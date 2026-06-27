@@ -529,11 +529,19 @@ span.ws-pop-item-icon--logout {
   }
 }
 
+/* ≤900px：左侧栏改为抽屉，左上角常驻 LOGO + 汉堡（固定 70px 高、约 88px 宽），
+   顶栏需让出该区域，避免搜索框被汉堡按钮压住。 */
+@media (max-width: 900px) {
+  .ws-topbar {
+    padding-left: 92px;
+  }
+}
+
 @media (max-width: 760px) {
   .ws-topbar {
     left: 0;
     width: 100%;
-    padding-left: 14px;
+    padding-left: 92px;
     padding-right: 14px;
   }
 

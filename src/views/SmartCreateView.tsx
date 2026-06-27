@@ -61,6 +61,7 @@ import {
   deriveModelPlanCandidates,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
+import { openComingSoon } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import {
   saveSmartDraft,
@@ -1534,6 +1535,7 @@ export default function SmartCreateView() {
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
+    else openComingSoon() // 设置等未上线项:弹全局「功能待开放」弹窗
   }
 
   // 「制作新视频」:把整个智能成片流程初始化为全新空白页(等同切换路由再切回来)。

@@ -34,6 +34,7 @@ import {
   deriveModelPlanCandidates,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
+import { openComingSoon } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
@@ -681,6 +682,7 @@ export default function HotCopyCreateView() {
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
+    else openComingSoon() // 设置等未上线项:弹全局「功能待开放」弹窗
   }
 
   const startRename = () => {
@@ -706,7 +708,7 @@ export default function HotCopyCreateView() {
         onClose={() => setSidebarOpen(false)}
       />
       <div className="smart__main">
-        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
+        <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
         {!started ? (
           <HotCopyEntry onSubmit={handleStart} initial={entryInitial} />

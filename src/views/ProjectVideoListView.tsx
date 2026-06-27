@@ -5,6 +5,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
+import { openComingSoon } from '@/stores/ui'
 import {
   createProjectVideo,
   deleteProjectVideo,
@@ -146,9 +147,9 @@ export default function ProjectVideoListView() {
     (key: string) => {
       const path = ROUTE_MAP[key]
       if (path) navigate(path)
-      else showToast('功能待开放', 'info')
+      else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
     },
-    [navigate, showToast],
+    [navigate],
   )
 
   const loadData = useCallback(async () => {
