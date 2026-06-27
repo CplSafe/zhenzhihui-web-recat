@@ -16,24 +16,35 @@ import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import './ChangePasswordModal.css'
 
-// 从会话/用户对象的多种可能路径里挑出 11 位手机号(/me 字段可能在顶层,也可能在 .user 下)
+// 归一化:去空格/连字符/括号、去国家码 +86,得到 11 位手机号(失败返回'')
+function normalizeMobile(raw: any): string {
+  let s = String(raw ?? '').trim()
+  if (!s) return ''
+  s = s.replace(/[\s\-()]/g, '').replace(/^\+?86/, '')
+  return /^1\d{10}$/.test(s) ? s : ''
+}
+
+// 递归深搜会话/用户对象里任意名为 mobile/phone/tel 的字段(/me 的 domain.User.mobile 可能在顶层或嵌套)
 function pickMobile(obj: any): string {
-  if (!obj) return ''
-  const cands = [
-    obj.mobile,
-    obj.phone,
-    obj.phone_number,
-    obj.tel,
-    obj.user?.mobile,
-    obj.user?.phone,
-    obj.user?.phone_number,
-    obj.user?.tel,
-    obj.profile?.mobile,
-    obj.profile?.phone,
-    obj.account?.mobile,
-    obj.account?.phone,
-  ]
-  return cands.map((x) => String(x ?? '').trim()).find((s) => /^1\d{10}$/.test(s)) || ''
+  if (!obj || typeof obj !== 'object') return ''
+  const seen = new Set<any>()
+  const stack: any[] = [obj]
+  while (stack.length) {
+    const cur = stack.pop()
+    if (!cur || typeof cur !== 'object' || seen.has(cur)) continue
+    seen.add(cur)
+    for (const [k, v] of Object.entries(cur)) {
+      if (v && typeof v === 'object') {
+        stack.push(v)
+        continue
+      }
+      if (/mobile|phone|tel/i.test(k)) {
+        const m = normalizeMobile(v)
+        if (m) return m
+      }
+    }
+  }
+  return ''
 }
 
 export default function ChangePasswordModal({ onClose }: { onClose: () => void }) {
@@ -58,6 +69,9 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
       .then((me: any) => {
         const m = pickMobile(me)
         if (!cancelled && m) setMobile(m)
+        else if (import.meta.env.DEV && !m)
+          // 仍取不到 → 打印 /me 原始返回,便于定位手机号字段路径
+          console.debug('[修改密码] /me 未解析出手机号,原始返回:', me)
       })
       .catch(() => {})
     return () => {
