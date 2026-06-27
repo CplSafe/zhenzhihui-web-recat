@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Shot } from '../ScriptStoryboardTable'
 import { polishText } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
+import VideoLoading from './VideoLoading'
 import styles from './VideoStage.module.less'
 
 // 帧缩略图缓存(模块级):key = `${videoUrl}::${帧数}`。
@@ -64,6 +65,9 @@ interface VideoStageProps {
   /** 整片历史版本(点击切换) */
   videoVersions?: { url: string; assetId: number }[]
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
+  /** 项目版本(后端 versions,整项目快照,可一键还原) */
+  projectVersions?: { vid: number; label: string; createdAt: string }[]
+  onRestoreVersion?: (vid: number) => void
   /**
    * 重新生成 / 确认修改整片。
    * note=对整片/各片段的修改意见(合并成一段);opts.edit=true 表示「确认修改」——
@@ -108,6 +112,8 @@ export default function VideoStage({
   faceBlurDebug,
   videoVersions = [],
   onSwitchVideo,
+  projectVersions = [],
+  onRestoreVersion,
   onRegenerateVideo,
   onDownloadVideo,
   onPrev,
@@ -356,16 +362,11 @@ export default function VideoStage({
         <div className={styles.vstageLeft}>
           <div className={styles.vstagePlayer}>
             {videoGenerating ? (
-              <div className={`${styles.vstagePlayerPh} ${styles.vstageWaiting}`}>
-                <span className={styles.vstageSpin} aria-hidden="true" />
-                <div className={styles.vstageWaitingStatus}>{videoStatusText || '视频生成中…'}</div>
-                <div className={styles.vstageWaitingNote}>
-                  视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。
-                </div>
-                <div className={styles.vstageWaitingTip} key={tipIdx}>
-                  💡 {VIDEO_TIPS[tipIdx]}
-                </div>
-              </div>
+              <VideoLoading
+                statusText={videoStatusText || '视频生成中'}
+                note="视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。"
+                tip={VIDEO_TIPS[tipIdx]}
+              />
             ) : videoUrl ? (
               <video
                 ref={videoRef}
@@ -399,8 +400,9 @@ export default function VideoStage({
             )}
           </div>
 
-          {/* 时间轴:时间刻度(真实秒数)+ 帧缩略条 + 拖选/点选片段 */}
-          {showTimeline && (
+          {/* 时间轴:时间刻度(真实秒数)+ 帧缩略条 + 拖选/点选片段。
+              生成中隐藏(避免显示旧视频的帧);生成完成后用新帧重新显示。 */}
+          {showTimeline && !videoGenerating && (
             <div className={styles.vstageTimeline}>
               <div className={styles.vstageRuler}>
                 {ticks.map((t) => (
@@ -458,7 +460,7 @@ export default function VideoStage({
 
         {/* 右:历史记录 + 整段视频修改 + 选中帧修改 */}
         <div className={styles.vstageRight}>
-          {videoVersions.length > 1 && (
+          {(videoVersions.length >= 1 || videoGenerating) && (
             <div className={styles.vstageVersions}>
               <span className={styles.vstageVersionsTitle}>历史生成</span>
               <div className={styles.vstageVersionsRow}>
@@ -466,13 +468,43 @@ export default function VideoStage({
                   <button
                     key={i}
                     type="button"
-                    className={`${styles.vstageVer}${v.url === videoUrl ? ' ' + styles.active : ''}`}
+                    // 生成中时高亮跟随「生成中」占位,旧版本不再显示选中边框
+                    className={`${styles.vstageVer}${!videoGenerating && v.url === videoUrl ? ' ' + styles.active : ''}`}
                     onClick={() => onSwitchVideo?.(v)}
                     title={`版本${i + 1}`}
                   >
                     <video src={v.url} muted preload="metadata" playsInline />
                     <span className={styles.vstageVerNo}>{i + 1}</span>
                   </button>
+                ))}
+                {/* 正在重新生成的新版本:作为一个「生成中」占位,与历史版本一起展示,并高亮选中边框 */}
+                {videoGenerating && (
+                  <div className={`${styles.vstageVer} ${styles.vstageVerLoading} ${styles.active}`} title="生成中">
+                    <span className={styles.vstageSpin} aria-hidden="true" />
+                    <span className={styles.vstageVerNo}>{videoVersions.length + 1}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {projectVersions.length > 0 && (
+            <div className={styles.vstageVersions}>
+              <span className={styles.vstageVersionsTitle}>项目版本(可还原)</span>
+              <div className={styles.vstageVerList}>
+                {projectVersions.map((v) => (
+                  <div className={styles.vstageVerItem} key={v.vid}>
+                    <span className={styles.vstageVerItemLabel} title={v.label}>
+                      {v.label}
+                    </span>
+                    <button
+                      type="button"
+                      className={styles.vstageVerRestore}
+                      onClick={() => onRestoreVersion?.(v.vid)}
+                      title="还原到该版本(整项目)"
+                    >
+                      还原
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>

@@ -51,6 +51,9 @@ import {
   patchCreativeProject,
   getCreativeProject,
   updateCreativeProjectDraft,
+  createCreativeProjectVersion,
+  listCreativeProjectVersions,
+  restoreCreativeProjectVersion,
   uploadAssetFile,
   getAssetDownloadUrl,
   listAssets,
@@ -546,8 +549,15 @@ export default function SmartCreateView() {
     }
     // 3) 逐产品组:命中 → 产品合一合并;未命中 → 注入
     let out = list.map((sh) => ({ ...sh, subjects: (sh.subjects || []).map((su) => ({ ...su })) }))
-    const injections: { tag: string; kind: string; refImage?: string; refAssetId?: number; refAssetIds?: number[] }[] =
-      []
+    const injections: {
+      tag: string
+      kind: string
+      refImage?: string
+      refAssetId?: number
+      refAssetIds?: number[]
+      image?: string
+      assetId?: number
+    }[] = []
     for (const p of products) {
       const groupIds = (p.imageIndexes || []).map((i) => persisted[i - 1]?.assetId || 0).filter(Boolean)
       const refImage = persisted[(p.imageIndexes?.[0] || 1) - 1]?.url || persisted[0]?.url
@@ -561,11 +571,29 @@ export default function SmartCreateView() {
           if (!sh.subjects.some((su) => set.has(stripAt(su.tag)))) return sh
           const kept = sh.subjects.filter((su) => !set.has(stripAt(su.tag)))
           const already = kept.some((su) => stripAt(su.tag) === prodName)
-          const productSubject = { tag: '@' + prodName, kind: prodKind, refImage, refAssetId, refAssetIds }
+          // 上传图直接作为该主体素材图(image/assetId):准备素材/分镜脚本立即展示,计入「已有图」、
+          // 一键生成自动跳过(不被 AI 覆盖);refImage 仍保留,供需要时手动「重新生成」做图生图参考。
+          const productSubject = {
+            tag: '@' + prodName,
+            kind: prodKind,
+            refImage,
+            refAssetId,
+            refAssetIds,
+            image: refImage,
+            assetId: refAssetId,
+          }
           return { ...sh, subjects: already ? kept : [productSubject, ...kept] }
         })
       } else {
-        injections.push({ tag: '@' + prodName, kind: prodKind, refImage, refAssetId, refAssetIds })
+        injections.push({
+          tag: '@' + prodName,
+          kind: prodKind,
+          refImage,
+          refAssetId,
+          refAssetIds,
+          image: refImage,
+          assetId: refAssetId,
+        })
       }
     }
     if (injections.length) {
@@ -1074,6 +1102,99 @@ export default function SmartCreateView() {
   const [vidGenRunning, setVidGenRunning] = useState(false)
   // 进行中的整片生成任务 id:生成开始即记录并随草稿持久化,切路由/刷新后凭它续轮询(不重新生成)
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
+  // 每次「重新生成」的独立记录(生成中/失败);成功的成片仍进 videoVersions。
+  // 让项目下能看到每次生成作为一条草稿:生成中、失败(可重试)。
+  type GenRecord = { id: string; status: 'processing' | 'failed' | 'published'; taskId: number; note: string; createdAt: number }
+  const [videoGenerations, setVideoGenerations] = useState<GenRecord[]>([])
+  const genSeqRef = useRef(0)
+  // 开始一次生成:压入一条「生成中」记录(同一时刻只会有一个在跑,vidGenRunning 已保证)
+  const startGen = (note?: string): string => {
+    genSeqRef.current += 1
+    const id = `gen-${Date.now()}-${genSeqRef.current}`
+    setVideoGenerations((prev) => [{ id, status: 'processing', taskId: 0, note: note || '', createdAt: Date.now() }, ...prev])
+    return id
+  }
+  const setGenTask = (id: string, taskId: number) =>
+    setVideoGenerations((prev) => prev.map((g) => (g.id === id ? { ...g, taskId: Number(taskId) || 0 } : g)))
+  // 标记本条记录为 已并入成片 / 失败;resume 没有 id 时按「当前生成中的那条」处理
+  const markGen = (id: string | null, status: 'published' | 'failed') =>
+    setVideoGenerations((prev) =>
+      prev.map((g) => (g.status === 'processing' && (id ? g.id === id : true) ? { ...g, status } : g)),
+    )
+
+  // ── 项目版本(走后端 versions 接口):每次成片存一个可还原的整项目快照 ──
+  const [projectVersions, setProjectVersions] = useState<any[]>([])
+  const versionIdOf = (it: any) =>
+    Number(it?.vid || it?.version_id || it?.versionId || it?.id || it?.version_no || 0)
+  const versionLabelOf = (it: any) =>
+    String(it?.label || it?.name || it?.title || (it?.version_no ? `版本 ${it.version_no}` : '') || '版本').trim()
+  const parseVersions = (payload: any): any[] => {
+    const raw = (payload && typeof payload === 'object' ? (payload.data ?? payload) : payload) || payload
+    const list = Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.items)
+        ? raw.items
+        : Array.isArray(raw?.list)
+          ? raw.list
+          : Array.isArray(raw?.versions)
+            ? raw.versions
+            : []
+    return (list as any[]).filter((x) => x && typeof x === 'object')
+  }
+  const loadProjectVersions = async () => {
+    const id = projectIdRef.current
+    const ws = Number(workspaceId || 0)
+    if (!id || !ws) return
+    try {
+      const payload = await listCreativeProjectVersions({ projectId: id, workspaceId: ws })
+      const list = parseVersions(payload).sort((a, b) => {
+        const an = Number(a?.version_no || a?.versionNo || 0)
+        const bn = Number(b?.version_no || b?.versionNo || 0)
+        if (an || bn) return bn - an
+        return new Date(b?.created_at || b?.createdAt || 0).getTime() - new Date(a?.created_at || a?.createdAt || 0).getTime()
+      })
+      setProjectVersions(list)
+    } catch {
+      /* 列表失败不阻塞 */
+    }
+  }
+  // 出片成功后存一个版本(先把当前草稿落库,再 POST 版本)。失败不阻塞出片。
+  const saveProjectVersion = async (label: string) => {
+    const id = projectIdRef.current
+    const ws = Number(workspaceId || 0)
+    if (!id || !ws) return
+    try {
+      await putSmartDraftToBackend()
+      await createCreativeProjectVersion({ projectId: id, workspaceId: ws, label: label || '视频版本' })
+      void loadProjectVersions()
+    } catch {
+      /* 存版本失败静默 */
+    }
+  }
+  // 还原到某版本:POST restore → 重新拉项目草稿回填页面
+  const restoreProjectVersion = async (vid: number) => {
+    const id = projectIdRef.current
+    const ws = Number(workspaceId || 0)
+    if (!id || !ws || !vid) return
+    try {
+      await restoreCreativeProjectVersion({ projectId: id, workspaceId: ws, vid })
+      const proj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
+      const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
+      const d = parseSmartSnapshot(draftJson)
+      if (d) applyDraft(d)
+      draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
+      void loadProjectVersions()
+      showToast('已还原到该版本', 'success')
+    } catch (e: any) {
+      showToast(`还原失败:${e?.message || '请重试'}`, 'error')
+    }
+  }
+  // 进「生成视频」步 + 已建项目 → 拉一次版本列表
+  useEffect(() => {
+    if (step === 3 && projectId && Number(workspaceId || 0)) void loadProjectVersions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, projectId, workspaceId])
+
   const autoVidRef = useRef(false)
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
   const [blurPhase, setBlurPhase] = useState('')
@@ -1104,6 +1225,7 @@ export default function SmartCreateView() {
     // 「确认修改」:把上次整片当 video 输入,按修改提示在原视频基础上改(片段时间段写进提示)
     if (opts?.edit && fullVideo.assetId) {
       setVidGenRunning(true)
+      const gid = startGen(note)
       try {
         const plans = await resolvePlanCandidates()
         const editPrompt = [
@@ -1122,8 +1244,11 @@ export default function SmartCreateView() {
         })
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
+        markGen(gid, 'published')
+        void saveProjectVersion(note?.trim() ? `修改:${note.trim().slice(0, 20)}` : '修改视频')
       } catch (e: any) {
         showToast(`视频修改失败:${e?.message || ''}`, 'error')
+        markGen(gid, 'failed')
       } finally {
         setVidGenRunning(false)
       }
@@ -1137,6 +1262,7 @@ export default function SmartCreateView() {
       return
     }
     setVidGenRunning(true)
+    const gid = startGen(note)
     // 记录本次出片所依据的分镜签名(供「下次进生成视频时分镜未变则不重生成」判断)
     videoGenSigRef.current = videoInputSig(shots, entryMeta, reqSummary || requirement)
     try {
@@ -1211,12 +1337,18 @@ export default function SmartCreateView() {
         note,
         modelPlanCandidates: plans,
         // 任务一创建就记录 task_id 并随草稿持久化:中途切路由/刷新后可凭它续轮询
-        onTask: (id) => setVidGenTaskId(Number(id) || 0),
+        onTask: (id) => {
+          setVidGenTaskId(Number(id) || 0)
+          setGenTask(gid, Number(id) || 0)
+        },
       })
       setFullVideo({ url, assetId })
       setVideoVersions((prev) => [...prev, { url, assetId }])
+      markGen(gid, 'published')
+      void saveProjectVersion(note?.trim() ? `生成:${note.trim().slice(0, 20)}` : '生成视频')
     } catch (e: any) {
       showToast(`视频生成失败:${e?.message || ''}`, 'error')
+      markGen(gid, 'failed')
     } finally {
       setBlurPhase('')
       setVidGenRunning(false)
@@ -1235,8 +1367,11 @@ export default function SmartCreateView() {
       const { url, assetId } = await resumeFullVideo({ workspaceId: ws, taskId })
       setFullVideo({ url, assetId })
       setVideoVersions((prev) => [...prev, { url, assetId }])
+      markGen(null, 'published') // 续跑完成:把那条「生成中」记录并入成片
+      void saveProjectVersion('生成视频')
     } catch (e: any) {
       showToast(`恢复视频生成失败:${e?.message || '请重试'}`, 'error')
+      markGen(null, 'failed')
     } finally {
       setVidGenRunning(false)
       setVidGenTaskId(0)
@@ -1543,6 +1678,7 @@ export default function SmartCreateView() {
     vidGenTaskId,
     materialBatchPending,
     videoVersions,
+    videoGenerations,
     faceBlurEnabled,
     marketingOpen,
     marketingText,
@@ -1564,6 +1700,7 @@ export default function SmartCreateView() {
     setFields(d.fields || {})
     setFullVideo({ url: d.fullVideoUrl || '', assetId: d.fullVideoAssetId || 0 })
     setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
+    setVideoGenerations(Array.isArray(d.videoGenerations) ? (d.videoGenerations as GenRecord[]) : [])
     // 恢复「一键生成」进行中标记 → 进准备素材步会由 effect 自动续作未出图的素材(不被截断)
     setMaterialBatchPending(!!d.materialBatchPending)
     // 恢复「生成中」:草稿里有进行中的任务 id → 续轮询同一个后端任务(不重新生成)。
@@ -1616,6 +1753,12 @@ export default function SmartCreateView() {
     const ws = Number(workspaceId || 0)
     if (!id || !ws) return false
     const snapshot = buildSmartSnapshot(currentDraft())
+    // 项目封面:优先第一张分镜图,其次入口上传素材的 asset_id。带进存草稿(后端 cover_asset_id),
+    // 列表接口就能直接返回封面,不必前端再挖 draft。0/无 时省略,保留现有封面。
+    const coverAssetId =
+      Number(shots.find((s) => Number(s.imageAssetId || 0) > 0)?.imageAssetId || 0) ||
+      Number(((entryMeta as any)?.imageAssetIds || []).find((x: any) => Number(x) > 0) || 0) ||
+      0
     // 首次/未知 revision:先拉一次,避免用错版本号导致 409 把后续(含图)的保存全部打掉
     if (!draftRevisionRef.current) await fetchRevision(id, ws)
     try {
@@ -1624,6 +1767,7 @@ export default function SmartCreateView() {
         workspaceId: ws,
         draft: snapshot,
         draftRevision: draftRevisionRef.current,
+        coverAssetId,
       })
       const next = normRev(payload)
       if (Number.isFinite(next)) draftRevisionRef.current = next
@@ -1638,6 +1782,7 @@ export default function SmartCreateView() {
           workspaceId: ws,
           draft: snapshot,
           draftRevision: draftRevisionRef.current,
+          coverAssetId,
         })
         const next = normRev(payload)
         if (Number.isFinite(next)) draftRevisionRef.current = next
@@ -1674,7 +1819,13 @@ export default function SmartCreateView() {
           draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
           const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
           const d = parseSmartSnapshot(draftJson)
-          if (d) applyDraft(d)
+          // 本地兜底:本地草稿若属于同一项目且 savedAt 更新(后端可能漏存"切走前最后一步")→ 用本地,
+          // 避免回来后丢掉最后一步操作。(本地是同步落盘 + 卸载即落盘,通常比后端防抖更新。)
+          const local = loadSmartDraft()
+          const localFresher =
+            !!local && Number(local.projectId || 0) === rid && Number(local.savedAt || 0) > Number(d?.savedAt || 0)
+          if (localFresher) applyDraft(local as SmartDraft)
+          else if (d) applyDraft(d)
           // 兜底:智能成片快照里没有整片视频(上次在「生成视频」中途切走,完成结果由后端落到了项目级字段),
           // 从项目数据补出最近一版视频 + 历史版本,保证「生成视频」步骤能加载出来(URL 过期由下面的签名刷新兜底)。
           if (!d?.fullVideoUrl && !d?.fullVideoAssetId) {
@@ -1739,6 +1890,7 @@ export default function SmartCreateView() {
     projectId,
     fullVideo,
     videoVersions,
+    videoGenerations, // 生成记录(生成中/失败)变化要存盘,切走也能在项目里看到这条草稿
     vidGenTaskId, // 任务 id 变化(生成开始)也要触发保存,否则长轮询期间不存盘 → 切走后无法恢复
     materialBatchPending, // 一键生成标记变化要存盘,切走再回来才能续作
     marketingOpen,
@@ -1746,6 +1898,21 @@ export default function SmartCreateView() {
     marketingData,
     imageMessages,
   ])
+
+  // 卸载即落盘:切到其它页面/路由时,上面的防抖保存会被 cleanup 取消,导致"最后一步操作"没存。
+  // 用 ref 持有最新 flush 闭包(避免空依赖 effect 捕获旧 state),仅在真正卸载时强制保存一次:
+  // 本地同步写(必成)+ 后端 PUT(SPA 内 fetch 不因组件卸载中断,通常能发完)。
+  const flushDraftRef = useRef<() => void>(() => {})
+  flushDraftRef.current = () => {
+    if (!hydratedRef.current) return
+    try {
+      saveSmartDraft(currentDraft())
+    } catch {
+      /* ignore */
+    }
+    if (projectIdRef.current) void putSmartDraftToBackend()
+  }
+  useEffect(() => () => flushDraftRef.current(), [])
 
   const goStep = (i: number) => {
     const next = Math.max(0, Math.min(STEPS.length - 1, i))
@@ -1781,6 +1948,7 @@ export default function SmartCreateView() {
     setFields({})
     setFullVideo({ url: '', assetId: 0 })
     setVideoVersions([])
+    setVideoGenerations([])
     setMarketingOpen(false)
     setMarketingText('')
     setMarketingData(null)
@@ -2280,6 +2448,20 @@ export default function SmartCreateView() {
           <Markdown>{promptText}</Markdown>
         </div>
 
+        {/* 我上传的素材:直接陈列入口上传的图片 */}
+        {(entryMeta?.images?.length ?? 0) > 0 && (
+          <div className="smart__uploads">
+            <div className="smart__uploads-label">我上传的素材：</div>
+            <div className="smart__uploads-row">
+              {entryMeta!.images!.map((u, i) => (
+                <div className="smart__uploads-item" key={i}>
+                  <img src={u} alt={`上传素材${i + 1}`} loading="lazy" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* skill 拆解出的营销建议:可编辑;正文区填满剩余空间并内部滚动,底部按钮常驻可见 */}
         <div className="smart__marketing">
           <div className="smart__marketing-title">
@@ -2381,6 +2563,20 @@ export default function SmartCreateView() {
             <Markdown>{promptText}</Markdown>
           </div>
 
+          {/* 我上传的素材:直接陈列入口上传的图片 */}
+          {(entryMeta?.images?.length ?? 0) > 0 && (
+            <div className="smart__uploads">
+              <div className="smart__uploads-label">我上传的素材：</div>
+              <div className="smart__uploads-row">
+                {entryMeta!.images!.map((u, i) => (
+                  <div className="smart__uploads-item" key={i}>
+                    <img src={u} alt={`上传素材${i + 1}`} loading="lazy" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 生成状态 + 分镜表 */}
           <div className="smart__script-done">
             <span className="smart__script-done-icon" aria-hidden="true">
@@ -2468,6 +2664,12 @@ export default function SmartCreateView() {
         onRegenerateVideo={runFullVideo}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
+        projectVersions={projectVersions.map((v) => ({
+          vid: versionIdOf(v),
+          label: versionLabelOf(v),
+          createdAt: String(v?.created_at || v?.createdAt || ''),
+        }))}
+        onRestoreVersion={restoreProjectVersion}
         debug={{
           prompt: buildTimelinePrompt({
             shots,
