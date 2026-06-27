@@ -350,8 +350,8 @@ export default function LoginView() {
 
   function handleAgreementAgree() {
     setShowAgreementModal(false)
+    setAgreed(true) // 「同意并继续」即勾选(与表单复选框联动)
     if (agreementModalContextRef.current === 'login') {
-      setAgreed(true)
       // setAgreed 异步,这里走不依赖该 state 的提交路径。
       const valid = validateLogin()
       if (valid) void submitLogin(valid.mobile, valid.credential)
@@ -550,14 +550,39 @@ export default function LoginView() {
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
             <span>
               已经阅读并同意
-              <a onClick={() => handleLink('用户协议')}>《用户协议》</a>及
-              <a onClick={() => handleLink('隐私政策')}>《隐私政策》</a>
+              {/* 链接在 label 内,且无 href 不算交互内容 → 点击会连带切换复选框;阻止默认/冒泡避免误改勾选 */}
+              <a
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  handleLink('用户协议')
+                }}
+              >
+                《用户协议》
+              </a>
+              及
+              <a
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  handleLink('隐私政策')
+                }}
+              >
+                《隐私政策》
+              </a>
             </span>
           </label>
         </div>
       </section>
 
-      {showAgreementModal && <AgreementModal onAgree={handleAgreementAgree} onCancel={handleAgreementCancel} />}
+      {showAgreementModal && (
+        <AgreementModal
+          agreed={agreed}
+          onAgreedChange={setAgreed}
+          onAgree={handleAgreementAgree}
+          onCancel={handleAgreementCancel}
+        />
+      )}
 
       {/* 注册 / 重置密码 弹窗 */}
       {authModal && (
