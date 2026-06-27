@@ -90,7 +90,9 @@ export const router = createBrowserRouter([
     element: <App />,
     errorElement: <RouteErrorBoundary />,
     children: [
-      { index: true, element: <IndexRedirect /> },
+      // index 必须免鉴权,否则未登录访问根路径会被中央守卫先重定向到 /login,
+      // 轮不到 IndexRedirect 跳 /welcome(开屏页)。
+      { index: true, element: <IndexRedirect />, handle: { requiresAuth: false } },
       { path: 'welcome', element: <WelcomeRoute />, handle: { requiresAuth: false } },
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },
       { path: 'home', element: lazyPage(<HomeView />), handle: { requiresAuth: false } },
