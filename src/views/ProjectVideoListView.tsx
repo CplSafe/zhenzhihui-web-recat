@@ -6,7 +6,6 @@ import AppToast from '@/components/AppToast'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import {
-  createProjectVideo,
   deleteProjectVideo,
   formatVideoDate,
   formatVideoDuration,
@@ -129,6 +128,7 @@ export default function ProjectVideoListView() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [projectTitle, setProjectTitle] = useState('')
+  const [newVideoOpen, setNewVideoOpen] = useState(false)
   const [videos, setVideos] = useState<ProjectVideo[]>([])
 
   const [query, setQuery] = useState('')
@@ -244,26 +244,14 @@ export default function ProjectVideoListView() {
     [showToast],
   )
 
-  const handleCreateVideo = useCallback(async () => {
-    const wsId = Number(workspaceId || 0)
-    if (!projectId || !wsId) {
-      showToast('当前项目不可用，无法新建视频', 'error')
-      return
-    }
-    try {
-      const created = await createProjectVideo({
-        projectId,
-        workspaceId: wsId,
-        title: `${projectTitle || '当前项目'} · 新视频`,
-        currentUserName: userName,
-      })
-      showToast('已在当前项目下创建新视频', 'success')
-      await loadData()
-      navigate(`/projects/${projectId}/videos/${created.id}`)
-    } catch (error: any) {
-      showToast(error?.message || '新建视频失败，请稍后重试', 'error')
-    }
-  }, [workspaceId, projectId, showToast, projectTitle, userName, loadData, navigate])
+  // 新建视频:弹窗选择「智能成片 / 爆款复制」,进入对应流程并沿用当前项目名(一模一样)
+  const goCreateVia = useCallback(
+    (kind: 'smart' | 'hot') => {
+      setNewVideoOpen(false)
+      navigate(kind === 'smart' ? '/smart' : '/hot-copy', { state: { newProjectName: projectTitle || '' } })
+    },
+    [navigate, projectTitle],
+  )
 
   const handlePublish = useCallback(
     async (video: ProjectVideo) => {
@@ -369,7 +357,7 @@ export default function ProjectVideoListView() {
                     </select>
                   </label>
                 </div>
-                <button type="button" className="pvlist-create-btn" onClick={handleCreateVideo}>
+                <button type="button" className="pvlist-create-btn" onClick={() => setNewVideoOpen(true)}>
                   + 新建视频
                 </button>
               </div>
@@ -546,6 +534,48 @@ export default function ProjectVideoListView() {
           </div>
         </main>
       </div>
+
+      {/* 新建视频:选择进入「智能成片」或「爆款复制」,项目名沿用当前项目名 */}
+      {newVideoOpen && (
+        <div className="pvlist-nvmask" role="dialog" aria-label="新建视频" onClick={() => setNewVideoOpen(false)}>
+          <div className="pvlist-nvcard" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="pvlist-nvx"
+              aria-label="关闭"
+              onClick={() => setNewVideoOpen(false)}
+            >
+              ×
+            </button>
+            <div className="pvlist-nvtitle">新建视频</div>
+            <div className="pvlist-nvsub">
+              将在项目「{projectTitle || '当前项目'}」下创建,选择创作方式:
+            </div>
+            <div className="pvlist-nvopts">
+              <button type="button" className="pvlist-nvopt" onClick={() => goCreateVia('smart')}>
+                <span className="pvlist-nvopt__ic pvlist-nvopt__ic--smart" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4" />
+                    <circle cx="12" cy="12" r="3.2" />
+                  </svg>
+                </span>
+                <span className="pvlist-nvopt__name">智能成片</span>
+                <span className="pvlist-nvopt__desc">输入需求/素材,AI 分镜成片</span>
+              </button>
+              <button type="button" className="pvlist-nvopt" onClick={() => goCreateVia('hot')}>
+                <span className="pvlist-nvopt__ic pvlist-nvopt__ic--hot" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="13" height="16" rx="2" />
+                    <path d="M8 4v16M20 8l-4 2v4l4 2z" />
+                  </svg>
+                </span>
+                <span className="pvlist-nvopt__name">爆款复制</span>
+                <span className="pvlist-nvopt__desc">上传爆款视频,一键做同款</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

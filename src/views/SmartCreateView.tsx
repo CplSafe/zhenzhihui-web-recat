@@ -6,7 +6,7 @@
  * 大量编排逻辑可复用现有 useCreativeWorkflow / useStoryboard* / useVideoGeneration。
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
@@ -186,6 +186,7 @@ function extractProjectVideoFallback(draftJson: any): {
 export default function SmartCreateView() {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
+  const location = useLocation()
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
   const workspaceId = useWorkspaceId()
@@ -222,6 +223,15 @@ export default function SmartCreateView() {
   const [draftName, setDraftName] = useState('')
   const [nameTouched, setNameTouched] = useState(false) // 用户手动改过名后不再自动覆盖
   const [naming, setNaming] = useState(false)
+  // 从「项目管理 → 新建视频」进入:沿用原项目名(一模一样),标记已命名避免被 AI 自动命名覆盖
+  useEffect(() => {
+    const nm = (location.state as any)?.newProjectName
+    if (typeof nm === 'string' && nm.trim()) {
+      setProjectName(nm.trim())
+      setNameTouched(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const nameInputRef = useRef<HTMLInputElement | null>(null)
 
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)

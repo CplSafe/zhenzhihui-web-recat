@@ -9,7 +9,7 @@
  * (恢复到生成步并用 task id 续轮询),与智能成片一致;暂不接后端项目 CRUD。
  */
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
@@ -97,6 +97,7 @@ function parseHotCopyDraft(draftJson: any): { obj: any; smart: any } | null {
 
 export default function HotCopyCreateView() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
   const workspaceId = useWorkspaceId()
@@ -131,6 +132,15 @@ export default function HotCopyCreateView() {
   const [draftName, setDraftName] = useState('')
   const [nameTouched, setNameTouched] = useState(false)
   const [naming, setNaming] = useState(false)
+  // 从「项目管理 → 新建视频」进入:沿用原项目名(一模一样),标记已命名避免被 AI 自动命名覆盖
+  useEffect(() => {
+    const nm = (location.state as any)?.newProjectName
+    if (typeof nm === 'string' && nm.trim()) {
+      setProjectName(nm.trim())
+      setNameTouched(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const nameInputRef = useRef<HTMLInputElement | null>(null)
   const nameAbortRef = useRef<AbortController | null>(null)
 
