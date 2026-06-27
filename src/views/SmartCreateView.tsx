@@ -1069,9 +1069,10 @@ export default function SmartCreateView() {
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
   const [blurPhase, setBlurPhase] = useState('')
   const [blurDebug, setBlurDebug] = useState<any[]>([])
-  // 人脸脱敏已下线(去掉开关):统一不脱敏,出片用原图,成片人脸清晰。保留 ref 供既有脱敏分支判断(恒 false=跳过)。
-  const [faceBlurEnabled] = useState(false)
-  const faceBlurEnabledRef = useRef(false)
+  // 人脸脱敏恒开(不提供开关):正式出片前先对每张进入视频的分镜图抠人脸/脱敏,再喂 seedance。
+  // 脱敏失败 / 后端未配 image.face_detect 模型 → 静默回退原图,不阻塞出片。
+  const [faceBlurEnabled] = useState(true)
+  const faceBlurEnabledRef = useRef(true)
   useEffect(() => {
     faceBlurEnabledRef.current = faceBlurEnabled
   }, [faceBlurEnabled])
