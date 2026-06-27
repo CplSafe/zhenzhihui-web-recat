@@ -26,6 +26,7 @@ import {
 import { listProjectVideos, addClassifiedVideo, countProjectVideos, type ProjectVideo } from '@/api/projectVideos'
 import { loadClassifiedKeys, markVideoClassified, videoKeyOf } from '@/utils/unclassifiedVideos'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
+import { openComingSoon } from '@/stores/ui'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 
 const ROUTE_MAP: Record<string, string> = {
@@ -474,9 +475,9 @@ export default function ProjectManagementView() {
     (key: string) => {
       const path = ROUTE_MAP[key]
       if (path) navigate(path)
-      else showToast('功能待开放', 'info')
+      else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
     },
-    [navigate, showToast],
+    [navigate],
   )
 
   const loadProjects = useCallback(async () => {
@@ -744,7 +745,7 @@ export default function ProjectManagementView() {
         className="pm2-shell"
         style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}
       >
-        <AppTopbar onMenu={() => setSidebarOpen(true)} onMember={() => showToast('会员中心待开放', 'info')} />
+        <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
         <section
           className="pm2-main"

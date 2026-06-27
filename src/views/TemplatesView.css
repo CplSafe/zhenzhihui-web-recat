@@ -5,6 +5,30 @@
   gap: 12px;
 }
 
+/* 窄屏汉堡:默认隐藏,<=900px 显示,用于唤出侧栏抽屉 */
+.templates-menu {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #444;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.templates-menu:hover {
+  background: #f3f4f6;
+}
+@media (max-width: 900px) {
+  .templates-menu {
+    display: inline-flex;
+  }
+}
+
 .templates-back {
   display: inline-flex;
   align-items: center;

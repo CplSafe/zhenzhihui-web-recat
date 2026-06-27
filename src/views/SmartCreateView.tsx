@@ -63,6 +63,7 @@ import {
   deriveModelPlanCandidates,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
+import { openComingSoon } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import {
   saveSmartDraft,
@@ -501,7 +502,12 @@ export default function SmartCreateView() {
     // 2) 一次 VL 看全部图 → 产品分组(同产品多图归组、主体互斥)
     let products: { product: string; kind: string; imageIndexes: number[]; matches: string[] }[] = []
     try {
-      products = (await matchUploadsToSubjects(persisted.map((p) => p.url), allNames)).products
+      products = (
+        await matchUploadsToSubjects(
+          persisted.map((p) => p.url),
+          allNames,
+        )
+      ).products
     } catch {
       /* VL 失败 → 下面兜底成一个「主推产品」 */
     }
@@ -536,9 +542,7 @@ export default function SmartCreateView() {
     if (injections.length) {
       out = out.map((sh) => {
         const have = new Set(sh.subjects.map((su) => stripAt(su.tag)))
-        const add = injections
-          .filter((inj) => !have.has(stripAt(inj.tag)))
-          .map((inj) => ({ ...inj, manualGen: true })) // 注入的主推产品:排除批量、须手动生成
+        const add = injections.filter((inj) => !have.has(stripAt(inj.tag))).map((inj) => ({ ...inj, manualGen: true })) // 注入的主推产品:排除批量、须手动生成
         return add.length ? { ...sh, subjects: [...add, ...sh.subjects] } : sh
       })
     }
@@ -1708,7 +1712,7 @@ export default function SmartCreateView() {
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
-    else showToast('功能待开放', 'info') // 视频编辑/投前预审/数据看板等未开放:提示,避免点了无反应
+    else openComingSoon() // 设置/视频编辑/投前预审/数据看板等未上线项:弹全局「功能待开放」弹窗
   }
 
   // 「制作新视频」:把整个智能成片流程初始化为全新空白页(等同切换路由再切回来)。
