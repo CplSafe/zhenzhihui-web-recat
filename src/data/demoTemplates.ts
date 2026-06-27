@@ -5,7 +5,7 @@
  */
 import type { TemplateItem } from '@/api/templates'
 
-const BASE = 'https://zzh-zhongdahengrui.oss-cn-beijing.aliyuncs.com/'
+const BASE = 'https://zzh-zhongdahengrui.oss-accelerate.aliyuncs.com/'
 
 interface DemoVid {
   name: string
