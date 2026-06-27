@@ -533,6 +533,17 @@
   color: #e54d42;
   font-size: 13px;
 }
+/* 红字提示里的「直接登录」内联链接 */
+.zauth-inline-link {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: #e54d42;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
 .zauth-submit {
   width: 100%;
   height: 52px;

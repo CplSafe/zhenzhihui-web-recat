@@ -73,6 +73,7 @@ export default function AuthActionModal({
   const [submitting, setSubmitting] = useState(false)
   const [showPwd, setShowPwd] = useState(false)
   const [err, setErr] = useState('')
+  const [alreadyReg, setAlreadyReg] = useState(false) // 注册时发现手机号已注册 → 红字提示+去登录
   const timerRef = useRef<number | null>(null)
 
   const needsMobileInput = mode !== 'sms-register'
@@ -127,9 +128,8 @@ export default function AuthActionModal({
       return false // 理论不可达(占位码必然失败)
     } catch (e: any) {
       if (Number(e?.code) === 10401) {
-        showToast('该手机号已被注册,请直接登录', 'info')
-        onAlreadyRegistered?.(m)
-        onClose()
+        // 已注册:不关闭弹窗,改为在弹窗内红字提示并提供「去登录」入口
+        setAlreadyReg(true)
         return true
       }
       return false // 10003(验证码错=未注册)或其他错误 → 放行继续发码
@@ -192,11 +192,9 @@ export default function AuthActionModal({
         setSubmitting(false)
         return
       }
-      // 注册:该手机号已注册 → 引导直接登录
+      // 注册:该手机号已注册 → 弹窗内红字提示并提供「去登录」入口(不关闭弹窗)
       if (mode === 'register' && Number(e?.code) === 10401) {
-        showToast('该手机号已被注册,请直接登录', 'info')
-        onAlreadyRegistered?.(m)
-        onClose()
+        setAlreadyReg(true)
         return
       }
       // sms-register:复用的登录验证码若不被注册接口接受 → 引导改用注册
@@ -232,6 +230,7 @@ export default function AuthActionModal({
                 onChange={(e) => {
                   setMobile(e.target.value)
                   setErr('')
+                  setAlreadyReg(false) // 改手机号 → 清掉「已注册」提示
                 }}
               />
             </div>
@@ -306,7 +305,20 @@ export default function AuthActionModal({
           )}
         </div>
 
-        {err && <span className="zauth-err">{err}</span>}
+        {alreadyReg ? (
+          <span className="zauth-err">
+            该手机号已注册,请
+            <button
+              type="button"
+              className="zauth-inline-link"
+              onClick={() => onAlreadyRegistered?.((mobile || prefill?.mobile || '').replace(/\s/g, ''))}
+            >
+              直接登录
+            </button>
+          </span>
+        ) : (
+          err && <span className="zauth-err">{err}</span>
+        )}
 
         <button type="button" className="zauth-submit" disabled={submitting} onClick={submit}>
           {submitting ? '处理中…' : submitLabel}
