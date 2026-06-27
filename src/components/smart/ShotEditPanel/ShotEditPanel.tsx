@@ -23,6 +23,23 @@ function Thumb({ src, alt, fallback }: { src?: string; alt?: string; fallback?: 
   return <img src={src} alt={alt || ''} onError={() => setBroken(true)} />
 }
 
+// 放大图标(hover 时显示在图片右上角,点击放大查看)
+const ZoomIcon = (
+  <svg
+    viewBox="0 0 24 24"
+    width="15"
+    height="15"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.2-3.2M11 8v6M8 11h6" />
+  </svg>
+)
+
 interface ShotEditPanelProps {
   /** 额外类名:父组件控制布局(如 VideoStage 收窄面板宽) */
   className?: string
@@ -160,12 +177,17 @@ export default function ShotEditPanel({
               const name = stripAt(su.tag)
               return (
                 <div className={styles.seMatCell} key={`${su.tag}-${i}`}>
-                  <div className={styles.seMatThumb} title={name}>
+                  <div
+                    className={`${styles.seMatThumb}${su.image ? ' ' + styles.zoomable : ''}`}
+                    title={su.image ? '点击放大查看' : name}
+                    onClick={() => su.image && setBigImg(su.image)}
+                  >
                     <Thumb
                       src={su.image}
                       alt={name}
                       fallback={<span className={styles.seMatPh}>{name || '素材'}</span>}
                     />
+                    {su.image && <span className={styles.seZoom}>{ZoomIcon}</span>}
                   </div>
                   <span className={styles.seMatLabel}>{name || '素材'}</span>
                 </div>
@@ -178,7 +200,11 @@ export default function ShotEditPanel({
       {/* ── 顶部:当前分镜图 + 历史生成 ── */}
       <div className={styles.seTop}>
         <div className={styles.seCurBox}>
-          <div className={styles.seditCur}>
+          <div
+            className={`${styles.seditCur}${current && !regenerating ? ' ' + styles.zoomable : ''}`}
+            title={current && !regenerating ? '点击放大查看' : ''}
+            onClick={() => current && !regenerating && setBigImg(current)}
+          >
             {regenerating ? (
               <span className={styles.seditCurPh}>
                 <span className={styles.seditSpin} aria-hidden="true" />
@@ -205,13 +231,27 @@ export default function ShotEditPanel({
                   const i = versions.length - 1 - ri
                   return (
                     <div className={styles.seHistCell} key={i}>
-                      <button
-                        type="button"
-                        className={`${styles.seHistItem}${v.url === current ? ' ' + styles.active : ''}`}
-                        onClick={() => pickVersion(v)}
-                      >
-                        <img src={v.url} alt="" />
-                      </button>
+                      <div className={styles.seHistThumb}>
+                        <button
+                          type="button"
+                          className={`${styles.seHistItem}${v.url === current ? ' ' + styles.active : ''}`}
+                          onClick={() => pickVersion(v)}
+                        >
+                          <img src={v.url} alt="" />
+                        </button>
+                        {/* hover 显示放大图标:点击仅放大查看,不切换版本 */}
+                        <span
+                          className={styles.seZoom}
+                          role="button"
+                          title="放大查看"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setBigImg(v.url)
+                          }}
+                        >
+                          {ZoomIcon}
+                        </span>
+                      </div>
                       <span className={styles.seHistLabel}>V{i + 1}</span>
                     </div>
                   )
@@ -233,6 +273,16 @@ export default function ShotEditPanel({
 
       {/* ── 台词 / 字幕 / 音效(全宽,即时自动保存)── */}
       {texts}
+
+      {/* 放大查看灯箱(主体素材 / 当前分镜图 / 历史版本 共用) */}
+      {bigImg && (
+        <div className={styles.seditLightbox} onClick={() => setBigImg('')} role="dialog" aria-label="图片放大">
+          <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
+          <button type="button" className={styles.seditLightboxClose} onClick={() => setBigImg('')} aria-label="关闭">
+            ×
+          </button>
+        </div>
+      )}
     </div>
   )
 }

@@ -68,14 +68,16 @@
 .sadPreview {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  /* 按项目比例自适应(横屏/竖屏);竖屏过高用 max-height 收住并居中 */
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+  max-height: 56vh;
+  margin: 0 auto 14px;
   border-radius: 12px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 14px;
 
   img {
     width: 100%;
@@ -206,6 +208,33 @@
 .sadRefHint {
   font-size: 11px;
   color: #9aa3af;
+}
+
+/* 已选参考图(主推产品锚定的上传素材,只读展示) */
+.sadAnchor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  background: #f4fbf9;
+  border: 1px solid #d7f0e9;
+  border-radius: 10px;
+}
+.sadAnchorThumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 200px;
+}
+.sadAnchorText {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #11a98a;
+}
+.sadAnchorText b {
+  font-weight: 600;
 }
 
 .sadPrompt {

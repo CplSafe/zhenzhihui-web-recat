@@ -16,6 +16,13 @@ export interface ShotSubject {
   kind?: string // 人物 / 物体 / 场景
   image?: string // AI 匹配到的素材图(或用户上传);无则展示「+」
   assetId?: number // 该素材图的后端 asset_id(持久化/刷新签名URL用)
+  // 主推产品锚定:该主体应「以这张用户上传素材为参考做图生图」(保真还原产品),而非纯文生图。
+  // 有 refImage 的主体:不参与合并;生成时走图生图(从上传素材抠成干净单品)。
+  refImage?: string // 参考用的上传素材图(签名URL/ dataURL);多张时取第一张供展示
+  refAssetId?: number // 主参考图的后端 asset_id(持久化/刷新签名URL用)
+  refAssetIds?: number[] // 同一产品的多张上传素材 asset_id(多图归组时全部作图生图参考)
+  // VL 没能把上传素材匹配到任何现有主体时「注入的主推产品」标记:排除出「AI一键生成」批量,须用户手动生成。
+  manualGen?: boolean
 }
 export interface Shot {
   id: string | number

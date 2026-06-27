@@ -73,7 +73,9 @@ function sanitize(d: SmartDraft): SmartDraft {
     next.shots = next.shots.map((s: any) => ({
       ...s,
       image: killBlob(s.image),
-      subjects: Array.isArray(s.subjects) ? s.subjects.map((x: any) => ({ ...x, image: killBlob(x.image) })) : [],
+      subjects: Array.isArray(s.subjects)
+        ? s.subjects.map((x: any) => ({ ...x, image: killBlob(x.image), refImage: killBlob(x.refImage) }))
+        : [],
       extraRefs: Array.isArray(s.extraRefs)
         ? s.extraRefs.map((r: any) => ({ ...r, url: killBlob(r?.url) })).filter((r: any) => r.url)
         : s.extraRefs,
@@ -166,7 +168,9 @@ function stripHeavy(d: SmartDraft): SmartDraft {
             )
             .filter((v: any) => v.url)
         : s.imageVersions,
-      subjects: Array.isArray(s.subjects) ? s.subjects.map((x: any) => ({ ...x, image: killHeavy(x.image) })) : [],
+      subjects: Array.isArray(s.subjects)
+        ? s.subjects.map((x: any) => ({ ...x, image: killHeavy(x.image), refImage: killHeavy(x.refImage) }))
+        : [],
       extraRefs: Array.isArray(s.extraRefs)
         ? s.extraRefs.map((r: any) => ({ ...r, url: killHeavy(r?.url) })).filter((r: any) => r.url)
         : s.extraRefs,

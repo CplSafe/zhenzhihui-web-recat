@@ -14,6 +14,8 @@ interface SubjectAssetDialogProps {
   kind?: string
   currentImage?: string
   versions: string[]
+  /** 已选参考图:主推产品锚定的上传素材(只读展示,可多张)。本产品按它们抠图保真生成,重新生成会沿用。 */
+  anchorRefImages?: string[]
   defaultPrompt: string
   /** 打开时若无版本则自动生成一次 */
   autoGen?: boolean
@@ -36,6 +38,7 @@ export default function SubjectAssetDialog({
   kind,
   currentImage,
   versions,
+  anchorRefImages,
   defaultPrompt,
   autoGen,
   refinePrompt,
@@ -209,6 +212,23 @@ export default function SubjectAssetDialog({
                   </svg>
                 </span>
               )}
+            </div>
+          )}
+          {/* 已选参考图:主推产品锚定的上传素材(只读,可多张)。本产品就是按它们抠图保真生成的 */}
+          {anchorRefImages && anchorRefImages.length > 0 && (
+            <div className={styles.sadAnchor}>
+              <div className={styles.sadAnchorThumbs}>
+                {anchorRefImages.map((url, i) => (
+                  <div className={styles.sadRefThumb} key={`${url}-${i}`}>
+                    <img src={url} alt={`已选参考图${i + 1}`} />
+                  </div>
+                ))}
+              </div>
+              <span className={styles.sadAnchorText}>
+                <b>已选参考图{anchorRefImages.length > 1 ? `(${anchorRefImages.length}张)` : ''}</b>:来自你上传的素材
+                <br />
+                本产品按它{anchorRefImages.length > 1 ? '们' : ''}抠图保真生成,重新生成会继续沿用
+              </span>
             </div>
           )}
           {/* 参考图:从项目选 或 上传;AI 据此优化提示词并图生图(保证用你的产品) */}
