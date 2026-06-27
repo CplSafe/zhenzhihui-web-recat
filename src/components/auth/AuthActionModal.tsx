@@ -235,8 +235,9 @@ export default function AuthActionModal({
               />
             </div>
           ) : (
-            <div className="zauth-field zauth-field--ro">
-              <input type="tel" value={mobile || prefill?.mobile || ''} readOnly aria-label="手机号" />
+            <div className="zauth-static" aria-label="手机号">
+              <span className="zauth-static-label">手机号</span>
+              <span className="zauth-static-val">{mobile || prefill?.mobile || ''}</span>
             </div>
           )}
 
@@ -245,6 +246,7 @@ export default function AuthActionModal({
               type={showPwd ? 'text' : 'password'}
               placeholder={pwdLabel}
               value={password}
+              autoComplete="new-password"
               onChange={(e) => {
                 setPassword(e.target.value)
                 setErr('')

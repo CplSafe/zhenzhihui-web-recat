@@ -476,6 +476,23 @@
 .zauth-field--ro input {
   color: #6b7280;
 }
+/* 只读手机号:纯文本展示,不做成输入框 */
+.zauth-static {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2px 2px 6px;
+}
+.zauth-static-label {
+  font-size: 13px;
+  color: #9aa3af;
+}
+.zauth-static-val {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2530;
+  letter-spacing: 0.5px;
+}
 /* 去掉浏览器记住密码 / 自动填充时的蓝(或黄)色底,保持与输入框一致的白底 */
 .zauth-field input:-webkit-autofill,
 .zauth-field input:-webkit-autofill:hover,
