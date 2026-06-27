@@ -784,6 +784,11 @@ export default function SmartCreateView() {
   // ── 镜头编排:按 画面描述 + 该镜头素材 + 上一张分镜图(连贯)+ 项目摘要 生成分镜图(后端文/图生图) ──
   const [shotGen, setShotGen] = useState<Record<string, boolean>>({})
   const [shotGenRunning, setShotGenRunning] = useState(false)
+  // 分镜图加载失败追踪(键=shot.id):缩略图 onError 标记、onLoad 清除。
+  // 任一参与分镜的图加载失败 → 禁止「生成视频」(避免拿坏图/过期URL出片)。
+  const [shotImgError, setShotImgError] = useState<Record<string | number, boolean>>({})
+  const markShotImgError = (id: string | number) => setShotImgError((m) => (m[id] ? m : { ...m, [id]: true }))
+  const markShotImgLoad = (id: string | number) => setShotImgError((m) => (m[id] ? { ...m, [id]: false } : m))
   const autoGenRef = useRef(false)
   // 上次「分镜图 / 整片视频」生成时的输入签名:用于区分「草稿恢复/未改动(沿用旧结果)」与
   // 「上游改动(需重新生成)」。进入下一步时输入签名变了 → 重新生成,与产品逻辑一致。
@@ -2221,7 +2226,11 @@ export default function SmartCreateView() {
                 : undefined,
           },
         ]
-      case 2: // 镜头编排:重新生成 + 生成视频
+      case 2: {
+        // 参与视频的分镜:每张都要有图且加载成功(无图/加载失败 → 不能生成视频)
+        const activeShots = shots.filter((s) => s.includeInVideo !== false)
+        const shotImagesReady = activeShots.length > 0 && activeShots.every((s) => !!s.image && !shotImgError[s.id])
+        // 镜头编排:重新生成 + 生成视频
         return [
           {
             label: shotGenRunning ? '生成中…' : '重新生成',
@@ -2236,9 +2245,15 @@ export default function SmartCreateView() {
               autoVidRef.current = false
               goStep(3)
             },
-            disabled: anyShotGenerating,
+            disabled: anyShotGenerating || !shotImagesReady,
+            tip: anyShotGenerating
+              ? '分镜图生成中,请稍候…'
+              : !shotImagesReady
+                ? '有分镜图未生成或加载失败,请先重新生成对应分镜图再生成视频'
+                : undefined,
           },
         ]
+      }
       case 3: // 生成视频:总按钮已移到中间 VideoStage,这里不再渲染底部条
         return []
       default:
@@ -2423,6 +2438,8 @@ export default function SmartCreateView() {
           generating={shotGen}
           onShotsChange={setShots}
           onUploadRef={uploadRef}
+          onShotImgError={markShotImgError}
+          onShotImgLoad={markShotImgLoad}
           onGenerateShot={generateShotFromDialog}
           onPolishPrompt={(text, uploadRefUrls) =>
             refineShotPrompt({
@@ -2515,6 +2532,10 @@ export default function SmartCreateView() {
           />
         ) : (
           <>
+            {/* 创建新视频:固定在流程区最右上,点击重置为全新入口、重新走一遍生成流程 */}
+            <button type="button" className="smart__newvideo" onClick={() => resetToNewVideo('video')}>
+              创建新视频
+            </button>
             {/* 进度条:用了 SKILL 时在最前面加一步「营销思路拆解」,索引整体后移 1 */}
             <div className="smart__progress">
               <StepProgress

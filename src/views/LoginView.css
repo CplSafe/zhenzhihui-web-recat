@@ -42,17 +42,24 @@
   padding: 4px 0;
   font-size: 20px;
   font-weight: 600;
+  font-family: inherit;
   color: rgba(217, 217, 217, 0.9);
   background: none;
   border: none;
-  cursor: default;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.zlogin-nav-item:hover {
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .zlogin-nav-item.is-active {
   color: #fff;
 }
 
-.zlogin-nav-item.is-active::after {
+/* 下划线:常驻但默认收起,选中时滑出(切换动效) */
+.zlogin-nav-item::after {
   content: '';
   position: absolute;
   left: 0;
@@ -61,6 +68,13 @@
   height: 2px;
   border-radius: 2px;
   background: #fff;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.2s ease;
+}
+
+.zlogin-nav-item.is-active::after {
+  transform: scaleX(1);
 }
 
 /* 右：表单区 */

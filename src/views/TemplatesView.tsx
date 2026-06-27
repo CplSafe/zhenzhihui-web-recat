@@ -5,24 +5,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
-import { listTemplates, type TemplateItem } from '@/api/templates'
+import { type TemplateItem } from '@/api/templates'
+import { DEMO_TEMPLATES } from '@/data/demoTemplates'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { openComingSoon } from '@/stores/ui'
-import { useAuth } from '@/auth/AuthContext'
-// 列表走 SWR 缓存(按 workspace,先返缓存秒出、后台刷新);加载后预热首屏视频首帧,见下方接入处。
-import { swrFetch, peekCache } from '@/utils/swrCache'
-import { preloadMedia, type MediaItem } from '@/utils/mediaPreload'
 import './HomeView.css'
 import './TemplatesView.css'
-
-/** 模板库列表的 SWR 缓存键(按 workspace 区分) */
-const templatesCacheKey = (workspaceId: number) => `templates:${workspaceId}`
-/** 加载后预热首屏的卡片视频首帧数量(只热前几个,避免一次拉太多) */
-const PRELOAD_FIRSTSCREEN_COUNT = 8
 
 const RATIO_KEYS = ['', '9 / 16', '16 / 9', '4 / 5', '1 / 1', '3 / 4']
 const RATIO_LABELS: Record<string, string> = {
@@ -47,12 +39,8 @@ export default function TemplatesView() {
   const navigate = useNavigate()
   const workspaceId = useWorkspaceId()
   const requireAuth = useRequireAuth()
-  const { isAuthenticated } = useAuth()
 
-  // 初始值从缓存秒出(再进模板库不闪空、不重拉);无缓存为空数组。
-  const [templates, setTemplates] = useState<TemplateItem[]>(
-    () => peekCache<TemplateItem[]>(templatesCacheKey(Number(workspaceId || 0))) ?? [],
-  )
+  const [templates, setTemplates] = useState<TemplateItem[]>(DEMO_TEMPLATES)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -87,51 +75,12 @@ export default function TemplatesView() {
     })
   }
 
+  // 模板库展示固定的 18 条演示视频(替换后端数据);不再依赖登录/工作空间
   useEffect(() => {
-    const wsId = Number(workspaceId || 0)
-    if (!wsId) return
-    if (!isAuthenticated) {
-      setTemplates([])
-      setLoading(false)
-      setError('unauth')
-      return
-    }
-    let cancelled = false
-    const cacheKey = templatesCacheKey(wsId)
-    // 有缓存就先用缓存(initial state 已秒出),不显示「加载中」;无缓存才转圈。
-    const hasCache = peekCache<TemplateItem[]>(cacheKey) !== undefined
-    setLoading(!hasCache)
-    setError('')
-
-    // 列表走 SWR:有缓存立即用缓存,后台静默刷新;新数据回来再更新。
-    // 「重试」按钮通过 retry 变化触发本 effect;若需强制绕过缓存可在此 invalidate(当前后台刷新已足够)。
-    const applyItems = (items: TemplateItem[]) => {
-      if (cancelled) return
-      setTemplates(items)
-      setError(items.length ? '' : 'empty')
-      // 加载完成后预热首屏前几张卡片的视频首帧,滚动/播放更顺(幂等、并发限流)。
-      const targets: MediaItem[] = items
-        .filter((t) => Boolean(t.videoUrl))
-        .slice(0, PRELOAD_FIRSTSCREEN_COUNT)
-        .map((t) => ({ url: t.videoUrl, type: 'video' as const }))
-      if (targets.length) preloadMedia(targets)
-    }
-
-    swrFetch(cacheKey, () => listTemplates({ workspaceId: wsId, limit: 200 }).then((r) => r.items), {
-      ttl: 5 * 60_000,
-      onRevalidate: applyItems, // 后台刷新到的最新列表
-    })
-      .then(({ data }) => applyItems(data))
-      .catch(() => {
-        if (!cancelled) setError('api')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [workspaceId, isAuthenticated, retry])
+    setTemplates(DEMO_TEMPLATES)
+    setLoading(false)
+    setError(DEMO_TEMPLATES.length ? '' : 'empty')
+  }, [retry])
 
   const keywordTrim = keyword.trim()
 
@@ -282,6 +231,14 @@ export default function TemplatesView() {
                             playsInline
                             preload="metadata"
                             style={{ position: 'absolute', inset: 0, zIndex: 0 }}
+                            onLoadedMetadata={(e) => {
+                              // 卡片比例跟随视频真实宽高
+                              const v = e.currentTarget
+                              if (v.videoWidth && v.videoHeight) {
+                                const thumb = v.closest('.home__proj-thumb') as HTMLElement | null
+                                if (thumb) thumb.style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`
+                              }
+                            }}
                             onError={(e) => {
                               ;(e.currentTarget as HTMLVideoElement).style.display = 'none'
                             }}

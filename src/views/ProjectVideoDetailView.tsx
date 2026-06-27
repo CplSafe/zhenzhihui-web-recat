@@ -44,6 +44,8 @@ export default function ProjectVideoDetailView() {
   const [projectTitle, setProjectTitle] = useState('')
   const [detail, setDetail] = useState<ProjectVideo | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // 竖屏视频:按屏幕高展示(横屏保持按宽,不变)。加载元数据后据真实宽高判断。
+  const [isPortrait, setIsPortrait] = useState(false)
 
   const handleNavigate = useCallback(
     (key: string) => {
@@ -184,9 +186,18 @@ export default function ProjectVideoDetailView() {
               </section>
 
               <section className="pvdetail-content">
-                <div className="pvdetail-player">
+                <div className={`pvdetail-player${isPortrait ? ' is-portrait' : ''}`}>
                   {detail.videoUrl ? (
-                    <video src={detail.videoUrl} controls playsInline preload="metadata" />
+                    <video
+                      src={detail.videoUrl}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      onLoadedMetadata={(e) => {
+                        const v = e.currentTarget
+                        setIsPortrait(v.videoHeight > v.videoWidth)
+                      }}
+                    />
                   ) : (
                     <div className="pvdetail-player__empty">该视频尚未生成内容，当前为草稿记录</div>
                   )}

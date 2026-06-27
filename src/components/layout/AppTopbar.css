@@ -82,17 +82,19 @@
   padding: 5px 12px;
   border: none;
   border-radius: 999px;
-  /* 青绿线性渐变(#60E0C4,断点 0%/14% · 50%/4% · 100%/14%);叠在白底上保证可读 */
-  background:
-    linear-gradient(to right, rgba(96, 224, 196, 0.14) 0%, rgba(96, 224, 196, 0.04) 50%, rgba(96, 224, 196, 0.14) 100%),
-    #fff;
-  color: #1aa489;
+  /* haoran 旧版:金色渐变会员按钮 */
+  background: linear-gradient(135deg, #ffe9a8, #ffd766);
+  color: #7a5a00;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 .apptop__member-icon {
-  font-size: 10px;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  flex: none;
+  display: block;
 }
 .apptop__user {
   position: relative;

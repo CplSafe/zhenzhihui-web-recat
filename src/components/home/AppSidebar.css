@@ -24,17 +24,19 @@
   display: flex;
   align-items: center;
   justify-content: flex-start; /* logo + 文字整体向左对齐 */
-  gap: 12px;
+  gap: 2px; /* 文字盒贴住 logo(logo 位置不变) */
   height: 84px;
   padding: 0 18px;
   flex-shrink: 0;
 }
-/* LOGO + hover 开关图标叠放容器 */
+/* LOGO + hover 开关图标叠放容器:尺寸与 LOGO 一致(60×60),LOGO 居中摆正 */
 .app-sidebar__logo-wrap {
   position: relative;
-  width: 44px;
-  height: 44px;
+  width: 60px;
+  height: 60px;
   flex-shrink: 0;
+  display: grid;
+  place-items: center;
 }
 .app-sidebar__logo {
   width: 60px;
@@ -49,7 +51,7 @@
   inset: 0;
   display: grid;
   place-items: center;
-  border-radius: 10px;
+  border-radius: 12px;
   background: rgba(31, 207, 169, 0.12);
   color: #1fcfa9;
   opacity: 0;
@@ -145,16 +147,13 @@
   color: #333;
   letter-spacing: 1px;
 }
-/* 版本徽章:黄底胶囊(用户指定 #F1EC00,80×20) */
+/* 版本徽章:黄底胶囊(haoran 版,用户指定 #F1EC00,80×20) */
 .app-sidebar__version {
   width: 80px;
   height: 20px;
   font-size: 11px;
-  /* 青绿线性渐变(#60E0C4,断点 0%/14% · 50%/4% · 100%/14%);叠在白底上保证可读 */
-  color: #1aa489;
-  background:
-    linear-gradient(to right, rgba(96, 224, 196, 0.14) 0%, rgba(96, 224, 196, 0.04) 50%, rgba(96, 224, 196, 0.14) 100%),
-    #fff;
+  color: #333;
+  background: #f1ec00;
   border-radius: 6px;
   display: inline-flex;
   align-items: center;

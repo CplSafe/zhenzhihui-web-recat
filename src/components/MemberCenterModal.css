@@ -4,32 +4,27 @@
 .mcm-mask {
   position: fixed;
   inset: 0;
+  /* 保留 dev 的高层级,避免被其它弹窗盖住 */
   z-index: 2100;
-  /* 浅绿毛玻璃:更深的模糊 + 一层淡绿染色(品牌青绿 #60E0C4),背景隐约可见 */
-  background: rgba(96, 224, 196, 0.14);
-  backdrop-filter: blur(70px);
-  -webkit-backdrop-filter: blur(10px);
+  /* haoran 旧版:深色半透明遮罩(还原背景) */
+  background: rgba(20, 20, 40, 0.45);
   display: flex;
-  align-items: stretch;
-  justify-content: stretch;
-  /* 铺满:无留边 */
-  padding: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
 }
 
 .mcm {
   position: relative;
-  /* 上下左右铺满视口 */
-  width: 100%;
-  height: 100%;
-  max-width: none;
-  max-height: none;
+  /* haoran 旧版:居中浅灰卡片(还原背景颜色) */
+  width: min(1200px, 96vw);
+  max-height: 90vh;
   box-sizing: border-box;
   overflow-y: auto;
-  /* 内容区本身透明:卡片/文字浮在透明层上,可见后面页面 */
-  background: transparent;
-  border-radius: 0;
+  background: #f8f9fa;
+  border-radius: 20px;
   padding: 28px 32px 32px;
-  box-shadow: none;
+  box-shadow: 0 24px 60px rgba(20, 20, 50, 0.28);
 }
 
 /* 页面模式:填满内容区、去掉弹窗外观 */
@@ -45,9 +40,9 @@
   box-shadow: none;
 }
 
-/* 关闭 X:透明铺满布局下需明显可见,固定在视口右上角(不随内容滚动) */
+/* 关闭 X:居中卡片右上角(还原 haoran 版定位) */
 .mcm-close {
-  position: fixed;
+  position: absolute;
   top: 18px;
   right: 18px;
   z-index: 1;

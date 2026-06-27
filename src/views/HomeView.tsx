@@ -169,43 +169,6 @@ const ROUTE_MAP: Record<string, string> = {
   templates: '/templates',
 }
 
-/* 轮播 Banner（占位多条;后端接入后替换 left/right 为视频/图、并补真实文案与跳转） */
-const BANNERS = [
-  {
-    id: 0,
-    left: bannerLeft,
-    right: bannerRight,
-    pre: '新手',
-    em: '快速入门',
-    post: '指南',
-    sub: '从零开始，在 3 分钟内生成您的第一条 AI 大片',
-    btn: '立即开启体验',
-    action: 'tutorial',
-  },
-  {
-    id: 1,
-    left: bannerRight,
-    right: bannerLeft,
-    pre: '海量',
-    em: '爆款模板',
-    post: '随心选',
-    sub: '一键复制热门同款，创作效率翻倍',
-    btn: '去逛模板库',
-    action: 'templates',
-  },
-  {
-    id: 2,
-    left: bannerLeft,
-    right: bannerRight,
-    pre: 'AI',
-    em: '智能成片',
-    post: '秒出大片',
-    sub: '输入灵感或上传素材，自动生成高质量广告视频',
-    btn: '立即体验',
-    action: 'creative',
-  },
-]
-
 /* 轮播统一渲染结构:兼容后端 /api/v1/banners(视频/图 + 外链)与本地占位兜底 */
 interface Slide {
   id: number | string
@@ -226,17 +189,12 @@ interface Slide {
   btn?: string
 }
 
-// 本地占位 → Slide(后端拉取失败时兜底)
-const PLACEHOLDER_SLIDES: Slide[] = BANNERS.map((b) => ({
-  id: b.id,
-  mediaUrl: b.left,
-  mediaType: 'image',
-  pre: b.pre,
-  em: b.em,
-  post: b.post,
-  sub: b.sub,
-  action: b.action,
-  btn: b.btn,
+// 轮播只用横屏视频(w>h),适配宽幅 banner;按真实比例显示
+const DEMO_SLIDES: Slide[] = DEMO_LANDSCAPE_URLS.map((url, i) => ({
+  id: `demo-${i}`,
+  mediaUrl: url,
+  mediaType: 'video',
+  sub: '',
 }))
 
 // 后端 Banner → Slide
@@ -328,7 +286,8 @@ const QUICK_ENTRIES = [
   },
 ]
 
-import { listTemplates, type TemplateItem } from '@/api/templates'
+import { type TemplateItem } from '@/api/templates'
+import { DEMO_TEMPLATES, DEMO_LANDSCAPE_URLS } from '@/data/demoTemplates'
 
 const TABS = [
   { key: 'template', label: '模板库' },
@@ -564,7 +523,7 @@ export default function HomeView() {
   const [historyError, setHistoryError] = useState('')
 
   // 模板库（接后端 listTemplates → /api/v1/creative/projects，仅展示有视频的项目）
-  const [templateItems, setTemplateItems] = useState<TemplateItem[]>([])
+  const [templateItems, setTemplateItems] = useState<TemplateItem[]>(DEMO_TEMPLATES)
   const [templateLoading, setTemplateLoading] = useState(false)
   const [templateError, setTemplateError] = useState('')
   const [templateRetry, setTemplateRetry] = useState(0)
@@ -594,39 +553,13 @@ export default function HomeView() {
     })
   }
 
+  // 模板库展示固定的 18 条演示视频(替换后端数据);不再依赖登录/工作空间
   useEffect(() => {
     if (activeTab !== 'template') return
-    const wsId = Number(workspaceId || 0)
-    if (!wsId) return
-    if (!isAuthenticated) {
-      setTemplateItems([])
-      setTemplateLoading(false)
-      setTemplateError('unauth')
-      return
-    }
-    let cancelled = false
-    setTemplateLoading(true)
-    setTemplateError('')
-    const fetcher = listTemplates({ workspaceId: wsId, limit: 100 })
-    fetcher
-      .then(({ items }) => {
-        if (!cancelled) {
-          setTemplateItems(items.length ? items : [])
-          setTemplateError(items.length ? '' : 'empty')
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setTemplateError('api')
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setTemplateLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [activeTab, workspaceId, isAuthenticated, templateRetry])
+    setTemplateItems(DEMO_TEMPLATES)
+    setTemplateLoading(false)
+    setTemplateError(DEMO_TEMPLATES.length ? '' : 'empty')
+  }, [activeTab, templateRetry])
 
   const keywordTrim = keyword.trim()
 
@@ -720,9 +653,9 @@ export default function HomeView() {
     }
   }, [])
 
-  // 优先用后端数据;为空则回退占位
+  // 轮播强制用这批演示视频;仅当演示为空时才回退后端 banner(当前不为空 → 始终用演示)
   const slides = useMemo<Slide[]>(
-    () => (apiBanners && apiBanners.length ? apiBanners.map(bannerToSlide) : PLACEHOLDER_SLIDES),
+    () => (DEMO_SLIDES.length ? DEMO_SLIDES : apiBanners && apiBanners.length ? apiBanners.map(bannerToSlide) : []),
     [apiBanners],
   )
 
@@ -1004,6 +937,14 @@ export default function HomeView() {
                               loop
                               playsInline
                               preload="metadata"
+                              onLoadedMetadata={(e) => {
+                                // 卡片比例跟随视频真实宽高
+                                const v = e.currentTarget
+                                if (v.videoWidth && v.videoHeight) {
+                                  const thumb = v.closest('.home__tpl-thumb') as HTMLElement | null
+                                  if (thumb) thumb.style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`
+                                }
+                              }}
                               onError={(e) => {
                                 ;(e.currentTarget as HTMLVideoElement).style.display = 'none'
                               }}

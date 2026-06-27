@@ -33,7 +33,7 @@ interface CaptchaState {
   answer: string
 }
 
-const NAV_ITEMS = ['母婴宠物', '视频饮料', '生活服务', '家居建材']
+const NAV_ITEMS = ['食品饮料', '生活服务', '餐饮美食', '丽人服务']
 
 export default function LoginView() {
   const navigate = useNavigate()
@@ -46,6 +46,7 @@ export default function LoginView() {
 
   const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
 
+  const [activeNav, setActiveNav] = useState(NAV_ITEMS[1]) // 左侧大图标签:默认高亮「生活服务」,可点击切换
   const [loginMode, setLoginMode] = useState<'password' | 'sms'>('sms')
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
@@ -373,9 +374,14 @@ export default function LoginView() {
       <aside className="zlogin-hero" style={{ backgroundImage: `url(${loginHero})` }} aria-hidden="true">
         <nav className="zlogin-nav">
           {NAV_ITEMS.map((item) => (
-            <span key={item} className={`zlogin-nav-item${item === '生活服务' ? ' is-active' : ''}`}>
+            <button
+              type="button"
+              key={item}
+              className={`zlogin-nav-item${item === activeNav ? ' is-active' : ''}`}
+              onClick={() => setActiveNav(item)}
+            >
               {item}
-            </span>
+            </button>
           ))}
         </nav>
       </aside>

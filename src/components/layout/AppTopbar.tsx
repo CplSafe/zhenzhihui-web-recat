@@ -12,6 +12,7 @@ import { useToast } from '@/composables/useToast'
 import { useUiStore } from '@/stores/ui'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
 import { markDevLogout } from '@/App'
+import memberIcon from '@/assets/image.png'
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
@@ -140,7 +141,7 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
       )}
       <div className="apptop__right">
         <button type="button" className="apptop__member" onClick={handleMember}>
-          <span className="apptop__member-icon">★</span>
+          <img className="apptop__member-icon" src={memberIcon} alt="" />
           {planName ? String(planName) : '会员中心'}
         </button>
         <div className="apptop__user" ref={boxRef}>

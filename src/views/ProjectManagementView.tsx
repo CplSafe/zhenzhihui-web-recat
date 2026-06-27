@@ -139,27 +139,24 @@ function relativeUpdated(ts: number): string {
   return mo < 12 ? `${mo}个月前更新` : `${Math.floor(mo / 12)}年前更新`
 }
 
-// 从项目列表中提取「待归类」=【草稿状态】项目:有在制内容(分镜/入口素材)但【还没有成片视频】。
-// 已生成成片视频的项目视为已完成,不进待归类;封面用图片(extractCover),不用视频。
-function extractUnclassified(projectItems: any[], workspaceId: number): { id: number; title: string; cover: string }[] {
+// 「历史生成」=【已出成片视频】的项目:有最终视频/版本/历史。封面用图片(extractCover)。
+// (草稿、未出片的项目不进这里——它们仍在上方项目卡里、点开可续作。)
+function extractGeneratedVideos(
+  projectItems: any[],
+  workspaceId: number,
+): { id: number; title: string; cover: string }[] {
   const out: { id: number; title: string; cover: string }[] = []
   const hasUrl = (list: any[]) => normalizeArray(list).some((v: any) => String(v?.url || v?.src || '').trim())
   for (const project of projectItems) {
     const draft = normalizeCreativeProjectDraft(project)
     if (!draft) continue
     const smart = toPlainObject(draft.smart) || draft
-    // 已有成片视频(版本/历史/最终)→ 已完成,不算待归类草稿
+    // 仅保留已出成片(版本/历史/最终任一)
     const hasFinalVideo =
       hasUrl(smart?.videoVersions) ||
       hasUrl(draft?.videoHistoryList || draft?.video_history_list) ||
       !!String(draft?.generatedVideoUrl || draft?.generated_video_url || smart?.fullVideoUrl || '').trim()
-    if (hasFinalVideo) continue
-    // 草稿:有在制内容(分镜 / 旧版分镜 / 入口素材)才展示
-    const hasWork =
-      normalizeArray(smart?.shots).length > 0 ||
-      normalizeArray(draft?.storyboardItems || draft?.storyboard_items).length > 0 ||
-      normalizeArray(smart?.entryMeta?.images).length > 0
-    if (!hasWork) continue
+    if (!hasFinalVideo) continue
     out.push({
       id: Number(project?.id || 0),
       title: String(project?.title || project?.name || '').trim() || '未命名项目',
@@ -308,9 +305,8 @@ export default function ProjectManagementView() {
   const [deletingProjectId, setDeletingProjectId] = useState(0)
   const [dragOverFolderId, setDragOverFolderId] = useState(0)
 
-  // 我的项目分页:只展示两行,其余分页。列数随容器宽度变化,运行时实测。
+  // 我的项目分页:固定每行 3 个、每页 3 行(共 9 个),不随屏幕改变列数。
   const gridRef = useRef<HTMLDivElement>(null)
-  const [cols, setCols] = useState(4)
   const [page, setPage] = useState(1)
   const [query, setQuery] = useState('') // 搜索项目名称/团队
   const [typeFilter, setTypeFilter] = useState<'all' | '个人项目' | '协作项目'>('all')
@@ -369,21 +365,6 @@ export default function ProjectManagementView() {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }, [projectItems, workspaceId])
 
-  // 实测网格列数(auto-fill 解析后的轨道数),用于「两行」分页
-  useEffect(() => {
-    if (viewMode !== 'root') return
-    const el = gridRef.current
-    if (!el) return
-    const measure = () => {
-      const tracks = getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length
-      setCols(Math.max(1, tracks))
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [viewMode])
-
   // 搜索 + 类型过滤 + 时间排序
   const shownFolders = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -393,8 +374,8 @@ export default function ProjectManagementView() {
     return sortDesc ? list : [...list].reverse()
   }, [folders, query, typeFilter, sortDesc])
 
-  // 每页 = 两行(新建项目移到顶栏,卡片网格不再占首格)
-  const pageSize = Math.max(1, cols * 2)
+  // 每页 = 3 行 × 3 列 = 9 个(固定,不随屏幕变)
+  const pageSize = 9
   const totalPages = Math.max(1, Math.ceil(shownFolders.length / pageSize))
   const pagedFolders = useMemo(
     () => shownFolders.slice((page - 1) * pageSize, page * pageSize),
@@ -416,34 +397,14 @@ export default function ProjectManagementView() {
     setClassifiedKeys(loadClassifiedKeys(Number(workspaceId || 0)))
   }, [workspaceId])
 
+  // 历史生成:已出成片的项目视频。仍沿用 classifiedKeys 过滤(若有手动隐藏的);不再自动清空。
   const unclassified = useMemo(
     () =>
-      extractUnclassified(projectItems, Number(workspaceId || 0)).filter(
+      extractGeneratedVideos(projectItems, Number(workspaceId || 0)).filter(
         (v) => !classifiedKeys.has(videoKeyOf(v.id, v.cover)),
       ),
     [projectItems, classifiedKeys, workspaceId],
   )
-
-  // 待归类里的草稿本身就是各自的项目(同 id),打开项目卡即可在其下看到草稿(buildDerivedVideos 派生占位)。
-  // 因此项目加载后自动把每个待归类草稿归类到它对应的项目 → 待归类恒为空,草稿仍在其项目下可续作。
-  // 只标记「已归类」隐藏即可,不写入本地视频清单(否则会与派生的草稿占位重复)。
-  useEffect(() => {
-    const wsId = Number(workspaceId || 0)
-    if (!wsId) return
-    const raw = extractUnclassified(projectItems, wsId)
-    if (!raw.length) return
-    const next = loadClassifiedKeys(wsId)
-    let changed = false
-    for (const v of raw) {
-      const key = videoKeyOf(v.id, v.cover)
-      if (!next.has(key)) {
-        markVideoClassified(wsId, key)
-        next.add(key)
-        changed = true
-      }
-    }
-    if (changed) setClassifiedKeys(new Set(next))
-  }, [projectItems, workspaceId])
 
   // 待归类:实测视频网格列数(grid 仅在有数据时渲染,故依赖 unclassified.length 重新挂载观察)
   useEffect(() => {
@@ -935,28 +896,22 @@ export default function ProjectManagementView() {
                 )}
               </section>
 
-              {/* 待归类:草稿状态项目(未出成片);封面用图片,点击进编辑续作 */}
-              <section className="pm2-section">
-                <h2 className="pm2-section-title">待归类</h2>
-                {!unclassified.length ? (
-                  <div className="pm2-hint">暂无待归类草稿，未完成的创作会出现在这里</div>
-                ) : (
+              {/* 历史生成:已出成片的项目视频;点击进入该项目视频页查看/播放 */}
+              {unclassified.length > 0 && (
+                <section className="pm2-section">
+                  <h2 className="pm2-section-title">历史生成</h2>
                   <div className="pm2-video-grid" ref={vidGridRef}>
                     {pagedUnclassified.map((video, i) => (
                       <div key={`${video.id}-${i}`} className="pm2-vid-wrap">
-                        <div
-                          className="pm2-vid"
-                          draggable
-                          onDragStart={(e) => e.dataTransfer.setData('text/plain', JSON.stringify(video))}
-                        >
+                        <div className="pm2-vid">
                           <span
                             className={`pm2-vid-thumb pm2-tone-${toneOf(i)}`}
                             role="button"
                             tabIndex={0}
                             onClick={() => {
-                              // 草稿 → 进智能成片编辑页续作
-                              if (video.id) navigate(`/smart/${video.id}`)
-                              else showToast('无法打开草稿', 'info')
+                              // 已出成片 → 进入该项目视频页查看/播放
+                              if (video.id) navigate(`/projects/${video.id}/videos`)
+                              else showToast('无法打开视频', 'info')
                             }}
                           >
                             {video.cover ? (
@@ -973,7 +928,6 @@ export default function ProjectManagementView() {
                                 <PlayIcon />
                               </span>
                             )}
-                            <span className="pm2-vid-draft-tag">草稿</span>
                           </span>
                           <span className="pm2-vid-title" title={video.title}>
                             {video.title}
@@ -982,19 +936,19 @@ export default function ProjectManagementView() {
                       </div>
                     ))}
                   </div>
-                )}
-                {vidTotalPages > 1 && (
-                  <div className="pm2-pager">
-                    <Pagination
-                      current={vidPage}
-                      pageSize={vidPageSize}
-                      total={unclassified.length}
-                      showSizeChanger={false}
-                      onChange={setVidPage}
-                    />
-                  </div>
-                )}
-              </section>
+                  {vidTotalPages > 1 && (
+                    <div className="pm2-pager">
+                      <Pagination
+                        current={vidPage}
+                        pageSize={vidPageSize}
+                        total={unclassified.length}
+                        showSizeChanger={false}
+                        onChange={setVidPage}
+                      />
+                    </div>
+                  )}
+                </section>
+              )}
             </>
           ) : (
             /* 项目详情:最终视频 + 分镜(含元素) */
