@@ -51,9 +51,7 @@ import {
   patchCreativeProject,
   getCreativeProject,
   updateCreativeProjectDraft,
-  createCreativeProjectVersion,
-  listCreativeProjectVersions,
-  restoreCreativeProjectVersion,
+
   uploadAssetFile,
   getAssetDownloadUrl,
   listAssets,
@@ -1122,79 +1120,6 @@ export default function SmartCreateView() {
       prev.map((g) => (g.status === 'processing' && (id ? g.id === id : true) ? { ...g, status } : g)),
     )
 
-  // ── 项目版本(走后端 versions 接口):每次成片存一个可还原的整项目快照 ──
-  const [projectVersions, setProjectVersions] = useState<any[]>([])
-  const versionIdOf = (it: any) =>
-    Number(it?.vid || it?.version_id || it?.versionId || it?.id || it?.version_no || 0)
-  const versionLabelOf = (it: any) =>
-    String(it?.label || it?.name || it?.title || (it?.version_no ? `版本 ${it.version_no}` : '') || '版本').trim()
-  const parseVersions = (payload: any): any[] => {
-    const raw = (payload && typeof payload === 'object' ? (payload.data ?? payload) : payload) || payload
-    const list = Array.isArray(raw)
-      ? raw
-      : Array.isArray(raw?.items)
-        ? raw.items
-        : Array.isArray(raw?.list)
-          ? raw.list
-          : Array.isArray(raw?.versions)
-            ? raw.versions
-            : []
-    return (list as any[]).filter((x) => x && typeof x === 'object')
-  }
-  const loadProjectVersions = async () => {
-    const id = projectIdRef.current
-    const ws = Number(workspaceId || 0)
-    if (!id || !ws) return
-    try {
-      const payload = await listCreativeProjectVersions({ projectId: id, workspaceId: ws })
-      const list = parseVersions(payload).sort((a, b) => {
-        const an = Number(a?.version_no || a?.versionNo || 0)
-        const bn = Number(b?.version_no || b?.versionNo || 0)
-        if (an || bn) return bn - an
-        return new Date(b?.created_at || b?.createdAt || 0).getTime() - new Date(a?.created_at || a?.createdAt || 0).getTime()
-      })
-      setProjectVersions(list)
-    } catch {
-      /* 列表失败不阻塞 */
-    }
-  }
-  // 出片成功后存一个版本(先把当前草稿落库,再 POST 版本)。失败不阻塞出片。
-  const saveProjectVersion = async (label: string) => {
-    const id = projectIdRef.current
-    const ws = Number(workspaceId || 0)
-    if (!id || !ws) return
-    try {
-      await putSmartDraftToBackend()
-      await createCreativeProjectVersion({ projectId: id, workspaceId: ws, label: label || '视频版本' })
-      void loadProjectVersions()
-    } catch {
-      /* 存版本失败静默 */
-    }
-  }
-  // 还原到某版本:POST restore → 重新拉项目草稿回填页面
-  const restoreProjectVersion = async (vid: number) => {
-    const id = projectIdRef.current
-    const ws = Number(workspaceId || 0)
-    if (!id || !ws || !vid) return
-    try {
-      await restoreCreativeProjectVersion({ projectId: id, workspaceId: ws, vid })
-      const proj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
-      const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
-      const d = parseSmartSnapshot(draftJson)
-      if (d) applyDraft(d)
-      draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
-      void loadProjectVersions()
-      showToast('已还原到该版本', 'success')
-    } catch (e: any) {
-      showToast(`还原失败:${e?.message || '请重试'}`, 'error')
-    }
-  }
-  // 进「生成视频」步 + 已建项目 → 拉一次版本列表
-  useEffect(() => {
-    if (step === 3 && projectId && Number(workspaceId || 0)) void loadProjectVersions()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, projectId, workspaceId])
-
   const autoVidRef = useRef(false)
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
   const [blurPhase, setBlurPhase] = useState('')
@@ -1245,7 +1170,6 @@ export default function SmartCreateView() {
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
         markGen(gid, 'published')
-        void saveProjectVersion(note?.trim() ? `修改:${note.trim().slice(0, 20)}` : '修改视频')
       } catch (e: any) {
         showToast(`视频修改失败:${e?.message || ''}`, 'error')
         markGen(gid, 'failed')
@@ -1345,7 +1269,6 @@ export default function SmartCreateView() {
       setFullVideo({ url, assetId })
       setVideoVersions((prev) => [...prev, { url, assetId }])
       markGen(gid, 'published')
-      void saveProjectVersion(note?.trim() ? `生成:${note.trim().slice(0, 20)}` : '生成视频')
     } catch (e: any) {
       showToast(`视频生成失败:${e?.message || ''}`, 'error')
       markGen(gid, 'failed')
@@ -1368,7 +1291,6 @@ export default function SmartCreateView() {
       setFullVideo({ url, assetId })
       setVideoVersions((prev) => [...prev, { url, assetId }])
       markGen(null, 'published') // 续跑完成:把那条「生成中」记录并入成片
-      void saveProjectVersion('生成视频')
     } catch (e: any) {
       showToast(`恢复视频生成失败:${e?.message || '请重试'}`, 'error')
       markGen(null, 'failed')
@@ -2664,12 +2586,6 @@ export default function SmartCreateView() {
         onRegenerateVideo={runFullVideo}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
-        projectVersions={projectVersions.map((v) => ({
-          vid: versionIdOf(v),
-          label: versionLabelOf(v),
-          createdAt: String(v?.created_at || v?.createdAt || ''),
-        }))}
-        onRestoreVersion={restoreProjectVersion}
         debug={{
           prompt: buildTimelinePrompt({
             shots,

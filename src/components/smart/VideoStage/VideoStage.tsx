@@ -65,9 +65,6 @@ interface VideoStageProps {
   /** 整片历史版本(点击切换) */
   videoVersions?: { url: string; assetId: number }[]
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
-  /** 项目版本(后端 versions,整项目快照,可一键还原) */
-  projectVersions?: { vid: number; label: string; createdAt: string }[]
-  onRestoreVersion?: (vid: number) => void
   /**
    * 重新生成 / 确认修改整片。
    * note=对整片/各片段的修改意见(合并成一段);opts.edit=true 表示「确认修改」——
@@ -112,8 +109,6 @@ export default function VideoStage({
   faceBlurDebug,
   videoVersions = [],
   onSwitchVideo,
-  projectVersions = [],
-  onRestoreVersion,
   onRegenerateVideo,
   onDownloadVideo,
   onPrev,
@@ -484,28 +479,6 @@ export default function VideoStage({
                     <span className={styles.vstageVerNo}>{videoVersions.length + 1}</span>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-          {projectVersions.length > 0 && (
-            <div className={styles.vstageVersions}>
-              <span className={styles.vstageVersionsTitle}>项目版本(可还原)</span>
-              <div className={styles.vstageVerList}>
-                {projectVersions.map((v) => (
-                  <div className={styles.vstageVerItem} key={v.vid}>
-                    <span className={styles.vstageVerItemLabel} title={v.label}>
-                      {v.label}
-                    </span>
-                    <button
-                      type="button"
-                      className={styles.vstageVerRestore}
-                      onClick={() => onRestoreVersion?.(v.vid)}
-                      title="还原到该版本(整项目)"
-                    >
-                      还原
-                    </button>
-                  </div>
-                ))}
               </div>
             </div>
           )}
