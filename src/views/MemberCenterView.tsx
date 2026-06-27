@@ -24,12 +24,6 @@ export default function MemberCenterView() {
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  // 返回上一页;直接进来(无历史)则回首页,避免退出应用
-  const goBack = () => {
-    if (window.history.length > 1) navigate(-1)
-    else navigate('/home')
-  }
-
   return (
     <div className="mcv-page">
       <AppToast />
@@ -45,13 +39,7 @@ export default function MemberCenterView() {
       <div className="mcv-shell">
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
         <main className="mcv-main">
-          <button type="button" className="mcv-back" onClick={goBack}>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            返回
-          </button>
-          <MemberCenterModal open embedded onClose={goBack} />
+          <MemberCenterModal open embedded onClose={() => navigate('/home')} />
         </main>
       </div>
     </div>

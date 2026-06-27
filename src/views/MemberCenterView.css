@@ -19,23 +19,3 @@
   overflow-y: auto;
   padding: 24px 32px 48px;
 }
-/* 返回按钮:会员中心为独立页(无弹窗关闭×),提供显式返回入口 */
-.mcv-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 16px;
-  padding: 7px 14px 7px 10px;
-  border: 1px solid #e3e6ef;
-  border-radius: 10px;
-  background: #fff;
-  color: #5b6072;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.mcv-back:hover {
-  border-color: #c7ccdb;
-  color: #1f2330;
-  background: #f4f6fb;
-}
