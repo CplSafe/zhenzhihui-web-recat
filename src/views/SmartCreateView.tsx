@@ -1644,6 +1644,14 @@ export default function SmartCreateView() {
   // 用 useLayoutEffect:在浏览器【绘制前】完成"空白 /smart→/smart/:id"的跳转,避免先闪一下初始页。
   useLayoutEffect(() => {
     if (hydratedRef.current) return
+    // 从「项目管理 → 新建视频」进入(携带 restartProjectId):全新流程。
+    // 不恢复本地草稿、也不跳回旧 /smart/:id;并清掉旧的本地在制草稿,避免它把页面带回上次未完成的步骤。
+    // 项目绑定 + 携带素材由 carry effect / useState 初始化器处理。
+    if (Number((location.state as any)?.restartProjectId)) {
+      clearSmartDraft()
+      hydratedRef.current = true
+      return
+    }
     const rid = Number(routeId || 0)
     if (rid > 0) {
       const ws = Number(workspaceId || 0)

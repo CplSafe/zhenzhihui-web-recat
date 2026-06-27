@@ -18,7 +18,7 @@ import VideoStage from '@/components/smart/VideoStage'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import { replicateHotVideo, uploadHotCopyAsset, awaitHotVideoResult } from '@/api/hotCopy'
 import { editFullVideo } from '@/api/smartVideo'
-import { saveHotCopyDraft, loadHotCopyDraft, type HotCopyDraft } from '@/utils/hotCopyDraft'
+import { saveHotCopyDraft, loadHotCopyDraft, clearHotCopyDraft, type HotCopyDraft } from '@/utils/hotCopyDraft'
 import { refreshAssetUrl } from '@/api/smartShotImage'
 import { generateProjectName } from '@/api/aiPolish'
 import {
@@ -217,6 +217,14 @@ export default function HotCopyCreateView() {
   useEffect(() => {
     const ws = Number(workspaceId || 0)
     if (!ws || hydratedRef.current) return
+
+    // 从「项目管理 → 新建视频」进入(携带 restartProjectId):全新流程,不恢复本地在制草稿、不跳回旧进度;
+    // 清掉旧本地草稿,避免它把页面带回上次未完成的步骤。绑定项目 + 携带素材由初始化器/carry effect 处理。
+    if (Number((location.state as any)?.restartProjectId)) {
+      clearHotCopyDraft(ws)
+      hydratedRef.current = true
+      return
+    }
 
     if (routeId > 0) {
       hydratedRef.current = true
