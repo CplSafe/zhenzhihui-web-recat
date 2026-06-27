@@ -1809,7 +1809,7 @@ export function deleteAsset({ workspaceId, assetId }) {
   })
 }
 
-export function updateCreativeProjectDraft({ projectId, workspaceId, draft, draftRevision }) {
+export function updateCreativeProjectDraft({ projectId, workspaceId, draft, draftRevision, coverAssetId = 0 }) {
   const id = Number(projectId || 0)
   if (!Number.isFinite(id) || id <= 0) {
     throw new BusinessApiError('项目 ID 无效')
@@ -1819,6 +1819,9 @@ export function updateCreativeProjectDraft({ projectId, workspaceId, draft, draf
   const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${wsId}` : ''
   const revisionNumber = Number(draftRevision)
   const hasRevision = Number.isFinite(revisionNumber) && revisionNumber >= 0
+  // 封面:省略=保留现有,整数=替换。只在有正整数 asset_id 时下发,避免误清空。
+  const coverId = Number(coverAssetId || 0)
+  const hasCover = Number.isFinite(coverId) && coverId > 0
   return requestJson(`/api/v1/creative/projects/${id}/draft${query}`, {
     method: 'PUT',
     headers: {
@@ -1827,6 +1830,7 @@ export function updateCreativeProjectDraft({ projectId, workspaceId, draft, draf
     body: JSON.stringify({
       draft: typeof draft === 'string' ? draft : JSON.stringify(draft ?? {}),
       ...(hasRevision ? { draft_revision: Math.floor(revisionNumber) } : {}),
+      ...(hasCover ? { cover_asset_id: Math.floor(coverId) } : {}),
     }),
   })
 }

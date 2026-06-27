@@ -27,6 +27,9 @@ export interface SmartDraft {
   materialBatchPending?: boolean
   /** 整片视频历史版本(每版带 asset_id,供水合刷新签名URL) */
   videoVersions?: { url: string; assetId: number }[]
+  /** 每次「重新生成」的独立记录:生成中 / 失败(成功的成片仍进 videoVersions)。
+   *  让项目下能看到每次生成是一条草稿:processing=生成中、failed=失败(可重试)、published=已并入成片。 */
+  videoGenerations?: { id: string; status: string; taskId?: number; note?: string; createdAt?: number }[]
   /** 人脸脱敏开关(默认开;关闭后出片用原图,成片人脸清晰) */
   faceBlurEnabled?: boolean
   /** 营销思路拆解(选中 SKILL 时多出的第 1 步):是否停留在该步 + 生成的建议正文 + 结构化数据 */
@@ -36,6 +39,8 @@ export interface SmartDraft {
   marketingData?: any
   /** 制作图片(chat 模式)的消息流(用户提问 + AI 生成图,图带 asset_id 供水合) */
   imageMessages?: any[]
+  /** 保存时间戳(ms):用于「/smart/:id 恢复时本地草稿是否比后端更新」的比较 */
+  savedAt?: number
 }
 
 const killBlob = (u: any) => (typeof u === 'string' && u.startsWith('blob:') ? '' : u)
@@ -110,7 +115,7 @@ export function loadSmartDraft(): SmartDraft | null {
 export function saveSmartDraft(state: SmartDraft) {
   // 与 2.0 一致:草稿不存 data:/blob:(体积大且会撑爆 localStorage 配额导致整盘清空);
   // 只存可持久的 http 图 + asset_id,刷新后按 asset_id 重换签名URL(见 SmartCreateView hydrate)。
-  const lean = stripHeavy(state)
+  const lean = { ...stripHeavy(state), savedAt: Date.now() }
   try {
     localStorage.setItem(KEY, JSON.stringify(lean))
   } catch {
@@ -228,8 +233,8 @@ export function buildSmartSnapshot(d: SmartDraft): any {
     generatedVideoUrl: fvUrl,
     generatedVideoAssetId: fvId,
     videoHistoryList: videoVersions.length ? videoVersions : fvUrl || fvId ? [{ url: fvUrl, assetId: fvId }] : [],
-    // 智能成片原生快照(精确回填,见 parseSmartSnapshot)
-    smart: clean,
+    // 智能成片原生快照(精确回填,见 parseSmartSnapshot);stamp savedAt 供恢复时与本地草稿比新旧
+    smart: { ...clean, savedAt: Date.now() },
   }
 }
 

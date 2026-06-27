@@ -115,6 +115,25 @@ function assetSceneRole(asset: any): 'role' | 'scene' | '' {
   return ''
 }
 
+// 人脸脱敏/抠脸产物(image.face_detect 输出):正式出片前对分镜图扣掉人脸生成的中间资产,
+// 不是用户素材,素材市场不应展示。后端字段不固定,横跨 operation_code / prompt / 名称 / meta 判定。
+function isFaceBlurAsset(asset: any): boolean {
+  const hints = [
+    asset?.operation_code,
+    asset?.operationCode,
+    asset?.prompt,
+    asset?.name,
+    asset?.file_name,
+    asset?.meta_json?.operation_code,
+    asset?.meta_json?.operationCode,
+    asset?.meta_json?.prompt,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return /face_detect|人脸检测|人脸脱敏|脱敏/.test(hints)
+}
+
 function assetTimestamp(asset: any): number {
   const raw = asset?.created_at || asset?.createdAt || asset?.updated_at || asset?.updatedAt || ''
   const t = Date.parse(raw || '')
@@ -508,7 +527,8 @@ export default function ResourceManagementView() {
     listAssets({ workspaceId: wsId, status: 'active', limit: 300 })
       .then((payload) => {
         if (cancelled) return
-        setRawAssets(extractAssetPage(payload).items || [])
+        // 过滤掉人脸脱敏/抠脸的中间产物,不在素材市场展示
+        setRawAssets((extractAssetPage(payload).items || []).filter((a: any) => !isFaceBlurAsset(a)))
       })
       .catch((error) => {
         if (cancelled) return

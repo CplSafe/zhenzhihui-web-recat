@@ -1,6 +1,6 @@
 import { getCreativeProject } from '@/api/business'
 
-export type ProjectVideoStatus = 'draft' | 'processing' | 'published'
+export type ProjectVideoStatus = 'draft' | 'processing' | 'published' | 'failed'
 export type ProjectVideoSourceType = 'smart' | 'creative'
 
 export interface ProjectVideo {
@@ -228,6 +228,34 @@ function buildDerivedVideos({
     '当前用户',
   )
 
+  // 每次「重新生成」的独立记录(生成中/失败)→ 项目下置顶展示成草稿条目(成功的成片仍走 videoVersions)。
+  // 兼容旧数据:没有 generations 但残留 vidGenTaskId>0 → 也兜底显示一条「生成中」。
+  const generationsRaw = normalizeArray(smart?.generations).filter(
+    (g: any) => g?.status === 'processing' || g?.status === 'failed',
+  )
+  const makeGenItem = (g: any, i: number): ProjectVideo => ({
+    id: `derived-gen-${pickString(g?.id, String(i))}`,
+    projectId: Number(project?.id || 0),
+    workspaceId,
+    title: `${projectTitle} · ${g?.status === 'failed' ? '生成失败' : '生成中'}`,
+    coverUrl: projectCoverUrl,
+    videoUrl: '',
+    durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
+    status: g?.status === 'failed' ? 'failed' : 'processing',
+    createdByName,
+    createdAt,
+    updatedAt,
+    sourceType,
+    flow,
+    publishUrl: '',
+  })
+  const genItems: ProjectVideo[] = generationsRaw.length
+    ? generationsRaw.map(makeGenItem)
+    : Number(smart?.vidGenTaskId || 0) > 0
+      ? [makeGenItem({ id: `legacy-${project?.id || 0}`, status: 'processing' }, 0)]
+      : []
+  const generating = genItems.length > 0
+
   const candidates = normalizeArray(smart?.videoVersions)
   const historyList =
     candidates.length > 0
@@ -283,7 +311,8 @@ function buildDerivedVideos({
     })
     .filter((item) => item.videoUrl || item.coverUrl)
 
-  if (records.length) return records
+  // 有已出版本:正在重新生成时,置顶一个「生成中」项(旧版本仍为已发布)
+  if (records.length) return generating ? [...genItems, ...records] : records
 
   const generatedVideoAssetId =
     Number(draft?.generatedVideoAssetId || draft?.generated_video_asset_id || smart?.fullVideoAssetId || 0) || 0
@@ -294,10 +323,10 @@ function buildDerivedVideos({
   if (!generatedVideoUrl) {
     // 没有最终视频,但草稿里有在制内容(分镜 / 进行中的生成任务)→ 返回一个「草稿」占位项,
     // 让项目在管理页可见、可点进编辑续作(进入后由 SmartCreateView 续轮询生成中的任务)。
+    // 有生成中/失败记录 → 直接用这些记录(每次重新生成是一条草稿)
+    if (genItems.length) return genItems
     const hasWork =
-      Number(smart?.vidGenTaskId || 0) > 0 ||
-      normalizeArray(smart?.shots).length > 0 ||
-      normalizeArray(draft?.storyboardItems).length > 0
+      normalizeArray(smart?.shots).length > 0 || normalizeArray(draft?.storyboardItems).length > 0
     if (!hasWork) return []
     return [
       {
@@ -319,24 +348,24 @@ function buildDerivedVideos({
     ]
   }
 
-  return [
-    {
-      id: `derived-generated-${project?.id || 0}`,
-      projectId: Number(project?.id || 0),
-      workspaceId,
-      title: `${projectTitle} · 最终视频`,
-      coverUrl: projectCoverUrl,
-      videoUrl: generatedVideoUrl,
-      durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
-      status: 'published',
-      createdByName,
-      createdAt,
-      updatedAt,
-      sourceType,
-      flow,
-      publishUrl: pickString(draft?.publishUrl, smart?.publishUrl),
-    },
-  ]
+  const finalItem: ProjectVideo = {
+    id: `derived-generated-${project?.id || 0}`,
+    projectId: Number(project?.id || 0),
+    workspaceId,
+    title: `${projectTitle} · 最终视频`,
+    coverUrl: projectCoverUrl,
+    videoUrl: generatedVideoUrl,
+    durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
+    status: 'published',
+    createdByName,
+    createdAt,
+    updatedAt,
+    sourceType,
+    flow,
+    publishUrl: pickString(draft?.publishUrl, smart?.publishUrl),
+  }
+  // 有旧成片但正在重新生成 → 置顶「生成中」项,旧片仍为已发布
+  return generating ? [...genItems, finalItem] : [finalItem]
 }
 
 function applyOverrides(item: ProjectVideo, overrides: ProjectVideoOverride | undefined): ProjectVideo | null {
@@ -549,7 +578,8 @@ export async function deleteProjectVideo({
 
 export function getVideoStatusText(status: ProjectVideoStatus): string {
   if (status === 'published') return '已发布'
-  if (status === 'processing') return '制作中'
+  if (status === 'processing') return '生成中'
+  if (status === 'failed') return '生成失败'
   return '草稿'
 }
 

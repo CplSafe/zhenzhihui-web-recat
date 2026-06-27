@@ -31,23 +31,60 @@ const SYSTEM =
   '注意:只拆需要视觉素材的主体;不要把台词、旁白、字幕、文案、标语、口号、CTA、标题等文本类元素列为主体。' +
   '若提供了素材图片,务必逐张判断它对应哪个主体:对应的主体必须加 imageIndex 字段(从1开始,表示第几张素材图),' +
   '尽量让每张素材图都被某个主体引用(场景图配场景主体、产品图配产品主体);确实无对应的主体才省略该字段。' +
-  '严格只输出 JSON(不要解释、不要 markdown 代码块),格式:' +
-  '{"shots":[{"duration":"5s","desc":"画面描述","voiceover":"台词/旁白","subtitle":"字幕","sfx":"音效","subjects":[{"name":"小雅","kind":"人物","imageIndex":2},{"name":"室内场景","kind":"场景"}]}]}'
+  '严格只输出 JSON(不要解释、不要 markdown 代码块);下面格式中的字段值均为占位示例,' +
+  '必须替换为真实内容,严禁原样输出「画面描述」「台词/旁白」「字幕」「音效」这类字段名作为值:' +
+  '{"shots":[{"duration":"5s","desc":"<具体可拍摄的画面描述>","voiceover":"<台词或旁白,无则空字符串>","subtitle":"<字幕,无则空字符串>","sfx":"<音效,无则空字符串>","subjects":[{"name":"小雅","kind":"人物","imageIndex":2},{"name":"室内场景","kind":"场景"}]}]}'
 
 function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): string {
   const totalSec = parseInt(String(duration || '10'), 10) || 10
-  const approxShots = Math.max(1, Math.round(totalSec / 4)) // 每镜约 4 秒估算镜头数
+  // 向下取整(每镜约 5 秒),避免镜头数偏多导致各镜时长之和超过总时长
+  const approxShots = Math.max(1, Math.floor(totalSec / 5))
+  const perShot = Math.max(3, Math.round(totalSec / approxShots))
   return [
     `创作需求:${requirement || '(未提供文字,请根据上传的参考图片构思一支完整广告短视频的分镜)'}`,
     `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'}。`,
-    `视频总时长约 ${totalSec} 秒:请切分为约 ${approxShots} 个镜头,每个镜头不少于 3 秒(通常 3~5 秒),` +
-      `各镜头 duration 之和约等于总时长;不要切得过碎。`,
+    `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒(不少于 3 秒),` +
+      `所有镜头 duration 相加必须严格等于 ${totalSec} 秒,绝对不能超过;不要切得过碎。`,
     '请按要求输出分镜 JSON。',
   ].join('\n')
 }
 
 // 文本类"主体"(无需上传素材)关键词
 const TEXT_SUBJECT_RE = /文案|字幕|标语|口号|标题|文字|台词|旁白|cta|slogan|字样/i
+
+// 模型有时把示例里的字段名当值原样输出(如 desc 直接写"画面描述")→ 视为无效占位,置空
+const PLACEHOLDER_FIELD_RE = /^(画面描述|台词\/?旁白|旁白|台词|字幕|音效|desc|voiceover|subtitle|sfx|无|none|n\/a)$/i
+const cleanField = (v: any): string => {
+  const t = String(v || '').trim()
+  return PLACEHOLDER_FIELD_RE.test(t) ? '' : t
+}
+
+// 时长字符串 → 秒(失败回退 0)
+const durToSec = (d: any): number => {
+  const n = parseFloat(String(d || '').replace(/[^0-9.]/g, ''))
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+// 强制各镜 duration 之和 = 目标总时长(模型常超/欠):按比例缩放,取整漂移修正到尾镜。
+function normalizeDurations(shots: Shot[], totalSec: number): Shot[] {
+  if (!Array.isArray(shots) || !shots.length || !(totalSec > 0)) return shots
+  const secs = shots.map((s) => durToSec(s.duration))
+  let sum = secs.reduce((a, b) => a + b, 0)
+  // 模型没给有效时长 → 平均分配
+  if (sum <= 0) {
+    const each = Math.max(1, Math.round(totalSec / shots.length))
+    secs.fill(each)
+    sum = each * shots.length
+  }
+  // 已基本对齐(±0.5s)则不动,避免无谓改动
+  if (Math.abs(sum - totalSec) < 0.5) return shots
+  const factor = totalSec / sum
+  const scaled = secs.map((s) => Math.max(1, Math.round(s * factor)))
+  // 取整漂移修正:差值并到最后一个镜头,保证总和精确 = totalSec
+  const drift = totalSec - scaled.reduce((a, b) => a + b, 0)
+  if (drift !== 0) scaled[scaled.length - 1] = Math.max(1, scaled[scaled.length - 1] + drift)
+  return shots.map((s, i) => ({ ...s, duration: `${scaled[i]}s` }))
+}
 
 // 容错:从(可能被截断的)文本里抢救出所有「完整」的顶层 {…} 对象
 function salvageObjects(raw: string): any[] {
@@ -83,10 +120,11 @@ function mapShots(list: any[], images: string[] = []): Shot[] {
     id: i + 1,
     no: `镜头${i + 1}`,
     duration: String(s?.duration || s?.dur || '5s').trim() || '5s',
-    desc: String(s?.desc || s?.prompt || s?.description || '').trim() || '画面描述',
-    line: String(s?.line || s?.voiceover || s?.dialogue || '').trim(),
-    subtitle: String(s?.subtitle || s?.caption || '').trim(),
-    sfx: String(s?.sfx || s?.sound || s?.audio || '').trim(),
+    // 占位字段名(画面描述/台词/字幕/音效…)被原样吐出时一律置空,不再硬填"画面描述"四个字
+    desc: cleanField(s?.desc || s?.prompt || s?.description),
+    line: cleanField(s?.line || s?.voiceover || s?.dialogue),
+    subtitle: cleanField(s?.subtitle || s?.caption),
+    sfx: cleanField(s?.sfx || s?.sound || s?.audio),
     // 注意:不再用 imageIndex 把上传图直接绑成 image(否则一张产品海报会被模型标到几乎所有主体上 →「全是产品图」)。
     // 上传素材改由 anchorUploadsToSubjects(VL 识别主推产品)决定绑到哪些主体的 refImage,再图生图抠成干净单品。
     subjects: Array.isArray(s?.subjects)
@@ -134,8 +172,9 @@ const ONE_SHOT_SYSTEM =
   '【硬性要求】subjects 数组不能为空:列出该画面出现的全部独立视觉元素(人物/场景/物体/产品),至少 1 个,通常 2~4 个。' +
   '不要把台词/旁白/字幕/文案/标语/口号/CTA/标题等文本类元素列为主体。' +
   '若提供了上传素材图片,请据图设定主体并判断每个主体是否与某张素材图对应,对应则加 imageIndex(从1开始),不对应则省略。' +
-  '严格只输出这一个镜头的 JSON(不要解释、不要 markdown 代码块),格式:' +
-  '{"duration":"5s","desc":"画面描述","voiceover":"台词/旁白","subtitle":"字幕","sfx":"音效","subjects":[{"name":"小雅","kind":"人物","imageIndex":1}]}'
+  '严格只输出这一个镜头的 JSON(不要解释、不要 markdown 代码块);下面字段值均为占位示例,' +
+  '必须替换为真实内容,严禁原样输出「画面描述」「台词/旁白」「字幕」「音效」这类字段名作为值:' +
+  '{"duration":"5s","desc":"<具体可拍摄的画面描述>","voiceover":"<台词或旁白,无则空字符串>","subtitle":"<字幕,无则空字符串>","sfx":"<音效,无则空字符串>","subjects":[{"name":"小雅","kind":"人物","imageIndex":1}]}'
 
 export interface ShotInfo {
   duration: string
@@ -234,7 +273,8 @@ export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
   // 用原始 objectURL(args.images)做展示映射(顺序与送模型/上传的一致)
   const shots = parseShots(text, images)
   if (!shots.length) throw new Error('未能解析分镜脚本,请重试')
-  return shots
+  // 强制各镜时长之和 = 用户要求的总时长(模型常超时)
+  return normalizeDurations(shots, parseInt(String(args.duration || '10'), 10) || 10)
 }
 
 /**
@@ -270,7 +310,8 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
   const finalShots = parseShots(finalText, images)
   const result = finalShots.length >= lastCount ? finalShots : mapShots(salvageObjects(finalText), images)
   if (!result.length) throw new Error('未能解析分镜脚本,请重试')
-  return result
+  // 强制各镜时长之和 = 用户要求的总时长(模型常超时);流式中间态不归一,只在最终结果对齐
+  return normalizeDurations(result, parseInt(String(args.duration || '10'), 10) || 10)
 }
 
 // ── 主体提取兜底 ──
