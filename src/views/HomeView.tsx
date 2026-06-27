@@ -636,7 +636,7 @@ export default function HomeView() {
   //   失败 / 为空时由下方 slides 计算回退到本地占位。
   useEffect(() => {
     let cancelled = false
-    swrFetch(BANNERS_CACHE_KEY, () => listBanners(), {
+    swrFetch(BANNERS_CACHE_KEY, () => listBanners('home'), {
       ttl: 5 * 60_000, // 5 分钟内视为新鲜,不重复后台刷新
       onRevalidate: (fresh) => {
         if (!cancelled) setApiBanners(fresh) // 后台刷新到的最新数据

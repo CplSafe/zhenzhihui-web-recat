@@ -5,6 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import { useCurrentUser, useCurrentPlanName } from '@/stores/workspaceSession'
 import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
@@ -30,11 +31,15 @@ interface AppTopbarProps {
 }
 
 export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
+  const navigate = useNavigate()
   const currentUser = useCurrentUser() as any
   const planName = useCurrentPlanName() as any
-  const { handleLogoutSuccess } = useAuth()
+  const { handleLogoutSuccess, isAuthenticated } = useAuth()
   const { showToast } = useToast()
   const openMemberCenter = useUiStore((s) => s.openMemberCenter)
+
+  // 匿名访问(未登录且无用户信息)右上角显示「登录」按钮,而非「用户」头像下拉。
+  const isAnonymous = !isAuthenticated && !currentUser
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
@@ -144,20 +149,30 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
           <img className="apptop__member-icon" src={memberIcon} alt="" />
           {planName ? String(planName) : '会员中心'}
         </button>
-        <div className="apptop__user" ref={boxRef}>
+        {isAnonymous ? (
           <button
-            ref={btnRef}
             type="button"
-            className="apptop__user-btn"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            onClick={toggleMenu}
+            className="apptop__signin"
+            onClick={() => navigate('/login', { state: { from: '/home' } })}
           >
-            <span className="apptop__avatar">{userName.slice(0, 1)}</span>
-            <span className="apptop__user-name">{userName}</span>
-            <span className={`apptop__caret${menuOpen ? ' is-open' : ''}`}>⌄</span>
+            登录
           </button>
-        </div>
+        ) : (
+          <div className="apptop__user" ref={boxRef}>
+            <button
+              ref={btnRef}
+              type="button"
+              className="apptop__user-btn"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={toggleMenu}
+            >
+              <span className="apptop__avatar">{userName.slice(0, 1)}</span>
+              <span className="apptop__user-name">{userName}</span>
+              <span className={`apptop__caret${menuOpen ? ' is-open' : ''}`}>⌄</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {menuOpen &&
