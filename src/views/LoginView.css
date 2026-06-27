@@ -400,7 +400,9 @@
   position: fixed;
   inset: 0;
   z-index: 1200;
-  background: rgba(17, 24, 39, 0.45);
+  background: rgba(17, 24, 39, 0.32);
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -473,6 +475,20 @@
 }
 .zauth-field--ro input {
   color: #6b7280;
+}
+.zauth-eye {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: #9aa3af;
+  cursor: pointer;
+  padding: 0 0 0 8px;
+}
+.zauth-eye:hover {
+  color: #5767e5;
 }
 .zauth-code-btn {
   flex: 0 0 auto;

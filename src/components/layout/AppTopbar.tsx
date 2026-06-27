@@ -12,6 +12,7 @@ import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
 import { markDevLogout } from '@/App'
+import AuthActionModal from '@/components/auth/AuthActionModal'
 import './AppTopbar.css'
 
 interface AppTopbarProps {
@@ -31,6 +32,7 @@ export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProp
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const [pwdModalOpen, setPwdModalOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -66,6 +68,17 @@ export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProp
   const handleMember = () => {
     setMenuOpen(false)
     navigate('/membership')
+  }
+
+  // 登录态下「修改密码」复用注册页的重置密码流程(手机号 + 新密码 + 验证码)。
+  // 仅当账号字段确为手机号时才预填,避免把用户名(如 u_xxx)填进手机号框。
+  const rawMobile = String(
+    currentUser?.mobile || currentUser?.phone || currentUser?.phone_number || currentUser?.username || '',
+  )
+  const userMobile = /^1\d{10}$/.test(rawMobile) ? rawMobile : ''
+  const handleChangePwd = () => {
+    setMenuOpen(false)
+    setPwdModalOpen(true)
   }
 
   async function handleLogout() {
@@ -141,6 +154,9 @@ export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProp
             <button type="button" className="apptop__menu-item" role="menuitem" onClick={handleMember}>
               会员中心
             </button>
+            <button type="button" className="apptop__menu-item" role="menuitem" onClick={handleChangePwd}>
+              修改密码
+            </button>
             <button
               type="button"
               className="apptop__menu-item apptop__menu-item--danger"
@@ -153,6 +169,17 @@ export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProp
           </div>,
           document.body,
         )}
+
+      {pwdModalOpen && (
+        <AuthActionModal
+          mode="forgot"
+          title="修改密码"
+          ensureAuthStart={async () => null}
+          prefill={{ mobile: userMobile }}
+          onClose={() => setPwdModalOpen(false)}
+          onResetDone={() => setPwdModalOpen(false)}
+        />
+      )}
     </header>
   )
 }

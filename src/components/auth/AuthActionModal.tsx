@@ -21,14 +21,16 @@ export type AuthActionMode = 'register' | 'forgot' | 'sms-register'
 
 interface AuthActionModalProps {
   mode: AuthActionMode
+  /** 覆盖默认标题(如登录态下「修改密码」复用 forgot 流程) */
+  title?: string
   /** 父级共享的 authStart 获取(注册/重置用其 client_id/return_to,并供后续 OAuth 桥接) */
   ensureAuthStart: () => Promise<any>
   /** sms-register:复用登录时已生成的 authStart(其 state 与登录一致),以及预填手机号/验证码 */
   authStart?: any
   prefill?: { mobile?: string; smsCode?: string }
   onClose: () => void
-  /** 注册/补全注册成功 → 父级走登录流程(OAuth 桥接) */
-  onAuthed: (authStart: any, result: any) => void
+  /** 注册/补全注册成功 → 父级走登录流程(OAuth 桥接);forgot 模式不需要 */
+  onAuthed?: (authStart: any, result: any) => void
   /** 重置密码成功 → 父级切回登录并预填手机号 */
   onResetDone?: (mobile: string) => void
   /** 注册时发现已注册 → 父级引导直接登录(切到密码登录并预填手机号) */
@@ -49,6 +51,7 @@ function randomPassword(): string {
 
 export default function AuthActionModal({
   mode,
+  title,
   ensureAuthStart,
   authStart,
   prefill,
@@ -65,6 +68,7 @@ export default function AuthActionModal({
   const [countdown, setCountdown] = useState(0)
   const [sending, setSending] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [showPwd, setShowPwd] = useState(false)
   const [err, setErr] = useState('')
   const timerRef = useRef<number | null>(null)
 
@@ -157,7 +161,7 @@ export default function AuthActionModal({
       const smsCode = needsCodeInput ? code.trim() : prefill?.smsCode || ''
       const result = await registerAccount({ authStart: as, mobile: m, password: pwd, smsCode, termsAccepted: true })
       showToast(mode === 'sms-register' ? '注册成功,正在登录…' : '注册成功', 'success')
-      onAuthed(as, result)
+      onAuthed?.(as, result)
       onClose()
     } catch (e: any) {
       if (await handleCaptchaErr(e)) {
@@ -184,11 +188,11 @@ export default function AuthActionModal({
 
   return (
     <div className="zauth-mask" onClick={onClose}>
-      <div className="zauth-card" role="dialog" aria-label={TITLES[mode]} onClick={(e) => e.stopPropagation()}>
+      <div className="zauth-card" role="dialog" aria-label={title ?? TITLES[mode]} onClick={(e) => e.stopPropagation()}>
         <button type="button" className="zauth-x" aria-label="关闭" onClick={onClose}>
           ×
         </button>
-        <h2 className="zauth-title">{TITLES[mode]}</h2>
+        <h2 className="zauth-title">{title ?? TITLES[mode]}</h2>
         {mode === 'sms-register' && (
           <p className="zauth-sub">该手机号未注册,设置密码即完成注册并登录(密码可不填,后续可用「忘记密码」设置)</p>
         )}
@@ -215,7 +219,7 @@ export default function AuthActionModal({
 
           <div className="zauth-field">
             <input
-              type="password"
+              type={showPwd ? 'text' : 'password'}
               placeholder={pwdLabel}
               value={password}
               onChange={(e) => {
@@ -223,6 +227,25 @@ export default function AuthActionModal({
                 setErr('')
               }}
             />
+            <button
+              type="button"
+              className="zauth-eye"
+              aria-label={showPwd ? '隐藏密码' : '显示密码'}
+              aria-pressed={showPwd}
+              onClick={() => setShowPwd((v) => !v)}
+            >
+              {showPwd ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
+            </button>
           </div>
 
           {needsCodeInput && (
