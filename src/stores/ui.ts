@@ -47,6 +47,12 @@ export interface UiState {
   toast: ToastState
   confirm: ConfirmState
   dirty: boolean
+  // 会员中心:全局单例弹窗开关(取代原 /membership 路由页),由顶层 <MemberCenterModal/> 渲染。
+  memberCenterOpen: boolean
+  // 「功能待开放」全局单例弹窗:任意页面点未上线项时弹出,由顶层 <ComingSoonDialog/> 渲染。
+  comingSoonOpen: boolean
+  // 左侧主侧栏(AppSidebar)桌面端是否收起(窄图标轨)。跨页面保持,故放全局 store。
+  sidebarCollapsed: boolean
 
   showToast: (message: string, type?: ToastType, duration?: number) => void
   clearToast: () => void
@@ -56,6 +62,15 @@ export interface UiState {
   setConfirmInput: (value: string) => void
 
   setDirty: (dirty: boolean) => void
+
+  openMemberCenter: () => void
+  closeMemberCenter: () => void
+
+  openComingSoon: () => void
+  closeComingSoon: () => void
+
+  toggleSidebarCollapsed: () => void
+  setSidebarCollapsed: (collapsed: boolean) => void
 }
 
 const DEFAULT_TOAST_DURATION = 5000
@@ -82,6 +97,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   toast: { visible: false, message: '', type: 'info' },
   confirm: { ...initialConfirm },
   dirty: false,
+  memberCenterOpen: false,
+  comingSoonOpen: false,
+  sidebarCollapsed: false,
 
   showToast: (message, type = 'info', duration = DEFAULT_TOAST_DURATION) => {
     if (!message) {
@@ -138,6 +156,15 @@ export const useUiStore = create<UiState>((set, get) => ({
   setConfirmInput: (value) => set({ confirm: { ...get().confirm, inputValue: value } }),
 
   setDirty: (dirty) => set({ dirty }),
+
+  openMemberCenter: () => set({ memberCenterOpen: true }),
+  closeMemberCenter: () => set({ memberCenterOpen: false }),
+
+  openComingSoon: () => set({ comingSoonOpen: true }),
+  closeComingSoon: () => set({ comingSoonOpen: false }),
+
+  toggleSidebarCollapsed: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
+  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
 }))
 
 // ---- 便捷取值（在非组件上下文中直接调用）-----------------------------------
@@ -146,3 +173,6 @@ export const showToast = (message: string, type?: ToastType, duration?: number) 
 
 export const requestConfirm = (message: string, options?: ConfirmOptions) =>
   useUiStore.getState().requestConfirm(message, options)
+
+/** 弹出全局「功能待开放」弹窗(任意上下文可调用)。 */
+export const openComingSoon = () => useUiStore.getState().openComingSoon()

@@ -7,6 +7,13 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* 隐藏滚动条但保留滚动(滚轮/触控板/键盘照常):滚动条不占宽度,
+     比例/时长下拉展开撑高内容时不再「出滚动条 → 挤压宽度 → 横向回流抖动」。纯视觉,不影响功能。 */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* 旧 Edge/IE */
+  &::-webkit-scrollbar {
+    display: none; /* Chrome/Safari/新 Edge */
+  }
   display: flex;
   flex-direction: column;
   align-items: center;

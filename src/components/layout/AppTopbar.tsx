@@ -5,29 +5,35 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
 import { useCurrentUser, useCurrentPlanName } from '@/stores/workspaceSession'
 import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
+import { useUiStore } from '@/stores/ui'
 import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
 import { markDevLogout } from '@/App'
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
+import brandLogo from '@/img/image copy 7.png'
+import { APP_VERSION } from '@/version'
+import AuthActionModal from '@/components/auth/AuthActionModal'
 import './AppTopbar.css'
 
 interface AppTopbarProps {
   /** 提供则在左侧显示汉堡(移动端),点击触发(通常打开侧栏抽屉) */
   onMenu?: () => void
-  /** 点击「会员中心」回调(默认提示待开放) */
+  /**
+   * 点击「会员中心」回调。默认打开全局会员中心弹窗(取代原 /membership 路由页);
+   * 传入则覆盖默认行为(兼容旧调用方)。
+   */
   onMember?: () => void
 }
 
-export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProps) {
-  const navigate = useNavigate()
+export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   const currentUser = useCurrentUser() as any
   const planName = useCurrentPlanName() as any
   const { handleLogoutSuccess } = useAuth()
   const { showToast } = useToast()
+  const openMemberCenter = useUiStore((s) => s.openMemberCenter)
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
@@ -67,7 +73,12 @@ export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProp
 
   const handleMember = () => {
     setMenuOpen(false)
-    navigate('/membership')
+    // 优先用调用方覆盖;默认唤出全局会员中心弹窗。
+    if (onMember) {
+      onMember()
+      return
+    }
+    openMemberCenter()
   }
 
   const handleChangePwd = () => {
@@ -105,20 +116,27 @@ export default function AppTopbar({ onMenu, onMember: _onMember }: AppTopbarProp
 
   return (
     <header className="apptop">
+      {/* 窄屏(≤900px)左上角:汉堡 + LOGO。点击汉堡滑出 AppSidebar 抽屉。桌面端隐藏。 */}
       {onMenu && (
-        <button type="button" className="apptop__hamburger" aria-label="打开菜单" onClick={onMenu}>
-          <svg
-            viewBox="0 0 24 24"
-            width="22"
-            height="22"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <path d="M4 7h16M4 12h16M4 17h16" />
-          </svg>
-        </button>
+        <div className="apptop__mobile-lead">
+          <button type="button" className="apptop__hamburger" aria-label="打开菜单" onClick={onMenu}>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="22"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="m11.666 12.669.135.013a.665.665 0 0 1 0 1.303l-.135.014H3.333a.665.665 0 0 1 0-1.33zm5-6.667.135.013a.665.665 0 0 1 0 1.303l-.135.014H3.333a.665.665 0 0 1 0-1.33z" />
+            </svg>
+          </button>
+          <img className="apptop__logo" src={brandLogo} alt="帧智汇" width={32} height={32} />
+          <span className="apptop__brand-text">
+            <strong className="apptop__brand-name">帧智汇</strong>
+            <em className="apptop__brand-version">v{APP_VERSION}</em>
+          </span>
+        </div>
       )}
       <div className="apptop__right">
         <button type="button" className="apptop__member" onClick={handleMember}>

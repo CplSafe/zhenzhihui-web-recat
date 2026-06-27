@@ -383,6 +383,22 @@ export async function listProjectVideos({
   }
 }
 
+/**
+ * 用已加载的项目对象(列表项即可)同步计算该项目「视频条数」——与 listProjectVideos 的 merged 口径一致:
+ * 派生视频(成片版本/单条成片/草稿占位)+ 本地归类清单,扣除隐藏项。
+ * 用于项目卡上的数量,避免用分镜数(shots.length)当条数导致「卡片显示 3、点开只有 1」。
+ */
+export function countProjectVideos({ project, workspaceId }: { project: any; workspaceId: number }): number {
+  const projectId = Number(project?.id || 0)
+  const derived = buildDerivedVideos({ project, workspaceId })
+  const store = loadStore(workspaceId, projectId)
+  const merged = [
+    ...derived.filter((item) => !store.overrides[item.id]?.hidden),
+    ...store.records.filter((item) => !store.overrides[item.id]?.hidden),
+  ]
+  return merged.length
+}
+
 export async function getProjectVideo({
   projectId,
   workspaceId,
