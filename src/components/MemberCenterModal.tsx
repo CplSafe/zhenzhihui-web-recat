@@ -539,7 +539,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         ) : !packages.length ? (
           <div className="mcm-hint">暂无可充值的积分包</div>
         ) : (
-          <div className="mcm-cards">
+          <div className="mcm-cards mcm-cards--recharge">
             {packages.map((pkg) => (
               <PackageCard key={pkg.id} pkg={pkg} buying={buyingId === pkg.id} onBuy={onRecharge} />
             ))}
