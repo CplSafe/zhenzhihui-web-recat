@@ -111,7 +111,7 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
 
   const sendCode = async () => {
     if (countdown > 0 || sending) return
-    if (!mobile) return setErr('未获取到当前账号手机号,无法发送验证码')
+    if (!/^1\d{10}$/.test(mobile)) return setErr('请输入正确的手机号')
     if (captcha.image && !captcha.answer.trim()) return setErr('请输入图形验证码')
     setSending(true)
     setErr('')
@@ -139,7 +139,7 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
 
   const submit = async () => {
     setErr('')
-    if (!mobile) return setErr('未获取到当前账号手机号')
+    if (!/^1\d{10}$/.test(mobile)) return setErr('请输入正确的手机号')
     if (!password.trim()) return setErr('请输入新密码')
     if (!code.trim()) return setErr('请输入验证码')
     setSubmitting(true)
@@ -173,10 +173,18 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
         <h2 className="cpw-title">修改密码</h2>
 
         <div className="cpw-fields">
-          {/* 当前手机号:只读展示,不可编辑 */}
-          <div className="cpw-mobile">
-            <span className="cpw-mobile-label">当前手机号</span>
-            <span className="cpw-mobile-val">{mobile || '未获取到手机号'}</span>
+          {/* 手机号:后端 /me 暂未返回手机号,改由用户输入(若能取到则自动预填) */}
+          <div className="cpw-field">
+            <input
+              type="tel"
+              inputMode="numeric"
+              placeholder="手机号"
+              value={mobile}
+              onChange={(e) => {
+                setMobile(e.target.value.replace(/\D/g, '').slice(0, 11))
+                setErr('')
+              }}
+            />
           </div>
 
           {/* 新密码 */}
@@ -227,7 +235,7 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
             <button
               type="button"
               className="cpw-code-btn"
-              disabled={countdown > 0 || sending || !mobile}
+              disabled={countdown > 0 || sending || !/^1\d{10}$/.test(mobile)}
               onClick={sendCode}
             >
               {sending ? '发送中…' : countdown > 0 ? `${countdown}s后重发` : '获取验证码'}
