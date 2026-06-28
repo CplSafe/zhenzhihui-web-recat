@@ -288,6 +288,8 @@ export default function SmartCreateView() {
     kind: '',
     autoGen: false,
   })
+  // 「我上传的素材」点击放大查看的大图 URL(空=不显示)
+  const [previewImg, setPreviewImg] = useState('')
   // 已选参考图(主推产品锚定的上传素材)的展示 URL 列表:打开弹窗时按 refAssetIds 解析(草稿恢复后也能显示多张)
   const [anchorRefs, setAnchorRefs] = useState<string[]>([])
   // 准备素材「一键生成」:逐个主体生成时的 loading(键=主体名),以及整体批量进行中标记
@@ -2345,7 +2347,14 @@ export default function SmartCreateView() {
             <div className="smart__uploads-row">
               {entryMeta!.images!.map((u, i) => (
                 <div className="smart__uploads-item" key={i}>
-                  <img src={u} alt={`上传素材${i + 1}`} loading="lazy" />
+                  <img
+                    src={u}
+                    alt={`上传素材${i + 1}`}
+                    loading="lazy"
+                    style={{ cursor: 'zoom-in' }}
+                    title="点击放大查看"
+                    onClick={() => setPreviewImg(u)}
+                  />
                 </div>
               ))}
             </div>
@@ -2460,7 +2469,14 @@ export default function SmartCreateView() {
               <div className="smart__uploads-row">
                 {entryMeta!.images!.map((u, i) => (
                   <div className="smart__uploads-item" key={i}>
-                    <img src={u} alt={`上传素材${i + 1}`} loading="lazy" />
+                    <img
+                    src={u}
+                    alt={`上传素材${i + 1}`}
+                    loading="lazy"
+                    style={{ cursor: 'zoom-in' }}
+                    title="点击放大查看"
+                    onClick={() => setPreviewImg(u)}
+                  />
                   </div>
                 ))}
               </div>
@@ -2774,6 +2790,30 @@ export default function SmartCreateView() {
         onSelect={(url) => applySubjectImage(subjectDlg.name, url, subjectAssets[subjectDlg.name]?.ids?.[url] || 0)}
         onUpload={(file) => uploadForSubject(subjectDlg.name, file)}
       />
+
+      {/* 「我上传的素材」点击放大查看(点任意处关闭) */}
+      {previewImg && (
+        <div
+          onClick={() => setPreviewImg('')}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 4000,
+            background: 'rgba(17,24,39,0.72)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+            cursor: 'zoom-out',
+          }}
+        >
+          <img
+            src={previewImg}
+            alt="放大查看"
+            style={{ maxWidth: '92vw', maxHeight: '92vh', borderRadius: 12, boxShadow: '0 24px 60px rgba(0,0,0,0.4)' }}
+          />
+        </div>
+      )}
     </div>
   )
 }
