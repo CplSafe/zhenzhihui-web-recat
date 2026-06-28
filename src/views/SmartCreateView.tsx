@@ -23,7 +23,6 @@ import {
   matchUploadsToSubjects,
   summarizeRequirement,
   refineElementPrompt,
-  refineElementPromptWithImage,
   refineShotPrompt,
   polishText,
   skillBreakdownStructured,
@@ -119,6 +118,18 @@ const stripAt = (t: string) =>
   String(t || '')
     .replace(/^@/, '')
     .trim()
+
+// 「保真抠图」专用极简提示词:从上传素材图生图时,只告诉 AI 抠取什么 + 与原图一模一样,不堆砌画面描述。
+// 刻意与 refineElementPromptWithImage(可调背景/角度/氛围)不同——这里要的是产品本身完全不变。
+function buildExtractPrompt(name: string, kind?: string): string {
+  const what = stripAt(name) || '产品'
+  const k = String(kind || '').trim()
+  return (
+    `从参考图中抠取${k ? `这个${k}` : ''}「${what}」,` +
+    `与参考图里的它保持一模一样:外观、品牌/logo、文字、颜色、造型、材质、所有细节完全一致,` +
+    `不改变、不美化、不重绘产品本身;只把它放到纯色干净背景上,画面里只有这一个主体,无其他物体、无多余文字、无水印。`
+  )
+}
 
 // 准备素材:每个主体只出「单一独立元素」(供镜头编排时再组合),简洁背景、便于抠图合成。
 // context = 广告主题 + 该元素出现的画面语境/用途,帮模型选对具体形态(如伞广告里的「地铁站」应是雨天出入口而非大厅)。
@@ -420,16 +431,8 @@ export default function SmartCreateView() {
       const anchoredIds =
         anchored.assetIds && anchored.assetIds.length ? anchored.assetIds : anchored.assetId ? [anchored.assetId] : []
       if (opts.refImageUrl) {
-        // 弹窗手动加的参考图:VL 优化提示词 + 作图生图参考
-        try {
-          finalPrompt = await refineElementPromptWithImage(prompt, opts.refImageUrl, {
-            name,
-            kind: subjectKindOf(name),
-            style: entryMeta?.style,
-          })
-        } catch {
-          /* 优化失败则用原提示词 */
-        }
+        // 弹窗手动加的参考图:保真抠图——用极简提示词(只说抠取什么 + 与原图一模一样),参考图作图生图输入
+        finalPrompt = buildExtractPrompt(name, subjectKindOf(name))
         try {
           const id = await ensureAssetId(ws, opts.refImageUrl, cache)
           if (id) refAssetIds.push(id)
@@ -437,24 +440,8 @@ export default function SmartCreateView() {
           /* ignore */
         }
       } else if (anchoredIds.length) {
-        // 锚定的上传素材:取第一张刷新出 URL 给 VL 优化提示词;全部 assetId 作图生图参考(草稿恢复后按 assetId 取最新)
-        let refUrl = anchored.url
-        try {
-          refUrl = await refreshAssetUrl(ws, anchoredIds[0])
-        } catch {
-          /* 刷新失败则沿用 refImage 原值 */
-        }
-        if (refUrl) {
-          try {
-            finalPrompt = await refineElementPromptWithImage(prompt, refUrl, {
-              name,
-              kind: subjectKindOf(name),
-              style: entryMeta?.style,
-            })
-          } catch {
-            /* 优化失败则用原提示词 */
-          }
-        }
+        // 锚定的上传素材(主推产品):同样走极简「保真抠图」提示词;全部 assetId 作图生图参考
+        finalPrompt = buildExtractPrompt(name, subjectKindOf(name))
         refAssetIds.push(...anchoredIds)
       }
       // 修改:把当前这张图作底图(img2img)
