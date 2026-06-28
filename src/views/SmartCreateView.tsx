@@ -68,7 +68,7 @@ import {
   createDraftSaver,
 } from '@/composables/useCreativeProjectBackend'
 import { useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import {
   saveSmartDraft,
@@ -92,15 +92,6 @@ const STEPS: StepItem[] = [
 const ACTIVE_STATUS = ['脚本生成中', '素材上传中', '镜头编排中', '视频生成中']
 // 选中 SKILL 时,在最前面多出的「营销思路拆解」步
 const MARKETING_STEP: StepItem = { key: 'marketing', label: '营销思路拆解' }
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 interface BottomButton {
   label: string
@@ -1804,11 +1795,7 @@ export default function SmartCreateView() {
     setMaxReached((m) => Math.max(m, next))
   }
 
-  const onNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
-    if (path) navigate(path)
-    else openComingSoon() // 设置/视频编辑/投前预审/数据看板等未上线项:弹全局「功能待开放」弹窗
-  }
+  const onNavigate = useSidebarNavigate()
 
   // 「制作新视频」:把整个智能成片流程初始化为全新空白页(等同切换路由再切回来)。
   // 清空本地草稿 + 所有页面状态 + 项目引用,回到入口输入页;入口页 key 自增以重挂载、清空其内部输入。
@@ -2470,13 +2457,13 @@ export default function SmartCreateView() {
                 {entryMeta!.images!.map((u, i) => (
                   <div className="smart__uploads-item" key={i}>
                     <img
-                    src={u}
-                    alt={`上传素材${i + 1}`}
-                    loading="lazy"
-                    style={{ cursor: 'zoom-in' }}
-                    title="点击放大查看"
-                    onClick={() => setPreviewImg(u)}
-                  />
+                      src={u}
+                      alt={`上传素材${i + 1}`}
+                      loading="lazy"
+                      style={{ cursor: 'zoom-in' }}
+                      title="点击放大查看"
+                      onClick={() => setPreviewImg(u)}
+                    />
                   </div>
                 ))}
               </div>

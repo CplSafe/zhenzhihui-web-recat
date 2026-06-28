@@ -47,6 +47,7 @@ export async function ensureAssetId(
   if (!url) return 0
   if (cache[url]) return cache[url]
   const res = await fetch(url)
+  if (!res.ok) throw new Error(`参考图获取失败 (${res.status})`) // 防止把错误页/空响应当图片上传
   const blob = await res.blob()
   const type = blob.type || 'image/jpeg'
   const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : 'jpg'

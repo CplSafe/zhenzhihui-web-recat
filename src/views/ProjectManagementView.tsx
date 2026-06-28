@@ -26,17 +26,8 @@ import {
 import { listProjectVideos, addClassifiedVideo, countProjectVideos, type ProjectVideo } from '@/api/projectVideos'
 import { loadClassifiedKeys, markVideoClassified, videoKeyOf } from '@/utils/unclassifiedVideos'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useWorkspaceId } from '@/stores/workspaceSession'
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 // ---- 纯函数工具 ----
 function toPlainObject(value: any): any {
@@ -448,14 +439,7 @@ export default function ProjectManagementView() {
     if (vidPage > vidTotalPages) setVidPage(vidTotalPages)
   }, [vidPage, vidTotalPages])
 
-  const handleNavigate = useCallback(
-    (key: string) => {
-      const path = ROUTE_MAP[key]
-      if (path) navigate(path)
-      else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
-    },
-    [navigate],
-  )
+  const handleNavigate = useSidebarNavigate()
 
   const loadProjects = useCallback(async () => {
     const wsId = Number(workspaceIdRef.current || 0)

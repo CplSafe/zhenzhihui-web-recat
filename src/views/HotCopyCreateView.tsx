@@ -9,7 +9,7 @@
  * (恢复到生成步并用 task id 续轮询),与智能成片一致;暂不接后端项目 CRUD。
  */
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams, useLocation } from 'react-router-dom'
+import { useParams, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
@@ -30,7 +30,7 @@ import {
   createDraftSaver,
 } from '@/composables/useCreativeProjectBackend'
 import { useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
@@ -40,15 +40,6 @@ const STEPS: StepItem[] = [
   { key: 'upload', label: '上传爆款视频' },
   { key: 'video', label: '生成视频' },
 ]
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 const DEFAULT_RATIO = '9:16'
 const DEFAULT_DURATION_SEC = 15
@@ -78,7 +69,6 @@ function parseHotCopyDraft(draftJson: any): { obj: any; smart: any } | null {
 }
 
 export default function HotCopyCreateView() {
-  const navigate = useNavigate()
   const location = useLocation()
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
@@ -768,11 +758,7 @@ export default function HotCopyCreateView() {
     setMaxReached((m) => Math.max(m, next))
   }
 
-  const onNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
-    if (path) navigate(path)
-    else openComingSoon() // 设置/视频编辑/投前预审/数据看板等未上线项:弹全局「功能待开放」弹窗
-  }
+  const onNavigate = useSidebarNavigate()
 
   const startRename = () => {
     setDraftName(projectName)

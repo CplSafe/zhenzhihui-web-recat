@@ -5,7 +5,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import {
   deleteProjectVideo,
   formatVideoDate,
@@ -15,15 +15,6 @@ import {
   type ProjectVideo,
 } from '@/api/projectVideos'
 import './ProjectVideoDetailView.css'
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 export default function ProjectVideoDetailView() {
   const navigate = useNavigate()
@@ -47,14 +38,7 @@ export default function ProjectVideoDetailView() {
   // 竖屏视频:按屏幕高展示(横屏保持按宽,不变)。加载元数据后据真实宽高判断。
   const [isPortrait, setIsPortrait] = useState(false)
 
-  const handleNavigate = useCallback(
-    (key: string) => {
-      const path = ROUTE_MAP[key]
-      if (path) navigate(path)
-      else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
-    },
-    [navigate],
-  )
+  const handleNavigate = useSidebarNavigate()
 
   const loadDetail = useCallback(async () => {
     const wsId = Number(workspaceId || 0)

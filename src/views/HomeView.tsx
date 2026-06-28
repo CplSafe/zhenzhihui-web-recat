@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { useWorkspaceId } from '@/stores/workspaceSession'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useAuth } from '@/auth/AuthContext'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { listCreativeProjects, getAssetDownloadUrl } from '@/api/business'
@@ -28,6 +28,7 @@ import quick1 from '@/assets/home/quick-1.png'
 import quick2 from '@/assets/home/quick-2.png'
 import quick3 from '@/assets/home/quick-3.png'
 import quick4 from '@/assets/home/quick-4.png'
+import VideoPreviewModal from '@/components/common/VideoPreviewModal'
 import './HomeView.css'
 
 /* 从项目记录里取标题 / 封面 / id（字段名后端不统一，做兜底） */
@@ -157,16 +158,6 @@ function projectRatio(p: any): string {
   if (!draft) return ''
   const smart = draft?.smart && typeof draft.smart === 'object' ? draft.smart : draft
   return String(smart?.entryMeta?.ratio || smart?.entry_meta?.ratio || draft?.selectedRatio || '').trim()
-}
-
-/* 侧栏 / 快捷入口 key → 路由映射（已存在的路由）*/
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
 }
 
 /* 轮播统一渲染结构:兼容后端 /api/v1/banners(视频/图 + 外链)与本地占位兜底 */
@@ -485,24 +476,8 @@ function HistoryVideoCard({
         </div>
       </div>
 
-      {/* 全屏视频播放弹窗 */}
-      {playingUrl && (
-        <div className="home__video-modal-mask" onClick={() => setPlayingUrl('')}>
-          <div className="home__video-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="home__video-modal-close" onClick={() => setPlayingUrl('')}>
-              ✕
-            </button>
-            <video
-              className="home__video-modal-player"
-              src={playingUrl}
-              controls
-              autoPlay
-              playsInline
-              crossOrigin="anonymous"
-            />
-          </div>
-        </div>
-      )}
+      {/* 全屏视频播放弹窗(历史项目:同源 /download,可带 crossOrigin) */}
+      <VideoPreviewModal src={playingUrl} crossOrigin="anonymous" onClose={() => setPlayingUrl('')} />
     </>
   )
 }
@@ -624,15 +599,7 @@ export default function HomeView() {
     return historyItems.filter((p) => projectTitle(p).includes(keywordTrim))
   }, [historyItems, keywordTrim])
 
-  const handleNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
-    if (path) {
-      navigate(path)
-    } else {
-      // 未实现的功能（爆款裂变 / IP视频 / 爆款复制 / 设置 等）：弹全局「功能待开放」弹窗
-      openComingSoon()
-    }
-  }
+  const handleNavigate = useSidebarNavigate()
 
   // 拉取后端轮播图(/api/v1/banners),走 SWR 缓存:
   //   - 有缓存 → 立即用缓存渲染(上面 useState 已秒出),同时后台刷新,新数据回来再更新;
@@ -1015,23 +982,7 @@ export default function HomeView() {
       </div>
 
       {/* 模板库点击放大预览(外链 OSS、无 CORS 头 → 不带 crossOrigin,否则卡 0:00) */}
-      {watching && (
-        <div className="home__video-modal-mask" onClick={() => setWatching(null)}>
-          <div className="home__video-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="home__video-modal-close" onClick={() => setWatching(null)}>
-              ✕
-            </button>
-            <video
-              className="home__video-modal-player"
-              src={watching.url}
-              poster={watching.poster || undefined}
-              controls
-              autoPlay
-              playsInline
-            />
-          </div>
-        </div>
-      )}
+      <VideoPreviewModal src={watching?.url || ''} poster={watching?.poster} onClose={() => setWatching(null)} />
     </div>
   )
 }

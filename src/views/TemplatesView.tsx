@@ -12,7 +12,8 @@ import { resolveProjectPath } from '@/utils/projectRoute'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useRequireAuth } from '@/composables/useRequireAuth'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
+import VideoPreviewModal from '@/components/common/VideoPreviewModal'
 import './HomeView.css'
 import './TemplatesView.css'
 
@@ -24,15 +25,6 @@ const RATIO_LABELS: Record<string, string> = {
   '4 / 5': '4:5',
   '1 / 1': '1:1',
   '3 / 4': '3:4',
-}
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
 }
 
 export default function TemplatesView() {
@@ -98,11 +90,7 @@ export default function TemplatesView() {
     return RATIO_KEYS.filter((k) => k === '' || seen.has(k))
   }, [templates])
 
-  const onNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
-    if (path) navigate(path)
-    else openComingSoon() // 设置等未上线项:弹全局「功能待开放」弹窗
-  }
+  const onNavigate = useSidebarNavigate()
 
   return (
     <div className="home">
@@ -341,25 +329,8 @@ export default function TemplatesView() {
         </div>
       </div>
 
-      {/* 全屏视频播放弹窗 */}
-      {watching && (
-        <div className="home__video-modal-mask" onClick={() => setWatching(null)}>
-          <div className="home__video-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="home__video-modal-close" onClick={() => setWatching(null)}>
-              ✕
-            </button>
-            {/* 不加 crossOrigin:模板视频多为外链 OSS、无 CORS 头,带它会被浏览器拒载卡在 0:00 */}
-            <video
-              className="home__video-modal-player"
-              src={watching.url}
-              poster={watching.poster || undefined}
-              controls
-              autoPlay
-              playsInline
-            />
-          </div>
-        </div>
-      )}
+      {/* 全屏视频播放弹窗(外链 OSS、无 CORS 头 → 不带 crossOrigin,否则卡 0:00) */}
+      <VideoPreviewModal src={watching?.url || ''} poster={watching?.poster} onClose={() => setWatching(null)} />
     </div>
   )
 }
