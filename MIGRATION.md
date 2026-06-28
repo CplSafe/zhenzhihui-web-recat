@@ -80,6 +80,17 @@
 - tsconfig.app.json 暂时放宽：`strictNullChecks:false`、`noImplicitAny:false`、`useUnknownInCatchVariables:false`。
   随组件迁移逐步收紧。
 
+## 迁移后清理(2.1-lrl-review,本节为现状,上方各表为迁移当时的快照)
+
+迁移完成后产品收敛到 4 个线上功能(**智能成片 / 爆款复制 / 项目管理 / 素材市场**),旧版 creative 流与 workbench 经核实**全仓不可达**(`resolveProjectPath` 恒返回 `/smart`),已连同其专属依赖删除。上表中的下列条目**现已不存在**:
+
+- **视图/路由**:`CreativeScriptView`、`CreativeEntryView`、`WorkbenchView` 及 `/creative*`、`/workbench` 路由 — 已删。现存视图见 CLAUDE.md。
+- **creative 流组件群**(Storyboard/Timeline/Video/Script 等 ~13 个)+ 其 composables(`useCreativeWorkflow` 全家桶、`useStoryboardGeneration`、`useVideoGeneration`、`useScriptPrompts`、`useTaskPolling`、`useTaskAbort`、`useWorkflowPersistence`、`useStateRef`)— 已删。新流程编排目前直接在视图里(`useCreativeProjectBackend` 是唯一抽出的切片,组合层仍是待办)。
+- **未接线的移植件**:`billing/`(BillingModal/BillingAdminPanel/useBilling)、`team/TeamManagementModal`、`stores/materialLibrary`、`styles/workbench.css` — 从未接线,已删。会员中心由 `MemberCenterModal` 另行实现。
+- **随旧流程移除的依赖**:`@tiptap/*`、`plyr`/`plyr-react`、`streamdown` — 已从 package.json 移除。Markdown 改用 `react-markdown` + `remark-gfm`(`components/common/Markdown.tsx`);`dnd-kit` 仍用于镜头编排 `ShotList`,保留。
+
+> 即:上方迁移表里凡涉及 CreativeScript/Workbench/billing/team/tiptap/plyr/streamdown 的行,均为**迁移当时**的状态,现已清理。
+
 ## 命令
 
 ```sh
