@@ -715,10 +715,50 @@ export default function HotCopyCreateView() {
     void prepareAndGenerate(payload, prompt)
   }
 
+  // 回到入口(上一步):用当前工作态(源视频 + 替换素材 assetId)回填入口,避免空白。
+  // 后端恢复 / 项目管理打开的项目 entryInitial 为空,这里按 assetId 刷新出预览 URL 重建,源视频与替换素材都带回。
+  const backToEntry = async () => {
+    const ws = Number(workspaceId || 0)
+    const next: any = { tab: entryInitial?.tab || 'remake' }
+    if (sourceVideo.assetId || sourceVideo.url) {
+      let src = sourceVideo.url || ''
+      if (ws && sourceVideo.assetId) {
+        try {
+          src = (await refreshAssetUrl(ws, sourceVideo.assetId)) || src
+        } catch {
+          /* 刷新失败用原 url */
+        }
+      }
+      next.videoSource = 'library'
+      next.videoPreview = src
+      next.libraryVideo = { assetId: sourceVideo.assetId, src }
+    }
+    if (productAssetIds.length) {
+      const prods = await Promise.all(
+        productAssetIds.map(async (id) => {
+          let url = ''
+          if (ws) {
+            try {
+              url = (await refreshAssetUrl(ws, id)) || ''
+            } catch {
+              /* ignore */
+            }
+          }
+          return { url, file: null, isVideo: false, assetId: id }
+        }),
+      )
+      const valid = prods.filter((p) => p.url || p.assetId)
+      if (valid.length) next.products = valid
+    }
+    // 有可回填内容才覆盖 entryInitial,否则保留原值(避免把已有内容清空)
+    if (next.videoSource || next.products) setEntryInitial(next)
+    setStarted(false)
+    setStep(0)
+  }
+
   const goStep = (i: number) => {
     if (i <= 0) {
-      setStarted(false)
-      setStep(0)
+      void backToEntry()
       return
     }
     const next = Math.min(STEPS.length - 1, i)
