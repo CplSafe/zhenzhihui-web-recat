@@ -231,10 +231,12 @@ function buildDerivedVideos({
   // 每次「重新生成」的独立记录(生成中/失败)→ 项目下置顶展示成「草稿」条目(成功的成片仍走 videoVersions)。
   // 按需求:生成中、生成失败统一显示「草稿」,不出现「生成中/生成失败」。
   // 兼容旧数据:没有 generations 但残留 vidGenTaskId>0 → 也兜底显示一条「草稿」。
-  // 草稿里存的字段名是 videoGenerations(兼容历史 generations)
-  const generationsRaw = normalizeArray(smart?.videoGenerations || smart?.generations).filter(
-    (g: any) => g?.status === 'processing' || g?.status === 'failed',
+  // 只把【仍在生成中且有在途任务】的记录折叠成「一条」草稿占位;失败 / 已结束的历史尝试不作为视频卡——
+  // 否则一个项目多次重试会堆出一堆空草稿(用户反馈:只生成 1 个视频却显示 5 个)。
+  const processingRaw = normalizeArray(smart?.videoGenerations || smart?.generations).filter(
+    (g: any) => g?.status === 'processing',
   )
+  const hasActiveTask = Number(smart?.vidGenTaskId || 0) > 0
   const makeGenItem = (g: any, i: number): ProjectVideo => ({
     id: `derived-gen-${pickString(g?.id, String(i))}`,
     projectId: Number(project?.id || 0),
@@ -251,11 +253,10 @@ function buildDerivedVideos({
     flow,
     publishUrl: '',
   })
-  const genItems: ProjectVideo[] = generationsRaw.length
-    ? generationsRaw.map(makeGenItem)
-    : Number(smart?.vidGenTaskId || 0) > 0
-      ? [makeGenItem({ id: `legacy-${project?.id || 0}`, status: 'processing' }, 0)]
-      : []
+  // 仅在确有在途生成任务时,显示一条「生成中」占位(取最近一条进行中记录;无则用兜底)。
+  const genItems: ProjectVideo[] = hasActiveTask
+    ? [makeGenItem(processingRaw[processingRaw.length - 1] || { id: `legacy-${project?.id || 0}`, status: 'processing' }, 0)]
+    : []
   const generating = genItems.length > 0
 
   const candidates = normalizeArray(smart?.videoVersions)
