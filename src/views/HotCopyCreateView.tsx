@@ -21,18 +21,14 @@ import { editFullVideo } from '@/api/smartVideo'
 import { saveHotCopyDraft, loadHotCopyDraft, clearHotCopyDraft, type HotCopyDraft } from '@/utils/hotCopyDraft'
 import { refreshAssetUrl } from '@/api/smartShotImage'
 import { generateProjectName } from '@/api/aiPolish'
+import { createCreativeProject, getCreativeProject, patchCreativeProject } from '@/api/business'
+import { useWorkspaceId } from '@/stores/workspaceSession'
 import {
-  createCreativeProject,
-  updateCreativeProjectDraft,
-  getCreativeProject,
-  patchCreativeProject,
-} from '@/api/business'
-import {
-  useWorkspaceId,
-  useModelPlanCandidates,
-  useWorkspaceSessionStore,
-  deriveModelPlanCandidates,
-} from '@/stores/workspaceSession'
+  resolveProjectId,
+  isUnnamedTitle,
+  resolvePlanCandidates,
+  createDraftSaver,
+} from '@/composables/useCreativeProjectBackend'
 import { useToast } from '@/composables/useToast'
 import { openComingSoon } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
@@ -66,21 +62,6 @@ function buildBasePrompt(tab: 'remake' | 'replica', text: string): string {
   return [text.trim(), intent].filter(Boolean).join(';') || '做同款-爆款复制'
 }
 
-// 默认/未命名标题:不回写后端(避免无意义的 PATCH 撞草稿保存的 draft_revision → 409)
-function isUnnamedTitle(title: string): boolean {
-  const t = String(title || '').trim()
-  return !t || t.includes('未命名')
-}
-
-// 从 createCreativeProject 返回里取项目 id(字段名后端不统一,做兜底)
-function resolveProjectId(payload: any): number {
-  return (
-    Number(
-      payload?.id ?? payload?.project_id ?? payload?.projectId ?? payload?.data?.id ?? payload?.data?.project_id ?? 0,
-    ) || 0
-  )
-}
-
 // 从后端 draft_json 还原爆款复制草稿(我们把字段存在 .smart 块里;兼容字符串/对象)
 function parseHotCopyDraft(draftJson: any): { obj: any; smart: any } | null {
   let obj = draftJson
@@ -102,18 +83,6 @@ export default function HotCopyCreateView() {
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
   const workspaceId = useWorkspaceId()
-  const modelPlanCandidates = useModelPlanCandidates() as string[]
-  const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
-
-  const resolvePlanCandidates = async (): Promise<string[]> => {
-    try {
-      await ensureModelPlanCandidatesLoaded()
-    } catch {
-      /* 失败用兜底候选 */
-    }
-    return (deriveModelPlanCandidates(useWorkspaceSessionStore.getState()) as string[]) || modelPlanCandidates
-  }
-
   const [started, setStarted] = useState(false) // false=入口(上传步), true=生成视频步
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [step, setStep] = useState(0)
@@ -441,67 +410,19 @@ export default function HotCopyCreateView() {
     }
   }
 
-  // 从任意返回体/错误体取 draft_revision(下划线/驼峰/嵌套 data 多种写法)
-  const normRev = (p: any): number => {
-    const v = Number(p?.draft_revision ?? p?.draftRevision ?? p?.data?.draft_revision ?? p?.data?.draftRevision ?? NaN)
-    return Number.isFinite(v) && v >= 0 ? Math.floor(v) : NaN
-  }
-  const fetchRevision = async (id: number, ws: number) => {
-    try {
-      const proj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
-      const r = normRev(proj)
-      if (Number.isFinite(r)) draftRevisionRef.current = r
-    } catch {
-      /* ignore */
-    }
-  }
-  const doPutHotCopyDraft = async (): Promise<boolean> => {
-    const id = projectIdRef.current
-    const ws = Number(workspaceId || 0)
-    if (!id || !ws) return false
-    // 封面:优先首张替换素材图(图片资源,适合做封面);没有则不带(=保持现状,后端封面不变)
-    const coverAssetId = Number(productAssetIds[0] || 0) || 0
-    try {
-      const payload: any = await updateCreativeProjectDraft({
-        projectId: id,
-        workspaceId: ws,
-        draft: buildHotCopySnapshot(),
-        draftRevision: draftRevisionRef.current,
-        coverAssetId,
-      })
-      const next = normRev(payload)
-      if (Number.isFinite(next)) draftRevisionRef.current = next
-      else await fetchRevision(id, ws) // 响应没带 revision → 重新拉,保持同步(否则下次保存必 409)
-      return true
-    } catch (e: any) {
-      if (e?.status !== 409) return false
-      // 版本冲突:优先用 409 响应体里直接带的最新 revision,没有再拉一次,然后重试
-      const fromErr = normRev(e?.response)
-      if (Number.isFinite(fromErr)) draftRevisionRef.current = fromErr
-      else await fetchRevision(id, ws)
-      try {
-        const payload: any = await updateCreativeProjectDraft({
-          projectId: id,
-          workspaceId: ws,
-          draft: buildHotCopySnapshot(),
-          draftRevision: draftRevisionRef.current,
-          coverAssetId,
-        })
-        const next = normRev(payload)
-        if (Number.isFinite(next)) draftRevisionRef.current = next
-        else await fetchRevision(id, ws)
-        return true
-      } catch {
-        return false
-      }
-    }
-  }
-  // 串行化后端保存(防并发 PUT 用同 revision 互相 409)
-  const putHotCopyDraftToBackend = (): Promise<boolean> => {
-    const run = saveChainRef.current.catch(() => {}).then(() => doPutHotCopyDraft())
-    saveChainRef.current = run
-    return run
-  }
+  // 后端草稿保存:版本号同步 + 串行化 + 409 冲突重试,逻辑统一在 useCreativeProjectBackend。
+  // 每次渲染重建(闭包捕获最新快照);saveChainRef 持久化串行链。
+  const { putDraft: putHotCopyDraftToBackend } = createDraftSaver({
+    draftRevisionRef,
+    saveChainRef,
+    getProjectId: () => projectIdRef.current,
+    getWorkspaceId: () => Number(workspaceId || 0),
+    // 封面:优先首张替换素材图(图片资源,适合做封面);0/无 则省略=保持现状
+    buildDraft: () => ({
+      draft: buildHotCopySnapshot(),
+      coverAssetId: Number(productAssetIds[0] || 0) || 0,
+    }),
+  })
 
   // 后端草稿自动保存(1.5s 防抖;已水合且已建项目才存)
   useEffect(() => {

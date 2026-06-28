@@ -50,18 +50,18 @@ import {
   createCreativeProject,
   patchCreativeProject,
   getCreativeProject,
-  updateCreativeProjectDraft,
   uploadAssetFile,
   getAssetDownloadUrl,
   listAssets,
   extractAssetPageItems,
 } from '@/api/business'
+import { useWorkspaceId } from '@/stores/workspaceSession'
 import {
-  useWorkspaceId,
-  useModelPlanCandidates,
-  useWorkspaceSessionStore,
-  deriveModelPlanCandidates,
-} from '@/stores/workspaceSession'
+  resolveProjectId,
+  isUnnamedTitle,
+  resolvePlanCandidates,
+  createDraftSaver,
+} from '@/composables/useCreativeProjectBackend'
 import { useToast } from '@/composables/useToast'
 import { openComingSoon } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
@@ -87,18 +87,6 @@ const STEPS: StepItem[] = [
 const ACTIVE_STATUS = ['脚本生成中', '素材上传中', '镜头编排中', '视频生成中']
 // 选中 SKILL 时,在最前面多出的「营销思路拆解」步
 const MARKETING_STEP: StepItem = { key: 'marketing', label: '营销思路拆解' }
-
-// 从 createCreativeProject 返回里取项目 id(字段名后端不统一,做兜底)
-function resolveProjectId(payload: any): number {
-  const id = Number([payload?.id, payload?.project?.id, payload?.data?.id].find((v) => Number(v) > 0) || 0)
-  return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
-}
-
-// 是否「未命名」标题(对齐 Vue isUnnamedProjectTitle):空 或 含「未命名」都视为未命名
-function isUnnamedTitle(title: string): boolean {
-  const t = String(title || '').trim()
-  return !t || t.includes('未命名')
-}
 
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
@@ -191,19 +179,6 @@ export default function SmartCreateView() {
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
   const workspaceId = useWorkspaceId()
-  const modelPlanCandidates = useModelPlanCandidates() as string[]
-  const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
-
-  // 生成前确保工作空间真实套餐候选已加载,并读最新值(否则只有默认候选,列不到付费套餐里的 seedance/seedream)。
-  // 与 2.0 useVideoGeneration 一致:先 ensure,再用 getState 读最新,避免闭包拿到旧的 modelPlanCandidates。
-  const resolvePlanCandidates = async (): Promise<string[]> => {
-    try {
-      await ensureModelPlanCandidatesLoaded()
-    } catch {
-      /* 加载失败则退回当前已有候选 */
-    }
-    return (deriveModelPlanCandidates(useWorkspaceSessionStore.getState()) as string[]) || modelPlanCandidates
-  }
 
   const [started, setStarted] = useState(false) // false=入口输入页, true=进入 4 步流程
   const [entryKey, setEntryKey] = useState(0) // 「制作新视频」自增 → 重挂载入口页,清空其内部输入状态
@@ -1688,77 +1663,23 @@ export default function SmartCreateView() {
     videoGenSigRef.current = videoInputSig(restoredShots, d.entryMeta || null, d.reqSummary || d.requirement || '')
   }
 
-  // 从任意返回体里取 draft_revision(后端字段有下划线/驼峰/嵌套 data 多种写法,对齐 2.0)
-  const normRev = (p: any): number => {
-    const v = Number(p?.draft_revision ?? p?.draftRevision ?? p?.data?.draft_revision ?? p?.data?.draftRevision ?? NaN)
-    return Number.isFinite(v) && v >= 0 ? Math.floor(v) : NaN
-  }
-  const fetchRevision = async (id: number, ws: number) => {
-    try {
-      const proj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
-      const r = normRev(proj)
-      if (Number.isFinite(r)) draftRevisionRef.current = r
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // 串行化所有后端草稿保存:排队执行,前一个完成(并更新 revision)再执行下一个,
-  // 杜绝并发 PUT 用同一 revision 互相打架导致的 409 DRAFT_CONFLICT。
+  // 后端草稿保存:版本号同步 + 串行化 + 409 冲突重试,逻辑统一在 useCreativeProjectBackend。
+  // 每次渲染重建(闭包捕获最新 shots/entryMeta/currentDraft);saveChainRef 持久化串行链。
   const saveChainRef = useRef<Promise<any>>(Promise.resolve())
-  const putSmartDraftToBackend = (): Promise<boolean> => {
-    const run = saveChainRef.current.catch(() => {}).then(() => doPutDraft())
-    saveChainRef.current = run
-    return run
-  }
-
-  // 把当前草稿写到后端。对齐 2.0 putDraftSnapshot:保存前先确保有当前 revision,
-  // 保存后用返回的 revision 同步;返回体没带 revision 则重新拉一次;409 冲突→拉新 revision 重试。
-  const doPutDraft = async (): Promise<boolean> => {
-    const id = projectIdRef.current
-    const ws = Number(workspaceId || 0)
-    if (!id || !ws) return false
-    const snapshot = buildSmartSnapshot(currentDraft())
-    // 项目封面:优先第一张分镜图,其次入口上传素材的 asset_id。带进存草稿(后端 cover_asset_id),
-    // 列表接口就能直接返回封面,不必前端再挖 draft。0/无 时省略,保留现有封面。
-    const coverAssetId =
-      Number(shots.find((s) => Number(s.imageAssetId || 0) > 0)?.imageAssetId || 0) ||
-      Number(((entryMeta as any)?.imageAssetIds || []).find((x: any) => Number(x) > 0) || 0) ||
-      0
-    // 首次/未知 revision:先拉一次,避免用错版本号导致 409 把后续(含图)的保存全部打掉
-    if (!draftRevisionRef.current) await fetchRevision(id, ws)
-    try {
-      const payload: any = await updateCreativeProjectDraft({
-        projectId: id,
-        workspaceId: ws,
-        draft: snapshot,
-        draftRevision: draftRevisionRef.current,
-        coverAssetId,
-      })
-      const next = normRev(payload)
-      if (Number.isFinite(next)) draftRevisionRef.current = next
-      else await fetchRevision(id, ws) // 返回体没带 revision → 重新拉,保持同步
-      return true
-    } catch (e: any) {
-      if (e?.status !== 409) return false
-      await fetchRevision(id, ws)
-      try {
-        const payload: any = await updateCreativeProjectDraft({
-          projectId: id,
-          workspaceId: ws,
-          draft: snapshot,
-          draftRevision: draftRevisionRef.current,
-          coverAssetId,
-        })
-        const next = normRev(payload)
-        if (Number.isFinite(next)) draftRevisionRef.current = next
-        else await fetchRevision(id, ws)
-        return true
-      } catch {
-        return false
-      }
-    }
-  }
+  const { putDraft: putSmartDraftToBackend } = createDraftSaver({
+    draftRevisionRef,
+    saveChainRef,
+    getProjectId: () => projectIdRef.current,
+    getWorkspaceId: () => Number(workspaceId || 0),
+    buildDraft: () => ({
+      draft: buildSmartSnapshot(currentDraft()),
+      // 项目封面:优先第一张分镜图,其次入口上传素材的 asset_id(0/无 则省略,保留现有封面)
+      coverAssetId:
+        Number(shots.find((s) => Number(s.imageAssetId || 0) > 0)?.imageAssetId || 0) ||
+        Number(((entryMeta as any)?.imageAssetIds || []).find((x: any) => Number(x) > 0) || 0) ||
+        0,
+    }),
+  })
 
   const hydratedRef = useRef(false)
   // 进入:有 /smart/:id → 从后端恢复;否则恢复 localStorage 草稿。
