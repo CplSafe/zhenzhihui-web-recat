@@ -75,7 +75,20 @@ export default function ImageChat({ messages, initialRatio, busy, onSend, onNewC
     const picked = (await Promise.all(sel.map((f) => fileToDataUrl(f).catch(() => null)))).filter(Boolean) as string[]
     if (picked.length) setImages((prev) => [...prev, ...picked])
   }
-  const removeImage = (url: string) => setImages((prev) => prev.filter((u) => u !== url))
+  const removeImage = (url: string) => {
+    const idx = images.indexOf(url) // 被删图的 0-based 位置
+    if (idx < 0) return
+    setImages((prev) => prev.filter((_, i) => i !== idx)) // 仅删该位置(重复 URL 不会被一起删掉)
+    // 同步重排文本里的位置型引用 @图片N:指向被删图的去掉,其后的整体 -1(否则引用错图)
+    setText((t) =>
+      t.replace(/@图片(\d+)/g, (m, d) => {
+        const n = Number(d) // 1-based
+        if (n - 1 === idx) return ''
+        if (n - 1 > idx) return `@图片${n - 1}`
+        return m
+      }),
+    )
+  }
 
   // 在记录的光标位置插入文本,并把光标移到插入内容之后,回焦
   const insertAtCaret = (snippet: string) => {

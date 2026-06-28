@@ -201,7 +201,8 @@ export default function HotCopyCreateView() {
 
   // 续等在途视频任务并回填(本地恢复 / 后端恢复共用)
   const resumeVideoTask = (ws: number, taskId: number) => {
-    if (!ws || !taskId) return
+    // vidGenRunning 守卫:避免重复进入(再挂载/重复 hydrate)时叠开多个 4s 轮询循环 → 任务状态请求风暴(对齐智能成片)
+    if (!ws || !taskId || vidGenRunning) return
     setVidGenTaskId(taskId)
     setVidGenRunning(true)
     awaitHotVideoResult({ workspaceId: ws, taskId })

@@ -4,15 +4,8 @@
  * (同 2.0「人脸检测抠图」模型)。脱敏失败不阻塞——回退用原图(由调用方决定)。
  */
 // @ts-nocheck
-import {
-  createAiTask,
-  waitForAiTask,
-  listAiModels,
-  getAssetDownloadUrl,
-  listAssets,
-  extractAssetPageItems,
-} from './business'
-import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
+import { createAiTask, waitForAiTask, listAiModels, getAssetDownloadUrl } from './business'
+import { resolveGeneratedMediaUrls, findAssetIdByTaskId } from '@/utils/taskMedia'
 
 // 懒加载缓存「人脸检测抠图」模型 ID:先精确名称、再放宽含「人脸」、最后任意兜底(同 2.0)
 let cachedFaceModelId = 0
@@ -35,19 +28,6 @@ async function getFaceDetectModelId(): Promise<number> {
 
 function outputAssetId(task: any): number {
   return Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
-}
-
-// outputs 没带 asset_id 时按 task_id 反查资产列表(否则刷新水合换不了URL → 破图)
-async function findAssetIdByTaskId(workspaceId: number, taskId: any): Promise<number> {
-  const tId = Number(taskId || 0)
-  if (!workspaceId || !tId) return 0
-  try {
-    const payload = await listAssets({ workspaceId, type: 'image', limit: 100 })
-    const hit = extractAssetPageItems(payload).find((a: any) => Number(a?.task_id) === tId)
-    return Number(hit?.id || 0) || 0
-  } catch {
-    return 0
-  }
 }
 
 export interface FaceBlurResult {
@@ -100,7 +80,7 @@ export async function blurFacesOnAsset(args: {
     const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 10 * 60 * 1000 })
     debug.status = completed?.status || ''
     let outId = outputAssetId(completed)
-    if (!outId) outId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
+    if (!outId) outId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'image')
     let url =
       (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
     if (!url && outId)

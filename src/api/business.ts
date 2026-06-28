@@ -333,13 +333,15 @@ export async function streamAiResponse({
     let lastError = null
 
     for (const model of ordered) {
+      // 同一模型的多次重试复用一个幂等键(换模型才换),避免首请求已到 provider 时重试重复计费
+      const idempotencyKey = createIdempotencyKey('resp')
       for (let attempt = 0; attempt <= PROVIDER_TASK_RETRY_LIMIT; attempt += 1) {
         try {
           return await openAiResponseStream({
             workspaceId,
             modelId: model.id,
             operationCode,
-            idempotencyKey: createIdempotencyKey('resp'),
+            idempotencyKey,
             prompt,
             messages,
             inputAssets,

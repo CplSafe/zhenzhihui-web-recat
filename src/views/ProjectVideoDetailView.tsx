@@ -92,11 +92,9 @@ export default function ProjectVideoDetailView() {
   const openEditor = useCallback(() => {
     if (!detail) return
     const qs = workspaceId ? `?workspace_id=${workspaceId}` : ''
-    if (detail.sourceType === 'creative') {
-      navigate(`/smart/${projectId}${qs}`)
-      return
-    }
-    navigate(`/smart/${projectId}${qs}`)
+    // 按视频所属流程进对应编辑器:爆款复制 → /hot-copy,其余(智能成片/旧版)→ /smart(与列表页 openEditor 一致)
+    const base = (detail as any).flow === 'hot-copy' ? '/hot-copy' : '/smart'
+    navigate(`${base}/${projectId}${qs}`)
   }, [detail, navigate, projectId, workspaceId])
 
   const downloadVideo = useCallback(() => {

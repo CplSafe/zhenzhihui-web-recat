@@ -249,10 +249,16 @@ function projectMediaCards(project: any, mode: 'upload' | 'generated', wsId: num
     const imgs = arr(em.images)
     const aids = arr(em.imageAssetIds || em.imageAssetIDs)
     imgs.forEach((u: any, i: number) => add(Number(aids[i] || 0) || 0, u, 'image'))
-    // 上传的源视频(爆款复制)
+    // 上传的源视频(爆款复制旧字段:entryMeta)
     const sv = String(em.sourceVideo || em.source_video || em.video || '').trim()
     const svAid = Number(em.sourceVideoAssetId || em.videoAssetId || 0) || 0
     if (sv || svAid) add(svAid, sv, 'video')
+    // 爆款复制:替换素材图 + 源视频实际存在 smart 块(productAssetIds / sourceVideo),entryMeta 里没有 → 这里补上
+    arr(smart?.productAssetIds || smart?.product_asset_ids).forEach((id: any) => add(Number(id || 0) || 0, '', 'image'))
+    const hcv = smart?.sourceVideo || smart?.source_video
+    if (hcv && typeof hcv === 'object') {
+      add(Number(hcv.assetId || hcv.asset_id || 0) || 0, String(hcv.url || hcv.src || ''), 'video')
+    }
   } else {
     // 生成的分镜图
     for (const s of arr(smart?.shots)) {
