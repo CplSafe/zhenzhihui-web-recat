@@ -63,8 +63,6 @@ const HomeView = lazy(() => import('../views/HomeView'))
 const TemplatesView = lazy(() => import('../views/TemplatesView'))
 const SmartCreateView = lazy(() => import('../views/SmartCreateView'))
 const HotCopyCreateView = lazy(() => import('../views/HotCopyCreateView'))
-const CreativeEntryView = lazy(() => import('../views/CreativeEntryView'))
-const CreativeScriptView = lazy(() => import('../views/CreativeScriptView'))
 const ProjectManagementView = lazy(() => import('../views/ProjectManagementView'))
 const ProjectVideoListView = lazy(() => import('../views/ProjectVideoListView'))
 const ProjectVideoDetailView = lazy(() => import('../views/ProjectVideoDetailView'))
@@ -103,9 +101,6 @@ export const router = createBrowserRouter([
       { path: 'smart/:id', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
       { path: 'hot-copy', element: lazyPage(<HotCopyCreateView />), handle: { requiresAuth: false } },
       { path: 'hot-copy/:id', element: lazyPage(<HotCopyCreateView />), handle: { requiresAuth: false } },
-      { path: 'creative/blank', element: lazyPage(<CreativeScriptView />) },
-      { path: 'creative', element: lazyPage(<CreativeEntryView />) },
-      { path: 'creative/:id', element: lazyPage(<CreativeScriptView />) },
       { path: 'projects', element: lazyPage(<ProjectManagementView />) },
       { path: 'projects/:projectId/videos', element: lazyPage(<ProjectVideoListView />) },
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },
