@@ -25,6 +25,8 @@ export interface SmartDraft {
   vidGenTaskId?: number
   /** 准备素材「一键生成」是否进行中:中途切走再回来据此自动续作未出图的素材 */
   materialBatchPending?: boolean
+  /** 分镜脚本是否生成进行中:中途切走再回来据此自动续跑(重新生成脚本),避免"中断" */
+  scriptPending?: boolean
   /** 整片视频历史版本(每版带 asset_id,供水合刷新签名URL) */
   videoVersions?: { url: string; assetId: number }[]
   /** 每次「重新生成」的独立记录:生成中 / 失败(成功的成片仍进 videoVersions)。
