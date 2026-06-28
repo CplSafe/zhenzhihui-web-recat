@@ -9,6 +9,7 @@ import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import GuideDialog from '../GuideDialog'
 import { fileToDataUrl } from '@/utils/imageFile'
+import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
 import { useToast } from '@/composables/useToast'
 import styles from './SmartEntry.module.less'
 
@@ -49,7 +50,6 @@ interface SmartEntryProps {
   }
 }
 
-const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
 const DURATION_OPTIONS = ['5s', '10s', '15s']
 const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill']
 const MAX_IMAGES = 9

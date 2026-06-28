@@ -4,30 +4,17 @@
  * 输入参考始终用当前分镜图,确保每次生成都基于最新镜头编排;修改意见只拼进 prompt,不复用旧视频。
  */
 // @ts-nocheck
-import { createAiTask, waitForAiTask, listAssets, extractAssetPageItems, getAssetDownloadUrl } from './business'
+import { createAiTask, waitForAiTask, getAssetDownloadUrl } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
-import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
+import { resolveGeneratedMediaUrls, findAssetIdByTaskId } from '@/utils/taskMedia'
 
 // 目前线上只有 Seedance 2.0
 const VIDEO_MODEL_KEYWORDS = ['seedance']
 // 视频编辑能力:在原视频基础上按提示微调(happyhorse-1.0-video-edit)
 const VIDEO_EDIT_MODEL_KEYWORDS = ['happyhorse']
 const extractVideoAssetId = (task: any): number => Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
-
-// outputs 没带 asset_id 时按 task_id 反查视频资产(否则刷新水合换不了URL → 视频丢失)
-async function findVideoAssetIdByTaskId(workspaceId: number, taskId: any): Promise<number> {
-  const tId = Number(taskId || 0)
-  if (!workspaceId || !tId) return 0
-  try {
-    const payload = await listAssets({ workspaceId, type: 'video', limit: 100 })
-    const hit = extractAssetPageItems(payload).find((a: any) => Number(a?.task_id) === tId)
-    return Number(hit?.id || 0) || 0
-  } catch {
-    return 0
-  }
-}
 
 const shotDurSec = (s: any): number => {
   const n = parseInt(String(s?.duration || '').replace(/[^0-9]/g, ''), 10)
@@ -132,7 +119,7 @@ async function resolveVideoTaskResult(
   fallbackTaskId: any,
 ): Promise<{ url: string; assetId: number }> {
   let assetId = extractVideoAssetId(completed)
-  if (!assetId) assetId = await findVideoAssetIdByTaskId(workspaceId, completed?.id || fallbackTaskId)
+  if (!assetId) assetId = await findAssetIdByTaskId(workspaceId, completed?.id || fallbackTaskId)
   const [url] = await resolveGeneratedMediaUrls({ workspaceId, task: completed, type: 'video' })
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')
   return { url, assetId }
@@ -208,7 +195,7 @@ export async function editFullVideo(args: {
     timeoutMs: 60 * 60 * 1000,
   })
   let assetId = extractVideoAssetId(completed)
-  if (!assetId) assetId = await findVideoAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
+  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
   let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('视频编辑已完成,暂未返回可预览地址')

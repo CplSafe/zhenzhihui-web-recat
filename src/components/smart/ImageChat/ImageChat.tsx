@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import EntryDropdown from '../EntryDropdown'
 import { fileToDataUrl } from '@/utils/imageFile'
+import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
 import { useToast } from '@/composables/useToast'
 import styles from './ImageChat.module.less'
 
@@ -37,7 +38,6 @@ interface ImageChatProps {
   onNewChat?: () => void
 }
 
-const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
 const MAX_IMAGES = 9
 const PLACEHOLDER =
   '最多上传9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
