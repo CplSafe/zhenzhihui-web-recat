@@ -35,7 +35,13 @@ import {
   type MarketingFieldKey,
 } from '@/api/aiPolish'
 import MarketingBreakdown from '@/components/smart/MarketingBreakdown'
-import { generateScriptShotsStream, generateShotInfo, extractSubjects, mergeSingleUseSubjects } from '@/api/smartScript'
+import {
+  generateScriptShotsStream,
+  generateShotInfo,
+  extractSubjects,
+  mergeSingleUseSubjects,
+  parsePerShotSec,
+} from '@/api/smartScript'
 import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
 import {
   generateFullVideo,
@@ -1883,6 +1889,8 @@ export default function SmartCreateView() {
           ratio: meta.ratio,
           duration: meta.duration,
           images: meta.images,
+          // 从「原始需求」解析单镜时长(如「2秒一个镜头」);营销摘要/skill 文本可能丢掉它,故用原始 requirement
+          perShotSec: parsePerShotSec(requirement),
         },
         (partial) => {
           got = partial.length

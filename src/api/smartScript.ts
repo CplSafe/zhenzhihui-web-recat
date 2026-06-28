@@ -17,7 +17,27 @@ interface GenerateArgs {
   ratio?: string
   duration?: string
   images?: string[] // objectURL / dataURL / http,送入后端前会上传成 asset(inputAssets)
+  /** 用户指定的单镜时长(秒);>0 时镜头数 = 总时长÷它。调用方从「原始需求」解析后传入(避免被营销摘要丢掉) */
+  perShotSec?: number
   signal?: AbortSignal
+}
+
+// 从用户原始需求里解析「每个镜头 X 秒」(2秒一个镜头 / 每个镜头2秒 / 镜头时长3s …),解析不到返回 0
+export function parsePerShotSec(text: string): number {
+  const t = String(text || '')
+  const pats = [
+    /(\d+(?:\.\d+)?)\s*(?:秒|s)\s*[一1]?\s*个?\s*镜头/i, // 2秒一个镜头 / 2s 镜头
+    /(?:每个?|单个?|一个)\s*镜头\s*[约]?\s*(\d+(?:\.\d+)?)\s*(?:秒|s)/i, // 每个镜头2秒
+    /镜头\s*时?长?\s*[约]?\s*(\d+(?:\.\d+)?)\s*(?:秒|s)/i, // 镜头时长2秒
+  ]
+  for (const re of pats) {
+    const m = t.match(re)
+    if (m) {
+      const n = parseFloat(m[1])
+      if (n > 0 && n <= 60) return n
+    }
+  }
+  return 0
 }
 
 const SYSTEM =
@@ -35,21 +55,30 @@ const SYSTEM =
   '必须替换为真实内容,严禁原样输出「画面描述」「台词/旁白」「字幕」「音效」这类字段名作为值:' +
   '{"shots":[{"duration":"5s","desc":"<具体可拍摄的画面描述>","voiceover":"<台词或旁白,无则空字符串>","subtitle":"<字幕,无则空字符串>","sfx":"<音效,无则空字符串>","subjects":[{"name":"小雅","kind":"人物","imageIndex":2},{"name":"室内场景","kind":"场景"}]}]}'
 
-function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): string {
+function buildUserText({ requirement, style, ratio, duration, perShotSec }: GenerateArgs): string {
   const totalSec = parseInt(String(duration || '10'), 10) || 10
-  // 向下取整(每镜约 5 秒),避免镜头数偏多导致各镜时长之和超过总时长
-  const approxShots = Math.max(1, Math.floor(totalSec / 5))
-  const perShot = Math.max(3, Math.round(totalSec / approxShots))
+  // 用户指定了单镜时长(如「2秒一个镜头」)→ 镜头数 = 总时长÷单镜,且【不】夹到 3 秒下限;
+  // 否则按默认每镜约 5 秒切分。两条分支生成「不冲突」的单一指令,避免模型在"约N镜"与"X秒一镜"间乱凑。
+  const spec = Number(perShotSec) > 0 ? Number(perShotSec) : parsePerShotSec(requirement)
+  let countClause: string
+  if (spec > 0) {
+    const n = Math.max(1, Math.round(totalSec / spec))
+    countClause =
+      `视频总时长约 ${totalSec} 秒。用户【明确要求每个镜头 ${spec} 秒】:必须切分为正好 ${n} 个镜头,` +
+      `每个镜头的 duration 都写「${spec}s」,镜头数严格等于 ${n}(不要多也不要少),所有镜头时长之和约等于 ${totalSec} 秒。`
+  } else {
+    const approxShots = Math.max(1, Math.floor(totalSec / 5))
+    const perShot = Math.max(3, Math.round(totalSec / approxShots))
+    countClause =
+      `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒(不少于 3 秒),` +
+      `所有镜头 duration 相加必须严格等于 ${totalSec} 秒,绝对不能超过;不要切得过碎。`
+  }
   return [
     `创作需求:${requirement || '(未提供文字,请根据上传的参考图片构思一支完整广告短视频的分镜)'}`,
     `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'}。`,
-    `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒(不少于 3 秒),` +
-      `所有镜头 duration 相加必须严格等于 ${totalSec} 秒,绝对不能超过;不要切得过碎。`,
-    // 若需求里明确了单镜时长(如「2秒一个镜头」),以它为准重新定镜头数,避免与上面的"约 N 镜"冲突导致模型乱凑
-    `特别注意:若上面的创作需求中指定了每个镜头的时长(例如「2秒一个镜头」「每个镜头X秒」),则以该单镜时长为准:` +
-      `镜头数 = 总时长 ÷ 单镜时长(四舍五入,至少 1 个),每个镜头的 duration 都等于该单镜时长,总和仍需尽量等于 ${totalSec} 秒。`,
+    countClause,
     // 杜绝空镜:用户反馈过"很多镜头解析是空的",根因是模型凑了镜头数却把 desc 留空/写占位词
-    '硬性要求:每一个镜头都必须给出非空、具体可拍摄的 desc;严禁输出 desc 为空或为占位词(如「画面描述」)的镜头,也不要为凑镜头数而生成空内容的镜头——宁可少切几个镜头,也不要留空。',
+    '硬性要求:每一个镜头都必须给出非空、具体可拍摄的 desc;严禁输出 desc 为空或为占位词(如「画面描述」)的镜头——每个镜头都要有完整内容。',
     '请按要求输出分镜 JSON。',
   ].join('\n')
 }
