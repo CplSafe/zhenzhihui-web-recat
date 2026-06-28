@@ -45,6 +45,11 @@ function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): s
     `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'}。`,
     `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒(不少于 3 秒),` +
       `所有镜头 duration 相加必须严格等于 ${totalSec} 秒,绝对不能超过;不要切得过碎。`,
+    // 若需求里明确了单镜时长(如「2秒一个镜头」),以它为准重新定镜头数,避免与上面的"约 N 镜"冲突导致模型乱凑
+    `特别注意:若上面的创作需求中指定了每个镜头的时长(例如「2秒一个镜头」「每个镜头X秒」),则以该单镜时长为准:` +
+      `镜头数 = 总时长 ÷ 单镜时长(四舍五入,至少 1 个),每个镜头的 duration 都等于该单镜时长,总和仍需尽量等于 ${totalSec} 秒。`,
+    // 杜绝空镜:用户反馈过"很多镜头解析是空的",根因是模型凑了镜头数却把 desc 留空/写占位词
+    '硬性要求:每一个镜头都必须给出非空、具体可拍摄的 desc;严禁输出 desc 为空或为占位词(如「画面描述」)的镜头,也不要为凑镜头数而生成空内容的镜头——宁可少切几个镜头,也不要留空。',
     '请按要求输出分镜 JSON。',
   ].join('\n')
 }
@@ -142,6 +147,12 @@ function mapShots(list: any[], images: string[] = []): Shot[] {
   }))
 }
 
+// 镜头是否有真实画面描述(空 / 仅占位词 经 cleanField 已置空)。用于丢弃模型凑数留空的镜头。
+const hasContent = (s: Shot): boolean => String(s.desc || '').trim().length > 0
+// 丢弃空镜头并重排编号(否则会出现 镜头1、镜头2、镜头8 这样的跳号)
+const keepNonEmpty = (shots: Shot[]): Shot[] =>
+  shots.filter(hasContent).map((s, i) => ({ ...s, id: i + 1, no: `镜头${i + 1}` }))
+
 function parseShots(text: string, images: string[] = []): Shot[] {
   let raw = String(text || '').trim()
   if (!raw) return []
@@ -158,7 +169,8 @@ function parseShots(text: string, images: string[] = []): Shot[] {
     /* 下面走容错抢救 */
   }
   if (!Array.isArray(list) || !list.length) list = salvageObjects(raw)
-  return mapShots(list, images)
+  // 丢弃 desc 为空的镜头(模型常凑镜头数却把 desc 留空/写占位词),避免表格出现一堆空行
+  return keepNonEmpty(mapShots(list, images))
 }
 
 // ── 单个分镜「新增 / 编辑」:带【全部现有分镜的完整信息】作上下文,产出该镜头完整内容 ──
@@ -287,9 +299,9 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
   const images = args.images || []
   let lastCount = 0
 
-  // 用「到目前为止的全文」增量抢救出已完整的分镜,多出来就回调
+  // 用「到目前为止的全文」增量抢救出已完整的分镜,多出来就回调(只算有 desc 的镜头,空镜头不展示)
   const emit = (acc: string) => {
-    const shots = mapShots(salvageObjects(acc), images)
+    const shots = keepNonEmpty(mapShots(salvageObjects(acc), images))
     if (shots.length > lastCount) {
       lastCount = shots.length
       onShots(shots)
@@ -306,9 +318,10 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
     onDelta: (_delta, aggregated) => emit(aggregated),
   })
 
-  // 收尾:用完整解析兜底(可能比增量多解析出最后一个;非流式回退时这里是唯一解析)
+  // 收尾:用完整解析兜底(可能比增量多解析出最后一个;非流式回退时这里是唯一解析)。均已滤掉空镜头。
   const finalShots = parseShots(finalText, images)
-  const result = finalShots.length >= lastCount ? finalShots : mapShots(salvageObjects(finalText), images)
+  const result =
+    finalShots.length >= lastCount ? finalShots : keepNonEmpty(mapShots(salvageObjects(finalText), images))
   if (!result.length) throw new Error('未能解析分镜脚本,请重试')
   // 强制各镜时长之和 = 用户要求的总时长(模型常超时);流式中间态不归一,只在最终结果对齐
   return normalizeDurations(result, parseInt(String(args.duration || '10'), 10) || 10)
