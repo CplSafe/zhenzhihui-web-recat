@@ -467,6 +467,43 @@
   cursor: not-allowed;
 }
 
+/* 恢复态:重新生成 + 下一步 */
+.hotcopy__resume-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hotcopy__resume-btn {
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 19px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
+}
+.hotcopy__resume-btn--ghost {
+  background: #fff;
+  border: 1px solid #d6dae1;
+  color: #4b5563;
+}
+.hotcopy__resume-btn--ghost:hover {
+  border-color: #1fcfa9;
+  color: #1fcfa9;
+}
+.hotcopy__resume-btn--primary {
+  background: #1fcfa9;
+  border: 1px solid #1fcfa9;
+  color: #fff;
+}
+.hotcopy__resume-btn--primary:hover {
+  background: #1bb897;
+}
+
 /* 生成中 / 成片结果 */
 .hotcopy__result {
   position: relative;

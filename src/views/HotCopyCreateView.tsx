@@ -799,7 +799,13 @@ export default function HotCopyCreateView() {
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
         {!started ? (
-          <HotCopyEntry onSubmit={handleStart} initial={entryInitial} />
+          <HotCopyEntry
+            onSubmit={handleStart}
+            initial={entryInitial}
+            // 已有生成结果/在制流程(从上一步退回入口)→ 显示「重新生成 + 下一步」
+            canResume={Boolean(fullVideo.url || videoVersions.length || sourceVideo.assetId || vidGenTaskId)}
+            onResume={() => goStep(1)}
+          />
         ) : (
           <>
             <div className="smart__progress">
