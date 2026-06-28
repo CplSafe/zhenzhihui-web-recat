@@ -283,12 +283,12 @@ export default function SubjectAssetDialog({
               {generating
                 ? '生成中…'
                 : refining
-                  ? '优化中…'
+                  ? '提示词优化中…'
                   : carryCurrent
                     ? '修改生成'
                     : versions.length
                       ? '重新生成'
-                      : '生成'}
+                      : '生成分镜图'}
             </button>
           </div>
 
