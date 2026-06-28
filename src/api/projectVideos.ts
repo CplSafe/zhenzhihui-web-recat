@@ -228,20 +228,22 @@ function buildDerivedVideos({
     '当前用户',
   )
 
-  // 每次「重新生成」的独立记录(生成中/失败)→ 项目下置顶展示成草稿条目(成功的成片仍走 videoVersions)。
-  // 兼容旧数据:没有 generations 但残留 vidGenTaskId>0 → 也兜底显示一条「生成中」。
-  const generationsRaw = normalizeArray(smart?.generations).filter(
+  // 每次「重新生成」的独立记录(生成中/失败)→ 项目下置顶展示成「草稿」条目(成功的成片仍走 videoVersions)。
+  // 按需求:生成中、生成失败统一显示「草稿」,不出现「生成中/生成失败」。
+  // 兼容旧数据:没有 generations 但残留 vidGenTaskId>0 → 也兜底显示一条「草稿」。
+  // 草稿里存的字段名是 videoGenerations(兼容历史 generations)
+  const generationsRaw = normalizeArray(smart?.videoGenerations || smart?.generations).filter(
     (g: any) => g?.status === 'processing' || g?.status === 'failed',
   )
   const makeGenItem = (g: any, i: number): ProjectVideo => ({
     id: `derived-gen-${pickString(g?.id, String(i))}`,
     projectId: Number(project?.id || 0),
     workspaceId,
-    title: `${projectTitle} · ${g?.status === 'failed' ? '生成失败' : '生成中'}`,
+    title: `${projectTitle} · 草稿`,
     coverUrl: projectCoverUrl,
     videoUrl: '',
     durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
-    status: g?.status === 'failed' ? 'failed' : 'processing',
+    status: 'draft',
     createdByName,
     createdAt,
     updatedAt,

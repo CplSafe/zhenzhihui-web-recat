@@ -255,6 +255,8 @@ export default function SmartCreateView() {
   const [shots, setShots] = useState<Shot[]>([])
   const [scriptLoading, setScriptLoading] = useState(false)
   const [scriptError, setScriptError] = useState('')
+  const [scriptPending, setScriptPending] = useState(false) // 脚本生成进行中(持久化):切走再回来据此自动续跑
+  const scriptResumeRef = useRef(false) // 续跑只触发一次,避免循环
   const [projectId, setProjectId] = useState(0)
   const projectIdRef = useRef(0)
   // 后端当前的项目标题(对齐 Vue serverProjectTitle):用于判断是否需要回写、避免覆盖已有真实标题
@@ -742,6 +744,17 @@ export default function SmartCreateView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [materialBatchPending, step, shots.length])
 
+  // 脚本续跑:恢复后若"脚本生成进行中"标记仍在(切走打断了)、当前没在生成、有入口信息 → 自动重新生成脚本。
+  // 流式脚本没有 task id 可续,这里以"重新生成"作为续跑;只触发一次。
+  useEffect(() => {
+    if (!hydratedRef.current || scriptResumeRef.current) return
+    if (scriptPending && !scriptLoading && step === 0 && !marketingOpen && entryMeta && started) {
+      scriptResumeRef.current = true
+      void generateScript(reqSummary || requirement, entryMeta)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptPending, scriptLoading, step, marketingOpen, entryMeta, started])
+
   // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
   // 后端"上传类"asset 的 id 集合(asset.source==='upload');用于可靠区分 上传/AI(对齐 2.0)
   const [uploadAssetIds, setUploadAssetIds] = useState<Set<number>>(new Set())
@@ -1105,11 +1118,22 @@ export default function SmartCreateView() {
   type GenRecord = { id: string; status: 'processing' | 'failed' | 'published'; taskId: number; note: string; createdAt: number }
   const [videoGenerations, setVideoGenerations] = useState<GenRecord[]>([])
   const genSeqRef = useRef(0)
-  // 开始一次生成:压入一条「生成中」记录(同一时刻只会有一个在跑,vidGenRunning 已保证)
-  const startGen = (note?: string): string => {
+  const immediateSaveRef = useRef(false) // startGen 后请求立即落盘:草稿即时出现在项目里(不等防抖)
+  // 开始一次生成/重做:压入一条「草稿(processing)」记录。
+  // forceNew=true(返回入口重新走一遍)→ 强制新建一条新草稿;
+  // 否则(生成视频)→ 复用当前那条未完成草稿,让它变成片,不重复创建。
+  const startGen = (note?: string, forceNew = false): string => {
+    if (!forceNew) {
+      const existing = videoGenerations.find((g) => g.status === 'processing')
+      if (existing) {
+        immediateSaveRef.current = true
+        return existing.id
+      }
+    }
     genSeqRef.current += 1
     const id = `gen-${Date.now()}-${genSeqRef.current}`
     setVideoGenerations((prev) => [{ id, status: 'processing', taskId: 0, note: note || '', createdAt: Date.now() }, ...prev])
+    immediateSaveRef.current = true // 草稿记录已加 → 本轮 effect 立即落盘
     return id
   }
   const setGenTask = (id: string, taskId: number) =>
@@ -1119,6 +1143,14 @@ export default function SmartCreateView() {
     setVideoGenerations((prev) =>
       prev.map((g) => (g.status === 'processing' && (id ? g.id === id : true) ? { ...g, status } : g)),
     )
+  // 草稿即时出现:startGen 后(videoGenerations 变化)立刻把草稿落库,不等防抖
+  useEffect(() => {
+    if (!immediateSaveRef.current || !hydratedRef.current) return
+    immediateSaveRef.current = false
+    saveSmartDraft(currentDraft())
+    if (projectIdRef.current) void putSmartDraftToBackend()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoGenerations])
 
   const autoVidRef = useRef(false)
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
@@ -1599,6 +1631,7 @@ export default function SmartCreateView() {
     fullVideoAssetId: fullVideo.assetId,
     vidGenTaskId,
     materialBatchPending,
+    scriptPending,
     videoVersions,
     videoGenerations,
     faceBlurEnabled,
@@ -1625,6 +1658,7 @@ export default function SmartCreateView() {
     setVideoGenerations(Array.isArray(d.videoGenerations) ? (d.videoGenerations as GenRecord[]) : [])
     // 恢复「一键生成」进行中标记 → 进准备素材步会由 effect 自动续作未出图的素材(不被截断)
     setMaterialBatchPending(!!d.materialBatchPending)
+    setScriptPending(!!d.scriptPending)
     // 恢复「生成中」:草稿里有进行中的任务 id → 续轮询同一个后端任务(不重新生成)。
     // 注意:不要求"没有旧视频"——重新生成/确认修改时会有上一轮旧视频,但新任务仍在跑,照样要续上。
     const pendingTask = Number(d.vidGenTaskId || 0) || 0
@@ -1767,11 +1801,12 @@ export default function SmartCreateView() {
     } else {
       // 点回空白 /smart 时:若本地草稿是个【在制项目】(已建项目、还没出整片,且正在生成或已有分镜)
       // → 自动跳回那个 /smart/:id,避免回到空白初始页。用本地草稿判断(autosave 一直在写,可靠);
-      // 不死等 vidGenTaskId(它可能因时序还没存进),改用"有分镜"兜底——生成中必然已有分镜。
+      // 放宽:只要"已开始 + 已建项目 + 还没出最终片"就算在制(含脚本/营销加载中、准备素材、镜头编排),
+      // 都重定向回 /smart/:id,避免加载阶段切走再回来落到空白入口、丢失当前步骤。
       const d = loadSmartDraft()
       const pendingPid = Number(d?.projectId || 0) || 0
-      const hasPendingTask = Number(d?.vidGenTaskId || 0) > 0 // 正在生成(可能有上一轮旧视频)
-      const unfinished = !d?.fullVideoUrl && !d?.fullVideoAssetId && Array.isArray(d?.shots) && d.shots.length > 0
+      const hasPendingTask = Number(d?.vidGenTaskId || 0) > 0 // 正在生成
+      const unfinished = !d?.fullVideoUrl && !d?.fullVideoAssetId // 还没出最终片的任意在制流程
       const inProgress = !!d?.started && pendingPid > 0 && (hasPendingTask || unfinished)
       if (inProgress) {
         navigate(`/smart/${pendingPid}`, { replace: true })
@@ -1815,6 +1850,7 @@ export default function SmartCreateView() {
     videoGenerations, // 生成记录(生成中/失败)变化要存盘,切走也能在项目里看到这条草稿
     vidGenTaskId, // 任务 id 变化(生成开始)也要触发保存,否则长轮询期间不存盘 → 切走后无法恢复
     materialBatchPending, // 一键生成标记变化要存盘,切走再回来才能续作
+    scriptPending, // 脚本生成标记变化要存盘,切走再回来才能续跑
     marketingOpen,
     marketingText,
     marketingData,
@@ -1903,6 +1939,7 @@ export default function SmartCreateView() {
   // 生成分镜脚本(本地多模态模型,流式:边生成边显示);失败置错误态,可重试
   const generateScript = async (req: string, meta: EntryMeta) => {
     setScriptLoading(true)
+    setScriptPending(true) // 标记"脚本生成进行中",随草稿持久;中途切走再回来据此自动续跑(重生成)
     setScriptError('')
     setShots([])
     autoGenRef.current = false // 新脚本 → 进入镜头编排时重新自动生成分镜图
@@ -1959,6 +1996,7 @@ export default function SmartCreateView() {
       if (!got) setScriptError(e?.message || '脚本生成失败,请重试')
     } finally {
       setScriptLoading(false)
+      setScriptPending(false) // 结束(成功/失败)清掉续跑标记,避免恢复时误续
     }
   }
 
@@ -2181,6 +2219,10 @@ export default function SmartCreateView() {
           if (id) navigate(`/smart/${id}`, { replace: true })
         })
         .catch(() => {})
+    } else if (projectIdRef.current && !imageMode) {
+      // 在【已有项目】上重做(进入编辑→返回入口→重新生成):立刻打一条「草稿」记录并即时落盘,
+      // 让项目里马上出现草稿(与旧成片并排)。forceNew:每次返回入口重新走都新增一条新草稿。
+      startGen('重新编辑', true)
     }
     // 制作图片:直接以入口需求 + 上传素材发起第一轮对话出图,不走分镜/脚本/视频流程。
     if (imageMode) {
