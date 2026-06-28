@@ -1194,8 +1194,8 @@
 /* 卡片网格 */
 .pm2-card-grid {
   display: grid;
-  /* 固定每行 3 个,不随屏幕变列数;卡片宽度用 1fr 跟着屏幕缩放 */
-  grid-template-columns: repeat(3, 1fr);
+  /* 响应式列数:卡片固定约 300px,宽屏自动多列、避免每行 3 个时封面被撑得过大;窄屏自动收成更少列 */
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 24px;
 }
 .pm2-pcard {

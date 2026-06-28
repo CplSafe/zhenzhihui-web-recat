@@ -296,22 +296,24 @@ const TABS = [
 ] as const
 
 /* ratio 字符串 → grid 列跨度（12 列桌面 / 6 列移动端） */
+// 12 列瀑布流里每张卡占的列数(越小=卡越小、每行越多)。宽屏下原值偏大(每行只有 2~3 张、预览过大),
+// 整体下调一档:竖屏 2 列(每行 6 张)、方形 3 列、横屏 4 列。
 function ratioToSpan(r: string): number {
-  if (!r) return 4
+  if (!r) return 3
   const s = r.replace(/\s+/g, '')
   switch (s) {
     case '9/16':
-      return 3 // 竖屏窄卡
+      return 2 // 竖屏窄卡
     case '3/4':
-      return 3
+      return 2
     case '4/5':
-      return 3
+      return 2
     case '1/1':
-      return 4 // 方形中卡
+      return 3 // 方形中卡
     case '16/9':
-      return 6 // 横屏宽卡
+      return 4 // 横屏宽卡
     default:
-      return 4
+      return 3
   }
 }
 
@@ -927,7 +929,11 @@ export default function HomeView() {
                       <div key={`${tpl.id}-${tplIdx}`} className="home__tpl">
                         <div
                           className={`home__tpl-thumb${tpl.videoUrl || tpl.thumbnailUrl ? ' has-image' : ''}`}
-                          style={{ aspectRatio: tpl.ratio, background: tpl.grad, cursor: tpl.videoUrl ? 'zoom-in' : '' }}
+                          style={{
+                            aspectRatio: tpl.ratio,
+                            background: tpl.grad,
+                            cursor: tpl.videoUrl ? 'zoom-in' : '',
+                          }}
                           role={tpl.videoUrl ? 'button' : undefined}
                           title={tpl.videoUrl ? '点击放大预览' : undefined}
                           onClick={() => {
