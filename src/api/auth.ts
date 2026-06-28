@@ -269,16 +269,6 @@ function requestDeepAuth(url, body) {
   })
 }
 
-// 直接向 SSO(8001) 发送请求，login/sms/register 统一走 /sso 代理，
-// 让 8001 直接认证并设置 cookie，后续 /sso OAuth 跳转即可跳过二次登录。
-function requestSso(url, body) {
-  return requestJson(toProxiedUrl(url, ssoApiBaseUrl, ssoRemoteOrigin), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(removeEmptyFields(body)),
-  })
-}
-
 async function requestJson(url, options = {}) {
   let response
 

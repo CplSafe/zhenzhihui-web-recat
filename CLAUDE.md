@@ -50,7 +50,7 @@ Request flow: **views** orchestrate UI and call **composables** (feature hooks) 
 
 - **`src/components/`** — grouped by domain: `auth`, `billing`, `layout`, `home` (`AppSidebar`), `creative` (storyboard/timeline/video panels for the legacy flow), `smart` (the 智能成片 2.1 step UIs — each in its own subfolder), `common` (small shared widgets: `AiBadge`, `InlineEdit`, `EllipsisText`), `material`, `resource`, `space`, `team`. Global singletons `AppToast`, `AppConfirmDialog`, and `HelpCenter` (draggable 帮助中心 floating ball, shown only on authenticated non-login pages) are mounted once in `AppShell`.
 
-Key libraries: **antd** (UI, replaces element-plus; locale zh_CN, primary color `#5767e5` set in `main.tsx`), **dnd-kit** (storyboard/timeline drag), **@tiptap/react** (rich-text in `GeneratedScriptPanel`), **streamdown** (script Markdown render), **plyr-react** (video), **qrcode.react** (payment QR).
+Key libraries: **antd** (UI, replaces element-plus; locale zh_CN, primary color `#5767e5` set in `main.tsx`), **dnd-kit** (storyboard/timeline drag), **@tiptap/react** (rich-text in `GeneratedScriptPanel`), **react-markdown** + **remark-gfm** (Markdown render, see `src/components/common/Markdown.tsx`), **plyr-react** (video), **qrcode.react** (payment QR).
 
 ## Conventions
 
@@ -69,4 +69,4 @@ Key libraries: **antd** (UI, replaces element-plus; locale zh_CN, primary color 
 ### Known runtime caveats (from MIGRATION.md)
 
 - The migration is build-verified but **not yet runtime-verified against a live backend** — verify generation/billing/team flows page-by-page when wiring a real backend.
-- `streamdown` bundles shiki + mermaid (mermaid chunk ~1.4MB), lazy-loaded as separate chunks. If Markdown diagrams/highlighting aren't needed, consider trimming or a lighter renderer.
+- Markdown rendering uses `react-markdown` + `remark-gfm` (`src/components/common/Markdown.tsx`); the old heavy `streamdown` (shiki + mermaid ~1.4MB) was removed.
