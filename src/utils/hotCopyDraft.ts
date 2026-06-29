@@ -4,6 +4,8 @@
  * 只存「恢复生成步」所需的可序列化状态(不存 File / blob:objectURL);用 vidGenTaskId 续轮询在途任务。
  * 单工作空间一条草稿(/hot-copy 无 :id),按 workspaceId 隔离。
  */
+import { readJson, writeJson, removeKey } from '@/utils/storage'
+
 export interface HotCopyDraft {
   /** 已建后端项目 id(>0):用于「/hot-copy 无 id 但在制」时重定向回 /hot-copy/:id */
   projectId?: number
@@ -28,32 +30,18 @@ const keyOf = (workspaceId: number) => `zzh_hotcopy_draft_v1_ws${Math.floor(Numb
 export function saveHotCopyDraft(workspaceId: number, draft: HotCopyDraft): void {
   const ws = Number(workspaceId || 0)
   if (!ws) return
-  try {
-    localStorage.setItem(keyOf(ws), JSON.stringify(draft))
-  } catch {
-    /* 配额满 / 隐私模式:忽略 */
-  }
+  writeJson(keyOf(ws), draft)
 }
 
 export function loadHotCopyDraft(workspaceId: number): HotCopyDraft | null {
   const ws = Number(workspaceId || 0)
   if (!ws) return null
-  try {
-    const raw = localStorage.getItem(keyOf(ws))
-    if (!raw) return null
-    const d = JSON.parse(raw)
-    return d && typeof d === 'object' ? (d as HotCopyDraft) : null
-  } catch {
-    return null
-  }
+  const d = readJson<HotCopyDraft | null>(keyOf(ws), null)
+  return d && typeof d === 'object' ? (d as HotCopyDraft) : null
 }
 
 export function clearHotCopyDraft(workspaceId: number): void {
   const ws = Number(workspaceId || 0)
   if (!ws) return
-  try {
-    localStorage.removeItem(keyOf(ws))
-  } catch {
-    /* 忽略 */
-  }
+  removeKey(keyOf(ws))
 }

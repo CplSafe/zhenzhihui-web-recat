@@ -2,18 +2,9 @@
  * 资源素材项目 CRUD（localStorage）
  * 管理素材库项目列表的增删改查，每个项目关联素材资产。
  */
-const STORAGE_KEY = 'zhenzhihui:resource-projects:v1'
+import { readJson, writeJson } from '@/utils/storage'
 
-function withStorage(fn, fallback?) {
-  if (typeof window === 'undefined') return fallback
-  try {
-    const storage = window.localStorage
-    if (!storage) return fallback
-    return fn(storage)
-  } catch {
-    return fallback
-  }
-}
+const STORAGE_KEY = 'zhenzhihui:resource-projects:v1'
 
 function createId(prefix) {
   const id = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -26,18 +17,12 @@ function toCount(value) {
 }
 
 export function loadResourceProjects() {
-  return withStorage((storage) => {
-    const raw = storage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  }, [])
+  const parsed = readJson(STORAGE_KEY, [])
+  return Array.isArray(parsed) ? parsed : []
 }
 
 export function saveResourceProjects(projects) {
-  withStorage((storage) => {
-    storage.setItem(STORAGE_KEY, JSON.stringify(projects))
-  })
+  writeJson(STORAGE_KEY, projects)
 }
 
 export function ensureSeededResourceProjects(seedProjects = []) {
