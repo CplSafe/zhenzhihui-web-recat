@@ -369,8 +369,21 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const visible = mainTab === 'team' ? plans.filter((p) => p.isTeam) : plans.filter((p) => !p.isTeam)
 
   // 该套餐是否为当前已生效订阅(用于把「立即开通」显示为「续费」)
-  const isPurchased = (p: PlanVM) =>
-    !!subscription?.active && (subscription.plan_code === p.code || subscription.plan_name === p.name)
+  // 该套餐是否为当前已生效订阅(决定按钮显示「续费」还是「立即开通」)。
+  // ① 优先用唯一 plan_id 精确匹配;② 后端没返回 plan_id 时,退回 code/name 匹配,
+  //    但必须叠加「团队/个人类型一致」—— 否则团队版与个人版同周期套餐重名(如都叫「年度会员」)会串台误判。
+  const isPurchased = (p: PlanVM) => {
+    if (!subscription?.active) return false
+    const subPlanId = Number(subscription.plan_id ?? subscription.planId ?? 0) || 0
+    if (subPlanId) return subPlanId === p.id
+    const codeOrNameHit =
+      (!!subscription.plan_code && subscription.plan_code === p.code) ||
+      (!!subscription.plan_name && subscription.plan_name === p.name)
+    if (!codeOrNameHit) return false
+    const t = String(subscription.plan_type ?? subscription.planType ?? '').toLowerCase()
+    const subIsTeam = t ? t === 'team' : Number(subscription.max_members) > 1
+    return subIsTeam === p.isTeam
+  }
 
   // 取到支付宝 pay_url 后直接打开支付页(去掉站内扫码步骤)。
   // 只在新标签页打开,绝不跳转当前页;若被浏览器拦截则提示用户允许弹窗后重试。
