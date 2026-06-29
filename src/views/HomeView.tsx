@@ -516,6 +516,8 @@ export default function HomeView() {
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // 模板库点击放大预览(与 /templates 页一致;外链 OSS 视频,弹窗不带 crossOrigin)
+  const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
 
   // 历史项目（接后端 listCreativeProjects）
   const [historyItems, setHistoryItems] = useState<any[]>([])
@@ -925,7 +927,12 @@ export default function HomeView() {
                       <div key={`${tpl.id}-${tplIdx}`} className="home__tpl">
                         <div
                           className={`home__tpl-thumb${tpl.videoUrl || tpl.thumbnailUrl ? ' has-image' : ''}`}
-                          style={{ aspectRatio: tpl.ratio, background: tpl.grad }}
+                          style={{ aspectRatio: tpl.ratio, background: tpl.grad, cursor: tpl.videoUrl ? 'zoom-in' : '' }}
+                          role={tpl.videoUrl ? 'button' : undefined}
+                          title={tpl.videoUrl ? '点击放大预览' : undefined}
+                          onClick={() => {
+                            if (tpl.videoUrl) setWatching({ url: tpl.videoUrl, poster: tpl.thumbnailUrl || '' })
+                          }}
                         >
                           {tpl.videoUrl ? (
                             // 封面=视频本身(首帧/循环),与「历史项目」一致,不依赖会过期的封面图
@@ -978,13 +985,14 @@ export default function HomeView() {
                             <button
                               type="button"
                               className="home__tpl-action"
-                              onClick={() =>
+                              onClick={(e) => {
+                                e.stopPropagation() // 不触发缩略图的放大预览
                                 requireAuth(() =>
                                   navigate('/hot-copy', {
                                     state: { carryVideo: { url: tpl.videoUrl || '', assetId: tpl.videoAssetId || 0 } },
                                   }),
                                 )
-                              }
+                              }}
                             >
                               做同款
                             </button>
@@ -999,6 +1007,25 @@ export default function HomeView() {
           </section>
         </div>
       </div>
+
+      {/* 模板库点击放大预览(外链 OSS、无 CORS 头 → 不带 crossOrigin,否则卡 0:00) */}
+      {watching && (
+        <div className="home__video-modal-mask" onClick={() => setWatching(null)}>
+          <div className="home__video-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="home__video-modal-close" onClick={() => setWatching(null)}>
+              ✕
+            </button>
+            <video
+              className="home__video-modal-player"
+              src={watching.url}
+              poster={watching.poster || undefined}
+              controls
+              autoPlay
+              playsInline
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

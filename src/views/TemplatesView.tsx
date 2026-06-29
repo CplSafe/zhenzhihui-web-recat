@@ -348,6 +348,7 @@ export default function TemplatesView() {
             <button className="home__video-modal-close" onClick={() => setWatching(null)}>
               ✕
             </button>
+            {/* 不加 crossOrigin:模板视频多为外链 OSS、无 CORS 头,带它会被浏览器拒载卡在 0:00 */}
             <video
               className="home__video-modal-player"
               src={watching.url}
@@ -355,7 +356,6 @@ export default function TemplatesView() {
               controls
               autoPlay
               playsInline
-              crossOrigin="anonymous"
             />
           </div>
         </div>
