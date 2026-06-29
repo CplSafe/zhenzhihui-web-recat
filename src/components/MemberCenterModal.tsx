@@ -155,7 +155,9 @@ function toVM(p: ApiPlan): PlanVM {
   if (!origin && !discount) {
     const ratio = periodKey === 'quarter' ? 0.75 : periodKey === 'year' ? 0.7 : periodKey === 'month' ? 0.88 : 0
     if (ratio && priceCents > 0) {
-      discount = `${Math.round((ratio * 100) / 10)}折` // 0.88 → 8.8折
+      // 月卡 8.8折、季卡 7.5折(直接取整会变 9折/8折);年卡维持原有取整(7折,不变)
+      discount =
+        periodKey === 'month' ? '8.8折' : periodKey === 'quarter' ? '7.5折' : `${Math.round((ratio * 100) / 10)}折`
       origin = `￥${Math.round(priceCents / 100 / ratio)}`
     }
   }
