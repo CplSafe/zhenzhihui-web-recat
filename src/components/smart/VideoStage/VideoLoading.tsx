@@ -137,9 +137,11 @@ interface VideoLoadingProps {
   tip?: string
   /** 生成开始时间戳(ms,持久化):进度锚定到它,切页面/刷新组件重挂也接着走,不从头来。 */
   startedAt?: number
+  /** 主标题文案覆盖(缺省「视频生成中」);仅整体标题,不暴露内部阶段(如人脸脱敏)。 */
+  title?: string
 }
 
-export default function VideoLoading({ note, tip, startedAt }: VideoLoadingProps) {
+export default function VideoLoading({ note, tip, startedAt, title = '视频生成中' }: VideoLoadingProps) {
   const frameRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
 
@@ -216,7 +218,7 @@ export default function VideoLoading({ note, tip, startedAt }: VideoLoadingProps
         }}
       >
         <LoadingDots />
-        {/* 不展示"人脸脱敏"等内部阶段,统一显示「视频生成中」 */}
+        {/* 不展示"人脸脱敏"等内部阶段,统一显示整体标题(默认「视频生成中」) */}
         <p
           style={{
             margin: '4px 0 0',
@@ -228,7 +230,7 @@ export default function VideoLoading({ note, tip, startedAt }: VideoLoadingProps
             whiteSpace: 'nowrap',
           }}
         >
-          视频生成中
+          {title}
         </p>
 
         {/* 进度:百分比 + 细进度条 */}
