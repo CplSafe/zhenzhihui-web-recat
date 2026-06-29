@@ -14,6 +14,7 @@ import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favorit
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import VideoPreviewModal from '@/components/common/VideoPreviewModal'
+import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './HomeView.css'
 import './TemplatesView.css'
 
@@ -268,20 +269,10 @@ export default function TemplatesView() {
                               className="home__proj-action-btn"
                               onClick={async (e) => {
                                 e.stopPropagation()
-                                try {
-                                  const res = await fetch(tpl.videoUrl)
-                                  const blob = await res.blob()
-                                  const url = URL.createObjectURL(blob)
-                                  const a = document.createElement('a')
-                                  a.href = url
-                                  a.download = `${tpl.title || '视频'}.mp4`
-                                  document.body.appendChild(a)
-                                  a.click()
-                                  document.body.removeChild(a)
-                                  URL.revokeObjectURL(url)
-                                } catch {
-                                  window.open(tpl.videoUrl, '_blank')
-                                }
+                                await downloadToDisk({
+                                  fileName: buildDownloadName(tpl.title || '视频', new Date()),
+                                  resolveUrl: () => tpl.videoUrl,
+                                }).catch(() => {})
                               }}
                             >
                               <svg

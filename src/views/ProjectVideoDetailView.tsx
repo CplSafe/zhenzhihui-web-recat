@@ -14,6 +14,7 @@ import {
   getVideoStatusText,
   type ProjectVideo,
 } from '@/api/projectVideos'
+import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './ProjectVideoDetailView.css'
 
 export default function ProjectVideoDetailView() {
@@ -81,13 +82,20 @@ export default function ProjectVideoDetailView() {
     navigate(`${base}/${projectId}${qs}`)
   }, [detail, navigate, projectId, workspaceId])
 
-  const downloadVideo = useCallback(() => {
+  const downloadVideo = useCallback(async () => {
     if (!detail?.videoUrl) {
       showToast('当前视频暂无可下载地址', 'info')
       return
     }
-    window.open(detail.videoUrl, '_blank', 'noopener')
-    showToast('已在新标签打开视频，可直接下载', 'success')
+    const url = detail.videoUrl
+    const fileName = buildDownloadName(detail.title || '视频', new Date())
+    try {
+      showToast('视频下载中…', 'success')
+      const r = await downloadToDisk({ fileName, resolveUrl: () => url })
+      if (r === 'done') showToast('视频已保存', 'success')
+    } catch (err: any) {
+      showToast(err?.message || '下载失败,请稍后重试', 'error')
+    }
   }, [detail, showToast])
 
   const handleDelete = useCallback(async () => {

@@ -29,6 +29,7 @@ import quick2 from '@/assets/home/quick-2.png'
 import quick3 from '@/assets/home/quick-3.png'
 import quick4 from '@/assets/home/quick-4.png'
 import VideoPreviewModal from '@/components/common/VideoPreviewModal'
+import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './HomeView.css'
 
 /* 从项目记录里取标题 / 封面 / id（字段名后端不统一，做兜底） */
@@ -398,18 +399,9 @@ function HistoryVideoCard({
     e.stopPropagation()
     const url = playingUrl || videoUrl
     if (!url) return
-    try {
-      const res = await fetch(url)
-      const blob = await res.blob()
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = `${title || '视频'}.mp4`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-    } catch {
-      window.open(url, '_blank')
-    }
+    await downloadToDisk({ fileName: buildDownloadName(title || '视频', new Date()), resolveUrl: () => url }).catch(
+      () => {},
+    )
   }
 
   return (
