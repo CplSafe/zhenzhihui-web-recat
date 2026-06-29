@@ -625,11 +625,11 @@ export default function HelpCenter() {
                       </li>
                       <li>
                         <span>客服电话</span>
-                        <a href="tel:400-000-0000">400-000-0000</a>
+                        <a href="tel:01068968819">010-6896-8819</a>
                       </li>
                       <li>
                         <span>邮箱</span>
-                        <a href="mailto:support@zhenzhihui.com">support@zhenzhihui.com</a>
+                        <a href="mailto:support@bjzhenzhihui.cn">support@bjzhenzhihui.cn</a>
                       </li>
                     </ul>
                   </div>
