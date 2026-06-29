@@ -6,9 +6,7 @@
  *   - GET  /api/v1/billing/plans                       列出套餐(listBillingPlans)
  *   - GET  /api/v1/billing/wallet                      当前 workspace 积分余额(getWallet)
  *   - GET  /api/v1/billing/subscription                当前订阅(getSubscription),已订阅的套餐按钮显示「续费」
- *   - POST /api/v1/billing/subscription-orders         开通普通订阅(一次性付款,取 pay_url)(createSubscriptionOrder)
- *   - GET  /api/v1/billing/renewal-orders              待支付续费单(listRenewalOrders)
- *   - POST /api/v1/billing/renewal-orders/{id}/pay-url 续费支付链接(createRenewalPayUrl)
+ *   - POST /api/v1/billing/subscription-orders         开通/续费订阅(一次性付款,取 pay_url)(createSubscriptionOrder;开通与续费统一走此接口)
  *   - POST /api/v1/billing/recharge-orders             积分充值(一次性付款,取 pay_url)(createRechargeOrder)
  * 注:签约(subscriptions/sign-url,周期扣款)暂未开通权限,故会员开通走一次性付款。
  * 接口未提供「副标题/功能清单」等营销文案,按个人/团队保留静态展示。
@@ -19,14 +17,12 @@ import { useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import {
   createRechargeOrder,
-  createRenewalPayUrl,
   createSubscriptionOrder,
   getBusinessErrorMessage,
   getSubscription,
   getWallet,
   listBillingPlans,
   listCreditPackages,
-  listRenewalOrders,
 } from '@/api/business'
 import './MemberCenterModal.css'
 
@@ -387,22 +383,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     showToast('已打开支付宝支付页面,完成支付后可刷新查看', 'info')
   }
 
-  // 续费:已有生效订阅 → 优先用待支付续费单生成支付链接;
-  // 无待续费单时回退再下一单订阅单作为续期。
-  const renewPayUrl = async (p: PlanVM): Promise<string> => {
-    const list: any = await listRenewalOrders(workspaceId)
-    const orders: any[] = Array.isArray(list) ? list : list?.items || list?.orders || list?.list || []
-    const pending =
-      orders.find((o: any) => /pending|unpaid|open|created|wait/i.test(String(o?.status || ''))) || orders[0]
-    if (pending?.id) {
-      const res: any = await createRenewalPayUrl({ workspaceId, renewalOrderId: Number(pending.id) })
-      return String(res?.pay_url || '')
-    }
-    const res: any = await createSubscriptionOrder({ workspaceId, planId: p.id })
-    return String(res?.pay_url || '')
-  }
-
-  // 会员开通 / 续费:取一次性付款 pay_url 直接跳支付宝。
+  // 会员开通 / 续费:统一走 subscription-orders 下单,取一次性付款 pay_url 直接跳支付宝。
   const onBuy = async (p: PlanVM) => {
     if (buyingId) return
     if (!workspaceId) {
@@ -412,9 +393,8 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     const renew = isPurchased(p)
     setBuyingId(p.id)
     try {
-      const url = renew
-        ? await renewPayUrl(p)
-        : String((await createSubscriptionOrder({ workspaceId, planId: p.id }))?.pay_url || '')
+      // 开通与续费用同一个接口:POST /api/v1/billing/subscription-orders
+      const url = String((await createSubscriptionOrder({ workspaceId, planId: p.id }))?.pay_url || '')
       if (url) openAlipay(url)
       else showToast('未获取到支付链接,请稍后重试', 'error')
     } catch (e) {
