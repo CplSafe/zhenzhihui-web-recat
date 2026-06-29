@@ -20,7 +20,7 @@ import { replicateHotVideo, uploadHotCopyAsset, awaitHotVideoResult } from '@/ap
 import { editFullVideo } from '@/api/smartVideo'
 import { saveHotCopyDraft, loadHotCopyDraft, clearHotCopyDraft, type HotCopyDraft } from '@/utils/hotCopyDraft'
 import { refreshAssetUrl } from '@/api/smartShotImage'
-import { generateProjectName } from '@/api/aiPolish'
+import { useProjectAutoNamer } from '@/composables/useProjectAutoNamer'
 import { createCreativeProject, getCreativeProject, patchCreativeProject } from '@/api/business'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import {
@@ -114,9 +114,9 @@ export default function HotCopyCreateView() {
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [nameTouched, setNameTouched] = useState(false)
-  const [naming, setNaming] = useState(false)
+  // AI 自动命名(与智能成片共用 useProjectAutoNamer):naming 供 JSX 显示「AI 命名中…」
+  const { naming, autoName: autoNameProject } = useProjectAutoNamer(nameTouched, setProjectName)
   const nameInputRef = useRef<HTMLInputElement | null>(null)
-  const nameAbortRef = useRef<AbortController | null>(null)
 
   // 整片视频(replicate 产物)
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
@@ -458,22 +458,7 @@ export default function HotCopyCreateView() {
     return () => window.clearTimeout(timer)
   }, [projectId, projectName, workspaceId])
 
-  // 据需求自动命名项目(用户已手动改名 / 需求为空则跳过)
-  const autoNameProject = async (req: string) => {
-    if (nameTouched || !req.trim()) return
-    setNaming(true)
-    try {
-      nameAbortRef.current?.abort()
-      const ctrl = new AbortController()
-      nameAbortRef.current = ctrl
-      const name = await generateProjectName(req, ctrl.signal)
-      if (name && !nameTouched) setProjectName(name)
-    } catch {
-      /* 命名失败保留原名 */
-    } finally {
-      setNaming(false)
-    }
-  }
+  // 据需求自动命名:逻辑已抽到 useProjectAutoNamer(autoNameProject 即其 autoName,调用处不变)。
 
   // 低层:调 video.replicate 出片,写回当前整片 + 版本库
   const doReplicate = async (ws: number, videoAssetId: number, productIds: number[], prompt: string) => {

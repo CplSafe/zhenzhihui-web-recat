@@ -18,8 +18,6 @@ import ImageChat, { type ChatMessage } from '@/components/smart/ImageChat'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import Markdown from '@/components/common/Markdown'
 import {
-  generateProjectName,
-  generateProjectNameFromImages,
   matchUploadsToSubjects,
   summarizeRequirement,
   refineElementPrompt,
@@ -70,6 +68,7 @@ import {
 import { useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+import { useProjectAutoNamer } from '@/composables/useProjectAutoNamer'
 import {
   saveSmartDraft,
   loadSmartDraft,
@@ -206,7 +205,8 @@ export default function SmartCreateView() {
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [nameTouched, setNameTouched] = useState(false) // 用户手动改过名后不再自动覆盖
-  const [naming, setNaming] = useState(false)
+  // AI 自动命名(与爆款复制共用 useProjectAutoNamer):naming 供 JSX 显示「AI 命名中…」
+  const { naming, autoName: autoNameProject } = useProjectAutoNamer(nameTouched, setProjectName)
   // 从「项目管理 → 新建视频」携带过来的、该项目上传过的素材图(预填入口)。
   // 关键:必须在【首帧】就就绪(SmartEntry 的 images 只在挂载时从 initial.images 初始化一次),
   // 所以用 useState 初始化器同步读 location.state,而不是挂载后再 setState(那样太晚,入口已用空数组初始化)。
@@ -221,7 +221,6 @@ export default function SmartCreateView() {
   // 第一步:用户输入的创作需求(后续用于生成分镜脚本 + 自动命名项目)
   const [requirement, setRequirement] = useState('')
   const [reqSummary, setReqSummary] = useState('') // ≤100字核心摘要,仅用于生成(basePrompt/大纲),不再展示
-  const nameAbortRef = useRef<AbortController | null>(null)
 
   // ── 营销思路拆解(选中 SKILL 时,在分镜脚本前多出的第 1 步)──
   // marketingOpen=停留在该步;marketingText=skill 拆解出的营销建议(只读展示);确认后才进入分镜脚本流程。
@@ -2157,30 +2156,7 @@ export default function SmartCreateView() {
     }
   }
 
-  // 自动命名项目:有需求 → 按需求命名(generateProjectName);无需求但有上传素材 → 据素材图命名
-  // (generateProjectNameFromImages,多模态读图)。用户已手动改名 / 正在命名 / 需求与素材皆空 则跳过。
-  const autoNameProject = async (reqArg?: string, imagesArg?: string[]) => {
-    const req = (reqArg ?? requirement).trim()
-    const images = (imagesArg || []).filter(Boolean)
-    if (nameTouched || naming) return
-    if (!req && !images.length) return
-    nameAbortRef.current?.abort()
-    const ctrl = new AbortController()
-    nameAbortRef.current = ctrl
-    setNaming(true)
-    try {
-      const nm = req
-        ? await generateProjectName(req, ctrl.signal)
-        : await generateProjectNameFromImages(images, '', ctrl.signal)
-      if (!nameTouched) setProjectName(nm)
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') {
-        // 命名失败不打断流程,仅静默(保留原名)
-      }
-    } finally {
-      setNaming(false)
-    }
-  }
+  // 自动命名逻辑已抽到 useProjectAutoNamer(autoNameProject 即其 autoName,调用处不变)。
 
   // TODO(后续阶段): 接真实生成/保存逻辑;现仅占位提示。
   const todo = (msg: string) => () => showToast(msg, 'info')
