@@ -50,6 +50,8 @@ interface VideoStageProps {
   videoGenerating?: boolean
   /** 生成中的阶段文案(如「人脸脱敏 2/9…」),缺省显示「视频生成中…」 */
   videoStatusText?: string
+  /** 生成开始时间戳(ms,持久化):传给加载动效做进度锚点,切页面/刷新回来续算而非重头 */
+  videoStartedAt?: number
   /** 人脸脱敏调试:每镜的输入/输出/模型/状态(开发可见) */
   faceBlurDebug?: {
     no?: string
@@ -106,6 +108,7 @@ export default function VideoStage({
   videoUrl,
   videoGenerating,
   videoStatusText,
+  videoStartedAt,
   faceBlurDebug,
   videoVersions = [],
   onSwitchVideo,
@@ -359,6 +362,7 @@ export default function VideoStage({
             {videoGenerating ? (
               <VideoLoading
                 statusText={videoStatusText || '视频生成中'}
+                startedAt={videoStartedAt}
                 note="视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。"
                 tip={VIDEO_TIPS[tipIdx]}
               />
@@ -721,9 +725,7 @@ function ModBox({
         <textarea
           className={styles.vstageModInput}
           value={value}
-          placeholder={
-            polishKind === 'segment' ? '输入对这一片段的视频修改描述...' : '输入对整段视频的修改描述...'
-          }
+          placeholder={polishKind === 'segment' ? '输入对这一片段的视频修改描述...' : '输入对整段视频的修改描述...'}
           onChange={(e) => onChange(e.target.value)}
         />
         <button

@@ -291,10 +291,11 @@
   font-size: 12px;
 }
 .hc-qr-box {
-  width: 120px;
-  height: 120px;
+  width: 140px;
+  height: 140px;
   border-radius: 8px;
-  background: repeating-linear-gradient(45deg, #e7e9f2 0 6px, #f4f5fb 6px 12px);
+  object-fit: contain;
+  background: #fff;
   border: 1px solid #e2e4ee;
 }
 .hc-contact-list {

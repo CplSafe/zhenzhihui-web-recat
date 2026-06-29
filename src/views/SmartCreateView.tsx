@@ -51,7 +51,6 @@ import {
   patchCreativeProject,
   getCreativeProject,
   updateCreativeProjectDraft,
-
   uploadAssetFile,
   getAssetDownloadUrl,
   listAssets,
@@ -814,10 +813,12 @@ export default function SmartCreateView() {
     shots.forEach((sh) => {
       if (sh.image) m.set(sh.image, classify(sh.image, 'ai'))
     })
-    return [...m.entries()]
-      // 接受 http(s) / data: / 同源绝对路径(如 /api/v1/assets/:id/download —— 新建视频携带的素材就是这种)
-      .filter(([u]) => /^(https?:|data:|\/)/.test(u))
-      .map(([url, source]) => ({ url, source, assetId: urlAssetId.get(url) || 0 }))
+    return (
+      [...m.entries()]
+        // 接受 http(s) / data: / 同源绝对路径(如 /api/v1/assets/:id/download —— 新建视频携带的素材就是这种)
+        .filter(([u]) => /^(https?:|data:|\/)/.test(u))
+        .map(([url, source]) => ({ url, source, assetId: urlAssetId.get(url) || 0 }))
+    )
   })()
 
   // ── 镜头编排:按 画面描述 + 该镜头素材 + 上一张分镜图(连贯)+ 项目摘要 生成分镜图(后端文/图生图) ──
@@ -1115,7 +1116,13 @@ export default function SmartCreateView() {
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
   // 每次「重新生成」的独立记录(生成中/失败);成功的成片仍进 videoVersions。
   // 让项目下能看到每次生成作为一条草稿:生成中、失败(可重试)。
-  type GenRecord = { id: string; status: 'processing' | 'failed' | 'published'; taskId: number; note: string; createdAt: number }
+  type GenRecord = {
+    id: string
+    status: 'processing' | 'failed' | 'published'
+    taskId: number
+    note: string
+    createdAt: number
+  }
   const [videoGenerations, setVideoGenerations] = useState<GenRecord[]>([])
   const genSeqRef = useRef(0)
   const immediateSaveRef = useRef(false) // startGen 后请求立即落盘:草稿即时出现在项目里(不等防抖)
@@ -1132,7 +1139,10 @@ export default function SmartCreateView() {
     }
     genSeqRef.current += 1
     const id = `gen-${Date.now()}-${genSeqRef.current}`
-    setVideoGenerations((prev) => [{ id, status: 'processing', taskId: 0, note: note || '', createdAt: Date.now() }, ...prev])
+    setVideoGenerations((prev) => [
+      { id, status: 'processing', taskId: 0, note: note || '', createdAt: Date.now() },
+      ...prev,
+    ])
     immediateSaveRef.current = true // 草稿记录已加 → 本轮 effect 立即落盘
     return id
   }
@@ -2622,6 +2632,7 @@ export default function SmartCreateView() {
         videoUrl={fullVideo.url}
         videoGenerating={vidGenRunning}
         videoStatusText={blurPhase || undefined}
+        videoStartedAt={videoGenerations.find((g) => g.status === 'processing')?.createdAt || 0}
         faceBlurDebug={blurDebug}
         videoVersions={videoVersions}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
