@@ -32,7 +32,7 @@ import {
 import { useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useRequireAuth } from '@/composables/useRequireAuth'
-import { downloadToDisk } from '@/utils/downloadToDisk'
+import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
 
 // 两步:上传爆款视频(入口)/ 生成视频
@@ -625,10 +625,7 @@ export default function HotCopyCreateView() {
       showToast('请先生成视频', 'info')
       return
     }
-    const safeName = (projectName || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'
-    const d = new Date()
-    const dateStr = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
-    const fileName = `${safeName}_${dateStr}.mp4`
+    const fileName = buildDownloadName(projectName || '视频', new Date())
     try {
       await downloadToDisk({
         fileName,

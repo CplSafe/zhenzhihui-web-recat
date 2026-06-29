@@ -78,7 +78,7 @@ import {
   parseSmartSnapshot,
   type SmartDraft,
 } from '@/utils/smartDraft'
-import { downloadToDisk } from '@/utils/downloadToDisk'
+import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
 
 // 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
@@ -2193,10 +2193,7 @@ export default function SmartCreateView() {
       showToast('请先生成视频', 'info')
       return
     }
-    const safeName = (projectName || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'
-    const d = new Date()
-    const dateStr = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
-    const fileName = `${safeName}_${dateStr}.mp4`
+    const fileName = buildDownloadName(projectName || '视频', new Date())
     try {
       await downloadToDisk({
         fileName,
