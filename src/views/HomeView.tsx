@@ -22,8 +22,6 @@ import { preloadMedia, type MediaItem } from '@/utils/mediaPreload'
 
 /** 首页轮播数据的 SWR 缓存键 */
 const BANNERS_CACHE_KEY = 'home-banners'
-import bannerLeft from '@/assets/home/banner-left.png'
-import bannerRight from '@/assets/home/banner-right.png'
 import quick1 from '@/assets/home/quick-1.png'
 import quick2 from '@/assets/home/quick-2.png'
 import quick3 from '@/assets/home/quick-3.png'
@@ -397,11 +395,19 @@ function HistoryVideoCard({
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    const url = playingUrl || videoUrl
-    if (!url) return
-    await downloadToDisk({ fileName: buildDownloadName(title || '视频', new Date()), resolveUrl: () => url }).catch(
-      () => {},
-    )
+    if (!videoAssetId && !displayUrl && !videoUrl) return
+    await downloadToDisk({
+      fileName: buildDownloadName(title || '视频', new Date()),
+      // 先按 assetId 取同源 /download(不过期);否则退回已就绪的 displayUrl。
+      // 不再用 `playingUrl || videoUrl`——没先点播放时 playingUrl 为空,videoUrl 可能是会过期的外链 OSS → 下载 403。
+      resolveUrl: async () => {
+        if (videoAssetId && workspaceId) {
+          const fresh = await getAssetDownloadUrl({ workspaceId, assetId: videoAssetId }).catch(() => '')
+          if (fresh) return fresh
+        }
+        return displayUrl || videoUrl
+      },
+    }).catch(() => {})
   }
 
   return (
@@ -468,8 +474,9 @@ function HistoryVideoCard({
         </div>
       </div>
 
-      {/* 全屏视频播放弹窗(历史项目:同源 /download,可带 crossOrigin) */}
-      <VideoPreviewModal src={playingUrl} crossOrigin="anonymous" onClose={() => setPlayingUrl('')} />
+      {/* 全屏视频播放弹窗。不带 crossOrigin:playingUrl 在 HEAD 探测成功时可能是外链 OSS(无 CORS 头),
+          带 crossOrigin 会被浏览器拒载卡在 0:00;此处仅播放、不读像素,无需 crossOrigin。 */}
+      <VideoPreviewModal src={playingUrl} onClose={() => setPlayingUrl('')} />
     </>
   )
 }

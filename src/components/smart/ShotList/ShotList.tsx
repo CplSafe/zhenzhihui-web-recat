@@ -41,8 +41,10 @@ interface ShotListProps {
   onImgLoad?: (id: string | number) => void
 }
 
-let uid = 1
-const newId = () => `s_${uid++}`
+// 新分镜 id 必须跨「刷新/重进」唯一:纯自增计数每次加载会归零,复制→刷新→再复制会和已持久化的
+// s_1 撞 id,破坏选中/拖拽/按 id 改删。用时间戳前缀 + 自增,保证全局唯一(对齐 ShotArrange 的 new_<ts>_…)。
+let uid = 0
+const newId = () => `s_${Date.now().toString(36)}_${uid++}`
 
 // "5s" / "4" / "3.5s" → "4.0s"(保留一位小数,对齐 Figma)
 function formatDur(d: string): string {

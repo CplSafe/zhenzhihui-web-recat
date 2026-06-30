@@ -682,20 +682,28 @@ export default function ProjectManagementView() {
       } catch {
         video = null
       }
-      if (!video?.id) return
+      // 散视频(loose asset)id=0、只有 assetId,旧逻辑 `!video?.id` 会把它挡掉 → 拖不进去。两类都放行。
+      if (!video?.id && !video?.assetId) return
       const wsId = Number(workspaceId || 0)
       if (!wsId || !folder.id) {
         showToast('workspace_id 缺失,无法归类', 'error')
         return
       }
-      const key = videoKeyOf(Number(video.id || 0), video.cover || '')
+      // key 必须与「待分类」的隐藏过滤一致:散视频用 videoKeyOf(assetId,''),项目视频用 videoKeyOf(id,cover)。
+      const isLoose = video.kind === 'asset' || (!video.id && video.assetId)
+      const key = isLoose
+        ? videoKeyOf(Number(video.assetId || 0), '')
+        : videoKeyOf(Number(video.id || 0), video.cover || '')
+      // 散视频封面为空,落库用其直传地址,目标文件夹才渲染得出
+      const url = video.cover || video.coverVideo || ''
       try {
         // 写入目标项目的视频清单(随项目草稿存云端),并带上来源 key 供「待分类」隐藏
         await addClassifiedVideo({
           projectId: folder.id,
           workspaceId: wsId,
           title: video.title,
-          videoUrl: video.cover || '',
+          videoUrl: url,
+          coverUrl: url,
           sourceKey: key,
         })
         // 乐观隐藏(刷新前),随后拉最新项目列表使云端口径生效
@@ -941,7 +949,17 @@ export default function ProjectManagementView() {
                   <h2 className="pm2-section-title">待分类</h2>
                   <div className="pm2-video-grid" ref={vidGridRef}>
                     {pagedUnclassified.map((video, i) => (
-                      <div key={`${video.kind}-${video.id || video.assetId}-${i}`} className="pm2-vid-wrap">
+                      <div
+                        key={`${video.kind}-${video.id || video.assetId}-${i}`}
+                        className="pm2-vid-wrap"
+                        draggable
+                        onDragStart={(e) => {
+                          // 拖到项目文件夹归类(对应文件夹卡的 onDrop → handleDropToFolder)。
+                          // payload 带 kind/id/assetId/cover/coverVideo,供落点按类型生成与「待分类」隐藏一致的 key。
+                          e.dataTransfer.effectAllowed = 'move'
+                          e.dataTransfer.setData('text/plain', JSON.stringify(video))
+                        }}
+                      >
                         <div className="pm2-vid">
                           <span
                             className={`pm2-vid-thumb pm2-tone-${toneOf(i)}`}

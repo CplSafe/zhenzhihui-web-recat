@@ -331,9 +331,18 @@ export default function VideoStage({
   // 是否存在「片段/整段」修改:有则主按钮显示「确认修改」(基于原视频改),无则「重新生成视频」
   const hasMods = frameSlots.some((s) => s.text.trim()) || overallNote.trim().length > 0
 
-  // 生成完成(videoUrl 变化且不在生成中)→ 把本次修改描述绑定到这条新版本上
+  // 记录「本次生成开始前」的视频 url:用于区分「真出了新片」vs「失败(url 没变)」。
+  const genStartUrlRef = useRef('')
+  // 生成完成 → 仅当产出了【新】视频(url 变了)才把本次修改描述绑定到新版本。
+  // 失败时 videoGenerating 也会 true→false 但 videoUrl 不变,若不判断会把 pendingNote 误绑到【旧版本】、
+  // 覆盖它原有的描述(本轮审计 P1)。失败则跳过、保留 pendingNote 供重试。
   useEffect(() => {
-    if (!videoUrl || videoGenerating || !pendingNote) return
+    if (videoGenerating) {
+      genStartUrlRef.current = videoUrl
+      return
+    }
+    if (!videoUrl || !pendingNote) return
+    if (videoUrl === genStartUrlRef.current) return // 没出新片(失败/无变化)→ 不绑、不覆盖旧版本
     setNoteByUrl((prev) => (prev[videoUrl] === pendingNote ? prev : { ...prev, [videoUrl]: pendingNote }))
     setPendingNote('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
