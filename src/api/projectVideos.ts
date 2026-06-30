@@ -277,10 +277,14 @@ function buildDerivedVideos({
     flow,
     publishUrl: '',
   })
-  // 仅在确有在途生成任务时,显示一条「生成中」占位(取最近一条进行中记录;无则用兜底)。
-  const genItems: ProjectVideo[] = hasActiveTask
-    ? [makeGenItem(processingRaw[processingRaw.length - 1] || { id: `legacy-${project?.id || 0}`, status: 'processing' }, 0)]
-    : []
+  // 显示一条「草稿/生成中」占位的条件:有在途视频任务,或草稿里有「进行中」的生成记录。
+  // 后者覆盖 #1:退回入口重新生成、走到分镜/准备素材(还没发起视频任务)就切走时,也应作为「草稿」出现,
+  // 而不是只剩旧成片。仍折叠成【一条】(取最近一条 processing),完成时记录会被标记 published(被过滤掉),
+  // 失败的也不是 processing → 不会重现「一个项目堆出多个空草稿(只生成1个却显示5个)」。
+  const genItems: ProjectVideo[] =
+    hasActiveTask || processingRaw.length > 0
+      ? [makeGenItem(processingRaw[processingRaw.length - 1] || { id: `legacy-${project?.id || 0}`, status: 'processing' }, 0)]
+      : []
   const generating = genItems.length > 0
 
   const candidates = normalizeArray(smart?.videoVersions)
