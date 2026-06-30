@@ -16,8 +16,9 @@ import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import HotCopyEntry, { type HotCopyEntryPayload } from '@/components/hotcopy/HotCopyEntry'
 import VideoStage from '@/components/smart/VideoStage'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
-import { replicateHotVideo, uploadHotCopyAsset, awaitHotVideoResult } from '@/api/hotCopy'
+import { replicateHotVideo, uploadHotCopyAsset, awaitHotVideoResult, estimateReplicateCost } from '@/api/hotCopy'
 import { editFullVideo } from '@/api/smartVideo'
+import { readVideoDurationSec } from '@/utils/videoDuration'
 import { saveHotCopyDraft, loadHotCopyDraft, clearHotCopyDraft, type HotCopyDraft } from '@/utils/hotCopyDraft'
 import { refreshAssetUrl } from '@/api/smartShotImage'
 import { generateProjectName } from '@/api/aiPolish'
@@ -178,6 +179,15 @@ export default function HotCopyCreateView() {
   }
   const [videoGenerations, setVideoGenerations] = useState<GenRecord[]>([])
   const immediateSaveRef = useRef(false) // 生成记录变化时请求立即落后端,草稿/失败态即时出现在项目里(不等防抖)
+
+  // 源视频真实时长(秒):video.replicate/edit 按它计费;前端读上传视频 HTML5 元数据得到
+  const [sourceVideoDurSec, setSourceVideoDurSec] = useState(0)
+  // 提交前积分预估(estimate-cost)
+  const [videoCost, setVideoCost] = useState<{
+    loading: boolean
+    error: string
+    estimate: { estimatedCost: number; balance: number; canAfford: boolean } | null
+  }>({ loading: false, error: '', estimate: null })
 
   // 开一条生成记录(已有进行中的则复用,避免重复);返回记录 id。立即落盘起始时间,供进度锚点。
   const startGen = (note?: string): string => {
@@ -546,6 +556,43 @@ export default function HotCopyCreateView() {
     return () => window.clearTimeout(timer)
   }, [projectId, projectName, workspaceId])
 
+  // 提交前积分预估(estimate-cost):进入生成视频步、有源视频且非生成中时估一次(口径同「重新生成」replicate)。
+  useEffect(() => {
+    const ws = Number(workspaceId || 0)
+    if (!ws || !started || vidGenRunning || !sourceVideo.assetId) return
+    let alive = true
+    setVideoCost((s) => ({ ...s, loading: true, error: '' }))
+    const timer = window.setTimeout(async () => {
+      try {
+        const plans = await resolvePlanCandidates()
+        const res: any = await estimateReplicateCost({
+          workspaceId: ws,
+          sourceVideoDurationSec: sourceVideoDurSec,
+          ratio: DEFAULT_RATIO,
+          durationSec: DEFAULT_DURATION_SEC,
+          modelPlanCandidates: plans,
+        })
+        if (!alive) return
+        setVideoCost({
+          loading: false,
+          error: '',
+          estimate: {
+            estimatedCost: Number(res?.estimated_cost ?? 0),
+            balance: Number(res?.balance ?? 0),
+            canAfford: res?.can_afford === true,
+          },
+        })
+      } catch (e: any) {
+        if (alive) setVideoCost({ loading: false, error: e?.message || '预估失败', estimate: null })
+      }
+    }, 500)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, started, vidGenRunning, sourceVideo.assetId, sourceVideoDurSec])
+
   // 据需求自动命名项目(用户已手动改名 / 需求为空则跳过)
   const autoNameProject = async (req: string) => {
     if (nameTouched || !req.trim()) return
@@ -563,8 +610,14 @@ export default function HotCopyCreateView() {
     }
   }
 
-  // 低层:调 video.replicate 出片,写回当前整片 + 版本库
-  const doReplicate = async (ws: number, videoAssetId: number, productIds: number[], prompt: string) => {
+  // 低层:调 video.replicate 出片,写回当前整片 + 版本库。srcDurSec=源视频真实时长(按它计费)
+  const doReplicate = async (
+    ws: number,
+    videoAssetId: number,
+    productIds: number[],
+    prompt: string,
+    srcDurSec?: number,
+  ) => {
     const plans = await resolvePlanCandidates()
     const { url, assetId } = await replicateHotVideo({
       workspaceId: ws,
@@ -573,6 +626,7 @@ export default function HotCopyCreateView() {
       prompt,
       ratio: DEFAULT_RATIO,
       durationSec: DEFAULT_DURATION_SEC,
+      sourceVideoDurationSec: srcDurSec || sourceVideoDurSec || 0,
       modelPlanCandidates: plans,
       onTask: (id) => {
         setVidGenTaskId(id)
@@ -626,8 +680,12 @@ export default function HotCopyCreateView() {
       setProductAssetIds(productIds)
       persistNow({ sourceVideo: { assetId: videoAssetId, url: videoUrl }, productAssetIds: productIds })
 
+      // 读源视频真实时长(秒),按它计费(source_video_duration);读不到回退默认 duration
+      const srcDur = await readVideoDurationSec(videoUrl)
+      if (srcDur) setSourceVideoDurSec(srcDur)
+
       // ③ 出片
-      await doReplicate(ws, videoAssetId, productIds, prompt)
+      await doReplicate(ws, videoAssetId, productIds, prompt, srcDur)
       markGen(gid, 'published')
     } catch (e: any) {
       markGen(gid, 'failed')
@@ -662,12 +720,14 @@ export default function HotCopyCreateView() {
         ]
           .filter(Boolean)
           .join('\n')
+        const editSrcDur = (await readVideoDurationSec(fullVideo.url)) || sourceVideoDurSec || 0
         const { url, assetId } = await editFullVideo({
           workspaceId: ws,
           videoAssetId: fullVideo.assetId,
           prompt: editPrompt,
           ratio: DEFAULT_RATIO,
           durationSec: DEFAULT_DURATION_SEC,
+          sourceVideoDurationSec: editSrcDur,
           modelPlanCandidates: plans,
           onTask: (id) => {
             setVidGenTaskId(id)
@@ -696,7 +756,8 @@ export default function HotCopyCreateView() {
     const gid = startGen('重新生成')
     try {
       const prompt = [basePrompt, note && `修改要求:${note}`].filter(Boolean).join('\n')
-      await doReplicate(ws, sourceVideo.assetId, productAssetIds, prompt)
+      const reSrcDur = sourceVideoDurSec || (await readVideoDurationSec(sourceVideo.url)) || 0
+      await doReplicate(ws, sourceVideo.assetId, productAssetIds, prompt, reSrcDur)
       markGen(gid, 'published')
     } catch (e: any) {
       markGen(gid, 'failed')
@@ -882,6 +943,9 @@ export default function HotCopyCreateView() {
                 videoStatusText={vidGenRunning ? '爆款复制生成中…' : undefined}
                 loadingTitle="爆款复制生成中"
                 videoStartedAt={videoGenerations.find((g) => g.status === 'processing')?.createdAt || 0}
+                costEstimate={videoCost.estimate}
+                costLoading={videoCost.loading}
+                costError={videoCost.error}
                 videoVersions={videoVersions}
                 onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
                 onRegenerateVideo={(note, opts) => regenerate(note, opts)}

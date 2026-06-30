@@ -11,6 +11,9 @@ import {
   getAssetDownloadUrl,
   listAssets,
   extractAssetPageItems,
+  getModelForOperation,
+  resolveTaskModel,
+  estimateAiTaskCost,
 } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
@@ -52,6 +55,8 @@ export async function replicateHotVideo(args: {
   prompt?: string
   ratio?: string
   durationSec?: number
+  /** 源视频真实时长(秒):video.replicate 按它计费(优先于 duration),前端读源视频 HTML5 元数据得到 */
+  sourceVideoDurationSec?: number
   modelPlanCandidates?: string[]
   /** 任务创建后回调 task_id:供前端持久化,刷新/切换后用 awaitHotVideoResult 续轮询(不丢在途生成) */
   onTask?: (taskId: number) => void
@@ -61,27 +66,28 @@ export async function replicateHotVideo(args: {
     { asset_id: args.videoAssetId, role: 'video' },
     ...products.map((id) => ({ asset_id: id, role: 'image' })),
   ]
+  // 钉死 seedance,不做跨模型退避:先显式解析支持 video.replicate 的 seedance 模型,再用 modelVersionId 提交。
+  // createAiTask 走「显式模型」分支(无「换下一个模型」循环),seedance 失败直接抛错由用户决定,
+  // 绝不退避到 happyhorse 等其它视频模型。
+  const model = await getModelForOperation('video.replicate', VIDEO_MODEL_KEYWORDS, args.modelPlanCandidates)
+  if (!model?.id)
+    throw new Error('当前工作空间/套餐暂无「爆款复刻(video.replicate)」可用模型(seedance),请联系管理员开通')
   const task = await createAiTask({
     workspaceId: args.workspaceId,
     capability: 'video',
     operationCode: 'video.replicate',
-    preferredModelKeywords: VIDEO_MODEL_KEYWORDS,
-    // 仅允许真正支持 video.replicate 的模型;否则后端会回退到任意视频模型(如只支持
-    // video.generate 的 Seedance)→ 提交后 provider 直接 PROVIDER_FAILED。
-    modelValidator: (model: any) =>
-      Array.isArray(model?.operation_codes) && model.operation_codes.includes('video.replicate')
-        ? true
-        : '当前工作空间/套餐暂无「爆款复刻(video.replicate)」可用模型,请联系管理员开通',
-    ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
+    modelVersionId: model.id,
+    modelVersion: model,
     prompt: args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。',
     inputAssets,
     // video.replicate 的画面/时长主要由源视频决定:仅按模型 params_schema 填字段,
     // 无 schema 时不塞 duration/resolution/ratio 等(否则 provider 报「参数有误」)。
-    params: (model: any) => {
-      const fields = getModelParamFields(model)
+    params: (m: any) => {
+      const fields = getModelParamFields(m)
       if (!fields.length) return {}
-      return buildVideoGenerationParams(model, {
+      return buildVideoGenerationParams(m, {
         duration: normalizeSeedanceDuration(args.durationSec || 10),
+        sourceVideoDuration: args.sourceVideoDurationSec, // 有源视频时长则按它计费(schema 声明才下发)
         resolution: '720p',
         ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
         generateAudio: true,
@@ -123,4 +129,40 @@ export async function awaitHotVideoResult(args: {
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')
   return { url, assetId }
+}
+
+/**
+ * 做同款(video.replicate)提交前积分预估。估价用的 model/operation/params 必须与 replicateHotVideo 一致。
+ * 按源视频真实时长 source_video_duration 计费(schema 声明才下发,优先于 duration)。
+ */
+export async function estimateReplicateCost(args: {
+  workspaceId: number
+  sourceVideoDurationSec?: number
+  ratio?: string
+  durationSec?: number
+  modelPlanCandidates?: string[]
+}): Promise<any> {
+  const pick = (kw: string[]) =>
+    resolveTaskModel({
+      capability: 'video',
+      operationCode: 'video.replicate',
+      preferredModelKeywords: kw,
+      modelPlanCandidates: args.modelPlanCandidates,
+    }).catch(() => null)
+  let model = await pick(VIDEO_MODEL_KEYWORDS)
+  if (!model?.id) model = await pick([])
+  if (!model?.id) throw new Error('暂无可用的爆款复刻模型')
+  const params = buildVideoGenerationParams(model, {
+    duration: normalizeSeedanceDuration(args.durationSec || 10),
+    sourceVideoDuration: args.sourceVideoDurationSec,
+    resolution: '720p',
+    ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
+    generateAudio: true,
+  })
+  return estimateAiTaskCost({
+    workspaceId: args.workspaceId,
+    modelVersionId: model.id,
+    operationCode: 'video.replicate',
+    params,
+  })
 }

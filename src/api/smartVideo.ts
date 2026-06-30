@@ -4,7 +4,16 @@
  * 输入参考始终用当前分镜图,确保每次生成都基于最新镜头编排;修改意见只拼进 prompt,不复用旧视频。
  */
 // @ts-nocheck
-import { createAiTask, waitForAiTask, listAssets, extractAssetPageItems, getAssetDownloadUrl } from './business'
+import {
+  createAiTask,
+  waitForAiTask,
+  listAssets,
+  extractAssetPageItems,
+  getAssetDownloadUrl,
+  getModelForOperation,
+  resolveTaskModel,
+  estimateAiTaskCost,
+} from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
@@ -95,18 +104,22 @@ export async function generateFullVideo(args: {
   // 不加非标准字段)。即便带修改意见也不复用上次整片,确保每次都基于最新镜头编排重新出片。
   const inputAssets = imgIds.map((id) => ({ asset_id: id, role: 'image' }))
 
-  // 只跑一次,不做静默重试(视频模型很贵,失败直接抛错由用户决定)
+  // 钉死 seedance,不做跨模型退避:先显式解析 seedance 模型,再用 modelVersionId 提交。
+  // 这样 createAiTask 走「显式模型」分支(无「换下一个模型」循环),seedance 失败直接抛错由用户决定,
+  // 绝不退避到 happyhorse 等其它视频模型。
+  const model = await getModelForOperation('video.generate', VIDEO_MODEL_KEYWORDS, args.modelPlanCandidates)
+  if (!model?.id) throw new Error('暂无可用的视频生成模型(seedance)')
   const task = await createAiTask({
     workspaceId: args.workspaceId,
     capability: 'video',
     operationCode: 'video.generate',
-    preferredModelKeywords: VIDEO_MODEL_KEYWORDS,
-    ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
+    modelVersionId: model.id,
+    modelVersion: model,
     prompt,
     inputAssets,
-    params: (model: any) => ({
+    params: (m: any) => ({
       generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
-      ...buildVideoGenerationParams(model, {
+      ...buildVideoGenerationParams(m, {
         duration: normalizeSeedanceDuration(totalDurationSec(args.shots) || 10),
         resolution: '720p',
         ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
@@ -169,6 +182,8 @@ export async function editFullVideo(args: {
   prompt?: string
   ratio?: string
   durationSec?: number
+  /** 源视频真实时长(秒):video.edit 按它计费(优先于 duration),前端读源视频 HTML5 元数据得到 */
+  sourceVideoDurationSec?: number
   modelPlanCandidates?: string[]
   /** 任务创建后回调 task_id(供前端持久化、刷新/切换后续轮询) */
   onTask?: (taskId: number) => void
@@ -194,6 +209,7 @@ export async function editFullVideo(args: {
       if (!fields.length) return {}
       return buildVideoGenerationParams(model, {
         duration: normalizeSeedanceDuration(args.durationSec || 10),
+        sourceVideoDuration: args.sourceVideoDurationSec, // 有源视频时长则按它计费(schema 声明才下发)
         resolution: '720p',
         ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
         generateAudio: true,
@@ -213,4 +229,75 @@ export async function editFullVideo(args: {
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('视频编辑已完成,暂未返回可预览地址')
   return { url, assetId }
+}
+
+// ── 提交前积分预估(POST /ai/tasks/estimate-cost) ──
+// 估价用的 model / operation / params 必须与真正提交(generateFullVideo / editFullVideo)一致,
+// 否则「预估 ≠ 实扣」。params 同样走 buildVideoGenerationParams 的 schema 门控。
+
+/** 整片生成(video.generate,图生视频)预估积分。返回 estimate 结果(含 estimated_cost 等)。 */
+export async function estimateFullVideoCost(args: {
+  workspaceId: number
+  shots: any[]
+  ratio?: string
+  modelPlanCandidates?: string[]
+}): Promise<any> {
+  // 与出片同口径(capability:'video' + 套餐候选);先按关键词(seedance)、查不到退回任意视频模型
+  const pick = (kw: string[]) =>
+    resolveTaskModel({
+      capability: 'video',
+      operationCode: 'video.generate',
+      preferredModelKeywords: kw,
+      modelPlanCandidates: args.modelPlanCandidates,
+    }).catch(() => null)
+  let model = await pick(VIDEO_MODEL_KEYWORDS)
+  if (!model?.id) model = await pick([])
+  if (!model?.id) throw new Error('暂无可用的视频生成模型')
+  const params = {
+    generate_audio: true,
+    ...buildVideoGenerationParams(model, {
+      duration: normalizeSeedanceDuration(totalDurationSec(args.shots) || 10),
+      resolution: '720p',
+      ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
+      generateAudio: true,
+    }),
+  }
+  return estimateAiTaskCost({
+    workspaceId: args.workspaceId,
+    modelVersionId: model.id,
+    operationCode: 'video.generate',
+    params,
+  })
+}
+
+/** 视频编辑(video.edit,确认修改)预估积分:按源视频真实时长 source_video_duration 计费。 */
+export async function estimateEditVideoCost(args: {
+  workspaceId: number
+  sourceVideoDurationSec?: number
+  ratio?: string
+  modelPlanCandidates?: string[]
+}): Promise<any> {
+  const pick = (kw: string[]) =>
+    resolveTaskModel({
+      capability: 'video',
+      operationCode: 'video.edit',
+      preferredModelKeywords: kw,
+      modelPlanCandidates: args.modelPlanCandidates,
+    }).catch(() => null)
+  let model = await pick(VIDEO_EDIT_MODEL_KEYWORDS)
+  if (!model?.id) model = await pick([])
+  if (!model?.id) throw new Error('暂无可用的视频编辑模型')
+  const params = buildVideoGenerationParams(model, {
+    duration: normalizeSeedanceDuration(args.sourceVideoDurationSec || 10),
+    sourceVideoDuration: args.sourceVideoDurationSec,
+    resolution: '720p',
+    ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
+    generateAudio: true,
+  })
+  return estimateAiTaskCost({
+    workspaceId: args.workspaceId,
+    modelVersionId: model.id,
+    operationCode: 'video.edit',
+    params,
+  })
 }

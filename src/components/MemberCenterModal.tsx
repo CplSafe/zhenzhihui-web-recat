@@ -11,7 +11,7 @@
  * 注:签约(subscriptions/sign-url,周期扣款)暂未开通权限,故会员开通走一次性付款。
  * 接口未提供「副标题/功能清单」等营销文案,按个人/团队保留静态展示。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
@@ -23,6 +23,7 @@ import {
   getWallet,
   listBillingPlans,
   listCreditPackages,
+  listPaymentOrders,
 } from '@/api/business'
 import './MemberCenterModal.css'
 
@@ -40,15 +41,15 @@ interface ApiPlan {
   period: string // month | year
   plan_type?: string // team | personal(后端区分团队/个人套餐)
   planType?: string
-  price_cents: number
+  price_cents: number // 折前原价(划线价)
   base_credits: number
   status?: string
   description?: string
   subtitle?: string
-  original_price_cents?: number
-  list_price_cents?: number
-  origin_price_cents?: number
-  discount?: string | number
+  // 后端折扣三件套:开关 + 折后实付价 + 折扣百分比(80=8折、88=8.8折、75=7.5折)
+  discount_enabled?: boolean
+  discounted_price_cents?: number
+  discount_percent?: number
   quota?: string
   display?: any
 }
@@ -95,6 +96,14 @@ function yuan(cents: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(2)
 }
 
+// 折扣百分比 → 角标文案:80→「8折」、88→「8.8折」、75→「7.5折」。非有效折扣(<=0 或 >=100)返回空串。
+function discountLabel(percent: number): string {
+  const p = Number(percent) || 0
+  if (p <= 0 || p >= 100) return ''
+  const d = p / 10
+  return `${Number.isInteger(d) ? d : d.toFixed(1)}折`
+}
+
 // 订阅到期展示:剩余天数 +「到期日期」。兼容多种字段名;无有效日期则返回空串。
 function formatExpiry(sub: any): string {
   const raw =
@@ -134,29 +143,18 @@ function toVM(p: ApiPlan): PlanVM {
   const isTeam = planType ? planType === 'team' : /团队|team/i.test(s)
   const { unit, creditUnit } = periodLabel(p)
   const credits = Number(p.base_credits ?? 0)
-  const priceCents = Number(p.price_cents || 0)
-  const rate = credits > 0 ? `1积分≈${(priceCents / 100 / credits).toFixed(2)}元` : ''
-  const periodKey = /7\s*天|试用|trial|week/i.test(s)
-    ? 'trial'
-    : /季|quarter/i.test(s)
-      ? 'quarter'
-      : /年|year/i.test(s) || p.period === 'year'
-        ? 'year'
-        : 'month'
 
-  // 划线原价 + 折扣:① 后端字段优先;② 暂未返回时按设计稿规则「写死」(按周期固定折扣,原价由现价反推)。
-  const originCents = Number(p.original_price_cents || p.list_price_cents || p.origin_price_cents || 0) || 0
-  let origin = originCents > priceCents ? `￥${yuan(originCents)}` : ''
-  let discount = p.discount ? String(p.discount) : ''
-  if (!origin && !discount) {
-    const ratio = periodKey === 'quarter' ? 0.75 : periodKey === 'year' ? 0.7 : periodKey === 'month' ? 0.88 : 0
-    if (ratio && priceCents > 0) {
-      // 月卡 8.8折、季卡 7.5折(直接取整会变 9折/8折);年卡维持原有取整(7折,不变)
-      discount =
-        periodKey === 'month' ? '8.8折' : periodKey === 'quarter' ? '7.5折' : `${Math.round((ratio * 100) / 10)}折`
-      origin = `￥${Math.round(priceCents / 100 / ratio)}`
-    }
-  }
+  // 价格用后端折扣三件套:price_cents=折前原价(划线),discounted_price_cents=折后实付(大号),
+  // discount_percent=折扣百分比。discount_enabled 关闭或数据缺失时,大号显示原价、不划线、不显示角标。
+  const originCents = Number(p.price_cents || 0)
+  const discountedCents = Number(p.discounted_price_cents || 0)
+  const enabled = p.discount_enabled === true && discountedCents > 0 && discountedCents < originCents
+  const payCents = enabled ? discountedCents : originCents
+  // 价格只展示整元(四舍五入),不显示小数:折后 79112 分 → ￥791
+  const origin = enabled ? `￥${Math.round(originCents / 100)}` : ''
+  const discount = enabled ? discountLabel(p.discount_percent ?? 0) : ''
+  // 1积分≈X元 用折后实付价算(用户实际付的钱)
+  const rate = credits > 0 ? `1积分≈${(payCents / 100 / credits).toFixed(2)}元` : ''
 
   const subtitle =
     String(p.subtitle || p.description || p.display?.subtitle || '').trim() ||
@@ -169,7 +167,7 @@ function toVM(p: ApiPlan): PlanVM {
     code: p.code || '',
     name: p.name || '套餐',
     subtitle,
-    price: yuan(p.price_cents),
+    price: String(Math.round(payCents / 100)),
     unit,
     origin,
     discount,
@@ -316,6 +314,16 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const [balance, setBalance] = useState<number | null>(null)
   const [subscription, setSubscription] = useState<any>(null)
   const [buyingId, setBuyingId] = useState(0)
+  // 极少数情况下「同步开窗」仍被浏览器拦截:存下 pay_url,在弹窗内给一个手动打开入口兜底。
+  const [pendingPayUrl, setPendingPayUrl] = useState('')
+  // 组件存活标记:订单轮询是异步长任务,卸载后不再 setState / 不再继续轮询
+  const aliveRef = useRef(true)
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+    }
+  }, [])
 
   // Esc 关闭(仅弹窗模式;页面模式不拦 Esc)
   useEffect(() => {
@@ -385,15 +393,87 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     return subIsTeam === p.isTeam
   }
 
-  // 取到支付宝 pay_url 后直接打开支付页(去掉站内扫码步骤)。
-  // 只在新标签页打开,绝不跳转当前页;若被浏览器拦截则提示用户允许弹窗后重试。
-  const openAlipay = (url: string) => {
-    const win = window.open(url, '_blank', 'noopener,noreferrer')
-    if (!win) {
-      showToast('支付页面被浏览器拦截,请允许弹出窗口后重试', 'error')
-      return
+  // 从下单返回里取订单 id(字段名后端不统一,做兜底)
+  const orderIdOf = (res: any): number =>
+    Number(
+      res?.order?.id ?? res?.order?.order_id ?? res?.order_id ?? res?.id ?? res?.data?.order?.id ?? res?.data?.id ?? 0,
+    ) || 0
+
+  // 打开支付页后轮询订单状态,给「成功/失败」结果提示并刷新余额/订阅(附加逻辑,不影响下单本身)。
+  // 支付在外部标签页完成、前端收不到回调,故每 3s 查一次 listPaymentOrders 匹配本单 id,直到 paid/失败/超时。
+  const watchOrder = (orderId: number, kind: 'recharge' | 'subscribe') => {
+    const ws = Number(workspaceId || 0)
+    if (!orderId || !ws) return
+    const type = kind === 'recharge' ? 'credit_recharge' : '' // 订阅有 initial/renewal 两种,留空取全部再按 id 匹配
+    let tries = 0
+    const MAX = 40 // ~40 × 3s ≈ 2 分钟
+    const tick = async () => {
+      if (!aliveRef.current) return
+      tries += 1
+      try {
+        const rows: any = await listPaymentOrders({ workspaceId: ws, type, limit: 50 })
+        const list: any[] = Array.isArray(rows) ? rows : rows?.items || rows?.list || rows?.orders || []
+        const st = String(list.find((r: any) => Number(r?.id) === orderId)?.status || '')
+        if (st === 'paid') {
+          if (!aliveRef.current) return
+          showToast(kind === 'recharge' ? '充值成功,积分已到账' : '支付成功,会员已开通', 'success')
+          getWallet(ws)
+            .then((w: any) => aliveRef.current && setBalance(Number(w?.available ?? w?.balance ?? 0)))
+            .catch(() => {})
+          getSubscription(ws)
+            .then((s: any) => aliveRef.current && setSubscription(s))
+            .catch(() => {})
+          return
+        }
+        if (st === 'failed' || st === 'canceled') {
+          if (aliveRef.current) showToast(st === 'canceled' ? '支付已取消' : '支付失败,请重试', 'error')
+          return
+        }
+      } catch {
+        /* 查询失败忽略,继续轮询 */
+      }
+      if (aliveRef.current && tries < MAX) window.setTimeout(tick, 3000)
     }
-    showToast('已打开支付宝支付页面,完成支付后可刷新查看', 'info')
+    window.setTimeout(tick, 3000)
+  }
+
+  // 支付下单 + 打开支付宝支付页的统一流程。
+  // 关键:window.open 必须在「点击手势的同步阶段」调用,否则下单 await 之后再开窗会被浏览器判定为
+  // 非用户触发而拦截(这正是「有人能开、有人不能开」的根因)。所以这里先同步打开一个空白标签页,
+  // 等下单接口返回 pay_url 后再把该标签页 location 替换为支付地址。
+  //   - 不能带 noopener:带了部分浏览器会返回 null 句柄,后续无法改 location;改为手动断开 win.opener 兜安全。
+  //   - 极少数环境(如装了拦截插件)连同步开窗都失败 → 存下 pay_url,在弹窗内显示「手动打开」按钮兜底。
+  const startPay = async (
+    createOrder: () => Promise<{ payUrl: string; orderId: number }>,
+    failMsg: string,
+    kind: 'recharge' | 'subscribe',
+  ) => {
+    setPendingPayUrl('')
+    // ① 与点击同步开空白页(此刻一定还在用户手势上下文里)
+    const win = window.open('about:blank', '_blank')
+    if (win) win.opener = null // 安全:断开对本页的引用,等价 noopener
+    try {
+      const { payUrl, orderId } = await createOrder()
+      if (!payUrl) {
+        win?.close()
+        showToast('未获取到支付链接,请稍后重试', 'error')
+        return
+      }
+      if (win) {
+        // ② 拿到地址后替换跳转目标
+        win.location.href = payUrl
+        showToast('已打开支付宝支付页面,完成支付后可刷新查看', 'info')
+      } else {
+        // ③ 同步开窗都被拦截:给手动入口,不让用户卡死
+        setPendingPayUrl(payUrl)
+        showToast('支付页面被浏览器拦截,请点击下方「手动打开支付页」', 'error')
+      }
+      // ④ 附加:轮询订单状态,出「成功/失败」结果并刷新余额/订阅(不影响上面的下单/开窗)
+      watchOrder(orderId, kind)
+    } catch (e) {
+      win?.close()
+      showToast(getBusinessErrorMessage(e, failMsg), 'error')
+    }
   }
 
   // 会员开通 / 续费:统一走 subscription-orders 下单,取一次性付款 pay_url 直接跳支付宝。
@@ -407,11 +487,14 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     setBuyingId(p.id)
     try {
       // 开通与续费用同一个接口:POST /api/v1/billing/subscription-orders
-      const url = String((await createSubscriptionOrder({ workspaceId, planId: p.id }))?.pay_url || '')
-      if (url) openAlipay(url)
-      else showToast('未获取到支付链接,请稍后重试', 'error')
-    } catch (e) {
-      showToast(getBusinessErrorMessage(e, renew ? '续费失败,请稍后重试' : '开通失败,请稍后重试'), 'error')
+      await startPay(
+        async () => {
+          const res: any = await createSubscriptionOrder({ workspaceId, planId: p.id })
+          return { payUrl: String(res?.pay_url || ''), orderId: orderIdOf(res) }
+        },
+        renew ? '续费失败,请稍后重试' : '开通失败,请稍后重试',
+        'subscribe',
+      )
     } finally {
       setBuyingId(0)
     }
@@ -426,12 +509,14 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     }
     setBuyingId(pkg.id)
     try {
-      const res: any = await createRechargeOrder({ workspaceId, creditPackageId: pkg.id })
-      const url = String(res?.pay_url || '')
-      if (url) openAlipay(url)
-      else showToast('未获取到支付链接,请稍后重试', 'error')
-    } catch (e) {
-      showToast(getBusinessErrorMessage(e, '充值失败,请稍后重试'), 'error')
+      await startPay(
+        async () => {
+          const res: any = await createRechargeOrder({ workspaceId, creditPackageId: pkg.id })
+          return { payUrl: String(res?.pay_url || ''), orderId: orderIdOf(res) }
+        },
+        '充值失败,请稍后重试',
+        'recharge',
+      )
     } finally {
       setBuyingId(0)
     }
@@ -449,6 +534,16 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       <>
         <h2 className="mcm-title">会员中心</h2>
         {balance !== null && <div className="mcm-balance">当前积分余额:{balance}</div>}
+
+        {/* 兜底:同步开窗仍被拦截时,给用户一个可点击的手动支付入口(a 标签由用户点击触发,不会被拦截) */}
+        {pendingPayUrl && (
+          <div className="mcm-paylink">
+            <span>支付页面被浏览器拦截,</span>
+            <a href={pendingPayUrl} target="_blank" rel="noopener noreferrer" onClick={() => setPendingPayUrl('')}>
+              点此手动打开支付页
+            </a>
+          </div>
+        )}
 
         {/* 当前订阅信息(套餐 / 席位 / 并发);未订阅不显示 */}
         {subscription?.active && (

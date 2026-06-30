@@ -7,6 +7,8 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import EntryDropdown from '../EntryDropdown'
+import RatioIcon from '@/components/common/RatioIcon'
+import { openMemberCenter } from '@/stores/ui'
 import { fileToDataUrl } from '@/utils/imageFile'
 import { useToast } from '@/composables/useToast'
 import styles from './ImageChat.module.less'
@@ -32,6 +34,10 @@ interface ImageChatProps {
   initialRatio?: string
   /** 是否有一轮正在出图(出图中禁用发送) */
   busy?: boolean
+  /** 提交前积分预估文案(单张口径,如「每张约 X 积分 · 余额 Y」);空则不显示 */
+  costText?: string
+  /** 预估超过余额:在 costText 后追加「积分不足,请前往充值积分」(可点击跳会员中心) */
+  costInsufficient?: boolean
   onSend: (text: string, images: string[], ratio: string) => void
   /** 「创建新对话」:清空会话回到入口 */
   onNewChat?: () => void
@@ -45,7 +51,15 @@ const PLACEHOLDER =
 // 高亮渲染匹配:@图片N(绿)
 const HL_RE = /@图片\d+/g
 
-export default function ImageChat({ messages, initialRatio, busy, onSend, onNewChat }: ImageChatProps) {
+export default function ImageChat({
+  messages,
+  initialRatio,
+  busy,
+  costText,
+  costInsufficient,
+  onSend,
+  onNewChat,
+}: ImageChatProps) {
   const { showToast } = useToast()
   const [text, setText] = useState('')
   const [ratio, setRatio] = useState(initialRatio || '16:9')
@@ -286,11 +300,8 @@ export default function ImageChat({ messages, initialRatio, busy, onSend, onNewC
                 value={ratio}
                 options={RATIO_OPTIONS}
                 onChange={setRatio}
-                icon={
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7">
-                    <rect x="3" y="6" width="18" height="12" rx="2" />
-                  </svg>
-                }
+                icon={<RatioIcon ratio={ratio} />}
+                valueMinWidth={34}
               />
               <span className={styles.atAnchor}>
                 <button type="button" className={styles.pillBtn} onClick={handleAt} title="引用参考素材">
@@ -314,6 +325,20 @@ export default function ImageChat({ messages, initialRatio, busy, onSend, onNewC
                 )}
               </span>
             </div>
+
+            {costText && (
+              <span className={`${styles.cost}${costInsufficient ? ' ' + styles.costErr : ''}`}>
+                {costText}
+                {costInsufficient && (
+                  <>
+                    {' · 积分不足,'}
+                    <button type="button" className={styles.costRecharge} onClick={openMemberCenter}>
+                      请前往充值积分
+                    </button>
+                  </>
+                )}
+              </span>
+            )}
 
             <button
               type="button"

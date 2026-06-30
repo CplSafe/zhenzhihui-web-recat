@@ -87,6 +87,25 @@
   color: #000000;
 }
 
+/* 支付被拦截时的手动入口兜底条 */
+.mcm-paylink {
+  margin: 0 auto 12px;
+  max-width: 560px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: #fff1f0;
+  border: 1px solid #ffccc7;
+  text-align: center;
+  font-size: 13px;
+  color: #cf1322;
+}
+
+.mcm-paylink a {
+  color: #5767e5;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
 /* 当前订阅信息条(套餐 / 席位 / 并发) */
 .mcm-sub {
   display: flex;

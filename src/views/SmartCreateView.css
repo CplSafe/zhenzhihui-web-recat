@@ -372,6 +372,51 @@
   font-size: 14px;
 }
 
+/* 按 id 加载项目失败的错误态:居中卡片 + 重试/返回 */
+.smart__loaderr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.smart__loaderr-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #fff1f0;
+  color: #cf1322;
+  font-size: 30px;
+  font-weight: 700;
+}
+
+.smart__loaderr-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2329;
+}
+
+.smart__loaderr-msg {
+  max-width: 460px;
+  font-size: 14px;
+  color: #8a8f99;
+  line-height: 1.6;
+}
+
+.smart__loaderr-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
 /* 营销思路拆解步:整步填满 body —— 我的描述/标题在上固定,中间表格滚动,底部按钮常驻 */
 .smart__mkt-step {
   display: flex;
@@ -600,8 +645,36 @@
 .smart__footer {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   padding: 16px 28px 24px;
+}
+
+/* 提交前积分预估行(占整行,在底部按钮上方居中) */
+.smart__cost {
+  flex-basis: 100%;
+  width: 100%;
+  text-align: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #6b7280;
+}
+.smart__cost--err {
+  color: #e25555;
+}
+/* 「请前往充值积分」链接按钮 */
+.smart__cost-recharge {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #e25555;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.smart__cost-recharge:hover {
+  color: #c43d3d;
 }
 
 /* 内容居中,最大宽度对齐正文 1240 列;分镜脚本/准备素材沿用原样(右对齐) */

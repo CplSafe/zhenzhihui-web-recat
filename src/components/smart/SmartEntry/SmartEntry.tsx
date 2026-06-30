@@ -8,6 +8,7 @@ import { useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import GuideDialog from '../GuideDialog'
+import RatioIcon from '@/components/common/RatioIcon'
 import { fileToDataUrl } from '@/utils/imageFile'
 import { useToast } from '@/composables/useToast'
 import styles from './SmartEntry.module.less'
@@ -362,11 +363,8 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
                 value={ratio}
                 options={RATIO_OPTIONS}
                 onChange={setRatio}
-                icon={
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7">
-                    <rect x="3" y="6" width="18" height="12" rx="2" />
-                  </svg>
-                }
+                icon={<RatioIcon ratio={ratio} />}
+                valueMinWidth={34}
               />
               {/* 时长仅「制作视频」需要;「制作图片」隐藏(对齐设计) */}
               {mode === 'video' && (

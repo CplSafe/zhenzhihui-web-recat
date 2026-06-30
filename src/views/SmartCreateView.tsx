@@ -36,20 +36,29 @@ import {
 } from '@/api/aiPolish'
 import MarketingBreakdown from '@/components/smart/MarketingBreakdown'
 import { generateScriptShotsStream, generateShotInfo, extractSubjects, mergeSingleUseSubjects } from '@/api/smartScript'
-import { generateShotImage, ensureAssetId, refreshAssetUrl, persistImageAsset } from '@/api/smartShotImage'
+import {
+  generateShotImage,
+  ensureAssetId,
+  refreshAssetUrl,
+  persistImageAsset,
+  estimateShotImageCost,
+} from '@/api/smartShotImage'
 import {
   generateFullVideo,
   editFullVideo,
   resumeFullVideo,
   buildTimelinePrompt,
   totalDurationSec,
+  estimateFullVideoCost,
 } from '@/api/smartVideo'
 import { blurFacesOnAsset } from '@/api/smartFaceBlur'
+import { readVideoDurationSec } from '@/utils/videoDuration'
 import VideoStage from '@/components/smart/VideoStage'
 import {
   createCreativeProject,
   patchCreativeProject,
   getCreativeProject,
+  getBusinessErrorMessage,
   updateCreativeProjectDraft,
   uploadAssetFile,
   getAssetDownloadUrl,
@@ -61,9 +70,10 @@ import {
   useModelPlanCandidates,
   useWorkspaceSessionStore,
   deriveModelPlanCandidates,
+  deriveAllWorkspaces,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
+import { openComingSoon, openMemberCenter } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import {
   saveSmartDraft,
@@ -258,6 +268,10 @@ export default function SmartCreateView() {
   const scriptResumeRef = useRef(false) // 续跑只触发一次,避免循环
   const [projectId, setProjectId] = useState(0)
   const projectIdRef = useRef(0)
+  // 按 /smart/:id 加载项目失败时的错误态(无权访问 / 项目不存在 / 服务器错误等)。
+  // 非空时渲染明确的错误页 + 重试,避免静默回落到「新建视频」入口误导用户。
+  const [loadError, setLoadError] = useState('')
+  const [loadRetrying, setLoadRetrying] = useState(false)
   // 后端当前的项目标题(对齐 Vue serverProjectTitle):用于判断是否需要回写、避免覆盖已有真实标题
   const serverTitleRef = useRef('')
   const draftRevisionRef = useRef(0) // 后端草稿版本号(乐观并发)
@@ -1112,6 +1126,19 @@ export default function SmartCreateView() {
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
+  // 提交前积分预估(estimate-cost):整片生成(video.generate)口径
+  const [videoCost, setVideoCost] = useState<{
+    loading: boolean
+    error: string
+    estimate: { estimatedCost: number; balance: number; canAfford: boolean } | null
+  }>({ loading: false, error: '', estimate: null })
+  // 每一步调模型前的积分预估:step0 分镜脚本(文本)、step1/2 出图(单张图)。perImage=按单张口径显示。
+  const [stepCost, setStepCost] = useState<{
+    loading: boolean
+    error: string
+    perImage: boolean
+    estimate: { estimatedCost: number; balance: number; canAfford: boolean } | null
+  }>({ loading: false, error: '', perImage: false, estimate: null })
   // 进行中的整片生成任务 id:生成开始即记录并随草稿持久化,切路由/刷新后凭它续轮询(不重新生成)
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
   // 每次「重新生成」的独立记录(生成中/失败);成功的成片仍进 videoVersions。
@@ -1177,6 +1204,7 @@ export default function SmartCreateView() {
   // 生成/重生成整片;note=修改意见。opts.edit=true(「确认修改」)且已有整片时:
   // 走视频编辑(video.edit,模型 happyhorse-1.0-video-edit):原视频 role:video + 修改提示,
   // 不复用爆款复制(video.replicate)逻辑,也不从分镜图重出整片。
+  // 注:「重新生成/出整片」钉死 seedance、不退避;「确认修改」仍专走 happyhorse 视频编辑模型。
   const runFullVideo = async (note?: string, opts?: { edit?: boolean }) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
@@ -1201,12 +1229,14 @@ export default function SmartCreateView() {
         ]
           .filter(Boolean)
           .join('\n')
+        const editSrcDur = (await readVideoDurationSec(fullVideo.url)) || 0
         const { url, assetId } = await editFullVideo({
           workspaceId: ws,
           videoAssetId: fullVideo.assetId,
           prompt: editPrompt,
           ratio: entryMeta?.ratio,
           durationSec: totalDurationSec(shots) || 10,
+          sourceVideoDurationSec: editSrcDur, // 按原整片真实时长计费(video.edit)
           modelPlanCandidates: plans,
         })
         setFullVideo({ url, assetId })
@@ -1357,6 +1387,98 @@ export default function SmartCreateView() {
     void runFullVideo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, shots])
+
+  // 提交前积分预估(estimate-cost):在生成视频步、非生成中、已有分镜时估一次(整片 video.generate 口径)。
+  useEffect(() => {
+    const ws = Number(workspaceId || 0)
+    if (!ws || step !== 3 || vidGenRunning || !shots.length) return
+    let alive = true
+    setVideoCost((s) => ({ ...s, loading: true, error: '' }))
+    const timer = window.setTimeout(async () => {
+      try {
+        const plans = await resolvePlanCandidates()
+        const res: any = await estimateFullVideoCost({
+          workspaceId: ws,
+          shots,
+          ratio: entryMeta?.ratio,
+          modelPlanCandidates: plans,
+        })
+        if (!alive) return
+        setVideoCost({
+          loading: false,
+          error: '',
+          estimate: {
+            estimatedCost: Number(res?.estimated_cost ?? 0),
+            balance: Number(res?.balance ?? 0),
+            canAfford: res?.can_afford === true,
+          },
+        })
+      } catch (e: any) {
+        if (alive) setVideoCost({ loading: false, error: e?.message || '预估失败', estimate: null })
+      }
+    }, 500)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, shots, vidGenRunning, workspaceId])
+
+  // 「前瞻预估」:在当前步就显示「下一步生成要花多少」,让用户进下一步前先看成本。
+  // 映射:分镜脚本/准备素材 → 下一步出图(image,单张);镜头编排 → 下一步生成视频(video,整片);
+  // 图片模式 → 出图(image)。step3 视频由 VideoStage 单独显示;营销拆解步不预估。
+  useEffect(() => {
+    const ws = Number(workspaceId || 0)
+    const isImg = isImageMode && started
+    // kind = 下一步要花的钱算哪种:image(出图,单张)/ video(整片)/ ''(不预估)
+    const kind = isImg ? 'image' : step === 2 ? 'video' : step === 0 || step === 1 ? 'image' : ''
+    if (!ws || marketingOpen || !kind) {
+      setStepCost((s) =>
+        s.estimate || s.loading || s.error ? { loading: false, error: '', perImage: false, estimate: null } : s,
+      )
+      return
+    }
+    let alive = true
+    const perImage = kind === 'image'
+    setStepCost({ loading: true, error: '', perImage, estimate: null })
+    const timer = window.setTimeout(async () => {
+      try {
+        const plans = await resolvePlanCandidates()
+        const res: any =
+          kind === 'video'
+            ? await estimateFullVideoCost({
+                workspaceId: ws,
+                shots,
+                ratio: entryMeta?.ratio,
+                modelPlanCandidates: plans,
+              })
+            : await estimateShotImageCost({
+                workspaceId: ws,
+                hasRefs: false,
+                ratio: entryMeta?.ratio,
+                modelPlanCandidates: plans,
+              })
+        if (!alive) return
+        setStepCost({
+          loading: false,
+          error: '',
+          perImage,
+          estimate: {
+            estimatedCost: Number(res?.estimated_cost ?? 0),
+            balance: Number(res?.balance ?? 0),
+            canAfford: res?.can_afford === true,
+          },
+        })
+      } catch (e: any) {
+        if (alive) setStepCost({ loading: false, error: e?.message || '暂不支持预估', perImage, estimate: null })
+      }
+    }, 500)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, marketingOpen, workspaceId, isImageMode, started, shots.length])
 
   // 同名主体素材联动 + 纳入版本库:
   // 脚本只在部分镜头(常仅镜头1)匹配到 imageIndex,这里把每个主体已有的图回填到所有同名缺图的分镜。
@@ -1761,6 +1883,94 @@ export default function SmartCreateView() {
   }
 
   const hydratedRef = useRef(false)
+
+  // 把后端返回的项目数据应用到本视图:恢复草稿 / 整片兜底 / 标题回填。
+  const applyLoadedProject = (proj: any, rid: number) => {
+    draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
+    const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
+    const d = parseSmartSnapshot(draftJson)
+    // 本地兜底:本地草稿若属于同一项目且 savedAt 更新(后端可能漏存"切走前最后一步")→ 用本地,
+    // 避免回来后丢掉最后一步操作。(本地是同步落盘 + 卸载即落盘,通常比后端防抖更新。)
+    const local = loadSmartDraft()
+    const localFresher =
+      !!local && Number(local.projectId || 0) === rid && Number(local.savedAt || 0) > Number(d?.savedAt || 0)
+    if (localFresher) applyDraft(local as SmartDraft)
+    else if (d) applyDraft(d)
+    // 兜底:智能成片快照里没有整片视频(上次在「生成视频」中途切走,完成结果由后端落到了项目级字段),
+    // 从项目数据补出最近一版视频 + 历史版本,保证「生成视频」步骤能加载出来(URL 过期由下面的签名刷新兜底)。
+    if (!d?.fullVideoUrl && !d?.fullVideoAssetId) {
+      const fb = extractProjectVideoFallback(draftJson)
+      if (fb.latest.url || fb.latest.assetId) {
+        setFullVideo(fb.latest)
+        if (fb.versions.length) setVideoVersions(fb.versions)
+      }
+    }
+    const t = String(proj?.title || proj?.name || '').trim()
+    if (t) {
+      setProjectName(t)
+      serverTitleRef.current = t // 既有标题已在后端,避免加载后又重复回写
+    }
+  }
+
+  // 按 id 从后端拉取项目并恢复草稿。失败时设置 loadError(暴露后端真实原因)并弹 toast,
+  // 由渲染层据此显示错误页;成功则清空 loadError。供首次进入与「重试」复用。
+  //
+  // 深链接(/smart/:id)不带工作空间上下文:当前激活空间若不是项目所属空间,后端会 403/404。
+  // 由于「手动切换的空间」只存内存、不持久化(刷新/换设备即丢失),同一链接会出现「有人能开有人不能、
+  // 手机上必现」。因此首拉失败(且是 403/404)时,在用户名下其它工作空间里逐个重试,命中即切换激活空间,
+  // 让「谁打开、哪台设备、刷不刷新」只要有权限就能进。
+  const loadProjectById = async (rid: number, ws: number) => {
+    setLoadError('')
+    projectIdRef.current = rid
+    setProjectId(rid)
+    try {
+      const proj: any = await getCreativeProject({ projectId: rid, workspaceId: ws })
+      applyLoadedProject(proj, rid)
+      return
+    } catch (e) {
+      const status = Number((e as any)?.status || 0)
+      // 仅 403/404(空间不匹配 / 当前空间下查不到)才值得跨空间重试;5xx/网络错误重试别的空间无意义。
+      if (status === 403 || status === 404) {
+        const candidates = (deriveAllWorkspaces(useWorkspaceSessionStore.getState()) as any[])
+          .map((w) => Number(w?.id || 0))
+          .filter((id) => id > 0 && id !== ws)
+        for (const candidate of candidates) {
+          try {
+            const proj: any = await getCreativeProject({ projectId: rid, workspaceId: candidate })
+            applyLoadedProject(proj, rid)
+            // 命中:把激活空间切到项目所属空间,后续 autosave / 账单 / 并发等都走对的空间。
+            useWorkspaceSessionStore.getState().switchWorkspace(candidate)
+            return
+          } catch {
+            /* 该空间也没有 → 继续试下一个 */
+          }
+        }
+      }
+      // 所有空间都拿不到:暴露后端真实原因(无权访问 / 不存在 / 服务器错误),不再吞成笼统提示。
+      projectIdRef.current = 0 // 没有有效项目绑定,避免 autosave 把草稿 PUT 到无权访问的项目
+      const msg = getBusinessErrorMessage(e, '项目加载失败')
+      setLoadError(msg)
+      showToast(msg, 'error')
+    }
+  }
+
+  // 错误页「重试」:用当前激活的工作空间重新加载。工作空间未就绪则提示。
+  const retryLoadProject = async () => {
+    const rid = Number(routeId || 0)
+    const ws = Number(workspaceId || 0)
+    if (rid <= 0) return
+    if (!ws) {
+      showToast('工作空间尚未就绪,请稍后重试', 'error')
+      return
+    }
+    setLoadRetrying(true)
+    try {
+      await loadProjectById(rid, ws)
+    } finally {
+      setLoadRetrying(false)
+    }
+  }
+
   // 进入:有 /smart/:id → 从后端恢复;否则恢复 localStorage 草稿。
   // 用 useLayoutEffect:在浏览器【绘制前】完成"空白 /smart→/smart/:id"的跳转,避免先闪一下初始页。
   useLayoutEffect(() => {
@@ -1778,36 +1988,7 @@ export default function SmartCreateView() {
       const ws = Number(workspaceId || 0)
       if (!ws) return // 等工作空间就绪
       hydratedRef.current = true
-      projectIdRef.current = rid
-      setProjectId(rid)
-      getCreativeProject({ projectId: rid, workspaceId: ws })
-        .then((proj: any) => {
-          draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
-          const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
-          const d = parseSmartSnapshot(draftJson)
-          // 本地兜底:本地草稿若属于同一项目且 savedAt 更新(后端可能漏存"切走前最后一步")→ 用本地,
-          // 避免回来后丢掉最后一步操作。(本地是同步落盘 + 卸载即落盘,通常比后端防抖更新。)
-          const local = loadSmartDraft()
-          const localFresher =
-            !!local && Number(local.projectId || 0) === rid && Number(local.savedAt || 0) > Number(d?.savedAt || 0)
-          if (localFresher) applyDraft(local as SmartDraft)
-          else if (d) applyDraft(d)
-          // 兜底:智能成片快照里没有整片视频(上次在「生成视频」中途切走,完成结果由后端落到了项目级字段),
-          // 从项目数据补出最近一版视频 + 历史版本,保证「生成视频」步骤能加载出来(URL 过期由下面的签名刷新兜底)。
-          if (!d?.fullVideoUrl && !d?.fullVideoAssetId) {
-            const fb = extractProjectVideoFallback(draftJson)
-            if (fb.latest.url || fb.latest.assetId) {
-              setFullVideo(fb.latest)
-              if (fb.versions.length) setVideoVersions(fb.versions)
-            }
-          }
-          const t = String(proj?.title || proj?.name || '').trim()
-          if (t) {
-            setProjectName(t)
-            serverTitleRef.current = t // 既有标题已在后端,避免加载后又重复回写
-          }
-        })
-        .catch(() => showToast('项目加载失败', 'error'))
+      void loadProjectById(rid, ws)
     } else {
       // 点回空白 /smart 时:若本地草稿是个【在制项目】(已建项目、还没出整片,且正在生成或已有分镜)
       // → 自动跳回那个 /smart/:id,避免回到空白初始页。用本地草稿判断(autosave 一直在写,可靠);
@@ -2633,6 +2814,9 @@ export default function SmartCreateView() {
         videoGenerating={vidGenRunning}
         videoStatusText={blurPhase || undefined}
         videoStartedAt={videoGenerations.find((g) => g.status === 'processing')?.createdAt || 0}
+        costEstimate={videoCost.estimate}
+        costLoading={videoCost.loading}
+        costError={videoCost.error}
         faceBlurDebug={blurDebug}
         videoVersions={videoVersions}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
@@ -2675,7 +2859,29 @@ export default function SmartCreateView() {
       <div className="smart__main">
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
-        {!started ? (
+        {loadError ? (
+          // 按 id 加载失败:显示明确错误态 + 重试 / 返回项目管理,而非静默回落到「新建视频」入口。
+          <div className="smart__loaderr" role="alert">
+            <div className="smart__loaderr-icon" aria-hidden="true">
+              !
+            </div>
+            <div className="smart__loaderr-title">项目加载失败</div>
+            <div className="smart__loaderr-msg">{loadError}</div>
+            <div className="smart__loaderr-actions">
+              <button
+                type="button"
+                className="smart__btn smart__btn--primary"
+                onClick={retryLoadProject}
+                disabled={loadRetrying}
+              >
+                {loadRetrying ? '重试中…' : '重试'}
+              </button>
+              <button type="button" className="smart__btn" onClick={() => navigate('/projects')}>
+                返回项目管理
+              </button>
+            </div>
+          </div>
+        ) : !started ? (
           // 「上一步」返回输入框时回填上次输入(数据存在本视图 state,路由切换卸载即清空)
           <SmartEntry
             key={entryKey}
@@ -2698,6 +2904,15 @@ export default function SmartCreateView() {
             messages={imageMessages}
             initialRatio={entryMeta?.ratio || '16:9'}
             busy={imageBusy}
+            costText={
+              stepCost.estimate
+                ? `每张约 ${stepCost.estimate.estimatedCost} 积分 · 余额 ${stepCost.estimate.balance} 积分`
+                : ''
+            }
+            costInsufficient={
+              !!stepCost.estimate &&
+              (stepCost.estimate.canAfford === false || stepCost.estimate.estimatedCost > stepCost.estimate.balance)
+            }
             onSend={(text, imgs, r) => sendImageChat(text, imgs, r)}
             onNewChat={() => resetToNewVideo('image')}
           />
@@ -2775,6 +2990,35 @@ export default function SmartCreateView() {
                 视频生成步(step3)总按钮在中间 VideoStage 内,这里不渲染。 */}
             {!marketingOpen && step !== 3 && (
               <footer className={`smart__footer ${step === 2 ? 'smart__footer--center' : 'smart__footer--right'}`}>
+                {/* 前瞻预估:当前步显示「下一步生成」要花多少(估到价才显示) */}
+                {stepCost.estimate &&
+                  (() => {
+                    const insufficient =
+                      stepCost.estimate.canAfford === false ||
+                      stepCost.estimate.estimatedCost > stepCost.estimate.balance
+                    return (
+                      <div className="smart__cost">
+                        <span className={insufficient ? 'smart__cost--err' : undefined}>
+                          {step === 0
+                            ? '下一步出图 · 每张约 '
+                            : step === 2
+                              ? '下一步生成视频 · 约 '
+                              : stepCost.perImage
+                                ? '每张约 '
+                                : '预计消耗 '}
+                          {stepCost.estimate.estimatedCost} 积分 · 余额 {stepCost.estimate.balance} 积分
+                          {insufficient && (
+                            <>
+                              {' · 积分不足,'}
+                              <button type="button" className="smart__cost-recharge" onClick={openMemberCenter}>
+                                请前往充值积分
+                              </button>
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    )
+                  })()}
                 <div className="smart__footer-inner">
                   {/* 上一步(悬停 tooltip:上一步) */}
                   <button

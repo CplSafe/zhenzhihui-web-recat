@@ -38,6 +38,14 @@ export function buildVideoGenerationParams(model, params) {
     payload[resolutionField.name] = pickOption(resolution || '720p', resolutionField)
   }
 
+  // 源视频时长(秒):含输入视频的任务(video.edit / video.replicate)按真实源视频时长计费,优先于 duration。
+  // 仅当模型 schema 声明了该字段、且前端读到有效时长时下发 —— 与提交保持一致,保证「预估 = 实扣」。
+  const sourceVideoDuration = Number(params?.sourceVideoDuration)
+  const sourceDurField = findFirstField(fields, ['source_video_duration', 'sourceVideoDuration'])
+  if (sourceDurField && Number.isFinite(sourceVideoDuration) && sourceVideoDuration > 0) {
+    payload[sourceDurField.name] = sourceVideoDuration
+  }
+
   const audioField = findFirstField(fields, ['generate_audio', 'generateAudio'])
   if (audioField) {
     payload[audioField.name] = generateAudio
