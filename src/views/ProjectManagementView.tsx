@@ -13,21 +13,18 @@ import '@/styles/creative.css'
 import '@/styles/project-management.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
-import AppToast from '@/components/AppToast'
-import AiBadge from '@/components/common/AiBadge'
 import {
   createCreativeProject,
   deleteCreativeProject,
   getAssetDownloadUrl,
   getBusinessErrorMessage,
-  getCreativeProject,
   listCreativeProjects,
   listAssets,
   extractAssetPageItems,
 } from '@/api/business'
-import { listProjectVideos, addClassifiedVideo, countProjectVideos, type ProjectVideo } from '@/api/projectVideos'
+import { addClassifiedVideo, countProjectVideos } from '@/api/projectVideos'
 import { collectClassifiedKeys, videoKeyOf } from '@/utils/unclassifiedVideos'
-import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
+import { assetStreamUrl } from '@/utils/assetUrl'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useWorkspaceId } from '@/stores/workspaceSession'
@@ -89,10 +86,6 @@ function getProjectTimestamp(project: any, keys: string[]): number {
 
 const toneOf = (_i: number) => 'a' as const
 
-// 鉴权直传地址:cookie 鉴权、非预签名,永不过期。替换草稿里会过期(X-Amz-Expires=900)的 S3 URL。
-function assetStreamUrl(assetId: number, workspaceId: number): string {
-  return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
-}
 
 // 项目封面:封面字段 → 入口素材 → 分镜图,取第一张(assetId 优先转直传地址,避免过期)
 function extractCover(project: any, wsId: number): string {
@@ -203,117 +196,10 @@ function extract20Videos(projectItems: any[], workspaceId: number): { id: number
   return out
 }
 
-interface DetailElement {
-  tag: string
-  kind: string
-  url: string
-  assetId: number
-}
-interface DetailShot {
-  id: string | number
-  no: string
-  duration: string
-  url: string
-  assetId: number
-  elements: DetailElement[]
-}
-interface DetailVideo {
-  url: string
-  assetId: number
-  label: string
-}
-
-// 从项目草稿解析「分镜 + 元素 + 视频历史」(优先 smart 原生块,降级 storyboardItems)
-function parseProjectDetail(draft: any): { shots: DetailShot[]; videos: DetailVideo[]; flow: string } {
-  const flow = String(draft?.flow || draft?.smart?.flow || '')
-  const smart = draft?.smart && typeof draft.smart === 'object' ? draft.smart : null
-
-  // 分镜
-  let shots: DetailShot[] = []
-  const smartShots = normalizeArray(smart?.shots)
-  if (smartShots.length) {
-    shots = smartShots.map((s: any, i: number) => {
-      const cur = imgOf(s.image ? { url: s.image, assetId: s.imageAssetId } : s)
-      return {
-        id: s.id ?? i,
-        no: String(s.no || `镜头${i + 1}`),
-        duration: String(s.duration || ''),
-        url: cur.url,
-        assetId: cur.assetId,
-        elements: normalizeArray(s.subjects).map((su: any) => {
-          const img = imgOf(su.image ? { url: su.image, assetId: su.assetId } : su)
-          return {
-            tag:
-              String(su.tag || '')
-                .replace(/^@/, '')
-                .trim() || '元素',
-            kind: String(su.kind || ''),
-            url: img.url,
-            assetId: img.assetId,
-          }
-        }),
-      }
-    })
-  } else {
-    shots = normalizeArray(draft?.storyboardItems || draft?.storyboard_items).map((s: any, i: number) => {
-      const cur = imgOf(s.currentImage || s.current_image || s)
-      return { id: s.id ?? i, no: `镜头${i + 1}`, duration: '', url: cur.url, assetId: cur.assetId, elements: [] }
-    })
-  }
-
-  // 视频历史:smart.videoVersions 优先,降级 videoHistoryList / generatedVideo*
-  let videos: DetailVideo[] = []
-  const vv = normalizeArray(smart?.videoVersions)
-  const vh = normalizeArray(draft?.videoHistoryList || draft?.video_history_list)
-  const src = vv.length ? vv : vh
-  videos = src
-    .map((v: any, i: number) => {
-      const img = imgOf(v)
-      return { url: img.url, assetId: img.assetId, label: `版本 ${src.length - i}` }
-    })
-    .filter((v) => v.url || v.assetId)
-  if (!videos.length) {
-    const url = String(draft?.generatedVideoUrl || draft?.generated_video_url || smart?.fullVideoUrl || '')
-    const assetId = Number(draft?.generatedVideoAssetId || smart?.fullVideoAssetId || 0) || 0
-    if (url || assetId) videos = [{ url, assetId, label: '当前成片' }]
-  }
-  // 最新的放最前
-  videos.reverse()
-  return { shots, videos, flow }
-}
-
-// 修进度条 bug:部分 MP4 初始 duration=Infinity(moov 在文件尾),进度条会从中间窜到结尾。
-// 跳到极大时间强制浏览器算出真实时长,再跳回 0。
-function fixVideoDuration(e: React.SyntheticEvent<HTMLVideoElement>) {
-  const v = e.currentTarget
-  if (!Number.isFinite(v.duration)) {
-    const back = () => {
-      v.currentTime = 0
-      v.removeEventListener('timeupdate', back)
-    }
-    v.addEventListener('timeupdate', back)
-    v.currentTime = 1e7
-  }
-}
-
 function PlayIcon() {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
       <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
-    </svg>
-  )
-}
-function DownloadIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-      <path
-        d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11M5 7l3 3 3-3M8 2.5V10"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
     </svg>
   )
 }
@@ -347,16 +233,6 @@ export default function ProjectManagementView() {
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
-
-  // 项目详情
-  const [viewMode, setViewMode] = useState<'root' | 'detail'>('root')
-  const [activeProject, setActiveProject] = useState<{ id: number; title: string } | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [detailShots, setDetailShots] = useState<DetailShot[]>([])
-  const [detailVideos, setDetailVideos] = useState<DetailVideo[]>([])
-  const [detailFlow, setDetailFlow] = useState('')
-  const [activeVideoIdx, setActiveVideoIdx] = useState(0)
-  const [bigImg, setBigImg] = useState('')
 
   const workspaceIdRef = useRef(0)
   useEffect(() => {
@@ -507,7 +383,7 @@ export default function ProjectManagementView() {
 
   // 待归类:实测视频网格列数(grid 仅在有数据时渲染,故依赖 unclassified.length 重新挂载观察)
   useEffect(() => {
-    if (viewMode !== 'root' || !unclassified.length) return
+    if (!unclassified.length) return
     const el = vidGridRef.current
     if (!el) return
     const measure = () => {
@@ -518,7 +394,7 @@ export default function ProjectManagementView() {
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [viewMode, unclassified.length])
+  }, [unclassified.length])
 
   // 待归类每页 = 两行
   const vidPageSize = Math.max(1, vidCols * 2)
@@ -546,7 +422,7 @@ export default function ProjectManagementView() {
       if (Number(workspaceIdRef.current || 0) !== wsId) return
       // 项目全部以云端列表为准(不再用 localStorage 缓存新建项目)
       setProjectItems(Array.isArray(items) ? items : [])
-    } catch (err: any) {
+    } catch {
       if (Number(workspaceIdRef.current || 0) === wsId) {
         setProjectItems([])
         showToast('项目列表加载失败,请稍后重试', 'error')
@@ -557,8 +433,6 @@ export default function ProjectManagementView() {
   }, [showToast])
 
   useEffect(() => {
-    setViewMode('root')
-    setActiveProject(null)
     setPage(1)
     setVidPage(1)
     loadProjects()
@@ -612,38 +486,6 @@ export default function ProjectManagementView() {
       navigate(`/projects/${folder.id}/videos`)
     },
     [workspaceId, showToast, navigate],
-  )
-
-  const backToRoot = useCallback(() => {
-    setViewMode('root')
-    setActiveProject(null)
-  }, [])
-
-  const openProjectEditor = useCallback(() => {
-    if (!activeProject?.id) return
-    const wsId = Number(workspaceId || 0)
-    const qs = wsId ? `?workspace_id=${wsId}` : ''
-    // 按流程分流:爆款复制 → /hot-copy/:id;其余 → /smart/:id
-    const base = String(detailFlow || '').toLowerCase() === 'hot-copy' ? '/hot-copy' : '/smart'
-    navigate(`${base}/${activeProject.id}${qs}`)
-  }, [activeProject, detailFlow, workspaceId, navigate])
-
-  const downloadFromUrl = useCallback(
-    async (url: string, title: string) => {
-      if (!url) {
-        showToast('没有可下载的视频', 'error')
-        return
-      }
-      const fileName = buildDownloadName(title, new Date())
-      try {
-        showToast('视频下载中…', 'success')
-        const r = await downloadToDisk({ fileName, resolveUrl: () => url })
-        if (r === 'done') showToast('视频已保存', 'success')
-      } catch (err: any) {
-        showToast(err?.message || '下载失败,请稍后重试', 'error')
-      }
-    },
-    [showToast],
   )
 
   const deleteProject = useCallback(
@@ -717,8 +559,6 @@ export default function ProjectManagementView() {
     [workspaceId, showToast, loadProjects],
   )
 
-  const activeVideo = detailVideos[activeVideoIdx] || null
-
   return (
     <div
       className="pm2-page"
@@ -742,8 +582,7 @@ export default function ProjectManagementView() {
           aria-label="项目管理"
           style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 36px 56px' }}
         >
-          {viewMode === 'root' ? (
-            <>
+          <>
               {/* 项目管理:头部(标题/副标题 + 搜索 + 新建)*/}
               <div className="pm2-head">
                 <div className="pm2-head-titles">
@@ -1020,164 +859,6 @@ export default function ProjectManagementView() {
                 </section>
               )}
             </>
-          ) : (
-            /* 项目详情:最终视频 + 分镜(含元素) */
-            <>
-              <div className="pm2-detail-head">
-                <button type="button" className="pm2-back" onClick={backToRoot}>
-                  <svg viewBox="0 0 12 12" aria-hidden="true" width="12" height="12">
-                    <path
-                      d="M7.5 2.5 4 6l3.5 3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  返回
-                </button>
-                <h2 className="pm2-section-title pm2-section-title--inline">{activeProject?.title || '项目'}</h2>
-                <button type="button" className="pm2-open-editor" onClick={openProjectEditor}>
-                  进入编辑
-                </button>
-              </div>
-
-              {detailLoading ? (
-                <div className="pm2-hint">正在加载项目内容…</div>
-              ) : (
-                <>
-                  {/* 最终视频(含历史) */}
-                  <section className="pm2-section">
-                    <h3 className="pm2-section-sub">最终视频</h3>
-                    {activeVideo ? (
-                      <div className="pm2-detail-video">
-                        <div className="pm2-detail-player">
-                          {activeVideo.url ? (
-                            <video
-                              src={activeVideo.url}
-                              controls
-                              playsInline
-                              preload="metadata"
-                              onLoadedMetadata={fixVideoDuration}
-                            />
-                          ) : (
-                            <div className="pm2-hint">该版本视频暂时无法播放</div>
-                          )}
-                        </div>
-                        {activeVideo?.url && (
-                          <div className="pm-video-modal-actions">
-                            <button
-                              type="button"
-                              className="pm-video-download-btn"
-                              onClick={() =>
-                                downloadFromUrl(
-                                  activeVideo.url,
-                                  `${activeProject?.title || '视频'}-${activeVideo.label}`,
-                                )
-                              }
-                            >
-                              <DownloadIcon /> 下载视频
-                            </button>
-                          </div>
-                        )}
-                        <div className="pm2-detail-video-side">
-                          <div className="pm2-detail-history-title">
-                            {detailVideos.length > 1 ? '历史版本' : '视频'}
-                          </div>
-                          <div className="pm2-detail-history-list">
-                            {detailVideos.map((v, i) => (
-                              <div
-                                key={i}
-                                className={`pm2-detail-history-item${i === activeVideoIdx ? ' is-active' : ''}`}
-                              >
-                                <button
-                                  type="button"
-                                  className="pm2-detail-history-pick"
-                                  onClick={() => setActiveVideoIdx(i)}
-                                >
-                                  {v.url ? (
-                                    <video src={v.url} muted preload="metadata" />
-                                  ) : (
-                                    <span className="pm2-vid-play">
-                                      <PlayIcon />
-                                    </span>
-                                  )}
-                                  <span>{v.label}</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  className="pm2-detail-dl"
-                                  aria-label="下载视频"
-                                  title="下载视频"
-                                  disabled={!v.url}
-                                  onClick={() => downloadFromUrl(v.url, `${activeProject?.title || '视频'}-${v.label}`)}
-                                >
-                                  <DownloadIcon />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="pm2-hint">这个项目还没有生成视频。</div>
-                    )}
-                  </section>
-
-                  {/* 分镜(每个分镜图 + 用到的元素) */}
-                  <section className="pm2-section">
-                    <h3 className="pm2-section-sub">分镜 · 共 {detailShots.length} 个</h3>
-                    {detailShots.length ? (
-                      <div className="pm2-shot-grid">
-                        {detailShots.map((shot, i) => (
-                          <div className="pm2-shot-card" key={shot.id}>
-                            <div
-                              className={`pm2-shot-thumb pm2-tone-${toneOf(i)}`}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => shot.url && setBigImg(shot.url)}
-                            >
-                              {shot.url ? (
-                                <>
-                                  <img src={shot.url} alt={shot.no} loading="lazy" />
-                                  <AiBadge />
-                                </>
-                              ) : (
-                                <span className="pm2-shot-empty">暂无分镜图</span>
-                              )}
-                            </div>
-                            <div className="pm2-shot-meta">
-                              <strong>{shot.no}</strong>
-                              {shot.duration && <span>{shot.duration}</span>}
-                            </div>
-                            {shot.elements.length > 0 && (
-                              <div className="pm2-shot-els">
-                                {shot.elements.map((el, j) => (
-                                  <span
-                                    className="pm2-shot-el"
-                                    key={j}
-                                    title={`${el.tag}${el.kind ? ' · ' + el.kind : ''}`}
-                                  >
-                                    <span className="pm2-shot-el-thumb">
-                                      {el.url ? <img src={el.url} alt={el.tag} loading="lazy" /> : <span>@</span>}
-                                    </span>
-                                    <span className="pm2-shot-el-name">@{el.tag}</span>
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="pm2-hint">这个项目还没有分镜。</div>
-                    )}
-                  </section>
-                </>
-              )}
-            </>
-          )}
         </section>
       </div>
 
@@ -1234,18 +915,6 @@ export default function ProjectManagementView() {
                 </button>
               </div>
             </div>
-          </div>,
-          document.body,
-        )}
-
-      {/* 分镜图放大 */}
-      {bigImg &&
-        createPortal(
-          <div className="pm2-lightbox" onClick={() => setBigImg('')} role="dialog" aria-label="分镜图放大">
-            <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
-            <button type="button" className="pm2-lightbox-close" aria-label="关闭" onClick={() => setBigImg('')}>
-              ×
-            </button>
           </div>,
           document.body,
         )}

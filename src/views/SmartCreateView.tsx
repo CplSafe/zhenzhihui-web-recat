@@ -74,8 +74,9 @@ import {
   deriveCurrentUser,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
-import { openComingSoon, openMemberCenter } from '@/stores/ui'
+import { openMemberCenter } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import {
   saveSmartDraft,
   loadSmartDraft,
@@ -89,7 +90,7 @@ import { getRunningVideoGen, trackVideoGen } from '@/utils/videoGenRegistry'
 import { downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
 
-// 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
+// 流程四步:分镜脚本 → 准备素材 → 镜头编排 → 生成视频
 const STEPS: StepItem[] = [
   { key: 'script', label: '分镜脚本' },
   { key: 'material', label: '准备素材' },
@@ -113,14 +114,6 @@ function isUnnamedTitle(title: string): boolean {
   return !t || t.includes('未命名')
 }
 
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 interface BottomButton {
   label: string
@@ -1487,9 +1480,11 @@ export default function SmartCreateView() {
     const timer = window.setTimeout(async () => {
       try {
         const plans = await resolvePlanCandidates()
+        // 预估口径必须与出片一致:只算「参与生成」的分镜(generateFullVideo 用的也是 activeShots),
+        // 否则取消勾选后预估偏高、可能误报「积分不足」。
         const res: any = await estimateFullVideoCost({
           workspaceId: ws,
-          shots,
+          shots: shots.filter((s) => s.includeInVideo !== false),
           ratio: entryMeta?.ratio,
           modelPlanCandidates: plans,
         })
@@ -1538,13 +1533,14 @@ export default function SmartCreateView() {
           kind === 'video'
             ? await estimateFullVideoCost({
                 workspaceId: ws,
-                shots,
+                shots: shots.filter((s) => s.includeInVideo !== false), // 与出片口径一致:仅算参与生成的分镜
                 ratio: entryMeta?.ratio,
                 modelPlanCandidates: plans,
               })
             : await estimateShotImageCost({
                 workspaceId: ws,
                 hasRefs: false,
+                lowRes: true, // 与素材/元素实际出图一致(lowRes:true);对无 size 字段的模型无影响,但口径对齐
                 ratio: entryMeta?.ratio,
                 modelPlanCandidates: plans,
               })
@@ -1865,6 +1861,9 @@ export default function SmartCreateView() {
     marketingData,
     imageMessages,
   })
+  // 续轮询只尝试一次:applyDraft 一次加载会被调两次(本地快路径 + 后端 applyLoadedProject),
+  // 否则会对同一在途任务开两条并行轮询(本轮审计 P2)。
+  const resumeAttemptedRef = useRef(false)
   // 把草稿回填到页面状态(本地恢复 / 后端恢复共用)
   const applyDraft = (d: SmartDraft) => {
     setStarted(true)
@@ -1889,11 +1888,14 @@ export default function SmartCreateView() {
     //    比如切走发生在脱敏/建任务阶段)→ 真正「切到别的页面也继续生成」。
     // ② 否则草稿里有进行中的任务 id(硬刷新后登记表为空)→ 凭它续轮询同一个后端任务(不重新生成)。
     // 注意:不要求"没有旧视频"——重新生成/确认修改时会有上一轮旧视频,但新任务仍在跑,照样要续上。
-    const restoredPid = Number(d.projectId || 0) || 0
-    if (!subscribeRunningVideo(restoredPid)) {
-      const pendingTask = Number(d.vidGenTaskId || 0) || 0
-      if (pendingTask > 0) {
-        void resumePendingVideo(pendingTask)
+    if (!resumeAttemptedRef.current) {
+      resumeAttemptedRef.current = true
+      const restoredPid = Number(d.projectId || 0) || 0
+      if (!subscribeRunningVideo(restoredPid)) {
+        const pendingTask = Number(d.vidGenTaskId || 0) || 0
+        if (pendingTask > 0) {
+          void resumePendingVideo(pendingTask)
+        }
       }
     }
     setMarketingOpen(!!d.marketingOpen)
@@ -2251,11 +2253,7 @@ export default function SmartCreateView() {
     setMaxReached((m) => Math.max(m, next))
   }
 
-  const onNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
-    if (path) navigate(path)
-    else openComingSoon() // 设置/视频编辑/投前预审/数据看板等未上线项:弹全局「功能待开放」弹窗
-  }
+  const onNavigate = useSidebarNavigate()
 
   // 「制作新视频」:把整个智能成片流程初始化为全新空白页(等同切换路由再切回来)。
   // 清空本地草稿 + 所有页面状态 + 项目引用,回到入口输入页;入口页 key 自增以重挂载、清空其内部输入。
@@ -2646,9 +2644,6 @@ export default function SmartCreateView() {
       setNaming(false)
     }
   }
-
-  // TODO(后续阶段): 接真实生成/保存逻辑;现仅占位提示。
-  const todo = (msg: string) => () => showToast(msg, 'info')
 
   // 下载当前整片视频:优先按 asset_id 取新签名URL → fetch 成 blob 下载;CORS 失败则新标签打开
   // 下载视频:弹「另存为」让用户自选保存位置(不支持的浏览器回退自动下载)。

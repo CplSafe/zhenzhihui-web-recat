@@ -4,7 +4,8 @@
  *
  * 关键交互(对齐产品逻辑):
  *  - 编辑/新增/插入都把「描述 + 上传素材」交给后端,后端只更新当前这一个分镜;
- *  - 「生成分镜」点击后进入 loading,等后端真正返回成功后才关闭弹框(失败保持打开,可重试)。
+ *  - 「生成分镜」点击即关闭弹框,生成在后台进行(分镜列表对应镜头显示「生成中」,出图后自动回填);
+ *    失败由全局 toast 提示,不再阻塞弹框。
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -28,7 +29,6 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
   const { showToast } = useToast()
   const [text, setText] = useState('')
   const [uploads, setUploads] = useState<{ url: string; assetId?: number }[]>([])
-  const [generating, setGenerating] = useState(false)
   const [polishing, setPolishing] = useState(false)
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -38,7 +38,6 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
     if (open) {
       setText('')
       setUploads([])
-      setGenerating(false)
       setPolishing(false)
       setUploading(false)
     }
@@ -46,7 +45,7 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
 
   if (!open) return null
 
-  const canGenerate = (text.trim().length > 0 || uploads.length > 0) && !generating && !uploading
+  const canGenerate = (text.trim().length > 0 || uploads.length > 0) && !uploading
 
   const pickFiles = async (files: FileList | null) => {
     if (!files?.length || !onUpload) return
@@ -93,12 +92,11 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
     <div
       className={styles.mask}
       onClick={(e) => {
-        // 生成中禁止点遮罩关闭,避免中断
-        if (e.target === e.currentTarget && !generating) onClose()
+        if (e.target === e.currentTarget) onClose()
       }}
     >
       <div className={styles.dlg} role="dialog" aria-label={mode === 'insert' ? '新增分镜' : '编辑分镜'}>
-        <button type="button" className={styles.x} onClick={onClose} disabled={generating} aria-label="关闭">
+        <button type="button" className={styles.x} onClick={onClose} aria-label="关闭">
           ×
         </button>
 
@@ -182,7 +180,7 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
               </button>
             )}
             <button type="button" className={styles.gen} onClick={doGenerate} disabled={!canGenerate}>
-              {generating ? '生成中…' : '生成分镜'}
+              生成分镜
             </button>
           </div>
         </div>

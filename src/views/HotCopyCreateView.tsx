@@ -6,10 +6,11 @@
  * 直接喂后端 video.replicate 一锅出片(由后端拆解源视频后用 Seedance 重生成)。
  * 结果支持预览 / 下载 / 重新生成 / 确认修改(片段意见拼进提示词重跑 replicate)。
  * 会话持久化:用 localStorage 存会话 + 在途任务 id(hotCopyDraft),生成途中切走/刷新回来不丢
- * (恢复到生成步并用 task id 续轮询),与智能成片一致;暂不接后端项目 CRUD。
+ * (恢复到生成步并用 task id 续轮询),与智能成片一致;并接后端项目 CRUD(建项目 + 草稿落库,
+ *  出现在项目管理 + 视频列表,/hot-copy/:id 可恢复)。
  */
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams, useLocation } from 'react-router-dom'
+import { useParams, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
@@ -37,8 +38,8 @@ import {
   deriveModelPlanCandidates,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
 
@@ -48,14 +49,6 @@ const STEPS: StepItem[] = [
   { key: 'video', label: '生成视频' },
 ]
 
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 // 默认尺寸/时长与智能成片一致:16:9、10s
 const DEFAULT_RATIO = '16:9'
@@ -101,7 +94,6 @@ function parseHotCopyDraft(draftJson: any): { obj: any; smart: any } | null {
 }
 
 export default function HotCopyCreateView() {
-  const navigate = useNavigate()
   const location = useLocation()
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
@@ -855,7 +847,7 @@ export default function HotCopyCreateView() {
     const prompt = buildBasePrompt(payload.tab, payload.text)
     setEntryInitial(payload)
     setBasePrompt(prompt)
-    // 采用用户在入口选择的成片尺寸/时长(默认竖屏 9:16、15s)
+    // 采用用户在入口选择的成片尺寸/时长(默认 16:9、10s,与智能成片一致)
     const pickedRatio = payload.ratio || DEFAULT_RATIO
     const pickedDurSec = Number.parseInt(String(payload.duration || ''), 10) || DEFAULT_DURATION_SEC
     setGenRatio(pickedRatio)
@@ -925,11 +917,7 @@ export default function HotCopyCreateView() {
     setMaxReached((m) => Math.max(m, next))
   }
 
-  const onNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
-    if (path) navigate(path)
-    else openComingSoon() // 设置/视频编辑/投前预审/数据看板等未上线项:弹全局「功能待开放」弹窗
-  }
+  const onNavigate = useSidebarNavigate()
 
   const startRename = () => {
     setDraftName(projectName)

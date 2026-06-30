@@ -309,9 +309,7 @@ function ratioToSpan(r: string): number {
 
 /* 历史视频卡片：素材市场风格（autoPlay 静音循环缩略图）+ URL 过期自动刷新 */
 function HistoryVideoCard({
-  projectId,
   title,
-  cover,
   videoUrl,
   videoAssetId,
   ratio,
