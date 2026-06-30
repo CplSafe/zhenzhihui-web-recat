@@ -324,6 +324,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       aliveRef.current = false
     }
   }, [])
+  // 未支付订单复用缓存:key(sub:planId / recharge:pkgId)→ 上次下单的 {订单id, pay_url, 时间戳}。
+  // 「扫码没付→再点支付」时,若该单仍 pending 就复用原链接,避免重复下单留下一堆 pending 单。
+  const pendingOrderRef = useRef<Record<string, { orderId: number; payUrl: string; ts: number }>>({})
 
   // Esc 关闭(仅弹窗模式;页面模式不拦 Esc)
   useEffect(() => {
@@ -399,6 +402,37 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       res?.order?.id ?? res?.order?.order_id ?? res?.order_id ?? res?.id ?? res?.data?.order?.id ?? res?.data?.id ?? 0,
     ) || 0
 
+  // 查某订单是否仍「待支付(pending)」——复用前确认,已付/取消/过期则不复用。
+  const isOrderPending = async (orderId: number): Promise<boolean> => {
+    const ws = Number(workspaceId || 0)
+    if (!ws || !orderId) return false
+    try {
+      const rows: any = await listPaymentOrders({ workspaceId: ws, limit: 50 })
+      const list: any[] = Array.isArray(rows) ? rows : rows?.items || rows?.list || rows?.orders || []
+      return String(list.find((r: any) => Number(r?.id) === orderId)?.status || '') === 'pending'
+    } catch {
+      return false
+    }
+  }
+
+  // 复用未支付订单:同 key 上次的单若在 10 分钟内且仍 pending → 复用原 pay_url,不重复下单;否则新下一单并缓存。
+  const REUSE_ORDER_MS = 10 * 60 * 1000
+  const resolveOrder = async (
+    key: string,
+    createFn: () => Promise<any>,
+  ): Promise<{ payUrl: string; orderId: number }> => {
+    const cached = pendingOrderRef.current[key]
+    if (cached?.payUrl && Date.now() - cached.ts < REUSE_ORDER_MS && (await isOrderPending(cached.orderId))) {
+      return { payUrl: cached.payUrl, orderId: cached.orderId } // 复用,不新建订单
+    }
+    if (cached) delete pendingOrderRef.current[key] // 旧单已失效,清掉
+    const res: any = await createFn()
+    const orderId = orderIdOf(res)
+    const payUrl = String(res?.pay_url || '')
+    if (orderId && payUrl) pendingOrderRef.current[key] = { orderId, payUrl, ts: Date.now() }
+    return { payUrl, orderId }
+  }
+
   // 打开支付页后轮询订单状态,给「成功/失败」结果提示并刷新余额/订阅(附加逻辑,不影响下单本身)。
   // 支付在外部标签页完成、前端收不到回调,故每 3s 查一次 listPaymentOrders 匹配本单 id,直到 paid/失败/超时。
   const watchOrder = (orderId: number, kind: 'recharge' | 'subscribe') => {
@@ -414,6 +448,12 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         const rows: any = await listPaymentOrders({ workspaceId: ws, type, limit: 50 })
         const list: any[] = Array.isArray(rows) ? rows : rows?.items || rows?.list || rows?.orders || []
         const st = String(list.find((r: any) => Number(r?.id) === orderId)?.status || '')
+        if (st === 'paid' || st === 'failed' || st === 'canceled') {
+          // 终态:清掉该订单的复用缓存,下次点支付重新下单
+          for (const k of Object.keys(pendingOrderRef.current)) {
+            if (pendingOrderRef.current[k]?.orderId === orderId) delete pendingOrderRef.current[k]
+          }
+        }
         if (st === 'paid') {
           if (!aliveRef.current) return
           showToast(kind === 'recharge' ? '充值成功,积分已到账' : '支付成功,会员已开通', 'success')
@@ -486,12 +526,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     const renew = isPurchased(p)
     setBuyingId(p.id)
     try {
-      // 开通与续费用同一个接口:POST /api/v1/billing/subscription-orders
+      // 开通与续费用同一个接口:POST /api/v1/billing/subscription-orders;未支付单 10 分钟内复用,不重复下单
       await startPay(
-        async () => {
-          const res: any = await createSubscriptionOrder({ workspaceId, planId: p.id })
-          return { payUrl: String(res?.pay_url || ''), orderId: orderIdOf(res) }
-        },
+        () => resolveOrder(`sub:${p.id}`, () => createSubscriptionOrder({ workspaceId, planId: p.id })),
         renew ? '续费失败,请稍后重试' : '开通失败,请稍后重试',
         'subscribe',
       )
@@ -510,10 +547,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     setBuyingId(pkg.id)
     try {
       await startPay(
-        async () => {
-          const res: any = await createRechargeOrder({ workspaceId, creditPackageId: pkg.id })
-          return { payUrl: String(res?.pay_url || ''), orderId: orderIdOf(res) }
-        },
+        () => resolveOrder(`recharge:${pkg.id}`, () => createRechargeOrder({ workspaceId, creditPackageId: pkg.id })),
         '充值失败,请稍后重试',
         'recharge',
       )

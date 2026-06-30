@@ -120,7 +120,7 @@ const GROUPS: SidebarGroup[] = [
     title: '管理',
     items: [
       { key: 'projects', label: '项目管理', icon: IconFolder },
-      { key: 'resources', label: '素材市场', icon: IconShop },
+      { key: 'resources', label: '我的素材', icon: IconShop },
     ],
   },
   {

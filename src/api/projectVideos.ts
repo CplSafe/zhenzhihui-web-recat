@@ -1,4 +1,4 @@
-import { getCreativeProject } from '@/api/business'
+import { getCreativeProject, updateCreativeProjectDraft } from '@/api/business'
 
 export type ProjectVideoStatus = 'draft' | 'processing' | 'published' | 'failed'
 export type ProjectVideoSourceType = 'smart' | 'creative'
@@ -19,13 +19,14 @@ export interface ProjectVideo {
   /** 真实创作流程标识(draft.flow):'smart' | 'hot-copy' | 'creative' …,用于「进入编辑」路由分流 */
   flow: string
   publishUrl?: string
-  localOnly?: boolean
+  /** 手动新建 / 归类进来的记录(随项目草稿存云端),用于和派生视频区分 */
+  manual?: boolean
+  /** 归类来源视频的稳定 key(videoKeyOf),供「待分类」去重隐藏 */
+  sourceKey?: string
 }
 
-const LOCAL_KEY_PREFIX = 'zzh_project_video_module'
-
 interface LocalProjectVideoRecord extends ProjectVideo {
-  localOnly: true
+  manual: true
 }
 
 interface ProjectVideoOverride {
@@ -35,10 +36,13 @@ interface ProjectVideoOverride {
   updatedAt?: string
 }
 
-interface ProjectVideoStore {
+export interface ProjectVideoStore {
   records: LocalProjectVideoRecord[]
   overrides: Record<string, ProjectVideoOverride>
 }
+
+// 视频清单存档随项目草稿(draft_json)持久化到云端的字段名。
+const STORE_DRAFT_KEY = 'projectVideoStore'
 
 function toPlainObject(value: any): any {
   if (!value) return null
@@ -77,31 +81,51 @@ function assetStreamUrl(assetId: number, workspaceId: number): string {
   return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
 }
 
-function resolveStorageKey(workspaceId: number, projectId: number): string {
-  return `${LOCAL_KEY_PREFIX}:${workspaceId}:${projectId}`
-}
-
-function loadStore(workspaceId: number, projectId: number): ProjectVideoStore {
-  if (typeof window === 'undefined') return { records: [], overrides: {} }
-  try {
-    const raw = window.localStorage.getItem(resolveStorageKey(workspaceId, projectId))
-    if (!raw) return { records: [], overrides: {} }
-    const parsed = JSON.parse(raw)
-    return {
-      records: normalizeArray(parsed?.records),
-      overrides:
-        parsed?.overrides && typeof parsed.overrides === 'object' && !Array.isArray(parsed.overrides)
-          ? parsed.overrides
-          : {},
-    }
-  } catch {
-    return { records: [], overrides: {} }
+function readStoreFromDraft(draft: any): ProjectVideoStore {
+  const raw = toPlainObject(draft?.[STORE_DRAFT_KEY])
+  if (!raw) return { records: [], overrides: {} }
+  return {
+    records: normalizeArray(raw.records),
+    overrides: raw.overrides && typeof raw.overrides === 'object' && !Array.isArray(raw.overrides) ? raw.overrides : {},
   }
 }
 
-function saveStore(workspaceId: number, projectId: number, store: ProjectVideoStore) {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(resolveStorageKey(workspaceId, projectId), JSON.stringify(store))
+/** 从已加载的项目对象里取该项目的「视频清单」存档(随项目草稿存云端,无 localStorage)。 */
+export function readProjectVideoStore(project: any): ProjectVideoStore {
+  return readStoreFromDraft(normalizeCreativeProjectDraft(project) || {})
+}
+
+/**
+ * 读最新项目草稿 → 修改其中的视频清单存档 → 整体写回云端(随项目草稿持久化)。
+ * 用乐观锁(draft_revision)+ 409 冲突重试一次,避免覆盖期间别处对草稿的写入。
+ * 注意:写回时保留草稿其余内容(分镜/视频版本等),只增改 projectVideoStore 字段。
+ */
+async function mutateProjectVideoStore(
+  projectId: number,
+  workspaceId: number,
+  mutate: (store: ProjectVideoStore) => void,
+): Promise<void> {
+  const id = Number(projectId || 0)
+  const wsId = Number(workspaceId || 0)
+  if (!id || !wsId) return
+  const doSave = async () => {
+    const project: any = await getCreativeProject({ projectId: id, workspaceId: wsId })
+    const rev = Number(project?.draft_revision ?? project?.data?.draft_revision ?? 0) || 0
+    const draft = normalizeCreativeProjectDraft(project) || {}
+    const store = readStoreFromDraft(draft)
+    mutate(store)
+    draft[STORE_DRAFT_KEY] = store
+    await updateCreativeProjectDraft({ projectId: id, workspaceId: wsId, draft, draftRevision: rev })
+  }
+  try {
+    await doSave()
+  } catch (e: any) {
+    if (e?.status === 409) {
+      await doSave()
+    } else {
+      throw e
+    }
+  }
 }
 
 function pickString(...values: any[]): string {
@@ -327,8 +351,7 @@ function buildDerivedVideos({
     // 让项目在管理页可见、可点进编辑续作(进入后由 SmartCreateView 续轮询生成中的任务)。
     // 有生成中/失败记录 → 直接用这些记录(每次重新生成是一条草稿)
     if (genItems.length) return genItems
-    const hasWork =
-      normalizeArray(smart?.shots).length > 0 || normalizeArray(draft?.storyboardItems).length > 0
+    const hasWork = normalizeArray(smart?.shots).length > 0 || normalizeArray(draft?.storyboardItems).length > 0
     if (!hasWork) return []
     return [
       {
@@ -400,7 +423,7 @@ export async function listProjectVideos({
 }): Promise<{ project: any; videos: ProjectVideo[] }> {
   const project = await getCreativeProject({ projectId, workspaceId })
   const derived = buildDerivedVideos({ project, workspaceId, currentUserName })
-  const store = loadStore(workspaceId, projectId)
+  const store = readProjectVideoStore(project)
   const merged = [
     ...derived
       .map((item) => applyOverrides(item, store.overrides[item.id]))
@@ -420,9 +443,8 @@ export async function listProjectVideos({
  * 用于项目卡上的数量,避免用分镜数(shots.length)当条数导致「卡片显示 3、点开只有 1」。
  */
 export function countProjectVideos({ project, workspaceId }: { project: any; workspaceId: number }): number {
-  const projectId = Number(project?.id || 0)
   const derived = buildDerivedVideos({ project, workspaceId })
-  const store = loadStore(workspaceId, projectId)
+  const store = readProjectVideoStore(project)
   const merged = [
     ...derived.filter((item) => !store.overrides[item.id]?.hidden),
     ...store.records.filter((item) => !store.overrides[item.id]?.hidden),
@@ -461,7 +483,6 @@ export async function createProjectVideo({
   currentUserName?: string
 }): Promise<ProjectVideo> {
   const now = new Date().toISOString()
-  const store = loadStore(workspaceId, projectId)
   const record: LocalProjectVideoRecord = {
     id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     projectId,
@@ -476,24 +497,26 @@ export async function createProjectVideo({
     updatedAt: now,
     sourceType: 'smart',
     flow: 'smart',
-    localOnly: true,
+    manual: true,
   }
-  store.records.unshift(record)
-  saveStore(workspaceId, projectId, store)
+  await mutateProjectVideoStore(projectId, workspaceId, (store) => {
+    store.records.unshift(record)
+  })
   return record
 }
 
 /**
- * 把「待归类」里的一条视频归类(写入)到目标项目的本地视频清单(localStorage 占位)。
- * 后端暂无「归类」接口,先本地落库,使该视频出现在目标项目的视频列表里。
+ * 把「待归类」里的一条视频归类(写入)到目标项目的视频清单 —— 随项目草稿存云端(不再用 localStorage)。
+ * sourceKey:来源视频的稳定 key(videoKeyOf),写入后「待分类」据此把该视频隐藏。
  */
-export function addClassifiedVideo({
+export async function addClassifiedVideo({
   projectId,
   workspaceId,
   title,
   videoUrl,
   coverUrl,
   createdByName,
+  sourceKey,
 }: {
   projectId: number
   workspaceId: number
@@ -501,12 +524,10 @@ export function addClassifiedVideo({
   videoUrl?: string
   coverUrl?: string
   createdByName?: string
-}): void {
+  sourceKey?: string
+}): Promise<void> {
   const now = new Date().toISOString()
-  const store = loadStore(workspaceId, projectId)
   const url = pickString(videoUrl)
-  // 同一视频已在该项目本地清单里则不重复添加
-  if (url && store.records.some((item) => item.videoUrl === url)) return
   const record: LocalProjectVideoRecord = {
     id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     projectId,
@@ -521,10 +542,16 @@ export function addClassifiedVideo({
     updatedAt: now,
     sourceType: 'smart',
     flow: 'smart',
-    localOnly: true,
+    manual: true,
+    sourceKey: pickString(sourceKey),
   }
-  store.records.unshift(record)
-  saveStore(workspaceId, projectId, store)
+  await mutateProjectVideoStore(projectId, workspaceId, (store) => {
+    // 同一视频已在该项目清单里则不重复添加(优先按来源 key,其次按 url)
+    const key = record.sourceKey
+    if (key && store.records.some((item) => item.sourceKey === key)) return
+    if (url && store.records.some((item) => item.videoUrl === url)) return
+    store.records.unshift(record)
+  })
 }
 
 export async function publishProjectVideo({
@@ -536,23 +563,23 @@ export async function publishProjectVideo({
   workspaceId: number
   videoId: string
 }): Promise<void> {
-  const store = loadStore(workspaceId, projectId)
-  const index = store.records.findIndex((item) => item.id === videoId)
   const now = new Date().toISOString()
-  if (index >= 0) {
-    store.records[index] = {
-      ...store.records[index],
-      status: 'published',
-      updatedAt: now,
+  await mutateProjectVideoStore(projectId, workspaceId, (store) => {
+    const index = store.records.findIndex((item) => item.id === videoId)
+    if (index >= 0) {
+      store.records[index] = {
+        ...store.records[index],
+        status: 'published',
+        updatedAt: now,
+      }
+    } else {
+      store.overrides[videoId] = {
+        ...(store.overrides[videoId] || {}),
+        status: 'published',
+        updatedAt: now,
+      }
     }
-  } else {
-    store.overrides[videoId] = {
-      ...(store.overrides[videoId] || {}),
-      status: 'published',
-      updatedAt: now,
-    }
-  }
-  saveStore(workspaceId, projectId, store)
+  })
 }
 
 export async function deleteProjectVideo({
@@ -564,18 +591,18 @@ export async function deleteProjectVideo({
   workspaceId: number
   videoId: string
 }): Promise<void> {
-  const store = loadStore(workspaceId, projectId)
-  const index = store.records.findIndex((item) => item.id === videoId)
-  if (index >= 0) {
-    store.records.splice(index, 1)
-  } else {
-    store.overrides[videoId] = {
-      ...(store.overrides[videoId] || {}),
-      hidden: true,
-      updatedAt: new Date().toISOString(),
+  await mutateProjectVideoStore(projectId, workspaceId, (store) => {
+    const index = store.records.findIndex((item) => item.id === videoId)
+    if (index >= 0) {
+      store.records.splice(index, 1)
+    } else {
+      store.overrides[videoId] = {
+        ...(store.overrides[videoId] || {}),
+        hidden: true,
+        updatedAt: new Date().toISOString(),
+      }
     }
-  }
-  saveStore(workspaceId, projectId, store)
+  })
 }
 
 export function getVideoStatusText(status: ProjectVideoStatus): string {
