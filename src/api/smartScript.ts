@@ -10,6 +10,31 @@
 // @ts-nocheck
 import type { Shot } from '@/components/smart/ScriptStoryboardTable'
 import { runResponseText, streamResponseText } from './aiResponses'
+import { resolveTaskModel, estimateAiTaskCost } from './business'
+
+/**
+ * 文本生成(responses.multimodal:分镜脚本 / AI 润色 / 镜头信息等)提交前积分预估。
+ * 注意:文本走 /ai/responses,而 estimate-cost 在 /ai/tasks —— 若后端不支持文本 op 估价会抛错,
+ * 调用方需 try/catch 优雅降级(显示"暂不支持预估")。
+ */
+export async function estimateResponsesCost(args: {
+  workspaceId: number
+  prompt?: string
+  modelPlanCandidates?: string[]
+}): Promise<any> {
+  const model = await resolveTaskModel({
+    operationCode: 'responses.multimodal',
+    modelPlanCandidates: args.modelPlanCandidates,
+  })
+  if (!model?.id) throw new Error('暂无可用的文本模型')
+  return estimateAiTaskCost({
+    workspaceId: args.workspaceId,
+    modelVersionId: model.id,
+    operationCode: 'responses.multimodal',
+    prompt: args.prompt || '',
+    params: {},
+  })
+}
 
 interface GenerateArgs {
   requirement: string

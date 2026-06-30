@@ -176,3 +176,6 @@ export const requestConfirm = (message: string, options?: ConfirmOptions) =>
 
 /** 弹出全局「功能待开放」弹窗(任意上下文可调用)。 */
 export const openComingSoon = () => useUiStore.getState().openComingSoon()
+
+/** 弹出全局「会员中心」弹窗(含积分充值;任意上下文可调用)。 */
+export const openMemberCenter = () => useUiStore.getState().openMemberCenter()
