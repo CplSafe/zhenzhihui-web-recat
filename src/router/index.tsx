@@ -63,13 +63,10 @@ const HomeView = lazy(() => import('../views/HomeView'))
 const TemplatesView = lazy(() => import('../views/TemplatesView'))
 const SmartCreateView = lazy(() => import('../views/SmartCreateView'))
 const HotCopyCreateView = lazy(() => import('../views/HotCopyCreateView'))
-const CreativeEntryView = lazy(() => import('../views/CreativeEntryView'))
-const CreativeScriptView = lazy(() => import('../views/CreativeScriptView'))
 const ProjectManagementView = lazy(() => import('../views/ProjectManagementView'))
 const ProjectVideoListView = lazy(() => import('../views/ProjectVideoListView'))
 const ProjectVideoDetailView = lazy(() => import('../views/ProjectVideoDetailView'))
 const ResourceManagementView = lazy(() => import('../views/ResourceManagementView'))
-const WorkbenchView = lazy(() => import('../views/WorkbenchView'))
 
 function lazyPage(node: ReactNode): ReactNode {
   return <Suspense fallback={<div className="route-loading" aria-label="加载中" />}>{node}</Suspense>
@@ -97,15 +94,11 @@ export const router = createBrowserRouter([
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },
       { path: 'home', element: lazyPage(<HomeView />), handle: { requiresAuth: false } },
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },
-      { path: 'workbench', element: lazyPage(<WorkbenchView />) },
       // 智能成片 / 爆款复制:免登录可进入并交互,仅「生成」动作需登录(组件内拦截)
       { path: 'smart', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
       { path: 'smart/:id', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
       { path: 'hot-copy', element: lazyPage(<HotCopyCreateView />), handle: { requiresAuth: false } },
       { path: 'hot-copy/:id', element: lazyPage(<HotCopyCreateView />), handle: { requiresAuth: false } },
-      { path: 'creative/blank', element: lazyPage(<CreativeScriptView />) },
-      { path: 'creative', element: lazyPage(<CreativeEntryView />) },
-      { path: 'creative/:id', element: lazyPage(<CreativeScriptView />) },
       { path: 'projects', element: lazyPage(<ProjectManagementView />) },
       { path: 'projects/:projectId/videos', element: lazyPage(<ProjectVideoListView />) },
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },

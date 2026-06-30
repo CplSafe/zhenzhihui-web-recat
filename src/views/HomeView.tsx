@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { useWorkspaceId } from '@/stores/workspaceSession'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useAuth } from '@/auth/AuthContext'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { listCreativeProjects, getAssetDownloadUrl } from '@/api/business'
@@ -28,6 +28,8 @@ import quick1 from '@/assets/home/quick-1.png'
 import quick2 from '@/assets/home/quick-2.png'
 import quick3 from '@/assets/home/quick-3.png'
 import quick4 from '@/assets/home/quick-4.png'
+import VideoPreviewModal from '@/components/common/VideoPreviewModal'
+import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './HomeView.css'
 
 /* 从项目记录里取标题 / 封面 / id（字段名后端不统一，做兜底） */
@@ -159,16 +161,6 @@ function projectRatio(p: any): string {
   return String(smart?.entryMeta?.ratio || smart?.entry_meta?.ratio || draft?.selectedRatio || '').trim()
 }
 
-/* 侧栏 / 快捷入口 key → 路由映射（已存在的路由）*/
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
-
 /* 轮播统一渲染结构:兼容后端 /api/v1/banners(视频/图 + 外链)与本地占位兜底 */
 interface Slide {
   id: number | string
@@ -296,22 +288,24 @@ const TABS = [
 ] as const
 
 /* ratio 字符串 → grid 列跨度（12 列桌面 / 6 列移动端） */
+// 12 列瀑布流里每张卡占的列数(越小=卡越小、每行越多)。宽屏下原值偏大(每行只有 2~3 张、预览过大),
+// 整体下调一档:竖屏 2 列(每行 6 张)、方形 3 列、横屏 4 列。
 function ratioToSpan(r: string): number {
-  if (!r) return 4
+  if (!r) return 3
   const s = r.replace(/\s+/g, '')
   switch (s) {
     case '9/16':
-      return 3 // 竖屏窄卡
+      return 2 // 竖屏窄卡
     case '3/4':
-      return 3
+      return 2
     case '4/5':
-      return 3
+      return 2
     case '1/1':
-      return 4 // 方形中卡
+      return 3 // 方形中卡
     case '16/9':
-      return 6 // 横屏宽卡
+      return 4 // 横屏宽卡
     default:
-      return 4
+      return 3
   }
 }
 
@@ -405,18 +399,9 @@ function HistoryVideoCard({
     e.stopPropagation()
     const url = playingUrl || videoUrl
     if (!url) return
-    try {
-      const res = await fetch(url)
-      const blob = await res.blob()
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = `${title || '视频'}.mp4`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-    } catch {
-      window.open(url, '_blank')
-    }
+    await downloadToDisk({ fileName: buildDownloadName(title || '视频', new Date()), resolveUrl: () => url }).catch(
+      () => {},
+    )
   }
 
   return (
@@ -483,24 +468,8 @@ function HistoryVideoCard({
         </div>
       </div>
 
-      {/* 全屏视频播放弹窗 */}
-      {playingUrl && (
-        <div className="home__video-modal-mask" onClick={() => setPlayingUrl('')}>
-          <div className="home__video-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="home__video-modal-close" onClick={() => setPlayingUrl('')}>
-              ✕
-            </button>
-            <video
-              className="home__video-modal-player"
-              src={playingUrl}
-              controls
-              autoPlay
-              playsInline
-              crossOrigin="anonymous"
-            />
-          </div>
-        </div>
-      )}
+      {/* 全屏视频播放弹窗(历史项目:同源 /download,可带 crossOrigin) */}
+      <VideoPreviewModal src={playingUrl} crossOrigin="anonymous" onClose={() => setPlayingUrl('')} />
     </>
   )
 }
@@ -622,15 +591,7 @@ export default function HomeView() {
     return historyItems.filter((p) => projectTitle(p).includes(keywordTrim))
   }, [historyItems, keywordTrim])
 
-  const handleNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
-    if (path) {
-      navigate(path)
-    } else {
-      // 未实现的功能（爆款裂变 / IP视频 / 爆款复制 / 设置 等）：弹全局「功能待开放」弹窗
-      openComingSoon()
-    }
-  }
+  const handleNavigate = useSidebarNavigate()
 
   // 拉取后端轮播图(/api/v1/banners),走 SWR 缓存:
   //   - 有缓存 → 立即用缓存渲染(上面 useState 已秒出),同时后台刷新,新数据回来再更新;
@@ -1013,23 +974,8 @@ export default function HomeView() {
       </div>
 
       {/* 案例库点击放大预览(外链 OSS、无 CORS 头 → 不带 crossOrigin,否则卡 0:00) */}
-      {watching && (
-        <div className="home__video-modal-mask" onClick={() => setWatching(null)}>
-          <div className="home__video-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="home__video-modal-close" onClick={() => setWatching(null)}>
-              ✕
-            </button>
-            <video
-              className="home__video-modal-player"
-              src={watching.url}
-              poster={watching.poster || undefined}
-              controls
-              autoPlay
-              playsInline
-            />
-          </div>
-        </div>
-      )}
+      <VideoPreviewModal src={watching?.url || ''} poster={watching?.poster} onClose={() => setWatching(null)} />
+
     </div>
   )
 }

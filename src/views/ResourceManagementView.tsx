@@ -5,7 +5,6 @@
  * 收藏(模板/IP)后端暂无对应概念,先占位;IP 子分类点击提示「功能待开放」。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import '../styles/creative.css'
 import './ResourceManagementView.css'
 import AppSidebar from '@/components/home/AppSidebar'
@@ -13,7 +12,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { loadFavorites } from '@/utils/favoriteVideos'
 import ResourceAddMaterialModal from '@/components/resource/ResourceAddMaterialModal'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
@@ -26,15 +25,6 @@ import {
   listAssets,
   listCreativeProjects,
 } from '@/api/business'
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 // 主 Tab + 各自子分类(全部 = 我上传的 + 我生成的 的所有素材)
 const MAIN_TABS = [
@@ -249,10 +239,16 @@ function projectMediaCards(project: any, mode: 'upload' | 'generated', wsId: num
     const imgs = arr(em.images)
     const aids = arr(em.imageAssetIds || em.imageAssetIDs)
     imgs.forEach((u: any, i: number) => add(Number(aids[i] || 0) || 0, u, 'image'))
-    // 上传的源视频(爆款复制)
+    // 上传的源视频(爆款复制旧字段:entryMeta)
     const sv = String(em.sourceVideo || em.source_video || em.video || '').trim()
     const svAid = Number(em.sourceVideoAssetId || em.videoAssetId || 0) || 0
     if (sv || svAid) add(svAid, sv, 'video')
+    // 爆款复制:替换素材图 + 源视频实际存在 smart 块(productAssetIds / sourceVideo),entryMeta 里没有 → 这里补上
+    arr(smart?.productAssetIds || smart?.product_asset_ids).forEach((id: any) => add(Number(id || 0) || 0, '', 'image'))
+    const hcv = smart?.sourceVideo || smart?.source_video
+    if (hcv && typeof hcv === 'object') {
+      add(Number(hcv.assetId || hcv.asset_id || 0) || 0, String(hcv.url || hcv.src || ''), 'video')
+    }
   } else {
     // 生成的分镜图
     for (const s of arr(smart?.shots)) {
@@ -490,7 +486,6 @@ function ResourceCard({
 }
 
 export default function ResourceManagementView() {
-  const navigate = useNavigate()
   const workspaceId = useWorkspaceId()
   const { showToast } = useToast()
   const { previewState, openPreview, closePreview, goPrev, goNext } = useAssetPreview()
@@ -509,11 +504,7 @@ export default function ResourceManagementView() {
   const [isAddMaterialModalVisible, setIsAddMaterialModalVisible] = useState(false)
   const [selectedAssetForAdd, setSelectedAssetForAdd] = useState<any>(null)
 
-  const handleNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
-    if (path) navigate(path)
-    else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
-  }
+  const handleNavigate = useSidebarNavigate()
 
   // 一次拉取当前工作空间素材(核心数据单次请求),客户端按 Tab/子分类分流
   useEffect(() => {

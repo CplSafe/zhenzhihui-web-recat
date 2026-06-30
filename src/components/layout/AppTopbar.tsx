@@ -17,7 +17,6 @@ import memberIcon from '@/assets/image.png'
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
-import AuthActionModal from '@/components/auth/AuthActionModal'
 import './AppTopbar.css'
 
 interface AppTopbarProps {

@@ -52,3 +52,21 @@ export async function resolveGeneratedMediaUrls({ workspaceId, task, type }) {
 
   return urls
 }
+
+// 任务 outputs 没带 asset_id 时,按 task_id 去资产列表反查 asset_id(否则刷新水合换不了 URL → 媒体丢失)。
+// smartVideo / hotCopy 原各有一份字节相同的实现,统一到此(type 默认 video)。
+export async function findAssetIdByTaskId(
+  workspaceId: number,
+  taskId: any,
+  type: 'video' | 'image' = 'video',
+): Promise<number> {
+  const tId = Number(taskId || 0)
+  if (!workspaceId || !tId) return 0
+  try {
+    const payload = await listAssets({ workspaceId, type, limit: 100 })
+    const hit = extractAssetPageItems(payload).find((a: any) => Number(a?.task_id) === tId)
+    return Number(hit?.id || 0) || 0
+  } catch {
+    return 0
+  }
+}

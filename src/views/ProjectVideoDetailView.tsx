@@ -5,7 +5,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import {
   deleteProjectVideo,
   formatVideoDate,
@@ -14,16 +14,8 @@ import {
   getVideoStatusText,
   type ProjectVideo,
 } from '@/api/projectVideos'
+import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './ProjectVideoDetailView.css'
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 export default function ProjectVideoDetailView() {
   const navigate = useNavigate()
@@ -47,14 +39,7 @@ export default function ProjectVideoDetailView() {
   // 竖屏视频:按屏幕高展示(横屏保持按宽,不变)。加载元数据后据真实宽高判断。
   const [isPortrait, setIsPortrait] = useState(false)
 
-  const handleNavigate = useCallback(
-    (key: string) => {
-      const path = ROUTE_MAP[key]
-      if (path) navigate(path)
-      else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
-    },
-    [navigate],
-  )
+  const handleNavigate = useSidebarNavigate()
 
   const loadDetail = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
@@ -92,20 +77,25 @@ export default function ProjectVideoDetailView() {
   const openEditor = useCallback(() => {
     if (!detail) return
     const qs = workspaceId ? `?workspace_id=${workspaceId}` : ''
-    if (detail.sourceType === 'creative') {
-      navigate(`/smart/${projectId}${qs}`)
-      return
-    }
-    navigate(`/smart/${projectId}${qs}`)
+    // 按视频所属流程进对应编辑器:爆款复制 → /hot-copy,其余(智能成片/旧版)→ /smart(与列表页 openEditor 一致)
+    const base = (detail as any).flow === 'hot-copy' ? '/hot-copy' : '/smart'
+    navigate(`${base}/${projectId}${qs}`)
   }, [detail, navigate, projectId, workspaceId])
 
-  const downloadVideo = useCallback(() => {
+  const downloadVideo = useCallback(async () => {
     if (!detail?.videoUrl) {
       showToast('当前视频暂无可下载地址', 'info')
       return
     }
-    window.open(detail.videoUrl, '_blank', 'noopener')
-    showToast('已在新标签打开视频，可直接下载', 'success')
+    const url = detail.videoUrl
+    const fileName = buildDownloadName(detail.title || '视频', new Date())
+    try {
+      showToast('视频下载中…', 'success')
+      const r = await downloadToDisk({ fileName, resolveUrl: () => url })
+      if (r === 'done') showToast('视频已保存', 'success')
+    } catch (err: any) {
+      showToast(err?.message || '下载失败,请稍后重试', 'error')
+    }
   }, [detail, showToast])
 
   const handleDelete = useCallback(async () => {

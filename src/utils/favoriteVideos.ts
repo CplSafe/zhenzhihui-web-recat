@@ -2,6 +2,8 @@
  * 收藏的视频(纯前端 localStorage 占位 —— 后端暂无"收藏"概念)。
  * 案例库里点爱心收藏的视频存这里,素材市场「我收藏的」从这里读取展示。
  */
+import { readJson, writeJson } from '@/utils/storage'
+
 export interface FavoriteVideo {
   key: string
   title: string
@@ -19,21 +21,12 @@ export function favoriteKeyOf(videoAssetId: number, videoUrl: string): string {
 }
 
 export function loadFavorites(workspaceId: number): FavoriteVideo[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const arr = JSON.parse(window.localStorage.getItem(KEY(workspaceId)) || '[]')
-    return Array.isArray(arr) ? arr : []
-  } catch {
-    return []
-  }
+  const arr = readJson<FavoriteVideo[]>(KEY(workspaceId), [])
+  return Array.isArray(arr) ? arr : []
 }
 
 function saveFavorites(workspaceId: number, list: FavoriteVideo[]): void {
-  try {
-    window.localStorage.setItem(KEY(workspaceId), JSON.stringify(list))
-  } catch {
-    /* 忽略存储失败(隐私模式等) */
-  }
+  writeJson(KEY(workspaceId), list)
 }
 
 export function loadFavoriteKeys(workspaceId: number): Set<string> {

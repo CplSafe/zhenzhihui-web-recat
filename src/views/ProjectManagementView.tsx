@@ -27,18 +27,10 @@ import {
 } from '@/api/business'
 import { listProjectVideos, addClassifiedVideo, countProjectVideos, type ProjectVideo } from '@/api/projectVideos'
 import { collectClassifiedKeys, videoKeyOf } from '@/utils/unclassifiedVideos'
+import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useWorkspaceId } from '@/stores/workspaceSession'
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 // ---- 纯函数工具 ----
 function toPlainObject(value: any): any {
@@ -536,14 +528,7 @@ export default function ProjectManagementView() {
     if (vidPage > vidTotalPages) setVidPage(vidTotalPages)
   }, [vidPage, vidTotalPages])
 
-  const handleNavigate = useCallback(
-    (key: string) => {
-      const path = ROUTE_MAP[key]
-      if (path) navigate(path)
-      else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
-    },
-    [navigate],
-  )
+  const handleNavigate = useSidebarNavigate()
 
   const loadProjects = useCallback(async () => {
     const wsId = Number(workspaceIdRef.current || 0)
@@ -646,62 +631,14 @@ export default function ProjectManagementView() {
         showToast('没有可下载的视频', 'error')
         return
       }
-      const date = new Date()
-      const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-      const safeName =
-        String(title || '视频')
-          .replace(/[\\/:*?"<>|]/g, '')
-          .trim() || '视频'
-      const fileName = `${safeName}_${dateStr}.mp4`
-
-      // ① 「另存为」对话框必须在用户手势内先弹出(放在 fetch 之前,避免手势失效)
-      let fileHandle: any = null
-      if ((window as any).showSaveFilePicker) {
-        try {
-          fileHandle = await (window as any).showSaveFilePicker({
-            suggestedName: fileName,
-            types: [{ description: 'MP4 视频', accept: { 'video/mp4': ['.mp4'] } }],
-          })
-        } catch (err: any) {
-          if (err?.name === 'AbortError') return // 用户取消
-        }
-      }
-
-      // ② 取视频数据(资源域名允许 CORS,与上传 ensureAssetId 同样 fetch)
-      let blob: Blob | null = null
+      const fileName = buildDownloadName(title, new Date())
       try {
         showToast('视频下载中…', 'success')
-        const response = await fetch(url)
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        blob = new Blob([await response.blob()], { type: 'video/mp4' })
-      } catch {
-        // 取不到(CORS/网络)→ 新标签打开兜底,用户可右键另存
-        window.open(url, '_blank', 'noopener')
-        showToast('无法直接下载,已在新标签打开,可右键另存', 'info')
-        return
+        const r = await downloadToDisk({ fileName, resolveUrl: () => url })
+        if (r === 'done') showToast('视频已保存', 'success')
+      } catch (err: any) {
+        showToast(err?.message || '下载失败,请稍后重试', 'error')
       }
-
-      // ③ 写入:优先 showSaveFilePicker,否则 a[download](blob: 同源,download 一定生效)
-      if (fileHandle) {
-        try {
-          const writable = await fileHandle.createWritable()
-          await writable.write(blob)
-          await writable.close()
-          showToast('视频已保存', 'success')
-          return
-        } catch (err: any) {
-          if (err?.name === 'AbortError') return
-        }
-      }
-      const objUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = objUrl
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(objUrl), 4000)
-      showToast('视频已开始下载', 'success')
     },
     [showToast],
   )

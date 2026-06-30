@@ -5,7 +5,7 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
-import { openComingSoon } from '@/stores/ui'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import {
   deleteProjectVideo,
   formatVideoDate,
@@ -16,6 +16,7 @@ import {
   type ProjectVideo,
 } from '@/api/projectVideos'
 import { getCreativeProject } from '@/api/business'
+import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './ProjectVideoListView.css'
 
 type CarryMat = { url: string; assetId: number }
@@ -51,15 +52,6 @@ function extractUploadedMaterials(draftJson: any, wsId: number): { images: Carry
   const svId = Number(sv?.assetId || 0)
   const video: CarryMat | null = svId ? { url: url(svId), assetId: svId } : null
   return { images, video }
-}
-
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
 }
 
 type SortKey = 'updatedAt' | 'createdAt'
@@ -179,14 +171,7 @@ export default function ProjectVideoListView() {
   const [durations, setDurations] = useState<Record<string, number>>({})
   const durationOf = (item: ProjectVideo) => durations[item.id] || Number(item.durationSeconds || 0)
 
-  const handleNavigate = useCallback(
-    (key: string) => {
-      const path = ROUTE_MAP[key]
-      if (path) navigate(path)
-      else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
-    },
-    [navigate],
-  )
+  const handleNavigate = useSidebarNavigate()
 
   const loadData = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
@@ -275,8 +260,14 @@ export default function ProjectVideoListView() {
         showToast('当前视频暂无可下载地址', 'info')
         return
       }
-      window.open(video.videoUrl, '_blank', 'noopener')
-      showToast('已在新标签打开视频，可直接下载', 'success')
+      const fileName = buildDownloadName(video.title || '视频', new Date())
+      try {
+        showToast('视频下载中…', 'success')
+        const r = await downloadToDisk({ fileName, resolveUrl: () => video.videoUrl })
+        if (r === 'done') showToast('视频已保存', 'success')
+      } catch (err: any) {
+        showToast(err?.message || '下载失败,请稍后重试', 'error')
+      }
     },
     [showToast],
   )
@@ -596,22 +587,24 @@ export default function ProjectVideoListView() {
       {newVideoOpen && (
         <div className="pvlist-nvmask" role="dialog" aria-label="新建视频" onClick={() => setNewVideoOpen(false)}>
           <div className="pvlist-nvcard" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              className="pvlist-nvx"
-              aria-label="关闭"
-              onClick={() => setNewVideoOpen(false)}
-            >
+            <button type="button" className="pvlist-nvx" aria-label="关闭" onClick={() => setNewVideoOpen(false)}>
               ×
             </button>
             <div className="pvlist-nvtitle">新建视频</div>
-            <div className="pvlist-nvsub">
-              将在项目「{projectTitle || '当前项目'}」下创建,选择创作方式:
-            </div>
+            <div className="pvlist-nvsub">将在项目「{projectTitle || '当前项目'}」下创建,选择创作方式:</div>
             <div className="pvlist-nvopts">
               <button type="button" className="pvlist-nvopt" onClick={() => goCreateVia('smart')}>
                 <span className="pvlist-nvopt__ic pvlist-nvopt__ic--smart" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="26"
+                    height="26"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4" />
                     <circle cx="12" cy="12" r="3.2" />
                   </svg>
@@ -621,7 +614,16 @@ export default function ProjectVideoListView() {
               </button>
               <button type="button" className="pvlist-nvopt" onClick={() => goCreateVia('hot')}>
                 <span className="pvlist-nvopt__ic pvlist-nvopt__ic--hot" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="26"
+                    height="26"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <rect x="3" y="4" width="13" height="16" rx="2" />
                     <path d="M8 4v16M20 8l-4 2v4l4 2z" />
                   </svg>

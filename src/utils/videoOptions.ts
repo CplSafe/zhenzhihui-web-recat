@@ -6,6 +6,8 @@ import { parseParamsSchema } from './modelSchema.js'
 
 export const SEEDANCE_DURATION_OPTIONS = Array.from({ length: 15 }, (_, index) => `${index + 1}s`)
 export const SEEDANCE_RATIO_OPTIONS = ['9:16', '3:4', '1:1', '4:3', '16:9', '21:9']
+// 入口/图片对话的比例选项(SmartEntry、ImageChat 共用,顺序与 Seedance 列表不同,单独维护)
+export const ENTRY_RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
 
 export function normalizeImageRatio(ratio) {
   return ['9:16', '3:4', '1:1', '4:3', '16:9', '21:9'].includes(ratio) ? ratio : '9:16'
