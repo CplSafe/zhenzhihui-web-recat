@@ -370,6 +370,12 @@
   justify-content: space-between;
   margin-top: 18px;
 }
+/* 左侧工具组:尺寸/时长下拉 + @ 引用 */
+.hotcopy__tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .hotcopy__at {
   width: 44px;
   height: 44px;

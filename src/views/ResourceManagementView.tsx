@@ -609,7 +609,7 @@ export default function ResourceManagementView() {
       if (subTab === 'image') base = base.filter((c) => c.kind === 'image')
       else if (subTab === 'video') base = base.filter((c) => c.kind === 'video')
     } else if (mainTab === 'collected') {
-      // 我收藏的:模板库里收藏的视频(localStorage 占位),套素材卡片渲染
+      // 我收藏的:案例库里收藏的视频(localStorage 占位),套素材卡片渲染
       base = loadFavorites(Number(workspaceId || 0)).map((f) => ({
         id: f.key,
         title: f.title,
@@ -704,7 +704,7 @@ export default function ResourceManagementView() {
       <div className="rm2-shell">
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
-        <section className="rm2-main" aria-label="素材市场">
+        <section className="rm2-main" aria-label="我的素材">
           {/* 三个主 Tab */}
           <div className="rm2-tabs">
             {MAIN_TABS.map((t) => (

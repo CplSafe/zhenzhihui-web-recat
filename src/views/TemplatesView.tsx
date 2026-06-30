@@ -1,5 +1,5 @@
 /**
- * 模板库页面 — 仅展示有生成视频的项目（listTemplates），
+ * 案例库页面 — 仅展示有生成视频的项目（listTemplates），
  * 卡片样式与首页历史项目统一（封面图 + 标题 + 比例 + 风格）。
  */
 import { useEffect, useMemo, useState } from 'react'
@@ -75,7 +75,7 @@ export default function TemplatesView() {
     })
   }
 
-  // 模板库展示固定的 18 条演示视频(替换后端数据);不再依赖登录/工作空间
+  // 案例库展示固定的 18 条演示视频(替换后端数据);不再依赖登录/工作空间
   useEffect(() => {
     setTemplates(DEMO_TEMPLATES)
     setLoading(false)
@@ -138,8 +138,8 @@ export default function TemplatesView() {
               />
             </svg>
           </button>
-          <h2 className="templates-page-title">模板库</h2>
-          <span className="templates-count">共 {templates.length} 个模板</span>
+          <h2 className="templates-page-title">案例库</h2>
+          <span className="templates-count">共 {templates.length} 个案例</span>
         </header>
         <div className="home__content templates-content">
           {/* 比例筛选 + 搜索 */}
@@ -175,7 +175,7 @@ export default function TemplatesView() {
                 type="text"
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
-                placeholder="搜索模板..."
+                placeholder="搜索案例..."
               />
             </div>
           </div>
@@ -186,20 +186,20 @@ export default function TemplatesView() {
               <div className="home__placeholder">加载中…</div>
             ) : error === 'unauth' ? (
               <div className="home__placeholder">
-                请先登录后查看模板库
+                请先登录后查看案例库
                 <button type="button" className="home__retry-btn" onClick={() => navigate('/login')}>
                   去登录
                 </button>
               </div>
             ) : error === 'api' ? (
               <div className="home__placeholder">
-                模板加载失败
+                案例加载失败
                 <button type="button" className="home__retry-btn" onClick={() => setRetry((n) => n + 1)}>
                   重试
                 </button>
               </div>
             ) : error === 'empty' || !filtered.length ? (
-              <div className="home__placeholder">暂无模板数据</div>
+              <div className="home__placeholder">暂无案例数据</div>
             ) : (
               <div className="templates-grid">
                 {filtered.map((tpl, i) => {
@@ -217,8 +217,8 @@ export default function TemplatesView() {
                           resolveProjectPath(tpl.id, Number(workspaceId || 0)).then((path) => navigate(path))
                       }}
                     >
-                      {/* 统一横向缩略图(对标 Figma 网格) */}
-                      <div className="home__proj-thumb" style={{ aspectRatio: '16 / 10' }}>
+                      {/* 瀑布流缩略图:按视频真实比例(无真实比例时回退 16:10) */}
+                      <div className="home__proj-thumb" style={{ aspectRatio: tpl.ratio || '16 / 10' }}>
                         <span className="home__proj-thumb-ph">🎬</span>
                         {tpl.duration ? <span className="tpl-dur">{Math.round(tpl.duration)}S</span> : null}
                         {tpl.videoUrl && (

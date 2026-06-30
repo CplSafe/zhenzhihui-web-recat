@@ -54,9 +54,10 @@ function resolveMaterialId(material: any): number {
   return Number(material?.serverAsset?.id || material?.assetId || 0) || 0
 }
 
-
 function resolveProjectFolderTab(project: any): string {
-  const raw = String(project?.workspace_type || project?.type || '').trim().toLowerCase()
+  const raw = String(project?.workspace_type || project?.type || '')
+    .trim()
+    .toLowerCase()
   if (raw.includes('team') || raw.includes('collab') || raw.includes('shared')) {
     return 'team'
   }
@@ -69,8 +70,13 @@ function getProjectTitle(project: any, fallback = '未命名文件夹'): string 
 }
 
 function getProjectUpdatedAt(project: any): number {
-  const raw = [project?.updated_at, project?.updatedAt, project?.last_saved_at, project?.created_at, project?.createdAt]
-    .find((value) => typeof value === 'string' && value.trim())
+  const raw = [
+    project?.updated_at,
+    project?.updatedAt,
+    project?.last_saved_at,
+    project?.created_at,
+    project?.createdAt,
+  ].find((value) => typeof value === 'string' && value.trim())
   const timestamp = Date.parse(raw || '')
   return Number.isFinite(timestamp) ? timestamp : Date.now()
 }
@@ -111,12 +117,7 @@ function resolveProjectVideoCount(project: any, materials: any[]): number {
 }
 
 function resolveProjectAudioCount(project: any): number {
-  const backendCount = [
-    project?.audio_count,
-    project?.audioCount,
-    project?.asset_audio_count,
-    project?.assetAudioCount,
-  ]
+  const backendCount = [project?.audio_count, project?.audioCount, project?.asset_audio_count, project?.assetAudioCount]
     .map((value) => toCount(value))
     .find((value) => value > 0)
   return backendCount || 0
@@ -137,7 +138,9 @@ function sortMaterialList(list: any[]): any[] {
 function getFolderCover(materials: any[]): string {
   const first = materials[0]
   if (!first) return ''
-  return isVideoMaterial(first) ? getMaterialPoster(first) || first?.src || '' : first?.src || getMaterialPoster(first) || ''
+  return isVideoMaterial(first)
+    ? getMaterialPoster(first) || first?.src || ''
+    : first?.src || getMaterialPoster(first) || ''
 }
 
 function formatFolderDate(ts: number): string {
@@ -264,10 +267,7 @@ export default function MaterialLibraryPicker({
 
   const selectedIdSet = useMemo(() => new Set(draftSelectedIds), [draftSelectedIds])
   const alreadySelectedSet = useMemo(() => new Set(selectedMaterialIds || []), [selectedMaterialIds])
-  const materialIndex = useMemo(
-    () => new Map((materials || []).map((item) => [item?.id, item])),
-    [materials],
-  )
+  const materialIndex = useMemo(() => new Map((materials || []).map((item) => [item?.id, item])), [materials])
 
   const normalizedQuery = useMemo(() => (query || '').trim().toLowerCase(), [query])
 
@@ -366,7 +366,11 @@ export default function MaterialLibraryPicker({
   const visibleFolders = useMemo(() => {
     const q = normalizedQuery
     if (!q) return folderCards
-    return folderCards.filter((folder) => String(folder?.title || '').toLowerCase().includes(q))
+    return folderCards.filter((folder) =>
+      String(folder?.title || '')
+        .toLowerCase()
+        .includes(q),
+    )
   }, [folderCards, normalizedQuery])
 
   const currentFolder = useMemo(
@@ -416,12 +420,9 @@ export default function MaterialLibraryPicker({
   const filteredMaterials = useMemo(() => {
     const q = normalizedQuery
     const list = currentFolder?.materials || []
-    const typed =
-      assetTypeFilter === 'all' ? list : list.filter((material) => material?.type === assetTypeFilter)
+    const typed = assetTypeFilter === 'all' ? list : list.filter((material) => material?.type === assetTypeFilter)
     const favorited = onlyFavorite ? typed.filter((material) => isFavorited(material)) : typed
-    const searched = q
-      ? favorited.filter((material) => (material?.name || '').toLowerCase().includes(q))
-      : favorited
+    const searched = q ? favorited.filter((material) => (material?.name || '').toLowerCase().includes(q)) : favorited
     const sorted = [...searched].sort((a, b) => {
       const at = resolveTimestamp(a)
       const bt = resolveTimestamp(b)
@@ -638,12 +639,7 @@ export default function MaterialLibraryPicker({
           {viewMode === 'folder' ? (
             <div className="mlp-tabs" role="tablist" aria-label="素材分组">
               {Object.entries(TAB_LABELS).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={tab === key ? 'active' : ''}
-                  onClick={() => switchTab(key)}
-                >
+                <button key={key} type="button" className={tab === key ? 'active' : ''} onClick={() => switchTab(key)}>
                   {label}
                 </button>
               ))}
@@ -694,12 +690,9 @@ export default function MaterialLibraryPicker({
           </div>
         </header>
 
-        <section
-          className={`mlp-hero${viewMode === 'material' ? ' is-material-view' : ''}`}
-          aria-label="素材市场"
-        >
+        <section className={`mlp-hero${viewMode === 'material' ? ' is-material-view' : ''}`} aria-label="我的素材">
           <div className="mlp-hero-card">
-            <div className="mlp-hero-title">素材市场</div>
+            <div className="mlp-hero-title">我的素材</div>
             <div className="mlp-hero-subtitle">海量优质素材，激发创意灵感</div>
             <button type="button" className="mlp-hero-link">
               探索更多优质素材
@@ -707,12 +700,7 @@ export default function MaterialLibraryPicker({
             </button>
           </div>
           {viewMode === 'folder' ? (
-            <button
-              type="button"
-              className="mlp-create-folder"
-              aria-label="新建项目文件夹"
-              onClick={createFolder}
-            >
+            <button type="button" className="mlp-create-folder" aria-label="新建项目文件夹" onClick={createFolder}>
               <span className="mlp-create-folder-copy">
                 <span className="mlp-create-folder-icon" aria-hidden="true">
                   +
@@ -860,11 +848,7 @@ export default function MaterialLibraryPicker({
                   </label>
 
                   <label className="mlp-toolbar-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={onlyFavorite}
-                      onChange={(e) => setOnlyFavorite(e.target.checked)}
-                    />
+                    <input type="checkbox" checked={onlyFavorite} onChange={(e) => setOnlyFavorite(e.target.checked)} />
                     我收藏的
                   </label>
                 </div>
@@ -900,9 +884,7 @@ export default function MaterialLibraryPicker({
                       ) : material?.src ? (
                         <img src={material.src} alt={material.name} />
                       ) : (
-                        <div className="mlp-item-fallback">
-                          {isVideoMaterial(material) ? '视频素材' : '图片素材'}
-                        </div>
+                        <div className="mlp-item-fallback">{isVideoMaterial(material) ? '视频素材' : '图片素材'}</div>
                       )}
                       <span className="mlp-media-badge">
                         <span className="mlp-media-type-tag">{material?.type === 'video' ? '视频' : '图片'}</span>

@@ -4,7 +4,7 @@
  * 比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
  * 提交 → 调 onSubmit(需求文本, 选项),由父级进入分镜脚本流程。
  */
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import GuideDialog from '../GuideDialog'
@@ -72,9 +72,58 @@ const composeWithSkill = (base: string, s: string) => (s ? (base ? `${base}\n\n$
 // 高亮渲染匹配:@图片N(绿) + 使用×××skills帮我优化(skill 提示语,着色)
 const HL_RE = new RegExp(`@图片\\d+|${SKILL_OPTIONS.map((s) => skillLine(s)).join('|')}`, 'g')
 
+// ── 入口未提交输入的「跨路由保活」 ──
+// 切到别的页面会卸载本组件、丢失全部内部 state(文字/图片/比例/时长/skill/模式)。
+// initial 只在「同一次挂载内点上一步返回」时回填,跨路由重新挂载时父级 state 已清空、initial 为空 → 输入消失。
+// 故把当前输入实时写进 sessionStorage,重新进入空白 /smart 时优先回填;提交成功 / 点「新建」即清空。
+// 用 sessionStorage:仅本标签页有效、关页即清,符合「别丢我刚输入的」语义,也避免长期残留旧草稿。
+const ENTRY_DRAFT_KEY = 'zzh.smart-entry.draft'
+interface EntryDraftStore {
+  mode?: 'video' | 'image'
+  text?: string // 已剥离 skill 提示语的干净正文(与 onSubmit/initial.text 同口径)
+  ratio?: string
+  duration?: string
+  skill?: string
+  images?: string[]
+}
+function loadSmartEntryDraft(): EntryDraftStore | null {
+  try {
+    const raw = sessionStorage.getItem(ENTRY_DRAFT_KEY)
+    return raw ? (JSON.parse(raw) as EntryDraftStore) : null
+  } catch {
+    return null
+  }
+}
+function saveSmartEntryDraft(d: EntryDraftStore) {
+  try {
+    sessionStorage.setItem(ENTRY_DRAFT_KEY, JSON.stringify(d))
+  } catch {
+    // 多半是图片 dataURL 撑爆配额:退化为不含图片再存一次,至少保住文字与选项。
+    try {
+      sessionStorage.setItem(ENTRY_DRAFT_KEY, JSON.stringify({ ...d, images: [] }))
+    } catch {
+      /* ignore */
+    }
+  }
+}
+/** 清空入口暂存(提交进入流程 / 重置为全新入口时调用)。父级 resetToNewVideo、restart 路径也会调。 */
+export function clearSmartEntryDraft() {
+  try {
+    sessionStorage.removeItem(ENTRY_DRAFT_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, initial }: SmartEntryProps) {
   const { showToast } = useToast()
-  const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? 'video')
+  // 回填优先级:initial(同一次挂载内「上一步」回填,值非空时为准)> sessionStorage 暂存(跨路由保活)> 默认。
+  // 注意 initial.text 跨路由时是父级空串(非 undefined),故用「非空才采纳」而非 ?? 来回退到暂存。
+  const [stored] = useState(loadSmartEntryDraft)
+  const seedText = (initial?.text && initial.text.length ? initial.text : stored?.text) ?? ''
+  const seedSkill = initial?.skill ?? stored?.skill ?? ''
+  const seedImages = (initial?.images && initial.images.length ? initial.images : stored?.images) ?? []
+  const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? stored?.mode ?? 'video')
   // 切换 Tab:背景弥散位移 + 涟漪动画由 <EntryCanvasBg mode> 监听 mode 变化驱动(Canvas 实现,不卡)
   const switchMode = (m: 'video' | 'image') => {
     if (m === mode) return
@@ -86,12 +135,12 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
     setMode(m)
   }
   // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
-  const [text, setText] = useState(() => composeWithSkill(initial?.text ?? '', initial?.skill ?? ''))
-  const [ratio, setRatio] = useState(initial?.ratio ?? '16:9')
-  const [duration, setDuration] = useState(initial?.duration ?? '10s')
-  const [images, setImages] = useState<string[]>(initial?.images ?? [])
+  const [text, setText] = useState(() => composeWithSkill(seedText, seedSkill))
+  const [ratio, setRatio] = useState(initial?.ratio ?? stored?.ratio ?? '16:9')
+  const [duration, setDuration] = useState(initial?.duration ?? stored?.duration ?? '10s')
+  const [images, setImages] = useState<string[]>(seedImages)
   // 选中的营销 SKILL(单选,空=不使用)
-  const [skill, setSkill] = useState(initial?.skill ?? '')
+  const [skill, setSkill] = useState(seedSkill)
   const [guideOpen, setGuideOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
@@ -102,9 +151,18 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
   const [atOpen, setAtOpen] = useState(false)
 
   // ── 需求文本的撤销/重做历史(AI 引导会改写文本,需可回退/前进)──
-  const histRef = useRef<string[]>([initial?.text ?? ''])
+  const histRef = useRef<string[]>([seedText])
   const idxRef = useRef(0)
   const [, bumpHist] = useState(0)
+
+  // 实时把当前输入写进 sessionStorage(防抖 300ms),切走再回来可回填。text 存「剥离 skill 提示语」的干净正文。
+  useEffect(() => {
+    const t = window.setTimeout(
+      () => saveSmartEntryDraft({ mode, text: stripSkillLine(text).trim(), ratio, duration, skill, images }),
+      300,
+    )
+    return () => window.clearTimeout(t)
+  }, [mode, text, ratio, duration, skill, images])
   const commitText = (val: string) => {
     if (histRef.current[idxRef.current] === val) return
     const next = histRef.current.slice(0, idxRef.current + 1)
@@ -207,6 +265,8 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
       images,
       skill: skill || undefined,
     })
+    // 已提交进入流程:清掉入口暂存,避免下次空白 /smart 又回填这次已用过的输入。
+    clearSmartEntryDraft()
   }
 
   // 选中/切换 SKILL:把提示语插入输入框(替换旧的);未选则移除

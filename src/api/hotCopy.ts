@@ -16,7 +16,6 @@ import {
   estimateAiTaskCost,
 } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
-import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
 import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 
@@ -69,7 +68,13 @@ export async function replicateHotVideo(args: {
   // 钉死 seedance,不做跨模型退避:先显式解析支持 video.replicate 的 seedance 模型,再用 modelVersionId 提交。
   // createAiTask 走「显式模型」分支(无「换下一个模型」循环),seedance 失败直接抛错由用户决定,
   // 绝不退避到 happyhorse 等其它视频模型。
-  const model = await getModelForOperation('video.replicate', VIDEO_MODEL_KEYWORDS, args.modelPlanCandidates)
+  // 查模型必带 workspace_id(否则后端按订阅返回空列表 → 误报无可用模型);显式传入,不依赖模块级当前 workspace。
+  const model = await getModelForOperation(
+    'video.replicate',
+    VIDEO_MODEL_KEYWORDS,
+    args.modelPlanCandidates,
+    args.workspaceId,
+  )
   if (!model?.id)
     throw new Error('当前工作空间/套餐暂无「爆款复刻(video.replicate)」可用模型(seedance),请联系管理员开通')
   const task = await createAiTask({
@@ -80,19 +85,20 @@ export async function replicateHotVideo(args: {
     modelVersion: model,
     prompt: args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。',
     inputAssets,
-    // video.replicate 的画面/时长主要由源视频决定:仅按模型 params_schema 填字段,
-    // 无 schema 时不塞 duration/resolution/ratio 等(否则 provider 报「参数有误」)。
-    params: (m: any) => {
-      const fields = getModelParamFields(m)
-      if (!fields.length) return {}
-      return buildVideoGenerationParams(m, {
+    // 时长/比例按用户在入口的选择下发 —— 与智能成片 generateFullVideo 同一写法:始终走
+    // buildVideoGenerationParams(其内部按模型 schema 决定字段名/取值;无 schema 时也下发标准
+    // duration/resolution/ratio,保证用户所选时长/比例生效)。source_video_duration 仅在模型 schema
+    // 声明时下发,用于「按源视频真实时长计费」,与 duration 不冲突。
+    params: (m: any) => ({
+      generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
+      ...buildVideoGenerationParams(m, {
         duration: normalizeSeedanceDuration(args.durationSec || 10),
-        sourceVideoDuration: args.sourceVideoDurationSec, // 有源视频时长则按它计费(schema 声明才下发)
+        sourceVideoDuration: args.sourceVideoDurationSec,
         resolution: '720p',
-        ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
+        ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
         generateAudio: true,
-      })
-    },
+      }),
+    }),
   })
   args.onTask?.(Number(task?.id || 0) || 0)
   const completed = await waitForAiTask({
@@ -147,7 +153,7 @@ export async function estimateReplicateCost(args: {
       capability: 'video',
       operationCode: 'video.replicate',
       preferredModelKeywords: kw,
-      modelPlanCandidates: args.modelPlanCandidates,
+      workspaceId: args.workspaceId, // 查模型必带 workspace_id,否则后端返回空列表
     }).catch(() => null)
   let model = await pick(VIDEO_MODEL_KEYWORDS)
   if (!model?.id) model = await pick([])
@@ -156,7 +162,7 @@ export async function estimateReplicateCost(args: {
     duration: normalizeSeedanceDuration(args.durationSec || 10),
     sourceVideoDuration: args.sourceVideoDurationSec,
     resolution: '720p',
-    ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
+    ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
     generateAudio: true,
   })
   return estimateAiTaskCost({

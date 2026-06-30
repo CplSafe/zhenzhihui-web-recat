@@ -40,7 +40,7 @@ const SIDEBAR_COLLAPSED_WIDTH = 72
 const LIBRARY_WIDTH = 404
 
 interface AppLayoutProps {
-  // 当前页面高亮的导航项：分步创作画布默认 '分步创作'，素材市场页传 '素材市场'。
+  // 当前页面高亮的导航项：分步创作画布默认 '分步创作'，我的素材页传 '我的素材'。
   activeNav?: string
   children?: ReactNode
   // 部分视图沿用旧 props 传参；AppLayout 内部经 useAuth() 取会话与登出，这些为可选兼容项。
@@ -170,7 +170,7 @@ export default function AppLayout(props: AppLayoutProps) {
           className: 'manage-section',
           items: [
             { label: '项目管理', icon: 'folder' },
-            { label: '素材市场', icon: 'shop' },
+            { label: '我的素材', icon: 'shop' },
           ],
         },
       ].map((section) => ({
@@ -346,7 +346,7 @@ export default function AppLayout(props: AppLayoutProps) {
       return
     }
 
-    if (label === '素材市场') {
+    if (label === '我的素材') {
       navigate('/resources')
       return
     }

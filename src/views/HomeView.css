@@ -140,7 +140,7 @@
 }
 
 /* 内容区（可滚动；限宽并居中，避免超宽屏把卡片拉得过长）*/
-/* 整页滚动:内容区作为唯一滚动容器,滚动条在最右(模板库不再内部滚动) */
+/* 整页滚动:内容区作为唯一滚动容器,滚动条在最右(案例库不再内部滚动) */
 .home__content {
   flex: 1;
   min-height: 0;
@@ -151,7 +151,7 @@
   padding: 22px 28px 24px;
   overflow-y: auto;
 }
-/* 模板库区块随内容自然撑高,不再占满剩余高度 / 不再内部滚动 */
+/* 案例库区块随内容自然撑高,不再占满剩余高度 / 不再内部滚动 */
 .home__section--grow {
   display: flex;
   flex-direction: column;
@@ -163,7 +163,7 @@
   position: relative;
   border-radius: 18px;
   height: 320px;
-  /* 固定高度,禁止在 flex 列中被下方内容(模板库瀑布流更高)压缩 → 切 tab 时 banner 不再变形 */
+  /* 固定高度,禁止在 flex 列中被下方内容(案例库瀑布流更高)压缩 → 切 tab 时 banner 不再变形 */
   flex: 0 0 320px;
   overflow: hidden;
   margin-bottom: 14px;
@@ -566,7 +566,7 @@ button.home__template-card {
   cursor: pointer;
 }
 
-/* ── 模板库/历史项目:随内容自然撑高,不再内部滚动(整页滚动见 .home__content) ── */
+/* ── 案例库/历史项目:随内容自然撑高,不再内部滚动(整页滚动见 .home__content) ── */
 .home__tab-box {
   padding: 4px 6px 8px;
   border-radius: 12px;

@@ -27,7 +27,9 @@ import {
   updateCreativeProjectDraft,
   getCreativeProject,
   patchCreativeProject,
+  getModelForOperation,
 } from '@/api/business'
+import { getModelParamOptions } from '@/utils/videoOptions'
 import {
   useWorkspaceId,
   useModelPlanCandidates,
@@ -55,8 +57,9 @@ const ROUTE_MAP: Record<string, string> = {
   templates: '/templates',
 }
 
-const DEFAULT_RATIO = '9:16'
-const DEFAULT_DURATION_SEC = 15
+// 默认尺寸/时长与智能成片一致:16:9、10s
+const DEFAULT_RATIO = '16:9'
+const DEFAULT_DURATION_SEC = 10
 
 // 据 Tab + 文案构造 replicate 提示词
 function buildBasePrompt(tab: 'remake' | 'replica', text: string): string {
@@ -182,6 +185,11 @@ export default function HotCopyCreateView() {
 
   // 源视频真实时长(秒):video.replicate/edit 按它计费;前端读上传视频 HTML5 元数据得到
   const [sourceVideoDurSec, setSourceVideoDurSec] = useState(0)
+  // 用户在入口选择的成片尺寸(画面比例)与时长(秒);默认与智能成片一致 16:9、10s。
+  const [genRatio, setGenRatio] = useState(DEFAULT_RATIO)
+  const [genDurationSec, setGenDurationSec] = useState(DEFAULT_DURATION_SEC)
+  // replicate 模型支持的比例选项(取自模型 params_schema 的 ratio 字段);供入口下拉只放模型真做得了的比例。
+  const [ratioOptions, setRatioOptions] = useState<string[]>([])
   // 提交前积分预估(estimate-cost)
   const [videoCost, setVideoCost] = useState<{
     loading: boolean
@@ -218,6 +226,9 @@ export default function HotCopyCreateView() {
   const [projectId, setProjectId] = useState(0)
   const projectIdRef = useRef(0)
   const draftRevisionRef = useRef(0) // 后端草稿版本号(防 409)
+  // 项目「视频清单」存档(待分类归类记录,随草稿存云端)。本编辑器不维护它,加载时原样存下、
+  // 保存时原样写回,避免整盘重建 draft_json 时被覆盖丢失。
+  const projectVideoStoreRef = useRef<any>(null)
   const serverTitleRef = useRef('') // 已同步到后端的标题(去重)
   const saveChainRef = useRef<Promise<any>>(Promise.resolve()) // 串行化草稿保存
 
@@ -292,6 +303,8 @@ export default function HotCopyCreateView() {
           const parsed = parseHotCopyDraft(proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft)
           const smart = parsed?.smart || {}
           const obj = parsed?.obj || {}
+          // 留存项目视频清单存档(归类记录),保存时原样写回,避免被本编辑器的草稿快照覆盖
+          projectVideoStoreRef.current = obj && typeof obj === 'object' ? obj.projectVideoStore || null : null
           setStarted(true)
           setStep(1)
           setMaxReached(1)
@@ -318,6 +331,8 @@ export default function HotCopyCreateView() {
               .filter((v: any) => v.url || v.assetId),
           )
           setVideoGenerations(Array.isArray(smart.videoGenerations) ? (smart.videoGenerations as GenRecord[]) : [])
+          if (smart.genRatio) setGenRatio(String(smart.genRatio))
+          if (Number(smart.genDurationSec) > 0) setGenDurationSec(Number(smart.genDurationSec))
           const t = String(proj?.title || proj?.name || '').trim()
           if (t) {
             setProjectName(t)
@@ -355,6 +370,8 @@ export default function HotCopyCreateView() {
       setFullVideo(d.fullVideo || { url: '', assetId: 0 })
       setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
       setVideoGenerations(Array.isArray(d.videoGenerations) ? (d.videoGenerations as GenRecord[]) : [])
+      if (d.genRatio) setGenRatio(String(d.genRatio))
+      if (Number(d.genDurationSec) > 0) setGenDurationSec(Number(d.genDurationSec))
       // 有在途任务且还没出片 → 续轮询(同一个后端任务,不重新生成)
       if (Number(d.vidGenTaskId || 0) > 0 && !d.fullVideo?.url) resumeVideoTask(ws, Number(d.vidGenTaskId))
     }
@@ -379,6 +396,8 @@ export default function HotCopyCreateView() {
       videoVersions,
       vidGenTaskId,
       videoGenerations,
+      genRatio,
+      genDurationSec,
     })
   }, [
     workspaceId,
@@ -395,6 +414,8 @@ export default function HotCopyCreateView() {
     videoVersions,
     vidGenTaskId,
     videoGenerations,
+    genRatio,
+    genDurationSec,
   ])
 
   // 命令式立即落盘:在关键节点(开始生成 / 拿到 task id / 拿到源素材)直接写 localStorage,
@@ -416,6 +437,8 @@ export default function HotCopyCreateView() {
       videoVersions,
       vidGenTaskId,
       videoGenerations,
+      genRatio,
+      genDurationSec,
     }
     saveHotCopyDraft(ws, { ...base, started: true, ...partial })
   }
@@ -433,6 +456,8 @@ export default function HotCopyCreateView() {
       generatedVideoUrl: fvUrl,
       generatedVideoAssetId: fvId,
       videoHistoryList: versions.length ? versions : fvUrl || fvId ? [{ url: fvUrl, assetId: fvId }] : [],
+      // 原样保留项目视频清单存档(归类记录),避免整盘重建草稿时丢失(本编辑器不维护它)
+      ...(projectVideoStoreRef.current ? { projectVideoStore: projectVideoStoreRef.current } : {}),
       smart: {
         flow: 'hot-copy',
         projectName,
@@ -445,6 +470,8 @@ export default function HotCopyCreateView() {
         videoVersions: versions,
         vidGenTaskId,
         videoGenerations,
+        genRatio,
+        genDurationSec,
         step,
         maxReached,
       },
@@ -556,6 +583,30 @@ export default function HotCopyCreateView() {
     return () => window.clearTimeout(timer)
   }, [projectId, projectName, workspaceId])
 
+  // 拉 replicate 模型,取其 ratio 字段支持的比例选项 → 入口下拉只放模型真做得了的比例(避免选了被悄悄回退)。
+  useEffect(() => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) return
+    let alive = true
+    ;(async () => {
+      try {
+        const plans = await resolvePlanCandidates()
+        const model: any = await getModelForOperation('video.replicate', ['seedance'], plans, ws)
+        const opts = (getModelParamOptions(model, 'ratio') || []).map(String).filter(Boolean)
+        if (!alive || !opts.length) return
+        setRatioOptions(opts)
+        // 默认比例收敛到模型支持范围内(不在则取第一个支持项)
+        setGenRatio((r) => (opts.includes(r) ? r : opts[0]))
+      } catch {
+        /* 拿不到模型 options 就用默认下拉 */
+      }
+    })()
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId])
+
   // 提交前积分预估(estimate-cost):进入生成视频步、有源视频且非生成中时估一次(口径同「重新生成」replicate)。
   useEffect(() => {
     const ws = Number(workspaceId || 0)
@@ -568,8 +619,8 @@ export default function HotCopyCreateView() {
         const res: any = await estimateReplicateCost({
           workspaceId: ws,
           sourceVideoDurationSec: sourceVideoDurSec,
-          ratio: DEFAULT_RATIO,
-          durationSec: DEFAULT_DURATION_SEC,
+          ratio: genRatio,
+          durationSec: genDurationSec,
           modelPlanCandidates: plans,
         })
         if (!alive) return
@@ -591,7 +642,7 @@ export default function HotCopyCreateView() {
       window.clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, started, vidGenRunning, sourceVideo.assetId, sourceVideoDurSec])
+  }, [workspaceId, started, vidGenRunning, sourceVideo.assetId, sourceVideoDurSec, genRatio, genDurationSec])
 
   // 据需求自动命名项目(用户已手动改名 / 需求为空则跳过)
   const autoNameProject = async (req: string) => {
@@ -624,8 +675,8 @@ export default function HotCopyCreateView() {
       videoAssetId,
       productAssetIds: productIds,
       prompt,
-      ratio: DEFAULT_RATIO,
-      durationSec: DEFAULT_DURATION_SEC,
+      ratio: genRatio,
+      durationSec: genDurationSec,
       sourceVideoDurationSec: srcDurSec || sourceVideoDurSec || 0,
       modelPlanCandidates: plans,
       onTask: (id) => {
@@ -725,8 +776,8 @@ export default function HotCopyCreateView() {
           workspaceId: ws,
           videoAssetId: fullVideo.assetId,
           prompt: editPrompt,
-          ratio: DEFAULT_RATIO,
-          durationSec: DEFAULT_DURATION_SEC,
+          ratio: genRatio,
+          durationSec: genDurationSec,
           sourceVideoDurationSec: editSrcDur,
           modelPlanCandidates: plans,
           onTask: (id) => {
@@ -804,6 +855,11 @@ export default function HotCopyCreateView() {
     const prompt = buildBasePrompt(payload.tab, payload.text)
     setEntryInitial(payload)
     setBasePrompt(prompt)
+    // 采用用户在入口选择的成片尺寸/时长(默认竖屏 9:16、15s)
+    const pickedRatio = payload.ratio || DEFAULT_RATIO
+    const pickedDurSec = Number.parseInt(String(payload.duration || ''), 10) || DEFAULT_DURATION_SEC
+    setGenRatio(pickedRatio)
+    setGenDurationSec(pickedDurSec)
     setStarted(true)
     setStep(1)
     setMaxReached(1)
@@ -836,6 +892,8 @@ export default function HotCopyCreateView() {
         videoVersions: [],
         vidGenTaskId: 0,
         videoGenerations: [],
+        genRatio: pickedRatio, // 用本地刚算出的值(setState 异步,此刻 state 还没更新)
+        genDurationSec: pickedDurSec,
       })
       // 建后端项目(best-effort,使其出现在项目管理/视频列表)。
       // 不在此 navigate 到 /hot-copy/:id —— 否则会重挂载组件、打断正在进行的生成;
@@ -899,7 +957,7 @@ export default function HotCopyCreateView() {
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
         {!started ? (
-          <HotCopyEntry onSubmit={handleStart} initial={entryInitial} />
+          <HotCopyEntry onSubmit={handleStart} initial={entryInitial} ratioOptions={ratioOptions} />
         ) : (
           <>
             <div className="smart__progress">

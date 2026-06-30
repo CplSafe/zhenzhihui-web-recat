@@ -1,5 +1,5 @@
 /**
- * 模板库 API — 对接后端 creative/projects，按条件筛选用作模板展示。
+ * 案例库 API — 对接后端 creative/projects，按条件筛选用作模板展示。
  * 后续若后端提供 /api/v1/templates 独立端点，切换数据源即可。
  */
 import { listCreativeProjects, type BusinessApiError } from './business'

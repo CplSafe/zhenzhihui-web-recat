@@ -22,9 +22,11 @@ import {
   getBusinessErrorMessage,
   getCreativeProject,
   listCreativeProjects,
+  listAssets,
+  extractAssetPageItems,
 } from '@/api/business'
 import { listProjectVideos, addClassifiedVideo, countProjectVideos, type ProjectVideo } from '@/api/projectVideos'
-import { loadClassifiedKeys, markVideoClassified, videoKeyOf } from '@/utils/unclassifiedVideos'
+import { collectClassifiedKeys, videoKeyOf } from '@/utils/unclassifiedVideos'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { openComingSoon } from '@/stores/ui'
 import { useWorkspaceId } from '@/stores/workspaceSession'
@@ -162,24 +164,44 @@ function relativeUpdated(ts: number): string {
   return mo < 12 ? `${mo}个月前更新` : `${Math.floor(mo / 12)}年前更新`
 }
 
-// 「历史生成」=【已出成片视频】的项目:有最终视频/版本/历史。封面用图片(extractCover)。
-// (草稿、未出片的项目不进这里——它们仍在上方项目卡里、点开可续作。)
-function extractGeneratedVideos(
-  projectItems: any[],
-  workspaceId: number,
-): { id: number; title: string; cover: string }[] {
-  const out: { id: number; title: string; cover: string }[] = []
-  const hasUrl = (list: any[]) => normalizeArray(list).some((v: any) => String(v?.url || v?.src || '').trim())
+// 收集所有 2.1 项目已用到的视频 asset_id —— 用于把「待分类」里的散视频(/assets?type=video)去重,
+// 避免和已挂在项目里的成片重复显示。
+function collectProjectVideoAssetIds(projectItems: any[]): Set<number> {
+  const ids = new Set<number>()
   for (const project of projectItems) {
     const draft = normalizeCreativeProjectDraft(project)
     if (!draft) continue
     const smart = toPlainObject(draft.smart) || draft
-    // 仅保留已出成片(版本/历史/最终任一)
-    const hasFinalVideo =
-      hasUrl(smart?.videoVersions) ||
-      hasUrl(draft?.videoHistoryList || draft?.video_history_list) ||
-      !!String(draft?.generatedVideoUrl || draft?.generated_video_url || smart?.fullVideoUrl || '').trim()
-    if (!hasFinalVideo) continue
+    for (const list of [smart?.videoVersions, draft?.videoHistoryList, draft?.video_history_list]) {
+      for (const v of normalizeArray(list)) {
+        const aid = Number(v?.assetId ?? v?.asset_id ?? 0) || 0
+        if (aid) ids.add(aid)
+      }
+    }
+    const main = Number(draft?.generatedVideoAssetId || smart?.fullVideoAssetId || 0) || 0
+    if (main) ids.add(main)
+  }
+  return ids
+}
+
+// 提取「2.0 旧版」项目的成片视频:flow 不是 smart/hot-copy(那是 2.1 智能成片/爆款复制),
+// 且草稿里有视频(generatedVideoUrl/Asset 或 videoHistoryList 任一,url 或 assetId 都算)。
+// 这些就是 2.0 视频,进「待分类」;2.1 的不进(它们在上方项目文件夹 / 项目详情里)。
+function extract20Videos(projectItems: any[], workspaceId: number): { id: number; title: string; cover: string }[] {
+  const out: { id: number; title: string; cover: string }[] = []
+  for (const project of projectItems) {
+    const draft = normalizeCreativeProjectDraft(project)
+    if (!draft) continue
+    const smart = toPlainObject(draft.smart) || draft
+    const flow = String(draft?.flow || smart?.flow || '').toLowerCase()
+    if (flow === 'smart' || flow === 'hot-copy') continue // 2.1 → 跳过
+    const hasVid =
+      !!String(draft?.generatedVideoUrl || draft?.generated_video_url || '').trim() ||
+      Number(draft?.generatedVideoAssetId || draft?.generated_video_asset_id || 0) > 0 ||
+      normalizeArray(draft?.videoHistoryList || draft?.video_history_list).some(
+        (v: any) => String(v?.url || v?.src || '').trim() || Number(v?.assetId || v?.asset_id || 0) > 0,
+      )
+    if (!hasVid) continue
     out.push({
       id: Number(project?.id || 0),
       title: String(project?.title || project?.name || '').trim() || '未命名项目',
@@ -407,20 +429,86 @@ export default function ProjectManagementView() {
     setPage(1)
   }, [query, typeFilter, sortDesc])
 
-  // 已归类(拖入项目)的视频 → 从待归类隐藏。纯前端 localStorage 占位。
-  const [classifiedKeys, setClassifiedKeys] = useState<Set<string>>(new Set())
+  // 已归类(拖入项目)的视频 → 从待归类隐藏。来源:各项目云端草稿(collectClassifiedKeys),
+  // 不再用 localStorage。pendingClassified 仅为拖入后、列表刷新前的乐观隐藏(纯内存)。
+  const [pendingClassified, setPendingClassified] = useState<Set<string>>(new Set())
   useEffect(() => {
-    setClassifiedKeys(loadClassifiedKeys(Number(workspaceId || 0)))
+    setPendingClassified(new Set())
   }, [workspaceId])
+  const classifiedKeys = useMemo(() => {
+    const set = collectClassifiedKeys(projectItems)
+    pendingClassified.forEach((key) => set.add(key))
+    return set
+  }, [projectItems, pendingClassified])
 
-  // 历史生成:已出成片的项目视频。仍沿用 classifiedKeys 过滤(若有手动隐藏的);不再自动清空。
-  const unclassified = useMemo(
-    () =>
-      extractGeneratedVideos(projectItems, Number(workspaceId || 0)).filter(
-        (v) => !classifiedKeys.has(videoKeyOf(v.id, v.cover)),
-      ),
-    [projectItems, classifiedKeys, workspaceId],
-  )
+  // 散视频资产:/assets?type=video 里「不属于任何 2.1 项目」的视频(2.0 旧视频通常就在这里)。
+  // 排除上传的源视频(source=upload,如爆款源视频),只留生成产物。
+  const [looseVideos, setLooseVideos] = useState<{ assetId: number; title: string }[]>([])
+  // 散视频播放:点击 → 取直传地址 → 弹窗 <video> 播放
+  const [playUrl, setPlayUrl] = useState('')
+  useEffect(() => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      setLooseVideos([])
+      return
+    }
+    let alive = true
+    const used = collectProjectVideoAssetIds(projectItems)
+    listAssets({ workspaceId: ws, type: 'video', limit: 200 })
+      .then((payload: any) => {
+        if (!alive) return
+        const loose = extractAssetPageItems(payload)
+          .filter((a: any) => {
+            const id = Number(a?.id || 0)
+            if (!id || used.has(id)) return false // 被某 2.1 项目引用 → 是 2.1 视频,不进待分类
+            if (String(a?.source || '').toLowerCase() === 'upload') return false // 上传的源视频不算成片
+            return true
+          })
+          .map((a: any, i: number) => ({
+            assetId: Number(a?.id),
+            title: String(a?.name || '').trim() || `视频 ${i + 1}`,
+          }))
+        setLooseVideos(loose)
+      })
+      .catch(() => alive && setLooseVideos([]))
+    return () => {
+      alive = false
+    }
+  }, [projectItems, workspaceId])
+
+  // 待分类 = 只放「2.0 旧视频」:① 2.0 项目成片(flow 非 smart/hot-copy);② 不属于任何项目的游离视频资产。
+  // 2.1(智能成片/爆款复制)的成片不进这里。已手动归类的隐藏。
+  const unclassified = useMemo(() => {
+    const ws = Number(workspaceId || 0)
+    const projectVids = extract20Videos(projectItems, ws)
+      .filter((v) => !classifiedKeys.has(videoKeyOf(v.id, v.cover)))
+      .map((v) => ({ kind: 'project' as const, id: v.id, assetId: 0, title: v.title, cover: v.cover, coverVideo: '' }))
+    const looseVids = looseVideos
+      .filter((a) => !classifiedKeys.has(videoKeyOf(a.assetId, '')))
+      // 封面用视频首帧:coverVideo 取该资产的直传地址,卡片里用 <video preload=metadata> 显示第一帧
+      .map((a) => ({
+        kind: 'asset' as const,
+        id: 0,
+        assetId: a.assetId,
+        title: a.title,
+        cover: '',
+        coverVideo: ws ? assetStreamUrl(a.assetId, ws) : '',
+      }))
+    return [...projectVids, ...looseVids]
+  }, [projectItems, looseVideos, classifiedKeys, workspaceId])
+
+  // 播放散视频资产:取直传地址后弹窗播放
+  const playLooseVideo = async (assetId: number) => {
+    const ws = Number(workspaceId || 0)
+    if (!ws || !assetId) return
+    try {
+      const url = await getAssetDownloadUrl({ workspaceId: ws, assetId })
+      if (url) setPlayUrl(url)
+      else showToast('无法打开视频', 'info')
+    } catch {
+      showToast('无法打开视频', 'info')
+    }
+  }
 
   // 待归类:实测视频网格列数(grid 仅在有数据时渲染,故依赖 unclassified.length 重新挂载观察)
   useEffect(() => {
@@ -468,23 +556,8 @@ export default function ProjectManagementView() {
     try {
       const items = await listCreativeProjects({ workspaceId: wsId, limit: 60 })
       if (Number(workspaceIdRef.current || 0) !== wsId) return
-      const merged = Array.isArray(items) ? [...items] : []
-      try {
-        const key = `zzh_created_${wsId}`
-        const cached = JSON.parse(localStorage.getItem(key) || '[]')
-        if (Array.isArray(cached)) {
-          const ids = new Set(merged.map((p: any) => Number(p?.id || 0)))
-          for (const cp of cached) {
-            if (!ids.has(Number(cp?.id || 0))) {
-              merged.unshift(cp)
-              ids.add(Number(cp?.id || 0))
-            }
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-      setProjectItems(merged)
+      // 项目全部以云端列表为准(不再用 localStorage 缓存新建项目)
+      setProjectItems(Array.isArray(items) ? items : [])
     } catch (err: any) {
       if (Number(workspaceIdRef.current || 0) === wsId) {
         setProjectItems([])
@@ -530,28 +603,15 @@ export default function ProjectManagementView() {
       showToast('项目已创建', 'success')
       setCreateOpen(false)
       setNewName('')
-      // 立即塞入本地列表头部 + 写 localStorage，刷新不丢
+      // 已存云端:乐观插入列表头部(仅内存,刷新后以云端列表为准),并拉取最新列表对齐
       setProjectItems((prev) => [created, ...prev])
-      try {
-        const key = `zzh_created_${wsId}`
-        const cached = JSON.parse(localStorage.getItem(key) || '[]')
-        cached.unshift({
-          id: created.id,
-          title: name,
-          created_at: created.created_at,
-          updated_at: created.updated_at,
-          workspace_id: created.workspace_id,
-        })
-        localStorage.setItem(key, JSON.stringify(cached.slice(0, 30)))
-      } catch {
-        /* ignore */
-      }
+      loadProjects()
     } catch (error: any) {
       showToast(getBusinessErrorMessage(error, '创建失败,请稍后重试'), 'error')
     } finally {
       setCreating(false)
     }
-  }, [newName, workspaceId, showToast])
+  }, [newName, workspaceId, showToast, loadProjects])
 
   // 项目管理主入口改为进入「项目下视频列表」
   const openFolder = useCallback(
@@ -674,7 +734,7 @@ export default function ProjectManagementView() {
   )
 
   const handleDropToFolder = useCallback(
-    (folder: { id: number; title: string }, payload: string) => {
+    async (folder: { id: number; title: string }, payload: string) => {
       setDragOverFolderId(0)
       let video: any = null
       try {
@@ -688,20 +748,25 @@ export default function ProjectManagementView() {
         showToast('workspace_id 缺失,无法归类', 'error')
         return
       }
-      // ① 写入目标项目的本地清单(占位草稿,带封面图),使其出现在该项目里
-      addClassifiedVideo({
-        projectId: folder.id,
-        workspaceId: wsId,
-        title: video.title,
-        videoUrl: video.cover || '',
-      })
-      // ② 标记已归类 → 从待归类隐藏
       const key = videoKeyOf(Number(video.id || 0), video.cover || '')
-      markVideoClassified(wsId, key)
-      setClassifiedKeys((prev) => new Set(prev).add(key))
-      showToast(`已归类到「${folder.title}」`, 'success')
+      try {
+        // 写入目标项目的视频清单(随项目草稿存云端),并带上来源 key 供「待分类」隐藏
+        await addClassifiedVideo({
+          projectId: folder.id,
+          workspaceId: wsId,
+          title: video.title,
+          videoUrl: video.cover || '',
+          sourceKey: key,
+        })
+        // 乐观隐藏(刷新前),随后拉最新项目列表使云端口径生效
+        setPendingClassified((prev) => new Set(prev).add(key))
+        showToast(`已归类到「${folder.title}」`, 'success')
+        loadProjects()
+      } catch (error) {
+        showToast(getBusinessErrorMessage(error, '归类失败,请稍后重试'), 'error')
+      }
     },
-    [workspaceId, showToast],
+    [workspaceId, showToast, loadProjects],
   )
 
   const activeVideo = detailVideos[activeVideoIdx] || null
@@ -930,22 +995,26 @@ export default function ProjectManagementView() {
                 )}
               </section>
 
-              {/* 历史生成:已出成片的项目视频;点击进入该项目视频页查看/播放 */}
+              {/* 待分类:已出成片但还没归类到项目文件夹的视频;点击进入该视频页查看/播放,可拖入上方项目归类 */}
               {unclassified.length > 0 && (
                 <section className="pm2-section">
-                  <h2 className="pm2-section-title">历史生成</h2>
+                  <h2 className="pm2-section-title">待分类</h2>
                   <div className="pm2-video-grid" ref={vidGridRef}>
                     {pagedUnclassified.map((video, i) => (
-                      <div key={`${video.id}-${i}`} className="pm2-vid-wrap">
+                      <div key={`${video.kind}-${video.id || video.assetId}-${i}`} className="pm2-vid-wrap">
                         <div className="pm2-vid">
                           <span
                             className={`pm2-vid-thumb pm2-tone-${toneOf(i)}`}
                             role="button"
                             tabIndex={0}
                             onClick={() => {
-                              // 已出成片 → 进入该项目视频页查看/播放
-                              if (video.id) navigate(`/projects/${video.id}/videos`)
-                              else showToast('无法打开视频', 'info')
+                              if (video.kind === 'asset') {
+                                playLooseVideo(video.assetId) // 散视频资产 → 弹窗播放
+                              } else if (video.id) {
+                                navigate(`/projects/${video.id}/videos`) // 项目成片 → 进项目视频页
+                              } else {
+                                showToast('无法打开视频', 'info')
+                              }
                             }}
                           >
                             {video.cover ? (
@@ -956,6 +1025,15 @@ export default function ProjectManagementView() {
                                 onError={(e) => {
                                   ;(e.currentTarget as HTMLImageElement).style.display = 'none'
                                 }}
+                              />
+                            ) : video.coverVideo ? (
+                              // 散视频:用视频首帧当封面
+                              <video
+                                className="pm2-vid-media"
+                                src={video.coverVideo}
+                                muted
+                                playsInline
+                                preload="metadata"
                               />
                             ) : (
                               <span className="pm2-vid-play">
@@ -1208,6 +1286,25 @@ export default function ProjectManagementView() {
           <div className="pm2-lightbox" onClick={() => setBigImg('')} role="dialog" aria-label="分镜图放大">
             <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
             <button type="button" className="pm2-lightbox-close" aria-label="关闭" onClick={() => setBigImg('')}>
+              ×
+            </button>
+          </div>,
+          document.body,
+        )}
+
+      {/* 散视频(待分类)播放弹窗 */}
+      {playUrl &&
+        createPortal(
+          <div className="pm2-lightbox" onClick={() => setPlayUrl('')} role="dialog" aria-label="视频播放">
+            <video
+              src={playUrl}
+              controls
+              autoPlay
+              playsInline
+              onClick={(e) => e.stopPropagation()}
+              style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12, background: '#000' }}
+            />
+            <button type="button" className="pm2-lightbox-close" aria-label="关闭" onClick={() => setPlayUrl('')}>
               ×
             </button>
           </div>,
