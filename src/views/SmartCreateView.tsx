@@ -71,6 +71,7 @@ import {
   useWorkspaceSessionStore,
   deriveModelPlanCandidates,
   deriveAllWorkspaces,
+  deriveCurrentUser,
 } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { openComingSoon, openMemberCenter } from '@/stores/ui'
@@ -1759,6 +1760,9 @@ export default function SmartCreateView() {
     subjectAssets,
     fields,
     projectId,
+    // 草稿归属:用于换账号/空间时校验,避免把上一个用户的在制项目带给新用户
+    ownerUserId: Number(deriveCurrentUser(useWorkspaceSessionStore.getState())?.id || 0) || 0,
+    workspaceId: Number(workspaceId || 0) || 0,
     fullVideoUrl: fullVideo.url,
     fullVideoAssetId: fullVideo.assetId,
     vidGenTaskId,
@@ -1840,6 +1844,19 @@ export default function SmartCreateView() {
     const id = projectIdRef.current
     const ws = Number(workspaceId || 0)
     if (!id || !ws) return false
+    // #3 首存 gate:没有任何实质产出前不落后端。否则刚建项目时 autosave 会先存一条空草稿,
+    // draft_revision 变 >0 → 后端列表(本隐藏 draft_revision=0 的空项目)就显示出一个「空文件夹」。
+    // 有分镜/素材主体/整片/生成记录/营销拆解/制作图片消息 任一,才算值得落库的项目。
+    const meaningful =
+      shots.length > 0 ||
+      !!fullVideo.url ||
+      Number(fullVideo.assetId || 0) > 0 ||
+      videoVersions.length > 0 ||
+      videoGenerations.length > 0 ||
+      !!marketingData ||
+      (Array.isArray(imageMessages) && imageMessages.length > 0) ||
+      Object.keys(subjectAssets || {}).length > 0
+    if (!meaningful) return false
     const snapshot = buildSmartSnapshot(currentDraft())
     // 项目封面:优先第一张分镜图,其次入口上传素材的 asset_id。带进存草稿(后端 cover_asset_id),
     // 列表接口就能直接返回封面,不必前端再挖 draft。0/无 时省略,保留现有封面。
@@ -1948,6 +1965,16 @@ export default function SmartCreateView() {
       }
       // 所有空间都拿不到:暴露后端真实原因(无权访问 / 不存在 / 服务器错误),不再吞成笼统提示。
       projectIdRef.current = 0 // 没有有效项目绑定,避免 autosave 把草稿 PUT 到无权访问的项目
+      // #4:若本地草稿正指向这个打不开的项目(常是同浏览器换账号后残留的上一个用户的草稿),
+      // 清掉它 —— 否则空白 /smart 的「在制重定向」会反复把用户送回这条 /smart/:id,一直「项目加载失败」。
+      if (status === 403 || status === 404) {
+        try {
+          const stale = loadSmartDraft()
+          if (stale && Number(stale.projectId || 0) === rid) clearSmartDraft()
+        } catch {
+          /* ignore */
+        }
+      }
       const msg = getBusinessErrorMessage(e, '项目加载失败')
       setLoadError(msg)
       showToast(msg, 'error')
@@ -1995,6 +2022,15 @@ export default function SmartCreateView() {
       // 放宽:只要"已开始 + 已建项目 + 还没出最终片"就算在制(含脚本/营销加载中、准备素材、镜头编排),
       // 都重定向回 /smart/:id,避免加载阶段切走再回来落到空白入口、丢失当前步骤。
       const d = loadSmartDraft()
+      // #4:同浏览器换账号后,上一个用户的本地草稿不能把新用户「在制重定向」带进别人的项目
+      // (→ /smart/:id 后端 404 → 一直「项目加载失败」)。草稿归属不是当前用户 → 清掉,按全新空白进入。
+      const me = Number(deriveCurrentUser(useWorkspaceSessionStore.getState())?.id || 0) || 0
+      const owner = Number(d?.ownerUserId || 0) || 0
+      if (d && owner && me && owner !== me) {
+        clearSmartDraft()
+        hydratedRef.current = true
+        return
+      }
       const pendingPid = Number(d?.projectId || 0) || 0
       const hasPendingTask = Number(d?.vidGenTaskId || 0) > 0 // 正在生成
       const unfinished = !d?.fullVideoUrl && !d?.fullVideoAssetId // 还没出最终片的任意在制流程

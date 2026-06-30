@@ -18,6 +18,9 @@ export interface SmartDraft {
   subjectAssets?: Record<string, any>
   fields?: Record<string, string>
   projectId?: number
+  /** 草稿归属(同一浏览器换账号/空间时校验,避免把别人的在制项目带给新用户 → 加载失败) */
+  ownerUserId?: number
+  workspaceId?: number
   /** 整片视频(seedance 一次生成) */
   fullVideoUrl?: string
   fullVideoAssetId?: number

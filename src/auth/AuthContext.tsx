@@ -16,6 +16,22 @@ import {
   refreshSession,
 } from '../api/auth'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
+import { clearSmartDraft } from '../utils/smartDraft'
+
+// 登出时清掉本地在制草稿(智能成片全局键 + 爆款复制按空间键)。
+// 这些草稿键不按用户隔离,不清的话同一浏览器换账号时新用户会继承上个用户的在制项目,
+// 触发「在制重定向 → /smart/:id 后端 404 → 一直项目加载失败」。
+function clearLocalDraftsOnLogout() {
+  try {
+    clearSmartDraft()
+    for (let i = window.localStorage.length - 1; i >= 0; i--) {
+      const k = window.localStorage.key(i)
+      if (k && k.startsWith('zzh_hotcopy_draft_')) window.localStorage.removeItem(k)
+    }
+  } catch {
+    /* 隐私模式 / SSR:忽略 */
+  }
+}
 
 // 续期调度:优先按【后端返回的 TTL】在到期前续期;拿不到 TTL 时用兜底间隔。
 const REFRESH_DEFAULT_MS = 4 * 60 * 1000 // TTL 未知时的兜底间隔:4 分钟(稳在常见短 access-token TTL 内)
@@ -234,6 +250,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthCheckError('')
     setAuthSession(null)
     clearAuthSessionMarker()
+    clearLocalDraftsOnLogout() // #4:换账号前清掉上个用户的在制草稿,避免新用户继承导致「项目加载失败」
     navigate('/welcome', { replace: true })
   }, [navigate, setAuthSession, stopSessionRefresh])
 
