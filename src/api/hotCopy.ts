@@ -89,29 +89,16 @@ export async function replicateHotVideo(args: {
     // buildVideoGenerationParams(其内部按模型 schema 决定字段名/取值;无 schema 时也下发标准
     // duration/resolution/ratio,保证用户所选时长/比例生效)。source_video_duration 仅在模型 schema
     // 声明时下发,用于「按源视频真实时长计费」,与 duration 不冲突。
-    params: (m: any) => {
-      const built = {
-        generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
-        ...buildVideoGenerationParams(m, {
-          duration: normalizeSeedanceDuration(args.durationSec || 10),
-          sourceVideoDuration: args.sourceVideoDurationSec,
-          resolution: '720p',
-          ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
-          generateAudio: true,
-        }),
-      }
-      // 临时诊断(时长):看①入口传进来的 durationSec,②模型 duration 字段的 options(决定就近吸附),
-      // ③归一化后的值,④最终发出的 duration。若 options 不含 5 → 5 会被吸附成 10(前端问题);
-      // 若发出确为 5 → 后端没按它生成(后端问题)。
-      const durField = (m?.params_schema?.fields ?? m?.paramsSchema?.fields ?? []).find(
-        (f: any) => f?.name === 'duration' || f?.name === 'seconds',
-      )
-      console.log('[爆款时长诊断] 入口 durationSec=', args.durationSec)
-      console.log('[爆款时长诊断] 模型 duration 字段=', durField)
-      console.log('[爆款时长诊断] 归一化 duration=', normalizeSeedanceDuration(args.durationSec || 10))
-      console.log('[爆款时长诊断] 最终发出 params=', built)
-      return built
-    },
+    params: (m: any) => ({
+      generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
+      ...buildVideoGenerationParams(m, {
+        duration: normalizeSeedanceDuration(args.durationSec || 10),
+        sourceVideoDuration: args.sourceVideoDurationSec,
+        resolution: '720p',
+        ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
+        generateAudio: true,
+      }),
+    }),
   })
   args.onTask?.(Number(task?.id || 0) || 0)
   const completed = await waitForAiTask({
