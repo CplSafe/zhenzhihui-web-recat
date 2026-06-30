@@ -1939,19 +1939,9 @@ export default function SmartCreateView() {
     const id = projectIdRef.current
     const ws = Number(workspaceId || 0)
     if (!id || !ws) return false
-    // #3 首存 gate:没有任何实质产出前不落后端。否则刚建项目时 autosave 会先存一条空草稿,
-    // draft_revision 变 >0 → 后端列表(本隐藏 draft_revision=0 的空项目)就显示出一个「空文件夹」。
-    // 有分镜/素材主体/整片/生成记录/营销拆解/制作图片消息 任一,才算值得落库的项目。
-    const meaningful =
-      shots.length > 0 ||
-      !!fullVideo.url ||
-      Number(fullVideo.assetId || 0) > 0 ||
-      videoVersions.length > 0 ||
-      videoGenerations.length > 0 ||
-      !!marketingData ||
-      (Array.isArray(imageMessages) && imageMessages.length > 0) ||
-      Object.keys(subjectAssets || {}).length > 0
-    if (!meaningful) return false
+    // 注:刚建项目时仍会落一版初始草稿(pendingInitialSave),保证「重进 /smart/:id 能恢复」。
+    // #3「空文件夹」改在列表层过滤(无任何内容的项目不展示),而不是在这里拦保存——否则会把
+    // 初始草稿也拦掉、重进项目变空白页(那正是 #2)。
     const snapshot = buildSmartSnapshot(currentDraft())
     // 原样保留项目视频清单存档(归类记录),避免整盘重建草稿时丢失(本编辑器不维护它)
     if (projectVideoStoreRef.current) snapshot.projectVideoStore = projectVideoStoreRef.current
@@ -2222,6 +2212,22 @@ export default function SmartCreateView() {
     if (projectIdRef.current) void putSmartDraftToBackend()
   }
   useEffect(() => () => flushDraftRef.current(), [])
+
+  // #2 硬刷新 / 关标签 / 切后台:React 不一定跑组件卸载 cleanup,上面的卸载 flush 可能不触发,
+  // 防抖中的「最后一步」就丢了 → 刷新回来恢复不到。这里在 pagehide / 切到后台时再 flush 一次:
+  // 本地草稿是同步写(必成),即便后端 PUT 来不及发完,重进 /smart/:id 也能凭本地草稿(localFresher)恢复。
+  useEffect(() => {
+    const onLeave = () => flushDraftRef.current()
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushDraftRef.current()
+    }
+    window.addEventListener('pagehide', onLeave)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', onLeave)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
 
   // 项目刚创建绑定:等本流程状态(started / entryMeta / 需求)落定后,立即把首版草稿落盘一次,
   // 不等 1.5s 防抖。这样「建了空壳就马上切走/刷新」也能在项目里看到内容,再次点开能回到流程而非初始页。

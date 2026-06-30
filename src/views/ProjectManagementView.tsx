@@ -392,6 +392,9 @@ export default function ProjectManagementView() {
         }
       })
       .filter((p) => p.id > 0)
+      // #3 空文件夹:项目建好但没有任何内容(无成片/草稿/分镜)→ works=0,不在列表展示。
+      // 仍可经直链 /smart/:id 打开续作(草稿已存,#2 恢复不受影响);一旦有内容(works≥1)即出现。
+      .filter((p) => p.works > 0)
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }, [projectItems, workspaceId])
 
