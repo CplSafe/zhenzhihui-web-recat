@@ -14,6 +14,7 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { loadFavorites } from '@/utils/favoriteVideos'
+import { assetStreamUrl } from '@/utils/assetUrl'
 import ResourceAddMaterialModal from '@/components/resource/ResourceAddMaterialModal'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
 import AiBadge from '@/components/common/AiBadge'
@@ -195,10 +196,6 @@ function projectTsOf(project: any): number {
   const raw = project?.updated_at || project?.updatedAt || project?.created_at || project?.createdAt || ''
   const t = Date.parse(raw || '')
   return Number.isFinite(t) ? t : 0
-}
-// 资产直传地址:cookie 鉴权流式返回,非预签名 → 不会过期
-function assetStreamUrl(assetId: number, workspaceId: number): string {
-  return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
 }
 /** 从一个项目草稿提取该项目的「上传」或「生成」媒体,转成素材卡片 */
 function projectMediaCards(project: any, mode: 'upload' | 'generated', wsId: number): any[] {

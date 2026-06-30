@@ -234,17 +234,6 @@ export async function resolveTaskModel({
   return pickModel(models, operationCode, preferredModelKeywords)
 }
 
-export async function getModelForCapability(
-  capability,
-  preferredOperationCode = '',
-  preferredKeywords = [],
-  planCandidates = DEFAULT_MODEL_PLAN_CANDIDATES,
-) {
-  return getModelFromPlanCandidates(planCandidates, (plan) =>
-    getModelForCapabilityFromPlan(capability, preferredOperationCode, preferredKeywords, plan),
-  )
-}
-
 export function getModelForOperationFromPlan(operationCode, preferredKeywords = [], _plan = '', workspaceId = 0) {
   // 后端按调用者实际订阅在服务端过滤模型,客户端不该再传 plan。
   // 注意:listAiModels 的 plan 默认是 'pro',不显式置空就会被顶成 plan=pro —— 那样若模型挂在非 pro 套餐下就查不到
@@ -257,17 +246,6 @@ export function getModelForOperationFromPlan(operationCode, preferredKeywords = 
   return getCachedModel(cacheKey, async () => {
     const models = await listAiModels({ operationCode, plan: '', workspaceId: ws })
     return pickModel(models, operationCode, preferredKeywords)
-  })
-}
-
-export function getModelForCapabilityFromPlan(capability, preferredOperationCode = '', preferredKeywords = []) {
-  // 后端按调用者实际订阅在服务端过滤;客户端不传 plan。同 getModelForOperationFromPlan:
-  // listAiModels 的 plan 默认 'pro',必须显式 plan:'' 才不会被顶成 plan=pro 而漏掉非 pro 套餐下的模型。
-  const key = ['cap', capability, preferredOperationCode, preferredKeywords.join('|')].filter(Boolean).join(':')
-
-  return getCachedModel(key, async () => {
-    const models = await listAiModels({ capability, plan: '' })
-    return pickModel(models, preferredOperationCode, preferredKeywords)
   })
 }
 
@@ -1621,61 +1599,6 @@ export function createSubscriptionOrder({ workspaceId, planId }) {
   })
 }
 
-/**
- * 待支付续费账单列表(订阅周期到期 / 待支付的续费单)。
- * @param {number} workspaceId
- * @returns {Promise<Array<object>>}
- */
-export function listRenewalOrders(workspaceId) {
-  return requestJson(`/api/v1/billing/renewal-orders?workspace_id=${encodeURIComponent(String(workspaceId))}`)
-}
-
-/**
- * 为某条待支付续费账单生成支付链接,返回支付宝 pay_url。
- * @param {{ workspaceId: number, renewalOrderId: number }} params
- * @returns {Promise<{ order?: object, pay_url: string }>}
- */
-export function createRenewalPayUrl({ workspaceId, renewalOrderId }) {
-  const wsq = workspaceId ? `?workspace_id=${encodeURIComponent(String(workspaceId))}` : ''
-  return requestJson(`/api/v1/billing/renewal-orders/${Math.floor(Number(renewalOrderId))}/pay-url${wsq}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workspace_id: Number(workspaceId) }),
-  })
-}
-
-/**
- * Creates a recurring-subscription sign URL. Returns the plan plus an Alipay
- * agreement sign_url the caller opens in the system browser.
- * @param {{ workspaceId: number, planId: number }} params
- * @returns {Promise<{ plan: object, sign_url: string }>}
- */
-export function createSubscriptionSignUrl({ workspaceId, planId }) {
-  return requestJson('/api/v1/billing/subscriptions/sign-url', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      workspace_id: Number(workspaceId),
-      plan_id: Number(planId),
-    }),
-  })
-}
-
-export function cancelSubscription({ workspaceId, subscriptionId }) {
-  const wsId = Number(workspaceId || 0)
-  const subId = Number(subscriptionId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  if (!Number.isFinite(subId) || subId <= 0) {
-    throw new BusinessApiError('订阅 ID 无效')
-  }
-  return requestJson(
-    `/api/v1/billing/subscriptions/${Math.floor(subId)}/cancel?workspace_id=${encodeURIComponent(String(Math.floor(wsId)))}`,
-    { method: 'POST' },
-  )
-}
-
 export function listAssets({ workspaceId, type = '', status = 'active', source = '', limit = 100, offset = 0 }) {
   const query = new URLSearchParams({
     workspace_id: String(workspaceId),
@@ -1797,47 +1720,6 @@ export async function getAssetDownloadUrl({ workspaceId, assetId }) {
   return `/api/v1/assets/${id}/download?workspace_id=${ws}`
 }
 
-export async function downloadAssetFile({ workspaceId, assetId }) {
-  const wsId = Number(workspaceId || 0)
-  const id = Number(assetId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('素材 ID 无效')
-  }
-
-  let response
-  try {
-    response = await fetch(
-      buildUrl(businessApiBaseUrl, `/api/v1/assets/${Math.floor(id)}/download?workspace_id=${Math.floor(wsId)}`),
-      {
-        credentials: 'include',
-      },
-    )
-  } catch (error) {
-    throw new BusinessApiError('网络请求失败，请检查接口服务或本地代理配置', {
-      response: error,
-    })
-  }
-
-  if (!response.ok) {
-    const payload = await readJsonResponse(response)
-    throw new BusinessApiError(payload?.message || `请求失败 (${response.status})`, {
-      status: response.status,
-      code: payload?.code ?? payload?.code_string ?? null,
-      response: payload,
-    })
-  }
-
-  const blob = await response.blob()
-  return {
-    blob,
-    fileName: parseDownloadFileName(response.headers.get('content-disposition')),
-    mimeType: response.headers.get('content-type') || blob.type || '',
-  }
-}
-
 export function deleteAsset({ workspaceId, assetId }) {
   return requestJson(`/api/v1/assets/${assetId}?workspace_id=${workspaceId}`, {
     method: 'DELETE',
@@ -1919,103 +1801,6 @@ export function patchCreativeProject({ projectId, workspaceId, title, name }: an
     },
     body: JSON.stringify(payload),
   })
-}
-
-export function listCreativeProjectVersions({ projectId, workspaceId, offset = 0, limit = 50 }: any = {}) {
-  const id = Number(projectId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('项目 ID 无效')
-  }
-  const wsId = Number(workspaceId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('workspace_id 缺失')
-  }
-  const params = new URLSearchParams()
-  params.set('workspace_id', String(Math.floor(wsId)))
-  const off = Number(offset || 0)
-  const lim = Number(limit || 0)
-  if (Number.isFinite(off) && off > 0) params.set('offset', String(Math.floor(off)))
-  if (Number.isFinite(lim) && lim > 0) params.set('limit', String(Math.floor(lim)))
-  return requestJson(`/api/v1/creative/projects/${id}/versions?${params.toString()}`)
-}
-
-export function createCreativeProjectVersion({ projectId, workspaceId, ...payload }: any = {}) {
-  const id = Number(projectId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('项目 ID 无效')
-  }
-  const wsId = Number(workspaceId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('workspace_id 缺失')
-  }
-  const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
-  return requestJson(`/api/v1/creative/projects/${id}/versions?workspace_id=${Math.floor(wsId)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
-}
-
-export function getCreativeProjectVersion({ projectId, versionId, vid, workspaceId }: any = {}) {
-  const id = Number(projectId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('项目 ID 无效')
-  }
-  const resolvedVid = Number(versionId || vid || 0)
-  if (!Number.isFinite(resolvedVid) || resolvedVid <= 0) {
-    throw new BusinessApiError('版本 ID 无效')
-  }
-  const wsId = Number(workspaceId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('workspace_id 缺失')
-  }
-  return requestJson(
-    `/api/v1/creative/projects/${id}/versions/${Math.floor(resolvedVid)}?workspace_id=${Math.floor(wsId)}`,
-  )
-}
-
-export function deleteCreativeProjectVersion({ projectId, versionId, vid, workspaceId }: any = {}) {
-  const id = Number(projectId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('项目 ID 无效')
-  }
-  const resolvedVid = Number(versionId || vid || 0)
-  if (!Number.isFinite(resolvedVid) || resolvedVid <= 0) {
-    throw new BusinessApiError('版本 ID 无效')
-  }
-  const wsId = Number(workspaceId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('workspace_id 缺失')
-  }
-  return requestJson(
-    `/api/v1/creative/projects/${id}/versions/${Math.floor(resolvedVid)}?workspace_id=${Math.floor(wsId)}`,
-    {
-      method: 'DELETE',
-    },
-  )
-}
-
-export function restoreCreativeProjectVersion({ projectId, versionId, vid, workspaceId }: any = {}) {
-  const id = Number(projectId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('项目 ID 无效')
-  }
-  const resolvedVid = Number(versionId || vid || 0)
-  if (!Number.isFinite(resolvedVid) || resolvedVid <= 0) {
-    throw new BusinessApiError('版本 ID 无效')
-  }
-  const wsId = Number(workspaceId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('workspace_id 缺失')
-  }
-  return requestJson(
-    `/api/v1/creative/projects/${id}/versions/${Math.floor(resolvedVid)}/restore?workspace_id=${Math.floor(wsId)}`,
-    {
-      method: 'POST',
-    },
-  )
 }
 
 export function createCreativeProject(payload = {}) {
@@ -2260,25 +2045,6 @@ async function readJsonResponse(response) {
   } catch {
     return text
   }
-}
-
-function parseDownloadFileName(contentDisposition) {
-  const value = String(contentDisposition || '').trim()
-  if (!value) return ''
-
-  const utf8Match = value.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]).trim()
-    } catch {
-      return utf8Match[1].trim()
-    }
-  }
-
-  const plainMatch = value.match(/filename\s*=\s*"([^"]+)"/i) || value.match(/filename\s*=\s*([^;]+)/i)
-  return String(plainMatch?.[1] || '')
-    .trim()
-    .replace(/^["']|["']$/g, '')
 }
 
 function isBusinessError(payload) {

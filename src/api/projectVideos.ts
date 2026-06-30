@@ -1,4 +1,5 @@
 import { getCreativeProject, updateCreativeProjectDraft } from '@/api/business'
+import { assetStreamUrl } from '@/utils/assetUrl'
 
 export type ProjectVideoStatus = 'draft' | 'processing' | 'published' | 'failed'
 export type ProjectVideoSourceType = 'smart' | 'creative'
@@ -74,11 +75,6 @@ function normalizeCreativeProjectDraft(payload: any): any {
     if (parsed) return parsed
   }
   return null
-}
-
-// 鉴权直传地址:cookie 鉴权、非预签名,永不过期。用它替换草稿里会过期(X-Amz-Expires=900)的 S3 视频 URL。
-function assetStreamUrl(assetId: number, workspaceId: number): string {
-  return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
 }
 
 function readStoreFromDraft(draft: any): ProjectVideoStore {

@@ -4,14 +4,7 @@
  */
 import { listCreativeProjects, type BusinessApiError } from './business'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
-
-/**
- * 资产「鉴权直传」地址:cookie 鉴权、后端实时流式返回,非预签名 → 不会过期。
- * 用作 <img>/<video> 的 src,避免草稿里 S3 预签名 URL 过期导致图加载失败。
- */
-function assetStreamUrl(assetId: number, workspaceId: number): string {
-  return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
-}
+import { assetStreamUrl } from '@/utils/assetUrl'
 
 export interface TemplateItem {
   id: number

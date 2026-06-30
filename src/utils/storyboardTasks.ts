@@ -51,36 +51,6 @@ export function buildStoryboardImageParams(model, ratio) {
   return params
 }
 
-export function buildStoryboardEditInputAssets(item, materials = [], model = null) {
-  const assetId = normalizeAssetId(item?.assetId)
-
-  if (!assetId) {
-    return []
-  }
-
-  const assetIds = [assetId]
-
-  if (supportsMultipleReferenceImages(model)) {
-    for (const material of materials) {
-      if (!isImageMaterial(material)) {
-        continue
-      }
-
-      const materialAssetId = normalizeAssetId(material?.assetId)
-
-      if (materialAssetId && !assetIds.includes(materialAssetId)) {
-        assetIds.push(materialAssetId)
-      }
-
-      if (assetIds.length >= 10) {
-        break
-      }
-    }
-  }
-
-  return assetIds.map((id) => ({ asset_id: id, role: 'reference_image' }))
-}
-
 function hasParam(fields, name) {
   return fields.some((field) => field?.name === name)
 }
@@ -190,27 +160,4 @@ function pickClosestRatioOption(requested, options) {
   }
 
   return best || normalizedOptions[0]
-}
-
-function supportsMultipleReferenceImages(model) {
-  const provider = String(model?.provider || '').toLowerCase()
-  const capability = String(model?.capability || '').toLowerCase()
-  const searchableText = [model?.model, model?.version, model?.display_name, model?.displayName]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
-
-  return provider === 'volcengine' && (capability === 'image' || searchableText.includes('seedream'))
-}
-
-function isImageMaterial(material) {
-  const type = String(material?.type || '').toLowerCase()
-  const mimeType = String(material?.mimeType || material?.mime_type || '').toLowerCase()
-
-  return type === 'image' || mimeType.startsWith('image/')
-}
-
-function normalizeAssetId(value) {
-  const assetId = Number(value || 0)
-  return Number.isFinite(assetId) && assetId > 0 ? assetId : 0
 }

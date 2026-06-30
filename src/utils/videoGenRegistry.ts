@@ -15,11 +15,6 @@ export type VideoGenResult = { url: string; assetId: number }
 
 const running = new Map<number, Promise<VideoGenResult>>()
 
-/** 该项目当前是否有在途整片生成 */
-export function isVideoGenRunning(projectId: number): boolean {
-  return Number(projectId) > 0 && running.has(Number(projectId))
-}
-
 /** 取该项目在途生成的结果 promise(无则 null);可 await 拿 { url, assetId } */
 export function getRunningVideoGen(projectId: number): Promise<VideoGenResult> | null {
   return running.get(Number(projectId)) || null

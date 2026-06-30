@@ -9,31 +9,17 @@ import {
   waitForAiTask,
   uploadAssetFile,
   getAssetDownloadUrl,
-  listAssets,
-  extractAssetPageItems,
   getModelForOperation,
   resolveTaskModel,
   estimateAiTaskCost,
 } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
-import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
+import { resolveGeneratedMediaUrls, findAssetIdByTaskId } from '@/utils/taskMedia'
 
 const VIDEO_MODEL_KEYWORDS = ['seedance']
 
 const extractVideoAssetId = (task: any): number => Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
-
-async function findVideoAssetIdByTaskId(workspaceId: number, taskId: any): Promise<number> {
-  const tId = Number(taskId || 0)
-  if (!workspaceId || !tId) return 0
-  try {
-    const payload = await listAssets({ workspaceId, type: 'video', limit: 100 })
-    const hit = extractAssetPageItems(payload).find((a: any) => Number(a?.task_id) === tId)
-    return Number(hit?.id || 0) || 0
-  } catch {
-    return 0
-  }
-}
 
 /** 上传本地文件成 asset,返回 asset_id(type 由文件推断:视频→video,图片→image)。 */
 export async function uploadHotCopyAsset(workspaceId: number, file: File): Promise<number> {
@@ -111,7 +97,7 @@ export async function replicateHotVideo(args: {
     timeoutMs: 60 * 60 * 1000,
   })
   let assetId = extractVideoAssetId(completed)
-  if (!assetId) assetId = await findVideoAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
+  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'video')
   let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('复刻任务已完成,暂未返回可预览地址')
@@ -133,7 +119,7 @@ export async function awaitHotVideoResult(args: {
     timeoutMs: 60 * 60 * 1000,
   })
   let assetId = extractVideoAssetId(completed)
-  if (!assetId) assetId = await findVideoAssetIdByTaskId(args.workspaceId, completed?.id || args.taskId)
+  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || args.taskId, 'video')
   let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
-import AppToast from '@/components/AppToast'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
@@ -117,7 +116,6 @@ export default function ProjectVideoDetailView() {
 
   return (
     <div className="pvdetail-page">
-      <AppToast />
       <AppSidebar
         activeKey="projects"
         onNavigate={handleNavigate}

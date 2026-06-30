@@ -10,25 +10,10 @@ import {
   uploadAssetFile,
   extractTaskMediaUrls,
   getAssetDownloadUrl,
-  listAssets,
-  extractAssetPageItems,
   resolveTaskModel,
   estimateAiTaskCost,
 } from './business'
-import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
-
-// 对齐 2.0:outputs 里没带 asset_id 时,按 task_id 去资产列表里反查(否则 assetId=0 → 刷新水合换不了URL → 破图)
-async function findAssetIdByTaskId(workspaceId: number, taskId: any): Promise<number> {
-  const tId = Number(taskId || 0)
-  if (!workspaceId || !tId) return 0
-  try {
-    const payload = await listAssets({ workspaceId, type: 'image', limit: 100 })
-    const hit = extractAssetPageItems(payload).find((a: any) => Number(a?.task_id) === tId)
-    return Number(hit?.id || 0) || 0
-  } catch {
-    return 0
-  }
-}
+import { resolveGeneratedMediaUrls, findAssetIdByTaskId } from '@/utils/taskMedia'
 import { buildStoryboardImageParams } from '@/utils/storyboardTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
 
@@ -155,7 +140,7 @@ export async function generateShotImage(args: {
   const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 30 * 60 * 1000 })
   // 取 asset_id:outputs 优先;没有则按 task_id 反查(否则刷新水合换不了URL → 破图)
   let assetId = outputAssetId(completed)
-  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
+  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'image')
   // 有 asset_id → 优先用同源流式地址(getAssetDownloadUrl 已改为返回 /download,同源 HTTPS、不过期),
   // 避免直接用 outputs[].url 的 OSS 原始地址(http + IP 主机,在 HTTPS 页会 Mixed Content 破图)。
   let url = assetId ? await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '') : ''

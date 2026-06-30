@@ -17,6 +17,7 @@ import {
 } from '../api/auth'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
 import { clearSmartDraft } from '../utils/smartDraft'
+import { clearAllCache } from '../utils/swrCache'
 
 // 登出时清掉本地在制草稿(智能成片全局键 + 爆款复制按空间键)。
 // 这些草稿键不按用户隔离,不清的话同一浏览器换账号时新用户会继承上个用户的在制项目,
@@ -251,6 +252,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthSession(null)
     clearAuthSessionMarker()
     clearLocalDraftsOnLogout() // #4:换账号前清掉上个用户的在制草稿,避免新用户继承导致「项目加载失败」
+    clearAllCache() // 清 SWR sessionStorage 缓存,避免换账号沿用上个会话的缓存数据
     navigate('/welcome', { replace: true })
   }, [navigate, setAuthSession, stopSessionRefresh])
 

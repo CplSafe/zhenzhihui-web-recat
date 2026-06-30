@@ -118,6 +118,8 @@ export default function VideoStage({
   videoStartedAt,
   loadingTitle,
   costEstimate,
+  costLoading,
+  costError,
   faceBlurDebug,
   videoVersions = [],
   onSwitchVideo,
@@ -547,6 +549,17 @@ export default function VideoStage({
         </div>
       </div>
 
+      {/* 提交前积分预估:加载中 / 出错也给出反馈(此前 costLoading/costError 被丢弃,只在估到价时才有显示) */}
+      {!videoGenerating && costLoading && !costEstimate && (
+        <div className={styles.vstageCost}>
+          <span>积分预估中…</span>
+        </div>
+      )}
+      {!videoGenerating && costError && !costEstimate && (
+        <div className={styles.vstageCost}>
+          <span className={styles.vstageCostErr}>{costError}</span>
+        </div>
+      )}
       {/* 提交前积分预估:仅在真正估到价时显示;估不出来不显示 */}
       {!videoGenerating &&
         costEstimate &&

@@ -10,31 +10,6 @@
 // @ts-nocheck
 import type { Shot } from '@/components/smart/ScriptStoryboardTable'
 import { runResponseText, streamResponseText } from './aiResponses'
-import { resolveTaskModel, estimateAiTaskCost } from './business'
-
-/**
- * 文本生成(responses.multimodal:分镜脚本 / AI 润色 / 镜头信息等)提交前积分预估。
- * 注意:文本走 /ai/responses,而 estimate-cost 在 /ai/tasks —— 若后端不支持文本 op 估价会抛错,
- * 调用方需 try/catch 优雅降级(显示"暂不支持预估")。
- */
-export async function estimateResponsesCost(args: {
-  workspaceId: number
-  prompt?: string
-  modelPlanCandidates?: string[]
-}): Promise<any> {
-  const model = await resolveTaskModel({
-    operationCode: 'responses.multimodal',
-    modelPlanCandidates: args.modelPlanCandidates,
-  })
-  if (!model?.id) throw new Error('暂无可用的文本模型')
-  return estimateAiTaskCost({
-    workspaceId: args.workspaceId,
-    modelVersionId: model.id,
-    operationCode: 'responses.multimodal',
-    prompt: args.prompt || '',
-    params: {},
-  })
-}
 
 interface GenerateArgs {
   requirement: string
@@ -322,25 +297,6 @@ export async function generateShotInfo(args: {
     sfx: mapped?.sfx || '',
     subjects: mapped?.subjects || [],
   }
-}
-
-/** 生成分镜脚本,返回 Shot[](失败抛错)。 */
-export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
-  if (!args.requirement.trim() && !args.images?.length) throw new Error('请至少输入文案或上传图片')
-  const images = args.images || []
-  const text = await runResponseText({
-    system: SYSTEM,
-    user: buildUserText(args),
-    images: images.slice(0, 6),
-    temperature: 0.8,
-    maxTokens: 4000,
-    signal: args.signal,
-  })
-  // 用原始 objectURL(args.images)做展示映射(顺序与送模型/上传的一致)
-  const shots = parseShots(text, images)
-  if (!shots.length) throw new Error('未能解析分镜脚本,请重试')
-  // 强制各镜时长之和 = 用户要求的总时长(模型常超时)
-  return normalizeDurations(shots, parseInt(String(args.duration || '10'), 10) || 10)
 }
 
 /**

@@ -89,10 +89,11 @@ export default function ImageChat({
     const picked = (await Promise.all(sel.map((f) => fileToDataUrl(f).catch(() => null)))).filter(Boolean) as string[]
     if (picked.length) setImages((prev) => [...prev, ...picked])
   }
-  const removeImage = (url: string) => {
-    const idx = images.indexOf(url) // 被删图的 0-based 位置
-    if (idx < 0) return
-    setImages((prev) => prev.filter((_, i) => i !== idx)) // 仅删该位置(重复 URL 不会被一起删掉)
+  const removeImage = (idx: number) => {
+    // 按【下标】删,而不是按 url indexOf——两张相同图(同 dataURL)时 indexOf 只命中第一张,
+    // 点第二张的 × 会误删第一张。下标删才精确。
+    if (idx < 0 || idx >= images.length) return
+    setImages((prev) => prev.filter((_, i) => i !== idx))
     // 同步重排文本里的位置型引用 @图片N:指向被删图的去掉,其后的整体 -1(否则引用错图)
     setText((t) =>
       t.replace(/@图片(\d+)/g, (m, d) => {
@@ -223,10 +224,10 @@ export default function ImageChat({
         <div className={styles.card}>
           {images.length > 0 && (
             <div className={styles.attachments}>
-              {images.map((url) => (
-                <div className={styles.thumb} key={url}>
+              {images.map((url, i) => (
+                <div className={styles.thumb} key={`${url}-${i}`}>
                   <img src={url} alt="" />
-                  <button type="button" className={styles.thumbX} onClick={() => removeImage(url)} aria-label="移除">
+                  <button type="button" className={styles.thumbX} onClick={() => removeImage(i)} aria-label="移除">
                     ×
                   </button>
                 </div>
@@ -327,7 +328,7 @@ export default function ImageChat({
                       <div className={styles.atMenuTitle}>选择参考素材</div>
                       <div className={styles.atMenuGrid}>
                         {images.map((url, i) => (
-                          <button type="button" className={styles.atItem} key={url} onClick={() => pickRef(i)}>
+                          <button type="button" className={styles.atItem} key={`${url}-${i}`} onClick={() => pickRef(i)}>
                             <img src={url} alt="" />
                             <span className={styles.atItemName}>@图片{i + 1}</span>
                           </button>

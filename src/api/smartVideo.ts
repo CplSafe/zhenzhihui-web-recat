@@ -7,8 +7,6 @@
 import {
   createAiTask,
   waitForAiTask,
-  listAssets,
-  extractAssetPageItems,
   getAssetDownloadUrl,
   getModelForOperation,
   resolveTaskModel,
@@ -17,26 +15,13 @@ import {
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
-import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
+import { resolveGeneratedMediaUrls, findAssetIdByTaskId } from '@/utils/taskMedia'
 
 // 目前线上只有 Seedance 2.0
 const VIDEO_MODEL_KEYWORDS = ['seedance']
 // 视频编辑能力:在原视频基础上按提示微调(happyhorse-1.0-video-edit)
 const VIDEO_EDIT_MODEL_KEYWORDS = ['happyhorse']
 const extractVideoAssetId = (task: any): number => Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
-
-// outputs 没带 asset_id 时按 task_id 反查视频资产(否则刷新水合换不了URL → 视频丢失)
-async function findVideoAssetIdByTaskId(workspaceId: number, taskId: any): Promise<number> {
-  const tId = Number(taskId || 0)
-  if (!workspaceId || !tId) return 0
-  try {
-    const payload = await listAssets({ workspaceId, type: 'video', limit: 100 })
-    const hit = extractAssetPageItems(payload).find((a: any) => Number(a?.task_id) === tId)
-    return Number(hit?.id || 0) || 0
-  } catch {
-    return 0
-  }
-}
 
 const shotDurSec = (s: any): number => {
   const n = parseInt(String(s?.duration || '').replace(/[^0-9]/g, ''), 10)
@@ -145,7 +130,7 @@ async function resolveVideoTaskResult(
   fallbackTaskId: any,
 ): Promise<{ url: string; assetId: number }> {
   let assetId = extractVideoAssetId(completed)
-  if (!assetId) assetId = await findVideoAssetIdByTaskId(workspaceId, completed?.id || fallbackTaskId)
+  if (!assetId) assetId = await findAssetIdByTaskId(workspaceId, completed?.id || fallbackTaskId, 'video')
   const [url] = await resolveGeneratedMediaUrls({ workspaceId, task: completed, type: 'video' })
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')
   return { url, assetId }
@@ -224,7 +209,7 @@ export async function editFullVideo(args: {
     timeoutMs: 60 * 60 * 1000,
   })
   let assetId = extractVideoAssetId(completed)
-  if (!assetId) assetId = await findVideoAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
+  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'video')
   let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
   if (!url) throw new Error('视频编辑已完成,暂未返回可预览地址')
@@ -266,38 +251,6 @@ export async function estimateFullVideoCost(args: {
     workspaceId: args.workspaceId,
     modelVersionId: model.id,
     operationCode: 'video.generate',
-    params,
-  })
-}
-
-/** 视频编辑(video.edit,确认修改)预估积分:按源视频真实时长 source_video_duration 计费。 */
-export async function estimateEditVideoCost(args: {
-  workspaceId: number
-  sourceVideoDurationSec?: number
-  ratio?: string
-  modelPlanCandidates?: string[]
-}): Promise<any> {
-  const pick = (kw: string[]) =>
-    resolveTaskModel({
-      capability: 'video',
-      operationCode: 'video.edit',
-      preferredModelKeywords: kw,
-      modelPlanCandidates: args.modelPlanCandidates,
-    }).catch(() => null)
-  let model = await pick(VIDEO_EDIT_MODEL_KEYWORDS)
-  if (!model?.id) model = await pick([])
-  if (!model?.id) throw new Error('暂无可用的视频编辑模型')
-  const params = buildVideoGenerationParams(model, {
-    duration: normalizeSeedanceDuration(args.sourceVideoDurationSec || 10),
-    sourceVideoDuration: args.sourceVideoDurationSec,
-    resolution: '720p',
-    ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
-    generateAudio: true,
-  })
-  return estimateAiTaskCost({
-    workspaceId: args.workspaceId,
-    modelVersionId: model.id,
-    operationCode: 'video.edit',
     params,
   })
 }

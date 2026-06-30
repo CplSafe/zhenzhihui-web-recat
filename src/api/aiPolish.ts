@@ -154,64 +154,6 @@ export async function generateProjectNameFromImages(
 }
 
 /**
- * 主推产品锚定:看一张用户上传的素材图(多模态),识别其主推产品/主体,并从给定的分镜主体名清单里
- * 选出该素材【应当复用】到的主体(应当用这张真实素材做图生图、保证产品一致,而非凭空文生图)。
- * 返回 { product:识别到的产品名, kind:类型, matches:命中的主体名[] }。失败/无图返回空匹配。
- */
-export async function matchUploadToSubjects(
-  imageUrl: string,
-  subjectNames: string[],
-  signal?: AbortSignal,
-): Promise<{ product: string; kind: string; matches: string[] }> {
-  const empty = { product: '', kind: '', matches: [] as string[] }
-  if (!imageUrl) return empty
-  const names = (subjectNames || []).map((n) => String(n || '').trim()).filter(Boolean)
-  const system =
-    '你是电商短视频「主推产品」识别助手。下面随请求附上一张用户上传的素材图(通常是要推广的产品)。' +
-    '请:①识别这张图里的【主推产品】,给出简短具体的中文名称(product)与类型(kind,如 服饰/数码/食品);' +
-    '②从给定的【分镜主体清单】里,选出所有「就是这件主推产品本身、或它的局部/细节/穿戴它的人」的主体名(matches)——' +
-    '例如产品是旗袍时:旗袍、立领、盘扣、印花、面料特写、以及穿着该旗袍的模特,都算同一产品,应全部选入' +
-    '(它们后续会合并成一个产品素材、复用这张真实素材以保证一致);' +
-    '但【场景/背景/与产品无关的道具】(如室内背景、桌子、团扇等)不要选。选不到就给空数组。' +
-    '只输出严格 JSON:{"product":"...","kind":"...","matches":["...","..."]},不要解释、不要代码块标记。'
-  const user =
-    `分镜主体清单(可多选,只选与素材同一对象的):${names.length ? names.join('、') : '(空)'}\n` +
-    '素材图已随请求附上,请据图判断。'
-  let raw = ''
-  try {
-    raw = await runResponseText({ system, user, images: [imageUrl], temperature: 0.3, maxTokens: 200, signal })
-  } catch {
-    return empty
-  }
-  raw = raw
-    .replace(/^```(json)?/i, '')
-    .replace(/```$/i, '')
-    .trim()
-  const m = raw.match(/\{[\s\S]*\}/)
-  try {
-    const o = JSON.parse(m ? m[0] : raw)
-    const product = String(o?.product || '')
-      .replace(/["'《》「」“”‘’\s]/g, '')
-      .trim()
-    const kind = String(o?.kind || '').trim()
-    const matchesRaw = Array.isArray(o?.matches) ? o.matches : []
-    // 模糊匹配回真实主体名:精确相等优先,否则包含关系(容忍 VL 措辞差异,但仍防臆造)
-    const matches: string[] = []
-    for (const raw of matchesRaw) {
-      const x = String(raw || '')
-        .replace(/^@/, '')
-        .trim()
-      if (!x) continue
-      const hit = names.find((n) => n === x) || names.find((n) => n.includes(x) || x.includes(n))
-      if (hit && !matches.includes(hit)) matches.push(hit)
-    }
-    return { product, kind, matches }
-  } catch {
-    return empty
-  }
-}
-
-/**
  * 主推产品锚定(多图版):一次性看用户上传的【多张】素材图 + 分镜主体清单,综合判断:
  *  - 把同一件产品的多张图归为一组(imageIndexes,1-based);不同产品分到不同组;
  *  - 每组给出 product 名称、kind,以及命中的主体名 matches(产品本身/局部/细节/穿戴它的人;场景/背景/无关道具不算);
@@ -350,61 +292,13 @@ export async function guideRequirement(text: string, signal?: AbortSignal): Prom
  * 营销 SKILLS:可选的营销技能包。key 为下拉选项文案,system 为该技能的拆解侧重。
  * 选择某 skill 后,把「用户想法 + 素材」交给对应技能,自动拆分生成「营销思路拆解」建议。
  */
-export const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill'] as const
-export type SkillOption = (typeof SKILL_OPTIONS)[number]
+const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill'] as const
+type SkillOption = (typeof SKILL_OPTIONS)[number]
 
 // 每个 skill 的完整方法论说明书(角色/铁律/五段框架/标签库/输出格式/示例),作为 system 提示词。
 const SKILL_SYSTEM: Record<SkillOption, string> = {
   信息电商Skill: skillEcommerceManual,
   本地生活Skill: skillLocalLifeManual,
-}
-
-/**
- * 用所选 SKILL 把「产品信息」拆解成「营销思路拆解」建议。
- *
- * 方案 A(多模态直喂):把
- *   - 说明书(该 skill 的营销方法论 → system)
- *   - 产品信息 = 用户文字 + 上传素材图(user 文本 + 图片随请求作多模态附上)
- * 一次性交给后端 responses.multimodal,据说明书 + 产品信息产出拆解(不臆造、不脱离素材)。
- * 产出与 AI 引导的「创作需求」同类:结构清晰、可直接用于后续生成分镜脚本。
- * images 传图片地址(url/dataURL)。
- */
-export async function skillBreakdown(
-  input: { skill: string; requirement: string; images?: string[] },
-  signal?: AbortSignal,
-): Promise<string> {
-  const req = (input.requirement || '').trim()
-  const images = (input.images || []).filter(Boolean)
-  if (!req && !images.length) throw new Error('请先输入想法或上传素材')
-
-  // 说明书:该 skill 对应的营销方法论(主导 system)
-  const manual = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['信息电商Skill']
-  const system =
-    manual +
-    '\n你只能依据用户提供的【产品信息】(下方文字 + 随请求附上的素材图)来分析,严禁脱离素材臆造不存在的产品/卖点;素材里没有的信息不要编。' +
-    '请输出一份结构清晰的「营销思路拆解」,用要点分条呈现,至少覆盖:' +
-    '【核心洞察】(目标人群+真实痛点/动机)、【创意概念】(一句话主创意/记忆点)、' +
-    '【卖点&信任】(核心卖点与信任背书)、【行动号召CTA】、【表现形式/风格调性】。' +
-    '不要直接写分镜脚本/台词/镜头画面,不要额外解释说明。'
-
-  // 产品信息:用户文字 + 素材说明(图片随请求作多模态附上)
-  const user =
-    '【产品信息】\n' +
-    `· 用户文字:${req || '(未填写,请基于素材图给出合理方向)'}\n` +
-    (images.length
-      ? `· 素材:已随请求附上 ${images.length} 张产品/场景图,请逐张看清实际出现的物体/品牌/场景/人物,据此拆解。`
-      : '· 素材:无(仅据文字)')
-
-  const out = await runResponseText({
-    system,
-    user,
-    images: images.length ? images : undefined, // 多模态:说明书(system)+文字(user)+图片 一次性喂入
-    temperature: 0.6,
-    maxTokens: 4000,
-    signal,
-  })
-  if (!out) throw new Error('生成为空,请重试')
-  return out
 }
 
 /**
@@ -590,39 +484,6 @@ export async function analyzeForGuide(
     return JSON.parse(m[0]) as GuideSuggestions
   } catch {
     return {}
-  }
-}
-
-/**
- * 镜头编排:根据整体需求 + 该镜头画面描述,生成该镜头的 台词/旁白、字幕、音效。
- */
-export async function generateShotCopy(
-  input: { requirement?: string; desc: string; durationSec?: number },
-  signal?: AbortSignal,
-): Promise<{ line: string; subtitle: string; sfx: string }> {
-  const dur = Number(input.durationSec || 0)
-  const maxLine = dur > 0 ? dur * 4 : 0
-  const system =
-    '你是短视频(信息流广告)文案。根据【整体需求】和【该镜头画面描述】,为这个镜头写出贴合的:' +
-    '台词/旁白(line)、字幕(subtitle)、音效说明(sfx)。' +
-    (maxLine ? `镜头时长约 ${dur} 秒,台词/旁白不超过 ${maxLine} 个字(避免语速过快);` : '') +
-    '字幕要简短(不超过台词、通常 ≤15 个字);没有就给空字符串。' +
-    '只输出严格 JSON:{"line":"...","subtitle":"...","sfx":"..."},不要解释、不要代码块标记。'
-  const user = `【整体需求】${input.requirement || ''}\n【画面描述】${input.desc || ''}`
-  const raw = (await chatOnce(system, user, signal, 300))
-    .replace(/^```(json)?/i, '')
-    .replace(/```$/i, '')
-    .trim()
-  const m = raw.match(/\{[\s\S]*\}/)
-  try {
-    const o = JSON.parse(m ? m[0] : raw)
-    return {
-      line: String(o?.line || o?.voiceover || '').trim(),
-      subtitle: String(o?.subtitle || '').trim(),
-      sfx: String(o?.sfx || o?.sound || '').trim(),
-    }
-  } catch {
-    throw new Error('文案生成解析失败,请重试')
   }
 }
 
