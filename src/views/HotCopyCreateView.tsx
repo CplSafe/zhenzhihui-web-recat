@@ -22,6 +22,7 @@ import { editFullVideo } from '@/api/smartVideo'
 import { readVideoDurationSec } from '@/utils/videoDuration'
 import { saveHotCopyDraft, loadHotCopyDraft, clearHotCopyDraft, type HotCopyDraft } from '@/utils/hotCopyDraft'
 import { refreshAssetUrl } from '@/api/smartShotImage'
+import { persistHotCopyResultToBackend } from '@/utils/persistHotCopyResult'
 import { generateProjectName } from '@/api/aiPolish'
 import {
   createCreativeProject,
@@ -253,6 +254,8 @@ export default function HotCopyCreateView() {
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
         markGen(null, 'published') // 收尾恢复时的进行中记录(从草稿列表消失)
+        // 完成即落库(切走/卸载也保存,不只靠 setState + 防抖)
+        void persistHotCopyResultToBackend({ projectId: projectIdRef.current, workspaceId: ws, url, assetId })
       })
       .catch((e: any) => {
         markGen(null, 'failed') // 失败:留作可重试草稿
@@ -678,6 +681,8 @@ export default function HotCopyCreateView() {
     })
     setFullVideo({ url, assetId })
     setVideoVersions((prev) => [...prev, { url, assetId }])
+    // 完成即落库(切走/卸载也保存,不只靠 setState + 防抖)
+    void persistHotCopyResultToBackend({ projectId: projectIdRef.current, workspaceId: ws, url, assetId })
   }
 
   // 入口提交:上传本地素材取 asset_id → 直接 video.replicate 出片
@@ -780,6 +785,8 @@ export default function HotCopyCreateView() {
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
         markGen(gid, 'published')
+        // 完成即落库(切走/卸载也保存)
+        void persistHotCopyResultToBackend({ projectId: projectIdRef.current, workspaceId: ws, url, assetId })
       } catch (e: any) {
         markGen(gid, 'failed')
         showToast(`视频修改失败:${e?.message || '请重试'}`, 'error')
