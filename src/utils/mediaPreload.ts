@@ -79,7 +79,7 @@ export function preloadImage(url: string): Promise<void> {
  * 与只取首帧不同:这里会缓冲到浏览器认为可流畅播放(canplay),
  * 这样真正展示该视频时直接能播、不再转圈。字节进入浏览器 HTTP 缓存供后续复用。
  */
-export function preloadVideo(url: string): Promise<void> {
+function preloadVideo(url: string): Promise<void> {
   if (!url) return Promise.resolve()
   const hit = cache.get(url)
   if (hit) return hit
@@ -111,7 +111,7 @@ export function preloadVideo(url: string): Promise<void> {
 }
 
 /** 按类型预取单个媒体。 */
-export function preloadOne(item: MediaItem): Promise<void> {
+function preloadOne(item: MediaItem): Promise<void> {
   return item.type === 'video' ? preloadVideo(item.url) : preloadImage(item.url)
 }
 

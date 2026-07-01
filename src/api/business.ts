@@ -234,7 +234,7 @@ export async function resolveTaskModel({
   return pickModel(models, operationCode, preferredModelKeywords)
 }
 
-export function getModelForOperationFromPlan(operationCode, preferredKeywords = [], _plan = '', workspaceId = 0) {
+function getModelForOperationFromPlan(operationCode, preferredKeywords = [], _plan = '', workspaceId = 0) {
   // 后端按调用者实际订阅在服务端过滤模型,客户端不该再传 plan。
   // 注意:listAiModels 的 plan 默认是 'pro',不显式置空就会被顶成 plan=pro —— 那样若模型挂在非 pro 套餐下就查不到
   // (正是「明明有 seedance 模型却报没有匹配」的根因)。故显式 plan:'' 不下发 plan,交后端按订阅决定。
@@ -1046,34 +1046,6 @@ export function getAiTask({ workspaceId, taskId }) {
   return requestJson(`/api/v1/ai/tasks/${taskId}?workspace_id=${workspaceId}`)
 }
 
-export function listAiTasks({ workspaceId, status = '', operationCode = '', mine, limit = 20, offset = 0 }: any = {}) {
-  const wsId = Number(workspaceId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  const query = new URLSearchParams({
-    workspace_id: String(Math.floor(wsId)),
-    limit: String(Math.max(1, Math.min(Number(limit) || 20, 100))),
-    offset: String(Math.max(0, Number(offset) || 0)),
-  })
-  if (status) query.set('status', String(status))
-  if (operationCode) query.set('operation_code', String(operationCode))
-  if (mine !== undefined && mine !== null && mine !== '') query.set('mine', String(mine))
-  return requestJson(`/api/v1/ai/tasks?${query}`)
-}
-
-export function cancelAiTask({ workspaceId, taskId }: any = {}) {
-  const wsId = Number(workspaceId || 0)
-  const id = Number(taskId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('任务 ID 无效')
-  }
-  return requestJson(`/api/v1/ai/tasks/${Math.floor(id)}/cancel?workspace_id=${Math.floor(wsId)}`, { method: 'POST' })
-}
-
 export async function waitForAiTask({ workspaceId, task, intervalMs = 1600, timeoutMs = 120000, onPoll, signal }) {
   let currentTask = task
   const startedAt = Date.now()
@@ -1133,136 +1105,6 @@ export function listBillingPlans() {
   return requestJson('/api/v1/billing/plans')
 }
 
-export function getAdminSession() {
-  return requestJson('/api/v1/admin/session')
-}
-
-export function getAdminOverview({ from = '', to = '' }: any = {}) {
-  const query = new URLSearchParams()
-  if (from) query.set('from', String(from))
-  if (to) query.set('to', String(to))
-  return requestJson(`/api/v1/admin/overview${query.toString() ? `?${query}` : ''}`)
-}
-
-export function listAdminAuditLogs({
-  actorAdminUserId = '',
-  action = '',
-  resourceType = '',
-  resourceId = '',
-  from = '',
-  to = '',
-  limit = 20,
-  offset = 0,
-}: any = {}) {
-  const query = new URLSearchParams({
-    limit: String(Math.max(1, Math.min(Number(limit) || 20, 100))),
-    offset: String(Math.max(0, Number(offset) || 0)),
-  })
-  if (actorAdminUserId !== '' && actorAdminUserId !== null && actorAdminUserId !== undefined) {
-    query.set('actor_admin_user_id', String(actorAdminUserId))
-  }
-  if (action) query.set('action', String(action))
-  if (resourceType) query.set('resource_type', String(resourceType))
-  if (resourceId) query.set('resource_id', String(resourceId))
-  if (from) query.set('from', String(from))
-  if (to) query.set('to', String(to))
-  return requestJson(`/api/v1/admin/audit-logs?${query}`)
-}
-
-export function listAdminProviders() {
-  return requestJson('/api/v1/admin/settings/providers')
-}
-
-export function updateAdminProvider(provider, request = {}) {
-  const providerName = String(provider || '').trim()
-  if (!providerName) {
-    throw new BusinessApiError('服务商标识不能为空')
-  }
-  return requestJson(`/api/v1/admin/settings/providers/${encodeURIComponent(providerName)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request && typeof request === 'object' ? removeEmptyFields(request) : {}),
-  })
-}
-
-export function testAdminProviderConnection(provider, request = {}) {
-  const providerName = String(provider || '').trim()
-  if (!providerName) {
-    throw new BusinessApiError('服务商标识不能为空')
-  }
-  return requestJson(`/api/v1/admin/settings/providers/${encodeURIComponent(providerName)}/test`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request && typeof request === 'object' ? removeEmptyFields(request) : {}),
-  })
-}
-
-export function listAdminModels({ provider = '', enabled = '', limit = 20, offset = 0 }: any = {}) {
-  const query = new URLSearchParams({
-    limit: String(Math.max(1, Math.min(Number(limit) || 20, 100))),
-    offset: String(Math.max(0, Number(offset) || 0)),
-  })
-  if (provider) query.set('provider', String(provider))
-  if (enabled !== '' && enabled !== null && enabled !== undefined) query.set('enabled', String(enabled))
-  return requestJson(`/api/v1/admin/models?${query}`)
-}
-
-export function createAdminModel(request = {}) {
-  return requestJson('/api/v1/admin/models', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request && typeof request === 'object' ? removeEmptyFields(request) : {}),
-  })
-}
-
-export function getAdminModelDetail(id) {
-  const modelId = Number(id || 0)
-  if (!Number.isFinite(modelId) || modelId <= 0) {
-    throw new BusinessApiError('模型 ID 无效')
-  }
-  return requestJson(`/api/v1/admin/models/${Math.floor(modelId)}`)
-}
-
-export function updateAdminModel(id, request = {}) {
-  const modelId = Number(id || 0)
-  if (!Number.isFinite(modelId) || modelId <= 0) {
-    throw new BusinessApiError('模型 ID 无效')
-  }
-  return requestJson(`/api/v1/admin/models/${Math.floor(modelId)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request && typeof request === 'object' ? removeEmptyFields(request) : {}),
-  })
-}
-
-export function enableAdminModel(id) {
-  const modelId = Number(id || 0)
-  if (!Number.isFinite(modelId) || modelId <= 0) {
-    throw new BusinessApiError('模型 ID 无效')
-  }
-  return requestJson(`/api/v1/admin/models/${Math.floor(modelId)}/enable`, { method: 'POST' })
-}
-
-export function disableAdminModel(id) {
-  const modelId = Number(id || 0)
-  if (!Number.isFinite(modelId) || modelId <= 0) {
-    throw new BusinessApiError('模型 ID 无效')
-  }
-  return requestJson(`/api/v1/admin/models/${Math.floor(modelId)}/disable`, { method: 'POST' })
-}
-
-export function testEstimateAdminModel(id, request = {}) {
-  const modelId = Number(id || 0)
-  if (!Number.isFinite(modelId) || modelId <= 0) {
-    throw new BusinessApiError('模型 ID 无效')
-  }
-  return requestJson(`/api/v1/admin/models/${Math.floor(modelId)}/test-estimate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request && typeof request === 'object' ? removeEmptyFields(request) : {}),
-  })
-}
-
 export function estimateAiTaskCost({ workspaceId, modelVersionId, operationCode, prompt = '', params = {} }: any = {}) {
   const wsId = Number(workspaceId || 0)
   const modelId = Number(modelVersionId || 0)
@@ -1289,22 +1131,6 @@ export function estimateAiTaskCost({ workspaceId, modelVersionId, operationCode,
       }),
     ),
   })
-}
-
-export function listCreditLedgers({ workspaceId, kind = '', limit = 20, offset = 0 }: any = {}) {
-  const wsId = Number(workspaceId || 0)
-  if (!Number.isFinite(wsId) || wsId <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  const query = new URLSearchParams({
-    workspace_id: String(Math.floor(wsId)),
-    limit: String(Math.max(1, Math.min(Number(limit) || 20, 100))),
-    offset: String(Math.max(0, Number(offset) || 0)),
-  })
-  if (kind) {
-    query.set('kind', String(kind))
-  }
-  return requestJson(`/api/v1/billing/credit-ledgers?${query}`)
 }
 
 export function listPaymentOrders({ workspaceId, type = '', status = '', limit = 20, offset = 0 }: any = {}) {
@@ -1380,130 +1206,6 @@ export function leaveWorkspace({ workspaceId }: any = {}) {
   }
   return requestJson(`/api/v1/workspaces/${Math.floor(id)}/leave`, {
     method: 'POST',
-  })
-}
-
-export function listWorkspaceInvitations(workspaceId) {
-  const id = Number(workspaceId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/invitations`)
-}
-
-export function createWorkspaceInvitation({ workspaceId, expiryDays, role = 'member' }: any = {}) {
-  const id = Number(workspaceId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  const days = Number(expiryDays || 0)
-  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/invitations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(
-      removeEmptyFields({
-        expires_in_days: Number.isFinite(days) && days > 0 ? Math.floor(days) : undefined,
-        role: String(role || 'member').trim() || 'member',
-      }),
-    ),
-  })
-}
-
-export function deleteWorkspaceInvitation({ workspaceId, invitationId }: any = {}) {
-  const id = Number(workspaceId || 0)
-  const invId = Number(invitationId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  if (!Number.isFinite(invId) || invId <= 0) {
-    throw new BusinessApiError('邀请 ID 无效')
-  }
-  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/invitations/${Math.floor(invId)}`, {
-    method: 'DELETE',
-  })
-}
-
-export function removeWorkspaceMember({ workspaceId, userId }: any = {}) {
-  const id = Number(workspaceId || 0)
-  const uid = Number(userId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  if (!Number.isFinite(uid) || uid <= 0) {
-    throw new BusinessApiError('成员 ID 无效')
-  }
-  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/members/${Math.floor(uid)}`, {
-    method: 'DELETE',
-  })
-}
-
-export function updateWorkspaceMemberRole({ workspaceId, userId, role }: any = {}) {
-  const id = Number(workspaceId || 0)
-  const uid = Number(userId || 0)
-  const nextRole = String(role || '').trim()
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  if (!Number.isFinite(uid) || uid <= 0) {
-    throw new BusinessApiError('成员 ID 无效')
-  }
-  if (!nextRole) {
-    throw new BusinessApiError('成员角色不能为空')
-  }
-  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/members/${Math.floor(uid)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      role: nextRole,
-    }),
-  })
-}
-
-export function updateWorkspaceMemberQuota({
-  workspaceId,
-  userId,
-  canGenerate,
-  maxTaskCredits,
-  monthlyCreditLimit,
-}: any = {}) {
-  const id = Number(workspaceId || 0)
-  const uid = Number(userId || 0)
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new BusinessApiError('工作空间 ID 无效')
-  }
-  if (!Number.isFinite(uid) || uid <= 0) {
-    throw new BusinessApiError('成员 ID 无效')
-  }
-  const resolvedMaxTaskCredits =
-    maxTaskCredits === undefined || maxTaskCredits === null || maxTaskCredits === ''
-      ? undefined
-      : Number(maxTaskCredits)
-  const resolvedMonthlyCreditLimit =
-    monthlyCreditLimit === undefined || monthlyCreditLimit === null || monthlyCreditLimit === ''
-      ? undefined
-      : Number(monthlyCreditLimit)
-  if (
-    resolvedMaxTaskCredits !== undefined &&
-    (!Number.isFinite(resolvedMaxTaskCredits) || resolvedMaxTaskCredits < 0)
-  ) {
-    throw new BusinessApiError('单任务额度必须为非负数字')
-  }
-  if (
-    resolvedMonthlyCreditLimit !== undefined &&
-    (!Number.isFinite(resolvedMonthlyCreditLimit) || resolvedMonthlyCreditLimit < 0)
-  ) {
-    throw new BusinessApiError('月度额度必须为非负数字')
-  }
-  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/members/${Math.floor(uid)}/quota`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(
-      removeEmptyFields({
-        can_generate: typeof canGenerate === 'boolean' ? canGenerate : undefined,
-        max_task_credits: resolvedMaxTaskCredits,
-        monthly_credit_limit: resolvedMonthlyCreditLimit,
-      }),
-    ),
   })
 }
 

@@ -37,33 +37,6 @@ export function buildModelPlanCandidatesFromSession(
   return normalizePlanCandidates(candidates, fallback)
 }
 
-export function buildModelPlanCandidatesFromBilling({ subscriptions = [], plans = [] } = {}) {
-  const planCodeById = new Map(
-    (Array.isArray(plans) ? plans : [])
-      .map((plan): [string, any] => [
-        String(plan?.id ?? plan?.plan_id ?? ''),
-        plan?.code || plan?.name || plan?.plan_code,
-      ])
-      .filter(([id, code]) => id && code),
-  )
-
-  const candidates = (Array.isArray(subscriptions) ? subscriptions : [])
-    .filter(isCurrentActiveSubscription)
-    .flatMap((subscription) => {
-      const planId = String(subscription?.plan_id ?? subscription?.planId ?? subscription?.plan?.id ?? '')
-
-      return normalizeModelPlanCandidate([
-        subscription?.plan,
-        subscription?.plan_code,
-        subscription?.planCode,
-        planCodeById.get(planId),
-      ])
-    })
-    .filter(Boolean)
-
-  return normalizePlanCandidates(candidates)
-}
-
 export function buildModelPlanCandidatesFromBillingPlans(plans = []) {
   const candidates = (Array.isArray(plans) ? plans : [])
     .flatMap((plan) => [plan?.code, plan?.plan_code, plan?.planCode, plan?.name])
@@ -116,20 +89,4 @@ export function normalizeModelPlanCandidate(value) {
   }
 
   return [plan]
-}
-
-function isCurrentActiveSubscription(subscription) {
-  if (String(subscription?.status || '').toLowerCase() !== 'active') {
-    return false
-  }
-
-  const currentPeriodEnd = subscription?.current_period_end || subscription?.currentPeriodEnd
-
-  if (!currentPeriodEnd) {
-    return true
-  }
-
-  const expiresAt = new Date(currentPeriodEnd).getTime()
-
-  return Number.isNaN(expiresAt) || expiresAt > Date.now()
 }
