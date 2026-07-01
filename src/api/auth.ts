@@ -135,7 +135,24 @@ export function listWorkspaceMembers(workspaceId) {
   return requestJson(buildUrl(businessApiBaseUrl, `/api/v1/workspaces/${workspaceId}/members`))
 }
 
-export async function getAuthenticatedSession() {
+// 同一时刻多个来源(初次挂载 / 续期失败重拉 / 守卫 / 登录轮询)可能并发校验会话。
+// 用一个共享 in-flight promise 去重:并发调用共用同一次 session→refresh,避免打成 3~4 对
+// 401 请求风暴。promise 结束即清空,后续(如登录轮询的下一拍)可再次正常发起。
+let authSessionPromise: Promise<any> | null = null
+
+export function getAuthenticatedSession() {
+  if (!authSessionPromise) {
+    authSessionPromise = fetchAuthenticatedSession()
+    // finally 仅用于结束后清空缓存;其返回的新 promise 丢弃,
+    // 对外 return 的是原始 promise(保留 resolve/reject 供调用方 await/catch)。
+    authSessionPromise.finally(() => {
+      authSessionPromise = null
+    })
+  }
+  return authSessionPromise
+}
+
+async function fetchAuthenticatedSession() {
   // 如果正在进行 SSO 登录回调，即使没有历史 marker 也应该尝试获取 session
   const ssoPending = window.sessionStorage.getItem('zzh_sso_pending') === '1'
   const shouldAttemptRefresh = hasAuthSessionMarker() || ssoPending
