@@ -75,12 +75,14 @@ import {
 import { useToast } from '@/composables/useToast'
 import { openComingSoon, openMemberCenter } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+import { useAuth } from '@/auth/AuthContext'
 import {
   saveSmartDraft,
   loadSmartDraft,
   clearSmartDraft,
   buildSmartSnapshot,
   parseSmartSnapshot,
+  computeVideoContentSig,
   type SmartDraft,
 } from '@/utils/smartDraft'
 import { persistVideoResultToBackend } from '@/utils/persistVideoResult'
@@ -202,6 +204,7 @@ export default function SmartCreateView() {
   const location = useLocation()
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
+  const { isCheckingSession } = useAuth()
   const workspaceId = useWorkspaceId()
   const modelPlanCandidates = useModelPlanCandidates() as string[]
   const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
@@ -1173,6 +1176,29 @@ export default function SmartCreateView() {
     createdAt: number
   }
   const [videoGenerations, setVideoGenerations] = useState<GenRecord[]>([])
+  // 上一版整片成片所依据的「内容签名」:随草稿持久化。项目管理据此判「内容改了没出新片 → 草稿(在制)」。
+  // 只在出片成功时盖章(见 commitVideoSig),普通编辑不动它。
+  const [lastVideoSig, setLastVideoSig] = useState('')
+  // 本次在途出片【发起时锁定】的内容签名:生成开始 lockVideoSig() 算好并随草稿持久化,完成时 commitVideoSig 用它盖章。
+  // 避免用"完成那一刻的当前分镜"盖章(用户生成中/后改了内容会把签名盖成新内容 → 列表误判"没变")。
+  const [pendingVideoSig, setPendingVideoSig] = useState('')
+  const pendingVideoSigRef = useRef('')
+  // 发起出片时锁定当前内容签名(与 persistVideoResult / 列表同口径 computeVideoContentSig)
+  const lockVideoSig = () => {
+    const sig = computeVideoContentSig(shots, entryMeta, reqSummary || requirement)
+    pendingVideoSigRef.current = sig
+    setPendingVideoSig(sig)
+    return sig
+  }
+  // 出片成功盖章:只用【锁定签名】(显式传入 → ref → 持久化 pending)。
+  // 拿不到锁定签名时【不本地盖章】—— 绝不用"当前分镜"兜底(用户可能已改内容,会把签名盖成新内容 → 列表误判"没变");
+  // 此时以后端 persistVideoResult 的权威盖章为准(它用草稿里的 pendingVideoSig),下次加载 applyDraft 再对齐。
+  const commitVideoSig = (sig?: string) => {
+    const finalSig = sig || pendingVideoSigRef.current || pendingVideoSig
+    if (finalSig) setLastVideoSig(finalSig)
+    pendingVideoSigRef.current = ''
+    setPendingVideoSig('')
+  }
   const genSeqRef = useRef(0)
   const immediateSaveRef = useRef(false) // startGen 后请求立即落盘:草稿即时出现在项目里(不等防抖)
   // 开始一次生成/重做:压入一条「草稿(processing)」记录。
@@ -1243,6 +1269,7 @@ export default function SmartCreateView() {
     if (opts?.edit && fullVideo.assetId) {
       setVidGenRunning(true)
       const gid = startGen(note)
+      const lockedSig = lockVideoSig() // 发起时锁定本片内容签名
       try {
         const plans = await resolvePlanCandidates()
         const editPrompt = [
@@ -1262,10 +1289,18 @@ export default function SmartCreateView() {
           modelPlanCandidates: plans,
         })
         // B:修改完成即落后端(切走也保存)
-        void persistVideoResultToBackend({ projectId: projectIdRef.current, workspaceId: ws, url, assetId, genId: gid })
+        void persistVideoResultToBackend({
+          projectId: projectIdRef.current,
+          workspaceId: ws,
+          url,
+          assetId,
+          genId: gid,
+          lockedSig,
+        })
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
         markGen(gid, 'published')
+        commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
       } catch (e: any) {
         showToast(`视频修改失败:${e?.message || ''}`, 'error')
         markGen(gid, 'failed')
@@ -1292,6 +1327,7 @@ export default function SmartCreateView() {
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
         markGen(null, 'published') // 收尾本组件的「生成中」记录
+        commitVideoSig() // 盖章:用锁定签名(在途生成由原发起方 lock/persist,这里只并入 UI)
       } catch {
         markGen(null, 'failed')
       } finally {
@@ -1302,6 +1338,7 @@ export default function SmartCreateView() {
       return
     }
     const gid = startGen(note)
+    const lockedSig = lockVideoSig() // 发起时锁定本片内容签名
     // 记录本次出片所依据的分镜签名(供「下次进生成视频时分镜未变则不重生成」判断)
     videoGenSigRef.current = videoInputSig(shots, entryMeta, reqSummary || requirement)
     try {
@@ -1393,6 +1430,7 @@ export default function SmartCreateView() {
             url: out.url,
             assetId: out.assetId,
             genId: gid,
+            lockedSig,
           })
           return out
         })(),
@@ -1400,6 +1438,7 @@ export default function SmartCreateView() {
       setFullVideo({ url, assetId })
       setVideoVersions((prev) => [...prev, { url, assetId }])
       markGen(gid, 'published')
+      commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
     } catch (e: any) {
       showToast(`视频生成失败:${e?.message || ''}`, 'error')
       markGen(gid, 'failed')
@@ -1418,6 +1457,7 @@ export default function SmartCreateView() {
       assetId && prev.some((v) => Number((v as any)?.assetId || 0) === assetId) ? prev : [...prev, { url, assetId }],
     )
     markGen(null, 'published')
+    commitVideoSig() // 盖章:用锁定签名(续跑/在途由原发起方 persist 已按 pending 盖章)
   }
 
   // 切走→回来:登记表里若还握着【同项目的在途生成】(同会话内,promise 活在组件之外)→ 直接订阅它,
@@ -1855,6 +1895,8 @@ export default function SmartCreateView() {
     scriptPending,
     videoVersions,
     videoGenerations,
+    lastVideoSig,
+    pendingVideoSig,
     faceBlurEnabled,
     marketingOpen,
     marketingText,
@@ -1877,6 +1919,10 @@ export default function SmartCreateView() {
     setFullVideo({ url: d.fullVideoUrl || '', assetId: d.fullVideoAssetId || 0 })
     setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
     setVideoGenerations(Array.isArray(d.videoGenerations) ? (d.videoGenerations as GenRecord[]) : [])
+    setLastVideoSig(String(d.lastVideoSig || ''))
+    const restoredPendingSig = String(d.pendingVideoSig || '')
+    setPendingVideoSig(restoredPendingSig)
+    pendingVideoSigRef.current = restoredPendingSig
     // 恢复「一键生成」进行中标记 → 进准备素材步会由 effect 自动续作未出图的素材(不被截断)
     setMaterialBatchPending(!!d.materialBatchPending)
     setScriptPending(!!d.scriptPending)
@@ -2060,8 +2106,18 @@ export default function SmartCreateView() {
           }
         }
       }
-      // 所有空间都拿不到:暴露后端真实原因(无权访问 / 不存在 / 服务器错误),不再吞成笼统提示。
       projectIdRef.current = 0 // 没有有效项目绑定,避免 autosave 把草稿 PUT 到无权访问的项目
+      // 若是「本地草稿自动跳转」到了一个当前用户无权访问的项目(403/404,典型:同浏览器换了账号、
+      // 或项目已被删)→ 清掉这份陈旧草稿并回落空白入口,而不是弹错误页(否则每次进 /smart 都循环报错)。
+      const localDraft = loadSmartDraft()
+      const cameFromLocalDraft =
+        (location.state as any)?.autoResumed === true && Number(localDraft?.projectId || 0) === rid
+      if ((status === 403 || status === 404) && cameFromLocalDraft) {
+        clearSmartDraft()
+        navigate('/smart', { replace: true })
+        return
+      }
+      // 其余情况(真实深链接、5xx/网络):暴露后端真实原因,不吞成笼统提示。
       const msg = getBusinessErrorMessage(e, '项目加载失败')
       setLoadError(msg)
       showToast(msg, 'error')
@@ -2116,6 +2172,11 @@ export default function SmartCreateView() {
       // 否则"加载中切走"会用初始空态覆盖好草稿。
       void loadProjectById(rid, ws)
     } else {
+      // 会话未确定前不要读草稿:草稿按用户隔离(keyOf 用 userId),登录用户在会话就绪前作用域还是 anon,
+      // 会读不到自己的 _u<id> 草稿 → 误判"无在制"→ 落空白页且 hydratedRef 置真后不再重试。
+      // 故等 isCheckingSession=false(登录用户会话已载 / 匿名已确定)再决定;此处 return 不置 hydratedRef,
+      // 会话就绪后 effect 依赖 isCheckingSession 变化会重跑。
+      if (isCheckingSession) return
       // 点回空白 /smart 时:若本地草稿是个【已开始 + 已建项目】的项目 → 自动跳回那个 /smart/:id,
       // 回到当时那一步(含「生成视频已出片」——出片后仍要能回到视频步看/改/重生成,不能落到空白入口)。
       // 想新建走「创建新视频」(resetToNewVideo 会清草稿,清后此判断为 false → 回到入口)。
@@ -2123,7 +2184,9 @@ export default function SmartCreateView() {
       const pendingPid = Number(d?.projectId || 0) || 0
       const inProgress = !!d?.started && pendingPid > 0
       if (inProgress) {
-        navigate(`/smart/${pendingPid}`, { replace: true })
+        // autoResumed:标记"由本地草稿自动跳转"。若目标项目不属于当前用户(403/404),
+        // loadProjectById 会据此清掉陈旧草稿并回落空白入口,而不是弹错误页且每次循环。
+        navigate(`/smart/${pendingPid}`, { replace: true, state: { autoResumed: true } })
         return // 不置 hydratedRef,等重定向到 /smart/:id 再水合 + 续轮询
       }
       // 空白 /smart:始终以最初的空输入框进入,不恢复本地草稿。
@@ -2133,7 +2196,7 @@ export default function SmartCreateView() {
       appliedRef.current = true // 空白入口无异步加载,进入即可放行保存
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeId, workspaceId])
+  }, [routeId, workspaceId, isCheckingSession])
 
   // 自动保存:本地立即(600ms 防抖)+ 后端(1.5s 防抖,仅在已建项目时)
   useEffect(() => {
@@ -2163,6 +2226,8 @@ export default function SmartCreateView() {
     fullVideo,
     videoVersions,
     videoGenerations, // 生成记录(生成中/失败)变化要存盘,切走也能在项目里看到这条草稿
+    lastVideoSig, // 成片内容签名变化(出片成功盖章)要存盘,项目管理据此判「在制/草稿」
+    pendingVideoSig, // 在途出片锁定签名:发起时即持久化,完成/刷新恢复时据它盖章
     vidGenTaskId, // 任务 id 变化(生成开始)也要触发保存,否则长轮询期间不存盘 → 切走后无法恢复
     materialBatchPending, // 一键生成标记变化要存盘,切走再回来才能续作
     scriptPending, // 脚本生成标记变化要存盘,切走再回来才能续跑
