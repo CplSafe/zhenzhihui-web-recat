@@ -13,6 +13,8 @@ import { createMaterialFromAsset } from '@/utils/materials'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import HotCopyCaseModal, { type HotCopyCaseTab } from '@/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
+import EntryDropdown from '@/components/smart/EntryDropdown'
+import RatioIcon from '@/components/common/RatioIcon'
 import videoIcon from '@/assets/icons/hotcopy-video.svg'
 import materialIcon from '@/assets/icons/hotcopy-material.svg'
 import helpIcon from '@/assets/icons/help-circle.svg'
@@ -37,12 +39,21 @@ export interface HotCopyEntryPayload {
   videoPreview: string
   products: HotCopyProduct[]
   text: string
+  /** 用户选择的成片尺寸(画面比例)与时长(秒数带 s,如 15s) */
+  ratio: string
+  duration: string
 }
+
+// 成片尺寸/时长可选项 —— 与智能成片完全一致(同样的列表顺序与默认值 16:9 / 10s)。
+const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
+const DURATION_OPTIONS = ['5s', '10s', '15s']
 
 interface HotCopyEntryProps {
   onSubmit: (payload: HotCopyEntryPayload) => void
   /** 返回上一步时回填上次输入(数据存在编排器 state) */
   initial?: Partial<HotCopyEntryPayload>
+  /** 比例下拉可选项:取自 replicate 模型 schema 的 ratio options(只放模型真支持的);缺省用默认列表 */
+  ratioOptions?: string[]
 }
 
 const TABS = [
@@ -82,7 +93,9 @@ const HOTCOPY_LAYERS: BgLayerStops = {
   ],
 }
 
-export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
+export default function HotCopyEntry({ onSubmit, initial, ratioOptions }: HotCopyEntryProps) {
+  // 比例下拉:优先用模型实际支持的 options(避免选了模型做不了的比例被悄悄回退);缺省用默认列表。
+  const ratioOpts = ratioOptions && ratioOptions.length ? ratioOptions : RATIO_OPTIONS
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
   const [tab, setTab] = useState<HotCopyTab>((initial?.tab as HotCopyTab) ?? 'remake')
@@ -124,6 +137,13 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
   const [productLibQuery, setProductLibQuery] = useState('')
 
   const [text, setText] = useState(initial?.text ?? '')
+  // 成片尺寸/时长(用户可选);默认与智能成片一致:16:9、10s
+  const [ratio, setRatio] = useState(initial?.ratio ?? '16:9')
+  const [duration, setDuration] = useState(initial?.duration ?? '10s')
+  // 模型 options 到位后,若当前比例不在其中 → 收敛到第一个支持项(防止显示/提交一个模型做不了的比例)
+  useEffect(() => {
+    if (ratioOpts.length && !ratioOpts.includes(ratio)) setRatio(ratioOpts[0])
+  }, [ratioOpts, ratio])
   // @ 引用替换素材(交互对齐智能成片;数据源是上传的替换素材 products)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const hlRef = useRef<HTMLDivElement | null>(null)
@@ -390,6 +410,8 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
       videoPreview,
       products,
       text,
+      ratio,
+      duration,
     })
   }
 
@@ -546,30 +568,60 @@ export default function HotCopyEntry({ onSubmit, initial }: HotCopyEntryProps) {
             </div>
           )}
 
-          {/* 底部:@ 参考素材(左) + 圆形发送(右) */}
+          {/* 底部:尺寸/时长 + @ 参考素材(左) + 圆形发送(右) */}
           <div className="hotcopy__bottom">
-            <span className="hotcopy__atAnchor">
-              <button type="button" className="hotcopy__at" onClick={handleAt} title="引用替换素材">
-                @
-              </button>
-              {/* @ 素材选择:在 @ 按钮上方弹出,数据源是上传的替换素材 */}
-              {atOpen && (
-                <>
-                  <div className="hotcopy__atMask" onClick={() => setAtOpen(false)} />
-                  <div className="hotcopy__atMenu">
-                    <div className="hotcopy__atMenuTitle">选择替换素材</div>
-                    <div className="hotcopy__atMenuGrid">
-                      {products.map((p, i) => (
-                        <button type="button" className="hotcopy__atItem" key={i} onClick={() => pickRef(i)}>
-                          <img src={p.url} alt="" />
-                          <span className="hotcopy__atItemName">{refLabel(i)}</span>
-                        </button>
-                      ))}
+            <div className="hotcopy__tools">
+              {/* 成片尺寸(画面比例):选项取自 replicate 模型支持的比例 */}
+              <EntryDropdown
+                value={ratio}
+                options={ratioOpts}
+                onChange={setRatio}
+                icon={<RatioIcon ratio={ratio} />}
+                valueMinWidth={34}
+              />
+              {/* 成片时长 */}
+              <EntryDropdown
+                value={duration}
+                options={DURATION_OPTIONS}
+                onChange={setDuration}
+                icon={
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                  >
+                    <circle cx="12" cy="12" r="8" />
+                    <path d="M12 8v4l3 2" />
+                  </svg>
+                }
+              />
+              <span className="hotcopy__atAnchor">
+                <button type="button" className="hotcopy__at" onClick={handleAt} title="引用替换素材">
+                  @
+                </button>
+                {/* @ 素材选择:在 @ 按钮上方弹出,数据源是上传的替换素材 */}
+                {atOpen && (
+                  <>
+                    <div className="hotcopy__atMask" onClick={() => setAtOpen(false)} />
+                    <div className="hotcopy__atMenu">
+                      <div className="hotcopy__atMenuTitle">选择替换素材</div>
+                      <div className="hotcopy__atMenuGrid">
+                        {products.map((p, i) => (
+                          <button type="button" className="hotcopy__atItem" key={i} onClick={() => pickRef(i)}>
+                            <img src={p.url} alt="" />
+                            <span className="hotcopy__atItemName">{refLabel(i)}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
-            </span>
+                  </>
+                )}
+              </span>
+            </div>
             <button
               type="button"
               className="hotcopy__send"

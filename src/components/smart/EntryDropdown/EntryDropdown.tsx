@@ -19,6 +19,8 @@ interface EntryDropdownProps {
   disabled?: boolean
   /** 单选可清空:再次点击已选项则清空(onChange('')) */
   clearable?: boolean
+  /** 值文字区最小宽度(px):固定后切换不同长度的值(如比例 16:9/1:1)时按钮整体宽度不抖动 */
+  valueMinWidth?: number
 }
 
 export default function EntryDropdown({
@@ -30,6 +32,7 @@ export default function EntryDropdown({
   placeholder = '请选择',
   disabled = false,
   clearable = false,
+  valueMinWidth,
 }: EntryDropdownProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -72,7 +75,12 @@ export default function EntryDropdown({
         aria-expanded={open}
       >
         {icon}
-        <span className={styles.val}>{label}</span>
+        <span
+          className={styles.val}
+          style={valueMinWidth ? { minWidth: valueMinWidth, display: 'inline-block', textAlign: 'left' } : undefined}
+        >
+          {label}
+        </span>
         {/* 可清空且已选中:显示叉号,点击清空(阻止冒泡,避免触发展开) */}
         {clearable && !multiple && value && !disabled && (
           <span

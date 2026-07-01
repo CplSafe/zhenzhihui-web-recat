@@ -15,6 +15,7 @@ import {
   type FeedbackRecord,
 } from '@/api/feedback'
 import { useWorkspaceId } from '@/stores/workspaceSession'
+import kefuQr from '@/assets/kefu-qr.png'
 import './HelpCenter.css'
 
 // 使用教程:跳转外部飞书文档(「2分钟学会使用帧智汇」「3分钟上手智能成片」共用)
@@ -610,7 +611,7 @@ export default function HelpCenter() {
                 {view === 'contact' && (
                   <div className="hc-contact">
                     <div className="hc-qr">
-                      <div className="hc-qr-box" aria-hidden="true" />
+                      <img className="hc-qr-box" src={kefuQr} alt="微信扫码联系客服" />
                       <span>微信扫码联系客服</span>
                     </div>
                     <ul className="hc-contact-list">
@@ -624,11 +625,11 @@ export default function HelpCenter() {
                       </li>
                       <li>
                         <span>客服电话</span>
-                        <a href="tel:400-000-0000">400-000-0000</a>
+                        <a href="tel:01068968819">010-6896-8819</a>
                       </li>
                       <li>
                         <span>邮箱</span>
-                        <a href="mailto:support@zhenzhihui.com">support@zhenzhihui.com</a>
+                        <a href="mailto:support@bjzhenzhihui.cn">support@bjzhenzhihui.cn</a>
                       </li>
                     </ul>
                   </div>

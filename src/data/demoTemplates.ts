@@ -1,5 +1,5 @@
 /**
- * 模板库 / 轮播 的固定演示视频(替换后端真实数据,用于展示)。
+ * 案例库 / 轮播 的固定演示视频(替换后端真实数据,用于展示)。
  * OSS 视频(HTTPS 域名,公开读)。
  * 每条带真实宽高(已探测),比例 = w/h(通用,不限 9:16 / 16:9);轮播只取横屏(w>h)。
  */
@@ -34,6 +34,12 @@ const VIDS: DemoVid[] = [
   { name: 'e392e4e7a65971b1e9bff7dc4baffd6c', w: 720, h: 1280 },
   { name: 'ff0b0a3b8c6bc0d43458c1d0d7940a6d', w: 720, h: 1280 },
   { name: '43518e0fdd4a2d633fd5d2d4e8af684f', w: 720, h: 1280 },
+  { name: '02b8643d9e3f7dd2ecb88754537ee426', w: 720, h: 1280 },
+  { name: '0e4e93bfa13e91f3a78cd88f8cb5d98d', w: 960, h: 960 },
+  { name: '2b87e409f463819782b9ebbd47aab80f', w: 960, h: 960 },
+  { name: '4e801a23462484f7fbfeedf2ded1e13a', w: 1280, h: 720 },
+  { name: '8e03e7cc86f048d258d514d75f32d0ed', w: 960, h: 960 },
+  { name: 'e2c11b01e534ce338cdf3eb03659a725', w: 960, h: 960 },
 ]
 
 const urlOf = (v: DemoVid) => BASE + v.name + '.mp4'
@@ -52,7 +58,7 @@ const GRADS = [
   'linear-gradient(160deg, #d4d8f0, #eaeefb)',
 ]
 
-/** 全部演示模板(供模板库展示);ratio 用真实宽高(任意比例) */
+/** 全部演示模板(供案例库展示);ratio 用真实宽高(任意比例) */
 export const DEMO_TEMPLATES: TemplateItem[] = VIDS.map((v, i) => ({
   id: 90000 + i,
   title: `精选模板 ${i + 1}`,

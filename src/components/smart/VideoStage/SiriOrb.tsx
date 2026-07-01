@@ -175,18 +175,19 @@ export default function SiriOrb({ size = 320 }: { size?: number }) {
       // ── 主画布:外发光 + 贴球体 ──
       ctx.clearRect(0, 0, size, size)
 
-      const lg0 = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 2.2 * pulse)
+      // 外发光收紧(更实):halo 半径与不透明度降下来,球体本身更突出
+      const lg0 = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.7 * pulse)
       lg0.addColorStop(0, 'rgba(0,0,0,0)')
-      lg0.addColorStop(0.32, 'rgba(100,50,220,0.06)')
-      lg0.addColorStop(0.62, 'rgba(70,30,170,0.03)')
+      lg0.addColorStop(0.45, 'rgba(110,55,230,0.06)')
+      lg0.addColorStop(0.75, 'rgba(80,40,200,0.03)')
       lg0.addColorStop(1, 'rgba(0,0,0,0)')
       ctx.fillStyle = lg0
       ctx.fillRect(0, 0, size, size)
 
-      const lg1 = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.45 * pulse)
+      const lg1 = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.25 * pulse)
       lg1.addColorStop(0, 'rgba(0,0,0,0)')
-      lg1.addColorStop(0.48, 'rgba(120,55,240,0.09)')
-      lg1.addColorStop(0.8, 'rgba(90,40,200,0.05)')
+      lg1.addColorStop(0.55, 'rgba(130,65,250,0.1)')
+      lg1.addColorStop(0.85, 'rgba(100,45,220,0.05)')
       lg1.addColorStop(1, 'rgba(0,0,0,0)')
       ctx.fillStyle = lg1
       ctx.fillRect(0, 0, size, size)

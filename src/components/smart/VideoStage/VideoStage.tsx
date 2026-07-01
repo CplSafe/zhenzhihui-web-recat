@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Shot } from '../ScriptStoryboardTable'
 import { polishText } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
+import { openMemberCenter } from '@/stores/ui'
 import VideoLoading from './VideoLoading'
 import styles from './VideoStage.module.less'
 
@@ -50,6 +51,14 @@ interface VideoStageProps {
   videoGenerating?: boolean
   /** 生成中的阶段文案(如「人脸脱敏 2/9…」),缺省显示「视频生成中…」 */
   videoStatusText?: string
+  /** 生成开始时间戳(ms,持久化):传给加载动效做进度锚点,切页面/刷新回来续算而非重头 */
+  videoStartedAt?: number
+  /** 加载动效主标题覆盖(缺省「视频生成中」);如爆款复制传「爆款复制生成中…」 */
+  loadingTitle?: string
+  /** 提交前积分预估(estimate-cost):展示「预计消耗 X 积分 · 余额 Y」。缺省不显示 */
+  costEstimate?: { estimatedCost: number; balance: number; canAfford: boolean } | null
+  costLoading?: boolean
+  costError?: string
   /** 人脸脱敏调试:每镜的输入/输出/模型/状态(开发可见) */
   faceBlurDebug?: {
     no?: string
@@ -106,6 +115,9 @@ export default function VideoStage({
   videoUrl,
   videoGenerating,
   videoStatusText,
+  videoStartedAt,
+  loadingTitle,
+  costEstimate,
   faceBlurDebug,
   videoVersions = [],
   onSwitchVideo,
@@ -359,6 +371,8 @@ export default function VideoStage({
             {videoGenerating ? (
               <VideoLoading
                 statusText={videoStatusText || '视频生成中'}
+                title={loadingTitle}
+                startedAt={videoStartedAt}
                 note="视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。"
                 tip={VIDEO_TIPS[tipIdx]}
               />
@@ -523,6 +537,28 @@ export default function VideoStage({
           )}
         </div>
       </div>
+
+      {/* 提交前积分预估:仅在真正估到价时显示;估不出来不显示 */}
+      {!videoGenerating &&
+        costEstimate &&
+        (() => {
+          const insufficient = costEstimate.canAfford === false || costEstimate.estimatedCost > costEstimate.balance
+          return (
+            <div className={styles.vstageCost}>
+              <span className={insufficient ? styles.vstageCostErr : undefined}>
+                预计消耗 {costEstimate.estimatedCost} 积分 · 余额 {costEstimate.balance} 积分
+                {insufficient && (
+                  <>
+                    {' · 积分不足,'}
+                    <button type="button" className={styles.vstageCostRecharge} onClick={openMemberCenter}>
+                      请前往充值积分
+                    </button>
+                  </>
+                )}
+              </span>
+            </div>
+          )
+        })()}
 
       {/* 底部总按钮:上一步 / 下载视频 / 重新生成视频|确认修改(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
       <div className={styles.vstageActions}>
@@ -721,9 +757,7 @@ function ModBox({
         <textarea
           className={styles.vstageModInput}
           value={value}
-          placeholder={
-            polishKind === 'segment' ? '输入对这一片段的视频修改描述...' : '输入对整段视频的修改描述...'
-          }
+          placeholder={polishKind === 'segment' ? '输入对这一片段的视频修改描述...' : '输入对整段视频的修改描述...'}
           onChange={(e) => onChange(e.target.value)}
         />
         <button

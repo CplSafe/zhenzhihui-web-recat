@@ -12,6 +12,8 @@ import {
   getAssetDownloadUrl,
   listAssets,
   extractAssetPageItems,
+  resolveTaskModel,
+  estimateAiTaskCost,
 } from './business'
 import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 
@@ -162,4 +164,31 @@ export async function generateShotImage(args: {
   if (!url) url = extractTaskMediaUrls(completed)[0] || ''
   if (!url) throw new Error('未生成分镜图')
   return { url, assetId }
+}
+
+/**
+ * 单张分镜图(image.text_to_image / image_to_image)提交前积分预估。
+ * 估价用的 model/operation/params 与 generateShotImage 一致 → 预估 = 实扣(单张口径)。
+ */
+export async function estimateShotImageCost(args: {
+  workspaceId: number
+  hasRefs?: boolean
+  ratio?: string
+  lowRes?: boolean
+  modelPlanCandidates?: string[]
+}): Promise<any> {
+  const operationCode = args.hasRefs ? 'image.image_to_image' : 'image.text_to_image'
+  // 与出片同口径解析模型(capability:'image' + 套餐候选);先按关键词(gpt-image-2)、查不到退回任意图像模型。
+  const pick = (kw: string[]) =>
+    resolveTaskModel({
+      capability: 'image',
+      operationCode,
+      preferredModelKeywords: kw,
+      modelPlanCandidates: args.modelPlanCandidates,
+    }).catch(() => null)
+  let model = await pick(STORYBOARD_MODEL_KEYWORDS)
+  if (!model?.id) model = await pick([])
+  if (!model?.id) throw new Error('暂无可用的图像生成模型')
+  const params = buildImageParams(model, args.ratio, args.lowRes)
+  return estimateAiTaskCost({ workspaceId: args.workspaceId, modelVersionId: model.id, operationCode, params })
 }

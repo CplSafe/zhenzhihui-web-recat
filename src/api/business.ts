@@ -150,7 +150,15 @@ function devMock(flag) {
   }
 }
 
-export async function listAiModels({ capability = '', operationCode = '', plan = 'pro' }: any = {}) {
+// 当前活跃 workspace id(由 store 在切换/初始化时 setActiveWorkspaceId 同步进来)。
+// 查模型 /ai/models 必须带 workspace_id —— 后端按该 workspace 的订阅返回"启用了哪些模型";
+// 不带就返回空 data:[](正是"明明配了模型却查不到、出片/出图/预估全失败"的根因)。
+let activeWorkspaceId = 0
+export function setActiveWorkspaceId(id) {
+  activeWorkspaceId = Number(id) || 0
+}
+
+export async function listAiModels({ capability = '', operationCode = '', plan = 'pro', workspaceId = 0 }: any = {}) {
   // 开发 mock:模拟"当前套餐不允许该模型"(用于手测前端受限 UI / 报错提示)
   if (devMock('model-locked')) {
     throw new BusinessApiError('当前模型需要开通对应套餐后才能使用（mock）', {
@@ -160,6 +168,12 @@ export async function listAiModels({ capability = '', operationCode = '', plan =
   }
 
   const query = new URLSearchParams()
+
+  // workspace_id:显式传入优先,否则用模块级当前 workspace。必须带,否则后端返回空模型列表。
+  const ws = Number(workspaceId || activeWorkspaceId || 0)
+  if (ws > 0) {
+    query.set('workspace_id', String(Math.floor(ws)))
+  }
 
   if (plan) {
     query.set('plan', plan)
@@ -198,10 +212,26 @@ export async function getModelForOperation(
   operationCode,
   preferredKeywords = [],
   planCandidates = DEFAULT_MODEL_PLAN_CANDIDATES,
+  workspaceId = 0, // 显式 workspace(查 /ai/models 必带);缺省回退模块级 activeWorkspaceId
 ) {
   return getModelFromPlanCandidates(planCandidates, (plan) =>
-    getModelForOperationFromPlan(operationCode, preferredKeywords, plan),
+    getModelForOperationFromPlan(operationCode, preferredKeywords, plan, workspaceId),
   )
+}
+
+// 与 createAiTask 完全同口径地解析「任务模型」:按 capability + operationCode + 套餐候选逐个试。
+// 专供「提交前预估积分」拿 model_version_id —— 必须和真正出片用同一种查法(带 capability、按真实套餐),
+// 否则像 getModelForOperation 那样(不带 capability、plan 写死 pro)会误报"没有可用模型"。
+export async function resolveTaskModel({
+  capability = '',
+  operationCode = '',
+  preferredModelKeywords = [],
+  workspaceId = 0, // 显式 workspace(查 /ai/models 必带);缺省回退模块级 activeWorkspaceId
+} = {}) {
+  // 实验:不带 plan 查(显式 plan:'' → listAiModels 不下发 plan 参数;默认是 'pro' 故必须显式置空),
+  // 让后端返回全部模型再 pick,规避「plan=pro 写死」导致明明有模型却查不到。
+  const models = await listAiModels({ capability, operationCode, plan: '', workspaceId })
+  return pickModel(models, operationCode, preferredModelKeywords)
 }
 
 export async function getModelForCapability(
@@ -215,25 +245,28 @@ export async function getModelForCapability(
   )
 }
 
-export function getModelForOperationFromPlan(operationCode, preferredKeywords = []) {
-  // Same rationale as getModelForCapabilityFromPlan: backend resolves the
-  // caller's subscription server-side; we just ask for the operation we want.
-  const cacheKey = `op:${operationCode}:${preferredKeywords.join('|')}`
+export function getModelForOperationFromPlan(operationCode, preferredKeywords = [], _plan = '', workspaceId = 0) {
+  // 后端按调用者实际订阅在服务端过滤模型,客户端不该再传 plan。
+  // 注意:listAiModels 的 plan 默认是 'pro',不显式置空就会被顶成 plan=pro —— 那样若模型挂在非 pro 套餐下就查不到
+  // (正是「明明有 seedance 模型却报没有匹配」的根因)。故显式 plan:'' 不下发 plan,交后端按订阅决定。
+  // 缓存键必须含 workspace:查 /ai/models 按 workspace 返回不同的「已启用模型」,
+  // 否则 workspace 还没就绪(=0)时查到空列表会被缓存,切到真实 workspace 后仍返回这份空结果 → 误报「没有可用模型」。
+  const ws = Number(workspaceId || activeWorkspaceId || 0)
+  const cacheKey = `op:${ws}:${operationCode}:${preferredKeywords.join('|')}`
 
   return getCachedModel(cacheKey, async () => {
-    const models = await listAiModels({ operationCode })
+    const models = await listAiModels({ operationCode, plan: '', workspaceId: ws })
     return pickModel(models, operationCode, preferredKeywords)
   })
 }
 
 export function getModelForCapabilityFromPlan(capability, preferredOperationCode = '', preferredKeywords = []) {
-  // Backend filters by the caller's actual subscription server-side; passing
-  // `plan` from the client only causes false-negative empty lists when the
-  // local plan candidate list is wrong or stale.
+  // 后端按调用者实际订阅在服务端过滤;客户端不传 plan。同 getModelForOperationFromPlan:
+  // listAiModels 的 plan 默认 'pro',必须显式 plan:'' 才不会被顶成 plan=pro 而漏掉非 pro 套餐下的模型。
   const key = ['cap', capability, preferredOperationCode, preferredKeywords.join('|')].filter(Boolean).join(':')
 
   return getCachedModel(key, async () => {
-    const models = await listAiModels({ capability })
+    const models = await listAiModels({ capability, plan: '' })
     return pickModel(models, preferredOperationCode, preferredKeywords)
   })
 }
@@ -757,7 +790,7 @@ export async function createAiTask({
   }
 
   return submitWithPlanCandidates(modelPlanCandidates, async (plan) => {
-    const models = await listAiModels({ capability, operationCode, plan })
+    const models = await listAiModels({ capability, operationCode, plan, workspaceId })
     const candidates = getEligibleModelsForOperation(models, operationCode)
     const preferred = pickModel(candidates, operationCode, preferredModelKeywords)
     const ordered = buildOrderedModelCandidates(candidates, preferred)

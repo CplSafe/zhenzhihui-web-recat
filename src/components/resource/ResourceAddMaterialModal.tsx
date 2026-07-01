@@ -305,9 +305,7 @@ export default function ResourceAddMaterialModal({
                     className="resource-project-card"
                     onClick={() => handleProjectSelect(project)}
                   >
-                    <div
-                      className={`resource-project-cover layout-${project.layout} tone-${project.badgeTone}`}
-                    >
+                    <div className={`resource-project-cover layout-${project.layout} tone-${project.badgeTone}`}>
                       <span className={`resource-project-badge tone-${project.badgeTone}`}>{project.badge}</span>
                       <button
                         type="button"
@@ -343,10 +341,7 @@ export default function ResourceAddMaterialModal({
                         <>
                           <div className="resource-project-mosaic">
                             {project.coverSet
-                              .slice(
-                                0,
-                                project.layout === 'double' ? 2 : project.layout === 'triple' ? 3 : 4,
-                              )
+                              .slice(0, project.layout === 'double' ? 2 : project.layout === 'triple' ? 3 : 4)
                               .map((cover: any, coverIndex: number) => (
                                 <div
                                   key={`${project.id}-${cover.id}-${coverIndex}`}
@@ -356,9 +351,7 @@ export default function ResourceAddMaterialModal({
                                 </div>
                               ))}
                           </div>
-                          {project.layout === 'mosaic' && (
-                            <div className="resource-project-progress">72%</div>
-                          )}
+                          {project.layout === 'mosaic' && <div className="resource-project-progress">72%</div>}
                         </>
                       )}
                     </div>
@@ -450,7 +443,7 @@ export default function ResourceAddMaterialModal({
             </div>
 
             <div className="resource-add-market-copy">
-              <h3>素材市场</h3>
+              <h3>我的素材</h3>
               <p>海量优质素材，激发创意灵感</p>
             </div>
 
@@ -479,7 +472,7 @@ export default function ResourceAddMaterialModal({
             </ul>
 
             <button type="button" className="resource-add-market-button" onClick={closeModal}>
-              前往素材市场
+              前往我的素材
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M3.5 8h9M9 3.5 13.5 8 9 12.5" />
               </svg>

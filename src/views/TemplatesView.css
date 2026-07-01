@@ -1,4 +1,4 @@
-/* 模板库页面 */
+/* 案例库页面 */
 .templates-topbar {
   display: flex;
   align-items: center;
@@ -71,14 +71,15 @@
   margin-top: 16px;
 }
 
-/* 统一网格(对标 Figma):等大卡片,横向 16:10 缩略图 */
+/* 瀑布流(对标首页案例库):按视频真实比例错落排列 */
 .templates-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(218px, 1fr));
-  gap: 20px 16px;
+  column-count: 4;
+  column-gap: 16px;
 }
 .templates-card {
   width: 100%;
+  break-inside: avoid;
+  margin-bottom: 16px;
 }
 /* 缩略图左上角时长徽标 */
 .tpl-dur {
@@ -95,7 +96,16 @@
   font-variant-numeric: tabular-nums;
 }
 @media (max-width: 1280px) {
+  /* 瀑布流:平板 3 列 */
   .templates-grid {
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    column-count: 3;
+    column-gap: 14px;
+  }
+}
+@media (max-width: 900px) {
+  /* 瀑布流:窄屏 2 列 */
+  .templates-grid {
+    column-count: 2;
+    column-gap: 10px;
   }
 }

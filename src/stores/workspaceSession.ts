@@ -16,6 +16,7 @@ import {
   listBillingPlans,
   listWorkspaces,
   redeemWorkspaceInvitation,
+  setActiveWorkspaceId,
   transferWorkspaceOwnership,
 } from '../api/business'
 import { listWorkspaceMembers } from '../api/auth'
@@ -117,11 +118,9 @@ export const deriveCurrentMember = (s: S): any => {
   return member
 }
 
-export const deriveActiveSubscription = (s: S): any =>
-  s.currentSubscription?.active ? s.currentSubscription : null
+export const deriveActiveSubscription = (s: S): any => (s.currentSubscription?.active ? s.currentSubscription : null)
 export const deriveCurrentPlanName = (s: S): string => deriveActiveSubscription(s)?.plan_name || ''
-export const deriveCurrentPlanExpiresAt = (s: S): string =>
-  deriveActiveSubscription(s)?.current_period_end || ''
+export const deriveCurrentPlanExpiresAt = (s: S): string => deriveActiveSubscription(s)?.current_period_end || ''
 export const deriveWalletCredits = (s: S): number => Number(s.currentWallet?.available ?? 0)
 
 const findPlanByCode = (s: S, code: any) => (code && s.billingPlans.find((p) => p.code === code)) || null
@@ -216,10 +215,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         return
       }
       set({ currentSubscription: null, currentWallet: null })
-      const [sub, wal] = await Promise.all([
-        getSubscription(id).catch(() => null),
-        getWallet(id).catch(() => null),
-      ])
+      const [sub, wal] = await Promise.all([getSubscription(id).catch(() => null), getWallet(id).catch(() => null)])
       if (deriveWorkspaceId(get()) !== id) return
       set({ currentSubscription: sub, currentWallet: wal })
       await get().ensureModelPlanCandidatesLoaded()
@@ -332,10 +328,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         const codeString = String(error?.response?.code_string || '').toUpperCase()
         const message = String(error?.response?.message || error?.message || '').trim()
         const isNotFound =
-          status === 404 ||
-          codeString === 'NOT_FOUND' ||
-          code === 10031 ||
-          /NOT_FOUND/i.test(String(error?.code || ''))
+          status === 404 || codeString === 'NOT_FOUND' || code === 10031 || /NOT_FOUND/i.test(String(error?.code || ''))
         if (!isNotFound || !/不是该\s*workspace\s*成员|not\s+a\s*member/i.test(message)) {
           throw error
         }
@@ -372,6 +365,13 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
   }
 })
 
+// 把"当前活跃 workspace id"同步给 api 层(business.listAiModels 查模型时必须带 workspace_id,
+// 否则后端按订阅返回空模型列表 → 出片/出图/预估全查不到模型)。初始 + 每次变化都推一次。
+setActiveWorkspaceId(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
+useWorkspaceSessionStore.subscribe((state) => {
+  setActiveWorkspaceId(deriveWorkspaceId(state))
+})
+
 // ---- Selector hooks（组件侧便捷读取派生值，保持响应式订阅）------------------
 export const useCurrentWorkspace = () => useWorkspaceSessionStore(deriveCurrentWorkspace)
 export const useCurrentUser = () => useWorkspaceSessionStore(deriveCurrentUser)
@@ -383,5 +383,4 @@ export const useCurrentPlanExpiresAt = () => useWorkspaceSessionStore(deriveCurr
 export const useWalletCredits = () => useWorkspaceSessionStore(deriveWalletCredits)
 export const usePlanBaseCredits = () => useWorkspaceSessionStore(derivePlanBaseCredits)
 export const useCurrentConcurrencyLimit = () => useWorkspaceSessionStore(deriveCurrentConcurrencyLimit)
-export const useModelPlanCandidates = () =>
-  useWorkspaceSessionStore(useShallow(deriveModelPlanCandidates))
+export const useModelPlanCandidates = () => useWorkspaceSessionStore(useShallow(deriveModelPlanCandidates))

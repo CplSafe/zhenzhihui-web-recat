@@ -290,7 +290,7 @@ import { type TemplateItem } from '@/api/templates'
 import { DEMO_TEMPLATES, DEMO_LANDSCAPE_URLS } from '@/data/demoTemplates'
 
 const TABS = [
-  { key: 'template', label: '模板库' },
+  { key: 'template', label: '案例库' },
   { key: 'history', label: '历史项目' },
   { key: 'ip', label: 'IP' },
 ] as const
@@ -516,13 +516,15 @@ export default function HomeView() {
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // 案例库点击放大预览(与 /templates 页一致;外链 OSS 视频,弹窗不带 crossOrigin)
+  const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
 
   // 历史项目（接后端 listCreativeProjects）
   const [historyItems, setHistoryItems] = useState<any[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState('')
 
-  // 模板库（接后端 listTemplates → /api/v1/creative/projects，仅展示有视频的项目）
+  // 案例库（接后端 listTemplates → /api/v1/creative/projects，仅展示有视频的项目）
   const [templateItems, setTemplateItems] = useState<TemplateItem[]>(DEMO_TEMPLATES)
   const [templateLoading, setTemplateLoading] = useState(false)
   const [templateError, setTemplateError] = useState('')
@@ -553,7 +555,7 @@ export default function HomeView() {
     })
   }
 
-  // 模板库展示固定的 18 条演示视频(替换后端数据);不再依赖登录/工作空间
+  // 案例库展示固定的 18 条演示视频(替换后端数据);不再依赖登录/工作空间
   useEffect(() => {
     if (activeTab !== 'template') return
     setTemplateItems(DEMO_TEMPLATES)
@@ -837,10 +839,10 @@ export default function HomeView() {
                   type="text"
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
-                  placeholder="搜索模板、项目、IP..."
+                  placeholder="搜索案例、项目、IP..."
                 />
               </div>
-              {/* 模板/历史 tab 均可查看更多 → 模板库 */}
+              {/* 模板/历史 tab 均可查看更多 → 案例库 */}
               {(activeTab === 'template' || activeTab === 'history') && (
                 <div className="home__more">
                   <button type="button" className="home__more-btn" onClick={() => navigate('/templates')}>
@@ -850,7 +852,7 @@ export default function HomeView() {
               )}
             </div>
 
-            {/* 内容框:模板库/历史项目/IP */}
+            {/* 内容框:案例库/历史项目/IP */}
             <div className="home__tab-box">
               {activeTab === 'history' ? (
                 historyLoading ? (
@@ -904,20 +906,20 @@ export default function HomeView() {
                 </div>
               ) : templateError === 'unauth' ? (
                 <div className="home__placeholder">
-                  请先登录后查看模板库
+                  请先登录后查看案例库
                   <button type="button" className="home__retry-btn" onClick={() => navigate('/login')}>
                     去登录
                   </button>
                 </div>
               ) : templateError === 'api' ? (
                 <div className="home__placeholder">
-                  模板加载失败
+                  案例加载失败
                   <button type="button" className="home__retry-btn" onClick={() => setTemplateRetry((n) => n + 1)}>
                     重试
                   </button>
                 </div>
               ) : templateError === 'empty' || !filteredTemplates.length ? (
-                <div className="home__placeholder">暂无模板数据</div>
+                <div className="home__placeholder">暂无案例数据</div>
               ) : (
                 <>
                   <div className="home__masonry">
@@ -925,7 +927,16 @@ export default function HomeView() {
                       <div key={`${tpl.id}-${tplIdx}`} className="home__tpl">
                         <div
                           className={`home__tpl-thumb${tpl.videoUrl || tpl.thumbnailUrl ? ' has-image' : ''}`}
-                          style={{ aspectRatio: tpl.ratio, background: tpl.grad }}
+                          style={{
+                            aspectRatio: tpl.ratio,
+                            background: tpl.grad,
+                            cursor: tpl.videoUrl ? 'zoom-in' : '',
+                          }}
+                          role={tpl.videoUrl ? 'button' : undefined}
+                          title={tpl.videoUrl ? '点击放大预览' : undefined}
+                          onClick={() => {
+                            if (tpl.videoUrl) setWatching({ url: tpl.videoUrl, poster: tpl.thumbnailUrl || '' })
+                          }}
                         >
                           {tpl.videoUrl ? (
                             // 封面=视频本身(首帧/循环),与「历史项目」一致,不依赖会过期的封面图
@@ -978,13 +989,14 @@ export default function HomeView() {
                             <button
                               type="button"
                               className="home__tpl-action"
-                              onClick={() =>
+                              onClick={(e) => {
+                                e.stopPropagation() // 不触发缩略图的放大预览
                                 requireAuth(() =>
                                   navigate('/hot-copy', {
                                     state: { carryVideo: { url: tpl.videoUrl || '', assetId: tpl.videoAssetId || 0 } },
                                   }),
                                 )
-                              }
+                              }}
                             >
                               做同款
                             </button>
@@ -999,6 +1011,25 @@ export default function HomeView() {
           </section>
         </div>
       </div>
+
+      {/* 案例库点击放大预览(外链 OSS、无 CORS 头 → 不带 crossOrigin,否则卡 0:00) */}
+      {watching && (
+        <div className="home__video-modal-mask" onClick={() => setWatching(null)}>
+          <div className="home__video-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="home__video-modal-close" onClick={() => setWatching(null)}>
+              ✕
+            </button>
+            <video
+              className="home__video-modal-player"
+              src={watching.url}
+              poster={watching.poster || undefined}
+              controls
+              autoPlay
+              playsInline
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
