@@ -185,13 +185,14 @@ export default function AuthActionModal({
       // register / sms-register
       const pwd = password.trim() || (mode === 'sms-register' ? randomPassword() : '')
       const smsCode = needsCodeInput ? code.trim() : prefill?.smsCode || ''
+      const inviteCode = getInviteCode()
       const result = await registerAccount({
         authStart: as,
         mobile: m,
         password: pwd,
         smsCode,
         termsAccepted: true,
-        inviteCode: getInviteCode(), // 分享链接带来的推广码(空则接口层去掉)
+        inviteCode, // 分享链接带来的推广码(空则接口层去掉)
       })
       clearInviteCode() // 注册成功即清除,避免后续误归因
       showToast(mode === 'sms-register' ? '注册成功,正在登录…' : '注册成功', 'success')
