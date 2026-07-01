@@ -77,3 +77,19 @@ export async function findAssetIdByTaskId(
     return 0
   }
 }
+
+// 已完成【视频】任务 → { url, assetId } 的统一解析尾巴:
+// outputs 取 asset_id → 没有则按 task_id 反查 → 取可预览地址 → 无地址但有 asset_id 则退回同源 /download。
+// url 可能为 ''(解析不出),由调用方按各自语义抛错,以保留原有的差异化错误文案。
+// 统一 hotCopy.replicate/awaitHotVideoResult、smartVideo.editFullVideo/resolveVideoTaskResult 里逐字重复的 4 段。
+export async function resolveTaskVideoResult(
+  workspaceId: number,
+  completed: any,
+  fallbackTaskId: any,
+): Promise<{ url: string; assetId: number }> {
+  let assetId = extractOutputAssetId(completed)
+  if (!assetId) assetId = await findAssetIdByTaskId(workspaceId, completed?.id || fallbackTaskId, 'video')
+  let [url] = await resolveGeneratedMediaUrls({ workspaceId, task: completed, type: 'video' })
+  if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId, assetId }).catch(() => '')
+  return { url: url || '', assetId }
+}

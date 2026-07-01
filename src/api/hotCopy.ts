@@ -8,14 +8,13 @@ import {
   createAiTask,
   waitForAiTask,
   uploadAssetFile,
-  getAssetDownloadUrl,
   getModelForOperation,
   resolveTaskModel,
   estimateAiTaskCost,
 } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
-import { resolveGeneratedMediaUrls, findAssetIdByTaskId, extractOutputAssetId } from '@/utils/taskMedia'
+import { resolveTaskVideoResult } from '@/utils/taskMedia'
 
 const VIDEO_MODEL_KEYWORDS = ['seedance']
 
@@ -91,10 +90,7 @@ export async function replicateHotVideo(args: {
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
   })
-  let assetId = extractOutputAssetId(completed)
-  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'video')
-  let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
-  if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
+  const { url, assetId } = await resolveTaskVideoResult(args.workspaceId, completed, (task as any)?.id)
   if (!url) throw new Error('复刻任务已完成,暂未返回可预览地址')
   return { url, assetId }
 }
@@ -113,10 +109,7 @@ export async function awaitHotVideoResult(args: {
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
   })
-  let assetId = extractOutputAssetId(completed)
-  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || args.taskId, 'video')
-  let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
-  if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
+  const { url, assetId } = await resolveTaskVideoResult(args.workspaceId, completed, args.taskId)
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')
   return { url, assetId }
 }

@@ -549,19 +549,27 @@ export default function VideoStage({
         </div>
       </div>
 
+      {/* 「确认修改」走 video.edit(happyhorse),与此处 video.generate(seedance)口径的预估不是同一模型,
+          直接显示会误导用户,故编辑态不展示该预估,仅提示按编辑模型计费。 */}
+      {!videoGenerating && hasMods && (
+        <div className={styles.vstageCost}>
+          <span>视频编辑按编辑模型计费,确认修改后按实际时长扣积分</span>
+        </div>
+      )}
       {/* 提交前积分预估:加载中 / 出错也给出反馈(此前 costLoading/costError 被丢弃,只在估到价时才有显示) */}
-      {!videoGenerating && costLoading && !costEstimate && (
+      {!videoGenerating && !hasMods && costLoading && !costEstimate && (
         <div className={styles.vstageCost}>
           <span>积分预估中…</span>
         </div>
       )}
-      {!videoGenerating && costError && !costEstimate && (
+      {!videoGenerating && !hasMods && costError && !costEstimate && (
         <div className={styles.vstageCost}>
           <span className={styles.vstageCostErr}>{costError}</span>
         </div>
       )}
       {/* 提交前积分预估:仅在真正估到价时显示;估不出来不显示 */}
       {!videoGenerating &&
+        !hasMods &&
         costEstimate &&
         (() => {
           const insufficient = costEstimate.canAfford === false || costEstimate.estimatedCost > costEstimate.balance

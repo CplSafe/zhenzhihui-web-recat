@@ -25,6 +25,8 @@ interface TeamManagementModalProps {
   workspaceId?: number
   workspace?: Record<string, any> | null
   currentMember?: Record<string, any> | null
+  /** 会话级用户 id(不随切换空间失效);用于在成员列表里定位「我」→ 取当前空间的真实角色 */
+  sessionUserId?: number
   onClose?: () => void
   onToast?: (message: string, type?: ToastType) => void
 }
@@ -33,7 +35,7 @@ interface NormalizedMember {
   raw: any
   id: number
   name: string
-  phone: string
+  email: string
   role: string
   roleLabel: string
   isOwner: boolean
@@ -81,33 +83,9 @@ function normalizeMemberName(member: any, fallback = ''): string {
   )
 }
 
-function normalizeMemberPhone(member: any): string {
-  return pickFirstText(
-    member?.mobile,
-    member?.phone,
-    member?.telephone,
-    member?.tel,
-    member?.mobile_masked,
-    member?.phone_masked,
-    member?.mobileMasked,
-    member?.phoneMasked,
-    member?.mobile_number,
-    member?.phone_number,
-    member?.user?.mobile,
-    member?.user?.phone,
-    member?.user?.telephone,
-    member?.user?.tel,
-    member?.user?.mobile_masked,
-    member?.user?.phone_masked,
-    member?.user?.mobile_number,
-    member?.user?.phone_number,
-    member?.profile?.mobile,
-    member?.profile?.phone,
-    member?.profile?.telephone,
-    member?.account?.mobile,
-    member?.account?.phone,
-    member?.account?.telephone,
-  )
+// 后端 MemberView 只有 email(无 phone/mobile)。展示/搜索账号统一用 email。
+function normalizeMemberEmail(member: any): string {
+  return pickFirstText(member?.email, member?.user?.email, member?.account?.email, member?.profile?.email)
 }
 
 function normalizeMemberId(member: any, index: number): number {
@@ -237,6 +215,7 @@ export default function TeamManagementModal({
   workspaceId = 0,
   workspace = null,
   currentMember = null,
+  sessionUserId = 0,
   onClose,
   onToast,
 }: TeamManagementModalProps) {
@@ -275,13 +254,26 @@ export default function TeamManagementModal({
   const invitationAutoEnsuredWorkspaceId = useRef(0)
 
   // === computed ===
+  // 当前用户 id:优先会话级(不随切空间失效);回退到 currentMember(仅在会话初始空间时有效)。
   const currentUserId = useMemo(() => {
-    const value = currentMember?.user_id ?? currentMember?.userId ?? currentMember?.user?.id ?? currentMember?.id ?? 0
+    const value =
+      sessionUserId ||
+      currentMember?.user_id ||
+      currentMember?.userId ||
+      currentMember?.user?.id ||
+      currentMember?.id ||
+      0
     const id = Number(value || 0)
     return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
-  }, [currentMember])
+  }, [sessionUserId, currentMember])
 
-  const currentUserRole = useMemo(() => normalizeMemberRole(currentMember || {}), [currentMember])
+  // 当前用户在【当前激活空间】的角色:从该空间已加载的 members 列表里按 id 取(切换空间后仍准确);
+  // members 未加载时回退到 currentMember 的角色(仅会话初始空间有效)。
+  // 修复:此前只读 currentMember,切换空间后它被置 null → owner/admin 的管理入口全部消失。
+  const currentUserRole = useMemo(() => {
+    const fromList = members.find((m) => m.id === currentUserId)?.role
+    return fromList || normalizeMemberRole(currentMember || {})
+  }, [members, currentUserId, currentMember])
   const ownerUserId = useMemo(() => {
     const id = Number(workspace?.owner_user_id || workspace?.ownerUserId || 0)
     return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
@@ -336,7 +328,7 @@ export default function TeamManagementModal({
             raw: item,
             id: userId,
             name: normalizeMemberName(item, `成员${index + 1}`),
-            phone: normalizeMemberPhone(item),
+            email: normalizeMemberEmail(item),
             role,
             roleLabel: isOwner ? '所有者' : getRoleLabel(role),
             isOwner,
@@ -546,8 +538,8 @@ export default function TeamManagementModal({
     if (!q) return members
     return members.filter((m) => {
       const name = String(m.name || '').toLowerCase()
-      const phone = String(m.phone || '')
-      return name.includes(q) || phone.includes(q)
+      const email = String(m.email || '').toLowerCase()
+      return name.includes(q) || email.includes(q)
     })
   }, [query, members])
 
@@ -796,7 +788,7 @@ export default function TeamManagementModal({
                           </span>
                         )}
                       </div>
-                      <span>{m.phone || '-'}</span>
+                      <span>{m.email || '-'}</span>
                     </div>
                     {canManageWorkspace && (
                       <button
@@ -831,12 +823,17 @@ export default function TeamManagementModal({
               onClick={closeMemberActions}
             ></button>
             <div className="tm-action-menu" style={memberActionStyle} onClick={(e) => e.stopPropagation()}>
-              <button type="button" className="tm-action-item" onClick={() => handleMemberAction('make-admin')}>
-                设为管理员
-              </button>
-              <button type="button" className="tm-action-item" onClick={() => handleMemberAction('set-member')}>
-                设为成员
-              </button>
+              {/* 改角色后端仅 owner 可执行(admin 调用必 403),故只对 owner 展示,避免误点报错 */}
+              {isCurrentUserOwner && (
+                <>
+                  <button type="button" className="tm-action-item" onClick={() => handleMemberAction('make-admin')}>
+                    设为管理员
+                  </button>
+                  <button type="button" className="tm-action-item" onClick={() => handleMemberAction('set-member')}>
+                    设为成员
+                  </button>
+                </>
+              )}
               <button type="button" className="tm-action-item" onClick={() => handleMemberAction('quota')}>
                 修改配额
               </button>

@@ -32,6 +32,9 @@ const toId = (value: any): number => Number(value) || 0
 const findById = (list: any[], id: number) => list.find((w) => toId(w?.id) === id) || null
 const pickWorkspaceId = (payload: any): number => {
   const candidates = [
+    // 兑换邀请码的返回体 data 是 Go RedeemResult(无 json tag)→ 字段大写 Workspace/Member,
+    // 内层 domain.Workspace 才是小写 id。不认大写这层,加入团队后拿不到 id → 不会自动切入团队空间。
+    payload?.Workspace?.id,
     payload?.workspace?.id,
     payload?.currentWorkspace?.id,
     payload?.current_workspace?.id,

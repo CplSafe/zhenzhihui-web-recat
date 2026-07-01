@@ -5,7 +5,7 @@
 */
 import TeamManagementModal from './TeamManagementModal'
 import { useUiStore } from '@/stores/ui'
-import { useCurrentWorkspace, useWorkspaceId, useCurrentMember } from '@/stores/workspaceSession'
+import { useCurrentWorkspace, useWorkspaceId, useCurrentMember, useCurrentUser } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 
 export default function GlobalTeamManageModal() {
@@ -14,7 +14,11 @@ export default function GlobalTeamManageModal() {
   const workspace = useCurrentWorkspace()
   const workspaceId = useWorkspaceId()
   const currentMember = useCurrentMember()
+  const currentUser = useCurrentUser()
   const { showToast } = useToast()
+
+  // 会话级用户 id(不随切换空间失效),供弹窗在成员列表里定位「我」→ 取当前空间下的真实角色。
+  const sessionUserId = Number(currentUser?.id ?? currentUser?.user_id ?? currentUser?.userId ?? 0) || 0
 
   return (
     <TeamManagementModal
@@ -22,6 +26,7 @@ export default function GlobalTeamManageModal() {
       workspaceId={workspaceId}
       workspace={workspace}
       currentMember={currentMember}
+      sessionUserId={sessionUserId}
       onClose={close}
       onToast={showToast}
     />
