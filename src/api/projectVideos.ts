@@ -257,6 +257,14 @@ function buildDerivedVideos({
     (g: any) => g?.status === 'processing',
   )
   const hasActiveTask = Number(smart?.vidGenTaskId || 0) > 0
+  // 「进行中」记录超过此时长仍未收尾 → 视为已废弃(生成中关标签页且再没回来 → 完成回填从未发生),
+  // 不再据它显示「生成中草稿」,否则项目管理会永久多出一张清不掉的幻影草稿卡。
+  // 无 createdAt 的旧记录(=0)无法判龄,保守当作「新」以免误伤既有行为。
+  const PROCESSING_STALE_MS = 6 * 60 * 60 * 1000 // 6h:远超任何真实生成时长,只淘汰真正废弃的
+  const latestProcessing = processingRaw[processingRaw.length - 1]
+  const latestProcessingTs = Number(latestProcessing?.createdAt || latestProcessing?.created_at || 0) || 0
+  const hasFreshProcessing =
+    processingRaw.length > 0 && (latestProcessingTs === 0 || Date.now() - latestProcessingTs < PROCESSING_STALE_MS)
   const makeGenItem = (g: any, i: number): ProjectVideo => ({
     id: `derived-gen-${pickString(g?.id, String(i))}`,
     projectId: Number(project?.id || 0),
@@ -278,8 +286,8 @@ function buildDerivedVideos({
   // 而不是只剩旧成片。仍折叠成【一条】(取最近一条 processing),完成时记录会被标记 published(被过滤掉),
   // 失败的也不是 processing → 不会重现「一个项目堆出多个空草稿(只生成1个却显示5个)」。
   const genItems: ProjectVideo[] =
-    hasActiveTask || processingRaw.length > 0
-      ? [makeGenItem(processingRaw[processingRaw.length - 1] || { id: `legacy-${project?.id || 0}`, status: 'processing' }, 0)]
+    hasActiveTask || hasFreshProcessing
+      ? [makeGenItem(latestProcessing || { id: `legacy-${project?.id || 0}`, status: 'processing' }, 0)]
       : []
   const generating = genItems.length > 0
 

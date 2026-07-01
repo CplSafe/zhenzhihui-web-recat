@@ -14,6 +14,7 @@ import {
   isUnauthorizedAuthError,
   markAuthSessionExpected,
   refreshSession,
+  resetAuthenticatedSession,
 } from '../api/auth'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
 import { clearSmartDraft } from '../utils/smartDraft'
@@ -245,6 +246,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const handleLogoutSuccess = useCallback(() => {
     stopSessionRefresh()
+    // 作废任何在途的会话校验:bump 序号让其 isStale() 命中,不再写状态;并丢弃共享 in-flight promise。
+    // 否则登出前发起的 getAuthenticatedSession 若在此之后 resolve,会把刚清掉的会话「复活」。
+    loadSeqRef.current++
+    resetAuthenticatedSession()
     setSession(null)
     setIsAuthenticated(false)
     setIsCheckingSession(false)

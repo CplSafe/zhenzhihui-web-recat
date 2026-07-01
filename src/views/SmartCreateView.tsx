@@ -1235,28 +1235,64 @@ export default function SmartCreateView() {
 
     // 「确认修改」:把上次整片当 video 输入,按修改提示在原视频基础上改(片段时间段写进提示)
     if (opts?.edit && fullVideo.assetId) {
+      const editPid = Number(projectIdRef.current) || 0
       setVidGenRunning(true)
+      // 同项目已有在途生成(编辑/整片)→ 直接订阅其结果,绝不重发起:
+      // 否则编辑中途切走→回来,因无 in-flight 登记会重复触发 → 重复出片 / 重复计费。
+      const alreadyEditing = editPid ? getRunningVideoGen(editPid) : null
+      if (alreadyEditing) {
+        try {
+          const { url, assetId } = await alreadyEditing
+          setFullVideo({ url, assetId })
+          setVideoVersions((prev) => [...prev, { url, assetId }])
+          markGen(null, 'published')
+        } catch {
+          markGen(null, 'failed')
+        } finally {
+          setVidGenRunning(false)
+          setVidGenTaskId(0)
+        }
+        return
+      }
       const gid = startGen(note)
       try {
-        const plans = await resolvePlanCandidates()
-        const editPrompt = [
-          '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
-          note || '',
-        ]
-          .filter(Boolean)
-          .join('\n')
-        const editSrcDur = (await readVideoDurationSec(fullVideo.url)) || 0
-        const { url, assetId } = await editFullVideo({
-          workspaceId: ws,
-          videoAssetId: fullVideo.assetId,
-          prompt: editPrompt,
-          ratio: entryMeta?.ratio,
-          durationSec: totalDurationSec(shots) || 10,
-          sourceVideoDurationSec: editSrcDur, // 按原整片真实时长计费(video.edit)
-          modelPlanCandidates: plans,
-        })
-        // B:修改完成即落后端(切走也保存)
-        void persistVideoResultToBackend({ projectId: projectIdRef.current, workspaceId: ws, url, assetId, genId: gid })
+        // 与整片生成对齐:按 projectId 登记结果 promise(活在组件外),并持久化 task_id → 切走/刷新可续轮询。
+        const { url, assetId } = await trackVideoGen(
+          editPid,
+          (async (): Promise<{ url: string; assetId: number }> => {
+            const plans = await resolvePlanCandidates()
+            const editPrompt = [
+              '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
+              note || '',
+            ]
+              .filter(Boolean)
+              .join('\n')
+            const editSrcDur = (await readVideoDurationSec(fullVideo.url)) || 0
+            const out = await editFullVideo({
+              workspaceId: ws,
+              videoAssetId: fullVideo.assetId,
+              prompt: editPrompt,
+              ratio: entryMeta?.ratio,
+              durationSec: totalDurationSec(shots) || 10,
+              sourceVideoDurationSec: editSrcDur, // 按原整片真实时长计费(video.edit)
+              modelPlanCandidates: plans,
+              // 任务创建即持久化 task_id:中途切路由/刷新可凭它续轮询(与整片生成一致)
+              onTask: (id) => {
+                setVidGenTaskId(Number(id) || 0)
+                setGenTask(gid, Number(id) || 0)
+              },
+            })
+            // B:修改完成即落后端(切走也保存)
+            await persistVideoResultToBackend({
+              projectId: editPid,
+              workspaceId: ws,
+              url: out.url,
+              assetId: out.assetId,
+              genId: gid,
+            })
+            return out
+          })(),
+        )
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
         markGen(gid, 'published')
@@ -1265,6 +1301,7 @@ export default function SmartCreateView() {
         markGen(gid, 'failed')
       } finally {
         setVidGenRunning(false)
+        setVidGenTaskId(0) // 生成结束(成功/失败)清掉进行中标记,避免恢复时误续
       }
       return
     }
@@ -1539,7 +1576,9 @@ export default function SmartCreateView() {
               })
             : await estimateShotImageCost({
                 workspaceId: ws,
-                hasRefs: false,
+                // 准备素材多为「主推产品/带参考图主体」→ 实际走 image_to_image;按 img2img 口径预估,
+                // 避免对含参考图的出图低估成本(默认模型 GPT Image 2 同时支持 text/image_to_image)。
+                hasRefs: true,
                 lowRes: true, // 与素材/元素实际出图一致(lowRes:true);对无 size 字段的模型无影响,但口径对齐
                 ratio: entryMeta?.ratio,
                 modelPlanCandidates: plans,
@@ -1903,6 +1942,8 @@ export default function SmartCreateView() {
     setMarketingData((d.marketingData as MarketingBreakdownData) || null)
     setImageMessages(Array.isArray(d.imageMessages) ? (d.imageMessages as ChatMessage[]) : [])
     imgMsgHydratedRef.current = false // 恢复后按 asset_id 重换图片签名URL
+    hydratedUrlsRef.current = false // 同上:每次 applyDraft 都允许分镜/视频 URL 重新水合。
+    // 否则本地 fast-path 先水合置 true 后,后端草稿(可能含本地没有的资源)到达时被跳过 → 过期 URL 渲染坏图。
     autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
     autoVidRef.current = true
     // 以恢复时的状态作为「已生成」基线签名:之后未改动就不重生成,改了上游再进下一步才重新生成
@@ -2289,6 +2330,15 @@ export default function SmartCreateView() {
     draftRevisionRef.current = 0
     serverTitleRef.current = ''
     autoVidRef.current = false
+    // /smart 与 /smart/:id 是同一组件实例(不会重挂载),故这些「一次性闸门」必须手动复位,
+    // 否则新项目会沿用上个项目的状态:跳过分镜图自动生成 / 跳过 URL 水合 / 抑制续传 / 漏首存。
+    hydratedUrlsRef.current = false
+    resumeAttemptedRef.current = false
+    autoGenRef.current = false
+    shotGenSigRef.current = ''
+    videoGenSigRef.current = ''
+    scriptResumeRef.current = false
+    pendingInitialSaveRef.current = false
     setEntryKey((k) => k + 1)
     navigate('/smart')
   }

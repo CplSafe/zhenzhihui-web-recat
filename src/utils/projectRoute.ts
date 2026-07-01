@@ -1,5 +1,6 @@
 /**
  * 按项目草稿的 flow 决定打开路径:
+ *  - 爆款复制(draft.flow==='hot-copy')→ /hot-copy/:id
  *  - 智能成片(draft.flow==='smart' 或含 smart 块)→ /smart/:id
  *  - 其它(旧版 2.0 分步创作)→ /smart/:id（统一走新版智能成片）
  * 失败兜底走 /smart。供首页/工作台/项目管理/布局等所有"打开历史项目"入口共用。
@@ -19,6 +20,9 @@ export async function resolveProjectPath(projectId: number | string, workspaceId
         draft = null
       }
     }
+    // 爆款复制先判:它的草稿也带 smart 块(flow:'hot-copy'),必须在 smart 分支之前拦掉,否则会误开 /smart。
+    const flow = String(draft?.flow || draft?.smart?.flow || '').toLowerCase()
+    if (flow === 'hot-copy') return `/hot-copy/${id}`
     if (draft && (draft.flow === 'smart' || draft.smart)) return `/smart/${id}`
   } catch {
     /* 拉取失败 → 默认走智能成片 */

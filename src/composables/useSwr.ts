@@ -48,6 +48,9 @@ export function useSwr<T>(key: string, fetcher: () => Promise<T>, options: UseSw
   const [data, setData] = useState<T | undefined>(cachedInit ?? fallback)
   const [loading, setLoading] = useState<boolean>(enabled && cachedInit === undefined)
   const [fromCache] = useState<boolean>(cachedInit !== undefined)
+  // refresh() 递增此值触发 effect 重跑:effect 的 cleanup 会把上一次 load() 的 alive 置 false,
+  // 取消仍在途的旧请求,避免旧请求后 resolve 覆盖新数据(手动刷新后闪回旧值)。
+  const [refreshTick, setRefreshTick] = useState(0)
 
   // fetcher 用 ref 持有,避免把它放进 effect 依赖导致重复请求
   const fetcherRef = useRef(fetcher)
@@ -83,13 +86,14 @@ export function useSwr<T>(key: string, fetcher: () => Promise<T>, options: UseSw
       cleanup?.()
       unsub()
     }
-  }, [load, key])
+    // refreshTick 变化 → 先 cleanup(取消上一个 in-flight)再 load,实现「刷新即取消旧请求」
+  }, [load, key, refreshTick])
 
   const refresh = useCallback(() => {
     invalidate(key, persist)
     setLoading(peekCache<T>(key, persist) === undefined)
-    load()
-  }, [key, persist, load])
+    setRefreshTick((n) => n + 1) // 交给 effect 重跑(带 cleanup),不再直接 load() 泄漏旧请求
+  }, [key, persist])
 
   return { data, loading, fromCache, refresh }
 }

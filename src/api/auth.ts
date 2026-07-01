@@ -152,6 +152,12 @@ export function getAuthenticatedSession() {
   return authSessionPromise
 }
 
+// 登出时调用:丢弃共享的 in-flight session promise。否则登出前发起的一次会话校验若在登出后才 resolve,
+// 其 .then 会把刚清掉的会话「复活」(setSession/setIsAuthenticated(true))。配合调用方 bump 序号双保险。
+export function resetAuthenticatedSession() {
+  authSessionPromise = null
+}
+
 async function fetchAuthenticatedSession() {
   // 如果正在进行 SSO 登录回调，即使没有历史 marker 也应该尝试获取 session
   const ssoPending = window.sessionStorage.getItem('zzh_sso_pending') === '1'
