@@ -75,6 +75,25 @@
   gap: 12px;
   margin-left: auto;
 }
+/* 分享链接:图标 + 深色文字(对齐 Figma) */
+.apptop__share {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  color: #2b3040;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.apptop__share:hover {
+  color: #ff5153;
+}
+.apptop__share-icon {
+  display: inline-flex;
+}
 .apptop__member {
   display: inline-flex;
   align-items: center;
@@ -163,6 +182,13 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   padding: 6px;
   z-index: 3000;
+}
+/* 装个人面板时:由 PersonalPanel 自控尺寸/内边距,菜单只当卡片外壳 */
+.apptop__menu--panel {
+  min-width: 0;
+  padding: 0;
+  border-radius: 16px;
+  overflow: hidden;
 }
 .apptop__menu-item {
   width: 100%;

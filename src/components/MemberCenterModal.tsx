@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useToast } from '@/composables/useToast'
-import { useWorkspaceId } from '@/stores/workspaceSession'
+import { useWorkspaceId, useWorkspaceSessionStore, deriveAllWorkspaces } from '@/stores/workspaceSession'
 import {
   createRechargeOrder,
   createSubscriptionOrder,
@@ -435,7 +435,27 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
 
   // 打开支付页后轮询订单状态,给「成功/失败」结果提示并刷新余额/订阅(附加逻辑,不影响下单本身)。
   // 支付在外部标签页完成、前端收不到回调,故每 3s 查一次 listPaymentOrders 匹配本单 id,直到 paid/失败/超时。
-  const watchOrder = (orderId: number, kind: 'recharge' | 'subscribe') => {
+  // 团队版支付成功后:后端已自动创建新团队空间 → 前端刷新空间列表,并切到"新出现的那个团队空间"。
+  const adoptNewTeamWorkspace = async () => {
+    try {
+      const store = useWorkspaceSessionStore
+      const beforeIds = new Set(
+        (deriveAllWorkspaces(store.getState()) as any[]).map((w) => Number(w?.id || 0)).filter((id) => id > 0),
+      )
+      await store.getState().loadWorkspaces() // 拉最新(含后端刚建的团队空间)
+      const after = deriveAllWorkspaces(store.getState()) as any[]
+      const isTeamWs = (w: any) => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal'
+      // 新出现的团队空间(优先);没有则退回任一新出现的空间
+      const created =
+        after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)) && isTeamWs(w)) ||
+        after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)))
+      if (created?.id) store.getState().switchWorkspace(Number(created.id))
+    } catch {
+      /* 刷新/切换失败不阻断支付成功提示;用户可手动在切换空间里找到新空间 */
+    }
+  }
+
+  const watchOrder = (orderId: number, kind: 'recharge' | 'subscribe', team = false) => {
     const ws = Number(workspaceId || 0)
     if (!orderId || !ws) return
     const type = kind === 'recharge' ? 'credit_recharge' : '' // 订阅有 initial/renewal 两种,留空取全部再按 id 匹配
@@ -463,6 +483,8 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           getSubscription(ws)
             .then((s: any) => aliveRef.current && setSubscription(s))
             .catch(() => {})
+          // 买的是团队版:后端已建新团队空间 → 刷新空间列表并切过去
+          if (kind === 'subscribe' && team) void adoptNewTeamWorkspace()
           return
         }
         if (st === 'failed' || st === 'canceled') {
@@ -487,6 +509,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     createOrder: () => Promise<{ payUrl: string; orderId: number }>,
     failMsg: string,
     kind: 'recharge' | 'subscribe',
+    team = false, // 团队版订阅:支付成功后要刷新空间列表并切到后端新建的团队空间
   ) => {
     setPendingPayUrl('')
     // ① 与点击同步开空白页(此刻一定还在用户手势上下文里)
@@ -509,7 +532,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         showToast('支付页面被浏览器拦截,请点击下方「手动打开支付页」', 'error')
       }
       // ④ 附加:轮询订单状态,出「成功/失败」结果并刷新余额/订阅(不影响上面的下单/开窗)
-      watchOrder(orderId, kind)
+      watchOrder(orderId, kind, team)
     } catch (e) {
       win?.close()
       showToast(getBusinessErrorMessage(e, failMsg), 'error')
@@ -531,6 +554,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         () => resolveOrder(`sub:${p.id}`, () => createSubscriptionOrder({ workspaceId, planId: p.id })),
         renew ? '续费失败,请稍后重试' : '开通失败,请稍后重试',
         'subscribe',
+        p.isTeam && !renew, // 团队版【开通】:支付成功后切到后端新建的团队空间;续费(空间已存在)不切
       )
     } finally {
       setBuyingId(0)

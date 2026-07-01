@@ -1209,6 +1209,141 @@ export function leaveWorkspace({ workspaceId }: any = {}) {
   })
 }
 
+// 解散空间(仅所有者):真删空间,连同其素材/项目/数据一并清空。POST /workspaces/{id}/disband
+export function disbandWorkspace({ workspaceId }: any = {}) {
+  const id = Number(workspaceId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/disband`, {
+    method: 'POST',
+  })
+}
+
+export function listWorkspaceInvitations(workspaceId) {
+  const id = Number(workspaceId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/invitations`)
+}
+
+export function createWorkspaceInvitation({ workspaceId, expiryDays, role = 'member' }: any = {}) {
+  const id = Number(workspaceId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  const days = Number(expiryDays || 0)
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/invitations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(
+      removeEmptyFields({
+        expires_in_days: Number.isFinite(days) && days > 0 ? Math.floor(days) : undefined,
+        role: String(role || 'member').trim() || 'member',
+      }),
+    ),
+  })
+}
+
+export function deleteWorkspaceInvitation({ workspaceId, invitationId }: any = {}) {
+  const id = Number(workspaceId || 0)
+  const invId = Number(invitationId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  if (!Number.isFinite(invId) || invId <= 0) {
+    throw new BusinessApiError('邀请 ID 无效')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/invitations/${Math.floor(invId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function removeWorkspaceMember({ workspaceId, userId }: any = {}) {
+  const id = Number(workspaceId || 0)
+  const uid = Number(userId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  if (!Number.isFinite(uid) || uid <= 0) {
+    throw new BusinessApiError('成员 ID 无效')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/members/${Math.floor(uid)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function updateWorkspaceMemberRole({ workspaceId, userId, role }: any = {}) {
+  const id = Number(workspaceId || 0)
+  const uid = Number(userId || 0)
+  const nextRole = String(role || '').trim()
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  if (!Number.isFinite(uid) || uid <= 0) {
+    throw new BusinessApiError('成员 ID 无效')
+  }
+  if (!nextRole) {
+    throw new BusinessApiError('成员角色不能为空')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/members/${Math.floor(uid)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      role: nextRole,
+    }),
+  })
+}
+
+export function updateWorkspaceMemberQuota({
+  workspaceId,
+  userId,
+  canGenerate,
+  maxTaskCredits,
+  monthlyCreditLimit,
+}: any = {}) {
+  const id = Number(workspaceId || 0)
+  const uid = Number(userId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  if (!Number.isFinite(uid) || uid <= 0) {
+    throw new BusinessApiError('成员 ID 无效')
+  }
+  const resolvedMaxTaskCredits =
+    maxTaskCredits === undefined || maxTaskCredits === null || maxTaskCredits === ''
+      ? undefined
+      : Number(maxTaskCredits)
+  const resolvedMonthlyCreditLimit =
+    monthlyCreditLimit === undefined || monthlyCreditLimit === null || monthlyCreditLimit === ''
+      ? undefined
+      : Number(monthlyCreditLimit)
+  if (
+    resolvedMaxTaskCredits !== undefined &&
+    (!Number.isFinite(resolvedMaxTaskCredits) || resolvedMaxTaskCredits < 0)
+  ) {
+    throw new BusinessApiError('单任务额度必须为非负数字')
+  }
+  if (
+    resolvedMonthlyCreditLimit !== undefined &&
+    (!Number.isFinite(resolvedMonthlyCreditLimit) || resolvedMonthlyCreditLimit < 0)
+  ) {
+    throw new BusinessApiError('月度额度必须为非负数字')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/members/${Math.floor(uid)}/quota`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(
+      removeEmptyFields({
+        can_generate: typeof canGenerate === 'boolean' ? canGenerate : undefined,
+        max_task_credits: resolvedMaxTaskCredits,
+        monthly_credit_limit: resolvedMonthlyCreditLimit,
+      }),
+    ),
+  })
+}
+
 export function transferWorkspaceOwnership({ workspaceId, userId }: any = {}) {
   const id = Number(workspaceId || 0)
   const uid = Number(userId || 0)
@@ -1477,6 +1612,13 @@ export function getCreativeProject({ projectId, workspaceId }: any = {}) {
   const wsId = Number(workspaceId || 0)
   const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${wsId}` : ''
   return requestJson(`/api/v1/creative/projects/${id}${query}`)
+}
+
+// 我的专属推广码(GET /api/v1/referral/my-code)。会话鉴权、无参数。
+// 返回 data:{ code:"ZZH-XXXX" };这里直接取出推广码字符串,拿不到则空串。
+export async function getReferralMyCode(): Promise<string> {
+  const data: any = await requestJson('/api/v1/referral/my-code')
+  return String(data?.code || '').trim()
 }
 
 export function patchCreativeProject({ projectId, workspaceId, title, name }: any = {}) {

@@ -182,7 +182,8 @@
 }
 .app-sidebar__group-title {
   font-size: 12px;
-  color: #aab0b8;
+  color: #1d2130;
+  font-weight: 700;
   padding: 4px 10px 6px;
   letter-spacing: 1px;
   white-space: nowrap;

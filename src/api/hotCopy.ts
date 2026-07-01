@@ -73,19 +73,16 @@ export async function replicateHotVideo(args: {
     // buildVideoGenerationParams(其内部按模型 schema 决定字段名/取值;无 schema 时也下发标准
     // duration/resolution/ratio,保证用户所选时长/比例生效)。source_video_duration 仅在模型 schema
     // 声明时下发,用于「按源视频真实时长计费」,与 duration 不冲突。
-    params: (m: any) => {
-      const built = {
-        generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
-        ...buildVideoGenerationParams(m, {
-          duration: normalizeSeedanceDuration(args.durationSec || 10),
-          sourceVideoDuration: args.sourceVideoDurationSec,
-          resolution: '720p',
-          ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
-          generateAudio: true,
-        }),
-      }
-      return built
-    },
+    params: (m: any) => ({
+      generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
+      ...buildVideoGenerationParams(m, {
+        duration: normalizeSeedanceDuration(args.durationSec || 10),
+        sourceVideoDuration: args.sourceVideoDurationSec,
+        resolution: '720p',
+        ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
+        generateAudio: true,
+      }),
+    }),
   })
   args.onTask?.(Number(task?.id || 0) || 0)
   const completed = await waitForAiTask({

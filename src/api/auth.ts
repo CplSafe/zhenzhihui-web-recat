@@ -78,13 +78,14 @@ export function loginWithSmsCode({ authStart, mobile, smsCode, captchaId, captch
   })
 }
 
-export function registerAccount({ authStart, mobile, password, smsCode, termsAccepted }) {
+export function registerAccount({ authStart, mobile, password, smsCode, termsAccepted, inviteCode = '' }) {
   return requestDeepAuth(PUBLIC_AUTH.register, {
     return_to: authStart?.return_to, // register 字段无 client_id,只带 return_to(空则被 removeEmptyFields 去掉)
     mobile,
     password,
     sms_code: smsCode,
     terms_accepted: termsAccepted,
+    invite_code: inviteCode, // 分享链接带来的推广码(空则被 removeEmptyFields 去掉)
   })
 }
 
