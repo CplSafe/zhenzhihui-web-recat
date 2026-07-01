@@ -46,6 +46,13 @@ export default function ProjectVideoDetailView() {
   const [deleting, setDeleting] = useState(false)
   // 竖屏视频:按屏幕高展示(横屏保持按宽,不变)。加载元数据后据真实宽高判断。
   const [isPortrait, setIsPortrait] = useState(false)
+  // 视频缓冲完成(canplay)前显示 loading,避免"空白等半天才蹦出画面";加载失败显示错误(不再永久转圈);换视频时重置。
+  const [videoReady, setVideoReady] = useState(false)
+  const [videoError, setVideoError] = useState(false)
+  useEffect(() => {
+    setVideoReady(false)
+    setVideoError(false)
+  }, [detail?.videoUrl])
 
   const handleNavigate = useCallback(
     (key: string) => {
@@ -188,16 +195,37 @@ export default function ProjectVideoDetailView() {
               <section className="pvdetail-content">
                 <div className={`pvdetail-player${isPortrait ? ' is-portrait' : ''}`}>
                   {detail.videoUrl ? (
-                    <video
-                      src={detail.videoUrl}
-                      controls
-                      playsInline
-                      preload="metadata"
-                      onLoadedMetadata={(e) => {
-                        const v = e.currentTarget
-                        setIsPortrait(v.videoHeight > v.videoWidth)
-                      }}
-                    />
+                    <>
+                      <video
+                        src={detail.videoUrl}
+                        poster={detail.coverUrl || undefined}
+                        controls
+                        playsInline
+                        preload="auto"
+                        className={`pvdetail-video${videoReady ? ' is-ready' : ''}`}
+                        onLoadedMetadata={(e) => {
+                          const v = e.currentTarget
+                          setIsPortrait(v.videoHeight > v.videoWidth)
+                        }}
+                        onLoadedData={() => setVideoReady(true)}
+                        onCanPlay={() => setVideoReady(true)}
+                        onError={() => {
+                          setVideoError(true)
+                          setVideoReady(true) // 收起 loading 转圈,改显错误
+                        }}
+                      />
+                      {!videoReady && !videoError && (
+                        <div className="pvdetail-player__loading" aria-live="polite">
+                          <span className="pvdetail-spinner" aria-hidden="true" />
+                          <span>视频加载中…</span>
+                        </div>
+                      )}
+                      {videoError && (
+                        <div className="pvdetail-player__loading" aria-live="polite">
+                          <span>视频加载失败,请稍后重试</span>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <div className="pvdetail-player__empty">该视频尚未生成内容，当前为草稿记录</div>
                   )}

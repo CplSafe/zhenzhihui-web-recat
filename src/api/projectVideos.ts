@@ -1,4 +1,5 @@
 import { getCreativeProject, updateCreativeProjectDraft } from '@/api/business'
+import { computeVideoContentSig } from '@/utils/smartDraft'
 
 export type ProjectVideoStatus = 'draft' | 'processing' | 'published' | 'failed'
 export type ProjectVideoSourceType = 'smart' | 'creative'
@@ -282,6 +283,20 @@ function buildDerivedVideos({
       : []
   const generating = genItems.length > 0
 
+  // 「在制/草稿」判定:草稿当前内容签名 ≠ 上一版成片盖章的签名 ⇒ 内容改了但没出新片 → 顶部并排一条草稿。
+  // 只对智能成片(有 lastVideoSig 盖章)生效;老数据无签名 → 不误报。有进行中记录(generating)时不重复加。
+  const lastVideoSig = pickString(smart?.lastVideoSig)
+  const currentVideoSig = lastVideoSig
+    ? computeVideoContentSig(
+        normalizeArray(smart?.shots),
+        smart?.entryMeta || draft?.entryMeta,
+        pickString(smart?.reqSummary, smart?.requirement, draft?.description),
+      )
+    : ''
+  const contentDirty = !!lastVideoSig && !!currentVideoSig && currentVideoSig !== lastVideoSig
+  const dirtyItems: ProjectVideo[] =
+    !generating && contentDirty ? [makeGenItem({ id: `dirty-${project?.id || 0}` }, 0)] : []
+
   const candidates = normalizeArray(smart?.videoVersions)
   const historyList =
     candidates.length > 0
@@ -338,7 +353,8 @@ function buildDerivedVideos({
     .filter((item) => item.videoUrl || item.coverUrl)
 
   // 有已出版本:正在重新生成时,置顶一个「生成中」项(旧版本仍为已发布)
-  if (records.length) return generating ? [...genItems, ...records] : records
+  if (records.length)
+    return generating ? [...genItems, ...records] : dirtyItems.length ? [...dirtyItems, ...records] : records
 
   const generatedVideoAssetId =
     Number(draft?.generatedVideoAssetId || draft?.generated_video_asset_id || smart?.fullVideoAssetId || 0) || 0
@@ -389,8 +405,9 @@ function buildDerivedVideos({
     flow,
     publishUrl: pickString(draft?.publishUrl, smart?.publishUrl),
   }
-  // 有旧成片但正在重新生成 → 置顶「生成中」项,旧片仍为已发布
-  return generating ? [...genItems, finalItem] : [finalItem]
+  // 有旧成片但正在重新生成 → 置顶「生成中」项;否则若内容已改未出新片(contentDirty)→ 置顶一条「草稿」。
+  // (与 records 分支同口径:成片只挂在 fullVideoUrl / generatedVideoUrl、videoVersions 为空时,dirtyItems 也要生效。)
+  return generating ? [...genItems, finalItem] : dirtyItems.length ? [...dirtyItems, finalItem] : [finalItem]
 }
 
 function applyOverrides(item: ProjectVideo, overrides: ProjectVideoOverride | undefined): ProjectVideo | null {

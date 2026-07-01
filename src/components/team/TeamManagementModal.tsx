@@ -14,6 +14,7 @@ import {
   updateWorkspaceMemberQuota,
   updateWorkspaceMemberRole,
 } from '@/api/business'
+import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useConfirmDialog } from '@/composables/useToast'
 import './TeamManagementModal.css'
 
@@ -255,6 +256,17 @@ export default function TeamManagementModal({
   const [memberActionOpen, setMemberActionOpen] = useState(false)
   const [memberActionTarget, setMemberActionTarget] = useState<NormalizedMember | null>(null)
   const [memberActionStyle, setMemberActionStyle] = useState<React.CSSProperties>({})
+  // 头部右上「…」菜单:退出 / 解散该空间
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false)
+  const headerMenuRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!headerMenuOpen) return
+    const onDown = (e: PointerEvent) => {
+      if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) setHeaderMenuOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [headerMenuOpen])
 
   // 用 ref 持有不影响渲染的状态，等价 Vue 的 ref（避免闭包过期 + 避免重复触发）
   const membersLoadingRef = useRef(false)
@@ -264,12 +276,7 @@ export default function TeamManagementModal({
 
   // === computed ===
   const currentUserId = useMemo(() => {
-    const value =
-      currentMember?.user_id ??
-      currentMember?.userId ??
-      currentMember?.user?.id ??
-      currentMember?.id ??
-      0
+    const value = currentMember?.user_id ?? currentMember?.userId ?? currentMember?.user?.id ?? currentMember?.id ?? 0
     const id = Number(value || 0)
     return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
   }, [currentMember])
@@ -289,19 +296,18 @@ export default function TeamManagementModal({
   )
   const canTransferOwnership = isCurrentUserOwner
   const workspaceType = useMemo(
-    () => String(workspace?.type || '').trim().toLowerCase(),
+    () =>
+      String(workspace?.type || '')
+        .trim()
+        .toLowerCase(),
     [workspace],
   )
   const isPersonalWorkspace = workspaceType === 'personal'
   const isTeamWorkspace = !workspaceType || workspaceType === 'team'
 
   const displayInviteCode = useMemo(() => formatInviteCodeForDisplay(inviteCode), [inviteCode])
-  const inviteDisplayText = isPersonalWorkspace
-    ? '个人空间不支持邀请码'
-    : displayInviteCode || '暂无邀请码'
-  const inviteExpiryText = isPersonalWorkspace
-    ? '切换到团队空间后才可邀请成员加入'
-    : expiryDate || '-'
+  const inviteDisplayText = isPersonalWorkspace ? '个人空间不支持邀请码' : displayInviteCode || '暂无邀请码'
+  const inviteExpiryText = isPersonalWorkspace ? '切换到团队空间后才可邀请成员加入' : expiryDate || '-'
   const canCopyInviteCode = isTeamWorkspace && Boolean(String(inviteCode || '').trim())
 
   // normalizeMembers 依赖 ownerUserId，因此用闭包形式定义
@@ -470,26 +476,22 @@ export default function TeamManagementModal({
         onToast?.(`已对 ${name} 设置成员`, 'success')
         await loadMembers()
       } else if (action === 'quota') {
-        const input = await requestConfirm(
-          `为 ${name} 设置单任务积分上限 max_task_credits（非负整数，0 表示不限制）`,
-          {
-            title: '设置配额',
-            inputEnabled: true,
-            inputValue: '',
-            inputLabel: '任务积分上限',
-            inputPlaceholder: '0 表示不限制',
-            confirmLabel: '保存',
-          },
-        )
+        const input = await requestConfirm(`为 ${name} 设置单任务积分上限 max_task_credits（非负整数，0 表示不限制）`, {
+          title: '设置配额',
+          inputEnabled: true,
+          inputValue: '',
+          inputLabel: '任务积分上限',
+          inputPlaceholder: '0 表示不限制',
+          confirmLabel: '保存',
+        })
         if (input === null) return
         const maxTaskCredits = Number(String(input).trim())
         await updateWorkspaceMemberQuota({ workspaceId: wsId, userId, maxTaskCredits })
         onToast?.(`已更新 ${name} 的配额`, 'success')
       } else if (action === 'transfer') {
-        const confirmed = await requestConfirm(
-          `确认将该团队所有权转让给 ${name} 吗？转让后你将不再是所有者。`,
-          { danger: true },
-        )
+        const confirmed = await requestConfirm(`确认将该团队所有权转让给 ${name} 吗？转让后你将不再是所有者。`, {
+          danger: true,
+        })
         if (!confirmed) return
         await transferWorkspaceOwnership({ workspaceId: wsId, userId })
         onToast?.(`已将团队所有权转让给 ${name}`, 'success')
@@ -508,6 +510,34 @@ export default function TeamManagementModal({
     } finally {
       setMemberActionLoading(false)
       closeMemberActions()
+    }
+  }
+
+  // 解散该空间(仅所有者):强确认——解散后素材/项目/数据全部清空,不可恢复。
+  async function handleDisband() {
+    if (!workspaceId) return
+    const ok = await requestConfirm('解散空间后,该空间的所有素材、项目及数据都将被清空,且不可恢复。确定解散该空间吗?')
+    if (!ok) return
+    try {
+      await useWorkspaceSessionStore.getState().disbandTeam(workspaceId)
+      onToast?.('空间已解散', 'success')
+      close()
+    } catch (error: any) {
+      onToast?.(error?.message || '解散失败,请稍后重试', 'error')
+    }
+  }
+
+  // 退出该空间(子账号):退出后不再看到该空间数据。所有者需先转让所有权才能退出。
+  async function handleLeave() {
+    if (!workspaceId) return
+    const ok = await requestConfirm('退出后你将不再看到该空间的素材、项目等数据。确定退出该空间吗?')
+    if (!ok) return
+    try {
+      await useWorkspaceSessionStore.getState().deleteTeam(workspaceId)
+      onToast?.('已退出该空间', 'success')
+      close()
+    } catch (error: any) {
+      onToast?.(error?.message || '退出失败,请稍后重试', 'error')
     }
   }
 
@@ -599,13 +629,78 @@ export default function TeamManagementModal({
         <div className="tm-overlay" role="dialog" aria-modal="true" aria-label="团队管理">
           <button type="button" className="tm-backdrop" aria-label="关闭团队管理" onClick={close}></button>
           <section className="tm-modal" aria-label="管理您的团队">
-            <button type="button" className="tm-close" aria-label="关闭" onClick={close}>
-              <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="M11.06 10l4.22-4.22a.75.75 0 0 0-1.06-1.06L10 8.94 5.78 4.72a.75.75 0 1 0-1.06 1.06L8.94 10l-4.22 4.22a.75.75 0 1 0 1.06 1.06L10 11.06l4.22 4.22a.75.75 0 0 0 1.06-1.06L11.06 10z" />
-              </svg>
-            </button>
-
-            <h2 className="tm-title">管理您的团队</h2>
+            {/* 头部:← 返回 + 空间名(+ 重命名) + 右上「…」菜单(退出/解散) */}
+            <div className="tm-header">
+              <button type="button" className="tm-back" aria-label="返回" onClick={close}>
+                <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M12 5l-5 5 5 5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <span className="tm-header-name">
+                {workspace?.name || (isPersonalWorkspace ? '个人空间' : '团队空间')}
+              </span>
+              {isTeamWorkspace && canManageWorkspace && (
+                <button
+                  type="button"
+                  className="tm-header-edit"
+                  aria-label="重命名"
+                  onClick={() => onToast?.('重命名功能暂未开放', 'success')}
+                >
+                  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <path
+                      d="M4 13.5V16h2.5l7-7-2.5-2.5-7 7zM12.5 5l2.5 2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              )}
+              <span className="tm-header-spacer" />
+              {isTeamWorkspace && (
+                <div className="tm-header-more-wrap" ref={headerMenuRef}>
+                  <button
+                    type="button"
+                    className="tm-header-more"
+                    aria-label="更多操作"
+                    aria-haspopup="menu"
+                    onClick={() => setHeaderMenuOpen((v) => !v)}
+                  >
+                    <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+                      <path d="M5 10a1.4 1.4 0 1 1 0 2.8A1.4 1.4 0 0 1 5 10Zm5 0a1.4 1.4 0 1 1 0 2.8A1.4 1.4 0 0 1 10 10Zm5 0a1.4 1.4 0 1 1 0 2.8A1.4 1.4 0 0 1 15 10Z" />
+                    </svg>
+                  </button>
+                  {headerMenuOpen && (
+                    <div className="tm-header-menu" role="menu">
+                      {isCurrentUserOwner ? (
+                        <button
+                          type="button"
+                          className="tm-header-menu-item tm-header-menu-item--danger"
+                          role="menuitem"
+                          onClick={() => {
+                            setHeaderMenuOpen(false)
+                            void handleDisband()
+                          }}
+                        >
+                          解散该空间
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="tm-header-menu-item"
+                          role="menuitem"
+                          onClick={() => {
+                            setHeaderMenuOpen(false)
+                            void handleLeave()
+                          }}
+                        >
+                          退出该空间
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             <div className="tm-invite-card">
               <div className="tm-invite-left">

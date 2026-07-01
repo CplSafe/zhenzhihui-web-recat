@@ -9,6 +9,7 @@ import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import {
   createWorkspace,
+  disbandWorkspace,
   extractPageItems,
   getSubscription,
   getWallet,
@@ -20,6 +21,7 @@ import {
   transferWorkspaceOwnership,
 } from '../api/business'
 import { listWorkspaceMembers } from '../api/auth'
+import { setSmartDraftUserScope } from '../utils/smartDraft'
 import {
   buildModelPlanCandidatesFromBillingPlans,
   buildModelPlanCandidatesFromSession,
@@ -71,6 +73,7 @@ export interface WorkspaceSessionState {
   createTeam: (name: string) => Promise<any>
   joinTeam: (inviteCode: string) => Promise<any>
   deleteTeam: (id: any) => Promise<void>
+  disbandTeam: (id: any) => Promise<void>
 }
 
 // ---- 派生值（纯函数，对应原 computed）---------------------------------------
@@ -362,14 +365,67 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         set({ activeWorkspaceOverrideId: toId(fallback?.id) })
       }
     },
+
+    // 解散空间(仅所有者):真删空间及其素材/项目/数据(POST /workspaces/{id}/disband)。
+    // 与 deleteTeam(退出语义)不同:disband 是所有者销毁整个空间,单人团队也能删。
+    disbandTeam: async (id) => {
+      const targetId = toId(id)
+      if (!targetId) throw new Error('团队 ID 无效')
+      const target = findById(deriveAllWorkspaces(get()), targetId)
+      // 必须是明确的团队空间才允许解散:type 非空且非 personal(空 type 也拒绝,避免绕过守卫误删个人空间)
+      const targetType = String(target?.type || '').toLowerCase()
+      if (!(targetType && targetType !== 'personal')) {
+        throw new Error('仅团队空间支持解散')
+      }
+      const userId = toId(get().authSession?.user?.id)
+      const ownerUserId = toId(target?.owner_user_id || target?.ownerUserId)
+      if (userId && ownerUserId && userId !== ownerUserId) {
+        throw new Error('只有空间所有者可以解散空间')
+      }
+      await disbandWorkspace({ workspaceId: targetId })
+      // 收尾:从本地列表移除 + 若删的是当前空间则切回个人空间兜底(同 deleteTeam)
+      const s = get()
+      if (Array.isArray(s.userWorkspaces) && s.userWorkspaces.length) {
+        set({ userWorkspaces: s.userWorkspaces.filter((item) => toId(item?.id) !== targetId) })
+      }
+      if (Array.isArray(s.authSession?.workspaces)) {
+        set({
+          authSession: {
+            ...s.authSession,
+            workspaces: s.authSession.workspaces.filter((item: any) => toId(item?.id) !== targetId),
+          },
+        })
+      }
+      if (toId(get().activeWorkspaceOverrideId) === targetId) {
+        set({ activeWorkspaceOverrideId: 0 })
+      }
+      await get().loadWorkspaces()
+      const next = get()
+      const nextList = deriveAllWorkspaces(next)
+      const desiredId = toId(next.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(next)
+      if (desiredId === targetId || !findById(nextList, desiredId)) {
+        const fallback =
+          nextList.find((item) => String(item?.type || '').toLowerCase() === 'personal') || nextList[0] || null
+        clearWorkspaceScopedState()
+        set({ activeWorkspaceOverrideId: toId(fallback?.id) })
+      }
+    },
   }
 })
 
 // 把"当前活跃 workspace id"同步给 api 层(business.listAiModels 查模型时必须带 workspace_id,
 // 否则后端按订阅返回空模型列表 → 出片/出图/预估全查不到模型)。初始 + 每次变化都推一次。
+// 智能成片本地草稿按【当前用户】隔离:同一浏览器换账号时各存各的,避免草稿串台
+// (新用户读到上个用户的 projectId → 空白 /smart 误跳 → 别人的项目 403/404 → 每次报「项目加载失败」)。
+const deriveDraftUserScope = (s: S): string => {
+  const u = deriveCurrentUser(s) || {}
+  return String(u.id ?? u.user_id ?? u.userId ?? u.account_id ?? u.uid ?? '')
+}
 setActiveWorkspaceId(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
+setSmartDraftUserScope(deriveDraftUserScope(useWorkspaceSessionStore.getState()))
 useWorkspaceSessionStore.subscribe((state) => {
   setActiveWorkspaceId(deriveWorkspaceId(state))
+  setSmartDraftUserScope(deriveDraftUserScope(state))
 })
 
 // ---- Selector hooks（组件侧便捷读取派生值，保持响应式订阅）------------------

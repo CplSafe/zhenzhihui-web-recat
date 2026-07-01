@@ -1403,6 +1403,17 @@ export function leaveWorkspace({ workspaceId }: any = {}) {
   })
 }
 
+// 解散空间(仅所有者):真删空间,连同其素材/项目/数据一并清空。POST /workspaces/{id}/disband
+export function disbandWorkspace({ workspaceId }: any = {}) {
+  const id = Number(workspaceId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/disband`, {
+    method: 'POST',
+  })
+}
+
 export function listWorkspaceInvitations(workspaceId) {
   const id = Number(workspaceId || 0)
   if (!Number.isFinite(id) || id <= 0) {
@@ -1891,6 +1902,13 @@ export function getCreativeProject({ projectId, workspaceId }: any = {}) {
   const wsId = Number(workspaceId || 0)
   const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${wsId}` : ''
   return requestJson(`/api/v1/creative/projects/${id}${query}`)
+}
+
+// 我的专属推广码(GET /api/v1/referral/my-code)。会话鉴权、无参数。
+// 返回 data:{ code:"ZZH-XXXX" };这里直接取出推广码字符串,拿不到则空串。
+export async function getReferralMyCode(): Promise<string> {
+  const data: any = await requestJson('/api/v1/referral/my-code')
+  return String(data?.code || '').trim()
 }
 
 export function patchCreativeProject({ projectId, workspaceId, title, name }: any = {}) {

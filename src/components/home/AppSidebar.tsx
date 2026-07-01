@@ -7,6 +7,7 @@
 import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
+import SidebarTeamGroup from './SidebarTeamGroup'
 import './AppSidebar.css'
 
 export interface SidebarItem {
@@ -75,35 +76,10 @@ const IconShop = (
     <path d="M9 13a3 3 0 0 0 6 0" />
   </svg>
 )
-const IconShield = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <path d="M12 3 5 6v6c0 4 3 6.5 7 9 4-2.5 7-5 7-9V6z" />
-    <path d="m9 12 2 2 4-4" />
-  </svg>
-)
-const IconDashboard = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <rect x="3" y="3" width="7" height="9" rx="1.5" />
-    <rect x="14" y="3" width="7" height="5" rx="1.5" />
-    <rect x="14" y="12" width="7" height="9" rx="1.5" />
-    <rect x="3" y="16" width="7" height="5" rx="1.5" />
-  </svg>
-)
-const IconUser = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <circle cx="12" cy="8" r="3.5" />
-    <path d="M5 20a7 7 0 0 1 14 0" />
-  </svg>
-)
 const IconSettings = (
   <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
     <circle cx="12" cy="12" r="3" />
     <path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />
-  </svg>
-)
-const IconChevron = (
-  <svg viewBox="0 0 24 24" width="14" height="14" {...stroke}>
-    <path d="m6 9 6 6 6-6" />
   </svg>
 )
 
@@ -121,13 +97,6 @@ const GROUPS: SidebarGroup[] = [
     items: [
       { key: 'projects', label: '项目管理', icon: IconFolder },
       { key: 'resources', label: '我的素材', icon: IconShop },
-    ],
-  },
-  {
-    title: '发布',
-    items: [
-      { key: 'pre-review', label: '投前预审', icon: IconShield },
-      { key: 'dashboard', label: '数据看板', icon: IconDashboard },
     ],
   },
 ]
@@ -235,15 +204,8 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
             </div>
           ))}
 
-          {/* 团队：个人空间（静态下拉样式）*/}
-          <div className="app-sidebar__group">
-            <div className="app-sidebar__group-title">团队</div>
-            <button type="button" className="app-sidebar__item app-sidebar__item--dropdown" onClick={() => go('team')}>
-              <span className="app-sidebar__icon">{IconUser}</span>
-              <span className="app-sidebar__label">个人空间</span>
-              <span className="app-sidebar__chevron">{IconChevron}</span>
-            </button>
-          </div>
+          {/* 团队：当前空间下拉 + 空间切换浮层 + 数据统计/团队管理(团队空间) */}
+          <SidebarTeamGroup collapsed={collapsed} />
 
           {GROUPS.slice(3).map((group) => (
             <div className="app-sidebar__group" key={group.title}>

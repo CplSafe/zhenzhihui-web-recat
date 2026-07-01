@@ -5,6 +5,15 @@
  */
 const KEY = 'smart_create_draft_v1'
 
+// 草稿按【用户】隔离:同一浏览器多个账号登录时,各存各的,避免"新用户读到上个用户的草稿 →
+// 空白 /smart 拿别人的 projectId 去跳转 → 别人的项目 403/404 → 每次进来都报『项目加载失败』"。
+// 由 store 会话变化时调 setSmartDraftUserScope(userId) 注入;未设置(未登录)用 'anon'。
+let draftUserScope = ''
+export function setSmartDraftUserScope(id: any) {
+  draftUserScope = String(id || '')
+}
+const keyOf = () => `${KEY}_u${draftUserScope || 'anon'}`
+
 export interface SmartDraft {
   started?: boolean
   requirement?: string
@@ -41,8 +50,44 @@ export interface SmartDraft {
   marketingData?: any
   /** 制作图片(chat 模式)的消息流(用户提问 + AI 生成图,图带 asset_id 供水合) */
   imageMessages?: any[]
+  /** 上一版整片成片所依据的「内容签名」(computeVideoContentSig):
+   *  用于项目管理列表派生判断——当前草稿内容签名 ≠ 此值 ⇒ 内容已改、尚未出新片 ⇒ 显示为「草稿(在制)」。
+   *  仅在成片落库时(persistVideoResult / 出片成功)盖章,不随普通编辑变化。 */
+  lastVideoSig?: string
+  /** 本次在途出片【发起时锁定】的内容签名(computeVideoContentSig):
+   *  生成开始即算好并持久化,完成时用它盖 lastVideoSig —— 避免用"完成那一刻的当前分镜"盖章,
+   *  否则用户在生成中/生成后改了内容,会把签名盖成新内容 ⇒ 列表误判"没变"、不显示草稿。
+   *  完成落库后清空。 */
+  pendingVideoSig?: string
   /** 保存时间戳(ms):用于「/smart/:id 恢复时本地草稿是否比后端更新」的比较 */
   savedAt?: number
+}
+
+// 整片视频的「内容签名」:参与视频的分镜稳定内容(优先 imageAssetId,其次去掉签名参数的图 URL,
+// 避免 S3 预签名/工作空间参数变化导致误判)+ 时长/台词/字幕/音效/顺序 + 风格/比例/大纲。
+// 与 SmartCreateView.videoInputSig 同口径,但只用「落盘后稳定」的字段,以便跨保存/刷新可靠比较。
+export function computeVideoContentSig(shots: any[], entryMeta: any, base: string): string {
+  const stableImg = (s: any): string => {
+    const aid = Number(s?.imageAssetId || s?.asset_id || s?.assetId || 0) || 0
+    if (aid) return `a:${aid}`
+    const u = String(s?.image || s?.url || '').trim()
+    return u ? `u:${u.split('?')[0]}` : ''
+  }
+  return JSON.stringify({
+    ratio: entryMeta?.ratio || '',
+    style: entryMeta?.style || '',
+    base: base || '',
+    shots: (Array.isArray(shots) ? shots : [])
+      .filter((s) => s?.includeInVideo !== false)
+      .map((s) => ({
+        id: s?.id,
+        img: stableImg(s),
+        duration: s?.duration || '',
+        line: s?.line || '',
+        subtitle: s?.subtitle || '',
+        sfx: s?.sfx || '',
+      })),
+  })
 }
 
 const killBlob = (u: any) => (typeof u === 'string' && u.startsWith('blob:') ? '' : u)
@@ -106,7 +151,7 @@ function sanitize(d: SmartDraft): SmartDraft {
 
 export function loadSmartDraft(): SmartDraft | null {
   try {
-    const s = localStorage.getItem(KEY)
+    const s = localStorage.getItem(keyOf())
     if (!s) return null
     return sanitize(JSON.parse(s))
   } catch {
@@ -119,7 +164,7 @@ export function saveSmartDraft(state: SmartDraft) {
   // 只存可持久的 http 图 + asset_id,刷新后按 asset_id 重换签名URL(见 SmartCreateView hydrate)。
   const lean = { ...stripHeavy(state), savedAt: Date.now() }
   try {
-    localStorage.setItem(KEY, JSON.stringify(lean))
+    localStorage.setItem(keyOf(), JSON.stringify(lean))
   } catch {
     // 仍超限(极端):退化为只存文本结构
     try {
@@ -134,7 +179,7 @@ export function saveSmartDraft(state: SmartDraft) {
         })),
         subjectAssets: {},
       }
-      localStorage.setItem(KEY, JSON.stringify(light))
+      localStorage.setItem(keyOf(), JSON.stringify(light))
     } catch {
       /* 放弃 */
     }
@@ -143,7 +188,7 @@ export function saveSmartDraft(state: SmartDraft) {
 
 export function clearSmartDraft() {
   try {
-    localStorage.removeItem(KEY)
+    localStorage.removeItem(keyOf())
   } catch {
     /* ignore */
   }

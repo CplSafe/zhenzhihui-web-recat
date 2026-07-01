@@ -1,0 +1,128 @@
+/* SidebarTeamGroup — 团队空间组(当前空间白框 + 邀请成员 + 加入空间) */
+
+.stg {
+  position: relative;
+}
+
+/* 当前空间白框:名称 + 分隔线 + 邀请成员图标 */
+.stg-current {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 34px);
+  margin: 4px auto 8px 10px;
+  padding: 6px 9px;
+  background: #fff;
+  border: 1px solid #e8eaf0;
+  border-radius: 9px;
+  box-shadow: 0 1px 2px rgba(23, 28, 46, 0.03);
+}
+.stg-current__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  color: #2b3040;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+.stg-current__name:hover {
+  color: #5767e5;
+}
+.stg-current__divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 14px;
+  background: #e3e5ec;
+}
+.stg-invite {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #5b6270;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.stg-invite:hover {
+  background: #f2f3f8;
+  color: #5767e5;
+}
+
+/* 邀请成员 hover 深色气泡提示 */
+.stg-invite::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: #2b3040;
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 20;
+}
+.stg-invite:hover::after {
+  opacity: 1;
+}
+
+/* 加入空间:浅灰描边按钮 */
+.stg-join {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: calc(100% - 34px);
+  margin: 0 auto 4px 10px;
+  padding: 6px 9px;
+  background: #fafbfc;
+  border: 1px solid #eceef3;
+  border-radius: 9px;
+  color: #8a90a0;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+.stg-join:hover {
+  background: #f2f3f8;
+  color: #5767e5;
+  border-color: #d9dcff;
+}
+.stg-join__ico {
+  display: inline-flex;
+}
+
+/* 收起态侧栏:只留邀请图标居中,隐藏文字/加入按钮 */
+.app-sidebar.is-collapsed .stg-current {
+  width: auto;
+  margin: 4px auto 8px;
+  padding: 6px;
+  justify-content: center;
+}
+.app-sidebar.is-collapsed .stg-current__name,
+.app-sidebar.is-collapsed .stg-current__divider,
+.app-sidebar.is-collapsed .stg-join {
+  display: none;
+}

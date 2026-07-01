@@ -10,8 +10,11 @@ import AppToast from './components/AppToast'
 import AppConfirmDialog from './components/AppConfirmDialog'
 import HelpCenter from './components/common/HelpCenter'
 import MemberCenterModal from './components/MemberCenterModal'
+import GlobalTeamManageModal from './components/team/GlobalTeamManageModal'
+import GlobalJoinTeamDialog from './components/team/GlobalJoinTeamDialog'
 import ComingSoonDialog from './components/ComingSoonDialog'
 import { useUiStore } from './stores/ui'
+import { captureInviteCode } from './utils/inviteCode'
 import './App.css'
 
 // 退出登录标记：dev 模式下 AuthContext 用 mock session 绕过 API 检查，
@@ -41,6 +44,11 @@ function AppShell() {
     // 仅在「检查结束且无错误」(即首次成功渲染过页面)后置位;首次失败保持 false 以便展示错误卡 + 重试。
     if (!isCheckingSession && !authCheckError) setHasChecked(true)
   }, [isCheckingSession, authCheckError])
+
+  // 进站即捕获分享链接里的推广邀请码(/login?invite_code=…),存起来供后续注册使用,避免路由跳转丢 query。
+  useEffect(() => {
+    captureInviteCode()
+  }, [])
 
   useEffect(() => {
     if (isCheckingSession) return
@@ -82,6 +90,12 @@ function AppShell() {
 
       {/* 会员中心全局弹窗:最高优先级全屏遮罩 + 右上角 X 关闭,任意页面可唤出 */}
       <MemberCenterModal open={memberCenterOpen} onClose={closeMemberCenter} />
+
+      {/* 团队管理全局弹窗:侧栏「邀请成员」等处唤出,任意 2.1 页面可弹 */}
+      <GlobalTeamManageModal />
+
+      {/* 加入空间全局弹窗:侧栏「加入空间」唤出 */}
+      <GlobalJoinTeamDialog />
 
       {/* 「功能待开放」全局弹窗:任意页面点未上线项时统一弹出 */}
       <ComingSoonDialog />

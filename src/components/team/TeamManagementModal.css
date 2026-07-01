@@ -74,7 +74,12 @@
   gap: 22px;
   padding: 18px 20px;
   border-radius: 14px;
-  background: rgba(91, 107, 232, 0.08);
+  /* 浅紫装饰底图叠在淡紫底色上(图很浅,深/紫色文字仍清晰) */
+  background-color: #f3f4fd;
+  background-image: url('../../assets/logo/image copy 4.png');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
   border: 1px solid rgba(91, 107, 232, 0.12);
 }
 
@@ -386,4 +391,146 @@
 
 .tm-action-item:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+/* 底部:退出/解散该空间 */
+.tm-footer {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #f0f1f5;
+  display: flex;
+  justify-content: flex-end;
+}
+.tm-footer-btn {
+  padding: 8px 18px;
+  border-radius: 9px;
+  border: 1px solid #e2e5ec;
+  background: #fff;
+  color: #5b6270;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+.tm-footer-btn:hover {
+  background: #f5f6fa;
+  color: #333a4a;
+}
+.tm-footer-btn--danger {
+  color: #ef4444;
+  border-color: #f6cccc;
+}
+.tm-footer-btn--danger:hover {
+  background: #fff2f2;
+  color: #dc2626;
+  border-color: #f0b4b4;
+}
+
+/* ── 头部:← 返回 + 空间名 + 重命名 + 右上「…」菜单 ── */
+.tm-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.tm-back {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #333;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tm-back:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.tm-header-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1d2130;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tm-header-edit {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a90a0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.tm-header-edit:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #5767e5;
+}
+.tm-header-spacer {
+  flex: 1 1 auto;
+}
+.tm-header-more-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.tm-header-more {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(51, 51, 51, 0.75);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tm-header-more:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.tm-header-more svg {
+  fill: currentColor;
+}
+.tm-header-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 132px;
+  border-radius: 10px;
+  background: rgba(17, 24, 39, 0.92);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.25);
+  padding: 8px 0;
+  z-index: 30;
+}
+.tm-header-menu-item {
+  width: 100%;
+  height: 36px;
+  border: 0;
+  padding: 0 14px;
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tm-header-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.tm-header-menu-item--danger {
+  color: #ff6b6b;
 }

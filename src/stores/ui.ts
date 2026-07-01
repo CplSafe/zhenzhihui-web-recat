@@ -49,6 +49,10 @@ export interface UiState {
   dirty: boolean
   // 会员中心:全局单例弹窗开关(取代原 /membership 路由页),由顶层 <MemberCenterModal/> 渲染。
   memberCenterOpen: boolean
+  // 团队管理:全局单例弹窗开关(邀请成员 / 成员管理),由顶层 <TeamManagementModal/> 渲染。
+  teamManageOpen: boolean
+  // 加入空间:全局单例弹窗开关(输入邀请码加入团队),由顶层 <GlobalJoinTeamDialog/> 渲染。
+  joinTeamOpen: boolean
   // 「功能待开放」全局单例弹窗:任意页面点未上线项时弹出,由顶层 <ComingSoonDialog/> 渲染。
   comingSoonOpen: boolean
   // 左侧主侧栏(AppSidebar)桌面端是否收起(窄图标轨)。跨页面保持,故放全局 store。
@@ -65,6 +69,12 @@ export interface UiState {
 
   openMemberCenter: () => void
   closeMemberCenter: () => void
+
+  openTeamManage: () => void
+  closeTeamManage: () => void
+
+  openJoinTeam: () => void
+  closeJoinTeam: () => void
 
   openComingSoon: () => void
   closeComingSoon: () => void
@@ -98,6 +108,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   confirm: { ...initialConfirm },
   dirty: false,
   memberCenterOpen: false,
+  teamManageOpen: false,
+  joinTeamOpen: false,
   comingSoonOpen: false,
   sidebarCollapsed: false,
 
@@ -160,6 +172,12 @@ export const useUiStore = create<UiState>((set, get) => ({
   openMemberCenter: () => set({ memberCenterOpen: true }),
   closeMemberCenter: () => set({ memberCenterOpen: false }),
 
+  openTeamManage: () => set({ teamManageOpen: true }),
+  closeTeamManage: () => set({ teamManageOpen: false }),
+
+  openJoinTeam: () => set({ joinTeamOpen: true }),
+  closeJoinTeam: () => set({ joinTeamOpen: false }),
+
   openComingSoon: () => set({ comingSoonOpen: true }),
   closeComingSoon: () => set({ comingSoonOpen: false }),
 
@@ -179,3 +197,5 @@ export const openComingSoon = () => useUiStore.getState().openComingSoon()
 
 /** 弹出全局「会员中心」弹窗(含积分充值;任意上下文可调用)。 */
 export const openMemberCenter = () => useUiStore.getState().openMemberCenter()
+export const openTeamManage = () => useUiStore.getState().openTeamManage()
+export const openJoinTeam = () => useUiStore.getState().openJoinTeam()
