@@ -84,7 +84,7 @@ export default function SplashView() {
           <img className="splash-overlay-mark" src={markLogo} alt="" />
           <span className="splash-overlay-name">帧智汇</span>
         </div>
-        <button type="button" className="splash-login" onClick={() => navigate('/login', { state: { from: '/home' } })}>
+        <button type="button" className="splash-login" onClick={() => navigate('/login')}>
           登录
         </button>
       </div>

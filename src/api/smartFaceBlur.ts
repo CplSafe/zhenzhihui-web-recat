@@ -5,7 +5,7 @@
  */
 // @ts-nocheck
 import { createAiTask, waitForAiTask, listAiModels, getAssetDownloadUrl } from './business'
-import { resolveGeneratedMediaUrls, findAssetIdByTaskId } from '@/utils/taskMedia'
+import { resolveGeneratedMediaUrls, findAssetIdByTaskId, extractOutputAssetId } from '@/utils/taskMedia'
 
 // 懒加载缓存「人脸检测抠图」模型 ID:先精确名称、再放宽含「人脸」、最后任意兜底(同 2.0)
 let cachedFaceModelId = 0
@@ -26,9 +26,6 @@ async function getFaceDetectModelId(): Promise<number> {
   return cachedFaceModelId || 0
 }
 
-function outputAssetId(task: any): number {
-  return Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
-}
 
 export interface FaceBlurResult {
   url: string
@@ -79,7 +76,7 @@ export async function blurFacesOnAsset(args: {
     } as any)
     const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 10 * 60 * 1000 })
     debug.status = completed?.status || ''
-    let outId = outputAssetId(completed)
+    let outId = extractOutputAssetId(completed)
     if (!outId) outId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'image')
     let url =
       (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''

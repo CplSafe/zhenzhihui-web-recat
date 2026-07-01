@@ -53,6 +53,13 @@ export async function resolveGeneratedMediaUrls({ workspaceId, task, type }) {
   return urls
 }
 
+// 从已完成任务的 outputs 里取第一个 asset_id(0 = 没有)。
+// smartVideo/hotCopy(原名 extractVideoAssetId)与 smartShotImage/smartFaceBlur(原名 outputAssetId)
+// 曾各有一份字节相同的实现,统一到此。
+export function extractOutputAssetId(task: any): number {
+  return Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
+}
+
 // 任务 outputs 没带 asset_id 时,按 task_id 去资产列表反查 asset_id(否则刷新水合换不了 URL → 媒体丢失)。
 // smartVideo / hotCopy 原各有一份字节相同的实现,统一到此(type 默认 video)。
 export async function findAssetIdByTaskId(

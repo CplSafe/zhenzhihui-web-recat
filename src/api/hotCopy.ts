@@ -15,11 +15,9 @@ import {
 } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
-import { resolveGeneratedMediaUrls, findAssetIdByTaskId } from '@/utils/taskMedia'
+import { resolveGeneratedMediaUrls, findAssetIdByTaskId, extractOutputAssetId } from '@/utils/taskMedia'
 
 const VIDEO_MODEL_KEYWORDS = ['seedance']
-
-const extractVideoAssetId = (task: any): number => Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
 
 /** 上传本地文件成 asset,返回 asset_id(type 由文件推断:视频→video,图片→image)。 */
 export async function uploadHotCopyAsset(workspaceId: number, file: File): Promise<number> {
@@ -96,7 +94,7 @@ export async function replicateHotVideo(args: {
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
   })
-  let assetId = extractVideoAssetId(completed)
+  let assetId = extractOutputAssetId(completed)
   if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'video')
   let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')
@@ -118,7 +116,7 @@ export async function awaitHotVideoResult(args: {
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
   })
-  let assetId = extractVideoAssetId(completed)
+  let assetId = extractOutputAssetId(completed)
   if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || args.taskId, 'video')
   let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')

@@ -69,50 +69,6 @@ function imgOf(value: any): string {
   ).trim()
 }
 
-/* 从项目草稿（draft_json）中提取第一张生成图片作为封面 */
-function extractDraftPreview(p: any): string {
-  const draft = toPlainObject(p?.draft_json) || toPlainObject(p?.draftJson) || toPlainObject(p?.draft)
-  if (!draft) return ''
-  const smart = draft?.smart && typeof draft.smart === 'object' ? draft.smart : draft
-
-  // ① 用户上传入口素材
-  const em = smart?.entryMeta || {}
-  const imgs = normalizeArray(em.images)
-  for (const u of imgs) {
-    const url = String(u || '').trim()
-    if (url) return url
-  }
-
-  // ② 分镜图 / 元素图
-  for (const s of normalizeArray(smart?.shots)) {
-    // 分镜图
-    const shotUrl = imgOf(s.image ? { url: s.image } : s)
-    if (shotUrl) return shotUrl
-    // 元素（素材主体）
-    for (const su of normalizeArray(s.subjects)) {
-      const suUrl = imgOf(su.image ? { url: su.image } : su)
-      if (suUrl) return suUrl
-    }
-  }
-
-  // 旧版 2.0 分步创作: storyboardItems
-  for (const si of normalizeArray(draft?.storyboardItems)) {
-    const url = imgOf(si.currentImage ? { url: si.currentImage } : si)
-    if (url) return url
-  }
-
-  return ''
-}
-
-function projectCover(p: any): string {
-  // 优先使用列表返回的封面/缩略图字段
-  const direct = p?.thumbnailUrl || p?.thumbnail_url || p?.coverUrl || p?.cover_url || p?.cover || ''
-  if (direct && isSafeMediaUrl(direct)) return direct
-  // 兜底：从草稿中提取生成图
-  const draftUrl = extractDraftPreview(p)
-  return isSafeMediaUrl(draftUrl) ? draftUrl : ''
-}
-
 /* 从草稿里提取视频 URL 和 assetId */
 function extractVideoInfo(p: any): { url: string; assetId: number } {
   const draft = toPlainObject(p?.draft_json) || toPlainObject(p?.draftJson) || toPlainObject(p?.draft)
@@ -316,9 +272,7 @@ function HistoryVideoCard({
   workspaceId,
   onOpen,
 }: {
-  projectId: number
   title: string
-  cover: string
   videoUrl: string
   videoAssetId: number
   ratio: string
@@ -836,16 +790,13 @@ export default function HomeView() {
                   <div className="home__proj-waterfall">
                     {filteredHistory.map((p) => {
                       const id = projectId(p)
-                      const cover = projectCover(p)
                       const { url: videoUrl, assetId: videoAssetId } = extractVideoInfo(p)
                       const ratio = projectRatio(p)
                       const wsId = Number(workspaceId || 0)
                       return (
                         <HistoryVideoCard
                           key={id || projectTitle(p)}
-                          projectId={id}
                           title={projectTitle(p)}
-                          cover={cover}
                           videoUrl={videoUrl}
                           videoAssetId={videoAssetId}
                           ratio={ratio}

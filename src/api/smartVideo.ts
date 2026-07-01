@@ -15,13 +15,12 @@ import {
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
-import { resolveGeneratedMediaUrls, findAssetIdByTaskId } from '@/utils/taskMedia'
+import { resolveGeneratedMediaUrls, findAssetIdByTaskId, extractOutputAssetId } from '@/utils/taskMedia'
 
 // 目前线上只有 Seedance 2.0
 const VIDEO_MODEL_KEYWORDS = ['seedance']
 // 视频编辑能力:在原视频基础上按提示微调(happyhorse-1.0-video-edit)
 const VIDEO_EDIT_MODEL_KEYWORDS = ['happyhorse']
-const extractVideoAssetId = (task: any): number => Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
 
 const shotDurSec = (s: any): number => {
   const n = parseInt(String(s?.duration || '').replace(/[^0-9]/g, ''), 10)
@@ -129,7 +128,7 @@ async function resolveVideoTaskResult(
   completed: any,
   fallbackTaskId: any,
 ): Promise<{ url: string; assetId: number }> {
-  let assetId = extractVideoAssetId(completed)
+  let assetId = extractOutputAssetId(completed)
   if (!assetId) assetId = await findAssetIdByTaskId(workspaceId, completed?.id || fallbackTaskId, 'video')
   const [url] = await resolveGeneratedMediaUrls({ workspaceId, task: completed, type: 'video' })
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')
@@ -208,7 +207,7 @@ export async function editFullVideo(args: {
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
   })
-  let assetId = extractVideoAssetId(completed)
+  let assetId = extractOutputAssetId(completed)
   if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'video')
   let [url] = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'video' })
   if (!url && assetId) url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '')

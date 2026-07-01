@@ -13,7 +13,7 @@ import {
   resolveTaskModel,
   estimateAiTaskCost,
 } from './business'
-import { resolveGeneratedMediaUrls, findAssetIdByTaskId } from '@/utils/taskMedia'
+import { resolveGeneratedMediaUrls, findAssetIdByTaskId, extractOutputAssetId } from '@/utils/taskMedia'
 import { buildStoryboardImageParams } from '@/utils/storyboardTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
 
@@ -102,11 +102,6 @@ export async function refreshAssetUrl(workspaceId: number, assetId: number): Pro
   }
 }
 
-/** 取已完成任务输出图的 asset_id(供下一镜头连贯参考)。 */
-function outputAssetId(task: any): number {
-  return Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
-}
-
 // 分镜图模型偏好:GPT Image 2(openai gpt-image-2,支持 image.text_to_image / image.image_to_image)
 const STORYBOARD_MODEL_KEYWORDS = ['gpt-image-2', 'gpt-image', 'gpt image']
 
@@ -139,7 +134,7 @@ export async function generateShotImage(args: {
   // 分镜图生成放宽轮询超时(默认 120s 偏短)
   const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 30 * 60 * 1000 })
   // 取 asset_id:outputs 优先;没有则按 task_id 反查(否则刷新水合换不了URL → 破图)
-  let assetId = outputAssetId(completed)
+  let assetId = extractOutputAssetId(completed)
   if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'image')
   // 有 asset_id → 优先用同源流式地址(getAssetDownloadUrl 已改为返回 /download,同源 HTTPS、不过期),
   // 避免直接用 outputs[].url 的 OSS 原始地址(http + IP 主机,在 HTTPS 页会 Mixed Content 破图)。

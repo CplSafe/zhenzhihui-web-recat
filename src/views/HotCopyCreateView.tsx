@@ -201,8 +201,11 @@ export default function HotCopyCreateView() {
     const ts = Date.now()
     const rec: GenRecord = { id, status: 'processing', taskId: 0, note: note || '', createdAt: ts }
     immediateSaveRef.current = true
-    setVideoGenerations((prev) => [rec, ...prev])
-    persistNow({ videoGenerations: [rec, ...videoGenerations] }) // 立即落盘(保留历史记录),供进度锚点/草稿即现
+    setVideoGenerations((prev) => {
+      const next = [rec, ...prev]
+      persistNow({ videoGenerations: next }) // 立即落盘(保留历史记录),供进度锚点/草稿即现
+      return next
+    })
     return id
   }
   // 结束一条生成记录:成功 published(从草稿列表消失)、失败 failed(留作可重试草稿)。
