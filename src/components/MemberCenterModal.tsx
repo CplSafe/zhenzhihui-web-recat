@@ -13,11 +13,20 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useToast } from '@/composables/useToast'
-import { useWorkspaceId, useWorkspaceSessionStore, deriveAllWorkspaces } from '@/stores/workspaceSession'
+import { useToast, useConfirmDialog } from '@/composables/useToast'
 import {
+  useWorkspaceId,
+  useWorkspaceSessionStore,
+  deriveAllWorkspaces,
+  useCurrentWorkspace,
+  useCurrentUser,
+  useCurrentMember,
+} from '@/stores/workspaceSession'
+import {
+  cancelSubscription,
   createRechargeOrder,
   createSubscriptionOrder,
+  disableSubscriptionAutoRenew,
   getBusinessErrorMessage,
   getSubscription,
   getWallet,
@@ -304,15 +313,36 @@ interface MemberCenterModalProps {
 
 export default function MemberCenterModal({ open, onClose, embedded = false }: MemberCenterModalProps) {
   const { showToast } = useToast()
+  const { requestConfirm } = useConfirmDialog()
   const workspaceId = Number(useWorkspaceId() || 0)
+  // 仅主账号可充值:团队空间里只有所有者能充值,子账号不允许;个人空间是自己的,可充值。
+  const currentWs = useCurrentWorkspace()
+  const currentUser = useCurrentUser()
+  const currentMember = useCurrentMember()
+  const isTeamWs = Boolean(currentWs?.type) && String(currentWs.type).toLowerCase() !== 'personal'
+  const isOwner =
+    (Number(currentWs?.owner_user_id ?? currentWs?.ownerUserId ?? 0) > 0 &&
+      Number(currentWs?.owner_user_id ?? currentWs?.ownerUserId) === Number(currentUser?.id ?? 0)) ||
+    String(currentMember?.role || '').toLowerCase() === 'owner'
+  const canRecharge = !isTeamWs || isOwner
+  // 新开团队空间时的团队名(intent=new_team 时随下单发给后端建空间);默认「XX的团队」,可改。
+  const defaultTeamName = `${String(currentUser?.nickname || currentUser?.name || currentUser?.username || '我').trim()}的团队`
+  const [teamName, setTeamName] = useState('')
   // 顶层 tab:基础版(个人套餐)/ 团队版(团队套餐)/ 积分充值
   const [mainTab, setMainTab] = useState<'basic' | 'team' | 'recharge'>('basic')
+  // 只有在个人空间买团队版才是「开新团队空间」(在团队空间里买 = 续费,不建新空间、不需团队名)
+  const isBuyingNewTeam = mainTab === 'team' && !isTeamWs
+  // 子账号(不可充值)若正停在积分充值 tab(如切空间后)→ 退回基础版,避免看到充值内容
+  useEffect(() => {
+    if (!canRecharge && mainTab === 'recharge') setMainTab('basic')
+  }, [canRecharge, mainTab])
   const [plans, setPlans] = useState<PlanVM[]>([])
   const [packages, setPackages] = useState<PackageVM[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [balance, setBalance] = useState<number | null>(null)
   const [subscription, setSubscription] = useState<any>(null)
+  const [subActionLoading, setSubActionLoading] = useState(false)
   const [buyingId, setBuyingId] = useState(0)
   // 极少数情况下「同步开窗」仍被浏览器拦截:存下 pay_url,在弹窗内给一个手动打开入口兜底。
   const [pendingPayUrl, setPendingPayUrl] = useState('')
@@ -435,23 +465,48 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
 
   // 打开支付页后轮询订单状态,给「成功/失败」结果提示并刷新余额/订阅(附加逻辑,不影响下单本身)。
   // 支付在外部标签页完成、前端收不到回调,故每 3s 查一次 listPaymentOrders 匹配本单 id,直到 paid/失败/超时。
-  // 团队版支付成功后:后端已自动创建新团队空间 → 前端刷新空间列表,并切到"新出现的那个团队空间"。
+  // 团队版支付成功后:适配团队空间。
+  // 后端建团队通常是【异步】的,支付 paid 那一刻可能还没建好,故:
+  //   ① 隔几秒重试刷新(~6×3s ≈ 18s),刷到"新出现的团队空间"就切过去(零重复风险);
+  //   ② 等到底后端仍没建出团队 → 判定后端不建,前端兜底建一个(等待足够长,基本不与后端重复)。
   const adoptNewTeamWorkspace = async () => {
+    const store = useWorkspaceSessionStore
+    const isTeamWs = (w: any) => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal'
     try {
-      const store = useWorkspaceSessionStore
       const beforeIds = new Set(
         (deriveAllWorkspaces(store.getState()) as any[]).map((w) => Number(w?.id || 0)).filter((id) => id > 0),
       )
-      await store.getState().loadWorkspaces() // 拉最新(含后端刚建的团队空间)
-      const after = deriveAllWorkspaces(store.getState()) as any[]
-      const isTeamWs = (w: any) => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal'
-      // 新出现的团队空间(优先);没有则退回任一新出现的空间
-      const created =
-        after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)) && isTeamWs(w)) ||
-        after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)))
-      if (created?.id) store.getState().switchWorkspace(Number(created.id))
+      // 新出现的空间:优先团队空间,退回任一新空间
+      const findNew = () => {
+        const after = deriveAllWorkspaces(store.getState()) as any[]
+        return (
+          after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)) && isTeamWs(w)) ||
+          after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)))
+        )
+      }
+      // ① 重试 adopt:给后端异步建团队留时间
+      for (let i = 0; i < 6; i++) {
+        await store.getState().loadWorkspaces()
+        const created = findNew()
+        if (created?.id) {
+          store.getState().switchWorkspace(Number(created.id))
+          return
+        }
+        await new Promise((r) => window.setTimeout(r, 3000))
+      }
+      // 兜底前最后确认一次,收窄"后端刚建好但上一轮没刷到"的窗口
+      await store.getState().loadWorkspaces()
+      const late = findNew()
+      if (late?.id) {
+        store.getState().switchWorkspace(Number(late.id))
+        return
+      }
+      // ② 后端确实没建 → 前端兜底建团队(createTeam 内部:建 team 空间 → 刷列表 → 切过去)
+      const user = store.getState().authSession?.user as any
+      const teamName = `${String(user?.nickname || user?.name || user?.username || '我').trim()}的团队`
+      await store.getState().createTeam(teamName)
     } catch {
-      /* 刷新/切换失败不阻断支付成功提示;用户可手动在切换空间里找到新空间 */
+      /* 刷新/切换/建团队失败不阻断支付成功提示;用户可手动在切换空间里找/建团队 */
     }
   }
 
@@ -547,14 +602,29 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       return
     }
     const renew = isPurchased(p)
+    // 买团队版且当前在个人空间 = 开新团队空间(intent=new_team + 团队名);其余(个人版 / 团队续费)= subscribe
+    const newTeam = p.isTeam && !renew && !isTeamWs
+    const intent = newTeam ? 'new_team' : 'subscribe'
+    const nwsName = newTeam ? teamName.trim() || defaultTeamName : ''
+    // 幂等键:后端要求简单字母数字串(示例 a1b2c3),不能带冒号/中文 → 用随机 base36 token
+    const idemKey = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`
     setBuyingId(p.id)
     try {
       // 开通与续费用同一个接口:POST /api/v1/billing/subscription-orders;未支付单 10 分钟内复用,不重复下单
       await startPay(
-        () => resolveOrder(`sub:${p.id}`, () => createSubscriptionOrder({ workspaceId, planId: p.id })),
+        () =>
+          resolveOrder(`sub:${intent}:${p.id}:${nwsName}`, () =>
+            createSubscriptionOrder({
+              workspaceId,
+              planId: p.id,
+              intent,
+              newWorkspaceName: nwsName,
+              idempotencyKey: idemKey,
+            }),
+          ),
         renew ? '续费失败,请稍后重试' : '开通失败,请稍后重试',
         'subscribe',
-        p.isTeam && !renew, // 团队版【开通】:支付成功后切到后端新建的团队空间;续费(空间已存在)不切
+        newTeam, // 开新团队空间:支付成功后刷新空间列表并切到后端新建的团队空间
       )
     } finally {
       setBuyingId(0)
@@ -564,6 +634,10 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   // 积分充值:取一次性付款 pay_url 直接跳支付宝。
   const onRecharge = async (pkg: PackageVM) => {
     if (buyingId) return
+    if (!canRecharge) {
+      showToast('仅主账号可充值,子账号请联系主账号', 'error')
+      return
+    }
     if (!workspaceId) {
       showToast('缺少 workspace,无法充值', 'error')
       return
@@ -577,6 +651,49 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       )
     } finally {
       setBuyingId(0)
+    }
+  }
+
+  // 订阅管理(仅主账号 canRecharge):关闭自动续费 / 取消订阅。成功后重拉订阅刷新展示。
+  const subscriptionId = Number(subscription?.subscription_id || subscription?.id || 0)
+  const isAutoRenew = String(subscription?.renew_mode || '')
+    .toLowerCase()
+    .includes('auto')
+  const refreshSubscription = () => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) return
+    getSubscription(ws)
+      .then((s: any) => aliveRef.current && setSubscription(s))
+      .catch(() => {})
+  }
+  const handleDisableAutoRenew = async () => {
+    if (subActionLoading || !workspaceId || !subscriptionId) return
+    const ok = await requestConfirm('确定关闭自动续费吗?关闭后当前订阅到期将不再自动扣款,权益到期结束。')
+    if (!ok) return
+    setSubActionLoading(true)
+    try {
+      await disableSubscriptionAutoRenew({ workspaceId, subscriptionId })
+      showToast('已关闭自动续费', 'success')
+      refreshSubscription()
+    } catch (e) {
+      showToast(getBusinessErrorMessage(e, '操作失败,请稍后重试'), 'error')
+    } finally {
+      setSubActionLoading(false)
+    }
+  }
+  const handleCancelSubscription = async () => {
+    if (subActionLoading || !workspaceId || !subscriptionId) return
+    const ok = await requestConfirm('确定取消当前订阅吗?取消后将不再续费。')
+    if (!ok) return
+    setSubActionLoading(true)
+    try {
+      await cancelSubscription({ workspaceId, subscriptionId })
+      showToast('已取消订阅', 'success')
+      refreshSubscription()
+    } catch (e) {
+      showToast(getBusinessErrorMessage(e, '取消订阅失败,请稍后重试'), 'error')
+    } finally {
+      setSubActionLoading(false)
     }
   }
 
@@ -638,6 +755,34 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
               const exp = formatExpiry(subscription)
               return exp ? <span className="mcm-sub-item mcm-sub-expiry">{exp}</span> : null
             })()}
+            {subscription.renew_mode && (
+              <span className="mcm-sub-item">
+                {String(subscription.renew_mode).toLowerCase().includes('auto') ? '自动续费' : '手动续费'}
+              </span>
+            )}
+            {/* 订阅管理:仅主账号。自动续费时可「关闭自动续费」;有订阅时可「取消订阅」 */}
+            {canRecharge && subscriptionId > 0 && isAutoRenew && (
+              <button
+                type="button"
+                className="mcm-sub-item mcm-sub-action"
+                style={{ border: 'none', background: 'none', color: '#5767e5', cursor: 'pointer', padding: 0 }}
+                disabled={subActionLoading}
+                onClick={handleDisableAutoRenew}
+              >
+                关闭自动续费
+              </button>
+            )}
+            {canRecharge && subscriptionId > 0 && (
+              <button
+                type="button"
+                className="mcm-sub-item mcm-sub-action"
+                style={{ border: 'none', background: 'none', color: '#e5574f', cursor: 'pointer', padding: 0 }}
+                disabled={subActionLoading}
+                onClick={handleCancelSubscription}
+              >
+                取消订阅
+              </button>
+            )}
           </div>
         )}
 
@@ -657,17 +802,35 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           >
             团队版
           </button>
-          <button
-            type="button"
-            className={`mcm-tab${mainTab === 'recharge' ? ' is-active' : ''}`}
-            onClick={() => setMainTab('recharge')}
-          >
-            积分充值
-          </button>
+          {/* 积分充值:仅主账号(所有者)可见;子账号(团队成员)不展示,不允许充值 */}
+          {canRecharge && (
+            <button
+              type="button"
+              className={`mcm-tab${mainTab === 'recharge' ? ' is-active' : ''}`}
+              onClick={() => setMainTab('recharge')}
+            >
+              积分充值
+            </button>
+          )}
         </div>
 
         {mainTab !== 'recharge' ? (
           <>
+            {/* 买团队版会新建一个团队空间,先让用户给空间起名(默认「XX的团队」),下单时随 intent=new_team 发给后端 */}
+            {isBuyingNewTeam && (
+              <div className="mcm-teamname">
+                <label className="mcm-teamname__label">团队空间名称</label>
+                <input
+                  className="mcm-teamname__input"
+                  type="text"
+                  maxLength={20}
+                  value={teamName}
+                  placeholder={defaultTeamName}
+                  onChange={(e) => setTeamName(e.target.value)}
+                />
+                <span className="mcm-teamname__hint">开通团队版将以此名称创建团队空间,可稍后在团队管理里修改</span>
+              </div>
+            )}
             {loading ? (
               <div className="mcm-hint">套餐加载中…</div>
             ) : error ? (

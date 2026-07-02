@@ -1162,8 +1162,10 @@ export default function SmartCreateView() {
     loading: boolean
     error: string
     perImage: boolean
-    estimate: { estimatedCost: number; balance: number; canAfford: boolean } | null
-  }>({ loading: false, error: '', perImage: false, estimate: null })
+    count: number // 下一步要出的图片张数(出图口径);估价已按张数汇总为总额
+    // perOne = 再加一张图片的增量积分(元素图=文生图单价;分镜帧=图生图单价,因新增分镜带上一帧)
+    estimate: { estimatedCost: number; balance: number; canAfford: boolean; perOne?: number } | null
+  }>({ loading: false, error: '', perImage: false, count: 0, estimate: null })
   // 进行中的整片生成任务 id:生成开始即记录并随草稿持久化,切路由/刷新后凭它续轮询(不重新生成)
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
   // 每次「重新生成」的独立记录(生成中/失败);成功的成片仍进 videoVersions。
@@ -1559,47 +1561,111 @@ export default function SmartCreateView() {
   useEffect(() => {
     const ws = Number(workspaceId || 0)
     const isImg = isImageMode && started
-    // kind = 下一步要花的钱算哪种:image(出图,单张)/ video(整片)/ ''(不预估)
-    const kind = isImg ? 'image' : step === 2 ? 'video' : step === 0 || step === 1 ? 'image' : ''
+    // 前瞻:每步显示【下一步】要花多少。
+    //   step0 分镜脚本 → 下一步「准备素材」= 元素图(按唯一主体数,AI 从描述生成 → 文生图口径)
+    //   step1 准备素材 → 下一步「镜头编排」= 分镜帧(首镜文生图 + 其余带上一帧 → 图生图,按分镜数)
+    //   step2 镜头编排 → 下一步「生成视频」= 整片
+    //   图片模式 → 出图(单张)
+    const kind = isImg ? 'frames' : step === 0 ? 'elements' : step === 1 ? 'frames' : step === 2 ? 'video' : ''
     if (!ws || marketingOpen || !kind) {
       setStepCost((s) =>
-        s.estimate || s.loading || s.error ? { loading: false, error: '', perImage: false, estimate: null } : s,
+        s.estimate || s.loading || s.error
+          ? { loading: false, error: '', perImage: false, count: 0, estimate: null }
+          : s,
       )
       return
     }
     let alive = true
-    const perImage = kind === 'image'
-    setStepCost({ loading: true, error: '', perImage, estimate: null })
+    const perImage = kind !== 'video'
+    // 分镜帧张数 = 参与视频的分镜数;元素图张数 = 分镜里唯一主体数。
+    const partShots = kind === 'frames' && !isImg ? shots.filter((s) => s.includeInVideo !== false) : []
+    const frameCount = partShots.length
+    const elementCount =
+      kind === 'elements'
+        ? new Set(shots.flatMap((s) => (s.subjects || []).map((su: any) => stripAt(su.tag || '')).filter(Boolean))).size
+        : 0
+    const count = kind === 'elements' ? elementCount : kind === 'frames' && !isImg ? frameCount : 0
+    setStepCost({ loading: true, error: '', perImage, count, estimate: null })
     const timer = window.setTimeout(async () => {
       try {
         const plans = await resolvePlanCandidates()
-        const res: any =
-          kind === 'video'
-            ? await estimateFullVideoCost({
-                workspaceId: ws,
-                shots,
-                ratio: entryMeta?.ratio,
-                modelPlanCandidates: plans,
-              })
-            : await estimateShotImageCost({
+        if (kind === 'video') {
+          const res: any = await estimateFullVideoCost({
+            workspaceId: ws,
+            shots,
+            ratio: entryMeta?.ratio,
+            modelPlanCandidates: plans,
+          })
+          if (!alive) return
+          const per = Number(res?.estimated_cost ?? 0)
+          const balance = Number(res?.balance ?? 0)
+          setStepCost({
+            loading: false,
+            error: '',
+            perImage,
+            count: 0,
+            estimate: { estimatedCost: per, balance, canAfford: per <= balance },
+          })
+          return
+        }
+        if (kind === 'elements') {
+          // 准备素材:每个唯一主体出一张独立元素图,AI 从描述生成 → 文生图口径;总额 = 文生图单价 × 主体数。
+          const res: any = await estimateShotImageCost({
+            workspaceId: ws,
+            hasRefs: false,
+            ratio: entryMeta?.ratio,
+            modelPlanCandidates: plans,
+          })
+          if (!alive) return
+          const per = Number(res?.estimated_cost ?? 0)
+          const balance = Number(res?.balance ?? 0)
+          const total = elementCount > 0 ? per * elementCount : per
+          setStepCost({
+            loading: false,
+            error: '',
+            perImage,
+            count: elementCount,
+            estimate: { estimatedCost: total, balance, canAfford: total <= balance, perOne: per },
+          })
+          return
+        }
+        // kind === 'frames'(镜头编排分镜帧):链式生成 —— 首镜(无自带素材)走【文生图】,第 2 镜起带上一帧 →【图生图】。
+        // 两者后端计费不同,故分别估价再按分镜数求和:总额 = 文生图×文生图数 + 图生图×图生图数。张数未知则按 1 张图生图估。
+        const n = isImg ? 0 : frameCount
+        const firstHasMaterials = n > 0 ? (partShots[0]?.subjects || []).some((su: any) => Boolean(su?.image)) : false
+        const textCount = n > 0 && !firstHasMaterials ? 1 : 0
+        const i2iCount = n > 0 ? n - textCount : 1
+        // 图生图始终估(供 total + 「每加一张」增量,新增分镜带上一帧=图生图);文生图仅首镜需要时估。
+        const [i2iRes, t2iRes]: any[] = await Promise.all([
+          estimateShotImageCost({
+            workspaceId: ws,
+            hasRefs: true,
+            ratio: entryMeta?.ratio,
+            modelPlanCandidates: plans,
+          }),
+          textCount > 0
+            ? estimateShotImageCost({
                 workspaceId: ws,
                 hasRefs: false,
                 ratio: entryMeta?.ratio,
                 modelPlanCandidates: plans,
               })
+            : Promise.resolve(null),
+        ])
         if (!alive) return
+        const i2iPer = Number(i2iRes?.estimated_cost ?? 0)
+        const t2iPer = Number(t2iRes?.estimated_cost ?? 0)
+        const total = i2iPer * i2iCount + t2iPer * textCount
+        const balance = Number(i2iRes?.balance ?? t2iRes?.balance ?? 0)
         setStepCost({
           loading: false,
           error: '',
           perImage,
-          estimate: {
-            estimatedCost: Number(res?.estimated_cost ?? 0),
-            balance: Number(res?.balance ?? 0),
-            canAfford: res?.can_afford === true,
-          },
+          count: n,
+          estimate: { estimatedCost: total, balance, canAfford: total <= balance, perOne: i2iPer },
         })
       } catch (e: any) {
-        if (alive) setStepCost({ loading: false, error: e?.message || '暂不支持预估', perImage, estimate: null })
+        if (alive) setStepCost({ loading: false, error: e?.message || '暂不支持预估', perImage, count, estimate: null })
       }
     }, 500)
     return () => {
@@ -3118,7 +3184,7 @@ export default function SmartCreateView() {
             busy={imageBusy}
             costText={
               stepCost.estimate
-                ? `每张约 ${stepCost.estimate.estimatedCost} 积分 · 余额 ${stepCost.estimate.balance} 积分`
+                ? `${stepCost.count > 1 ? `共 ${stepCost.count} 张 · 约 ` : '约 '}${stepCost.estimate.estimatedCost} 积分 · 余额 ${stepCost.estimate.balance} 积分`
                 : ''
             }
             costInsufficient={
@@ -3212,13 +3278,18 @@ export default function SmartCreateView() {
                       <div className="smart__cost">
                         <span className={insufficient ? 'smart__cost--err' : undefined}>
                           {step === 0
-                            ? '下一步出图 · 每张约 '
-                            : step === 2
-                              ? '下一步生成视频 · 约 '
-                              : stepCost.perImage
-                                ? '每张约 '
-                                : '预计消耗 '}
+                            ? `下一步准备素材 · ${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}`
+                            : step === 1
+                              ? `下一步镜头编排 · ${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}`
+                              : step === 2
+                                ? '下一步生成视频 · 约 '
+                                : stepCost.count > 1
+                                  ? `共 ${stepCost.count} 张约 `
+                                  : '约 '}
                           {stepCost.estimate.estimatedCost} 积分 · 余额 {stepCost.estimate.balance} 积分
+                          {stepCost.estimate.perOne != null && step !== 2 && (
+                            <span className="smart__cost-per"> · 每加一张约 {stepCost.estimate.perOne} 积分</span>
+                          )}
                           {insufficient && (
                             <>
                               {' · 积分不足,'}

@@ -18,9 +18,7 @@ import {
   listWorkspaces,
   redeemWorkspaceInvitation,
   setActiveWorkspaceId,
-  transferWorkspaceOwnership,
 } from '../api/business'
-import { listWorkspaceMembers } from '../api/auth'
 import { setSmartDraftUserScope } from '../utils/smartDraft'
 import {
   buildModelPlanCandidatesFromBillingPlans,
@@ -293,34 +291,12 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         throw new Error('个人空间不支持删除')
       }
 
-      // Owner 需要先转让所有权再离开
+      // 主账号(所有者)退出:必须【先手动转让主账号权限】给其他成员,这里不再自动转让(防绕过)。
+      // 单人团队所有者的引导(转让/解散)由 UI 层按成员数给出;此处仅作后端调用前的防线。
       const userId = toId(get().authSession?.user?.id)
       const ownerUserId = toId(target?.owner_user_id || target?.ownerUserId)
       if (userId && ownerUserId && userId === ownerUserId) {
-        let membersList: any[] = []
-        try {
-          const raw: any = await listWorkspaceMembers(targetId)
-          membersList = Array.isArray(raw)
-            ? raw
-            : Array.isArray(raw?.list)
-              ? raw.list
-              : Array.isArray(raw?.members)
-                ? raw.members
-                : Array.isArray(raw?.items)
-                  ? raw.items
-                  : []
-        } catch {
-          throw new Error('无法获取团队成员列表，请稍后重试')
-        }
-        const otherMember = membersList.find((m) => {
-          const mid = toId(m?.user_id || m?.userId || m?.id)
-          return mid > 0 && mid !== userId
-        })
-        if (!otherMember) {
-          throw new Error('你是团队唯一成员，无法退出。如需删除团队请联系管理员。')
-        }
-        const otherUserId = toId(otherMember?.user_id || otherMember?.userId || otherMember?.id)
-        await transferWorkspaceOwnership({ workspaceId: targetId, userId: otherUserId })
+        throw new Error('你是主账号,退出前请先把主账号权限转让给其他成员;若要删除空间请用「解散该空间」。')
       }
 
       try {

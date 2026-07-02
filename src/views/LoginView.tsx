@@ -382,6 +382,13 @@ export default function LoginView() {
     return () => clearCodeTimer()
   }, [])
 
+  // 带推广码进站(分享链接 /login?invite_code=…):属新用户场景,直接弹出注册框,省掉手点「免费注册」。
+  // (推广码本身由 App 的 captureInviteCode 落地即捕获,注册时读取;这里只负责自动打开注册。)
+  useEffect(() => {
+    const invited = new URLSearchParams(window.location.search).get('invite_code')
+    if (invited && invited.trim()) setAuthModal('register')
+  }, [])
+
   // ── 登录页大图轮播(slug=login)──────────────────────────────────────
   // 有数据用 banner 列表;为空回退到静态四项(只有标题、无媒体)。
   const hasBanners = Array.isArray(loginBanners) && loginBanners.length > 0
