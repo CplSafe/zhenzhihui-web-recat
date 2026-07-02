@@ -99,15 +99,13 @@ export function getBusinessErrorMessage(error, fallback = '业务接口请求失
     }
 
     if (error.status === 409) {
-      const code = String(error.code || '').toUpperCase()
       const responseMessage = String(
         error.response?.message || error.response?.error?.message || error.response?.data?.message || '',
       ).trim()
-      const message = responseMessage || error.message
-      if (code === 'CONFLICT' || /owner|所有者|转让|退出|离开/i.test(message)) {
-        return message
-      }
-      return '草稿保存冲突：项目可能不属于当前工作空间，请切换工作空间后重试'
+      // 各类 409 后端都给了明确中文原因(草稿乐观锁「草稿已被其他端更新」/「你已经是该 workspace 成员」/
+      // 「席位已满」/「不能移除 owner」等),直接回显。此前默认套用「草稿保存冲突」文案,导致加入团队、
+      // 成员管理等非草稿 409 显示错误提示(如加入已被使用的邀请码却提示草稿冲突)。
+      return responseMessage || error.message || '操作冲突，请刷新后重试'
     }
 
     // 业务错误码优先按 code/code_string 映射（后端 message 多为英文）。

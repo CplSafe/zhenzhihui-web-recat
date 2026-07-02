@@ -79,7 +79,9 @@ export function computeVideoContentSig(shots: any[], entryMeta: any, base: strin
   return JSON.stringify({
     ratio: entryMeta?.ratio || '',
     style: entryMeta?.style || '',
-    base: base || '',
+    // trim:出片锁定端传原始 reqSummary(LLM 常带尾部换行/空格),项目列表端传 pickString 已 trim 的值。
+    // 两端不一致会让签名不等 → 明明没改却永久显示「· 草稿(内容已改)」。统一在此 trim,两端一致。
+    base: String(base || '').trim(),
     shots: (Array.isArray(shots) ? shots : [])
       .filter((s) => s?.includeInVideo !== false)
       .map((s) => ({
