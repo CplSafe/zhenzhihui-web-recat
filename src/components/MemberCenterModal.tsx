@@ -494,17 +494,17 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         }
         await new Promise((r) => window.setTimeout(r, 3000))
       }
-      // 兜底前最后确认一次,收窄"后端刚建好但上一轮没刷到"的窗口
+      // 到底仍没刷到:最后再确认一次
       await store.getState().loadWorkspaces()
       const late = findNew()
       if (late?.id) {
         store.getState().switchWorkspace(Number(late.id))
         return
       }
-      // ② 后端确实没建 → 前端兜底建团队(createTeam 内部:建 team 空间 → 刷列表 → 切过去)
-      const user = store.getState().authSession?.user as any
-      const teamName = `${String(user?.nickname || user?.name || user?.username || '我').trim()}的团队`
-      await store.getState().createTeam(teamName)
+      // 后端(intent=new_team)下单即建 activation_pending 空间、付款后激活,正常 18s 内可刷到;
+      // 到底仍没刷到大概率只是异步慢 → 提示用户稍后自查,【绝不】前端兜底再建一个(否则后端已建+前端再建
+      // = 一个订单开出两个团队空间)。
+      if (aliveRef.current) showToast('团队空间开通中,稍后可在「切换空间」处查看', 'info')
     } catch {
       /* 刷新/切换/建团队失败不阻断支付成功提示;用户可手动在切换空间里找/建团队 */
     }

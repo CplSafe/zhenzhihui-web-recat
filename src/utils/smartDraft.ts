@@ -74,7 +74,10 @@ export function computeVideoContentSig(shots: any[], entryMeta: any, base: strin
     const aid = Number(s?.imageAssetId || s?.asset_id || s?.assetId || 0) || 0
     if (aid) return `a:${aid}`
     const u = String(s?.image || s?.url || '').trim()
-    return u ? `u:${u.split('?')[0]}` : ''
+    // data:/blob: 落盘时被 stripHeavy 清空(只留 asset_id + http)→ 此处也视为空,否则锁定端(带 data:)
+    // 与落盘后列表端(空)签名不等,又出现「明明没改却显示 · 草稿」的幻影。
+    if (!u || /^(data:|blob:)/i.test(u)) return ''
+    return `u:${u.split('?')[0]}`
   }
   return JSON.stringify({
     ratio: entryMeta?.ratio || '',

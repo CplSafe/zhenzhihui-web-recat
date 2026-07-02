@@ -1151,15 +1151,14 @@ export default function SmartCreateView() {
     error: string
     estimate: { estimatedCost: number; balance: number; canAfford: boolean } | null
   }>({ loading: false, error: '', estimate: null })
-  // 每一步调模型前的积分预估:step0 分镜脚本(文本)、step1/2 出图(单张图)。perImage=按单张口径显示。
+  // 每一步调模型前的积分预估:按 kind 分 video / elements / frames 三种口径,估价已按张数汇总为总额。
   const [stepCost, setStepCost] = useState<{
     loading: boolean
     error: string
-    perImage: boolean
     count: number // 下一步要出的图片张数(出图口径);估价已按张数汇总为总额
     // perOne = 再加一张图片的增量积分(元素图=文生图单价;分镜帧=图生图单价,因新增分镜带上一帧)
     estimate: { estimatedCost: number; balance: number; canAfford: boolean; perOne?: number } | null
-  }>({ loading: false, error: '', perImage: false, count: 0, estimate: null })
+  }>({ loading: false, error: '', count: 0, estimate: null })
   // 进行中的整片生成任务 id:生成开始即记录并随草稿持久化,切路由/刷新后凭它续轮询(不重新生成)
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
   // 每次「重新生成」的独立记录(生成中/失败);成功的成片仍进 videoVersions。
@@ -1192,6 +1191,11 @@ export default function SmartCreateView() {
   const commitVideoSig = (sig?: string) => {
     const finalSig = sig || pendingVideoSigRef.current || pendingVideoSig
     if (finalSig) setLastVideoSig(finalSig)
+    pendingVideoSigRef.current = ''
+    setPendingVideoSig('')
+  }
+  // 出片失败:清掉在途锁定签名(不盖章)。否则失败的 pending 会被持久化并可能在后续在途 adopt 时被误盖到 lastVideoSig。
+  const clearVideoSig = () => {
     pendingVideoSigRef.current = ''
     setPendingVideoSig('')
   }
@@ -1330,6 +1334,7 @@ export default function SmartCreateView() {
       } catch (e: any) {
         showToast(`视频修改失败:${e?.message || ''}`, 'error')
         markGen(gid, 'failed')
+        clearVideoSig() // 失败不盖章,清掉在途锁定签名
       } finally {
         setVidGenRunning(false)
         setVidGenTaskId(0) // 生成结束(成功/失败)清掉进行中标记,避免恢复时误续
@@ -1469,6 +1474,7 @@ export default function SmartCreateView() {
     } catch (e: any) {
       showToast(`视频生成失败:${e?.message || ''}`, 'error')
       markGen(gid, 'failed')
+      clearVideoSig() // 失败不盖章,清掉在途锁定签名
     } finally {
       setBlurPhase('')
       setVidGenRunning(false)
@@ -1596,14 +1602,11 @@ export default function SmartCreateView() {
     const kind = isImg ? 'frames' : step === 0 ? 'elements' : step === 1 ? 'frames' : step === 2 ? 'video' : ''
     if (!ws || marketingOpen || !kind) {
       setStepCost((s) =>
-        s.estimate || s.loading || s.error
-          ? { loading: false, error: '', perImage: false, count: 0, estimate: null }
-          : s,
+        s.estimate || s.loading || s.error ? { loading: false, error: '', count: 0, estimate: null } : s,
       )
       return
     }
     let alive = true
-    const perImage = kind !== 'video'
     // 分镜帧张数 = 参与视频的分镜数;元素图张数 = 分镜里唯一主体数。
     const partShots = kind === 'frames' && !isImg ? shots.filter((s) => s.includeInVideo !== false) : []
     const frameCount = partShots.length
@@ -1612,7 +1615,7 @@ export default function SmartCreateView() {
         ? new Set(shots.flatMap((s) => (s.subjects || []).map((su: any) => stripAt(su.tag || '')).filter(Boolean))).size
         : 0
     const count = kind === 'elements' ? elementCount : kind === 'frames' && !isImg ? frameCount : 0
-    setStepCost({ loading: true, error: '', perImage, count, estimate: null })
+    setStepCost({ loading: true, error: '', count, estimate: null })
     const timer = window.setTimeout(async () => {
       try {
         const plans = await resolvePlanCandidates()
@@ -1629,7 +1632,6 @@ export default function SmartCreateView() {
           setStepCost({
             loading: false,
             error: '',
-            perImage,
             count: 0,
             estimate: { estimatedCost: per, balance, canAfford: per <= balance },
           })
@@ -1651,7 +1653,6 @@ export default function SmartCreateView() {
           setStepCost({
             loading: false,
             error: '',
-            perImage,
             count: elementCount,
             estimate: { estimatedCost: total, balance, canAfford: total <= balance, perOne: per },
           })
@@ -1688,12 +1689,11 @@ export default function SmartCreateView() {
         setStepCost({
           loading: false,
           error: '',
-          perImage,
           count: n,
           estimate: { estimatedCost: total, balance, canAfford: total <= balance, perOne: i2iPer },
         })
       } catch (e: any) {
-        if (alive) setStepCost({ loading: false, error: e?.message || '暂不支持预估', perImage, count, estimate: null })
+        if (alive) setStepCost({ loading: false, error: e?.message || '暂不支持预估', count, estimate: null })
       }
     }, 500)
     return () => {

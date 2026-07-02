@@ -278,7 +278,9 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       const redeemed = await redeemWorkspaceInvitation({ inviteCode })
       await get().loadWorkspaces()
       const joinedWorkspaceId = pickWorkspaceId(redeemed)
-      if (joinedWorkspaceId) {
+      // 只有确认加入的空间已在刷新后的列表里才切过去。loadWorkspaces 内部吞错(失败静默返回),
+      // 若不校验就设 override,会把 active 指向列表里不存在的空间 → 停在空态。失败则不切,列表恢复后用户可自选。
+      if (joinedWorkspaceId && findById(deriveAllWorkspaces(get()), joinedWorkspaceId)) {
         clearWorkspaceScopedState()
         set({ activeWorkspaceOverrideId: joinedWorkspaceId })
       }
