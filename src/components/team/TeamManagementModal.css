@@ -534,3 +534,26 @@
 .tm-header-menu-item--danger {
   color: #ff6b6b;
 }
+
+/* 撤销邀请:淡色文字按钮(和「重新生成」并列) */
+.tm-revoke {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  border-radius: 12px;
+  border: 0;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.78);
+  color: rgba(180, 83, 9, 0.95);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.tm-revoke:hover {
+  background: rgba(255, 255, 255, 0.92);
+}
+.tm-revoke svg {
+  width: 14px;
+  height: 14px;
+}

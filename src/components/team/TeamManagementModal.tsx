@@ -8,6 +8,7 @@ import { listWorkspaceMembers } from '@/api/auth'
 import {
   createWorkspaceInvitation,
   deleteWorkspaceInvitation,
+  getSubscription,
   listWorkspaceInvitations,
   removeWorkspaceMember,
   transferWorkspaceOwnership,
@@ -225,6 +226,8 @@ export default function TeamManagementModal({
   const [expiryDate, setExpiryDate] = useState('')
   const [activeInvitationId, setActiveInvitationId] = useState(0)
   const [expiryDays, setExpiryDays] = useState(7)
+  // 席位上限:来自当前空间的订阅套餐(max_members)。0 = 未知/不限制,不拦邀请。
+  const [maxMembers, setMaxMembers] = useState(0)
 
   const [query, setQuery] = useState('')
 
@@ -251,7 +254,6 @@ export default function TeamManagementModal({
   const membersLoadingRef = useRef(false)
   const invitationsLoadingRef = useRef(false)
   const invitationDeleteBusyIds = useRef<Set<number>>(new Set())
-  const invitationAutoEnsuredWorkspaceId = useRef(0)
 
   // === computed ===
   // 当前用户 id:优先会话级(不随切空间失效);回退到 currentMember(仅在会话初始空间时有效)。
@@ -298,9 +300,21 @@ export default function TeamManagementModal({
   const isTeamWorkspace = !workspaceType || workspaceType === 'team'
 
   const displayInviteCode = useMemo(() => formatInviteCodeForDisplay(inviteCode), [inviteCode])
-  const inviteDisplayText = isPersonalWorkspace ? '个人空间不支持邀请码' : displayInviteCode || '暂无邀请码'
+  // 仅主账号(空间所有者)可管理/查看邀请码;非所有者(管理员/成员)一律隐藏:不显示码、不能复制/重新生成。
+  const canManageInvite = isTeamWorkspace && isCurrentUserOwner
+  // 席位:成员数 vs 套餐 max_members(后端真实值,不写死)。满员则不可再邀请。maxMembers=0 视为不限制。
+  const memberCount = members.length
+  const seatFull = maxMembers > 0 && memberCount >= maxMembers
+  const canInvite = canManageInvite && !seatFull
+  const inviteDisplayText = isPersonalWorkspace
+    ? '个人空间不支持邀请码'
+    : !isCurrentUserOwner
+      ? '仅空间所有者可管理邀请码'
+      : seatFull
+        ? `席位已满(${memberCount}/${maxMembers}),暂不可再邀请`
+        : displayInviteCode || '暂无邀请码'
   const inviteExpiryText = isPersonalWorkspace ? '切换到团队空间后才可邀请成员加入' : expiryDate || '-'
-  const canCopyInviteCode = isTeamWorkspace && Boolean(String(inviteCode || '').trim())
+  const canCopyInviteCode = canInvite && Boolean(String(inviteCode || '').trim())
 
   // normalizeMembers 依赖 ownerUserId，因此用闭包形式定义
   const normalizeMembers = useCallback(
@@ -376,7 +390,6 @@ export default function TeamManagementModal({
       setActiveInvitationId(0)
       setInviteCode('')
       setExpiryDate('')
-      invitationAutoEnsuredWorkspaceId.current = 0
       return
     }
     if (invitationsLoadingRef.current) return
@@ -388,19 +401,11 @@ export default function TeamManagementModal({
       if (active) {
         applyActiveInvitation(active.raw)
       } else {
+        // 无有效邀请码 → 显示「暂无邀请码」,由主账号手动「重新生成」。
+        // 【不再自动补码】:否则主账号「撤销邀请」后重开弹窗会又自动生成,撤销形同无效。
         setActiveInvitationId(0)
         setInviteCode('')
         setExpiryDate('')
-        if (open && invitationAutoEnsuredWorkspaceId.current !== wsId) {
-          invitationAutoEnsuredWorkspaceId.current = wsId
-          createWorkspaceInvitation({ workspaceId: wsId, expiryDays })
-            .then((created: any) => {
-              applyActiveInvitation(created)
-            })
-            .catch((error: any) => {
-              onToast?.(error?.message || '邀请码生成失败', 'error')
-            })
-        }
       }
     } catch (error: any) {
       setActiveInvitationId(0)
@@ -410,7 +415,7 @@ export default function TeamManagementModal({
     } finally {
       invitationsLoadingRef.current = false
     }
-  }, [workspaceId, isPersonalWorkspace, open, expiryDays, onToast])
+  }, [workspaceId, isPersonalWorkspace, onToast])
 
   function closeMemberActions() {
     setMemberActionOpen(false)
@@ -446,6 +451,11 @@ export default function TeamManagementModal({
       const targetIsOwner = Boolean(target?.isOwner)
       if (action === 'transfer' && !canTransferOwnership) {
         onToast?.('只有团队所有者可以转让所有权', 'error')
+        return
+      }
+      // 踢除成员:仅主账号(所有者),管理员不可
+      if (action === 'remove' && !isCurrentUserOwner) {
+        onToast?.('只有主账号可以移出成员', 'error')
         return
       }
       if (
@@ -487,6 +497,9 @@ export default function TeamManagementModal({
         if (!confirmed) return
         await transferWorkspaceOwnership({ workspaceId: wsId, userId })
         onToast?.(`已将团队所有权转让给 ${name}`, 'success')
+        // 刷新空间(owner_user_id 变了)→ useCurrentWorkspace 更新 → isCurrentUserOwner 立刻变 false,
+        // 原主账号当场降级为子账号:邀请码/踢除/转让/解散等主账号功能即时消失;成员列表所有者标记也更新。
+        await useWorkspaceSessionStore.getState().loadWorkspaces()
         await loadMembers()
       } else if (action === 'remove') {
         const confirmed = await requestConfirm(`确认将 ${name} 移出团队吗？`, { danger: true })
@@ -508,7 +521,9 @@ export default function TeamManagementModal({
   // 解散该空间(仅所有者):强确认——解散后素材/项目/数据全部清空,不可恢复。
   async function handleDisband() {
     if (!workspaceId) return
-    const ok = await requestConfirm('解散空间后,该空间的所有素材、项目及数据都将被清空,且不可恢复。确定解散该空间吗?')
+    const ok = await requestConfirm('解散空间后,该空间的所有素材、项目及数据都将被清空,且不可恢复。确定解散该空间吗?', {
+      danger: true,
+    })
     if (!ok) return
     try {
       await useWorkspaceSessionStore.getState().disbandTeam(workspaceId)
@@ -519,9 +534,18 @@ export default function TeamManagementModal({
     }
   }
 
-  // 退出该空间(子账号):退出后不再看到该空间数据。所有者需先转让所有权才能退出。
+  // 退出该空间:子账号可直接退出;主账号(所有者)必须【先手动转让主账号权限】,单人团队引导去解散。
   async function handleLeave() {
     if (!workspaceId) return
+    if (isCurrentUserOwner) {
+      onToast?.(
+        members.length <= 1
+          ? '你是主账号且是唯一成员,无法退出。如需删除空间请用「解散该空间」。'
+          : '你是主账号,退出前请先在成员列表把主账号权限转让给其他成员,再退出。',
+        'error',
+      )
+      return
+    }
     const ok = await requestConfirm('退出后你将不再看到该空间的素材、项目等数据。确定退出该空间吗?')
     if (!ok) return
     try {
@@ -577,6 +601,30 @@ export default function TeamManagementModal({
       })
   }
 
+  // 撤销邀请:让当前邀请码立即失效(删除该邀请),不再生成新码 —— 无码状态保持,直到主账号「重新生成」。
+  // 不影响已加入成员;仅关闭新的加入通道。
+  async function handleRevoke() {
+    const wsId = Number(workspaceId || 0)
+    const invId = Number(activeInvitationId || 0)
+    if (!wsId || !invId || invitationsLoadingRef.current) return
+    const ok = await requestConfirm('撤销后当前邀请码立即失效,已发出的链接将无法再加入。确定撤销?', { danger: true })
+    if (!ok) return
+    invitationsLoadingRef.current = true
+    invitationDeleteBusyIds.current.add(invId)
+    try {
+      await deleteWorkspaceInvitation({ workspaceId: wsId, invitationId: invId })
+      setActiveInvitationId(0)
+      setInviteCode('')
+      setExpiryDate('')
+      onToast?.('邀请码已撤销', 'success')
+    } catch (error: any) {
+      onToast?.(error?.message || '撤销失败,请稍后重试', 'error')
+    } finally {
+      invitationDeleteBusyIds.current.delete(invId)
+      invitationsLoadingRef.current = false
+    }
+  }
+
   async function copyCode() {
     if (!canCopyInviteCode) return
     try {
@@ -599,7 +647,28 @@ export default function TeamManagementModal({
       return
     }
     loadMembers()
-    loadInvitations()
+    // 邀请码是【主账号专属】接口:非主账号(子账号/管理员)/个人空间调它会被后端 403「无权管理该 workspace」。
+    // 子账号只是来看成员列表,不该碰邀请码接口 → 仅 canManageInvite(团队所有者)才拉;否则清空邀请状态。
+    if (canManageInvite) {
+      loadInvitations()
+    } else {
+      setActiveInvitationId(0)
+      setInviteCode('')
+      setExpiryDate('')
+    }
+    // 拉当前空间订阅拿席位上限(max_members),供邀请前拦超额;个人空间/拉取失败按「不限制」(0)处理
+    const wsId = Number(workspaceId || 0)
+    if (!wsId || isPersonalWorkspace) {
+      setMaxMembers(0)
+    } else {
+      let alive = true
+      getSubscription(wsId)
+        .then((sub: any) => alive && setMaxMembers(Number(sub?.max_members || 0) || 0))
+        .catch(() => alive && setMaxMembers(0))
+      return () => {
+        alive = false
+      }
+    }
     // 含 workspaceId：弹窗打开期间切换空间时需重新拉取成员/邀请，避免显示上一个团队的数据
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, workspaceId])
@@ -663,19 +732,8 @@ export default function TeamManagementModal({
                   </button>
                   {headerMenuOpen && (
                     <div className="tm-header-menu" role="menu">
-                      {isCurrentUserOwner ? (
-                        <button
-                          type="button"
-                          className="tm-header-menu-item tm-header-menu-item--danger"
-                          role="menuitem"
-                          onClick={() => {
-                            setHeaderMenuOpen(false)
-                            void handleDisband()
-                          }}
-                        >
-                          解散该空间
-                        </button>
-                      ) : (
+                      {/* 退出:仅子账号可主动退出;主账号看不到,须先转让所有权(变子账号)或解散 */}
+                      {!isCurrentUserOwner && (
                         <button
                           type="button"
                           className="tm-header-menu-item"
@@ -686,6 +744,19 @@ export default function TeamManagementModal({
                           }}
                         >
                           退出该空间
+                        </button>
+                      )}
+                      {isCurrentUserOwner && (
+                        <button
+                          type="button"
+                          className="tm-header-menu-item tm-header-menu-item--danger"
+                          role="menuitem"
+                          onClick={() => {
+                            setHeaderMenuOpen(false)
+                            void handleDisband()
+                          }}
+                        >
+                          解散该空间
                         </button>
                       )}
                     </div>
@@ -713,12 +784,32 @@ export default function TeamManagementModal({
                   </button>
                 </div>
                 <div className="tm-invite-expiry">
-                  {isPersonalWorkspace ? inviteExpiryText : `有效期至：${inviteExpiryText}`}
+                  {isPersonalWorkspace
+                    ? inviteExpiryText
+                    : isCurrentUserOwner && !seatFull
+                      ? `有效期至：${inviteExpiryText}`
+                      : ''}
                 </div>
               </div>
 
               <div className="tm-invite-right">
-                {canManageWorkspace && isTeamWorkspace && (
+                {/* 撤销邀请:仅主账号、且当前有有效邀请码时显示 → 撤销后失效、无码 */}
+                {canInvite && Number(activeInvitationId || 0) > 0 && (
+                  <button type="button" className="tm-revoke" onClick={handleRevoke}>
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                      <path
+                        d="M3 8a5 5 0 1 1 1.6 3.7M3 8H1.6M3 8V6.4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    撤销邀请
+                  </button>
+                )}
+                {canInvite && (
                   <button type="button" className="tm-regenerate" onClick={generateCode}>
                     <svg viewBox="0 0 16 16" aria-hidden="true">
                       <path d="M13.7 7.2a5.7 5.7 0 1 1-1.4-3.6l.1-1.2h1.2v4H9.5V5.2h1.6A4.5 4.5 0 1 0 12.6 8h1.1Z" />
@@ -727,7 +818,7 @@ export default function TeamManagementModal({
                   </button>
                 )}
 
-                {canManageWorkspace && isTeamWorkspace && (
+                {canInvite && (
                   <div className="tm-expiry-select">
                     <select
                       value={expiryDays}
@@ -842,9 +933,12 @@ export default function TeamManagementModal({
                   转让所有权
                 </button>
               )}
-              <button type="button" className="tm-action-item" onClick={() => handleMemberAction('remove')}>
-                移出团队
-              </button>
+              {/* 踢除成员:仅主账号(所有者),管理员不可 */}
+              {isCurrentUserOwner && (
+                <button type="button" className="tm-action-item" onClick={() => handleMemberAction('remove')}>
+                  移出团队
+                </button>
+              )}
             </div>
           </div>,
           document.body,

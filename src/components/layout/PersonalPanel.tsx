@@ -101,7 +101,11 @@ export default function PersonalPanel({ onMember, onChangePwd, onLogout, onClose
   const isTeamWs = Boolean(currentWs?.type) && String(currentWs.type).toLowerCase() !== 'personal'
   const avatarUrl = user?.avatar || user?.avatar_url || user?.avatarUrl || ''
   const initial = String(name).trim().charAt(0) || 'U'
-  const pct = baseCredits > 0 ? Math.min(100, Math.max(0, Math.round((Number(credits) / baseCredits) * 100))) : 0
+  // 积分进度按【已消耗】算(用得越多条越满)。有任何消耗就至少显示 1%(从 1% 起,让进度立刻可见);
+  // 完全没消耗则 0%。credits 为剩余积分,baseCredits 为套餐基础积分。
+  const usedCredits = Math.max(0, baseCredits - Number(credits))
+  const usedPct =
+    baseCredits > 0 && usedCredits > 0 ? Math.min(100, Math.max(1, Math.round((usedCredits / baseCredits) * 100))) : 0
 
   const pickWs = (id: number) => {
     if (id && Number(id) !== Number(activeId)) switchWorkspace(id)
@@ -156,13 +160,13 @@ export default function PersonalPanel({ onMember, onChangePwd, onLogout, onClose
           <span className="ppl__crown">{IconCrown}</span>
         </div>
         <div className="ppl__credits-row">
-          <span className="ppl__credits-label">积分剩余{pct}%</span>
+          <span className="ppl__credits-label">积分已用{usedPct}%</span>
           <span className="ppl__credits-num">
             <b>{Number(credits) || 0}</b> /{baseCredits || 0}
           </span>
         </div>
         <div className="ppl__bar">
-          <span className="ppl__bar-fill" style={{ width: `${pct}%` }} />
+          <span className="ppl__bar-fill" style={{ width: `${usedPct}%` }} />
         </div>
       </button>
 

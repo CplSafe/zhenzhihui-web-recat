@@ -1425,8 +1425,69 @@ export function createRechargeOrder({ workspaceId, creditPackageId }) {
  * @param {{ workspaceId: number, planId: number }} params
  * @returns {Promise<{ order: object, pay_url: string }>}
  */
-export function createSubscriptionOrder({ workspaceId, planId }) {
+// 开通订阅(一次性付款,按 intent 分流):
+//   intent='subscribe' 为某空间开通/续费(后端按订阅历史自决)——个人版、团队续费用它;
+//   intent='new_team'  买 team 套餐【开新团队空间】——下单即建 activation_pending 空间、付款激活,必须带 newWorkspaceName;
+//   intent='upgrade'   占位未实现。
+// idempotencyKey 幂等去重,防重复下单。
+export function createSubscriptionOrder({
+  workspaceId,
+  planId,
+  intent = 'subscribe',
+  newWorkspaceName = '',
+  idempotencyKey = '',
+}) {
+  const op = String(intent || 'subscribe')
+  const body = {
+    plan_id: Number(planId),
+    intent: op,
+  }
+  // 开新团队(new_team)不属于任何现有空间,后端不接受 workspace_id;其余(subscribe/upgrade)必须带当前空间
+  if (op !== 'new_team') {
+    body.workspace_id = Number(workspaceId)
+  }
+  const name = String(newWorkspaceName || '').trim()
+  if (name) body.new_workspace_name = name
+  const key = String(idempotencyKey || '').trim()
+  if (key) body.idempotency_key = key
   return requestJson('/api/v1/billing/subscription-orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+/**
+ * 待支付续费账单列表(订阅周期到期 / 待支付的续费单)。
+ * @param {number} workspaceId
+ * @returns {Promise<Array<object>>}
+ */
+export function listRenewalOrders(workspaceId) {
+  return requestJson(`/api/v1/billing/renewal-orders?workspace_id=${encodeURIComponent(String(workspaceId))}`)
+}
+
+/**
+ * 为某条待支付续费账单生成支付链接,返回支付宝 pay_url。
+ * @param {{ workspaceId: number, renewalOrderId: number }} params
+ * @returns {Promise<{ order?: object, pay_url: string }>}
+ */
+export function createRenewalPayUrl({ workspaceId, renewalOrderId }) {
+  const wsq = workspaceId ? `?workspace_id=${encodeURIComponent(String(workspaceId))}` : ''
+  return requestJson(`/api/v1/billing/renewal-orders/${Math.floor(Number(renewalOrderId))}/pay-url${wsq}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace_id: Number(workspaceId) }),
+  })
+}
+
+/**
+ * Creates a recurring-subscription sign URL. Returns the plan plus an Alipay
+ * agreement sign_url the caller opens in the system browser.
+ * @param {{ workspaceId: number, planId: number }} params
+ * @returns {Promise<{ plan: object, sign_url: string }>}
+ */
+export function createSubscriptionSignUrl({ workspaceId, planId }) {
+  return requestJson('/api/v1/billing/subscriptions/sign-url', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1434,6 +1495,37 @@ export function createSubscriptionOrder({ workspaceId, planId }) {
       plan_id: Number(planId),
     }),
   })
+}
+
+export function cancelSubscription({ workspaceId, subscriptionId }) {
+  const wsId = Number(workspaceId || 0)
+  const subId = Number(subscriptionId || 0)
+  if (!Number.isFinite(wsId) || wsId <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  if (!Number.isFinite(subId) || subId <= 0) {
+    throw new BusinessApiError('订阅 ID 无效')
+  }
+  return requestJson(
+    `/api/v1/billing/subscriptions/${Math.floor(subId)}/cancel?workspace_id=${encodeURIComponent(String(Math.floor(wsId)))}`,
+    { method: 'POST' },
+  )
+}
+
+// 关闭自动续费:到期不再自动扣款(当前周期权益不受影响)。POST /subscriptions/{id}/disable-auto-renew
+export function disableSubscriptionAutoRenew({ workspaceId, subscriptionId }) {
+  const wsId = Number(workspaceId || 0)
+  const subId = Number(subscriptionId || 0)
+  if (!Number.isFinite(wsId) || wsId <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  if (!Number.isFinite(subId) || subId <= 0) {
+    throw new BusinessApiError('订阅 ID 无效')
+  }
+  return requestJson(
+    `/api/v1/billing/subscriptions/${Math.floor(subId)}/disable-auto-renew?workspace_id=${encodeURIComponent(String(Math.floor(wsId)))}`,
+    { method: 'POST' },
+  )
 }
 
 export function listAssets({ workspaceId, type = '', status = 'active', source = '', limit = 100, offset = 0 }) {
