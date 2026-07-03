@@ -50,6 +50,24 @@ const pickCurrentWorkspaceIdFromSession = (session: any): number => {
   return toId(candidates.find((value) => toId(value) > 0))
 }
 
+// 记住「上次选中的工作空间」(UI 选择,非项目数据),按用户隔离,刷新后恢复——
+// 否则刷新会被会话默认空间(个人)覆盖,导致「一刷新就回个人空间」。
+const ACTIVE_WS_KEY = (uid: any) => `zzh_active_ws_u${toId(uid) || 'anon'}`
+const readSavedActiveWs = (uid: any): number => {
+  try {
+    return toId(window.localStorage.getItem(ACTIVE_WS_KEY(uid)))
+  } catch {
+    return 0
+  }
+}
+const saveActiveWs = (uid: any, id: any): void => {
+  try {
+    window.localStorage.setItem(ACTIVE_WS_KEY(uid), String(toId(id)))
+  } catch {
+    /* 忽略(隐私模式等) */
+  }
+}
+
 // 非响应式闭包变量（原 pinia store 内 `let`）。
 let billingPlansPromise: Promise<void> | null = null
 let billingPlansLoadedWorkspaceId = 0
@@ -200,8 +218,12 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       }
       set({ authSession: session })
 
+      const savedWs = readSavedActiveWs(toId(session?.user?.id))
       const nextWorkspaceId = pickCurrentWorkspaceIdFromSession(session)
-      if (nextWorkspaceId > 0) {
+      if (savedWs > 0) {
+        // 恢复上次选中的空间(刷新前的);若该空间已不属于你,loadWorkspaces 会校验并清掉回落。
+        set({ activeWorkspaceOverrideId: savedWs })
+      } else if (nextWorkspaceId > 0) {
         set({ activeWorkspaceOverrideId: nextWorkspaceId })
       } else if (!findById(deriveAllWorkspaces(get()), get().activeWorkspaceOverrideId)) {
         set({ activeWorkspaceOverrideId: 0 })
@@ -248,7 +270,9 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         const s = get()
         const preferredId = toId(s.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(s)
         if (preferredId && !findById(items, preferredId) && s.activeWorkspaceOverrideId) {
+          // 存档指向的空间已不属于你(被移出/解散)→ 清 override 并清存档,回落默认空间
           set({ activeWorkspaceOverrideId: 0 })
+          saveActiveWs(toId(s.authSession?.user?.id), 0)
         }
       } catch {
         return
@@ -261,6 +285,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       if (!target || target === deriveWorkspaceId(get())) return
       clearWorkspaceScopedState()
       set({ activeWorkspaceOverrideId: target })
+      saveActiveWs(toId(get().authSession?.user?.id), target) // 持久化,刷新后恢复
     },
 
     // 创建团队：返回新建结果（toast/错误处理交给调用方）。
@@ -278,6 +303,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       if (joinedWorkspaceId) {
         clearWorkspaceScopedState()
         set({ activeWorkspaceOverrideId: joinedWorkspaceId })
+        saveActiveWs(toId(get().authSession?.user?.id), joinedWorkspaceId) // 持久化,刷新后恢复
       }
       return redeemed
     },
@@ -331,6 +357,13 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
 
       await get().loadWorkspaces()
 
+      // 兜底:loadWorkspaces 会用后端结果覆盖 userWorkspaces,若后端 leave 有延迟/仍返回该空间,
+      // 会把刚退出的空间又加回来 → 这里再过滤一次,确保退出后列表里不再出现该空间。
+      const afterLoad = get()
+      if (Array.isArray(afterLoad.userWorkspaces) && findById(afterLoad.userWorkspaces, targetId)) {
+        set({ userWorkspaces: afterLoad.userWorkspaces.filter((item) => toId(item?.id) !== targetId) })
+      }
+
       const next = get()
       const nextList = deriveAllWorkspaces(next)
       const desiredId = toId(next.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(next)
@@ -376,6 +409,11 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         set({ activeWorkspaceOverrideId: 0 })
       }
       await get().loadWorkspaces()
+      // 兜底:同 deleteTeam,防 loadWorkspaces 把刚解散的空间又拉回来
+      const afterLoad = get()
+      if (Array.isArray(afterLoad.userWorkspaces) && findById(afterLoad.userWorkspaces, targetId)) {
+        set({ userWorkspaces: afterLoad.userWorkspaces.filter((item) => toId(item?.id) !== targetId) })
+      }
       const next = get()
       const nextList = deriveAllWorkspaces(next)
       const desiredId = toId(next.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(next)

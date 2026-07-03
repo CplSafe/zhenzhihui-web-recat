@@ -331,7 +331,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   // 顶层 tab:基础版(个人套餐)/ 团队版(团队套餐)/ 积分充值
   const [mainTab, setMainTab] = useState<'basic' | 'team' | 'recharge'>('basic')
   // 只有在个人空间买团队版才是「开新团队空间」(在团队空间里买 = 续费,不建新空间、不需团队名)
-  const isBuyingNewTeam = mainTab === 'team' && !isTeamWs
+  // 团队 tab 就显示「新团队命名」输入(名字仅在真正开新团队即 newTeam 时随下单发出;续费时忽略)。
+  // 不再限制「仅个人空间」——在团队空间里也能给「即将新开的团队」起名。
+  const isBuyingNewTeam = mainTab === 'team'
   // 子账号(不可充值)若正停在积分充值 tab(如切空间后)→ 退回基础版,避免看到充值内容
   useEffect(() => {
     if (!canRecharge && mainTab === 'recharge') setMainTab('basic')
@@ -343,6 +345,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const [balance, setBalance] = useState<number | null>(null)
   const [subscription, setSubscription] = useState<any>(null)
   const [subActionLoading, setSubActionLoading] = useState(false)
+  const [renewing, setRenewing] = useState(false)
   const [buyingId, setBuyingId] = useState(0)
   // 极少数情况下「同步开窗」仍被浏览器拦截:存下 pay_url,在弹窗内给一个手动打开入口兜底。
   const [pendingPayUrl, setPendingPayUrl] = useState('')
@@ -602,8 +605,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       return
     }
     const renew = isPurchased(p)
-    // 买团队版且当前在个人空间 = 开新团队空间(intent=new_team + 团队名);其余(个人版 / 团队续费)= subscribe
-    const newTeam = p.isTeam && !renew && !isTeamWs
+    // A方案:团队套餐一律「开新团队」——每买一次就新开一个团队(空间:套餐 1:1),同一套餐可反复买、各用于新团队。
+    // 续费某个已有团队走订阅信息区的「续费当前团队」按钮(intent=subscribe);个人版维持 开通/续费。
+    const newTeam = p.isTeam
     const intent = newTeam ? 'new_team' : 'subscribe'
     const nwsName = newTeam ? teamName.trim() || defaultTeamName : ''
     // 幂等键:后端要求简单字母数字串(示例 a1b2c3),不能带冒号/中文 → 用随机 base36 token
@@ -622,7 +626,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
               idempotencyKey: idemKey,
             }),
           ),
-        renew ? '续费失败,请稍后重试' : '开通失败,请稍后重试',
+        !newTeam && renew ? '续费失败,请稍后重试' : '开通失败,请稍后重试',
         'subscribe',
         newTeam, // 开新团队空间:支付成功后刷新空间列表并切到后端新建的团队空间
       )
@@ -697,6 +701,36 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     }
   }
 
+  // A方案:续费【当前所在团队】(团队套餐卡片已改为「开新团队」,续费独立到这)。intent=subscribe,不建新团队。
+  const handleRenewCurrentTeam = async () => {
+    if (renewing || buyingId || !workspaceId || !subscription?.active) return
+    // 定位当前套餐 id:优先订阅自带 plan_id,否则按 code/name 从套餐列表匹配
+    let planId = Number(subscription.plan_id ?? subscription.planId ?? 0) || 0
+    if (!planId) {
+      const matched = plans.find((p) => subscription.plan_code === p.code || subscription.plan_name === p.name)
+      planId = Number(matched?.id || 0) || 0
+    }
+    if (!planId) {
+      showToast('未找到当前套餐,无法续费', 'error')
+      return
+    }
+    const idemKey = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`
+    setRenewing(true)
+    try {
+      await startPay(
+        () =>
+          resolveOrder(`sub:subscribe:${planId}:`, () =>
+            createSubscriptionOrder({ workspaceId, planId, intent: 'subscribe', idempotencyKey: idemKey }),
+          ),
+        '续费失败,请稍后重试',
+        'subscribe',
+        false,
+      )
+    } finally {
+      setRenewing(false)
+    }
+  }
+
   const shell = (
     <div className={`mcm${embedded ? ' mcm--embedded' : ''}`} role="dialog" aria-label="会员中心">
       {!embedded && (
@@ -759,6 +793,25 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
               <span className="mcm-sub-item">
                 {String(subscription.renew_mode).toLowerCase().includes('auto') ? '自动续费' : '手动续费'}
               </span>
+            )}
+            {/* A方案:续费当前团队(团队套餐卡片改为开新团队后,续费走这里)。仅主账号、当前在团队里显示。 */}
+            {canRecharge && isTeamWs && subscriptionId > 0 && (
+              <button
+                type="button"
+                className="mcm-sub-item mcm-sub-action"
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  color: '#5767e5',
+                  cursor: 'pointer',
+                  padding: 0,
+                  fontWeight: 600,
+                }}
+                disabled={renewing}
+                onClick={handleRenewCurrentTeam}
+              >
+                {renewing ? '续费中…' : '续费当前团队'}
+              </button>
             )}
             {/* 订阅管理:仅主账号。自动续费时可「关闭自动续费」;有订阅时可「取消订阅」 */}
             {canRecharge && subscriptionId > 0 && isAutoRenew && (
@@ -840,7 +893,14 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
             ) : (
               <div className="mcm-cards">
                 {visible.map((p) => (
-                  <PlanCard key={p.id} plan={p} buying={buyingId === p.id} purchased={isPurchased(p)} onBuy={onBuy} />
+                  <PlanCard
+                    key={p.id}
+                    plan={p}
+                    buying={buyingId === p.id}
+                    /* 团队套餐卡片一律「开新团队」,不显示「续费」;续费走订阅信息区的「续费当前团队」 */
+                    purchased={!p.isTeam && isPurchased(p)}
+                    onBuy={onBuy}
+                  />
                 ))}
               </div>
             )}
