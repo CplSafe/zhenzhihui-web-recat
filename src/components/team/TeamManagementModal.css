@@ -361,35 +361,6 @@
   color: rgba(4, 120, 87, 0.95);
 }
 
-/* 自己那行「修改用户名」的铅笔按钮:紧跟角色徽标,轻量描边图标 */
-.tm-edit-name {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 8px;
-  border: 0;
-  background: transparent;
-  color: rgba(87, 103, 229, 0.85);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-.tm-edit-name:hover {
-  background: rgba(87, 103, 229, 0.1);
-  color: #5767e5;
-}
-.tm-edit-name:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.tm-edit-name svg {
-  width: 15px;
-  height: 15px;
-}
-
 .tm-more {
   margin-left: auto;
   width: 34px;
@@ -537,6 +508,12 @@
 .tm-header-edit:hover {
   background: rgba(0, 0, 0, 0.05);
   color: #5767e5;
+}
+.tm-header-edit-img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  display: block;
 }
 /* 行内重命名:输入框 + 保存/取消 */
 .tm-header-rename {

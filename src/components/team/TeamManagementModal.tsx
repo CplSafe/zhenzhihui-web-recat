@@ -4,7 +4,7 @@
 */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { listWorkspaceMembers, updateMyProfile, getCurrentUser } from '@/api/auth'
+import { listWorkspaceMembers } from '@/api/auth'
 import {
   createWorkspaceInvitation,
   deleteWorkspaceInvitation,
@@ -20,6 +20,7 @@ import {
 import { deriveAllWorkspaces, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useConfirmDialog } from '@/composables/useToast'
 import { WORKSPACE_NAME_MAX, normalizeWorkspaceNameForCompare, validateWorkspaceName } from '@/utils/workspaceName'
+import editIcon from '@/assets/81926ea1670cd86f6fc1adec90042f08.png'
 import './TeamManagementModal.css'
 
 type ToastType = 'success' | 'error'
@@ -259,7 +260,7 @@ function normalizeMemberRole(member: any): string {
 }
 
 function getRoleLabel(role: string): string {
-  if (role === 'owner') return '所有者'
+  if (role === 'owner') return '超级管理员'
   if (role === 'admin') return '管理员'
   if (role === 'member') return '成员'
   return ''
@@ -426,13 +427,27 @@ export default function TeamManagementModal({
   const invitationDeleteBusyIds = useRef<Set<number>>(new Set())
 
   // === computed ===
+  // 登录用户 id 取会话内 user.id(稳定,不随所看空间变化);currentMember 只对应会话默认空间,
+  // 回退用它里面的 id。
+  const sessionUserId = useWorkspaceSessionStore((s) => {
+    const v = Number(s.authSession?.user?.id || 0)
+    return Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
+  })
   const currentUserId = useMemo(() => {
+    if (sessionUserId > 0) return sessionUserId
     const value = currentMember?.user_id ?? currentMember?.userId ?? currentMember?.user?.id ?? currentMember?.id ?? 0
     const id = Number(value || 0)
     return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
-  }, [currentMember])
+  }, [sessionUserId, currentMember])
 
-  const currentUserRole = useMemo(() => normalizeMemberRole(currentMember || {}), [currentMember])
+  // 角色以「当前所看空间的成员列表」为准。currentMember 仅对应会话默认空间,管理员查看他人团队时
+  // deriveCurrentMember 会返回 null → 解析不出 admin → 顶部邀请与成员行「…」全部消失。故优先
+  // 从成员列表里自己那行读取角色,列表未就绪时再回退到 currentMember。
+  const currentUserRole = useMemo(() => {
+    const mine = currentUserId > 0 ? members.find((m) => m.id === currentUserId) : null
+    if (mine?.role) return mine.role
+    return normalizeMemberRole(currentMember || {})
+  }, [members, currentUserId, currentMember])
   const ownerFromProp = useMemo(() => {
     const id = Number(workspace?.owner_user_id || workspace?.ownerUserId || 0)
     return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
@@ -511,7 +526,7 @@ export default function TeamManagementModal({
   const inviteDisplayText = isPersonalWorkspace
     ? '个人空间不支持邀请码'
     : !canManageWorkspace
-      ? '仅所有者或管理员可管理邀请码'
+      ? '仅超级管理员或管理员可管理邀请码'
       : seatFull
         ? `席位已满(${memberCount}/${maxMembers}),暂不可再邀请`
         : displayInviteCode || '暂无邀请码'
@@ -546,7 +561,7 @@ export default function TeamManagementModal({
             name: normalizeMemberName(item, `成员${index + 1}`),
             phone: normalizeMemberPhone(item),
             role,
-            roleLabel: isOwner ? '所有者' : getRoleLabel(role),
+            roleLabel: isOwner ? '超级管理员' : getRoleLabel(role),
             isOwner,
           }
         })
@@ -627,55 +642,6 @@ export default function TeamManagementModal({
     setMemberActionTarget(null)
   }
 
-  // 修改我的用户名(仅自己:PATCH /api/v1/me/profile)。用户名唯一,重复由后端报错 → 提示「已被占用」。
-  const [usernameSaving, setUsernameSaving] = useState(false)
-  async function editUsername() {
-    if (usernameSaving) return
-    const sessUser = useWorkspaceSessionStore.getState().authSession?.user || {}
-    // 显示名以 nickname 优先(成员列表/顶栏都先读 nickname);故编辑对象即 nickname
-    const current = String(sessUser.nickname ?? sessUser.name ?? sessUser.username ?? '').trim()
-    const input = await requestConfirm('设置一个唯一的用户名(不可与他人重复)。', {
-      title: '修改用户名',
-      inputEnabled: true,
-      inputValue: current,
-      inputLabel: '用户名',
-      inputPlaceholder: '请输入用户名',
-      confirmLabel: '保存',
-    })
-    if (input === null) return
-    const username = String(input).trim()
-    if (!username) {
-      onToast?.('用户名不能为空', 'error')
-      return
-    }
-    if (username === current) return
-    setUsernameSaving(true)
-    try {
-      // 后端 /me/profile 的显示名字段为 nickname(username 非可更新字段,会报「没有需要更新的资料字段」)。
-      // 同时带上 name 兜底:后端只认识哪个就更新哪个,未知字段忽略,保持 name/nickname 一致。
-      await updateMyProfile({ nickname: username, name: username })
-      // 刷新当前用户(顶栏/个人面板即时更新)+ 成员列表(自己那行同步)。不走 setAuthSession 以免清空空间态。
-      try {
-        const me = await getCurrentUser()
-        useWorkspaceSessionStore.setState((s: any) =>
-          s.authSession ? { authSession: { ...s.authSession, user: { ...s.authSession.user, ...me } } } : s,
-        )
-      } catch {
-        /* 刷新失败不影响保存结果 */
-      }
-      await loadMembers()
-      onToast?.('用户名已更新', 'success')
-    } catch (error: any) {
-      const msg = String(error?.message || '修改失败')
-      const duplicated =
-        Number(error?.status) === 409 ||
-        /重复|已存在|已被|占用|exist|taken|duplicat/i.test(`${error?.code || ''} ${msg}`)
-      onToast?.(duplicated ? '该用户名已被占用,请换一个' : msg, 'error')
-    } finally {
-      setUsernameSaving(false)
-    }
-  }
-
   function openMemberActions(member: NormalizedMember, event: React.MouseEvent) {
     if (!canActOnMember(member)) return
     const el = event?.currentTarget as HTMLElement | undefined
@@ -705,7 +671,7 @@ export default function TeamManagementModal({
       }
       const targetIsOwner = Boolean(target?.isOwner)
       if (action === 'transfer' && !canTransferOwnership) {
-        onToast?.('只有团队所有者可以转让所有权', 'error')
+        onToast?.('只有团队超级管理员可以转让所有权', 'error')
         return
       }
       // 踢除成员:所有者与管理员均可;管理员只能移出普通成员(由上面的 canActOnMember 限定),
@@ -716,7 +682,7 @@ export default function TeamManagementModal({
       }
       // 所有者可对自己「修改配额」;设为管理员/设为成员/移出团队 对所有者仍无意义 → 拦截
       if ((action === 'remove' || action === 'make-admin' || action === 'set-member') && targetIsOwner) {
-        onToast?.('无法对团队所有者执行该操作', 'error')
+        onToast?.('无法对团队超级管理员执行该操作', 'error')
         return
       }
       if (action === 'remove' && currentUserId && userId === currentUserId) {
@@ -745,7 +711,7 @@ export default function TeamManagementModal({
         await updateWorkspaceMemberQuota({ workspaceId: wsId, userId, maxTaskCredits })
         onToast?.(`已更新 ${name} 的配额`, 'success')
       } else if (action === 'transfer') {
-        const confirmed = await requestConfirm(`确认将该团队所有权转让给 ${name} 吗？转让后你将不再是所有者。`, {
+        const confirmed = await requestConfirm(`确认将该团队所有权转让给 ${name} 吗？转让后你将不再是超级管理员。`, {
           danger: true,
         })
         if (!confirmed) return
@@ -769,7 +735,7 @@ export default function TeamManagementModal({
     } catch (error: any) {
       // 后端未放开管理员的踢除/改角色权限时会 403 → 友好提示,不弹通用报错
       onToast?.(
-        isPermissionDenied(error) ? '你没有权限执行该操作,请联系团队所有者' : error?.message || '操作失败',
+        isPermissionDenied(error) ? '你没有权限执行该操作,请联系团队超级管理员' : error?.message || '操作失败',
         'error',
       )
     } finally {
@@ -879,7 +845,7 @@ export default function TeamManagementModal({
       const isOwner = m.id === ownerUserId
       const role = isOwner ? 'owner' : m.role === 'owner' ? 'admin' : m.role
       if (isOwner === m.isOwner && role === m.role) return m
-      return { ...m, isOwner, role, roleLabel: isOwner ? '所有者' : getRoleLabel(role) }
+      return { ...m, isOwner, role, roleLabel: isOwner ? '超级管理员' : getRoleLabel(role) }
     })
   }, [members, ownerUserId])
 
@@ -920,7 +886,7 @@ export default function TeamManagementModal({
       })
       .catch((error: any) => {
         onToast?.(
-          isPermissionDenied(error) ? '暂无邀请码管理权限,请联系团队所有者' : error?.message || '邀请码生成失败',
+          isPermissionDenied(error) ? '暂无邀请码管理权限,请联系团队超级管理员' : error?.message || '邀请码生成失败',
           'error',
         )
       })
@@ -948,7 +914,7 @@ export default function TeamManagementModal({
       onToast?.('邀请码已撤销', 'success')
     } catch (error: any) {
       onToast?.(
-        isPermissionDenied(error) ? '暂无邀请码管理权限,请联系团队所有者' : error?.message || '撤销失败,请稍后重试',
+        isPermissionDenied(error) ? '暂无邀请码管理权限,请联系团队超级管理员' : error?.message || '撤销失败,请稍后重试',
         'error',
       )
     } finally {
@@ -1080,20 +1046,7 @@ export default function TeamManagementModal({
                   </span>
                   {isTeamWorkspace && canManageWorkspace && (
                     <button type="button" className="tm-header-edit" aria-label="重命名" onClick={startRename}>
-                      <svg
-                        viewBox="0 0 20 20"
-                        width="16"
-                        height="16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                      >
-                        <path
-                          d="M4 13.5V16h2.5l7-7-2.5-2.5-7 7zM12.5 5l2.5 2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
+                      <img className="tm-header-edit-img" src={editIcon} alt="" aria-hidden="true" />
                     </button>
                   )}
                 </>
@@ -1287,31 +1240,6 @@ export default function TeamManagementModal({
                                 {m.roleLabel}
                               </span>
                             )}
-                            {/* 仅自己那行:修改用户名(接口 me/profile 只能改自己)。用户名唯一,重复由后端拦截 */}
-                            {Number(m.id) === currentUserId && (
-                              <button
-                                type="button"
-                                className="tm-edit-name"
-                                aria-label="修改用户名"
-                                title="修改用户名"
-                                disabled={usernameSaving}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  editUsername()
-                                }}
-                              >
-                                <svg viewBox="0 0 20 20" aria-hidden="true">
-                                  <path
-                                    d="M12.6 3.7a1.6 1.6 0 0 1 2.3 2.3l-7.6 7.6-3 .7.7-3 7.6-7.6Z"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.4"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                </svg>
-                              </button>
-                            )}
                           </div>
                           <span>{m.phone || '-'}</span>
                         </div>
@@ -1498,12 +1426,14 @@ export default function TeamManagementModal({
             ></button>
             <div className="tm-action-menu" style={memberActionStyle} onClick={(e) => e.stopPropagation()}>
               {/* 所有者行(含所有者操作自己):仅「修改配额」有意义,角色变更/转让/移出对所有者一律隐藏 */}
-              {!memberActionTarget?.isOwner && (
+              {/* 设为管理员(升级):仅所有者可用;管理员菜单不显示 */}
+              {isCurrentUserOwner && !memberActionTarget?.isOwner && (
                 <button type="button" className="tm-action-item" onClick={() => handleMemberAction('make-admin')}>
                   设为管理员
                 </button>
               )}
-              {!memberActionTarget?.isOwner && (
+              {/* 设为成员(降级):仅所有者可用;管理员菜单不显示 */}
+              {isCurrentUserOwner && !memberActionTarget?.isOwner && (
                 <button type="button" className="tm-action-item" onClick={() => handleMemberAction('set-member')}>
                   设为成员
                 </button>

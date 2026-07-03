@@ -57,6 +57,39 @@
   padding: 2px 8px;
   white-space: nowrap;
 }
+/* 重命名团队铅笔:紧跟角色徽标,灰色小图标,悬停变紫 */
+.ppl__rename {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin-left: -2px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a90a2;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.ppl__rename-img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  display: block;
+}
+.ppl__rename:hover:not(:disabled) {
+  color: #5767e5;
+  background: #eef0fb;
+}
+.ppl__rename:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .ppl__ws {
   display: inline-flex;
   align-items: center;
@@ -75,15 +108,27 @@
   padding: 4px 8px;
   margin: -4px -8px;
   border-radius: 8px;
-  transition: background 0.15s;
+  transition: color 0.15s;
 }
+/* 不再有胶囊底,仅文字变紫作为悬停反馈 */
 .ppl__ws--btn:hover {
-  background: #f2f3f8;
   color: #5767e5;
+}
+/* 仅图标按钮:方形内边距,悬停提示由 antd Tooltip(黑色圆角)承担 */
+.ppl__ws--icononly {
+  padding: 6px;
+  margin: -6px;
+  border-radius: 8px;
 }
 .ppl__ws-ico {
   display: inline-flex;
   color: #2b3040;
+}
+.ppl__ws-ico-img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  display: block;
 }
 .ppl__ws-txt {
   overflow: hidden;
@@ -103,7 +148,17 @@
   padding: 16px;
   border-radius: 14px;
   overflow: hidden;
-  background: linear-gradient(120deg, #e4f6ef 0%, #dff3ea 55%, #eaf7f0 100%);
+  /* 会员卡背景:底层薄荷渐变图 + 顶层半调网点图(白底用 multiply 抠掉,只留绿点/波纹纹理) */
+  background-color: #e4f6ef;
+  background-image:
+    url(../../assets/vip/6e5343f852ff4819c62c1de5d5c13c43.png),
+    url(../../assets/vip/78f0caf0472daa2f11241194c37cdbc6.png);
+  background-repeat: no-repeat, no-repeat;
+  background-position:
+    right top,
+    center;
+  background-size: cover, cover;
+  background-blend-mode: multiply, normal;
 }
 .ppl__card-top {
   display: flex;
@@ -280,6 +335,10 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+}
+.ppl__act-ico--blue {
+  color: #5767e5;
+  background: #eef1fd;
 }
 .ppl__act-ico--green {
   color: #16b98a;
