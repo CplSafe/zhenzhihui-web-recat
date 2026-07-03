@@ -202,7 +202,7 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
             分享链接
           </button>
         )}
-        <button type="button" className="apptop__member" onClick={handleMember}>
+        <button type="button" className="apptop__member" data-guide="topbar-member" onClick={handleMember}>
           <img className="apptop__member-icon" src={memberIcon} alt="" />
           {planName ? String(planName) : '会员中心'}
         </button>

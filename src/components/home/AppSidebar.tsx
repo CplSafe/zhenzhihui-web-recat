@@ -118,6 +118,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
         key={item.key}
         type="button"
         className={`app-sidebar__item${active ? ' is-active' : ''}`}
+        data-guide={item.key === 'creative' ? 'nav-smart' : item.key === 'projects' ? 'nav-projects' : undefined}
         onClick={() => go(item.key)}
       >
         <span className="app-sidebar__icon">{item.icon}</span>

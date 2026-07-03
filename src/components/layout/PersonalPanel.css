@@ -1,6 +1,6 @@
 /* PersonalPanel — 我的-个人面板(对齐 Figma 1147:3823) */
 .ppl {
-  width: 360px;
+  width: 384px;
   padding: 18px;
   display: flex;
   flex-direction: column;
@@ -8,6 +8,7 @@
 }
 
 /* ── 头部 ── */
+/* 一行:左=头像+姓名+角色徽标(姓名过长省略号),右=当前空间(靠右上角) */
 .ppl__head {
   display: flex;
   align-items: center;
@@ -19,6 +20,7 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 .ppl__ava {
   width: 44px;
@@ -42,6 +44,9 @@
   font-weight: 700;
   color: #1d2130;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .ppl__role {
   flex: 0 0 auto;
@@ -60,6 +65,7 @@
   font-weight: 600;
   font-size: 15px;
   min-width: 0;
+  flex: 0 0 auto; /* 靠右上角:自身不压缩,由左侧姓名区让位 */
 }
 /* 团队空间可点击查看成员 */
 .ppl__ws--btn {
@@ -83,7 +89,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 110px;
+  max-width: 150px; /* 右上角:超长团队名省略号,给左侧姓名留空间 */
 }
 
 /* ── 会员卡 ── */
@@ -134,6 +140,12 @@
   display: inline-flex;
   margin: -4px -2px 0 0;
   flex: 0 0 auto;
+}
+.ppl__crown-img {
+  width: 86px;
+  height: 76px;
+  object-fit: contain;
+  display: block;
 }
 .ppl__credits-row {
   display: flex;

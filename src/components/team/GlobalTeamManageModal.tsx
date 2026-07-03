@@ -10,6 +10,7 @@ import { useToast } from '@/composables/useToast'
 
 export default function GlobalTeamManageModal() {
   const open = useUiStore((s) => s.teamManageOpen)
+  const initialTab = useUiStore((s) => s.teamManageTab)
   const close = useUiStore((s) => s.closeTeamManage)
   const workspace = useCurrentWorkspace()
   const workspaceId = useWorkspaceId()
@@ -19,6 +20,7 @@ export default function GlobalTeamManageModal() {
   return (
     <TeamManagementModal
       open={open}
+      initialTab={initialTab}
       workspaceId={workspaceId}
       workspace={workspace}
       currentMember={currentMember}

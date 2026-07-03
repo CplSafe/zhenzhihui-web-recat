@@ -16,6 +16,7 @@ import {
   useWorkspaceSessionStore,
 } from '@/stores/workspaceSession'
 import { openTeamManage } from '@/stores/ui'
+import crownImg from '@/assets/vip/5dc4125fc31865adb710a7f65ad2df60.png'
 import './PersonalPanel.css'
 
 const roleLabelOf = (role: any): string => {
@@ -36,20 +37,7 @@ const IconMembers = (
     />
   </svg>
 )
-const IconCrown = (
-  <svg viewBox="0 0 64 56" width="86" height="76" fill="none" aria-hidden="true">
-    <path
-      d="M8 44l-4-26 14 9L32 8l14 19 14-9-4 26z"
-      fill="#7fe0c6"
-      stroke="#43c9a8"
-      strokeWidth="2"
-      strokeLinejoin="round"
-    />
-    <circle cx="4" cy="18" r="3" fill="#43c9a8" />
-    <circle cx="60" cy="18" r="3" fill="#43c9a8" />
-    <circle cx="32" cy="8" r="3" fill="#43c9a8" />
-  </svg>
-)
+const IconCrown = <img className="ppl__crown-img" src={crownImg} alt="" aria-hidden="true" />
 const IconLock = (
   <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7">
     <rect x="4.5" y="8.5" width="11" height="8" rx="2" />
