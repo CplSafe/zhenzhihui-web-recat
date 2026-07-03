@@ -49,11 +49,22 @@ export default function SidebarTeamGroup({ collapsed = false }: SidebarTeamGroup
     <div className="app-sidebar__group stg">
       <div className="app-sidebar__group-title">团队</div>
 
-      {/* 当前空间名(个人 / 团队都显示);团队空间才带「邀请成员」 */}
+      {/* 当前空间名(个人 / 团队都显示);团队空间可点 → 打开团队管理(成员管理);并带「邀请成员」 */}
       <div className="stg-current">
-        <span className="stg-current__name" title={collapsed ? wsName : undefined}>
-          {wsName}
-        </span>
+        {isTeam ? (
+          <button
+            type="button"
+            className="stg-current__name stg-current__name--btn"
+            title={collapsed ? wsName : '团队管理'}
+            onClick={() => openTeamManage()}
+          >
+            {wsName}
+          </button>
+        ) : (
+          <span className="stg-current__name" title={collapsed ? wsName : undefined}>
+            {wsName}
+          </span>
+        )}
         {isTeam && (
           <>
             <span className="stg-current__divider" aria-hidden="true" />

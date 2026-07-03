@@ -6,6 +6,7 @@
  * - 内容暂为前端占位,后端就绪后替换;搜索为占位。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useToast } from '@/composables/useToast'
 import { uploadAssetFile } from '@/api/business'
 import {
@@ -15,7 +16,9 @@ import {
   type FeedbackRecord,
 } from '@/api/feedback'
 import { useWorkspaceId } from '@/stores/workspaceSession'
+import { guideKeyForPath, guideLabelForPath, openGuide } from '@/stores/guide'
 import kefuQr from '@/assets/kefu-qr.png'
+import helpBallIcon from '@/assets/1f7fa9801ef8d3ffb61b903b44f58fc3.png'
 import './HelpCenter.css'
 
 // 使用教程:跳转外部飞书文档(「2分钟学会使用帧智汇」「3分钟上手智能成片」共用)
@@ -209,6 +212,7 @@ const IconChat = () => (
 
 export default function HelpCenter() {
   const { showToast } = useToast()
+  const location = useLocation() // 当前路由:用于「新手引导」按页分类展示 + 定位对应引导
   const workspaceId = Number(useWorkspaceId() || 0)
   const [pos, setPos] = useState<Pos | null>(null)
   const [open, setOpen] = useState(false)
@@ -481,6 +485,27 @@ export default function HelpCenter() {
               </label>
 
               <div className="hc-ai-card">
+                {/* 新手引导放在第一位,按当前页分类:首页→「首页新手引导」,智能成片→「智能成片新手引导」 */}
+                <button
+                  type="button"
+                  className="hc-ai-row"
+                  onClick={() => {
+                    const key = guideKeyForPath(location.pathname)
+                    if (!key) {
+                      showToast('本页暂无新手引导', 'info')
+                      return
+                    }
+                    setOpen(false) // 收起帮助面板,露出引导蒙层
+                    openGuide(key)
+                  }}
+                >
+                  <span className="hc-ai-row-ic">
+                    <IconHelp />
+                  </span>
+                  <span className="hc-ai-row-text">{guideLabelForPath(location.pathname)}</span>
+                  <ChevronRight />
+                </button>
+                <div className="hc-ai-divider" />
                 <button type="button" className="hc-ai-row" onClick={openGuideDoc}>
                   <span className="hc-ai-row-ic">
                     <IconPlay />
@@ -871,7 +896,7 @@ export default function HelpCenter() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       >
-        {/* 与 Figma 一致:收起态=闪电对话气泡(AI 标识),展开态=白色圆角上箭头(⌃) */}
+        {/* 收起态=机器人客服头像(帮助中心图标),展开态=白色圆角上箭头(⌃) */}
         {open ? (
           <svg viewBox="0 0 70 70" width="30" height="30" aria-hidden="true">
             <path
@@ -880,16 +905,7 @@ export default function HelpCenter() {
             />
           </svg>
         ) : (
-          <svg viewBox="0 0 70 70" width="32" height="32" aria-hidden="true">
-            <path
-              d="M51 45.656V23.664C51 23.4879 50.9306 23.319 50.8072 23.1945C50.6837 23.07 50.5162 23 50.3416 23H19.6584C19.5719 23 19.4863 23.0172 19.4064 23.0505C19.3266 23.0839 19.254 23.1328 19.1928 23.1945C19.1317 23.2562 19.0832 23.3294 19.0501 23.4099C19.017 23.4905 19 23.5768 19 23.664V45.656C19 45.7432 19.017 45.8295 19.0501 45.9101C19.0832 45.9907 19.1317 46.0639 19.1928 46.1255C19.254 46.1872 19.3266 46.2361 19.4064 46.2695C19.4863 46.3028 19.5719 46.32 19.6584 46.32H50.3416C50.5162 46.32 50.6837 46.2501 50.8072 46.1255C50.9306 46.001 51 45.8321 51 45.656ZM33.4212 42.9284C33.3823 42.942 33.3399 42.942 33.3009 42.9284C33.1168 42.8784 33.046 42.7927 33.1027 42.6499L34.3416 36.3522H28.9469C28.893 36.3571 28.8388 36.3471 28.7901 36.3232C28.7415 36.2992 28.7002 36.2624 28.6708 36.2166C28.5906 36.1261 28.6047 36.0238 28.7133 35.9096L37.0106 26.513C37.0276 26.4821 37.0511 26.4553 37.0795 26.4346C37.1078 26.4138 37.1403 26.3995 37.1747 26.3927C37.2091 26.3859 37.2445 26.3867 37.2785 26.3952C37.3126 26.4036 37.3444 26.4195 37.3717 26.4416C37.5062 26.4416 37.5699 26.5558 37.5699 26.7201L36.331 33.0178H41.0814C41.1353 33.0129 41.1895 33.0229 41.2382 33.0469C41.2868 33.0708 41.3281 33.1076 41.3575 33.1534C41.3836 33.2541 41.3836 33.3598 41.3575 33.4605L33.6973 42.8284C33.6203 42.8943 33.5222 42.9299 33.4212 42.9284Z"
-              fill="currentColor"
-            />
-            <path
-              d="M30.6743 44.0851H23.1273C23.0748 44.0851 23.0244 44.1062 22.9872 44.1437C22.95 44.1812 22.9291 44.232 22.9291 44.2851V50.797C22.9285 50.8361 22.9393 50.8745 22.9602 50.9075C22.981 50.9405 23.011 50.9666 23.0465 50.9826C23.0819 50.9986 23.1212 51.0037 23.1595 50.9974C23.1978 50.991 23.2334 50.9735 23.2619 50.9469L30.8017 44.4421C30.8344 44.4162 30.8582 44.3805 30.8697 44.3401C30.8812 44.2998 30.8798 44.2568 30.8657 44.2173C30.8515 44.1778 30.8255 44.1437 30.7911 44.12C30.7568 44.0963 30.7159 44.0841 30.6743 44.0851Z"
-              fill="currentColor"
-            />
-          </svg>
+          <img className="hc-ball-icon" src={helpBallIcon} alt="" draggable={false} />
         )}
       </button>
     </div>

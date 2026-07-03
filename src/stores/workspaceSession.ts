@@ -18,6 +18,7 @@ import {
   listWorkspaces,
   redeemWorkspaceInvitation,
   setActiveWorkspaceId,
+  updateWorkspace,
 } from '../api/business'
 import { setSmartDraftUserScope } from '../utils/smartDraft'
 import {
@@ -87,6 +88,7 @@ export interface WorkspaceSessionState {
   loadWorkspaces: () => Promise<void>
   switchWorkspace: (id: any) => void
   createTeam: (name: string) => Promise<any>
+  renameTeam: (id: any, name: string) => Promise<any>
   joinTeam: (inviteCode: string) => Promise<any>
   deleteTeam: (id: any) => Promise<void>
   disbandTeam: (id: any) => Promise<void>
@@ -294,6 +296,22 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       await get().loadWorkspaces()
       if (created?.id) get().switchWorkspace(created.id)
       return created
+    },
+
+    // 重命名空间(仅团队空间）：改名后刷新列表，让侧栏/顶栏/弹窗同步新名称。
+    // 名称的安全校验/查重由调用方(UI)先行处理;此处仅做基本防线。
+    renameTeam: async (id, name) => {
+      const targetId = toId(id)
+      if (!targetId) throw new Error('空间 ID 无效')
+      const nextName = String(name || '').trim()
+      if (!nextName) throw new Error('空间名称不能为空')
+      const target = findById(deriveAllWorkspaces(get()), targetId)
+      if (String(target?.type || '').toLowerCase() === 'personal') {
+        throw new Error('个人空间不支持重命名')
+      }
+      const updated = await updateWorkspace({ workspaceId: targetId, name: nextName })
+      await get().loadWorkspaces()
+      return updated
     },
 
     joinTeam: async (inviteCode) => {

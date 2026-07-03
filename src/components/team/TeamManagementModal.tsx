@@ -4,31 +4,158 @@
 */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { listWorkspaceMembers } from '@/api/auth'
+import { listWorkspaceMembers, updateMyProfile, getCurrentUser } from '@/api/auth'
 import {
   createWorkspaceInvitation,
   deleteWorkspaceInvitation,
   getSubscription,
+  getWorkspaceMemberStatistics,
+  getWorkspaceOverview,
   listWorkspaceInvitations,
   removeWorkspaceMember,
   transferWorkspaceOwnership,
   updateWorkspaceMemberQuota,
   updateWorkspaceMemberRole,
 } from '@/api/business'
-import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import { deriveAllWorkspaces, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useConfirmDialog } from '@/composables/useToast'
+import { WORKSPACE_NAME_MAX, normalizeWorkspaceNameForCompare, validateWorkspaceName } from '@/utils/workspaceName'
 import './TeamManagementModal.css'
 
 type ToastType = 'success' | 'error'
 
 interface TeamManagementModalProps {
   open?: boolean
+  /** 打开时初始 tab:'members'(成员管理,默认)/ 'data'(团队数据) */
+  initialTab?: 'members' | 'data'
   workspaceId?: number
   workspace?: Record<string, any> | null
   currentMember?: Record<string, any> | null
   onClose?: () => void
   onToast?: (message: string, type?: ToastType) => void
 }
+
+// ── 团队数据(overview / member-statistics)容错解析:后端 C 端接口字段名未定,多候选兜底 ──
+function pickNum(obj: any, keys: string[]): number {
+  if (!obj || typeof obj !== 'object') return 0
+  for (const k of keys) {
+    const v = obj[k]
+    if (v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v))) return Number(v)
+  }
+  return 0
+}
+const MEMBER_KEYS = ['member_count', 'members_total', 'members', 'memberCount', 'user_count', 'users_total']
+const PROJECT_KEYS = ['project_count', 'projects_total', 'projects', 'projectCount', 'proj_count']
+const VIDEO_KEYS = [
+  'video_count',
+  'videos_total',
+  'videos',
+  'works_total',
+  'works',
+  'work_count',
+  'generated_videos',
+  'total_videos',
+]
+const CREDIT_KEYS = [
+  'credits_consumed',
+  'consumed_credits',
+  'credits_total',
+  'total_credits',
+  'credit_consumed',
+  'consume_credits',
+  'credits',
+]
+
+function parseOverview(payload: any): { members: number; projects: number; videos: number; credits: number } {
+  const o = payload && typeof payload === 'object' ? payload : {}
+  // 兼容 flat 或 { total/cumulative/all/overall/data: {...} } 包裹;取累计口径,取不到再回落顶层
+  const nested = o.total ?? o.cumulative ?? o.all ?? o.overall ?? o.data
+  const src = nested && typeof nested === 'object' ? nested : o
+  const num = (keys: string[]) => pickNum(src, keys) || pickNum(o, keys)
+  return {
+    members: num(MEMBER_KEYS),
+    projects: num(PROJECT_KEYS),
+    videos: num(VIDEO_KEYS),
+    credits: num(CREDIT_KEYS),
+  }
+}
+
+interface MemberStatRow {
+  id: any
+  name: string
+  phone: string
+  projects: number
+  videos: number
+  credits: number
+}
+function parseMemberStats(payload: any): MemberStatRow[] {
+  const list = Array.isArray(payload)
+    ? payload
+    : (payload?.items ?? payload?.list ?? payload?.records ?? payload?.members ?? payload?.data ?? [])
+  const arr = Array.isArray(list) ? list : []
+  return arr
+    .filter((m: any) => m && typeof m === 'object')
+    .map((m: any) => {
+      const base = m.total ?? m.cumulative ?? m
+      const num = (keys: string[]) => pickNum(base, keys) || pickNum(m, keys)
+      return {
+        id: m.user_id ?? m.userId ?? m.id ?? m.member_id ?? '',
+        name: normalizeMemberName(m) || pickFirstText(m.user_name, m.member_name, '成员'),
+        phone: normalizeMemberPhone(m),
+        projects: num(PROJECT_KEYS),
+        videos: num(VIDEO_KEYS),
+        credits: num(CREDIT_KEYS),
+      }
+    })
+}
+// 平均每视频消耗积分(前端算,保留 1 位小数,防除 0)
+const avgPerVideo = (credits: number, videos: number): number =>
+  videos > 0 ? Math.round((credits / videos) * 10) / 10 : 0
+
+// 权限不足(403)。后端尚未把邀请码接口放开给管理员时会返回 403 → 用于静默/友好降级,不弹通用报错。
+const isPermissionDenied = (error: any): boolean => Number(error?.status) === 403
+
+// 数据看板 5 张卡的图标(描边 currentColor,由外层设色)
+const svgProps = {
+  width: 22,
+  height: 22,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.8,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+}
+const IcoMembers = (
+  <svg {...svgProps}>
+    <circle cx="9" cy="8" r="3.2" />
+    <path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.8M20.5 19a5.2 5.2 0 0 0-3-4.7" />
+  </svg>
+)
+const IcoProjects = (
+  <svg {...svgProps}>
+    <rect x="4" y="4" width="16" height="16" rx="2.5" />
+    <path d="M8 9h8M8 13h8M8 17h5" />
+  </svg>
+)
+const IcoVideos = (
+  <svg {...svgProps}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M10 8.5 16 12l-6 3.5z" fill="currentColor" stroke="none" />
+  </svg>
+)
+const IcoAvg = (
+  <svg {...svgProps}>
+    <ellipse cx="12" cy="6" rx="7" ry="3" />
+    <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+  </svg>
+)
+const IcoCredits = (
+  <svg {...svgProps}>
+    <rect x="5" y="4" width="14" height="17" rx="2" />
+    <path d="M9 3.5h6v2.5H9zM8.5 11h7M8.5 15h5" />
+  </svg>
+)
 
 interface NormalizedMember {
   raw: any
@@ -196,8 +323,8 @@ function isInvitationActive(invitation: NormalizedInvitation | null): boolean {
   if (!invitation) return false
   const revokedAt = String(invitation.revokedAt || '').trim()
   if (revokedAt) return false
-  const acceptedAt = String(invitation.acceptedAt || '').trim()
-  if (acceptedAt) return false
+  // 邀请码可多次使用:被人接受过(acceptedAt)不再算「失效」,同一个码继续作为活码供反复加入。
+  // 仅「被撤销 / 被禁用 / 已过期」才判为失效。
   const status = String(invitation.status || '')
     .trim()
     .toLowerCase()
@@ -235,6 +362,7 @@ function formatInviteCodeForDisplay(value: any): string {
 
 export default function TeamManagementModal({
   open = false,
+  initialTab = 'members',
   workspaceId = 0,
   workspace = null,
   currentMember = null,
@@ -242,6 +370,18 @@ export default function TeamManagementModal({
   onToast,
 }: TeamManagementModalProps) {
   const { requestConfirm } = useConfirmDialog()
+
+  // tab:成员管理 / 团队数据。打开时用 initialTab(点团队空间名进来 = 'data')。
+  const [activeTab, setActiveTab] = useState<'members' | 'data'>(initialTab)
+  // 团队数据:总览 + 成员统计(owner/admin;字段容错解析)
+  const [dataLoading, setDataLoading] = useState(false)
+  const [overview, setOverview] = useState<{
+    members: number
+    projects: number
+    videos: number
+    credits: number
+  } | null>(null)
+  const [memberStats, setMemberStats] = useState<MemberStatRow[]>([])
 
   const [inviteCode, setInviteCode] = useState('')
   const [expiryDate, setExpiryDate] = useState('')
@@ -254,12 +394,15 @@ export default function TeamManagementModal({
 
   const [membersLoading, setMembersLoading] = useState(false)
   const [members, setMembers] = useState<NormalizedMember[]>([])
+  // 转让所有权后,父级 workspace prop 的 owner_user_id 要等 loadWorkspaces 回来才更新;
+  // 这里先本地记住新所有者 id,让「所有者」标记与主账号权限立即切换,避免刷新前显示两个所有者。
+  const [ownerOverrideId, setOwnerOverrideId] = useState(0)
   const [memberActionLoading, setMemberActionLoading] = useState(false)
 
   const [memberActionOpen, setMemberActionOpen] = useState(false)
   const [memberActionTarget, setMemberActionTarget] = useState<NormalizedMember | null>(null)
   const [memberActionStyle, setMemberActionStyle] = useState<React.CSSProperties>({})
-  // 头部右上「…」菜单:退出 / 解散该空间
+  // 头部右上「…」菜单:退出该空间(仅子账号;主账号不再有解散入口)
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false)
   const headerMenuRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
@@ -270,6 +413,12 @@ export default function TeamManagementModal({
     window.addEventListener('pointerdown', onDown, true)
     return () => window.removeEventListener('pointerdown', onDown, true)
   }, [headerMenuOpen])
+
+  // 头部空间名重命名(仅团队空间 + 可管理者):点铅笔进入行内编辑,Enter/保存提交,Esc/取消退出。
+  const [renaming, setRenaming] = useState(false)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
+  const renameInputRef = useRef<HTMLInputElement | null>(null)
 
   // 用 ref 持有不影响渲染的状态，等价 Vue 的 ref（避免闭包过期 + 避免重复触发）
   const membersLoadingRef = useRef(false)
@@ -284,10 +433,20 @@ export default function TeamManagementModal({
   }, [currentMember])
 
   const currentUserRole = useMemo(() => normalizeMemberRole(currentMember || {}), [currentMember])
-  const ownerUserId = useMemo(() => {
+  const ownerFromProp = useMemo(() => {
     const id = Number(workspace?.owner_user_id || workspace?.ownerUserId || 0)
     return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
   }, [workspace])
+  // 有效所有者:优先本地 override(转让后即时生效),否则用 workspace prop
+  const ownerUserId = ownerOverrideId > 0 ? ownerOverrideId : ownerFromProp
+  // prop 追上 override(转让已在父级生效)→ 清除 override,回到单一数据源
+  useEffect(() => {
+    if (ownerOverrideId > 0 && ownerFromProp === ownerOverrideId) setOwnerOverrideId(0)
+  }, [ownerFromProp, ownerOverrideId])
+  // 切换空间 / 重开弹窗时归零 override,避免把上一个团队的新所有者 id 串到别的团队
+  useEffect(() => {
+    setOwnerOverrideId(0)
+  }, [workspaceId, open])
   const isCurrentUserOwner = useMemo(
     () => currentUserId > 0 && currentUserId === ownerUserId,
     [currentUserId, ownerUserId],
@@ -297,6 +456,16 @@ export default function TeamManagementModal({
     [isCurrentUserOwner, currentUserRole],
   )
   const canTransferOwnership = isCurrentUserOwner
+  // 成员行「更多操作(三个点)」显示/可操作规则 —— 能操作才显示三个点:
+  //  · 所有者:可操作任何人,【包括自己】(自己那行仅「修改配额」有意义,见操作菜单);
+  //  · 管理员:只能操作【成员】(不能操作所有者或其他管理员,含自己);
+  //  · 成员:不能操作任何人(canManageWorkspace 为 false)。
+  const canActOnMember = (m: NormalizedMember): boolean => {
+    if (!canManageWorkspace) return false // 成员:不显示三个点
+    if (isCurrentUserOwner) return true // 所有者:可操作任何人(含自己那行)
+    if (m.isOwner) return false // 管理员:不能操作所有者
+    return m.role === 'member' // 管理员:只能操作「成员」
+  }
   const workspaceType = useMemo(
     () =>
       String(workspace?.type || '')
@@ -307,17 +476,42 @@ export default function TeamManagementModal({
   const isPersonalWorkspace = workspaceType === 'personal'
   const isTeamWorkspace = !workspaceType || workspaceType === 'team'
 
+  // 打开弹窗时用 initialTab 定 tab(点团队空间名进来 = 'data')
+  useEffect(() => {
+    if (open) setActiveTab(initialTab)
+  }, [open, initialTab])
+
+  // 团队数据:切到「团队数据」tab(团队空间 + owner/admin)时加载 overview + member-statistics(字段容错解析)
+  useEffect(() => {
+    const wsId = Number(workspaceId || 0)
+    if (!open || activeTab !== 'data' || isPersonalWorkspace || !wsId || !canManageWorkspace) return
+    let alive = true
+    setDataLoading(true)
+    Promise.allSettled([getWorkspaceOverview(wsId), getWorkspaceMemberStatistics(wsId)])
+      .then(([ov, ms]) => {
+        if (!alive) return
+        setOverview(ov.status === 'fulfilled' ? parseOverview(ov.value) : null)
+        setMemberStats(ms.status === 'fulfilled' ? parseMemberStats(ms.value) : [])
+      })
+      .finally(() => {
+        if (alive) setDataLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [open, activeTab, isPersonalWorkspace, workspaceId, canManageWorkspace])
+
   const displayInviteCode = useMemo(() => formatInviteCodeForDisplay(inviteCode), [inviteCode])
-  // 仅主账号(空间所有者)可管理/查看邀请码;非所有者(管理员/成员)一律隐藏:不显示码、不能复制/重新生成。
-  const canManageInvite = isTeamWorkspace && isCurrentUserOwner
+  // 所有者与管理员可管理/查看邀请码(邀请成员);普通成员一律隐藏:不显示码、不能复制/重新生成。
+  const canManageInvite = isTeamWorkspace && canManageWorkspace
   // 席位:成员数 vs 套餐 max_members(后端真实值,不写死)。满员则不可再邀请。maxMembers=0 视为不限制。
   const memberCount = members.length
   const seatFull = maxMembers > 0 && memberCount >= maxMembers
   const canInvite = canManageInvite && !seatFull
   const inviteDisplayText = isPersonalWorkspace
     ? '个人空间不支持邀请码'
-    : !isCurrentUserOwner
-      ? '仅空间所有者可管理邀请码'
+    : !canManageWorkspace
+      ? '仅所有者或管理员可管理邀请码'
       : seatFull
         ? `席位已满(${memberCount}/${maxMembers}),暂不可再邀请`
         : displayInviteCode || '暂无邀请码'
@@ -419,7 +613,10 @@ export default function TeamManagementModal({
       setActiveInvitationId(0)
       setInviteCode('')
       setExpiryDate('')
-      onToast?.(error?.message || '邀请码信息加载失败', 'error')
+      // 后端未放开管理员邀请码权限时会 403 → 静默降级为「暂无邀请码」,打开弹窗不弹错误
+      if (!isPermissionDenied(error)) {
+        onToast?.(error?.message || '邀请码信息加载失败', 'error')
+      }
     } finally {
       invitationsLoadingRef.current = false
     }
@@ -430,8 +627,57 @@ export default function TeamManagementModal({
     setMemberActionTarget(null)
   }
 
+  // 修改我的用户名(仅自己:PATCH /api/v1/me/profile)。用户名唯一,重复由后端报错 → 提示「已被占用」。
+  const [usernameSaving, setUsernameSaving] = useState(false)
+  async function editUsername() {
+    if (usernameSaving) return
+    const sessUser = useWorkspaceSessionStore.getState().authSession?.user || {}
+    // 显示名以 nickname 优先(成员列表/顶栏都先读 nickname);故编辑对象即 nickname
+    const current = String(sessUser.nickname ?? sessUser.name ?? sessUser.username ?? '').trim()
+    const input = await requestConfirm('设置一个唯一的用户名(不可与他人重复)。', {
+      title: '修改用户名',
+      inputEnabled: true,
+      inputValue: current,
+      inputLabel: '用户名',
+      inputPlaceholder: '请输入用户名',
+      confirmLabel: '保存',
+    })
+    if (input === null) return
+    const username = String(input).trim()
+    if (!username) {
+      onToast?.('用户名不能为空', 'error')
+      return
+    }
+    if (username === current) return
+    setUsernameSaving(true)
+    try {
+      // 后端 /me/profile 的显示名字段为 nickname(username 非可更新字段,会报「没有需要更新的资料字段」)。
+      // 同时带上 name 兜底:后端只认识哪个就更新哪个,未知字段忽略,保持 name/nickname 一致。
+      await updateMyProfile({ nickname: username, name: username })
+      // 刷新当前用户(顶栏/个人面板即时更新)+ 成员列表(自己那行同步)。不走 setAuthSession 以免清空空间态。
+      try {
+        const me = await getCurrentUser()
+        useWorkspaceSessionStore.setState((s: any) =>
+          s.authSession ? { authSession: { ...s.authSession, user: { ...s.authSession.user, ...me } } } : s,
+        )
+      } catch {
+        /* 刷新失败不影响保存结果 */
+      }
+      await loadMembers()
+      onToast?.('用户名已更新', 'success')
+    } catch (error: any) {
+      const msg = String(error?.message || '修改失败')
+      const duplicated =
+        Number(error?.status) === 409 ||
+        /重复|已存在|已被|占用|exist|taken|duplicat/i.test(`${error?.code || ''} ${msg}`)
+      onToast?.(duplicated ? '该用户名已被占用,请换一个' : msg, 'error')
+    } finally {
+      setUsernameSaving(false)
+    }
+  }
+
   function openMemberActions(member: NormalizedMember, event: React.MouseEvent) {
-    if (!canManageWorkspace) return
+    if (!canActOnMember(member)) return
     const el = event?.currentTarget as HTMLElement | undefined
     if (!el?.getBoundingClientRect) return
     const rect = el.getBoundingClientRect()
@@ -452,7 +698,8 @@ export default function TeamManagementModal({
 
     setMemberActionLoading(true)
     try {
-      if (!canManageWorkspace) {
+      // 权限校验:管理员只能操作成员、所有者可操作任何非所有者、成员不可操作(与三个点显示规则一致)
+      if (!target || !canActOnMember(target)) {
         onToast?.('你没有权限执行该操作', 'error')
         return
       }
@@ -461,15 +708,14 @@ export default function TeamManagementModal({
         onToast?.('只有团队所有者可以转让所有权', 'error')
         return
       }
-      // 踢除成员:仅主账号(所有者),管理员不可
-      if (action === 'remove' && !isCurrentUserOwner) {
-        onToast?.('只有主账号可以移出成员', 'error')
+      // 踢除成员:所有者与管理员均可;管理员只能移出普通成员(由上面的 canActOnMember 限定),
+      // 不能移出所有者/其他管理员;所有者可移出任何非所有者。转让所有权仍仅限所有者(见上)。
+      if (action === 'remove' && !canManageWorkspace) {
+        onToast?.('你没有权限移出成员', 'error')
         return
       }
-      if (
-        (action === 'remove' || action === 'make-admin' || action === 'set-member' || action === 'quota') &&
-        targetIsOwner
-      ) {
+      // 所有者可对自己「修改配额」;设为管理员/设为成员/移出团队 对所有者仍无意义 → 拦截
+      if ((action === 'remove' || action === 'make-admin' || action === 'set-member') && targetIsOwner) {
         onToast?.('无法对团队所有者执行该操作', 'error')
         return
       }
@@ -504,9 +750,11 @@ export default function TeamManagementModal({
         })
         if (!confirmed) return
         await transferWorkspaceOwnership({ workspaceId: wsId, userId })
+        // 立即把有效所有者切到新成员:列表所有者标记与主账号权限(邀请码/踢除/转让/解散)当场更新,
+        // 不必等 loadWorkspaces 回来刷新 workspace prop,避免刷新前出现「两个所有者」。
+        setOwnerOverrideId(userId)
         onToast?.(`已将团队所有权转让给 ${name}`, 'success')
-        // 刷新空间(owner_user_id 变了)→ useCurrentWorkspace 更新 → isCurrentUserOwner 立刻变 false,
-        // 原主账号当场降级为子账号:邀请码/踢除/转让/解散等主账号功能即时消失;成员列表所有者标记也更新。
+        // 刷新空间(owner_user_id 变了)→ useCurrentWorkspace 更新 → prop 追上后 override 自动清除。
         await useWorkspaceSessionStore.getState().loadWorkspaces()
         await loadMembers()
       } else if (action === 'remove') {
@@ -519,28 +767,84 @@ export default function TeamManagementModal({
         onToast?.('功能即将开放', 'success')
       }
     } catch (error: any) {
-      onToast?.(error?.message || '操作失败', 'error')
+      // 后端未放开管理员的踢除/改角色权限时会 403 → 友好提示,不弹通用报错
+      onToast?.(
+        isPermissionDenied(error) ? '你没有权限执行该操作,请联系团队所有者' : error?.message || '操作失败',
+        'error',
+      )
     } finally {
       setMemberActionLoading(false)
       closeMemberActions()
     }
   }
 
-  // 解散该空间(仅所有者):强确认——解散后素材/项目/数据全部清空,不可恢复。
-  async function handleDisband() {
-    if (!workspaceId) return
-    const ok = await requestConfirm('解散空间后,该空间的所有素材、项目及数据都将被清空,且不可恢复。确定解散该空间吗?', {
-      danger: true,
-    })
-    if (!ok) return
+  // ── 空间重命名 ──
+  function startRename() {
+    if (!(isTeamWorkspace && canManageWorkspace) || renameBusy) return
+    setRenameDraft(String(workspace?.name || '').trim())
+    setRenaming(true)
+  }
+  function cancelRename() {
+    if (renameBusy) return
+    setRenaming(false)
+    setRenameDraft('')
+  }
+  async function commitRename() {
+    if (renameBusy) return
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) return
+    const current = String(workspace?.name || '').trim()
+    const next = renameDraft.trim()
+    if (!next || next === current) {
+      // 空 / 未改动 → 直接退出编辑,不打扰
+      cancelRename()
+      return
+    }
+    // 安全校验(长度 / 控制字符 / 尖括号):不通过则停留编辑态便于修正
+    const invalid = validateWorkspaceName(next)
+    if (invalid) {
+      onToast?.(invalid, 'error')
+      return
+    }
+    // 不可重复:与用户名下其它空间比对(去空白 + 折叠空格 + 小写)
+    const key = normalizeWorkspaceNameForCompare(next)
+    const dup = deriveAllWorkspaces(useWorkspaceSessionStore.getState()).some(
+      (w: any) => Number(w?.id || 0) !== wsId && normalizeWorkspaceNameForCompare(w?.name || '') === key,
+    )
+    if (dup) {
+      onToast?.('已存在同名空间,请换一个名称', 'error')
+      return
+    }
+    setRenameBusy(true)
     try {
-      await useWorkspaceSessionStore.getState().disbandTeam(workspaceId)
-      onToast?.('空间已解散', 'success')
-      close()
+      await useWorkspaceSessionStore.getState().renameTeam(wsId, next)
+      onToast?.('空间名称已更新', 'success')
+      setRenaming(false)
+      setRenameDraft('')
     } catch (error: any) {
-      onToast?.(error?.message || '解散失败,请稍后重试', 'error')
+      // 后端查重冲突(409)→ 明确提示重名,避免落到通用「草稿保存冲突」文案
+      const status = Number(error?.status || 0)
+      onToast?.(status === 409 ? '已存在同名空间,请换一个名称' : error?.message || '重命名失败,请稍后重试', 'error')
+    } finally {
+      setRenameBusy(false)
     }
   }
+
+  // 进入编辑态时聚焦并全选输入框,方便直接改名
+  useEffect(() => {
+    if (!renaming) return
+    const el = renameInputRef.current
+    if (el) {
+      el.focus()
+      el.select()
+    }
+  }, [renaming])
+
+  // 关闭弹窗 / 切换空间时退出重命名态,避免把上一个空间的草稿名带过来
+  useEffect(() => {
+    setRenaming(false)
+    setRenameDraft('')
+  }, [workspaceId, open])
 
   // 退出该空间:子账号可直接退出;主账号(所有者)必须【先手动转让主账号权限】,单人团队引导去解散。
   async function handleLeave() {
@@ -565,15 +869,29 @@ export default function TeamManagementModal({
     }
   }
 
+  // 「所有者」只认当前有效 owner_user_id(单一数据源),在渲染时实时判定:
+  // 这样转让后 ownerUserId 一变,列表标记立刻跟着变,无需重新拉取;同时把后端 role='owner'
+  // 但并非当前所有者的成员(转让瞬间的旧主账号)降级为管理员,杜绝「两个所有者」。
+  const decoratedMembers = useMemo(() => {
+    // 所有者未知(prop 缺失)时不做降级,保持既有判定
+    if (ownerUserId <= 0) return members
+    return members.map((m) => {
+      const isOwner = m.id === ownerUserId
+      const role = isOwner ? 'owner' : m.role === 'owner' ? 'admin' : m.role
+      if (isOwner === m.isOwner && role === m.role) return m
+      return { ...m, isOwner, role, roleLabel: isOwner ? '所有者' : getRoleLabel(role) }
+    })
+  }, [members, ownerUserId])
+
   const filteredMembers = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return members
-    return members.filter((m) => {
+    if (!q) return decoratedMembers
+    return decoratedMembers.filter((m) => {
       const name = String(m.name || '').toLowerCase()
       const phone = String(m.phone || '')
       return name.includes(q) || phone.includes(q)
     })
-  }, [query, members])
+  }, [query, decoratedMembers])
 
   function close() {
     onClose?.()
@@ -601,7 +919,10 @@ export default function TeamManagementModal({
         return null
       })
       .catch((error: any) => {
-        onToast?.(error?.message || '邀请码生成失败', 'error')
+        onToast?.(
+          isPermissionDenied(error) ? '暂无邀请码管理权限,请联系团队所有者' : error?.message || '邀请码生成失败',
+          'error',
+        )
       })
       .finally(() => {
         invitationsLoadingRef.current = false
@@ -626,7 +947,10 @@ export default function TeamManagementModal({
       setExpiryDate('')
       onToast?.('邀请码已撤销', 'success')
     } catch (error: any) {
-      onToast?.(error?.message || '撤销失败,请稍后重试', 'error')
+      onToast?.(
+        isPermissionDenied(error) ? '暂无邀请码管理权限,请联系团队所有者' : error?.message || '撤销失败,请稍后重试',
+        'error',
+      )
     } finally {
       invitationDeleteBusyIds.current.delete(invId)
       invitationsLoadingRef.current = false
@@ -655,8 +979,9 @@ export default function TeamManagementModal({
       return
     }
     loadMembers()
-    // 邀请码是【主账号专属】接口:非主账号(子账号/管理员)/个人空间调它会被后端 403「无权管理该 workspace」。
-    // 子账号只是来看成员列表,不该碰邀请码接口 → 仅 canManageInvite(团队所有者)才拉;否则清空邀请状态。
+    // 邀请码接口需「可管理空间」权限(所有者/管理员);普通成员/个人空间调它会被后端 403 →
+    // 仅 canManageInvite(所有者或管理员)才拉;否则清空邀请状态。
+    // ⚠ 需后端同步放开管理员对 workspace-invitation(list/create/delete)的权限,否则管理员会收到 403。
     if (canManageInvite) {
       loadInvitations()
     } else {
@@ -697,7 +1022,12 @@ export default function TeamManagementModal({
       {open && (
         <div className="tm-overlay" role="dialog" aria-modal="true" aria-label="团队管理">
           <button type="button" className="tm-backdrop" aria-label="关闭团队管理" onClick={close}></button>
-          <section className="tm-modal" aria-label="管理您的团队">
+          <section
+            className="tm-modal"
+            aria-label="管理您的团队"
+            // 团队数据 tab:全屏展示(看板更宽敞);成员管理仍是常规小弹窗尺寸
+            style={activeTab === 'data' ? { width: '96vw', height: '92vh' } : undefined}
+          >
             {/* 头部:← 返回 + 空间名(+ 重命名) + 右上「…」菜单(退出/解散) */}
             <div className="tm-header">
               <button type="button" className="tm-back" aria-label="返回" onClick={close}>
@@ -705,27 +1035,72 @@ export default function TeamManagementModal({
                   <path d="M12 5l-5 5 5 5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
-              <span className="tm-header-name">
-                {workspace?.name || (isPersonalWorkspace ? '个人空间' : '团队空间')}
-              </span>
-              {isTeamWorkspace && canManageWorkspace && (
-                <button
-                  type="button"
-                  className="tm-header-edit"
-                  aria-label="重命名"
-                  onClick={() => onToast?.('重命名功能暂未开放', 'success')}
-                >
-                  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6">
-                    <path
-                      d="M4 13.5V16h2.5l7-7-2.5-2.5-7 7zM12.5 5l2.5 2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
+              {renaming ? (
+                <span className="tm-header-rename">
+                  <input
+                    ref={renameInputRef}
+                    className="tm-header-rename-input"
+                    value={renameDraft}
+                    maxLength={WORKSPACE_NAME_MAX}
+                    placeholder="输入空间名称"
+                    disabled={renameBusy}
+                    aria-label="空间名称"
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        void commitRename()
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        cancelRename()
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="tm-header-rename-ok"
+                    disabled={renameBusy}
+                    onClick={() => void commitRename()}
+                  >
+                    {renameBusy ? '保存中…' : '保存'}
+                  </button>
+                  <button
+                    type="button"
+                    className="tm-header-rename-cancel"
+                    disabled={renameBusy}
+                    onClick={cancelRename}
+                  >
+                    取消
+                  </button>
+                </span>
+              ) : (
+                <>
+                  <span className="tm-header-name">
+                    {workspace?.name || (isPersonalWorkspace ? '个人空间' : '团队空间')}
+                  </span>
+                  {isTeamWorkspace && canManageWorkspace && (
+                    <button type="button" className="tm-header-edit" aria-label="重命名" onClick={startRename}>
+                      <svg
+                        viewBox="0 0 20 20"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                      >
+                        <path
+                          d="M4 13.5V16h2.5l7-7-2.5-2.5-7 7zM12.5 5l2.5 2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                </>
               )}
               <span className="tm-header-spacer" />
-              {isTeamWorkspace && (
+              {/* 「…」菜单仅剩「退出该空间」(仅子账号可见);主账号无菜单项,故不再渲染触发按钮 */}
+              {isTeamWorkspace && !isCurrentUserOwner && (
                 <div className="tm-header-more-wrap" ref={headerMenuRef}>
                   <button
                     type="button"
@@ -740,7 +1115,7 @@ export default function TeamManagementModal({
                   </button>
                   {headerMenuOpen && (
                     <div className="tm-header-menu" role="menu">
-                      {/* 退出:仅子账号可主动退出;主账号看不到,须先转让所有权(变子账号)或解散 */}
+                      {/* 退出:仅子账号可主动退出;主账号看不到,须先转让所有权(变子账号)后再退出 */}
                       {!isCurrentUserOwner && (
                         <button
                           type="button"
@@ -754,160 +1129,360 @@ export default function TeamManagementModal({
                           退出该空间
                         </button>
                       )}
-                      {isCurrentUserOwner && (
-                        <button
-                          type="button"
-                          className="tm-header-menu-item tm-header-menu-item--danger"
-                          role="menuitem"
-                          onClick={() => {
-                            setHeaderMenuOpen(false)
-                            void handleDisband()
-                          }}
-                        >
-                          解散该空间
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>
               )}
             </div>
 
-            <div className="tm-invite-card">
-              <div className="tm-invite-left">
-                <div className="tm-invite-label">团队邀请码</div>
-                <div className="tm-invite-code">
-                  <span className={isPersonalWorkspace ? 'is-muted' : undefined}>{inviteDisplayText}</span>
+            {/* 团队空间:仅「成员管理」tab(团队数据已下线;个人空间无 tab,只显示成员) */}
+            {!isPersonalWorkspace && (
+              <div className="tm-tabs" style={{ display: 'flex', gap: 16, padding: '0 20px 10px' }}>
+                {(['members'] as const).map((t) => (
                   <button
+                    key={t}
                     type="button"
-                    className="tm-copy"
-                    aria-label="复制邀请码"
-                    disabled={!canCopyInviteCode}
-                    onClick={copyCode}
+                    onClick={() => setActiveTab(t)}
+                    style={{
+                      border: 'none',
+                      background: 'none',
+                      padding: '4px 2px',
+                      cursor: 'pointer',
+                      fontSize: 15,
+                      fontWeight: activeTab === t ? 600 : 400,
+                      color: activeTab === t ? '#5767e5' : '#8a8f9c',
+                      borderBottom: activeTab === t ? '2px solid #5767e5' : '2px solid transparent',
+                    }}
                   >
-                    <svg viewBox="0 0 16 16" aria-hidden="true">
-                      <path d="M5.2 1.8h6.1c.8 0 1.5.7 1.5 1.5v6.1c0 .8-.7 1.5-1.5 1.5H5.2c-.8 0-1.5-.7-1.5-1.5V3.3c0-.8.7-1.5 1.5-1.5Zm0 1.2a.3.3 0 0 0-.3.3v6.1c0 .2.1.3.3.3h6.1c.2 0 .3-.1.3-.3V3.3a.3.3 0 0 0-.3-.3H5.2Z" />
-                      <path d="M3.2 4.2H3c-.7 0-1.2.5-1.2 1.2v6.3c0 .7.5 1.2 1.2 1.2h6.3c.7 0 1.2-.5 1.2-1.2v-.2H4.8c-.9 0-1.6-.7-1.6-1.6V4.2Z" />
-                    </svg>
+                    成员管理
                   </button>
-                </div>
-                <div className="tm-invite-expiry">
-                  {isPersonalWorkspace
-                    ? inviteExpiryText
-                    : isCurrentUserOwner && !seatFull
-                      ? `有效期至：${inviteExpiryText}`
-                      : ''}
-                </div>
+                ))}
               </div>
+            )}
 
-              <div className="tm-invite-right">
-                {/* 撤销邀请:仅主账号、且当前有有效邀请码时显示 → 撤销后失效、无码 */}
-                {canInvite && Number(activeInvitationId || 0) > 0 && (
-                  <button type="button" className="tm-revoke" onClick={handleRevoke}>
-                    <svg viewBox="0 0 16 16" aria-hidden="true">
-                      <path
-                        d="M3 8a5 5 0 1 1 1.6 3.7M3 8H1.6M3 8V6.4"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    撤销邀请
-                  </button>
-                )}
-                {canInvite && (
-                  <button type="button" className="tm-regenerate" onClick={generateCode}>
-                    <svg viewBox="0 0 16 16" aria-hidden="true">
-                      <path d="M13.7 7.2a5.7 5.7 0 1 1-1.4-3.6l.1-1.2h1.2v4H9.5V5.2h1.6A4.5 4.5 0 1 0 12.6 8h1.1Z" />
-                    </svg>
-                    重新生成
-                  </button>
-                )}
-
-                {canInvite && (
-                  <div className="tm-expiry-select">
-                    <select
-                      value={expiryDays}
-                      aria-label="有效期"
-                      onChange={(e) => setExpiryDays(Number(e.target.value))}
-                    >
-                      {expiryOptions.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    <svg viewBox="0 0 12 12" aria-hidden="true">
-                      <path d="m3.5 4.5 2.5 2.5 2.5-2.5" />
-                    </svg>
-                  </div>
-                )}
-
-                {!(canManageWorkspace && isTeamWorkspace) && isPersonalWorkspace && (
-                  <div className="tm-invite-placeholder">个人空间仅支持个人使用</div>
-                )}
-              </div>
-            </div>
-
-            <div className="tm-members-head">
-              <h3>成员信息</h3>
-              <div className="tm-search">
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <circle cx="7" cy="7" r="5" />
-                  <path d="m11 11 3 3" />
-                </svg>
-                <input
-                  value={query}
-                  type="text"
-                  placeholder="搜索成员昵称、账号..."
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="tm-members">
-              {membersLoading ? (
-                <div className="tm-members-empty">正在加载成员信息...</div>
-              ) : !filteredMembers.length ? (
-                <div className="tm-members-empty">暂无成员</div>
-              ) : (
-                filteredMembers.map((m) => (
-                  <div key={m.id} className="tm-member">
-                    <div className="tm-avatar" aria-hidden="true">
-                      <span>{String(m.name).trim().charAt(0).toUpperCase()}</span>
+            {(isPersonalWorkspace || activeTab === 'members') && (
+              <>
+                <div className="tm-invite-card">
+                  {/* 顶行:邀请码标签 + 名额提示(左) | 撤销邀请(右) */}
+                  <div className="tm-invite-row tm-invite-row--top">
+                    <div className="tm-invite-labels">
+                      <span className="tm-invite-label">团队邀请码</span>
+                      {canManageInvite && maxMembers > 1 && (
+                        <span className="tm-invite-hint">最多可邀请{maxMembers - 1}名成员</span>
+                      )}
                     </div>
-                    <div className="tm-member-meta">
-                      <div className="tm-member-name">
-                        <strong>{m.name}</strong>
-                        {m.roleLabel && (
-                          <span className="tm-role-badge" data-role={m.isOwner ? 'owner' : m.role}>
-                            {m.roleLabel}
-                          </span>
-                        )}
-                      </div>
-                      <span>{m.phone || '-'}</span>
-                    </div>
-                    {canManageWorkspace && (
-                      <button
-                        type="button"
-                        className="tm-more"
-                        aria-label="更多操作"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openMemberActions(m, e)
-                        }}
-                      >
-                        <svg viewBox="0 0 20 20" aria-hidden="true">
-                          <path d="M5 10a1.4 1.4 0 1 1 0 2.8A1.4 1.4 0 0 1 5 10Zm5-0a1.4 1.4 0 1 1 0 2.8A1.4 1.4 0 0 1 10 10Zm5 0a1.4 1.4 0 1 1 0 2.8A1.4 1.4 0 0 1 15 10Z" />
+                    {/* 撤销邀请:仅主账号、且当前有有效邀请码时显示 → 撤销后失效、无码 */}
+                    {canInvite && Number(activeInvitationId || 0) > 0 && (
+                      <button type="button" className="tm-revoke" onClick={handleRevoke}>
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <path
+                            d="M3 8a5 5 0 1 1 1.6 3.7M3 8H1.6M3 8V6.4"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
                         </svg>
+                        撤销邀请
                       </button>
                     )}
                   </div>
-                ))
-              )}
-            </div>
+
+                  {/* 中行:邀请码 + 复制 */}
+                  <div className="tm-invite-code">
+                    <span className={isPersonalWorkspace ? 'is-muted' : undefined}>{inviteDisplayText}</span>
+                    <button
+                      type="button"
+                      className="tm-copy"
+                      aria-label="复制邀请码"
+                      disabled={!canCopyInviteCode}
+                      onClick={copyCode}
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M5.2 1.8h6.1c.8 0 1.5.7 1.5 1.5v6.1c0 .8-.7 1.5-1.5 1.5H5.2c-.8 0-1.5-.7-1.5-1.5V3.3c0-.8.7-1.5 1.5-1.5Zm0 1.2a.3.3 0 0 0-.3.3v6.1c0 .2.1.3.3.3h6.1c.2 0 .3-.1.3-.3V3.3a.3.3 0 0 0-.3-.3H5.2Z" />
+                        <path d="M3.2 4.2H3c-.7 0-1.2.5-1.2 1.2v6.3c0 .7.5 1.2 1.2 1.2h6.3c.7 0 1.2-.5 1.2-1.2v-.2H4.8c-.9 0-1.6-.7-1.6-1.6V4.2Z" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* 底行:有效期(左) | 重新生成 + 有效期下拉(右) */}
+                  <div className="tm-invite-row tm-invite-row--bottom">
+                    <div className="tm-invite-expiry">
+                      {isPersonalWorkspace
+                        ? inviteExpiryText
+                        : canManageWorkspace && !seatFull
+                          ? `有效期至：${inviteExpiryText}`
+                          : ''}
+                    </div>
+
+                    <div className="tm-invite-actions">
+                      {canInvite && (
+                        <button type="button" className="tm-regenerate" onClick={generateCode}>
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M13.7 7.2a5.7 5.7 0 1 1-1.4-3.6l.1-1.2h1.2v4H9.5V5.2h1.6A4.5 4.5 0 1 0 12.6 8h1.1Z" />
+                          </svg>
+                          重新生成
+                        </button>
+                      )}
+
+                      {canInvite && (
+                        <div className="tm-expiry-select">
+                          <select
+                            value={expiryDays}
+                            aria-label="有效期"
+                            onChange={(e) => setExpiryDays(Number(e.target.value))}
+                          >
+                            {expiryOptions.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                          <svg viewBox="0 0 12 12" aria-hidden="true">
+                            <path d="m3.5 4.5 2.5 2.5 2.5-2.5" />
+                          </svg>
+                        </div>
+                      )}
+
+                      {!(canManageWorkspace && isTeamWorkspace) && isPersonalWorkspace && (
+                        <div className="tm-invite-placeholder">个人空间仅支持个人使用</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="tm-members-head">
+                  <h3>成员信息</h3>
+                  <div className="tm-search">
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                      <circle cx="7" cy="7" r="5" />
+                      <path d="m11 11 3 3" />
+                    </svg>
+                    <input
+                      value={query}
+                      type="text"
+                      placeholder="搜索成员昵称、账号..."
+                      onChange={(e) => setQuery(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="tm-members">
+                  {membersLoading ? (
+                    <div className="tm-members-empty">正在加载成员信息...</div>
+                  ) : !filteredMembers.length ? (
+                    <div className="tm-members-empty">暂无成员</div>
+                  ) : (
+                    filteredMembers.map((m) => (
+                      <div key={m.id} className="tm-member">
+                        <div className="tm-avatar" aria-hidden="true">
+                          <span>{String(m.name).trim().charAt(0).toUpperCase()}</span>
+                        </div>
+                        <div className="tm-member-meta">
+                          <div className="tm-member-name">
+                            <strong>{m.name}</strong>
+                            {m.roleLabel && (
+                              <span className="tm-role-badge" data-role={m.isOwner ? 'owner' : m.role}>
+                                {m.roleLabel}
+                              </span>
+                            )}
+                            {/* 仅自己那行:修改用户名(接口 me/profile 只能改自己)。用户名唯一,重复由后端拦截 */}
+                            {Number(m.id) === currentUserId && (
+                              <button
+                                type="button"
+                                className="tm-edit-name"
+                                aria-label="修改用户名"
+                                title="修改用户名"
+                                disabled={usernameSaving}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  editUsername()
+                                }}
+                              >
+                                <svg viewBox="0 0 20 20" aria-hidden="true">
+                                  <path
+                                    d="M12.6 3.7a1.6 1.6 0 0 1 2.3 2.3l-7.6 7.6-3 .7.7-3 7.6-7.6Z"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.4"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                          <span>{m.phone || '-'}</span>
+                        </div>
+                        {canActOnMember(m) && (
+                          <button
+                            type="button"
+                            className="tm-more"
+                            aria-label="更多操作"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openMemberActions(m, e)
+                            }}
+                          >
+                            <svg viewBox="0 0 20 20" aria-hidden="true">
+                              <path d="M5 10a1.4 1.4 0 1 1 0 2.8A1.4 1.4 0 0 1 5 10Zm5-0a1.4 1.4 0 1 1 0 2.8A1.4 1.4 0 0 1 10 10Zm5 0a1.4 1.4 0 1 1 0 2.8A1.4 1.4 0 0 1 15 10Z" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* 团队数据看板(团队空间 + 团队数据 tab):总览 + 每个成员统计。接口 owner/admin,非管理者提示无权限。 */}
+            {!isPersonalWorkspace && activeTab === 'data' && (
+              <div className="tm-data" style={{ padding: '0 20px 20px' }}>
+                {!canManageWorkspace ? (
+                  <div className="tm-members-empty">仅主账号 / 管理员可查看团队数据</div>
+                ) : dataLoading ? (
+                  <div className="tm-members-empty">正在加载团队数据…</div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+                      {[
+                        {
+                          label: '成员人数',
+                          value: overview?.members ?? memberStats.length,
+                          unit: '人',
+                          bg: '#f3ecfd',
+                          fg: '#a855f7',
+                          ico: IcoMembers,
+                        },
+                        {
+                          label: '项目个数',
+                          value: overview?.projects ?? 0,
+                          unit: '个',
+                          bg: '#e9eeff',
+                          fg: '#5b8def',
+                          ico: IcoProjects,
+                        },
+                        {
+                          label: '总生成视频数',
+                          value: overview?.videos ?? 0,
+                          unit: '个',
+                          bg: '#e3f7f0',
+                          fg: '#32c7a6',
+                          ico: IcoVideos,
+                        },
+                        {
+                          label: '平均每个视频消耗积分数',
+                          value: avgPerVideo(overview?.credits ?? 0, overview?.videos ?? 0),
+                          unit: '积分/个',
+                          bg: '#fff0e5',
+                          fg: '#f5934f',
+                          ico: IcoAvg,
+                        },
+                        {
+                          label: '消耗积分总数',
+                          value: overview?.credits ?? 0,
+                          unit: '积分',
+                          bg: '#fdeaea',
+                          fg: '#e5574f',
+                          ico: IcoCredits,
+                        },
+                      ].map((c) => (
+                        <div
+                          key={c.label}
+                          style={{
+                            flex: '1 1 160px',
+                            minWidth: 150,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 12,
+                            background: '#fff',
+                            border: '1px solid #eef0f4',
+                            borderRadius: 12,
+                            padding: '14px 16px',
+                          }}
+                        >
+                          <span
+                            style={{
+                              flex: '0 0 auto',
+                              width: 40,
+                              height: 40,
+                              borderRadius: 10,
+                              background: c.bg,
+                              color: c.fg,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {c.ico}
+                          </span>
+                          <span style={{ minWidth: 0 }}>
+                            <span style={{ display: 'block', fontSize: 13, color: '#8a8f9c', marginBottom: 4 }}>
+                              {c.label}
+                            </span>
+                            <span style={{ fontSize: 20, fontWeight: 700, color: '#2b2f38' }}>{c.value}</span>
+                            <span style={{ fontSize: 12, color: '#8a8f9c', marginLeft: 3 }}>{c.unit}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <div style={{ minWidth: 680 }}>
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1.1fr 1.4fr 1fr 1.2fr 1.2fr 1.7fr',
+                            gap: 6,
+                            padding: '12px 16px',
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: '#4a4f5c',
+                            background: '#eef1fb',
+                            borderRadius: 10,
+                          }}
+                        >
+                          <span>成员</span>
+                          <span>成员账号</span>
+                          <span>项目个数</span>
+                          <span>总生成视频数</span>
+                          <span>消耗积分数</span>
+                          <span>平均每个视频消耗积分数</span>
+                        </div>
+                        {memberStats.length ? (
+                          memberStats.map((m, i) => (
+                            <div
+                              key={String(m.id || i)}
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: '1.1fr 1.4fr 1fr 1.2fr 1.2fr 1.7fr',
+                                gap: 6,
+                                padding: '14px 16px',
+                                fontSize: 14,
+                                color: '#2b2f38',
+                                borderBottom: '1px solid #f0f1f5',
+                              }}
+                            >
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {m.name}
+                              </span>
+                              <span>{m.phone || '-'}</span>
+                              <span>{m.projects}</span>
+                              <span>{m.videos}</span>
+                              <span>{m.credits}</span>
+                              <span>{avgPerVideo(m.credits, m.videos)}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="tm-members-empty">暂无成员数据</div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </section>
         </div>
       )}
@@ -922,22 +1497,27 @@ export default function TeamManagementModal({
               onClick={closeMemberActions}
             ></button>
             <div className="tm-action-menu" style={memberActionStyle} onClick={(e) => e.stopPropagation()}>
-              <button type="button" className="tm-action-item" onClick={() => handleMemberAction('make-admin')}>
-                设为管理员
-              </button>
-              <button type="button" className="tm-action-item" onClick={() => handleMemberAction('set-member')}>
-                设为成员
-              </button>
+              {/* 所有者行(含所有者操作自己):仅「修改配额」有意义,角色变更/转让/移出对所有者一律隐藏 */}
+              {!memberActionTarget?.isOwner && (
+                <button type="button" className="tm-action-item" onClick={() => handleMemberAction('make-admin')}>
+                  设为管理员
+                </button>
+              )}
+              {!memberActionTarget?.isOwner && (
+                <button type="button" className="tm-action-item" onClick={() => handleMemberAction('set-member')}>
+                  设为成员
+                </button>
+              )}
               <button type="button" className="tm-action-item" onClick={() => handleMemberAction('quota')}>
                 修改配额
               </button>
-              {canTransferOwnership && (
+              {canTransferOwnership && !memberActionTarget?.isOwner && (
                 <button type="button" className="tm-action-item" onClick={() => handleMemberAction('transfer')}>
                   转让所有权
                 </button>
               )}
-              {/* 踢除成员:仅主账号(所有者),管理员不可 */}
-              {isCurrentUserOwner && (
+              {/* 踢除成员:所有者与管理员均可(管理员仅对成员行有菜单,故只会移出成员);不对所有者显示 */}
+              {canManageWorkspace && !memberActionTarget?.isOwner && (
                 <button type="button" className="tm-action-item" onClick={() => handleMemberAction('remove')}>
                   移出团队
                 </button>

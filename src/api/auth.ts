@@ -132,6 +132,16 @@ export function getCurrentUser() {
   return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/me'))
 }
 
+// PATCH /api/v1/me/profile —— 修改我的资料(用户名等,仅改当前登录用户自己)。
+// 用户名唯一(不可重复):重复由后端校验并报错(AuthApiError.status/code/message),前端据此提示「已被占用」。
+export function updateMyProfile(payload) {
+  return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/me/profile'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  })
+}
+
 export function listWorkspaceMembers(workspaceId) {
   return requestJson(buildUrl(businessApiBaseUrl, `/api/v1/workspaces/${workspaceId}/members`))
 }

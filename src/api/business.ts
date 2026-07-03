@@ -1346,6 +1346,20 @@ export function listPaymentOrders({ workspaceId, type = '', status = '', limit =
   return requestJson(`/api/v1/billing/payment-orders?${query}`)
 }
 
+// 主动对账:让后端去支付宝核对该订单真实状态并更新本地订单,返回更新后的订单(带 status)。
+// 比被动等支付宝异步通知/回跳可靠——本地测试付完直接对账即可确认到账。POST /payment-orders/{id}/reconcile
+export function reconcilePaymentOrder({ workspaceId, orderId }: any = {}) {
+  const id = Number(orderId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('订单 ID 无效')
+  }
+  const wsId = Number(workspaceId || 0)
+  const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${Math.floor(wsId)}` : ''
+  return requestJson(`/api/v1/billing/payment-orders/${Math.floor(id)}/reconcile${query}`, {
+    method: 'POST',
+  })
+}
+
 /**
  * Lists the workspaces (个人空间 / 团队) the current user belongs to.
  * @returns {Promise<Array<{ id: number, type: string, name: string, owner_user_id: number, status: string }>>}
@@ -1364,6 +1378,27 @@ export function createWorkspace({ name, type = 'team' }) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: String(name || '').trim(), type }),
+  })
+}
+
+/**
+ * 修改空间名称。PATCH /api/v1/workspaces/{id}
+ * @param {{ workspaceId: number, name: string }} params
+ * @returns {Promise<{ id: number, name: string }>}
+ */
+export function updateWorkspace({ workspaceId, name }: any = {}) {
+  const id = Number(workspaceId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  const nextName = String(name || '').trim()
+  if (!nextName) {
+    throw new BusinessApiError('空间名称不能为空')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: nextName }),
   })
 }
 
@@ -1554,6 +1589,24 @@ export function transferWorkspaceOwnership({ workspaceId, userId }: any = {}) {
       to_user_id: uid,
     }),
   })
+}
+
+// 团队数据总览(owner/admin):成员数 + 总消耗 + 总作品数(本月+累计)。GET /workspaces/{id}/overview
+export function getWorkspaceOverview(workspaceId: any) {
+  const id = Number(workspaceId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/overview`)
+}
+
+// 团队成员统计(owner/admin):每个成员本月/累计消耗积分 + 作品数。GET /workspaces/{id}/member-statistics
+export function getWorkspaceMemberStatistics(workspaceId: any) {
+  const id = Number(workspaceId || 0)
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  return requestJson(`/api/v1/workspaces/${Math.floor(id)}/member-statistics`)
 }
 
 /**

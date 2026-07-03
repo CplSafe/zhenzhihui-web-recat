@@ -310,7 +310,7 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
           </button>
         </div>
 
-        <div className={styles.card}>
+        <div className={styles.card} data-guide="smart-input">
           {/* 已选图片:独立成一行(可换行),不挤压文本框;参考主流 AI 输入框做法 */}
           {images.length > 0 && (
             <div className={styles.attachments}>
@@ -449,7 +449,7 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
                 />
               )}
 
-              <span className={styles.atAnchor}>
+              <span className={styles.atAnchor} data-guide="smart-at">
                 <button type="button" className={styles.pillBtn} onClick={handleAt} title="引用参考素材">
                   @
                 </button>
@@ -474,28 +474,30 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
 
               {/* SKILLS:营销技能包(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
               {mode === 'video' && (
-                <EntryDropdown
-                  clearable
-                  placeholder="SKILLS"
-                  value={skill}
-                  options={SKILL_OPTIONS}
-                  onChange={pickSkill}
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="20"
-                      height="20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
-                      <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
-                    </svg>
-                  }
-                />
+                <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
+                  <EntryDropdown
+                    clearable
+                    placeholder="SKILLS"
+                    value={skill}
+                    options={SKILL_OPTIONS}
+                    onChange={pickSkill}
+                    icon={
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="20"
+                        height="20"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.7"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                        <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                      </svg>
+                    }
+                  />
+                </span>
               )}
             </div>
 
@@ -505,6 +507,7 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
                 <button
                   type="button"
                   className={styles.regen}
+                  data-guide="smart-regen"
                   disabled={!canSubmit}
                   onClick={() => submit()}
                   title="按当前输入重新生成"
@@ -528,6 +531,7 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
               <button
                 type="button"
                 className={styles.send}
+                data-guide="smart-next"
                 // 恢复态(下一步)始终可点;普通发送需有输入
                 disabled={resumeMode ? false : !canSubmit}
                 onClick={() => (resumeMode ? onResume?.() : submit())}
