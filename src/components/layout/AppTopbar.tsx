@@ -1,26 +1,21 @@
 /**
  * 共享顶栏(2.1)。Home / 智能成片 等页面统一使用,避免各页写死用户名。
- * 右侧:会员中心 + 用户头像下拉(会员中心 / 退出登录)。可选左侧汉堡(移动端开侧栏)。
- * 用户信息来自 workspaceSession;退出走 logoutSession + AuthContext。
+ * 右侧:会员中心 + 用户头像下拉(个人面板:会员卡 / 切换空间)。可选左侧汉堡(移动端开侧栏)。
+ * 用户信息来自 workspaceSession。个人中心/修改密码/退出登录已移至侧栏「设置」菜单(SettingsMenu)。
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useCurrentUser, useCurrentPlanName, useWorkspaceId, useWorkspaceSessionStore } from '@/stores/workspaceSession'
-import { logoutSession, getAuthErrorMessage } from '@/api/auth'
 import { getReferralMyCode } from '@/api/business'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { useUiStore } from '@/stores/ui'
-import { shouldClearSessionAfterLogoutFailure } from '@/utils/workflowGuards'
-import { markDevLogout } from '@/App'
 import memberIcon from '@/assets/image.png'
 import shareIcon from '@/assets/image copy 2.png'
-import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import PersonalPanel from './PersonalPanel'
 import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
-import AuthActionModal from '@/components/auth/AuthActionModal'
 import './AppTopbar.css'
 
 // 推广码缓存:跨页面多次挂载 AppTopbar 只拉一次(同一用户推广码稳定)。
@@ -40,7 +35,7 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   const navigate = useNavigate()
   const currentUser = useCurrentUser() as any
   const planName = useCurrentPlanName() as any
-  const { handleLogoutSuccess, isAuthenticated } = useAuth()
+  const { isAuthenticated } = useAuth()
   const { showToast } = useToast()
   const openMemberCenter = useUiStore((s) => s.openMemberCenter)
   const workspaceId = useWorkspaceId()
@@ -78,8 +73,6 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
-  const [isLoggingOut, setIsLoggingOut] = useState(false)
-  const [pwdModalOpen, setPwdModalOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -134,39 +127,6 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
       showToast(referralCode ? '推广链接已复制' : '分享链接已复制', 'success')
     } catch {
       showToast('复制失败,请手动复制链接', 'error')
-    }
-  }
-
-  const handleChangePwd = () => {
-    setMenuOpen(false)
-    setPwdModalOpen(true)
-  }
-
-  async function handleLogout() {
-    if (isLoggingOut) return
-    setMenuOpen(false)
-    setIsLoggingOut(true)
-
-    if (import.meta.env.DEV) {
-      setIsLoggingOut(false)
-      markDevLogout()
-      handleLogoutSuccess()
-      return
-    }
-
-    try {
-      await logoutSession()
-      showToast('已退出登录', 'success')
-      setIsLoggingOut(false)
-      handleLogoutSuccess()
-    } catch (error) {
-      if (shouldClearSessionAfterLogoutFailure(error)) {
-        setIsLoggingOut(false)
-        handleLogoutSuccess()
-        return
-      }
-      showToast(getAuthErrorMessage(error, '退出登录失败，请稍后重试'), 'error')
-      setIsLoggingOut(false)
     }
   }
 
@@ -241,18 +201,10 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
             role="menu"
             style={{ top: menuPos.top, right: menuPos.right }}
           >
-            <PersonalPanel
-              onMember={handleMember}
-              onChangePwd={handleChangePwd}
-              onLogout={handleLogout}
-              onClose={() => setMenuOpen(false)}
-              loggingOut={isLoggingOut}
-            />
+            <PersonalPanel onMember={handleMember} onClose={() => setMenuOpen(false)} />
           </div>,
           document.body,
         )}
-
-      {pwdModalOpen && <ChangePasswordModal onClose={() => setPwdModalOpen(false)} />}
     </header>
   )
 }

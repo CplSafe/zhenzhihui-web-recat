@@ -1,0 +1,220 @@
+/* PersonalCenterModal — 「个人中心」个人资料弹窗(对齐 Figma「设置-个人中心」1391:9020) */
+.pcm-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.pcm-card {
+  width: min(820px, 100%);
+  background: #fdfdfd;
+  border-radius: 14px;
+  padding: 44px 52px 40px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
+}
+.pcm-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 26px;
+  color: #333;
+}
+
+/* 主体:左头像列 + 右表单列 */
+.pcm-body {
+  display: flex;
+  gap: 72px;
+  margin-top: 40px;
+}
+
+/* ── 左:头像 ── */
+.pcm-left {
+  flex: 0 0 auto;
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.pcm-avatar {
+  position: relative;
+  width: 180px;
+  height: 180px;
+}
+.pcm-avatar-img,
+.pcm-avatar-fallback {
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+.pcm-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 68px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #a7d8f2, #6bb7ea);
+}
+.pcm-cam {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: 2px solid #fdfdfd;
+  background: rgba(51, 51, 51, 0.9);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pcm-cam:hover {
+  background: rgba(51, 51, 51, 1);
+}
+.pcm-file {
+  display: none;
+}
+.pcm-hint {
+  margin: 20px 0 0;
+  font-size: 14px;
+  line-height: 16px;
+  color: #666;
+  text-align: center;
+}
+
+/* ── 右:表单 ── */
+.pcm-right {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+.pcm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pcm-label {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 20px;
+  color: #333;
+}
+.pcm-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 50px;
+  padding: 0 16px;
+  border: 1px solid #909090;
+  border-radius: 8px;
+  background: #fff;
+  transition: border-color 0.15s;
+}
+.pcm-input:focus-within {
+  border-color: #11ab89;
+}
+.pcm-input-el {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  font-size: 18px;
+  color: #333;
+}
+.pcm-input-el::placeholder {
+  color: #bbb;
+}
+.pcm-count {
+  flex: 0 0 auto;
+  font-size: 18px;
+  color: #909090;
+}
+/* 账号:禁用态灰底、不可编辑 */
+.pcm-input--disabled {
+  border-color: transparent;
+  background: #f1f1f1;
+}
+.pcm-account {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+  color: #909090;
+}
+.pcm-account-tip {
+  flex: 0 0 auto;
+  font-size: 18px;
+  color: #909090;
+}
+
+/* ── 底部按钮 ── */
+.pcm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 20px;
+  margin-top: 44px;
+}
+.pcm-btn {
+  width: 160px;
+  height: 48px;
+  border-radius: 8px;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+.pcm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.pcm-btn--ghost {
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  color: #666;
+}
+.pcm-btn--ghost:hover:not(:disabled) {
+  border-color: #b8b8b8;
+  color: #333;
+}
+.pcm-btn--save {
+  background: #11ab89;
+  border: none;
+  color: #fff;
+}
+.pcm-btn--save:hover:not(:disabled) {
+  background: #0e9b7c;
+}
+
+/* 窄屏:头像列与表单列上下堆叠 */
+@media (max-width: 640px) {
+  .pcm-card {
+    padding: 32px 24px 28px;
+  }
+  .pcm-body {
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+  }
+  .pcm-right {
+    width: 100%;
+  }
+  .pcm-footer {
+    margin-top: 32px;
+  }
+}

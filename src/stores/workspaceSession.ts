@@ -407,7 +407,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       const userId = toId(get().authSession?.user?.id)
       const ownerUserId = toId(target?.owner_user_id || target?.ownerUserId)
       if (userId && ownerUserId && userId !== ownerUserId) {
-        throw new Error('只有空间所有者可以解散空间')
+        throw new Error('只有空间超级管理员可以解散空间')
       }
       await disbandWorkspace({ workspaceId: targetId })
       // 收尾:从本地列表移除 + 若删的是当前空间则切回个人空间兜底(同 deleteTeam)
