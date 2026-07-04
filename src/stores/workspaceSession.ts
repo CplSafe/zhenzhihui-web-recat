@@ -27,6 +27,7 @@ import {
   buildModelPlanCandidatesFromSession,
   normalizePlanCandidates,
 } from '../utils/modelPlans'
+import { applyUserProfileOverrides } from '../utils/profileOverrides'
 
 const toId = (value: any): number => Number(value) || 0
 const findById = (list: any[], id: number) => list.find((w) => toId(w?.id) === id) || null
@@ -260,7 +261,11 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         set({ authSession: null, activeWorkspaceOverrideId: 0, userWorkspaces: [], currentWorkspaceMember: null })
         return
       }
-      const normalizedSession = { ...session, workspaces: deriveSessionWorkspaces(session) }
+      const normalizedSession = {
+        ...session,
+        user: applyUserProfileOverrides(session?.user),
+        workspaces: deriveSessionWorkspaces(session),
+      }
       // #region debug-point D:session-workspaces
       fetch('http://127.0.0.1:7777/event', {
         method: 'POST',
