@@ -94,15 +94,23 @@ export function isAbortedTaskError(error) {
 
 export function getBusinessErrorMessage(error, fallback = '业务接口请求失败，请稍后重试') {
   if (error instanceof BusinessApiError && error.message) {
+    const responseMessage = String(
+      error.response?.message || error.response?.error?.message || error.response?.data?.message || '',
+    ).trim()
+    const fullMessage = `${error.message} ${responseMessage}`.trim()
+    const seatFullPattern =
+      /team.*full|workspace.*full|max[_\s-]*members|member.*limit|seat.*full|full capacity|成员.*已满|团队.*已满|人数.*已满|满员/i
+
     if (error.status === 401) {
       return '登录状态已失效，请重新登录'
     }
 
+    if ([400, 403, 409, 422].includes(Number(error.status || 0)) && seatFullPattern.test(fullMessage)) {
+      return '团队已满，暂时无法加入'
+    }
+
     if (error.status === 409) {
       const code = String(error.code || '').toUpperCase()
-      const responseMessage = String(
-        error.response?.message || error.response?.error?.message || error.response?.data?.message || '',
-      ).trim()
       const message = responseMessage || error.message
       if (code === 'CONFLICT' || /owner|所有者|转让|退出|离开/i.test(message)) {
         return message

@@ -18,8 +18,8 @@ import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
 import './AppTopbar.css'
 
-// 推广码缓存:跨页面多次挂载 AppTopbar 只拉一次(同一用户推广码稳定)。
-let cachedReferralCode = ''
+// 推广码缓存:按用户维度缓存,真正点「分享链接」时才拉一次。
+const cachedReferralCodeByUser = new Map<string, string>()
 
 interface AppTopbarProps {
   /** 提供则在左侧显示汉堡(移动端),点击触发(通常打开侧栏抽屉) */
@@ -40,6 +40,7 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   const openMemberCenter = useUiStore((s) => s.openMemberCenter)
   const workspaceId = useWorkspaceId()
   const loadSubscriptionLabel = useWorkspaceSessionStore((s) => s.loadSubscriptionLabel)
+  const [shareLoading, setShareLoading] = useState(false)
 
   // 2.1 页面各自挂 AppTopbar、不走旧壳 AppLayout → 平时没人加载订阅/钱包,个人面板会显示 0/0。
   // 按当前工作空间加载一次订阅(含套餐/到期/base_credits)+ 钱包(积分),切空间也刷新。
@@ -48,25 +49,6 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
     if (!workspaceId || !isAuthenticated) return
     void loadSubscriptionLabel?.()
   }, [workspaceId, isAuthenticated, loadSubscriptionLabel])
-
-  // 我的专属推广码:登录后拉一次(带缓存),供「分享链接」拼接 /login?invite_code=…
-  const [referralCode, setReferralCode] = useState(cachedReferralCode)
-  useEffect(() => {
-    if (!isAuthenticated || cachedReferralCode) return
-    let alive = true
-    getReferralMyCode()
-      .then((code) => {
-        if (!alive || !code) return
-        cachedReferralCode = code
-        setReferralCode(code)
-      })
-      .catch(() => {
-        /* 拉取失败:分享仍可用,退回站点地址 */
-      })
-    return () => {
-      alive = false
-    }
-  }, [isAuthenticated])
 
   // 匿名访问(未登录且无用户信息)右上角显示「登录」按钮,而非「用户」头像下拉。
   const isAnonymous = !isAuthenticated && !currentUser
@@ -79,6 +61,10 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
 
   const userName = useMemo(
     () => currentUser?.nickname || currentUser?.name || currentUser?.username || '用户',
+    [currentUser],
+  )
+  const avatarUrl = useMemo(
+    () => currentUser?.avatar || currentUser?.avatar_url || currentUser?.avatarUrl || '',
     [currentUser],
   )
 
@@ -115,18 +101,26 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
     openMemberCenter()
   }
 
-  // 分享链接:复制「带推广码的注册链接」到剪贴板。新用户点开 → /login?invite_code=… → 注册时带上推广码。
-  // 推广码已在挂载时预取到 state(剪贴板写入在用户手势内首个 await,避免 Safari 丢失手势);
-  // 尚未取到则退回站点地址,保证始终可分享。
+  // 分享链接:点击时再拉推广码。新用户点开 → /login?invite_code=… → 注册时带上推广码。
   const handleShare = async () => {
-    const link = referralCode
-      ? `${window.location.origin}/login?invite_code=${encodeURIComponent(referralCode)}`
-      : window.location.origin
+    if (shareLoading) return
+    const cacheKey = String(currentUser?.id || currentUser?.user_id || currentUser?.mobile || 'anon')
+    setShareLoading(true)
     try {
+      let referralCode = cachedReferralCodeByUser.get(cacheKey) || ''
+      if (!referralCode && isAuthenticated) {
+        referralCode = await getReferralMyCode()
+        if (referralCode) cachedReferralCodeByUser.set(cacheKey, referralCode)
+      }
+      const link = referralCode
+        ? `${window.location.origin}/login?invite_code=${encodeURIComponent(referralCode)}`
+        : window.location.origin
       await navigator.clipboard.writeText(link)
       showToast(referralCode ? '推广链接已复制' : '分享链接已复制', 'success')
     } catch {
       showToast('复制失败,请手动复制链接', 'error')
+    } finally {
+      setShareLoading(false)
     }
   }
 
@@ -157,9 +151,9 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
       <div className="apptop__right">
         {/* 分享链接:仅登录后展示(未登录不可分享)。珊瑚圆角方块 + 链条图标 */}
         {!isAnonymous && (
-          <button type="button" className="apptop__share" onClick={handleShare}>
+          <button type="button" className="apptop__share" onClick={handleShare} disabled={shareLoading}>
             <img className="apptop__share-icon" src={shareIcon} alt="" width={24} height={24} />
-            分享链接
+            {shareLoading ? '生成中...' : '分享链接'}
           </button>
         )}
         <button type="button" className="apptop__member" data-guide="topbar-member" onClick={handleMember}>
@@ -184,7 +178,11 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
               aria-expanded={menuOpen}
               onClick={toggleMenu}
             >
-              <span className="apptop__avatar">{userName.slice(0, 1)}</span>
+              {avatarUrl ? (
+                <img className="apptop__avatar apptop__avatar--img" src={avatarUrl} alt="" />
+              ) : (
+                <span className="apptop__avatar">{userName.slice(0, 1)}</span>
+              )}
               <span className="apptop__user-name">{userName}</span>
               <span className={`apptop__caret${menuOpen ? ' is-open' : ''}`}>⌄</span>
             </button>

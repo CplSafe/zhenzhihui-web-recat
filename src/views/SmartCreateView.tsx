@@ -72,6 +72,7 @@ import {
   deriveModelPlanCandidates,
   deriveAllWorkspaces,
 } from '@/stores/workspaceSession'
+import { useUiStore } from '@/stores/ui'
 import { useToast } from '@/composables/useToast'
 import { openComingSoon, openMemberCenter } from '@/stores/ui'
 import { openGuide, isSmartGuideArmed, disarmSmartGuide, syncSmartGuideStage, useGuideStore } from '@/stores/guide'
@@ -1176,6 +1177,7 @@ export default function SmartCreateView() {
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
+  const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
   // 提交前积分预估(estimate-cost):整片生成(video.generate)口径
   const [videoCost, setVideoCost] = useState<{
     loading: boolean
@@ -1210,6 +1212,12 @@ export default function SmartCreateView() {
   // 避免用"完成那一刻的当前分镜"盖章(用户生成中/后改了内容会把签名盖成新内容 → 列表误判"没变")。
   const [pendingVideoSig, setPendingVideoSig] = useState('')
   const pendingVideoSigRef = useRef('')
+  useEffect(() => {
+    setWorkspaceSwitchLock(vidGenRunning, vidGenRunning ? '智能成片视频生成中，暂不支持切换团队' : '')
+    return () => {
+      setWorkspaceSwitchLock(false)
+    }
+  }, [setWorkspaceSwitchLock, vidGenRunning])
   // 发起出片时锁定当前内容签名(与 persistVideoResult / 列表同口径 computeVideoContentSig)
   const lockVideoSig = () => {
     const sig = computeVideoContentSig(shots, entryMeta, reqSummary || requirement)

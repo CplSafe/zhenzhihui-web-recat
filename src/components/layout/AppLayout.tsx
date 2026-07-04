@@ -79,6 +79,8 @@ export default function AppLayout(props: AppLayoutProps) {
   // 全局脏状态（对应原 sharedDirtyState）。
   const dirty = useUiStore((s) => s.dirty)
   const setDirty = useUiStore((s) => s.setDirty)
+  const workspaceSwitchLocked = useUiStore((s) => s.workspaceSwitchLocked)
+  const workspaceSwitchLockReason = useUiStore((s) => s.workspaceSwitchLockReason)
 
   // authSession 注入 store（App → useAuth → store）。
   useEffect(() => {
@@ -194,6 +196,10 @@ export default function AppLayout(props: AppLayoutProps) {
 
   // 切换活跃空间：store 改 override，workspaceId 变化由下方 effect 统一刷新订阅/钱包。
   function switchWorkspace(id: any) {
+    if (workspaceSwitchLocked) {
+      showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
+      return
+    }
     switchWorkspaceAction(id)
     if (mobileDrawerOpen) setMobileDrawerOpen(false)
     if (isCreativeWorkbench || isCreativeEntry) {

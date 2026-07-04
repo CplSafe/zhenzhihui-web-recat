@@ -1,6 +1,6 @@
 /*
   PersonalCenterModal — 「个人中心」个人资料弹窗(对齐 Figma「设置-个人中心」1391:9020)。
-  左侧头像(可换,支持 JPG/PNG ≤2MB 本地预览)+ 右侧昵称(可改,x/6)/ 账号(只读不可改)。
+  左侧头像(可换,支持 JPG/PNG ≤2MB 本地预览)+ 右侧昵称(可改,x/10)/ 账号(只读不可改)。
   昵称保存走 PATCH /api/v1/me/profile(与团队管理里的改名同一接口),保存后刷新会话内当前用户。
   头像:后端暂无「设置头像」接口 → 选中后本地预览 + 保存时乐观写入会话内 user.avatar(刷新前生效)。
 */
@@ -11,8 +11,8 @@ import { useCurrentUser, useWorkspaceSessionStore } from '@/stores/workspaceSess
 import { useToast } from '@/composables/useToast'
 import './PersonalCenterModal.css'
 
-// 昵称最大长度(Figma 计数器为 x/6)
-const NAME_MAX = 6
+// 昵称最大长度(Figma 计数器为 x/10)
+const NAME_MAX = 10
 
 // 递归深搜会话/用户对象里任意名为 mobile/phone/tel 的字段(/me 的手机号字段路径不固定)
 function pickMobile(obj: any): string {

@@ -20,6 +20,7 @@ import {
   setActiveWorkspaceId,
   updateWorkspace,
 } from '../api/business'
+import { listWorkspaceMembers } from '../api/auth'
 import { setSmartDraftUserScope } from '../utils/smartDraft'
 import {
   buildModelPlanCandidatesFromBillingPlans,
@@ -29,6 +30,41 @@ import {
 
 const toId = (value: any): number => Number(value) || 0
 const findById = (list: any[], id: number) => list.find((w) => toId(w?.id) === id) || null
+const dedupeWorkspaces = (...groups: any[]): any[] => {
+  const merged = new Map<number, any>()
+  groups.forEach((group) => {
+    const items = Array.isArray(group) ? group : group ? [group] : []
+    items.forEach((item) => {
+      const id = toId(item?.id)
+      if (!id) return
+      if (!merged.has(id)) {
+        merged.set(id, item)
+        return
+      }
+      const prev = merged.get(id)
+      merged.set(id, prev === item ? prev : { ...prev, ...item })
+    })
+  })
+  return [...merged.values()]
+}
+const normalizeWorkspaceStatus = (workspace: any): string =>
+  String(workspace?.status || workspace?.workspace_status || workspace?.workspaceStatus || '')
+    .trim()
+    .toLowerCase()
+const isVisibleWorkspace = (workspace: any): boolean => {
+  if (toId(workspace?.id) <= 0) return false
+  const status = normalizeWorkspaceStatus(workspace)
+  if (!status) return true
+  return !/(^invited$|invite_pending|pending_invite|member_pending|join_pending|pending_join|not_joined|left|removed|disbanded|deleted|inactive|disabled)/.test(
+    status,
+  )
+}
+const sanitizeWorkspaceList = (list: any[]): any[] =>
+  dedupeWorkspaces((Array.isArray(list) ? list : []).filter(isVisibleWorkspace))
+const deriveSessionWorkspaces = (session: any): any[] =>
+  sanitizeWorkspaceList(
+    dedupeWorkspaces(session?.workspaces, session?.workspace, session?.currentWorkspace, session?.current_workspace),
+  )
 const pickWorkspaceId = (payload: any): number => {
   const candidates = [
     payload?.workspace?.id,
@@ -81,11 +117,13 @@ export interface WorkspaceSessionState {
   currentWallet: any
   billingPlans: any[]
   billingPlanCandidates: any[]
+  currentWorkspaceMember: any
 
   setAuthSession: (session: any) => void
   loadSubscriptionLabel: () => Promise<void>
   ensureModelPlanCandidatesLoaded: () => Promise<void>
   loadWorkspaces: () => Promise<void>
+  loadCurrentWorkspaceMember: (workspaceId?: any) => Promise<any>
   switchWorkspace: (id: any) => void
   createTeam: (name: string) => Promise<any>
   renameTeam: (id: any, name: string) => Promise<any>
@@ -117,6 +155,9 @@ export const deriveCurrentUser = (s: S): any => s.authSession?.user || null
 export const deriveWorkspaceId = (s: S): number => toId(deriveCurrentWorkspace(s)?.id)
 
 export const deriveCurrentMember = (s: S): any => {
+  const activeMember = s.currentWorkspaceMember || null
+  if (activeMember) return activeMember
+
   const member = s.authSession?.currentMember || null
   if (!member) return null
 
@@ -211,17 +252,46 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     currentWallet: null,
     billingPlans: [],
     billingPlanCandidates: [],
+    currentWorkspaceMember: null,
 
     setAuthSession: (session) => {
       clearWorkspaceScopedState()
       if (!session) {
-        set({ authSession: null, activeWorkspaceOverrideId: 0, userWorkspaces: [] })
+        set({ authSession: null, activeWorkspaceOverrideId: 0, userWorkspaces: [], currentWorkspaceMember: null })
         return
       }
-      set({ authSession: session })
+      const normalizedSession = { ...session, workspaces: deriveSessionWorkspaces(session) }
+      // #region debug-point D:session-workspaces
+      fetch('http://127.0.0.1:7777/event', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: 'workspace-list-missing',
+          runId: 'post-fix',
+          hypothesisId: 'D',
+          location: 'workspaceSession.ts:setAuthSession',
+          msg: '[DEBUG] normalized session workspace fallback prepared',
+          data: {
+            rawWorkspaceCount: Array.isArray(session?.workspaces) ? session.workspaces.length : -1,
+            normalizedWorkspaceCount: normalizedSession.workspaces.length,
+            normalizedWorkspaces: normalizedSession.workspaces.slice(0, 10).map((item: any) => ({
+              id: item?.id,
+              name: item?.name,
+              type: item?.type,
+            })),
+            currentWorkspace: session?.currentWorkspace || session?.current_workspace || session?.workspace || null,
+          },
+          ts: Date.now(),
+        }),
+      }).catch(() => {})
+      // #endregion
+      set({
+        authSession: normalizedSession,
+        userWorkspaces: normalizedSession.workspaces || [],
+        currentWorkspaceMember: normalizedSession.currentMember || null,
+      })
 
       const savedWs = readSavedActiveWs(toId(session?.user?.id))
-      const nextWorkspaceId = pickCurrentWorkspaceIdFromSession(session)
+      const nextWorkspaceId = pickCurrentWorkspaceIdFromSession(normalizedSession)
       if (savedWs > 0) {
         // 恢复上次选中的空间(刷新前的);若该空间已不属于你,loadWorkspaces 会校验并清掉回落。
         set({ activeWorkspaceOverrideId: savedWs })
@@ -240,10 +310,77 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         return
       }
       set({ currentSubscription: null, currentWallet: null })
-      const [sub, wal] = await Promise.all([getSubscription(id).catch(() => null), getWallet(id).catch(() => null)])
+      const [sub, wal] = await Promise.all([
+        getSubscription(id).catch(() => null),
+        getWallet(id).catch(() => null),
+        get()
+          .loadCurrentWorkspaceMember(id)
+          .catch(() => null),
+      ])
       if (deriveWorkspaceId(get()) !== id) return
       set({ currentSubscription: sub, currentWallet: wal })
       await get().ensureModelPlanCandidatesLoaded()
+    },
+
+    loadCurrentWorkspaceMember: async (workspaceId) => {
+      const targetId = toId(workspaceId) || deriveWorkspaceId(get())
+      const userId = toId(get().authSession?.user?.id)
+      if (!targetId || !userId) {
+        set({ currentWorkspaceMember: null })
+        return null
+      }
+      try {
+        const members = await listWorkspaceMembers(targetId)
+        const list = Array.isArray(members) ? members : []
+        const nextMember = list.find((member: any) => toId(member?.user_id || member?.userId) === userId) || null
+        // #region debug-point C:load-current-member
+        fetch('http://127.0.0.1:7777/event', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId: 'workspace-list-missing',
+            runId: 'post-fix',
+            hypothesisId: 'C',
+            location: 'workspaceSession.ts:loadCurrentWorkspaceMember:success',
+            msg: '[DEBUG] active workspace member resolved',
+            data: {
+              workspaceId: targetId,
+              memberCount: list.length,
+              currentMember: nextMember
+                ? {
+                    userId: nextMember.user_id || nextMember.userId || 0,
+                    workspaceId: nextMember.workspace_id || nextMember.workspaceId || 0,
+                    role: nextMember.workspace_role || nextMember.workspaceRole || nextMember.role || '',
+                  }
+                : null,
+            },
+            ts: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
+        if (deriveWorkspaceId(get()) === targetId) {
+          set({ currentWorkspaceMember: nextMember })
+        }
+        return nextMember
+      } catch {
+        // #region debug-point C:load-current-member-error
+        fetch('http://127.0.0.1:7777/event', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId: 'workspace-list-missing',
+            runId: 'post-fix',
+            hypothesisId: 'C',
+            location: 'workspaceSession.ts:loadCurrentWorkspaceMember:catch',
+            msg: '[DEBUG] active workspace member load failed',
+            data: { workspaceId: targetId },
+            ts: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
+        if (deriveWorkspaceId(get()) === targetId) {
+          set({ currentWorkspaceMember: null })
+        }
+        return null
+      }
     },
 
     ensureModelPlanCandidatesLoaded: async () => {
@@ -267,16 +404,79 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     // 拉取真实空间列表（侧边栏团队组）。
     loadWorkspaces: async () => {
       try {
-        const items = extractPageItems(await listWorkspaces())
-        set({ userWorkspaces: items })
+        const raw = await listWorkspaces()
+        // #region debug-point A:load-workspaces
+        fetch('http://127.0.0.1:7777/event', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId: 'workspace-list-missing',
+            runId: 'post-fix',
+            hypothesisId: 'A',
+            location: 'workspaceSession.ts:loadWorkspaces:before-parse',
+            msg: '[DEBUG] listWorkspaces returned payload',
+            data: {
+              isArray: Array.isArray(raw),
+              keys: raw && typeof raw === 'object' ? Object.keys(raw).slice(0, 12) : [],
+              itemsLength: Array.isArray(raw?.items) ? raw.items.length : -1,
+              listLength: Array.isArray(raw?.list) ? raw.list.length : -1,
+              recordsLength: Array.isArray(raw?.records) ? raw.records.length : -1,
+              dataLength: Array.isArray(raw?.data) ? raw.data.length : -1,
+            },
+            ts: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
+        const items = sanitizeWorkspaceList(extractPageItems(raw))
+        // #region debug-point B:parsed-workspaces
+        fetch('http://127.0.0.1:7777/event', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId: 'workspace-list-missing',
+            runId: 'post-fix',
+            hypothesisId: 'B',
+            location: 'workspaceSession.ts:loadWorkspaces:after-parse',
+            msg: '[DEBUG] extractPageItems parsed workspaces',
+            data: {
+              parsedLength: items.length,
+              workspaceNames: items.slice(0, 10).map((item: any) => ({
+                id: item?.id,
+                name: item?.name,
+                type: item?.type,
+              })),
+            },
+            ts: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
+        const fallbackWorkspaces = deriveSessionWorkspaces(get().authSession)
+        const nextWorkspaces = items.length ? items : fallbackWorkspaces
+        set({ userWorkspaces: nextWorkspaces })
         const s = get()
         const preferredId = toId(s.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(s)
-        if (preferredId && !findById(items, preferredId) && s.activeWorkspaceOverrideId) {
+        if (preferredId && !findById(nextWorkspaces, preferredId) && s.activeWorkspaceOverrideId) {
           // 存档指向的空间已不属于你(被移出/解散)→ 清 override 并清存档,回落默认空间
           set({ activeWorkspaceOverrideId: 0 })
           saveActiveWs(toId(s.authSession?.user?.id), 0)
         }
-      } catch {
+      } catch (error: any) {
+        // #region debug-point A:load-workspaces-error
+        fetch('http://127.0.0.1:7777/event', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId: 'workspace-list-missing',
+            runId: 'post-fix',
+            hypothesisId: 'A',
+            location: 'workspaceSession.ts:loadWorkspaces:catch',
+            msg: '[DEBUG] loadWorkspaces failed',
+            data: {
+              message: error?.message || '',
+              status: Number(error?.status || 0) || null,
+              code: error?.code || '',
+            },
+            ts: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
         return
       }
     },
@@ -285,9 +485,38 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     switchWorkspace: (id) => {
       const target = toId(id)
       if (!target || target === deriveWorkspaceId(get())) return
+      // #region debug-point C:switch-workspace
+      fetch('http://127.0.0.1:7777/event', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: 'workspace-list-missing',
+          runId: 'post-fix',
+          hypothesisId: 'C',
+          location: 'workspaceSession.ts:switchWorkspace',
+          msg: '[DEBUG] switchWorkspace requested',
+          data: {
+            currentWorkspaceId: deriveWorkspaceId(get()),
+            targetWorkspaceId: target,
+            currentMemberWorkspaceId: Number(
+              get().authSession?.currentMember?.workspace_id ??
+                get().authSession?.currentMember?.workspaceId ??
+                get().authSession?.currentMember?.workspace?.id ??
+                0,
+            ),
+            currentMemberRole:
+              get().authSession?.currentMember?.workspace_role ||
+              get().authSession?.currentMember?.workspaceRole ||
+              get().authSession?.currentMember?.role ||
+              '',
+          },
+          ts: Date.now(),
+        }),
+      }).catch(() => {})
+      // #endregion
       clearWorkspaceScopedState()
       set({ activeWorkspaceOverrideId: target })
       saveActiveWs(toId(get().authSession?.user?.id), target) // 持久化,刷新后恢复
+      void get().loadCurrentWorkspaceMember(target)
     },
 
     // 创建团队：返回新建结果（toast/错误处理交给调用方）。
