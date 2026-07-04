@@ -1,0 +1,217 @@
+/* 营销思路拆解 · 结构化表格(Figma 715:5902;整体收紧紧凑) */
+/* 去掉外框 border + overflow:hidden(后者会影响整步滚动);整步在 .smart__body 内自然滚动 */
+.mkt {
+  border-radius: 12px;
+  background: #fff;
+}
+
+/* 表头:左「营销点拆分」+ 右「核心内容」,浅蓝底 */
+.mktHead {
+  display: flex;
+  border-bottom: 1px solid #d9d9d9;
+}
+.mktHeadCat,
+.mktHeadMain {
+  background: #f3f6fe;
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 11px 0;
+}
+.mktHeadCat {
+  flex: 0 0 130px;
+  text-align: center;
+  border-right: 1px solid #d9d9d9;
+}
+.mktHeadMain {
+  flex: 1;
+  text-align: center;
+}
+
+/* 分类行:左分类标签(竖直居中,跨该类的字段)+ 右字段列 */
+.mktRow {
+  display: flex;
+}
+.mktRow:not(:last-child) {
+  border-bottom: 1px solid #d9d9d9;
+}
+.mktCat {
+  flex: 0 0 130px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid #d9d9d9;
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+}
+.mktFields {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 单个维度 */
+.mktField {
+  padding: 12px 20px;
+}
+.mktField:not(:last-child) {
+  border-bottom: 1px solid #d9d9d9;
+}
+.mktFieldHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.mktFieldLabel {
+  color: #333;
+  font-size: 14px;
+  font-weight: 600;
+}
+.mktFieldHint {
+  color: #909090;
+  font-size: 12px;
+}
+/* 描述行:左侧描述文本,右侧已选标签徽章 */
+/* 描述 + 已选徽章同一行,徽章紧跟句末(左对齐,不右靠) */
+.mktDescRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+}
+.mktPickedWrap {
+  flex: 0 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* 已选标签徽章:放在描述右侧,点击可移除 */
+.mktPicked {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 6px 0 10px;
+  background: rgba(31, 207, 169, 0.1);
+  border: 1px solid rgba(31, 207, 169, 0.4);
+  border-radius: 11px;
+  color: #11a98a;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+  &:hover {
+    background: rgba(31, 207, 169, 0.18);
+    border-color: #1fcfa9;
+  }
+}
+.mktPickedX {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+/* 内容框 */
+.mktBox {
+  margin-top: 8px;
+  background: #f8f9fa;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.mktDesc {
+  display: block;
+  /* 按内容宽度自适应:句子多长就多宽,徽章才能紧跟句末。不支持 field-sizing 的浏览器回退占满整行 */
+  field-sizing: content;
+  flex: 0 1 auto;
+  min-width: 120px;
+  max-width: 100%;
+  width: auto;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: #333;
+  font-size: 13px;
+  line-height: 1.6;
+  font-family: inherit;
+  overflow: hidden;
+  &::placeholder {
+    color: #b0b4ba;
+  }
+}
+/* 不支持 field-sizing 时:textarea 占满整行,徽章自然落到下一行紧跟其后(仍在句子区域内) */
+@supports not (field-sizing: content) {
+  .mktDesc {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}
+
+/* 候选标签 + 换一批 */
+.mktTags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mktTag {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 12px;
+  background: #f6f6f6;
+  border: 1px solid #d9d9d9;
+  border-radius: 13px;
+  color: #909090;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+  &:hover {
+    border-color: #1fcfa9;
+    color: #11a98a;
+  }
+}
+/* 已被选中的候选标签:高亮成与已选徽章一致的绿色,提示「已添加」 */
+.mktTagActive {
+  background: rgba(31, 207, 169, 0.1);
+  border-color: #1fcfa9;
+  color: #11a98a;
+  font-weight: 600;
+  &:hover {
+    background: rgba(31, 207, 169, 0.18);
+    border-color: #1fcfa9;
+    color: #11a98a;
+  }
+}
+.mktRefresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: #909090;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s;
+  &:hover:not(:disabled) {
+    color: #11a98a;
+  }
+  &:disabled {
+    cursor: default;
+    opacity: 0.7;
+  }
+}
+.mktSpin {
+  animation: mktspin 0.7s linear infinite;
+}
+@keyframes mktspin {
+  to {
+    transform: rotate(360deg);
+  }
+}

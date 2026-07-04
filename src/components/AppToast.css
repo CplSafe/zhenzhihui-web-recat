@@ -1,0 +1,66 @@
+.toast-message {
+  position: fixed;
+  /* 高于会员中心弹窗(2100),确保支付/操作反馈始终可见 */
+  z-index: 2200;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  min-width: 150px;
+  max-width: min(440px, calc(100vw - 32px));
+  min-height: 42px;
+  align-items: flex-start;
+  gap: 8px;
+  box-sizing: border-box;
+  border: 1px solid #2fbd66;
+  border-radius: 10px;
+  padding: 9px 14px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 8px 20px rgba(18, 42, 72, 0.1);
+  color: #333333;
+  font-size: 14px;
+  line-height: 20px;
+  /* 长文案换行,不再横向撑破(原 nowrap 导致溢出) */
+  white-space: normal;
+  word-break: break-word;
+  animation: toast-enter 0.2s ease;
+}
+
+.toast-message.success {
+  border-color: #2fbd66;
+}
+
+.toast-message.error {
+  border-color: #ff4d4f;
+}
+
+.toast-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  /* 多行文案时图标对齐首行(line-height 20 与 icon 18 居中差 1px) */
+  margin-top: 1px;
+  place-items: center;
+}
+
+.toast-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: #2fbd66;
+}
+
+.toast-message.error .toast-icon svg {
+  fill: #ff4d4f;
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}

@@ -1,0 +1,373 @@
+/* 分镜脚本(表格式,还原 Figma 299:2524) */
+.sbTable {
+  background: #fff;
+  border-radius: 24px;
+  box-shadow:
+    0 1px 6px rgba(0, 0, 0, 0.04),
+    0 4px 32px rgba(96, 224, 196, 0.12);
+  overflow: hidden;
+}
+
+/* 表头:青色渐变 + 列分隔 */
+.sbHead {
+  display: flex;
+  align-items: stretch;
+  background: linear-gradient(90deg, #f0fdf9 0%, #e8faf6 100%);
+  border-bottom: 0.8px solid rgba(96, 224, 196, 0.1);
+}
+.sbHeadCell {
+  padding: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  box-sizing: border-box;
+  border-right: 0.8px solid rgba(96, 224, 196, 0.15);
+}
+.sbHead .sbHeadCell:last-child {
+  border-right: none;
+}
+/* 准备素材表头:标题 + 右侧「AI一键生成图片」 */
+.sbHead .sbColMat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* AI一键生成图片(表头药丸,按 Figma:浅青描边 + 闪光图标 + 青字) */
+.sbHeadGen {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid rgba(96, 224, 196, 0.55);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  color: #2bb89b;
+  white-space: nowrap;
+  background: #fff;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sbHeadGen:hover:not(:disabled) {
+  background: rgba(96, 224, 196, 0.1);
+  border-color: #60e0c4;
+}
+.sbHeadGen:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.sbHeadGenIcon {
+  width: 16px;
+  height: 16px;
+}
+
+/* 分镜脚本表尾的「重新生成」 */
+.sbRegen {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #333;
+  cursor: pointer;
+  transition: opacity 0.15s;
+
+  img {
+    display: block;
+    width: 16px;
+    height: 16px;
+  }
+
+  &:hover:not(:disabled) {
+    opacity: 0.7;
+  }
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+/* 列宽 */
+.sbColNo {
+  flex: 0 0 120px;
+}
+.sbColDur {
+  flex: 0 0 100px;
+}
+.sbColDesc {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 24px;
+  padding-right: 24px;
+}
+.sbColMat {
+  flex: 0 0 340px;
+}
+
+/* 行 */
+.sbRow {
+  display: flex;
+  align-items: stretch;
+  min-height: 80px;
+  border-bottom: 0.8px solid #edf6f4;
+}
+.sbBody .sbRow:last-child {
+  border-bottom: none;
+}
+.sbCell {
+  padding: 16px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+}
+/* 画面描述:有「准备素材」列时才显示右分隔;末列不显示 */
+.sbColDesc.sbCell {
+  align-items: flex-start;
+  padding-top: 20px;
+  padding-bottom: 20px;
+  border-right: 0.8px solid #edf6f4;
+}
+.sbRow .sbCell:last-child {
+  border-right: none;
+}
+.sbColMat.sbCell {
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  padding: 4px 20px;
+}
+
+/* 镜头编号:圆形序号 + 镜头名 */
+.sbColNo.sbCell {
+  gap: 8px;
+}
+.sbNoBadge {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #333;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.sbNoLabel {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+/* 时长:青色药丸(内含可编辑数值) */
+.sbColDur.sbCell {
+  align-items: center;
+}
+.sbDurPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: rgba(96, 224, 196, 0.1);
+  border: 0.8px solid rgba(96, 224, 196, 0.2);
+  border-radius: 8px;
+  color: #1a9d87;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 16px;
+}
+.sbDurVal {
+  color: #1a9d87;
+  min-width: 8px;
+}
+.sbDurUnit {
+  color: #1a9d87;
+}
+
+/* 画面描述 */
+.sbDesc {
+  width: 100%;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #555;
+}
+
+/* 表尾:共 N 个镜头 */
+.sbFoot {
+  padding: 12px 24px;
+  background: #f8fdfb;
+  border-top: 0.8px solid rgba(96, 224, 196, 0.15);
+  font-size: 12px;
+  font-weight: 500;
+  color: #333;
+}
+
+/* ── 准备素材列(还原 Figma 313:5073):每个主体一行,左=居中的@名称+AI自动生成药丸,右=上传图片框 ── */
+.sbcMatList {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+/* 主体之间有分隔线,最后一行无 */
+.sbcMatRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 0.8px solid #edf6f4;
+}
+.sbcMatRow:last-child {
+  border-bottom: none;
+}
+
+.sbcMatInfo {
+  flex: 0 0 102px;
+  width: 102px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.sbcMatName {
+  max-width: 100%;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 19.5px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* AI自动生成:浅青描边药丸(可点击,按画面描述出图) */
+.sbcMatBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 0.8px solid rgba(96, 224, 196, 0.3);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  color: #60e0c4;
+  white-space: nowrap;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sbcMatBadge:hover:not(:disabled) {
+  background: rgba(96, 224, 196, 0.1);
+  border-color: rgba(96, 224, 196, 0.6);
+}
+/* 去掉图片的「×」(缩略图右上角):默认隐藏,滑过该素材行才显示 */
+.sbcMatImgX {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+/* 鼠标滑过该素材行 → 显示「去图 ×」 */
+.sbcMatRow:hover .sbcMatImgX {
+  opacity: 1;
+  pointer-events: auto;
+}
+.sbcMatBadge:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.sbcMatBadgeIcon {
+  display: block;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+/* 上传图片框:80×80 虚线圆角(14px),浅青底 */
+.sbcMatUpload {
+  flex: 0 0 auto;
+  width: 80px;
+  height: 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1.6px dashed rgba(96, 224, 196, 0.4);
+  border-radius: 14px;
+  background: #f0fdf9;
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: rgba(96, 224, 196, 0.7);
+    background: #e8faf6;
+  }
+}
+.sbcMatUploadImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sbcMatUploadText {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 15px;
+  color: rgba(96, 224, 196, 0.5);
+}
+/* AI 自动出图中:小转圈 */
+.sbcMatSpin {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(96, 224, 196, 0.25);
+  border-top-color: #1fcfa9;
+  border-radius: 50%;
+  animation: sbc-spin 0.7s linear infinite;
+}
+@keyframes sbc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 主体后台生成中:上传框内转圈 */
+.sbcMatSpin {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: sbcMatSpin 0.7s linear infinite;
+}
+@keyframes sbcMatSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}

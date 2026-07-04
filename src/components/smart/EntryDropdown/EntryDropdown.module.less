@@ -1,0 +1,96 @@
+@import '../styles/mixins.less';
+
+.entrydd {
+  position: relative;
+}
+
+.btn {
+  .pill-base();
+  gap: 6px;
+
+  &.open .caret {
+    transform: rotate(180deg);
+  }
+}
+
+.val {
+  font-size: 14px;
+  color: #333;
+}
+
+.caret {
+  color: #888;
+  transition: transform 0.15s ease;
+}
+
+/* 清空叉号(可清空下拉,已选中时显示) */
+.clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: #999;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: #555;
+  }
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 120px;
+  background: #fff;
+  border: 1px solid #eef0f2;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 30;
+}
+
+.opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  white-space: nowrap; /* 选项不换行,菜单按最长项自适应宽度 */
+  cursor: pointer;
+
+  &:hover {
+    background: #f5f6f8;
+  }
+
+  &.active {
+    color: #11a98a;
+    font-weight: 600;
+    background: #ebfffb;
+  }
+}
+
+/* 多选项:左侧勾选标记 + 文案 */
+.optMulti {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.check {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: #11a98a;
+}

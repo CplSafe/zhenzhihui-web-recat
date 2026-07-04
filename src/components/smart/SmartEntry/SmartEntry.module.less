@@ -1,0 +1,489 @@
+@import '../styles/mixins.less';
+
+/* 智能成片 入口/需求输入页 */
+.screate {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 隐藏滚动条但保留滚动(滚轮/触控板/键盘照常):滚动条不占宽度,
+     比例/时长下拉展开撑高内容时不再「出滚动条 → 挤压宽度 → 横向回流抖动」。纯视觉,不影响功能。 */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* 旧 Edge/IE */
+  &::-webkit-scrollbar {
+    display: none; /* Chrome/Safari/新 Edge */
+  }
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 黄金分割:内容居上约 38.2%(1 - 0.618),比居中略上,符合常见落地页视觉重心 */
+  justify-content: flex-start;
+  padding: clamp(56px, 18vh, 220px) 24px 48px;
+  background: #f8f9fa;
+}
+
+/* 「制作新视频」(Figma 79:4049 → 652:2494):纯文字,与 Tab 同一行、右对齐卡片右缘。点击初始化为全新空白页 */
+.newVideoBtn {
+  position: absolute;
+  /* 与 Tab 药丸同一视觉行(.tabs 用 bottom:-20px 整体下移,故按钮也相应下移对齐) */
+  top: 30px;
+  right: 15px;
+  z-index: 2;
+  padding: 6px 4px;
+  border: none;
+  background: transparent;
+  color: #333;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.0625em;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.newVideoBtn:hover {
+  color: #1fcfa9;
+}
+
+/* 背景容器:Canvas 弥散背景铺满(实现见 EntryCanvasBg) */
+.bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.title {
+  position: relative;
+  z-index: 1;
+  margin: 0 0 34px;
+  font-size: clamp(28px, 3.6vw, 46px);
+  font-weight: 500;
+  color: #333333;
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+
+.panel {
+  position: relative;
+  z-index: 1;
+  width: min(920px, 94%);
+}
+
+/* Tab(浅灰标签栏:左边缘与卡片齐边、底边接卡片;选中态为白色药丸) */
+.tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 26px;
+  margin: 0;
+  background: rgba(244, 244, 244, 0.6);
+  border-radius: 8px 8px 0 0;
+  position: relative;
+  z-index: 0;
+  bottom: -20px;
+}
+
+.tab {
+  padding: 10px 23px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: #666666;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover:not(.active) {
+    color: #333333;
+  }
+
+  &.active {
+    background: #fff;
+    color: #333333;
+    /* 四周柔和阴影,呈白色药丸质感(对齐 effect 0 0 10px) */
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  }
+}
+
+/* 输入卡片 */
+.card {
+  background: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 30px;
+  padding: 20px 24px;
+  box-shadow:
+    0 24px 60px rgba(31, 41, 55, 0.1),
+    0 2px 8px rgba(31, 41, 55, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+}
+
+.cardBody {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-height: 108px;
+}
+
+.upload {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+
+  &:hover {
+    filter: brightness(0.97);
+    transform: scale(1.03);
+  }
+}
+
+.uploadCard {
+  display: block;
+}
+
+/* 已选图片缩略图行(独立成行,可换行) */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.add {
+  flex: 0 0 auto;
+  width: 76px;
+  height: 76px;
+  border: 1px dashed #dcdfe4;
+  border-radius: 12px;
+  background: #fafbfc;
+  color: #b0b4ba;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: #1fcfa9;
+    color: #1fcfa9;
+    background: #f3fffc;
+  }
+}
+
+.thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 76px;
+  height: 76px;
+  border-radius: 12px;
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.thumbX {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 输入区:高亮层(渲染 @图片N 绿色)在底,透明文字的 textarea 叠在上,光标可见 */
+.inputWrap {
+  flex: 1 1 240px;
+  min-width: 0;
+  position: relative;
+  min-height: 108px;
+}
+
+.inputHl,
+.input {
+  font-size: 15px;
+  line-height: 1.7;
+  font-family: inherit;
+  padding: 2px 0 0;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.inputHl {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #333;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.refTag {
+  color: #1fcfa9;
+  font-weight: 600;
+}
+
+/* 选中 SKILL 后插入输入框的提示语「使用×××skills帮我优化」着色 */
+.skillTag {
+  color: #11a98a;
+  font-weight: 600;
+}
+
+.input {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  min-height: 108px;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: transparent; /* 文字透明,显示底层高亮文本 */
+  caret-color: #333; /* 但光标保持可见 */
+
+  /* 聚焦不显示边框:已由 tokens.css 全局 input/textarea:focus-visible 统一处理 */
+  &::placeholder {
+    color: #909090;
+    -webkit-text-fill-color: #909090; /* color:transparent 时仍显示占位符 */
+  }
+}
+
+/* @ 素材选择:在 @ 按钮附近(上方)弹出,展示历史上传素材 */
+.atAnchor {
+  position: relative;
+  display: inline-flex;
+}
+.atMask {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+.atMenu {
+  position: absolute;
+  z-index: 31;
+  bottom: calc(100% + 8px); /* 在 @ 按钮上方 */
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  padding: 10px;
+}
+.atMenuTitle {
+  font-size: 12px;
+  color: #8a93a0;
+  margin-bottom: 8px;
+}
+.atMenuGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 300px;
+}
+.atItem {
+  width: 72px;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: border-color 0.15s;
+
+  img {
+    width: 72px;
+    height: 56px;
+    object-fit: cover;
+    display: block;
+  }
+  &:hover {
+    border-color: #1fcfa9;
+  }
+}
+.atItemName {
+  font-size: 11px;
+  color: #333;
+  padding: 3px 0;
+}
+
+/* 工具栏 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  .pill-base();
+}
+
+/* @ 等:略大字号的 pill 按钮 */
+.pillBtn {
+  .pill-base();
+  font-size: 18px;
+  color: #333;
+  padding: 0 14px;
+}
+
+/* AI 引导按钮(青色强调) */
+.guide {
+  .pill-base();
+  border-color: #bdeee3;
+  color: #11a98a;
+  font-weight: 600;
+
+  &:hover:not(:disabled) {
+    background: #1fcfa9;
+    border-color: #1fcfa9;
+    color: #fff;
+  }
+
+  &:disabled {
+    opacity: 0.7;
+    cursor: default;
+  }
+}
+
+.guideSpin {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* 撤销/重做图标按钮 */
+.iconBtn {
+  .pill-base();
+  padding: 0;
+  width: 38px;
+  justify-content: center;
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+    border-color: #eef0f2;
+    color: #b0b4ba;
+    background: #fafbfc;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 发送区:恢复态下「重新生成」+「下一步」并排,右对齐 */
+.sendArea {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 重新生成(恢复态显示):刷新图标 + 文字,无边框(对齐设计) */
+.regen {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: #333;
+  font-size: 16px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: color 0.15s;
+
+  &:hover:not(:disabled) {
+    color: #1fcfa9;
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+/* 发送按钮:绿色圆底 + 白色箭头(可点=品牌绿,不可点=禁用灰) */
+.send {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: #1fcfa9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, filter 0.15s;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.05);
+  }
+
+  &:disabled {
+    background: #d9d9d9;
+    cursor: not-allowed;
+  }
+}
+
+@media (max-width: 560px) {
+  .screate {
+    padding: 36px 14px 40px;
+  }
+
+  .card {
+    border-radius: 18px;
+    padding: 14px;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .send {
+    align-self: flex-end;
+  }
+}

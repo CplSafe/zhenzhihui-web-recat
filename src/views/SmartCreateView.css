@@ -1,0 +1,839 @@
+/* 智能成片 2.1 流程壳子 */
+.smart {
+  display: flex;
+  height: 100vh;
+  /* 视口锁高,内部 body 区滚动(body overflow:hidden 下) */
+  min-height: 100vh;
+  background: #f8f9fa;
+}
+
+.smart__main {
+  position: relative; /* 供「创建新视频」按钮绝对定位到最右上 */
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  /* 允许 flex 子项收缩,使 body 获得有界高度可滚动 */
+  display: flex;
+  flex-direction: column;
+}
+
+/* 创建新视频:流程区最右上(复用入口「制作新视频」样式),点击重置为全新入口、重新走一遍 */
+.smart__newvideo {
+  position: absolute;
+  top: 68px;
+  right: 24px;
+  z-index: 5;
+  padding: 7px 16px;
+  border: 1px solid #1fcfa9;
+  border-radius: 10px;
+  background: #f3fffb;
+  color: #1fcfa9;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.0625em;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background 0.15s;
+}
+.smart__newvideo:hover {
+  color: #11a98a;
+  border-color: #11a98a;
+  background: #e8fbf5;
+}
+
+/* 顶栏 */
+.smart__topbar {
+  height: 56px;
+  flex: 0 0 56px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  padding: 0 28px;
+  background: #fff;
+  border-bottom: 1px solid #eef0f4;
+}
+
+.smart__brand-spacer {
+  flex: 1;
+}
+
+.smart__top-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.smart__top-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #4b5563;
+  font-size: 14px;
+}
+
+.smart__top-link:hover {
+  color: #1fcfa9;
+}
+
+.smart__user {
+  font-size: 14px;
+  color: #111827;
+  font-weight: 500;
+}
+
+/* 进度条 */
+.smart__progress {
+  background: #fff;
+  padding: 22px 28px 18px;
+  border-bottom: 1px solid #eef0f4;
+}
+
+/* 项目名:单独一行,横向内边距与正文 .smart__body 一致(28px) */
+.smart__projbar {
+  padding: 16px 28px 4px;
+}
+
+/* 内层与正文(.smart__script)同宽居中(1240),使项目名与「我的描述」左缘对齐 */
+.smart__projbar-inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.smart__home-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 14px;
+  padding: 0;
+}
+
+.smart__home-link:hover {
+  color: #1fcfa9;
+}
+
+.smart__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 500;
+  font-family:
+    'PingFang SC',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  line-height: 1;
+  padding: 0;
+}
+
+.smart__name-label {
+  color: #909090;
+}
+
+.smart__name-text {
+  color: #333333;
+}
+
+.smart__name-edit {
+  display: block;
+  margin-left: 4px;
+  opacity: 0.85;
+}
+
+.smart__name:hover .smart__name-edit {
+  opacity: 1;
+}
+
+.smart__name-naming {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #11a98a;
+}
+
+.smart__name-input {
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+  border: 1px solid #1fcfa9;
+  border-radius: 6px;
+  padding: 4px 10px;
+  outline: none;
+  min-width: 220px;
+}
+
+/* 步骤内容 */
+.smart__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* 常驻滚动条占位:切换分镜/内容高度变化时不再因滚动条出现/消失而整体横向抖动 */
+  scrollbar-gutter: stable;
+  padding: 20px 28px;
+}
+
+.smart__placeholder {
+  height: 100%;
+  min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px;
+  border: 1.5px dashed #d6dae1;
+  border-radius: 14px;
+  background: #fff;
+  color: #8a93a0;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.smart__placeholder--sm {
+  min-height: 200px;
+  padding: 24px;
+  font-size: 13px;
+}
+
+.smart__placeholder--xs {
+  min-height: 120px;
+  padding: 18px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+/* 分镜流式生成中:轻量内联提示(青色小转圈 + 文案),不占大块空间 */
+.smart__gen-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 0;
+  font-size: 13px;
+  color: #11a98a;
+}
+.smart__gen-spin {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(31, 207, 169, 0.25);
+  border-top-color: #1fcfa9;
+  border-radius: 50%;
+  animation: smart-spin 0.7s linear infinite;
+}
+@keyframes smart-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 第一步:创作需求输入 */
+.smart__script {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+/* 脚本页:需求 prompt + 素材 + 完成标题 */
+.smart__script {
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+/* 「我的描述:」标签(Figma 299-2310) */
+.smart__prompt-label {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 20px;
+  color: #333;
+  margin-bottom: 12px;
+}
+
+.smart__prompt {
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.7;
+  color: #333;
+  margin-bottom: 16px;
+}
+
+.smart__ref {
+  color: #1fcfa9;
+  font-weight: 600;
+}
+
+/* 我上传的素材:营销思路拆解 / 分镜脚本步顶部陈列入口上传图 */
+.smart__uploads {
+  margin-bottom: 16px;
+}
+.smart__uploads-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+.smart__uploads-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.smart__uploads-item {
+  width: 84px;
+  height: 84px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e6e8ef;
+  background: #f5f6fa;
+  flex-shrink: 0;
+}
+.smart__uploads-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.smart__mats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 26px;
+}
+
+.smart__mat {
+  width: 108px;
+  height: 108px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f3f4f6;
+  flex: 0 0 auto;
+}
+
+.smart__mat img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.smart__mat-add {
+  width: 108px;
+  height: 108px;
+  flex: 0 0 auto;
+  border: 1px dashed #dcdfe4;
+  border-radius: 12px;
+  background: #fafbfc;
+  color: #b0b4ba;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.smart__mat-add:hover {
+  border-color: #1fcfa9;
+  color: #1fcfa9;
+}
+
+.smart__script-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 14px;
+}
+
+.smart__script-done-icon {
+  font-size: 18px;
+}
+
+.smart__script-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 40px;
+  border: 1.5px dashed #f0c4c4;
+  border-radius: 14px;
+  background: #fff;
+  color: #e54d42;
+  font-size: 14px;
+}
+
+/* 按 id 加载项目失败的错误态:居中卡片 + 重试/返回 */
+.smart__loaderr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.smart__loaderr-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #fff1f0;
+  color: #cf1322;
+  font-size: 30px;
+  font-weight: 700;
+}
+
+.smart__loaderr-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2329;
+}
+
+.smart__loaderr-msg {
+  max-width: 460px;
+  font-size: 14px;
+  color: #8a8f99;
+  line-height: 1.6;
+}
+
+.smart__loaderr-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+/* 营销思路拆解步:整步填满 body —— 我的描述/标题在上固定,中间表格滚动,底部按钮常驻 */
+.smart__mkt-step {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.smart__marketing {
+  margin-top: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.smart__marketing-title {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #11a98a;
+  margin-bottom: 12px;
+}
+
+/* 建议正文容器:占据剩余空间,内容(拆解表格)超长时在此内部滚动;底部按钮不随之滚动 */
+.smart__marketing-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* 营销建议:可编辑文本域(填满容器,文案超长时内部滚动) */
+.smart__marketing-edit {
+  flex: 1 1 auto;
+  display: block;
+  width: 100%;
+  min-height: 160px;
+  resize: none;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 18px 20px;
+  color: #333;
+  font-size: 15px;
+  line-height: 1.8;
+  font-family: inherit;
+  white-space: pre-wrap;
+  box-sizing: border-box;
+}
+
+.smart__marketing-edit:focus-visible {
+  border-color: #1fcfa9;
+  outline: none;
+}
+
+.smart__marketing-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+/* 创作需求:展示 ≤100 字 AI 摘要,完整需求可展开 */
+.smart__req-readonly {
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #374151;
+}
+
+.smart__req-toggle {
+  margin-top: 8px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: #11a98a;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.smart__req-toggle:hover {
+  text-decoration: underline;
+}
+
+.smart__req-full {
+  margin-top: 8px;
+  background: #f7fffd;
+  border: 1px solid #d5f3ec;
+  border-radius: 12px;
+  padding: 6px 16px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #4b5563;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+/* markdown 排版(创作需求完整版) */
+.smart__md h1,
+.smart__md h2,
+.smart__md h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 12px 0 6px;
+}
+
+.smart__md p {
+  margin: 6px 0;
+}
+
+.smart__md ul,
+.smart__md ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.smart__md li {
+  margin: 3px 0;
+}
+
+.smart__md strong {
+  color: #1f2937;
+}
+
+.smart__req-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0 18px;
+  font-size: 13px;
+  color: #8a93a0;
+}
+
+.smart__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 多列布局(镜头编排 / 视频生成) */
+.smart__cols {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.smart__col {
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.smart__col--list {
+  flex: 0 0 240px;
+}
+
+.smart__col--video {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.smart__col--edit {
+  flex: 0 0 360px;
+}
+
+/* 镜头编排:仅 列表 + 修改框 两列 */
+.smart__cols .smart__col--edit:nth-child(2) {
+  flex: 1 1 auto;
+}
+
+.smart__panel-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 14px;
+}
+
+.smart__panel-hint {
+  font-size: 13px;
+  font-weight: 400;
+  color: #9aa3af;
+}
+
+.smart__video-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  border: 1.5px dashed #d6dae1;
+  border-radius: 12px;
+  color: #8a93a0;
+  font-size: 14px;
+  margin-bottom: 16px;
+  background: #fafbfc;
+}
+
+@media (max-width: 1100px) {
+  .smart__cols {
+    flex-wrap: wrap;
+  }
+
+  .smart__col--list,
+  .smart__col--edit {
+    flex: 1 1 100%;
+  }
+
+  .smart__col--video {
+    flex: 1 1 100%;
+  }
+}
+
+/* 底部总按钮(还原 Figma BottomBar 335:3520:胶囊按钮,幽灵=青色淡底,主按钮=青色渐变) */
+.smart__footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 16px 28px 24px;
+}
+
+/* 提交前积分预估行(占整行,在底部按钮上方居中) */
+.smart__cost {
+  flex-basis: 100%;
+  width: 100%;
+  text-align: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #6b7280;
+}
+.smart__cost--err {
+  color: #e25555;
+}
+/* 「请前往充值积分」链接按钮 */
+.smart__cost-recharge {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #e25555;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.smart__cost-recharge:hover {
+  color: #c43d3d;
+}
+
+/* 内容居中,最大宽度对齐正文 1240 列;分镜脚本/准备素材沿用原样(右对齐) */
+.smart__footer-inner {
+  width: 100%;
+  max-width: 1040px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.smart__footer-group {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* 镜头编排(及生成视频)底栏:整组水平居中,与 VideoStage 统一 */
+.smart__footer--center .smart__footer-inner {
+  justify-content: center;
+}
+
+/* 分镜脚本 / 准备素材底栏:整组靠右 */
+.smart__footer--right .smart__footer-inner {
+  justify-content: flex-end;
+}
+
+/* 上一步 / 下一步 导航箭头:裸图标按钮 + 悬停深色 tooltip(下一步前沿时置灰) */
+.smart__nav-btn {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #333; /* 可操作:黑色 */
+  cursor: pointer;
+  transition:
+    color 0.18s,
+    transform 0.18s;
+}
+
+.smart__nav-btn:hover:not(:disabled) {
+  transform: scale(1.08);
+}
+
+.smart__nav-btn:disabled {
+  color: #c8c8c8; /* 禁止操作:灰色 */
+  cursor: not-allowed;
+}
+
+/* 悬停 tooltip:深色圆角气泡(气泡 + 下方小三角) */
+.smart__nav-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  padding: 7px 16px;
+  background: #2b2b2b;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  white-space: nowrap;
+  border-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+  z-index: 5;
+}
+
+.smart__nav-btn::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  border: 6px solid transparent;
+  border-top-color: #2b2b2b;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+  z-index: 5;
+}
+
+.smart__nav-btn:hover:not(:disabled)::after,
+.smart__nav-btn:hover:not(:disabled)::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.smart__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 130px;
+  height: 40px;
+  border-radius: 20px;
+  font-size: 18px;
+  font-weight: 500;
+  font-family:
+    'PingFang SC',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  cursor: pointer;
+  transition: all 0.18s;
+  padding: 0 24px;
+}
+
+.smart__btn-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
+.smart__btn--ghost {
+  background: rgba(96, 224, 196, 0.1);
+  border: 0.8px solid rgba(96, 224, 196, 0.4);
+  color: #3dcdb0;
+}
+
+.smart__btn--ghost:hover:not(:disabled) {
+  background: rgba(96, 224, 196, 0.18);
+  border-color: rgba(96, 224, 196, 0.6);
+}
+
+.smart__btn--primary {
+  background: linear-gradient(135deg, #38dbb7 0%, #1cbd9c 100%);
+  border: none;
+  color: #fff;
+}
+
+.smart__btn--primary:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+
+/* 文本按钮(重新生成):靠左,无底无框,深灰字 + 深灰刷新图标(Figma 344:4297) */
+.smart__btn--text {
+  min-width: 0;
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: #333333;
+}
+
+.smart__btn--text:hover:not(:disabled) {
+  color: #1cbd9c;
+}

@@ -1,0 +1,572 @@
+.ws-topbar {
+  position: absolute;
+  left: var(--sidebar-width);
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: calc(100% - var(--sidebar-width));
+  height: 70px;
+  box-sizing: border-box;
+  padding: 0 clamp(16px, 1.8vw, 24px);
+  background: #f5f5f5;
+  border-bottom: 1px solid rgba(51, 51, 51, 0.08);
+  transition:
+    left 0.2s ease,
+    width 0.2s ease;
+}
+
+.ws-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: clamp(220px, 24vw, 300px);
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid #d6dbf7;
+  border-radius: 10px;
+  background: #fff;
+  color: #909090;
+  font-size: 13px;
+  transition: border-color 0.15s ease;
+}
+.ws-search:hover {
+  border-color: #5b6be8;
+}
+.ws-search svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: #909090;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.ws-search span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ws-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.ws-link {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font-size: 14px;
+  color: #333;
+  transition: background 0.15s ease;
+}
+.ws-link:hover {
+  background: #ebedfe;
+}
+.ws-link-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  object-fit: contain;
+}
+
+.ws-icon-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: #5a5a68;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.ws-icon-btn:hover {
+  background: #ebedfe;
+  color: #333;
+}
+.ws-btn-icon {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  object-fit: contain;
+}
+.ws-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  background: #ef4444;
+  border-radius: 999px;
+}
+
+/* 用户区：纯头像 + 文字（设计稿 Frame 286，无边框无背景 chip），
+   自成层叠上下文确保 popover 在遮罩之上 */
+.ws-user {
+  position: relative;
+  z-index: 40;
+  isolation: isolate;
+  margin-left: 10px;
+}
+.ws-user-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px;
+  border: none;
+  background: transparent;
+}
+.ws-avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: #5b6be8;
+}
+.ws-user-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.2;
+  max-width: 140px;
+}
+.ws-user-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ws-user-name-row strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-user-plan {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-style: normal;
+  color: #333;
+}
+.ws-vip-badge {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  object-fit: contain;
+}
+.ws-caret {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: #666;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.15s ease;
+}
+.ws-caret.up {
+  transform: rotate(180deg);
+}
+
+/* ===== 个人中心 popover ===== */
+.ws-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 60;
+  width: min(400px, calc(100vw - 24px));
+  padding: 20px;
+  box-sizing: border-box;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(40, 46, 92, 0.18);
+}
+
+.ws-pop-head {
+  position: relative;
+  display: flex;
+  gap: 14px;
+}
+.ws-pop-avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #5b6be8, #9b77f6);
+}
+.ws-pop-id {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ws-pop-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ws-pop-name-row strong {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+.ws-pop-role {
+  padding: 1px 8px;
+  font-size: 12px;
+  color: #5b6be8;
+  background: #d5daff;
+  border-radius: 4px;
+}
+.ws-pop-team {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #333;
+}
+.ws-pop-team svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ws-pop-team-caret {
+  width: 11px;
+  height: 11px;
+}
+.ws-pop-plan {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+.ws-pop-plan-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+  color: #333;
+}
+.ws-pop-expiry {
+  font-size: 12px;
+  color: #666;
+}
+
+.ws-pop-divider {
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid rgba(51, 51, 51, 0.08);
+}
+
+.ws-pop-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.ws-pop-stat {
+  position: relative;
+  padding: 12px 10px 14px;
+  background: #fff;
+  border-radius: 10px;
+}
+.ws-pop-stat-icon {
+  width: 33px;
+  height: 33px;
+  object-fit: contain;
+}
+.ws-pop-stat-label {
+  position: absolute;
+  top: 14px;
+  left: 53px;
+  font-size: 12px;
+  color: #666;
+}
+.ws-pop-stat-value {
+  position: absolute;
+  top: 31px;
+  left: 53px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #5b6be8;
+  font-variant-numeric: tabular-nums;
+}
+.ws-pop-stat-value i {
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 400;
+  color: #666;
+}
+.ws-pop-bar {
+  margin-top: 18px;
+  height: 6px;
+  border-radius: 8px;
+  background: #e3e6f5;
+  overflow: hidden;
+}
+.ws-pop-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 8px;
+  background: #5b6be8;
+  transition: width 0.3s ease;
+}
+.ws-pop-stat-foot {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  color: #666;
+}
+
+.ws-pop-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.ws-pop-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  height: 110px;
+  padding: 12px 10px;
+  border: none;
+  border-radius: 10px;
+  background: #fff;
+  text-align: left;
+  transition: box-shadow 0.15s ease;
+}
+.ws-pop-card:hover {
+  box-shadow: 0 6px 18px rgba(87, 103, 229, 0.12);
+}
+.ws-pop-card-icon {
+  width: 46px;
+  height: 40px;
+  margin-bottom: auto;
+  object-fit: contain;
+}
+.ws-pop-card strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+.ws-pop-card small {
+  margin-top: 3px;
+  font-size: 10px;
+  color: #909090;
+}
+.ws-pop-card-arrow {
+  position: absolute;
+  right: 8px;
+  bottom: 10px;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: #909090;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ws-pop-menu {
+  margin-top: 8px;
+}
+.ws-pop-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: #333;
+}
+.ws-pop-item:hover:not(:disabled) .ws-pop-item-label {
+  color: #5b6be8;
+}
+.ws-pop-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.ws-pop-item-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  object-fit: contain;
+}
+/* 退出登录：Figma 只导出了门箭头字形（无圆底），补一个 #ffe4e4 圆底 + 红色字形 */
+span.ws-pop-item-icon--logout {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #ffe4e4;
+}
+.ws-logout-glyph {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+.ws-pop-item-label {
+  flex: 1;
+  text-align: left;
+}
+.ws-pop-item-arrow {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: #666;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ws-pop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+
+.ws-pop-fade-enter-active,
+.ws-pop-fade-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+.ws-pop-fade-enter-from,
+.ws-pop-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+@media (max-width: 1180px) {
+  .ws-topbar {
+    gap: 12px;
+  }
+
+  .ws-link {
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+
+  .ws-user-meta {
+    max-width: 112px;
+  }
+
+  .ws-user-name-row strong {
+    max-width: 86px;
+  }
+}
+
+@media (max-width: 960px) {
+  .ws-topbar {
+    height: auto;
+    min-height: 70px;
+    flex-wrap: wrap;
+    align-items: center;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .ws-search {
+    flex: 1 1 220px;
+    width: auto;
+    min-width: 0;
+  }
+
+  .ws-actions {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .ws-user {
+    margin-left: 2px;
+  }
+}
+
+/* ≤900px：左侧栏改为抽屉，左上角常驻 LOGO + 汉堡（固定 70px 高、约 88px 宽），
+   顶栏需让出该区域，避免搜索框被汉堡按钮压住。 */
+@media (max-width: 900px) {
+  .ws-topbar {
+    padding-left: 92px;
+  }
+}
+
+@media (max-width: 760px) {
+  .ws-topbar {
+    left: 0;
+    width: 100%;
+    padding-left: 92px;
+    padding-right: 14px;
+  }
+
+  .ws-actions {
+    justify-content: flex-start;
+  }
+
+  .ws-link span {
+    display: none;
+  }
+
+  .ws-link {
+    padding: 7px;
+  }
+
+  .ws-user-meta {
+    display: none;
+  }
+
+  .ws-pop {
+    right: -2px;
+  }
+
+  .ws-pop-stats,
+  .ws-pop-cards {
+    grid-template-columns: 1fr;
+  }
+}

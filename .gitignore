@@ -1,0 +1,44 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+output/
+AGENTS.md
+*.local
+
+# Local env files
+.env
+.env.local
+.env.development
+.env.production
+
+# Playwright local artifacts
+.playwright-cli/
+playwright-report/
+test-results/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 本地代码索引 / 编辑器规则（机器本地，不入库）
+.codegraph/
+.cursor/
+
+# Figma MCP 下载的图片
+figma-images/

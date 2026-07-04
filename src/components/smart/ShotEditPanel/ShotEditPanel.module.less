@@ -1,0 +1,1003 @@
+/* 右侧素材修改面板(镜头编排 / 视频生成 共用) */
+.sedit {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.seditSub {
+  font-size: 12px;
+  color: #9aa3af;
+  margin: 0 0 6px;
+}
+
+.seditSubRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.seditOptimize {
+  border: 1px solid #1fcfa9;
+  background: #fff;
+  color: #11a98a;
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: #e8faf5;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+.seditOptStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #11a98a;
+  margin-top: 6px;
+}
+
+.seditScript .seditTa {
+  min-height: 64px;
+}
+
+/* ── 分镜图修改区:两栏 ── */
+.seditEditrow {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.seditLeft {
+  flex: 1 1 56%;
+  min-width: 0;
+
+  .seditSub {
+    margin-top: 10px;
+  }
+}
+
+.seditRight {
+  flex: 1 1 44%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 左:当前分镜图(大)+ 历史版本 */
+.seditCur {
+  position: relative;
+  width: 100%;
+  /* 按项目比例自适应(横屏/竖屏);竖屏过高时用 max-height 收住并居中 */
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+  max-height: 56vh;
+  margin: 0 auto;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.seditCurPh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #aab0b8;
+  font-size: 13px;
+}
+
+/* 视频生成页:精简面板 */
+.seditCompact {
+  gap: 12px;
+
+  /* 视频生成页:台词/字幕/音效 竖排三行(面板窄,不挤一行)。用复合选择器保证覆盖默认三列 */
+  .seditTexts {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    border-top: none;
+    padding-top: 0;
+  }
+}
+
+.seditCurSm {
+  max-height: 170px;
+}
+
+.seditCurZoom {
+  cursor: zoom-in;
+}
+
+/* 只读素材缩略(视频生成页) */
+.seditElThumbRo {
+  cursor: default;
+
+  &.on,
+  &:hover {
+    border-color: #eef0f4;
+    box-shadow: none;
+  }
+}
+
+/* 分镜图放大查看 */
+.seditLightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  cursor: zoom-out;
+
+  img {
+    max-width: 92vw;
+    max-height: 92vh;
+    object-fit: contain;
+    border-radius: 8px;
+    cursor: default;
+  }
+}
+
+.seditLightboxClose {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.seditSpin {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(31, 207, 169, 0.35);
+  border-top-color: #11a98a;
+  border-radius: 50%;
+  animation: seditSpin 0.7s linear infinite;
+}
+
+@keyframes seditSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.seditHistRow {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.seditHist {
+  position: relative;
+  flex: 0 0 auto;
+  width: 76px;
+  height: 48px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: #f0f2f5;
+  cursor: pointer;
+  padding: 0;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  &.active {
+    border-color: #1fcfa9;
+  }
+}
+
+/* 右:素材 */
+.seditEls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.seditEl {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 84px;
+}
+
+.seditElThumb {
+  position: relative;
+  width: 84px;
+  height: 60px;
+  border-radius: 9px;
+  border: 2px solid #eef0f4;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #b0b4ba;
+  font-size: 20px;
+  padding: 0;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  &.on {
+    border-color: #1fcfa9;
+    box-shadow: 0 0 0 2px rgba(31, 207, 169, 0.18);
+  }
+}
+
+.seditElCheck {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.seditElMeta {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 84px;
+}
+
+.seditElName {
+  font-size: 11px;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seditElKind {
+  font-size: 9px;
+  color: #9aa3af;
+  background: #f1f3f6;
+  border-radius: 4px;
+  padding: 0 3px;
+  flex: 0 0 auto;
+}
+
+.seditElMng {
+  font-size: 11px;
+  color: #11a98a;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.seditElAdd {
+  width: 84px;
+  height: 60px;
+  border-radius: 9px;
+  border: 1px dashed #d8dce3;
+  background: #fafbfc;
+  color: #11a98a;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+
+  span {
+    font-size: 18px;
+    line-height: 1;
+  }
+}
+
+.seditElEmpty {
+  font-size: 12px;
+  color: #9aa3af;
+  padding: 6px 0;
+}
+
+/* 从项目素材选择器 */
+.seditPicker {
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fafbfc;
+  margin-bottom: 12px;
+}
+
+.seditPickerTitle {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 6px 0;
+}
+
+.seditPickerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 8px;
+}
+
+.seditPickerItem {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border: 2px solid #eef0f4;
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  background: #f3f4f6;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  &.picked {
+    border-color: #1fcfa9;
+  }
+}
+
+.seditPickerCheck {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.seditPickerBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #9aa3af;
+  margin-bottom: 8px;
+}
+
+.seditPickerCancel {
+  border: none;
+  background: none;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+.seditPickerOk {
+  border: none;
+  border-radius: 6px;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 12px;
+  padding: 3px 12px;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+.seditPickerEmpty {
+  font-size: 12px;
+  color: #9aa3af;
+  padding: 6px 0;
+}
+
+/* 添加素材弹层里的「上传本地」按钮 */
+.seditPickerUpload {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #d8dce3;
+  background: #fff;
+  color: #4b5563;
+  border-radius: 7px;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: #1fcfa9;
+    color: #11a98a;
+  }
+}
+
+/* 文本域(旧版直接 textarea,现已改用 InlineEdit;保留样式备用) */
+.seditTa {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #1f2937;
+  font-family: inherit;
+  outline: none;
+
+  &:focus {
+    border-color: #1fcfa9;
+  }
+}
+
+.seditTaPrompt {
+  min-height: 88px;
+  margin-bottom: 10px;
+}
+
+.seditCarry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
+  margin-bottom: 12px;
+
+  input {
+    accent-color: #1fcfa9;
+  }
+}
+
+.seditGen {
+  align-self: flex-start;
+  height: 38px;
+  padding: 0 22px;
+  border: none;
+  border-radius: 9px;
+  background: #1fcfa9;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: #1bb897;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+/* ── 台词修改 / 字幕修改 / 音效修改:全宽卡片纵向堆叠(对齐 Figma)── */
+.seditTexts {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* 视频生成页(compact)仍纵向,但卡更紧凑 */
+.seditTextsCol {
+  gap: 10px;
+}
+
+/* 台词/字幕/音效:左(标题+文本)右(AI一键润色,垂直居中),靠留白分区无分割线 */
+.seditTf {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-radius: 14px;
+  background: #fff;
+  padding: 20px 28px;
+}
+
+.seditTfMain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 右侧「AI一键润色」:贴右,单行不换行 */
+.seditTfAside {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.seditTfTitle {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.seditTfIcon {
+  display: inline-flex;
+  color: #1fcfa9;
+}
+
+@media (max-width: 1280px) {
+  .seditEditrow {
+    flex-direction: column;
+  }
+
+  .seditLeft,
+  .seditRight {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .seditTexts {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 优化提示词调试弹窗 */
+.seditDbgMask {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.seditDbg {
+  width: min(720px, 96vw);
+  max-height: 88vh;
+  background: #fff;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.seditDbgHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #eef0f4;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+
+  button {
+    border: none;
+    background: none;
+    font-size: 22px;
+    line-height: 1;
+    color: #9aa3af;
+    cursor: pointer;
+  }
+}
+
+.seditDbgBody {
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+.seditDbgT {
+  font-size: 13px;
+  font-weight: 600;
+  color: #11a98a;
+  margin: 14px 0 6px;
+
+  &:first-child {
+    margin-top: 0;
+  }
+}
+
+.seditDbgPre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #374151;
+  background: #f7f8fa;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.seditDbgImgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+
+  figure {
+    margin: 0;
+    width: 110px;
+    font-size: 11px;
+    color: #6b7280;
+    text-align: center;
+  }
+
+  img {
+    width: 110px;
+    height: 74px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid #eef0f4;
+  }
+}
+
+.seditDbgNoimg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 110px;
+  height: 74px;
+  background: #f0f2f5;
+  color: #aab0b8;
+  border-radius: 6px;
+}
+
+.seditDbgMuted {
+  font-size: 12px;
+  color: #9aa3af;
+}
+
+/* 点击编辑的文本字段(画面描述 / 台词 / 字幕 / 音效 / 生成提示词):平时纯文本,点击出输入框。
+   ie-display / ie-input 是 InlineEdit 输出的全局类名,用 :global 引用 */
+.seditIe {
+
+  /* 显示态/编辑态共用尺寸,保证台词/字幕/音效三框高度与内边距完全一致,切换态不跳变 */
+  &:global(.ie-display),
+  &:global(.ie-input) {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 60px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #374151;
+  }
+
+  &:global(.ie-display) {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #fafbfc;
+    border: 1px solid #f0f2f5;
+    cursor: text;
+
+    &:hover {
+      background: #f3f5f8;
+    }
+  }
+
+  /* 编辑态仅以边框颜色区分(品牌绿),尺寸与显示态保持一致 */
+  &:global(.ie-input) {
+    background: #fff;
+    border: 1px solid #1fcfa9;
+    resize: vertical;
+  }
+}
+
+.seditIePrompt {
+  &:global(.ie-input) {
+    min-height: 88px;
+  }
+}
+
+/* 分镜描述 / 台词 / 字幕 / 音效:显示态为纯文本(无边框/无底色),与标题左对齐,点击才出输入框 */
+.seditIePlain {
+  &:global(.ie-display) {
+    min-height: 0;
+    padding: 6px 0;
+    background: transparent;
+    border-color: transparent;
+    color: #333;
+
+    &:hover {
+      background: #f7f8fa;
+    }
+  }
+}
+
+/* 底部操作行:AI一键润色 + 生成分镜(整体靠右) */
+.seditGenrow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+
+  .seditGen {
+    align-self: auto;
+    flex: 0 0 auto;
+  }
+}
+
+/* ════ 镜头编排右栏(还原 Figma 421-3105)════ */
+
+/* 顶部:当前分镜图(大)+ 历史生成 */
+/* 使用到的主体和素材:图片展示,样式对齐分镜图(圆角缩略 + 下方名称) */
+.seMats {
+  margin-bottom: 4px;
+}
+.seMatsTitle {
+  font-size: 18px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 12px;
+}
+.seMatsGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.seMatCell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.seMatThumb {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+.seMatPh {
+  color: #aab0b8;
+  font-size: 13px;
+  padding: 0 6px;
+  text-align: center;
+}
+.seMatLabel {
+  font-size: 14px;
+  color: #555;
+  line-height: 1;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seTop {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.seCurBox {
+  flex: 0 0 auto;
+}
+.seCurBox .seditCur {
+  /* 定高 220,宽按项目比例(--frame-ratio):竖屏窄、横屏宽、方形 220×220。
+     不再写死方形,使大图预览与所选比例一致。 */
+  height: 220px;
+  width: auto;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+}
+.seHistory {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.seHistTitle {
+  font-size: 18px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 12px;
+}
+.seHistGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+/* 单个版本:缩略图 + 下方 V 标号 */
+.seHistCell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.seHistItem {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: linear-gradient(135deg, #eef1f6, #f6f8fb);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  &:hover {
+    border-color: #bdeee3;
+  }
+  &.active {
+    border-color: #1fcfa9;
+  }
+}
+.seHistLabel {
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+  line-height: 1;
+}
+.seHistEmpty {
+  font-size: 13px;
+  color: #9aa3af;
+  padding: 12px 0;
+}
+
+/* 上传素材:顶部行里的高方框(与分镜图同高,对齐 Figma) */
+.seUploadBox {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 150px;
+  height: 220px;
+  border: 1px solid #e6e8ec;
+  border-radius: 14px;
+  background: #fff;
+  color: #909090;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: #1fcfa9;
+    color: #1fcfa9;
+    background: #f7fffd;
+  }
+}
+
+/* 镜头N 卡片(图片修改描述) */
+.seCard {
+  border-radius: 14px;
+  padding: 22px 28px;
+  background: #fff;
+}
+.seCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.seCardTitle {
+  font-size: 18px;
+  font-weight: 500;
+  color: #333;
+}
+/* 分镜描述:只读展示(编辑走左侧「编辑该分镜」弹框) */
+.seDescRo {
+  font-size: 15px;
+  line-height: 1.75;
+  color: #555;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.seCardActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* AI一键润色:青色文字按钮 */
+.seditPolish {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #32c7a6;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: #11a98a;
+    text-decoration: underline;
+  }
+  &:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+}
+/* ── 放大查看(主体素材 / 当前分镜图 / 历史版本)── */
+.zoomable {
+  cursor: zoom-in;
+}
+.seHistThumb {
+  position: relative;
+}
+/* hover 显示在图片右上角的放大图标;点击仅放大查看 */
+.seZoom {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: zoom-in;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.zoomable:hover .seZoom,
+.seHistThumb:hover .seZoom {
+  opacity: 1;
+}

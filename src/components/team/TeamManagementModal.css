@@ -1,0 +1,660 @@
+.tm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  font-family:
+    'PingFang SC',
+    -apple-system,
+    Roboto,
+    Helvetica,
+    sans-serif;
+}
+
+.tm-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgba(17, 24, 39, 0.45);
+}
+
+.tm-modal {
+  position: relative;
+  width: min(600px, calc(100% - 48px));
+  height: min(700px, calc(100% - 60px));
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.18);
+  padding: 26px 34px 28px;
+  box-sizing: border-box;
+}
+
+.tm-close {
+  position: absolute;
+  right: 18px;
+  top: 18px;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.04);
+  color: rgba(51, 51, 51, 0.7);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.tm-close:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: rgba(51, 51, 51, 0.9);
+}
+.tm-close svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.tm-title {
+  margin: 0 0 18px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: #333333;
+  line-height: 26px;
+}
+
+.tm-invite-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: 14px;
+  /* 团队空间卡片:#F8F9FE 纯色底 + 半透明浅紫装饰图层(PNG 透明,底色透出) */
+  background-color: #f8f9fe;
+  background-image: url('../../assets/logo/image copy 4.png');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  border: 1px solid rgba(91, 107, 232, 0.12);
+}
+
+/* 每行:左信息 / 右操作,两端对齐、垂直居中 */
+.tm-invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+/* 底行按钮为空时也保持行高,避免上下行贴太近 */
+.tm-invite-row--bottom {
+  min-height: 34px;
+}
+
+/* 顶行左侧:标签 + 名额提示,基线对齐 */
+.tm-invite-labels {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.tm-invite-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: #5767e5;
+  line-height: 22px;
+}
+
+.tm-invite-hint {
+  font-size: 14px;
+  color: rgba(102, 102, 102, 0.9);
+  line-height: 22px;
+}
+
+.tm-invite-code {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: #333333;
+  line-height: 28px;
+}
+
+.tm-invite-code .is-muted {
+  color: rgba(51, 51, 51, 0.72);
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.tm-copy {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  color: rgba(51, 51, 51, 0.5);
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.tm-copy:hover {
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
+}
+.tm-copy:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.tm-copy svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.tm-invite-expiry {
+  font-size: 12px;
+  color: rgba(102, 102, 102, 0.9);
+  line-height: 18px;
+}
+
+.tm-invite-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tm-regenerate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  border-radius: 10px;
+  border: 0;
+  padding: 0 10px;
+  background: transparent;
+  color: rgba(51, 51, 51, 0.72);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.tm-regenerate:hover {
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
+}
+.tm-regenerate svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.tm-expiry-select {
+  position: relative;
+  height: 32px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 0 28px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tm-expiry-select select {
+  appearance: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: rgba(51, 51, 51, 0.85);
+  cursor: pointer;
+}
+.tm-expiry-select svg {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px;
+  height: 12px;
+  fill: rgba(102, 102, 102, 0.9);
+  pointer-events: none;
+}
+
+.tm-invite-placeholder {
+  color: rgba(102, 102, 102, 0.82);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.tm-members-head {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.tm-members-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333333;
+  line-height: 20px;
+}
+
+.tm-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  width: 260px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(245, 245, 245, 0.9);
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+.tm-search svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: rgba(102, 102, 102, 0.8);
+  stroke-width: 1.4;
+}
+.tm-search input {
+  border: 0;
+  outline: none;
+  width: 100%;
+  background: transparent;
+  font-size: 12px;
+  color: #333333;
+}
+.tm-search input::placeholder {
+  color: rgba(102, 102, 102, 0.65);
+}
+
+.tm-members {
+  margin-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.tm-members-empty {
+  padding: 14px 0;
+  font-size: 12px;
+  color: rgba(102, 102, 102, 0.9);
+}
+
+.tm-member {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.tm-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 82, 82, 0.18);
+  color: rgba(255, 82, 82, 0.95);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex: none;
+}
+
+.tm-member-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tm-member-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tm-member-meta strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333333;
+  line-height: 18px;
+}
+.tm-member-meta span {
+  font-size: 11px;
+  color: rgba(102, 102, 102, 0.9);
+  line-height: 16px;
+}
+.tm-role-badge {
+  flex: none;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 18px;
+  background: rgba(148, 163, 184, 0.18);
+  color: rgba(30, 41, 59, 0.88);
+}
+.tm-role-badge[data-role='owner'] {
+  background: rgba(245, 158, 11, 0.18);
+  color: rgba(180, 83, 9, 0.95);
+}
+.tm-role-badge[data-role='admin'] {
+  background: rgba(99, 102, 241, 0.18);
+  color: rgba(67, 56, 202, 0.95);
+}
+.tm-role-badge[data-role='member'] {
+  background: rgba(16, 185, 129, 0.18);
+  color: rgba(4, 120, 87, 0.95);
+}
+
+.tm-more {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 0;
+  background: transparent;
+  color: rgba(102, 102, 102, 0.85);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease;
+}
+.tm-more:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.tm-more svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.tm-action-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+}
+
+.tm-action-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.tm-action-menu {
+  position: fixed;
+  width: 112px;
+  border-radius: 10px;
+  background: rgba(17, 24, 39, 0.92);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.25);
+  padding: 8px 0;
+}
+
+.tm-action-item {
+  width: 100%;
+  height: 34px;
+  border: 0;
+  padding: 0 12px;
+  background: transparent;
+  color: #ffffff;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tm-action-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* 底部:退出/解散该空间 */
+.tm-footer {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #f0f1f5;
+  display: flex;
+  justify-content: flex-end;
+}
+.tm-footer-btn {
+  padding: 8px 18px;
+  border-radius: 9px;
+  border: 1px solid #e2e5ec;
+  background: #fff;
+  color: #5b6270;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+.tm-footer-btn:hover {
+  background: #f5f6fa;
+  color: #333a4a;
+}
+.tm-footer-btn--danger {
+  color: #ef4444;
+  border-color: #f6cccc;
+}
+.tm-footer-btn--danger:hover {
+  background: #fff2f2;
+  color: #dc2626;
+  border-color: #f0b4b4;
+}
+
+/* ── 头部:← 返回 + 空间名 + 重命名 + 右上「…」菜单 ── */
+.tm-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.tm-back {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #333;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tm-back:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.tm-header-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1d2130;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tm-header-edit {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a90a0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.tm-header-edit:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #5767e5;
+}
+.tm-header-edit-img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  display: block;
+}
+/* 行内重命名:输入框 + 保存/取消 */
+.tm-header-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tm-header-rename-input {
+  width: 220px;
+  max-width: 300px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d2130;
+  border: 1px solid #c9cee0;
+  border-radius: 8px;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.tm-header-rename-input:focus {
+  border-color: #5767e5;
+  box-shadow: 0 0 0 3px rgba(87, 103, 229, 0.15);
+}
+.tm-header-rename-input:disabled {
+  background: #f4f5f8;
+  color: #8a90a0;
+}
+.tm-header-rename-ok,
+.tm-header-rename-cancel {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    opacity 0.15s;
+}
+.tm-header-rename-ok {
+  border: 0;
+  background: #5767e5;
+  color: #fff;
+}
+.tm-header-rename-ok:hover:not(:disabled) {
+  background: #4656d8;
+}
+.tm-header-rename-cancel {
+  border: 1px solid #d9dced;
+  background: #fff;
+  color: #4a4f5c;
+}
+.tm-header-rename-cancel:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+.tm-header-rename-ok:disabled,
+.tm-header-rename-cancel:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.tm-header-spacer {
+  flex: 1 1 auto;
+}
+.tm-header-more-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.tm-header-more {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(51, 51, 51, 0.75);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tm-header-more:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.tm-header-more svg {
+  fill: currentColor;
+}
+.tm-header-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 132px;
+  border-radius: 10px;
+  background: rgba(17, 24, 39, 0.92);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.25);
+  padding: 8px 0;
+  z-index: 30;
+}
+.tm-header-menu-item {
+  width: 100%;
+  height: 36px;
+  border: 0;
+  padding: 0 14px;
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tm-header-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.tm-header-menu-item--danger {
+  color: #ff6b6b;
+}
+
+/* 撤销邀请:淡色文字按钮(和「重新生成」并列) */
+.tm-revoke {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  border-radius: 10px;
+  border: 0;
+  padding: 0 10px;
+  background: transparent;
+  color: rgba(102, 102, 102, 0.9);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.tm-revoke:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: rgba(51, 51, 51, 0.95);
+}
+.tm-revoke svg {
+  width: 14px;
+  height: 14px;
+}

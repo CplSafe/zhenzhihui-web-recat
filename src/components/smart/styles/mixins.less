@@ -1,0 +1,24 @@
+// smart 组件共享样式 mixin(供各 *.module.less @import 使用)。
+// 仅定义 mixin(带括号不输出 css),被 include 时才在对应局部类内展开。
+
+// pill:工具栏圆角按钮基础样式(下拉触发器 / @ / AI 引导 / 撤销重做 等共用)
+.pill-base() {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid #eef0f2;
+  border-radius: 19px;
+  background: #fafbfc;
+  color: #4b5563;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: #1fcfa9;
+    color: #11a98a;
+    background: #f3fffc;
+  }
+}

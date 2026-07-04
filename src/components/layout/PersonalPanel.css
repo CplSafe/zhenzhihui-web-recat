@@ -1,0 +1,397 @@
+/* PersonalPanel — 我的-个人面板(对齐 Figma 1147:3823) */
+.ppl {
+  width: 384px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── 头部 ── */
+/* 一行:左=头像+姓名+角色徽标(姓名过长省略号),右=当前空间(靠右上角) */
+.ppl__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ppl__id {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.ppl__identity {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ppl__identity-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ppl__identity-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ppl__identity-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #8a90a2;
+}
+.ppl__identity-ws {
+  min-width: 0;
+  font-size: 13px;
+  color: #2b3040;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ppl__ava {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+  background: #eef1f8;
+}
+.ppl__ava--txt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #7b8cff, #5767e5);
+}
+.ppl__name {
+  font-size: 17px;
+  font-weight: 700;
+  color: #1d2130;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.ppl__role {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #5767e5;
+  border: 1px solid #c3caf5;
+  border-radius: 7px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+/* 重命名团队铅笔:紧跟角色徽标,灰色小图标,悬停变紫 */
+.ppl__rename {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a90a2;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.ppl__rename-img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  display: block;
+}
+.ppl__rename:hover:not(:disabled) {
+  color: #5767e5;
+  background: #eef0fb;
+}
+.ppl__rename:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ppl__ws {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #2b3040;
+  font-weight: 600;
+  font-size: 15px;
+  min-width: 0;
+  flex: 0 0 auto; /* 靠右上角:自身不压缩,由左侧姓名区让位 */
+}
+/* 团队空间可点击查看成员 */
+.ppl__ws--btn {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  border-radius: 8px;
+  transition: color 0.15s;
+}
+/* 不再有胶囊底,仅文字变紫作为悬停反馈 */
+.ppl__ws--btn:hover {
+  color: #5767e5;
+}
+/* 仅图标按钮:方形内边距,悬停提示由 antd Tooltip(黑色圆角)承担 */
+.ppl__ws--icononly {
+  padding: 6px;
+  margin: -6px;
+  border-radius: 8px;
+}
+.ppl__ws-ico {
+  display: inline-flex;
+  color: #2b3040;
+}
+.ppl__ws-ico-img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  display: block;
+}
+.ppl__ws-txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px; /* 右上角:超长团队名省略号,给左侧姓名留空间 */
+}
+
+/* ── 会员卡 ── */
+.ppl__card {
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  cursor: pointer;
+  padding: 16px;
+  border-radius: 14px;
+  overflow: hidden;
+  /* 会员卡背景:底层薄荷渐变图 + 顶层半调网点图(白底用 multiply 抠掉,只留绿点/波纹纹理) */
+  background-color: #e4f6ef;
+  background-image:
+    url(../../assets/vip/6e5343f852ff4819c62c1de5d5c13c43.png),
+    url(../../assets/vip/78f0caf0472daa2f11241194c37cdbc6.png);
+  background-repeat: no-repeat, no-repeat;
+  background-position:
+    right top,
+    center;
+  background-size: cover, cover;
+  background-blend-mode: multiply, normal;
+}
+.ppl__card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.ppl__plan {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #1f2937;
+}
+.ppl__vbadge {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  font-style: italic;
+  background: linear-gradient(135deg, #ffa23a, #ff7a00);
+}
+.ppl__expire {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #6b7280;
+}
+.ppl__crown {
+  display: inline-flex;
+  margin: -4px -2px 0 0;
+  flex: 0 0 auto;
+}
+.ppl__crown-img {
+  width: 86px;
+  height: 76px;
+  object-fit: contain;
+  display: block;
+}
+.ppl__credits-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 18px;
+}
+.ppl__credits-label {
+  font-size: 15px;
+  color: #4b5563;
+}
+.ppl__credits-num {
+  font-size: 15px;
+  color: #9aa2af;
+}
+.ppl__credits-num b {
+  font-size: 26px;
+  font-weight: 700;
+  color: #16b98a;
+  margin-right: 2px;
+}
+.ppl__bar {
+  margin-top: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  overflow: hidden;
+}
+.ppl__bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #34d39e, #16b98a);
+  transition: width 0.3s ease;
+}
+
+/* ── 切换空间 ── */
+.ppl__switch-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #2b3040;
+  margin-top: 2px;
+}
+.ppl__ws-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 空间多于 3 个:固定高度(约 3 个 + 露半个提示可滚)+ 可滚动,面板高度恒定 */
+.ppl__ws-list.scroll {
+  max-height: 188px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #d3d8e2 transparent;
+}
+.ppl__ws-list.scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.ppl__ws-list.scroll::-webkit-scrollbar-thumb {
+  background: #d3d8e2;
+  border-radius: 999px;
+}
+.ppl__ws-list.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ppl__ws-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid #eceef3;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 16px;
+  color: #8a90a0;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.ppl__ws-item:hover {
+  border-color: #d7dbe6;
+}
+.ppl__ws-item.active {
+  background: linear-gradient(120deg, #eaf7f1, #e4f4ec);
+  border-color: transparent;
+  color: #1d2130;
+  font-weight: 700;
+}
+.ppl__ws-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+.ppl__ws-item:disabled:hover {
+  border-color: #eceef3;
+}
+.ppl__ws-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ppl__radio {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid #d3d8e2;
+  background: #fff;
+}
+.ppl__radio.on {
+  border-color: #16b98a;
+  background: radial-gradient(circle at center, #16b98a 0 6px, #fff 7px 8px, #16b98a 9px);
+}
+
+/* ── 动作 ── */
+.ppl__act {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 4px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  color: #2b3040;
+}
+.ppl__act:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.ppl__act-ico {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.ppl__act-ico--blue {
+  color: #5767e5;
+  background: #eef1fd;
+}
+.ppl__act-ico--green {
+  color: #16b98a;
+  background: #e6f7f1;
+}
+.ppl__act-ico--red {
+  color: #ff5153;
+  background: #ffecec;
+}
+.ppl__act-label {
+  flex: 1 1 auto;
+  text-align: left;
+}
+.ppl__act-arrow {
+  display: inline-flex;
+  color: #c2c8d2;
+}
