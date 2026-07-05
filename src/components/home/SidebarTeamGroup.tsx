@@ -8,7 +8,13 @@
   切换空间不在此(在右上角个人面板)。挂载时兜底 loadWorkspaces 一次,供个人面板列全空间。
 */
 import { useEffect } from 'react'
-import { useCurrentWorkspace, useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import { useLocation, useNavigate } from 'react-router-dom'
+import {
+  useCurrentMember,
+  useCurrentUser,
+  useCurrentWorkspace,
+  useWorkspaceSessionStore,
+} from '@/stores/workspaceSession'
 import { openTeamManage, openJoinTeam } from '@/stores/ui'
 import inviteIcon from '@/assets/logo/image copy 3.png'
 import './SidebarTeamGroup.css'
@@ -29,7 +35,11 @@ interface SidebarTeamGroupProps {
 }
 
 export default function SidebarTeamGroup({ collapsed = false }: SidebarTeamGroupProps) {
+  const navigate = useNavigate()
+  const location = useLocation()
   const currentWorkspace = useCurrentWorkspace()
+  const currentMember = useCurrentMember() as any
+  const currentUser = useCurrentUser() as any
   const loadWorkspaces = useWorkspaceSessionStore((s) => s.loadWorkspaces)
 
   useEffect(() => {
@@ -43,29 +53,48 @@ export default function SidebarTeamGroup({ collapsed = false }: SidebarTeamGroup
   // 跟随当前空间:不再固定显示团队。个人空间显示「个人空间」,团队空间显示团队名 + 邀请成员。
   if (!currentWorkspace) return null
   const isTeam = isTeamWorkspace(currentWorkspace)
-  const wsName = (currentWorkspace as any)?.name || (isTeam ? '团队' : '个人空间')
+  const ownerUserId = Number((currentWorkspace as any)?.owner_user_id || (currentWorkspace as any)?.ownerUserId || 0)
+  const currentUserId = Number(currentUser?.id || currentUser?.user_id || 0)
+  const currentRole = String(
+    currentMember?.workspace_role ||
+      currentMember?.workspaceRole ||
+      currentMember?.member_role ||
+      currentMember?.memberRole ||
+      currentMember?.role ||
+      '',
+  )
+    .trim()
+    .toLowerCase()
+  const canRevealTeamInfo = !isTeam || Boolean(currentRole) || (ownerUserId > 0 && currentUserId === ownerUserId)
+  const wsName = canRevealTeamInfo ? (currentWorkspace as any)?.name || (isTeam ? '团队' : '个人空间') : '团队空间'
+  const dashboardActive = location.pathname === '/team'
+
+  const openDashboard = () => {
+    navigate('/team')
+  }
 
   return (
     <div className="app-sidebar__group stg">
       <div className="app-sidebar__group-title">团队</div>
 
-      {/* 当前空间名(个人 / 团队都显示);团队空间可点 → 打开团队管理(成员管理);并带「邀请成员」 */}
-      <div className="stg-current">
-        {isTeam ? (
-          <button
-            type="button"
-            className="stg-current__name stg-current__name--btn"
-            title={collapsed ? wsName : '团队管理'}
-            onClick={() => openTeamManage()}
-          >
-            {wsName}
-          </button>
-        ) : (
-          <span className="stg-current__name" title={collapsed ? wsName : undefined}>
-            {wsName}
-          </span>
-        )}
-        {isTeam && (
+      {/* 当前空间卡片点击进入空间数据看板;邀请成员按钮保留为团队管理入口。 */}
+      <div
+        className={`stg-current${dashboardActive ? ' is-active' : ''}`}
+        role="button"
+        tabIndex={0}
+        aria-label="打开空间数据看板"
+        onClick={openDashboard}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            openDashboard()
+          }
+        }}
+      >
+        <span className="stg-current__name" title={collapsed ? wsName : undefined}>
+          {wsName}
+        </span>
+        {isTeam && canRevealTeamInfo && (
           <>
             <span className="stg-current__divider" aria-hidden="true" />
             <button
@@ -73,7 +102,10 @@ export default function SidebarTeamGroup({ collapsed = false }: SidebarTeamGroup
               className="stg-invite"
               data-tip="邀请成员"
               aria-label="邀请成员"
-              onClick={() => openTeamManage()}
+              onClick={(event) => {
+                event.stopPropagation()
+                openTeamManage()
+              }}
             >
               <img className="stg-invite__img" src={inviteIcon} alt="" width={20} height={20} />
             </button>

@@ -116,6 +116,17 @@ const avgPerVideo = (credits: number, videos: number): number =>
 // 权限不足(403)。后端尚未把邀请码接口放开给管理员时会返回 403 → 用于静默/友好降级,不弹通用报错。
 const isPermissionDenied = (error: any): boolean => Number(error?.status) === 403
 
+// 某些后端版本只允许把所有权转让给 member。前端在 owner -> admin 的场景下做一次兼容兜底:
+// 若接口因目标成员当前是 admin 被拒绝，则先降为 member 再重试转让。
+function shouldRetryTransferViaMemberFallback(error: any): boolean {
+  const status = Number(error?.status || 0)
+  if (![400, 409, 422].includes(status)) return false
+  const message = String(error?.message || error?.response?.message || '')
+    .trim()
+    .toLowerCase()
+  return /admin|administrator|管理员|member|成员|owner|ownership|transfer|转让/.test(message)
+}
+
 // 数据看板 5 张卡的图标(描边 currentColor,由外层设色)
 const svgProps = {
   width: 22,
@@ -448,6 +459,13 @@ export default function TeamManagementModal({
     if (mine?.role) return mine.role
     return normalizeMemberRole(currentMember || {})
   }, [members, currentUserId, currentMember])
+  const memberActionTargetIsAdmin = useMemo(() => {
+    if (!memberActionTarget || memberActionTarget.isOwner) return false
+    const normalizedRole = normalizeMemberRole(memberActionTarget.raw || memberActionTarget)
+    return (
+      memberActionTarget.role === 'admin' || normalizedRole === 'admin' || memberActionTarget.roleLabel === '管理员'
+    )
+  }, [memberActionTarget])
   const ownerFromProp = useMemo(() => {
     const id = Number(workspace?.owner_user_id || workspace?.ownerUserId || 0)
     return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
@@ -471,6 +489,7 @@ export default function TeamManagementModal({
     [isCurrentUserOwner, currentUserRole],
   )
   const canTransferOwnership = isCurrentUserOwner
+  const canEditMemberQuota = canManageWorkspace
   // 成员行「更多操作(三个点)」显示/可操作规则 —— 能操作才显示三个点:
   //  · 所有者:可操作任何人,【包括自己】(自己那行仅「修改配额」有意义,见操作菜单);
   //  · 管理员:只能操作【成员】(不能操作所有者或其他管理员,含自己);
@@ -680,7 +699,11 @@ export default function TeamManagementModal({
         onToast?.('你没有权限移出成员', 'error')
         return
       }
-      // 所有者可对自己「修改配额」;设为管理员/设为成员/移出团队 对所有者仍无意义 → 拦截
+      if (action === 'quota' && !canEditMemberQuota) {
+        onToast?.('只有团队超级管理员或管理员可以修改成员配额', 'error')
+        return
+      }
+      // 所有者可对自己「修改配额」;设为管理员/取消管理员/移出团队 对所有者仍无意义 → 拦截
       if ((action === 'remove' || action === 'make-admin' || action === 'set-member') && targetIsOwner) {
         onToast?.('无法对团队超级管理员执行该操作', 'error')
         return
@@ -695,7 +718,7 @@ export default function TeamManagementModal({
         await loadMembers()
       } else if (action === 'set-member') {
         await updateWorkspaceMemberRole({ workspaceId: wsId, userId, role: 'member' })
-        onToast?.(`已对 ${name} 设置成员`, 'success')
+        onToast?.(`已取消 ${name} 的管理员权限`, 'success')
         await loadMembers()
       } else if (action === 'quota') {
         const input = await requestConfirm(`为 ${name} 设置单任务积分上限 max_task_credits（非负整数，0 表示不限制）`, {
@@ -715,7 +738,15 @@ export default function TeamManagementModal({
           danger: true,
         })
         if (!confirmed) return
-        await transferWorkspaceOwnership({ workspaceId: wsId, userId })
+        try {
+          await transferWorkspaceOwnership({ workspaceId: wsId, userId })
+        } catch (transferError: any) {
+          if (!memberActionTargetIsAdmin || !shouldRetryTransferViaMemberFallback(transferError)) {
+            throw transferError
+          }
+          await updateWorkspaceMemberRole({ workspaceId: wsId, userId, role: 'member' })
+          await transferWorkspaceOwnership({ workspaceId: wsId, userId })
+        }
         // 立即把有效所有者切到新成员:列表所有者标记与主账号权限(邀请码/踢除/转让/解散)当场更新,
         // 不必等 loadWorkspaces 回来刷新 workspace prop,避免刷新前出现「两个所有者」。
         setOwnerOverrideId(userId)
@@ -1426,21 +1457,22 @@ export default function TeamManagementModal({
             ></button>
             <div className="tm-action-menu" style={memberActionStyle} onClick={(e) => e.stopPropagation()}>
               {/* 所有者行(含所有者操作自己):仅「修改配额」有意义,角色变更/转让/移出对所有者一律隐藏 */}
-              {/* 设为管理员(升级):仅所有者可用;管理员菜单不显示 */}
-              {isCurrentUserOwner && !memberActionTarget?.isOwner && (
+              {/* 角色切换:仅所有者可用;成员显示「设为管理员」,管理员显示「取消管理员」 */}
+              {isCurrentUserOwner && !memberActionTarget?.isOwner && !memberActionTargetIsAdmin && (
                 <button type="button" className="tm-action-item" onClick={() => handleMemberAction('make-admin')}>
                   设为管理员
                 </button>
               )}
-              {/* 设为成员(降级):仅所有者可用;管理员菜单不显示 */}
-              {isCurrentUserOwner && !memberActionTarget?.isOwner && (
+              {isCurrentUserOwner && !memberActionTarget?.isOwner && memberActionTargetIsAdmin && (
                 <button type="button" className="tm-action-item" onClick={() => handleMemberAction('set-member')}>
-                  设为成员
+                  取消管理员
                 </button>
               )}
-              <button type="button" className="tm-action-item" onClick={() => handleMemberAction('quota')}>
-                修改配额
-              </button>
+              {canEditMemberQuota && (
+                <button type="button" className="tm-action-item" onClick={() => handleMemberAction('quota')}>
+                  修改配额
+                </button>
+              )}
               {canTransferOwnership && !memberActionTarget?.isOwner && (
                 <button type="button" className="tm-action-item" onClick={() => handleMemberAction('transfer')}>
                   转让所有权

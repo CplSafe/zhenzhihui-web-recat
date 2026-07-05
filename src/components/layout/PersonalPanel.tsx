@@ -4,7 +4,7 @@
   数据全接 workspaceSession store;切换空间直接生效,会员卡点击回调给 AppTopbar。
   (个人中心 / 修改密码 / 退出登录 已移至侧栏「设置」菜单,见 SettingsMenu。)
 */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Tooltip } from 'antd'
 import {
   useAllWorkspaces,
@@ -18,7 +18,7 @@ import {
   useWorkspaceId,
   useWorkspaceSessionStore,
 } from '@/stores/workspaceSession'
-import { openTeamManage } from '@/stores/ui'
+import { openTeamManage, useUiStore } from '@/stores/ui'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { validateWorkspaceName, normalizeWorkspaceNameForCompare } from '@/utils/workspaceName'
 import crownImg from '@/assets/vip/5dc4125fc31865adb710a7f65ad2df60.png'
@@ -33,6 +33,35 @@ const roleLabelOf = (role: any): string => {
   if (r === 'member') return '成员'
   return ''
 }
+
+const roleValueOf = (member: any, workspace: any, user: any): string => {
+  const currentWorkspaceId = Number(workspace?.id || 0)
+  const memberWorkspaceId = Number(
+    member?.workspace_id ??
+      member?.workspaceId ??
+      member?.workspace?.id ??
+      member?.current_workspace_id ??
+      member?.currentWorkspaceId ??
+      0,
+  )
+  const userId = Number(user?.id || 0)
+  const ownerUserId = Number(workspace?.owner_user_id || workspace?.ownerUserId || 0)
+
+  if (currentWorkspaceId > 0 && ownerUserId > 0 && userId > 0 && ownerUserId === userId) {
+    return 'owner'
+  }
+
+  if (currentWorkspaceId > 0 && memberWorkspaceId > 0 && memberWorkspaceId !== currentWorkspaceId) {
+    return ''
+  }
+
+  return String(
+    member?.workspace_role || member?.workspaceRole || member?.member_role || member?.memberRole || member?.role || '',
+  )
+    .trim()
+    .toLowerCase()
+}
+
 const fmtDate = (s: any): string => String(s || '').slice(0, 10)
 
 const IconMembers = <img className="ppl__ws-ico-img" src={teamIcon} alt="" aria-hidden="true" />
@@ -56,6 +85,8 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const credits = useWalletCredits()
   const baseCredits = usePlanBaseCredits()
   const switchWorkspace = useWorkspaceSessionStore((s) => s.switchWorkspace)
+  const workspaceSwitchLocked = useUiStore((s) => s.workspaceSwitchLocked)
+  const workspaceSwitchLockReason = useUiStore((s) => s.workspaceSwitchLockReason)
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const [renamingTeam, setRenamingTeam] = useState(false)
@@ -63,13 +94,13 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const hasMore = workspaces.length > MAX_VISIBLE_WS
 
   const name = user?.name || user?.nickname || user?.mobile || '用户'
-  const role = roleLabelOf(member?.role)
-  const wsName = currentWs?.name || '个人空间'
+  const roleValue = roleValueOf(member, currentWs, user)
+  const role = roleLabelOf(roleValue)
   const isTeamWs = Boolean(currentWs?.type) && String(currentWs.type).toLowerCase() !== 'personal'
-  // 头部主名:团队空间显示团队名(与下方所选空间、右侧铅笔重命名对象保持一致);个人空间显示用户名
-  const displayName = isTeamWs ? currentWs?.name || '团队空间' : name
+  const canRevealTeamInfo = !isTeamWs || Boolean(roleValue)
+  const wsName = canRevealTeamInfo ? currentWs?.name || '个人空间' : '团队空间'
   // 团队空间 + 所有者/管理员才可重命名(与团队管理弹窗头部的重命名权限一致)
-  const canRenameTeam = isTeamWs && ['owner', 'admin'].includes(String(member?.role || '').toLowerCase())
+  const canRenameTeam = isTeamWs && ['owner', 'admin'].includes(roleValue)
 
   // 重命名当前团队:弹输入框(预填现名)→ 前端校验/查重 → renameTeam(改后侧栏/顶栏同步)。
   const handleRenameTeam = async () => {
@@ -119,7 +150,8 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
     }
   }
   const avatarUrl = user?.avatar || user?.avatar_url || user?.avatarUrl || ''
-  const initial = String(displayName).trim().charAt(0) || 'U'
+  const accountName = name
+  const initial = String(accountName).trim().charAt(0) || 'U'
   // 积分进度按【已消耗】算(用得越多条越满)。有任何消耗就至少显示 1%(从 1% 起,让进度立刻可见);
   // 完全没消耗则 0%。credits 为剩余积分,baseCredits 为套餐基础积分。
   const usedCredits = Math.max(0, baseCredits - Number(credits))
@@ -127,13 +159,44 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
     baseCredits > 0 && usedCredits > 0 ? Math.min(100, Math.max(1, Math.round((usedCredits / baseCredits) * 100))) : 0
 
   const pickWs = (id: number) => {
+    if (workspaceSwitchLocked) {
+      showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
+      return
+    }
     if (id && Number(id) !== Number(activeId)) switchWorkspace(id)
     onClose?.()
   }
 
+  useEffect(() => {
+    // #region debug-point D:personal-panel-workspaces
+    fetch('http://127.0.0.1:7777/event', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: 'workspace-list-missing',
+        runId: 'post-fix',
+        hypothesisId: 'D',
+        location: 'PersonalPanel.tsx:useEffect',
+        msg: '[DEBUG] personal panel received workspace list',
+        data: {
+          activeId: Number(activeId || 0),
+          currentWorkspace: currentWs ? { id: currentWs.id, name: currentWs.name, type: currentWs.type } : null,
+          memberRole: member?.role || member?.workspace_role || member?.workspaceRole || '',
+          workspaceCount: workspaces.length,
+          workspaceNames: workspaces.slice(0, 10).map((ws: any) => ({
+            id: ws?.id,
+            name: ws?.name,
+            type: ws?.type,
+          })),
+        },
+        ts: Date.now(),
+      }),
+    }).catch(() => {})
+    // #endregion
+  }, [activeId, currentWs, member, workspaces])
+
   return (
     <div className="ppl">
-      {/* 头部:头像 + 姓名 + 角色徽标 / 当前空间 */}
+      {/* 头部:始终显示登录账号;当前空间单独展示,避免团队名和账号名混淆。 */}
       <div className="ppl__head">
         <div className="ppl__id">
           {avatarUrl ? (
@@ -141,27 +204,36 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
           ) : (
             <span className="ppl__ava ppl__ava--txt">{initial}</span>
           )}
-          <span className="ppl__name" title={displayName}>
-            {displayName}
-          </span>
-          {role && <span className="ppl__role">{role}</span>}
-          {/* 团队空间(所有者/管理员)可点铅笔重命名当前团队 —— 与团队管理弹窗头部同款 */}
-          {canRenameTeam && (
-            <Tooltip title="重命名团队" placement="bottom" zIndex={4000}>
-              <button
-                type="button"
-                className="ppl__rename"
-                aria-label="重命名团队"
-                disabled={renamingTeam}
-                onClick={handleRenameTeam}
-              >
-                <img className="ppl__rename-img" src={editIcon} alt="" aria-hidden="true" />
-              </button>
-            </Tooltip>
-          )}
+          <div className="ppl__identity">
+            <div className="ppl__identity-top">
+              <span className="ppl__name" title={accountName}>
+                {accountName}
+              </span>
+              {role && <span className="ppl__role">{role}</span>}
+            </div>
+            <div className="ppl__identity-sub">
+              <span className="ppl__identity-label">当前空间</span>
+              <span className="ppl__identity-ws" title={wsName}>
+                {wsName}
+              </span>
+              {canRenameTeam && (
+                <Tooltip title="重命名团队" placement="bottom" zIndex={4000}>
+                  <button
+                    type="button"
+                    className="ppl__rename"
+                    aria-label="重命名团队"
+                    disabled={renamingTeam}
+                    onClick={handleRenameTeam}
+                  >
+                    <img className="ppl__rename-img" src={editIcon} alt="" aria-hidden="true" />
+                  </button>
+                </Tooltip>
+              )}
+            </div>
+          </div>
         </div>
         {/* 当前空间:团队空间只显示图标,悬停弹出「团队成员」黑色圆角浮层,点击打开团队管理查看成员 */}
-        {isTeamWs ? (
+        {isTeamWs && canRevealTeamInfo ? (
           <Tooltip title="团队成员" placement="bottom" zIndex={4000}>
             <button
               type="button"
@@ -217,6 +289,8 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
               key={String(ws.id)}
               type="button"
               className={`ppl__ws-item${active ? ' active' : ''}`}
+              disabled={workspaceSwitchLocked}
+              title={workspaceSwitchLocked ? workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队' : ''}
               onClick={() => pickWs(Number(ws.id))}
             >
               <span className="ppl__ws-item-name">{ws.name || '个人空间'}</span>

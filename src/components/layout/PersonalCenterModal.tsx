@@ -1,18 +1,20 @@
 /*
   PersonalCenterModal — 「个人中心」个人资料弹窗(对齐 Figma「设置-个人中心」1391:9020)。
-  左侧头像(可换,支持 JPG/PNG ≤2MB 本地预览)+ 右侧昵称(可改,x/6)/ 账号(只读不可改)。
+  左侧头像(可换,支持 JPG/PNG ≤2MB 本地预览)+ 右侧昵称(可改,x/10)/ 账号(只读不可改)。
   昵称保存走 PATCH /api/v1/me/profile(与团队管理里的改名同一接口),保存后刷新会话内当前用户。
-  头像:后端暂无「设置头像」接口 → 选中后本地预览 + 保存时乐观写入会话内 user.avatar(刷新前生效)。
+  头像:后端暂无稳定的头像保存接口 → 选中后本地预览,保存时持久写入浏览器本地资料缓存,
+  下次重新登录仍可恢复显示。
 */
 import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { updateMyProfile, getCurrentUser } from '@/api/auth'
 import { useCurrentUser, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
+import { applyUserProfileOverrides, saveUserAvatarOverride } from '@/utils/profileOverrides'
 import './PersonalCenterModal.css'
 
-// 昵称最大长度(Figma 计数器为 x/6)
-const NAME_MAX = 6
+// 昵称最大长度(Figma 计数器为 x/10)
+const NAME_MAX = 10
 
 // 递归深搜会话/用户对象里任意名为 mobile/phone/tel 的字段(/me 的手机号字段路径不固定)
 function pickMobile(obj: any): string {
@@ -109,21 +111,25 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
       if (next !== initialName) {
         await updateMyProfile({ nickname: next, name: next })
       }
-      // 刷新会话内当前用户(顶栏/个人面板即时更新);头像后端暂无接口 → 乐观写入本地会话。
+      if (avatarData) {
+        saveUserAvatarOverride(user, avatarData)
+      }
+      // 刷新会话内当前用户(顶栏/个人面板即时更新);头像接口未落地时,用本地持久缓存兜底恢复。
       try {
         const me = await getCurrentUser()
+        const mergedUser = applyUserProfileOverrides(me)
         useWorkspaceSessionStore.setState((s: any) =>
           s.authSession
             ? {
                 authSession: {
                   ...s.authSession,
-                  user: { ...s.authSession.user, ...me, ...(avatarData ? { avatar: avatarData } : {}) },
+                  user: { ...s.authSession.user, ...mergedUser },
                 },
               }
             : s,
         )
       } catch {
-        // 刷新失败也把已改的字段乐观落到本地会话,避免界面回退
+        // 刷新失败也把已改的字段乐观落到本地会话,避免界面回退。
         useWorkspaceSessionStore.setState((s: any) =>
           s.authSession
             ? {

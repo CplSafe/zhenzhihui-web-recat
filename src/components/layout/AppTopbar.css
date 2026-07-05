@@ -160,6 +160,12 @@
   font-size: 12px;
   font-weight: 600;
 }
+
+.apptop__avatar--img {
+  object-fit: cover;
+  display: block;
+  background: #eef2f6;
+}
 .apptop__user-name {
   font-size: 13px;
   color: #444d5b;

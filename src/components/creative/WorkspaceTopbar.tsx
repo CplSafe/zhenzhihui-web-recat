@@ -62,23 +62,32 @@ export default function WorkspaceTopbar({
 
   // 顶栏展示文案的派生状态。
   // 这里统一把用户昵称、头像首字、套餐名、工作空间名、角色和积分信息整理成模板可直接使用的值。
-  const displayName = useMemo(
-    () => user?.nickname || user?.mobile || user?.email || '未登录用户',
-    [user],
-  )
+  const displayName = useMemo(() => user?.nickname || user?.mobile || user?.email || '未登录用户', [user])
   const avatarText = useMemo(() => {
     const first = displayName.trim().charAt(0)
     return first ? first.toUpperCase() : '帧'
   }, [displayName])
   const planLabel = useMemo(() => planName || '未开通套餐', [planName])
-  const workspaceName = useMemo(() => workspace?.name || '个人空间', [workspace])
+  const workspaceName = useMemo(() => {
+    const workspaceType = String(workspace?.type || '').toLowerCase()
+    const role = String(
+      member?.workspace_role ||
+        member?.workspaceRole ||
+        member?.member_role ||
+        member?.memberRole ||
+        member?.role ||
+        '',
+    ).toLowerCase()
+    const isOwner = Boolean(user?.id && workspace?.owner_user_id && Number(user.id) === Number(workspace.owner_user_id))
+    if (workspaceType && workspaceType !== 'personal' && !role && !isOwner) return '团队空间'
+    return workspace?.name || '个人空间'
+  }, [member, user, workspace])
   const roleLabel = useMemo(() => {
     const role = member?.role
     if (role === 'owner' || role === 'admin') return '管理员'
     if (role === 'member') return '成员'
     if (role === 'viewer') return '访客'
-    if (user?.id && workspace?.owner_user_id && Number(user.id) === Number(workspace.owner_user_id))
-      return '管理员'
+    if (user?.id && workspace?.owner_user_id && Number(user.id) === Number(workspace.owner_user_id)) return '管理员'
     return ''
   }, [member, user, workspace])
   const expiryText = useMemo(() => {
@@ -90,10 +99,7 @@ export default function WorkspaceTopbar({
     const p = (n: number) => String(n).padStart(2, '0')
     return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`
   }, [planExpiresAt])
-  const notificationLabel = useMemo(
-    () => (notifications > 99 ? '99+' : String(notifications)),
-    [notifications],
-  )
+  const notificationLabel = useMemo(() => (notifications > 99 ? '99+' : String(notifications)), [notifications])
 
   const creditsLabel = useMemo(() => Number(credits || 0).toLocaleString('zh-CN'), [credits])
   const creditsTotalLabel = useMemo(
@@ -136,7 +142,6 @@ export default function WorkspaceTopbar({
         topbarResizeObserver = null
       }
     }
-     
   }, [])
 
   // 以下几个方法统一负责关闭菜单并把操作交还给父级。
@@ -317,14 +322,7 @@ export default function WorkspaceTopbar({
                   </button>
 
                   <button type="button" className="ws-pop-card" onClick={() => comingSoon('数据面板')}>
-                    <img
-                      className="ws-pop-card-icon"
-                      src={imgData}
-                      alt=""
-                      aria-hidden="true"
-                      width={46}
-                      height={40}
-                    />
+                    <img className="ws-pop-card-icon" src={imgData} alt="" aria-hidden="true" width={46} height={40} />
                     <strong>数据面板</strong>
                     <small>查看广告投放数据</small>
                     <svg className="ws-pop-card-arrow" viewBox="0 0 16 16" aria-hidden="true">
@@ -333,14 +331,7 @@ export default function WorkspaceTopbar({
                   </button>
 
                   <button type="button" className="ws-pop-card" onClick={openJoinTeam}>
-                    <img
-                      className="ws-pop-card-icon"
-                      src={imgTeam}
-                      alt=""
-                      aria-hidden="true"
-                      width={46}
-                      height={40}
-                    />
+                    <img className="ws-pop-card-icon" src={imgTeam} alt="" aria-hidden="true" width={46} height={40} />
                     <strong>加入新团队</strong>
                     <small>输入邀请码加入团队空间</small>
                     <svg className="ws-pop-card-arrow" viewBox="0 0 16 16" aria-hidden="true">
