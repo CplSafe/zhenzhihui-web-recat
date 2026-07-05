@@ -760,6 +760,11 @@ export async function createAiTask({
     }
   }
 
+  // 幂等键:同一次 createAiTask 操作全程复用一个 key。后端按 (workspace, idempotency_key) 去重——
+  // 换新键会新建任务并再次冻结积分(= 重复扣费,尤其"provider 实际成功但响应 5xx"时换模型重试会双扣);
+  // 复用同键则命中已建任务、不重复冻结,是唯一能兜住"成功但响应丢失"的做法。
+  const taskIdempotencyKey = createIdempotencyKey('task')
+
   if (modelVersionId) {
     const model = await resolveExplicitTaskModel({
       modelVersionId,
@@ -771,7 +776,7 @@ export async function createAiTask({
     const resolvedInputAssets = resolveTaskField(inputAssets, model)
 
     return submitTask({
-      idempotencyKey: createIdempotencyKey('task'),
+      idempotencyKey: taskIdempotencyKey,
       modelId: model.id || modelVersionId,
       resolvedParams,
       resolvedInputAssets,
@@ -809,7 +814,7 @@ export async function createAiTask({
 
       try {
         return await submitTask({
-          idempotencyKey: createIdempotencyKey('task'),
+          idempotencyKey: taskIdempotencyKey,
           modelId: model.id,
           resolvedParams,
           resolvedInputAssets,
