@@ -289,6 +289,11 @@ export default function TeamManagementModal({
     [isCurrentUserOwner, currentUserRole],
   )
   const canTransferOwnership = isCurrentUserOwner
+  // 操作目标当前是否为管理员 → 决定角色按钮显示「取消管理员」还是「设为管理员」
+  const memberActionTargetIsAdmin = useMemo(
+    () => normalizeMemberRole(memberActionTarget || {}) === 'admin',
+    [memberActionTarget],
+  )
   const workspaceType = useMemo(
     () =>
       String(workspace?.type || '')
@@ -914,17 +919,19 @@ export default function TeamManagementModal({
               onClick={closeMemberActions}
             ></button>
             <div className="tm-action-menu" style={memberActionStyle} onClick={(e) => e.stopPropagation()}>
-              {/* 改角色后端仅 owner 可执行(admin 调用必 403),故只对 owner 展示,避免误点报错 */}
-              {isCurrentUserOwner && (
-                <>
+              {/* 改角色后端仅 owner 可执行(admin 调用必 403),故只对 owner 展示;所有者自身行不显示角色切换。
+                  按目标当前角色只显示对应一个按钮:管理员→「取消管理员」(降为成员),成员→「设为管理员」。 */}
+              {isCurrentUserOwner &&
+                !memberActionTarget?.isOwner &&
+                (memberActionTargetIsAdmin ? (
+                  <button type="button" className="tm-action-item" onClick={() => handleMemberAction('set-member')}>
+                    取消管理员
+                  </button>
+                ) : (
                   <button type="button" className="tm-action-item" onClick={() => handleMemberAction('make-admin')}>
                     设为管理员
                   </button>
-                  <button type="button" className="tm-action-item" onClick={() => handleMemberAction('set-member')}>
-                    设为成员
-                  </button>
-                </>
-              )}
+                ))}
               <button type="button" className="tm-action-item" onClick={() => handleMemberAction('quota')}>
                 修改配额
               </button>
