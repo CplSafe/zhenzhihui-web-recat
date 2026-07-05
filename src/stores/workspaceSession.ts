@@ -18,16 +18,54 @@ import {
   listWorkspaces,
   redeemWorkspaceInvitation,
   setActiveWorkspaceId,
+  updateWorkspace,
 } from '../api/business'
+import { listWorkspaceMembers } from '../api/auth'
 import { setSmartDraftUserScope } from '../utils/smartDraft'
 import {
   buildModelPlanCandidatesFromBillingPlans,
   buildModelPlanCandidatesFromSession,
   normalizePlanCandidates,
 } from '../utils/modelPlans'
+import { applyUserProfileOverrides } from '../utils/profileOverrides'
 
 const toId = (value: any): number => Number(value) || 0
 const findById = (list: any[], id: number) => list.find((w) => toId(w?.id) === id) || null
+const dedupeWorkspaces = (...groups: any[]): any[] => {
+  const merged = new Map<number, any>()
+  groups.forEach((group) => {
+    const items = Array.isArray(group) ? group : group ? [group] : []
+    items.forEach((item) => {
+      const id = toId(item?.id)
+      if (!id) return
+      if (!merged.has(id)) {
+        merged.set(id, item)
+        return
+      }
+      const prev = merged.get(id)
+      merged.set(id, prev === item ? prev : { ...prev, ...item })
+    })
+  })
+  return [...merged.values()]
+}
+const normalizeWorkspaceStatus = (workspace: any): string =>
+  String(workspace?.status || workspace?.workspace_status || workspace?.workspaceStatus || '')
+    .trim()
+    .toLowerCase()
+const isVisibleWorkspace = (workspace: any): boolean => {
+  if (toId(workspace?.id) <= 0) return false
+  const status = normalizeWorkspaceStatus(workspace)
+  if (!status) return true
+  return !/(^invited$|invite_pending|pending_invite|member_pending|join_pending|pending_join|not_joined|left|removed|disbanded|deleted|inactive|disabled)/.test(
+    status,
+  )
+}
+const sanitizeWorkspaceList = (list: any[]): any[] =>
+  dedupeWorkspaces((Array.isArray(list) ? list : []).filter(isVisibleWorkspace))
+const deriveSessionWorkspaces = (session: any): any[] =>
+  sanitizeWorkspaceList(
+    dedupeWorkspaces(session?.workspaces, session?.workspace, session?.currentWorkspace, session?.current_workspace),
+  )
 const pickWorkspaceId = (payload: any): number => {
   const candidates = [
     // 兑换邀请码的返回体 data 是 Go RedeemResult(无 json tag)→ 字段大写 Workspace/Member,
@@ -53,6 +91,24 @@ const pickCurrentWorkspaceIdFromSession = (session: any): number => {
   return toId(candidates.find((value) => toId(value) > 0))
 }
 
+// 记住「上次选中的工作空间」(UI 选择,非项目数据),按用户隔离,刷新后恢复——
+// 否则刷新会被会话默认空间(个人)覆盖,导致「一刷新就回个人空间」。
+const ACTIVE_WS_KEY = (uid: any) => `zzh_active_ws_u${toId(uid) || 'anon'}`
+const readSavedActiveWs = (uid: any): number => {
+  try {
+    return toId(window.localStorage.getItem(ACTIVE_WS_KEY(uid)))
+  } catch {
+    return 0
+  }
+}
+const saveActiveWs = (uid: any, id: any): void => {
+  try {
+    window.localStorage.setItem(ACTIVE_WS_KEY(uid), String(toId(id)))
+  } catch {
+    /* 忽略(隐私模式等) */
+  }
+}
+
 // 非响应式闭包变量（原 pinia store 内 `let`）。
 let billingPlansPromise: Promise<void> | null = null
 let billingPlansLoadedWorkspaceId = 0
@@ -65,13 +121,16 @@ export interface WorkspaceSessionState {
   currentWallet: any
   billingPlans: any[]
   billingPlanCandidates: any[]
+  currentWorkspaceMember: any
 
   setAuthSession: (session: any) => void
   loadSubscriptionLabel: () => Promise<void>
   ensureModelPlanCandidatesLoaded: () => Promise<void>
   loadWorkspaces: () => Promise<void>
+  loadCurrentWorkspaceMember: (workspaceId?: any) => Promise<any>
   switchWorkspace: (id: any) => void
   createTeam: (name: string) => Promise<any>
+  renameTeam: (id: any, name: string) => Promise<any>
   joinTeam: (inviteCode: string) => Promise<any>
   deleteTeam: (id: any) => Promise<void>
   disbandTeam: (id: any) => Promise<void>
@@ -100,6 +159,9 @@ export const deriveCurrentUser = (s: S): any => s.authSession?.user || null
 export const deriveWorkspaceId = (s: S): number => toId(deriveCurrentWorkspace(s)?.id)
 
 export const deriveCurrentMember = (s: S): any => {
+  const activeMember = s.currentWorkspaceMember || null
+  if (activeMember) return activeMember
+
   const member = s.authSession?.currentMember || null
   if (!member) return null
 
@@ -194,17 +256,31 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     currentWallet: null,
     billingPlans: [],
     billingPlanCandidates: [],
+    currentWorkspaceMember: null,
 
     setAuthSession: (session) => {
       clearWorkspaceScopedState()
       if (!session) {
-        set({ authSession: null, activeWorkspaceOverrideId: 0, userWorkspaces: [] })
+        set({ authSession: null, activeWorkspaceOverrideId: 0, userWorkspaces: [], currentWorkspaceMember: null })
         return
       }
-      set({ authSession: session })
+      const normalizedSession = {
+        ...session,
+        user: applyUserProfileOverrides(session?.user),
+        workspaces: deriveSessionWorkspaces(session),
+      }
+      set({
+        authSession: normalizedSession,
+        userWorkspaces: normalizedSession.workspaces || [],
+        currentWorkspaceMember: normalizedSession.currentMember || null,
+      })
 
-      const nextWorkspaceId = pickCurrentWorkspaceIdFromSession(session)
-      if (nextWorkspaceId > 0) {
+      const savedWs = readSavedActiveWs(toId(session?.user?.id))
+      const nextWorkspaceId = pickCurrentWorkspaceIdFromSession(normalizedSession)
+      if (savedWs > 0) {
+        // 恢复上次选中的空间(刷新前的);若该空间已不属于你,loadWorkspaces 会校验并清掉回落。
+        set({ activeWorkspaceOverrideId: savedWs })
+      } else if (nextWorkspaceId > 0) {
         set({ activeWorkspaceOverrideId: nextWorkspaceId })
       } else if (!findById(deriveAllWorkspaces(get()), get().activeWorkspaceOverrideId)) {
         set({ activeWorkspaceOverrideId: 0 })
@@ -219,10 +295,39 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         return
       }
       set({ currentSubscription: null, currentWallet: null })
-      const [sub, wal] = await Promise.all([getSubscription(id).catch(() => null), getWallet(id).catch(() => null)])
+      const [sub, wal] = await Promise.all([
+        getSubscription(id).catch(() => null),
+        getWallet(id).catch(() => null),
+        get()
+          .loadCurrentWorkspaceMember(id)
+          .catch(() => null),
+      ])
       if (deriveWorkspaceId(get()) !== id) return
       set({ currentSubscription: sub, currentWallet: wal })
       await get().ensureModelPlanCandidatesLoaded()
+    },
+
+    loadCurrentWorkspaceMember: async (workspaceId) => {
+      const targetId = toId(workspaceId) || deriveWorkspaceId(get())
+      const userId = toId(get().authSession?.user?.id)
+      if (!targetId || !userId) {
+        set({ currentWorkspaceMember: null })
+        return null
+      }
+      try {
+        const members = await listWorkspaceMembers(targetId)
+        const list = Array.isArray(members) ? members : []
+        const nextMember = list.find((member: any) => toId(member?.user_id || member?.userId) === userId) || null
+        if (deriveWorkspaceId(get()) === targetId) {
+          set({ currentWorkspaceMember: nextMember })
+        }
+        return nextMember
+      } catch {
+        if (deriveWorkspaceId(get()) === targetId) {
+          set({ currentWorkspaceMember: null })
+        }
+        return null
+      }
     },
 
     ensureModelPlanCandidatesLoaded: async () => {
@@ -246,14 +351,19 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     // 拉取真实空间列表（侧边栏团队组）。
     loadWorkspaces: async () => {
       try {
-        const items = extractPageItems(await listWorkspaces())
-        set({ userWorkspaces: items })
+        const raw = await listWorkspaces()
+        const items = sanitizeWorkspaceList(extractPageItems(raw))
+        const fallbackWorkspaces = deriveSessionWorkspaces(get().authSession)
+        const nextWorkspaces = items.length ? items : fallbackWorkspaces
+        set({ userWorkspaces: nextWorkspaces })
         const s = get()
         const preferredId = toId(s.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(s)
-        if (preferredId && !findById(items, preferredId) && s.activeWorkspaceOverrideId) {
+        if (preferredId && !findById(nextWorkspaces, preferredId) && s.activeWorkspaceOverrideId) {
+          // 存档指向的空间已不属于你(被移出/解散)→ 清 override 并清存档,回落默认空间
           set({ activeWorkspaceOverrideId: 0 })
+          saveActiveWs(toId(s.authSession?.user?.id), 0)
         }
-      } catch {
+      } catch (error: any) {
         return
       }
     },
@@ -264,6 +374,8 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       if (!target || target === deriveWorkspaceId(get())) return
       clearWorkspaceScopedState()
       set({ activeWorkspaceOverrideId: target })
+      saveActiveWs(toId(get().authSession?.user?.id), target) // 持久化,刷新后恢复
+      void get().loadCurrentWorkspaceMember(target)
     },
 
     // 创建团队：返回新建结果（toast/错误处理交给调用方）。
@@ -272,6 +384,22 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       await get().loadWorkspaces()
       if (created?.id) get().switchWorkspace(created.id)
       return created
+    },
+
+    // 重命名空间(仅团队空间）：改名后刷新列表，让侧栏/顶栏/弹窗同步新名称。
+    // 名称的安全校验/查重由调用方(UI)先行处理;此处仅做基本防线。
+    renameTeam: async (id, name) => {
+      const targetId = toId(id)
+      if (!targetId) throw new Error('空间 ID 无效')
+      const nextName = String(name || '').trim()
+      if (!nextName) throw new Error('空间名称不能为空')
+      const target = findById(deriveAllWorkspaces(get()), targetId)
+      if (String(target?.type || '').toLowerCase() === 'personal') {
+        throw new Error('个人空间不支持重命名')
+      }
+      const updated = await updateWorkspace({ workspaceId: targetId, name: nextName })
+      await get().loadWorkspaces()
+      return updated
     },
 
     joinTeam: async (inviteCode) => {
@@ -283,6 +411,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       if (joinedWorkspaceId && findById(deriveAllWorkspaces(get()), joinedWorkspaceId)) {
         clearWorkspaceScopedState()
         set({ activeWorkspaceOverrideId: joinedWorkspaceId })
+        saveActiveWs(toId(get().authSession?.user?.id), joinedWorkspaceId) // 持久化,刷新后恢复
       }
       return redeemed
     },
@@ -336,6 +465,13 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
 
       await get().loadWorkspaces()
 
+      // 兜底:loadWorkspaces 会用后端结果覆盖 userWorkspaces,若后端 leave 有延迟/仍返回该空间,
+      // 会把刚退出的空间又加回来 → 这里再过滤一次,确保退出后列表里不再出现该空间。
+      const afterLoad = get()
+      if (Array.isArray(afterLoad.userWorkspaces) && findById(afterLoad.userWorkspaces, targetId)) {
+        set({ userWorkspaces: afterLoad.userWorkspaces.filter((item) => toId(item?.id) !== targetId) })
+      }
+
       const next = get()
       const nextList = deriveAllWorkspaces(next)
       const desiredId = toId(next.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(next)
@@ -361,7 +497,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       const userId = toId(get().authSession?.user?.id)
       const ownerUserId = toId(target?.owner_user_id || target?.ownerUserId)
       if (userId && ownerUserId && userId !== ownerUserId) {
-        throw new Error('只有空间所有者可以解散空间')
+        throw new Error('只有空间超级管理员可以解散空间')
       }
       await disbandWorkspace({ workspaceId: targetId })
       // 收尾:从本地列表移除 + 若删的是当前空间则切回个人空间兜底(同 deleteTeam)
@@ -381,6 +517,11 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         set({ activeWorkspaceOverrideId: 0 })
       }
       await get().loadWorkspaces()
+      // 兜底:同 deleteTeam,防 loadWorkspaces 把刚解散的空间又拉回来
+      const afterLoad = get()
+      if (Array.isArray(afterLoad.userWorkspaces) && findById(afterLoad.userWorkspaces, targetId)) {
+        set({ userWorkspaces: afterLoad.userWorkspaces.filter((item) => toId(item?.id) !== targetId) })
+      }
       const next = get()
       const nextList = deriveAllWorkspaces(next)
       const desiredId = toId(next.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(next)

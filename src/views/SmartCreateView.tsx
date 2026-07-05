@@ -73,8 +73,10 @@ import {
   deriveAllWorkspaces,
   deriveCurrentUser,
 } from '@/stores/workspaceSession'
+import { useUiStore } from '@/stores/ui'
 import { useToast } from '@/composables/useToast'
-import { openMemberCenter } from '@/stores/ui'
+import { openComingSoon, openMemberCenter } from '@/stores/ui'
+import { openGuide, isSmartGuideArmed, disarmSmartGuide, syncSmartGuideStage, useGuideStore } from '@/stores/guide'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useAuth } from '@/auth/AuthContext'
@@ -192,6 +194,9 @@ function extractProjectVideoFallback(draftJson: any): {
   return { latest: { url: latest.url || '', assetId: latest.assetId || 0 }, versions }
 }
 
+// true=每次进智能成片入口页都弹引导(仅本地调试用);false=仅支付成功(armSmartGuide)后进入口页触发一次。
+const GUIDE_TESTING = false
+
 export default function SmartCreateView() {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
@@ -202,6 +207,8 @@ export default function SmartCreateView() {
   const workspaceId = useWorkspaceId()
   const modelPlanCandidates = useModelPlanCandidates() as string[]
   const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
+
+  const guideActiveKey = useGuideStore((s) => s.activeKey)
 
   // 生成前确保工作空间真实套餐候选已加载,并读最新值(否则只有默认候选,列不到付费套餐里的 seedance/seedream)。
   // 与 2.0 useVideoGeneration 一致:先 ensure,再用 getState 读最新,避免闭包拿到旧的 modelPlanCandidates。
@@ -252,6 +259,25 @@ export default function SmartCreateView() {
   // ── 营销思路拆解(选中 SKILL 时,在分镜脚本前多出的第 1 步)──
   // marketingOpen=停留在该步;marketingText=skill 拆解出的营销建议(只读展示);确认后才进入分镜脚本流程。
   const [marketingOpen, setMarketingOpen] = useState(false)
+
+  // 智能成片引导:任一支付成功后「装填」(armSmartGuide),进入口页(输入框可见)时【本次挂载只触发一次】,随后跟随流程。
+  // 关键:openGuide 只在首次到达入口时调一次;从流程「上一步」退回入口(started 由 true→false,本效果 deps 含 started 会再跑)
+  // 时【不能】再调 —— 否则 startGuide 会重置 shownStages/waiting/stageKey,把 syncSmartStage 刚同步出的 reentry 引导冲掉
+  //(表现为:返回上一页后引导闪一下就没、或根本不出来)。退回入口的引导交由下方 syncSmartStage 跟随流程展示。
+  const smartGuideOpenedRef = useRef(false)
+  useEffect(() => {
+    if (isCheckingSession || started || (!GUIDE_TESTING && !isSmartGuideArmed())) return
+    if (smartGuideOpenedRef.current) return // 本次挂载已开过:退回入口交给 syncSmartStage,勿重置
+    const t = window.setTimeout(() => {
+      if (document.querySelector('[data-guide="smart-input"]')) {
+        smartGuideOpenedRef.current = true
+        if (!GUIDE_TESTING) disarmSmartGuide()
+        openGuide('smart')
+      }
+    }, 700)
+    return () => window.clearTimeout(t)
+  }, [isCheckingSession, started])
+
   const [marketingText, setMarketingText] = useState('')
   // 结构化拆解(8 维度 desc+tags)→ 表格展示;marketingText 由它派生,供脚本生成/持久化/续接判断复用
   const [marketingData, setMarketingData] = useState<MarketingBreakdownData | null>(null)
@@ -1145,6 +1171,7 @@ export default function SmartCreateView() {
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
+  const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
   // 提交前积分预估(estimate-cost):整片生成(video.generate)口径
   const [videoCost, setVideoCost] = useState<{
     loading: boolean
@@ -1178,6 +1205,12 @@ export default function SmartCreateView() {
   // 避免用"完成那一刻的当前分镜"盖章(用户生成中/后改了内容会把签名盖成新内容 → 列表误判"没变")。
   const [pendingVideoSig, setPendingVideoSig] = useState('')
   const pendingVideoSigRef = useRef('')
+  useEffect(() => {
+    setWorkspaceSwitchLock(vidGenRunning, vidGenRunning ? '智能成片视频生成中，暂不支持切换团队' : '')
+    return () => {
+      setWorkspaceSwitchLock(false)
+    }
+  }, [setWorkspaceSwitchLock, vidGenRunning])
   // 发起出片时锁定当前内容签名(与 persistVideoResult / 列表同口径 computeVideoContentSig)
   const lockVideoSig = () => {
     const sig = computeVideoContentSig(shots, entryMeta, reqSummary || requirement)
@@ -2939,6 +2972,23 @@ export default function SmartCreateView() {
   // 入口是否可「恢复/下一步」:视频模式且已有生成结果(分镜脚本 或 营销拆解)
   const canResumeFlow = entryMeta?.mode !== 'image' && (shots.length > 0 || !!marketingText)
 
+  // 上报当前流程阶段给引导:用户【自己操作】进到某阶段时,自动展示该阶段引导。
+  // 未开始且【从流程退回入口(canResumeFlow)】= reentry(高亮「重新生成」);未开始且全新 = entry;进入流程 = process。
+  // (放在 canResumeFlow 声明之后,避免 TDZ。)
+  const lastSyncedStageRef = useRef('')
+  useEffect(() => {
+    if (guideActiveKey !== 'smart') {
+      lastSyncedStageRef.current = ''
+      return
+    }
+    const stage = !started ? (canResumeFlow ? 'reentry' : 'entry') : 'process'
+    // 只在阶段【真正变化】时同步:否则返回入口时 started/canResumeFlow/step 连续变化会重复同步同一阶段,
+    // 而 syncSmartStage 对"已展示过的同阶段再同步"会设 waiting=true → 刚弹出就被自己隐藏(闪退)。
+    if (stage === lastSyncedStageRef.current) return
+    lastSyncedStageRef.current = stage
+    syncSmartGuideStage(stage)
+  }, [guideActiveKey, started, canResumeFlow, marketingOpen, step])
+
   // 营销思路拆解步(选中 SKILL 时的第 1 步):我的描述(只读,与分镜脚本步一致)+ skill 拆解建议(可编辑)+ 确认/上一步。
   const renderMarketingBody = () => {
     const promptText = requirement || '（未填写需求）'
@@ -3000,11 +3050,12 @@ export default function SmartCreateView() {
               <div className="smart__placeholder smart__placeholder--sm">暂无拆解结果</div>
             )}
           </div>
-          <div className="smart__marketing-foot">
+          <div className="smart__marketing-foot" data-guide="smart-foot">
             {/* 上一步:返回入口(与后面步骤一致的箭头按钮 + tooltip) */}
             <button
               type="button"
               className="smart__nav-btn"
+              data-guide="smart-foot-prev"
               onClick={cancelMarketing}
               aria-label="上一步"
               data-tip="上一步"
@@ -3021,6 +3072,7 @@ export default function SmartCreateView() {
             <button
               type="button"
               className="smart__nav-btn"
+              data-guide="smart-foot-next"
               onClick={() => {
                 setMarketingOpen(false)
                 goStep(0)
@@ -3039,6 +3091,7 @@ export default function SmartCreateView() {
             <button
               type="button"
               className="smart__btn smart__btn--primary"
+              data-guide="smart-foot-confirm"
               onClick={confirmMarketing}
               disabled={marketingLoading || !marketingText.trim()}
             >
@@ -3270,7 +3323,7 @@ export default function SmartCreateView() {
               创建新视频
             </button>
             {/* 进度条:用了 SKILL 时在最前面加一步「营销思路拆解」,索引整体后移 1 */}
-            <div className="smart__progress">
+            <div className="smart__progress" data-guide="smart-stepbar">
               <StepProgress
                 steps={usedSkill ? [MARKETING_STEP, ...STEPS] : STEPS}
                 current={usedSkill ? (marketingOpen ? 0 : step + 1) : step}
@@ -3371,11 +3424,12 @@ export default function SmartCreateView() {
                       </div>
                     )
                   })()}
-                <div className="smart__footer-inner">
+                <div className="smart__footer-inner" data-guide="smart-foot">
                   {/* 上一步(悬停 tooltip:上一步) */}
                   <button
                     type="button"
                     className="smart__nav-btn"
+                    data-guide="smart-foot-prev"
                     onClick={goPrev}
                     aria-label="上一步"
                     data-tip="上一步"
@@ -3391,6 +3445,7 @@ export default function SmartCreateView() {
                   <button
                     type="button"
                     className="smart__nav-btn"
+                    data-guide="smart-foot-next"
                     onClick={goNext}
                     disabled={!canGoNext}
                     aria-label="下一步"
@@ -3404,11 +3459,12 @@ export default function SmartCreateView() {
                     </svg>
                   </button>
                   {/* 各步主操作按钮 */}
-                  {bottomButtons.map((b) => (
+                  {bottomButtons.map((b, bi) => (
                     <button
                       key={b.label}
                       type="button"
                       className={`smart__btn smart__btn--${b.variant}`}
+                      data-guide={bi === bottomButtons.length - 1 ? 'smart-foot-confirm' : undefined}
                       onClick={b.action}
                       disabled={b.disabled}
                       title={b.disabled ? b.tip : undefined}

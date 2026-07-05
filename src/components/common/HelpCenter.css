@@ -45,6 +45,14 @@
 .hc-ball.is-open {
   transform: scale(0.92);
 }
+/* 机器人客服头像:自带紫色背景,铺满圆形悬浮球并裁成圆 */
+.hc-ball-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  pointer-events: none;
+}
 
 /* 弹出卡片 */
 .hc-card {

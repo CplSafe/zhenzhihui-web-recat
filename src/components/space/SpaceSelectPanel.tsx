@@ -3,6 +3,7 @@
   展示用户所有工作空间/团队列表，支持切换空间、创建新空间、加入空间。
 */
 import { useEffect, useMemo, useState } from 'react'
+import { useUiStore } from '@/stores/ui'
 import iconOrg from '@/img/0e11184b2fea6edf30f5d9069dff11d9.png'
 import iconCreateTeam from '@/img/84dcae4ff71f768e85106ec686c4ff99.png'
 import './SpaceSelectPanel.css'
@@ -34,6 +35,8 @@ export default function SpaceSelectPanel({
   onDeleteWorkspace,
 }: SpaceSelectPanelProps) {
   const [open, setOpen] = useState<boolean>(defaultOpen)
+  const workspaceSwitchLocked = useUiStore((s) => s.workspaceSwitchLocked)
+  const workspaceSwitchLockReason = useUiStore((s) => s.workspaceSwitchLockReason)
 
   // watch props.defaultOpen
   useEffect(() => {
@@ -51,7 +54,7 @@ export default function SpaceSelectPanel({
 
   function pickWorkspace(ws: Workspace) {
     const id = Number(ws?.id || 0)
-    if (!id) return
+    if (!id || workspaceSwitchLocked) return
     onSelect?.(id)
   }
 
@@ -89,6 +92,10 @@ export default function SpaceSelectPanel({
                       type="button"
                       className={`sp-item${isActive ? ' active' : ''}${deletable ? ' deletable' : ''}`}
                       aria-selected={isActive}
+                      disabled={workspaceSwitchLocked}
+                      title={
+                        workspaceSwitchLocked ? workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队' : ''
+                      }
                       onClick={() => pickWorkspace(ws)}
                     >
                       <span className="sp-item-name">{ws.name || '个人空间'}</span>

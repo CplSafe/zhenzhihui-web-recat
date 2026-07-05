@@ -69,13 +69,12 @@
 
 .tm-invite-card {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 22px;
+  flex-direction: column;
+  gap: 14px;
   padding: 18px 20px;
   border-radius: 14px;
-  /* 浅紫装饰底图叠在淡紫底色上(图很浅,深/紫色文字仍清晰) */
-  background-color: #f3f4fd;
+  /* 团队空间卡片:#F8F9FE 纯色底 + 半透明浅紫装饰图层(PNG 透明,底色透出) */
+  background-color: #f8f9fe;
   background-image: url('../../assets/logo/image copy 4.png');
   background-repeat: no-repeat;
   background-position: center;
@@ -83,23 +82,49 @@
   border: 1px solid rgba(91, 107, 232, 0.12);
 }
 
+/* 每行:左信息 / 右操作,两端对齐、垂直居中 */
+.tm-invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+/* 底行按钮为空时也保持行高,避免上下行贴太近 */
+.tm-invite-row--bottom {
+  min-height: 34px;
+}
+
+/* 顶行左侧:标签 + 名额提示,基线对齐 */
+.tm-invite-labels {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
 .tm-invite-label {
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 600;
   color: #5767e5;
-  line-height: 18px;
-  margin-bottom: 6px;
+  line-height: 22px;
+}
+
+.tm-invite-hint {
+  font-size: 14px;
+  color: rgba(102, 102, 102, 0.9);
+  line-height: 22px;
 }
 
 .tm-invite-code {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.8px;
   color: #333333;
-  line-height: 26px;
+  line-height: 28px;
 }
 
 .tm-invite-code .is-muted {
@@ -109,22 +134,26 @@
 }
 
 .tm-copy {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 0;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.75);
+  border-radius: 8px;
+  background: transparent;
   cursor: pointer;
   display: grid;
   place-items: center;
-  color: rgba(51, 51, 51, 0.6);
+  color: rgba(51, 51, 51, 0.5);
   transition:
     background 0.15s ease,
     color 0.15s ease;
 }
 .tm-copy:hover {
-  background: rgba(255, 255, 255, 0.92);
-  color: rgba(51, 51, 51, 0.85);
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
+}
+.tm-copy:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 .tm-copy svg {
   width: 16px;
@@ -133,35 +162,36 @@
 }
 
 .tm-invite-expiry {
-  margin-top: 6px;
   font-size: 12px;
   color: rgba(102, 102, 102, 0.9);
   line-height: 18px;
 }
 
-.tm-invite-right {
+.tm-invite-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding-top: 18px;
+  gap: 8px;
 }
 
 .tm-regenerate {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
-  border-radius: 12px;
+  height: 32px;
+  border-radius: 10px;
   border: 0;
-  padding: 0 12px;
-  background: rgba(255, 255, 255, 0.78);
-  color: rgba(51, 51, 51, 0.85);
-  font-size: 12px;
+  padding: 0 10px;
+  background: transparent;
+  color: rgba(51, 51, 51, 0.72);
+  font-size: 13px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 .tm-regenerate:hover {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
 }
 .tm-regenerate svg {
   width: 14px;
@@ -171,8 +201,8 @@
 
 .tm-expiry-select {
   position: relative;
-  height: 34px;
-  border-radius: 12px;
+  height: 32px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.78);
   border: 1px solid rgba(0, 0, 0, 0.06);
   padding: 0 28px 0 12px;
@@ -185,7 +215,7 @@
   border: 0;
   outline: none;
   background: transparent;
-  font-size: 12px;
+  font-size: 13px;
   color: rgba(51, 51, 51, 0.85);
   cursor: pointer;
 }
@@ -204,7 +234,6 @@
   color: rgba(102, 102, 102, 0.82);
   font-size: 12px;
   line-height: 18px;
-  padding-top: 8px;
 }
 
 .tm-members-head {
@@ -480,6 +509,75 @@
   background: rgba(0, 0, 0, 0.05);
   color: #5767e5;
 }
+.tm-header-edit-img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  display: block;
+}
+/* 行内重命名:输入框 + 保存/取消 */
+.tm-header-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tm-header-rename-input {
+  width: 220px;
+  max-width: 300px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d2130;
+  border: 1px solid #c9cee0;
+  border-radius: 8px;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.tm-header-rename-input:focus {
+  border-color: #5767e5;
+  box-shadow: 0 0 0 3px rgba(87, 103, 229, 0.15);
+}
+.tm-header-rename-input:disabled {
+  background: #f4f5f8;
+  color: #8a90a0;
+}
+.tm-header-rename-ok,
+.tm-header-rename-cancel {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    opacity 0.15s;
+}
+.tm-header-rename-ok {
+  border: 0;
+  background: #5767e5;
+  color: #fff;
+}
+.tm-header-rename-ok:hover:not(:disabled) {
+  background: #4656d8;
+}
+.tm-header-rename-cancel {
+  border: 1px solid #d9dced;
+  background: #fff;
+  color: #4a4f5c;
+}
+.tm-header-rename-cancel:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+.tm-header-rename-ok:disabled,
+.tm-header-rename-cancel:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .tm-header-spacer {
   flex: 1 1 auto;
 }
@@ -540,18 +638,21 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
-  border-radius: 12px;
+  height: 30px;
+  border-radius: 10px;
   border: 0;
-  padding: 0 12px;
-  background: rgba(255, 255, 255, 0.78);
-  color: rgba(180, 83, 9, 0.95);
-  font-size: 12px;
+  padding: 0 10px;
+  background: transparent;
+  color: rgba(102, 102, 102, 0.9);
+  font-size: 13px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 .tm-revoke:hover {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(0, 0, 0, 0.05);
+  color: rgba(51, 51, 51, 0.95);
 }
 .tm-revoke svg {
   width: 14px;

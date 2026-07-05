@@ -107,6 +107,13 @@
 .sp-item.active {
   background: rgba(17, 24, 39, 0.06);
 }
+.sp-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+.sp-item:disabled:hover {
+  background: transparent;
+}
 
 .sp-item.deletable {
   padding-right: 6px;

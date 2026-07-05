@@ -67,6 +67,7 @@ const ProjectManagementView = lazy(() => import('../views/ProjectManagementView'
 const ProjectVideoListView = lazy(() => import('../views/ProjectVideoListView'))
 const ProjectVideoDetailView = lazy(() => import('../views/ProjectVideoDetailView'))
 const ResourceManagementView = lazy(() => import('../views/ResourceManagementView'))
+const SpaceDashboardView = lazy(() => import('../views/SpaceDashboardView'))
 
 function lazyPage(node: ReactNode): ReactNode {
   return <Suspense fallback={<div className="route-loading" aria-label="加载中" />}>{node}</Suspense>
@@ -103,6 +104,7 @@ export const router = createBrowserRouter([
       { path: 'projects/:projectId/videos', element: lazyPage(<ProjectVideoListView />) },
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
+      { path: 'team', element: lazyPage(<SpaceDashboardView />) },
       { path: '*', element: <Navigate to="/home" replace /> },
     ],
   },

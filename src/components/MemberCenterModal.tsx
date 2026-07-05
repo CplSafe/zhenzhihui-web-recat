@@ -11,13 +11,14 @@
  * 注:签约(subscriptions/sign-url,周期扣款)暂未开通权限,故会员开通走一次性付款。
  * 接口未提供「副标题/功能清单」等营销文案,按个人/团队保留静态展示。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import {
   useWorkspaceId,
   useWorkspaceSessionStore,
   deriveAllWorkspaces,
+  useAllWorkspaces,
   useCurrentWorkspace,
   useCurrentUser,
   useCurrentMember,
@@ -33,7 +34,10 @@ import {
   listBillingPlans,
   listCreditPackages,
   listPaymentOrders,
+  reconcilePaymentOrder,
 } from '@/api/business'
+import { armSmartGuide } from '@/stores/guide'
+import { WORKSPACE_NAME_MAX, validateWorkspaceName } from '@/utils/workspaceName'
 import './MemberCenterModal.css'
 
 interface Feature {
@@ -325,13 +329,47 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       Number(currentWs?.owner_user_id ?? currentWs?.ownerUserId) === Number(currentUser?.id ?? 0)) ||
     String(currentMember?.role || '').toLowerCase() === 'owner'
   const canRecharge = !isTeamWs || isOwner
-  // 新开团队空间时的团队名(intent=new_team 时随下单发给后端建空间);默认「XX的团队」,可改。
+  // 新开团队空间的默认团队名(intent=new_team 必须带名字随下单建空间);默认「XX的团队」。
+  // 用户在【充值/开通前】就把团队名输入好(见团队版 tab 的团队名输入框),随下单直接建好空间,不再支付后二次命名。
   const defaultTeamName = `${String(currentUser?.nickname || currentUser?.name || currentUser?.username || '我').trim()}的团队`
-  const [teamName, setTeamName] = useState('')
   // 顶层 tab:基础版(个人套餐)/ 团队版(团队套餐)/ 积分充值
   const [mainTab, setMainTab] = useState<'basic' | 'team' | 'recharge'>('basic')
-  // 只有在个人空间买团队版才是「开新团队空间」(在团队空间里买 = 续费,不建新空间、不需团队名)
-  const isBuyingNewTeam = mainTab === 'team' && !isTeamWs
+  // 名下已有团队名(去空格、忽略大小写),用于给「下单默认名」去重,避免后端因重名建不出空间。
+  const allWorkspaces = useAllWorkspaces()
+  const existingTeamNames = useMemo(
+    () =>
+      new Set(
+        (allWorkspaces as any[])
+          .filter((w) => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal')
+          .map((w) =>
+            String(w?.name || '')
+              .trim()
+              .toLowerCase(),
+          )
+          .filter(Boolean),
+      ),
+    [allWorkspaces],
+  )
+  // 下单用的唯一默认名:「XX的团队」被占用则追加序号,防止 new_team 因重名建不出空间。
+  const uniqueDefaultTeamName = useMemo(() => {
+    if (!existingTeamNames.has(defaultTeamName.toLowerCase())) return defaultTeamName
+    for (let i = 2; i < 100; i++) {
+      const cand = `${defaultTeamName}${i}`
+      if (!existingTeamNames.has(cand.toLowerCase())) return cand
+    }
+    return `${defaultTeamName}-${Date.now().toString(36)}`
+  }, [defaultTeamName, existingTeamNames])
+  // 支付成功后「创建团队并命名」弹框:被命名的团队 id(0=关闭)、输入名、提交中(现改为下单前命名,此弹框保留兜底,一般不触发)
+  const [namePromptTeamId, setNamePromptTeamId] = useState(0)
+  const [teamNameInput, setTeamNameInput] = useState('')
+  const [renamingTeam, setRenamingTeam] = useState(false)
+  // 【下单前】团队名输入:开团队版前先填好,随订单一起把空间建成该名字。默认预填唯一名(用户可改)。
+  const [teamName, setTeamName] = useState('')
+  const teamNameTouchedRef = useRef(false) // 用户手动改过后不再被默认名覆盖
+  const orderedTeamNameRef = useRef('') // 本次下单用的团队名,供 18s 兜底自建时复用,保持一致
+  useEffect(() => {
+    if (mainTab === 'team' && !teamNameTouchedRef.current) setTeamName(uniqueDefaultTeamName)
+  }, [mainTab, uniqueDefaultTeamName])
   // 子账号(不可充值)若正停在积分充值 tab(如切空间后)→ 退回基础版,避免看到充值内容
   useEffect(() => {
     if (!canRecharge && mainTab === 'recharge') setMainTab('basic')
@@ -343,6 +381,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const [balance, setBalance] = useState<number | null>(null)
   const [subscription, setSubscription] = useState<any>(null)
   const [subActionLoading, setSubActionLoading] = useState(false)
+  const [renewing, setRenewing] = useState(false)
   const [buyingId, setBuyingId] = useState(0)
   // 极少数情况下「同步开窗」仍被浏览器拦截:存下 pay_url,在弹窗内给一个手动打开入口兜底。
   const [pendingPayUrl, setPendingPayUrl] = useState('')
@@ -472,6 +511,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const adoptNewTeamWorkspace = async () => {
     const store = useWorkspaceSessionStore
     const isTeamWs = (w: any) => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal'
+    console.log('[建团队] adoptNewTeamWorkspace 开始(重试找后端新建团队,18s 没有就兜底自建)') // 临时排查
     try {
       const beforeIds = new Set(
         (deriveAllWorkspaces(store.getState()) as any[]).map((w) => Number(w?.id || 0)).filter((id) => id > 0),
@@ -484,13 +524,13 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)))
         )
       }
-      // ① 重试 adopt:给后端异步建团队留时间
+      // ① 重试 adopt:给后端异步建团队留时间。返回被切换到的新团队空间,供上层弹框命名。
       for (let i = 0; i < 6; i++) {
         await store.getState().loadWorkspaces()
         const created = findNew()
         if (created?.id) {
           store.getState().switchWorkspace(Number(created.id))
-          return
+          return created
         }
         await new Promise((r) => window.setTimeout(r, 3000))
       }
@@ -499,7 +539,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       const late = findNew()
       if (late?.id) {
         store.getState().switchWorkspace(Number(late.id))
-        return
+        return late
       }
       // 后端(intent=new_team)下单即建 activation_pending 空间、付款后激活,正常 18s 内可刷到;
       // 到底仍没刷到大概率只是异步慢 → 提示用户稍后自查,【绝不】前端兜底再建一个(否则后端已建+前端再建
@@ -508,6 +548,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     } catch {
       /* 刷新/切换/建团队失败不阻断支付成功提示;用户可手动在切换空间里找/建团队 */
     }
+    return null
   }
 
   const watchOrder = (orderId: number, kind: 'recharge' | 'subscribe', team = false) => {
@@ -520,9 +561,18 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       if (!aliveRef.current) return
       tries += 1
       try {
+        // 先主动对账:只【催后端】去支付宝核对并更新本单(不读它的返回状态——避免 reconcile 的状态字典
+        // 与列表口径不一致导致误判);再用列表读【权威状态】('paid' 口径与原逻辑一致)。
+        try {
+          await reconcilePaymentOrder({ workspaceId: ws, orderId })
+        } catch {
+          /* 未支付/限流等 → 忽略,继续用列表查 */
+        }
         const rows: any = await listPaymentOrders({ workspaceId: ws, type, limit: 50 })
         const list: any[] = Array.isArray(rows) ? rows : rows?.items || rows?.list || rows?.orders || []
         const st = String(list.find((r: any) => Number(r?.id) === orderId)?.status || '')
+        // TODO 临时:排查「付款成功没建团队」——看轮询看到的订单状态 + 是否团队版
+        if (st) console.log('[支付轮询] order=', orderId, 'status=', st, '| team=', team, '| kind=', kind)
         if (st === 'paid' || st === 'failed' || st === 'canceled') {
           // 终态:清掉该订单的复用缓存,下次点支付重新下单
           for (const k of Object.keys(pendingOrderRef.current)) {
@@ -530,6 +580,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           }
         }
         if (st === 'paid') {
+          // 支付成功 → 装填智能成片引导(仅该用户【首次支付】装填一次,续费/再买不再触发),
+          // 下次进 /smart 入口页触发跟随流程引导。
+          armSmartGuide(useWorkspaceSessionStore.getState().authSession?.user?.id)
           if (!aliveRef.current) return
           showToast(kind === 'recharge' ? '充值成功,积分已到账' : '支付成功,会员已开通', 'success')
           getWallet(ws)
@@ -538,8 +591,15 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           getSubscription(ws)
             .then((s: any) => aliveRef.current && setSubscription(s))
             .catch(() => {})
-          // 买的是团队版:后端已建新团队空间 → 刷新空间列表并切过去
-          if (kind === 'subscribe' && team) void adoptNewTeamWorkspace()
+          // 同步刷新全局 store(顶栏/个人面板的会员套餐 + 积分进度据此显示):
+          // 否则关掉弹窗回到页面看不到刚开通/续费的会员、刚充的积分(弹窗 setSubscription 只更新弹窗局部)。
+          // 团队版新开走 adoptNewTeamWorkspace 切空间会再刷一次,此处对老空间刷一次也无害。
+          void useWorkspaceSessionStore.getState().loadSubscriptionLabel()
+          // 买的是团队版:团队名已在下单前填好并随单创建 → 这里只把新团队空间适配/切换过去,不再二次弹命名框。
+          console.log('[支付] paid 已确认,team=', team, '→', team ? '触发建/切团队' : '非团队版,不建团队') // 临时排查
+          if (kind === 'subscribe' && team) {
+            void adoptNewTeamWorkspace()
+          }
           return
         }
         if (st === 'failed' || st === 'canceled') {
@@ -602,10 +662,25 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       return
     }
     const renew = isPurchased(p)
-    // 买团队版且当前在个人空间 = 开新团队空间(intent=new_team + 团队名);其余(个人版 / 团队续费)= subscribe
-    const newTeam = p.isTeam && !renew && !isTeamWs
+    // A方案:团队套餐一律「开新团队」——每买一次就新开一个团队(空间:套餐 1:1),同一套餐可反复买、各用于新团队。
+    // 续费某个已有团队走订阅信息区的「续费当前团队」按钮(intent=subscribe);个人版维持 开通/续费。
+    const newTeam = p.isTeam
     const intent = newTeam ? 'new_team' : 'subscribe'
-    const nwsName = newTeam ? teamName.trim() || defaultTeamName : ''
+    // new_team:用用户【下单前填好】的团队名随单建空间(为空退回唯一默认名)。先校验 + 查重,避免后端因非法/重名建不出空间。
+    let nwsName = ''
+    if (newTeam) {
+      nwsName = teamName.trim() || uniqueDefaultTeamName
+      const nameErr = validateWorkspaceName(nwsName)
+      if (nameErr) {
+        showToast(nameErr, 'error')
+        return
+      }
+      if (existingTeamNames.has(nwsName.toLowerCase())) {
+        showToast('该团队名称已存在,请换一个名称', 'error')
+        return
+      }
+      orderedTeamNameRef.current = nwsName
+    }
     // 幂等键:后端要求简单字母数字串(示例 a1b2c3),不能带冒号/中文 → 用随机 base36 token
     const idemKey = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`
     setBuyingId(p.id)
@@ -622,7 +697,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
               idempotencyKey: idemKey,
             }),
           ),
-        renew ? '续费失败,请稍后重试' : '开通失败,请稍后重试',
+        !newTeam && renew ? '续费失败,请稍后重试' : '开通失败,请稍后重试',
         'subscribe',
         newTeam, // 开新团队空间:支付成功后刷新空间列表并切到后端新建的团队空间
       )
@@ -651,6 +726,29 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       )
     } finally {
       setBuyingId(0)
+    }
+  }
+
+  // 「创建团队并命名」弹框提交:把刚开通的团队空间改成用户填的名字(updateWorkspace),刷新列表。
+  const submitTeamName = async () => {
+    const id = Number(namePromptTeamId || 0)
+    const name = teamNameInput.trim()
+    if (!id || renamingTeam) return
+    if (!name) {
+      showToast('请输入团队名称', 'error')
+      return
+    }
+    setRenamingTeam(true)
+    try {
+      // renameTeam:updateWorkspace 改名 + 刷新空间列表(侧栏/顶栏/弹窗同步新名)
+      await useWorkspaceSessionStore.getState().renameTeam(id, name)
+      void useWorkspaceSessionStore.getState().loadSubscriptionLabel()
+      showToast('团队已创建', 'success')
+      setNamePromptTeamId(0)
+    } catch (e: any) {
+      showToast(getBusinessErrorMessage(e, '团队命名失败,可稍后在团队管理里修改'), 'error')
+    } finally {
+      setRenamingTeam(false)
     }
   }
 
@@ -694,6 +792,36 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       showToast(getBusinessErrorMessage(e, '取消订阅失败,请稍后重试'), 'error')
     } finally {
       setSubActionLoading(false)
+    }
+  }
+
+  // A方案:续费【当前所在团队】(团队套餐卡片已改为「开新团队」,续费独立到这)。intent=subscribe,不建新团队。
+  const handleRenewCurrentTeam = async () => {
+    if (renewing || buyingId || !workspaceId || !subscription?.active) return
+    // 定位当前套餐 id:优先订阅自带 plan_id,否则按 code/name 从套餐列表匹配
+    let planId = Number(subscription.plan_id ?? subscription.planId ?? 0) || 0
+    if (!planId) {
+      const matched = plans.find((p) => subscription.plan_code === p.code || subscription.plan_name === p.name)
+      planId = Number(matched?.id || 0) || 0
+    }
+    if (!planId) {
+      showToast('未找到当前套餐,无法续费', 'error')
+      return
+    }
+    const idemKey = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`
+    setRenewing(true)
+    try {
+      await startPay(
+        () =>
+          resolveOrder(`sub:subscribe:${planId}:`, () =>
+            createSubscriptionOrder({ workspaceId, planId, intent: 'subscribe', idempotencyKey: idemKey }),
+          ),
+        '续费失败,请稍后重试',
+        'subscribe',
+        false,
+      )
+    } finally {
+      setRenewing(false)
     }
   }
 
@@ -760,6 +888,25 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
                 {String(subscription.renew_mode).toLowerCase().includes('auto') ? '自动续费' : '手动续费'}
               </span>
             )}
+            {/* A方案:续费当前团队(团队套餐卡片改为开新团队后,续费走这里)。仅主账号、当前在团队里显示。 */}
+            {canRecharge && isTeamWs && subscriptionId > 0 && (
+              <button
+                type="button"
+                className="mcm-sub-item mcm-sub-action"
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  color: '#5767e5',
+                  cursor: 'pointer',
+                  padding: 0,
+                  fontWeight: 600,
+                }}
+                disabled={renewing}
+                onClick={handleRenewCurrentTeam}
+              >
+                {renewing ? '续费中…' : '续费当前团队'}
+              </button>
+            )}
             {/* 订阅管理:仅主账号。自动续费时可「关闭自动续费」;有订阅时可「取消订阅」 */}
             {canRecharge && subscriptionId > 0 && isAutoRenew && (
               <button
@@ -816,17 +963,19 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
 
         {mainTab !== 'recharge' ? (
           <>
-            {/* 买团队版会新建一个团队空间,先让用户给空间起名(默认「XX的团队」),下单时随 intent=new_team 发给后端 */}
-            {isBuyingNewTeam && (
+            {/* 团队版:充值/开通【前】先把团队名填好,随订单一起建好空间(不再支付后二次命名) */}
+            {mainTab === 'team' && (
               <div className="mcm-teamname">
-                <label className="mcm-teamname__label">团队空间名称</label>
+                <span className="mcm-teamname__label">团队名称</span>
                 <input
                   className="mcm-teamname__input"
-                  type="text"
-                  maxLength={20}
                   value={teamName}
-                  placeholder={defaultTeamName}
-                  onChange={(e) => setTeamName(e.target.value)}
+                  maxLength={WORKSPACE_NAME_MAX}
+                  placeholder="请输入团队名称"
+                  onChange={(e) => {
+                    teamNameTouchedRef.current = true
+                    setTeamName(e.target.value)
+                  }}
                 />
                 <span className="mcm-teamname__hint">开通团队版将以此名称创建团队空间,可稍后在团队管理里修改</span>
               </div>
@@ -840,7 +989,14 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
             ) : (
               <div className="mcm-cards">
                 {visible.map((p) => (
-                  <PlanCard key={p.id} plan={p} buying={buyingId === p.id} purchased={isPurchased(p)} onBuy={onBuy} />
+                  <PlanCard
+                    key={p.id}
+                    plan={p}
+                    buying={buyingId === p.id}
+                    /* 团队套餐卡片一律「开新团队」,不显示「续费」;续费走订阅信息区的「续费当前团队」 */
+                    purchased={!p.isTeam && isPurchased(p)}
+                    onBuy={onBuy}
+                  />
                 ))}
               </div>
             )}
@@ -860,12 +1016,119 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     </div>
   )
 
-  return embedded
-    ? shell
-    : createPortal(
-        <div className="mcm-mask" onClick={(e) => e.target === e.currentTarget && onClose()}>
-          {shell}
-        </div>,
-        document.body,
-      )
+  // 支付成功后的「创建团队并命名」弹框:叠在会员中心之上(portal),命名后 updateWorkspace 改名。
+  const namePrompt =
+    namePromptTeamId > 0
+      ? createPortal(
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 3000,
+              background: 'rgba(17,24,39,0.45)',
+              display: 'grid',
+              placeItems: 'center',
+              padding: 16,
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="创建团队"
+              style={{
+                width: 'min(380px, 100%)',
+                background: '#fff',
+                borderRadius: 16,
+                boxShadow: '0 24px 70px rgba(0,0,0,0.22)',
+                padding: '24px 24px 20px',
+                boxSizing: 'border-box',
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#1f2430', marginBottom: 6 }}>创建你的团队</div>
+              <div style={{ fontSize: 13, color: '#8a8f9c', lineHeight: 1.6, marginBottom: 16 }}>
+                团队版已开通,给团队起个名字,即可邀请成员一起协作。
+              </div>
+              <input
+                autoFocus
+                type="text"
+                maxLength={20}
+                value={teamNameInput}
+                placeholder="为你的团队起个名字"
+                onChange={(e) => setTeamNameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void submitTeamName()
+                }}
+                style={{
+                  width: '100%',
+                  height: 42,
+                  borderRadius: 10,
+                  border: '1px solid rgba(0,0,0,0.12)',
+                  padding: '0 12px',
+                  fontSize: 14,
+                  color: '#1f2430',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18 }}>
+                <button
+                  type="button"
+                  onClick={() => setNamePromptTeamId(0)}
+                  disabled={renamingTeam}
+                  style={{
+                    flex: 'none',
+                    height: 40,
+                    padding: '0 14px',
+                    borderRadius: 10,
+                    border: '1px solid rgba(0,0,0,0.12)',
+                    background: '#fff',
+                    color: '#6b7280',
+                    fontSize: 14,
+                    cursor: renamingTeam ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  以后再说
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void submitTeamName()}
+                  disabled={renamingTeam || !teamNameInput.trim()}
+                  style={{
+                    flex: 1,
+                    height: 40,
+                    borderRadius: 10,
+                    border: 0,
+                    background: renamingTeam || !teamNameInput.trim() ? '#a9b0ee' : '#5767e5',
+                    color: '#fff',
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: renamingTeam || !teamNameInput.trim() ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {renamingTeam ? '创建中…' : '创建团队'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null
+
+  return (
+    <>
+      {embedded ? (
+        shell
+      ) : (
+        <>
+          {createPortal(
+            <div className="mcm-mask" onClick={(e) => e.target === e.currentTarget && onClose()}>
+              {shell}
+            </div>,
+            document.body,
+          )}
+        </>
+      )}
+      {namePrompt}
+    </>
+  )
 }

@@ -120,30 +120,46 @@ export async function generateShotImage(args: {
   lowRes?: boolean
 }): Promise<{ url: string; assetId: number }> {
   const refs = (args.refAssetIds || []).filter((n) => Number(n) > 0)
-  const operationCode = refs.length ? 'image.image_to_image' : 'image.text_to_image'
-  const task = await createAiTask({
-    workspaceId: args.workspaceId,
-    capability: 'image',
-    operationCode,
-    preferredModelKeywords: STORYBOARD_MODEL_KEYWORDS,
-    ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
-    prompt: args.prompt,
-    inputAssets: refs.map((id) => ({ asset_id: id, role: 'reference_image' })),
-    params: (model: any) => buildImageParams(model, args.ratio, args.lowRes),
-  })
-  // 分镜图生成放宽轮询超时(默认 120s 偏短)
-  const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 30 * 60 * 1000 })
-  // 取 asset_id:outputs 优先;没有则按 task_id 反查(否则刷新水合换不了URL → 破图)
-  let assetId = extractOutputAssetId(completed)
-  if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'image')
-  // 有 asset_id → 优先用同源流式地址(getAssetDownloadUrl 已改为返回 /download,同源 HTTPS、不过期),
-  // 避免直接用 outputs[].url 的 OSS 原始地址(http + IP 主机,在 HTTPS 页会 Mixed Content 破图)。
-  let url = assetId ? await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '') : ''
-  if (!url)
-    url = (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
-  if (!url) url = extractTaskMediaUrls(completed)[0] || ''
-  if (!url) throw new Error('未生成分镜图')
-  return { url, assetId }
+  const runShotTask = async (
+    operationCode: string,
+    inputAssetIds: number[],
+  ): Promise<{ url: string; assetId: number }> => {
+    const task = await createAiTask({
+      workspaceId: args.workspaceId,
+      capability: 'image',
+      operationCode,
+      preferredModelKeywords: STORYBOARD_MODEL_KEYWORDS,
+      ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
+      prompt: args.prompt,
+      inputAssets: inputAssetIds.map((id) => ({ asset_id: id, role: 'reference_image' })),
+      params: (model: any) => buildImageParams(model, args.ratio, args.lowRes),
+    })
+    // 分镜图生成放宽轮询超时(默认 120s 偏短)
+    const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 30 * 60 * 1000 })
+    // 取 asset_id:outputs 优先;没有则按 task_id 反查(否则刷新水合换不了URL → 破图)
+    let assetId = extractOutputAssetId(completed)
+    if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'image')
+    // 有 asset_id → 优先用同源流式地址(getAssetDownloadUrl 已改为返回 /download,同源 HTTPS、不过期),
+    // 避免直接用 outputs[].url 的 OSS 原始地址(http + IP 主机,在 HTTPS 页会 Mixed Content 破图)。
+    let url = assetId ? await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '') : ''
+    if (!url)
+      url =
+        (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
+    if (!url) url = extractTaskMediaUrls(completed)[0] || ''
+    if (!url) throw new Error('未生成分镜图')
+    return { url, assetId }
+  }
+
+  if (!refs.length) {
+    return runShotTask('image.text_to_image', [])
+  }
+
+  try {
+    return await runShotTask('image.image_to_image', refs)
+  } catch {
+    // 当前图生图模型链路不稳定时，自动回退一次文生图，优先保证分镜可生成。
+    return runShotTask('image.text_to_image', [])
+  }
 }
 
 /**

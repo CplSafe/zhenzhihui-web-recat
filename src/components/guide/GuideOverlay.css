@@ -1,0 +1,184 @@
+/* 新手引导覆盖层。按 Figma 引导页:蒙层 80% 黑、白卡圆角 14px、青绿「下一步」、菱形箭头。 */
+.guide-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  pointer-events: auto; /* 拦截页面点击,只有卡片按钮可操作 */
+}
+
+/* 压暗蒙层:SVG 遮罩,holes 挖成透明洞(打亮),其余压暗。支持多洞 */
+.guide-dim-svg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+}
+
+/* 指向目标的箭头(旋转 45° 的白色小方块) */
+.guide-arrow {
+  position: fixed;
+  width: 14px;
+  height: 14px;
+  background: #ffffff;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+/* 标注:目标下沿 → 虚线 → 文字标签(白字,叠在暗色蒙层上) */
+.guide-anno {
+  position: fixed;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  z-index: 1;
+}
+.guide-anno__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #32c7a6;
+  flex: 0 0 auto;
+}
+.guide-anno__line {
+  width: 0;
+  border-left: 2px dotted #32c7a6;
+  flex: 0 0 auto;
+  margin: 3px 0;
+}
+.guide-anno__line--flex {
+  flex: 1 1 auto;
+  height: auto;
+}
+.guide-anno__label {
+  margin-top: 8px;
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+/* 向上标注:标签在上、点在下(贴目标上沿) */
+.guide-anno--up .guide-anno__label {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+/* up 标注:SVG 折线连接层 + 上方水平带的标签 */
+.guide-anno-svg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+}
+.guide-anno-label {
+  position: fixed;
+  transform: translateX(-50%);
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 20px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 提示气泡卡 */
+.guide-card {
+  position: fixed;
+  width: min(520px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 20px 24px;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+  animation: guide-pop 0.18s ease;
+}
+@keyframes guide-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.guide-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.guide-card__icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+.guide-card__title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #333333;
+  line-height: 24px;
+}
+.guide-card__body {
+  font-size: 15px;
+  line-height: 24px;
+  color: #333333;
+  margin: 0;
+}
+.guide-card__body + .guide-card__body {
+  margin-top: 2px;
+}
+
+.guide-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18px;
+}
+.guide-card__foot--cta {
+  justify-content: flex-end;
+}
+.guide-card__nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.guide-skip {
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: #666666;
+  cursor: pointer;
+  padding: 0;
+}
+.guide-prev {
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: #666666;
+  cursor: pointer;
+  padding: 0;
+}
+.guide-next {
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 600;
+  color: #32c7a6;
+  cursor: pointer;
+  padding: 0;
+}
+.guide-skip:hover,
+.guide-prev:hover {
+  color: #333333;
+}
+.guide-next:hover {
+  color: #24a98c;
+}

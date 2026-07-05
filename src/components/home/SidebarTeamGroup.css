@@ -16,7 +16,25 @@
   border: 1px solid #e8eaf0;
   border-radius: 9px;
   box-shadow: 0 1px 2px rgba(23, 28, 46, 0.03);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.15s;
 }
+
+.stg-current:hover {
+  background: #f8f9ff;
+  border-color: #dbe1ff;
+  box-shadow: 0 8px 18px rgba(87, 103, 229, 0.08);
+}
+
+.stg-current.is-active {
+  background: linear-gradient(180deg, #f5f7ff 0%, #eef1ff 100%);
+  border-color: #cfd7ff;
+  box-shadow: 0 10px 20px rgba(87, 103, 229, 0.12);
+}
+
 .stg-current__name {
   flex: 1 1 auto;
   min-width: 0;
@@ -24,7 +42,6 @@
   background: transparent;
   padding: 0;
   text-align: left;
-  cursor: pointer;
   font-size: 13px;
   color: #2b3040;
   overflow: hidden;
@@ -32,7 +49,8 @@
   white-space: nowrap;
   transition: color 0.15s;
 }
-.stg-current__name:hover {
+.stg-current:hover .stg-current__name,
+.stg-current.is-active .stg-current__name {
   color: #5767e5;
 }
 .stg-current__divider {

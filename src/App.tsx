@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from './auth/AuthContext'
 import AppToast from './components/AppToast'
 import AppConfirmDialog from './components/AppConfirmDialog'
 import HelpCenter from './components/common/HelpCenter'
+import GuideOverlay from './components/guide/GuideOverlay'
 import MemberCenterModal from './components/MemberCenterModal'
 import GlobalTeamManageModal from './components/team/GlobalTeamManageModal'
 import GlobalJoinTeamDialog from './components/team/GlobalJoinTeamDialog'
@@ -107,6 +108,9 @@ function AppShell() {
       {isAuthenticated && hasChecked && location.pathname !== '/login' && location.pathname !== '/welcome' && (
         <HelpCenter />
       )}
+
+      {/* 新手引导覆盖层:登录后由页面首次进入自动弹 / 帮助中心手动重看 */}
+      {isAuthenticated && hasChecked && <GuideOverlay />}
     </>
   )
 }

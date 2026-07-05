@@ -38,6 +38,7 @@ import {
   useWorkspaceSessionStore,
   deriveModelPlanCandidates,
 } from '@/stores/workspaceSession'
+import { useUiStore } from '@/stores/ui'
 import { useToast } from '@/composables/useToast'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
@@ -160,6 +161,7 @@ export default function HotCopyCreateView() {
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
+  const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
   // 在途生成任务 id(>0=有任务在跑):持久化后,刷新/切换页面回来用它续轮询,不丢生成结果
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
 
@@ -178,6 +180,12 @@ export default function HotCopyCreateView() {
 
   // 源视频真实时长(秒):video.replicate/edit 按它计费;前端读上传视频 HTML5 元数据得到
   const [sourceVideoDurSec, setSourceVideoDurSec] = useState(0)
+  useEffect(() => {
+    setWorkspaceSwitchLock(vidGenRunning, vidGenRunning ? '爆款复制视频生成中，暂不支持切换团队' : '')
+    return () => {
+      setWorkspaceSwitchLock(false)
+    }
+  }, [setWorkspaceSwitchLock, vidGenRunning])
   // 用户在入口选择的成片尺寸(画面比例)与时长(秒);默认与智能成片一致 16:9、10s。
   const [genRatio, setGenRatio] = useState(DEFAULT_RATIO)
   const [genDurationSec, setGenDurationSec] = useState(DEFAULT_DURATION_SEC)

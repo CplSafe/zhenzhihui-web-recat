@@ -7,8 +7,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
-import { useWorkspaceId } from '@/stores/workspaceSession'
-import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
+import { useWorkspaceId, useCurrentUser } from '@/stores/workspaceSession'
+import { openComingSoon } from '@/stores/ui'
+import { openGuide, isGuideSeen } from '@/stores/guide'
 import { useAuth } from '@/auth/AuthContext'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { listCreativeProjects, getAssetDownloadUrl } from '@/api/business'
@@ -16,6 +17,7 @@ import { listBanners, type Banner } from '@/api/banners'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 // banner 数据走 SWR 缓存(先返缓存秒出、后台刷新);切换前预取相邻媒体,见下方接入处。
 import { swrFetch, peekCache } from '@/utils/swrCache'
 import { preloadMedia, type MediaItem } from '@/utils/mediaPreload'
@@ -236,7 +238,7 @@ import { type TemplateItem } from '@/api/templates'
 import { DEMO_TEMPLATES, DEMO_LANDSCAPE_URLS } from '@/data/demoTemplates'
 
 const TABS = [
-  { key: 'template', label: '案例库' },
+  { key: 'template', label: '模板库' },
   { key: 'history', label: '历史项目' },
   { key: 'ip', label: 'IP' },
 ] as const
@@ -438,6 +440,7 @@ export default function HomeView() {
   const workspaceId = useWorkspaceId()
   const requireAuth = useRequireAuth()
   const { isAuthenticated } = useAuth()
+  const currentUser = useCurrentUser()
   const [bannerIndex, setBannerIndex] = useState(0)
   // 初始值从缓存秒出(有上次数据就不闪空),无缓存为 null 走占位兜底。
   const [apiBanners, setApiBanners] = useState<Banner[] | null>(() => peekCache<Banner[]>(BANNERS_CACHE_KEY) ?? null)
@@ -446,6 +449,15 @@ export default function HomeView() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   // 案例库点击放大预览(与 /templates 页一致;外链 OSS 视频,弹窗不带 crossOrigin)
   const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
+
+  // 新用户首次进首页自动弹新手引导:按用户隔离的「已看」标记,只在第一次出现;看过(完成/跳过)后不再弹。
+  // (延时等快捷入口锚点渲染出来;markGuideSeen 在 GuideOverlay 的 finish() 里写入。)
+  useEffect(() => {
+    if (!isAuthenticated) return
+    if (isGuideSeen('home', currentUser?.id)) return
+    const t = window.setTimeout(() => openGuide('home'), 600)
+    return () => window.clearTimeout(t)
+  }, [isAuthenticated, currentUser?.id])
 
   // 历史项目（接后端 listCreativeProjects）
   const [historyItems, setHistoryItems] = useState<any[]>([])
@@ -729,7 +741,7 @@ export default function HomeView() {
 
           {/* 标签 + 比例筛选 + 搜索 */}
           <section className="home__section home__section--grow">
-            <div className="home__tabs-bar">
+            <div className="home__tabs-bar" data-guide="home-cases">
               <div className="home__tabs">
                 {TABS.map((t) => (
                   <button
@@ -823,7 +835,7 @@ export default function HomeView() {
                 </div>
               ) : templateError === 'unauth' ? (
                 <div className="home__placeholder">
-                  请先登录后查看案例库
+                  请先登录后查看模板库
                   <button type="button" className="home__retry-btn" onClick={() => navigate('/login')}>
                     去登录
                   </button>

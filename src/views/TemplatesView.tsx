@@ -126,8 +126,8 @@ export default function TemplatesView() {
               />
             </svg>
           </button>
-          <h2 className="templates-page-title">案例库</h2>
-          <span className="templates-count">共 {templates.length} 个案例</span>
+          <h2 className="templates-page-title">模板库</h2>
+          <span className="templates-count">共 {templates.length} 个模板</span>
         </header>
         <div className="home__content templates-content">
           {/* 比例筛选 + 搜索 */}
@@ -174,7 +174,7 @@ export default function TemplatesView() {
               <div className="home__placeholder">加载中…</div>
             ) : error === 'unauth' ? (
               <div className="home__placeholder">
-                请先登录后查看案例库
+                请先登录后查看模板库
                 <button type="button" className="home__retry-btn" onClick={() => navigate('/login')}>
                   去登录
                 </button>

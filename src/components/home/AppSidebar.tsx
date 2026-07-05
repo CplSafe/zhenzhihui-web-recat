@@ -8,6 +8,7 @@ import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
 import SidebarTeamGroup from './SidebarTeamGroup'
+import SettingsMenu from './SettingsMenu'
 import './AppSidebar.css'
 
 export interface SidebarItem {
@@ -76,13 +77,6 @@ const IconShop = (
     <path d="M9 13a3 3 0 0 0 6 0" />
   </svg>
 )
-const IconSettings = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <circle cx="12" cy="12" r="3" />
-    <path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />
-  </svg>
-)
-
 const GROUPS: SidebarGroup[] = [
   {
     title: '创作',
@@ -118,6 +112,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
         key={item.key}
         type="button"
         className={`app-sidebar__item${active ? ' is-active' : ''}`}
+        data-guide={item.key === 'creative' ? 'nav-smart' : item.key === 'projects' ? 'nav-projects' : undefined}
         onClick={() => go(item.key)}
       >
         <span className="app-sidebar__icon">{item.icon}</span>
@@ -215,8 +210,10 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
           ))}
         </nav>
 
-        {/* 底部：设置 */}
-        <div className="app-sidebar__footer">{renderItem({ key: 'settings', label: '设置', icon: IconSettings })}</div>
+        {/* 底部：设置 —— 点击弹出菜单(个人中心 / 修改密码 / 退出登录) */}
+        <div className="app-sidebar__footer">
+          <SettingsMenu onAfterAction={onClose} />
+        </div>
       </aside>
     </>
   )

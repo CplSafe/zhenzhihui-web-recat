@@ -1,6 +1,6 @@
 /* PersonalPanel — 我的-个人面板(对齐 Figma 1147:3823) */
 .ppl {
-  width: 360px;
+  width: 384px;
   padding: 18px;
   display: flex;
   flex-direction: column;
@@ -8,6 +8,7 @@
 }
 
 /* ── 头部 ── */
+/* 一行:左=头像+姓名+角色徽标(姓名过长省略号),右=当前空间(靠右上角) */
 .ppl__head {
   display: flex;
   align-items: center;
@@ -16,9 +17,43 @@
 }
 .ppl__id {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   min-width: 0;
+  flex: 1 1 auto;
+}
+.ppl__identity {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ppl__identity-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ppl__identity-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ppl__identity-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #8a90a2;
+}
+.ppl__identity-ws {
+  min-width: 0;
+  font-size: 13px;
+  color: #2b3040;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ppl__ava {
   width: 44px;
@@ -42,6 +77,9 @@
   font-weight: 700;
   color: #1d2130;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .ppl__role {
   flex: 0 0 auto;
@@ -52,6 +90,38 @@
   padding: 2px 8px;
   white-space: nowrap;
 }
+/* 重命名团队铅笔:紧跟角色徽标,灰色小图标,悬停变紫 */
+.ppl__rename {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a90a2;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.ppl__rename-img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  display: block;
+}
+.ppl__rename:hover:not(:disabled) {
+  color: #5767e5;
+  background: #eef0fb;
+}
+.ppl__rename:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .ppl__ws {
   display: inline-flex;
   align-items: center;
@@ -60,6 +130,7 @@
   font-weight: 600;
   font-size: 15px;
   min-width: 0;
+  flex: 0 0 auto; /* 靠右上角:自身不压缩,由左侧姓名区让位 */
 }
 /* 团队空间可点击查看成员 */
 .ppl__ws--btn {
@@ -69,21 +140,33 @@
   padding: 4px 8px;
   margin: -4px -8px;
   border-radius: 8px;
-  transition: background 0.15s;
+  transition: color 0.15s;
 }
+/* 不再有胶囊底,仅文字变紫作为悬停反馈 */
 .ppl__ws--btn:hover {
-  background: #f2f3f8;
   color: #5767e5;
+}
+/* 仅图标按钮:方形内边距,悬停提示由 antd Tooltip(黑色圆角)承担 */
+.ppl__ws--icononly {
+  padding: 6px;
+  margin: -6px;
+  border-radius: 8px;
 }
 .ppl__ws-ico {
   display: inline-flex;
   color: #2b3040;
 }
+.ppl__ws-ico-img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  display: block;
+}
 .ppl__ws-txt {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 110px;
+  max-width: 150px; /* 右上角:超长团队名省略号,给左侧姓名留空间 */
 }
 
 /* ── 会员卡 ── */
@@ -97,7 +180,17 @@
   padding: 16px;
   border-radius: 14px;
   overflow: hidden;
-  background: linear-gradient(120deg, #e4f6ef 0%, #dff3ea 55%, #eaf7f0 100%);
+  /* 会员卡背景:底层薄荷渐变图 + 顶层半调网点图(白底用 multiply 抠掉,只留绿点/波纹纹理) */
+  background-color: #e4f6ef;
+  background-image:
+    url(../../assets/vip/6e5343f852ff4819c62c1de5d5c13c43.png),
+    url(../../assets/vip/78f0caf0472daa2f11241194c37cdbc6.png);
+  background-repeat: no-repeat, no-repeat;
+  background-position:
+    right top,
+    center;
+  background-size: cover, cover;
+  background-blend-mode: multiply, normal;
 }
 .ppl__card-top {
   display: flex;
@@ -134,6 +227,12 @@
   display: inline-flex;
   margin: -4px -2px 0 0;
   flex: 0 0 auto;
+}
+.ppl__crown-img {
+  width: 86px;
+  height: 76px;
+  object-fit: contain;
+  display: block;
 }
 .ppl__credits-row {
   display: flex;
@@ -225,6 +324,13 @@
   color: #1d2130;
   font-weight: 700;
 }
+.ppl__ws-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+.ppl__ws-item:disabled:hover {
+  border-color: #eceef3;
+}
 .ppl__ws-item-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -268,6 +374,10 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+}
+.ppl__act-ico--blue {
+  color: #5767e5;
+  background: #eef1fd;
 }
 .ppl__act-ico--green {
   color: #16b98a;
