@@ -273,8 +273,8 @@ export default function MaterialLibraryPicker({
 
   function isFavorited(material: any): boolean {
     if (!material?.id) return false
-    if (favoriteOverrides.has(material.id)) {
-      return Boolean(favoriteOverrides.get(material.id))
+    if (favoriteOverrides.has(String(material.id))) {
+      return Boolean(favoriteOverrides.get(String(material.id)))
     }
     return Boolean(material?.favorite || material?.serverAsset?.is_favorite)
   }
@@ -411,7 +411,9 @@ export default function MaterialLibraryPicker({
     const prev = isFavorited(material)
     const next = !prev
     const map = new Map(favoriteOverrides)
-    map.set(material.id, next)
+    // 键统一用 String:落盘经 JSON 后键必为字符串,读回(Object.entries)也是字符串;
+    // set 若用数字键则重载后 has(数字) 命中不了字符串键 → 收藏每次重置。
+    map.set(String(material.id), next)
     setFavoriteOverrides(map)
     persistFavoriteOverridesToStorage(map)
     pulseStar(material.id)

@@ -291,6 +291,7 @@ export default function SmartCreateView() {
   const [scriptError, setScriptError] = useState('')
   const [scriptPending, setScriptPending] = useState(false) // 脚本生成进行中(持久化):切走再回来据此自动续跑
   const scriptResumeRef = useRef(false) // 续跑只触发一次,避免循环
+  const scriptRunningRef = useRef(false) // 脚本生成重入守卫(state 异步,连点/续跑叠加会并发两条流式生成 → 交错覆盖)
   const [projectId, setProjectId] = useState(0)
   const projectIdRef = useRef(0)
   // 项目刚创建绑定后,需要「立即落盘一版草稿」的一次性标记。真正落盘由下方 effect 在
@@ -2506,6 +2507,8 @@ export default function SmartCreateView() {
   // 入口页发送:记录需求/选项,进入流程,并据需求自动命名项目。
   // 生成分镜脚本(本地多模态模型,流式:边生成边显示);失败置错误态,可重试
   const generateScript = async (req: string, meta: EntryMeta) => {
+    if (scriptRunningRef.current) return // 已有一条在跑就忽略(marketing/regenerate/续跑多入口并发)
+    scriptRunningRef.current = true
     setScriptLoading(true)
     setScriptPending(true) // 标记"脚本生成进行中",随草稿持久;中途切走再回来据此自动续跑(重生成)
     setScriptError('')
@@ -2563,6 +2566,7 @@ export default function SmartCreateView() {
     } catch (e: any) {
       if (!got) setScriptError(e?.message || '脚本生成失败,请重试')
     } finally {
+      scriptRunningRef.current = false
       setScriptLoading(false)
       setScriptPending(false) // 结束(成功/失败)清掉续跑标记,避免恢复时误续
     }

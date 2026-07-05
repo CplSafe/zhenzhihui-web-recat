@@ -341,6 +341,7 @@ export default function LoginView() {
   }
 
   function handleSubmit() {
+    if (isSubmitting) return // 回车提交也走这里,补上按钮 disabled 之外的并发守卫,避免连按并发提交/会话互踩
     clearLoginErrors()
     setNoticeMessage('')
     const valid = validateLogin()
