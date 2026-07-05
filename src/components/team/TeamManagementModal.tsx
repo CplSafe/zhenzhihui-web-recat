@@ -19,6 +19,7 @@ import {
 } from '@/api/business'
 import { deriveAllWorkspaces, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useConfirmDialog } from '@/composables/useToast'
+import { sanitizeMediaUrl } from '@/utils/urlSafety'
 import { WORKSPACE_NAME_MAX, normalizeWorkspaceNameForCompare, validateWorkspaceName } from '@/utils/workspaceName'
 import editIcon from '@/assets/81926ea1670cd86f6fc1adec90042f08.png'
 import './TeamManagementModal.css'
@@ -174,6 +175,7 @@ interface NormalizedMember {
   id: number
   name: string
   phone: string
+  avatarUrl: string
   role: string
   roleLabel: string
   isOwner: boolean
@@ -247,6 +249,26 @@ function normalizeMemberPhone(member: any): string {
     member?.account?.mobile,
     member?.account?.phone,
     member?.account?.telephone,
+  )
+}
+
+function normalizeMemberAvatar(member: any): string {
+  return sanitizeMediaUrl(
+    pickFirstText(
+      member?.avatar,
+      member?.avatar_url,
+      member?.avatarUrl,
+      member?.user?.avatar,
+      member?.user?.avatar_url,
+      member?.user?.avatarUrl,
+      member?.profile?.avatar,
+      member?.profile?.avatar_url,
+      member?.profile?.avatarUrl,
+      member?.account?.avatar,
+      member?.account?.avatar_url,
+      member?.account?.avatarUrl,
+    ),
+    '',
   )
 }
 
@@ -382,6 +404,7 @@ export default function TeamManagementModal({
   onToast,
 }: TeamManagementModalProps) {
   const { requestConfirm } = useConfirmDialog()
+  const currentUser = useWorkspaceSessionStore((s) => s.authSession?.user || null)
 
   // tab:成员管理 / 团队数据。打开时用 initialTab(点团队空间名进来 = 'data')。
   const [activeTab, setActiveTab] = useState<'members' | 'data'>(initialTab)
@@ -450,6 +473,16 @@ export default function TeamManagementModal({
     const id = Number(value || 0)
     return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
   }, [sessionUserId, currentMember])
+  const currentUserName = useMemo(
+    () =>
+      pickFirstText(currentUser?.nickname, currentUser?.name, currentUser?.username, currentUser?.mobile, '当前用户') ||
+      '当前用户',
+    [currentUser],
+  )
+  const currentUserAvatarUrl = useMemo(
+    () => sanitizeMediaUrl(pickFirstText(currentUser?.avatar, currentUser?.avatar_url, currentUser?.avatarUrl), ''),
+    [currentUser],
+  )
 
   // 角色以「当前所看空间的成员列表」为准。currentMember 仅对应会话默认空间,管理员查看他人团队时
   // deriveCurrentMember 会返回 null → 解析不出 admin → 顶部邀请与成员行「…」全部消失。故优先
@@ -572,20 +605,24 @@ export default function TeamManagementModal({
         .map((item: any, index: number) => {
           const userId = normalizeMemberId(item, index)
           const role = normalizeMemberRole(item)
+          const isCurrentUser = currentUserId > 0 && userId === currentUserId
+          const normalizedName = normalizeMemberName(item, `成员${index + 1}`)
+          const normalizedAvatarUrl = normalizeMemberAvatar(item)
           // 所有权通过 owner_user_id 判断，不依赖后端返回的 role 字段
           const isOwner = ownerId > 0 && userId === ownerId
           return {
             raw: item,
             id: userId,
-            name: normalizeMemberName(item, `成员${index + 1}`),
+            name: isCurrentUser ? normalizedName || currentUserName : normalizedName,
             phone: normalizeMemberPhone(item),
+            avatarUrl: normalizedAvatarUrl || (isCurrentUser ? currentUserAvatarUrl : ''),
             role,
             roleLabel: isOwner ? '超级管理员' : getRoleLabel(role),
             isOwner,
           }
         })
     },
-    [ownerUserId],
+    [ownerUserId, currentUserId, currentUserName, currentUserAvatarUrl],
   )
 
   const loadMembers = useCallback(async () => {
@@ -1261,7 +1298,11 @@ export default function TeamManagementModal({
                     filteredMembers.map((m) => (
                       <div key={m.id} className="tm-member">
                         <div className="tm-avatar" aria-hidden="true">
-                          <span>{String(m.name).trim().charAt(0).toUpperCase()}</span>
+                          {m.avatarUrl ? (
+                            <img src={m.avatarUrl} alt="" />
+                          ) : (
+                            <span>{String(m.name).trim().charAt(0).toUpperCase()}</span>
+                          )}
                         </div>
                         <div className="tm-member-meta">
                           <div className="tm-member-name">

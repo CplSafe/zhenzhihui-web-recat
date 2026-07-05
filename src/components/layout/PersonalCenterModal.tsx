@@ -2,13 +2,14 @@
   PersonalCenterModal — 「个人中心」个人资料弹窗(对齐 Figma「设置-个人中心」1391:9020)。
   左侧头像(可换,支持 JPG/PNG ≤2MB 本地预览)+ 右侧昵称(可改,x/10)/ 账号(只读不可改)。
   昵称保存走 PATCH /api/v1/me/profile(与团队管理里的改名同一接口),保存后刷新会话内当前用户。
-  头像:后端暂无稳定的头像保存接口 → 选中后本地预览,保存时持久写入浏览器本地资料缓存,
-  下次重新登录仍可恢复显示。
+  头像:先上传为素材并换取下载地址,再把 avatar_url 提交到 /api/v1/me/profile,
+  保存成功后刷新当前用户资料;本地缓存仅作为接口未返回头像时的兜底。
 */
 import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { getAssetDownloadUrl, uploadAssetFile } from '@/api/business'
 import { updateMyProfile, getCurrentUser } from '@/api/auth'
-import { useCurrentUser, useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import { useCurrentUser, useWorkspaceId, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { applyUserProfileOverrides, saveUserAvatarOverride } from '@/utils/profileOverrides'
 import './PersonalCenterModal.css'
@@ -55,6 +56,7 @@ const CameraIcon = (
 
 export default function PersonalCenterModal({ onClose }: { onClose: () => void }) {
   const user = useCurrentUser() as any
+  const workspaceId = useWorkspaceId()
   const session = useWorkspaceSessionStore((s) => s.authSession)
   const { showToast } = useToast()
 
@@ -70,6 +72,7 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
   const [name, setName] = useState(initialName)
   // 本地预览(data URL);未选新头像时为空,回落当前头像
   const [avatarData, setAvatarData] = useState('')
+  const [avatarFile, setAvatarFile] = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -90,6 +93,7 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
       return
     }
     const reader = new FileReader()
+    setAvatarFile(file)
     reader.onload = () => setAvatarData(String(reader.result || ''))
     reader.onerror = () => showToast('图片读取失败,请重试', 'error')
     reader.readAsDataURL(file)
@@ -108,13 +112,31 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
     }
     setSaving(true)
     try {
+      let nextAvatarUrl = ''
+      if (avatarFile) {
+        const ws = Number(workspaceId || 0)
+        if (!ws) throw new Error('未选择工作空间,暂时无法上传头像')
+        const uploaded: any = await uploadAssetFile({ workspaceId: ws, file: avatarFile, source: 'avatar' })
+        const assetId = Number(uploaded?.asset?.id || 0)
+        if (!assetId) throw new Error('头像上传失败,未取得素材 ID')
+        nextAvatarUrl = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
+        if (!nextAvatarUrl) throw new Error('头像上传失败,未取得图片地址')
+      }
+      const payload: Record<string, any> = {}
       if (next !== initialName) {
-        await updateMyProfile({ nickname: next, name: next })
+        payload.nickname = next
+        payload.name = next
       }
-      if (avatarData) {
-        saveUserAvatarOverride(user, avatarData)
+      if (nextAvatarUrl) {
+        payload.avatar_url = nextAvatarUrl
       }
-      // 刷新会话内当前用户(顶栏/个人面板即时更新);头像接口未落地时,用本地持久缓存兜底恢复。
+      if (Object.keys(payload).length) {
+        await updateMyProfile(payload)
+      }
+      if (nextAvatarUrl) {
+        saveUserAvatarOverride(user, nextAvatarUrl)
+      }
+      // 刷新会话内当前用户(顶栏/个人面板即时更新);若接口暂未回传头像,再用本地缓存兜底。
       try {
         const me = await getCurrentUser()
         const mergedUser = applyUserProfileOverrides(me)
