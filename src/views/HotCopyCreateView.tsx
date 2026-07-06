@@ -1191,6 +1191,27 @@ export default function HotCopyCreateView() {
     void prepareAndGenerate(payload, prompt)
   }
 
+  const canResumeFlow = Boolean(
+    entryInitial?.videoPreview ||
+    entryInitial?.libraryVideo?.src ||
+    (Array.isArray(entryInitial?.products) && entryInitial.products.length > 0) ||
+    sourceVideo.url ||
+    sourceVideo.assetId ||
+    productAssetIds.length > 0 ||
+    fullVideo.url ||
+    fullVideo.assetId ||
+    videoVersions.length > 0 ||
+    vidGenRunning ||
+    vidGenTaskId > 0 ||
+    videoGenerations.length > 0,
+  )
+
+  const resumeFlow = () => {
+    setStarted(true)
+    setStep(1)
+    setMaxReached((m) => Math.max(m, 1))
+  }
+
   const goStep = (i: number) => {
     if (i <= 0) {
       setStarted(false)
@@ -1235,7 +1256,13 @@ export default function HotCopyCreateView() {
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
 
         {!started ? (
-          <HotCopyEntry onSubmit={handleStart} initial={entryInitial} ratioOptions={ratioOptions} />
+          <HotCopyEntry
+            onSubmit={handleStart}
+            canResume={canResumeFlow}
+            onResume={resumeFlow}
+            initial={entryInitial}
+            ratioOptions={ratioOptions}
+          />
         ) : (
           <>
             <div className="smart__progress">
