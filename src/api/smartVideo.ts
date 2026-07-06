@@ -19,7 +19,7 @@ import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
 import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 
-// 目前线上只有 Seedance 2.0
+// 智能成片整片生成固定走 seedance 系列模型
 const VIDEO_MODEL_KEYWORDS = ['seedance']
 // 视频编辑能力:在原视频基础上按提示微调(happyhorse-1.0-video-edit)
 const VIDEO_EDIT_MODEL_KEYWORDS = ['happyhorse']
@@ -105,8 +105,7 @@ export async function generateFullVideo(args: {
   const inputAssets = imgIds.map((id) => ({ asset_id: id, role: 'image' }))
 
   // 钉死 seedance,不做跨模型退避:先显式解析 seedance 模型,再用 modelVersionId 提交。
-  // 这样 createAiTask 走「显式模型」分支(无「换下一个模型」循环),seedance 失败直接抛错由用户决定,
-  // 绝不退避到 happyhorse 等其它视频模型。
+  // 这样 createAiTask 走「显式模型」分支(无「换下一个模型」循环),seedance 失败直接抛错由用户决定。
   const model = await getModelForOperation('video.generate', VIDEO_MODEL_KEYWORDS, args.modelPlanCandidates)
   if (!model?.id) throw new Error('暂无可用的视频生成模型(seedance)')
   const task = await createAiTask({

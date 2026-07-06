@@ -28,6 +28,7 @@ import {
   getCreativeProject,
   patchCreativeProject,
   getModelForOperation,
+  isAbortedTaskError,
 } from '@/api/business'
 import { getModelParamOptions } from '@/utils/videoOptions'
 import {
@@ -69,6 +70,40 @@ function buildBasePrompt(tab: 'remake' | 'replica', text: string): string {
       ? '精准复刻:尽量 1:1 还原原视频的画面、运镜与节奏'
       : '同款翻拍:保留原视频镜头节奏与爆点结构,把主体替换为提供的替换素材产品'
   return [text.trim(), intent].filter(Boolean).join(';') || '做同款-爆款复制'
+}
+
+function buildEntrySnapshot(payload?: Partial<HotCopyEntryPayload> | null): Partial<HotCopyEntryPayload> | undefined {
+  if (!payload || typeof payload !== 'object') return undefined
+  const products = Array.isArray(payload.products)
+    ? payload.products
+        .map((p: any) => ({
+          url: String(p?.url || ''),
+          file: null,
+          isVideo: Boolean(p?.isVideo),
+          assetId: Number(p?.assetId || 0) || undefined,
+        }))
+        .filter((p: any) => p.url)
+    : []
+  const libraryVideo =
+    payload.libraryVideo && (payload.libraryVideo.src || payload.libraryVideo.assetId)
+      ? {
+          assetId: Number(payload.libraryVideo.assetId || 0) || 0,
+          src: String(payload.libraryVideo.src || ''),
+        }
+      : null
+  const snapshot: Partial<HotCopyEntryPayload> = {
+    tab: (payload.tab as any) || 'remake',
+    videoSource: (payload.videoSource as any) || '',
+    videoFile: null,
+    libraryVideo,
+    videoFileName: String(payload.videoFileName || ''),
+    videoPreview: String(payload.videoPreview || libraryVideo?.src || ''),
+    products,
+    text: String(payload.text || ''),
+    ratio: String(payload.ratio || DEFAULT_RATIO),
+    duration: String(payload.duration || `${DEFAULT_DURATION_SEC}s`),
+  }
+  return snapshot
 }
 
 // 默认/未命名标题:不回写后端(避免无意义的 PATCH 撞草稿保存的 draft_revision → 409)
@@ -171,6 +206,9 @@ export default function HotCopyCreateView() {
   const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
   // 在途生成任务 id(>0=有任务在跑):持久化后,刷新/切换页面回来用它续轮询,不丢生成结果
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
+  const vidGenAbortRef = useRef<AbortController | null>(null)
+  const aliveRef = useRef(true)
+  const vidGenPendingTimerRef = useRef<number>(0)
 
   // 每次生成的独立记录(对齐智能成片):processing=生成中、failed=失败(可重试)、published=已并入成片。
   // 作用:① 项目管理里把「生成中/失败」显示成可重试的「草稿」(失败不再让项目凭空消失);
@@ -182,6 +220,9 @@ export default function HotCopyCreateView() {
     note: string
     createdAt: number
   }
+
+  const dropProcessingGenerations = (list: GenRecord[] | any[] | null | undefined): GenRecord[] =>
+    Array.isArray(list) ? (list.filter((g: any) => String(g?.status || '') !== 'processing') as GenRecord[]) : []
   const [videoGenerations, setVideoGenerations] = useState<GenRecord[]>([])
   const immediateSaveRef = useRef(false) // 生成记录变化时请求立即落后端,草稿/失败态即时出现在项目里(不等防抖)
 
@@ -193,6 +234,15 @@ export default function HotCopyCreateView() {
       setWorkspaceSwitchLock(false)
     }
   }, [setWorkspaceSwitchLock, vidGenRunning])
+  useEffect(() => {
+    return () => {
+      aliveRef.current = false
+      if (vidGenPendingTimerRef.current) {
+        window.clearInterval(vidGenPendingTimerRef.current)
+        vidGenPendingTimerRef.current = 0
+      }
+    }
+  }, [])
   // 用户在入口选择的成片尺寸(画面比例)与时长(秒);默认与智能成片一致 16:9、10s。
   const [genRatio, setGenRatio] = useState(DEFAULT_RATIO)
   const [genDurationSec, setGenDurationSec] = useState(DEFAULT_DURATION_SEC)
@@ -216,8 +266,18 @@ export default function HotCopyCreateView() {
     const ts = Date.now()
     const rec: GenRecord = { id, status: 'processing', taskId: 0, note: note || '', createdAt: ts }
     immediateSaveRef.current = true
-    setVideoGenerations((prev) => [rec, ...prev])
-    persistNow({ videoGenerations: [rec, ...videoGenerations] }) // 立即落盘(保留历史记录),供进度锚点/草稿即现
+    const ws = Number(workspaceId || 0)
+    if (ws) {
+      const d = loadHotCopyDraft(ws)
+      const prev = Array.isArray(d?.videoGenerations) ? (d?.videoGenerations as any[]) : videoGenerations
+      const next = [rec, ...prev]
+      persistNow({ started: true, step: 1, maxReached: 1, videoGenerating: true, videoGenerations: next })
+    }
+    setVideoGenerations((prev) => {
+      const next = [rec, ...prev]
+      persistNow({ videoGenerations: next })
+      return next
+    })
     return id
   }
   // 结束一条生成记录:成功 published(从草稿列表消失)、失败 failed(留作可重试草稿)。
@@ -238,6 +298,7 @@ export default function HotCopyCreateView() {
   // 保存时原样写回,避免整盘重建 draft_json 时被覆盖丢失。
   const projectVideoStoreRef = useRef<any>(null)
   const serverTitleRef = useRef('') // 已同步到后端的标题(去重)
+  const pendingAutoTitleRef = useRef('')
   const saveChainRef = useRef<Promise<any>>(Promise.resolve()) // 串行化草稿保存
 
   // 从「项目管理 → 新建视频」进入:沿用原项目名 + 携带上传素材(源视频/替换素材)+ 绑定同一项目(不新建重复项目)。
@@ -264,20 +325,80 @@ export default function HotCopyCreateView() {
     if (!ws || !taskId) return
     setVidGenTaskId(taskId)
     setVidGenRunning(true)
-    awaitHotVideoResult({ workspaceId: ws, taskId })
+    persistNow({ videoGenerating: true, vidGenTaskId: taskId })
+    vidGenAbortRef.current?.abort()
+    const ctrl = new AbortController()
+    vidGenAbortRef.current = ctrl
+    let aborted = false
+    awaitHotVideoResult({ workspaceId: ws, taskId, signal: ctrl.signal })
       .then(({ url, assetId }) => {
-        setFullVideo({ url, assetId })
-        setVideoVersions((prev) => [...prev, { url, assetId }])
-        markGen(null, 'published') // 收尾恢复时的进行中记录(从草稿列表消失)
+        const d = loadHotCopyDraft(ws)
+        const prevVers = (Array.isArray(d?.videoVersions) ? d?.videoVersions : null) || videoVersions
+        const nextVers = [...prevVers, { url, assetId }]
+        const nextGens = dropProcessingGenerations(
+          (Array.isArray(d?.videoGenerations) ? d?.videoGenerations : null) || videoGenerations,
+        )
+        persistNow({
+          fullVideo: { url, assetId },
+          videoVersions: nextVers,
+          videoGenerating: false,
+          vidGenTaskId: 0,
+          videoGenerations: nextGens,
+        })
+        if (aliveRef.current) {
+          setFullVideo({ url, assetId })
+          setVideoVersions(nextVers)
+          setVideoGenerations(nextGens)
+        }
       })
       .catch((e: any) => {
-        markGen(null, 'failed') // 失败:留作可重试草稿
-        showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+        if (isAbortedTaskError(e)) {
+          aborted = true
+          return
+        }
+        persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+        if (aliveRef.current) {
+          markGen(null, 'failed') // 失败:留作可重试草稿
+          showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+        }
       })
       .finally(() => {
-        setVidGenRunning(false)
-        setVidGenTaskId(0)
+        if (!aborted) {
+          persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+          if (aliveRef.current) {
+            setVidGenRunning(false)
+            setVidGenTaskId(0)
+          }
+        }
       })
+  }
+
+  const ensurePendingTaskId = (ws: number) => {
+    if (!ws) return
+    if (vidGenPendingTimerRef.current) return
+    vidGenPendingTimerRef.current = window.setInterval(() => {
+      const d = loadHotCopyDraft(ws)
+      const id = Number(d?.vidGenTaskId || 0) || 0
+      const hasResult = Boolean(d?.fullVideo?.url)
+      if (hasResult) {
+        if (vidGenPendingTimerRef.current) {
+          window.clearInterval(vidGenPendingTimerRef.current)
+          vidGenPendingTimerRef.current = 0
+        }
+        if (aliveRef.current) {
+          setVidGenRunning(false)
+          setVidGenTaskId(0)
+        }
+        return
+      }
+      if (id > 0) {
+        if (vidGenPendingTimerRef.current) {
+          window.clearInterval(vidGenPendingTimerRef.current)
+          vidGenPendingTimerRef.current = 0
+        }
+        if (aliveRef.current) resumeVideoTask(ws, id)
+      }
+    }, 800)
   }
 
   // ── 进入恢复(对齐智能成片) ──
@@ -348,8 +469,28 @@ export default function HotCopyCreateView() {
           }
           // 在途任务:后端草稿可能因防抖还没写进 task id → 用本地草稿兜底
           const localD = loadHotCopyDraft(ws)
+          if (localD?.entryInitial) setEntryInitial(localD.entryInitial)
+          if (localD?.fullVideo && typeof localD.fullVideo === 'object' && localD.fullVideo.url && !fv.url) {
+            setFullVideo({ url: String(localD.fullVideo.url), assetId: Number(localD.fullVideo.assetId || 0) || 0 })
+          }
+          if (Array.isArray(localD?.videoVersions) && localD.videoVersions.length) {
+            const localVers = localD.videoVersions
+              .map((v: any) => ({ url: String(v?.url || ''), assetId: Number(v?.assetId || 0) || 0 }))
+              .filter((v: any) => v.url || v.assetId)
+            if (localVers.length && localVers.length > rawVers.length) setVideoVersions(localVers)
+          }
           const pendingTask = Number(smart.vidGenTaskId || localD?.vidGenTaskId || 0) || 0
+          const hasGeneratingFlag = Boolean(smart.videoGenerating || localD?.videoGenerating)
           if (pendingTask > 0 && !fv.url) resumeVideoTask(ws, pendingTask)
+          else if (!fv.url) {
+            const gens = Array.isArray(smart.videoGenerations) ? smart.videoGenerations : []
+            const localGens = Array.isArray(localD?.videoGenerations) ? localD?.videoGenerations : []
+            const hasProcessing = [...gens, ...localGens].some((g: any) => String(g?.status || '') === 'processing')
+            if (hasProcessing || hasGeneratingFlag) {
+              setVidGenRunning(true)
+              ensurePendingTaskId(ws)
+            }
+          }
         })
         .catch(() => showToast('项目加载失败', 'error'))
       return
@@ -360,7 +501,14 @@ export default function HotCopyCreateView() {
     //    项目管理照样可见。跨设备/全新浏览器的恢复走「项目管理→进入编辑」的 /hot-copy/:id(A 分支)。
     hydratedRef.current = true
     const d = loadHotCopyDraft(ws)
-    if (d?.started) {
+    if (d?.entryInitial) setEntryInitial(d.entryInitial)
+    const hasProcessing =
+      Array.isArray(d?.videoGenerations) &&
+      d.videoGenerations.some((g: any) => String(g?.status || '') === 'processing')
+    const hasGeneratingFlag = Boolean(d?.videoGenerating)
+    const pendingTaskId = Number(d?.vidGenTaskId || 0) || 0
+    const hasResult = Boolean(d?.fullVideo?.url)
+    if (d?.started || hasProcessing || pendingTaskId > 0 || hasGeneratingFlag) {
       const pid = Number(d.projectId || 0) || 0
       if (pid) {
         projectIdRef.current = pid
@@ -381,7 +529,11 @@ export default function HotCopyCreateView() {
       if (d.genRatio) setGenRatio(String(d.genRatio))
       if (Number(d.genDurationSec) > 0) setGenDurationSec(Number(d.genDurationSec))
       // 有在途任务且还没出片 → 续轮询(同一个后端任务,不重新生成)
-      if (Number(d.vidGenTaskId || 0) > 0 && !d.fullVideo?.url) resumeVideoTask(ws, Number(d.vidGenTaskId))
+      if (pendingTaskId > 0 && !hasResult) resumeVideoTask(ws, pendingTaskId)
+      else if (!hasResult && (hasProcessing || hasGeneratingFlag)) {
+        setVidGenRunning(true)
+        ensurePendingTaskId(ws)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeId, workspaceId])
@@ -389,8 +541,15 @@ export default function HotCopyCreateView() {
   // 状态变更即写回草稿(仅在已水合且已进入流程后,避免用初始空态覆盖已存草稿)
   useEffect(() => {
     const ws = Number(workspaceId || 0)
-    if (!ws || !hydratedRef.current || !started) return
+    if (!ws || !hydratedRef.current) return
+    const hasEntry =
+      Boolean(entryInitial?.videoPreview) ||
+      Boolean(entryInitial?.text?.trim?.()) ||
+      Boolean(entryInitial?.libraryVideo?.assetId || entryInitial?.libraryVideo?.src) ||
+      Boolean(entryInitial?.products?.length)
+    if (!started && !hasEntry) return
     saveHotCopyDraft(ws, {
+      entryInitial,
       projectId: projectIdRef.current || projectId,
       started,
       step,
@@ -402,6 +561,7 @@ export default function HotCopyCreateView() {
       productAssetIds,
       fullVideo,
       videoVersions,
+      videoGenerating: vidGenRunning,
       vidGenTaskId,
       videoGenerations,
       genRatio,
@@ -409,6 +569,7 @@ export default function HotCopyCreateView() {
     })
   }, [
     workspaceId,
+    entryInitial,
     projectId,
     started,
     step,
@@ -420,6 +581,7 @@ export default function HotCopyCreateView() {
     productAssetIds,
     fullVideo,
     videoVersions,
+    vidGenRunning,
     vidGenTaskId,
     videoGenerations,
     genRatio,
@@ -432,6 +594,7 @@ export default function HotCopyCreateView() {
     const ws = Number(workspaceId || 0)
     if (!ws) return
     const base: HotCopyDraft = loadHotCopyDraft(ws) || {
+      entryInitial,
       projectId: projectIdRef.current || projectId,
       started: true,
       step: 1,
@@ -443,6 +606,7 @@ export default function HotCopyCreateView() {
       productAssetIds,
       fullVideo,
       videoVersions,
+      videoGenerating: vidGenRunning,
       vidGenTaskId,
       videoGenerations,
       genRatio,
@@ -519,7 +683,13 @@ export default function HotCopyCreateView() {
       else await fetchRevision(id, ws) // 响应没带 revision → 重新拉,保持同步(否则下次保存必 409)
       return true
     } catch (e: any) {
-      if (e?.status !== 409) return false
+      const conflict =
+        Number(e?.status || 0) === 409 ||
+        Number(e?.code || 0) === 409 ||
+        String(e?.code || '').toUpperCase() === 'DRAFT_CONFLICT' ||
+        String(e?.response?.code_string || e?.response?.codeString || '').toUpperCase() === 'DRAFT_CONFLICT' ||
+        Number(e?.response?.code || 0) === 409
+      if (!conflict) return false
       // 版本冲突:优先用 409 响应体里直接带的最新 revision,没有再拉一次,然后重试
       const fromErr = normRev(e?.response)
       if (Number.isFinite(fromErr)) draftRevisionRef.current = fromErr
@@ -661,7 +831,23 @@ export default function HotCopyCreateView() {
       const ctrl = new AbortController()
       nameAbortRef.current = ctrl
       const name = await generateProjectName(req, ctrl.signal)
-      if (name && !nameTouched) setProjectName(name)
+      if (name && !nameTouched) {
+        const next = String(name).trim()
+        if (next) {
+          pendingAutoTitleRef.current = next
+          setProjectName(next)
+          const wsId = Number(workspaceId || 0)
+          const id = Number(projectIdRef.current || 0)
+          if (wsId > 0 && id > 0 && !isUnnamedTitle(next)) {
+            serverTitleRef.current = next
+            pendingAutoTitleRef.current = ''
+            patchCreativeProject({ projectId: id, workspaceId: wsId, title: next, name: next }).catch(() => {
+              serverTitleRef.current = ''
+              pendingAutoTitleRef.current = next
+            })
+          }
+        }
+      }
     } catch {
       /* 命名失败保留原名 */
     } finally {
@@ -678,6 +864,9 @@ export default function HotCopyCreateView() {
     srcDurSec?: number,
   ) => {
     const plans = await resolvePlanCandidates()
+    vidGenAbortRef.current?.abort()
+    const ctrl = new AbortController()
+    vidGenAbortRef.current = ctrl
     const { url, assetId } = await replicateHotVideo({
       workspaceId: ws,
       videoAssetId,
@@ -687,13 +876,30 @@ export default function HotCopyCreateView() {
       durationSec: genDurationSec,
       sourceVideoDurationSec: srcDurSec || sourceVideoDurSec || 0,
       modelPlanCandidates: plans,
+      signal: ctrl.signal,
       onTask: (id) => {
         setVidGenTaskId(id)
         persistNow({ vidGenTaskId: id }) // 立即落盘 task id,供切换/刷新后续轮询(不丢在途生成)
       },
     })
-    setFullVideo({ url, assetId })
-    setVideoVersions((prev) => [...prev, { url, assetId }])
+    const d = loadHotCopyDraft(ws)
+    const prevVers = (Array.isArray(d?.videoVersions) ? d?.videoVersions : null) || videoVersions
+    const nextVers = [...prevVers, { url, assetId }]
+    const nextGens = dropProcessingGenerations(
+      (Array.isArray(d?.videoGenerations) ? d?.videoGenerations : null) || videoGenerations,
+    )
+    persistNow({
+      fullVideo: { url, assetId },
+      videoVersions: nextVers,
+      videoGenerating: false,
+      vidGenTaskId: 0,
+      videoGenerations: nextGens,
+    })
+    if (aliveRef.current) {
+      setFullVideo({ url, assetId })
+      setVideoVersions(nextVers)
+      setVideoGenerations(nextGens)
+    }
   }
 
   // 入口提交:上传本地素材取 asset_id → 直接 video.replicate 出片
@@ -705,6 +911,7 @@ export default function HotCopyCreateView() {
     }
     setVidGenRunning(true)
     const gid = startGen('生成')
+    let aborted = false
     try {
       // ① 源视频 asset_id(素材库已有;本地现传)
       let videoAssetId = 0
@@ -737,7 +944,21 @@ export default function HotCopyCreateView() {
       }
       setSourceVideo({ assetId: videoAssetId, url: videoUrl })
       setProductAssetIds(productIds)
+      const nextEntryInitial = buildEntrySnapshot({
+        ...payload,
+        videoSource: 'library',
+        videoFile: null,
+        libraryVideo: { assetId: videoAssetId, src: videoUrl },
+        videoPreview: videoUrl,
+        products: (payload.products || []).map((p, index) => ({
+          ...p,
+          file: null,
+          assetId: Number(productIds[index] || p.assetId || 0) || undefined,
+        })),
+      })
+      setEntryInitial(nextEntryInitial)
       persistNow({ sourceVideo: { assetId: videoAssetId, url: videoUrl }, productAssetIds: productIds })
+      persistNow({ entryInitial: nextEntryInitial })
 
       // 读源视频真实时长(秒),按它计费(source_video_duration);读不到回退默认 duration
       const srcDur = await readVideoDurationSec(videoUrl)
@@ -745,13 +966,25 @@ export default function HotCopyCreateView() {
 
       // ③ 出片
       await doReplicate(ws, videoAssetId, productIds, prompt, srcDur)
-      markGen(gid, 'published')
+      if (aliveRef.current) markGen(gid, 'published')
     } catch (e: any) {
-      markGen(gid, 'failed')
-      showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+      if (isAbortedTaskError(e)) {
+        aborted = true
+        return
+      }
+      persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+      if (aliveRef.current) {
+        markGen(gid, 'failed')
+        showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+      }
     } finally {
-      setVidGenRunning(false)
-      setVidGenTaskId(0)
+      if (!aborted) {
+        persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+        if (aliveRef.current) {
+          setVidGenRunning(false)
+          setVidGenTaskId(0)
+        }
+      }
     }
   }
 
@@ -790,7 +1023,7 @@ export default function HotCopyCreateView() {
           modelPlanCandidates: plans,
           onTask: (id) => {
             setVidGenTaskId(id)
-            persistNow({ vidGenTaskId: id })
+            persistNow({ videoGenerating: true, vidGenTaskId: id })
           },
         })
         setFullVideo({ url, assetId })
@@ -800,6 +1033,7 @@ export default function HotCopyCreateView() {
         markGen(gid, 'failed')
         showToast(`视频修改失败:${e?.message || '请重试'}`, 'error')
       } finally {
+        persistNow({ videoGenerating: false, vidGenTaskId: 0 })
         setVidGenRunning(false)
         setVidGenTaskId(0)
       }
@@ -857,11 +1091,36 @@ export default function HotCopyCreateView() {
 
   // 入口提交「做同款/生成视频」→ 需登录(免登录可进页面/上传,但生成需登录)
   const handleStart = (payload: HotCopyEntryPayload) => {
+    const ws = Number(workspaceId || 0)
+    const d = ws ? loadHotCopyDraft(ws) : null
+    const pendingTask = Number(d?.vidGenTaskId || 0) || 0
+    const hasResult = Boolean(d?.fullVideo?.url)
+    if (ws && pendingTask > 0 && !hasResult) {
+      void requireAuth(async () => {
+        setStarted(true)
+        setStep(1)
+        setMaxReached(1)
+        setBasePrompt(String(d?.basePrompt || ''))
+        setProjectName(String(d?.projectName || projectName))
+        setNameTouched(Boolean(d?.nameTouched))
+        setSourceVideo(d?.sourceVideo && typeof d.sourceVideo === 'object' ? d.sourceVideo : { assetId: 0, url: '' })
+        setProductAssetIds(Array.isArray(d?.productAssetIds) ? d.productAssetIds : [])
+        setFullVideo(d?.fullVideo && typeof d.fullVideo === 'object' ? d.fullVideo : { url: '', assetId: 0 })
+        setVideoVersions(Array.isArray(d?.videoVersions) ? d.videoVersions : [])
+        setVideoGenerations(Array.isArray(d?.videoGenerations) ? d.videoGenerations : [])
+        if (d?.genRatio) setGenRatio(String(d.genRatio))
+        if (Number(d?.genDurationSec) > 0) setGenDurationSec(Number(d.genDurationSec))
+        showToast('检测到视频正在生成，已为你恢复进度', 'info')
+        resumeVideoTask(ws, pendingTask)
+      })
+      return
+    }
     void requireAuth(() => startGenerate(payload))
   }
   const startGenerate = (payload: HotCopyEntryPayload) => {
     const prompt = buildBasePrompt(payload.tab, payload.text)
-    setEntryInitial(payload)
+    const nextEntryInitial = buildEntrySnapshot(payload)
+    setEntryInitial(nextEntryInitial)
     setBasePrompt(prompt)
     // 采用用户在入口选择的成片尺寸/时长(默认竖屏 9:16、15s)
     const pickedRatio = payload.ratio || DEFAULT_RATIO
@@ -887,6 +1146,7 @@ export default function HotCopyCreateView() {
     const ws = Number(workspaceId || 0)
     if (ws) {
       saveHotCopyDraft(ws, {
+        entryInitial: nextEntryInitial,
         projectId: 0,
         started: true,
         step: 1,
@@ -898,6 +1158,7 @@ export default function HotCopyCreateView() {
         productAssetIds: [],
         fullVideo: { url: '', assetId: 0 },
         videoVersions: [],
+        videoGenerating: false,
         vidGenTaskId: 0,
         videoGenerations: [],
         genRatio: pickedRatio, // 用本地刚算出的值(setState 异步,此刻 state 还没更新)
@@ -914,10 +1175,19 @@ export default function HotCopyCreateView() {
           setProjectId(id)
           persistNow({ projectId: id }) // 本地记下 projectId,供「无 id 重定向」
           void putHotCopyDraftToBackend() // 立即落一次后端草稿,确保项目可见
+          const title = pendingAutoTitleRef.current.trim()
+          if (title && !isUnnamedTitle(title)) {
+            serverTitleRef.current = title
+            pendingAutoTitleRef.current = ''
+            patchCreativeProject({ projectId: id, workspaceId: ws, title, name: title }).catch(() => {
+              serverTitleRef.current = ''
+              pendingAutoTitleRef.current = title
+            })
+          }
         })
         .catch(() => {})
     }
-    if (payload.text.trim()) void autoNameProject(prompt)
+    void autoNameProject(prompt)
     void prepareAndGenerate(payload, prompt)
   }
 

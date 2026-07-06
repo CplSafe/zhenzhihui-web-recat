@@ -7,6 +7,8 @@
 export interface HotCopyDraft {
   /** 已建后端项目 id(>0):用于「/hot-copy 无 id 但在制」时重定向回 /hot-copy/:id */
   projectId?: number
+  /** 入口页序列化快照:切路由后返回第一页时恢复已输入的视频/素材/文案/比例/时长 */
+  entryInitial?: any
   started: boolean
   step: number
   maxReached: number
@@ -17,6 +19,8 @@ export interface HotCopyDraft {
   productAssetIds: number[]
   fullVideo: { url: string; assetId: number }
   videoVersions: { url: string; assetId: number }[]
+  /** 显式标记当前是否正在生成/续轮询中,用于切路由后优先恢复到生成页而不是显示「暂无视频」 */
+  videoGenerating?: boolean
   vidGenTaskId: number // >0 表示有在途生成任务,恢复时续轮询
   /** 用户在入口选择的成片尺寸(画面比例,如 9:16)与时长(秒);恢复后重新生成沿用同样设置 */
   genRatio?: string
