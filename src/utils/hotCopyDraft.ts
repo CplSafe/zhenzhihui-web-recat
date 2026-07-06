@@ -4,6 +4,16 @@
  * 只存「恢复生成步」所需的可序列化状态(不存 File / blob:objectURL);用 vidGenTaskId 续轮询在途任务。
  * 单工作空间一条草稿(/hot-copy 无 :id),按 workspaceId 隔离。
  */
+export type HotCopyGenStatus = 'processing' | 'failed' | 'published'
+
+export interface HotCopyGenRecord {
+  id: string
+  status: HotCopyGenStatus
+  taskId: number
+  note: string
+  createdAt: number
+}
+
 export interface HotCopyDraft {
   /** 已建后端项目 id(>0):用于「/hot-copy 无 id 但在制」时重定向回 /hot-copy/:id */
   projectId?: number
@@ -27,7 +37,7 @@ export interface HotCopyDraft {
   genDurationSec?: number
   /** 每次生成的独立记录(生成中/失败 → 项目里显示成可重试「草稿」;成功并入成片后置 published 即从草稿列表消失)。
    *  进行中那条的 createdAt 同时作为「加载进度锚点」:切页面/刷新回来按真实流逝时间续算,不从头爬。 */
-  videoGenerations?: { id: string; status: string; taskId?: number; note?: string; createdAt?: number }[]
+  videoGenerations?: HotCopyGenRecord[]
 }
 
 const keyOf = (workspaceId: number) => `zzh_hotcopy_draft_v1_ws${Math.floor(Number(workspaceId) || 0)}`

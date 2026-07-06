@@ -370,6 +370,12 @@
   justify-content: space-between;
   margin-top: 18px;
 }
+.hotcopy__sendArea {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+}
 /* 左侧工具组:尺寸/时长下拉 + @ 引用 */
 .hotcopy__tools {
   display: flex;
@@ -453,6 +459,21 @@
   font-size: 11px;
   color: #333;
   padding: 3px 0;
+}
+.hotcopy__regen {
+  border: none;
+  background: none;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #5b6472;
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.hotcopy__regen:hover {
+  color: #11a98a;
 }
 /* 发送按钮:仅作点击容器,圆底与灰/绿两态由 SVG fill 切换(对齐智能成片 .send) */
 .hotcopy__send {
