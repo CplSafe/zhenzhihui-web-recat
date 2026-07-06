@@ -944,6 +944,7 @@ export default function HotCopyCreateView() {
 
       // ② 替换素材图 asset_id(只用图片;素材库已有,本地现传)
       const productIds: number[] = []
+      let productFailures = 0
       for (const p of payload.products) {
         if (p.isVideo) continue
         if (p.assetId) {
@@ -953,11 +954,23 @@ export default function HotCopyCreateView() {
         if (p.file) {
           try {
             const id = await uploadHotCopyAsset(ws, p.file)
-            if (id) productIds.push(id)
+            if (id) {
+              productIds.push(id)
+            } else {
+              productFailures++
+            }
           } catch {
-            /* 单张失败跳过 */
+            productFailures++
           }
         }
+      }
+      // 所有素材都失败或未提供时,不给后端发空的 productAssetIds——那会导致 replicate 只拿视频没替换图,白白消耗积分。
+      if (!productIds.length) {
+        throw new Error(
+          productFailures > 0
+            ? `${productFailures} 张素材图片上传失败,请重试或更换图片`
+            : '未获取到替换素材,请至少上传一张图片',
+        )
       }
       setSourceVideo({ assetId: videoAssetId, url: videoUrl })
       setProductAssetIds(productIds)
