@@ -205,14 +205,21 @@ function periodLabel(p: ApiPlan): { unit: string; creditUnit: string } {
       const unit = `/${intervalCount}天`
       return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
     }
-    if (intervalUnit === 'week') return { unit: '/7天', creditUnit: backendCreditUnit || '积分/7天' }
+    // 周:按后端返回的周数 interval_count 换算真实天数(1周=7天),不再写死「7天」。
+    // 后端没给周数(interval_count 缺失/0)时按 1 周算,仍是 7 天。
+    if (intervalUnit === 'week') {
+      const unit = `/${7 * (intervalCount || 1)}天`
+      return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
+    }
     if (intervalUnit === 'quarter') return { unit: '/季', creditUnit: backendCreditUnit || '积分/季' }
     if (intervalUnit === 'year') return { unit: '/年', creditUnit: backendCreditUnit || '积分/年' }
     if (intervalUnit === 'month') return { unit: '/月', creditUnit: backendCreditUnit || '积分/月' }
   }
 
-  if (String(p.period || '').toLowerCase() === 'week')
-    return { unit: '/7天', creditUnit: backendCreditUnit || '积分/7天' }
+  if (String(p.period || '').toLowerCase() === 'week') {
+    const unit = `/${7 * (intervalCount || 1)}天`
+    return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
+  }
   if (String(p.period || '').toLowerCase() === 'quarter')
     return { unit: '/季', creditUnit: backendCreditUnit || '积分/季' }
   if (String(p.period || '').toLowerCase() === 'year')

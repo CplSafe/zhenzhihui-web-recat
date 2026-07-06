@@ -19,7 +19,13 @@ import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import { replicateHotVideo, uploadHotCopyAsset, awaitHotVideoResult, estimateReplicateCost } from '@/api/hotCopy'
 import { editFullVideo } from '@/api/smartVideo'
 import { readVideoDurationSec } from '@/utils/videoDuration'
-import { saveHotCopyDraft, loadHotCopyDraft, clearHotCopyDraft, type HotCopyDraft } from '@/utils/hotCopyDraft'
+import {
+  saveHotCopyDraft,
+  loadHotCopyDraft,
+  clearHotCopyDraft,
+  type HotCopyDraft,
+  type HotCopyGenRecord,
+} from '@/utils/hotCopyDraft'
 import { refreshAssetUrl } from '@/api/smartShotImage'
 import { generateProjectName } from '@/api/aiPolish'
 import {
@@ -213,16 +219,33 @@ export default function HotCopyCreateView() {
   // 每次生成的独立记录(对齐智能成片):processing=生成中、failed=失败(可重试)、published=已并入成片。
   // 作用:① 项目管理里把「生成中/失败」显示成可重试的「草稿」(失败不再让项目凭空消失);
   //       ② 进行中那条的 createdAt 作为加载进度锚点 → 切页面/刷新回来续算,不从头爬。
-  type GenRecord = {
-    id: string
-    status: 'processing' | 'failed' | 'published'
-    taskId: number
-    note: string
-    createdAt: number
+  type GenRecord = HotCopyGenRecord
+
+  const normalizeGenStatus = (s: any): GenRecord['status'] => {
+    const v = String(s || '').trim()
+    if (v === 'processing' || v === 'failed' || v === 'published') return v
+    return 'processing'
   }
 
-  const dropProcessingGenerations = (list: GenRecord[] | any[] | null | undefined): GenRecord[] =>
-    Array.isArray(list) ? (list.filter((g: any) => String(g?.status || '') !== 'processing') as GenRecord[]) : []
+  const normalizeGenRecords = (list: any): GenRecord[] => {
+    if (!Array.isArray(list)) return []
+    return list
+      .map((g: any) => {
+        const id = String(g?.id || '').trim()
+        if (!id) return null
+        return {
+          id,
+          status: normalizeGenStatus(g?.status),
+          taskId: Number(g?.taskId || 0) || 0,
+          note: String(g?.note || ''),
+          createdAt: Number(g?.createdAt || 0) || Date.now(),
+        } as GenRecord
+      })
+      .filter(Boolean) as GenRecord[]
+  }
+
+  const dropProcessingGenerations = (list: any): GenRecord[] =>
+    normalizeGenRecords(list).filter((g) => String(g?.status || '') !== 'processing')
   const [videoGenerations, setVideoGenerations] = useState<GenRecord[]>([])
   const immediateSaveRef = useRef(false) // 生成记录变化时请求立即落后端,草稿/失败态即时出现在项目里(不等防抖)
 
@@ -269,7 +292,7 @@ export default function HotCopyCreateView() {
     const ws = Number(workspaceId || 0)
     if (ws) {
       const d = loadHotCopyDraft(ws)
-      const prev = Array.isArray(d?.videoGenerations) ? (d?.videoGenerations as any[]) : videoGenerations
+      const prev = (d ? normalizeGenRecords((d as any)?.videoGenerations) : null) || videoGenerations
       const next = [rec, ...prev]
       persistNow({ started: true, step: 1, maxReached: 1, videoGenerating: true, videoGenerations: next })
     }
@@ -335,9 +358,7 @@ export default function HotCopyCreateView() {
         const d = loadHotCopyDraft(ws)
         const prevVers = (Array.isArray(d?.videoVersions) ? d?.videoVersions : null) || videoVersions
         const nextVers = [...prevVers, { url, assetId }]
-        const nextGens = dropProcessingGenerations(
-          (Array.isArray(d?.videoGenerations) ? d?.videoGenerations : null) || videoGenerations,
-        )
+        const nextGens = dropProcessingGenerations((d as any)?.videoGenerations || videoGenerations)
         persistNow({
           fullVideo: { url, assetId },
           videoVersions: nextVers,
@@ -459,7 +480,7 @@ export default function HotCopyCreateView() {
               .map((v: any) => ({ url: String(v?.url || ''), assetId: Number(v?.assetId || 0) || 0 }))
               .filter((v: any) => v.url || v.assetId),
           )
-          setVideoGenerations(Array.isArray(smart.videoGenerations) ? (smart.videoGenerations as GenRecord[]) : [])
+          setVideoGenerations(normalizeGenRecords((smart as any)?.videoGenerations))
           if (smart.genRatio) setGenRatio(String(smart.genRatio))
           if (Number(smart.genDurationSec) > 0) setGenDurationSec(Number(smart.genDurationSec))
           const t = String(proj?.title || proj?.name || '').trim()
@@ -502,9 +523,7 @@ export default function HotCopyCreateView() {
     hydratedRef.current = true
     const d = loadHotCopyDraft(ws)
     if (d?.entryInitial) setEntryInitial(d.entryInitial)
-    const hasProcessing =
-      Array.isArray(d?.videoGenerations) &&
-      d.videoGenerations.some((g: any) => String(g?.status || '') === 'processing')
+    const hasProcessing = normalizeGenRecords((d as any)?.videoGenerations).some((g) => g.status === 'processing')
     const hasGeneratingFlag = Boolean(d?.videoGenerating)
     const pendingTaskId = Number(d?.vidGenTaskId || 0) || 0
     const hasResult = Boolean(d?.fullVideo?.url)
@@ -525,7 +544,7 @@ export default function HotCopyCreateView() {
       setProductAssetIds(Array.isArray(d.productAssetIds) ? d.productAssetIds : [])
       setFullVideo(d.fullVideo || { url: '', assetId: 0 })
       setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
-      setVideoGenerations(Array.isArray(d.videoGenerations) ? (d.videoGenerations as GenRecord[]) : [])
+      setVideoGenerations(normalizeGenRecords((d as any)?.videoGenerations))
       if (d.genRatio) setGenRatio(String(d.genRatio))
       if (Number(d.genDurationSec) > 0) setGenDurationSec(Number(d.genDurationSec))
       // 有在途任务且还没出片 → 续轮询(同一个后端任务,不重新生成)
@@ -885,9 +904,7 @@ export default function HotCopyCreateView() {
     const d = loadHotCopyDraft(ws)
     const prevVers = (Array.isArray(d?.videoVersions) ? d?.videoVersions : null) || videoVersions
     const nextVers = [...prevVers, { url, assetId }]
-    const nextGens = dropProcessingGenerations(
-      (Array.isArray(d?.videoGenerations) ? d?.videoGenerations : null) || videoGenerations,
-    )
+    const nextGens = dropProcessingGenerations((d as any)?.videoGenerations || videoGenerations)
     persistNow({
       fullVideo: { url, assetId },
       videoVersions: nextVers,
@@ -1107,7 +1124,7 @@ export default function HotCopyCreateView() {
         setProductAssetIds(Array.isArray(d?.productAssetIds) ? d.productAssetIds : [])
         setFullVideo(d?.fullVideo && typeof d.fullVideo === 'object' ? d.fullVideo : { url: '', assetId: 0 })
         setVideoVersions(Array.isArray(d?.videoVersions) ? d.videoVersions : [])
-        setVideoGenerations(Array.isArray(d?.videoGenerations) ? d.videoGenerations : [])
+        setVideoGenerations(normalizeGenRecords((d as any)?.videoGenerations))
         if (d?.genRatio) setGenRatio(String(d.genRatio))
         if (Number(d?.genDurationSec) > 0) setGenDurationSec(Number(d.genDurationSec))
         showToast('检测到视频正在生成，已为你恢复进度', 'info')
