@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { getBusinessErrorMessage, getWorkspaceMemberStatistics, getWorkspaceOverview } from '@/api/business'
+import { listWorkspaceMembers } from '@/api/auth'
 import { useCurrentMember, useCurrentUser, useCurrentWorkspace, useWorkspaceId } from '@/stores/workspaceSession'
 import { openComingSoon } from '@/stores/ui'
 import './SpaceDashboardView.css'
@@ -104,6 +105,32 @@ function parseMemberStats(payload: any): MemberStatRow[] {
         credits: num(CREDIT_KEYS),
       }
     })
+}
+
+function normalizeMemberPhone(member: any): string {
+  return pickText(
+    member?.phone,
+    member?.mobile,
+    member?.account,
+    member?.username,
+    member?.phoneMasked,
+    member?.mobile_number,
+    member?.phone_number,
+    member?.user?.mobile,
+    member?.user?.phone,
+    member?.user?.telephone,
+    member?.user?.tel,
+    member?.user?.mobile_masked,
+    member?.user?.phone_masked,
+    member?.user?.mobile_number,
+    member?.user?.phone_number,
+    member?.profile?.mobile,
+    member?.profile?.phone,
+    member?.profile?.telephone,
+    member?.account?.mobile,
+    member?.account?.phone,
+    member?.account?.telephone,
+  )
 }
 
 function avgPerVideo(credits: number, videos: number): number {
@@ -313,9 +340,10 @@ export default function SpaceDashboardView() {
         return
       }
 
-      const [overviewResult, memberResult] = await Promise.allSettled([
+      const [overviewResult, memberResult, membersResult] = await Promise.allSettled([
         getWorkspaceOverview(wsId),
         getWorkspaceMemberStatistics(wsId),
+        listWorkspaceMembers(wsId),
       ])
 
       if (overviewResult.status === 'fulfilled') {
@@ -325,12 +353,42 @@ export default function SpaceDashboardView() {
       }
 
       if (memberResult.status === 'fulfilled') {
-        setMemberStats(parseMemberStats(memberResult.value))
+        let rows = parseMemberStats(memberResult.value)
+        if (membersResult.status === 'fulfilled') {
+          const rawList = Array.isArray(membersResult.value)
+            ? membersResult.value
+            : (membersResult.value?.items ??
+              membersResult.value?.list ??
+              membersResult.value?.records ??
+              membersResult.value?.members ??
+              membersResult.value?.data ??
+              [])
+          const list = Array.isArray(rawList) ? rawList : []
+          const phoneById = new Map<number, string>()
+          for (const item of list) {
+            if (!item || typeof item !== 'object') continue
+            const id = Number(item?.id || item?.user_id || item?.userId || 0)
+            if (!Number.isFinite(id) || id <= 0) continue
+            const phone = normalizeMemberPhone(item)
+            if (phone) phoneById.set(Math.floor(id), phone)
+          }
+          rows = rows.map((row) => {
+            if (row.phone) return row
+            const id = Number(row.id || 0)
+            if (!Number.isFinite(id) || id <= 0) return row
+            return { ...row, phone: phoneById.get(Math.floor(id)) || '' }
+          })
+        }
+        setMemberStats(rows)
       } else {
         setMemberStats([])
       }
 
-      if (overviewResult.status === 'rejected' && memberResult.status === 'rejected') {
+      if (
+        overviewResult.status === 'rejected' &&
+        memberResult.status === 'rejected' &&
+        (membersResult.status === 'fulfilled' || membersResult.status === 'rejected')
+      ) {
         setError(
           getBusinessErrorMessage(
             overviewResult.reason,

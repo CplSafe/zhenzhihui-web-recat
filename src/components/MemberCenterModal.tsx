@@ -51,7 +51,20 @@ interface ApiPlan {
   id: number
   code: string
   name: string
-  period: string // month | year
+  period: string
+  period_label?: string
+  periodLabel?: string
+  period_days?: number
+  periodDays?: number
+  duration_days?: number
+  durationDays?: number
+  interval_unit?: string
+  intervalUnit?: string
+  interval_count?: number
+  intervalCount?: number
+  unit?: string
+  credit_unit?: string
+  creditUnit?: string
   plan_type?: string // team | personal(后端区分团队/个人套餐)
   planType?: string
   price_cents: number // 折前原价(划线价)
@@ -140,13 +153,71 @@ function formatExpiry(sub: any): string {
   return `${days} 天后到期（${ymd}）`
 }
 
-// 从套餐名/code 推断周期文案(接口 period 只有 month|year,7天/季 从名称识别)
+function expiryTimeMs(sub: any): number {
+  const raw =
+    sub?.current_period_end ||
+    sub?.currentPeriodEnd ||
+    sub?.expire_at ||
+    sub?.expires_at ||
+    sub?.expired_at ||
+    sub?.end_at ||
+    sub?.end_time ||
+    ''
+  if (!raw) return 0
+  const ms = typeof raw === 'number' ? (raw < 1e12 ? raw * 1000 : raw) : Date.parse(String(raw))
+  return Number.isFinite(ms) ? ms : 0
+}
+
+function normalizeSlashUnit(raw: any): string {
+  const s = String(raw || '').trim()
+  if (!s) return ''
+  return s.startsWith('/') ? s : `/${s}`
+}
+
+function creditUnitFromUnit(unit: string): string {
+  const clean = String(unit || '')
+    .trim()
+    .replace(/^\//, '')
+  return clean ? `积分/${clean}` : ''
+}
+
+// 周期文案只使用后端返回字段(unit/period_label/period_days/interval_*/period),不再按套餐名/code 猜「7天/季」。
 function periodLabel(p: ApiPlan): { unit: string; creditUnit: string } {
-  const s = `${p.name || ''} ${p.code || ''}`
-  if (/7\s*天|试用|trial|week/i.test(s)) return { unit: '/7天', creditUnit: '积分/七天' }
-  if (/季|quarter/i.test(s)) return { unit: '/季', creditUnit: '积分/季' }
-  if (/年|year/i.test(s) || p.period === 'year') return { unit: '/年', creditUnit: '积分/年' }
-  return { unit: '/月', creditUnit: '积分/月' }
+  const backendUnit = normalizeSlashUnit(
+    p.unit || p.period_label || p.periodLabel || p.display?.unit || p.display?.period_label || p.display?.periodLabel,
+  )
+  const backendCreditUnit = String(
+    p.credit_unit || p.creditUnit || p.display?.credit_unit || p.display?.creditUnit || '',
+  ).trim()
+  if (backendUnit) return { unit: backendUnit, creditUnit: backendCreditUnit || creditUnitFromUnit(backendUnit) }
+
+  const periodDays =
+    Number(p.period_days ?? p.periodDays ?? p.duration_days ?? p.durationDays ?? p.display?.period_days ?? 0) || 0
+  if (periodDays > 0) {
+    const unit = `/${periodDays}天`
+    return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
+  }
+
+  const intervalUnit = String(p.interval_unit ?? p.intervalUnit ?? p.display?.interval_unit ?? '').toLowerCase()
+  const intervalCount = Number(p.interval_count ?? p.intervalCount ?? p.display?.interval_count ?? 0) || 0
+  if (intervalUnit) {
+    if (intervalUnit === 'day' && intervalCount > 0) {
+      const unit = `/${intervalCount}天`
+      return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
+    }
+    if (intervalUnit === 'week') return { unit: '/7天', creditUnit: backendCreditUnit || '积分/7天' }
+    if (intervalUnit === 'quarter') return { unit: '/季', creditUnit: backendCreditUnit || '积分/季' }
+    if (intervalUnit === 'year') return { unit: '/年', creditUnit: backendCreditUnit || '积分/年' }
+    if (intervalUnit === 'month') return { unit: '/月', creditUnit: backendCreditUnit || '积分/月' }
+  }
+
+  if (String(p.period || '').toLowerCase() === 'week')
+    return { unit: '/7天', creditUnit: backendCreditUnit || '积分/7天' }
+  if (String(p.period || '').toLowerCase() === 'quarter')
+    return { unit: '/季', creditUnit: backendCreditUnit || '积分/季' }
+  if (String(p.period || '').toLowerCase() === 'year')
+    return { unit: '/年', creditUnit: backendCreditUnit || '积分/年' }
+  return { unit: '/月', creditUnit: backendCreditUnit || '积分/月' }
 }
 
 function toVM(p: ApiPlan): PlanVM {
@@ -363,13 +434,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const [namePromptTeamId, setNamePromptTeamId] = useState(0)
   const [teamNameInput, setTeamNameInput] = useState('')
   const [renamingTeam, setRenamingTeam] = useState(false)
-  // 【下单前】团队名输入:开团队版前先填好,随订单一起把空间建成该名字。默认预填唯一名(用户可改)。
-  const [teamName, setTeamName] = useState('')
-  const teamNameTouchedRef = useRef(false) // 用户手动改过后不再被默认名覆盖
   const orderedTeamNameRef = useRef('') // 本次下单用的团队名,供 18s 兜底自建时复用,保持一致
-  useEffect(() => {
-    if (mainTab === 'team' && !teamNameTouchedRef.current) setTeamName(uniqueDefaultTeamName)
-  }, [mainTab, uniqueDefaultTeamName])
   // 子账号(不可充值)若正停在积分充值 tab(如切空间后)→ 退回基础版,避免看到充值内容
   useEffect(() => {
     if (!canRecharge && mainTab === 'recharge') setMainTab('basic')
@@ -442,6 +507,17 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       alive = false
     }
   }, [open, workspaceId])
+
+  const expiredBanner = useMemo(() => {
+    if (!subscription) return false
+    const expMs = expiryTimeMs(subscription)
+    if (!expMs) return false
+    const hasBought = Boolean(
+      subscription.plan_id || subscription.planId || subscription.plan_code || subscription.plan_name,
+    )
+    if (!hasBought) return false
+    return expMs <= Date.now()
+  }, [subscription])
 
   if (!open) return null
 
@@ -673,18 +749,28 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     // 续费某个已有团队走订阅信息区的「续费当前团队」按钮(intent=subscribe);个人版维持 开通/续费。
     const newTeam = p.isTeam
     const intent = newTeam ? 'new_team' : 'subscribe'
-    // new_team:用用户【下单前填好】的团队名随单建空间(为空退回唯一默认名)。先校验 + 查重,避免后端因非法/重名建不出空间。
+    // new_team:随单建团队空间。团队名不在会员中心输入,统一用唯一默认名,并做校验/去重,避免后端因非法/重名建不出空间。
     let nwsName = ''
     if (newTeam) {
-      nwsName = teamName.trim() || uniqueDefaultTeamName
-      const nameErr = validateWorkspaceName(nwsName)
+      nwsName = uniqueDefaultTeamName
+      let nameErr = validateWorkspaceName(nwsName)
+      if (nameErr) {
+        const trimmed = String(nwsName).trim()
+        nwsName = (trimmed.length > WORKSPACE_NAME_MAX ? trimmed.slice(0, WORKSPACE_NAME_MAX) : trimmed) || '我的团队'
+        nameErr = validateWorkspaceName(nwsName)
+      }
       if (nameErr) {
         showToast(nameErr, 'error')
         return
       }
       if (existingTeamNames.has(nwsName.toLowerCase())) {
-        showToast('该团队名称已存在,请换一个名称', 'error')
-        return
+        for (let i = 2; i < 100; i++) {
+          const cand = `${nwsName}${i}`
+          if (!existingTeamNames.has(cand.toLowerCase())) {
+            nwsName = cand
+            break
+          }
+        }
       }
       orderedTeamNameRef.current = nwsName
     }
@@ -844,6 +930,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       <>
         <h2 className="mcm-title">会员中心</h2>
         {balance !== null && <div className="mcm-balance">当前积分余额:{balance}</div>}
+        {expiredBanner && <div className="mcm-expired">您所购买的会员已到期，请续费</div>}
 
         {/* 兜底:同步开窗仍被拦截时,给用户一个可点击的手动支付入口(a 标签由用户点击触发,不会被拦截) */}
         {pendingPayUrl && (
@@ -970,23 +1057,6 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
 
         {mainTab !== 'recharge' ? (
           <>
-            {/* 团队版:充值/开通【前】先把团队名填好,随订单一起建好空间(不再支付后二次命名) */}
-            {mainTab === 'team' && (
-              <div className="mcm-teamname">
-                <span className="mcm-teamname__label">团队名称</span>
-                <input
-                  className="mcm-teamname__input"
-                  value={teamName}
-                  maxLength={WORKSPACE_NAME_MAX}
-                  placeholder="请输入团队名称"
-                  onChange={(e) => {
-                    teamNameTouchedRef.current = true
-                    setTeamName(e.target.value)
-                  }}
-                />
-                <span className="mcm-teamname__hint">开通团队版将以此名称创建团队空间,可稍后在团队管理里修改</span>
-              </div>
-            )}
             {loading ? (
               <div className="mcm-hint">套餐加载中…</div>
             ) : error ? (
