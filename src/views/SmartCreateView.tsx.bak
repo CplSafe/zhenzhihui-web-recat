@@ -396,24 +396,6 @@ export default function SmartCreateView() {
       return next
     })
   }
-  const deleteShot = (id: Shot['id']) => {
-    setShots((prev) => {
-      const kept = prev.filter((s) => s.id !== id)
-      return kept.map((s, i) => ({ ...s, no: `镜头${i + 1}` }))
-    })
-    setShotGen((m) => {
-      if (!m || !m[id]) return m
-      const next = { ...m }
-      delete next[id]
-      return next
-    })
-    setShotImgError((m) => {
-      if (!m || !m[id]) return m
-      const next = { ...m }
-      delete next[id]
-      return next
-    })
-  }
   // 把生成/上传的图落库(dataURL→后端 asset,得签名URL+assetId),写入版本库 + 同名联动
   const addSubjectVersion = (name: string, url: string, assetId: number, source: 'ai' | 'upload', prompt?: string) => {
     setSubjectAssets((a) => {
@@ -759,7 +741,7 @@ export default function SmartCreateView() {
     await genForSubject(name, prompt)
   }
 
-  // 真正执行批量:把所有还没有图的主体逐个后台生成,但 UI 上一次性全部显示「生成中…」,每张完成后逐个解除。
+  // 真正执行批量:把所有还没有图的主体,每批并发 3 张后台生成(本批完成再下一批),逐个显示「生成中…」。
   // 由下方 effect 据 materialBatchPending 触发(点按钮 / 切回来续作 都走这里)。
   const runBatchGenerate = async () => {
     if (batchRunningRef.current) return
@@ -788,19 +770,35 @@ export default function SmartCreateView() {
     batchRunningRef.current = true
     setBatchGenning(true)
     try {
-      setSubjectGenerating((m) => {
-        const next = { ...m }
-        targets.forEach((name) => (next[name] = true))
-        return next
-      })
-      for (const name of targets) {
-        try {
-          await generateSubjectAuto(name)
-        } catch {
-          /* genForSubject 内已 toast,单张失败不影响后续 */
-        } finally {
-          setSubjectGenerating((m) => ({ ...m, [name]: false }))
-        }
+      const BATCH = 1 // 后端限制同一空间只能一个任务并发,逐个生成
+      for (let i = 0; i < targets.length; i += BATCH) {
+        const batch = targets.slice(i, i + BATCH)
+        setSubjectGenerating((m) => {
+          const next = { ...m }
+          batch.forEach((name) => (next[name] = true))
+          return next
+        })
+        await Promise.all(
+          batch.map(async (name) => {
+            // 并发限制重试:遇到 10401 等 3s 再试,最多 5 次
+            for (let retry = 0; retry < 5; retry++) {
+              try {
+                await generateSubjectAuto(name)
+                break // 成功则退出重试循环
+              } catch (e: any) {
+                const code = String(e?.code || e?.response?.code || '')
+                if ((code === '10401' || code === 'WORKSPACE_CONCURRENCY_LIMIT') && retry < 4) {
+                  await new Promise((r) => setTimeout(r, 3000))
+                  continue
+                }
+                break // 非并发错误或重试耗尽,交给 finally
+              } finally {
+                if (retry === 4) setSubjectGenerating((m) => ({ ...m, [name]: false }))
+              }
+            }
+            setSubjectGenerating((m) => ({ ...m, [name]: false }))
+          }),
+        )
       }
       showToast('素材生成完成', 'success')
     } finally {
@@ -1210,6 +1208,8 @@ export default function SmartCreateView() {
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
+  const [batchTotal, setBatchTotal] = useState(0) // 批量生成总数
+  const [batchCurrent, setBatchCurrent] = useState(0) // 当前正在生成第几个(1-indexed)
   const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
   // 提交前积分预估(estimate-cost):整片生成(video.generate)口径
   const [videoCost, setVideoCost] = useState<{
@@ -1321,7 +1321,7 @@ export default function SmartCreateView() {
   // 走视频编辑(video.edit,模型 happyhorse-1.0-video-edit):原视频 role:video + 修改提示,
   // 不复用爆款复制(video.replicate)逻辑,也不从分镜图重出整片。
   // 注:「重新生成/出整片」钉死 seedance、不退避;「确认修改」仍专走 happyhorse 视频编辑模型。
-  const runFullVideo = async (note?: string, opts?: { edit?: boolean }, count?: number) => {
+  const runFullVideo = async (note?: string, opts?: { edit?: boolean }) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
@@ -1332,7 +1332,6 @@ export default function SmartCreateView() {
       return
     }
     if (vidGenRunning) return
-    const total = Math.max(1, Math.floor(Number(count || 1) || 1))
 
     // 「确认修改」:把上次整片当 video 输入,按修改提示在原视频基础上改(片段时间段写进提示)
     if (opts?.edit && fullVideo.assetId) {
@@ -1406,24 +1405,16 @@ export default function SmartCreateView() {
       }
       return
     }
-    const genIds =
-      total > 1
-        ? Array.from({ length: total }, (_, i) =>
-            startGen(note ? `${note}（${i + 1}/${total}）` : `生成视频 ${i + 1}/${total}`, true),
-          )
-        : [startGen(note)]
+    const count = opts?.edit ? 1 : videoCount
+    const lockedSig = lockVideoSig() // 发起时锁定本片内容签名
     // 记录本次出片所依据的分镜签名(供「下次进生成视频时分镜未变则不重生成」判断)
     videoGenSigRef.current = videoInputSig(shots, entryMeta, reqSummary || requirement)
-    for (let i = 0; i < total; i++) {
-      const noteWithIndex = note
-        ? total > 1
-          ? `${note}（${i + 1}/${total}）`
-          : note
-        : total > 1
-          ? `生成视频 ${i + 1}/${total}`
-          : ''
-      const gid = genIds[i]
-      const lockedSig = lockVideoSig() // 发起时锁定本片内容签名
+    // 批量生成:依次排队,一个完成再生成下一个
+    if (count > 1) setBatchTotal(count)
+    for (let batchIdx = 0; batchIdx < count; batchIdx++) {
+      if (count > 1) setBatchCurrent(batchIdx + 1)
+      const batchLabel = count > 1 ? ` (${batchIdx + 1}/${count})` : ''
+      const gid = startGen(note ? `${note}${batchLabel}` : batchLabel ? `第${batchIdx + 1}个视频` : undefined)
       try {
         // 把整段生成(脱敏 + 建任务 + 轮询 + 落库)包成一个【按 projectId 登记的结果 promise】,活在组件之外:
         // 即使中途切走、组件卸载,它也继续跑到完成并落后端;回来时凭登记表订阅同一个,不重启 → 真正「切页面也继续生成」。
@@ -1451,10 +1442,10 @@ export default function SmartCreateView() {
             if (faceBlurEnabledRef.current) {
               const dbg: any[] = []
               const blurPatch: Record<string, Partial<Shot>> = {}
-              for (let j = 0; j < srcIds.length; j++) {
-                const { shotId, id } = srcIds[j]
+              for (let i = 0; i < srcIds.length; i++) {
+                const { shotId, id } = srcIds[i]
                 const sh = shots.find((s) => s.id === shotId)
-                setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
+                setBlurPhase(`人脸脱敏 ${i + 1}/${srcIds.length}…`)
                 // 缓存命中(同一原图已脱敏过)→ 直接复用,不重复调用
                 if (sh?.blurredImageAssetId && Number(sh.blurredFromAssetId || 0) === id) {
                   imageAssetIds.push(Number(sh.blurredImageAssetId))
@@ -1484,9 +1475,7 @@ export default function SmartCreateView() {
               setBlurDebug(dbg)
               // 把脱敏结果缓存回分镜(随草稿持久,重试/重进不重复脱敏)
               if (Object.keys(blurPatch).length) {
-                setShots((prev) =>
-                  prev.map((s) => (blurPatch[String(s.id)] ? { ...s, ...blurPatch[String(s.id)] } : s)),
-                )
+                setShots((prev) => prev.map((s) => (blurPatch[String(s.id)] ? { ...s, ...blurPatch[String(s.id)] } : s)))
               }
             } else {
               // 不脱敏:直接用原图 assetId 出片
@@ -1523,17 +1512,18 @@ export default function SmartCreateView() {
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
         markGen(gid, 'published')
-        commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
       } catch (e: any) {
-        showToast(`视频生成失败:${e?.message || ''}`, 'error')
+        showToast(`第${batchIdx + 1}个视频生成失败:${e?.message || ''}`, 'error')
         markGen(gid, 'failed')
-        break
-      } finally {
-        setBlurPhase('')
-        setVidGenTaskId(0) // 每轮结束清掉进行中标记,避免恢复时误续
+        // 单个失败不中断后续生成
       }
+      setVidGenTaskId(0)
     }
+    commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
+    setBlurPhase('')
     setVidGenRunning(false)
+    setBatchTotal(0)
+    setBatchCurrent(0)
   }
 
   // 恢复一个【已提交但前端中途离开】的整片生成任务:不重新建任务,凭 taskId 续轮询到完成。
@@ -1600,7 +1590,7 @@ export default function SmartCreateView() {
     )
       return
     autoVidRef.current = true
-    void runFullVideo(undefined, undefined, videoCount)
+    void runFullVideo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, shots])
 
@@ -2069,18 +2059,7 @@ export default function SmartCreateView() {
     setFields(d.fields || {})
     setFullVideo({ url: d.fullVideoUrl || '', assetId: d.fullVideoAssetId || 0 })
     setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
-    setVideoGenerations(
-      Array.isArray(d.videoGenerations)
-        ? (d.videoGenerations as GenRecord[]).filter(
-            (g: any) =>
-              !(
-                g?.status === 'processing' &&
-                !(Number(g?.taskId || 0) > 0) &&
-                String(g?.note || '').trim() === '重新编辑'
-              ),
-          )
-        : [],
-    )
+    setVideoGenerations(Array.isArray(d.videoGenerations) ? (d.videoGenerations as GenRecord[]) : [])
     setLastVideoSig(String(d.lastVideoSig || ''))
     const restoredPendingSig = String(d.pendingVideoSig || '')
     setPendingVideoSig(restoredPendingSig)
@@ -2784,6 +2763,10 @@ export default function SmartCreateView() {
           }
         })
         .catch(() => {})
+    } else if (projectIdRef.current && !imageMode) {
+      // 在【已有项目】上重做(进入编辑→返回入口→重新生成):立刻打一条「草稿」记录并即时落盘,
+      // 让项目里马上出现草稿(与旧成片并排)。forceNew:每次返回入口重新走都新增一条新草稿。
+      startGen('重新编辑', true)
     }
     // 制作图片:直接以入口需求 + 上传素材发起第一轮对话出图,不走分镜/脚本/视频流程。
     if (imageMode) {
@@ -3141,7 +3124,6 @@ export default function SmartCreateView() {
                 onGenerateAll={materialMode ? generateAllSubjects : undefined}
                 batchGenning={batchGenning}
                 onRemoveSubject={removeSubjectImage}
-                onDeleteShot={materialMode ? deleteShot : undefined}
                 onGenerateMaterial={(s) => addShotMaterial(s, true)}
                 onOpenSubject={openSubject}
                 /* AI自动生成:不后台直生,改为唤起素材弹窗并在弹窗内自动生成(autoGen),与「上传图片」一致 */
@@ -3213,14 +3195,12 @@ export default function SmartCreateView() {
         costError={videoCost.error}
         faceBlurDebug={blurDebug}
         videoVersions={videoVersions}
-        pendingVideoCount={videoGenerations.filter((g) => g.status === 'processing').length}
+        batchTotal={batchTotal}
+        batchCurrent={batchCurrent}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
-        onRegenerateVideo={(note, opts) => runFullVideo(note, opts, videoCount)}
+        onRegenerateVideo={runFullVideo}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
-        regenCount={videoCount}
-        regenCountOptions={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}
-        onRegenCountChange={(n) => setVideoCount(n)}
         debug={{
           prompt: buildTimelinePrompt({
             shots,
@@ -3485,13 +3465,7 @@ export default function SmartCreateView() {
                         >
                           <span>{b.splitCount ?? 1}个</span>
                           <svg width="14" height="14" viewBox="0 0 12 12" fill="none" style={{ marginLeft: 4 }}>
-                            <path
-                              d="M3 4.5L6 7.5L9 4.5"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
+                            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
                         </button>
                         {splitOpen && (

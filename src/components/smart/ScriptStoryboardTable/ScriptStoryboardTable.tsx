@@ -1,11 +1,13 @@
 /**
  * ScriptStoryboardTable — 分镜脚本(表格式,还原 Figma 299:2524)。
  * 圆角卡片容器 + 渐变表头(镜头编号/时长/画面描述[/准备素材]) + 行(圆形序号+镜头名、时长药丸、画面描述) + 表尾「共 N 个镜头」。
- * 时长只读(纯展示,不可双击修改);画面描述双击可编辑(受控 onShotsChange,缺省只读)。
+ * 时长单击可编辑(>15s 报错,与原值不同弹确认);画面描述双击可编辑(受控 onShotsChange,缺省只读)。
  * showSubjects=false:分镜脚本阶段隐藏「准备素材」列;materialMode:准备素材阶段每个主体「@名称 + AI自动生成 + 上传图片」(图二)。
  */
 import InlineEdit from '@/components/common/InlineEdit'
 import EllipsisText from '@/components/common/EllipsisText'
+import { useToast } from '@/composables/useToast'
+import { requestConfirm } from '@/stores/ui'
 import aiSparkIcon from '@/assets/icons/ai-spark.svg'
 import materialUploadIcon from '@/assets/icons/material-upload.svg'
 import regenerateIcon from '@/assets/icons/regenerate.svg'
@@ -84,6 +86,8 @@ interface ScriptStoryboardTableProps {
   batchGenning?: boolean
   /** 提供则在已有图的素材缩略图右上角显示「×」,点击去掉该主体当前的图(回到占位,可重新生成/上传) */
   onRemoveSubject?: (name: string) => void
+  /** 删除整条分镜(准备素材阶段) */
+  onDeleteShot?: (id: Shot['id']) => void
 }
 
 const stripAt = (t: string) =>
@@ -104,7 +108,9 @@ export default function ScriptStoryboardTable({
   onGenerateAll,
   batchGenning = false,
   onRemoveSubject,
+  onDeleteShot,
 }: ScriptStoryboardTableProps) {
+  const { showToast } = useToast()
   const editable = !!onShotsChange
   const patchShot = (id: Shot['id'], p: Partial<Shot>) =>
     onShotsChange?.(shots.map((s) => (s.id === id ? { ...s, ...p } : s)))
@@ -139,16 +145,81 @@ export default function ScriptStoryboardTable({
       <div className={styles.sbBody}>
         {shots.map((shot, i) => (
           <div className={styles.sbRow} key={shot.id}>
+            {showSubjects && onDeleteShot && (
+              <button
+                type="button"
+                className={styles.sbRowTrash}
+                aria-label="删除镜头"
+                title="删除镜头"
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  const ok = await requestConfirm(`确认删除「${shot.no || `镜头${i + 1}`}」吗？`, {
+                    title: '删除镜头',
+                    confirmLabel: '删除',
+                    cancelLabel: '取消',
+                    danger: true,
+                  })
+                  if (!ok) return
+                  try {
+                    onDeleteShot(shot.id)
+                    showToast('已删除', 'success')
+                  } catch (err: any) {
+                    showToast(err?.message || '删除失败', 'error')
+                  }
+                }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                </svg>
+              </button>
+            )}
             {/* 镜头编号:圆形序号 + 镜头名 */}
             <div className={`${styles.sbCell} ${styles.sbColNo}`}>
               <span className={styles.sbNoBadge}>{i + 1}</span>
               <span className={styles.sbNoLabel}>{shot.no}</span>
             </div>
 
-            {/* 时长:青色药丸(只读;分镜脚本/准备素材阶段不可双击修改) */}
+            {/* 时长:单击可编辑(青色药丸)，>15s 报错，变更时弹确认 */}
             <div className={`${styles.sbCell} ${styles.sbColDur}`}>
               <span className={styles.sbDurPill}>
-                <span className={styles.sbDurVal}>{String(shot.duration || '').replace(/[^0-9.]/g, '') || '—'}</span>
+                <InlineEdit
+                  className={styles.sbDurInline}
+                  value={String(shot.duration || '').replace(/[^0-9.]/g, '') || '—'}
+                  numeric
+                  placeholder="—"
+                  editable={editable}
+                  trigger="click"
+                  onCommit={async (v) => {
+                    const sec = parseInt(v, 10) || 0
+                    const orig = parseInt(String(shot.duration || '0').replace(/[^0-9]/g, ''), 10) || 0
+                    if (sec < 1) return
+                    if (sec > 15) {
+                      showToast('最长仅支持15秒，请修改秒数', 'error')
+                      return
+                    }
+                    if (sec !== orig) {
+                      const ok = await requestConfirm(`镜头「${shot.no}」时长从 ${orig}s 改为 ${sec}s，确认修改吗？`, {
+                        title: '确认时长',
+                        confirmLabel: '确认修改',
+                        cancelLabel: '取消',
+                      })
+                      if (!ok) return
+                    }
+                    patchShot(shot.id, { duration: `${sec}s` })
+                  }}
+                />
                 <span className={styles.sbDurUnit}>s</span>
               </span>
             </div>

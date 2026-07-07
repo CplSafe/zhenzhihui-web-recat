@@ -14,6 +14,8 @@ export interface ProjectVideo {
   durationSeconds: number
   status: ProjectVideoStatus
   createdByName: string
+  /** 创建者用户 ID(来自 project.user_id),用于前端权限判断 */
+  createdByUserId: number
   createdAt: string
   updatedAt: string
   sourceType: ProjectVideoSourceType
@@ -228,14 +230,33 @@ function resolveProjectCoverUrl(project: any, draft: any): string {
   return shotImage
 }
 
+/** 从工作空间成员列表中按 user_id 查找成员显示名(昵称优先) */
+function resolveMemberNameByUserId(userId: number, members: any[]): string {
+  if (!userId || !members?.length) return ''
+  const found = members.find((m: any) => Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) === userId)
+  if (!found) return ''
+  return pickString(
+    found?.nickname,
+    found?.name,
+    found?.user?.nickname,
+    found?.user?.name,
+    found?.user?.mobile,
+    found?.mobile,
+  )
+}
+
 function buildDerivedVideos({
   project,
   workspaceId,
   currentUserName,
+  currentUserId,
+  workspaceMembers,
 }: {
   project: any
   workspaceId: number
   currentUserName?: string
+  currentUserId?: number
+  workspaceMembers?: any[]
 }): ProjectVideo[] {
   const draft = normalizeCreativeProjectDraft(project) || {}
   const smart = toPlainObject(draft?.smart) || draft
@@ -245,21 +266,44 @@ function buildDerivedVideos({
   const projectCoverUrl = resolveProjectCoverUrl(project, draft)
   const createdAt = pickDateString(project?.created_at, project?.createdAt)
   const updatedAt = pickDateString(project?.updated_at, project?.updatedAt, project?.last_saved_at, createdAt)
-  const createdByName = pickString(
-    project?.owner_name,
-    project?.ownerName,
-    project?.created_by_name,
-    currentUserName,
-    '当前用户',
-  )
+  // 创建者用户 ID:来自 project.user_id,用于前端权限判断(比 createdByName 可靠,不受昵称影响)
+  const createdByUserId =
+    Number(project?.user_id ?? project?.userId ?? project?.owner_user_id ?? project?.ownerUserId ?? 0) || 0
+  // 归属人:后端优先 creator_nickname;若未返回,仅当查看者=项目归属人时才用 currentUserName 兜底
+  const createdByName =
+    pickString(
+      project?.creator_nickname,
+      project?.creatorNickname,
+      project?.owner_name,
+      project?.ownerName,
+      project?.created_by_name,
+      project?.createdByName,
+      project?.creator_name,
+      project?.creatorName,
+      project?.user?.nickname,
+      project?.user?.name,
+      project?.owner?.nickname,
+      project?.owner?.name,
+      project?.creator?.nickname,
+      project?.creator?.name,
+    ) ||
+    // 后端未返回 creator_nickname 时:先用当前用户(若是归属人本人),再从成员列表查找
+    (currentUserId && createdByUserId && currentUserId === createdByUserId
+      ? currentUserName || ''
+      : resolveMemberNameByUserId(createdByUserId, workspaceMembers || []))
 
   // 每次「重新生成」的独立记录(生成中/失败)→ 项目下置顶展示成「草稿」条目(成功的成片仍走 videoVersions)。
   // 按需求:生成中、生成失败统一显示「草稿」,不出现「生成中/生成失败」。
   // 兼容旧数据:没有 generations 但残留 vidGenTaskId>0 → 也兜底显示一条「草稿」。
   // 草稿里存的字段名是 videoGenerations(兼容历史 generations)
-  const generationsRaw = normalizeArray(smart?.videoGenerations || smart?.generations).filter(
-    (g: any) => g?.status === 'processing' || g?.status === 'failed',
-  )
+  const generationsRaw = normalizeArray(smart?.videoGenerations || smart?.generations).filter((g: any) => {
+    const status = pickString(g?.status)
+    const isStaleReeditPlaceholder =
+      status === 'processing' &&
+      !(Number(g?.taskId ?? g?.task_id ?? 0) > 0) &&
+      pickString(g?.note).trim() === '重新编辑'
+    return (status === 'processing' || status === 'failed') && !isStaleReeditPlaceholder
+  })
   const makeGenItem = (g: any, i: number): ProjectVideo => ({
     id: `derived-gen-${pickString(g?.id, String(i))}`,
     projectId: Number(project?.id || 0),
@@ -270,6 +314,7 @@ function buildDerivedVideos({
     durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
     status: 'draft',
     createdByName,
+    createdByUserId,
     createdAt,
     updatedAt,
     sourceType,
@@ -333,6 +378,8 @@ function buildDerivedVideos({
       const itemUpdatedAt = pickDateString(item?.updated_at, item?.updatedAt, updatedAt, itemCreatedAt)
       const rawId = pickString(item?.id, item?.assetId, item?.asset_id, item?.videoId, index + 1)
       const label = pickString(item?.label, item?.title, item?.name, `视频 ${index + 1}`)
+      const itemCreatedByUserId =
+        Number(item?.creator_user_id ?? item?.creatorUserId ?? item?.user_id ?? item?.userId ?? 0) || createdByUserId
       return {
         id: `derived-${rawId}-${index + 1}`,
         projectId: Number(project?.id || 0),
@@ -342,7 +389,9 @@ function buildDerivedVideos({
         videoUrl,
         durationSeconds,
         status,
-        createdByName,
+        // 版本级归属人优先（后端 /versions 每个版本带 creator_nickname），没有则用项目级
+        createdByName: pickString(item?.creator_nickname, item?.creatorNickname, createdByName),
+        createdByUserId: itemCreatedByUserId,
         createdAt: itemCreatedAt || createdAt,
         updatedAt: itemUpdatedAt || updatedAt || itemCreatedAt,
         sourceType,
@@ -380,6 +429,7 @@ function buildDerivedVideos({
         durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
         status: 'draft',
         createdByName,
+        createdByUserId,
         createdAt,
         updatedAt,
         sourceType,
@@ -399,6 +449,7 @@ function buildDerivedVideos({
     durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
     status: 'published',
     createdByName,
+    createdByUserId,
     createdAt,
     updatedAt,
     sourceType,
@@ -433,13 +484,17 @@ export async function listProjectVideos({
   projectId,
   workspaceId,
   currentUserName,
+  currentUserId,
+  workspaceMembers,
 }: {
   projectId: number
   workspaceId: number
   currentUserName?: string
+  currentUserId?: number
+  workspaceMembers?: any[]
 }): Promise<{ project: any; videos: ProjectVideo[] }> {
   const project = await getCreativeProject({ projectId, workspaceId })
-  const derived = buildDerivedVideos({ project, workspaceId, currentUserName })
+  const derived = buildDerivedVideos({ project, workspaceId, currentUserName, currentUserId, workspaceMembers })
   const store = readProjectVideoStore(project)
   const merged = [
     ...derived
@@ -474,13 +529,17 @@ export async function getProjectVideo({
   workspaceId,
   videoId,
   currentUserName,
+  currentUserId,
+  workspaceMembers,
 }: {
   projectId: number
   workspaceId: number
   videoId: string
   currentUserName?: string
+  currentUserId?: number
+  workspaceMembers?: any[]
 }): Promise<{ project: any; video: ProjectVideo | null }> {
-  const payload = await listProjectVideos({ projectId, workspaceId, currentUserName })
+  const payload = await listProjectVideos({ projectId, workspaceId, currentUserName, currentUserId, workspaceMembers })
   return {
     project: payload.project,
     // 精确匹配 videoId;匹配不到时回退到该项目第一条视频(供「待归类」用哨兵 id 直接打开主视频)
@@ -555,6 +614,7 @@ export async function addClassifiedVideo({
     durationSeconds: 0,
     status: 'draft',
     createdByName: pickString(createdByName, '当前用户'),
+    createdByUserId: 0,
     createdAt: now,
     updatedAt: now,
     sourceType: 'smart',

@@ -208,6 +208,7 @@ export default function HotCopyCreateView() {
   // 整片视频(replicate 产物)
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
+  const [videoCount, setVideoCount] = useState(1)
   const [vidGenRunning, setVidGenRunning] = useState(false)
   const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
   // 在途生成任务 id(>0=有任务在跑):持久化后,刷新/切换页面回来用它续轮询,不丢生成结果
@@ -1022,13 +1023,14 @@ export default function HotCopyCreateView() {
   //  - opts.edit=true(「确认修改」)且已有整片时:走视频编辑(video.edit,模型 happyhorse-1.0-video-edit),
   //    在已生成的整片基础上按修改意见微调(与智能成片一致),不再用 video.replicate 从源视频重做同款。
   //  - 否则(「重新生成」):基于已上传的源视频 + 替换素材重跑 replicate。
-  const regenerate = async (note?: string, opts?: { edit?: boolean }) => {
+  const regenerate = async (note?: string, opts?: { edit?: boolean }, count?: number) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
       return
     }
     if (vidGenRunning) return
+    const total = Math.max(1, Math.floor(Number(count || 1) || 1))
 
     // 「确认修改」:把当前整片当 video 输入,按修改提示在原视频基础上改
     if (opts?.edit && fullVideo.assetId) {
@@ -1076,14 +1078,20 @@ export default function HotCopyCreateView() {
       return
     }
     setVidGenRunning(true)
-    const gid = startGen('重新生成')
     try {
       const prompt = [basePrompt, note && `修改要求:${note}`].filter(Boolean).join('\n')
       const reSrcDur = sourceVideoDurSec || (await readVideoDurationSec(sourceVideo.url)) || 0
-      await doReplicate(ws, sourceVideo.assetId, productAssetIds, prompt, reSrcDur)
-      markGen(gid, 'published')
+      for (let i = 0; i < total; i++) {
+        const gid = startGen(total > 1 ? `重新生成 ${i + 1}/${total}` : '重新生成')
+        try {
+          await doReplicate(ws, sourceVideo.assetId, productAssetIds, prompt, reSrcDur)
+          markGen(gid, 'published')
+        } catch (e: any) {
+          markGen(gid, 'failed')
+          throw e
+        }
+      }
     } catch (e: any) {
-      markGen(gid, 'failed')
       showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
     } finally {
       setVidGenRunning(false)
@@ -1341,9 +1349,12 @@ export default function HotCopyCreateView() {
                 costError={videoCost.error}
                 videoVersions={videoVersions}
                 onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
-                onRegenerateVideo={(note, opts) => regenerate(note, opts)}
+                onRegenerateVideo={(note, opts) => regenerate(note, opts, videoCount)}
                 onDownloadVideo={handleDownloadVideo}
                 onPrev={() => goStep(0)}
+                regenCount={videoCount}
+                regenCountOptions={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}
+                onRegenCountChange={(n) => setVideoCount(n)}
               />
             </div>
           </>

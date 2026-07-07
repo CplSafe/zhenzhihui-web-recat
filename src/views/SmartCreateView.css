@@ -824,6 +824,95 @@
   filter: brightness(1.04);
 }
 
+/* split 按钮:左"生成视频" + 右数量选择,无缝衔接,圆角椭圆 */
+.smart__btn-split {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 24px;
+  position: relative;
+}
+.smart__btn-split--main {
+  height: 40px;
+  padding: 0 35px;
+  border: none;
+  border-radius: 24px 0 0 24px;
+  background: #36d399;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s;
+}
+.smart__btn-split--main:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+.smart__btn-split--main:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.smart__btn-split--sep {
+  width: 0;
+  flex-shrink: 0;
+}
+.smart__btn-split--count {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #36d399;
+  border-radius: 0 24px 24px 0;
+  background: #eaf7f5;
+  color: #36d399;
+  font-size: 18px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s;
+}
+.smart__btn-split--count:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+.smart__btn-split--count:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.smart__btn-split--dropdown {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 8px;
+  background: #fff;
+  border: 1px solid #e8f5f2;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  min-width: 88px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.smart__btn-split--option {
+  display: block;
+  width: 100%;
+  padding: 10px 20px;
+  border: none;
+  background: #fff;
+  color: #333;
+  font-size: 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.smart__btn-split--option:hover {
+  background: #eaf7f5;
+  color: #36d399;
+}
+.smart__btn-split--option.is-active {
+  background: #eaf7f5;
+  color: #36d399;
+  font-weight: 600;
+}
+
 /* 文本按钮(重新生成):靠左,无底无框,深灰字 + 深灰刷新图标(Figma 344:4297) */
 .smart__btn--text {
   min-width: 0;

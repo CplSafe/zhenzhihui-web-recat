@@ -167,33 +167,6 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
     onClose?.()
   }
 
-  useEffect(() => {
-    // #region debug-point D:personal-panel-workspaces
-    fetch('http://127.0.0.1:7777/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'workspace-list-missing',
-        runId: 'post-fix',
-        hypothesisId: 'D',
-        location: 'PersonalPanel.tsx:useEffect',
-        msg: '[DEBUG] personal panel received workspace list',
-        data: {
-          activeId: Number(activeId || 0),
-          currentWorkspace: currentWs ? { id: currentWs.id, name: currentWs.name, type: currentWs.type } : null,
-          memberRole: member?.role || member?.workspace_role || member?.workspaceRole || '',
-          workspaceCount: workspaces.length,
-          workspaceNames: workspaces.slice(0, 10).map((ws: any) => ({
-            id: ws?.id,
-            name: ws?.name,
-            type: ws?.type,
-          })),
-        },
-        ts: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
-  }, [activeId, currentWs, member, workspaces])
-
   return (
     <div className="ppl">
       {/* 头部:始终显示登录账号;当前空间单独展示,避免团队名和账号名混淆。 */}

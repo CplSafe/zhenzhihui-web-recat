@@ -167,6 +167,8 @@ function createBusinessProxy(target: string): ProxyOptions {
     changeOrigin: true,
     secure: false,
     cookieDomainRewrite: '',
+    proxyTimeout: 120000, // 后端响应超时（默认 30s,部分 AI 任务创建耗时较长需放宽）
+    timeout: 120000, // 后端数据传输超时
     configure: (proxy) => {
       proxy.on('proxyReq', (proxyReq) => {
         proxyReq.removeHeader('origin')

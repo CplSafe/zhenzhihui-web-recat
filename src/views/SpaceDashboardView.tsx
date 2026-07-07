@@ -244,54 +244,6 @@ export default function SpaceDashboardView() {
   const canViewDashboard =
     !isPersonalWorkspace && (currentRole === 'admin' || (ownerUserId > 0 && currentUserId === ownerUserId))
 
-  useEffect(() => {
-    // #region debug-point C:dashboard-permission
-    fetch('http://127.0.0.1:7777/event', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: 'workspace-list-missing',
-        runId: 'post-fix',
-        hypothesisId: 'C',
-        location: 'SpaceDashboardView.tsx:permission-effect',
-        msg: '[DEBUG] dashboard permission inputs evaluated',
-        data: {
-          workspaceId: Number(workspaceId || 0),
-          currentWorkspace: currentWorkspace
-            ? {
-                id: currentWorkspace.id,
-                name: currentWorkspace.name,
-                type: currentWorkspace.type,
-                ownerUserId: currentWorkspace.owner_user_id || currentWorkspace.ownerUserId || 0,
-              }
-            : null,
-          currentUserId,
-          currentRole,
-          currentMember: currentMember
-            ? {
-                workspaceId:
-                  currentMember.workspace_id ??
-                  currentMember.workspaceId ??
-                  currentMember.workspace?.id ??
-                  currentMember.current_workspace_id ??
-                  currentMember.currentWorkspaceId ??
-                  0,
-                role:
-                  currentMember.workspace_role ||
-                  currentMember.workspaceRole ||
-                  currentMember.role ||
-                  currentMember.member_role ||
-                  '',
-              }
-            : null,
-          canViewDashboard,
-          isPersonalWorkspace,
-        },
-        ts: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
-  }, [canViewDashboard, currentMember, currentRole, currentUserId, currentWorkspace, isPersonalWorkspace, workspaceId])
-
   const statCards = useMemo(() => {
     const totalCredits = overview?.credits ?? 0
     const totalVideos = overview?.videos ?? 0
