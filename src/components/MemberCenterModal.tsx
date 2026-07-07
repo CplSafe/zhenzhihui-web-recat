@@ -529,7 +529,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   }, [])
   // 未支付订单复用缓存:key(sub:planId / recharge:pkgId)→ 上次下单的 {订单id, pay_url, 时间戳}。
   // 「扫码没付→再点支付」时,若该单仍 pending 就复用原链接,避免重复下单留下一堆 pending 单。
-  const pendingOrderRef = useRef<Record<string, { orderId: number; payUrl: string; ts: number }>>({})
+  const pendingOrderRef = useRef<
+    Record<string, { orderId: number; payUrl: string; ts: number; newWorkspaceId?: number }>
+  >({})
 
   // Esc 关闭(仅弹窗模式;页面模式不拦 Esc)
   useEffect(() => {
