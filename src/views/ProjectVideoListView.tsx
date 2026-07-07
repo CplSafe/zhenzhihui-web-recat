@@ -559,7 +559,9 @@ export default function ProjectVideoListView() {
                       <button
                         type="button"
                         className="pvlist-card__cover"
-                        onClick={() => (item.videoUrl ? openDetail(item) : openEditor(item))}
+                        onClick={() =>
+                          item.videoUrl ? openDetail(item) : canModify(item) ? openEditor(item) : openDetail(item)
+                        }
                       >
                         {item.videoUrl ? (
                           // 优先用视频流取首帧(同源 /download,不过期),比可能损坏/过期的封面图可靠;
@@ -642,7 +644,9 @@ export default function ProjectVideoListView() {
                         <button
                           type="button"
                           className="pvlist-card__title"
-                          onClick={() => (item.videoUrl ? openDetail(item) : openEditor(item))}
+                          onClick={() =>
+                            item.videoUrl ? openDetail(item) : canModify(item) ? openEditor(item) : openDetail(item)
+                          }
                         >
                           {item.title}
                         </button>

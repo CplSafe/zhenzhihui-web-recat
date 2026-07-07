@@ -123,7 +123,7 @@ function outputAssetId(task: any): number {
 }
 
 // 分镜图模型偏好:GPT Image 2(openai gpt-image-2,支持 image.text_to_image / image.image_to_image)
-const STORYBOARD_MODEL_KEYWORDS = ['seedream', 'doubao', 'gpt-image-2', 'gpt-image', 'gpt image']
+const STORYBOARD_MODEL_KEYWORDS = ['gpt-image-2', 'gpt-image', 'gpt image', 'seedream', 'doubao']
 
 /**
  * 生成一张分镜图。refAssetIds 为参考图 asset_id(该镜头素材 + 上一张分镜图)。
@@ -170,15 +170,32 @@ export async function generateShotImage(args: {
     return { url, assetId }
   }
 
+  // 任务执行失败自动重试一次（context canceled / provider 错误通常是偶发网络抖动）
+  const runWithRetry = async (fn: () => Promise<{ url: string; assetId: number }>, maxRetries = 1) => {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn()
+      } catch (e: any) {
+        if (attempt >= maxRetries) throw e
+        // 检查顶层 message + response.error_message（context canceled 通常在后端返回的 error_message 里）
+        const msg = String(e?.message || '').toLowerCase()
+        const inner = String(e?.response?.error_message || '').toLowerCase()
+        if (!/context canceled|provider task failed|internal.*error/i.test(`${msg} ${inner}`)) throw e
+        await new Promise((r) => setTimeout(r, 1200))
+      }
+    }
+    throw new Error('unreachable')
+  }
+
   if (!refs.length) {
-    return runShotTask('image.text_to_image', [])
+    return runWithRetry(() => runShotTask('image.text_to_image', []))
   }
 
   try {
-    return await runShotTask('image.image_to_image', refs)
+    return await runWithRetry(() => runShotTask('image.image_to_image', refs))
   } catch {
     // 当前图生图模型链路不稳定时，自动回退一次文生图，优先保证分镜可生成。
-    return runShotTask('image.text_to_image', [])
+    return runWithRetry(() => runShotTask('image.text_to_image', []))
   }
 }
 

@@ -11,6 +11,7 @@ import { getReferralMyCode } from '@/api/business'
 import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { useUiStore } from '@/stores/ui'
+import UserAvatar from '@/components/common/UserAvatar'
 import memberIcon from '@/assets/image.png'
 import shareIcon from '@/assets/image copy 2.png'
 import PersonalPanel from './PersonalPanel'
@@ -178,11 +179,12 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
               aria-expanded={menuOpen}
               onClick={toggleMenu}
             >
-              {avatarUrl ? (
-                <img className="apptop__avatar apptop__avatar--img" src={avatarUrl} alt="" />
-              ) : (
-                <span className="apptop__avatar">{userName.slice(0, 1)}</span>
-              )}
+              <UserAvatar
+                src={avatarUrl}
+                name={userName}
+                className="apptop__avatar apptop__avatar--img"
+                fallbackClassName="apptop__avatar"
+              />
               <span className="apptop__user-name">{userName}</span>
               <span className={`apptop__caret${menuOpen ? ' is-open' : ''}`}>⌄</span>
             </button>

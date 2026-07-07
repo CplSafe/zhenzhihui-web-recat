@@ -552,11 +552,13 @@ export async function createProjectVideo({
   workspaceId,
   title,
   currentUserName,
+  currentUserId,
 }: {
   projectId: number
   workspaceId: number
   title?: string
   currentUserName?: string
+  currentUserId?: number
 }): Promise<ProjectVideo> {
   const now = new Date().toISOString()
   const record: LocalProjectVideoRecord = {
@@ -569,7 +571,7 @@ export async function createProjectVideo({
     durationSeconds: 0,
     status: 'draft',
     createdByName: pickString(currentUserName, '当前用户'),
-    createdByUserId: 0,
+    createdByUserId: Number(currentUserId ?? 0) || 0,
     createdAt: now,
     updatedAt: now,
     sourceType: 'smart',

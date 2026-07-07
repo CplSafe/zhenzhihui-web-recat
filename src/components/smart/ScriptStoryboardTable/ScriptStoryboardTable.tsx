@@ -145,50 +145,50 @@ export default function ScriptStoryboardTable({
       <div className={styles.sbBody}>
         {shots.map((shot, i) => (
           <div className={styles.sbRow} key={shot.id}>
-            {showSubjects && onDeleteShot && (
-              <button
-                type="button"
-                className={styles.sbRowTrash}
-                aria-label="删除镜头"
-                title="删除镜头"
-                onClick={async (e) => {
-                  e.stopPropagation()
-                  const ok = await requestConfirm(`确认删除「${shot.no || `镜头${i + 1}`}」吗？`, {
-                    title: '删除镜头',
-                    confirmLabel: '删除',
-                    cancelLabel: '取消',
-                    danger: true,
-                  })
-                  if (!ok) return
-                  try {
-                    onDeleteShot(shot.id)
-                    showToast('已删除', 'success')
-                  } catch (err: any) {
-                    showToast(err?.message || '删除失败', 'error')
-                  }
-                }}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="18"
-                  height="18"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M3 6h18" />
-                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                </svg>
-              </button>
-            )}
-            {/* 镜头编号:圆形序号 + 镜头名 */}
+            {/* 镜头编号:圆形序号 + 镜头名 + 删除按钮(右上角) */}
             <div className={`${styles.sbCell} ${styles.sbColNo}`}>
               <span className={styles.sbNoBadge}>{i + 1}</span>
               <span className={styles.sbNoLabel}>{shot.no}</span>
+              {onDeleteShot && (
+                <button
+                  type="button"
+                  className={styles.sbRowTrash}
+                  aria-label="删除镜头"
+                  title="删除镜头"
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    const ok = await requestConfirm(`确认删除「${shot.no || `镜头${i + 1}`}」吗？`, {
+                      title: '删除镜头',
+                      confirmLabel: '删除',
+                      cancelLabel: '取消',
+                      danger: true,
+                    })
+                    if (!ok) return
+                    try {
+                      onDeleteShot(shot.id)
+                      showToast('已删除', 'success')
+                    } catch (err: any) {
+                      showToast(err?.message || '删除失败', 'error')
+                    }
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 6h18" />
+                    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  </svg>
+                </button>
+              )}
             </div>
 
             {/* 时长:单击可编辑(青色药丸)，>15s 报错，变更时弹确认 */}

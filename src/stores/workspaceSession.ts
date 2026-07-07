@@ -269,12 +269,18 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
 
       const savedWs = readSavedActiveWs(toId(session?.user?.id))
       const nextWorkspaceId = pickCurrentWorkspaceIdFromSession(normalizedSession)
-      if (savedWs > 0) {
-        // 恢复上次选中的空间(刷新前的);若该空间已不属于你,loadWorkspaces 会校验并清掉回落。
+      // 如果用户有团队空间，优先选团队（不恢复 localStorage 的个人空间缓存）
+      const allWs = deriveAllWorkspaces(get())
+      const teamWs = allWs.find((w: any) => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal')
+      if (savedWs > 0 && !teamWs) {
+        // 仅个人空间：恢复上次选中的
         set({ activeWorkspaceOverrideId: savedWs })
+      } else if (teamWs) {
+        // 有团队空间：优先选团队
+        set({ activeWorkspaceOverrideId: Number(teamWs.id) })
       } else if (nextWorkspaceId > 0) {
         set({ activeWorkspaceOverrideId: nextWorkspaceId })
-      } else if (!findById(deriveAllWorkspaces(get()), get().activeWorkspaceOverrideId)) {
+      } else if (!findById(allWs, get().activeWorkspaceOverrideId)) {
         set({ activeWorkspaceOverrideId: 0 })
       }
     },

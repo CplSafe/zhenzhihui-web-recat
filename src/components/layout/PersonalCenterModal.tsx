@@ -12,6 +12,7 @@ import { updateMyProfile, getCurrentUser } from '@/api/auth'
 import { useCurrentUser, useWorkspaceId, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { applyUserProfileOverrides, saveUserAvatarOverride } from '@/utils/profileOverrides'
+import UserAvatar from '@/components/common/UserAvatar'
 import './PersonalCenterModal.css'
 
 // 昵称最大长度(Figma 计数器为 x/10)
@@ -67,7 +68,6 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
     [user, session],
   )
   const currentAvatar = user?.avatar || user?.avatar_url || user?.avatarUrl || ''
-  const initial = (initialName || '用户').charAt(0) || 'U'
 
   const [name, setName] = useState(initialName)
   // 本地预览(data URL);未选新头像时为空,回落当前头像
@@ -195,11 +195,13 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
           {/* 左:头像 + 上传提示 */}
           <div className="pcm-left">
             <div className="pcm-avatar">
-              {shownAvatar ? (
-                <img className="pcm-avatar-img" src={shownAvatar} alt="头像" />
-              ) : (
-                <span className="pcm-avatar-fallback">{initial}</span>
-              )}
+              <UserAvatar
+                src={shownAvatar}
+                name={initialName || '用户'}
+                className="pcm-avatar-img"
+                fallbackClassName="pcm-avatar-fallback"
+                alt="头像"
+              />
               <button
                 type="button"
                 className="pcm-cam"

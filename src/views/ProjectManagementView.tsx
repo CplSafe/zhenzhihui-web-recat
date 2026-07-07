@@ -32,6 +32,7 @@ import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { openComingSoon } from '@/stores/ui'
 import { useWorkspaceId, useCurrentUser, useCurrentWorkspace } from '@/stores/workspaceSession'
 import { listWorkspaceMembers } from '@/api/auth'
+import UserAvatar from '@/components/common/UserAvatar'
 
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
@@ -184,41 +185,6 @@ function pickFirstText(...candidates: any[]): string {
   return ''
 }
 
-function resolveEditorCount(project: any): number {
-  const count =
-    Number(
-      project?.editor_count ?? project?.editorCount ?? project?.data?.editor_count ?? project?.data?.editorCount ?? 0,
-    ) || 0
-  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0
-}
-
-function normalizeEditorUser(
-  raw: any,
-): { userId: number; nickname: string; avatarUrl: string; lastEditedAt: string } | null {
-  if (!raw) return null
-  if (typeof raw === 'string') {
-    const s = raw.trim()
-    if (!s) return null
-    return { userId: 0, nickname: '', avatarUrl: s, lastEditedAt: '' }
-  }
-  if (typeof raw !== 'object') return null
-  const userId = Number(raw?.user_id ?? raw?.userId ?? raw?.id ?? raw?.user?.id ?? 0) || 0
-  const nickname =
-    pickFirstText(raw?.nickname, raw?.name, raw?.user?.nickname, raw?.user?.name, raw?.mobile, raw?.user?.mobile) ||
-    (userId ? `成员${userId}` : '')
-  const avatarUrl = pickFirstText(
-    raw?.avatar_url,
-    raw?.avatarUrl,
-    raw?.avatar,
-    raw?.user?.avatar_url,
-    raw?.user?.avatarUrl,
-    raw?.user?.avatar,
-  )
-  const lastEditedAt = pickFirstText(raw?.last_edited_at, raw?.lastEditedAt)
-  if (!userId && !avatarUrl && !nickname) return null
-  return { userId, nickname, avatarUrl, lastEditedAt }
-}
-
 // 项目卡片的参与人头像列表:团队空间展示所有非受限成员,个人空间展示创建者
 function resolveProjectAvatars(
   project: any,
@@ -226,29 +192,16 @@ function resolveProjectAvatars(
   workspaceMembers: any[],
   restrictedIds: number[],
 ): { url: string; name: string }[] {
-  const editorsRaw = project?.editors ?? project?.data?.editors ?? project?.editor_list ?? project?.data?.editor_list
-  const editors = normalizeArray(editorsRaw).map(normalizeEditorUser).filter(Boolean) as {
-    userId: number
-    nickname: string
-    avatarUrl: string
-    lastEditedAt: string
-  }[]
-  if (editors.length > 0) {
-    const restrictedSet = new Set(restrictedIds.filter((id) => Number.isFinite(id) && id > 0))
-    return editors
-      .filter((u) => !u.userId || !restrictedSet.has(u.userId))
-      .slice(0, 5)
-      .map((u) => ({ url: u.avatarUrl, name: u.nickname || (u.userId ? `成员${u.userId}` : '') }))
-  }
-  const isTeamSpace = workspaceMembers.length > 1
-  if (isTeamSpace) {
-    // 团队空间:展示所有非受限成员的头像
-    const restrictedSet = new Set(restrictedIds.filter((id) => Number.isFinite(id) && id > 0))
+  const restrictedSet = new Set(restrictedIds.filter((id) => Number.isFinite(id) && id > 0))
+
+  // 团队/多人空间：展示所有非受限成员的头像（不再仅限 editors）
+  if (workspaceMembers.length > 1) {
     return workspaceMembers
       .filter((m: any) => {
         const uid = Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) || 0
         return uid > 0 && !restrictedSet.has(uid)
       })
+      .slice(0, 5)
       .map((m: any) => {
         const uid = Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) || 0
         const name =
@@ -265,7 +218,8 @@ function resolveProjectAvatars(
         return { url, name }
       })
   }
-  // 个人空间:后端返回 creator_nickname / creator_avatar_url 时用后端,否则回退当前用户
+
+  // 个人空间：后端返回 creator_nickname / creator_avatar_url 时用后端，否则回退当前用户
   const avatarUrl = String(project?.creator_avatar_url || '').trim()
   const name = String(project?.creator_nickname || '').trim()
   if (avatarUrl || name) return [{ url: avatarUrl, name }]
@@ -449,6 +403,12 @@ export default function ProjectManagementView() {
 
   // 工作空间成员,供成员权限弹窗及归属人名字查找
   const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([])
+  // 当前用户在工作空间中的角色（owner/admin/member）
+  const currentWsRole = useMemo(() => {
+    const me = workspaceMembers.find((m: any) => Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) === currentUserId)
+    return String(me?.role || me?.workspace_role || '').toLowerCase()
+  }, [workspaceMembers, currentUserId])
+  const isWsAdminOrOwner = currentWsRole === 'admin' || currentWsRole === 'owner'
 
   // 成员权限弹窗
   const [memberPermProject, setMemberPermProject] = useState<{ id: number; title: string; userId: number } | null>(null)
@@ -523,13 +483,8 @@ export default function ProjectManagementView() {
       .map((project) => {
         const isTeamSpace = String(currentWorkspace?.type || '').toLowerCase() !== 'personal'
         const restrictedIds = getRestrictedMemberIds(project)
-        // 团队空间:人数 = 所有成员 - 被限制成员;个人空间:固定 1
-        const editorCount = resolveEditorCount(project)
-        const members = editorCount
-          ? editorCount
-          : isTeamSpace
-            ? Math.max(1, workspaceMembers.length - restrictedIds.length)
-            : 1
+        // 成员数 = 非受限成员数（决定项目类型是个人还是协作）
+        const actualMemberCount = isTeamSpace ? Math.max(1, workspaceMembers.length - restrictedIds.length) : 1
         // 作品数 = 点开项目后实际看到的视频条数(派生成片/草稿占位 + 本地归类),
         // 与 listProjectVideos 同口径;不再用分镜数(shots.length),避免「卡片显示 3、点开只有 1」。
         const worksCount = countProjectVideos({ project, workspaceId: wsId })
@@ -549,16 +504,16 @@ export default function ProjectManagementView() {
           cover,
           // 没有图片封面时,退而用已出片视频的首帧当封面
           coverVideo: cover ? '' : extractCoverVideo(project, wsId),
-          members,
-          membersLabel: editorCount ? '编辑者' : '成员',
-          type: members > 1 ? '协作项目' : '个人项目',
+          members: actualMemberCount,
+          membersLabel: isTeamSpace ? '成员' : '',
+          type: actualMemberCount > 1 ? '协作项目' : '个人项目',
           works: worksCount,
           participantAvatars,
           userId,
         }
       })
       .filter((p) => {
-        // 被限制成员看不到项目(创建者自己永远能看到)
+        // 被限制成员看不到项目卡片(创建者自己永远能看到)
         if (!p.id) return false
         if (!currentUserId || p.userId === currentUserId) return true
         const restrictedIds = getRestrictedMemberIds(projectItems.find((proj: any) => Number(proj?.id || 0) === p.id))
@@ -1191,7 +1146,7 @@ export default function ProjectManagementView() {
                               </svg>
                               {openMenuId === folder.id && (
                                 <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
-                                  {folder.userId > 0 && folder.userId === currentUserId && (
+                                  {folder.userId > 0 && (folder.userId === currentUserId || isWsAdminOrOwner) && (
                                     <button
                                       type="button"
                                       className="pm2-folder-menu-item"
@@ -1622,20 +1577,26 @@ export default function ProjectManagementView() {
                     const info = resolveMemberInfo(member, idx)
                     const isRestricted = permRestrictedIds.has(info.id)
                     const isProjectOwner = memberPermProject.userId > 0 && info.id === memberPermProject.userId
+                    // 该成员的工作空间角色
+                    const memberRole = String(
+                      member?.role || member?.workspace_role || member?.member_role || '',
+                    ).toLowerCase()
+                    const isWsOwner = memberRole === 'owner'
+                    const isWsAdmin = memberRole === 'admin'
+                    // 当前用户是管理员（非 owner）时：不能操作 owner 和其他 admin
+                    const cannotRestrict = isProjectOwner || (currentWsRole === 'admin' && (isWsOwner || isWsAdmin))
                     return (
                       <div className="pm2-perm-member-row" key={info.id}>
-                        <div className={`pm2-perm-avatar${info.avatarUrl ? '' : ' pm2-perm-avatar-placeholder'}`}>
-                          {info.avatarUrl ? (
-                            <img src={info.avatarUrl} alt="" />
-                          ) : (
-                            <span>{info.name.charAt(0).toUpperCase()}</span>
-                          )}
+                        <div className="pm2-perm-avatar pm2-perm-avatar-placeholder">
+                          <UserAvatar src={info.avatarUrl} name={info.name} />
                         </div>
                         <div className="pm2-perm-name">
                           {info.name}
                           {isProjectOwner && <span className="pm2-perm-owner-tag">创建者</span>}
+                          {isWsOwner && !isProjectOwner && <span className="pm2-perm-owner-tag">超级管理员</span>}
+                          {isWsAdmin && <span className="pm2-perm-owner-tag">管理员</span>}
                         </div>
-                        {isProjectOwner ? (
+                        {cannotRestrict ? (
                           <span className="pm2-perm-cannot-hint">无法限制</span>
                         ) : (
                           <button

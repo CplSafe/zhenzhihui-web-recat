@@ -461,21 +461,23 @@
   padding: 3px 0;
 }
 .hotcopy__regen {
-  border: none;
-  background: none;
-  padding: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: #5b6472;
-  font-size: 14px;
+  gap: 8px;
+  height: 40px;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: #333;
+  font-size: 16px;
+  font-weight: 400;
   cursor: pointer;
   transition: color 0.15s;
 }
 .hotcopy__regen:hover {
-  color: #11a98a;
+  color: #1fcfa9;
 }
-/* 发送按钮:仅作点击容器,圆底与灰/绿两态由 SVG fill 切换(对齐智能成片 .send) */
+/* 发送按钮:改为与智能成片同款圆底 + 白色箭头。 */
 .hotcopy__send {
   flex: 0 0 auto;
   border: none;
@@ -487,11 +489,17 @@
   cursor: pointer;
   transition: filter 0.15s;
 }
-.hotcopy__send:hover:not(:disabled) {
+.hotcopy__send:hover {
   filter: brightness(1.05);
 }
-.hotcopy__send:disabled {
-  cursor: not-allowed;
+.hotcopy__send--resume {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #1fcfa9;
+}
+.hotcopy__send.is-disabled {
+  cursor: pointer;
 }
 
 /* 生成中 / 成片结果 */

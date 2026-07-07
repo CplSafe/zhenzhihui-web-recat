@@ -170,6 +170,7 @@
 
 /* 左:分镜N + 时长药丸(贴左、纵向堆叠) */
 .meta {
+  position: relative;
   flex: 0 0 auto;
   min-width: 48px;
   display: flex;
@@ -206,7 +207,38 @@
   padding: 1px 6px;
 }
 
-/* 缩略图上的快捷动作:仅 hover 显示「编辑(铅笔)+ 删除(垃圾桶)」浮层 */
+/* 删除按钮(垃圾桶):镜头编号右上角,默认隐藏,hover 时显示 */
+.metaTrash {
+  position: absolute;
+  top: -4px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: rgba(31, 36, 48, 0.06);
+  color: #6b7280;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  z-index: 2;
+
+  &:hover {
+    background: rgba(229, 72, 77, 0.1);
+    color: #e5484d;
+  }
+}
+.card:hover .metaTrash {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 缩略图上的快捷动作:仅 hover 显示「编辑(铅笔)」浮层 */
 .thumbActions {
   position: absolute;
   inset: 0;
