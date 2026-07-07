@@ -895,9 +895,11 @@ function shouldRetryWithNextModel(error) {
     error.response?.message || error.response?.error?.message || error.response?.data?.message || '',
   ).toLowerCase()
   const code = String(error.code || '').toUpperCase()
+  // 网络错误(status=0)或服务端错误 → 换下一个模型重试
+  if (error.status === 0) return true
   if (error.status >= 500) return true
   if (code === 'INTERNAL_ERROR' || code === '50008') return true
-  return /provider task failed|status failed|upstream|model.*(failed|error)|internal_error|服务内部错误|服务器内部错误/i.test(
+  return /provider task failed|status failed|upstream|model.*(failed|error)|internal_error|服务内部错误|服务器内部错误|网络请求失败/i.test(
     `${message} ${responseMessage}`,
   )
 }

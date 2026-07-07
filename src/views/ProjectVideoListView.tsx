@@ -65,6 +65,7 @@ const ROUTE_MAP: Record<string, string> = {
 
 type SortKey = 'updatedAt' | 'createdAt'
 type StatusFilter = 'all' | 'draft' | 'processing' | 'published'
+type DurationFilter = 'all' | 'short' | 'mid' | 'long'
 type FlowFilter = 'all' | 'smart' | 'hot-copy'
 
 function toPlainObj(value: any): any {

@@ -56,14 +56,17 @@ function findPreferredModel(models, preferredKeywords = []) {
     return null
   }
 
-  return (
-    models.find((model) => {
+  // 按关键词优先级遍历（而非按模型列表顺序），确保高优先级关键词（如 seedream）优先命中
+  for (const keyword of keywords) {
+    const match = models.find((model) => {
       const searchableText = [model.provider, model.model, model.version, model.display_name]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
+      return searchableText.includes(keyword)
+    })
+    if (match) return match
+  }
 
-      return keywords.some((keyword) => searchableText.includes(keyword))
-    }) || null
-  )
+  return null
 }

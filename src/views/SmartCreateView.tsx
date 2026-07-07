@@ -249,6 +249,13 @@ export default function SmartCreateView() {
   const imageBusy = imageMessages.some((m) => m.role === 'assistant' && m.status === 'pending')
   const [step, setStep] = useState(0)
   const [maxReached, setMaxReached] = useState(0)
+  const [durGuard, setDurGuard] = useState<{
+    open: boolean
+    currentSec: number
+    expectedSec: number
+    overMax: boolean
+  }>({ open: false, currentSec: 0, expectedSec: 0, overMax: false })
+  const durGuardProceedRef = useRef<null | (() => void)>(null)
   const [projectName, setProjectName] = useState('未命名项目')
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState('')
@@ -2436,6 +2443,35 @@ export default function SmartCreateView() {
     setMaxReached((m) => Math.max(m, next))
   }
 
+  const parseDurationSec = (value: any): number => {
+    const n = parseInt(String(value || '').replace(/[^0-9]/g, ''), 10)
+    return Number.isFinite(n) && n > 0 ? n : 0
+  }
+
+  const guardDurationBeforeNext = async (proceed: () => void) => {
+    if (!entryMeta || entryMeta.mode !== 'video') {
+      proceed()
+      return
+    }
+    const currentSec = totalDurationSec(shots)
+    const expectedSec = parseDurationSec(entryMeta.duration)
+    const maxSec = 15
+    if (currentSec > maxSec) {
+      durGuardProceedRef.current = null
+      setDurGuard({ open: true, currentSec, expectedSec, overMax: true })
+      return
+    }
+    if (expectedSec > 0 && currentSec > 0 && currentSec !== expectedSec) {
+      durGuardProceedRef.current = () => {
+        setEntryMeta((m) => (m ? { ...m, duration: `${currentSec}s` } : m))
+        proceed()
+      }
+      setDurGuard({ open: true, currentSec, expectedSec, overMax: false })
+      return
+    }
+    proceed()
+  }
+
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
@@ -2907,8 +2943,10 @@ export default function SmartCreateView() {
             label: '镜头编排',
             variant: 'primary',
             action: () => {
-              autoGenRef.current = false // 允许进入镜头编排后自动生成分镜图
-              goStep(2)
+              void guardDurationBeforeNext(() => {
+                autoGenRef.current = false
+                goStep(2)
+              })
             },
             // 素材未全部生成完毕不可进入镜头编排(含主推产品需手动生成)
             disabled: scriptLoading || !materialsAllReady,
@@ -2935,8 +2973,10 @@ export default function SmartCreateView() {
             label: '生成视频',
             variant: 'split',
             action: () => {
-              autoVidRef.current = false
-              goStep(3)
+              void guardDurationBeforeNext(() => {
+                autoVidRef.current = false
+                goStep(3)
+              })
             },
             disabled: anyShotGenerating || !shotImagesReady,
             tip: anyShotGenerating
@@ -3248,6 +3288,60 @@ export default function SmartCreateView() {
 
   return (
     <div className="smart">
+      {durGuard.open && (
+        <div className="smart__durguard" role="dialog" aria-modal="true">
+          <div
+            className="smart__durguard-backdrop"
+            aria-hidden="true"
+            onClick={() => {
+              durGuardProceedRef.current = null
+              setDurGuard({ open: false, currentSec: 0, expectedSec: 0, overMax: false })
+            }}
+          />
+          <div className="smart__durguard-card">
+            <div className="smart__durguard-top">
+              <span className="smart__durguard-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 16v-5" strokeLinecap="round" />
+                  <path d="M12 8h.01" strokeLinecap="round" />
+                  <circle cx="12" cy="12" r="9" />
+                </svg>
+              </span>
+              <div className="smart__durguard-msg">
+                {durGuard.overMax
+                  ? `您目前的视频秒数为${durGuard.currentSec}s（已超过最大限制15s，无法生成视频）`
+                  : `您目前的视频秒数为${durGuard.currentSec}s（与期望的视频秒数${durGuard.expectedSec || parseDurationSec(entryMeta?.duration)}s不符）`}
+              </div>
+            </div>
+            <div className="smart__durguard-actions">
+              <button
+                type="button"
+                className="smart__durguard-btn"
+                onClick={() => {
+                  durGuardProceedRef.current = null
+                  setDurGuard({ open: false, currentSec: 0, expectedSec: 0, overMax: false })
+                }}
+              >
+                重新输入
+              </button>
+              {!durGuard.overMax && (
+                <button
+                  type="button"
+                  className="smart__durguard-btn smart__durguard-btn--primary"
+                  onClick={() => {
+                    const proceed = durGuardProceedRef.current
+                    durGuardProceedRef.current = null
+                    setDurGuard({ open: false, currentSec: 0, expectedSec: 0, overMax: false })
+                    proceed?.()
+                  }}
+                >
+                  知道了，继续生成
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <AppSidebar
         activeKey="creative"
         onNavigate={onNavigate}
