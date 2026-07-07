@@ -307,7 +307,7 @@ export default function HotCopyCreateView() {
     return id
   }
   // 结束一条生成记录:成功 published(从草稿列表消失)、失败 failed(留作可重试草稿)。
-  const markGen = (id: string | null, status: 'failed' | 'published') => {
+  const markGen = (id: string | null, status: 'failed' | 'published' | 'cancelled') => {
     immediateSaveRef.current = true
     setVideoGenerations((prev) =>
       prev.map((g) => (g.id === id || (id == null && g.status === 'processing') ? { ...g, status } : g)),
