@@ -1,7 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
-import https from 'node:https'
 import type { ProxyOptions } from 'vite'
 import type { IncomingMessage } from 'node:http'
 
@@ -170,10 +169,12 @@ function createBusinessProxy(target: string): ProxyOptions {
     cookieDomainRewrite: '',
     proxyTimeout: 120000,
     timeout: 120000,
-    agent: new https.Agent({ keepAlive: false, rejectUnauthorized: false }),
     configure: (proxy) => {
       proxy.on('proxyReq', (proxyReq) => {
         proxyReq.removeHeader('origin')
+      })
+      proxy.on('error', (_err) => {
+        // socket hang up 不影响，模型回退+重试会处理
       })
     },
   }

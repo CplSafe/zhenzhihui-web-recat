@@ -616,6 +616,19 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       res?.order?.id ?? res?.order?.order_id ?? res?.order_id ?? res?.id ?? res?.data?.order?.id ?? res?.data?.id ?? 0,
     ) || 0
 
+  // 从 new_team 下单返回里取新建 workspace id(多字段兜底)
+  const newWorkspaceIdOf = (res: any): number =>
+    Number(
+      res?.new_workspace_id ??
+        res?.workspace_id ??
+        res?.workspace?.id ??
+        res?.order?.workspace_id ??
+        res?.order?.new_workspace_id ??
+        res?.data?.workspace_id ??
+        res?.data?.new_workspace_id ??
+        0,
+    ) || 0
+
   // 查某订单是否仍「待支付(pending)」——复用前确认,已付/取消/过期则不复用。
   const isOrderPending = async (orderId: number): Promise<boolean> => {
     const ws = Number(workspaceId || 0)
@@ -634,78 +647,85 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const resolveOrder = async (
     key: string,
     createFn: () => Promise<any>,
-  ): Promise<{ payUrl: string; orderId: number }> => {
+  ): Promise<{ payUrl: string; orderId: number; newWorkspaceId: number }> => {
     const cached = pendingOrderRef.current[key]
     if (cached?.payUrl && Date.now() - cached.ts < REUSE_ORDER_MS && (await isOrderPending(cached.orderId))) {
-      return { payUrl: cached.payUrl, orderId: cached.orderId } // 复用,不新建订单
+      return { payUrl: cached.payUrl, orderId: cached.orderId, newWorkspaceId: cached.newWorkspaceId || 0 }
     }
     if (cached) delete pendingOrderRef.current[key] // 旧单已失效,清掉
     const res: any = await createFn()
     const orderId = orderIdOf(res)
     const payUrl = String(res?.pay_url || '')
-    if (orderId && payUrl) pendingOrderRef.current[key] = { orderId, payUrl, ts: Date.now() }
-    return { payUrl, orderId }
+    const newWorkspaceId = newWorkspaceIdOf(res)
+    if (newWorkspaceId) console.log('[下单] 检测到新 workspace id:', newWorkspaceId)
+    if (orderId && payUrl) pendingOrderRef.current[key] = { orderId, payUrl, ts: Date.now(), newWorkspaceId }
+    return { payUrl, orderId, newWorkspaceId }
   }
 
-  // 打开支付页后轮询订单状态,给「成功/失败」结果提示并刷新余额/订阅(附加逻辑,不影响下单本身)。
-  // 支付在外部标签页完成、前端收不到回调,故每 3s 查一次 listPaymentOrders 匹配本单 id,直到 paid/失败/超时。
   // 团队版支付成功后:适配团队空间。
   // 后端建团队通常是【异步】的,支付 paid 那一刻可能还没建好,故:
-  //   ① 隔几秒重试刷新(~6×3s ≈ 18s),刷到"新出现的团队空间"就切过去(零重复风险);
-  //   ② 等到底后端仍没建出团队 → 判定后端不建,前端兜底建一个(等待足够长,基本不与后端重复)。
-  const adoptNewTeamWorkspace = async () => {
+  //   ① 优先使用下单返回的 newWorkspaceId 精确定位新空间;
+  //   ② 无 newWorkspaceId 时,保存购买前的空间列表,通过 diff 找到新增的团队空间;
+  //   ③ 隔几秒重试刷新(~6×3s ≈ 18s);
+  //   ④ 等到底后端仍没建出团队 → 判定后端不建,前端兜底建一个(等待足够长,基本不与后端重复)。
+  const adoptNewTeamWorkspace = async (targetWorkspaceId = 0) => {
     const store = useWorkspaceSessionStore
     const isTeamWs = (w: any) => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal'
-    console.log('[建团队] adoptNewTeamWorkspace 开始(重试找后端新建团队,18s 没有就兜底自建)') // 临时排查
+    // 记录购买前的空间 ID 集合,用于后续 diff 查找新增空间
+    const allBefore = deriveAllWorkspaces(store.getState()) as any[]
+    const beforeIds = new Set(allBefore.map((w: any) => Number(w?.id || 0)).filter(Boolean))
     try {
-      const beforeIds = new Set(
-        (deriveAllWorkspaces(store.getState()) as any[]).map((w) => Number(w?.id || 0)).filter((id) => id > 0),
-      )
-      // 新出现的空间:优先团队空间,退回任一新空间
-      const findNew = () => {
-        const after = deriveAllWorkspaces(store.getState()) as any[]
-        return (
-          after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)) && isTeamWs(w)) ||
-          after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)))
-        )
-      }
-      // ① 重试 adopt:给后端异步建团队留时间。返回被切换到的新团队空间,供上层弹框命名。
+      // 重试加载 workspace 列表（给后端异步建团队留时间）
       for (let i = 0; i < 6; i++) {
         await store.getState().loadWorkspaces()
-        const created = findNew()
-        if (created?.id) {
-          store.getState().switchWorkspace(Number(created.id))
-          return created
+        const all = deriveAllWorkspaces(store.getState()) as any[]
+
+        // 优先:用下单返回的精确 workspace id 定位
+        if (targetWorkspaceId > 0) {
+          const exact = all.find((w) => Number(w?.id) === targetWorkspaceId)
+          if (exact) {
+            store.getState().switchWorkspace(Number(exact.id))
+            return exact
+          }
         }
+
+        // 备选:通过 diff 找到新增的团队空间(购买前没有、现在新出现的)
+        const fresh = all.find((w) => Number(w?.id) > 0 && isTeamWs(w) && !beforeIds.has(Number(w.id)))
+        if (fresh?.id) {
+          store.getState().switchWorkspace(Number(fresh.id))
+          return fresh
+        }
+
+        // 兜底:如果用户之前没有任何团队空间,现在出现了任意一个团队空间就切过去
+        if (!targetWorkspaceId) {
+          const anyTeam = all.find((w) => Number(w?.id) > 0 && isTeamWs(w))
+          if (anyTeam?.id && !beforeIds.has(Number(anyTeam.id))) {
+            store.getState().switchWorkspace(Number(anyTeam.id))
+            return anyTeam
+          }
+        }
+
         await new Promise((r) => window.setTimeout(r, 3000))
       }
-      // 兜底前最后确认一次,收窄"后端刚建好但上一轮没刷到"的窗口
-      await store.getState().loadWorkspaces()
-      const late = findNew()
-      if (late?.id) {
-        store.getState().switchWorkspace(Number(late.id))
-        return late
-      }
-      // ② 后端确实没建 → 前端兜底建团队(createTeam 内部:建 team 空间 → 刷列表 → 切过去)
+      // 兜底：后端确实没建 → 前端自行创建
       const user = store.getState().authSession?.user as any
-      // 优先用本次下单填好的团队名(与后端随单建空间一致);缺失才退回默认名
       const fallbackName =
         orderedTeamNameRef.current.trim() ||
         `${String(user?.nickname || user?.name || user?.username || '我').trim()}的团队`
-      console.log('[建团队] 后端 18s 内没建出新团队 → 前端兜底 createTeam:', fallbackName) // 临时
-      const createdTeam = await store.getState().createTeam(fallbackName)
-      console.log('[建团队] 兜底 createTeam 返回:', createdTeam) // 临时
-      return createdTeam
+      return await store.getState().createTeam(fallbackName)
     } catch (e) {
-      // 临时:兜底建团队被后端拒(如需团队会员权限)会走这里,原来被静默吞掉
       console.error('[建团队] adopt / 兜底建团队失败:', e)
     }
     return null
   }
 
-  const watchOrder = (orderId: number, kind: 'recharge' | 'subscribe', team = false) => {
+  const watchOrder = (orderId: number, kind: 'recharge' | 'subscribe', team = false, newWorkspaceId = 0) => {
     const ws = Number(workspaceId || 0)
-    if (!orderId || !ws) return
+    if (!orderId) return
+    // new_team 订单:下单时未关联当前 workspace,轮询需用新空间的 id;若后端未返回,
+    // 回退到当前 ws(至少 reconcile 能工作),同时额外尝试不按 workspace 过滤的兜底。
+    const pollWs = team && newWorkspaceId > 0 ? newWorkspaceId : ws
+    if (!pollWs) return
     const type = kind === 'recharge' ? 'credit_recharge' : '' // 订阅有 initial/renewal 两种,留空取全部再按 id 匹配
     let tries = 0
     const MAX = 40 // ~40 × 3s ≈ 2 分钟
@@ -715,16 +735,40 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       try {
         // 先主动对账:只【催后端】去支付宝核对并更新本单(不读它的返回状态——避免 reconcile 的状态字典
         // 与列表口径不一致导致误判);再用列表读【权威状态】('paid' 口径与原逻辑一致)。
+        // 对账用当前 ws(写操作);列表查询用 pollWs(读新空间关联的订单)。
         try {
-          await reconcilePaymentOrder({ workspaceId: ws, orderId })
+          await reconcilePaymentOrder({ workspaceId: ws || pollWs, orderId })
         } catch {
           /* 未支付/限流等 → 忽略,继续用列表查 */
         }
-        const rows: any = await listPaymentOrders({ workspaceId: ws, type, limit: 50 })
+        const rows: any = await listPaymentOrders({ workspaceId: pollWs, type, limit: 50 })
         const list: any[] = Array.isArray(rows) ? rows : rows?.items || rows?.list || rows?.orders || []
-        const st = String(list.find((r: any) => Number(r?.id) === orderId)?.status || '')
-        // TODO 临时:排查「付款成功没建团队」——看轮询看到的订单状态 + 是否团队版
-        if (st) console.log('[支付轮询] order=', orderId, 'status=', st, '| team=', team, '| kind=', kind)
+        let st = String(list.find((r: any) => Number(r?.id) === orderId)?.status || '')
+
+        // new_team 兜底:如果用新 ws 没查到订单,再用原 ws 查一次(可能后端把订单挂在了原空间)
+        if (!st && team && newWorkspaceId > 0 && newWorkspaceId !== ws) {
+          try {
+            const rows2: any = await listPaymentOrders({ workspaceId: ws, type, limit: 50 })
+            const list2: any[] = Array.isArray(rows2) ? rows2 : rows2?.items || rows2?.list || rows2?.orders || []
+            st = String(list2.find((r: any) => Number(r?.id) === orderId)?.status || '')
+          } catch {
+            /* 忽略 */
+          }
+        }
+
+        if (st)
+          console.log(
+            '[支付轮询] order=',
+            orderId,
+            'status=',
+            st,
+            '| team=',
+            team,
+            '| kind=',
+            kind,
+            '| pollWs=',
+            pollWs,
+          )
         if (st === 'paid' || st === 'failed' || st === 'canceled') {
           // 终态:清掉该订单的复用缓存,下次点支付重新下单
           for (const k of Object.keys(pendingOrderRef.current)) {
@@ -748,9 +792,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           // 团队版新开走 adoptNewTeamWorkspace 切空间会再刷一次,此处对老空间刷一次也无害。
           void useWorkspaceSessionStore.getState().loadSubscriptionLabel()
           // 买的是团队版:团队名已在下单前填好并随单创建 → 这里只把新团队空间适配/切换过去,不再二次弹命名框。
-          console.log('[支付] paid 已确认,team=', team, '→', team ? '触发建/切团队' : '非团队版,不建团队') // 临时排查
+          console.log('[支付] paid 已确认,team=', team, '→', team ? '触发建/切团队' : '非团队版,不建团队')
           if (kind === 'subscribe' && team) {
-            void adoptNewTeamWorkspace()
+            void adoptNewTeamWorkspace(newWorkspaceId)
           }
           return
         }
@@ -773,7 +817,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   //   - 不能带 noopener:带了部分浏览器会返回 null 句柄,后续无法改 location;改为手动断开 win.opener 兜安全。
   //   - 极少数环境(如装了拦截插件)连同步开窗都失败 → 存下 pay_url,在弹窗内显示「手动打开」按钮兜底。
   const startPay = async (
-    createOrder: () => Promise<{ payUrl: string; orderId: number }>,
+    createOrder: () => Promise<{ payUrl: string; orderId: number; newWorkspaceId?: number }>,
     failMsg: string,
     kind: 'recharge' | 'subscribe',
     team = false, // 团队版订阅:支付成功后要刷新空间列表并切到后端新建的团队空间
@@ -783,7 +827,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     const win = window.open('about:blank', '_blank')
     if (win) win.opener = null // 安全:断开对本页的引用,等价 noopener
     try {
-      const { payUrl, orderId } = await createOrder()
+      const { payUrl, orderId, newWorkspaceId = 0 } = await createOrder()
       if (!payUrl) {
         win?.close()
         showToast('未获取到支付链接,请稍后重试', 'error')
@@ -799,7 +843,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         showToast('支付页面被浏览器拦截,请点击下方「手动打开支付页」', 'error')
       }
       // ④ 附加:轮询订单状态,出「成功/失败」结果并刷新余额/订阅(不影响上面的下单/开窗)
-      watchOrder(orderId, kind, team)
+      watchOrder(orderId, kind, team, newWorkspaceId)
     } catch (e) {
       win?.close()
       showToast(getBusinessErrorMessage(e, failMsg), 'error')

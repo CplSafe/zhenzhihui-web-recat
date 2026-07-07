@@ -208,7 +208,6 @@ export default function HotCopyCreateView() {
   // 整片视频(replicate 产物)
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
-  const [videoCount, setVideoCount] = useState(1)
   const [vidGenRunning, setVidGenRunning] = useState(false)
   const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
   // 在途生成任务 id(>0=有任务在跑):持久化后,刷新/切换页面回来用它续轮询,不丢生成结果
@@ -224,9 +223,12 @@ export default function HotCopyCreateView() {
 
   const normalizeGenStatus = (s: any): GenRecord['status'] => {
     const v = String(s || '').trim()
-    if (v === 'processing' || v === 'failed' || v === 'published') return v
+    if (v === 'processing' || v === 'failed' || v === 'published' || v === 'cancelled') return v
     return 'processing'
   }
+
+  // 后端主动中断（cancelled/expired），区别于前端 abort 和后端 failed
+  const isTaskCancelled = (e: any): boolean => String(e?.code || '').toUpperCase() === 'TASK_CANCELLED'
 
   const normalizeGenRecords = (list: any): GenRecord[] => {
     if (!Array.isArray(list)) return []
@@ -380,8 +382,13 @@ export default function HotCopyCreateView() {
         }
         persistNow({ videoGenerating: false, vidGenTaskId: 0 })
         if (aliveRef.current) {
-          markGen(null, 'failed') // 失败:留作可重试草稿
-          showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+          if (isTaskCancelled(e)) {
+            markGen(null, 'cancelled')
+            showToast('视频生成已中断', 'info')
+          } else {
+            markGen(null, 'failed')
+            showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+          }
         }
       })
       .finally(() => {
@@ -1005,8 +1012,13 @@ export default function HotCopyCreateView() {
       }
       persistNow({ videoGenerating: false, vidGenTaskId: 0 })
       if (aliveRef.current) {
-        markGen(gid, 'failed')
-        showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+        if (isTaskCancelled(e)) {
+          markGen(gid, 'cancelled')
+          showToast('视频生成已中断', 'info')
+        } else {
+          markGen(gid, 'failed')
+          showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+        }
       }
     } finally {
       if (!aborted) {
@@ -1087,12 +1099,15 @@ export default function HotCopyCreateView() {
           await doReplicate(ws, sourceVideo.assetId, productAssetIds, prompt, reSrcDur)
           markGen(gid, 'published')
         } catch (e: any) {
-          markGen(gid, 'failed')
+          markGen(gid, isTaskCancelled(e) ? 'cancelled' : 'failed')
           throw e
         }
       }
     } catch (e: any) {
-      showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+      showToast(
+        isTaskCancelled(e) ? '视频生成已中断' : `视频生成失败:${e?.message || '请重试'}`,
+        isTaskCancelled(e) ? 'info' : 'error',
+      )
     } finally {
       setVidGenRunning(false)
       setVidGenTaskId(0)
@@ -1349,12 +1364,9 @@ export default function HotCopyCreateView() {
                 costError={videoCost.error}
                 videoVersions={videoVersions}
                 onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
-                onRegenerateVideo={(note, opts) => regenerate(note, opts, videoCount)}
+                onRegenerateVideo={(note, opts) => regenerate(note, opts)}
                 onDownloadVideo={handleDownloadVideo}
                 onPrev={() => goStep(0)}
-                regenCount={videoCount}
-                regenCountOptions={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}
-                onRegenCountChange={(n) => setVideoCount(n)}
               />
             </div>
           </>

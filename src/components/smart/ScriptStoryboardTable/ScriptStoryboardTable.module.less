@@ -121,13 +121,13 @@
 }
 .sbRowTrash {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 34px;
-  height: 34px;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
-  border-radius: 10px;
+  border-radius: 6px;
   background: rgba(31, 36, 48, 0.06);
   color: #6b7280;
   display: inline-flex;
@@ -173,8 +173,9 @@
   padding: 4px 20px;
 }
 
-/* 镜头编号:圆形序号 + 镜头名 */
+/* 镜头编号:圆形序号 + 镜头名 + 右上角删除按钮 */
 .sbColNo.sbCell {
+  position: relative;
   gap: 8px;
 }
 .sbNoBadge {
@@ -199,6 +200,7 @@
 
 /* 时长:青色药丸(内含可编辑数值) */
 .sbColDur.sbCell {
+  position: relative;
   align-items: center;
 }
 .sbDurPill {

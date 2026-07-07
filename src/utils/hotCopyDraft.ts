@@ -4,7 +4,7 @@
  * 只存「恢复生成步」所需的可序列化状态(不存 File / blob:objectURL);用 vidGenTaskId 续轮询在途任务。
  * 单工作空间一条草稿(/hot-copy 无 :id),按 workspaceId 隔离。
  */
-export type HotCopyGenStatus = 'processing' | 'failed' | 'published'
+export type HotCopyGenStatus = 'processing' | 'failed' | 'published' | 'cancelled'
 
 export interface HotCopyGenRecord {
   id: string

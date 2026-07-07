@@ -1207,10 +1207,12 @@ export async function waitForAiTask({ workspaceId, task, intervalMs = 2000, time
   // 失败态统一抛错(与 isFinalTaskStatus 的失败列表对齐)
   if (['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(currentTask?.status)) {
     // payment_failed 通常是积分不足；把 code/状态透传给 getBusinessErrorMessage 做中文映射。
+    // cancelled / expired = 后端主动中断（非前端 abort），前端应显示"已中断"而非"生成失败"
     const code =
       currentTask?.code ??
       currentTask?.code_string ??
-      (currentTask?.status === 'payment_failed' ? 'INSUFFICIENT_CREDITS' : null)
+      (currentTask?.status === 'payment_failed' ? 'INSUFFICIENT_CREDITS' : null) ??
+      (currentTask?.status === 'cancelled' || currentTask?.status === 'expired' ? 'TASK_CANCELLED' : null)
     throw new BusinessApiError(currentTask?.error_message || 'AI 任务生成失败', {
       code,
       response: currentTask,
@@ -2643,9 +2645,8 @@ function resolveProxyFriendlyBaseUrl(configuredBaseUrl, proxyBaseUrl, remoteOrig
   if (!normalizedConfigured) {
     return normalizedProxy
   }
-  if (remoteOrigin && normalizedConfigured === remoteOrigin) {
-    return normalizedProxy
-  }
+  // 显式设置了直连 URL 就用它（包括和 remoteOrigin 相同的场景），不再强制走代理。
+  // 注意：浏览器直连跨域后端需后端支持 CORS，或本地用 --disable-web-security 启动浏览器。
   return normalizedConfigured
 }
 

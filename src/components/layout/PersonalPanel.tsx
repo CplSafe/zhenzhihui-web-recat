@@ -21,6 +21,7 @@ import {
 import { openTeamManage, useUiStore } from '@/stores/ui'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { validateWorkspaceName, normalizeWorkspaceNameForCompare } from '@/utils/workspaceName'
+import UserAvatar from '@/components/common/UserAvatar'
 import crownImg from '@/assets/vip/5dc4125fc31865adb710a7f65ad2df60.png'
 import teamIcon from '@/assets/5d214dea973d5d1dd62b8be882e775c2.png'
 import editIcon from '@/assets/81926ea1670cd86f6fc1adec90042f08.png'
@@ -151,7 +152,6 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   }
   const avatarUrl = user?.avatar || user?.avatar_url || user?.avatarUrl || ''
   const accountName = name
-  const initial = String(accountName).trim().charAt(0) || 'U'
   // 积分进度按【已消耗】算(用得越多条越满)。有任何消耗就至少显示 1%(从 1% 起,让进度立刻可见);
   // 完全没消耗则 0%。credits 为剩余积分,baseCredits 为套餐基础积分。
   const usedCredits = Math.max(0, baseCredits - Number(credits))
@@ -172,11 +172,12 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
       {/* 头部:始终显示登录账号;当前空间单独展示,避免团队名和账号名混淆。 */}
       <div className="ppl__head">
         <div className="ppl__id">
-          {avatarUrl ? (
-            <img className="ppl__ava" src={avatarUrl} alt="" />
-          ) : (
-            <span className="ppl__ava ppl__ava--txt">{initial}</span>
-          )}
+          <UserAvatar
+            src={avatarUrl}
+            name={accountName}
+            className="ppl__ava"
+            fallbackClassName="ppl__ava ppl__ava--txt"
+          />
           <div className="ppl__identity">
             <div className="ppl__identity-top">
               <span className="ppl__name" title={accountName}>

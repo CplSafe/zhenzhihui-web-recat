@@ -21,6 +21,7 @@ import { deriveAllWorkspaces, useWorkspaceSessionStore } from '@/stores/workspac
 import { useConfirmDialog } from '@/composables/useToast'
 import { sanitizeMediaUrl } from '@/utils/urlSafety'
 import { WORKSPACE_NAME_MAX, normalizeWorkspaceNameForCompare, validateWorkspaceName } from '@/utils/workspaceName'
+import UserAvatar from '@/components/common/UserAvatar'
 import editIcon from '@/assets/81926ea1670cd86f6fc1adec90042f08.png'
 import './TeamManagementModal.css'
 
@@ -1298,11 +1299,7 @@ export default function TeamManagementModal({
                     filteredMembers.map((m) => (
                       <div key={m.id} className="tm-member">
                         <div className="tm-avatar" aria-hidden="true">
-                          {m.avatarUrl ? (
-                            <img src={m.avatarUrl} alt="" />
-                          ) : (
-                            <span>{String(m.name).trim().charAt(0).toUpperCase()}</span>
-                          )}
+                          <UserAvatar src={m.avatarUrl} name={m.name} />
                         </div>
                         <div className="tm-member-meta">
                           <div className="tm-member-name">

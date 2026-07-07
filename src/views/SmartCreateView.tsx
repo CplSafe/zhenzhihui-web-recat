@@ -800,15 +800,24 @@ export default function SmartCreateView() {
         targets.forEach((name) => (next[name] = true))
         return next
       })
+      // 并发5条：同一时刻最多5个主体并行生成，完成一个立即补位下一个
+      const CONCURRENCY = 5
+      const pool = new Set<Promise<void>>()
       for (const name of targets) {
-        try {
-          await generateSubjectAuto(name)
-        } catch {
-          /* genForSubject 内已 toast,单张失败不影响后续 */
-        } finally {
-          setSubjectGenerating((m) => ({ ...m, [name]: false }))
-        }
+        const p = (async () => {
+          try {
+            await generateSubjectAuto(name)
+          } catch {
+            /* genForSubject 内已 toast,单张失败不影响后续 */
+          } finally {
+            setSubjectGenerating((m) => ({ ...m, [name]: false }))
+            pool.delete(p)
+          }
+        })()
+        pool.add(p)
+        if (pool.size >= CONCURRENCY) await Promise.race(pool)
       }
+      await Promise.all(pool)
       showToast('素材生成完成', 'success')
     } finally {
       batchRunningRef.current = false
@@ -3175,7 +3184,7 @@ export default function SmartCreateView() {
                 onGenerateAll={materialMode ? generateAllSubjects : undefined}
                 batchGenning={batchGenning}
                 onRemoveSubject={removeSubjectImage}
-                onDeleteShot={materialMode ? deleteShot : undefined}
+                onDeleteShot={deleteShot}
                 onGenerateMaterial={(s) => addShotMaterial(s, true)}
                 onOpenSubject={openSubject}
                 /* AI自动生成:不后台直生,改为唤起素材弹窗并在弹窗内自动生成(autoGen),与「上传图片」一致 */
