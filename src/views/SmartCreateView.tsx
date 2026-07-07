@@ -249,6 +249,13 @@ export default function SmartCreateView() {
   const imageBusy = imageMessages.some((m) => m.role === 'assistant' && m.status === 'pending')
   const [step, setStep] = useState(0)
   const [maxReached, setMaxReached] = useState(0)
+  const [durGuard, setDurGuard] = useState<{
+    open: boolean
+    currentSec: number
+    expectedSec: number
+    overMax: boolean
+  }>({ open: false, currentSec: 0, expectedSec: 0, overMax: false })
+  const durGuardProceedRef = useRef<null | (() => void)>(null)
   const [projectName, setProjectName] = useState('未命名项目')
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState('')
@@ -1447,23 +1454,27 @@ export default function SmartCreateView() {
             }
             // ② 正式生成前:对每张进入视频的分镜图做人脸脱敏,用脱敏版喂 seedance(失败回退原图)。
             // 脱敏开关关闭 → 跳过脱敏,直接用原图,成片人脸清晰。
+            // 注意:每轮视频生成独立运作，脱敏结果仅本轮有效不清存到 shots，
+            // 避免第1次脱敏成功→缓存→第2次及后续视频被迫复用脱敏版导致"后面视频人脸被抠"。
             const imageAssetIds: number[] = []
             if (faceBlurEnabledRef.current) {
               const dbg: any[] = []
-              const blurPatch: Record<string, Partial<Shot>> = {}
+              // 本轮内已脱敏的原图缓存(key=原始assetId):同一原图被多个镜头引用时避免重复脱敏
+              const roundCache = new Map<number, { assetId: number; url: string }>()
               for (let j = 0; j < srcIds.length; j++) {
                 const { shotId, id } = srcIds[j]
                 const sh = shots.find((s) => s.id === shotId)
                 setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
-                // 缓存命中(同一原图已脱敏过)→ 直接复用,不重复调用
-                if (sh?.blurredImageAssetId && Number(sh.blurredFromAssetId || 0) === id) {
-                  imageAssetIds.push(Number(sh.blurredImageAssetId))
+                // 本轮内已脱敏过该原图 → 直接复用
+                const cached = roundCache.get(id)
+                if (cached) {
+                  imageAssetIds.push(cached.assetId)
                   dbg.push({
-                    no: sh.no,
+                    no: sh?.no || '',
                     srcAssetId: id,
                     cached: true,
-                    outAssetId: sh.blurredImageAssetId,
-                    outUrl: sh.blurredImageUrl,
+                    outAssetId: cached.assetId,
+                    outUrl: cached.url,
                     ok: true,
                   })
                   continue
@@ -1472,22 +1483,12 @@ export default function SmartCreateView() {
                 dbg.push({ no: sh?.no || '', ...r.debug, ok: r.ok, cached: false })
                 if (r.ok && r.assetId) {
                   imageAssetIds.push(r.assetId)
-                  blurPatch[String(shotId)] = {
-                    blurredImageUrl: r.url,
-                    blurredImageAssetId: r.assetId,
-                    blurredFromAssetId: id,
-                  }
+                  roundCache.set(id, { assetId: r.assetId, url: r.url })
                 } else {
                   imageAssetIds.push(id) // 脱敏失败:回退原图,不阻塞出片
                 }
               }
               setBlurDebug(dbg)
-              // 把脱敏结果缓存回分镜(随草稿持久,重试/重进不重复脱敏)
-              if (Object.keys(blurPatch).length) {
-                setShots((prev) =>
-                  prev.map((s) => (blurPatch[String(s.id)] ? { ...s, ...blurPatch[String(s.id)] } : s)),
-                )
-              }
             } else {
               // 不脱敏:直接用原图 assetId 出片
               for (const s of srcIds) imageAssetIds.push(s.id)
@@ -2436,6 +2437,35 @@ export default function SmartCreateView() {
     setMaxReached((m) => Math.max(m, next))
   }
 
+  const parseDurationSec = (value: any): number => {
+    const n = parseInt(String(value || '').replace(/[^0-9]/g, ''), 10)
+    return Number.isFinite(n) && n > 0 ? n : 0
+  }
+
+  const guardDurationBeforeNext = async (proceed: () => void) => {
+    if (!entryMeta || entryMeta.mode !== 'video') {
+      proceed()
+      return
+    }
+    const currentSec = totalDurationSec(shots)
+    const expectedSec = parseDurationSec(entryMeta.duration)
+    const maxSec = 15
+    if (currentSec > maxSec) {
+      durGuardProceedRef.current = null
+      setDurGuard({ open: true, currentSec, expectedSec, overMax: true })
+      return
+    }
+    if (expectedSec > 0 && currentSec > 0 && currentSec !== expectedSec) {
+      durGuardProceedRef.current = () => {
+        setEntryMeta((m) => (m ? { ...m, duration: `${currentSec}s` } : m))
+        proceed()
+      }
+      setDurGuard({ open: true, currentSec, expectedSec, overMax: false })
+      return
+    }
+    proceed()
+  }
+
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
@@ -2907,8 +2937,10 @@ export default function SmartCreateView() {
             label: '镜头编排',
             variant: 'primary',
             action: () => {
-              autoGenRef.current = false // 允许进入镜头编排后自动生成分镜图
-              goStep(2)
+              void guardDurationBeforeNext(() => {
+                autoGenRef.current = false
+                goStep(2)
+              })
             },
             // 素材未全部生成完毕不可进入镜头编排(含主推产品需手动生成)
             disabled: scriptLoading || !materialsAllReady,
@@ -2935,8 +2967,10 @@ export default function SmartCreateView() {
             label: '生成视频',
             variant: 'split',
             action: () => {
-              autoVidRef.current = false
-              goStep(3)
+              void guardDurationBeforeNext(() => {
+                autoVidRef.current = false
+                goStep(3)
+              })
             },
             disabled: anyShotGenerating || !shotImagesReady,
             tip: anyShotGenerating
@@ -3248,6 +3282,60 @@ export default function SmartCreateView() {
 
   return (
     <div className="smart">
+      {durGuard.open && (
+        <div className="smart__durguard" role="dialog" aria-modal="true">
+          <div
+            className="smart__durguard-backdrop"
+            aria-hidden="true"
+            onClick={() => {
+              durGuardProceedRef.current = null
+              setDurGuard({ open: false, currentSec: 0, expectedSec: 0, overMax: false })
+            }}
+          />
+          <div className="smart__durguard-card">
+            <div className="smart__durguard-top">
+              <span className="smart__durguard-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 16v-5" strokeLinecap="round" />
+                  <path d="M12 8h.01" strokeLinecap="round" />
+                  <circle cx="12" cy="12" r="9" />
+                </svg>
+              </span>
+              <div className="smart__durguard-msg">
+                {durGuard.overMax
+                  ? `您目前的视频秒数为${durGuard.currentSec}s（已超过最大限制15s，无法生成视频）`
+                  : `您目前的视频秒数为${durGuard.currentSec}s（与期望的视频秒数${durGuard.expectedSec || parseDurationSec(entryMeta?.duration)}s不符）`}
+              </div>
+            </div>
+            <div className="smart__durguard-actions">
+              <button
+                type="button"
+                className="smart__durguard-btn"
+                onClick={() => {
+                  durGuardProceedRef.current = null
+                  setDurGuard({ open: false, currentSec: 0, expectedSec: 0, overMax: false })
+                }}
+              >
+                重新输入
+              </button>
+              {!durGuard.overMax && (
+                <button
+                  type="button"
+                  className="smart__durguard-btn smart__durguard-btn--primary"
+                  onClick={() => {
+                    const proceed = durGuardProceedRef.current
+                    durGuardProceedRef.current = null
+                    setDurGuard({ open: false, currentSec: 0, expectedSec: 0, overMax: false })
+                    proceed?.()
+                  }}
+                >
+                  知道了，继续生成
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <AppSidebar
         activeKey="creative"
         onNavigate={onNavigate}

@@ -569,6 +569,7 @@ export async function createProjectVideo({
     durationSeconds: 0,
     status: 'draft',
     createdByName: pickString(currentUserName, '当前用户'),
+    createdByUserId: 0,
     createdAt: now,
     updatedAt: now,
     sourceType: 'smart',

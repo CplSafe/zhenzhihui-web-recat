@@ -123,7 +123,7 @@ function outputAssetId(task: any): number {
 }
 
 // 分镜图模型偏好:GPT Image 2(openai gpt-image-2,支持 image.text_to_image / image.image_to_image)
-const STORYBOARD_MODEL_KEYWORDS = ['gpt-image-2', 'gpt-image', 'gpt image']
+const STORYBOARD_MODEL_KEYWORDS = ['seedream', 'doubao', 'gpt-image-2', 'gpt-image', 'gpt image']
 
 /**
  * 生成一张分镜图。refAssetIds 为参考图 asset_id(该镜头素材 + 上一张分镜图)。
