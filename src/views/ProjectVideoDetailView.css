@@ -77,6 +77,13 @@
   font-weight: 600;
 }
 
+.pvdetail-meta {
+  margin-top: 10px;
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .pvdetail-status.is-published {
   background: #e8f8ef;
   color: #22a061;

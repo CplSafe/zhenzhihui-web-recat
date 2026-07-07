@@ -23,13 +23,15 @@ import {
   getCreativeProject,
   listCreativeProjects,
   listAssets,
+  updateCreativeProjectDraft,
   extractAssetPageItems,
 } from '@/api/business'
 import { listProjectVideos, addClassifiedVideo, countProjectVideos, type ProjectVideo } from '@/api/projectVideos'
 import { collectClassifiedKeys, videoKeyOf } from '@/utils/unclassifiedVideos'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { openComingSoon } from '@/stores/ui'
-import { useWorkspaceId } from '@/stores/workspaceSession'
+import { useWorkspaceId, useCurrentUser, useCurrentWorkspace } from '@/stores/workspaceSession'
+import { listWorkspaceMembers } from '@/api/auth'
 
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
@@ -71,6 +73,15 @@ function normalizeCreativeProjectDraft(payload: any): any {
     if (parsed) return parsed
   }
   return null
+}
+
+/** 从项目草稿中提取受限成员 ID 列表 */
+function getRestrictedMemberIds(project: any): number[] {
+  const draft = normalizeCreativeProjectDraft(project)
+  if (!draft) return []
+  const ids = draft.restrictedMemberIds ?? draft.restricted_member_ids ?? []
+  if (!Array.isArray(ids)) return []
+  return ids.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id) && id > 0)
 }
 
 function imgOf(value: any): { url: string; assetId: number } {
@@ -162,6 +173,108 @@ function relativeUpdated(ts: number): string {
   if (d < 30) return `${d}天前更新`
   const mo = Math.floor(d / 30)
   return mo < 12 ? `${mo}个月前更新` : `${Math.floor(mo / 12)}年前更新`
+}
+
+// 取首个非空字符串(多字段容错)
+function pickFirstText(...candidates: any[]): string {
+  for (const candidate of candidates) {
+    const value = String(candidate ?? '').trim()
+    if (value) return value
+  }
+  return ''
+}
+
+function resolveEditorCount(project: any): number {
+  const count =
+    Number(
+      project?.editor_count ?? project?.editorCount ?? project?.data?.editor_count ?? project?.data?.editorCount ?? 0,
+    ) || 0
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0
+}
+
+function normalizeEditorUser(
+  raw: any,
+): { userId: number; nickname: string; avatarUrl: string; lastEditedAt: string } | null {
+  if (!raw) return null
+  if (typeof raw === 'string') {
+    const s = raw.trim()
+    if (!s) return null
+    return { userId: 0, nickname: '', avatarUrl: s, lastEditedAt: '' }
+  }
+  if (typeof raw !== 'object') return null
+  const userId = Number(raw?.user_id ?? raw?.userId ?? raw?.id ?? raw?.user?.id ?? 0) || 0
+  const nickname =
+    pickFirstText(raw?.nickname, raw?.name, raw?.user?.nickname, raw?.user?.name, raw?.mobile, raw?.user?.mobile) ||
+    (userId ? `成员${userId}` : '')
+  const avatarUrl = pickFirstText(
+    raw?.avatar_url,
+    raw?.avatarUrl,
+    raw?.avatar,
+    raw?.user?.avatar_url,
+    raw?.user?.avatarUrl,
+    raw?.user?.avatar,
+  )
+  const lastEditedAt = pickFirstText(raw?.last_edited_at, raw?.lastEditedAt)
+  if (!userId && !avatarUrl && !nickname) return null
+  return { userId, nickname, avatarUrl, lastEditedAt }
+}
+
+// 项目卡片的参与人头像列表:团队空间展示所有非受限成员,个人空间展示创建者
+function resolveProjectAvatars(
+  project: any,
+  currentUser: any,
+  workspaceMembers: any[],
+  restrictedIds: number[],
+): { url: string; name: string }[] {
+  const editorsRaw = project?.editors ?? project?.data?.editors ?? project?.editor_list ?? project?.data?.editor_list
+  const editors = normalizeArray(editorsRaw).map(normalizeEditorUser).filter(Boolean) as {
+    userId: number
+    nickname: string
+    avatarUrl: string
+    lastEditedAt: string
+  }[]
+  if (editors.length > 0) {
+    const restrictedSet = new Set(restrictedIds.filter((id) => Number.isFinite(id) && id > 0))
+    return editors
+      .filter((u) => !u.userId || !restrictedSet.has(u.userId))
+      .slice(0, 5)
+      .map((u) => ({ url: u.avatarUrl, name: u.nickname || (u.userId ? `成员${u.userId}` : '') }))
+  }
+  const isTeamSpace = workspaceMembers.length > 1
+  if (isTeamSpace) {
+    // 团队空间:展示所有非受限成员的头像
+    const restrictedSet = new Set(restrictedIds.filter((id) => Number.isFinite(id) && id > 0))
+    return workspaceMembers
+      .filter((m: any) => {
+        const uid = Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) || 0
+        return uid > 0 && !restrictedSet.has(uid)
+      })
+      .map((m: any) => {
+        const uid = Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) || 0
+        const name =
+          pickFirstText(m?.nickname, m?.name, m?.user?.nickname, m?.user?.name, m?.user?.mobile, m?.mobile) ||
+          `成员${uid}`
+        const url = pickFirstText(
+          m?.avatar,
+          m?.avatar_url,
+          m?.avatarUrl,
+          m?.user?.avatar,
+          m?.user?.avatar_url,
+          m?.user?.avatarUrl,
+        )
+        return { url, name }
+      })
+  }
+  // 个人空间:后端返回 creator_nickname / creator_avatar_url 时用后端,否则回退当前用户
+  const avatarUrl = String(project?.creator_avatar_url || '').trim()
+  const name = String(project?.creator_nickname || '').trim()
+  if (avatarUrl || name) return [{ url: avatarUrl, name }]
+  if (currentUser) {
+    const fallbackUrl = pickFirstText(currentUser?.avatar, currentUser?.avatar_url, currentUser?.avatarUrl)
+    const fallbackName = pickFirstText(currentUser?.nickname, currentUser?.name, currentUser?.username) || '我'
+    return [{ url: fallbackUrl, name: fallbackName }]
+  }
+  return []
 }
 
 // 收集所有 2.1 项目已用到的视频 asset_id —— 用于把「待分类」里的散视频(/assets?type=video)去重,
@@ -330,6 +443,18 @@ export default function ProjectManagementView() {
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const workspaceId = useWorkspaceId()
+  const currentUser = useCurrentUser()
+  const currentWorkspace = useCurrentWorkspace()
+  const currentUserId = Number(currentUser?.id ?? currentUser?.userId ?? 0) || 0
+
+  // 工作空间成员,供成员权限弹窗及归属人名字查找
+  const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([])
+
+  // 成员权限弹窗
+  const [memberPermProject, setMemberPermProject] = useState<{ id: number; title: string; userId: number } | null>(null)
+  const [permRestrictedIds, setPermRestrictedIds] = useState<Set<number>>(new Set())
+  const [permSaving, setPermSaving] = useState(false)
+  const [permInitializing, setPermInitializing] = useState(false)
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -371,16 +496,46 @@ export default function ProjectManagementView() {
     workspaceIdRef.current = Number(workspaceId || 0)
   }, [workspaceId])
 
+  // 拉取工作空间成员,供成员权限弹窗及归属人名字查找
+  useEffect(() => {
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) {
+      setWorkspaceMembers([])
+      return
+    }
+    let cancelled = false
+    listWorkspaceMembers(wsId)
+      .then((result: any) => {
+        if (!cancelled && Number(workspaceIdRef.current || 0) === wsId)
+          setWorkspaceMembers(Array.isArray(result) ? result : [])
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceMembers([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId])
+
   const folders = useMemo(() => {
     const wsId = Number(workspaceId || 0)
     return projectItems
       .map((project) => {
-        // 成员数/项目数:后端列表暂未稳定提供,按可用字段取,缺省给 1 / 草稿作品数
-        const members = Number(project?.member_count || project?.members?.length || 1) || 1
+        const isTeamSpace = String(currentWorkspace?.type || '').toLowerCase() !== 'personal'
+        const restrictedIds = getRestrictedMemberIds(project)
+        // 团队空间:人数 = 所有成员 - 被限制成员;个人空间:固定 1
+        const editorCount = resolveEditorCount(project)
+        const members = editorCount
+          ? editorCount
+          : isTeamSpace
+            ? Math.max(1, workspaceMembers.length - restrictedIds.length)
+            : 1
         // 作品数 = 点开项目后实际看到的视频条数(派生成片/草稿占位 + 本地归类),
         // 与 listProjectVideos 同口径;不再用分镜数(shots.length),避免「卡片显示 3、点开只有 1」。
         const worksCount = countProjectVideos({ project, workspaceId: wsId })
         const cover = extractCover(project, wsId)
+        const userId = Number(project?.user_id || project?.userId || 0) || 0
+        const participantAvatars = resolveProjectAvatars(project, currentUser, workspaceMembers, restrictedIds)
         return {
           id: Number(project?.id || 0),
           title: String(project?.title || project?.name || '').trim() || '未命名项目',
@@ -395,13 +550,23 @@ export default function ProjectManagementView() {
           // 没有图片封面时,退而用已出片视频的首帧当封面
           coverVideo: cover ? '' : extractCoverVideo(project, wsId),
           members,
+          membersLabel: editorCount ? '编辑者' : '成员',
           type: members > 1 ? '协作项目' : '个人项目',
           works: worksCount,
+          participantAvatars,
+          userId,
         }
       })
-      .filter((p) => p.id > 0)
+      .filter((p) => {
+        // 被限制成员看不到项目(创建者自己永远能看到)
+        if (!p.id) return false
+        if (!currentUserId || p.userId === currentUserId) return true
+        const restrictedIds = getRestrictedMemberIds(projectItems.find((proj: any) => Number(proj?.id || 0) === p.id))
+        if (restrictedIds.includes(currentUserId)) return false
+        return true
+      })
       .sort((a, b) => b.updatedAt - a.updatedAt)
-  }, [projectItems, workspaceId])
+  }, [projectItems, workspaceId, currentWorkspace, currentUser, currentUserId, workspaceMembers])
 
   // 搜索 + 类型过滤 + 时间排序
   const shownFolders = useMemo(() => {
@@ -600,18 +765,44 @@ export default function ProjectManagementView() {
     setCreating(true)
     try {
       const created = await createCreativeProject({ workspace_id: wsId, title: name })
+      // 后端不同接口返回的 id 字段名不统一(有的用 id,有的用 project_id/projectId),
+      // 统一归一化为 id,确保乐观插入不会被 folders 的 .filter(p => p.id > 0) 过滤掉。
+      const newId =
+        Number(
+          created?.id ??
+            created?.project_id ??
+            created?.projectId ??
+            created?.data?.id ??
+            created?.data?.project_id ??
+            0,
+        ) || 0
+      const normalized = { ...created, id: newId || created.id || created.project_id }
       showToast('项目已创建', 'success')
       setCreateOpen(false)
       setNewName('')
-      // 已存云端:乐观插入列表头部(仅内存,刷新后以云端列表为准),并拉取最新列表对齐
-      setProjectItems((prev) => [created, ...prev])
-      loadProjects()
+      // 先乐观插入:用户立刻看到新建的项目,不等后端列表刷新。
+      setProjectItems((prev) => [normalized, ...prev])
+      // 拉取最新列表对齐云端,但用合并策略而非替换:
+      // 后端列表若因写入延迟暂不包含新项目 → 补回列表头部,不丢失刚建的项目。
+      try {
+        const items = await listCreativeProjects({ workspaceId: wsId, limit: 60 })
+        if (Number(workspaceIdRef.current || 0) === wsId) {
+          const list = Array.isArray(items) ? items : []
+          const exists = list.some((p: any) => {
+            const pid = Number(p?.id ?? p?.project_id ?? p?.projectId ?? p?.data?.id ?? 0) || 0
+            return pid === newId
+          })
+          setProjectItems(exists ? list : [normalized, ...list])
+        }
+      } catch {
+        // 列表刷新失败不影响已展示的新项目(乐观插入已就位)
+      }
     } catch (error: any) {
       showToast(getBusinessErrorMessage(error, '创建失败,请稍后重试'), 'error')
     } finally {
       setCreating(false)
     }
-  }, [newName, workspaceId, showToast, loadProjects])
+  }, [newName, workspaceId, showToast])
 
   // 项目管理主入口改为进入「项目下视频列表」
   const openFolder = useCallback(
@@ -705,6 +896,66 @@ export default function ProjectManagementView() {
     },
     [showToast],
   )
+
+  // ---- 成员权限弹窗 ----
+  const openMemberPermModal = useCallback(async (folder: { id: number; title: string; userId: number }) => {
+    setOpenMenuId(0)
+    setMemberPermProject({ id: folder.id, title: folder.title, userId: folder.userId })
+    setPermInitializing(true)
+    try {
+      const wsId = Number(workspaceIdRef.current || 0)
+      const project = await getCreativeProject({ projectId: folder.id, workspaceId: wsId })
+      const ids = getRestrictedMemberIds(project)
+      setPermRestrictedIds(new Set(ids))
+    } catch {
+      setPermRestrictedIds(new Set())
+    } finally {
+      setPermInitializing(false)
+    }
+  }, [])
+
+  const closeMemberPermModal = useCallback(() => {
+    setMemberPermProject(null)
+    setPermRestrictedIds(new Set())
+  }, [])
+
+  const saveMemberPerm = useCallback(async () => {
+    if (!memberPermProject) return
+    setPermSaving(true)
+    try {
+      const wsId = Number(workspaceIdRef.current || 0)
+      const project = await getCreativeProject({ projectId: memberPermProject.id, workspaceId: wsId })
+      const draft = normalizeCreativeProjectDraft(project) || {}
+      draft.restrictedMemberIds = [...permRestrictedIds]
+      const revision = Number(project?.draft_revision ?? project?.draftRevision ?? 0) || 0
+      await updateCreativeProjectDraft({
+        projectId: memberPermProject.id,
+        workspaceId: wsId,
+        draft,
+        draftRevision: revision,
+      })
+      showToast('成员权限已更新', 'success')
+      closeMemberPermModal()
+      loadProjects()
+    } catch (error: any) {
+      showToast(getBusinessErrorMessage(error, '保存失败，请稍后重试'), 'error')
+    } finally {
+      setPermSaving(false)
+    }
+  }, [memberPermProject, permRestrictedIds, showToast, closeMemberPermModal, loadProjects])
+
+  // 成员信息提取(头像+名字,多字段兜底)
+  function resolveMemberInfo(member: any, index: number): { id: number; name: string; avatarUrl: string } {
+    const id = Number(member?.user_id ?? member?.userId ?? member?.id ?? 0) || index + 1
+    const name =
+      String(
+        member?.nickname || member?.name || member?.user?.nickname || member?.user?.name || member?.mobile || '',
+      ).trim() || `成员${index + 1}`
+    const avatarUrl = String(
+      member?.avatar || member?.avatar_url || member?.avatarUrl || member?.user?.avatar || '',
+    ).trim()
+    return { id, name, avatarUrl }
+  }
 
   const deleteProject = useCallback(
     async (folder: { id: number; title: string }) => {
@@ -940,6 +1191,22 @@ export default function ProjectManagementView() {
                               </svg>
                               {openMenuId === folder.id && (
                                 <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
+                                  {folder.userId > 0 && folder.userId === currentUserId && (
+                                    <button
+                                      type="button"
+                                      className="pm2-folder-menu-item"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        openMemberPermModal({
+                                          id: folder.id,
+                                          title: folder.title,
+                                          userId: folder.userId,
+                                        })
+                                      }}
+                                    >
+                                      成员权限
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     className="pm2-folder-menu-item is-danger"
@@ -970,11 +1237,42 @@ export default function ProjectManagementView() {
                               {folder.type}
                             </span>
                             <span className="pm2-pcard-counts">
-                              {folder.members} 成员 · {folder.works} 作品
+                              {folder.members} {folder.membersLabel} · {folder.works} 作品
                             </span>
                           </div>
                           <div className="pm2-pcard-foot">
-                            <span className="pm2-pcard-avatar">{folder.title.slice(0, 1)}</span>
+                            {folder.participantAvatars && folder.participantAvatars.length > 0 ? (
+                              <span className="pm2-pcard-avatars">
+                                {folder.participantAvatars.map((av: any, idx: number) => (
+                                  <span
+                                    key={idx}
+                                    className={`pm2-pcard-avatar${idx > 0 ? ' is-stacked' : ''}`}
+                                    title={av.name || ''}
+                                  >
+                                    {av.url ? (
+                                      <img
+                                        src={av.url}
+                                        alt={av.name || ''}
+                                        onError={(e) => {
+                                          const el = e.currentTarget as HTMLImageElement
+                                          el.style.display = 'none'
+                                          const fallback = el.nextElementSibling as HTMLElement | null
+                                          if (fallback) fallback.style.display = 'inline-flex'
+                                        }}
+                                      />
+                                    ) : null}
+                                    <span
+                                      className="pm2-pcard-avatar-txt"
+                                      style={av.url ? { display: 'none' } : undefined}
+                                    >
+                                      {(av.name || '?').slice(0, 1)}
+                                    </span>
+                                  </span>
+                                ))}
+                              </span>
+                            ) : (
+                              <span className="pm2-pcard-avatar">{folder.title.slice(0, 1)}</span>
+                            )}
                             <span className="pm2-pcard-time">{relativeUpdated(folder.updatedAt)}</span>
                           </div>
                         </div>
@@ -1273,6 +1571,105 @@ export default function ProjectManagementView() {
                   onClick={submitCreate}
                 >
                   {creating ? '创建中…' : '创建'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* 成员权限弹窗 */}
+      {memberPermProject &&
+        createPortal(
+          <div
+            className="pm2-modal-mask"
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !permSaving) closeMemberPermModal()
+            }}
+          >
+            <div
+              className="pm2-modal"
+              style={{
+                width: 'min(480px, 96vw)',
+                maxHeight: 'min(560px, 80vh)',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+              role="dialog"
+              aria-label="成员权限"
+            >
+              <div className="pm2-modal-head">
+                <span>成员权限 - {memberPermProject.title}</span>
+                <button
+                  type="button"
+                  className="pm2-modal-close"
+                  aria-label="关闭"
+                  disabled={permSaving}
+                  onClick={closeMemberPermModal}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="pm2-modal-body" style={{ flex: 1, overflowY: 'auto', padding: '0 20px' }}>
+                {permInitializing ? (
+                  <div style={{ padding: '32px 0', textAlign: 'center', color: '#9aa3af', fontSize: 14 }}>
+                    正在加载成员列表…
+                  </div>
+                ) : !workspaceMembers.length ? (
+                  <div style={{ padding: '32px 0', textAlign: 'center', color: '#9aa3af', fontSize: 14 }}>暂无成员</div>
+                ) : (
+                  workspaceMembers.map((member: any, idx: number) => {
+                    const info = resolveMemberInfo(member, idx)
+                    const isRestricted = permRestrictedIds.has(info.id)
+                    const isProjectOwner = memberPermProject.userId > 0 && info.id === memberPermProject.userId
+                    return (
+                      <div className="pm2-perm-member-row" key={info.id}>
+                        <div className={`pm2-perm-avatar${info.avatarUrl ? '' : ' pm2-perm-avatar-placeholder'}`}>
+                          {info.avatarUrl ? (
+                            <img src={info.avatarUrl} alt="" />
+                          ) : (
+                            <span>{info.name.charAt(0).toUpperCase()}</span>
+                          )}
+                        </div>
+                        <div className="pm2-perm-name">
+                          {info.name}
+                          {isProjectOwner && <span className="pm2-perm-owner-tag">创建者</span>}
+                        </div>
+                        {isProjectOwner ? (
+                          <span className="pm2-perm-cannot-hint">无法限制</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className={`pm2-perm-toggle${isRestricted ? ' pm2-perm-toggle--on' : ' pm2-perm-toggle--off'}`}
+                            onClick={() =>
+                              setPermRestrictedIds((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(info.id)) next.delete(info.id)
+                                else next.add(info.id)
+                                return next
+                              })
+                            }
+                            aria-label={isRestricted ? '取消限制' : '限制访问'}
+                          >
+                            <span className="pm2-perm-toggle-knob" style={{ left: isRestricted ? 22 : 2 }} />
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+              <div className="pm2-modal-foot">
+                <button type="button" className="pm2-modal-btn" disabled={permSaving} onClick={closeMemberPermModal}>
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="pm2-modal-btn pm2-modal-btn--primary"
+                  disabled={permSaving || permInitializing}
+                  onClick={saveMemberPerm}
+                >
+                  {permSaving ? '保存中…' : '保存'}
                 </button>
               </div>
             </div>

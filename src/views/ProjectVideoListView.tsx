@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import AppToast from '@/components/AppToast'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
+import { listWorkspaceMembers } from '@/api/auth'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { openComingSoon } from '@/stores/ui'
 import {
@@ -64,7 +65,27 @@ const ROUTE_MAP: Record<string, string> = {
 
 type SortKey = 'updatedAt' | 'createdAt'
 type StatusFilter = 'all' | 'draft' | 'processing' | 'published'
-type DurationFilter = 'all' | 'short' | 'mid' | 'long'
+type FlowFilter = 'all' | 'smart' | 'hot-copy'
+
+function toPlainObj(value: any): any {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+// 从后端项目草稿解析流程标识(与 projectVideos.ts resolveProjectFlow 口径一致)
+function resolveProjectFlowFromDraft(draft: any): string {
+  if (!draft || typeof draft !== 'object') return ''
+  const smart = draft.smart && typeof draft.smart === 'object' ? draft.smart : null
+  return String(smart?.flow || draft.flow || '').toLowerCase()
+}
 
 function matchesDuration(item: ProjectVideo, duration: DurationFilter): boolean {
   if (duration === 'all') return true
@@ -159,19 +180,33 @@ export default function ProjectVideoListView() {
   const currentUser = useCurrentUser() as any
   const workspaceId = useWorkspaceId()
   const projectId = Number(params.projectId || 0)
+  // 当前用户显示名(多字段兜底),用于与视频 createdByName 比对判断是否有修改权限
   const userName =
     currentUser?.nickname || currentUser?.name || currentUser?.username || currentUser?.email || '当前用户'
+  // 权限判断:用 user_id 而非 createdByName,因为后端项目列表不返回创建者昵称字段,
+  // createdByName 一律回退成当前用户名导致谁都能操作。
+  // createdByUserId=0 表示无法判定归属(如手动归类的视频),保守处理:不允许操作。
+  const currentUserId = Number(currentUser?.id ?? currentUser?.userId ?? 0) || 0
+  const canModify = (item: ProjectVideo) => {
+    const ownerId = Number(item.createdByUserId ?? 0) || 0
+    return ownerId > 0 && ownerId === currentUserId
+  }
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [projectTitle, setProjectTitle] = useState('')
+  const [editorCount, setEditorCount] = useState(0)
   const [newVideoOpen, setNewVideoOpen] = useState(false)
   const [videos, setVideos] = useState<ProjectVideo[]>([])
+  // 工作空间成员(含头像/昵称),供归属人按 user_id 查名字
+  const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([])
 
   const [query, setQuery] = useState('')
   const [sortBy, setSortBy] = useState<SortKey>('updatedAt')
   const [status, setStatus] = useState<StatusFilter>('all')
   const [duration, setDuration] = useState<DurationFilter>('all')
+  const [flowFilter, setFlowFilter] = useState<FlowFilter>('all')
+  const [projectFlow, setProjectFlow] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [openMenuId, setOpenMenuId] = useState('')
@@ -188,6 +223,31 @@ export default function ProjectVideoListView() {
     [navigate],
   )
 
+  // 拉取工作空间成员,供归属人按 user_id 查名字
+  const workspaceIdRef = useRef(0)
+  useEffect(() => {
+    workspaceIdRef.current = Number(workspaceId || 0)
+  }, [workspaceId])
+  useEffect(() => {
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) {
+      setWorkspaceMembers([])
+      return
+    }
+    let cancelled = false
+    listWorkspaceMembers(wsId)
+      .then((result: any) => {
+        if (!cancelled && Number(workspaceIdRef.current || 0) === wsId)
+          setWorkspaceMembers(Array.isArray(result) ? result : [])
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceMembers([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId])
+
   const loadData = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
     if (!projectId || !wsId) {
@@ -198,9 +258,35 @@ export default function ProjectVideoListView() {
     }
     setLoading(true)
     try {
-      const payload = await listProjectVideos({ projectId, workspaceId: wsId, currentUserName: userName })
+      const payload = await listProjectVideos({
+        projectId,
+        workspaceId: wsId,
+        currentUserName: userName,
+        currentUserId,
+        workspaceMembers,
+      })
       setProjectTitle(String(payload.project?.title || payload.project?.name || '未命名项目'))
+      const count =
+        Number(
+          payload.project?.editor_count ?? payload.project?.editorCount ?? payload.project?.data?.editor_count ?? 0,
+        ) || 0
+      setEditorCount(Number.isFinite(count) && count > 0 ? Math.floor(count) : 0)
       setVideos(payload.videos)
+      // 项目当前草稿的流程标识:用于后续新建视频/进入编辑默认走正确的编辑器
+      const draft = toPlainObj(
+        payload.project?.draft_json ?? payload.project?.data?.draft_json ?? payload.project?.draft,
+      )
+      setProjectFlow(resolveProjectFlowFromDraft(draft) || '')
+      // 受限成员拦截:直接访问 URL 时若在 restrictedMemberIds 中则跳回列表
+      if (currentUserId > 0) {
+        const restricted: number[] = draft?.restrictedMemberIds ?? draft?.restricted_member_ids ?? []
+        if (Array.isArray(restricted) && restricted.some((id: any) => Number(id) === currentUserId)) {
+          showToast('您没有权限访问该项目', 'error')
+          navigate('/projects', { replace: true })
+          setLoading(false)
+          return
+        }
+      }
     } catch (error: any) {
       setVideos([])
       setProjectTitle('')
@@ -208,7 +294,7 @@ export default function ProjectVideoListView() {
     } finally {
       setLoading(false)
     }
-  }, [projectId, workspaceId, showToast, userName])
+  }, [projectId, workspaceId, showToast, userName, currentUserId, workspaceMembers, navigate])
 
   useEffect(() => {
     loadData()
@@ -216,7 +302,7 @@ export default function ProjectVideoListView() {
 
   useEffect(() => {
     setPage(1)
-  }, [query, sortBy, status, duration, pageSize])
+  }, [query, sortBy, status, duration, flowFilter, pageSize])
 
   useEffect(() => {
     if (!openMenuId) return
@@ -241,10 +327,11 @@ export default function ProjectVideoListView() {
         return false
       if (status !== 'all' && item.status !== status) return false
       if (!matchesDuration(item, duration)) return false
+      if (flowFilter !== 'all' && item.flow !== flowFilter) return false
       return true
     })
     return sortVideos(filtered, sortBy)
-  }, [videos, query, status, duration, sortBy])
+  }, [videos, query, status, duration, flowFilter, sortBy])
 
   const videoCount = videos.length
   const total = filteredVideos.length
@@ -369,6 +456,7 @@ export default function ProjectVideoListView() {
               <span className="pvlist-breadcrumb__current">
                 {projectTitle || '项目视频'}
                 {videoCount ? `（${videoCount}个视频）` : ''}
+                {editorCount ? <span className="pvlist-breadcrumb__meta">· {editorCount} 编辑者</span> : null}
               </span>
             </div>
 
@@ -385,6 +473,29 @@ export default function ProjectVideoListView() {
                     onChange={(event) => setQuery(event.target.value)}
                   />
                 </label>
+                <div className="pvlist-flow-tabs">
+                  <button
+                    type="button"
+                    className={`pvlist-flow-tab${flowFilter === 'all' ? ' is-active' : ''}`}
+                    onClick={() => setFlowFilter('all')}
+                  >
+                    全部
+                  </button>
+                  <button
+                    type="button"
+                    className={`pvlist-flow-tab${flowFilter === 'smart' ? ' is-active' : ''}`}
+                    onClick={() => setFlowFilter('smart')}
+                  >
+                    智能成片
+                  </button>
+                  <button
+                    type="button"
+                    className={`pvlist-flow-tab${flowFilter === 'hot-copy' ? ' is-active' : ''}`}
+                    onClick={() => setFlowFilter('hot-copy')}
+                  >
+                    爆款复制
+                  </button>
+                </div>
               </div>
               <div className="pvlist-toolbar__right">
                 <div className="pvlist-filters">
@@ -414,7 +525,22 @@ export default function ProjectVideoListView() {
                     </select>
                   </label>
                 </div>
-                <button type="button" className="pvlist-create-btn" onClick={() => setNewVideoOpen(true)}>
+                <button
+                  type="button"
+                  className="pvlist-create-btn"
+                  onClick={() => {
+                    // 项目已有明确流程:直接进入对应编辑器,不弹选择框
+                    if (projectFlow === 'hot-copy') {
+                      goCreateVia('hot')
+                      return
+                    }
+                    if (projectFlow === 'smart') {
+                      goCreateVia('smart')
+                      return
+                    }
+                    setNewVideoOpen(true)
+                  }}
+                >
                   + 新建视频
                 </button>
               </div>
@@ -486,18 +612,26 @@ export default function ProjectVideoListView() {
                             <button type="button" onClick={() => openDetail(item)}>
                               查看详情
                             </button>
-                            <button type="button" onClick={() => openEditor(item)}>
-                              进入编辑
-                            </button>
-                            <button type="button" onClick={() => handlePublish(item)}>
-                              标记发布
-                            </button>
+                            {canModify(item) ? (
+                              <button type="button" onClick={() => openEditor(item)}>
+                                进入编辑
+                              </button>
+                            ) : null}
                             <button type="button" onClick={() => downloadVideo(item)}>
                               下载视频
                             </button>
-                            <button type="button" className="is-danger" onClick={() => handleDelete(item)}>
-                              删除视频
-                            </button>
+                            {canModify(item) ? (
+                              <>
+                                <button type="button" onClick={() => handlePublish(item)}>
+                                  标记发布
+                                </button>
+                                <button type="button" className="is-danger" onClick={() => handleDelete(item)}>
+                                  删除视频
+                                </button>
+                              </>
+                            ) : (
+                              <div className="pvlist-card__menu-hint">仅视频创建者可管理</div>
+                            )}
                           </div>
                         ) : null}
                       </div>
@@ -596,22 +730,24 @@ export default function ProjectVideoListView() {
       {newVideoOpen && (
         <div className="pvlist-nvmask" role="dialog" aria-label="新建视频" onClick={() => setNewVideoOpen(false)}>
           <div className="pvlist-nvcard" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              className="pvlist-nvx"
-              aria-label="关闭"
-              onClick={() => setNewVideoOpen(false)}
-            >
+            <button type="button" className="pvlist-nvx" aria-label="关闭" onClick={() => setNewVideoOpen(false)}>
               ×
             </button>
             <div className="pvlist-nvtitle">新建视频</div>
-            <div className="pvlist-nvsub">
-              将在项目「{projectTitle || '当前项目'}」下创建,选择创作方式:
-            </div>
+            <div className="pvlist-nvsub">将在项目「{projectTitle || '当前项目'}」下创建,选择创作方式:</div>
             <div className="pvlist-nvopts">
               <button type="button" className="pvlist-nvopt" onClick={() => goCreateVia('smart')}>
                 <span className="pvlist-nvopt__ic pvlist-nvopt__ic--smart" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="26"
+                    height="26"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4" />
                     <circle cx="12" cy="12" r="3.2" />
                   </svg>
@@ -621,7 +757,16 @@ export default function ProjectVideoListView() {
               </button>
               <button type="button" className="pvlist-nvopt" onClick={() => goCreateVia('hot')}>
                 <span className="pvlist-nvopt__ic pvlist-nvopt__ic--hot" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="26"
+                    height="26"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <rect x="3" y="4" width="13" height="16" rx="2" />
                     <path d="M8 4v16M20 8l-4 2v4l4 2z" />
                   </svg>

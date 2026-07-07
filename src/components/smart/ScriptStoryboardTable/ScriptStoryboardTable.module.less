@@ -113,10 +113,39 @@
 
 /* 行 */
 .sbRow {
+  position: relative;
   display: flex;
   align-items: stretch;
   min-height: 80px;
   border-bottom: 0.8px solid #edf6f4;
+}
+.sbRowTrash {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: rgba(31, 36, 48, 0.06);
+  color: #6b7280;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  z-index: 2;
+}
+.sbRowTrash:hover {
+  background: rgba(229, 72, 77, 0.1);
+  color: #e5484d;
+}
+.sbRow:hover .sbRowTrash {
+  opacity: 1;
+  pointer-events: auto;
 }
 .sbBody .sbRow:last-child {
   border-bottom: none;
@@ -175,6 +204,7 @@
 .sbDurPill {
   display: inline-flex;
   align-items: center;
+  gap: 1px;
   padding: 4px 10px;
   background: rgba(96, 224, 196, 0.1);
   border: 0.8px solid rgba(96, 224, 196, 0.2);
@@ -184,12 +214,34 @@
   font-weight: 500;
   line-height: 16px;
 }
-.sbDurVal {
-  color: #1a9d87;
-  min-width: 8px;
-}
 .sbDurUnit {
   color: #1a9d87;
+}
+/* InlineEdit 嵌入药丸：显示态无缝融合，编辑态仅底部细线提示 */
+.sbDurInline {
+  min-width: 8px;
+  text-align: center;
+  color: #1a9d87;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 16px;
+
+  &:global(.ie-display) {
+    border-radius: 0;
+    background: transparent;
+  }
+  &:global(.ie-input) {
+    width: 26px;
+    padding: 0 2px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: #1a9d87;
+    font-weight: 500;
+    font-size: 14px;
+    text-align: center;
+    box-shadow: 0 1px 0 0 #1fcfa9;
+  }
 }
 
 /* 画面描述 */

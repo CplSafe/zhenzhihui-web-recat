@@ -161,7 +161,7 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
                     ...s.authSession.user,
                     nickname: next,
                     name: next,
-                    ...(avatarData ? { avatar: avatarData } : {}),
+                    ...(nextAvatarUrl ? { avatar: nextAvatarUrl } : avatarData ? { avatar: avatarData } : {}),
                   },
                 },
               }

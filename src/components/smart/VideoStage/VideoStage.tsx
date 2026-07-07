@@ -73,6 +73,8 @@ interface VideoStageProps {
   }[]
   /** 整片历史版本(点击切换) */
   videoVersions?: { url: string; assetId: number }[]
+  /** 仍处于 processing 的历史生成占位数量 */
+  pendingVideoCount?: number
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
   /**
    * 重新生成 / 确认修改整片。
@@ -83,6 +85,10 @@ interface VideoStageProps {
   /** 下载当前整片视频(由父级弹本地保存位置后下载) */
   onDownloadVideo?: () => void
   onPrev?: () => void
+  /** 「重新生成视频/确认修改」按钮的数量选择(与智能成片底栏 split 按钮同样式) */
+  regenCount?: number
+  regenCountOptions?: number[]
+  onRegenCountChange?: (n: number) => void
   /** 调试:实际喂给视频模型的提示词/参考图/各分镜文本(开发可见,正式隐藏) */
   debug?: {
     prompt: string
@@ -120,10 +126,14 @@ export default function VideoStage({
   costEstimate,
   faceBlurDebug,
   videoVersions = [],
+  pendingVideoCount = 0,
   onSwitchVideo,
   onRegenerateVideo,
   onDownloadVideo,
   onPrev,
+  regenCount,
+  regenCountOptions,
+  onRegenCountChange,
   debug,
 }: VideoStageProps) {
   const { showToast } = useToast()
@@ -149,6 +159,20 @@ export default function VideoStage({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const trackRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ s0: number } | null>(null)
+  const [regenSplitOpen, setRegenSplitOpen] = useState(false)
+  const regenSplitRef = useRef<HTMLSpanElement | null>(null)
+
+  useEffect(() => {
+    if (!regenSplitOpen) return
+    const onPointerDown = (e: PointerEvent) => {
+      const el = regenSplitRef.current
+      if (!el) return
+      const target = e.target as HTMLElement
+      if (!el.contains(target)) setRegenSplitOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown, true)
+    return () => window.removeEventListener('pointerdown', onPointerDown, true)
+  }, [regenSplitOpen])
 
   // 时长:优先视频真实时长;未知时回退分镜时长之和
   const shotsTotal = useMemo(
@@ -469,7 +493,7 @@ export default function VideoStage({
 
         {/* 右:历史记录 + 整段视频修改 + 选中帧修改 */}
         <div className={styles.vstageRight}>
-          {(videoVersions.length >= 1 || videoGenerating) && (
+          {(videoVersions.length >= 1 || pendingVideoCount > 0 || videoGenerating) && (
             <div className={styles.vstageVersions}>
               <span className={styles.vstageVersionsTitle}>历史生成</span>
               <div className={styles.vstageVersionsRow}>
@@ -486,13 +510,16 @@ export default function VideoStage({
                     <span className={styles.vstageVerNo}>{i + 1}</span>
                   </button>
                 ))}
-                {/* 正在重新生成的新版本:作为一个「生成中」占位,与历史版本一起展示,并高亮选中边框 */}
-                {videoGenerating && (
-                  <div className={`${styles.vstageVer} ${styles.vstageVerLoading} ${styles.active}`} title="生成中">
+                {Array.from({ length: Math.max(0, pendingVideoCount) }).map((_, i) => (
+                  <div
+                    key={`pending-${videoVersions.length + i + 1}`}
+                    className={`${styles.vstageVer} ${styles.vstageVerLoading}${i === 0 && videoGenerating ? ' ' + styles.active : ''}`}
+                    title={i === 0 && videoGenerating ? '生成中' : '排队中'}
+                  >
                     <span className={styles.vstageSpin} aria-hidden="true" />
-                    <span className={styles.vstageVerNo}>{videoVersions.length + 1}</span>
+                    <span className={styles.vstageVerNo}>{videoVersions.length + i + 1}</span>
                   </div>
-                )}
+                ))}
               </div>
             </div>
           )}
@@ -582,19 +609,74 @@ export default function VideoStage({
             下载视频
           </button>
         )}
-        <button
-          type="button"
-          className="smart__btn smart__btn--primary"
-          onClick={() => {
-            const note = buildNote()
-            // 点下立即把本次修改描述放到左侧;生成完成后会绑定到新版本上(切历史时跟随)
-            setPendingNote(hasMods ? note || '' : '')
-            onRegenerateVideo(note, { edit: hasMods })
-          }}
-          disabled={!!videoGenerating}
-        >
-          {videoGenerating ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
-        </button>
+        {onRegenCountChange && Array.isArray(regenCountOptions) && regenCountOptions.length ? (
+          <span className="smart__btn-split" ref={regenSplitRef}>
+            <button
+              type="button"
+              className="smart__btn-split--main"
+              onClick={() => {
+                const note = buildNote()
+                setPendingNote(hasMods ? note || '' : '')
+                onRegenerateVideo(note, { edit: hasMods })
+              }}
+              disabled={!!videoGenerating}
+            >
+              {videoGenerating ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
+            </button>
+            <span className="smart__btn-split--sep" aria-hidden="true" />
+            <button
+              type="button"
+              className="smart__btn-split--count"
+              disabled={!!videoGenerating}
+              onClick={(e) => {
+                e.stopPropagation()
+                setRegenSplitOpen((prev) => !prev)
+              }}
+            >
+              <span>{regenCount ?? 1}个</span>
+              <svg width="14" height="14" viewBox="0 0 12 12" fill="none" style={{ marginLeft: 4 }}>
+                <path
+                  d="M3 4.5L6 7.5L9 4.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            {regenSplitOpen && (
+              <span className="smart__btn-split--dropdown">
+                {regenCountOptions.map((n: number) => (
+                  <button
+                    key={n}
+                    type="button"
+                    className={`smart__btn-split--option${n === (regenCount ?? 1) ? ' is-active' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRegenCountChange(n)
+                      setRegenSplitOpen(false)
+                    }}
+                  >
+                    {n}个
+                  </button>
+                ))}
+              </span>
+            )}
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="smart__btn smart__btn--primary"
+            onClick={() => {
+              const note = buildNote()
+              setPendingNote(hasMods ? note || '' : '')
+              onRegenerateVideo(note, { edit: hasMods })
+            }}
+            disabled={!!videoGenerating}
+          >
+            {videoGenerating ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
+          </button>
+        )}
       </div>
 
       {/* 调试弹框:实际喂给视频模型的内容(开发可见) */}

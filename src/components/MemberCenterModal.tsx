@@ -181,50 +181,105 @@ function creditUnitFromUnit(unit: string): string {
   return clean ? `积分/${clean}` : ''
 }
 
-// 周期文案只使用后端返回字段(unit/period_label/period_days/interval_*/period),不再按套餐名/code 猜「7天/季」。
-function periodLabel(p: ApiPlan): { unit: string; creditUnit: string } {
-  const backendUnit = normalizeSlashUnit(
-    p.unit || p.period_label || p.periodLabel || p.display?.unit || p.display?.period_label || p.display?.periodLabel,
+function resolvePeriodDays(p: ApiPlan): number {
+  const explicitDays =
+    Number(
+      p.period_days ??
+        p.periodDays ??
+        p.duration_days ??
+        p.durationDays ??
+        p.display?.period_days ??
+        p.display?.periodDays ??
+        p.display?.duration_days ??
+        p.display?.durationDays ??
+        0,
+    ) || 0
+  if (explicitDays > 0) return explicitDays
+
+  const periodRaw = p.period ?? p.display?.period ?? ''
+  const periodNum = Number(periodRaw)
+  if (String(periodRaw || '').trim() && Number.isFinite(periodNum) && periodNum > 0) {
+    return periodNum
+  }
+
+  const intervalUnit = String(
+    p.interval_unit ?? p.intervalUnit ?? p.display?.interval_unit ?? p.display?.intervalUnit ?? '',
+  ).toLowerCase()
+  const intervalCount =
+    Number(p.interval_count ?? p.intervalCount ?? p.display?.interval_count ?? p.display?.intervalCount ?? 0) || 0
+  if (intervalUnit === 'day' && intervalCount > 0) return intervalCount
+  if (intervalUnit === 'week') return 7 * (intervalCount || 1)
+
+  if (String(periodRaw || '').toLowerCase() === 'week') {
+    return 7 * (intervalCount || 1)
+  }
+
+  return 0
+}
+
+function resolvePeriodText(p: ApiPlan): string {
+  const periodDays = resolvePeriodDays(p)
+  if (periodDays > 0) return `${periodDays}天`
+
+  const backendUnit = String(
+    p.unit ||
+      p.period_label ||
+      p.periodLabel ||
+      p.display?.unit ||
+      p.display?.period_label ||
+      p.display?.periodLabel ||
+      '',
   )
+    .trim()
+    .replace(/^\//, '')
+  if (backendUnit) return backendUnit
+
+  const intervalUnit = String(
+    p.interval_unit ?? p.intervalUnit ?? p.display?.interval_unit ?? p.display?.intervalUnit ?? '',
+  ).toLowerCase()
+  const intervalCount =
+    Number(p.interval_count ?? p.intervalCount ?? p.display?.interval_count ?? p.display?.intervalCount ?? 0) || 0
+  if (intervalUnit === 'quarter') return '季'
+  if (intervalUnit === 'year') return '年'
+  if (intervalUnit === 'month') return '月'
+  if (intervalUnit === 'day' && intervalCount > 0) return `${intervalCount}天`
+  if (intervalUnit === 'week') return `${7 * (intervalCount || 1)}天`
+
+  const periodRaw = String(p.period ?? p.display?.period ?? '').toLowerCase()
+  if (periodRaw === 'quarter') return '季'
+  if (periodRaw === 'year') return '年'
+  if (periodRaw === 'month') return '月'
+  if (periodRaw === 'week') return `${7 * (intervalCount || 1)}天`
+
+  return '月'
+}
+
+function normalizePlanName(name: string, p: ApiPlan): string {
+  const rawName = String(name || '').trim()
+  if (!rawName) return '套餐'
+
+  const periodText = resolvePeriodText(p)
+  if (!periodText.endsWith('天')) return rawName
+
+  // 会员中心里标题、价格单位、积分单位需要统一跟随同一套周期字段。
+  if (/^\d+\s*天(?=\S)/.test(rawName)) {
+    return rawName.replace(/^\d+\s*天(?=\S)/, periodText)
+  }
+  if (/试用会员/.test(rawName) && !new RegExp(`^${periodText}`).test(rawName)) {
+    return rawName.replace(/试用会员/, `${periodText}试用会员`)
+  }
+  return rawName
+}
+
+// 周期优先级:明确的数字 > 后端的展示文案(unit/period_label 可能未同步更新)。
+// 1.period_days/duration_days 2.period 纯数字 3.unit/period_label 4.interval_unit 5.period 文字 6.兜底/月
+function periodLabel(p: ApiPlan): { unit: string; creditUnit: string } {
   const backendCreditUnit = String(
     p.credit_unit || p.creditUnit || p.display?.credit_unit || p.display?.creditUnit || '',
   ).trim()
-  if (backendUnit) return { unit: backendUnit, creditUnit: backendCreditUnit || creditUnitFromUnit(backendUnit) }
-
-  const periodDays =
-    Number(p.period_days ?? p.periodDays ?? p.duration_days ?? p.durationDays ?? p.display?.period_days ?? 0) || 0
-  if (periodDays > 0) {
-    const unit = `/${periodDays}天`
-    return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
-  }
-
-  const intervalUnit = String(p.interval_unit ?? p.intervalUnit ?? p.display?.interval_unit ?? '').toLowerCase()
-  const intervalCount = Number(p.interval_count ?? p.intervalCount ?? p.display?.interval_count ?? 0) || 0
-  if (intervalUnit) {
-    if (intervalUnit === 'day' && intervalCount > 0) {
-      const unit = `/${intervalCount}天`
-      return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
-    }
-    // 周:按后端返回的周数 interval_count 换算真实天数(1周=7天),不再写死「7天」。
-    // 后端没给周数(interval_count 缺失/0)时按 1 周算,仍是 7 天。
-    if (intervalUnit === 'week') {
-      const unit = `/${7 * (intervalCount || 1)}天`
-      return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
-    }
-    if (intervalUnit === 'quarter') return { unit: '/季', creditUnit: backendCreditUnit || '积分/季' }
-    if (intervalUnit === 'year') return { unit: '/年', creditUnit: backendCreditUnit || '积分/年' }
-    if (intervalUnit === 'month') return { unit: '/月', creditUnit: backendCreditUnit || '积分/月' }
-  }
-
-  if (String(p.period || '').toLowerCase() === 'week') {
-    const unit = `/${7 * (intervalCount || 1)}天`
-    return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
-  }
-  if (String(p.period || '').toLowerCase() === 'quarter')
-    return { unit: '/季', creditUnit: backendCreditUnit || '积分/季' }
-  if (String(p.period || '').toLowerCase() === 'year')
-    return { unit: '/年', creditUnit: backendCreditUnit || '积分/年' }
-  return { unit: '/月', creditUnit: backendCreditUnit || '积分/月' }
+  const periodText = resolvePeriodText(p)
+  const unit = normalizeSlashUnit(periodText)
+  return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
 }
 
 function toVM(p: ApiPlan): PlanVM {
@@ -237,13 +292,20 @@ function toVM(p: ApiPlan): PlanVM {
 
   // 价格用后端折扣三件套:price_cents=折前原价(划线),discounted_price_cents=折后实付(大号),
   // discount_percent=折扣百分比。discount_enabled 关闭或数据缺失时,大号显示原价、不划线、不显示角标。
-  const originCents = Number(p.price_cents || 0)
-  const discountedCents = Number(p.discounted_price_cents || 0)
-  const enabled = p.discount_enabled === true && discountedCents > 0 && discountedCents < originCents
+  // display 字段作为兜底(部分后端版本把价格放在 display 里)。
+  const originCents = Number(p.price_cents ?? p.display?.price_cents ?? p.display?.priceCents ?? 0)
+  const discountedCents = Number(
+    p.discounted_price_cents ?? p.display?.discounted_price_cents ?? p.display?.discountedPriceCents ?? 0,
+  )
+  const discountEnabled = Boolean(
+    p.discount_enabled ?? p.display?.discount_enabled ?? p.display?.discountEnabled ?? false,
+  )
+  const discountPercent = Number(p.discount_percent ?? p.display?.discount_percent ?? p.display?.discountPercent ?? 0)
+  const enabled = discountEnabled && discountedCents > 0 && discountedCents < originCents
   const payCents = enabled ? discountedCents : originCents
   // 价格只展示整元(四舍五入),不显示小数:折后 79112 分 → ￥791
   const origin = enabled ? `￥${Math.round(originCents / 100)}` : ''
-  const discount = enabled ? discountLabel(p.discount_percent ?? 0) : ''
+  const discount = enabled ? discountLabel(discountPercent) : ''
   // 1积分≈X元 用折后实付价算(用户实际付的钱)
   const rate = credits > 0 ? `1积分≈${(payCents / 100 / credits).toFixed(2)}元` : ''
 
@@ -256,7 +318,7 @@ function toVM(p: ApiPlan): PlanVM {
   return {
     id: Number(p.id),
     code: p.code || '',
-    name: p.name || '套餐',
+    name: normalizePlanName(p.name || '套餐', p),
     subtitle,
     price: String(Math.round(payCents / 100)),
     unit,

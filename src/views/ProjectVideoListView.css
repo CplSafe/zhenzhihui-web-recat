@@ -57,6 +57,13 @@
   letter-spacing: 0.01em;
 }
 
+.pvlist-breadcrumb__meta {
+  margin-left: 8px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .pvlist-breadcrumb__sep {
   color: #c0c6d4;
 }
@@ -115,6 +122,41 @@
   align-items: center;
   gap: 10px;
   flex-wrap: nowrap;
+}
+
+/* 流量来源切换 tabs(全部 / 智能成片 / 爆款复制) */
+.pvlist-flow-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 8px;
+  background: #edf0f4;
+}
+.pvlist-flow-tab {
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #6d7584;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    box-shadow 0.15s;
+}
+.pvlist-flow-tab:hover {
+  color: #354052;
+}
+.pvlist-flow-tab.is-active {
+  background: #fff;
+  color: #1f2430;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .pvlist-select {
@@ -360,6 +402,16 @@
   color: #d64545;
 }
 
+/* 非创建者菜单中的提示文案 */
+.pvlist-card__menu-hint {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  color: #a2a9b6;
+  text-align: center;
+  border-top: 1px solid #eef1f6;
+  margin-top: 2px;
+}
+
 .pvlist-card__status {
   display: inline-flex;
   align-items: center;
@@ -393,6 +445,27 @@
 .pvlist-card__status.is-failed {
   background: #fdeaea;
   color: #e5484d;
+}
+
+/* 流量来源标签:智能成片(绿) / 爆款复制(粉) */
+.pvlist-card__flow {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pvlist-card__flow.is-smart {
+  background: #e8f8ef;
+  color: #22a061;
+}
+.pvlist-card__flow.is-hotcopy {
+  background: #fef0f5;
+  color: #e54d7b;
 }
 
 /* 信息行:⏱ 时长 · 👤 作者 / 📅 日期 + 下载 */
