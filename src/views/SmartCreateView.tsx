@@ -1454,23 +1454,27 @@ export default function SmartCreateView() {
             }
             // ② 正式生成前:对每张进入视频的分镜图做人脸脱敏,用脱敏版喂 seedance(失败回退原图)。
             // 脱敏开关关闭 → 跳过脱敏,直接用原图,成片人脸清晰。
+            // 注意:每轮视频生成独立运作，脱敏结果仅本轮有效不清存到 shots，
+            // 避免第1次脱敏成功→缓存→第2次及后续视频被迫复用脱敏版导致"后面视频人脸被抠"。
             const imageAssetIds: number[] = []
             if (faceBlurEnabledRef.current) {
               const dbg: any[] = []
-              const blurPatch: Record<string, Partial<Shot>> = {}
+              // 本轮内已脱敏的原图缓存(key=原始assetId):同一原图被多个镜头引用时避免重复脱敏
+              const roundCache = new Map<number, { assetId: number; url: string }>()
               for (let j = 0; j < srcIds.length; j++) {
                 const { shotId, id } = srcIds[j]
                 const sh = shots.find((s) => s.id === shotId)
                 setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
-                // 缓存命中(同一原图已脱敏过)→ 直接复用,不重复调用
-                if (sh?.blurredImageAssetId && Number(sh.blurredFromAssetId || 0) === id) {
-                  imageAssetIds.push(Number(sh.blurredImageAssetId))
+                // 本轮内已脱敏过该原图 → 直接复用
+                const cached = roundCache.get(id)
+                if (cached) {
+                  imageAssetIds.push(cached.assetId)
                   dbg.push({
-                    no: sh.no,
+                    no: sh?.no || '',
                     srcAssetId: id,
                     cached: true,
-                    outAssetId: sh.blurredImageAssetId,
-                    outUrl: sh.blurredImageUrl,
+                    outAssetId: cached.assetId,
+                    outUrl: cached.url,
                     ok: true,
                   })
                   continue
@@ -1479,22 +1483,12 @@ export default function SmartCreateView() {
                 dbg.push({ no: sh?.no || '', ...r.debug, ok: r.ok, cached: false })
                 if (r.ok && r.assetId) {
                   imageAssetIds.push(r.assetId)
-                  blurPatch[String(shotId)] = {
-                    blurredImageUrl: r.url,
-                    blurredImageAssetId: r.assetId,
-                    blurredFromAssetId: id,
-                  }
+                  roundCache.set(id, { assetId: r.assetId, url: r.url })
                 } else {
                   imageAssetIds.push(id) // 脱敏失败:回退原图,不阻塞出片
                 }
               }
               setBlurDebug(dbg)
-              // 把脱敏结果缓存回分镜(随草稿持久,重试/重进不重复脱敏)
-              if (Object.keys(blurPatch).length) {
-                setShots((prev) =>
-                  prev.map((s) => (blurPatch[String(s.id)] ? { ...s, ...blurPatch[String(s.id)] } : s)),
-                )
-              }
             } else {
               // 不脱敏:直接用原图 assetId 出片
               for (const s of srcIds) imageAssetIds.push(s.id)

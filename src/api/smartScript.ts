@@ -60,16 +60,43 @@ const SYSTEM =
   '必须替换为真实内容,严禁原样输出「画面描述」「台词/旁白」「字幕」「音效」这类字段名作为值:' +
   '{"shots":[{"duration":"5s","desc":"<具体可拍摄的画面描述>","voiceover":"<台词或旁白,无则空字符串>","subtitle":"<字幕,无则空字符串>","sfx":"<音效,无则空字符串>","subjects":[{"name":"小雅","kind":"人物","imageIndex":2},{"name":"室内场景","kind":"场景"}]}]}'
 
-function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): string {
-  const totalSec = parseInt(String(duration || '10'), 10) || 10
+function buildDurationPromptLines(totalSec: number): string[] {
+  if (totalSec === 15) {
+    return [
+      '视频总时长 15 秒(硬性要求)。',
+      '时长分配规则:开头镜头固定 3 秒,结尾镜头固定 3 秒,中间部分合计固定 9 秒。',
+      '中间部分的脚本内容、分镜个数和每镜时长按叙事需要分配,不做固定模板;但所有中间镜头 duration 相加必须等于 9 秒。',
+      '请至少生成 3 个镜头,并确保所有镜头 duration 相加严格等于 15 秒,绝对不能超过。',
+    ]
+  }
+  if (totalSec === 10) {
+    return [
+      '视频总时长 10 秒(硬性要求)。',
+      '时长分配规则固定为 3 秒-4 秒-3 秒。',
+      '请优先输出 3 个镜头,且 duration 必须依次为 3s、4s、3s,不要改成其他分配方式。',
+    ]
+  }
+  if (totalSec === 5) {
+    return [
+      '视频总时长 5 秒(硬性要求)。',
+      '时长按脚本内容需要自由分配,不做固定模板;但所有镜头 duration 相加必须严格等于 5 秒,绝对不能超过。',
+    ]
+  }
   // 向下取整(每镜约 5 秒),避免镜头数偏多导致各镜时长之和超过总时长
   const approxShots = Math.max(1, Math.floor(totalSec / 5))
   const perShot = Math.max(3, Math.round(totalSec / approxShots))
   return [
-    `创作需求:${requirement || '(未提供文字,请根据上传的参考图片构思一支完整广告短视频的分镜)'}`,
-    `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'}。`,
     `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒(不少于 3 秒),` +
       `所有镜头 duration 相加必须严格等于 ${totalSec} 秒,绝对不能超过;不要切得过碎。`,
+  ]
+}
+
+function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): string {
+  const totalSec = parseInt(String(duration || '10'), 10) || 10
+  return [
+    `创作需求:${requirement || '(未提供文字,请根据上传的参考图片构思一支完整广告短视频的分镜)'}`,
+    `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'}。`,
+    ...buildDurationPromptLines(totalSec),
     '请按要求输出分镜 JSON。',
   ].join('\n')
 }
@@ -90,24 +117,89 @@ const durToSec = (d: any): number => {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
-// 强制各镜 duration 之和 = 目标总时长(模型常超/欠):按比例缩放,取整漂移修正到尾镜。
+function distributeEvenly(totalSec: number, count: number): number[] {
+  if (!(totalSec > 0) || !(count > 0) || totalSec < count) return []
+  const base = Math.floor(totalSec / count)
+  const remainder = totalSec - base * count
+  return Array.from({ length: count }, (_v, index) => base + (index < remainder ? 1 : 0))
+}
+
+function scaleDurationsToTotal(values: number[], totalSec: number): number[] {
+  if (!Array.isArray(values) || !values.length || !(totalSec > 0) || totalSec < values.length) return []
+  const normalized = values.map((value) => (value > 0 ? Math.round(value) : 1))
+  const sum = normalized.reduce((acc, value) => acc + value, 0)
+  if (sum <= 0) return distributeEvenly(totalSec, values.length)
+
+  const factor = totalSec / sum
+  const scaled = normalized.map((value) => Math.max(1, Math.round(value * factor)))
+  let drift = totalSec - scaled.reduce((acc, value) => acc + value, 0)
+
+  while (drift > 0) {
+    for (let i = scaled.length - 1; i >= 0 && drift > 0; i -= 1) {
+      scaled[i] += 1
+      drift -= 1
+    }
+  }
+  while (drift < 0) {
+    let changed = false
+    for (let i = scaled.length - 1; i >= 0 && drift < 0; i -= 1) {
+      if (scaled[i] <= 1) continue
+      scaled[i] -= 1
+      drift += 1
+      changed = true
+    }
+    if (!changed) return distributeEvenly(totalSec, values.length)
+  }
+
+  return scaled
+}
+
+function applyDurationPattern(totalSec: number, secs: number[]): number[] {
+  if (!Array.isArray(secs) || !secs.length || !(totalSec > 0)) return []
+
+  if (totalSec === 10) {
+    if (secs.length === 3) return [3, 4, 3]
+    if (secs.length > 3 && secs.length <= 6) {
+      const middle = scaleDurationsToTotal(secs.slice(1, -1), 4)
+      return middle.length ? [3, ...middle, 3] : []
+    }
+    return []
+  }
+
+  if (totalSec === 15) {
+    if (secs.length >= 3 && secs.length <= 11) {
+      const middle = scaleDurationsToTotal(secs.slice(1, -1), 9)
+      return middle.length ? [3, ...middle, 3] : []
+    }
+    return []
+  }
+
+  return []
+}
+
+// 强制各镜 duration 之和 = 目标总时长(模型常超/欠):优先匹配指定分配规则,否则按比例缩放。
 function normalizeDurations(shots: Shot[], totalSec: number): Shot[] {
   if (!Array.isArray(shots) || !shots.length || !(totalSec > 0)) return shots
   const secs = shots.map((s) => durToSec(s.duration))
-  let sum = secs.reduce((a, b) => a + b, 0)
+  const sum = secs.reduce((a, b) => a + b, 0)
   // 模型没给有效时长 → 平均分配
   if (sum <= 0) {
-    const each = Math.max(1, Math.round(totalSec / shots.length))
-    secs.fill(each)
-    sum = each * shots.length
+    const patterned = applyDurationPattern(totalSec, secs)
+    if (patterned.length === shots.length) {
+      return shots.map((s, i) => ({ ...s, duration: `${patterned[i]}s` }))
+    }
+    const evenly = distributeEvenly(totalSec, shots.length)
+    if (!evenly.length) return shots
+    return shots.map((s, i) => ({ ...s, duration: `${evenly[i]}s` }))
+  }
+  const patterned = applyDurationPattern(totalSec, secs)
+  if (patterned.length === shots.length) {
+    return shots.map((s, i) => ({ ...s, duration: `${patterned[i]}s` }))
   }
   // 已基本对齐(±0.5s)则不动,避免无谓改动
   if (Math.abs(sum - totalSec) < 0.5) return shots
-  const factor = totalSec / sum
-  const scaled = secs.map((s) => Math.max(1, Math.round(s * factor)))
-  // 取整漂移修正:差值并到最后一个镜头,保证总和精确 = totalSec
-  const drift = totalSec - scaled.reduce((a, b) => a + b, 0)
-  if (drift !== 0) scaled[scaled.length - 1] = Math.max(1, scaled[scaled.length - 1] + drift)
+  const scaled = scaleDurationsToTotal(secs, totalSec)
+  if (!scaled.length) return shots
   return shots.map((s, i) => ({ ...s, duration: `${scaled[i]}s` }))
 }
 
