@@ -52,10 +52,14 @@ interface HotCopyEntryProps {
   onSubmit: (payload: HotCopyEntryPayload) => void
   /** 外部正在发起生成(含点击后到 running 生效前的短窗口),用于禁用重复点击 */
   busy?: boolean
+  /** 恢复态点击「重新生成」时的独立忙碌态:只锁本次取消旧任务+重开新任务,不阻塞「下一步」 */
+  resumeRegenBusy?: boolean
   /** 从第二步返回第一页时,可直接回到已生成/生成中的视频页而不重新发起生成 */
   canResume?: boolean
   /** 恢复到第二步:只切回流程,不重新提交生成 */
   onResume?: () => void
+  /** 恢复态下点击「重新生成」:按当前输入重新生成(必要时由父级先取消旧任务) */
+  onRegenerate?: (payload: HotCopyEntryPayload) => void
   /** 返回上一步时回填上次输入(数据存在编排器 state) */
   initial?: Partial<HotCopyEntryPayload>
   /** 比例下拉可选项:取自 replicate 模型 schema 的 ratio options(只放模型真支持的);缺省用默认列表 */
@@ -102,8 +106,10 @@ const HOTCOPY_LAYERS: BgLayerStops = {
 export default function HotCopyEntry({
   onSubmit,
   busy = false,
+  resumeRegenBusy = false,
   canResume,
   onResume,
+  onRegenerate,
   initial,
   ratioOptions,
 }: HotCopyEntryProps) {
@@ -407,28 +413,41 @@ export default function HotCopyEntry({
   // 恢复态:从第二步回到第一页后,主按钮变「下一步」回到已生成内容;旁边提供「重新生成」。
   const resumeMode = !!canResume
 
-  const submit = () => {
-    if (busy) return
+  const buildPayload = (): HotCopyEntryPayload => ({
+    tab,
+    videoSource,
+    videoFile,
+    libraryVideo,
+    videoFileName,
+    videoPreview,
+    products,
+    text,
+    ratio,
+    duration,
+  })
+
+  const validateBeforeSubmit = () => {
     if (!hasHotVideo) {
       showToast('请先上传爆款视频(本地上传 / 素材库)', 'error')
-      return
+      return false
     }
     if (!hasProductImage) {
       showToast('请至少上传一张替换素材图片', 'error')
-      return
+      return false
     }
-    onSubmit({
-      tab,
-      videoSource,
-      videoFile,
-      libraryVideo,
-      videoFileName,
-      videoPreview,
-      products,
-      text,
-      ratio,
-      duration,
-    })
+    return true
+  }
+
+  const submit = () => {
+    if (busy) return
+    if (!validateBeforeSubmit()) return
+    onSubmit(buildPayload())
+  }
+
+  const regenerate = () => {
+    if (resumeRegenBusy) return
+    if (!validateBeforeSubmit()) return
+    ;(onRegenerate || onSubmit)(buildPayload())
   }
 
   return (
@@ -643,9 +662,9 @@ export default function HotCopyEntry({
                 <button
                   type="button"
                   className="hotcopy__regen"
-                  disabled={busy}
-                  onClick={submit}
-                  title={busy ? '视频生成启动中…' : '按当前输入重新生成'}
+                  disabled={resumeRegenBusy}
+                  onClick={regenerate}
+                  title={resumeRegenBusy ? '正在重新生成…' : '按当前输入重新生成'}
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -668,11 +687,11 @@ export default function HotCopyEntry({
                 type="button"
                 className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ''}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
                 /* 恢复态下主按钮仅回到第二步;普通态仍走提交生成。 */
-                disabled={busy}
+                disabled={!resumeMode && busy}
                 onClick={() => (resumeMode ? onResume?.() : submit())}
                 aria-label={resumeMode ? '下一步' : '生成'}
                 title={
-                  busy
+                  !resumeMode && busy
                     ? '视频生成启动中…'
                     : resumeMode
                       ? '下一步:返回已生成内容'

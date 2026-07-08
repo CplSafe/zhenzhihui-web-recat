@@ -1274,6 +1274,13 @@ export default function SmartCreateView() {
   const videoGenerationsRef = useRef<GenRecord[]>([])
   const videoGenQueueRef = useRef<VideoGenJob[]>([])
   const videoGenDrainRef = useRef(false)
+  // 失败记录只在当前页内存中显示黑色卡片与失败原因，不持久化到草稿。
+  // 这样刷新、切菜单、切页面后不会再恢复出「失败视频」。
+  const getPersistedVideoGenerations = (gens: GenRecord[]): GenRecord[] =>
+    (Array.isArray(gens) ? gens : []).filter(
+      (g) =>
+        g?.status === 'processing' && !(!(Number(g?.taskId || 0) > 0) && String(g?.note || '').trim() === '重新编辑'),
+    )
   // 上一版整片成片所依据的「内容签名」:随草稿持久化。项目管理据此判「内容改了没出新片 → 草稿(在制)」。
   // 只在出片成功时盖章(见 commitVideoSig),普通编辑不动它。
   const [lastVideoSig, setLastVideoSig] = useState('')
@@ -2118,7 +2125,7 @@ export default function SmartCreateView() {
     materialBatchPending,
     scriptPending,
     videoVersions,
-    videoGenerations,
+    videoGenerations: getPersistedVideoGenerations(videoGenerations),
     lastVideoSig,
     pendingVideoSig,
     faceBlurEnabled,
@@ -2142,18 +2149,7 @@ export default function SmartCreateView() {
     setFields(d.fields || {})
     setFullVideo({ url: d.fullVideoUrl || '', assetId: d.fullVideoAssetId || 0 })
     setVideoVersions(Array.isArray(d.videoVersions) ? d.videoVersions : [])
-    setVideoGenerations(
-      Array.isArray(d.videoGenerations)
-        ? (d.videoGenerations as GenRecord[]).filter(
-            (g: any) =>
-              !(
-                g?.status === 'processing' &&
-                !(Number(g?.taskId || 0) > 0) &&
-                String(g?.note || '').trim() === '重新编辑'
-              ),
-          )
-        : [],
-    )
+    setVideoGenerations(getPersistedVideoGenerations((d.videoGenerations as GenRecord[]) || []))
     setLastVideoSig(String(d.lastVideoSig || ''))
     const restoredPendingSig = String(d.pendingVideoSig || '')
     setPendingVideoSig(restoredPendingSig)

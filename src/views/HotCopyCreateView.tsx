@@ -35,6 +35,7 @@ import {
   patchCreativeProject,
   getModelForOperation,
   isAbortedTaskError,
+  cancelAiTask,
 } from '@/api/business'
 import { getModelParamOptions } from '@/utils/videoOptions'
 import {
@@ -209,6 +210,7 @@ export default function HotCopyCreateView() {
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
   const [genTriggerBusy, setGenTriggerBusy] = useState(false)
+  const [entryResumeRegenBusy, setEntryResumeRegenBusy] = useState(false)
   // 在途生成任务 id(>0=有任务在跑):持久化后,刷新/切换页面回来用它续轮询,不丢生成结果
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
   const vidGenAbortRef = useRef<AbortController | null>(null)
@@ -1327,6 +1329,49 @@ export default function HotCopyCreateView() {
     setMaxReached((m) => Math.max(m, 1))
   }
 
+  const cancelRunningGenerationForRestart = async (ws: number) => {
+    const draft = loadHotCopyDraft(ws)
+    const pendingTaskId = Number(vidGenTaskId || draft?.vidGenTaskId || 0) || 0
+    vidGenAbortRef.current?.abort()
+    if (pendingTaskId > 0) {
+      await cancelAiTask({ workspaceId: ws, taskId: pendingTaskId })
+    }
+    markGen(null, 'cancelled')
+    persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+    if (aliveRef.current) {
+      setVidGenRunning(false)
+      setVidGenTaskId(0)
+    }
+  }
+
+  const handleEntryRegenerate = (payload: HotCopyEntryPayload) => {
+    void requireAuth(async () => {
+      const ws = Number(workspaceId || 0)
+      if (!ws) {
+        showToast('未选择工作空间,无法生成视频', 'error')
+        return
+      }
+      if (entryResumeRegenBusy) return
+      setEntryResumeRegenBusy(true)
+      try {
+        // 入口页点「重新生成」后立刻回到下一步，用户直接看到生成页内容与状态。
+        setStarted(true)
+        setStep(1)
+        setMaxReached((m) => Math.max(m, 1))
+        if (vidGenRunning || vidGenTaskId > 0 || Number(loadHotCopyDraft(ws)?.vidGenTaskId || 0) > 0) {
+          await cancelRunningGenerationForRestart(ws)
+        }
+        releaseGenTriggerLock()
+        startGenerate(payload)
+      } catch (e: any) {
+        releaseGenTriggerLock()
+        showToast(e?.message || '停止上一条视频失败,请重试', 'error')
+      } finally {
+        setEntryResumeRegenBusy(false)
+      }
+    })
+  }
+
   const goStep = (i: number) => {
     if (i <= 0) {
       setStarted(false)
@@ -1374,8 +1419,10 @@ export default function HotCopyCreateView() {
           <HotCopyEntry
             onSubmit={handleStart}
             busy={genTriggerBusy || vidGenRunning}
+            resumeRegenBusy={entryResumeRegenBusy}
             canResume={canResumeFlow}
             onResume={resumeFlow}
+            onRegenerate={handleEntryRegenerate}
             initial={entryInitial}
             ratioOptions={ratioOptions}
           />
