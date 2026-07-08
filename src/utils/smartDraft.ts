@@ -55,6 +55,14 @@ export interface SmartDraft {
     error?: string
     createdAt?: number
   }[]
+  /** 多视频生成时尚未真正发出的排队任务:刷新/重进后据此继续串行发送,保证整批走完 */
+  videoGenQueue?: {
+    id: string
+    note?: string
+    variationIndex?: number
+    variationTotal?: number
+    opts?: { edit?: boolean }
+  }[]
   /** 人脸脱敏开关(默认开;关闭后出片用原图,成片人脸清晰) */
   faceBlurEnabled?: boolean
   /** 营销思路拆解(选中 SKILL 时多出的第 1 步):是否停留在该步 + 生成的建议正文 + 结构化数据 */

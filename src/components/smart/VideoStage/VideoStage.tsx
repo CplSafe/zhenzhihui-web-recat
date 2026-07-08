@@ -164,6 +164,7 @@ export default function VideoStage({
   const [showDebug, setShowDebug] = useState(false)
   const [showBlurDebug, setShowBlurDebug] = useState(false)
   const [selectedPendingId, setSelectedPendingId] = useState<string>('')
+  const [selectedHistoryVersionId, setSelectedHistoryVersionId] = useState('')
   const debugEnabled = import.meta.env.DEV // 正式版自动隐藏
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -203,6 +204,46 @@ export default function VideoStage({
       })),
     [frameCount, total, frameThumbs],
   )
+  const displayPendingGenerations = useMemo(() => {
+    const base = pendingGenerations.length
+      ? pendingGenerations
+      : Array.from({ length: Math.max(0, pendingVideoCount) }).map((_, i) => ({
+          id: `pending-${i}`,
+          running: false,
+        }))
+    const sorted = [...base].sort((a, b) => {
+      const runningDiff = Number(Boolean(b.running)) - Number(Boolean(a.running))
+      if (runningDiff !== 0) return runningDiff
+      return Number(a.createdAt || 0) - Number(b.createdAt || 0)
+    })
+    return sorted
+  }, [pendingGenerations, pendingVideoCount])
+  const historyItems = useMemo(() => {
+    const failedGens = failedGenerations.map((g) => ({
+      kind: 'failed' as const,
+      id: g.id,
+      createdAt: Number(g.createdAt || 0),
+      error: g.error,
+    }))
+    const pendingGens = displayPendingGenerations.map((g) => ({
+      kind: 'pending' as const,
+      id: g.id,
+      createdAt: Number(g.createdAt || 0),
+      running: !!g.running,
+    }))
+    const mergedGenItems = [...failedGens, ...pendingGens].sort(
+      (a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0),
+    )
+    return {
+      publishedVersions: [...videoVersions].map((v, i) => ({
+        kind: 'published' as const,
+        id: `video-${i}-${v.assetId || v.url}`,
+        orderNo: i + 1,
+        video: v,
+      })),
+      mergedGenItems,
+    }
+  }, [displayPendingGenerations, failedGenerations, videoVersions])
 
   // 时间刻度(整秒;过长时按步长抽稀,约 10 个标签)
   const ticks = useMemo(() => {
@@ -228,6 +269,10 @@ export default function VideoStage({
     if (!selectedPendingId) return
     if (!pendingGenerations.some((g) => g.id === selectedPendingId)) setSelectedPendingId('')
   }, [pendingGenerations, selectedPendingId])
+  useEffect(() => {
+    if (!selectedHistoryVersionId) return
+    if (!historyItems.publishedVersions.some((v) => v.id === selectedHistoryVersionId)) setSelectedHistoryVersionId('')
+  }, [historyItems, selectedHistoryVersionId])
 
   // 逐秒抓取视频帧(1 帧/秒)用独立隐藏 <video>,不打扰主播放器。
   // 跨域无 CORS 头时 crossOrigin 会导致 canvas 被污染/加载失败 → 保持 null,渲染秒标占位。
@@ -380,15 +425,18 @@ export default function VideoStage({
   // 左侧「视频修改描述」:生成中显示本次描述;否则显示当前版本(含切到的历史版本)绑定的描述
   const displayNote = videoGenerating ? pendingNote : videoUrl ? noteByUrl[videoUrl] || '' : ''
 
-  // 生成中若已有上一版视频,仍允许继续播放/查看历史;仅首次无视频时才显示纯加载态。
+  const hasExplicitHistorySelection =
+    !!selectedHistoryVersionId && historyItems.publishedVersions.some((v) => v.id === selectedHistoryVersionId)
+  // 生成中若已有上一版视频,仍允许继续播放/查看历史;仅在未手动切到某个已生成视频时,默认显示当前生成中的占位。
   const activePendingGeneration =
     pendingGenerations.find((g) => g.id === selectedPendingId) ||
-    (videoGenerating ? pendingGenerations.find((g) => g.running) || null : null)
+    (!hasExplicitHistorySelection && videoGenerating ? pendingGenerations.find((g) => g.running) || null : null)
   const showingPendingGeneration = !!activePendingGeneration
   const showLoadingView = showingPendingGeneration || (!videoUrl && !!videoGenerating)
   const hasPlayableVideo = !!videoUrl && !showingPendingGeneration
   const showTimeline = hasPlayableVideo
-  const hasSelectedHistoryVideo = videoVersions.some((v) => v.url === videoUrl)
+  const hasSelectedHistoryVideo = hasExplicitHistorySelection
+  const lockSingleActions = showingPendingGeneration
   const canChooseMultiRegen =
     !!onGenerateMultipleVideos &&
     !!onRegenCountChange &&
@@ -544,62 +592,59 @@ export default function VideoStage({
             <div className={styles.vstageVersions}>
               <span className={styles.vstageVersionsTitle}>历史生成</span>
               <div className={styles.vstageVersionsRow}>
-                {videoVersions.map((v, i) => (
+                {historyItems.publishedVersions.map((item) => (
                   <button
-                    key={i}
+                    key={item.id}
                     type="button"
-                    className={`${styles.vstageVer}${v.url === videoUrl ? ' ' + styles.active : ''}`}
+                    className={`${styles.vstageVer}${selectedHistoryVersionId === item.id ? ' ' + styles.active : ''}`}
                     onClick={() => {
                       setSelectedPendingId('')
-                      onSwitchVideo?.(v)
+                      setSelectedHistoryVersionId(item.id)
+                      onSwitchVideo?.(item.video)
                     }}
-                    title={`版本${i + 1}`}
+                    title={`版本${item.orderNo}`}
                   >
-                    <video src={v.url} muted preload="metadata" playsInline />
-                    <span className={styles.vstageVerNo}>{i + 1}</span>
+                    <video src={item.video.url} muted preload="metadata" playsInline />
+                    <span className={styles.vstageVerNo}>{item.orderNo}</span>
                   </button>
                 ))}
-                {failedGenerations.map((g, i) => (
-                  <div
-                    key={g.id}
-                    className={`${styles.vstageVer} ${styles.vstageVerFailed}`}
-                    title={g.error || '生成失败'}
-                  >
-                    <div className={styles.vstageVerFailedBody}>
-                      <span className={styles.vstageVerFailedTitle}>生成失败</span>
-                      <span className={styles.vstageVerFailedReason}>{g.error || '请重试'}</span>
+                {historyItems.mergedGenItems.map((item, i) =>
+                  item.kind === 'failed' ? (
+                    <div
+                      key={item.id}
+                      className={`${styles.vstageVer} ${styles.vstageVerFailed}`}
+                      title={item.error || '生成失败'}
+                    >
+                      <div className={styles.vstageVerFailedBody}>
+                        <span className={styles.vstageVerFailedTitle}>生成失败</span>
+                        <span className={styles.vstageVerFailedReason}>{item.error || '请重试'}</span>
+                      </div>
+                      <span className={styles.vstageVerNo}>{historyItems.publishedVersions.length + i + 1}</span>
                     </div>
-                    <span className={styles.vstageVerNo}>{videoVersions.length + i + 1}</span>
-                  </div>
-                ))}
-                {(pendingGenerations.length
-                  ? pendingGenerations
-                  : Array.from({ length: Math.max(0, pendingVideoCount) }).map((_, i) => ({
-                      id: `pending-${i}`,
-                      running: i === 0 && videoGenerating,
-                    }))
-                ).map((g, i) => (
-                  <button
-                    key={g.id}
-                    type="button"
-                    className={`${styles.vstageVer} ${styles.vstageVerLoading} ${styles.vstageVerPending}${
-                      activePendingGeneration?.id === g.id ||
-                      (!selectedPendingId && !hasSelectedHistoryVideo && !videoUrl && !!g.running)
-                        ? ' ' + styles.active
-                        : ''
-                    }`}
-                    title={g.running ? '生成中' : '排队中'}
-                    onClick={() => setSelectedPendingId(g.id)}
-                  >
-                    <span className={styles.vstageVerPendingBody}>
-                      <span className={styles.vstageSpin} aria-hidden="true" />
-                      <span className={styles.vstageVerPendingText}>{g.running ? '生成中' : '排队中'}</span>
-                    </span>
-                    <span className={styles.vstageVerNo}>
-                      {videoVersions.length + failedGenerations.length + i + 1}
-                    </span>
-                  </button>
-                ))}
+                  ) : (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`${styles.vstageVer} ${styles.vstageVerLoading} ${styles.vstageVerPending}${
+                        activePendingGeneration?.id === item.id ||
+                        (!selectedPendingId && !hasSelectedHistoryVideo && !!item.running)
+                          ? ' ' + styles.active
+                          : ''
+                      }`}
+                      title={item.running ? '生成中' : '排队中'}
+                      onClick={() => {
+                        setSelectedHistoryVersionId('')
+                        setSelectedPendingId(item.id)
+                      }}
+                    >
+                      <span className={styles.vstageVerPendingBody}>
+                        <span className={styles.vstageSpin} aria-hidden="true" />
+                        <span className={styles.vstageVerPendingText}>{item.running ? '生成中' : '排队中'}</span>
+                      </span>
+                      <span className={styles.vstageVerNo}>{historyItems.publishedVersions.length + i + 1}</span>
+                    </button>
+                  ),
+                )}
               </div>
             </div>
           )}
@@ -685,7 +730,7 @@ export default function VideoStage({
               type="button"
               className="smart__btn smart__btn--ghost"
               onClick={onDownloadVideo}
-              disabled={!videoUrl || !!videoGenerating}
+              disabled={!videoUrl || lockSingleActions}
             >
               下载视频
             </button>
@@ -694,9 +739,9 @@ export default function VideoStage({
             type="button"
             className="smart__btn smart__btn--primary"
             onClick={triggerSingleRegenerate}
-            disabled={!!videoGenerating}
+            disabled={lockSingleActions}
           >
-            {videoGenerating ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
+            {showingPendingGeneration ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
           </button>
           {canChooseMultiRegen && (
             <span className={`smart__btn-split ${styles.vstageMultiSplit}`} ref={regenSplitRef}>

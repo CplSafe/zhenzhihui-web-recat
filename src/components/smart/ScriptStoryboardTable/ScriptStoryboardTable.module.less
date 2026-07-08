@@ -1,3 +1,8 @@
+.sbWrap {
+  position: relative;
+  padding-bottom: 40px;
+}
+
 /* 分镜脚本(表格式,还原 Figma 299:2524) */
 .sbTable {
   background: #fff;
@@ -6,6 +11,10 @@
     0 1px 6px rgba(0, 0, 0, 0.04),
     0 4px 32px rgba(96, 224, 196, 0.12);
   overflow: hidden;
+}
+
+.trashFabDock {
+  z-index: 12;
 }
 
 /* 表头:青色渐变 + 列分隔 */
@@ -96,7 +105,7 @@
 
 /* 列宽 */
 .sbColNo {
-  flex: 0 0 120px;
+  flex: 0 0 140px;
 }
 .sbColDur {
   flex: 0 0 100px;
@@ -120,11 +129,10 @@
   border-bottom: 0.8px solid #edf6f4;
 }
 .sbRowTrash {
-  position: absolute;
-  top: 4px;
-  right: 4px;
+  position: static;
   width: 22px;
   height: 22px;
+  margin-left: auto;
   padding: 0;
   border: none;
   border-radius: 6px;

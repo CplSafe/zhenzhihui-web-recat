@@ -50,6 +50,8 @@ const DURATION_OPTIONS = ['5s', '10s', '15s']
 
 interface HotCopyEntryProps {
   onSubmit: (payload: HotCopyEntryPayload) => void
+  /** 入口右上角「创建新视频」:清空当前输入,回到全新入口态 */
+  onNewVideo?: () => void
   /** 外部正在发起生成(含点击后到 running 生效前的短窗口),用于禁用重复点击 */
   busy?: boolean
   /** 恢复态点击「重新生成」时的独立忙碌态:只锁本次取消旧任务+重开新任务,不阻塞「下一步」 */
@@ -105,6 +107,7 @@ const HOTCOPY_LAYERS: BgLayerStops = {
 
 export default function HotCopyEntry({
   onSubmit,
+  onNewVideo,
   busy = false,
   resumeRegenBusy = false,
   canResume,
@@ -460,6 +463,11 @@ export default function HotCopyEntry({
       <h1 className="hotcopy__title">爆款作业直接抄,你的产品当主角!</h1>
 
       <div className="hotcopy__panel">
+        {onNewVideo && (
+          <button type="button" className="hotcopy__newVideoBtn" onClick={onNewVideo}>
+            创建新视频
+          </button>
+        )}
         {/* 分段 Tab:同款翻拍 / 精准复刻(选中态白卡 + 名称 + ? + 副标题) */}
         <div className="hotcopy__tabs">
           {TABS.map((t) => (
@@ -658,82 +666,52 @@ export default function HotCopyEntry({
               </span>
             </div>
             <div className="hotcopy__sendArea">
+              <button
+                type="button"
+                className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ' hotcopy__send--plain'}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
+                /* 恢复态下真正返回下一步;普通态仍走首次去制作。 */
+                disabled={resumeMode ? resumeRegenBusy : busy}
+                onClick={() => (resumeMode ? onResume?.() : submit())}
+                aria-label={resumeMode ? '返回下一步' : '去制作'}
+                title={
+                  resumeMode && resumeRegenBusy
+                    ? '正在返回下一步…'
+                    : !resumeMode && busy
+                      ? '视频生成启动中…'
+                      : resumeMode
+                        ? '返回下一步'
+                        : '去制作'
+                }
+              >
+                {resumeMode ? (
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 30 30"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
+                      fill="black"
+                    />
+                  </svg>
+                ) : (
+                  <span className="hotcopy__sendPlainText">去制作</span>
+                )}
+              </button>
               {resumeMode && (
                 <button
                   type="button"
                   className="hotcopy__regen"
-                  disabled={resumeRegenBusy}
-                  onClick={regenerate}
-                  title={resumeRegenBusy ? '正在重新生成…' : '按当前输入重新生成'}
+                  disabled={busy}
+                  onClick={() => submit()}
+                  title="去制作"
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M20 12a8 8 0 1 1-2.3-5.6" />
-                    <path d="M20 4v4h-4" />
-                  </svg>
-                  重新生成
+                  去制作
                 </button>
               )}
-              <button
-                type="button"
-                className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ''}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
-                /* 恢复态下主按钮仅回到第二步;普通态仍走提交生成。 */
-                disabled={!resumeMode && busy}
-                onClick={() => (resumeMode ? onResume?.() : submit())}
-                aria-label={resumeMode ? '下一步' : '生成'}
-                title={
-                  !resumeMode && busy
-                    ? '视频生成启动中…'
-                    : resumeMode
-                      ? '下一步:返回已生成内容'
-                      : '下一步:生成视频(需先上传爆款视频 + 至少一张替换素材图片)'
-                }
-              >
-                {resumeMode ? (
-                  <>
-                    {/* 恢复态:用智能成片同款白色箭头,和左侧「重新生成」形成视觉分组。 */}
-                    <svg
-                      width="20"
-                      height="14"
-                      viewBox="0 0 20 14"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M1.05649 8.0251H16.5914L12.2367 12.2495C12.0385 12.4418 11.9271 12.7025 11.9271 12.9745C11.927 13.2464 12.0383 13.5072 12.2364 13.6995C12.4346 13.8919 12.7034 13.9999 12.9836 14C13.2639 14.0001 13.5327 13.8921 13.7309 13.6998L19.7078 7.90093C19.9614 7.65491 20.0398 7.3181 19.9819 7.00004C20.0398 6.68257 19.9608 6.34518 19.7078 6.09916L13.7309 0.300249C13.5328 0.108003 13.2641 0 12.9838 0C12.7036 0 12.4349 0.108003 12.2367 0.300249C12.0386 0.492495 11.9273 0.753236 11.9273 1.02511C11.9273 1.29699 12.0386 1.55773 12.2367 1.74998L16.5914 5.97498H1.05649C0.776285 5.97498 0.507557 6.08298 0.309422 6.27522C0.111287 6.46745 -2.3859e-05 6.72818 -2.3859e-05 7.00004C-2.3859e-05 7.27191 0.111287 7.53263 0.309422 7.72487C0.507557 7.91711 0.776285 8.0251 1.05649 8.0251Z"
-                        fill="white"
-                      />
-                    </svg>
-                  </>
-                ) : (
-                  <>
-                    {/* 首次生成:保留爆款复制原来的大圆箭头,方便和恢复态区分。 */}
-                    <svg
-                      width="40"
-                      height="40"
-                      viewBox="0 0 40 40"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M34.1395 5.85926C26.3291 -1.95309 13.6662 -1.95309 5.85779 5.85926C-1.95064 13.6716 -1.95455 26.332 5.85779 34.1424C13.6701 41.9528 26.3305 41.9523 34.1409 34.1424C41.9513 26.3325 41.9494 13.6677 34.1395 5.85926ZM30.6669 18.5416L22.8687 24.4673C22.8072 24.5144 22.7338 24.5435 22.6567 24.5512C22.5796 24.5589 22.5019 24.545 22.4323 24.5109C22.3627 24.4769 22.304 24.4241 22.2627 24.3585C22.2215 24.2929 22.1993 24.2171 22.1988 24.1397V21.4981C22.1983 21.3926 22.1577 21.2911 22.0851 21.2145C22.0126 21.1378 21.9135 21.0917 21.8082 21.0855C18.2711 20.8629 15.1711 21.2349 13.072 23.4409C11.9978 24.5703 10.7024 26.81 10.3924 27.4672C10.3484 27.56 10.2674 27.7319 10.0721 27.7968L10.055 27.8022C9.98791 27.8233 9.9166 27.8271 9.84765 27.8134C9.77869 27.7997 9.71431 27.7688 9.66045 27.7236C9.47589 27.5688 9.36407 27.475 10.1058 24.4468C11.3631 19.3199 16.2702 15.9689 21.8282 15.3527C21.9297 15.3421 22.0238 15.2944 22.0923 15.2187C22.1607 15.143 22.1989 15.0447 22.1993 14.9426V12.2883C22.2002 12.2111 22.2227 12.1357 22.264 12.0704C22.3054 12.0052 22.3641 11.9528 22.4335 11.919C22.503 11.8852 22.5804 11.8714 22.6573 11.8791C22.7341 11.8868 22.8073 11.9157 22.8687 11.9627L30.6669 17.8864C30.7176 17.9246 30.7588 17.9741 30.7872 18.0309C30.8155 18.0878 30.8303 18.1505 30.8303 18.214C30.8303 18.2775 30.8155 18.3402 30.7872 18.3971C30.7588 18.4539 30.7176 18.5034 30.6669 18.5416Z"
-                        fill={canSend ? '#1FCFA9' : '#D9D9D9'}
-                      />
-                    </svg>
-                  </>
-                )}
-              </button>
             </div>
           </div>
         </div>
