@@ -393,8 +393,8 @@ export default function HotCopyCreateView() {
             markGen(null, 'cancelled')
             showToast('视频生成已中断', 'info')
           } else {
-            const errMsg = resolveGenError(e)
-            markGen(null, 'failed', errMsg)
+            const errMsg = e?.message || '请重试'
+            markGen(null, 'failed')
             showToast(`视频生成失败:${errMsg}`, 'error')
           }
         }
