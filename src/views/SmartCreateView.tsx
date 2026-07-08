@@ -216,7 +216,18 @@ export default function SmartCreateView() {
   const { showToast } = useToast()
   const requireAuth = useRequireAuth()
   const { isCheckingSession } = useAuth()
-  const workspaceId = useWorkspaceId()
+  const globalWorkspaceId = useWorkspaceId()
+  // 打开项目「钉住」的所属空间(0=空白入口/无项目)。切换全局空间时,已打开的项目仍走它自己的空间
+  // (保存 / 计费 / 素材加载),避免被全局切换重置。见 loadProjectById / startCreation 处的写入。
+  const [projectWorkspaceId, setProjectWorkspaceId] = useState(0)
+  // 有效空间:项目优先,否则用全局活跃空间。下游所有 Number(workspaceId||0) 用法均走此值。
+  const workspaceId = projectWorkspaceId || globalWorkspaceId
+  // 项目钉在与全局活跃空间【不同】的空间时,取其空间名用于在项目名旁提示(说明本项目保存/计费走该空间)。
+  const allWorkspaces = useWorkspaceSessionStore(deriveAllWorkspaces)
+  const pinnedWsName =
+    projectWorkspaceId && projectWorkspaceId !== globalWorkspaceId
+      ? String((allWorkspaces as any[]).find((w) => Number(w?.id || 0) === projectWorkspaceId)?.name || '').trim()
+      : ''
   const modelPlanCandidates = useModelPlanCandidates() as string[]
   const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
 
@@ -2250,7 +2261,7 @@ export default function SmartCreateView() {
   const appliedRef = useRef(false)
 
   // 把后端返回的项目数据应用到本视图:恢复草稿 / 整片兜底 / 标题回填。
-  const applyLoadedProject = (proj: any, rid: number) => {
+  const applyLoadedProject = (proj: any, rid: number, ws: number) => {
     draftRevisionRef.current = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
     const draftJson = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
     // 留存项目视频清单存档(归类记录),保存时原样写回,避免被本编辑器的草稿快照覆盖
@@ -2268,7 +2279,9 @@ export default function SmartCreateView() {
     const d = parseSmartSnapshot(draftJson)
     // 本地兜底:本地草稿若属于同一项目且 savedAt 更新(后端可能漏存"切走前最后一步")→ 用本地,
     // 避免回来后丢掉最后一步操作。(本地是同步落盘 + 卸载即落盘,通常比后端防抖更新。)
-    const local = loadSmartDraft(Number(workspaceId || 0))
+    // 用传入的 ws(项目所属空间)取草稿键:此时 projectWorkspaceId 的 setState 可能尚未生效,
+    // 直接读派生的 workspaceId 会取到旧空间的草稿键。
+    const local = loadSmartDraft(Number(ws || 0))
     const localFresher =
       !!local && Number(local.projectId || 0) === rid && Number(local.savedAt || 0) > Number(d?.savedAt || 0)
     if (localFresher) applyDraft(local as SmartDraft)
@@ -2304,7 +2317,8 @@ export default function SmartCreateView() {
     setProjectId(rid)
     try {
       const proj: any = await getCreativeProject({ projectId: rid, workspaceId: ws })
-      applyLoadedProject(proj, rid)
+      setProjectWorkspaceId(ws) // 钉住项目所属空间:后续全局切换不影响本项目的保存/计费/素材
+      applyLoadedProject(proj, rid, ws)
       return
     } catch (e) {
       const status = Number((e as any)?.status || 0)
@@ -2323,7 +2337,8 @@ export default function SmartCreateView() {
         for (const candidate of candidates) {
           try {
             const proj: any = await getCreativeProject({ projectId: rid, workspaceId: candidate })
-            applyLoadedProject(proj, rid)
+            setProjectWorkspaceId(candidate) // 钉住项目所属空间(命中的兜底空间)
+            applyLoadedProject(proj, rid, candidate)
             // 命中:把激活空间切到项目所属空间,后续 autosave / 账单 / 并发等都走对的空间。
             useWorkspaceSessionStore.getState().switchWorkspace(candidate)
             return
@@ -2374,6 +2389,7 @@ export default function SmartCreateView() {
     const navState = (location.state as any) || {}
     if (navState.workspaceSwitchReset) {
       clearSmartEntryDraft()
+      setProjectWorkspaceId(0) // 空白入口切空间:解除项目钉住,后续新建走新的全局空间
       hydratedRef.current = true
       appliedRef.current = true
       navigate('/smart', { replace: true })
@@ -2385,6 +2401,7 @@ export default function SmartCreateView() {
     if (Number((location.state as any)?.restartProjectId)) {
       clearSmartDraft(Number(workspaceId || 0))
       clearSmartEntryDraft() // 从「项目管理→新建视频」进入:全新流程,清掉入口暂存
+      setProjectWorkspaceId(0) // 全新流程:解除旧项目钉住,新项目用当前全局空间创建
       hydratedRef.current = true
       appliedRef.current = true // 全新流程无异步加载,进入即可放行保存
       return
@@ -2551,6 +2568,7 @@ export default function SmartCreateView() {
   const resetToNewVideo = (entryMode?: 'video' | 'image') => {
     clearSmartDraft(Number(workspaceId || 0))
     clearSmartEntryDraft() // 重置为全新入口:清掉入口暂存,避免重挂载后又回填旧输入
+    setProjectWorkspaceId(0) // 全新视频:解除项目钉住,回到用全局空间创建
     setStarted(false)
     setShots([])
     setRequirement('')
@@ -2877,6 +2895,7 @@ export default function SmartCreateView() {
           const id = resolveProjectId(p)
           projectIdRef.current = id
           setProjectId(id)
+          setProjectWorkspaceId(wsId) // 钉住:新建项目属于当前(创建时的)空间
           // 对齐 2.0(CreativeEntryView router.replace /creative/:id):跳到 /smart/:id,
           // 之后刷新走「后端草稿」恢复(可靠、有 asset_id、不受 localStorage 配额限制)
           if (id) {
@@ -3554,6 +3573,12 @@ export default function SmartCreateView() {
                     {naming && <span className="smart__name-naming">AI 命名中…</span>}
                     <img className="smart__name-edit" src={iconProjectEdit} alt="" width={20} height={20} />
                   </button>
+                )}
+                {/* 本项目钉在与当前活跃空间不同的空间:提示保存/计费走该空间(顶栏钱包显示的是活跃空间) */}
+                {pinnedWsName && (
+                  <span className="smart__name-space" title={`本项目属于「${pinnedWsName}」空间,保存与计费走该空间`}>
+                    空间：{pinnedWsName}
+                  </span>
                 )}
               </div>
             </div>
