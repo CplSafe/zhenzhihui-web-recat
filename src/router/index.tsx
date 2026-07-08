@@ -8,6 +8,7 @@ import type { ReactNode } from 'react'
 import { createBrowserRouter, Navigate, useRouteError } from 'react-router-dom'
 import App from '../App'
 import { hasAuthSessionMarker } from '../api/auth'
+import { useWorkspaceId } from '../stores/workspaceSession'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
@@ -69,6 +70,16 @@ const ProjectVideoDetailView = lazy(() => import('../views/ProjectVideoDetailVie
 const ResourceManagementView = lazy(() => import('../views/ResourceManagementView'))
 const SpaceDashboardView = lazy(() => import('../views/SpaceDashboardView'))
 
+function WorkspaceScopedSmartCreateRoute() {
+  const workspaceId = useWorkspaceId()
+  return <SmartCreateView key={`smart-ws-${Number(workspaceId || 0)}`} />
+}
+
+function WorkspaceScopedHotCopyRoute() {
+  const workspaceId = useWorkspaceId()
+  return <HotCopyCreateView key={`hot-copy-ws-${Number(workspaceId || 0)}`} />
+}
+
 function lazyPage(node: ReactNode): ReactNode {
   return <Suspense fallback={<div className="route-loading" aria-label="加载中" />}>{node}</Suspense>
 }
@@ -96,10 +107,10 @@ export const router = createBrowserRouter([
       { path: 'home', element: lazyPage(<HomeView />), handle: { requiresAuth: false } },
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },
       // 智能成片 / 爆款复制:免登录可进入并交互,仅「生成」动作需登录(组件内拦截)
-      { path: 'smart', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
-      { path: 'smart/:id', element: lazyPage(<SmartCreateView />), handle: { requiresAuth: false } },
-      { path: 'hot-copy', element: lazyPage(<HotCopyCreateView />), handle: { requiresAuth: false } },
-      { path: 'hot-copy/:id', element: lazyPage(<HotCopyCreateView />), handle: { requiresAuth: false } },
+      { path: 'smart', element: lazyPage(<WorkspaceScopedSmartCreateRoute />), handle: { requiresAuth: false } },
+      { path: 'smart/:id', element: lazyPage(<WorkspaceScopedSmartCreateRoute />), handle: { requiresAuth: false } },
+      { path: 'hot-copy', element: lazyPage(<WorkspaceScopedHotCopyRoute />), handle: { requiresAuth: false } },
+      { path: 'hot-copy/:id', element: lazyPage(<WorkspaceScopedHotCopyRoute />), handle: { requiresAuth: false } },
       { path: 'projects', element: lazyPage(<ProjectManagementView />) },
       { path: 'projects/:projectId/videos', element: lazyPage(<ProjectVideoListView />) },
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },

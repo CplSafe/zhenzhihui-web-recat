@@ -13,21 +13,35 @@ import '@/styles/creative.css'
 import '@/styles/project-management.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
+import AppToast from '@/components/AppToast'
+import AiBadge from '@/components/common/AiBadge'
 import {
   createCreativeProject,
   deleteCreativeProject,
   getAssetDownloadUrl,
   getBusinessErrorMessage,
+  getCreativeProject,
   listCreativeProjects,
   listAssets,
+  updateCreativeProjectDraft,
   extractAssetPageItems,
 } from '@/api/business'
-import { addClassifiedVideo, countProjectVideos } from '@/api/projectVideos'
+import { listProjectVideos, addClassifiedVideo, countProjectVideos, type ProjectVideo } from '@/api/projectVideos'
 import { collectClassifiedKeys, videoKeyOf } from '@/utils/unclassifiedVideos'
-import { assetStreamUrl } from '@/utils/assetUrl'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
-import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
-import { useWorkspaceId } from '@/stores/workspaceSession'
+import { openComingSoon } from '@/stores/ui'
+import { useWorkspaceId, useCurrentUser, useCurrentWorkspace } from '@/stores/workspaceSession'
+import { listWorkspaceMembers } from '@/api/auth'
+import UserAvatar from '@/components/common/UserAvatar'
+
+const ROUTE_MAP: Record<string, string> = {
+  home: '/home',
+  creative: '/smart',
+  'hot-copy': '/hot-copy',
+  projects: '/projects',
+  resources: '/resources',
+  templates: '/templates',
+}
 
 // ---- 纯函数工具 ----
 function toPlainObject(value: any): any {
@@ -62,6 +76,15 @@ function normalizeCreativeProjectDraft(payload: any): any {
   return null
 }
 
+/** 从项目草稿中提取受限成员 ID 列表 */
+function getRestrictedMemberIds(project: any): number[] {
+  const draft = normalizeCreativeProjectDraft(project)
+  if (!draft) return []
+  const ids = draft.restrictedMemberIds ?? draft.restricted_member_ids ?? []
+  if (!Array.isArray(ids)) return []
+  return ids.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id) && id > 0)
+}
+
 function imgOf(value: any): { url: string; assetId: number } {
   if (typeof value === 'string') return { url: value.trim(), assetId: 0 }
   if (!value || typeof value !== 'object') return { url: '', assetId: 0 }
@@ -86,6 +109,10 @@ function getProjectTimestamp(project: any, keys: string[]): number {
 
 const toneOf = (_i: number) => 'a' as const
 
+// 鉴权直传地址:cookie 鉴权、非预签名,永不过期。替换草稿里会过期(X-Amz-Expires=900)的 S3 URL。
+function assetStreamUrl(assetId: number, workspaceId: number): string {
+  return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
+}
 
 // 项目封面:封面字段 → 入口素材 → 分镜图,取第一张(assetId 优先转直传地址,避免过期)
 function extractCover(project: any, wsId: number): string {
@@ -149,6 +176,61 @@ function relativeUpdated(ts: number): string {
   return mo < 12 ? `${mo}个月前更新` : `${Math.floor(mo / 12)}年前更新`
 }
 
+// 取首个非空字符串(多字段容错)
+function pickFirstText(...candidates: any[]): string {
+  for (const candidate of candidates) {
+    const value = String(candidate ?? '').trim()
+    if (value) return value
+  }
+  return ''
+}
+
+// 项目卡片的参与人头像列表:团队空间展示所有非受限成员,个人空间展示创建者
+function resolveProjectAvatars(
+  project: any,
+  currentUser: any,
+  workspaceMembers: any[],
+  restrictedIds: number[],
+): { url: string; name: string }[] {
+  const restrictedSet = new Set(restrictedIds.filter((id) => Number.isFinite(id) && id > 0))
+
+  // 团队/多人空间：展示所有非受限成员的头像（不再仅限 editors）
+  if (workspaceMembers.length > 1) {
+    return workspaceMembers
+      .filter((m: any) => {
+        const uid = Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) || 0
+        return uid > 0 && !restrictedSet.has(uid)
+      })
+      .slice(0, 5)
+      .map((m: any) => {
+        const uid = Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) || 0
+        const name =
+          pickFirstText(m?.nickname, m?.name, m?.user?.nickname, m?.user?.name, m?.user?.mobile, m?.mobile) ||
+          `成员${uid}`
+        const url = pickFirstText(
+          m?.avatar,
+          m?.avatar_url,
+          m?.avatarUrl,
+          m?.user?.avatar,
+          m?.user?.avatar_url,
+          m?.user?.avatarUrl,
+        )
+        return { url, name }
+      })
+  }
+
+  // 个人空间：后端返回 creator_nickname / creator_avatar_url 时用后端，否则回退当前用户
+  const avatarUrl = String(project?.creator_avatar_url || '').trim()
+  const name = String(project?.creator_nickname || '').trim()
+  if (avatarUrl || name) return [{ url: avatarUrl, name }]
+  if (currentUser) {
+    const fallbackUrl = pickFirstText(currentUser?.avatar, currentUser?.avatar_url, currentUser?.avatarUrl)
+    const fallbackName = pickFirstText(currentUser?.nickname, currentUser?.name, currentUser?.username) || '我'
+    return [{ url: fallbackUrl, name: fallbackName }]
+  }
+  return []
+}
+
 // 收集所有 2.1 项目已用到的视频 asset_id —— 用于把「待分类」里的散视频(/assets?type=video)去重,
 // 避免和已挂在项目里的成片重复显示。
 function collectProjectVideoAssetIds(projectItems: any[]): Set<number> {
@@ -196,10 +278,117 @@ function extract20Videos(projectItems: any[], workspaceId: number): { id: number
   return out
 }
 
+interface DetailElement {
+  tag: string
+  kind: string
+  url: string
+  assetId: number
+}
+interface DetailShot {
+  id: string | number
+  no: string
+  duration: string
+  url: string
+  assetId: number
+  elements: DetailElement[]
+}
+interface DetailVideo {
+  url: string
+  assetId: number
+  label: string
+}
+
+// 从项目草稿解析「分镜 + 元素 + 视频历史」(优先 smart 原生块,降级 storyboardItems)
+function parseProjectDetail(draft: any): { shots: DetailShot[]; videos: DetailVideo[]; flow: string } {
+  const flow = String(draft?.flow || draft?.smart?.flow || '')
+  const smart = draft?.smart && typeof draft.smart === 'object' ? draft.smart : null
+
+  // 分镜
+  let shots: DetailShot[] = []
+  const smartShots = normalizeArray(smart?.shots)
+  if (smartShots.length) {
+    shots = smartShots.map((s: any, i: number) => {
+      const cur = imgOf(s.image ? { url: s.image, assetId: s.imageAssetId } : s)
+      return {
+        id: s.id ?? i,
+        no: String(s.no || `镜头${i + 1}`),
+        duration: String(s.duration || ''),
+        url: cur.url,
+        assetId: cur.assetId,
+        elements: normalizeArray(s.subjects).map((su: any) => {
+          const img = imgOf(su.image ? { url: su.image, assetId: su.assetId } : su)
+          return {
+            tag:
+              String(su.tag || '')
+                .replace(/^@/, '')
+                .trim() || '元素',
+            kind: String(su.kind || ''),
+            url: img.url,
+            assetId: img.assetId,
+          }
+        }),
+      }
+    })
+  } else {
+    shots = normalizeArray(draft?.storyboardItems || draft?.storyboard_items).map((s: any, i: number) => {
+      const cur = imgOf(s.currentImage || s.current_image || s)
+      return { id: s.id ?? i, no: `镜头${i + 1}`, duration: '', url: cur.url, assetId: cur.assetId, elements: [] }
+    })
+  }
+
+  // 视频历史:smart.videoVersions 优先,降级 videoHistoryList / generatedVideo*
+  let videos: DetailVideo[] = []
+  const vv = normalizeArray(smart?.videoVersions)
+  const vh = normalizeArray(draft?.videoHistoryList || draft?.video_history_list)
+  const src = vv.length ? vv : vh
+  videos = src
+    .map((v: any, i: number) => {
+      const img = imgOf(v)
+      return { url: img.url, assetId: img.assetId, label: `版本 ${src.length - i}` }
+    })
+    .filter((v) => v.url || v.assetId)
+  if (!videos.length) {
+    const url = String(draft?.generatedVideoUrl || draft?.generated_video_url || smart?.fullVideoUrl || '')
+    const assetId = Number(draft?.generatedVideoAssetId || smart?.fullVideoAssetId || 0) || 0
+    if (url || assetId) videos = [{ url, assetId, label: '当前成片' }]
+  }
+  // 最新的放最前
+  videos.reverse()
+  return { shots, videos, flow }
+}
+
+// 修进度条 bug:部分 MP4 初始 duration=Infinity(moov 在文件尾),进度条会从中间窜到结尾。
+// 跳到极大时间强制浏览器算出真实时长,再跳回 0。
+function fixVideoDuration(e: React.SyntheticEvent<HTMLVideoElement>) {
+  const v = e.currentTarget
+  if (!Number.isFinite(v.duration)) {
+    const back = () => {
+      v.currentTime = 0
+      v.removeEventListener('timeupdate', back)
+    }
+    v.addEventListener('timeupdate', back)
+    v.currentTime = 1e7
+  }
+}
+
 function PlayIcon() {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
       <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
+    </svg>
+  )
+}
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path
+        d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11M5 7l3 3 3-3M8 2.5V10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -208,6 +397,24 @@ export default function ProjectManagementView() {
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const workspaceId = useWorkspaceId()
+  const currentUser = useCurrentUser()
+  const currentWorkspace = useCurrentWorkspace()
+  const currentUserId = Number(currentUser?.id ?? currentUser?.userId ?? 0) || 0
+
+  // 工作空间成员,供成员权限弹窗及归属人名字查找
+  const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([])
+  // 当前用户在工作空间中的角色（owner/admin/member）
+  const currentWsRole = useMemo(() => {
+    const me = workspaceMembers.find((m: any) => Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) === currentUserId)
+    return String(me?.role || me?.workspace_role || '').toLowerCase()
+  }, [workspaceMembers, currentUserId])
+  const isWsAdminOrOwner = currentWsRole === 'admin' || currentWsRole === 'owner'
+
+  // 成员权限弹窗
+  const [memberPermProject, setMemberPermProject] = useState<{ id: number; title: string; userId: number } | null>(null)
+  const [permRestrictedIds, setPermRestrictedIds] = useState<Set<number>>(new Set())
+  const [permSaving, setPermSaving] = useState(false)
+  const [permInitializing, setPermInitializing] = useState(false)
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -234,21 +441,56 @@ export default function ProjectManagementView() {
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
 
+  // 项目详情
+  const [viewMode, setViewMode] = useState<'root' | 'detail'>('root')
+  const [activeProject, setActiveProject] = useState<{ id: number; title: string } | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailShots, setDetailShots] = useState<DetailShot[]>([])
+  const [detailVideos, setDetailVideos] = useState<DetailVideo[]>([])
+  const [detailFlow, setDetailFlow] = useState('')
+  const [activeVideoIdx, setActiveVideoIdx] = useState(0)
+  const [bigImg, setBigImg] = useState('')
+
   const workspaceIdRef = useRef(0)
   useEffect(() => {
     workspaceIdRef.current = Number(workspaceId || 0)
+  }, [workspaceId])
+
+  // 拉取工作空间成员,供成员权限弹窗及归属人名字查找
+  useEffect(() => {
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) {
+      setWorkspaceMembers([])
+      return
+    }
+    let cancelled = false
+    listWorkspaceMembers(wsId)
+      .then((result: any) => {
+        if (!cancelled && Number(workspaceIdRef.current || 0) === wsId)
+          setWorkspaceMembers(Array.isArray(result) ? result : [])
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceMembers([])
+      })
+    return () => {
+      cancelled = true
+    }
   }, [workspaceId])
 
   const folders = useMemo(() => {
     const wsId = Number(workspaceId || 0)
     return projectItems
       .map((project) => {
-        // 成员数/项目数:后端列表暂未稳定提供,按可用字段取,缺省给 1 / 草稿作品数
-        const members = Number(project?.member_count || project?.members?.length || 1) || 1
+        const isTeamSpace = String(currentWorkspace?.type || '').toLowerCase() !== 'personal'
+        const restrictedIds = getRestrictedMemberIds(project)
+        // 成员数 = 非受限成员数（决定项目类型是个人还是协作）
+        const actualMemberCount = isTeamSpace ? Math.max(1, workspaceMembers.length - restrictedIds.length) : 1
         // 作品数 = 点开项目后实际看到的视频条数(派生成片/草稿占位 + 本地归类),
         // 与 listProjectVideos 同口径;不再用分镜数(shots.length),避免「卡片显示 3、点开只有 1」。
         const worksCount = countProjectVideos({ project, workspaceId: wsId })
         const cover = extractCover(project, wsId)
+        const userId = Number(project?.user_id || project?.userId || 0) || 0
+        const participantAvatars = resolveProjectAvatars(project, currentUser, workspaceMembers, restrictedIds)
         return {
           id: Number(project?.id || 0),
           title: String(project?.title || project?.name || '').trim() || '未命名项目',
@@ -262,17 +504,24 @@ export default function ProjectManagementView() {
           cover,
           // 没有图片封面时,退而用已出片视频的首帧当封面
           coverVideo: cover ? '' : extractCoverVideo(project, wsId),
-          members,
-          type: members > 1 ? '协作项目' : '个人项目',
+          members: actualMemberCount,
+          membersLabel: isTeamSpace ? '成员' : '',
+          type: actualMemberCount > 1 ? '协作项目' : '个人项目',
           works: worksCount,
+          participantAvatars,
+          userId,
         }
       })
-      .filter((p) => p.id > 0)
-      // #3 空文件夹:项目建好但没有任何内容(无成片/草稿/分镜)→ works=0,不在列表展示。
-      // 仍可经直链 /smart/:id 打开续作(草稿已存,#2 恢复不受影响);一旦有内容(works≥1)即出现。
-      .filter((p) => p.works > 0)
+      .filter((p) => {
+        // 被限制成员看不到项目卡片(创建者自己永远能看到)
+        if (!p.id) return false
+        if (!currentUserId || p.userId === currentUserId) return true
+        const restrictedIds = getRestrictedMemberIds(projectItems.find((proj: any) => Number(proj?.id || 0) === p.id))
+        if (restrictedIds.includes(currentUserId)) return false
+        return true
+      })
       .sort((a, b) => b.updatedAt - a.updatedAt)
-  }, [projectItems, workspaceId])
+  }, [projectItems, workspaceId, currentWorkspace, currentUser, currentUserId, workspaceMembers])
 
   // 搜索 + 类型过滤 + 时间排序
   const shownFolders = useMemo(() => {
@@ -383,7 +632,7 @@ export default function ProjectManagementView() {
 
   // 待归类:实测视频网格列数(grid 仅在有数据时渲染,故依赖 unclassified.length 重新挂载观察)
   useEffect(() => {
-    if (!unclassified.length) return
+    if (viewMode !== 'root' || !unclassified.length) return
     const el = vidGridRef.current
     if (!el) return
     const measure = () => {
@@ -394,7 +643,7 @@ export default function ProjectManagementView() {
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [unclassified.length])
+  }, [viewMode, unclassified.length])
 
   // 待归类每页 = 两行
   const vidPageSize = Math.max(1, vidCols * 2)
@@ -407,7 +656,14 @@ export default function ProjectManagementView() {
     if (vidPage > vidTotalPages) setVidPage(vidTotalPages)
   }, [vidPage, vidTotalPages])
 
-  const handleNavigate = useSidebarNavigate()
+  const handleNavigate = useCallback(
+    (key: string) => {
+      const path = ROUTE_MAP[key]
+      if (path) navigate(path)
+      else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
+    },
+    [navigate],
+  )
 
   const loadProjects = useCallback(async () => {
     const wsId = Number(workspaceIdRef.current || 0)
@@ -422,7 +678,7 @@ export default function ProjectManagementView() {
       if (Number(workspaceIdRef.current || 0) !== wsId) return
       // 项目全部以云端列表为准(不再用 localStorage 缓存新建项目)
       setProjectItems(Array.isArray(items) ? items : [])
-    } catch {
+    } catch (err: any) {
       if (Number(workspaceIdRef.current || 0) === wsId) {
         setProjectItems([])
         showToast('项目列表加载失败,请稍后重试', 'error')
@@ -433,6 +689,8 @@ export default function ProjectManagementView() {
   }, [showToast])
 
   useEffect(() => {
+    setViewMode('root')
+    setActiveProject(null)
     setPage(1)
     setVidPage(1)
     loadProjects()
@@ -462,18 +720,44 @@ export default function ProjectManagementView() {
     setCreating(true)
     try {
       const created = await createCreativeProject({ workspace_id: wsId, title: name })
+      // 后端不同接口返回的 id 字段名不统一(有的用 id,有的用 project_id/projectId),
+      // 统一归一化为 id,确保乐观插入不会被 folders 的 .filter(p => p.id > 0) 过滤掉。
+      const newId =
+        Number(
+          created?.id ??
+            created?.project_id ??
+            created?.projectId ??
+            created?.data?.id ??
+            created?.data?.project_id ??
+            0,
+        ) || 0
+      const normalized = { ...created, id: newId || created.id || created.project_id }
       showToast('项目已创建', 'success')
       setCreateOpen(false)
       setNewName('')
-      // 已存云端:乐观插入列表头部(仅内存,刷新后以云端列表为准),并拉取最新列表对齐
-      setProjectItems((prev) => [created, ...prev])
-      loadProjects()
+      // 先乐观插入:用户立刻看到新建的项目,不等后端列表刷新。
+      setProjectItems((prev) => [normalized, ...prev])
+      // 拉取最新列表对齐云端,但用合并策略而非替换:
+      // 后端列表若因写入延迟暂不包含新项目 → 补回列表头部,不丢失刚建的项目。
+      try {
+        const items = await listCreativeProjects({ workspaceId: wsId, limit: 60 })
+        if (Number(workspaceIdRef.current || 0) === wsId) {
+          const list = Array.isArray(items) ? items : []
+          const exists = list.some((p: any) => {
+            const pid = Number(p?.id ?? p?.project_id ?? p?.projectId ?? p?.data?.id ?? 0) || 0
+            return pid === newId
+          })
+          setProjectItems(exists ? list : [normalized, ...list])
+        }
+      } catch {
+        // 列表刷新失败不影响已展示的新项目(乐观插入已就位)
+      }
     } catch (error: any) {
       showToast(getBusinessErrorMessage(error, '创建失败,请稍后重试'), 'error')
     } finally {
       setCreating(false)
     }
-  }, [newName, workspaceId, showToast, loadProjects])
+  }, [newName, workspaceId, showToast])
 
   // 项目管理主入口改为进入「项目下视频列表」
   const openFolder = useCallback(
@@ -487,6 +771,146 @@ export default function ProjectManagementView() {
     },
     [workspaceId, showToast, navigate],
   )
+
+  const backToRoot = useCallback(() => {
+    setViewMode('root')
+    setActiveProject(null)
+  }, [])
+
+  const openProjectEditor = useCallback(() => {
+    if (!activeProject?.id) return
+    const wsId = Number(workspaceId || 0)
+    const qs = wsId ? `?workspace_id=${wsId}` : ''
+    // 按流程分流:爆款复制 → /hot-copy/:id;其余 → /smart/:id
+    const base = String(detailFlow || '').toLowerCase() === 'hot-copy' ? '/hot-copy' : '/smart'
+    navigate(`${base}/${activeProject.id}${qs}`)
+  }, [activeProject, detailFlow, workspaceId, navigate])
+
+  const downloadFromUrl = useCallback(
+    async (url: string, title: string) => {
+      if (!url) {
+        showToast('没有可下载的视频', 'error')
+        return
+      }
+      const date = new Date()
+      const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+      const safeName =
+        String(title || '视频')
+          .replace(/[\\/:*?"<>|]/g, '')
+          .trim() || '视频'
+      const fileName = `${safeName}_${dateStr}.mp4`
+
+      // ① 「另存为」对话框必须在用户手势内先弹出(放在 fetch 之前,避免手势失效)
+      let fileHandle: any = null
+      if ((window as any).showSaveFilePicker) {
+        try {
+          fileHandle = await (window as any).showSaveFilePicker({
+            suggestedName: fileName,
+            types: [{ description: 'MP4 视频', accept: { 'video/mp4': ['.mp4'] } }],
+          })
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return // 用户取消
+        }
+      }
+
+      // ② 取视频数据(资源域名允许 CORS,与上传 ensureAssetId 同样 fetch)
+      let blob: Blob | null = null
+      try {
+        showToast('视频下载中…', 'success')
+        const response = await fetch(url)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        blob = new Blob([await response.blob()], { type: 'video/mp4' })
+      } catch {
+        // 取不到(CORS/网络)→ 新标签打开兜底,用户可右键另存
+        window.open(url, '_blank', 'noopener')
+        showToast('无法直接下载,已在新标签打开,可右键另存', 'info')
+        return
+      }
+
+      // ③ 写入:优先 showSaveFilePicker,否则 a[download](blob: 同源,download 一定生效)
+      if (fileHandle) {
+        try {
+          const writable = await fileHandle.createWritable()
+          await writable.write(blob)
+          await writable.close()
+          showToast('视频已保存', 'success')
+          return
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return
+        }
+      }
+      const objUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objUrl
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(objUrl), 4000)
+      showToast('视频已开始下载', 'success')
+    },
+    [showToast],
+  )
+
+  // ---- 成员权限弹窗 ----
+  const openMemberPermModal = useCallback(async (folder: { id: number; title: string; userId: number }) => {
+    setOpenMenuId(0)
+    setMemberPermProject({ id: folder.id, title: folder.title, userId: folder.userId })
+    setPermInitializing(true)
+    try {
+      const wsId = Number(workspaceIdRef.current || 0)
+      const project = await getCreativeProject({ projectId: folder.id, workspaceId: wsId })
+      const ids = getRestrictedMemberIds(project)
+      setPermRestrictedIds(new Set(ids))
+    } catch {
+      setPermRestrictedIds(new Set())
+    } finally {
+      setPermInitializing(false)
+    }
+  }, [])
+
+  const closeMemberPermModal = useCallback(() => {
+    setMemberPermProject(null)
+    setPermRestrictedIds(new Set())
+  }, [])
+
+  const saveMemberPerm = useCallback(async () => {
+    if (!memberPermProject) return
+    setPermSaving(true)
+    try {
+      const wsId = Number(workspaceIdRef.current || 0)
+      const project = await getCreativeProject({ projectId: memberPermProject.id, workspaceId: wsId })
+      const draft = normalizeCreativeProjectDraft(project) || {}
+      draft.restrictedMemberIds = [...permRestrictedIds]
+      const revision = Number(project?.draft_revision ?? project?.draftRevision ?? 0) || 0
+      await updateCreativeProjectDraft({
+        projectId: memberPermProject.id,
+        workspaceId: wsId,
+        draft,
+        draftRevision: revision,
+      })
+      showToast('成员权限已更新', 'success')
+      closeMemberPermModal()
+      loadProjects()
+    } catch (error: any) {
+      showToast(getBusinessErrorMessage(error, '保存失败，请稍后重试'), 'error')
+    } finally {
+      setPermSaving(false)
+    }
+  }, [memberPermProject, permRestrictedIds, showToast, closeMemberPermModal, loadProjects])
+
+  // 成员信息提取(头像+名字,多字段兜底)
+  function resolveMemberInfo(member: any, index: number): { id: number; name: string; avatarUrl: string } {
+    const id = Number(member?.user_id ?? member?.userId ?? member?.id ?? 0) || index + 1
+    const name =
+      String(
+        member?.nickname || member?.name || member?.user?.nickname || member?.user?.name || member?.mobile || '',
+      ).trim() || `成员${index + 1}`
+    const avatarUrl = String(
+      member?.avatar || member?.avatar_url || member?.avatarUrl || member?.user?.avatar || '',
+    ).trim()
+    return { id, name, avatarUrl }
+  }
 
   const deleteProject = useCallback(
     async (folder: { id: number; title: string }) => {
@@ -524,28 +948,20 @@ export default function ProjectManagementView() {
       } catch {
         video = null
       }
-      // 散视频(loose asset)id=0、只有 assetId,旧逻辑 `!video?.id` 会把它挡掉 → 拖不进去。两类都放行。
-      if (!video?.id && !video?.assetId) return
+      if (!video?.id) return
       const wsId = Number(workspaceId || 0)
       if (!wsId || !folder.id) {
         showToast('workspace_id 缺失,无法归类', 'error')
         return
       }
-      // key 必须与「待分类」的隐藏过滤一致:散视频用 videoKeyOf(assetId,''),项目视频用 videoKeyOf(id,cover)。
-      const isLoose = video.kind === 'asset' || (!video.id && video.assetId)
-      const key = isLoose
-        ? videoKeyOf(Number(video.assetId || 0), '')
-        : videoKeyOf(Number(video.id || 0), video.cover || '')
-      // 散视频封面为空,落库用其直传地址,目标文件夹才渲染得出
-      const url = video.cover || video.coverVideo || ''
+      const key = videoKeyOf(Number(video.id || 0), video.cover || '')
       try {
         // 写入目标项目的视频清单(随项目草稿存云端),并带上来源 key 供「待分类」隐藏
         await addClassifiedVideo({
           projectId: folder.id,
           workspaceId: wsId,
           title: video.title,
-          videoUrl: url,
-          coverUrl: url,
+          videoUrl: video.cover || '',
           sourceKey: key,
         })
         // 乐观隐藏(刷新前),随后拉最新项目列表使云端口径生效
@@ -558,6 +974,8 @@ export default function ProjectManagementView() {
     },
     [workspaceId, showToast, loadProjects],
   )
+
+  const activeVideo = detailVideos[activeVideoIdx] || null
 
   return (
     <div
@@ -582,7 +1000,8 @@ export default function ProjectManagementView() {
           aria-label="项目管理"
           style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px 36px 56px' }}
         >
-          <>
+          {viewMode === 'root' ? (
+            <>
               {/* 项目管理:头部(标题/副标题 + 搜索 + 新建)*/}
               <div className="pm2-head">
                 <div className="pm2-head-titles">
@@ -727,6 +1146,22 @@ export default function ProjectManagementView() {
                               </svg>
                               {openMenuId === folder.id && (
                                 <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
+                                  {folder.userId > 0 && (folder.userId === currentUserId || isWsAdminOrOwner) && (
+                                    <button
+                                      type="button"
+                                      className="pm2-folder-menu-item"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        openMemberPermModal({
+                                          id: folder.id,
+                                          title: folder.title,
+                                          userId: folder.userId,
+                                        })
+                                      }}
+                                    >
+                                      成员权限
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     className="pm2-folder-menu-item is-danger"
@@ -757,11 +1192,42 @@ export default function ProjectManagementView() {
                               {folder.type}
                             </span>
                             <span className="pm2-pcard-counts">
-                              {folder.members} 成员 · {folder.works} 作品
+                              {folder.members} {folder.membersLabel} · {folder.works} 作品
                             </span>
                           </div>
                           <div className="pm2-pcard-foot">
-                            <span className="pm2-pcard-avatar">{folder.title.slice(0, 1)}</span>
+                            {folder.participantAvatars && folder.participantAvatars.length > 0 ? (
+                              <span className="pm2-pcard-avatars">
+                                {folder.participantAvatars.map((av: any, idx: number) => (
+                                  <span
+                                    key={idx}
+                                    className={`pm2-pcard-avatar${idx > 0 ? ' is-stacked' : ''}`}
+                                    title={av.name || ''}
+                                  >
+                                    {av.url ? (
+                                      <img
+                                        src={av.url}
+                                        alt={av.name || ''}
+                                        onError={(e) => {
+                                          const el = e.currentTarget as HTMLImageElement
+                                          el.style.display = 'none'
+                                          const fallback = el.nextElementSibling as HTMLElement | null
+                                          if (fallback) fallback.style.display = 'inline-flex'
+                                        }}
+                                      />
+                                    ) : null}
+                                    <span
+                                      className="pm2-pcard-avatar-txt"
+                                      style={av.url ? { display: 'none' } : undefined}
+                                    >
+                                      {(av.name || '?').slice(0, 1)}
+                                    </span>
+                                  </span>
+                                ))}
+                              </span>
+                            ) : (
+                              <span className="pm2-pcard-avatar">{folder.title.slice(0, 1)}</span>
+                            )}
                             <span className="pm2-pcard-time">{relativeUpdated(folder.updatedAt)}</span>
                           </div>
                         </div>
@@ -788,17 +1254,7 @@ export default function ProjectManagementView() {
                   <h2 className="pm2-section-title">待分类</h2>
                   <div className="pm2-video-grid" ref={vidGridRef}>
                     {pagedUnclassified.map((video, i) => (
-                      <div
-                        key={`${video.kind}-${video.id || video.assetId}-${i}`}
-                        className="pm2-vid-wrap"
-                        draggable
-                        onDragStart={(e) => {
-                          // 拖到项目文件夹归类(对应文件夹卡的 onDrop → handleDropToFolder)。
-                          // payload 带 kind/id/assetId/cover/coverVideo,供落点按类型生成与「待分类」隐藏一致的 key。
-                          e.dataTransfer.effectAllowed = 'move'
-                          e.dataTransfer.setData('text/plain', JSON.stringify(video))
-                        }}
-                      >
+                      <div key={`${video.kind}-${video.id || video.assetId}-${i}`} className="pm2-vid-wrap">
                         <div className="pm2-vid">
                           <span
                             className={`pm2-vid-thumb pm2-tone-${toneOf(i)}`}
@@ -859,6 +1315,164 @@ export default function ProjectManagementView() {
                 </section>
               )}
             </>
+          ) : (
+            /* 项目详情:最终视频 + 分镜(含元素) */
+            <>
+              <div className="pm2-detail-head">
+                <button type="button" className="pm2-back" onClick={backToRoot}>
+                  <svg viewBox="0 0 12 12" aria-hidden="true" width="12" height="12">
+                    <path
+                      d="M7.5 2.5 4 6l3.5 3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  返回
+                </button>
+                <h2 className="pm2-section-title pm2-section-title--inline">{activeProject?.title || '项目'}</h2>
+                <button type="button" className="pm2-open-editor" onClick={openProjectEditor}>
+                  进入编辑
+                </button>
+              </div>
+
+              {detailLoading ? (
+                <div className="pm2-hint">正在加载项目内容…</div>
+              ) : (
+                <>
+                  {/* 最终视频(含历史) */}
+                  <section className="pm2-section">
+                    <h3 className="pm2-section-sub">最终视频</h3>
+                    {activeVideo ? (
+                      <div className="pm2-detail-video">
+                        <div className="pm2-detail-player">
+                          {activeVideo.url ? (
+                            <video
+                              src={activeVideo.url}
+                              controls
+                              playsInline
+                              preload="metadata"
+                              onLoadedMetadata={fixVideoDuration}
+                            />
+                          ) : (
+                            <div className="pm2-hint">该版本视频暂时无法播放</div>
+                          )}
+                        </div>
+                        {activeVideo?.url && (
+                          <div className="pm-video-modal-actions">
+                            <button
+                              type="button"
+                              className="pm-video-download-btn"
+                              onClick={() =>
+                                downloadFromUrl(
+                                  activeVideo.url,
+                                  `${activeProject?.title || '视频'}-${activeVideo.label}`,
+                                )
+                              }
+                            >
+                              <DownloadIcon /> 下载视频
+                            </button>
+                          </div>
+                        )}
+                        <div className="pm2-detail-video-side">
+                          <div className="pm2-detail-history-title">
+                            {detailVideos.length > 1 ? '历史版本' : '视频'}
+                          </div>
+                          <div className="pm2-detail-history-list">
+                            {detailVideos.map((v, i) => (
+                              <div
+                                key={i}
+                                className={`pm2-detail-history-item${i === activeVideoIdx ? ' is-active' : ''}`}
+                              >
+                                <button
+                                  type="button"
+                                  className="pm2-detail-history-pick"
+                                  onClick={() => setActiveVideoIdx(i)}
+                                >
+                                  {v.url ? (
+                                    <video src={v.url} muted preload="metadata" />
+                                  ) : (
+                                    <span className="pm2-vid-play">
+                                      <PlayIcon />
+                                    </span>
+                                  )}
+                                  <span>{v.label}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="pm2-detail-dl"
+                                  aria-label="下载视频"
+                                  title="下载视频"
+                                  disabled={!v.url}
+                                  onClick={() => downloadFromUrl(v.url, `${activeProject?.title || '视频'}-${v.label}`)}
+                                >
+                                  <DownloadIcon />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="pm2-hint">这个项目还没有生成视频。</div>
+                    )}
+                  </section>
+
+                  {/* 分镜(每个分镜图 + 用到的元素) */}
+                  <section className="pm2-section">
+                    <h3 className="pm2-section-sub">分镜 · 共 {detailShots.length} 个</h3>
+                    {detailShots.length ? (
+                      <div className="pm2-shot-grid">
+                        {detailShots.map((shot, i) => (
+                          <div className="pm2-shot-card" key={shot.id}>
+                            <div
+                              className={`pm2-shot-thumb pm2-tone-${toneOf(i)}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => shot.url && setBigImg(shot.url)}
+                            >
+                              {shot.url ? (
+                                <>
+                                  <img src={shot.url} alt={shot.no} loading="lazy" />
+                                  <AiBadge />
+                                </>
+                              ) : (
+                                <span className="pm2-shot-empty">暂无分镜图</span>
+                              )}
+                            </div>
+                            <div className="pm2-shot-meta">
+                              <strong>{shot.no}</strong>
+                              {shot.duration && <span>{shot.duration}</span>}
+                            </div>
+                            {shot.elements.length > 0 && (
+                              <div className="pm2-shot-els">
+                                {shot.elements.map((el, j) => (
+                                  <span
+                                    className="pm2-shot-el"
+                                    key={j}
+                                    title={`${el.tag}${el.kind ? ' · ' + el.kind : ''}`}
+                                  >
+                                    <span className="pm2-shot-el-thumb">
+                                      {el.url ? <img src={el.url} alt={el.tag} loading="lazy" /> : <span>@</span>}
+                                    </span>
+                                    <span className="pm2-shot-el-name">@{el.tag}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="pm2-hint">这个项目还没有分镜。</div>
+                    )}
+                  </section>
+                </>
+              )}
+            </>
+          )}
         </section>
       </div>
 
@@ -915,6 +1529,123 @@ export default function ProjectManagementView() {
                 </button>
               </div>
             </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* 成员权限弹窗 */}
+      {memberPermProject &&
+        createPortal(
+          <div
+            className="pm2-modal-mask"
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !permSaving) closeMemberPermModal()
+            }}
+          >
+            <div
+              className="pm2-modal"
+              style={{
+                width: 'min(480px, 96vw)',
+                maxHeight: 'min(560px, 80vh)',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+              role="dialog"
+              aria-label="成员权限"
+            >
+              <div className="pm2-modal-head">
+                <span>成员权限 - {memberPermProject.title}</span>
+                <button
+                  type="button"
+                  className="pm2-modal-close"
+                  aria-label="关闭"
+                  disabled={permSaving}
+                  onClick={closeMemberPermModal}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="pm2-modal-body" style={{ flex: 1, overflowY: 'auto', padding: '0 20px' }}>
+                {permInitializing ? (
+                  <div style={{ padding: '32px 0', textAlign: 'center', color: '#9aa3af', fontSize: 14 }}>
+                    正在加载成员列表…
+                  </div>
+                ) : !workspaceMembers.length ? (
+                  <div style={{ padding: '32px 0', textAlign: 'center', color: '#9aa3af', fontSize: 14 }}>暂无成员</div>
+                ) : (
+                  workspaceMembers.map((member: any, idx: number) => {
+                    const info = resolveMemberInfo(member, idx)
+                    const isRestricted = permRestrictedIds.has(info.id)
+                    const isProjectOwner = memberPermProject.userId > 0 && info.id === memberPermProject.userId
+                    // 该成员的工作空间角色
+                    const memberRole = String(
+                      member?.role || member?.workspace_role || member?.member_role || '',
+                    ).toLowerCase()
+                    const isWsOwner = memberRole === 'owner'
+                    const isWsAdmin = memberRole === 'admin'
+                    // 当前用户是管理员（非 owner）时：不能操作 owner 和其他 admin
+                    const cannotRestrict = isProjectOwner || (currentWsRole === 'admin' && (isWsOwner || isWsAdmin))
+                    return (
+                      <div className="pm2-perm-member-row" key={info.id}>
+                        <div className="pm2-perm-avatar pm2-perm-avatar-placeholder">
+                          <UserAvatar src={info.avatarUrl} name={info.name} />
+                        </div>
+                        <div className="pm2-perm-name">
+                          {info.name}
+                          {isProjectOwner && <span className="pm2-perm-owner-tag">创建者</span>}
+                          {isWsOwner && !isProjectOwner && <span className="pm2-perm-owner-tag">超级管理员</span>}
+                          {isWsAdmin && <span className="pm2-perm-owner-tag">管理员</span>}
+                        </div>
+                        {cannotRestrict ? (
+                          <span className="pm2-perm-cannot-hint">无法限制</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className={`pm2-perm-toggle${isRestricted ? ' pm2-perm-toggle--on' : ' pm2-perm-toggle--off'}`}
+                            onClick={() =>
+                              setPermRestrictedIds((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(info.id)) next.delete(info.id)
+                                else next.add(info.id)
+                                return next
+                              })
+                            }
+                            aria-label={isRestricted ? '取消限制' : '限制访问'}
+                          >
+                            <span className="pm2-perm-toggle-knob" style={{ left: isRestricted ? 22 : 2 }} />
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+              <div className="pm2-modal-foot">
+                <button type="button" className="pm2-modal-btn" disabled={permSaving} onClick={closeMemberPermModal}>
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="pm2-modal-btn pm2-modal-btn--primary"
+                  disabled={permSaving || permInitializing}
+                  onClick={saveMemberPerm}
+                >
+                  {permSaving ? '保存中…' : '保存'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* 分镜图放大 */}
+      {bigImg &&
+        createPortal(
+          <div className="pm2-lightbox" onClick={() => setBigImg('')} role="dialog" aria-label="分镜图放大">
+            <img src={bigImg} alt="" onClick={(e) => e.stopPropagation()} />
+            <button type="button" className="pm2-lightbox-close" aria-label="关闭" onClick={() => setBigImg('')}>
+              ×
+            </button>
           </div>,
           document.body,
         )}

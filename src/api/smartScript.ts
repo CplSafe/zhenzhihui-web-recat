@@ -10,6 +10,31 @@
 // @ts-nocheck
 import type { Shot } from '@/components/smart/ScriptStoryboardTable'
 import { runResponseText, streamResponseText } from './aiResponses'
+import { resolveTaskModel, estimateAiTaskCost } from './business'
+
+/**
+ * 文本生成(responses.multimodal:分镜脚本 / AI 润色 / 镜头信息等)提交前积分预估。
+ * 注意:文本走 /ai/responses,而 estimate-cost 在 /ai/tasks —— 若后端不支持文本 op 估价会抛错,
+ * 调用方需 try/catch 优雅降级(显示"暂不支持预估")。
+ */
+export async function estimateResponsesCost(args: {
+  workspaceId: number
+  prompt?: string
+  modelPlanCandidates?: string[]
+}): Promise<any> {
+  const model = await resolveTaskModel({
+    operationCode: 'responses.multimodal',
+    modelPlanCandidates: args.modelPlanCandidates,
+  })
+  if (!model?.id) throw new Error('暂无可用的文本模型')
+  return estimateAiTaskCost({
+    workspaceId: args.workspaceId,
+    modelVersionId: model.id,
+    operationCode: 'responses.multimodal',
+    prompt: args.prompt || '',
+    params: {},
+  })
+}
 
 interface GenerateArgs {
   requirement: string
@@ -17,27 +42,7 @@ interface GenerateArgs {
   ratio?: string
   duration?: string
   images?: string[] // objectURL / dataURL / http,送入后端前会上传成 asset(inputAssets)
-  /** 用户指定的单镜时长(秒);>0 时镜头数 = 总时长÷它。调用方从「原始需求」解析后传入(避免被营销摘要丢掉) */
-  perShotSec?: number
   signal?: AbortSignal
-}
-
-// 从用户原始需求里解析「每个镜头 X 秒」(2秒一个镜头 / 每个镜头2秒 / 镜头时长3s …),解析不到返回 0
-export function parsePerShotSec(text: string): number {
-  const t = String(text || '')
-  const pats = [
-    /(\d+(?:\.\d+)?)\s*(?:秒|s)\s*[一1]?\s*个?\s*镜头/i, // 2秒一个镜头 / 2s 镜头
-    /(?:每个?|单个?|一个)\s*镜头\s*[约]?\s*(\d+(?:\.\d+)?)\s*(?:秒|s)/i, // 每个镜头2秒
-    /镜头\s*时?长?\s*[约]?\s*(\d+(?:\.\d+)?)\s*(?:秒|s)/i, // 镜头时长2秒
-  ]
-  for (const re of pats) {
-    const m = t.match(re)
-    if (m) {
-      const n = parseFloat(m[1])
-      if (n > 0 && n <= 60) return n
-    }
-  }
-  return 0
 }
 
 const SYSTEM =
@@ -55,30 +60,45 @@ const SYSTEM =
   '必须替换为真实内容,严禁原样输出「画面描述」「台词/旁白」「字幕」「音效」这类字段名作为值:' +
   '{"shots":[{"duration":"5s","desc":"<具体可拍摄的画面描述>","voiceover":"<台词或旁白,无则空字符串>","subtitle":"<字幕,无则空字符串>","sfx":"<音效,无则空字符串>","subjects":[{"name":"小雅","kind":"人物","imageIndex":2},{"name":"室内场景","kind":"场景"}]}]}'
 
-function buildUserText({ requirement, style, ratio, duration, perShotSec }: GenerateArgs): string {
-  const totalSec = parseInt(String(duration || '10'), 10) || 10
-  // 用户指定了单镜时长(如「2秒一个镜头」)→ 镜头数 = 总时长÷单镜,且【不】夹到 3 秒下限;
-  // 否则按默认每镜约 5 秒切分。两条分支生成「不冲突」的单一指令,避免模型在"约N镜"与"X秒一镜"间乱凑。
-  const spec = Number(perShotSec) > 0 ? Number(perShotSec) : parsePerShotSec(requirement)
-  let countClause: string
-  if (spec > 0) {
-    const n = Math.max(1, Math.round(totalSec / spec))
-    countClause =
-      `视频总时长约 ${totalSec} 秒。用户【明确要求每个镜头 ${spec} 秒】:必须切分为正好 ${n} 个镜头,` +
-      `每个镜头的 duration 都写「${spec}s」,镜头数严格等于 ${n}(不要多也不要少),所有镜头时长之和约等于 ${totalSec} 秒。`
-  } else {
-    const approxShots = Math.max(1, Math.floor(totalSec / 5))
-    const perShot = Math.max(3, Math.round(totalSec / approxShots))
-    countClause =
-      `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒(不少于 3 秒),` +
-      `所有镜头 duration 相加必须严格等于 ${totalSec} 秒,绝对不能超过;不要切得过碎。`
+function buildDurationPromptLines(totalSec: number): string[] {
+  if (totalSec === 15) {
+    return [
+      '视频总时长 15 秒(硬性要求)。',
+      '时长分配规则:开头镜头固定 3 秒,结尾镜头固定 3 秒,中间部分合计固定 9 秒。',
+      '中间部分的脚本内容、分镜个数和每镜时长按叙事需要分配,不做固定模板;但所有中间镜头 duration 相加必须等于 9 秒。',
+      '请至少生成 3 个镜头,总镜头数尽量控制在 3~5 个之间,不要切得过碎,避免出现多个 1s 镜头。',
+    ]
   }
+  if (totalSec === 10) {
+    return [
+      '视频总时长 10 秒(硬性要求)。',
+      '时长分配规则固定为 3 秒-4 秒-3 秒。',
+      '请优先输出 3 个镜头,且 duration 必须依次为 3s、4s、3s;如确需更多镜头,总镜头数最多 4 个,避免出现多个 1s。',
+    ]
+  }
+  if (totalSec === 5) {
+    return [
+      '视频总时长 5 秒(硬性要求)。',
+      '时长按脚本内容需要自由分配,不做固定模板;但所有镜头 duration 相加必须严格等于 5 秒,绝对不能超过。',
+      '总镜头数尽量控制在 1~2 个之间,不要切得过碎,避免出现多个 1s。',
+    ]
+  }
+  // 通用兜底:限制镜头数别太碎，避免大量 1s。
+  const approxShots = Math.max(1, Math.floor(totalSec / 4))
+  const perShot = Math.max(2, Math.round(totalSec / approxShots))
+  return [
+    `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒,` +
+      `所有镜头 duration 相加必须严格等于 ${totalSec} 秒,绝对不能超过;不要切得过碎。`,
+    '除非叙事表达确有必要，否则避免出现多个 1s 镜头，尤其不要连续出现多个 1s。',
+  ]
+}
+
+function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): string {
+  const totalSec = parseInt(String(duration || '10'), 10) || 10
   return [
     `创作需求:${requirement || '(未提供文字,请根据上传的参考图片构思一支完整广告短视频的分镜)'}`,
     `约束:风格 ${style || '商业'},画面比例 ${ratio || '16:9'}。`,
-    countClause,
-    // 杜绝空镜:用户反馈过"很多镜头解析是空的",根因是模型凑了镜头数却把 desc 留空/写占位词
-    '硬性要求:每一个镜头都必须给出非空、具体可拍摄的 desc;严禁输出 desc 为空或为占位词(如「画面描述」)的镜头——每个镜头都要有完整内容。',
+    ...buildDurationPromptLines(totalSec),
     '请按要求输出分镜 JSON。',
   ].join('\n')
 }
@@ -99,24 +119,108 @@ const durToSec = (d: any): number => {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
-// 强制各镜 duration 之和 = 目标总时长(模型常超/欠):按比例缩放,取整漂移修正到尾镜。
+function distributeEvenly(totalSec: number, count: number): number[] {
+  if (!(totalSec > 0) || !(count > 0) || totalSec < count) return []
+  const base = Math.floor(totalSec / count)
+  const remainder = totalSec - base * count
+  return Array.from({ length: count }, (_v, index) => base + (index < remainder ? 1 : 0))
+}
+
+function reduceMultipleOneSeconds(values: number[], totalSec: number): number[] {
+  if (!Array.isArray(values) || !values.length) return values
+  const next = values.map((value) => Math.max(1, Math.round(value || 0)))
+  if (next.length === 1) return [Math.max(1, totalSec)]
+  // 若总时长本身不足以支撑“至多一个 1s”，则只能接受多 1s。
+  if (totalSec < next.length * 2 - 1) return next
+
+  let oneIndexes = next.map((value, index) => (value <= 1 ? index : -1)).filter((index) => index >= 0)
+  while (oneIndexes.length > 1) {
+    const target = oneIndexes[0]
+    const donor = next.findIndex((value, index) => index !== target && value > 2)
+    if (donor < 0) break
+    next[target] += 1
+    next[donor] -= 1
+    oneIndexes = next.map((value, index) => (value <= 1 ? index : -1)).filter((index) => index >= 0)
+  }
+  return next
+}
+
+function scaleDurationsToTotal(values: number[], totalSec: number): number[] {
+  if (!Array.isArray(values) || !values.length || !(totalSec > 0) || totalSec < values.length) return []
+  const normalized = values.map((value) => (value > 0 ? Math.round(value) : 1))
+  const sum = normalized.reduce((acc, value) => acc + value, 0)
+  if (sum <= 0) return distributeEvenly(totalSec, values.length)
+
+  const factor = totalSec / sum
+  const scaled = normalized.map((value) => Math.max(1, Math.round(value * factor)))
+  let drift = totalSec - scaled.reduce((acc, value) => acc + value, 0)
+
+  while (drift > 0) {
+    for (let i = scaled.length - 1; i >= 0 && drift > 0; i -= 1) {
+      scaled[i] += 1
+      drift -= 1
+    }
+  }
+  while (drift < 0) {
+    let changed = false
+    for (let i = scaled.length - 1; i >= 0 && drift < 0; i -= 1) {
+      if (scaled[i] <= 1) continue
+      scaled[i] -= 1
+      drift += 1
+      changed = true
+    }
+    if (!changed) return distributeEvenly(totalSec, values.length)
+  }
+
+  return reduceMultipleOneSeconds(scaled, totalSec)
+}
+
+function applyDurationPattern(totalSec: number, secs: number[]): number[] {
+  if (!Array.isArray(secs) || !secs.length || !(totalSec > 0)) return []
+
+  if (totalSec === 10) {
+    if (secs.length === 3) return [3, 4, 3]
+    if (secs.length > 3 && secs.length <= 6) {
+      const middle = scaleDurationsToTotal(secs.slice(1, -1), 4)
+      return middle.length ? [3, ...middle, 3] : []
+    }
+    return []
+  }
+
+  if (totalSec === 15) {
+    if (secs.length >= 3 && secs.length <= 11) {
+      const middle = scaleDurationsToTotal(secs.slice(1, -1), 9)
+      return middle.length ? [3, ...middle, 3] : []
+    }
+    return []
+  }
+
+  return []
+}
+
+// 强制各镜 duration 之和 = 目标总时长(模型常超/欠):优先匹配指定分配规则,否则按比例缩放。
 function normalizeDurations(shots: Shot[], totalSec: number): Shot[] {
   if (!Array.isArray(shots) || !shots.length || !(totalSec > 0)) return shots
   const secs = shots.map((s) => durToSec(s.duration))
-  let sum = secs.reduce((a, b) => a + b, 0)
+  const sum = secs.reduce((a, b) => a + b, 0)
   // 模型没给有效时长 → 平均分配
   if (sum <= 0) {
-    const each = Math.max(1, Math.round(totalSec / shots.length))
-    secs.fill(each)
-    sum = each * shots.length
+    const patterned = applyDurationPattern(totalSec, secs)
+    if (patterned.length === shots.length) {
+      return shots.map((s, i) => ({ ...s, duration: `${patterned[i]}s` }))
+    }
+    const evenly = distributeEvenly(totalSec, shots.length)
+    if (!evenly.length) return shots
+    return shots.map((s, i) => ({ ...s, duration: `${evenly[i]}s` }))
+  }
+  const patterned = applyDurationPattern(totalSec, secs)
+  if (patterned.length === shots.length) {
+    return shots.map((s, i) => ({ ...s, duration: `${patterned[i]}s` }))
   }
   // 已基本对齐(±0.5s)则不动,避免无谓改动
   if (Math.abs(sum - totalSec) < 0.5) return shots
-  const factor = totalSec / sum
-  const scaled = secs.map((s) => Math.max(1, Math.round(s * factor)))
-  // 取整漂移修正:差值并到最后一个镜头,保证总和精确 = totalSec
-  const drift = totalSec - scaled.reduce((a, b) => a + b, 0)
-  if (drift !== 0) scaled[scaled.length - 1] = Math.max(1, scaled[scaled.length - 1] + drift)
+  const scaled = scaleDurationsToTotal(secs, totalSec)
+  if (!scaled.length) return shots
   return shots.map((s, i) => ({ ...s, duration: `${scaled[i]}s` }))
 }
 
@@ -176,12 +280,6 @@ function mapShots(list: any[], images: string[] = []): Shot[] {
   }))
 }
 
-// 镜头是否有真实画面描述(空 / 仅占位词 经 cleanField 已置空)。用于丢弃模型凑数留空的镜头。
-const hasContent = (s: Shot): boolean => String(s.desc || '').trim().length > 0
-// 丢弃空镜头并重排编号(否则会出现 镜头1、镜头2、镜头8 这样的跳号)
-const keepNonEmpty = (shots: Shot[]): Shot[] =>
-  shots.filter(hasContent).map((s, i) => ({ ...s, id: i + 1, no: `镜头${i + 1}` }))
-
 function parseShots(text: string, images: string[] = []): Shot[] {
   let raw = String(text || '').trim()
   if (!raw) return []
@@ -198,8 +296,7 @@ function parseShots(text: string, images: string[] = []): Shot[] {
     /* 下面走容错抢救 */
   }
   if (!Array.isArray(list) || !list.length) list = salvageObjects(raw)
-  // 丢弃 desc 为空的镜头(模型常凑镜头数却把 desc 留空/写占位词),避免表格出现一堆空行
-  return keepNonEmpty(mapShots(list, images))
+  return mapShots(list, images)
 }
 
 // ── 单个分镜「新增 / 编辑」:带【全部现有分镜的完整信息】作上下文,产出该镜头完整内容 ──
@@ -299,6 +396,25 @@ export async function generateShotInfo(args: {
   }
 }
 
+/** 生成分镜脚本,返回 Shot[](失败抛错)。 */
+export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
+  if (!args.requirement.trim() && !args.images?.length) throw new Error('请至少输入文案或上传图片')
+  const images = args.images || []
+  const text = await runResponseText({
+    system: SYSTEM,
+    user: buildUserText(args),
+    images: images.slice(0, 6),
+    temperature: 0.8,
+    maxTokens: 4000,
+    signal: args.signal,
+  })
+  // 用原始 objectURL(args.images)做展示映射(顺序与送模型/上传的一致)
+  const shots = parseShots(text, images)
+  if (!shots.length) throw new Error('未能解析分镜脚本,请重试')
+  // 保留 15s/10s/5s 的前端时长约束，但尽量避免被归一化压成多个 1s。
+  return normalizeDurations(shots, parseInt(String(args.duration || '10'), 10) || 10)
+}
+
 /**
  * 流式生成分镜脚本:边生成边增量解析,每当多出一个「完整」分镜就回调 onShots,
  * 用户看到镜头1即可开始修改。返回最终 Shot[]。
@@ -309,9 +425,9 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
   const images = args.images || []
   let lastCount = 0
 
-  // 用「到目前为止的全文」增量抢救出已完整的分镜,多出来就回调(只算有 desc 的镜头,空镜头不展示)
+  // 用「到目前为止的全文」增量抢救出已完整的分镜,多出来就回调
   const emit = (acc: string) => {
-    const shots = keepNonEmpty(mapShots(salvageObjects(acc), images))
+    const shots = mapShots(salvageObjects(acc), images)
     if (shots.length > lastCount) {
       lastCount = shots.length
       onShots(shots)
@@ -328,12 +444,11 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
     onDelta: (_delta, aggregated) => emit(aggregated),
   })
 
-  // 收尾:用完整解析兜底(可能比增量多解析出最后一个;非流式回退时这里是唯一解析)。均已滤掉空镜头。
+  // 收尾:用完整解析兜底(可能比增量多解析出最后一个;非流式回退时这里是唯一解析)
   const finalShots = parseShots(finalText, images)
-  const result =
-    finalShots.length >= lastCount ? finalShots : keepNonEmpty(mapShots(salvageObjects(finalText), images))
+  const result = finalShots.length >= lastCount ? finalShots : mapShots(salvageObjects(finalText), images)
   if (!result.length) throw new Error('未能解析分镜脚本,请重试')
-  // 强制各镜时长之和 = 用户要求的总时长(模型常超时);流式中间态不归一,只在最终结果对齐
+  // 流式中间态不归一,只在最终结果对齐;同时尽量避免出现多个 1s。
   return normalizeDurations(result, parseInt(String(args.duration || '10'), 10) || 10)
 }
 

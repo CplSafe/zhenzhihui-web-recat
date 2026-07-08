@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
+import { listWorkspaceMembers } from '@/api/auth'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import {
@@ -29,10 +30,43 @@ export default function ProjectVideoDetailView() {
   const videoId = String(params.videoId || '')
   const userName =
     currentUser?.nickname || currentUser?.name || currentUser?.username || currentUser?.email || '当前用户'
+  const currentUserId = Number(currentUser?.id ?? currentUser?.userId ?? 0) || 0
+  const canModify = (item: ProjectVideo | null) => {
+    if (!item) return false
+    const ownerId = Number(item.createdByUserId ?? 0) || 0
+    return ownerId > 0 && ownerId === currentUserId
+  }
+
+  // 工作空间成员,供归属人按 user_id 查名字
+  const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([])
+  const workspaceIdRef = useRef(0)
+  useEffect(() => {
+    workspaceIdRef.current = Number(workspaceId || 0)
+  }, [workspaceId])
+  useEffect(() => {
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) {
+      setWorkspaceMembers([])
+      return
+    }
+    let cancelled = false
+    listWorkspaceMembers(wsId)
+      .then((result: any) => {
+        if (!cancelled && Number(workspaceIdRef.current || 0) === wsId)
+          setWorkspaceMembers(Array.isArray(result) ? result : [])
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceMembers([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId])
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [projectTitle, setProjectTitle] = useState('')
+  const [editorCount, setEditorCount] = useState(0)
   const [detail, setDetail] = useState<ProjectVideo | null>(null)
   const [deleting, setDeleting] = useState(false)
   // 竖屏视频:按屏幕高展示(横屏保持按宽,不变)。加载元数据后据真实宽高判断。
@@ -57,8 +91,20 @@ export default function ProjectVideoDetailView() {
     }
     setLoading(true)
     try {
-      const payload = await getProjectVideo({ projectId, workspaceId: wsId, videoId, currentUserName: userName })
+      const payload = await getProjectVideo({
+        projectId,
+        workspaceId: wsId,
+        videoId,
+        currentUserName: userName,
+        currentUserId,
+        workspaceMembers,
+      })
       setProjectTitle(String(payload.project?.title || payload.project?.name || '未命名项目'))
+      const count =
+        Number(
+          payload.project?.editor_count ?? payload.project?.editorCount ?? payload.project?.data?.editor_count ?? 0,
+        ) || 0
+      setEditorCount(Number.isFinite(count) && count > 0 ? Math.floor(count) : 0)
       setDetail(payload.video)
       if (!payload.video) {
         showToast('未找到该视频记录', 'error')
@@ -69,7 +115,7 @@ export default function ProjectVideoDetailView() {
     } finally {
       setLoading(false)
     }
-  }, [projectId, videoId, workspaceId, userName, showToast])
+  }, [projectId, videoId, workspaceId, userName, currentUserId, workspaceMembers, showToast])
 
   useEffect(() => {
     loadDetail()
@@ -161,22 +207,27 @@ export default function ProjectVideoDetailView() {
                   </button>
                   <h1>{detail.title}</h1>
                   <div className={`pvdetail-status is-${detail.status}`}>{getVideoStatusText(detail.status)}</div>
+                  {editorCount ? <div className="pvdetail-meta">{editorCount} 编辑者</div> : null}
                 </div>
                 <div className="pvdetail-header__actions">
-                  <button type="button" className="pvdetail-action" onClick={openEditor}>
-                    进入编辑
-                  </button>
+                  {canModify(detail) ? (
+                    <button type="button" className="pvdetail-action" onClick={openEditor}>
+                      进入编辑
+                    </button>
+                  ) : null}
                   <button type="button" className="pvdetail-action" onClick={downloadVideo}>
                     下载视频
                   </button>
-                  <button
-                    type="button"
-                    className="pvdetail-action pvdetail-action--danger"
-                    onClick={handleDelete}
-                    disabled={deleting}
-                  >
-                    {deleting ? '删除中...' : '删除视频'}
-                  </button>
+                  {canModify(detail) ? (
+                    <button
+                      type="button"
+                      className="pvdetail-action pvdetail-action--danger"
+                      onClick={handleDelete}
+                      disabled={deleting}
+                    >
+                      {deleting ? '删除中...' : '删除视频'}
+                    </button>
+                  ) : null}
                 </div>
               </section>
 

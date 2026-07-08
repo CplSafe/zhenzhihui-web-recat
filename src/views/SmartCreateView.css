@@ -78,6 +78,93 @@
   color: #1fcfa9;
 }
 
+.smart__durguard {
+  position: fixed;
+  inset: 0;
+  z-index: 2160;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  box-sizing: border-box;
+}
+
+.smart__durguard-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.06);
+}
+
+.smart__durguard-card {
+  position: relative;
+  width: min(620px, calc(100vw - 36px));
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 18px 46px rgba(16, 24, 40, 0.14);
+  padding: 22px 24px;
+  display: grid;
+  gap: 18px;
+}
+
+.smart__durguard-top {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.smart__durguard-ico {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(31, 207, 169, 0.14);
+  color: #1fcfa9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.smart__durguard-msg {
+  font-size: 20px;
+  line-height: 1.35;
+  color: rgba(51, 51, 51, 0.88);
+  font-weight: 600;
+}
+
+.smart__durguard-actions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+.smart__durguard-btn {
+  min-width: 150px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(51, 51, 51, 0.18);
+  background: #ffffff;
+  color: rgba(51, 51, 51, 0.86);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.smart__durguard-btn--primary {
+  border-color: #1fcfa9;
+  background: #1fcfa9;
+  color: #ffffff;
+}
+
+.smart__durguard-btn--primary:hover {
+  background: #11a98a;
+  border-color: #11a98a;
+}
+
+.smart__durguard-btn:hover:not(.smart__durguard-btn--primary) {
+  border-color: rgba(31, 207, 169, 0.55);
+  color: #11a98a;
+}
+
 .smart__user {
   font-size: 14px;
   color: #111827;
@@ -161,6 +248,21 @@
   font-size: 12px;
   font-weight: 400;
   color: #11a98a;
+}
+
+/* 项目钉在与活跃空间不同的空间时的提示标签 */
+.smart__name-space {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid #ffd8a8;
+  border-radius: 999px;
+  background: #fff4e6;
+  color: #b5651d;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
 }
 
 .smart__name-input {
@@ -822,6 +924,95 @@
 
 .smart__btn--primary:hover:not(:disabled) {
   filter: brightness(1.04);
+}
+
+/* split 按钮:左"生成视频" + 右数量选择,无缝衔接,圆角椭圆 */
+.smart__btn-split {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 24px;
+  position: relative;
+}
+.smart__btn-split--main {
+  height: 40px;
+  padding: 0 35px;
+  border: none;
+  border-radius: 24px 0 0 24px;
+  background: #36d399;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s;
+}
+.smart__btn-split--main:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+.smart__btn-split--main:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.smart__btn-split--sep {
+  width: 0;
+  flex-shrink: 0;
+}
+.smart__btn-split--count {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #36d399;
+  border-radius: 0 24px 24px 0;
+  background: #eaf7f5;
+  color: #36d399;
+  font-size: 18px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s;
+}
+.smart__btn-split--count:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+.smart__btn-split--count:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.smart__btn-split--dropdown {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 8px;
+  background: #fff;
+  border: 1px solid #e8f5f2;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  min-width: 88px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.smart__btn-split--option {
+  display: block;
+  width: 100%;
+  padding: 10px 20px;
+  border: none;
+  background: #fff;
+  color: #333;
+  font-size: 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.smart__btn-split--option:hover {
+  background: #eaf7f5;
+  color: #36d399;
+}
+.smart__btn-split--option.is-active {
+  background: #eaf7f5;
+  color: #36d399;
+  font-weight: 600;
 }
 
 /* 文本按钮(重新生成):靠左,无底无框,深灰字 + 深灰刷新图标(Figma 344:4297) */

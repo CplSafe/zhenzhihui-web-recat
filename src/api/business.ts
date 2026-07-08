@@ -881,9 +881,11 @@ function shouldRetryWithNextModel(error) {
     error.response?.message || error.response?.error?.message || error.response?.data?.message || '',
   ).toLowerCase()
   const code = String(error.code || '').toUpperCase()
+  // 网络错误(status=0)或服务端错误 → 换下一个模型重试
+  if (error.status === 0) return true
   if (error.status >= 500) return true
   if (code === 'INTERNAL_ERROR' || code === '50008') return true
-  return /provider task failed|status failed|upstream|model.*(failed|error)|internal_error|服务内部错误|服务器内部错误/i.test(
+  return /provider task failed|status failed|upstream|model.*(failed|error)|internal_error|服务内部错误|服务器内部错误|网络请求失败/i.test(
     `${message} ${responseMessage}`,
   )
 }
@@ -1036,31 +1038,91 @@ function submitAiResponse({
   })
 }
 
-function submitAiTask({ workspaceId, modelId, operationCode, idempotencyKey, prompt, params, inputAssets }) {
-  return requestJson('/api/v1/ai/tasks', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+function isRetryableAiCreateTaskError(error) {
+  if (!(error instanceof BusinessApiError)) return false
+  const status = Number(error.status || 0)
+  if (status >= 500) return true
+  if (status === 0) return true
+  if (status === 429) return true
+  return false
+}
+
+async function requestJsonWithRetry(path, options: any = {}, cfg: any = {}) {
+  const retries = Math.max(0, Number(cfg.retries ?? 0) || 0)
+  const timeoutMs = Math.max(0, Number(cfg.timeoutMs ?? 0) || 0)
+  const baseDelayMs = Math.max(0, Number(cfg.baseDelayMs ?? 800) || 0)
+  const shouldRetry = typeof cfg.shouldRetry === 'function' ? cfg.shouldRetry : () => false
+  let attempt = 0
+  for (;;) {
+    try {
+      return await requestJson(path, { ...options, timeoutMs })
+    } catch (error) {
+      if (attempt >= retries || !shouldRetry(error)) throw error
+      const backoff = baseDelayMs * Math.pow(2, attempt)
+      const jitter = Math.floor(Math.random() * 250)
+      attempt += 1
+      await sleep(backoff + jitter)
+    }
+  }
+}
+
+async function submitAiTask({ workspaceId, modelId, operationCode, idempotencyKey, prompt, params, inputAssets }) {
+  return requestJsonWithRetry(
+    '/api/v1/ai/tasks',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(
+        removeEmptyFields({
+          workspace_id: workspaceId,
+          model_version_id: modelId,
+          operation_code: operationCode,
+          idempotency_key: idempotencyKey,
+          prompt,
+          params,
+          input_assets: inputAssets,
+        }),
+      ),
     },
-    body: JSON.stringify(
-      removeEmptyFields({
-        workspace_id: workspaceId,
-        model_version_id: modelId,
-        operation_code: operationCode,
-        idempotency_key: idempotencyKey,
-        prompt,
-        params,
-        input_assets: inputAssets,
-      }),
-    ),
-  })
+    { retries: 2, timeoutMs: 120000, baseDelayMs: 800, shouldRetry: isRetryableAiCreateTaskError },
+  )
 }
 
 export function getAiTask({ workspaceId, taskId }) {
   return requestJson(`/api/v1/ai/tasks/${taskId}?workspace_id=${workspaceId}`)
 }
 
-export async function waitForAiTask({ workspaceId, task, intervalMs = 1600, timeoutMs = 120000, onPoll, signal }) {
+export function listAiTasks({ workspaceId, status = '', operationCode = '', mine, limit = 20, offset = 0 }: any = {}) {
+  const wsId = Number(workspaceId || 0)
+  if (!Number.isFinite(wsId) || wsId <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  const query = new URLSearchParams({
+    workspace_id: String(Math.floor(wsId)),
+    limit: String(Math.max(1, Math.min(Number(limit) || 20, 100))),
+    offset: String(Math.max(0, Number(offset) || 0)),
+  })
+  if (status) query.set('status', String(status))
+  if (operationCode) query.set('operation_code', String(operationCode))
+  if (mine !== undefined && mine !== null && mine !== '') query.set('mine', String(mine))
+  return requestJson(`/api/v1/ai/tasks?${query}`)
+}
+
+export function cancelAiTask({ workspaceId, taskId }: any = {}) {
+  const wsId = Number(workspaceId || 0)
+  const id = Number(taskId || 0)
+  if (!Number.isFinite(wsId) || wsId <= 0) {
+    throw new BusinessApiError('工作空间 ID 无效')
+  }
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new BusinessApiError('任务 ID 无效')
+  }
+  return requestJson(`/api/v1/ai/tasks/${Math.floor(id)}/cancel?workspace_id=${Math.floor(wsId)}`, { method: 'POST' })
+}
+
+export async function waitForAiTask({ workspaceId, task, intervalMs = 2000, timeoutMs = 120000, onPoll, signal }) {
   let currentTask = task
   const startedAt = Date.now()
 
@@ -1091,6 +1153,34 @@ export async function waitForAiTask({ workspaceId, task, intervalMs = 1600, time
     ensureNotAborted()
     currentTask = await getAiTask({ workspaceId, taskId: currentTask.id })
 
+    // DEV: 排查「一直轮询不停」——仅当后端返回了不在已知名单里的状态才 warn。
+    // submitting/pending/processing/queued/running 都是正常的非终态,不需要 warn。
+    if (import.meta.env.DEV && currentTask?.status) {
+      const s = String(currentTask.status).toLowerCase()
+      const known = [
+        'succeeded',
+        'completed',
+        'success', // 成功终态
+        'failed',
+        'error',
+        'payment_failed',
+        'cancelled',
+        'expired', // 失败终态
+        'submitting',
+        'pending',
+        'processing',
+        'queued',
+        'running', // 正常非终态
+      ]
+      if (!known.includes(s)) {
+        console.warn('[waitForAiTask] 未识别的任务状态,轮询继续', {
+          taskId: currentTask.id,
+          status: currentTask.status,
+          operationCode: currentTask.operation_code,
+        })
+      }
+    }
+
     if (typeof onPoll === 'function' && currentTask) {
       try {
         onPoll(currentTask)
@@ -1100,12 +1190,15 @@ export async function waitForAiTask({ workspaceId, task, intervalMs = 1600, time
     }
   }
 
-  if (['failed', 'payment_failed', 'cancelled', 'expired'].includes(currentTask?.status)) {
+  // 失败态统一抛错(与 isFinalTaskStatus 的失败列表对齐)
+  if (['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(currentTask?.status)) {
     // payment_failed 通常是积分不足；把 code/状态透传给 getBusinessErrorMessage 做中文映射。
+    // cancelled / expired = 后端主动中断（非前端 abort），前端应显示"已中断"而非"生成失败"
     const code =
       currentTask?.code ??
       currentTask?.code_string ??
-      (currentTask?.status === 'payment_failed' ? 'INSUFFICIENT_CREDITS' : null)
+      (currentTask?.status === 'payment_failed' ? 'INSUFFICIENT_CREDITS' : null) ??
+      (currentTask?.status === 'cancelled' || currentTask?.status === 'expired' ? 'TASK_CANCELLED' : null)
     throw new BusinessApiError(currentTask?.error_message || 'AI 任务生成失败', {
       code,
       response: currentTask,
@@ -2001,18 +2094,39 @@ function refreshBusinessSession() {
   return sessionRefreshPromise
 }
 
-async function requestJson(path, options = {}, _retried = false) {
+async function requestJson(path, options: any = {}, _retried = false) {
   let response
+  const timeoutMs = Math.max(0, Number(options?.timeoutMs ?? 0) || 0)
+  const { timeoutMs: _timeoutMs, signal: externalSignal, ...fetchOptions } = options || {}
+  const controller = timeoutMs > 0 || externalSignal ? new AbortController() : null
+  let timeoutId: any = null
+  const abortByExternal = () => controller?.abort()
+  if (controller && externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort()
+    } else {
+      externalSignal.addEventListener('abort', abortByExternal, { once: true })
+    }
+  }
+  if (controller && timeoutMs > 0) {
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  }
 
   try {
     response = await fetch(buildUrl(businessApiBaseUrl, path), {
       credentials: 'include',
-      ...options,
+      ...fetchOptions,
+      ...(controller ? { signal: controller.signal } : {}),
     })
   } catch (error) {
-    throw new BusinessApiError('网络请求失败，请检查接口服务或本地代理配置', {
+    const isAbort = String((error as any)?.name || '') === 'AbortError'
+    throw new BusinessApiError(isAbort ? '网络请求超时，请稍后重试' : '网络请求失败，请检查接口服务或本地代理配置', {
       response: error,
+      cause: isAbort ? 'timeout' : null,
     })
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+    if (controller && externalSignal) externalSignal.removeEventListener('abort', abortByExternal)
   }
 
   // 401 → 先静默续期一次再重试原请求;排除续期接口本身,避免死循环。
@@ -2155,7 +2269,11 @@ function collectUrls(value, urls) {
 }
 
 function isFinalTaskStatus(status) {
-  return ['succeeded', 'failed', 'payment_failed', 'cancelled', 'expired'].includes(String(status || '').toLowerCase())
+  // 注意:后端不同 provider 返回的终态值可能不同(succeeded/completed/success 均为成功,error 为失败);
+  // 必须与 useTaskPolling.isSuccessStatus / isFailedStatus 保持一致,否则 waitForAiTask 会无限轮询。
+  return ['succeeded', 'completed', 'success', 'failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(
+    String(status || '').toLowerCase(),
+  )
 }
 
 // sleep imported from ../utils/common.js
@@ -2210,9 +2328,8 @@ function resolveProxyFriendlyBaseUrl(configuredBaseUrl, proxyBaseUrl, remoteOrig
   if (!normalizedConfigured) {
     return normalizedProxy
   }
-  if (remoteOrigin && normalizedConfigured === remoteOrigin) {
-    return normalizedProxy
-  }
+  // 显式设置了直连 URL 就用它（包括和 remoteOrigin 相同的场景），不再强制走代理。
+  // 注意：浏览器直连跨域后端需后端支持 CORS，或本地用 --disable-web-security 启动浏览器。
   return normalizedConfigured
 }
 

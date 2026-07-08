@@ -21,13 +21,12 @@ import {
   updateWorkspace,
 } from '../api/business'
 import { listWorkspaceMembers } from '../api/auth'
-import { setSmartDraftUserScope } from '../utils/smartDraft'
+import { setSmartDraftUserScope, setSmartDraftWorkspaceScope } from '../utils/smartDraft'
 import {
   buildModelPlanCandidatesFromBillingPlans,
   buildModelPlanCandidatesFromSession,
   normalizePlanCandidates,
 } from '../utils/modelPlans'
-import { applyUserProfileOverrides } from '../utils/profileOverrides'
 
 const toId = (value: any): number => Number(value) || 0
 const findById = (list: any[], id: number) => list.find((w) => toId(w?.id) === id) || null
@@ -266,7 +265,6 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       }
       const normalizedSession = {
         ...session,
-        user: applyUserProfileOverrides(session?.user),
         workspaces: deriveSessionWorkspaces(session),
       }
       set({
@@ -277,12 +275,18 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
 
       const savedWs = readSavedActiveWs(toId(session?.user?.id))
       const nextWorkspaceId = pickCurrentWorkspaceIdFromSession(normalizedSession)
-      if (savedWs > 0) {
-        // 恢复上次选中的空间(刷新前的);若该空间已不属于你,loadWorkspaces 会校验并清掉回落。
+      // 如果用户有团队空间，优先选团队（不恢复 localStorage 的个人空间缓存）
+      const allWs = deriveAllWorkspaces(get())
+      const teamWs = allWs.find((w: any) => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal')
+      if (savedWs > 0 && !teamWs) {
+        // 仅个人空间：恢复上次选中的
         set({ activeWorkspaceOverrideId: savedWs })
+      } else if (teamWs) {
+        // 有团队空间：优先选团队
+        set({ activeWorkspaceOverrideId: Number(teamWs.id) })
       } else if (nextWorkspaceId > 0) {
         set({ activeWorkspaceOverrideId: nextWorkspaceId })
-      } else if (!findById(deriveAllWorkspaces(get()), get().activeWorkspaceOverrideId)) {
+      } else if (!findById(allWs, get().activeWorkspaceOverrideId)) {
         set({ activeWorkspaceOverrideId: 0 })
       }
     },
@@ -363,7 +367,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
           set({ activeWorkspaceOverrideId: 0 })
           saveActiveWs(toId(s.authSession?.user?.id), 0)
         }
-      } catch (error: any) {
+      } catch (_error: any) {
         return
       }
     },
@@ -545,9 +549,11 @@ const deriveDraftUserScope = (s: S): string => {
 }
 setActiveWorkspaceId(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
 setSmartDraftUserScope(deriveDraftUserScope(useWorkspaceSessionStore.getState()))
+setSmartDraftWorkspaceScope(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
 useWorkspaceSessionStore.subscribe((state) => {
   setActiveWorkspaceId(deriveWorkspaceId(state))
   setSmartDraftUserScope(deriveDraftUserScope(state))
+  setSmartDraftWorkspaceScope(deriveWorkspaceId(state))
 })
 
 // ---- Selector hooks（组件侧便捷读取派生值，保持响应式订阅）------------------

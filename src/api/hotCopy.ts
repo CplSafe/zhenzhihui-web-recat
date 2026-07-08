@@ -40,6 +40,7 @@ export async function replicateHotVideo(args: {
   /** 源视频真实时长(秒):video.replicate 按它计费(优先于 duration),前端读源视频 HTML5 元数据得到 */
   sourceVideoDurationSec?: number
   modelPlanCandidates?: string[]
+  signal?: AbortSignal
   /** 任务创建后回调 task_id:供前端持久化,刷新/切换后用 awaitHotVideoResult 续轮询(不丢在途生成) */
   onTask?: (taskId: number) => void
 }): Promise<{ url: string; assetId: number }> {
@@ -49,8 +50,7 @@ export async function replicateHotVideo(args: {
     ...products.map((id) => ({ asset_id: id, role: 'image' })),
   ]
   // 钉死 seedance,不做跨模型退避:先显式解析支持 video.replicate 的 seedance 模型,再用 modelVersionId 提交。
-  // createAiTask 走「显式模型」分支(无「换下一个模型」循环),seedance 失败直接抛错由用户决定,
-  // 绝不退避到 happyhorse 等其它视频模型。
+  // createAiTask 走「显式模型」分支(无「换下一个模型」循环),seedance 失败直接抛错由用户决定。
   // 查模型必带 workspace_id(否则后端按订阅返回空列表 → 误报无可用模型);显式传入,不依赖模块级当前 workspace。
   const model = await getModelForOperation(
     'video.replicate',
@@ -89,6 +89,7 @@ export async function replicateHotVideo(args: {
     task,
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
+    signal: args.signal,
   })
   const { url, assetId } = await resolveTaskVideoResult(args.workspaceId, completed, (task as any)?.id)
   if (!url) throw new Error('复刻任务已完成,暂未返回可预览地址')
@@ -102,12 +103,14 @@ export async function replicateHotVideo(args: {
 export async function awaitHotVideoResult(args: {
   workspaceId: number
   taskId: number
+  signal?: AbortSignal
 }): Promise<{ url: string; assetId: number }> {
   const completed = await waitForAiTask({
     workspaceId: args.workspaceId,
     task: { id: args.taskId, status: 'processing' },
     intervalMs: 4000,
     timeoutMs: 60 * 60 * 1000,
+    signal: args.signal,
   })
   const { url, assetId } = await resolveTaskVideoResult(args.workspaceId, completed, args.taskId)
   if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')

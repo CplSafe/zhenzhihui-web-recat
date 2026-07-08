@@ -1,5 +1,4 @@
 import { getCreativeProject, updateCreativeProjectDraft } from '@/api/business'
-import { assetStreamUrl } from '@/utils/assetUrl'
 import { computeVideoContentSig } from '@/utils/smartDraft'
 
 export type ProjectVideoStatus = 'draft' | 'processing' | 'published' | 'failed'
@@ -15,6 +14,8 @@ export interface ProjectVideo {
   durationSeconds: number
   status: ProjectVideoStatus
   createdByName: string
+  /** 创建者用户 ID(来自 project.user_id),用于前端权限判断 */
+  createdByUserId: number
   createdAt: string
   updatedAt: string
   sourceType: ProjectVideoSourceType
@@ -76,6 +77,11 @@ function normalizeCreativeProjectDraft(payload: any): any {
     if (parsed) return parsed
   }
   return null
+}
+
+// 鉴权直传地址:cookie 鉴权、非预签名,永不过期。用它替换草稿里会过期(X-Amz-Expires=900)的 S3 视频 URL。
+function assetStreamUrl(assetId: number, workspaceId: number): string {
+  return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
 }
 
 function readStoreFromDraft(draft: any): ProjectVideoStore {
@@ -224,14 +230,33 @@ function resolveProjectCoverUrl(project: any, draft: any): string {
   return shotImage
 }
 
+/** 从工作空间成员列表中按 user_id 查找成员显示名(昵称优先) */
+function resolveMemberNameByUserId(userId: number, members: any[]): string {
+  if (!userId || !members?.length) return ''
+  const found = members.find((m: any) => Number(m?.user_id ?? m?.userId ?? m?.id ?? 0) === userId)
+  if (!found) return ''
+  return pickString(
+    found?.nickname,
+    found?.name,
+    found?.user?.nickname,
+    found?.user?.name,
+    found?.user?.mobile,
+    found?.mobile,
+  )
+}
+
 function buildDerivedVideos({
   project,
   workspaceId,
   currentUserName,
+  currentUserId,
+  workspaceMembers,
 }: {
   project: any
   workspaceId: number
   currentUserName?: string
+  currentUserId?: number
+  workspaceMembers?: any[]
 }): ProjectVideo[] {
   const draft = normalizeCreativeProjectDraft(project) || {}
   const smart = toPlainObject(draft?.smart) || draft
@@ -241,31 +266,44 @@ function buildDerivedVideos({
   const projectCoverUrl = resolveProjectCoverUrl(project, draft)
   const createdAt = pickDateString(project?.created_at, project?.createdAt)
   const updatedAt = pickDateString(project?.updated_at, project?.updatedAt, project?.last_saved_at, createdAt)
-  const createdByName = pickString(
-    project?.owner_name,
-    project?.ownerName,
-    project?.created_by_name,
-    currentUserName,
-    '当前用户',
-  )
+  // 创建者用户 ID:来自 project.user_id,用于前端权限判断(比 createdByName 可靠,不受昵称影响)
+  const createdByUserId =
+    Number(project?.user_id ?? project?.userId ?? project?.owner_user_id ?? project?.ownerUserId ?? 0) || 0
+  // 归属人:后端优先 creator_nickname;若未返回,仅当查看者=项目归属人时才用 currentUserName 兜底
+  const createdByName =
+    pickString(
+      project?.creator_nickname,
+      project?.creatorNickname,
+      project?.owner_name,
+      project?.ownerName,
+      project?.created_by_name,
+      project?.createdByName,
+      project?.creator_name,
+      project?.creatorName,
+      project?.user?.nickname,
+      project?.user?.name,
+      project?.owner?.nickname,
+      project?.owner?.name,
+      project?.creator?.nickname,
+      project?.creator?.name,
+    ) ||
+    // 后端未返回 creator_nickname 时:先用当前用户(若是归属人本人),再从成员列表查找
+    (currentUserId && createdByUserId && currentUserId === createdByUserId
+      ? currentUserName || ''
+      : resolveMemberNameByUserId(createdByUserId, workspaceMembers || []))
 
-  // 每次「重新生成」的独立记录(生成中/失败)→ 项目下置顶展示成「草稿」条目(成功的成片仍走 videoVersions)。
-  // 按需求:生成中、生成失败统一显示「草稿」,不出现「生成中/生成失败」。
+  // 每次「重新生成」的独立记录(仅生成中)→ 项目下置顶展示成「草稿」条目(成功的成片仍走 videoVersions)。
+  // 失败记录不再跨页面/刷新持久展示，因此这里也不再把 failed 派生到列表里。
   // 兼容旧数据:没有 generations 但残留 vidGenTaskId>0 → 也兜底显示一条「草稿」。
-  // 只把【仍在生成中且有在途任务】的记录折叠成「一条」草稿占位;失败 / 已结束的历史尝试不作为视频卡——
-  // 否则一个项目多次重试会堆出一堆空草稿(用户反馈:只生成 1 个视频却显示 5 个)。
-  const processingRaw = normalizeArray(smart?.videoGenerations || smart?.generations).filter(
-    (g: any) => g?.status === 'processing',
-  )
-  const hasActiveTask = Number(smart?.vidGenTaskId || 0) > 0
-  // 「进行中」记录超过此时长仍未收尾 → 视为已废弃(生成中关标签页且再没回来 → 完成回填从未发生),
-  // 不再据它显示「生成中草稿」,否则项目管理会永久多出一张清不掉的幻影草稿卡。
-  // 无 createdAt 的旧记录(=0)无法判龄,保守当作「新」以免误伤既有行为。
-  const PROCESSING_STALE_MS = 6 * 60 * 60 * 1000 // 6h:远超任何真实生成时长,只淘汰真正废弃的
-  const latestProcessing = processingRaw[processingRaw.length - 1]
-  const latestProcessingTs = Number(latestProcessing?.createdAt || latestProcessing?.created_at || 0) || 0
-  const hasFreshProcessing =
-    processingRaw.length > 0 && (latestProcessingTs === 0 || Date.now() - latestProcessingTs < PROCESSING_STALE_MS)
+  // 草稿里存的字段名是 videoGenerations(兼容历史 generations)
+  const generationsRaw = normalizeArray(smart?.videoGenerations || smart?.generations).filter((g: any) => {
+    const status = pickString(g?.status)
+    const isStaleReeditPlaceholder =
+      status === 'processing' &&
+      !(Number(g?.taskId ?? g?.task_id ?? 0) > 0) &&
+      pickString(g?.note).trim() === '重新编辑'
+    return status === 'processing' && !isStaleReeditPlaceholder
+  })
   const makeGenItem = (g: any, i: number): ProjectVideo => ({
     id: `derived-gen-${pickString(g?.id, String(i))}`,
     projectId: Number(project?.id || 0),
@@ -276,19 +314,17 @@ function buildDerivedVideos({
     durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
     status: 'draft',
     createdByName,
+    createdByUserId,
     createdAt,
     updatedAt,
     sourceType,
     flow,
     publishUrl: '',
   })
-  // 显示一条「草稿/生成中」占位的条件:有在途视频任务,或草稿里有「进行中」的生成记录。
-  // 后者覆盖 #1:退回入口重新生成、走到分镜/准备素材(还没发起视频任务)就切走时,也应作为「草稿」出现,
-  // 而不是只剩旧成片。仍折叠成【一条】(取最近一条 processing),完成时记录会被标记 published(被过滤掉),
-  // 失败的也不是 processing → 不会重现「一个项目堆出多个空草稿(只生成1个却显示5个)」。
-  const genItems: ProjectVideo[] =
-    hasActiveTask || hasFreshProcessing
-      ? [makeGenItem(latestProcessing || { id: `legacy-${project?.id || 0}`, status: 'processing' }, 0)]
+  const genItems: ProjectVideo[] = generationsRaw.length
+    ? generationsRaw.map(makeGenItem)
+    : Number(smart?.vidGenTaskId || 0) > 0
+      ? [makeGenItem({ id: `legacy-${project?.id || 0}`, status: 'processing' }, 0)]
       : []
   const generating = genItems.length > 0
 
@@ -342,6 +378,8 @@ function buildDerivedVideos({
       const itemUpdatedAt = pickDateString(item?.updated_at, item?.updatedAt, updatedAt, itemCreatedAt)
       const rawId = pickString(item?.id, item?.assetId, item?.asset_id, item?.videoId, index + 1)
       const label = pickString(item?.label, item?.title, item?.name, `视频 ${index + 1}`)
+      const itemCreatedByUserId =
+        Number(item?.creator_user_id ?? item?.creatorUserId ?? item?.user_id ?? item?.userId ?? 0) || createdByUserId
       return {
         id: `derived-${rawId}-${index + 1}`,
         projectId: Number(project?.id || 0),
@@ -351,7 +389,9 @@ function buildDerivedVideos({
         videoUrl,
         durationSeconds,
         status,
-        createdByName,
+        // 版本级归属人优先（后端 /versions 每个版本带 creator_nickname），没有则用项目级
+        createdByName: pickString(item?.creator_nickname, item?.creatorNickname, createdByName),
+        createdByUserId: itemCreatedByUserId,
         createdAt: itemCreatedAt || createdAt,
         updatedAt: itemUpdatedAt || updatedAt || itemCreatedAt,
         sourceType,
@@ -389,6 +429,7 @@ function buildDerivedVideos({
         durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
         status: 'draft',
         createdByName,
+        createdByUserId,
         createdAt,
         updatedAt,
         sourceType,
@@ -408,6 +449,7 @@ function buildDerivedVideos({
     durationSeconds: parseDurationSeconds(draft?.selectedDuration || smart?.duration),
     status: 'published',
     createdByName,
+    createdByUserId,
     createdAt,
     updatedAt,
     sourceType,
@@ -442,13 +484,17 @@ export async function listProjectVideos({
   projectId,
   workspaceId,
   currentUserName,
+  currentUserId,
+  workspaceMembers,
 }: {
   projectId: number
   workspaceId: number
   currentUserName?: string
+  currentUserId?: number
+  workspaceMembers?: any[]
 }): Promise<{ project: any; videos: ProjectVideo[] }> {
   const project = await getCreativeProject({ projectId, workspaceId })
-  const derived = buildDerivedVideos({ project, workspaceId, currentUserName })
+  const derived = buildDerivedVideos({ project, workspaceId, currentUserName, currentUserId, workspaceMembers })
   const store = readProjectVideoStore(project)
   const merged = [
     ...derived
@@ -483,13 +529,17 @@ export async function getProjectVideo({
   workspaceId,
   videoId,
   currentUserName,
+  currentUserId,
+  workspaceMembers,
 }: {
   projectId: number
   workspaceId: number
   videoId: string
   currentUserName?: string
+  currentUserId?: number
+  workspaceMembers?: any[]
 }): Promise<{ project: any; video: ProjectVideo | null }> {
-  const payload = await listProjectVideos({ projectId, workspaceId, currentUserName })
+  const payload = await listProjectVideos({ projectId, workspaceId, currentUserName, currentUserId, workspaceMembers })
   return {
     project: payload.project,
     // 精确匹配 videoId;匹配不到时回退到该项目第一条视频(供「待归类」用哨兵 id 直接打开主视频)
@@ -502,11 +552,13 @@ export async function createProjectVideo({
   workspaceId,
   title,
   currentUserName,
+  currentUserId,
 }: {
   projectId: number
   workspaceId: number
   title?: string
   currentUserName?: string
+  currentUserId?: number
 }): Promise<ProjectVideo> {
   const now = new Date().toISOString()
   const record: LocalProjectVideoRecord = {
@@ -519,6 +571,7 @@ export async function createProjectVideo({
     durationSeconds: 0,
     status: 'draft',
     createdByName: pickString(currentUserName, '当前用户'),
+    createdByUserId: Number(currentUserId ?? 0) || 0,
     createdAt: now,
     updatedAt: now,
     sourceType: 'smart',
@@ -564,6 +617,7 @@ export async function addClassifiedVideo({
     durationSeconds: 0,
     status: 'draft',
     createdByName: pickString(createdByName, '当前用户'),
+    createdByUserId: 0,
     createdAt: now,
     updatedAt: now,
     sourceType: 'smart',

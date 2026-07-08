@@ -167,9 +167,14 @@ function createBusinessProxy(target: string): ProxyOptions {
     changeOrigin: true,
     secure: false,
     cookieDomainRewrite: '',
+    proxyTimeout: 120000,
+    timeout: 120000,
     configure: (proxy) => {
       proxy.on('proxyReq', (proxyReq) => {
         proxyReq.removeHeader('origin')
+      })
+      proxy.on('error', (_err) => {
+        // socket hang up 不影响，模型回退+重试会处理
       })
     },
   }

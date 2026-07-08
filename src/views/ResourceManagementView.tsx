@@ -20,8 +20,10 @@ import AiBadge from '@/components/common/AiBadge'
 import { useAssetPreview } from '@/composables/useAssetPreview'
 import {
   extractAssetPage,
+  extractAssetPageItems,
   getAssetDownloadUrl,
   getBusinessErrorMessage,
+  listAiTasks,
   listAssets,
   listCreativeProjects,
 } from '@/api/business'
@@ -106,22 +108,54 @@ function assetSceneRole(asset: any): 'role' | 'scene' | '' {
 }
 
 // 人脸脱敏/抠脸产物(image.face_detect 输出):正式出片前对分镜图扣掉人脸生成的中间资产,
-// 不是用户素材,素材市场不应展示。后端字段不固定,横跨 operation_code / prompt / 名称 / meta 判定。
+// 不是用户素材,素材市场不应展示。后端字段不固定,因此把常见字段 + meta_json 整体一起做关键词判定。
 function isFaceBlurAsset(asset: any): boolean {
+  let metaHints = ''
+  try {
+    metaHints = JSON.stringify(asset?.meta_json || {})
+  } catch {
+    metaHints = ''
+  }
   const hints = [
     asset?.operation_code,
     asset?.operationCode,
     asset?.prompt,
     asset?.name,
     asset?.file_name,
+    asset?.description,
+    asset?.category,
+    asset?.scene,
+    asset?.subject_kind,
+    asset?.kind,
+    ...(Array.isArray(asset?.tags) ? asset.tags : []),
     asset?.meta_json?.operation_code,
     asset?.meta_json?.operationCode,
     asset?.meta_json?.prompt,
+    asset?.meta_json?.name,
+    asset?.meta_json?.file_name,
+    asset?.meta_json?.description,
+    asset?.meta_json?.category,
+    asset?.meta_json?.scene,
+    asset?.meta_json?.subject_kind,
+    asset?.meta_json?.kind,
+    metaHints,
   ]
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
-  return /face_detect|人脸检测|人脸脱敏|脱敏/.test(hints)
+
+  const hasFaceBlurCue = /face[_\s-]?detect|人脸检测|人脸检测抠图|人脸脱敏|脱敏/.test(hints)
+  const hasCutoutCue = /抠图|抠脸|背抠图|cutout|matting|segment(?:ation)?|mask|alpha[_\s-]?matte/.test(hints)
+  const hasPortraitCue = /人脸|脸部|头像|人像|人物|portrait|person|face|head/.test(hints)
+
+  // 爆款复制(video.replicate)抠图/遮罩中间产物:后端产出固定命名如 replicate-subject-178-masked.png。
+  // 这类图既不是用户上传素材、也非最终成片,素材市场不展示。命名固定(mask(ed) + replicate/subject),
+  // 不会误伤用户素材(用户很难恰好上传这种命名的图)。
+  const hasReplicateMaskCue = /(replicate|subject)[\w\s-]*mask(?:ed)?|mask(?:ed)?[\w\s-]*(replicate|subject)/.test(
+    hints,
+  )
+
+  return hasFaceBlurCue || hasReplicateMaskCue || (hasCutoutCue && hasPortraitCue)
 }
 
 function assetTimestamp(asset: any): number {
@@ -511,11 +545,29 @@ export default function ResourceManagementView() {
       return
     }
     setLoading(true)
-    listAssets({ workspaceId: wsId, status: 'active', limit: 300 })
-      .then((payload) => {
+    // 并行:① 素材列表;② image.face_detect(人脸脱敏/抠脸)任务列表 —— 用其 task_id 集合精确剔除
+    // 脱敏中间产物。asset 对象带 task_id,凡命中脱敏任务的一律不展示(比关键词判定可靠,漏不掉)。
+    // 任务列表拉取失败不阻塞素材展示,退回仅用 isFaceBlurAsset() 关键词兜底。
+    Promise.all([
+      listAssets({ workspaceId: wsId, status: 'active', limit: 300 }),
+      listAiTasks({ workspaceId: wsId, operationCode: 'image.face_detect', limit: 100 }).catch(() => null),
+    ])
+      .then(([assetPayload, taskPayload]) => {
         if (cancelled) return
-        // 过滤掉人脸脱敏/抠脸的中间产物,不在素材市场展示
-        setRawAssets((extractAssetPage(payload).items || []).filter((a: any) => !isFaceBlurAsset(a)))
+        const faceTaskIds = new Set<number>()
+        for (const t of extractAssetPageItems(taskPayload)) {
+          const id = Number(t?.id || 0) || 0
+          if (id) faceTaskIds.add(id)
+        }
+        const items = extractAssetPage(assetPayload).items || []
+        // 双保险:① task_id 命中脱敏任务;② 关键词兜底(任务列表拉取失败时仍生效)
+        setRawAssets(
+          items.filter((a: any) => {
+            const taskId = Number(a?.task_id ?? a?.taskId ?? 0) || 0
+            if (taskId && faceTaskIds.has(taskId)) return false
+            return !isFaceBlurAsset(a)
+          }),
+        )
       })
       .catch((error) => {
         if (cancelled) return

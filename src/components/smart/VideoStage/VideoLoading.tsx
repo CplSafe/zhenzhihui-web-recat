@@ -141,10 +141,14 @@ interface VideoLoadingProps {
   title?: string
 }
 
-export default function VideoLoading({ note, tip, startedAt, statusText, title }: VideoLoadingProps) {
-  // 标题优先级:外部覆盖 title(如「爆款复制生成中…」)> 实时阶段 statusText(如「人脸脱敏 2/9」)> 兜底。
-  // 之前 statusText 被声明却没消费 → 实时阶段文案被丢弃,只显示兜底标题。
-  const heading = title || statusText || '视频生成中'
+function calcProgress(startedAt?: number): number {
+  const T = 70 // 时间常数(秒):越大爬升越慢
+  const base = startedAt && startedAt > 0 ? startedAt : Date.now()
+  const elapsedSec = Math.max(0, (Date.now() - base) / 1000)
+  return Math.max(1, Math.min(99, Math.round(99 * (1 - Math.exp(-elapsedSec / T)))))
+}
+
+export default function VideoLoading({ note, tip, startedAt, title = '视频生成中' }: VideoLoadingProps) {
   const frameRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
 
@@ -160,15 +164,12 @@ export default function VideoLoading({ note, tip, startedAt, statusText, title }
 
   // 进度:锚定到持久化的「生成开始时间戳」startedAt —— 切页面/刷新组件重挂,也按真实流逝时间续算,不从头来。
   // 缺省(无 startedAt)退化为按挂载时刻计。最低 1%(从 1 开始,不停在 0),按时间常数 T 平滑逼近 99%,单调不回退。
-  const [pct, setPct] = useState(0)
+  // 关键:初始值直接按 startedAt 计算,避免切回页面重挂时先闪到 0%,看起来像从头开始。
+  const [pct, setPct] = useState(() => calcProgress(startedAt))
   useEffect(() => {
-    const T = 70 // 时间常数(秒):越大爬升越慢
-    const base = startedAt && startedAt > 0 ? startedAt : Date.now()
-    setPct(0) // 换一轮(startedAt 变)/重挂:先归零,首拍按锚点跳到「应有进度」(续算而非重头)
+    setPct(calcProgress(startedAt))
     const tick = () => {
-      const el = Math.max(0, (Date.now() - base) / 1000)
-      const v = Math.max(1, Math.min(99, Math.round(99 * (1 - Math.exp(-el / T)))))
-      setPct((p) => Math.max(p, v))
+      setPct((p) => Math.max(p, calcProgress(startedAt)))
     }
     tick()
     const id = window.setInterval(tick, 400)
@@ -233,7 +234,7 @@ export default function VideoLoading({ note, tip, startedAt, statusText, title }
             whiteSpace: 'nowrap',
           }}
         >
-          {heading}
+          {title}
         </p>
 
         {/* 进度:百分比 + 细进度条 */}

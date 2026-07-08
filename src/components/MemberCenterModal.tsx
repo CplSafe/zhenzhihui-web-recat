@@ -51,7 +51,20 @@ interface ApiPlan {
   id: number
   code: string
   name: string
-  period: string // month | year
+  period: string
+  period_label?: string
+  periodLabel?: string
+  period_days?: number
+  periodDays?: number
+  duration_days?: number
+  durationDays?: number
+  interval_unit?: string
+  intervalUnit?: string
+  interval_count?: number
+  intervalCount?: number
+  unit?: string
+  credit_unit?: string
+  creditUnit?: string
   plan_type?: string // team | personal(后端区分团队/个人套餐)
   planType?: string
   price_cents: number // 折前原价(划线价)
@@ -140,13 +153,133 @@ function formatExpiry(sub: any): string {
   return `${days} 天后到期（${ymd}）`
 }
 
-// 从套餐名/code 推断周期文案(接口 period 只有 month|year,7天/季 从名称识别)
+function expiryTimeMs(sub: any): number {
+  const raw =
+    sub?.current_period_end ||
+    sub?.currentPeriodEnd ||
+    sub?.expire_at ||
+    sub?.expires_at ||
+    sub?.expired_at ||
+    sub?.end_at ||
+    sub?.end_time ||
+    ''
+  if (!raw) return 0
+  const ms = typeof raw === 'number' ? (raw < 1e12 ? raw * 1000 : raw) : Date.parse(String(raw))
+  return Number.isFinite(ms) ? ms : 0
+}
+
+function normalizeSlashUnit(raw: any): string {
+  const s = String(raw || '').trim()
+  if (!s) return ''
+  return s.startsWith('/') ? s : `/${s}`
+}
+
+function creditUnitFromUnit(unit: string): string {
+  const clean = String(unit || '')
+    .trim()
+    .replace(/^\//, '')
+  return clean ? `积分/${clean}` : ''
+}
+
+function resolvePeriodDays(p: ApiPlan): number {
+  const explicitDays =
+    Number(
+      p.period_days ??
+        p.periodDays ??
+        p.duration_days ??
+        p.durationDays ??
+        p.display?.period_days ??
+        p.display?.periodDays ??
+        p.display?.duration_days ??
+        p.display?.durationDays ??
+        0,
+    ) || 0
+  if (explicitDays > 0) return explicitDays
+
+  const periodRaw = p.period ?? p.display?.period ?? ''
+  const periodNum = Number(periodRaw)
+  if (String(periodRaw || '').trim() && Number.isFinite(periodNum) && periodNum > 0) {
+    return periodNum
+  }
+
+  const intervalUnit = String(
+    p.interval_unit ?? p.intervalUnit ?? p.display?.interval_unit ?? p.display?.intervalUnit ?? '',
+  ).toLowerCase()
+  const intervalCount =
+    Number(p.interval_count ?? p.intervalCount ?? p.display?.interval_count ?? p.display?.intervalCount ?? 0) || 0
+  if (intervalUnit === 'day' && intervalCount > 0) return intervalCount
+  if (intervalUnit === 'week') return 7 * (intervalCount || 1)
+
+  if (String(periodRaw || '').toLowerCase() === 'week') {
+    return 7 * (intervalCount || 1)
+  }
+
+  return 0
+}
+
+function resolvePeriodText(p: ApiPlan): string {
+  const periodDays = resolvePeriodDays(p)
+  if (periodDays > 0) return `${periodDays}天`
+
+  const backendUnit = String(
+    p.unit ||
+      p.period_label ||
+      p.periodLabel ||
+      p.display?.unit ||
+      p.display?.period_label ||
+      p.display?.periodLabel ||
+      '',
+  )
+    .trim()
+    .replace(/^\//, '')
+  if (backendUnit) return backendUnit
+
+  const intervalUnit = String(
+    p.interval_unit ?? p.intervalUnit ?? p.display?.interval_unit ?? p.display?.intervalUnit ?? '',
+  ).toLowerCase()
+  const intervalCount =
+    Number(p.interval_count ?? p.intervalCount ?? p.display?.interval_count ?? p.display?.intervalCount ?? 0) || 0
+  if (intervalUnit === 'quarter') return '季'
+  if (intervalUnit === 'year') return '年'
+  if (intervalUnit === 'month') return '月'
+  if (intervalUnit === 'day' && intervalCount > 0) return `${intervalCount}天`
+  if (intervalUnit === 'week') return `${7 * (intervalCount || 1)}天`
+
+  const periodRaw = String(p.period ?? p.display?.period ?? '').toLowerCase()
+  if (periodRaw === 'quarter') return '季'
+  if (periodRaw === 'year') return '年'
+  if (periodRaw === 'month') return '月'
+  if (periodRaw === 'week') return `${7 * (intervalCount || 1)}天`
+
+  return '月'
+}
+
+function normalizePlanName(name: string, p: ApiPlan): string {
+  const rawName = String(name || '').trim()
+  if (!rawName) return '套餐'
+
+  const periodText = resolvePeriodText(p)
+  if (!periodText.endsWith('天')) return rawName
+
+  // 会员中心里标题、价格单位、积分单位需要统一跟随同一套周期字段。
+  if (/^\d+\s*天(?=\S)/.test(rawName)) {
+    return rawName.replace(/^\d+\s*天(?=\S)/, periodText)
+  }
+  if (/试用会员/.test(rawName) && !new RegExp(`^${periodText}`).test(rawName)) {
+    return rawName.replace(/试用会员/, `${periodText}试用会员`)
+  }
+  return rawName
+}
+
+// 周期优先级:明确的数字 > 后端的展示文案(unit/period_label 可能未同步更新)。
+// 1.period_days/duration_days 2.period 纯数字 3.unit/period_label 4.interval_unit 5.period 文字 6.兜底/月
 function periodLabel(p: ApiPlan): { unit: string; creditUnit: string } {
-  const s = `${p.name || ''} ${p.code || ''}`
-  if (/7\s*天|试用|trial|week/i.test(s)) return { unit: '/7天', creditUnit: '积分/七天' }
-  if (/季|quarter/i.test(s)) return { unit: '/季', creditUnit: '积分/季' }
-  if (/年|year/i.test(s) || p.period === 'year') return { unit: '/年', creditUnit: '积分/年' }
-  return { unit: '/月', creditUnit: '积分/月' }
+  const backendCreditUnit = String(
+    p.credit_unit || p.creditUnit || p.display?.credit_unit || p.display?.creditUnit || '',
+  ).trim()
+  const periodText = resolvePeriodText(p)
+  const unit = normalizeSlashUnit(periodText)
+  return { unit, creditUnit: backendCreditUnit || creditUnitFromUnit(unit) }
 }
 
 function toVM(p: ApiPlan): PlanVM {
@@ -159,13 +292,20 @@ function toVM(p: ApiPlan): PlanVM {
 
   // 价格用后端折扣三件套:price_cents=折前原价(划线),discounted_price_cents=折后实付(大号),
   // discount_percent=折扣百分比。discount_enabled 关闭或数据缺失时,大号显示原价、不划线、不显示角标。
-  const originCents = Number(p.price_cents || 0)
-  const discountedCents = Number(p.discounted_price_cents || 0)
-  const enabled = p.discount_enabled === true && discountedCents > 0 && discountedCents < originCents
+  // display 字段作为兜底(部分后端版本把价格放在 display 里)。
+  const originCents = Number(p.price_cents ?? p.display?.price_cents ?? p.display?.priceCents ?? 0)
+  const discountedCents = Number(
+    p.discounted_price_cents ?? p.display?.discounted_price_cents ?? p.display?.discountedPriceCents ?? 0,
+  )
+  const discountEnabled = Boolean(
+    p.discount_enabled ?? p.display?.discount_enabled ?? p.display?.discountEnabled ?? false,
+  )
+  const discountPercent = Number(p.discount_percent ?? p.display?.discount_percent ?? p.display?.discountPercent ?? 0)
+  const enabled = discountEnabled && discountedCents > 0 && discountedCents < originCents
   const payCents = enabled ? discountedCents : originCents
   // 价格只展示整元(四舍五入),不显示小数:折后 79112 分 → ￥791
   const origin = enabled ? `￥${Math.round(originCents / 100)}` : ''
-  const discount = enabled ? discountLabel(p.discount_percent ?? 0) : ''
+  const discount = enabled ? discountLabel(discountPercent) : ''
   // 1积分≈X元 用折后实付价算(用户实际付的钱)
   const rate = credits > 0 ? `1积分≈${(payCents / 100 / credits).toFixed(2)}元` : ''
 
@@ -178,7 +318,7 @@ function toVM(p: ApiPlan): PlanVM {
   return {
     id: Number(p.id),
     code: p.code || '',
-    name: p.name || '套餐',
+    name: normalizePlanName(p.name || '套餐', p),
     subtitle,
     price: String(Math.round(payCents / 100)),
     unit,
@@ -363,13 +503,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const [namePromptTeamId, setNamePromptTeamId] = useState(0)
   const [teamNameInput, setTeamNameInput] = useState('')
   const [renamingTeam, setRenamingTeam] = useState(false)
-  // 【下单前】团队名输入:开团队版前先填好,随订单一起把空间建成该名字。默认预填唯一名(用户可改)。
-  const [teamName, setTeamName] = useState('')
-  const teamNameTouchedRef = useRef(false) // 用户手动改过后不再被默认名覆盖
   const orderedTeamNameRef = useRef('') // 本次下单用的团队名,供 18s 兜底自建时复用,保持一致
-  useEffect(() => {
-    if (mainTab === 'team' && !teamNameTouchedRef.current) setTeamName(uniqueDefaultTeamName)
-  }, [mainTab, uniqueDefaultTeamName])
   // 子账号(不可充值)若正停在积分充值 tab(如切空间后)→ 退回基础版,避免看到充值内容
   useEffect(() => {
     if (!canRecharge && mainTab === 'recharge') setMainTab('basic')
@@ -395,7 +529,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   }, [])
   // 未支付订单复用缓存:key(sub:planId / recharge:pkgId)→ 上次下单的 {订单id, pay_url, 时间戳}。
   // 「扫码没付→再点支付」时,若该单仍 pending 就复用原链接,避免重复下单留下一堆 pending 单。
-  const pendingOrderRef = useRef<Record<string, { orderId: number; payUrl: string; ts: number }>>({})
+  const pendingOrderRef = useRef<
+    Record<string, { orderId: number; payUrl: string; ts: number; newWorkspaceId?: number }>
+  >({})
 
   // Esc 关闭(仅弹窗模式;页面模式不拦 Esc)
   useEffect(() => {
@@ -443,6 +579,17 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     }
   }, [open, workspaceId])
 
+  const expiredBanner = useMemo(() => {
+    if (!subscription) return false
+    const expMs = expiryTimeMs(subscription)
+    if (!expMs) return false
+    const hasBought = Boolean(
+      subscription.plan_id || subscription.planId || subscription.plan_code || subscription.plan_name,
+    )
+    if (!hasBought) return false
+    return expMs <= Date.now()
+  }, [subscription])
+
   if (!open) return null
 
   // 基础版 = 非团队套餐;团队版 = 团队套餐
@@ -471,6 +618,19 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       res?.order?.id ?? res?.order?.order_id ?? res?.order_id ?? res?.id ?? res?.data?.order?.id ?? res?.data?.id ?? 0,
     ) || 0
 
+  // 从 new_team 下单返回里取新建 workspace id(多字段兜底)
+  const newWorkspaceIdOf = (res: any): number =>
+    Number(
+      res?.new_workspace_id ??
+        res?.workspace_id ??
+        res?.workspace?.id ??
+        res?.order?.workspace_id ??
+        res?.order?.new_workspace_id ??
+        res?.data?.workspace_id ??
+        res?.data?.new_workspace_id ??
+        0,
+    ) || 0
+
   // 查某订单是否仍「待支付(pending)」——复用前确认,已付/取消/过期则不复用。
   const isOrderPending = async (orderId: number): Promise<boolean> => {
     const ws = Number(workspaceId || 0)
@@ -489,71 +649,84 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const resolveOrder = async (
     key: string,
     createFn: () => Promise<any>,
-  ): Promise<{ payUrl: string; orderId: number }> => {
+  ): Promise<{ payUrl: string; orderId: number; newWorkspaceId: number }> => {
     const cached = pendingOrderRef.current[key]
     if (cached?.payUrl && Date.now() - cached.ts < REUSE_ORDER_MS && (await isOrderPending(cached.orderId))) {
-      return { payUrl: cached.payUrl, orderId: cached.orderId } // 复用,不新建订单
+      return { payUrl: cached.payUrl, orderId: cached.orderId, newWorkspaceId: cached.newWorkspaceId || 0 }
     }
     if (cached) delete pendingOrderRef.current[key] // 旧单已失效,清掉
     const res: any = await createFn()
     const orderId = orderIdOf(res)
     const payUrl = String(res?.pay_url || '')
-    if (orderId && payUrl) pendingOrderRef.current[key] = { orderId, payUrl, ts: Date.now() }
-    return { payUrl, orderId }
+    const newWorkspaceId = newWorkspaceIdOf(res)
+    if (orderId && payUrl) pendingOrderRef.current[key] = { orderId, payUrl, ts: Date.now(), newWorkspaceId }
+    return { payUrl, orderId, newWorkspaceId }
   }
 
-  // 打开支付页后轮询订单状态,给「成功/失败」结果提示并刷新余额/订阅(附加逻辑,不影响下单本身)。
-  // 支付在外部标签页完成、前端收不到回调,故每 3s 查一次 listPaymentOrders 匹配本单 id,直到 paid/失败/超时。
   // 团队版支付成功后:适配团队空间。
   // 后端建团队通常是【异步】的,支付 paid 那一刻可能还没建好,故:
-  //   ① 隔几秒重试刷新(~6×3s ≈ 18s),刷到"新出现的团队空间"就切过去(零重复风险);
-  //   ② 等到底后端仍没建出团队 → 判定后端不建,前端兜底建一个(等待足够长,基本不与后端重复)。
-  const adoptNewTeamWorkspace = async () => {
+  //   ① 优先使用下单返回的 newWorkspaceId 精确定位新空间;
+  //   ② 无 newWorkspaceId 时,保存购买前的空间列表,通过 diff 找到新增的团队空间;
+  //   ③ 隔几秒重试刷新(~6×3s ≈ 18s);
+  //   ④ 等到底后端仍没建出团队 → 判定后端不建,前端兜底建一个(等待足够长,基本不与后端重复)。
+  const adoptNewTeamWorkspace = async (targetWorkspaceId = 0) => {
     const store = useWorkspaceSessionStore
     const isTeamWs = (w: any) => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal'
-    console.log('[建团队] adoptNewTeamWorkspace 开始(重试找后端新建团队,18s 没有就兜底自建)') // 临时排查
+    // 记录购买前的空间 ID 集合,用于后续 diff 查找新增空间
+    const allBefore = deriveAllWorkspaces(store.getState()) as any[]
+    const beforeIds = new Set(allBefore.map((w: any) => Number(w?.id || 0)).filter(Boolean))
     try {
-      const beforeIds = new Set(
-        (deriveAllWorkspaces(store.getState()) as any[]).map((w) => Number(w?.id || 0)).filter((id) => id > 0),
-      )
-      // 新出现的空间:优先团队空间,退回任一新空间
-      const findNew = () => {
-        const after = deriveAllWorkspaces(store.getState()) as any[]
-        return (
-          after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)) && isTeamWs(w)) ||
-          after.find((w) => Number(w?.id) > 0 && !beforeIds.has(Number(w.id)))
-        )
-      }
-      // ① 重试 adopt:给后端异步建团队留时间。返回被切换到的新团队空间,供上层弹框命名。
+      // 重试加载 workspace 列表（给后端异步建团队留时间）
       for (let i = 0; i < 6; i++) {
         await store.getState().loadWorkspaces()
-        const created = findNew()
-        if (created?.id) {
-          store.getState().switchWorkspace(Number(created.id))
-          return created
+        const all = deriveAllWorkspaces(store.getState()) as any[]
+
+        // 优先:用下单返回的精确 workspace id 定位
+        if (targetWorkspaceId > 0) {
+          const exact = all.find((w) => Number(w?.id) === targetWorkspaceId)
+          if (exact) {
+            store.getState().switchWorkspace(Number(exact.id))
+            return exact
+          }
         }
+
+        // 备选:通过 diff 找到新增的团队空间(购买前没有、现在新出现的)
+        const fresh = all.find((w) => Number(w?.id) > 0 && isTeamWs(w) && !beforeIds.has(Number(w.id)))
+        if (fresh?.id) {
+          store.getState().switchWorkspace(Number(fresh.id))
+          return fresh
+        }
+
+        // 兜底:如果用户之前没有任何团队空间,现在出现了任意一个团队空间就切过去
+        if (!targetWorkspaceId) {
+          const anyTeam = all.find((w) => Number(w?.id) > 0 && isTeamWs(w))
+          if (anyTeam?.id && !beforeIds.has(Number(anyTeam.id))) {
+            store.getState().switchWorkspace(Number(anyTeam.id))
+            return anyTeam
+          }
+        }
+
         await new Promise((r) => window.setTimeout(r, 3000))
       }
-      // 到底仍没刷到:最后再确认一次
-      await store.getState().loadWorkspaces()
-      const late = findNew()
-      if (late?.id) {
-        store.getState().switchWorkspace(Number(late.id))
-        return late
-      }
-      // 后端(intent=new_team)下单即建 activation_pending 空间、付款后激活,正常 18s 内可刷到;
-      // 到底仍没刷到大概率只是异步慢 → 提示用户稍后自查,【绝不】前端兜底再建一个(否则后端已建+前端再建
-      // = 一个订单开出两个团队空间)。
-      if (aliveRef.current) showToast('团队空间开通中,稍后可在「切换空间」处查看', 'info')
-    } catch {
-      /* 刷新/切换/建团队失败不阻断支付成功提示;用户可手动在切换空间里找/建团队 */
+      // 兜底：后端确实没建 → 前端自行创建
+      const user = store.getState().authSession?.user as any
+      const fallbackName =
+        orderedTeamNameRef.current.trim() ||
+        `${String(user?.nickname || user?.name || user?.username || '我').trim()}的团队`
+      return await store.getState().createTeam(fallbackName)
+    } catch (e) {
+      console.error('[建团队] adopt / 兜底建团队失败:', e)
     }
     return null
   }
 
-  const watchOrder = (orderId: number, kind: 'recharge' | 'subscribe', team = false) => {
+  const watchOrder = (orderId: number, kind: 'recharge' | 'subscribe', team = false, newWorkspaceId = 0) => {
     const ws = Number(workspaceId || 0)
-    if (!orderId || !ws) return
+    if (!orderId) return
+    // new_team 订单:下单时未关联当前 workspace,轮询需用新空间的 id;若后端未返回,
+    // 回退到当前 ws(至少 reconcile 能工作),同时额外尝试不按 workspace 过滤的兜底。
+    const pollWs = team && newWorkspaceId > 0 ? newWorkspaceId : ws
+    if (!pollWs) return
     const type = kind === 'recharge' ? 'credit_recharge' : '' // 订阅有 initial/renewal 两种,留空取全部再按 id 匹配
     let tries = 0
     const MAX = 40 // ~40 × 3s ≈ 2 分钟
@@ -563,16 +736,27 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       try {
         // 先主动对账:只【催后端】去支付宝核对并更新本单(不读它的返回状态——避免 reconcile 的状态字典
         // 与列表口径不一致导致误判);再用列表读【权威状态】('paid' 口径与原逻辑一致)。
+        // 对账用当前 ws(写操作);列表查询用 pollWs(读新空间关联的订单)。
         try {
-          await reconcilePaymentOrder({ workspaceId: ws, orderId })
+          await reconcilePaymentOrder({ workspaceId: ws || pollWs, orderId })
         } catch {
           /* 未支付/限流等 → 忽略,继续用列表查 */
         }
-        const rows: any = await listPaymentOrders({ workspaceId: ws, type, limit: 50 })
+        const rows: any = await listPaymentOrders({ workspaceId: pollWs, type, limit: 50 })
         const list: any[] = Array.isArray(rows) ? rows : rows?.items || rows?.list || rows?.orders || []
-        const st = String(list.find((r: any) => Number(r?.id) === orderId)?.status || '')
-        // TODO 临时:排查「付款成功没建团队」——看轮询看到的订单状态 + 是否团队版
-        if (st) console.log('[支付轮询] order=', orderId, 'status=', st, '| team=', team, '| kind=', kind)
+        let st = String(list.find((r: any) => Number(r?.id) === orderId)?.status || '')
+
+        // new_team 兜底:如果用新 ws 没查到订单,再用原 ws 查一次(可能后端把订单挂在了原空间)
+        if (!st && team && newWorkspaceId > 0 && newWorkspaceId !== ws) {
+          try {
+            const rows2: any = await listPaymentOrders({ workspaceId: ws, type, limit: 50 })
+            const list2: any[] = Array.isArray(rows2) ? rows2 : rows2?.items || rows2?.list || rows2?.orders || []
+            st = String(list2.find((r: any) => Number(r?.id) === orderId)?.status || '')
+          } catch {
+            /* 忽略 */
+          }
+        }
+
         if (st === 'paid' || st === 'failed' || st === 'canceled') {
           // 终态:清掉该订单的复用缓存,下次点支付重新下单
           for (const k of Object.keys(pendingOrderRef.current)) {
@@ -596,9 +780,8 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           // 团队版新开走 adoptNewTeamWorkspace 切空间会再刷一次,此处对老空间刷一次也无害。
           void useWorkspaceSessionStore.getState().loadSubscriptionLabel()
           // 买的是团队版:团队名已在下单前填好并随单创建 → 这里只把新团队空间适配/切换过去,不再二次弹命名框。
-          console.log('[支付] paid 已确认,team=', team, '→', team ? '触发建/切团队' : '非团队版,不建团队') // 临时排查
           if (kind === 'subscribe' && team) {
-            void adoptNewTeamWorkspace()
+            void adoptNewTeamWorkspace(newWorkspaceId)
           }
           return
         }
@@ -621,7 +804,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   //   - 不能带 noopener:带了部分浏览器会返回 null 句柄,后续无法改 location;改为手动断开 win.opener 兜安全。
   //   - 极少数环境(如装了拦截插件)连同步开窗都失败 → 存下 pay_url,在弹窗内显示「手动打开」按钮兜底。
   const startPay = async (
-    createOrder: () => Promise<{ payUrl: string; orderId: number }>,
+    createOrder: () => Promise<{ payUrl: string; orderId: number; newWorkspaceId?: number }>,
     failMsg: string,
     kind: 'recharge' | 'subscribe',
     team = false, // 团队版订阅:支付成功后要刷新空间列表并切到后端新建的团队空间
@@ -631,7 +814,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     const win = window.open('about:blank', '_blank')
     if (win) win.opener = null // 安全:断开对本页的引用,等价 noopener
     try {
-      const { payUrl, orderId } = await createOrder()
+      const { payUrl, orderId, newWorkspaceId = 0 } = await createOrder()
       if (!payUrl) {
         win?.close()
         showToast('未获取到支付链接,请稍后重试', 'error')
@@ -647,7 +830,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         showToast('支付页面被浏览器拦截,请点击下方「手动打开支付页」', 'error')
       }
       // ④ 附加:轮询订单状态,出「成功/失败」结果并刷新余额/订阅(不影响上面的下单/开窗)
-      watchOrder(orderId, kind, team)
+      watchOrder(orderId, kind, team, newWorkspaceId)
     } catch (e) {
       win?.close()
       showToast(getBusinessErrorMessage(e, failMsg), 'error')
@@ -666,18 +849,28 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     // 续费某个已有团队走订阅信息区的「续费当前团队」按钮(intent=subscribe);个人版维持 开通/续费。
     const newTeam = p.isTeam
     const intent = newTeam ? 'new_team' : 'subscribe'
-    // new_team:用用户【下单前填好】的团队名随单建空间(为空退回唯一默认名)。先校验 + 查重,避免后端因非法/重名建不出空间。
+    // new_team:随单建团队空间。团队名不在会员中心输入,统一用唯一默认名,并做校验/去重,避免后端因非法/重名建不出空间。
     let nwsName = ''
     if (newTeam) {
-      nwsName = teamName.trim() || uniqueDefaultTeamName
-      const nameErr = validateWorkspaceName(nwsName)
+      nwsName = uniqueDefaultTeamName
+      let nameErr = validateWorkspaceName(nwsName)
+      if (nameErr) {
+        const trimmed = String(nwsName).trim()
+        nwsName = (trimmed.length > WORKSPACE_NAME_MAX ? trimmed.slice(0, WORKSPACE_NAME_MAX) : trimmed) || '我的团队'
+        nameErr = validateWorkspaceName(nwsName)
+      }
       if (nameErr) {
         showToast(nameErr, 'error')
         return
       }
       if (existingTeamNames.has(nwsName.toLowerCase())) {
-        showToast('该团队名称已存在,请换一个名称', 'error')
-        return
+        for (let i = 2; i < 100; i++) {
+          const cand = `${nwsName}${i}`
+          if (!existingTeamNames.has(cand.toLowerCase())) {
+            nwsName = cand
+            break
+          }
+        }
       }
       orderedTeamNameRef.current = nwsName
     }
@@ -837,6 +1030,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       <>
         <h2 className="mcm-title">会员中心</h2>
         {balance !== null && <div className="mcm-balance">当前积分余额:{balance}</div>}
+        {expiredBanner && <div className="mcm-expired">您所购买的会员已到期，请续费</div>}
 
         {/* 兜底:同步开窗仍被拦截时,给用户一个可点击的手动支付入口(a 标签由用户点击触发,不会被拦截) */}
         {pendingPayUrl && (
@@ -963,23 +1157,6 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
 
         {mainTab !== 'recharge' ? (
           <>
-            {/* 团队版:充值/开通【前】先把团队名填好,随订单一起建好空间(不再支付后二次命名) */}
-            {mainTab === 'team' && (
-              <div className="mcm-teamname">
-                <span className="mcm-teamname__label">团队名称</span>
-                <input
-                  className="mcm-teamname__input"
-                  value={teamName}
-                  maxLength={WORKSPACE_NAME_MAX}
-                  placeholder="请输入团队名称"
-                  onChange={(e) => {
-                    teamNameTouchedRef.current = true
-                    setTeamName(e.target.value)
-                  }}
-                />
-                <span className="mcm-teamname__hint">开通团队版将以此名称创建团队空间,可稍后在团队管理里修改</span>
-              </div>
-            )}
             {loading ? (
               <div className="mcm-hint">套餐加载中…</div>
             ) : error ? (

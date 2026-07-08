@@ -73,6 +73,12 @@ interface VideoStageProps {
   }[]
   /** 整片历史版本(点击切换) */
   videoVersions?: { url: string; assetId: number }[]
+  /** 历史生成里的失败记录(无视频可播,仅展示失败态与原因) */
+  failedGenerations?: { id: string; note?: string; error?: string; createdAt?: number }[]
+  /** 历史生成里的 processing 记录:支持点选切到对应生成中/排队中的占位 */
+  pendingGenerations?: { id: string; createdAt?: number; running?: boolean }[]
+  /** 仍处于 processing 的历史生成占位数量 */
+  pendingVideoCount?: number
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
   /**
    * 重新生成 / 确认修改整片。
@@ -80,9 +86,15 @@ interface VideoStageProps {
    * 父级应基于原视频做修改(而非从分镜图重出整片)。
    */
   onRegenerateVideo: (note?: string, opts?: { edit?: boolean }) => void
+  /** 生成多个视频:允许在当前仍有视频生成时继续追加到历史记录队列 */
+  onGenerateMultipleVideos?: (note?: string, opts?: { edit?: boolean }, count?: number) => void
   /** 下载当前整片视频(由父级弹本地保存位置后下载) */
   onDownloadVideo?: () => void
   onPrev?: () => void
+  /** 「重新生成视频/确认修改」按钮的数量选择(与智能成片底栏 split 按钮同样式) */
+  regenCount?: number
+  regenCountOptions?: number[]
+  onRegenCountChange?: (n: number) => void
   /** 调试:实际喂给视频模型的提示词/参考图/各分镜文本(开发可见,正式隐藏) */
   debug?: {
     prompt: string
@@ -122,10 +134,17 @@ export default function VideoStage({
   costError,
   faceBlurDebug,
   videoVersions = [],
+  failedGenerations = [],
+  pendingGenerations = [],
+  pendingVideoCount = 0,
   onSwitchVideo,
   onRegenerateVideo,
+  onGenerateMultipleVideos,
   onDownloadVideo,
   onPrev,
+  regenCount,
+  regenCountOptions,
+  onRegenCountChange,
   debug,
 }: VideoStageProps) {
   const { showToast } = useToast()
@@ -146,11 +165,26 @@ export default function VideoStage({
   const [tipIdx, setTipIdx] = useState(0)
   const [showDebug, setShowDebug] = useState(false)
   const [showBlurDebug, setShowBlurDebug] = useState(false)
+  const [selectedPendingId, setSelectedPendingId] = useState<string>('')
   const debugEnabled = import.meta.env.DEV // 正式版自动隐藏
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const trackRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ s0: number } | null>(null)
+  const [regenSplitOpen, setRegenSplitOpen] = useState(false)
+  const regenSplitRef = useRef<HTMLSpanElement | null>(null)
+
+  useEffect(() => {
+    if (!regenSplitOpen) return
+    const onPointerDown = (e: PointerEvent) => {
+      const el = regenSplitRef.current
+      if (!el) return
+      const target = e.target as HTMLElement
+      if (!el.contains(target)) setRegenSplitOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown, true)
+    return () => window.removeEventListener('pointerdown', onPointerDown, true)
+  }, [regenSplitOpen])
 
   // 时长:优先视频真实时长;未知时回退分镜时长之和
   const shotsTotal = useMemo(
@@ -192,6 +226,10 @@ export default function VideoStage({
     setSel(null)
     setPlaySec(0)
   }, [videoUrl])
+  useEffect(() => {
+    if (!selectedPendingId) return
+    if (!pendingGenerations.some((g) => g.id === selectedPendingId)) setSelectedPendingId('')
+  }, [pendingGenerations, selectedPendingId])
 
   // 逐秒抓取视频帧(1 帧/秒)用独立隐藏 <video>,不打扰主播放器。
   // 跨域无 CORS 头时 crossOrigin 会导致 canvas 被污染/加载失败 → 保持 null,渲染秒标占位。
@@ -353,9 +391,32 @@ export default function VideoStage({
   // 左侧「视频修改描述」:生成中显示本次描述;否则显示当前版本(含切到的历史版本)绑定的描述
   const displayNote = videoGenerating ? pendingNote : videoUrl ? noteByUrl[videoUrl] || '' : ''
 
-  // 生成中也展示时间轴/修改区/视频修改描述(基于上一版视频);仅首次无视频时隐藏
-  const showTimeline = !!videoUrl
+  // 生成中若已有上一版视频,仍允许继续播放/查看历史;仅首次无视频时才显示纯加载态。
+  const activePendingGeneration =
+    pendingGenerations.find((g) => g.id === selectedPendingId) ||
+    (videoGenerating ? pendingGenerations.find((g) => g.running) || null : null)
+  const showingPendingGeneration = !!activePendingGeneration
+  const showLoadingView = showingPendingGeneration || (!videoUrl && !!videoGenerating)
+  const hasPlayableVideo = !!videoUrl && !showingPendingGeneration
+  const showTimeline = hasPlayableVideo
+  const hasSelectedHistoryVideo = videoVersions.some((v) => v.url === videoUrl)
+  const canChooseMultiRegen =
+    !!onGenerateMultipleVideos &&
+    !!onRegenCountChange &&
+    Array.isArray(regenCountOptions) &&
+    regenCountOptions.length > 0
   const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
+  const triggerSingleRegenerate = () => {
+    const note = buildNote()
+    setPendingNote(hasMods ? note || '' : '')
+    onRegenerateVideo(note, { edit: hasMods })
+  }
+  const triggerMultiGenerate = () => {
+    if (!onGenerateMultipleVideos) return
+    const note = buildNote()
+    setPendingNote(hasMods ? note || '' : '')
+    onGenerateMultipleVideos(note, { edit: hasMods }, regenCount ?? 1)
+  }
 
   return (
     <div className={styles.vstage}>
@@ -379,11 +440,21 @@ export default function VideoStage({
         {/* 左:视频播放器 + 时间轴 */}
         <div className={styles.vstageLeft}>
           <div className={styles.vstagePlayer}>
-            {videoGenerating ? (
+            {showLoadingView ? (
               <VideoLoading
-                statusText={videoStatusText || '视频生成中'}
+                statusText={
+                  activePendingGeneration?.running
+                    ? videoStatusText || '视频生成中'
+                    : activePendingGeneration
+                      ? '排队中'
+                      : '视频生成中'
+                }
                 title={loadingTitle}
-                startedAt={videoStartedAt}
+                startedAt={
+                  activePendingGeneration?.running
+                    ? videoStartedAt || activePendingGeneration?.createdAt
+                    : activePendingGeneration?.createdAt || videoStartedAt
+                }
                 note="视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。"
                 tip={VIDEO_TIPS[tipIdx]}
               />
@@ -421,8 +492,8 @@ export default function VideoStage({
           </div>
 
           {/* 时间轴:时间刻度(真实秒数)+ 帧缩略条 + 拖选/点选片段。
-              生成中隐藏(避免显示旧视频的帧);生成完成后用新帧重新显示。 */}
-          {showTimeline && !videoGenerating && (
+              若已存在上一版视频,生成中也允许继续查看/播放它;切到新版本后会自动重算帧条。 */}
+          {showTimeline && (
             <div className={styles.vstageTimeline}>
               <div className={styles.vstageRuler}>
                 {ticks.map((t) => (
@@ -480,7 +551,7 @@ export default function VideoStage({
 
         {/* 右:历史记录 + 整段视频修改 + 选中帧修改 */}
         <div className={styles.vstageRight}>
-          {(videoVersions.length >= 1 || videoGenerating) && (
+          {(videoVersions.length >= 1 || failedGenerations.length > 0 || pendingVideoCount > 0 || videoGenerating) && (
             <div className={styles.vstageVersions}>
               <span className={styles.vstageVersionsTitle}>历史生成</span>
               <div className={styles.vstageVersionsRow}>
@@ -488,22 +559,58 @@ export default function VideoStage({
                   <button
                     key={i}
                     type="button"
-                    // 生成中时高亮跟随「生成中」占位,旧版本不再显示选中边框
-                    className={`${styles.vstageVer}${!videoGenerating && v.url === videoUrl ? ' ' + styles.active : ''}`}
-                    onClick={() => onSwitchVideo?.(v)}
+                    className={`${styles.vstageVer}${v.url === videoUrl ? ' ' + styles.active : ''}`}
+                    onClick={() => {
+                      setSelectedPendingId('')
+                      onSwitchVideo?.(v)
+                    }}
                     title={`版本${i + 1}`}
                   >
                     <video src={v.url} muted preload="metadata" playsInline />
                     <span className={styles.vstageVerNo}>{i + 1}</span>
                   </button>
                 ))}
-                {/* 正在重新生成的新版本:作为一个「生成中」占位,与历史版本一起展示,并高亮选中边框 */}
-                {videoGenerating && (
-                  <div className={`${styles.vstageVer} ${styles.vstageVerLoading} ${styles.active}`} title="生成中">
-                    <span className={styles.vstageSpin} aria-hidden="true" />
-                    <span className={styles.vstageVerNo}>{videoVersions.length + 1}</span>
+                {failedGenerations.map((g, i) => (
+                  <div
+                    key={g.id}
+                    className={`${styles.vstageVer} ${styles.vstageVerFailed}`}
+                    title={g.error || '生成失败'}
+                  >
+                    <div className={styles.vstageVerFailedBody}>
+                      <span className={styles.vstageVerFailedTitle}>生成失败</span>
+                      <span className={styles.vstageVerFailedReason}>{g.error || '请重试'}</span>
+                    </div>
+                    <span className={styles.vstageVerNo}>{videoVersions.length + i + 1}</span>
                   </div>
-                )}
+                ))}
+                {(pendingGenerations.length
+                  ? pendingGenerations
+                  : Array.from({ length: Math.max(0, pendingVideoCount) }).map((_, i) => ({
+                      id: `pending-${i}`,
+                      running: i === 0 && videoGenerating,
+                    }))
+                ).map((g, i) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    className={`${styles.vstageVer} ${styles.vstageVerLoading} ${styles.vstageVerPending}${
+                      activePendingGeneration?.id === g.id ||
+                      (!selectedPendingId && !hasSelectedHistoryVideo && !videoUrl && !!g.running)
+                        ? ' ' + styles.active
+                        : ''
+                    }`}
+                    title={g.running ? '生成中' : '排队中'}
+                    onClick={() => setSelectedPendingId(g.id)}
+                  >
+                    <span className={styles.vstageVerPendingBody}>
+                      <span className={styles.vstageSpin} aria-hidden="true" />
+                      <span className={styles.vstageVerPendingText}>{g.running ? '生成中' : '排队中'}</span>
+                    </span>
+                    <span className={styles.vstageVerNo}>
+                      {videoVersions.length + failedGenerations.length + i + 1}
+                    </span>
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -591,7 +698,7 @@ export default function VideoStage({
         })()}
 
       {/* 底部总按钮:上一步 / 下载视频 / 重新生成视频|确认修改(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
-      <div className={styles.vstageActions}>
+      <div className={`${styles.vstageActions}${!onPrev ? ` ${styles.vstageActionsNoPrev}` : ''}`}>
         {onPrev && (
           <button type="button" className="smart__nav-btn" onClick={onPrev} aria-label="上一步" data-tip="上一步">
             <svg width="26" height="21" viewBox="0 0 29 23" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -602,29 +709,75 @@ export default function VideoStage({
             </svg>
           </button>
         )}
-        {onDownloadVideo && (
+        <div className={styles.vstageActionButtons}>
+          {onDownloadVideo && (
+            <button
+              type="button"
+              className="smart__btn smart__btn--ghost"
+              onClick={onDownloadVideo}
+              disabled={!videoUrl || !!videoGenerating}
+            >
+              下载视频
+            </button>
+          )}
           <button
             type="button"
-            className="smart__btn smart__btn--ghost"
-            onClick={onDownloadVideo}
-            disabled={!videoUrl || !!videoGenerating}
+            className="smart__btn smart__btn--primary"
+            onClick={triggerSingleRegenerate}
+            disabled={!!videoGenerating}
           >
-            下载视频
+            {videoGenerating ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
           </button>
-        )}
-        <button
-          type="button"
-          className="smart__btn smart__btn--primary"
-          onClick={() => {
-            const note = buildNote()
-            // 点下立即把本次修改描述放到左侧;生成完成后会绑定到新版本上(切历史时跟随)
-            setPendingNote(hasMods ? note || '' : '')
-            onRegenerateVideo(note, { edit: hasMods })
-          }}
-          disabled={!!videoGenerating}
-        >
-          {videoGenerating ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
-        </button>
+          {canChooseMultiRegen && (
+            <span className={`smart__btn-split ${styles.vstageMultiSplit}`} ref={regenSplitRef}>
+              <button
+                type="button"
+                className={`smart__btn-split--main ${styles.vstageMultiSplitMain}`}
+                onClick={triggerMultiGenerate}
+              >
+                生成多个视频
+              </button>
+              <span className="smart__btn-split--sep" aria-hidden="true" />
+              <button
+                type="button"
+                className={`smart__btn-split--count ${styles.vstageMultiSplitCount}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setRegenSplitOpen((prev) => !prev)
+                }}
+              >
+                <span>{regenCount ?? 1}个</span>
+                <svg width="14" height="14" viewBox="0 0 12 12" fill="none" style={{ marginLeft: 4 }}>
+                  <path
+                    d="M3 4.5L6 7.5L9 4.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+              {regenSplitOpen && (
+                <span className="smart__btn-split--dropdown">
+                  {regenCountOptions.map((n: number) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={`smart__btn-split--option${n === (regenCount ?? 1) ? ' is-active' : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onRegenCountChange(n)
+                        setRegenSplitOpen(false)
+                      }}
+                    >
+                      {n}个
+                    </button>
+                  ))}
+                </span>
+              )}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* 调试弹框:实际喂给视频模型的内容(开发可见) */}
