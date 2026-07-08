@@ -1254,7 +1254,14 @@ export default function ProjectManagementView() {
                   <h2 className="pm2-section-title">待分类</h2>
                   <div className="pm2-video-grid" ref={vidGridRef}>
                     {pagedUnclassified.map((video, i) => (
-                      <div key={`${video.kind}-${video.id || video.assetId}-${i}`} className="pm2-vid-wrap">
+                      <div
+                        key={`${video.kind}-${video.id || video.assetId}-${i}`}
+                        className="pm2-vid-wrap"
+                        // 拖拽源:仅项目成片(有 id)可拖入项目文件夹归类;handleDropToFolder 按 JSON 解析 id/cover/title。
+                        // 散视频资产(kind='asset',无 id)不可归类,故不设 draggable。
+                        draggable={!!video.id}
+                        onDragStart={(e) => e.dataTransfer.setData('text/plain', JSON.stringify(video))}
+                      >
                         <div className="pm2-vid">
                           <span
                             className={`pm2-vid-thumb pm2-tone-${toneOf(i)}`}
