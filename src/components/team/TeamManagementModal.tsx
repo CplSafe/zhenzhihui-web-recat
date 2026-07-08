@@ -37,6 +37,7 @@ interface NormalizedMember {
   id: number
   name: string
   email: string
+  mobile: string
   role: string
   roleLabel: string
   isOwner: boolean
@@ -84,9 +85,20 @@ function normalizeMemberName(member: any, fallback = ''): string {
   )
 }
 
-// 后端 MemberView 只有 email(无 phone/mobile)。展示/搜索账号统一用 email。
+// 后端 MemberView 返回 email 与 mobile(手机号,DeepAuth 回传)。账号展示优先手机号、回退 email。
 function normalizeMemberEmail(member: any): string {
   return pickFirstText(member?.email, member?.user?.email, member?.account?.email, member?.profile?.email)
+}
+
+function normalizeMemberMobile(member: any): string {
+  return pickFirstText(
+    member?.mobile,
+    member?.phone,
+    member?.user?.mobile,
+    member?.user?.phone,
+    member?.account?.mobile,
+    member?.profile?.mobile,
+  )
 }
 
 function normalizeMemberId(member: any, index: number): number {
@@ -348,6 +360,7 @@ export default function TeamManagementModal({
             id: userId,
             name: normalizeMemberName(item, `成员${index + 1}`),
             email: normalizeMemberEmail(item),
+            mobile: normalizeMemberMobile(item),
             role,
             roleLabel: isOwner ? '所有者' : getRoleLabel(role),
             isOwner,
@@ -568,7 +581,8 @@ export default function TeamManagementModal({
     return members.filter((m) => {
       const name = String(m.name || '').toLowerCase()
       const email = String(m.email || '').toLowerCase()
-      return name.includes(q) || email.includes(q)
+      const mobile = String(m.mobile || '').toLowerCase()
+      return name.includes(q) || email.includes(q) || mobile.includes(q)
     })
   }, [query, members])
 
@@ -884,7 +898,7 @@ export default function TeamManagementModal({
                           </span>
                         )}
                       </div>
-                      <span>{m.email || '-'}</span>
+                      <span>{m.mobile || m.email || '-'}</span>
                     </div>
                     {canManageWorkspace && (
                       <button
