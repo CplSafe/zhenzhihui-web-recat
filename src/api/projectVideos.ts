@@ -615,7 +615,8 @@ export async function addClassifiedVideo({
     coverUrl: pickString(coverUrl),
     videoUrl: url,
     durationSeconds: 0,
-    status: 'draft',
+    // 「待归类 → 拖入项目」语义是把已存在的视频归档进项目，而不是新建一个待继续编辑的草稿。
+    status: 'published',
     createdByName: pickString(createdByName, '当前用户'),
     createdByUserId: 0,
     createdAt: now,
