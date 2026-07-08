@@ -5,6 +5,7 @@
   (个人中心 / 修改密码 / 退出登录 已移至侧栏「设置」菜单,见 SettingsMenu。)
 */
 import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Tooltip } from 'antd'
 import {
   useAllWorkspaces,
@@ -76,6 +77,8 @@ interface PersonalPanelProps {
 }
 
 export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps) {
+  const navigate = useNavigate()
+  const location = useLocation()
   const user = useCurrentUser()
   const member = useCurrentMember()
   const currentWs = useCurrentWorkspace()
@@ -163,7 +166,18 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
       showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
       return
     }
-    if (id && Number(id) !== Number(activeId)) switchWorkspace(id)
+    if (id && Number(id) !== Number(activeId)) {
+      const pathname = String(location.pathname || '')
+      const inSmart = pathname === '/smart' || pathname.startsWith('/smart/')
+      const inHotCopy = pathname === '/hot-copy' || pathname.startsWith('/hot-copy/')
+      if (inSmart || inHotCopy) {
+        navigate(inSmart ? '/smart' : '/hot-copy', {
+          replace: true,
+          state: { workspaceSwitchReset: true, workspaceSwitchNonce: Date.now() },
+        })
+      }
+      switchWorkspace(id)
+    }
     onClose?.()
   }
 

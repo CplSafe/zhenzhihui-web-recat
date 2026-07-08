@@ -43,7 +43,6 @@ import {
   useWorkspaceSessionStore,
   deriveModelPlanCandidates,
 } from '@/stores/workspaceSession'
-import { useUiStore } from '@/stores/ui'
 import { useToast } from '@/composables/useToast'
 import { openComingSoon } from '@/stores/ui'
 import { useRequireAuth } from '@/composables/useRequireAuth'
@@ -209,12 +208,13 @@ export default function HotCopyCreateView() {
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
-  const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
+  const [genTriggerBusy, setGenTriggerBusy] = useState(false)
   // 在途生成任务 id(>0=有任务在跑):持久化后,刷新/切换页面回来用它续轮询,不丢生成结果
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
   const vidGenAbortRef = useRef<AbortController | null>(null)
   const aliveRef = useRef(true)
   const vidGenPendingTimerRef = useRef<number>(0)
+  const genTriggerLockRef = useRef(false)
 
   // 每次生成的独立记录(对齐智能成片):processing=生成中、failed=失败(可重试)、published=已并入成片。
   // 作用:① 项目管理里把「生成中/失败」显示成可重试的「草稿」(失败不再让项目凭空消失);
@@ -254,15 +254,20 @@ export default function HotCopyCreateView() {
 
   // 源视频真实时长(秒):video.replicate/edit 按它计费;前端读上传视频 HTML5 元数据得到
   const [sourceVideoDurSec, setSourceVideoDurSec] = useState(0)
-  useEffect(() => {
-    setWorkspaceSwitchLock(vidGenRunning, vidGenRunning ? '爆款复制视频生成中，暂不支持切换团队' : '')
-    return () => {
-      setWorkspaceSwitchLock(false)
-    }
-  }, [setWorkspaceSwitchLock, vidGenRunning])
+  const acquireGenTriggerLock = (): boolean => {
+    if (genTriggerLockRef.current || vidGenRunning) return false
+    genTriggerLockRef.current = true
+    setGenTriggerBusy(true)
+    return true
+  }
+  const releaseGenTriggerLock = () => {
+    genTriggerLockRef.current = false
+    setGenTriggerBusy(false)
+  }
   useEffect(() => {
     return () => {
       aliveRef.current = false
+      genTriggerLockRef.current = false
       if (vidGenPendingTimerRef.current) {
         window.clearInterval(vidGenPendingTimerRef.current)
         vidGenPendingTimerRef.current = 0
@@ -386,8 +391,9 @@ export default function HotCopyCreateView() {
             markGen(null, 'cancelled')
             showToast('视频生成已中断', 'info')
           } else {
-            markGen(null, 'failed')
-            showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+            const errMsg = resolveGenError(e)
+            markGen(null, 'failed', errMsg)
+            showToast(`视频生成失败:${errMsg}`, 'error')
           }
         }
       })
@@ -442,6 +448,11 @@ export default function HotCopyCreateView() {
     //   ① 项目管理 → 新建视频(restartProjectId);② 主页/模板「做同款」(carryVideo / carryImages)。
     // 绑定项目 + 携带素材由 初始化器 / 上面的注入 effect 处理。
     const navSt = (location.state as any) || {}
+    if (navSt.workspaceSwitchReset) {
+      hydratedRef.current = true
+      navigate('/hot-copy', { replace: true })
+      return
+    }
     const hasCarry =
       (navSt.carryVideo && (navSt.carryVideo.url || navSt.carryVideo.assetId)) ||
       (Array.isArray(navSt.carryImages) && navSt.carryImages.length > 0)
@@ -461,6 +472,7 @@ export default function HotCopyCreateView() {
           const parsed = parseHotCopyDraft(proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft)
           const smart = parsed?.smart || {}
           const obj = parsed?.obj || {}
+          const localD = loadHotCopyDraft(ws)
           // 留存项目视频清单存档(归类记录),保存时原样写回,避免被本编辑器的草稿快照覆盖
           projectVideoStoreRef.current = obj && typeof obj === 'object' ? obj.projectVideoStore || null : null
           setStarted(true)
@@ -497,7 +509,6 @@ export default function HotCopyCreateView() {
             serverTitleRef.current = t
           }
           // 在途任务:后端草稿可能因防抖还没写进 task id → 用本地草稿兜底
-          const localD = loadHotCopyDraft(ws)
           if (localD?.entryInitial) setEntryInitial(localD.entryInitial)
           if (localD?.fullVideo && typeof localD.fullVideo === 'object' && localD.fullVideo.url && !fv.url) {
             setFullVideo({ url: String(localD.fullVideo.url), assetId: Number(localD.fullVideo.assetId || 0) || 0 })
@@ -691,9 +702,9 @@ export default function HotCopyCreateView() {
       /* ignore */
     }
   }
-  const doPutHotCopyDraft = async (): Promise<boolean> => {
+  const doPutHotCopyDraft = async (workspaceIdOverride?: number): Promise<boolean> => {
     const id = projectIdRef.current
-    const ws = Number(workspaceId || 0)
+    const ws = Number(workspaceIdOverride || workspaceId || 0)
     if (!id || !ws) return false
     // 封面:优先首张替换素材图(图片资源,适合做封面);没有则不带(=保持现状,后端封面不变)
     const coverAssetId = Number(productAssetIds[0] || 0) || 0
@@ -739,10 +750,41 @@ export default function HotCopyCreateView() {
     }
   }
   // 串行化后端保存(防并发 PUT 用同 revision 互相 409)
-  const putHotCopyDraftToBackend = (): Promise<boolean> => {
-    const run = saveChainRef.current.catch(() => {}).then(() => doPutHotCopyDraft())
+  const putHotCopyDraftToBackend = (workspaceIdOverride?: number): Promise<boolean> => {
+    const run = saveChainRef.current.catch(() => {}).then(() => doPutHotCopyDraft(workspaceIdOverride))
     saveChainRef.current = run
     return run
+  }
+
+  const flushHotCopyDraft = (workspaceIdOverride?: number) => {
+    const ws = Number(workspaceIdOverride || workspaceId || 0)
+    if (!ws || !hydratedRef.current) return
+    const hasEntry =
+      Boolean(entryInitial?.videoPreview) ||
+      Boolean(entryInitial?.text?.trim?.()) ||
+      Boolean(entryInitial?.libraryVideo?.assetId || entryInitial?.libraryVideo?.src) ||
+      Boolean(entryInitial?.products?.length)
+    if (!started && !hasEntry) return
+    saveHotCopyDraft(ws, {
+      entryInitial,
+      projectId: projectIdRef.current || projectId,
+      started,
+      step,
+      maxReached,
+      basePrompt,
+      projectName,
+      nameTouched,
+      sourceVideo,
+      productAssetIds,
+      fullVideo,
+      videoVersions,
+      videoGenerating: vidGenRunning,
+      vidGenTaskId,
+      videoGenerations,
+      genRatio,
+      genDurationSec,
+    })
+    if (projectIdRef.current) void putHotCopyDraftToBackend(ws)
   }
 
   // 后端草稿自动保存(1.5s 防抖;已水合且已建项目才存)
@@ -772,6 +814,15 @@ export default function HotCopyCreateView() {
     void putHotCopyDraftToBackend()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoGenerations])
+
+  const flushHotCopyDraftRef = useRef<() => void>(() => {})
+  flushHotCopyDraftRef.current = () => flushHotCopyDraft(Number(workspaceId || 0))
+  useEffect(
+    () => () => {
+      flushHotCopyDraftRef.current()
+    },
+    [],
+  )
 
   // 项目名变化回写后端标题(防抖;默认/未命名标题不回写,避免 PATCH 撞草稿 revision → 409;与已同步标题相同也跳过)
   useEffect(() => {
@@ -932,6 +983,7 @@ export default function HotCopyCreateView() {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
+      releaseGenTriggerLock()
       return
     }
     setVidGenRunning(true)
@@ -1021,6 +1073,7 @@ export default function HotCopyCreateView() {
         }
       }
     } finally {
+      releaseGenTriggerLock()
       if (!aborted) {
         persistNow({ videoGenerating: false, vidGenTaskId: 0 })
         if (aliveRef.current) {
@@ -1041,7 +1094,7 @@ export default function HotCopyCreateView() {
       showToast('未选择工作空间,无法生成视频', 'error')
       return
     }
-    if (vidGenRunning) return
+    if (!acquireGenTriggerLock()) return
     const total = Math.max(1, Math.floor(Number(count || 1) || 1))
 
     // 「确认修改」:把当前整片当 video 输入,按修改提示在原视频基础上改
@@ -1080,6 +1133,7 @@ export default function HotCopyCreateView() {
         persistNow({ videoGenerating: false, vidGenTaskId: 0 })
         setVidGenRunning(false)
         setVidGenTaskId(0)
+        releaseGenTriggerLock()
       }
       return
     }
@@ -1087,6 +1141,7 @@ export default function HotCopyCreateView() {
     // 「重新生成」:基于已上传的源视频 + 替换素材重跑 replicate(note=片段/整段修改意见)
     if (!sourceVideo.assetId) {
       showToast('请先上传爆款视频', 'error')
+      releaseGenTriggerLock()
       return
     }
     setVidGenRunning(true)
@@ -1111,6 +1166,7 @@ export default function HotCopyCreateView() {
     } finally {
       setVidGenRunning(false)
       setVidGenTaskId(0)
+      releaseGenTriggerLock()
     }
   }
 
@@ -1168,9 +1224,15 @@ export default function HotCopyCreateView() {
       })
       return
     }
-    void requireAuth(() => startGenerate(payload))
+    void requireAuth(() => {
+      if (!acquireGenTriggerLock()) return
+      startGenerate(payload)
+    })
   }
   const startGenerate = (payload: HotCopyEntryPayload) => {
+    if (!genTriggerLockRef.current) {
+      if (!acquireGenTriggerLock()) return
+    }
     const prompt = buildBasePrompt(payload.tab, payload.text)
     const nextEntryInitial = buildEntrySnapshot(payload)
     setEntryInitial(nextEntryInitial)
@@ -1311,6 +1373,7 @@ export default function HotCopyCreateView() {
         {!started ? (
           <HotCopyEntry
             onSubmit={handleStart}
+            busy={genTriggerBusy || vidGenRunning}
             canResume={canResumeFlow}
             onResume={resumeFlow}
             initial={entryInitial}
@@ -1322,7 +1385,10 @@ export default function HotCopyCreateView() {
               <StepProgress
                 steps={STEPS}
                 current={step}
-                statuses={['已完成', vidGenRunning ? '视频生成中' : fullVideo.url ? '已完成' : '待生成']}
+                statuses={[
+                  '已完成',
+                  vidGenRunning || genTriggerBusy ? '视频生成中' : fullVideo.url ? '已完成' : '待生成',
+                ]}
                 onStepClick={(i) => goStep(i)}
               />
             </div>
@@ -1355,8 +1421,8 @@ export default function HotCopyCreateView() {
               <VideoStage
                 shots={[]}
                 videoUrl={fullVideo.url}
-                videoGenerating={vidGenRunning}
-                videoStatusText={vidGenRunning ? '爆款复制生成中…' : undefined}
+                videoGenerating={vidGenRunning || genTriggerBusy}
+                videoStatusText={vidGenRunning || genTriggerBusy ? '爆款复制生成中…' : undefined}
                 loadingTitle="爆款复制生成中"
                 videoStartedAt={videoGenerations.find((g) => g.status === 'processing')?.createdAt || 0}
                 costEstimate={videoCost.estimate}

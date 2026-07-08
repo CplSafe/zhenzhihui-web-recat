@@ -50,6 +50,8 @@ const DURATION_OPTIONS = ['5s', '10s', '15s']
 
 interface HotCopyEntryProps {
   onSubmit: (payload: HotCopyEntryPayload) => void
+  /** 外部正在发起生成(含点击后到 running 生效前的短窗口),用于禁用重复点击 */
+  busy?: boolean
   /** 从第二步返回第一页时,可直接回到已生成/生成中的视频页而不重新发起生成 */
   canResume?: boolean
   /** 恢复到第二步:只切回流程,不重新提交生成 */
@@ -97,7 +99,14 @@ const HOTCOPY_LAYERS: BgLayerStops = {
   ],
 }
 
-export default function HotCopyEntry({ onSubmit, canResume, onResume, initial, ratioOptions }: HotCopyEntryProps) {
+export default function HotCopyEntry({
+  onSubmit,
+  busy = false,
+  canResume,
+  onResume,
+  initial,
+  ratioOptions,
+}: HotCopyEntryProps) {
   // 比例下拉:优先用模型实际支持的 options(避免选了模型做不了的比例被悄悄回退);缺省用默认列表。
   const ratioOpts = ratioOptions && ratioOptions.length ? ratioOptions : RATIO_OPTIONS
   const { showToast } = useToast()
@@ -399,6 +408,7 @@ export default function HotCopyEntry({ onSubmit, canResume, onResume, initial, r
   const resumeMode = !!canResume
 
   const submit = () => {
+    if (busy) return
     if (!hasHotVideo) {
       showToast('请先上传爆款视频(本地上传 / 素材库)', 'error')
       return
@@ -630,7 +640,13 @@ export default function HotCopyEntry({ onSubmit, canResume, onResume, initial, r
             </div>
             <div className="hotcopy__sendArea">
               {resumeMode && (
-                <button type="button" className="hotcopy__regen" onClick={submit} title="按当前输入重新生成">
+                <button
+                  type="button"
+                  className="hotcopy__regen"
+                  disabled={busy}
+                  onClick={submit}
+                  title={busy ? '视频生成启动中…' : '按当前输入重新生成'}
+                >
                   <svg
                     viewBox="0 0 24 24"
                     width="20"
@@ -652,10 +668,15 @@ export default function HotCopyEntry({ onSubmit, canResume, onResume, initial, r
                 type="button"
                 className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ''}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
                 /* 恢复态下主按钮仅回到第二步;普通态仍走提交生成。 */
+                disabled={busy}
                 onClick={() => (resumeMode ? onResume?.() : submit())}
                 aria-label={resumeMode ? '下一步' : '生成'}
                 title={
-                  resumeMode ? '下一步:返回已生成内容' : '下一步:生成视频(需先上传爆款视频 + 至少一张替换素材图片)'
+                  busy
+                    ? '视频生成启动中…'
+                    : resumeMode
+                      ? '下一步:返回已生成内容'
+                      : '下一步:生成视频(需先上传爆款视频 + 至少一张替换素材图片)'
                 }
               >
                 {resumeMode ? (

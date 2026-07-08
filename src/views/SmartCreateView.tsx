@@ -72,7 +72,6 @@ import {
   deriveModelPlanCandidates,
   deriveAllWorkspaces,
 } from '@/stores/workspaceSession'
-import { useUiStore } from '@/stores/ui'
 import { useToast } from '@/composables/useToast'
 import { openComingSoon, openMemberCenter } from '@/stores/ui'
 import { openGuide, isSmartGuideArmed, disarmSmartGuide, syncSmartGuideStage, useGuideStore } from '@/stores/guide'
@@ -88,6 +87,7 @@ import {
   type SmartDraft,
 } from '@/utils/smartDraft'
 import { persistVideoResultToBackend } from '@/utils/persistVideoResult'
+import { enqueueCreativeProjectDraftSave } from '@/utils/creativeDraftSaveQueue'
 import { getRunningVideoGen, trackVideoGen } from '@/utils/videoGenRegistry'
 import { downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
@@ -1226,7 +1226,6 @@ export default function SmartCreateView() {
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
   const [vidGenRunning, setVidGenRunning] = useState(false)
-  const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
   // 提交前积分预估(estimate-cost):整片生成(video.generate)口径
   const [videoCost, setVideoCost] = useState<{
     loading: boolean
@@ -1251,9 +1250,19 @@ export default function SmartCreateView() {
     status: 'processing' | 'failed' | 'published'
     taskId: number
     note: string
+    error?: string
     createdAt: number
   }
+  type VideoGenJob = {
+    id: string
+    note?: string
+    opts?: { edit?: boolean }
+  }
   const [videoGenerations, setVideoGenerations] = useState<GenRecord[]>([])
+  const [runningGenerationId, setRunningGenerationId] = useState('')
+  const videoGenerationsRef = useRef<GenRecord[]>([])
+  const videoGenQueueRef = useRef<VideoGenJob[]>([])
+  const videoGenDrainRef = useRef(false)
   // 上一版整片成片所依据的「内容签名」:随草稿持久化。项目管理据此判「内容改了没出新片 → 草稿(在制)」。
   // 只在出片成功时盖章(见 commitVideoSig),普通编辑不动它。
   const [lastVideoSig, setLastVideoSig] = useState('')
@@ -1261,12 +1270,6 @@ export default function SmartCreateView() {
   // 避免用"完成那一刻的当前分镜"盖章(用户生成中/后改了内容会把签名盖成新内容 → 列表误判"没变")。
   const [pendingVideoSig, setPendingVideoSig] = useState('')
   const pendingVideoSigRef = useRef('')
-  useEffect(() => {
-    setWorkspaceSwitchLock(vidGenRunning, vidGenRunning ? '智能成片视频生成中，暂不支持切换团队' : '')
-    return () => {
-      setWorkspaceSwitchLock(false)
-    }
-  }, [setWorkspaceSwitchLock, vidGenRunning])
   // 发起出片时锁定当前内容签名(与 persistVideoResult / 列表同口径 computeVideoContentSig)
   const lockVideoSig = () => {
     const sig = computeVideoContentSig(shots, entryMeta, reqSummary || requirement)
@@ -1299,7 +1302,7 @@ export default function SmartCreateView() {
     genSeqRef.current += 1
     const id = `gen-${Date.now()}-${genSeqRef.current}`
     setVideoGenerations((prev) => [
-      { id, status: 'processing', taskId: 0, note: note || '', createdAt: Date.now() },
+      { id, status: 'processing', taskId: 0, note: note || '', error: '', createdAt: Date.now() },
       ...prev,
     ])
     immediateSaveRef.current = true // 草稿记录已加 → 本轮 effect 立即落盘
@@ -1308,17 +1311,27 @@ export default function SmartCreateView() {
   const setGenTask = (id: string, taskId: number) =>
     setVideoGenerations((prev) => prev.map((g) => (g.id === id ? { ...g, taskId: Number(taskId) || 0 } : g)))
   // 标记本条记录为 已并入成片 / 失败;resume 没有 id 时按「当前生成中的那条」处理
-  const markGen = (id: string | null, status: 'published' | 'failed') =>
-    setVideoGenerations((prev) =>
-      prev.map((g) => (g.status === 'processing' && (id ? g.id === id : true) ? { ...g, status } : g)),
-    )
+  const markGen = (id: string | null, status: 'published' | 'failed', error = '') =>
+    setVideoGenerations((prev) => {
+      const targetId = id || prev.find((g) => g.status === 'processing')?.id
+      if (!targetId) return prev
+      return prev.map((g) =>
+        g.id === targetId
+          ? { ...g, status, error: status === 'failed' ? error || g.error || '生成失败，请重试' : '' }
+          : g,
+      )
+    })
   // 草稿即时出现:startGen 后(videoGenerations 变化)立刻把草稿落库,不等防抖
   useEffect(() => {
     if (!immediateSaveRef.current || !appliedRef.current) return
     immediateSaveRef.current = false
-    saveSmartDraft(currentDraft())
-    if (projectIdRef.current) void putSmartDraftToBackend()
+    const ws = Number(workspaceId || 0)
+    saveSmartDraft(currentDraft(), ws)
+    if (projectIdRef.current) void putSmartDraftToBackend(ws)
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoGenerations, workspaceId])
+  useEffect(() => {
+    videoGenerationsRef.current = videoGenerations
   }, [videoGenerations])
 
   const autoVidRef = useRef(false)
@@ -1333,33 +1346,29 @@ export default function SmartCreateView() {
     faceBlurEnabledRef.current = faceBlurEnabled
   }, [faceBlurEnabled])
 
-  // 生成/重生成整片;note=修改意见。opts.edit=true(「确认修改」)且已有整片时:
-  // 走视频编辑(video.edit,模型 happyhorse-1.0-video-edit):原视频 role:video + 修改提示,
-  // 不复用爆款复制(video.replicate)逻辑,也不从分镜图重出整片。
-  // 注:「重新生成/出整片」钉死 seedance、不退避;「确认修改」仍专走 happyhorse 视频编辑模型。
-  const runFullVideo = async (note?: string, opts?: { edit?: boolean }, count?: number) => {
+  // 生成/重生成整片的单次执行单元;多条生成由外层队列顺序消费。
+  // 「确认修改」仍专走 video.edit;普通重生成走 seedance。
+  const runVideoJob = async (job: VideoGenJob) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
+      markGen(job.id, 'failed', '未选择工作空间，无法生成视频')
       return
     }
     if (!shots.length) {
       showToast('暂无分镜,无法生成视频', 'error')
+      markGen(job.id, 'failed', '暂无分镜，无法生成视频')
       return
     }
-    if (vidGenRunning) return
-    const total = Math.max(1, Math.floor(Number(count || 1) || 1))
 
     // 「确认修改」:把上次整片当 video 输入,按修改提示在原视频基础上改(片段时间段写进提示)
-    if (opts?.edit && fullVideo.assetId) {
-      setVidGenRunning(true)
-      const gid = startGen(note)
+    if (job.opts?.edit && fullVideo.assetId) {
       const lockedSig = lockVideoSig() // 发起时锁定本片内容签名
       try {
         const plans = await resolvePlanCandidates()
         const editPrompt = [
           '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
-          note || '',
+          job.note || '',
         ]
           .filter(Boolean)
           .join('\n')
@@ -1379,18 +1388,17 @@ export default function SmartCreateView() {
           workspaceId: ws,
           url,
           assetId,
-          genId: gid,
+          genId: job.id,
           lockedSig,
         })
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
-        markGen(gid, 'published')
+        markGen(job.id, 'published')
         commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
       } catch (e: any) {
-        showToast(`视频修改失败:${e?.message || ''}`, 'error')
-        markGen(gid, 'failed')
-      } finally {
-        setVidGenRunning(false)
+        const msg = e?.message || '请重试'
+        showToast(`视频修改失败:${msg}`, 'error')
+        markGen(job.id, 'failed', msg)
       }
       return
     }
@@ -1399,10 +1407,10 @@ export default function SmartCreateView() {
     const activeShots = shots.filter((s) => s.includeInVideo !== false)
     if (!activeShots.length) {
       showToast('请至少勾选一个分镜参与视频生成', 'error')
+      markGen(job.id, 'failed', '请至少勾选一个分镜参与视频生成')
       return
     }
     const pid = Number(projectIdRef.current) || 0
-    setVidGenRunning(true)
     // 同项目已有在途整片生成(切走→回来 / effect 重入):直接订阅它的结果,绝不重新发起,
     // 避免「旧 promise 还在后台跑」时又起一次 → 重复出片 / 重复计费。
     const already = pid ? getRunningVideoGen(pid) : null
@@ -1411,139 +1419,173 @@ export default function SmartCreateView() {
         const { url, assetId } = await already
         setFullVideo({ url, assetId })
         setVideoVersions((prev) => [...prev, { url, assetId }])
-        markGen(null, 'published') // 收尾本组件的「生成中」记录
+        markGen(job.id, 'published')
         commitVideoSig() // 盖章:用锁定签名(在途生成由原发起方 lock/persist,这里只并入 UI)
-      } catch {
-        markGen(null, 'failed')
-      } finally {
-        setBlurPhase('')
-        setVidGenRunning(false)
-        setVidGenTaskId(0)
+      } catch (e: any) {
+        markGen(job.id, 'failed', e?.message || '视频生成失败，请重试')
       }
       return
     }
-    const genIds =
-      total > 1
-        ? Array.from({ length: total }, (_, i) =>
-            startGen(note ? `${note}（${i + 1}/${total}）` : `生成视频 ${i + 1}/${total}`, true),
-          )
-        : [startGen(note)]
     // 记录本次出片所依据的分镜签名(供「下次进生成视频时分镜未变则不重生成」判断)
     videoGenSigRef.current = videoInputSig(shots, entryMeta, reqSummary || requirement)
-    for (let i = 0; i < total; i++) {
-      const noteWithIndex = note
+    const lockedSig = lockVideoSig() // 发起时锁定本片内容签名
+    try {
+      // 把整段生成(脱敏 + 建任务 + 轮询 + 落库)包成一个【按 projectId 登记的结果 promise】,活在组件之外:
+      // 即使中途切走、组件卸载,它也继续跑到完成并落后端;回来时凭登记表订阅同一个,不重启 → 真正「切页面也继续生成」。
+      const { url, assetId } = await trackVideoGen(
+        pid,
+        (async (): Promise<{ url: string; assetId: number }> => {
+          const plans = await resolvePlanCandidates()
+          const cache: Record<string, number> = {}
+          // ① 先确定每镜「原始分镜图」asset_id(按镜头顺序):优先已有 imageAssetId,缺则现传一次
+          const srcIds: { shotId: string | number; id: number }[] = []
+          for (const sh of activeShots) {
+            let id = Number(sh.imageAssetId || 0) || 0
+            if (!id && sh.image) {
+              try {
+                id = await ensureAssetId(ws, sh.image, cache)
+              } catch {
+                /* 单张失败跳过 */
+              }
+            }
+            if (id) srcIds.push({ shotId: sh.id, id })
+          }
+          // ② 正式生成前:对每张进入视频的分镜图做人脸脱敏,用脱敏版喂 seedance(失败回退原图)。
+          // 脱敏开关关闭 → 跳过脱敏,直接用原图,成片人脸清晰。
+          // 注意:每轮视频生成独立运作，脱敏结果仅本轮有效不清存到 shots，
+          // 避免第1次脱敏成功→缓存→第2次及后续视频被迫复用脱敏版导致"后面视频人脸被抠"。
+          const imageAssetIds: number[] = []
+          if (faceBlurEnabledRef.current) {
+            const dbg: any[] = []
+            // 本轮内已脱敏的原图缓存(key=原始assetId):同一原图被多个镜头引用时避免重复脱敏
+            const roundCache = new Map<number, { assetId: number; url: string }>()
+            for (let j = 0; j < srcIds.length; j++) {
+              const { shotId, id } = srcIds[j]
+              const sh = shots.find((s) => s.id === shotId)
+              setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
+              // 本轮内已脱敏过该原图 → 直接复用
+              const cached = roundCache.get(id)
+              if (cached) {
+                imageAssetIds.push(cached.assetId)
+                dbg.push({
+                  no: sh?.no || '',
+                  srcAssetId: id,
+                  cached: true,
+                  outAssetId: cached.assetId,
+                  outUrl: cached.url,
+                  ok: true,
+                })
+                continue
+              }
+              const r = await blurFacesOnAsset({ workspaceId: ws, assetId: id, modelPlanCandidates: plans })
+              dbg.push({ no: sh?.no || '', ...r.debug, ok: r.ok, cached: false })
+              if (r.ok && r.assetId) {
+                imageAssetIds.push(r.assetId)
+                roundCache.set(id, { assetId: r.assetId, url: r.url })
+              } else {
+                imageAssetIds.push(id) // 脱敏失败:回退原图,不阻塞出片
+              }
+            }
+            setBlurDebug(dbg)
+          } else {
+            // 不脱敏:直接用原图 assetId 出片
+            for (const s of srcIds) imageAssetIds.push(s.id)
+          }
+          setBlurPhase('')
+          const out = await generateFullVideo({
+            workspaceId: ws,
+            shots: activeShots,
+            basePrompt: reqSummary || requirement,
+            ratio: entryMeta?.ratio,
+            style: entryMeta?.style,
+            imageAssetIds,
+            note: job.note,
+            modelPlanCandidates: plans,
+            // 任务一创建就记录 task_id 并随草稿持久化:中途切路由/刷新后可凭它续轮询
+            onTask: (id) => {
+              setVidGenTaskId(Number(id) || 0)
+              setGenTask(job.id, Number(id) || 0)
+            },
+          })
+          // B:完成即直接落后端(不依赖组件挂载)——切到别的页面也能把成片保存进项目
+          await persistVideoResultToBackend({
+            projectId: pid,
+            workspaceId: ws,
+            url: out.url,
+            assetId: out.assetId,
+            genId: job.id,
+            lockedSig,
+          })
+          return out
+        })(),
+      )
+      setFullVideo({ url, assetId })
+      setVideoVersions((prev) => [...prev, { url, assetId }])
+      markGen(job.id, 'published')
+      commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
+    } catch (e: any) {
+      const msg = e?.message || '请重试'
+      showToast(`视频生成失败:${msg}`, 'error')
+      markGen(job.id, 'failed', msg)
+    } finally {
+      setBlurPhase('')
+      setVidGenTaskId(0) // 每轮结束清掉进行中标记,避免恢复时误续
+    }
+  }
+
+  const drainVideoGenQueue = async () => {
+    if (videoGenDrainRef.current) return
+    videoGenDrainRef.current = true
+    setVidGenRunning(true)
+    try {
+      while (videoGenQueueRef.current.length) {
+        const job = videoGenQueueRef.current.shift()
+        if (!job) continue
+        setRunningGenerationId(job.id)
+        await runVideoJob(job)
+      }
+    } finally {
+      setRunningGenerationId('')
+      videoGenDrainRef.current = false
+      setBlurPhase('')
+      setVidGenTaskId(0)
+      setVidGenRunning(false)
+    }
+  }
+
+  const queueFullVideo = (note?: string, opts?: { edit?: boolean }, count?: number) => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      showToast('未选择工作空间,无法生成视频', 'error')
+      return
+    }
+    if (!shots.length) {
+      showToast('暂无分镜,无法生成视频', 'error')
+      return
+    }
+    const total = Math.max(1, Math.floor(Number(count || 1) || 1))
+    const jobs: VideoGenJob[] = Array.from({ length: total }, (_, i) => {
+      const displayNote = note
         ? total > 1
           ? `${note}（${i + 1}/${total}）`
           : note
         : total > 1
           ? `生成视频 ${i + 1}/${total}`
           : ''
-      const gid = genIds[i]
-      const lockedSig = lockVideoSig() // 发起时锁定本片内容签名
-      try {
-        // 把整段生成(脱敏 + 建任务 + 轮询 + 落库)包成一个【按 projectId 登记的结果 promise】,活在组件之外:
-        // 即使中途切走、组件卸载,它也继续跑到完成并落后端;回来时凭登记表订阅同一个,不重启 → 真正「切页面也继续生成」。
-        const { url, assetId } = await trackVideoGen(
-          pid,
-          (async (): Promise<{ url: string; assetId: number }> => {
-            const plans = await resolvePlanCandidates()
-            const cache: Record<string, number> = {}
-            // ① 先确定每镜「原始分镜图」asset_id(按镜头顺序):优先已有 imageAssetId,缺则现传一次
-            const srcIds: { shotId: string | number; id: number }[] = []
-            for (const sh of activeShots) {
-              let id = Number(sh.imageAssetId || 0) || 0
-              if (!id && sh.image) {
-                try {
-                  id = await ensureAssetId(ws, sh.image, cache)
-                } catch {
-                  /* 单张失败跳过 */
-                }
-              }
-              if (id) srcIds.push({ shotId: sh.id, id })
-            }
-            // ② 正式生成前:对每张进入视频的分镜图做人脸脱敏,用脱敏版喂 seedance(失败回退原图)。
-            // 脱敏开关关闭 → 跳过脱敏,直接用原图,成片人脸清晰。
-            // 注意:每轮视频生成独立运作，脱敏结果仅本轮有效不清存到 shots，
-            // 避免第1次脱敏成功→缓存→第2次及后续视频被迫复用脱敏版导致"后面视频人脸被抠"。
-            const imageAssetIds: number[] = []
-            if (faceBlurEnabledRef.current) {
-              const dbg: any[] = []
-              // 本轮内已脱敏的原图缓存(key=原始assetId):同一原图被多个镜头引用时避免重复脱敏
-              const roundCache = new Map<number, { assetId: number; url: string }>()
-              for (let j = 0; j < srcIds.length; j++) {
-                const { shotId, id } = srcIds[j]
-                const sh = shots.find((s) => s.id === shotId)
-                setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
-                // 本轮内已脱敏过该原图 → 直接复用
-                const cached = roundCache.get(id)
-                if (cached) {
-                  imageAssetIds.push(cached.assetId)
-                  dbg.push({
-                    no: sh?.no || '',
-                    srcAssetId: id,
-                    cached: true,
-                    outAssetId: cached.assetId,
-                    outUrl: cached.url,
-                    ok: true,
-                  })
-                  continue
-                }
-                const r = await blurFacesOnAsset({ workspaceId: ws, assetId: id, modelPlanCandidates: plans })
-                dbg.push({ no: sh?.no || '', ...r.debug, ok: r.ok, cached: false })
-                if (r.ok && r.assetId) {
-                  imageAssetIds.push(r.assetId)
-                  roundCache.set(id, { assetId: r.assetId, url: r.url })
-                } else {
-                  imageAssetIds.push(id) // 脱敏失败:回退原图,不阻塞出片
-                }
-              }
-              setBlurDebug(dbg)
-            } else {
-              // 不脱敏:直接用原图 assetId 出片
-              for (const s of srcIds) imageAssetIds.push(s.id)
-            }
-            setBlurPhase('')
-            const out = await generateFullVideo({
-              workspaceId: ws,
-              shots: activeShots,
-              basePrompt: reqSummary || requirement,
-              ratio: entryMeta?.ratio,
-              style: entryMeta?.style,
-              imageAssetIds,
-              note,
-              modelPlanCandidates: plans,
-              // 任务一创建就记录 task_id 并随草稿持久化:中途切路由/刷新后可凭它续轮询
-              onTask: (id) => {
-                setVidGenTaskId(Number(id) || 0)
-                setGenTask(gid, Number(id) || 0)
-              },
-            })
-            // B:完成即直接落后端(不依赖组件挂载)——切到别的页面也能把成片保存进项目
-            await persistVideoResultToBackend({
-              projectId: pid,
-              workspaceId: ws,
-              url: out.url,
-              assetId: out.assetId,
-              genId: gid,
-              lockedSig,
-            })
-            return out
-          })(),
-        )
-        setFullVideo({ url, assetId })
-        setVideoVersions((prev) => [...prev, { url, assetId }])
-        markGen(gid, 'published')
-        commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
-      } catch (e: any) {
-        showToast(`视频生成失败:${e?.message || ''}`, 'error')
-        markGen(gid, 'failed')
-        break
-      } finally {
-        setBlurPhase('')
-        setVidGenTaskId(0) // 每轮结束清掉进行中标记,避免恢复时误续
+      return {
+        id: startGen(displayNote, total > 1 || !!vidGenRunning || videoGenDrainRef.current),
+        note,
+        opts,
       }
-    }
-    setVidGenRunning(false)
+    })
+    videoGenQueueRef.current.push(...jobs)
+    if (!videoGenDrainRef.current) void drainVideoGenQueue()
+  }
+
+  // 单个重生成:只允许当前整片任务空闲时触发。
+  const runFullVideo = (note?: string, opts?: { edit?: boolean }, count?: number) => {
+    if (vidGenRunning || videoGenDrainRef.current) return
+    queueFullVideo(note, opts, Math.max(1, Math.floor(Number(count || 1) || 1)))
   }
 
   // 恢复一个【已提交但前端中途离开】的整片生成任务:不重新建任务,凭 taskId 续轮询到完成。
@@ -1566,7 +1608,7 @@ export default function SmartCreateView() {
     setVidGenRunning(true)
     inflight
       .then(({ url, assetId }) => adoptVideoResult(url, assetId))
-      .catch(() => markGen(null, 'failed'))
+      .catch((e: any) => markGen(null, 'failed', e?.message || '视频生成失败，请重试'))
       .finally(() => {
         setVidGenRunning(false)
         setVidGenTaskId(0)
@@ -1578,11 +1620,19 @@ export default function SmartCreateView() {
     const ws = Number(workspaceId || 0)
     if (!ws || !taskId || vidGenRunning) return
     const pid = Number(projectIdRef.current) || 0
+    const activeGenId =
+      videoGenerationsRef.current.find((g) => Number(g.taskId || 0) === Number(taskId || 0))?.id ||
+      videoGenerationsRef.current.find((g) => g.status === 'processing')?.id ||
+      ''
     // 同会话内切走→回来:登记表里还握着那次在途生成 → 订阅它(不对同一任务起第二路轮询)。
-    if (subscribeRunningVideo(pid)) return
+    if (subscribeRunningVideo(pid)) {
+      if (activeGenId) setRunningGenerationId(activeGenId)
+      return
+    }
     autoVidRef.current = true // 防止「自动生成」effect 同时再触发一次
     setVidGenRunning(true)
     setVidGenTaskId(taskId)
+    if (activeGenId) setRunningGenerationId(activeGenId)
     try {
       // 硬刷新后登记表为空 → 凭 taskId 续轮询同一后端任务(不重新生成)。
       const { url, assetId } = await resumeFullVideo({ workspaceId: ws, taskId })
@@ -1590,9 +1640,11 @@ export default function SmartCreateView() {
       void persistVideoResultToBackend({ projectId: pid, workspaceId: ws, url, assetId })
       adoptVideoResult(url, assetId) // 续跑完成:把那条「生成中」记录并入成片
     } catch (e: any) {
-      showToast(`恢复视频生成失败:${e?.message || '请重试'}`, 'error')
-      markGen(null, 'failed')
+      const msg = e?.message || '请重试'
+      showToast(`恢复视频生成失败:${msg}`, 'error')
+      markGen(null, 'failed', msg)
     } finally {
+      setRunningGenerationId('')
       setVidGenRunning(false)
       setVidGenTaskId(0)
     }
@@ -2138,20 +2190,22 @@ export default function SmartCreateView() {
     }
   }
 
-  // 串行化所有后端草稿保存:排队执行,前一个完成(并更新 revision)再执行下一个,
-  // 杜绝并发 PUT 用同一 revision 互相打架导致的 409 DRAFT_CONFLICT。
-  const saveChainRef = useRef<Promise<any>>(Promise.resolve())
-  const putSmartDraftToBackend = (): Promise<boolean> => {
-    const run = saveChainRef.current.catch(() => {}).then(() => doPutDraft())
-    saveChainRef.current = run
-    return run
+  const putSmartDraftToBackend = (workspaceIdOverride?: number): Promise<boolean> => {
+    const id = projectIdRef.current
+    const ws = Number(workspaceIdOverride || workspaceId || 0)
+    if (!id || !ws) return Promise.resolve(false)
+    return enqueueCreativeProjectDraftSave({
+      projectId: id,
+      workspaceId: ws,
+      task: () => doPutDraft(ws),
+    })
   }
 
   // 把当前草稿写到后端。对齐 2.0 putDraftSnapshot:保存前先确保有当前 revision,
   // 保存后用返回的 revision 同步;返回体没带 revision 则重新拉一次;409 冲突→拉新 revision 重试。
-  const doPutDraft = async (): Promise<boolean> => {
+  const doPutDraft = async (workspaceIdOverride?: number): Promise<boolean> => {
     const id = projectIdRef.current
-    const ws = Number(workspaceId || 0)
+    const ws = Number(workspaceIdOverride || workspaceId || 0)
     if (!id || !ws) return false
     const snapshot = buildSmartSnapshot(currentDraft())
     // 原样保留项目视频清单存档(归类记录),避免整盘重建草稿时丢失(本编辑器不维护它)
@@ -2214,7 +2268,7 @@ export default function SmartCreateView() {
     const d = parseSmartSnapshot(draftJson)
     // 本地兜底:本地草稿若属于同一项目且 savedAt 更新(后端可能漏存"切走前最后一步")→ 用本地,
     // 避免回来后丢掉最后一步操作。(本地是同步落盘 + 卸载即落盘,通常比后端防抖更新。)
-    const local = loadSmartDraft()
+    const local = loadSmartDraft(Number(workspaceId || 0))
     const localFresher =
       !!local && Number(local.projectId || 0) === rid && Number(local.savedAt || 0) > Number(d?.savedAt || 0)
     if (localFresher) applyDraft(local as SmartDraft)
@@ -2281,11 +2335,11 @@ export default function SmartCreateView() {
       projectIdRef.current = 0 // 没有有效项目绑定,避免 autosave 把草稿 PUT 到无权访问的项目
       // 若是「本地草稿自动跳转」到了一个当前用户无权访问的项目(403/404,典型:同浏览器换了账号、
       // 或项目已被删)→ 清掉这份陈旧草稿并回落空白入口,而不是弹错误页(否则每次进 /smart 都循环报错)。
-      const localDraft = loadSmartDraft()
+      const localDraft = loadSmartDraft(Number(workspaceId || 0))
       const cameFromLocalDraft =
         (location.state as any)?.autoResumed === true && Number(localDraft?.projectId || 0) === rid
       if ((status === 403 || status === 404) && cameFromLocalDraft) {
-        clearSmartDraft()
+        clearSmartDraft(Number(workspaceId || 0))
         navigate('/smart', { replace: true })
         return
       }
@@ -2317,11 +2371,19 @@ export default function SmartCreateView() {
   // 用 useLayoutEffect:在浏览器【绘制前】完成"空白 /smart→/smart/:id"的跳转,避免先闪一下初始页。
   useLayoutEffect(() => {
     if (hydratedRef.current) return
+    const navState = (location.state as any) || {}
+    if (navState.workspaceSwitchReset) {
+      clearSmartEntryDraft()
+      hydratedRef.current = true
+      appliedRef.current = true
+      navigate('/smart', { replace: true })
+      return
+    }
     // 从「项目管理 → 新建视频」进入(携带 restartProjectId):全新流程。
     // 不恢复本地草稿、也不跳回旧 /smart/:id;并清掉旧的本地在制草稿,避免它把页面带回上次未完成的步骤。
     // 项目绑定 + 携带素材由 carry effect / useState 初始化器处理。
     if (Number((location.state as any)?.restartProjectId)) {
-      clearSmartDraft()
+      clearSmartDraft(Number(workspaceId || 0))
       clearSmartEntryDraft() // 从「项目管理→新建视频」进入:全新流程,清掉入口暂存
       hydratedRef.current = true
       appliedRef.current = true // 全新流程无异步加载,进入即可放行保存
@@ -2335,7 +2397,7 @@ export default function SmartCreateView() {
       // 先用本地草稿【秒渲染】(同项目时):立刻出内容、显示切走时那一步,避免先闪初始页、等后端才跳回。
       // 本地是同步落盘 + 卸载即落盘,通常比后端新;后端在后台拉取后再由 applyLoadedProject 对账(用更新的那份)。
       // 命中本地即把 appliedRef 置 true:此时显示的是真实数据,放行 autosave / flush 不会覆盖。
-      const localFast = loadSmartDraft()
+      const localFast = loadSmartDraft(ws)
       if (localFast && Number(localFast.projectId || 0) === rid) {
         applyDraft(localFast as SmartDraft)
         appliedRef.current = true
@@ -2352,7 +2414,7 @@ export default function SmartCreateView() {
       // 点回空白 /smart 时:若本地草稿是个【已开始 + 已建项目】的项目 → 自动跳回那个 /smart/:id,
       // 回到当时那一步(含「生成视频已出片」——出片后仍要能回到视频步看/改/重生成,不能落到空白入口)。
       // 想新建走「创建新视频」(resetToNewVideo 会清草稿,清后此判断为 false → 回到入口)。
-      const d = loadSmartDraft()
+      const d = loadSmartDraft(Number(workspaceId || 0))
       const pendingPid = Number(d?.projectId || 0) || 0
       const inProgress = !!d?.started && pendingPid > 0
       if (inProgress) {
@@ -2373,9 +2435,10 @@ export default function SmartCreateView() {
   // 自动保存:本地立即(600ms 防抖)+ 后端(1.5s 防抖,仅在已建项目时)
   useEffect(() => {
     if (!appliedRef.current) return // 数据应用前不保存,避免用空态覆盖草稿
-    const local = window.setTimeout(() => saveSmartDraft(currentDraft()), 600)
+    const ws = Number(workspaceId || 0)
+    const local = window.setTimeout(() => saveSmartDraft(currentDraft(), ws), 600)
     const remote = window.setTimeout(() => {
-      if (projectIdRef.current) void putSmartDraftToBackend()
+      if (projectIdRef.current) void putSmartDraftToBackend(ws)
     }, 1500)
     return () => {
       window.clearTimeout(local)
@@ -2415,12 +2478,13 @@ export default function SmartCreateView() {
   const flushDraftRef = useRef<() => void>(() => {})
   flushDraftRef.current = () => {
     if (!appliedRef.current) return // 数据应用前卸载 → 不落盘(否则把初始空态写进草稿,覆盖好数据)
+    const ws = Number(workspaceId || 0)
     try {
-      saveSmartDraft(currentDraft())
+      saveSmartDraft(currentDraft(), ws)
     } catch {
       /* ignore */
     }
-    if (projectIdRef.current) void putSmartDraftToBackend()
+    if (projectIdRef.current) void putSmartDraftToBackend(ws)
   }
   useEffect(() => () => flushDraftRef.current(), [])
 
@@ -2431,12 +2495,13 @@ export default function SmartCreateView() {
     if (!appliedRef.current || !pendingInitialSaveRef.current) return
     if (!projectIdRef.current || !started) return
     pendingInitialSaveRef.current = false
+    const ws = Number(workspaceId || 0)
     try {
-      saveSmartDraft(currentDraft())
+      saveSmartDraft(currentDraft(), ws)
     } catch {
       /* ignore */
     }
-    void putSmartDraftToBackend()
+    void putSmartDraftToBackend(ws)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, started, entryMeta, requirement, shots])
 
@@ -2484,7 +2549,7 @@ export default function SmartCreateView() {
   // 「制作新视频」:把整个智能成片流程初始化为全新空白页(等同切换路由再切回来)。
   // 清空本地草稿 + 所有页面状态 + 项目引用,回到入口输入页;入口页 key 自增以重挂载、清空其内部输入。
   const resetToNewVideo = (entryMode?: 'video' | 'image') => {
-    clearSmartDraft()
+    clearSmartDraft(Number(workspaceId || 0))
     clearSmartEntryDraft() // 重置为全新入口:清掉入口暂存,避免重挂载后又回填旧输入
     setStarted(false)
     setShots([])
@@ -3250,15 +3315,30 @@ export default function SmartCreateView() {
         videoUrl={fullVideo.url}
         videoGenerating={vidGenRunning}
         videoStatusText={blurPhase || undefined}
-        videoStartedAt={videoGenerations.find((g) => g.status === 'processing')?.createdAt || 0}
+        videoStartedAt={
+          videoGenerations.find((g) => g.id === runningGenerationId)?.createdAt ||
+          [...videoGenerations]
+            .filter((g) => g.status === 'processing')
+            .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0))[0]?.createdAt ||
+          0
+        }
         costEstimate={videoCost.estimate}
         costLoading={videoCost.loading}
         costError={videoCost.error}
         faceBlurDebug={blurDebug}
         videoVersions={videoVersions}
+        failedGenerations={[...videoGenerations]
+          .filter((g) => g.status === 'failed')
+          .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0))
+          .map((g) => ({ id: g.id, note: g.note, error: g.error, createdAt: g.createdAt }))}
+        pendingGenerations={[...videoGenerations]
+          .filter((g) => g.status === 'processing')
+          .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0))
+          .map((g) => ({ id: g.id, createdAt: g.createdAt, running: g.id === runningGenerationId }))}
         pendingVideoCount={videoGenerations.filter((g) => g.status === 'processing').length}
         onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
-        onRegenerateVideo={(note, opts) => runFullVideo(note, opts, videoCount)}
+        onRegenerateVideo={(note, opts) => runFullVideo(note, opts, 1)}
+        onGenerateMultipleVideos={(note, opts, count) => queueFullVideo(note, opts, count || videoCount)}
         onDownloadVideo={handleDownloadVideo}
         onPrev={() => goStep(2)}
         regenCount={videoCount}
