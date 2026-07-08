@@ -168,10 +168,13 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
     }
     if (id && Number(id) !== Number(activeId)) {
       const pathname = String(location.pathname || '')
-      const inSmart = pathname === '/smart' || pathname.startsWith('/smart/')
+      // 打开的智能成片项目在 /smart/:id:切空间时【保留项目】——项目靠自身钉住的所属空间继续保存/计费,
+      // 不再导航重置。空白 /smart 入口、以及爆款复制 /hot-copy 仍走原来的重置逻辑。
+      const inSmartProject = /^\/smart\/[^/]+/.test(pathname)
+      const inSmartBlank = pathname === '/smart'
       const inHotCopy = pathname === '/hot-copy' || pathname.startsWith('/hot-copy/')
-      if (inSmart || inHotCopy) {
-        navigate(inSmart ? '/smart' : '/hot-copy', {
+      if (!inSmartProject && (inSmartBlank || inHotCopy)) {
+        navigate(inHotCopy ? '/hot-copy' : '/smart', {
           replace: true,
           state: { workspaceSwitchReset: true, workspaceSwitchNonce: Date.now() },
         })
