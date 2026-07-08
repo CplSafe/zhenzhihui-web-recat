@@ -26,6 +26,8 @@ export interface EntryMeta {
 
 interface SmartEntryProps {
   onSubmit: (requirement: string, meta: EntryMeta) => void
+  /** 恢复态下点击圆形按钮:按当前输入走下一页的重生成逻辑。 */
+  onRegenerate?: (requirement: string, meta: EntryMeta) => void
   /** 「制作新视频」/「创建新对话」:清空输入/项目,初始化为全新空白页(保留当前 Tab 模式)。 */
   onNewVideo?: (mode: 'video' | 'image') => void
   /**
@@ -115,7 +117,14 @@ export function clearSmartEntryDraft() {
   }
 }
 
-export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, initial }: SmartEntryProps) {
+export default function SmartEntry({
+  onSubmit,
+  onRegenerate,
+  onNewVideo,
+  canResume,
+  onResume,
+  initial,
+}: SmartEntryProps) {
   const { showToast } = useToast()
   // 回填优先级:initial(同一次挂载内「上一步」回填,值非空时为准)> sessionStorage 暂存(跨路由保活)> 默认。
   // 注意 initial.text 跨路由时是父级空串(非 undefined),故用「非空才采纳」而非 ?? 来回退到暂存。
@@ -502,56 +511,41 @@ export default function SmartEntry({ onSubmit, onNewVideo, canResume, onResume, 
             </div>
 
             <div className={styles.sendArea}>
-              {/* 恢复态:重新生成(按当前输入重新走流程) */}
               {resumeMode && (
                 <button
                   type="button"
-                  className={styles.regen}
-                  data-guide="smart-regen"
-                  disabled={!canSubmit}
-                  onClick={() => submit()}
-                  title="按当前输入重新生成"
+                  className={`${styles.send} ${styles.sendResume}`}
+                  data-guide="smart-next"
+                  disabled={false}
+                  onClick={() => onResume?.()}
+                  aria-label="返回下一步"
+                  title="返回下一步"
                 >
                   <svg
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 30 30"
                     fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
+                    xmlns="http://www.w3.org/2000/svg"
+                    aria-hidden="true"
                   >
-                    <path d="M20 12a8 8 0 1 1-2.3-5.6" />
-                    <path d="M20 4v4h-4" />
+                    <path
+                      d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
+                      fill="black"
+                    />
                   </svg>
-                  重新生成
                 </button>
               )}
               <button
                 type="button"
-                className={styles.send}
-                data-guide="smart-next"
-                // 恢复态(下一步)始终可点;普通发送需有输入
-                disabled={resumeMode ? false : !canSubmit}
-                onClick={() => (resumeMode ? onResume?.() : submit())}
-                aria-label={resumeMode ? '下一步' : '生成'}
-                title={resumeMode ? '下一步' : '生成(Ctrl/⌘ + Enter)'}
+                className={`${styles.send} ${styles.sendPlain}`}
+                data-guide={resumeMode ? 'smart-regen' : 'smart-next'}
+                disabled={!canSubmit}
+                onClick={() => submit()}
+                aria-label="去制作"
+                title="去制作"
               >
-                {/* 白色右箭头;圆底由 .send 控制(可点=品牌绿,不可点=禁用灰) */}
-                <svg
-                  width="20"
-                  height="14"
-                  viewBox="0 0 20 14"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M1.05649 8.0251H16.5914L12.2367 12.2495C12.0385 12.4418 11.9271 12.7025 11.9271 12.9745C11.927 13.2464 12.0383 13.5072 12.2364 13.6995C12.4346 13.8919 12.7034 13.9999 12.9836 14C13.2639 14.0001 13.5327 13.8921 13.7309 13.6998L19.7078 7.90093C19.9614 7.65491 20.0398 7.3181 19.9819 7.00004C20.0398 6.68257 19.9608 6.34518 19.7078 6.09916L13.7309 0.300249C13.5328 0.108003 13.2641 0 12.9838 0C12.7036 0 12.4349 0.108003 12.2367 0.300249C12.0386 0.492495 11.9273 0.753236 11.9273 1.02511C11.9273 1.29699 12.0386 1.55773 12.2367 1.74998L16.5914 5.97498H1.05649C0.776285 5.97498 0.507557 6.08298 0.309422 6.27522C0.111287 6.46745 -2.3859e-05 6.72818 -2.3859e-05 7.00004C-2.3859e-05 7.27191 0.111287 7.53263 0.309422 7.72487C0.507557 7.91711 0.776285 8.0251 1.05649 8.0251Z"
-                    fill="white"
-                  />
-                </svg>
+                <span className={styles.sendPlainText}>去制作</span>
               </button>
             </div>
           </div>

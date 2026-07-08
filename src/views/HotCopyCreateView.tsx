@@ -161,6 +161,7 @@ export default function HotCopyCreateView() {
   }
 
   const [started, setStarted] = useState(false) // false=入口(上传步), true=生成视频步
+  const [entryKey, setEntryKey] = useState(0) // 「创建新视频」自增 → 重挂载入口页,清空其内部输入状态
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [step, setStep] = useState(0)
   const [maxReached, setMaxReached] = useState(0)
@@ -568,12 +569,11 @@ export default function HotCopyCreateView() {
       setVideoGenerations(normalizeGenRecords((d as any)?.videoGenerations))
       if (d.genRatio) setGenRatio(String(d.genRatio))
       if (Number(d.genDurationSec) > 0) setGenDurationSec(Number(d.genDurationSec))
-      // 有在途任务且还没出片 → 续轮询(同一个后端任务,不重新生成)
-      if (pendingTaskId > 0 && !hasResult) resumeVideoTask(ws, pendingTaskId)
-      else if (!hasResult && (hasProcessing || hasGeneratingFlag)) {
-        setVidGenRunning(true)
-        ensurePendingTaskId(ws)
-      }
+      // 普通进入 /hot-copy 根页时，仅恢复本地草稿展示，不自动续跑旧的爆款复制任务。
+      // 避免用户从「智能成片」切到「爆款复制」时，爆款复制也被本地旧草稿误触发开始生成。
+      // 真正需要继续时，由入口页显式操作恢复。
+      setVidGenRunning(false)
+      setVidGenTaskId(pendingTaskId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeId, workspaceId])
@@ -1372,6 +1372,34 @@ export default function HotCopyCreateView() {
     })
   }
 
+  const resetToNewVideo = () => {
+    const ws = Number(workspaceId || 0)
+    vidGenAbortRef.current?.abort()
+    releaseGenTriggerLock()
+    setStarted(false)
+    setStep(0)
+    setMaxReached(0)
+    setBasePrompt('')
+    setEntryInitial(undefined)
+    setSourceVideo({ assetId: 0, url: '' })
+    setProductAssetIds([])
+    setFullVideo({ url: '', assetId: 0 })
+    setVideoVersions([])
+    setVidGenRunning(false)
+    setGenTriggerBusy(false)
+    setEntryResumeRegenBusy(false)
+    setVidGenTaskId(0)
+    setVideoGenerations([])
+    projectIdRef.current = 0
+    draftRevisionRef.current = 0
+    serverTitleRef.current = ''
+    setProjectId(0)
+    setProjectName('未命名项目')
+    setNameTouched(false)
+    if (ws) clearHotCopyDraft(ws)
+    setEntryKey((k) => k + 1)
+  }
+
   const goStep = (i: number) => {
     if (i <= 0) {
       setStarted(false)
@@ -1417,7 +1445,9 @@ export default function HotCopyCreateView() {
 
         {!started ? (
           <HotCopyEntry
+            key={entryKey}
             onSubmit={handleStart}
+            onNewVideo={resetToNewVideo}
             busy={genTriggerBusy || vidGenRunning}
             resumeRegenBusy={entryResumeRegenBusy}
             canResume={canResumeFlow}
@@ -1428,6 +1458,9 @@ export default function HotCopyCreateView() {
           />
         ) : (
           <>
+            <button type="button" className="smart__newvideo" onClick={resetToNewVideo}>
+              创建新视频
+            </button>
             <div className="smart__progress">
               <StepProgress
                 steps={STEPS}

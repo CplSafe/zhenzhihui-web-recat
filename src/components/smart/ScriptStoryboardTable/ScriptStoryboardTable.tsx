@@ -8,6 +8,7 @@ import InlineEdit from '@/components/common/InlineEdit'
 import EllipsisText from '@/components/common/EllipsisText'
 import { useToast } from '@/composables/useToast'
 import { requestConfirm } from '@/stores/ui'
+import ShotTrashBin, { type ShotTrashItem } from '../ShotTrashBin/ShotTrashBin'
 import aiSparkIcon from '@/assets/icons/ai-spark.svg'
 import materialUploadIcon from '@/assets/icons/material-upload.svg'
 import regenerateIcon from '@/assets/icons/regenerate.svg'
@@ -86,8 +87,15 @@ interface ScriptStoryboardTableProps {
   batchGenning?: boolean
   /** 提供则在已有图的素材缩略图右上角显示「×」,点击去掉该主体当前的图(回到占位,可重新生成/上传) */
   onRemoveSubject?: (name: string) => void
-  /** 删除整条分镜(准备素材阶段) */
-  onDeleteShot?: (id: Shot['id']) => void
+  /** 删除整条分镜(分镜脚本/准备素材阶段) */
+  onDeleteShot?: (shot: Shot, index: number) => Promise<void> | void
+  trashItems?: ShotTrashItem[]
+  trashLoading?: boolean
+  onLoadTrash?: () => Promise<void> | void
+  onRestoreTrash?: (item: ShotTrashItem) => Promise<void> | void
+  onDeleteTrash?: (item: ShotTrashItem) => Promise<void> | void
+  onRestoreAllTrash?: (items: ShotTrashItem[]) => Promise<void> | void
+  onClearTrash?: (items: ShotTrashItem[]) => Promise<void> | void
 }
 
 const stripAt = (t: string) =>
@@ -109,6 +117,13 @@ export default function ScriptStoryboardTable({
   batchGenning = false,
   onRemoveSubject,
   onDeleteShot,
+  trashItems = [],
+  trashLoading = false,
+  onLoadTrash,
+  onRestoreTrash,
+  onDeleteTrash,
+  onRestoreAllTrash,
+  onClearTrash,
 }: ScriptStoryboardTableProps) {
   const { showToast } = useToast()
   const editable = !!onShotsChange
@@ -116,243 +131,261 @@ export default function ScriptStoryboardTable({
     onShotsChange?.(shots.map((s) => (s.id === id ? { ...s, ...p } : s)))
 
   return (
-    <div className={styles.sbTable}>
-      {/* 表头(渐变) */}
-      <div className={styles.sbHead}>
-        <div className={`${styles.sbHeadCell} ${styles.sbColNo}`}>镜头编号</div>
-        <div className={`${styles.sbHeadCell} ${styles.sbColDur}`}>时长</div>
-        <div className={`${styles.sbHeadCell} ${styles.sbColDesc}`}>画面描述</div>
-        {showSubjects && (
-          <div className={`${styles.sbHeadCell} ${styles.sbColMat}`}>
-            <span>准备素材</span>
-            {onGenerateAll && (
-              <button
-                type="button"
-                className={styles.sbHeadGen}
-                disabled={batchGenning}
-                onClick={onGenerateAll}
-                title="为所有还没有图的主体批量生成(已上传 / 已生成的会自动跳过,不覆盖)"
-              >
-                <img className={styles.sbHeadGenIcon} src={aiSparkIcon} alt="" width={16} height={16} />
-                {batchGenning ? '生成中…' : 'AI一键生成图片'}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 行 */}
-      <div className={styles.sbBody}>
-        {shots.map((shot, i) => (
-          <div className={styles.sbRow} key={shot.id}>
-            {/* 镜头编号:圆形序号 + 镜头名 + 删除按钮(右上角) */}
-            <div className={`${styles.sbCell} ${styles.sbColNo}`}>
-              <span className={styles.sbNoBadge}>{i + 1}</span>
-              <span className={styles.sbNoLabel}>{shot.no}</span>
-              {onDeleteShot && (
+    <div className={styles.sbWrap}>
+      <div className={styles.sbTable}>
+        {/* 表头(渐变) */}
+        <div className={styles.sbHead}>
+          <div className={`${styles.sbHeadCell} ${styles.sbColNo}`}>镜头编号</div>
+          <div className={`${styles.sbHeadCell} ${styles.sbColDur}`}>时长</div>
+          <div className={`${styles.sbHeadCell} ${styles.sbColDesc}`}>画面描述</div>
+          {showSubjects && (
+            <div className={`${styles.sbHeadCell} ${styles.sbColMat}`}>
+              <span>准备素材</span>
+              {onGenerateAll && (
                 <button
                   type="button"
-                  className={styles.sbRowTrash}
-                  aria-label="删除镜头"
-                  title="删除镜头"
-                  onClick={async (e) => {
-                    e.stopPropagation()
-                    const ok = await requestConfirm(`确认删除「${shot.no || `镜头${i + 1}`}」吗？`, {
-                      title: '删除镜头',
-                      confirmLabel: '删除',
-                      cancelLabel: '取消',
-                      danger: true,
-                    })
-                    if (!ok) return
-                    try {
-                      onDeleteShot(shot.id)
-                      showToast('已删除', 'success')
-                    } catch (err: any) {
-                      showToast(err?.message || '删除失败', 'error')
-                    }
-                  }}
+                  className={styles.sbHeadGen}
+                  disabled={batchGenning}
+                  onClick={onGenerateAll}
+                  title="为所有还没有图的主体批量生成(已上传 / 已生成的会自动跳过,不覆盖)"
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="14"
-                    height="14"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M3 6h18" />
-                    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  </svg>
+                  <img className={styles.sbHeadGenIcon} src={aiSparkIcon} alt="" width={16} height={16} />
+                  {batchGenning ? '生成中…' : 'AI一键生成图片'}
                 </button>
               )}
             </div>
+          )}
+        </div>
 
-            {/* 时长:单击可编辑(青色药丸)，>15s 报错，变更时弹确认 */}
-            <div className={`${styles.sbCell} ${styles.sbColDur}`}>
-              <span className={styles.sbDurPill}>
-                <InlineEdit
-                  className={styles.sbDurInline}
-                  value={String(shot.duration || '').replace(/[^0-9.]/g, '') || '—'}
-                  numeric
-                  placeholder="—"
-                  editable={editable}
-                  trigger="click"
-                  onCommit={async (v) => {
-                    const sec = parseInt(v, 10) || 0
-                    const orig = parseInt(String(shot.duration || '0').replace(/[^0-9]/g, ''), 10) || 0
-                    if (sec < 1) return
-                    if (sec > 15) {
-                      showToast('最长仅支持15秒，请修改秒数', 'error')
-                      return
-                    }
-                    if (sec !== orig) {
-                      const ok = await requestConfirm(`镜头「${shot.no}」时长从 ${orig}s 改为 ${sec}s，确认修改吗？`, {
-                        title: '确认时长',
-                        confirmLabel: '确认修改',
+        {/* 行 */}
+        <div className={styles.sbBody}>
+          {shots.map((shot, i) => (
+            <div className={styles.sbRow} key={shot.id}>
+              {/* 镜头编号:圆形序号 + 镜头名 + 删除按钮(右上角) */}
+              <div className={`${styles.sbCell} ${styles.sbColNo}`}>
+                <span className={styles.sbNoBadge}>{i + 1}</span>
+                <span className={styles.sbNoLabel}>{shot.no}</span>
+                {onDeleteShot && (
+                  <button
+                    type="button"
+                    className={styles.sbRowTrash}
+                    aria-label="删除镜头"
+                    title="删除镜头"
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      const ok = await requestConfirm(`确认删除「${shot.no || `镜头${i + 1}`}」吗？`, {
+                        title: '删除镜头',
+                        confirmLabel: '删除',
                         cancelLabel: '取消',
+                        danger: true,
                       })
                       if (!ok) return
-                    }
-                    patchShot(shot.id, { duration: `${sec}s` })
-                  }}
+                      try {
+                        await onDeleteShot(shot, i)
+                      } catch (err: any) {
+                        showToast(err?.message || '删除失败', 'error')
+                      }
+                    }}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="14"
+                      height="14"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M3 6h18" />
+                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+
+              {/* 时长:单击可编辑(青色药丸)，>15s 报错，变更时弹确认 */}
+              <div className={`${styles.sbCell} ${styles.sbColDur}`}>
+                <span className={styles.sbDurPill}>
+                  <InlineEdit
+                    className={styles.sbDurInline}
+                    value={String(shot.duration || '').replace(/[^0-9.]/g, '') || '—'}
+                    numeric
+                    placeholder="—"
+                    editable={editable}
+                    trigger="click"
+                    onCommit={async (v) => {
+                      const sec = parseInt(v, 10) || 0
+                      const orig = parseInt(String(shot.duration || '0').replace(/[^0-9]/g, ''), 10) || 0
+                      if (sec < 1) return
+                      if (sec > 15) {
+                        showToast('最长仅支持15秒，请修改秒数', 'error')
+                        return
+                      }
+                      if (sec !== orig) {
+                        const ok = await requestConfirm(
+                          `镜头「${shot.no}」时长从 ${orig}s 改为 ${sec}s，确认修改吗？`,
+                          {
+                            title: '确认时长',
+                            confirmLabel: '确认修改',
+                            cancelLabel: '取消',
+                          },
+                        )
+                        if (!ok) return
+                      }
+                      patchShot(shot.id, { duration: `${sec}s` })
+                    }}
+                  />
+                  <span className={styles.sbDurUnit}>s</span>
+                </span>
+              </div>
+
+              {/* 画面描述(可编辑) */}
+              <div className={`${styles.sbCell} ${styles.sbColDesc}`}>
+                <InlineEdit
+                  className={styles.sbDesc}
+                  value={shot.desc || ''}
+                  multiline
+                  placeholder="双击添加画面描述…"
+                  editable={editable}
+                  onCommit={(v) => patchShot(shot.id, { desc: v })}
                 />
-                <span className={styles.sbDurUnit}>s</span>
-              </span>
-            </div>
+              </div>
 
-            {/* 画面描述(可编辑) */}
-            <div className={`${styles.sbCell} ${styles.sbColDesc}`}>
-              <InlineEdit
-                className={styles.sbDesc}
-                value={shot.desc || ''}
-                multiline
-                placeholder="双击添加画面描述…"
-                editable={editable}
-                onCommit={(v) => patchShot(shot.id, { desc: v })}
-              />
-            </div>
-
-            {/* 准备素材(materialMode=图二:@名称 + AI自动生成 + 上传图片) */}
-            {showSubjects && (
-              <div className={`${styles.sbCell} ${styles.sbColMat}`}>
-                <div className={styles.sbcMatList}>
-                  {shot.subjects.map((su, idx) => {
-                    const name = stripAt(su.tag)
-                    const genning = !!subjectGenerating?.[name]
-                    return (
-                      <div className={styles.sbcMatRow} key={`${su.tag}-${idx}`}>
+              {/* 准备素材(materialMode=图二:@名称 + AI自动生成 + 上传图片) */}
+              {showSubjects && (
+                <div className={`${styles.sbCell} ${styles.sbColMat}`}>
+                  <div className={styles.sbcMatList}>
+                    {shot.subjects.map((su, idx) => {
+                      const name = stripAt(su.tag)
+                      const genning = !!subjectGenerating?.[name]
+                      return (
+                        <div className={styles.sbcMatRow} key={`${su.tag}-${idx}`}>
+                          <div className={styles.sbcMatInfo}>
+                            <EllipsisText
+                              className={styles.sbcMatName}
+                              text={`@${name}`}
+                              title={su.kind ? `@${name}（${su.kind}）` : `@${name}`}
+                            />
+                            <button
+                              type="button"
+                              className={styles.sbcMatBadge}
+                              disabled={genning}
+                              title={
+                                onGenerateSubject ? '后台生成该主体(可同时生成多个)' : '打开素材弹窗,在弹窗内生成该素材'
+                              }
+                              onClick={() =>
+                                onGenerateSubject ? onGenerateSubject(name) : onOpenSubject?.(name, true)
+                              }
+                            >
+                              <img className={styles.sbcMatBadgeIcon} src={aiSparkIcon} alt="" width={12} height={12} />
+                              {genning ? '生成中…' : 'AI自动生成'}
+                            </button>
+                          </div>
+                          <span style={{ position: 'relative', display: 'inline-flex' }}>
+                            <button
+                              type="button"
+                              className={styles.sbcMatUpload}
+                              title={su.image ? '查看 / 重新生成该素材' : '点击上传 / 生成该素材'}
+                              onClick={() => onOpenSubject?.(name)}
+                            >
+                              {genning ? (
+                                <span className={styles.sbcMatSpin} aria-hidden="true" />
+                              ) : su.image ? (
+                                <img className={styles.sbcMatUploadImg} src={su.image} alt={name} />
+                              ) : (
+                                <>
+                                  <img src={materialUploadIcon} alt="" width={20} height={20} />
+                                  <span className={styles.sbcMatUploadText}>上传图片</span>
+                                </>
+                              )}
+                            </button>
+                            {su.image && !genning && onRemoveSubject && (
+                              <button
+                                type="button"
+                                className={styles.sbcMatImgX}
+                                title="去掉这张图"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onRemoveSubject(name)
+                                }}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                      )
+                    })}
+                    {/* 该镜头无主体素材:加占位主体并 AI 自动生成(用户上传已下线) */}
+                    {shot.subjects.length === 0 && onGenerateMaterial && (
+                      <div className={styles.sbcMatRow}>
                         <div className={styles.sbcMatInfo}>
                           <EllipsisText
                             className={styles.sbcMatName}
-                            text={`@${name}`}
-                            title={su.kind ? `@${name}（${su.kind}）` : `@${name}`}
+                            text="@待补充"
+                            title="该镜头脚本未拆出主体,可补充素材"
                           />
                           <button
                             type="button"
                             className={styles.sbcMatBadge}
-                            disabled={genning}
-                            title={
-                              onGenerateSubject ? '后台生成该主体(可同时生成多个)' : '打开素材弹窗,在弹窗内生成该素材'
-                            }
-                            onClick={() => (onGenerateSubject ? onGenerateSubject(name) : onOpenSubject?.(name, true))}
+                            title="为该镜头加一个素材并自动生成"
+                            onClick={() => onGenerateMaterial(shot)}
                           >
                             <img className={styles.sbcMatBadgeIcon} src={aiSparkIcon} alt="" width={12} height={12} />
-                            {genning ? '生成中…' : 'AI自动生成'}
+                            AI自动生成
                           </button>
                         </div>
-                        <span style={{ position: 'relative', display: 'inline-flex' }}>
-                          <button
-                            type="button"
-                            className={styles.sbcMatUpload}
-                            title={su.image ? '查看 / 重新生成该素材' : '点击上传 / 生成该素材'}
-                            onClick={() => onOpenSubject?.(name)}
-                          >
-                            {genning ? (
-                              <span className={styles.sbcMatSpin} aria-hidden="true" />
-                            ) : su.image ? (
-                              <img className={styles.sbcMatUploadImg} src={su.image} alt={name} />
-                            ) : (
-                              <>
-                                <img src={materialUploadIcon} alt="" width={20} height={20} />
-                                <span className={styles.sbcMatUploadText}>上传图片</span>
-                              </>
-                            )}
-                          </button>
-                          {su.image && !genning && onRemoveSubject && (
-                            <button
-                              type="button"
-                              className={styles.sbcMatImgX}
-                              title="去掉这张图"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                onRemoveSubject(name)
-                              }}
-                            >
-                              ×
-                            </button>
-                          )}
-                        </span>
-                      </div>
-                    )
-                  })}
-                  {/* 该镜头无主体素材:加占位主体并 AI 自动生成(用户上传已下线) */}
-                  {shot.subjects.length === 0 && onGenerateMaterial && (
-                    <div className={styles.sbcMatRow}>
-                      <div className={styles.sbcMatInfo}>
-                        <EllipsisText
-                          className={styles.sbcMatName}
-                          text="@待补充"
-                          title="该镜头脚本未拆出主体,可补充素材"
-                        />
                         <button
                           type="button"
-                          className={styles.sbcMatBadge}
-                          title="为该镜头加一个素材并自动生成"
+                          className={styles.sbcMatUpload}
+                          title="点击 AI 生成该素材"
                           onClick={() => onGenerateMaterial(shot)}
                         >
-                          <img className={styles.sbcMatBadgeIcon} src={aiSparkIcon} alt="" width={12} height={12} />
-                          AI自动生成
+                          <img src={aiSparkIcon} alt="" width={20} height={20} />
+                          <span className={styles.sbcMatUploadText}>AI生成</span>
                         </button>
                       </div>
-                      <button
-                        type="button"
-                        className={styles.sbcMatUpload}
-                        title="点击 AI 生成该素材"
-                        onClick={() => onGenerateMaterial(shot)}
-                      >
-                        <img src={aiSparkIcon} alt="" width={20} height={20} />
-                        <span className={styles.sbcMatUploadText}>AI生成</span>
-                      </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+              )}
+            </div>
+          ))}
+        </div>
 
-      {/* 表尾:分镜脚本阶段(传 onRegenerate)显示「重新生成」,其余阶段显示「共 N 个镜头」 */}
-      <div className={styles.sbFoot}>
-        {onRegenerate ? (
-          <button
-            type="button"
-            className={styles.sbRegen}
-            disabled={regenerating}
-            onClick={onRegenerate}
-            title="按当前需求重新生成分镜脚本"
-          >
-            <img src={regenerateIcon} alt="" width={16} height={16} />
-            {regenerating ? '生成中…' : '重新生成'}
-          </button>
-        ) : (
-          `共 ${shots.length} 个镜头`
-        )}
+        {/* 表尾:分镜脚本阶段(传 onRegenerate)显示「重新生成」,其余阶段显示「共 N 个镜头」 */}
+        <div className={styles.sbFoot}>
+          {onRegenerate ? (
+            <button
+              type="button"
+              className={styles.sbRegen}
+              disabled={regenerating}
+              onClick={onRegenerate}
+              title="按当前需求重新生成分镜脚本"
+            >
+              <img src={regenerateIcon} alt="" width={16} height={16} />
+              {regenerating ? '生成中…' : '重新生成'}
+            </button>
+          ) : (
+            `共 ${shots.length} 个镜头`
+          )}
+        </div>
       </div>
+      <ShotTrashBin
+        items={trashItems}
+        loading={trashLoading}
+        onLoad={onLoadTrash}
+        onRestore={onRestoreTrash}
+        onDelete={onDeleteTrash}
+        onRestoreAll={onRestoreAllTrash}
+        onClearAll={onClearTrash}
+        buttonClassName={styles.trashFabDock}
+        dragStorageKey={showSubjects ? 'smart-material-trash-fab' : 'smart-script-trash-fab'}
+        dragBoundarySelector=".smart__body"
+      />
     </div>
   )
 }

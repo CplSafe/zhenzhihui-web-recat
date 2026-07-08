@@ -50,6 +50,27 @@
   width: min(1180px, 94%);
 }
 
+.hotcopy__newVideoBtn {
+  position: absolute;
+  top: 30px;
+  right: 15px;
+  z-index: 2;
+  padding: 6px 4px;
+  border: none;
+  background: transparent;
+  color: #333;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.0625em;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.hotcopy__newVideoBtn:hover {
+  color: #1fcfa9;
+}
+
 /* 分段 Tab(对齐智能成片 .tabs):灰底条在卡片下层,bottom:-20px 把底部塞进主卡,
    卡片(z-index:1)盖住灰条底部 → 无缝「文件夹页签」;选中态为白色圆角卡 */
 .hotcopy__tabs {
@@ -477,29 +498,69 @@
 .hotcopy__regen:hover {
   color: #1fcfa9;
 }
-/* 发送按钮:改为与智能成片同款圆底 + 白色箭头。 */
+/* 主按钮:与智能成片同款绿色胶囊 + 白色文字箭头。 */
 .hotcopy__send {
   flex: 0 0 auto;
+  min-width: 40px;
+  height: 40px;
+  border-radius: 999px;
   border: none;
-  background: none;
-  padding: 0;
+  padding: 0 16px;
+  background: #1fcfa9;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   cursor: pointer;
-  transition: filter 0.15s;
+  transition:
+    background 0.15s,
+    filter 0.15s;
 }
 .hotcopy__send:hover {
   filter: brightness(1.05);
 }
 .hotcopy__send--resume {
+  min-width: 40px;
   width: 40px;
-  height: 40px;
+  padding: 0;
   border-radius: 50%;
-  background: #1fcfa9;
+  background: transparent;
+  gap: 0;
+}
+.hotcopy__send--plain {
+  min-width: auto;
+  width: auto;
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: 0;
+  transition: color 0.15s;
+}
+.hotcopy__send--plain:hover {
+  filter: none;
+  color: #1fcfa9;
 }
 .hotcopy__send.is-disabled {
-  cursor: pointer;
+  background: #d9d9d9;
+  cursor: not-allowed;
+}
+.hotcopy__send--plain.is-disabled {
+  background: transparent;
+  opacity: 0.45;
+}
+
+.hotcopy__sendText {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+.hotcopy__sendPlainText {
+  color: inherit;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 /* 生成中 / 成片结果 */

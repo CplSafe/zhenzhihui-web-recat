@@ -2224,6 +2224,88 @@ export function deleteCreativeProject({ projectId, workspaceId }: any = {}) {
   })
 }
 
+export function listCreativeTrash({ workspaceId, projectId, offset = 0, limit = 100 }: any = {}) {
+  const params = new URLSearchParams()
+  const wsId = Number(workspaceId || 0)
+  const pid = Number(projectId || 0)
+  const off = Number(offset || 0)
+  const lim = Number(limit || 0)
+  if (Number.isFinite(wsId) && wsId > 0) params.set('workspace_id', String(Math.floor(wsId)))
+  if (Number.isFinite(pid) && pid > 0) params.set('project_id', String(Math.floor(pid)))
+  if (Number.isFinite(off) && off >= 0) params.set('offset', String(Math.floor(off)))
+  if (Number.isFinite(lim) && lim > 0) params.set('limit', String(Math.floor(lim)))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return requestJson(`/api/v1/creative/trash${suffix}`)
+}
+
+export function createCreativeTrash(payload: any = {}) {
+  const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+  const wsId = Number(body.workspaceId || body.workspace_id || 0)
+  if (!Number.isFinite(wsId) || wsId <= 0) {
+    throw new BusinessApiError('workspace_id 缺失')
+  }
+  const pid = Number(body.projectId || body.project_id || 0)
+  const params = new URLSearchParams()
+  params.set('workspace_id', String(Math.floor(wsId)))
+  if (Number.isFinite(pid) && pid > 0) {
+    params.set('project_id', String(Math.floor(pid)))
+    params.set('creative_project_id', String(Math.floor(pid)))
+  }
+  const { workspaceId, workspace_id, projectId, project_id, creativeProjectId, creative_project_id, ...restBody } = body
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  const normalizedBody = {
+    ...restBody,
+    workspace_id: Math.floor(wsId),
+    ...(Number.isFinite(pid) && pid > 0
+      ? {
+          project_id: Math.floor(pid),
+          creative_project_id: Math.floor(pid),
+        }
+      : {}),
+  }
+  return requestJson(`/api/v1/creative/trash${suffix}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(normalizedBody),
+  })
+}
+
+export function getCreativeTrashItem({ id, trashId, workspaceId }: any = {}) {
+  const resolvedId = Number(id || trashId || 0)
+  if (!Number.isFinite(resolvedId) || resolvedId <= 0) {
+    throw new BusinessApiError('垃圾桶条目 ID 无效')
+  }
+  const wsId = Number(workspaceId || 0)
+  const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${Math.floor(wsId)}` : ''
+  return requestJson(`/api/v1/creative/trash/${Math.floor(resolvedId)}${query}`)
+}
+
+export function deleteCreativeTrashItem({ id, trashId, workspaceId }: any = {}) {
+  const resolvedId = Number(id || trashId || 0)
+  if (!Number.isFinite(resolvedId) || resolvedId <= 0) {
+    throw new BusinessApiError('垃圾桶条目 ID 无效')
+  }
+  const wsId = Number(workspaceId || 0)
+  const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${Math.floor(wsId)}` : ''
+  return requestJson(`/api/v1/creative/trash/${Math.floor(resolvedId)}${query}`, {
+    method: 'DELETE',
+  })
+}
+
+export function restoreCreativeTrashItem({ id, trashId, workspaceId }: any = {}) {
+  const resolvedId = Number(id || trashId || 0)
+  if (!Number.isFinite(resolvedId) || resolvedId <= 0) {
+    throw new BusinessApiError('垃圾桶条目 ID 无效')
+  }
+  const wsId = Number(workspaceId || 0)
+  const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${Math.floor(wsId)}` : ''
+  return requestJson(`/api/v1/creative/trash/${Math.floor(resolvedId)}/restore${query}`, {
+    method: 'POST',
+  })
+}
+
 export function extractTaskText(task) {
   const raw = normalizeResultJson(task?.result_json)
 

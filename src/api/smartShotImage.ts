@@ -7,6 +7,8 @@
 import {
   createAiTask,
   waitForAiTask,
+  cancelAiTask,
+  isAbortedTaskError,
   uploadAssetFile,
   extractTaskMediaUrls,
   getAssetDownloadUrl,
@@ -138,6 +140,10 @@ export async function generateShotImage(args: {
   ratio?: string
   /** 最低分辨率出图(素材元素用,省时省额度) */
   lowRes?: boolean
+  /** 前端中断当前等待链路 */
+  signal?: AbortSignal
+  /** 任务一创建就抛出 taskId,供上层在需要时主动 cancel */
+  onTask?: (taskId: number) => void
 }): Promise<{ url: string; assetId: number }> {
   const refs = (args.refAssetIds || []).filter((n) => Number(n) > 0)
   const runShotTask = async (
@@ -154,8 +160,38 @@ export async function generateShotImage(args: {
       inputAssets: inputAssetIds.map((id) => ({ asset_id: id, role: 'reference_image' })),
       params: (model: any) => buildImageParams(model, args.ratio, args.lowRes),
     })
+    const taskId = Number((task as any)?.id || 0) || 0
+    if (taskId) args.onTask?.(taskId)
+    if (args.signal?.aborted) {
+      if (taskId) {
+        try {
+          await cancelAiTask({ workspaceId: args.workspaceId, taskId })
+        } catch {
+          /* ignore */
+        }
+      }
+      throw new Error('分镜图生成已取消')
+    }
     // 分镜图生成放宽轮询超时(默认 120s 偏短)
-    const completed = await waitForAiTask({ workspaceId: args.workspaceId, task, timeoutMs: 30 * 60 * 1000 })
+    let completed
+    try {
+      completed = await waitForAiTask({
+        workspaceId: args.workspaceId,
+        task,
+        timeoutMs: 30 * 60 * 1000,
+        signal: args.signal,
+      })
+    } catch (e: any) {
+      if (taskId && (isAbortedTaskError(e) || args.signal?.aborted)) {
+        try {
+          await cancelAiTask({ workspaceId: args.workspaceId, taskId })
+        } catch {
+          /* ignore */
+        }
+        throw new Error('分镜图生成已取消')
+      }
+      throw e
+    }
     // 取 asset_id:outputs 优先;没有则按 task_id 反查(否则刷新水合换不了URL → 破图)
     let assetId = outputAssetId(completed)
     if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id)
