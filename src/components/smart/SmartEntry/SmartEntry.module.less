@@ -488,23 +488,27 @@
 }
 
 .sendPlain {
-  min-width: auto;
+  min-width: 130px;
   width: auto;
-  height: auto;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  gap: 0;
-  transition: color 0.15s;
+  height: 40px;
+  padding: 0 24px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #38dbb7 0%, #1cbd9c 100%);
+  color: #fff;
+  gap: 4px;
+  transition:
+    filter 0.18s,
+    background 0.18s,
+    opacity 0.18s;
 
   &:hover:not(:disabled) {
-    filter: none;
-    color: #1fcfa9;
+    filter: brightness(1.04);
   }
 
   &:disabled {
-    background: transparent;
-    opacity: 0.45;
+    background: #d9d9d9;
+    color: #fff;
+    opacity: 1;
   }
 }
 
@@ -517,9 +521,9 @@
 
 .sendPlainText {
   color: inherit;
-  font-size: 16px;
-  font-weight: 400;
-  line-height: 1.5;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
 }
 
 @media (max-width: 560px) {

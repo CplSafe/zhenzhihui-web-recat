@@ -95,6 +95,8 @@ interface VideoStageProps {
   regenCount?: number
   regenCountOptions?: number[]
   onRegenCountChange?: (n: number) => void
+  /** 父级显式要求把视图切到最新一条生成中的历史占位 */
+  pendingFocusToken?: number
   /** 调试:实际喂给视频模型的提示词/参考图/各分镜文本(开发可见,正式隐藏) */
   debug?: {
     prompt: string
@@ -145,6 +147,7 @@ export default function VideoStage({
   regenCount,
   regenCountOptions,
   onRegenCountChange,
+  pendingFocusToken = 0,
   debug,
 }: VideoStageProps) {
   const { showToast } = useToast()
@@ -167,6 +170,7 @@ export default function VideoStage({
   const [showBlurDebug, setShowBlurDebug] = useState(false)
   const [selectedPendingId, setSelectedPendingId] = useState<string>('')
   const [selectedHistoryVersionId, setSelectedHistoryVersionId] = useState('')
+  const [pendingFocusArmed, setPendingFocusArmed] = useState(false)
   const debugEnabled = import.meta.env.DEV // 正式版自动隐藏
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -186,6 +190,20 @@ export default function VideoStage({
     window.addEventListener('pointerdown', onPointerDown, true)
     return () => window.removeEventListener('pointerdown', onPointerDown, true)
   }, [regenSplitOpen])
+  useEffect(() => {
+    if (!pendingFocusToken) return
+    setPendingFocusArmed(true)
+  }, [pendingFocusToken])
+  useEffect(() => {
+    if (!pendingFocusArmed || !pendingGenerations.length) return
+    const running = pendingGenerations.find((g) => g.running)
+    const newest = [...pendingGenerations].sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0)).pop()
+    const candidate = running || newest || pendingGenerations[0]
+    if (!candidate) return
+    setSelectedHistoryVersionId('')
+    setSelectedPendingId(candidate.id)
+    setPendingFocusArmed(false)
+  }, [pendingFocusArmed, pendingGenerations])
 
   // 时长:优先视频真实时长;未知时回退分镜时长之和
   const shotsTotal = useMemo(
@@ -439,7 +457,10 @@ export default function VideoStage({
   const hasPlayableVideo = !!videoUrl && !showingPendingGeneration
   const showTimeline = hasPlayableVideo
   const hasSelectedHistoryVideo = hasExplicitHistorySelection
+  const isHotCopyMode = shots.length === 0
   const lockSingleActions = showingPendingGeneration
+  const lockRegenerateAction = lockSingleActions || (isHotCopyMode && videoGenerating)
+  const inlinePrevWithActions = !!onPrev && shots.length === 0
   const canChooseMultiRegen =
     !!onGenerateMultipleVideos &&
     !!onRegenCountChange &&
@@ -449,12 +470,16 @@ export default function VideoStage({
   const triggerSingleRegenerate = () => {
     const note = buildNote()
     setPendingNote(hasMods ? note || '' : '')
+    setSelectedHistoryVersionId('')
+    setPendingFocusArmed(true)
     onRegenerateVideo(note, { edit: hasMods })
   }
   const triggerMultiGenerate = () => {
     if (!onGenerateMultipleVideos) return
     const note = buildNote()
     setPendingNote(hasMods ? note || '' : '')
+    setSelectedHistoryVersionId('')
+    setPendingFocusArmed(true)
     onGenerateMultipleVideos(note, { edit: hasMods }, regenCount ?? 1)
   }
 
@@ -716,8 +741,10 @@ export default function VideoStage({
         })()}
 
       {/* 底部总按钮:上一步 / 下载视频 / 重新生成视频|确认修改(复用镜头编排底栏 smart__btn 药丸样式,整组居中) */}
-      <div className={`${styles.vstageActions}${!onPrev ? ` ${styles.vstageActionsNoPrev}` : ''}`}>
-        {onPrev && (
+      <div
+        className={`${styles.vstageActions}${!onPrev || inlinePrevWithActions ? ` ${styles.vstageActionsNoPrev}` : ''}`}
+      >
+        {onPrev && !inlinePrevWithActions && (
           <button type="button" className="smart__nav-btn" onClick={onPrev} aria-label="上一步" data-tip="上一步">
             <svg width="26" height="21" viewBox="0 0 29 23" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path
@@ -728,6 +755,16 @@ export default function VideoStage({
           </button>
         )}
         <div className={styles.vstageActionButtons}>
+          {inlinePrevWithActions && (
+            <button type="button" className="smart__nav-btn" onClick={onPrev} aria-label="上一步" data-tip="上一步">
+              <svg width="26" height="21" viewBox="0 0 29 23" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M27.8881 22.0104L28.1187 21.8116C28.3625 21.6053 28.5088 21.4777 27.5336 17.4193C25.8513 10.3938 19.1616 5.85705 11.6728 5.18001V0L0 9.06596L11.6728 18.1319V12.95C16.5247 12.5824 20.7876 13.0063 23.6458 16.0708C25.0542 17.588 26.7515 20.585 27.1585 21.4684C27.2166 21.594 27.3217 21.8247 27.5786 21.911L27.8881 22.0104Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+          )}
           {onDownloadVideo && (
             <button
               type="button"
@@ -742,7 +779,7 @@ export default function VideoStage({
             type="button"
             className="smart__btn smart__btn--primary"
             onClick={triggerSingleRegenerate}
-            disabled={lockSingleActions}
+            disabled={lockRegenerateAction}
           >
             {showingPendingGeneration ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
           </button>
