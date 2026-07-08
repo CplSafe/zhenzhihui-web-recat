@@ -22,6 +22,8 @@ interface ShotListProps {
   onSelect: (id: string | number) => void
   /** 正在生成分镜图/视频的镜头(键为 shot.id),显示转圈 */
   generating?: Record<string | number, boolean>
+  /** 整页分镜图正在批量生成中 */
+  globalGenerating?: boolean
   onShotsChange: (shots: Shot[]) => void
   /** 卡右下角状态角标(如视频生成页:待生成/已生成) */
   badgeOf?: (shot: Shot) => string
@@ -71,6 +73,7 @@ interface SortableCardProps {
   total: number
   selectedId: string | number | null
   generating: Record<string | number, boolean>
+  globalGenerating: boolean
   badgeOf?: (shot: Shot) => string
   locked?: boolean
   dragEnabled: boolean
@@ -99,6 +102,7 @@ function SortableCard({
   total,
   selectedId,
   generating,
+  globalGenerating,
   badgeOf,
   locked,
   dragEnabled,
@@ -127,6 +131,7 @@ function SortableCard({
   // 只用「分镜图」做缩略图;没有则显示等待态(不退回素材图,避免误以为已生成)
   const thumb = s.image
   const included = includeOf ? includeOf(s) : true
+  const pending = !!generating[s.id] || (!!globalGenerating && !thumb)
 
   return (
     <div
@@ -145,7 +150,7 @@ function SortableCard({
         <span className={styles.dur}>{formatDur(s.duration)}</span>
         {badgeOf && <span className={styles.badge}>{badgeOf(s)}</span>}
         {/* 删除该分镜(垃圾桶):镜头编号右上角,hover 显示 */}
-        {!locked && !generating[s.id] && !['betweenMetaAndThumb', 'thumbOverlay'].includes(deleteButtonPlacement) && (
+        {!locked && !pending && !['betweenMetaAndThumb', 'thumbOverlay'].includes(deleteButtonPlacement) && (
           <button
             type="button"
             className={`${styles.metaTrash}${deleteButtonPlacement === 'cardTopRight' ? ' ' + styles.metaTrashCardTopRight : ''}`}
@@ -175,7 +180,7 @@ function SortableCard({
         )}
       </div>
 
-      {!locked && !generating[s.id] && deleteButtonPlacement === 'betweenMetaAndThumb' && (
+      {!locked && !pending && deleteButtonPlacement === 'betweenMetaAndThumb' && (
         <button
           type="button"
           className={`${styles.metaTrash} ${styles.metaTrashBetween}`}
@@ -231,7 +236,7 @@ function SortableCard({
               <AiBadge />
             </>
           ) : (
-            <span className={styles.thumbPh}>{generating[s.id] ? '生成中…' : '待生成'}</span>
+            <span className={styles.thumbPh}>{pending ? '生成中…' : '待生成'}</span>
           )}
           {locked && includeOf && onToggleInclude && (
             <label
@@ -242,7 +247,7 @@ function SortableCard({
               <input type="checkbox" checked={included} onChange={() => onToggleInclude(s.id)} />
             </label>
           )}
-          {generating[s.id] && (
+          {pending && (
             <div className={styles.gen}>
               <span className={styles.genSpin} aria-hidden="true" />
             </div>
@@ -250,7 +255,7 @@ function SortableCard({
         </div>
 
         {/* 缩略图上的快捷动作:仅 hover 显示 编辑 + 删除 */}
-        {!locked && !generating[s.id] && (
+        {!locked && !pending && (
           <div className={styles.thumbActions} onPointerDown={(e) => e.stopPropagation()}>
             {/* 编辑该分镜:走编辑弹框(描述 + 上传素材 → 仅更新本分镜) */}
             <button
@@ -392,6 +397,7 @@ export default function ShotList({
   selectedId,
   onSelect,
   generating = {},
+  globalGenerating = false,
   onShotsChange,
   badgeOf,
   locked,
@@ -478,6 +484,7 @@ export default function ShotList({
                 total={shots.length}
                 selectedId={selectedId}
                 generating={generating}
+                globalGenerating={globalGenerating}
                 badgeOf={badgeOf}
                 locked={locked}
                 dragEnabled={dragEnabled}

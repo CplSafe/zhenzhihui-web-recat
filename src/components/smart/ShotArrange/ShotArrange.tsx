@@ -17,6 +17,8 @@ interface ShotArrangeProps {
   shots: Shot[]
   /** 正在生成分镜图的镜头(键为 shot.id) */
   generating?: Record<string | number, boolean>
+  /** 整页分镜图正在批量生成中 */
+  generatingAll?: boolean
   onShotsChange: (shots: Shot[]) => void
   /** 分镜缩略图加载失败/成功回调(用于「图未加载成功不能生成视频」) */
   onShotImgError?: (id: string | number) => void
@@ -53,6 +55,7 @@ const blankShot = (): Shot => ({ id: newShotId(), no: '镜头', duration: '5s', 
 export default function ShotArrange({
   shots,
   generating = {},
+  generatingAll = false,
   onShotsChange,
   onShotImgError,
   onShotImgLoad,
@@ -130,6 +133,7 @@ export default function ShotArrange({
         selectedId={selectedId}
         onSelect={setSelectedId}
         generating={generating}
+        globalGenerating={generatingAll}
         onShotsChange={onShotsChange}
         onEditShot={openEditShot}
         onInsertShot={openInsertShot}
@@ -143,7 +147,7 @@ export default function ShotArrange({
       {selected ? (
         <ShotEditPanel
           shot={selected}
-          regenerating={!!generating[selected.id]}
+          regenerating={!!generating[selected.id] || (!!generatingAll && !selected.image)}
           onPatch={patchSel}
           onPolishText={onPolishText}
         />
