@@ -111,6 +111,8 @@ interface VideoStageProps {
   }
 }
 
+type PendingGenerationItem = { id: string; createdAt?: number; running?: boolean }
+
 const parseDur = (d: string): number => {
   const n = parseFloat(String(d || '').replace(/[^0-9.]/g, ''))
   return Number.isFinite(n) && n > 0 ? n : 5
@@ -205,10 +207,11 @@ export default function VideoStage({
     [frameCount, total, frameThumbs],
   )
   const displayPendingGenerations = useMemo(() => {
-    const base = pendingGenerations.length
+    const base: PendingGenerationItem[] = pendingGenerations.length
       ? pendingGenerations
       : Array.from({ length: Math.max(0, pendingVideoCount) }).map((_, i) => ({
           id: `pending-${i}`,
+          createdAt: 0,
           running: false,
         }))
     const sorted = [...base].sort((a, b) => {
