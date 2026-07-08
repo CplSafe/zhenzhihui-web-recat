@@ -12,9 +12,16 @@ let draftUserScope = ''
 export function setSmartDraftUserScope(id: any) {
   draftUserScope = String(id || '')
 }
-const keyOf = () => `${KEY}_u${draftUserScope || 'anon'}`
+let draftWorkspaceScope = 0
+export function setSmartDraftWorkspaceScope(id: any) {
+  draftWorkspaceScope = Number(id || 0) || 0
+}
+const legacyKeyOf = () => `${KEY}_u${draftUserScope || 'anon'}`
+const keyOf = (workspaceId?: number) =>
+  `${KEY}_u${draftUserScope || 'anon'}_ws${Math.floor(Number(workspaceId ?? draftWorkspaceScope) || 0)}`
 
 export interface SmartDraft {
+  workspaceId?: number
   started?: boolean
   requirement?: string
   reqSummary?: string
@@ -40,7 +47,14 @@ export interface SmartDraft {
   videoVersions?: { url: string; assetId: number }[]
   /** 每次「重新生成」的独立记录:生成中 / 失败(成功的成片仍进 videoVersions)。
    *  让项目下能看到每次生成是一条草稿:processing=生成中、failed=失败(可重试)、published=已并入成片。 */
-  videoGenerations?: { id: string; status: string; taskId?: number; note?: string; createdAt?: number }[]
+  videoGenerations?: {
+    id: string
+    status: string
+    taskId?: number
+    note?: string
+    error?: string
+    createdAt?: number
+  }[]
   /** 人脸脱敏开关(默认开;关闭后出片用原图,成片人脸清晰) */
   faceBlurEnabled?: boolean
   /** 营销思路拆解(选中 SKILL 时多出的第 1 步):是否停留在该步 + 生成的建议正文 + 结构化数据 */
@@ -149,22 +163,25 @@ function sanitize(d: SmartDraft): SmartDraft {
   return next
 }
 
-export function loadSmartDraft(): SmartDraft | null {
+export function loadSmartDraft(workspaceId?: number): SmartDraft | null {
   try {
-    const s = localStorage.getItem(keyOf())
-    if (!s) return null
-    return sanitize(JSON.parse(s))
+    const scoped = localStorage.getItem(keyOf(workspaceId))
+    if (scoped) return sanitize(JSON.parse(scoped))
+    const legacy = localStorage.getItem(legacyKeyOf())
+    if (!legacy) return null
+    return sanitize(JSON.parse(legacy))
   } catch {
     return null
   }
 }
 
-export function saveSmartDraft(state: SmartDraft) {
+export function saveSmartDraft(state: SmartDraft, workspaceId?: number) {
   // 与 2.0 一致:草稿不存 data:/blob:(体积大且会撑爆 localStorage 配额导致整盘清空);
   // 只存可持久的 http 图 + asset_id,刷新后按 asset_id 重换签名URL(见 SmartCreateView hydrate)。
-  const lean = { ...stripHeavy(state), savedAt: Date.now() }
+  const ws = Number(workspaceId ?? draftWorkspaceScope) || 0
+  const lean = { ...stripHeavy(state), workspaceId: ws, savedAt: Date.now() }
   try {
-    localStorage.setItem(keyOf(), JSON.stringify(lean))
+    localStorage.setItem(keyOf(ws), JSON.stringify(lean))
   } catch {
     // 仍超限(极端):退化为只存文本结构
     try {
@@ -179,16 +196,17 @@ export function saveSmartDraft(state: SmartDraft) {
         })),
         subjectAssets: {},
       }
-      localStorage.setItem(keyOf(), JSON.stringify(light))
+      localStorage.setItem(keyOf(ws), JSON.stringify(light))
     } catch {
       /* 放弃 */
     }
   }
 }
 
-export function clearSmartDraft() {
+export function clearSmartDraft(workspaceId?: number) {
   try {
-    localStorage.removeItem(keyOf())
+    localStorage.removeItem(keyOf(workspaceId))
+    localStorage.removeItem(legacyKeyOf())
   } catch {
     /* ignore */
   }

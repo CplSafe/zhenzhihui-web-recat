@@ -5,6 +5,7 @@
   (个人中心 / 修改密码 / 退出登录 已移至侧栏「设置」菜单,见 SettingsMenu。)
 */
 import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Tooltip } from 'antd'
 import {
   useAllWorkspaces,
@@ -76,6 +77,8 @@ interface PersonalPanelProps {
 }
 
 export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps) {
+  const navigate = useNavigate()
+  const location = useLocation()
   const user = useCurrentUser()
   const member = useCurrentMember()
   const currentWs = useCurrentWorkspace()
@@ -163,7 +166,21 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
       showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
       return
     }
-    if (id && Number(id) !== Number(activeId)) switchWorkspace(id)
+    if (id && Number(id) !== Number(activeId)) {
+      const pathname = String(location.pathname || '')
+      // 打开的智能成片项目在 /smart/:id:切空间时【保留项目】——项目靠自身钉住的所属空间继续保存/计费,
+      // 不再导航重置。空白 /smart 入口、以及爆款复制 /hot-copy 仍走原来的重置逻辑。
+      const inSmartProject = /^\/smart\/[^/]+/.test(pathname)
+      const inSmartBlank = pathname === '/smart'
+      const inHotCopy = pathname === '/hot-copy' || pathname.startsWith('/hot-copy/')
+      if (!inSmartProject && (inSmartBlank || inHotCopy)) {
+        navigate(inHotCopy ? '/hot-copy' : '/smart', {
+          replace: true,
+          state: { workspaceSwitchReset: true, workspaceSwitchNonce: Date.now() },
+        })
+      }
+      switchWorkspace(id)
+    }
     onClose?.()
   }
 

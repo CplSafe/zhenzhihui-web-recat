@@ -66,28 +66,30 @@ function buildDurationPromptLines(totalSec: number): string[] {
       '视频总时长 15 秒(硬性要求)。',
       '时长分配规则:开头镜头固定 3 秒,结尾镜头固定 3 秒,中间部分合计固定 9 秒。',
       '中间部分的脚本内容、分镜个数和每镜时长按叙事需要分配,不做固定模板;但所有中间镜头 duration 相加必须等于 9 秒。',
-      '请至少生成 3 个镜头,并确保所有镜头 duration 相加严格等于 15 秒,绝对不能超过。',
+      '请至少生成 3 个镜头,总镜头数尽量控制在 3~5 个之间,不要切得过碎,避免出现多个 1s 镜头。',
     ]
   }
   if (totalSec === 10) {
     return [
       '视频总时长 10 秒(硬性要求)。',
       '时长分配规则固定为 3 秒-4 秒-3 秒。',
-      '请优先输出 3 个镜头,且 duration 必须依次为 3s、4s、3s,不要改成其他分配方式。',
+      '请优先输出 3 个镜头,且 duration 必须依次为 3s、4s、3s;如确需更多镜头,总镜头数最多 4 个,避免出现多个 1s。',
     ]
   }
   if (totalSec === 5) {
     return [
       '视频总时长 5 秒(硬性要求)。',
       '时长按脚本内容需要自由分配,不做固定模板;但所有镜头 duration 相加必须严格等于 5 秒,绝对不能超过。',
+      '总镜头数尽量控制在 1~2 个之间,不要切得过碎,避免出现多个 1s。',
     ]
   }
-  // 向下取整(每镜约 5 秒),避免镜头数偏多导致各镜时长之和超过总时长
-  const approxShots = Math.max(1, Math.floor(totalSec / 5))
-  const perShot = Math.max(3, Math.round(totalSec / approxShots))
+  // 通用兜底:限制镜头数别太碎，避免大量 1s。
+  const approxShots = Math.max(1, Math.floor(totalSec / 4))
+  const perShot = Math.max(2, Math.round(totalSec / approxShots))
   return [
-    `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒(不少于 3 秒),` +
+    `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒,` +
       `所有镜头 duration 相加必须严格等于 ${totalSec} 秒,绝对不能超过;不要切得过碎。`,
+    '除非叙事表达确有必要，否则避免出现多个 1s 镜头，尤其不要连续出现多个 1s。',
   ]
 }
 
@@ -124,6 +126,25 @@ function distributeEvenly(totalSec: number, count: number): number[] {
   return Array.from({ length: count }, (_v, index) => base + (index < remainder ? 1 : 0))
 }
 
+function reduceMultipleOneSeconds(values: number[], totalSec: number): number[] {
+  if (!Array.isArray(values) || !values.length) return values
+  const next = values.map((value) => Math.max(1, Math.round(value || 0)))
+  if (next.length === 1) return [Math.max(1, totalSec)]
+  // 若总时长本身不足以支撑“至多一个 1s”，则只能接受多 1s。
+  if (totalSec < next.length * 2 - 1) return next
+
+  let oneIndexes = next.map((value, index) => (value <= 1 ? index : -1)).filter((index) => index >= 0)
+  while (oneIndexes.length > 1) {
+    const target = oneIndexes[0]
+    const donor = next.findIndex((value, index) => index !== target && value > 2)
+    if (donor < 0) break
+    next[target] += 1
+    next[donor] -= 1
+    oneIndexes = next.map((value, index) => (value <= 1 ? index : -1)).filter((index) => index >= 0)
+  }
+  return next
+}
+
 function scaleDurationsToTotal(values: number[], totalSec: number): number[] {
   if (!Array.isArray(values) || !values.length || !(totalSec > 0) || totalSec < values.length) return []
   const normalized = values.map((value) => (value > 0 ? Math.round(value) : 1))
@@ -151,7 +172,7 @@ function scaleDurationsToTotal(values: number[], totalSec: number): number[] {
     if (!changed) return distributeEvenly(totalSec, values.length)
   }
 
-  return scaled
+  return reduceMultipleOneSeconds(scaled, totalSec)
 }
 
 function applyDurationPattern(totalSec: number, secs: number[]): number[] {
@@ -390,7 +411,7 @@ export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
   // 用原始 objectURL(args.images)做展示映射(顺序与送模型/上传的一致)
   const shots = parseShots(text, images)
   if (!shots.length) throw new Error('未能解析分镜脚本,请重试')
-  // 强制各镜时长之和 = 用户要求的总时长(模型常超时)
+  // 保留 15s/10s/5s 的前端时长约束，但尽量避免被归一化压成多个 1s。
   return normalizeDurations(shots, parseInt(String(args.duration || '10'), 10) || 10)
 }
 
@@ -427,7 +448,7 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
   const finalShots = parseShots(finalText, images)
   const result = finalShots.length >= lastCount ? finalShots : mapShots(salvageObjects(finalText), images)
   if (!result.length) throw new Error('未能解析分镜脚本,请重试')
-  // 强制各镜时长之和 = 用户要求的总时长(模型常超时);流式中间态不归一,只在最终结果对齐
+  // 流式中间态不归一,只在最终结果对齐;同时尽量避免出现多个 1s。
   return normalizeDurations(result, parseInt(String(args.duration || '10'), 10) || 10)
 }
 

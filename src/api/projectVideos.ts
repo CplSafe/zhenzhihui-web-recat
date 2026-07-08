@@ -292,8 +292,8 @@ function buildDerivedVideos({
       ? currentUserName || ''
       : resolveMemberNameByUserId(createdByUserId, workspaceMembers || []))
 
-  // 每次「重新生成」的独立记录(生成中/失败)→ 项目下置顶展示成「草稿」条目(成功的成片仍走 videoVersions)。
-  // 按需求:生成中、生成失败统一显示「草稿」,不出现「生成中/生成失败」。
+  // 每次「重新生成」的独立记录(仅生成中)→ 项目下置顶展示成「草稿」条目(成功的成片仍走 videoVersions)。
+  // 失败记录不再跨页面/刷新持久展示，因此这里也不再把 failed 派生到列表里。
   // 兼容旧数据:没有 generations 但残留 vidGenTaskId>0 → 也兜底显示一条「草稿」。
   // 草稿里存的字段名是 videoGenerations(兼容历史 generations)
   const generationsRaw = normalizeArray(smart?.videoGenerations || smart?.generations).filter((g: any) => {
@@ -302,7 +302,7 @@ function buildDerivedVideos({
       status === 'processing' &&
       !(Number(g?.taskId ?? g?.task_id ?? 0) > 0) &&
       pickString(g?.note).trim() === '重新编辑'
-    return (status === 'processing' || status === 'failed') && !isStaleReeditPlaceholder
+    return status === 'processing' && !isStaleReeditPlaceholder
   })
   const makeGenItem = (g: any, i: number): ProjectVideo => ({
     id: `derived-gen-${pickString(g?.id, String(i))}`,

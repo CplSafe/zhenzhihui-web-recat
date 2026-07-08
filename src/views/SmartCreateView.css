@@ -250,6 +250,21 @@
   color: #11a98a;
 }
 
+/* 项目钉在与活跃空间不同的空间时的提示标签 */
+.smart__name-space {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid #ffd8a8;
+  border-radius: 999px;
+  background: #fff4e6;
+  color: #b5651d;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+}
+
 .smart__name-input {
   font-size: 16px;
   font-weight: 600;
