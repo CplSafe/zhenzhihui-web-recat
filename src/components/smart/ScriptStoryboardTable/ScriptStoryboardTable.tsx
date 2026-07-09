@@ -224,6 +224,21 @@ export default function ScriptStoryboardTable({
                         showToast('最长仅支持15秒，请修改秒数', 'error')
                         return
                       }
+                      // 总时长约束:改完后所有镜头之和必须在 [5s, 15s]，超出弹提示、不允许改。
+                      const othersTotal = shots.reduce(
+                        (sum, s) =>
+                          sum + (s.id === shot.id ? 0 : Number(String(s.duration || '0').replace(/[^0-9.]/g, '')) || 0),
+                        0,
+                      )
+                      const newTotal = othersTotal + sec
+                      if (newTotal > 15) {
+                        showToast(`总时长不能超过15秒（改后为 ${newTotal}s），请调整`, 'error')
+                        return
+                      }
+                      if (newTotal < 5) {
+                        showToast(`总时长不能少于5秒（改后为 ${newTotal}s），请调整`, 'error')
+                        return
+                      }
                       if (sec !== orig) {
                         const ok = await requestConfirm(
                           `镜头「${shot.no}」时长从 ${orig}s 改为 ${sec}s，确认修改吗？`,

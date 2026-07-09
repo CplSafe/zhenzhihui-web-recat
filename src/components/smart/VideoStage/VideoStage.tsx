@@ -180,6 +180,20 @@ export default function VideoStage({
   const dragRef = useRef<{ s0: number } | null>(null)
   const [regenSplitOpen, setRegenSplitOpen] = useState(false)
   const regenSplitRef = useRef<HTMLSpanElement | null>(null)
+  // 生成/重新生成按钮 10s 防抖:点一次后锁 10 秒,防手抖连点重复提交(视频生成很贵)。
+  const [genCooldown, setGenCooldown] = useState(false)
+  const genCooldownTimerRef = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (genCooldownTimerRef.current) window.clearTimeout(genCooldownTimerRef.current)
+    },
+    [],
+  )
+  const startGenCooldown = () => {
+    setGenCooldown(true)
+    if (genCooldownTimerRef.current) window.clearTimeout(genCooldownTimerRef.current)
+    genCooldownTimerRef.current = window.setTimeout(() => setGenCooldown(false), 10000)
+  }
 
   useEffect(() => {
     if (!regenSplitOpen) return
@@ -485,6 +499,8 @@ export default function VideoStage({
     regenCountOptions.length > 0
   const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
   const triggerSingleRegenerate = () => {
+    if (genCooldown) return // 10s 防抖:防连点重复提交
+    startGenCooldown()
     const note = buildNote()
     setPendingNote(hasMods ? note || '' : '')
     setSelectedHistoryVersionId('')
@@ -493,6 +509,8 @@ export default function VideoStage({
   }
   const triggerMultiGenerate = () => {
     if (!onGenerateMultipleVideos) return
+    if (genCooldown) return // 10s 防抖:防连点重复追加多批
+    startGenCooldown()
     const note = buildNote()
     setPendingNote(hasMods ? note || '' : '')
     setSelectedHistoryVersionId('')
@@ -821,7 +839,7 @@ export default function VideoStage({
             type="button"
             className="smart__btn smart__btn--primary"
             onClick={triggerSingleRegenerate}
-            disabled={lockRegenerateAction}
+            disabled={lockRegenerateAction || genCooldown}
           >
             {showingPendingGeneration ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
           </button>
@@ -831,6 +849,7 @@ export default function VideoStage({
                 type="button"
                 className={`smart__btn-split--main ${styles.vstageMultiSplitMain}`}
                 onClick={triggerMultiGenerate}
+                disabled={genCooldown}
               >
                 生成多个视频
               </button>
