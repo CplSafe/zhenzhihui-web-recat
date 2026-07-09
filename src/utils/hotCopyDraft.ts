@@ -11,6 +11,7 @@ export interface HotCopyGenRecord {
   status: HotCopyGenStatus
   taskId: number
   note: string
+  error?: string
   createdAt: number
 }
 

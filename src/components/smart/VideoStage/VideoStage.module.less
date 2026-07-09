@@ -563,8 +563,8 @@
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  justify-content: center;
+  gap: 30px;
   width: min(100%, 760px);
   margin-left: auto;
   margin-right: auto;
@@ -584,22 +584,42 @@
   gap: 16px;
 }
 
+.vstageDownloadButton {
+  background: #cbf2ea !important;
+  border: 0.8px solid #cbf2ea !important;
+  color: #3dcdb0 !important;
+}
+
+.vstageDownloadButton:hover:not(:disabled) {
+  background: #cbf2ea !important;
+  border-color: #cbf2ea !important;
+  filter: brightness(0.98);
+}
+
 .vstageMultiSplit {
   border-radius: 24px;
+  overflow: visible;
+  box-shadow: none;
 }
 
 .vstageMultiSplitMain {
-  background: #eaf7f5 !important;
-  border: 1px solid #36d399 !important;
-  border-right: 0 !important;
-  color: #36d399 !important;
+  background: #cbf2ea !important;
+  border: none !important;
+  color: #3dcdb0 !important;
   box-shadow: none !important;
 }
 
 .vstageMultiSplitCount {
-  background: #eaf7f5;
-  border-color: #36d399;
-  color: #36d399;
+  background: #cbf2ea !important;
+  border: none !important;
+  border-left: 1px solid rgba(61, 205, 176, 0.45) !important;
+  color: #3dcdb0 !important;
+  box-shadow: none !important;
+}
+
+.vstageMultiSplitMain:hover:not(:disabled),
+.vstageMultiSplitCount:hover:not(:disabled) {
+  filter: brightness(1.04);
 }
 
 @media (max-width: 900px) {

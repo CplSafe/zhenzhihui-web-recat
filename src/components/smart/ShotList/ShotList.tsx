@@ -22,6 +22,8 @@ interface ShotListProps {
   onSelect: (id: string | number) => void
   /** 正在生成分镜图/视频的镜头(键为 shot.id),显示转圈 */
   generating?: Record<string | number, boolean>
+  /** 整页分镜图正在批量生成中 */
+  globalGenerating?: boolean
   onShotsChange: (shots: Shot[]) => void
   /** 卡右下角状态角标(如视频生成页:待生成/已生成) */
   badgeOf?: (shot: Shot) => string
@@ -39,6 +41,12 @@ interface ShotListProps {
   /** 缩略图加载失败/成功(用于「图未加载成功不能生成视频」) */
   onImgError?: (id: string | number) => void
   onImgLoad?: (id: string | number) => void
+  /** 删除分镜时，优先走外部「丢入垃圾桶」逻辑 */
+  onDeleteShot?: (shot: Shot, index: number) => void | Promise<void>
+  /** 是否显示右上角更多菜单 */
+  showMoreMenu?: boolean
+  /** 删除按钮位置 */
+  deleteButtonPlacement?: 'meta' | 'cardTopRight' | 'betweenMetaAndThumb' | 'thumbOverlay'
 }
 
 // 新分镜 id 必须跨「刷新/重进」唯一:纯自增计数每次加载会归零,复制→刷新→再复制会和已持久化的
@@ -67,6 +75,7 @@ interface SortableCardProps {
   total: number
   selectedId: string | number | null
   generating: Record<string | number, boolean>
+  globalGenerating: boolean
   badgeOf?: (shot: Shot) => string
   locked?: boolean
   dragEnabled: boolean
@@ -84,6 +93,9 @@ interface SortableCardProps {
   onPreview?: (url: string) => void
   onImgError?: (id: string | number) => void
   onImgLoad?: (id: string | number) => void
+  onDeleteShot?: (shot: Shot, index: number) => void | Promise<void>
+  showMoreMenu: boolean
+  deleteButtonPlacement: 'meta' | 'cardTopRight' | 'betweenMetaAndThumb' | 'thumbOverlay'
 }
 
 function SortableCard({
@@ -92,6 +104,7 @@ function SortableCard({
   total,
   selectedId,
   generating,
+  globalGenerating,
   badgeOf,
   locked,
   dragEnabled,
@@ -109,6 +122,9 @@ function SortableCard({
   onPreview,
   onImgError,
   onImgLoad,
+  onDeleteShot,
+  showMoreMenu,
+  deleteButtonPlacement,
 }: SortableCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: s.id,
@@ -117,6 +133,7 @@ function SortableCard({
   // 只用「分镜图」做缩略图;没有则显示等待态(不退回素材图,避免误以为已生成)
   const thumb = s.image
   const included = includeOf ? includeOf(s) : true
+  const pending = !!generating[s.id] || (!!globalGenerating && !thumb)
 
   return (
     <div
@@ -135,13 +152,14 @@ function SortableCard({
         <span className={styles.dur}>{formatDur(s.duration)}</span>
         {badgeOf && <span className={styles.badge}>{badgeOf(s)}</span>}
         {/* 删除该分镜(垃圾桶):镜头编号右上角,hover 显示 */}
-        {!locked && !generating[s.id] && (
+        {!locked && !pending && !['betweenMetaAndThumb', 'thumbOverlay'].includes(deleteButtonPlacement) && (
           <button
             type="button"
-            className={styles.metaTrash}
+            className={`${styles.metaTrash}${deleteButtonPlacement === 'cardTopRight' ? ' ' + styles.metaTrashCardTopRight : ''}`}
             onClick={(e) => {
               e.stopPropagation()
-              remove(s.id)
+              void onDeleteShot?.(s, i)
+              if (!onDeleteShot) remove(s.id)
             }}
             aria-label="删除分镜"
             title="删除分镜"
@@ -163,6 +181,35 @@ function SortableCard({
           </button>
         )}
       </div>
+
+      {!locked && !pending && deleteButtonPlacement === 'betweenMetaAndThumb' && (
+        <button
+          type="button"
+          className={`${styles.metaTrash} ${styles.metaTrashBetween}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            void onDeleteShot?.(s, i)
+            if (!onDeleteShot) remove(s.id)
+          }}
+          aria-label="删除分镜"
+          title="删除分镜"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M3 6h18" />
+            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          </svg>
+        </button>
+      )}
 
       {/* 右:缩略图(hover/选中 显示 编辑菜单 + 删除) */}
       <div className={styles.thumbWrap}>
@@ -191,7 +238,7 @@ function SortableCard({
               <AiBadge />
             </>
           ) : (
-            <span className={styles.thumbPh}>{generating[s.id] ? '生成中…' : '待生成'}</span>
+            <span className={styles.thumbPh}>{pending ? '生成中…' : '待生成'}</span>
           )}
           {locked && includeOf && onToggleInclude && (
             <label
@@ -202,7 +249,7 @@ function SortableCard({
               <input type="checkbox" checked={included} onChange={() => onToggleInclude(s.id)} />
             </label>
           )}
-          {generating[s.id] && (
+          {pending && (
             <div className={styles.gen}>
               <span className={styles.genSpin} aria-hidden="true" />
             </div>
@@ -210,7 +257,7 @@ function SortableCard({
         </div>
 
         {/* 缩略图上的快捷动作:仅 hover 显示 编辑 + 删除 */}
-        {!locked && !generating[s.id] && (
+        {!locked && !pending && (
           <div className={styles.thumbActions} onPointerDown={(e) => e.stopPropagation()}>
             {/* 编辑该分镜:走编辑弹框(描述 + 上传素材 → 仅更新本分镜) */}
             <button
@@ -238,12 +285,40 @@ function SortableCard({
                 <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
               </svg>
             </button>
+            {deleteButtonPlacement === 'thumbOverlay' && (
+              <button
+                type="button"
+                className={`${styles.act} ${styles.actDanger}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void onDeleteShot?.(s, i)
+                  if (!onDeleteShot) remove(s.id)
+                }}
+                aria-label="删除分镜"
+                title="删除分镜"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                </svg>
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {/* 「⋯」更多菜单(恢复原样:卡片右上角,hover/选中显示):向上/向下插入、复制、删除 */}
-      {!locked && !generating[s.id] && (
+      {showMoreMenu && !locked && !generating[s.id] && (
         <div className={styles.moreWrap} ref={s.id === menuId ? menuWrapRef : undefined}>
           <button
             type="button"
@@ -281,7 +356,14 @@ function SortableCard({
               <button type="button" onClick={() => duplicate(s.id)}>
                 复制分镜
               </button>
-              <button type="button" className={styles.danger} onClick={() => remove(s.id)}>
+              <button
+                type="button"
+                className={styles.danger}
+                onClick={() => {
+                  void onDeleteShot?.(s, i)
+                  if (!onDeleteShot) remove(s.id)
+                }}
+              >
                 删除分镜
               </button>
             </div>
@@ -317,6 +399,7 @@ export default function ShotList({
   selectedId,
   onSelect,
   generating = {},
+  globalGenerating = false,
   onShotsChange,
   badgeOf,
   locked,
@@ -327,6 +410,9 @@ export default function ShotList({
   onPreview,
   onImgError,
   onImgLoad,
+  onDeleteShot,
+  showMoreMenu = true,
+  deleteButtonPlacement = 'meta',
 }: ShotListProps) {
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
@@ -400,6 +486,7 @@ export default function ShotList({
                 total={shots.length}
                 selectedId={selectedId}
                 generating={generating}
+                globalGenerating={globalGenerating}
                 badgeOf={badgeOf}
                 locked={locked}
                 dragEnabled={dragEnabled}
@@ -417,6 +504,9 @@ export default function ShotList({
                 onPreview={onPreview}
                 onImgError={onImgError}
                 onImgLoad={onImgLoad}
+                onDeleteShot={onDeleteShot}
+                showMoreMenu={showMoreMenu}
+                deleteButtonPlacement={deleteButtonPlacement}
               />
             ))}
           </SortableContext>

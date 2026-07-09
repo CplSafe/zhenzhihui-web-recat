@@ -254,8 +254,11 @@ function collectProjectVideoAssetIds(projectItems: any[]): Set<number> {
 // 提取「2.0 旧版」项目的成片视频:flow 不是 smart/hot-copy(那是 2.1 智能成片/爆款复制),
 // 且草稿里有视频(generatedVideoUrl/Asset 或 videoHistoryList 任一,url 或 assetId 都算)。
 // 这些就是 2.0 视频,进「待分类」;2.1 的不进(它们在上方项目文件夹 / 项目详情里)。
-function extract20Videos(projectItems: any[], workspaceId: number): { id: number; title: string; cover: string }[] {
-  const out: { id: number; title: string; cover: string }[] = []
+function extract20Videos(
+  projectItems: any[],
+  workspaceId: number,
+): { id: number; title: string; cover: string; videoUrl: string }[] {
+  const out: { id: number; title: string; cover: string; videoUrl: string }[] = []
   for (const project of projectItems) {
     const draft = normalizeCreativeProjectDraft(project)
     if (!draft) continue
@@ -273,6 +276,7 @@ function extract20Videos(projectItems: any[], workspaceId: number): { id: number
       id: Number(project?.id || 0),
       title: String(project?.title || project?.name || '').trim() || '未命名项目',
       cover: extractCover(project, workspaceId),
+      videoUrl: extractCoverVideo(project, workspaceId),
     })
   }
   return out
@@ -296,6 +300,17 @@ interface DetailVideo {
   url: string
   assetId: number
   label: string
+}
+
+interface UnclassifiedVideoItem {
+  kind: 'project' | 'asset'
+  id: number
+  assetId: number
+  title: string
+  cover: string
+  coverVideo: string
+  videoUrl: string
+  sourceKey: string
 }
 
 // 从项目草稿解析「分镜 + 元素 + 视频历史」(优先 smart 原生块,降级 storyboardItems)
@@ -601,18 +616,35 @@ export default function ProjectManagementView() {
   const unclassified = useMemo(() => {
     const ws = Number(workspaceId || 0)
     const projectVids = extract20Videos(projectItems, ws)
-      .filter((v) => !classifiedKeys.has(videoKeyOf(v.id, v.cover)))
-      .map((v) => ({ kind: 'project' as const, id: v.id, assetId: 0, title: v.title, cover: v.cover, coverVideo: '' }))
+      .map((v) => ({
+        kind: 'project' as const,
+        id: v.id,
+        assetId: 0,
+        title: v.title,
+        cover: v.cover,
+        coverVideo: v.videoUrl,
+        videoUrl: v.videoUrl,
+        sourceKey: videoKeyOf(v.id, v.videoUrl),
+      }))
+      .filter((v) => !classifiedKeys.has(v.sourceKey))
     const looseVids = looseVideos
-      .filter((a) => !classifiedKeys.has(videoKeyOf(a.assetId, '')))
+      .map((a) => {
+        const streamUrl = ws ? assetStreamUrl(a.assetId, ws) : ''
+        return {
+          kind: 'asset' as const,
+          id: 0,
+          assetId: a.assetId,
+          title: a.title,
+          cover: '',
+          coverVideo: streamUrl,
+          videoUrl: streamUrl,
+          sourceKey: videoKeyOf(a.assetId, ''),
+        } satisfies UnclassifiedVideoItem
+      })
+      .filter((a) => !classifiedKeys.has(a.sourceKey))
       // 封面用视频首帧:coverVideo 取该资产的直传地址,卡片里用 <video preload=metadata> 显示第一帧
       .map((a) => ({
-        kind: 'asset' as const,
-        id: 0,
-        assetId: a.assetId,
-        title: a.title,
-        cover: '',
-        coverVideo: ws ? assetStreamUrl(a.assetId, ws) : '',
+        ...a,
       }))
     return [...projectVids, ...looseVids]
   }, [projectItems, looseVideos, classifiedKeys, workspaceId])
@@ -942,30 +974,32 @@ export default function ProjectManagementView() {
   const handleDropToFolder = useCallback(
     async (folder: { id: number; title: string }, payload: string) => {
       setDragOverFolderId(0)
-      let video: any = null
+      let video: Partial<UnclassifiedVideoItem> | null = null
       try {
-        video = JSON.parse(payload)
+        video = JSON.parse(payload) as UnclassifiedVideoItem
       } catch {
         video = null
       }
-      if (!video?.id) return
+      const sourceKey = String(video?.sourceKey || '').trim()
+      const videoUrl = String(video?.videoUrl || video?.coverVideo || video?.cover || '').trim()
+      if (!sourceKey || !videoUrl) return
       const wsId = Number(workspaceId || 0)
       if (!wsId || !folder.id) {
         showToast('workspace_id 缺失,无法归类', 'error')
         return
       }
-      const key = videoKeyOf(Number(video.id || 0), video.cover || '')
       try {
         // 写入目标项目的视频清单(随项目草稿存云端),并带上来源 key 供「待分类」隐藏
         await addClassifiedVideo({
           projectId: folder.id,
           workspaceId: wsId,
-          title: video.title,
-          videoUrl: video.cover || '',
-          sourceKey: key,
+          title: String(video.title || '').trim() || '归类视频',
+          videoUrl,
+          coverUrl: String(video.cover || '').trim(),
+          sourceKey,
         })
         // 乐观隐藏(刷新前),随后拉最新项目列表使云端口径生效
-        setPendingClassified((prev) => new Set(prev).add(key))
+        setPendingClassified((prev) => new Set(prev).add(sourceKey))
         showToast(`已归类到「${folder.title}」`, 'success')
         loadProjects()
       } catch (error) {
@@ -1254,15 +1288,27 @@ export default function ProjectManagementView() {
                   <h2 className="pm2-section-title">待分类</h2>
                   <div className="pm2-video-grid" ref={vidGridRef}>
                     {pagedUnclassified.map((video, i) => (
-                      <div
-                        key={`${video.kind}-${video.id || video.assetId}-${i}`}
-                        className="pm2-vid-wrap"
-                        // 拖拽源:仅项目成片(有 id)可拖入项目文件夹归类;handleDropToFolder 按 JSON 解析 id/cover/title。
-                        // 散视频资产(kind='asset',无 id)不可归类,故不设 draggable。
-                        draggable={!!video.id}
-                        onDragStart={(e) => e.dataTransfer.setData('text/plain', JSON.stringify(video))}
-                      >
-                        <div className="pm2-vid">
+                      <div key={`${video.kind}-${video.id || video.assetId}-${i}`} className="pm2-vid-wrap">
+                        <div
+                          className="pm2-vid"
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.effectAllowed = 'move'
+                            e.dataTransfer.setData(
+                              'text/plain',
+                              JSON.stringify({
+                                kind: video.kind,
+                                id: video.id,
+                                assetId: video.assetId,
+                                title: video.title,
+                                cover: video.cover,
+                                coverVideo: video.coverVideo,
+                                videoUrl: video.videoUrl,
+                                sourceKey: video.sourceKey,
+                              }),
+                            )
+                          }}
+                        >
                           <span
                             className={`pm2-vid-thumb pm2-tone-${toneOf(i)}`}
                             role="button"

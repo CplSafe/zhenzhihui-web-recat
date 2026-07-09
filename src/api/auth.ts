@@ -142,6 +142,17 @@ export function updateMyProfile(payload) {
   })
 }
 
+// POST /api/v1/me/avatar —— 上传我的头像(当前登录用户自己)。
+// 与修改资料分开：头像走专用上传接口，昵称等文字资料仍走 /api/v1/me/profile。
+export function uploadMyAvatar(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/me/avatar'), {
+    method: 'POST',
+    body: formData,
+  })
+}
+
 export function listWorkspaceMembers(workspaceId) {
   return requestJson(buildUrl(businessApiBaseUrl, `/api/v1/workspaces/${workspaceId}/members`))
 }

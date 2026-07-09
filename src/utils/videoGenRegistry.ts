@@ -1,3 +1,5 @@
+import { useUiStore } from '@/stores/ui'
+
 /**
  * 整片视频生成「全局在途登记表」—— 让生成真正脱离组件,切到别的页面也继续。
  *
@@ -12,28 +14,55 @@
  *   - 真正实现「切走 / 在别的页面也继续加载」。
  */
 export type VideoGenResult = { url: string; assetId: number }
+export type VideoGenScope = 'smart' | 'hot-copy'
 
-const running = new Map<number, Promise<VideoGenResult>>()
+const running = new Map<string, Promise<VideoGenResult>>()
+const WORKSPACE_SWITCH_LOCK_REASON = '当前视频处理中，暂不支持切换团队'
+
+function buildKey(scope: VideoGenScope, projectId: number): string {
+  return `${scope}:${Number(projectId) || 0}`
+}
+
+function syncWorkspaceSwitchLock() {
+  useUiStore.getState().setWorkspaceSwitchLock(running.size > 0, WORKSPACE_SWITCH_LOCK_REASON)
+}
+
+/** 该项目当前是否有在途整片生成 */
+export function isVideoGenRunning(scope: VideoGenScope, projectId: number): boolean {
+  return Number(projectId) > 0 && running.has(buildKey(scope, projectId))
+}
+
+/** 当前会话里是否存在任意在途整片生成 */
+export function isAnyVideoGenRunning(): boolean {
+  return running.size > 0
+}
 
 /** 取该项目在途生成的结果 promise(无则 null);可 await 拿 { url, assetId } */
-export function getRunningVideoGen(projectId: number): Promise<VideoGenResult> | null {
-  return running.get(Number(projectId)) || null
+export function getRunningVideoGen(scope: VideoGenScope, projectId: number): Promise<VideoGenResult> | null {
+  return running.get(buildKey(scope, projectId)) || null
 }
 
 /**
  * 登记一次在途生成:把结果 promise 按 projectId 存下,完成/失败后自动摘除。
  * projectId 无效(0)时不登记,直接返回原 promise(退化为旧行为,不影响功能)。
  */
-export function trackVideoGen(projectId: number, p: Promise<VideoGenResult>): Promise<VideoGenResult> {
+export function trackVideoGen(
+  scope: VideoGenScope,
+  projectId: number,
+  p: Promise<VideoGenResult>,
+): Promise<VideoGenResult> {
   const pid = Number(projectId)
   if (!(pid > 0)) return p
-  running.set(pid, p)
+  const key = buildKey(scope, pid)
+  running.set(key, p)
+  syncWorkspaceSwitchLock()
   void p
     .catch(() => {
       /* 失败也要摘除,避免卡住后续重试 */
     })
     .finally(() => {
-      if (running.get(pid) === p) running.delete(pid)
+      if (running.get(key) === p) running.delete(key)
+      syncWorkspaceSwitchLock()
     })
   return p
 }

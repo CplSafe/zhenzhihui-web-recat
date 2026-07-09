@@ -10,12 +10,15 @@ import type { Shot } from '../ScriptStoryboardTable'
 import ShotList from '../ShotList'
 import ShotEditPanel from '../ShotEditPanel'
 import ShotEditDialog from '../ShotEditDialog'
+import ShotTrashBin, { type ShotTrashItem } from '../ShotTrashBin/ShotTrashBin'
 import styles from './ShotArrange.module.less'
 
 interface ShotArrangeProps {
   shots: Shot[]
   /** 正在生成分镜图的镜头(键为 shot.id) */
   generating?: Record<string | number, boolean>
+  /** 整页分镜图正在批量生成中 */
+  generatingAll?: boolean
   onShotsChange: (shots: Shot[]) => void
   /** 分镜缩略图加载失败/成功回调(用于「图未加载成功不能生成视频」) */
   onShotImgError?: (id: string | number) => void
@@ -34,6 +37,14 @@ interface ShotArrangeProps {
   onPolishPrompt?: (text: string, uploadRefUrls: string[]) => Promise<string>
   /** 台词/字幕/音效 的「AI一键润色」 */
   onPolishText?: (kind: 'line' | 'subtitle' | 'sound', text: string) => Promise<string>
+  onDeleteShot?: (shot: Shot, index: number) => Promise<void> | void
+  trashItems?: ShotTrashItem[]
+  trashLoading?: boolean
+  onLoadTrash?: () => Promise<void> | void
+  onRestoreTrash?: (item: ShotTrashItem) => Promise<void> | void
+  onDeleteTrash?: (item: ShotTrashItem) => Promise<void> | void
+  onRestoreAllTrash?: (items: ShotTrashItem[]) => Promise<void> | void
+  onClearTrash?: (items: ShotTrashItem[]) => Promise<void> | void
 }
 
 let insUid = 1
@@ -44,6 +55,7 @@ const blankShot = (): Shot => ({ id: newShotId(), no: '镜头', duration: '5s', 
 export default function ShotArrange({
   shots,
   generating = {},
+  generatingAll = false,
   onShotsChange,
   onShotImgError,
   onShotImgLoad,
@@ -51,6 +63,14 @@ export default function ShotArrange({
   onGenerateShot,
   onPolishPrompt,
   onPolishText,
+  onDeleteShot,
+  trashItems = [],
+  trashLoading = false,
+  onLoadTrash,
+  onRestoreTrash,
+  onDeleteTrash,
+  onRestoreAllTrash,
+  onClearTrash,
 }: ShotArrangeProps) {
   const [selectedId, setSelectedId] = useState<string | number | null>(shots[0]?.id ?? null)
   const [bigImg, setBigImg] = useState('') // 点击分镜缩略图 → 放大查看
@@ -113,17 +133,21 @@ export default function ShotArrange({
         selectedId={selectedId}
         onSelect={setSelectedId}
         generating={generating}
+        globalGenerating={generatingAll}
         onShotsChange={onShotsChange}
         onEditShot={openEditShot}
         onInsertShot={openInsertShot}
         onPreview={setBigImg}
         onImgError={onShotImgError}
         onImgLoad={onShotImgLoad}
+        onDeleteShot={onDeleteShot}
+        showMoreMenu={false}
+        deleteButtonPlacement="thumbOverlay"
       />
       {selected ? (
         <ShotEditPanel
           shot={selected}
-          regenerating={!!generating[selected.id]}
+          regenerating={!!generating[selected.id] || (!!generatingAll && !selected.image)}
           onPatch={patchSel}
           onPolishText={onPolishText}
         />
@@ -138,6 +162,19 @@ export default function ShotArrange({
         onPolish={onPolishPrompt}
         onGenerate={handleDialogGenerate}
         onClose={closeDlg}
+      />
+
+      <ShotTrashBin
+        items={trashItems}
+        loading={trashLoading}
+        onLoad={onLoadTrash}
+        onRestore={onRestoreTrash}
+        onDelete={onDeleteTrash}
+        onRestoreAll={onRestoreAllTrash}
+        onClearAll={onClearTrash}
+        buttonClassName={styles.trashFabDock}
+        dragStorageKey="smart-arrange-trash-fab"
+        dragBoundarySelector=".smart__body"
       />
 
       {/* 分镜缩略图放大查看灯箱 */}

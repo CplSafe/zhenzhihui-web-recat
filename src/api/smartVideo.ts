@@ -4,13 +4,7 @@
  * 输入参考始终用当前分镜图,确保每次生成都基于最新镜头编排;修改意见只拼进 prompt,不复用旧视频。
  */
 // @ts-nocheck
-import {
-  createAiTask,
-  waitForAiTask,
-  getModelForOperation,
-  resolveTaskModel,
-  estimateAiTaskCost,
-} from './business'
+import { createAiTask, waitForAiTask, getModelForOperation, resolveTaskModel, estimateAiTaskCost } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
@@ -74,13 +68,19 @@ export async function generateFullVideo(args: {
   imageAssetIds?: number[]
   /** 对整片的修改意见 */
   note?: string
+  /** 多个视频生成时的变体序号(仅用于避免同 prompt 结果完全重复) */
+  variationIndex?: number
+  variationTotal?: number
   modelPlanCandidates?: string[]
   /** 任务一创建就回调 task_id,供上层持久化(切路由/刷新后凭它续轮询,不重新生成) */
   onTask?: (taskId: number) => void
 }): Promise<{ url: string; assetId: number }> {
   const prompt =
     buildTimelinePrompt({ shots: args.shots, basePrompt: args.basePrompt, ratio: args.ratio, style: args.style }) +
-    (args.note ? `\n额外修改要求:${args.note}` : '')
+    (args.note ? `\n额外修改要求:${args.note}` : '') +
+    (args.variationTotal && args.variationTotal > 1
+      ? `\n变体要求:这是同一需求下的第 ${args.variationIndex || 1}/${args.variationTotal} 个不同版本。请保持脚本主线一致，但在构图、镜头运动、人物状态、细节节奏上给出明显不同的创意变体，避免与其他版本完全相同。`
+      : '')
   const imgIds = (args.imageAssetIds || []).filter((n) => Number(n) > 0)
 
   // 输入参考:始终把「全部当前分镜图」按镜头顺序作参考帧送入(干净格式 {asset_id, role:'image'},

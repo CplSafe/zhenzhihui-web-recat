@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useToast } from '@/composables/useToast'
 import { fileToDataUrl } from '@/utils/imageFile'
 import { useWorkspaceId } from '@/stores/workspaceSession'
-import { listAssets, extractAssetPageItems, getAssetDownloadUrl } from '@/api/business'
+import { listAssets, listAiTasks, extractAssetPageItems, getAssetDownloadUrl } from '@/api/business'
 import { createMaterialFromAsset } from '@/utils/materials'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import HotCopyCaseModal, { type HotCopyCaseTab } from '@/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal'
@@ -29,6 +29,8 @@ export interface HotCopyProduct {
   isVideo: boolean
   /** 素材库选中的替换素材已有 asset_id;本地上传的留空,出片前再上传 */
   assetId?: number
+  /** 真正传给 video.replicate 的人脸/抠脸素材 asset_id;展示仍使用 url/assetId 对应的原图 */
+  submitAssetId?: number
 }
 export interface HotCopyEntryPayload {
   tab: HotCopyTab
@@ -44,22 +46,22 @@ export interface HotCopyEntryPayload {
   duration: string
 }
 
+type HotCopyTabDraft = Omit<HotCopyEntryPayload, 'tab'>
+
 // 成片尺寸/时长可选项 —— 与智能成片完全一致(同样的列表顺序与默认值 16:9 / 10s)。
 const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
 const DURATION_OPTIONS = ['5s', '10s', '15s']
 
 interface HotCopyEntryProps {
   onSubmit: (payload: HotCopyEntryPayload) => void
+  /** 入口右上角「创建新视频」:清空当前输入,回到全新入口态 */
+  onNewVideo?: () => void
   /** 外部正在发起生成(含点击后到 running 生效前的短窗口),用于禁用重复点击 */
   busy?: boolean
-  /** 恢复态点击「重新生成」时的独立忙碌态:只锁本次取消旧任务+重开新任务,不阻塞「下一步」 */
-  resumeRegenBusy?: boolean
   /** 从第二步返回第一页时,可直接回到已生成/生成中的视频页而不重新发起生成 */
   canResume?: boolean
   /** 恢复到第二步:只切回流程,不重新提交生成 */
   onResume?: () => void
-  /** 恢复态下点击「重新生成」:按当前输入重新生成(必要时由父级先取消旧任务) */
-  onRegenerate?: (payload: HotCopyEntryPayload) => void
   /** 返回上一步时回填上次输入(数据存在编排器 state) */
   initial?: Partial<HotCopyEntryPayload>
   /** 比例下拉可选项:取自 replicate 模型 schema 的 ratio options(只放模型真支持的);缺省用默认列表 */
@@ -83,6 +85,136 @@ const TABS = [
 
 const MAX_PRODUCTS = 9
 
+const pickAssetId = (...values: any[]): number => {
+  for (const value of values) {
+    const id = Number(value)
+    if (Number.isFinite(id) && id > 0) return Math.floor(id)
+  }
+  return 0
+}
+
+const collectAssetIds = (value: any): number[] => {
+  if (!value) return []
+  if (Array.isArray(value)) return value.flatMap(collectAssetIds)
+  if (typeof value === 'object') {
+    const direct = pickAssetId(value.asset_id, value.assetId, value.id)
+    const nested = collectAssetIds(value.asset || value.data || value.output || value.outputs || value.input_assets)
+    return direct ? [direct, ...nested] : nested
+  }
+  const id = pickAssetId(value)
+  return id ? [id] : []
+}
+
+const isFaceCutAsset = (asset: any): boolean => {
+  let metaHints = ''
+  try {
+    metaHints = JSON.stringify(asset?.meta_json || asset?.metadata || asset?.meta || {})
+  } catch {
+    metaHints = ''
+  }
+  const hints = [
+    asset?.operation_code,
+    asset?.operationCode,
+    asset?.prompt,
+    asset?.name,
+    asset?.file_name,
+    asset?.description,
+    asset?.category,
+    asset?.kind,
+    ...(Array.isArray(asset?.tags) ? asset.tags : []),
+    asset?.meta_json?.operation_code,
+    asset?.meta_json?.operationCode,
+    asset?.meta_json?.prompt,
+    asset?.meta_json?.name,
+    asset?.meta_json?.file_name,
+    asset?.meta_json?.description,
+    asset?.meta_json?.category,
+    asset?.meta_json?.kind,
+    metaHints,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  const faceCue = /face[_\s-]?detect|人脸检测|人脸检测抠图|人脸脱敏|脱敏/.test(hints)
+  const cutoutCue = /抠图|抠脸|cutout|matting|segment(?:ation)?|mask|alpha[_\s-]?matte/.test(hints)
+  const portraitCue = /人脸|脸部|头像|人像|人物|portrait|person|face|head/.test(hints)
+  const replicateMaskCue = /(replicate|subject)[\w\s-]*mask(?:ed)?|mask(?:ed)?[\w\s-]*(replicate|subject)/.test(hints)
+  return faceCue || replicateMaskCue || (cutoutCue && portraitCue)
+}
+
+const resolveSourceAssetId = (asset: any): number =>
+  pickAssetId(
+    asset?.source_asset_id,
+    asset?.sourceAssetId,
+    asset?.origin_asset_id,
+    asset?.originAssetId,
+    asset?.original_asset_id,
+    asset?.originalAssetId,
+    asset?.parent_asset_id,
+    asset?.parentAssetId,
+    asset?.input_asset_id,
+    asset?.inputAssetId,
+    asset?.from_asset_id,
+    asset?.fromAssetId,
+    asset?.base_asset_id,
+    asset?.baseAssetId,
+    asset?.meta_json?.source_asset_id,
+    asset?.meta_json?.sourceAssetId,
+    asset?.meta_json?.origin_asset_id,
+    asset?.meta_json?.originAssetId,
+    asset?.meta_json?.original_asset_id,
+    asset?.meta_json?.originalAssetId,
+    asset?.meta_json?.parent_asset_id,
+    asset?.meta_json?.parentAssetId,
+    asset?.meta_json?.input_asset_id,
+    asset?.meta_json?.inputAssetId,
+    asset?.meta_json?.from_asset_id,
+    asset?.meta_json?.fromAssetId,
+    asset?.meta_json?.base_asset_id,
+    asset?.meta_json?.baseAssetId,
+  )
+
+const resolveFaceSubmitAssetId = (asset: any): number =>
+  pickAssetId(
+    asset?.face_asset_id,
+    asset?.faceAssetId,
+    asset?.face_asset?.id,
+    asset?.faceAsset?.id,
+    asset?.cutout_asset_id,
+    asset?.cutoutAssetId,
+    asset?.cutout_asset?.id,
+    asset?.cutoutAsset?.id,
+    asset?.masked_asset_id,
+    asset?.maskedAssetId,
+    asset?.mask_asset_id,
+    asset?.maskAssetId,
+    asset?.output_asset_id,
+    asset?.outputAssetId,
+    asset?.derived_asset_id,
+    asset?.derivedAssetId,
+    asset?.meta_json?.face_asset_id,
+    asset?.meta_json?.faceAssetId,
+    asset?.meta_json?.cutout_asset_id,
+    asset?.meta_json?.cutoutAssetId,
+    asset?.meta_json?.masked_asset_id,
+    asset?.meta_json?.maskedAssetId,
+    asset?.meta_json?.mask_asset_id,
+    asset?.meta_json?.maskAssetId,
+    asset?.meta_json?.output_asset_id,
+    asset?.meta_json?.outputAssetId,
+    asset?.meta_json?.derived_asset_id,
+    asset?.meta_json?.derivedAssetId,
+  )
+
+const resolveTaskSourceAssetId = (task: any): number =>
+  collectAssetIds(
+    task?.input_assets || task?.inputAssets || task?.inputs || task?.input || task?.request?.input_assets,
+  )[0] || 0
+
+const resolveTaskOutputAssetId = (task: any): number =>
+  collectAssetIds(task?.outputs || task?.output || task?.result?.outputs || task?.data?.outputs)[0] || 0
+
 // 爆款复制背景配色(粉紫,取自本页 Figma):底部粉 + 紫色光晕 + 淡粉核
 const HOTCOPY_LAYERS: BgLayerStops = {
   bottom: [
@@ -105,46 +237,101 @@ const HOTCOPY_LAYERS: BgLayerStops = {
 
 export default function HotCopyEntry({
   onSubmit,
+  onNewVideo,
   busy = false,
-  resumeRegenBusy = false,
   canResume,
   onResume,
-  onRegenerate,
   initial,
   ratioOptions,
 }: HotCopyEntryProps) {
   // 比例下拉:优先用模型实际支持的 options(避免选了模型做不了的比例被悄悄回退);缺省用默认列表。
   const ratioOpts = ratioOptions && ratioOptions.length ? ratioOptions : RATIO_OPTIONS
+  const defaultRatio = ratioOpts.includes('16:9') ? '16:9' : ratioOpts[0] || '16:9'
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
-  const [tab, setTab] = useState<HotCopyTab>((initial?.tab as HotCopyTab) ?? 'remake')
+  const initialTab = (initial?.tab as HotCopyTab) ?? 'remake'
+  const blankTabDraft = (): HotCopyTabDraft => ({
+    videoSource: '',
+    videoFile: null,
+    libraryVideo: null,
+    videoFileName: '',
+    videoPreview: '',
+    products: [],
+    text: '',
+    ratio: defaultRatio,
+    duration: '10s',
+  })
+  const initialTabDraft = (): HotCopyTabDraft => ({
+    ...blankTabDraft(),
+    videoSource: initial?.videoSource ?? '',
+    videoFile: initial?.videoFile ?? null,
+    libraryVideo: initial?.libraryVideo ?? null,
+    videoFileName: initial?.videoFileName ?? '',
+    videoPreview: initial?.videoPreview ?? '',
+    products: initial?.products ?? [],
+    text: initial?.text ?? '',
+    ratio: initial?.ratio ?? defaultRatio,
+    duration: initial?.duration ?? '10s',
+  })
+  const tabDraftsRef = useRef<Record<HotCopyTab, HotCopyTabDraft>>({
+    remake: initialTab === 'remake' ? initialTabDraft() : blankTabDraft(),
+    replica: initialTab === 'replica' ? initialTabDraft() : blankTabDraft(),
+  })
+  const [tab, setTab] = useState<HotCopyTab>(initialTab)
   // 点击 Tab 旁的「?」打开对应案例弹窗(Figma 还原);null=关闭
   const [caseTab, setCaseTab] = useState<HotCopyCaseTab | null>(null)
   // 切换 Tab:背景的位移/上升动画由 <EntryCanvasBg mode={tab}> 监听 tab 变化驱动
   const switchTab = (k: HotCopyTab) => {
     if (k === tab) return
+    tabDraftsRef.current[tab] = {
+      videoSource,
+      videoFile,
+      libraryVideo,
+      videoFileName,
+      videoPreview,
+      products,
+      text,
+      ratio,
+      duration,
+    }
+    const next = tabDraftsRef.current[k] || blankTabDraft()
+    setVideoSource(next.videoSource)
+    setVideoFile(next.videoFile)
+    setLibraryVideo(next.libraryVideo)
+    setVideoFileName(next.videoFileName)
+    setVideoPreview(next.videoPreview)
+    setProducts(next.products)
+    setText(next.text)
+    setRatio(next.ratio)
+    setDuration(next.duration)
+    caretRef.current = next.text.length
+    setVideoMenuOpen(false)
+    setProductMenuOpen(false)
+    setLibraryOpen(false)
+    setProductLibOpen(false)
+    setAtOpen(false)
     setTab(k)
   }
 
   // 爆款视频来源(本地 / 素材库,二选一)
   const [videoMenuOpen, setVideoMenuOpen] = useState(false)
-  const [videoSource, setVideoSource] = useState<HotCopyVideoSource>(initial?.videoSource ?? '')
-  const [videoFile, setVideoFile] = useState<File | null>(initial?.videoFile ?? null)
-  const [videoFileName, setVideoFileName] = useState(initial?.videoFileName ?? '')
-  const [videoPreview, setVideoPreview] = useState(initial?.videoPreview ?? '')
+  const [videoSource, setVideoSource] = useState<HotCopyVideoSource>(tabDraftsRef.current[initialTab].videoSource)
+  const [videoFile, setVideoFile] = useState<File | null>(tabDraftsRef.current[initialTab].videoFile)
+  const [videoFileName, setVideoFileName] = useState(tabDraftsRef.current[initialTab].videoFileName)
+  const [videoPreview, setVideoPreview] = useState(tabDraftsRef.current[initialTab].videoPreview)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [libraryMaterials, setLibraryMaterials] = useState<any[]>([])
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryTab, setLibraryTab] = useState('mine')
   const [libraryQuery, setLibraryQuery] = useState('')
   const [libraryVideo, setLibraryVideo] = useState<{ assetId: number; src: string } | null>(
-    initial?.libraryVideo ?? null,
+    tabDraftsRef.current[initialTab].libraryVideo,
   )
   const videoFileRef = useRef<HTMLInputElement | null>(null)
   const videoMenuRef = useRef<HTMLDivElement | null>(null)
 
   // 替换素材(仅图片):本地上传保留 File 待上传;素材库选择带 assetId
-  const [products, setProducts] = useState<HotCopyProduct[]>(initial?.products ?? [])
+  const [products, setProducts] = useState<HotCopyProduct[]>(tabDraftsRef.current[initialTab].products)
   const productFileRef = useRef<HTMLInputElement | null>(null)
   // 替换素材来源菜单(本地 / 素材库)+ 素材库选图弹窗
   const [productMenuOpen, setProductMenuOpen] = useState(false)
@@ -155,10 +342,10 @@ export default function HotCopyEntry({
   const [productLibTab, setProductLibTab] = useState('mine')
   const [productLibQuery, setProductLibQuery] = useState('')
 
-  const [text, setText] = useState(initial?.text ?? '')
+  const [text, setText] = useState(tabDraftsRef.current[initialTab].text)
   // 成片尺寸/时长(用户可选);默认与智能成片一致:16:9、10s
-  const [ratio, setRatio] = useState(initial?.ratio ?? '16:9')
-  const [duration, setDuration] = useState(initial?.duration ?? '10s')
+  const [ratio, setRatio] = useState(tabDraftsRef.current[initialTab].ratio)
+  const [duration, setDuration] = useState(tabDraftsRef.current[initialTab].duration)
   // 模型 options 到位后,若当前比例不在其中 → 收敛到第一个支持项(防止显示/提交一个模型做不了的比例)
   useEffect(() => {
     if (ratioOpts.length && !ratioOpts.includes(ratio)) setRatio(ratioOpts[0])
@@ -253,8 +440,33 @@ export default function HotCopyEntry({
     }
     setProductLibLoading(true)
     try {
-      const payload = await listAssets({ workspaceId: ws, type: 'image', limit: 100 })
-      const assets = extractAssetPageItems(payload).filter((a: any) => a?.id && a.type === 'image')
+      const [payload, faceTaskPayload] = await Promise.all([
+        listAssets({ workspaceId: ws, type: 'image', limit: 300 }),
+        listAiTasks({ workspaceId: ws, operationCode: 'image.face_detect', limit: 100 }).catch(() => null),
+      ])
+      const faceTaskIds = new Set<number>()
+      const submitAssetBySource = new Map<number, number>()
+      for (const task of extractAssetPageItems(faceTaskPayload)) {
+        const taskId = pickAssetId(task?.id)
+        if (taskId) faceTaskIds.add(taskId)
+        const sourceId = resolveTaskSourceAssetId(task)
+        const outputId = resolveTaskOutputAssetId(task)
+        if (sourceId && outputId) submitAssetBySource.set(sourceId, outputId)
+      }
+      const rawAssets = extractAssetPageItems(payload).filter((a: any) => a?.id && a.type === 'image')
+      for (const asset of rawAssets) {
+        const sourceId = resolveSourceAssetId(asset)
+        const assetId = pickAssetId(asset?.id)
+        const taskId = pickAssetId(asset?.task_id, asset?.taskId)
+        if (sourceId && assetId && (isFaceCutAsset(asset) || (taskId && faceTaskIds.has(taskId)))) {
+          submitAssetBySource.set(sourceId, assetId)
+        }
+      }
+      const assets = rawAssets.filter((a: any) => {
+        const taskId = pickAssetId(a?.task_id, a?.taskId)
+        if (taskId && faceTaskIds.has(taskId)) return false
+        return !isFaceCutAsset(a)
+      })
       const mats = await Promise.all(
         assets.map(async (a: any) => {
           let src = ''
@@ -264,7 +476,11 @@ export default function HotCopyEntry({
             /* 取签名URL失败则回退缩略图 */
           }
           if (!src) src = a?.thumbnail_url || a?.preview_url || a?.url || ''
-          return createMaterialFromAsset(a, src)
+          return {
+            ...createMaterialFromAsset(a, src),
+            submitAssetId:
+              resolveFaceSubmitAssetId(a) || submitAssetBySource.get(pickAssetId(a?.id)) || pickAssetId(a?.id),
+          }
         }),
       )
       setProductLibMaterials(mats.filter((m: any) => m.src))
@@ -292,13 +508,23 @@ export default function HotCopyEntry({
     const imgs = (picked || [])
       .filter((m: any) => !/video/i.test(String(m?.type || m?.serverAsset?.type || '')))
       .slice(0, Math.max(0, room))
-      .map((m: any) => ({
-        url: m?.src || '',
-        file: null as File | null,
-        isVideo: false,
-        assetId: Number(m?.assetId || m?.serverAsset?.id || m?.id || 0) || 0,
-      }))
-      .filter((p: HotCopyProduct) => p.url && p.assetId)
+      .map((m: any) => {
+        const displayAssetId = pickAssetId(m?.assetId, m?.serverAsset?.id, m?.id)
+        const submitAssetId = pickAssetId(
+          m?.submitAssetId,
+          m?.serverAsset?.submitAssetId,
+          resolveFaceSubmitAssetId(m?.serverAsset),
+          displayAssetId,
+        )
+        return {
+          url: m?.src || '',
+          file: null as File | null,
+          isVideo: false,
+          assetId: displayAssetId,
+          submitAssetId,
+        }
+      })
+      .filter((p: HotCopyProduct) => p.url && (p.submitAssetId || p.assetId))
     if (imgs.length) setProducts((prev) => [...prev, ...imgs])
     if (room <= 0) showToast(`最多上传 ${MAX_PRODUCTS} 张替换素材`, 'info')
     setProductLibOpen(false)
@@ -444,12 +670,6 @@ export default function HotCopyEntry({
     onSubmit(buildPayload())
   }
 
-  const regenerate = () => {
-    if (resumeRegenBusy) return
-    if (!validateBeforeSubmit()) return
-    ;(onRegenerate || onSubmit)(buildPayload())
-  }
-
   return (
     <section className="hotcopy__main" data-tab={tab}>
       {/* 背景弥散:Canvas 实现(与智能成片同一套),配色用本页粉紫;切 Tab 时从底部上升 */}
@@ -460,6 +680,11 @@ export default function HotCopyEntry({
       <h1 className="hotcopy__title">爆款作业直接抄,你的产品当主角!</h1>
 
       <div className="hotcopy__panel">
+        {onNewVideo && (
+          <button type="button" className="hotcopy__newVideoBtn" onClick={onNewVideo}>
+            创建新视频
+          </button>
+        )}
         {/* 分段 Tab:同款翻拍 / 精准复刻(选中态白卡 + 名称 + ? + 副标题) */}
         <div className="hotcopy__tabs">
           {TABS.map((t) => (
@@ -658,82 +883,44 @@ export default function HotCopyEntry({
               </span>
             </div>
             <div className="hotcopy__sendArea">
+              <button
+                type="button"
+                className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ' hotcopy__send--plain'}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
+                /* 恢复态下真正返回下一步;普通态仍走首次去制作。 */
+                disabled={!resumeMode && busy}
+                onClick={() => (resumeMode ? onResume?.() : submit())}
+                aria-label={resumeMode ? '返回下一步' : '去制作'}
+                title={!resumeMode && busy ? '视频生成启动中…' : resumeMode ? '返回下一步' : '去制作'}
+              >
+                {resumeMode ? (
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 30 30"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
+                      fill="black"
+                    />
+                  </svg>
+                ) : (
+                  <span className="hotcopy__sendPlainText">去制作</span>
+                )}
+              </button>
               {resumeMode && (
                 <button
                   type="button"
                   className="hotcopy__regen"
-                  disabled={resumeRegenBusy}
-                  onClick={regenerate}
-                  title={resumeRegenBusy ? '正在重新生成…' : '按当前输入重新生成'}
+                  disabled={busy}
+                  onClick={() => submit()}
+                  title="去制作"
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M20 12a8 8 0 1 1-2.3-5.6" />
-                    <path d="M20 4v4h-4" />
-                  </svg>
-                  重新生成
+                  去制作
                 </button>
               )}
-              <button
-                type="button"
-                className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ''}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
-                /* 恢复态下主按钮仅回到第二步;普通态仍走提交生成。 */
-                disabled={!resumeMode && busy}
-                onClick={() => (resumeMode ? onResume?.() : submit())}
-                aria-label={resumeMode ? '下一步' : '生成'}
-                title={
-                  !resumeMode && busy
-                    ? '视频生成启动中…'
-                    : resumeMode
-                      ? '下一步:返回已生成内容'
-                      : '下一步:生成视频(需先上传爆款视频 + 至少一张替换素材图片)'
-                }
-              >
-                {resumeMode ? (
-                  <>
-                    {/* 恢复态:用智能成片同款白色箭头,和左侧「重新生成」形成视觉分组。 */}
-                    <svg
-                      width="20"
-                      height="14"
-                      viewBox="0 0 20 14"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M1.05649 8.0251H16.5914L12.2367 12.2495C12.0385 12.4418 11.9271 12.7025 11.9271 12.9745C11.927 13.2464 12.0383 13.5072 12.2364 13.6995C12.4346 13.8919 12.7034 13.9999 12.9836 14C13.2639 14.0001 13.5327 13.8921 13.7309 13.6998L19.7078 7.90093C19.9614 7.65491 20.0398 7.3181 19.9819 7.00004C20.0398 6.68257 19.9608 6.34518 19.7078 6.09916L13.7309 0.300249C13.5328 0.108003 13.2641 0 12.9838 0C12.7036 0 12.4349 0.108003 12.2367 0.300249C12.0386 0.492495 11.9273 0.753236 11.9273 1.02511C11.9273 1.29699 12.0386 1.55773 12.2367 1.74998L16.5914 5.97498H1.05649C0.776285 5.97498 0.507557 6.08298 0.309422 6.27522C0.111287 6.46745 -2.3859e-05 6.72818 -2.3859e-05 7.00004C-2.3859e-05 7.27191 0.111287 7.53263 0.309422 7.72487C0.507557 7.91711 0.776285 8.0251 1.05649 8.0251Z"
-                        fill="white"
-                      />
-                    </svg>
-                  </>
-                ) : (
-                  <>
-                    {/* 首次生成:保留爆款复制原来的大圆箭头,方便和恢复态区分。 */}
-                    <svg
-                      width="40"
-                      height="40"
-                      viewBox="0 0 40 40"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M34.1395 5.85926C26.3291 -1.95309 13.6662 -1.95309 5.85779 5.85926C-1.95064 13.6716 -1.95455 26.332 5.85779 34.1424C13.6701 41.9528 26.3305 41.9523 34.1409 34.1424C41.9513 26.3325 41.9494 13.6677 34.1395 5.85926ZM30.6669 18.5416L22.8687 24.4673C22.8072 24.5144 22.7338 24.5435 22.6567 24.5512C22.5796 24.5589 22.5019 24.545 22.4323 24.5109C22.3627 24.4769 22.304 24.4241 22.2627 24.3585C22.2215 24.2929 22.1993 24.2171 22.1988 24.1397V21.4981C22.1983 21.3926 22.1577 21.2911 22.0851 21.2145C22.0126 21.1378 21.9135 21.0917 21.8082 21.0855C18.2711 20.8629 15.1711 21.2349 13.072 23.4409C11.9978 24.5703 10.7024 26.81 10.3924 27.4672C10.3484 27.56 10.2674 27.7319 10.0721 27.7968L10.055 27.8022C9.98791 27.8233 9.9166 27.8271 9.84765 27.8134C9.77869 27.7997 9.71431 27.7688 9.66045 27.7236C9.47589 27.5688 9.36407 27.475 10.1058 24.4468C11.3631 19.3199 16.2702 15.9689 21.8282 15.3527C21.9297 15.3421 22.0238 15.2944 22.0923 15.2187C22.1607 15.143 22.1989 15.0447 22.1993 14.9426V12.2883C22.2002 12.2111 22.2227 12.1357 22.264 12.0704C22.3054 12.0052 22.3641 11.9528 22.4335 11.919C22.503 11.8852 22.5804 11.8714 22.6573 11.8791C22.7341 11.8868 22.8073 11.9157 22.8687 11.9627L30.6669 17.8864C30.7176 17.9246 30.7588 17.9741 30.7872 18.0309C30.8155 18.0878 30.8303 18.1505 30.8303 18.214C30.8303 18.2775 30.8155 18.3402 30.7872 18.3971C30.7588 18.4539 30.7176 18.5034 30.6669 18.5416Z"
-                        fill={canSend ? '#1FCFA9' : '#D9D9D9'}
-                      />
-                    </svg>
-                  </>
-                )}
-              </button>
             </div>
           </div>
         </div>

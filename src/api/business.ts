@@ -27,6 +27,9 @@ const MODEL_CACHE_TTL_MS = 30_000
 const modelCache = new Map()
 const PROVIDER_TASK_RETRY_LIMIT = 2
 const PROVIDER_TASK_RETRY_BACKOFF_MS = [700, 1400]
+const AI_TASK_POLL_RETRY_LIMIT = 5
+const AI_TASK_POLL_RETRY_BASE_MS = 1000
+const AI_TASK_POLL_RETRY_MAX_MS = 8000
 
 // Whitelist for uploadAssetFile destinations. Blocks redirect-to-internal-host attacks.
 const ALLOWED_UPLOAD_HOST_PATTERNS = [
@@ -1047,6 +1050,22 @@ function isRetryableAiCreateTaskError(error) {
   return false
 }
 
+function isRetryableAiTaskPollError(error) {
+  if (!(error instanceof BusinessApiError)) return false
+  const status = Number(error.status || 0)
+  if (status >= 500) return true
+  if (status === 0) return true
+  if (status === 429) return true
+  if (error.cause === 'timeout') return true
+  return false
+}
+
+function getAiTaskPollRetryDelay(attempt) {
+  const base = AI_TASK_POLL_RETRY_BASE_MS * Math.pow(2, Math.max(0, Number(attempt || 0)))
+  const jitter = Math.floor(Math.random() * 400)
+  return Math.min(AI_TASK_POLL_RETRY_MAX_MS, base + jitter)
+}
+
 async function requestJsonWithRetry(path, options: any = {}, cfg: any = {}) {
   const retries = Math.max(0, Number(cfg.retries ?? 0) || 0)
   const timeoutMs = Math.max(0, Number(cfg.timeoutMs ?? 0) || 0)
@@ -1125,6 +1144,7 @@ export function cancelAiTask({ workspaceId, taskId }: any = {}) {
 export async function waitForAiTask({ workspaceId, task, intervalMs = 2000, timeoutMs = 120000, onPoll, signal }) {
   let currentTask = task
   const startedAt = Date.now()
+  let pollErrorCount = 0
 
   const ensureNotAborted = () => {
     if (signal?.aborted) {
@@ -1151,7 +1171,33 @@ export async function waitForAiTask({ workspaceId, task, intervalMs = 2000, time
 
     await sleep(intervalMs)
     ensureNotAborted()
-    currentTask = await getAiTask({ workspaceId, taskId: currentTask.id })
+    try {
+      currentTask = await getAiTask({ workspaceId, taskId: currentTask.id })
+      pollErrorCount = 0
+    } catch (error) {
+      if (!isRetryableAiTaskPollError(error)) {
+        throw error
+      }
+      pollErrorCount += 1
+      if (pollErrorCount > AI_TASK_POLL_RETRY_LIMIT) {
+        throw new BusinessApiError('AI 任务状态查询连续失败，请稍后重试', {
+          status: error?.status,
+          code: error?.code,
+          response: error?.response,
+          cause: error,
+        })
+      }
+      if (import.meta.env.DEV) {
+        console.warn('[waitForAiTask] task polling failed, retrying', {
+          taskId: currentTask.id,
+          status: error?.status,
+          code: error?.code,
+          attempt: pollErrorCount,
+        })
+      }
+      await sleep(getAiTaskPollRetryDelay(Math.min(pollErrorCount - 1, AI_TASK_POLL_RETRY_LIMIT)))
+      continue
+    }
 
     // DEV: 排查「一直轮询不停」——仅当后端返回了不在已知名单里的状态才 warn。
     // submitting/pending/processing/queued/running 都是正常的非终态,不需要 warn。
@@ -1923,6 +1969,88 @@ export function deleteCreativeProject({ projectId, workspaceId }: any = {}) {
   }
   return requestJson(`/api/v1/creative/projects/${id}?workspace_id=${Math.floor(wsId)}`, {
     method: 'DELETE',
+  })
+}
+
+export function listCreativeTrash({ workspaceId, projectId, offset = 0, limit = 100 }: any = {}) {
+  const params = new URLSearchParams()
+  const wsId = Number(workspaceId || 0)
+  const pid = Number(projectId || 0)
+  const off = Number(offset || 0)
+  const lim = Number(limit || 0)
+  if (Number.isFinite(wsId) && wsId > 0) params.set('workspace_id', String(Math.floor(wsId)))
+  if (Number.isFinite(pid) && pid > 0) params.set('project_id', String(Math.floor(pid)))
+  if (Number.isFinite(off) && off >= 0) params.set('offset', String(Math.floor(off)))
+  if (Number.isFinite(lim) && lim > 0) params.set('limit', String(Math.floor(lim)))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return requestJson(`/api/v1/creative/trash${suffix}`)
+}
+
+export function createCreativeTrash(payload: any = {}) {
+  const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+  const wsId = Number(body.workspaceId || body.workspace_id || 0)
+  if (!Number.isFinite(wsId) || wsId <= 0) {
+    throw new BusinessApiError('workspace_id 缺失')
+  }
+  const pid = Number(body.projectId || body.project_id || 0)
+  const params = new URLSearchParams()
+  params.set('workspace_id', String(Math.floor(wsId)))
+  if (Number.isFinite(pid) && pid > 0) {
+    params.set('project_id', String(Math.floor(pid)))
+    params.set('creative_project_id', String(Math.floor(pid)))
+  }
+  const { workspaceId, workspace_id, projectId, project_id, creativeProjectId, creative_project_id, ...restBody } = body
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  const normalizedBody = {
+    ...restBody,
+    workspace_id: Math.floor(wsId),
+    ...(Number.isFinite(pid) && pid > 0
+      ? {
+          project_id: Math.floor(pid),
+          creative_project_id: Math.floor(pid),
+        }
+      : {}),
+  }
+  return requestJson(`/api/v1/creative/trash${suffix}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(normalizedBody),
+  })
+}
+
+export function getCreativeTrashItem({ id, trashId, workspaceId }: any = {}) {
+  const resolvedId = Number(id || trashId || 0)
+  if (!Number.isFinite(resolvedId) || resolvedId <= 0) {
+    throw new BusinessApiError('垃圾桶条目 ID 无效')
+  }
+  const wsId = Number(workspaceId || 0)
+  const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${Math.floor(wsId)}` : ''
+  return requestJson(`/api/v1/creative/trash/${Math.floor(resolvedId)}${query}`)
+}
+
+export function deleteCreativeTrashItem({ id, trashId, workspaceId }: any = {}) {
+  const resolvedId = Number(id || trashId || 0)
+  if (!Number.isFinite(resolvedId) || resolvedId <= 0) {
+    throw new BusinessApiError('垃圾桶条目 ID 无效')
+  }
+  const wsId = Number(workspaceId || 0)
+  const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${Math.floor(wsId)}` : ''
+  return requestJson(`/api/v1/creative/trash/${Math.floor(resolvedId)}${query}`, {
+    method: 'DELETE',
+  })
+}
+
+export function restoreCreativeTrashItem({ id, trashId, workspaceId }: any = {}) {
+  const resolvedId = Number(id || trashId || 0)
+  if (!Number.isFinite(resolvedId) || resolvedId <= 0) {
+    throw new BusinessApiError('垃圾桶条目 ID 无效')
+  }
+  const wsId = Number(workspaceId || 0)
+  const query = Number.isFinite(wsId) && wsId > 0 ? `?workspace_id=${Math.floor(wsId)}` : ''
+  return requestJson(`/api/v1/creative/trash/${Math.floor(resolvedId)}/restore${query}`, {
+    method: 'POST',
   })
 }
 

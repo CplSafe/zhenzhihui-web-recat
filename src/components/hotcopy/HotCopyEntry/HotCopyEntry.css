@@ -50,6 +50,27 @@
   width: min(1180px, 94%);
 }
 
+.hotcopy__newVideoBtn {
+  position: absolute;
+  top: 30px;
+  right: 15px;
+  z-index: 2;
+  padding: 6px 4px;
+  border: none;
+  background: transparent;
+  color: #333;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.0625em;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.hotcopy__newVideoBtn:hover {
+  color: #1fcfa9;
+}
+
 /* 分段 Tab(对齐智能成片 .tabs):灰底条在卡片下层,bottom:-20px 把底部塞进主卡,
    卡片(z-index:1)盖住灰条底部 → 无缝「文件夹页签」;选中态为白色圆角卡 */
 .hotcopy__tabs {
@@ -338,13 +359,33 @@
   right: 1px;
   width: 16px;
   height: 16px;
+  padding: 0;
   border: none;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-size: 12px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+  line-height: 0;
   cursor: pointer;
+}
+.hotcopy__product button::before,
+.hotcopy__product button::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: #fff;
+  pointer-events: none;
+}
+.hotcopy__product button::before {
+  transform: rotate(45deg);
+}
+.hotcopy__product button::after {
+  transform: rotate(-45deg);
 }
 /* 爆款视频缩略图:绿色描边 + 左下角「爆款」角标,与替换素材区分 */
 .hotcopy__product--hot {
@@ -463,43 +504,98 @@
 .hotcopy__regen {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 4px;
+  min-width: 130px;
   height: 40px;
-  padding: 0 6px;
+  padding: 0 24px;
   border: none;
-  background: transparent;
-  color: #333;
-  font-size: 16px;
-  font-weight: 400;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #38dbb7 0%, #1cbd9c 100%);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 500;
   cursor: pointer;
-  transition: color 0.15s;
+  transition:
+    filter 0.18s,
+    background 0.18s,
+    opacity 0.18s;
 }
 .hotcopy__regen:hover {
-  color: #1fcfa9;
+  filter: brightness(1.04);
 }
-/* 发送按钮:改为与智能成片同款圆底 + 白色箭头。 */
+.hotcopy__regen:disabled {
+  background: #d9d9d9;
+  color: #fff;
+  cursor: not-allowed;
+}
+/* 主按钮:与智能成片同款绿色胶囊 + 白色文字箭头。 */
 .hotcopy__send {
   flex: 0 0 auto;
+  min-width: 40px;
+  height: 40px;
+  border-radius: 999px;
   border: none;
-  background: none;
-  padding: 0;
+  padding: 0 16px;
+  background: #1fcfa9;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   cursor: pointer;
-  transition: filter 0.15s;
+  transition:
+    background 0.15s,
+    filter 0.15s;
 }
 .hotcopy__send:hover {
   filter: brightness(1.05);
 }
 .hotcopy__send--resume {
+  min-width: 40px;
   width: 40px;
-  height: 40px;
+  padding: 0;
   border-radius: 50%;
-  background: #1fcfa9;
+  background: transparent;
+  gap: 0;
+}
+.hotcopy__send--plain {
+  min-width: 130px;
+  width: auto;
+  height: 40px;
+  padding: 0 24px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #38dbb7 0%, #1cbd9c 100%);
+  color: #fff;
+  gap: 4px;
+  transition:
+    filter 0.18s,
+    background 0.18s,
+    opacity 0.18s;
+}
+.hotcopy__send--plain:hover {
+  filter: brightness(1.04);
 }
 .hotcopy__send.is-disabled {
-  cursor: pointer;
+  background: #d9d9d9;
+  cursor: not-allowed;
+}
+.hotcopy__send--plain.is-disabled {
+  background: #d9d9d9;
+  color: #fff;
+  opacity: 1;
+}
+
+.hotcopy__sendText {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+.hotcopy__sendPlainText {
+  color: inherit;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
 }
 
 /* 恢复态:重新生成 + 下一步 */

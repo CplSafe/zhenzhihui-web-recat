@@ -1472,7 +1472,11 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  cursor: pointer;
+  cursor: grab;
+  user-select: none;
+}
+.pm2-vid:active {
+  cursor: grabbing;
 }
 .pm2-vid-thumb {
   position: relative;

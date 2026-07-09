@@ -2,14 +2,13 @@
   PersonalCenterModal — 「个人中心」个人资料弹窗(对齐 Figma「设置-个人中心」1391:9020)。
   左侧头像(可换,支持 JPG/PNG ≤2MB 本地预览)+ 右侧昵称(可改,x/10)/ 账号(只读不可改)。
   昵称保存走 PATCH /api/v1/me/profile(与团队管理里的改名同一接口),保存后刷新会话内当前用户。
-  头像:先上传为素材并换取下载地址,再把 avatar_url 提交到 /api/v1/me/profile,
+  头像:直接走 POST /api/v1/me/avatar 专用接口,
   保存成功后刷新当前用户资料;本地缓存仅作为接口未返回头像时的兜底。
 */
 import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { getAssetDownloadUrl, uploadAssetFile } from '@/api/business'
-import { updateMyProfile, getCurrentUser } from '@/api/auth'
-import { useCurrentUser, useWorkspaceId, useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import { updateMyProfile, getCurrentUser, uploadMyAvatar } from '@/api/auth'
+import { useCurrentUser, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { applyUserProfileOverrides, saveUserAvatarOverride } from '@/utils/profileOverrides'
 import UserAvatar from '@/components/common/UserAvatar'
@@ -57,7 +56,6 @@ const CameraIcon = (
 
 export default function PersonalCenterModal({ onClose }: { onClose: () => void }) {
   const user = useCurrentUser() as any
-  const workspaceId = useWorkspaceId()
   const session = useWorkspaceSessionStore((s) => s.authSession)
   const { showToast } = useToast()
 
@@ -114,21 +112,15 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
     try {
       let nextAvatarUrl = ''
       if (avatarFile) {
-        const ws = Number(workspaceId || 0)
-        if (!ws) throw new Error('未选择工作空间,暂时无法上传头像')
-        const uploaded: any = await uploadAssetFile({ workspaceId: ws, file: avatarFile, source: 'avatar' })
-        const assetId = Number(uploaded?.asset?.id || 0)
-        if (!assetId) throw new Error('头像上传失败,未取得素材 ID')
-        nextAvatarUrl = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
-        if (!nextAvatarUrl) throw new Error('头像上传失败,未取得图片地址')
+        const uploaded: any = await uploadMyAvatar(avatarFile)
+        nextAvatarUrl = String(
+          uploaded?.avatar_url || uploaded?.avatarUrl || uploaded?.avatar || uploaded?.url || avatarData || '',
+        ).trim()
       }
       const payload: Record<string, any> = {}
       if (next !== initialName) {
         payload.nickname = next
         payload.name = next
-      }
-      if (nextAvatarUrl) {
-        payload.avatar_url = nextAvatarUrl
       }
       if (Object.keys(payload).length) {
         await updateMyProfile(payload)

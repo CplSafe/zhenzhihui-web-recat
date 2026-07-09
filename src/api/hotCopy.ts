@@ -17,6 +17,7 @@ import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/video
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
 
 const VIDEO_MODEL_KEYWORDS = ['seedance']
+const HOT_COPY_VIDEO_TIMEOUT_MS = 60 * 60 * 1000
 
 /** 上传本地文件成 asset,返回 asset_id(type 由文件推断:视频→video,图片→image)。 */
 export async function uploadHotCopyAsset(workspaceId: number, file: File): Promise<number> {
@@ -88,7 +89,7 @@ export async function replicateHotVideo(args: {
     workspaceId: args.workspaceId,
     task,
     intervalMs: 4000,
-    timeoutMs: 60 * 60 * 1000,
+    timeoutMs: HOT_COPY_VIDEO_TIMEOUT_MS,
     signal: args.signal,
   })
   const { url, assetId } = await resolveTaskVideoResult(args.workspaceId, completed, (task as any)?.id)
@@ -109,7 +110,7 @@ export async function awaitHotVideoResult(args: {
     workspaceId: args.workspaceId,
     task: { id: args.taskId, status: 'processing' },
     intervalMs: 4000,
-    timeoutMs: 60 * 60 * 1000,
+    timeoutMs: HOT_COPY_VIDEO_TIMEOUT_MS,
     signal: args.signal,
   })
   const { url, assetId } = await resolveTaskVideoResult(args.workspaceId, completed, args.taskId)

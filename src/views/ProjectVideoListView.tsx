@@ -452,17 +452,6 @@ export default function ProjectVideoListView() {
 
             <section className="pvlist-toolbar" aria-label="项目视频工具栏">
               <div className="pvlist-toolbar__left">
-                <label className="pvlist-search">
-                  <span className="pvlist-search__icon" aria-hidden="true">
-                    ⌕
-                  </span>
-                  <input
-                    type="search"
-                    value={query}
-                    placeholder="搜索视频..."
-                    onChange={(event) => setQuery(event.target.value)}
-                  />
-                </label>
                 <div className="pvlist-flow-tabs">
                   <button
                     type="button"
@@ -486,6 +475,17 @@ export default function ProjectVideoListView() {
                     爆款复制
                   </button>
                 </div>
+                <label className="pvlist-search">
+                  <span className="pvlist-search__icon" aria-hidden="true">
+                    ⌕
+                  </span>
+                  <input
+                    type="search"
+                    value={query}
+                    placeholder="搜索视频..."
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                </label>
               </div>
               <div className="pvlist-toolbar__right">
                 <div className="pvlist-filters">
