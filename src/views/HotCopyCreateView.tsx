@@ -13,11 +13,12 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
-import HotCopyEntry, { type HotCopyEntryPayload } from '@/components/hotcopy/HotCopyEntry'
+import HotCopyEntry, { type HotCopyEntryPayload, type HotCopyProduct } from '@/components/hotcopy/HotCopyEntry'
 import VideoStage from '@/components/smart/VideoStage'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import { replicateHotVideo, uploadHotCopyAsset, awaitHotVideoResult, estimateReplicateCost } from '@/api/hotCopy'
 import { editFullVideo } from '@/api/smartVideo'
+import { blurFacesOnAsset } from '@/api/smartFaceBlur'
 import { readVideoDurationSec } from '@/utils/videoDuration'
 import {
   saveHotCopyDraft,
@@ -217,6 +218,7 @@ export default function HotCopyCreateView() {
   const [videoStageKey, setVideoStageKey] = useState(0)
   // 在途生成任务 id(>0=有任务在跑):持久化后,刷新/切换页面回来用它续轮询,不丢生成结果
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
+  const [hotCopyPhase, setHotCopyPhase] = useState('')
   const vidGenAbortRef = useRef<AbortController | null>(null)
   const aliveRef = useRef(true)
   const vidGenPendingTimerRef = useRef<number>(0)
@@ -1406,6 +1408,45 @@ export default function HotCopyCreateView() {
     return { url, assetId }
   }
 
+  const prepareProductForReplicate = async (
+    ws: number,
+    product: HotCopyProduct,
+    index: number,
+    total: number,
+  ): Promise<{ product: HotCopyProduct; submitAssetId: number; failed: boolean }> => {
+    const existingSubmitId = Number((product as any).submitAssetId || 0) || 0
+    let sourceAssetId = Number(product.assetId || 0) || 0
+    if (existingSubmitId && (!sourceAssetId || existingSubmitId !== sourceAssetId)) {
+      return {
+        product: { ...product, file: null, submitAssetId: existingSubmitId },
+        submitAssetId: existingSubmitId,
+        failed: false,
+      }
+    }
+
+    if (!sourceAssetId && product.file) {
+      setHotCopyPhase(`替换素材上传 ${index}/${total}…`)
+      sourceAssetId = await uploadHotCopyAsset(ws, product.file)
+    }
+    if (!sourceAssetId) {
+      return { product: { ...product, file: null }, submitAssetId: 0, failed: true }
+    }
+
+    setHotCopyPhase(`替换素材人脸检测 ${index}/${total}…`)
+    const face = await blurFacesOnAsset({ workspaceId: ws, assetId: sourceAssetId })
+    const submitAssetId = face.ok && face.assetId ? face.assetId : sourceAssetId
+    return {
+      product: {
+        ...product,
+        file: null,
+        assetId: sourceAssetId,
+        submitAssetId,
+      },
+      submitAssetId,
+      failed: false,
+    }
+  }
+
   // 入口提交:上传本地素材取 asset_id → 直接 video.replicate 出片
   const prepareAndGenerate = async (payload: HotCopyEntryPayload, prompt: string) => {
     const ws = Number(workspaceId || 0)
@@ -1425,32 +1466,34 @@ export default function HotCopyCreateView() {
         videoAssetId = payload.libraryVideo.assetId
         videoUrl = payload.libraryVideo.src
       } else if (payload.videoSource === 'local' && payload.videoFile) {
+        setHotCopyPhase('爆款视频上传中…')
         videoAssetId = await uploadHotCopyAsset(ws, payload.videoFile)
         videoUrl = payload.videoPreview
       }
       if (!videoAssetId) throw new Error('爆款视频上传失败,请重试')
 
-      // ② 替换素材图 asset_id(只用图片;素材库已有,本地现传)
+      // ② 替换素材图 asset_id(只用图片;素材库已有,本地现传)。
+      // 做同款的人物/头像素材在送 video.replicate 前先跑 image.face_detect,优先用检测/抠脸产物;
+      // 检测失败则回退原图,不阻塞生成。
       const productIds: number[] = []
+      const preparedProducts: HotCopyProduct[] = []
       let productFailures = 0
+      const totalProductImages = payload.products.filter((p) => !p.isVideo).length
+      let productIndex = 0
       for (const p of payload.products) {
-        if (p.isVideo) continue
-        const existingAssetId = Number((p as any).submitAssetId || p.assetId || 0) || 0
-        if (existingAssetId) {
-          productIds.push(existingAssetId)
+        if (p.isVideo) {
+          preparedProducts.push({ ...p, file: null })
           continue
         }
-        if (p.file) {
-          try {
-            const id = await uploadHotCopyAsset(ws, p.file)
-            if (id) {
-              productIds.push(id)
-            } else {
-              productFailures++
-            }
-          } catch {
-            productFailures++
-          }
+        productIndex += 1
+        try {
+          const prepared = await prepareProductForReplicate(ws, p, productIndex, totalProductImages)
+          preparedProducts.push(prepared.product)
+          if (prepared.submitAssetId) productIds.push(prepared.submitAssetId)
+          else if (prepared.failed) productFailures++
+        } catch {
+          preparedProducts.push({ ...p, file: null })
+          productFailures++
         }
       }
       // 所有素材都失败或未提供时,不给后端发空的 productAssetIds——那会导致 replicate 只拿视频没替换图,白白消耗积分。
@@ -1463,24 +1506,13 @@ export default function HotCopyCreateView() {
       }
       setSourceVideo({ assetId: videoAssetId, url: videoUrl })
       setProductAssetIds(productIds)
-      let productIdCursor = 0
       const nextEntryInitial = buildEntrySnapshot({
         ...payload,
         videoSource: 'library',
         videoFile: null,
         libraryVideo: { assetId: videoAssetId, src: videoUrl },
         videoPreview: videoUrl,
-        products: (payload.products || []).map((p) => {
-          const submitAssetId = p.isVideo
-            ? Number((p as any).submitAssetId || p.assetId || 0) || undefined
-            : Number(productIds[productIdCursor++] || (p as any).submitAssetId || p.assetId || 0) || undefined
-          return {
-            ...p,
-            file: null,
-            assetId: Number(p.assetId || 0) || undefined,
-            submitAssetId,
-          }
-        }),
+        products: preparedProducts,
       })
       setEntryInitial(nextEntryInitial)
       persistNow({ sourceVideo: { assetId: videoAssetId, url: videoUrl }, productAssetIds: productIds })
@@ -1491,11 +1523,13 @@ export default function HotCopyCreateView() {
       if (srcDur) setSourceVideoDurSec(srcDur)
 
       // ③ 出片
+      setHotCopyPhase('爆款复制生成中…')
       await doReplicate(ws, videoAssetId, productIds, prompt, srcDur, gid)
       if (aliveRef.current) markGen(gid, 'published')
     } catch (e: any) {
       if (isAbortedTaskError(e)) {
         aborted = true
+        setHotCopyPhase('')
         const taskId = Number(loadHotCopyDraft(ws)?.vidGenTaskId || vidGenTaskId || 0) || 0
         if (taskId) scheduleResumeVideoTask(ws, taskId)
         return
@@ -1517,6 +1551,7 @@ export default function HotCopyCreateView() {
         persistNow({ videoGenerating: false, vidGenTaskId: 0 })
         setVidGenRunning(false)
         setVidGenTaskId(0)
+        setHotCopyPhase('')
       }
     }
   }
@@ -1536,6 +1571,7 @@ export default function HotCopyCreateView() {
     // 「确认修改」:把当前整片当 video 输入,按修改提示在原视频基础上改
     if (opts?.edit && fullVideo.assetId) {
       setVidGenRunning(true)
+      setHotCopyPhase('视频修改生成中…')
       const gid = startGen('确认修改')
       try {
         const plans = await resolvePlanCandidates()
@@ -1582,6 +1618,7 @@ export default function HotCopyCreateView() {
           persistNow({ videoGenerating: false, vidGenTaskId: 0 })
           setVidGenRunning(false)
           setVidGenTaskId(0)
+          setHotCopyPhase('')
         }
       }
       return
@@ -1594,6 +1631,7 @@ export default function HotCopyCreateView() {
       return
     }
     setVidGenRunning(true)
+    setHotCopyPhase('爆款复制生成中…')
     try {
       const prompt = [basePrompt, note && `修改要求:${note}`].filter(Boolean).join('\n')
       const reSrcDur = sourceVideoDurSec || (await readVideoDurationSec(sourceVideo.url)) || 0
@@ -1617,6 +1655,7 @@ export default function HotCopyCreateView() {
       if (aliveRef.current) {
         setVidGenRunning(false)
         setVidGenTaskId(0)
+        setHotCopyPhase('')
       }
     }
   }
@@ -1889,7 +1928,7 @@ export default function HotCopyCreateView() {
                 current={step}
                 statuses={[
                   '已完成',
-                  vidGenRunning || genTriggerBusy ? '视频生成中' : fullVideo.url ? '已完成' : '待生成',
+                  vidGenRunning || genTriggerBusy ? hotCopyPhase || '视频生成中' : fullVideo.url ? '已完成' : '待生成',
                 ]}
                 onStepClick={(i) => goStep(i)}
               />
@@ -1925,7 +1964,7 @@ export default function HotCopyCreateView() {
                 shots={[]}
                 videoUrl={fullVideo.url}
                 videoGenerating={hotCopyVideoGenerating}
-                videoStatusText={hotCopyVideoGenerating ? '爆款复制生成中…' : undefined}
+                videoStatusText={hotCopyVideoGenerating ? hotCopyPhase || '爆款复制生成中…' : undefined}
                 loadingTitle="爆款复制生成中"
                 videoStartedAt={videoGenerations.find(isActiveProcessingGen)?.createdAt || 0}
                 costEstimate={videoCost.estimate}

@@ -315,8 +315,11 @@
 
 .vstageVer {
   position: relative;
-  width: 84px;
-  height: 50px;
+  /* 缩略图按项目比例显示(--frame-ratio 由 SmartCreateView 写在 <html> 上:竖屏 9:16 则窄高、
+     横屏 16:9 则宽扁),高度固定、宽度随比例。行 flex-wrap 会自动换行,故可放大。 */
+  height: 110px;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+  flex: 0 0 auto;
   padding: 0;
   border: 2px solid transparent;
   border-radius: 8px;
@@ -334,6 +337,13 @@
   &.active {
     border-color: #1fcfa9;
   }
+}
+
+/* 「生成中 / 失败」占位不按视频比例(要容纳文字),保持横向固定宽。 */
+.vstageVerLoading,
+.vstageVerFailed {
+  aspect-ratio: auto;
+  width: 92px;
 }
 
 /* 正在重新生成的新版本占位:与历史缩略图同尺寸,居中转圈 */
