@@ -20,6 +20,7 @@ import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/video
 import { resolveGeneratedMediaUrls } from '@/utils/taskMedia'
 
 const VIDEO_MODEL_KEYWORDS = ['seedance']
+const HOT_COPY_VIDEO_TIMEOUT_MS = 60 * 60 * 1000
 
 const extractVideoAssetId = (task: any): number => Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
 
@@ -105,7 +106,7 @@ export async function replicateHotVideo(args: {
     workspaceId: args.workspaceId,
     task,
     intervalMs: 4000,
-    timeoutMs: 60 * 60 * 1000,
+    timeoutMs: HOT_COPY_VIDEO_TIMEOUT_MS,
     signal: args.signal,
   })
   let assetId = extractVideoAssetId(completed)
@@ -129,7 +130,7 @@ export async function awaitHotVideoResult(args: {
     workspaceId: args.workspaceId,
     task: { id: args.taskId, status: 'processing' },
     intervalMs: 4000,
-    timeoutMs: 60 * 60 * 1000,
+    timeoutMs: HOT_COPY_VIDEO_TIMEOUT_MS,
     signal: args.signal,
   })
   let assetId = extractVideoAssetId(completed)

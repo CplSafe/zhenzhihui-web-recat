@@ -322,6 +322,8 @@ export function parseSmartSnapshot(draftJson: any): SmartDraft | null {
     }
   }
   if (!obj || typeof obj !== 'object') return null
+  const flow = String(obj?.smart?.flow || obj?.flow || '').toLowerCase()
+  if (flow === 'hot-copy') return null
   const smart = obj.smart
   if (smart && typeof smart === 'object') return sanitize(smart as SmartDraft)
   return null

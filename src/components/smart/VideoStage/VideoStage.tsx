@@ -291,6 +291,12 @@ export default function VideoStage({
     if (!pendingGenerations.some((g) => g.id === selectedPendingId)) setSelectedPendingId('')
   }, [pendingGenerations, selectedPendingId])
   useEffect(() => {
+    if (pendingGenerations.length || !videoUrl || !historyItems.publishedVersions.length) return
+    setSelectedPendingId('')
+    const latest = historyItems.publishedVersions[historyItems.publishedVersions.length - 1]
+    if (latest) setSelectedHistoryVersionId(latest.id)
+  }, [historyItems.publishedVersions, pendingGenerations.length, videoUrl])
+  useEffect(() => {
     if (!selectedHistoryVersionId) return
     if (!historyItems.publishedVersions.some((v) => v.id === selectedHistoryVersionId)) setSelectedHistoryVersionId('')
   }, [historyItems, selectedHistoryVersionId])
@@ -768,7 +774,7 @@ export default function VideoStage({
           {onDownloadVideo && (
             <button
               type="button"
-              className="smart__btn smart__btn--ghost"
+              className={`smart__btn smart__btn--ghost ${styles.vstageDownloadButton}`}
               onClick={onDownloadVideo}
               disabled={!videoUrl || lockSingleActions}
             >

@@ -1,10 +1,16 @@
 /**
  * 按项目草稿的 flow 决定打开路径:
+ *  - 爆款复制(draft.flow==='hot-copy' 或 smart.flow==='hot-copy')→ /hot-copy/:id
  *  - 智能成片(draft.flow==='smart' 或含 smart 块)→ /smart/:id
  *  - 其它(旧版 2.0 分步创作)→ /smart/:id（统一走新版智能成片）
  * 失败兜底走 /smart。供首页/工作台/项目管理/布局等所有"打开历史项目"入口共用。
  */
 import { getCreativeProject } from '@/api/business'
+
+function readDraftFlow(draft: any): string {
+  if (!draft || typeof draft !== 'object') return ''
+  return String(draft?.smart?.flow || draft?.flow || '').toLowerCase()
+}
 
 export async function resolveProjectPath(projectId: number | string, workspaceId: number): Promise<string> {
   const id = Number(projectId || 0)
@@ -19,7 +25,9 @@ export async function resolveProjectPath(projectId: number | string, workspaceId
         draft = null
       }
     }
-    if (draft && (draft.flow === 'smart' || draft.smart)) return `/smart/${id}`
+    const flow = readDraftFlow(draft)
+    if (flow === 'hot-copy') return `/hot-copy/${id}`
+    if (draft && (flow === 'smart' || draft.smart)) return `/smart/${id}`
   } catch {
     /* 拉取失败 → 默认走智能成片 */
   }

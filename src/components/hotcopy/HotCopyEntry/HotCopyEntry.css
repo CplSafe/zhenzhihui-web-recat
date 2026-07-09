@@ -359,13 +359,33 @@
   right: 1px;
   width: 16px;
   height: 16px;
+  padding: 0;
   border: none;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-size: 12px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+  line-height: 0;
   cursor: pointer;
+}
+.hotcopy__product button::before,
+.hotcopy__product button::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: #fff;
+  pointer-events: none;
+}
+.hotcopy__product button::before {
+  transform: rotate(45deg);
+}
+.hotcopy__product button::after {
+  transform: rotate(-45deg);
 }
 /* 爆款视频缩略图:绿色描边 + 左下角「爆款」角标,与替换素材区分 */
 .hotcopy__product--hot {
