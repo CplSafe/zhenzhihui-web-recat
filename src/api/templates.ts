@@ -304,6 +304,50 @@ export interface ListTemplatesResult {
 }
 
 /**
+ * 拉取后台配置的模板库（GET /api/v1/templates,公开免登录,后台在 admin 里增删改）。
+ * 返回标准业务信封 { code, data: Template[] }。失败/空时返回空数组,调用方自行决定是否用 demo 兜底。
+ */
+export async function listBackendTemplates(): Promise<TemplateItem[]> {
+  let res: Response
+  try {
+    res = await fetch('/api/v1/templates', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    })
+  } catch {
+    return []
+  }
+  if (!res.ok) return []
+  let payload: any
+  try {
+    payload = await res.json()
+  } catch {
+    return []
+  }
+  const list = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : []
+  return list
+    .map((t: any, i: number): TemplateItem => {
+      const w = Number(t?.width || 0)
+      const h = Number(t?.height || 0)
+      const ratio = String(t?.ratio || '').trim() || (w && h ? `${w} / ${h}` : '9 / 16')
+      return {
+        id: Number(t?.id || 0),
+        title: String(t?.title || '').trim(),
+        thumbnailUrl: String(t?.thumbnail_url || '').trim(),
+        videoUrl: String(t?.video_url || '').trim(),
+        ratio,
+        width: w || undefined,
+        height: h || undefined,
+        style: String(t?.style || '').trim(),
+        useCount: 0,
+        createdAt: String(t?.created_at || ''),
+        grad: pickGrad(i),
+      }
+    })
+    .filter((t: TemplateItem) => t.videoUrl && isSafeMediaUrl(t.videoUrl))
+}
+
+/**
  * 拉取模板列表（当前复用 creative/projects 端点）。
  * 后续替换为 /api/v1/templates 即可。
  */

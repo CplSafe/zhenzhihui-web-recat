@@ -1,7 +1,9 @@
 /**
- * 智能成片 — 人脸脱敏:正式生成视频前,对每张「进入视频」的分镜图做人脸检测脱敏(打码/抠脸),
- * 产出新的后端 asset,再把脱敏版喂给 seedance。走业务后端 image.face_detect 能力
- * (同 2.0「人脸检测抠图」模型)。脱敏失败不阻塞——回退用原图(由调用方决定)。
+ * 智能成片 — 人脸脱敏:正式生成视频前,对每张「进入视频」的分镜图做人脸检测脱敏(把人脸区域
+ * 像素整块挖空成透明,产出人脸位置透明的整图 PNG),再把脱敏版喂给 seedance —— 火山对含真人
+ * 人脸的输入图会拒审(InputImageSensitiveContentDetected.PrivacyInformation),必须先脱敏。
+ * 走业务后端 image.face_detect 能力(DetectFace + importFaceCrops 挖空,同 2.0「人脸检测抠图」)。
+ * 脱敏失败不阻塞——回退用原图(由调用方决定)。
  */
 // @ts-nocheck
 import { createAiTask, waitForAiTask, listAiModels, getAssetDownloadUrl } from './business'
@@ -15,7 +17,7 @@ async function getFaceDetectModelId(): Promise<number> {
     const models = await listAiModels({ operationCode: 'image.face_detect' })
     const list = Array.isArray(models) ? models : models?.items || models?.data || []
     const hit =
-      list.find((m: any) => String(m?.name || '').includes('人脸检测抠图')) ||
+      list.find((m: any) => String(m?.name || '').includes('人脸检测')) ||
       list.find((m: any) => String(m?.name || '').includes('人脸')) ||
       list[0]
     // 只在查到时缓存(对齐 Vue):失败/异常不写 0,避免首次失败后永久返回 0、下次还能重试
@@ -25,7 +27,6 @@ async function getFaceDetectModelId(): Promise<number> {
   }
   return cachedFaceModelId || 0
 }
-
 
 export interface FaceBlurResult {
   url: string

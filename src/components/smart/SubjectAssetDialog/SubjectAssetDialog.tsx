@@ -25,7 +25,7 @@ interface SubjectAssetDialogProps {
   projectImages?: { url: string; source: 'ai' | 'upload' }[]
   onClose: () => void
   /** 生成:prompt + 选项(refImageUrl 参考图;carryCurrent 携带当前图=修改/不带=重新生成) */
-  onGenerate: (prompt: string, opts: { refImageUrl?: string; carryCurrent?: boolean }) => Promise<void>
+  onGenerate: (prompt: string, opts: { refImageUrls?: string[]; carryCurrent?: boolean }) => Promise<void>
   onSelect: (url: string) => void
   /** 上传素材:直接交 File,由父级经后端 uploadAssetFile 存服务器取 asset_id。
    *  不传 → 视为「用户上传已下线」,弹窗内不显示任何「上传」入口,仅 AI 生成 / 从项目选。 */
@@ -52,7 +52,7 @@ export default function SubjectAssetDialog({
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [refining, setRefining] = useState(false)
-  const [refImage, setRefImage] = useState('') // 参考图(产品真实照片)dataURL
+  const [refImages, setRefImages] = useState<string[]>([]) // 参考图(产品真实照片)dataURL,支持多选
   const [carryCurrent, setCarryCurrent] = useState(false) // 携带当前图(修改)/ 不带(重新生成)
   const [picker, setPicker] = useState<null | 'ref' | 'use'>(null) // 项目图片选择器目标
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -64,11 +64,14 @@ export default function SubjectAssetDialog({
     uploadModeRef.current = mode
     fileRef.current?.click()
   }
-  // 项目图片选择器选中某图:ref→参考图;use→设为当前版本(同名联动)
+  // 项目图片选择器选中某图:ref→参考图(多选,点击切换,不自动关闭);use→设为当前版本(同名联动)
   const pickProjectImage = (url: string) => {
-    if (picker === 'ref') setRefImage(url)
-    else if (picker === 'use') onSelect(url)
-    setPicker(null)
+    if (picker === 'ref') {
+      setRefImages((prev) => (prev.includes(url) ? prev.filter((u) => u !== url) : [...prev, url]))
+    } else if (picker === 'use') {
+      onSelect(url)
+      setPicker(null)
+    }
   }
 
   // 打开时:先回显原始意图,若提供 refinePrompt 则用本地 Qwen 润成干净提示词后替换;
@@ -80,7 +83,7 @@ export default function SubjectAssetDialog({
     }
     let cancelled = false
     setPrompt(defaultPrompt)
-    setRefImage('')
+    setRefImages([])
     setCarryCurrent(false)
     setPicker(null)
     ;(async () => {
@@ -113,7 +116,7 @@ export default function SubjectAssetDialog({
     if (!p.trim()) return
     setGenerating(true)
     try {
-      await onGenerate(p, { refImageUrl: refImage || undefined, carryCurrent })
+      await onGenerate(p, { refImageUrls: refImages.length ? refImages : undefined, carryCurrent })
     } finally {
       setGenerating(false)
     }
@@ -233,19 +236,22 @@ export default function SubjectAssetDialog({
           )}
           {/* 参考图:从项目选 或 上传;AI 据此优化提示词并图生图(保证用你的产品) */}
           <div className={styles.sadRef}>
-            {refImage ? (
-              <div className={styles.sadRefThumb}>
-                <img src={refImage} alt="参考图" />
-                <button type="button" onClick={() => setRefImage('')} aria-label="移除参考图">
+            {refImages.map((url, i) => (
+              <div key={i} className={styles.sadRefThumb}>
+                <img src={url} alt={`参考图${i + 1}`} />
+                <button
+                  type="button"
+                  onClick={() => setRefImages((prev) => prev.filter((u) => u !== url))}
+                  aria-label="移除参考图"
+                >
                   ×
                 </button>
               </div>
-            ) : (
-              <button type="button" className={styles.sadRefAdd} onClick={() => setPicker('ref')}>
-                + 添加参考图
-              </button>
-            )}
-            <span className={styles.sadRefHint}>可从项目里选图或上传;按其产品外观优化提示词并图生图</span>
+            ))}
+            <button type="button" className={styles.sadRefAdd} onClick={() => setPicker('ref')}>
+              + 添加参考图{refImages.length ? `(已选${refImages.length}张)` : ''}
+            </button>
+            <span className={styles.sadRefHint}>可多选:从项目里选图或上传;按其产品外观优化提示词并图生图</span>
           </div>
 
           {/* 携带当前图:勾上=在当前图基础上「修改」;不勾=「重新生成」(可带参考图) */}
@@ -267,7 +273,7 @@ export default function SubjectAssetDialog({
                 if (f) {
                   if (uploadModeRef.current === 'ref')
                     fileToDataUrl(f)
-                      .then(setRefImage)
+                      .then((u) => setRefImages((prev) => [...prev, u]))
                       .catch(() => {})
                   else onUpload(f) // 上传成新版本(后端 asset)
                 }
@@ -316,10 +322,18 @@ export default function SubjectAssetDialog({
           {picker && (
             <div className={styles.sadPicker}>
               <div className={styles.sadPickerHead}>
-                {picker === 'ref' ? '选择参考图' : '选择要使用的图'}
-                <button type="button" onClick={() => setPicker(null)} aria-label="关闭">
-                  ×
-                </button>
+                {picker === 'ref'
+                  ? `选择参考图(可多选${refImages.length ? `,已选${refImages.length}张` : ''})`
+                  : '选择要使用的图'}
+                {picker === 'ref' ? (
+                  <button type="button" onClick={() => setPicker(null)}>
+                    完成
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => setPicker(null)} aria-label="关闭">
+                    ×
+                  </button>
+                )}
               </div>
               {onUpload && (
                 <div className={styles.sadPickerGrid}>
@@ -345,10 +359,34 @@ export default function SubjectAssetDialog({
                           key={i}
                           type="button"
                           className={styles.sadPickerItem}
+                          style={
+                            picker === 'ref' && refImages.includes(p.url)
+                              ? { outline: '2px solid #5767e5', outlineOffset: '-2px' }
+                              : undefined
+                          }
                           onClick={() => pickProjectImage(p.url)}
                         >
                           <img src={p.url} alt="" />
                           {src === 'ai' && <AiBadge size={15} />}
+                          {picker === 'ref' && refImages.includes(p.url) && (
+                            <span
+                              style={{
+                                position: 'absolute',
+                                top: 2,
+                                left: 2,
+                                background: '#5767e5',
+                                color: '#fff',
+                                borderRadius: '50%',
+                                width: 16,
+                                height: 16,
+                                fontSize: 11,
+                                lineHeight: '16px',
+                                textAlign: 'center',
+                              }}
+                            >
+                              ✓
+                            </span>
+                          )}
                         </button>
                       ))}
                     </div>

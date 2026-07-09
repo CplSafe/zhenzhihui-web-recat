@@ -566,7 +566,8 @@ export default function VideoStage({
                     }}
                     title={`版本${i + 1}`}
                   >
-                    <video src={v.url} muted preload="metadata" playsInline />
+                    {/* #t=0.1 媒体片段:让浏览器 seek 到首帧并渲染成静态预览,否则无 poster 时显示黑帧 */}
+                    <video src={v.url ? `${v.url}#t=0.1` : v.url} muted preload="metadata" playsInline />
                     <span className={styles.vstageVerNo}>{i + 1}</span>
                   </button>
                 ))}

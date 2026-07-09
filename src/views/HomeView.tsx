@@ -234,7 +234,7 @@ const QUICK_ENTRIES = [
   },
 ]
 
-import { type TemplateItem } from '@/api/templates'
+import { type TemplateItem, listBackendTemplates } from '@/api/templates'
 import { DEMO_TEMPLATES, DEMO_LANDSCAPE_URLS } from '@/data/demoTemplates'
 
 const TABS = [
@@ -495,12 +495,30 @@ export default function HomeView() {
     })
   }
 
-  // 案例库展示固定的 18 条演示视频(替换后端数据);不再依赖登录/工作空间
+  // 案例库拉后台配置的模板库(GET /api/v1/templates);为空/失败时用 demo 兜底。
+  // 免登录、不依赖工作空间(后端公开接口)。
   useEffect(() => {
     if (activeTab !== 'template') return
-    setTemplateItems(DEMO_TEMPLATES)
-    setTemplateLoading(false)
-    setTemplateError(DEMO_TEMPLATES.length ? '' : 'empty')
+    let cancelled = false
+    setTemplateLoading(true)
+    listBackendTemplates()
+      .then((items) => {
+        if (cancelled) return
+        const list = items.length ? items : DEMO_TEMPLATES
+        setTemplateItems(list)
+        setTemplateError(list.length ? '' : 'empty')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setTemplateItems(DEMO_TEMPLATES)
+        setTemplateError(DEMO_TEMPLATES.length ? '' : 'empty')
+      })
+      .finally(() => {
+        if (!cancelled) setTemplateLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [activeTab, templateRetry])
 
   const keywordTrim = keyword.trim()
@@ -943,7 +961,6 @@ export default function HomeView() {
 
       {/* 案例库点击放大预览(外链 OSS、无 CORS 头 → 不带 crossOrigin,否则卡 0:00) */}
       <VideoPreviewModal src={watching?.url || ''} poster={watching?.poster} onClose={() => setWatching(null)} />
-
     </div>
   )
 }

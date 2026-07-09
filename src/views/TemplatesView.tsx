@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
-import { type TemplateItem } from '@/api/templates'
+import { type TemplateItem, listBackendTemplates } from '@/api/templates'
 import { DEMO_TEMPLATES } from '@/data/demoTemplates'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveProjectPath } from '@/utils/projectRoute'
@@ -67,11 +67,28 @@ export default function TemplatesView() {
     })
   }
 
-  // 案例库展示固定的 18 条演示视频(替换后端数据);不再依赖登录/工作空间
+  // 案例库拉后台配置的模板库(GET /api/v1/templates);为空/失败时用 demo 兜底。
   useEffect(() => {
-    setTemplates(DEMO_TEMPLATES)
-    setLoading(false)
-    setError(DEMO_TEMPLATES.length ? '' : 'empty')
+    let cancelled = false
+    setLoading(true)
+    listBackendTemplates()
+      .then((items) => {
+        if (cancelled) return
+        const list = items.length ? items : DEMO_TEMPLATES
+        setTemplates(list)
+        setError(list.length ? '' : 'empty')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setTemplates(DEMO_TEMPLATES)
+        setError(DEMO_TEMPLATES.length ? '' : 'empty')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [retry])
 
   const keywordTrim = keyword.trim()

@@ -532,7 +532,7 @@ export default function SmartCreateView() {
   const genForSubject = async (
     name: string,
     prompt: string,
-    opts: { refImageUrl?: string; carryCurrent?: boolean } = {},
+    opts: { refImageUrls?: string[]; carryCurrent?: boolean } = {},
   ) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
@@ -548,10 +548,10 @@ export default function SmartCreateView() {
       const anchored = subjectRefOf(name)
       const anchoredIds =
         anchored.assetIds && anchored.assetIds.length ? anchored.assetIds : anchored.assetId ? [anchored.assetId] : []
-      if (opts.refImageUrl) {
-        // 弹窗手动加的参考图:VL 优化提示词 + 作图生图参考
+      if (opts.refImageUrls?.length) {
+        // 弹窗手动加的参考图(可多张):第一张给 VL 优化提示词;全部作图生图参考(gpt-image 支持多张)
         try {
-          finalPrompt = await refineElementPromptWithImage(prompt, opts.refImageUrl, {
+          finalPrompt = await refineElementPromptWithImage(prompt, opts.refImageUrls[0], {
             name,
             kind: subjectKindOf(name),
             style: entryMeta?.style,
@@ -559,11 +559,13 @@ export default function SmartCreateView() {
         } catch {
           /* 优化失败则用原提示词 */
         }
-        try {
-          const id = await ensureAssetId(ws, opts.refImageUrl, cache)
-          if (id) refAssetIds.push(id)
-        } catch {
-          /* ignore */
+        for (const url of opts.refImageUrls) {
+          try {
+            const id = await ensureAssetId(ws, url, cache)
+            if (id && !refAssetIds.includes(id)) refAssetIds.push(id)
+          } catch {
+            /* 单张失败跳过,不阻断其余 */
+          }
         }
       } else if (anchoredIds.length) {
         // 锚定的上传素材:取第一张刷新出 URL 给 VL 优化提示词;全部 assetId 作图生图参考(草稿恢复后按 assetId 取最新)
