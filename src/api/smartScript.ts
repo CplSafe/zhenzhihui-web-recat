@@ -119,6 +119,37 @@ const durToSec = (d: any): number => {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
+const hasScriptContent = (shot: Shot): boolean =>
+  [shot?.desc, shot?.line, shot?.subtitle, shot?.sfx].some((value) => String(value || '').trim())
+
+function renumberScriptShots(shots: Shot[]): Shot[] {
+  return (shots || []).map((shot, index) => ({
+    ...shot,
+    id: index + 1,
+    no: `镜头${index + 1}`,
+  }))
+}
+
+function maxShotCountForDuration(totalSec: number): number {
+  if (totalSec === 5) return 2
+  if (totalSec === 10) return 4
+  if (totalSec === 15) return 5
+  return 0
+}
+
+function limitShotsForDuration(shots: Shot[], totalSec: number): Shot[] {
+  const useful = renumberScriptShots((shots || []).filter(hasScriptContent))
+  const maxCount = maxShotCountForDuration(totalSec)
+  if (!maxCount || useful.length <= maxCount) return useful
+
+  if ((totalSec === 10 || totalSec === 15) && maxCount >= 3) {
+    const middle = useful.slice(1, -1).slice(0, maxCount - 2)
+    return renumberScriptShots([useful[0], ...middle, useful[useful.length - 1]])
+  }
+
+  return renumberScriptShots(useful.slice(0, maxCount))
+}
+
 function distributeEvenly(totalSec: number, count: number): number[] {
   if (!(totalSec > 0) || !(count > 0) || totalSec < count) return []
   const base = Math.floor(totalSec / count)
@@ -180,7 +211,7 @@ function applyDurationPattern(totalSec: number, secs: number[]): number[] {
 
   if (totalSec === 10) {
     if (secs.length === 3) return [3, 4, 3]
-    if (secs.length > 3 && secs.length <= 6) {
+    if (secs.length > 3 && secs.length <= 4) {
       const middle = scaleDurationsToTotal(secs.slice(1, -1), 4)
       return middle.length ? [3, ...middle, 3] : []
     }
@@ -188,7 +219,7 @@ function applyDurationPattern(totalSec: number, secs: number[]): number[] {
   }
 
   if (totalSec === 15) {
-    if (secs.length >= 3 && secs.length <= 11) {
+    if (secs.length >= 3 && secs.length <= 5) {
       const middle = scaleDurationsToTotal(secs.slice(1, -1), 9)
       return middle.length ? [3, ...middle, 3] : []
     }
@@ -201,27 +232,29 @@ function applyDurationPattern(totalSec: number, secs: number[]): number[] {
 // 强制各镜 duration 之和 = 目标总时长(模型常超/欠):优先匹配指定分配规则,否则按比例缩放。
 function normalizeDurations(shots: Shot[], totalSec: number): Shot[] {
   if (!Array.isArray(shots) || !shots.length || !(totalSec > 0)) return shots
-  const secs = shots.map((s) => durToSec(s.duration))
+  const boundedShots = limitShotsForDuration(shots, totalSec)
+  if (!boundedShots.length) return boundedShots
+  const secs = boundedShots.map((s) => durToSec(s.duration))
   const sum = secs.reduce((a, b) => a + b, 0)
   // 模型没给有效时长 → 平均分配
   if (sum <= 0) {
     const patterned = applyDurationPattern(totalSec, secs)
-    if (patterned.length === shots.length) {
-      return shots.map((s, i) => ({ ...s, duration: `${patterned[i]}s` }))
+    if (patterned.length === boundedShots.length) {
+      return boundedShots.map((s, i) => ({ ...s, duration: `${patterned[i]}s` }))
     }
-    const evenly = distributeEvenly(totalSec, shots.length)
-    if (!evenly.length) return shots
-    return shots.map((s, i) => ({ ...s, duration: `${evenly[i]}s` }))
+    const evenly = distributeEvenly(totalSec, boundedShots.length)
+    if (!evenly.length) return boundedShots
+    return boundedShots.map((s, i) => ({ ...s, duration: `${evenly[i]}s` }))
   }
   const patterned = applyDurationPattern(totalSec, secs)
-  if (patterned.length === shots.length) {
-    return shots.map((s, i) => ({ ...s, duration: `${patterned[i]}s` }))
+  if (patterned.length === boundedShots.length) {
+    return boundedShots.map((s, i) => ({ ...s, duration: `${patterned[i]}s` }))
   }
   // 已基本对齐(±0.5s)则不动,避免无谓改动
-  if (Math.abs(sum - totalSec) < 0.5) return shots
+  if (Math.abs(sum - totalSec) < 0.5) return boundedShots
   const scaled = scaleDurationsToTotal(secs, totalSec)
-  if (!scaled.length) return shots
-  return shots.map((s, i) => ({ ...s, duration: `${scaled[i]}s` }))
+  if (!scaled.length) return boundedShots
+  return boundedShots.map((s, i) => ({ ...s, duration: `${scaled[i]}s` }))
 }
 
 // 容错:从(可能被截断的)文本里抢救出所有「完整」的顶层 {…} 对象
@@ -252,9 +285,10 @@ function salvageObjects(raw: string): any[] {
 }
 
 // 原始分镜对象数组 → Shot[](主体映射 + 文本类过滤)
-function mapShots(list: any[], images: string[] = []): Shot[] {
+function mapShots(list: any[], images: string[] = [], options: { filterEmpty?: boolean } = {}): Shot[] {
   if (!Array.isArray(list)) return []
-  return list.map((s: any, i: number) => ({
+  const filterEmpty = options.filterEmpty !== false
+  const shots = list.map((s: any, i: number) => ({
     id: i + 1,
     no: `镜头${i + 1}`,
     duration: String(s?.duration || s?.dur || '5s').trim() || '5s',
@@ -278,6 +312,7 @@ function mapShots(list: any[], images: string[] = []): Shot[] {
           .filter((s: any) => !TEXT_SUBJECT_RE.test(s.tag) && !TEXT_SUBJECT_RE.test(s.kind))
       : [],
   }))
+  return renumberScriptShots(filterEmpty ? shots.filter(hasScriptContent) : shots)
 }
 
 function parseShots(text: string, images: string[] = []): Shot[] {
@@ -385,7 +420,7 @@ export async function generateShotInfo(args: {
     obj = salvageObjects('[' + raw + ']')[0] || {}
   }
   if (obj && Array.isArray(obj.shots)) obj = obj.shots[0] || {}
-  const mapped = mapShots([obj], images)[0]
+  const mapped = mapShots([obj], images, { filterEmpty: false })[0]
   return {
     duration: mapped?.duration || '5s',
     desc: mapped?.desc || '',
@@ -423,13 +458,17 @@ export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
 export async function generateScriptShotsStream(args: GenerateArgs, onShots: (shots: Shot[]) => void): Promise<Shot[]> {
   if (!args.requirement.trim() && !args.images?.length) throw new Error('请至少输入文案或上传图片')
   const images = args.images || []
+  const totalSec = parseInt(String(args.duration || '10'), 10) || 10
   let lastCount = 0
+  let lastSig = ''
 
   // 用「到目前为止的全文」增量抢救出已完整的分镜,多出来就回调
   const emit = (acc: string) => {
-    const shots = mapShots(salvageObjects(acc), images)
-    if (shots.length > lastCount) {
+    const shots = limitShotsForDuration(mapShots(salvageObjects(acc), images), totalSec)
+    const sig = shots.map((s) => [s.duration, s.desc, s.line, s.subtitle, s.sfx].join('\u0001')).join('\u0002')
+    if (shots.length && sig !== lastSig) {
       lastCount = shots.length
+      lastSig = sig
       onShots(shots)
     }
   }
@@ -449,7 +488,7 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
   const result = finalShots.length >= lastCount ? finalShots : mapShots(salvageObjects(finalText), images)
   if (!result.length) throw new Error('未能解析分镜脚本,请重试')
   // 流式中间态不归一,只在最终结果对齐;同时尽量避免出现多个 1s。
-  return normalizeDurations(result, parseInt(String(args.duration || '10'), 10) || 10)
+  return normalizeDurations(result, totalSec)
 }
 
 // ── 主体提取兜底 ──

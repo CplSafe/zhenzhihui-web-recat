@@ -27,6 +27,9 @@ const MODEL_CACHE_TTL_MS = 30_000
 const modelCache = new Map()
 const PROVIDER_TASK_RETRY_LIMIT = 2
 const PROVIDER_TASK_RETRY_BACKOFF_MS = [700, 1400]
+const AI_TASK_POLL_RETRY_LIMIT = 5
+const AI_TASK_POLL_RETRY_BASE_MS = 1000
+const AI_TASK_POLL_RETRY_MAX_MS = 8000
 
 // Whitelist for uploadAssetFile destinations. Blocks redirect-to-internal-host attacks.
 const ALLOWED_UPLOAD_HOST_PATTERNS = [
@@ -1061,6 +1064,22 @@ function isRetryableAiCreateTaskError(error) {
   return false
 }
 
+function isRetryableAiTaskPollError(error) {
+  if (!(error instanceof BusinessApiError)) return false
+  const status = Number(error.status || 0)
+  if (status >= 500) return true
+  if (status === 0) return true
+  if (status === 429) return true
+  if (error.cause === 'timeout') return true
+  return false
+}
+
+function getAiTaskPollRetryDelay(attempt) {
+  const base = AI_TASK_POLL_RETRY_BASE_MS * Math.pow(2, Math.max(0, Number(attempt || 0)))
+  const jitter = Math.floor(Math.random() * 400)
+  return Math.min(AI_TASK_POLL_RETRY_MAX_MS, base + jitter)
+}
+
 async function requestJsonWithRetry(path, options: any = {}, cfg: any = {}) {
   const retries = Math.max(0, Number(cfg.retries ?? 0) || 0)
   const timeoutMs = Math.max(0, Number(cfg.timeoutMs ?? 0) || 0)
@@ -1139,6 +1158,7 @@ export function cancelAiTask({ workspaceId, taskId }: any = {}) {
 export async function waitForAiTask({ workspaceId, task, intervalMs = 2000, timeoutMs = 120000, onPoll, signal }) {
   let currentTask = task
   const startedAt = Date.now()
+  let pollErrorCount = 0
 
   const ensureNotAborted = () => {
     if (signal?.aborted) {
@@ -1165,7 +1185,33 @@ export async function waitForAiTask({ workspaceId, task, intervalMs = 2000, time
 
     await sleep(intervalMs)
     ensureNotAborted()
-    currentTask = await getAiTask({ workspaceId, taskId: currentTask.id })
+    try {
+      currentTask = await getAiTask({ workspaceId, taskId: currentTask.id })
+      pollErrorCount = 0
+    } catch (error) {
+      if (!isRetryableAiTaskPollError(error)) {
+        throw error
+      }
+      pollErrorCount += 1
+      if (pollErrorCount > AI_TASK_POLL_RETRY_LIMIT) {
+        throw new BusinessApiError('AI 任务状态查询连续失败，请稍后重试', {
+          status: error?.status,
+          code: error?.code,
+          response: error?.response,
+          cause: error,
+        })
+      }
+      if (import.meta.env.DEV) {
+        console.warn('[waitForAiTask] task polling failed, retrying', {
+          taskId: currentTask.id,
+          status: error?.status,
+          code: error?.code,
+          attempt: pollErrorCount,
+        })
+      }
+      await sleep(getAiTaskPollRetryDelay(Math.min(pollErrorCount - 1, AI_TASK_POLL_RETRY_LIMIT)))
+      continue
+    }
 
     // DEV: 排查「一直轮询不停」——仅当后端返回了不在已知名单里的状态才 warn。
     // submitting/pending/processing/queued/running 都是正常的非终态,不需要 warn。

@@ -58,7 +58,7 @@ export async function persistVideoResultToBackend(args: {
         // 生成记录置 published(从「草稿」列表消失):有 genId 则置那条,否则把所有「生成中」的都收尾(resume 场景)
         if (Array.isArray(smart.videoGenerations)) {
           smart.videoGenerations = smart.videoGenerations.map((g: any) =>
-            (genId ? g?.id === genId : g?.status === 'processing') ? { ...g, status: 'published' } : g,
+            (genId ? g?.id === genId : g?.status === 'processing') ? { ...g, status: 'published', taskId: 0 } : g,
           )
         }
         await updateCreativeProjectDraft({
