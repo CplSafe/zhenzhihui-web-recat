@@ -42,3 +42,6 @@ test-results/
 
 # Figma MCP 下载的图片
 figma-images/
+Dockerfile
+nginx.conf
+.dockerignore

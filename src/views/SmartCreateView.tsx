@@ -2284,7 +2284,9 @@ export default function SmartCreateView() {
     )
       return
     autoVidRef.current = true
-    void runFullVideo(undefined, undefined, videoCount)
+    // 自动生成固定只出 1 个(预览);多份由用户显式点「生成多个视频」触发,
+    // 避免把「生成 N 个」选择器的数量误当自动生成份数、进入步骤就自动跑 N 次(重复扣费)。
+    void runFullVideo(undefined, undefined, 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, shots])
 
