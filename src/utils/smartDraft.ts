@@ -46,7 +46,7 @@ export interface SmartDraft {
   /** 分镜脚本是否生成进行中:中途切走再回来据此自动续跑(重新生成脚本),避免"中断" */
   scriptPending?: boolean
   /** 整片视频历史版本(每版带 asset_id,供水合刷新签名URL) */
-  videoVersions?: { url: string; assetId: number }[]
+  videoVersions?: { url: string; assetId: number; createdAt?: string }[]
   /** 每次「重新生成」的独立记录:生成中 / 失败(成功的成片仍进 videoVersions)。
    *  让项目下能看到每次生成是一条草稿:processing=生成中、failed=失败(可重试)、published=已并入成片。 */
   videoGenerations?: {
@@ -296,10 +296,13 @@ export function buildSmartSnapshot(d: SmartDraft): any {
   }))
   const fvUrl = killHeavy(clean.fullVideoUrl || '')
   const fvId = Number(clean.fullVideoAssetId || 0) || 0
-  const videoVersions = (clean.videoVersions || []).map((v: any) => ({
-    url: typeof v === 'string' ? v : v?.url,
-    assetId: typeof v === 'string' ? 0 : v?.assetId,
-  }))
+  const videoVersions = (clean.videoVersions || []).map((v: any) => {
+    if (typeof v === 'string') return { url: v, assetId: 0 }
+    const out: any = { url: v?.url, assetId: v?.assetId }
+    // 保留本版生成完成时间(项目管理按它展示每条视频的时间)
+    if (v?.createdAt) out.createdAt = v.createdAt
+    return out
+  })
   return {
     flow: 'smart',
     title: clean.projectName || '',

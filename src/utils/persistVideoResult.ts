@@ -38,8 +38,16 @@ export async function persistVideoResultToBackend(args: {
         smart.fullVideoUrl = url || smart.fullVideoUrl
         smart.fullVideoAssetId = assetId || smart.fullVideoAssetId
         const versions = Array.isArray(smart.videoVersions) ? smart.videoVersions.slice() : []
-        if (!(assetId && versions.some((v: any) => Number(v?.assetId || 0) === assetId))) {
-          versions.push({ url, assetId })
+        // createdAt = 该版视频最终生成完成的时间(项目管理每条视频卡片按它展示时间,
+        // 而非整个项目的创建/修改时间)。新版打时间戳;已存在但缺时间的旧版补一个。
+        const nowIso = new Date().toISOString()
+        const existIdx = assetId ? versions.findIndex((v: any) => Number(v?.assetId || 0) === assetId) : -1
+        if (existIdx >= 0) {
+          if (!(versions[existIdx] as any)?.createdAt) {
+            versions[existIdx] = { ...versions[existIdx], createdAt: nowIso }
+          }
+        } else {
+          versions.push({ url, assetId, createdAt: nowIso })
         }
         smart.videoVersions = versions
         smart.vidGenTaskId = 0 // 已完成 → 清在途任务标记

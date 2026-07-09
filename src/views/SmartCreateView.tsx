@@ -227,10 +227,10 @@ function extractProjectVideoFallback(draftJson: any): {
 }
 
 function mergeVideoVersionLists(
-  ...groups: Array<Array<{ url: string; assetId: number } | null | undefined> | null | undefined>
-): { url: string; assetId: number }[] {
+  ...groups: Array<Array<{ url: string; assetId: number; createdAt?: string } | null | undefined> | null | undefined>
+): { url: string; assetId: number; createdAt?: string }[] {
   const seen = new Set<string>()
-  const merged: { url: string; assetId: number }[] = []
+  const merged: { url: string; assetId: number; createdAt?: string }[] = []
   for (const group of groups) {
     for (const item of Array.isArray(group) ? group : []) {
       const url = String(item?.url || '').trim()
@@ -239,7 +239,8 @@ function mergeVideoVersionLists(
       const key = assetId > 0 ? `a:${assetId}` : `u:${url}`
       if (seen.has(key)) continue
       seen.add(key)
-      merged.push({ url, assetId })
+      // 保留本版生成完成时间(供项目管理按每条视频时间展示)
+      merged.push({ url, assetId, ...(item?.createdAt ? { createdAt: item.createdAt } : {}) })
     }
   }
   return merged
@@ -1661,13 +1662,13 @@ export default function SmartCreateView() {
   useEffect(() => {
     fullVideoRef.current = fullVideo
   }, [fullVideo])
-  const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number }[]>([])
-  const videoVersionsRef = useRef<{ url: string; assetId: number }[]>([])
-  const replaceVideoVersions = (next: { url: string; assetId: number }[]) => {
+  const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number; createdAt?: string }[]>([])
+  const videoVersionsRef = useRef<{ url: string; assetId: number; createdAt?: string }[]>([])
+  const replaceVideoVersions = (next: { url: string; assetId: number; createdAt?: string }[]) => {
     videoVersionsRef.current = next
     setVideoVersions(next)
   }
-  const appendVideoVersion = (item: { url: string; assetId: number }) => {
+  const appendVideoVersion = (item: { url: string; assetId: number; createdAt?: string }) => {
     const url = String(item.url || '').trim()
     const assetId = Number(item.assetId || 0) || 0
     if (!url && !assetId) return
@@ -1680,7 +1681,8 @@ export default function SmartCreateView() {
         videoVersionsRef.current = prev
         return prev
       }
-      const next = [...prev, { url, assetId }]
+      // createdAt = 本版生成完成时间(项目管理按它展示每条视频的时间)
+      const next = [...prev, { url, assetId, createdAt: item.createdAt || new Date().toISOString() }]
       videoVersionsRef.current = next
       return next
     })
