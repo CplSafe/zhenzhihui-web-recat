@@ -26,3 +26,25 @@ export function enqueueCreativeProjectDraftSave<T>(args: {
   draftSaveQueues.set(key, tracked)
   return run
 }
+
+/**
+ * 等待同一项目当前已经排队的草稿写入完成。
+ *
+ * 路由切换时，旧页面会在卸载阶段把最后一份状态加入保存队列；新页面读取项目之前先等待
+ * 这条队列，可以避免“旧页面正在 PUT，新页面先 GET 到旧草稿”的读写竞态。
+ */
+export async function waitForCreativeProjectDraftSaves(args: {
+  projectId: number
+  workspaceId: number
+}): Promise<void> {
+  const projectId = Math.floor(Number(args.projectId) || 0)
+  const workspaceId = Math.floor(Number(args.workspaceId) || 0)
+  if (!projectId || !workspaceId) return
+
+  const key = queueKeyOf(projectId, workspaceId)
+  while (true) {
+    const pending = draftSaveQueues.get(key)
+    if (!pending) return
+    await pending.catch(() => undefined)
+  }
+}

@@ -53,6 +53,7 @@ export interface SmartDraft {
     id: string
     status: string
     taskId?: number
+    idempotencyKey?: string
     note?: string
     error?: string
     createdAt?: number
@@ -60,6 +61,7 @@ export interface SmartDraft {
   /** 多视频生成时尚未真正发出的排队任务:刷新/重进后据此继续串行发送,保证整批走完 */
   videoGenQueue?: {
     id: string
+    idempotencyKey?: string
     note?: string
     variationIndex?: number
     variationTotal?: number
@@ -175,6 +177,24 @@ function sanitize(d: SmartDraft): SmartDraft {
     next.subjectAssets = sa
   }
   if (Array.isArray(next.imageMessages)) next.imageMessages = cleanMessages(next.imageMessages, killBlob)
+  if (Array.isArray(next.videoGenerations)) {
+    next.videoGenerations = next.videoGenerations
+      .filter((g: any) => String(g?.status || '').trim() === 'processing')
+      .map((g: any) => {
+        const idempotencyKey = String(g?.idempotencyKey || g?.idempotency_key || '').trim()
+        return {
+          ...g,
+          taskId: Number(g?.taskId || 0) || 0,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        }
+      })
+  }
+  if (Array.isArray(next.videoGenQueue)) {
+    const liveGenerationIds = new Set(
+      (next.videoGenerations || []).map((g: any) => String(g?.id || '').trim()).filter(Boolean),
+    )
+    next.videoGenQueue = next.videoGenQueue.filter((job: any) => liveGenerationIds.has(String(job?.id || '').trim()))
+  }
   return next
 }
 

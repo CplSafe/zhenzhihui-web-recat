@@ -114,11 +114,37 @@ function assetStreamUrl(assetId: number, workspaceId: number): string {
   return `/api/v1/assets/${Math.floor(assetId)}/download?workspace_id=${Math.floor(workspaceId)}`
 }
 
-// 项目封面:封面字段 → 入口素材 → 分镜图,取第一张(assetId 优先转直传地址,避免过期)
+function extractHotCopyOriginalCoverAssetId(draft: any): number {
+  if (!draft) return 0
+  const smart = toPlainObject(draft.smart) || draft
+  const flow = String(draft?.flow || smart?.flow || '')
+    .trim()
+    .toLowerCase()
+  if (flow !== 'hot-copy' && flow !== 'hotcopy') return 0
+
+  const entry = toPlainObject(smart?.entryInitial)
+  const fromEntry = normalizeArray(entry?.products)
+    .filter((product) => !product?.isVideo)
+    .map((product) => Number(product?.assetId || 0) || 0)
+    .find((assetId) => assetId > 0)
+  if (fromEntry) return fromEntry
+
+  return (
+    normalizeArray(smart?.originalProductAssetIds)
+      .map((assetId) => Number(assetId) || 0)
+      .find((assetId) => assetId > 0) || 0
+  )
+}
+
+// 项目封面:爆款复制原始素材 → 封面字段 → 入口素材 → 分镜图。
+// 生成用的人脸脱敏图只存在 submitAssetId/productAssetIds，不能作为项目展示封面。
 function extractCover(project: any, wsId: number): string {
+  const draft = normalizeCreativeProjectDraft(project)
+  const hotCopyOriginalAid = extractHotCopyOriginalCoverAssetId(draft)
+  if (hotCopyOriginalAid && wsId) return assetStreamUrl(hotCopyOriginalAid, wsId)
+
   const coverAid = Number(project?.cover_asset_id || project?.coverAssetId || 0) || 0
   if (coverAid && wsId) return assetStreamUrl(coverAid, wsId)
-  const draft = normalizeCreativeProjectDraft(project)
   if (draft) {
     const smart = toPlainObject(draft.smart) || draft
     // 入口素材:优先用平行的 imageAssetIds → 直传地址(草稿里的 images 可能是已过期 S3 预签名或 blob:,会破图)

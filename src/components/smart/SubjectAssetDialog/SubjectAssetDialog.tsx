@@ -25,7 +25,7 @@ interface SubjectAssetDialogProps {
   projectImages?: { url: string; source: 'ai' | 'upload' }[]
   onClose: () => void
   /** 生成:prompt + 选项(refImageUrl 参考图;carryCurrent 携带当前图=修改/不带=重新生成) */
-  onGenerate: (prompt: string, opts: { refImageUrls?: string[]; carryCurrent?: boolean }) => Promise<void>
+  onGenerate: (prompt: string, opts: { refImageUrls?: string[]; carryCurrent?: boolean }) => Promise<void | boolean>
   onSelect: (url: string) => void
   /** 上传素材:直接交 File,由父级经后端 uploadAssetFile 存服务器取 asset_id。
    *  不传 → 视为「用户上传已下线」,弹窗内不显示任何「上传」入口,仅 AI 生成 / 从项目选。 */

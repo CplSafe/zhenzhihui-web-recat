@@ -72,6 +72,7 @@ export async function generateFullVideo(args: {
   variationIndex?: number
   variationTotal?: number
   modelPlanCandidates?: string[]
+  idempotencyKey?: string
   /** 任务一创建就回调 task_id,供上层持久化(切路由/刷新后凭它续轮询,不重新生成) */
   onTask?: (taskId: number) => void
 }): Promise<{ url: string; assetId: number }> {
@@ -99,6 +100,7 @@ export async function generateFullVideo(args: {
     modelVersion: model,
     prompt,
     inputAssets,
+    idempotencyKey: args.idempotencyKey,
     params: (m: any) => ({
       generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
       ...buildVideoGenerationParams(m, {
@@ -165,6 +167,7 @@ export async function editFullVideo(args: {
   /** 源视频真实时长(秒):video.edit 按它计费(优先于 duration),前端读源视频 HTML5 元数据得到 */
   sourceVideoDurationSec?: number
   modelPlanCandidates?: string[]
+  idempotencyKey?: string
   /** 任务创建后回调 task_id(供前端持久化、刷新/切换后续轮询) */
   onTask?: (taskId: number) => void
 }): Promise<{ url: string; assetId: number }> {
@@ -181,6 +184,7 @@ export async function editFullVideo(args: {
         ? true
         : '当前工作空间/套餐暂无「视频编辑(video.edit)」可用模型(happyhorse-1.0-video-edit),请联系管理员开通',
     ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
+    idempotencyKey: args.idempotencyKey,
     prompt: args.prompt || '在保留原视频镜头内容、顺序与节奏的前提下,按要求微调画面(只改提到的部分,其余保持不变)。',
     inputAssets,
     // 画面/时长主要由源视频决定:仅按模型 params_schema 填字段,无 schema 时不塞参数(否则 provider 报「参数有误」)。

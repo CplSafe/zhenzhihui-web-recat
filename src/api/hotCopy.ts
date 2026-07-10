@@ -18,6 +18,68 @@ import { resolveTaskVideoResult } from '@/utils/taskMedia'
 
 const VIDEO_MODEL_KEYWORDS = ['seedance']
 const HOT_COPY_VIDEO_TIMEOUT_MS = 60 * 60 * 1000
+const HOT_COPY_MODEL_LOOKUP_TIMEOUT_MS = 8000
+const HOT_COPY_MODEL_CACHE_TTL_MS = 5 * 60 * 1000
+const hotCopyModelCache = new Map()
+const hotCopyModelPromises = new Map()
+
+function hotCopyModelCacheKey(workspaceId: number): string {
+  return String(Math.floor(Number(workspaceId) || 0))
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
+
+export function invalidateHotCopyVideoModel(workspaceId: number): void {
+  const key = hotCopyModelCacheKey(workspaceId)
+  hotCopyModelCache.delete(key)
+  hotCopyModelPromises.delete(key)
+}
+
+/**
+ * 页面空闲时预热爆款复制模型。缓存仅按工作空间复用；失败不缓存，正式提交仍会重新走原查询逻辑。
+ */
+export async function preloadHotCopyVideoModel(args: {
+  workspaceId: number
+  modelPlanCandidates?: string[]
+}): Promise<any> {
+  const key = hotCopyModelCacheKey(args.workspaceId)
+  if (key === '0') throw new Error('工作空间 ID 无效')
+  const cached = hotCopyModelCache.get(key)
+  if (cached && Date.now() - cached.createdAt < HOT_COPY_MODEL_CACHE_TTL_MS && cached.model?.id) {
+    return cached.model
+  }
+  const pending = hotCopyModelPromises.get(key)
+  if (pending) return pending
+
+  const promise = withTimeout(
+    getModelForOperation('video.replicate', VIDEO_MODEL_KEYWORDS, args.modelPlanCandidates, args.workspaceId),
+    HOT_COPY_MODEL_LOOKUP_TIMEOUT_MS,
+    '爆款复制模型查询超时，请重试',
+  )
+    .then((model) => {
+      if (!model?.id) {
+        throw new Error('当前工作空间/套餐暂无「爆款复刻(video.replicate)」可用模型(seedance),请联系管理员开通')
+      }
+      hotCopyModelCache.set(key, { createdAt: Date.now(), model })
+      return model
+    })
+    .finally(() => {
+      if (hotCopyModelPromises.get(key) === promise) hotCopyModelPromises.delete(key)
+    })
+
+  hotCopyModelPromises.set(key, promise)
+  return promise
+}
 
 /** 上传本地文件成 asset,返回 asset_id(type 由文件推断:视频→video,图片→image)。 */
 export async function uploadHotCopyAsset(workspaceId: number, file: File): Promise<number> {
@@ -41,6 +103,8 @@ export async function replicateHotVideo(args: {
   /** 源视频真实时长(秒):video.replicate 按它计费(优先于 duration),前端读源视频 HTML5 元数据得到 */
   sourceVideoDurationSec?: number
   modelPlanCandidates?: string[]
+  /** 页面空闲时预热得到的模型；缺失时仍按原逻辑实时查询。 */
+  modelVersion?: any
   signal?: AbortSignal
   /** 任务创建后回调 task_id:供前端持久化,刷新/切换后用 awaitHotVideoResult 续轮询(不丢在途生成) */
   onTask?: (taskId: number) => void
@@ -53,37 +117,37 @@ export async function replicateHotVideo(args: {
   // 钉死 seedance,不做跨模型退避:先显式解析支持 video.replicate 的 seedance 模型,再用 modelVersionId 提交。
   // createAiTask 走「显式模型」分支(无「换下一个模型」循环),seedance 失败直接抛错由用户决定。
   // 查模型必带 workspace_id(否则后端按订阅返回空列表 → 误报无可用模型);显式传入,不依赖模块级当前 workspace。
-  const model = await getModelForOperation(
-    'video.replicate',
-    VIDEO_MODEL_KEYWORDS,
-    args.modelPlanCandidates,
-    args.workspaceId,
-  )
-  if (!model?.id)
-    throw new Error('当前工作空间/套餐暂无「爆款复刻(video.replicate)」可用模型(seedance),请联系管理员开通')
-  const task = await createAiTask({
-    workspaceId: args.workspaceId,
-    capability: 'video',
-    operationCode: 'video.replicate',
-    modelVersionId: model.id,
-    modelVersion: model,
-    prompt: args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。',
-    inputAssets,
-    // 时长/比例按用户在入口的选择下发 —— 与智能成片 generateFullVideo 同一写法:始终走
-    // buildVideoGenerationParams(其内部按模型 schema 决定字段名/取值;无 schema 时也下发标准
-    // duration/resolution/ratio,保证用户所选时长/比例生效)。source_video_duration 仅在模型 schema
-    // 声明时下发,用于「按源视频真实时长计费」,与 duration 不冲突。
-    params: (m: any) => ({
-      generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
-      ...buildVideoGenerationParams(m, {
-        duration: normalizeSeedanceDuration(args.durationSec || 10),
-        sourceVideoDuration: args.sourceVideoDurationSec,
-        resolution: '720p',
-        ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
-        generateAudio: true,
+  const model = args.modelVersion?.id ? args.modelVersion : await preloadHotCopyVideoModel(args)
+  let task
+  try {
+    task = await createAiTask({
+      workspaceId: args.workspaceId,
+      capability: 'video',
+      operationCode: 'video.replicate',
+      modelVersionId: model.id,
+      modelVersion: model,
+      prompt: args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。',
+      inputAssets,
+      // 时长/比例按用户在入口的选择下发 —— 与智能成片 generateFullVideo 同一写法:始终走
+      // buildVideoGenerationParams(其内部按模型 schema 决定字段名/取值;无 schema 时也下发标准
+      // duration/resolution/ratio,保证用户所选时长/比例生效)。source_video_duration 仅在模型 schema
+      // 声明时下发,用于「按源视频真实时长计费」,与 duration 不冲突。
+      params: (m: any) => ({
+        generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
+        ...buildVideoGenerationParams(m, {
+          duration: normalizeSeedanceDuration(args.durationSec || 10),
+          sourceVideoDuration: args.sourceVideoDurationSec,
+          resolution: '720p',
+          ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
+          generateAudio: true,
+        }),
       }),
-    }),
-  })
+    })
+  } catch (error) {
+    // 模型可能刚被管理员关闭或套餐发生变化；本次仍按原错误返回，下次点击重新查询，避免缓存放大故障。
+    invalidateHotCopyVideoModel(args.workspaceId)
+    throw error
+  }
   args.onTask?.(Number(task?.id || 0) || 0)
   const completed = await waitForAiTask({
     workspaceId: args.workspaceId,

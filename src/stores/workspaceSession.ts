@@ -21,6 +21,7 @@ import {
   updateWorkspace,
 } from '../api/business'
 import { listWorkspaceMembers } from '../api/auth'
+import { setHotCopyDraftUserScope } from '../utils/hotCopyDraft'
 import { setSmartDraftUserScope, setSmartDraftWorkspaceScope } from '../utils/smartDraft'
 import {
   buildModelPlanCandidatesFromBillingPlans,
@@ -545,10 +546,12 @@ const deriveDraftUserScope = (s: S): string => {
 setActiveWorkspaceId(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
 setSmartDraftUserScope(deriveDraftUserScope(useWorkspaceSessionStore.getState()))
 setSmartDraftWorkspaceScope(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
+setHotCopyDraftUserScope(deriveDraftUserScope(useWorkspaceSessionStore.getState()))
 useWorkspaceSessionStore.subscribe((state) => {
   setActiveWorkspaceId(deriveWorkspaceId(state))
   setSmartDraftUserScope(deriveDraftUserScope(state))
   setSmartDraftWorkspaceScope(deriveWorkspaceId(state))
+  setHotCopyDraftUserScope(deriveDraftUserScope(state))
 })
 
 // ---- Selector hooks（组件侧便捷读取派生值，保持响应式订阅）------------------
