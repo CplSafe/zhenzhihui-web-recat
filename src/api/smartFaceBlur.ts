@@ -3,7 +3,7 @@
  * 像素整块挖空成透明,产出人脸位置透明的整图 PNG),再把脱敏版喂给 seedance —— 火山对含真人
  * 人脸的输入图会拒审(InputImageSensitiveContentDetected.PrivacyInformation),必须先脱敏。
  * 走业务后端 image.face_detect 能力(DetectFace + importFaceCrops 挖空,同 2.0「人脸检测抠图」)。
- * 脱敏失败不阻塞——回退用原图(由调用方决定)。
+ * 脱敏失败返回 ok=false；是否阻断后续生成由调用方按业务安全要求决定。
  */
 // @ts-nocheck
 import { createAiTask, waitForAiTask, listAiModels, getAssetDownloadUrl } from './business'

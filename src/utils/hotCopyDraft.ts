@@ -27,6 +27,11 @@ export interface HotCopyDraft {
   projectName: string
   nameTouched: boolean
   sourceVideo: { assetId: number; url: string }
+  /** 源视频真实时长缓存；必须与 sourceVideoDurationAssetId 匹配后才能用于计费参数。 */
+  sourceVideoDurationSec?: number
+  sourceVideoDurationAssetId?: number
+  /** 原始展示素材 ID；生成提交仍使用 productAssetIds 中的人脸脱敏素材。 */
+  originalProductAssetIds?: number[]
   productAssetIds: number[]
   fullVideo: { url: string; assetId: number }
   videoVersions: { url: string; assetId: number }[]
@@ -41,7 +46,15 @@ export interface HotCopyDraft {
   videoGenerations?: HotCopyGenRecord[]
 }
 
-const keyOf = (workspaceId: number) => `zzh_hotcopy_draft_v1_ws${Math.floor(Number(workspaceId) || 0)}`
+let draftUserScope = ''
+export function setHotCopyDraftUserScope(id: any): void {
+  draftUserScope = String(id || '')
+}
+
+const normalizedWorkspaceId = (workspaceId: number) => Math.floor(Number(workspaceId) || 0)
+const legacyKeyOf = (workspaceId: number) => `zzh_hotcopy_draft_v1_ws${normalizedWorkspaceId(workspaceId)}`
+const keyOf = (workspaceId: number) =>
+  `zzh_hotcopy_draft_v1_u${draftUserScope || 'anon'}_ws${normalizedWorkspaceId(workspaceId)}`
 
 export function saveHotCopyDraft(workspaceId: number, draft: HotCopyDraft): void {
   const ws = Number(workspaceId || 0)
@@ -57,7 +70,7 @@ export function loadHotCopyDraft(workspaceId: number): HotCopyDraft | null {
   const ws = Number(workspaceId || 0)
   if (!ws) return null
   try {
-    const raw = localStorage.getItem(keyOf(ws))
+    const raw = localStorage.getItem(keyOf(ws)) || localStorage.getItem(legacyKeyOf(ws))
     if (!raw) return null
     const d = JSON.parse(raw)
     return d && typeof d === 'object' ? (d as HotCopyDraft) : null
@@ -71,6 +84,7 @@ export function clearHotCopyDraft(workspaceId: number): void {
   if (!ws) return
   try {
     localStorage.removeItem(keyOf(ws))
+    localStorage.removeItem(legacyKeyOf(ws))
   } catch {
     /* 忽略 */
   }

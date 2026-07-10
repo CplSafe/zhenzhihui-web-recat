@@ -95,6 +95,25 @@ export function isAbortedTaskError(error) {
   return Boolean(error && error.cause === 'aborted')
 }
 
+function isNonRetryableContentSafetyError(error) {
+  if (!(error instanceof BusinessApiError)) return false
+  const response = error.response && typeof error.response === 'object' ? error.response : {}
+  const data = response?.data && typeof response.data === 'object' ? response.data : {}
+  const message = [
+    error.message,
+    response?.message,
+    response?.error?.message,
+    response?.error_message,
+    data?.message,
+    data?.error_message,
+  ]
+    .filter(Boolean)
+    .join(' ')
+  return /安全审核|内容审核|内容安全|未通过.{0,8}审核|审核未通过|敏感内容|版权限制|SensitiveContentDetected|PrivacyInformation|copyright|content policy|policy violation|moderation|safety review/i.test(
+    message,
+  )
+}
+
 export function getBusinessErrorMessage(error, fallback = '业务接口请求失败，请稍后重试') {
   if (error instanceof BusinessApiError && error.message) {
     const responseMessage = String(
@@ -705,7 +724,10 @@ export async function createAiTask({
   preferredModelKeywords = [],
   modelValidator,
   modelPlanCandidates = DEFAULT_MODEL_PLAN_CANDIDATES,
+  idempotencyKey: providedIdempotencyKey,
 }: any) {
+  const fallbackIdempotencyKey = (suffix: string) =>
+    providedIdempotencyKey ? `${providedIdempotencyKey}_${suffix}` : createIdempotencyKey('task')
   const submitTask = async ({ idempotencyKey, modelId, resolvedParams, resolvedInputAssets }) => {
     try {
       return await submitAiTask({
@@ -726,7 +748,7 @@ export async function createAiTask({
             workspaceId,
             modelId,
             operationCode,
-            idempotencyKey: createIdempotencyKey('task'),
+            idempotencyKey: fallbackIdempotencyKey('no_assets'),
             prompt,
             params: resolvedParams,
             inputAssets: [],
@@ -739,7 +761,7 @@ export async function createAiTask({
             workspaceId,
             modelId,
             operationCode,
-            idempotencyKey: createIdempotencyKey('task'),
+            idempotencyKey: fallbackIdempotencyKey('no_assets_simple'),
             prompt,
             params: simplifyVideoTaskParams(resolvedParams),
             inputAssets: [],
@@ -755,7 +777,7 @@ export async function createAiTask({
         workspaceId,
         modelId,
         operationCode,
-        idempotencyKey: createIdempotencyKey('task'),
+        idempotencyKey: fallbackIdempotencyKey('simple'),
         prompt,
         params: simplifyVideoTaskParams(resolvedParams),
         inputAssets: resolvedInputAssets,
@@ -766,7 +788,7 @@ export async function createAiTask({
   // 幂等键:同一次 createAiTask 操作全程复用一个 key。后端按 (workspace, idempotency_key) 去重——
   // 换新键会新建任务并再次冻结积分(= 重复扣费,尤其"provider 实际成功但响应 5xx"时换模型重试会双扣);
   // 复用同键则命中已建任务、不重复冻结,是唯一能兜住"成功但响应丢失"的做法。
-  const taskIdempotencyKey = createIdempotencyKey('task')
+  const taskIdempotencyKey = providedIdempotencyKey || createIdempotencyKey('task')
 
   if (modelVersionId) {
     const model = await resolveExplicitTaskModel({
@@ -877,6 +899,7 @@ function buildOrderedModelCandidates(models, preferredModel) {
 
 function shouldRetryWithNextModel(error) {
   if (!error) return false
+  if (isNonRetryableContentSafetyError(error)) return false
   if (isRetryableModelSelectionError(error)) return true
   if (!(error instanceof BusinessApiError)) return false
   const message = String(error.message || '').toLowerCase()
@@ -895,6 +918,7 @@ function shouldRetryWithNextModel(error) {
 
 function isProviderTaskFailedError(error) {
   if (!(error instanceof BusinessApiError)) return false
+  if (isNonRetryableContentSafetyError(error)) return false
   const message = String(error.message || '').toLowerCase()
   const responseMessage = String(
     error.response?.message || error.response?.error?.message || error.response?.data?.message || '',
@@ -1043,6 +1067,7 @@ function submitAiResponse({
 
 function isRetryableAiCreateTaskError(error) {
   if (!(error instanceof BusinessApiError)) return false
+  if (isNonRetryableContentSafetyError(error)) return false
   const status = Number(error.status || 0)
   if (status >= 500) return true
   if (status === 0) return true
@@ -1052,6 +1077,7 @@ function isRetryableAiCreateTaskError(error) {
 
 function isRetryableAiTaskPollError(error) {
   if (!(error instanceof BusinessApiError)) return false
+  if (isNonRetryableContentSafetyError(error)) return false
   const status = Number(error.status || 0)
   if (status >= 500) return true
   if (status === 0) return true

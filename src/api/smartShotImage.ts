@@ -106,6 +106,76 @@ export async function refreshAssetUrl(workspaceId: number, assetId: number): Pro
 
 // 分镜图模型偏好:GPT Image 2(openai gpt-image-2,支持 image.text_to_image / image.image_to_image)
 const STORYBOARD_MODEL_KEYWORDS = ['gpt-image-2', 'gpt-image', 'gpt image', 'seedream', 'doubao']
+const IMAGE_TASK_RETRY_DELAYS_MS = [1200, 2400]
+const ASSET_READY_RETRY_DELAYS_MS = [800, 1600, 3200, 5000]
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
+
+function isRetryableShotImageError(error: any): boolean {
+  if (isAbortedTaskError(error)) return false
+  const status = Number(error?.status || 0)
+  if (status === 0 || status === 429 || status >= 500) return true
+  const code = String(error?.code || '').toUpperCase()
+  const msg = String(error?.message || '').toLowerCase()
+  const inner = String(
+    error?.response?.message ||
+      error?.response?.error_message ||
+      error?.response?.error?.message ||
+      error?.response?.data?.message ||
+      '',
+  ).toLowerCase()
+  if (code === 'INTERNAL_ERROR' || code === '50008') return true
+  return /context canceled|provider task failed|status failed|upstream|internal.*error|internal_error|服务内部错误|服务器内部错误|网络请求失败|网络请求超时/i.test(
+    `${msg} ${inner}`,
+  )
+}
+
+function isSameOriginAssetDownload(url: string): boolean {
+  if (!url) return false
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+    const parsed = new URL(url, base)
+    return parsed.origin === base && /^\/api\/v1\/assets\/\d+\/download$/i.test(parsed.pathname)
+  } catch {
+    return false
+  }
+}
+
+async function waitForDisplayUrl(url: string, signal?: AbortSignal): Promise<string> {
+  if (!url) return ''
+  if (!isSameOriginAssetDownload(url)) return url
+
+  for (let attempt = 0; attempt <= ASSET_READY_RETRY_DELAYS_MS.length; attempt++) {
+    if (signal?.aborted) throw new Error('分镜图生成已取消')
+    try {
+      const res = await fetch(url, {
+        credentials: 'include',
+        cache: 'no-store',
+        headers: { Accept: 'image/*,*/*;q=0.8' },
+        signal,
+      })
+      try {
+        await res.body?.cancel?.()
+      } catch {
+        /* ignore */
+      }
+      if (res.ok) return url
+    } catch (e: any) {
+      if (signal?.aborted || String(e?.name || '') === 'AbortError') throw new Error('分镜图生成已取消')
+    }
+    if (attempt < ASSET_READY_RETRY_DELAYS_MS.length) await delay(ASSET_READY_RETRY_DELAYS_MS[attempt])
+  }
+
+  return ''
+}
+
+async function firstReadyDisplayUrl(urls: string[], signal?: AbortSignal): Promise<string> {
+  for (const url of urls || []) {
+    const ready = await waitForDisplayUrl(url, signal)
+    if (ready) return ready
+  }
+  return ''
+}
 
 /**
  * 生成一张分镜图。refAssetIds 为参考图 asset_id(该镜头素材 + 上一张分镜图)。
@@ -177,27 +247,36 @@ export async function generateShotImage(args: {
     if (!assetId) assetId = await findAssetIdByTaskId(args.workspaceId, completed?.id || (task as any)?.id, 'image')
     // 有 asset_id → 优先用同源流式地址(getAssetDownloadUrl 已改为返回 /download,同源 HTTPS、不过期),
     // 避免直接用 outputs[].url 的 OSS 原始地址(http + IP 主机,在 HTTPS 页会 Mixed Content 破图)。
-    let url = assetId ? await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId }).catch(() => '') : ''
-    if (!url)
-      url =
-        (await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' }))[0] || ''
-    if (!url) url = extractTaskMediaUrls(completed)[0] || ''
+    let url = assetId
+      ? await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId })
+          .then((item) => waitForDisplayUrl(item, args.signal))
+          .catch(() => '')
+      : ''
+    if (!url) url = await firstReadyDisplayUrl(extractTaskMediaUrls(completed), args.signal)
+    if (!url) {
+      const urls = await resolveGeneratedMediaUrls({ workspaceId: args.workspaceId, task: completed, type: 'image' })
+      url = await firstReadyDisplayUrl(urls, args.signal)
+    }
     if (!url) throw new Error('未生成分镜图')
     return { url, assetId }
   }
 
-  // 任务执行失败自动重试一次（context canceled / provider 错误通常是偶发网络抖动）
-  const runWithRetry = async (fn: () => Promise<{ url: string; assetId: number }>, maxRetries = 1) => {
+  // 任务执行失败自动重试（context canceled / provider 5xx / 存储短暂不可读通常是偶发抖动）
+  const runWithRetry = async (
+    fn: () => Promise<{ url: string; assetId: number }>,
+    maxRetries = IMAGE_TASK_RETRY_DELAYS_MS.length,
+  ) => {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         return await fn()
       } catch (e: any) {
         if (attempt >= maxRetries) throw e
-        // 检查顶层 message + response.error_message（context canceled 通常在后端返回的 error_message 里）
-        const msg = String(e?.message || '').toLowerCase()
-        const inner = String(e?.response?.error_message || '').toLowerCase()
-        if (!/context canceled|provider task failed|internal.*error/i.test(`${msg} ${inner}`)) throw e
-        await new Promise((r) => setTimeout(r, 1200))
+        if (!isRetryableShotImageError(e)) throw e
+        await delay(
+          IMAGE_TASK_RETRY_DELAYS_MS[attempt] ||
+            IMAGE_TASK_RETRY_DELAYS_MS[IMAGE_TASK_RETRY_DELAYS_MS.length - 1] ||
+            1200,
+        )
       }
     }
     throw new Error('unreachable')

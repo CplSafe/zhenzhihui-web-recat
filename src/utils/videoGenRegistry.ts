@@ -16,7 +16,23 @@ import { useUiStore } from '@/stores/ui'
 export type VideoGenResult = { url: string; assetId: number }
 export type VideoGenScope = 'smart' | 'hot-copy'
 
-const running = new Map<string, Promise<VideoGenResult>>()
+export interface RunningVideoGenMeta {
+  scope: VideoGenScope
+  projectId: number
+  workspaceId: number
+  taskId: number
+  generationId: string
+  status: 'preparing' | 'processing' | 'reconnecting'
+  startedAt: number
+  updatedAt: number
+}
+
+export interface RunningVideoGenEntry {
+  promise: Promise<VideoGenResult>
+  meta: RunningVideoGenMeta
+}
+
+const running = new Map<string, RunningVideoGenEntry>()
 const WORKSPACE_SWITCH_LOCK_REASON = '当前视频处理中，暂不支持切换团队'
 
 function buildKey(scope: VideoGenScope, projectId: number): string {
@@ -39,7 +55,37 @@ export function isAnyVideoGenRunning(): boolean {
 
 /** 取该项目在途生成的结果 promise(无则 null);可 await 拿 { url, assetId } */
 export function getRunningVideoGen(scope: VideoGenScope, projectId: number): Promise<VideoGenResult> | null {
-  return running.get(buildKey(scope, projectId)) || null
+  return running.get(buildKey(scope, projectId))?.promise || null
+}
+
+export function getRunningVideoGenMeta(scope: VideoGenScope, projectId: number): RunningVideoGenMeta | null {
+  return running.get(buildKey(scope, projectId))?.meta || null
+}
+
+/** 按流程反查最近启动的在途项目，供 /smart、/hot-copy 根路由恢复项目绑定。 */
+export function findRunningVideoGen(scope: VideoGenScope, workspaceId?: number): RunningVideoGenEntry | null {
+  const ws = Number(workspaceId || 0) || 0
+  const matches = Array.from(running.values()).filter(
+    (entry) => entry.meta.scope === scope && (!ws || !entry.meta.workspaceId || entry.meta.workspaceId === ws),
+  )
+  return matches.sort((a, b) => Number(b.meta.startedAt || 0) - Number(a.meta.startedAt || 0))[0] || null
+}
+
+export function updateRunningVideoGenMeta(
+  scope: VideoGenScope,
+  projectId: number,
+  patch: Partial<Omit<RunningVideoGenMeta, 'scope' | 'projectId'>>,
+): void {
+  const key = buildKey(scope, projectId)
+  const entry = running.get(key)
+  if (!entry) return
+  entry.meta = {
+    ...entry.meta,
+    ...patch,
+    scope,
+    projectId: Number(projectId) || 0,
+    updatedAt: Date.now(),
+  }
 }
 
 /**
@@ -50,18 +96,36 @@ export function trackVideoGen(
   scope: VideoGenScope,
   projectId: number,
   p: Promise<VideoGenResult>,
+  metadata: Partial<Omit<RunningVideoGenMeta, 'scope' | 'projectId'>> = {},
 ): Promise<VideoGenResult> {
   const pid = Number(projectId)
   if (!(pid > 0)) return p
   const key = buildKey(scope, pid)
-  running.set(key, p)
+  const existing = running.get(key)
+  const now = Date.now()
+  const meta: RunningVideoGenMeta = {
+    scope,
+    projectId: pid,
+    workspaceId: Number(metadata.workspaceId ?? existing?.meta.workspaceId ?? 0) || 0,
+    taskId: Number(metadata.taskId ?? existing?.meta.taskId ?? 0) || 0,
+    generationId: String(metadata.generationId ?? existing?.meta.generationId ?? ''),
+    status: metadata.status || existing?.meta.status || 'preparing',
+    startedAt: Number(metadata.startedAt ?? existing?.meta.startedAt ?? now) || now,
+    updatedAt: now,
+  }
+  if (existing?.promise === p) {
+    existing.meta = meta
+    syncWorkspaceSwitchLock()
+    return p
+  }
+  running.set(key, { promise: p, meta })
   syncWorkspaceSwitchLock()
   void p
     .catch(() => {
       /* 失败也要摘除,避免卡住后续重试 */
     })
     .finally(() => {
-      if (running.get(key) === p) running.delete(key)
+      if (running.get(key)?.promise === p) running.delete(key)
       syncWorkspaceSwitchLock()
     })
   return p
