@@ -386,8 +386,9 @@ function toNavigationUrl(url, authStart) {
     const parsedUrl = new URL(url)
     const origin = normalizeBaseUrl(parsedUrl.origin)
     const pathAndQuery = `${parsedUrl.pathname}${parsedUrl.search}`
+    const authStartOrigin = getOAuthOriginFromAuthStart(authStart)
 
-    if (origin === deepAuthRemoteOrigin) {
+    if (origin === deepAuthRemoteOrigin || origin === authStartOrigin) {
       return buildUrl(deepAuthApiBaseUrl, pathAndQuery)
     }
 
@@ -404,6 +405,25 @@ function toNavigationUrl(url, authStart) {
 
   // Reject any absolute URL that did not match a known origin to avoid open redirects.
   return '/'
+}
+
+function getOAuthOriginFromAuthStart(authStart) {
+  const candidates = [authStart?.authorize_url, authStart?.return_to]
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'string') continue
+
+    try {
+      const parsedUrl = new URL(candidate)
+      if (parsedUrl.pathname.startsWith('/oauth2/')) {
+        return normalizeBaseUrl(parsedUrl.origin)
+      }
+    } catch {
+      // Relative URLs are already handled by toNavigationUrl.
+    }
+  }
+
+  return ''
 }
 
 function toProxiedUrl(url, localBaseUrl, remoteOrigin) {
