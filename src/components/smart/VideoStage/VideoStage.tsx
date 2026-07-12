@@ -70,6 +70,7 @@ interface VideoStageProps {
     error?: string
     ok?: boolean
     cached?: boolean
+    noFace?: boolean
   }[]
   /** 整片历史版本(点击切换) */
   videoVersions?: { url: string; assetId: number }[]
@@ -969,7 +970,16 @@ export default function VideoStage({
               {faceBlurDebug.map((b, i) => (
                 <div className={styles.vdbgShot} key={i}>
                   <div className={styles.vdbgShotNo}>
-                    {b.no || `图${i + 1}`} · {b.ok ? (b.cached ? '✓ 复用缓存' : '✓ 脱敏成功') : '✗ 失败(回退原图)'}
+                    {b.no || `图${i + 1}`} ·{' '}
+                    {b.noFace
+                      ? b.cached
+                        ? '✓ 复用无人脸结果'
+                        : '✓ 未检测到人脸，使用原图'
+                      : b.ok
+                        ? b.cached
+                          ? '✓ 复用脱敏结果'
+                          : '✓ 脱敏成功'
+                        : '✗ 检测失败，已停止生成'}
                   </div>
                   <div className={styles.vdbgShotBody}>
                     {b.outUrl ? <img src={b.outUrl} alt="" /> : <div className={styles.vdbgNoimg}>无图</div>}

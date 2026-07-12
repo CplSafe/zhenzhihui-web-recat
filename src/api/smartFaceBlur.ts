@@ -11,6 +11,17 @@ import { resolveGeneratedMediaUrls, findAssetIdByTaskId, extractOutputAssetId } 
 
 // 懒加载缓存「人脸检测抠图」模型 ID:先精确名称、再放宽含「人脸」、最后任意兜底(同 2.0)
 let cachedFaceModelId = 0
+
+export function isNoFaceDetectedError(error: unknown): boolean {
+  const message = String((error as any)?.message || error || '')
+  return [
+    /EAS_FACE_NOT_EXIST/i,
+    /InvalidImage\.NotFoundFace/i,
+    /\b(?:no faces? (?:found|detected)|face not found)\b/i,
+    /(?:图像中|图片中)?.{0,8}(?:没找到|未找到|未检测到|没有检测到|不存在)人脸/,
+  ].some((pattern) => pattern.test(message))
+}
+
 async function getFaceDetectModelId(): Promise<number> {
   if (cachedFaceModelId) return cachedFaceModelId
   try {

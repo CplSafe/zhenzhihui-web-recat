@@ -31,6 +31,10 @@ export interface HotCopyProduct {
   assetId?: number
   /** 真正传给 video.replicate 的人脸/抠脸素材 asset_id;展示仍使用 url/assetId 对应的原图 */
   submitAssetId?: number
+  /** 人脸预处理结果；no_face 表示已确认无人脸，可直接复用原图。 */
+  faceCheckStatus?: 'blurred' | 'no_face'
+  /** 上述检测结果对应的原图 asset_id；原图变化后必须重新检测。 */
+  faceCheckedAssetId?: number
 }
 export interface HotCopyEntryPayload {
   tab: HotCopyTab

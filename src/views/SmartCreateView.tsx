@@ -52,7 +52,7 @@ import {
   totalDurationSec,
   estimateFullVideoCost,
 } from '@/api/smartVideo'
-import { blurFacesOnAsset } from '@/api/smartFaceBlur'
+import { blurFacesOnAsset, isNoFaceDetectedError } from '@/api/smartFaceBlur'
 import { readVideoDurationSec } from '@/utils/videoDuration'
 import VideoStage from '@/components/smart/VideoStage'
 import {
@@ -1881,9 +1881,12 @@ export default function SmartCreateView() {
   type VideoGenJob = {
     id: string
     idempotencyKey?: string
+    batchId?: string
     note?: string
     variationIndex?: number
     variationTotal?: number
+    sourceImageAssetIds?: number[]
+    preparedImageAssetIds?: number[]
     opts?: { edit?: boolean }
   }
   const videoGenerationsRef = useRef<GenRecord[]>([])
@@ -2086,7 +2089,7 @@ export default function SmartCreateView() {
   const [blurPhase, setBlurPhase] = useState('')
   const [blurDebug, setBlurDebug] = useState<any[]>([])
   // 人脸脱敏恒开(不提供开关):正式出片前先对每张进入视频的分镜图抠人脸/脱敏,再喂 seedance。
-  // 脱敏失败 / 后端未配 image.face_detect 模型 → 静默回退原图,不阻塞出片。
+  // 明确确认无人脸时使用原图；检测服务异常时停止本轮，不能把未经确认的原图送去生成。
   const [faceBlurEnabled] = useState(true)
   const faceBlurEnabledRef = useRef(true)
   useEffect(() => {
@@ -2215,59 +2218,107 @@ export default function SmartCreateView() {
         (async (): Promise<{ url: string; assetId: number }> => {
           const plans = await resolvePlanCandidates()
           const cache: Record<string, number> = {}
-          // ① 先确定每镜「原始分镜图」asset_id(按镜头顺序):优先已有 imageAssetId,缺则现传一次
-          const srcIds: { shotId: string | number; id: number }[] = []
-          for (const sh of activeShots) {
-            let id = Number(sh.imageAssetId || 0) || 0
-            if (!id && sh.image) {
-              try {
-                id = await ensureAssetId(ws, sh.image, cache)
-              } catch {
-                /* 单张失败跳过 */
-              }
-            }
-            if (id) srcIds.push({ shotId: sh.id, id })
-          }
-          // ② 正式生成前:对每张进入视频的分镜图做人脸脱敏,用脱敏版喂 seedance(失败回退原图)。
-          // 脱敏开关关闭 → 跳过脱敏,直接用原图,成片人脸清晰。
-          // 注意:每轮视频生成独立运作，脱敏结果仅本轮有效不清存到 shots，
-          // 避免第1次脱敏成功→缓存→第2次及后续视频被迫复用脱敏版导致"后面视频人脸被抠"。
           const imageAssetIds: number[] = []
-          if (faceBlurEnabledRef.current) {
-            const dbg: any[] = []
-            // 本轮内已脱敏的原图缓存(key=原始assetId):同一原图被多个镜头引用时避免重复脱敏
-            const roundCache = new Map<number, { assetId: number; url: string }>()
-            for (let j = 0; j < srcIds.length; j++) {
-              const { shotId, id } = srcIds[j]
-              const sh = currentShots.find((s) => s.id === shotId)
-              setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
-              // 本轮内已脱敏过该原图 → 直接复用
-              const cached = roundCache.get(id)
-              if (cached) {
-                imageAssetIds.push(cached.assetId)
+          const lockedSourceIds = (job.sourceImageAssetIds || []).map((id) => Number(id) || 0).filter((id) => id > 0)
+          const lockedPreparedIds = (job.preparedImageAssetIds || [])
+            .map((id) => Number(id) || 0)
+            .filter((id) => id > 0)
+          const canReuseBatchAssets = lockedSourceIds.length > 0 && lockedSourceIds.length === lockedPreparedIds.length
+
+          if (canReuseBatchAssets) {
+            imageAssetIds.push(...lockedPreparedIds)
+            setBlurDebug(
+              lockedPreparedIds.map((outAssetId, index) => ({
+                no: activeShots[index]?.no || '',
+                srcAssetId: lockedSourceIds[index],
+                outAssetId,
+                outUrl: '',
+                status: 'batch_cached',
+                ok: true,
+                cached: true,
+                noFace: outAssetId === lockedSourceIds[index],
+              })),
+            )
+          } else {
+            // ① 先确定每镜「原始分镜图」asset_id(按镜头顺序):优先已有 imageAssetId,缺则现传一次。
+            const srcIds: { shotId: string | number; id: number }[] = []
+            for (const sh of activeShots) {
+              let id = Number(sh.imageAssetId || 0) || 0
+              if (!id && sh.image) {
+                try {
+                  id = await ensureAssetId(ws, sh.image, cache)
+                } catch {
+                  /* 单张失败跳过 */
+                }
+              }
+              if (id) srcIds.push({ shotId: sh.id, id })
+            }
+
+            // ② 每批视频只做人脸预处理一次。同批后续任务复用同一组安全素材，避免某一轮检测失败后回退原图。
+            if (faceBlurEnabledRef.current) {
+              const dbg: any[] = []
+              const roundCache = new Map<number, { assetId: number; url: string; noFace?: boolean }>()
+              for (let j = 0; j < srcIds.length; j++) {
+                const { shotId, id } = srcIds[j]
+                const sh = currentShots.find((s) => s.id === shotId)
+                setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
+                const cached = roundCache.get(id)
+                if (cached) {
+                  imageAssetIds.push(cached.assetId)
+                  dbg.push({
+                    no: sh?.no || '',
+                    srcAssetId: id,
+                    cached: true,
+                    outAssetId: cached.assetId,
+                    outUrl: cached.url,
+                    status: cached.noFace ? 'no_face' : 'cached',
+                    ok: true,
+                    noFace: Boolean(cached.noFace),
+                  })
+                  continue
+                }
+
+                const result = await blurFacesOnAsset({ workspaceId: ws, assetId: id, modelPlanCandidates: plans })
+                const noFace = !result.ok && isNoFaceDetectedError(result.debug?.error)
                 dbg.push({
                   no: sh?.no || '',
-                  srcAssetId: id,
-                  cached: true,
-                  outAssetId: cached.assetId,
-                  outUrl: cached.url,
-                  ok: true,
+                  ...result.debug,
+                  status: noFace ? 'no_face' : result.debug?.status,
+                  outAssetId: noFace ? id : result.debug?.outAssetId,
+                  ok: result.ok || noFace,
+                  cached: false,
+                  noFace,
                 })
-                continue
+                if (result.ok && result.assetId) {
+                  imageAssetIds.push(result.assetId)
+                  roundCache.set(id, { assetId: result.assetId, url: result.url })
+                } else if (noFace) {
+                  imageAssetIds.push(id)
+                  roundCache.set(id, { assetId: id, url: sh?.image || '', noFace: true })
+                } else {
+                  setBlurDebug(dbg)
+                  throw new Error(`${sh?.no || `分镜 ${j + 1}`}人脸检测失败，已停止本次视频生成，请稍后重试`)
+                }
               }
-              const r = await blurFacesOnAsset({ workspaceId: ws, assetId: id, modelPlanCandidates: plans })
-              dbg.push({ no: sh?.no || '', ...r.debug, ok: r.ok, cached: false })
-              if (r.ok && r.assetId) {
-                imageAssetIds.push(r.assetId)
-                roundCache.set(id, { assetId: r.assetId, url: r.url })
-              } else {
-                imageAssetIds.push(id) // 脱敏失败:回退原图,不阻塞出片
-              }
+              setBlurDebug(dbg)
+            } else {
+              for (const source of srcIds) imageAssetIds.push(source.id)
             }
-            setBlurDebug(dbg)
-          } else {
-            // 不脱敏:直接用原图 assetId 出片
-            for (const s of srcIds) imageAssetIds.push(s.id)
+
+            if (job.batchId && srcIds.length > 0 && imageAssetIds.length === srcIds.length) {
+              const sourceImageAssetIds = srcIds.map((source) => source.id)
+              const preparedImageAssetIds = [...imageAssetIds]
+              syncVideoGenQueue(
+                videoGenQueueRef.current.map((queuedJob) =>
+                  queuedJob.batchId === job.batchId
+                    ? { ...queuedJob, sourceImageAssetIds, preparedImageAssetIds }
+                    : queuedJob,
+                ),
+              )
+              // 在创建视频任务前先保存批次素材锁定结果，覆盖此刻刷新/切路由的恢复窗口。
+              saveSmartDraft(currentDraft(), ws)
+              if (projectIdRef.current) void putSmartDraftToBackend(ws)
+            }
           }
           setBlurPhase('')
           const generationPromise = generateFullVideo({
@@ -2388,6 +2439,7 @@ export default function SmartCreateView() {
     const existing = !forceNew ? videoGenerationsRef.current.find((g) => g.status === 'processing') || null : null
     const newRecords: GenRecord[] = []
     let patchedExisting: GenRecord | null = null
+    const batchId = total > 1 ? createVideoTaskIdempotencyKey().replace(/^task_/, 'batch_') : ''
     const jobs: VideoGenJob[] = Array.from({ length: total }, (_, i) => {
       const displayNote = note
         ? total > 1
@@ -2409,6 +2461,7 @@ export default function SmartCreateView() {
       return {
         id: record.id,
         idempotencyKey: record.idempotencyKey,
+        ...(batchId ? { batchId } : {}),
         note,
         variationIndex: total > 1 ? i + 1 : undefined,
         variationTotal: total > 1 ? total : undefined,
