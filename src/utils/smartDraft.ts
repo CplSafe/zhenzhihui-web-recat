@@ -62,9 +62,12 @@ export interface SmartDraft {
   videoGenQueue?: {
     id: string
     idempotencyKey?: string
+    batchId?: string
     note?: string
     variationIndex?: number
     variationTotal?: number
+    sourceImageAssetIds?: number[]
+    preparedImageAssetIds?: number[]
     opts?: { edit?: boolean }
   }[]
   /** 人脸脱敏开关(默认开;关闭后出片用原图,成片人脸清晰) */

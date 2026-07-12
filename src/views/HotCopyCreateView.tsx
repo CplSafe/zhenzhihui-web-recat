@@ -24,7 +24,7 @@ import {
   preloadHotCopyVideoModel,
 } from '@/api/hotCopy'
 import { editFullVideo } from '@/api/smartVideo'
-import { blurFacesOnAsset } from '@/api/smartFaceBlur'
+import { blurFacesOnAsset, isNoFaceDetectedError } from '@/api/smartFaceBlur'
 import { readVideoDurationSec } from '@/utils/videoDuration'
 import {
   saveHotCopyDraft,
@@ -130,6 +130,9 @@ function buildEntrySnapshot(payload?: Partial<HotCopyEntryPayload> | null): Part
           isVideo: Boolean(p?.isVideo),
           assetId: Number(p?.assetId || 0) || undefined,
           submitAssetId: Number(p?.submitAssetId || 0) || undefined,
+          faceCheckStatus:
+            p?.faceCheckStatus === 'blurred' || p?.faceCheckStatus === 'no_face' ? p.faceCheckStatus : undefined,
+          faceCheckedAssetId: Number(p?.faceCheckedAssetId || 0) || undefined,
         }))
         .filter((p: any) => p.url)
     : []
@@ -1958,9 +1961,19 @@ export default function HotCopyCreateView() {
     index: number,
     total: number,
   ): Promise<{ product: HotCopyProduct; submitAssetId: number; failed: boolean; error?: string }> => {
-    const existingSubmitId = Number((product as any).submitAssetId || 0) || 0
+    const existingSubmitId = Number(product.submitAssetId || 0) || 0
     let sourceAssetId = Number(product.assetId || 0) || 0
-    if (existingSubmitId && (!sourceAssetId || existingSubmitId !== sourceAssetId)) {
+    const hasFaceCheckMetadata =
+      Number(product.faceCheckedAssetId || 0) > 0 &&
+      (product.faceCheckStatus === 'blurred' || product.faceCheckStatus === 'no_face')
+    const faceResultMatchesSource =
+      existingSubmitId > 0 &&
+      sourceAssetId > 0 &&
+      Number(product.faceCheckedAssetId || 0) === sourceAssetId &&
+      (product.faceCheckStatus === 'blurred' || product.faceCheckStatus === 'no_face')
+    const reusableLegacySubmitId =
+      existingSubmitId > 0 && !hasFaceCheckMetadata && (!sourceAssetId || existingSubmitId !== sourceAssetId)
+    if (faceResultMatchesSource || reusableLegacySubmitId) {
       return {
         product: { ...product, file: null, submitAssetId: existingSubmitId },
         submitAssetId: existingSubmitId,
@@ -1983,6 +1996,20 @@ export default function HotCopyCreateView() {
 
     setHotCopyPhase(`替换素材人脸检测 ${index}/${total}…`)
     const face = await blurFacesOnAsset({ workspaceId: ws, assetId: sourceAssetId })
+    if (!face.ok && isNoFaceDetectedError(face.debug?.error)) {
+      return {
+        product: {
+          ...product,
+          file: null,
+          assetId: sourceAssetId,
+          submitAssetId: sourceAssetId,
+          faceCheckStatus: 'no_face',
+          faceCheckedAssetId: sourceAssetId,
+        },
+        submitAssetId: sourceAssetId,
+        failed: false,
+      }
+    }
     if (!face.ok || !face.assetId) {
       return {
         product: {
@@ -2004,6 +2031,8 @@ export default function HotCopyCreateView() {
         file: null,
         assetId: sourceAssetId,
         submitAssetId,
+        faceCheckStatus: 'blurred',
+        faceCheckedAssetId: sourceAssetId,
       },
       submitAssetId,
       failed: false,
