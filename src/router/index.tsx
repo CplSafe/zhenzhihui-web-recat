@@ -3,9 +3,9 @@
  * 由原 vue-router 配置移植。受保护页的鉴权守卫在 App(AppShell) 中央处理；
  * 仅 /login 标记 handle.requiresAuth=false。
  */
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { createBrowserRouter, Navigate, useRouteError } from 'react-router-dom'
+import { createBrowserRouter, Navigate, useLocation, useRouteError } from 'react-router-dom'
 import App from '../App'
 import { hasAuthSessionMarker } from '../api/auth'
 import { useWorkspaceId } from '../stores/workspaceSession'
@@ -72,7 +72,11 @@ const SpaceDashboardView = lazy(() => import('../views/SpaceDashboardView'))
 
 function WorkspaceScopedSmartCreateRoute() {
   const workspaceId = useWorkspaceId()
-  return <SmartCreateView key={`smart-ws-${Number(workspaceId || 0)}`} />
+  const location = useLocation()
+  const remountNonceRef = useRef(0)
+  const requestedRemountNonce = Number((location.state as any)?.workspaceSwitchRemountNonce || 0)
+  if (requestedRemountNonce > 0) remountNonceRef.current = requestedRemountNonce
+  return <SmartCreateView key={`smart-ws-${Number(workspaceId || 0)}-${remountNonceRef.current}`} />
 }
 
 function WorkspaceScopedHotCopyRoute() {

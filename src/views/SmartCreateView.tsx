@@ -10,7 +10,11 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
-import SmartEntry, { clearSmartEntryDraft, type EntryMeta } from '@/components/smart/SmartEntry'
+import SmartEntry, {
+  clearSmartEntryDraft,
+  getSmartEntryDraftFingerprint,
+  type EntryMeta,
+} from '@/components/smart/SmartEntry'
 import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStoryboardTable'
 import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import ShotArrange from '@/components/smart/ShotArrange'
@@ -65,6 +69,7 @@ import {
   uploadAssetFile,
   getAssetDownloadUrl,
   listAssets,
+  listCreativeProjects,
   extractAssetPageItems,
   restoreCreativeTrashItem,
   deleteCreativeTrashItem,
@@ -73,6 +78,7 @@ import {
   useWorkspaceId,
   useModelPlanCandidates,
   useWorkspaceSessionStore,
+  deriveWorkspaceId,
   deriveModelPlanCandidates,
   deriveAllWorkspaces,
 } from '@/stores/workspaceSession'
@@ -101,6 +107,7 @@ import {
   updateRunningVideoGenMeta,
 } from '@/utils/videoGenRegistry'
 import { downloadToDisk } from '@/utils/downloadToDisk'
+import { onBeforeWorkspaceSwitch } from '@/utils/workspaceSwitch'
 import './SmartCreateView.css'
 
 // 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
@@ -160,6 +167,9 @@ const stripAt = (t: string) =>
     .trim()
 const normalizeVideoGenerateCount = (value: any) => Math.min(10, Math.max(1, Math.floor(Number(value || 1) || 1)))
 const SMART_VIDEO_RECOVERY_MAX_MS = 70 * 60 * 1000
+let smartProjectCreationSequence = 0
+const smartProjectCreationTokens = new Map<number, number>()
+const pendingSmartProjectCreations = new Map<number, Promise<unknown>>()
 
 function isTransientVideoTaskRecoveryError(error: any): boolean {
   const status = Number(error?.status || 0)
@@ -593,6 +603,15 @@ export default function SmartCreateView() {
   const workspaceId = projectWorkspaceId || globalWorkspaceId
   const workspaceIdRef = useRef(0)
   workspaceIdRef.current = workspaceId
+  const viewMountedRef = useRef(true)
+  const workspaceSwitchAwayRef = useRef(false)
+  const workspaceSwitchRequestRef = useRef(0)
+  useEffect(() => {
+    viewMountedRef.current = true
+    return () => {
+      viewMountedRef.current = false
+    }
+  }, [])
   const pinProjectWorkspaceId = (value: number) => {
     const next = Number(value || 0) || 0
     workspaceIdRef.current = next || globalWorkspaceId
@@ -3233,13 +3252,13 @@ export default function SmartCreateView() {
     const v = Number(p?.draft_revision ?? p?.draftRevision ?? p?.data?.draft_revision ?? p?.data?.draftRevision ?? NaN)
     return Number.isFinite(v) && v >= 0 ? Math.floor(v) : NaN
   }
-  const fetchRevision = async (id: number, ws: number) => {
+  const fetchRevision = async (id: number, ws: number): Promise<number> => {
     try {
       const proj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
       const r = normRev(proj)
-      if (Number.isFinite(r)) draftRevisionRef.current = r
+      return Number.isFinite(r) ? r : NaN
     } catch {
-      /* ignore */
+      return NaN
     }
   }
 
@@ -3247,34 +3266,45 @@ export default function SmartCreateView() {
     const id = projectIdRef.current
     const ws = Number(workspaceIdOverride || workspaceId || 0)
     if (!id || !ws) return Promise.resolve(false)
+    const draft = currentDraft()
+    const snapshot = buildSmartSnapshot(draft)
+    if (projectVideoStoreRef.current) snapshot.projectVideoStore = projectVideoStoreRef.current
+    const coverAssetId =
+      Number((draft.shots || []).find((shot: any) => Number(shot?.imageAssetId || 0) > 0)?.imageAssetId || 0) ||
+      Number(((draft.entryMeta as any)?.imageAssetIds || []).find((value: any) => Number(value) > 0) || 0) ||
+      0
+    const revision = Number(draftRevisionRef.current || 0) || 0
+    const preserveUpstreamContent = !shotsExplicitlyClearedRef.current
     return enqueueCreativeProjectDraftSave({
       projectId: id,
       workspaceId: ws,
-      task: () => doPutDraft(ws),
+      task: () =>
+        doPutDraft({ id, ws, snapshot, revision, coverAssetId, preserveUpstreamContent }).then((result) => {
+          // 仅当前视图仍绑定同一项目时回写 revision；切到其它项目后不能污染新项目版本号。
+          if (result.revision != null && projectIdRef.current === id) draftRevisionRef.current = result.revision
+          return result.saved
+        }),
     })
   }
 
   // 把当前草稿写到后端。对齐 2.0 putDraftSnapshot:保存前先确保有当前 revision,
   // 保存后用返回的 revision 同步;返回体没带 revision 则重新拉一次;409 冲突→拉新 revision 重试。
-  const doPutDraft = async (workspaceIdOverride?: number): Promise<boolean> => {
-    const id = projectIdRef.current
-    const ws = Number(workspaceIdOverride || workspaceId || 0)
-    if (!id || !ws) return false
-    let snapshot = buildSmartSnapshot(currentDraft())
-    // 原样保留项目视频清单存档(归类记录),避免整盘重建草稿时丢失(本编辑器不维护它)
-    if (projectVideoStoreRef.current) snapshot.projectVideoStore = projectVideoStoreRef.current
-    // 项目封面:优先第一张分镜图,其次入口上传素材的 asset_id。带进存草稿(后端 cover_asset_id),
-    // 列表接口就能直接返回封面,不必前端再挖 draft。0/无 时省略,保留现有封面。
-    let coverAssetId =
-      Number(shotsRef.current.find((s) => Number(s.imageAssetId || 0) > 0)?.imageAssetId || 0) ||
-      Number(((entryMeta as any)?.imageAssetIds || []).find((x: any) => Number(x) > 0) || 0) ||
-      0
+  const doPutDraft = async (args: {
+    id: number
+    ws: number
+    snapshot: any
+    revision: number
+    coverAssetId: number
+    preserveUpstreamContent: boolean
+  }): Promise<{ saved: boolean; revision: number | null }> => {
+    const { id, ws, preserveUpstreamContent } = args
+    let { snapshot, revision, coverAssetId } = args
     const mergeLatestProjectDraft = (latestProj: any) => {
       const next = normRev(latestProj)
-      if (Number.isFinite(next)) draftRevisionRef.current = next
+      if (Number.isFinite(next)) revision = next
       const latestDraftJson = latestProj?.draft_json ?? latestProj?.data?.draft_json ?? latestProj?.draft
       snapshot = mergeSnapshotVideoHistory(snapshot, latestDraftJson, {
-        preserveUpstreamContent: !shotsExplicitlyClearedRef.current,
+        preserveUpstreamContent,
       })
       if (!coverAssetId) {
         const snapshotShots = Array.isArray(snapshot?.smart?.shots) ? snapshot.smart.shots : []
@@ -3283,7 +3313,10 @@ export default function SmartCreateView() {
       }
     }
     // 首次/未知 revision:先拉一次,避免用错版本号导致 409 把后续(含图)的保存全部打掉
-    if (!draftRevisionRef.current) await fetchRevision(id, ws)
+    if (!revision) {
+      const fetchedRevision = await fetchRevision(id, ws)
+      if (Number.isFinite(fetchedRevision)) revision = fetchedRevision
+    }
     // 视频生成会有「后台完成写入」与「页面自动保存」并发交错的窗口。
     // 保存前先把后端已存在的视频历史合并回来，避免当前页稍旧的 snapshot 把已完成的视频覆盖掉。
     try {
@@ -3300,28 +3333,34 @@ export default function SmartCreateView() {
           projectId: id,
           workspaceId: ws,
           draft: snapshot,
-          draftRevision: draftRevisionRef.current,
+          draftRevision: revision,
           coverAssetId,
         })
         const next = normRev(payload)
-        if (Number.isFinite(next)) draftRevisionRef.current = next
-        else await fetchRevision(id, ws) // 返回体没带 revision → 重新拉,保持同步
-        return true
+        if (Number.isFinite(next)) revision = next
+        else {
+          const fetchedRevision = await fetchRevision(id, ws)
+          if (Number.isFinite(fetchedRevision)) revision = fetchedRevision
+        }
+        return { saved: true, revision: Number.isFinite(revision) ? revision : null }
       } catch (e: any) {
-        if (e?.status !== 409) return false
+        if (e?.status !== 409) return { saved: false, revision: Number.isFinite(revision) ? revision : null }
         // 冲突后不能只更新 revision 再拿旧快照覆盖；重新合并最新草稿后再重试。
         try {
           const latestProj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
           mergeLatestProjectDraft(latestProj)
         } catch {
-          await fetchRevision(id, ws)
+          const fetchedRevision = await fetchRevision(id, ws)
+          if (Number.isFinite(fetchedRevision)) revision = fetchedRevision
         }
       }
     }
-    return false
+    return { saved: false, revision: Number.isFinite(revision) ? revision : null }
   }
 
   const hydratedRef = useRef(false)
+  const workspaceRestoreNonceRef = useRef(0)
+  const projectLoadRequestRef = useRef(0)
   // 「数据已应用」标记:hydratedRef 是在异步 loadProjectById【之前】就置 true 的,存在
   // 「已水合但后端数据还没应用」的窗口;若此时切走,卸载 flush / autosave 会把【初始空态】写盘覆盖好草稿
   // (频繁切换 → 回到分镜脚本"暂无分镜"的根因)。故所有【保存类】逻辑改用本标记:仅在草稿真正应用后才放行。
@@ -3389,6 +3428,8 @@ export default function SmartCreateView() {
   // 手机上必现」。因此首拉失败(且是 403/404)时,在用户名下其它工作空间里逐个重试,命中即切换激活空间,
   // 让「谁打开、哪台设备、刷不刷新」只要有权限就能进。
   const loadProjectById = async (rid: number, ws: number) => {
+    const loadRequest = ++projectLoadRequestRef.current
+    const isCurrentLoad = () => projectLoadRequestRef.current === loadRequest && viewMountedRef.current
     setLoadError('')
     setProjectLoading(true)
     projectIdRef.current = rid
@@ -3396,10 +3437,12 @@ export default function SmartCreateView() {
     try {
       await waitForCreativeProjectDraftSaves({ projectId: rid, workspaceId: ws })
       const proj: any = await getCreativeProject({ projectId: rid, workspaceId: ws })
+      if (!isCurrentLoad()) return
       pinProjectWorkspaceId(ws) // 钉住项目所属空间:后续全局切换不影响本项目的保存/计费/素材
       applyLoadedProject(proj, rid, ws)
       return
     } catch (e) {
+      if (!isCurrentLoad()) return
       const status = Number((e as any)?.status || 0)
       // 仅 403/404(空间不匹配 / 当前空间下查不到)才值得跨空间重试;5xx/网络错误重试别的空间无意义。
       if (status === 403 || status === 404) {
@@ -3410,17 +3453,20 @@ export default function SmartCreateView() {
         } catch {
           /* 拉取失败则用现有候选继续兜底 */
         }
+        if (!isCurrentLoad()) return
         const candidates = (deriveAllWorkspaces(useWorkspaceSessionStore.getState()) as any[])
           .map((w) => Number(w?.id || 0))
           .filter((id) => id > 0 && id !== ws)
         for (const candidate of candidates) {
           try {
             const proj: any = await getCreativeProject({ projectId: rid, workspaceId: candidate })
+            if (!isCurrentLoad()) return
             pinProjectWorkspaceId(candidate) // 钉住项目所属空间(命中的兜底空间)
             applyLoadedProject(proj, rid, candidate)
             // 命中后只钉住本项目空间,不切换全局团队。后续 autosave / 账单 / 并发均通过 projectWorkspaceId 走项目空间。
             return
           } catch {
+            if (!isCurrentLoad()) return
             /* 该空间也没有 → 继续试下一个 */
           }
         }
@@ -3441,7 +3487,7 @@ export default function SmartCreateView() {
       setLoadError(msg)
       showToast(msg, 'error')
     } finally {
-      setProjectLoading(false)
+      if (isCurrentLoad()) setProjectLoading(false)
     }
   }
 
@@ -3465,10 +3511,44 @@ export default function SmartCreateView() {
   // 进入:有 /smart/:id → 从后端恢复;否则恢复 localStorage 草稿。
   // 用 useLayoutEffect:在浏览器【绘制前】完成"空白 /smart→/smart/:id"的跳转,避免先闪一下初始页。
   useLayoutEffect(() => {
-    if (hydratedRef.current) return
     const navState = (location.state as any) || {}
+    const rid = Number(routeId || 0)
+    const restoreNonce = Number(navState.workspaceSwitchNonce || 0)
+    const isWorkspaceRestore =
+      navState.workspaceSwitchRestore === true &&
+      Number(navState.targetWorkspaceId || 0) === Number(workspaceId || 0) &&
+      restoreNonce > 0
+
+    // 后台云端找回可能在当前 workspace 视图已完成首次水合后才把路由从旧项目修正为新项目。
+    // 此时组件不会因 routeId 变化重挂载，必须显式重新拉取目标项目。
+    if (hydratedRef.current) {
+      if (isWorkspaceRestore && workspaceRestoreNonceRef.current !== restoreNonce) {
+        workspaceRestoreNonceRef.current = restoreNonce
+        workspaceSwitchAwayRef.current = false
+        if (rid > 0) {
+          appliedRef.current = false
+          void loadProjectById(rid, Number(workspaceId || 0))
+        } else {
+          // 同一路由组件不会重挂载：优先恢复目标空间尚未绑定项目的完整本地稿；
+          // 确认没有旧稿时只清页面状态，不能清掉用户刚输入的入口稿或正在创建的 token。
+          projectLoadRequestRef.current += 1
+          appliedRef.current = true
+          const localDraft = loadSmartDraft(Number(workspaceId || 0))
+          if (localDraft?.started && !Number(localDraft.projectId || 0)) {
+            projectIdRef.current = 0
+            setProjectId(0)
+            pinProjectWorkspaceId(0)
+            applyDraft(localDraft)
+          } else {
+            resetToNewVideo(undefined, { preserveWorkspaceDrafts: true, skipNavigate: true })
+          }
+        }
+      }
+      return
+    }
+    if (isWorkspaceRestore) workspaceRestoreNonceRef.current = restoreNonce
     if (navState.workspaceSwitchReset) {
-      clearSmartEntryDraft()
+      clearSmartEntryDraft(Number(workspaceId || 0))
       pinProjectWorkspaceId(0) // 空白入口切空间:解除项目钉住,后续新建走新的全局空间
       hydratedRef.current = true
       appliedRef.current = true
@@ -3480,13 +3560,12 @@ export default function SmartCreateView() {
     // 项目绑定 + 携带素材由 carry effect / useState 初始化器处理。
     if (Number((location.state as any)?.restartProjectId)) {
       clearSmartDraft(Number(workspaceId || 0))
-      clearSmartEntryDraft() // 从「项目管理→新建视频」进入:全新流程,清掉入口暂存
+      clearSmartEntryDraft(Number(workspaceId || 0)) // 从「项目管理→新建视频」进入:全新流程,清掉本空间入口暂存
       pinProjectWorkspaceId(0) // 全新流程:解除旧项目钉住,新项目用当前全局空间创建
       hydratedRef.current = true
       appliedRef.current = true // 全新流程无异步加载,进入即可放行保存
       return
     }
-    const rid = Number(routeId || 0)
     if (rid > 0) {
       const ws = Number(workspaceId || 0)
       if (!ws) return // 等工作空间就绪
@@ -3521,6 +3600,16 @@ export default function SmartCreateView() {
         navigate(`/smart/${pendingPid}`, { replace: true, state: { autoResumed: true } })
         return // 不置 hydratedRef,等重定向到 /smart/:id 再水合 + 续轮询
       }
+      if (d?.started && !pendingPid) {
+        // 建项目请求失败/尚未返回 id 时，本地稿仍是完整可恢复稿；切回来继续展示，不能当成空空间删除。
+        projectIdRef.current = 0
+        setProjectId(0)
+        applyDraft(d)
+        workspaceSwitchAwayRef.current = false
+        hydratedRef.current = true
+        appliedRef.current = true
+        return
+      }
       // 空白 /smart:始终以最初的空输入框进入,不恢复本地草稿。
       // (同一次进入内点「上一步」回到输入框会保留历史输入——那是组件 state,不依赖这里;
       //  切换路由再回来则会重新挂载、state 清空,故得到全新空白页。)
@@ -3534,6 +3623,7 @@ export default function SmartCreateView() {
   useEffect(() => {
     if (!appliedRef.current) return // 数据应用前不保存,避免用空态覆盖草稿
     const ws = Number(workspaceId || 0)
+    if (!projectIdRef.current && pendingSmartProjectCreations.has(ws)) return
     const local = window.setTimeout(() => saveSmartDraft(currentDraft(), ws), 600)
     const remote = window.setTimeout(() => {
       if (projectIdRef.current) void putSmartDraftToBackend(ws)
@@ -3544,6 +3634,7 @@ export default function SmartCreateView() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    workspaceId,
     started,
     requirement,
     reqSummary,
@@ -3578,6 +3669,7 @@ export default function SmartCreateView() {
   flushDraftRef.current = () => {
     if (!appliedRef.current) return // 数据应用前卸载 → 不落盘(否则把初始空态写进草稿,覆盖好数据)
     const ws = Number(workspaceId || 0)
+    if (!projectIdRef.current && pendingSmartProjectCreations.has(ws)) return
     try {
       saveSmartDraft(currentDraft(), ws)
     } catch {
@@ -3586,6 +3678,180 @@ export default function SmartCreateView() {
     if (projectIdRef.current) void putSmartDraftToBackend(ws)
   }
   useEffect(() => () => flushDraftRef.current(), [])
+
+  // 切换空间时只同步做本地快照;后端保存与目标草稿的云端找回都在后台进行,
+  // 不阻塞 workspace store 切换。生成中/保存中也可随时切换。
+  useEffect(() =>
+    onBeforeWorkspaceSwitch((detail) => {
+      const ws = Number(workspaceIdRef.current || workspaceId || 0)
+      const targetWs = Number(detail.targetWorkspaceId || 0)
+      detail.sourceWorkspaceId = ws
+      const oldProjectId = Number(projectIdRef.current || 0)
+      if (targetWs === ws) {
+        workspaceSwitchAwayRef.current = false
+        detail.destinationPath = oldProjectId ? `/smart/${oldProjectId}` : '/smart'
+        if (appliedRef.current) saveSmartDraft(currentDraft(), ws)
+        if (appliedRef.current && oldProjectId) {
+          detail.waitUntil.push(
+            putSmartDraftToBackend(ws).then((saved) => {
+              if (!saved) throw new Error('草稿云端同步失败')
+            }),
+          )
+        }
+        return
+      }
+      const switchRequest = ++workspaceSwitchRequestRef.current
+      workspaceSwitchAwayRef.current = targetWs > 0 && targetWs !== ws
+      const hasPendingUnboundCreation = !oldProjectId && pendingSmartProjectCreations.has(ws)
+      if (appliedRef.current && !hasPendingUnboundCreation) saveSmartDraft(currentDraft(), ws)
+
+      // 先同步给出目标空间的上次项目路由,点击后可立即切换;云端校验在后台修正。
+      const initialTargetDraft = loadSmartDraft(targetWs)
+      const targetEntryFingerprint = getSmartEntryDraftFingerprint(targetWs)
+      const targetCreationTokenAtSwitch = smartProjectCreationTokens.get(targetWs) || 0
+      const initialTargetProjectId = Number(initialTargetDraft?.projectId || 0) || 0
+      if (initialTargetProjectId && initialTargetDraft?.started !== false) {
+        detail.destinationPath = `/smart/${initialTargetProjectId}`
+      }
+
+      detail.waitUntil.push(
+        (async () => {
+          const oldSavePromise = appliedRef.current && oldProjectId ? putSmartDraftToBackend(ws) : Promise.resolve(true)
+          if (!targetWs) {
+            await oldSavePromise
+            throw new Error('目标空间无效')
+          }
+
+          // 目标空间若刚提交、项目仍在创建，先在后台等它绑定 projectId；实际空间切换不等待。
+          const pendingTargetCreation = pendingSmartProjectCreations.get(targetWs)
+          if (pendingTargetCreation) await pendingTargetCreation.catch(() => undefined)
+          const localTargetDraft = loadSmartDraft(targetWs)
+          const targetDraftFingerprint = JSON.stringify(localTargetDraft)
+          const localTargetProjectId = Number(localTargetDraft?.projectId || 0) || 0
+          if (localTargetProjectId && localTargetDraft?.started !== false) {
+            detail.destinationPath = `/smart/${localTargetProjectId}`
+          }
+          if (localTargetDraft?.started && !localTargetProjectId) {
+            detail.destinationPath = '/smart'
+            const oldSaved = await oldSavePromise
+            if (!oldSaved) throw new Error('旧草稿云端同步失败')
+            return
+          }
+
+          // 本地指针丢失时再从云端按最近更新找回;该流程与旧草稿保存并发。
+          const readSmartProject = async (project: any): Promise<{ projectId: number; draft: SmartDraft } | null> => {
+            const candidateId = resolveProjectId(project)
+            if (!candidateId) return null
+            let payload = project
+            let parsed = parseSmartSnapshot(
+              payload?.draft_json ?? payload?.draftJson ?? payload?.data?.draft_json ?? payload?.draft,
+            )
+            if (!parsed) {
+              try {
+                payload = await getCreativeProject({ projectId: candidateId, workspaceId: targetWs })
+                parsed = parseSmartSnapshot(
+                  payload?.draft_json ?? payload?.draftJson ?? payload?.data?.draft_json ?? payload?.draft,
+                )
+              } catch {
+                return null
+              }
+            }
+            return parsed ? { projectId: candidateId, draft: parsed } : null
+          }
+
+          let targetProject: { projectId: number; draft: SmartDraft } | null = null
+          if (localTargetProjectId) {
+            targetProject = await readSmartProject({ id: localTargetProjectId })
+          }
+
+          // started=false 是旧版切换时自动创建的空白草稿;有更早的真实在制数据时,
+          // 应恢复真实数据而不是停在空白项目。
+          if (!targetProject || targetProject.draft.started === false) {
+            try {
+              const projects: any[] = await listCreativeProjects({ workspaceId: targetWs, limit: 20 })
+              const sorted = [...projects].sort((a, b) => {
+                const timeOf = (value: any) =>
+                  Date.parse(
+                    String(
+                      value?.updated_at ||
+                        value?.updatedAt ||
+                        value?.last_saved_at ||
+                        value?.created_at ||
+                        value?.createdAt ||
+                        '',
+                    ),
+                  ) || 0
+                return timeOf(b) - timeOf(a)
+              })
+              const candidates = sorted
+                .filter((project) => {
+                  const candidateId = resolveProjectId(project)
+                  return candidateId > 0 && candidateId !== localTargetProjectId
+                })
+                .slice(0, 12)
+              const resolvedCandidates = await Promise.all(candidates.map((project) => readSmartProject(project)))
+              targetProject =
+                resolvedCandidates.find((candidate) => candidate?.draft.started !== false) ||
+                targetProject ||
+                resolvedCandidates.find((candidate) => Boolean(candidate)) ||
+                null
+            } catch {
+              // 云端列表查找失败时仍可回退到有效的本地指针,不影响切换。
+            }
+          }
+
+          if (!targetProject && localTargetProjectId && localTargetDraft) {
+            targetProject = { projectId: localTargetProjectId, draft: localTargetDraft }
+          }
+
+          // 后台找回期间用户可能再次切换，或已经在目标空间输入/提交新内容。
+          // 过期结果只完成旧空间保存，绝不再写目标 localStorage 或触发延迟导航。
+          const activeWorkspaceId = Number(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
+          const currentTargetDraft = loadSmartDraft(targetWs)
+          const targetDraftChanged =
+            JSON.stringify(currentTargetDraft) !== targetDraftFingerprint &&
+            Boolean(currentTargetDraft?.started || Number(currentTargetDraft?.projectId || 0) > 0)
+          const targetEntryChanged = getSmartEntryDraftFingerprint(targetWs) !== targetEntryFingerprint
+          if (
+            switchRequest !== workspaceSwitchRequestRef.current ||
+            activeWorkspaceId !== targetWs ||
+            (smartProjectCreationTokens.get(targetWs) || 0) !== targetCreationTokenAtSwitch ||
+            targetDraftChanged ||
+            targetEntryChanged
+          ) {
+            if (activeWorkspaceId === targetWs && (targetDraftChanged || targetEntryChanged)) {
+              const activeProjectId = Number(currentTargetDraft?.projectId || 0) || 0
+              detail.destinationPath = activeProjectId ? `/smart/${activeProjectId}` : '/smart'
+            }
+            const oldSaved = await oldSavePromise
+            if (!oldSaved) throw new Error('旧草稿云端同步失败')
+            return
+          }
+
+          if (targetProject) {
+            const restoredDraft: SmartDraft = {
+              ...targetProject.draft,
+              workspaceId: targetWs,
+              projectId: targetProject.projectId,
+            }
+            saveSmartDraft(restoredDraft, targetWs)
+            detail.destinationPath = `/smart/${targetProject.projectId}`
+          } else {
+            // 目标空间没有旧草稿时直接展示新草稿入口;用户提交后按原流程建项目。
+            // 不在后台预创建空壳,避免用户已开始输入时又被延迟导航打断。
+            const currentTargetProjectId = Number(loadSmartDraft(targetWs)?.projectId || 0) || 0
+            if (currentTargetProjectId === localTargetProjectId) clearSmartDraft(targetWs)
+            detail.destinationPath = '/smart'
+          }
+
+          const oldSaved = await oldSavePromise
+          if (!oldSaved) throw new Error('旧草稿云端同步失败')
+        })(),
+      )
+      const pendingOldCreation = pendingSmartProjectCreations.get(ws)
+      if (pendingOldCreation) detail.waitUntil.push(pendingOldCreation)
+    }),
+  )
 
   // 项目刚创建绑定:等本流程状态(started / entryMeta / 需求)落定后,立即把首版草稿落盘一次,
   // 不等 1.5s 防抖。这样「建了空壳就马上切走/刷新」也能在项目里看到内容,再次点开能回到流程而非初始页。
@@ -3647,9 +3913,17 @@ export default function SmartCreateView() {
 
   // 「制作新视频」:把整个智能成片流程初始化为全新空白页(等同切换路由再切回来)。
   // 清空本地草稿 + 所有页面状态 + 项目引用,回到入口输入页;入口页 key 自增以重挂载、清空其内部输入。
-  const resetToNewVideo = (entryMode?: 'video' | 'image') => {
-    clearSmartDraft(Number(workspaceId || 0))
-    clearSmartEntryDraft() // 重置为全新入口:清掉入口暂存,避免重挂载后又回填旧输入
+  const resetToNewVideo = (
+    entryMode?: 'video' | 'image',
+    options?: { preserveWorkspaceDrafts?: boolean; skipNavigate?: boolean },
+  ) => {
+    const resetWorkspaceId = Number(workspaceId || 0)
+    if (!options?.preserveWorkspaceDrafts) {
+      if (resetWorkspaceId) smartProjectCreationTokens.set(resetWorkspaceId, ++smartProjectCreationSequence)
+      if (resetWorkspaceId) pendingSmartProjectCreations.delete(resetWorkspaceId)
+      clearSmartDraft(resetWorkspaceId)
+      clearSmartEntryDraft(resetWorkspaceId) // 重置为全新入口:只清本空间暂存,不影响其它空间旧输入
+    }
     pinProjectWorkspaceId(0) // 全新视频:解除项目钉住,回到用全局空间创建
     setStarted(false)
     shotsExplicitlyClearedRef.current = false
@@ -3683,7 +3957,7 @@ export default function SmartCreateView() {
     serverTitleRef.current = ''
     autoVidRef.current = false
     setEntryKey((k) => k + 1)
-    navigate('/smart')
+    if (!options?.skipNavigate) navigate('/smart')
   }
 
   const startRename = () => {
@@ -3959,6 +4233,29 @@ export default function SmartCreateView() {
     else if (meta.images?.length) void autoNameProject('', meta.images)
     // 入口上传的素材图(dataURL)落库成后端 asset,否则刷新会丢(stripHeavy 剥 dataURL)
     const wsId = Number(workspaceId || 0)
+    const initialDraft: SmartDraft = {
+      ...currentDraft(),
+      workspaceId: wsId,
+      started: true,
+      requirement: req,
+      reqSummary: req,
+      entryMeta: meta,
+      step: 0,
+      maxReached: 0,
+      shots: [],
+      projectId: 0,
+      marketingOpen: imageMode ? false : !!meta.skill,
+      marketingText: '',
+      marketingData: null,
+      ...(imageMode ? { imageMessages: [] } : {}),
+    }
+    // React state 要到下一次渲染才会生效；先同步保存提交内容，保证点击发送后立刻切空间也不会丢稿。
+    const creationToken = wsId && !projectIdRef.current ? ++smartProjectCreationSequence : 0
+    if (creationToken) smartProjectCreationTokens.set(wsId, creationToken)
+    if (wsId && !projectIdRef.current) {
+      latestDraftStateRef.current = initialDraft
+      saveSmartDraft(initialDraft, wsId)
+    }
     if (wsId && meta.images?.length) {
       void (async () => {
         const cache: Record<string, number> = {}
@@ -3974,30 +4271,93 @@ export default function SmartCreateView() {
             ids.push(0)
           }
         }
-        setEntryMeta((m: any) => (m ? { ...m, images: urls, imageAssetIds: ids } : m))
+        const persistedMeta = { ...meta, images: urls, imageAssetIds: ids }
+        const localDraft = loadSmartDraft(wsId)
+        const isCurrentCreation = !creationToken || smartProjectCreationTokens.get(wsId) === creationToken
+        if (isCurrentCreation && localDraft?.started) {
+          saveSmartDraft({ ...localDraft, entryMeta: persistedMeta }, wsId)
+        }
+        if (
+          isCurrentCreation &&
+          viewMountedRef.current &&
+          !workspaceSwitchAwayRef.current &&
+          Number(deriveWorkspaceId(useWorkspaceSessionStore.getState())) === wsId
+        ) {
+          setEntryMeta((m: any) => (m ? persistedMeta : m))
+        }
       })()
     }
     // 后端建项目(best-effort,使其出现在项目管理/历史)
     if (wsId && !projectIdRef.current) {
       draftRevisionRef.current = 0
       serverTitleRef.current = ''
-      createCreativeProject({ workspace_id: wsId })
-        .then((p: any) => {
-          const id = resolveProjectId(p)
-          projectIdRef.current = id
-          setProjectId(id)
-          pinProjectWorkspaceId(wsId) // 钉住:新建项目属于当前(创建时的)空间
-          // 对齐 2.0(CreativeEntryView router.replace /creative/:id):跳到 /smart/:id,
-          // 之后刷新走「后端草稿」恢复(可靠、有 asset_id、不受 localStorage 配额限制)
-          if (id) {
-            navigate(`/smart/${id}`, { replace: true })
-            // 标记「建好后立即落盘一版草稿」:避免「建了空壳、还没到防抖就离开」导致后端 draft_json 为空,
-            // 再次点开项目时 parseSmartSnapshot 返回 null、started 不置 true → 回到初始空白页。
-            // 真正落盘交给 effect(此处 .then 闭包是创建前的旧 state,直接存会存成空草稿)。
-            pendingInitialSaveRef.current = true
-          }
-        })
+      const creationPromise = createCreativeProject({ workspace_id: wsId }).then(async (p: any) => {
+        const id = resolveProjectId(p)
+        if (!id) return
+        const isLatestCreation = smartProjectCreationTokens.get(wsId) === creationToken
+        const createdDraft: SmartDraft = {
+          ...(isLatestCreation ? loadSmartDraft(wsId) || initialDraft : initialDraft),
+          workspaceId: wsId,
+          projectId: id,
+          started: true,
+        }
+        if (isLatestCreation) saveSmartDraft(createdDraft, wsId)
+
+        const isStillActive =
+          isLatestCreation &&
+          viewMountedRef.current &&
+          !workspaceSwitchAwayRef.current &&
+          Number(deriveWorkspaceId(useWorkspaceSessionStore.getState())) === wsId
+        if (!isStillActive) {
+          // 创建请求发出后若已切走，旧组件不能再 setState/navigate；直接把刚提交的快照落到原空间项目。
+          await enqueueCreativeProjectDraftSave({
+            projectId: id,
+            workspaceId: wsId,
+            task: async () => {
+              let revision = normRev(p)
+              if (!Number.isFinite(revision)) {
+                const project: any = await getCreativeProject({ projectId: id, workspaceId: wsId })
+                revision = normRev(project)
+              }
+              try {
+                await updateCreativeProjectDraft({
+                  projectId: id,
+                  workspaceId: wsId,
+                  draft: buildSmartSnapshot(createdDraft),
+                  draftRevision: Number.isFinite(revision) ? revision : 0,
+                })
+              } catch (error: any) {
+                if (Number(error?.status || 0) !== 409) throw error
+                const latest: any = await getCreativeProject({ projectId: id, workspaceId: wsId })
+                const latestRevision = normRev(latest)
+                await updateCreativeProjectDraft({
+                  projectId: id,
+                  workspaceId: wsId,
+                  draft: buildSmartSnapshot(createdDraft),
+                  draftRevision: Number.isFinite(latestRevision) ? latestRevision : 0,
+                })
+              }
+            },
+          })
+          return
+        }
+
+        projectIdRef.current = id
+        setProjectId(id)
+        pinProjectWorkspaceId(wsId) // 钉住:新建项目属于当前(创建时的)空间
+        // 对齐 2.0(CreativeEntryView router.replace /creative/:id):跳到 /smart/:id,
+        // 之后刷新走「后端草稿」恢复(可靠、有 asset_id、不受 localStorage 配额限制)
+        navigate(`/smart/${id}`, { replace: true })
+        // 标记「建好后立即落盘一版草稿」:避免「建了空壳、还没到防抖就离开」导致后端 draft_json 为空,
+        // 再次点开项目时 parseSmartSnapshot 返回 null、started 不置 true → 回到初始空白页。
+        pendingInitialSaveRef.current = true
+      })
+      pendingSmartProjectCreations.set(wsId, creationPromise)
+      void creationPromise
         .catch(() => {})
+        .finally(() => {
+          if (pendingSmartProjectCreations.get(wsId) === creationPromise) pendingSmartProjectCreations.delete(wsId)
+        })
     }
     // 制作图片:直接以入口需求 + 上传素材发起第一轮对话出图,不走分镜/脚本/视频流程。
     if (imageMode) {
@@ -4652,6 +5012,7 @@ export default function SmartCreateView() {
           // 「上一步」返回输入框时回填上次输入(数据存在本视图 state,路由切换卸载即清空)
           <SmartEntry
             key={entryKey}
+            workspaceId={Number(workspaceId || 0)}
             onSubmit={handleStart}
             onRegenerate={handleEntryRegenerate}
             onNewVideo={resetToNewVideo}

@@ -4,7 +4,7 @@
   数据全接 workspaceSession store;切换空间直接生效,会员卡点击回调给 AppTopbar。
   (个人中心 / 修改密码 / 退出登录 已移至侧栏「设置」菜单,见 SettingsMenu。)
 */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Tooltip } from 'antd'
 import {
@@ -18,10 +18,12 @@ import {
   useWalletCredits,
   useWorkspaceId,
   useWorkspaceSessionStore,
+  deriveWorkspaceId,
 } from '@/stores/workspaceSession'
-import { openTeamManage, useUiStore } from '@/stores/ui'
+import { openTeamManage } from '@/stores/ui'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { validateWorkspaceName, normalizeWorkspaceNameForCompare } from '@/utils/workspaceName'
+import { prepareForWorkspaceSwitch } from '@/utils/workspaceSwitch'
 import UserAvatar from '@/components/common/UserAvatar'
 import crownImg from '@/assets/vip/5dc4125fc31865adb710a7f65ad2df60.png'
 import teamIcon from '@/assets/5d214dea973d5d1dd62b8be882e775c2.png'
@@ -89,8 +91,6 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const credits = useWalletCredits()
   const baseCredits = usePlanBaseCredits()
   const switchWorkspace = useWorkspaceSessionStore((s) => s.switchWorkspace)
-  const workspaceSwitchLocked = useUiStore((s) => s.workspaceSwitchLocked)
-  const workspaceSwitchLockReason = useUiStore((s) => s.workspaceSwitchLockReason)
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const [renamingTeam, setRenamingTeam] = useState(false)
@@ -162,24 +162,77 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
     baseCredits > 0 && usedCredits > 0 ? Math.min(100, Math.max(1, Math.round((usedCredits / baseCredits) * 100))) : 0
 
   const pickWs = (id: number) => {
-    if (workspaceSwitchLocked) {
-      showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
-      return
-    }
-    if (id && Number(id) !== Number(activeId)) {
+    if (id) {
       const pathname = String(location.pathname || '')
-      // 打开的智能成片项目在 /smart/:id:切空间时【保留项目】——项目靠自身钉住的所属空间继续保存/计费,
-      // 不再导航重置。空白 /smart 入口、以及爆款复制 /hot-copy 仍走原来的重置逻辑。
       const inSmartProject = /^\/smart\/[^/]+/.test(pathname)
       const inSmartBlank = pathname === '/smart'
       const inHotCopy = pathname === '/hot-copy' || pathname.startsWith('/hot-copy/')
-      if (!inSmartProject && (inSmartBlank || inHotCopy)) {
-        navigate(inHotCopy ? '/hot-copy' : '/smart', {
+
+      // 智能成片项目可能钉在与全局高亮不同的空间。即使点的是当前高亮项，也先询问编辑器实际空间；
+      // 这样可从“项目属于 A、全局仍高亮 B”的状态直接切回 B，无需借道第三个空间。
+      if (Number(id) === Number(activeId) && !inSmartProject && !inSmartBlank) {
+        onClose?.()
+        return
+      }
+
+      // 本地草稿在事件派发时同步快照;云端保存/目标草稿找回转后台,
+      // 不再阻塞空间切换。生成中、保存中也可随时切换。
+      const preparation = prepareForWorkspaceSwitch(id)
+      if (
+        Number(id) === Number(activeId) &&
+        (!preparation.detail.sourceWorkspaceId || Number(preparation.detail.sourceWorkspaceId) === Number(id))
+      ) {
+        onClose?.()
+        return
+      }
+      const switchNonce = Date.now()
+      const forceSmartRemount =
+        (inSmartProject || inSmartBlank) &&
+        Number(id) === Number(activeId) &&
+        Number(preparation.detail.sourceWorkspaceId || 0) > 0 &&
+        Number(preparation.detail.sourceWorkspaceId) !== Number(id)
+      const fallbackDestinationPath = inHotCopy ? '/hot-copy' : inSmartProject || inSmartBlank ? '/smart' : ''
+      const destinationPath = String(preparation.detail.destinationPath || fallbackDestinationPath)
+
+      if (inSmartProject || inSmartBlank || inHotCopy) {
+        // React Router 导航默认使用 transition;紧接着的 workspace key 重挂载可能会
+        // 抢先保留旧 /smart/:id。先 flush 到目标草稿路由,再切 store,确保不再回落旧项目。
+        navigate(destinationPath, {
           replace: true,
-          state: { workspaceSwitchReset: true, workspaceSwitchNonce: Date.now() },
+          flushSync: true,
+          state: {
+            workspaceSwitchReset: false,
+            workspaceSwitchRestore: inSmartProject || inSmartBlank || !!preparation.detail.destinationPath,
+            workspaceSwitchNonce: switchNonce,
+            workspaceSwitchRemountNonce: forceSmartRemount ? switchNonce : 0,
+            targetWorkspaceId: Number(id),
+          },
         })
       }
       switchWorkspace(id)
+
+      const finishBackgroundPreparation = (syncError = false) => {
+        // 用户可能在后台查找期间又切到了别的空间/页面,不能用过期结果把他拉回。
+        if (Number(deriveWorkspaceId(useWorkspaceSessionStore.getState())) !== Number(id)) return
+        if (Number(window.history.state?.usr?.workspaceSwitchNonce || 0) !== switchNonce) return
+        if (syncError) showToast('已切换空间；草稿已保存在本地，云端同步未完成', 'error')
+        const recoveredPath = String(preparation.detail.destinationPath || '')
+        if (!recoveredPath || recoveredPath === destinationPath) return
+        if (!String(window.location.pathname || '').startsWith('/smart')) return
+        navigate(recoveredPath, {
+          replace: true,
+          flushSync: true,
+          state: {
+            workspaceSwitchRestore: true,
+            workspaceSwitchNonce: Date.now(),
+            targetWorkspaceId: Number(id),
+          },
+        })
+      }
+      void preparation.done.then(
+        () => finishBackgroundPreparation(false),
+        () => finishBackgroundPreparation(true),
+      )
     }
     onClose?.()
   }
@@ -280,8 +333,6 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
               key={String(ws.id)}
               type="button"
               className={`ppl__ws-item${active ? ' active' : ''}`}
-              disabled={workspaceSwitchLocked}
-              title={workspaceSwitchLocked ? workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队' : ''}
               onClick={() => pickWs(Number(ws.id))}
             >
               <span className="ppl__ws-item-name">{ws.name || '个人空间'}</span>

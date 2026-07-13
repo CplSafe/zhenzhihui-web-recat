@@ -1,1 +1,1 @@
-export { default, clearSmartEntryDraft, type EntryMeta } from './SmartEntry'
+export { default, clearSmartEntryDraft, getSmartEntryDraftFingerprint, type EntryMeta } from './SmartEntry'

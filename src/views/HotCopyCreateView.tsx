@@ -40,6 +40,7 @@ import {
   updateCreativeProjectDraft,
   getCreativeProject,
   patchCreativeProject,
+  cancelAiTask,
   isAbortedTaskError,
 } from '@/api/business'
 import { getModelParamOptions } from '@/utils/videoOptions'
@@ -57,7 +58,9 @@ import { downloadToDisk } from '@/utils/downloadToDisk'
 import {
   findRunningVideoGen,
   getRunningVideoGen,
+  getRunningVideoGenMeta,
   isAnyVideoGenRunning,
+  removeRunningVideoGen,
   trackVideoGen,
   updateRunningVideoGenMeta,
   type VideoGenResult,
@@ -84,7 +87,12 @@ const ROUTE_MAP: Record<string, string> = {
 const DEFAULT_RATIO = '16:9'
 const DEFAULT_DURATION_SEC = 10
 const HOT_COPY_STALE_GENERATION_MS = 70 * 60 * 1000
+const HOT_COPY_PREPARING_GRACE_MS = 5 * 60 * 1000
 const HOT_COPY_PLAN_LOOKUP_TIMEOUT_MS = 6000
+// 生成作废状态必须跨 HotCopyCreateView 重挂载共享；否则切空间后的新实例无法阻止旧实例晚返回。
+const obsoleteHotCopyGenerationIds = new Set<string>()
+// 每次入口“做同款”对应一个新项目 run；正常生成先结束仍可接收晚到的项目 ID，只有作废/被新 run 替代才拒绝。
+const hotCopyProjectRunTokens = new Map<number, string>()
 
 async function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promise<void> {
   let timer = 0
@@ -449,7 +457,7 @@ export default function HotCopyCreateView() {
       (generation) =>
         generation.status === 'processing' &&
         Number(generation.taskId || 0) === 0 &&
-        Date.now() - Number(generation.createdAt || 0) < 5 * 60 * 1000,
+        Date.now() - Number(generation.createdAt || 0) < HOT_COPY_PREPARING_GRACE_MS,
     )
   const hasVideoResult = (...items: any[]): boolean =>
     items.some((item) => {
@@ -572,19 +580,48 @@ export default function HotCopyCreateView() {
   // 真正失败会由 catch 清理，异常中断则由下方启动保护超时收口，不会永久伪装成在途任务。
   const [pendingUiGeneration, setPendingUiGenerationState] = useState<ReservedGen | null>(null)
   const pendingUiGenerationRef = useRef<ReservedGen | null>(null)
+  const isGenerationStillActive = (ws: number, generationId = '', taskId = 0): boolean => {
+    const id = String(generationId || '').trim()
+    if (!ws || (id && obsoleteHotCopyGenerationIds.has(id))) return false
+    const draft = loadHotCopyDraft(ws)
+    const records = normalizeGenRecords(draft?.videoGenerations)
+    if (id) return records.some((generation) => generation.id === id && generation.status === 'processing')
+    const activeTaskId = Number(taskId || 0) || 0
+    if (activeTaskId > 0) {
+      return Boolean(
+        draft?.videoGenerating &&
+        (Number(draft.vidGenTaskId || 0) === activeTaskId ||
+          records.some(
+            (generation) => generation.status === 'processing' && Number(generation.taskId || 0) === activeTaskId,
+          )),
+      )
+    }
+    return Boolean(draft?.videoGenerating && records.some((generation) => generation.status === 'processing'))
+  }
+  const obsoleteGenerationError = () => Object.assign(new Error('生成请求已停止'), { cause: 'aborted' })
   const beginPendingUiGeneration = (generation: ReservedGen) => {
+    obsoleteHotCopyGenerationIds.delete(generation.id)
     pendingUiGenerationRef.current = generation
     if (aliveRef.current) setPendingUiGenerationState(generation)
     const record: GenRecord = { ...generation, status: 'processing', taskId: 0 }
+    const ws = Number(workspaceId || 0)
+    const localDraft = ws ? loadCurrentHotCopyDraft(ws) : null
+    const persisted = [
+      record,
+      ...mergeGenRecords(videoGenerationsRef.current, localDraft?.videoGenerations).filter(
+        (item) => item.id !== generation.id,
+      ),
+    ]
+    videoGenerationsRef.current = persisted
     immediateSaveRef.current = true
-    setVideoGenerations((prev) => [record, ...prev.filter((item) => item.id !== generation.id)])
+    if (aliveRef.current) setVideoGenerations(persisted)
     persistNow({
       started: true,
       step: 1,
       maxReached: 1,
       videoGenerating: true,
       vidGenTaskId: 0,
-      videoGenerations: [record, ...videoGenerationsRef.current.filter((item) => item.id !== generation.id)],
+      videoGenerations: persisted,
     })
   }
   const clearPendingUiGeneration = useCallback((generationId?: string | null) => {
@@ -598,13 +635,15 @@ export default function HotCopyCreateView() {
   const activateGen = (reserved: ReservedGen, taskId: number) => {
     const id = Number(taskId || 0) || 0
     if (!id) return
-    const rec: GenRecord = { ...reserved, status: 'processing', taskId: id }
     const ws = Number(workspaceId || 0)
+    if (!isGenerationStillActive(ws, reserved.id)) return
+    const rec: GenRecord = { ...reserved, status: 'processing', taskId: id }
     const localDraft = ws ? loadCurrentHotCopyDraft(ws) : null
     const current = mergeGenRecords(videoGenerationsRef.current, localDraft?.videoGenerations).filter(
       (item) => item.id !== reserved.id,
     )
     const persisted = [rec, ...current]
+    videoGenerationsRef.current = persisted
     immediateSaveRef.current = true
     persistNow({
       started: true,
@@ -614,7 +653,8 @@ export default function HotCopyCreateView() {
       vidGenTaskId: id,
       videoGenerations: persisted,
     })
-    setVideoGenerations((prev) => [rec, ...prev.filter((item) => item.id !== reserved.id)])
+    if (aliveRef.current) setVideoGenerations(persisted)
+    if (projectIdRef.current) void putHotCopyDraftToBackend(ws)
   }
 
   // 结束一条生成记录:成功 published(从草稿列表消失)、失败 failed(留作可重试草稿)。
@@ -624,34 +664,37 @@ export default function HotCopyCreateView() {
     error = '',
     fallback?: ReservedGen,
   ) => {
-    immediateSaveRef.current = true
-    setVideoGenerations((prev) => {
-      let matched = false
-      const next = prev.map((g) => {
-        if (!(g.id === id || (id == null && g.status === 'processing'))) return g
-        matched = true
-        return {
-          ...g,
-          status,
-          taskId: 0,
-          error: status === 'failed' ? error || g.error || '生成失败，请重试' : '',
-        }
-      })
-      if (!matched && fallback && status === 'failed') {
-        next.unshift({
-          ...fallback,
-          status: 'failed',
-          taskId: 0,
-          error: error || '生成失败，请重试',
-        })
+    const ws = Number(workspaceId || 0)
+    const localDraft = ws ? loadCurrentHotCopyDraft(ws) : null
+    const records = mergeGenRecords(videoGenerationsRef.current, localDraft?.videoGenerations)
+    let matched = false
+    const next = records.map((g) => {
+      if (!(g.id === id || (id == null && g.status === 'processing'))) return g
+      matched = true
+      return {
+        ...g,
+        status,
+        taskId: 0,
+        error: status === 'failed' ? error || g.error || '生成失败，请重试' : '',
       }
-      if (!next.some((g) => g.status === 'processing')) {
-        persistNow({ videoGenerating: false, vidGenTaskId: 0, videoGenerations: next })
-      } else {
-        persistNow({ videoGenerations: next })
-      }
-      return next
     })
+    if (!matched && fallback && status === 'failed') {
+      next.unshift({
+        ...fallback,
+        status: 'failed',
+        taskId: 0,
+        error: error || '生成失败，请重试',
+      })
+    }
+    videoGenerationsRef.current = next
+    immediateSaveRef.current = true
+    if (!next.some((g) => g.status === 'processing')) {
+      persistNow({ videoGenerating: false, vidGenTaskId: 0, videoGenerations: next })
+    } else {
+      persistNow({ videoGenerations: next })
+    }
+    if (aliveRef.current) setVideoGenerations(next)
+    if (projectIdRef.current) void putHotCopyDraftToBackend(ws)
   }
 
   const rememberCompletedTask = (taskId: number) => {
@@ -667,17 +710,25 @@ export default function HotCopyCreateView() {
 
   const failStaleGenerations = useCallback(
     (reason = '生成请求已停止，请重新生成') => {
+      const ws = Number(workspaceId || 0)
+      const localDraft = ws ? loadCurrentHotCopyDraft(ws) : null
+      const records = mergeGenRecords(videoGenerationsRef.current, localDraft?.videoGenerations)
       let changed = false
-      immediateSaveRef.current = true
-      setVideoGenerations((prev) => {
-        const next: GenRecord[] = prev.map((g) => {
-          if (g.status !== 'processing') return g
-          changed = true
-          return { ...g, status: 'failed' as const, taskId: 0, error: reason }
-        })
-        persistNow({ videoGenerating: false, vidGenTaskId: 0, videoGenerations: next })
-        return next
+      const next: GenRecord[] = records.map((g) => {
+        if (g.status !== 'processing') return g
+        changed = true
+        obsoleteHotCopyGenerationIds.add(g.id)
+        return { ...g, status: 'failed' as const, taskId: 0, error: reason }
       })
+      videoGenerationsRef.current = next
+      clearPendingUiGeneration()
+      vidGenAbortRef.current?.abort()
+      const pid = Number(projectIdRef.current || projectId || localDraft?.projectId || 0) || 0
+      if (pid) removeRunningVideoGen('hot-copy', pid)
+      immediateSaveRef.current = true
+      persistNow({ videoGenerating: false, vidGenTaskId: 0, videoGenerations: next })
+      if (aliveRef.current) setVideoGenerations(next)
+      if (projectIdRef.current) void putHotCopyDraftToBackend(ws)
       releaseGenTriggerLock()
       if (vidGenPendingTimerRef.current) {
         window.clearInterval(vidGenPendingTimerRef.current)
@@ -741,9 +792,16 @@ export default function HotCopyCreateView() {
     if (pid > 0 && inflight) {
       const draft = loadCurrentHotCopyDraft(Number(workspaceId || 0))
       const taskId = Number(draft?.vidGenTaskId || vidGenTaskId || 0) || 0
+      const generationId =
+        String(pendingUiGenerationRef.current?.id || '') ||
+        String(
+          normalizeGenRecords(draft?.videoGenerations).find((generation) => generation.status === 'processing')?.id ||
+            '',
+        )
       trackVideoGen('hot-copy', pid, inflight, {
         workspaceId: Number(workspaceId || 0) || 0,
         taskId,
+        generationId,
         status: taskId > 0 ? 'processing' : 'preparing',
       })
     }
@@ -753,17 +811,34 @@ export default function HotCopyCreateView() {
     const pid = Number(projectId || 0) || 0
     const inflight = pid > 0 ? getRunningVideoGen('hot-copy', pid) : null
     if (!inflight) return false
+    const inflightMeta = getRunningVideoGenMeta('hot-copy', pid)
+    const trackedWorkspaceId = Number(inflightMeta?.workspaceId || workspaceId || 0) || 0
+    const trackedGenerationId = String(inflightMeta?.generationId || '')
+    const trackedTaskId = Number(inflightMeta?.taskId || 0) || 0
+    if (!isGenerationStillActive(trackedWorkspaceId, trackedGenerationId, trackedTaskId)) {
+      removeRunningVideoGen('hot-copy', pid)
+      return false
+    }
     runningVideoPromiseRef.current = inflight
     setVidGenRunning(true)
     persistNow({ videoGenerating: true })
     let keepPending = false
+    let obsolete = false
     inflight
       .then(({ url, assetId }) => {
-        const ws = Number(workspaceId || 0)
+        if (!isGenerationStillActive(trackedWorkspaceId, trackedGenerationId, trackedTaskId)) {
+          obsolete = true
+          return
+        }
+        const ws = trackedWorkspaceId
         const d = ws ? loadCurrentHotCopyDraft(ws) : null
         commitGeneratedVideo(ws, { url, assetId }, Number(d?.vidGenTaskId || vidGenTaskId || 0) || 0)
       })
       .catch((e: any) => {
+        if (!isGenerationStillActive(trackedWorkspaceId, trackedGenerationId, trackedTaskId)) {
+          obsolete = true
+          return
+        }
         if (isAbortedTaskError(e)) {
           keepPending = true
           const ws = Number(workspaceId || 0)
@@ -777,18 +852,17 @@ export default function HotCopyCreateView() {
           return
         }
         persistNow({ videoGenerating: false })
-        if (aliveRef.current) {
-          if (isTaskCancelled(e)) {
-            markGen(null, 'cancelled')
-            showToast('视频生成已中断', 'info')
-          } else {
-            markGen(null, 'failed')
-            showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
-          }
+        if (isTaskCancelled(e)) {
+          markGen(null, 'cancelled')
+          if (aliveRef.current) showToast('视频生成已中断', 'info')
+        } else {
+          markGen(null, 'failed')
+          if (aliveRef.current) showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
         }
       })
       .finally(() => {
         if (runningVideoPromiseRef.current === inflight) runningVideoPromiseRef.current = null
+        if (obsolete) return
         if (keepPending) return
         persistNow({ videoGenerating: false, vidGenTaskId: 0 })
         if (aliveRef.current) {
@@ -827,6 +901,7 @@ export default function HotCopyCreateView() {
       if (existing !== runningVideoPromiseRef.current) subscribeRunningVideo(pid)
       return
     }
+    if (!isGenerationStillActive(ws, '', taskId)) return
     setVidGenTaskId(taskId)
     setVidGenRunning(true)
     setHotCopyPhase('正在恢复生成任务…')
@@ -839,11 +914,20 @@ export default function HotCopyCreateView() {
       taskId,
       status: 'reconnecting',
     })
+    let obsolete = false
     inflight
       .then(({ url, assetId }) => {
+        if (!isGenerationStillActive(ws, '', taskId)) {
+          obsolete = true
+          return
+        }
         commitGeneratedVideo(ws, { url, assetId }, taskId)
       })
       .catch((e: any) => {
+        if (!isGenerationStillActive(ws, '', taskId)) {
+          obsolete = true
+          return
+        }
         if (isAbortedTaskError(e)) {
           keepPending = true
           scheduleResumeVideoTask(ws, taskId)
@@ -853,20 +937,19 @@ export default function HotCopyCreateView() {
           keepPending = true
           return
         }
-        if (!aliveRef.current) return
         persistNow({ videoGenerating: false, vidGenTaskId: 0 })
         if (isTaskCancelled(e)) {
           markGen(null, 'cancelled')
-          showToast('视频生成已中断', 'info')
+          if (aliveRef.current) showToast('视频生成已中断', 'info')
         } else {
           const errMsg = e?.message || '请重试'
           markGen(null, 'failed')
-          showToast(`视频生成失败:${errMsg}`, 'error')
+          if (aliveRef.current) showToast(`视频生成失败:${errMsg}`, 'error')
         }
       })
       .finally(() => {
+        if (obsolete) return
         if (!keepPending) {
-          if (!aliveRef.current) return
           persistNow({ videoGenerating: false, vidGenTaskId: 0 })
           if (aliveRef.current) {
             setVidGenRunning(false)
@@ -1112,6 +1195,37 @@ export default function HotCopyCreateView() {
           // 项目内容以后端草稿为权威；本地只在后端没有草稿或缺少在途任务凭证时兜底。
           if (restoredEntryInitial) setEntryInitial(restoredEntryInitial)
           const pendingTask = restoredIsGenerating ? restoredTaskId : 0
+          if (pendingTask > 0) setVidGenTaskId(pendingTask)
+          // 后续恢复/晚返回统一以 workspace 本地稿判定任务是否仍有效；跨设备只有后端稿时，
+          // 先同步这份受信快照，再订阅 registry 或按 taskId 续轮询。
+          saveHotCopyDraft(ws, {
+            ...(localDraft || ({} as HotCopyDraft)),
+            entryInitial: restoredEntryInitial || localDraft?.entryInitial,
+            projectId: routeId,
+            started: true,
+            step: 1,
+            maxReached: 1,
+            basePrompt: String(smart.basePrompt || obj.description || localFallback?.basePrompt || ''),
+            projectName: t || String(localDraft?.projectName || '未命名项目'),
+            nameTouched: Boolean(smart.nameTouched || localFallback?.nameTouched),
+            sourceVideo: restoredSourceVideo,
+            sourceVideoDurationSec: restoredSourceDuration,
+            sourceVideoDurationAssetId: restoredSourceDuration ? restoredSourceVideo.assetId : 0,
+            originalProductAssetIds: resolveHotCopyOriginalProductAssetIds(
+              restoredEntryInitial,
+              localDraft?.originalProductAssetIds,
+            ),
+            productAssetIds: restoredProductAssetIds,
+            fullVideo: fv,
+            videoVersions: restoredVersions,
+            videoGenerating: restoredIsGenerating,
+            vidGenTaskId: pendingTask,
+            videoGenerations: restoredGenerations,
+            genRatio: String(smart.genRatio || localFallback?.genRatio || DEFAULT_RATIO),
+            genDurationSec:
+              Number(smart.genDurationSec || localFallback?.genDurationSec || DEFAULT_DURATION_SEC) ||
+              DEFAULT_DURATION_SEC,
+          })
           const subscribed = subscribeRunningVideo(routeId)
           if (!subscribed && pendingTask > 0) {
             resumeVideoTask(ws, pendingTask)
@@ -1222,7 +1336,7 @@ export default function HotCopyCreateView() {
       videoGenerations
         .filter(isActiveProcessingGen)
         .reduce((max, g) => Math.max(max, Number(g.createdAt || 0) || 0), 0) || 0
-    const inStartupGrace = processingStartedAt > 0 && Date.now() - processingStartedAt < 5 * 60 * 1000
+    const inStartupGrace = processingStartedAt > 0 && Date.now() - processingStartedAt < HOT_COPY_PREPARING_GRACE_MS
     const draft = ws ? loadCurrentHotCopyDraft(ws) : null
     const recoverTaskId =
       Number(vidGenTaskId || videoGenerations.find(isActiveProcessingGen)?.taskId || draft?.vidGenTaskId || 0) || 0
@@ -1230,11 +1344,11 @@ export default function HotCopyCreateView() {
       clearStaleGenTimer()
       return
     }
-    if (hasInflight) {
-      clearStaleGenTimer()
-      return
-    }
     if (recoverTaskId > 0) {
+      if (hasInflight) {
+        clearStaleGenTimer()
+        return
+      }
       if (staleGenTimerRef.current) return
       staleGenTimerRef.current = window.setTimeout(() => {
         staleGenTimerRef.current = 0
@@ -1248,7 +1362,23 @@ export default function HotCopyCreateView() {
     }
     if (inStartupGrace) {
       clearStaleGenTimer()
-      return
+      const remainingMs = Math.max(0, HOT_COPY_PREPARING_GRACE_MS - (Date.now() - processingStartedAt))
+      staleGenTimerRef.current = window.setTimeout(() => {
+        staleGenTimerRef.current = 0
+        if (!aliveRef.current) return
+        const latestPid = Number(projectIdRef.current || projectId || 0) || 0
+        const latestInflight =
+          Boolean(runningVideoPromiseRef.current) || Boolean(latestPid > 0 && getRunningVideoGen('hot-copy', latestPid))
+        const latestDraft = ws ? loadCurrentHotCopyDraft(ws) : null
+        const latestTaskId = Number(latestDraft?.vidGenTaskId || 0) || 0
+        if (latestTaskId > 0) {
+          if (latestInflight && latestPid) subscribeRunningVideo(latestPid)
+          else resumeVideoTask(ws, latestTaskId)
+          return
+        }
+        failStaleGenerations('生成请求未创建成功，请重新生成')
+      }, remainingMs + 100)
+      return clearStaleGenTimer
     }
     if (staleGenTimerRef.current) return
     staleGenTimerRef.current = window.setTimeout(() => {
@@ -1257,10 +1387,6 @@ export default function HotCopyCreateView() {
       const latestPid = Number(projectIdRef.current || projectId || 0) || 0
       const latestInflight =
         Boolean(runningVideoPromiseRef.current) || Boolean(latestPid > 0 && getRunningVideoGen('hot-copy', latestPid))
-      if (latestInflight) {
-        if (latestPid) subscribeRunningVideo(latestPid)
-        return
-      }
       const draft = ws ? loadCurrentHotCopyDraft(ws) : null
       const draftTaskId = Number(draft?.vidGenTaskId || 0) || 0
       const draftProcessingStartedAt =
@@ -1272,7 +1398,8 @@ export default function HotCopyCreateView() {
         return
       }
       if (draftTaskId > 0) {
-        resumeVideoTask(ws, draftTaskId)
+        if (latestInflight && latestPid) subscribeRunningVideo(latestPid)
+        else resumeVideoTask(ws, draftTaskId)
         return
       }
       failStaleGenerations()
@@ -1314,7 +1441,8 @@ export default function HotCopyCreateView() {
     const rawTaskId = Number(vidGenTaskId || 0) || 0
     const draftTaskId = rawTaskId > 0 && completedTaskIdsRef.current.has(rawTaskId) ? 0 : rawTaskId
     const hasProcessing = videoGenerations.some(isActiveProcessingGen)
-    const hasActiveGeneration = hasProcessing && (draftTaskId > 0 || hasInflight)
+    const hasPreparingGeneration = hasRecentPreparingGeneration(videoGenerations)
+    const hasActiveGeneration = hasProcessing && (draftTaskId > 0 || hasInflight || hasPreparingGeneration)
     const draftVideoGenerations =
       hasActiveGeneration || !fullVideo.url ? videoGenerations : dropProcessingGenerations(videoGenerations)
     const localDraft = loadCurrentHotCopyDraft(ws)
@@ -1492,8 +1620,7 @@ export default function HotCopyCreateView() {
     const pid = Number(projectIdRef.current || projectId || 0) || 0
     const hasInflight =
       Boolean(runningVideoPromiseRef.current) || Boolean(pid > 0 && getRunningVideoGen('hot-copy', pid))
-    const localProcessing = normalizeGenRecords((localDraft as any)?.videoGenerations).filter(isActiveProcessingGen)
-    const effectiveGenerations = mergeGenRecords(videoGenerations, localProcessing)
+    const effectiveGenerations = mergeGenRecords(videoGenerationsRef.current, localDraft?.videoGenerations)
     const effectiveTaskId = Number(vidGenTaskId || localDraft?.vidGenTaskId || 0) || 0
     const effectiveEntryBase = entryInitial || localDraft?.entryInitial
     const effectiveSourceVideo = resolveHotCopySourceVideo(
@@ -1686,12 +1813,14 @@ export default function HotCopyCreateView() {
     const effectiveGenerations = mergeGenRecords(videoGenerations, localDraft?.videoGenerations)
     const effectiveTaskId = Number(vidGenTaskId || localDraft?.vidGenTaskId || 0) || 0
     const hasProcessing = effectiveGenerations.some(isActiveProcessingGen)
-    const draftHasActiveGeneration = hasProcessing && (effectiveTaskId > 0 || hasInflight)
+    const hasPreparingGeneration = hasRecentPreparingGeneration(effectiveGenerations)
+    const draftHasActiveGeneration = hasProcessing && (effectiveTaskId > 0 || hasInflight || hasPreparingGeneration)
     const draftVideoGenerations = restoreGenerationRecords(
       effectiveGenerations,
       draftHasResult,
       draftHasActiveGeneration,
     )
+    videoGenerationsRef.current = draftVideoGenerations
     const draftSourceVideo = hasVideoResult(sourceVideo) ? sourceVideo : localDraft?.sourceVideo || sourceVideo
     const draftSourceDuration =
       sourceVideoDurAssetId === draftSourceVideo.assetId && sourceVideoDurSec > 0
@@ -1908,6 +2037,9 @@ export default function HotCopyCreateView() {
     const derivedPlans = (deriveModelPlanCandidates(useWorkspaceSessionStore.getState()) as string[]) || []
     const plans = derivedPlans.length ? derivedPlans : modelPlanCandidates
     const model = await preloadHotCopyVideoModel({ workspaceId: ws, modelPlanCandidates: plans })
+    if (generation && !isGenerationStillActive(ws, generation.id)) {
+      throw obsoleteGenerationError()
+    }
     vidGenAbortRef.current?.abort()
     const ctrl = new AbortController()
     vidGenAbortRef.current = ctrl
@@ -1925,8 +2057,14 @@ export default function HotCopyCreateView() {
         modelVersion: model,
         signal: ctrl.signal,
         onTask: (id) => {
-          activeTaskId = Number(id || 0) || 0
-          setVidGenTaskId(id)
+          const nextTaskId = Number(id || 0) || 0
+          if (generation && !isGenerationStillActive(ws, generation.id)) {
+            if (nextTaskId > 0) void cancelAiTask({ workspaceId: ws, taskId: nextTaskId }).catch(() => {})
+            ctrl.abort()
+            return
+          }
+          activeTaskId = nextTaskId
+          if (aliveRef.current) setVidGenTaskId(id)
           if (projectIdRef.current && activeTaskId > 0) {
             updateRunningVideoGenMeta('hot-copy', projectIdRef.current, {
               taskId: activeTaskId,
@@ -1946,6 +2084,7 @@ export default function HotCopyCreateView() {
       { generationId: generation?.id || '', status: 'preparing' },
     )
     const { url, assetId } = await tracked
+    if (generation && !isGenerationStillActive(ws, generation.id, activeTaskId)) throw obsoleteGenerationError()
     commitGeneratedVideo(
       ws,
       { url, assetId },
@@ -2077,7 +2216,7 @@ export default function HotCopyCreateView() {
   }
 
   // 入口提交:上传本地素材取 asset_id → 直接 video.replicate 出片
-  const prepareAndGenerate = async (payload: HotCopyEntryPayload, prompt: string) => {
+  const prepareAndGenerate = async (payload: HotCopyEntryPayload, prompt: string, generation: ReservedGen) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
@@ -2086,7 +2225,6 @@ export default function HotCopyCreateView() {
     }
     setVidGenRunning(true)
     setHotCopyPhase('素材准备中…')
-    const generation = reserveGen('生成')
     beginPendingUiGeneration(generation)
     // 元数据读取与素材上传/人脸检测并行，避免所有前置步骤结束后再额外等待最多 8 秒。
     const durationUrl = String(payload.videoPreview || payload.libraryVideo?.src || '')
@@ -2141,10 +2279,18 @@ export default function HotCopyCreateView() {
       }
 
       // ③ 出片
+      if (!isGenerationStillActive(ws, generation.id)) {
+        aborted = true
+        return
+      }
       setHotCopyPhase('正在提交视频任务…')
       await doReplicate(ws, videoAssetId, productIds, prompt, srcDur, generation)
-      if (aliveRef.current) markGen(generation.id, 'published')
+      markGen(generation.id, 'published')
     } catch (e: any) {
+      if (!isGenerationStillActive(ws, generation.id)) {
+        aborted = true
+        return
+      }
       if (isAbortedTaskError(e)) {
         aborted = true
         setHotCopyPhase('')
@@ -2156,26 +2302,25 @@ export default function HotCopyCreateView() {
         aborted = true
         return
       }
-      if (!aliveRef.current) return
       persistNow({ videoGenerating: false, vidGenTaskId: 0 })
-      if (aliveRef.current) {
-        if (isTaskCancelled(e)) {
-          markGen(generation.id, 'cancelled')
-          showToast('视频生成已中断', 'info')
-        } else {
-          const message = e?.message || '请重试'
-          markGen(generation.id, 'failed', message, generation)
-          showToast(`视频生成失败:${message}`, 'error')
-        }
+      if (isTaskCancelled(e)) {
+        markGen(generation.id, 'cancelled')
+        if (aliveRef.current) showToast('视频生成已中断', 'info')
+      } else {
+        const message = e?.message || '请重试'
+        markGen(generation.id, 'failed', message, generation)
+        if (aliveRef.current) showToast(`视频生成失败:${message}`, 'error')
       }
     } finally {
       clearPendingUiGeneration(generation.id)
       releaseGenTriggerLock()
-      if (!aborted && aliveRef.current) {
+      if (!aborted) {
         persistNow({ videoGenerating: false, vidGenTaskId: 0 })
-        setVidGenRunning(false)
-        setVidGenTaskId(0)
-        setHotCopyPhase('')
+        if (aliveRef.current) {
+          setVidGenRunning(false)
+          setVidGenTaskId(0)
+          setHotCopyPhase('')
+        }
       }
     }
   }
@@ -2202,6 +2347,7 @@ export default function HotCopyCreateView() {
       const generation = reserveGen('确认修改')
       beginPendingUiGeneration(generation)
       let keepPending = false
+      let skipFinalPersist = false
       let activeEditTaskId = 0
       try {
         const plans = await resolvePlanCandidates()
@@ -2212,7 +2358,10 @@ export default function HotCopyCreateView() {
           .filter(Boolean)
           .join('\n')
         const editSrcDur = (await readVideoDurationSec(fullVideo.url)) || boundSourceVideoDurSec || 0
-        if (!aliveRef.current || pendingUiGenerationRef.current?.id !== generation.id) return
+        if (!isGenerationStillActive(ws, generation.id)) {
+          skipFinalPersist = true
+          return
+        }
         const trackedEdit = bindRunningVideoPromise(
           editFullVideo({
             workspaceId: ws,
@@ -2223,8 +2372,13 @@ export default function HotCopyCreateView() {
             sourceVideoDurationSec: editSrcDur,
             modelPlanCandidates: plans,
             onTask: (id) => {
-              activeEditTaskId = Number(id || 0) || 0
-              setVidGenTaskId(id)
+              const nextTaskId = Number(id || 0) || 0
+              if (!isGenerationStillActive(ws, generation.id, nextTaskId)) {
+                if (nextTaskId > 0) void cancelAiTask({ workspaceId: ws, taskId: nextTaskId }).catch(() => {})
+                return
+              }
+              activeEditTaskId = nextTaskId
+              if (aliveRef.current) setVidGenTaskId(id)
               if (projectIdRef.current && activeEditTaskId > 0) {
                 updateRunningVideoGenMeta('hot-copy', projectIdRef.current, {
                   taskId: activeEditTaskId,
@@ -2242,6 +2396,7 @@ export default function HotCopyCreateView() {
           { generationId: generation.id, status: 'preparing' },
         )
         const { url, assetId } = await trackedEdit
+        if (!isGenerationStillActive(ws, generation.id, activeEditTaskId)) throw obsoleteGenerationError()
         commitGeneratedVideo(
           ws,
           { url, assetId },
@@ -2250,22 +2405,28 @@ export default function HotCopyCreateView() {
         )
         markGen(generation.id, 'published')
       } catch (e: any) {
+        if (!isGenerationStillActive(ws, generation.id, activeEditTaskId)) {
+          skipFinalPersist = true
+          return
+        }
+        if (isAbortedTaskError(e)) return
         if (keepVideoTaskForReconnect(e, ws, activeEditTaskId)) {
           keepPending = true
           return
         }
-        if (!aliveRef.current) return
         const message = withPreviousVideoHint(e?.message || '请重试')
         markGen(generation.id, 'failed', message, generation)
-        showToast(`视频修改失败:${message}`, 'error')
+        if (aliveRef.current) showToast(`视频修改失败:${message}`, 'error')
       } finally {
         clearPendingUiGeneration(generation.id)
         releaseGenTriggerLock()
-        if (!keepPending && aliveRef.current) {
+        if (!keepPending && !skipFinalPersist) {
           persistNow({ videoGenerating: false, vidGenTaskId: 0 })
-          setVidGenRunning(false)
-          setVidGenTaskId(0)
-          setHotCopyPhase('')
+          if (aliveRef.current) {
+            setVidGenRunning(false)
+            setVidGenTaskId(0)
+            setHotCopyPhase('')
+          }
         }
       }
       return
@@ -2342,6 +2503,7 @@ export default function HotCopyCreateView() {
     setVidGenRunning(true)
     setHotCopyPhase('准备视频任务中…')
     let keepPending = false
+    let skipFinalPersist = false
     try {
       const prompt = [basePrompt, note && `修改要求:${note}`].filter(Boolean).join('\n')
       let safeProductAssetIds = recoveredProductAssetIds
@@ -2383,31 +2545,41 @@ export default function HotCopyCreateView() {
           sourceVideoDurationAssetId: recoveredSourceVideo.assetId,
         })
       }
-      if (!aliveRef.current || pendingUiGenerationRef.current?.id !== generation.id) return
+      if (!isGenerationStillActive(ws, generation.id)) {
+        skipFinalPersist = true
+        return
+      }
       setHotCopyPhase('正在提交视频任务…')
       await doReplicate(ws, recoveredSourceVideo.assetId, safeProductAssetIds, prompt, reSrcDur, generation)
       markGen(generation.id, 'published')
     } catch (e: any) {
+      if (!isGenerationStillActive(ws, generation.id)) {
+        skipFinalPersist = true
+        return
+      }
+      if (isAbortedTaskError(e)) return
       if (keepVideoTaskForReconnect(e, ws)) {
         keepPending = true
         return
       }
-      if (!aliveRef.current) return
       if (isTaskCancelled(e)) {
         markGen(generation.id, 'cancelled')
-        showToast('视频生成已中断', 'info')
+        if (aliveRef.current) showToast('视频生成已中断', 'info')
       } else {
         const message = withPreviousVideoHint(e?.message || '请重试')
         markGen(generation.id, 'failed', message, generation)
-        showToast(`视频生成失败:${message}`, 'error')
+        if (aliveRef.current) showToast(`视频生成失败:${message}`, 'error')
       }
     } finally {
       clearPendingUiGeneration(generation.id)
       releaseGenTriggerLock()
-      if (!keepPending && aliveRef.current) {
-        setVidGenRunning(false)
-        setVidGenTaskId(0)
-        setHotCopyPhase('')
+      if (!keepPending && !skipFinalPersist) {
+        persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+        if (aliveRef.current) {
+          setVidGenRunning(false)
+          setVidGenTaskId(0)
+          setHotCopyPhase('')
+        }
       }
     }
   }
@@ -2481,6 +2653,7 @@ export default function HotCopyCreateView() {
       if (!acquireGenTriggerLock()) return
     }
     const prompt = buildBasePrompt(payload.tab, payload.text)
+    const generation = reserveGen('生成')
     const nextEntryInitial = buildEntrySnapshot(payload)
     // 先显式置为生成中,再切到视频页,避免首帧短暂落到「暂无视频」占位态。
     setVidGenRunning(true)
@@ -2521,6 +2694,7 @@ export default function HotCopyCreateView() {
     // 立即落一份干净草稿(重置上一次结果),防止刚开始生成就切走时恢复到旧视频
     const ws = Number(workspaceId || 0)
     if (ws) {
+      hotCopyProjectRunTokens.set(ws, generation.id)
       saveHotCopyDraft(ws, {
         entryInitial: nextEntryInitial,
         projectId: 0,
@@ -2549,7 +2723,12 @@ export default function HotCopyCreateView() {
       createCreativeProject({ workspace_id: ws, title: initialProjectTitle, name: initialProjectTitle })
         .then((p: any) => {
           const id = resolveProjectId(p)
-          if (!id) return
+          if (
+            !id ||
+            obsoleteHotCopyGenerationIds.has(generation.id) ||
+            hotCopyProjectRunTokens.get(ws) !== generation.id
+          )
+            return
           projectIdRef.current = id
           setProjectId(id)
           serverTitleRef.current = initialProjectTitle
@@ -2569,7 +2748,7 @@ export default function HotCopyCreateView() {
         .catch(() => {})
     }
     void autoNameProject(prompt)
-    void prepareAndGenerate(payload, prompt)
+    void prepareAndGenerate(payload, prompt, generation)
   }
 
   const activeVideoGenerations = videoGenerations.filter(isActiveProcessingGen)
@@ -2606,7 +2785,16 @@ export default function HotCopyCreateView() {
 
   const resetToNewVideo = () => {
     const ws = Number(workspaceId || 0)
+    const pid = Number(projectIdRef.current || projectId || 0) || 0
+    if (ws) hotCopyProjectRunTokens.delete(ws)
+    videoGenerationsRef.current
+      .filter((generation) => generation.status === 'processing')
+      .forEach((generation) => obsoleteHotCopyGenerationIds.add(generation.id))
+    if (pendingUiGenerationRef.current) {
+      obsoleteHotCopyGenerationIds.add(pendingUiGenerationRef.current.id)
+    }
     vidGenAbortRef.current?.abort()
+    if (pid) removeRunningVideoGen('hot-copy', pid)
     releaseGenTriggerLock()
     setStarted(false)
     setStep(0)

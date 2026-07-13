@@ -26,6 +26,8 @@ export interface EntryMeta {
 }
 
 interface SmartEntryProps {
+  /** 入口未提交内容按空间隔离,切回时恢复该空间上次输入。 */
+  workspaceId?: number
   onSubmit: (requirement: string, meta: EntryMeta) => void
   /** 恢复态下点击圆形按钮:按当前输入走下一页的重生成逻辑。 */
   onRegenerate?: (requirement: string, meta: EntryMeta) => void
@@ -80,6 +82,7 @@ const HL_RE = new RegExp(`@图片\\d+|${SKILL_OPTIONS.map((s) => skillLine(s)).j
 // 故把当前输入实时写进 sessionStorage,重新进入空白 /smart 时优先回填;提交成功 / 点「新建」即清空。
 // 用 sessionStorage:仅本标签页有效、关页即清,符合「别丢我刚输入的」语义,也避免长期残留旧草稿。
 const ENTRY_DRAFT_KEY = 'zzh.smart-entry.draft'
+const entryDraftKey = (workspaceId?: number) => `${ENTRY_DRAFT_KEY}.ws${Math.floor(Number(workspaceId || 0))}`
 interface EntryDraftStore {
   mode?: 'video' | 'image'
   text?: string // 已剥离 skill 提示语的干净正文(与 onSubmit/initial.text 同口径)
@@ -88,38 +91,64 @@ interface EntryDraftStore {
   skill?: string
   images?: string[]
 }
-function loadSmartEntryDraft(): EntryDraftStore | null {
+const liveEntryDraftFingerprints = new Map<number, string>()
+const workspaceKey = (workspaceId?: number) => Math.floor(Number(workspaceId || 0))
+const entryDraftFingerprint = (draft: EntryDraftStore = {}): string =>
+  JSON.stringify({
+    mode: draft.mode || 'video',
+    text: draft.text || '',
+    ratio: draft.ratio || '16:9',
+    duration: draft.duration || '10s',
+    skill: draft.skill || '',
+    images: Array.isArray(draft.images) ? draft.images : [],
+  })
+
+function loadSmartEntryDraft(workspaceId?: number): EntryDraftStore | null {
   try {
-    const raw = sessionStorage.getItem(ENTRY_DRAFT_KEY)
+    const raw = sessionStorage.getItem(entryDraftKey(workspaceId))
     return raw ? (JSON.parse(raw) as EntryDraftStore) : null
   } catch {
     return null
   }
 }
-function saveSmartEntryDraft(d: EntryDraftStore) {
+
+/**
+ * 空间切换的云端草稿找回在后台执行。用规范化指纹判断目标空间的入口内容是否已被用户修改，
+ * 避免较慢的找回结果在用户开始输入后又把页面跳到旧项目。
+ */
+export function getSmartEntryDraftFingerprint(workspaceId?: number): string {
+  return (
+    liveEntryDraftFingerprints.get(workspaceKey(workspaceId)) ||
+    entryDraftFingerprint(loadSmartEntryDraft(workspaceId) || {})
+  )
+}
+
+function saveSmartEntryDraft(d: EntryDraftStore, workspaceId?: number) {
+  liveEntryDraftFingerprints.set(workspaceKey(workspaceId), entryDraftFingerprint(d))
   try {
-    sessionStorage.setItem(ENTRY_DRAFT_KEY, JSON.stringify(d))
+    sessionStorage.setItem(entryDraftKey(workspaceId), JSON.stringify(d))
   } catch {
     // 多半是图片 dataURL 撑爆配额:退化为不含图片再存一次,至少保住文字与选项。
     try {
-      sessionStorage.setItem(ENTRY_DRAFT_KEY, JSON.stringify({ ...d, images: [] }))
+      sessionStorage.setItem(entryDraftKey(workspaceId), JSON.stringify({ ...d, images: [] }))
     } catch {
       /* ignore */
     }
   }
 }
 /** 清空入口暂存(提交进入流程 / 重置为全新入口时调用)。父级 resetToNewVideo、restart 路径也会调。 */
-export function clearSmartEntryDraft() {
+export function clearSmartEntryDraft(workspaceId?: number) {
+  liveEntryDraftFingerprints.delete(workspaceKey(workspaceId))
   try {
-    sessionStorage.removeItem(ENTRY_DRAFT_KEY)
+    sessionStorage.removeItem(entryDraftKey(workspaceId))
   } catch {
     /* ignore */
   }
 }
 
 export default function SmartEntry({
+  workspaceId = 0,
   onSubmit,
-  onRegenerate,
   onNewVideo,
   canResume,
   onResume,
@@ -128,7 +157,7 @@ export default function SmartEntry({
   const { showToast } = useToast()
   // 回填优先级:initial(同一次挂载内「上一步」回填,值非空时为准)> sessionStorage 暂存(跨路由保活)> 默认。
   // 注意 initial.text 跨路由时是父级空串(非 undefined),故用「非空才采纳」而非 ?? 来回退到暂存。
-  const [stored] = useState(loadSmartEntryDraft)
+  const [stored] = useState(() => loadSmartEntryDraft(workspaceId))
   const seedText = (initial?.text && initial.text.length ? initial.text : stored?.text) ?? ''
   const seedSkill = initial?.skill ?? stored?.skill ?? ''
   const seedImages = (initial?.images && initial.images.length ? initial.images : stored?.images) ?? []
@@ -152,6 +181,7 @@ export default function SmartEntry({
   const [skill, setSkill] = useState(seedSkill)
   const [guideOpen, setGuideOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const discardDraftRef = useRef(false)
 
   // ── @ 引用素材:点击 @ 在光标处弹出已上传素材;选中插入「@图片N」;无素材则直接插入「@」──
   const taRef = useRef<HTMLTextAreaElement | null>(null)
@@ -166,12 +196,14 @@ export default function SmartEntry({
 
   // 实时把当前输入写进 sessionStorage(防抖 300ms),切走再回来可回填。text 存「剥离 skill 提示语」的干净正文。
   useEffect(() => {
-    const t = window.setTimeout(
-      () => saveSmartEntryDraft({ mode, text: stripSkillLine(text).trim(), ratio, duration, skill, images }),
-      300,
-    )
-    return () => window.clearTimeout(t)
-  }, [mode, text, ratio, duration, skill, images])
+    const draft = { mode, text: stripSkillLine(text).trim(), ratio, duration, skill, images }
+    liveEntryDraftFingerprints.set(workspaceKey(workspaceId), entryDraftFingerprint(draft))
+    const t = window.setTimeout(() => saveSmartEntryDraft(draft, workspaceId), 300)
+    return () => {
+      window.clearTimeout(t)
+      if (!discardDraftRef.current) saveSmartEntryDraft(draft, workspaceId)
+    }
+  }, [workspaceId, mode, text, ratio, duration, skill, images])
   const commitText = (val: string) => {
     if (histRef.current[idxRef.current] === val) return
     const next = histRef.current.slice(0, idxRef.current + 1)
@@ -265,6 +297,7 @@ export default function SmartEntry({
   const resumeMode = !!canResume && mode === 'video'
   const submit = () => {
     if (!canSubmit) return
+    discardDraftRef.current = true
     onSubmit(cleanText, {
       mode,
       style: '',
@@ -275,7 +308,7 @@ export default function SmartEntry({
       skill: skill || undefined,
     })
     // 已提交进入流程:清掉入口暂存,避免下次空白 /smart 又回填这次已用过的输入。
-    clearSmartEntryDraft()
+    clearSmartEntryDraft(workspaceId)
   }
 
   // 选中/切换 SKILL:把提示语插入输入框(替换旧的);未选则移除
@@ -297,7 +330,14 @@ export default function SmartEntry({
       <div className={styles.panel}>
         {/* 右上角:与 Tab 同一行、右对齐卡片;点击初始化为全新空白页(等同切换路由再回来) */}
         {onNewVideo && (
-          <button type="button" className={styles.newVideoBtn} onClick={() => onNewVideo(mode)}>
+          <button
+            type="button"
+            className={styles.newVideoBtn}
+            onClick={() => {
+              discardDraftRef.current = true
+              onNewVideo(mode)
+            }}
+          >
             {mode === 'image' ? '创建新对话' : '制作新视频'}
           </button>
         )}

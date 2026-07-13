@@ -62,6 +62,14 @@ export function getRunningVideoGenMeta(scope: VideoGenScope, projectId: number):
   return running.get(buildKey(scope, projectId))?.meta || null
 }
 
+/** 主动摘除一条已由页面判定为过期/作废的登记；底层 Promise 可继续收尾，但不再参与页面恢复。 */
+export function removeRunningVideoGen(scope: VideoGenScope, projectId: number): void {
+  const pid = Number(projectId || 0) || 0
+  if (!pid) return
+  running.delete(buildKey(scope, pid))
+  syncWorkspaceSwitchLock()
+}
+
 /** 按流程反查最近启动的在途项目，供 /smart、/hot-copy 根路由恢复项目绑定。 */
 export function findRunningVideoGen(scope: VideoGenScope, workspaceId?: number): RunningVideoGenEntry | null {
   const ws = Number(workspaceId || 0) || 0

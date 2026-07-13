@@ -205,6 +205,10 @@ export function loadSmartDraft(workspaceId?: number): SmartDraft | null {
   try {
     const scoped = localStorage.getItem(keyOf(workspaceId))
     if (scoped) return sanitize(JSON.parse(scoped))
+    // 显式按 workspace 读取时不得回退到旧版全局键。旧键不含空间归属,
+    // 将其当成任意目标空间的草稿会造成跨空间 projectId 串用。
+    const requestedWorkspaceId = Number(workspaceId ?? draftWorkspaceScope) || 0
+    if (requestedWorkspaceId > 0) return null
     const legacy = localStorage.getItem(legacyKeyOf())
     if (!legacy) return null
     return sanitize(JSON.parse(legacy))
