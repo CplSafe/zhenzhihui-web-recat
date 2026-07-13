@@ -1,7 +1,11 @@
 const BEFORE_WORKSPACE_SWITCH_EVENT = 'zzh:before-workspace-switch'
+let workspaceSwitchIssuedSequence = 0
+let currentWorkspaceSwitchToken = 0
 
 export interface WorkspaceSwitchPreparationDetail {
   targetWorkspaceId: number
+  /** 本次全局空间切换序号；任意页面发起下一次切换后，旧后台结果立即失效。 */
+  switchToken: number
   /** 当前编辑器实际绑定的空间（可能与全局高亮空间不同）。 */
   sourceWorkspaceId?: number
   waitUntil: Promise<unknown>[]
@@ -23,13 +27,23 @@ export interface WorkspaceSwitchPreparation {
 export function prepareForWorkspaceSwitch(targetWorkspaceId: number): WorkspaceSwitchPreparation {
   const detail: WorkspaceSwitchPreparationDetail = {
     targetWorkspaceId: Number(targetWorkspaceId || 0),
+    switchToken: ++workspaceSwitchIssuedSequence,
     waitUntil: [],
   }
   window.dispatchEvent(new CustomEvent<WorkspaceSwitchPreparationDetail>(BEFORE_WORKSPACE_SWITCH_EVENT, { detail }))
+  // Smart 编辑器会在同步事件里回填实际 source。重复点击当前空间只是 no-op，
+  // 不能因此淘汰上一轮仍在进行的合法后台恢复。
+  if (!detail.sourceWorkspaceId || Number(detail.sourceWorkspaceId) !== detail.targetWorkspaceId) {
+    currentWorkspaceSwitchToken = detail.switchToken
+  }
   return {
     detail,
     done: Promise.all(detail.waitUntil).then(() => undefined),
   }
+}
+
+export function isCurrentWorkspaceSwitch(switchToken: number): boolean {
+  return Number(switchToken || 0) > 0 && Number(switchToken) === currentWorkspaceSwitchToken
 }
 
 export function onBeforeWorkspaceSwitch(listener: (detail: WorkspaceSwitchPreparationDetail) => void): () => void {

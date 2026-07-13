@@ -217,11 +217,12 @@ export function loadSmartDraft(workspaceId?: number): SmartDraft | null {
   }
 }
 
-export function saveSmartDraft(state: SmartDraft, workspaceId?: number) {
+export function saveSmartDraft(state: SmartDraft, workspaceId?: number, options: { preserveSavedAt?: boolean } = {}) {
   // 与 2.0 一致:草稿不存 data:/blob:(体积大且会撑爆 localStorage 配额导致整盘清空);
   // 只存可持久的 http 图 + asset_id,刷新后按 asset_id 重换签名URL(见 SmartCreateView hydrate)。
   const ws = Number(workspaceId ?? draftWorkspaceScope) || 0
-  const lean = { ...stripHeavy(state), workspaceId: ws, savedAt: Date.now() }
+  const savedAt = options.preserveSavedAt ? Number(state.savedAt || 0) || 0 : Date.now()
+  const lean = { ...stripHeavy(state), workspaceId: ws, savedAt }
   try {
     localStorage.setItem(keyOf(ws), JSON.stringify(lean))
   } catch {

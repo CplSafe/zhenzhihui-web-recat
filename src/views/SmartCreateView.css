@@ -83,39 +83,41 @@
   inset: 0;
   z-index: 2160;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 18px 44px 112px 280px;
   box-sizing: border-box;
 }
 
 .smart__durguard-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(17, 24, 39, 0.06);
+  background: transparent;
 }
 
 .smart__durguard-card {
   position: relative;
-  width: min(620px, calc(100vw - 36px));
-  border-radius: 18px;
+  width: min(490px, calc(100vw - 36px));
+  box-sizing: border-box;
+  border: 1px solid #eceff2;
+  border-radius: 12px;
   background: #ffffff;
-  box-shadow: 0 18px 46px rgba(16, 24, 40, 0.14);
-  padding: 22px 24px;
+  box-shadow: 0 10px 28px rgba(31, 41, 55, 0.1);
+  padding: 20px 24px 18px;
   display: grid;
-  gap: 18px;
+  gap: 20px;
 }
 
 .smart__durguard-top {
   display: grid;
-  grid-template-columns: 28px 1fr;
+  grid-template-columns: 20px 1fr;
   gap: 12px;
   align-items: start;
 }
 
 .smart__durguard-ico {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: rgba(31, 207, 169, 0.14);
   color: #1fcfa9;
@@ -124,45 +126,79 @@
   justify-content: center;
 }
 
+.smart__durguard-ico svg {
+  width: 14px;
+  height: 14px;
+}
+
 .smart__durguard-msg {
-  font-size: 20px;
-  line-height: 1.35;
-  color: rgba(51, 51, 51, 0.88);
-  font-weight: 600;
+  min-height: 44px;
+  font-size: 18px;
+  line-height: 1.45;
+  color: #62666d;
+  font-weight: 400;
 }
 
 .smart__durguard-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+}
+
+.smart__durguard-actions--single {
   display: flex;
-  justify-content: center;
-  gap: 16px;
+  justify-content: flex-end;
+}
+
+.smart__durguard-actions--single .smart__durguard-btn {
+  width: 196px;
 }
 
 .smart__durguard-btn {
-  min-width: 150px;
-  height: 44px;
-  border-radius: 12px;
-  border: 1px solid rgba(51, 51, 51, 0.18);
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  border-radius: 8px;
+  border: 1px solid #d9dde2;
   background: #ffffff;
-  color: rgba(51, 51, 51, 0.86);
+  color: #686c72;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 400;
   cursor: pointer;
 }
 
 .smart__durguard-btn--primary {
-  border-color: #1fcfa9;
-  background: #1fcfa9;
+  border-color: #25cbae;
+  background: linear-gradient(100deg, #35d7b6 0%, #20c7aa 100%);
   color: #ffffff;
 }
 
 .smart__durguard-btn--primary:hover {
-  background: #11a98a;
-  border-color: #11a98a;
+  background: linear-gradient(100deg, #24caaa 0%, #13b899 100%);
+  border-color: #13b899;
 }
 
 .smart__durguard-btn:hover:not(.smart__durguard-btn--primary) {
   border-color: rgba(31, 207, 169, 0.55);
   color: #11a98a;
+}
+
+@media (max-width: 700px) {
+  .smart__durguard {
+    padding: 18px 18px 96px;
+  }
+
+  .smart__durguard-card {
+    padding: 18px;
+  }
+
+  .smart__durguard-msg {
+    font-size: 16px;
+  }
+
+  .smart__durguard-actions {
+    gap: 12px;
+  }
 }
 
 .smart__user {

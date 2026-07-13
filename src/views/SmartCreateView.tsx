@@ -107,7 +107,7 @@ import {
   updateRunningVideoGenMeta,
 } from '@/utils/videoGenRegistry'
 import { downloadToDisk } from '@/utils/downloadToDisk'
-import { onBeforeWorkspaceSwitch } from '@/utils/workspaceSwitch'
+import { isCurrentWorkspaceSwitch, onBeforeWorkspaceSwitch } from '@/utils/workspaceSwitch'
 import './SmartCreateView.css'
 
 // 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
@@ -167,9 +167,20 @@ const stripAt = (t: string) =>
     .trim()
 const normalizeVideoGenerateCount = (value: any) => Math.min(10, Math.max(1, Math.floor(Number(value || 1) || 1)))
 const SMART_VIDEO_RECOVERY_MAX_MS = 70 * 60 * 1000
+const SMART_PROJECT_BOUND_EVENT = 'zzh:smart-project-bound'
 let smartProjectCreationSequence = 0
 const smartProjectCreationTokens = new Map<number, number>()
 const pendingSmartProjectCreations = new Map<number, Promise<unknown>>()
+
+interface SmartProjectBoundDetail {
+  workspaceId: number
+  projectId: number
+  creationToken: number
+}
+
+function notifySmartProjectBound(detail: SmartProjectBoundDetail) {
+  window.dispatchEvent(new CustomEvent<SmartProjectBoundDetail>(SMART_PROJECT_BOUND_EVENT, { detail }))
+}
 
 function isTransientVideoTaskRecoveryError(error: any): boolean {
   const status = Number(error?.status || 0)
@@ -270,8 +281,8 @@ function isHotCopyDraft(draftJson: any): boolean {
  * 的场景——和项目管理页读取同一批字段,保证「生成视频」步骤能把视频加载出来。
  */
 function extractProjectVideoFallback(draftJson: any): {
-  latest: { url: string; assetId: number }
-  versions: { url: string; assetId: number }[]
+  latest: { url: string; assetId: number; createdAt?: string }
+  versions: { url: string; assetId: number; createdAt?: string }[]
 } {
   const obj = parseDraftObject(draftJson)
   if (!obj || typeof obj !== 'object') return { latest: { url: '', assetId: 0 }, versions: [] }
@@ -281,16 +292,35 @@ function extractProjectVideoFallback(draftJson: any): {
   const vh = Array.isArray(obj?.videoHistoryList || obj?.video_history_list)
     ? obj.videoHistoryList || obj.video_history_list
     : []
-  const src = vv.length ? vv : vh
-  const versions: { url: string; assetId: number }[] = []
-  for (const v of src) {
+  const versions: { url: string; assetId: number; createdAt?: string }[] = []
+  const appendVersion = (v: any, moveToEnd = false) => {
     const url = String((typeof v === 'string' ? v : v?.url || v?.src) || '').trim()
     const assetId = Number((typeof v === 'string' ? 0 : v?.assetId || v?.asset_id) || 0) || 0
-    if (url || assetId) versions.push({ url, assetId })
+    if (!url && !assetId) return
+    const key = assetId > 0 ? `a:${assetId}` : `u:${url.split('?')[0]}`
+    const index = versions.findIndex((item) => {
+      const itemKey = item.assetId > 0 ? `a:${item.assetId}` : `u:${item.url.split('?')[0]}`
+      return itemKey === key
+    })
+    const createdAt = String((typeof v === 'string' ? '' : v?.createdAt || v?.created_at) || '').trim()
+    const existing = index >= 0 ? versions[index] : null
+    const next = {
+      url: url || existing?.url || '',
+      assetId: assetId || existing?.assetId || 0,
+      ...(createdAt || existing?.createdAt ? { createdAt: createdAt || existing?.createdAt } : {}),
+    }
+    if (index >= 0) versions.splice(index, 1)
+    if (index < 0 || moveToEnd) versions.push(next)
+    else versions.splice(index, 0, next)
   }
-  const gvUrl = String(obj?.generatedVideoUrl || obj?.generated_video_url || smart?.fullVideoUrl || '').trim()
-  const gvId = Number(obj?.generatedVideoAssetId || obj?.generated_video_asset_id || smart?.fullVideoAssetId || 0) || 0
-  if (!versions.length && (gvUrl || gvId)) versions.push({ url: gvUrl, assetId: gvId })
+  for (const v of vv) appendVersion(v)
+  for (const v of vh) appendVersion(v)
+  const rootVideoUrl = String(obj?.generatedVideoUrl || obj?.generated_video_url || '').trim()
+  const rootVideoAssetId = Number(obj?.generatedVideoAssetId || obj?.generated_video_asset_id || 0) || 0
+  const hasRootVideo = Boolean(rootVideoUrl || rootVideoAssetId)
+  const gvUrl = hasRootVideo ? rootVideoUrl : String(smart?.fullVideoUrl || '').trim()
+  const gvId = hasRootVideo ? rootVideoAssetId : Number(smart?.fullVideoAssetId || 0) || 0
+  if (gvUrl || gvId) appendVersion({ url: gvUrl, assetId: gvId }, true)
   const latest = versions.length ? versions[versions.length - 1] : { url: gvUrl, assetId: gvId }
   return { latest: { url: latest.url || '', assetId: latest.assetId || 0 }, versions }
 }
@@ -305,7 +335,7 @@ function mergeVideoVersionLists(
       const url = String(item?.url || '').trim()
       const assetId = Number(item?.assetId || 0) || 0
       if (!url && !assetId) continue
-      const key = assetId > 0 ? `a:${assetId}` : `u:${url}`
+      const key = assetId > 0 ? `a:${assetId}` : `u:${url.split('?')[0]}`
       if (seen.has(key)) continue
       seen.add(key)
       // 保留本版生成完成时间(供项目管理按每条视频时间展示)
@@ -389,18 +419,128 @@ function mergeVideoGenQueues(current: any, backend: any, generations: any[]): an
   return merged
 }
 
+function hasMeaningfulSmartDraftContent(draft: SmartDraft | null): boolean {
+  if (!draft) return false
+  return Boolean(
+    String(draft.requirement || draft.reqSummary || '').trim() ||
+    draft.entryMeta ||
+    Number(draft.step || 0) > 0 ||
+    Number(draft.maxReached || 0) > 0 ||
+    (Array.isArray(draft.shots) && draft.shots.length > 0) ||
+    (draft.subjectAssets && Object.keys(draft.subjectAssets).length > 0) ||
+    (draft.fields && Object.keys(draft.fields).length > 0) ||
+    draft.fullVideoUrl ||
+    Number(draft.fullVideoAssetId || 0) > 0 ||
+    (Array.isArray(draft.videoVersions) && draft.videoVersions.length > 0) ||
+    (Array.isArray(draft.videoGenerations) && draft.videoGenerations.length > 0) ||
+    (Array.isArray(draft.videoGenQueue) && draft.videoGenQueue.length > 0) ||
+    (Array.isArray(draft.imageMessages) && draft.imageMessages.length > 0) ||
+    draft.marketingText ||
+    draft.marketingData ||
+    draft.materialBatchPending ||
+    draft.scriptPending,
+  )
+}
+
+function getSmartVideoVersionKey(item: { url?: string; assetId?: number } | null | undefined): string {
+  const assetId = Number(item?.assetId || 0) || 0
+  if (assetId > 0) return `a:${assetId}`
+  const url = String(item?.url || '').trim()
+  return url ? `u:${url.split('?')[0]}` : ''
+}
+
+function getSmartDraftCompletedVideos(draft: SmartDraft | null): {
+  url: string
+  assetId: number
+  createdAt?: string
+}[] {
+  if (!draft) return []
+  return mergeVideoVersionLists(Array.isArray(draft.videoVersions) ? draft.videoVersions : [], [
+    {
+      url: String(draft.fullVideoUrl || '').trim(),
+      assetId: Number(draft.fullVideoAssetId || 0) || 0,
+    },
+  ])
+}
+
 /**
- * 后端草稿仍是项目内容的权威来源；本地草稿只补同一项目尚未完成的任务凭证。
- * 这样既不会把旧步骤/旧素材覆盖回后端，又能覆盖“切页时最后一次 PUT 还没完成”的短窗口。
+ * 内容主稿与已完成视频是两条独立时间线：切回空间时可以恢复较新的本地编辑，
+ * 同时仍要吸收后端离屏完成的视频；在途 task/queue 则只保留内容主稿自身的状态。
+ */
+function mergeSmartCompletedVideoState(primary: SmartDraft, secondary: SmartDraft | null): SmartDraft {
+  if (!secondary) return primary
+  const primaryVideos = getSmartDraftCompletedVideos(primary)
+  const secondaryVideos = getSmartDraftCompletedVideos(secondary)
+  if (!primaryVideos.length && !secondaryVideos.length) return primary
+
+  const primaryLatest = primaryVideos[primaryVideos.length - 1]
+  const secondaryLatest = secondaryVideos[secondaryVideos.length - 1]
+  const primaryLatestKey = getSmartVideoVersionKey(primaryLatest)
+  const secondaryLatestKey = getSmartVideoVersionKey(secondaryLatest)
+  const secondaryKeys = new Set(secondaryVideos.map(getSmartVideoVersionKey).filter(Boolean))
+  const secondaryExtendsPrimary = Boolean(
+    primaryLatestKey &&
+    secondaryLatestKey &&
+    primaryLatestKey !== secondaryLatestKey &&
+    secondaryKeys.has(primaryLatestKey),
+  )
+  const sameLatest = Boolean(primaryLatestKey && primaryLatestKey === secondaryLatestKey)
+  const selectedFromSecondary = !primaryLatest || secondaryExtendsPrimary || sameLatest
+  const selectedBase = selectedFromSecondary ? secondaryLatest : primaryLatest
+  const selectedPeer = selectedFromSecondary ? primaryLatest : secondaryLatest
+  const selected = {
+    url: String(selectedBase?.url || (sameLatest ? selectedPeer?.url : '') || ''),
+    assetId: Number(selectedBase?.assetId || (sameLatest ? selectedPeer?.assetId : 0) || 0) || 0,
+    ...(selectedBase?.createdAt || (sameLatest ? selectedPeer?.createdAt : '')
+      ? { createdAt: selectedBase?.createdAt || (sameLatest ? selectedPeer?.createdAt : '') }
+      : {}),
+  }
+  const selectedKey = getSmartVideoVersionKey(selected)
+  const mergedVersions = mergeVideoVersionLists(secondaryVideos, primaryVideos).filter(
+    (item) => getSmartVideoVersionKey(item) !== selectedKey,
+  )
+  if (selectedKey) mergedVersions.push(selected)
+
+  return {
+    ...primary,
+    fullVideoUrl: String(selected?.url || ''),
+    fullVideoAssetId: Number(selected?.assetId || 0) || 0,
+    videoVersions: mergedVersions,
+    // 签名必须和最终选中的当前视频同源；来源没有签名时宁可留空，避免误判“内容未变”。
+    lastVideoSig: sameLatest
+      ? String(secondary.lastVideoSig || primary.lastVideoSig || '')
+      : selectedFromSecondary
+        ? String(secondary.lastVideoSig || '')
+        : String(primary.lastVideoSig || ''),
+  }
+}
+
+/**
+ * 同一项目恢复时选择真正更新的完整草稿，再补齐另一份草稿里的在途任务凭证。
+ * 云端仍可覆盖旧本地稿，但不能用可解析的空壳/较旧快照覆盖切换前刚同步保存的本地稿。
  */
 function mergeSmartInFlightRecovery(
   backendDraft: SmartDraft | null,
   localDraft: SmartDraft | null,
   projectId: number,
+  options: { preferNewerLocal?: boolean } = {},
 ): SmartDraft | null {
   const localMatches = localDraft && localDraft.started && Number(localDraft.projectId || 0) === Number(projectId || 0)
   if (!localMatches) return backendDraft
   if (!backendDraft) return localDraft
+  const localSavedAt = Number(localDraft.savedAt || 0) || 0
+  const backendSavedAt = Number(backendDraft.savedAt || 0) || 0
+  const localIsNewer = localSavedAt > 0 && (backendSavedAt <= 0 || localSavedAt > backendSavedAt)
+  const localWins = !hasMeaningfulSmartDraftContent(backendDraft) || (options.preferNewerLocal && localIsNewer)
+  // 本地完整稿胜出时不要再补旧云端的 processing/queue，否则已结束的任务可能被复活。
+  if (localWins) {
+    return {
+      ...mergeSmartCompletedVideoState(localDraft, backendDraft),
+      projectId,
+      workspaceId: Number(localDraft.workspaceId || backendDraft.workspaceId || 0) || undefined,
+      savedAt: localDraft.savedAt,
+    }
+  }
 
   const localGenerations = Array.isArray(localDraft.videoGenerations) ? localDraft.videoGenerations : []
   const localQueue = Array.isArray(localDraft.videoGenQueue) ? localDraft.videoGenQueue : []
@@ -3156,6 +3296,16 @@ export default function SmartCreateView() {
       videoGenQueue: latestVideoQueue,
     }
   }
+  const saveCurrentDraftLocally = (ws: number, draft: SmartDraft = currentDraft()): boolean => {
+    // 创建请求可能刚在另一个组件实例里绑定 projectId；旧的 pid=0 实例不能再把该指针覆盖掉。
+    // 显式“创建新视频”会先 clearSmartDraft，因此不会被这层保护误拦。
+    if (!Number(draft.projectId || 0)) {
+      const existing = loadSmartDraft(ws)
+      if (existing?.started && Number(existing.projectId || 0) > 0) return false
+    }
+    saveSmartDraft(draft, ws)
+    return true
+  }
   const hasRestoredVideoInProgress = (d: SmartDraft, generations: GenRecord[], queue: VideoGenJob[]): boolean => {
     if (Number(d.vidGenTaskId || 0) > 0) return true
     if ((generations || []).some((g) => String(g?.status || '') === 'processing' || Number(g?.taskId || 0) > 0))
@@ -3390,18 +3540,35 @@ export default function SmartCreateView() {
     }
     const d = parseSmartSnapshot(draftJson)
     const localDraft = loadSmartDraft(ws)
-    // 已创建项目以后端项目草稿为权威源，不再让 localStorage 草稿参与覆盖。
-    // 否则刷新时可能把本地旧 step 与后端 video task 混合，出现“视频生成中却回到分镜脚本”的错位。
-    const restoredDraft = mergeSmartInFlightRecovery(d, localDraft, rid)
-    if (restoredDraft) applyDraft(restoredDraft)
+    // 普通刷新仍以后端有效草稿为准；空间切回时允许刚同步保存且更新的同项目本地稿先恢复。
+    // 两种情况都会补齐另一侧尚未完成的任务凭证，避免生成中的任务被截断。
+    const restoredDraft = mergeSmartInFlightRecovery(d, localDraft, rid, {
+      preferNewerLocal: (location.state as any)?.workspaceSwitchRestore === true,
+    })
+    const hadCompletedVideo = Boolean(
+      restoredDraft?.fullVideoUrl ||
+      restoredDraft?.fullVideoAssetId ||
+      (Array.isArray(restoredDraft?.videoVersions) && restoredDraft.videoVersions.length > 0),
+    )
+    const fb = extractProjectVideoFallback(draftJson)
+    const restoredWithProjectVideo = restoredDraft
+      ? mergeSmartCompletedVideoState(restoredDraft, {
+          fullVideoUrl: fb.latest.url,
+          fullVideoAssetId: fb.latest.assetId,
+          videoVersions: fb.versions,
+        })
+      : null
+    if (restoredWithProjectVideo) applyDraft(restoredWithProjectVideo)
     // 兜底:智能成片快照里没有整片视频(上次在「生成视频」中途切走,完成结果由后端落到了项目级字段),
     // 从项目数据补出最近一版视频 + 历史版本,保证「生成视频」步骤能加载出来(URL 过期由下面的签名刷新兜底)。
-    if (!restoredDraft?.fullVideoUrl && !restoredDraft?.fullVideoAssetId) {
-      const fb = extractProjectVideoFallback(draftJson)
+    if (!hadCompletedVideo) {
       if (fb.latest.url || fb.latest.assetId) {
-        fullVideoRef.current = fb.latest
-        setFullVideo(fb.latest)
-        if (fb.versions.length) replaceVideoVersions(fb.versions)
+        // restoredWithProjectVideo 已把根级历史并入草稿；无可解析草稿时才直接回填状态。
+        if (!restoredWithProjectVideo) {
+          fullVideoRef.current = fb.latest
+          setFullVideo(fb.latest)
+          if (fb.versions.length) replaceVideoVersions(fb.versions)
+        }
         latestDraftStateRef.current = {
           ...latestDraftStateRef.current,
           step: STEPS.length - 1,
@@ -3419,6 +3586,51 @@ export default function SmartCreateView() {
     // 草稿已真正应用 → 放行 autosave / 卸载 flush(在此之前切走不会用空态覆盖草稿)
     appliedRef.current = true
   }
+
+  // 首次提交后立即切空间时，创建请求可能由已卸载的旧实例完成。
+  // localStorage 本身不会通知当前页面，因此用同页事件把新 projectId 原子绑定到已经水合的目标实例。
+  useEffect(() => {
+    const handleProjectBound = (event: Event) => {
+      const detail = (event as CustomEvent<SmartProjectBoundDetail>).detail
+      const ws = Number(detail?.workspaceId || 0)
+      const id = Number(detail?.projectId || 0)
+      const token = Number(detail?.creationToken || 0)
+      if (!ws || !id || !token) return
+      if (window.location.pathname !== '/smart') return
+      if (workspaceSwitchAwayRef.current || projectIdRef.current) return
+      if (Number(deriveWorkspaceId(useWorkspaceSessionStore.getState())) !== ws) return
+      if (Number(workspaceIdRef.current || workspaceId || 0) !== ws) return
+      if (smartProjectCreationTokens.get(ws) !== token) return
+
+      const storedDraft = loadSmartDraft(ws)
+      if (!storedDraft?.started || Number(storedDraft.projectId || 0) !== id) return
+
+      const visibleDraft = currentDraft()
+      const boundDraft: SmartDraft = {
+        ...(visibleDraft.started ? visibleDraft : storedDraft),
+        workspaceId: ws,
+        projectId: id,
+        started: true,
+      }
+      latestDraftStateRef.current = boundDraft
+      pendingInitialSaveRef.current = true
+      projectIdRef.current = id
+      setProjectId(id)
+      pinProjectWorkspaceId(ws)
+      if (!visibleDraft.started) applyDraft(boundDraft)
+      saveSmartDraft(boundDraft, ws)
+      navigate(`/smart/${id}`, {
+        replace: true,
+        state: {
+          workspaceSwitchRestore: true,
+          workspaceSwitchNonce: Date.now(),
+          targetWorkspaceId: ws,
+        },
+      })
+    }
+    window.addEventListener(SMART_PROJECT_BOUND_EVENT, handleProjectBound)
+    return () => window.removeEventListener(SMART_PROJECT_BOUND_EVENT, handleProjectBound)
+  })
 
   // 按 id 从后端拉取项目并恢复草稿。失败时设置 loadError(暴露后端真实原因)并弹 toast,
   // 由渲染层据此显示错误页;成功则清空 loadError。供首次进入与「重试」复用。
@@ -3624,7 +3836,7 @@ export default function SmartCreateView() {
     if (!appliedRef.current) return // 数据应用前不保存,避免用空态覆盖草稿
     const ws = Number(workspaceId || 0)
     if (!projectIdRef.current && pendingSmartProjectCreations.has(ws)) return
-    const local = window.setTimeout(() => saveSmartDraft(currentDraft(), ws), 600)
+    const local = window.setTimeout(() => saveCurrentDraftLocally(ws), 600)
     const remote = window.setTimeout(() => {
       if (projectIdRef.current) void putSmartDraftToBackend(ws)
     }, 1500)
@@ -3671,7 +3883,7 @@ export default function SmartCreateView() {
     const ws = Number(workspaceId || 0)
     if (!projectIdRef.current && pendingSmartProjectCreations.has(ws)) return
     try {
-      saveSmartDraft(currentDraft(), ws)
+      saveCurrentDraftLocally(ws)
     } catch {
       /* ignore */
     }
@@ -3690,7 +3902,7 @@ export default function SmartCreateView() {
       if (targetWs === ws) {
         workspaceSwitchAwayRef.current = false
         detail.destinationPath = oldProjectId ? `/smart/${oldProjectId}` : '/smart'
-        if (appliedRef.current) saveSmartDraft(currentDraft(), ws)
+        if (appliedRef.current) saveCurrentDraftLocally(ws)
         if (appliedRef.current && oldProjectId) {
           detail.waitUntil.push(
             putSmartDraftToBackend(ws).then((saved) => {
@@ -3701,9 +3913,10 @@ export default function SmartCreateView() {
         return
       }
       const switchRequest = ++workspaceSwitchRequestRef.current
+      const workspaceSwitchToken = Number(detail.switchToken || 0)
       workspaceSwitchAwayRef.current = targetWs > 0 && targetWs !== ws
       const hasPendingUnboundCreation = !oldProjectId && pendingSmartProjectCreations.has(ws)
-      if (appliedRef.current && !hasPendingUnboundCreation) saveSmartDraft(currentDraft(), ws)
+      if (appliedRef.current && !hasPendingUnboundCreation) saveCurrentDraftLocally(ws)
 
       // 先同步给出目标空间的上次项目路由,点击后可立即切换;云端校验在后台修正。
       const initialTargetDraft = loadSmartDraft(targetWs)
@@ -3738,35 +3951,72 @@ export default function SmartCreateView() {
             return
           }
 
+          // 用户在该空间明确点过“创建新视频”时，空白入口就是当前状态。
+          // 不再用云端历史项目替换它，否则切回空间会从创建页被拉回旧草稿。
+          if (localTargetDraft && localTargetDraft.started === false && !localTargetProjectId) {
+            detail.destinationPath = '/smart'
+            const oldSaved = await oldSavePromise
+            if (!oldSaved) throw new Error('旧草稿云端同步失败')
+            return
+          }
+
           // 本地指针丢失时再从云端按最近更新找回;该流程与旧草稿保存并发。
-          const readSmartProject = async (project: any): Promise<{ projectId: number; draft: SmartDraft } | null> => {
+          let targetLookupFailed = false
+          const readSmartProject = async (
+            project: any,
+            forceFresh = false,
+          ): Promise<{ projectId: number; draft: SmartDraft | null } | null> => {
             const candidateId = resolveProjectId(project)
             if (!candidateId) return null
             let payload = project
+            if (forceFresh) {
+              try {
+                await waitForCreativeProjectDraftSaves({ projectId: candidateId, workspaceId: targetWs })
+                payload = await getCreativeProject({ projectId: candidateId, workspaceId: targetWs })
+              } catch {
+                targetLookupFailed = true
+                return null
+              }
+            }
             let parsed = parseSmartSnapshot(
               payload?.draft_json ?? payload?.draftJson ?? payload?.data?.draft_json ?? payload?.draft,
             )
-            if (!parsed) {
+            if (!parsed && !forceFresh) {
               try {
                 payload = await getCreativeProject({ projectId: candidateId, workspaceId: targetWs })
                 parsed = parseSmartSnapshot(
                   payload?.draft_json ?? payload?.draftJson ?? payload?.data?.draft_json ?? payload?.draft,
                 )
               } catch {
+                targetLookupFailed = true
                 return null
               }
             }
-            return parsed ? { projectId: candidateId, draft: parsed } : null
+            // 项目存在但尚无可解析快照时仍返回 projectId，让同项目的完整本地稿可以作为实时数据源。
+            return { projectId: candidateId, draft: parsed }
           }
 
           let targetProject: { projectId: number; draft: SmartDraft } | null = null
           if (localTargetProjectId) {
-            targetProject = await readSmartProject({ id: localTargetProjectId })
+            const resolvedTarget = await readSmartProject({ id: localTargetProjectId }, true)
+            if (resolvedTarget) {
+              const restoredTargetDraft = mergeSmartInFlightRecovery(
+                resolvedTarget.draft,
+                localTargetDraft,
+                localTargetProjectId,
+                { preferNewerLocal: true },
+              )
+              if (restoredTargetDraft) {
+                targetProject = { projectId: localTargetProjectId, draft: restoredTargetDraft }
+              }
+            }
+          }
+          if (!targetProject && localTargetProjectId && localTargetDraft?.started) {
+            targetProject = { projectId: localTargetProjectId, draft: localTargetDraft }
           }
 
-          // started=false 是旧版切换时自动创建的空白草稿;有更早的真实在制数据时,
-          // 应恢复真实数据而不是停在空白项目。
-          if (!targetProject || targetProject.draft.started === false) {
+          // 仅在没有本地“当前项目/空白入口”状态时，才从云端找回最近的真实项目。
+          if (!targetProject) {
             try {
               const projects: any[] = await listCreativeProjects({ workspaceId: targetWs, limit: 20 })
               const sorted = [...projects].sort((a, b) => {
@@ -3790,12 +4040,16 @@ export default function SmartCreateView() {
                 })
                 .slice(0, 12)
               const resolvedCandidates = await Promise.all(candidates.map((project) => readSmartProject(project)))
+              const usableCandidates = resolvedCandidates.flatMap((candidate) =>
+                candidate?.draft ? [{ projectId: candidate.projectId, draft: candidate.draft }] : [],
+              )
               targetProject =
-                resolvedCandidates.find((candidate) => candidate?.draft.started !== false) ||
+                usableCandidates.find((candidate) => candidate.draft.started !== false) ||
                 targetProject ||
-                resolvedCandidates.find((candidate) => Boolean(candidate)) ||
+                usableCandidates[0] ||
                 null
             } catch {
+              targetLookupFailed = true
               // 云端列表查找失败时仍可回退到有效的本地指针,不影响切换。
             }
           }
@@ -3814,6 +4068,7 @@ export default function SmartCreateView() {
           const targetEntryChanged = getSmartEntryDraftFingerprint(targetWs) !== targetEntryFingerprint
           if (
             switchRequest !== workspaceSwitchRequestRef.current ||
+            !isCurrentWorkspaceSwitch(workspaceSwitchToken) ||
             activeWorkspaceId !== targetWs ||
             (smartProjectCreationTokens.get(targetWs) || 0) !== targetCreationTokenAtSwitch ||
             targetDraftChanged ||
@@ -3834,13 +4089,18 @@ export default function SmartCreateView() {
               workspaceId: targetWs,
               projectId: targetProject.projectId,
             }
-            saveSmartDraft(restoredDraft, targetWs)
+            // 这是恢复快照而非新编辑，保留原 savedAt，避免一次读取把旧云端稿伪装成“更新的本地稿”。
+            saveSmartDraft(restoredDraft, targetWs, { preserveSavedAt: true })
             detail.destinationPath = `/smart/${targetProject.projectId}`
           } else {
             // 目标空间没有旧草稿时直接展示新草稿入口;用户提交后按原流程建项目。
             // 不在后台预创建空壳,避免用户已开始输入时又被延迟导航打断。
             const currentTargetProjectId = Number(loadSmartDraft(targetWs)?.projectId || 0) || 0
-            if (currentTargetProjectId === localTargetProjectId) clearSmartDraft(targetWs)
+            // 云端确实查无项目才记录“当前为空白”；网络失败时不落墓碑，下次切回仍会重试找回。
+            if (!targetLookupFailed) {
+              if (currentTargetProjectId === localTargetProjectId) clearSmartDraft(targetWs)
+              saveSmartDraft({ workspaceId: targetWs, started: false, projectId: 0 }, targetWs)
+            }
             detail.destinationPath = '/smart'
           }
 
@@ -3905,6 +4165,29 @@ export default function SmartCreateView() {
     proceed()
   }
 
+  const showDurationOverflow = (currentSec: number) => {
+    durGuardProceedRef.current = null
+    setDurGuard({
+      open: true,
+      currentSec,
+      expectedSec: parseDurationSec(entryMeta?.duration),
+      overMax: true,
+    })
+  }
+
+  const requestDurationChange = (currentSec: number, applyChange: () => void) => {
+    const expectedSec = parseDurationSec(entryMeta?.duration)
+    if (!expectedSec || currentSec === expectedSec) {
+      applyChange()
+      return
+    }
+    durGuardProceedRef.current = () => {
+      setEntryMeta((m) => (m ? { ...m, duration: `${currentSec}s` } : m))
+      applyChange()
+    }
+    setDurGuard({ open: true, currentSec, expectedSec, overMax: false })
+  }
+
   const onNavigate = (key: string) => {
     const path = ROUTE_MAP[key]
     if (path) navigate(path)
@@ -3922,6 +4205,9 @@ export default function SmartCreateView() {
       if (resetWorkspaceId) smartProjectCreationTokens.set(resetWorkspaceId, ++smartProjectCreationSequence)
       if (resetWorkspaceId) pendingSmartProjectCreations.delete(resetWorkspaceId)
       clearSmartDraft(resetWorkspaceId)
+      if (resetWorkspaceId) {
+        saveSmartDraft({ workspaceId: resetWorkspaceId, started: false, projectId: 0 }, resetWorkspaceId)
+      }
       clearSmartEntryDraft(resetWorkspaceId) // 重置为全新入口:只清本空间暂存,不影响其它空间旧输入
     }
     pinProjectWorkspaceId(0) // 全新视频:解除项目钉住,回到用全局空间创建
@@ -4310,7 +4596,8 @@ export default function SmartCreateView() {
           Number(deriveWorkspaceId(useWorkspaceSessionStore.getState())) === wsId
         if (!isStillActive) {
           // 创建请求发出后若已切走，旧组件不能再 setState/navigate；直接把刚提交的快照落到原空间项目。
-          await enqueueCreativeProjectDraftSave({
+          const createdSnapshot = buildSmartSnapshot(createdDraft)
+          const persistence = enqueueCreativeProjectDraftSave({
             projectId: id,
             workspaceId: wsId,
             task: async () => {
@@ -4323,7 +4610,7 @@ export default function SmartCreateView() {
                 await updateCreativeProjectDraft({
                   projectId: id,
                   workspaceId: wsId,
-                  draft: buildSmartSnapshot(createdDraft),
+                  draft: createdSnapshot,
                   draftRevision: Number.isFinite(revision) ? revision : 0,
                 })
               } catch (error: any) {
@@ -4333,12 +4620,18 @@ export default function SmartCreateView() {
                 await updateCreativeProjectDraft({
                   projectId: id,
                   workspaceId: wsId,
-                  draft: buildSmartSnapshot(createdDraft),
+                  draft: createdSnapshot,
                   draftRevision: Number.isFinite(latestRevision) ? latestRevision : 0,
                 })
               }
             },
           })
+          // 保存任务已进入同项目队列后再广播；目标实例导航 /smart/:id 时会先等待这条队列。
+          // 即使云端保存失败，本地完整稿和 projectId 也已绑定，目标实例仍可继续并在后续自动重试。
+          if (isLatestCreation && smartProjectCreationTokens.get(wsId) === creationToken) {
+            notifySmartProjectBound({ workspaceId: wsId, projectId: id, creationToken })
+          }
+          await persistence
           return
         }
 
@@ -4470,12 +4763,14 @@ export default function SmartCreateView() {
             label: '确认脚本',
             variant: 'primary',
             action: () => {
-              if (revisitingScriptStep) {
-                forceFreshMaterialsRef.current = true
-                clearAllSubjectMaterials()
-              }
-              goStep(1)
-              if (revisitingScriptStep) generateAllSubjects()
+              void guardDurationBeforeNext(() => {
+                if (revisitingScriptStep) {
+                  forceFreshMaterialsRef.current = true
+                  clearAllSubjectMaterials()
+                }
+                goStep(1)
+                if (revisitingScriptStep) generateAllSubjects()
+              })
             },
             disabled: scriptLoading,
           },
@@ -4778,6 +5073,8 @@ export default function SmartCreateView() {
                 onClearTrash={clearAllShotTrash}
                 /* AI自动生成:不后台直生,改为唤起素材弹窗并在弹窗内自动生成(autoGen),与「上传图片」一致 */
                 onShotsChange={updateShotsFromEditor}
+                onDurationOverflow={showDurationOverflow}
+                onDurationChangeRequest={requestDurationChange}
                 onRegenerate={materialMode ? undefined : () => entryMeta && generateScript(requirement, entryMeta)}
                 regenerating={scriptLoading}
               />
@@ -4939,11 +5236,11 @@ export default function SmartCreateView() {
               </span>
               <div className="smart__durguard-msg">
                 {durGuard.overMax
-                  ? `您目前的视频秒数为${durGuard.currentSec}s（已超过最大限制15s，无法生成视频）`
+                  ? `您目前的视频秒数为${durGuard.currentSec}s（视频时长最多支持15s）`
                   : `您目前的视频秒数为${durGuard.currentSec}s（与期望的视频秒数${durGuard.expectedSec || parseDurationSec(entryMeta?.duration)}s不符）`}
               </div>
             </div>
-            <div className="smart__durguard-actions">
+            <div className={`smart__durguard-actions${durGuard.overMax ? ' smart__durguard-actions--single' : ''}`}>
               <button
                 type="button"
                 className="smart__durguard-btn"
