@@ -66,6 +66,10 @@ interface ScriptStoryboardTableProps {
   onOpenSubject?: (name: string, autoGen?: boolean) => void
   /** 编辑回写(时长/画面描述);缺省则只读 */
   onShotsChange?: (next: Shot[]) => void
+  /** 修改单行时长导致总时长超过上限时，以页面弹框提示（分镜脚本/准备素材共用） */
+  onDurationOverflow?: (totalSec: number) => void
+  /** 修改后总时长与用户选择不一致时，由页面弹框决定是否应用本次修改 */
+  onDurationChangeRequest?: (totalSec: number, applyChange: () => void) => void
   /**
    * 是否显示「准备素材」列。分镜脚本阶段传 false 隐藏;准备素材阶段传 true,
    * 列内每个主体按图二「@名称 + AI自动生成 + 上传图片」展示。默认显示。
@@ -107,6 +111,8 @@ export default function ScriptStoryboardTable({
   shots,
   onOpenSubject,
   onShotsChange,
+  onDurationOverflow,
+  onDurationChangeRequest,
   showSubjects = true,
   onRegenerate,
   regenerating = false,
@@ -220,10 +226,6 @@ export default function ScriptStoryboardTable({
                       const sec = parseInt(v, 10) || 0
                       const orig = parseInt(String(shot.duration || '0').replace(/[^0-9]/g, ''), 10) || 0
                       if (sec < 1) return
-                      if (sec > 15) {
-                        showToast('最长仅支持15秒，请修改秒数', 'error')
-                        return
-                      }
                       // 总时长约束:改完后所有镜头之和必须在 [5s, 15s]，超出弹提示、不允许改。
                       const othersTotal = shots.reduce(
                         (sum, s) =>
@@ -232,25 +234,20 @@ export default function ScriptStoryboardTable({
                       )
                       const newTotal = othersTotal + sec
                       if (newTotal > 15) {
-                        showToast(`总时长不能超过15秒（改后为 ${newTotal}s），请调整`, 'error')
+                        if (onDurationOverflow) onDurationOverflow(newTotal)
+                        else showToast(`总时长不能超过15秒（改后为 ${newTotal}s），请调整`, 'error')
                         return
                       }
                       if (newTotal < 5) {
                         showToast(`总时长不能少于5秒（改后为 ${newTotal}s），请调整`, 'error')
                         return
                       }
-                      if (sec !== orig) {
-                        const ok = await requestConfirm(
-                          `镜头「${shot.no}」时长从 ${orig}s 改为 ${sec}s，确认修改吗？`,
-                          {
-                            title: '确认时长',
-                            confirmLabel: '确认修改',
-                            cancelLabel: '取消',
-                          },
-                        )
-                        if (!ok) return
+                      const applyChange = () => patchShot(shot.id, { duration: `${sec}s` })
+                      if (sec !== orig && onDurationChangeRequest) {
+                        onDurationChangeRequest(newTotal, applyChange)
+                        return
                       }
-                      patchShot(shot.id, { duration: `${sec}s` })
+                      applyChange()
                     }}
                   />
                   <span className={styles.sbDurUnit}>s</span>
