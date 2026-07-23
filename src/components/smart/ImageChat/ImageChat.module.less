@@ -13,11 +13,15 @@
 /* 「创建新对话」:位于沉底输入框右上角 */
 .footerHead {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 10px;
 }
+.back,
 .newChat {
-  padding: 6px 4px;
+  min-height: 44px;
+  padding: 8px 6px;
   border: none;
   background: transparent;
   color: #333;
@@ -29,6 +33,27 @@
 
   &:hover {
     color: #1fcfa9;
+  }
+
+  &:disabled {
+    color: #aeb4ba;
+    cursor: not-allowed;
+  }
+}
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 }
 
@@ -95,6 +120,10 @@
   gap: 12px;
   max-width: 72%;
 }
+.aiColWide {
+  width: 100%;
+  max-width: 100%;
+}
 .aiText {
   color: #333;
   font-size: 16px;
@@ -107,17 +136,169 @@
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+  align-items: flex-start;
 }
 .aiImg {
-  max-width: 260px;
-  max-height: 360px;
-  border-radius: 14px;
+  width: 100%;
+  max-height: 420px;
   object-fit: contain;
   display: block;
-  background: #fff;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  background: #f2f5f4;
 }
+.resultCard {
+  position: relative;
+  width: min(320px, 100%);
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid #e7eeec;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow:
+    0 8px 24px rgba(25, 48, 43, 0.08),
+    0 2px 6px rgba(25, 48, 43, 0.05);
+}
+.resultCardVideoSelected {
+  border-color: #20bfa0;
+  box-shadow:
+    0 0 0 3px rgba(31, 207, 169, 0.2),
+    0 12px 30px rgba(25, 48, 43, 0.14);
+}
+.videoSelect {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  width: 44px;
+  height: 44px;
+  padding: 8px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
 
+  span {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    place-items: center;
+    border: 2px solid rgba(255, 255, 255, 0.94);
+    border-radius: 50%;
+    background: rgba(18, 31, 28, 0.52);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 0 2px 9px rgba(0, 0, 0, 0.22);
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease,
+      transform 0.15s ease;
+  }
+
+  &[aria-pressed='true'] span {
+    border-color: #1fcfa9;
+    background: #1fcfa9;
+    transform: scale(1.04);
+  }
+
+  &:hover:not(:disabled) span {
+    border-color: #1fcfa9;
+  }
+
+  &:disabled {
+    cursor: wait;
+    opacity: 0.7;
+  }
+}
+.resultCardSelected {
+  border-color: #1fcfa9;
+  box-shadow:
+    0 0 0 2px rgba(31, 207, 169, 0.14),
+    0 10px 28px rgba(25, 48, 43, 0.12);
+}
+.resultPreview {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 80px;
+  padding: 0;
+  border: 0;
+  background: #f2f5f4;
+  cursor: zoom-in;
+}
+.previewHint {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 6px 10px;
+  border-radius: 15px;
+  background: rgba(20, 32, 29, 0.72);
+  color: #fff;
+  font-size: 12px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+.resultPreview:hover .previewHint,
+.resultPreview:focus-visible .previewHint {
+  opacity: 1;
+  transform: translateY(0);
+}
+.resultActions {
+  display: grid;
+  grid-template-columns: 0.9fr 0.9fr 1.25fr;
+  min-height: 46px;
+  border-top: 1px solid #edf2f0;
+
+  button {
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 8px;
+    border: 0;
+    border-right: 1px solid #edf2f0;
+    background: #fff;
+    color: #56625f;
+    font: inherit;
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease;
+
+    &:last-child {
+      border-right: 0;
+    }
+
+    &:hover {
+      color: #10aa8a;
+      background: #f3fffc;
+    }
+
+    &:disabled {
+      color: #b9bfbd;
+      background: #fafafa;
+      cursor: not-allowed;
+    }
+
+    svg {
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex: 0 0 auto;
+    }
+  }
+}
 /* 出图占位(生成中) */
 .pending {
   width: 240px;
@@ -145,6 +326,54 @@
   font-size: 15px;
   line-height: 1.6;
 }
+.errorCard {
+  max-width: 420px;
+  padding: 14px 16px;
+  border: 1px solid #f3d5d7;
+  border-radius: 14px;
+  background: #fff8f8;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.retry {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid #bcebe1;
+  border-radius: 22px;
+  background: #fff;
+  color: #10aa8a;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+
+  svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &:hover:not(:disabled) {
+    border-color: #1fcfa9;
+    background: #f3fffc;
+  }
+
+  &:disabled {
+    border-color: #e4e7e6;
+    color: #aeb4ba;
+    cursor: not-allowed;
+  }
+}
 
 @keyframes spin {
   to {
@@ -161,6 +390,180 @@
   box-sizing: border-box;
 }
 
+.videoBatchBar {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 12px;
+  padding: 10px 12px 10px 18px;
+  border: 1px solid rgba(31, 207, 169, 0.28);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 24px rgba(25, 48, 43, 0.08);
+}
+.videoBatchCopy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+
+  strong {
+    color: #25332f;
+    font-size: 14px;
+    font-weight: 650;
+  }
+
+  span {
+    color: #7d8986;
+    font-size: 12px;
+  }
+}
+.videoBatchActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+.clearVideoSelection,
+.continueVideo {
+  min-height: 44px;
+  border-radius: 22px;
+  padding: 0 18px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.clearVideoSelection {
+  border: 0;
+  background: transparent;
+  color: #64706d;
+}
+.continueVideo {
+  display: inline-flex;
+  min-width: 110px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #1fcfa9;
+  background: #1fcfa9;
+  color: #fff;
+  box-shadow: 0 6px 15px rgba(31, 207, 169, 0.22);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+
+  svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &:hover:not(:disabled) {
+    border-color: #18b996;
+    background: #18b996;
+    transform: translateY(-1px);
+  }
+
+  &:disabled {
+    border-color: #d8dfdd;
+    background: #d8dfdd;
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+}
+
+/* 生成图大图预览：沉浸式遮罩，图片按视口等比放大，不新开浏览器标签。 */
+.previewOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 72px 32px 32px;
+  background: rgba(10, 16, 15, 0.82);
+  backdrop-filter: blur(7px);
+}
+.previewToolbar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 14px;
+}
+.previewToolbarActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  button {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 0;
+    border-radius: 22px;
+    padding: 0 14px;
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.24);
+    }
+
+    svg {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+  }
+}
+.previewToolbarActions .previewClose {
+  width: 44px;
+  padding: 0;
+  border-radius: 50%;
+}
+.previewStage {
+  display: flex;
+  width: min(92vw, 1440px);
+  height: min(84vh, 960px);
+  align-items: center;
+  justify-content: center;
+
+  img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 10px;
+    object-fit: contain;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.32);
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+}
+
 .card {
   background: #fff;
   border: 1px solid rgba(255, 255, 255, 0.8);
@@ -174,6 +577,25 @@
   gap: 14px;
 }
 
+.editingStatus {
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: #effcf8;
+  color: #198a72;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.editingDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1fcfa9;
+  box-shadow: 0 0 0 4px rgba(31, 207, 169, 0.12);
+}
+
 .cardBody {
   display: flex;
   align-items: flex-start;
@@ -183,15 +605,19 @@
 
 .upload {
   flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
   border: none;
   background: transparent;
-  padding: 4px;
+  padding: 0;
   color: #909090;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: color 0.15s, transform 0.15s ease;
+  transition:
+    color 0.15s,
+    transform 0.15s ease;
 
   &:hover {
     color: #1fcfa9;
@@ -230,23 +656,23 @@
   width: 64px;
   height: 64px;
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
 
   img {
     width: 100%;
     height: 100%;
+    border-radius: 12px;
     object-fit: cover;
   }
 }
 .thumbX {
   position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 18px;
-  height: 18px;
+  top: -6px;
+  right: -6px;
+  width: 44px;
+  height: 44px;
   border: none;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
+  background: transparent;
   color: #fff;
   font-size: 13px;
   line-height: 1;
@@ -254,6 +680,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
+
+  &::before {
+    content: '';
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.62);
+  }
+
+  span {
+    position: relative;
+    z-index: 1;
+  }
 }
 
 .inputWrap {
@@ -326,6 +766,8 @@
   border-radius: 12px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
   padding: 10px;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 28px));
 }
 .atMenuTitle {
   font-size: 12px;
@@ -392,6 +834,8 @@
 .costRecharge {
   border: none;
   background: none;
+  min-height: 44px;
+  margin: -14px 0;
   padding: 0;
   color: #e25555;
   font: inherit;
@@ -405,14 +849,16 @@
 }
 .pillBtn {
   .pill-base();
+  height: 44px;
+  border-radius: 22px;
   font-size: 18px;
   color: #333;
   padding: 0 14px;
 }
 .send {
   flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: none;
   padding: 0;
@@ -421,7 +867,9 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.15s, filter 0.15s;
+  transition:
+    background 0.15s,
+    filter 0.15s;
 
   &:hover:not(:disabled) {
     filter: brightness(1.05);
@@ -429,6 +877,50 @@
   &:disabled {
     background: #d9d9d9;
     cursor: not-allowed;
+  }
+}
+
+.back,
+.newChat,
+.videoSelect,
+.clearVideoSelection,
+.continueVideo,
+.upload,
+.add,
+.thumbX,
+.atItem,
+.costRecharge,
+.pillBtn,
+.send,
+.retry,
+.resultPreview,
+.resultActions button,
+.previewToolbarActions button {
+  &:focus-visible {
+    outline: 3px solid rgba(31, 207, 169, 0.36);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+
+  .back,
+  .newChat,
+  .videoSelect,
+  .clearVideoSelection,
+  .continueVideo,
+  .upload,
+  .add,
+  .atItem,
+  .pillBtn,
+  .send,
+  .resultActions button,
+  .previewToolbarActions button,
+  .previewHint {
+    transition: none;
   }
 }
 
@@ -445,5 +937,35 @@
   .userImg {
     width: 96px;
     height: 96px;
+  }
+  .aiCol,
+  .userCol {
+    max-width: 88%;
+  }
+  .aiColWide {
+    max-width: 100%;
+  }
+  .videoBatchBar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .videoBatchActions {
+    justify-content: flex-end;
+  }
+  .previewOverlay {
+    padding: 68px 12px 20px;
+  }
+  .previewStage {
+    width: 96vw;
+    height: 78vh;
+  }
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .cost {
+    order: 3;
+    width: 100%;
+    white-space: normal;
   }
 }

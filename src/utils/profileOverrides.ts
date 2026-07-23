@@ -1,6 +1,13 @@
+/**
+ * 用户资料本地覆盖工具：在服务端资料接口尚未返回新值时保留头像更新结果。
+ * 覆盖按用户 ID 隔离；一旦服务端已有头像便以服务端数据为准。
+ */
+/** 将用户标识规范化为数字。 */
 const toId = (value: any): number => Number(value) || 0
+/** 构建按用户隔离的资料覆盖存储键。 */
 const PROFILE_OVERRIDE_KEY = (uid: any) => `zzh_profile_override_u${toId(uid) || 'anon'}`
 
+/** 读取指定用户的本地资料覆盖。 */
 function readProfileOverride(uid: any): Record<string, any> {
   const id = toId(uid)
   if (!id) return {}
@@ -13,6 +20,7 @@ function readProfileOverride(uid: any): Record<string, any> {
   }
 }
 
+/** 写入资料覆盖；空对象会删除存储项。 */
 function writeProfileOverride(uid: any, payload: Record<string, any>) {
   const id = toId(uid)
   if (!id) return
@@ -28,10 +36,12 @@ function writeProfileOverride(uid: any, payload: Record<string, any>) {
   }
 }
 
+/** 从兼容的用户字段中选择稳定用户 ID。 */
 export function pickUserProfileId(user: any): number {
   return toId(user?.id || user?.user_id || user?.userId)
 }
 
+/** 保存或清除当前用户的本地头像覆盖。 */
 export function saveUserAvatarOverride(user: any, avatar: string) {
   const uid = pickUserProfileId(user)
   if (!uid) return
@@ -45,6 +55,7 @@ export function saveUserAvatarOverride(user: any, avatar: string) {
   writeProfileOverride(uid, { ...current, avatar: nextAvatar })
 }
 
+/** 在服务端头像为空时把本地覆盖应用到用户对象。 */
 export function applyUserProfileOverrides(user: any): any {
   if (!user || typeof user !== 'object') return user
   const uid = pickUserProfileId(user)

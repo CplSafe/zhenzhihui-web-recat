@@ -1,11 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+/**
+ * 项目视频列表页
+ *
+ * 页面效果：按项目展示智能成片、爆款复制及归类视频，提供关键词、流程、状态、时长筛选，
+ * 支持分页、真实时长回填、查看详情、下载，以及从项目素材继续创建新视频。
+ *
+ * 权限边界：项目成员均可进入详情和下载；仅视频创建者可编辑/发布；仅项目创建者或空间
+ * owner/admin 可删除。界面隐藏无权限按钮，执行函数仍会再次校验，避免绕过界面直接触发操作。
+ */
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
-import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
-import { listWorkspaceMembers } from '@/api/auth'
+import { useCurrentUser, useCurrentWorkspace, useWorkspaceId } from '@/stores/workspaceSession'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
+import { useWorkspaceMemberAccess } from '@/composables/useWorkspaceMemberAccess'
 import {
   deleteProjectVideo,
   formatVideoDate,
@@ -17,8 +26,16 @@ import {
 } from '@/api/projectVideos'
 import { getCreativeProject } from '@/api/business'
 import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
+import {
+  isCreativeProjectRestrictedForUser,
+  resolveCreativeProjectOwnerId,
+  resolveUserId,
+  toPlainObject as toPlainObj,
+} from '@/utils/creativeDraftMetadata'
+import { LazyMediaVideo, useMediaCardActivation } from '@/components/common/LazyMediaVideo'
 import './ProjectVideoListView.css'
 
+/** 从项目草稿带入新创作流程的素材引用。 */
 type CarryMat = { url: string; assetId: number }
 // 从项目草稿里抽取「用户上传的素材」(图片资产 id + 源视频),兼容 智能成片 / 爆款复制 两种草稿结构
 function extractUploadedMaterials(draftJson: any, wsId: number): { images: CarryMat[]; video: CarryMat | null } {
@@ -54,24 +71,14 @@ function extractUploadedMaterials(draftJson: any, wsId: number): { images: Carry
   return { images, video }
 }
 
+/** 视频列表支持的时间排序字段。 */
 type SortKey = 'updatedAt' | 'createdAt'
-type StatusFilter = 'all' | 'draft' | 'processing' | 'published'
+/** 视频生成/发布状态筛选项。 */
+type StatusFilter = 'all' | 'draft' | 'processing' | 'published' | 'failed'
+/** 视频时长区间筛选项。 */
 type DurationFilter = 'all' | 'short' | 'mid' | 'long'
+/** 智能成片与爆款复制流程筛选项。 */
 type FlowFilter = 'all' | 'smart' | 'hot-copy'
-
-function toPlainObj(value: any): any {
-  if (!value) return null
-  if (typeof value === 'object') return value
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value)
-    } catch {
-      return null
-    }
-  }
-  return null
-}
-
 // 从后端项目草稿解析流程标识(与 projectVideos.ts resolveProjectFlow 口径一致)
 function resolveProjectFlowFromDraft(draft: any): string {
   if (!draft || typeof draft !== 'object') return ''
@@ -79,6 +86,7 @@ function resolveProjectFlowFromDraft(draft: any): string {
   return String(smart?.flow || draft.flow || '').toLowerCase()
 }
 
+/** 判断一条视频是否命中当前时长筛选区间。 */
 function matchesDuration(item: ProjectVideo, duration: DurationFilter): boolean {
   if (duration === 'all') return true
   const seconds = Number(item.durationSeconds || 0)
@@ -87,6 +95,7 @@ function matchesDuration(item: ProjectVideo, duration: DurationFilter): boolean 
   return seconds > 60
 }
 
+/** 按创建时间或最近更新时间倒序排列视频。 */
 function sortVideos(list: ProjectVideo[], sortBy: SortKey): ProjectVideo[] {
   return [...list].sort((a, b) => {
     const av = Date.parse(sortBy === 'createdAt' ? a.createdAt : a.updatedAt || a.createdAt || '')
@@ -95,6 +104,7 @@ function sortVideos(list: ProjectVideo[], sortBy: SortKey): ProjectVideo[] {
   })
 }
 
+/** 判断封面地址本身是否指向视频文件。 */
 function isVideoCover(url: string): boolean {
   return /\.(mp4|mov|webm|m4v)(\?|$)/i.test(String(url || ''))
 }
@@ -116,6 +126,7 @@ const IcoClock = () => (
     <path d="M12 7.5V12l3 1.8" />
   </svg>
 )
+/** 创建人信息图标。 */
 const IcoUser = () => (
   <svg
     viewBox="0 0 24 24"
@@ -132,6 +143,7 @@ const IcoUser = () => (
     <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
   </svg>
 )
+/** 创建日期信息图标。 */
 const IcoCalendar = () => (
   <svg
     viewBox="0 0 24 24"
@@ -148,6 +160,7 @@ const IcoCalendar = () => (
     <path d="M4 9.5h16M8 3.5v4M16 3.5v4" />
   </svg>
 )
+/** 视频下载操作图标。 */
 const IcoDownload = () => (
   <svg
     viewBox="0 0 24 24"
@@ -164,12 +177,172 @@ const IcoDownload = () => (
   </svg>
 )
 
+/** 单个视频卡片的权限结果、展示数据和操作回调。 */
+interface ProjectVideoCardProps {
+  item: ProjectVideo
+  canModify: boolean
+  canDelete: boolean
+  durationSeconds: number
+  menuOpen: boolean
+  onOpen: (item: ProjectVideo) => void
+  onEdit: (item: ProjectVideo) => void
+  onDownload: (item: ProjectVideo) => void
+  onPublish: (item: ProjectVideo) => void
+  onDelete: (item: ProjectVideo) => void
+  onToggleMenu: (videoId: string) => void
+  onDuration: (videoId: string, durationSeconds: number) => void
+}
+
+// 卡片只负责按父组件计算好的权限渲染操作入口；查看与下载始终对可访问项目的成员开放。
+const ProjectVideoCard = memo(function ProjectVideoCard({
+  item,
+  canModify,
+  canDelete,
+  durationSeconds,
+  menuOpen,
+  onOpen,
+  onEdit,
+  onDownload,
+  onPublish,
+  onDelete,
+  onToggleMenu,
+  onDuration,
+}: ProjectVideoCardProps) {
+  const { active, activationProps } = useMediaCardActivation()
+  const coverImage = item.coverUrl && !isVideoCover(item.coverUrl) ? item.coverUrl : ''
+  const openPrimary = () => (item.videoUrl ? onOpen(item) : canModify ? onEdit(item) : onOpen(item))
+
+  return (
+    <article className="pvlist-card" {...activationProps}>
+      <div className="pvlist-card__media">
+        <button
+          type="button"
+          className="pvlist-card__cover"
+          aria-label={`查看视频：${item.title}`}
+          onClick={openPrimary}
+        >
+          {item.videoUrl ? (
+            <>
+              <span className="pvlist-card__placeholder">视频</span>
+              <LazyMediaVideo
+                src={item.videoUrl}
+                poster={coverImage || undefined}
+                active={active || menuOpen}
+                onLoadedMetadata={(event) => {
+                  const measured = Math.round(event.currentTarget.duration)
+                  if (Number.isFinite(measured) && measured > 0) onDuration(item.id, measured)
+                }}
+                onError={(event) => {
+                  event.currentTarget.style.display = 'none'
+                }}
+              />
+            </>
+          ) : coverImage ? (
+            <img
+              src={coverImage}
+              alt={item.title}
+              loading="lazy"
+              onError={(event) => {
+                event.currentTarget.style.display = 'none'
+              }}
+            />
+          ) : (
+            <span className="pvlist-card__placeholder">视频</span>
+          )}
+          <span className="pvlist-card__play" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18">
+              <path d="M9 7.2 17 12l-8 4.8z" fill="#fff" />
+            </svg>
+          </span>
+          <span className="pvlist-card__duration">{formatVideoDuration(durationSeconds)}</span>
+        </button>
+        <div className="pvlist-card__menu-wrap">
+          <button
+            type="button"
+            className="pvlist-card__more"
+            aria-label="更多操作"
+            aria-expanded={menuOpen}
+            onClick={() => onToggleMenu(item.id)}
+          >
+            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+              <circle cx="4" cy="10" r="1.5" fill="currentColor" />
+              <circle cx="10" cy="10" r="1.5" fill="currentColor" />
+              <circle cx="16" cy="10" r="1.5" fill="currentColor" />
+            </svg>
+          </button>
+          {menuOpen ? (
+            <div className="pvlist-card__menu">
+              <button type="button" onClick={() => onOpen(item)}>
+                查看详情
+              </button>
+              {canModify ? (
+                <button type="button" onClick={() => onEdit(item)}>
+                  进入编辑
+                </button>
+              ) : null}
+              <button type="button" onClick={() => onDownload(item)}>
+                下载视频
+              </button>
+              {canModify ? (
+                <button type="button" onClick={() => onPublish(item)}>
+                  标记发布
+                </button>
+              ) : null}
+              {canDelete ? (
+                <button type="button" className="is-danger" onClick={() => onDelete(item)}>
+                  删除视频
+                </button>
+              ) : null}
+              {!canModify && !canDelete ? <div className="pvlist-card__menu-hint">当前仅可查看和下载</div> : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="pvlist-card__body">
+        <div className="pvlist-card__head">
+          <button type="button" className="pvlist-card__title" onClick={openPrimary}>
+            {item.title}
+          </button>
+          <span className={`pvlist-card__status is-${item.status}`}>{getVideoStatusText(item.status)}</span>
+        </div>
+        <div className="pvlist-card__info">
+          <span className="pvlist-card__info-item">
+            <IcoClock />
+            {formatVideoDuration(durationSeconds)}
+          </span>
+          <span className="pvlist-card__info-item pvlist-card__info-item--author">
+            <IcoUser />
+            {item.createdByName}
+          </span>
+        </div>
+        <div className="pvlist-card__info pvlist-card__info--row2">
+          <span className="pvlist-card__info-item">
+            <IcoCalendar />
+            {formatVideoDate(item.createdAt)}
+          </span>
+          <button
+            type="button"
+            className={`pvlist-card__download${item.videoUrl ? '' : ' is-disabled'}`}
+            aria-label="下载视频"
+            title="下载视频"
+            onClick={() => onDownload(item)}
+          >
+            <IcoDownload />
+          </button>
+        </div>
+      </div>
+    </article>
+  )
+})
+
+/** 加载并渲染项目下的视频列表，统一处理筛选、权限和媒体操作。 */
 export default function ProjectVideoListView() {
   const navigate = useNavigate()
   const params = useParams()
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const currentUser = useCurrentUser() as any
+  const currentWorkspace = useCurrentWorkspace() as any
   const workspaceId = useWorkspaceId()
   const projectId = Number(params.projectId || 0)
   // 当前用户显示名(多字段兜底),用于与视频 createdByName 比对判断是否有修改权限
@@ -178,20 +351,37 @@ export default function ProjectVideoListView() {
   // 权限判断:用 user_id 而非 createdByName,因为后端项目列表不返回创建者昵称字段,
   // createdByName 一律回退成当前用户名导致谁都能操作。
   // createdByUserId=0 表示无法判定归属(如手动归类的视频),保守处理:不允许操作。
-  const currentUserId = Number(currentUser?.id ?? currentUser?.userId ?? 0) || 0
-  const canModify = (item: ProjectVideo) => {
-    const ownerId = Number(item.createdByUserId ?? 0) || 0
-    return ownerId > 0 && ownerId === currentUserId
-  }
+  const currentUserId = resolveUserId(currentUser)
+  // 编辑/发布按视频创建者判定，不能用显示名比较，避免同名或后端昵称回退造成越权。
+  const canModify = useCallback(
+    (item: ProjectVideo) => {
+      const ownerId = Number(item.createdByUserId ?? 0) || 0
+      return ownerId > 0 && ownerId === currentUserId
+    },
+    [currentUserId],
+  )
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [projectTitle, setProjectTitle] = useState('')
+  const [projectOwnerId, setProjectOwnerId] = useState(0)
   const [editorCount, setEditorCount] = useState(0)
   const [newVideoOpen, setNewVideoOpen] = useState(false)
   const [videos, setVideos] = useState<ProjectVideo[]>([])
-  // 工作空间成员(含头像/昵称),供归属人按 user_id 查名字
-  const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([])
+  const { workspaceMembers: effectiveWorkspaceMembers, currentWorkspaceRole } = useWorkspaceMemberAccess({
+    workspaceId,
+    currentUserId,
+    currentWorkspace,
+  })
+  // 删除按项目所有权判定：普通成员即使能查看、下载，也不能删除项目中的任何视频。
+  const canDeleteVideo = useCallback(
+    (_item: ProjectVideo) =>
+      currentUserId > 0 &&
+      (currentUserId === projectOwnerId || currentWorkspaceRole === 'owner' || currentWorkspaceRole === 'admin'),
+    [currentUserId, currentWorkspaceRole, projectOwnerId],
+  )
+  const canDeleteVideoRef = useRef(canDeleteVideo)
+  canDeleteVideoRef.current = canDeleteVideo
 
   const [query, setQuery] = useState('')
   const [sortBy, setSortBy] = useState<SortKey>('updatedAt')
@@ -205,38 +395,32 @@ export default function ProjectVideoListView() {
   // 后端视频版本常不带时长 → 从 <video> 元数据里读真实时长(键为卡片 id),展示时优先用它
   const [durations, setDurations] = useState<Record<string, number>>({})
   const durationOf = (item: ProjectVideo) => durations[item.id] || Number(item.durationSeconds || 0)
+  const updateDuration = useCallback((videoId: string, measuredDuration: number) => {
+    setDurations((prev) => (prev[videoId] === measuredDuration ? prev : { ...prev, [videoId]: measuredDuration }))
+  }, [])
+  const toggleVideoMenu = useCallback((videoId: string) => {
+    setOpenMenuId((prev) => (prev === videoId ? '' : videoId))
+  }, [])
 
   const handleNavigate = useSidebarNavigate()
 
-  // 拉取工作空间成员,供归属人按 user_id 查名字
   const workspaceIdRef = useRef(0)
+  const projectIdRef = useRef(0)
+  const loadRequestSeqRef = useRef(0)
   useEffect(() => {
     workspaceIdRef.current = Number(workspaceId || 0)
-  }, [workspaceId])
-  useEffect(() => {
-    const wsId = Number(workspaceId || 0)
-    if (!wsId) {
-      setWorkspaceMembers([])
-      return
-    }
-    let cancelled = false
-    listWorkspaceMembers(wsId)
-      .then((result: any) => {
-        if (!cancelled && Number(workspaceIdRef.current || 0) === wsId)
-          setWorkspaceMembers(Array.isArray(result) ? result : [])
-      })
-      .catch(() => {
-        if (!cancelled) setWorkspaceMembers([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [workspaceId])
-
+    projectIdRef.current = projectId
+  }, [projectId, workspaceId])
+  // 同时加载项目元信息和视频清单；请求快照确保快速切换项目/空间时只接收最后一次响应。
   const loadData = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
+    const requestSeq = ++loadRequestSeqRef.current
+    const isCurrentRequest = () =>
+      loadRequestSeqRef.current === requestSeq && workspaceIdRef.current === wsId && projectIdRef.current === projectId
+
     if (!projectId || !wsId) {
       setProjectTitle('')
+      setProjectOwnerId(0)
       setVideos([])
       setLoading(false)
       return
@@ -248,9 +432,16 @@ export default function ProjectVideoListView() {
         workspaceId: wsId,
         currentUserName: userName,
         currentUserId,
-        workspaceMembers,
+        workspaceMembers: effectiveWorkspaceMembers,
       })
+      if (!isCurrentRequest()) return
+      if (isCreativeProjectRestrictedForUser(payload.project, currentUserId)) {
+        showToast('您没有权限访问该项目', 'error')
+        navigate('/projects', { replace: true })
+        return
+      }
       setProjectTitle(String(payload.project?.title || payload.project?.name || '未命名项目'))
+      setProjectOwnerId(resolveCreativeProjectOwnerId(payload.project))
       const count =
         Number(
           payload.project?.editor_count ?? payload.project?.editorCount ?? payload.project?.data?.editor_count ?? 0,
@@ -262,27 +453,22 @@ export default function ProjectVideoListView() {
         payload.project?.draft_json ?? payload.project?.data?.draft_json ?? payload.project?.draft,
       )
       setProjectFlow(resolveProjectFlowFromDraft(draft) || '')
-      // 受限成员拦截:直接访问 URL 时若在 restrictedMemberIds 中则跳回列表
-      if (currentUserId > 0) {
-        const restricted: number[] = draft?.restrictedMemberIds ?? draft?.restricted_member_ids ?? []
-        if (Array.isArray(restricted) && restricted.some((id: any) => Number(id) === currentUserId)) {
-          showToast('您没有权限访问该项目', 'error')
-          navigate('/projects', { replace: true })
-          setLoading(false)
-          return
-        }
-      }
     } catch (error: any) {
+      if (!isCurrentRequest()) return
       setVideos([])
       setProjectTitle('')
+      setProjectOwnerId(0)
       showToast(error?.message || '项目视频加载失败，请稍后重试', 'error')
     } finally {
-      setLoading(false)
+      if (isCurrentRequest()) setLoading(false)
     }
-  }, [projectId, workspaceId, showToast, userName, currentUserId, workspaceMembers, navigate])
+  }, [projectId, workspaceId, showToast, userName, currentUserId, effectiveWorkspaceMembers, navigate])
 
   useEffect(() => {
     loadData()
+    return () => {
+      loadRequestSeqRef.current += 1
+    }
   }, [loadData])
 
   useEffect(() => {
@@ -300,6 +486,7 @@ export default function ProjectVideoListView() {
     return () => window.removeEventListener('pointerdown', onPointerDown, true)
   }, [openMenuId])
 
+  // 所有筛选先在完整列表上组合执行，再统一排序和分页，保证页码与筛选结果数量一致。
   const filteredVideos = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     const filtered = videos.filter((item) => {
@@ -333,14 +520,30 @@ export default function ProjectVideoListView() {
 
   const openEditor = useCallback(
     (video: ProjectVideo) => {
-      const qs = workspaceId ? `?workspace_id=${workspaceId}` : ''
+      const query = new URLSearchParams()
+      const targetWorkspaceId = Number(workspaceId || video.workspaceId || 0)
+      if (targetWorkspaceId > 0) query.set('workspace_id', String(targetWorkspaceId))
+      query.set('video_id', String(video.id))
+      const videoAssetId = Number(video.videoAssetId || 0)
+      const selectedVideoAssetId = Number.isFinite(videoAssetId) && videoAssetId > 0 ? Math.floor(videoAssetId) : 0
+      if (selectedVideoAssetId > 0) query.set('video_asset_id', String(selectedVideoAssetId))
       // 按真实流程分流编辑器:爆款复制 → /hot-copy/:id;其余(智能成片/旧创作)→ /smart/:id
       const base = video.flow === 'hot-copy' ? '/hot-copy' : '/smart'
-      navigate(`${base}/${projectId}${qs}`)
+      navigate(`${base}/${projectId}?${query.toString()}`, {
+        state: {
+          projectVideoSelection: {
+            projectId,
+            workspaceId: targetWorkspaceId,
+            videoId: String(video.id),
+            ...(selectedVideoAssetId > 0 ? { videoAssetId: selectedVideoAssetId } : {}),
+          },
+        },
+      })
     },
     [navigate, projectId, workspaceId],
   )
 
+  // 下载不要求修改权限：只要成员能访问项目并且视频有地址，就可以保存到本地。
   const downloadVideo = useCallback(
     async (video: ProjectVideo) => {
       if (!video.videoUrl) {
@@ -352,6 +555,9 @@ export default function ProjectVideoListView() {
         showToast('视频下载中…', 'success')
         const r = await downloadToDisk({ fileName, resolveUrl: () => video.videoUrl })
         if (r === 'done') showToast('视频已保存', 'success')
+        else if (r === 'started') {
+          showToast('已开始下载，请查看浏览器下载列表', 'info')
+        }
       } catch (err: any) {
         showToast(err?.message || '下载失败,请稍后重试', 'error')
       }
@@ -390,28 +596,54 @@ export default function ProjectVideoListView() {
 
   const handlePublish = useCallback(
     async (video: ProjectVideo) => {
+      if (!canModify(video)) {
+        showToast('仅视频创建者可以发布视频', 'error')
+        return
+      }
       const wsId = Number(workspaceId || 0)
       if (!projectId || !wsId) return
-      await publishProjectVideo({ projectId, workspaceId: wsId, videoId: video.id })
-      showToast('视频已标记为已发布', 'success')
-      setOpenMenuId('')
-      await loadData()
+      try {
+        await publishProjectVideo({ projectId, workspaceId: wsId, videoId: video.id })
+        if (workspaceIdRef.current !== wsId || projectIdRef.current !== projectId) return
+        showToast('视频已标记为已发布', 'success')
+        setOpenMenuId('')
+        await loadData()
+      } catch (error: any) {
+        if (workspaceIdRef.current !== wsId || projectIdRef.current !== projectId) return
+        showToast(error?.message || '视频发布失败，请稍后重试', 'error')
+      }
     },
-    [workspaceId, projectId, loadData, showToast],
+    [canModify, workspaceId, projectId, loadData, showToast],
   )
 
+  // 删除在确认前后各校验一次，并核对当前 workspace/project，防止弹窗期间切页后误删旧目标。
   const handleDelete = useCallback(
     async (video: ProjectVideo) => {
+      if (!canDeleteVideo(video)) {
+        showToast('仅项目创建者或空间管理员可以删除视频', 'error')
+        return
+      }
       const confirmed = await requestConfirm(`确定删除视频「${video.title}」吗？该操作不可恢复。`)
       if (!confirmed) return
+      if (!canDeleteVideoRef.current(video)) {
+        showToast('仅项目创建者或空间管理员可以删除视频', 'error')
+        return
+      }
       const wsId = Number(workspaceId || 0)
       if (!projectId || !wsId) return
-      await deleteProjectVideo({ projectId, workspaceId: wsId, videoId: video.id })
-      showToast('视频已删除', 'success')
-      setOpenMenuId('')
-      await loadData()
+      if (workspaceIdRef.current !== wsId || projectIdRef.current !== projectId) return
+      try {
+        await deleteProjectVideo({ projectId, workspaceId: wsId, videoId: video.id })
+        if (workspaceIdRef.current !== wsId || projectIdRef.current !== projectId) return
+        showToast('视频已删除', 'success')
+        setOpenMenuId('')
+        await loadData()
+      } catch (error: any) {
+        if (workspaceIdRef.current !== wsId || projectIdRef.current !== projectId) return
+        showToast(error?.message || '视频删除失败，请稍后重试', 'error')
+      }
     },
-    [requestConfirm, workspaceId, projectId, loadData, showToast],
+    [canDeleteVideo, requestConfirm, workspaceId, projectId, loadData, showToast],
   )
 
   const pageNumbers = useMemo(() => {
@@ -503,6 +735,7 @@ export default function ProjectVideoListView() {
                       <option value="draft">草稿</option>
                       <option value="processing">制作中</option>
                       <option value="published">已发布</option>
+                      <option value="failed">失败</option>
                     </select>
                   </label>
                   <label className="pvlist-select">
@@ -543,133 +776,21 @@ export default function ProjectVideoListView() {
             ) : (
               <section className="pvlist-grid" aria-label="项目视频列表">
                 {pagedVideos.map((item) => (
-                  <article className="pvlist-card" key={item.id}>
-                    <div className="pvlist-card__media">
-                      <button
-                        type="button"
-                        className="pvlist-card__cover"
-                        onClick={() =>
-                          item.videoUrl ? openDetail(item) : canModify(item) ? openEditor(item) : openDetail(item)
-                        }
-                      >
-                        {item.videoUrl ? (
-                          // 优先用视频流取首帧(同源 /download,不过期),比可能损坏/过期的封面图可靠;
-                          // 同时从元数据读真实时长,补上后端缺失的时长(--:--)
-                          <video
-                            src={`${item.videoUrl}#t=0.1`}
-                            muted
-                            playsInline
-                            preload="metadata"
-                            onLoadedMetadata={(e) => {
-                              const d = Math.round((e.currentTarget as HTMLVideoElement).duration)
-                              if (Number.isFinite(d) && d > 0) {
-                                setDurations((prev) => (prev[item.id] === d ? prev : { ...prev, [item.id]: d }))
-                              }
-                            }}
-                          />
-                        ) : item.coverUrl && !isVideoCover(item.coverUrl) ? (
-                          <img
-                            src={item.coverUrl}
-                            alt={item.title}
-                            onError={(e) => {
-                              // 封面图加载失败(过期/失效)→ 隐藏裂图,露出灰底占位,不再显示破图
-                              ;(e.currentTarget as HTMLImageElement).style.display = 'none'
-                            }}
-                          />
-                        ) : (
-                          <span className="pvlist-card__placeholder">视频</span>
-                        )}
-                        <span className="pvlist-card__play" aria-hidden="true">
-                          <svg viewBox="0 0 24 24" width="18" height="18">
-                            <path d="M9 7.2 17 12l-8 4.8z" fill="#fff" />
-                          </svg>
-                        </span>
-                        <span className="pvlist-card__duration">{formatVideoDuration(durationOf(item))}</span>
-                      </button>
-                      <div className="pvlist-card__menu-wrap">
-                        <button
-                          type="button"
-                          className="pvlist-card__more"
-                          aria-label="更多操作"
-                          onClick={() => setOpenMenuId((prev) => (prev === item.id ? '' : item.id))}
-                        >
-                          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
-                            <circle cx="4" cy="10" r="1.5" fill="currentColor" />
-                            <circle cx="10" cy="10" r="1.5" fill="currentColor" />
-                            <circle cx="16" cy="10" r="1.5" fill="currentColor" />
-                          </svg>
-                        </button>
-                        {openMenuId === item.id ? (
-                          <div className="pvlist-card__menu">
-                            <button type="button" onClick={() => openDetail(item)}>
-                              查看详情
-                            </button>
-                            {canModify(item) ? (
-                              <button type="button" onClick={() => openEditor(item)}>
-                                进入编辑
-                              </button>
-                            ) : null}
-                            <button type="button" onClick={() => downloadVideo(item)}>
-                              下载视频
-                            </button>
-                            {canModify(item) ? (
-                              <>
-                                <button type="button" onClick={() => handlePublish(item)}>
-                                  标记发布
-                                </button>
-                                <button type="button" className="is-danger" onClick={() => handleDelete(item)}>
-                                  删除视频
-                                </button>
-                              </>
-                            ) : (
-                              <div className="pvlist-card__menu-hint">仅视频创建者可管理</div>
-                            )}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="pvlist-card__body">
-                      <div className="pvlist-card__head">
-                        <button
-                          type="button"
-                          className="pvlist-card__title"
-                          onClick={() =>
-                            item.videoUrl ? openDetail(item) : canModify(item) ? openEditor(item) : openDetail(item)
-                          }
-                        >
-                          {item.title}
-                        </button>
-                        <span className={`pvlist-card__status is-${item.status}`}>
-                          {getVideoStatusText(item.status)}
-                        </span>
-                      </div>
-                      <div className="pvlist-card__info">
-                        <span className="pvlist-card__info-item">
-                          <IcoClock />
-                          {formatVideoDuration(durationOf(item))}
-                        </span>
-                        <span className="pvlist-card__info-item pvlist-card__info-item--author">
-                          <IcoUser />
-                          {item.createdByName}
-                        </span>
-                      </div>
-                      <div className="pvlist-card__info pvlist-card__info--row2">
-                        <span className="pvlist-card__info-item">
-                          <IcoCalendar />
-                          {formatVideoDate(item.createdAt)}
-                        </span>
-                        <button
-                          type="button"
-                          className={`pvlist-card__download${item.videoUrl ? '' : ' is-disabled'}`}
-                          aria-label="下载视频"
-                          title="下载视频"
-                          onClick={() => downloadVideo(item)}
-                        >
-                          <IcoDownload />
-                        </button>
-                      </div>
-                    </div>
-                  </article>
+                  <ProjectVideoCard
+                    key={item.id}
+                    item={item}
+                    canModify={canModify(item)}
+                    canDelete={canDeleteVideo(item)}
+                    durationSeconds={durationOf(item)}
+                    menuOpen={openMenuId === item.id}
+                    onOpen={openDetail}
+                    onEdit={openEditor}
+                    onDownload={downloadVideo}
+                    onPublish={handlePublish}
+                    onDelete={handleDelete}
+                    onToggleMenu={toggleVideoMenu}
+                    onDuration={updateDuration}
+                  />
                 ))}
               </section>
             )}

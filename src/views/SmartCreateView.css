@@ -17,6 +17,28 @@
   flex-direction: column;
 }
 
+/* 入口页任务管理：桌面按 Figma 从侧栏旁展开并重新分配内容宽度；窄屏由抽屉自身切换为覆盖层。 */
+.smart__entry-with-tasks {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.smart__entry-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.smart__entry-content > * {
+  flex: 1;
+  min-width: 0;
+}
+
 /* 创建新视频:流程区最右上(复用入口「制作新视频」样式),点击重置为全新入口、重新走一遍 */
 .smart__newvideo {
   position: absolute;
@@ -1090,4 +1112,69 @@
 
 .smart__btn--text:hover:not(:disabled) {
   color: #1cbd9c;
+}
+.creative-draft-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  margin-left: 10px;
+  padding: 3px 9px;
+  border: 1px solid rgba(87, 103, 229, 0.14);
+  border-radius: 999px;
+  color: #7a8293;
+  background: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.creative-draft-save__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.creative-draft-save.is-saving {
+  color: #5767e5;
+}
+
+.creative-draft-save.is-dirty {
+  color: #a66b12;
+  border-color: rgba(166, 107, 18, 0.18);
+  background: rgba(255, 250, 238, 0.92);
+}
+
+.creative-draft-save.is-saving .creative-draft-save__dot {
+  animation: creative-draft-save-pulse 1s ease-in-out infinite;
+}
+
+.creative-draft-save.is-saved {
+  color: #1fa987;
+}
+
+.creative-draft-save.is-error,
+.creative-draft-save.is-conflict {
+  color: #d94c4c;
+  border-color: rgba(217, 76, 76, 0.2);
+  background: rgba(255, 246, 246, 0.92);
+}
+
+.creative-draft-save__retry {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@keyframes creative-draft-save-pulse {
+  50% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
 }

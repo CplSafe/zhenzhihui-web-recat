@@ -1,15 +1,21 @@
 /**
- * 案例库页面 — 仅展示有生成视频的项目（listTemplates），
- * 卡片样式与首页历史项目统一（封面图 + 标题 + 比例 + 风格）。
+ * 模板库页面（/templates）
+ *
+ * 页面职责：集中展示可预览、可复用的视频模板，并提供比例与关键词筛选。
+ * 用户可见效果：模板按真实视频比例组成卡片网格，支持播放、下载、收藏、进入详情和“做同款”；
+ * 页面会明确标记当前使用在线模板还是内置模板，并为加载中、空数据、失败重试提供对应状态。
+ * 数据与隔离：收藏按工作空间保存；异步详情跳转会校验发起请求时的工作空间，避免切换空间后误入旧项目。
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
-import { type TemplateItem, listBackendTemplates } from '@/api/templates'
+import { type TemplateItem } from '@/api/templates'
 import { DEMO_TEMPLATES } from '@/data/demoTemplates'
-import { useWorkspaceId } from '@/stores/workspaceSession'
+import { loadTemplateCatalog, type TemplateCatalogSource } from '@/utils/templateCatalog'
+import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveProjectPath } from '@/utils/projectRoute'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
+import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import VideoPreviewModal from '@/components/common/VideoPreviewModal'
@@ -17,7 +23,9 @@ import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './HomeView.css'
 import './TemplatesView.css'
 
+// 仅展示目录中实际存在的比例；空字符串代表“全部”。
 const RATIO_KEYS = ['', '9 / 16', '16 / 9', '4 / 5', '1 / 1', '3 / 4']
+/** 比例筛选值对应的中文展示名称。 */
 const RATIO_LABELS: Record<string, string> = {
   '': '全部',
   '9 / 16': '9:16',
@@ -27,26 +35,41 @@ const RATIO_LABELS: Record<string, string> = {
   '3 / 4': '3:4',
 }
 
+/** 渲染模板筛选、卡片列表及预览/复用交互。 */
 export default function TemplatesView() {
   const navigate = useNavigate()
   const workspaceId = useWorkspaceId()
+  const currentUserId = resolveUserId(useCurrentUser())
   const requireAuth = useRequireAuth()
 
+  // 模板目录状态：先用内置数据保证首屏有内容，再由共享目录加载器决定在线/内置来源。
   const [templates, setTemplates] = useState<TemplateItem[]>(DEMO_TEMPLATES)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [keyword, setKeyword] = useState('')
   const [ratioFilter, setRatioFilter] = useState('')
+  const [templateSource, setTemplateSource] = useState<TemplateCatalogSource>('builtin')
+  const [templateNotice, setTemplateNotice] = useState('')
   const [retry, setRetry] = useState(0)
   // 移动端侧栏抽屉开关(<=900px)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
+  // 两组引用分别防止异步详情解析跨工作空间生效，以及同一视频被连续点击重复下载。
+  const workspaceIdRef = useRef(Number(workspaceId || 0))
+  const openRequestRef = useRef<object | null>(null)
+  const downloadingRef = useRef(new Set<string>())
+  workspaceIdRef.current = Number(workspaceId || 0)
 
-  // 模板收藏(localStorage 占位):收藏的视频进素材市场「我收藏的」
+  // 用户或工作空间改变时，使上一个尚未完成的详情跳转失效。
+  useEffect(() => {
+    openRequestRef.current = null
+  }, [currentUserId, workspaceId])
+
+  // 收藏结果按工作空间保存在 localStorage，并同步显示到素材市场“我收藏的”。
   const [favKeys, setFavKeys] = useState<Set<string>>(new Set())
   useEffect(() => {
     setFavKeys(loadFavoriteKeys(Number(workspaceId || 0)))
-  }, [workspaceId])
+  }, [currentUserId, workspaceId])
   const toggleFav = (tpl: TemplateItem) => {
     const wsId = Number(workspaceId || 0)
     if (!wsId) return
@@ -67,21 +90,52 @@ export default function TemplatesView() {
     })
   }
 
-  // 案例库拉后台配置的模板库(GET /api/v1/templates);为空/失败时用 demo 兜底。
+  // 先根据项目类型解析正确的详情路由；解析期间锁住重复点击，并拒绝旧工作空间的迟到结果。
+  const openTemplate = (tpl: TemplateItem) => {
+    if (openRequestRef.current) return
+    const sourceWorkspaceId = Number(workspaceId || 0)
+    const request = {}
+    openRequestRef.current = request
+    void resolveProjectPath(tpl.id, sourceWorkspaceId)
+      .then((path) => {
+        if (openRequestRef.current === request && workspaceIdRef.current === sourceWorkspaceId) navigate(path)
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (openRequestRef.current === request) openRequestRef.current = null
+      })
+  }
+
+  // 用模板与媒体标识组成下载锁，防止用户快速连点触发多个相同下载任务。
+  const downloadTemplate = (tpl: TemplateItem) => {
+    const key = `${tpl.id}:${tpl.videoAssetId || tpl.videoUrl}`
+    if (downloadingRef.current.has(key)) return
+    downloadingRef.current.add(key)
+    void downloadToDisk({
+      fileName: buildDownloadName(tpl.title || '视频', new Date()),
+      resolveUrl: () => tpl.videoUrl,
+    })
+      .catch(() => undefined)
+      .finally(() => downloadingRef.current.delete(key))
+  }
+
+  // 全应用共享一次远程探测；端点未开放时显式标注内置模板，不重复请求 404。
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    listBackendTemplates()
-      .then((items) => {
+    setError('')
+    loadTemplateCatalog()
+      .then((catalog) => {
         if (cancelled) return
-        const list = items.length ? items : DEMO_TEMPLATES
-        setTemplates(list)
-        setError(list.length ? '' : 'empty')
+        setTemplates(catalog.items)
+        setTemplateSource(catalog.source)
+        setTemplateNotice(catalog.notice)
+        setError(catalog.items.length ? '' : 'empty')
       })
       .catch(() => {
         if (cancelled) return
-        setTemplates(DEMO_TEMPLATES)
-        setError(DEMO_TEMPLATES.length ? '' : 'empty')
+        setTemplates([])
+        setError('api')
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -93,6 +147,7 @@ export default function TemplatesView() {
 
   const keywordTrim = keyword.trim()
 
+  // 筛选顺序：先排除没有成片的记录，再叠加比例与标题关键词条件。
   const filtered = useMemo(() => {
     // 有视频(url 或 assetId)即展示;签名 URL 没换到的也显示(缩略图),与历史项目一致
     let list = templates.filter((t) => Boolean(t.videoUrl) || Boolean(t.videoAssetId))
@@ -101,6 +156,7 @@ export default function TemplatesView() {
     return list
   }, [templates, ratioFilter, keywordTrim])
 
+  // 根据当前目录动态生成比例按钮，避免出现点击后必为空的无效筛选项。
   const availableRatios = useMemo(() => {
     const seen = new Set<string>()
     templates.forEach((t) => seen.add(t.ratio))
@@ -145,6 +201,9 @@ export default function TemplatesView() {
           </button>
           <h2 className="templates-page-title">模板库</h2>
           <span className="templates-count">共 {templates.length} 个模板</span>
+          <span className={`templates-source is-${templateSource}`} title={templateNotice || '来自模板服务'}>
+            {templateSource === 'builtin' ? '内置模板' : '在线模板'}
+          </span>
         </header>
         <div className="home__content templates-content">
           {/* 比例筛选 + 搜索 */}
@@ -199,7 +258,7 @@ export default function TemplatesView() {
             ) : error === 'api' ? (
               <div className="home__placeholder">
                 案例加载失败
-                <button type="button" className="home__retry-btn" onClick={() => setRetry((n) => n + 1)}>
+                <button type="button" className="home__retry-btn" onClick={() => setRetry((value) => value + 1)}>
                   重试
                 </button>
               </div>
@@ -214,12 +273,9 @@ export default function TemplatesView() {
                       className="home__proj templates-card"
                       role="button"
                       tabIndex={0}
-                      onClick={() =>
-                        resolveProjectPath(tpl.id, Number(workspaceId || 0)).then((path) => navigate(path))
-                      }
+                      onClick={() => openTemplate(tpl)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter')
-                          resolveProjectPath(tpl.id, Number(workspaceId || 0)).then((path) => navigate(path))
+                        if (e.key === 'Enter') openTemplate(tpl)
                       }}
                     >
                       {/* 瀑布流缩略图:按视频真实比例(无真实比例时回退 16:10) */}
@@ -266,6 +322,7 @@ export default function TemplatesView() {
                         )}
                         <div className="home__proj-overlay">
                           <span className="home__proj-overlay-text">{tpl.title}</span>
+                          {/* 卡片操作互相独立，均阻止冒泡，避免同时触发卡片的详情跳转。 */}
                           <div className="home__proj-actions">
                             <button
                               type="button"
@@ -283,12 +340,9 @@ export default function TemplatesView() {
                             <button
                               type="button"
                               className="home__proj-action-btn"
-                              onClick={async (e) => {
+                              onClick={(e) => {
                                 e.stopPropagation()
-                                await downloadToDisk({
-                                  fileName: buildDownloadName(tpl.title || '视频', new Date()),
-                                  resolveUrl: () => tpl.videoUrl,
-                                }).catch(() => {})
+                                downloadTemplate(tpl)
                               }}
                             >
                               <svg

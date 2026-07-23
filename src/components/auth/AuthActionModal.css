@@ -141,12 +141,23 @@
   color: #b8bfc9;
   cursor: not-allowed;
 }
-.zauth-captcha {
+.zauth-captcha-button {
   flex: 0 0 auto;
-  height: 34px;
   margin-left: 10px;
+  padding: 0;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
   cursor: pointer;
+}
+.zauth-captcha-button:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 2px;
+}
+.zauth-captcha {
+  display: block;
+  height: 34px;
+  border-radius: 6px;
 }
 .zauth-err {
   display: block;

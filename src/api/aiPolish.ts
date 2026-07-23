@@ -13,6 +13,7 @@ import skillLocalLifeManual from './skills/本地生活.md?raw'
 /** 不同修改框的润色侧重,用于系统提示词。 */
 export type PolishKind = 'script' | 'line' | 'subtitle' | 'sound' | 'segment' | 'generic'
 
+/** 按润色场景隔离的系统提示词，约束模型只输出可直接回填的文本。 */
 const SYSTEM_PROMPTS: Record<PolishKind, string> = {
   script:
     '你是专业的短视频分镜脚本润色助手。在保持原意与画面信息的前提下,让文案更生动、专业、有镜头感。只输出润色后的脚本正文,不要加解释、不要加引号。',
@@ -27,6 +28,7 @@ const SYSTEM_PROMPTS: Record<PolishKind, string> = {
     '只输出润色后的纯文本,严禁输出 JSON、数组、代码块、分镜脚本或 <<<STORYBOARD_JSON>>> 等任何标记,不要解释、不要引号。',
 }
 
+/** 单次文本润色的场景、上下文与取消配置。 */
 export interface PolishOptions {
   kind?: PolishKind
   /** 额外上下文(如所属分镜主体/场景),拼到用户消息里帮助润色 */
@@ -102,24 +104,200 @@ async function chatOnce(system: string, user: string, signal?: AbortSignal, maxT
   return runResponseText({ system, user, temperature: 0.6, maxTokens, signal })
 }
 
+/** 智能成片与爆款复制两种项目命名语境。 */
+export type ProjectNameFlow = 'smart' | 'hot-copy'
+
+/** 用于校验和生成项目名的流程与目标时长上下文。 */
+export interface ProjectNameContext {
+  flow?: ProjectNameFlow
+  durationSec?: number
+}
+
+/** 通过文字需求生成项目名的参数。 */
+export interface GenerateProjectNameOptions extends ProjectNameContext {
+  requirement: string
+  signal?: AbortSignal
+}
+
+/** 项目名规则校验结果，reason 供页面展示或回退。 */
+export interface ProjectNameValidationResult {
+  valid: boolean
+  reason?: string
+}
+
+/** 项目名中的时长与跨流程词识别规则。 */
+const PROJECT_NAME_DURATION_PATTERN = /(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千]+)\s*秒(?:钟)?/
+/** 智能成片项目名中不应出现的爆款复制跨流程词。 */
+const SMART_CROSS_FLOW_PATTERN = /爆款(?:复制|复刻|仿拍|克隆|命名助手)|(?:复制|复刻)爆款/
+/** 爆款复制项目名中不应出现的智能成片跨流程词。 */
+const HOT_COPY_CROSS_FLOW_PATTERN = /智能成片|智能制片/
+
+/** 克隆一个带全局标志的正则，避免复用时 lastIndex 相互影响。 */
+function globalPattern(pattern: RegExp): RegExp {
+  return new RegExp(pattern.source, 'g')
+}
+
+/** 清理 AI 命名输出的换行、空白、引号和标点。 */
+function cleanProjectNameOutput(raw: string): string {
+  return (raw || '')
+    .split(/\r?\n/)[0]
+    .replace(/["'《》「」“”‘’\s]/g, '')
+    .replace(/[。,，.!！?？:：;；]/g, '')
+    .trim()
+}
+
+/** 将常见中文数字表达转为阿拉伯数字，用于项目名时长校验。 */
+function parseChineseNumber(value: string): number | undefined {
+  const digits: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+  }
+  const units: Record<string, number> = { 十: 10, 百: 100, 千: 1000 }
+  if (!/[十百千]/.test(value)) {
+    const joined = Array.from(value)
+      .map((char) => digits[char])
+      .join('')
+    const parsed = Number(joined)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+
+  let total = 0
+  let current = 0
+  for (const char of value) {
+    if (char in digits) {
+      current = digits[char]
+      continue
+    }
+    const unit = units[char]
+    if (!unit) return undefined
+    total += (current || 1) * unit
+    current = 0
+  }
+  return total + current
+}
+
+/** 提取项目名中所有“若干秒”表达并转为数值。 */
+function projectNameDurations(name: string): number[] {
+  const matches = name.match(globalPattern(PROJECT_NAME_DURATION_PATTERN)) || []
+  return matches
+    .map((match) => match.replace(/\s*秒(?:钟)?$/, ''))
+    .map((value) => (/^\d/.test(value) ? Number(value) : parseChineseNumber(value)))
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+}
+
+/** 校验项目名是否符合当前创作流程和目标时长，不会触发 AI 请求。 */
+export function validateProjectName(name: string, context: ProjectNameContext = {}): ProjectNameValidationResult {
+  const value = (name || '').trim()
+  if (!value) return { valid: false, reason: '项目名称为空' }
+  if (value.includes('命名助手')) return { valid: false, reason: '项目名称不能包含“命名助手”' }
+  if (context.flow === 'smart' && SMART_CROSS_FLOW_PATTERN.test(value)) {
+    return { valid: false, reason: '智能成片项目名称不能包含爆款复制或爆款复刻等跨流程词' }
+  }
+  if (context.flow === 'hot-copy' && HOT_COPY_CROSS_FLOW_PATTERN.test(value)) {
+    return { valid: false, reason: '爆款复制项目名称不能包含“智能成片”等跨流程词' }
+  }
+
+  const durations = projectNameDurations(value)
+  if (durations.length) {
+    const expected = Number(context.durationSec)
+    if (!Number.isFinite(expected) || expected <= 0) {
+      return { valid: false, reason: '项目名称不应包含秒数' }
+    }
+    const mismatched = durations.find((duration) => Math.abs(duration - expected) > 0.001)
+    if (mismatched !== undefined) {
+      return {
+        valid: false,
+        reason: `项目名称中的 ${mismatched} 秒与目标时长 ${expected} 秒不一致`,
+      }
+    }
+  }
+  return { valid: true }
+}
+
+/** 本地兜底命名所需的文字需求和流程上下文。 */
+export interface CreateProjectNameFallbackOptions extends ProjectNameContext {
+  requirement: string
+}
+
+/** 根据需求在本地生成安全兜底名称，不会触发 AI 请求。 */
+export function createProjectNameFallback(requirement: string, context?: ProjectNameContext): string
+/** 使用对象参数生成本地兜底项目名。 */
+export function createProjectNameFallback(options: CreateProjectNameFallbackOptions): string
+/** 兼容字符串和对象两种调用形式的兜底命名实现。 */
+export function createProjectNameFallback(
+  input: string | CreateProjectNameFallbackOptions,
+  suppliedContext: ProjectNameContext = {},
+): string {
+  const requirement = typeof input === 'string' ? input : input?.requirement || ''
+  const context = typeof input === 'string' ? suppliedContext : input
+  const crossFlowPattern =
+    context.flow === 'smart'
+      ? globalPattern(SMART_CROSS_FLOW_PATTERN)
+      : context.flow === 'hot-copy'
+        ? globalPattern(HOT_COPY_CROSS_FLOW_PATTERN)
+        : undefined
+  let name = cleanProjectNameOutput(requirement).replace(globalPattern(PROJECT_NAME_DURATION_PATTERN), '')
+  if (crossFlowPattern) name = name.replace(crossFlowPattern, '')
+  name = name.replace(/命名助手/g, '').trim()
+  name = Array.from(name).slice(0, 12).join('')
+
+  const fallback = context.flow === 'hot-copy' ? '爆款复制项目' : '智能成片项目'
+  return name && validateProjectName(name, context).valid ? name : fallback
+}
+
+/** 按当前流程和时长规则组装项目命名系统提示词。 */
+function projectNameSystemPrompt(context: ProjectNameContext): string {
+  const flowRule =
+    context.flow === 'smart'
+      ? '当前业务是“智能成片”，名称必须围绕用户的智能成片创作主题，严禁出现“爆款复制”“爆款复刻”“爆款仿拍”等其他流程词。'
+      : context.flow === 'hot-copy'
+        ? '当前业务是“爆款复制”，名称应围绕源视频的复刻或改编主题，严禁出现“智能成片”等其他流程词。'
+        : '名称应准确概括用户的短视频创作主题。'
+  const durationRule =
+    Number.isFinite(Number(context.durationSec)) && Number(context.durationSec) > 0
+      ? `目标视频时长是 ${Number(context.durationSec)} 秒，该时长只用于理解创作约束，不要写入项目名称。`
+      : '不要在项目名称中写视频秒数。'
+  return (
+    '你是短视频项目命名专家。根据用户的创作需求，起一个简洁、贴切、有吸引力的中文项目名称。' +
+    flowRule +
+    durationRule +
+    '所有流程的名称都不得包含“命名助手”。要求:尽量简洁(大约 6 到 12 个字,完整表达即可),不含标点、引号、书名号、空格、序号,不要任何解释。只输出名称本身。'
+  )
+}
+
 /**
  * 根据用户的创作需求,自动生成简洁贴切的项目名称。
  * 失败抛错;调用方自行兜底(保留原名)。
  */
-export async function generateProjectName(requirement: string, signal?: AbortSignal): Promise<string> {
-  const req = (requirement || '').trim()
+export function generateProjectName(requirement: string, signal?: AbortSignal): Promise<string>
+/** 使用结构化上下文生成项目名。 */
+export function generateProjectName(options: GenerateProjectNameOptions, signal?: AbortSignal): Promise<string>
+/** 兼容字符串和对象参数的 AI 命名实现。 */
+export async function generateProjectName(
+  input: string | GenerateProjectNameOptions,
+  signal?: AbortSignal,
+): Promise<string> {
+  const options = typeof input === 'string' ? undefined : input
+  const req = (typeof input === 'string' ? input : input?.requirement || '').trim()
   if (!req) throw new Error('请输入创作需求')
-  const system =
-    '你是项目命名助手。根据用户的短视频创作需求,起一个简洁、贴切、有吸引力的中文项目名称。' +
-    '要求:尽量简洁(大约 6 到 12 个字,完整表达即可),不含标点、引号、书名号、空格、序号,不要任何解释。只输出名称本身。'
-  let name = await chatOnce(system, req, signal, 32)
+  const context: ProjectNameContext = { flow: options?.flow, durationSec: options?.durationSec }
+  const name = cleanProjectNameOutput(
+    await chatOnce(projectNameSystemPrompt(context), req, signal ?? options?.signal, 32),
+  )
   // 兜底清洗:去引号/标点/空白,只取首行(不截断字数,保留完整名称)
-  name = name
-    .replace(/["'《》「」“”‘’\s]/g, '')
-    .replace(/[。,，.!！?？:：;；]/g, '')
-    .trim()
-  name = name.split('\n')[0]
   if (!name) throw new Error('生成名称为空,请重试')
+  const validation = validateProjectName(name, context)
+  if (!validation.valid) throw new Error(`生成名称不符合要求：${validation.reason}`)
   return name
 }
 
@@ -128,28 +306,56 @@ export async function generateProjectName(requirement: string, signal?: AbortSig
  * 用于「未填写创作需求、仅上传了素材」时:看图识别实际产品/主体/场景后命名。
  * 可选附上需求文字作为补充语境。失败抛错;调用方自行兜底(保留原名)。
  */
-export async function generateProjectNameFromImages(
+export interface GenerateProjectNameFromImagesOptions extends ProjectNameContext {
+  requirement?: string
+  signal?: AbortSignal
+}
+
+/** 结合素材图和可选文字需求生成项目名，并执行与文本命名相同的规则校验。 */
+export function generateProjectNameFromImages(
   images: string[],
   requirement?: string,
+  signal?: AbortSignal,
+): Promise<string>
+/** 使用图片和结构化上下文生成项目名。 */
+export function generateProjectNameFromImages(
+  images: string[],
+  options?: GenerateProjectNameFromImagesOptions,
+  signal?: AbortSignal,
+): Promise<string>
+/** 兼容文字和对象补充信息的多模态命名实现。 */
+export async function generateProjectNameFromImages(
+  images: string[],
+  input?: string | GenerateProjectNameFromImagesOptions,
   signal?: AbortSignal,
 ): Promise<string> {
   const imgs = (images || []).filter(Boolean)
   if (!imgs.length) throw new Error('请先上传素材')
+  const options = typeof input === 'string' ? undefined : input
+  const requirement = typeof input === 'string' ? input : options?.requirement
+  const context: ProjectNameContext = { flow: options?.flow, durationSec: options?.durationSec }
   const system =
-    '你是项目命名助手。下面随请求附上了用户上传的素材图(产品/主体/场景)。请逐张看清图中实际出现的物体/品牌/场景,' +
+    '你是素材理解专家。下面随请求附上了用户上传的素材图(产品/主体/场景)。请逐张看清图中实际出现的物体/品牌/场景,' +
     '据此为这条短视频项目起一个简洁、贴切、有吸引力的中文项目名称。' +
-    '要求:紧扣素材实际内容、不臆造;尽量简洁(大约 6 到 12 个字,完整表达即可),不含标点、引号、书名号、空格、序号,不要任何解释。只输出名称本身。'
+    '要求:紧扣素材实际内容、不臆造。' +
+    projectNameSystemPrompt(context)
   const user =
     (requirement?.trim() ? `用户补充想法:${requirement.trim()}\n` : '') +
     `已随请求附上 ${imgs.length} 张素材图,请据图为项目命名。`
-  let name = await runResponseText({ system, user, images: imgs, temperature: 0.6, maxTokens: 48, signal })
+  const name = cleanProjectNameOutput(
+    await runResponseText({
+      system,
+      user,
+      images: imgs,
+      temperature: 0.6,
+      maxTokens: 48,
+      signal: signal ?? options?.signal,
+    }),
+  )
   // 与 generateProjectName 一致的兜底清洗:去引号/标点/空白,只取首行
-  name = name
-    .replace(/["'《》「」“”‘’\s]/g, '')
-    .replace(/[。,，.!！?？:：;；]/g, '')
-    .trim()
-  name = name.split('\n')[0]
   if (!name) throw new Error('生成名称为空,请重试')
+  const validation = validateProjectName(name, context)
+  if (!validation.valid) throw new Error(`生成名称不符合要求：${validation.reason}`)
   return name
 }
 
@@ -201,6 +407,7 @@ export async function matchUploadsToSubjects(
         const imageIndexes = (Array.isArray(p?.imageIndexes) ? p.imageIndexes : [])
           .map((x: any) => Number(x) || 0)
           .filter((n: number) => n >= 1 && n <= imgs.length)
+          .filter((n: number, index: number, all: number[]) => all.indexOf(n) === index)
         const matchesRaw = Array.isArray(p?.matches) ? p.matches : []
         const matches: string[] = []
         for (const rawN of matchesRaw) {
@@ -254,13 +461,19 @@ export async function suggestOptions(
   try {
     const arr = JSON.parse(m ? m[0] : raw)
     if (Array.isArray(arr)) {
+      const normalizeOption = (value: unknown) =>
+        String(value)
+          .replace(/["'\s]/g, '')
+          .trim()
+      const excluded = new Set(exclude.map(normalizeOption).filter(Boolean))
+      const seen = new Set<string>()
       return arr
-        .map((x) =>
-          String(x)
-            .replace(/["'\s]/g, '')
-            .trim(),
-        )
-        .filter(Boolean)
+        .map(normalizeOption)
+        .filter((value) => {
+          if (!value || excluded.has(value) || seen.has(value)) return false
+          seen.add(value)
+          return true
+        })
         .slice(0, 5)
     }
   } catch {
@@ -270,32 +483,14 @@ export async function suggestOptions(
 }
 
 /**
- * AI 引导(入口页):把用户粗略的创作需求梳理、补全成更清晰可执行的"创作需求"。
- * 注意:这不是写分镜脚本/台词,只是帮用户把 brief 想得更专业完整(信息流广告视角)。
- */
-export async function guideRequirement(text: string, signal?: AbortSignal): Promise<string> {
-  const req = (text || '').trim()
-  if (!req) throw new Error('请先输入创作需求')
-  const system =
-    '你是资深信息流广告策划。用户会提供产品及若干要素(可能不全)。请基于"信息流需求三角(创造需求→介绍产品→呼吁行动)"' +
-    '和"前3秒钩子→痛点→产品卖点→信任→行动号召(CTA)"的逻辑,把它整理、补全成一份清晰可执行的"创作需求"。' +
-    '需覆盖:【产品/品牌】【目标人群】【用户痛点/诉求】【核心卖点(利益点)】【使用场景】【营销目标与CTA】【表现形式/剧情类型】【风格调性】;' +
-    '用户没提到的要素,基于信息流广告经验补充合理建议(但必须紧扣其产品,不要脱离产品臆造)。' +
-    '输出一份结构清晰的"创作需求"(供后续生成分镜脚本使用),用简洁要点分条呈现;' +
-    '不要直接写分镜脚本/台词/镜头画面,不要额外解释说明。'
-  const out = await chatOnce(system, req, signal, 800)
-  if (!out) throw new Error('生成为空,请重试')
-  return out
-}
-
-/**
  * 营销 SKILLS:可选的营销技能包。key 为下拉选项文案,system 为该技能的拆解侧重。
  * 选择某 skill 后,把「用户想法 + 素材」交给对应技能,自动拆分生成「营销思路拆解」建议。
  */
 const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill'] as const
+/** 可用营销方法论的字面量类型。 */
 type SkillOption = (typeof SKILL_OPTIONS)[number]
 
-// 每个 skill 的完整方法论说明书(角色/铁律/五段框架/标签库/输出格式/示例),作为 system 提示词。
+/** 将每个 skill 的完整方法论说明书映射为系统提示词。 */
 const SKILL_SYSTEM: Record<SkillOption, string> = {
   信息电商Skill: skillEcommerceManual,
   本地生活Skill: skillLocalLifeManual,
@@ -315,10 +510,14 @@ export interface MarketingField {
   /** 用户点击候选后选中的标签:展示在标题行右侧(不改动 desc 原文案) */
   picked?: string[]
 }
+
+/** 营销拆解中的一个动态分类及其维度。 */
 export interface MarketingGroup {
   label: string
   fields: MarketingField[]
 }
+
+/** 营销方法论生成的分组化结构数据。 */
 export interface MarketingBreakdownData {
   groups: MarketingGroup[]
 }
@@ -394,14 +593,17 @@ export async function skillBreakdownStructured(
           hint: String(f?.hint || '').trim() || undefined,
           desc: String(f?.desc || '').trim(),
           tags: Array.isArray(f?.tags)
-            ? f.tags
-                .map((t: any) =>
-                  String(t)
-                    .replace(/["'\s]/g, '')
-                    .trim(),
-                )
-                .filter(Boolean)
-                .slice(0, 4)
+            ? Array.from(
+                new Set<string>(
+                  f.tags
+                    .map((t: any) =>
+                      String(t)
+                        .replace(/["'\s]/g, '')
+                        .trim(),
+                    )
+                    .filter(Boolean),
+                ),
+              ).slice(0, 4)
             : [],
         })),
       }))
@@ -424,67 +626,6 @@ export function marketingDataToText(data: MarketingBreakdownData): string {
       if (body) lines.push(`${f.label}:${body}`)
     }
   return lines.join('\n')
-}
-
-export interface GuideSuggestions {
-  product?: string
-  sellpoint?: string
-  audience?: string
-  pain?: string
-  scene?: string
-  goal?: string
-  plot?: string
-  tone?: string
-}
-
-/**
- * 智能预填:根据用户的想法(文字)+ 素材图片(多模态),推断信息流广告各要素的建议,
- * 用于 AI 引导对话框的预填(因材施教,不再千篇一律)。images 传图片地址(url/dataURL)。
- */
-export async function analyzeForGuide(
-  input: { text?: string; images?: string[] },
-  signal?: AbortSignal,
-): Promise<GuideSuggestions> {
-  const text = (input.text || '').trim()
-  const images = (input.images || []).filter(Boolean)
-  if (!text && !images.length) return {}
-
-  const user =
-    `用户的创作想法:${text || '(未填写)'}\n` +
-    (images.length ? '用户还上传了素材图片(已随请求附上)。请务必结合图片中实际出现的物体/场景/人物来推断。' : '') +
-    '请为这条信息流广告推断各要素建议。'
-
-  const system =
-    '你是资深信息流广告策划。根据用户的想法和(若有)素材图片,推断以下要素并给出简短建议(中文,每项不超过20字):' +
-    'product(产品/品牌)、sellpoint(核心卖点)、audience(目标人群)、pain(用户痛点)、scene(使用场景)、' +
-    'goal(营销目标与CTA)、plot(表现形式/剧情类型)、tone(风格调性)。' +
-    '紧扣用户素材与想法,不要臆造;某项看不出就留空字符串。' +
-    '只输出严格 JSON 对象(键为上述英文,值为字符串),不要解释、不要代码块标记。'
-
-  let raw = ''
-  try {
-    raw = await runResponseText({
-      system,
-      user,
-      images: images.length ? images : undefined,
-      temperature: 0.5,
-      maxTokens: 400,
-      signal,
-    })
-  } catch {
-    return {}
-  }
-  raw = raw
-    .replace(/^```(json)?/i, '')
-    .replace(/```$/, '')
-    .trim()
-  const m = raw.match(/\{[\s\S]*\}/)
-  if (!m) return {}
-  try {
-    return JSON.parse(m[0]) as GuideSuggestions
-  } catch {
-    return {}
-  }
 }
 
 /**
@@ -513,6 +654,7 @@ export async function refineShotPrompt(
     s
       .replace(/^```(\w+)?/i, '')
       .replace(/```$/i, '')
+      .trim()
       .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
       .replace(/\s*\n+\s*/g, ',')
       .trim()
@@ -622,6 +764,7 @@ export async function refineElementPromptWithImage(
   )
     .replace(/^```(\w+)?/i, '')
     .replace(/```$/i, '')
+    .trim()
     .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
     .replace(/\s*\n+\s*/g, ',')
     .trim()
@@ -639,11 +782,11 @@ export async function summarizeRequirement(text: string, signal?: AbortSignal): 
     '纯文本,不要 markdown 符号(不要 *、#、- 等)、不要标题、不要分点,直接输出摘要。'
   const out = await chatOnce(system, req, signal, 200)
   // 不再清洗 markdown(前端按 md 渲染),仅去代码块围栏与裁剪长度
-  return out
-    .replace(/^```(json)?/i, '')
+  const cleaned = out
+    .replace(/^```(\w+)?/i, '')
     .replace(/```$/i, '')
     .trim()
-    .slice(0, 160)
+  return Array.from(cleaned).slice(0, 100).join('')
 }
 
 /**
@@ -677,6 +820,7 @@ export async function refineElementPrompt(
   const cleaned = out
     .replace(/^```(\w+)?/i, '')
     .replace(/```$/i, '')
+    .trim()
     .replace(/^["'《》「」“”‘’]+|["'《》「」“”‘’]+$/g, '')
     .replace(/\s*\n+\s*/g, ',')
     .trim()

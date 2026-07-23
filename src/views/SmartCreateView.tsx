@@ -1,28 +1,40 @@
 /**
- * 智能成片 2.1 流程壳子（P0）。
- * 提供:左侧导航 + 顶栏 + 新进度条 + 项目名(可改名) + 各步占位内容 + 各步底部总按钮。
- * 流程:分镜脚本 → 准备素材 → 镜头编排 → 视频生成。
- * 各步具体内容(脚本编辑/素材匹配/镜头编排/视频生成)在后续阶段填充,
- * 大量编排逻辑可复用现有 useCreativeWorkflow / useStoryboard* / useVideoGeneration。
+ * 页面效果：完成一条可恢复、可编辑的「智能成片 2.1」创作流程。
+ *
+ * 用户从文字需求或参考图开始，依次完成营销思路拆解（可选）、分镜脚本、
+ * 主体素材生成、镜头编排和整片视频生成；成片支持历史版本切换、分段修改、
+ * 重新生成与下载。项目名称、草稿、生成任务和视频结果会同步到后端，刷新、
+ * 切换页面或重新进入项目后仍可恢复，并通过任务中心展示真实生成状态。
+ *
+ * 本文件负责跨步骤编排与持久化，具体步骤界面由 components/smart 下的组件负责。
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  lazy,
+  startTransition,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type SetStateAction,
+} from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
+import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
-import SmartEntry, {
-  clearSmartEntryDraft,
-  getSmartEntryDraftFingerprint,
-  type EntryMeta,
-} from '@/components/smart/SmartEntry'
-import ScriptStoryboardTable, { type Shot } from '@/components/smart/ScriptStoryboardTable'
+import SmartEntry, { clearSmartEntryDraft, type EntryMeta } from '@/components/smart/SmartEntry'
+import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
+import type { Shot } from '@/components/smart/ScriptStoryboardTable'
 import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
-import ShotArrange from '@/components/smart/ShotArrange'
 import type { ShotTrashItem } from '@/components/smart/ShotTrashBin/ShotTrashBin'
-import ImageChat, { type ChatMessage } from '@/components/smart/ImageChat'
+import type { ChatImg, ChatMessage, ImageComposerDraft, ImageVideoSelection } from '@/components/smart/ImageChat'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import Markdown from '@/components/common/Markdown'
 import {
+  createProjectNameFallback,
   generateProjectName,
   generateProjectNameFromImages,
   matchUploadsToSubjects,
@@ -36,17 +48,19 @@ import {
   marketingFieldByKey,
   patchMarketingField,
   suggestOptions,
+  validateProjectName,
   type MarketingBreakdownData,
   type MarketingFieldKey,
 } from '@/api/aiPolish'
-import MarketingBreakdown from '@/components/smart/MarketingBreakdown'
 import { generateScriptShotsStream, generateShotInfo, extractSubjects, mergeSingleUseSubjects } from '@/api/smartScript'
 import {
   generateShotImage,
+  resumeShotImageGeneration,
   ensureAssetId,
   refreshAssetUrl,
   persistImageAsset,
   estimateShotImageCost,
+  isTerminalShotImageTaskError,
 } from '@/api/smartShotImage'
 import {
   generateFullVideo,
@@ -55,10 +69,10 @@ import {
   buildTimelinePrompt,
   totalDurationSec,
   estimateFullVideoCost,
+  estimateVideoEditCost,
 } from '@/api/smartVideo'
 import { blurFacesOnAsset, isNoFaceDetectedError } from '@/api/smartFaceBlur'
 import { readVideoDurationSec } from '@/utils/videoDuration'
-import VideoStage from '@/components/smart/VideoStage'
 import {
   createCreativeProject,
   patchCreativeProject,
@@ -68,22 +82,27 @@ import {
   updateCreativeProjectDraft,
   uploadAssetFile,
   getAssetDownloadUrl,
-  listAssets,
-  listCreativeProjects,
-  extractAssetPageItems,
   restoreCreativeTrashItem,
   deleteCreativeTrashItem,
 } from '@/api/business'
+import { listAllAssets } from '@/utils/businessPagination'
 import {
   useWorkspaceId,
+  useCurrentUser,
+  useAllWorkspaces,
   useModelPlanCandidates,
   useWorkspaceSessionStore,
-  deriveWorkspaceId,
   deriveModelPlanCandidates,
   deriveAllWorkspaces,
 } from '@/stores/workspaceSession'
-import { useToast } from '@/composables/useToast'
+import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { openComingSoon, openMemberCenter, useUiStore } from '@/stores/ui'
+import {
+  buildTaskCenterId,
+  isTaskCenterTerminalStatus,
+  useTaskCenterStore,
+  type TaskCenterStatus,
+} from '@/stores/taskCenter'
 import { openGuide, isSmartGuideArmed, disarmSmartGuide, syncSmartGuideStage, useGuideStore } from '@/stores/guide'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useAuth } from '@/auth/AuthContext'
@@ -92,23 +111,97 @@ import {
   loadSmartDraft,
   clearSmartDraft,
   buildSmartSnapshot,
+  canPersistSmartProjectDraft,
   parseSmartSnapshot,
   computeVideoContentSig,
+  mergeCompletedVideoGenerationIds,
   type SmartDraft,
 } from '@/utils/smartDraft'
-import { persistVideoResultToBackend } from '@/utils/persistVideoResult'
+import { mergeImageMessagesForRecovery, shouldMergeLocalImageRecovery } from '@/utils/smartImageRecovery'
+import { persistVideoResultToBackend, persistVideoTerminalStateToBackend } from '@/utils/persistVideoResult'
 import { enqueueCreativeProjectDraftSave, waitForCreativeProjectDraftSaves } from '@/utils/creativeDraftSaveQueue'
 import {
+  getCreativeProjectDraft,
+  isCreativeProjectRestrictedForUser,
+  mergeLatestProjectMetadata,
+  resolveUserId,
+} from '@/utils/creativeDraftMetadata'
+import { deriveSmartVideoGenerationActivity, resolveSmartActiveTask } from '@/utils/smartVideoGenerationState'
+import {
+  isUnnamedProjectTitle as isUnnamedTitle,
+  resolveCreativeProjectTitleWrite,
+} from '@/utils/creativeProjectTitlePersistence'
+import { resolveCreativeProjectId as resolveProjectId } from '@/utils/projectAssetAccess'
+import { stableDerivedVideoId } from '@/api/projectVideos'
+import {
+  mergeVideoVersionLists,
+  readRequestedProjectVideoSelection,
+  resolveRestoredVideoSelection,
+  stableMediaUrlKey,
+  type RequestedProjectVideoSelection,
+  type SmartVideoVersion,
+} from '@/utils/projectVideoSelection'
+import { useLatestCallback } from '@/composables/useLatestCallback'
+import { sanitizePersistentProjectVideoStore } from '@/utils/persistentMediaUrl'
+import {
+  persistSmartEntryImages,
+  requireOrderedShotAssetIds,
+  scriptStreamFailureMessage,
+  stableGenerationAssetKey,
+} from '@/utils/smartGenerationGuards'
+import { validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
+import { SUPPORTED_VIDEO_DURATIONS, parseDurationSeconds, validateVideoDuration } from '@/utils/videoDurationValue'
+import {
+  bindVideoModificationNote,
+  parseVideoModificationDraft,
+  serializeVideoModificationDraft,
+  VIDEO_MODIFICATION_DRAFT_FIELD,
+  type VideoModificationDraft,
+} from '@/utils/videoModificationDraft'
+import {
+  assertCreativeDraftContentUnchanged,
+  assertCreativeDraftWriteStillOwned,
+  createCreativeDraftContentFingerprint,
+  createDraftFingerprint,
+  isCreativeDraftContentConflictError,
+  isDraftConflictError,
+  isRetryableDraftSaveError,
+  waitForDraftSaveRetry,
+  type DraftSaveStatus,
+  type DraftWriteResult,
+} from '@/utils/creativeDraftPersistence'
+import {
+  detachRunningVideoGen,
   findRunningVideoGen,
   getRunningVideoGen,
   getRunningVideoGenMeta,
-  isAnyVideoGenRunning,
+  isVideoGenRunning,
   trackVideoGen,
   updateRunningVideoGenMeta,
 } from '@/utils/videoGenRegistry'
-import { downloadToDisk } from '@/utils/downloadToDisk'
-import { isCurrentWorkspaceSwitch, onBeforeWorkspaceSwitch } from '@/utils/workspaceSwitch'
+import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import './SmartCreateView.css'
+
+/** 按需加载分镜脚本编辑表。 */
+const ScriptStoryboardTable = lazy(() => import('@/components/smart/ScriptStoryboardTable'))
+/** 按需加载镜头编排工作区。 */
+const ShotArrange = lazy(() => import('@/components/smart/ShotArrange'))
+/** 按需加载图片创作对话区。 */
+const ImageChat = lazy(() => import('@/components/smart/ImageChat'))
+/** 按需加载营销思路拆解表。 */
+const MarketingBreakdown = lazy(() => import('@/components/smart/MarketingBreakdown'))
+/** 按需加载成片预览与修改区。 */
+const VideoStage = lazy(() => import('@/components/smart/VideoStage'))
+
+/** 懒加载大型步骤组件时使用的无障碍占位。 */
+function LazyEditorFallback({ label = '正在加载编辑器…' }: { label?: string }) {
+  return (
+    <div className="smart__placeholder smart__placeholder--sm" role="status" aria-live="polite">
+      <span className="smart__project-loading-spinner" aria-hidden="true" />
+      <span>{label}</span>
+    </div>
+  )
+}
 
 // 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
 const STEPS: StepItem[] = [
@@ -117,23 +210,49 @@ const STEPS: StepItem[] = [
   { key: 'shots', label: '镜头编排' },
   { key: 'video', label: '生成视频' },
 ]
+/** 流式脚本增量合并到界面的最小间隔。 */
+const SCRIPT_STREAM_RENDER_INTERVAL_MS = 120
 // 各步「当前进行中」时的子状态文案(进度条展示)
 const ACTIVE_STATUS = ['脚本生成中', '素材上传中', '镜头编排中', '视频生成中']
 // 选中 SKILL 时,在最前面多出的「营销思路拆解」步
 const MARKETING_STEP: StepItem = { key: 'marketing', label: '营销思路拆解' }
+/** 当前会话已确认无权访问的项目键，避免恢复链重复尝试。 */
+const deniedSmartProjectKeys = new Set<string>()
+/** 组合工作空间与项目 id，作为权限拒绝和草稿基线缓存键。 */
+const smartProjectKey = (workspaceId: number, projectId: number) =>
+  `${Math.floor(Number(workspaceId) || 0)}:${Math.floor(Number(projectId) || 0)}`
 
-// 从 createCreativeProject 返回里取项目 id(字段名后端不统一,做兜底)
-function resolveProjectId(payload: any): number {
-  const id = Number([payload?.id, payload?.project?.id, payload?.data?.id].find((v) => Number(v) > 0) || 0)
-  return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
+/** 每次图片生成用户动作的稳定幂等根键，网络重试只能复用该键，不能产生第二笔任务。 */
+function createImageChatIdempotencyKey(): string {
+  const randomId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `smart_image_${randomId}`
 }
 
-// 是否「未命名」标题(对齐 Vue isUnnamedProjectTitle):空 或 含「未命名」都视为未命名
-function isUnnamedTitle(title: string): boolean {
-  const t = String(title || '').trim()
-  return !t || t.includes('未命名')
+// 后端在不同接口里会用下划线、驼峰或嵌套 data 返回草稿版本号。
+// 保持为模块级纯函数，避免依赖它的保存回调在每次渲染时失效。
+function normRev(payload: any): number {
+  const value = Number(
+    payload?.draft_revision ??
+      payload?.draftRevision ??
+      payload?.data?.draft_revision ??
+      payload?.data?.draftRevision ??
+      NaN,
+  )
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : NaN
 }
 
+/** 视频模型支持时长的用户可读列表。 */
+const SUPPORTED_VIDEO_DURATION_LABEL = SUPPORTED_VIDEO_DURATIONS.map((seconds) => `${seconds}秒`).join('、')
+
+/** 为不受模型支持的总时长生成明确调整提示。 */
+function unsupportedVideoDurationMessage(value: unknown): string {
+  const seconds = parseDurationSeconds(value)
+  return seconds === null
+    ? `参与生成的分镜总时长无效，请调整为${SUPPORTED_VIDEO_DURATION_LABEL}`
+    : `当前参与生成的分镜总时长为${seconds}秒，视频模型仅支持${SUPPORTED_VIDEO_DURATION_LABEL}，请调整分镜时长后重试`
+}
+
+/** 侧边栏导航键与页面路径映射。 */
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
   creative: '/smart',
@@ -143,6 +262,7 @@ const ROUTE_MAP: Record<string, string> = {
   templates: '/templates',
 }
 
+/** 流程底栏主操作按钮的统一配置。 */
 interface BottomButton {
   label: string
   variant: 'ghost' | 'primary' | 'text' | 'split'
@@ -161,29 +281,22 @@ interface BottomButton {
   onSplitCountChange?: (n: number) => void
 }
 
+/** 移除主体标签开头的 @，得到用于跨镜头匹配的规范名称。 */
 const stripAt = (t: string) =>
   String(t || '')
     .replace(/^@/, '')
     .trim()
+/** 把多视频生成数量限制到界面支持的 1～10。 */
 const normalizeVideoGenerateCount = (value: any) => Math.min(10, Math.max(1, Math.floor(Number(value || 1) || 1)))
+/** 短暂错误后继续恢复同一视频任务的最长窗口。 */
 const SMART_VIDEO_RECOVERY_MAX_MS = 70 * 60 * 1000
-const SMART_PROJECT_BOUND_EVENT = 'zzh:smart-project-bound'
-let smartProjectCreationSequence = 0
-const smartProjectCreationTokens = new Map<number, number>()
-const pendingSmartProjectCreations = new Map<number, Promise<unknown>>()
+/** 草稿标记为处理中、但页面内已没有执行者时，留给恢复链接管的短暂宽限。 */
+const SMART_STALE_VIDEO_STATE_GRACE_MS = 3000
 
-interface SmartProjectBoundDetail {
-  workspaceId: number
-  projectId: number
-  creationToken: number
-}
-
-function notifySmartProjectBound(detail: SmartProjectBoundDetail) {
-  window.dispatchEvent(new CustomEvent<SmartProjectBoundDetail>(SMART_PROJECT_BOUND_EVENT, { detail }))
-}
-
+/** 区分可继续轮询的网络/服务错误与不可重试的审核失败。 */
 function isTransientVideoTaskRecoveryError(error: any): boolean {
   const status = Number(error?.status || 0)
+  const code = String(error?.code || '').toUpperCase()
   const message = [error?.message, error?.response?.message, error?.response?.data?.message].filter(Boolean).join(' ')
   if (
     /安全审核|内容审核|内容安全|未通过.{0,8}审核|审核未通过|敏感内容|版权限制|copyright|content policy|policy violation|moderation|safety review/i.test(
@@ -193,6 +306,7 @@ function isTransientVideoTaskRecoveryError(error: any): boolean {
     return false
   }
   return (
+    code === 'TASK_MEDIA_PENDING' ||
     status >= 500 ||
     status === 429 ||
     error?.cause === 'timeout' ||
@@ -200,12 +314,21 @@ function isTransientVideoTaskRecoveryError(error: any): boolean {
   )
 }
 
+/** 兼容错误码和状态字段，判断服务商任务是否已取消或过期。 */
+function isCancelledVideoTaskError(error: any): boolean {
+  const code = String(error?.code || error?.response?.code || error?.response?.data?.code || '').toUpperCase()
+  const status = String(error?.status || error?.response?.status || error?.response?.data?.status || '').toLowerCase()
+  return code === 'TASK_CANCELLED' || status === 'cancelled' || status === 'expired'
+}
+
+/** 已拿到 taskId 后遇到短暂断网/5xx 时按退避策略恢复轮询，避免误判任务失败。 */
 async function continueSmartVideoTaskAfterTransient(
   initialPromise: Promise<{ url: string; assetId: number }>,
   options: {
     workspaceId: number
     getTaskId: () => number
     onReconnect?: (taskId: number) => void
+    onProgress?: (progress: number) => void
   },
 ): Promise<{ url: string; assetId: number }> {
   const startedAt = Date.now()
@@ -227,7 +350,11 @@ async function continueSmartVideoTaskAfterTransient(
       const delayMs = Math.min(8000, 1200 * Math.pow(2, Math.min(attempt, 3)))
       attempt += 1
       await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs))
-      currentPromise = resumeFullVideo({ workspaceId: options.workspaceId, taskId })
+      currentPromise = resumeFullVideo({
+        workspaceId: options.workspaceId,
+        taskId,
+        onProgress: options.onProgress,
+      })
     }
   }
 }
@@ -252,6 +379,7 @@ function subjectPrompt(name: string, kind: string, style?: string, context?: str
     .join(',')
 }
 
+/** 兼容字符串和对象形式，把项目草稿安全解析为普通对象。 */
 function parseDraftObject(draftJson: any): any | null {
   let obj = draftJson
   if (typeof obj === 'string') {
@@ -264,12 +392,14 @@ function parseDraftObject(draftJson: any): any | null {
   return obj && typeof obj === 'object' ? obj : null
 }
 
+/** 从顶层或 smart 块读取草稿所属创作流程。 */
 function getDraftFlow(draftJson: any): string {
   const obj = parseDraftObject(draftJson)
   if (!obj) return ''
   return String(obj?.smart?.flow || obj?.flow || '').toLowerCase()
 }
 
+/** 判断项目草稿是否属于爆款复制，防止跨流程误加载。 */
 function isHotCopyDraft(draftJson: any): boolean {
   return getDraftFlow(draftJson) === 'hot-copy'
 }
@@ -280,9 +410,12 @@ function isHotCopyDraft(draftJson: any): boolean {
  * (generatedVideoUrl / videoHistoryList,常见于上次在「生成视频」中途切走、完成时组件已卸载)
  * 的场景——和项目管理页读取同一批字段,保证「生成视频」步骤能把视频加载出来。
  */
-function extractProjectVideoFallback(draftJson: any): {
-  latest: { url: string; assetId: number; createdAt?: string }
-  versions: { url: string; assetId: number; createdAt?: string }[]
+function extractProjectVideoFallback(
+  draftJson: any,
+  project?: any,
+): {
+  latest: SmartVideoVersion
+  versions: SmartVideoVersion[]
 } {
   const obj = parseDraftObject(draftJson)
   if (!obj || typeof obj !== 'object') return { latest: { url: '', assetId: 0 }, versions: [] }
@@ -292,59 +425,40 @@ function extractProjectVideoFallback(draftJson: any): {
   const vh = Array.isArray(obj?.videoHistoryList || obj?.video_history_list)
     ? obj.videoHistoryList || obj.video_history_list
     : []
-  const versions: { url: string; assetId: number; createdAt?: string }[] = []
-  const appendVersion = (v: any, moveToEnd = false) => {
+  const src = vv.length ? vv : vh
+  const projectCreatedAt = String(
+    project?.created_at || project?.createdAt || project?.data?.created_at || project?.data?.createdAt || '',
+  ).trim()
+  const versions: SmartVideoVersion[] = []
+  for (const v of src) {
     const url = String((typeof v === 'string' ? v : v?.url || v?.src) || '').trim()
     const assetId = Number((typeof v === 'string' ? 0 : v?.assetId || v?.asset_id) || 0) || 0
-    if (!url && !assetId) return
-    const key = assetId > 0 ? `a:${assetId}` : `u:${url.split('?')[0]}`
-    const index = versions.findIndex((item) => {
-      const itemKey = item.assetId > 0 ? `a:${item.assetId}` : `u:${item.url.split('?')[0]}`
-      return itemKey === key
+    const createdAt = String((typeof v === 'string' ? '' : v?.created_at || v?.createdAt) || projectCreatedAt).trim()
+    if (url || assetId) {
+      versions.push({
+        url,
+        assetId,
+        ...(createdAt ? { createdAt } : {}),
+        id: stableDerivedVideoId(v, assetId, url, createdAt),
+      })
+    }
+  }
+  const gvUrl = String(obj?.generatedVideoUrl || obj?.generated_video_url || smart?.fullVideoUrl || '').trim()
+  const gvId = Number(obj?.generatedVideoAssetId || obj?.generated_video_asset_id || smart?.fullVideoAssetId || 0) || 0
+  if (!versions.length && (gvUrl || gvId)) {
+    const projectId = Number(project?.id || project?.data?.id || 0) || 0
+    versions.push({
+      url: gvUrl,
+      assetId: gvId,
+      ...(projectCreatedAt ? { createdAt: projectCreatedAt } : {}),
+      id: projectId ? `derived-generated-${projectId}` : stableDerivedVideoId({}, gvId, gvUrl, projectCreatedAt),
     })
-    const createdAt = String((typeof v === 'string' ? '' : v?.createdAt || v?.created_at) || '').trim()
-    const existing = index >= 0 ? versions[index] : null
-    const next = {
-      url: url || existing?.url || '',
-      assetId: assetId || existing?.assetId || 0,
-      ...(createdAt || existing?.createdAt ? { createdAt: createdAt || existing?.createdAt } : {}),
-    }
-    if (index >= 0) versions.splice(index, 1)
-    if (index < 0 || moveToEnd) versions.push(next)
-    else versions.splice(index, 0, next)
   }
-  for (const v of vv) appendVersion(v)
-  for (const v of vh) appendVersion(v)
-  const rootVideoUrl = String(obj?.generatedVideoUrl || obj?.generated_video_url || '').trim()
-  const rootVideoAssetId = Number(obj?.generatedVideoAssetId || obj?.generated_video_asset_id || 0) || 0
-  const hasRootVideo = Boolean(rootVideoUrl || rootVideoAssetId)
-  const gvUrl = hasRootVideo ? rootVideoUrl : String(smart?.fullVideoUrl || '').trim()
-  const gvId = hasRootVideo ? rootVideoAssetId : Number(smart?.fullVideoAssetId || 0) || 0
-  if (gvUrl || gvId) appendVersion({ url: gvUrl, assetId: gvId }, true)
   const latest = versions.length ? versions[versions.length - 1] : { url: gvUrl, assetId: gvId }
-  return { latest: { url: latest.url || '', assetId: latest.assetId || 0 }, versions }
+  return { latest: { ...latest, url: latest.url || '', assetId: latest.assetId || 0 }, versions }
 }
 
-function mergeVideoVersionLists(
-  ...groups: Array<Array<{ url: string; assetId: number; createdAt?: string } | null | undefined> | null | undefined>
-): { url: string; assetId: number; createdAt?: string }[] {
-  const seen = new Set<string>()
-  const merged: { url: string; assetId: number; createdAt?: string }[] = []
-  for (const group of groups) {
-    for (const item of Array.isArray(group) ? group : []) {
-      const url = String(item?.url || '').trim()
-      const assetId = Number(item?.assetId || 0) || 0
-      if (!url && !assetId) continue
-      const key = assetId > 0 ? `a:${assetId}` : `u:${url.split('?')[0]}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      // 保留本版生成完成时间(供项目管理按每条视频时间展示)
-      merged.push({ url, assetId, ...(item?.createdAt ? { createdAt: item.createdAt } : {}) })
-    }
-  }
-  return merged
-}
-
+/** 仅接受智能成片草稿并返回实际状态块。 */
 function extractSmartDraftBlock(draftJson: any): any | null {
   const obj = parseDraftObject(draftJson)
   if (!obj || typeof obj !== 'object') return null
@@ -353,6 +467,7 @@ function extractSmartDraftBlock(draftJson: any): any | null {
   return smart && typeof smart === 'object' ? smart : null
 }
 
+/** 把历史生成记录规范为可恢复的 id、状态、任务号和时间结构。 */
 function normalizeVideoGenerationRecord(record: any): any | null {
   const id = String(record?.id || '').trim()
   const status = String(record?.status || '').toLowerCase()
@@ -367,11 +482,13 @@ function normalizeVideoGenerationRecord(record: any): any | null {
     ...(idempotencyKey ? { idempotencyKey } : {}),
     running: Boolean(record?.running) && taskId > 0,
     note: String(record?.note || ''),
+    modificationNote: String(record?.modificationNote || ''),
     error: String(record?.error || ''),
     createdAt: Number(record?.createdAt ?? record?.created_at ?? 0) || 0,
   }
 }
 
+/** 以后端终态优先合并页面与云端的生成记录。 */
 function mergeVideoGenerationRecords(current: any, backend: any): any[] {
   const merged = new Map<string, any>()
   for (const source of [backend, current]) {
@@ -396,6 +513,7 @@ function mergeVideoGenerationRecords(current: any, backend: any): any[] {
   return Array.from(merged.values())
 }
 
+/** 合并多视频排队记录，并移除已经具有对应终态的过期队列项。 */
 function mergeVideoGenQueues(current: any, backend: any, generations: any[]): any[] {
   const pendingIds = new Set(
     (Array.isArray(generations) ? generations : [])
@@ -419,157 +537,109 @@ function mergeVideoGenQueues(current: any, backend: any, generations: any[]): an
   return merged
 }
 
-function hasMeaningfulSmartDraftContent(draft: SmartDraft | null): boolean {
-  if (!draft) return false
-  return Boolean(
-    String(draft.requirement || draft.reqSummary || '').trim() ||
-    draft.entryMeta ||
-    Number(draft.step || 0) > 0 ||
-    Number(draft.maxReached || 0) > 0 ||
-    (Array.isArray(draft.shots) && draft.shots.length > 0) ||
-    (draft.subjectAssets && Object.keys(draft.subjectAssets).length > 0) ||
-    (draft.fields && Object.keys(draft.fields).length > 0) ||
-    draft.fullVideoUrl ||
-    Number(draft.fullVideoAssetId || 0) > 0 ||
-    (Array.isArray(draft.videoVersions) && draft.videoVersions.length > 0) ||
-    (Array.isArray(draft.videoGenerations) && draft.videoGenerations.length > 0) ||
-    (Array.isArray(draft.videoGenQueue) && draft.videoGenQueue.length > 0) ||
-    (Array.isArray(draft.imageMessages) && draft.imageMessages.length > 0) ||
-    draft.marketingText ||
-    draft.marketingData ||
-    draft.materialBatchPending ||
-    draft.scriptPending,
-  )
-}
-
-function getSmartVideoVersionKey(item: { url?: string; assetId?: number } | null | undefined): string {
-  const assetId = Number(item?.assetId || 0) || 0
-  if (assetId > 0) return `a:${assetId}`
-  const url = String(item?.url || '').trim()
-  return url ? `u:${url.split('?')[0]}` : ''
-}
-
-function getSmartDraftCompletedVideos(draft: SmartDraft | null): {
-  url: string
-  assetId: number
-  createdAt?: string
-}[] {
-  if (!draft) return []
-  return mergeVideoVersionLists(Array.isArray(draft.videoVersions) ? draft.videoVersions : [], [
-    {
-      url: String(draft.fullVideoUrl || '').trim(),
-      assetId: Number(draft.fullVideoAssetId || 0) || 0,
-    },
-  ])
-}
-
 /**
- * 内容主稿与已完成视频是两条独立时间线：切回空间时可以恢复较新的本地编辑，
- * 同时仍要吸收后端离屏完成的视频；在途 task/queue 则只保留内容主稿自身的状态。
- */
-function mergeSmartCompletedVideoState(primary: SmartDraft, secondary: SmartDraft | null): SmartDraft {
-  if (!secondary) return primary
-  const primaryVideos = getSmartDraftCompletedVideos(primary)
-  const secondaryVideos = getSmartDraftCompletedVideos(secondary)
-  if (!primaryVideos.length && !secondaryVideos.length) return primary
-
-  const primaryLatest = primaryVideos[primaryVideos.length - 1]
-  const secondaryLatest = secondaryVideos[secondaryVideos.length - 1]
-  const primaryLatestKey = getSmartVideoVersionKey(primaryLatest)
-  const secondaryLatestKey = getSmartVideoVersionKey(secondaryLatest)
-  const secondaryKeys = new Set(secondaryVideos.map(getSmartVideoVersionKey).filter(Boolean))
-  const secondaryExtendsPrimary = Boolean(
-    primaryLatestKey &&
-    secondaryLatestKey &&
-    primaryLatestKey !== secondaryLatestKey &&
-    secondaryKeys.has(primaryLatestKey),
-  )
-  const sameLatest = Boolean(primaryLatestKey && primaryLatestKey === secondaryLatestKey)
-  const selectedFromSecondary = !primaryLatest || secondaryExtendsPrimary || sameLatest
-  const selectedBase = selectedFromSecondary ? secondaryLatest : primaryLatest
-  const selectedPeer = selectedFromSecondary ? primaryLatest : secondaryLatest
-  const selected = {
-    url: String(selectedBase?.url || (sameLatest ? selectedPeer?.url : '') || ''),
-    assetId: Number(selectedBase?.assetId || (sameLatest ? selectedPeer?.assetId : 0) || 0) || 0,
-    ...(selectedBase?.createdAt || (sameLatest ? selectedPeer?.createdAt : '')
-      ? { createdAt: selectedBase?.createdAt || (sameLatest ? selectedPeer?.createdAt : '') }
-      : {}),
-  }
-  const selectedKey = getSmartVideoVersionKey(selected)
-  const mergedVersions = mergeVideoVersionLists(secondaryVideos, primaryVideos).filter(
-    (item) => getSmartVideoVersionKey(item) !== selectedKey,
-  )
-  if (selectedKey) mergedVersions.push(selected)
-
-  return {
-    ...primary,
-    fullVideoUrl: String(selected?.url || ''),
-    fullVideoAssetId: Number(selected?.assetId || 0) || 0,
-    videoVersions: mergedVersions,
-    // 签名必须和最终选中的当前视频同源；来源没有签名时宁可留空，避免误判“内容未变”。
-    lastVideoSig: sameLatest
-      ? String(secondary.lastVideoSig || primary.lastVideoSig || '')
-      : selectedFromSecondary
-        ? String(secondary.lastVideoSig || '')
-        : String(primary.lastVideoSig || ''),
-  }
-}
-
-/**
- * 同一项目恢复时选择真正更新的完整草稿，再补齐另一份草稿里的在途任务凭证。
- * 云端仍可覆盖旧本地稿，但不能用可解析的空壳/较旧快照覆盖切换前刚同步保存的本地稿。
+ * 后端草稿仍是项目内容的权威来源；本地草稿只补同一项目尚未完成的任务凭证。
+ * 这样既不会把旧步骤/旧素材覆盖回后端，又能覆盖“切页时最后一次 PUT 还没完成”的短窗口。
  */
 function mergeSmartInFlightRecovery(
   backendDraft: SmartDraft | null,
   localDraft: SmartDraft | null,
   projectId: number,
-  options: { preferNewerLocal?: boolean } = {},
 ): SmartDraft | null {
   const localMatches = localDraft && localDraft.started && Number(localDraft.projectId || 0) === Number(projectId || 0)
-  if (!localMatches) return backendDraft
-  if (!backendDraft) return localDraft
-  const localSavedAt = Number(localDraft.savedAt || 0) || 0
-  const backendSavedAt = Number(backendDraft.savedAt || 0) || 0
-  const localIsNewer = localSavedAt > 0 && (backendSavedAt <= 0 || localSavedAt > backendSavedAt)
-  const localWins = !hasMeaningfulSmartDraftContent(backendDraft) || (options.preferNewerLocal && localIsNewer)
-  // 本地完整稿胜出时不要再补旧云端的 processing/queue，否则已结束的任务可能被复活。
-  if (localWins) {
-    return {
-      ...mergeSmartCompletedVideoState(localDraft, backendDraft),
-      projectId,
-      workspaceId: Number(localDraft.workspaceId || backendDraft.workspaceId || 0) || undefined,
-      savedAt: localDraft.savedAt,
-    }
-  }
+  if (!backendDraft) return localMatches ? localDraft : null
+  const recoveryDraft: SmartDraft = localMatches && localDraft ? localDraft : {}
 
-  const localGenerations = Array.isArray(localDraft.videoGenerations) ? localDraft.videoGenerations : []
-  const localQueue = Array.isArray(localDraft.videoGenQueue) ? localDraft.videoGenQueue : []
-  const hasLocalInFlight = Boolean(
-    Number(localDraft.vidGenTaskId || 0) > 0 ||
+  const backendGenerationsRaw = Array.isArray(backendDraft.videoGenerations) ? backendDraft.videoGenerations : []
+  const localGenerationsRaw = Array.isArray(recoveryDraft.videoGenerations) ? recoveryDraft.videoGenerations : []
+  const backendCompletedIds = mergeCompletedVideoGenerationIds(
+    backendDraft.completedVideoGenerationIds,
+    backendDraft.lastCompletedVideoGenerationId,
+  )
+  const localCompletedIds = mergeCompletedVideoGenerationIds(
+    recoveryDraft.completedVideoGenerationIds,
+    recoveryDraft.lastCompletedVideoGenerationId,
+  )
+  const completedGenerationIds = mergeCompletedVideoGenerationIds(localCompletedIds, backendCompletedIds)
+  const completedGenerationIdSet = new Set(completedGenerationIds)
+  const completedTaskIds = new Set(
+    [...backendGenerationsRaw, ...localGenerationsRaw]
+      .filter((generation: any) => completedGenerationIdSet.has(String(generation?.id || '').trim()))
+      .map((generation: any) => Number(generation?.taskId || 0) || 0)
+      .filter((taskId: number) => taskId > 0),
+  )
+  const backendGenerations = backendGenerationsRaw.filter(
+    (generation: any) => !completedGenerationIdSet.has(String(generation?.id || '').trim()),
+  )
+  const localGenerations = localGenerationsRaw.filter(
+    (generation: any) => !completedGenerationIdSet.has(String(generation?.id || '').trim()),
+  )
+  const localQueue = (Array.isArray(recoveryDraft.videoGenQueue) ? recoveryDraft.videoGenQueue : []).filter(
+    (job: any) => !completedGenerationIdSet.has(String(job?.id || '').trim()),
+  )
+  const backendCompletedIdSet = new Set(backendCompletedIds)
+  const hasLocalCompletionState = localCompletedIds.some((id) => !backendCompletedIdSet.has(id))
+  const hasBackendCompletionResidue =
+    backendGenerationsRaw.some((generation: any) =>
+      completedGenerationIdSet.has(String(generation?.id || '').trim()),
+    ) ||
+    (Array.isArray(backendDraft.videoGenQueue) ? backendDraft.videoGenQueue : []).some((job: any) =>
+      completedGenerationIdSet.has(String(job?.id || '').trim()),
+    )
+  const localImageMessages = Array.isArray(recoveryDraft.imageMessages) ? recoveryDraft.imageMessages : []
+  const hasLocalImageRecovery = shouldMergeLocalImageRecovery(
+    backendDraft,
+    localMatches ? recoveryDraft : null,
+    projectId,
+  )
+  const needsRecoveryMerge = Boolean(
+    Number(recoveryDraft.vidGenTaskId || 0) > 0 ||
     localGenerations.some((g: any) => String(g?.status || '') === 'processing') ||
     localQueue.length > 0 ||
-    localDraft.materialBatchPending ||
-    localDraft.scriptPending,
+    recoveryDraft.materialBatchPending ||
+    recoveryDraft.scriptPending ||
+    recoveryDraft.scriptError ||
+    hasLocalCompletionState ||
+    hasBackendCompletionResidue ||
+    hasLocalImageRecovery,
   )
-  if (!hasLocalInFlight) return backendDraft
+  if (!needsRecoveryMerge) return backendDraft
 
-  const mergedGenerations = mergeVideoGenerationRecords(localGenerations, backendDraft.videoGenerations)
+  const mergedGenerations = mergeVideoGenerationRecords(localGenerations, backendGenerations)
   const mergedQueue = mergeVideoGenQueues(localQueue, backendDraft.videoGenQueue, mergedGenerations)
+  const activeTaskId =
+    [
+      Number(backendDraft.vidGenTaskId || 0) || 0,
+      Number(recoveryDraft.vidGenTaskId || 0) || 0,
+      Number(mergedGenerations.find((g: any) => Number(g?.taskId || 0) > 0)?.taskId || 0) || 0,
+    ].find((taskId) => taskId > 0 && !completedTaskIds.has(taskId)) || 0
+  const hasVideoInFlight = activeTaskId > 0 || mergedGenerations.length > 0 || mergedQueue.length > 0
   return {
     ...backendDraft,
-    vidGenTaskId:
-      Number(backendDraft.vidGenTaskId || 0) ||
-      Number(localDraft.vidGenTaskId || 0) ||
-      Number(mergedGenerations.find((g: any) => Number(g?.taskId || 0) > 0)?.taskId || 0) ||
-      0,
+    vidGenTaskId: activeTaskId,
     videoGenerations: mergedGenerations,
     videoGenQueue: mergedQueue,
-    pendingVideoSig: backendDraft.pendingVideoSig || localDraft.pendingVideoSig || '',
-    materialBatchPending: Boolean(backendDraft.materialBatchPending || localDraft.materialBatchPending),
-    scriptPending: Boolean(backendDraft.scriptPending || localDraft.scriptPending),
+    completedVideoGenerationIds: completedGenerationIds,
+    ...(backendDraft.lastCompletedVideoGenerationId || recoveryDraft.lastCompletedVideoGenerationId
+      ? {
+          lastCompletedVideoGenerationId:
+            backendDraft.lastCompletedVideoGenerationId || recoveryDraft.lastCompletedVideoGenerationId,
+        }
+      : {}),
+    pendingVideoSig: hasVideoInFlight ? backendDraft.pendingVideoSig || recoveryDraft.pendingVideoSig || '' : '',
+    materialBatchPending: Boolean(backendDraft.materialBatchPending || recoveryDraft.materialBatchPending),
+    scriptPending: Boolean(backendDraft.scriptPending || recoveryDraft.scriptPending),
+    scriptError: String(backendDraft.scriptError || recoveryDraft.scriptError || ''),
+    ...(hasLocalImageRecovery
+      ? {
+          imageMessages: mergeImageMessagesForRecovery(backendDraft.imageMessages, localImageMessages),
+          ...(recoveryDraft.imageComposerDraft ? { imageComposerDraft: recoveryDraft.imageComposerDraft } : {}),
+        }
+      : {}),
   }
 }
 
+/** 保存前合并后端可能晚到的视频结果，避免自动保存覆盖成片历史。 */
 function mergeSnapshotVideoHistory(
   snapshot: any,
   draftJson: any,
@@ -619,19 +689,70 @@ function mergeSnapshotVideoHistory(
         snapshot.selectedStyles = Array.isArray(backendSnapshot?.selectedStyles) ? backendSnapshot.selectedStyles : []
       }
     }
-    const mergedGenerations = mergeVideoGenerationRecords(smart.videoGenerations, backendSmart.videoGenerations)
+    const currentGenerations = Array.isArray(smart.videoGenerations) ? smart.videoGenerations : []
+    const backendGenerations = Array.isArray(backendSmart.videoGenerations) ? backendSmart.videoGenerations : []
+    const completedGenerationIds = mergeCompletedVideoGenerationIds(
+      smart.completedVideoGenerationIds,
+      smart.lastCompletedVideoGenerationId,
+      backendSmart.completedVideoGenerationIds,
+      backendSmart.lastCompletedVideoGenerationId,
+    )
+    const completedGenerationIdSet = new Set(completedGenerationIds)
+    const completedTaskIds = new Set(
+      [...currentGenerations, ...backendGenerations]
+        .filter((generation: any) => completedGenerationIdSet.has(String(generation?.id || '').trim()))
+        .map((generation: any) => Number(generation?.taskId || 0) || 0)
+        .filter((taskId: number) => taskId > 0),
+    )
+    const safeCurrentGenerations = currentGenerations.filter(
+      (generation: any) => !completedGenerationIdSet.has(String(generation?.id || '').trim()),
+    )
+    const safeBackendGenerations = backendGenerations.filter(
+      (generation: any) => !completedGenerationIdSet.has(String(generation?.id || '').trim()),
+    )
+    if (completedGenerationIds.length) smart.completedVideoGenerationIds = completedGenerationIds
+    const completedGenerationId = String(
+      backendSmart.lastCompletedVideoGenerationId || smart.lastCompletedVideoGenerationId || '',
+    ).trim()
+    if (completedGenerationId) smart.lastCompletedVideoGenerationId = completedGenerationId
+    const currentTaskId = Number(smart.vidGenTaskId || 0) || 0
+    if (currentTaskId > 0 && completedTaskIds.has(currentTaskId)) smart.pendingVideoSig = ''
+    smart.lastVideoSig = backendSmart.lastVideoSig || smart.lastVideoSig || ''
+    const mergedGenerations = mergeVideoGenerationRecords(safeCurrentGenerations, safeBackendGenerations)
     smart.videoGenerations = mergedGenerations
     smart.videoGenQueue = mergeVideoGenQueues(smart.videoGenQueue, backendSmart.videoGenQueue, mergedGenerations)
     const backendTaskId = Number(backendSmart.vidGenTaskId || 0) || 0
-    if (!Number(smart.vidGenTaskId || 0) && backendTaskId > 0) smart.vidGenTaskId = backendTaskId
-    if (!smart.pendingVideoSig && backendSmart.pendingVideoSig) smart.pendingVideoSig = backendSmart.pendingVideoSig
+    const activeOwner = resolveSmartActiveTask(mergedGenerations, backendTaskId)
+    smart.vidGenTaskId = activeOwner.generationId
+      ? activeOwner.taskId
+      : (!completedTaskIds.has(backendTaskId) ? backendTaskId : 0) ||
+        (!completedTaskIds.has(currentTaskId) ? currentTaskId : 0)
+    if (
+      Number(smart.vidGenTaskId || 0) > 0 &&
+      Number(smart.vidGenTaskId || 0) === backendTaskId &&
+      backendSmart.pendingVideoSig
+    ) {
+      smart.pendingVideoSig = backendSmart.pendingVideoSig
+    }
+    const hasVideoInFlight =
+      Number(smart.vidGenTaskId || 0) > 0 || mergedGenerations.length > 0 || smart.videoGenQueue.length > 0
+    if (!hasVideoInFlight) smart.pendingVideoSig = ''
+    else if (!smart.pendingVideoSig && backendSmart.pendingVideoSig)
+      smart.pendingVideoSig = backendSmart.pendingVideoSig
   }
   return snapshot
 }
 
+/** 增删分镜后按当前顺序重新生成“镜头 N”编号。 */
 const renumberShots = (list: Shot[]): Shot[] => list.map((s, i) => ({ ...s, no: `镜头${i + 1}` }))
+/** 同一毫秒内新增多个手动分镜时使用的递增后缀。 */
+let manualShotUid = 0
+/** 为本地手动新增分镜生成当前会话内唯一 id。 */
+const newManualShotId = () => `manual_${Date.now().toString(36)}_${manualShotUid++}`
+/** 分镜回收站 localStorage 键前缀。 */
 const SHOT_TRASH_STORAGE_PREFIX = 'smart_shot_trash'
 
+/** 生成按工作空间和项目隔离的分镜回收站缓存键。 */
 function getShotTrashStorageKey(workspaceId: number, projectId: number) {
   const ws = Math.floor(Number(workspaceId) || 0)
   const pid = Math.floor(Number(projectId) || 0)
@@ -639,6 +760,7 @@ function getShotTrashStorageKey(workspaceId: number, projectId: number) {
   return `${SHOT_TRASH_STORAGE_PREFIX}:${ws}:${pid}`
 }
 
+/** 从本地缓存恢复当前项目的已删分镜。 */
 function loadShotTrashFromStorage(workspaceId: number, projectId: number): ShotTrashItem[] {
   if (typeof window === 'undefined') return []
   const key = getShotTrashStorageKey(workspaceId, projectId)
@@ -653,6 +775,7 @@ function loadShotTrashFromStorage(workspaceId: number, projectId: number): ShotT
   }
 }
 
+/** 持久化当前项目分镜回收站；空列表时直接清除缓存。 */
 function saveShotTrashToStorage(workspaceId: number, projectId: number, items: ShotTrashItem[]) {
   if (typeof window === 'undefined') return
   const key = getShotTrashStorageKey(workspaceId, projectId)
@@ -666,6 +789,7 @@ function saveShotTrashToStorage(workspaceId: number, projectId: number, items: S
   } catch {}
 }
 
+/** 把删除时间转换为回收站显示文本。 */
 function toTrashTimeText(value: any): string {
   const raw = String(value || '').trim()
   if (!raw) return ''
@@ -675,6 +799,7 @@ function toTrashTimeText(value: any): string {
   return `删除于 ${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+/** 兼容历史回收站结构并补齐分镜快照、索引和删除时间。 */
 function normalizeShotTrashItem(raw: any, fallbackShot?: Shot, fallbackIndex?: number): ShotTrashItem | null {
   const shot = (raw?.shot ||
     raw?.snapshot?.shot ||
@@ -728,11 +853,30 @@ function normalizeShotTrashItem(raw: any, fallbackShot?: Shot, fallbackIndex?: n
 // true=每次进智能成片入口页都弹引导(仅本地调试用);false=仅支付成功(armSmartGuide)后进入口页触发一次。
 const GUIDE_TESTING = false
 
-export default function SmartCreateView() {
+/** 路由包装传入的会话令牌，用于隔离重挂载前后的异步回调。 */
+interface SmartCreateViewProps {
+  routeSessionToken?: string
+}
+
+/** 编排智能成片完整流程并负责草稿、任务、权限和结果恢复。 */
+export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateViewProps) {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
   const location = useLocation()
+  const requestedProjectVideoSelection: RequestedProjectVideoSelection | null = readRequestedProjectVideoSelection(
+    location.search,
+    location.state,
+  )
+  const explicitFreshEntrySession = Boolean(
+    (location.state as any)?.taskCenterNewSession ||
+    (location.state as any)?.workspaceSwitchReset ||
+    Number((location.state as any)?.restartProjectId || 0) > 0,
+  )
   const { showToast } = useToast()
+  const { requestConfirm } = useConfirmDialog()
+  const memberCenterOpen = useUiStore((state) => state.memberCenterOpen)
+  const currentUser = useCurrentUser() as any
+  const currentUserId = resolveUserId(currentUser)
   const requireAuth = useRequireAuth()
   const { isCheckingSession } = useAuth()
   const globalWorkspaceId = useWorkspaceId()
@@ -743,22 +887,15 @@ export default function SmartCreateView() {
   const workspaceId = projectWorkspaceId || globalWorkspaceId
   const workspaceIdRef = useRef(0)
   workspaceIdRef.current = workspaceId
-  const viewMountedRef = useRef(true)
-  const workspaceSwitchAwayRef = useRef(false)
-  const workspaceSwitchRequestRef = useRef(0)
-  useEffect(() => {
-    viewMountedRef.current = true
-    return () => {
-      viewMountedRef.current = false
-    }
-  }, [])
   const pinProjectWorkspaceId = (value: number) => {
     const next = Number(value || 0) || 0
     workspaceIdRef.current = next || globalWorkspaceId
     setProjectWorkspaceId(next)
   }
   // 项目钉在与全局活跃空间【不同】的空间时,取其空间名用于在项目名旁提示(说明本项目保存/计费走该空间)。
-  const allWorkspaces = useWorkspaceSessionStore(deriveAllWorkspaces)
+  // 通过稳定 selector 订阅；未登录/会话冷启动时 deriveAllWorkspaces 的空数组回退不能直接作为快照，
+  // 否则 Zustand 5 会把每次新数组视为新状态并触发无限重渲染。
+  const allWorkspaces = useAllWorkspaces()
   const pinnedWsName =
     projectWorkspaceId && projectWorkspaceId !== globalWorkspaceId
       ? String((allWorkspaces as any[]).find((w) => Number(w?.id || 0) === projectWorkspaceId)?.name || '').trim()
@@ -789,12 +926,47 @@ export default function SmartCreateView() {
   const [entryMeta, setEntryMeta] = useState<EntryMeta | null>(null)
   // ── 制作图片(chat 形式):消息流。image 模式不走分镜/视频 4 步,改为对话出图 ──
   const [imageMessages, setImageMessages] = useState<ChatMessage[]>([])
+  const imageMessagesRef = useRef<ChatMessage[]>([])
+  imageMessagesRef.current = imageMessages
   const msgIdRef = useRef(0)
   const nextMsgId = () => `m${++msgIdRef.current}-${Date.now()}`
   const imgMsgHydratedRef = useRef(false)
+  const imageGenerationLockRef = useRef(false)
+  // 新批次的恢复描述符写入云端前，禁止 useEffect/手动调度创建任何付费任务。
+  const imageQueueCheckpointBlockedRef = useRef(false)
+  const [imagePreparing, setImagePreparing] = useState(false)
+  const [imageComposerRefCount, setImageComposerRefCount] = useState(0)
+  const [imageComposerRatio, setImageComposerRatio] = useState('16:9')
+  const [imageComposerOutputCount, setImageComposerOutputCount] = useState(1)
+  const [imageComposerDraft, setImageComposerDraft] = useState<ImageComposerDraft>({
+    text: '',
+    ratio: '16:9',
+    images: [],
+    outputCount: 1,
+  })
+  const handleImageComposerRatioChange = useCallback((ratio: string) => {
+    const nextRatio = ratio || '16:9'
+    setImageComposerRatio(nextRatio)
+    setImageComposerDraft((previous) => (previous.ratio === nextRatio ? previous : { ...previous, ratio: nextRatio }))
+    setEntryMeta((previous) =>
+      previous?.mode === 'image' && previous.ratio !== nextRatio ? { ...previous, ratio: nextRatio } : previous,
+    )
+  }, [])
+  const handleImageComposerOutputCountChange = useCallback((value: number) => {
+    const nextCount = Math.min(9, Math.max(1, Math.floor(Number(value) || 1)))
+    setImageComposerOutputCount(nextCount)
+    setImageComposerDraft((previous) =>
+      previous.outputCount === nextCount ? previous : { ...previous, outputCount: nextCount },
+    )
+    setEntryMeta((previous) =>
+      previous?.mode === 'image' && previous.outputCount !== nextCount
+        ? { ...previous, outputCount: nextCount }
+        : previous,
+    )
+  }, [])
   // 是否处于「制作图片」对话模式;有一轮正在出图(禁用发送)
   const isImageMode = entryMeta?.mode === 'image'
-  const imageBusy = imageMessages.some((m) => m.role === 'assistant' && m.status === 'pending')
+  const imageBusy = imagePreparing || imageMessages.some((m) => m.role === 'assistant' && m.status === 'pending')
   const [step, setStep] = useState(0)
   const [maxReached, setMaxReached] = useState(0)
   const [durGuard, setDurGuard] = useState<{
@@ -805,18 +977,38 @@ export default function SmartCreateView() {
   }>({ open: false, currentSec: 0, expectedSec: 0, overMax: false })
   const durGuardProceedRef = useRef<null | (() => void)>(null)
   const [projectName, setProjectName] = useState('未命名项目')
+  // AI 命名与新项目创建/路由加载并行。ref 记录同步意义上的最新名称，避免刚创建项目返回的
+  // “未命名创意”通过异步旧闭包覆盖已经生成好的 AI 名称。
+  const projectNameRef = useRef('未命名项目')
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [nameTouched, setNameTouched] = useState(false) // 用户手动改过名后不再自动覆盖
+  const nameTouchedRef = useRef(false)
   const [naming, setNaming] = useState(false)
   // 从「项目管理 → 新建视频」携带过来的、该项目上传过的素材图(预填入口)。
   // 关键:必须在【首帧】就就绪(SmartEntry 的 images 只在挂载时从 initial.images 初始化一次),
   // 所以用 useState 初始化器同步读 location.state,而不是挂载后再 setState(那样太晚,入口已用空数组初始化)。
-  const [carriedImages] = useState<string[]>(() => {
+  const [carriedEntry] = useState<{
+    mode?: 'video' | 'image'
+    text: string
+    ratio?: string
+    images: string[]
+    imageAssetIds: number[]
+  }>(() => {
     const st = (location.state as any) || {}
-    return Array.isArray(st.carryImages)
-      ? st.carryImages.map((m: any) => (typeof m === 'string' ? m : m?.url)).filter(Boolean)
-      : []
+    const items = (Array.isArray(st.carryImages) ? st.carryImages : [])
+      .map((item: any) => ({
+        url: String(typeof item === 'string' ? item : item?.url || '').trim(),
+        assetId: Math.max(0, Math.floor(Number(typeof item === 'string' ? 0 : (item?.assetId ?? item?.asset_id)) || 0)),
+      }))
+      .filter((item: ChatImg) => item.url || Number(item.assetId || 0) > 0)
+    return {
+      mode: st.carryMode === 'image' ? 'image' : items.length || st.carryMode === 'video' ? 'video' : undefined,
+      text: String(st.carryText || ''),
+      ratio: typeof st.carryRatio === 'string' ? st.carryRatio : undefined,
+      images: items.map((item: ChatImg) => item.url),
+      imageAssetIds: items.map((item: ChatImg) => Number(item.assetId || 0) || 0),
+    }
   })
   const nameInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -824,6 +1016,9 @@ export default function SmartCreateView() {
   const [requirement, setRequirement] = useState('')
   const [reqSummary, setReqSummary] = useState('') // ≤100字核心摘要,仅用于生成(basePrompt/大纲),不再展示
   const nameAbortRef = useRef<AbortController | null>(null)
+  const autoNameResumeKeyRef = useRef('')
+  projectNameRef.current = projectName
+  nameTouchedRef.current = nameTouched
 
   // ── 营销思路拆解(选中 SKILL 时,在分镜脚本前多出的第 1 步)──
   // marketingOpen=停留在该步;marketingText=skill 拆解出的营销建议(只读展示);确认后才进入分镜脚本流程。
@@ -866,8 +1061,33 @@ export default function SmartCreateView() {
   const [scriptPending, setScriptPending] = useState(false) // 脚本生成进行中(持久化):切走再回来据此自动续跑
   const scriptResumeRef = useRef(false) // 续跑只触发一次,避免循环
   const scriptRunningRef = useRef(false) // 脚本生成重入守卫(state 异步,连点/续跑叠加会并发两条流式生成 → 交错覆盖)
+  // 分镜脚本页点击加号后，只生成这一条分镜词；独立于整条脚本/分镜图生成状态。
+  const [insertTextGeneratingId, setInsertTextGeneratingId] = useState<Shot['id'] | null>(null)
+  const insertTextRequestRef = useRef<{
+    shotId: Shot['id']
+    runId: number
+    controller: AbortController
+  } | null>(null)
+  const insertTextRunSeqRef = useRef(0)
+  const insertTextGenerating = insertTextGeneratingId !== null
+  const cancelInsertTextGeneration = (shotId?: Shot['id']) => {
+    const active = insertTextRequestRef.current
+    if (!active || (shotId !== undefined && active.shotId !== shotId)) return
+    active.controller.abort()
+    insertTextRequestRef.current = null
+    setInsertTextGeneratingId((current) => (current === active.shotId ? null : current))
+  }
   const [projectId, setProjectId] = useState(0)
   const projectIdRef = useRef(0)
+  const projectCreationAttemptRef = useRef(0)
+  const creationStartingRef = useRef(false)
+  const pendingCreatedProjectRef = useRef<{ workspaceId: number; projectId: number } | null>(null)
+  useEffect(
+    () => () => {
+      projectCreationAttemptRef.current += 1
+    },
+    [],
+  )
   const shotTrashHydratedKeyRef = useRef('')
   // 项目刚创建绑定后,需要「立即落盘一版草稿」的一次性标记。真正落盘由下方 effect 在
   // started/entryMeta/需求 等状态落定后执行(不能在 createCreativeProject().then 里直接存,
@@ -880,10 +1100,81 @@ export default function SmartCreateView() {
   const [loadRetrying, setLoadRetrying] = useState(false)
   // 后端当前的项目标题(对齐 Vue serverProjectTitle):用于判断是否需要回写、避免覆盖已有真实标题
   const serverTitleRef = useRef('')
+  // 历史 AI 标题不符合当前流程/时长时，允许一次本地安全修复覆盖旧服务端标题；不触发新的 AI 请求。
+  const pendingAutoTitleCorrectionRef = useRef('')
+  const pendingTitleSaveRef = useRef('')
+  const titleSaveFailedRef = useRef(false)
   const draftRevisionRef = useRef(0) // 后端草稿版本号(乐观并发)
   // 项目「视频清单」存档(待分类归类记录,随草稿存云端,见 api/projectVideos)。本编辑器不维护它,
   // 但保存草稿会整盘重建 draft_json,故加载时原样存下、保存时原样写回,避免把它覆盖丢失。
   const projectVideoStoreRef = useRef<any>(null)
+  const [draftSaveStatus, setDraftSaveStatus] = useState<DraftSaveStatus>('idle')
+  const draftSaveStatusRef = useRef<DraftSaveStatus>('idle')
+  const draftSaveSequenceRef = useRef(0)
+  const lastSavedDraftFingerprintRef = useRef('')
+  const baseDraftContentFingerprintRef = useRef('')
+  const draftContentConflictNotifiedRef = useRef(false)
+  const queuedDraftSaveRef = useRef<{
+    projectId: number
+    workspaceId: number
+    fingerprint: string
+    contentFingerprint: string
+    promise: Promise<DraftWriteResult>
+  } | null>(null)
+  // 新项目和“项目管理 → 新建视频”允许首次整版替换；授权绑定到精确项目并在首次成功写入后失效。
+  // 普通保存绝不能再用“baseline 为空”隐式获得覆盖权限。
+  const allowCreativeReplaceProjectIdRef = useRef(0)
+  const blockRestrictedProjectRef = useRef<(project: any, projectId: number, workspaceId: number) => boolean>(
+    () => false,
+  )
+  const viewAliveRef = useRef(true)
+  useEffect(() => {
+    viewAliveRef.current = true
+    return () => {
+      viewAliveRef.current = false
+    }
+  }, [])
+  const updateDraftSaveStatus = useCallback((nextStatus: DraftSaveStatus): boolean => {
+    // 内容冲突只能由重新加载项目、显式新建/重启或一次明确成功的冲突解决流程清除。
+    // 标题 PATCH、旧请求失败或普通自动保存的晚到回调都不能把它降级成 error/saved。
+    if (draftSaveStatusRef.current === 'conflict' && nextStatus !== 'conflict') return false
+    draftSaveStatusRef.current = nextStatus
+    if (viewAliveRef.current) setDraftSaveStatus(nextStatus)
+    return true
+  }, [])
+  useEffect(() => {
+    draftSaveStatusRef.current = 'idle'
+    setDraftSaveStatus('idle')
+    lastSavedDraftFingerprintRef.current = ''
+    baseDraftContentFingerprintRef.current = ''
+    draftContentConflictNotifiedRef.current = false
+    queuedDraftSaveRef.current = null
+    pendingTitleSaveRef.current = ''
+    pendingAutoTitleCorrectionRef.current = ''
+    titleSaveFailedRef.current = false
+    draftSaveSequenceRef.current += 1
+    const nextRouteId = Number(routeId || 0)
+    if (allowCreativeReplaceProjectIdRef.current && allowCreativeReplaceProjectIdRef.current !== nextRouteId) {
+      allowCreativeReplaceProjectIdRef.current = 0
+    }
+  }, [routeId])
+  useEffect(() => {
+    // 同一组件切换到另一个项目时，旧项目的单镜 AI 响应不能回填到新项目。
+    const active = insertTextRequestRef.current
+    if (active) {
+      active.controller.abort()
+      insertTextRequestRef.current = null
+      setInsertTextGeneratingId(null)
+    }
+    nameAbortRef.current?.abort()
+    nameAbortRef.current = null
+    autoNameResumeKeyRef.current = ''
+    setNaming(false)
+    return () => {
+      insertTextRequestRef.current?.controller.abort()
+      nameAbortRef.current?.abort()
+    }
+  }, [routeId])
   useEffect(() => {
     const ws = Number(workspaceId || 0)
     const pid = Number(projectId || 0)
@@ -910,13 +1201,17 @@ export default function SmartCreateView() {
     const st = location.state as any
     if (!st) return
     if (typeof st.newProjectName === 'string' && st.newProjectName.trim()) {
-      setProjectName(st.newProjectName.trim())
+      projectNameRef.current = st.newProjectName.trim()
+      setProjectName(projectNameRef.current)
+      nameTouchedRef.current = true
       setNameTouched(true)
     }
-    // carriedImages 已在 useState 初始化器同步读入(见上),此处不再 setState
+    // carriedEntry 已在 useState 初始化器同步读入(见上),此处不再 setState
     if (Number(st.restartProjectId)) {
-      projectIdRef.current = Number(st.restartProjectId)
-      setProjectId(Number(st.restartProjectId))
+      const restartProjectId = Number(st.restartProjectId)
+      allowCreativeReplaceProjectIdRef.current = restartProjectId
+      projectIdRef.current = restartProjectId
+      setProjectId(restartProjectId)
       serverTitleRef.current = '' // 让沿用的项目名回写;draftRevisionRef 保持 0 → 首次保存自动拉取(防 409)
     }
     // 仅 mount 时注入一次([] 依赖),无需清 location.state
@@ -1465,11 +1760,15 @@ export default function SmartCreateView() {
     const ws = Number(workspaceId || 0)
     if (!ws || !started) return
     let cancelled = false
-    listAssets({ workspaceId: ws, type: 'image', limit: 300 })
-      .then((payload: any) => {
+    listAllAssets({
+      workspaceId: ws,
+      type: 'image',
+      isCurrent: () => !cancelled && Number(workspaceIdRef.current || 0) === ws,
+    })
+      .then((items: any[]) => {
         if (cancelled) return
         const ids = new Set<number>()
-        extractAssetPageItems(payload).forEach((a: any) => {
+        items.forEach((a: any) => {
           if (String(a?.source || '') === 'upload' && Number(a?.id)) ids.add(Number(a.id))
         })
         setUploadAssetIds(ids)
@@ -1560,8 +1859,67 @@ export default function SmartCreateView() {
   // 分镜图加载失败追踪(键=shot.id):缩略图 onError 标记、onLoad 清除。
   // 任一参与分镜的图加载失败 → 禁止「生成视频」(避免拿坏图/过期URL出片)。
   const [shotImgError, setShotImgError] = useState<Record<string | number, boolean>>({})
-  const markShotImgError = (id: string | number) => setShotImgError((m) => (m[id] ? m : { ...m, [id]: true }))
-  const markShotImgLoad = (id: string | number) => setShotImgError((m) => (m[id] ? { ...m, [id]: false } : m))
+  const [shotImgRetryTokens, setShotImgRetryTokens] = useState<Record<string | number, number>>({})
+  const [shotImgReloading, setShotImgReloading] = useState<Record<string | number, boolean>>({})
+  const clearShotImgReloading = (id: string | number) =>
+    setShotImgReloading((current) => {
+      if (!current[id]) return current
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+  const markShotImgRetrying = (id: string | number) =>
+    setShotImgReloading((current) => (current[id] ? current : { ...current, [id]: true }))
+  const markShotImgError = (id: string | number) => {
+    clearShotImgReloading(id)
+    setShotImgError((current) => (current[id] ? current : { ...current, [id]: true }))
+  }
+  const markShotImgLoad = (id: string | number) => {
+    clearShotImgReloading(id)
+    setShotImgError((current) => {
+      if (!current[id]) return current
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+  }
+  const retryFailedShotImageLoads = async () => {
+    const failedShots = shotsRef.current.filter((shot) => shotImgError[shot.id] && shot.image)
+    if (!failedShots.length) return
+    setShotImgReloading((current) => ({
+      ...current,
+      ...Object.fromEntries(failedShots.map((shot) => [shot.id, true])),
+    }))
+    const ws = Number(workspaceIdRef.current || workspaceId || 0)
+    const refreshedUrls = new Map<Shot['id'], string>()
+    if (ws) {
+      await Promise.all(
+        failedShots.map(async (shot) => {
+          const assetId = Number(shot.imageAssetId || 0) || 0
+          if (!assetId) return
+          try {
+            const freshUrl = await refreshAssetUrl(ws, assetId)
+            if (freshUrl) refreshedUrls.set(shot.id, freshUrl)
+          } catch {
+            // 签名地址刷新失败时仍保留当前地址，交给下方有限次数的图片重试继续恢复。
+          }
+        }),
+      )
+    }
+    setShots((current) => {
+      const next = current.map((shot) => {
+        const freshUrl = refreshedUrls.get(shot.id)
+        return freshUrl ? { ...shot, image: freshUrl } : shot
+      })
+      shotsRef.current = next
+      return next
+    })
+    setShotImgRetryTokens((current) => {
+      const next = { ...current }
+      for (const shot of failedShots) next[shot.id] = Number(next[shot.id] || 0) + 1
+      return next
+    })
+  }
   const autoGenRef = useRef(false)
   // 上次「分镜图 / 整片视频」生成时的输入签名:用于区分「草稿恢复/未改动(沿用旧结果)」与
   // 「上游改动(需重新生成)」。进入下一步时输入签名变了 → 重新生成,与产品逻辑一致。
@@ -1577,7 +1935,7 @@ export default function SmartCreateView() {
       shots: (list || []).map((s) => ({
         id: s.id,
         desc: s.desc || '',
-        subjects: s.subjects.map((su) => su.image || ''),
+        subjects: (s.subjects || []).map((su) => stableGenerationAssetKey(su.image, su.assetId)),
       })),
     })
 
@@ -1592,7 +1950,7 @@ export default function SmartCreateView() {
         .filter((s) => s.includeInVideo !== false)
         .map((s) => ({
           id: s.id,
-          image: s.image || '',
+          image: stableGenerationAssetKey(s.image, s.imageAssetId),
           duration: s.duration || '',
           line: s.line || '',
           subtitle: s.subtitle || '',
@@ -1844,9 +2202,11 @@ export default function SmartCreateView() {
   }
 
   const removeShotLocally = (shotId: Shot['id']) => {
+    cancelInsertTextGeneration(shotId)
     setShots((prev) => {
       const next = renumberShots(prev.filter((s) => s.id !== shotId))
       if (prev.length > 0 && next.length === 0) shotsExplicitlyClearedRef.current = true
+      shotsRef.current = next
       return next
     })
     setShotGen((m) => {
@@ -1861,6 +2221,18 @@ export default function SmartCreateView() {
       delete next[shotId]
       return next
     })
+    setShotImgReloading((current) => {
+      if (!current[shotId]) return current
+      const next = { ...current }
+      delete next[shotId]
+      return next
+    })
+    setShotImgRetryTokens((current) => {
+      if (!Object.prototype.hasOwnProperty.call(current, shotId)) return current
+      const next = { ...current }
+      delete next[shotId]
+      return next
+    })
   }
 
   const updateShotsFromEditor = (next: Shot[]) => {
@@ -1869,23 +2241,134 @@ export default function SmartCreateView() {
     setShots(next)
   }
 
+  const generateInsertedStoryboardText = async (
+    shot: Shot,
+    contextShots: Shot[],
+    targetIndex: number,
+    durationSec: number,
+  ) => {
+    if (insertTextRequestRef.current) return
+    const runId = ++insertTextRunSeqRef.current
+    const controller = new AbortController()
+    insertTextRequestRef.current = { shotId: shot.id, runId, controller }
+    setInsertTextGeneratingId(shot.id)
+
+    const originalRequirement = String(requirement || '').trim()
+    const summary = String(reqSummary || '').trim()
+    const intent = [
+      originalRequirement && `整体创作需求：${originalRequirement}`,
+      summary && summary !== originalRequirement && `项目摘要：${summary}`,
+      `请在这个位置自动补充一个时长固定为 ${durationSec} 秒的新镜头，生成具体、可拍摄且与前后镜头连贯、不重复的分镜词。`,
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    try {
+      const info = await generateShotInfo({
+        shots: contextShots,
+        targetIndex,
+        mode: 'insert',
+        intent,
+        style: entryMeta?.style,
+        ratio: entryMeta?.ratio,
+        images: entryMeta?.images || [],
+        signal: controller.signal,
+      })
+      const desc = String(info.desc || '').trim()
+      if (!desc) throw new Error('AI 未返回有效的分镜词')
+
+      const active = insertTextRequestRef.current
+      if (!active || active.runId !== runId || active.shotId !== shot.id || controller.signal.aborted) return
+      const latest = shotsRef.current
+      const existing = latest.find((item) => item.id === shot.id)
+      if (!existing) return
+      updateShotsFromEditor(
+        latest.map((item) =>
+          item.id === shot.id
+            ? {
+                ...item,
+                desc,
+                line: info.line || '',
+                subtitle: info.subtitle || '',
+                sfx: info.sfx || '',
+                subjects: info.subjects?.length ? info.subjects : item.subjects,
+                // 时长继续采用插入时按剩余总时长计算出的值，避免 AI 返回值突破 15 秒。
+                duration: item.duration,
+              }
+            : item,
+        ),
+      )
+      showToast(`${existing.no}的分镜词已生成`, 'success')
+    } catch (e: any) {
+      if (controller.signal.aborted || /已取消/.test(String(e?.message || ''))) return
+      const active = insertTextRequestRef.current
+      if (active?.runId === runId && active.shotId === shot.id) {
+        showToast(`AI 生成分镜词失败，已保留空白分镜：${e?.message || '可双击手动填写'}`, 'error')
+      }
+    } finally {
+      const active = insertTextRequestRef.current
+      if (active?.runId === runId && active.shotId === shot.id) {
+        insertTextRequestRef.current = null
+        setInsertTextGeneratingId(null)
+      }
+    }
+  }
+
+  // 分镜脚本 / 准备素材共用的手工插入:只新增上游分镜数据,不在这两步提前生成分镜图。
+  // 两页均读取同一个 shots,所以插入、编号、素材与草稿会自然同步。
+  const insertStoryboardShot = (rawIndex: number) => {
+    if (insertTextRequestRef.current) {
+      showToast('上一条新增分镜的 AI 分镜词仍在生成，请稍候', 'error')
+      return
+    }
+    const current = shotsRef.current
+    const currentSec = totalDurationSec(current)
+    const remainingSec = 15 - currentSec
+    if (remainingSec < 1) {
+      showToast('当前分镜总时长已达到15秒，请先缩短已有镜头再新增', 'error')
+      return
+    }
+
+    const defaultDurationSec = Math.max(1, Math.min(5, Math.floor(remainingSec)))
+    const shot: Shot = {
+      id: newManualShotId(),
+      no: '镜头',
+      duration: `${defaultDurationSec}s`,
+      desc: '',
+      subjects: [],
+      isNew: true,
+    }
+    const index = Math.max(0, Math.min(current.length, Math.floor(Number(rawIndex) || 0)))
+    const next = current.slice()
+    next.splice(index, 0, shot)
+    updateShotsFromEditor(renumberShots(next))
+    // 上游结构变化后不允许从进度条直接跳过脚本/素材确认。
+    setMaxReached((value) => Math.min(value, step))
+    autoGenRef.current = false
+    showToast(`已新增镜头${index + 1}，正在生成分镜词`, 'success')
+    void generateInsertedStoryboardText(shot, current, index, defaultDurationSec)
+  }
+
   const deleteShot = async (shot: Shot, index: number) => {
+    // 删除确认框打开期间 AI 可能刚好完成回填；入垃圾桶前按 id 读取最新版，避免存进空描述旧快照。
+    const latestShot = shotsRef.current.find((item) => item.id === shot.id) || shot
+    const latestIndex = shotsRef.current.findIndex((item) => item.id === shot.id)
     const trashItem = normalizeShotTrashItem(
       {
-        title: shot.no || shot.title,
-        duration: shot.duration,
-        thumbnail_url: shot.image,
-        desc: shot.desc,
+        title: latestShot.no || latestShot.title,
+        duration: latestShot.duration,
+        thumbnail_url: latestShot.image,
+        desc: latestShot.desc,
         deleted_at: new Date().toISOString(),
-        original_index: index,
+        original_index: latestIndex >= 0 ? latestIndex : index,
       },
-      shot,
-      index,
+      latestShot,
+      latestIndex >= 0 ? latestIndex : index,
     )
     if (trashItem) {
       setShotTrashItems((prev) => [trashItem, ...prev.filter((x) => String(x.id) !== String(trashItem.id))])
     }
-    removeShotLocally(shot.id)
+    removeShotLocally(latestShot.id)
     showToast('分镜已移入垃圾桶', 'success')
   }
 
@@ -1905,7 +2388,9 @@ export default function SmartCreateView() {
         const next = prev.slice()
         const at = Math.min(next.length, Math.max(0, Number(rawIndex ?? next.length)))
         next.splice(at, 0, shot)
-        return renumberShots(next)
+        const renumbered = renumberShots(next)
+        shotsRef.current = renumbered
+        return renumbered
       })
     }
     try {
@@ -2007,6 +2492,22 @@ export default function SmartCreateView() {
       return next
     })
   }
+  // 各修改框文本，以及按具体视频版本归档的整片修改说明。
+  const [fields, setFields] = useState<Record<string, string>>({})
+  const videoModificationDraft = parseVideoModificationDraft(fields[VIDEO_MODIFICATION_DRAFT_FIELD])
+  const setVideoModificationDraft = useCallback((nextOrUpdater: SetStateAction<VideoModificationDraft>) => {
+    setFields((previousFields) => {
+      const previous = parseVideoModificationDraft(previousFields[VIDEO_MODIFICATION_DRAFT_FIELD])
+      const next =
+        typeof nextOrUpdater === 'function'
+          ? (nextOrUpdater as (value: VideoModificationDraft) => VideoModificationDraft)(previous)
+          : nextOrUpdater
+      return {
+        ...previousFields,
+        [VIDEO_MODIFICATION_DRAFT_FIELD]: serializeVideoModificationDraft(next),
+      }
+    })
+  }, [])
   const [vidGenRunning, setVidGenRunning] = useState(false)
   // 提交前积分预估(estimate-cost):整片生成(video.generate)口径
   const [videoCost, setVideoCost] = useState<{
@@ -2034,6 +2535,8 @@ export default function SmartCreateView() {
     idempotencyKey?: string
     running?: boolean
     note: string
+    /** 原始修改要求，不含多视频序号等 UI 文案。 */
+    modificationNote?: string
     error?: string
     createdAt: number
   }
@@ -2047,6 +2550,21 @@ export default function SmartCreateView() {
     sourceImageAssetIds?: number[]
     preparedImageAssetIds?: number[]
     opts?: { edit?: boolean }
+    /** 入队时锁定的不可变上下文。创建新视频后，旧任务仍只写回原项目。 */
+    context?: {
+      sessionId: number
+      workspaceId: number
+      projectId: number
+      projectTitle: string
+      shots: Shot[]
+      basePrompt: string
+      ratio?: string
+      style?: string
+      durationSec: number
+      thumbnailUrl?: string
+      sourceVideo?: { url: string; assetId: number }
+      lockedSig: string
+    }
   }
   const videoGenerationsRef = useRef<GenRecord[]>([])
   const [videoGenerations, setVideoGenerationsState] = useState<GenRecord[]>([])
@@ -2062,6 +2580,20 @@ export default function SmartCreateView() {
       return next
     })
   }, [])
+  const bindGenerationNoteToResult = useCallback(
+    (generationId: string | null | undefined, result: { url: string; assetId: number }, note?: string) => {
+      const generation = videoGenerationsRef.current.find((item) => item.id === generationId)
+      const modificationNote =
+        note !== undefined ? note : String(generation?.modificationNote ?? generation?.note ?? '')
+      const hasOtherPending = videoGenerationsRef.current.some(
+        (item) => item.status === 'processing' && item.id !== generationId,
+      )
+      setVideoModificationDraft((previous) =>
+        bindVideoModificationNote(previous, result, modificationNote, { clearPending: !hasOtherPending }),
+      )
+    },
+    [setVideoModificationDraft],
+  )
   const [runningGenerationId, setRunningGenerationId] = useState('')
   const runningGenerationIdRef = useRef('')
   const setActiveRunningGenerationId = useCallback((id: string) => {
@@ -2095,11 +2627,24 @@ export default function SmartCreateView() {
   const [videoGenQueueDraft, setVideoGenQueueDraft] = useState<VideoGenJob[]>([])
   const videoGenQueueDraftRef = useRef<VideoGenJob[]>([])
   const videoGenQueueRef = useRef<VideoGenJob[]>([])
-  const videoGenDrainRef = useRef(false)
+  const videoGenSessionIdRef = useRef(1)
+  const videoGenDrainingSessionsRef = useRef(new Set<number>())
+  // drain 之外，恢复轮询 / registry 订阅也代表该 session 已经有唯一执行方。
+  // reset 时不能再把它的剩余队列交给第二个 drain，否则会提前并发甚至重复提交。
+  const videoGenOwnedSessionsRef = useRef(new Set<number>())
+  const isCurrentVideoSession = (sessionId: number) => sessionId === videoGenSessionIdRef.current
+  const isCurrentVideoDraining = () => videoGenDrainingSessionsRef.current.has(videoGenSessionIdRef.current)
+  const isVideoSessionOwned = (sessionId: number) =>
+    videoGenDrainingSessionsRef.current.has(sessionId) || videoGenOwnedSessionsRef.current.has(sessionId)
   const videoRegistryFollowTimerRef = useRef(0)
   useEffect(
     () => () => {
+      // 组件卸载后旧 promise 仍会继续生成/落库，但不得再把 taskId 或旧草稿写回当前用户的新页面会话。
+      const endingSessionId = videoGenSessionIdRef.current
+      videoGenSessionIdRef.current += 1
+      videoGenOwnedSessionsRef.current.delete(endingSessionId)
       if (videoRegistryFollowTimerRef.current) window.clearTimeout(videoRegistryFollowTimerRef.current)
+      videoRegistryFollowTimerRef.current = 0
     },
     [],
   )
@@ -2124,17 +2669,10 @@ export default function SmartCreateView() {
   // 上一版整片成片所依据的「内容签名」:随草稿持久化。项目管理据此判「内容改了没出新片 → 草稿(在制)」。
   // 只在出片成功时盖章(见 commitVideoSig),普通编辑不动它。
   const [lastVideoSig, setLastVideoSig] = useState('')
-  // 本次在途出片【发起时锁定】的内容签名:生成开始 lockVideoSig() 算好并随草稿持久化,完成时 commitVideoSig 用它盖章。
+  // 本次在途出片【入队时锁定】的内容签名:随任务上下文及草稿持久化,完成时 commitVideoSig 用它盖章。
   // 避免用"完成那一刻的当前分镜"盖章(用户生成中/后改了内容会把签名盖成新内容 → 列表误判"没变")。
   const [pendingVideoSig, setPendingVideoSig] = useState('')
   const pendingVideoSigRef = useRef('')
-  // 发起出片时锁定当前内容签名(与 persistVideoResult / 列表同口径 computeVideoContentSig)
-  const lockVideoSig = () => {
-    const sig = computeVideoContentSig(shots, entryMeta, reqSummary || requirement)
-    pendingVideoSigRef.current = sig
-    setPendingVideoSig(sig)
-    return sig
-  }
   // 出片成功盖章:只用【锁定签名】(显式传入 → ref → 持久化 pending)。
   // 拿不到锁定签名时【不本地盖章】—— 绝不用"当前分镜"兜底(用户可能已改内容,会把签名盖成新内容 → 列表误判"没变");
   // 此时以后端 persistVideoResult 的权威盖章为准(它用草稿里的 pendingVideoSig),下次加载 applyDraft 再对齐。
@@ -2150,7 +2688,7 @@ export default function SmartCreateView() {
     return `task_${uuid || `${Date.now()}_${Math.random().toString(16).slice(2)}`}`
   }
   const immediateSaveRef = useRef(false) // processing 记录写入后请求立即落盘:草稿即时出现在项目里(不等防抖)
-  const createPendingGenRecord = (note?: string): GenRecord => {
+  const createPendingGenRecord = (note?: string, modificationNote?: string): GenRecord => {
     genSeqRef.current += 1
     return {
       id: `gen-${Date.now()}-${genSeqRef.current}`,
@@ -2159,6 +2697,7 @@ export default function SmartCreateView() {
       idempotencyKey: createVideoTaskIdempotencyKey(),
       running: false,
       note: note || '',
+      modificationNote: modificationNote || '',
       error: '',
       createdAt: Date.now(),
     }
@@ -2193,21 +2732,22 @@ export default function SmartCreateView() {
     })
   const failStaleVideoGenerations = useCallback(
     (reason = '生成请求已停止，请重新生成') => {
-      let changed = false
+      const previous = videoGenerationsRef.current
+      const changed = previous.some((generation) => generation.status === 'processing')
       immediateSaveRef.current = true
-      setVideoGenerations((prev) =>
-        prev.map((g) => {
+      // 先同步 ref 再触发 React 更新；后续队列恢复不能读到上一帧的 processing 而错误 return。
+      setVideoGenerations(
+        previous.map((g) => {
           if (g.status !== 'processing') return g
-          changed = true
           return { ...g, status: 'failed', taskId: 0, running: false, error: reason }
         }),
       )
       clearRunningGeneration()
       setVidGenTaskId(0)
       setVidGenRunning(false)
-      if (changed) showToast(`视频生成失败:${reason}`, 'error')
+      if (changed || Number(vidGenTaskId || 0) > 0) showToast(`视频生成失败:${reason}`, 'error')
     },
-    [clearRunningGeneration, setVideoGenerations, showToast],
+    [clearRunningGeneration, setVideoGenerations, showToast, vidGenTaskId],
   )
   // 草稿即时出现:startGen 后(videoGenerations 变化)立刻把草稿落库,不等防抖
   useEffect(() => {
@@ -2232,15 +2772,148 @@ export default function SmartCreateView() {
     videoGenQueueDraftRef.current = videoGenQueueDraft
   }, [videoGenQueueDraft])
 
-  const syncVideoGenQueue = (next: VideoGenJob[]) => {
-    videoGenQueueRef.current = next
-    setVideoGenQueueDraft(next)
+  const syncVideoGenQueue = (
+    next: VideoGenJob[],
+    sessionId = videoGenSessionIdRef.current,
+    targetQueue = videoGenQueueRef.current,
+  ) => {
+    targetQueue.splice(0, targetQueue.length, ...next)
+    if (!isCurrentVideoSession(sessionId)) return
+    videoGenQueueRef.current = targetQueue
+    setVideoGenQueueDraft([...targetQueue])
   }
-  const dropVideoGenQueueJob = (id: string) => {
+  const dropVideoGenQueueJob = (
+    id: string,
+    sessionId = videoGenSessionIdRef.current,
+    targetQueue = videoGenQueueRef.current,
+  ) => {
     if (!id) return
-    const current = videoGenQueueRef.current
+    const current = targetQueue
     const next = current.filter((job) => job.id !== id)
-    if (next.length !== current.length) syncVideoGenQueue(next)
+    if (next.length !== current.length) syncVideoGenQueue(next, sessionId, targetQueue)
+  }
+
+  const syncSmartTask = (job: VideoGenJob, status: TaskCenterStatus, patch: Record<string, unknown> = {}) => {
+    const context = job.context
+    const pid = Number(context?.projectId || projectIdRef.current || 0) || 0
+    const ws = Number(context?.workspaceId || workspaceId || 0) || 0
+    if (!pid || !ws) return
+    const id = buildTaskCenterId('smart', ws, pid, job.id)
+    const store = useTaskCenterStore.getState()
+    const existing = store.tasks.find((task) => task.id === id)
+    // 同一 generation 的终态不可被晚到的轮询/catch 降回 active；若远端最终成功，仍允许 succeeded 覆盖失败态。
+    if (
+      existing &&
+      isTaskCenterTerminalStatus(existing.status) &&
+      status !== existing.status &&
+      status !== 'succeeded'
+    ) {
+      return
+    }
+    store.upsertTask({
+      id,
+      scope: 'smart',
+      workspaceId: ws,
+      projectId: pid,
+      generationId: job.id,
+      taskId: Number(existing?.taskId || 0) || 0,
+      status,
+      title: context?.projectTitle || projectName || '智能成片',
+      ratio: context?.ratio || entryMeta?.ratio || '',
+      durationSec: Number(context?.durationSec || totalDurationSec(context?.shots || shotsRef.current) || 0) || 0,
+      thumbnailUrl: context?.thumbnailUrl || context?.shots?.find((shot) => shot.image)?.image || '',
+      thumbnailAssetId:
+        Number(context?.shots?.find((shot) => Number(shot.imageAssetId || 0) > 0)?.imageAssetId || 0) || 0,
+      operationCode: job.opts?.edit ? 'video.edit' : 'video.generate',
+      startedAt: Number(existing?.startedAt || Date.now()),
+      updatedAt: Date.now(),
+      ...patch,
+    })
+  }
+
+  /** 将图片对话中的一次生成同步到任务中心；generationId 使用 assistant 消息 id，跨刷新稳定。 */
+  const syncImageTask = (
+    message: ChatMessage,
+    status: TaskCenterStatus,
+    patch: Record<string, unknown> = {},
+    context: { workspaceId?: number; projectId?: number } = {},
+  ) => {
+    const ws = Number(context.workspaceId || workspaceIdRef.current || 0) || 0
+    const pid = Number(context.projectId || projectIdRef.current || 0) || 0
+    if (!ws || !pid || !message.id) return
+    const id = buildTaskCenterId('image', ws, pid, message.id)
+    const store = useTaskCenterStore.getState()
+    const existing = store.tasks.find((task) => task.id === id)
+    if (
+      existing &&
+      isTaskCenterTerminalStatus(existing.status) &&
+      status !== existing.status &&
+      status !== 'succeeded'
+    ) {
+      return
+    }
+    const requestImages = message.request?.refImages || []
+    const thumbnail = requestImages.find((image) => image.url) || message.images?.find((image) => image.url)
+    store.upsertTask({
+      id,
+      scope: 'image',
+      workspaceId: ws,
+      projectId: pid,
+      generationId: message.id,
+      taskId: Number(message.taskId || existing?.taskId || 0) || 0,
+      status,
+      title: projectNameRef.current || '图片生成任务',
+      ratio: message.request?.ratio || entryMeta?.ratio || '',
+      durationSec: 0,
+      thumbnailUrl: thumbnail?.url || '',
+      thumbnailAssetId: Number(thumbnail?.assetId || 0) || undefined,
+      operationCode: message.operationCode || 'image.text_to_image',
+      startedAt: Number(message.startedAt || existing?.startedAt || Date.now()),
+      updatedAt: Date.now(),
+      ownerUserId: currentUserId || undefined,
+      ...patch,
+    })
+  }
+
+  /**
+   * 失败/取消也必须先写回该 job 入队时锁定的项目，再把任务中心切到终态。
+   * 旧页面卸载或创建新视频后，这里不再读取可变 projectIdRef/workspaceId；落库失败则保持
+   * reconnecting，交给全局 TaskCenterCoordinator 用同一 task/generation 继续收口。
+   */
+  const persistSmartJobTerminal = async (
+    job: VideoGenJob,
+    status: 'failed' | 'cancelled',
+    error: string,
+    taskId = 0,
+  ): Promise<boolean> => {
+    const context = job.context
+    const ws = Number(context?.workspaceId || 0) || 0
+    const pid = Number(context?.projectId || 0) || 0
+    const safeTaskId = Number(taskId || 0) || 0
+    if (!ws || !pid || !job.id) return false
+
+    const taskCenterId = buildTaskCenterId('smart', ws, pid, job.id)
+    const currentTask = useTaskCenterStore.getState().tasks.find((task) => task.id === taskCenterId)
+    // catch 等待期间，另一条恢复链可能已经落库服务商的成功结果；
+    // 已成功任务后面不能再排入失败或取消草稿，避免终态倒退。
+    if (currentTask?.status === 'succeeded') return false
+
+    syncSmartTask(job, 'reconnecting', { taskId: safeTaskId, error })
+    const persisted = await persistVideoTerminalStateToBackend({
+      projectId: pid,
+      workspaceId: ws,
+      taskId: safeTaskId,
+      genId: job.id,
+      status,
+      error,
+    }).catch(() => false)
+    if (!persisted) return false
+
+    // 可能有另一条全局恢复链已经先拿到成功结果；成功终态永远优先，不能被晚到的 catch 覆盖。
+    const latestTask = useTaskCenterStore.getState().tasks.find((task) => task.id === taskCenterId)
+    if (latestTask?.status === 'succeeded') return true
+    syncSmartTask(job, status, { taskId: 0, error })
+    return true
   }
 
   const autoVidRef = useRef(false)
@@ -2257,29 +2930,61 @@ export default function SmartCreateView() {
 
   // 生成/重生成整片的单次执行单元;多条生成由外层队列顺序消费。
   // 「确认修改」仍专走 video.edit;普通重生成走 seedance。
-  const runVideoJob = async (job: VideoGenJob) => {
-    const ws = Number(workspaceId || 0)
-    const pid = Number(projectIdRef.current) || 0
-    const currentShots = shotsRef.current
+  const runVideoJob = async (
+    job: VideoGenJob,
+    sessionId = job.context?.sessionId || videoGenSessionIdRef.current,
+    sessionQueue = videoGenQueueRef.current,
+  ) => {
+    const context = job.context
+    const ws = Number(context?.workspaceId || workspaceId || 0)
+    const pid = Number(context?.projectId || projectIdRef.current) || 0
+    const currentShots = context?.shots?.length ? context.shots : shotsRef.current
+    const currentRatio = context?.ratio || entryMeta?.ratio
+    const currentStyle = context?.style || entryMeta?.style
+    const currentPrompt = context?.basePrompt || reqSummary || requirement
+    const sourceVideo = context?.sourceVideo || fullVideo
+    const updateCurrentUi = () => isCurrentVideoSession(sessionId)
     if (!ws) {
-      showToast('未选择工作空间,无法生成视频', 'error')
-      markGen(job.id, 'failed', '未选择工作空间，无法生成视频')
+      if (updateCurrentUi()) {
+        showToast('未选择工作空间,无法生成视频', 'error')
+        markGen(job.id, 'failed', '未选择工作空间，无法生成视频')
+      }
+      syncSmartTask(job, 'failed', { error: '未选择工作空间，无法生成视频' })
       return
     }
     if (!currentShots.length) {
-      showToast('暂无分镜,无法生成视频', 'error')
-      markGen(job.id, 'failed', '暂无分镜，无法生成视频')
+      const msg = '暂无分镜，无法生成视频'
+      const terminalPersisted = await persistSmartJobTerminal(job, 'failed', msg)
+      if (updateCurrentUi() && terminalPersisted) {
+        showToast('暂无分镜,无法生成视频', 'error')
+        markGen(job.id, 'failed', msg)
+      }
+      return
+    }
+    const durationValidation = validateVideoDuration(totalDurationSec(currentShots))
+    if (!durationValidation.valid) {
+      const msg = unsupportedVideoDurationMessage(durationValidation.seconds)
+      const terminalPersisted = await persistSmartJobTerminal(job, 'failed', msg)
+      if (updateCurrentUi()) {
+        showToast(msg, 'error')
+        if (terminalPersisted) markGen(job.id, 'failed', msg)
+      }
       return
     }
 
     // 队列开始消费该 job 时就标记为「生成中」。
     // 后端 task_id 要等模型选择/人脸脱敏/提交任务后才返回；如果只在 onTask 里标记，
     // 多视频生成刚开始会全部显示「排队中」，过一会儿才跳成加载态。
-    markRunningGeneration(job.id)
+    if (updateCurrentUi()) markRunningGeneration(job.id)
+    syncSmartTask(job, 'preparing')
 
     // 「确认修改」:把上次整片当 video 输入,按修改提示在原视频基础上改(片段时间段写进提示)
-    if (job.opts?.edit && fullVideo.assetId) {
-      const lockedSig = lockVideoSig() // 发起时锁定本片内容签名
+    if (job.opts?.edit && sourceVideo.assetId) {
+      const lockedSig = context?.lockedSig || computeVideoContentSig(currentShots, null, currentPrompt)
+      if (updateCurrentUi()) {
+        pendingVideoSigRef.current = lockedSig
+        setPendingVideoSig(lockedSig)
+      }
       let activeTaskId = 0
       try {
         const plans = await resolvePlanCandidates()
@@ -2292,12 +2997,12 @@ export default function SmartCreateView() {
         ]
           .filter(Boolean)
           .join('\n')
-        const editSrcDur = (await readVideoDurationSec(fullVideo.url)) || 0
+        const editSrcDur = (await readVideoDurationSec(sourceVideo.url)) || 0
         const editPromise = editFullVideo({
           workspaceId: ws,
-          videoAssetId: fullVideo.assetId,
+          videoAssetId: sourceVideo.assetId,
           prompt: editPrompt,
-          ratio: entryMeta?.ratio,
+          ratio: currentRatio,
           durationSec: totalDurationSec(currentShots) || 10,
           sourceVideoDurationSec: editSrcDur, // 按原整片真实时长计费(video.edit)
           modelPlanCandidates: plans,
@@ -2305,54 +3010,85 @@ export default function SmartCreateView() {
           onTask: (id) => {
             const nextTaskId = Number(id) || 0
             activeTaskId = nextTaskId
-            setVidGenTaskId(nextTaskId)
-            setGenTask(job.id, nextTaskId)
+            syncSmartTask(job, 'processing', { taskId: nextTaskId })
+            if (updateCurrentUi()) {
+              setVidGenTaskId(nextTaskId)
+              setGenTask(job.id, nextTaskId)
+            }
             if (nextTaskId > 0) {
-              updateRunningVideoGenMeta('smart', pid, {
+              updateRunningVideoGenMeta('smart', ws, pid, {
                 taskId: nextTaskId,
                 generationId: job.id,
                 status: 'processing',
               })
-              markRunningGeneration(job.id)
-              dropVideoGenQueueJob(job.id)
-              saveSmartDraft(currentDraft(), ws)
-              if (projectIdRef.current) void putSmartDraftToBackend(ws)
+              if (updateCurrentUi()) {
+                markRunningGeneration(job.id)
+                saveSmartDraft(currentDraft(), ws)
+                if (projectIdRef.current === pid) void putSmartDraftToBackend(ws)
+              }
+              dropVideoGenQueueJob(job.id, sessionId, sessionQueue)
             }
           },
+          onProgress: (progress) => syncSmartTask(job, 'processing', { progress }),
         })
         const { url, assetId } = await trackVideoGen(
           'smart',
+          ws,
           pid,
           continueSmartVideoTaskAfterTransient(editPromise, {
             workspaceId: ws,
             getTaskId: () => activeTaskId,
             onReconnect: (taskId) => {
-              updateRunningVideoGenMeta('smart', pid, {
+              syncSmartTask(job, 'reconnecting', { taskId })
+              updateRunningVideoGenMeta('smart', ws, pid, {
                 taskId,
                 generationId: job.id,
                 status: 'reconnecting',
               })
             },
+            onProgress: (progress) => syncSmartTask(job, 'processing', { progress }),
           }),
-          { workspaceId: ws, generationId: job.id, status: 'preparing' },
+          { generationId: job.id, status: 'preparing' },
         )
-        setFullVideo({ url, assetId })
-        appendVideoVersion({ url, assetId })
-        markGen(job.id, 'published')
-        commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
+        if (updateCurrentUi()) {
+          setFullVideo({ url, assetId })
+          appendVideoVersion({ url, assetId })
+          bindGenerationNoteToResult(job.id, { url, assetId }, job.note || '')
+          markGen(job.id, 'published')
+          commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
+        }
         // B:修改完成即落后端(切走也保存);多条队列等这一版落库后再跑下一条,避免历史版本被旧草稿覆盖。
-        await persistVideoResultToBackend({
-          projectId: projectIdRef.current,
+        const persisted = await persistVideoResultToBackend({
+          projectId: pid,
           workspaceId: ws,
           url,
           assetId,
+          taskId: activeTaskId,
           genId: job.id,
+          modificationNote: job.note || '',
           lockedSig,
-        })
+        }).catch(() => false)
+        if (!persisted) throw new Error('视频已生成，但保存到项目失败')
+        syncSmartTask(job, 'succeeded', { resultUrl: url, resultAssetId: assetId, progress: 100, error: '' })
       } catch (e: any) {
         const msg = e?.message || '请重试'
-        showToast(`视频修改失败:${msg}`, 'error')
-        markGen(job.id, 'failed', msg)
+        const resultSavePending = msg === '视频已生成，但保存到项目失败'
+        const cancelled = isCancelledVideoTaskError(e)
+        const terminalPersisted = resultSavePending
+          ? false
+          : await persistSmartJobTerminal(job, cancelled ? 'cancelled' : 'failed', msg, activeTaskId)
+        if (resultSavePending) {
+          syncSmartTask(job, 'reconnecting', { taskId: activeTaskId, progress: 99, error: msg })
+        }
+        if (updateCurrentUi()) {
+          if (resultSavePending) showToast('视频已生成，正在后台保存到项目', 'info')
+          else if (terminalPersisted) {
+            showToast(cancelled ? '视频生成已中断' : `视频修改失败:${msg}`, cancelled ? 'info' : 'error')
+            markGen(job.id, 'failed', msg)
+          } else {
+            showToast('视频任务终态正在后台同步，请稍后查看', 'info')
+          }
+        }
       }
       return
     }
@@ -2360,19 +3096,28 @@ export default function SmartCreateView() {
     // 仅勾选「参与视频生成」的分镜进入视频(未勾选的跳过)
     const activeShots = currentShots.filter((s) => s.includeInVideo !== false)
     if (!activeShots.length) {
-      showToast('请至少勾选一个分镜参与视频生成', 'error')
-      markGen(job.id, 'failed', '请至少勾选一个分镜参与视频生成')
+      const msg = '请至少勾选一个分镜参与视频生成'
+      const terminalPersisted = await persistSmartJobTerminal(job, 'failed', msg)
+      if (updateCurrentUi() && terminalPersisted) {
+        showToast('请至少勾选一个分镜参与视频生成', 'error')
+        markGen(job.id, 'failed', msg)
+      }
       return
     }
     // 记录本次出片所依据的分镜签名(供「下次进生成视频时分镜未变则不重生成」判断)
-    videoGenSigRef.current = videoInputSig(currentShots, entryMeta, reqSummary || requirement)
-    const lockedSig = lockVideoSig() // 发起时锁定本片内容签名
+    if (updateCurrentUi()) videoGenSigRef.current = videoInputSig(currentShots, entryMeta, currentPrompt)
+    const lockedSig = context?.lockedSig || computeVideoContentSig(currentShots, entryMeta, currentPrompt)
+    if (updateCurrentUi()) {
+      pendingVideoSigRef.current = lockedSig
+      setPendingVideoSig(lockedSig)
+    }
     let activeTaskId = 0
     try {
       // 把整段生成(脱敏 + 建任务 + 轮询 + 落库)包成一个【按 projectId 登记的结果 promise】,活在组件之外:
       // 即使中途切走、组件卸载,它也继续跑到完成并落后端;回来时凭登记表订阅同一个,不重启 → 真正「切页面也继续生成」。
       const { url, assetId } = await trackVideoGen(
         'smart',
+        ws,
         pid,
         (async (): Promise<{ url: string; assetId: number }> => {
           const plans = await resolvePlanCandidates()
@@ -2382,36 +3127,49 @@ export default function SmartCreateView() {
           const lockedPreparedIds = (job.preparedImageAssetIds || [])
             .map((id) => Number(id) || 0)
             .filter((id) => id > 0)
-          const canReuseBatchAssets = lockedSourceIds.length > 0 && lockedSourceIds.length === lockedPreparedIds.length
+          const canReuseBatchAssets =
+            lockedSourceIds.length === activeShots.length && lockedPreparedIds.length === activeShots.length
 
           if (canReuseBatchAssets) {
             imageAssetIds.push(...lockedPreparedIds)
-            setBlurDebug(
-              lockedPreparedIds.map((outAssetId, index) => ({
-                no: activeShots[index]?.no || '',
-                srcAssetId: lockedSourceIds[index],
-                outAssetId,
-                outUrl: '',
-                status: 'batch_cached',
-                ok: true,
-                cached: true,
-                noFace: outAssetId === lockedSourceIds[index],
-              })),
-            )
+            if (updateCurrentUi())
+              setBlurDebug(
+                lockedPreparedIds.map((outAssetId, index) => ({
+                  no: activeShots[index]?.no || '',
+                  srcAssetId: lockedSourceIds[index],
+                  outAssetId,
+                  outUrl: '',
+                  status: 'batch_cached',
+                  ok: true,
+                  cached: true,
+                  noFace: outAssetId === lockedSourceIds[index],
+                })),
+              )
           } else {
             // ① 先确定每镜「原始分镜图」asset_id(按镜头顺序):优先已有 imageAssetId,缺则现传一次。
-            const srcIds: { shotId: string | number; id: number }[] = []
-            for (const sh of activeShots) {
-              let id = Number(sh.imageAssetId || 0) || 0
-              if (!id && sh.image) {
-                try {
-                  id = await ensureAssetId(ws, sh.image, cache)
-                } catch {
-                  /* 单张失败跳过 */
+            const sourceAssetIds = await Promise.all(
+              activeShots.map(async (sh, index) => {
+                const label = sh.no || `分镜 ${index + 1}`
+                if (!sh.image && !Number(sh.imageAssetId || 0)) {
+                  throw new Error(`${label}缺少分镜图，已停止本次视频生成`)
                 }
-              }
-              if (id) srcIds.push({ shotId: sh.id, id })
-            }
+                let id = Number(sh.imageAssetId || 0) || 0
+                if (!id && sh.image) {
+                  try {
+                    id = await ensureAssetId(ws, sh.image, cache)
+                  } catch (error: any) {
+                    throw new Error(`${label}的分镜图保存失败：${error?.message || '请稍后重试'}`)
+                  }
+                }
+                if (!id) throw new Error(`${label}的分镜图尚未保存，已停止本次视频生成`)
+                return id
+              }),
+            )
+            const completeSourceAssetIds = requireOrderedShotAssetIds(activeShots, sourceAssetIds)
+            const srcIds = activeShots.map((shot, index) => ({
+              shotId: shot.id,
+              id: completeSourceAssetIds[index],
+            }))
 
             // ② 每批视频只做人脸预处理一次。同批后续任务复用同一组安全素材，避免某一轮检测失败后回退原图。
             if (faceBlurEnabledRef.current) {
@@ -2420,7 +3178,7 @@ export default function SmartCreateView() {
               for (let j = 0; j < srcIds.length; j++) {
                 const { shotId, id } = srcIds[j]
                 const sh = currentShots.find((s) => s.id === shotId)
-                setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
+                if (updateCurrentUi()) setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
                 const cached = roundCache.get(id)
                 if (cached) {
                   imageAssetIds.push(cached.assetId)
@@ -2455,11 +3213,11 @@ export default function SmartCreateView() {
                   imageAssetIds.push(id)
                   roundCache.set(id, { assetId: id, url: sh?.image || '', noFace: true })
                 } else {
-                  setBlurDebug(dbg)
+                  if (updateCurrentUi()) setBlurDebug(dbg)
                   throw new Error(`${sh?.no || `分镜 ${j + 1}`}人脸检测失败，已停止本次视频生成，请稍后重试`)
                 }
               }
-              setBlurDebug(dbg)
+              if (updateCurrentUi()) setBlurDebug(dbg)
             } else {
               for (const source of srcIds) imageAssetIds.push(source.id)
             }
@@ -2468,25 +3226,30 @@ export default function SmartCreateView() {
               const sourceImageAssetIds = srcIds.map((source) => source.id)
               const preparedImageAssetIds = [...imageAssetIds]
               syncVideoGenQueue(
-                videoGenQueueRef.current.map((queuedJob) =>
+                sessionQueue.map((queuedJob) =>
                   queuedJob.batchId === job.batchId
                     ? { ...queuedJob, sourceImageAssetIds, preparedImageAssetIds }
                     : queuedJob,
                 ),
+                sessionId,
+                sessionQueue,
               )
               // 在创建视频任务前先保存批次素材锁定结果，覆盖此刻刷新/切路由的恢复窗口。
-              saveSmartDraft(currentDraft(), ws)
-              if (projectIdRef.current) void putSmartDraftToBackend(ws)
+              if (updateCurrentUi()) {
+                saveSmartDraft(currentDraft(), ws)
+                if (projectIdRef.current === pid) void putSmartDraftToBackend(ws)
+              }
             }
           }
-          setBlurPhase('')
+          if (updateCurrentUi()) setBlurPhase('')
+          const completeImageAssetIds = requireOrderedShotAssetIds(activeShots, imageAssetIds)
           const generationPromise = generateFullVideo({
             workspaceId: ws,
             shots: activeShots,
-            basePrompt: reqSummary || requirement,
-            ratio: entryMeta?.ratio,
-            style: entryMeta?.style,
-            imageAssetIds,
+            basePrompt: currentPrompt,
+            ratio: currentRatio,
+            style: currentStyle,
+            imageAssetIds: completeImageAssetIds,
             note: job.note,
             variationIndex: job.variationIndex,
             variationTotal: job.variationTotal,
@@ -2496,90 +3259,128 @@ export default function SmartCreateView() {
             onTask: (id) => {
               const nextTaskId = Number(id) || 0
               activeTaskId = nextTaskId
-              setVidGenTaskId(nextTaskId)
-              setGenTask(job.id, nextTaskId)
+              syncSmartTask(job, 'processing', { taskId: nextTaskId })
+              if (updateCurrentUi()) {
+                setVidGenTaskId(nextTaskId)
+                setGenTask(job.id, nextTaskId)
+              }
               if (nextTaskId > 0) {
-                updateRunningVideoGenMeta('smart', pid, {
+                updateRunningVideoGenMeta('smart', ws, pid, {
                   taskId: nextTaskId,
                   generationId: job.id,
                   status: 'processing',
                 })
-                markRunningGeneration(job.id)
-                dropVideoGenQueueJob(job.id)
-                saveSmartDraft(currentDraft(), ws)
-                if (projectIdRef.current) void putSmartDraftToBackend(ws)
+                if (updateCurrentUi()) {
+                  markRunningGeneration(job.id)
+                  saveSmartDraft(currentDraft(), ws)
+                  if (projectIdRef.current === pid) void putSmartDraftToBackend(ws)
+                }
+                dropVideoGenQueueJob(job.id, sessionId, sessionQueue)
               }
             },
+            onProgress: (progress) => syncSmartTask(job, 'processing', { progress }),
           })
           return continueSmartVideoTaskAfterTransient(generationPromise, {
             workspaceId: ws,
             getTaskId: () => activeTaskId,
             onReconnect: (taskId) => {
-              updateRunningVideoGenMeta('smart', pid, {
+              syncSmartTask(job, 'reconnecting', { taskId })
+              updateRunningVideoGenMeta('smart', ws, pid, {
                 taskId,
                 generationId: job.id,
                 status: 'reconnecting',
               })
             },
+            onProgress: (progress) => syncSmartTask(job, 'processing', { progress }),
           })
         })(),
         {
-          workspaceId: ws,
           generationId: job.id,
           status: 'preparing',
         },
       )
-      setFullVideo({ url, assetId })
-      appendVideoVersion({ url, assetId })
-      markGen(job.id, 'published')
-      commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
+      if (updateCurrentUi()) {
+        setFullVideo({ url, assetId })
+        appendVideoVersion({ url, assetId })
+        bindGenerationNoteToResult(job.id, { url, assetId }, job.note || '')
+        markGen(job.id, 'published')
+        commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
+      }
       // 完成即直接落后端(不依赖组件挂载);多条队列等这一版落库后再跑下一条。
-      await persistVideoResultToBackend({
+      const persisted = await persistVideoResultToBackend({
         projectId: pid,
         workspaceId: ws,
         url,
         assetId,
+        taskId: activeTaskId,
         genId: job.id,
+        modificationNote: job.note || '',
         lockedSig,
-      })
+      }).catch(() => false)
+      if (!persisted) throw new Error('视频已生成，但保存到项目失败')
+      syncSmartTask(job, 'succeeded', { resultUrl: url, resultAssetId: assetId, progress: 100, error: '' })
     } catch (e: any) {
       const msg = e?.message || '请重试'
-      showToast(`视频生成失败:${msg}`, 'error')
-      markGen(job.id, 'failed', msg)
+      const resultSavePending = msg === '视频已生成，但保存到项目失败'
+      const cancelled = isCancelledVideoTaskError(e)
+      const terminalPersisted = resultSavePending
+        ? false
+        : await persistSmartJobTerminal(job, cancelled ? 'cancelled' : 'failed', msg, activeTaskId)
+      if (resultSavePending) {
+        syncSmartTask(job, 'reconnecting', { taskId: activeTaskId, progress: 99, error: msg })
+      }
+      if (updateCurrentUi()) {
+        if (resultSavePending) showToast('视频已生成，正在后台保存到项目', 'info')
+        else if (terminalPersisted) {
+          showToast(cancelled ? '视频生成已中断' : `视频生成失败:${msg}`, cancelled ? 'info' : 'error')
+          markGen(job.id, 'failed', msg)
+        } else {
+          showToast('视频任务终态正在后台同步，请稍后查看', 'info')
+        }
+      }
     } finally {
-      setBlurPhase('')
-      setVidGenTaskId(0) // 每轮结束清掉进行中标记,避免恢复时误续
+      if (updateCurrentUi()) {
+        setBlurPhase('')
+        setVidGenTaskId(0) // 每轮结束清掉进行中标记,避免恢复时误续
+      }
     }
   }
 
-  const drainVideoGenQueue = async () => {
-    if (videoGenDrainRef.current) return
-    videoGenDrainRef.current = true
-    setVidGenRunning(true)
+  const drainVideoGenQueue = async (
+    sessionId = videoGenSessionIdRef.current,
+    sessionQueue = videoGenQueueRef.current,
+  ) => {
+    if (videoGenDrainingSessionsRef.current.has(sessionId)) return
+    videoGenDrainingSessionsRef.current.add(sessionId)
+    if (isCurrentVideoSession(sessionId)) setVidGenRunning(true)
     try {
-      while (videoGenQueueRef.current.length) {
-        const [job] = videoGenQueueRef.current
+      while (sessionQueue.length) {
+        const [job] = sessionQueue
         if (!job) {
-          syncVideoGenQueue(videoGenQueueRef.current.slice(1))
+          syncVideoGenQueue(sessionQueue.slice(1), sessionId, sessionQueue)
           continue
         }
-        await runVideoJob(job)
-        dropVideoGenQueueJob(job.id)
+        await runVideoJob(job, sessionId, sessionQueue)
+        dropVideoGenQueueJob(job.id, sessionId, sessionQueue)
       }
     } finally {
-      clearRunningGeneration()
-      videoGenDrainRef.current = false
-      setBlurPhase('')
-      setVidGenTaskId(0)
-      setVidGenRunning(false)
+      videoGenDrainingSessionsRef.current.delete(sessionId)
+      if (isCurrentVideoSession(sessionId)) {
+        clearRunningGeneration()
+        setBlurPhase('')
+        setVidGenTaskId(0)
+        setVidGenRunning(false)
+      }
     }
   }
 
   const resumeQueuedVideoJobs = () => {
-    if (videoGenDrainRef.current) return
+    const sessionId = videoGenSessionIdRef.current
+    const sessionQueue = videoGenQueueRef.current
+    if (videoGenDrainingSessionsRef.current.has(sessionId)) return
     if (videoGenerationsRef.current.some((g) => g.status === 'processing' && Number(g.taskId || 0) > 0)) return
-    if (!videoGenQueueRef.current.length) return
-    void drainVideoGenQueue()
+    if (!sessionQueue.length) return
+    void drainVideoGenQueue(sessionId, sessionQueue)
   }
 
   const queueFullVideo = (note?: string, opts?: { edit?: boolean }, count?: number) => {
@@ -2593,8 +3394,20 @@ export default function SmartCreateView() {
       showToast('暂无分镜,无法生成视频', 'error')
       return
     }
+    const durationValidation = validateVideoDuration(totalDurationSec(currentShots))
+    if (!durationValidation.valid) {
+      showToast(unsupportedVideoDurationMessage(durationValidation.seconds), 'error')
+      return
+    }
     const total = normalizeVideoGenerateCount(count)
-    const forceNew = total > 1 || !!vidGenRunning || videoGenDrainRef.current
+    const sessionId = videoGenSessionIdRef.current
+    const sessionQueue = videoGenQueueRef.current
+    const pid = Number(projectIdRef.current || 0) || 0
+    if (!pid) {
+      showToast('项目尚未创建成功，无法生成视频，请返回入口后重试', 'error')
+      return
+    }
+    const forceNew = total > 1 || !!vidGenRunning || isCurrentVideoDraining()
     const existing = !forceNew ? videoGenerationsRef.current.find((g) => g.status === 'processing') || null : null
     const newRecords: GenRecord[] = []
     let patchedExisting: GenRecord | null = null
@@ -2608,10 +3421,14 @@ export default function SmartCreateView() {
           ? `生成视频 ${i + 1}/${total}`
           : ''
       const useExisting = !forceNew && i === 0 && existing
-      const baseRecord = useExisting ? existing : createPendingGenRecord(displayNote)
+      const baseRecord = useExisting ? existing : createPendingGenRecord(displayNote, note)
       const record = baseRecord.idempotencyKey
-        ? baseRecord
-        : { ...baseRecord, idempotencyKey: createVideoTaskIdempotencyKey() }
+        ? { ...baseRecord, modificationNote: note || '' }
+        : {
+            ...baseRecord,
+            modificationNote: note || '',
+            idempotencyKey: createVideoTaskIdempotencyKey(),
+          }
       if (useExisting) {
         if (record !== existing) patchedExisting = record
       } else {
@@ -2625,6 +3442,20 @@ export default function SmartCreateView() {
         variationIndex: total > 1 ? i + 1 : undefined,
         variationTotal: total > 1 ? total : undefined,
         opts,
+        context: {
+          sessionId,
+          workspaceId: ws,
+          projectId: pid,
+          projectTitle: projectName || '智能成片',
+          shots: currentShots.map((shot) => ({ ...shot })),
+          basePrompt: reqSummary || requirement,
+          ratio: entryMeta?.ratio,
+          style: entryMeta?.style,
+          durationSec: totalDurationSec(currentShots) || 0,
+          thumbnailUrl: currentShots.find((shot) => shot.image)?.image || '',
+          sourceVideo: { ...fullVideo },
+          lockedSig: computeVideoContentSig(currentShots, entryMeta, reqSummary || requirement),
+        },
       }
     })
     if (newRecords.length || patchedExisting) {
@@ -2637,29 +3468,51 @@ export default function SmartCreateView() {
       setVideoGenerations(nextGenerations)
     }
     immediateSaveRef.current = true
-    syncVideoGenQueue([...videoGenQueueRef.current, ...jobs])
+    syncVideoGenQueue([...sessionQueue, ...jobs], sessionId, sessionQueue)
+    for (const job of jobs) syncSmartTask(job, 'queued')
+    if (jobs.length) useTaskCenterStore.getState().setDrawerExpanded(true)
     void (async () => {
       try {
         saveSmartDraft(currentDraft(), ws)
         if (projectIdRef.current) await putSmartDraftToBackend(ws)
       } finally {
-        resumeQueuedVideoJobs()
+        if (isCurrentVideoSession(sessionId)) {
+          resumeQueuedVideoJobs()
+        } else if (sessionQueue.length && !isVideoSessionOwned(sessionId)) {
+          void drainVideoGenQueue(sessionId, sessionQueue)
+        }
       }
     })()
   }
 
   // 单个重生成:只允许当前整片任务空闲时触发。
   const runFullVideo = (note?: string, opts?: { edit?: boolean }, count?: number) => {
-    if (vidGenRunning || videoGenDrainRef.current) return
+    if (vidGenRunning || isCurrentVideoDraining()) return
+    const ws = Number(workspaceIdRef.current || workspaceId || 0)
+    const pid = Number(projectIdRef.current || projectId || 0)
+    if (ws > 0 && pid > 0 && isVideoGenRunning('smart', ws, pid)) {
+      showToast('该项目已在另一个页面生成视频，请等待任务完成', 'info')
+      return
+    }
     queueFullVideo(note, opts, normalizeVideoGenerateCount(count))
   }
 
-  const actualVideoGenerating =
-    vidGenRunning ||
-    videoGenDrainRef.current ||
-    videoGenQueueRef.current.length > 0 ||
-    vidGenTaskId > 0 ||
-    videoGenerations.some((g) => g.status === 'processing' && Number(g.taskId || 0) > 0)
+  const generationWorkspaceId = Number(workspaceIdRef.current || workspaceId || 0)
+  const generationProjectId = Number(projectIdRef.current || projectId || 0) || 0
+  const hasRegisteredVideoGeneration =
+    generationProjectId > 0 && isVideoGenRunning('smart', generationWorkspaceId, generationProjectId)
+  // “正在执行”与“草稿里残留 processing”必须分开。过去 actualVideoGenerating 同时包含二者，
+  // 清理 effect 又用 actualVideoGenerating 作为退出条件，形成 processing 永远无法被清掉的自锁。
+  const videoGenerationActivity = deriveSmartVideoGenerationActivity({
+    generations: videoGenerations,
+    taskId: vidGenTaskId,
+    queueLength: videoGenQueueRef.current.length,
+    localRunning: vidGenRunning,
+    draining: isCurrentVideoDraining(),
+    registered: hasRegisteredVideoGeneration,
+  })
+  const actualVideoGenerating = videoGenerationActivity.visibleActive
+  const staleVideoRecoveryState = videoGenerationActivity.staleRecoveryState
   const resolveRunningVideoGenerationId = (records: GenRecord[] = videoGenerations): string => {
     const processing = [...records]
       .filter((g) => g.status === 'processing')
@@ -2672,33 +3525,68 @@ export default function SmartCreateView() {
       processing.find((g) => Number(g.taskId || 0) > 0)?.id ||
       runningGenerationIdRef.current ||
       runningGenerationId ||
-      (vidGenRunning || actualVideoGenerating || videoGenDrainRef.current ? processing[0].id : '')
+      (vidGenRunning || actualVideoGenerating || isCurrentVideoDraining() ? processing[0].id : '')
     )
   }
-  const setWorkspaceSwitchLock = useUiStore((s) => s.setWorkspaceSwitchLock)
+  const setWorkspaceSwitchLockSource = useUiStore((s) => s.setWorkspaceSwitchLockSource)
+  const workspaceSwitchLockSourceRef = useRef(Symbol('smart-create-workspace-switch-lock'))
   const shouldLockWorkspaceSwitch =
-    actualVideoGenerating || videoGenerations.some((g) => String(g.status || '') === 'processing')
+    imageBusy || actualVideoGenerating || videoGenerations.some((g) => String(g.status || '') === 'processing')
 
   useEffect(() => {
-    setWorkspaceSwitchLock(shouldLockWorkspaceSwitch || isAnyVideoGenRunning(), '当前视频处理中，暂不支持切换团队')
+    const source = workspaceSwitchLockSourceRef.current
+    setWorkspaceSwitchLockSource(
+      source,
+      shouldLockWorkspaceSwitch,
+      imageBusy ? '当前图片处理中，暂不支持切换团队' : '当前视频处理中，暂不支持切换团队',
+    )
     return () => {
-      setWorkspaceSwitchLock(isAnyVideoGenRunning(), '当前视频处理中，暂不支持切换团队')
+      setWorkspaceSwitchLockSource(source, false)
     }
-  }, [setWorkspaceSwitchLock, shouldLockWorkspaceSwitch])
+  }, [imageBusy, setWorkspaceSwitchLockSource, shouldLockWorkspaceSwitch])
   useEffect(() => {
-    const pid = Number(projectIdRef.current || projectId || 0) || 0
-    const hasProcessing = videoGenerations.some((g) => g.status === 'processing')
-    const hasInflight = Boolean(pid > 0 && getRunningVideoGen('smart', pid))
-    if (!hasProcessing) return
-    if (videoGenDrainRef.current || actualVideoGenerating || videoGenQueueRef.current.length > 0 || hasInflight) return
-    failStaleVideoGenerations()
-  }, [actualVideoGenerating, failStaleVideoGenerations, projectId, videoGenerations])
+    const hasTaskBackedGeneration = videoGenerations.some(
+      (generation) => generation.status === 'processing' && Number(generation.taskId || 0) > 0,
+    )
+    if (
+      !videoGenQueueDraft.length ||
+      videoGenerationActivity.runtimeActive ||
+      hasTaskBackedGeneration ||
+      Number(vidGenTaskId || 0) > 0
+    ) {
+      return
+    }
+    // 队列是“待执行凭证”而不是执行者。若恢复回调的同一帧曾读到旧 processing，
+    // 这里会在提交后的状态上再次接管，保证队列不会无人消费却一直显示转圈。
+    resumeQueuedVideoJobs()
+    // resumeQueuedVideoJobs 通过 ref 读取当前 session/queue，本 effect 只由稳定状态字段触发。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoGenQueueDraft, videoGenerationActivity.runtimeActive, vidGenTaskId, videoGenerations])
+  useEffect(() => {
+    if (!staleVideoRecoveryState) return
+    // applyDraft 与 resumePendingVideo 在相邻更新中完成，给恢复链一个短暂接管窗口；
+    // 到期后再次读取 registry/ref，只有确认没有任何执行者才把幽灵状态收口为失败。
+    const timer = window.setTimeout(() => {
+      const ws = Number(workspaceIdRef.current || workspaceId || 0)
+      const pid = Number(projectIdRef.current || projectId || 0) || 0
+      const stillRunning = vidGenRunning || isCurrentVideoDraining() || (pid > 0 && isVideoGenRunning('smart', ws, pid))
+      const stillHasRecoveryState =
+        Number(vidGenTaskId || 0) > 0 ||
+        videoGenQueueRef.current.length > 0 ||
+        videoGenerationsRef.current.some((g) => g.status === 'processing')
+      if (!stillRunning && stillHasRecoveryState) {
+        failStaleVideoGenerations()
+      }
+    }, SMART_STALE_VIDEO_STATE_GRACE_MS)
+    return () => window.clearTimeout(timer)
+  }, [failStaleVideoGenerations, projectId, staleVideoRecoveryState, vidGenRunning, vidGenTaskId, workspaceId])
 
   // 恢复一个【已提交但前端中途离开】的整片生成任务:不重新建任务,凭 taskId 续轮询到完成。
   // 把一次「在途生成的结果」并入本组件 UI(去重,避免和后台路径重复 push 版本)
   const adoptVideoResult = (url: string, assetId: number, genId?: string) => {
     setFullVideo({ url, assetId })
     appendVideoVersion({ url, assetId })
+    bindGenerationNoteToResult(genId, { url, assetId })
     markGen(genId || null, 'published')
     commitVideoSig() // 盖章:用锁定签名(续跑/在途由原发起方 persist 已按 pending 盖章)
   }
@@ -2706,11 +3594,36 @@ export default function SmartCreateView() {
   // 切走→回来:登记表里若还握着【同项目的在途生成】(同会话内,promise 活在组件之外)→ 直接订阅它,
   // 不重启、也不另起一路轮询。覆盖「切走时 taskId 还没存进草稿」的窗口(脱敏/建任务阶段)。返回是否已接管。
   const subscribeRunningVideo = (pid: number, genId = ''): boolean => {
-    const inflight = pid ? getRunningVideoGen('smart', pid) : null
+    const registryWorkspaceId = Number(workspaceIdRef.current || workspaceId || 0) || 0
+    const inflight = pid ? getRunningVideoGen('smart', registryWorkspaceId, pid) : null
     if (!inflight) return false
-    const metadata = getRunningVideoGenMeta('smart', pid)
+    const metadata = getRunningVideoGenMeta('smart', registryWorkspaceId, pid)
+    const subscribedSessionId = videoGenSessionIdRef.current
     const trackedGenId = genId || String(metadata?.generationId || '')
     const trackedTaskId = Number(metadata?.taskId || 0) || 0
+    const subscribedWorkspaceId = Number(metadata?.workspaceId || workspaceIdRef.current || workspaceId || 0) || 0
+    const subscribedDraft = latestDraftStateRef.current
+    const subscribedEntryMeta = subscribedDraft.entryMeta as EntryMeta | null | undefined
+    const subscribedJob: VideoGenJob = {
+      id: trackedGenId || (trackedTaskId > 0 ? `task-${trackedTaskId}` : `resume-${pid}`),
+      context: {
+        sessionId: subscribedSessionId,
+        workspaceId: subscribedWorkspaceId,
+        projectId: pid,
+        projectTitle: String(subscribedDraft.projectName || projectName || '智能成片'),
+        shots: shotsRef.current.map((shot) => ({ ...shot })),
+        basePrompt: String(
+          subscribedDraft.reqSummary || subscribedDraft.requirement || reqSummary || requirement || '',
+        ),
+        ratio: subscribedEntryMeta?.ratio,
+        style: subscribedEntryMeta?.style,
+        durationSec: totalDurationSec(shotsRef.current) || 0,
+        thumbnailUrl: shotsRef.current.find((shot) => shot.image)?.image || '',
+        sourceVideo: { ...fullVideoRef.current },
+        lockedSig: pendingVideoSigRef.current || String(subscribedDraft.pendingVideoSig || '') || pendingVideoSig,
+      },
+    }
+    videoGenOwnedSessionsRef.current.add(subscribedSessionId)
     autoVidRef.current = true // 防止「自动生成」effect 再触发一次
     setVidGenRunning(true)
     if (trackedGenId) {
@@ -2720,18 +3633,39 @@ export default function SmartCreateView() {
     }
     if (trackedTaskId > 0) setVidGenTaskId(trackedTaskId)
     inflight
-      .then(({ url, assetId }) => adoptVideoResult(url, assetId, trackedGenId))
-      .catch((e: any) => markGen(trackedGenId || null, 'failed', e?.message || '视频生成失败，请重试'))
+      .then(({ url, assetId }) => {
+        if (isCurrentVideoSession(subscribedSessionId)) adoptVideoResult(url, assetId, trackedGenId)
+      })
+      .catch(async (e: any) => {
+        const message = e?.message || '视频生成失败，请重试'
+        const terminalPersisted = await persistSmartJobTerminal(
+          subscribedJob,
+          isCancelledVideoTaskError(e) ? 'cancelled' : 'failed',
+          message,
+          trackedTaskId,
+        )
+        if (terminalPersisted && isCurrentVideoSession(subscribedSessionId)) {
+          markGen(trackedGenId || null, 'failed', message)
+        }
+      })
       .finally(() => {
+        if (!isCurrentVideoSession(subscribedSessionId)) {
+          videoGenOwnedSessionsRef.current.delete(subscribedSessionId)
+          return
+        }
         setVidGenTaskId(0)
         clearRunningGeneration()
         // 同一浏览器内切路由后，原页面仍拥有多视频队列。这里只跟随登记表中的下一条任务，
         // 绝不在新页面抢占/重跑队列，避免同一个 idempotency job 被提交两次。
         const followNext = () => {
-          const next = getRunningVideoGen('smart', pid)
+          if (!isCurrentVideoSession(subscribedSessionId)) {
+            videoGenOwnedSessionsRef.current.delete(subscribedSessionId)
+            return
+          }
+          const next = getRunningVideoGen('smart', subscribedWorkspaceId, pid)
           if (next && next !== inflight) {
             videoRegistryFollowTimerRef.current = 0
-            const nextMeta = getRunningVideoGenMeta('smart', pid)
+            const nextMeta = getRunningVideoGenMeta('smart', subscribedWorkspaceId, pid)
             subscribeRunningVideo(pid, String(nextMeta?.generationId || ''))
             return
           }
@@ -2739,6 +3673,7 @@ export default function SmartCreateView() {
             videoGenQueueRef.current.length > 0 || videoGenerationsRef.current.some((g) => g.status === 'processing')
           if (!hasPending) {
             videoRegistryFollowTimerRef.current = 0
+            videoGenOwnedSessionsRef.current.delete(subscribedSessionId)
             setVidGenRunning(false)
             return
           }
@@ -2754,50 +3689,111 @@ export default function SmartCreateView() {
     const ws = Number(workspaceIdRef.current || workspaceId || 0)
     if (!ws || !taskId || vidGenRunning) return
     const pid = Number(projectIdRef.current) || 0
+    const resumeSessionId = videoGenSessionIdRef.current
+    const resumeSessionQueue = videoGenQueueRef.current
     const activeGenId =
       videoGenerationsRef.current.find((g) => Number(g.taskId || 0) === Number(taskId || 0))?.id ||
       videoGenerationsRef.current.find((g) => g.status === 'processing')?.id ||
       ''
+    const restoredDraft = latestDraftStateRef.current
+    const restoredEntryMeta = restoredDraft.entryMeta as EntryMeta | null | undefined
+    const restoredFullVideo = fullVideoRef.current
+    const resumeJob: VideoGenJob = {
+      id: activeGenId || `task-${taskId}`,
+      context: {
+        sessionId: resumeSessionId,
+        workspaceId: ws,
+        projectId: pid,
+        projectTitle: String(restoredDraft.projectName || projectName || '智能成片'),
+        shots: shotsRef.current.map((shot) => ({ ...shot })),
+        basePrompt: String(restoredDraft.reqSummary || restoredDraft.requirement || reqSummary || requirement || ''),
+        ratio: restoredEntryMeta?.ratio,
+        style: restoredEntryMeta?.style,
+        durationSec: totalDurationSec(shotsRef.current) || 0,
+        thumbnailUrl: shotsRef.current.find((shot) => shot.image)?.image || '',
+        sourceVideo: { ...restoredFullVideo },
+        lockedSig: pendingVideoSigRef.current || String(restoredDraft.pendingVideoSig || '') || pendingVideoSig,
+      },
+    }
+    syncSmartTask(resumeJob, 'reconnecting', { taskId })
     // 同会话内切走→回来:登记表里还握着那次在途生成 → 订阅它(不对同一任务起第二路轮询)。
     if (subscribeRunningVideo(pid, activeGenId)) {
       if (activeGenId) markRunningGeneration(activeGenId)
       return
     }
+    videoGenOwnedSessionsRef.current.add(resumeSessionId)
     autoVidRef.current = true // 防止「自动生成」effect 同时再触发一次
     setVidGenRunning(true)
     setVidGenTaskId(taskId)
     if (activeGenId) markRunningGeneration(activeGenId)
     try {
       // 硬刷新后登记表为空 → 凭 taskId 续轮询同一后端任务(不重新生成)。
-      const resumePromise = continueSmartVideoTaskAfterTransient(resumeFullVideo({ workspaceId: ws, taskId }), {
-        workspaceId: ws,
-        getTaskId: () => taskId,
-        onReconnect: (reconnectingTaskId) => {
-          updateRunningVideoGenMeta('smart', pid, {
-            taskId: reconnectingTaskId,
-            generationId: activeGenId,
-            status: 'reconnecting',
-          })
+      const resumePromise = continueSmartVideoTaskAfterTransient(
+        resumeFullVideo({
+          workspaceId: ws,
+          taskId,
+          onProgress: (progress) => syncSmartTask(resumeJob, 'processing', { progress }),
+        }),
+        {
+          workspaceId: ws,
+          getTaskId: () => taskId,
+          onReconnect: (reconnectingTaskId) => {
+            updateRunningVideoGenMeta('smart', ws, pid, {
+              taskId: reconnectingTaskId,
+              generationId: activeGenId,
+              status: 'reconnecting',
+            })
+          },
+          onProgress: (progress) => syncSmartTask(resumeJob, 'processing', { progress }),
         },
-      })
-      const { url, assetId } = await trackVideoGen('smart', pid, resumePromise, {
-        workspaceId: ws,
+      )
+      const { url, assetId } = await trackVideoGen('smart', ws, pid, resumePromise, {
         taskId,
         generationId: activeGenId,
         status: 'reconnecting',
       })
+      if (isCurrentVideoSession(resumeSessionId)) adoptVideoResult(url, assetId, activeGenId)
       // B:续跑完成即落后端(切走也保存)
-      await persistVideoResultToBackend({ projectId: pid, workspaceId: ws, url, assetId, genId: activeGenId })
-      adoptVideoResult(url, assetId, activeGenId) // 续跑完成:把那条「生成中」记录并入成片
+      const persisted = await persistVideoResultToBackend({
+        projectId: pid,
+        workspaceId: ws,
+        url,
+        assetId,
+        taskId,
+        genId: activeGenId,
+      }).catch(() => false)
+      if (!persisted) throw new Error('视频已生成，但保存到项目失败')
+      syncSmartTask(resumeJob, 'succeeded', { resultUrl: url, resultAssetId: assetId, progress: 100, error: '' })
     } catch (e: any) {
       const msg = e?.message || '请重试'
-      showToast(`恢复视频生成失败:${msg}`, 'error')
-      markGen(activeGenId || null, 'failed', msg)
+      const resultSavePending = msg === '视频已生成，但保存到项目失败'
+      const cancelled = isCancelledVideoTaskError(e)
+      const terminalPersisted = resultSavePending
+        ? false
+        : await persistSmartJobTerminal(resumeJob, cancelled ? 'cancelled' : 'failed', msg, taskId)
+      if (resultSavePending) {
+        syncSmartTask(resumeJob, 'reconnecting', { taskId, progress: 99, error: msg })
+      }
+      if (isCurrentVideoSession(resumeSessionId)) {
+        if (resultSavePending) showToast('视频已生成，正在后台保存到项目', 'info')
+        else if (terminalPersisted) {
+          showToast(cancelled ? '视频生成已中断' : `恢复视频生成失败:${msg}`, cancelled ? 'info' : 'error')
+          markGen(activeGenId || null, 'failed', msg)
+        } else {
+          showToast('视频任务终态正在后台同步，请稍后查看', 'info')
+        }
+      }
     } finally {
-      clearRunningGeneration()
-      setVidGenRunning(false)
-      setVidGenTaskId(0)
-      resumeQueuedVideoJobs()
+      videoGenOwnedSessionsRef.current.delete(resumeSessionId)
+      if (isCurrentVideoSession(resumeSessionId)) {
+        clearRunningGeneration()
+        setVidGenRunning(false)
+        setVidGenTaskId(0)
+        resumeQueuedVideoJobs()
+      } else if (resumeSessionQueue.length && !isVideoSessionOwned(resumeSessionId)) {
+        // reset / 卸载后仍让原 session 按顺序跑完剩余任务，但不能抢占仍在恢复中的当前 task。
+        void drainVideoGenQueue(resumeSessionId, resumeSessionQueue)
+      }
     }
   }
 
@@ -2823,7 +3819,7 @@ export default function SmartCreateView() {
   useEffect(() => {
     const ws = Number(workspaceId || 0)
     const pid = Number(projectIdRef.current || projectId || 0) || 0
-    const hasInflight = Boolean(pid > 0 && getRunningVideoGen('smart', pid))
+    const hasInflight = pid > 0 && isVideoGenRunning('smart', ws, pid)
     if (!ws || step !== 3 || actualVideoGenerating || hasInflight || !shots.length) return
     let alive = true
     setVideoCost((s) => ({ ...s, loading: true, error: '' }))
@@ -2886,11 +3882,44 @@ export default function SmartCreateView() {
       kind === 'elements'
         ? new Set(shots.flatMap((s) => (s.subjects || []).map((su: any) => stripAt(su.tag || '')).filter(Boolean))).size
         : 0
-    const count = kind === 'elements' ? elementCount : kind === 'frames' && !isImg ? frameCount : 0
+    const count = isImg
+      ? Math.min(9, Math.max(1, Math.floor(Number(imageComposerOutputCount) || 1)))
+      : kind === 'elements'
+        ? elementCount
+        : kind === 'frames'
+          ? frameCount
+          : 0
     setStepCost({ loading: true, error: '', perImage, count, estimate: null })
     const timer = window.setTimeout(async () => {
       try {
         const plans = await resolvePlanCandidates()
+        if (isImg) {
+          // 图片对话按当前输入框是否带参考图，精确区分文生图/图生图；不能再固定按图生图展示费用。
+          const res: any = await estimateShotImageCost({
+            workspaceId: ws,
+            hasRefs: imageComposerRefCount > 0,
+            ratio: imageComposerRatio || entryMeta?.ratio,
+            modelPlanCandidates: plans,
+          })
+          if (!alive) return
+          const perImageCost = Math.max(0, Number(res?.estimated_cost ?? 0) || 0)
+          const estimatedCost = perImageCost * count
+          const balance = Number(res?.balance ?? 0)
+          const canAfford = res?.can_afford !== false && estimatedCost <= balance
+          setStepCost({
+            loading: false,
+            error: '',
+            perImage: true,
+            count,
+            estimate: {
+              estimatedCost,
+              balance,
+              canAfford,
+              perOne: perImageCost,
+            },
+          })
+          return
+        }
         if (kind === 'video') {
           const res: any = await estimateFullVideoCost({
             workspaceId: ws,
@@ -2933,7 +3962,7 @@ export default function SmartCreateView() {
         }
         // kind === 'frames'(镜头编排分镜帧):链式生成 —— 首镜(无自带素材)走【文生图】,第 2 镜起带上一帧 →【图生图】。
         // 两者后端计费不同,故分别估价再按分镜数求和:总额 = 文生图×文生图数 + 图生图×图生图数。张数未知则按 1 张图生图估。
-        const n = isImg ? 0 : frameCount
+        const n = frameCount
         const firstHasMaterials = n > 0 ? (partShots[0]?.subjects || []).some((su: any) => Boolean(su?.image)) : false
         const textCount = n > 0 && !firstHasMaterials ? 1 : 0
         const i2iCount = n > 0 ? n - textCount : 1
@@ -2975,7 +4004,19 @@ export default function SmartCreateView() {
       window.clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, marketingOpen, workspaceId, isImageMode, started, shots.length])
+  }, [
+    step,
+    marketingOpen,
+    workspaceId,
+    isImageMode,
+    started,
+    shots.length,
+    entryMeta?.ratio,
+    imageComposerRefCount,
+    imageComposerRatio,
+    imageComposerOutputCount,
+    memberCenterOpen,
+  ])
 
   // 同名主体素材联动 + 纳入版本库:
   // 脚本只在部分镜头(常仅镜头1)匹配到 imageIndex,这里把每个主体已有的图回填到所有同名缺图的分镜。
@@ -3078,15 +4119,40 @@ export default function SmartCreateView() {
     if (changed) setShots(next)
   }, [step, shots, entryMeta])
 
-  // 各修改框文本(临时本地态;后端接入后改为来自分镜数据)。
-  const [fields, setFields] = useState<Record<string, string>>({})
-
   // ── 加载后水合签名URL(对齐 2.0):草稿里存的签名URL会过期,按 asset_id 重新取新签名URL ──
-  const hydratedUrlsRef = useRef(false)
+  // 按“工作空间 + 项目 + asset”记录成功项，而不是整个页面只允许执行一次：后续新生成的版本同样需要水合；
+  // 单个资源失败只重试它自己，不能让一次短暂失败永久留下过期 URL。
+  const hydratedAssetKeysRef = useRef(new Set<string>())
+  const hydratingAssetKeysRef = useRef(new Set<string>())
+  const assetHydrationAttemptsRef = useRef(new Map<string, number>())
+  const assetHydrationScopeRef = useRef('')
+  const assetHydrationRetryTimerRef = useRef(0)
+  const [assetHydrationVersion, setAssetHydrationVersion] = useState(0)
   useEffect(() => {
-    if (!hydratedRef.current || hydratedUrlsRef.current) return
+    const scope = `${Number(workspaceId || 0)}:${Number(projectId || routeId || 0)}`
+    assetHydrationScopeRef.current = scope
+    hydratedAssetKeysRef.current.clear()
+    hydratingAssetKeysRef.current.clear()
+    assetHydrationAttemptsRef.current.clear()
+    if (assetHydrationRetryTimerRef.current) window.clearTimeout(assetHydrationRetryTimerRef.current)
+    assetHydrationRetryTimerRef.current = 0
+    setAssetHydrationVersion((version) => version + 1)
+    return () => {
+      if (assetHydrationScopeRef.current === scope) assetHydrationScopeRef.current = ''
+    }
+  }, [projectId, routeId, workspaceId])
+  useEffect(
+    () => () => {
+      if (assetHydrationRetryTimerRef.current) window.clearTimeout(assetHydrationRetryTimerRef.current)
+    },
+    [],
+  )
+  useEffect(() => {
+    if (!hydratedRef.current) return
     const ws = Number(workspaceId || 0)
     if (!ws || !started) return
+    const scope = `${ws}:${Number(projectId || routeId || 0)}`
+    if (assetHydrationScopeRef.current !== scope) return
     // 收集所有 asset_id(分镜图 + 元素图 + 版本库)
     const ids = new Set<number>()
     shots.forEach((sh) => {
@@ -3116,16 +4182,58 @@ export default function SmartCreateView() {
       if (id) ids.add(Number(id))
     })
     if (!ids.size) return // 暂无 asset_id(数据可能还没装载完)→ 下一轮再试
-    hydratedUrlsRef.current = true
+    const pendingIds = [...ids].filter((id) => {
+      const key = `${scope}:${id}`
+      return (
+        !hydratedAssetKeysRef.current.has(key) &&
+        !hydratingAssetKeysRef.current.has(key) &&
+        Number(assetHydrationAttemptsRef.current.get(key) || 0) < 3
+      )
+    })
+    if (!pendingIds.length) return
+    pendingIds.forEach((id) => hydratingAssetKeysRef.current.add(`${scope}:${id}`))
     void (async () => {
       const map = new Map<number, string>()
-      await Promise.all(
-        [...ids].map(async (id) => {
-          const u = await refreshAssetUrl(ws, id)
-          if (u) map.set(id, u)
+      const results = await Promise.all(
+        pendingIds.map(async (id) => {
+          try {
+            const url = await refreshAssetUrl(ws, id)
+            return { id, url: String(url || '') }
+          } catch {
+            return { id, url: '' }
+          }
         }),
       )
-      if (!map.size) return
+      results.forEach(({ id }) => hydratingAssetKeysRef.current.delete(`${scope}:${id}`))
+      if (assetHydrationScopeRef.current !== scope) return
+      const retryKeys: string[] = []
+      results.forEach(({ id, url }) => {
+        const key = `${scope}:${id}`
+        if (url) {
+          map.set(id, url)
+          hydratedAssetKeysRef.current.add(key)
+          assetHydrationAttemptsRef.current.delete(key)
+          return
+        }
+        const attempt = Number(assetHydrationAttemptsRef.current.get(key) || 0) + 1
+        assetHydrationAttemptsRef.current.set(key, attempt)
+        if (attempt < 3) retryKeys.push(key)
+      })
+      const scheduleRetry = () => {
+        if (!retryKeys.length || assetHydrationRetryTimerRef.current) return
+        const attempt = Math.max(...retryKeys.map((key) => Number(assetHydrationAttemptsRef.current.get(key) || 1)))
+        assetHydrationRetryTimerRef.current = window.setTimeout(
+          () => {
+            assetHydrationRetryTimerRef.current = 0
+            if (assetHydrationScopeRef.current === scope) setAssetHydrationVersion((version) => version + 1)
+          },
+          attempt > 1 ? 1200 : 400,
+        )
+      }
+      if (!map.size) {
+        scheduleRetry()
+        return
+      }
       setShots((prev) =>
         prev.map((sh) => {
           // 该镜内 旧url→新url 映射(元素/额外参考/版本/当前图各自带 asset_id),用于刷新 selectedRefs/版本refs
@@ -3215,8 +4323,20 @@ export default function SmartCreateView() {
         videoVersionsRef.current = next
         return next
       })
+      scheduleRetry()
     })()
-  }, [workspaceId, started, shots, subjectAssets, fullVideo, videoVersions, entryMeta])
+  }, [
+    assetHydrationVersion,
+    entryMeta,
+    fullVideo,
+    projectId,
+    routeId,
+    shots,
+    started,
+    subjectAssets,
+    videoVersions,
+    workspaceId,
+  ])
 
   // ── 制作图片对话:加载后按 asset_id 重换图片签名URL(草稿里存的签名URL会过期)──
   useEffect(() => {
@@ -3225,6 +4345,7 @@ export default function SmartCreateView() {
     if (!ws || !started || !isImageMode) return
     const ids = new Set<number>()
     imageMessages.forEach((m) => (m.images || []).forEach((im) => im.assetId && ids.add(Number(im.assetId))))
+    imageComposerDraft.images.forEach((image) => image.assetId && ids.add(Number(image.assetId)))
     if (!ids.size) return
     imgMsgHydratedRef.current = true
     void (async () => {
@@ -3244,8 +4365,14 @@ export default function SmartCreateView() {
           ),
         })),
       )
+      setImageComposerDraft((previous) => ({
+        ...previous,
+        images: previous.images.map((image) =>
+          image.assetId && map.get(Number(image.assetId)) ? { ...image, url: map.get(Number(image.assetId))! } : image,
+        ),
+      }))
     })()
-  }, [workspaceId, started, isImageMode, imageMessages])
+  }, [workspaceId, started, isImageMode, imageMessages, imageComposerDraft.images])
 
   // ── 草稿:本地(localStorage)+ 后端(/creative/projects/:id/draft)双层持久化 ──
   // 保存队列里的 task 可能晚于发起它的 render 执行，因此不能依赖旧闭包里的页面状态。
@@ -3266,6 +4393,7 @@ export default function SmartCreateView() {
     projectId: Number(projectIdRef.current || projectId || 0) || 0,
     materialBatchPending,
     scriptPending,
+    scriptError,
     lastVideoSig,
     pendingVideoSig,
     faceBlurEnabled,
@@ -3273,7 +4401,36 @@ export default function SmartCreateView() {
     marketingText,
     marketingData,
     imageMessages,
+    imageComposerDraft,
   }
+
+  /** 同步更新图片消息 state、即时 ref 与草稿快照，供 taskId 回调后立刻可靠落盘。 */
+  const commitImageMessages = useCallback((nextOrUpdater: SetStateAction<ChatMessage[]>): ChatMessage[] => {
+    const previous = imageMessagesRef.current
+    const next =
+      typeof nextOrUpdater === 'function'
+        ? (nextOrUpdater as (value: ChatMessage[]) => ChatMessage[])(previous)
+        : nextOrUpdater
+    imageMessagesRef.current = next
+    latestDraftStateRef.current = { ...latestDraftStateRef.current, imageMessages: next }
+    setImageMessages(next)
+    return next
+  }, [])
+
+  /** 同步图片输入草稿到 state 与即时快照，返回入口或刷新时都不会丢失未发送内容。 */
+  const commitImageComposerDraft = useCallback((draft: ImageComposerDraft) => {
+    const next: ImageComposerDraft = {
+      text: String(draft.text || ''),
+      ratio: String(draft.ratio || '16:9'),
+      images: Array.isArray(draft.images) ? draft.images : [],
+      outputCount: Math.min(9, Math.max(1, Math.floor(Number(draft.outputCount) || 1))),
+    }
+    latestDraftStateRef.current = { ...latestDraftStateRef.current, imageComposerDraft: next }
+    setImageComposerDraft(next)
+    setImageComposerRefCount(next.images.length)
+    setImageComposerRatio(next.ratio)
+    setImageComposerOutputCount(next.outputCount)
+  }, [])
 
   // 把当前页面状态打包成草稿对象(localStorage 与后端快照共用)
   const currentDraft = (): SmartDraft => {
@@ -3296,16 +4453,6 @@ export default function SmartCreateView() {
       videoGenQueue: latestVideoQueue,
     }
   }
-  const saveCurrentDraftLocally = (ws: number, draft: SmartDraft = currentDraft()): boolean => {
-    // 创建请求可能刚在另一个组件实例里绑定 projectId；旧的 pid=0 实例不能再把该指针覆盖掉。
-    // 显式“创建新视频”会先 clearSmartDraft，因此不会被这层保护误拦。
-    if (!Number(draft.projectId || 0)) {
-      const existing = loadSmartDraft(ws)
-      if (existing?.started && Number(existing.projectId || 0) > 0) return false
-    }
-    saveSmartDraft(draft, ws)
-    return true
-  }
   const hasRestoredVideoInProgress = (d: SmartDraft, generations: GenRecord[], queue: VideoGenJob[]): boolean => {
     if (Number(d.vidGenTaskId || 0) > 0) return true
     if ((generations || []).some((g) => String(g?.status || '') === 'processing' || Number(g?.taskId || 0) > 0))
@@ -3319,8 +4466,12 @@ export default function SmartCreateView() {
     setRequirement(d.requirement || '')
     setReqSummary(d.reqSummary || '')
     if (d.entryMeta) setEntryMeta(d.entryMeta)
-    if (d.projectName) setProjectName(d.projectName)
-    setNameTouched(!!d.nameTouched)
+    if (d.projectName && (!isUnnamedTitle(d.projectName) || isUnnamedTitle(projectNameRef.current))) {
+      projectNameRef.current = d.projectName
+      setProjectName(d.projectName)
+    }
+    nameTouchedRef.current = !!d.nameTouched
+    setNameTouched(nameTouchedRef.current)
     const restoredGenerations = getPersistedVideoGenerations((d.videoGenerations as GenRecord[]) || [])
     const restoredVideoQueue = Array.isArray(d.videoGenQueue)
       ? (d.videoGenQueue as any[])
@@ -3368,6 +4519,7 @@ export default function SmartCreateView() {
     // 恢复「一键生成」进行中标记 → 进准备素材步会由 effect 自动续作未出图的素材(不被截断)
     setMaterialBatchPending(!!d.materialBatchPending)
     setScriptPending(!!d.scriptPending)
+    setScriptError(String(d.scriptError || ''))
     // 恢复「生成中」:
     // ① 同会话内切走→回来:登记表里还握着那次在途生成 → 直接订阅(即便 taskId 还没存进草稿,
     //    比如切走发生在脱敏/建任务阶段)→ 真正「切到别的页面也继续生成」。
@@ -3388,7 +4540,30 @@ export default function SmartCreateView() {
     setMarketingOpen(!!d.marketingOpen)
     setMarketingText(d.marketingText || '')
     setMarketingData((d.marketingData as MarketingBreakdownData) || null)
-    setImageMessages(Array.isArray(d.imageMessages) ? (d.imageMessages as ChatMessage[]) : [])
+    const restoredImageMessages = Array.isArray(d.imageMessages) ? (d.imageMessages as ChatMessage[]) : []
+    imageMessagesRef.current = restoredImageMessages
+    setImageMessages(restoredImageMessages)
+    const restoredComposer = d.imageComposerDraft as Partial<ImageComposerDraft> | undefined
+    const restoredComposerDraft: ImageComposerDraft = {
+      text: String(restoredComposer?.text || ''),
+      ratio: String(restoredComposer?.ratio || d.entryMeta?.ratio || '16:9'),
+      images: Array.isArray(restoredComposer?.images)
+        ? restoredComposer.images
+            .map((image: any) => ({
+              url: String(image?.url || ''),
+              assetId: Math.max(0, Math.floor(Number(image?.assetId || 0) || 0)),
+            }))
+            .filter((image: ChatImg) => image.url || Number(image.assetId || 0) > 0)
+        : [],
+      outputCount: Math.min(
+        9,
+        Math.max(1, Math.floor(Number(restoredComposer?.outputCount || d.entryMeta?.outputCount || 1) || 1)),
+      ),
+    }
+    setImageComposerDraft(restoredComposerDraft)
+    setImageComposerRefCount(restoredComposerDraft.images.length)
+    setImageComposerRatio(restoredComposerDraft.ratio)
+    setImageComposerOutputCount(restoredComposerDraft.outputCount)
     imgMsgHydratedRef.current = false // 恢复后按 asset_id 重换图片签名URL
     autoGenRef.current = true // 已有分镜图/草稿,进入镜头编排不自动重生成
     autoVidRef.current = true
@@ -3397,84 +4572,364 @@ export default function SmartCreateView() {
     videoGenSigRef.current = videoInputSig(restoredShots, d.entryMeta || null, d.reqSummary || d.requirement || '')
   }
 
-  // 从任意返回体里取 draft_revision(后端字段有下划线/驼峰/嵌套 data 多种写法,对齐 2.0)
-  const normRev = (p: any): number => {
-    const v = Number(p?.draft_revision ?? p?.draftRevision ?? p?.data?.draft_revision ?? p?.data?.draftRevision ?? NaN)
-    return Number.isFinite(v) && v >= 0 ? Math.floor(v) : NaN
-  }
-  const fetchRevision = async (id: number, ws: number): Promise<number> => {
+  const fetchRevision = useCallback(async (id: number, ws: number): Promise<number> => {
     try {
       const proj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
       const r = normRev(proj)
-      return Number.isFinite(r) ? r : NaN
+      if (Number.isFinite(r) && projectIdRef.current === id && Number(workspaceIdRef.current || 0) === ws) {
+        draftRevisionRef.current = r
+      }
+      return r
     } catch {
       return NaN
     }
+  }, [])
+
+  // 项目标题 PATCH 与草稿 PUT 共用 draft_revision，必须进入同一保存队列，避免并发写入互相 409。
+  const patchSmartTitleToBackend = useCallback(
+    (id: number, title: string, ws: number): Promise<DraftWriteResult> => {
+      const normalizedTitle = String(title || '').trim()
+      if (!id || !ws || !normalizedTitle) return Promise.resolve('error')
+      const expectedTitle = serverTitleRef.current
+      const fallbackContentFingerprint = baseDraftContentFingerprintRef.current
+      return enqueueCreativeProjectDraftSave({
+        projectId: id,
+        workspaceId: ws,
+        task: async () => {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+              const latestProject: any = await getCreativeProject({ projectId: id, workspaceId: ws })
+              if (blockRestrictedProjectRef.current(latestProject, id, ws)) return 'error'
+              const latestRevision = normRev(latestProject)
+              if (
+                Number.isFinite(latestRevision) &&
+                projectIdRef.current === id &&
+                Number(workspaceIdRef.current || 0) === ws
+              ) {
+                draftRevisionRef.current = latestRevision
+              }
+              const latestDraftValue =
+                latestProject?.draft_json ?? latestProject?.data?.draft_json ?? latestProject?.draft
+              // 标题任务也在草稿保存队列中。等待期间，同一标签页可能已经把图片 taskId、结果或
+              // 批次合并写入云端；此时应采用队列前一笔“实际落库”的内容指纹，而不是调用标题
+              // 保存时捕获的旧基线。真正来自其他页面的内容仍不会更新该 ref，仍会被下面的 CAS 拦截。
+              const expectedContentFingerprint =
+                projectIdRef.current === id && Number(workspaceIdRef.current || 0) === ws
+                  ? baseDraftContentFingerprintRef.current || fallbackContentFingerprint
+                  : fallbackContentFingerprint
+              if (!expectedContentFingerprint) return 'conflict'
+              assertCreativeDraftContentUnchanged(expectedContentFingerprint, latestDraftValue)
+              const latestTitle = String(latestProject?.title || latestProject?.name || '').trim()
+              const titleDecision = resolveCreativeProjectTitleWrite(expectedTitle, normalizedTitle, latestTitle)
+              if (titleDecision === 'already-saved') return 'saved'
+              if (titleDecision === 'conflict') return 'conflict'
+              const payload: any = await patchCreativeProject({
+                projectId: id,
+                workspaceId: ws,
+                title: normalizedTitle,
+                name: normalizedTitle,
+              })
+              const nextRevision = normRev(payload)
+              if (
+                Number.isFinite(nextRevision) &&
+                projectIdRef.current === id &&
+                Number(workspaceIdRef.current || 0) === ws
+              ) {
+                draftRevisionRef.current = nextRevision
+              } else await fetchRevision(id, ws)
+              return 'saved'
+            } catch (error) {
+              if (isCreativeDraftContentConflictError(error)) return 'conflict'
+              const conflict = isDraftConflictError(error)
+              const retryable = isRetryableDraftSaveError(error)
+              if ((!conflict && !retryable) || attempt >= 2) return 'error'
+              if (retryable && !conflict) await waitForDraftSaveRetry(attempt)
+              await fetchRevision(id, ws)
+            }
+          }
+          return 'error'
+        },
+      })
+    },
+    [fetchRevision],
+  )
+
+  const retrySmartCloudSave = async () => {
+    const id = Number(projectIdRef.current || 0)
+    const ws = Number(workspaceId || 0)
+    if (!id || !ws || draftSaveStatusRef.current === 'conflict') return
+    const pendingTitle = pendingTitleSaveRef.current
+    updateDraftSaveStatus('saving')
+    const draftResult = await putSmartDraftToBackend(ws)
+    if (projectIdRef.current !== id || Number(workspaceIdRef.current || 0) !== ws || draftResult !== 'saved') {
+      return
+    }
+    if (pendingTitle) {
+      const titleResult = await patchSmartTitleToBackend(id, pendingTitle, ws)
+      if (
+        pendingTitleSaveRef.current !== pendingTitle ||
+        projectIdRef.current !== id ||
+        Number(workspaceIdRef.current || 0) !== ws
+      ) {
+        return
+      }
+      if (titleResult === 'conflict') {
+        updateDraftSaveStatus('conflict')
+        if (!draftContentConflictNotifiedRef.current) {
+          draftContentConflictNotifiedRef.current = true
+          showToast('检测到其他页面修改了项目，已停止云端保存，当前页面内容不会覆盖对方修改', 'error')
+        }
+        return
+      }
+      if (titleResult !== 'saved') {
+        titleSaveFailedRef.current = true
+        updateDraftSaveStatus('error')
+        return
+      }
+      titleSaveFailedRef.current = false
+      serverTitleRef.current = pendingTitle
+      if (pendingAutoTitleCorrectionRef.current === pendingTitle) pendingAutoTitleCorrectionRef.current = ''
+      if (pendingTitleSaveRef.current === pendingTitle) pendingTitleSaveRef.current = ''
+    }
+    updateDraftSaveStatus('saved')
   }
 
-  const putSmartDraftToBackend = (workspaceIdOverride?: number): Promise<boolean> => {
+  type SmartDraftSaveRequest = {
+    projectId: number
+    workspaceId: number
+    snapshot: any
+    coverAssetId: number
+    preserveUpstreamContent: boolean
+    initialRevision: number
+    baseContentFingerprint: string
+    allowCreativeReplace: boolean
+  }
+
+  const putSmartDraftToBackend = useLatestCallback((workspaceIdOverride?: number): Promise<DraftWriteResult> => {
     const id = projectIdRef.current
     const ws = Number(workspaceIdOverride || workspaceId || 0)
-    if (!id || !ws) return Promise.resolve(false)
     const draft = currentDraft()
-    const snapshot = buildSmartSnapshot(draft)
-    if (projectVideoStoreRef.current) snapshot.projectVideoStore = projectVideoStoreRef.current
+    if (
+      !canPersistSmartProjectDraft({
+        applied: appliedRef.current,
+        started: Boolean(draft.started),
+        projectId: id,
+        workspaceId: ws,
+      })
+    ) {
+      return Promise.resolve('error')
+    }
+    if (draftSaveStatusRef.current === 'conflict') return Promise.resolve('conflict')
+    // 保存请求入队时就锁定项目与快照。队列可能晚到 reset / 新项目创建之后才执行，届时绝不能再读可变 ref。
+    const snapshot = buildSmartSnapshot(draft, ws)
+    if (projectVideoStoreRef.current) {
+      snapshot.projectVideoStore = sanitizePersistentProjectVideoStore(projectVideoStoreRef.current, ws)
+    }
+    const latestGeneratedImageAssetId = [...((draft.imageMessages as ChatMessage[]) || [])]
+      .reverse()
+      .flatMap((message) => [...(message.images || [])].reverse())
+      .map((image) => Number(image.assetId || 0) || 0)
+      .find((assetId) => assetId > 0)
+    const entryImageAssetId = Number(
+      ((draft.entryMeta as any)?.imageAssetIds || []).find((value: any) => Number(value) > 0) || 0,
+    )
+    const shotCoverAssetId = Number(
+      shotsRef.current.find((shot) => Number(shot.imageAssetId || 0) > 0)?.imageAssetId || 0,
+    )
+    // 图片项目优先采用最新生成结果作封面；视频项目继续使用首个分镜，避免两种模式互相串封面。
     const coverAssetId =
-      Number((draft.shots || []).find((shot: any) => Number(shot?.imageAssetId || 0) > 0)?.imageAssetId || 0) ||
-      Number(((draft.entryMeta as any)?.imageAssetIds || []).find((value: any) => Number(value) > 0) || 0) ||
-      0
-    const revision = Number(draftRevisionRef.current || 0) || 0
-    const preserveUpstreamContent = !shotsExplicitlyClearedRef.current
-    return enqueueCreativeProjectDraftSave({
+      draft.entryMeta?.mode === 'image'
+        ? Number(latestGeneratedImageAssetId || entryImageAssetId || 0)
+        : Number(shotCoverAssetId || entryImageAssetId || 0)
+    const fingerprint = createDraftFingerprint(snapshot, coverAssetId)
+    const contentFingerprint = createCreativeDraftContentFingerprint(snapshot)
+    const queuedSave =
+      queuedDraftSaveRef.current?.projectId === id && queuedDraftSaveRef.current?.workspaceId === ws
+        ? queuedDraftSaveRef.current
+        : null
+    if (fingerprint && queuedSave?.fingerprint === fingerprint) {
+      const adoptedSequence = ++draftSaveSequenceRef.current
+      updateDraftSaveStatus('saving')
+      return queuedSave.promise.then((result) => {
+        if (
+          viewAliveRef.current &&
+          projectIdRef.current === id &&
+          Number(workspaceIdRef.current || 0) === ws &&
+          draftSaveSequenceRef.current === adoptedSequence
+        ) {
+          if (result === 'saved') lastSavedDraftFingerprintRef.current = fingerprint
+          const nextStatus: DraftSaveStatus =
+            result === 'saved'
+              ? titleSaveFailedRef.current
+                ? 'error'
+                : pendingTitleSaveRef.current
+                  ? 'saving'
+                  : 'saved'
+              : result
+          updateDraftSaveStatus(nextStatus)
+          if (result === 'conflict' && !draftContentConflictNotifiedRef.current) {
+            draftContentConflictNotifiedRef.current = true
+            showToast('检测到其他页面修改了项目，已停止云端保存，当前页面内容不会覆盖对方修改', 'error')
+          }
+        }
+        return result
+      })
+    }
+    const saveSequence = ++draftSaveSequenceRef.current
+    updateDraftSaveStatus('saving')
+    // 同一标签页连续产生不同快照时，后一个快照以“前一个已排队快照”作为预期云端内容。
+    // 只有首个明确的新建/重启写入可整版替换；后续快照仍必须经过内容指纹校验。
+    const allowCreativeReplace = !queuedSave && allowCreativeReplaceProjectIdRef.current === id
+    const request: SmartDraftSaveRequest = {
       projectId: id,
       workspaceId: ws,
-      task: () =>
-        doPutDraft({ id, ws, snapshot, revision, coverAssetId, preserveUpstreamContent }).then((result) => {
-          // 仅当前视图仍绑定同一项目时回写 revision；切到其它项目后不能污染新项目版本号。
-          if (result.revision != null && projectIdRef.current === id) draftRevisionRef.current = result.revision
-          return result.saved
-        }),
+      snapshot,
+      coverAssetId,
+      preserveUpstreamContent: !allowCreativeReplace && !shotsExplicitlyClearedRef.current,
+      initialRevision: Number(draftRevisionRef.current || 0) || 0,
+      baseContentFingerprint: queuedSave?.contentFingerprint || baseDraftContentFingerprintRef.current,
+      allowCreativeReplace,
+    }
+    const savePromise: Promise<DraftWriteResult> = enqueueCreativeProjectDraftSave({
+      projectId: id,
+      workspaceId: ws,
+      task: async (): Promise<DraftWriteResult> => {
+        // 若前一份快照没有真正落库，后一份的预期基线就不可能成立；直接传播其精确结果，
+        // 避免把 conflict 降级成普通 error，也避免越过失败快照继续覆盖云端。
+        if (queuedSave) {
+          const previousResult = await queuedSave.promise
+          if (previousResult !== 'saved') return previousResult
+          // 前一份快照在真正落库前还会合并后端的视频历史/权限元数据，最终内容指纹可能与
+          // “刚入队时”的指纹不同。当前项目必须以它实际落库后的指纹继续 CAS；否则图片
+          // 批次最后一张完成并紧接着合并多图消息时，会把同一标签页的串行保存误判成外部修改。
+          if (projectIdRef.current === id && Number(workspaceIdRef.current || 0) === ws) {
+            request.baseContentFingerprint = baseDraftContentFingerprintRef.current || request.baseContentFingerprint
+          }
+        }
+        try {
+          return (await doPutDraft(request)) ? 'saved' : 'error'
+        } catch (error) {
+          return isCreativeDraftContentConflictError(error) ? 'conflict' : 'error'
+        }
+      },
     })
-  }
+      .then((result) => {
+        if (
+          result === 'saved' &&
+          fingerprint &&
+          projectIdRef.current === id &&
+          Number(workspaceIdRef.current || 0) === ws &&
+          draftSaveSequenceRef.current === saveSequence
+        ) {
+          lastSavedDraftFingerprintRef.current = fingerprint
+        }
+        if (
+          viewAliveRef.current &&
+          projectIdRef.current === id &&
+          Number(workspaceIdRef.current || 0) === ws &&
+          draftSaveSequenceRef.current === saveSequence
+        ) {
+          const nextStatus: DraftSaveStatus =
+            result === 'saved'
+              ? titleSaveFailedRef.current
+                ? 'error'
+                : pendingTitleSaveRef.current
+                  ? 'saving'
+                  : 'saved'
+              : result
+          updateDraftSaveStatus(nextStatus)
+          if (result === 'conflict' && !draftContentConflictNotifiedRef.current) {
+            draftContentConflictNotifiedRef.current = true
+            showToast('检测到其他页面修改了项目，已停止云端保存，当前页面内容不会覆盖对方修改', 'error')
+          }
+        }
+        return result
+      })
+      .finally(() => {
+        if (queuedDraftSaveRef.current?.promise === savePromise) queuedDraftSaveRef.current = null
+      })
+    queuedDraftSaveRef.current = {
+      projectId: id,
+      workspaceId: ws,
+      fingerprint,
+      contentFingerprint,
+      promise: savePromise,
+    }
+    return savePromise
+  })
 
   // 把当前草稿写到后端。对齐 2.0 putDraftSnapshot:保存前先确保有当前 revision,
   // 保存后用返回的 revision 同步;返回体没带 revision 则重新拉一次;409 冲突→拉新 revision 重试。
-  const doPutDraft = async (args: {
-    id: number
-    ws: number
-    snapshot: any
-    revision: number
-    coverAssetId: number
-    preserveUpstreamContent: boolean
-  }): Promise<{ saved: boolean; revision: number | null }> => {
-    const { id, ws, preserveUpstreamContent } = args
-    let { snapshot, revision, coverAssetId } = args
-    const mergeLatestProjectDraft = (latestProj: any) => {
+  const doPutDraft = async (request: SmartDraftSaveRequest): Promise<boolean> => {
+    const id = request.projectId
+    const ws = request.workspaceId
+    let snapshot = request.snapshot
+    let coverAssetId = request.coverAssetId
+    let revision = request.initialRevision
+    const intendedContentFingerprint = createCreativeDraftContentFingerprint(request.snapshot)
+    const syncRevision = (value: number) => {
+      if (!Number.isFinite(value) || value < 0) return
+      revision = Math.floor(value)
+      // 旧 session 的保存可继续完成，但不能把旧项目 revision 写进新项目会话。
+      if (projectIdRef.current === id && Number(workspaceIdRef.current || 0) === ws) {
+        draftRevisionRef.current = revision
+      }
+    }
+    const mergeLatestProjectDraft = (latestProj: any, acceptIntendedContent = false) => {
       const next = normRev(latestProj)
-      if (Number.isFinite(next)) revision = next
+      if (Number.isFinite(next)) syncRevision(next)
       const latestDraftJson = latestProj?.draft_json ?? latestProj?.data?.draft_json ?? latestProj?.draft
+      if (!request.allowCreativeReplace) {
+        const latestContentFingerprint = assertCreativeDraftWriteStillOwned({
+          baseFingerprint: request.baseContentFingerprint,
+          intendedFingerprint: intendedContentFingerprint,
+          latestDraft: latestDraftJson,
+          acceptIntendedContent,
+        })
+        // 当前编辑器的后台完成回调可能已经先写入同一份目标内容；自动保存排到队列时，
+        // 应把该内容接纳为新的 CAS 基线，避免把自己的写入误报为并发冲突。
+        if (latestContentFingerprint === intendedContentFingerprint) {
+          request.baseContentFingerprint = latestContentFingerprint
+        }
+      }
       snapshot = mergeSnapshotVideoHistory(snapshot, latestDraftJson, {
-        preserveUpstreamContent,
+        preserveUpstreamContent: request.preserveUpstreamContent,
       })
+      snapshot = mergeLatestProjectMetadata(snapshot, latestProj)
+      const latestDraft = getCreativeProjectDraft(latestProj)
+      if (
+        projectIdRef.current === id &&
+        Number(workspaceIdRef.current || 0) === ws &&
+        latestDraft &&
+        Object.prototype.hasOwnProperty.call(latestDraft, 'projectVideoStore')
+      ) {
+        projectVideoStoreRef.current = latestDraft.projectVideoStore ?? null
+      }
       if (!coverAssetId) {
         const snapshotShots = Array.isArray(snapshot?.smart?.shots) ? snapshot.smart.shots : []
         coverAssetId =
           Number(snapshotShots.find((shot: any) => Number(shot?.imageAssetId || 0) > 0)?.imageAssetId || 0) || 0
       }
     }
-    // 首次/未知 revision:先拉一次,避免用错版本号导致 409 把后续(含图)的保存全部打掉
-    if (!revision) {
-      const fetchedRevision = await fetchRevision(id, ws)
-      if (Number.isFinite(fetchedRevision)) revision = fetchedRevision
+    const refreshLatestProjectDraft = async (acceptIntendedContent = false): Promise<boolean> => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const latestProj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
+          if (blockRestrictedProject(latestProj, id, ws)) return false
+          mergeLatestProjectDraft(latestProj, acceptIntendedContent)
+          return true
+        } catch (error) {
+          if (isCreativeDraftContentConflictError(error)) throw error
+          if (!isRetryableDraftSaveError(error) || attempt >= 2) return false
+          await waitForDraftSaveRetry(attempt)
+        }
+      }
+      return false
     }
     // 视频生成会有「后台完成写入」与「页面自动保存」并发交错的窗口。
     // 保存前先把后端已存在的视频历史合并回来，避免当前页稍旧的 snapshot 把已完成的视频覆盖掉。
-    try {
-      const latestProj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
-      mergeLatestProjectDraft(latestProj)
-    } catch {
-      /* 读取失败时退回当前 snapshot，后续仍走普通保存 */
-    }
+    // 这是整盘 PUT 的安全前提：读取失败绝不能继续写，否则旧标签页会清掉成员权限/归类记录。
+    if (!(await refreshLatestProjectDraft())) return false
     // 409 冲突(常见于切空间后 revision 过期):拉最新 revision 再试,最多 3 次,
     // 避免一次冲突就把整版草稿静默丢弃(中途切走/刷新带不回数据的元凶之一)。
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -3487,36 +4942,42 @@ export default function SmartCreateView() {
           coverAssetId,
         })
         const next = normRev(payload)
-        if (Number.isFinite(next)) revision = next
+        if (Number.isFinite(next)) syncRevision(next)
         else {
-          const fetchedRevision = await fetchRevision(id, ws)
-          if (Number.isFinite(fetchedRevision)) revision = fetchedRevision
+          const fetched = await fetchRevision(id, ws) // 返回体没带 revision → 重新拉,保持同步
+          if (Number.isFinite(fetched)) syncRevision(fetched)
         }
-        return { saved: true, revision: Number.isFinite(revision) ? revision : null }
+        if (projectIdRef.current === id && Number(workspaceIdRef.current || 0) === ws) {
+          baseDraftContentFingerprintRef.current = createCreativeDraftContentFingerprint(snapshot)
+          if (request.allowCreativeReplace && allowCreativeReplaceProjectIdRef.current === id) {
+            allowCreativeReplaceProjectIdRef.current = 0
+          }
+          draftContentConflictNotifiedRef.current = false
+        }
+        return true
       } catch (e: any) {
-        if (e?.status !== 409) return { saved: false, revision: Number.isFinite(revision) ? revision : null }
-        // 冲突后不能只更新 revision 再拿旧快照覆盖；重新合并最新草稿后再重试。
-        try {
-          const latestProj: any = await getCreativeProject({ projectId: id, workspaceId: ws })
-          mergeLatestProjectDraft(latestProj)
-        } catch {
-          const fetchedRevision = await fetchRevision(id, ws)
-          if (Number.isFinite(fetchedRevision)) revision = fetchedRevision
-        }
+        const conflict = isDraftConflictError(e)
+        const retryable = isRetryableDraftSaveError(e)
+        if ((!conflict && !retryable) || attempt >= 2) return false
+        if (retryable && !conflict) await waitForDraftSaveRetry(attempt)
+        // 冲突或短暂服务异常后不能只沿用旧快照；重新合并最新草稿和元数据后再重试。
+        if (!(await refreshLatestProjectDraft(true))) return false
       }
     }
-    return { saved: false, revision: Number.isFinite(revision) ? revision : null }
+    return false
   }
 
   const hydratedRef = useRef(false)
-  const workspaceRestoreNonceRef = useRef(0)
-  const projectLoadRequestRef = useRef(0)
   // 「数据已应用」标记:hydratedRef 是在异步 loadProjectById【之前】就置 true 的,存在
   // 「已水合但后端数据还没应用」的窗口;若此时切走,卸载 flush / autosave 会把【初始空态】写盘覆盖好草稿
   // (频繁切换 → 回到分镜脚本"暂无分镜"的根因)。故所有【保存类】逻辑改用本标记:仅在草稿真正应用后才放行。
   // 新建 / 空白入口无异步加载 → 进入即 true;/smart/:id 需等 applyLoadedProject 成功后才 true(失败保持 false,
   // 不让 flush 用空态覆盖)。
   const appliedRef = useRef(false)
+  const [draftApplicationVersion, setDraftApplicationVersion] = useState(0)
+  useEffect(() => {
+    if (draftApplicationVersion > 0) appliedRef.current = true
+  }, [draftApplicationVersion])
 
   // 把后端返回的项目数据应用到本视图:恢复草稿 / 整片兜底 / 标题回填。
   const applyLoadedProject = (proj: any, rid: number, ws: number) => {
@@ -3526,6 +4987,9 @@ export default function SmartCreateView() {
       navigate(`/hot-copy/${rid}`, { replace: true })
       return
     }
+    allowCreativeReplaceProjectIdRef.current = 0
+    baseDraftContentFingerprintRef.current = createCreativeDraftContentFingerprint(draftJson)
+    draftContentConflictNotifiedRef.current = false
     // 留存项目视频清单存档(归类记录),保存时原样写回,避免被本编辑器的草稿快照覆盖
     {
       let raw: any = draftJson
@@ -3540,97 +5004,118 @@ export default function SmartCreateView() {
     }
     const d = parseSmartSnapshot(draftJson)
     const localDraft = loadSmartDraft(ws)
-    // 普通刷新仍以后端有效草稿为准；空间切回时允许刚同步保存且更新的同项目本地稿先恢复。
-    // 两种情况都会补齐另一侧尚未完成的任务凭证，避免生成中的任务被截断。
-    const restoredDraft = mergeSmartInFlightRecovery(d, localDraft, rid, {
-      preferNewerLocal: (location.state as any)?.workspaceSwitchRestore === true,
-    })
-    const hadCompletedVideo = Boolean(
-      restoredDraft?.fullVideoUrl ||
-      restoredDraft?.fullVideoAssetId ||
-      (Array.isArray(restoredDraft?.videoVersions) && restoredDraft.videoVersions.length > 0),
-    )
-    const fb = extractProjectVideoFallback(draftJson)
-    const restoredWithProjectVideo = restoredDraft
-      ? mergeSmartCompletedVideoState(restoredDraft, {
-          fullVideoUrl: fb.latest.url,
-          fullVideoAssetId: fb.latest.assetId,
-          videoVersions: fb.versions,
-        })
+    // 已创建项目以后端项目草稿为权威源，不再让 localStorage 草稿参与覆盖。
+    // 否则刷新时可能把本地旧 step 与后端 video task 混合，出现“视频生成中却回到分镜脚本”的错位。
+    const recoveredDraft = mergeSmartInFlightRecovery(d, localDraft, rid)
+    const fallbackVideo = extractProjectVideoFallback(draftJson, proj)
+    // 项目管理可能打开的是某一条历史成片。恢复前先把 smart 快照与项目级视频历史合并，
+    // 再统一决定主播放器记录，避免“右侧选中 A、左侧仍播放 B”或只显示 0:00 黑屏。
+    const restoredDraft = recoveredDraft
+      ? (() => {
+          const resolvedVideo = resolveRestoredVideoSelection(
+            {
+              url: String(recoveredDraft.fullVideoUrl || fallbackVideo.latest.url || ''),
+              assetId: Number(recoveredDraft.fullVideoAssetId || fallbackVideo.latest.assetId || 0) || 0,
+            },
+            mergeVideoVersionLists(
+              fallbackVideo.versions,
+              Array.isArray(recoveredDraft.videoVersions) ? recoveredDraft.videoVersions : [],
+            ),
+            requestedProjectVideoSelection,
+          )
+          return {
+            ...recoveredDraft,
+            fullVideoUrl: resolvedVideo.current.url,
+            fullVideoAssetId: resolvedVideo.current.assetId,
+            videoVersions: resolvedVideo.versions,
+          }
+        })()
       : null
-    if (restoredWithProjectVideo) applyDraft(restoredWithProjectVideo)
-    // 兜底:智能成片快照里没有整片视频(上次在「生成视频」中途切走,完成结果由后端落到了项目级字段),
-    // 从项目数据补出最近一版视频 + 历史版本,保证「生成视频」步骤能加载出来(URL 过期由下面的签名刷新兜底)。
-    if (!hadCompletedVideo) {
-      if (fb.latest.url || fb.latest.assetId) {
-        // restoredWithProjectVideo 已把根级历史并入草稿；无可解析草稿时才直接回填状态。
-        if (!restoredWithProjectVideo) {
-          fullVideoRef.current = fb.latest
-          setFullVideo(fb.latest)
-          if (fb.versions.length) replaceVideoVersions(fb.versions)
-        }
-        latestDraftStateRef.current = {
-          ...latestDraftStateRef.current,
-          step: STEPS.length - 1,
-          maxReached: Math.max(Number(latestDraftStateRef.current.maxReached || 0), STEPS.length - 1),
-        }
-        setStep(STEPS.length - 1)
-        setMaxReached((value) => Math.max(value, STEPS.length - 1))
+    if (restoredDraft) {
+      applyDraft(restoredDraft)
+    } else if (fallbackVideo.latest.url || fallbackVideo.latest.assetId) {
+      const resolvedVideo = resolveRestoredVideoSelection(
+        fallbackVideo.latest,
+        fallbackVideo.versions,
+        requestedProjectVideoSelection,
+      )
+      setStarted(true)
+      fullVideoRef.current = resolvedVideo.current
+      setFullVideo(resolvedVideo.current)
+      replaceVideoVersions(resolvedVideo.versions)
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        started: true,
+        step: STEPS.length - 1,
+        maxReached: Math.max(Number(latestDraftStateRef.current.maxReached || 0), STEPS.length - 1),
       }
+      setStep(STEPS.length - 1)
+      setMaxReached((value) => Math.max(value, STEPS.length - 1))
     }
     const t = String(proj?.title || proj?.name || '').trim()
-    if (t) {
-      setProjectName(t)
-      serverTitleRef.current = t // 既有标题已在后端,避免加载后又重复回写
+    const candidateTitle = t || projectNameRef.current.trim()
+    const namingDuration =
+      restoredDraft?.entryMeta?.mode === 'video'
+        ? parseDurationSeconds(restoredDraft.entryMeta.duration) || undefined
+        : undefined
+    const namingContext = { flow: 'smart' as const, durationSec: namingDuration }
+    const shouldRepairHistoricalAiTitle =
+      restoredDraft?.nameTouched === false &&
+      !!candidateTitle &&
+      !isUnnamedTitle(candidateTitle) &&
+      !validateProjectName(candidateTitle, namingContext).valid
+    if (shouldRepairHistoricalAiTitle) {
+      const repairedTitle = createProjectNameFallback({
+        requirement: restoredDraft?.requirement || '',
+        ...namingContext,
+      })
+      projectNameRef.current = repairedTitle
+      setProjectName(repairedTitle)
+      pendingAutoTitleCorrectionRef.current = repairedTitle
+      // 保留服务端旧标题，标题同步 effect 会在草稿 CAS 成功后进行一次安全覆盖。
+      serverTitleRef.current = t
+    } else if (t) {
+      const localTitle = projectNameRef.current
+      // 新建项目的默认标题不能覆盖并行返回的 AI 名称；真实服务端标题仍保持权威。
+      if (!isUnnamedTitle(t) || isUnnamedTitle(localTitle)) {
+        projectNameRef.current = t
+        setProjectName(t)
+      }
+      serverTitleRef.current = t
     }
-    // 草稿已真正应用 → 放行 autosave / 卸载 flush(在此之前切走不会用空态覆盖草稿)
-    appliedRef.current = true
+    // 等上述 React state 真正提交后再放行 autosave / 卸载 flush。异步 GET 回调里立刻
+    // 放行仍有一个“ref 已就绪但页面 state 还是初始空值”的覆盖窗口。
+    setDraftApplicationVersion((version) => version + 1)
   }
 
-  // 首次提交后立即切空间时，创建请求可能由已卸载的旧实例完成。
-  // localStorage 本身不会通知当前页面，因此用同页事件把新 projectId 原子绑定到已经水合的目标实例。
-  useEffect(() => {
-    const handleProjectBound = (event: Event) => {
-      const detail = (event as CustomEvent<SmartProjectBoundDetail>).detail
-      const ws = Number(detail?.workspaceId || 0)
-      const id = Number(detail?.projectId || 0)
-      const token = Number(detail?.creationToken || 0)
-      if (!ws || !id || !token) return
-      if (window.location.pathname !== '/smart') return
-      if (workspaceSwitchAwayRef.current || projectIdRef.current) return
-      if (Number(deriveWorkspaceId(useWorkspaceSessionStore.getState())) !== ws) return
-      if (Number(workspaceIdRef.current || workspaceId || 0) !== ws) return
-      if (smartProjectCreationTokens.get(ws) !== token) return
-
-      const storedDraft = loadSmartDraft(ws)
-      if (!storedDraft?.started || Number(storedDraft.projectId || 0) !== id) return
-
-      const visibleDraft = currentDraft()
-      const boundDraft: SmartDraft = {
-        ...(visibleDraft.started ? visibleDraft : storedDraft),
-        workspaceId: ws,
-        projectId: id,
-        started: true,
-      }
-      latestDraftStateRef.current = boundDraft
-      pendingInitialSaveRef.current = true
-      projectIdRef.current = id
-      setProjectId(id)
-      pinProjectWorkspaceId(ws)
-      if (!visibleDraft.started) applyDraft(boundDraft)
-      saveSmartDraft(boundDraft, ws)
-      navigate(`/smart/${id}`, {
-        replace: true,
-        state: {
-          workspaceSwitchRestore: true,
-          workspaceSwitchNonce: Date.now(),
-          targetWorkspaceId: ws,
-        },
-      })
+  const blockRestrictedProject = (project: any, expectedProjectId: number, expectedWorkspaceId: number): boolean => {
+    const key = smartProjectKey(expectedWorkspaceId, expectedProjectId)
+    if (!isCreativeProjectRestrictedForUser(project, currentUserId)) {
+      deniedSmartProjectKeys.delete(key)
+      return false
     }
-    window.addEventListener(SMART_PROJECT_BOUND_EVENT, handleProjectBound)
-    return () => window.removeEventListener(SMART_PROJECT_BOUND_EVENT, handleProjectBound)
-  })
+    deniedSmartProjectKeys.add(key)
+    const localDraft = loadSmartDraft(expectedWorkspaceId)
+    if (Number(localDraft?.projectId || 0) === Number(expectedProjectId || 0)) clearSmartDraft(expectedWorkspaceId)
+    detachRunningVideoGen('smart', expectedWorkspaceId, expectedProjectId)
+    // 旧项目/旧空间的队列可以被安全终止，但不能把用户从已经切换到的新页面踢走。
+    // projectId 不能单独标识当前页面：不同工作区可能出现相同 id，权限响应必须同时匹配工作区。
+    if (
+      projectIdRef.current !== expectedProjectId ||
+      Number(workspaceIdRef.current || 0) !== Number(expectedWorkspaceId || 0)
+    ) {
+      return true
+    }
+    projectIdRef.current = 0
+    setProjectId(0)
+    appliedRef.current = false
+    allowCreativeReplaceProjectIdRef.current = 0
+    pinProjectWorkspaceId(0)
+    showToast('您没有权限访问该项目', 'error')
+    navigate('/projects', { replace: true })
+    return true
+  }
+  blockRestrictedProjectRef.current = blockRestrictedProject
 
   // 按 id 从后端拉取项目并恢复草稿。失败时设置 loadError(暴露后端真实原因)并弹 toast,
   // 由渲染层据此显示错误页;成功则清空 loadError。供首次进入与「重试」复用。
@@ -3640,21 +5125,19 @@ export default function SmartCreateView() {
   // 手机上必现」。因此首拉失败(且是 403/404)时,在用户名下其它工作空间里逐个重试,命中即切换激活空间,
   // 让「谁打开、哪台设备、刷不刷新」只要有权限就能进。
   const loadProjectById = async (rid: number, ws: number) => {
-    const loadRequest = ++projectLoadRequestRef.current
-    const isCurrentLoad = () => projectLoadRequestRef.current === loadRequest && viewMountedRef.current
     setLoadError('')
     setProjectLoading(true)
+    appliedRef.current = false
     projectIdRef.current = rid
     setProjectId(rid)
     try {
       await waitForCreativeProjectDraftSaves({ projectId: rid, workspaceId: ws })
       const proj: any = await getCreativeProject({ projectId: rid, workspaceId: ws })
-      if (!isCurrentLoad()) return
+      if (blockRestrictedProject(proj, rid, ws)) return
       pinProjectWorkspaceId(ws) // 钉住项目所属空间:后续全局切换不影响本项目的保存/计费/素材
       applyLoadedProject(proj, rid, ws)
       return
     } catch (e) {
-      if (!isCurrentLoad()) return
       const status = Number((e as any)?.status || 0)
       // 仅 403/404(空间不匹配 / 当前空间下查不到)才值得跨空间重试;5xx/网络错误重试别的空间无意义。
       if (status === 403 || status === 404) {
@@ -3665,20 +5148,18 @@ export default function SmartCreateView() {
         } catch {
           /* 拉取失败则用现有候选继续兜底 */
         }
-        if (!isCurrentLoad()) return
         const candidates = (deriveAllWorkspaces(useWorkspaceSessionStore.getState()) as any[])
           .map((w) => Number(w?.id || 0))
           .filter((id) => id > 0 && id !== ws)
         for (const candidate of candidates) {
           try {
             const proj: any = await getCreativeProject({ projectId: rid, workspaceId: candidate })
-            if (!isCurrentLoad()) return
+            if (blockRestrictedProject(proj, rid, candidate)) return
             pinProjectWorkspaceId(candidate) // 钉住项目所属空间(命中的兜底空间)
             applyLoadedProject(proj, rid, candidate)
             // 命中后只钉住本项目空间,不切换全局团队。后续 autosave / 账单 / 并发均通过 projectWorkspaceId 走项目空间。
             return
           } catch {
-            if (!isCurrentLoad()) return
             /* 该空间也没有 → 继续试下一个 */
           }
         }
@@ -3699,7 +5180,7 @@ export default function SmartCreateView() {
       setLoadError(msg)
       showToast(msg, 'error')
     } finally {
-      if (isCurrentLoad()) setProjectLoading(false)
+      setProjectLoading(false)
     }
   }
 
@@ -3723,44 +5204,20 @@ export default function SmartCreateView() {
   // 进入:有 /smart/:id → 从后端恢复;否则恢复 localStorage 草稿。
   // 用 useLayoutEffect:在浏览器【绘制前】完成"空白 /smart→/smart/:id"的跳转,避免先闪一下初始页。
   useLayoutEffect(() => {
+    if (hydratedRef.current) return
     const navState = (location.state as any) || {}
-    const rid = Number(routeId || 0)
-    const restoreNonce = Number(navState.workspaceSwitchNonce || 0)
-    const isWorkspaceRestore =
-      navState.workspaceSwitchRestore === true &&
-      Number(navState.targetWorkspaceId || 0) === Number(workspaceId || 0) &&
-      restoreNonce > 0
-
-    // 后台云端找回可能在当前 workspace 视图已完成首次水合后才把路由从旧项目修正为新项目。
-    // 此时组件不会因 routeId 变化重挂载，必须显式重新拉取目标项目。
-    if (hydratedRef.current) {
-      if (isWorkspaceRestore && workspaceRestoreNonceRef.current !== restoreNonce) {
-        workspaceRestoreNonceRef.current = restoreNonce
-        workspaceSwitchAwayRef.current = false
-        if (rid > 0) {
-          appliedRef.current = false
-          void loadProjectById(rid, Number(workspaceId || 0))
-        } else {
-          // 同一路由组件不会重挂载：优先恢复目标空间尚未绑定项目的完整本地稿；
-          // 确认没有旧稿时只清页面状态，不能清掉用户刚输入的入口稿或正在创建的 token。
-          projectLoadRequestRef.current += 1
-          appliedRef.current = true
-          const localDraft = loadSmartDraft(Number(workspaceId || 0))
-          if (localDraft?.started && !Number(localDraft.projectId || 0)) {
-            projectIdRef.current = 0
-            setProjectId(0)
-            pinProjectWorkspaceId(0)
-            applyDraft(localDraft)
-          } else {
-            resetToNewVideo(undefined, { preserveWorkspaceDrafts: true, skipNavigate: true })
-          }
-        }
-      }
+    // 「创建新视频」明确要求进入空白入口：旧项目即使仍在 registry 生成，也只在任务管理里展示，
+    // 不能再由 /smart 根路由自动把用户带回旧项目。
+    if (navState.taskCenterNewSession) {
+      clearSmartDraft(Number(workspaceId || 0))
+      clearSmartEntryDraft()
+      pinProjectWorkspaceId(0)
+      hydratedRef.current = true
+      appliedRef.current = true
       return
     }
-    if (isWorkspaceRestore) workspaceRestoreNonceRef.current = restoreNonce
     if (navState.workspaceSwitchReset) {
-      clearSmartEntryDraft(Number(workspaceId || 0))
+      clearSmartEntryDraft()
       pinProjectWorkspaceId(0) // 空白入口切空间:解除项目钉住,后续新建走新的全局空间
       hydratedRef.current = true
       appliedRef.current = true
@@ -3772,12 +5229,13 @@ export default function SmartCreateView() {
     // 项目绑定 + 携带素材由 carry effect / useState 初始化器处理。
     if (Number((location.state as any)?.restartProjectId)) {
       clearSmartDraft(Number(workspaceId || 0))
-      clearSmartEntryDraft(Number(workspaceId || 0)) // 从「项目管理→新建视频」进入:全新流程,清掉本空间入口暂存
+      clearSmartEntryDraft() // 从「项目管理→新建视频」进入:全新流程,清掉入口暂存
       pinProjectWorkspaceId(0) // 全新流程:解除旧项目钉住,新项目用当前全局空间创建
       hydratedRef.current = true
       appliedRef.current = true // 全新流程无异步加载,进入即可放行保存
       return
     }
+    const rid = Number(routeId || 0)
     if (rid > 0) {
       const ws = Number(workspaceId || 0)
       if (!ws) return // 等工作空间就绪
@@ -3791,7 +5249,12 @@ export default function SmartCreateView() {
       // 会话就绪后 effect 依赖 isCheckingSession 变化会重跑。
       if (isCheckingSession) return
       const runningProject = findRunningVideoGen('smart', Number(workspaceId || 0))
-      if (runningProject?.meta.projectId) {
+      if (
+        runningProject?.meta.projectId &&
+        !deniedSmartProjectKeys.has(
+          smartProjectKey(Number(workspaceId || 0), Number(runningProject.meta.projectId || 0)),
+        )
+      ) {
         setProjectLoading(true)
         navigate(`/smart/${runningProject.meta.projectId}`, {
           replace: true,
@@ -3812,16 +5275,6 @@ export default function SmartCreateView() {
         navigate(`/smart/${pendingPid}`, { replace: true, state: { autoResumed: true } })
         return // 不置 hydratedRef,等重定向到 /smart/:id 再水合 + 续轮询
       }
-      if (d?.started && !pendingPid) {
-        // 建项目请求失败/尚未返回 id 时，本地稿仍是完整可恢复稿；切回来继续展示，不能当成空空间删除。
-        projectIdRef.current = 0
-        setProjectId(0)
-        applyDraft(d)
-        workspaceSwitchAwayRef.current = false
-        hydratedRef.current = true
-        appliedRef.current = true
-        return
-      }
       // 空白 /smart:始终以最初的空输入框进入,不恢复本地草稿。
       // (同一次进入内点「上一步」回到输入框会保留历史输入——那是组件 state,不依赖这里;
       //  切换路由再回来则会重新挂载、state 清空,故得到全新空白页。)
@@ -3829,14 +5282,220 @@ export default function SmartCreateView() {
       appliedRef.current = true // 空白入口无异步加载,进入即可放行保存
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeId, workspaceId, isCheckingSession])
+  }, [routeId, workspaceId, isCheckingSession, location.key])
+
+  /** 同步保存当前图片草稿到本地；返回 false 表示当前会话不具备合法项目写入上下文。 */
+  const saveCurrentImageDraftLocally = (workspaceIdOverride?: number): boolean => {
+    const ws = Number(workspaceIdOverride || workspaceIdRef.current || 0) || 0
+    const draft = currentDraft()
+    if (
+      !canPersistSmartProjectDraft({
+        applied: appliedRef.current,
+        started: Boolean(draft.started),
+        projectId: projectIdRef.current,
+        workspaceId: ws,
+      })
+    ) {
+      return false
+    }
+    try {
+      saveSmartDraft(draft, ws)
+    } catch {
+      /* 本地存储不可用时仍继续写云端 */
+    }
+    return true
+  }
+
+  /** 图片任务拿到 taskId/结果后立即写本地与云端，避免离开页面早于常规防抖导致恢复凭证丢失。 */
+  const checkpointImageDraft = (workspaceIdOverride?: number) => {
+    const ws = Number(workspaceIdOverride || workspaceIdRef.current || 0) || 0
+    if (!saveCurrentImageDraftLocally(ws)) return
+    if (projectIdRef.current) void putSmartDraftToBackend(ws)
+  }
+
+  /** 第一笔付费图片任务前必须确认恢复描述符已经写入云端；失败时 fail closed，不创建任务。 */
+  const persistImageQueueBeforePaidTask = async (workspaceIdOverride?: number): Promise<DraftWriteResult> => {
+    const ws = Number(workspaceIdOverride || workspaceIdRef.current || 0) || 0
+    if (!saveCurrentImageDraftLocally(ws) || !projectIdRef.current) return 'error'
+    return putSmartDraftToBackend(ws)
+  }
+
+  /** 批次完成后把成功结果合并为一条多图回复；失败子任务仍保留，供用户逐张重试。 */
+  const collapseCompletedImageBatch = (batchId: string) => {
+    if (!batchId) return
+    const batch = imageMessagesRef.current
+      .filter((message) => message.role === 'assistant' && message.batchId === batchId)
+      .sort((left, right) => Number(left.batchIndex || 0) - Number(right.batchIndex || 0))
+    if (!batch.length || batch.some((message) => message.status === 'pending')) return
+    const successful = batch.filter((message) => message.status === 'done' && (message.images || []).length > 0)
+    if (successful.length <= 1) return
+    const primaryId = successful[0].id
+    const successfulIds = new Set(successful.map((message) => message.id))
+    const combinedImages = successful.flatMap((message) => message.images || [])
+    commitImageMessages((messages) =>
+      messages.flatMap((message) => {
+        if (!successfulIds.has(message.id)) return [message]
+        if (message.id !== primaryId) return []
+        return [
+          {
+            ...message,
+            status: 'done' as const,
+            error: undefined,
+            images: combinedImages,
+            batchIndex: 0,
+            batchTotal: combinedImages.length,
+          },
+        ]
+      }),
+    )
+  }
+
+  /** 积分、鉴权或空间类错误出现后停止尚未提交的子任务，避免继续创建不可支付任务。 */
+  const shouldStopImageBatch = (error: unknown): boolean => {
+    const message = getBusinessErrorMessage(error, '')
+    return /积分|余额|充值|支付|payment|unauthorized|forbidden|工作空间|workspace|并发|concurrency/i.test(message)
+  }
+
+  /**
+   * 串行收口所有图片 pending 消息：有 taskId 时只恢复原任务，没有 taskId 时用已持久化幂等键创建。
+   * 一次只运行一个队列，刷新后也会从第一条未完成子任务继续，不会重复计费。
+   */
+  const processPendingImageQueue = async (ws: number) => {
+    if (!ws || imageGenerationLockRef.current || imageQueueCheckpointBlockedRef.current) return
+    if (!imageMessagesRef.current.some((message) => message.role === 'assistant' && message.status === 'pending')) {
+      return
+    }
+    imageGenerationLockRef.current = true
+    if (viewAliveRef.current) setImagePreparing(true)
+    const context = { workspaceId: ws, projectId: Number(projectIdRef.current || projectId || 0) || 0 }
+    let plans: string[] | null = null
+    try {
+      while (true) {
+        const message = imageMessagesRef.current.find((item) => item.role === 'assistant' && item.status === 'pending')
+        if (!message) break
+        const taskId = Number(message.taskId || 0) || 0
+        const request = message.request
+        let activeTaskId = taskId
+        const patchMessage = (next: Partial<ChatMessage>) =>
+          commitImageMessages((messages) =>
+            messages.map((item) => (item.id === message.id ? { ...item, ...next } : item)),
+          )
+        try {
+          let result: { url: string; assetId: number }
+          if (taskId > 0) {
+            syncImageTask(message, 'reconnecting', { taskId, error: '' }, context)
+            result = await resumeShotImageGeneration({ workspaceId: ws, taskId })
+          } else {
+            if (!request || !message.idempotencyKey) {
+              throw new Error('图片生成队列缺少恢复信息，请重试这张图片')
+            }
+            if (!plans) plans = await resolvePlanCandidates()
+            result = await generateShotImage({
+              workspaceId: ws,
+              prompt: request.text || '生成一张营销广告图片',
+              refAssetIds: request.refAssetIds || [],
+              modelPlanCandidates: plans,
+              ratio: request.ratio,
+              idempotencyKey: message.idempotencyKey,
+              allowTextToImageFallback: false,
+              onTask: (nextTaskId) => {
+                activeTaskId = nextTaskId
+                patchMessage({ taskId: nextTaskId, status: 'pending' })
+                syncImageTask(
+                  { ...message, taskId: nextTaskId },
+                  'processing',
+                  { taskId: nextTaskId, error: '' },
+                  context,
+                )
+                checkpointImageDraft(ws)
+              },
+            })
+          }
+          patchMessage({
+            taskId: activeTaskId,
+            status: 'done',
+            error: undefined,
+            terminalFailure: undefined,
+            images: [{ url: result.url, assetId: result.assetId }],
+          })
+          syncImageTask(
+            { ...message, taskId: activeTaskId, status: 'done', images: [result] },
+            'succeeded',
+            {
+              taskId: activeTaskId,
+              progress: 100,
+              resultUrl: result.url,
+              resultAssetId: result.assetId,
+              error: '',
+            },
+            context,
+          )
+          checkpointImageDraft(ws)
+          collapseCompletedImageBatch(String(message.batchId || ''))
+        } catch (error: any) {
+          const hasSubmittedTask = activeTaskId > 0
+          const terminalFailure = hasSubmittedTask && isTerminalShotImageTaskError(error)
+          const errorMessage = `${hasSubmittedTask ? (terminalFailure ? '图片任务失败' : '图片任务连接中断') : '图片生成失败'}：${getBusinessErrorMessage(error, '请重试')}${hasSubmittedTask && !terminalFailure ? '。点击重试将继续查询原任务，不会重复计费' : ''}`
+          patchMessage({ taskId: activeTaskId, status: 'error', terminalFailure, error: errorMessage })
+          syncImageTask(
+            { ...message, taskId: activeTaskId },
+            hasSubmittedTask && !terminalFailure ? 'reconnecting' : 'failed',
+            { taskId: activeTaskId, error: errorMessage },
+            context,
+          )
+          if ((shouldStopImageBatch(error) || (hasSubmittedTask && !terminalFailure)) && message.batchId) {
+            const skipped = imageMessagesRef.current.filter(
+              (item) => item.batchId === message.batchId && item.status === 'pending' && Number(item.taskId || 0) === 0,
+            )
+            const skippedError = `${hasSubmittedTask && !terminalFailure ? '批次已暂停，请先继续查询上一张图片' : '批次已停止'}：${errorMessage}`
+            commitImageMessages((messages) =>
+              messages.map((item) =>
+                skipped.some((candidate) => candidate.id === item.id)
+                  ? { ...item, status: 'error', terminalFailure: true, error: skippedError }
+                  : item,
+              ),
+            )
+            skipped.forEach((item) => syncImageTask(item, 'cancelled', { taskId: 0, error: skippedError }, context))
+          }
+          checkpointImageDraft(ws)
+          collapseCompletedImageBatch(String(message.batchId || ''))
+        }
+      }
+    } finally {
+      imageGenerationLockRef.current = false
+      if (viewAliveRef.current) setImagePreparing(false)
+    }
+  }
+
+  useEffect(() => {
+    const ws = Number(workspaceId || 0) || 0
+    if (!ws || !started || !isImageMode) return
+    if (imageMessages.some((message) => message.role === 'assistant' && message.status === 'pending')) {
+      void processPendingImageQueue(ws)
+    }
+    // imageMessages 变化用于发现恢复任务和批次中的下一张；全局锁会阻止重复处理。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageMessages, isImageMode, started, workspaceId])
 
   // 自动保存:本地立即(600ms 防抖)+ 后端(1.5s 防抖,仅在已建项目时)
   useEffect(() => {
-    if (!appliedRef.current) return // 数据应用前不保存,避免用空态覆盖草稿
     const ws = Number(workspaceId || 0)
-    if (!projectIdRef.current && pendingSmartProjectCreations.has(ws)) return
-    const local = window.setTimeout(() => saveCurrentDraftLocally(ws), 600)
+    if (
+      !canPersistSmartProjectDraft({
+        applied: appliedRef.current,
+        started,
+        projectId: projectIdRef.current,
+        workspaceId: ws,
+      })
+    ) {
+      return
+    }
+    if (projectIdRef.current && (draftSaveStatusRef.current === 'saved' || draftSaveStatusRef.current === 'saving')) {
+      draftSaveSequenceRef.current += 1
+      draftSaveStatusRef.current = 'dirty'
+      setDraftSaveStatus('dirty')
+    }
+    const local = window.setTimeout(() => saveSmartDraft(currentDraft(), ws), 600)
     const remote = window.setTimeout(() => {
       if (projectIdRef.current) void putSmartDraftToBackend(ws)
     }, 1500)
@@ -3846,7 +5505,6 @@ export default function SmartCreateView() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    workspaceId,
     started,
     requirement,
     reqSummary,
@@ -3868,10 +5526,12 @@ export default function SmartCreateView() {
     vidGenTaskId, // 任务 id 变化(生成开始)也要触发保存,否则长轮询期间不存盘 → 切走后无法恢复
     materialBatchPending, // 一键生成标记变化要存盘,切走再回来才能续作
     scriptPending, // 脚本生成标记变化要存盘,切走再回来才能续跑
+    scriptError, // 流式中断错误也要存盘，恢复后不能误显示为完整脚本
     marketingOpen,
     marketingText,
     marketingData,
     imageMessages,
+    imageComposerDraft,
   ])
 
   // 卸载即落盘:切到其它页面/路由时,上面的防抖保存会被 cleanup 取消,导致"最后一步操作"没存。
@@ -3879,239 +5539,26 @@ export default function SmartCreateView() {
   // 本地同步写(必成)+ 后端 PUT(SPA 内 fetch 不因组件卸载中断,通常能发完)。
   const flushDraftRef = useRef<() => void>(() => {})
   flushDraftRef.current = () => {
-    if (!appliedRef.current) return // 数据应用前卸载 → 不落盘(否则把初始空态写进草稿,覆盖好数据)
     const ws = Number(workspaceId || 0)
-    if (!projectIdRef.current && pendingSmartProjectCreations.has(ws)) return
+    const draft = currentDraft()
+    if (
+      !canPersistSmartProjectDraft({
+        applied: appliedRef.current,
+        started: Boolean(draft.started),
+        projectId: projectIdRef.current,
+        workspaceId: ws,
+      })
+    ) {
+      return
+    }
     try {
-      saveCurrentDraftLocally(ws)
+      saveSmartDraft(draft, ws)
     } catch {
       /* ignore */
     }
     if (projectIdRef.current) void putSmartDraftToBackend(ws)
   }
   useEffect(() => () => flushDraftRef.current(), [])
-
-  // 切换空间时只同步做本地快照;后端保存与目标草稿的云端找回都在后台进行,
-  // 不阻塞 workspace store 切换。生成中/保存中也可随时切换。
-  useEffect(() =>
-    onBeforeWorkspaceSwitch((detail) => {
-      const ws = Number(workspaceIdRef.current || workspaceId || 0)
-      const targetWs = Number(detail.targetWorkspaceId || 0)
-      detail.sourceWorkspaceId = ws
-      const oldProjectId = Number(projectIdRef.current || 0)
-      if (targetWs === ws) {
-        workspaceSwitchAwayRef.current = false
-        detail.destinationPath = oldProjectId ? `/smart/${oldProjectId}` : '/smart'
-        if (appliedRef.current) saveCurrentDraftLocally(ws)
-        if (appliedRef.current && oldProjectId) {
-          detail.waitUntil.push(
-            putSmartDraftToBackend(ws).then((saved) => {
-              if (!saved) throw new Error('草稿云端同步失败')
-            }),
-          )
-        }
-        return
-      }
-      const switchRequest = ++workspaceSwitchRequestRef.current
-      const workspaceSwitchToken = Number(detail.switchToken || 0)
-      workspaceSwitchAwayRef.current = targetWs > 0 && targetWs !== ws
-      const hasPendingUnboundCreation = !oldProjectId && pendingSmartProjectCreations.has(ws)
-      if (appliedRef.current && !hasPendingUnboundCreation) saveCurrentDraftLocally(ws)
-
-      // 先同步给出目标空间的上次项目路由,点击后可立即切换;云端校验在后台修正。
-      const initialTargetDraft = loadSmartDraft(targetWs)
-      const targetEntryFingerprint = getSmartEntryDraftFingerprint(targetWs)
-      const targetCreationTokenAtSwitch = smartProjectCreationTokens.get(targetWs) || 0
-      const initialTargetProjectId = Number(initialTargetDraft?.projectId || 0) || 0
-      if (initialTargetProjectId && initialTargetDraft?.started !== false) {
-        detail.destinationPath = `/smart/${initialTargetProjectId}`
-      }
-
-      detail.waitUntil.push(
-        (async () => {
-          const oldSavePromise = appliedRef.current && oldProjectId ? putSmartDraftToBackend(ws) : Promise.resolve(true)
-          if (!targetWs) {
-            await oldSavePromise
-            throw new Error('目标空间无效')
-          }
-
-          // 目标空间若刚提交、项目仍在创建，先在后台等它绑定 projectId；实际空间切换不等待。
-          const pendingTargetCreation = pendingSmartProjectCreations.get(targetWs)
-          if (pendingTargetCreation) await pendingTargetCreation.catch(() => undefined)
-          const localTargetDraft = loadSmartDraft(targetWs)
-          const targetDraftFingerprint = JSON.stringify(localTargetDraft)
-          const localTargetProjectId = Number(localTargetDraft?.projectId || 0) || 0
-          if (localTargetProjectId && localTargetDraft?.started !== false) {
-            detail.destinationPath = `/smart/${localTargetProjectId}`
-          }
-          if (localTargetDraft?.started && !localTargetProjectId) {
-            detail.destinationPath = '/smart'
-            const oldSaved = await oldSavePromise
-            if (!oldSaved) throw new Error('旧草稿云端同步失败')
-            return
-          }
-
-          // 用户在该空间明确点过“创建新视频”时，空白入口就是当前状态。
-          // 不再用云端历史项目替换它，否则切回空间会从创建页被拉回旧草稿。
-          if (localTargetDraft && localTargetDraft.started === false && !localTargetProjectId) {
-            detail.destinationPath = '/smart'
-            const oldSaved = await oldSavePromise
-            if (!oldSaved) throw new Error('旧草稿云端同步失败')
-            return
-          }
-
-          // 本地指针丢失时再从云端按最近更新找回;该流程与旧草稿保存并发。
-          let targetLookupFailed = false
-          const readSmartProject = async (
-            project: any,
-            forceFresh = false,
-          ): Promise<{ projectId: number; draft: SmartDraft | null } | null> => {
-            const candidateId = resolveProjectId(project)
-            if (!candidateId) return null
-            let payload = project
-            if (forceFresh) {
-              try {
-                await waitForCreativeProjectDraftSaves({ projectId: candidateId, workspaceId: targetWs })
-                payload = await getCreativeProject({ projectId: candidateId, workspaceId: targetWs })
-              } catch {
-                targetLookupFailed = true
-                return null
-              }
-            }
-            let parsed = parseSmartSnapshot(
-              payload?.draft_json ?? payload?.draftJson ?? payload?.data?.draft_json ?? payload?.draft,
-            )
-            if (!parsed && !forceFresh) {
-              try {
-                payload = await getCreativeProject({ projectId: candidateId, workspaceId: targetWs })
-                parsed = parseSmartSnapshot(
-                  payload?.draft_json ?? payload?.draftJson ?? payload?.data?.draft_json ?? payload?.draft,
-                )
-              } catch {
-                targetLookupFailed = true
-                return null
-              }
-            }
-            // 项目存在但尚无可解析快照时仍返回 projectId，让同项目的完整本地稿可以作为实时数据源。
-            return { projectId: candidateId, draft: parsed }
-          }
-
-          let targetProject: { projectId: number; draft: SmartDraft } | null = null
-          if (localTargetProjectId) {
-            const resolvedTarget = await readSmartProject({ id: localTargetProjectId }, true)
-            if (resolvedTarget) {
-              const restoredTargetDraft = mergeSmartInFlightRecovery(
-                resolvedTarget.draft,
-                localTargetDraft,
-                localTargetProjectId,
-                { preferNewerLocal: true },
-              )
-              if (restoredTargetDraft) {
-                targetProject = { projectId: localTargetProjectId, draft: restoredTargetDraft }
-              }
-            }
-          }
-          if (!targetProject && localTargetProjectId && localTargetDraft?.started) {
-            targetProject = { projectId: localTargetProjectId, draft: localTargetDraft }
-          }
-
-          // 仅在没有本地“当前项目/空白入口”状态时，才从云端找回最近的真实项目。
-          if (!targetProject) {
-            try {
-              const projects: any[] = await listCreativeProjects({ workspaceId: targetWs, limit: 20 })
-              const sorted = [...projects].sort((a, b) => {
-                const timeOf = (value: any) =>
-                  Date.parse(
-                    String(
-                      value?.updated_at ||
-                        value?.updatedAt ||
-                        value?.last_saved_at ||
-                        value?.created_at ||
-                        value?.createdAt ||
-                        '',
-                    ),
-                  ) || 0
-                return timeOf(b) - timeOf(a)
-              })
-              const candidates = sorted
-                .filter((project) => {
-                  const candidateId = resolveProjectId(project)
-                  return candidateId > 0 && candidateId !== localTargetProjectId
-                })
-                .slice(0, 12)
-              const resolvedCandidates = await Promise.all(candidates.map((project) => readSmartProject(project)))
-              const usableCandidates = resolvedCandidates.flatMap((candidate) =>
-                candidate?.draft ? [{ projectId: candidate.projectId, draft: candidate.draft }] : [],
-              )
-              targetProject =
-                usableCandidates.find((candidate) => candidate.draft.started !== false) ||
-                targetProject ||
-                usableCandidates[0] ||
-                null
-            } catch {
-              targetLookupFailed = true
-              // 云端列表查找失败时仍可回退到有效的本地指针,不影响切换。
-            }
-          }
-
-          if (!targetProject && localTargetProjectId && localTargetDraft) {
-            targetProject = { projectId: localTargetProjectId, draft: localTargetDraft }
-          }
-
-          // 后台找回期间用户可能再次切换，或已经在目标空间输入/提交新内容。
-          // 过期结果只完成旧空间保存，绝不再写目标 localStorage 或触发延迟导航。
-          const activeWorkspaceId = Number(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
-          const currentTargetDraft = loadSmartDraft(targetWs)
-          const targetDraftChanged =
-            JSON.stringify(currentTargetDraft) !== targetDraftFingerprint &&
-            Boolean(currentTargetDraft?.started || Number(currentTargetDraft?.projectId || 0) > 0)
-          const targetEntryChanged = getSmartEntryDraftFingerprint(targetWs) !== targetEntryFingerprint
-          if (
-            switchRequest !== workspaceSwitchRequestRef.current ||
-            !isCurrentWorkspaceSwitch(workspaceSwitchToken) ||
-            activeWorkspaceId !== targetWs ||
-            (smartProjectCreationTokens.get(targetWs) || 0) !== targetCreationTokenAtSwitch ||
-            targetDraftChanged ||
-            targetEntryChanged
-          ) {
-            if (activeWorkspaceId === targetWs && (targetDraftChanged || targetEntryChanged)) {
-              const activeProjectId = Number(currentTargetDraft?.projectId || 0) || 0
-              detail.destinationPath = activeProjectId ? `/smart/${activeProjectId}` : '/smart'
-            }
-            const oldSaved = await oldSavePromise
-            if (!oldSaved) throw new Error('旧草稿云端同步失败')
-            return
-          }
-
-          if (targetProject) {
-            const restoredDraft: SmartDraft = {
-              ...targetProject.draft,
-              workspaceId: targetWs,
-              projectId: targetProject.projectId,
-            }
-            // 这是恢复快照而非新编辑，保留原 savedAt，避免一次读取把旧云端稿伪装成“更新的本地稿”。
-            saveSmartDraft(restoredDraft, targetWs, { preserveSavedAt: true })
-            detail.destinationPath = `/smart/${targetProject.projectId}`
-          } else {
-            // 目标空间没有旧草稿时直接展示新草稿入口;用户提交后按原流程建项目。
-            // 不在后台预创建空壳,避免用户已开始输入时又被延迟导航打断。
-            const currentTargetProjectId = Number(loadSmartDraft(targetWs)?.projectId || 0) || 0
-            // 云端确实查无项目才记录“当前为空白”；网络失败时不落墓碑，下次切回仍会重试找回。
-            if (!targetLookupFailed) {
-              if (currentTargetProjectId === localTargetProjectId) clearSmartDraft(targetWs)
-              saveSmartDraft({ workspaceId: targetWs, started: false, projectId: 0 }, targetWs)
-            }
-            detail.destinationPath = '/smart'
-          }
-
-          const oldSaved = await oldSavePromise
-          if (!oldSaved) throw new Error('旧草稿云端同步失败')
-        })(),
-      )
-      const pendingOldCreation = pendingSmartProjectCreations.get(ws)
-      if (pendingOldCreation) detail.waitUntil.push(pendingOldCreation)
-    }),
-  )
 
   // 项目刚创建绑定:等本流程状态(started / entryMeta / 需求)落定后,立即把首版草稿落盘一次,
   // 不等 1.5s 防抖。这样「建了空壳就马上切走/刷新」也能在项目里看到内容,再次点开能回到流程而非初始页。
@@ -4136,22 +5583,28 @@ export default function SmartCreateView() {
     setMaxReached((m) => Math.max(m, next))
   }
 
-  const parseDurationSec = (value: any): number => {
-    const n = parseInt(String(value || '').replace(/[^0-9]/g, ''), 10)
-    return Number.isFinite(n) && n > 0 ? n : 0
-  }
-
   const guardDurationBeforeNext = async (proceed: () => void) => {
     if (!entryMeta || entryMeta.mode !== 'video') {
       proceed()
       return
     }
     const currentSec = totalDurationSec(shots)
-    const expectedSec = parseDurationSec(entryMeta.duration)
+    const expectedSec = parseDurationSeconds(entryMeta.duration) ?? 0
     const maxSec = 15
     if (currentSec > maxSec) {
       durGuardProceedRef.current = null
       setDurGuard({ open: true, currentSec, expectedSec, overMax: true })
+      return
+    }
+    const selectedDuration = validateVideoDuration(entryMeta.duration)
+    if (!selectedDuration.valid) {
+      showToast(`当前视频时长选项无效，请选择${SUPPORTED_VIDEO_DURATION_LABEL}`, 'error')
+      return
+    }
+    const shotDuration = validateVideoDuration(currentSec)
+    if (!shotDuration.valid) {
+      durGuardProceedRef.current = null
+      showToast(unsupportedVideoDurationMessage(shotDuration.seconds), 'error')
       return
     }
     if (expectedSec > 0 && currentSec > 0 && currentSec !== expectedSec) {
@@ -4165,27 +5618,21 @@ export default function SmartCreateView() {
     proceed()
   }
 
-  const showDurationOverflow = (currentSec: number) => {
-    durGuardProceedRef.current = null
-    setDurGuard({
-      open: true,
-      currentSec,
-      expectedSec: parseDurationSec(entryMeta?.duration),
-      overMax: true,
-    })
-  }
-
-  const requestDurationChange = (currentSec: number, applyChange: () => void) => {
-    const expectedSec = parseDurationSec(entryMeta?.duration)
-    if (!expectedSec || currentSec === expectedSec) {
-      applyChange()
+  const guardInsertedShotBeforeNext = (proceed: () => void) => {
+    if (insertTextGenerating) {
+      showToast('请等待新增分镜的 AI 分镜词生成完成', 'error')
       return
     }
-    durGuardProceedRef.current = () => {
-      setEntryMeta((m) => (m ? { ...m, duration: `${currentSec}s` } : m))
-      applyChange()
+    if (shots.length === 0) {
+      showToast('请至少添加一个分镜', 'error')
+      return
     }
-    setDurGuard({ open: true, currentSec, expectedSec, overMax: false })
+    const incomplete = shots.find((shot) => shot.isNew && !String(shot.desc || '').trim())
+    if (incomplete) {
+      showToast(`请先填写「${incomplete.no}」的画面描述`, 'error')
+      return
+    }
+    proceed()
   }
 
   const onNavigate = (key: string) => {
@@ -4196,20 +5643,34 @@ export default function SmartCreateView() {
 
   // 「制作新视频」:把整个智能成片流程初始化为全新空白页(等同切换路由再切回来)。
   // 清空本地草稿 + 所有页面状态 + 项目引用,回到入口输入页;入口页 key 自增以重挂载、清空其内部输入。
-  const resetToNewVideo = (
-    entryMode?: 'video' | 'image',
-    options?: { preserveWorkspaceDrafts?: boolean; skipNavigate?: boolean },
-  ) => {
-    const resetWorkspaceId = Number(workspaceId || 0)
-    if (!options?.preserveWorkspaceDrafts) {
-      if (resetWorkspaceId) smartProjectCreationTokens.set(resetWorkspaceId, ++smartProjectCreationSequence)
-      if (resetWorkspaceId) pendingSmartProjectCreations.delete(resetWorkspaceId)
-      clearSmartDraft(resetWorkspaceId)
-      if (resetWorkspaceId) {
-        saveSmartDraft({ workspaceId: resetWorkspaceId, started: false, projectId: 0 }, resetWorkspaceId)
-      }
-      clearSmartEntryDraft(resetWorkspaceId) // 重置为全新入口:只清本空间暂存,不影响其它空间旧输入
+  const resetToNewVideo = (entryMode?: 'video' | 'image') => {
+    if (entryMode === 'image' && imageBusy) {
+      showToast('图片正在生成，请等待完成后再创建新对话', 'info')
+      return
     }
+    projectCreationAttemptRef.current += 1 // 忽略仍在返回途中的旧建项响应，避免它把新会话拉回旧项目
+    pendingCreatedProjectRef.current = null
+    nameAbortRef.current?.abort()
+    nameAbortRef.current = null
+    autoNameResumeKeyRef.current = ''
+    setNaming(false)
+    // 将旧队列交给原 session 的后台 drain；随后换一套全新队列/状态。
+    // 旧任务持有入队时锁定的 workspace/project/shots，不会再读取下面即将清空的 ref。
+    const previousSessionId = videoGenSessionIdRef.current
+    const previousQueue = videoGenQueueRef.current
+    if (previousQueue.length && !isVideoSessionOwned(previousSessionId)) {
+      void drainVideoGenQueue(previousSessionId, previousQueue)
+    }
+    if (videoRegistryFollowTimerRef.current) window.clearTimeout(videoRegistryFollowTimerRef.current)
+    videoRegistryFollowTimerRef.current = 0
+    videoGenOwnedSessionsRef.current.delete(previousSessionId)
+    videoGenSessionIdRef.current += 1
+    videoGenQueueRef.current = []
+    videoGenQueueDraftRef.current = []
+    setVideoGenQueueDraft([])
+    cancelInsertTextGeneration()
+    clearSmartDraft(Number(workspaceId || 0))
+    clearSmartEntryDraft() // 重置为全新入口:清掉入口暂存,避免重挂载后又回填旧输入
     pinProjectWorkspaceId(0) // 全新视频:解除项目钉住,回到用全局空间创建
     setStarted(false)
     shotsExplicitlyClearedRef.current = false
@@ -4220,30 +5681,62 @@ export default function SmartCreateView() {
     // 回到入口:默认全清(视频 tab);image=保持「制作图片」tab(供「创建新对话」)
     setEntryMeta(
       entryMode === 'image'
-        ? { mode: 'image', style: '', ratio: '16:9', duration: '10s', imageCount: 0, images: [] }
+        ? { mode: 'image', style: '', ratio: '16:9', duration: '10s', imageCount: 0, images: [], outputCount: 1 }
         : null,
     )
-    setProjectName('未命名项目')
+    projectNameRef.current = '未命名项目'
+    setProjectName(projectNameRef.current)
+    nameTouchedRef.current = false
     setNameTouched(false)
     setStep(0)
     setMaxReached(0)
     setSubjectAssets({})
     setFields({})
-    setFullVideo({ url: '', assetId: 0 })
+    setShotImgError({})
+    setShotImgRetryTokens({})
+    setShotImgReloading({})
+    fullVideoRef.current = { url: '', assetId: 0 }
+    setFullVideo(fullVideoRef.current)
     replaceVideoVersions([])
     setVideoGenerations([])
+    clearRunningGeneration()
+    setVidGenTaskId(0)
+    setVidGenRunning(false)
+    setBlurPhase('')
+    pendingVideoSigRef.current = ''
+    setPendingVideoSig('')
     setMarketingOpen(false)
     setMarketingText('')
     setMarketingData(null)
+    imageMessagesRef.current = []
     setImageMessages([])
+    setImagePreparing(false)
+    imageGenerationLockRef.current = false
+    imageQueueCheckpointBlockedRef.current = false
+    setImageComposerRefCount(0)
+    setImageComposerRatio('16:9')
+    setImageComposerOutputCount(1)
+    setImageComposerDraft({ text: '', ratio: '16:9', images: [], outputCount: 1 })
     imgMsgHydratedRef.current = false
     projectIdRef.current = 0
     setProjectId(0)
     draftRevisionRef.current = 0
+    allowCreativeReplaceProjectIdRef.current = 0
+    baseDraftContentFingerprintRef.current = ''
+    draftContentConflictNotifiedRef.current = false
+    projectVideoStoreRef.current = null
+    pendingTitleSaveRef.current = ''
+    pendingAutoTitleCorrectionRef.current = ''
+    titleSaveFailedRef.current = false
+    draftSaveSequenceRef.current += 1
+    lastSavedDraftFingerprintRef.current = ''
+    queuedDraftSaveRef.current = null
+    draftSaveStatusRef.current = 'idle'
+    setDraftSaveStatus('idle')
     serverTitleRef.current = ''
     autoVidRef.current = false
     setEntryKey((k) => k + 1)
-    if (!options?.skipNavigate) navigate('/smart')
+    navigate('/smart', { state: { taskCenterNewSession: true } })
   }
 
   const startRename = () => {
@@ -4254,7 +5747,13 @@ export default function SmartCreateView() {
   const commitRename = () => {
     const v = draftName.trim()
     if (v) {
+      nameAbortRef.current?.abort()
+      nameAbortRef.current = null
+      setNaming(false)
+      projectNameRef.current = v
       setProjectName(v)
+      pendingAutoTitleCorrectionRef.current = ''
+      nameTouchedRef.current = true
       setNameTouched(true) // 手动命名后,不再被自动命名覆盖
     }
     setEditingName(false)
@@ -4264,6 +5763,7 @@ export default function SmartCreateView() {
   // 生成分镜脚本(本地多模态模型,流式:边生成边显示);失败置错误态,可重试
   const generateScript = async (req: string, meta: EntryMeta) => {
     if (scriptRunningRef.current) return // 已有一条在跑就忽略(marketing/regenerate/续跑多入口并发)
+    cancelInsertTextGeneration()
     scriptRunningRef.current = true
     setScriptLoading(true)
     setScriptPending(true) // 标记"脚本生成进行中",随草稿持久;中途切走再回来据此自动续跑(重生成)
@@ -4273,6 +5773,31 @@ export default function SmartCreateView() {
     setShots([])
     autoGenRef.current = false // 新脚本 → 进入镜头编排时重新自动生成分镜图
     let got = 0
+    let pendingPartial: Shot[] | null = null
+    let partialRenderTimer = 0
+    const flushPendingPartial = (urgent = false) => {
+      if (partialRenderTimer) {
+        window.clearTimeout(partialRenderTimer)
+        partialRenderTimer = 0
+      }
+      const next = pendingPartial
+      pendingPartial = null
+      if (!next) return
+      shotsRef.current = next
+      if (urgent) {
+        setShots(next)
+        return
+      }
+      startTransition(() => setShots(next))
+    }
+    const schedulePartialRender = (partial: Shot[]) => {
+      pendingPartial = partial
+      if (partialRenderTimer) return
+      partialRenderTimer = window.setTimeout(() => {
+        partialRenderTimer = 0
+        flushPendingPartial()
+      }, SCRIPT_STREAM_RENDER_INTERVAL_MS)
+    }
     try {
       const result = await generateScriptShotsStream(
         {
@@ -4284,9 +5809,15 @@ export default function SmartCreateView() {
         },
         (partial) => {
           got = partial.length
-          setShots(partial)
+          schedulePartialRender(partial)
         },
       )
+      pendingPartial = null
+      if (partialRenderTimer) {
+        window.clearTimeout(partialRenderTimer)
+        partialRenderTimer = 0
+      }
+      shotsRef.current = result
       setShots(result)
       // 兜底:对没拆出主体的镜头(弱模型常整体不给 subjects),单独聚焦提取主体后回填。
       // best-effort、并发、不阻塞主流程展示;失败的镜头保持空(可在准备素材步手动补)。
@@ -4322,8 +5853,11 @@ export default function SmartCreateView() {
         /* 合并失败 → 保持拆分结果 */
       }
     } catch (e: any) {
-      if (!got) setScriptError(e?.message || '脚本生成失败,请重试')
+      // 流结束前失败时也立即呈现最后一批已收到的有效分镜，保持原有的部分恢复能力。
+      flushPendingPartial(true)
+      setScriptError(scriptStreamFailureMessage(e, got))
     } finally {
+      if (partialRenderTimer) window.clearTimeout(partialRenderTimer)
       scriptRunningRef.current = false
       setScriptLoading(false)
       setScriptPending(false) // 结束(成功/失败)清掉续跑标记,避免恢复时误续
@@ -4340,15 +5874,60 @@ export default function SmartCreateView() {
     if (!projectId || !wsId) return
     const t = projectName.trim()
     if (!t || isUnnamedTitle(t) || t === serverTitleRef.current) return
-    if (!nameTouched && !isUnnamedTitle(serverTitleRef.current)) return
+    const isPendingAutoCorrection = pendingAutoTitleCorrectionRef.current === t
+    if (!nameTouched && !isUnnamedTitle(serverTitleRef.current) && !isPendingAutoCorrection) return
     const timer = window.setTimeout(() => {
-      serverTitleRef.current = t
-      patchCreativeProject({ projectId, workspaceId: wsId, title: t, name: t }).catch(() => {
-        serverTitleRef.current = ''
+      pendingTitleSaveRef.current = t
+      titleSaveFailedRef.current = false
+      // 草稿标题先通过 revision/content CAS；只有成功写入该草稿的标签页才同步项目标题。
+      void putSmartDraftToBackend(wsId).then(async (draftResult) => {
+        if (
+          pendingTitleSaveRef.current !== t ||
+          projectIdRef.current !== projectId ||
+          Number(workspaceIdRef.current || 0) !== wsId
+        ) {
+          return
+        }
+        if (draftResult !== 'saved') return
+        const titleResult = await patchSmartTitleToBackend(projectId, t, wsId)
+        if (
+          pendingTitleSaveRef.current !== t ||
+          projectIdRef.current !== projectId ||
+          Number(workspaceIdRef.current || 0) !== wsId
+        ) {
+          return
+        }
+        if (titleResult === 'saved') {
+          serverTitleRef.current = t
+          if (pendingAutoTitleCorrectionRef.current === t) pendingAutoTitleCorrectionRef.current = ''
+          titleSaveFailedRef.current = false
+          pendingTitleSaveRef.current = ''
+          updateDraftSaveStatus('saved')
+          return
+        }
+        if (titleResult === 'conflict') {
+          updateDraftSaveStatus('conflict')
+          if (!draftContentConflictNotifiedRef.current) {
+            draftContentConflictNotifiedRef.current = true
+            showToast('检测到其他页面修改了项目，已停止云端保存，当前页面内容不会覆盖对方修改', 'error')
+          }
+          return
+        }
+        titleSaveFailedRef.current = true
+        updateDraftSaveStatus('error')
       })
     }, 600)
     return () => window.clearTimeout(timer)
-  }, [projectId, projectName, nameTouched, workspaceId])
+  }, [
+    nameTouched,
+    patchSmartTitleToBackend,
+    projectId,
+    projectName,
+    putSmartDraftToBackend,
+    showToast,
+    updateDraftSaveStatus,
+    workspaceId,
+  ])
 
   // 选中 SKILL:把「想法 + 素材」交给技能包,自动拆解出营销思路建议(只读展示在营销思路拆解步)。
   // 此时 meta.images 多为入口刚转好的 dataURL(尚未落库),正好可直接喂多模态视觉模型。
@@ -4442,231 +6021,605 @@ export default function SmartCreateView() {
     setStarted(false)
   }
 
-  // 发送一轮对话:追加 用户消息(文本 + 参考图)+ assistant 占位,后台出图后回填。
-  // 有参考图(上传 / @图片N)→ image_to_image;无参考图 → text_to_image(均走 generateShotImage)。
-  const sendImageChat = (text: string, refUrls: string[], ratio: string) => {
-    const uid = nextMsgId()
-    const aid = nextMsgId()
-    setImageMessages((m) => [
-      ...m,
-      { id: uid, role: 'user', text, images: refUrls.map((u) => ({ url: u })) },
-      { id: aid, role: 'assistant', status: 'pending' },
-    ])
-    const patch = (id: string, next: Partial<ChatMessage>) =>
-      setImageMessages((m) => m.map((x) => (x.id === id ? { ...x, ...next } : x)))
-    void (async () => {
-      const ws = Number(workspaceId || 0)
-      if (!ws) {
-        patch(aid, { status: 'error', error: '未选择工作空间,无法生成图片' })
-        return
+  /** 按本轮真实文生图/图生图参数预估费用，并在创建付费任务前取得用户明确确认。 */
+  const confirmImageGenerationCost = async (args: {
+    workspaceId: number
+    hasRefs: boolean
+    ratio: string
+    count?: number
+  }): Promise<boolean> => {
+    setStepCost((previous) => ({ ...previous, loading: true, error: '' }))
+    try {
+      const plans = await resolvePlanCandidates()
+      const estimate: any = await estimateShotImageCost({
+        workspaceId: args.workspaceId,
+        hasRefs: args.hasRefs,
+        ratio: args.ratio,
+        modelPlanCandidates: plans,
+      })
+      if (Number(workspaceIdRef.current || 0) !== args.workspaceId) {
+        setStepCost((previous) => ({
+          ...previous,
+          loading: false,
+          error: '工作空间已变化，请重新确认生成费用',
+        }))
+        showToast('工作空间已变化，本次未发起图片生成', 'info')
+        return false
       }
-      try {
-        const plans = await resolvePlanCandidates()
-        // 参考图落库取 asset_id(并回填到用户消息,供刷新后按 asset_id 重换签名URL)
-        const cache: Record<string, number> = {}
-        const refIds: number[] = []
-        const userImgs: { url: string; assetId: number }[] = []
-        for (const u of refUrls) {
-          let id = 0
-          try {
-            id = await ensureAssetId(ws, u, cache)
-          } catch {
-            /* 单张失败跳过 */
-          }
-          userImgs.push({ url: u, assetId: id })
-          if (id) refIds.push(id)
-        }
-        if (userImgs.length) patch(uid, { images: userImgs })
-        const { url, assetId } = await generateShotImage({
+      const count = Math.min(9, Math.max(1, Math.floor(Number(args.count) || 1)))
+      const perImageCost = Math.max(0, Number(estimate?.estimated_cost ?? 0) || 0)
+      const estimatedCost = perImageCost * count
+      const balance = Math.max(0, Number(estimate?.balance ?? 0) || 0)
+      const canAfford = estimate?.can_afford !== false && estimatedCost <= balance
+      setStepCost({
+        loading: false,
+        error: '',
+        perImage: true,
+        count,
+        estimate: { estimatedCost, balance, canAfford, perOne: perImageCost },
+      })
+
+      if (!canAfford) {
+        const recharge = await requestConfirm(
+          `本次生成 ${count} 张图片，预计共消耗 ${estimatedCost} 积分（每张约 ${perImageCost} 积分），当前余额 ${balance} 积分。积分不足，系统不会创建生成任务。`,
+          {
+            title: '积分不足',
+            confirmLabel: '前往充值',
+            cancelLabel: '暂不生成',
+          },
+        )
+        if (recharge === true) openMemberCenter()
+        return false
+      }
+
+      const operationLabel = args.hasRefs ? '参考图创作' : '文字生成图片'
+      return (
+        (await requestConfirm(
+          `${operationLabel}将生成 ${count} 张图片，预计共消耗 ${estimatedCost} 积分（每张约 ${perImageCost} 积分），当前余额 ${balance} 积分。图片将按顺序逐张生成，每张对应一笔独立任务。确认后才会创建付费生成任务。`,
+          {
+            title: '确认生成图片',
+            confirmLabel: '确认并生成',
+            cancelLabel: '取消',
+          },
+        )) === true
+      )
+    } catch (error: any) {
+      const message = getBusinessErrorMessage(error, '费用预估失败')
+      setStepCost({
+        loading: false,
+        error: message,
+        perImage: true,
+        count: Math.min(9, Math.max(1, Math.floor(Number(args.count) || 1))),
+        estimate: null,
+      })
+      showToast(`${message}，为避免未知扣费，本次未发起生成`, 'error')
+      return false
+    }
+  }
+
+  /**
+   * 发送一轮图片对话。确认完成后立即返回并清空输入框，真正的长轮询在后台收口；
+   * taskId 一返回就写入消息与草稿，刷新后只恢复同一任务，绝不重新提交。
+   */
+  const sendImageChat = async (
+    text: string,
+    refUrls: string[],
+    ratio: string,
+    knownAssetIds: number[] = [],
+    outputCount = 1,
+    options: { costConfirmed?: boolean; idempotencyKey?: string } = {},
+  ): Promise<boolean> => {
+    if (imageGenerationLockRef.current) {
+      showToast('已有图片正在生成，请等待完成后再发送', 'info')
+      return false
+    }
+    const ws = Number(workspaceIdRef.current || workspaceId || 0) || 0
+    if (!ws) {
+      showToast('未选择工作空间，无法生成图片', 'error')
+      return false
+    }
+
+    imageGenerationLockRef.current = true
+    setImagePreparing(true)
+    let queued = false
+    let queuedWorkspaceId = 0
+    let preparedMessages: ChatMessage[] = []
+    let preparedTaskContext = { workspaceId: 0, projectId: 0 }
+    try {
+      const count = Math.min(9, Math.max(1, Math.floor(Number(outputCount) || 1)))
+      const refs = refUrls
+        .map((url, index) => ({ url: String(url || '').trim(), assetId: Number(knownAssetIds[index] || 0) || 0 }))
+        .filter((item) => item.url || item.assetId)
+      const cache: Record<string, number> = {}
+      const missingUrls = [...new Set(refs.filter((item) => !item.assetId && item.url).map((item) => item.url))]
+      // 不相关的参考图上传并行执行，减少点击确认前的等待；失败则整轮停止，不能静默改变计费操作。
+      await Promise.all(
+        missingUrls.map(async (url) => {
+          cache[url] = await ensureAssetId(ws, url, cache)
+        }),
+      )
+      const userImages = refs.map((item) => ({
+        url: item.url,
+        assetId: item.assetId || Number(cache[item.url] || 0) || 0,
+      }))
+      if (userImages.some((image) => !image.assetId)) {
+        throw new Error('参考图上传失败，请重新选择后再试')
+      }
+      const refAssetIds = userImages.map((image) => image.assetId).filter((assetId) => assetId > 0)
+      if (
+        !options.costConfirmed &&
+        !(await confirmImageGenerationCost({
           workspaceId: ws,
-          prompt: text || '生成一张营销广告图片',
-          refAssetIds: refIds,
-          modelPlanCandidates: plans,
+          hasRefs: refAssetIds.length > 0,
           ratio,
-        })
-        patch(aid, { status: 'done', images: [{ url, assetId }] })
-      } catch (e: any) {
-        patch(aid, { status: 'error', error: `图片生成失败:${e?.message || '请重试'}` })
+          count,
+        }))
+      ) {
+        return false
       }
-    })()
+
+      const uid = nextMsgId()
+      const prompt = text || '生成一张营销广告图片'
+      const idempotencyRoot = options.idempotencyKey || createImageChatIdempotencyKey()
+      const batchId = count > 1 ? `batch_${idempotencyRoot}` : ''
+      const operationCode = refAssetIds.length ? 'image.image_to_image' : 'image.text_to_image'
+      const request = {
+        text: prompt,
+        ratio,
+        refAssetIds,
+        refImages: userImages,
+        outputCount: 1,
+      }
+      const assistantMessages: ChatMessage[] = Array.from({ length: count }, (_, index) => ({
+        id: nextMsgId(),
+        role: 'assistant' as const,
+        status: 'pending' as const,
+        taskId: 0,
+        idempotencyKey: count === 1 ? idempotencyRoot : `${idempotencyRoot}_${String(index + 1).padStart(2, '0')}`,
+        operationCode,
+        ...(batchId ? { batchId, batchIndex: index, batchTotal: count } : {}),
+        request,
+        startedAt: Date.now(),
+      }))
+      imageQueueCheckpointBlockedRef.current = true
+      preparedMessages = assistantMessages
+      commitImageMessages((messages) => [
+        ...messages,
+        { id: uid, role: 'user', text, images: userImages },
+        ...assistantMessages,
+      ])
+      const taskContext = { workspaceId: ws, projectId: Number(projectIdRef.current || projectId || 0) || 0 }
+      preparedTaskContext = taskContext
+      assistantMessages.forEach((message) => syncImageTask(message, 'preparing', { taskId: 0, error: '' }, taskContext))
+      const checkpointResult = await persistImageQueueBeforePaidTask(ws)
+      if (checkpointResult !== 'saved') {
+        throw new Error(
+          checkpointResult === 'conflict' ? '项目已在其他页面更新，请刷新确认后再生成' : '生成队列保存失败，请稍后重试',
+        )
+      }
+      queued = true
+      queuedWorkspaceId = ws
+      return true
+    } catch (error: any) {
+      const errorMessage = getBusinessErrorMessage(error, '图片生成准备失败，请重试')
+      if (preparedMessages.length) {
+        const preparedIds = new Set(preparedMessages.map((message) => message.id))
+        const safeError = `${errorMessage}，未提交任何付费任务`
+        commitImageMessages((messages) =>
+          messages.map((message) =>
+            preparedIds.has(message.id)
+              ? { ...message, status: 'error', terminalFailure: true, error: safeError }
+              : message,
+          ),
+        )
+        preparedMessages.forEach((message) =>
+          syncImageTask(message, 'failed', { taskId: 0, error: safeError }, preparedTaskContext),
+        )
+        saveCurrentImageDraftLocally(preparedTaskContext.workspaceId)
+        showToast(safeError, 'error')
+      } else {
+        showToast(errorMessage, 'error')
+      }
+      return false
+    } finally {
+      imageQueueCheckpointBlockedRef.current = false
+      imageGenerationLockRef.current = false
+      setImagePreparing(false)
+      if (queued && queuedWorkspaceId) {
+        window.setTimeout(() => void processPendingImageQueue(queuedWorkspaceId), 0)
+      }
+    }
+  }
+
+  /**
+   * 已有 taskId 且未确认终态时只恢复原任务，不弹新费用确认也不创建新任务；
+   * 只有后端明确终态失败，才按原输入重新确认费用并生成。
+   */
+  const retryImageMessage = (message: ChatMessage): Promise<boolean> => {
+    const existingTaskId = Number(message.taskId || 0) || 0
+    if (existingTaskId > 0 && message.terminalFailure !== true) {
+      if (imageGenerationLockRef.current || imageQueueCheckpointBlockedRef.current) {
+        showToast('已有图片任务正在处理，请稍后再试', 'info')
+        return Promise.resolve(false)
+      }
+      commitImageMessages((messages) =>
+        messages.map((item) =>
+          item.id === message.id ? { ...item, status: 'pending', terminalFailure: false, error: undefined } : item,
+        ),
+      )
+      const context = {
+        workspaceId: Number(workspaceIdRef.current || workspaceId || 0) || 0,
+        projectId: Number(projectIdRef.current || projectId || 0) || 0,
+      }
+      syncImageTask(message, 'reconnecting', { taskId: existingTaskId, error: '' }, context)
+      checkpointImageDraft(context.workspaceId)
+      window.setTimeout(() => void processPendingImageQueue(context.workspaceId), 0)
+      return Promise.resolve(true)
+    }
+
+    const storedRequest = message.request
+    if (storedRequest) {
+      return sendImageChat(
+        storedRequest.text,
+        (storedRequest.refImages || []).map((image) => image.url),
+        storedRequest.ratio || entryMeta?.ratio || '16:9',
+        storedRequest.refAssetIds || [],
+        1,
+        { idempotencyKey: existingTaskId > 0 ? undefined : message.idempotencyKey },
+      )
+    }
+    const index = imageMessagesRef.current.findIndex((item) => item.id === message.id)
+    const previousUser = [...imageMessagesRef.current.slice(0, Math.max(0, index))]
+      .reverse()
+      .find((item) => item.role === 'user')
+    return sendImageChat(
+      previousUser?.text || '',
+      (previousUser?.images || []).map((image) => image.url),
+      entryMeta?.ratio || '16:9',
+      (previousUser?.images || []).map((image) => Number(image.assetId || 0) || 0),
+      1,
+      { idempotencyKey: existingTaskId > 0 ? undefined : message.idempotencyKey },
+    )
+  }
+
+  /** 使用全站统一安全下载链路保存生成图；有 assetId 时先刷新为当前工作空间的可用地址。 */
+  const downloadImageMessage = async (image: { url: string; assetId?: number }) => {
+    try {
+      const result = await downloadToDisk({
+        fileName: buildDownloadName(projectNameRef.current || 'AI图片', new Date(), 'png'),
+        mimeType: 'image/png',
+        resolveUrl: async () => {
+          const assetId = Number(image.assetId || 0) || 0
+          if (!assetId) return image.url
+          return (await refreshAssetUrl(Number(workspaceIdRef.current || 0), assetId)) || image.url
+        },
+      })
+      if (result === 'done') showToast('图片已保存', 'success')
+      else if (result === 'started') showToast('已开始下载图片', 'success')
+    } catch (error) {
+      showToast(getBusinessErrorMessage(error, '图片下载失败，请稍后重试'), 'error')
+    }
+  }
+
+  /** 非破坏性返回图片入口：保留项目、消息和未发送的修改内容。 */
+  const backFromImageChat = (draft: ImageComposerDraft) => {
+    commitImageComposerDraft(draft)
+    checkpointImageDraft(Number(workspaceIdRef.current || workspaceId || 0))
+    setStarted(false)
+  }
+
+  /**
+   * 把一至九张生成结果交给全新的视频项目。整批图片先落为可恢复素材，原图片项目保存成功后
+   * 再进入可编辑的视频入口；不在当前项目内切换 mode，避免图片历史和视频草稿混在同一个项目中。
+   */
+  const continueImagesAsVideo = async (selections: ImageVideoSelection[]) => {
+    if (imageBusy) {
+      showToast('请等待当前图片全部生成完成后再制作视频', 'info')
+      return
+    }
+    const uniqueSelections: ImageVideoSelection[] = []
+    const seenImages = new Set<string>()
+    for (const selection of selections || []) {
+      const image = selection?.image
+      const key = Number(image?.assetId || 0) > 0 ? `asset:${Number(image.assetId)}` : `url:${String(image?.url || '')}`
+      if ((!image?.url && Number(image?.assetId || 0) <= 0) || seenImages.has(key)) continue
+      seenImages.add(key)
+      uniqueSelections.push(selection)
+    }
+    if (!uniqueSelections.length) {
+      showToast('请先选择至少一张图片', 'info')
+      return
+    }
+    if (uniqueSelections.length > 9) {
+      showToast('最多选择 9 张图片制作视频', 'info')
+      return
+    }
+    const sourceWorkspaceId = Number(workspaceIdRef.current || workspaceId || 0) || 0
+    if (!sourceWorkspaceId) {
+      showToast('当前图片项目没有有效工作空间，无法继续制作视频', 'error')
+      return
+    }
+    if (sourceWorkspaceId !== Number(globalWorkspaceId || 0)) {
+      showToast('请先切换到该图片项目所属空间，再用图片制作视频', 'info')
+      return
+    }
+    let durableImages: { images: string[]; imageAssetIds: number[] }
+    try {
+      durableImages = await persistSmartEntryImages(
+        sourceWorkspaceId,
+        uniqueSelections.map(({ image }) => image.url),
+        persistImageAsset,
+        uniqueSelections.map(({ image }) => Number(image.assetId || 0) || 0),
+      )
+    } catch (error) {
+      showToast(getBusinessErrorMessage(error, '图片素材保存失败，请稍后重试'), 'error')
+      return
+    }
+    const preparedImages: Array<{
+      sourceMessageId: string
+      sourceUrl: string
+      sourceAssetId: number
+      url: string
+      assetId: number
+    }> = uniqueSelections.map(({ image, message }, index) => ({
+      sourceMessageId: String(message?.id || ''),
+      sourceUrl: image.url,
+      sourceAssetId: Math.max(0, Math.floor(Number(image.assetId || 0) || 0)),
+      url: durableImages.images[index] || image.url,
+      assetId: Number(durableImages.imageAssetIds[index] || 0) || 0,
+    }))
+
+    commitImageMessages((messages) =>
+      messages.map((message) => {
+        const replacements = preparedImages.filter(({ sourceMessageId }) => sourceMessageId === message.id)
+        if (!replacements.length) return message
+        return {
+          ...message,
+          images: (message.images || []).map((candidate) => {
+            const replacement = replacements.find(
+              ({ sourceUrl, sourceAssetId }) =>
+                candidate.url === sourceUrl && Number(candidate.assetId || 0) === sourceAssetId,
+            )
+            return replacement ? { ...candidate, url: replacement.url, assetId: replacement.assetId } : candidate
+          }),
+        }
+      }),
+    )
+    saveCurrentImageDraftLocally(sourceWorkspaceId)
+    const saveResult = await putSmartDraftToBackend(sourceWorkspaceId)
+    if (saveResult !== 'saved') {
+      showToast(
+        saveResult === 'conflict'
+          ? '原图片项目已在其他页面更新，请刷新确认后再制作视频'
+          : '原图片项目保存失败，暂未跳转，请稍后重试',
+        'error',
+      )
+      return
+    }
+
+    navigate('/smart', {
+      state: {
+        taskCenterNewSession: true,
+        carryMode: 'video',
+        carryRatio: entryMeta?.ratio || imageComposerRatio || '16:9',
+        carryImages: preparedImages.map(({ url, assetId }) => ({ url, assetId })),
+        sourceImageProjectId: Number(projectIdRef.current || 0) || 0,
+        sourceWorkspaceId,
+      },
+    })
   }
 
   // 入口提交「输入文字生成」→ 需登录(免登录可进页面/输入,但生成需登录)
-  const handleStart = (req: string, meta: EntryMeta) => {
-    void requireAuth(() => startCreation(req, meta))
-  }
-  const startCreation = (req: string, meta: EntryMeta) => {
-    setRequirement(req)
-    setEntryMeta(meta)
-    setStarted(true)
-    setStep(0)
-    setMaxReached(0)
-    shotsExplicitlyClearedRef.current = false
-    shotsRef.current = []
-    setShots([])
-    setScriptError('')
-    const imageMode = meta.mode === 'image'
-    // 制作图片:对话模式,清空旧会话,不进「营销思路拆解」步。
-    if (imageMode) setImageMessages([])
-    imgMsgHydratedRef.current = false
-    // 选中 SKILL → 先进「营销思路拆解」步(不立即生成脚本);未选 → 走现有逻辑直接生成脚本。
-    setMarketingOpen(imageMode ? false : !!meta.skill)
-    setMarketingText('')
-    setMarketingData(null)
-    setMarketingError('')
-    // 命名:有需求 → 按需求命名;无需求但上传了素材 → 据素材图命名(否则保留默认名)
-    if (req) void autoNameProject(req)
-    else if (meta.images?.length) void autoNameProject('', meta.images)
-    // 入口上传的素材图(dataURL)落库成后端 asset,否则刷新会丢(stripHeavy 剥 dataURL)
-    const wsId = Number(workspaceId || 0)
-    const initialDraft: SmartDraft = {
-      ...currentDraft(),
-      workspaceId: wsId,
-      started: true,
-      requirement: req,
-      reqSummary: req,
-      entryMeta: meta,
-      step: 0,
-      maxReached: 0,
-      shots: [],
-      projectId: 0,
-      marketingOpen: imageMode ? false : !!meta.skill,
-      marketingText: '',
-      marketingData: null,
-      ...(imageMode ? { imageMessages: [] } : {}),
+  const handleStart = async (req: string, meta: EntryMeta): Promise<boolean> => {
+    if (meta.mode === 'video') {
+      const durationValidation = validateCreativeDurationSelection(req, meta.duration)
+      if (!durationValidation.valid) {
+        showToast(durationValidation.message, 'error')
+        return false
+      }
     }
-    // React state 要到下一次渲染才会生效；先同步保存提交内容，保证点击发送后立刻切空间也不会丢稿。
-    const creationToken = wsId && !projectIdRef.current ? ++smartProjectCreationSequence : 0
-    if (creationToken) smartProjectCreationTokens.set(wsId, creationToken)
-    if (wsId && !projectIdRef.current) {
-      latestDraftStateRef.current = initialDraft
-      saveSmartDraft(initialDraft, wsId)
-    }
-    if (wsId && meta.images?.length) {
-      void (async () => {
-        const cache: Record<string, number> = {}
-        const urls: string[] = []
-        const ids: number[] = []
-        for (const u of meta.images!) {
-          try {
-            const out = await persistImageAsset(wsId, u, cache)
-            urls.push(out.url)
-            ids.push(out.assetId || 0)
-          } catch {
-            urls.push(u)
-            ids.push(0)
-          }
-        }
-        const persistedMeta = { ...meta, images: urls, imageAssetIds: ids }
-        const localDraft = loadSmartDraft(wsId)
-        const isCurrentCreation = !creationToken || smartProjectCreationTokens.get(wsId) === creationToken
-        if (isCurrentCreation && localDraft?.started) {
-          saveSmartDraft({ ...localDraft, entryMeta: persistedMeta }, wsId)
-        }
-        if (
-          isCurrentCreation &&
-          viewMountedRef.current &&
-          !workspaceSwitchAwayRef.current &&
-          Number(deriveWorkspaceId(useWorkspaceSessionStore.getState())) === wsId
-        ) {
-          setEntryMeta((m: any) => (m ? persistedMeta : m))
-        }
-      })()
-    }
-    // 后端建项目(best-effort,使其出现在项目管理/历史)
-    if (wsId && !projectIdRef.current) {
-      draftRevisionRef.current = 0
-      serverTitleRef.current = ''
-      const creationPromise = createCreativeProject({ workspace_id: wsId }).then(async (p: any) => {
-        const id = resolveProjectId(p)
-        if (!id) return
-        const isLatestCreation = smartProjectCreationTokens.get(wsId) === creationToken
-        const createdDraft: SmartDraft = {
-          ...(isLatestCreation ? loadSmartDraft(wsId) || initialDraft : initialDraft),
-          workspaceId: wsId,
-          projectId: id,
-          started: true,
-        }
-        if (isLatestCreation) saveSmartDraft(createdDraft, wsId)
-
-        const isStillActive =
-          isLatestCreation &&
-          viewMountedRef.current &&
-          !workspaceSwitchAwayRef.current &&
-          Number(deriveWorkspaceId(useWorkspaceSessionStore.getState())) === wsId
-        if (!isStillActive) {
-          // 创建请求发出后若已切走，旧组件不能再 setState/navigate；直接把刚提交的快照落到原空间项目。
-          const createdSnapshot = buildSmartSnapshot(createdDraft)
-          const persistence = enqueueCreativeProjectDraftSave({
-            projectId: id,
-            workspaceId: wsId,
-            task: async () => {
-              let revision = normRev(p)
-              if (!Number.isFinite(revision)) {
-                const project: any = await getCreativeProject({ projectId: id, workspaceId: wsId })
-                revision = normRev(project)
-              }
-              try {
-                await updateCreativeProjectDraft({
-                  projectId: id,
-                  workspaceId: wsId,
-                  draft: createdSnapshot,
-                  draftRevision: Number.isFinite(revision) ? revision : 0,
-                })
-              } catch (error: any) {
-                if (Number(error?.status || 0) !== 409) throw error
-                const latest: any = await getCreativeProject({ projectId: id, workspaceId: wsId })
-                const latestRevision = normRev(latest)
-                await updateCreativeProjectDraft({
-                  projectId: id,
-                  workspaceId: wsId,
-                  draft: createdSnapshot,
-                  draftRevision: Number.isFinite(latestRevision) ? latestRevision : 0,
-                })
-              }
-            },
-          })
-          // 保存任务已进入同项目队列后再广播；目标实例导航 /smart/:id 时会先等待这条队列。
-          // 即使云端保存失败，本地完整稿和 projectId 也已绑定，目标实例仍可继续并在后续自动重试。
-          if (isLatestCreation && smartProjectCreationTokens.get(wsId) === creationToken) {
-            notifySmartProjectBound({ workspaceId: wsId, projectId: id, creationToken })
-          }
-          await persistence
-          return
-        }
-
-        projectIdRef.current = id
-        setProjectId(id)
-        pinProjectWorkspaceId(wsId) // 钉住:新建项目属于当前(创建时的)空间
-        // 对齐 2.0(CreativeEntryView router.replace /creative/:id):跳到 /smart/:id,
-        // 之后刷新走「后端草稿」恢复(可靠、有 asset_id、不受 localStorage 配额限制)
-        navigate(`/smart/${id}`, { replace: true })
-        // 标记「建好后立即落盘一版草稿」:避免「建了空壳、还没到防抖就离开」导致后端 draft_json 为空,
-        // 再次点开项目时 parseSmartSnapshot 返回 null、started 不置 true → 回到初始空白页。
-        pendingInitialSaveRef.current = true
+    if (!(await requireAuth())) return false
+    // 从已有图片项目返回入口后切到「制作视频」时，必须先 fork 新会话，不能覆盖当前图片项目。
+    if (entryMeta?.mode === 'image' && meta.mode === 'video' && Number(projectIdRef.current || 0) > 0) {
+      const sourceWorkspaceId = Number(workspaceIdRef.current || workspaceId || 0) || 0
+      if (!sourceWorkspaceId || sourceWorkspaceId !== Number(globalWorkspaceId || 0)) {
+        showToast('请先切换到该图片项目所属空间，再开始制作视频', 'info')
+        return false
+      }
+      const previousStarted = Boolean(latestDraftStateRef.current.started)
+      latestDraftStateRef.current = { ...latestDraftStateRef.current, started: true }
+      checkpointImageDraft(sourceWorkspaceId)
+      const saveResult = await putSmartDraftToBackend(sourceWorkspaceId)
+      latestDraftStateRef.current = { ...latestDraftStateRef.current, started: previousStarted }
+      if (saveResult !== 'saved') {
+        showToast(
+          saveResult === 'conflict'
+            ? '图片项目已在其他页面更新，请刷新确认后再继续'
+            : '图片项目保存失败，暂未创建视频项目',
+          'error',
+        )
+        return false
+      }
+      navigate('/smart', {
+        state: {
+          taskCenterNewSession: true,
+          carryMode: 'video',
+          carryText: req,
+          carryRatio: meta.ratio,
+          carryImages: (meta.images || []).map((url, index) => ({
+            url,
+            assetId: Number(meta.imageAssetIds?.[index] || 0) || 0,
+          })),
+          sourceImageProjectId: Number(projectIdRef.current || 0) || 0,
+          sourceWorkspaceId,
+        },
       })
-      pendingSmartProjectCreations.set(wsId, creationPromise)
-      void creationPromise
-        .catch(() => {})
-        .finally(() => {
-          if (pendingSmartProjectCreations.get(wsId) === creationPromise) pendingSmartProjectCreations.delete(wsId)
+      return true
+    }
+    return startCreation(req, meta)
+  }
+  const startCreation = async (req: string, meta: EntryMeta): Promise<boolean> => {
+    if (creationStartingRef.current) return false
+    creationStartingRef.current = true
+    const wsId = Number(workspaceId || 0)
+    if (!wsId) {
+      creationStartingRef.current = false
+      showToast('工作空间尚未加载完成，请稍后重试', 'error')
+      return false
+    }
+
+    if (
+      meta.mode === 'image' &&
+      !(await confirmImageGenerationCost({
+        workspaceId: wsId,
+        hasRefs: (meta.images || []).length > 0,
+        ratio: meta.ratio || '16:9',
+        count: meta.outputCount || 1,
+      }))
+    ) {
+      creationStartingRef.current = false
+      return false
+    }
+
+    const creationAttempt = ++projectCreationAttemptRef.current
+    const pendingProject = pendingCreatedProjectRef.current
+    const reusablePendingProjectId =
+      pendingProject?.workspaceId === wsId ? Number(pendingProject.projectId || 0) || 0 : 0
+    const existingProjectId = Number(projectIdRef.current || 0) || reusablePendingProjectId
+    const needsProject = !existingProjectId
+
+    if (needsProject) {
+      draftRevisionRef.current = 0
+      draftContentConflictNotifiedRef.current = false
+      serverTitleRef.current = ''
+    }
+
+    try {
+      // 建项目与素材上传互不依赖，并行准备；任一失败都不会启动 AI 生成。
+      const [mediaResult, projectResult] = await Promise.allSettled([
+        persistSmartEntryImages(wsId, meta.images || [], persistImageAsset, meta.imageAssetIds || []),
+        needsProject ? createCreativeProject({ workspace_id: wsId }) : Promise.resolve(null),
+      ])
+
+      if (projectCreationAttemptRef.current !== creationAttempt || Number(workspaceIdRef.current || 0) !== wsId) {
+        return false
+      }
+
+      if (projectResult.status === 'rejected') {
+        throw new Error(getBusinessErrorMessage(projectResult.reason, '项目创建失败，请稍后重试'))
+      }
+
+      let readyProjectId = existingProjectId
+      if (needsProject) {
+        readyProjectId = resolveProjectId(projectResult.value)
+        if (!readyProjectId) throw new Error('项目创建失败：服务端未返回有效项目 ID')
+        // 素材若失败，保留本次已创建的空项目供原页面重试，避免每次重试都创建一个新空壳。
+        pendingCreatedProjectRef.current = { workspaceId: wsId, projectId: readyProjectId }
+      }
+
+      if (mediaResult.status === 'rejected') throw mediaResult.reason
+      const durableMeta: EntryMeta = {
+        ...meta,
+        images: mediaResult.value.images,
+        imageAssetIds: mediaResult.value.imageAssetIds,
+      }
+
+      if (!projectIdRef.current) {
+        allowCreativeReplaceProjectIdRef.current = readyProjectId
+        projectIdRef.current = readyProjectId
+        setProjectId(readyProjectId)
+      }
+      pinProjectWorkspaceId(wsId)
+      pendingCreatedProjectRef.current = null
+      pendingInitialSaveRef.current = true
+      // restartProjectId 存在浏览器历史状态中，强制刷新后仍会保留。用户提交新入口后，
+      // 立即绑定到正式项目地址并替换这份一次性状态，确保刷新时恢复已保存项目，
+      // 而不是再次进入空白的“重新创建”分支。
+      if (Number(routeId || 0) !== readyProjectId || explicitFreshEntrySession) {
+        navigate(`/smart/${readyProjectId}`, {
+          replace: true,
+          state: {
+            autoNameRequirement: req,
+            smartCreationBindProjectId: readyProjectId,
+            smartCreationBindSessionToken: routeSessionToken,
+            smartCreationBindWorkspaceId: wsId,
+          },
         })
-    }
-    // 制作图片:直接以入口需求 + 上传素材发起第一轮对话出图,不走分镜/脚本/视频流程。
-    if (imageMode) {
-      sendImageChat(req, meta.images || [], meta.ratio)
-      return
-    }
-    // 选中 SKILL:先做营销思路拆解,确认后再生成脚本;未选:立即生成脚本。
-    if (meta.skill) void runSkillBreakdown(req, meta)
-    else void generateScript(req, meta)
-    // 长需求 → AI 摘要成 ≤100 字展示;短需求直接用原文
-    if (req.trim().length > 90) {
-      summarizeRequirement(req)
-        .then((s) => setReqSummary(s || req))
-        .catch(() => setReqSummary(req))
-    } else {
-      setReqSummary(req)
+      }
+
+      setRequirement(req)
+      setEntryMeta(durableMeta)
+      setStarted(true)
+      setStep(0)
+      setMaxReached(0)
+      shotsExplicitlyClearedRef.current = false
+      shotsRef.current = []
+      setShots([])
+      setScriptError('')
+      const imageMode = durableMeta.mode === 'image'
+      if (imageMode) {
+        imageMessagesRef.current = []
+        setImageMessages([])
+        const nextComposerDraft: ImageComposerDraft = {
+          text: '',
+          ratio: durableMeta.ratio || '16:9',
+          images: [],
+          outputCount: Math.min(9, Math.max(1, Math.floor(Number(durableMeta.outputCount) || 1))),
+        }
+        setImageComposerDraft(nextComposerDraft)
+        setImageComposerRefCount(0)
+        setImageComposerRatio(nextComposerDraft.ratio)
+        setImageComposerOutputCount(nextComposerDraft.outputCount)
+        latestDraftStateRef.current = {
+          ...latestDraftStateRef.current,
+          imageComposerDraft: nextComposerDraft,
+        }
+      }
+      imgMsgHydratedRef.current = false
+      setMarketingOpen(imageMode ? false : !!durableMeta.skill)
+      setMarketingText('')
+      setMarketingData(null)
+      setMarketingError('')
+
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        started: true,
+        requirement: req,
+        entryMeta: durableMeta,
+        projectId: readyProjectId,
+        imageMessages: imageMode ? [] : latestDraftStateRef.current.imageMessages,
+      }
+
+      // 只有项目与入口素材均可恢复后，才允许发起会计费的生成任务。
+      if (imageMode) {
+        void sendImageChat(
+          req,
+          durableMeta.images || [],
+          durableMeta.ratio,
+          durableMeta.imageAssetIds,
+          durableMeta.outputCount || 1,
+          { costConfirmed: true },
+        )
+      } else if (durableMeta.skill) {
+        void runSkillBreakdown(req, durableMeta)
+      } else {
+        void generateScript(req, durableMeta)
+      }
+
+      if (req.trim().length > 90) {
+        summarizeRequirement(req)
+          .then((summary) => setReqSummary(summary || req))
+          .catch(() => setReqSummary(req))
+      } else {
+        setReqSummary(req)
+      }
+      return true
+    } catch (error) {
+      const fallback = error instanceof Error && error.message ? error.message : '创作准备失败，请稍后重试'
+      showToast(getBusinessErrorMessage(error, fallback), 'error')
+      return false
+    } finally {
+      creationStartingRef.current = false
     }
   }
 
@@ -4675,7 +6628,11 @@ export default function SmartCreateView() {
   const autoNameProject = async (reqArg?: string, imagesArg?: string[]) => {
     const req = (reqArg ?? requirement).trim()
     const images = (imagesArg || []).filter(Boolean)
-    if (nameTouched || naming) return
+    const namingContext = {
+      flow: 'smart' as const,
+      durationSec: entryMeta?.mode === 'video' ? parseDurationSeconds(entryMeta.duration) || undefined : undefined,
+    }
+    if (nameTouchedRef.current || naming) return
     if (!req && !images.length) return
     nameAbortRef.current?.abort()
     const ctrl = new AbortController()
@@ -4683,17 +6640,41 @@ export default function SmartCreateView() {
     setNaming(true)
     try {
       const nm = req
-        ? await generateProjectName(req, ctrl.signal)
-        : await generateProjectNameFromImages(images, '', ctrl.signal)
-      if (!nameTouched) setProjectName(nm)
+        ? await generateProjectName({ requirement: req, ...namingContext }, ctrl.signal)
+        : await generateProjectNameFromImages(images, { requirement: '', ...namingContext }, ctrl.signal)
+      if (nameAbortRef.current === ctrl && !nameTouchedRef.current) {
+        projectNameRef.current = nm
+        setProjectName(nm)
+      }
     } catch (e: any) {
-      if (e?.name !== 'AbortError') {
-        // 命名失败不打断流程,仅静默(保留原名)
+      if (e?.name !== 'AbortError' && nameAbortRef.current === ctrl && !nameTouchedRef.current) {
+        // AI 失败或返回跨流程/错误秒数名称时，仅做本地兜底；不重试 AI，避免额外计费。
+        const fallback = createProjectNameFallback({ requirement: req, ...namingContext })
+        projectNameRef.current = fallback
+        setProjectName(fallback)
       }
     } finally {
-      setNaming(false)
+      if (nameAbortRef.current === ctrl) {
+        nameAbortRef.current = null
+        setNaming(false)
+      }
     }
   }
+
+  // 项目绑定/加载后，依据需求或素材继续 AI 命名；同时修复历史遗留的未命名草稿。
+  useEffect(() => {
+    const id = Number(projectId || 0)
+    if (!id || !appliedRef.current || nameTouched || naming || !isUnnamedTitle(projectName)) return
+    const req = requirement.trim() || String((location.state as any)?.autoNameRequirement || '').trim()
+    const images = Array.isArray(entryMeta?.images) ? entryMeta.images.filter(Boolean) : []
+    if (!req && !images.length) return
+    const key = `${id}:${req}:${images.length}`
+    if (autoNameResumeKeyRef.current === key) return
+    autoNameResumeKeyRef.current = key
+    void autoNameProject(req, req ? undefined : images)
+    // autoNameProject 有意通过 ref 读取最新的手动命名状态，依赖项无需重复展开。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entryMeta?.images, nameTouched, naming, projectId, projectName, requirement])
 
   // 下载当前整片视频:优先按 asset_id 取新签名URL → fetch 成 blob 下载;CORS 失败则新标签打开
   // 下载视频:弹「另存为」让用户自选保存位置(不支持的浏览器回退自动下载)。
@@ -4703,10 +6684,7 @@ export default function SmartCreateView() {
       showToast('请先生成视频', 'info')
       return
     }
-    const safeName = (projectName || '视频').replace(/[\\/:*?"<>|]/g, '').trim() || '视频'
-    const d = new Date()
-    const dateStr = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
-    const fileName = `${safeName}_${dateStr}.mp4`
+    const fileName = buildDownloadName(projectName || '视频', new Date())
     try {
       await downloadToDisk({
         fileName,
@@ -4726,6 +6704,39 @@ export default function SmartCreateView() {
     }
   }
 
+  /** 播放失败时按 assetId 获取可用地址，并只更新仍指向该版本的主播放器，避免异步响应覆盖用户新选择。 */
+  const refreshVideoForPlayback = useCallback(
+    async (video: { url: string; assetId: number }): Promise<{ url: string; assetId: number } | void> => {
+      const ws = Number(workspaceIdRef.current || workspaceId || 0)
+      const assetId = Number(video.assetId || 0) || 0
+      if (!ws || !assetId) return
+      try {
+        const url = String((await refreshAssetUrl(ws, assetId)) || '').trim()
+        if (!url || Number(workspaceIdRef.current || 0) !== ws) return
+        const next = { url, assetId }
+        const current = fullVideoRef.current
+        const stillSelected =
+          Number(current.assetId || 0) === assetId ||
+          (!current.assetId && stableMediaUrlKey(current.url) === stableMediaUrlKey(video.url))
+        if (stillSelected) {
+          fullVideoRef.current = next
+          setFullVideo(next)
+        }
+        setVideoVersions((previous) => {
+          const updated = previous.map((version) =>
+            Number(version.assetId || 0) === assetId ? { ...version, url } : version,
+          )
+          videoVersionsRef.current = updated
+          return updated
+        })
+        return next
+      } catch {
+        return
+      }
+    },
+    [workspaceId],
+  )
+
   // ── 底栏导航箭头(上一步 / 下一步),与各步「主操作按钮」分离 ──
   // 上一步:step0 → 营销拆解(用了 skill)/ 入口;其余 → 上一步骤(纯导航,不重生成)。
   const goPrev = () => {
@@ -4738,7 +6749,7 @@ export default function SmartCreateView() {
   }
   // 下一步:仅在「已生成过」的步骤之间向前导航(step < maxReached);前沿(下一步尚未生成)置灰,
   // 首次生成只走主按钮(确认脚本 / 镜头编排 / 生成视频)。
-  const canGoNext = step < maxReached
+  const canGoNext = step < maxReached && !insertTextGenerating
   const goNext = () => {
     if (canGoNext) goStep(step + 1)
   }
@@ -4763,16 +6774,19 @@ export default function SmartCreateView() {
             label: '确认脚本',
             variant: 'primary',
             action: () => {
-              void guardDurationBeforeNext(() => {
-                if (revisitingScriptStep) {
-                  forceFreshMaterialsRef.current = true
-                  clearAllSubjectMaterials()
-                }
-                goStep(1)
-                if (revisitingScriptStep) generateAllSubjects()
+              guardInsertedShotBeforeNext(() => {
+                void guardDurationBeforeNext(() => {
+                  if (revisitingScriptStep) {
+                    forceFreshMaterialsRef.current = true
+                    clearAllSubjectMaterials()
+                  }
+                  goStep(1)
+                  if (revisitingScriptStep) generateAllSubjects()
+                })
               })
             },
-            disabled: scriptLoading,
+            disabled: scriptLoading || insertTextGenerating || Boolean(scriptError),
+            tip: scriptError ? '脚本生成未完整结束，请先重新生成' : undefined,
           },
         ]
       }
@@ -4784,22 +6798,26 @@ export default function SmartCreateView() {
             label: '生成分镜',
             variant: 'primary',
             action: () => {
-              void guardDurationBeforeNext(() => {
-                if (revisitingShotStep) {
-                  void (async () => {
-                    await cancelShotGeneration()
-                    const nextShots = resetShotArrangementOutputs(shots)
-                    setShots(nextShots)
-                    setShotImgError({})
-                    shotGenSigRef.current = ''
-                    autoGenRef.current = true
-                    goStep(2)
-                    void generateShotImages(nextShots)
-                  })()
-                  return
-                }
-                autoGenRef.current = false
-                goStep(2)
+              guardInsertedShotBeforeNext(() => {
+                void guardDurationBeforeNext(() => {
+                  if (revisitingShotStep) {
+                    void (async () => {
+                      await cancelShotGeneration()
+                      const nextShots = resetShotArrangementOutputs(shots)
+                      setShots(nextShots)
+                      setShotImgError({})
+                      setShotImgRetryTokens({})
+                      setShotImgReloading({})
+                      shotGenSigRef.current = ''
+                      autoGenRef.current = true
+                      goStep(2)
+                      void generateShotImages(nextShots)
+                    })()
+                    return
+                  }
+                  autoGenRef.current = false
+                  goStep(2)
+                })
               })
             },
             // 素材未全部生成完毕不可进入镜头编排(含主推产品需手动生成)
@@ -4815,14 +6833,25 @@ export default function SmartCreateView() {
       case 2: {
         // 参与视频的分镜:每张都要有图且加载成功(无图/加载失败 → 不能生成视频)
         const activeShots = shots.filter((s) => s.includeInVideo !== false)
+        const failedShotImages = activeShots.filter((shot) => shotImgError[shot.id])
+        const imageReloading = activeShots.some((shot) => shotImgReloading[shot.id])
         const shotImagesReady = activeShots.length > 0 && activeShots.every((s) => !!s.image && !shotImgError[s.id])
         // 镜头编排:重新生成 + 生成视频
         return [
           {
-            label: shotGenRunning ? '生成中…' : '重新生成',
+            label: imageReloading
+              ? '重新加载中…'
+              : failedShotImages.length
+                ? '重新加载失败分镜'
+                : shotGenRunning
+                  ? '生成中…'
+                  : '重新生成',
             variant: 'ghost',
-            action: () => generateShotImages(),
-            disabled: anyShotGenerating,
+            action: () => {
+              if (failedShotImages.length) void retryFailedShotImageLoads()
+              else void generateShotImages()
+            },
+            disabled: anyShotGenerating || imageReloading,
           },
           {
             label: '生成视频',
@@ -4836,12 +6865,14 @@ export default function SmartCreateView() {
                 goStep(3)
               })
             },
-            disabled: anyShotGenerating || !shotImagesReady,
+            disabled: anyShotGenerating || imageReloading || !shotImagesReady,
             tip: anyShotGenerating
               ? '分镜图生成中,请稍候…'
-              : !shotImagesReady
-                ? '有分镜图未生成或加载失败,请先重新生成对应分镜图再生成视频'
-                : undefined,
+              : imageReloading
+                ? '分镜图正在自动重新加载,请稍候…'
+                : !shotImagesReady
+                  ? '有分镜图未生成或加载失败,请先重新加载失败分镜;资源确实失效时再单独编辑该分镜'
+                  : undefined,
             splitCount: videoCount,
             splitCountOptions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
             onSplitCountChange: (n: number) => setVideoCount(n),
@@ -4860,33 +6891,12 @@ export default function SmartCreateView() {
     setStarted(true)
     if (entryMeta?.skill && marketingText) setMarketingOpen(true)
   }
-  // 入口圆形按钮:按当前输入走「下一页」的重生成逻辑。
-  const handleEntryRegenerate = (req: string, meta: EntryMeta) => {
-    setRequirement(req)
-    setEntryMeta(meta)
-    setStarted(true)
-    setStep(0)
-    setMaxReached(0)
-    if (req.trim().length > 90) {
-      summarizeRequirement(req)
-        .then((s) => setReqSummary(s || req))
-        .catch(() => setReqSummary(req))
-    } else {
-      setReqSummary(req)
-    }
-    if (meta.skill) {
-      setMarketingOpen(true)
-      void runSkillBreakdown(req, meta)
-      return
-    }
-    setMarketingOpen(false)
-    void generateScript(req, meta)
-  }
-  // 入口是否可「恢复/下一步」:视频模式且已有生成结果(分镜脚本 或 营销拆解)
-  const canResumeFlow = entryMeta?.mode !== 'image' && (shots.length > 0 || !!marketingText)
+  // 入口是否可恢复：视频回到既有步骤；图片回到原对话，不重新提交任务。
+  const canResumeFlow = entryMeta?.mode === 'image' ? imageMessages.length > 0 : shots.length > 0 || !!marketingText
 
   // 上报当前流程阶段给引导:用户【自己操作】进到某阶段时,自动展示该阶段引导。
-  // 未开始且【从流程退回入口(canResumeFlow)】= reentry(高亮「重新生成」);未开始且全新 = entry;进入流程 = process。
+  // 未开始且【从流程退回入口(canResumeFlow)】= reentry(高亮「重新生成」);未开始且全新 = entry;
+  // 首次进入镜头编排 = arrangeTrash(高亮分镜回收站);其余创作流程 = process。
   // (放在 canResumeFlow 声明之后,避免 TDZ。)
   const lastSyncedStageRef = useRef('')
   useEffect(() => {
@@ -4894,13 +6904,19 @@ export default function SmartCreateView() {
       lastSyncedStageRef.current = ''
       return
     }
-    const stage = !started ? (canResumeFlow ? 'reentry' : 'entry') : 'process'
+    const stage = !started
+      ? canResumeFlow
+        ? 'reentry'
+        : 'entry'
+      : entryMeta?.mode !== 'image' && !marketingOpen && step === 2
+        ? 'arrangeTrash'
+        : 'process'
     // 只在阶段【真正变化】时同步:否则返回入口时 started/canResumeFlow/step 连续变化会重复同步同一阶段,
     // 而 syncSmartStage 对"已展示过的同阶段再同步"会设 waiting=true → 刚弹出就被自己隐藏(闪退)。
     if (stage === lastSyncedStageRef.current) return
     lastSyncedStageRef.current = stage
     syncSmartGuideStage(stage)
-  }, [guideActiveKey, started, canResumeFlow, marketingOpen, step])
+  }, [guideActiveKey, started, canResumeFlow, entryMeta?.mode, marketingOpen, step])
 
   // 营销思路拆解步(选中 SKILL 时的第 1 步):我的描述(只读,与分镜脚本步一致)+ skill 拆解建议(可编辑)+ 确认/上一步。
   const renderMarketingBody = () => {
@@ -5050,13 +7066,28 @@ export default function SmartCreateView() {
             <span className="smart__script-done-icon" aria-hidden="true">
               💡
             </span>
-            {scriptLoading ? '分镜脚本生成中…' : scriptError ? '分镜脚本生成失败' : '分镜脚本生成完成'}
+            {scriptLoading
+              ? '分镜脚本生成中…'
+              : insertTextGenerating
+                ? '正在生成新增分镜词…'
+                : scriptError
+                  ? '分镜脚本生成失败'
+                  : '分镜脚本生成完成'}
           </div>
-          {shots.length ? (
+          {shots.length || (!scriptLoading && !scriptError) ? (
             <>
               <ScriptStoryboardTable
                 shots={shots}
                 showSubjects={materialMode}
+                deferDurationValidation={!materialMode}
+                onInsertShot={insertStoryboardShot}
+                insertDisabled={
+                  scriptLoading ||
+                  insertTextGenerating ||
+                  batchGenning ||
+                  Object.values(subjectGenerating).some(Boolean)
+                }
+                shotTextGenerating={insertTextGeneratingId === null ? {} : { [String(insertTextGeneratingId)]: true }}
                 subjectGenerating={subjectGenerating}
                 onGenerateAll={materialMode ? generateAllSubjects : undefined}
                 batchGenning={batchGenning}
@@ -5073,15 +7104,25 @@ export default function SmartCreateView() {
                 onClearTrash={clearAllShotTrash}
                 /* AI自动生成:不后台直生,改为唤起素材弹窗并在弹窗内自动生成(autoGen),与「上传图片」一致 */
                 onShotsChange={updateShotsFromEditor}
-                onDurationOverflow={showDurationOverflow}
-                onDurationChangeRequest={requestDurationChange}
                 onRegenerate={materialMode ? undefined : () => entryMeta && generateScript(requirement, entryMeta)}
-                regenerating={scriptLoading}
+                regenerating={scriptLoading || insertTextGenerating}
               />
-              {scriptLoading && (
+              {(scriptLoading || insertTextGenerating) && (
                 <div className="smart__gen-hint">
                   <span className="smart__gen-spin" aria-hidden="true" />
-                  分镜持续生成中…
+                  {scriptLoading ? '分镜持续生成中…' : '正在生成新增分镜词…'}
+                </div>
+              )}
+              {!scriptLoading && scriptError && (
+                <div className="smart__script-error" role="alert">
+                  {scriptError}
+                  <button
+                    type="button"
+                    className="smart__btn smart__btn--primary"
+                    onClick={() => entryMeta && generateScript(requirement, entryMeta)}
+                  >
+                    重新生成
+                  </button>
                 </div>
               )}
             </>
@@ -5115,6 +7156,8 @@ export default function SmartCreateView() {
           onUploadRef={uploadRef}
           onShotImgError={markShotImgError}
           onShotImgLoad={markShotImgLoad}
+          onShotImgRetrying={markShotImgRetrying}
+          imageRetryTokens={shotImgRetryTokens}
           onGenerateShot={generateShotFromDialog}
           onDeleteShot={deleteShot}
           trashItems={shotTrashItems}
@@ -5143,6 +7186,7 @@ export default function SmartCreateView() {
       <VideoStage
         shots={shots}
         videoUrl={fullVideo.url}
+        videoAssetId={fullVideo.assetId}
         videoGenerating={actualVideoGenerating}
         videoStatusText={blurPhase || undefined}
         videoStartedAt={
@@ -5155,6 +7199,31 @@ export default function SmartCreateView() {
         costEstimate={videoCost.estimate}
         costLoading={videoCost.loading}
         costError={videoCost.error}
+        onEstimateEditCost={async (note) => {
+          const ws = Number(workspaceId || 0)
+          if (!ws || !fullVideo.assetId || !fullVideo.url) throw new Error('缺少可编辑的视频')
+          const plans = await resolvePlanCandidates()
+          const editPrompt = [
+            '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
+            note || '',
+          ]
+            .filter(Boolean)
+            .join('\n')
+          const sourceVideoDurationSec = (await readVideoDurationSec(fullVideo.url)) || 0
+          const result: any = await estimateVideoEditCost({
+            workspaceId: ws,
+            prompt: editPrompt,
+            ratio: entryMeta?.ratio,
+            durationSec: totalDurationSec(shots) || 10,
+            sourceVideoDurationSec,
+            modelPlanCandidates: plans,
+          })
+          return {
+            estimatedCost: Number(result?.estimated_cost ?? 0),
+            balance: Number(result?.balance ?? 0),
+            canAfford: result?.can_afford === true,
+          }
+        }}
         faceBlurDebug={blurDebug}
         videoVersions={videoVersions}
         failedGenerations={[...videoGenerations]
@@ -5173,7 +7242,14 @@ export default function SmartCreateView() {
           }))
         })()}
         pendingVideoCount={videoGenerations.filter((g) => g.status === 'processing').length}
-        onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
+        modificationDraft={videoModificationDraft}
+        onModificationDraftChange={setVideoModificationDraft}
+        onSwitchVideo={(v) => {
+          const next = { url: v.url, assetId: v.assetId }
+          fullVideoRef.current = next
+          setFullVideo(next)
+        }}
+        onRefreshVideo={refreshVideoForPlayback}
         onRegenerateVideo={(note, opts) => {
           setPendingVideoFocusToken((v) => v + 1)
           runFullVideo(note, opts, 1)
@@ -5236,11 +7312,11 @@ export default function SmartCreateView() {
               </span>
               <div className="smart__durguard-msg">
                 {durGuard.overMax
-                  ? `您目前的视频秒数为${durGuard.currentSec}s（视频时长最多支持15s）`
-                  : `您目前的视频秒数为${durGuard.currentSec}s（与期望的视频秒数${durGuard.expectedSec || parseDurationSec(entryMeta?.duration)}s不符）`}
+                  ? `您目前的视频秒数为${durGuard.currentSec}s（已超过最大限制15s，无法生成视频）`
+                  : `您目前的视频秒数为${durGuard.currentSec}s（与期望的视频秒数${durGuard.expectedSec || parseDurationSeconds(entryMeta?.duration) || 0}s不符）`}
               </div>
             </div>
-            <div className={`smart__durguard-actions${durGuard.overMax ? ' smart__durguard-actions--single' : ''}`}>
+            <div className="smart__durguard-actions">
               <button
                 type="button"
                 className="smart__durguard-btn"
@@ -5307,41 +7383,85 @@ export default function SmartCreateView() {
           </div>
         ) : !started ? (
           // 「上一步」返回输入框时回填上次输入(数据存在本视图 state,路由切换卸载即清空)
-          <SmartEntry
-            key={entryKey}
-            workspaceId={Number(workspaceId || 0)}
-            onSubmit={handleStart}
-            onRegenerate={handleEntryRegenerate}
-            onNewVideo={resetToNewVideo}
-            canResume={canResumeFlow}
-            onResume={resumeFlow}
-            initial={{
-              mode: entryMeta?.mode,
-              text: requirement,
-              ratio: entryMeta?.ratio,
-              duration: entryMeta?.duration,
-              images: entryMeta?.images ?? (carriedImages.length ? carriedImages : undefined),
-              skill: entryMeta?.skill,
-            }}
-          />
+          <div className="smart__entry-with-tasks">
+            <TaskCenterDrawer scope="smart" />
+            <div className="smart__entry-content">
+              <SmartEntry
+                key={entryKey}
+                onSubmit={handleStart}
+                restoreSessionDraft={!explicitFreshEntrySession}
+                onNewVideo={resetToNewVideo}
+                canResume={canResumeFlow}
+                onResume={resumeFlow}
+                initial={{
+                  mode: entryMeta?.mode ?? carriedEntry.mode,
+                  text:
+                    entryMeta?.mode === 'image' && imageComposerDraft.text
+                      ? imageComposerDraft.text
+                      : requirement || carriedEntry.text,
+                  ratio: entryMeta?.ratio ?? carriedEntry.ratio,
+                  duration: entryMeta?.duration,
+                  images:
+                    entryMeta?.mode === 'image' && imageComposerDraft.images.length
+                      ? imageComposerDraft.images.map((image) => image.url)
+                      : (entryMeta?.images ?? (carriedEntry.images.length ? carriedEntry.images : undefined)),
+                  imageAssetIds:
+                    entryMeta?.mode === 'image' && imageComposerDraft.images.length
+                      ? imageComposerDraft.images.map((image) => Number(image.assetId || 0) || 0)
+                      : (entryMeta?.imageAssetIds ??
+                        (carriedEntry.imageAssetIds.some((assetId) => assetId > 0)
+                          ? carriedEntry.imageAssetIds
+                          : undefined)),
+                  outputCount: entryMeta?.outputCount ?? imageComposerDraft.outputCount,
+                  skill: entryMeta?.skill,
+                }}
+              />
+            </div>
+          </div>
         ) : isImageMode ? (
           // 制作图片:chat 对话视图(消息流 + 沉底输入框,工具栏仅比例 + @)
-          <ImageChat
-            messages={imageMessages}
-            initialRatio={entryMeta?.ratio || '16:9'}
-            busy={imageBusy}
-            costText={
-              stepCost.estimate
-                ? `${stepCost.count > 1 ? `共 ${stepCost.count} 张 · 约 ` : '约 '}${stepCost.estimate.estimatedCost} 积分 · 余额 ${stepCost.estimate.balance} 积分`
-                : ''
-            }
-            costInsufficient={
-              !!stepCost.estimate &&
-              (stepCost.estimate.canAfford === false || stepCost.estimate.estimatedCost > stepCost.estimate.balance)
-            }
-            onSend={(text, imgs, r) => sendImageChat(text, imgs, r)}
-            onNewChat={() => resetToNewVideo('image')}
-          />
+          <div className="smart__entry-with-tasks">
+            <TaskCenterDrawer scope="image" />
+            <div className="smart__entry-content">
+              <Suspense fallback={<LazyEditorFallback label="正在加载图片编辑器…" />}>
+                <ImageChat
+                  messages={imageMessages}
+                  initialRatio={entryMeta?.ratio || '16:9'}
+                  initialOutputCount={entryMeta?.outputCount || 1}
+                  initialComposerDraft={imageComposerDraft}
+                  busy={imageBusy}
+                  newChatDisabled={imageBusy}
+                  costText={
+                    stepCost.loading
+                      ? '费用预估中…'
+                      : stepCost.estimate
+                        ? `${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}${stepCost.estimate.estimatedCost} 积分${stepCost.estimate.perOne != null ? ` · 每张约 ${stepCost.estimate.perOne} 积分` : ''} · 余额 ${stepCost.estimate.balance} 积分`
+                        : stepCost.error
+                          ? `费用暂不可用：${stepCost.error}`
+                          : ''
+                  }
+                  costInsufficient={
+                    !!stepCost.estimate &&
+                    (stepCost.estimate.canAfford === false ||
+                      stepCost.estimate.estimatedCost > stepCost.estimate.balance)
+                  }
+                  onSend={(text, images, ratio, assetIds, outputCount) =>
+                    sendImageChat(text, images, ratio, assetIds, outputCount)
+                  }
+                  onRetry={(message) => void retryImageMessage(message)}
+                  onDownload={(image) => void downloadImageMessage(image)}
+                  onComposerReferenceCountChange={setImageComposerRefCount}
+                  onRatioChange={handleImageComposerRatioChange}
+                  onOutputCountChange={handleImageComposerOutputCountChange}
+                  onComposerDraftChange={commitImageComposerDraft}
+                  onBack={backFromImageChat}
+                  backDisabled={imageBusy}
+                  onContinueToVideo={(selections) => continueImagesAsVideo(selections)}
+                  onNewChat={() => resetToNewVideo('image')}
+                />
+              </Suspense>
+            </div>
+          </div>
         ) : (
           <>
             {/* 创建新视频:固定在流程区最右上,点击重置为全新入口、重新走一遍生成流程 */}
@@ -5358,13 +7478,14 @@ export default function SmartCreateView() {
                   // 4 个流程步的子状态:脚本有分镜 / 已进入镜头编排(素材就绪) / 有任一分镜图 / 有整片视频
                   const hasVideoOutput = Boolean(fullVideo.url || fullVideo.assetId || videoVersions.length)
                   const hasShotImage = shots.some((s) => s.image || Number(s.imageAssetId || 0) > 0)
+                  // 上游新增/修改后 maxReached 会回退；旧分镜图/成片不能让后续步骤继续显示为可跳转的“已完成”。
                   const done = [
                     shots.length > 0 || hasVideoOutput,
-                    maxReached >= 2 || hasShotImage || hasVideoOutput,
-                    hasShotImage || hasVideoOutput,
-                    hasVideoOutput,
+                    maxReached >= 1 && (maxReached >= 2 || hasShotImage || hasVideoOutput),
+                    maxReached >= 2 && (hasShotImage || hasVideoOutput),
+                    maxReached >= 3 && hasVideoOutput,
                   ]
-                  const running = [scriptLoading, false, shotGenRunning, actualVideoGenerating]
+                  const running = [scriptLoading || insertTextGenerating, false, shotGenRunning, actualVideoGenerating]
                   const flow = STEPS.map((_, i) =>
                     running[i]
                       ? ACTIVE_STATUS[i]
@@ -5379,6 +7500,15 @@ export default function SmartCreateView() {
                   return [mkt, ...flow]
                 })()}
                 onStepClick={(i) => {
+                  const targetStep = usedSkill ? i - 1 : i
+                  if (insertTextRequestRef.current && targetStep !== step) {
+                    showToast('请等待新增分镜的 AI 分镜词生成完成', 'error')
+                    return
+                  }
+                  if (targetStep > maxReached) {
+                    showToast('请先完成当前步骤，再进入后续流程', 'error')
+                    return
+                  }
                   if (!usedSkill) return goStep(i)
                   if (i === 0) setMarketingOpen(true)
                   else {
@@ -5406,9 +7536,8 @@ export default function SmartCreateView() {
                     }}
                   />
                 ) : (
-                  <button type="button" className="smart__name" onClick={startRename} title="点击修改项目名">
-                    <span className="smart__name-label">项目</span>
-                    <span className="smart__name-text">/{projectName}</span>
+                  <button type="button" className="smart__name" onClick={startRename} title="点击修改名称">
+                    <span className="smart__name-text">{projectName}</span>
                     {naming && <span className="smart__name-naming">AI 命名中…</span>}
                     <img className="smart__name-edit" src={iconProjectEdit} alt="" width={20} height={20} />
                   </button>
@@ -5419,11 +7548,16 @@ export default function SmartCreateView() {
                     空间：{pinnedWsName}
                   </span>
                 )}
+                <DraftSaveIndicator status={draftSaveStatus} onRetry={() => void retrySmartCloudSave()} />
               </div>
             </div>
 
             {/* 步骤内容:营销思路拆解步 / 现有流程步 */}
-            <div className="smart__body">{marketingOpen ? renderMarketingBody() : renderStepBody()}</div>
+            <div className="smart__body">
+              <Suspense fallback={<LazyEditorFallback />}>
+                {marketingOpen ? renderMarketingBody() : renderStepBody()}
+              </Suspense>
+            </div>
 
             {/* 底栏:上一步/下一步 导航箭头 + 各步主操作按钮(整组居中)。
                 视频生成步(step3)总按钮在中间 VideoStage 内,这里不渲染。 */}

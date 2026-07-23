@@ -10,32 +10,8 @@
 // @ts-nocheck
 import type { Shot } from '@/components/smart/ScriptStoryboardTable'
 import { runResponseText, streamResponseText } from './aiResponses'
-import { resolveTaskModel, estimateAiTaskCost } from './business'
 
-/**
- * 文本生成(responses.multimodal:分镜脚本 / AI 润色 / 镜头信息等)提交前积分预估。
- * 注意:文本走 /ai/responses,而 estimate-cost 在 /ai/tasks —— 若后端不支持文本 op 估价会抛错,
- * 调用方需 try/catch 优雅降级(显示"暂不支持预估")。
- */
-export async function estimateResponsesCost(args: {
-  workspaceId: number
-  prompt?: string
-  modelPlanCandidates?: string[]
-}): Promise<any> {
-  const model = await resolveTaskModel({
-    operationCode: 'responses.multimodal',
-    modelPlanCandidates: args.modelPlanCandidates,
-  })
-  if (!model?.id) throw new Error('暂无可用的文本模型')
-  return estimateAiTaskCost({
-    workspaceId: args.workspaceId,
-    modelVersionId: model.id,
-    operationCode: 'responses.multimodal',
-    prompt: args.prompt || '',
-    params: {},
-  })
-}
-
+/** 整条分镜脚本生成所需的需求、样式、比例、时长和素材。 */
 interface GenerateArgs {
   requirement: string
   style?: string
@@ -45,6 +21,7 @@ interface GenerateArgs {
   signal?: AbortSignal
 }
 
+/** 整条信息流广告分镜的结构、主体命名和输出格式约束。 */
 const SYSTEM =
   '你是资深短视频(信息流广告)分镜脚本师。根据创作需求(及可能提供的素材图片)生成一条可执行的分镜脚本。' +
   '为每个镜头给出:镜头时长(如 5s)、画面描述(中文,具体、可拍摄),并拆分该镜头涉及的【视觉主体】(人物/场景/物体/产品),用于后续素材准备。' +
@@ -60,6 +37,7 @@ const SYSTEM =
   '必须替换为真实内容,严禁原样输出「画面描述」「台词/旁白」「字幕」「音效」这类字段名作为值:' +
   '{"shots":[{"duration":"5s","desc":"<具体可拍摄的画面描述>","voiceover":"<台词或旁白,无则空字符串>","subtitle":"<字幕,无则空字符串>","sfx":"<音效,无则空字符串>","subjects":[{"name":"小雅","kind":"人物","imageIndex":2},{"name":"室内场景","kind":"场景"}]}]}'
 
+/** 按目标总时长生成镜头数量、单镜时长和台词字数约束。 */
 function buildDurationPromptLines(totalSec: number): string[] {
   if (totalSec === 15) {
     return [
@@ -93,6 +71,7 @@ function buildDurationPromptLines(totalSec: number): string[] {
   ]
 }
 
+/** 将页面选项组装为可供模型理解的用户输入。 */
 function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): string {
   const totalSec = parseInt(String(duration || '10'), 10) || 10
   return [
@@ -104,24 +83,29 @@ function buildUserText({ requirement, style, ratio, duration }: GenerateArgs): s
 }
 
 // 文本类"主体"(无需上传素材)关键词
+/** 用于排除文案类“假视觉主体”和模板占位字段的规则。 */
 const TEXT_SUBJECT_RE = /文案|字幕|标语|口号|标题|文字|台词|旁白|cta|slogan|字样/i
 
 // 模型有时把示例里的字段名当值原样输出(如 desc 直接写"画面描述")→ 视为无效占位,置空
 const PLACEHOLDER_FIELD_RE = /^(画面描述|台词\/?旁白|旁白|台词|字幕|音效|desc|voiceover|subtitle|sfx|无|none|n\/a)$/i
+/** 清理脚本字段，将空值、占位词和外层引号归一化为可编辑文本。 */
 const cleanField = (v: any): string => {
   const t = String(v || '').trim()
   return PLACEHOLDER_FIELD_RE.test(t) ? '' : t
 }
 
 // 时长字符串 → 秒(失败回退 0)
+/** 从“5s”等时长字段中提取正数秒值。 */
 const durToSec = (d: any): number => {
   const n = parseFloat(String(d || '').replace(/[^0-9.]/g, ''))
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
+/** 判断镜头是否含有至少一项可展示脚本内容。 */
 const hasScriptContent = (shot: Shot): boolean =>
   [shot?.desc, shot?.line, shot?.subtitle, shot?.sfx].some((value) => String(value || '').trim())
 
+/** 删除空镜头后重新生成连续镜头编号。 */
 function renumberScriptShots(shots: Shot[]): Shot[] {
   return (shots || []).map((shot, index) => ({
     ...shot,
@@ -130,6 +114,7 @@ function renumberScriptShots(shots: Shot[]): Shot[] {
   }))
 }
 
+/** 按总时长计算允许的最大镜头数，避免出现过多 1 秒碎镜。 */
 function maxShotCountForDuration(totalSec: number): number {
   if (totalSec === 5) return 2
   if (totalSec === 10) return 4
@@ -137,6 +122,7 @@ function maxShotCountForDuration(totalSec: number): number {
   return 0
 }
 
+/** 将脚本裁剪到目标时长可承载的镜头数，并保留有内容的镜头。 */
 function limitShotsForDuration(shots: Shot[], totalSec: number): Shot[] {
   const useful = renumberScriptShots((shots || []).filter(hasScriptContent))
   const maxCount = maxShotCountForDuration(totalSec)
@@ -150,6 +136,7 @@ function limitShotsForDuration(shots: Shot[], totalSec: number): Shot[] {
   return renumberScriptShots(useful.slice(0, maxCount))
 }
 
+/** 将整数总时长尽量均匀分配到指定镜头数。 */
 function distributeEvenly(totalSec: number, count: number): number[] {
   if (!(totalSec > 0) || !(count > 0) || totalSec < count) return []
   const base = Math.floor(totalSec / count)
@@ -157,6 +144,7 @@ function distributeEvenly(totalSec: number, count: number): number[] {
   return Array.from({ length: count }, (_v, index) => base + (index < remainder ? 1 : 0))
 }
 
+/** 在总时长不变的前提下减少多个 1 秒镜头，改善剪辑可用性。 */
 function reduceMultipleOneSeconds(values: number[], totalSec: number): number[] {
   if (!Array.isArray(values) || !values.length) return values
   const next = values.map((value) => Math.max(1, Math.round(value || 0)))
@@ -176,6 +164,7 @@ function reduceMultipleOneSeconds(values: number[], totalSec: number): number[] 
   return next
 }
 
+/** 按比例缩放各镜头时长，再用余数补齐保证和精确等于目标值。 */
 function scaleDurationsToTotal(values: number[], totalSec: number): number[] {
   if (!Array.isArray(values) || !values.length || !(totalSec > 0) || totalSec < values.length) return []
   const normalized = values.map((value) => (value > 0 ? Math.round(value) : 1))
@@ -206,6 +195,7 @@ function scaleDurationsToTotal(values: number[], totalSec: number): number[] {
   return reduceMultipleOneSeconds(scaled, totalSec)
 }
 
+/** 对常见短视频时长应用可剪辑的镜头分配，其他时长按原比例归一。 */
 function applyDurationPattern(totalSec: number, secs: number[]): number[] {
   if (!Array.isArray(secs) || !secs.length || !(totalSec > 0)) return []
 
@@ -230,6 +220,7 @@ function applyDurationPattern(totalSec: number, secs: number[]): number[] {
 }
 
 // 强制各镜 duration 之和 = 目标总时长(模型常超/欠):优先匹配指定分配规则,否则按比例缩放。
+/** 将 AI 生成的各镜时长校正到用户指定的精确总时长。 */
 function normalizeDurations(shots: Shot[], totalSec: number): Shot[] {
   if (!Array.isArray(shots) || !shots.length || !(totalSec > 0)) return shots
   const boundedShots = limitShotsForDuration(shots, totalSec)
@@ -258,6 +249,7 @@ function normalizeDurations(shots: Shot[], totalSec: number): Shot[] {
 }
 
 // 容错:从(可能被截断的)文本里抢救出所有「完整」的顶层 {…} 对象
+/** 当完整 JSON 解析失败时，从流式残片中抢救已闭合的镜头对象。 */
 function salvageObjects(raw: string): any[] {
   const objs: any[] = []
   const arrStart = raw.indexOf('[')
@@ -285,6 +277,7 @@ function salvageObjects(raw: string): any[] {
 }
 
 // 原始分镜对象数组 → Shot[](主体映射 + 文本类过滤)
+/** 将模型原始字段映射为页面 Shot，清理占位文本并关联 imageIndex。 */
 function mapShots(list: any[], images: string[] = [], options: { filterEmpty?: boolean } = {}): Shot[] {
   if (!Array.isArray(list)) return []
   const filterEmpty = options.filterEmpty !== false
@@ -315,6 +308,7 @@ function mapShots(list: any[], images: string[] = [], options: { filterEmpty?: b
   return renumberScriptShots(filterEmpty ? shots.filter(hasScriptContent) : shots)
 }
 
+/** 从可能包含代码围栏的模型输出中解析完整分镜列表。 */
 function parseShots(text: string, images: string[] = []): Shot[] {
   let raw = String(text || '').trim()
   if (!raw) return []
@@ -334,9 +328,7 @@ function parseShots(text: string, images: string[] = []): Shot[] {
   return mapShots(list, images)
 }
 
-// ── 单个分镜「新增 / 编辑」:带【全部现有分镜的完整信息】作上下文,产出该镜头完整内容 ──
-// 解决「新插入的分镜跟其他没关系」+「后端没返回台词/字幕/音效」:LLM 看到整条广告所有分镜,
-// 据用户描述 + 上传素材,生成/修改这一个镜头的 画面描述/台词/字幕/音效/主体,与前后连贯。
+/** 单镜头新增/编辑提示词，要求模型结合全部现有分镜保持剧情、风格和节奏连贯。 */
 const ONE_SHOT_SYSTEM =
   '你是资深短视频(信息流广告)分镜脚本师。下面会给你整条广告已有的全部分镜(画面/台词/字幕/音效)。' +
   '请为指定位置的【单个镜头】(新增或修改)生成内容,使其与前后镜头的剧情、风格、节奏、配色保持连贯。' +
@@ -349,6 +341,7 @@ const ONE_SHOT_SYSTEM =
   '必须替换为真实内容,严禁原样输出「画面描述」「台词/旁白」「字幕」「音效」这类字段名作为值:' +
   '{"duration":"5s","desc":"<具体可拍摄的画面描述>","voiceover":"<台词或旁白,无则空字符串>","subtitle":"<字幕,无则空字符串>","sfx":"<音效,无则空字符串>","subjects":[{"name":"小雅","kind":"人物","imageIndex":1}]}'
 
+/** 单个分镜生成后可直接回填的完整脚本信息。 */
 export interface ShotInfo {
   duration: string
   desc: string
@@ -431,25 +424,6 @@ export async function generateShotInfo(args: {
   }
 }
 
-/** 生成分镜脚本,返回 Shot[](失败抛错)。 */
-export async function generateScriptShots(args: GenerateArgs): Promise<Shot[]> {
-  if (!args.requirement.trim() && !args.images?.length) throw new Error('请至少输入文案或上传图片')
-  const images = args.images || []
-  const text = await runResponseText({
-    system: SYSTEM,
-    user: buildUserText(args),
-    images: images.slice(0, 6),
-    temperature: 0.8,
-    maxTokens: 4000,
-    signal: args.signal,
-  })
-  // 用原始 objectURL(args.images)做展示映射(顺序与送模型/上传的一致)
-  const shots = parseShots(text, images)
-  if (!shots.length) throw new Error('未能解析分镜脚本,请重试')
-  // 保留 15s/10s/5s 的前端时长约束，但尽量避免被归一化压成多个 1s。
-  return normalizeDurations(shots, parseInt(String(args.duration || '10'), 10) || 10)
-}
-
 /**
  * 流式生成分镜脚本:边生成边增量解析,每当多出一个「完整」分镜就回调 onShots,
  * 用户看到镜头1即可开始修改。返回最终 Shot[]。
@@ -494,6 +468,7 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
 // ── 主体提取兜底 ──
 // 弱模型生成整条脚本 JSON 时,常整体不给 / 给空 subjects(导致表格里每镜没主体)。
 // 对这类镜头单独跑一个【聚焦的小任务】:只从一句画面描述里抽主体——简单任务弱模型也能稳定完成。
+/** 从画面描述中拆分视觉主体的系统提示词。 */
 const SUBJECT_SYSTEM =
   '你是分镜「视觉主体」提取器。给你一句镜头画面描述,提取其中出现的、需要准备视觉素材的主体(人物/场景/物体/产品)。' +
   '命名必须是【具体名词】(如「年轻女性」「皮肤管理师」「护肤仪器」「咨询区」「精华液瓶」),' +
@@ -502,8 +477,10 @@ const SUBJECT_SYSTEM =
   '严格只输出 JSON(无解释、无 markdown):{"subjects":[{"name":"年轻女性","kind":"人物"},{"name":"咨询区","kind":"场景"}]}'
 
 // 纯泛指词(可带编号)——这类不算有效主体,过滤掉
+/** 识别“主体1”“素材2”等不可用的泛化主体名。 */
 const GENERIC_SUBJECT_RE = /^(素材|主体|元素|图片|画面|对象|内容|视觉元素|物体|场景|产品|人物)\d*$/
 
+/** 调用 AI 从单镜画面描述中提取去重后的具体视觉主体。 */
 export async function extractSubjects(desc: string, signal?: AbortSignal): Promise<Shot['subjects']> {
   const d = String(desc || '').trim()
   if (!d) return []
@@ -551,6 +528,7 @@ export async function extractSubjects(desc: string, signal?: AbortSignal): Promi
 //  - 跨镜复用的主体(出现在 ≥2 个不同镜头)必须保持独立 —— 否则无法保证它在各镜里是同一个人/物(一致性);
 //  - 已绑定用户上传图(su.image)的主体不合并 —— 那是用户指定的真实产品/人物,合进场景会丢真实性;
 //  - 同一镜头里「仅出现一次、且未绑定上传图」的主体若 ≥2 个 → 合并成 1 个组合主体(据画面描述命名)。
+/** 为仅出现一次的相关主体生成更可复用合并名的提示词。 */
 const MERGE_NAME_SYSTEM =
   '你是分镜主体命名助手。给你一句镜头画面描述,以及该镜头里若干「只在这一个镜头出现」的视觉主体名。' +
   '请把它们合并成【一个】能直接合成该画面的组合主体名:用中文具体短语体现主体之间的关系/动作/场景' +
@@ -558,6 +536,7 @@ const MERGE_NAME_SYSTEM =
   '只输出这个组合主体名本身,不超过 16 个字,不含标点、引号、书名号、空格、序号,不要任何解释。'
 
 // 据画面描述 + 待合并主体名,生成一个组合主体名(失败返回空,调用方用模板兜底)
+/** 根据镜头语境为一组一次性主体生成简短、具体的合并名。 */
 async function mergeNameFor(desc: string, names: string[], signal?: AbortSignal): Promise<string> {
   const user = `画面描述:${String(desc || '').trim() || '(无)'}\n要合并的主体:${names.join('、')}`
   let name = ''

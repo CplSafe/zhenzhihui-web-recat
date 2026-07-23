@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+coverage/
 output/
 AGENTS.md
 *.local
@@ -35,13 +36,16 @@ test-results/
 *.njsproj
 *.sln
 *.sw?
+*.bak
 
 # 本地代码索引 / 编辑器规则（机器本地，不入库）
 .codegraph/
+.codex/
 .cursor/
 
 # Figma MCP 下载的图片
 figma-images/
+reports/
 Dockerfile
 nginx.conf
 .dockerignore

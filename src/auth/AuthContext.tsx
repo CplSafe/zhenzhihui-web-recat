@@ -17,33 +17,59 @@ import {
   resetAuthenticatedSession,
 } from '../api/auth'
 import { useWorkspaceSessionStore } from '../stores/workspaceSession'
-import { clearSmartDraft } from '../utils/smartDraft'
+import { clearHotCopyDraftsForUser } from '../utils/hotCopyDraft'
+import { clearSmartEntryDraftsForUser } from '../utils/smartEntryDraft'
+import { clearSmartDraftsForUser } from '../utils/smartDraft'
 import { clearAllCache } from '../utils/swrCache'
+import { beginLogoutDraftWriteBarrier, releaseLogoutDraftWriteBarrier } from '../utils/logoutBarrier'
+import { detachRunningVideoGensForOwner } from '../utils/videoGenRegistry'
+import { hasConfiguredDevBackend } from '../utils/devBackend'
 
-// 登出时清掉本地在制草稿(智能成片全局键 + 爆款复制按空间键)。
-// 这些草稿键不按用户隔离,不清的话同一浏览器换账号时新用户会继承上个用户的在制项目,
-// 触发「在制重定向 → /smart/:id 后端 404 → 一直项目加载失败」。
-function clearLocalDraftsOnLogout() {
+/** 用于通知同浏览器其他标签页同步登出的 localStorage 事件键。 */
+const AUTH_LOGOUT_EVENT_KEY = 'zzh.auth.logout-event.v1'
+
+/** 从不同后端会话字段中提取稳定的用户草稿隔离标识。 */
+function getDraftUserScopeFromSession(session: any): string {
+  const user = session?.user || {}
+  return String(user.id ?? user.user_id ?? user.userId ?? user.account_id ?? user.uid ?? '').trim()
+}
+
+/** 从工作空间 store 中读取当前会话对应的草稿用户域。 */
+function getCurrentDraftUserScope(): string {
+  return getDraftUserScopeFromSession(useWorkspaceSessionStore.getState().authSession)
+}
+
+/** 登录成功后只解除该用户的登出写入屏障。 */
+function releaseDraftWriteBarrierForSession(session: any): void {
+  const ownerScope = getDraftUserScopeFromSession(session)
+  if (ownerScope) releaseLogoutDraftWriteBarrier(ownerScope)
+}
+
+/**
+ * 登出时只删除当前账号的本地草稿。
+ * 其他账号的 user-scoped 草稿必须保留；无法归属的旧键由各清理函数安全移除。
+ */
+function clearLocalDraftsOnLogout(userId: string) {
   try {
-    clearSmartDraft()
-    for (let i = window.localStorage.length - 1; i >= 0; i--) {
-      const k = window.localStorage.key(i)
-      if (k && k.startsWith('zzh_hotcopy_draft_')) window.localStorage.removeItem(k)
-    }
+    clearSmartDraftsForUser(userId)
+    clearHotCopyDraftsForUser(userId)
+    clearSmartEntryDraftsForUser(userId)
   } catch {
     /* 隐私模式 / SSR:忽略 */
   }
 }
 
-// 续期调度:优先按【后端返回的 TTL】在到期前续期;拿不到 TTL 时用兜底间隔。
+/** 会话续期策略：优先按后端 TTL 在到期前刷新，无 TTL 时使用固定兜底间隔。 */
 const REFRESH_DEFAULT_MS = 4 * 60 * 1000 // TTL 未知时的兜底间隔:4 分钟(稳在常见短 access-token TTL 内)
 const REFRESH_SAFETY_RATIO = 0.7 // 在 TTL 的 70% 处续期,留出余量(到期前就换好新 token)
 const REFRESH_MIN_MS = 60 * 1000 // 续期最短间隔 1 分钟(防止极短 TTL 触发刷新风暴)
 const REFRESH_MAX_MS = 10 * 60 * 1000 // 续期最长间隔 10 分钟
 const VISIBILITY_REFRESH_GAP_MS = 2 * 60 * 1000 // 回到页面时:距上次续期超过 2 分钟才再续,避免频繁刷新
 
-// 从 session/refresh 响应里尽量解析出 access-token 的剩余有效期(毫秒)。
-// 兼容多种后端字段名:相对秒数(expires_in 等)或绝对过期时间戳/ISO(expires_at 等)。拿不到返回 0。
+/**
+ * 从 session/refresh 响应中解析 access-token 剩余有效期（毫秒）。
+ * 兼容相对秒数、绝对时间戳和 ISO 日期，无法识别时返回 0。
+ */
 function extractSessionTtlMs(resp: any): number {
   if (!resp || typeof resp !== 'object') return 0
   const inSec = Number(
@@ -72,13 +98,14 @@ function extractSessionTtlMs(resp: any): number {
   return 0
 }
 
-// 据响应 TTL 计算下次续期延迟:有 TTL → TTL×70%(clamp 到 [1min,10min]);无 → 4min 兜底。
+/** 按 TTL 的 70% 计算续期延迟，并限制在 1–10 分钟以避免刷新风暴或过期窗口。 */
 function computeRefreshDelay(resp?: any): number {
   const ttl = extractSessionTtlMs(resp)
   if (ttl > 0) return Math.min(REFRESH_MAX_MS, Math.max(REFRESH_MIN_MS, Math.floor(ttl * REFRESH_SAFETY_RATIO)))
   return REFRESH_DEFAULT_MS
 }
 
+/** 路由树可消费的鉴权状态与登录、登出处理器。 */
 export interface AuthContextValue {
   authSession: any
   isAuthenticated: boolean
@@ -86,17 +113,25 @@ export interface AuthContextValue {
   authCheckError: string
   loadAuthSession: () => Promise<void>
   handleLoginSuccess: (session?: any) => void
+  handleLogoutStart: () => void
+  handleLogoutCancelled: () => void
   handleLogoutSuccess: () => void
 }
 
+/** 鉴权上下文实例，null 用于识别组件被误用在 Provider 外部。 */
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+/** 读取当前鉴权上下文，脱离 AuthProvider 使用时立即报错。 */
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error('useAuth 必须在 <AuthProvider> 内使用')
   return ctx
 }
 
+/**
+ * 统一管理会话初始化、单飞续期、跨标签登出与账号草稿隔离。
+ * 登出会先阻断旧账号和匿名域的延迟写入，防止已卸载页面将私有草稿落到 anon 键下。
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const setAuthSession = useWorkspaceSessionStore((s) => s.setAuthSession)
@@ -107,18 +142,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authCheckError, setAuthCheckError] = useState('')
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const refreshEpochRef = useRef(0)
+  const refreshInFlightRef = useRef<{
+    epoch: number
+    controller: AbortController
+    promise: Promise<any>
+  } | null>(null)
   // loadAuthSession 的最新引用（供刷新失败回调调用，规避与 startSessionRefresh 的循环依赖）。
   const loadAuthSessionRef = useRef<() => Promise<void>>(async () => {})
+  // loadAuthSession 定义在登出清理回调之前；通过 ref 复用同一条隐私安全清理链，
+  // 避免自动会话失效路径为了声明顺序而复制一份容易漂移的清理逻辑。
+  const clearLocalAuthStateRef = useRef<(draftUserScope: string, broadcast: boolean) => void>(() => {})
   // 并发序号：仅最新一次会话检查的结果可写回 state，避免慢请求覆盖快请求。
   const loadSeqRef = useRef(0)
   // 上次成功续期的时间戳，供「回到页面时续期」节流用。
   const lastRefreshRef = useRef(0)
 
   const stopSessionRefresh = useCallback(() => {
+    refreshEpochRef.current += 1
     if (refreshTimer.current) {
       clearTimeout(refreshTimer.current)
       refreshTimer.current = null
     }
+    refreshInFlightRef.current?.controller.abort()
+    refreshInFlightRef.current = null
+  }, [])
+
+  const runSessionRefresh = useCallback((): Promise<any> => {
+    const epoch = refreshEpochRef.current
+    const existing = refreshInFlightRef.current
+    if (existing?.epoch === epoch) return existing.promise
+
+    const controller = new AbortController()
+    const promise = refreshSession({ signal: controller.signal })
+    const entry = { epoch, controller, promise }
+    refreshInFlightRef.current = entry
+    void promise
+      .finally(() => {
+        if (refreshInFlightRef.current === entry) refreshInFlightRef.current = null
+      })
+      .catch(() => undefined)
+    return promise
   }, [])
 
   // 自重排续期:每次续期成功后,按【本次响应的 TTL】安排下一次,确保始终在 token 到期前换好新 token。
@@ -126,14 +190,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const startSessionRefresh = useCallback(
     (initialResp?: any) => {
       stopSessionRefresh()
+      const refreshEpoch = refreshEpochRef.current
       lastRefreshRef.current = Date.now()
       const scheduleNext = (resp?: any) => {
         refreshTimer.current = setTimeout(async () => {
+          if (refreshEpochRef.current !== refreshEpoch) return
           try {
-            const next = await refreshSession()
+            const next = await runSessionRefresh()
+            if (refreshEpochRef.current !== refreshEpoch) return
             lastRefreshRef.current = Date.now()
             scheduleNext(next) // 按本次 refresh 返回的 TTL 安排下一次
           } catch {
+            if (refreshEpochRef.current !== refreshEpoch) return
             // 刷新失败 → 会话可能已过期：立即重新校验会话；若确已失效会清掉登录态,
             // 由 App 的中央守卫跳转登录,而不是停留在"已登录"的死会话上。
             stopSessionRefresh()
@@ -143,7 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       scheduleNext(initialResp)
     },
-    [stopSessionRefresh],
+    [runSessionRefresh, stopSessionRefresh],
   )
 
   const loadAuthSession = useCallback(async () => {
@@ -152,9 +220,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsCheckingSession(true)
     setAuthCheckError('')
 
-    // 开发模式：仅在未配置远程后端时用 mock session 跳过鉴权。
-    // 配置了 VITE_ZZH_REMOTE_ORIGIN 时走真实认证流程。
-    const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
+    // 开发模式：仅在未配置代理后端时用 mock session 跳过鉴权。
+    const hasRemoteBackend = hasConfiguredDevBackend()
     if (import.meta.env.DEV && !hasRemoteBackend) {
       const justLoggedOut = (window as any).__zzh_dev_logout__
       delete (window as any).__zzh_dev_logout__
@@ -170,10 +237,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
       const mock = { user: { id: 1, nickname: 'dev' }, workspaces: [{ id: 1, name: 'dev' }] }
+      if (isStale()) return
       setSession(mock)
       setIsAuthenticated(true)
       setAuthSession(mock)
-      if (!isStale()) setIsCheckingSession(false)
+      releaseDraftWriteBarrierForSession(mock)
+      setIsCheckingSession(false)
       return
     }
 
@@ -183,15 +252,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session)
       setIsAuthenticated(true)
       setAuthSession(session)
+      releaseDraftWriteBarrierForSession(session)
       markAuthSessionExpected()
       sessionStorage.removeItem('zzh_sso_pending')
       startSessionRefresh(session) // 用初次会话的 TTL(若有)决定首次续期时机
     } catch (error: any) {
       if (isStale()) return
-      stopSessionRefresh()
-      setSession(null)
-      setIsAuthenticated(false)
-      setAuthSession(null)
+      const existingDraftUserScope = getCurrentDraftUserScope()
+      if (existingDraftUserScope) {
+        // 已登录会话自动过期/被服务端撤销时，与显式登出使用同一条清理链。
+        // 必须在 store 切到 anon 之前同时封锁旧账号与 anon，防止仍挂载的
+        // /smart、/hot-copy 页面把旧内容异步保存到匿名草稿。
+        clearLocalAuthStateRef.current(existingDraftUserScope, false)
+      } else {
+        // 首次匿名访客的会话探测失败不应永久封锁 anon 草稿。
+        stopSessionRefresh()
+        setSession(null)
+        setIsAuthenticated(false)
+        setAuthSession(null)
+      }
 
       const ssoPending = sessionStorage.getItem('zzh_sso_pending')
       if (ssoPending) {
@@ -212,6 +291,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const handleLoginSuccess = useCallback(
     (session?: any) => {
       sessionStorage.removeItem('zzh_sso_pending')
+      // A login result is newer than any session bootstrap already in flight.
+      loadSeqRef.current += 1
+      resetAuthenticatedSession()
       if (session) {
         flushSync(() => {
           setSession(session)
@@ -219,11 +301,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAuthCheckError('')
           setAuthSession(session)
         })
+        releaseDraftWriteBarrierForSession(session)
         markAuthSessionExpected()
+        startSessionRefresh(session)
         navigate('/home', { replace: true })
         return
       }
-      if (import.meta.env.DEV && !import.meta.env.VITE_ZZH_REMOTE_ORIGIN) {
+      if (import.meta.env.DEV && !hasConfiguredDevBackend()) {
         const mock = { user: { id: 1, nickname: 'dev' }, workspaces: [{ id: 1, name: 'dev' }] }
         flushSync(() => {
           setSession(mock)
@@ -231,7 +315,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAuthCheckError('')
           setAuthSession(mock)
         })
+        releaseDraftWriteBarrierForSession(mock)
         markAuthSessionExpected()
+        startSessionRefresh(mock)
         navigate('/home', { replace: true })
         return
       }
@@ -241,25 +327,83 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       })
     },
-    [loadAuthSession, navigate, setAuthSession],
+    [loadAuthSession, navigate, setAuthSession, startSessionRefresh],
   )
 
-  const handleLogoutSuccess = useCallback(() => {
+  const clearLocalAuthState = useCallback(
+    (draftUserScope: string, broadcast: boolean) => {
+      // The store switches every draft helper to the anonymous scope when the
+      // session is cleared. Block both identities first so unmount cleanups or
+      // delayed callbacks cannot recreate the signed-out user's draft under
+      // an `anon` key.
+      beginLogoutDraftWriteBarrier(draftUserScope)
+      beginLogoutDraftWriteBarrier('anon')
+      stopSessionRefresh()
+      // 作废任何在途的会话校验:bump 序号让其 isStale() 命中,不再写状态;并丢弃共享 in-flight promise。
+      // 否则登出前发起的 getAuthenticatedSession 若在此之后 resolve,会把刚清掉的会话「复活」。
+      loadSeqRef.current++
+      resetAuthenticatedSession()
+      setSession(null)
+      setIsAuthenticated(false)
+      setIsCheckingSession(false)
+      setAuthCheckError('')
+      clearLocalDraftsOnLogout(draftUserScope)
+      clearLocalDraftsOnLogout('anon')
+      detachRunningVideoGensForOwner(draftUserScope)
+      setAuthSession(null)
+      clearAuthSessionMarker()
+      clearAllCache() // 清 SWR sessionStorage 缓存,避免换账号沿用上个会话的缓存数据
+      if (broadcast) {
+        try {
+          localStorage.setItem(
+            AUTH_LOGOUT_EVENT_KEY,
+            JSON.stringify({
+              userId: draftUserScope,
+              nonce: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            }),
+          )
+        } catch {
+          /* Storage may be unavailable; the current tab is still cleared. */
+        }
+      }
+      navigate('/welcome', { replace: true })
+    },
+    [navigate, setAuthSession, stopSessionRefresh],
+  )
+  clearLocalAuthStateRef.current = clearLocalAuthState
+
+  const handleLogoutStart = useCallback(() => {
+    // Abort refresh before POST /logout starts, so an older refresh cannot race
+    // the server logout response and restore its cookie afterward.
     stopSessionRefresh()
-    // 作废任何在途的会话校验:bump 序号让其 isStale() 命中,不再写状态;并丢弃共享 in-flight promise。
-    // 否则登出前发起的 getAuthenticatedSession 若在此之后 resolve,会把刚清掉的会话「复活」。
-    loadSeqRef.current++
+    loadSeqRef.current += 1
     resetAuthenticatedSession()
-    setSession(null)
-    setIsAuthenticated(false)
-    setIsCheckingSession(false)
-    setAuthCheckError('')
-    setAuthSession(null)
-    clearAuthSessionMarker()
-    clearLocalDraftsOnLogout() // #4:换账号前清掉上个用户的在制草稿,避免新用户继承导致「项目加载失败」
-    clearAllCache() // 清 SWR sessionStorage 缓存,避免换账号沿用上个会话的缓存数据
-    navigate('/welcome', { replace: true })
-  }, [navigate, setAuthSession, stopSessionRefresh])
+  }, [stopSessionRefresh])
+
+  const handleLogoutCancelled = useCallback(() => {
+    if (authSession && isAuthenticated) startSessionRefresh(authSession)
+  }, [authSession, isAuthenticated, startSessionRefresh])
+
+  const handleLogoutSuccess = useCallback(() => {
+    clearLocalAuthState(getCurrentDraftUserScope(), true)
+  }, [clearLocalAuthState])
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== AUTH_LOGOUT_EVENT_KEY || !event.newValue) return
+      try {
+        const payload = JSON.parse(event.newValue)
+        const currentUserScope = getCurrentDraftUserScope()
+        if (!currentUserScope) return
+        if (String(payload?.userId || '') !== currentUserScope) return
+        clearLocalAuthState(currentUserScope, false)
+      } catch {
+        /* Ignore malformed cross-tab events. */
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [clearLocalAuthState])
 
   // 首次挂载执行会话检查；卸载时停止刷新计时器。
   useEffect(() => {
@@ -276,11 +420,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const now = Date.now()
       if (now - lastRefreshRef.current < VISIBILITY_REFRESH_GAP_MS) return
       lastRefreshRef.current = now
-      refreshSession()
+      const refreshEpoch = refreshEpochRef.current
+      runSessionRefresh()
         .then(() => {
-          lastRefreshRef.current = Date.now()
+          if (refreshEpochRef.current === refreshEpoch) lastRefreshRef.current = Date.now()
         })
         .catch(() => {
+          if (refreshEpochRef.current !== refreshEpoch) return
           stopSessionRefresh()
           loadAuthSessionRef.current()
         })
@@ -291,7 +437,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', maybeRefresh)
       window.removeEventListener('focus', maybeRefresh)
     }
-  }, [isAuthenticated, stopSessionRefresh])
+  }, [isAuthenticated, runSessionRefresh, stopSessionRefresh])
 
   // 用 useMemo 固定 value 引用：否则每次渲染都是新对象，会让所有 useAuth() 消费者
   // （AuthProvider 包住整个路由树）连带全树重渲染。回调已是 useCallback 稳定引用。
@@ -303,6 +449,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authCheckError,
       loadAuthSession,
       handleLoginSuccess,
+      handleLogoutStart,
+      handleLogoutCancelled,
       handleLogoutSuccess,
     }),
     [
@@ -312,6 +460,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authCheckError,
       loadAuthSession,
       handleLoginSuccess,
+      handleLogoutStart,
+      handleLogoutCancelled,
       handleLogoutSuccess,
     ],
   )

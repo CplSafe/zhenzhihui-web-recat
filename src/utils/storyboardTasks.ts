@@ -5,6 +5,7 @@
 import { normalizeImageRatio } from './videoOptions.js'
 import { getModelParamFields, findFirstField } from './modelSchema.js'
 
+/** 根据模型 schema 构建兼容的分镜图比例、尺寸、质量与数量参数。 */
 export function buildStoryboardImageParams(model, ratio) {
   const fields = getModelParamFields(model)
   const requestedRatio = String(ratio || '').trim()
@@ -51,10 +52,12 @@ export function buildStoryboardImageParams(model, ratio) {
   return params
 }
 
+/** 判断模型 schema 是否声明指定参数。 */
 function hasParam(fields, name) {
   return fields.some((field) => field?.name === name)
 }
 
+/** 从模型选项中选择首选 2K 或最接近目标比例的尺寸。 */
 function getPreferredSize(fields, ratio) {
   const sizeField = fields.find((field) => field?.name === 'size')
   const options = Array.isArray(sizeField?.options) ? sizeField.options.map(String) : []
@@ -70,6 +73,7 @@ function getPreferredSize(fields, ratio) {
   return pickClosestRatioOption(ratio, options) || options[0]
 }
 
+/** 从比例、分辨率或横竖屏提示文本中解析宽高。 */
 function parseRatioToken(value) {
   if (value === null || value === undefined) {
     return null
@@ -110,7 +114,7 @@ function parseRatioToken(value) {
   }
 
   const numbers = text
-    .replaceAll('-', '_')
+    .replace(/-/g, '_')
     .split('_')
     .map((part) => Number.parseInt(part, 10))
     .filter((num) => Number.isFinite(num) && num > 0)
@@ -124,6 +128,7 @@ function parseRatioToken(value) {
   return null
 }
 
+/** 在模型允许选项中选择与目标宽高比差值最小的一项。 */
 function pickClosestRatioOption(requested, options) {
   const normalizedOptions = Array.isArray(options) ? options.map(String).filter(Boolean) : []
   if (!normalizedOptions.length) {

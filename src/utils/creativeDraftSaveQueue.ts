@@ -1,5 +1,11 @@
+/**
+ * 创意草稿保存队列：按“工作区 + 项目”串行化自动保存、生成落库与卸载刷新。
+ * 这样可避免多个调用链携带同一 draft_revision 并发 PUT 而互相制造冲突。
+ */
+/** 每个项目当前排队中的保存 Promise。 */
 const draftSaveQueues = new Map<string, Promise<unknown>>()
 
+/** 构建隔离工作区与项目的保存队列键。 */
 const queueKeyOf = (projectId: number, workspaceId: number) =>
   `${Math.floor(Number(workspaceId) || 0)}:${Math.floor(Number(projectId) || 0)}`
 
@@ -20,9 +26,14 @@ export function enqueueCreativeProjectDraftSave<T>(args: {
   const key = queueKeyOf(projectId, workspaceId)
   const previous = draftSaveQueues.get(key) || Promise.resolve()
   const run = previous.catch(() => undefined).then(args.task)
-  const tracked = run.finally(() => {
+  // Keep a non-rejecting promise in the registry. Returning `run` still
+  // preserves the caller-visible result, while a rejected `.finally()` chain
+  // left in the map would otherwise surface as an unhandled rejection when no
+  // later save was queued.
+  const settle = () => {
     if (draftSaveQueues.get(key) === tracked) draftSaveQueues.delete(key)
-  })
+  }
+  const tracked = run.then(settle, settle)
   draftSaveQueues.set(key, tracked)
   return run
 }

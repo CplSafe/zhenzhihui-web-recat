@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from 'react'
 
+/** 头像地址、用户名回退文本和两种展示态的样式。 */
 interface UserAvatarProps {
   /** 头像图片 URL */
   src: string
@@ -17,6 +18,7 @@ interface UserAvatarProps {
   alt?: string
 }
 
+/** 优先显示用户头像，地址为空或加载失败时稳定回退到用户名首字符。 */
 export default function UserAvatar({ src, name, className, fallbackClassName, alt = '' }: UserAvatarProps) {
   const [failed, setFailed] = useState(false)
 
@@ -25,10 +27,8 @@ export default function UserAvatar({ src, name, className, fallbackClassName, al
     setFailed(false)
   }, [src])
 
-  const initial = String(name || '?')
-    .trim()
-    .charAt(0)
-    .toUpperCase()
+  const normalizedName = String(name || '').trim()
+  const initial = normalizedName ? normalizedName.charAt(0).toUpperCase() : '?'
 
   // 无 src 或图片加载失败 → 文字回退
   if (!src || failed) {

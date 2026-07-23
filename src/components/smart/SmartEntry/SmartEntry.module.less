@@ -23,6 +23,23 @@
   background: #f8f9fa;
 }
 
+.dragging::after {
+  position: fixed;
+  inset: 72px 24px 24px 240px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #35c9a8;
+  border-radius: 18px;
+  background: rgba(240, 255, 251, 0.94);
+  color: #16a887;
+  content: '松开鼠标，添加图片素材';
+  font-size: 18px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
 /* 「制作新视频」(Figma 79:4049 → 652:2494):纯文字,与 Tab 同一行、右对齐卡片右缘。点击初始化为全新空白页 */
 .newVideoBtn {
   position: absolute;
@@ -139,7 +156,9 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: transform 0.15s ease, filter 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    filter 0.15s ease;
 
   &:hover {
     filter: brightness(0.97);
@@ -361,56 +380,6 @@
   padding: 0 14px;
 }
 
-/* AI 引导按钮(青色强调) */
-.guide {
-  .pill-base();
-  border-color: #bdeee3;
-  color: #11a98a;
-  font-weight: 600;
-
-  &:hover:not(:disabled) {
-    background: #1fcfa9;
-    border-color: #1fcfa9;
-    color: #fff;
-  }
-
-  &:disabled {
-    opacity: 0.7;
-    cursor: default;
-  }
-}
-
-.guideSpin {
-  width: 13px;
-  height: 13px;
-  border: 2px solid rgba(31, 207, 169, 0.35);
-  border-top-color: #11a98a;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
-/* 撤销/重做图标按钮 */
-.iconBtn {
-  .pill-base();
-  padding: 0;
-  width: 38px;
-  justify-content: center;
-
-  &:disabled {
-    opacity: 0.4;
-    cursor: default;
-    border-color: #eef0f2;
-    color: #b0b4ba;
-    background: #fafbfc;
-  }
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* 发送区:恢复态下「重新生成」+「下一步」并排,右对齐 */
 .sendArea {
   flex: 0 0 auto;
@@ -457,7 +426,9 @@
   justify-content: center;
   gap: 8px;
   cursor: pointer;
-  transition: background 0.15s, filter 0.15s;
+  transition:
+    background 0.15s,
+    filter 0.15s;
 
   &:hover:not(:disabled) {
     filter: brightness(1.05);

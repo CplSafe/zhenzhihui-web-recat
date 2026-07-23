@@ -6,6 +6,7 @@
 import badgeIcon from '@/assets/image copy.png'
 import './AiBadge.css'
 
+/** AI 来源角标的尺寸、提示文案和扩展样式。 */
 interface AiBadgeProps {
   /** 角标尺寸(px),默认 18 */
   size?: number
@@ -14,6 +15,7 @@ interface AiBadgeProps {
   className?: string
 }
 
+/** 渲染覆盖在素材缩略图右上角的统一 AI 来源标识。 */
 export default function AiBadge({ size = 18, title = 'AI 生成', className = '' }: AiBadgeProps) {
   return (
     <span

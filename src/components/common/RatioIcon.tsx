@@ -5,13 +5,16 @@
  *   横屏(16:9)→ 约 18 宽的扁矩形(与原图标一样大)、竖屏(9:16)→ 高窄、1:1 → 中等方块,各比例视觉大小一致。
  * 图标宽随比例变化无妨:外层 pill 宽已由 valueMinWidth 固定,SVG 外框恒为 size×size,图标居中不推动布局。
  */
+/** 比例字符串与 SVG 画布尺寸。 */
 interface RatioIconProps {
   ratio?: string
   size?: number
 }
 
-const G = 14 // 几何均值(√面积)固定 → 各比例视觉大小一致,且横向够大(≈原图标尺寸)
+/** 固定矩形面积的几何均值，使不同宽高比保持接近的视觉重量。 */
+const G = 14
 
+/** 将任意合法宽高比换算为画布内面积近似恒定的居中矩形。 */
 export default function RatioIcon({ ratio = '16:9', size = 20 }: RatioIconProps) {
   const m = /(\d+(?:\.\d+)?)\s*[:：/]\s*(\d+(?:\.\d+)?)/.exec(String(ratio || ''))
   let a = m ? Number(m[1]) : 16

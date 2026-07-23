@@ -24,6 +24,22 @@
   align-items: center;
   background: #f8f9fa;
 }
+.hotcopy__main.is-file-dragging::after {
+  position: fixed;
+  inset: 72px 24px 24px 240px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #9a72e8;
+  border-radius: 18px;
+  background: rgba(250, 245, 255, 0.95);
+  color: #8156cf;
+  content: '松开鼠标，添加图片或视频素材';
+  font-size: 18px;
+  font-weight: 600;
+  pointer-events: none;
+}
 
 /* 背景容器:Canvas 弥散背景铺满(实现见 EntryCanvasBg,配色用本页粉紫) */
 .hotcopy__bg {

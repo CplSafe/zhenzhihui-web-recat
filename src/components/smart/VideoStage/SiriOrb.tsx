@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef } from 'react'
 
+/** 叠加多组正弦波，生成连续但不机械重复的动画扰动值。 */
 function sn(t: number, seed: number): number {
   return (
     Math.sin(t * 1.27 + seed) * 0.42 +
@@ -14,6 +15,7 @@ function sn(t: number, seed: number): number {
   )
 }
 
+/** 将十六进制颜色转换为带透明度的 Canvas rgba 颜色。 */
 function hex(h: string, a: number): string {
   const r = parseInt(h.slice(1, 3), 16)
   const g = parseInt(h.slice(3, 5), 16)
@@ -21,6 +23,7 @@ function hex(h: string, a: number): string {
   return `rgba(${r},${g},${b},${a})`
 }
 
+/** 一条彩色流体臂的几何、颜色和运动参数。 */
 interface ArmDef {
   color: string
   angle: number
@@ -32,6 +35,7 @@ interface ArmDef {
   seed: number
 }
 
+/** 在 Canvas 上持续绘制带羽化边缘和呼吸光晕的生成等待光球。 */
 export default function SiriOrb({ size = 320 }: { size?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number>(0)

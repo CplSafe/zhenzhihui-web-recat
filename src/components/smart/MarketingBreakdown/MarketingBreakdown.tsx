@@ -6,6 +6,7 @@
 import type { MarketingBreakdownData, MarketingFieldKey } from '@/api/aiPolish'
 import styles from './MarketingBreakdown.module.less'
 
+/** 营销拆解数据及描述、标签和刷新候选的受控回调。 */
 interface MarketingBreakdownProps {
   data: MarketingBreakdownData
   onChangeDesc: (key: MarketingFieldKey, desc: string) => void
@@ -18,6 +19,7 @@ interface MarketingBreakdownProps {
   refreshing?: Partial<Record<string, boolean>>
 }
 
+/** 按 AI 返回的动态分组渲染可编辑营销维度，不在组件内复制业务数据。 */
 export default function MarketingBreakdown({
   data,
   onChangeDesc,
@@ -48,6 +50,7 @@ export default function MarketingBreakdown({
                       className={styles.mktDesc}
                       value={f.desc}
                       rows={1}
+                      aria-label={`${f.label}描述`}
                       placeholder={`${f.label}…`}
                       onChange={(e) => onChangeDesc(f.key, e.target.value)}
                     />
@@ -59,6 +62,7 @@ export default function MarketingBreakdown({
                             key={`picked-${t}-${i}`}
                             className={styles.mktPicked}
                             title="点击移除"
+                            aria-label={`移除${t}`}
                             onClick={() => onRemoveTag(f.key, t)}
                           >
                             {t}
@@ -79,6 +83,7 @@ export default function MarketingBreakdown({
                           key={`${t}-${i}`}
                           className={`${styles.mktTag} ${active ? styles.mktTagActive : ''}`}
                           title={active ? '已添加,点击移除' : '点击添加到标题右侧'}
+                          aria-pressed={active}
                           onClick={() => (active ? onRemoveTag(f.key, t) : onPickTag(f.key, t))}
                         >
                           {t}
@@ -89,6 +94,8 @@ export default function MarketingBreakdown({
                       type="button"
                       className={styles.mktRefresh}
                       disabled={!!refreshing?.[f.key]}
+                      aria-label={`${f.label}换一批候选`}
+                      aria-busy={!!refreshing?.[f.key]}
                       onClick={() => onRefreshTags(f.key)}
                       title="换一批候选"
                     >

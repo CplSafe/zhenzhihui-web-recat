@@ -21,16 +21,22 @@ import {
   updateWorkspace,
 } from '../api/business'
 import { listWorkspaceMembers } from '../api/auth'
+import { setFavoriteVideoUserScope } from '../utils/favoriteVideos'
 import { setHotCopyDraftUserScope } from '../utils/hotCopyDraft'
+import { setSmartEntryDraftScope } from '../utils/smartEntryDraft'
 import { setSmartDraftUserScope, setSmartDraftWorkspaceScope } from '../utils/smartDraft'
+import { setVideoGenOwnerScope } from '../utils/videoGenRegistry'
 import {
   buildModelPlanCandidatesFromBillingPlans,
   buildModelPlanCandidatesFromSession,
   normalizePlanCandidates,
 } from '../utils/modelPlans'
 
+/** 把后端可能返回的字符串/数字主键统一为数值 id。 */
 const toId = (value: any): number => Number(value) || 0
+/** 按规范化 id 从工作空间数组中查找记录。 */
 const findById = (list: any[], id: number) => list.find((w) => toId(w?.id) === id) || null
+/** 合并多个空间来源，同 id 后出现的数据补齐先前记录。 */
 const dedupeWorkspaces = (...groups: any[]): any[] => {
   const merged = new Map<number, any>()
   groups.forEach((group) => {
@@ -48,10 +54,12 @@ const dedupeWorkspaces = (...groups: any[]): any[] => {
   })
   return [...merged.values()]
 }
+/** 兼容多种字段名并规范化空间状态。 */
 const normalizeWorkspaceStatus = (workspace: any): string =>
   String(workspace?.status || workspace?.workspace_status || workspace?.workspaceStatus || '')
     .trim()
     .toLowerCase()
+/** 排除待邀请、已退出、已解散等当前用户不可进入的空间。 */
 const isVisibleWorkspace = (workspace: any): boolean => {
   if (toId(workspace?.id) <= 0) return false
   const status = normalizeWorkspaceStatus(workspace)
@@ -60,12 +68,15 @@ const isVisibleWorkspace = (workspace: any): boolean => {
     status,
   )
 }
+/** 对空间列表去重并过滤不可见记录。 */
 const sanitizeWorkspaceList = (list: any[]): any[] =>
   dedupeWorkspaces((Array.isArray(list) ? list : []).filter(isVisibleWorkspace))
+/** 从会话对象的多种兼容字段收集工作空间。 */
 const deriveSessionWorkspaces = (session: any): any[] =>
   sanitizeWorkspaceList(
     dedupeWorkspaces(session?.workspaces, session?.workspace, session?.currentWorkspace, session?.current_workspace),
   )
+/** 从创建、加入等接口的兼容返回体中提取空间 id。 */
 const pickWorkspaceId = (payload: any): number => {
   const candidates = [
     // 兑换邀请码的返回体 data 是 Go RedeemResult(无 json tag)→ 字段大写 Workspace/Member,
@@ -80,6 +91,12 @@ const pickWorkspaceId = (payload: any): number => {
   ]
   return toId(candidates.find((value) => toId(value) > 0))
 }
+/** 从接口返回体中取得完整空间对象。 */
+const pickWorkspaceFromPayload = (payload: any): any | null => {
+  const candidates = [payload?.Workspace, payload?.workspace, payload?.currentWorkspace, payload?.current_workspace]
+  return candidates.find((workspace) => workspace && typeof workspace === 'object' && toId(workspace.id) > 0) || null
+}
+/** 从认证会话中解析服务端当前空间 id。 */
 const pickCurrentWorkspaceIdFromSession = (session: any): number => {
   const candidates = [
     session?.workspace?.id,
@@ -90,10 +107,47 @@ const pickCurrentWorkspaceIdFromSession = (session: any): number => {
   ]
   return toId(candidates.find((value) => toId(value) > 0))
 }
+/** 从成员记录中解析其所属空间 id。 */
+const pickMemberWorkspaceId = (member: any): number =>
+  toId(
+    member?.workspace_id ??
+      member?.workspaceId ??
+      member?.workspace?.id ??
+      member?.current_workspace_id ??
+      member?.currentWorkspaceId,
+  )
+
+/** 提取用于隔离浏览器本地数据的用户作用域。 */
+const getSessionUserScope = (session: any): string =>
+  String(
+    session?.user?.id ??
+      session?.user?.user_id ??
+      session?.user?.userId ??
+      session?.user?.account_id ??
+      session?.user?.uid ??
+      '',
+  ).trim()
+
+/** 兼容列表、分页和嵌套 data 返回体，提取工作空间成员数组。 */
+export const extractWorkspaceMemberItems = (payload: any): any[] => {
+  if (Array.isArray(payload)) return payload
+  const directCandidates = [payload?.members, payload?.items, payload?.list, payload?.records, payload?.data]
+  const direct = directCandidates.find(Array.isArray)
+  if (Array.isArray(direct)) return direct
+  const nested = payload?.data
+  if (!nested || typeof nested !== 'object') return []
+  const nestedCandidates = [nested.members, nested.items, nested.list, nested.records, nested.data]
+  const nestedList = nestedCandidates.find(Array.isArray)
+  return Array.isArray(nestedList) ? nestedList : []
+}
 
 // 记住「上次选中的工作空间」(UI 选择,非项目数据),按用户隔离,刷新后恢复——
 // 否则刷新会被会话默认空间(个人)覆盖,导致「一刷新就回个人空间」。
-const ACTIVE_WS_KEY = (uid: any) => `zzh_active_ws_u${toId(uid) || 'anon'}`
+/** 为空用户生成匿名本地存储作用域。 */
+const normalizeUserStorageScope = (uid: any): string => String(uid ?? '').trim() || 'anon'
+/** 生成按账号隔离的“最近使用空间”缓存键。 */
+const ACTIVE_WS_KEY = (uid: any) => `zzh_active_ws_u${encodeURIComponent(normalizeUserStorageScope(uid))}`
+/** 读取当前账号上次选中的工作空间。 */
 const readSavedActiveWs = (uid: any): number => {
   try {
     return toId(window.localStorage.getItem(ACTIVE_WS_KEY(uid)))
@@ -101,6 +155,7 @@ const readSavedActiveWs = (uid: any): number => {
     return 0
   }
 }
+/** 保存当前账号最近选择的工作空间。 */
 const saveActiveWs = (uid: any, id: any): void => {
   try {
     window.localStorage.setItem(ACTIVE_WS_KEY(uid), String(toId(id)))
@@ -111,34 +166,73 @@ const saveActiveWs = (uid: any, id: any): void => {
 
 // 非响应式闭包变量（原 pinia store 内 `let`）。
 let billingPlansPromise: Promise<void> | null = null
+/** 最近一次已加载计费方案的工作空间 id。 */
 let billingPlansLoadedWorkspaceId = 0
+/** 套餐名称等轻量展示信息的短缓存时间。 */
+const SUBSCRIPTION_LABEL_CACHE_TTL_MS = 30_000
+/** 当前共享的订阅展示信息请求。 */
+let subscriptionLabelPromise: Promise<void> | null = null
+/** 共享订阅请求所绑定的工作空间 id。 */
+let subscriptionLabelPromiseWorkspaceId = 0
+/** 最近一次成功加载订阅展示信息的工作空间 id。 */
+let subscriptionLabelLoadedWorkspaceId = 0
+/** 最近一次订阅展示信息加载成功时间。 */
+let subscriptionLabelLoadedAt = 0
+/** 空间级状态版本，用于让旧异步响应失效。 */
+let workspaceScopeVersion = 0
+/** 空间列表请求序号，用于仅接纳最后一次响应。 */
+let workspaceListRequestSeq = 0
+/** 认证会话世代号，账号变化后使旧请求失效。 */
+let authSessionEpoch = 0
 
+/** 离开/解散空间后供安全切换使用的目标与源空间。 */
+export interface WorkspaceTransitionResult {
+  workspaceId: number
+  sourceWorkspace: any | null
+}
+
+/** 等待根布局完成卸载和移除的空间切换任务。 */
+export interface PendingWorkspaceTransition extends WorkspaceTransitionResult {
+  removedWorkspaceId: number
+}
+
+/** 加入空间后的切换信息及原始接口返回体。 */
+export interface JoinWorkspaceResult extends WorkspaceTransitionResult {
+  payload: any
+}
+
+/** 工作空间、套餐、成员和钱包的全局会话状态。 */
 export interface WorkspaceSessionState {
   authSession: any
   userWorkspaces: any[]
   activeWorkspaceOverrideId: number
+  pendingWorkspaceTransition: PendingWorkspaceTransition | null
   currentSubscription: any
   currentWallet: any
   billingPlans: any[]
   billingPlanCandidates: any[]
   currentWorkspaceMember: any
+  currentWorkspaceMemberWorkspaceId: number
 
   setAuthSession: (session: any) => void
-  loadSubscriptionLabel: () => Promise<void>
+  loadSubscriptionLabel: (options?: { force?: boolean }) => Promise<void>
   ensureModelPlanCandidatesLoaded: () => Promise<void>
-  loadWorkspaces: () => Promise<void>
+  loadWorkspaces: () => Promise<boolean>
   loadCurrentWorkspaceMember: (workspaceId?: any) => Promise<any>
-  switchWorkspace: (id: any) => void
+  switchWorkspace: (id: any, options?: { forceMemberReload?: boolean }) => void
   createTeam: (name: string) => Promise<any>
   renameTeam: (id: any, name: string) => Promise<any>
-  joinTeam: (inviteCode: string) => Promise<any>
-  deleteTeam: (id: any) => Promise<void>
-  disbandTeam: (id: any) => Promise<void>
+  joinTeam: (inviteCode: string) => Promise<JoinWorkspaceResult>
+  deleteTeam: (id: any) => Promise<WorkspaceTransitionResult>
+  disbandTeam: (id: any) => Promise<WorkspaceTransitionResult>
+  consumePendingWorkspaceTransition: (removedWorkspaceId: any) => PendingWorkspaceTransition | null
+  finalizeWorkspaceRemoval: (id: any) => Promise<void>
 }
 
 // ---- 派生值（纯函数，对应原 computed）---------------------------------------
 type S = WorkspaceSessionState
 
+/** 取得服务端会话声明的当前空间 id。 */
 export const deriveSessionWorkspaceId = (s: S) => pickCurrentWorkspaceIdFromSession(s.authSession)
 
 // 用户名下的真实空间，冷启动前回退到会话里的列表。
@@ -155,24 +249,22 @@ export const deriveCurrentWorkspace = (s: S): any => {
   return list[0] || null
 }
 
+/** 取得当前登录用户。 */
 export const deriveCurrentUser = (s: S): any => s.authSession?.user || null
+/** 取得当前前端实际使用的工作空间 id。 */
 export const deriveWorkspaceId = (s: S): number => toId(deriveCurrentWorkspace(s)?.id)
 
+/** 取得与当前空间严格匹配的成员记录，避免沿用上一空间角色。 */
 export const deriveCurrentMember = (s: S): any => {
+  const activeId = deriveWorkspaceId(s)
   const activeMember = s.currentWorkspaceMember || null
-  if (activeMember) return activeMember
+  const activeMemberWorkspaceId = toId(s.currentWorkspaceMemberWorkspaceId) || pickMemberWorkspaceId(activeMember)
+  if (activeMember && activeId > 0 && activeMemberWorkspaceId === activeId) return activeMember
 
   const member = s.authSession?.currentMember || null
   if (!member) return null
 
-  const memberWorkspaceId = toId(
-    member?.workspace_id ??
-      member?.workspaceId ??
-      member?.workspace?.id ??
-      member?.current_workspace_id ??
-      member?.currentWorkspaceId,
-  )
-  const activeId = deriveWorkspaceId(s)
+  const memberWorkspaceId = pickMemberWorkspaceId(member)
   const sessionWsId = deriveSessionWorkspaceId(s)
 
   if (memberWorkspaceId > 0 && activeId > 0) {
@@ -184,13 +276,19 @@ export const deriveCurrentMember = (s: S): any => {
   return member
 }
 
+/** 仅返回当前仍生效的订阅。 */
 export const deriveActiveSubscription = (s: S): any => (s.currentSubscription?.active ? s.currentSubscription : null)
+/** 取得当前套餐展示名称。 */
 export const deriveCurrentPlanName = (s: S): string => deriveActiveSubscription(s)?.plan_name || ''
+/** 取得当前套餐到期时间。 */
 export const deriveCurrentPlanExpiresAt = (s: S): string => deriveActiveSubscription(s)?.current_period_end || ''
+/** 取得钱包可用积分。 */
 export const deriveWalletCredits = (s: S): number => Number(s.currentWallet?.available ?? 0)
 
+/** 按套餐代码查找已加载的计费方案。 */
 const findPlanByCode = (s: S, code: any) => (code && s.billingPlans.find((p) => p.code === code)) || null
 
+/** 取得当前套餐包含的基础积分额度。 */
 export const derivePlanBaseCredits = (s: S): number =>
   Number(
     deriveActiveSubscription(s)?.base_credits ??
@@ -198,15 +296,7 @@ export const derivePlanBaseCredits = (s: S): number =>
       0,
   )
 
-export const deriveCurrentConcurrencyLimit = (s: S): number => {
-  const limit = Number(
-    deriveActiveSubscription(s)?.concurrency ??
-      findPlanByCode(s, deriveActiveSubscription(s)?.plan_code)?.entitlements_json?.concurrency ??
-      0,
-  )
-  return limit > 0 ? limit : 1
-}
-
+/** 合并会话与计费接口中的模型套餐候选，供生成前选择可用模型。 */
 export const deriveModelPlanCandidates = (s: S): any[] => {
   const sessionCandidates = buildModelPlanCandidatesFromSession(
     s.authSession,
@@ -218,17 +308,41 @@ export const deriveModelPlanCandidates = (s: S): any[] => {
 }
 
 // ---- Store ------------------------------------------------------------------
+/** 工作空间会话全局 Store。 */
 export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get) => {
+  /** 切换空间时清空所有空间级套餐、钱包和成员缓存。 */
   const clearWorkspaceScopedState = () => {
+    workspaceScopeVersion += 1
     billingPlansLoadedWorkspaceId = 0
+    subscriptionLabelPromise = null
+    subscriptionLabelPromiseWorkspaceId = 0
+    subscriptionLabelLoadedWorkspaceId = 0
+    subscriptionLabelLoadedAt = 0
     set({
       currentSubscription: null,
       currentWallet: null,
       billingPlans: [],
       billingPlanCandidates: [],
+      currentWorkspaceMember: null,
+      currentWorkspaceMemberWorkspaceId: 0,
     })
   }
 
+  /** 在 store 内激活目标空间并触发所需的成员/计费刷新。 */
+  const activateWorkspace = (workspaceId: any, options?: { forceMemberReload?: boolean }): boolean => {
+    const targetId = toId(workspaceId)
+    if (!targetId) return false
+    const currentId = deriveWorkspaceId(get())
+    if (targetId === currentId && !options?.forceMemberReload) return false
+
+    clearWorkspaceScopedState()
+    set({ activeWorkspaceOverrideId: targetId })
+    saveActiveWs(getSessionUserScope(get().authSession), targetId)
+    void get().loadCurrentWorkspaceMember(targetId)
+    return true
+  }
+
+  /** 加载指定空间可用的计费方案并转换为模型候选。 */
   const loadWorkspaceBillingPlanCandidates = async (targetWorkspaceId: number) => {
     try {
       const planItems = extractPageItems(await listBillingPlans())
@@ -252,16 +366,27 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     authSession: null,
     userWorkspaces: [],
     activeWorkspaceOverrideId: 0,
+    pendingWorkspaceTransition: null,
     currentSubscription: null,
     currentWallet: null,
     billingPlans: [],
     billingPlanCandidates: [],
     currentWorkspaceMember: null,
+    currentWorkspaceMemberWorkspaceId: 0,
 
     setAuthSession: (session) => {
+      authSessionEpoch += 1
+      workspaceListRequestSeq += 1
       clearWorkspaceScopedState()
       if (!session) {
-        set({ authSession: null, activeWorkspaceOverrideId: 0, userWorkspaces: [], currentWorkspaceMember: null })
+        set({
+          authSession: null,
+          activeWorkspaceOverrideId: 0,
+          userWorkspaces: [],
+          pendingWorkspaceTransition: null,
+          currentWorkspaceMember: null,
+          currentWorkspaceMemberWorkspaceId: 0,
+        })
         return
       }
       const normalizedSession = {
@@ -271,10 +396,14 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       set({
         authSession: normalizedSession,
         userWorkspaces: normalizedSession.workspaces || [],
+        pendingWorkspaceTransition: null,
         currentWorkspaceMember: normalizedSession.currentMember || null,
+        currentWorkspaceMemberWorkspaceId:
+          pickMemberWorkspaceId(normalizedSession.currentMember) ||
+          pickCurrentWorkspaceIdFromSession(normalizedSession),
       })
 
-      const savedWs = readSavedActiveWs(toId(session?.user?.id))
+      const savedWs = readSavedActiveWs(getSessionUserScope(session))
       const nextWorkspaceId = pickCurrentWorkspaceIdFromSession(normalizedSession)
       const allWs = deriveAllWorkspaces(get())
       // 尊重用户上次手动选择的空间。不要因为账号下存在团队空间，就在刷新后强制切到团队。
@@ -285,46 +414,88 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       } else if (!findById(allWs, get().activeWorkspaceOverrideId)) {
         set({ activeWorkspaceOverrideId: 0 })
       }
+
+      const activeId = deriveWorkspaceId(get())
+      const loadedMemberId =
+        toId(get().currentWorkspaceMemberWorkspaceId) || pickMemberWorkspaceId(get().currentWorkspaceMember)
+      if (activeId > 0 && loadedMemberId !== activeId) {
+        set({ currentWorkspaceMember: null, currentWorkspaceMemberWorkspaceId: 0 })
+      }
+      if (activeId > 0) void get().loadCurrentWorkspaceMember(activeId)
     },
 
     // 订阅 + 钱包并行：个人中心弹窗的套餐标签、到期、积分剩余都依赖这两项。
-    loadSubscriptionLabel: async () => {
+    loadSubscriptionLabel: (options) => {
       const id = deriveWorkspaceId(get())
       if (!id) {
         clearWorkspaceScopedState()
-        return
+        return Promise.resolve()
       }
-      set({ currentSubscription: null, currentWallet: null })
-      const [sub, wal] = await Promise.all([
-        getSubscription(id).catch(() => null),
-        getWallet(id).catch(() => null),
-        get()
-          .loadCurrentWorkspaceMember(id)
-          .catch(() => null),
-      ])
-      if (deriveWorkspaceId(get()) !== id) return
-      set({ currentSubscription: sub, currentWallet: wal })
-      await get().ensureModelPlanCandidatesLoaded()
+      const now = Date.now()
+      if (
+        !options?.force &&
+        subscriptionLabelLoadedWorkspaceId === id &&
+        now - subscriptionLabelLoadedAt < SUBSCRIPTION_LABEL_CACHE_TTL_MS
+      ) {
+        return Promise.resolve()
+      }
+      if (subscriptionLabelPromise && subscriptionLabelPromiseWorkspaceId === id) {
+        return subscriptionLabelPromise
+      }
+
+      const requestScopeVersion = workspaceScopeVersion
+      const request = (async () => {
+        const [sub, wal] = await Promise.all([
+          getSubscription(id).catch(() => null),
+          getWallet(id).catch(() => null),
+          get()
+            .loadCurrentWorkspaceMember(id)
+            .catch(() => null),
+        ])
+        if (workspaceScopeVersion !== requestScopeVersion || deriveWorkspaceId(get()) !== id) return
+        // 保留上一份值直到新请求完成，避免普通路由切换时套餐/积分先闪空再回填。
+        set({ currentSubscription: sub, currentWallet: wal })
+        await get().ensureModelPlanCandidatesLoaded()
+        if (workspaceScopeVersion !== requestScopeVersion || deriveWorkspaceId(get()) !== id) return
+        subscriptionLabelLoadedWorkspaceId = id
+        subscriptionLabelLoadedAt = Date.now()
+      })()
+      const tracked = request.finally(() => {
+        if (subscriptionLabelPromise === tracked) {
+          subscriptionLabelPromise = null
+          subscriptionLabelPromiseWorkspaceId = 0
+        }
+      })
+      subscriptionLabelPromise = tracked
+      subscriptionLabelPromiseWorkspaceId = id
+      return tracked
     },
 
     loadCurrentWorkspaceMember: async (workspaceId) => {
       const targetId = toId(workspaceId) || deriveWorkspaceId(get())
-      const userId = toId(get().authSession?.user?.id)
+      const userId = getSessionUserScope(get().authSession)
       if (!targetId || !userId) {
-        set({ currentWorkspaceMember: null })
+        set({ currentWorkspaceMember: null, currentWorkspaceMemberWorkspaceId: 0 })
         return null
       }
+      const requestScopeVersion = workspaceScopeVersion
       try {
         const members = await listWorkspaceMembers(targetId)
-        const list = Array.isArray(members) ? members : []
-        const nextMember = list.find((member: any) => toId(member?.user_id || member?.userId) === userId) || null
-        if (deriveWorkspaceId(get()) === targetId) {
-          set({ currentWorkspaceMember: nextMember })
+        const list = extractWorkspaceMemberItems(members)
+        const nextMember =
+          list.find(
+            (member: any) => String(member?.user_id ?? member?.userId ?? member?.user?.id ?? '').trim() === userId,
+          ) || null
+        if (workspaceScopeVersion === requestScopeVersion && deriveWorkspaceId(get()) === targetId) {
+          set({
+            currentWorkspaceMember: nextMember,
+            currentWorkspaceMemberWorkspaceId: nextMember ? targetId : 0,
+          })
         }
         return nextMember
       } catch {
-        if (deriveWorkspaceId(get()) === targetId) {
-          set({ currentWorkspaceMember: null })
+        if (workspaceScopeVersion === requestScopeVersion && deriveWorkspaceId(get()) === targetId) {
+          set({ currentWorkspaceMember: null, currentWorkspaceMemberWorkspaceId: 0 })
         }
         return null
       }
@@ -350,39 +521,76 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
 
     // 拉取真实空间列表（侧边栏团队组）。
     loadWorkspaces: async () => {
+      const requestSeq = ++workspaceListRequestSeq
+      const requestUserScope = getSessionUserScope(get().authSession)
+      const isStaleRequest = () =>
+        requestSeq !== workspaceListRequestSeq || getSessionUserScope(get().authSession) !== requestUserScope
       try {
         const raw = await listWorkspaces()
+        if (isStaleRequest()) return false
         const items = sanitizeWorkspaceList(extractPageItems(raw))
         const fallbackWorkspaces = deriveSessionWorkspaces(get().authSession)
         const nextWorkspaces = items.length ? items : fallbackWorkspaces
-        set({ userWorkspaces: nextWorkspaces })
-        const s = get()
-        const preferredId = toId(s.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(s)
-        if (preferredId && !findById(nextWorkspaces, preferredId) && s.activeWorkspaceOverrideId) {
-          // 存档指向的空间已不属于你(被移出/解散)→ 清 override 并清存档,回落默认空间
-          set({ activeWorkspaceOverrideId: 0 })
-          saveActiveWs(toId(s.authSession?.user?.id), 0)
+        const stateBeforeUpdate = get()
+        const preferredId =
+          toId(stateBeforeUpdate.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(stateBeforeUpdate)
+        if (preferredId && !findById(nextWorkspaces, preferredId) && stateBeforeUpdate.activeWorkspaceOverrideId) {
+          // 当前空间可能已被其他标签页或管理员移除。此时不能直接 activateWorkspace：
+          // 创作页必须先在源 workspace 下卸载并保存草稿，再由 App 顶层安全桥切换。
+          const sourceWorkspace =
+            findById(deriveAllWorkspaces(stateBeforeUpdate), preferredId) ||
+            deriveCurrentWorkspace(stateBeforeUpdate) ||
+            null
+          const fallback =
+            nextWorkspaces.find((item) => String(item?.type || '').toLowerCase() === 'personal') ||
+            nextWorkspaces[0] ||
+            null
+          const fallbackId = toId(fallback?.id)
+          if (fallbackId && sourceWorkspace) {
+            set({
+              // 暂时保留已失效的源空间，确保 deriveWorkspaceId 及草稿 scope 在路由桥
+              // 完成切换前都不变化；finalizeWorkspaceRemoval 会在切换后移除它。
+              userWorkspaces: dedupeWorkspaces(nextWorkspaces, sourceWorkspace),
+              pendingWorkspaceTransition: {
+                removedWorkspaceId: preferredId,
+                workspaceId: fallbackId,
+                sourceWorkspace,
+              },
+            })
+          } else {
+            clearWorkspaceScopedState()
+            set({
+              userWorkspaces: nextWorkspaces,
+              activeWorkspaceOverrideId: 0,
+              pendingWorkspaceTransition: null,
+            })
+            saveActiveWs(getSessionUserScope(stateBeforeUpdate.authSession), 0)
+          }
+        } else {
+          set({ userWorkspaces: nextWorkspaces, pendingWorkspaceTransition: null })
         }
+        return true
       } catch {
-        return
+        return false
       }
     },
 
     // 切换活跃空间：只改 override，workspaceId 变化由调用方的 effect 统一触发刷新。
-    switchWorkspace: (id) => {
-      const target = toId(id)
-      if (!target || target === deriveWorkspaceId(get())) return
-      clearWorkspaceScopedState()
-      set({ activeWorkspaceOverrideId: target })
-      saveActiveWs(toId(get().authSession?.user?.id), target) // 持久化,刷新后恢复
-      void get().loadCurrentWorkspaceMember(target)
+    switchWorkspace: (id, options) => {
+      activateWorkspace(id, options)
     },
 
     // 创建团队：返回新建结果（toast/错误处理交给调用方）。
     createTeam: async (name) => {
       const created = await createWorkspace({ name })
       await get().loadWorkspaces()
-      if (created?.id) get().switchWorkspace(created.id)
+      const createdWorkspaceId = toId(created?.id)
+      if (createdWorkspaceId) {
+        if (!findById(deriveAllWorkspaces(get()), createdWorkspaceId)) {
+          set({ userWorkspaces: sanitizeWorkspaceList([...deriveAllWorkspaces(get()), created]) })
+        }
+        get().switchWorkspace(createdWorkspaceId)
+      }
       return created
     },
 
@@ -403,23 +611,44 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     },
 
     joinTeam: async (inviteCode) => {
+      const sourceWorkspace = deriveCurrentWorkspace(get())
+      const beforeIds = new Set(
+        deriveAllWorkspaces(get())
+          .map((workspace) => toId(workspace?.id))
+          .filter(Boolean),
+      )
       const redeemed = await redeemWorkspaceInvitation({ inviteCode })
       await get().loadWorkspaces()
       const joinedWorkspaceId = pickWorkspaceId(redeemed)
-      // 只有确认加入的空间已在刷新后的列表里才切过去。loadWorkspaces 内部吞错(失败静默返回),
-      // 若不校验就设 override,会把 active 指向列表里不存在的空间 → 停在空态。失败则不切,列表恢复后用户可自选。
-      if (joinedWorkspaceId && findById(deriveAllWorkspaces(get()), joinedWorkspaceId)) {
-        clearWorkspaceScopedState()
-        set({ activeWorkspaceOverrideId: joinedWorkspaceId })
-        saveActiveWs(toId(get().authSession?.user?.id), joinedWorkspaceId) // 持久化,刷新后恢复
+      let currentList = deriveAllWorkspaces(get())
+      if (joinedWorkspaceId && !findById(currentList, joinedWorkspaceId)) {
+        const payloadWorkspace = pickWorkspaceFromPayload(redeemed) || {
+          id: joinedWorkspaceId,
+          type: 'team',
+          name: '团队空间',
+        }
+        const nextWorkspaces = sanitizeWorkspaceList([...currentList, payloadWorkspace])
+        set({ userWorkspaces: nextWorkspaces })
+        currentList = nextWorkspaces
       }
-      return redeemed
+      const inferredNewTeams = currentList.filter(
+        (workspace) =>
+          !beforeIds.has(toId(workspace?.id)) && String(workspace?.type || '').toLowerCase() !== 'personal',
+      )
+      const targetWorkspaceId =
+        (joinedWorkspaceId && findById(currentList, joinedWorkspaceId) ? joinedWorkspaceId : 0) ||
+        (inferredNewTeams.length === 1 ? toId(inferredNewTeams[0]?.id) : 0)
+      if (!targetWorkspaceId) {
+        throw new Error('已加入团队，但空间列表尚未同步，请刷新后重试')
+      }
+      return { payload: redeemed, workspaceId: targetWorkspaceId, sourceWorkspace }
     },
 
     deleteTeam: async (id) => {
       const targetId = toId(id)
       if (!targetId) throw new Error('团队 ID 无效')
       const target = findById(deriveAllWorkspaces(get()), targetId)
+      const sourceWorkspace = deriveCurrentWorkspace(get())
       const targetType = String(target?.type || '').toLowerCase()
       if (targetType === 'personal') {
         throw new Error('个人空间不支持删除')
@@ -427,8 +656,8 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
 
       // 主账号(所有者)退出:必须【先手动转让主账号权限】给其他成员,这里不再自动转让(防绕过)。
       // 单人团队所有者的引导(转让/解散)由 UI 层按成员数给出;此处仅作后端调用前的防线。
-      const userId = toId(get().authSession?.user?.id)
-      const ownerUserId = toId(target?.owner_user_id || target?.ownerUserId)
+      const userId = getSessionUserScope(get().authSession)
+      const ownerUserId = String(target?.owner_user_id ?? target?.ownerUserId ?? '').trim()
       if (userId && ownerUserId && userId === ownerUserId) {
         throw new Error('你是主账号,退出前请先把主账号权限转让给其他成员;若要删除空间请用「解散该空间」。')
       }
@@ -447,40 +676,25 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         }
       }
 
-      const s = get()
-      if (Array.isArray(s.userWorkspaces) && s.userWorkspaces.length) {
-        set({ userWorkspaces: s.userWorkspaces.filter((item) => toId(item?.id) !== targetId) })
-      }
-      if (Array.isArray(s.authSession?.workspaces)) {
-        set({
-          authSession: {
-            ...s.authSession,
-            workspaces: s.authSession.workspaces.filter((item: any) => toId(item?.id) !== targetId),
-          },
-        })
-      }
-      if (toId(get().activeWorkspaceOverrideId) === targetId) {
-        set({ activeWorkspaceOverrideId: 0 })
+      const stateAfterLeave = get()
+      const removedActiveWorkspace = deriveWorkspaceId(stateAfterLeave) === targetId
+      const remainingWorkspaces = deriveAllWorkspaces(stateAfterLeave).filter(
+        (workspace) => toId(workspace?.id) !== targetId,
+      )
+      const fallback =
+        remainingWorkspaces.find((workspace) => String(workspace?.type || '').toLowerCase() === 'personal') ||
+        remainingWorkspaces[0] ||
+        null
+
+      // 当前创作页必须仍绑定源 workspace，直到 UI 先导航到桥接页并同步调用
+      // switchWorkspace。这里提前改列表/override 会让旧组件在 workspace 0 或个人
+      // scope 下执行卸载保存，重新制造“切换后显示旧草稿”。
+      if (removedActiveWorkspace) {
+        return { workspaceId: toId(fallback?.id), sourceWorkspace }
       }
 
-      await get().loadWorkspaces()
-
-      // 兜底:loadWorkspaces 会用后端结果覆盖 userWorkspaces,若后端 leave 有延迟/仍返回该空间,
-      // 会把刚退出的空间又加回来 → 这里再过滤一次,确保退出后列表里不再出现该空间。
-      const afterLoad = get()
-      if (Array.isArray(afterLoad.userWorkspaces) && findById(afterLoad.userWorkspaces, targetId)) {
-        set({ userWorkspaces: afterLoad.userWorkspaces.filter((item) => toId(item?.id) !== targetId) })
-      }
-
-      const next = get()
-      const nextList = deriveAllWorkspaces(next)
-      const desiredId = toId(next.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(next)
-      if (desiredId === targetId || !findById(nextList, desiredId)) {
-        const fallback =
-          nextList.find((item) => String(item?.type || '').toLowerCase() === 'personal') || nextList[0] || null
-        clearWorkspaceScopedState()
-        set({ activeWorkspaceOverrideId: toId(fallback?.id) })
-      }
+      await get().finalizeWorkspaceRemoval(targetId)
+      return { workspaceId: 0, sourceWorkspace: null }
     },
 
     // 解散空间(仅所有者):真删空间及其素材/项目/数据(POST /workspaces/{id}/disband)。
@@ -489,48 +703,66 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       const targetId = toId(id)
       if (!targetId) throw new Error('团队 ID 无效')
       const target = findById(deriveAllWorkspaces(get()), targetId)
+      const sourceWorkspace = deriveCurrentWorkspace(get())
       // 必须是明确的团队空间才允许解散:type 非空且非 personal(空 type 也拒绝,避免绕过守卫误删个人空间)
       const targetType = String(target?.type || '').toLowerCase()
       if (!(targetType && targetType !== 'personal')) {
         throw new Error('仅团队空间支持解散')
       }
-      const userId = toId(get().authSession?.user?.id)
-      const ownerUserId = toId(target?.owner_user_id || target?.ownerUserId)
+      const userId = getSessionUserScope(get().authSession)
+      const ownerUserId = String(target?.owner_user_id ?? target?.ownerUserId ?? '').trim()
       if (userId && ownerUserId && userId !== ownerUserId) {
         throw new Error('只有空间超级管理员可以解散空间')
       }
       await disbandWorkspace({ workspaceId: targetId })
-      // 收尾:从本地列表移除 + 若删的是当前空间则切回个人空间兜底(同 deleteTeam)
-      const s = get()
-      if (Array.isArray(s.userWorkspaces) && s.userWorkspaces.length) {
-        set({ userWorkspaces: s.userWorkspaces.filter((item) => toId(item?.id) !== targetId) })
+      const stateAfterDisband = get()
+      const removedActiveWorkspace = deriveWorkspaceId(stateAfterDisband) === targetId
+      const remainingWorkspaces = deriveAllWorkspaces(stateAfterDisband).filter(
+        (workspace) => toId(workspace?.id) !== targetId,
+      )
+      const fallback =
+        remainingWorkspaces.find((workspace) => String(workspace?.type || '').toLowerCase() === 'personal') ||
+        remainingWorkspaces[0] ||
+        null
+
+      if (removedActiveWorkspace) {
+        return { workspaceId: toId(fallback?.id), sourceWorkspace }
       }
-      if (Array.isArray(s.authSession?.workspaces)) {
-        set({
-          authSession: {
-            ...s.authSession,
-            workspaces: s.authSession.workspaces.filter((item: any) => toId(item?.id) !== targetId),
-          },
-        })
-      }
-      if (toId(get().activeWorkspaceOverrideId) === targetId) {
-        set({ activeWorkspaceOverrideId: 0 })
-      }
+
+      await get().finalizeWorkspaceRemoval(targetId)
+      return { workspaceId: 0, sourceWorkspace: null }
+    },
+
+    consumePendingWorkspaceTransition: (removedWorkspaceId) => {
+      const targetId = toId(removedWorkspaceId)
+      const pending = get().pendingWorkspaceTransition
+      if (!pending || !targetId || pending.removedWorkspaceId !== targetId) return null
+      set({ pendingWorkspaceTransition: null })
+      return pending
+    },
+
+    finalizeWorkspaceRemoval: async (id) => {
+      const targetId = toId(id)
+      if (!targetId) return
+      const finalizeUserScope = getSessionUserScope(get().authSession)
+      const finalizeSessionEpoch = authSessionEpoch
       await get().loadWorkspaces()
-      // 兜底:同 deleteTeam,防 loadWorkspaces 把刚解散的空间又拉回来
-      const afterLoad = get()
-      if (Array.isArray(afterLoad.userWorkspaces) && findById(afterLoad.userWorkspaces, targetId)) {
-        set({ userWorkspaces: afterLoad.userWorkspaces.filter((item) => toId(item?.id) !== targetId) })
+      const current = get()
+      // loadWorkspaces 会拒绝旧账号的列表响应，但 finalize 也必须停止：
+      // 否则登出/换号发生在 await 期间时，会按相同数字 ID 误删新账号的空间。
+      if (authSessionEpoch !== finalizeSessionEpoch || getSessionUserScope(current.authSession) !== finalizeUserScope) {
+        return
       }
-      const next = get()
-      const nextList = deriveAllWorkspaces(next)
-      const desiredId = toId(next.activeWorkspaceOverrideId) || deriveSessionWorkspaceId(next)
-      if (desiredId === targetId || !findById(nextList, desiredId)) {
-        const fallback =
-          nextList.find((item) => String(item?.type || '').toLowerCase() === 'personal') || nextList[0] || null
-        clearWorkspaceScopedState()
-        set({ activeWorkspaceOverrideId: toId(fallback?.id) })
-      }
+      const nextUserWorkspaces = current.userWorkspaces.filter((workspace) => toId(workspace?.id) !== targetId)
+      const sessionWorkspaces = Array.isArray(current.authSession?.workspaces)
+        ? current.authSession.workspaces.filter((workspace: any) => toId(workspace?.id) !== targetId)
+        : current.authSession?.workspaces
+      set({
+        userWorkspaces: nextUserWorkspaces,
+        ...(Array.isArray(current.authSession?.workspaces)
+          ? { authSession: { ...current.authSession, workspaces: sessionWorkspaces } }
+          : {}),
+      })
     },
   }
 })
@@ -539,30 +771,48 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
 // 否则后端按订阅返回空模型列表 → 出片/出图/预估全查不到模型)。初始 + 每次变化都推一次。
 // 智能成片本地草稿按【当前用户】隔离:同一浏览器换账号时各存各的,避免草稿串台
 // (新用户读到上个用户的 projectId → 空白 /smart 误跳 → 别人的项目 403/404 → 每次报「项目加载失败」)。
+/** 为各类本地草稿和任务登记表计算统一账号作用域。 */
 const deriveDraftUserScope = (s: S): string => {
-  const u = deriveCurrentUser(s) || {}
-  return String(u.id ?? u.user_id ?? u.userId ?? u.account_id ?? u.uid ?? '')
+  return getSessionUserScope(s.authSession)
 }
 setActiveWorkspaceId(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
+setVideoGenOwnerScope(deriveDraftUserScope(useWorkspaceSessionStore.getState()))
 setSmartDraftUserScope(deriveDraftUserScope(useWorkspaceSessionStore.getState()))
 setSmartDraftWorkspaceScope(deriveWorkspaceId(useWorkspaceSessionStore.getState()))
 setHotCopyDraftUserScope(deriveDraftUserScope(useWorkspaceSessionStore.getState()))
+setFavoriteVideoUserScope(deriveDraftUserScope(useWorkspaceSessionStore.getState()))
+setSmartEntryDraftScope(
+  deriveDraftUserScope(useWorkspaceSessionStore.getState()),
+  deriveWorkspaceId(useWorkspaceSessionStore.getState()),
+)
 useWorkspaceSessionStore.subscribe((state) => {
   setActiveWorkspaceId(deriveWorkspaceId(state))
+  setVideoGenOwnerScope(deriveDraftUserScope(state))
   setSmartDraftUserScope(deriveDraftUserScope(state))
   setSmartDraftWorkspaceScope(deriveWorkspaceId(state))
   setHotCopyDraftUserScope(deriveDraftUserScope(state))
+  setFavoriteVideoUserScope(deriveDraftUserScope(state))
+  setSmartEntryDraftScope(deriveDraftUserScope(state), deriveWorkspaceId(state))
 })
 
 // ---- Selector hooks（组件侧便捷读取派生值，保持响应式订阅）------------------
+/** 订阅当前工作空间对象。 */
 export const useCurrentWorkspace = () => useWorkspaceSessionStore(deriveCurrentWorkspace)
+/** 订阅当前登录用户。 */
 export const useCurrentUser = () => useWorkspaceSessionStore(deriveCurrentUser)
+/** 订阅当前空间中的成员身份。 */
 export const useCurrentMember = () => useWorkspaceSessionStore(deriveCurrentMember)
+/** 订阅当前工作空间 id。 */
 export const useWorkspaceId = () => useWorkspaceSessionStore(deriveWorkspaceId)
+/** 浅比较订阅用户可见的全部工作空间。 */
 export const useAllWorkspaces = () => useWorkspaceSessionStore(useShallow(deriveAllWorkspaces))
+/** 订阅当前套餐名称。 */
 export const useCurrentPlanName = () => useWorkspaceSessionStore(deriveCurrentPlanName)
+/** 订阅当前套餐到期时间。 */
 export const useCurrentPlanExpiresAt = () => useWorkspaceSessionStore(deriveCurrentPlanExpiresAt)
+/** 订阅钱包可用积分。 */
 export const useWalletCredits = () => useWorkspaceSessionStore(deriveWalletCredits)
+/** 订阅套餐基础积分额度。 */
 export const usePlanBaseCredits = () => useWorkspaceSessionStore(derivePlanBaseCredits)
-export const useCurrentConcurrencyLimit = () => useWorkspaceSessionStore(deriveCurrentConcurrencyLimit)
+/** 浅比较订阅当前可用的模型套餐候选。 */
 export const useModelPlanCandidates = () => useWorkspaceSessionStore(useShallow(deriveModelPlanCandidates))

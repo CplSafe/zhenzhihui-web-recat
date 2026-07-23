@@ -15,12 +15,16 @@ import {
   updateWorkspaceMemberQuota,
   updateWorkspaceMemberRole,
 } from '@/api/business'
-import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import { extractWorkspaceMemberItems, useWorkspaceSessionStore } from '@/stores/workspaceSession'
+import { useUiStore } from '@/stores/ui'
 import { useConfirmDialog } from '@/composables/useToast'
+import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'
 import './TeamManagementModal.css'
 
+/** 团队管理向全局提示层发送的消息类型。 */
 type ToastType = 'success' | 'error'
 
+/** 团队管理弹窗的空间上下文、当前用户身份和通知回调。 */
 interface TeamManagementModalProps {
   open?: boolean
   workspaceId?: number
@@ -32,6 +36,7 @@ interface TeamManagementModalProps {
   onToast?: (message: string, type?: ToastType) => void
 }
 
+/** 不同成员接口结构归一化后的列表模型。 */
 interface NormalizedMember {
   raw: any
   id: number
@@ -43,6 +48,7 @@ interface NormalizedMember {
   isOwner: boolean
 }
 
+/** 邀请码接口结构归一化后的展示模型。 */
 interface NormalizedInvitation {
   raw: any
   id: number
@@ -54,12 +60,14 @@ interface NormalizedInvitation {
   status: string
 }
 
+/** 创建邀请码时可选的有效期。 */
 const expiryOptions = [
   { label: '7天', value: 7 },
   { label: '30天', value: 30 },
   { label: '90天', value: 90 },
 ]
 
+/** 从兼容字段中取首个非空文本。 */
 function pickFirstText(...candidates: any[]): string {
   for (const candidate of candidates) {
     const value = String(candidate ?? '').trim()
@@ -68,6 +76,7 @@ function pickFirstText(...candidates: any[]): string {
   return ''
 }
 
+/** 解析成员展示名称，并对手机号/邮箱账户提供脱敏友好回退。 */
 function normalizeMemberName(member: any, fallback = ''): string {
   return (
     pickFirstText(
@@ -86,10 +95,12 @@ function normalizeMemberName(member: any, fallback = ''): string {
 }
 
 // 后端 MemberView 返回 email 与 mobile(手机号,DeepAuth 回传)。账号展示优先手机号、回退 email。
+/** 从不同成员响应结构提取邮箱。 */
 function normalizeMemberEmail(member: any): string {
   return pickFirstText(member?.email, member?.user?.email, member?.account?.email, member?.profile?.email)
 }
 
+/** 从不同成员响应结构提取手机号。 */
 function normalizeMemberMobile(member: any): string {
   return pickFirstText(
     member?.mobile,
@@ -101,12 +112,14 @@ function normalizeMemberMobile(member: any): string {
   )
 }
 
+/** 读取成员稳定 ID；无 ID 时用负数索引作为仅展示用临时键。 */
 function normalizeMemberId(member: any, index: number): number {
   const id = Number(member?.id || member?.user_id || member?.userId || 0)
   if (Number.isFinite(id) && id > 0) return Math.floor(id)
   return index + 1
 }
 
+/** 把成员角色别名统一为 owner/admin/member。 */
 function normalizeMemberRole(member: any): string {
   const raw = pickFirstText(
     member?.role,
@@ -121,6 +134,7 @@ function normalizeMemberRole(member: any): string {
   return ''
 }
 
+/** 将内部角色值转换为中文展示文案。 */
 function getRoleLabel(role: string): string {
   if (role === 'owner') return '所有者'
   if (role === 'admin') return '管理员'
@@ -128,15 +142,18 @@ function getRoleLabel(role: string): string {
   return ''
 }
 
+/** 解析邀请记录 ID。 */
 function toInvitationId(item: any): number {
   const id = Number(item?.id || item?.invitation_id || item?.inv_id || item?.invId || 0)
   return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
 }
 
+/** 解析邀请记录中的协作码。 */
 function toInvitationCode(item: any): string {
   return pickFirstText(item?.code, item?.invite_code, item?.invitation_code, item?.token, item?.key)
 }
 
+/** 解析邀请码到期字段。 */
 function toInvitationExpiry(item: any): string {
   return pickFirstText(
     item?.expires_at,
@@ -148,6 +165,7 @@ function toInvitationExpiry(item: any): string {
   )
 }
 
+/** 解包并归一化邀请列表，过滤缺少有效 ID 或协作码的损坏记录。 */
 function normalizeInvitations(payload: any): NormalizedInvitation[] {
   const list = Array.isArray(payload)
     ? payload
@@ -173,6 +191,7 @@ function normalizeInvitations(payload: any): NormalizedInvitation[] {
     .filter((item: NormalizedInvitation) => item.id || item.code)
 }
 
+/** 格式化邀请码到期日期。 */
 function formatExpiryDate(value: any): string {
   const raw = String(value || '').trim()
   if (!raw) return ''
@@ -182,6 +201,7 @@ function formatExpiryDate(value: any): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
+/** 判断邀请码状态有效且尚未过期。 */
 function isInvitationActive(invitation: NormalizedInvitation | null): boolean {
   if (!invitation) return false
   const revokedAt = String(invitation.revokedAt || '').trim()
@@ -200,6 +220,7 @@ function isInvitationActive(invitation: NormalizedInvitation | null): boolean {
   return d.getTime() > Date.now()
 }
 
+/** 从邀请列表中选择最近到期的有效邀请码供主界面展示。 */
 function pickActiveInvitation(list: NormalizedInvitation[]): NormalizedInvitation | null {
   if (!Array.isArray(list) || !list.length) return null
   const activeList = list.filter((item) => isInvitationActive(item))
@@ -214,6 +235,7 @@ function pickActiveInvitation(list: NormalizedInvitation[]): NormalizedInvitatio
   return sorted.find((item) => item.code) || null
 }
 
+/** 将长邀请码分组显示，便于人工核对和口述。 */
 function formatInviteCodeForDisplay(value: any): string {
   const raw = String(value || '').trim()
   if (!raw) return ''
@@ -223,6 +245,9 @@ function formatInviteCodeForDisplay(value: any): string {
   return raw
 }
 
+/**
+ * 加载成员、订阅限额和邀请码，并按当前角色控制邀请、配额、角色、移除和所有权转让操作。
+ */
 export default function TeamManagementModal({
   open = false,
   workspaceId = 0,
@@ -233,6 +258,9 @@ export default function TeamManagementModal({
   onToast,
 }: TeamManagementModalProps) {
   const { requestConfirm } = useConfirmDialog()
+  const switchWorkspaceSafely = useSafeWorkspaceSwitch()
+  const workspaceSwitchLocked = useUiStore((state) => state.workspaceSwitchLocked)
+  const workspaceSwitchLockReason = useUiStore((state) => state.workspaceSwitchLockReason)
 
   const [inviteCode, setInviteCode] = useState('')
   const [expiryDate, setExpiryDate] = useState('')
@@ -263,8 +291,11 @@ export default function TeamManagementModal({
   }, [headerMenuOpen])
 
   // 用 ref 持有不影响渲染的状态，等价 Vue 的 ref（避免闭包过期 + 避免重复触发）
-  const membersLoadingRef = useRef(false)
+  const membersRequestSeqRef = useRef(0)
+  const invitationsRequestSeqRef = useRef(0)
   const invitationsLoadingRef = useRef(false)
+  const workspaceIdRef = useRef(Number(workspaceId || 0))
+  workspaceIdRef.current = Number(workspaceId || 0)
   const invitationDeleteBusyIds = useRef<Set<number>>(new Set())
 
   // === computed ===
@@ -336,17 +367,7 @@ export default function TeamManagementModal({
   // normalizeMembers 依赖 ownerUserId，因此用闭包形式定义
   const normalizeMembers = useCallback(
     (payload: any): NormalizedMember[] => {
-      const list = Array.isArray(payload)
-        ? payload
-        : Array.isArray(payload?.items)
-          ? payload.items
-          : Array.isArray(payload?.list)
-            ? payload.list
-            : Array.isArray(payload?.members)
-              ? payload.members
-              : Array.isArray(payload?.records)
-                ? payload.records
-                : []
+      const list = extractWorkspaceMemberItems(payload)
       const ownerId = ownerUserId
       return list
         .filter((item: any) => item && typeof item === 'object')
@@ -372,24 +393,28 @@ export default function TeamManagementModal({
 
   const loadMembers = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
+    const requestSeq = ++membersRequestSeqRef.current
     if (!wsId) {
       setMembers([])
       return
     }
 
-    if (membersLoadingRef.current) return
-    membersLoadingRef.current = true
     setMembersLoading(true)
 
     try {
       const result = await listWorkspaceMembers(wsId)
-      setMembers(normalizeMembers(result))
+      if (requestSeq === membersRequestSeqRef.current && workspaceIdRef.current === wsId) {
+        setMembers(normalizeMembers(result))
+      }
     } catch (error: any) {
-      setMembers([])
-      onToast?.(error?.message || '成员信息加载失败', 'error')
+      if (requestSeq === membersRequestSeqRef.current && workspaceIdRef.current === wsId) {
+        setMembers([])
+        onToast?.(error?.message || '成员信息加载失败', 'error')
+      }
     } finally {
-      membersLoadingRef.current = false
-      setMembersLoading(false)
+      if (requestSeq === membersRequestSeqRef.current && workspaceIdRef.current === wsId) {
+        setMembersLoading(false)
+      }
     }
   }, [workspaceId, normalizeMembers, onToast])
 
@@ -404,16 +429,16 @@ export default function TeamManagementModal({
 
   const loadInvitations = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
+    const requestSeq = ++invitationsRequestSeqRef.current
     if (!wsId || isPersonalWorkspace) {
       setActiveInvitationId(0)
       setInviteCode('')
       setExpiryDate('')
       return
     }
-    if (invitationsLoadingRef.current) return
-    invitationsLoadingRef.current = true
     try {
       const result = await listWorkspaceInvitations(wsId)
+      if (requestSeq !== invitationsRequestSeqRef.current || workspaceIdRef.current !== wsId) return
       const list = normalizeInvitations(result)
       const active = pickActiveInvitation(list)
       if (active) {
@@ -426,12 +451,12 @@ export default function TeamManagementModal({
         setExpiryDate('')
       }
     } catch (error: any) {
-      setActiveInvitationId(0)
-      setInviteCode('')
-      setExpiryDate('')
-      onToast?.(error?.message || '邀请码信息加载失败', 'error')
-    } finally {
-      invitationsLoadingRef.current = false
+      if (requestSeq === invitationsRequestSeqRef.current && workspaceIdRef.current === wsId) {
+        setActiveInvitationId(0)
+        setInviteCode('')
+        setExpiryDate('')
+        onToast?.(error?.message || '邀请码信息加载失败', 'error')
+      }
     }
   }, [workspaceId, isPersonalWorkspace, onToast])
 
@@ -539,12 +564,24 @@ export default function TeamManagementModal({
   // 解散该空间(仅所有者):强确认——解散后素材/项目/数据全部清空,不可恢复。
   async function handleDisband() {
     if (!workspaceId) return
+    if (workspaceSwitchLocked) {
+      onToast?.(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
+      return
+    }
     const ok = await requestConfirm('解散空间后,该空间的所有素材、项目及数据都将被清空,且不可恢复。确定解散该空间吗?', {
       danger: true,
     })
     if (!ok) return
     try {
-      await useWorkspaceSessionStore.getState().disbandTeam(workspaceId)
+      const transition = await useWorkspaceSessionStore.getState().disbandTeam(workspaceId)
+      if (transition.workspaceId) {
+        const switched = switchWorkspaceSafely(transition.workspaceId, {
+          sourceWorkspace: transition.sourceWorkspace,
+          allowLockedTransition: true,
+        })
+        if (!switched) throw new Error(workspaceSwitchLockReason || '当前暂不支持切换团队')
+        await useWorkspaceSessionStore.getState().finalizeWorkspaceRemoval(workspaceId)
+      }
       onToast?.('空间已解散', 'success')
       close()
     } catch (error: any) {
@@ -555,6 +592,10 @@ export default function TeamManagementModal({
   // 退出该空间:子账号可直接退出;主账号(所有者)必须【先手动转让主账号权限】,单人团队引导去解散。
   async function handleLeave() {
     if (!workspaceId) return
+    if (workspaceSwitchLocked) {
+      onToast?.(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
+      return
+    }
     if (isCurrentUserOwner) {
       onToast?.(
         members.length <= 1
@@ -567,7 +608,15 @@ export default function TeamManagementModal({
     const ok = await requestConfirm('退出后你将不再看到该空间的素材、项目等数据。确定退出该空间吗?')
     if (!ok) return
     try {
-      await useWorkspaceSessionStore.getState().deleteTeam(workspaceId)
+      const transition = await useWorkspaceSessionStore.getState().deleteTeam(workspaceId)
+      if (transition.workspaceId) {
+        const switched = switchWorkspaceSafely(transition.workspaceId, {
+          sourceWorkspace: transition.sourceWorkspace,
+          allowLockedTransition: true,
+        })
+        if (!switched) throw new Error(workspaceSwitchLockReason || '当前暂不支持切换团队')
+        await useWorkspaceSessionStore.getState().finalizeWorkspaceRemoval(workspaceId)
+      }
       onToast?.('已退出该空间', 'success')
       close()
     } catch (error: any) {
@@ -601,6 +650,7 @@ export default function TeamManagementModal({
     const previousInvitationId = Number(activeInvitationId || 0)
     createWorkspaceInvitation({ workspaceId: wsId, expiryDays })
       .then((created: any) => {
+        if (workspaceIdRef.current !== wsId) return null
         applyActiveInvitation(created)
         onToast?.('邀请码已重新生成', 'success')
         if (previousInvitationId && toInvitationId(created) && previousInvitationId !== toInvitationId(created)) {
@@ -612,11 +662,13 @@ export default function TeamManagementModal({
         return null
       })
       .catch((error: any) => {
-        onToast?.(error?.message || '邀请码生成失败', 'error')
+        if (workspaceIdRef.current === wsId) {
+          onToast?.(error?.message || '邀请码生成失败', 'error')
+        }
       })
       .finally(() => {
         invitationsLoadingRef.current = false
-        loadInvitations()
+        if (workspaceIdRef.current === wsId) loadInvitations()
       })
   }
 
@@ -632,12 +684,15 @@ export default function TeamManagementModal({
     invitationDeleteBusyIds.current.add(invId)
     try {
       await deleteWorkspaceInvitation({ workspaceId: wsId, invitationId: invId })
+      if (workspaceIdRef.current !== wsId) return
       setActiveInvitationId(0)
       setInviteCode('')
       setExpiryDate('')
       onToast?.('邀请码已撤销', 'success')
     } catch (error: any) {
-      onToast?.(error?.message || '撤销失败,请稍后重试', 'error')
+      if (workspaceIdRef.current === wsId) {
+        onToast?.(error?.message || '撤销失败,请稍后重试', 'error')
+      }
     } finally {
       invitationDeleteBusyIds.current.delete(invId)
       invitationsLoadingRef.current = false
@@ -658,19 +713,23 @@ export default function TeamManagementModal({
     }
   }
 
-  // watch props.open
+  // 监听弹窗开关：每次打开重新拉取成员、订阅与邀请码，关闭则清理临时编辑态。
   useEffect(() => {
     if (!open) {
+      membersRequestSeqRef.current += 1
+      invitationsRequestSeqRef.current += 1
       setQuery('')
       closeMemberActions()
       return
     }
+    setMembers([])
     loadMembers()
     // 邀请码是【主账号专属】接口:非主账号(子账号/管理员)/个人空间调它会被后端 403「无权管理该 workspace」。
     // 子账号只是来看成员列表,不该碰邀请码接口 → 仅 canManageInvite(团队所有者)才拉;否则清空邀请状态。
     if (canManageInvite) {
       loadInvitations()
     } else {
+      invitationsRequestSeqRef.current += 1
       setActiveInvitationId(0)
       setInviteCode('')
       setExpiryDate('')
@@ -692,7 +751,7 @@ export default function TeamManagementModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, workspaceId])
 
-  // onMounted / onBeforeUnmount —— Escape 关闭
+  // 挂载/卸载期间注册并清理 Esc 关闭监听。
   useEffect(() => {
     function onKeydown(e: KeyboardEvent) {
       if (e.key !== 'Escape' || !open) return

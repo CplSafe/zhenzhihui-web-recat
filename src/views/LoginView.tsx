@@ -1,14 +1,14 @@
 /**
- * LoginView — 登录页（按 Figma「帧智汇 2.1」重构）
- * 左侧品牌大图 + 右侧表单。支持两种登录方式:
- *  - 账号密码登录(loginWithPassword)
- *  - 手机短信登录(loginWithSmsCode);未注册手机号经短信登录即完成注册
- * 保留图形验证码挑战、用户协议确认、OAuth start 等既有认证逻辑;移除扫码/SSO/独立注册页。
+ * 页面职责：提供帧智汇统一登录入口，并在认证成功后把业务会话交给全局 AuthContext。
+ * 页面效果：左侧展示可轮播的品牌媒体，右侧支持密码登录、短信登录、验证码挑战、协议确认和注册/找回密码弹窗。
+ * 关键流程：提交凭证前清理旧会话，复用同一次 OAuth start；登录接口成功后继续确认业务会话，必要时通过隐藏 iframe 完成 SSO 桥接。
+ * 安全边界：不记录令牌、认证响应或完整跳转地址；组件卸载时终止倒计时和迟到的会话桥接回调。
  */
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import './LoginView.css'
-import loginHero from '@/assets/login-hero.jpg'
+import loginHero from '@/assets/login-hero.webp'
+import loginHeroFallback from '@/assets/login-hero-fallback.jpg'
 import AgreementModal from '@/components/auth/AgreementModal'
 import AuthActionModal, { type AuthActionMode } from '@/components/auth/AuthActionModal'
 import {
@@ -29,7 +29,11 @@ import { useToast } from '@/composables/useToast'
 import { listBanners } from '@/api/banners'
 import { useSwr } from '@/composables/useSwr' // 复用首页同一套 SWR 缓存(先返缓存秒出、后台刷新)
 import { isPreloaded } from '@/utils/mediaPreload'
+import { logger } from '@/observability/openobserve-logger'
+import { createLoginBridgeDiagnostic, type LoginBridgeWarningReason } from '@/utils/loginObservability'
+import { hasConfiguredDevBackend } from '@/utils/devBackend'
 
+/** 短信登录前的人机验证码会话状态。 */
 interface CaptchaState {
   id: string
   image: string
@@ -43,6 +47,25 @@ const IMAGE_AUTOPLAY_MS = 3000
 // 接口无数据时的兜底标题(保持原静态四项)
 const NAV_ITEMS = ['食品饮料', '生活服务', '餐饮美食', '丽人服务']
 
+/** 只上报脱敏后的登录桥接诊断，不记录令牌或完整跳转地址。 */
+function reportLoginBridgeWarning(
+  reason: LoginBridgeWarningReason,
+  oauthStart: unknown,
+  authResult: unknown,
+  navigationUrl: unknown,
+) {
+  // 诊断信息由专用工具脱敏；开发环境输出控制台，生产环境才上报可观测平台。
+  const diagnostic = createLoginBridgeDiagnostic({ reason, oauthStart, authResult, navigationUrl })
+
+  if (import.meta.env.DEV) {
+    console.warn('[login] session bridge warning', diagnostic)
+    return
+  }
+
+  logger.warn('login_session_bridge_warning', diagnostic)
+}
+
+/** 渲染密码/短信登录，并把认证结果安全交给全局会话。 */
 export default function LoginView() {
   const navigate = useNavigate()
   // 「返回」写死:始终回到开屏页 /welcome。
@@ -52,7 +75,7 @@ export default function LoginView() {
   const { showToast, clearToast } = useToast()
   const { handleLoginSuccess } = useAuth()
 
-  const hasRemoteBackend = Boolean(import.meta.env.VITE_ZZH_REMOTE_ORIGIN)
+  const hasRemoteBackend = hasConfiguredDevBackend()
 
   // 左侧大图轮播:数据来自 /api/v1/banners?slug=login。useSwr 负责缓存秒出 + 后台刷新。
   const { data: loginBanners } = useSwr(LOGIN_BANNERS_CACHE_KEY, () => listBanners('login'), { fallback: [] })
@@ -81,6 +104,8 @@ export default function LoginView() {
   const authStartRef = useRef<any>(null)
   const authStartPromiseRef = useRef<Promise<any> | null>(null)
   const codeTimerRef = useRef<number | null>(null)
+  const loginFlowSequenceRef = useRef(0)
+  const silentBridgeCleanupRef = useRef<() => void>(() => undefined)
 
   const credentialLabel = loginMode === 'password' ? '密码' : '验证码'
   const codeButtonText = codeCountdown > 0 ? `${codeCountdown}s后重发` : '获取验证码'
@@ -100,6 +125,11 @@ export default function LoginView() {
   function normalizeMobile(value: string) {
     return value.replace(/\s/g, '')
   }
+  // 短信验证码只能发送到中国大陆手机号；密码登录仍允许后端支持的账号标识。
+  // 与 ChangePasswordModal / AuthActionModal 现有规则保持一致。
+  function isValidSmsMobile(value: string) {
+    return /^1\d{10}$/.test(value)
+  }
   // 登录成功后的 SSO 回跳地址:直接落到首页。
   // 不能用 `${origin}/`,根路径会被路由重定向到开屏页 /welcome(详见 router/index.tsx 的 index 路由)。
   function getRedirectTo() {
@@ -110,8 +140,14 @@ export default function LoginView() {
   // (authorize 地址同源经代理,cookie 共享),期间轮询会话,全程不弹出 DeepAuth 页;
   // ③ 静默被拦/超时 → 兜底回退到可见重定向,保证一定能登录。
   async function handleLoginFlowComplete(oauth: any, authResult?: any) {
+    // 每次登录生成独立序号；旧流程即使晚返回，也不能再更新提示、会话或页面位置。
+    silentBridgeCleanupRef.current()
+    silentBridgeCleanupRef.current = () => undefined
+    const flowSequence = ++loginFlowSequenceRef.current
+    const isFlowActive = () => loginFlowSequenceRef.current === flowSequence
     markAuthSessionExpected()
     if (import.meta.env.DEV && !hasRemoteBackend) {
+      if (!isFlowActive()) return
       setNoticeMessage('登录成功', 'success')
       handleLoginSuccess()
       return
@@ -120,6 +156,7 @@ export default function LoginView() {
     const trySession = async () => {
       try {
         const session = await getAuthenticatedSession()
+        if (!isFlowActive()) return false
         setNoticeMessage('登录成功', 'success')
         handleLoginSuccess(session)
         return true
@@ -131,10 +168,11 @@ export default function LoginView() {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (await trySession()) return
       await new Promise((resolve) => setTimeout(resolve, 300))
+      if (!isFlowActive()) return
     }
     const navUrl = getAuthNavigationUrl(oauth, authResult)
     if (!navUrl || navUrl === '/') {
-      console.warn('[login] 取会话失败且无 SSO 跳转地址 navUrl=%o', navUrl, { authResult, oauth })
+      reportLoginBridgeWarning('navigation_url_missing', oauth, authResult, navUrl)
       setNoticeMessage('登录失败:未获取到会话,且缺少 SSO 跳转地址,请稍后重试或联系管理员', 'error')
       return
     }
@@ -146,15 +184,25 @@ export default function LoginView() {
       iframe.src = navUrl
       document.body.appendChild(iframe)
       let settled = false
+      let pollTimer = 0
       const finish = (ok: boolean) => {
         if (settled) return
         settled = true
+        if (pollTimer) window.clearTimeout(pollTimer)
         iframe.remove()
+        if (silentBridgeCleanupRef.current === cancel) {
+          silentBridgeCleanupRef.current = () => undefined
+        }
         resolve(ok)
       }
+      const cancel = () => finish(false)
+      silentBridgeCleanupRef.current = cancel
       const deadline = Date.now() + 6000
       const poll = async () => {
-        if (settled) return
+        if (settled || !isFlowActive()) {
+          finish(false)
+          return
+        }
         if (await trySession()) {
           finish(true)
           return
@@ -163,13 +211,13 @@ export default function LoginView() {
           finish(false)
           return
         }
-        setTimeout(poll, 500)
+        pollTimer = window.setTimeout(poll, 500)
       }
-      setTimeout(poll, 700) // 给 iframe 一点时间跑完重定向链
+      pollTimer = window.setTimeout(poll, 700) // 给 iframe 一点时间跑完重定向链
     })
-    if (silentOk) return
+    if (!isFlowActive() || silentOk) return
     // ③ 静默失败(被 X-Frame-Options 拦截 / 超时)→ 兜底可见重定向,保证能登录
-    console.warn('[login] 静默会话桥接失败/超时,回退可见重定向:', navUrl)
+    reportLoginBridgeWarning('silent_bridge_unavailable', oauth, authResult, navUrl)
     window.location.href = navUrl
   }
 
@@ -195,6 +243,7 @@ export default function LoginView() {
   }
 
   async function ensureAuthStart() {
+    // 缓存进行中的 OAuth start Promise，避免发送验证码与提交登录并发创建不同 state。
     if (authStartRef.current) return authStartRef.current
     if (!authStartPromiseRef.current) {
       authStartPromiseRef.current = startOAuth({ redirectTo: getRedirectTo() })
@@ -236,10 +285,15 @@ export default function LoginView() {
   }
 
   async function requestCode() {
+    // 先做本地校验，再取得 OAuth 上下文并发送短信；验证码挑战失败时刷新图片供用户重试。
     if (codeCountdown > 0) return
     const mobile = normalizeMobile(phone)
     if (!mobile) {
       setLoginErrors((prev) => ({ ...prev, phone: '请输入手机号' }))
+      return
+    }
+    if (!isValidSmsMobile(mobile)) {
+      setLoginErrors((prev) => ({ ...prev, phone: '请输入正确的手机号' }))
       return
     }
     if (captcha.image && !captcha.answer.trim()) {
@@ -279,6 +333,9 @@ export default function LoginView() {
     if (!mobile) {
       nextErrors.phone = '请输入手机号'
       hasError = true
+    } else if (loginMode === 'sms' && !isValidSmsMobile(mobile)) {
+      nextErrors.phone = '请输入正确的手机号'
+      hasError = true
     }
     if (!credential) {
       nextErrors[loginMode === 'password' ? 'password' : 'code'] = `请输入${credentialLabel}`
@@ -307,6 +364,7 @@ export default function LoginView() {
     }
 
     try {
+      // 账号切换必须先清理旧业务会话，再创建本次 OAuth state，避免登录后仍读到上一账号。
       // 换账号关键：先登出旧业务会话，否则登录后立即 getSession() 会读回旧账号。
       // 必须在 oauth-start 之前，否则会清掉本次 OAuth 的 state 导致回调 400。
       await clearExistingSession()
@@ -379,8 +437,13 @@ export default function LoginView() {
   }
 
   useEffect(() => {
-    // 仅卸载时清理倒计时定时器
-    return () => clearCodeTimer()
+    // 卸载时同时终止短信倒计时和静默 SSO 桥接，防止离开登录页后迟到回调把用户强制导航回首页。
+    return () => {
+      clearCodeTimer()
+      loginFlowSequenceRef.current += 1
+      silentBridgeCleanupRef.current()
+      silentBridgeCleanupRef.current = () => undefined
+    }
   }, [])
 
   // 带推广码进站(分享链接 /login?invite_code=…):属新用户场景,直接弹出注册框,省掉手点「免费注册」。
@@ -440,7 +503,11 @@ export default function LoginView() {
   return (
     <main className="zlogin">
       {/* 始终铺静态 login-hero 背景图:既是无数据时的兜底,也是 banner 图/视频加载失败时透出的底图。 */}
-      <aside className="zlogin-hero" style={{ backgroundImage: `url(${loginHero})` }}>
+      <aside className="zlogin-hero">
+        <picture className="zlogin-hero-fallback" aria-hidden="true">
+          <source srcSet={loginHero} type="image/webp" />
+          <img src={loginHeroFallback} alt="" fetchPriority="high" decoding="async" />
+        </picture>
         {/* 大图媒体:有 banner 数据时按当前幻灯片展示(图=图层,视频=播放并播完切下一张);
             加载失败时:多张→切下一张,单张→隐藏(透出静态底图)。 */}
         {hasBanners && activeBanner && (

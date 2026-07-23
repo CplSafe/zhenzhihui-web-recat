@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom'
 import { useUiStore } from '@/stores/ui'
 import './ComingSoonDialog.css'
 
+/** 根据全局开关挂载待开放弹窗，并统一处理遮罩、按钮和 Esc 关闭。 */
 export default function ComingSoonDialog() {
   const open = useUiStore((s) => s.comingSoonOpen)
   const close = useUiStore((s) => s.closeComingSoon)
@@ -26,7 +27,13 @@ export default function ComingSoonDialog() {
 
   return createPortal(
     <div className="coming-soon-mask" onClick={close}>
-      <div className="coming-soon-card" role="dialog" aria-label="功能待开放" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="coming-soon-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="功能待开放"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="coming-soon-icon" aria-hidden="true">
           🚧
         </div>

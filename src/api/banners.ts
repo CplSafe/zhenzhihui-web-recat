@@ -3,8 +3,9 @@
  * 返回标准业务信封 { code, message, data: Banner[] }。media_type 区分图片 / 视频。
  * slug 区分使用位置:首页传 'home',登录页传 'login'。
  */
-import { isSafeMediaUrl } from '@/utils/urlSafety'
+import { isSafeMediaUrl, sanitizeNavigationUrl } from '@/utils/urlSafety'
 
+/** 首页或登录页轮播位的标准化展示数据。 */
 export interface Banner {
   id: number
   title: string
@@ -17,6 +18,10 @@ export interface Banner {
   position: number
 }
 
+/**
+ * 按展示位 slug 读取轮播图，并过滤停用项及不安全媒体地址。
+ * 轮播是非关键内容，网络或解析失败时返回空列表，不阻断页面。
+ */
 export async function listBanners(slug?: string): Promise<Banner[]> {
   // slug 指定使用位置(home / login),后端按位置返回对应轮播数据。
   const query = slug ? `?slug=${encodeURIComponent(slug)}` : ''
@@ -48,7 +53,7 @@ export async function listBanners(slug?: string): Promise<Banner[]> {
         description: String(b?.description || '').trim(),
         mediaUrl: String(b?.image_url || b?.imageUrl || b?.media_url || b?.url || '').trim(),
         mediaType: String(b?.media_type || b?.mediaType || '').toLowerCase() === 'video' ? 'video' : 'image',
-        linkUrl: String(b?.link_url || b?.linkUrl || '').trim(),
+        linkUrl: sanitizeNavigationUrl(String(b?.link_url || b?.linkUrl || '').trim()),
         position: Number(b?.position || 0),
       }),
     )

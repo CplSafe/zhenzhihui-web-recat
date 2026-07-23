@@ -10,6 +10,7 @@
  */
 import { useEffect, useState } from 'react'
 
+/** 全局素材预览弹窗所需的最小状态。 */
 export interface AssetPreviewState {
   visible: boolean
   /** 当前预览的素材卡片列表 */
@@ -28,12 +29,15 @@ let sharedPreviewState: AssetPreviewState = {
   activeIndex: 0,
 }
 
+/** 所有使用该 Hook 的组件订阅者。 */
 const subscribers = new Set<() => void>()
 
+/** 通知订阅组件重新读取共享预览状态。 */
 function notify() {
   subscribers.forEach((fn) => fn())
 }
 
+/** 原子替换共享状态并广播变更。 */
 function setState(next: AssetPreviewState) {
   sharedPreviewState = next
   notify()
@@ -47,12 +51,14 @@ function closePreviewSilent() {
   setState({ visible: false, items: [], activeIndex: 0 })
 }
 
+/** 在不依赖组件闭包的情况下切换到上一项。 */
 function goPrevSilent() {
   if (sharedPreviewState.activeIndex > 0) {
     setState({ ...sharedPreviewState, activeIndex: sharedPreviewState.activeIndex - 1 })
   }
 }
 
+/** 在不依赖组件闭包的情况下切换到下一项。 */
 function goNextSilent() {
   if (sharedPreviewState.activeIndex < sharedPreviewState.items.length - 1) {
     setState({ ...sharedPreviewState, activeIndex: sharedPreviewState.activeIndex + 1 })
@@ -64,8 +70,10 @@ function goNextSilent() {
 // ============================================================================
 
 let globalKeyHandler: ((e: KeyboardEvent) => void) | null = null
+/** 当前挂载的 Hook 实例数，用于决定何时移除共享键盘监听。 */
 let handlerCount = 0
 
+/** 首个订阅者挂载时注册一次全局预览快捷键。 */
 function ensureGlobalKeyboard() {
   handlerCount += 1
   if (globalKeyHandler) return
@@ -84,6 +92,7 @@ function ensureGlobalKeyboard() {
   window.addEventListener('keydown', globalKeyHandler)
 }
 
+/** 最后一个订阅者卸载后移除全局快捷键。 */
 function teardownGlobalKeyboard() {
   handlerCount = Math.max(0, handlerCount - 1)
   if (handlerCount > 0 || !globalKeyHandler) return
@@ -95,6 +104,7 @@ function teardownGlobalKeyboard() {
 // Hook 入口
 // ============================================================================
 
+/** 返回共享素材预览状态及打开、关闭、前后切换动作。 */
 export function useAssetPreview() {
   // 订阅模块级共享状态，使组件随状态变化重渲染。
   const [, forceRender] = useState(0)

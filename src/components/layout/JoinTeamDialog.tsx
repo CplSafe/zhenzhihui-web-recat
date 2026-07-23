@@ -2,14 +2,16 @@
  * JoinTeamDialog — 加入团队弹窗
  * 输入邀请码加入已有工作空间/团队。
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import joinTeamIcon from '@/img/image copy.png'
 import './JoinTeamDialog.css'
 
+/** 提交给全局加入空间流程的已清理邀请码。 */
 interface JoinTeamSubmitPayload {
   inviteCode: string
 }
 
+/** 弹窗开关、提交状态及父级处理回调。 */
 interface JoinTeamDialogProps {
   open?: boolean
   loading?: boolean
@@ -17,10 +19,12 @@ interface JoinTeamDialogProps {
   onSubmit?: (payload: JoinTeamSubmitPayload) => void
 }
 
+/** 收集并规范化团队邀请码；真正加入、切换空间和错误处理由全局包装组件负责。 */
 export default function JoinTeamDialog(props: JoinTeamDialogProps) {
   const { open = false, loading = false } = props
 
   const [inviteCode, setInviteCode] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const inviteCodeTrimmed = useMemo(() => inviteCode.trim(), [inviteCode])
   const canSubmit = Boolean(inviteCodeTrimmed) && !loading
@@ -29,6 +33,7 @@ export default function JoinTeamDialog(props: JoinTeamDialogProps) {
   useEffect(() => {
     if (!open) return
     setInviteCode('')
+    inputRef.current?.focus()
   }, [open])
 
   // Esc 关闭。
@@ -40,6 +45,7 @@ export default function JoinTeamDialog(props: JoinTeamDialogProps) {
     return () => document.removeEventListener('keydown', handleKeydown)
   }, [open, props])
 
+  // 去除粘贴邀请码时夹带的空白，避免肉眼一致的编码因格式字符提交失败。
   function submit() {
     if (!canSubmit) return
     props.onSubmit?.({
@@ -70,8 +76,14 @@ export default function JoinTeamDialog(props: JoinTeamDialogProps) {
           <label className="jt-field">
             <span className="jt-label">邀请码</span>
             <input
+              ref={inputRef}
               value={inviteCode}
               onChange={(e) => setInviteCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                e.preventDefault()
+                submit()
+              }}
               className="jt-input"
               type="text"
               disabled={loading}
@@ -87,12 +99,7 @@ export default function JoinTeamDialog(props: JoinTeamDialogProps) {
         </div>
 
         <footer className="jt-actions">
-          <button
-            type="button"
-            className="jt-btn jt-btn-cancel"
-            disabled={loading}
-            onClick={() => props.onClose?.()}
-          >
+          <button type="button" className="jt-btn jt-btn-cancel" disabled={loading} onClick={() => props.onClose?.()}>
             取消
           </button>
           <button type="button" className="jt-btn jt-btn-confirm" disabled={!canSubmit} onClick={submit}>

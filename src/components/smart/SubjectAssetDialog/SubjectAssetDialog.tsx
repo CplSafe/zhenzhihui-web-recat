@@ -8,6 +8,7 @@ import { fileToDataUrl } from '@/utils/imageFile'
 import AiBadge from '@/components/common/AiBadge'
 import styles from './SubjectAssetDialog.module.less'
 
+/** 主体素材弹窗的当前版本、参考图、生成能力和受控回调。 */
 interface SubjectAssetDialogProps {
   open: boolean
   name: string
@@ -32,6 +33,7 @@ interface SubjectAssetDialogProps {
   onUpload?: (file: File) => void
 }
 
+/** 管理同名主体的提示词、参考图和生成版本，并把最终选择同步到所有同名主体。 */
 export default function SubjectAssetDialog({
   open,
   name,
@@ -56,8 +58,21 @@ export default function SubjectAssetDialog({
   const [carryCurrent, setCarryCurrent] = useState(false) // 携带当前图(修改)/ 不带(重新生成)
   const [picker, setPicker] = useState<null | 'ref' | 'use'>(null) // 项目图片选择器目标
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
   const uploadModeRef = useRef<'version' | 'ref'>('version')
   const autoRef = useRef(false)
+  const generatingRef = useRef(false)
+  const generationEpochRef = useRef(0)
+
+  useEffect(() => {
+    if (!open) return
+    dialogRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose, open])
 
   // 触发文件上传:mode=version → onUpload(新版本);mode=ref → 设为参考图
   const triggerUpload = (mode: 'version' | 'ref') => {
@@ -79,6 +94,9 @@ export default function SubjectAssetDialog({
   useEffect(() => {
     if (!open) {
       autoRef.current = false
+      generationEpochRef.current += 1
+      generatingRef.current = false
+      setGenerating(false)
       return
     }
     let cancelled = false
@@ -107,18 +125,27 @@ export default function SubjectAssetDialog({
     })()
     return () => {
       cancelled = true
+      generationEpochRef.current += 1
+      generatingRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  // 生成 epoch 隔离关闭/重开后的旧请求，避免上一次主体结果结束时错误解除新一次加载态。
   const runGen = async (p: string) => {
-    if (generating) return
+    if (generatingRef.current) return
     if (!p.trim()) return
+    const epoch = generationEpochRef.current + 1
+    generationEpochRef.current = epoch
+    generatingRef.current = true
     setGenerating(true)
     try {
       await onGenerate(p, { refImageUrls: refImages.length ? refImages : undefined, carryCurrent })
     } finally {
-      setGenerating(false)
+      if (generationEpochRef.current === epoch) {
+        generatingRef.current = false
+        setGenerating(false)
+      }
     }
   }
 
@@ -131,7 +158,7 @@ export default function SubjectAssetDialog({
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className={styles.sad} role="dialog" aria-label="素材管理">
+      <div ref={dialogRef} className={styles.sad} role="dialog" aria-modal="true" aria-label="素材管理" tabIndex={-1}>
         <div className={styles.sadHead}>
           <span className={styles.sadTitle}>
             素材 · {name}
@@ -177,6 +204,7 @@ export default function SubjectAssetDialog({
               className={`${styles.sadPrompt} ${styles.sadPromptEditing}`}
               rows={3}
               autoFocus
+              aria-label="生成提示词"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onBlur={() => setEditingPrompt(false)}
@@ -326,7 +354,7 @@ export default function SubjectAssetDialog({
                   ? `选择参考图(可多选${refImages.length ? `,已选${refImages.length}张` : ''})`
                   : '选择要使用的图'}
                 {picker === 'ref' ? (
-                  <button type="button" onClick={() => setPicker(null)}>
+                  <button type="button" aria-label="完成选择参考图" onClick={() => setPicker(null)}>
                     完成
                   </button>
                 ) : (
@@ -359,6 +387,7 @@ export default function SubjectAssetDialog({
                           key={i}
                           type="button"
                           className={styles.sadPickerItem}
+                          aria-label={`选择${src === 'upload' ? '我上传的图' : 'AI 生成的图'} ${i + 1}`}
                           style={
                             picker === 'ref' && refImages.includes(p.url)
                               ? { outline: '2px solid #5767e5', outlineOffset: '-2px' }

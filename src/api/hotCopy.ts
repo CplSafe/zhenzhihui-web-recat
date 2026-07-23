@@ -9,24 +9,33 @@ import {
   waitForAiTask,
   uploadAssetFile,
   getModelForOperation,
-  resolveTaskModel,
   estimateAiTaskCost,
+  getAiTaskId,
 } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
+import { readAiTaskProgress } from '@/utils/taskProgress'
 
+/** 爆款复制的模型筛选、任务超时与模型预热缓存策略。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
+/** 爆款复制视频生成任务的最大等待时间。 */
 const HOT_COPY_VIDEO_TIMEOUT_MS = 60 * 60 * 1000
+/** 正式提交前模型查询的超时时间。 */
 const HOT_COPY_MODEL_LOOKUP_TIMEOUT_MS = 8000
+/** 按工作空间预热模型的缓存有效期。 */
 const HOT_COPY_MODEL_CACHE_TTL_MS = 5 * 60 * 1000
+/** 已成功解析的爆款复制模型缓存。 */
 const hotCopyModelCache = new Map()
+/** 正在进行的模型查询单飞 Promise 缓存。 */
 const hotCopyModelPromises = new Map()
 
+/** 将工作空间 ID 归一化为模型缓存键。 */
 function hotCopyModelCacheKey(workspaceId: number): string {
   return String(Math.floor(Number(workspaceId) || 0))
 }
 
+/** 为模型查询增加独立超时上限，结束后始终清理计时器。 */
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null
   return Promise.race([
@@ -39,6 +48,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   })
 }
 
+/** 作废指定工作空间的爆款复制模型缓存和在途查询。 */
 export function invalidateHotCopyVideoModel(workspaceId: number): void {
   const key = hotCopyModelCacheKey(workspaceId)
   hotCopyModelCache.delete(key)
@@ -87,6 +97,46 @@ export async function uploadHotCopyAsset(workspaceId: number, file: File): Promi
   return Number(out?.asset?.id || 0) || 0
 }
 
+/** 按模型 schema 构建 video.replicate 参数，确保时长、比例和声音与正式提交一致。 */
+function buildReplicateVideoParams(
+  model: any,
+  args: { durationSec?: number; sourceVideoDurationSec?: number; ratio?: string },
+): Record<string, any> {
+  return {
+    generate_audio: true,
+    ...buildVideoGenerationParams(model, {
+      duration: normalizeSeedanceDuration(args.durationSec || 10),
+      sourceVideoDuration: args.sourceVideoDurationSec,
+      resolution: '720p',
+      ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
+      generateAudio: true,
+    }),
+  }
+}
+
+/** 解析已完成任务的视频地址；资产尚在入库时抛出可恢复的待就绪错误。 */
+async function resolveCompletedHotCopyVideo(
+  workspaceId: number,
+  completed: any,
+  taskId: number,
+  pendingMessage: string,
+): Promise<{ url: string; assetId: number }> {
+  try {
+    const result = await resolveTaskVideoResult(workspaceId, completed, taskId)
+    if (result.url) return result
+  } catch (cause) {
+    const error: any = new Error(pendingMessage)
+    error.code = 'TASK_MEDIA_PENDING'
+    error.hotCopyTaskId = taskId
+    error.cause = cause
+    throw error
+  }
+  const error: any = new Error(pendingMessage)
+  error.code = 'TASK_MEDIA_PENDING'
+  error.hotCopyTaskId = taskId
+  throw error
+}
+
 /**
  * 爆款做同款。返回 { url, assetId }(成片视频)。
  * @param videoAssetId   源视频 asset_id(role=video)
@@ -106,8 +156,12 @@ export async function replicateHotVideo(args: {
   /** 页面空闲时预热得到的模型；缺失时仍按原逻辑实时查询。 */
   modelVersion?: any
   signal?: AbortSignal
+  /** 持久化 generation/context 对应的稳定幂等键。 */
+  idempotencyKey?: string
   /** 任务创建后回调 task_id:供前端持久化,刷新/切换后用 awaitHotVideoResult 续轮询(不丢在途生成) */
   onTask?: (taskId: number) => void
+  /** 后端任务返回的真实进度；后端未提供进度时不回调。 */
+  onProgress?: (progress: number) => void
 }): Promise<{ url: string; assetId: number }> {
   const products = (args.productAssetIds || []).filter((n) => Number(n) > 0).slice(0, 9)
   const inputAssets = [
@@ -126,39 +180,41 @@ export async function replicateHotVideo(args: {
       operationCode: 'video.replicate',
       modelVersionId: model.id,
       modelVersion: model,
+      idempotencyKey: String(args.idempotencyKey || '').trim() || undefined,
+      signal: args.signal,
       prompt: args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。',
       inputAssets,
       // 时长/比例按用户在入口的选择下发 —— 与智能成片 generateFullVideo 同一写法:始终走
       // buildVideoGenerationParams(其内部按模型 schema 决定字段名/取值;无 schema 时也下发标准
       // duration/resolution/ratio,保证用户所选时长/比例生效)。source_video_duration 仅在模型 schema
       // 声明时下发,用于「按源视频真实时长计费」,与 duration 不冲突。
-      params: (m: any) => ({
-        generate_audio: true, // 兜底:部分模型 schema 没声明 audio 字段会被丢弃 → 无声
-        ...buildVideoGenerationParams(m, {
-          duration: normalizeSeedanceDuration(args.durationSec || 10),
-          sourceVideoDuration: args.sourceVideoDurationSec,
-          resolution: '720p',
-          ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
-          generateAudio: true,
-        }),
-      }),
+      params: buildReplicateVideoParams(model, args),
     })
   } catch (error) {
     // 模型可能刚被管理员关闭或套餐发生变化；本次仍按原错误返回，下次点击重新查询，避免缓存放大故障。
     invalidateHotCopyVideoModel(args.workspaceId)
     throw error
   }
-  args.onTask?.(Number(task?.id || 0) || 0)
+  const taskId = getAiTaskId(task)
+  if (!taskId) throw new Error('爆款复制任务创建后未返回任务 ID')
+  args.onTask?.(taskId)
   const completed = await waitForAiTask({
     workspaceId: args.workspaceId,
     task,
     intervalMs: 4000,
     timeoutMs: HOT_COPY_VIDEO_TIMEOUT_MS,
     signal: args.signal,
+    onPoll: (currentTask: any) => {
+      const progress = readAiTaskProgress(currentTask)
+      if (progress !== undefined) args.onProgress?.(progress)
+    },
   })
-  const { url, assetId } = await resolveTaskVideoResult(args.workspaceId, completed, (task as any)?.id)
-  if (!url) throw new Error('复刻任务已完成,暂未返回可预览地址')
-  return { url, assetId }
+  return resolveCompletedHotCopyVideo(
+    args.workspaceId,
+    completed,
+    getAiTaskId(completed) || taskId,
+    '复刻任务已完成，视频仍在入库，请稍后自动重试',
+  )
 }
 
 /**
@@ -169,17 +225,27 @@ export async function awaitHotVideoResult(args: {
   workspaceId: number
   taskId: number
   signal?: AbortSignal
+  onProgress?: (progress: number) => void
 }): Promise<{ url: string; assetId: number }> {
+  const taskId = getAiTaskId({ id: args.taskId })
+  if (!taskId) throw new Error('爆款复制任务 ID 无效')
   const completed = await waitForAiTask({
     workspaceId: args.workspaceId,
-    task: { id: args.taskId, status: 'processing' },
+    task: { id: taskId, status: 'processing' },
     intervalMs: 4000,
     timeoutMs: HOT_COPY_VIDEO_TIMEOUT_MS,
     signal: args.signal,
+    onPoll: (currentTask: any) => {
+      const progress = readAiTaskProgress(currentTask)
+      if (progress !== undefined) args.onProgress?.(progress)
+    },
   })
-  const { url, assetId } = await resolveTaskVideoResult(args.workspaceId, completed, args.taskId)
-  if (!url) throw new Error('视频任务已完成,暂未返回可预览地址')
-  return { url, assetId }
+  return resolveCompletedHotCopyVideo(
+    args.workspaceId,
+    completed,
+    taskId,
+    '视频任务已完成，视频仍在入库，请稍后自动重试',
+  )
 }
 
 /**
@@ -193,23 +259,8 @@ export async function estimateReplicateCost(args: {
   durationSec?: number
   modelPlanCandidates?: string[]
 }): Promise<any> {
-  const pick = (kw: string[]) =>
-    resolveTaskModel({
-      capability: 'video',
-      operationCode: 'video.replicate',
-      preferredModelKeywords: kw,
-      workspaceId: args.workspaceId, // 查模型必带 workspace_id,否则后端返回空列表
-    }).catch(() => null)
-  let model = await pick(VIDEO_MODEL_KEYWORDS)
-  if (!model?.id) model = await pick([])
-  if (!model?.id) throw new Error('暂无可用的爆款复刻模型')
-  const params = buildVideoGenerationParams(model, {
-    duration: normalizeSeedanceDuration(args.durationSec || 10),
-    sourceVideoDuration: args.sourceVideoDurationSec,
-    resolution: '720p',
-    ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
-    generateAudio: true,
-  })
+  const model = await preloadHotCopyVideoModel(args)
+  const params = buildReplicateVideoParams(model, args)
   return estimateAiTaskCost({
     workspaceId: args.workspaceId,
     modelVersionId: model.id,

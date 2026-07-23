@@ -9,14 +9,14 @@
  *
  * 统一出图:提示词 + 选中的素材(refUrls) + 是否携带当前分镜图(carryCurrent) → onRegenerateImage。
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { Shot } from '../ScriptStoryboardTable'
 import AiBadge from '@/components/common/AiBadge'
 import InlineEdit from '@/components/common/InlineEdit'
 import { useToast } from '@/composables/useToast'
 import styles from './ShotEditPanel.module.less'
 
-// 缩略图:签名URL过期等导致加载失败时回退占位,不显示破图
+/** 缩略图加载失败时回退占位，避免签名 URL 过期后显示浏览器破图。 */
 function Thumb({ src, alt, fallback }: { src?: string; alt?: string; fallback?: React.ReactNode }) {
   const [broken, setBroken] = useState(false)
   if (!src || broken) return <>{fallback ?? <span>—</span>}</>
@@ -40,6 +40,7 @@ const ZoomIcon = (
   </svg>
 )
 
+/** 当前镜头、布局模式及即时保存/文本润色回调。 */
 interface ShotEditPanelProps {
   /** 额外类名:父组件控制布局(如 VideoStage 收窄面板宽) */
   className?: string
@@ -53,11 +54,20 @@ interface ShotEditPanelProps {
   onPolishText?: (kind: 'line' | 'subtitle' | 'sound', text: string) => Promise<string>
 }
 
+/** 去掉素材主体标签开头的 @，用于普通文本显示。 */
 const stripAt = (t: string) =>
   String(t || '')
     .replace(/^@/, '')
     .trim()
 
+/** 为可点击非 button 元素补齐 Enter/空格键激活能力。 */
+const activateWithKeyboard = (event: KeyboardEvent<HTMLElement>, action: () => void) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  action()
+}
+
+/** 展示当前分镜及历史版本，编辑素材引用与台词字段，并隔离切镜头后的旧润色响应。 */
 export default function ShotEditPanel({
   shot,
   regenerating,
@@ -67,6 +77,16 @@ export default function ShotEditPanel({
   onPolishText,
 }: ShotEditPanelProps) {
   const { showToast } = useToast()
+  const activeShotIdRef = useRef(shot.id)
+  const mountedRef = useRef(false)
+  activeShotIdRef.current = shot.id
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const current = shot.image || ''
   // 兼容旧草稿(字符串)与新结构({url, assetId})
@@ -78,11 +98,16 @@ export default function ShotEditPanel({
     !compact && onPolishText
       ? async () => {
           if (!value.trim()) return
+          const requestedShotId = shot.id
           try {
             const out = await onPolishText(kind, value)
-            if (out) onPatch({ [key]: out })
+            if (out && mountedRef.current && activeShotIdRef.current === requestedShotId) {
+              onPatch({ [key]: out })
+            }
           } catch (e: any) {
-            showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')
+            if (mountedRef.current && activeShotIdRef.current === requestedShotId) {
+              showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')
+            }
           }
         }
       : undefined
@@ -91,6 +116,7 @@ export default function ShotEditPanel({
   const texts = (
     <div className={`${styles.seditTexts}${compact ? ' ' + styles.seditTextsCol : ''}`}>
       <TextField
+        key={`${shot.id}:line`}
         title="台词修改"
         value={shot.line || ''}
         placeholder={`${shot.no}的台词/旁白…`}
@@ -98,6 +124,7 @@ export default function ShotEditPanel({
         onPolish={makePolish('line', shot.line || '', 'line')}
       />
       <TextField
+        key={`${shot.id}:subtitle`}
         title="字幕修改"
         value={shot.subtitle || ''}
         placeholder={`${shot.no}的字幕…`}
@@ -105,6 +132,7 @@ export default function ShotEditPanel({
         onPolish={makePolish('subtitle', shot.subtitle || '', 'subtitle')}
       />
       <TextField
+        key={`${shot.id}:sfx`}
         title="音效修改"
         value={shot.sfx || ''}
         placeholder={`${shot.no}的音效…`}
@@ -122,7 +150,11 @@ export default function ShotEditPanel({
         <div
           className={`${styles.seditCur} ${styles.seditCurSm}${current ? ' ' + styles.seditCurZoom : ''}`}
           onClick={() => current && setBigImg(current)}
+          onKeyDown={(event) => current && activateWithKeyboard(event, () => setBigImg(current))}
           title={current ? '点击放大查看' : ''}
+          role={current ? 'button' : undefined}
+          tabIndex={current ? 0 : undefined}
+          aria-label={current ? '放大当前分镜图' : undefined}
         >
           {current ? (
             <>
@@ -181,6 +213,10 @@ export default function ShotEditPanel({
                     className={`${styles.seMatThumb}${su.image ? ' ' + styles.zoomable : ''}`}
                     title={su.image ? '点击放大查看' : name}
                     onClick={() => su.image && setBigImg(su.image)}
+                    onKeyDown={(event) => su.image && activateWithKeyboard(event, () => setBigImg(su.image!))}
+                    role={su.image ? 'button' : undefined}
+                    tabIndex={su.image ? 0 : undefined}
+                    aria-label={su.image ? `放大素材 ${name || '素材'}` : undefined}
                   >
                     <Thumb
                       src={su.image}
@@ -204,9 +240,14 @@ export default function ShotEditPanel({
             className={`${styles.seditCur}${current && !regenerating ? ' ' + styles.zoomable : ''}`}
             title={current && !regenerating ? '点击放大查看' : ''}
             onClick={() => current && !regenerating && setBigImg(current)}
+            onKeyDown={(event) => current && !regenerating && activateWithKeyboard(event, () => setBigImg(current))}
+            role={current && !regenerating ? 'button' : undefined}
+            tabIndex={current && !regenerating ? 0 : undefined}
+            aria-label={current && !regenerating ? '放大当前分镜图' : undefined}
+            aria-busy={regenerating || undefined}
           >
             {regenerating ? (
-              <span className={styles.seditCurPh}>
+              <span className={styles.seditCurPh} role="status" aria-live="polite">
                 <span className={styles.seditSpin} aria-hidden="true" />
                 生成中…
               </span>
@@ -236,6 +277,7 @@ export default function ShotEditPanel({
                           type="button"
                           className={`${styles.seHistItem}${v.url === current ? ' ' + styles.active : ''}`}
                           onClick={() => pickVersion(v)}
+                          aria-label={`切换到历史版本 V${i + 1}`}
                         >
                           <img src={v.url} alt="" />
                         </button>
@@ -244,10 +286,18 @@ export default function ShotEditPanel({
                           className={styles.seZoom}
                           role="button"
                           title="放大查看"
+                          aria-label={`放大历史版本 V${i + 1}`}
+                          tabIndex={0}
                           onClick={(e) => {
                             e.stopPropagation()
                             setBigImg(v.url)
                           }}
+                          onKeyDown={(event) =>
+                            activateWithKeyboard(event, () => {
+                              event.stopPropagation()
+                              setBigImg(v.url)
+                            })
+                          }
                         >
                           {ZoomIcon}
                         </span>
@@ -287,6 +337,7 @@ export default function ShotEditPanel({
   )
 }
 
+/** 台词、字幕和音效共用的可编辑文本框及可选 AI 润色按钮。 */
 function TextField({
   title,
   value,

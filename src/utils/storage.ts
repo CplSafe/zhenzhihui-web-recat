@@ -27,13 +27,3 @@ export function writeJson(key: string, value: unknown): void {
     /* 忽略存储失败 */
   }
 }
-
-/** 删除键;失败静默忽略。 */
-export function removeKey(key: string): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage?.removeItem(key)
-  } catch {
-    /* 忽略 */
-  }
-}

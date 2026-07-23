@@ -5,6 +5,7 @@
  */
 export const DEFAULT_MODEL_PLAN_CANDIDATES = ['free']
 
+/** 从登录会话及会员信息中按优先级收集模型套餐候选。 */
 export function buildModelPlanCandidatesFromSession(
   authSession,
   workspace,
@@ -37,6 +38,7 @@ export function buildModelPlanCandidatesFromSession(
   return normalizePlanCandidates(candidates, fallback)
 }
 
+/** 从计费套餐响应中提取可用于模型筛选的候选名称。 */
 export function buildModelPlanCandidatesFromBillingPlans(plans = []) {
   const candidates = (Array.isArray(plans) ? plans : [])
     .flatMap((plan) => [plan?.code, plan?.plan_code, plan?.planCode, plan?.name])
@@ -45,6 +47,7 @@ export function buildModelPlanCandidatesFromBillingPlans(plans = []) {
   return normalizePlanCandidates(candidates)
 }
 
+/** 清洗、去重套餐候选；没有有效值时使用兼容回退。 */
 export function normalizePlanCandidates(planCandidates, fallback = DEFAULT_MODEL_PLAN_CANDIDATES) {
   const rawCandidates = Array.isArray(planCandidates) ? planCandidates : [planCandidates]
   const normalized = rawCandidates.flatMap(normalizeModelPlanCandidate).filter(Boolean)
@@ -53,6 +56,7 @@ export function normalizePlanCandidates(planCandidates, fallback = DEFAULT_MODEL
   return [...new Set(candidates)]
 }
 
+/** 将单个套餐名称规范化为模型接口接受的值。 */
 export function normalizeModelPlanCandidate(value) {
   if (!value) {
     return []

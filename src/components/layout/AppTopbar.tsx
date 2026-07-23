@@ -17,11 +17,13 @@ import shareIcon from '@/assets/image copy 2.png'
 import PersonalPanel from './PersonalPanel'
 import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
+import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import './AppTopbar.css'
 
 // 推广码缓存:按用户维度缓存,真正点「分享链接」时才拉一次。
 const cachedReferralCodeByUser = new Map<string, string>()
 
+/** 顶栏在移动端与会员入口上的可选页面级回调。 */
 interface AppTopbarProps {
   /** 提供则在左侧显示汉堡(移动端),点击触发(通常打开侧栏抽屉) */
   onMenu?: () => void
@@ -32,6 +34,7 @@ interface AppTopbarProps {
   onMember?: () => void
 }
 
+/** 汇总会话用户、会员信息、分享链接和个人面板入口，供所有主页面复用。 */
 export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   const navigate = useNavigate()
   const currentUser = useCurrentUser() as any
@@ -42,6 +45,9 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   const workspaceId = useWorkspaceId()
   const loadSubscriptionLabel = useWorkspaceSessionStore((s) => s.loadSubscriptionLabel)
   const [shareLoading, setShareLoading] = useState(false)
+  const shareLoadingRef = useRef(false)
+  const shareRequestRef = useRef(0)
+  const aliveRef = useRef(true)
 
   // 2.1 页面各自挂 AppTopbar、不走旧壳 AppLayout → 平时没人加载订阅/钱包,个人面板会显示 0/0。
   // 按当前工作空间加载一次订阅(含套餐/到期/base_credits)+ 钱包(积分),切空间也刷新。
@@ -59,15 +65,38 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   const boxRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const wasMenuOpenRef = useRef(false)
 
   const userName = useMemo(
     () => currentUser?.nickname || currentUser?.name || currentUser?.username || '用户',
     [currentUser],
   )
   const avatarUrl = useMemo(
-    () => currentUser?.avatar || currentUser?.avatar_url || currentUser?.avatarUrl || '',
-    [currentUser],
+    () =>
+      bindAssetUrlToWorkspace(
+        currentUser?.avatar || currentUser?.avatar_url || currentUser?.avatarUrl || '',
+        workspaceId,
+      ),
+    [currentUser, workspaceId],
   )
+  const shareScope = `${String(currentUser?.id || currentUser?.user_id || currentUser?.mobile || 'anon')}:${Number(workspaceId || 0)}`
+  const shareScopeRef = useRef(shareScope)
+  shareScopeRef.current = shareScope
+
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+      shareRequestRef.current += 1
+    }
+  }, [])
+
+  useEffect(() => {
+    shareRequestRef.current += 1
+    shareLoadingRef.current = false
+    setShareLoading(false)
+    setMenuOpen(false)
+  }, [shareScope])
 
   // 下拉用 portal 渲染到 body,避免被任何祖先的层叠/overflow 截断;打开时按按钮位置定位。
   const toggleMenu = () => {
@@ -82,14 +111,27 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   }
 
   useEffect(() => {
-    if (!menuOpen) return
+    if (!menuOpen) {
+      if (wasMenuOpenRef.current) btnRef.current?.focus()
+      wasMenuOpenRef.current = false
+      return
+    }
+    wasMenuOpenRef.current = true
+    menuRef.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus()
     function onDown(e: PointerEvent) {
       const t = e.target as Node
       if (boxRef.current?.contains(t) || menuRef.current?.contains(t)) return
       setMenuOpen(false)
     }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false)
+    }
     window.addEventListener('pointerdown', onDown, true)
-    return () => window.removeEventListener('pointerdown', onDown, true)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('keydown', onKeyDown)
+    }
   }, [menuOpen])
 
   const handleMember = () => {
@@ -103,25 +145,36 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
   }
 
   // 分享链接:点击时再拉推广码。新用户点开 → /login?invite_code=… → 注册时带上推广码。
+  // 分享码按用户缓存，但异步完成时仍核对用户/工作空间作用域，避免切空间后复制上一空间链接。
   const handleShare = async () => {
-    if (shareLoading) return
+    if (shareLoadingRef.current) return
     const cacheKey = String(currentUser?.id || currentUser?.user_id || currentUser?.mobile || 'anon')
+    const requestId = ++shareRequestRef.current
+    const requestScope = shareScopeRef.current
+    shareLoadingRef.current = true
     setShareLoading(true)
     try {
       let referralCode = cachedReferralCodeByUser.get(cacheKey) || ''
       if (!referralCode && isAuthenticated) {
         referralCode = await getReferralMyCode()
+        if (!aliveRef.current || requestId !== shareRequestRef.current || requestScope !== shareScopeRef.current) return
         if (referralCode) cachedReferralCodeByUser.set(cacheKey, referralCode)
       }
+      if (!aliveRef.current || requestId !== shareRequestRef.current || requestScope !== shareScopeRef.current) return
       const link = referralCode
         ? `${window.location.origin}/login?invite_code=${encodeURIComponent(referralCode)}`
         : window.location.origin
       await navigator.clipboard.writeText(link)
+      if (!aliveRef.current || requestId !== shareRequestRef.current || requestScope !== shareScopeRef.current) return
       showToast(referralCode ? '推广链接已复制' : '分享链接已复制', 'success')
     } catch {
+      if (!aliveRef.current || requestId !== shareRequestRef.current || requestScope !== shareScopeRef.current) return
       showToast('复制失败,请手动复制链接', 'error')
     } finally {
-      setShareLoading(false)
+      if (requestId === shareRequestRef.current) {
+        shareLoadingRef.current = false
+        if (aliveRef.current) setShareLoading(false)
+      }
     }
   }
 
@@ -175,7 +228,8 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
               ref={btnRef}
               type="button"
               className="apptop__user-btn"
-              aria-haspopup="menu"
+              aria-haspopup="dialog"
+              aria-controls="apptop-user-panel"
               aria-expanded={menuOpen}
               onClick={toggleMenu}
             >
@@ -184,6 +238,7 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
                 name={userName}
                 className="apptop__avatar apptop__avatar--img"
                 fallbackClassName="apptop__avatar"
+                alt={`${userName}头像`}
               />
               <span className="apptop__user-name">{userName}</span>
               <span className={`apptop__caret${menuOpen ? ' is-open' : ''}`}>⌄</span>
@@ -196,9 +251,11 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
         menuPos &&
         createPortal(
           <div
+            id="apptop-user-panel"
             ref={menuRef}
             className="apptop__menu apptop__menu--panel"
-            role="menu"
+            role="dialog"
+            aria-label="用户面板"
             style={{ top: menuPos.top, right: menuPos.right }}
           >
             <PersonalPanel onMember={handleMember} onClose={() => setMenuOpen(false)} />

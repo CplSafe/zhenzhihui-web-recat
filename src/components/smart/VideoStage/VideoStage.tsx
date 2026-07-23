@@ -9,20 +9,44 @@
  *  - 片段框下方是「整段视频修改」框(含 AI一键润色,无提交按钮)。
  *  - 底部总按钮:上一步 / 保存视频 / 重新生成视频。重新生成把所有片段修改 + 整段修改合并成一段说明整片重生成。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import type { Shot } from '../ScriptStoryboardTable'
 import { polishText } from '@/api/aiPolish'
 import { useToast } from '@/composables/useToast'
 import { openMemberCenter } from '@/stores/ui'
+import {
+  createEmptyVideoModificationDraft,
+  normalizeVideoModificationDraft,
+  type VideoFrameModification,
+  type VideoModificationDraft,
+} from '@/utils/videoModificationDraft'
+import { seekVideoToDecodedFrame } from '@/utils/videoFrameCapture'
 import VideoLoading from './VideoLoading'
 import styles from './VideoStage.module.less'
 
-// 帧缩略图缓存(模块级):key = `${videoUrl}::${帧数}`。
+/** 一次视频生成或编辑的积分预估与余额可支付状态。 */
+export interface VideoCostEstimate {
+  estimatedCost: number
+  balance: number
+  canAfford: boolean
+}
+
+// 帧缩略图缓存(模块级):key = `${视频地址}::${帧数}::${抓帧实现版本}`。
 // 切步骤再回来 / 切视频版本再切回 时直接复用,避免重复逐秒抓帧(很慢)。
 // 视频较多时限制条目数,避免内存膨胀(超出后淘汰最早的)。
 const FRAME_THUMB_CACHE = new Map<string, string[]>()
+/** 时间轴帧缓存允许保留的视频条目数。 */
 const FRAME_THUMB_CACHE_MAX = 16
-const frameThumbKey = (url: string, count: number) => `${url}::${count}`
+
+/** 抓帧实现版本；算法变化时递增以使旧缓存键自动失效。 */
+const FRAME_THUMB_CAPTURE_VERSION = 3
+
+/** 一次交给浏览器绘制的帧缩略图数量，避免长任务阻塞主线程。 */
+const FRAME_THUMB_RENDER_BATCH_SIZE = 5
+/** 把视频地址、帧数和实现版本组合成不会误复用旧算法结果的缓存键。 */
+const frameThumbKey = (url: string, count: number) => `${url}::${count}::v${FRAME_THUMB_CAPTURE_VERSION}`
+/** 写入时间轴帧缓存，并按最旧插入顺序限制内存条目数。 */
 function putFrameThumbCache(key: string, thumbs: string[]) {
   if (FRAME_THUMB_CACHE.has(key)) FRAME_THUMB_CACHE.delete(key)
   FRAME_THUMB_CACHE.set(key, thumbs)
@@ -30,6 +54,39 @@ function putFrameThumbCache(key: string, thumbs: string[]) {
     const oldest = FRAME_THUMB_CACHE.keys().next().value
     if (oldest === undefined) break
     FRAME_THUMB_CACHE.delete(oldest)
+  }
+}
+
+// 播放器封面单独保留高清首帧，避免把 96px 的时间轴缩略图放大后显示模糊。
+const VIDEO_POSTER_CACHE = new Map<string, string>()
+/** 高清播放器封面的最大缓存条目数。 */
+const VIDEO_POSTER_CACHE_MAX = 8
+/** 缓存播放器高清封面，并淘汰最旧视频条目。 */
+function putVideoPosterCache(url: string, poster: string) {
+  if (VIDEO_POSTER_CACHE.has(url)) VIDEO_POSTER_CACHE.delete(url)
+  VIDEO_POSTER_CACHE.set(url, poster)
+  while (VIDEO_POSTER_CACHE.size > VIDEO_POSTER_CACHE_MAX) {
+    const oldest = VIDEO_POSTER_CACHE.keys().next().value
+    if (oldest === undefined) break
+    VIDEO_POSTER_CACHE.delete(oldest)
+  }
+}
+
+/**
+ * 同步释放原生播放器资源。Firefox 可能持续重试已卸载节点的旧 URL；切换工作空间时主动清空 src，
+ * 可防止卸载后仍发出携带旧 workspace_id 的媒体请求。
+ */
+function releaseVideoPlayer(player: HTMLVideoElement) {
+  try {
+    player.pause()
+  } catch {
+    // 节点可能已经脱离文档或处于浏览器特定错误状态，暂停失败不影响后续清理。
+  }
+  player.removeAttribute('src')
+  try {
+    player.load()
+  } catch {
+    // 即使 load() 不可用，移除 src 也足以断开旧媒体资源。
   }
 }
 
@@ -43,10 +100,13 @@ const VIDEO_TIPS = [
   '选中时间轴上的片段,可以只对这一段提修改意见,描述越具体越好。',
 ]
 
+/** 视频生成舞台的镜头、历史版本、生成队列、修改草稿、估价和页面动作。 */
 interface VideoStageProps {
   shots: Shot[]
   /** 当前整片视频 url */
   videoUrl?: string
+  /** 当前整片视频的稳定资产 ID；用于让修改说明不依赖会刷新的签名 URL。 */
+  videoAssetId?: number
   /** 整片生成中 */
   videoGenerating?: boolean
   /** 生成中的阶段文案(如「人脸脱敏 2/9…」),缺省显示「视频生成中…」 */
@@ -56,9 +116,14 @@ interface VideoStageProps {
   /** 加载动效主标题覆盖(缺省「视频生成中」);如爆款复制传「爆款复制生成中…」 */
   loadingTitle?: string
   /** 提交前积分预估(estimate-cost):展示「预计消耗 X 积分 · 余额 Y」。缺省不显示 */
-  costEstimate?: { estimatedCost: number; balance: number; canAfford: boolean } | null
+  costEstimate?: VideoCostEstimate | null
   costLoading?: boolean
   costError?: string
+  /**
+   * video.edit 的真实后端估价。编辑态不复用 video.generate 估价；
+   * 估价失败时确认按钮保持禁用，避免用户在不知实际预估积分时提交。
+   */
+  onEstimateEditCost?: (note?: string) => Promise<VideoCostEstimate>
   /** 人脸脱敏调试:每镜的输入/输出/模型/状态(开发可见) */
   faceBlurDebug?: {
     no?: string
@@ -80,7 +145,15 @@ interface VideoStageProps {
   pendingGenerations?: { id: string; createdAt?: number; running?: boolean }[]
   /** 仍处于 processing 的历史生成占位数量 */
   pendingVideoCount?: number
+  /** 未提交的修改框、范围和各历史版本说明；父级传入后会随项目草稿持久化。 */
+  modificationDraft?: VideoModificationDraft
+  onModificationDraftChange?: Dispatch<SetStateAction<VideoModificationDraft>>
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
+  /**
+   * 主播放器地址失效时刷新当前视频的临时访问地址。
+   * 返回新地址后播放器会直接重载；未返回或刷新失败时降级为原地址的缓存破坏重试。
+   */
+  onRefreshVideo?: (video: { url: string; assetId: number }) => Promise<{ url: string; assetId: number } | void>
   /**
    * 重新生成 / 确认修改整片。
    * note=对整片/各片段的修改意见(合并成一段);opts.edit=true 表示「确认修改」——
@@ -114,8 +187,41 @@ interface VideoStageProps {
   }
 }
 
+/** 历史区一条排队中或执行中的视频生成占位。 */
 type PendingGenerationItem = { id: string; createdAt?: number; running?: boolean }
 
+type StageVideo = { url: string; assetId: number }
+
+/** 主播放器的两次自动恢复采用短退避，避免同一个媒体错误连续打满接口。 */
+const VIDEO_AUTO_RETRY_DELAYS_MS = [400, 1200] as const
+/** 超过后交给用户显式重试，避免错误媒体无限请求。 */
+const VIDEO_AUTO_RETRY_LIMIT = VIDEO_AUTO_RETRY_DELAYS_MS.length
+
+/** 资产 ID 是稳定标识；仅在任一侧没有资产 ID 时才退回比较 URL。 */
+function isSameStageVideo(left: StageVideo, right: StageVideo) {
+  const leftAssetId = Number(left.assetId || 0)
+  const rightAssetId = Number(right.assetId || 0)
+  if (leftAssetId > 0 && rightAssetId > 0) return leftAssetId === rightAssetId
+  return Boolean(left.url && right.url && left.url === right.url)
+}
+
+/** 用稳定资产 ID 标识逻辑视频；无资产 ID 时才让 URL 决定是否真的切源。 */
+function stageVideoIdentity(video: StageVideo) {
+  const assetId = Number(video.assetId || 0)
+  return assetId > 0 ? `asset:${assetId}` : video.url ? `url:${video.url}` : ''
+}
+
+/** 给同一媒体地址增加一次性查询参数，强制浏览器绕过失败的媒体缓存。 */
+function withVideoRetryToken(url: string, attempt: number) {
+  if (!url || /^(blob:|data:)/i.test(url)) return url
+  const hashIndex = url.indexOf('#')
+  const hash = hashIndex >= 0 ? url.slice(hashIndex) : ''
+  const base = hashIndex >= 0 ? url.slice(0, hashIndex) : url
+  const separator = base.includes('?') ? '&' : '?'
+  return `${base}${separator}__vstage_retry=${attempt}-${Date.now()}${hash}`
+}
+
+/** 将镜头时长文案解析为正秒数，无效时回退 5 秒。 */
 const parseDur = (d: string): number => {
   const n = parseFloat(String(d || '').replace(/[^0-9.]/g, ''))
   return Number.isFinite(n) && n > 0 ? n : 5
@@ -125,11 +231,16 @@ const fmtClock = (s: number) => {
   const t = Math.max(0, Math.floor(s))
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`
 }
+/** 将帧选区秒数统一显示为一位小数。 */
 const fmtSec = (s: number) => `${s.toFixed(1)}s`
 
+/**
+ * 播放当前成片、抓取时间轴帧、切换历史版本并收集帧区间/整段修改，提交前执行真实积分估价。
+ */
 export default function VideoStage({
   shots,
   videoUrl,
+  videoAssetId = 0,
   videoGenerating,
   videoStatusText,
   videoStartedAt,
@@ -137,12 +248,16 @@ export default function VideoStage({
   costEstimate,
   costLoading,
   costError,
+  onEstimateEditCost,
   faceBlurDebug,
   videoVersions = [],
   failedGenerations = [],
   pendingGenerations = [],
   pendingVideoCount = 0,
+  modificationDraft,
+  onModificationDraftChange,
   onSwitchVideo,
+  onRefreshVideo,
   onRegenerateVideo,
   onGenerateMultipleVideos,
   onDownloadVideo,
@@ -154,31 +269,84 @@ export default function VideoStage({
   debug,
 }: VideoStageProps) {
   const { showToast } = useToast()
-  const [overallNote, setOverallNote] = useState('')
-  // 片段修改:固定两个框,各自独立保存「自己选中的帧范围 + 修改文案」(互不同步)
-  const [frameSlots, setFrameSlots] = useState<{ start: number | null; end: number | null; text: string }[]>([
-    { start: null, end: null, text: '' },
-    { start: null, end: null, text: '' },
-  ])
-  // 视频修改描述:按「视频版本 url」记忆——每条历史版本各自带自己的修改说明,切换历史时跟着走
-  const [noteByUrl, setNoteByUrl] = useState<Record<string, string>>({})
-  // 本次点击「确认修改/生成」时的描述:点下立即显示,生成中也显示;生成完成后绑定到新版本 url
-  const [pendingNote, setPendingNote] = useState('')
+  const [localModificationDraft, setLocalModificationDraft] = useState(createEmptyVideoModificationDraft)
+  const activeModificationDraft = normalizeVideoModificationDraft(modificationDraft ?? localModificationDraft)
+  const updateModificationDraft = useCallback(
+    (updater: SetStateAction<VideoModificationDraft>) => {
+      const dispatch = onModificationDraftChange || setLocalModificationDraft
+      dispatch((previous) => {
+        const normalized = normalizeVideoModificationDraft(previous)
+        return typeof updater === 'function'
+          ? (updater as (value: VideoModificationDraft) => VideoModificationDraft)(normalized)
+          : normalizeVideoModificationDraft(updater)
+      })
+    },
+    [onModificationDraftChange],
+  )
+  const overallNote = activeModificationDraft.overallNote
+  const frameSlots = activeModificationDraft.frameSlots
+  const noteByVersion = activeModificationDraft.noteByVersion
+  const pendingNote = activeModificationDraft.pendingNote
+  const setOverallNote = useCallback(
+    (value: string) => updateModificationDraft((previous) => ({ ...previous, overallNote: value })),
+    [updateModificationDraft],
+  )
+  const setFrameSlots = useCallback(
+    (updater: (previous: VideoFrameModification[]) => VideoFrameModification[]) =>
+      updateModificationDraft((previous) => ({ ...previous, frameSlots: updater(previous.frameSlots) })),
+    [updateModificationDraft],
+  )
+  const setPendingNote = useCallback(
+    (value: string) => updateModificationDraft((previous) => ({ ...previous, pendingNote: value })),
+    [updateModificationDraft],
+  )
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null) // 时间轴待确认选区(秒)
-  const [playSec, setPlaySec] = useState(0) // 播放头位置(秒)
   const [dur, setDur] = useState(0) // 视频真实时长(秒),0=未知
   const [frameThumbs, setFrameThumbs] = useState<string[] | null>(null) // 逐秒抓取的帧缩略图(CORS 失败则 null,回退占位)
+  const [videoPosterSource, setVideoPosterSource] = useState<{ ownerUrl: string; src: string }>({
+    ownerUrl: '',
+    src: '',
+  })
+  const [timelineCaptureReadyUrl, setTimelineCaptureReadyUrl] = useState('')
   const [tipIdx, setTipIdx] = useState(0)
   const [showDebug, setShowDebug] = useState(false)
   const [showBlurDebug, setShowBlurDebug] = useState(false)
   const [selectedPendingId, setSelectedPendingId] = useState<string>('')
-  const [selectedHistoryVersionId, setSelectedHistoryVersionId] = useState('')
   const [pendingFocusArmed, setPendingFocusArmed] = useState(false)
+  const [playbackUrl, setPlaybackUrl] = useState(videoUrl || '')
+  const [playbackReloadKey, setPlaybackReloadKey] = useState(0)
+  const [mediaError, setMediaError] = useState('')
   const debugEnabled = import.meta.env.DEV // 正式版自动隐藏
+  const videoPosterUrl = videoPosterSource.ownerUrl === (videoUrl || '') ? videoPosterSource.src : undefined
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const sourceIdentity = stageVideoIdentity({ url: videoUrl || '', assetId: videoAssetId })
+  const sourceIdentityRef = useRef(sourceIdentity)
+  const mediaRetryCountRef = useRef(0)
+  const mediaRetryTimerRef = useRef<number | null>(null)
+  const mediaRefreshInFlightRef = useRef(false)
+  const mediaRefreshRequestRef = useRef(0)
+  const previousVideoUrlRef = useRef(videoUrl || '')
+  const onRefreshVideoRef = useRef(onRefreshVideo)
+  onRefreshVideoRef.current = onRefreshVideo
+  const clearMediaRetryTimer = useCallback(() => {
+    if (mediaRetryTimerRef.current == null) return
+    window.clearTimeout(mediaRetryTimerRef.current)
+    mediaRetryTimerRef.current = null
+  }, [])
+  const bindVideoRef = useCallback((player: HTMLVideoElement | null) => {
+    const previousPlayer = videoRef.current
+    if (previousPlayer && previousPlayer !== player) releaseVideoPlayer(previousPlayer)
+    videoRef.current = player
+  }, [])
+  // 播放进度属于高频瞬时值；直接同步两个展示节点，避免每次 timeupdate 重渲染整个生成步骤。
+  const playSecRef = useRef(0)
+  const playheadRef = useRef<HTMLSpanElement | null>(null)
+  const playbackTimeRef = useRef<HTMLSpanElement | null>(null)
   const trackRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ s0: number } | null>(null)
+  const pendingTimelineSeekRef = useRef<number | null>(null)
+  const timelineCaptureScheduleRef = useRef<(() => void) | null>(null)
   const [regenSplitOpen, setRegenSplitOpen] = useState(false)
   const regenSplitRef = useRef<HTMLSpanElement | null>(null)
   // 生成/重新生成按钮 10s 防抖:点一次后锁 10 秒,防手抖连点重复提交(视频生成很贵)。
@@ -217,7 +385,6 @@ export default function VideoStage({
     const newest = [...pendingGenerations].sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0)).pop()
     const candidate = running || newest || pendingGenerations[0]
     if (!candidate) return
-    setSelectedHistoryVersionId('')
     setSelectedPendingId(candidate.id)
     setPendingFocusArmed(false)
   }, [pendingFocusArmed, pendingGenerations])
@@ -230,6 +397,15 @@ export default function VideoStage({
   const total = dur || shotsTotal || 10
   // 帧条:按视频真实时长「1 帧/秒」切分(15s 视频 = 15 帧),封顶 60 帧
   const frameCount = Math.max(1, Math.min(60, Math.round(total)))
+  const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
+  const syncPlaybackProgress = (seconds: number) => {
+    const next = Number.isFinite(seconds) ? Math.max(0, seconds) : 0
+    playSecRef.current = next
+    if (playheadRef.current) playheadRef.current.style.left = pct(next)
+    if (playbackTimeRef.current) {
+      playbackTimeRef.current.textContent = `${fmtClock(next)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧,再点右侧片段框的「框选这段」`
+    }
+  }
   // 每帧覆盖 1 秒:[i, i+1)(末帧裁到总时长);缩略图来自逐秒抓帧,失败则显示秒标占位
   const frames = useMemo(
     () =>
@@ -282,6 +458,53 @@ export default function VideoStage({
       mergedGenItems,
     }
   }, [displayPendingGenerations, failedGenerations, videoVersions])
+  const currentStageVideo = { url: videoUrl || '', assetId: videoAssetId }
+  const activePublishedVersion = historyItems.publishedVersions.find((item) =>
+    isSameStageVideo(item.video, currentStageVideo),
+  )
+  const activeHistoryVersionId = activePublishedVersion?.id || ''
+  const publishedVersionSignature = historyItems.publishedVersions
+    .map((item) => `${stageVideoIdentity(item.video)}:${item.video.url}`)
+    .join('|')
+  const historySyncAttemptRef = useRef('')
+
+  // 当前主视频是受控数据：历史卡只按 assetId/URL 的真实匹配高亮。
+  // 若草稿主视频已经脱离历史列表，则把最新历史版本同步回父层，而不是只画一个“已选中”边框。
+  useEffect(() => {
+    const publishedVersions = historyItems.publishedVersions
+    if (!publishedVersions.length) {
+      historySyncAttemptRef.current = ''
+      return
+    }
+
+    if (activePublishedVersion) {
+      if (videoUrl || !activePublishedVersion.video.url || !onSwitchVideo) {
+        historySyncAttemptRef.current = ''
+        return
+      }
+      const hydrateKey = `hydrate:${stageVideoIdentity(activePublishedVersion.video)}:${activePublishedVersion.video.url}`
+      if (historySyncAttemptRef.current === hydrateKey) return
+      historySyncAttemptRef.current = hydrateKey
+      onSwitchVideo(activePublishedVersion.video)
+      return
+    }
+
+    const latest = publishedVersions[publishedVersions.length - 1]
+    if (!latest || !onSwitchVideo) return
+    const syncKey = `${sourceIdentity || 'empty'}=>${stageVideoIdentity(latest.video)}:${latest.video.url}`
+    if (historySyncAttemptRef.current === syncKey) return
+    historySyncAttemptRef.current = syncKey
+    setSelectedPendingId('')
+    onSwitchVideo(latest.video)
+  }, [
+    activeHistoryVersionId,
+    activePublishedVersion,
+    historyItems.publishedVersions,
+    onSwitchVideo,
+    publishedVersionSignature,
+    sourceIdentity,
+    videoUrl,
+  ])
 
   // 时间刻度(整秒;过长时按步长抽稀,约 10 个标签)
   const ticks = useMemo(() => {
@@ -297,29 +520,112 @@ export default function VideoStage({
     const t = window.setInterval(() => setTipIdx((i) => (i + 1) % VIDEO_TIPS.length), 4500)
     return () => window.clearInterval(t)
   }, [videoGenerating])
-  // 切换视频源 → 重置时长/选区/播放头(帧缩略图交由下面的抓帧 effect 按缓存处理,不在此清空)
+  // 切换视频源 → 重置时长/选区/播放头；缓存命中时下面的抓帧 effect 会在同一轮恢复缩略图。
   useEffect(() => {
+    const identityChanged = sourceIdentityRef.current !== sourceIdentity
+    const urlChanged = previousVideoUrlRef.current !== (videoUrl || '')
+    sourceIdentityRef.current = sourceIdentity
+    previousVideoUrlRef.current = videoUrl || ''
+    setPlaybackUrl(videoUrl || '')
+    if (!identityChanged && !urlChanged) return
+
+    clearMediaRetryTimer()
+    mediaRefreshRequestRef.current += 1
+    mediaRefreshInFlightRef.current = false
+    setMediaError('')
+    if (identityChanged) mediaRetryCountRef.current = 0
+  }, [clearMediaRetryTimer, sourceIdentity, videoUrl])
+  useEffect(
+    () => () => {
+      clearMediaRetryTimer()
+      mediaRefreshRequestRef.current += 1
+      mediaRefreshInFlightRef.current = false
+    },
+    [clearMediaRetryTimer],
+  )
+  useEffect(() => {
+    timelineCaptureScheduleRef.current?.()
+    timelineCaptureScheduleRef.current = null
     setDur(0)
-    setSel(null)
-    setPlaySec(0)
+    setSel(videoUrl ? { start: 0, end: 1 } : null)
+    playSecRef.current = 0
+    if (playheadRef.current) playheadRef.current.style.left = '0%'
+    setFrameThumbs(null)
+    setTimelineCaptureReadyUrl('')
+    pendingTimelineSeekRef.current = null
+    return () => {
+      timelineCaptureScheduleRef.current?.()
+      timelineCaptureScheduleRef.current = null
+    }
   }, [videoUrl])
   useEffect(() => {
     if (!selectedPendingId) return
     if (!pendingGenerations.some((g) => g.id === selectedPendingId)) setSelectedPendingId('')
   }, [pendingGenerations, selectedPendingId])
+
+  // 主播放器直接使用媒体地址，让浏览器通过 Range 请求尽快显示首帧；不再等待完整 Blob 下载。
+  // 封面从已经加载好的主播放器画面生成，避免为同一视频再启动一次高优先级下载。
   useEffect(() => {
-    if (pendingGenerations.length || !videoUrl || !historyItems.publishedVersions.length) return
-    setSelectedPendingId('')
-    const latest = historyItems.publishedVersions[historyItems.publishedVersions.length - 1]
-    if (latest) setSelectedHistoryVersionId(latest.id)
-  }, [historyItems.publishedVersions, pendingGenerations.length, videoUrl])
-  useEffect(() => {
-    if (!selectedHistoryVersionId) return
-    if (!historyItems.publishedVersions.some((v) => v.id === selectedHistoryVersionId)) setSelectedHistoryVersionId('')
-  }, [historyItems, selectedHistoryVersionId])
+    const ownerUrl = videoUrl || ''
+    if (!ownerUrl) {
+      setVideoPosterSource({ ownerUrl: '', src: '' })
+      return
+    }
+    const cached = VIDEO_POSTER_CACHE.get(ownerUrl)
+    if (cached) {
+      setVideoPosterSource({ ownerUrl, src: cached })
+      return
+    }
+    setVideoPosterSource({ ownerUrl, src: '' })
+  }, [videoUrl])
+
+  const capturePosterFromPlayer = (video: HTMLVideoElement) => {
+    const ownerUrl = videoUrl || ''
+    if (!ownerUrl || VIDEO_POSTER_CACHE.has(ownerUrl)) return
+    try {
+      const sourceWidth = video.videoWidth
+      const sourceHeight = video.videoHeight
+      if (!sourceWidth || !sourceHeight) return
+      const scale = Math.min(1, 1280 / Math.max(sourceWidth, sourceHeight))
+      const width = Math.max(1, Math.round(sourceWidth * scale))
+      const height = Math.max(1, Math.round(sourceHeight * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(video, 0, 0, width, height)
+      const poster = canvas.toDataURL('image/jpeg', 0.92)
+      putVideoPosterCache(ownerUrl, poster)
+      setVideoPosterSource({ ownerUrl, src: poster })
+    } catch {
+      // 跨域视频无法写入 canvas 时不设置 poster，让浏览器显示原始视频首帧。
+    }
+  }
+
+  const scheduleTimelineCapture = (ownerUrl: string) => {
+    if (!ownerUrl || timelineCaptureReadyUrl === ownerUrl || timelineCaptureScheduleRef.current) return
+    const idleWindow = window as typeof window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number
+      cancelIdleCallback?: (handle: number) => void
+    }
+    const ready = () => {
+      timelineCaptureScheduleRef.current = null
+      setTimelineCaptureReadyUrl(ownerUrl)
+    }
+    if (idleWindow.requestIdleCallback) {
+      const handle = idleWindow.requestIdleCallback(ready, { timeout: 1500 })
+      timelineCaptureScheduleRef.current = () => idleWindow.cancelIdleCallback?.(handle)
+      return
+    }
+    const handle = window.setTimeout(ready, 350)
+    timelineCaptureScheduleRef.current = () => window.clearTimeout(handle)
+  }
 
   // 逐秒抓取视频帧(1 帧/秒)用独立隐藏 <video>,不打扰主播放器。
-  // 跨域无 CORS 头时 crossOrigin 会导致 canvas 被污染/加载失败 → 保持 null,渲染秒标占位。
+  // 主播放器首帧出现后再空闲抓取；原地址无法 seek/写 canvas 时才后台完整下载 Blob 降级。
   // 命中模块级缓存(同一 url + 帧数)时直接复用,切步骤/切版本回来秒显,不再重抓。
   useEffect(() => {
     if (!videoUrl) {
@@ -332,59 +638,116 @@ export default function VideoStage({
       setFrameThumbs(cached)
       return
     }
-    if (total <= 0) return
+    if (timelineCaptureReadyUrl !== videoUrl || total <= 0) return
     setFrameThumbs(null)
     let cancelled = false
+    let fallbackObjectUrl = ''
+    const abortController = new AbortController()
     const v = document.createElement('video')
-    v.crossOrigin = 'anonymous'
     v.muted = true
     v.preload = 'auto'
-    v.src = videoUrl
     const canvas = document.createElement('canvas')
     const thumbs: string[] = []
+
+    const loadCaptureVideo = async (src: string) =>
+      new Promise<void>((resolve, reject) => {
+        if (/^(blob:|data:)/i.test(src)) v.removeAttribute('crossorigin')
+        else v.crossOrigin = 'anonymous'
+        const cleanup = () => {
+          v.removeEventListener('loadeddata', onLoaded)
+          v.removeEventListener('error', onError)
+        }
+        const onLoaded = () => {
+          cleanup()
+          resolve()
+        }
+        const onError = () => {
+          cleanup()
+          reject(new Error('load'))
+        }
+        v.addEventListener('loadeddata', onLoaded)
+        v.addEventListener('error', onError)
+        v.src = src
+        v.load()
+      })
+    const seekTo = (time: number) => seekVideoToDecodedFrame(v, time, { signal: abortController.signal })
+    const captureFromSource = async (src: string) => {
+      thumbs.length = 0
+      await loadCaptureVideo(src)
+      if (cancelled) return
+      // 帧条缩略图无需高清:96px 宽 + 较低 jpeg 质量,抓取更快、内存与 dataURL 更省
+      const W = 96
+      const H = Math.max(1, Math.round((v.videoHeight / (v.videoWidth || 1)) * W)) || 54
+      canvas.width = W
+      canvas.height = H
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      const captureDuration = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : total
+      for (let i = 0; i < frameCount; i++) {
+        if (cancelled) return
+        const t = Math.min(i + 0.5, Math.max(0, captureDuration - 0.05))
+        await seekTo(t)
+        if (cancelled) return
+        ctx.drawImage(v, 0, 0, W, H)
+        thumbs.push(canvas.toDataURL('image/jpeg', 0.5)) // canvas 被污染会抛错 → 触发 Blob 降级
+        // UI 每帧提交会让整块 VideoStage 最多重渲染 60 次。按批渐进展示，
+        // 保留反馈的同时减少 React commit 与图片布局次数。
+        if (!cancelled && thumbs.length % FRAME_THUMB_RENDER_BATCH_SIZE === 0) {
+          setFrameThumbs(thumbs.slice())
+        }
+      }
+      if (!cancelled) {
+        const completedThumbs = thumbs.slice()
+        setFrameThumbs(completedThumbs)
+        // 完整抓完才写入缓存,供切步骤/切版本回来复用
+        if (completedThumbs.length === frameCount) putFrameThumbCache(key, completedThumbs)
+      }
+    }
+    const releaseCaptureResources = () => {
+      v.removeAttribute('src')
+      v.load()
+      if (fallbackObjectUrl) {
+        URL.revokeObjectURL(fallbackObjectUrl)
+        fallbackObjectUrl = ''
+      }
+    }
     const capture = async () => {
       try {
-        await new Promise<void>((resolve, reject) => {
-          v.onloadeddata = () => resolve()
-          v.onerror = () => reject(new Error('load'))
-        })
-        if (cancelled) return
-        // 帧条缩略图无需高清:96px 宽 + 较低 jpeg 质量,抓取更快、内存与 dataURL 更省
-        const W = 96
-        const H = Math.max(1, Math.round((v.videoHeight / (v.videoWidth || 1)) * W)) || 54
-        canvas.width = W
-        canvas.height = H
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-        for (let i = 0; i < frameCount; i++) {
-          if (cancelled) return
-          const t = Math.min(i + 0.5, Math.max(0, total - 0.05))
-          await new Promise<void>((resolve) => {
-            const onSeeked = () => {
-              v.removeEventListener('seeked', onSeeked)
-              resolve()
-            }
-            v.addEventListener('seeked', onSeeked)
-            v.currentTime = t
-          })
-          if (cancelled) return
-          ctx.drawImage(v, 0, 0, W, H)
-          thumbs.push(canvas.toDataURL('image/jpeg', 0.5)) // canvas 被污染会抛错 → 落到 catch
-          if (!cancelled) setFrameThumbs(thumbs.slice()) // 渐进显示
+        try {
+          await captureFromSource(videoUrl)
+          return
+        } catch {
+          if (cancelled || /^(blob:|data:)/i.test(videoUrl)) {
+            if (!cancelled) setFrameThumbs(null)
+            return
+          }
         }
-        // 完整抓完才写入缓存,供切步骤/切版本回来复用
-        if (!cancelled && thumbs.length === frameCount) putFrameThumbCache(key, thumbs.slice())
-      } catch {
-        if (!cancelled) setFrameThumbs(null) // CORS/解码失败 → 用秒标占位
+        try {
+          // 仅时间轴直读失败时才完整下载，且不会替换或阻塞正在播放的主视频。
+          setFrameThumbs(null)
+          const response = await fetch(videoUrl, {
+            credentials: 'include',
+            signal: abortController.signal,
+          })
+          if (!response.ok) throw new Error(`video ${response.status}`)
+          const rawBlob = await response.blob()
+          const blob = rawBlob.type.startsWith('video/') ? rawBlob : rawBlob.slice(0, rawBlob.size, 'video/mp4')
+          fallbackObjectUrl = URL.createObjectURL(blob)
+          await captureFromSource(fallbackObjectUrl)
+        } catch {
+          if (!cancelled && !abortController.signal.aborted) setFrameThumbs(null) // 解码/CORS 失败 → 秒标占位
+        }
+      } finally {
+        releaseCaptureResources()
       }
     }
     void capture()
     return () => {
       cancelled = true
-      v.removeAttribute('src')
-      v.load()
+      abortController.abort()
+      releaseCaptureResources()
     }
-  }, [videoUrl, total, frameCount])
+  }, [videoUrl, timelineCaptureReadyUrl, total, frameCount])
 
   // 时间轴上的像素 → 秒(以视频真实时长为基准,做到「秒数一一对应」)
   const secFromEvent = (e: { clientX: number }) => {
@@ -392,6 +755,37 @@ export default function VideoStage({
     if (!rect || rect.width <= 0) return 0
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
     return frac * total
+  }
+  const clampPlayerTime = (video: HTMLVideoElement | null, seconds: number) => {
+    const mediaDuration = video && Number.isFinite(video.duration) && video.duration > 0 ? video.duration : total
+    return Math.min(Math.max(0, mediaDuration - 0.01), Math.max(0, seconds))
+  }
+  const applyPlayerSeek = (video: HTMLVideoElement, seconds: number) => {
+    if (video.readyState < 1) return false
+    const target = clampPlayerTime(video, seconds)
+    try {
+      video.currentTime = target
+      syncPlaybackProgress(target)
+      return true
+    } catch {
+      return false
+    }
+  }
+  // 时间轴缩略图抓取于每秒中点(i + 0.5s);点击该格时主视频也跳到同一时刻，保证画面对得上。
+  const seekPlayerToTimelineFrame = (frameIndex: number) => {
+    const target = Math.min(frameIndex + 0.5, Math.max(0, total - 0.05))
+    const video = videoRef.current
+    const clamped = clampPlayerTime(video, target)
+    pendingTimelineSeekRef.current = clamped
+    syncPlaybackProgress(clamped)
+    if (!video) return
+    video.pause()
+    if (applyPlayerSeek(video, clamped)) pendingTimelineSeekRef.current = null
+  }
+  const flushPendingTimelineSeek = (video: HTMLVideoElement) => {
+    const pending = pendingTimelineSeekRef.current
+    if (pending == null) return
+    if (applyPlayerSeek(video, pending)) pendingTimelineSeekRef.current = null
   }
   const onTrackPointerDown = (e: React.PointerEvent) => {
     if (!videoUrl) return
@@ -415,12 +809,13 @@ export default function VideoStage({
     if (Math.abs(s - s0) < total * 0.012) {
       const i = Math.min(frameCount - 1, Math.max(0, Math.floor(s)))
       setSel({ start: i, end: Math.min(total, i + 1) })
-      if (videoRef.current && Number.isFinite(videoRef.current.duration)) videoRef.current.currentTime = s
+      seekPlayerToTimelineFrame(i)
     } else {
       // 拖选 → 对齐到整秒(帧)边界
       const a = Math.max(0, Math.floor(Math.min(s0, s)))
       const b = Math.min(total, Math.ceil(Math.max(s0, s)))
       setSel({ start: a, end: b > a ? b : Math.min(total, a + 1) })
+      seekPlayerToTimelineFrame(Math.min(frameCount - 1, Math.floor(a)))
     }
   }
 
@@ -457,29 +852,143 @@ export default function VideoStage({
 
   // 是否存在「片段/整段」修改:有则主按钮显示「确认修改」(基于原视频改),无则「重新生成视频」
   const hasMods = frameSlots.some((s) => s.text.trim()) || overallNote.trim().length > 0
+  const editRequestSignature = JSON.stringify({
+    videoAssetId,
+    videoUrl,
+    overallNote: overallNote.trim(),
+    frameSlots: frameSlots.map((slot) => ({ start: slot.start, end: slot.end, text: slot.text.trim() })),
+  })
+  const estimateEditCostRef = useRef(onEstimateEditCost)
+  estimateEditCostRef.current = onEstimateEditCost
+  const [editCost, setEditCost] = useState<{
+    loading: boolean
+    error: string
+    estimate: VideoCostEstimate | null
+  }>({ loading: false, error: '', estimate: null })
+  const [editCostRetry, setEditCostRetry] = useState(0)
 
-  // 记录「本次生成开始前」的视频 url:用于区分「真出了新片」vs「失败(url 没变)」。
-  const genStartUrlRef = useRef('')
-  // 生成完成 → 仅当产出了【新】视频(url 变了)才把本次修改描述绑定到新版本。
-  // 失败时 videoGenerating 也会 true→false 但 videoUrl 不变,若不判断会把 pendingNote 误绑到【旧版本】、
-  // 覆盖它原有的描述(本轮审计 P1)。失败则跳过、保留 pendingNote 供重试。
   useEffect(() => {
-    if (videoGenerating) {
-      genStartUrlRef.current = videoUrl
+    if (!hasMods || videoGenerating) {
+      setEditCost({ loading: false, error: '', estimate: null })
       return
     }
-    if (!videoUrl || !pendingNote) return
-    if (videoUrl === genStartUrlRef.current) return // 没出新片(失败/无变化)→ 不绑、不覆盖旧版本
-    setNoteByUrl((prev) => (prev[videoUrl] === pendingNote ? prev : { ...prev, [videoUrl]: pendingNote }))
-    setPendingNote('')
+    const request = estimateEditCostRef.current
+    if (!request || !videoAssetId) {
+      setEditCost({ loading: false, error: '暂时无法获取视频编辑积分估价，当前不能提交', estimate: null })
+      return
+    }
+
+    let alive = true
+    setEditCost({ loading: true, error: '', estimate: null })
+    const timer = window.setTimeout(() => {
+      request(buildNote())
+        .then((estimate) => {
+          if (!alive) return
+          const estimatedCost = Number(estimate?.estimatedCost)
+          const balance = Number(estimate?.balance)
+          if (!Number.isFinite(estimatedCost) || estimatedCost < 0 || !Number.isFinite(balance)) {
+            throw new Error('后端未返回有效的视频编辑积分估价')
+          }
+          setEditCost({
+            loading: false,
+            error: '',
+            estimate: { estimatedCost, balance, canAfford: estimate?.canAfford === true },
+          })
+        })
+        .catch((error: any) => {
+          if (!alive) return
+          setEditCost({
+            loading: false,
+            error: error?.message || '视频编辑积分估价失败，当前不能提交',
+            estimate: null,
+          })
+        })
+    }, 400)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+    // editRequestSignature 包含所有会改变编辑请求的字段，避免依赖每次 normalize 新建的数组导致重复估价。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoUrl, videoGenerating])
+  }, [editCostRetry, editRequestSignature, hasMods, videoAssetId, videoGenerating])
+
+  const reloadPlaybackSource = useCallback(
+    async (attempt: number) => {
+      if (mediaRefreshInFlightRef.current) return
+      const expectedIdentity = sourceIdentity
+      const requestId = mediaRefreshRequestRef.current + 1
+      mediaRefreshRequestRef.current = requestId
+      mediaRefreshInFlightRef.current = true
+      let refreshedVideo: StageVideo | undefined
+      try {
+        const refresh = onRefreshVideoRef.current
+        if (refresh) {
+          try {
+            const refreshed = await refresh({ url: videoUrl || playbackUrl, assetId: videoAssetId })
+            if (refreshed) refreshedVideo = refreshed
+          } catch {
+            // 刷新临时地址失败时仍可对现有地址做一次浏览器级重载。
+          }
+        }
+        if (mediaRefreshRequestRef.current !== requestId || sourceIdentityRef.current !== expectedIdentity) return
+
+        const baseUrl = refreshedVideo?.url || videoUrl || playbackUrl
+        if (!baseUrl) {
+          setMediaError('没有可用的视频地址，请稍后重新加载')
+          return
+        }
+        const nextUrl =
+          refreshedVideo?.url && refreshedVideo.url !== (videoUrl || playbackUrl)
+            ? refreshedVideo.url
+            : withVideoRetryToken(baseUrl, attempt)
+        setMediaError('')
+        setPlaybackUrl(nextUrl)
+        setPlaybackReloadKey((key) => key + 1)
+      } finally {
+        if (mediaRefreshRequestRef.current === requestId) mediaRefreshInFlightRef.current = false
+      }
+    },
+    [playbackUrl, sourceIdentity, videoAssetId, videoUrl],
+  )
+
+  const handleMediaError = useCallback(() => {
+    if (mediaRefreshInFlightRef.current || mediaRetryTimerRef.current != null) return
+    const nextAttempt = mediaRetryCountRef.current + 1
+    if (nextAttempt > VIDEO_AUTO_RETRY_LIMIT) {
+      setMediaError('视频加载失败，请检查网络后重新加载')
+      return
+    }
+    mediaRetryCountRef.current = nextAttempt
+    const delay = VIDEO_AUTO_RETRY_DELAYS_MS[nextAttempt - 1]
+    mediaRetryTimerRef.current = window.setTimeout(() => {
+      mediaRetryTimerRef.current = null
+      void reloadPlaybackSource(nextAttempt)
+    }, delay)
+  }, [reloadPlaybackSource])
+
+  const handleMediaMetadata = useCallback(() => {
+    setMediaError('')
+  }, [])
+
+  const handleMediaCanPlay = useCallback(() => {
+    clearMediaRetryTimer()
+    mediaRetryCountRef.current = 0
+    setMediaError('')
+  }, [clearMediaRetryTimer])
+
+  const handleManualMediaReload = useCallback(() => {
+    clearMediaRetryTimer()
+    mediaRetryCountRef.current = 0
+    setMediaError('')
+    void reloadPlaybackSource(1)
+  }, [clearMediaRetryTimer, reloadPlaybackSource])
+
+  const currentVersionKey = videoAssetId > 0 ? `asset:${videoAssetId}` : videoUrl ? `url:${videoUrl}` : ''
 
   // 左侧「视频修改描述」:生成中显示本次描述;否则显示当前版本(含切到的历史版本)绑定的描述
-  const displayNote = videoGenerating ? pendingNote : videoUrl ? noteByUrl[videoUrl] || '' : ''
+  const displayNote = videoGenerating ? pendingNote : currentVersionKey ? noteByVersion[currentVersionKey] || '' : ''
 
-  const hasExplicitHistorySelection =
-    !!selectedHistoryVersionId && historyItems.publishedVersions.some((v) => v.id === selectedHistoryVersionId)
+  const hasExplicitHistorySelection = !!activeHistoryVersionId && !selectedPendingId
   // 生成中若已有上一版视频,仍允许继续播放/查看历史;仅在未手动切到某个已生成视频时,默认显示当前生成中的占位。
   const activePendingGeneration =
     pendingGenerations.find((g) => g.id === selectedPendingId) ||
@@ -492,29 +1001,42 @@ export default function VideoStage({
   const isHotCopyMode = shots.length === 0
   const lockSingleActions = showingPendingGeneration
   const lockRegenerateAction = lockSingleActions || (isHotCopyMode && videoGenerating)
+  const editCostInsufficient =
+    !!editCost.estimate &&
+    (editCost.estimate.canAfford === false || editCost.estimate.estimatedCost > editCost.estimate.balance)
+  const editCostUnavailable = hasMods && (editCost.loading || !!editCost.error || !editCost.estimate)
   const inlinePrevWithActions = !!onPrev && shots.length === 0
   const canChooseMultiRegen =
     !!onGenerateMultipleVideos &&
     !!onRegenCountChange &&
     Array.isArray(regenCountOptions) &&
     regenCountOptions.length > 0
-  const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
   const triggerSingleRegenerate = () => {
     if (genCooldown) return // 10s 防抖:防连点重复提交
+    if (hasMods && (editCostUnavailable || editCostInsufficient)) {
+      showToast(editCostInsufficient ? '积分不足，无法提交视频修改' : '请等待视频编辑积分估价完成', 'info')
+      return
+    }
     startGenCooldown()
     const note = buildNote()
     setPendingNote(hasMods ? note || '' : '')
-    setSelectedHistoryVersionId('')
     setPendingFocusArmed(true)
     onRegenerateVideo(note, { edit: hasMods })
   }
   const triggerMultiGenerate = () => {
     if (!onGenerateMultipleVideos) return
     if (genCooldown) return // 10s 防抖:防连点重复追加多批
+    const multiEstimatedCost = Number(editCost.estimate?.estimatedCost || 0) * Math.max(1, Number(regenCount || 1))
+    if (
+      hasMods &&
+      (editCostUnavailable || editCostInsufficient || multiEstimatedCost > Number(editCost.estimate?.balance || 0))
+    ) {
+      showToast('请先确认视频编辑估价及积分余额', 'info')
+      return
+    }
     startGenCooldown()
     const note = buildNote()
     setPendingNote(hasMods ? note || '' : '')
-    setSelectedHistoryVersionId('')
     setPendingFocusArmed(true)
     onGenerateMultipleVideos(note, { edit: hasMods }, regenCount ?? 1)
   }
@@ -559,34 +1081,51 @@ export default function VideoStage({
                 note="视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。"
                 tip={VIDEO_TIPS[tipIdx]}
               />
-            ) : videoUrl ? (
+            ) : mediaError ? (
+              <div className={styles.vstagePlayerError} role="alert">
+                <span className={styles.vstagePlayerErrorTitle}>视频暂时无法播放</span>
+                <span className={styles.vstagePlayerErrorText}>{mediaError}</span>
+                <button type="button" className={styles.vstagePlayerRetry} onClick={handleManualMediaReload}>
+                  重新加载
+                </button>
+              </div>
+            ) : playbackUrl ? (
               <video
-                ref={videoRef}
-                src={videoUrl}
+                key={`${sourceIdentity}:${playbackReloadKey}`}
+                ref={bindVideoRef}
+                src={playbackUrl}
+                poster={videoPosterUrl}
                 controls
                 playsInline
                 preload="metadata"
                 onLoadedMetadata={(e) => {
-                  // 修进度条 bug:部分 MP4 初始 duration=Infinity(moov 在文件尾),
-                  // 跳到极大时间强制浏览器算出真实时长,再跳回 0。
-                  const v = e.currentTarget
-                  if (!Number.isFinite(v.duration)) {
-                    const back = () => {
-                      v.currentTime = 0
-                      v.removeEventListener('timeupdate', back)
-                    }
-                    v.addEventListener('timeupdate', back)
-                    v.currentTime = 1e7
-                  } else {
-                    setDur(v.duration)
-                  }
+                  // 能读取容器元数据不代表视频帧可解码；仅 canplay 才恢复自动重试额度。
+                  handleMediaMetadata()
+                  const d = e.currentTarget.duration
+                  if (Number.isFinite(d) && d > 0) setDur(d)
+                  flushPendingTimelineSeek(e.currentTarget)
+                  scheduleTimelineCapture(videoUrl || '')
                 }}
+                onLoadedData={(e) => {
+                  capturePosterFromPlayer(e.currentTarget)
+                  scheduleTimelineCapture(videoUrl || '')
+                }}
+                onCanPlay={handleMediaCanPlay}
+                onError={handleMediaError}
                 onDurationChange={(e) => {
                   const d = e.currentTarget.duration
                   if (Number.isFinite(d) && d > 0) setDur(d)
+                  flushPendingTimelineSeek(e.currentTarget)
                 }}
-                onTimeUpdate={(e) => setPlaySec(e.currentTarget.currentTime || 0)}
+                onPlay={(e) => {
+                  const v = e.currentTarget
+                  const upperBound = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : total
+                  if (!Number.isFinite(v.currentTime) || v.currentTime > upperBound + 1) v.currentTime = 0
+                }}
+                onTimeUpdate={(e) => syncPlaybackProgress(e.currentTarget.currentTime || 0)}
               />
+            ) : videoUrl ? (
+              <div className={styles.vstagePlayerPh}>视频加载中...</div>
             ) : (
               <div className={styles.vstagePlayerPh}>暂无视频,点下方「重新生成视频」生成整片</div>
             )}
@@ -618,27 +1157,45 @@ export default function VideoStage({
                     className={styles.vstageFrame}
                     style={{ left: pct(f.start), width: pct(f.end - f.start) }}
                   >
-                    {f.thumb ? <img src={f.thumb} alt="" draggable={false} /> : <span>{f.i}s</span>}
+                    {f.thumb ? (
+                      <span className={styles.vstageFrameVisual}>
+                        <img
+                          className={styles.vstageFrameBackdrop}
+                          src={f.thumb}
+                          alt=""
+                          aria-hidden="true"
+                          draggable={false}
+                        />
+                        <img className={styles.vstageFrameImage} src={f.thumb} alt="" draggable={false} />
+                      </span>
+                    ) : (
+                      <span className={styles.vstageFramePlaceholder}>{f.i}s</span>
+                    )}
                   </div>
                 ))}
                 {/* 选区:蓝色描边 + 左右把手(拖选要修改的帧;修改意见填右侧「选中帧修改」框)*/}
                 {sel && sel.end > sel.start && (
-                  <div
-                    className={styles.vstageSel}
-                    style={{ left: pct(sel.start), width: pct(sel.end - sel.start) }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                  >
+                  <div className={styles.vstageSel} style={{ left: pct(sel.start), width: pct(sel.end - sel.start) }}>
                     <span className={`${styles.vstageSelHandle} ${styles.vstageSelHandleL}`} />
                     <span className={`${styles.vstageSelHandle} ${styles.vstageSelHandleR}`} />
                   </div>
                 )}
                 {/* 播放头 */}
-                <span className={styles.vstagePlayhead} style={{ left: pct(playSec) }} />
+                <span
+                  ref={playheadRef}
+                  className={styles.vstagePlayhead}
+                  style={{ left: pct(playSecRef.current) }}
+                  aria-hidden="true"
+                />
               </div>
               <div className={styles.vstageTimeHint}>
-                {selRangeText
-                  ? `已选 ${selRangeText}(${Math.round((sel as { end: number; start: number }).end - (sel as { end: number; start: number }).start)} 帧),点右侧某个片段框的「框选这段」即可应用到该片段`
-                  : `${fmtClock(playSec)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧,再点右侧片段框的「框选这段」`}
+                {selRangeText ? (
+                  `已选 ${selRangeText}(${Math.round((sel as { end: number; start: number }).end - (sel as { end: number; start: number }).start)} 帧),点右侧某个片段框的「框选这段」即可应用到该片段`
+                ) : (
+                  <span ref={playbackTimeRef}>
+                    {`${fmtClock(playSecRef.current)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧,再点右侧片段框的「框选这段」`}
+                  </span>
+                )}
               </div>
               {displayNote && (
                 <div className={styles.vstageLastNote}>
@@ -660,12 +1217,15 @@ export default function VideoStage({
                   <button
                     key={item.id}
                     type="button"
-                    className={`${styles.vstageVer}${selectedHistoryVersionId === item.id ? ' ' + styles.active : ''}`}
+                    className={`${styles.vstageVer}${
+                      !selectedPendingId && activeHistoryVersionId === item.id ? ' ' + styles.active : ''
+                    }`}
                     onClick={() => {
                       setSelectedPendingId('')
-                      setSelectedHistoryVersionId(item.id)
                       onSwitchVideo?.(item.video)
                     }}
+                    aria-label={`版本${item.orderNo}`}
+                    aria-pressed={!selectedPendingId && activeHistoryVersionId === item.id}
                     title={`版本${item.orderNo}`}
                   >
                     {/* #t=0.1 媒体片段:让浏览器 seek 到首帧并渲染成静态预览,否则无 poster 时显示黑帧 */}
@@ -702,8 +1262,9 @@ export default function VideoStage({
                           : ''
                       }`}
                       title={item.running ? '生成中' : '排队中'}
+                      aria-label={`版本${historyItems.publishedVersions.length + i + 1}${item.running ? '生成中' : '排队中'}`}
+                      aria-pressed={activePendingGeneration?.id === item.id}
                       onClick={() => {
-                        setSelectedHistoryVersionId('')
                         setSelectedPendingId(item.id)
                       }}
                     >
@@ -760,11 +1321,32 @@ export default function VideoStage({
         </div>
       </div>
 
-      {/* 「确认修改」走 video.edit(happyhorse),与此处 video.generate(seedance)口径的预估不是同一模型,
-          直接显示会误导用户,故编辑态不展示该预估,仅提示按编辑模型计费。 */}
-      {!videoGenerating && hasMods && (
+      {/* 编辑态使用 video.edit 自身的后端 estimate-cost，不复用 video.generate 估价。 */}
+      {!videoGenerating && hasMods && editCost.loading && (
         <div className={styles.vstageCost}>
-          <span>视频编辑按编辑模型计费,确认修改后按实际时长扣积分</span>
+          <span>正在获取视频编辑积分估价…</span>
+        </div>
+      )}
+      {!videoGenerating && hasMods && editCost.error && (
+        <div className={styles.vstageCost}>
+          <span className={styles.vstageCostErr}>{editCost.error}</span>
+          <button type="button" className={styles.vstageCostRecharge} onClick={() => setEditCostRetry((n) => n + 1)}>
+            重新估价
+          </button>
+        </div>
+      )}
+      {!videoGenerating && hasMods && editCost.estimate && (
+        <div className={styles.vstageCost}>
+          <span className={editCostInsufficient ? styles.vstageCostErr : undefined}>
+            后端预计消耗 {editCost.estimate.estimatedCost} 积分 · 余额 {editCost.estimate.balance} 积分
+            {editCostInsufficient && ' · 积分不足'}
+          </span>
+          <span>最终以任务结算为准；后端可能按最低计费时长结算。</span>
+          {editCostInsufficient && (
+            <button type="button" className={styles.vstageCostRecharge} onClick={openMemberCenter}>
+              前往充值积分
+            </button>
+          )}
         </div>
       )}
       {/* 提交前积分预估:加载中 / 出错也给出反馈(此前 costLoading/costError 被丢弃,只在估到价时才有显示) */}
@@ -840,7 +1422,7 @@ export default function VideoStage({
             type="button"
             className="smart__btn smart__btn--primary"
             onClick={triggerSingleRegenerate}
-            disabled={lockRegenerateAction || genCooldown}
+            disabled={lockRegenerateAction || genCooldown || (hasMods && (editCostUnavailable || editCostInsufficient))}
           >
             {showingPendingGeneration ? '生成中…' : hasMods ? '确认修改' : '重新生成视频'}
           </button>
@@ -850,7 +1432,7 @@ export default function VideoStage({
                 type="button"
                 className={`smart__btn-split--main ${styles.vstageMultiSplitMain}`}
                 onClick={triggerMultiGenerate}
-                disabled={genCooldown}
+                disabled={genCooldown || (hasMods && (editCostUnavailable || editCostInsufficient))}
               >
                 生成多个视频
               </button>
@@ -1014,6 +1596,7 @@ export default function VideoStage({
 }
 
 /** 单个修改框:标题在上(片段框带秒数范围 + 移除);框内 自然语言输入 + 右侧 AI一键润色 */
+/** 单个片段或整段视频的修改意见框，支持 AI 润色和可选删除。 */
 function ModBox({
   title,
   range,

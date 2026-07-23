@@ -8,32 +8,30 @@ import { createPortal } from 'react-dom'
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import PersonalCenterModal from '@/components/layout/PersonalCenterModal'
 import { useLogout } from '@/composables/useLogout'
+import { useConfirmDialog } from '@/composables/useToast'
 import lockIcon from '@/assets/f0664ce9dc6df70f76c69f9c034a047c.png'
 import logoutIcon from '@/assets/149cc9cc4f85b48451edcb6fa468dff0.png'
+import settingsIcon from '@/assets/sidebar/settings.svg'
 import './SettingsMenu.css'
 
-const stroke = {
-  fill: 'none',
-  stroke: 'currentColor',
-  strokeWidth: 1.8,
-  strokeLinecap: 'round' as const,
-  strokeLinejoin: 'round' as const,
-}
+/** 侧栏设置入口图标。 */
 const IconSettings = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <circle cx="12" cy="12" r="3" />
-    <path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />
-  </svg>
+  <img className="app-sidebar__icon-img" src={settingsIcon} alt="" width={14} height={14} aria-hidden="true" />
 )
 // 个人中心 / 退出登录 共用「退出箭头」图标;修改密码 用「锁」图标(均为 PNG)
+/** 修改密码菜单图标。 */
 const IconLockImg = <img className="settings-menu__ico-img" src={lockIcon} alt="" aria-hidden="true" />
+
+/** 退出登录菜单图标。 */
 const IconLogoutImg = <img className="settings-menu__ico-img" src={logoutIcon} alt="" aria-hidden="true" />
 
+/** 设置菜单完成一个动作后的可选收尾回调。 */
 interface SettingsMenuProps {
   /** 移动端抽屉:选中菜单项后请求收起抽屉 */
   onAfterAction?: () => void
 }
 
+/** 管理设置菜单锚点、弹层焦点及个人中心、改密、退出三个动作。 */
 export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
@@ -41,7 +39,10 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const [pwdOpen, setPwdOpen] = useState(false)
   const btnRef = useRef<HTMLButtonElement>(null)
   const popRef = useRef<HTMLDivElement>(null)
+  const wasOpenRef = useRef(false)
+  const logoutConfirmRef = useRef(false)
   const { logout, isLoggingOut } = useLogout()
+  const { requestConfirm } = useConfirmDialog()
 
   // 菜单向上展开(设置项在侧栏底部):菜单底边对齐按钮顶边上方 8px。用 portal 避免被侧栏裁切。
   const toggle = () => {
@@ -56,14 +57,27 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   }
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      if (wasOpenRef.current) btnRef.current?.focus()
+      wasOpenRef.current = false
+      return
+    }
+    wasOpenRef.current = true
+    popRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus()
     function onDown(e: PointerEvent) {
       const t = e.target as Node
       if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return
       setOpen(false)
     }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
     window.addEventListener('pointerdown', onDown, true)
-    return () => window.removeEventListener('pointerdown', onDown, true)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('keydown', onKeyDown)
+    }
   }, [open])
 
   const openProfile = () => {
@@ -76,10 +90,22 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
     setPwdOpen(true)
     onAfterAction?.()
   }
-  const doLogout = () => {
+  const doLogout = async () => {
+    if (logoutConfirmRef.current || isLoggingOut) return
+    logoutConfirmRef.current = true
     setOpen(false)
-    onAfterAction?.()
-    void logout()
+    try {
+      const confirmed = await requestConfirm('退出后需要重新登录,确认退出当前账号吗？', {
+        title: '退出登录',
+        confirmLabel: '确认退出',
+        danger: true,
+      })
+      if (!confirmed) return
+      onAfterAction?.()
+      await logout()
+    } finally {
+      logoutConfirmRef.current = false
+    }
   }
 
   return (
@@ -89,6 +115,7 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
         type="button"
         className={`app-sidebar__item${open ? ' is-active' : ''}`}
         aria-haspopup="menu"
+        aria-controls="settings-popup-menu"
         aria-expanded={open}
         onClick={toggle}
       >
@@ -99,7 +126,14 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
       {open &&
         pos &&
         createPortal(
-          <div ref={popRef} className="settings-menu" role="menu" style={{ left: pos.left, top: pos.top }}>
+          <div
+            id="settings-popup-menu"
+            ref={popRef}
+            className="settings-menu"
+            role="menu"
+            aria-label="设置菜单"
+            style={{ left: pos.left, top: pos.top }}
+          >
             <button type="button" className="settings-menu__item" role="menuitem" onClick={openProfile}>
               <span className="settings-menu__ico settings-menu__ico--blue">{IconLogoutImg}</span>
               <span className="settings-menu__label">个人中心</span>
@@ -112,7 +146,7 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
               type="button"
               className="settings-menu__item"
               role="menuitem"
-              onClick={doLogout}
+              onClick={() => void doLogout()}
               disabled={isLoggingOut}
             >
               <span className="settings-menu__ico settings-menu__ico--red">{IconLogoutImg}</span>

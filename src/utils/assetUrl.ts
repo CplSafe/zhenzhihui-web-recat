@@ -5,8 +5,8 @@
  * 用于直接当 img/video src 的场景。
  */
 export function assetStreamUrl(assetId: number, workspaceId: number): string {
-  const id = Math.floor(Number(assetId) || 0)
-  const ws = Math.floor(Number(workspaceId) || 0)
-  if (!id) return ''
+  const id = Number(assetId)
+  const ws = Number(workspaceId)
+  if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(ws) || ws <= 0) return ''
   return `/api/v1/assets/${id}/download?workspace_id=${ws}`
 }

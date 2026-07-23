@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { peekCache, subscribe, swrFetch, invalidate } from '@/utils/swrCache'
 
+/** SWR 请求的缓存、持久化与启用配置。 */
 export interface UseSwrOptions<T> {
   /** 新鲜期(ms),默认 5 分钟 */
   ttl?: number
@@ -32,6 +33,7 @@ export interface UseSwrOptions<T> {
   enabled?: boolean
 }
 
+/** React 组件消费的 SWR 数据与刷新状态。 */
 export interface UseSwrResult<T> {
   data: T | undefined
   loading: boolean
@@ -40,6 +42,7 @@ export interface UseSwrResult<T> {
   refresh: () => void
 }
 
+/** 订阅指定缓存键，先返回缓存并在后台重新验证最新数据。 */
 export function useSwr<T>(key: string, fetcher: () => Promise<T>, options: UseSwrOptions<T> = {}): UseSwrResult<T> {
   const { ttl, fallback, persist = true, enabled = true } = options
 

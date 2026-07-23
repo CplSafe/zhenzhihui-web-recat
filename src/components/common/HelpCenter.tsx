@@ -25,6 +25,7 @@ import './HelpCenter.css'
 const FEISHU_GUIDE_URL = 'https://zcnyqlah2rse.feishu.cn/wiki/LeMwwtrRQiJyxKkMepOcnbIDnvg'
 // 爆款复制实操指南(飞书文档)
 const HOTCOPY_GUIDE_URL = 'https://zcnyqlah2rse.feishu.cn/wiki/EuaXw2pNHin1abkRVx5ci1yVnhd'
+/** 在隔离 opener 的新标签页中打开使用教程。 */
 const openGuideDoc = () => window.open(FEISHU_GUIDE_URL, '_blank', 'noopener,noreferrer')
 
 // 固定反馈类型(按设计):功能反馈带子分类下拉,优化建议 / 其他反馈为普通项。
@@ -62,22 +63,40 @@ const FB_DETAILS: Record<string, { q: string; opts: string[]; hint: string }> = 
     hint: '说说你的使用场景和期望效果,越具体越好。',
   },
 }
-const FB_MAX_IMAGES = 3 // 附件数量上限(图片 / 短视频)
-const FB_MAX_FILE_MB = 50 // 单个附件大小上限
+/** 意见反馈最多允许上传的图片或短视频数量。 */
+const FB_MAX_IMAGES = 3
+
+/** 意见反馈单个附件的大小上限（MB）。 */
+const FB_MAX_FILE_MB = 50
+
+/** 意见反馈正文的最大字符数。 */
 const FB_MAX_LEN = 200
 
+/** 记录帮助悬浮球位置的本地存储键。 */
 const POS_KEY = 'zzh_help_ball_pos'
+
+/** 帮助悬浮球的像素尺寸。 */
 const BALL = 56
+
+/** 悬浮球与视口边缘的最小距离。 */
 const MARGIN = 8
+
+/** 悬浮球与弹出面板之间的间距。 */
 const GAP = 14
+
+/** 帮助面板的默认宽度。 */
 const CARD_W = 384
 
+/** 助手面板内部可切换的内容视图。 */
 type View = 'home' | 'faq' | 'tutorial' | 'contact' | 'feedback'
+
+/** 悬浮球左上角坐标。 */
 interface Pos {
   x: number
   y: number
 }
 
+/** 助手内置的常见问题与简短答案。 */
 const FAQ: { q: string; a: string }[] = [
   {
     q: '如何用「智能成片」快速生成一条视频?',
@@ -110,6 +129,7 @@ const TUTORIALS: { title: string; url?: string }[] = [
   { title: '如何替换 / 编辑分镜图' },
 ]
 
+/** 将记忆或拖拽得到的位置限制在当前视口，防止窗口缩放后悬浮球不可见。 */
 function clampPos(p: Pos): Pos {
   const maxX = Math.max(MARGIN, window.innerWidth - BALL - MARGIN)
   const maxY = Math.max(MARGIN, window.innerHeight - BALL - MARGIN)
@@ -120,6 +140,7 @@ function clampPos(p: Pos): Pos {
 }
 
 // ── 面板图标(内联,描边色 currentColor)──
+/** 搜索入口图标。 */
 const IconSearch = () => (
   <svg
     viewBox="0 0 24 24"
@@ -134,6 +155,7 @@ const IconSearch = () => (
     <path d="m20 20-3.2-3.2" />
   </svg>
 )
+/** 教程播放图标。 */
 const IconPlay = () => (
   <svg
     viewBox="0 0 24 24"
@@ -149,6 +171,7 @@ const IconPlay = () => (
     <path d="M10 8.5l5 3.5-5 3.5z" fill="currentColor" stroke="none" />
   </svg>
 )
+/** 帮助中心图标。 */
 const IconHelp = () => (
   <svg
     viewBox="0 0 24 24"
@@ -165,6 +188,7 @@ const IconHelp = () => (
     <circle cx="12" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
   </svg>
 )
+/** 学习中心图标。 */
 const IconBook = () => (
   <svg
     viewBox="0 0 24 24"
@@ -180,6 +204,7 @@ const IconBook = () => (
     <path d="M20 5.5A2 2 0 0 0 18 4h-6v15h6a2 2 0 0 1 2 1.5z" />
   </svg>
 )
+/** 意见反馈图标。 */
 const IconPen = () => (
   <svg
     viewBox="0 0 24 24"
@@ -195,6 +220,7 @@ const IconPen = () => (
     <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 )
+/** 智能客服图标。 */
 const IconChat = () => (
   <svg
     viewBox="0 0 24 24"
@@ -210,6 +236,7 @@ const IconChat = () => (
   </svg>
 )
 
+/** 协调悬浮球拖拽、面板导航、意见反馈上传和当前页面引导入口。 */
 export default function HelpCenter() {
   const { showToast } = useToast()
   const location = useLocation() // 当前路由:用于「新手引导」按页分类展示 + 定位对应引导
@@ -233,11 +260,31 @@ export default function HelpCenter() {
   const [fbHistory, setFbHistory] = useState<FeedbackRecord[]>([])
   const [fbHistoryLoading, setFbHistoryLoading] = useState(false)
   const fbFileRef = useRef<HTMLInputElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   const ballRef = useRef<HTMLButtonElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const posRef = useRef<Pos>({ x: 0, y: 0 })
   const drag = useRef({ dragging: false, moved: false, offX: 0, offY: 0, startX: 0, startY: 0 })
+  const aliveRef = useRef(true)
+  const fbSubmittingRef = useRef(false)
+  const fbImagesRef = useRef(fbImages)
+  const wasOpenRef = useRef(false)
+  fbImagesRef.current = fbImages
+
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+      fbImagesRef.current.forEach((image) => {
+        try {
+          URL.revokeObjectURL(image.url)
+        } catch {
+          /* ignore */
+        }
+      })
+    }
+  }, [])
 
   const setPosBoth = useCallback((p: Pos) => {
     const c = clampPos(p)
@@ -269,18 +316,31 @@ export default function HelpCenter() {
   }, [setPosBoth])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      if (wasOpenRef.current) ballRef.current?.focus()
+      wasOpenRef.current = false
+      return
+    }
+    wasOpenRef.current = true
+    searchInputRef.current?.focus()
     function onDocPointerDown(e: PointerEvent) {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
     }
+    function onDocKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
     document.addEventListener('pointerdown', onDocPointerDown)
-    return () => document.removeEventListener('pointerdown', onDocPointerDown)
+    document.addEventListener('keydown', onDocKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onDocPointerDown)
+      document.removeEventListener('keydown', onDocKeyDown)
+    }
   }, [open])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLButtonElement>) => {
       if (!pos) return
-      ballRef.current?.setPointerCapture(e.pointerId)
+      ballRef.current?.setPointerCapture?.(e.pointerId)
       drag.current = {
         dragging: true,
         moved: false,
@@ -317,6 +377,16 @@ export default function HelpCenter() {
     } else {
       setOpen((o) => !o)
     }
+  }, [])
+
+  const onPointerCancel = useCallback(() => {
+    drag.current.dragging = false
+  }, [])
+
+  const onBallKeyDown = useCallback((e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault()
+    setOpen((value) => !value)
   }, [])
 
   const goHome = useCallback(() => setView('home'), [])
@@ -364,7 +434,7 @@ export default function HelpCenter() {
   }, [view, fbTab])
 
   const submitFeedback = useCallback(async () => {
-    if (fbSubmitting) return
+    if (fbSubmittingRef.current) return
     if (!feedback.trim()) {
       showToast('请先填写反馈内容', 'info')
       return
@@ -381,6 +451,7 @@ export default function HelpCenter() {
       showToast('反馈类型暂未配置,暂时无法提交,请联系管理员', 'info')
       return
     }
+    fbSubmittingRef.current = true
     setFbSubmitting(true)
     try {
       // ① 反馈图先上传成 asset(source=feedback)拿 asset_id
@@ -399,11 +470,13 @@ export default function HelpCenter() {
           assetIds = results.filter(Boolean)
         }
       }
+      if (!aliveRef.current) return
       // ② 把所选分类 + 多选标签拼进 content(后端类型粒度不够,避免丢信息)
       const catLine = fbTop === 'feature' ? `【功能反馈 / ${fbSub}】` : `【${topDef.label}】`
       const tagPart = fbTags.length ? ` ${fbTags.join('、')}` : ''
       const content = [catLine + tagPart, feedback.trim()].filter(Boolean).join('\n')
       await apiSubmitFeedback({ feedbackType: typeId, content, contact, assetIds })
+      if (!aliveRef.current) return
       showToast('感谢反馈,我们会尽快处理', 'success')
       setFeedback('')
       setContact('')
@@ -421,11 +494,13 @@ export default function HelpCenter() {
       setFbDropOpen(false)
       setView('home')
     } catch (e: any) {
+      if (!aliveRef.current) return
       showToast(e?.message || '提交失败,请稍后重试', 'error')
     } finally {
-      setFbSubmitting(false)
+      fbSubmittingRef.current = false
+      if (aliveRef.current) setFbSubmitting(false)
     }
-  }, [fbSubmitting, feedback, fbTop, fbSub, fbTypes, fbImages, workspaceId, fbTags, contact, showToast])
+  }, [feedback, fbTop, fbSub, fbTypes, fbImages, workspaceId, fbTags, contact, showToast])
 
   if (!pos) return null
 
@@ -447,9 +522,11 @@ export default function HelpCenter() {
     <div ref={rootRef} className="hc-root">
       {open && (
         <div
+          id="help-center-dialog"
           className={`hc-card${view === 'home' ? ' hc-card--ai' : ''}${view === 'feedback' ? ' hc-card--fb' : ''}`}
           style={cardStyle}
           role="dialog"
+          aria-modal="true"
           aria-label="AI 助手"
         >
           {view === 'home' ? (
@@ -475,6 +552,8 @@ export default function HelpCenter() {
               <label className="hc-ai-search">
                 <IconSearch />
                 <input
+                  ref={searchInputRef}
+                  aria-label="搜索帮助内容"
                   value={search}
                   placeholder="搜索模板、项目、IP..."
                   onChange={(e) => setSearch(e.target.value)}
@@ -496,7 +575,14 @@ export default function HelpCenter() {
                       return
                     }
                     setOpen(false) // 收起帮助面板,露出引导蒙层
-                    openGuide(key)
+                    // 分镜脚本 / 镜头编排页从帮助中心重看时，使用扁平的三步回放：流程说明 2 步 → 分镜回收站。
+                    // 仅在垃圾桶真实可见时启用，避免其他阶段的第 3 步找不到目标后退化为居中卡片。
+                    const trash = document.querySelector<HTMLElement>(
+                      '[data-guide="smart-script-trash"], [data-guide="smart-arrange-trash"]',
+                    )
+                    const trashRect = trash?.getBoundingClientRect()
+                    const hasVisibleTrash = !!trashRect && trashRect.width > 0 && trashRect.height > 0
+                    openGuide(key === 'smart' && hasVisibleTrash ? 'smartHelpWithTrash' : key)
                   }}
                 >
                   <span className="hc-ai-row-ic">
@@ -662,9 +748,11 @@ export default function HelpCenter() {
 
                 {view === 'feedback' && (
                   <div className="hc-fb">
-                    <div className="hc-fb-tabs">
+                    <div className="hc-fb-tabs" role="tablist" aria-label="反馈视图">
                       <button
                         type="button"
+                        role="tab"
+                        aria-selected={fbTab === 'submit'}
                         className={`hc-fb-tab${fbTab === 'submit' ? ' is-active' : ''}`}
                         onClick={() => setFbTab('submit')}
                       >
@@ -672,6 +760,8 @@ export default function HelpCenter() {
                       </button>
                       <button
                         type="button"
+                        role="tab"
+                        aria-selected={fbTab === 'history'}
                         className={`hc-fb-tab${fbTab === 'history' ? ' is-active' : ''}`}
                         onClick={() => setFbTab('history')}
                       >
@@ -744,6 +834,7 @@ export default function HelpCenter() {
                           </span>
                         </div>
                         <textarea
+                          aria-label="反馈内容"
                           className="hc-fb-textarea"
                           value={feedback}
                           maxLength={FB_MAX_LEN}
@@ -758,6 +849,7 @@ export default function HelpCenter() {
                               <button
                                 key={opt}
                                 type="button"
+                                aria-pressed={fbTags.includes(opt)}
                                 className={`hc-fb-tag${fbTags.includes(opt) ? ' is-active' : ''}`}
                                 onClick={() => toggleTag(opt)}
                               >
@@ -819,6 +911,7 @@ export default function HelpCenter() {
                           )}
                           <input
                             ref={fbFileRef}
+                            aria-label="上传反馈附件"
                             type="file"
                             accept="image/*,video/*"
                             multiple
@@ -845,6 +938,7 @@ export default function HelpCenter() {
 
                         <div className="hc-fb-label">联系方式</div>
                         <input
+                          aria-label="联系方式"
                           className="hc-fb-input"
                           value={contact}
                           maxLength={20}
@@ -892,9 +986,13 @@ export default function HelpCenter() {
         className={`hc-ball${open ? ' is-open' : ''}`}
         style={{ left: pos.x, top: pos.y }}
         aria-label="AI 助手"
+        aria-controls="help-center-dialog"
+        aria-expanded={open}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onKeyDown={onBallKeyDown}
       >
         {/* 收起态=机器人客服头像(帮助中心图标),展开态=白色圆角上箭头(⌃) */}
         {open ? (
@@ -912,6 +1010,7 @@ export default function HelpCenter() {
   )
 }
 
+/** 列表导航使用的右箭头图标。 */
 const ChevronRight = () => (
   <svg className="hc-ai-row-arrow" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
     <path
