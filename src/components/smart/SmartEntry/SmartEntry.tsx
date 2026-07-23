@@ -15,8 +15,9 @@ import {
   saveSmartEntryDraft,
   type SmartEntryDraftStore,
 } from '@/utils/smartEntryDraft'
+import { ALL_SMART_SCRIPT_NAMES, SMART_SCRIPT_OPTIONS, normalizeSmartScriptName } from '@/utils/smartScriptOptions'
 import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
-import { SUPPORTED_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
+import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 import { useToast } from '@/composables/useToast'
 import styles from './SmartEntry.module.less'
 
@@ -69,17 +70,16 @@ interface SmartEntryProps {
   }
 }
 
-/** 统一视频时长策略对应的入口秒数选项。 */
-const DURATION_OPTIONS = SUPPORTED_VIDEO_DURATIONS.map((seconds) => `${seconds}s`)
+/** 智能成片支持从 1 秒到 15 秒逐秒选择。 */
+const DURATION_OPTIONS = SMART_VIDEO_DURATIONS.map((seconds) => `${seconds}s`)
 
-/** 可选的营销需求分析技能。 */
-const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill']
+/** 可选的智能成片脚本。 */
+const SCRIPT_OPTIONS = [...SMART_SCRIPT_OPTIONS]
 
 /** 入口最多接收的参考图数量。 */
 const MAX_IMAGES = 9
 const IMAGE_OUTPUT_COUNT_OPTIONS = Array.from({ length: MAX_IMAGES }, (_, index) => `${index + 1}张`)
 const clampImageOutputCount = (value: unknown) => Math.min(MAX_IMAGES, Math.max(1, Math.floor(Number(value) || 1)))
-
 /** 文件扩展名图片识别兜底规则。 */
 const IMAGE_FILE_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i
 
@@ -93,18 +93,18 @@ const PLACEHOLDER_VIDEO =
 const PLACEHOLDER_IMAGE =
   '最多上传9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 
-// 选中 SKILL 后插入到输入框的提示语(高亮显示)。提交/展示前会被剥离,保持需求正文干净。
-const skillLine = (s: string) => `使用${s}帮我优化`
+// 选中智能脚本后插入到输入框的提示语(高亮显示)。提交/展示前会被剥离,保持需求正文干净。
+const skillLine = (s: string) => `使用${normalizeSmartScriptName(s)}帮我优化`
 /** 保存/提交前移除仅用于界面高亮的技能提示语，保持原始需求干净。 */
 const stripSkillLine = (t: string) =>
-  SKILL_OPTIONS.reduce((acc, opt) => acc.split(skillLine(opt)).join(''), t)
+  ALL_SMART_SCRIPT_NAMES.reduce((acc, name) => acc.split(`使用${name}帮我优化`).join(''), t)
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t\n]+$/, '')
-// 把 skill 提示语拼到正文后面(正文非空时空一行)
+// 把智能脚本提示语拼到正文后面(正文非空时空一行)
 const composeWithSkill = (base: string, s: string) => (s ? (base ? `${base}\n\n${skillLine(s)}` : skillLine(s)) : base)
 
-// 高亮渲染匹配:@图片N(绿) + 使用×××skills帮我优化(skill 提示语,着色)
-const HL_RE = new RegExp(`@图片\\d+|${SKILL_OPTIONS.map((s) => skillLine(s)).join('|')}`, 'g')
+// 高亮渲染匹配:@图片N(绿) + 使用××智能脚本帮我优化(智能脚本提示语,着色)
+const HL_RE = new RegExp(`@图片\\d+|${ALL_SMART_SCRIPT_NAMES.map((name) => `使用${name}帮我优化`).join('|')}`, 'g')
 
 // ── 入口未提交输入的「跨路由保活」 ──
 // 切到别的页面会卸载本组件、丢失全部内部 state(文字/图片/比例/时长/skill/模式)。
@@ -132,7 +132,7 @@ export default function SmartEntry({
   // 注意 initial.text 跨路由时是父级空串(非 undefined),故用「非空才采纳」而非 ?? 来回退到暂存。
   const [stored] = useState(() => (restoreSessionDraft ? loadSmartEntryDraft() : null))
   const seedText = (initial?.text && initial.text.length ? initial.text : stored?.text) ?? ''
-  const seedSkill = initial?.skill ?? stored?.skill ?? ''
+  const seedSkill = normalizeSmartScriptName(initial?.skill ?? stored?.skill ?? '')
   const seedImages = (initial?.images && initial.images.length ? initial.images : stored?.images) ?? []
   const seedImageAssetIds =
     (initial?.images && initial.images.length ? initial.imageAssetIds : stored?.imageAssetIds) ?? []
@@ -566,14 +566,14 @@ export default function SmartEntry({
                 )}
               </span>
 
-              {/* SKILLS:营销技能包(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
+              {/* 智能成片脚本(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
               {mode === 'video' && (
                 <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
                   <EntryDropdown
                     clearable
-                    placeholder="SKILLS"
+                    placeholder="爆款脚本自动生成"
                     value={skill}
-                    options={SKILL_OPTIONS}
+                    options={SCRIPT_OPTIONS}
                     onChange={pickSkill}
                     icon={
                       <svg

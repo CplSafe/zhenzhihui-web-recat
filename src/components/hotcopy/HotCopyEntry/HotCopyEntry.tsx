@@ -14,7 +14,7 @@ import { assetStreamUrl } from '@/utils/assetUrl'
 import { createMaterialFromAsset } from '@/utils/materials'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { filterAssetsByProjectAccess, getAccessibleProjectIds } from '@/utils/projectAssetAccess'
-import { SUPPORTED_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
+import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import HotCopyCaseModal, { type HotCopyCaseTab } from '@/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
@@ -66,8 +66,8 @@ type HotCopyTabDraft = Omit<HotCopyEntryPayload, 'tab'>
 
 // 成片尺寸/时长可选项 —— 与智能成片完全一致(同样的列表顺序与默认值 16:9 / 10s)。
 const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
-/** 由统一视频时长策略生成爆款复制可选秒数文案。 */
-const DURATION_OPTIONS = SUPPORTED_VIDEO_DURATIONS.map((seconds) => `${seconds}s`)
+/** 爆款复制同样支持从 1 秒到 15 秒逐秒选择。 */
+const DURATION_OPTIONS = SMART_VIDEO_DURATIONS.map((seconds) => `${seconds}s`)
 
 /** 入口页与父级编排器之间的提交、草稿同步及恢复协议。 */
 interface HotCopyEntryProps {

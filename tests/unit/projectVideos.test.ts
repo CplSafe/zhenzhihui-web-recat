@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { countProjectVideos, deriveProjectVideos, formatVideoDuration, stableDerivedVideoId } from '@/api/projectVideos'
+import { computeVideoContentSig } from '@/utils/smartDraft'
 
 function projectWithVersions(): any {
   return {
@@ -205,6 +206,31 @@ describe('projectVideos 派生视频', () => {
     const [video] = deriveProjectVideos({ project, workspaceId: 7 })
 
     expect(video).toMatchObject({ id: 'derived-generated-21', status: 'published', videoAssetId: 105 })
+  })
+
+  it('忽略旧切换模型草稿写入的签名字段，不把已发布视频误判为新草稿', () => {
+    const project = projectWithVersions()
+    const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '7s', line: '新品上市' }]
+    const entryMeta = { ratio: '16:9', style: '写实' }
+    const fixedSignature = computeVideoContentSig(shots, entryMeta, '夏日饮品')
+    const legacySignature = JSON.stringify({
+      ...JSON.parse(fixedSignature),
+      videoModelVersionId: 7301,
+      videoModel: 'happyhorse',
+    })
+    project.draft_json.smart = {
+      shots,
+      entryMeta,
+      reqSummary: '夏日饮品',
+      lastVideoSig: legacySignature,
+      fullVideoAssetId: 105,
+      videoVersions: [],
+    }
+
+    const videos = deriveProjectVideos({ project, workspaceId: 7 })
+
+    expect(videos).toHaveLength(1)
+    expect(videos[0]).toMatchObject({ status: 'published', videoAssetId: 105 })
   })
 
   it.each([

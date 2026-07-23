@@ -13,7 +13,8 @@ import {
   getAiTaskId,
 } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
-import { normalizeSeedanceRatio, normalizeSeedanceDuration } from '@/utils/videoOptions'
+import { normalizeSeedanceRatio } from '@/utils/videoOptions'
+import { validateSmartVideoDuration } from '@/utils/videoDurationValue'
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
 import { readAiTaskProgress } from '@/utils/taskProgress'
 
@@ -102,10 +103,15 @@ function buildReplicateVideoParams(
   model: any,
   args: { durationSec?: number; sourceVideoDurationSec?: number; ratio?: string },
 ): Record<string, any> {
+  const durationValidation = validateSmartVideoDuration(args.durationSec ?? 10)
+  if (!durationValidation.valid) {
+    throw new Error('爆款复制时长必须是 1 至 15 秒内的整数')
+  }
   return {
     generate_audio: true,
     ...buildVideoGenerationParams(model, {
-      duration: normalizeSeedanceDuration(args.durationSec || 10),
+      duration: durationValidation.seconds,
+      durationMode: 'exact',
       sourceVideoDuration: args.sourceVideoDurationSec,
       resolution: '720p',
       ratio: normalizeSeedanceRatio(args.ratio || '16:9'),

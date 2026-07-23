@@ -63,7 +63,7 @@ function buildDurationPromptLines(totalSec: number): string[] {
   }
   // 通用兜底:限制镜头数别太碎，避免大量 1s。
   const approxShots = Math.max(1, Math.floor(totalSec / 4))
-  const perShot = Math.max(2, Math.round(totalSec / approxShots))
+  const perShot = Math.max(1, Math.round(totalSec / approxShots))
   return [
     `视频总时长 ${totalSec} 秒(硬性要求):请切分为约 ${approxShots} 个镜头,每镜约 ${perShot} 秒,` +
       `所有镜头 duration 相加必须严格等于 ${totalSec} 秒,绝对不能超过;不要切得过碎。`,
@@ -116,10 +116,9 @@ function renumberScriptShots(shots: Shot[]): Shot[] {
 
 /** 按总时长计算允许的最大镜头数，避免出现过多 1 秒碎镜。 */
 function maxShotCountForDuration(totalSec: number): number {
-  if (totalSec === 5) return 2
-  if (totalSec === 10) return 4
-  if (totalSec === 15) return 5
-  return 0
+  if (!(totalSec > 0)) return 0
+  // 每个镜头至少 1 秒；按约 3 秒一个镜头限制碎片数量，并延续 5/10/15 秒原有的 2/4/5 镜上限。
+  return Math.min(Math.floor(totalSec), 5, Math.ceil(totalSec / 3))
 }
 
 /** 将脚本裁剪到目标时长可承载的镜头数，并保留有内容的镜头。 */
@@ -241,8 +240,8 @@ function normalizeDurations(shots: Shot[], totalSec: number): Shot[] {
   if (patterned.length === boundedShots.length) {
     return boundedShots.map((s, i) => ({ ...s, duration: `${patterned[i]}s` }))
   }
-  // 已基本对齐(±0.5s)则不动,避免无谓改动
-  if (Math.abs(sum - totalSec) < 0.5) return boundedShots
+  // 只有真正相等时才保留，避免 6.8 秒等近似结果进入“选择 7 秒”的生成请求。
+  if (Math.abs(sum - totalSec) < 0.001) return boundedShots
   const scaled = scaleDurationsToTotal(secs, totalSec)
   if (!scaled.length) return boundedShots
   return boundedShots.map((s, i) => ({ ...s, duration: `${scaled[i]}s` }))

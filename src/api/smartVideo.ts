@@ -8,7 +8,7 @@ import { createAiTask, waitForAiTask, getAiTaskId, resolveTaskModel, estimateAiT
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
 import { normalizeSeedanceRatio } from '@/utils/videoOptions'
-import { parseDurationSeconds } from '@/utils/videoDurationValue'
+import { parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoDurationValue'
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
 import { readAiTaskProgress } from '@/utils/taskProgress'
 import { requireOrderedShotAssetIds } from '@/utils/smartGenerationGuards'
@@ -17,7 +17,6 @@ import { requireOrderedShotAssetIds } from '@/utils/smartGenerationGuards'
 const VIDEO_MODEL_KEYWORDS = ['seedance']
 // 视频编辑能力:在原视频基础上按提示微调(happyhorse-1.0-video-edit)
 const VIDEO_EDIT_MODEL_KEYWORDS = ['happyhorse']
-
 /** 工作空间未开通 video.edit 能力时的统一错误文案。 */
 const VIDEO_EDIT_MODEL_UNAVAILABLE =
   '当前工作空间/套餐暂无「视频编辑(video.edit)」可用模型(happyhorse-1.0-video-edit),请联系管理员开通'
@@ -54,6 +53,7 @@ function buildVideoEditParams(
   const declaredNames = new Set(fields.map((field: any) => String(field?.name || '')).filter(Boolean))
   const candidates = buildVideoGenerationParams(model, {
     duration: args.durationSec,
+    durationMode: 'exact',
     sourceVideoDuration: args.sourceVideoDurationSec,
     resolution: '720p',
     ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
@@ -86,10 +86,16 @@ async function resolveFullVideoModel(args: { workspaceId: number }): Promise<any
 
 /** 用与正式提交一致的镜头总时长、比例和分辨率构建生成参数。 */
 function buildFullVideoParams(model: any, args: { shots: any[]; ratio?: string }): Record<string, any> {
+  const duration = totalDurationSec(args.shots)
+  const durationValidation = validateSmartVideoDuration(duration)
+  if (!durationValidation.valid) {
+    throw new Error('智能成片总时长必须是 1 至 15 秒内的整数')
+  }
   return {
     generate_audio: true,
     ...buildVideoGenerationParams(model, {
-      duration: totalDurationSec(args.shots) || 10,
+      duration: durationValidation.seconds,
+      durationMode: 'exact',
       resolution: '720p',
       ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
       generateAudio: true,

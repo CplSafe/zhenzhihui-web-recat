@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
   getModelForOperation: vi.fn(),
   resolveTaskVideoResult: vi.fn(),
   waitForAiTask: vi.fn(),
-  buildVideoGenerationParams: vi.fn(),
 }))
 
 vi.mock('@/api/business', () => ({
@@ -20,10 +19,6 @@ vi.mock('@/api/business', () => ({
   resolveTaskModel: vi.fn(),
   uploadAssetFile: vi.fn(),
   waitForAiTask: mocks.waitForAiTask,
-}))
-
-vi.mock('@/utils/videoTasks', () => ({
-  buildVideoGenerationParams: mocks.buildVideoGenerationParams,
 }))
 
 vi.mock('@/utils/videoOptions', () => ({
@@ -51,7 +46,6 @@ describe('replicateHotVideo lifecycle', () => {
     Object.values(mocks).forEach((mock) => mock.mockReset())
     invalidateHotCopyVideoModel(7)
     invalidateHotCopyVideoModel(61)
-    mocks.buildVideoGenerationParams.mockReturnValue({ duration: 10, ratio: '16:9', generate_audio: true })
   })
 
   it('passes the persistent generation key and accepts taskId response aliases', async () => {
@@ -105,6 +99,29 @@ describe('replicateHotVideo lifecycle', () => {
     })
   })
 
+  it.each([0, 7.5, 16])(
+    'rejects invalid duration %s before estimating or creating a paid task',
+    async (durationSec) => {
+      mocks.getModelForOperation.mockResolvedValue({ id: 3, params_schema: { fields: [] } })
+
+      await expect(estimateReplicateCost({ workspaceId: 7, durationSec })).rejects.toThrow(
+        '爆款复制时长必须是 1 至 15 秒内的整数',
+      )
+      await expect(
+        replicateHotVideo({
+          workspaceId: 7,
+          videoAssetId: 100,
+          productAssetIds: [101],
+          durationSec,
+          modelVersion: { id: 3 },
+        }),
+      ).rejects.toThrow('爆款复制时长必须是 1 至 15 秒内的整数')
+
+      expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
+      expect(mocks.createAiTask).not.toHaveBeenCalled()
+    },
+  )
+
   it('rejects task ID zero before trying to resume polling', async () => {
     await expect(awaitHotVideoResult({ workspaceId: 7, taskId: 0 })).rejects.toThrow('爆款复制任务 ID 无效')
     expect(mocks.waitForAiTask).not.toHaveBeenCalled()
@@ -121,15 +138,20 @@ describe('replicateHotVideo lifecycle', () => {
   })
 
   it('uses the same cached model and schema-derived params for replicate estimate and submission', async () => {
-    const model = { id: 29, operation_codes: ['video.replicate'], params_schema: { fields: [] } }
+    const model = {
+      id: 29,
+      operation_codes: ['video.replicate'],
+      params_schema: {
+        fields: [
+          { name: 'seconds', options: ['5', '10', '15'] },
+          { name: 'source_video_duration' },
+          { name: 'resolution', options: ['720p'] },
+          { name: 'ratio', options: ['9:16', '16:9'] },
+          { name: 'generate_audio' },
+        ],
+      },
+    }
     mocks.getModelForOperation.mockResolvedValue(model)
-    mocks.buildVideoGenerationParams.mockReturnValue({
-      duration: 15,
-      source_video_duration: 14.8,
-      resolution: '720p',
-      ratio: '9:16',
-      generate_audio: true,
-    })
     mocks.estimateAiTaskCost.mockResolvedValue({ estimated_cost: 99 })
     mocks.createAiTask.mockResolvedValue({ id: 831, status: 'PROCESSING' })
     mocks.waitForAiTask.mockResolvedValue({ id: 831, status: 'COMPLETED' })
@@ -137,7 +159,7 @@ describe('replicateHotVideo lifecycle', () => {
     const sharedArgs = {
       workspaceId: 61,
       ratio: '9:16',
-      durationSec: 15,
+      durationSec: 7,
       sourceVideoDurationSec: 14.8,
       modelPlanCandidates: ['team'],
     }
@@ -163,6 +185,13 @@ describe('replicateHotVideo lifecycle', () => {
       operationCode: 'video.replicate',
     })
     expect(estimated.params).toEqual(submitted.params)
+    expect(submitted.params).toMatchObject({
+      seconds: 7,
+      source_video_duration: 14.8,
+      resolution: '720p',
+      ratio: '9:16',
+      generate_audio: true,
+    })
     expect(mocks.getModelForOperation).toHaveBeenCalledWith('video.replicate', ['seedance'], ['team'], 61)
     expect(mocks.getModelForOperation).toHaveBeenCalledOnce()
   })

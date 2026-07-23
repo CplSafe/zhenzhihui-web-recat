@@ -5,6 +5,8 @@
 
 /* 分镜脚本(表格式,还原 Figma 299:2524) */
 .sbTable {
+  --sb-material-column-width: 340px;
+
   background: #fff;
   border-radius: 24px;
   box-shadow:
@@ -53,6 +55,7 @@
     justify-self: end;
   }
 }
+
 /* AI一键生成图片(表头药丸,按 Figma:浅青描边 + 闪光图标 + 青字) */
 .sbHeadGen {
   display: inline-flex;
@@ -137,13 +140,15 @@
   flex: 0 0 100px;
 }
 .sbColDesc {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   padding-left: 24px;
   padding-right: 24px;
 }
 .sbColMat {
-  flex: 0 0 340px;
+  flex: 0 0 var(--sb-material-column-width);
+  width: var(--sb-material-column-width);
+  min-width: 0;
 }
 
 /* 行 */
@@ -409,6 +414,7 @@
   align-items: center;
   gap: 12px;
 }
+
 /* 缩略图固定贴到素材列右侧，把中间的可用宽度留给完整素材名称。 */
 .sbcMatRow > span:last-child,
 .sbcMatRow > .sbcMatUpload:last-child {

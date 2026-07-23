@@ -2,13 +2,7 @@
  * 创意视频时长策略：从自然语言需求中识别明确总时长，并校验模型支持范围。
  * 只接受明确表达的总时长，避免把“第 3 秒”等镜头时间误当成成片时长。
  */
-import {
-  SUPPORTED_VIDEO_DURATIONS,
-  isSupportedVideoDuration,
-  parseDurationSeconds,
-  validateVideoDuration,
-  type SupportedVideoDuration,
-} from './videoDurationValue'
+import { SUPPORTED_VIDEO_DURATIONS, parseDurationSeconds } from './videoDurationValue'
 
 /** 阿拉伯数字时长片段。 */
 const ARABIC_DURATION_TOKEN = String.raw`\d+(?:\.\d+)?`
@@ -100,7 +94,7 @@ export type CreativeDurationIssue =
 export type CreativeDurationValidation =
   | {
       valid: true
-      selectedSeconds: SupportedVideoDuration
+      selectedSeconds: number
       requestedSeconds: number | null
       issue: null
       message: ''
@@ -113,54 +107,73 @@ export type CreativeDurationValidation =
       message: string
     }
 
-/** 用于错误提示的模型支持时长列表。 */
-const supportedDurationLabel = SUPPORTED_VIDEO_DURATIONS.map((seconds) => `${seconds}秒`).join('、')
+/** 不同创作流程可传入各自的合法时长，默认保留离散档位流程的 5/10/15 秒规则。 */
+export interface CreativeDurationPolicyOptions {
+  supportedDurations?: readonly number[]
+  supportedDurationLabel?: string
+}
+
+/** 把连续范围压缩成“1至15秒”，离散档位仍显示完整列表。 */
+function formatSupportedDurationLabel(durations: readonly number[]): string {
+  if (!durations.length) return '有效时长'
+  const continuous = durations.every((duration, index) => index === 0 || duration === durations[index - 1] + 1)
+  if (continuous && durations.length > 2) {
+    return `${durations[0]}至${durations[durations.length - 1]}秒`
+  }
+  return durations.map((seconds) => `${seconds}秒`).join('、')
+}
 
 /** 同时校验结构化时长选择和需求文本中明确写出的总时长。 */
 export function validateCreativeDurationSelection(
   requirement: unknown,
   selectedDuration: unknown,
+  options: CreativeDurationPolicyOptions = {},
 ): CreativeDurationValidation {
-  const selected = validateVideoDuration(selectedDuration)
+  const supportedDurations = options.supportedDurations?.length
+    ? [...new Set(options.supportedDurations)].filter((duration) => Number.isFinite(duration) && duration > 0)
+    : [...SUPPORTED_VIDEO_DURATIONS]
+  const supportedDurationLabel = options.supportedDurationLabel || formatSupportedDurationLabel(supportedDurations)
+  const selectedSeconds = parseDurationSeconds(selectedDuration)
   const requestedSeconds = extractExplicitTotalDurationSeconds(requirement)
+  const selectedSupported = selectedSeconds !== null && supportedDurations.includes(selectedSeconds)
 
-  if (!selected.valid) {
-    const issue = selected.reason === 'unsupported' ? 'unsupported-selection' : 'invalid-selection'
+  if (!selectedSupported) {
+    const issue = selectedSeconds === null ? 'invalid-selection' : 'unsupported-selection'
     return {
       valid: false,
-      selectedSeconds: selected.seconds,
+      selectedSeconds,
       requestedSeconds,
       issue,
       message:
         issue === 'unsupported-selection'
-          ? `当前选择的${selected.seconds}秒不受支持，请选择${supportedDurationLabel}`
+          ? `当前选择的${selectedSeconds}秒不受支持，请选择${supportedDurationLabel}`
           : `视频时长无效，请选择${supportedDurationLabel}`,
     }
   }
 
-  if (requestedSeconds !== null && !isSupportedVideoDuration(requestedSeconds)) {
+  if (requestedSeconds !== null && !supportedDurations.includes(requestedSeconds)) {
     return {
       valid: false,
-      selectedSeconds: selected.seconds,
+      selectedSeconds,
       requestedSeconds,
       issue: 'unsupported-requirement',
       message: `创作需求中指定了${requestedSeconds}秒，但当前视频模型仅支持${supportedDurationLabel}，请修改需求或时长选项`,
     }
   }
 
-  if (requestedSeconds !== null && requestedSeconds !== selected.seconds) {
+  if (requestedSeconds !== null && requestedSeconds !== selectedSeconds) {
     return {
       valid: false,
-      selectedSeconds: selected.seconds,
+      selectedSeconds,
       requestedSeconds,
       issue: 'requirement-mismatch',
-      message: `创作需求中指定了${requestedSeconds}秒，但当前时长选项是${selected.seconds}秒，请保持两处一致后再生成`,
+      message: `创作需求中指定了${requestedSeconds}秒，但当前时长选项是${selectedSeconds}秒，请保持两处一致后再生成`,
     }
   }
 
   return {
     valid: true,
-    selectedSeconds: selected.seconds,
+    selectedSeconds,
     requestedSeconds,
     issue: null,
     message: '',

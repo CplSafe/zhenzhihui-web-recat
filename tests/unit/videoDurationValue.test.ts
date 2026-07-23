@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { totalDurationSec } from '@/api/smartVideo'
 import {
+  SMART_VIDEO_DURATIONS,
   SUPPORTED_VIDEO_DURATIONS,
   parseDurationSeconds,
   resolveVideoDuration,
+  validateSmartVideoDuration,
   validateVideoDuration,
 } from '@/utils/videoDurationValue'
 
@@ -31,6 +33,16 @@ describe('video duration values', () => {
       expect(validateVideoDuration(`${duration}s`)).toEqual({ valid: true, seconds: duration, reason: null })
     }
     expect(validateVideoDuration(11)).toEqual({ valid: false, seconds: 11, reason: 'unsupported' })
+  })
+
+  it('accepts every integer from 1 to 15 for smart video without changing discrete-duration flows', () => {
+    expect(SMART_VIDEO_DURATIONS).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+    for (const duration of SMART_VIDEO_DURATIONS) {
+      expect(validateSmartVideoDuration(`${duration}s`)).toEqual({ valid: true, seconds: duration, reason: null })
+    }
+    expect(validateSmartVideoDuration(0)).toEqual({ valid: false, seconds: null, reason: 'invalid' })
+    expect(validateSmartVideoDuration(7.5)).toEqual({ valid: false, seconds: 7.5, reason: 'unsupported' })
+    expect(validateSmartVideoDuration(16)).toEqual({ valid: false, seconds: 16, reason: 'unsupported' })
   })
 
   it('keeps compatibility snapping while offering strict resolution', () => {

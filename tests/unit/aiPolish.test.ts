@@ -339,6 +339,23 @@ describe('marketing field pure functions and structured parsing', () => {
     expect(mocks.runResponseText).toHaveBeenCalledWith(expect.objectContaining({ images: ['img'] }))
   })
 
+  it.each(['本地生活广告', '本地生活智能脚本', '本地生活Skill'])(
+    'routes the current and legacy local-life labels to the local-life manual: %s',
+    async (skill) => {
+      mocks.runResponseText.mockResolvedValue(
+        '{"groups":[{"label":"到店转化","fields":[{"label":"核销","desc":"引导用户到店核销","tags":[]}]}]}',
+      )
+
+      await skillBreakdownStructured({ skill, requirement: '推广餐厅团购' })
+
+      expect(mocks.runResponseText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: expect.stringContaining('本地生活目标是'),
+        }),
+      )
+    },
+  )
+
   it.each(['', 'not json', '{"groups":[]}', '{"groups":[{"fields":[]}]}'])(
     'rejects empty or malformed marketing structure: %j',
     async (raw) => {

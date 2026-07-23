@@ -132,6 +132,7 @@ import {
   resolveCreativeProjectTitleWrite,
 } from '@/utils/creativeProjectTitlePersistence'
 import { resolveCreativeProjectId as resolveProjectId } from '@/utils/projectAssetAccess'
+import { normalizeSmartScriptName } from '@/utils/smartScriptOptions'
 import { stableDerivedVideoId } from '@/api/projectVideos'
 import {
   mergeVideoVersionLists,
@@ -150,7 +151,7 @@ import {
   stableGenerationAssetKey,
 } from '@/utils/smartGenerationGuards'
 import { validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
-import { SUPPORTED_VIDEO_DURATIONS, parseDurationSeconds, validateVideoDuration } from '@/utils/videoDurationValue'
+import { SMART_VIDEO_DURATIONS, parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoDurationValue'
 import {
   bindVideoModificationNote,
   parseVideoModificationDraft,
@@ -241,8 +242,8 @@ function normRev(payload: any): number {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : NaN
 }
 
-/** 视频模型支持时长的用户可读列表。 */
-const SUPPORTED_VIDEO_DURATION_LABEL = SUPPORTED_VIDEO_DURATIONS.map((seconds) => `${seconds}秒`).join('、')
+/** 智能成片支持时长的用户可读范围。 */
+const SUPPORTED_VIDEO_DURATION_LABEL = '1至15秒内的整数'
 
 /** 为不受模型支持的总时长生成明确调整提示。 */
 function unsupportedVideoDurationMessage(value: unknown): string {
@@ -905,7 +906,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
 
   const guideActiveKey = useGuideStore((s) => s.activeKey)
 
-  // 生成前确保工作空间真实套餐候选已加载,并读最新值(否则只有默认候选,列不到付费套餐里的 seedance/seedream)。
+  // 生成前确保工作空间真实套餐候选已加载,并读最新值(否则只有默认候选,列不到付费套餐模型)。
   // 与 2.0 useVideoGeneration 一致:先 ensure,再用 getState 读最新,避免闭包拿到旧的 modelPlanCandidates。
   const resolvePlanCandidates = async (): Promise<string[]> => {
     try {
@@ -924,6 +925,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   const [entryKey, setEntryKey] = useState(0) // 「制作新视频」自增 → 重挂载入口页,清空其内部输入状态
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [entryMeta, setEntryMeta] = useState<EntryMeta | null>(null)
+
   // ── 制作图片(chat 形式):消息流。image 模式不走分镜/视频 4 步,改为对话出图 ──
   const [imageMessages, setImageMessages] = useState<ChatMessage[]>([])
   const imageMessagesRef = useRef<ChatMessage[]>([])
@@ -2461,7 +2463,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, shots])
 
-  // ── 生成视频:整片一次生成(所有分镜图+脚本+台词+字幕+音效 → seedance)──
+  // ── 生成视频:整片一次生成(所有分镜图+脚本+台词+字幕+音效 → Seedance)──
   const [fullVideo, setFullVideo] = useState<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   const fullVideoRef = useRef<{ url: string; assetId: number }>({ url: '', assetId: 0 })
   useEffect(() => {
@@ -2920,7 +2922,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
   const [blurPhase, setBlurPhase] = useState('')
   const [blurDebug, setBlurDebug] = useState<any[]>([])
-  // 人脸脱敏恒开(不提供开关):正式出片前先对每张进入视频的分镜图抠人脸/脱敏,再喂 seedance。
+  // 人脸脱敏恒开(不提供开关):正式出片前先对每张进入视频的分镜图抠人脸/脱敏,再提交给 Seedance。
   // 明确确认无人脸时使用原图；检测服务异常时停止本轮，不能把未经确认的原图送去生成。
   const [faceBlurEnabled] = useState(true)
   const faceBlurEnabledRef = useRef(true)
@@ -2929,7 +2931,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   }, [faceBlurEnabled])
 
   // 生成/重生成整片的单次执行单元;多条生成由外层队列顺序消费。
-  // 「确认修改」仍专走 video.edit;普通重生成走 seedance。
+  // 「确认修改」仍专走 video.edit;普通重生成继续走固定的 Seedance 整片模型。
   const runVideoJob = async (
     job: VideoGenJob,
     sessionId = job.context?.sessionId || videoGenSessionIdRef.current,
@@ -2961,7 +2963,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       }
       return
     }
-    const durationValidation = validateVideoDuration(totalDurationSec(currentShots))
+    const durationValidation = validateSmartVideoDuration(totalDurationSec(currentShots))
     if (!durationValidation.valid) {
       const msg = unsupportedVideoDurationMessage(durationValidation.seconds)
       const terminalPersisted = await persistSmartJobTerminal(job, 'failed', msg)
@@ -3394,7 +3396,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       showToast('暂无分镜,无法生成视频', 'error')
       return
     }
-    const durationValidation = validateVideoDuration(totalDurationSec(currentShots))
+    const durationValidation = validateSmartVideoDuration(totalDurationSec(currentShots))
     if (!durationValidation.valid) {
       showToast(unsupportedVideoDurationMessage(durationValidation.seconds), 'error')
       return
@@ -5596,12 +5598,12 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       setDurGuard({ open: true, currentSec, expectedSec, overMax: true })
       return
     }
-    const selectedDuration = validateVideoDuration(entryMeta.duration)
+    const selectedDuration = validateSmartVideoDuration(entryMeta.duration)
     if (!selectedDuration.valid) {
       showToast(`当前视频时长选项无效，请选择${SUPPORTED_VIDEO_DURATION_LABEL}`, 'error')
       return
     }
-    const shotDuration = validateVideoDuration(currentSec)
+    const shotDuration = validateSmartVideoDuration(currentSec)
     if (!shotDuration.valid) {
       durGuardProceedRef.current = null
       showToast(unsupportedVideoDurationMessage(shotDuration.seconds), 'error')
@@ -6412,7 +6414,10 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   // 入口提交「输入文字生成」→ 需登录(免登录可进页面/输入,但生成需登录)
   const handleStart = async (req: string, meta: EntryMeta): Promise<boolean> => {
     if (meta.mode === 'video') {
-      const durationValidation = validateCreativeDurationSelection(req, meta.duration)
+      const durationValidation = validateCreativeDurationSelection(req, meta.duration, {
+        supportedDurations: SMART_VIDEO_DURATIONS,
+        supportedDurationLabel: SUPPORTED_VIDEO_DURATION_LABEL,
+      })
       if (!durationValidation.valid) {
         showToast(durationValidation.message, 'error')
         return false
@@ -6947,7 +6952,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         <div className="smart__marketing">
           <div className="smart__marketing-title">
             <span aria-hidden="true">💡</span>
-            {entryMeta?.skill}建议：
+            {normalizeSmartScriptName(entryMeta?.skill)}建议：
           </div>
           <div className="smart__marketing-content">
             {marketingLoading ? (

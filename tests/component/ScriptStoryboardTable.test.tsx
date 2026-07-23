@@ -40,6 +40,10 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+function getMaterialItem(name: string) {
+  return screen.getByRole('group', { name })
+}
+
 async function editDuration(user: ReturnType<typeof userEvent.setup>, from: string, to: string) {
   await user.click(screen.getByRole('button', { name: from }))
   const input = screen.getByRole('textbox')
@@ -134,7 +138,6 @@ describe('duration editing boundaries', () => {
   it.each([
     ['0', ''],
     ['16', '最长仅支持15秒，请修改秒数'],
-    ['4', '总时长不能少于5秒（改后为 4s），请调整'],
   ])('rejects duration boundary %s without updating', async (value, toast) => {
     const user = userEvent.setup()
     const onShotsChange = vi.fn()
@@ -145,6 +148,20 @@ describe('duration editing boundaries', () => {
     expect(onShotsChange).not.toHaveBeenCalled()
     expect(mocks.requestConfirm).not.toHaveBeenCalled()
     if (toast) expect(mocks.showToast).toHaveBeenCalledWith(toast, 'error')
+  })
+
+  it('allows the combined duration to be reduced below five seconds', async () => {
+    const user = userEvent.setup()
+    const onShotsChange = vi.fn()
+    render(<ScriptStoryboardTable shots={[shot()]} onShotsChange={onShotsChange} showSubjects={false} />)
+
+    await editDuration(user, '5', '1')
+
+    await waitFor(() => expect(onShotsChange).toHaveBeenCalledWith([expect.objectContaining({ duration: '1s' })]))
+    expect(mocks.requestConfirm).toHaveBeenCalledWith(
+      '镜头「镜头1」时长从 5s 改为 1s，确认修改吗？',
+      expect.objectContaining({ title: '确认时长' }),
+    )
   })
 
   it('rejects a change that would push the combined duration over 15 seconds', async () => {
@@ -229,7 +246,7 @@ describe('description and loading accessibility', () => {
 })
 
 describe('subject material actions', () => {
-  it('shows each repeated subject only at its first occurrence across shots', () => {
+  it('keeps the original row material layout while showing each repeated subject only once', () => {
     render(
       <ScriptStoryboardTable
         shots={[
@@ -263,12 +280,58 @@ describe('subject material actions', () => {
       />,
     )
 
+    const firstShotMaterials = screen.getByRole('group', { name: '镜头1准备素材' })
+    const secondShotMaterials = screen.getByRole('group', { name: '镜头2准备素材' })
+    const thirdShotMaterials = screen.getByRole('group', { name: '镜头3准备素材' })
+
+    expect(within(firstShotMaterials).getByText('@年轻男性篮球手')).toBeInTheDocument()
+    expect(within(firstShotMaterials).getByText('@室外篮球场')).toBeInTheDocument()
+    expect(within(firstShotMaterials).getByText('@篮球')).toBeInTheDocument()
+    expect(within(secondShotMaterials).queryByText('@年轻男性篮球手')).not.toBeInTheDocument()
+    expect(within(secondShotMaterials).queryByText('@篮球')).not.toBeInTheDocument()
+    expect(within(secondShotMaterials).getByText('@篮筐')).toBeInTheDocument()
+    expect(within(thirdShotMaterials).queryByText('@篮球')).not.toBeInTheDocument()
+    expect(within(thirdShotMaterials).queryByText('@室外篮球场')).not.toBeInTheDocument()
+    expect(within(thirdShotMaterials).getByText('@落日天空')).toBeInTheDocument()
     expect(screen.getAllByText('@年轻男性篮球手')).toHaveLength(1)
     expect(screen.getAllByText('@室外篮球场')).toHaveLength(1)
     expect(screen.getAllByText('@篮球')).toHaveLength(1)
     expect(screen.getAllByText('@篮筐')).toHaveLength(1)
     expect(screen.getAllByText('@落日天空')).toHaveLength(1)
     expect(screen.queryByText('@待补充')).not.toBeInTheDocument()
+  })
+
+  it('uses the same material-column width class for the header and every shot row', () => {
+    render(
+      <ScriptStoryboardTable
+        shots={[
+          shot({ subjects: [{ tag: '@短名称' }] }),
+          shot({
+            id: 'shot-2',
+            no: '镜头2',
+            subjects: [{ tag: '@这是一个不会再撑宽第二条分镜素材列的很长素材名称' }],
+          }),
+        ]}
+      />,
+    )
+
+    const materialHeader = screen.getByText('准备素材').parentElement
+    const materialColumns = [
+      screen.getByRole('group', { name: '镜头1准备素材' }),
+      screen.getByRole('group', { name: '镜头2准备素材' }),
+    ]
+    expect(materialHeader).not.toBeNull()
+    const sharedColumnClasses = [...(materialHeader?.classList || [])].filter((className) =>
+      materialColumns.every((column) => column.classList.contains(className)),
+    )
+    expect(sharedColumnClasses).toHaveLength(1)
+  })
+
+  it('hides the original material column during the storyboard-only step', () => {
+    render(<ScriptStoryboardTable shots={[shot({ subjects: [{ tag: '@产品' }] })]} showSubjects={false} />)
+
+    expect(screen.queryByText('准备素材')).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: '镜头1准备素材' })).not.toBeInTheDocument()
   })
 
   it('generates, opens and removes a subject image', async () => {
@@ -289,13 +352,13 @@ describe('subject material actions', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: 'AI自动生成' }))
+    await user.click(within(getMaterialItem('素材：@咖啡杯')).getByRole('button', { name: '为咖啡杯AI自动生成' }))
     expect(onGenerateSubject).toHaveBeenCalledWith('咖啡杯')
 
     await user.click(screen.getByRole('button', { name: '咖啡杯' }))
     expect(onOpenSubject).toHaveBeenCalledWith('咖啡杯')
 
-    await user.click(screen.getByRole('button', { name: '去掉这张图' }))
+    await user.click(screen.getByRole('button', { name: '去掉咖啡杯素材图' }))
     expect(onRemoveSubject).toHaveBeenCalledWith('咖啡杯')
   })
 
@@ -307,14 +370,18 @@ describe('subject material actions', () => {
       <ScriptStoryboardTable shots={[shot({ subjects: [{ tag: '@模特' }] })]} onOpenSubject={onOpenSubject} />,
     )
 
-    await user.click(screen.getByRole('button', { name: 'AI自动生成' }))
+    await user.click(within(getMaterialItem('素材：@模特')).getByRole('button', { name: '为模特AI自动生成' }))
     expect(onOpenSubject).toHaveBeenCalledWith('模特', true)
 
-    rerender(<ScriptStoryboardTable shots={[shot()]} onGenerateMaterial={onGenerateMaterial} />)
-    const emptyMaterialRow = screen.getByText('@待补充').closest('div')?.parentElement
-    expect(emptyMaterialRow).not.toBeNull()
-    await user.click(within(emptyMaterialRow as HTMLElement).getByRole('button', { name: 'AI自动生成' }))
-    expect(onGenerateMaterial).toHaveBeenCalledWith(expect.objectContaining({ id: 'shot-1' }))
+    rerender(
+      <ScriptStoryboardTable
+        shots={[shot({ subjects: [{ tag: '@模特' }] }), shot({ id: 'shot-2', no: '镜头2', subjects: [] })]}
+        onGenerateMaterial={onGenerateMaterial}
+      />,
+    )
+    const emptyMaterialItem = getMaterialItem('待补充素材：镜头2')
+    await user.click(within(emptyMaterialItem).getByRole('button', { name: '为镜头2AI自动生成素材' }))
+    expect(onGenerateMaterial).toHaveBeenCalledWith(expect.objectContaining({ id: 'shot-2' }))
   })
 
   it('runs batch generation and exposes batch/subject loading states', async () => {
@@ -338,7 +405,8 @@ describe('subject material actions', () => {
     expect(screen.getByRole('button', { name: '批量素材生成中' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '产品生成中' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '产品素材生成中' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '去掉这张图' })).not.toBeInTheDocument()
+    expect(within(getMaterialItem('素材：@产品')).getByRole('status')).toHaveTextContent('生成中…')
+    expect(screen.queryByRole('button', { name: '去掉产品素材图' })).not.toBeInTheDocument()
   })
 
   it('suppresses immediate duplicate subject and batch generation clicks', async () => {
@@ -353,7 +421,7 @@ describe('subject material actions', () => {
       />,
     )
 
-    await user.dblClick(screen.getByRole('button', { name: 'AI自动生成' }))
+    await user.dblClick(screen.getByRole('button', { name: '为产品AI自动生成' }))
     await user.dblClick(screen.getByRole('button', { name: 'AI一键生成图片' }))
 
     expect(onGenerateSubject).toHaveBeenCalledOnce()

@@ -308,7 +308,7 @@ export default function ScriptStoryboardTable({
                   )}
                 </div>
 
-                {/* 时长:单击可编辑(青色药丸)，>15s 报错，变更时弹确认 */}
+                {/* 时长:单击可编辑(青色药丸)，单镜及总时长限制在 1–15 秒，变更时弹确认。 */}
                 <div className={`${styles.sbCell} ${styles.sbColDur}`}>
                   <span className={styles.sbDurPill}>
                     <InlineEdit
@@ -327,7 +327,7 @@ export default function ScriptStoryboardTable({
                             showToast('最长仅支持15秒，请修改秒数', 'error')
                             return
                           }
-                          // 总时长约束:改完后所有镜头之和必须在 [5s, 15s]，超出弹提示、不允许改。
+                          // 总时长约束:改完后所有镜头之和必须在 [1s, 15s]，超出弹提示、不允许改。
                           const othersTotal = shots.reduce(
                             (sum, s) => sum + (s.id === shot.id ? 0 : durationSeconds(s.duration)),
                             0,
@@ -335,10 +335,6 @@ export default function ScriptStoryboardTable({
                           const newTotal = othersTotal + sec
                           if (newTotal > 15) {
                             showToast(`总时长不能超过15秒（改后为 ${newTotal}s），请调整`, 'error')
-                            return
-                          }
-                          if (newTotal < 5) {
-                            showToast(`总时长不能少于5秒（改后为 ${newTotal}s），请调整`, 'error')
                             return
                           }
                           if (sec !== orig) {
@@ -384,12 +380,22 @@ export default function ScriptStoryboardTable({
 
                 {/* 准备素材(materialMode=图二:@名称 + AI自动生成 + 上传图片) */}
                 {showSubjects && (
-                  <div className={`${styles.sbCell} ${styles.sbColMat}`}>
+                  <div
+                    className={`${styles.sbCell} ${styles.sbColMat}`}
+                    role="group"
+                    aria-label={`${shot.no || `镜头${i + 1}`}准备素材`}
+                  >
                     <div className={styles.sbcMatList}>
                       {visibleSubjectsByShot[i].map(({ subject: su, name, originalIndex }) => {
                         const genning = !!subjectGenerating?.[name]
                         return (
-                          <div className={styles.sbcMatRow} key={`${su.tag}-${originalIndex}`}>
+                          <div
+                            className={styles.sbcMatRow}
+                            key={`${su.tag}-${originalIndex}`}
+                            role="group"
+                            aria-label={`素材：@${name}`}
+                            aria-busy={genning || undefined}
+                          >
                             <div className={styles.sbcMatInfo}>
                               <EllipsisText
                                 className={styles.sbcMatName}
@@ -400,7 +406,7 @@ export default function ScriptStoryboardTable({
                                 type="button"
                                 className={styles.sbcMatBadge}
                                 disabled={genning}
-                                aria-label={genning ? `${name}生成中` : undefined}
+                                aria-label={genning ? `${name}生成中` : `为${name}AI自动生成`}
                                 title={
                                   onGenerateSubject
                                     ? '后台生成该主体(可同时生成多个)'
@@ -419,14 +425,20 @@ export default function ScriptStoryboardTable({
                                   width={12}
                                   height={12}
                                 />
-                                {genning ? '生成中…' : 'AI自动生成'}
+                                {genning ? (
+                                  <span role="status" aria-live="polite">
+                                    生成中…
+                                  </span>
+                                ) : (
+                                  'AI自动生成'
+                                )}
                               </button>
                             </div>
                             <span style={{ position: 'relative', display: 'inline-flex' }}>
                               <button
                                 type="button"
                                 className={styles.sbcMatUpload}
-                                aria-label={genning ? `${name}素材生成中` : undefined}
+                                aria-label={genning ? `${name}素材生成中` : su.image ? name : `上传或生成${name}`}
                                 title={su.image ? '查看 / 重新生成该素材' : '点击上传 / 生成该素材'}
                                 onClick={() => onOpenSubject?.(name)}
                               >
@@ -445,7 +457,7 @@ export default function ScriptStoryboardTable({
                                 <button
                                   type="button"
                                   className={styles.sbcMatImgX}
-                                  aria-label="去掉这张图"
+                                  aria-label={`去掉${name}素材图`}
                                   title="去掉这张图"
                                   onClick={(e) => {
                                     e.stopPropagation()
@@ -461,7 +473,11 @@ export default function ScriptStoryboardTable({
                       })}
                       {/* 该镜头无主体素材:加占位主体并 AI 自动生成(用户上传已下线) */}
                       {shot.subjects.length === 0 && onGenerateMaterial && (
-                        <div className={styles.sbcMatRow}>
+                        <div
+                          className={styles.sbcMatRow}
+                          role="group"
+                          aria-label={`待补充素材：${shot.no || `镜头${i + 1}`}`}
+                        >
                           <div className={styles.sbcMatInfo}>
                             <EllipsisText
                               className={styles.sbcMatName}
@@ -471,6 +487,7 @@ export default function ScriptStoryboardTable({
                             <button
                               type="button"
                               className={styles.sbcMatBadge}
+                              aria-label={`为${shot.no || `镜头${i + 1}`}AI自动生成素材`}
                               title="为该镜头加一个素材并自动生成"
                               onClick={() =>
                                 runRapidActionOnce(`generate-material:${String(shot.id)}`, () =>
@@ -485,6 +502,7 @@ export default function ScriptStoryboardTable({
                           <button
                             type="button"
                             className={styles.sbcMatUpload}
+                            aria-label={`为${shot.no || `镜头${i + 1}`}生成素材`}
                             title="点击 AI 生成该素材"
                             onClick={() =>
                               runRapidActionOnce(`generate-material:${String(shot.id)}`, () => onGenerateMaterial(shot))
