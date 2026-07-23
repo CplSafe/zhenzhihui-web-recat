@@ -205,7 +205,20 @@ describe('smartDraft 本地持久化', () => {
         { id: 'gen-published', status: 'published', taskId: 0 },
       ],
       videoGenQueue: [
-        { id: 'gen-running-1', idempotencyKey: 'idem-1' },
+        {
+          id: 'gen-running-1',
+          idempotencyKey: 'idem-1',
+          context: {
+            sessionId: 1,
+            workspaceId: 11,
+            projectId: 303,
+            projectTitle: '队列上下文草稿',
+            shots: [{ id: 'shot-1' }],
+            basePrompt: '生成短视频',
+            durationSec: 5,
+            lockedSig: 'sig-model-7301',
+          },
+        },
         { id: 'gen-running-2', idempotencyKey: 'idem-2' },
         { id: 'gen-failed', idempotencyKey: 'idem-failed' },
         { id: 'orphan', idempotencyKey: 'idem-orphan' },
@@ -221,6 +234,7 @@ describe('smartDraft 本地持久化', () => {
       expect.objectContaining({ id: 'gen-running-2', status: 'processing', taskId: 0, idempotencyKey: 'idem-2' }),
     ])
     expect(restored?.videoGenQueue?.map((job) => job.id)).toEqual(['gen-running-1', 'gen-running-2'])
+    expect(restored?.videoGenQueue?.[0]?.context).toMatchObject({ lockedSig: 'sig-model-7301' })
   })
 
   it('preserves unsubmitted children in a confirmed multi-image queue and the image composer draft', () => {
@@ -470,5 +484,18 @@ describe('smartDraft 后端快照', () => {
     )
 
     expect(first).toBe(second)
+  })
+
+  it('固定模型流程会忽略切换模型版本遗留的签名字段', () => {
+    const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '5s' }]
+
+    const fixedModelSig = computeVideoContentSig(shots, { ratio: '16:9' }, '夏日饮品')
+    const legacySwitchingSig = computeVideoContentSig(
+      shots,
+      { ratio: '16:9', videoModelVersionId: 7301, videoModel: 'happyhorse' },
+      '夏日饮品',
+    )
+
+    expect(legacySwitchingSig).toBe(fixedModelSig)
   })
 })

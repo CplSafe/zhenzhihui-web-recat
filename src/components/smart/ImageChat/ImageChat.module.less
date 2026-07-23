@@ -10,6 +10,43 @@
   background: #f8f9fa;
 }
 
+.pageHeader {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 20px 32px 0;
+  box-sizing: border-box;
+}
+.pageTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pageTitle {
+  margin: 0;
+  color: #25332f;
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.pageMode {
+  padding: 4px 10px;
+  border: 1px solid rgba(31, 207, 169, 0.28);
+  border-radius: 999px;
+  background: #edfbf7;
+  color: #15997e;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.pageDescription {
+  margin: 5px 0 0;
+  color: #77827f;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 /* 「创建新对话」:位于沉底输入框右上角 */
 .footerHead {
   display: flex;
@@ -925,6 +962,7 @@
 }
 
 @media (max-width: 560px) {
+  .pageHeader,
   .list,
   .footer {
     padding-left: 14px;

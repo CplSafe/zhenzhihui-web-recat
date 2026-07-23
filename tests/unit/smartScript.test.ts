@@ -77,6 +77,23 @@ describe('smart script generation', () => {
     expect(result.map((item) => item.no)).toEqual(['镜头1', '镜头2', '镜头3', '镜头4'])
   })
 
+  it.each([1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 15])(
+    'normalizes generated shots to an exact %s-second total',
+    async (duration) => {
+      const shots = ['A', 'B', 'C', 'D', 'E', 'F'].map((desc) => rawShot(desc, '2.2s'))
+      mocks.streamResponseText.mockResolvedValue(JSON.stringify({ shots }))
+
+      const result = await generateScriptShotsStream({ requirement: '广告', duration: `${duration}s` }, vi.fn())
+      const total = result.reduce(
+        (sum, item) => sum + Number.parseFloat(String(item.duration).replace(/[^0-9.]/g, '')),
+        0,
+      )
+
+      expect(total).toBe(duration)
+      expect(result.length).toBeLessThanOrEqual(duration)
+    },
+  )
+
   it('drops placeholder fields, empty shots and text-only subjects', async () => {
     mocks.streamResponseText.mockResolvedValue(
       JSON.stringify({

@@ -20,11 +20,13 @@ describe('sanitizeHotCopyPersistentDraft', () => {
           fullVideoUrl: signed,
           fullVideoAssetId: 301,
           videoVersions: [{ url: signed, assetId: 301 }],
+          genDurationSec: 7,
           entryInitial: {
             videoSource: 'library',
             videoPreview: 'blob:local-preview',
             libraryVideo: { assetId: 101, src: 'blob:local-preview' },
             products: [{ assetId: 201, url: 'data:image/png;base64,temporary' }],
+            duration: '7s',
           },
         },
       },
@@ -41,6 +43,7 @@ describe('sanitizeHotCopyPersistentDraft', () => {
         sourceVideo: { url: '/api/v1/assets/101/download?workspace_id=21', assetId: 101 },
         fullVideoUrl: '/api/v1/assets/301/download?workspace_id=21',
         videoVersions: [{ url: '/api/v1/assets/301/download?workspace_id=21', assetId: 301 }],
+        genDurationSec: 7,
         entryInitial: {
           videoPreview: '/api/v1/assets/101/download?workspace_id=21',
           libraryVideo: {
@@ -48,6 +51,7 @@ describe('sanitizeHotCopyPersistentDraft', () => {
             src: '/api/v1/assets/101/download?workspace_id=21',
           },
           products: [{ assetId: 201, url: '/api/v1/assets/201/download?workspace_id=21', file: null }],
+          duration: '7s',
         },
       },
     })

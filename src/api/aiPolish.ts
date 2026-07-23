@@ -9,6 +9,7 @@ import { runResponseText } from './aiResponses'
 // skill 方法论说明书(原样导入 .md,不在此硬编码长文本,便于维护)
 import skillEcommerceManual from './skills/信息电商.md?raw'
 import skillLocalLifeManual from './skills/本地生活.md?raw'
+import { SMART_SCRIPT_OPTIONS, normalizeSmartScriptName, type SmartScriptOption } from '@/utils/smartScriptOptions'
 
 /** 不同修改框的润色侧重,用于系统提示词。 */
 export type PolishKind = 'script' | 'line' | 'subtitle' | 'sound' | 'segment' | 'generic'
@@ -486,14 +487,10 @@ export async function suggestOptions(
  * 营销 SKILLS:可选的营销技能包。key 为下拉选项文案,system 为该技能的拆解侧重。
  * 选择某 skill 后,把「用户想法 + 素材」交给对应技能,自动拆分生成「营销思路拆解」建议。
  */
-const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill'] as const
-/** 可用营销方法论的字面量类型。 */
-type SkillOption = (typeof SKILL_OPTIONS)[number]
-
 /** 将每个 skill 的完整方法论说明书映射为系统提示词。 */
-const SKILL_SYSTEM: Record<SkillOption, string> = {
-  信息电商Skill: skillEcommerceManual,
-  本地生活Skill: skillLocalLifeManual,
+const SKILL_SYSTEM: Record<SmartScriptOption, string> = {
+  电商广告: skillEcommerceManual,
+  本地生活广告: skillLocalLifeManual,
 }
 
 /**
@@ -560,7 +557,8 @@ export async function skillBreakdownStructured(
 
   // skill 说明书本身已包含【拆解方法 + 维度字段规则 + 严格 JSON 输出格式 + 示例】,直接作为 system,
   // 不再叠加旧的格式说明(避免与说明书里的规则重复打架)。
-  const system = SKILL_SYSTEM[input.skill as SkillOption] || SKILL_SYSTEM['信息电商Skill']
+  const normalizedSkill = normalizeSmartScriptName(input.skill)
+  const system = SKILL_SYSTEM[normalizedSkill as SmartScriptOption] || SKILL_SYSTEM[SMART_SCRIPT_OPTIONS[0]]
   const user =
     '【产品信息】\n' +
     `· 用户文字:${req || '(未填写,请基于素材图给出合理方向)'}\n` +

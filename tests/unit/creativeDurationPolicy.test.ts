@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { extractExplicitTotalDurationSeconds, validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
+import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 
 describe('creative duration policy', () => {
   it.each([
@@ -49,6 +50,24 @@ describe('creative duration policy', () => {
       valid: false,
       issue: 'unsupported-selection',
       selectedSeconds: 11,
+    })
+  })
+
+  it('uses the smart-video 1–15 second range when that flow supplies its policy', () => {
+    const options = {
+      supportedDurations: SMART_VIDEO_DURATIONS,
+      supportedDurationLabel: '1至15秒内的整数',
+    }
+
+    expect(validateCreativeDurationSelection('制作一条11秒视频', '11s', options)).toMatchObject({
+      valid: true,
+      selectedSeconds: 11,
+      requestedSeconds: 11,
+    })
+    expect(validateCreativeDurationSelection('制作一条16秒视频', '15s', options)).toMatchObject({
+      valid: false,
+      issue: 'unsupported-requirement',
+      requestedSeconds: 16,
     })
   })
 })

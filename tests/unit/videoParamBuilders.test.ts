@@ -96,6 +96,13 @@ describe('buildVideoGenerationParams', () => {
     ).toEqual({ duration: 10, resolution: '720p', ratio: '16:9', generate_audio: false })
   })
 
+  it('preserves smart-video exact durations instead of snapping them to a legacy bucket', () => {
+    expect(buildVideoGenerationParams({}, { duration: 7, durationMode: 'exact' })).toMatchObject({ duration: 7 })
+
+    const model = { params_schema: { fields: [{ name: 'seconds', options: ['5', '10', '15'] }] } }
+    expect(buildVideoGenerationParams(model, { duration: '11s', durationMode: 'exact' })).toEqual({ seconds: 11 })
+  })
+
   it('uses declared aliases and picks the closest supported numeric option', () => {
     const model = {
       params_schema: {

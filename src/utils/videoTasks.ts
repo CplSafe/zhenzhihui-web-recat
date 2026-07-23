@@ -10,13 +10,14 @@ import { parseDurationSeconds, resolveVideoDuration } from './videoDurationValue
 export function buildVideoGenerationParams(model, params) {
   const fields = getModelParamFields(model)
   const duration = parseDurationSeconds(params?.duration) ?? 10
+  const exactDuration = params?.durationMode === 'exact'
   const ratio = normalizeSeedanceRatio(params?.ratio)
   const resolution = String(params?.resolution || '').trim()
   const generateAudio = Boolean(params?.generateAudio)
 
   if (!fields.length) {
     return {
-      duration: resolveVideoDuration(duration) ?? 10,
+      duration: exactDuration ? duration : (resolveVideoDuration(duration) ?? 10),
       resolution: resolution || '720p',
       ratio,
       generate_audio: generateAudio,
@@ -27,7 +28,8 @@ export function buildVideoGenerationParams(model, params) {
 
   const durationField = findFirstField(fields, ['duration', 'seconds'])
   if (durationField) {
-    payload[durationField.name] = pickClosestNumericOption(duration, durationField)
+    // 智能成片的时间线已经严格对齐用户所选总时长，不能再被模型选项静默吸附到邻近档位。
+    payload[durationField.name] = exactDuration ? duration : pickClosestNumericOption(duration, durationField)
   }
 
   const ratioField = findFirstField(fields, ['ratio', 'aspect_ratio', 'aspectRatio'])

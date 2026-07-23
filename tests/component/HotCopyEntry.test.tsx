@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -191,7 +192,7 @@ describe('HotCopyEntry project asset access', () => {
       .getAllByRole('button')
       .filter((button) => button.getAttribute('aria-haspopup') === 'listbox')[1]
     fireEvent.click(durationButton)
-    fireEvent.click(screen.getByRole('option', { name: '5s' }))
+    fireEvent.click(screen.getByRole('option', { name: '7s' }))
 
     await waitFor(() => {
       expect(onDraftChange).toHaveBeenLastCalledWith(
@@ -200,10 +201,47 @@ describe('HotCopyEntry project asset access', () => {
           products: [expect.objectContaining({ assetId: 201 })],
           text: '保留节奏，突出产品',
           ratio: '16:9',
-          duration: '5s',
+          duration: '7s',
         }),
       )
     })
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('offers the same 1s through 15s whole-second range as smart video', async () => {
+    const user = userEvent.setup()
+    render(<HotCopyEntry onSubmit={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: '10s' }))
+    expect(
+      within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['1s', '2s', '3s', '4s', '5s', '6s', '7s', '8s', '9s', '10s', '11s', '12s', '13s', '14s', '15s'])
+  })
+
+  it('restores and submits the exact duration saved in the entry draft', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <HotCopyEntry
+        onSubmit={onSubmit}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          products: [{ assetId: 201, url: '/201.png', file: null, isVideo: false }],
+          ratio: '16:9',
+          duration: '7s',
+          text: '',
+        }}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '7s' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ duration: '7s' }))
   })
 })

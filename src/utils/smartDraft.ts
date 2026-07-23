@@ -57,7 +57,7 @@ export interface SmartDraft {
   projectId?: number
   /** 草稿归属(同一浏览器换账号/空间时校验,避免把别人的在制项目带给新用户 → 加载失败) */
   ownerUserId?: number
-  /** 整片视频(seedance 一次生成) */
+  /** 整片视频（Seedance 一次生成）。 */
   fullVideoUrl?: string
   fullVideoAssetId?: number
   /** 进行中的整片生成任务 id:中途切路由/刷新后凭它续轮询(不重新生成);完成后清 0 */
@@ -97,6 +97,21 @@ export interface SmartDraft {
     sourceImageAssetIds?: number[]
     preparedImageAssetIds?: number[]
     opts?: { edit?: boolean }
+    /** 入队时锁定的模型与项目上下文；刷新恢复后必须继续使用原选择，不能随当前入口状态漂移。 */
+    context?: {
+      sessionId: number
+      workspaceId: number
+      projectId: number
+      projectTitle: string
+      shots: any[]
+      basePrompt: string
+      ratio?: string
+      style?: string
+      durationSec: number
+      thumbnailUrl?: string
+      sourceVideo?: { url: string; assetId: number }
+      lockedSig: string
+    }
   }[]
   /** 人脸脱敏开关(默认开;关闭后出片用原图,成片人脸清晰) */
   faceBlurEnabled?: boolean

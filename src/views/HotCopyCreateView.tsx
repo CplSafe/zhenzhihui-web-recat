@@ -117,7 +117,7 @@ import { sanitizeHotCopyPersistentDraft } from '@/utils/hotCopyPersistentDraft'
 import { sanitizePersistentMediaUrl, sanitizePersistentProjectVideoStore } from '@/utils/persistentMediaUrl'
 import { sanitizeTelemetryText } from '@/utils/observabilitySanitizer'
 import { validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
-import { parseDurationSeconds } from '@/utils/videoDurationValue'
+import { SMART_VIDEO_DURATIONS, parseDurationSeconds } from '@/utils/videoDurationValue'
 import './SmartCreateView.css'
 
 /** 按需加载爆款复制素材入口。 */
@@ -4228,7 +4228,10 @@ export default function HotCopyCreateView() {
 
   // 入口提交「做同款/生成视频」→ 需登录(免登录可进页面/上传,但生成需登录)
   const handleStart = (payload: HotCopyEntryPayload) => {
-    const durationValidation = validateCreativeDurationSelection(payload.text, payload.duration)
+    const durationValidation = validateCreativeDurationSelection(payload.text, payload.duration, {
+      supportedDurations: SMART_VIDEO_DURATIONS,
+      supportedDurationLabel: '1至15秒内的整数',
+    })
     if (!durationValidation.valid) {
       showToast(durationValidation.message, 'error')
       return

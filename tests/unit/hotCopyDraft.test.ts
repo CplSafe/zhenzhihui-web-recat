@@ -58,6 +58,18 @@ describe('hot-copy 本地草稿隔离', () => {
       taskId: 301,
       status: 'processing',
     })
+
+    saveHotCopyDraft(
+      21,
+      draft({
+        entryInitial: { duration: '7s' },
+        genDurationSec: 7,
+      }),
+    )
+    expect(loadHotCopyDraft(21)).toMatchObject({
+      entryInitial: { duration: '7s' },
+      genDurationSec: 7,
+    })
   })
 
   it('不同用户在同一工作空间保存各自的草稿', () => {

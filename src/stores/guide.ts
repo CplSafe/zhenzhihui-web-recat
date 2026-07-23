@@ -121,13 +121,13 @@ export const GUIDES: Record<string, GuideDef> = {
             target: '[data-guide="smart-input"]',
             cardTarget: '[data-guide="smart-at"]', // 卡片贴 @ 上方(工具栏上方),不飘到整卡顶
             title: '用简单的描述,AI 帮你生成精彩视频',
-            body: ['上传图片,输入描述,引用素材或预设技能,即可一键生成爆款短视频!'],
+            body: ['上传图片,输入描述,引用素材或智能成片脚本,即可一键生成爆款短视频!'],
             placement: 'top',
             spots: ['[data-guide="smart-at"]', '[data-guide="smart-skills"]'], // 只打亮 @ 和 SKILLS
             cta: '开始创作',
             annotations: [
               { target: '[data-guide="smart-at"]', label: '输入@引用素材或指令', dir: 'down' },
-              { target: '[data-guide="smart-skills"]', label: '选择预设技能快速创作', dir: 'down' },
+              { target: '[data-guide="smart-skills"]', label: '选择智能成片脚本快速创作', dir: 'down' },
             ],
           },
         ],

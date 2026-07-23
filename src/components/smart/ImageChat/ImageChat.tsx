@@ -536,6 +536,16 @@ export default function ImageChat({
 
   return (
     <div className={styles.chat}>
+      <header className={styles.pageHeader}>
+        <div className={styles.pageTitleRow}>
+          <h1 className={styles.pageTitle}>制作图片</h1>
+          <span className={styles.pageMode}>仅生成图片</span>
+        </div>
+        <p className={styles.pageDescription}>
+          当前页面只会生成或修改图片，不会直接生成视频；如需制作视频，请先选择生成结果，再点击「做视频」。
+        </p>
+      </header>
+
       {/* 消息流 */}
       <div className={styles.list} ref={listRef}>
         {messages.map((msg) =>

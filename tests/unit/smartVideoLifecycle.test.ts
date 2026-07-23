@@ -112,10 +112,14 @@ describe('smart video lifecycle', () => {
     await editFullVideo({
       workspaceId: 61,
       videoAssetId: 2550,
-      durationSec: 5,
+      durationSec: 7,
       sourceVideoDurationSec: 5.06,
     })
 
+    expect(mocks.buildVideoGenerationParams).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ duration: 7, durationMode: 'exact' }),
+    )
     expect(mocks.createAiTask).toHaveBeenCalledWith(
       expect.objectContaining({
         modelVersionId: 9,
@@ -132,11 +136,15 @@ describe('smart video lifecycle', () => {
       estimateVideoEditCost({
         workspaceId: 61,
         prompt: '提高亮度',
-        durationSec: 5,
+        durationSec: 7,
         sourceVideoDurationSec: 5.06,
       }),
     ).resolves.toMatchObject({ estimated_cost: 1500 })
 
+    expect(mocks.buildVideoGenerationParams).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ duration: 7, durationMode: 'exact' }),
+    )
     expect(mocks.estimateAiTaskCost).toHaveBeenCalledWith({
       workspaceId: 61,
       modelVersionId: 9,
@@ -182,11 +190,17 @@ describe('smart video lifecycle', () => {
     expect(mocks.waitForAiTask).not.toHaveBeenCalled()
   })
 
-  it('uses the same explicit model and schema-derived params for full-video estimate and submission', async () => {
-    const model = { id: 19, operation_codes: ['video.generate'], params_schema: { fields: [] } }
+  it('uses the fixed Seedance resolver for estimate and submission while ignoring legacy model fields', async () => {
+    const model = {
+      id: 19,
+      enabled: true,
+      display_name: 'Seedance 1.5 Pro',
+      operation_codes: ['video.generate'],
+      params_schema: { fields: [] },
+    }
     mocks.resolveTaskModel.mockResolvedValue(model)
     mocks.buildVideoGenerationParams.mockReturnValue({
-      duration: 10,
+      duration: 7,
       resolution: '720p',
       ratio: '9:16',
       generate_audio: true,
@@ -197,9 +211,11 @@ describe('smart video lifecycle', () => {
     mocks.estimateAiTaskCost.mockResolvedValue({ estimated_cost: 88 })
     const args = {
       workspaceId: 61,
-      shots: [{ duration: '10s' }],
+      shots: [{ duration: '3s' }, { duration: '4s' }],
       ratio: '9:16',
-    }
+      videoModelVersionId: 999,
+      videoModel: 'happyhorse',
+    } as any
 
     await generateFullVideo({ ...args, imageAssetIds: [101] })
     await estimateFullVideoCost(args)
@@ -218,7 +234,23 @@ describe('smart video lifecycle', () => {
       operationCode: 'video.generate',
     })
     expect(estimated.params).toEqual(submitted.params)
-    expect(mocks.resolveTaskModel).toHaveBeenCalledWith({
+    expect(mocks.buildVideoGenerationParams).toHaveBeenNthCalledWith(
+      1,
+      model,
+      expect.objectContaining({ duration: 7, durationMode: 'exact' }),
+    )
+    expect(mocks.buildVideoGenerationParams).toHaveBeenNthCalledWith(
+      2,
+      model,
+      expect.objectContaining({ duration: 7, durationMode: 'exact' }),
+    )
+    expect(mocks.resolveTaskModel).toHaveBeenNthCalledWith(1, {
+      workspaceId: 61,
+      capability: 'video',
+      operationCode: 'video.generate',
+      preferredModelKeywords: ['seedance'],
+    })
+    expect(mocks.resolveTaskModel).toHaveBeenNthCalledWith(2, {
       workspaceId: 61,
       capability: 'video',
       operationCode: 'video.generate',

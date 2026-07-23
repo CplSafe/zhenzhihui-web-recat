@@ -54,6 +54,14 @@ describe('ImageChat', () => {
     mocks.fileToDataUrl.mockImplementation(async (file: File) => `data:${file.name}`)
   })
 
+  it('identifies the page as image-only creation', () => {
+    render(<ImageChat {...baseProps()} />)
+
+    expect(screen.getByRole('heading', { name: '制作图片' })).toBeInTheDocument()
+    expect(screen.getByText('仅生成图片')).toBeInTheDocument()
+    expect(screen.getByText(/当前页面只会生成或修改图片，不会直接生成视频/)).toBeInTheDocument()
+  })
+
   it('renders user, pending, error and completed assistant messages semantically', () => {
     render(
       <ImageChat
