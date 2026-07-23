@@ -693,7 +693,6 @@
 /* 点击编辑的文本字段(画面描述 / 台词 / 字幕 / 音效 / 生成提示词):平时纯文本,点击出输入框。
    ie-display / ie-input 是 InlineEdit 输出的全局类名,用 :global 引用 */
 .seditIe {
-
   /* 显示态/编辑态共用尺寸,保证台词/字幕/音效三框高度与内边距完全一致,切换态不跳变 */
   &:global(.ie-display),
   &:global(.ie-input) {
@@ -790,8 +789,10 @@
 }
 .seMatThumb {
   position: relative;
-  width: 120px;
+  width: auto;
   height: 120px;
+  min-width: 0;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
   border-radius: 12px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
@@ -860,8 +861,11 @@
 }
 .seHistItem {
   position: relative;
-  width: 120px;
+  width: auto;
   height: 120px;
+  min-width: 0;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+  box-sizing: border-box;
   border-radius: 10px;
   overflow: hidden;
   border: 2px solid transparent;

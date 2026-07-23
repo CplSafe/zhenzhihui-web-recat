@@ -5,17 +5,14 @@
 import { useUiStore } from '../stores/ui'
 import './AppToast.css'
 
+/** 渲染全局唯一的通知条，并根据消息类型设置屏幕阅读器语义。 */
 export default function AppToast() {
   const { visible, message, type } = useUiStore((s) => s.toast)
 
   if (!visible) return null
 
   return (
-    <div
-      className={`toast-message ${type}`}
-      role={type === 'error' ? 'alert' : 'status'}
-      aria-live="polite"
-    >
+    <div className={`toast-message ${type}`} role={type === 'error' ? 'alert' : 'status'} aria-live="polite">
       <span className="toast-icon" aria-hidden="true">
         {type === 'error' ? (
           <svg viewBox="0 0 20 20">

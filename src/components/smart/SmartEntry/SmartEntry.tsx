@@ -7,13 +7,20 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
-import GuideDialog from '../GuideDialog'
 import RatioIcon from '@/components/common/RatioIcon'
 import { fileToDataUrl } from '@/utils/imageFile'
+import {
+  clearSmartEntryDraft,
+  loadSmartEntryDraft,
+  saveSmartEntryDraft,
+  type SmartEntryDraftStore,
+} from '@/utils/smartEntryDraft'
 import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
+import { SUPPORTED_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 import { useToast } from '@/composables/useToast'
 import styles from './SmartEntry.module.less'
 
+/** 入口提交给智能成片编排器的制作模式、画幅、时长和参考素材元数据。 */
 export interface EntryMeta {
   mode: 'video' | 'image'
   style: string
@@ -21,16 +28,21 @@ export interface EntryMeta {
   duration: string
   imageCount: number
   images: string[]
+  imageAssetIds?: number[]
+  /** 图片模式单轮生成数量，限制为 1–9；视频模式忽略。 */
+  outputCount?: number
   /** 选中的营销 SKILL(空=不使用,走现有逻辑;非空=多一步「营销思路拆解」) */
   skill?: string
 }
 
+/** 智能成片入口的提交、恢复、新建及初始草稿参数。 */
 interface SmartEntryProps {
-  /** 入口未提交内容按空间隔离,切回时恢复该空间上次输入。 */
-  workspaceId?: number
-  onSubmit: (requirement: string, meta: EntryMeta) => void
-  /** 恢复态下点击圆形按钮:按当前输入走下一页的重生成逻辑。 */
-  onRegenerate?: (requirement: string, meta: EntryMeta) => void
+  onSubmit: (requirement: string, meta: EntryMeta) => void | boolean | Promise<void | boolean>
+  /**
+   * 是否允许恢复当前标签页尚未提交的入口草稿。
+   * 显式“新建视频”会在首次渲染就设为 false，早于布局副作用清理 sessionStorage，避免旧输入闪回。
+   */
+  restoreSessionDraft?: boolean
   /** 「制作新视频」/「创建新对话」:清空输入/项目,初始化为全新空白页(保留当前 Tab 模式)。 */
   onNewVideo?: (mode: 'video' | 'image') => void
   /**
@@ -51,21 +63,39 @@ interface SmartEntryProps {
     ratio?: string
     duration?: string
     images?: string[]
+    imageAssetIds?: number[]
+    outputCount?: number
     skill?: string
   }
 }
 
-const DURATION_OPTIONS = ['5s', '10s', '15s']
-const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill']
-const MAX_IMAGES = 9
+/** 统一视频时长策略对应的入口秒数选项。 */
+const DURATION_OPTIONS = SUPPORTED_VIDEO_DURATIONS.map((seconds) => `${seconds}s`)
 
+/** 可选的营销需求分析技能。 */
+const SKILL_OPTIONS = ['信息电商Skill', '本地生活Skill']
+
+/** 入口最多接收的参考图数量。 */
+const MAX_IMAGES = 9
+const IMAGE_OUTPUT_COUNT_OPTIONS = Array.from({ length: MAX_IMAGES }, (_, index) => `${index + 1}张`)
+const clampImageOutputCount = (value: unknown) => Math.min(MAX_IMAGES, Math.max(1, Math.floor(Number(value) || 1)))
+
+/** 文件扩展名图片识别兜底规则。 */
+const IMAGE_FILE_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i
+
+/** 同时依据 MIME 与扩展名判断是否为可接收图片。 */
+const isImageFile = (file: File) => file.type.startsWith('image/') || IMAGE_FILE_RE.test(file.name)
+
+/** 视频模式的输入示例文案。 */
 const PLACEHOLDER_VIDEO =
   '最多上传9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
+/** 图片模式的输入示例文案。 */
 const PLACEHOLDER_IMAGE =
   '最多上传9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 
 // 选中 SKILL 后插入到输入框的提示语(高亮显示)。提交/展示前会被剥离,保持需求正文干净。
 const skillLine = (s: string) => `使用${s}帮我优化`
+/** 保存/提交前移除仅用于界面高亮的技能提示语，保持原始需求干净。 */
 const stripSkillLine = (t: string) =>
   SKILL_OPTIONS.reduce((acc, opt) => acc.split(skillLine(opt)).join(''), t)
     .replace(/\n{3,}/g, '\n\n')
@@ -81,95 +111,35 @@ const HL_RE = new RegExp(`@图片\\d+|${SKILL_OPTIONS.map((s) => skillLine(s)).j
 // initial 只在「同一次挂载内点上一步返回」时回填,跨路由重新挂载时父级 state 已清空、initial 为空 → 输入消失。
 // 故把当前输入实时写进 sessionStorage,重新进入空白 /smart 时优先回填;提交成功 / 点「新建」即清空。
 // 用 sessionStorage:仅本标签页有效、关页即清,符合「别丢我刚输入的」语义,也避免长期残留旧草稿。
-const ENTRY_DRAFT_KEY = 'zzh.smart-entry.draft'
-const entryDraftKey = (workspaceId?: number) => `${ENTRY_DRAFT_KEY}.ws${Math.floor(Number(workspaceId || 0))}`
-interface EntryDraftStore {
-  mode?: 'video' | 'image'
-  text?: string // 已剥离 skill 提示语的干净正文(与 onSubmit/initial.text 同口径)
-  ratio?: string
-  duration?: string
-  skill?: string
-  images?: string[]
-}
-const liveEntryDraftFingerprints = new Map<number, string>()
-const workspaceKey = (workspaceId?: number) => Math.floor(Number(workspaceId || 0))
-const entryDraftFingerprint = (draft: EntryDraftStore = {}): string =>
-  JSON.stringify({
-    mode: draft.mode || 'video',
-    text: draft.text || '',
-    ratio: draft.ratio || '16:9',
-    duration: draft.duration || '10s',
-    skill: draft.skill || '',
-    images: Array.isArray(draft.images) ? draft.images : [],
-  })
+export { clearSmartEntryDraft }
+/** 转出智能成片入口草稿的存储结构类型。 */
+export type { SmartEntryDraftStore }
 
-function loadSmartEntryDraft(workspaceId?: number): EntryDraftStore | null {
-  try {
-    const raw = sessionStorage.getItem(entryDraftKey(workspaceId))
-    return raw ? (JSON.parse(raw) as EntryDraftStore) : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * 空间切换的云端草稿找回在后台执行。用规范化指纹判断目标空间的入口内容是否已被用户修改，
- * 避免较慢的找回结果在用户开始输入后又把页面跳到旧项目。
- */
-export function getSmartEntryDraftFingerprint(workspaceId?: number): string {
-  return (
-    liveEntryDraftFingerprints.get(workspaceKey(workspaceId)) ||
-    entryDraftFingerprint(loadSmartEntryDraft(workspaceId) || {})
-  )
-}
-
-function saveSmartEntryDraft(d: EntryDraftStore, workspaceId?: number) {
-  liveEntryDraftFingerprints.set(workspaceKey(workspaceId), entryDraftFingerprint(d))
-  try {
-    sessionStorage.setItem(entryDraftKey(workspaceId), JSON.stringify(d))
-  } catch {
-    // 多半是图片 dataURL 撑爆配额:退化为不含图片再存一次,至少保住文字与选项。
-    try {
-      sessionStorage.setItem(entryDraftKey(workspaceId), JSON.stringify({ ...d, images: [] }))
-    } catch {
-      /* ignore */
-    }
-  }
-}
-/** 清空入口暂存(提交进入流程 / 重置为全新入口时调用)。父级 resetToNewVideo、restart 路径也会调。 */
-export function clearSmartEntryDraft(workspaceId?: number) {
-  liveEntryDraftFingerprints.delete(workspaceKey(workspaceId))
-  try {
-    sessionStorage.removeItem(entryDraftKey(workspaceId))
-  } catch {
-    /* ignore */
-  }
-}
-
+/** 管理需求输入、参考图、比例时长、@ 引用和会话级草稿恢复。 */
 export default function SmartEntry({
-  workspaceId = 0,
   onSubmit,
   onNewVideo,
   canResume,
   onResume,
   initial,
+  restoreSessionDraft = true,
 }: SmartEntryProps) {
   const { showToast } = useToast()
+  const [submitting, setSubmitting] = useState(false)
+  const submittingRef = useRef(false)
+  const draftPersistenceEnabledRef = useRef(true)
   // 回填优先级:initial(同一次挂载内「上一步」回填,值非空时为准)> sessionStorage 暂存(跨路由保活)> 默认。
   // 注意 initial.text 跨路由时是父级空串(非 undefined),故用「非空才采纳」而非 ?? 来回退到暂存。
-  const [stored] = useState(() => loadSmartEntryDraft(workspaceId))
+  const [stored] = useState(() => (restoreSessionDraft ? loadSmartEntryDraft() : null))
   const seedText = (initial?.text && initial.text.length ? initial.text : stored?.text) ?? ''
   const seedSkill = initial?.skill ?? stored?.skill ?? ''
   const seedImages = (initial?.images && initial.images.length ? initial.images : stored?.images) ?? []
+  const seedImageAssetIds =
+    (initial?.images && initial.images.length ? initial.imageAssetIds : stored?.imageAssetIds) ?? []
   const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? stored?.mode ?? 'video')
   // 切换 Tab:背景弥散位移 + 涟漪动画由 <EntryCanvasBg mode> 监听 mode 变化驱动(Canvas 实现,不卡)
   const switchMode = (m: 'video' | 'image') => {
     if (m === mode) return
-    // 「制作图片」暂未开放:点击只提示,不切换;图片模式原逻辑代码保留,开放时去掉此拦截即可
-    if (m === 'image') {
-      showToast('功能暂未开放', 'info')
-      return
-    }
     setMode(m)
   }
   // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
@@ -177,11 +147,17 @@ export default function SmartEntry({
   const [ratio, setRatio] = useState(initial?.ratio ?? stored?.ratio ?? '16:9')
   const [duration, setDuration] = useState(initial?.duration ?? stored?.duration ?? '10s')
   const [images, setImages] = useState<string[]>(seedImages)
+  const [imageAssetIds, setImageAssetIds] = useState<number[]>(() =>
+    seedImages.map((_, index) => Math.max(0, Math.floor(Number(seedImageAssetIds[index]) || 0))),
+  )
+  const [outputCount, setOutputCount] = useState(() =>
+    clampImageOutputCount(initial?.outputCount ?? stored?.outputCount ?? 1),
+  )
   // 选中的营销 SKILL(单选,空=不使用)
   const [skill, setSkill] = useState(seedSkill)
-  const [guideOpen, setGuideOpen] = useState(false)
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
-  const discardDraftRef = useRef(false)
+  const dragDepthRef = useRef(0)
 
   // ── @ 引用素材:点击 @ 在光标处弹出已上传素材;选中插入「@图片N」;无素材则直接插入「@」──
   const taRef = useRef<HTMLTextAreaElement | null>(null)
@@ -189,50 +165,50 @@ export default function SmartEntry({
   const caretRef = useRef(0) // 最近一次光标位置(点 @ 按钮会失焦,需提前记下)
   const [atOpen, setAtOpen] = useState(false)
 
-  // ── 需求文本的撤销/重做历史(AI 引导会改写文本,需可回退/前进)──
-  const histRef = useRef<string[]>([seedText])
-  const idxRef = useRef(0)
-  const [, bumpHist] = useState(0)
-
   // 实时把当前输入写进 sessionStorage(防抖 300ms),切走再回来可回填。text 存「剥离 skill 提示语」的干净正文。
   useEffect(() => {
-    const draft = { mode, text: stripSkillLine(text).trim(), ratio, duration, skill, images }
-    liveEntryDraftFingerprints.set(workspaceKey(workspaceId), entryDraftFingerprint(draft))
-    const t = window.setTimeout(() => saveSmartEntryDraft(draft, workspaceId), 300)
-    return () => {
-      window.clearTimeout(t)
-      if (!discardDraftRef.current) saveSmartEntryDraft(draft, workspaceId)
-    }
-  }, [workspaceId, mode, text, ratio, duration, skill, images])
-  const commitText = (val: string) => {
-    if (histRef.current[idxRef.current] === val) return
-    const next = histRef.current.slice(0, idxRef.current + 1)
-    next.push(val)
-    histRef.current = next
-    idxRef.current = next.length - 1
-    bumpHist((v) => v + 1)
-  }
-
-  // AI 引导:打开交互式对话框(问人群/剧情/目标…),用户确认后再回填(不擅自改原文)。
-  const applyGuide = (brief: string) => {
-    commitText(text) // 快照当前输入,便于回退
-    setText(brief)
-    commitText(brief) // 快照引导结果,便于重做
-  }
-
-  const pickImages = async (files: FileList | null) => {
+    const t = window.setTimeout(() => {
+      if (!draftPersistenceEnabledRef.current) return
+      saveSmartEntryDraft({
+        mode,
+        text: stripSkillLine(text).trim(),
+        ratio,
+        duration,
+        skill,
+        images,
+        imageAssetIds,
+        outputCount,
+      })
+    }, 300)
+    return () => window.clearTimeout(t)
+  }, [mode, text, ratio, duration, skill, images, imageAssetIds, outputCount])
+  // 本地图片先转成受控 data URL；过滤非图片并限制数量，避免无效文件进入后续资产上传流程。
+  const pickImages = async (files: FileList | File[] | null) => {
     if (!files?.length) return
     const room = MAX_IMAGES - images.length
     if (room <= 0) {
       showToast(`最多上传 ${MAX_IMAGES} 张图片`, 'info')
       return
     }
-    const sel = Array.from(files).slice(0, room)
+    const sel = Array.from(files).filter(isImageFile).slice(0, room)
+    if (!sel.length) {
+      showToast('智能成片仅支持添加图片素材', 'info')
+      return
+    }
     const picked = (await Promise.all(sel.map((f) => fileToDataUrl(f).catch(() => null)))).filter(Boolean) as string[]
-    if (picked.length) setImages((prev) => [...prev, ...picked])
+    if (picked.length < sel.length) {
+      showToast(picked.length ? '部分图片读取失败，请重试' : '图片读取失败，请重试', 'error')
+    }
+    if (picked.length) {
+      const accepted = picked.slice(0, MAX_IMAGES - images.length)
+      setImages((prev) => [...prev, ...accepted])
+      setImageAssetIds((prev) => [...prev, ...accepted.map(() => 0)])
+    }
   }
-  const removeImage = (url: string) => {
-    setImages((prev) => prev.filter((u) => u !== url))
+  const removeImage = (index: number) => {
+    const url = images[index]
+    setImages((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
+    setImageAssetIds((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
     URL.revokeObjectURL(url)
   }
 
@@ -294,21 +270,32 @@ export default function SmartEntry({
   const cleanText = stripSkillLine(text).trim()
   const canSubmit = cleanText.length > 0 || images.length > 0
   // 恢复态:已有生成结果且当前在视频 Tab → 发送按钮变「下一步」,并显示「重新生成」
-  const resumeMode = !!canResume && mode === 'video'
-  const submit = () => {
-    if (!canSubmit) return
-    discardDraftRef.current = true
-    onSubmit(cleanText, {
-      mode,
-      style: '',
-      ratio,
-      duration,
-      imageCount: images.length,
-      images,
-      skill: skill || undefined,
-    })
-    // 已提交进入流程:清掉入口暂存,避免下次空白 /smart 又回填这次已用过的输入。
-    clearSmartEntryDraft(workspaceId)
+  const resumeMode = !!canResume && mode === (initial?.mode || 'video')
+  const submit = async () => {
+    if (!canSubmit || submittingRef.current) return
+    submittingRef.current = true
+    setSubmitting(true)
+    try {
+      const accepted = await onSubmit(cleanText, {
+        mode,
+        style: '',
+        ratio,
+        duration,
+        imageCount: images.length,
+        images,
+        ...(imageAssetIds.some((assetId) => assetId > 0) ? { imageAssetIds } : {}),
+        ...(mode === 'image' ? { outputCount } : {}),
+        skill: mode === 'video' && skill ? skill : undefined,
+      })
+      // 项目和临时素材均准备成功后才清空入口暂存。失败时保留输入，刷新后仍可重试。
+      if (accepted !== false) {
+        draftPersistenceEnabledRef.current = false
+        clearSmartEntryDraft()
+      }
+    } finally {
+      submittingRef.current = false
+      setSubmitting(false)
+    }
   }
 
   // 选中/切换 SKILL:把提示语插入输入框(替换旧的);未选则移除
@@ -318,7 +305,40 @@ export default function SmartEntry({
   }
 
   return (
-    <div className={styles.screate} data-mode={mode}>
+    <div
+      className={`${styles.screate}${isDraggingFiles ? ` ${styles.dragging}` : ''}`}
+      data-mode={mode}
+      onPaste={(event) => {
+        const files = Array.from(event.clipboardData?.items || [])
+          .filter((item) => item.kind === 'file')
+          .map((item) => item.getAsFile())
+          .filter((file): file is File => !!file)
+        if (!files.length) return
+        event.preventDefault()
+        void pickImages(files)
+      }}
+      onDragEnter={(event) => {
+        if (!Array.from(event.dataTransfer?.items || []).some((item) => item.kind === 'file')) return
+        event.preventDefault()
+        dragDepthRef.current += 1
+        setIsDraggingFiles(true)
+      }}
+      onDragOver={(event) => {
+        if (!Array.from(event.dataTransfer?.items || []).some((item) => item.kind === 'file')) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+      }}
+      onDragLeave={() => {
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+        if (!dragDepthRef.current) setIsDraggingFiles(false)
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        dragDepthRef.current = 0
+        setIsDraggingFiles(false)
+        void pickImages(Array.from(event.dataTransfer.files))
+      }}
+    >
       {/* 背景弥散:Canvas 精确复刻 UI 设计「背景颜色」(Figma 677:3996)三层叠加;只绘制一次,
           切换 mode 时对画布做纯位移动画(GPU 合成,不卡) */}
       <div className={styles.bg} aria-hidden="true">
@@ -330,21 +350,16 @@ export default function SmartEntry({
       <div className={styles.panel}>
         {/* 右上角:与 Tab 同一行、右对齐卡片;点击初始化为全新空白页(等同切换路由再回来) */}
         {onNewVideo && (
-          <button
-            type="button"
-            className={styles.newVideoBtn}
-            onClick={() => {
-              discardDraftRef.current = true
-              onNewVideo(mode)
-            }}
-          >
+          <button type="button" className={styles.newVideoBtn} onClick={() => onNewVideo(mode)}>
             {mode === 'image' ? '创建新对话' : '制作新视频'}
           </button>
         )}
         {/* Tab:制作视频 / 制作图片 */}
-        <div className={styles.tabs}>
+        <div className={styles.tabs} role="tablist" aria-label="创作类型">
           <button
             type="button"
+            role="tab"
+            aria-selected={mode === 'video'}
             className={`${styles.tab}${mode === 'video' ? ' ' + styles.active : ''}`}
             onClick={() => switchMode('video')}
           >
@@ -352,6 +367,8 @@ export default function SmartEntry({
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={mode === 'image'}
             className={`${styles.tab}${mode === 'image' ? ' ' + styles.active : ''}`}
             onClick={() => switchMode('image')}
           >
@@ -363,10 +380,10 @@ export default function SmartEntry({
           {/* 已选图片:独立成一行(可换行),不挤压文本框;参考主流 AI 输入框做法 */}
           {images.length > 0 && (
             <div className={styles.attachments}>
-              {images.map((url) => (
-                <div className={styles.thumb} key={url}>
+              {images.map((url, index) => (
+                <div className={styles.thumb} key={`${url}-${index}`}>
                   <img src={url} alt="" />
-                  <button type="button" className={styles.thumbX} onClick={() => removeImage(url)} aria-label="移除">
+                  <button type="button" className={styles.thumbX} onClick={() => removeImage(index)} aria-label="移除">
                     ×
                   </button>
                 </div>
@@ -431,6 +448,7 @@ export default function SmartEntry({
             <input
               ref={fileRef}
               type="file"
+              aria-label="选择上传图片"
               accept="image/*"
               multiple
               hidden
@@ -447,6 +465,7 @@ export default function SmartEntry({
               <textarea
                 ref={taRef}
                 className={styles.input}
+                aria-label="创作需求"
                 value={text}
                 placeholder={mode === 'image' ? PLACEHOLDER_IMAGE : PLACEHOLDER_VIDEO}
                 onChange={(e) => {
@@ -495,6 +514,32 @@ export default function SmartEntry({
                       <path d="M12 8v4l3 2" />
                     </svg>
                   }
+                />
+              )}
+
+              {mode === 'image' && (
+                <EntryDropdown
+                  value={`${outputCount}张`}
+                  options={IMAGE_OUTPUT_COUNT_OPTIONS}
+                  onChange={(value) => setOutputCount(clampImageOutputCount(String(value).replace('张', '')))}
+                  ariaLabel="生成图片数量"
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="20"
+                      height="20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="5" y="5" width="14" height="14" rx="3" />
+                      <path d="M8.5 15.5l3-3 2.2 2.2 1.8-2 3.5 3.5M9 9.5h.01" />
+                    </svg>
+                  }
+                  valueMinWidth={28}
                 />
               )}
 
@@ -556,10 +601,10 @@ export default function SmartEntry({
                   type="button"
                   className={`${styles.send} ${styles.sendResume}`}
                   data-guide="smart-next"
-                  disabled={false}
+                  disabled={submitting}
                   onClick={() => onResume?.()}
-                  aria-label="返回下一步"
-                  title="返回下一步"
+                  aria-label={mode === 'image' ? '返回图片对话' : '返回下一步'}
+                  title={mode === 'image' ? '返回图片对话' : '返回下一步'}
                 >
                   <svg
                     width="18"
@@ -580,26 +625,17 @@ export default function SmartEntry({
                 type="button"
                 className={`${styles.send} ${styles.sendPlain}`}
                 data-guide={resumeMode ? 'smart-regen' : 'smart-next'}
-                disabled={!canSubmit}
-                onClick={() => submit()}
-                aria-label="去制作"
-                title="去制作"
+                disabled={!canSubmit || submitting}
+                onClick={() => void submit()}
+                aria-label={submitting ? '正在准备创作' : '去制作'}
+                title={submitting ? '正在准备创作' : '去制作'}
               >
-                <span className={styles.sendPlainText}>去制作</span>
+                <span className={styles.sendPlainText}>{submitting ? '准备中…' : '去制作'}</span>
               </button>
             </div>
           </div>
         </div>
       </div>
-
-      <GuideDialog
-        open={guideOpen}
-        initialText={text}
-        images={images}
-        onAddImages={(urls) => setImages((prev) => [...prev, ...urls].slice(0, MAX_IMAGES))}
-        onClose={() => setGuideOpen(false)}
-        onApply={applyGuide}
-      />
     </div>
   )
 }

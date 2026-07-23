@@ -6,6 +6,7 @@ export function shouldRequestAuthenticatedSession(hasSessionMarker) {
   return hasSessionMarker === true
 }
 
+/** 仅在退出失败明确为未认证时清除本地会话，避免网络错误误登出。 */
 export function shouldClearSessionAfterLogoutFailure(error) {
   return Number(error?.status || 0) === 401
 }

@@ -37,10 +37,21 @@
 }
 /* 准备素材表头:标题 + 右侧「AI一键生成图片」 */
 .sbHead .sbColMat {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+
+  > span {
+    grid-column: 1;
+    justify-self: start;
+    text-align: left;
+  }
+
+  > button {
+    grid-column: 2;
+    justify-self: end;
+  }
 }
 /* AI一键生成图片(表头药丸,按 Figma:浅青描边 + 闪光图标 + 青字) */
 .sbHeadGen {
@@ -71,6 +82,21 @@
 .sbHeadGenIcon {
   width: 16px;
   height: 16px;
+}
+.sbHeadGenSpin {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  border: 2px solid rgba(31, 207, 169, 0.2);
+  border-top-color: #1fcfa9;
+  border-radius: 50%;
+  animation: sbHeadGenSpin 0.7s linear infinite;
+}
+@keyframes sbHeadGenSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* 分镜脚本表尾的「重新生成」 */
@@ -128,6 +154,59 @@
   min-height: 80px;
   border-bottom: 0.8px solid #edf6f4;
 }
+.sbInsertSlot {
+  position: relative;
+  height: 0;
+  z-index: 3;
+}
+.sbInsertButton {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: #c2c9d2;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+
+  &:hover:not(:disabled),
+  &:focus-visible {
+    opacity: 1;
+    background: #1fcfa9;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0;
+    box-shadow: none;
+  }
+}
+.sbInsertSlot:hover .sbInsertButton:not(:disabled) {
+  opacity: 1;
+}
+.sbInsertButtonVisible:not(:disabled) {
+  opacity: 1;
+}
+.sbInsertSlot:hover .sbInsertButton:disabled {
+  opacity: 0.28;
+}
+.sbInsertButtonVisible:disabled {
+  opacity: 0.28;
+}
 .sbRowTrash {
   position: static;
   width: 22px;
@@ -144,7 +223,10 @@
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
   z-index: 2;
 }
 .sbRowTrash:hover {
@@ -166,7 +248,7 @@
 }
 /* 画面描述:有「准备素材」列时才显示右分隔;末列不显示 */
 .sbColDesc.sbCell {
-  align-items: flex-start;
+  align-items: center;
   padding-top: 20px;
   padding-bottom: 20px;
   border-right: 0.8px solid #edf6f4;
@@ -262,6 +344,32 @@
   line-height: 1.5;
   color: #555;
 }
+.sbDescLoading {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #28b99a;
+  font-size: 14px;
+  font-weight: 500;
+}
+.sbDescSpinner {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  border: 2px solid rgba(31, 207, 169, 0.22);
+  border-top-color: #1fcfa9;
+  border-radius: 50%;
+  animation: sbDescSpin 0.72s linear infinite;
+}
+@keyframes sbDescSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 /* 表尾:共 N 个镜头 */
 .sbFoot {
@@ -292,13 +400,20 @@
 }
 
 .sbcMatInfo {
-  flex: 0 0 102px;
-  width: 102px;
+  /* 左侧文字占用图片之外的剩余空间，长名称不再被固定 102px 截断。 */
+  flex: 1 1 0;
+  width: auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
+}
+/* 缩略图固定贴到素材列右侧，把中间的可用宽度留给完整素材名称。 */
+.sbcMatRow > span:last-child,
+.sbcMatRow > .sbcMatUpload:last-child {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 .sbcMatName {
   max-width: 100%;
@@ -371,11 +486,15 @@
   flex: 0 0 auto;
 }
 
-/* 上传图片框:80×80 虚线圆角(14px),浅青底 */
+/* 素材预览固定高度,宽度跟随项目画面比例;避免所有素材都被压成正方形。 */
 .sbcMatUpload {
   flex: 0 0 auto;
-  width: 80px;
+  width: auto;
   height: 80px;
+  min-width: 0;
+  aspect-ratio: var(--frame-ratio, 16 / 9);
+  box-sizing: border-box;
+  padding: 0;
   display: flex;
   flex-direction: column;
   align-items: center;

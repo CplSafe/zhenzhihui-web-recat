@@ -1,0 +1,603 @@
+.drawer {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  flex: 0 0 330px;
+  flex-direction: column;
+  width: 330px;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: visible;
+  border-right: 1px solid #edf0f3;
+  background: #fff;
+  box-shadow: 8px 0 24px rgba(31, 45, 61, 0.04);
+  color: #1f2937;
+  transition:
+    width 0.2s ease,
+    flex-basis 0.2s ease;
+}
+
+.collapsed {
+  flex-basis: 20px;
+  width: 20px;
+  justify-content: center;
+  border-right: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  height: 58px;
+  padding: 0 14px 0 18px;
+  border-bottom: 1px solid #f1f3f5;
+}
+
+.title {
+  margin: 0;
+  color: #202938;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.collapseButton,
+.railButton {
+  border: 0;
+  background: transparent;
+  color: #7d8794;
+  cursor: pointer;
+}
+
+.collapseButton {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  right: -20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 60px;
+  padding: 0;
+  border-radius: 0 7px 7px 0;
+  background: #fff;
+  box-shadow: 5px 0 12px rgba(31, 45, 61, 0.07);
+  transform: translateY(-50%);
+
+  &:hover,
+  &:focus-visible {
+    background: #f3f6f7;
+    color: #26c8a6;
+    outline: none;
+  }
+}
+
+.railButton {
+  display: flex;
+  width: 100%;
+  height: 60px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 0 7px 7px 0;
+  background: #fff;
+  box-shadow: 5px 0 12px rgba(31, 45, 61, 0.07);
+
+  &:hover,
+  &:focus-visible {
+    background: #f3fbf9;
+    color: #20bd9d;
+    outline: none;
+  }
+}
+
+.tabs {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: 1fr 1fr 0.86fr;
+  min-height: 45px;
+  padding: 0 12px;
+  border-bottom: 1px solid #eef1f3;
+}
+
+.tab {
+  position: relative;
+  min-width: 0;
+  padding: 1px 4px 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: #7c8795;
+  font-size: 13px;
+  line-height: 44px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &::after {
+    position: absolute;
+    right: 11px;
+    bottom: 0;
+    left: 11px;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: transparent;
+    content: '';
+  }
+
+  &:hover,
+  &:focus-visible {
+    color: #21b99a;
+    outline: none;
+  }
+}
+
+.tabActive {
+  color: #1eaf91;
+  font-weight: 600;
+
+  &::after {
+    background: #29c9a8;
+  }
+}
+
+.tabDisabled {
+  color: #c2c8cf;
+  font-size: 12px;
+  cursor: not-allowed;
+
+  &:hover {
+    color: #c2c8cf;
+  }
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #dfe5e9 transparent;
+}
+
+.taskList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 18px 20px;
+}
+
+.viewAllFooter {
+  flex: 0 0 auto;
+  padding: 10px 18px 14px;
+  border-top: 1px solid #eef3f1;
+  background: #fff;
+}
+
+.viewAllButton {
+  display: inline-flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid #dceee9;
+  border-radius: 8px;
+  background: #f5fbf9;
+  color: #1eaf91;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    border-color: #8edacb;
+    background: #ecf9f5;
+    color: #14997f;
+    outline: none;
+  }
+
+  &:focus-visible {
+    box-shadow: 0 0 0 3px rgba(38, 200, 166, 0.2);
+  }
+}
+
+.taskCard {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  transition:
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+
+  &:hover,
+  &:focus-within {
+    background: #f7faf9;
+    box-shadow: 0 0 0 6px #f7faf9;
+  }
+}
+
+.active {
+  .progressValue {
+    background: #5767e5;
+  }
+
+  .statusText {
+    color: #5767e5;
+  }
+}
+
+.queued {
+  .progressValue {
+    background: #aeb5bd;
+  }
+
+  .statusText {
+    color: #8c959f;
+  }
+}
+
+.failed {
+  border-color: #f3d1d5;
+  background: linear-gradient(135deg, #fff 68%, #fff7f7 100%);
+
+  .statusText,
+  .errorMessage {
+    color: #d85966;
+  }
+
+  .progressValue {
+    background: #e36672;
+  }
+}
+
+.completed {
+  .progressValue {
+    background: #26c8a6;
+  }
+
+  .statusText {
+    color: #24b898;
+  }
+}
+
+.taskMain {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 30px 4px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid rgba(38, 200, 166, 0.45);
+    outline-offset: -2px;
+  }
+}
+
+.taskMainDisabled {
+  cursor: default;
+
+  &:disabled {
+    color: inherit;
+  }
+}
+
+.mobileBackdrop {
+  display: none;
+}
+
+.thumbnail {
+  position: relative;
+  display: block;
+  flex: 0 0 100px;
+  width: 100px;
+  height: 100px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #e9f6f3, #eef1f5);
+}
+
+.thumbnailPlaceholder,
+.thumbnailImage {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.thumbnailPlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thumbnailImage {
+  z-index: 1;
+  object-fit: cover;
+}
+
+.thumbnailSpinner {
+  color: #26c8a6;
+  font-size: 26px;
+}
+
+.thumbnailPlay {
+  color: #9facb5;
+  font-size: 27px;
+}
+
+.taskContent {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100px;
+  flex-direction: column;
+}
+
+.statusLine {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 18px;
+}
+
+.statusText {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: #24b898;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.taskTitle {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #8a929d;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskMeta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #89939f;
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+.metaDivider {
+  flex: 0 0 1px;
+  width: 1px;
+  height: 10px;
+  background: #dfe3e7;
+}
+
+.progressRow {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  margin-top: auto;
+}
+
+.progressTrack {
+  position: relative;
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0f2;
+}
+
+.progressValue {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.3s ease;
+}
+
+.progressIndeterminate {
+  position: absolute;
+  width: 42%;
+  animation: task-progress-indeterminate 1.35s ease-in-out infinite;
+}
+
+.progressText {
+  flex: 0 0 auto;
+  min-width: 28px;
+  color: #7d8794;
+  font-size: 10px;
+  line-height: 12px;
+  text-align: right;
+}
+
+@keyframes task-progress-indeterminate {
+  0% {
+    left: -42%;
+  }
+
+  100% {
+    left: 100%;
+  }
+}
+
+.errorMessage {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #d85966;
+  font-size: 10px;
+  line-height: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archiveButton {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  right: 6px;
+  display: inline-flex;
+  width: 25px;
+  height: 25px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #a5adb6;
+  cursor: pointer;
+  opacity: 1;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    opacity 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    background: #f0f7f5;
+    color: #27b99b;
+    outline: none;
+    opacity: 1;
+  }
+}
+
+.taskCard:hover .archiveButton,
+.taskCard:focus-within .archiveButton {
+  opacity: 1;
+}
+
+.empty {
+  display: flex;
+  min-height: 280px;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 22px;
+  flex-direction: column;
+  color: #9aa4af;
+  text-align: center;
+}
+
+.emptyIcon {
+  color: #9fd9cd;
+  font-size: 48px;
+}
+
+.emptySpinner {
+  color: #26c8a6;
+  font-size: 32px;
+}
+
+.emptyTitle {
+  margin-top: 13px;
+  color: #66717e;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.emptyText {
+  max-width: 210px;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (hover: none) {
+  .archiveButton {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .mobileBackdrop {
+    position: fixed;
+    z-index: 1079;
+    inset: 0;
+    display: block;
+    padding: 0;
+    border: 0;
+    background: rgba(27, 38, 51, 0.26);
+    cursor: default;
+  }
+
+  .drawer {
+    position: fixed;
+    z-index: 1080;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(330px, calc(100vw - 36px));
+    height: auto;
+    box-shadow: 12px 0 32px rgba(31, 45, 61, 0.16);
+  }
+
+  .collapsed {
+    top: 50%;
+    bottom: auto;
+    width: 24px;
+    height: 60px;
+    min-height: 60px;
+    transform: translateY(-50%);
+    box-shadow: none;
+  }
+
+  .collapsed .railButton {
+    min-width: 24px;
+    width: 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer,
+  .taskCard,
+  .progressValue,
+  .viewAllButton {
+    transition: none;
+  }
+
+  .progressIndeterminate {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.45;
+  }
+}

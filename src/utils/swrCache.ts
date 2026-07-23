@@ -42,6 +42,7 @@ interface CacheEntry<T> {
   ts: number
 }
 
+/** SWR 请求的缓存时长、回调及持久化选项。 */
 export interface SwrOptions<T> {
   /** 缓存「新鲜期」(ms)。在此期间命中缓存不会触发后台刷新。默认 5 分钟。 */
   ttl?: number
@@ -51,6 +52,7 @@ export interface SwrOptions<T> {
   persist?: boolean
 }
 
+/** SWR 取数结果及其缓存来源标记。 */
 export interface SwrResult<T> {
   /** 数据:命中缓存则为缓存值,否则为本次请求结果。 */
   data: T
@@ -58,18 +60,33 @@ export interface SwrResult<T> {
   fromCache: boolean
 }
 
+/** 缓存默认新鲜期为五分钟。 */
 const DEFAULT_TTL = 5 * 60_000
+/** sessionStorage 中 SWR 数据的统一键前缀。 */
 const STORAGE_PREFIX = 'swr:'
 
 /** 进程内缓存:Map<key, entry>。组件/模块共享。 */
 const memoryCache = new Map<string, CacheEntry<unknown>>()
 
-/** 同一 key 正在进行的请求,用于去重(并发调用只发一次网络请求)。 */
-const inflight = new Map<string, Promise<unknown>>()
+/** 同一缓存键当前请求的代次与共享 Promise。 */
+interface InflightEntry {
+  generation: number
+  promise: Promise<unknown>
+}
+
+/** 同一 key、同一缓存代次正在进行的请求,用于去重(并发调用只发一次网络请求)。 */
+const inflight = new Map<string, InflightEntry>()
+
+/**
+ * 每个 key 的失效代次。invalidate/clear 后旧请求即使晚返回，也不能重新写回缓存。
+ * 代次保留在 Map 中，避免 clearAllCache 后旧的 generation=0 请求复活。
+ */
+const generations = new Map<string, number>()
 
 /** 订阅者:key 变更时通知(供 useSwr 等响应式刷新)。 */
 const subscribers = new Map<string, Set<(value: unknown) => void>>()
 
+/** 从 sessionStorage 安全读取缓存项。 */
 function readSession<T>(key: string): CacheEntry<T> | null {
   try {
     const raw = sessionStorage.getItem(STORAGE_PREFIX + key)
@@ -82,6 +99,7 @@ function readSession<T>(key: string): CacheEntry<T> | null {
   }
 }
 
+/** 将缓存项写入 sessionStorage；失败时静默降级为内存缓存。 */
 function writeSession<T>(key: string, entry: CacheEntry<T>): void {
   try {
     sessionStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(entry))
@@ -108,26 +126,40 @@ function writeCache<T>(key: string, value: T, persist: boolean): void {
   notify(key, value)
 }
 
+/** 向指定缓存键的所有订阅者广播最新值。 */
 function notify(key: string, value: unknown): void {
   const subs = subscribers.get(key)
   if (subs) subs.forEach((fn) => fn(value))
 }
 
+/** 读取缓存键当前的失效代次。 */
+function currentGeneration(key: string): number {
+  return generations.get(key) || 0
+}
+
+/** 推进缓存失效代次，使较早请求无法回写新缓存。 */
+function advanceGeneration(key: string): number {
+  const next = currentGeneration(key) + 1
+  generations.set(key, next)
+  return next
+}
+
 /** 实际发起请求,并对同 key 并发去重。 */
 function revalidate<T>(key: string, fetcher: () => Promise<T>, persist: boolean): Promise<T> {
-  const existing = inflight.get(key) as Promise<T> | undefined
-  if (existing) return existing
+  const generation = currentGeneration(key)
+  const existing = inflight.get(key)
+  if (existing?.generation === generation) return existing.promise as Promise<T>
 
   const p = fetcher()
     .then((fresh) => {
-      writeCache(key, fresh, persist)
+      if (currentGeneration(key) === generation) writeCache(key, fresh, persist)
       return fresh
     })
     .finally(() => {
-      inflight.delete(key)
+      if (inflight.get(key)?.promise === p) inflight.delete(key)
     })
 
-  inflight.set(key, p)
+  inflight.set(key, { generation, promise: p })
   return p
 }
 
@@ -177,7 +209,9 @@ export function setCache<T>(key: string, value: T, persist = true): void {
 
 /** 失效指定 key(下次 swrFetch 会重新请求)。 */
 export function invalidate(key: string, persist = true): void {
+  advanceGeneration(key)
   memoryCache.delete(key)
+  inflight.delete(key)
   if (persist) {
     try {
       sessionStorage.removeItem(STORAGE_PREFIX + key)
@@ -189,6 +223,8 @@ export function invalidate(key: string, persist = true): void {
 
 /** 清空所有 SWR 缓存(如退出登录)。 */
 export function clearAllCache(): void {
+  const activeKeys = new Set([...memoryCache.keys(), ...inflight.keys(), ...generations.keys()])
+  activeKeys.forEach(advanceGeneration)
   memoryCache.clear()
   inflight.clear()
   try {

@@ -144,7 +144,9 @@
   color: #fff;
   cursor: pointer;
   transform: translateY(-50%);
-  transition: background 0.2s, box-shadow 0.2s;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
 }
 

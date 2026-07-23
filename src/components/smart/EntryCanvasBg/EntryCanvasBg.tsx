@@ -12,6 +12,7 @@
  *   - 'bloom'(爆款复制):从被点击的 Tab 处放射绽放 + 轻微回弹,有张力。
  */
 import { useEffect, useRef } from 'react'
+import { observeElementResize } from '@/utils/observeElementResize'
 import styles from './EntryCanvasBg.module.less'
 
 // 内部渲染缩放(柔和渐变拉伸后无差别,越小越省)
@@ -44,6 +45,7 @@ export const SMART_LAYERS: BgLayerStops = {
   ],
 }
 
+/** 背景当前页签、动画性格与可替换配色配置。 */
 interface EntryCanvasBgProps {
   /** 当前 Tab 序号(变化即触发一次切换动画;用于方向判断) */
   index: number
@@ -59,6 +61,7 @@ interface EntryCanvasBgProps {
   layers?: BgLayerStops
 }
 
+/** 低分辨率静态绘制入口渐变，并在页签变化时仅用 GPU 合成属性播放过渡。 */
 export default function EntryCanvasBg({ index, count = 2, anim = 'glide', layers = SMART_LAYERS }: EntryCanvasBgProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const sizeRef = useRef({ w: 1, h: 1 })
@@ -120,10 +123,7 @@ export default function EntryCanvasBg({ index, count = 2, anim = 'glide', layers
       draw()
     }
 
-    resize()
-    const ro = new ResizeObserver(resize)
-    ro.observe(canvas)
-    return () => ro.disconnect()
+    return observeElementResize(canvas, resize)
   }, [])
 
   // 配色变化时重绘(静态使用时仅挂载触发一次)

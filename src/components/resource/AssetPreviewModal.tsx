@@ -14,6 +14,7 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 import { getAssetDownloadUrl } from '@/api/business'
 import './AssetPreviewModal.css'
 
+/** 预览队列状态及关闭、前后切换回调。 */
 interface AssetPreviewModalProps {
   state: AssetPreviewState
   onClose?: () => void
@@ -27,21 +28,29 @@ interface AssetPreviewModalProps {
 function PreviewMedia({ item, workspaceId, videoKey }: { item: any; workspaceId: any; videoKey: number }) {
   const [src, setSrc] = useState<string>(item?.mediaUrl || '')
   const triedRef = useRef(false)
+  const assetId = Number(item?.assetId ?? item?.id ?? 0) || 0
+  const requestScope = `${Number(workspaceId || 0)}:${assetId}:${String(item?.mediaUrl || '')}`
+  const requestScopeRef = useRef(requestScope)
+  requestScopeRef.current = requestScope
 
   useEffect(() => {
+    let cancelled = false
+    const scope = requestScope
     setSrc(item?.mediaUrl || '')
     triedRef.current = false
     // 无内联地址:按 assetId 取签名地址(否则永远显示「暂无预览」)
-    if (!item?.mediaUrl) {
-      const id = item?.id
-      if (id && !String(id).startsWith('asset-')) {
-        triedRef.current = true
-        getAssetDownloadUrl({ workspaceId, assetId: id })
-          .then((u) => setSrc(u || ''))
-          .catch(() => {})
-      }
+    if (!item?.mediaUrl && assetId > 0) {
+      triedRef.current = true
+      getAssetDownloadUrl({ workspaceId, assetId })
+        .then((u) => {
+          if (!cancelled && requestScopeRef.current === scope) setSrc(u || '')
+        })
+        .catch(() => {})
     }
-  }, [item?.mediaUrl, item?.id, workspaceId])
+    return () => {
+      cancelled = true
+    }
+  }, [assetId, item?.mediaUrl, requestScope, workspaceId])
 
   const handleError = useCallback(async () => {
     if (triedRef.current) {
@@ -49,18 +58,18 @@ function PreviewMedia({ item, workspaceId, videoKey }: { item: any; workspaceId:
       return
     }
     triedRef.current = true
-    const id = item?.id
-    if (!id || String(id).startsWith('asset-')) {
+    if (assetId <= 0) {
       setSrc('')
       return
     }
+    const scope = requestScopeRef.current
     try {
-      const fresh = await getAssetDownloadUrl({ workspaceId, assetId: id })
-      setSrc(fresh || '')
+      const fresh = await getAssetDownloadUrl({ workspaceId, assetId })
+      if (requestScopeRef.current === scope) setSrc(fresh || '')
     } catch {
-      setSrc('')
+      if (requestScopeRef.current === scope) setSrc('')
     }
-  }, [item?.id, workspaceId])
+  }, [assetId, workspaceId])
 
   if (item?.mediaKind === 'image' && src) {
     return <img src={src} alt={item.title} className="asset-preview-image" onError={handleError} />
@@ -87,14 +96,21 @@ function PreviewMedia({ item, workspaceId, videoKey }: { item: any; workspaceId:
   )
 }
 
+/** 渲染跨图片/视频的全屏预览，并在工作空间切换时阻止旧资产串入新空间。 */
 export default function AssetPreviewModal({ state, onClose, onPrev, onNext }: AssetPreviewModalProps) {
   const workspaceId = useWorkspaceId()
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
   // ---- 派生值 ----
   const activeIndex = Number(state?.activeIndex) || 0
   const items = useMemo(() => (Array.isArray(state?.items) ? state.items : []), [state?.items])
-  const visible = Boolean(state?.visible) && items.length > 0
-
   const activeItem = items[activeIndex] || null
+  const activeWorkspaceId = Number(activeItem?.workspaceId || 0)
+  const workspaceMatches = activeWorkspaceId <= 0 || activeWorkspaceId === Number(workspaceId || 0)
+  // 工作空间切换后的首帧先隐藏旧预览，避免旧 assetId 搭配新 workspaceId 请求。
+  const visible = Boolean(state?.visible) && items.length > 0 && workspaceMatches
   const hasPrev = activeIndex > 0
   const hasNext = activeIndex < items.length - 1
   const totalCount = items.length
@@ -127,17 +143,75 @@ export default function AssetPreviewModal({ state, onClose, onPrev, onNext }: As
     handleClose()
   }
 
+  useEffect(() => {
+    if (!visible) return
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus())
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current?.()
+        return
+      }
+      if (event.key !== 'Tab' || !overlayRef.current) return
+      const focusable = Array.from(
+        overlayRef.current.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), video[controls], [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => element.getAttribute('aria-hidden') !== 'true')
+      if (!focusable.length) {
+        event.preventDefault()
+        overlayRef.current.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.cancelAnimationFrame(focusFrame)
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+      window.requestAnimationFrame(() => {
+        if (previouslyFocused?.isConnected) previouslyFocused.focus()
+      })
+    }
+  }, [visible])
+
   // 关闭时直接移除 DOM，无闪烁
   if (!visible) return null
 
   return (
-    <div className="asset-preview-overlay" onClick={onMaskClick}>
+    <div
+      ref={overlayRef}
+      className="asset-preview-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="素材预览"
+      tabIndex={-1}
+      onClick={onMaskClick}
+    >
       {/* 顶部工具栏 */}
       <div className="asset-preview-toolbar">
         <span className="asset-preview-counter">
           {displayIndex} / {totalCount}
         </span>
-        <button type="button" className="asset-preview-close-btn" aria-label="关闭预览" onClick={handleClose}>
+        <button
+          ref={closeButtonRef}
+          type="button"
+          className="asset-preview-close-btn"
+          aria-label="关闭预览"
+          onClick={handleClose}
+        >
           <svg viewBox="0 0 20 20" aria-hidden="true">
             <path d="M5 5 15 15M15 5 5 15" />
           </svg>
@@ -184,9 +258,7 @@ export default function AssetPreviewModal({ state, onClose, onPrev, onNext }: As
       {activeItem && (
         <div className="asset-preview-footer">
           <h3 className="asset-preview-title">{activeItem.title}</h3>
-          {activeItem.tags?.length ? (
-            <p className="asset-preview-tags">{activeItem.tags.join(' ／ ')}</p>
-          ) : null}
+          {activeItem.tags?.length ? <p className="asset-preview-tags">{activeItem.tags.join(' ／ ')}</p> : null}
         </div>
       )}
     </div>

@@ -12,8 +12,10 @@ import iconSpark from '@/assets/yindao/02b04334d1db2f3ed739bb11b52bc84d.png' // 
 import iconFolder from '@/assets/yindao/8edabba3e1b101ba5853a3fd7df6a28f.png' // 文件夹 → 项目管理
 import iconRocket from '@/assets/yindao/ab77fbf6046403906094a0eb4087c586.png' // 火箭 → 会员中心
 
+/** 引导气泡相对目标元素的展示方向。 */
 export type GuidePlacement = 'top' | 'bottom' | 'left' | 'right'
 
+/** 从引导卡片指向页面控件的辅助标注。 */
 export interface GuideAnnotation {
   target: string
   label: string
@@ -21,6 +23,7 @@ export interface GuideAnnotation {
   dir?: 'down' | 'up'
 }
 
+/** 单个聚光引导步骤的目标、文案与布局配置。 */
 export interface GuideStep {
   /** 高亮目标的 CSS 选择器;找不到则居中只显示文案 */
   target: string
@@ -45,6 +48,12 @@ export interface GuideStep {
   cardTarget?: string
   /** 气泡卡垂直微调 px(负=上移,正=下移);连同箭头一起偏移 */
   cardOffsetY?: number
+  /** top/bottom 布局下气泡卡水平微调 px;箭头仍锚定目标 */
+  cardOffsetX?: number
+  /** 气泡卡宽度 px;未设置时使用全局默认宽度 */
+  cardWidth?: number
+  /** 聚光洞圆角 px;圆形目标可传入足够大的值 */
+  spotRadius?: number
 }
 
 /** 智能成片分阶段:key 对应 SmartCreateView 的流程阶段(entry/marketing/…) */
@@ -53,6 +62,7 @@ export interface GuideStage {
   steps: GuideStep[]
 }
 
+/** 一套扁平或分阶段的新手引导定义。 */
 export interface GuideDef {
   key: string
   /** 扁平引导(首页) */
@@ -61,6 +71,7 @@ export interface GuideDef {
   stages?: GuideStage[]
 }
 
+/** 全部页面引导定义；首页为扁平步骤，智能成片按流程阶段组织。 */
 export const GUIDES: Record<string, GuideDef> = {
   home: {
     key: 'home',
@@ -173,6 +184,65 @@ export const GUIDES: Record<string, GuideDef> = {
           },
         ],
       },
+      // 阶段 arrangeTrash:首次进入镜头编排时,说明左侧浮动分镜回收站。
+      {
+        key: 'arrangeTrash',
+        steps: [
+          {
+            target: '[data-guide="smart-arrange-trash"]',
+            title: '分镜回收站',
+            body: ['删除的分镜会暂时保存在这里，可恢复或彻底删除。'],
+            placement: 'top',
+            pad: 8,
+            spotRadius: 999,
+            cardWidth: 460,
+            cardOffsetX: 165,
+            cta: '开始创作',
+          },
+        ],
+      },
+    ],
+  },
+  // 帮助中心在「分镜脚本 / 镜头编排」页手动回放：把流程说明两步与回收站说明串成完整的 3 步。
+  // 使用独立的扁平 key，避免 SmartCreateView 的自动阶段同步跳过前两步、直接切到 arrangeTrash。
+  smartHelpWithTrash: {
+    key: 'smartHelpWithTrash',
+    steps: [
+      {
+        target: '[data-guide="smart-stepbar"]',
+        title: '了解创作流程',
+        body: ['视频创作分为多个步骤,可点击随意切换已生成的步骤,可随时查看进度,完成当前步骤后自动进入下一步。'],
+        placement: 'bottom',
+      },
+      {
+        target: '[data-guide="smart-foot"]',
+        cardTarget: '[data-guide="smart-foot-confirm"]',
+        title: '使用导航和生成按钮继续创作',
+        body: ['使用底部导航栏可返回上一步或进入下一步,点击绿色按钮生成新内容并进入下一阶段。'],
+        placement: 'top',
+        cardOffsetY: -75,
+        spots: [
+          '[data-guide="smart-foot-prev"]',
+          '[data-guide="smart-foot-next"]',
+          '[data-guide="smart-foot-confirm"]',
+        ],
+        annotations: [
+          { target: '[data-guide="smart-foot-prev"]', label: '点击返回上一步', dir: 'up' },
+          { target: '[data-guide="smart-foot-next"]', label: '点击进入下一步', dir: 'up' },
+          { target: '[data-guide="smart-foot-confirm"]', label: '点击生成新内容', dir: 'up' },
+        ],
+      },
+      {
+        target: '[data-guide="smart-script-trash"], [data-guide="smart-arrange-trash"]',
+        title: '分镜回收站',
+        body: ['删除的分镜会暂时保存在这里，可恢复或彻底删除。'],
+        placement: 'top',
+        pad: 8,
+        spotRadius: 999,
+        cardWidth: 460,
+        cardOffsetX: 165,
+        cta: '开始创作',
+      },
     ],
   },
 }
@@ -199,6 +269,7 @@ export const guideLabelForPath = (pathname: string): string => {
 
 // —— 已看标记(首页用;按用户隔离)——
 const seenKey = (guideKey: string, uid: any) => `zzh_guide_seen_${guideKey}_u${Number(uid) || 'anon'}`
+/** 查询指定用户是否已经看过某套引导。 */
 export const isGuideSeen = (guideKey: string, uid: any): boolean => {
   try {
     return window.localStorage.getItem(seenKey(guideKey, uid)) === '1'
@@ -206,6 +277,7 @@ export const isGuideSeen = (guideKey: string, uid: any): boolean => {
     return false
   }
 }
+/** 记录指定用户已经看过某套引导。 */
 export const markGuideSeen = (guideKey: string, uid: any): void => {
   try {
     window.localStorage.setItem(seenKey(guideKey, uid), '1')
@@ -219,6 +291,7 @@ const SMART_ARM_KEY = 'zzh_smart_guide_armed'
 // 「首次支付」门槛(按用户隔离):智能成片引导只对新用户触发——仅该用户【第一次支付】装填一次,
 // 续费/再买不再触发。首次装填时置位;之后 armSmartGuide 见此标记即跳过。
 const smartOnboardedKey = (uid: any) => `zzh_smart_guide_onboarded_u${Number(uid) || 'anon'}`
+/** 判断当前用户是否已经触发过首次付费引导。 */
 export const isSmartGuideOnboarded = (uid: any): boolean => {
   try {
     return window.localStorage.getItem(smartOnboardedKey(uid)) === '1'
@@ -227,6 +300,7 @@ export const isSmartGuideOnboarded = (uid: any): boolean => {
   }
 }
 // 支付成功调用:传入当前用户 id。该用户此前已装填过(续费/再买)→ 直接跳过,保证只对首次付费的新用户触发。
+/** 首次支付成功后装填一次智能成片引导。 */
 export const armSmartGuide = (uid?: any): void => {
   try {
     if (isSmartGuideOnboarded(uid)) return // 非首次支付 → 不再装填
@@ -236,6 +310,7 @@ export const armSmartGuide = (uid?: any): void => {
     /* 忽略 */
   }
 }
+/** 查询智能成片引导是否已装填、等待进入页面触发。 */
 export const isSmartGuideArmed = (): boolean => {
   try {
     return window.localStorage.getItem(SMART_ARM_KEY) === '1'
@@ -243,6 +318,7 @@ export const isSmartGuideArmed = (): boolean => {
     return false
   }
 }
+/** 消费并清除本次智能成片引导装填标记。 */
 export const disarmSmartGuide = (): void => {
   try {
     window.localStorage.removeItem(SMART_ARM_KEY)
@@ -251,6 +327,7 @@ export const disarmSmartGuide = (): void => {
   }
 }
 
+/** 引导覆盖层的运行状态与推进动作。 */
 interface GuideState {
   activeKey: string | null
   stepIndex: number
@@ -269,12 +346,14 @@ interface GuideState {
   syncSmartStage: (stageKey: string) => void
 }
 
+/** 从扁平或分阶段定义中取得当前实际展示的步骤列表。 */
 const stageSteps = (def: GuideDef | null, stageKey: string | null): GuideStep[] => {
   if (!def) return []
   if (def.stages) return def.stages.find((s) => s.key === stageKey)?.steps || []
   return def.steps || []
 }
 
+/** 全局新手引导 Store。 */
 export const useGuideStore = create<GuideState>((set, get) => ({
   activeKey: null,
   stepIndex: 0,
@@ -342,5 +421,7 @@ export const useGuideStore = create<GuideState>((set, get) => ({
 }))
 
 // 模块级触发器
+/** 在 React 组件外启动指定引导。 */
 export const openGuide = (key: string) => useGuideStore.getState().startGuide(key)
+/** 在 React 组件外同步智能成片当前阶段。 */
 export const syncSmartGuideStage = (stageKey: string) => useGuideStore.getState().syncSmartStage(stageKey)

@@ -2,16 +2,24 @@
  * AppConfirmDialog — 可访问的确认/输入对话框。
  * 挂载在顶层，任意页面可经 useConfirmDialog().requestConfirm() 触发。
  */
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useUiStore } from '../stores/ui'
 import './AppConfirmDialog.css'
 
+/** 订阅全局确认状态，并将用户选择通过 store 中保存的 Promise 解析器返回给调用方。 */
 export default function AppConfirmDialog() {
   const state = useUiStore((s) => s.confirm)
   const resolveConfirm = useUiStore((s) => s.resolveConfirm)
   const setConfirmInput = useUiStore((s) => s.setConfirmInput)
   const inputRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!state.visible) return
+    if (state.inputEnabled) inputRef.current?.focus()
+    else dialogRef.current?.focus()
+  }, [state.id, state.inputEnabled, state.visible])
 
   if (!state.visible) return null
 
@@ -39,8 +47,10 @@ export default function AppConfirmDialog() {
 
   return (
     <div
+      ref={dialogRef}
       className="confirm-overlay"
       role="alertdialog"
+      tabIndex={-1}
       aria-modal="true"
       aria-labelledby={`confirm-title-${idSuffix}`}
       aria-describedby={`confirm-desc-${idSuffix}`}

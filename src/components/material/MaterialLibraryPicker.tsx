@@ -4,13 +4,25 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from 'antd'
-import { createCreativeProject, getBusinessErrorMessage, listCreativeProjects } from '@/api/business'
+import { getBusinessErrorMessage } from '@/api/business'
+import { createInitializedProjectFolder } from '@/utils/creativeProjectInitialization'
+import { useCurrentUser } from '@/stores/workspaceSession'
+import { listAllCreativeProjects } from '@/utils/businessPagination'
+import { isCreativeProjectRestrictedForUser, resolveUserId } from '@/utils/creativeDraftMetadata'
 import { getMaterialPoster, isVideoMaterial } from '@/utils/materials'
+import {
+  collectCreativeProjectAssetIds,
+  groupMaterialsByProject,
+  resolveMaterialAssetId,
+  resolveMaterialProjectId,
+} from '@/utils/materialProjectFolders'
+import { resolveCreativeProjectId } from '@/utils/projectAssetAccess'
 import folderPurpleIcon from '@/img/595d866d18aa16996c24488624357662.png'
 import folderGrayIcon from '@/img/a8f65f05b65174e6022127353290899a.png'
 import actionCardVisual from '@/img/d35650818c74e6f9dd90befc870a0ec8.png'
 import './MaterialLibraryPicker.css'
 
+/** 素材选择器的受控筛选状态、候选素材与批量操作回调。 */
 interface MaterialLibraryPickerProps {
   modelValue?: boolean
   workspaceId?: number
@@ -33,13 +45,21 @@ interface MaterialLibraryPickerProps {
   onBatchDelete?: (ids: any[]) => void
 }
 
+/** 内部页签值到中文标题的映射。 */
 const TAB_LABELS: Record<string, string> = {
   mine: '个人素材',
   team: '团队素材',
   favorite: '我的收藏',
 }
 
-// ===== 工具函数（与 props/state 无关，提到组件外） =====
+/** 未提供收藏覆盖时复用的稳定空映射，避免每次渲染创建新引用。 */
+const EMPTY_FAVORITE_OVERRIDES = new Map<string, boolean>()
+
+/** 远端项目尚未加载时复用的稳定空数组。 */
+const EMPTY_REMOTE_PROJECTS: any[] = []
+
+// ===== 纯工具函数：不依赖组件状态，保证文件夹归类和排序可稳定复用。 =====
+/** 解析素材创建时间，用于同一文件夹内的新旧排序。 */
 function resolveTimestamp(material: any): number {
   const raw = material?.serverAsset?.created_at ?? material?.serverAsset?.createdAt ?? 0
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0
@@ -50,10 +70,12 @@ function resolveTimestamp(material: any): number {
   return 0
 }
 
+/** 兼容本地视图模型与后端资产对象，读取稳定资产 ID。 */
 function resolveMaterialId(material: any): number {
   return Number(material?.serverAsset?.id || material?.assetId || 0) || 0
 }
 
+/** 根据项目空间类型将文件夹归入个人或团队页签。 */
 function resolveProjectFolderTab(project: any): string {
   const raw = String(project?.workspace_type || project?.type || '')
     .trim()
@@ -64,11 +86,13 @@ function resolveProjectFolderTab(project: any): string {
   return 'mine'
 }
 
+/** 读取项目文件夹标题，并为空标题提供可理解的回退文案。 */
 function getProjectTitle(project: any, fallback = '未命名文件夹'): string {
   const title = String(project?.title || project?.name || '').trim()
   return title || fallback
 }
 
+/** 从多个后端时间字段中解析项目最近更新时间。 */
 function getProjectUpdatedAt(project: any): number {
   const raw = [
     project?.updated_at,
@@ -81,11 +105,13 @@ function getProjectUpdatedAt(project: any): number {
   return Number.isFinite(timestamp) ? timestamp : Date.now()
 }
 
+/** 将后端数量字段安全转换为非负整数。 */
 function toCount(value: any): number {
   const num = Number(value || 0)
   return Number.isFinite(num) && num > 0 ? Math.floor(num) : 0
 }
 
+/** 优先使用项目聚合字段，缺失时按已加载素材统计图片数量。 */
 function resolveProjectImageCount(project: any, materials: any[]): number {
   const backendCount = [
     project?.image_count,
@@ -101,6 +127,7 @@ function resolveProjectImageCount(project: any, materials: any[]): number {
   return materials.filter((item) => item?.type === 'image' || !isVideoMaterial(item)).length
 }
 
+/** 优先使用项目聚合字段，缺失时按已加载素材统计视频数量。 */
 function resolveProjectVideoCount(project: any, materials: any[]): number {
   const backendCount = [
     project?.video_count,
@@ -116,6 +143,7 @@ function resolveProjectVideoCount(project: any, materials: any[]): number {
   return materials.filter((item) => isVideoMaterial(item)).length
 }
 
+/** 读取项目音频数量；当前素材视图未携带音频明细，因此不做本地反推。 */
 function resolveProjectAudioCount(project: any): number {
   const backendCount = [project?.audio_count, project?.audioCount, project?.asset_audio_count, project?.assetAudioCount]
     .map((value) => toCount(value))
@@ -123,6 +151,7 @@ function resolveProjectAudioCount(project: any): number {
   return backendCount || 0
 }
 
+/** 按时间、资产 ID、名称依次降序/稳定排序素材，保证刷新后顺序不跳动。 */
 function sortMaterialList(list: any[]): any[] {
   return [...list].sort((a, b) => {
     const at = resolveTimestamp(a)
@@ -135,6 +164,7 @@ function sortMaterialList(list: any[]): any[] {
   })
 }
 
+/** 取文件夹首个素材作为封面，视频优先使用海报帧。 */
 function getFolderCover(materials: any[]): string {
   const first = materials[0]
   if (!first) return ''
@@ -143,6 +173,7 @@ function getFolderCover(materials: any[]): string {
     : first?.src || getMaterialPoster(first) || ''
 }
 
+/** 将文件夹更新时间格式化为年月日，无有效时间时显示即时更新。 */
 function formatFolderDate(ts: number): string {
   const ms = Number(ts || 0)
   if (!ms) return '刚刚更新'
@@ -151,6 +182,7 @@ function formatFolderDate(ts: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+/** 加载可访问项目并按文件夹展示素材，维护临时勾选状态后一次性确认给父流程。 */
 export default function MaterialLibraryPicker({
   modelValue = false,
   workspaceId = 0,
@@ -175,24 +207,83 @@ export default function MaterialLibraryPicker({
   const [timeSort, setTimeSort] = useState('desc')
   const [onlyFavorite, setOnlyFavorite] = useState(false)
   const [batchMode, setBatchMode] = useState(false)
-  const [favoriteOverrides, setFavoriteOverrides] = useState<Map<any, boolean>>(new Map())
+  const [favoriteOverrideState, setFavoriteOverrideState] = useState<{
+    storageKey: string
+    values: Map<string, boolean>
+  }>({ storageKey: '', values: new Map() })
   const [starPulseIds, setStarPulseIds] = useState<Set<any>>(new Set())
   const [viewMode, setViewMode] = useState<'folder' | 'material'>('folder')
   const [selectedFolderId, setSelectedFolderId] = useState('')
   const [activeFolderId, setActiveFolderId] = useState('')
-  const [remoteProjects, setRemoteProjects] = useState<any[]>([])
-  const [activeFolderMenuId, setActiveFolderMenuId] = useState('')
+  const [remoteProjectState, setRemoteProjectState] = useState<{
+    workspaceId: number
+    userId: number
+    tab: string
+    items: any[]
+    restrictedProjectIds: number[]
+    restrictedAssetIds: number[]
+    accessLoaded: boolean
+  }>({
+    workspaceId: 0,
+    userId: 0,
+    tab: '',
+    items: [],
+    restrictedProjectIds: [],
+    restrictedAssetIds: [],
+    accessLoaded: false,
+  })
   const [folderLoading, setFolderLoading] = useState(false)
   const [actionPulse, setActionPulse] = useState(false)
-  // Track locally-deleted folder IDs (folder system is currently frontend-only)
-  const [deletedFolderIds, setDeletedFolderIds] = useState<Set<any>>(new Set())
 
-  const favoriteStorageKey = useMemo(() => `mlp-favorites-${String(workspaceId || 0)}`, [workspaceId])
+  const currentUser = useCurrentUser()
+  const currentUserId = resolveUserId(currentUser)
+  const currentUserStorageScope = String(
+    currentUser?.id ??
+      currentUser?.user_id ??
+      currentUser?.userId ??
+      currentUser?.account_id ??
+      currentUser?.accountId ??
+      currentUser?.uid ??
+      '',
+  ).trim()
+  const favoriteStorageKey = useMemo(
+    () =>
+      `mlp-favorites-user-${encodeURIComponent(currentUserStorageScope || 'anon')}-workspace-${String(workspaceId || 0)}`,
+    [currentUserStorageScope, workspaceId],
+  )
+  const currentScopeRef = useRef({
+    modelValue,
+    tab,
+    workspaceId: Number(workspaceId || 0),
+    userId: currentUserId,
+  })
+  currentScopeRef.current = {
+    modelValue,
+    tab,
+    workspaceId: Number(workspaceId || 0),
+    userId: currentUserId,
+  }
+  const projectRequestIdRef = useRef(0)
+  const remoteProjects =
+    remoteProjectState.workspaceId === Number(workspaceId || 0) &&
+    remoteProjectState.tab === tab &&
+    remoteProjectState.userId === currentUserId
+      ? remoteProjectState.items
+      : EMPTY_REMOTE_PROJECTS
+  const projectAccessStateMatches =
+    remoteProjectState.workspaceId === Number(workspaceId || 0) &&
+    remoteProjectState.tab === tab &&
+    remoteProjectState.userId === currentUserId
+  const favoriteOverrides = useMemo(
+    () =>
+      favoriteOverrideState.storageKey === favoriteStorageKey ? favoriteOverrideState.values : EMPTY_FAVORITE_OVERRIDES,
+    [favoriteOverrideState, favoriteStorageKey],
+  )
 
-  function loadFavoriteOverridesFromStorage(): Map<any, boolean> {
+  function loadFavoriteOverridesFromStorage(storageKey: string): Map<string, boolean> {
     if (typeof window === 'undefined') return new Map()
     try {
-      const raw = window.localStorage.getItem(favoriteStorageKey)
+      const raw = window.localStorage.getItem(storageKey)
       if (!raw) return new Map()
       const parsed = JSON.parse(raw)
       if (!parsed || typeof parsed !== 'object') return new Map()
@@ -202,35 +293,89 @@ export default function MaterialLibraryPicker({
     }
   }
 
-  function persistFavoriteOverridesToStorage(map: Map<any, boolean>) {
+  function persistFavoriteOverridesToStorage(storageKey: string, map: Map<string, boolean>) {
     if (typeof window === 'undefined') return
     try {
       const obj = Object.fromEntries(map.entries())
-      window.localStorage.setItem(favoriteStorageKey, JSON.stringify(obj))
+      window.localStorage.setItem(storageKey, JSON.stringify(obj))
     } catch {
       // localStorage 不可用（隐私模式/配额）时静默跳过，收藏覆盖不落盘即可。
     }
   }
 
-  async function loadRemoteProjects() {
-    const wsId = Number(workspaceId || 0)
-    if (!Number.isFinite(wsId) || wsId <= 0 || tab === 'favorite') {
-      setRemoteProjects([])
+  function setScopedFavoriteOverrides(map: Map<string, boolean>) {
+    setFavoriteOverrideState({ storageKey: favoriteStorageKey, values: map })
+    persistFavoriteOverridesToStorage(favoriteStorageKey, map)
+  }
+
+  function isCurrentProjectRequest(requestId: number, wsId: number, targetTab: string, userId: number): boolean {
+    const current = currentScopeRef.current
+    return (
+      projectRequestIdRef.current === requestId &&
+      current.modelValue &&
+      current.workspaceId === wsId &&
+      current.tab === targetTab &&
+      current.userId === userId
+    )
+  }
+
+  async function loadRemoteProjects(wsId: number, targetTab: string) {
+    const current = currentScopeRef.current
+    if (!current.modelValue || current.workspaceId !== wsId || current.tab !== targetTab) return
+    const targetUserId = current.userId
+
+    const requestId = ++projectRequestIdRef.current
+    setRemoteProjectState({
+      workspaceId: wsId,
+      userId: targetUserId,
+      tab: targetTab,
+      items: [],
+      restrictedProjectIds: [],
+      restrictedAssetIds: [],
+      accessLoaded: false,
+    })
+    if (!Number.isFinite(wsId) || wsId <= 0) {
       setFolderLoading(false)
       return
     }
     setFolderLoading(true)
     try {
-      const items = await listCreativeProjects({ workspaceId: wsId, limit: 100 })
-      if (Number(workspaceId || 0) !== wsId) return
-      setRemoteProjects(Array.isArray(items) ? items : [])
+      const items = await listAllCreativeProjects({
+        workspaceId: wsId,
+        isCurrent: () => isCurrentProjectRequest(requestId, wsId, targetTab, targetUserId),
+      })
+      if (!isCurrentProjectRequest(requestId, wsId, targetTab, targetUserId)) return
+      const allProjects = Array.isArray(items) ? items : []
+      const restrictedProjects = allProjects.filter((project) =>
+        isCreativeProjectRestrictedForUser(project, targetUserId),
+      )
+      setRemoteProjectState({
+        workspaceId: wsId,
+        userId: targetUserId,
+        tab: targetTab,
+        items: allProjects.filter((project) => !isCreativeProjectRestrictedForUser(project, targetUserId)),
+        restrictedProjectIds: restrictedProjects.map(resolveCreativeProjectId).filter((projectId) => projectId > 0),
+        restrictedAssetIds: Array.from(
+          new Set(restrictedProjects.flatMap((project) => Array.from(collectCreativeProjectAssetIds(project)))),
+        ),
+        accessLoaded: true,
+      })
     } catch (error) {
-      if (Number(workspaceId || 0) === wsId) {
-        setRemoteProjects([])
+      if (isCurrentProjectRequest(requestId, wsId, targetTab, targetUserId)) {
+        // 项目权限是素材可见性的权威来源；权限加载失败时从严隐藏，而不是回退全部素材导致越权泄露。
+        setRemoteProjectState({
+          workspaceId: wsId,
+          userId: targetUserId,
+          tab: targetTab,
+          items: [],
+          restrictedProjectIds: [],
+          restrictedAssetIds: [],
+          accessLoaded: false,
+        })
         window.alert(getBusinessErrorMessage(error, '文件夹列表加载失败，请稍后重试'))
       }
     } finally {
-      if (Number(workspaceId || 0) === wsId) {
+      if (isCurrentProjectRequest(requestId, wsId, targetTab, targetUserId)) {
         setFolderLoading(false)
       }
     }
@@ -244,26 +389,40 @@ export default function MaterialLibraryPicker({
     setTimeSort('desc')
     setOnlyFavorite(false)
     setBatchMode(false)
-    setFavoriteOverrides(loadFavoriteOverridesFromStorage())
     setViewMode('folder')
     setSelectedFolderId('')
     setActiveFolderId('')
-    setActiveFolderMenuId('')
-    loadRemoteProjects()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelValue])
 
-  // tab / workspaceId 变化时重新加载（仅当弹窗打开）。
+  // tab / workspaceId 变化时立即隔离旧状态，并只接收当前作用域的异步结果。
   useEffect(() => {
-    if (!modelValue) return
+    const wsId = Number(workspaceId || 0)
+    projectRequestIdRef.current += 1
+    setRemoteProjectState({
+      workspaceId: wsId,
+      userId: currentUserId,
+      tab,
+      items: [],
+      restrictedProjectIds: [],
+      restrictedAssetIds: [],
+      accessLoaded: false,
+    })
+    setFavoriteOverrideState({
+      storageKey: favoriteStorageKey,
+      values: loadFavoriteOverridesFromStorage(favoriteStorageKey),
+    })
     setViewMode('folder')
     setSelectedFolderId('')
     setActiveFolderId('')
     setDraftSelectedIds([])
-    setActiveFolderMenuId('')
-    loadRemoteProjects()
+    setStarPulseIds(new Set())
+    if (!modelValue) {
+      setFolderLoading(false)
+      return
+    }
+    void loadRemoteProjects(wsId, tab)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, workspaceId])
+  }, [currentUserId, favoriteStorageKey, modelValue, tab, workspaceId])
 
   const selectedIdSet = useMemo(() => new Set(draftSelectedIds), [draftSelectedIds])
   const alreadySelectedSet = useMemo(() => new Set(selectedMaterialIds || []), [selectedMaterialIds])
@@ -282,7 +441,15 @@ export default function MaterialLibraryPicker({
   const currentTabLabel = TAB_LABELS[tab] || '个人素材'
 
   const scopedMaterials = useMemo(() => {
-    const list = materials || []
+    if (!projectAccessStateMatches || !remoteProjectState.accessLoaded) return []
+    const restrictedProjectIds = new Set(remoteProjectState.restrictedProjectIds)
+    const restrictedAssetIds = new Set(remoteProjectState.restrictedAssetIds)
+    const list = (materials || []).filter((material) => {
+      const projectId = resolveMaterialProjectId(material)
+      if (projectId && restrictedProjectIds.has(projectId)) return false
+      const assetId = resolveMaterialAssetId(material)
+      return !assetId || !restrictedAssetIds.has(assetId)
+    })
     if (tab === 'favorite') {
       return list.filter((material) => isFavorited(material))
     }
@@ -297,31 +464,10 @@ export default function MaterialLibraryPicker({
     }
     return list
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [materials, tab, favoriteOverrides])
-
-  function getFallbackFolderSeeds(t: string): any[] {
-    const baseProjectName = String(projectName || '当前创意项目').trim() || '当前创意项目'
-    if (t === 'team') {
-      return [
-        { id: 'team-folder-1', tab: 'team', title: '团队共创素材', updatedAt: Date.now() - 3600_000 },
-        { id: 'team-folder-2', tab: 'team', title: '品牌共享素材', updatedAt: Date.now() - 7200_000 },
-      ]
-    }
-    if (t === 'favorite') {
-      return [
-        { id: 'favorite-folder-1', tab: 'favorite', title: '我的收藏夹', updatedAt: Date.now() - 1800_000 },
-        { id: 'favorite-folder-2', tab: 'favorite', title: '高频使用素材', updatedAt: Date.now() - 5400_000 },
-      ]
-    }
-    return [
-      { id: 'mine-folder-1', tab: 'mine', title: `${baseProjectName}素材库`, updatedAt: Date.now() - 1200_000 },
-      { id: 'mine-folder-2', tab: 'mine', title: '营销图片合集', updatedAt: Date.now() - 3600_000 },
-      { id: 'mine-folder-3', tab: 'mine', title: '视频片段库', updatedAt: Date.now() - 7200_000 },
-    ]
-  }
+  }, [favoriteOverrides, materials, projectAccessStateMatches, remoteProjectState, tab])
 
   const folderSeeds = useMemo(() => {
-    const seeded = (remoteProjects || [])
+    return (remoteProjects || [])
       .filter((item) => resolveProjectFolderTab(item) === tab)
       .map((item) => ({
         id: item?.id,
@@ -331,19 +477,37 @@ export default function MaterialLibraryPicker({
         updatedAt: getProjectUpdatedAt(item),
         raw: item,
       }))
-    return seeded.length ? seeded : getFallbackFolderSeeds(tab)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remoteProjects, tab, projectName])
+  }, [remoteProjects, tab])
 
   const folderCards = useMemo(() => {
     const source = sortMaterialList(scopedMaterials)
-    const seeds = folderSeeds.length ? folderSeeds : getFallbackFolderSeeds(tab)
-    // Filter out locally-deleted folders
-    const activeSeeds = seeds.filter((seed) => !deletedFolderIds.has(seed.id))
-    const bucketSize = Math.max(1, Math.ceil(Math.max(source.length, 1) / Math.max(activeSeeds.length, 1)))
+    const activeSeeds = folderSeeds
+    if (!activeSeeds.length) {
+      if (!source.length) return []
+      return [
+        {
+          id: `${tab}-all-materials`,
+          projectId: 0,
+          title: '全部素材',
+          updatedAt: Date.now(),
+          updatedText: '当前空间',
+          materials: source,
+          imageCount: resolveProjectImageCount(null, source),
+          videoCount: resolveProjectVideoCount(null, source),
+          audioCount: 0,
+          totalCount: source.length,
+          cover: getFolderCover(source),
+        },
+      ]
+    }
 
-    return activeSeeds.map((seed, index) => {
-      const folderMaterials = source.slice(index * bucketSize, index * bucketSize + bucketSize)
+    const grouped = groupMaterialsByProject(
+      source,
+      activeSeeds.map((seed) => seed.raw ?? seed),
+    )
+    const materialsByProjectId = new Map(grouped.groups.map((group) => [group.projectId, group.materials]))
+    const cards = activeSeeds.map((seed, index) => {
+      const folderMaterials = materialsByProjectId.get(Number(seed.projectId || 0)) || []
       const imageCount = resolveProjectImageCount(seed?.raw, folderMaterials)
       const videoCount = resolveProjectVideoCount(seed?.raw, folderMaterials)
       return {
@@ -360,8 +524,25 @@ export default function MaterialLibraryPicker({
         cover: getFolderCover(folderMaterials),
       }
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopedMaterials, folderSeeds, tab, deletedFolderIds])
+
+    if (grouped.unclassified.length) {
+      const unclassified = sortMaterialList(grouped.unclassified)
+      cards.push({
+        id: `${tab}-unclassified`,
+        projectId: 0,
+        title: '未归类素材',
+        updatedAt: Date.now(),
+        updatedText: '未关联项目',
+        materials: unclassified,
+        imageCount: resolveProjectImageCount(null, unclassified),
+        videoCount: resolveProjectVideoCount(null, unclassified),
+        audioCount: 0,
+        totalCount: unclassified.length,
+        cover: getFolderCover(unclassified),
+      })
+    }
+    return cards
+  }, [scopedMaterials, folderSeeds, tab])
 
   const visibleFolders = useMemo(() => {
     const q = normalizedQuery
@@ -407,16 +588,16 @@ export default function MaterialLibraryPicker({
   }
 
   function toggleFavorite(material: any) {
-    if (!material?.id) return
+    if (!material?.id || !onBatchFavorite) return
     const prev = isFavorited(material)
     const next = !prev
     const map = new Map(favoriteOverrides)
     // 键统一用 String:落盘经 JSON 后键必为字符串,读回(Object.entries)也是字符串;
     // set 若用数字键则重载后 has(数字) 命中不了字符串键 → 收藏每次重置。
     map.set(String(material.id), next)
-    setFavoriteOverrides(map)
-    persistFavoriteOverridesToStorage(map)
+    setScopedFavoriteOverrides(map)
     pulseStar(material.id)
+    onBatchFavorite({ ids: [material.id], favorite: next })
   }
 
   const filteredMaterials = useMemo(() => {
@@ -504,7 +685,7 @@ export default function MaterialLibraryPicker({
   }
 
   function toggleSelectedFavorites() {
-    if (!selectedCount) return
+    if (!selectedCount || !onBatchFavorite) return
 
     const prev = selectedAllFavorited
     const next = !prev
@@ -513,31 +694,31 @@ export default function MaterialLibraryPicker({
 
     for (const material of mats) {
       if (material?.id) {
-        map.set(material.id, next)
+        map.set(String(material.id), next)
       }
     }
 
-    setFavoriteOverrides(map)
-    persistFavoriteOverridesToStorage(map)
+    setScopedFavoriteOverrides(map)
     pulseAction()
 
-    onBatchFavorite?.({ ids: [...draftSelectedIds], favorite: next })
+    onBatchFavorite({ ids: [...draftSelectedIds], favorite: next })
   }
 
   function deleteSelected() {
-    if (!selectedCount) return
+    if (!selectedCount || !onBatchDelete) return
     const ids = [...draftSelectedIds]
     if (!ids.length) return
-    onBatchDelete?.(ids)
+    onBatchDelete(ids)
     clearSelection()
   }
 
   function triggerUpload() {
+    if (!onFilesUpload) return
     fileInput.current?.click()
   }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    onFilesUpload?.(event.target.files || [])
+    if (onFilesUpload) onFilesUpload(event.target.files || [])
     event.target.value = ''
   }
 
@@ -549,7 +730,6 @@ export default function MaterialLibraryPicker({
 
   function openFolder(folder: any) {
     if (!folder?.id) return
-    setActiveFolderMenuId('')
     setActiveFolderId(folder.id)
     setSelectedFolderId(folder.id)
     setViewMode('material')
@@ -559,7 +739,6 @@ export default function MaterialLibraryPicker({
 
   function selectFolder(folder: any) {
     if (!folder?.id) return
-    setActiveFolderMenuId('')
     setActiveFolderId(folder.id)
   }
 
@@ -569,59 +748,34 @@ export default function MaterialLibraryPicker({
     setActiveFolderId('')
     setDraftSelectedIds([])
     setBatchMode(false)
-    setActiveFolderMenuId('')
   }
 
   function createFolder() {
     const title = tab === 'favorite' ? '新建收藏文件夹' : tab === 'team' ? '新建团队文件夹' : '新建项目文件夹'
     const wsId = Number(workspaceId || 0)
+    const targetTab = tab
     if (!Number.isFinite(wsId) || wsId <= 0) {
       window.alert('workspace_id 缺失，无法创建文件夹')
       return
     }
-    createCreativeProject({ workspace_id: wsId, title })
-      .then(() => loadRemoteProjects())
+    createInitializedProjectFolder({ workspaceId: wsId, title })
+      .then(() => {
+        const current = currentScopeRef.current
+        if (current.modelValue && current.workspaceId === wsId && current.tab === targetTab) {
+          void loadRemoteProjects(wsId, targetTab)
+        }
+      })
       .catch((error: any) => {
-        window.alert(getBusinessErrorMessage(error, '新建文件夹失败，请稍后重试'))
+        const current = currentScopeRef.current
+        if (current.modelValue && current.workspaceId === wsId && current.tab === targetTab) {
+          window.alert(getBusinessErrorMessage(error, '新建文件夹失败，请稍后重试'))
+        }
       })
   }
 
   function close() {
     setActiveFolderId('')
-    setActiveFolderMenuId('')
     onModelValueChange?.(false)
-  }
-
-  function toggleFolderMenu(folderId: any) {
-    if (!folderId) return
-    setActiveFolderMenuId((prev) => (prev === folderId ? '' : folderId))
-  }
-
-  function closeFolderMenu() {
-    setActiveFolderMenuId('')
-  }
-
-  function handleFolderMenuAction(action: string, folder: any) {
-    if (!folder?.id) return
-    setActiveFolderMenuId('')
-    if (action === 'pin') {
-      window.alert(`后续这里接”置顶”逻辑：${folder.title}`)
-      return
-    }
-    if (action === 'rename') {
-      window.alert(`后续这里接”重命名”逻辑：${folder.title}`)
-      return
-    }
-    if (action === 'delete') {
-      setDeletedFolderIds((prev) => {
-        const next = new Set(prev)
-        next.add(folder.id)
-        return next
-      })
-      if (selectedFolderId === folder.id) {
-        setSelectedFolderId('')
-      }
-    }
   }
 
   return (
@@ -640,11 +794,18 @@ export default function MaterialLibraryPicker({
         <header className="mlp-header">
           {viewMode === 'folder' ? (
             <div className="mlp-tabs" role="tablist" aria-label="素材分组">
-              {Object.entries(TAB_LABELS).map(([key, label]) => (
-                <button key={key} type="button" className={tab === key ? 'active' : ''} onClick={() => switchTab(key)}>
-                  {label}
-                </button>
-              ))}
+              {Object.entries(TAB_LABELS)
+                .filter(([key]) => key !== 'favorite' || Boolean(onBatchFavorite))
+                .map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={tab === key ? 'active' : ''}
+                    onClick={() => switchTab(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
             </div>
           ) : (
             <div className="mlp-breadcrumb-header">
@@ -696,10 +857,10 @@ export default function MaterialLibraryPicker({
           <div className="mlp-hero-card">
             <div className="mlp-hero-title">我的素材</div>
             <div className="mlp-hero-subtitle">海量优质素材，激发创意灵感</div>
-            <button type="button" className="mlp-hero-link">
+            <span className="mlp-hero-link">
               探索更多优质素材
               <span aria-hidden="true">→</span>
-            </button>
+            </span>
           </div>
           {viewMode === 'folder' ? (
             <button type="button" className="mlp-create-folder" aria-label="新建项目文件夹" onClick={createFolder}>
@@ -711,7 +872,7 @@ export default function MaterialLibraryPicker({
               </span>
               <img className="mlp-create-folder-visual" src={actionCardVisual} alt="" aria-hidden="true" />
             </button>
-          ) : (
+          ) : onFilesUpload ? (
             <button
               type="button"
               className="mlp-create-folder mlp-upload-button"
@@ -726,7 +887,7 @@ export default function MaterialLibraryPicker({
               </span>
               <img className="mlp-create-folder-visual" src={actionCardVisual} alt="" aria-hidden="true" />
             </button>
-          )}
+          ) : null}
         </section>
 
         <section className="mlp-body" aria-label={viewMode === 'folder' ? '素材文件夹' : '素材内容'}>
@@ -736,7 +897,7 @@ export default function MaterialLibraryPicker({
             !visibleFolders.length ? (
               <div className="mlp-empty">暂无文件夹</div>
             ) : (
-              <div className="mlp-folder-grid" onClick={closeFolderMenu}>
+              <div className="mlp-folder-grid">
                 {visibleFolders.map((folder) => (
                   <div
                     key={folder.id}
@@ -774,53 +935,6 @@ export default function MaterialLibraryPicker({
                     </div>
                     <div className="mlp-folder-side">
                       <span className="mlp-folder-date">{folder.updatedText}</span>
-                      <div className="mlp-folder-more-wrap" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          type="button"
-                          className="mlp-folder-more"
-                          aria-label={`打开${folder.title}更多操作`}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            toggleFolderMenu(folder.id)
-                          }}
-                        >
-                          …
-                        </button>
-                        {activeFolderMenuId === folder.id ? (
-                          <div className="mlp-folder-menu" role="menu" aria-label={`${folder.title}更多操作`}>
-                            <button
-                              type="button"
-                              className="mlp-folder-menu-item"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleFolderMenuAction('pin', folder)
-                              }}
-                            >
-                              置顶
-                            </button>
-                            <button
-                              type="button"
-                              className="mlp-folder-menu-item"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleFolderMenuAction('rename', folder)
-                              }}
-                            >
-                              重命名
-                            </button>
-                            <button
-                              type="button"
-                              className="mlp-folder-menu-item danger"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleFolderMenuAction('delete', folder)
-                              }}
-                            >
-                              删除
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
                     </div>
                   </div>
                 ))}
@@ -849,10 +963,16 @@ export default function MaterialLibraryPicker({
                     </select>
                   </label>
 
-                  <label className="mlp-toolbar-checkbox">
-                    <input type="checkbox" checked={onlyFavorite} onChange={(e) => setOnlyFavorite(e.target.checked)} />
-                    我收藏的
-                  </label>
+                  {onBatchFavorite ? (
+                    <label className="mlp-toolbar-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={onlyFavorite}
+                        onChange={(e) => setOnlyFavorite(e.target.checked)}
+                      />
+                      我收藏的
+                    </label>
+                  ) : null}
                 </div>
 
                 <button type="button" className="mlp-batch" onClick={() => setBatchMode((v) => !v)}>
@@ -890,65 +1010,67 @@ export default function MaterialLibraryPicker({
                       )}
                       <span className="mlp-media-badge">
                         <span className="mlp-media-type-tag">{material?.type === 'video' ? '视频' : '图片'}</span>
-                        <span
-                          className={`mlp-media-star${isFavorited(material) ? ' active' : ''}`}
-                          role="button"
-                          tabIndex={0}
-                          aria-label="收藏"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            e.preventDefault()
-                            toggleFavorite(material)
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
+                        {onBatchFavorite ? (
+                          <span
+                            className={`mlp-media-star${isFavorited(material) ? ' active' : ''}`}
+                            role="button"
+                            tabIndex={0}
+                            aria-label="收藏"
+                            onClick={(e) => {
                               e.stopPropagation()
                               e.preventDefault()
                               toggleFavorite(material)
-                            }
-                          }}
-                        >
-                          <svg
-                            className={`mlp-star-icon${isFavorited(material) ? ' active' : ''}${
-                              starPulseIds.has(material.id) ? ' pulsing' : ''
-                            }`}
-                            width={22}
-                            height={22}
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                            aria-hidden="true"
-                            focusable="false"
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.stopPropagation()
+                                e.preventDefault()
+                                toggleFavorite(material)
+                              }
+                            }}
                           >
-                            <defs>
-                              <linearGradient
-                                id={`mlp-star-gradient-${material.id}`}
-                                x1="12"
-                                y1="2"
-                                x2="12"
-                                y2="22"
-                                gradientUnits="userSpaceOnUse"
-                              >
-                                <stop offset="0" stopColor="#c4b5fd" />
-                                <stop offset="1" stopColor="#7c3aed" />
-                              </linearGradient>
-                            </defs>
-                            {isFavorited(material) ? (
-                              <path
-                                d="M12 2.4L14.93 8.62L21.69 9.43C22.15 9.49 22.34 10.06 22 10.38L17.02 15.02L18.29 21.63C18.37 22.09 17.9 22.44 17.48 22.21L12 19.17L6.52 22.21C6.1 22.44 5.63 22.09 5.71 21.63L6.98 15.02L2 10.38C1.66 10.06 1.85 9.49 2.31 9.43L9.07 8.62L12 2.4Z"
-                                fill={`url(#mlp-star-gradient-${material.id})`}
-                              />
-                            ) : (
-                              <path
-                                d="M12 2.4L14.93 8.62L21.69 9.43C22.15 9.49 22.34 10.06 22 10.38L17.02 15.02L18.29 21.63C18.37 22.09 17.9 22.44 17.48 22.21L12 19.17L6.52 22.21C6.1 22.44 5.63 22.09 5.71 21.63L6.98 15.02L2 10.38C1.66 10.06 1.85 9.49 2.31 9.43L9.07 8.62L12 2.4Z"
-                                fill="none"
-                                stroke="rgba(255, 255, 255, 0.92)"
-                                strokeWidth="1.6"
-                                strokeLinejoin="round"
-                              />
-                            )}
-                          </svg>
-                        </span>
+                            <svg
+                              className={`mlp-star-icon${isFavorited(material) ? ' active' : ''}${
+                                starPulseIds.has(material.id) ? ' pulsing' : ''
+                              }`}
+                              width={22}
+                              height={22}
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                              aria-hidden="true"
+                              focusable="false"
+                            >
+                              <defs>
+                                <linearGradient
+                                  id={`mlp-star-gradient-${material.id}`}
+                                  x1="12"
+                                  y1="2"
+                                  x2="12"
+                                  y2="22"
+                                  gradientUnits="userSpaceOnUse"
+                                >
+                                  <stop offset="0" stopColor="#c4b5fd" />
+                                  <stop offset="1" stopColor="#7c3aed" />
+                                </linearGradient>
+                              </defs>
+                              {isFavorited(material) ? (
+                                <path
+                                  d="M12 2.4L14.93 8.62L21.69 9.43C22.15 9.49 22.34 10.06 22 10.38L17.02 15.02L18.29 21.63C18.37 22.09 17.9 22.44 17.48 22.21L12 19.17L6.52 22.21C6.1 22.44 5.63 22.09 5.71 21.63L6.98 15.02L2 10.38C1.66 10.06 1.85 9.49 2.31 9.43L9.07 8.62L12 2.4Z"
+                                  fill={`url(#mlp-star-gradient-${material.id})`}
+                                />
+                              ) : (
+                                <path
+                                  d="M12 2.4L14.93 8.62L21.69 9.43C22.15 9.49 22.34 10.06 22 10.38L17.02 15.02L18.29 21.63C18.37 22.09 17.9 22.44 17.48 22.21L12 19.17L6.52 22.21C6.1 22.44 5.63 22.09 5.71 21.63L6.98 15.02L2 10.38C1.66 10.06 1.85 9.49 2.31 9.43L9.07 8.62L12 2.4Z"
+                                  fill="none"
+                                  stroke="rgba(255, 255, 255, 0.92)"
+                                  strokeWidth="1.6"
+                                  strokeLinejoin="round"
+                                />
+                              )}
+                            </svg>
+                          </span>
+                        ) : null}
                       </span>
                       {batchMode && selectedIdSet.has(material.id) ? (
                         <span className="mlp-check" aria-hidden="true">
@@ -997,64 +1119,70 @@ export default function MaterialLibraryPicker({
                 </span>
                 添加
               </button>
-              <button
-                type="button"
-                className={`mlp-action-btn${selectedAllFavorited ? ' active' : ''}${actionPulse ? ' pulsing' : ''}`}
-                disabled={!selectedCount}
-                onClick={toggleSelectedFavorites}
-              >
-                <span className="mlp-action-icon" aria-hidden="true">
-                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path
-                      d="M10 2.4L12.31 7.3L17.63 7.94C18 7.98 18.16 8.45 17.88 8.72L13.96 12.36L14.96 17.52C15.03 17.89 14.66 18.17 14.32 17.99L10 15.62L5.68 17.99C5.34 18.17 4.97 17.89 5.04 17.52L6.04 12.36L2.12 8.72C1.84 8.45 2 7.98 2.37 7.94L7.69 7.3L10 2.4Z"
-                      fill={selectedAllFavorited ? 'currentColor' : 'none'}
-                      stroke={selectedAllFavorited ? 'none' : 'currentColor'}
-                      strokeWidth="1.6"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </span>
-                收藏
-              </button>
-              <button
-                type="button"
-                className="mlp-action-btn danger"
-                disabled={!selectedCount}
-                onClick={deleteSelected}
-              >
-                <span className="mlp-action-icon" aria-hidden="true">
-                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M4.5 6.2H15.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                    <path
-                      d="M8 6.2V4.6C8 3.94 8.54 3.4 9.2 3.4H10.8C11.46 3.4 12 3.94 12 4.6V6.2"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M6.3 6.2L6.9 16.1C6.94 16.75 7.48 17.25 8.13 17.25H11.87C12.52 17.25 13.06 16.75 13.1 16.1L13.7 6.2"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinejoin="round"
-                    />
-                    <path d="M8.3 9.1V14.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                    <path d="M11.7 9.1V14.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  </svg>
-                </span>
-                删除
-              </button>
+              {onBatchFavorite ? (
+                <button
+                  type="button"
+                  className={`mlp-action-btn${selectedAllFavorited ? ' active' : ''}${actionPulse ? ' pulsing' : ''}`}
+                  disabled={!selectedCount}
+                  onClick={toggleSelectedFavorites}
+                >
+                  <span className="mlp-action-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path
+                        d="M10 2.4L12.31 7.3L17.63 7.94C18 7.98 18.16 8.45 17.88 8.72L13.96 12.36L14.96 17.52C15.03 17.89 14.66 18.17 14.32 17.99L10 15.62L5.68 17.99C5.34 18.17 4.97 17.89 5.04 17.52L6.04 12.36L2.12 8.72C1.84 8.45 2 7.98 2.37 7.94L7.69 7.3L10 2.4Z"
+                        fill={selectedAllFavorited ? 'currentColor' : 'none'}
+                        stroke={selectedAllFavorited ? 'none' : 'currentColor'}
+                        strokeWidth="1.6"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </span>
+                  收藏
+                </button>
+              ) : null}
+              {onBatchDelete ? (
+                <button
+                  type="button"
+                  className="mlp-action-btn danger"
+                  disabled={!selectedCount}
+                  onClick={deleteSelected}
+                >
+                  <span className="mlp-action-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M4.5 6.2H15.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                      <path
+                        d="M8 6.2V4.6C8 3.94 8.54 3.4 9.2 3.4H10.8C11.46 3.4 12 3.94 12 4.6V6.2"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M6.3 6.2L6.9 16.1C6.94 16.75 7.48 17.25 8.13 17.25H11.87C12.52 17.25 13.06 16.75 13.1 16.1L13.7 6.2"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinejoin="round"
+                      />
+                      <path d="M8.3 9.1V14.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                      <path d="M11.7 9.1V14.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                    </svg>
+                  </span>
+                  删除
+                </button>
+              ) : null}
             </div>
           </footer>
         ) : null}
 
-        <input
-          ref={fileInput}
-          className="file-input"
-          type="file"
-          multiple
-          accept="image/*,video/*"
-          onChange={handleFileChange}
-        />
+        {onFilesUpload ? (
+          <input
+            ref={fileInput}
+            className="file-input"
+            type="file"
+            multiple
+            accept="image/*,video/*"
+            onChange={handleFileChange}
+          />
+        ) : null}
       </div>
     </Modal>
   )

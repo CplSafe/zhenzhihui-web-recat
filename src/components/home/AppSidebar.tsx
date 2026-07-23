@@ -2,26 +2,42 @@
  * 2.1 左侧导航栏（自包含静态实现）。
  * 浅色窄侧栏：品牌 + 首页 + 分组（创作/管理/发布/团队/其他）+ 底部设置。
  * props: activeKey 当前选中项；onNavigate(key) 点击回调（跳转由父级接线）。
- * 图标统一用简单 inline SVG（24x24, stroke=currentColor），避免引入新依赖。
+ * 菜单图标直接使用 Figma 导出的默认态/选中态 SVG，保持造型、尺寸和颜色一致。
  */
 import brandLogo from '@/img/image copy 7.png'
+import homeIcon from '@/assets/sidebar/home.svg'
+import homeActiveIcon from '@/assets/sidebar/home-active.svg'
+import smartIcon from '@/assets/sidebar/smart.svg'
+import smartActiveIcon from '@/assets/sidebar/smart-active.svg'
+import hotCopyIcon from '@/assets/sidebar/hotcopy.svg'
+import hotCopyActiveIcon from '@/assets/sidebar/hotcopy-active.svg'
+import videoEditIcon from '@/assets/sidebar/videoedit.svg'
+import projectsIcon from '@/assets/sidebar/projects.svg'
+import projectsActiveIcon from '@/assets/sidebar/projects-active.svg'
+import resourcesIcon from '@/assets/sidebar/resources.svg'
+import resourcesActiveIcon from '@/assets/sidebar/resources-active.svg'
 import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
 import SidebarTeamGroup from './SidebarTeamGroup'
 import SettingsMenu from './SettingsMenu'
 import './AppSidebar.css'
 
+/** 单个侧栏导航项的稳定键、显示文案与图标。 */
 export interface SidebarItem {
   key: string
   label: string
-  icon: React.ReactNode
+  icon: string
+  activeIcon?: string
+  iconSize?: 14 | 16
 }
 
+/** 带分组标题的一组侧栏导航项。 */
 export interface SidebarGroup {
   title: string
   items: SidebarItem[]
 }
 
+/** 侧栏的当前选中项、导航回调和移动端展开状态。 */
 interface AppSidebarProps {
   activeKey?: string
   onNavigate?: (key: string) => void
@@ -31,70 +47,28 @@ interface AppSidebarProps {
   onClose?: () => void
 }
 
-/* ---- inline SVG 图标（统一 currentColor，随选中态变色）------------------ */
-const stroke = {
-  fill: 'none',
-  stroke: 'currentColor',
-  strokeWidth: 1.8,
-  strokeLinecap: 'round' as const,
-  strokeLinejoin: 'round' as const,
-}
-
-const IconHome = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <path d="M3 10.5 12 3l9 7.5" />
-    <path d="M5 9.5V20h14V9.5" />
-    <path d="M9.5 20v-6h5v6" />
-  </svg>
-)
-const IconSpark = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
-    <path d="m6.5 6.5 2.5 2.5M15 15l2.5 2.5M17.5 6.5 15 9M9 15l-2.5 2.5" />
-  </svg>
-)
-const IconCopy = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <rect x="8" y="8" width="12" height="12" rx="2" />
-    <path d="M4 16V5a1 1 0 0 1 1-1h11" />
-  </svg>
-)
-const IconEdit = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <rect x="3" y="5" width="18" height="14" rx="2" />
-    <path d="m10 9 5 3-5 3z" />
-  </svg>
-)
-const IconFolder = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-  </svg>
-)
-const IconShop = (
-  <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
-    <path d="M4 9h16l-1 11H5z" />
-    <path d="M4 9 6 4h12l2 5" />
-    <path d="M9 13a3 3 0 0 0 6 0" />
-  </svg>
-)
+/** 按产品信息架构组织的侧栏导航分组。 */
 const GROUPS: SidebarGroup[] = [
   {
     title: '创作',
     items: [
-      { key: 'creative', label: '智能成片', icon: IconSpark },
-      { key: 'hot-copy', label: '爆款复制', icon: IconCopy },
-      { key: 'video-edit', label: '视频编辑', icon: IconEdit },
+      { key: 'creative', label: '智能成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
+      { key: 'hot-copy', label: '爆款复制', icon: hotCopyIcon, activeIcon: hotCopyActiveIcon, iconSize: 16 },
+      { key: 'video-edit', label: '视频编辑', icon: videoEditIcon, iconSize: 16 },
     ],
   },
   {
     title: '管理',
     items: [
-      { key: 'projects', label: '项目管理', icon: IconFolder },
-      { key: 'resources', label: '我的素材', icon: IconShop },
+      { key: 'projects', label: '项目管理', icon: projectsIcon, activeIcon: projectsActiveIcon, iconSize: 14 },
+      { key: 'resources', label: '我的素材', icon: resourcesIcon, activeIcon: resourcesActiveIcon, iconSize: 14 },
     ],
   },
 ]
 
+const HIDDEN_SIDEBAR_ITEM_KEYS = new Set(['video-edit'])
+
+/** 渲染全站主导航，并把实际路由跳转交由页面侧栏 Hook 统一处理。 */
 export default function AppSidebar({ activeKey = 'home', onNavigate, open = false, onClose }: AppSidebarProps) {
   // 桌面端收起态:跨页面保持,放全局 ui store。
   const collapsed = useUiStore((s) => s.sidebarCollapsed)
@@ -115,7 +89,15 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
         data-guide={item.key === 'creative' ? 'nav-smart' : item.key === 'projects' ? 'nav-projects' : undefined}
         onClick={() => go(item.key)}
       >
-        <span className="app-sidebar__icon">{item.icon}</span>
+        <span className="app-sidebar__icon" aria-hidden="true">
+          <img
+            className="app-sidebar__icon-img"
+            src={active && item.activeIcon ? item.activeIcon : item.icon}
+            alt=""
+            width={item.iconSize ?? 16}
+            height={item.iconSize ?? 16}
+          />
+        </span>
         <span className="app-sidebar__label">{item.label}</span>
       </button>
     )
@@ -189,13 +171,15 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
 
         <nav className="app-sidebar__nav">
           {/* 首页 单独一项 */}
-          <div className="app-sidebar__group">{renderItem({ key: 'home', label: '首页', icon: IconHome })}</div>
+          <div className="app-sidebar__group">
+            {renderItem({ key: 'home', label: '首页', icon: homeIcon, activeIcon: homeActiveIcon, iconSize: 16 })}
+          </div>
 
           {/* 创作 / 管理 / 发布 / 其他 */}
           {GROUPS.slice(0, 3).map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>
-              {group.items.map(renderItem)}
+              {group.items.filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key)).map(renderItem)}
             </div>
           ))}
 
@@ -205,7 +189,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
           {GROUPS.slice(3).map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>
-              {group.items.map(renderItem)}
+              {group.items.filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key)).map(renderItem)}
             </div>
           ))}
         </nav>

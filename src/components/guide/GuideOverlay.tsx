@@ -11,11 +11,19 @@ import { GUIDES, markGuideSeen, useGuideStore } from '@/stores/guide'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import './GuideOverlay.css'
 
-const GAP = 14 // 目标与气泡卡的间距
-const ARROW = 14 // 箭头方块边长
-const PAD_DEFAULT = 8 // 挖洞外扩
-const ANNO_GAP = 10 // 标注点线与元素之间的空隙
+/** 高亮目标与引导气泡卡的间距。 */
+const GAP = 14
 
+/** 引导气泡箭头方块边长。 */
+const ARROW = 14
+
+/** 聚光挖洞相对目标元素的默认外扩距离。 */
+const PAD_DEFAULT = 8
+
+/** 标注点线与目标元素之间的空隙。 */
+const ANNO_GAP = 10
+
+/** 引导卡片与箭头相对高亮目标的计算结果。 */
 interface Pos {
   cardLeft: number
   cardTop: number
@@ -23,6 +31,7 @@ interface Pos {
   arrowTop: number
 }
 
+/** 根据全局引导步骤定位目标、绘制聚光蒙层并处理步骤前进、返回和跳过。 */
 export default function GuideOverlay() {
   const activeKey = useGuideStore((s) => s.activeKey)
   const stepIndex = useGuideStore((s) => s.stepIndex)
@@ -54,6 +63,17 @@ export default function GuideOverlay() {
     if (activeKey) markGuideSeen(activeKey, useWorkspaceSessionStore.getState().authSession?.user?.id)
     close()
   }
+  useEffect(() => {
+    if (!activeKey || !step) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      markGuideSeen(activeKey, useWorkspaceSessionStore.getState().authSession?.user?.id)
+      close()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [activeKey, close, step])
   const onNext = () => {
     const isLast = stepIndex + 1 >= total
     if (!isLast) {
@@ -172,7 +192,7 @@ export default function GuideOverlay() {
     let arrowTop = 0
 
     if (placement === 'bottom' || placement === 'top') {
-      cardLeft = cx - cw / 2
+      cardLeft = cx - cw / 2 + (step?.cardOffsetX ?? 0)
       cardTop = placement === 'bottom' ? anchor.bottom + pad + GAP : anchor.top - pad - GAP - ch
       cardLeft = Math.min(Math.max(cardLeft, M), vw - cw - M)
       const ax = Math.min(Math.max(cx, cardLeft + 18), cardLeft + cw - 18)
@@ -219,7 +239,7 @@ export default function GuideOverlay() {
                 y={Math.round(h.top - pad)}
                 width={Math.round(h.width + pad * 2)}
                 height={Math.round(h.height + pad * 2)}
-                rx="10"
+                rx={step.spotRadius ?? 10}
                 fill="black"
               />
             ))}
@@ -299,6 +319,7 @@ export default function GuideOverlay() {
         style={{
           left: pos?.cardLeft ?? -9999,
           top: pos?.cardTop ?? -9999,
+          width: step.cardWidth ? `min(${step.cardWidth}px, calc(100vw - 32px))` : undefined,
           visibility: cardVisible ? 'visible' : 'hidden',
         }}
       >

@@ -18,4 +18,5 @@ export function useConfirmDialog() {
   return { requestConfirm }
 }
 
+/** 向调用方转出全局提示与确认框的公共类型。 */
 export type { ToastType, ConfirmOptions }

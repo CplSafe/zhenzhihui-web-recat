@@ -60,6 +60,20 @@
   color: #999;
 }
 
+.templates-source {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #3f7b6e;
+  background: #eaf8f4;
+}
+
+.templates-source.is-builtin {
+  color: #80621a;
+  background: #fff6dc;
+}
+
 .templates-content {
   flex: 1;
   min-height: 0;

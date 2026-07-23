@@ -13,6 +13,7 @@ import ShotEditDialog from '../ShotEditDialog'
 import ShotTrashBin, { type ShotTrashItem } from '../ShotTrashBin/ShotTrashBin'
 import styles from './ShotArrange.module.less'
 
+/** 镜头编排受控数据及单镜生成、润色、上传、删除和回收站能力。 */
 interface ShotArrangeProps {
   shots: Shot[]
   /** 正在生成分镜图的镜头(键为 shot.id) */
@@ -23,6 +24,8 @@ interface ShotArrangeProps {
   /** 分镜缩略图加载失败/成功回调(用于「图未加载成功不能生成视频」) */
   onShotImgError?: (id: string | number) => void
   onShotImgLoad?: (id: string | number) => void
+  onShotImgRetrying?: (id: string | number) => void
+  imageRetryTokens?: Record<string | number, number>
   /** 上传素材 → 直传后端成 asset(http url + asset_id) */
   onUploadRef?: (file: File) => Promise<{ url: string; assetId?: number }>
   /**
@@ -47,11 +50,18 @@ interface ShotArrangeProps {
   onClearTrash?: (items: ShotTrashItem[]) => Promise<void> | void
 }
 
+/** 为尚未持久化的新镜头生成会话内唯一 ID。 */
 let insUid = 1
+/** 结合时间戳和自增值生成未持久化镜头 ID。 */
 const newShotId = () => `new_${Date.now()}_${insUid++}`
+
+/** 按当前数组顺序重新生成镜头编号。 */
 const renumber = (list: Shot[]): Shot[] => list.map((s, i) => ({ ...s, no: `镜头${i + 1}` }))
+
+/** 创建等待用户描述或后台生成的空镜头占位。 */
 const blankShot = (): Shot => ({ id: newShotId(), no: '镜头', duration: '5s', desc: '', subjects: [], isNew: true })
 
+/** 协调分镜列表选择、插入占位、编辑弹窗和右侧素材编辑面板。 */
 export default function ShotArrange({
   shots,
   generating = {},
@@ -59,6 +69,8 @@ export default function ShotArrange({
   onShotsChange,
   onShotImgError,
   onShotImgLoad,
+  onShotImgRetrying,
+  imageRetryTokens = {},
   onUploadRef,
   onGenerateShot,
   onPolishPrompt,
@@ -90,6 +102,8 @@ export default function ShotArrange({
     mode: 'edit',
     shotId: null,
   })
+  const [pendingAutoGenerateId, setPendingAutoGenerateId] = useState<Shot['id'] | null>(null)
+  const autoGenerateStartedRef = useRef(new Set<Shot['id']>())
   // 插入态:是否已成功生成(用于取消时清理「占位空分镜」,避免误删已出图的)
   const insertCommittedRef = useRef(false)
 
@@ -103,9 +117,30 @@ export default function ShotArrange({
     list.splice(index, 0, s)
     onShotsChange(renumber(list))
     setSelectedId(s.id)
-    insertCommittedRef.current = false
-    setDlg({ open: true, mode: 'insert', shotId: s.id })
+    if (onGenerateShot) {
+      setPendingAutoGenerateId(s.id)
+    } else {
+      insertCommittedRef.current = false
+      setDlg({ open: true, mode: 'insert', shotId: s.id })
+    }
   }
+
+  // 等父级接收新增分镜后再生成，确保父级能拿到正确插入位置及完整前后文。
+  useEffect(() => {
+    if (pendingAutoGenerateId == null || !onGenerateShot) return
+    const sh = shots.find((s) => s.id === pendingAutoGenerateId)
+    if (!sh || autoGenerateStartedRef.current.has(sh.id)) return
+
+    autoGenerateStartedRef.current.add(sh.id)
+    setPendingAutoGenerateId(null)
+    void Promise.resolve()
+      .then(() => onGenerateShot(sh, { mode: 'insert', intent: '', uploadRefUrls: [] }))
+      // 业务层负责提示具体生成错误；协调层必须消费拒绝态，避免产生全局未处理 Promise。
+      .catch(() => false)
+      .finally(() => {
+        autoGenerateStartedRef.current.delete(sh.id)
+      })
+  }, [onGenerateShot, pendingAutoGenerateId, shots])
   const closeDlg = () => {
     // 取消新增:移除未出图的占位空分镜(已成功生成则保留)
     if (dlg.mode === 'insert' && !insertCommittedRef.current && dlg.shotId != null) {
@@ -140,6 +175,8 @@ export default function ShotArrange({
         onPreview={setBigImg}
         onImgError={onShotImgError}
         onImgLoad={onShotImgLoad}
+        onImgRetrying={onShotImgRetrying}
+        imageRetryTokens={imageRetryTokens}
         onDeleteShot={onDeleteShot}
         showMoreMenu={false}
         deleteButtonPlacement="thumbOverlay"
@@ -173,8 +210,10 @@ export default function ShotArrange({
         onRestoreAll={onRestoreAllTrash}
         onClearAll={onClearTrash}
         buttonClassName={styles.trashFabDock}
+        dataGuide="smart-arrange-trash"
         dragStorageKey="smart-arrange-trash-fab"
-        dragBoundarySelector=".smart__body"
+        dragBoundarySelector=".smart__main"
+        dragTopObstacleSelector=".smart__progress"
       />
 
       {/* 分镜缩略图放大查看灯箱 */}

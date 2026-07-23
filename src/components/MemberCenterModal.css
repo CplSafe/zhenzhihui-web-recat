@@ -538,6 +538,14 @@
   filter: brightness(1.05);
 }
 
+.mc-card-buy:disabled {
+  background: #eceef2 !important;
+  color: #a7abb4;
+  cursor: not-allowed;
+  filter: none;
+  opacity: 0.78;
+}
+
 .mc-card-divider {
   height: 1px;
   background: rgba(102, 102, 102, 0.1);

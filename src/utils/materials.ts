@@ -1,4 +1,4 @@
-// Pure helpers for selected / library material objects.
+/** 素材对象转换工具：统一封面选择、视频类型判断和接口素材映射。 */
 
 // 视频素材预览时优先用服务端封面图。
 export function getMaterialPoster(material) {
@@ -12,7 +12,7 @@ export function isVideoMaterial(material) {
   return material?.type === 'video' || mimeType.startsWith('video/')
 }
 
-
+/** 将后端素材记录转换为素材选择器使用的统一结构。 */
 export function createMaterialFromAsset(asset, src = '') {
   return {
     id: `asset-${asset.id}`,

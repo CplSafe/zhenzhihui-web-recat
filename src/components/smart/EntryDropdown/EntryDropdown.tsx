@@ -8,11 +8,16 @@
 import { useEffect, useRef, useState } from 'react'
 import styles from './EntryDropdown.module.less'
 
+/** 下拉选项、单/多选受控值、清空策略和禁用状态。 */
 interface EntryDropdownProps {
   icon: React.ReactNode
   options: string[]
   value: string | string[]
   onChange: (v: any) => void
+  /** 下拉触发器的可访问名称；同一工具栏存在多个下拉时用于消除歧义。 */
+  ariaLabel?: string
+  /** 靠近视口底部的工具栏可让菜单向上展开。 */
+  placement?: 'top' | 'bottom'
   multiple?: boolean
   placeholder?: string
   /** 只读/禁用:按钮不可点击、不弹出浮层(用于只读复用场景) */
@@ -23,11 +28,14 @@ interface EntryDropdownProps {
   valueMinWidth?: number
 }
 
+/** 渲染入口工具栏统一下拉，并支持外部点击关闭和连续多选。 */
 export default function EntryDropdown({
   icon,
   value,
   options,
   onChange,
+  ariaLabel,
+  placement = 'bottom',
   multiple = false,
   placeholder = '请选择',
   disabled = false,
@@ -65,12 +73,13 @@ export default function EntryDropdown({
   }
 
   return (
-    <div className={styles.entrydd} ref={ref}>
+    <div className={`${styles.entrydd}${placement === 'top' ? ' ' + styles.top : ''}`} ref={ref}>
       <button
         type="button"
         className={`${styles.btn}${open ? ' ' + styles.open : ''}`}
         onClick={() => !disabled && setOpen((o) => !o)}
         disabled={disabled}
+        aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -104,7 +113,7 @@ export default function EntryDropdown({
         </svg>
       </button>
       {open && (
-        <div className={styles.menu} role="listbox" aria-multiselectable={multiple}>
+        <div className={styles.menu} role="listbox" aria-label={ariaLabel} aria-multiselectable={multiple}>
           {options.map((o) => (
             <button
               key={o}

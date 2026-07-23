@@ -17,23 +17,26 @@ import {
 } from '@/stores/workspaceSession'
 import { openTeamManage, openJoinTeam } from '@/stores/ui'
 import inviteIcon from '@/assets/logo/image copy 3.png'
+import joinSpaceIcon from '@/assets/sidebar/join.svg'
 import './SidebarTeamGroup.css'
 
+/** 根据空间类型区分团队空间与个人空间，决定是否显示邀请入口。 */
 const isTeamWorkspace = (w: any): boolean => Boolean(w?.type) && String(w.type).toLowerCase() !== 'personal'
 
+/** 加入新空间按钮图标。 */
 const IconPlus = (
-  <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7">
-    <path d="M10 4.5v11M4.5 10h11" strokeLinecap="round" />
-  </svg>
+  <img className="stg-join__ico-img" src={joinSpaceIcon} alt="" width={12} height={12} aria-hidden="true" />
 )
 
 // 会话内只兜底拉一次全部空间(供个人面板切换列表列全),不给每次翻页刷接口
 let workspacesFetched = false
 
+/** 工作空间区域的折叠展示状态。 */
 interface SidebarTeamGroupProps {
   collapsed?: boolean
 }
 
+/** 显示当前工作空间，并连接加入空间和团队管理全局弹窗。 */
 export default function SidebarTeamGroup({ collapsed = false }: SidebarTeamGroupProps) {
   const navigate = useNavigate()
   const location = useLocation()

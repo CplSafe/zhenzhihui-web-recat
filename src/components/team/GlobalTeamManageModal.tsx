@@ -8,6 +8,7 @@ import { useUiStore } from '@/stores/ui'
 import { useCurrentWorkspace, useWorkspaceId, useCurrentMember, useCurrentUser } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 
+/** 从当前会话注入真实空间、成员和用户身份，统一挂载团队管理弹窗。 */
 export default function GlobalTeamManageModal() {
   const open = useUiStore((s) => s.teamManageOpen)
   const close = useUiStore((s) => s.closeTeamManage)

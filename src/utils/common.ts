@@ -1,10 +1,8 @@
-/**
- * Shared utility functions used across composables and views.
- */
+/** 供页面与组合式逻辑复用的基础通用工具。 */
 
 /**
- * Promise-based sleep/delay.
- * @param {number} ms - milliseconds to wait (clamped to >= 0)
+ * 返回指定毫秒后完成的 Promise，负数会按 0 处理。
+ * @param {number} ms 等待毫秒数
  */
 export function sleep(ms) {
   return new Promise((resolve) => {

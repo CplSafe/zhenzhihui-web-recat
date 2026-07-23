@@ -7,11 +7,13 @@
  */
 import { getCreativeProject } from '@/api/business'
 
+/** 从项目草稿兼容结构中读取流程标记。 */
 function readDraftFlow(draft: any): string {
   if (!draft || typeof draft !== 'object') return ''
   return String(draft?.smart?.flow || draft?.flow || '').toLowerCase()
 }
 
+/** 拉取项目草稿并返回对应编辑器路径，读取失败时安全回退到智能成片。 */
 export async function resolveProjectPath(projectId: number | string, workspaceId: number): Promise<string> {
   const id = Number(projectId || 0)
   if (!id) return '/smart'

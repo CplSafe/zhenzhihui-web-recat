@@ -7,9 +7,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useToast } from '@/composables/useToast'
 import { fileToDataUrl } from '@/utils/imageFile'
-import { useWorkspaceId } from '@/stores/workspaceSession'
-import { listAssets, listAiTasks, extractAssetPageItems, getAssetDownloadUrl } from '@/api/business'
+import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
+import { listAiTasks, extractAssetPageItems } from '@/api/business'
+import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
+import { assetStreamUrl } from '@/utils/assetUrl'
 import { createMaterialFromAsset } from '@/utils/materials'
+import { resolveUserId } from '@/utils/creativeDraftMetadata'
+import { filterAssetsByProjectAccess, getAccessibleProjectIds } from '@/utils/projectAssetAccess'
+import { SUPPORTED_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import HotCopyCaseModal, { type HotCopyCaseTab } from '@/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
@@ -20,8 +25,13 @@ import materialIcon from '@/assets/icons/hotcopy-material.svg'
 import helpIcon from '@/assets/icons/help-circle.svg'
 import './HotCopyEntry.css'
 
+/** 爆款复制入口当前选择的制作模式。 */
 export type HotCopyTab = 'remake' | 'replica'
+
+/** 爆款原视频尚未选择、来自本地或来自素材库的来源状态。 */
 export type HotCopyVideoSource = '' | 'local' | 'library'
+
+/** 一张替换主体素材的预览、原始文件和后端资产关联信息。 */
 export interface HotCopyProduct {
   url: string
   /** 本地选择带 File(待上传);素材库选择无 File(已有 assetId) */
@@ -36,6 +46,7 @@ export interface HotCopyProduct {
   /** 上述检测结果对应的原图 asset_id；原图变化后必须重新检测。 */
   faceCheckedAssetId?: number
 }
+/** 从入口页提交给爆款复制编排器的完整输入快照。 */
 export interface HotCopyEntryPayload {
   tab: HotCopyTab
   videoSource: HotCopyVideoSource
@@ -50,14 +61,22 @@ export interface HotCopyEntryPayload {
   duration: string
 }
 
+/** 每个制作模式独立保存的入口草稿，模式键由外层映射维护。 */
 type HotCopyTabDraft = Omit<HotCopyEntryPayload, 'tab'>
 
 // 成片尺寸/时长可选项 —— 与智能成片完全一致(同样的列表顺序与默认值 16:9 / 10s)。
 const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
-const DURATION_OPTIONS = ['5s', '10s', '15s']
+/** 由统一视频时长策略生成爆款复制可选秒数文案。 */
+const DURATION_OPTIONS = SUPPORTED_VIDEO_DURATIONS.map((seconds) => `${seconds}s`)
 
+/** 入口页与父级编排器之间的提交、草稿同步及恢复协议。 */
 interface HotCopyEntryProps {
   onSubmit: (payload: HotCopyEntryPayload) => void
+  /**
+   * 仅同步当前入口草稿而不发起生成；父级用它提前保存项目素材、提示词、比例和时长，
+   * 确保用户点击“去制作”前刷新页面也能恢复输入。
+   */
+  onDraftChange?: (payload: HotCopyEntryPayload) => void
   /** 入口右上角「创建新视频」:清空当前输入,回到全新入口态 */
   onNewVideo?: () => void
   /** 外部正在发起生成(含点击后到 running 生效前的短窗口),用于禁用重复点击 */
@@ -72,6 +91,7 @@ interface HotCopyEntryProps {
   ratioOptions?: string[]
 }
 
+/** 两种爆款复制模式的标题、说明与帮助提示。 */
 const TABS = [
   {
     key: 'remake',
@@ -87,8 +107,22 @@ const TABS = [
   },
 ] as const
 
+/** 单次生成最多允许的替换主体数量。 */
 const MAX_PRODUCTS = 9
 
+/** 本地文件名的图片格式兜底识别规则。 */
+const IMAGE_FILE_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i
+
+/** 本地文件名的视频格式兜底识别规则。 */
+const VIDEO_FILE_RE = /\.(mp4|mov|avi|mkv|webm|m4v)$/i
+
+/** 同时根据 MIME 与扩展名判断图片，兼容浏览器未填 type 的文件。 */
+const isImageFile = (file: File) => file.type.startsWith('image/') || IMAGE_FILE_RE.test(file.name)
+
+/** 同时根据 MIME 与扩展名判断视频，兼容浏览器未填 type 的文件。 */
+const isVideoFile = (file: File) => file.type.startsWith('video/') || VIDEO_FILE_RE.test(file.name)
+
+/** 从后端多种兼容字段中选出第一个有效正整数资产 ID。 */
 const pickAssetId = (...values: any[]): number => {
   for (const value of values) {
     const id = Number(value)
@@ -97,6 +131,7 @@ const pickAssetId = (...values: any[]): number => {
   return 0
 }
 
+/** 递归收集任务、资产响应中可能嵌套的资产 ID。 */
 const collectAssetIds = (value: any): number[] => {
   if (!value) return []
   if (Array.isArray(value)) return value.flatMap(collectAssetIds)
@@ -109,6 +144,7 @@ const collectAssetIds = (value: any): number[] => {
   return id ? [id] : []
 }
 
+/** 根据操作码和元数据语义判断资产是否为人脸检测/抠图派生结果。 */
 const isFaceCutAsset = (asset: any): boolean => {
   let metaHints = ''
   try {
@@ -147,6 +183,7 @@ const isFaceCutAsset = (asset: any): boolean => {
   return faceCue || replicateMaskCue || (cutoutCue && portraitCue)
 }
 
+/** 从派生人脸资产中反查原始上传素材 ID。 */
 const resolveSourceAssetId = (asset: any): number =>
   pickAssetId(
     asset?.source_asset_id,
@@ -179,6 +216,7 @@ const resolveSourceAssetId = (asset: any): number =>
     asset?.meta_json?.baseAssetId,
   )
 
+/** 解析真正提交给复刻模型的人脸或抠图结果资产 ID。 */
 const resolveFaceSubmitAssetId = (asset: any): number =>
   pickAssetId(
     asset?.face_asset_id,
@@ -211,11 +249,13 @@ const resolveFaceSubmitAssetId = (asset: any): number =>
     asset?.meta_json?.derivedAssetId,
   )
 
+/** 读取人脸预处理任务的首个输入资产。 */
 const resolveTaskSourceAssetId = (task: any): number =>
   collectAssetIds(
     task?.input_assets || task?.inputAssets || task?.inputs || task?.input || task?.request?.input_assets,
   )[0] || 0
 
+/** 读取人脸预处理任务的首个输出资产。 */
 const resolveTaskOutputAssetId = (task: any): number =>
   collectAssetIds(task?.outputs || task?.output || task?.result?.outputs || task?.data?.outputs)[0] || 0
 
@@ -239,8 +279,10 @@ const HOTCOPY_LAYERS: BgLayerStops = {
   ],
 }
 
+/** 管理两个制作模式的独立草稿、素材来源选择、@ 引用和最终提交校验。 */
 export default function HotCopyEntry({
   onSubmit,
+  onDraftChange,
   onNewVideo,
   busy = false,
   canResume,
@@ -253,6 +295,8 @@ export default function HotCopyEntry({
   const defaultRatio = ratioOpts.includes('16:9') ? '16:9' : ratioOpts[0] || '16:9'
   const { showToast } = useToast()
   const workspaceId = useWorkspaceId()
+  const currentUser = useCurrentUser()
+  const currentUserId = resolveUserId(currentUser)
   const initialTab = (initial?.tab as HotCopyTab) ?? 'remake'
   const blankTabDraft = (): HotCopyTabDraft => ({
     videoSource: '',
@@ -325,6 +369,7 @@ export default function HotCopyEntry({
   const [videoPreview, setVideoPreview] = useState(tabDraftsRef.current[initialTab].videoPreview)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [libraryMaterials, setLibraryMaterials] = useState<any[]>([])
+  const [libraryMaterialsScope, setLibraryMaterialsScope] = useState('')
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryTab, setLibraryTab] = useState('mine')
   const [libraryQuery, setLibraryQuery] = useState('')
@@ -333,6 +378,8 @@ export default function HotCopyEntry({
   )
   const videoFileRef = useRef<HTMLInputElement | null>(null)
   const videoMenuRef = useRef<HTMLDivElement | null>(null)
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const dragDepthRef = useRef(0)
 
   // 替换素材(仅图片):本地上传保留 File 待上传;素材库选择带 assetId
   const [products, setProducts] = useState<HotCopyProduct[]>(tabDraftsRef.current[initialTab].products)
@@ -342,9 +389,28 @@ export default function HotCopyEntry({
   const productMenuRef = useRef<HTMLDivElement | null>(null)
   const [productLibOpen, setProductLibOpen] = useState(false)
   const [productLibMaterials, setProductLibMaterials] = useState<any[]>([])
+  const [productLibMaterialsScope, setProductLibMaterialsScope] = useState('')
   const [productLibLoading, setProductLibLoading] = useState(false)
   const [productLibTab, setProductLibTab] = useState('mine')
   const [productLibQuery, setProductLibQuery] = useState('')
+  const workspaceIdRef = useRef(Number(workspaceId || 0))
+  workspaceIdRef.current = Number(workspaceId || 0)
+  const currentUserIdRef = useRef(currentUserId)
+  currentUserIdRef.current = currentUserId
+  const currentMaterialScope = `${Number(workspaceId || 0)}:${currentUserId}`
+  const scopedLibraryMaterials = libraryMaterialsScope === currentMaterialScope ? libraryMaterials : []
+  const scopedProductLibMaterials = productLibMaterialsScope === currentMaterialScope ? productLibMaterials : []
+
+  useEffect(() => {
+    setLibraryMaterials([])
+    setLibraryMaterialsScope('')
+    setProductLibMaterials([])
+    setProductLibMaterialsScope('')
+    setLibraryLoading(false)
+    setProductLibLoading(false)
+    setLibraryOpen(false)
+    setProductLibOpen(false)
+  }, [workspaceId, currentUserId])
 
   const [text, setText] = useState(tabDraftsRef.current[initialTab].text)
   // 成片尺寸/时长(用户可选);默认与智能成片一致:16:9、10s
@@ -373,31 +439,49 @@ export default function HotCopyEntry({
   // 加载素材库里的视频素材(复用现有 listAssets + 签名URL + material 映射)
   const loadLibraryVideos = async () => {
     const ws = Number(workspaceId || 0)
+    const userId = currentUserId
     if (!ws) {
       showToast('未选择工作空间', 'error')
       return
     }
+    if (!userId) {
+      showToast('登录身份尚未就绪，请稍后重试', 'error')
+      return
+    }
+    const isCurrentScope = () =>
+      Number(workspaceIdRef.current || 0) === ws && Number(currentUserIdRef.current || 0) === userId
     setLibraryLoading(true)
     try {
-      const payload = await listAssets({ workspaceId: ws, type: 'video', limit: 100 })
-      const assets = extractAssetPageItems(payload).filter((a: any) => a?.id && a.type === 'video')
-      const mats = await Promise.all(
-        assets.map(async (a: any) => {
-          let src = ''
-          try {
-            src = await getAssetDownloadUrl({ workspaceId: ws, assetId: a.id })
-          } catch {
-            /* 取签名URL失败则回退缩略图 */
-          }
-          if (!src) src = a?.thumbnail_url || a?.preview_url || a?.cover_url || a?.url || ''
-          return createMaterialFromAsset(a, src)
+      const [rawAssetItems, projectResult] = await Promise.all([
+        listAllAssets({
+          workspaceId: ws,
+          type: 'video',
+          isCurrent: isCurrentScope,
         }),
+        listAllCreativeProjects({
+          workspaceId: ws,
+          isCurrent: isCurrentScope,
+        })
+          .then((items) => ({ loaded: true, items }))
+          .catch(() => ({ loaded: false, items: [] as any[] })),
+      ])
+      if (!isCurrentScope()) return
+      const accessibleProjectIds = getAccessibleProjectIds(projectResult.items, userId)
+      const assets = filterAssetsByProjectAccess(rawAssetItems, accessibleProjectIds, projectResult.loaded).filter(
+        (a: any) => a?.id && a.type === 'video',
+      )
+      const mats = assets.map((a: any) =>
+        createMaterialFromAsset(
+          a,
+          assetStreamUrl(Number(a.id), ws) || a?.thumbnail_url || a?.preview_url || a?.cover_url || a?.url || '',
+        ),
       )
       setLibraryMaterials(mats.filter((m: any) => m.src))
+      setLibraryMaterialsScope(`${ws}:${userId}`)
     } catch (e: any) {
-      showToast(e?.message || '素材库加载失败', 'error')
+      if (isCurrentScope()) showToast(e?.message || '素材库加载失败', 'error')
     } finally {
-      setLibraryLoading(false)
+      if (isCurrentScope()) setLibraryLoading(false)
     }
   }
 
@@ -438,16 +522,39 @@ export default function HotCopyEntry({
   // 加载素材库里的图片素材(替换素材只用图片)
   const loadLibraryImages = async () => {
     const ws = Number(workspaceId || 0)
+    const userId = currentUserId
     if (!ws) {
       showToast('未选择工作空间', 'error')
       return
     }
+    if (!userId) {
+      showToast('登录身份尚未就绪，请稍后重试', 'error')
+      return
+    }
+    const isCurrentScope = () =>
+      Number(workspaceIdRef.current || 0) === ws && Number(currentUserIdRef.current || 0) === userId
     setProductLibLoading(true)
     try {
-      const [payload, faceTaskPayload] = await Promise.all([
-        listAssets({ workspaceId: ws, type: 'image', limit: 300 }),
+      const [allAssetItems, faceTaskPayload, projectResult] = await Promise.all([
+        listAllAssets({
+          workspaceId: ws,
+          type: 'image',
+          isCurrent: isCurrentScope,
+        }),
         listAiTasks({ workspaceId: ws, operationCode: 'image.face_detect', limit: 100 }).catch(() => null),
+        listAllCreativeProjects({
+          workspaceId: ws,
+          isCurrent: isCurrentScope,
+        })
+          .then((items) => ({ loaded: true, items }))
+          .catch(() => ({ loaded: false, items: [] as any[] })),
       ])
+      if (!isCurrentScope()) return
+      const rawAssetItems = filterAssetsByProjectAccess(
+        allAssetItems,
+        getAccessibleProjectIds(projectResult.items, userId),
+        projectResult.loaded,
+      )
       const faceTaskIds = new Set<number>()
       const submitAssetBySource = new Map<number, number>()
       for (const task of extractAssetPageItems(faceTaskPayload)) {
@@ -457,7 +564,7 @@ export default function HotCopyEntry({
         const outputId = resolveTaskOutputAssetId(task)
         if (sourceId && outputId) submitAssetBySource.set(sourceId, outputId)
       }
-      const rawAssets = extractAssetPageItems(payload).filter((a: any) => a?.id && a.type === 'image')
+      const rawAssets = rawAssetItems.filter((a: any) => a?.id && a.type === 'image')
       for (const asset of rawAssets) {
         const sourceId = resolveSourceAssetId(asset)
         const assetId = pickAssetId(asset?.id)
@@ -471,27 +578,20 @@ export default function HotCopyEntry({
         if (taskId && faceTaskIds.has(taskId)) return false
         return !isFaceCutAsset(a)
       })
-      const mats = await Promise.all(
-        assets.map(async (a: any) => {
-          let src = ''
-          try {
-            src = await getAssetDownloadUrl({ workspaceId: ws, assetId: a.id })
-          } catch {
-            /* 取签名URL失败则回退缩略图 */
-          }
-          if (!src) src = a?.thumbnail_url || a?.preview_url || a?.url || ''
-          return {
-            ...createMaterialFromAsset(a, src),
-            submitAssetId:
-              resolveFaceSubmitAssetId(a) || submitAssetBySource.get(pickAssetId(a?.id)) || pickAssetId(a?.id),
-          }
-        }),
-      )
+      const mats = assets.map((a: any) => {
+        const src = assetStreamUrl(Number(a.id), ws) || a?.thumbnail_url || a?.preview_url || a?.url || ''
+        return {
+          ...createMaterialFromAsset(a, src),
+          submitAssetId:
+            resolveFaceSubmitAssetId(a) || submitAssetBySource.get(pickAssetId(a?.id)) || pickAssetId(a?.id),
+        }
+      })
       setProductLibMaterials(mats.filter((m: any) => m.src))
+      setProductLibMaterialsScope(`${ws}:${userId}`)
     } catch (e: any) {
-      showToast(e?.message || '素材库加载失败', 'error')
+      if (isCurrentScope()) showToast(e?.message || '素材库加载失败', 'error')
     } finally {
-      setProductLibLoading(false)
+      if (isCurrentScope()) setProductLibLoading(false)
     }
   }
 
@@ -534,7 +634,8 @@ export default function HotCopyEntry({
     setProductLibOpen(false)
   }
 
-  const pickVideo = (files: FileList | null) => {
+  // 本地视频预览使用对象 URL；替换视频时先释放旧 URL，避免频繁选择文件造成内存泄漏。
+  const pickVideo = (files: FileList | File[] | null) => {
     const f = files?.[0]
     if (!f) return
     setVideoSource('local')
@@ -558,22 +659,31 @@ export default function HotCopyEntry({
   }
 
   // 替换素材本地上传:仅图片,缩放成 dataURL 预览,留 File 待出片前上传成 asset
-  const pickProducts = async (files: FileList | null) => {
+  const pickProducts = async (files: FileList | File[] | null) => {
     if (!files?.length) return
     const room = MAX_PRODUCTS - products.length
     if (room <= 0) {
       showToast(`最多上传 ${MAX_PRODUCTS} 张替换素材`, 'info')
       return
     }
-    const sel = Array.from(files)
-      .filter((f) => /^image\//.test(f.type))
-      .slice(0, room)
+    const sel = Array.from(files).filter(isImageFile).slice(0, room)
     const picked = (
       await Promise.all(
         sel.map(async (f) => ({ url: (await fileToDataUrl(f).catch(() => '')) || '', file: f, isVideo: false })),
       )
     ).filter((p) => p.url)
     if (picked.length) setProducts((prev) => [...prev, ...picked])
+  }
+
+  const acceptLocalFiles = (files: File[]) => {
+    const videos = files.filter(isVideoFile)
+    const images = files.filter(isImageFile)
+    if (!videos.length && !images.length) {
+      showToast('爆款复制仅支持添加图片或视频素材', 'info')
+      return
+    }
+    if (videos.length) pickVideo(videos)
+    if (images.length) void pickProducts(images)
   }
 
   const removeProduct = (i: number) => setProducts((arr) => arr.filter((_, j) => j !== i))
@@ -656,6 +766,34 @@ export default function HotCopyEntry({
     duration,
   })
 
+  useEffect(() => {
+    onDraftChange?.({
+      tab,
+      videoSource,
+      videoFile,
+      libraryVideo,
+      videoFileName,
+      videoPreview,
+      products,
+      text,
+      ratio,
+      duration,
+    })
+  }, [
+    duration,
+    libraryVideo,
+    onDraftChange,
+    products,
+    ratio,
+    tab,
+    text,
+    videoFile,
+    videoFileName,
+    videoPreview,
+    videoSource,
+  ])
+
+  // 提交前同时要求原视频和至少一张替换图片，防止创建后端无法执行的空任务。
   const validateBeforeSubmit = () => {
     if (!hasHotVideo) {
       showToast('请先上传爆款视频(本地上传 / 素材库)', 'error')
@@ -675,7 +813,40 @@ export default function HotCopyEntry({
   }
 
   return (
-    <section className="hotcopy__main" data-tab={tab}>
+    <section
+      className={`hotcopy__main${isDraggingFiles ? ' is-file-dragging' : ''}`}
+      data-tab={tab}
+      onPaste={(event) => {
+        const files = Array.from(event.clipboardData?.items || [])
+          .filter((item) => item.kind === 'file')
+          .map((item) => item.getAsFile())
+          .filter((file): file is File => !!file)
+        if (!files.length) return
+        event.preventDefault()
+        acceptLocalFiles(files)
+      }}
+      onDragEnter={(event) => {
+        if (!Array.from(event.dataTransfer?.items || []).some((item) => item.kind === 'file')) return
+        event.preventDefault()
+        dragDepthRef.current += 1
+        setIsDraggingFiles(true)
+      }}
+      onDragOver={(event) => {
+        if (!Array.from(event.dataTransfer?.items || []).some((item) => item.kind === 'file')) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+      }}
+      onDragLeave={() => {
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+        if (!dragDepthRef.current) setIsDraggingFiles(false)
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        dragDepthRef.current = 0
+        setIsDraggingFiles(false)
+        acceptLocalFiles(Array.from(event.dataTransfer.files))
+      }}
+    >
       {/* 背景弥散:Canvas 实现(与智能成片同一套),配色用本页粉紫;切 Tab 时从底部上升 */}
       <div className="hotcopy__bg" aria-hidden="true">
         <EntryCanvasBg index={tab === 'replica' ? 1 : 0} count={2} anim="bloom" layers={HOTCOPY_LAYERS} />
@@ -958,7 +1129,7 @@ export default function HotCopyEntry({
         onModelValueChange={setLibraryOpen}
         workspaceId={Number(workspaceId || 0)}
         projectName="爆款复刻"
-        materials={libraryMaterials}
+        materials={scopedLibraryMaterials}
         tab={libraryTab}
         query={libraryQuery}
         isLoading={libraryLoading}
@@ -973,7 +1144,7 @@ export default function HotCopyEntry({
         onModelValueChange={setProductLibOpen}
         workspaceId={Number(workspaceId || 0)}
         projectName="替换素材"
-        materials={productLibMaterials}
+        materials={scopedProductLibMaterials}
         tab={productLibTab}
         query={productLibQuery}
         isLoading={productLibLoading}

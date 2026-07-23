@@ -1,11 +1,20 @@
+/**
+ * 项目视频详情页
+ *
+ * 页面效果：根据路由中的 projectId + videoId 精确加载一条视频，展示播放器、生成状态、创建人、
+ * 时间和时长信息；支持返回来源列表、进入对应创作流程和下载视频，并适配横屏/竖屏播放。
+ *
+ * 权限边界：有项目访问权的成员可以查看详情和下载；仅视频创建者显示编辑入口；仅项目创建者
+ * 或空间 owner/admin 可以删除。错误 videoId 只会显示未找到，不会回退打开或删除第一条视频。
+ */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
-import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
-import { listWorkspaceMembers } from '@/api/auth'
+import { useCurrentUser, useCurrentWorkspace, useWorkspaceId } from '@/stores/workspaceSession'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
+import { useWorkspaceMemberAccess } from '@/composables/useWorkspaceMemberAccess'
 import {
   deleteProjectVideo,
   formatVideoDate,
@@ -15,14 +24,21 @@ import {
   type ProjectVideo,
 } from '@/api/projectVideos'
 import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
+import {
+  isCreativeProjectRestrictedForUser,
+  resolveCreativeProjectOwnerId,
+  resolveUserId,
+} from '@/utils/creativeDraftMetadata'
 import './ProjectVideoDetailView.css'
 
+/** 精确加载并渲染路由指定的视频详情，同时执行查看、下载和删除权限控制。 */
 export default function ProjectVideoDetailView() {
   const navigate = useNavigate()
   const params = useParams()
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const currentUser = useCurrentUser() as any
+  const currentWorkspace = useCurrentWorkspace() as any
   const workspaceId = useWorkspaceId()
   const [searchParams] = useSearchParams()
   const fromUnclassified = searchParams.get('from') === 'unclassified' // 来自「待归类」:换面包屑、隐藏发布
@@ -30,45 +46,49 @@ export default function ProjectVideoDetailView() {
   const videoId = String(params.videoId || '')
   const userName =
     currentUser?.nickname || currentUser?.name || currentUser?.username || currentUser?.email || '当前用户'
-  const currentUserId = Number(currentUser?.id ?? currentUser?.userId ?? 0) || 0
+  const currentUserId = resolveUserId(currentUser)
+  // 编辑权跟随视频创建者；普通项目成员只保留查看和下载能力。
   const canModify = (item: ProjectVideo | null) => {
     if (!item) return false
     const ownerId = Number(item.createdByUserId ?? 0) || 0
     return ownerId > 0 && ownerId === currentUserId
   }
 
-  // 工作空间成员,供归属人按 user_id 查名字
-  const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([])
-  const workspaceIdRef = useRef(0)
-  useEffect(() => {
-    workspaceIdRef.current = Number(workspaceId || 0)
-  }, [workspaceId])
-  useEffect(() => {
-    const wsId = Number(workspaceId || 0)
-    if (!wsId) {
-      setWorkspaceMembers([])
-      return
-    }
-    let cancelled = false
-    listWorkspaceMembers(wsId)
-      .then((result: any) => {
-        if (!cancelled && Number(workspaceIdRef.current || 0) === wsId)
-          setWorkspaceMembers(Array.isArray(result) ? result : [])
-      })
-      .catch(() => {
-        if (!cancelled) setWorkspaceMembers([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [workspaceId])
+  const { workspaceMembers: effectiveWorkspaceMembers, currentWorkspaceRole } = useWorkspaceMemberAccess({
+    workspaceId,
+    currentUserId,
+    currentWorkspace,
+  })
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [projectTitle, setProjectTitle] = useState('')
   const [editorCount, setEditorCount] = useState(0)
   const [detail, setDetail] = useState<ProjectVideo | null>(null)
+  const [projectOwnerId, setProjectOwnerId] = useState(0)
   const [deleting, setDeleting] = useState(false)
+  const detailRequestSequenceRef = useRef(0)
+  const mountedRef = useRef(false)
+  const routeContextRef = useRef({ workspaceId: 0, projectId: 0, videoId: '' })
+  routeContextRef.current = { workspaceId: Number(workspaceId || 0), projectId, videoId }
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+  // 删除权跟随项目创建者/空间管理员，而不是“能进入详情页”这一查看权限。
+  const canDelete = useCallback(
+    (_item: ProjectVideo | null) =>
+      currentUserId > 0 &&
+      (currentUserId === projectOwnerId || currentWorkspaceRole === 'owner' || currentWorkspaceRole === 'admin'),
+    [currentUserId, currentWorkspaceRole, projectOwnerId],
+  )
+  const canDeleteRef = useRef(canDelete)
+  canDeleteRef.current = canDelete
+  useEffect(() => {
+    setDeleting(false)
+  }, [projectId, videoId, workspaceId])
   // 竖屏视频:按屏幕高展示(横屏保持按宽,不变)。加载元数据后据真实宽高判断。
   const [isPortrait, setIsPortrait] = useState(false)
   // 视频缓冲完成(canplay)前显示 loading,避免"空白等半天才蹦出画面";加载失败显示错误(不再永久转圈);换视频时重置。
@@ -81,15 +101,19 @@ export default function ProjectVideoDetailView() {
 
   const handleNavigate = useSidebarNavigate()
 
+  // 必须同时命中路由中的 projectId 和 videoId；请求序号防止旧详情响应覆盖新路由。
   const loadDetail = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
+    const requestSequence = ++detailRequestSequenceRef.current
     if (!projectId || !videoId || !wsId) {
       setProjectTitle('')
+      setProjectOwnerId(0)
       setDetail(null)
       setLoading(false)
       return
     }
     setLoading(true)
+    setDetail(null)
     try {
       const payload = await getProjectVideo({
         projectId,
@@ -97,9 +121,16 @@ export default function ProjectVideoDetailView() {
         videoId,
         currentUserName: userName,
         currentUserId,
-        workspaceMembers,
+        workspaceMembers: effectiveWorkspaceMembers,
       })
+      if (requestSequence !== detailRequestSequenceRef.current) return
+      if (isCreativeProjectRestrictedForUser(payload.project, currentUserId)) {
+        showToast('您没有权限访问该项目', 'error')
+        navigate('/projects', { replace: true })
+        return
+      }
       setProjectTitle(String(payload.project?.title || payload.project?.name || '未命名项目'))
+      setProjectOwnerId(resolveCreativeProjectOwnerId(payload.project))
       const count =
         Number(
           payload.project?.editor_count ?? payload.project?.editorCount ?? payload.project?.data?.editor_count ?? 0,
@@ -110,15 +141,20 @@ export default function ProjectVideoDetailView() {
         showToast('未找到该视频记录', 'error')
       }
     } catch (error: any) {
+      if (requestSequence !== detailRequestSequenceRef.current) return
       setDetail(null)
+      setProjectOwnerId(0)
       showToast(error?.message || '视频详情加载失败，请稍后重试', 'error')
     } finally {
-      setLoading(false)
+      if (requestSequence === detailRequestSequenceRef.current) setLoading(false)
     }
-  }, [projectId, videoId, workspaceId, userName, currentUserId, workspaceMembers, showToast])
+  }, [projectId, videoId, workspaceId, userName, currentUserId, effectiveWorkspaceMembers, showToast, navigate])
 
   useEffect(() => {
-    loadDetail()
+    void loadDetail()
+    return () => {
+      detailRequestSequenceRef.current += 1
+    }
   }, [loadDetail])
 
   const backToList = useCallback(() => {
@@ -128,12 +164,28 @@ export default function ProjectVideoDetailView() {
 
   const openEditor = useCallback(() => {
     if (!detail) return
-    const qs = workspaceId ? `?workspace_id=${workspaceId}` : ''
+    const query = new URLSearchParams()
+    const targetWorkspaceId = Number(workspaceId || detail.workspaceId || 0)
+    if (targetWorkspaceId > 0) query.set('workspace_id', String(targetWorkspaceId))
+    query.set('video_id', String(detail.id))
+    const videoAssetId = Number(detail.videoAssetId || 0)
+    const selectedVideoAssetId = Number.isFinite(videoAssetId) && videoAssetId > 0 ? Math.floor(videoAssetId) : 0
+    if (selectedVideoAssetId > 0) query.set('video_asset_id', String(selectedVideoAssetId))
     // 按视频所属流程进对应编辑器:爆款复制 → /hot-copy,其余(智能成片/旧版)→ /smart(与列表页 openEditor 一致)
     const base = (detail as any).flow === 'hot-copy' ? '/hot-copy' : '/smart'
-    navigate(`${base}/${projectId}${qs}`)
+    navigate(`${base}/${projectId}?${query.toString()}`, {
+      state: {
+        projectVideoSelection: {
+          projectId,
+          workspaceId: targetWorkspaceId,
+          videoId: String(detail.id),
+          ...(selectedVideoAssetId > 0 ? { videoAssetId: selectedVideoAssetId } : {}),
+        },
+      },
+    })
   }, [detail, navigate, projectId, workspaceId])
 
+  // 下载对所有可访问项目的成员开放，不与编辑或删除权限绑定。
   const downloadVideo = useCallback(async () => {
     if (!detail?.videoUrl) {
       showToast('当前视频暂无可下载地址', 'info')
@@ -145,27 +197,60 @@ export default function ProjectVideoDetailView() {
       showToast('视频下载中…', 'success')
       const r = await downloadToDisk({ fileName, resolveUrl: () => url })
       if (r === 'done') showToast('视频已保存', 'success')
+      else if (r === 'started') {
+        showToast('已开始下载，请查看浏览器下载列表', 'info')
+      }
     } catch (err: any) {
       showToast(err?.message || '下载失败,请稍后重试', 'error')
     }
   }, [detail, showToast])
 
+  // 删除前校验权限、视频 id 和路由快照；确认弹窗返回后再次核对，避免误删已切走的目标。
   const handleDelete = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
     if (!detail || !projectId || !wsId || deleting) return
+    if (!canDeleteRef.current(detail)) {
+      showToast('仅项目创建者或空间管理员可以删除视频', 'error')
+      return
+    }
+    if (String(detail.id) !== videoId) {
+      setDetail(null)
+      showToast('视频标识已变化，请返回列表后重新打开', 'error')
+      return
+    }
+    const target = { workspaceId: wsId, projectId, videoId }
+    const isCurrentTarget = () => {
+      const current = routeContextRef.current
+      return (
+        mountedRef.current &&
+        current.workspaceId === target.workspaceId &&
+        current.projectId === target.projectId &&
+        current.videoId === target.videoId
+      )
+    }
     const confirmed = await requestConfirm(`确定删除视频「${detail.title}」吗？该操作不可恢复。`)
     if (!confirmed) return
+    if (!isCurrentTarget()) return
+    if (!canDeleteRef.current(detail)) {
+      showToast('仅项目创建者或空间管理员可以删除视频', 'error')
+      return
+    }
     setDeleting(true)
     try {
-      await deleteProjectVideo({ projectId, workspaceId: wsId, videoId: detail.id })
+      await deleteProjectVideo({
+        projectId: target.projectId,
+        workspaceId: target.workspaceId,
+        videoId: target.videoId,
+      })
+      if (!isCurrentTarget()) return
       showToast('视频已删除', 'success')
-      navigate(`/projects/${projectId}/videos`)
+      navigate(`/projects/${target.projectId}/videos`)
     } catch (error: any) {
-      showToast(error?.message || '删除失败，请稍后重试', 'error')
+      if (isCurrentTarget()) showToast(error?.message || '删除失败，请稍后重试', 'error')
     } finally {
-      setDeleting(false)
+      if (isCurrentTarget()) setDeleting(false)
     }
-  }, [detail, projectId, workspaceId, deleting, requestConfirm, showToast, navigate])
+  }, [detail, projectId, videoId, workspaceId, deleting, requestConfirm, showToast, navigate])
 
   return (
     <div className="pvdetail-page">
@@ -218,7 +303,7 @@ export default function ProjectVideoDetailView() {
                   <button type="button" className="pvdetail-action" onClick={downloadVideo}>
                     下载视频
                   </button>
-                  {canModify(detail) ? (
+                  {canDelete(detail) ? (
                     <button
                       type="button"
                       className="pvdetail-action pvdetail-action--danger"
@@ -302,12 +387,6 @@ export default function ProjectVideoDetailView() {
                         <dd>{detail.sourceType === 'creative' ? '分步创作' : '智能成片'}</dd>
                       </div>
                     </dl>
-                  </div>
-                  <div className="pvdetail-meta__block">
-                    <h2>说明</h2>
-                    <p>
-                      当前详情页已经具备项目视频模块的业务承载能力，后续可继续补充发布链接、操作日志、审核状态等信息。
-                    </p>
                   </div>
                 </aside>
               </section>

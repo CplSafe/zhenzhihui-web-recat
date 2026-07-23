@@ -15,6 +15,7 @@ import { useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Tooltip } from 'antd'
 import type { TooltipProps } from 'antd'
 
+/** 省略文本的显示行数、完整提示内容和样式扩展属性。 */
 interface EllipsisTextProps {
   /** 要展示的文本 */
   text: string
@@ -28,6 +29,7 @@ interface EllipsisTextProps {
   tooltipProps?: Omit<TooltipProps, 'title'>
 }
 
+/** 仅在实际发生文本溢出时启用 Tooltip，避免短文本出现无意义悬浮层。 */
 export default function EllipsisText({ text, title, lines, className, style, tooltipProps }: EllipsisTextProps) {
   const ref = useRef<HTMLSpanElement>(null)
   const [overflow, setOverflow] = useState(false)

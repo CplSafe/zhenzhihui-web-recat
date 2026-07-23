@@ -130,6 +130,13 @@
 }
 .stg-join__ico {
   display: inline-flex;
+  width: 12px;
+  height: 12px;
+}
+.stg-join__ico-img {
+  display: block;
+  width: 12px;
+  height: 12px;
 }
 
 /* 收起态侧栏:只留邀请图标居中,隐藏文字/加入按钮 */

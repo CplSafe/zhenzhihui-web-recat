@@ -6,6 +6,7 @@ import { listCreativeProjects } from './business'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { assetStreamUrl } from '@/utils/assetUrl'
 
+/** 模板库页面使用的归一化创意项目数据。 */
 export interface TemplateItem {
   id: number
   title: string
@@ -35,6 +36,7 @@ export interface TemplateItem {
   grad: string
 }
 
+/** 后端项目缺少封面时的稳定渐变占位集合。 */
 const FALLBACK_GRADS = [
   'linear-gradient(160deg, #e0d4f5, #f5ecfd)',
   'linear-gradient(160deg, #d4e8f0, #ecf8fb)',
@@ -44,16 +46,19 @@ const FALLBACK_GRADS = [
   'linear-gradient(160deg, #d4d8f0, #eaeefb)',
 ]
 
+/** 根据列表位置稳定选择占位渐变。 */
 function pickGrad(index: number): string {
   return FALLBACK_GRADS[index % FALLBACK_GRADS.length]
 }
 
+/** 根据宽高约分得到用于展示的画面比例。 */
 function deriveRatio(w?: number, h?: number): string {
   if (!w || !h) return '9 / 16'
   const g = gcd(w, h)
   return `${w / g} / ${h / g}`
 }
 
+/** 计算两个整数的最大公约数，用于约分宽高比。 */
 function gcd(a: number, b: number): number {
   let x = Math.abs(Math.round(a))
   let y = Math.abs(Math.round(b))
@@ -63,6 +68,7 @@ function gcd(a: number, b: number): number {
   return x || 1
 }
 
+/** 按候选顺序返回首个非空文本值。 */
 function pickFirstText(...values: any[]): string {
   for (const v of values) {
     const s = String(v ?? '').trim()
@@ -71,6 +77,7 @@ function pickFirstText(...values: any[]): string {
   return ''
 }
 
+/** 将后端字段转为数值，非法值归零。 */
 function toNumber(v: any): number {
   return Number(v) || 0
 }
@@ -173,6 +180,7 @@ function extractRatioFromDraft(raw: any): string {
   return ''
 }
 
+/** 将冒号或斜杠比例统一为页面展示格式。 */
 function normalizeRatio(val: string): string {
   // "9:16" → "9 / 16", "16/9" → "16 / 9"
   return val.replace(/\s*[:/]\s*/g, ' / ')
@@ -256,6 +264,7 @@ function normalizeProject(raw: any, index: number): TemplateItem {
   // 先从顶层字段取，再从 draft 里补
   let thumbnailUrl = pickFirstText(raw?.thumbnailUrl, raw?.thumbnail_url, raw?.coverUrl, raw?.cover_url, raw?.cover)
   if (!thumbnailUrl) thumbnailUrl = extractCoverFromDraft(raw)
+  if (!isSafeMediaUrl(thumbnailUrl)) thumbnailUrl = ''
 
   // 默认取第一条视频(listTemplates 会逐视频覆盖)
   const firstVideo = extractProjectVideos(raw)[0] || { url: '', assetId: 0 }
@@ -292,12 +301,14 @@ function normalizeProject(raw: any, index: number): TemplateItem {
   }
 }
 
+/** 项目模板查询的工作空间与分页参数。 */
 export interface ListTemplatesOptions {
   workspaceId?: number
   offset?: number
   limit?: number
 }
 
+/** 模板分页列表与总数。 */
 export interface ListTemplatesResult {
   items: TemplateItem[]
   total: number
@@ -329,11 +340,12 @@ export async function listBackendTemplates(): Promise<TemplateItem[]> {
     .map((t: any, i: number): TemplateItem => {
       const w = Number(t?.width || 0)
       const h = Number(t?.height || 0)
-      const ratio = String(t?.ratio || '').trim() || (w && h ? `${w} / ${h}` : '9 / 16')
+      const ratio = normalizeRatio(String(t?.ratio || '').trim() || (w && h ? `${w} / ${h}` : '9 / 16'))
+      const thumbnailUrl = String(t?.thumbnail_url || '').trim()
       return {
         id: Number(t?.id || 0),
         title: String(t?.title || '').trim(),
-        thumbnailUrl: String(t?.thumbnail_url || '').trim(),
+        thumbnailUrl: isSafeMediaUrl(thumbnailUrl) ? thumbnailUrl : '',
         videoUrl: String(t?.video_url || '').trim(),
         ratio,
         width: w || undefined,

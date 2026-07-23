@@ -7,16 +7,20 @@
  */
 import { create } from 'zustand'
 
+/** 全局提示消息的视觉类型。 */
 export type ToastType = 'info' | 'success' | 'error'
 
+/** 当前 Toast 的渲染状态。 */
 export interface ToastState {
   visible: boolean
   message: string
   type: ToastType
 }
 
+/** 确认框 Promise 的统一完成函数。 */
 export type ConfirmResolve = (value: boolean | string | null) => void
 
+/** 全局确认/输入对话框的完整状态。 */
 export interface ConfirmState {
   visible: boolean
   id: number
@@ -32,6 +36,7 @@ export interface ConfirmState {
   resolve: ConfirmResolve | null
 }
 
+/** 调用确认框时允许覆盖的显示与输入配置。 */
 export interface ConfirmOptions {
   title?: string
   inputEnabled?: boolean
@@ -43,12 +48,17 @@ export interface ConfirmOptions {
   danger?: boolean
 }
 
+/** 标识一个工作空间切换锁的持有者，支持多个业务独立加锁和释放。 */
+export type WorkspaceSwitchLockSource = string | symbol
+
+/** 全局 UI 状态及跨页面操作集合。 */
 export interface UiState {
   toast: ToastState
   confirm: ConfirmState
   dirty: boolean
   workspaceSwitchLocked: boolean
   workspaceSwitchLockReason: string
+  workspaceSwitchLockSources: ReadonlyMap<WorkspaceSwitchLockSource, string>
   // 会员中心:全局单例弹窗开关(取代原 /membership 路由页),由顶层 <MemberCenterModal/> 渲染。
   memberCenterOpen: boolean
   // 团队管理:全局单例弹窗开关(邀请成员 / 成员管理 / 团队数据),由顶层 <TeamManagementModal/> 渲染。
@@ -70,6 +80,7 @@ export interface UiState {
   setConfirmInput: (value: string) => void
 
   setDirty: (dirty: boolean) => void
+  setWorkspaceSwitchLockSource: (source: WorkspaceSwitchLockSource, locked: boolean, reason?: string) => void
   setWorkspaceSwitchLock: (locked: boolean, reason?: string) => void
 
   openMemberCenter: () => void
@@ -88,11 +99,17 @@ export interface UiState {
   setSidebarCollapsed: (collapsed: boolean) => void
 }
 
+/** 普通 Toast 默认展示 5 秒。 */
 const DEFAULT_TOAST_DURATION = 5000
+/** 兼容旧单锁 API 的固定锁持有者标识。 */
+const LEGACY_WORKSPACE_SWITCH_LOCK_SOURCE = Symbol('legacy-workspace-switch-lock')
 
+/** 当前 Toast 自动关闭定时器。 */
 let toastTimer: ReturnType<typeof setTimeout> | null = null
+/** 为每次确认框请求生成递增 id，避免迟到回调混淆。 */
 let confirmIdCounter = 0
 
+/** 确认框关闭状态的默认字段集合。 */
 const initialConfirm: ConfirmState = {
   visible: false,
   id: 0,
@@ -108,12 +125,14 @@ const initialConfirm: ConfirmState = {
   resolve: null,
 }
 
+/** 全局 UI Store；Toast、确认框和跨页面弹窗均由根布局中的单例组件消费。 */
 export const useUiStore = create<UiState>((set, get) => ({
   toast: { visible: false, message: '', type: 'info' },
   confirm: { ...initialConfirm },
   dirty: false,
   workspaceSwitchLocked: false,
   workspaceSwitchLockReason: '',
+  workspaceSwitchLockSources: new Map(),
   memberCenterOpen: false,
   teamManageOpen: false,
   teamManageTab: 'members',
@@ -142,7 +161,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
 
   requestConfirm: (message, options = {}) => {
-    // Resolve any pending request first (guard against overlap).
+    // 新确认框出现前先结束上一请求，避免两个 Promise 永远悬挂。
     const pending = get().confirm.resolve
     if (pending) pending(get().confirm.inputEnabled ? null : false)
 
@@ -176,11 +195,23 @@ export const useUiStore = create<UiState>((set, get) => ({
   setConfirmInput: (value) => set({ confirm: { ...get().confirm, inputValue: value } }),
 
   setDirty: (dirty) => set({ dirty }),
-  setWorkspaceSwitchLock: (locked, reason = '') =>
-    set({
-      workspaceSwitchLocked: Boolean(locked),
-      workspaceSwitchLockReason: locked ? String(reason || '').trim() : '',
+  setWorkspaceSwitchLockSource: (source, locked, reason = '') =>
+    set((state) => {
+      const sources = new Map(state.workspaceSwitchLockSources)
+      if (locked) {
+        sources.set(source, String(reason || '').trim())
+      } else {
+        sources.delete(source)
+      }
+      return {
+        workspaceSwitchLockSources: sources,
+        workspaceSwitchLocked: sources.size > 0,
+        workspaceSwitchLockReason: Array.from(sources.values()).find(Boolean) || '',
+      }
     }),
+  // 保留旧版单锁 API；释放它时不能清掉生成租约或页面实例持有的其他锁。
+  setWorkspaceSwitchLock: (locked, reason = '') =>
+    get().setWorkspaceSwitchLockSource(LEGACY_WORKSPACE_SWITCH_LOCK_SOURCE, locked, reason),
 
   openMemberCenter: () => set({ memberCenterOpen: true }),
   closeMemberCenter: () => set({ memberCenterOpen: false }),
@@ -199,9 +230,11 @@ export const useUiStore = create<UiState>((set, get) => ({
 }))
 
 // ---- 便捷取值（在非组件上下文中直接调用）-----------------------------------
+/** 在 React 组件外直接显示全局 Toast。 */
 export const showToast = (message: string, type?: ToastType, duration?: number) =>
   useUiStore.getState().showToast(message, type, duration)
 
+/** 在 React 组件外直接发起全局确认/输入对话框。 */
 export const requestConfirm = (message: string, options?: ConfirmOptions) =>
   useUiStore.getState().requestConfirm(message, options)
 
@@ -210,5 +243,7 @@ export const openComingSoon = () => useUiStore.getState().openComingSoon()
 
 /** 弹出全局「会员中心」弹窗(含积分充值;任意上下文可调用)。 */
 export const openMemberCenter = () => useUiStore.getState().openMemberCenter()
+/** 打开团队管理弹窗，并可指定初始标签。 */
 export const openTeamManage = (tab?: 'members' | 'data') => useUiStore.getState().openTeamManage(tab)
+/** 打开加入团队弹窗。 */
 export const openJoinTeam = () => useUiStore.getState().openJoinTeam()

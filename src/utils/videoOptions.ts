@@ -4,14 +4,17 @@
  */
 import { parseParamsSchema } from './modelSchema.js'
 
+/** Seedance 模型允许的画面比例。 */
 export const SEEDANCE_RATIO_OPTIONS = ['9:16', '3:4', '1:1', '4:3', '16:9', '21:9']
 // 入口/图片对话的比例选项(SmartEntry、ImageChat 共用,顺序与 Seedance 列表不同,单独维护)
 export const ENTRY_RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
 
+/** 将入口图片比例限制在支持列表内，非法值回退竖屏。 */
 export function normalizeImageRatio(ratio) {
   return ['9:16', '3:4', '1:1', '4:3', '16:9', '21:9'].includes(ratio) ? ratio : '9:16'
 }
 
+/** 将 Seedance 视频比例限制在模型支持列表内。 */
 export function normalizeSeedanceRatio(ratio) {
   if (SEEDANCE_RATIO_OPTIONS.includes(ratio)) {
     return ratio
@@ -20,6 +23,7 @@ export function normalizeSeedanceRatio(ratio) {
   return '9:16'
 }
 
+/** 将 Seedance 时长规范化为支持的秒数。 */
 export function normalizeSeedanceDuration(duration) {
   const seconds = Number.parseInt(String(duration || ''), 10)
 
@@ -30,6 +34,7 @@ export function normalizeSeedanceDuration(duration) {
   return Math.min(Math.max(seconds, 1), 15)
 }
 
+/** 从模型参数 schema 中读取指定字段的可选值。 */
 export function getModelParamOptions(model, paramName) {
   const schema = parseParamsSchema(model?.params_schema ?? model?.paramsSchema)
   const fields = Array.isArray(schema?.fields) ? schema.fields : []

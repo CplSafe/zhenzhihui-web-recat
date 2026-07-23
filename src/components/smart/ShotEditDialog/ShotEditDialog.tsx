@@ -7,11 +7,12 @@
  *  - 「生成分镜」点击即关闭弹框,生成在后台进行(分镜列表对应镜头显示「生成中」,出图后自动回填);
  *    失败由全局 toast 提示,不再阻塞弹框。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useToast } from '@/composables/useToast'
 import styles from './ShotEditDialog.module.less'
 
+/** 分镜弹窗模式与上传、润色、生成、关闭异步回调。 */
 export interface ShotEditDialogProps {
   open: boolean
   /** edit=编辑现有分镜;insert=新增/插入分镜 */
@@ -25,6 +26,9 @@ export interface ShotEditDialogProps {
   onClose: () => void
 }
 
+/**
+ * 收集单镜修改描述和参考素材；通过生命周期序号阻止弹窗关闭后旧上传/润色结果回写新会话。
+ */
 export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGenerate, onClose }: ShotEditDialogProps) {
   const { showToast } = useToast()
   const [text, setText] = useState('')
@@ -32,37 +36,80 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
   const [polishing, setPolishing] = useState(false)
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const lifecycleRef = useRef(0)
+  const openRef = useRef(open)
+  const polishingRef = useRef(false)
+  const uploadingRef = useRef(false)
+  const generatingRef = useRef(false)
+  openRef.current = open
+
+  const closeDialog = useCallback(() => {
+    lifecycleRef.current += 1
+    openRef.current = false
+    polishingRef.current = false
+    uploadingRef.current = false
+    onClose()
+  }, [onClose])
 
   // 每次打开重置输入(编辑/插入都从空描述开始,placeholder 提示)
   useEffect(() => {
+    lifecycleRef.current += 1
+    polishingRef.current = false
+    uploadingRef.current = false
+    generatingRef.current = false
     if (open) {
       setText('')
       setUploads([])
       setPolishing(false)
       setUploading(false)
     }
+    return () => {
+      lifecycleRef.current += 1
+    }
   }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeDialog()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [closeDialog, open])
 
   if (!open) return null
 
   const canGenerate = (text.trim().length > 0 || uploads.length > 0) && !uploading
+  const isCurrentSession = (scope: number) => openRef.current && lifecycleRef.current === scope
 
+  // 文件串行上传以保持用户选择顺序，并在弹窗关闭或重开后停止接收旧会话结果。
   const pickFiles = async (files: FileList | null) => {
-    if (!files?.length || !onUpload) return
+    if (!files?.length || !onUpload || uploadingRef.current) return
+    const scope = lifecycleRef.current
+    uploadingRef.current = true
     setUploading(true)
     try {
       for (const f of Array.from(files)) {
+        if (!isCurrentSession(scope)) break
         const r = await onUpload(f).catch(() => null)
+        if (!isCurrentSession(scope)) break
         if (r?.url) setUploads((prev) => [...prev, { url: r.url, assetId: r.assetId }])
         else showToast('素材上传失败,请重试', 'error')
       }
     } finally {
-      setUploading(false)
+      if (isCurrentSession(scope)) {
+        uploadingRef.current = false
+        setUploading(false)
+      }
     }
   }
 
   const doPolish = async () => {
-    if (!onPolish || !text.trim() || polishing) return
+    if (!onPolish || !text.trim() || polishingRef.current) return
+    const scope = lifecycleRef.current
+    polishingRef.current = true
     setPolishing(true)
     try {
       // 带上本次上传的素材图 → 润色时 VL 读图理解诉求(如「把产品换成这张图里的」)
@@ -70,33 +117,42 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
         text,
         uploads.map((u) => u.url),
       )
-      if (out) setText(out)
+      if (out && isCurrentSession(scope)) setText(out)
     } catch (e: any) {
-      showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')
+      if (isCurrentSession(scope)) showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')
     } finally {
-      setPolishing(false)
+      if (isCurrentSession(scope)) {
+        polishingRef.current = false
+        setPolishing(false)
+      }
     }
   }
 
   const doGenerate = () => {
-    if (!canGenerate) return
+    if (!canGenerate || generatingRef.current) return
+    generatingRef.current = true
     // 触发生成后立即关闭弹框:生成在后台进行,分镜列表对应镜头显示「生成中」,出图后自动回填。
     void onGenerate(
       text.trim(),
       uploads.map((u) => u.url),
     )
-    onClose()
+    closeDialog()
   }
 
   return createPortal(
     <div
       className={styles.mask}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
+        if (e.target === e.currentTarget) closeDialog()
       }}
     >
-      <div className={styles.dlg} role="dialog" aria-label={mode === 'insert' ? '新增分镜' : '编辑分镜'}>
-        <button type="button" className={styles.x} onClick={onClose} aria-label="关闭">
+      <div
+        className={styles.dlg}
+        role="dialog"
+        aria-modal="true"
+        aria-label={mode === 'insert' ? '新增分镜' : '编辑分镜'}
+      >
+        <button type="button" className={styles.x} onClick={closeDialog} aria-label="关闭">
           ×
         </button>
 
@@ -107,6 +163,7 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
         <textarea
           className={styles.input}
           value={text}
+          aria-label="分镜描述"
           placeholder="输入你的分镜图片修改描述…"
           autoFocus
           onChange={(e) => setText(e.target.value)}
@@ -165,6 +222,7 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
               accept="image/*"
               multiple
               hidden
+              aria-label="上传素材文件"
               onChange={(e) => {
                 pickFiles(e.target.files)
                 e.target.value = ''

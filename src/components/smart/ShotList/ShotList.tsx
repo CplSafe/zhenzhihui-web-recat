@@ -5,7 +5,7 @@
  * 整卡可上下拖拽排序(@dnd-kit;激活距离避免与点击选中冲突,锁定态禁用拖拽)。
  * 受控:shots + selectedId + onSelect;整列变更经 onShotsChange(由父级保存)。
  */
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
@@ -14,6 +14,7 @@ import type { Shot } from '../ScriptStoryboardTable'
 import AiBadge from '@/components/common/AiBadge'
 import styles from './ShotList.module.less'
 
+/** 分镜列表受控数据、拖拽/选择行为及生成、重试、删除等扩展能力。 */
 interface ShotListProps {
   /** 额外类名:父组件控制布局(如 VideoStage 收窄列宽) */
   className?: string
@@ -41,6 +42,9 @@ interface ShotListProps {
   /** 缩略图加载失败/成功(用于「图未加载成功不能生成视频」) */
   onImgError?: (id: string | number) => void
   onImgLoad?: (id: string | number) => void
+  onImgRetrying?: (id: string | number) => void
+  /** 递增某镜头令牌可显式开始一轮新的有限图片加载重试。 */
+  imageRetryTokens?: Record<string | number, number>
   /** 删除分镜时，优先走外部「丢入垃圾桶」逻辑 */
   onDeleteShot?: (shot: Shot, index: number) => void | Promise<void>
   /** 是否显示右上角更多菜单 */
@@ -49,9 +53,72 @@ interface ShotListProps {
   deleteButtonPlacement?: 'meta' | 'cardTopRight' | 'betweenMetaAndThumb' | 'thumbOverlay'
 }
 
+/** 分镜图任务刚成功但 CDN 尚未可读时采用的有限退避间隔。 */
+export const SHOT_IMAGE_RETRY_DELAYS_MS = [350, 900, 1800] as const
+
+/**
+ * 生成任务刚进入成功终态时，分镜资产可能短暂收到 CDN 不可用响应。
+ * 在向工作流报告真实加载失败前，用同一持久地址有限重试几次。
+ */
+export function RetryableShotImage({
+  src,
+  alt,
+  onLoad,
+  onFinalError,
+  onRetrying,
+}: {
+  src: string
+  alt: string
+  onLoad?: () => void
+  onFinalError?: () => void
+  onRetrying?: () => void
+}) {
+  const [retryAttempt, setRetryAttempt] = useState(0)
+  const retryTimerRef = useRef(0)
+  const finalErrorReportedRef = useRef(false)
+
+  useEffect(
+    () => () => {
+      if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current)
+    },
+    [],
+  )
+
+  return (
+    <img
+      key={`${src}:${retryAttempt}`}
+      src={src}
+      alt={alt}
+      draggable={false}
+      data-load-attempt={retryAttempt}
+      onLoad={() => {
+        if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = 0
+        finalErrorReportedRef.current = false
+        onLoad?.()
+      }}
+      onError={() => {
+        if (retryTimerRef.current || finalErrorReportedRef.current) return
+        const delay = SHOT_IMAGE_RETRY_DELAYS_MS[retryAttempt]
+        if (delay == null) {
+          finalErrorReportedRef.current = true
+          onFinalError?.()
+          return
+        }
+        onRetrying?.()
+        retryTimerRef.current = window.setTimeout(() => {
+          retryTimerRef.current = 0
+          setRetryAttempt((attempt) => attempt + 1)
+        }, delay)
+      }}
+    />
+  )
+}
+
 // 新分镜 id 必须跨「刷新/重进」唯一:纯自增计数每次加载会归零,复制→刷新→再复制会和已持久化的
 // s_1 撞 id,破坏选中/拖拽/按 id 改删。用时间戳前缀 + 自增,保证全局唯一(对齐 ShotArrange 的 new_<ts>_…)。
 let uid = 0
+/** 结合时间戳与会话自增值生成复制/插入镜头的唯一 ID。 */
 const newId = () => `s_${Date.now().toString(36)}_${uid++}`
 
 // "5s" / "4" / "3.5s" → "4.0s"(保留一位小数,对齐 Figma)
@@ -60,9 +127,11 @@ function formatDur(d: string): string {
   if (!Number.isFinite(n) || n <= 0) return '5.0s'
   return `${n.toFixed(1)}s`
 }
+/** 拖拽、插入或删除后按数组顺序重排镜头编号。 */
 function renumber(list: Shot[]): Shot[] {
   return list.map((s, i) => ({ ...s, no: `镜头${i + 1}` }))
 }
+/** 创建待编辑/生成的新镜头占位。 */
 function blankShot(): Shot {
   // isNew:插入的新分镜 → 右侧面板显示「生成分镜」(带新描述全量重生成),出图后清除
   return { id: newId(), no: '镜头', duration: '5s', desc: '', subjects: [], isNew: true }
@@ -72,7 +141,6 @@ function blankShot(): Shot {
 interface SortableCardProps {
   shot: Shot
   index: number
-  total: number
   selectedId: string | number | null
   generating: Record<string | number, boolean>
   globalGenerating: boolean
@@ -93,15 +161,18 @@ interface SortableCardProps {
   onPreview?: (url: string) => void
   onImgError?: (id: string | number) => void
   onImgLoad?: (id: string | number) => void
+  onImgRetrying?: (id: string | number) => void
+  imageRetryToken: number
   onDeleteShot?: (shot: Shot, index: number) => void | Promise<void>
   showMoreMenu: boolean
   deleteButtonPlacement: 'meta' | 'cardTopRight' | 'betweenMetaAndThumb' | 'thumbOverlay'
+  onHoverChange: (index: number | null) => void
 }
 
+/** 每个分镜卡片独立连接 dnd-kit，同时处理选中、预览、生成态和操作菜单。 */
 function SortableCard({
   shot: s,
   index: i,
-  total,
   selectedId,
   generating,
   globalGenerating,
@@ -122,9 +193,12 @@ function SortableCard({
   onPreview,
   onImgError,
   onImgLoad,
+  onImgRetrying,
+  imageRetryToken,
   onDeleteShot,
   showMoreMenu,
   deleteButtonPlacement,
+  onHoverChange,
 }: SortableCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: s.id,
@@ -142,6 +216,8 @@ function SortableCard({
       className={`${styles.card}${s.id === selectedId ? ' ' + styles.active : ''}${
         locked && includeOf && !included ? ' ' + styles.excluded : ''
       }${isDragging ? ' ' + styles.dragging : ''}`}
+      onMouseEnter={() => onHoverChange(i)}
+      onMouseLeave={() => onHoverChange(null)}
       onClick={() => onSelect(s.id)}
       {...attributes}
       {...listeners}
@@ -228,12 +304,13 @@ function SortableCard({
         >
           {thumb ? (
             <>
-              <img
+              <RetryableShotImage
+                key={`${thumb}:${imageRetryToken}`}
                 src={thumb}
-                alt=""
-                draggable={false}
-                onError={() => onImgError?.(s.id)}
+                alt={`${s.no || `镜头${i + 1}`}分镜图`}
+                onFinalError={() => onImgError?.(s.id)}
                 onLoad={() => onImgLoad?.(s.id)}
+                onRetrying={() => onImgRetrying?.(s.id)}
               />
               <AiBadge />
             </>
@@ -370,29 +447,11 @@ function SortableCard({
           )}
         </div>
       )}
-
-      {/* 两个分镜之间的小加号:点击在此处插入新分镜(hover 显示) */}
-      {!locked && i < total - 1 && (
-        <button
-          type="button"
-          className={styles.insert}
-          title="在此插入分镜"
-          aria-label="在此插入分镜"
-          // 拖拽监听在卡片根上,阻止 pointerdown 冒泡避免按加号时误触发拖拽
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (onInsertShot) onInsertShot(i + 1)
-            else insertAt(i + 1)
-          }}
-        >
-          +
-        </button>
-      )}
     </div>
   )
 }
 
+/** 渲染纵向可排序镜头列表，并把排序、复制、插入和删除后的完整数组交还父级保存。 */
 export default function ShotList({
   className,
   shots,
@@ -410,12 +469,17 @@ export default function ShotList({
   onPreview,
   onImgError,
   onImgLoad,
+  onImgRetrying,
+  imageRetryTokens = {},
   onDeleteShot,
   showMoreMenu = true,
   deleteButtonPlacement = 'meta',
 }: ShotListProps) {
   const [menuId, setMenuId] = useState<string | number | null>(null)
   const menuWrapRef = useRef<HTMLDivElement>(null)
+  // hover 只影响相邻的插入按钮；用 ref 切换样式，避免鼠标移动时重渲染整张分镜表。
+  const hoveredIndexRef = useRef<number | null>(null)
+  const insertButtonRefs = useRef(new Map<number, HTMLButtonElement>())
 
   // 激活距离 6px:轻点 = 选中,拖动 = 排序,二者互不干扰
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
@@ -462,6 +526,47 @@ export default function ShotList({
     if (from < 0 || to < 0) return
     commit(arrayMove(shots, from, to))
   }
+  const requestInsertAt = (index: number) => {
+    if (onInsertShot) onInsertShot(index)
+    else insertAt(index)
+  }
+  const setInsertVisible = (index: number, visible: boolean) => {
+    insertButtonRefs.current.get(index)?.classList.toggle(styles.insertVisible, visible)
+  }
+  const handleHoverChange = (index: number | null) => {
+    const previous = hoveredIndexRef.current
+    if (previous != null) {
+      setInsertVisible(previous, false)
+      setInsertVisible(previous + 1, false)
+    }
+    hoveredIndexRef.current = index
+    if (index != null) {
+      setInsertVisible(index, true)
+      setInsertVisible(index + 1, true)
+    }
+  }
+  const insertSlot = (index: number, label: string) =>
+    locked ? null : (
+      <div className={styles.insertSlot}>
+        <button
+          ref={(node) => {
+            if (node) insertButtonRefs.current.set(index, node)
+            else insertButtonRefs.current.delete(index)
+          }}
+          type="button"
+          className={styles.insert}
+          title={label}
+          aria-label={label}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            requestInsertAt(index)
+          }}
+        >
+          +
+        </button>
+      </div>
+    )
 
   return (
     <div className={`${styles.shotlist}${className ? ' ' + className : ''}`}>
@@ -479,35 +584,40 @@ export default function ShotList({
         >
           <SortableContext items={shots.map((s) => s.id)} strategy={verticalListSortingStrategy}>
             {shots.map((s, i) => (
-              <SortableCard
-                key={s.id}
-                shot={s}
-                index={i}
-                total={shots.length}
-                selectedId={selectedId}
-                generating={generating}
-                globalGenerating={globalGenerating}
-                badgeOf={badgeOf}
-                locked={locked}
-                dragEnabled={dragEnabled}
-                includeOf={includeOf}
-                onToggleInclude={onToggleInclude}
-                onSelect={onSelect}
-                menuId={menuId}
-                setMenuId={setMenuId}
-                menuWrapRef={menuWrapRef}
-                insertAt={insertAt}
-                duplicate={duplicate}
-                remove={remove}
-                onEditShot={onEditShot}
-                onInsertShot={onInsertShot}
-                onPreview={onPreview}
-                onImgError={onImgError}
-                onImgLoad={onImgLoad}
-                onDeleteShot={onDeleteShot}
-                showMoreMenu={showMoreMenu}
-                deleteButtonPlacement={deleteButtonPlacement}
-              />
+              <Fragment key={s.id}>
+                {i === 0 && insertSlot(0, `在${s.no || '第一张分镜'}前插入分镜`)}
+                <SortableCard
+                  shot={s}
+                  index={i}
+                  selectedId={selectedId}
+                  generating={generating}
+                  globalGenerating={globalGenerating}
+                  badgeOf={badgeOf}
+                  locked={locked}
+                  dragEnabled={dragEnabled}
+                  includeOf={includeOf}
+                  onToggleInclude={onToggleInclude}
+                  onSelect={onSelect}
+                  menuId={menuId}
+                  setMenuId={setMenuId}
+                  menuWrapRef={menuWrapRef}
+                  insertAt={insertAt}
+                  duplicate={duplicate}
+                  remove={remove}
+                  onEditShot={onEditShot}
+                  onInsertShot={onInsertShot}
+                  onPreview={onPreview}
+                  onImgError={onImgError}
+                  onImgLoad={onImgLoad}
+                  onImgRetrying={onImgRetrying}
+                  imageRetryToken={Number(imageRetryTokens[s.id] || 0)}
+                  onDeleteShot={onDeleteShot}
+                  showMoreMenu={showMoreMenu}
+                  deleteButtonPlacement={deleteButtonPlacement}
+                  onHoverChange={handleHoverChange}
+                />
+                {insertSlot(i + 1, `在${s.no || `第${i + 1}张分镜`}后插入分镜`)}
+              </Fragment>
             ))}
           </SortableContext>
         </DndContext>

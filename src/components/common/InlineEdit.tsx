@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import './InlineEdit.css'
 
+/** 行内编辑器的受控值、提交方式和输入约束。 */
 interface InlineEditProps {
   value: string
   onCommit: (next: string) => void
@@ -21,6 +22,7 @@ interface InlineEditProps {
   trigger?: 'click' | 'dblclick'
 }
 
+/** 在展示态与输入态之间切换，并把确认后的新值一次性交给父组件持久化。 */
 export default function InlineEdit({
   value,
   onCommit,
@@ -52,6 +54,11 @@ export default function InlineEdit({
         className={`ie ie-display ${className}`}
         onClick={trigger === 'click' ? start : undefined}
         onDoubleClick={trigger === 'dblclick' ? start : undefined}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          start()
+        }}
         title={editable ? (trigger === 'click' ? '点击修改' : '双击修改') : undefined}
         role={editable ? 'button' : undefined}
         tabIndex={editable ? 0 : undefined}

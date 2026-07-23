@@ -3,23 +3,48 @@ import react from '@vitejs/plugin-react'
 import path from 'node:path'
 import type { ProxyOptions } from 'vite'
 import type { IncomingMessage } from 'node:http'
+import { resolveProxyTarget } from './src/build/proxyTarget'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const businessTarget = env.VITE_ZZH_REMOTE_ORIGIN || 'http://localhost:9000'
-  const deepAuthTarget = env.VITE_DEEPAUTH_REMOTE_ORIGIN || 'http://localhost:8080'
-  const ssoTarget = env.VITE_SSO_REMOTE_ORIGIN || 'http://localhost:8001'
-  // AI 润色/文本:本地部署的 vLLM(OpenAI 兼容)模型,后端就绪后改 VITE_AI_MODEL_ORIGIN 即可
-  const aiModelTarget = env.VITE_AI_MODEL_ORIGIN || 'http://172.10.0.102:8001'
+  // Proxy destinations are Node-only configuration. Prefer the unprefixed
+  // names; legacy VITE_* aliases remain accepted so existing local env files
+  // keep working without exposing those values to browser code.
+  const businessOrigin = env.ZZH_REMOTE_ORIGIN || env.VITE_ZZH_REMOTE_ORIGIN
+  const deepAuthOrigin = env.DEEPAUTH_REMOTE_ORIGIN || env.VITE_DEEPAUTH_REMOTE_ORIGIN
+  const ssoOrigin = env.SSO_REMOTE_ORIGIN || env.VITE_SSO_REMOTE_ORIGIN
+  const businessTarget = resolveProxyTarget(businessOrigin, 'http://localhost:9000', 'ZZH_REMOTE_ORIGIN')
+  const deepAuthTarget = resolveProxyTarget(deepAuthOrigin, 'http://localhost:8080', 'DEEPAUTH_REMOTE_ORIGIN')
+  const ssoTarget = resolveProxyTarget(ssoOrigin, 'http://localhost:8001', 'SSO_REMOTE_ORIGIN')
+  // AI 润色/文本:本地部署的 vLLM(OpenAI 兼容)模型,后端就绪后改 AI_MODEL_ORIGIN 即可
+  const aiModelTarget = resolveProxyTarget(
+    env.AI_MODEL_ORIGIN || env.VITE_AI_MODEL_ORIGIN,
+    'http://172.10.0.102:8001',
+    'AI_MODEL_ORIGIN',
+  )
   // AI 视觉(图片解析):专用 VL 模型(Qwen3-VL),用于素材分析/智能预填/带图脚本
-  const aiVlTarget = env.VITE_AI_VL_ORIGIN || 'http://172.10.0.102:8003'
+  const aiVlTarget = resolveProxyTarget(
+    env.AI_VL_ORIGIN || env.VITE_AI_VL_ORIGIN,
+    'http://172.10.0.102:8003',
+    'AI_VL_ORIGIN',
+  )
   // AI 图片生成(Qwen-Image),用于「AI 自动生成」素材/分镜图
-  const aiImgTarget = env.VITE_AI_IMG_ORIGIN || 'http://172.10.0.102:8004'
+  const aiImgTarget = resolveProxyTarget(
+    env.AI_IMG_ORIGIN || env.VITE_AI_IMG_ORIGIN,
+    'http://172.10.0.102:8004',
+    'AI_IMG_ORIGIN',
+  )
   const businessCallbackUrl = `${normalizeBaseUrl(businessTarget)}/auth/callback`
 
   return {
     plugins: [react()],
+    define: {
+      'import.meta.env.ZZH_DEV_PROXY_CONFIGURED': JSON.stringify(mode === 'test' || Boolean(businessOrigin)),
+    },
+    build: {
+      target: 'safari13',
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, 'src'),

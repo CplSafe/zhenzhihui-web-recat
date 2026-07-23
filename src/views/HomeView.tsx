@@ -1,18 +1,29 @@
 /**
- * 2.1 首页（自包含静态实现，纯前端占位数据，不接后端）。
- * 组合 <AppSidebar/> + 内容区：简洁顶栏 / 轮播 Banner / 快捷入口 / 标签切换 + 搜索 / 模板网格。
- * 导航跳转用 react-router useNavigate；已存在路由直接跳转，未实现的项 console 占位。
+ * 首页（/home）
+ *
+ * 页面职责：汇总产品入口和可复用内容，让用户从一个页面进入智能成片、爆款复制、模板案例与历史项目。
+ * 用户可见效果：
+ * - 顶部轮播优先展示后台 Banner，接口无数据时使用本地演示媒体兜底；视频播完后自动切换。
+ * - 快捷入口负责跳转到各创作流程，模板卡片支持预览、收藏和“做同款”。
+ * - 历史项目仅向已登录用户展示当前工作空间内、本人有权访问且已经生成视频的项目，并支持播放、下载和继续编辑。
+ * - 首次登录进入首页时展示一次新手引导；搜索框按当前标签过滤模板或历史项目。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { useWorkspaceId, useCurrentUser } from '@/stores/workspaceSession'
-import { openComingSoon } from '@/stores/ui'
 import { openGuide, isGuideSeen } from '@/stores/guide'
 import { useAuth } from '@/auth/AuthContext'
 import { resolveProjectPath } from '@/utils/projectRoute'
-import { listCreativeProjects, getAssetDownloadUrl } from '@/api/business'
+import {
+  isCreativeProjectRestrictedForUser,
+  normalizeArray,
+  resolveUserId,
+  toPlainObject,
+} from '@/utils/creativeDraftMetadata'
+import { getAssetDownloadUrl } from '@/api/business'
+import { listAllCreativeProjects } from '@/utils/businessPagination'
 import { listBanners, type Banner } from '@/api/banners'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { favoriteKeyOf, loadFavoriteKeys, toggleFavorite } from '@/utils/favoriteVideos'
@@ -29,6 +40,7 @@ import quick2 from '@/assets/home/quick-2.png'
 import quick3 from '@/assets/home/quick-3.png'
 import quick4 from '@/assets/home/quick-4.png'
 import VideoPreviewModal from '@/components/common/VideoPreviewModal'
+import { LazyMediaVideo, useMediaCardActivation } from '@/components/common/LazyMediaVideo'
 import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './HomeView.css'
 
@@ -36,26 +48,12 @@ import './HomeView.css'
 function projectTitle(p: any): string {
   return String(p?.title || p?.name || p?.project_name || '').trim() || '未命名项目'
 }
+/** 兼容不同项目接口字段并提取数值 id。 */
 function projectId(p: any): number {
   return Number(p?.id || p?.project_id || p?.projectId || 0)
 }
 
-/* 工具：JSON 解析 / 数组标准化 / 图片 URL 提取 */
-function toPlainObject(value: any): any {
-  if (!value) return null
-  if (typeof value === 'object') return value
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value)
-    } catch {
-      return null
-    }
-  }
-  return null
-}
-function normalizeArray(value: any): any[] {
-  return Array.isArray(value) ? value : []
-}
+/* 工具：图片 URL 提取 */
 function imgOf(value: any): string {
   if (typeof value === 'string') return value.trim()
   if (!value || typeof value !== 'object') return ''
@@ -109,6 +107,16 @@ function extractVideoInfo(p: any): { url: string; assetId: number } {
   return { url: '', assetId: 0 }
 }
 
+/** 首页历史只展示当前用户有权访问且已经生成视频的项目。 */
+export function filterHomeHistoryProjects(items: unknown, currentUserId: unknown): any[] {
+  const projects = Array.isArray(items) ? items : []
+  return projects.filter((project) => {
+    if (isCreativeProjectRestrictedForUser(project, currentUserId)) return false
+    const info = extractVideoInfo(project)
+    return Boolean(info.url || info.assetId)
+  })
+}
+
 /* 从草稿里提取视频比例 */
 function projectRatio(p: any): string {
   const draft = toPlainObject(p?.draft_json) || toPlainObject(p?.draftJson) || toPlainObject(p?.draft)
@@ -158,12 +166,71 @@ function bannerToSlide(b: Banner): Slide {
 }
 
 /* 轮播视频:成为焦点(active)时从头静音播放;播放结束 / 出错回调 onDone 切下一张,非焦点暂停 */
-function BannerVideo({ src, active, onDone }: { src: string; active: boolean; onDone: () => void }) {
+const HERO_VIDEO_ATTACH_TIMEOUT_MS = 1200
+
+/** 订阅系统“减少动态效果”偏好，供自动播放和轮播降级。 */
+function usePrefersReducedMotion(): boolean {
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(
+    () => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches),
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setPrefersReducedMotion(query.matches)
+    update()
+    if (query.addEventListener) {
+      query.addEventListener('change', update)
+      return () => query.removeEventListener('change', update)
+    }
+    query.addListener?.(update)
+    return () => query.removeListener?.(update)
+  }, [])
+
+  return prefersReducedMotion
+}
+
+/** 只让当前可见轮播视频播放，结束或失败后通知父级切换下一张。 */
+export function BannerVideo({
+  src,
+  active,
+  visible,
+  onDone,
+}: {
+  src: string
+  active: boolean
+  visible: boolean
+  onDone: () => void
+}) {
   const ref = useRef<HTMLVideoElement>(null)
+  const [sourceReady, setSourceReady] = useState(
+    () => typeof document === 'undefined' || document.readyState === 'complete',
+  )
+  const prefersReducedMotion = usePrefersReducedMotion()
+
+  useEffect(() => {
+    if (sourceReady) return
+    if (document.readyState === 'complete') {
+      setSourceReady(true)
+      return
+    }
+    const allowSource = () => setSourceReady(true)
+    const timeout = window.setTimeout(allowSource, HERO_VIDEO_ATTACH_TIMEOUT_MS)
+    window.addEventListener('load', allowSource, { once: true })
+    return () => {
+      window.clearTimeout(timeout)
+      window.removeEventListener('load', allowSource)
+    }
+  }, [sourceReady])
+
+  // 等页面主体加载完成后再挂载远程视频，避免 Banner 请求拖慢首次导航；
+  // 超时兜底可防止其他慢资源迟迟不触发 load，导致轮播一直空白。
+  const shouldAttachSource = sourceReady && visible
+  const shouldPlay = active && shouldAttachSource && !prefersReducedMotion
   useEffect(() => {
     const v = ref.current
     if (!v) return
-    if (active) {
+    if (shouldPlay) {
       try {
         v.currentTime = 0
       } catch {
@@ -173,30 +240,30 @@ function BannerVideo({ src, active, onDone }: { src: string; active: boolean; on
     } else {
       v.pause()
     }
-  }, [active])
+  }, [shouldPlay])
   return (
     <video
       ref={ref}
       className="home__bcard-video"
-      src={src}
+      src={shouldAttachSource ? src : undefined}
       muted
       playsInline
       /* 只让焦点视频整段缓冲,其余只取首帧,避免多路视频同时下载导致卡顿 */
-      preload={active ? 'auto' : 'metadata'}
-      autoPlay={active}
+      preload={shouldPlay ? 'auto' : shouldAttachSource ? 'metadata' : 'none'}
+      autoPlay={false}
       controls={false}
       disablePictureInPicture
       controlsList="nodownload nofullscreen noremoteplayback noplaybackrate"
       onContextMenu={(e) => e.preventDefault()}
       onLoadedData={(e) => {
-        if (active) (e.currentTarget as HTMLVideoElement).play().catch(() => {})
+        if (shouldPlay) (e.currentTarget as HTMLVideoElement).play().catch(() => {})
       }}
       onEnded={() => {
-        if (active) onDone()
+        if (active && !prefersReducedMotion) onDone()
       }}
       onError={() => {
-        console.warn('[banner] 视频加载失败:', src)
-        if (active) onDone()
+        console.warn('[banner] 视频加载失败', { active })
+        if (active && !prefersReducedMotion) onDone()
       }}
     />
   )
@@ -234,36 +301,18 @@ const QUICK_ENTRIES = [
   },
 ]
 
-import { type TemplateItem, listBackendTemplates } from '@/api/templates'
+import { type TemplateItem } from '@/api/templates'
 import { DEMO_TEMPLATES, DEMO_LANDSCAPE_URLS } from '@/data/demoTemplates'
+import { loadTemplateCatalog, type TemplateCatalogSource } from '@/utils/templateCatalog'
 
+/** 首页案例区可切换的模板和历史项目标签。 */
 const TABS = [
   { key: 'template', label: '模板库' },
   { key: 'history', label: '历史项目' },
   { key: 'ip', label: 'IP' },
 ] as const
 
-/* ratio 字符串 → grid 列跨度（12 列桌面 / 6 列移动端） */
-// 12 列瀑布流里每张卡占的列数(越小=卡越小、每行越多)。宽屏下原值偏大(每行只有 2~3 张、预览过大),
-// 整体下调一档:竖屏 2 列(每行 6 张)、方形 3 列、横屏 4 列。
-function ratioToSpan(r: string): number {
-  if (!r) return 3
-  const s = r.replace(/\s+/g, '')
-  switch (s) {
-    case '9/16':
-      return 2 // 竖屏窄卡
-    case '3/4':
-      return 2
-    case '4/5':
-      return 2
-    case '1/1':
-      return 3 // 方形中卡
-    case '16/9':
-      return 4 // 横屏宽卡
-    default:
-      return 3
-  }
-}
+const HOME_HISTORY_LIMIT = 20
 
 /* 历史视频卡片：素材市场风格（autoPlay 静音循环缩略图）+ URL 过期自动刷新 */
 function HistoryVideoCard({
@@ -283,30 +332,34 @@ function HistoryVideoCard({
 }) {
   const nav = useNavigate()
   const requireAuth = useRequireAuth()
-  const [freshUrl, setFreshUrl] = useState('')
+  const [freshMedia, setFreshMedia] = useState({ assetKey: '', url: '' })
   const [playingUrl, setPlayingUrl] = useState('')
   const [loadingUrl, setLoadingUrl] = useState(false)
-  const triedRef = useRef(false)
+  const attemptedAssetRef = useRef('')
   const refreshingRef = useRef(false)
+  const { active: mediaActive, activationProps } = useMediaCardActivation()
+  const assetKey = `${workspaceId}:${videoAssetId}`
+  const currentAssetKeyRef = useRef(assetKey)
+  currentAssetKeyRef.current = assetKey
 
-  // 卡片挂载时通过 assetId 获取实时签名 URL（静默，失败不报错）
-  useEffect(() => {
-    if (triedRef.current) return
+  // 进入可见区后再刷新签名地址，避免首屏为所有历史卡片逐个请求 URL。
+  const ensureFreshUrl = useCallback(() => {
     if (!videoAssetId || !workspaceId) {
-      if (videoUrl) setFreshUrl(videoUrl)
       return
     }
-    triedRef.current = true
+    if (attemptedAssetRef.current === assetKey) return
+    attemptedAssetRef.current = assetKey
+    setFreshMedia({ assetKey, url: '' })
     getAssetDownloadUrl({ workspaceId, assetId: videoAssetId })
       .then((url) => {
-        if (url) setFreshUrl(url)
+        if (url && currentAssetKeyRef.current === assetKey) setFreshMedia({ assetKey, url })
       })
       .catch(() => {
-        if (videoUrl) setFreshUrl(videoUrl)
+        if (videoUrl && currentAssetKeyRef.current === assetKey) setFreshMedia({ assetKey, url: videoUrl })
       })
-  }, [videoAssetId, workspaceId, videoUrl])
+  }, [assetKey, videoAssetId, workspaceId, videoUrl])
 
-  const displayUrl = freshUrl || videoUrl
+  const displayUrl = freshMedia.assetKey === assetKey ? freshMedia.url : !videoAssetId ? videoUrl : ''
 
   // 点击播放：通过 assetId 获取实时签名 URL，避免过期 403
   const handlePlay = async (e: React.MouseEvent) => {
@@ -344,7 +397,9 @@ function HistoryVideoCard({
   const handleHotCopy = (e: React.MouseEvent) => {
     e.stopPropagation()
     // 做同款:把该视频作为「源爆款视频」带入爆款复制页(url 用于预览,assetId 用于 replicate)
-    requireAuth(() => nav('/hot-copy', { state: { carryVideo: { url: displayUrl, assetId: videoAssetId || 0 } } }))
+    requireAuth(() =>
+      nav('/hot-copy', { state: { carryVideo: { url: displayUrl || videoUrl, assetId: videoAssetId || 0 } } }),
+    )
   }
 
   const handleDownload = async (e: React.MouseEvent) => {
@@ -368,26 +423,28 @@ function HistoryVideoCard({
     <>
       <div
         className="home__proj"
-        style={{ gridColumn: `span ${ratioToSpan(ratio)}` }}
         role="button"
         tabIndex={0}
+        {...activationProps}
         onClick={onOpen}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') onOpen()
+          if (e.target !== e.currentTarget) return
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onOpen()
+          }
         }}
       >
         <div className="home__proj-thumb" style={{ aspectRatio: ratio || '9 / 16' }}>
           <span className="home__proj-thumb-ph">🎬</span>
           {/* 视频（assetId 刷新后的有效 URL 或草稿原始 URL） */}
-          {displayUrl && (
-            <video
+          {(videoAssetId > 0 || Boolean(videoUrl)) && (
+            <LazyMediaVideo
+              key={assetKey}
               className="home__proj-video"
               src={displayUrl}
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="auto"
+              active={mediaActive}
+              onVisible={ensureFreshUrl}
               style={{ position: 'absolute', inset: 0, zIndex: 0 }}
               onError={(e) => {
                 ;(e.currentTarget as HTMLVideoElement).style.display = 'none'
@@ -421,11 +478,6 @@ function HistoryVideoCard({
             </div>
           </div>
         </div>
-        <div className="home__proj-title">
-          <span className="home__proj-title-text" title={title}>
-            {title}
-          </span>
-        </div>
       </div>
 
       {/* 全屏视频播放弹窗。不带 crossOrigin:playingUrl 在 HEAD 探测成功时可能是外链 OSS(无 CORS 头),
@@ -435,12 +487,118 @@ function HistoryVideoCard({
   )
 }
 
+/** 首页模板媒体卡的展示数据与操作回调。 */
+interface TemplateVideoCardProps {
+  tpl: TemplateItem
+  favorite: boolean
+  onPreview: (url: string, poster: string) => void
+  onToggleFavorite: (tpl: TemplateItem) => void
+  onUseTemplate: (tpl: TemplateItem) => void
+}
+
+/** 首页模板卡：媒体进入视口/获得交互焦点后才激活视频，并把预览、收藏、做同款交给页面统一处理。 */
+const TemplateVideoCard = memo(function TemplateVideoCard({
+  tpl,
+  favorite,
+  onPreview,
+  onToggleFavorite,
+  onUseTemplate,
+}: TemplateVideoCardProps) {
+  const { active, activationProps } = useMediaCardActivation()
+  const canPreview = Boolean(tpl.videoUrl)
+
+  return (
+    <div className="home__tpl" {...activationProps}>
+      <div
+        className={`home__tpl-thumb${tpl.videoUrl || tpl.thumbnailUrl ? ' has-image' : ''}`}
+        style={{
+          aspectRatio: tpl.ratio,
+          background: tpl.grad,
+          cursor: canPreview ? 'zoom-in' : '',
+        }}
+        role={canPreview ? 'button' : undefined}
+        tabIndex={canPreview ? 0 : undefined}
+        aria-label={canPreview ? `预览${tpl.title || '案例视频'}` : undefined}
+        title={canPreview ? '点击放大预览' : undefined}
+        onClick={() => {
+          if (tpl.videoUrl) onPreview(tpl.videoUrl, tpl.thumbnailUrl || '')
+        }}
+        onKeyDown={(event) => {
+          if (!canPreview || event.target !== event.currentTarget) return
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onPreview(tpl.videoUrl, tpl.thumbnailUrl || '')
+          }
+        }}
+      >
+        {tpl.videoUrl ? (
+          <LazyMediaVideo
+            className="home__tpl-video"
+            src={tpl.videoUrl}
+            poster={tpl.thumbnailUrl || undefined}
+            active={active}
+            onLoadedMetadata={(event) => {
+              const video = event.currentTarget
+              if (video.videoWidth && video.videoHeight) {
+                const thumb = video.closest('.home__tpl-thumb') as HTMLElement | null
+                if (thumb) thumb.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`
+              }
+            }}
+            onError={(event) => {
+              event.currentTarget.style.display = 'none'
+            }}
+          />
+        ) : tpl.thumbnailUrl ? (
+          <img src={tpl.thumbnailUrl} alt={tpl.title} loading="lazy" className="home__tpl-img" />
+        ) : (
+          <span className="home__tpl-media" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none">
+              <circle cx="12" cy="12" r="11" fill="rgba(255,255,255,0.55)" />
+              <path d="M10 8.5l6 3.5-6 3.5z" fill="#fff" />
+            </svg>
+          </span>
+        )}
+        {tpl.videoUrl ? (
+          <button
+            type="button"
+            className={`home__tpl-fav${favorite ? ' is-on' : ''}`}
+            aria-label={favorite ? '取消收藏' : '收藏'}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleFavorite(tpl)
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+            </svg>
+          </button>
+        ) : null}
+        <div className="home__tpl-mask">
+          <button
+            type="button"
+            className="home__tpl-action"
+            onClick={(event) => {
+              event.stopPropagation()
+              onUseTemplate(tpl)
+            }}
+          >
+            做同款
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+})
+
+/** 组合轮播、快捷创作、模板案例和当前空间历史项目的首页。 */
 export default function HomeView() {
   const navigate = useNavigate()
   const workspaceId = useWorkspaceId()
   const requireAuth = useRequireAuth()
+  const prefersReducedMotion = usePrefersReducedMotion()
   const { isAuthenticated } = useAuth()
   const currentUser = useCurrentUser()
+  const currentUserId = resolveUserId(currentUser)
   const [bannerIndex, setBannerIndex] = useState(0)
   // 初始值从缓存秒出(有上次数据就不闪空),无缓存为 null 走占位兜底。
   const [apiBanners, setApiBanners] = useState<Banner[] | null>(() => peekCache<Banner[]>(BANNERS_CACHE_KEY) ?? null)
@@ -468,50 +626,65 @@ export default function HomeView() {
   const [templateItems, setTemplateItems] = useState<TemplateItem[]>(DEMO_TEMPLATES)
   const [templateLoading, setTemplateLoading] = useState(false)
   const [templateError, setTemplateError] = useState('')
-  const [templateRetry, setTemplateRetry] = useState(0)
+  const [templateSource, setTemplateSource] = useState<TemplateCatalogSource>('builtin')
+  const [templateNotice, setTemplateNotice] = useState('')
 
-  // 模板收藏(localStorage 占位):收藏的视频进素材市场「我收藏的」
+  // 模板收藏按工作空间保存到 localStorage；切换用户或工作空间时重新读取，避免收藏状态串用。
   const [favKeys, setFavKeys] = useState<Set<string>>(new Set())
   useEffect(() => {
     setFavKeys(loadFavoriteKeys(Number(workspaceId || 0)))
-  }, [workspaceId])
-  const toggleFav = (tpl: TemplateItem) => {
-    const wsId = Number(workspaceId || 0)
-    if (!wsId) return
-    const key = favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl)
-    const on = toggleFavorite(wsId, {
-      key,
-      title: tpl.title || '未命名视频',
-      videoUrl: tpl.videoUrl || '',
-      thumbnailUrl: tpl.thumbnailUrl || '',
-      ratio: tpl.ratio || '',
-      ts: Date.now(),
-    })
-    setFavKeys((prev) => {
-      const next = new Set(prev)
-      if (on) next.add(key)
-      else next.delete(key)
-      return next
-    })
-  }
+  }, [currentUserId, workspaceId])
+  const toggleFav = useCallback(
+    (tpl: TemplateItem) => {
+      const wsId = Number(workspaceId || 0)
+      if (!wsId) return
+      const key = favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl)
+      const on = toggleFavorite(wsId, {
+        key,
+        title: tpl.title || '未命名视频',
+        videoUrl: tpl.videoUrl || '',
+        thumbnailUrl: tpl.thumbnailUrl || '',
+        ratio: tpl.ratio || '',
+        ts: Date.now(),
+      })
+      setFavKeys((prev) => {
+        const next = new Set(prev)
+        if (on) next.add(key)
+        else next.delete(key)
+        return next
+      })
+    },
+    [workspaceId],
+  )
 
-  // 案例库拉后台配置的模板库(GET /api/v1/templates);为空/失败时用 demo 兜底。
-  // 免登录、不依赖工作空间(后端公开接口)。
+  const previewTemplate = useCallback((url: string, poster: string) => {
+    setWatching({ url, poster })
+  }, [])
+
+  // “做同款”属于需登录操作：游客先走统一登录拦截，登录用户携带源视频进入爆款复制。
+  const useTemplate = useCallback(
+    (tpl: TemplateItem) => {
+      requireAuth(() =>
+        navigate('/hot-copy', {
+          state: { carryVideo: { url: tpl.videoUrl || '', assetId: tpl.videoAssetId || 0 } },
+        }),
+      )
+    },
+    [navigate, requireAuth],
+  )
+
+  // 全应用共享一次远程探测；端点未开放时稳定展示并标注内置模板。
   useEffect(() => {
     if (activeTab !== 'template') return
     let cancelled = false
     setTemplateLoading(true)
-    listBackendTemplates()
-      .then((items) => {
+    loadTemplateCatalog()
+      .then((catalog) => {
         if (cancelled) return
-        const list = items.length ? items : DEMO_TEMPLATES
-        setTemplateItems(list)
-        setTemplateError(list.length ? '' : 'empty')
-      })
-      .catch(() => {
-        if (cancelled) return
-        setTemplateItems(DEMO_TEMPLATES)
-        setTemplateError(DEMO_TEMPLATES.length ? '' : 'empty')
+        setTemplateItems(catalog.items)
+        setTemplateSource(catalog.source)
+        setTemplateNotice(catalog.notice)
+        setTemplateError(catalog.items.length ? '' : 'empty')
       })
       .finally(() => {
         if (!cancelled) setTemplateLoading(false)
@@ -519,7 +692,7 @@ export default function HomeView() {
     return () => {
       cancelled = true
     }
-  }, [activeTab, templateRetry])
+  }, [activeTab])
 
   const keywordTrim = keyword.trim()
 
@@ -545,17 +718,13 @@ export default function HomeView() {
     let cancelled = false
     setHistoryLoading(true)
     setHistoryError('')
-    listCreativeProjects({ workspaceId: wsId, limit: 50 })
+    listAllCreativeProjects({
+      workspaceId: wsId,
+      isCurrent: () => !cancelled,
+    })
       .then((items: any) => {
         if (!cancelled) {
-          const list = Array.isArray(items) ? items : []
-          // 仅保留有生成视频的项目（有 url 或 assetId 即为有效）
-          setHistoryItems(
-            list.filter((p: any) => {
-              const info = extractVideoInfo(p)
-              return Boolean(info.url || info.assetId)
-            }),
-          )
+          setHistoryItems(filterHomeHistoryProjects(items, currentUserId))
         }
       })
       .catch((err: any) => {
@@ -573,12 +742,14 @@ export default function HomeView() {
     return () => {
       cancelled = true
     }
-  }, [activeTab, workspaceId, isAuthenticated])
+  }, [activeTab, workspaceId, isAuthenticated, currentUserId])
 
+  // 历史项目已经在请求完成时做过权限和“已生成视频”过滤，这里只负责当前搜索词过滤。
   const filteredHistory = useMemo(() => {
     if (!keywordTrim) return historyItems
     return historyItems.filter((p) => projectTitle(p).includes(keywordTrim))
   }, [historyItems, keywordTrim])
+  const visibleHistory = filteredHistory.slice(0, HOME_HISTORY_LIMIT)
 
   const handleNavigate = useSidebarNavigate()
 
@@ -625,7 +796,18 @@ export default function HomeView() {
     const targets: MediaItem[] = [slides[nextIdx], slides[prevIdx]]
       .filter((s) => s && s.mediaUrl)
       .map((s) => ({ url: s.mediaUrl, type: s.mediaType }))
-    preloadMedia(targets)
+    let timer = 0
+    const startPreload = () => {
+      timer = window.setTimeout(() => {
+        void preloadMedia(targets)
+      }, 0)
+    }
+    if (document.readyState === 'complete') startPreload()
+    else window.addEventListener('load', startPreload, { once: true })
+    return () => {
+      window.removeEventListener('load', startPreload)
+      if (timer) window.clearTimeout(timer)
+    }
   }, [slides, bannerIndex])
 
   // 居中卡片式焦点轮播(自定义 coverflow,对 3 张最稳):左右箭头切换 + 自动播放,取模实现无缝循环
@@ -634,10 +816,11 @@ export default function HomeView() {
   // 自动切换:视频幻灯片由其播放结束(BannerVideo 的 onEnded)驱动,播完才切;图片幻灯片用 5 秒定时兜底。
   useEffect(() => {
     if (slides.length < 2) return
+    if (prefersReducedMotion) return
     if (slides[bannerIndex]?.mediaType === 'video') return
     const t = window.setTimeout(() => setBannerIndex((i) => (i + 1) % slides.length), 5000)
     return () => window.clearTimeout(t)
-  }, [slides, bannerIndex])
+  }, [slides, bannerIndex, prefersReducedMotion])
 
   return (
     <div className="home">
@@ -673,7 +856,12 @@ export default function HomeView() {
                       style={b.mediaType === 'image' ? { backgroundImage: `url(${b.mediaUrl})` } : undefined}
                     >
                       {b.mediaType === 'video' && (
-                        <BannerVideo src={b.mediaUrl} active={pos === 'center'} onDone={bannerNext} />
+                        <BannerVideo
+                          src={b.mediaUrl}
+                          active={pos === 'center'}
+                          visible={pos !== 'hidden'}
+                          onDone={bannerNext}
+                        />
                       )}
                       {/* 视频幻灯片只展示视频,不叠加文字层;图片占位仍带文案 */}
                       {b.mediaType !== 'video' && (
@@ -772,6 +960,11 @@ export default function HomeView() {
                   </button>
                 ))}
               </div>
+              {activeTab === 'template' && (
+                <span className={`home__template-source is-${templateSource}`} title={templateNotice || '来自模板服务'}>
+                  {templateSource === 'builtin' ? '内置模板' : '在线模板'}
+                </span>
+              )}
               <div className="home__search">
                 <svg
                   viewBox="0 0 24 24"
@@ -792,8 +985,8 @@ export default function HomeView() {
                   placeholder="搜索案例、项目、IP..."
                 />
               </div>
-              {/* 模板/历史 tab 均可查看更多 → 案例库 */}
-              {(activeTab === 'template' || activeTab === 'history') && (
+              {/* 模板库保留顶部入口；历史项目的“查看更多素材”放在列表末尾。 */}
+              {activeTab === 'template' && (
                 <div className="home__more">
                   <button type="button" className="home__more-btn" onClick={() => navigate('/templates')}>
                     查看更多 →
@@ -818,7 +1011,7 @@ export default function HomeView() {
                   <div className="home__placeholder">{historyError}</div>
                 ) : filteredHistory.length ? (
                   <div className="home__proj-waterfall">
-                    {filteredHistory.map((p) => {
+                    {visibleHistory.map((p) => {
                       const id = projectId(p)
                       const { url: videoUrl, assetId: videoAssetId } = extractVideoInfo(p)
                       const ratio = projectRatio(p)
@@ -835,6 +1028,20 @@ export default function HomeView() {
                         />
                       )
                     })}
+                    <button
+                      type="button"
+                      className="home__proj home__proj--more"
+                      onClick={() => navigate('/resources')}
+                      aria-label="查看更多素材，前往我的素材"
+                    >
+                      <span className="home__proj-thumb home__proj-thumb--more">
+                        <span className="home__proj-more-icon" aria-hidden="true">
+                          →
+                        </span>
+                        <span className="home__proj-more-text">查看更多素材</span>
+                        <span className="home__proj-more-hint">前往我的素材</span>
+                      </span>
+                    </button>
                   </div>
                 ) : (
                   <div className="home__placeholder">暂无生成视频</div>
@@ -858,98 +1065,20 @@ export default function HomeView() {
                     去登录
                   </button>
                 </div>
-              ) : templateError === 'api' ? (
-                <div className="home__placeholder">
-                  案例加载失败
-                  <button type="button" className="home__retry-btn" onClick={() => setTemplateRetry((n) => n + 1)}>
-                    重试
-                  </button>
-                </div>
               ) : templateError === 'empty' || !filteredTemplates.length ? (
                 <div className="home__placeholder">暂无案例数据</div>
               ) : (
                 <>
                   <div className="home__masonry">
                     {filteredTemplates.map((tpl, tplIdx) => (
-                      <div key={`${tpl.id}-${tplIdx}`} className="home__tpl">
-                        <div
-                          className={`home__tpl-thumb${tpl.videoUrl || tpl.thumbnailUrl ? ' has-image' : ''}`}
-                          style={{
-                            aspectRatio: tpl.ratio,
-                            background: tpl.grad,
-                            cursor: tpl.videoUrl ? 'zoom-in' : '',
-                          }}
-                          role={tpl.videoUrl ? 'button' : undefined}
-                          title={tpl.videoUrl ? '点击放大预览' : undefined}
-                          onClick={() => {
-                            if (tpl.videoUrl) setWatching({ url: tpl.videoUrl, poster: tpl.thumbnailUrl || '' })
-                          }}
-                        >
-                          {tpl.videoUrl ? (
-                            // 封面=视频本身(首帧/循环),与「历史项目」一致,不依赖会过期的封面图
-                            <video
-                              className="home__tpl-video"
-                              src={tpl.videoUrl}
-                              autoPlay
-                              muted
-                              loop
-                              playsInline
-                              preload="metadata"
-                              onLoadedMetadata={(e) => {
-                                // 卡片比例跟随视频真实宽高
-                                const v = e.currentTarget
-                                if (v.videoWidth && v.videoHeight) {
-                                  const thumb = v.closest('.home__tpl-thumb') as HTMLElement | null
-                                  if (thumb) thumb.style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`
-                                }
-                              }}
-                              onError={(e) => {
-                                ;(e.currentTarget as HTMLVideoElement).style.display = 'none'
-                              }}
-                            />
-                          ) : tpl.thumbnailUrl ? (
-                            <img src={tpl.thumbnailUrl} alt={tpl.title} loading="lazy" className="home__tpl-img" />
-                          ) : (
-                            <span className="home__tpl-media" aria-hidden="true">
-                              <svg viewBox="0 0 24 24" width="34" height="34" fill="none">
-                                <circle cx="12" cy="12" r="11" fill="rgba(255,255,255,0.55)" />
-                                <path d="M10 8.5l6 3.5-6 3.5z" fill="#fff" />
-                              </svg>
-                            </span>
-                          )}
-                          {tpl.videoUrl && (
-                            <button
-                              type="button"
-                              className={`home__tpl-fav${favKeys.has(favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl)) ? ' is-on' : ''}`}
-                              aria-label="收藏"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                toggleFav(tpl)
-                              }}
-                            >
-                              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                              </svg>
-                            </button>
-                          )}
-                          <div className="home__tpl-mask">
-                            <button
-                              type="button"
-                              className="home__tpl-action"
-                              onClick={(e) => {
-                                e.stopPropagation() // 不触发缩略图的放大预览
-                                requireAuth(() =>
-                                  navigate('/hot-copy', {
-                                    state: { carryVideo: { url: tpl.videoUrl || '', assetId: tpl.videoAssetId || 0 } },
-                                  }),
-                                )
-                              }}
-                            >
-                              做同款
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+                      <TemplateVideoCard
+                        key={`${tpl.id}-${tplIdx}`}
+                        tpl={tpl}
+                        favorite={favKeys.has(favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl))}
+                        onPreview={previewTemplate}
+                        onToggleFavorite={toggleFav}
+                        onUseTemplate={useTemplate}
+                      />
                     ))}
                   </div>
                 </>

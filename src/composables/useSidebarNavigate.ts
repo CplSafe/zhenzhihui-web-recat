@@ -17,6 +17,7 @@ const ROUTE_MAP: Record<string, string> = {
   templates: '/templates',
 }
 
+/** 返回侧边栏统一导航处理器，未开放入口改为展示全局提示。 */
 export function useSidebarNavigate() {
   const navigate = useNavigate()
   return useCallback(

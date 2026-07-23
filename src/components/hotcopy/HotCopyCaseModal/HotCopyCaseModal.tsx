@@ -4,16 +4,21 @@
  * 严格按图层还原:标题 + 说明 + 4 张「原视频/翻拍(复刻)视频」对照卡 + 输入素材缩略图。
  * 弹窗本身无交互(纯案例展示),故整卡作为一张图呈现;关闭走遮罩点击 / Esc / 右上角 ×。
  */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import remakeImg from '@/assets/hotcopy-cases/remake.jpg'
 import replicaImg from '@/assets/hotcopy-cases/replica.jpg'
 
+/** 当前展示的案例类型，对应“同款翻拍”和“精准复刻”两个入口。 */
 export type HotCopyCaseTab = 'remake' | 'replica'
 
+/** 在 Portal 中展示对应案例整图，并统一处理焦点、Esc、遮罩和关闭按钮。 */
 export default function HotCopyCaseModal({ tab, onClose }: { tab: HotCopyCaseTab | null; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     if (!tab) return
+    dialogRef.current?.focus()
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -37,6 +42,11 @@ export default function HotCopyCaseModal({ tab, onClose }: { tab: HotCopyCaseTab
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={tab === 'replica' ? '精准复刻案例' : '同款翻拍案例'}
+        tabIndex={-1}
         style={{
           position: 'relative',
           width: 'min(880px, 94vw)',

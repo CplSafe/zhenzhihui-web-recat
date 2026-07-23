@@ -4,6 +4,7 @@
  */
 export const MODEL_NOT_FOUND_CODE = 'MODEL_NOT_FOUND'
 
+/** 按操作类型、套餐候选与名称偏好选择最合适的可用模型。 */
 export function chooseModelCandidate(models, { operationCode = '', preferredKeywords = [] } = {}) {
   const availableModels = Array.isArray(models) ? models : []
   const enabledModels = availableModels.filter((model) => {
@@ -35,6 +36,7 @@ export function chooseModelCandidate(models, { operationCode = '', preferredKeyw
   return enabledModels[0] || availableModels.find((model) => model?.enabled) || availableModels[0] || null
 }
 
+/** 判断错误是否适合切换到下一模型候选继续尝试。 */
 export function isRetryableModelSelectionError(error) {
   if (!error) {
     return false
@@ -49,6 +51,7 @@ export function isRetryableModelSelectionError(error) {
   return /not available without an active subscription|not included in current plan/.test(message)
 }
 
+/** 在模型列表中查找匹配操作码和关键词偏好的模型。 */
 function findPreferredModel(models, preferredKeywords = []) {
   const keywords = preferredKeywords.map((keyword) => String(keyword || '').toLowerCase()).filter(Boolean)
 

@@ -6,6 +6,7 @@
  * 标准业务信封 { code, message, data }。
  */
 
+/** 容错读取响应 JSON，空响应或非 JSON 响应统一返回 null。 */
 async function readJson(res: Response): Promise<any> {
   try {
     return await res.json()
@@ -14,12 +15,14 @@ async function readJson(res: Response): Promise<any> {
   }
 }
 
+/** 可供用户选择的反馈类型。 */
 export interface FeedbackType {
   id: number
   name: string
   position: number
 }
 
+/** 读取已启用的反馈类型，接口不可用时降级为空列表。 */
 export async function listFeedbackTypes(): Promise<FeedbackType[]> {
   try {
     const res = await fetch('/api/v1/feedback-types', {
@@ -45,6 +48,7 @@ export async function listFeedbackTypes(): Promise<FeedbackType[]> {
   }
 }
 
+/** 提交反馈时的文本、联系方式与附件参数。 */
 export interface SubmitFeedbackInput {
   feedbackType: number
   content: string
@@ -52,6 +56,7 @@ export interface SubmitFeedbackInput {
   assetIds?: number[]
 }
 
+/** 提交一条用户反馈，HTTP 或业务码失败时抛出可展示错误。 */
 export async function submitFeedback(input: SubmitFeedbackInput): Promise<void> {
   const res = await fetch('/api/v1/feedback', {
     method: 'POST',
@@ -70,6 +75,7 @@ export async function submitFeedback(input: SubmitFeedbackInput): Promise<void> 
   }
 }
 
+/** “我的反馈”列表中的标准化记录。 */
 export interface FeedbackRecord {
   id: number
   feedbackType: number
@@ -80,6 +86,7 @@ export interface FeedbackRecord {
   assetIds: number[]
 }
 
+/** 分页读取当前用户的反馈历史，读取失败时返回空列表。 */
 export async function listMyFeedback({ limit = 20, offset = 0 } = {}): Promise<FeedbackRecord[]> {
   try {
     const q = new URLSearchParams({ limit: String(limit), offset: String(offset) })

@@ -35,8 +35,10 @@
  *     此时退化为仅建立连接/不报错,真正播放时仍按需加载(无副作用)。
  */
 
+/** 预加载任务支持的媒体类型。 */
 export type MediaType = 'image' | 'video'
 
+/** 单个待预加载媒体的地址与类型。 */
 export interface MediaItem {
   url: string
   type: MediaType
@@ -75,9 +77,8 @@ export function preloadImage(url: string): Promise<void> {
 }
 
 /**
- * 预加载单个视频「到可播放」(preload=auto + 等 canplay)。
- * 与只取首帧不同:这里会缓冲到浏览器认为可流畅播放(canplay),
- * 这样真正展示该视频时直接能播、不再转圈。字节进入浏览器 HTTP 缓存供后续复用。
+ * 只预加载单个视频的元数据(preload=metadata + 等 loadedmetadata)。
+ * 不主动缓冲完整媒体,避免后台预热与当前页面争抢带宽;真正展示时再由播放器按需加载。
  */
 function preloadVideo(url: string): Promise<void> {
   if (!url) return Promise.resolve()
@@ -86,24 +87,27 @@ function preloadVideo(url: string): Promise<void> {
 
   const p = new Promise<void>((resolve) => {
     const v = document.createElement('video')
-    v.preload = 'auto'
+    v.preload = 'metadata'
     v.muted = true
-    // 不挂到 DOM 上,纯粹触发浏览器缓冲到可播
+    // 不挂到 DOM 上,只触发浏览器读取媒体元数据。
     let done = false
     const finish = () => {
       if (done) return
       done = true
-      // 解除引用,便于 GC;已缓冲字节仍在浏览器 HTTP 缓存里
+      window.clearTimeout(timeoutHandle)
+      v.onloadedmetadata = null
+      v.onerror = null
+      // 解除引用,便于 GC;已读取的元数据仍可命中浏览器 HTTP 缓存。
       v.removeAttribute('src')
       v.load()
       resolve()
     }
-    v.oncanplaythrough = finish // 可流畅播放到底(最佳)
-    v.oncanplay = finish // 可开始播放(足够展示)
+    v.onloadedmetadata = finish
     v.onerror = finish // 失败不抛错
     // 安全兜底:某些浏览器不触发事件时 12s 后放行,避免 Promise 永挂
-    setTimeout(finish, 12000)
+    const timeoutHandle = window.setTimeout(finish, 12000)
     v.src = url
+    v.load()
   })
 
   cache.set(url, p)
@@ -115,6 +119,7 @@ function preloadOne(item: MediaItem): Promise<void> {
   return item.type === 'video' ? preloadVideo(item.url) : preloadImage(item.url)
 }
 
+/** 批量预加载的并发数与失败处理选项。 */
 export interface PreloadOptions {
   /** 同时进行的最大预取数,默认 3(避免一次性拉爆带宽)。 */
   concurrency?: number

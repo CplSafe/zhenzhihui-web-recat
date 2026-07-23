@@ -8,6 +8,7 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
+/** 安全渲染营销文案和脚本使用的 GFM Markdown，不解析原始 HTML。 */
 export default function Markdown({ children }: { children?: string | null }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]}>{children || ''}</ReactMarkdown>
 }

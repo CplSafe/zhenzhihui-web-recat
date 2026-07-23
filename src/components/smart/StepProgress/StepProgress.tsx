@@ -5,11 +5,13 @@
 import { Fragment } from 'react'
 import styles from './StepProgress.module.less'
 
+/** 一个创作步骤的稳定键和展示名称。 */
 export interface StepItem {
   key: string
   label: string
 }
 
+/** 当前步骤、子状态和允许回跳到的最远步骤。 */
 interface StepProgressProps {
   steps: StepItem[]
   current: number
@@ -20,13 +22,8 @@ interface StepProgressProps {
   clickableMax?: number
 }
 
-export default function StepProgress({
-  steps,
-  current,
-  statuses,
-  onStepClick,
-  clickableMax = -1,
-}: StepProgressProps) {
+/** 展示创作流程状态，并只允许跳转到已完成、当前或曾经到达的步骤。 */
+export default function StepProgress({ steps, current, statuses, onStepClick, clickableMax = -1 }: StepProgressProps) {
   return (
     <div className={styles.stepProgress} role="list">
       {steps.map((s, i) => {

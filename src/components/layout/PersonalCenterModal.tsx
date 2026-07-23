@@ -5,7 +5,7 @@
   头像:直接走 POST /api/v1/me/avatar 专用接口,
   保存成功后刷新当前用户资料;本地缓存仅作为接口未返回头像时的兜底。
 */
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { updateMyProfile, getCurrentUser, uploadMyAvatar } from '@/api/auth'
 import { useCurrentUser, useWorkspaceSessionStore } from '@/stores/workspaceSession'
@@ -17,7 +17,7 @@ import './PersonalCenterModal.css'
 // 昵称最大长度(Figma 计数器为 x/10)
 const NAME_MAX = 10
 
-// 递归深搜会话/用户对象里任意名为 mobile/phone/tel 的字段(/me 的手机号字段路径不固定)
+/** 递归查找会话/用户对象中的手机号字段，以兼容不同版本 `/me` 响应结构。 */
 function pickMobile(obj: any): string {
   if (!obj || typeof obj !== 'object') return ''
   const seen = new Set<any>()
@@ -37,6 +37,7 @@ function pickMobile(obj: any): string {
   return ''
 }
 
+/** 头像上传覆盖层使用的相机图标。 */
 const CameraIcon = (
   <svg
     viewBox="0 0 24 24"
@@ -54,6 +55,7 @@ const CameraIcon = (
   </svg>
 )
 
+/** 编辑昵称和头像并同步会话资料；保存期间用请求序号隔离用户切换与组件卸载。 */
 export default function PersonalCenterModal({ onClose }: { onClose: () => void }) {
   const user = useCurrentUser() as any
   const session = useWorkspaceSessionStore((s) => s.authSession)
@@ -73,6 +75,29 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
+  const aliveRef = useRef(true)
+  const savingRef = useRef(false)
+  const saveRequestRef = useRef(0)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  const userScope = String(user?.id || user?.user_id || user?.mobile || user?.phone || 'anon')
+  const userScopeRef = useRef(userScope)
+  userScopeRef.current = userScope
+
+  useEffect(() => {
+    aliveRef.current = true
+    nameRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCloseRef.current()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      aliveRef.current = false
+      saveRequestRef.current += 1
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [])
 
   const shownAvatar = avatarData || currentAvatar
   const dirty = name.trim() !== initialName || Boolean(avatarData)
@@ -92,13 +117,19 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
     }
     const reader = new FileReader()
     setAvatarFile(file)
-    reader.onload = () => setAvatarData(String(reader.result || ''))
-    reader.onerror = () => showToast('图片读取失败,请重试', 'error')
+    const scope = userScopeRef.current
+    reader.onload = () => {
+      if (aliveRef.current && scope === userScopeRef.current) setAvatarData(String(reader.result || ''))
+    }
+    reader.onerror = () => {
+      if (aliveRef.current && scope === userScopeRef.current) showToast('图片读取失败,请重试', 'error')
+    }
     reader.readAsDataURL(file)
   }
 
+  // 昵称和头像是两个后端动作；仅在所有请求属于当前用户且组件仍挂载时回写界面。
   const save = async () => {
-    if (saving) return
+    if (savingRef.current) return
     const next = name.trim()
     if (!next) {
       showToast('昵称不能为空', 'error')
@@ -108,11 +139,15 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
       onClose()
       return
     }
+    const requestId = ++saveRequestRef.current
+    const requestScope = userScopeRef.current
+    savingRef.current = true
     setSaving(true)
     try {
       let nextAvatarUrl = ''
       if (avatarFile) {
         const uploaded: any = await uploadMyAvatar(avatarFile)
+        if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
         nextAvatarUrl = String(
           uploaded?.avatar_url || uploaded?.avatarUrl || uploaded?.avatar || uploaded?.url || avatarData || '',
         ).trim()
@@ -124,6 +159,7 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
       }
       if (Object.keys(payload).length) {
         await updateMyProfile(payload)
+        if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
       }
       if (nextAvatarUrl) {
         saveUserAvatarOverride(user, nextAvatarUrl)
@@ -131,6 +167,7 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
       // 刷新会话内当前用户(顶栏/个人面板即时更新);若接口暂未回传头像,再用本地缓存兜底。
       try {
         const me = await getCurrentUser()
+        if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
         const mergedUser = applyUserProfileOverrides(me)
         useWorkspaceSessionStore.setState((s: any) =>
           s.authSession
@@ -143,6 +180,7 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
             : s,
         )
       } catch {
+        if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
         // 刷新失败也把已改的字段乐观落到本地会话,避免界面回退。
         useWorkspaceSessionStore.setState((s: any) =>
           s.authSession
@@ -160,16 +198,21 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
             : s,
         )
       }
+      if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
       showToast('保存成功', 'success')
       onClose()
     } catch (error: any) {
+      if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
       const msg = String(error?.message || '保存失败')
       const duplicated =
         Number(error?.status) === 409 ||
         /重复|已存在|已被|占用|exist|taken|duplicat/i.test(`${error?.code || ''} ${msg}`)
       showToast(duplicated ? '该昵称已被占用,请换一个' : msg, 'error')
     } finally {
-      setSaving(false)
+      if (requestId === saveRequestRef.current) {
+        savingRef.current = false
+        if (aliveRef.current) setSaving(false)
+      }
     }
   }
 
@@ -205,6 +248,7 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
               </button>
               <input
                 ref={fileRef}
+                aria-label="上传头像文件"
                 type="file"
                 accept="image/jpeg,image/png"
                 className="pcm-file"
@@ -222,6 +266,7 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
               </label>
               <div className="pcm-input">
                 <input
+                  ref={nameRef}
                   id="pcm-nick"
                   className="pcm-input-el"
                   type="text"

@@ -14,9 +14,10 @@ import { createAiResponse, streamAiResponse, getBusinessErrorMessage, extractTas
 import { ensureAssetId } from './smartShotImage'
 import { useWorkspaceSessionStore, deriveWorkspaceId, deriveModelPlanCandidates } from '@/stores/workspaceSession'
 
+/** 文本与图片多模态请求在业务网关中的能力代码。 */
 const OPERATION_CODE = 'responses.multimodal'
 
-// 从 store 取 workspaceId + 套餐候选(先确保套餐已加载,否则只有默认候选)
+/** 从当前会话解析工作空间和套餐模型候选，套餐加载失败时保留已有候选。 */
 async function resolveContext(): Promise<{ workspaceId: number; modelPlanCandidates: string[] }> {
   const store = useWorkspaceSessionStore.getState()
   try {
@@ -31,7 +32,7 @@ async function resolveContext(): Promise<{ workspaceId: number; modelPlanCandida
   }
 }
 
-// 把图片 url / dataURL / blobURL 上传成后端 asset,转成 responses 的 inputAssets
+/** 将图片 URL 转换为后端 asset 引用；单张失败只跳过该图，保留其他可用输入。 */
 async function toInputAssets(
   workspaceId: number,
   images?: string[],
@@ -51,10 +52,10 @@ async function toInputAssets(
   return assets.length ? assets : undefined
 }
 
-// 从(非流式)响应里取纯文本。
-// requestJson 已解包成后端 data:非流式 /ai/responses 返回的是一个「任务」对象,
-// 文本在 result_json / output_text 里,需用 business 的 extractTaskText 解析;
-// 另对 Vue 习惯的 result.text、responses 风格的 output_text/output[] 一并兜底。
+/**
+ * 从非流式响应的不同后端结构中提取纯文本。
+ * 同时兼容任务结果、Vue 旧字段和 Responses 风格输出，避免后端渐进升级导致空内容。
+ */
 function extractText(result: any): string {
   if (!result) return ''
   if (typeof result === 'string') return result.trim()
@@ -82,8 +83,10 @@ function extractText(result: any): string {
   return ''
 }
 
+/** 将系统设定和用户内容合并为网关所需的单一 prompt。 */
 const buildPrompt = (system?: string, user?: string) => [system, user].filter(Boolean).join('\n\n')
 
+/** 非流式多模态文本请求参数。 */
 export interface ResponseTextArgs {
   /** 角色/任务设定(并入 prompt 顶部) */
   system?: string
@@ -121,17 +124,21 @@ export async function runResponseText(args: ResponseTextArgs): Promise<string> {
   return String(streamed?.text || extractText(streamed) || '').trim()
 }
 
+/** 流式文本请求参数，可通过 onDelta 接收增量和已聚合全文。 */
 export interface ResponseStreamArgs extends ResponseTextArgs {
   /** 流式增量回调:(本次增量, 到目前为止的全文) */
   onDelta?: (delta: string, aggregated: string) => void
 }
 
-// 流式失败是否应回退非流式(对齐 Vue shouldFallbackToNonStreamResponse)
-function shouldFallback(error: any): boolean {
+/** 判断流式错误是否可安全回退到非流式；用户取消和 401 不重试。 */
+function shouldFallback(error: any, signal?: AbortSignal): boolean {
+  if (signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR') return false
+  const status = Number(error?.status || 0)
+  if (status === 401) return false
   const msg = getBusinessErrorMessage(error, String(error?.message || ''))
   const raw = String(error?.message || '')
   const re = /internal_error|服务内部错误|服务器内部错误|stream|event-stream|sse|响应流|bad_request|请求失败\s*\(400\)/i
-  return Number(error?.status) >= 500 || re.test(msg) || re.test(raw)
+  return status === 400 || (status >= 500 && status < 600) || re.test(msg) || re.test(raw)
 }
 
 /**
@@ -157,7 +164,7 @@ export async function streamResponseText(args: ResponseStreamArgs): Promise<stri
     const result = await streamAiResponse({ ...payload, onDelta: args.onDelta, signal: args.signal })
     return String(result?.text || '').trim()
   } catch (error) {
-    if (!shouldFallback(error)) throw error
+    if (!shouldFallback(error, args.signal)) throw error
     const result = await createAiResponse(payload)
     return extractText(result).trim()
   }

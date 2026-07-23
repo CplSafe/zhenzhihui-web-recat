@@ -5,8 +5,10 @@
  */
 import type { TemplateItem } from '@/api/templates'
 
+/** 内置演示视频的公共 OSS 前缀。 */
 const BASE = 'https://zzh-zhongdahengrui.oss-accelerate.aliyuncs.com/'
 
+/** 内置演示视频的对象名与真实像素尺寸。 */
 interface DemoVid {
   name: string
   w: number
@@ -42,13 +44,13 @@ const VIDS: DemoVid[] = [
   { name: 'e2c11b01e534ce338cdf3eb03659a725', w: 960, h: 960 },
 ]
 
+/** 把演示视频对象名转换为公开可读的完整 OSS 地址。 */
 const urlOf = (v: DemoVid) => BASE + v.name + '.mp4'
-
-export const DEMO_VIDEO_URLS: string[] = VIDS.map(urlOf)
 
 /** 横屏视频 url(w>h),用于轮播 */
 export const DEMO_LANDSCAPE_URLS: string[] = VIDS.filter((v) => v.w > v.h).map(urlOf)
 
+/** 缩略图不可用时循环使用的卡片渐变背景。 */
 const GRADS = [
   'linear-gradient(160deg, #e0d4f5, #f5ecfd)',
   'linear-gradient(160deg, #d4e8f0, #ecf8fb)',

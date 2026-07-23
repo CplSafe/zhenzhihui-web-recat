@@ -4,8 +4,7 @@
   数据全接 workspaceSession store;切换空间直接生效,会员卡点击回调给 AppTopbar。
   (个人中心 / 修改密码 / 退出登录 已移至侧栏「设置」菜单,见 SettingsMenu。)
 */
-import { useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
 import { Tooltip } from 'antd'
 import {
   useAllWorkspaces,
@@ -18,18 +17,19 @@ import {
   useWalletCredits,
   useWorkspaceId,
   useWorkspaceSessionStore,
-  deriveWorkspaceId,
 } from '@/stores/workspaceSession'
-import { openTeamManage } from '@/stores/ui'
+import { openTeamManage, useUiStore } from '@/stores/ui'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
+import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'
 import { validateWorkspaceName, normalizeWorkspaceNameForCompare } from '@/utils/workspaceName'
-import { prepareForWorkspaceSwitch } from '@/utils/workspaceSwitch'
 import UserAvatar from '@/components/common/UserAvatar'
+import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import crownImg from '@/assets/vip/5dc4125fc31865adb710a7f65ad2df60.png'
 import teamIcon from '@/assets/5d214dea973d5d1dd62b8be882e775c2.png'
 import editIcon from '@/assets/81926ea1670cd86f6fc1adec90042f08.png'
 import './PersonalPanel.css'
 
+/** 把后端成员角色转换为面板展示文案。 */
 const roleLabelOf = (role: any): string => {
   const r = String(role || '').toLowerCase()
   if (r === 'owner') return '超级管理员'
@@ -38,6 +38,10 @@ const roleLabelOf = (role: any): string => {
   return ''
 }
 
+/**
+ * 解析用户在当前空间中的真实角色。
+ * 优先用空间 owner 身份兜底，并拒绝误用其他空间残留的成员记录。
+ */
 const roleValueOf = (member: any, workspace: any, user: any): string => {
   const currentWorkspaceId = Number(workspace?.id || 0)
   const memberWorkspaceId = Number(
@@ -66,21 +70,25 @@ const roleValueOf = (member: any, workspace: any, user: any): string => {
     .toLowerCase()
 }
 
+/** 将订阅到期时间裁剪成页面使用的日期文本。 */
 const fmtDate = (s: any): string => String(s || '').slice(0, 10)
 
+/** 当前团队空间的成员图标。 */
 const IconMembers = <img className="ppl__ws-ico-img" src={teamIcon} alt="" aria-hidden="true" />
+
+/** 会员套餐卡片的皇冠图标。 */
 const IconCrown = <img className="ppl__crown-img" src={crownImg} alt="" aria-hidden="true" />
 // 切换空间列表默认露出约 3 个,超出则固定高度可滚动(不撑高面板)
 const MAX_VISIBLE_WS = 3
 
+/** 会员中心跳转与关闭个人面板的父级回调。 */
 interface PersonalPanelProps {
   onMember?: () => void
   onClose?: () => void
 }
 
+/** 展示当前用户、空间角色、会员积分及安全的空间切换/团队重命名入口。 */
 export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps) {
-  const navigate = useNavigate()
-  const location = useLocation()
   const user = useCurrentUser()
   const member = useCurrentMember()
   const currentWs = useCurrentWorkspace()
@@ -90,10 +98,23 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const expiresAt = useCurrentPlanExpiresAt()
   const credits = useWalletCredits()
   const baseCredits = usePlanBaseCredits()
-  const switchWorkspace = useWorkspaceSessionStore((s) => s.switchWorkspace)
+  const switchWorkspaceSafely = useSafeWorkspaceSwitch()
+  const workspaceSwitchLocked = useUiStore((s) => s.workspaceSwitchLocked)
+  const workspaceSwitchLockReason = useUiStore((s) => s.workspaceSwitchLockReason)
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const [renamingTeam, setRenamingTeam] = useState(false)
+  const aliveRef = useRef(true)
+  const renameFlowRef = useRef(false)
+  const activeIdRef = useRef(Number(activeId || 0))
+  activeIdRef.current = Number(activeId || 0)
+
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+    }
+  }, [])
 
   const hasMore = workspaces.length > MAX_VISIBLE_WS
 
@@ -107,53 +128,56 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const canRenameTeam = isTeamWs && ['owner', 'admin'].includes(roleValue)
 
   // 重命名当前团队:弹输入框(预填现名)→ 前端校验/查重 → renameTeam(改后侧栏/顶栏同步)。
+  // 重命名是异步确认流程；锁与空间 ID 复核可避免连点或切换空间后改错团队。
   const handleRenameTeam = async () => {
-    if (renamingTeam) return
+    if (renameFlowRef.current) return
     const wsId = Number(currentWs?.id || 0)
     if (!wsId) return
-    const currentName = String(currentWs?.name || '').trim()
-    const input = await requestConfirm('修改当前团队空间的名称,改后侧栏 / 顶栏同步更新。', {
-      title: '重命名团队',
-      inputEnabled: true,
-      inputValue: currentName,
-      inputLabel: '团队名称',
-      inputPlaceholder: '请输入团队名称',
-      confirmLabel: '保存',
-    })
-    if (input === null) return // 取消
-    const next = String(input).trim()
-    if (!next || next === currentName) return
-    // 基本校验(长度 / 控制字符 / 尖括号),与创建团队输入框一致
-    const err = validateWorkspaceName(next)
-    if (err) {
-      showToast(err, 'error')
-      return
-    }
-    // 名下团队查重(排除当前空间自己),避免后端因重名报错
-    const norm = normalizeWorkspaceNameForCompare(next)
-    const dup = (workspaces as any[]).some(
-      (w) =>
-        Number(w?.id) !== wsId &&
-        Boolean(w?.type) &&
-        String(w.type).toLowerCase() !== 'personal' &&
-        normalizeWorkspaceNameForCompare(String(w?.name || '')) === norm,
-    )
-    if (dup) {
-      showToast('已存在同名团队,请换一个名称', 'error')
-      return
-    }
+    renameFlowRef.current = true
     setRenamingTeam(true)
+    const currentName = String(currentWs?.name || '').trim()
     try {
+      const input = await requestConfirm('修改当前团队空间的名称,改后侧栏 / 顶栏同步更新。', {
+        title: '重命名团队',
+        inputEnabled: true,
+        inputValue: currentName,
+        inputLabel: '团队名称',
+        inputPlaceholder: '请输入团队名称',
+        confirmLabel: '保存',
+      })
+      if (!aliveRef.current || activeIdRef.current !== wsId || input === null) return
+      const next = String(input).trim()
+      if (!next || next === currentName) return
+      const err = validateWorkspaceName(next)
+      if (err) {
+        showToast(err, 'error')
+        return
+      }
+      const norm = normalizeWorkspaceNameForCompare(next)
+      const dup = (workspaces as any[]).some(
+        (w) =>
+          Number(w?.id) !== wsId &&
+          Boolean(w?.type) &&
+          String(w.type).toLowerCase() !== 'personal' &&
+          normalizeWorkspaceNameForCompare(String(w?.name || '')) === norm,
+      )
+      if (dup) {
+        showToast('已存在同名团队,请换一个名称', 'error')
+        return
+      }
       await useWorkspaceSessionStore.getState().renameTeam(wsId, next)
+      if (!aliveRef.current || activeIdRef.current !== wsId) return
       showToast('团队名称已更新', 'success')
     } catch (error: any) {
+      if (!aliveRef.current || activeIdRef.current !== wsId) return
       const status = Number(error?.status)
       showToast(status === 409 ? '已存在同名空间,请换一个名称' : error?.message || '重命名失败,请稍后重试', 'error')
     } finally {
-      setRenamingTeam(false)
+      renameFlowRef.current = false
+      if (aliveRef.current) setRenamingTeam(false)
     }
   }
-  const avatarUrl = user?.avatar || user?.avatar_url || user?.avatarUrl || ''
+  const avatarUrl = bindAssetUrlToWorkspace(user?.avatar || user?.avatar_url || user?.avatarUrl || '', activeId)
   const accountName = name
   // 积分进度按【已消耗】算(用得越多条越满)。有任何消耗就至少显示 1%(从 1% 起,让进度立刻可见);
   // 完全没消耗则 0%。credits 为剩余积分,baseCredits 为套餐基础积分。
@@ -162,77 +186,12 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
     baseCredits > 0 && usedCredits > 0 ? Math.min(100, Math.max(1, Math.round((usedCredits / baseCredits) * 100))) : 0
 
   const pickWs = (id: number) => {
-    if (id) {
-      const pathname = String(location.pathname || '')
-      const inSmartProject = /^\/smart\/[^/]+/.test(pathname)
-      const inSmartBlank = pathname === '/smart'
-      const inHotCopy = pathname === '/hot-copy' || pathname.startsWith('/hot-copy/')
-
-      // 智能成片项目可能钉在与全局高亮不同的空间。即使点的是当前高亮项，也先询问编辑器实际空间；
-      // 这样可从“项目属于 A、全局仍高亮 B”的状态直接切回 B，无需借道第三个空间。
-      if (Number(id) === Number(activeId) && !inSmartProject && !inSmartBlank) {
-        onClose?.()
-        return
-      }
-
-      // 本地草稿在事件派发时同步快照;云端保存/目标草稿找回转后台,
-      // 不再阻塞空间切换。生成中、保存中也可随时切换。
-      const preparation = prepareForWorkspaceSwitch(id)
-      if (
-        Number(id) === Number(activeId) &&
-        (!preparation.detail.sourceWorkspaceId || Number(preparation.detail.sourceWorkspaceId) === Number(id))
-      ) {
-        onClose?.()
-        return
-      }
-      const switchNonce = Date.now()
-      const forceSmartRemount =
-        (inSmartProject || inSmartBlank) &&
-        Number(id) === Number(activeId) &&
-        Number(preparation.detail.sourceWorkspaceId || 0) > 0 &&
-        Number(preparation.detail.sourceWorkspaceId) !== Number(id)
-      const fallbackDestinationPath = inHotCopy ? '/hot-copy' : inSmartProject || inSmartBlank ? '/smart' : ''
-      const destinationPath = String(preparation.detail.destinationPath || fallbackDestinationPath)
-
-      if (inSmartProject || inSmartBlank || inHotCopy) {
-        // React Router 导航默认使用 transition;紧接着的 workspace key 重挂载可能会
-        // 抢先保留旧 /smart/:id。先 flush 到目标草稿路由,再切 store,确保不再回落旧项目。
-        navigate(destinationPath, {
-          replace: true,
-          flushSync: true,
-          state: {
-            workspaceSwitchReset: false,
-            workspaceSwitchRestore: inSmartProject || inSmartBlank || !!preparation.detail.destinationPath,
-            workspaceSwitchNonce: switchNonce,
-            workspaceSwitchRemountNonce: forceSmartRemount ? switchNonce : 0,
-            targetWorkspaceId: Number(id),
-          },
-        })
-      }
-      switchWorkspace(id)
-
-      const finishBackgroundPreparation = (syncError = false) => {
-        // 用户可能在后台查找期间又切到了别的空间/页面,不能用过期结果把他拉回。
-        if (Number(deriveWorkspaceId(useWorkspaceSessionStore.getState())) !== Number(id)) return
-        if (Number(window.history.state?.usr?.workspaceSwitchNonce || 0) !== switchNonce) return
-        if (syncError) showToast('已切换空间；草稿已保存在本地，云端同步未完成', 'error')
-        const recoveredPath = String(preparation.detail.destinationPath || '')
-        if (!recoveredPath || recoveredPath === destinationPath) return
-        if (!String(window.location.pathname || '').startsWith('/smart')) return
-        navigate(recoveredPath, {
-          replace: true,
-          flushSync: true,
-          state: {
-            workspaceSwitchRestore: true,
-            workspaceSwitchNonce: Date.now(),
-            targetWorkspaceId: Number(id),
-          },
-        })
-      }
-      void preparation.done.then(
-        () => finishBackgroundPreparation(false),
-        () => finishBackgroundPreparation(true),
-      )
+    if (workspaceSwitchLocked) {
+      showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
+      return
+    }
+    if (id && Number(id) !== Number(activeId)) {
+      switchWorkspaceSafely(id)
     }
     onClose?.()
   }
@@ -247,6 +206,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
             name={accountName}
             className="ppl__ava"
             fallbackClassName="ppl__ava ppl__ava--txt"
+            alt={`${accountName}头像`}
           />
           <div className="ppl__identity">
             <div className="ppl__identity-top">
@@ -333,6 +293,9 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
               key={String(ws.id)}
               type="button"
               className={`ppl__ws-item${active ? ' active' : ''}`}
+              aria-current={active ? 'true' : undefined}
+              disabled={workspaceSwitchLocked}
+              title={workspaceSwitchLocked ? workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队' : ''}
               onClick={() => pickWs(Number(ws.id))}
             >
               <span className="ppl__ws-item-name">{ws.name || '个人空间'}</span>
