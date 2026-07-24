@@ -294,6 +294,18 @@ describe('useGenerationModelCatalog', () => {
           operation_codes: ['video.generate'],
         },
         {
+          id: 928,
+          model: 'doubao-seedance-2-0-fast',
+          display_name: 'Seedance 2.0 Fast',
+          operation_codes: ['video.generate'],
+        },
+        {
+          id: 929,
+          model: 'doubao-seedance-2-0-mini',
+          display_name: 'Seedance 2.0 Mini',
+          operation_codes: ['video.generate'],
+        },
+        {
           id: 923,
           model_code: 'image-to-video',
           display_name: 'HappyHorse 图生视频',
@@ -337,10 +349,12 @@ describe('useGenerationModelCatalog', () => {
     expect(videoModels.map(({ modelVersionId, displayName }) => ({ modelVersionId, displayName }))).toEqual([
       { modelVersionId: 921, displayName: 'HappyHorse 参考生视频' },
       { modelVersionId: 922, displayName: 'Seedance 2.0' },
+      { modelVersionId: 928, displayName: 'Seedance 2.0 Fast' },
+      { modelVersionId: 929, displayName: 'Seedance 2.0 Mini' },
     ])
     expect(result.current.operationStates['video.generate']).toMatchObject({
       status: 'ready',
-      availableModelCount: 2,
+      availableModelCount: 4,
     })
 
     const dropdownModels =
@@ -350,6 +364,8 @@ describe('useGenerationModelCatalog', () => {
     expect(dropdownModels.map(({ id, name }) => ({ id, name }))).toEqual([
       { id: 921, name: 'HappyHorse 参考生视频' },
       { id: 922, name: 'Seedance 2.0' },
+      { id: 928, name: 'Seedance 2.0 Fast' },
+      { id: 929, name: 'Seedance 2.0 Mini' },
     ])
   })
 

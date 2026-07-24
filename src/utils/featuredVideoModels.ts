@@ -13,6 +13,7 @@ import {
 } from './generationModelCatalog'
 
 export type CreativeVideoModelKind = 'reference-video' | 'seedance-2.0' | 'traditional-video' | 'other' | 'conflict'
+type FeaturedVideoModelSlot = 'happyhorse-reference-video' | 'seedance-2.0' | 'seedance-2.0-fast' | 'seedance-2.0-mini'
 
 const EXPLICIT_CAPABILITY_KEYS = [
   'capability',
@@ -155,9 +156,14 @@ function isHappyHorseReferenceVideoModel(model: BackendGenerationModel): boolean
   )
 }
 
-function featuredSlotOf(model: BackendGenerationModel): 'happyhorse-reference-video' | 'seedance-2.0' | null {
+function featuredSlotOf(model: BackendGenerationModel): FeaturedVideoModelSlot | null {
   const kind = getCreativeVideoModelKind(model)
-  if (kind === 'seedance-2.0') return 'seedance-2.0'
+  if (kind === 'seedance-2.0') {
+    const identities = textsFromKeys(model, FALLBACK_IDENTITY_KEYS).map(compactIdentity)
+    if (identities.some((identity) => identity.includes('seedance20fast'))) return 'seedance-2.0-fast'
+    if (identities.some((identity) => identity.includes('seedance20mini'))) return 'seedance-2.0-mini'
+    return 'seedance-2.0'
+  }
   return isHappyHorseReferenceVideoModel(model) ? 'happyhorse-reference-video' : null
 }
 
@@ -216,7 +222,7 @@ export function filterFeaturedCreativeVideoModels<T extends BackendGenerationMod
 ): T[] {
   const list = Array.isArray(models) ? models : []
   const conflictingIds = new Set(getConflictingCreativeVideoModelIds(list))
-  const selectedBySlot = new Map<'happyhorse-reference-video' | 'seedance-2.0', T>()
+  const selectedBySlot = new Map<FeaturedVideoModelSlot, T>()
 
   list.forEach((model) => {
     const id = getBackendGenerationModelVersionId(model)

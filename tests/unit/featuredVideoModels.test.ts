@@ -54,6 +54,16 @@ describe('featured creative video models', () => {
     expect(filterFeaturedCreativeVideoModels(null)).toEqual([])
   })
 
+  it('keeps the standard, Fast, and Mini Seedance 2.0 variants as separate choices', () => {
+    const models = [
+      { id: 301, model: 'doubao-seedance-2-0', display_name: 'Seedance 2.0' },
+      { id: 302, model: 'doubao-seedance-2-0-fast', display_name: 'Seedance 2.0 Fast' },
+      { id: 303, model: 'doubao-seedance-2-0-mini', display_name: 'Seedance 2.0 Mini' },
+    ]
+
+    expect(filterFeaturedCreativeVideoModels(models)).toEqual(models)
+  })
+
   it('keeps at most one model per featured effect and prefers enabled valid backend records', () => {
     const models = [
       {
