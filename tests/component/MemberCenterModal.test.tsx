@@ -108,6 +108,12 @@ vi.mock('@/observability/openobserve-logger', () => ({
   logger: { warn: vi.fn() },
 }))
 
+vi.mock('@/components/smart/EntryCanvasBg', () => ({
+  default: ({ index, count }: { index: number; count?: number }) => (
+    <canvas data-testid="smart-entry-background" data-index={index} data-count={count} />
+  ),
+}))
+
 import MemberCenterModal from '@/components/MemberCenterModal'
 
 function deferred<T>() {
@@ -181,6 +187,21 @@ describe('MemberCenterModal behavior', () => {
     mocks.loadPendingNewTeamOrders.mockReturnValue([])
     mocks.requestConfirm.mockResolvedValue(true)
     mocks.switchWorkspaceSafely.mockReturnValue(true)
+  })
+
+  it('uses the smart creation background only in full-screen mode', () => {
+    const fullscreen = render(<MemberCenterModal open onClose={vi.fn()} />)
+    const background = screen.getByTestId('smart-entry-background')
+    const dialog = screen.getByRole('dialog', { name: '会员中心' })
+
+    expect(background.parentElement).toHaveClass('mcm-bg')
+    expect(background.parentElement?.nextElementSibling).toBe(dialog)
+    expect(background).toHaveAttribute('data-index', '0')
+    expect(background).toHaveAttribute('data-count', '1')
+
+    fullscreen.unmount()
+    renderModal()
+    expect(screen.queryByTestId('smart-entry-background')).not.toBeInTheDocument()
   })
 
   it('preserves cent precision and separates personal and team plans', async () => {

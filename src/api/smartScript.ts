@@ -9,7 +9,7 @@
  */
 // @ts-nocheck
 import type { Shot } from '@/components/smart/ScriptStoryboardTable'
-import { runResponseText, streamResponseText } from './aiResponses'
+import { runResponseText, streamResponseText, type AiResponseRequestContext } from './aiResponses'
 
 /** 整条分镜脚本生成所需的需求、样式、比例、时长和素材。 */
 interface GenerateArgs {
@@ -18,6 +18,10 @@ interface GenerateArgs {
   ratio?: string
   duration?: string
   images?: string[] // objectURL / dataURL / http,送入后端前会上传成 asset(inputAssets)
+  /** 用户在“生成脚本”阶段显式选择的模型版本。 */
+  modelVersionId?: number
+  /** 本轮脚本生成锁定的工作空间，后续主体提取和合并必须复用。 */
+  requestContext?: AiResponseRequestContext
   signal?: AbortSignal
 }
 
@@ -364,6 +368,10 @@ export async function generateShotInfo(args: {
   style?: string
   ratio?: string
   images?: string[]
+  /** 用户在“生成脚本”阶段显式选择的模型版本。 */
+  modelVersionId?: number
+  /** 本轮请求锁定的工作空间上下文。 */
+  requestContext?: AiResponseRequestContext
   signal?: AbortSignal
 }): Promise<ShotInfo> {
   const { shots, targetIndex, mode, intent, style, ratio, images = [] } = args
@@ -396,6 +404,8 @@ export async function generateShotInfo(args: {
     images: images.slice(0, 6),
     temperature: 0.7,
     maxTokens: 1500,
+    modelVersionId: args.modelVersionId,
+    requestContext: args.requestContext,
     signal: args.signal,
   })
 
@@ -452,6 +462,8 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
     images: images.slice(0, 6),
     temperature: 0.8,
     maxTokens: 4000,
+    modelVersionId: args.modelVersionId,
+    requestContext: args.requestContext,
     signal: args.signal,
     onDelta: (_delta, aggregated) => emit(aggregated),
   })
@@ -480,7 +492,12 @@ const SUBJECT_SYSTEM =
 const GENERIC_SUBJECT_RE = /^(素材|主体|元素|图片|画面|对象|内容|视觉元素|物体|场景|产品|人物)\d*$/
 
 /** 调用 AI 从单镜画面描述中提取去重后的具体视觉主体。 */
-export async function extractSubjects(desc: string, signal?: AbortSignal): Promise<Shot['subjects']> {
+export async function extractSubjects(
+  desc: string,
+  signal?: AbortSignal,
+  modelVersionId?: number,
+  requestContext?: AiResponseRequestContext,
+): Promise<Shot['subjects']> {
   const d = String(desc || '').trim()
   if (!d) return []
   let text = ''
@@ -490,9 +507,12 @@ export async function extractSubjects(desc: string, signal?: AbortSignal): Promi
       user: `镜头画面描述:${d}`,
       temperature: 0.4,
       maxTokens: 300,
+      modelVersionId,
+      requestContext,
       signal,
     })
-  } catch {
+  } catch (error) {
+    if (signal?.aborted || (error as any)?.name === 'AbortError') throw error
     return []
   }
   let arr: any[] = []
@@ -536,12 +556,27 @@ const MERGE_NAME_SYSTEM =
 
 // 据画面描述 + 待合并主体名,生成一个组合主体名(失败返回空,调用方用模板兜底)
 /** 根据镜头语境为一组一次性主体生成简短、具体的合并名。 */
-async function mergeNameFor(desc: string, names: string[], signal?: AbortSignal): Promise<string> {
+async function mergeNameFor(
+  desc: string,
+  names: string[],
+  signal?: AbortSignal,
+  modelVersionId?: number,
+  requestContext?: AiResponseRequestContext,
+): Promise<string> {
   const user = `画面描述:${String(desc || '').trim() || '(无)'}\n要合并的主体:${names.join('、')}`
   let name = ''
   try {
-    name = await runResponseText({ system: MERGE_NAME_SYSTEM, user, temperature: 0.5, maxTokens: 48, signal })
-  } catch {
+    name = await runResponseText({
+      system: MERGE_NAME_SYSTEM,
+      user,
+      temperature: 0.5,
+      maxTokens: 48,
+      modelVersionId,
+      requestContext,
+      signal,
+    })
+  } catch (error) {
+    if (signal?.aborted || (error as any)?.name === 'AbortError') throw error
     return ''
   }
   return (name || '')
@@ -555,7 +590,12 @@ async function mergeNameFor(desc: string, names: string[], signal?: AbortSignal)
  * 合并各镜头里「单次出现」的主体(减少不必要的素材)。在脚本生成 + 主体兜底之后、展示给「准备素材」之前调用。
  * 跨镜统计需要完整 Shot[];失败/无可合并则原样返回。组合命名为各镜并发,降低延迟。
  */
-export async function mergeSingleUseSubjects(shots: Shot[], signal?: AbortSignal): Promise<Shot[]> {
+export async function mergeSingleUseSubjects(
+  shots: Shot[],
+  signal?: AbortSignal,
+  modelVersionId?: number,
+  requestContext?: AiResponseRequestContext,
+): Promise<Shot[]> {
   if (!Array.isArray(shots) || shots.length < 1) return shots
   const norm = (t: string) =>
     String(t || '')
@@ -588,7 +628,7 @@ export async function mergeSingleUseSubjects(shots: Shot[], signal?: AbortSignal
     plans.map(async (p) => {
       if (p.mergeable.length < 2) return ''
       const ns = p.mergeable.map((su) => norm(su.tag)).filter(Boolean)
-      const nm = await mergeNameFor(p.sh.desc, ns, signal)
+      const nm = await mergeNameFor(p.sh.desc, ns, signal, modelVersionId, requestContext)
       return nm || ns.join('的') // 模板兜底:如「台灯的学生」
     }),
   )

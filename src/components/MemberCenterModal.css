@@ -1,19 +1,26 @@
-/* 会员中心弹窗:全局最高优先级「全屏」弹窗,上下左右铺满,内容区透明。
+/* 会员中心弹窗:全局最高优先级「全屏」弹窗,上下左右铺满。
    z-index 2100 高于所有页面弹窗(团队/资源 1200、项目预览 2000、其它对话框 1300);
    仅全局 Toast(2200)在其之上,以便支付反馈提示可见。 */
 .mcm-mask {
   position: fixed;
   inset: 0;
   z-index: 2100;
-  /* 浅绿毛玻璃:强模糊 + 一层淡绿染色(品牌青绿 #60E0C4),背景隐约可见 */
-  background: rgba(96, 224, 196, 0.14);
-  backdrop-filter: blur(70px);
-  -webkit-backdrop-filter: blur(70px);
+  /* 与智能成片入口一致的不透明页面底色；Canvas 光晕叠在其上，不透出底层业务页面。 */
+  background: #f8f9fa;
+  isolation: isolate;
   display: flex;
   align-items: stretch;
   justify-content: stretch;
   /* 铺满:无留边 */
   padding: 0;
+}
+
+.mcm-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .mcm {
@@ -25,11 +32,16 @@
   max-height: none;
   box-sizing: border-box;
   overflow-y: auto;
-  /* 内容区本身透明:卡片/文字浮在透明层上,可见后面页面 */
+  /* 透明仅用于露出会员中心自己的 Canvas 背景；遮罩底层仍为不透明浅灰。 */
   background: transparent;
   border-radius: 0;
   padding: 28px 32px 32px;
   box-shadow: none;
+}
+
+/* 仅弹窗模式建立“背景 → 内容”的层级；内嵌模式不创建额外堆叠上下文。 */
+.mcm-mask > .mcm {
+  z-index: 1;
 }
 
 /* 页面模式:填满内容区、去掉弹窗外观 */
@@ -45,12 +57,12 @@
   box-shadow: none;
 }
 
-/* 关闭 X:透明铺满布局下需明显可见,固定在视口右上角(不随内容滚动) */
+/* 关闭 X 位于会员内容层之上，固定在视口右上角(不随内容滚动)。 */
 .mcm-close {
   position: fixed;
   top: 18px;
   right: 18px;
-  z-index: 1;
+  z-index: 2;
   width: 38px;
   height: 38px;
   border: 1px solid rgba(0, 0, 0, 0.08);

@@ -3,7 +3,7 @@
  * 从智能成片/爆款复制草稿派生历史视频，合并人工归类记录和状态覆盖，并以乐观锁安全写回项目草稿。
  */
 import { getCreativeProject, updateCreativeProjectDraft } from '@/api/business'
-import { computeVideoContentSig } from '@/utils/smartDraft'
+import { computeVideoContentSig, isVideoContentSigMatch } from '@/utils/smartDraft'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { enqueueCreativeProjectDraftSave } from '@/utils/creativeDraftSaveQueue'
 import {
@@ -19,24 +19,6 @@ import {
   isRetryableDraftSaveError,
   waitForDraftSaveRetry,
 } from '@/utils/creativeDraftPersistence'
-
-/**
- * 切换模型功能曾把模型字段写入成片内容签名；固定模型流程恢复后应忽略这些遗留字段，
- * 否则相同内容会被项目管理误判为“已修改但尚未重新出片”。
- */
-function normalizeFixedModelVideoSignature(value: unknown): string {
-  const signature = String(value || '').trim()
-  if (!signature) return ''
-  try {
-    const parsed = JSON.parse(signature)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return signature
-    delete parsed.videoModelVersionId
-    delete parsed.videoModel
-    return JSON.stringify(parsed)
-  } catch {
-    return signature
-  }
-}
 
 /** 项目视频在任务中心的归一化状态。 */
 export type ProjectVideoStatus = 'draft' | 'processing' | 'published' | 'failed'
@@ -453,17 +435,15 @@ function buildDerivedVideos({
 
   // 「在制/草稿」判定:草稿当前内容签名 ≠ 上一版成片盖章的签名 ⇒ 内容改了但没出新片 → 顶部并排一条草稿。
   // 只对智能成片(有 lastVideoSig 盖章)生效;老数据无签名 → 不误报。有进行中记录(generating)时不重复加。
-  const lastVideoSig = normalizeFixedModelVideoSignature(pickString(smart?.lastVideoSig))
+  const lastVideoSig = pickString(smart?.lastVideoSig)
   const currentVideoSig = lastVideoSig
-    ? normalizeFixedModelVideoSignature(
-        computeVideoContentSig(
-          normalizeArray(smart?.shots),
-          smart?.entryMeta || draft?.entryMeta,
-          pickString(smart?.reqSummary, smart?.requirement, draft?.description),
-        ),
+    ? computeVideoContentSig(
+        normalizeArray(smart?.shots),
+        smart?.entryMeta || draft?.entryMeta,
+        pickString(smart?.reqSummary, smart?.requirement, draft?.description),
       )
     : ''
-  const contentDirty = !!lastVideoSig && !!currentVideoSig && currentVideoSig !== lastVideoSig
+  const contentDirty = !!lastVideoSig && !!currentVideoSig && !isVideoContentSigMatch(lastVideoSig, currentVideoSig)
   const dirtyItems: ProjectVideo[] =
     !generating && contentDirty ? [makeGenItem({ id: `dirty-${project?.id || 0}` }, 0)] : []
 

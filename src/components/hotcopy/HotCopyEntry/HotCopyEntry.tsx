@@ -19,6 +19,14 @@ import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import HotCopyCaseModal, { type HotCopyCaseTab } from '@/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
 import EntryDropdown from '@/components/smart/EntryDropdown'
+import {
+  GenerationModelDropdown,
+  getGenerationModelSelectionConflicts,
+  isGenerationModelSelectionComplete,
+  type GenerationModelErrorState,
+  type GenerationModelGroup,
+  type GenerationModelLoadingState,
+} from '@/components/smart/GenerationModelPicker'
 import RatioIcon from '@/components/common/RatioIcon'
 import videoIcon from '@/assets/icons/hotcopy-video.svg'
 import materialIcon from '@/assets/icons/hotcopy-material.svg'
@@ -59,6 +67,8 @@ export interface HotCopyEntryPayload {
   /** 用户选择的成片尺寸(画面比例)与时长(秒数带 s,如 15s) */
   ratio: string
   duration: string
+  /** 本次爆款复制固定使用的 video.replicate 后端模型版本 ID。 */
+  modelVersionId?: number
 }
 
 /** 每个制作模式独立保存的入口草稿，模式键由外层映射维护。 */
@@ -89,6 +99,14 @@ interface HotCopyEntryProps {
   initial?: Partial<HotCopyEntryPayload>
   /** 比例下拉可选项:取自 replicate 模型 schema 的 ratio options(只放模型真支持的);缺省用默认列表 */
   ratioOptions?: string[]
+  /** 爆款复制首页可选的 video.replicate 模型目录。 */
+  modelGroups?: GenerationModelGroup[]
+  modelLoading?: GenerationModelLoadingState
+  modelError?: GenerationModelErrorState
+  modelReady?: boolean
+  onReloadModels?: () => void
+  /** 登录且工作空间就绪后开启模型必选门禁；游客仍先走原有登录拦截。 */
+  requireModelSelection?: boolean
 }
 
 /** 两种爆款复制模式的标题、说明与帮助提示。 */
@@ -289,6 +307,12 @@ export default function HotCopyEntry({
   onResume,
   initial,
   ratioOptions,
+  modelGroups = [],
+  modelLoading = false,
+  modelError = null,
+  modelReady = false,
+  onReloadModels,
+  requireModelSelection = false,
 }: HotCopyEntryProps) {
   // 比例下拉:优先用模型实际支持的 options(避免选了模型做不了的比例被悄悄回退);缺省用默认列表。
   const ratioOpts = ratioOptions && ratioOptions.length ? ratioOptions : RATIO_OPTIONS
@@ -308,6 +332,7 @@ export default function HotCopyEntry({
     text: '',
     ratio: defaultRatio,
     duration: '10s',
+    modelVersionId: undefined,
   })
   const initialTabDraft = (): HotCopyTabDraft => ({
     ...blankTabDraft(),
@@ -320,6 +345,7 @@ export default function HotCopyEntry({
     text: initial?.text ?? '',
     ratio: initial?.ratio ?? defaultRatio,
     duration: initial?.duration ?? '10s',
+    modelVersionId: initial?.modelVersionId,
   })
   const tabDraftsRef = useRef<Record<HotCopyTab, HotCopyTabDraft>>({
     remake: initialTab === 'remake' ? initialTabDraft() : blankTabDraft(),
@@ -341,6 +367,7 @@ export default function HotCopyEntry({
       text,
       ratio,
       duration,
+      modelVersionId: modelVersionId || undefined,
     }
     const next = tabDraftsRef.current[k] || blankTabDraft()
     setVideoSource(next.videoSource)
@@ -352,6 +379,7 @@ export default function HotCopyEntry({
     setText(next.text)
     setRatio(next.ratio)
     setDuration(next.duration)
+    setModelVersionId(next.modelVersionId)
     caretRef.current = next.text.length
     setVideoMenuOpen(false)
     setProductMenuOpen(false)
@@ -416,6 +444,10 @@ export default function HotCopyEntry({
   // 成片尺寸/时长(用户可选);默认与智能成片一致:16:9、10s
   const [ratio, setRatio] = useState(tabDraftsRef.current[initialTab].ratio)
   const [duration, setDuration] = useState(tabDraftsRef.current[initialTab].duration)
+  const [modelVersionId, setModelVersionId] = useState<number | undefined>(
+    tabDraftsRef.current[initialTab].modelVersionId,
+  )
+  const [modelAttentionRequest, setModelAttentionRequest] = useState(0)
   // 模型 options 到位后,若当前比例不在其中 → 收敛到第一个支持项(防止显示/提交一个模型做不了的比例)
   useEffect(() => {
     if (ratioOpts.length && !ratioOpts.includes(ratio)) setRatio(ratioOpts[0])
@@ -752,6 +784,28 @@ export default function HotCopyEntry({
   const canSend = hasHotVideo && hasProductImage
   // 恢复态:从第二步回到第一页后,主按钮变「下一步」回到已生成内容;旁边提供「重新生成」。
   const resumeMode = !!canResume
+  const modelSelection = { 'video.replicate': modelVersionId }
+  const modelSelectionComplete = isGenerationModelSelectionComplete(modelGroups, modelSelection)
+  const modelSelectionConflicts = getGenerationModelSelectionConflicts(modelGroups, modelSelection, {
+    ratio,
+    durationSec: Number.parseInt(duration, 10) || undefined,
+    resolution: '720p',
+    generateAudio: true,
+    referenceImageCount: products.filter((product) => !product.isVideo).length,
+  })
+  const modelGatePassed =
+    !requireModelSelection || (modelReady && modelSelectionComplete && modelSelectionConflicts.length === 0)
+  const modelGateMessage = modelLoading
+    ? '视频模型正在加载，请稍后再试'
+    : typeof modelError === 'string' && modelError
+      ? modelError
+      : !modelReady
+        ? '当前没有可用的视频生成模型，请重新加载'
+        : !modelSelectionComplete
+          ? '请先选择本次爆款复制使用的视频模型'
+          : modelSelectionConflicts[0] || '当前参数与所选模型不兼容'
+  // 用户点击生成后立即锁定本次模型选择；异步读取时长/估价期间也不能切换成另一模型。
+  const modelsLocked = busy || (resumeMode && modelGatePassed)
 
   const buildPayload = (): HotCopyEntryPayload => ({
     tab,
@@ -764,6 +818,7 @@ export default function HotCopyEntry({
     text,
     ratio,
     duration,
+    ...(modelVersionId ? { modelVersionId } : {}),
   })
 
   useEffect(() => {
@@ -778,10 +833,12 @@ export default function HotCopyEntry({
       text,
       ratio,
       duration,
+      ...(modelVersionId ? { modelVersionId } : {}),
     })
   }, [
     duration,
     libraryVideo,
+    modelVersionId,
     onDraftChange,
     products,
     ratio,
@@ -793,6 +850,11 @@ export default function HotCopyEntry({
     videoSource,
   ])
 
+  const requestModelSelectionAttention = () => {
+    setModelAttentionRequest((value) => value + 1)
+    showToast(modelGateMessage || '请先选择视频生成模型', 'info')
+  }
+
   // 提交前同时要求原视频和至少一张替换图片，防止创建后端无法执行的空任务。
   const validateBeforeSubmit = () => {
     if (!hasHotVideo) {
@@ -803,6 +865,10 @@ export default function HotCopyEntry({
       showToast('请至少上传一张替换素材图片', 'error')
       return false
     }
+    if (!modelGatePassed) {
+      requestModelSelectionAttention()
+      return false
+    }
     return true
   }
 
@@ -810,6 +876,14 @@ export default function HotCopyEntry({
     if (busy) return
     if (!validateBeforeSubmit()) return
     onSubmit(buildPayload())
+  }
+  const resume = () => {
+    if (busy) return
+    if (!modelGatePassed) {
+      requestModelSelectionAttention()
+      return
+    }
+    onResume?.()
   }
 
   return (
@@ -856,7 +930,13 @@ export default function HotCopyEntry({
 
       <div className="hotcopy__panel">
         {onNewVideo && (
-          <button type="button" className="hotcopy__newVideoBtn" onClick={onNewVideo}>
+          <button
+            type="button"
+            className="hotcopy__newVideoBtn"
+            disabled={busy}
+            onClick={onNewVideo}
+            title={busy ? '本次生成正在启动，请稍候' : '创建新视频'}
+          >
             创建新视频
           </button>
         )}
@@ -1034,6 +1114,23 @@ export default function HotCopyEntry({
                   </svg>
                 }
               />
+              <GenerationModelDropdown
+                groups={modelGroups}
+                selected={modelSelection}
+                placement="start"
+                loading={modelLoading}
+                error={modelError}
+                locked={modelsLocked}
+                conflicts={modelSelectionConflicts}
+                attentionRequest={modelAttentionRequest}
+                attentionMessage={modelGateMessage}
+                onRetry={() => onReloadModels?.()}
+                onChange={(_groupKey, nextModelId, subgroupKey) => {
+                  if (subgroupKey !== 'video.replicate') return
+                  const normalizedId = Number(nextModelId)
+                  setModelVersionId(Number.isSafeInteger(normalizedId) && normalizedId > 0 ? normalizedId : undefined)
+                }}
+              />
               <span className="hotcopy__atAnchor">
                 <button type="button" className="hotcopy__at" onClick={handleAt} title="引用替换素材">
                   @
@@ -1062,10 +1159,10 @@ export default function HotCopyEntry({
                 type="button"
                 className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ' hotcopy__send--plain'}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
                 /* 恢复态下真正返回下一步;普通态仍走首次去制作。 */
-                disabled={!resumeMode && busy}
-                onClick={() => (resumeMode ? onResume?.() : submit())}
+                disabled={busy}
+                onClick={() => (resumeMode ? resume() : submit())}
                 aria-label={resumeMode ? '返回下一步' : '去制作'}
-                title={!resumeMode && busy ? '视频生成启动中…' : resumeMode ? '返回下一步' : '去制作'}
+                title={busy ? '视频生成启动中…' : resumeMode ? '返回下一步' : '去制作'}
               >
                 {resumeMode ? (
                   <svg

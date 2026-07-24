@@ -61,6 +61,7 @@ import {
   tryAcquireMemberCenterPayment,
   tryTrackMemberCenterOrder,
 } from '@/utils/memberCenterPayment'
+import EntryCanvasBg from '@/components/smart/EntryCanvasBg'
 import './MemberCenterModal.css'
 
 /** 套餐能力清单中的一项及其是否包含状态。 */
@@ -1744,6 +1745,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         <>
           {createPortal(
             <div className="mcm-mask" onClick={(e) => e.target === e.currentTarget && onClose()}>
+              <div className="mcm-bg" aria-hidden="true">
+                <EntryCanvasBg index={0} count={1} />
+              </div>
               {shell}
             </div>,
             document.body,

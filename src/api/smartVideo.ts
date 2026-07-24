@@ -1,12 +1,19 @@
 /**
  * 智能成片 — 生成视频:把「所有分镜图 + 脚本 + 台词(旁白) + 字幕 + 音效 + 总时长」
- * 一次性喂给 seedance 出**整片**(对齐 2.0 useVideoGeneration,不是逐镜一段)。
+ * 一次性喂给用户选择的视频模型出**整片**(未选择时兼容回退 Seedance；不是逐镜一段)。
  * 输入参考始终用当前分镜图,确保每次生成都基于最新镜头编排;修改意见只拼进 prompt,不复用旧视频。
  */
 // @ts-nocheck
 import { createAiTask, waitForAiTask, getAiTaskId, resolveTaskModel, estimateAiTaskCost } from './business'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
-import { getModelParamFields } from '@/utils/modelSchema'
+import {
+  findModelParamField,
+  getModelParamFields,
+  getModelParamOptionValues,
+  normalizeModelParamName,
+} from '@/utils/modelSchema'
+import { getBackendGenerationModelVersionId } from '@/utils/generationModelCatalog'
+import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/utils/modelRestrictions'
 import { normalizeSeedanceRatio } from '@/utils/videoOptions'
 import { parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoDurationValue'
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
@@ -20,6 +27,131 @@ const VIDEO_EDIT_MODEL_KEYWORDS = ['happyhorse']
 /** 工作空间未开通 video.edit 能力时的统一错误文案。 */
 const VIDEO_EDIT_MODEL_UNAVAILABLE =
   '当前工作空间/套餐暂无「视频编辑(video.edit)」可用模型(happyhorse-1.0-video-edit),请联系管理员开通'
+/** 视频修改未填写提示词时，估价和正式提交共同使用的默认要求。 */
+const DEFAULT_VIDEO_EDIT_PROMPT =
+  '在保留原视频镜头内容、顺序与节奏的前提下,按要求微调画面(只改提到的部分,其余保持不变)。'
+
+/** 归一化页面显式选择的模型；ID 与详情不一致时直接拦截，避免估价和提交串用模型。 */
+function getExplicitVideoModel(args: { modelVersionId?: number; modelVersion?: any }): {
+  id: number
+  model: any
+} | null {
+  const model = args.modelVersion && typeof args.modelVersion === 'object' ? args.modelVersion : null
+  const hasExplicitSelection = args.modelVersionId !== undefined || model !== null
+  if (!hasExplicitSelection) return null
+
+  const detailId = getBackendGenerationModelVersionId(model) || 0
+  const requestedId = Number(args.modelVersionId !== undefined ? args.modelVersionId : detailId)
+  if (!Number.isSafeInteger(requestedId) || requestedId <= 0) {
+    throw new Error('已选择的视频模型无效，请重新选择')
+  }
+
+  if (detailId > 0 && detailId !== requestedId) {
+    throw new Error('已选择的视频模型 ID 与模型详情不一致，请重新选择')
+  }
+  return {
+    id: requestedId,
+    model: model ? { ...model, id: requestedId } : { id: requestedId },
+  }
+}
+
+/** 后端 schema 中用于声明输入素材角色的字段名。 */
+const INPUT_ASSET_ROLE_FIELD_NAMES = [
+  'input_asset_role',
+  'inputAssetRole',
+  'input_role',
+  'inputRole',
+  'image_input_role',
+  'imageInputRole',
+  'reference_image_role',
+  'referenceImageRole',
+]
+
+/** 将 schema 中的布尔值选项归一化，避免把字符串 "false" 当成 true。 */
+function readBooleanOption(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value
+  if (
+    value === 1 ||
+    String(value ?? '')
+      .trim()
+      .toLocaleLowerCase() === 'true'
+  )
+    return true
+  if (
+    value === 0 ||
+    String(value ?? '')
+      .trim()
+      .toLocaleLowerCase() === 'false'
+  )
+    return false
+  return null
+}
+
+/**
+ * 保留原有“支持时生成音频”的效果；模型显式只允许 false 时自动关闭。
+ * schema 未声明音频字段时仍传 true 给通用构建器，由构建器负责省略未声明参数。
+ */
+function shouldGenerateAudio(model: any): boolean {
+  const field = findModelParamField(getModelParamFields(model), [
+    'generate_audio',
+    'generateAudio',
+    'audio',
+    'with_audio',
+    'withAudio',
+    'enable_audio',
+    'enableAudio',
+  ])
+  if (!field) return true
+  const options = getModelParamOptionValues(field)
+    .map(readBooleanOption)
+    .filter((value): value is boolean => value !== null)
+  if (!options.length || options.includes(true)) return true
+  return false
+}
+
+/** 读取 input_assets 数组项里的标准 JSON Schema role 声明。 */
+function readNestedInputAssetRoleField(fields: any[]): any | null {
+  const inputAssetsField = findModelParamField(fields, ['input_assets', 'inputAssets'])
+  const items = inputAssetsField?.items && typeof inputAssetsField.items === 'object' ? inputAssetsField.items : null
+  const properties = items?.properties && typeof items.properties === 'object' ? items.properties : null
+  const role = properties?.role && typeof properties.role === 'object' ? properties.role : null
+  if (!role) return null
+  const required = Array.isArray(items?.required)
+    ? items.required.some((name: unknown) => normalizeModelParamName(name) === 'role')
+    : false
+  return { ...role, name: 'role', ...(required ? { required: true } : {}) }
+}
+
+function readInputRoleText(value: unknown): string {
+  return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : ''
+}
+
+/**
+ * 只在后端 schema 明确声明输入角色时采用该声明。
+ * 未声明时继续使用历史 role:'image'；多种非 image 角色且无默认值时不猜测，付费任务前拦截。
+ */
+function resolveInputAssetRole(model: any): string {
+  const fields = getModelParamFields(model)
+  const field = findModelParamField(fields, INPUT_ASSET_ROLE_FIELD_NAMES) || readNestedInputAssetRoleField(fields)
+  if (!field) return 'image'
+
+  const options = Array.from(new Set(getModelParamOptionValues(field).map(readInputRoleText).filter(Boolean)))
+  const defaultRole = readInputRoleText(field.default ?? field.default_value ?? field.defaultValue)
+  if (defaultRole) {
+    if (options.length && !options.includes(defaultRole)) {
+      throw new Error('所选视频模型的输入素材角色默认值不在允许范围内，请联系管理员检查模型配置')
+    }
+    return defaultRole
+  }
+
+  const imageRole = options.find((role) => normalizeModelParamName(role) === 'image')
+  if (imageRole) return imageRole
+  if (options.length === 1) return options[0]
+  if (options.length > 1 || field.required === true) {
+    throw new Error('所选视频模型声明了输入素材角色，但未提供唯一可用角色，请联系管理员检查模型配置')
+  }
+  return 'image'
+}
 
 /** 确认候选模型显式声明了 video.edit 操作。 */
 function isVideoEditModel(model: any): boolean {
@@ -27,7 +159,21 @@ function isVideoEditModel(model: any): boolean {
 }
 
 /** 按工作空间和套餐解析可用的 happyhorse 视频编辑模型。 */
-async function resolveVideoEditModel(args: { workspaceId: number; modelPlanCandidates?: string[] }): Promise<any> {
+async function resolveVideoEditModel(args: {
+  workspaceId: number
+  modelVersionId?: number
+  modelVersion?: any
+  modelPlanCandidates?: string[]
+}): Promise<any> {
+  const explicitModel = getExplicitVideoModel(args)
+  if (explicitModel) {
+    const operations = explicitModel.model?.operation_codes
+    if (Array.isArray(operations) && operations.length && !operations.includes('video.edit')) {
+      throw new Error('已选择的模型不支持视频修改(video.edit)')
+    }
+    return explicitModel.model
+  }
+
   const model = await resolveTaskModel({
     workspaceId: args.workspaceId,
     capability: 'video',
@@ -35,8 +181,9 @@ async function resolveVideoEditModel(args: { workspaceId: number; modelPlanCandi
     preferredModelKeywords: VIDEO_EDIT_MODEL_KEYWORDS,
     modelPlanCandidates: args.modelPlanCandidates,
   })
-  if (!model?.id || !isVideoEditModel(model)) throw new Error(VIDEO_EDIT_MODEL_UNAVAILABLE)
-  return model
+  const modelVersionId = getBackendGenerationModelVersionId(model)
+  if (!modelVersionId || !isVideoEditModel(model)) throw new Error(VIDEO_EDIT_MODEL_UNAVAILABLE)
+  return model?.id === modelVersionId ? model : { ...model, id: modelVersionId }
 }
 
 /**
@@ -55,11 +202,41 @@ function buildVideoEditParams(
     duration: args.durationSec,
     durationMode: 'exact',
     sourceVideoDuration: args.sourceVideoDurationSec,
-    resolution: '720p',
+    // 720p 是旧默认而非用户显式选择；留空后由模型 schema 选 720p 或其首个支持值。
+    resolution: '',
     ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
-    generateAudio: true,
+    generateAudio: shouldGenerateAudio(model),
   })
   return Object.fromEntries(Object.entries(candidates).filter(([name]) => declaredNames.has(name)))
+}
+
+export interface VideoEditModelRequestCompilation {
+  modelVersionId: number
+  modelVersion: any
+  prompt: string
+  params: Record<string, any>
+}
+
+/**
+ * 将视频修改模型和当前输入编译为估价、提交共用的请求快照。
+ * 纯函数不会请求接口或创建任务，可在用户确认修改前提前校验模型配置。
+ */
+export function compileVideoEditModelRequest(
+  model: any,
+  args: { prompt?: string; ratio?: string; durationSec?: number; sourceVideoDurationSec?: number },
+): VideoEditModelRequestCompilation {
+  const modelVersionId = getBackendGenerationModelVersionId(model)
+  if (!modelVersionId) throw new Error('已选择的视频修改模型无效，请重新选择')
+  const operations = model?.operation_codes
+  if (Array.isArray(operations) && operations.length && !operations.includes('video.edit')) {
+    throw new Error('已选择的模型不支持视频修改(video.edit)')
+  }
+  return {
+    modelVersionId,
+    modelVersion: model?.id === modelVersionId ? model : { ...model, id: modelVersionId },
+    prompt: String(args.prompt || '').trim() || DEFAULT_VIDEO_EDIT_PROMPT,
+    params: buildVideoEditParams(model, args),
+  }
 }
 
 /** 将单镜头时长归一化为秒，缺失时按 5 秒处理。 */
@@ -73,33 +250,92 @@ export function totalDurationSec(shots: any[]): number {
 }
 
 /** 解析当前工作空间可用的 Seedance 整片生成模型。 */
-async function resolveFullVideoModel(args: { workspaceId: number }): Promise<any> {
+async function resolveFullVideoModel(args: {
+  workspaceId: number
+  modelVersionId?: number
+  modelVersion?: any
+}): Promise<any> {
+  const explicitModel = getExplicitVideoModel(args)
+  if (explicitModel) {
+    const operations = explicitModel.model?.operation_codes
+    if (Array.isArray(operations) && operations.length && !operations.includes('video.generate')) {
+      throw new Error('已选择的模型不支持视频生成(video.generate)')
+    }
+    return explicitModel.model
+  }
+
   const model = await resolveTaskModel({
     workspaceId: args.workspaceId,
     capability: 'video',
     operationCode: 'video.generate',
     preferredModelKeywords: VIDEO_MODEL_KEYWORDS,
   })
-  if (!model?.id) throw new Error('暂无可用的视频生成模型(seedance)')
-  return model
+  const modelVersionId = getBackendGenerationModelVersionId(model)
+  if (!modelVersionId) throw new Error('暂无可用的视频生成模型(seedance)')
+  return { ...model, id: modelVersionId }
 }
 
-/** 用与正式提交一致的镜头总时长、比例和分辨率构建生成参数。 */
-function buildFullVideoParams(model: any, args: { shots: any[]; ratio?: string }): Record<string, any> {
+export interface FullVideoModelRequestCompilation {
+  modelVersionId: number
+  modelVersion: any
+  params: Record<string, any>
+  inputAssetRole: string
+  referenceImageCount: number
+}
+
+/**
+ * 将所选视频模型和当前镜头编译为可估价、可提交的稳定请求参数。
+ *
+ * 这是纯函数，不请求接口也不创建任务；SmartCreateView 可在入队/扣费前调用它做同口径校验。
+ */
+export function compileFullVideoModelRequest(
+  model: any,
+  args: { shots: any[]; ratio?: string; referenceImageCount?: number },
+): FullVideoModelRequestCompilation {
+  const modelVersionId = getBackendGenerationModelVersionId(model)
+  if (!modelVersionId) throw new Error('已选择的视频模型无效，请重新选择')
+  const operations = model?.operation_codes
+  if (Array.isArray(operations) && operations.length && !operations.includes('video.generate')) {
+    throw new Error('已选择的模型不支持视频生成(video.generate)')
+  }
+
   const duration = totalDurationSec(args.shots)
   const durationValidation = validateSmartVideoDuration(duration)
   if (!durationValidation.valid) {
     throw new Error('智能成片总时长必须是 1 至 15 秒内的整数')
   }
+
+  const referenceImageCount =
+    args.referenceImageCount === undefined
+      ? (args.shots || []).filter((shot) => shot?.includeInVideo !== false).length
+      : Number(args.referenceImageCount)
+  if (!Number.isSafeInteger(referenceImageCount) || referenceImageCount < 0) {
+    throw new Error('参考图数量无效，请重新准备分镜素材')
+  }
+
+  const referenceImageConflicts = getModelConstraintConflicts(buildModelRestrictionSummary(model).constraints, {
+    referenceImageCount,
+  })
+  if (referenceImageConflicts.length) {
+    throw new Error(`所选视频模型不支持当前参考图：${referenceImageConflicts[0]}`)
+  }
+
+  const generateAudio = shouldGenerateAudio(model)
+  const params = buildVideoGenerationParams(model, {
+    duration: durationValidation.seconds,
+    durationMode: 'exact',
+    validateExactDuration: true,
+    // 未提供分辨率选择时让 schema 决定默认值；无 schema 的旧模型仍由通用构建器回退 720p。
+    resolution: '',
+    ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
+    generateAudio,
+  })
   return {
-    generate_audio: true,
-    ...buildVideoGenerationParams(model, {
-      duration: durationValidation.seconds,
-      durationMode: 'exact',
-      resolution: '720p',
-      ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
-      generateAudio: true,
-    }),
+    modelVersionId,
+    modelVersion: model?.id === modelVersionId ? model : { ...model, id: modelVersionId },
+    params,
+    inputAssetRole: resolveInputAssetRole(model),
+    referenceImageCount,
   }
 }
 
@@ -154,6 +390,10 @@ export async function generateFullVideo(args: {
   /** 多个视频生成时的变体序号(仅用于避免同 prompt 结果完全重复) */
   variationIndex?: number
   variationTotal?: number
+  /** 用户显式选择的视频生成模型版本 ID。 */
+  modelVersionId?: number
+  /** 与 modelVersionId 对应的后端模型详情，用于按该模型 schema 构建参数。 */
+  modelVersion?: any
   modelPlanCandidates?: string[]
   idempotencyKey?: string
   /** 任务一创建就回调 task_id,供上层持久化(切路由/刷新后凭它续轮询,不重新生成) */
@@ -170,23 +410,26 @@ export async function generateFullVideo(args: {
   // 每个参与镜头必须按顺序对应一张已落库参考图；禁止静默过滤后拿错位/少图输入创建计费任务。
   const imgIds = requireOrderedShotAssetIds(args.shots || [], args.imageAssetIds || [])
 
-  // 输入参考:始终把「全部当前分镜图」按镜头顺序作参考帧送入(干净格式 {asset_id, role:'image'},
-  // 不加非标准字段)。即便带修改意见也不复用上次整片,确保每次都基于最新镜头编排重新出片。
-  const inputAssets = imgIds.map((id) => ({ asset_id: id, role: 'image' }))
-
-  // 钉死 seedance,不做跨模型退避:先显式解析 seedance 模型,再用 modelVersionId 提交。
-  // 这样 createAiTask 走「显式模型」分支(无「换下一个模型」循环),seedance 失败直接抛错由用户决定。
+  // 已显式选择时使用页面传入模型；旧调用未选择时仍自动解析 Seedance，保持原生成链路兼容。
+  // 两种路径都会让 createAiTask 走“显式模型”分支，不会在失败后静默切换模型。
   const model = await resolveFullVideoModel(args)
+  const request = compileFullVideoModelRequest(model, {
+    shots: args.shots,
+    ratio: args.ratio,
+    referenceImageCount: imgIds.length,
+  })
+  // schema 未声明时继续使用 role:'image'；显式声明唯一角色时按模型要求下发。
+  const inputAssets = imgIds.map((id) => ({ asset_id: id, role: request.inputAssetRole }))
   const task = await createAiTask({
     workspaceId: args.workspaceId,
     capability: 'video',
     operationCode: 'video.generate',
-    modelVersionId: model.id,
-    modelVersion: model,
+    modelVersionId: request.modelVersionId,
+    modelVersion: request.modelVersion,
     prompt,
     inputAssets,
     idempotencyKey: args.idempotencyKey,
-    params: buildFullVideoParams(model, args),
+    params: request.params,
   })
   // 任务一创建就把 task_id 抛给上层持久化(中途切路由/刷新后可凭它续轮询,而非重新生成)
   const taskId = getAiTaskId(task)
@@ -268,6 +511,10 @@ export async function editFullVideo(args: {
   durationSec?: number
   /** 源视频真实时长(秒):video.edit 按它计费(优先于 duration),前端读源视频 HTML5 元数据得到 */
   sourceVideoDurationSec?: number
+  /** 用户显式选择的视频修改模型版本 ID。 */
+  modelVersionId?: number
+  /** 与 modelVersionId 对应的后端模型详情，用于按该模型 schema 构建参数。 */
+  modelVersion?: any
   modelPlanCandidates?: string[]
   idempotencyKey?: string
   /** 任务创建后回调 task_id(供前端持久化、刷新/切换后续轮询) */
@@ -277,17 +524,18 @@ export async function editFullVideo(args: {
 }): Promise<{ url: string; assetId: number }> {
   const inputAssets = [{ asset_id: args.videoAssetId, role: 'video' }]
   const model = await resolveVideoEditModel(args)
+  const request = compileVideoEditModelRequest(model, args)
   const task = await createAiTask({
     workspaceId: args.workspaceId,
     capability: 'video',
     operationCode: 'video.edit',
     // 提交和 estimate-cost 共用同一个显式模型，避免“预估模型 A、实际提交模型 B”。
-    modelVersionId: model.id,
-    modelVersion: model,
+    modelVersionId: request.modelVersionId,
+    modelVersion: request.modelVersion,
     idempotencyKey: args.idempotencyKey,
-    prompt: args.prompt || '在保留原视频镜头内容、顺序与节奏的前提下,按要求微调画面(只改提到的部分,其余保持不变)。',
+    prompt: request.prompt,
     inputAssets,
-    params: buildVideoEditParams(model, args),
+    params: request.params,
   })
   const taskId = getAiTaskId(task)
   args.onTask?.(taskId)
@@ -319,15 +567,20 @@ export async function estimateVideoEditCost(args: {
   ratio?: string
   durationSec?: number
   sourceVideoDurationSec?: number
+  /** 用户显式选择的视频修改模型版本 ID。 */
+  modelVersionId?: number
+  /** 与 modelVersionId 对应的后端模型详情，用于保持估价与提交参数一致。 */
+  modelVersion?: any
   modelPlanCandidates?: string[]
 }): Promise<any> {
   const model = await resolveVideoEditModel(args)
+  const request = compileVideoEditModelRequest(model, args)
   return estimateAiTaskCost({
     workspaceId: args.workspaceId,
-    modelVersionId: model.id,
+    modelVersionId: request.modelVersionId,
     operationCode: 'video.edit',
-    prompt: args.prompt || '',
-    params: buildVideoEditParams(model, args),
+    prompt: request.prompt,
+    params: request.params,
   })
 }
 
@@ -340,14 +593,21 @@ export async function estimateFullVideoCost(args: {
   workspaceId: number
   shots: any[]
   ratio?: string
+  /** 用户显式选择的视频生成模型版本 ID。 */
+  modelVersionId?: number
+  /** 与 modelVersionId 对应的后端模型详情，用于保持估价与提交参数一致。 */
+  modelVersion?: any
   modelPlanCandidates?: string[]
 }): Promise<any> {
   const model = await resolveFullVideoModel(args)
-  const params = buildFullVideoParams(model, args)
+  const request = compileFullVideoModelRequest(model, {
+    shots: args.shots,
+    ratio: args.ratio,
+  })
   return estimateAiTaskCost({
     workspaceId: args.workspaceId,
-    modelVersionId: model.id,
+    modelVersionId: request.modelVersionId,
     operationCode: 'video.generate',
-    params,
+    params: request.params,
   })
 }

@@ -4,6 +4,7 @@ import {
   canPersistSmartProjectDraft,
   clearSmartDraftsForUser,
   computeVideoContentSig,
+  isVideoContentSigMatch,
   loadSmartDraft,
   mergeCompletedVideoGenerationIds,
   parseSmartSnapshot,
@@ -140,6 +141,8 @@ describe('smartDraft 本地持久化', () => {
             ratio: '1:1',
             refAssetIds: [61],
             refImages: [{ url: 'data:image/png;base64,reference', assetId: 61 }],
+            modelVersionId: 6102,
+            modelVersion: { id: 6102, name: '后端图片模型' },
           },
         },
       ],
@@ -189,6 +192,8 @@ describe('smartDraft 本地持久化', () => {
           ratio: '1:1',
           refAssetIds: [61],
           refImages: [{ url: '/api/v1/assets/61/download?workspace_id=21', assetId: 61 }],
+          modelVersionId: 6102,
+          modelVersion: { id: 6102, name: '后端图片模型' },
         },
         images: undefined,
       },
@@ -216,6 +221,9 @@ describe('smartDraft 本地持久化', () => {
             shots: [{ id: 'shot-1' }],
             basePrompt: '生成短视频',
             durationSec: 5,
+            modelVersionId: 7301,
+            modelVersion: { id: 7301, name: '后端视频模型' },
+            operationCode: 'video.generate',
             lockedSig: 'sig-model-7301',
           },
         },
@@ -234,7 +242,12 @@ describe('smartDraft 本地持久化', () => {
       expect.objectContaining({ id: 'gen-running-2', status: 'processing', taskId: 0, idempotencyKey: 'idem-2' }),
     ])
     expect(restored?.videoGenQueue?.map((job) => job.id)).toEqual(['gen-running-1', 'gen-running-2'])
-    expect(restored?.videoGenQueue?.[0]?.context).toMatchObject({ lockedSig: 'sig-model-7301' })
+    expect(restored?.videoGenQueue?.[0]?.context).toMatchObject({
+      modelVersionId: 7301,
+      modelVersion: { id: 7301, name: '后端视频模型' },
+      operationCode: 'video.generate',
+      lockedSig: 'sig-model-7301',
+    })
   })
 
   it('preserves unsubmitted children in a confirmed multi-image queue and the image composer draft', () => {
@@ -497,5 +510,64 @@ describe('smartDraft 后端快照', () => {
     )
 
     expect(legacySwitchingSig).toBe(fixedModelSig)
+  })
+
+  it('把当前视频生成模型纳入内容签名', () => {
+    const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '5s' }]
+    const firstModelSig = computeVideoContentSig(
+      shots,
+      { ratio: '16:9', generationModels: { 'video.generate': 7301 } },
+      '夏日饮品',
+    )
+    const secondModelSig = computeVideoContentSig(
+      shots,
+      { ratio: '16:9', generationModels: { 'video.generate': 7302 } },
+      '夏日饮品',
+    )
+
+    expect(firstModelSig).not.toBe(secondModelSig)
+    expect(isVideoContentSigMatch(firstModelSig, secondModelSig)).toBe(false)
+  })
+
+  it('兼容不含模型字段的历史签名，但仍比较其他真实内容变化', () => {
+    const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '5s' }]
+    const currentSig = computeVideoContentSig(
+      shots,
+      { ratio: '16:9', generationModels: { 'video.generate': 7301 } },
+      '夏日饮品',
+    )
+    const legacyPayload = JSON.parse(currentSig)
+    delete legacyPayload.signatureVersion
+    delete legacyPayload.videoModel
+    const legacySig = JSON.stringify(legacyPayload)
+
+    expect(isVideoContentSigMatch(legacySig, currentSig)).toBe(true)
+    expect(
+      isVideoContentSigMatch(
+        legacySig,
+        computeVideoContentSig(shots, { ratio: '16:9', generationModels: { 'video.generate': 7301 } }, '新品饮品'),
+      ),
+    ).toBe(false)
+  })
+
+  it('只对历史签名启用模型字段迁移，新版签名双方始终严格比较模型', () => {
+    const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '5s' }]
+    const currentSig = computeVideoContentSig(
+      shots,
+      { ratio: '16:9', generationModels: { 'video.generate': 7301 } },
+      '夏日饮品',
+    )
+    const legacyPayload = JSON.parse(currentSig)
+    delete legacyPayload.signatureVersion
+    legacyPayload.videoModelVersionId = 9999
+    legacyPayload.videoModel = 'legacy-switcher'
+
+    expect(isVideoContentSigMatch(JSON.stringify(legacyPayload), currentSig)).toBe(true)
+    expect(
+      isVideoContentSigMatch(
+        currentSig,
+        computeVideoContentSig(shots, { ratio: '16:9', generationModels: { 'video.generate': 7302 } }, '夏日饮品'),
+      ),
+    ).toBe(false)
   })
 })

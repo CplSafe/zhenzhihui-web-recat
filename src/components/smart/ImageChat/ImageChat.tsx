@@ -12,6 +12,8 @@ import { openMemberCenter } from '@/stores/ui'
 import { fileToDataUrl } from '@/utils/imageFile'
 import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
 import { useToast } from '@/composables/useToast'
+import type { BackendGenerationModel, GenerationModelVersionId } from '@/utils/generationModelCatalog'
+import type { LockedSmartImageQuotedCost } from '@/utils/smartImageQueueSafety'
 import styles from './ImageChat.module.less'
 
 /** 对话消息中的图片地址及可选后端资产 ID。 */
@@ -45,6 +47,11 @@ export interface ChatMessage {
     refAssetIds?: number[]
     refImages?: ChatImg[]
     outputCount?: number
+    /** 创建队列时锁定的后端模型；刷新恢复后继续使用同一模型，避免批次内漂移。 */
+    modelVersionId?: GenerationModelVersionId
+    modelVersion?: BackendGenerationModel
+    /** 用户确认时冻结的工作空间、模型 schema、请求参数和整批报价。 */
+    quotedCost?: LockedSmartImageQuotedCost
   }
   startedAt?: number
 }
@@ -72,6 +79,9 @@ export interface ImageChatProps {
   initialComposerDraft?: Partial<ImageComposerDraft>
   /** 是否有一轮正在出图(出图中禁用发送) */
   busy?: boolean
+  /** 当前图片操作尚未选择模型等原因，仅禁用新生成，不影响返回或新建对话。 */
+  generationDisabled?: boolean
+  generationDisabledReason?: string
   /** 提交前积分预估文案(单张口径,如「每张约 X 积分 · 余额 Y」);空则不显示 */
   costText?: string
   /** 预估超过余额:在 costText 后追加「积分不足,请前往充值积分」(可点击跳会员中心) */
@@ -99,6 +109,12 @@ export interface ImageChatProps {
   /** 用一至九张生成结果开启一个独立的视频项目，避免覆盖当前图片项目。 */
   onContinueToVideo?: (selections: ImageVideoSelection[]) => void | Promise<void>
   onRetry?: (message: ChatMessage) => void
+  /**
+   * 按失败消息判断是否允许重试。未提供时沿用 generationDisabled，
+   * 这样已有 taskId 的恢复可以不受当前输入框模型选择影响。
+   */
+  isRetryDisabled?: (message: ChatMessage) => boolean
+  getRetryDisabledReason?: (message: ChatMessage) => string
   /** 当前输入框参考图数量变化，供父级实时切换文生图/图生图费用预估。 */
   onComposerReferenceCountChange?: (count: number) => void
   /** 当前输入框比例变化，供父级实时刷新费用预估。 */
@@ -180,6 +196,8 @@ export default function ImageChat({
   initialOutputCount,
   initialComposerDraft,
   busy,
+  generationDisabled = false,
+  generationDisabledReason = '',
   costText,
   costInsufficient,
   onSend,
@@ -192,6 +210,8 @@ export default function ImageChat({
   onUseAsReference,
   onContinueToVideo,
   onRetry,
+  isRetryDisabled,
+  getRetryDisabledReason,
   onComposerReferenceCountChange,
   onRatioChange,
   onOutputCountChange,
@@ -429,7 +449,8 @@ export default function ImageChat({
   }
 
   const cleanText = text.trim()
-  const canSubmit = (cleanText.length > 0 || images.length > 0) && !busy && !submitting && !costInsufficient
+  const canSubmit =
+    (cleanText.length > 0 || images.length > 0) && !busy && !submitting && !costInsufficient && !generationDisabled
   // 父级确认接受生成后才清空本轮输入；用户取消付费确认时原内容不会丢失。
   const submit = async () => {
     if (!canSubmit) return
@@ -577,18 +598,33 @@ export default function ImageChat({
                     <div className={styles.aiError} role="alert">
                       {msg.error || '生成失败，请重试'}
                     </div>
-                    {onRetry && (
-                      <button
-                        type="button"
-                        className={styles.retry}
-                        onClick={() => onRetry(msg)}
-                        disabled={busy || submitting || costInsufficient}
-                        aria-label="重新生成这张图片"
-                      >
-                        <ResultActionIcon type="retry" />
-                        重新生成
-                      </button>
-                    )}
+                    {onRetry &&
+                      (() => {
+                        const hasMessageRetryGate = typeof isRetryDisabled === 'function'
+                        const retryDisabled = hasMessageRetryGate
+                          ? Boolean(isRetryDisabled(msg))
+                          : Boolean(costInsufficient || generationDisabled)
+                        const retryDisabledReason =
+                          getRetryDisabledReason?.(msg) ||
+                          (retryDisabled
+                            ? costInsufficient
+                              ? '积分不足，请先充值'
+                              : generationDisabledReason || '当前图片任务暂时无法重试'
+                            : '')
+                        return (
+                          <button
+                            type="button"
+                            className={styles.retry}
+                            onClick={() => onRetry(msg)}
+                            disabled={busy || submitting || retryDisabled}
+                            aria-label="重新生成这张图片"
+                            title={retryDisabledReason || undefined}
+                          >
+                            <ResultActionIcon type="retry" />
+                            重新生成
+                          </button>
+                        )
+                      })()}
                   </div>
                 ) : (
                   <>
@@ -931,7 +967,13 @@ export default function ImageChat({
               onClick={submit}
               aria-label="生成"
               aria-describedby={costText || costInsufficient ? 'image-generation-cost' : undefined}
-              title={costInsufficient ? '积分不足，请先充值' : '生成(Ctrl/⌘ + Enter)'}
+              title={
+                costInsufficient
+                  ? '积分不足，请先充值'
+                  : generationDisabled
+                    ? generationDisabledReason || '请先选择图片生成模型'
+                    : '生成(Ctrl/⌘ + Enter)'
+              }
             >
               {/* 白色右箭头;圆底由 .send 控制(可点=品牌绿,不可点=禁用灰) */}
               <svg

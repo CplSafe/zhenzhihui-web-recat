@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { findFirstField, getModelParamFields, parseParamsSchema } from '@/utils/modelSchema'
+import {
+  findFirstField,
+  getModelParamOptionValues,
+  getModelParamFields,
+  hasModelParamSchema,
+  normalizeModelParamName,
+  parseParamsSchema,
+} from '@/utils/modelSchema'
 import {
   ENTRY_RATIO_OPTIONS,
   SEEDANCE_RATIO_OPTIONS,
@@ -27,6 +34,61 @@ describe('model schema helpers', () => {
     expect(getModelParamFields({ paramsSchema: { fields: [{ name: 'duration' }] } })).toEqual([{ name: 'duration' }])
     expect(getModelParamFields({ params_schema: { fields: {} } })).toEqual([])
     expect(getModelParamFields(null)).toEqual([])
+    expect(hasModelParamSchema({ params_schema: { fields: [] } })).toBe(true)
+    expect(hasModelParamSchema({})).toBe(false)
+  })
+
+  it('converts standard JSON Schema properties and enums to model fields', () => {
+    expect(
+      getModelParamFields({
+        params_schema: {
+          type: 'object',
+          required: ['duration'],
+          properties: {
+            duration: { type: 'integer', minimum: 4, maximum: 15 },
+            ratio: { type: 'string', enum: ['16:9', '9:16'] },
+            generate_audio: { type: 'boolean' },
+          },
+        },
+      }),
+    ).toEqual([
+      { name: 'duration', type: 'integer', minimum: 4, maximum: 15, required: true },
+      { name: 'ratio', type: 'string', enum: ['16:9', '9:16'], options: ['16:9', '9:16'] },
+      { name: 'generate_audio', type: 'boolean' },
+    ])
+  })
+
+  it('reads nested required fields, aliases and object-shaped options', () => {
+    const fields = getModelParamFields({
+      params_schema: {
+        schema: {
+          required: ['aspectRatio'],
+          properties: {
+            aspectRatio: {
+              type: 'string',
+              aliases: ['ratio', 'aspect_ratio'],
+              options: {
+                '16:9': '横屏',
+                '9:16': '竖屏',
+              },
+            },
+          },
+        },
+      },
+    })
+
+    expect(fields).toEqual([
+      {
+        name: 'aspectRatio',
+        type: 'string',
+        aliases: ['ratio', 'aspect_ratio'],
+        options: ['16:9', '9:16'],
+        required: true,
+      },
+    ])
+    expect(findFirstField(fields, ['aspect_ratio'])).toBe(fields[0])
+    expect(getModelParamOptionValues(fields[0])).toEqual(['16:9', '9:16'])
+    expect(normalizeModelParamName('Aspect-Ratio')).toBe('aspectratio')
   })
 
   it('returns the first field matching candidate priority', () => {
@@ -96,11 +158,28 @@ describe('buildVideoGenerationParams', () => {
     ).toEqual({ duration: 10, resolution: '720p', ratio: '16:9', generate_audio: false })
   })
 
-  it('preserves smart-video exact durations instead of snapping them to a legacy bucket', () => {
+  it('preserves exact durations by default and can strictly validate smart-video model options', () => {
     expect(buildVideoGenerationParams({}, { duration: 7, durationMode: 'exact' })).toMatchObject({ duration: 7 })
 
-    const model = { params_schema: { fields: [{ name: 'seconds', options: ['5', '10', '15'] }] } }
+    const model = {
+      display_name: 'Seedance 2.0',
+      params_schema: { fields: [{ name: 'seconds', options: ['5', '10', '15'] }] },
+    }
     expect(buildVideoGenerationParams(model, { duration: '11s', durationMode: 'exact' })).toEqual({ seconds: 11 })
+    expect(() =>
+      buildVideoGenerationParams(model, {
+        duration: '11s',
+        durationMode: 'exact',
+        validateExactDuration: true,
+      }),
+    ).toThrow('Seedance 2.0 不支持 11 秒视频，可选时长：5、10、15 秒')
+    expect(
+      buildVideoGenerationParams(model, {
+        duration: '10s',
+        durationMode: 'exact',
+        validateExactDuration: true,
+      }),
+    ).toEqual({ seconds: 10 })
   })
 
   it('uses declared aliases and picks the closest supported numeric option', () => {
@@ -120,7 +199,7 @@ describe('buildVideoGenerationParams', () => {
       buildVideoGenerationParams(model, {
         duration: 12.5,
         ratio: '16:9',
-        resolution: '4k',
+        resolution: '1080p',
         sourceVideoDuration: 4.6,
         generateAudio: true,
       }),
@@ -131,6 +210,33 @@ describe('buildVideoGenerationParams', () => {
       sourceVideoDuration: 4.6,
       generateAudio: true,
     })
+  })
+
+  it('rejects explicitly selected unsupported ratio, resolution and audio values', () => {
+    const model = {
+      display_name: '后端视频模型',
+      params_schema: {
+        fields: [
+          { name: 'aspect_ratio', options: ['16:9', '9:16'] },
+          { name: 'resolution', options: { '720p': '标清', '1080p': '高清' } },
+          { name: 'generate_audio', oneOf: [{ const: false }] },
+        ],
+      },
+    }
+
+    expect(() => buildVideoGenerationParams(model, { ratio: '4:3' })).toThrow(
+      '后端视频模型 不支持当前画面比例 4:3，可选值：16:9、9:16',
+    )
+    expect(() => buildVideoGenerationParams(model, { ratio: '16:9', resolution: '4k' })).toThrow(
+      '后端视频模型 不支持当前分辨率 4k，可选值：720p、1080p',
+    )
+    expect(() =>
+      buildVideoGenerationParams(model, {
+        ratio: '16:9',
+        resolution: '720p',
+        generateAudio: true,
+      }),
+    ).toThrow('后端视频模型 不支持当前音频生成参数 true，可选值：false')
   })
 
   it.each([undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
@@ -144,18 +250,88 @@ describe('buildVideoGenerationParams', () => {
     },
   )
 
-  it('does not send undeclared generation fields except the intentional audio fallback', () => {
+  it('does not send fields that are absent from the selected model schema', () => {
     const model = { params_schema: { fields: [{ name: 'ratio', options: ['9:16'] }] } }
     expect(
       buildVideoGenerationParams(model, {
         duration: 15,
-        ratio: '16:9',
-        resolution: '1080p',
         sourceVideoDuration: 10,
         generateAudio: true,
       }),
-    ).toEqual({ ratio: '9:16', generate_audio: true })
+    ).toEqual({ ratio: '9:16' })
     expect(buildVideoGenerationParams(model, { generateAudio: false })).toEqual({ ratio: '9:16' })
+  })
+
+  it('keeps audio only when the selected model explicitly declares it', () => {
+    const seedance = {
+      params_schema: {
+        fields: [
+          { name: 'duration', options: [5, 10, 15] },
+          { name: 'ratio', options: ['16:9', '9:16'] },
+          { name: 'resolution', options: ['720p'] },
+        ],
+      },
+    }
+    expect(
+      buildVideoGenerationParams(seedance, {
+        duration: 10,
+        durationMode: 'exact',
+        validateExactDuration: true,
+        ratio: '16:9',
+        resolution: '720p',
+        generateAudio: true,
+      }),
+    ).toEqual({ duration: 10, ratio: '16:9', resolution: '720p' })
+
+    const happyHorse = {
+      params_schema: {
+        fields: [{ name: 'duration' }, { name: 'generateAudio' }],
+      },
+    }
+    expect(
+      buildVideoGenerationParams(happyHorse, {
+        duration: 10,
+        durationMode: 'exact',
+        generateAudio: true,
+      }),
+    ).toEqual({ duration: 10, generateAudio: true })
+  })
+
+  it('treats an explicit empty schema as no configurable params and rejects malformed schema text', () => {
+    expect(
+      buildVideoGenerationParams({ params_schema: { fields: [] } }, { duration: 10, generateAudio: true }),
+    ).toEqual({})
+    expect(() =>
+      buildVideoGenerationParams(
+        { display_name: 'Seedance 2.0', params_schema: '{bad json' },
+        { duration: 10, generateAudio: true },
+      ),
+    ).toThrow('Seedance 2.0 的参数定义无法解析')
+  })
+
+  it('validates exact duration against JSON Schema numeric boundaries', () => {
+    const model = {
+      display_name: 'Seedance 2.0',
+      params_schema: {
+        properties: {
+          duration: { type: 'integer', minimum: 4, maximum: 15 },
+        },
+      },
+    }
+    expect(() =>
+      buildVideoGenerationParams(model, {
+        duration: 3,
+        durationMode: 'exact',
+        validateExactDuration: true,
+      }),
+    ).toThrow('Seedance 2.0 支持的时长为4–15 秒，当前为 3 秒')
+    expect(
+      buildVideoGenerationParams(model, {
+        duration: 4,
+        durationMode: 'exact',
+        validateExactDuration: true,
+      }),
+    ).toEqual({ duration: 4 })
   })
 
   it('preserves a duration when the model declares no numeric options', () => {

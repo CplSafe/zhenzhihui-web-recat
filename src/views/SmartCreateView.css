@@ -39,6 +39,18 @@
   min-width: 0;
 }
 
+.smart__image-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.smart__image-workspace > :last-child {
+  flex: 1;
+  min-height: 0;
+}
+
 /* 创建新视频:流程区最右上(复用入口「制作新视频」样式),点击重置为全新入口、重新走一遍 */
 .smart__newvideo {
   position: absolute;
@@ -247,7 +259,25 @@
   margin: 0 auto;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 18px;
+}
+
+/* 流程内模型选择：空闲时可切换，核价/生成期间由页面临时锁定。 */
+.smart__generation-model,
+.smart__hotcopy-generation-model {
+  z-index: 12;
+  margin-left: auto;
+}
+
+/* 图片对话没有项目栏，单独提供一条紧凑的模型工具栏。 */
+.smart__image-modelbar {
+  position: relative;
+  z-index: 12;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  padding: 10px 24px 0;
 }
 
 .smart__home-link {
@@ -825,6 +855,31 @@
 
   .smart__col--video {
     flex: 1 1 100%;
+  }
+
+  .smart__generation-model,
+  .smart__hotcopy-generation-model {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .smart__projbar {
+    padding-inline: 16px;
+  }
+
+  .smart__projbar-inner {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .smart__generation-model,
+  .smart__hotcopy-generation-model {
+    width: 100%;
+  }
+
+  .smart__image-modelbar {
+    padding: 8px 12px 0;
   }
 }
 

@@ -42,10 +42,37 @@ describe('smart script generation', () => {
     mocks.streamResponseText.mockResolvedValue(JSON.stringify({ shots: [rawShot('产品')] }))
     const images = Array.from({ length: 8 }, (_, index) => `/image-${index}.png`)
 
-    const result = await generateScriptShotsStream({ requirement: ' ', images, duration: '5' }, vi.fn())
+    const result = await generateScriptShotsStream(
+      { requirement: ' ', images, duration: '5', modelVersionId: 801 },
+      vi.fn(),
+    )
 
     expect(result).toHaveLength(1)
-    expect(mocks.streamResponseText).toHaveBeenCalledWith(expect.objectContaining({ images: images.slice(0, 6) }))
+    expect(mocks.streamResponseText).toHaveBeenCalledWith(
+      expect.objectContaining({ images: images.slice(0, 6), modelVersionId: 801 }),
+    )
+  })
+
+  it('forwards the locked workspace context through the complete script request', async () => {
+    mocks.streamResponseText.mockResolvedValue(JSON.stringify({ shots: [rawShot('产品')] }))
+    const requestContext = { workspaceId: 88, modelPlanCandidates: ['locked-plan'] }
+
+    await generateScriptShotsStream(
+      {
+        requirement: '广告',
+        duration: '5',
+        modelVersionId: 801,
+        requestContext,
+      },
+      vi.fn(),
+    )
+
+    expect(mocks.streamResponseText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVersionId: 801,
+        requestContext,
+      }),
+    )
   })
 
   it('emits complete incremental shots once per changed snapshot', async () => {
@@ -158,6 +185,7 @@ describe('single-shot generation and subject normalization', () => {
       mode: 'insert',
       intent: '增加产品特写',
       images,
+      modelVersionId: 802,
     })
 
     expect(result).toEqual({
@@ -169,7 +197,7 @@ describe('single-shot generation and subject normalization', () => {
       subjects: [{ tag: '@精华液瓶', kind: '产品' }],
     })
     expect(mocks.runResponseText).toHaveBeenCalledWith(
-      expect.objectContaining({ images: images.slice(0, 6), maxTokens: 1500 }),
+      expect.objectContaining({ images: images.slice(0, 6), maxTokens: 1500, modelVersionId: 802 }),
     )
   })
 
@@ -196,11 +224,21 @@ describe('single-shot generation and subject normalization', () => {
         ],
       }),
     )
-    await expect(extractSubjects('女性手持产品')).resolves.toEqual([{ tag: '@年轻女性', kind: '人物' }])
+    await expect(extractSubjects('女性手持产品', undefined, 803)).resolves.toEqual([{ tag: '@年轻女性', kind: '人物' }])
+    expect(mocks.runResponseText).toHaveBeenLastCalledWith(expect.objectContaining({ modelVersionId: 803 }))
 
     mocks.runResponseText.mockRejectedValue(new Error('network'))
     await expect(extractSubjects('女性手持产品')).resolves.toEqual([])
     await expect(extractSubjects('  ')).resolves.toEqual([])
+  })
+
+  it('does not swallow cancellation while extracting subjects', async () => {
+    const controller = new AbortController()
+    const abortError = new DOMException('aborted', 'AbortError')
+    mocks.runResponseText.mockRejectedValue(abortError)
+    controller.abort()
+
+    await expect(extractSubjects('女性手持产品', controller.signal, 803, { workspaceId: 88 })).rejects.toBe(abortError)
   })
 
   it('merges only single-use unbound subjects and keeps shared or uploaded subjects', async () => {
@@ -218,7 +256,7 @@ describe('single-shot generation and subject normalization', () => {
       ]),
     ]
 
-    const result = await mergeSingleUseSubjects(input)
+    const result = await mergeSingleUseSubjects(input, undefined, 804)
 
     expect(result[0].subjects).toEqual([
       { tag: '@学生', kind: '人物' },
@@ -227,6 +265,7 @@ describe('single-shot generation and subject normalization', () => {
     ])
     expect(result[1]).toBe(input[1])
     expect(mocks.runResponseText).toHaveBeenCalledOnce()
+    expect(mocks.runResponseText).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 804 }))
   })
 
   it('uses a deterministic merge name when AI naming fails', async () => {

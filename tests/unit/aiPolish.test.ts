@@ -38,6 +38,11 @@ describe('polishText', () => {
 
   it('passes kind, context, token and signal options to the response gateway', async () => {
     const controller = new AbortController()
+    const requestContext = {
+      workspaceId: 77,
+      modelVersionId: 901,
+      modelVersion: { id: 901, display_name: '锁定脚本模型' },
+    }
     mocks.runResponseText.mockResolvedValue('润色后的台词')
 
     await expect(
@@ -45,6 +50,8 @@ describe('polishText', () => {
         kind: 'line',
         context: '镜头一',
         maxTokens: 88,
+        modelVersionId: 901,
+        requestContext,
         signal: controller.signal,
       }),
     ).resolves.toBe('润色后的台词')
@@ -53,6 +60,8 @@ describe('polishText', () => {
       expect.objectContaining({
         user: '【上下文】镜头一\n【待润色文本】原台词',
         maxTokens: 88,
+        modelVersionId: 901,
+        requestContext,
         signal: controller.signal,
       }),
     )
@@ -92,13 +101,19 @@ describe('project naming', () => {
   it('adds smart flow and duration constraints to the naming prompt', async () => {
     mocks.runResponseText.mockResolvedValue('夏日新品灵感')
 
-    await expect(generateProjectName({ requirement: '夏季服饰推广', flow: 'smart', durationSec: 10 })).resolves.toBe(
-      '夏日新品灵感',
-    )
+    await expect(
+      generateProjectName({
+        requirement: '夏季服饰推广',
+        flow: 'smart',
+        durationSec: 10,
+        modelVersionId: 902,
+      }),
+    ).resolves.toBe('夏日新品灵感')
 
     expect(mocks.runResponseText).toHaveBeenCalledWith(
       expect.objectContaining({
         system: expect.stringMatching(/智能成片.*爆款复制.*10 秒.*命名助手/),
+        modelVersionId: 902,
       }),
     )
   })
@@ -159,10 +174,15 @@ describe('project naming', () => {
   it('applies the same smart naming context to image-only naming', async () => {
     mocks.runResponseText.mockResolvedValue('十秒爆款复制助手')
 
-    await expect(generateProjectNameFromImages(['img'], { flow: 'smart', durationSec: 10 })).rejects.toThrow('跨流程词')
+    await expect(
+      generateProjectNameFromImages(['img'], { flow: 'smart', durationSec: 10, modelVersionId: 903 }),
+    ).rejects.toThrow('跨流程词')
     expect(mocks.runResponseText).toHaveBeenCalledTimes(1)
     expect(mocks.runResponseText).toHaveBeenCalledWith(
-      expect.objectContaining({ system: expect.stringContaining('当前业务是“智能成片”') }),
+      expect.objectContaining({
+        system: expect.stringContaining('当前业务是“智能成片”'),
+        modelVersionId: 903,
+      }),
     )
   })
 
@@ -206,7 +226,7 @@ describe('matchUploadsToSubjects', () => {
       \`\`\`
     `)
 
-    await expect(matchUploadsToSubjects(['img-1', 'img-2'], ['咖啡杯', '露营壶'])).resolves.toEqual({
+    await expect(matchUploadsToSubjects(['img-1', 'img-2'], ['咖啡杯', '露营壶'], undefined, 904)).resolves.toEqual({
       products: [
         {
           product: '山野咖啡',
@@ -222,6 +242,7 @@ describe('matchUploadsToSubjects', () => {
         },
       ],
     })
+    expect(mocks.runResponseText).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 904 }))
   })
 
   it.each(['invalid json', '{"products":"wrong"}', ''])(
@@ -236,6 +257,15 @@ describe('matchUploadsToSubjects', () => {
     mocks.runResponseText.mockRejectedValue(new Error('offline'))
     await expect(matchUploadsToSubjects(['img'], ['产品'])).resolves.toEqual({ products: [] })
   })
+
+  it('does not turn an explicit cancellation into an empty fallback result', async () => {
+    const controller = new AbortController()
+    const abortError = new DOMException('aborted', 'AbortError')
+    controller.abort()
+    mocks.runResponseText.mockRejectedValue(abortError)
+
+    await expect(matchUploadsToSubjects(['img'], ['产品'], controller.signal)).rejects.toBe(abortError)
+  })
 })
 
 describe('suggestOptions', () => {
@@ -244,15 +274,14 @@ describe('suggestOptions', () => {
       '```json\n["旧款"," 新品 ","新品","轻便","耐用","轻便","通勤","防水","备用"]\n```',
     )
 
-    await expect(suggestOptions({ label: '卖点', context: '户外背包', exclude: ['旧款'] })).resolves.toEqual([
-      '新品',
-      '轻便',
-      '耐用',
-      '通勤',
-      '防水',
-    ])
+    await expect(
+      suggestOptions({ label: '卖点', context: '户外背包', exclude: ['旧款'] }, undefined, 905),
+    ).resolves.toEqual(['新品', '轻便', '耐用', '通勤', '防水'])
     expect(mocks.runResponseText).toHaveBeenCalledWith(
-      expect.objectContaining({ user: expect.stringContaining('请避免与这些重复:旧款') }),
+      expect.objectContaining({
+        user: expect.stringContaining('请避免与这些重复:旧款'),
+        modelVersionId: 905,
+      }),
     )
   })
 
@@ -267,6 +296,15 @@ describe('suggestOptions', () => {
   it('converts suggestion network failures to []', async () => {
     mocks.runResponseText.mockRejectedValue(new Error('offline'))
     await expect(suggestOptions({ label: '场景' })).resolves.toEqual([])
+  })
+
+  it('does not turn an explicit cancellation into an empty suggestion list', async () => {
+    const controller = new AbortController()
+    const abortError = new DOMException('aborted', 'AbortError')
+    controller.abort()
+    mocks.runResponseText.mockRejectedValue(abortError)
+
+    await expect(suggestOptions({ label: '场景' }, controller.signal)).rejects.toBe(abortError)
   })
 })
 
@@ -319,7 +357,12 @@ describe('marketing field pure functions and structured parsing', () => {
     `)
 
     await expect(
-      skillBreakdownStructured({ skill: '未知技能', requirement: '推广背包', images: ['', 'img'] }),
+      skillBreakdownStructured({
+        skill: '未知技能',
+        requirement: '推广背包',
+        images: ['', 'img'],
+        modelVersionId: 906,
+      }),
     ).resolves.toEqual({
       groups: [
         {
@@ -336,7 +379,9 @@ describe('marketing field pure functions and structured parsing', () => {
         },
       ],
     })
-    expect(mocks.runResponseText).toHaveBeenCalledWith(expect.objectContaining({ images: ['img'] }))
+    expect(mocks.runResponseText).toHaveBeenCalledWith(
+      expect.objectContaining({ images: ['img'], modelVersionId: 906 }),
+    )
   })
 
   it.each(['本地生活广告', '本地生活智能脚本', '本地生活Skill'])(
@@ -379,10 +424,16 @@ describe('prompt refinement', () => {
   it('cleans text-only shot output and returns debug context', async () => {
     mocks.runResponseText.mockResolvedValue('```text\n「晨光下的咖啡杯\n木桌近景」\n```')
 
-    const result = await refineShotPrompt({ desc: '咖啡杯特写', outline: '温暖日常', ratio: '9:16' })
+    const result = await refineShotPrompt({
+      desc: '咖啡杯特写',
+      outline: '温暖日常',
+      ratio: '9:16',
+      modelVersionId: 907,
+    })
 
     expect(result.prompt).toBe('晨光下的咖啡杯,木桌近景')
     expect(result.debug.endpoint).toContain('纯文本')
+    expect(mocks.runResponseText).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 907 }))
     expect(mocks.runResponseText).toHaveBeenCalledWith(expect.not.objectContaining({ images: expect.anything() }))
   })
 
@@ -392,10 +443,13 @@ describe('prompt refinement', () => {
     const result = await refineShotPrompt({
       desc: '对比场景',
       materials: [{ name: '产品A', url: 'img-a' }, { name: '文字素材' }, { name: '产品B', url: 'img-b' }],
+      modelVersionId: 908,
     })
 
     expect(result.prompt).toBe('素材主体自然互动')
-    expect(mocks.runResponseText).toHaveBeenCalledWith(expect.objectContaining({ images: ['img-a', 'img-b'] }))
+    expect(mocks.runResponseText).toHaveBeenCalledWith(
+      expect.objectContaining({ images: ['img-a', 'img-b'], modelVersionId: 908 }),
+    )
   })
 
   it('skips image refinement without an image and cleans or falls back to the original intent', async () => {
@@ -403,7 +457,10 @@ describe('prompt refinement', () => {
     expect(mocks.runResponseText).not.toHaveBeenCalled()
 
     mocks.runResponseText.mockResolvedValueOnce('```text\n「真实产品\n干净背景」\n```')
-    await expect(refineElementPromptWithImage('原始意图', 'img')).resolves.toBe('真实产品,干净背景')
+    await expect(refineElementPromptWithImage('原始意图', 'img', { modelVersionId: 909 })).resolves.toBe(
+      '真实产品,干净背景',
+    )
+    expect(mocks.runResponseText).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 909 }))
 
     mocks.runResponseText.mockResolvedValueOnce('')
     await expect(refineElementPromptWithImage('原始意图', 'img')).resolves.toBe('原始意图')
@@ -414,7 +471,10 @@ describe('prompt refinement', () => {
     expect(mocks.runResponseText).not.toHaveBeenCalled()
 
     mocks.runResponseText.mockResolvedValueOnce('「蓝色背包\n纯白背景」')
-    await expect(refineElementPrompt('推广背包', { name: '背包' })).resolves.toBe('蓝色背包,纯白背景')
+    await expect(refineElementPrompt('推广背包', { name: '背包', modelVersionId: 910 })).resolves.toBe(
+      '蓝色背包,纯白背景',
+    )
+    expect(mocks.runResponseText).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 910 }))
 
     mocks.runResponseText.mockResolvedValueOnce('')
     await expect(refineElementPrompt('推广背包')).resolves.toBe('推广背包')
@@ -430,10 +490,11 @@ describe('summarizeRequirement', () => {
   it('removes code fences and enforces the documented 100-character maximum', async () => {
     mocks.runResponseText.mockResolvedValue(`\`\`\`\n${'摘'.repeat(120)}\n\`\`\``)
 
-    const result = await summarizeRequirement('很长的创作需求')
+    const result = await summarizeRequirement('很长的创作需求', undefined, 911)
 
     expect(result).toBe('摘'.repeat(100))
     expect(result).toHaveLength(100)
+    expect(mocks.runResponseText).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 911 }))
   })
 
   it('propagates summary network errors and accepts an empty response', async () => {

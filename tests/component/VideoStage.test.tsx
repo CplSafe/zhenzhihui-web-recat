@@ -292,6 +292,27 @@ describe('VideoStage playback loading', () => {
     expect(screen.getByText('上一轮已经增强产品特写')).toBeInTheDocument()
   })
 
+  it('uses the injected homepage-locked model callback for AI polishing', async () => {
+    const user = userEvent.setup()
+    const onPolishText = vi.fn().mockResolvedValue('润色后的整段修改意见')
+    render(
+      <VideoStage
+        shots={[]}
+        videoUrl="https://cdn.example.com/edit-source.mp4"
+        videoAssetId={2550}
+        onPolishText={onPolishText}
+        onRegenerateVideo={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByPlaceholderText('输入对整段视频的修改描述...')
+    await user.type(input, '提高整体亮度')
+    await user.click(screen.getAllByRole('button', { name: 'AI一键润色' })[0])
+
+    await waitFor(() => expect(onPolishText).toHaveBeenCalledWith('generic', '提高整体亮度'))
+    expect(input).toHaveValue('润色后的整段修改意见')
+  })
+
   it('确认视频修改前展示后端估价，估价完成前不允许提交', async () => {
     const onEstimateEditCost = vi.fn().mockResolvedValue({
       estimatedCost: 1500,

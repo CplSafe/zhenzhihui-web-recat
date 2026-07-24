@@ -164,6 +164,11 @@ interface VideoStageProps {
   onGenerateMultipleVideos?: (note?: string, opts?: { edit?: boolean }, count?: number) => void
   /** 下载当前整片视频(由父级弹本地保存位置后下载) */
   onDownloadVideo?: () => void
+  /**
+   * 修改意见的 AI 润色入口。智能成片由父级注入已锁定模型，
+   * 其他复用方未传时继续沿用组件原有的自动模型行为。
+   */
+  onPolishText?: (kind: 'segment' | 'generic', text: string) => Promise<string>
   onPrev?: () => void
   /** 「重新生成视频/确认修改」按钮的数量选择(与智能成片底栏 split 按钮同样式) */
   regenCount?: number
@@ -261,6 +266,7 @@ export default function VideoStage({
   onRegenerateVideo,
   onGenerateMultipleVideos,
   onDownloadVideo,
+  onPolishText,
   onPrev,
   regenCount,
   regenCountOptions,
@@ -1281,13 +1287,20 @@ export default function VideoStage({
           )}
           {showTimeline ? (
             <>
-              <ModBox title="整段视频修改" value={overallNote} polishKind="generic" onChange={setOverallNote} />
+              <ModBox
+                title="整段视频修改"
+                value={overallNote}
+                polishKind="generic"
+                onChange={setOverallNote}
+                onPolishText={onPolishText}
+              />
               <ModBox
                 title="片段1修改"
                 range={slotRangeText(frameSlots[0])}
                 value={frameSlots[0].text}
                 polishKind="segment"
                 onChange={(v) => setFrameSlots((prev) => prev.map((s, i) => (i === 0 ? { ...s, text: v } : s)))}
+                onPolishText={onPolishText}
                 onCapture={() => captureSelToSlot(0)}
                 onRemove={
                   frameSlots[0].start != null
@@ -1302,6 +1315,7 @@ export default function VideoStage({
                 value={frameSlots[1].text}
                 polishKind="segment"
                 onChange={(v) => setFrameSlots((prev) => prev.map((s, i) => (i === 1 ? { ...s, text: v } : s)))}
+                onPolishText={onPolishText}
                 onCapture={() => captureSelToSlot(1)}
                 onRemove={
                   frameSlots[1].start != null
@@ -1603,6 +1617,7 @@ function ModBox({
   value,
   polishKind,
   onChange,
+  onPolishText,
   onRemove,
   onCapture,
 }: {
@@ -1611,6 +1626,7 @@ function ModBox({
   value: string
   polishKind: 'segment' | 'generic'
   onChange: (v: string) => void
+  onPolishText?: (kind: 'segment' | 'generic', text: string) => Promise<string>
   onRemove?: () => void
   /** 片段框:点击把当前时间轴选区写入本框 */
   onCapture?: () => void
@@ -1621,7 +1637,7 @@ function ModBox({
     if (!value.trim() || polishing) return
     setPolishing(true)
     try {
-      const out = await polishText(value, { kind: polishKind })
+      const out = onPolishText ? await onPolishText(polishKind, value) : await polishText(value, { kind: polishKind })
       if (out) onChange(out)
     } catch (e: any) {
       showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')

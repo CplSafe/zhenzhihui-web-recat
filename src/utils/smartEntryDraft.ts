@@ -3,6 +3,7 @@
  * 存储按用户与工作区隔离，无法确认归属的旧键直接删除而不迁移，避免泄露输入内容。
  */
 import { isLogoutDraftWriteBlocked } from './logoutBarrier'
+import type { GenerationModelSelectionMap } from './generationModelCatalog'
 
 /** 无归属信息的旧版入口草稿键。 */
 const LEGACY_ENTRY_DRAFT_KEY = 'zzh.smart-entry.draft'
@@ -21,6 +22,8 @@ export interface SmartEntryDraftStore {
   imageAssetIds?: number[]
   /** 图片模式单轮生成数量。 */
   outputCount?: number
+  /** 按 operation_code 保存的后端模型版本选择。 */
+  generationModels?: GenerationModelSelectionMap
 }
 
 /** 当前入口草稿用户作用域。 */
