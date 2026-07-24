@@ -137,10 +137,27 @@ test.describe('已认证关键路由与读取链路', () => {
     // but give that lazy boundary a realistic cross-browser budget.
     test.slow()
     const api = await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/ai/models**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 9801, enabled: true, display_name: 'E2E 脚本模型', operation_codes: ['responses.multimodal'] },
+          { id: 9802, enabled: true, display_name: 'E2E 文生图模型', operation_codes: ['image.text_to_image'] },
+          { id: 9803, enabled: true, display_name: 'E2E 图生图模型', operation_codes: ['image.image_to_image'] },
+          { id: 9804, enabled: true, display_name: 'E2E 视频模型', operation_codes: ['video.generate'] },
+          { id: 9805, enabled: true, display_name: 'E2E 视频修改模型', operation_codes: ['video.edit'] },
+        ]),
+      })
+    })
 
+    await page.goto('/smart')
+    await expect(page.getByRole('button', { name: /^生成模型，/ })).toBeVisible({ timeout: 30_000 })
     await page.goto(`/smart/${SMART_PROJECT_ID}`)
     await expect(page.getByText('刷新后应恢复的智能成片描述', { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(page.getByText('E2E 恢复分镜画面', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)
+    await expect(page.getByRole('dialog', { name: '本次创作使用的模型' })).toHaveCount(0)
     expectScopedRequest(api, {
       method: 'GET',
       path: `/api/v1/creative/projects/${SMART_PROJECT_ID}`,
@@ -152,6 +169,7 @@ test.describe('已认证关键路由与读取链路', () => {
 
     await expect(page.getByText('刷新后应恢复的智能成片描述', { exact: true })).toBeVisible()
     await expect(page.getByText('E2E 恢复分镜画面', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)
     expect(api.paidTaskSubmissions).toBe(0)
     expectNoUnexpectedApi(api)
   })
@@ -188,8 +206,16 @@ test.describe('已认证关键路由与读取链路', () => {
             enabled: true,
             provider: 'openai',
             model: 'gpt-image-2',
-            display_name: 'E2E 图片模型',
-            operation_codes: ['image.text_to_image', 'image.image_to_image'],
+            display_name: 'E2E 文生图模型',
+            operation_codes: ['image.text_to_image'],
+          },
+          {
+            id: 9902,
+            enabled: true,
+            provider: 'openai',
+            model: 'gpt-image-2-edit',
+            display_name: 'E2E 图生图模型',
+            operation_codes: ['image.image_to_image'],
           },
         ]),
       })
@@ -302,6 +328,12 @@ test.describe('已认证关键路由与读取链路', () => {
 
     await page.goto('/smart')
     await page.getByRole('tab', { name: '制作图片' }).click()
+    const entryModelTrigger = page.getByRole('button', { name: '生成模型，0/2 已选择' })
+    await expect(entryModelTrigger).toBeVisible()
+    await entryModelTrigger.click()
+    await page.getByRole('combobox', { name: '文生图模型' }).selectOption('9901')
+    await page.getByRole('combobox', { name: '图生图模型' }).selectOption('9902')
+    await page.getByRole('button', { name: '关闭模型选择' }).click()
     await page.getByRole('button', { name: '生成图片数量' }).click()
     await page.getByRole('option', { name: '3张' }).click()
     const input = page.getByRole('textbox', { name: '创作需求' })
@@ -328,6 +360,8 @@ test.describe('已认证关键路由与读取链路', () => {
     await page.getByRole('button', { name: '去制作' }).click()
     await page.getByRole('alertdialog', { name: '确认生成图片' }).getByRole('button', { name: '确认并生成' }).click()
     await expect(page).toHaveURL(/\/smart\/303$/)
+    await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)
+    await expect(page.getByRole('dialog', { name: '本次创作使用的模型' })).toHaveCount(0)
     // 串行队列完成前，每个子消息里的首图都会暂时使用“AI 生成图片 1”作为 alt。
     // 先等待真实结果总数，再用第 3 张的唯一选择按钮等待批次合并。
     const generatedImages = page.locator('img[alt^="AI 生成图片 "]')
@@ -338,6 +372,7 @@ test.describe('已认证关键路由与读取链路', () => {
     expect(imageTaskBodies[0]).toMatchObject({
       workspace_id: WORKSPACE_ID,
       operation_code: 'image.text_to_image',
+      model_version_id: 9901,
     })
     expect(imageTaskBodies.map((body) => String(body.idempotency_key || ''))).toEqual([
       expect.stringMatching(/^smart_image_.+_01_/),
@@ -376,6 +411,7 @@ test.describe('已认证关键路由与读取链路', () => {
     expect(imageTaskBodies[3]).toMatchObject({
       workspace_id: WORKSPACE_ID,
       operation_code: 'image.image_to_image',
+      model_version_id: 9902,
       prompt: '把背景改为海边',
       input_assets: [{ asset_id: 704, role: 'reference_image' }],
     })
@@ -422,11 +458,29 @@ test.describe('已认证关键路由与读取链路', () => {
     // project shell well before the editor chunk under parallel cold-start.
     test.slow()
     const api = await installStrictAuthenticatedApp(page)
+    await page.route('**/api/v1/ai/models**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 9701,
+            enabled: true,
+            display_name: 'E2E 爆款复制模型',
+            operation_codes: ['video.replicate'],
+          },
+        ]),
+      })
+    })
 
+    await page.goto('/hot-copy')
+    await expect(page.getByRole('button', { name: /^生成模型，/ })).toBeVisible({ timeout: 30_000 })
     await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}`)
 
     await expect(page.getByText('/E2E 爆款项目', { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(page.getByText('已完成', { exact: true }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)
+    await expect(page.getByRole('dialog', { name: '本次创作使用的模型' })).toHaveCount(0)
     expectScopedRequest(api, {
       method: 'GET',
       path: `/api/v1/creative/projects/${HOT_COPY_PROJECT_ID}`,

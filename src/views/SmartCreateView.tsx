@@ -28,6 +28,7 @@ import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import SmartEntry, { clearSmartEntryDraft, type EntryMeta } from '@/components/smart/SmartEntry'
 import {
   GenerationModelDropdown,
+  filterGenerationModelGroupsByOperations,
   getGenerationModelSelectionConflicts,
   isGenerationModelSelectionComplete,
 } from '@/components/smart/GenerationModelPicker'
@@ -190,11 +191,13 @@ import {
   trackVideoGen,
   updateRunningVideoGenMeta,
 } from '@/utils/videoGenRegistry'
-import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
+import { buildDownloadName, downloadToDisk, isWeChatBrowser } from '@/utils/downloadToDisk'
 import {
-  getUnavailableRequiredGenerationOperations,
+  REQUIRED_GENERATION_OPERATION_CODES_BY_MODE,
+  areGenerationModelOperationsReady,
+  getImageGenerationOperationCode,
+  getUnavailableGenerationOperations,
   isGenerationOperationCode,
-  isGenerationModelCatalogReadyForMode,
   resolveGenerationModelSelections,
   unwrapGenerationModelCatalogResponse,
   type GenerationModelOption,
@@ -1013,6 +1016,8 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   }
 
   const [started, setStarted] = useState(false) // false=入口输入页, true=进入 4 步流程
+  // 产品规则：模型只在入口页选择；进入图片对话或视频四步流程后只读取入口快照。
+  const showGenerationModelSelection = !started
   const [videoCount, setVideoCount] = useState(1) // 生成视频数量(1-10)
   const initialVideoGenerateCountRef = useRef(1)
   const [pendingVideoFocusToken, setPendingVideoFocusToken] = useState(0)
@@ -1043,11 +1048,19 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   const imageToImageModelSelectionId = entryMeta?.generationModels?.['image.image_to_image']
   const videoGenerationModelSelectionId = entryMeta?.generationModels?.['video.generate']
 
-  /** 目录未就绪时优先展示对应 operation 的后端错误，加载态再使用页面级兜底。 */
-  const generationModelCatalogMessage = (mode: EntryMeta['mode']): string => {
-    const firstUnavailableOperation = getUnavailableRequiredGenerationOperations(
+  const requiredGenerationOperations = (
+    mode: EntryMeta['mode'],
+    referenceImageCount = 0,
+  ): readonly GenerationOperationCode[] =>
+    mode === 'image'
+      ? [getImageGenerationOperationCode(referenceImageCount)]
+      : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
+
+  /** 入口必须一次加载完整流程所需模型；后续页面只读取入口快照，不再提供补选入口。 */
+  const generationModelCatalogMessage = (mode: EntryMeta['mode'], referenceImageCount = 0): string => {
+    const firstUnavailableOperation = getUnavailableGenerationOperations(
       generationModelCatalog.operationStates,
-      mode,
+      requiredGenerationOperations(mode, referenceImageCount),
     )[0]
     return (
       (firstUnavailableOperation && generationModelCatalog.operationStates[firstUnavailableOperation].message) ||
@@ -1123,7 +1136,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
     if (selectedGenerationModel(operationCode)) return ''
     if (generationModelCatalog.loading) return '可用模型仍在加载，请稍后再试'
     if (generationModelCatalog.error) return generationModelCatalog.error
-    return `请先选择${operationCode === 'image.image_to_image' ? '图生图' : '文生图'}模型`
+    return `入口选择的${operationCode === 'image.image_to_image' ? '图生图' : '文生图'}模型缺失或已失效，请返回首页重新选择`
   }
 
   // ── 制作图片(chat 形式):消息流。image 模式不走分镜/视频 4 步,改为对话出图 ──
@@ -5275,8 +5288,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       try {
         const plans = await resolvePlanCandidates()
         if (isImg) {
-          const operationCode: GenerationOperationCode =
-            imageComposerRefCount > 0 ? 'image.image_to_image' : 'image.text_to_image'
+          const operationCode = getImageGenerationOperationCode(imageComposerRefCount)
           const modelSelection = selectedGenerationModel(operationCode)
           if (!modelSelection) throw new Error(`请先选择${imageComposerRefCount > 0 ? '图生图' : '文生图'}模型`)
           // 图片对话按当前输入框是否带参考图，精确区分文生图/图生图；不能再固定按图生图展示费用。
@@ -7938,7 +7950,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         throw new Error('参考图上传失败，请重新选择后再试')
       }
       const refAssetIds = userImages.map((image) => image.assetId).filter((assetId) => assetId > 0)
-      const operationCode: GenerationOperationCode = refAssetIds.length ? 'image.image_to_image' : 'image.text_to_image'
+      const operationCode = getImageGenerationOperationCode(refAssetIds.length)
       const modelSelection = requireGenerationModel(
         operationCode,
         options.generationModels || entryMeta?.generationModels,
@@ -8103,6 +8115,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       const result = await downloadToDisk({
         fileName: buildDownloadName(projectNameRef.current || 'AI图片', new Date(), 'png'),
         mimeType: 'image/png',
+        preserveResponseMediaType: true,
         resolveUrl: async () => {
           const assetId = Number(image.assetId || 0) || 0
           if (!assetId) return image.url
@@ -8110,7 +8123,9 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         },
       })
       if (result === 'done') showToast('图片已保存', 'success')
-      else if (result === 'started') showToast('已开始下载图片', 'success')
+      else if (result === 'started') {
+        showToast(isWeChatBrowser() ? '已打开原图，请长按图片保存' : '已开始下载图片', 'success')
+      }
     } catch (error) {
       showToast(getBusinessErrorMessage(error, '图片下载失败，请稍后重试'), 'error')
     }
@@ -8237,14 +8252,16 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       }
     }
     if (!(await requireAuth())) return false
-    if (!isGenerationModelCatalogReadyForMode(generationModelCatalog.operationStates, meta.mode)) {
-      showToast(generationModelCatalogMessage(meta.mode), 'error')
+    const entryReferenceImageCount = meta.mode === 'image' ? (meta.images || []).length : 0
+    const entryRequiredOperations = requiredGenerationOperations(meta.mode, entryReferenceImageCount)
+    if (!areGenerationModelOperationsReady(generationModelCatalog.operationStates, entryRequiredOperations)) {
+      showToast(generationModelCatalogMessage(meta.mode, entryReferenceImageCount), 'error')
       return false
     }
     const entryModelGroups =
       meta.mode === 'video'
         ? generationModelCatalog.pickerGroups
-        : generationModelCatalog.pickerGroups.filter((group) => group.key === 'image')
+        : filterGenerationModelGroupsByOperations(generationModelCatalog.pickerGroups, entryRequiredOperations)
     if (!isGenerationModelSelectionComplete(entryModelGroups, meta.generationModels || {})) {
       showToast(
         generationModelCatalog.loading
@@ -8254,20 +8271,23 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       )
       return false
     }
-    const entryModelConflicts = getGenerationModelSelectionConflicts(entryModelGroups, meta.generationModels || {}, {
+    const entryConflictGroups =
+      meta.mode === 'image'
+        ? filterGenerationModelGroupsByOperations(entryModelGroups, [
+            getImageGenerationOperationCode(entryReferenceImageCount),
+          ])
+        : entryModelGroups
+    const entryModelConflicts = getGenerationModelSelectionConflicts(entryConflictGroups, meta.generationModels || {}, {
       ratio: meta.ratio,
       ...(meta.mode === 'video' ? { durationSec: parseDurationSeconds(meta.duration) ?? undefined } : {}),
+      ...(meta.mode === 'image' ? { referenceImageCount: entryReferenceImageCount } : {}),
     })
     if (entryModelConflicts.length) {
       showToast(entryModelConflicts[0], 'error')
       return false
     }
     const initialOperation: GenerationOperationCode =
-      meta.mode === 'video'
-        ? 'responses.multimodal'
-        : (meta.images || []).length
-          ? 'image.image_to_image'
-          : 'image.text_to_image'
+      meta.mode === 'video' ? 'responses.multimodal' : getImageGenerationOperationCode(entryReferenceImageCount)
     if (!requireGenerationModel(initialOperation, meta.generationModels)) return false
     // 从已有图片项目返回入口后切到「制作视频」时，必须先 fork 新会话，不能覆盖当前图片项目。
     if (entryMeta?.mode === 'image' && meta.mode === 'video' && Number(projectIdRef.current || 0) > 0) {
@@ -8821,23 +8841,31 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       showToast('当前草稿缺少创作配置，请重新开始创作', 'error')
       return
     }
+    const resumeReferenceImageCount = entryMeta.mode === 'image' ? imageComposerRefCount : 0
+    const resumeRequiredOperations = requiredGenerationOperations(entryMeta.mode, resumeReferenceImageCount)
     if (
       workspaceId > 0 &&
-      !isGenerationModelCatalogReadyForMode(generationModelCatalog.operationStates, entryMeta.mode)
+      !areGenerationModelOperationsReady(generationModelCatalog.operationStates, resumeRequiredOperations)
     ) {
-      showToast(generationModelCatalogMessage(entryMeta.mode), 'error')
+      showToast(generationModelCatalogMessage(entryMeta.mode, resumeReferenceImageCount), 'error')
       return
     }
     const resumeGroups =
       entryMeta.mode === 'video'
         ? generationModelCatalog.pickerGroups
-        : generationModelCatalog.pickerGroups.filter((group) => group.key === 'image')
+        : filterGenerationModelGroupsByOperations(generationModelCatalog.pickerGroups, resumeRequiredOperations)
+    const resumeConflictGroups =
+      entryMeta.mode === 'image'
+        ? filterGenerationModelGroupsByOperations(resumeGroups, [
+            getImageGenerationOperationCode(resumeReferenceImageCount),
+          ])
+        : resumeGroups
     if (
       workspaceId > 0 &&
       (!isGenerationModelSelectionComplete(resumeGroups, generationModels) ||
-        getGenerationModelSelectionConflicts(resumeGroups, generationModels, {
+        getGenerationModelSelectionConflicts(resumeConflictGroups, generationModels, {
           ratio: entryMeta.ratio,
-          ...(entryMeta.mode === 'image' ? { referenceImageCount: entryMeta.images?.length || 0 } : {}),
+          ...(entryMeta.mode === 'image' ? { referenceImageCount: resumeReferenceImageCount } : {}),
           ...(entryMeta.mode === 'video' ? { durationSec: parseDurationSeconds(entryMeta.duration) ?? undefined } : {}),
         }).length > 0)
     ) {
@@ -8851,9 +8879,10 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   // 入口是否可恢复：视频回到既有步骤；图片回到原对话，不重新提交任务。
   const canResumeFlow = entryMeta?.mode === 'image' ? imageMessages.length > 0 : shots.length > 0 || !!marketingText
 
+  const activeImageGenerationOperation = getImageGenerationOperationCode(imageComposerRefCount)
   const flowGenerationModelGroups =
     entryMeta?.mode === 'image'
-      ? generationModelCatalog.pickerGroups.filter((group) => group.key === 'image')
+      ? filterGenerationModelGroupsByOperations(generationModelCatalog.pickerGroups, [activeImageGenerationOperation])
       : generationModelCatalog.pickerGroups
   const flowGenerationModelConflicts = entryMeta
     ? getGenerationModelSelectionConflicts(flowGenerationModelGroups, entryMeta.generationModels || {}, {
@@ -9872,23 +9901,25 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
             <TaskCenterDrawer scope="image" />
             <div className="smart__entry-content">
               <div className="smart__image-workspace">
-                <div className="smart__image-modelbar">
-                  <GenerationModelDropdown
-                    groups={flowGenerationModelGroups}
-                    selected={entryMeta?.generationModels || {}}
-                    loading={generationModelCatalog.loading}
-                    error={generationModelCatalog.error}
-                    onChange={(groupKey, nextModelId, subgroupKey) =>
-                      void switchGenerationModel(groupKey, nextModelId, subgroupKey)
-                    }
-                    onRetry={generationModelCatalog.reload}
-                    context="generation"
-                    locked={generationModelSwitchLocked}
-                    lockedReason={generationModelSwitchLockedReason}
-                    conflicts={flowGenerationModelConflicts}
-                    className="smart__generation-model"
-                  />
-                </div>
+                {showGenerationModelSelection && (
+                  <div className="smart__image-modelbar">
+                    <GenerationModelDropdown
+                      groups={flowGenerationModelGroups}
+                      selected={entryMeta?.generationModels || {}}
+                      loading={generationModelCatalog.loading}
+                      error={generationModelCatalog.error}
+                      onChange={(groupKey, nextModelId, subgroupKey) =>
+                        void switchGenerationModel(groupKey, nextModelId, subgroupKey)
+                      }
+                      onRetry={generationModelCatalog.reload}
+                      context="generation"
+                      locked={generationModelSwitchLocked}
+                      lockedReason={generationModelSwitchLockedReason}
+                      conflicts={flowGenerationModelConflicts}
+                      className="smart__generation-model"
+                    />
+                  </div>
+                )}
                 <Suspense fallback={<LazyEditorFallback label="正在加载图片编辑器…" />}>
                   <ImageChat
                     messages={imageMessages}
@@ -9896,14 +9927,10 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
                     initialOutputCount={entryMeta?.outputCount || 1}
                     initialComposerDraft={imageComposerDraft}
                     busy={imageBusy}
-                    generationDisabled={
-                      !selectedGenerationModel(
-                        imageComposerRefCount > 0 ? 'image.image_to_image' : 'image.text_to_image',
-                      )
-                    }
+                    generationDisabled={!selectedGenerationModel(activeImageGenerationOperation)}
                     generationDisabledReason={`入口选择的${
-                      imageComposerRefCount > 0 ? '图生图' : '文生图'
-                    }模型不可用，请返回首页重新选择`}
+                      activeImageGenerationOperation === 'image.image_to_image' ? '图生图' : '文生图'
+                    }模型缺失或已失效，请返回首页重新选择`}
                     newChatDisabled={imageBusy}
                     costText={
                       stepCost.loading
@@ -10026,21 +10053,23 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
                   </span>
                 )}
                 <DraftSaveIndicator status={draftSaveStatus} onRetry={() => void retrySmartCloudSave()} />
-                <GenerationModelDropdown
-                  groups={flowGenerationModelGroups}
-                  selected={entryMeta?.generationModels || {}}
-                  loading={generationModelCatalog.loading}
-                  error={generationModelCatalog.error}
-                  onChange={(groupKey, nextModelId, subgroupKey) =>
-                    void switchGenerationModel(groupKey, nextModelId, subgroupKey)
-                  }
-                  onRetry={generationModelCatalog.reload}
-                  context="generation"
-                  locked={generationModelSwitchLocked}
-                  lockedReason={generationModelSwitchLockedReason}
-                  conflicts={flowGenerationModelConflicts}
-                  className="smart__generation-model"
-                />
+                {showGenerationModelSelection && (
+                  <GenerationModelDropdown
+                    groups={flowGenerationModelGroups}
+                    selected={entryMeta?.generationModels || {}}
+                    loading={generationModelCatalog.loading}
+                    error={generationModelCatalog.error}
+                    onChange={(groupKey, nextModelId, subgroupKey) =>
+                      void switchGenerationModel(groupKey, nextModelId, subgroupKey)
+                    }
+                    onRetry={generationModelCatalog.reload}
+                    context="generation"
+                    locked={generationModelSwitchLocked}
+                    lockedReason={generationModelSwitchLockedReason}
+                    conflicts={flowGenerationModelConflicts}
+                    className="smart__generation-model"
+                  />
+                )}
               </div>
             </div>
 

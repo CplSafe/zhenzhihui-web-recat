@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -79,6 +79,65 @@ describe('ImageChat', () => {
     expect(screen.getByRole('status')).toHaveTextContent('营销图片生成中…')
     expect(screen.getByRole('alert')).toHaveTextContent('余额不足')
     expect(screen.getByText('已完成')).toBeInTheDocument()
+  })
+
+  it('keeps completed and pending images in stable horizontal batch slots', () => {
+    const batchMessages = [
+      {
+        id: 'batch-image-1',
+        role: 'assistant' as const,
+        status: 'done' as const,
+        images: [{ url: '/batch-1.png' }],
+        batchId: 'batch-layout',
+        batchIndex: 0,
+        batchTotal: 3,
+      },
+      {
+        id: 'batch-image-2',
+        role: 'assistant' as const,
+        status: 'pending' as const,
+        batchId: 'batch-layout',
+        batchIndex: 1,
+        batchTotal: 3,
+      },
+      {
+        id: 'batch-image-3',
+        role: 'assistant' as const,
+        status: 'pending' as const,
+        batchId: 'batch-layout',
+        batchIndex: 2,
+        batchTotal: 3,
+      },
+    ]
+    const view = render(<ImageChat {...baseProps()} messages={batchMessages} />)
+
+    const batch = screen.getByRole('list', { name: '批量图片生成进度' })
+    const slots = within(batch).getAllByRole('listitem')
+    expect(slots).toHaveLength(3)
+    expect(within(slots[0]).getByRole('img', { name: 'AI 生成图片 1' })).toBeInTheDocument()
+    expect(within(slots[1]).getByRole('status')).toHaveTextContent('正在生成第 2/3 张图片…')
+    expect(slots[0].nextElementSibling).toBe(slots[1])
+
+    const secondSlot = slots[1]
+    view.rerender(
+      <ImageChat
+        {...baseProps()}
+        messages={[
+          batchMessages[0],
+          {
+            ...batchMessages[1],
+            status: 'done',
+            images: [{ url: '/batch-2.png' }],
+          },
+          batchMessages[2],
+        ]}
+      />,
+    )
+
+    const updatedSlots = within(screen.getByRole('list', { name: '批量图片生成进度' })).getAllByRole('listitem')
+    expect(updatedSlots[1]).toBe(secondSlot)
+    expect(within(updatedSlots[1]).getByRole('img', { name: 'AI 生成图片 2' })).toBeInTheDocument()
+    expect(within(updatedSlots[2]).getByRole('status')).toHaveTextContent('正在生成第 3/3 张图片…')
   })
 
   it('submits trimmed text by button and Ctrl+Enter, then clears the composer', async () => {

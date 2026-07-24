@@ -200,41 +200,45 @@ export default function ShotEditPanel({
 
   return (
     <div className={`${styles.sedit}${className ? ' ' + className : ''}`}>
-      {/* ── 使用到的主体和素材(图片展示,样式对齐分镜图)── */}
-      {shot.subjects.length > 0 && (
-        <div className={styles.seMats}>
-          <div className={styles.seMatsTitle}>使用到的主体和素材</div>
-          <div className={styles.seMatsGrid}>
-            {shot.subjects.map((su, i) => {
-              const name = stripAt(su.tag)
-              return (
-                <div className={styles.seMatCell} key={`${su.tag}-${i}`}>
-                  <div
-                    className={`${styles.seMatThumb}${su.image ? ' ' + styles.zoomable : ''}`}
-                    title={su.image ? '点击放大查看' : name}
-                    onClick={() => su.image && setBigImg(su.image)}
-                    onKeyDown={(event) => su.image && activateWithKeyboard(event, () => setBigImg(su.image!))}
-                    role={su.image ? 'button' : undefined}
-                    tabIndex={su.image ? 0 : undefined}
-                    aria-label={su.image ? `放大素材 ${name || '素材'}` : undefined}
-                  >
-                    <Thumb
-                      src={su.image}
-                      alt={name}
-                      fallback={<span className={styles.seMatPh}>{name || '素材'}</span>}
-                    />
-                    {su.image && <span className={styles.seZoom}>{ZoomIcon}</span>}
+      <div
+        className={`${styles.seMediaRow}${shot.subjects.length === 0 ? ` ${styles.seMediaRowNoMats}` : ''}`}
+        role="group"
+        aria-label="分镜图片与素材"
+      >
+        {/* ── 使用到的主体和素材(图片展示,样式对齐分镜图)── */}
+        {shot.subjects.length > 0 && (
+          <div className={styles.seMats}>
+            <div className={styles.seMatsTitle}>使用到的主体和素材</div>
+            <div className={styles.seMatsGrid}>
+              {shot.subjects.map((su, i) => {
+                const name = stripAt(su.tag)
+                return (
+                  <div className={styles.seMatCell} key={`${su.tag}-${i}`}>
+                    <div
+                      className={`${styles.seMatThumb}${su.image ? ' ' + styles.zoomable : ''}`}
+                      title={su.image ? '点击放大查看' : name}
+                      onClick={() => su.image && setBigImg(su.image)}
+                      onKeyDown={(event) => su.image && activateWithKeyboard(event, () => setBigImg(su.image!))}
+                      role={su.image ? 'button' : undefined}
+                      tabIndex={su.image ? 0 : undefined}
+                      aria-label={su.image ? `放大素材 ${name || '素材'}` : undefined}
+                    >
+                      <Thumb
+                        src={su.image}
+                        alt={name}
+                        fallback={<span className={styles.seMatPh}>{name || '素材'}</span>}
+                      />
+                      {su.image && <span className={styles.seZoom}>{ZoomIcon}</span>}
+                    </div>
+                    <span className={styles.seMatLabel}>{name || '素材'}</span>
                   </div>
-                  <span className={styles.seMatLabel}>{name || '素材'}</span>
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── 顶部:当前分镜图 + 历史生成 ── */}
-      <div className={styles.seTop}>
+        {/* ── 当前分镜图 ── */}
         <div className={styles.seCurBox}>
           <div
             className={`${styles.seditCur}${current && !regenerating ? ' ' + styles.zoomable : ''}`}
@@ -261,6 +265,8 @@ export default function ShotEditPanel({
             )}
           </div>
         </div>
+
+        {/* ── 历史生成 ── */}
         <div className={styles.seHistory}>
           <div className={styles.seHistTitle}>历史生成</div>
           {versions.length > 0 ? (

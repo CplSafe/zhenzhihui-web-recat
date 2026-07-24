@@ -23,7 +23,7 @@ import {
   getVideoStatusText,
   type ProjectVideo,
 } from '@/api/projectVideos'
-import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
+import { downloadToDisk, buildDownloadName, isWeChatBrowser } from '@/utils/downloadToDisk'
 import {
   isCreativeProjectRestrictedForUser,
   resolveCreativeProjectOwnerId,
@@ -198,7 +198,7 @@ export default function ProjectVideoDetailView() {
       const r = await downloadToDisk({ fileName, resolveUrl: () => url })
       if (r === 'done') showToast('视频已保存', 'success')
       else if (r === 'started') {
-        showToast('已开始下载，请查看浏览器下载列表', 'info')
+        showToast(isWeChatBrowser() ? '已打开视频，请使用播放器菜单保存' : '已开始下载，请查看浏览器下载列表', 'info')
       }
     } catch (err: any) {
       showToast(err?.message || '下载失败,请稍后重试', 'error')

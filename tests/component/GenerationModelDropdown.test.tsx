@@ -79,6 +79,19 @@ function StatefulDropdown({ initial = {} }: { initial?: GenerationModelSelection
 }
 
 describe('GenerationModelDropdown', () => {
+  it('refreshes the model catalog whenever an unlocked selector is opened', async () => {
+    const user = userEvent.setup()
+    const onOpen = vi.fn()
+    render(<GenerationModelDropdown groups={groups} selected={{}} onChange={vi.fn()} onOpen={onOpen} />)
+
+    const trigger = screen.getByRole('button', { name: '生成模型，0/3 已选择' })
+    await user.click(trigger)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    await user.click(trigger)
+    await user.click(trigger)
+    expect(onOpen).toHaveBeenCalledTimes(2)
+  })
+
   it('opens from one toolbar trigger and selects every operation with native dropdowns', async () => {
     const user = userEvent.setup()
     render(<StatefulDropdown />)
@@ -92,7 +105,7 @@ describe('GenerationModelDropdown', () => {
     expect(screen.queryByText('每次最多生成 10 个镜头')).not.toBeInTheDocument()
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '图生图模型' }), '301')
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '视频生成模型' }), '201')
-    expect(screen.getByText('模型配置完成，空闲时可以随时切换')).toBeInTheDocument()
+    expect(screen.getByText('模型配置完成，开始创作后将沿用本次选择')).toBeInTheDocument()
     expect(trigger).toHaveAccessibleName('生成模型，3/3 已选择')
   })
 
@@ -166,11 +179,11 @@ describe('GenerationModelDropdown', () => {
 
     await user.click(screen.getByRole('button', { name: /生成模型，3\/3 已选择，处理中不可切换/ }))
     expect(screen.getByText('视频正在生成中，暂时不能切换模型')).toBeInTheDocument()
-    expect(screen.getByText('当前任务结束后可继续切换模型')).toBeInTheDocument()
+    expect(screen.getByText('本次模型选择已锁定')).toBeInTheDocument()
     screen.getAllByRole('combobox').forEach((select) => expect(select).toBeDisabled())
   })
 
-  it('explains that workflow models remain switchable when no task is running', async () => {
+  it('explains that the homepage selection is reused after creation starts', async () => {
     const user = userEvent.setup()
     render(
       <GenerationModelDropdown
@@ -182,7 +195,7 @@ describe('GenerationModelDropdown', () => {
     )
 
     await user.click(screen.getByRole('button', { name: '生成模型，3/3 已选择' }))
-    expect(screen.getByText('流程中可以切换模型；已有对应产物时会先确认并重新生成')).toBeInTheDocument()
+    expect(screen.getByText('请在首页完成模型选择；进入后续步骤后将始终沿用本次选择')).toBeInTheDocument()
     screen.getAllByRole('combobox').forEach((select) => expect(select).toBeEnabled())
   })
 

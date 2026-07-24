@@ -45,21 +45,14 @@
   justify-content: center;
   flex: 0 0 auto;
 }
-.settings-menu__ico-img {
-  width: 18px;
-  height: 18px;
-  object-fit: contain;
-  display: block;
+.settings-menu__ico-vector {
+  font-size: 18px;
 }
 /* 图标圆底背景色已去掉,仅保留图标本身 */
-.settings-menu__ico--blue {
-  color: #5767e5;
-}
-.settings-menu__ico--green {
-  color: #16b98a;
-}
+.settings-menu__ico--blue,
+.settings-menu__ico--green,
 .settings-menu__ico--red {
-  color: #ff5153;
+  color: #2b3040;
 }
 .settings-menu__label {
   flex: 1 1 auto;

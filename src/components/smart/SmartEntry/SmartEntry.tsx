@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import {
+  filterGenerationModelGroupsByOperations,
   GenerationModelDropdown,
   getGenerationModelSelectionConflicts,
   isGenerationModelSelectionComplete,
@@ -27,7 +28,9 @@ import { ALL_SMART_SCRIPT_NAMES, SMART_SCRIPT_OPTIONS, normalizeSmartScriptName 
 import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
 import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 import {
-  isGenerationModelCatalogReadyForMode,
+  REQUIRED_GENERATION_OPERATION_CODES_BY_MODE,
+  areGenerationModelOperationsReady,
+  getImageGenerationOperationCode,
   type GenerationModelOperationStateMap,
   type GenerationModelSelectionMap,
   type GenerationOperationCode,
@@ -118,10 +121,10 @@ const isImageFile = (file: File) => file.type.startsWith('image/') || IMAGE_FILE
 
 /** 视频模式的输入示例文案。 */
 const PLACEHOLDER_VIDEO =
-  '最多上传9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
+  '最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 /** 图片模式的输入示例文案。 */
 const PLACEHOLDER_IMAGE =
-  '最多上传9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
+  '最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 
 // 选中智能脚本后插入到输入框的提示语(高亮显示)。提交/展示前会被剥离,保持需求正文干净。
 const skillLine = (s: string) => `使用${normalizeSmartScriptName(s)}帮我优化`
@@ -309,16 +312,24 @@ export default function SmartEntry({
 
   // 正文(剥离 skill 提示语后)用于提交/校验,保证需求干净
   const cleanText = stripSkillLine(text).trim()
-  // 视频在入口一次配置完整工作流；图片只配置文生图/图生图，后续转视频时会回到视频入口重新选择。
-  const visibleModelGroups = mode === 'video' ? modelGroups : modelGroups.filter((group) => group.key === 'image')
+  // 模型只允许在入口选择。视频一次配置完整工作流；图片按当前是否有参考图，
+  // 只展示并要求文生图或图生图中的一个，避免用户必须为一次创作选择两个图片模型。
+  const requiredModelOperations: readonly GenerationOperationCode[] =
+    mode === 'image'
+      ? [getImageGenerationOperationCode(images.length)]
+      : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
+  const visibleModelGroups =
+    mode === 'video' ? modelGroups : filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations)
+  const conflictModelGroups = visibleModelGroups
   const modelSelectionComplete = isGenerationModelSelectionComplete(visibleModelGroups, generationModels)
-  const modelSelectionConflicts = getGenerationModelSelectionConflicts(visibleModelGroups, generationModels, {
+  const modelSelectionConflicts = getGenerationModelSelectionConflicts(conflictModelGroups, generationModels, {
     ratio,
     ...(mode === 'video'
       ? { durationSec: parseDurationSeconds(duration) ?? undefined }
       : { referenceImageCount: images.length }),
   })
-  const modelCatalogReady = !modelOperationStates || isGenerationModelCatalogReadyForMode(modelOperationStates, mode)
+  const modelCatalogReady =
+    !modelOperationStates || areGenerationModelOperationsReady(modelOperationStates, requiredModelOperations)
   const modelGatePassed =
     !requireModelSelection || (modelCatalogReady && modelSelectionComplete && modelSelectionConflicts.length === 0)
   const modelGateMessage = !requireModelSelection

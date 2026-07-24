@@ -145,6 +145,30 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
     setSaving(true)
     try {
       let nextAvatarUrl = ''
+      const nameChanged = next !== initialName
+      const syncCommittedUser = (serverUser?: any) => {
+        const serverProfile = serverUser && typeof serverUser === 'object' ? applyUserProfileOverrides(serverUser) : {}
+        const namePatch = nameChanged ? { nickname: next, name: next } : {}
+        const avatarPatch = nextAvatarUrl
+          ? { avatar: nextAvatarUrl, avatar_url: nextAvatarUrl, avatarUrl: nextAvatarUrl }
+          : {}
+        useWorkspaceSessionStore.setState((s: any) =>
+          s.authSession
+            ? {
+                authSession: {
+                  ...s.authSession,
+                  user: {
+                    ...s.authSession.user,
+                    ...serverProfile,
+                    ...namePatch,
+                    ...avatarPatch,
+                  },
+                },
+              }
+            : s,
+        )
+      }
+
       if (avatarFile) {
         const uploaded: any = await uploadMyAvatar(avatarFile)
         if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
@@ -153,7 +177,7 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
         ).trim()
       }
       const payload: Record<string, any> = {}
-      if (next !== initialName) {
+      if (nameChanged) {
         payload.nickname = next
         payload.name = next
       }
@@ -164,39 +188,18 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
       if (nextAvatarUrl) {
         saveUserAvatarOverride(user, nextAvatarUrl)
       }
-      // 刷新会话内当前用户(顶栏/个人面板即时更新);若接口暂未回传头像,再用本地缓存兜底。
+
+      // 保存接口成功后立即更新当前会话；后续资料查询可能有短暂延迟，不能让旧昵称覆盖已提交值。
+      syncCommittedUser()
+
+      // 再刷新服务端资料以补齐其他字段；刚提交的昵称和头像始终拥有最高优先级。
       try {
         const me = await getCurrentUser()
         if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
-        const mergedUser = applyUserProfileOverrides(me)
-        useWorkspaceSessionStore.setState((s: any) =>
-          s.authSession
-            ? {
-                authSession: {
-                  ...s.authSession,
-                  user: { ...s.authSession.user, ...mergedUser },
-                },
-              }
-            : s,
-        )
+        syncCommittedUser(me)
       } catch {
         if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
-        // 刷新失败也把已改的字段乐观落到本地会话,避免界面回退。
-        useWorkspaceSessionStore.setState((s: any) =>
-          s.authSession
-            ? {
-                authSession: {
-                  ...s.authSession,
-                  user: {
-                    ...s.authSession.user,
-                    nickname: next,
-                    name: next,
-                    ...(nextAvatarUrl ? { avatar: nextAvatarUrl } : avatarData ? { avatar: avatarData } : {}),
-                  },
-                },
-              }
-            : s,
-        )
+        // 即时会话已在上方提交；资料查询失败不影响本次昵称和头像更新。
       }
       if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
       showToast('保存成功', 'success')

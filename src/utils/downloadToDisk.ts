@@ -16,6 +16,114 @@ import { resolveSafeDownloadUrl } from '@/utils/downloadUrlSafety'
 /** 下载动作的最终结果，用于区分已完成、用户取消与浏览器接管。 */
 export type DownloadResult = 'done' | 'cancelled' | 'started'
 
+/** 下载完成后识别出的真实媒体类型与推荐扩展名。 */
+export interface DownloadedMediaType {
+  mimeType: string
+  extension: string
+}
+
+const MEDIA_EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/avif': 'avif',
+  'image/svg+xml': 'svg',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+}
+
+/** 微信内置 WebView 不可靠支持 blob URL 与 a[download]，需要改走原始 HTTP 媒体地址。 */
+export function isWeChatBrowser(userAgent = globalThis.navigator?.userAgent || ''): boolean {
+  return /MicroMessenger/i.test(String(userAgent || ''))
+}
+
+function normalizeMediaMime(value: unknown): string {
+  const mime = String(value || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase()
+  return MEDIA_EXTENSION_BY_MIME[mime] ? mime : ''
+}
+
+function asciiAt(bytes: Uint8Array, offset: number, text: string): boolean {
+  if (bytes.length < offset + text.length) return false
+  for (let index = 0; index < text.length; index += 1) {
+    if (bytes[offset + index] !== text.charCodeAt(index)) return false
+  }
+  return true
+}
+
+/** 从文件头识别常见图片与视频，避免错误响应头把 JPEG/WebP 保存成 PNG。 */
+async function sniffMediaMime(blob: Blob): Promise<string> {
+  try {
+    const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer())
+    if (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47 &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    ) {
+      return 'image/png'
+    }
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+    if (asciiAt(bytes, 0, 'GIF87a') || asciiAt(bytes, 0, 'GIF89a')) return 'image/gif'
+    if (asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'WEBP')) return 'image/webp'
+    if (asciiAt(bytes, 4, 'ftyp')) {
+      if (asciiAt(bytes, 8, 'avif') || asciiAt(bytes, 8, 'avis')) return 'image/avif'
+      return 'video/mp4'
+    }
+    if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+      return 'video/webm'
+    }
+  } catch {
+    // 极旧 WebView 不支持 Blob.arrayBuffer 时，继续使用响应头和调用方的后备 MIME。
+  }
+  return ''
+}
+
+/** 优先相信文件头，其次使用响应头/Blob 类型，最后才使用调用方后备类型。 */
+export async function detectDownloadedMediaType(
+  blob: Blob,
+  responseContentType = '',
+  fallbackMimeType = '',
+): Promise<DownloadedMediaType> {
+  const mimeType =
+    (await sniffMediaMime(blob)) ||
+    normalizeMediaMime(responseContentType) ||
+    normalizeMediaMime(blob.type) ||
+    normalizeMediaMime(fallbackMimeType) ||
+    'application/octet-stream'
+  return {
+    mimeType,
+    extension: MEDIA_EXTENSION_BY_MIME[mimeType] || '',
+  }
+}
+
+/** 根据真实媒体格式替换建议文件名扩展名；未知格式保留调用方原文件名。 */
+export function alignDownloadFileName(fileName: string, mediaType: DownloadedMediaType): string {
+  if (!mediaType.extension) return fileName
+  const baseName = String(fileName || '下载文件').replace(/\.[a-z0-9]{1,8}$/i, '')
+  return `${baseName}.${mediaType.extension}`
+}
+
+function openWechatMediaUrl(url: string): void {
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.target = '_blank'
+  anchor.rel = 'noopener noreferrer'
+  anchor.referrerPolicy = 'no-referrer'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
 /**
  * 安全地把远程资源保存到本地；优先使用文件选择器，失败时降级为浏览器下载。
  * URL 会在实际请求前重新解析和校验，避免过期签名及危险协议被直接打开。
@@ -27,14 +135,17 @@ export async function downloadToDisk(opts: {
   resolveUrl: () => Promise<string> | string
   /** MIME(写入文件句柄时用,默认 video/mp4) */
   mimeType?: string
+  /** 按响应头与文件头保留真实媒体格式；适用于可能返回 PNG/JPEG/WebP 的图片生成接口。 */
+  preserveResponseMediaType?: boolean
 }): Promise<DownloadResult> {
   const mime = opts.mimeType || 'video/mp4'
   const ext = (opts.fileName.split('.').pop() || '').toLowerCase()
+  const weChatBrowser = isWeChatBrowser()
 
   // ① 先弹「另存为」(用户手势内)
   const picker = (window as { showSaveFilePicker?: any }).showSaveFilePicker
   let fileHandle: any = null
-  if (typeof picker === 'function') {
+  if (typeof picker === 'function' && !weChatBrowser && !opts.preserveResponseMediaType) {
     try {
       fileHandle = await picker({
         suggestedName: opts.fileName,
@@ -56,8 +167,16 @@ export async function downloadToDisk(opts: {
   }
   const url = safeUrl.href
 
+  // 微信 WebView 对 blob: + a[download] 的支持不稳定，可能创建空文件或在异步读取前丢失 Blob。
+  // HTTP(S) 资源直接交给微信/后端响应处理：支持附件下载的环境会下载，其余环境会打开原图/视频供长按保存。
+  if (weChatBrowser && safeUrl.kind === 'http') {
+    openWechatMediaUrl(url)
+    return 'started'
+  }
+
   // ③ 尝试 fetch + 内容校验(任何源都试一次)
   let blob: Blob | null = null
+  let resolvedFileName = opts.fileName
   let useIframeFallback = false
   try {
     // 内容校验:视频流不应是 0 字节(资源尚未写完),也不应是 JSON/HTML/纯文本(被包成 200 的错误体)。
@@ -68,7 +187,13 @@ export async function downloadToDisk(opts: {
       const ct = res.headers.get('content-type') || ''
       const raw = await res.blob()
       if (raw.size > 0 && !/application\/json|text\/html|text\/plain/i.test(ct)) {
-        blob = new Blob([raw], { type: mime })
+        if (opts.preserveResponseMediaType) {
+          const mediaType = await detectDownloadedMediaType(raw, ct, mime)
+          resolvedFileName = alignDownloadFileName(opts.fileName, mediaType)
+          blob = mediaType.mimeType === raw.type ? raw : new Blob([raw], { type: mediaType.mimeType })
+        } else {
+          blob = new Blob([raw], { type: mime })
+        }
         break
       }
       if (attempt < 2) await new Promise((r) => setTimeout(r, 1500)) // 等待后端写完再重试
@@ -103,11 +228,12 @@ export async function downloadToDisk(opts: {
     const objUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = objUrl
-    a.download = opts.fileName
+    a.download = resolvedFileName
     document.body.appendChild(a)
     a.click()
     a.remove()
-    setTimeout(() => URL.revokeObjectURL(objUrl), 4000)
+    // 微信 HTTP 下载不会走 Blob；其余浏览器仍留足时间让下载器异步读取大文件。
+    setTimeout(() => URL.revokeObjectURL(objUrl), 60_000)
     return 'done'
   }
 

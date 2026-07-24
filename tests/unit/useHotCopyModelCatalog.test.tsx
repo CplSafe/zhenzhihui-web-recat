@@ -20,7 +20,7 @@ describe('useHotCopyModelCatalog', () => {
     mocks.getBusinessErrorMessage.mockImplementation((_reason, fallback) => fallback)
   })
 
-  it('only requests video.replicate and exposes only the two featured video models', async () => {
+  it('requests video.replicate and exposes every enabled model returned for that operation', async () => {
     mocks.listAiModels.mockResolvedValue([
       {
         id: 101,
@@ -83,11 +83,15 @@ describe('useHotCopyModelCatalog', () => {
     expect(result.current.pickerGroups[0]?.subgroups?.[0]?.models.map((model) => model.name)).toEqual([
       'HappyHorse 参考生视频',
       'Seedance 2.0',
+      '图生视频',
+      '文生视频',
+      'HappyHorse 参考生视频（重复记录）',
+      '其他厂商参考生视频',
     ])
     expect(result.current.error).toBe('')
   })
 
-  it('filters operation mismatches before selecting one model for each featured category', async () => {
+  it('filters operation mismatches and disabled records without collapsing valid versions', async () => {
     mocks.listAiModels.mockResolvedValue([
       {
         id: 111,
@@ -223,7 +227,7 @@ describe('useHotCopyModelCatalog', () => {
 
     const { result } = renderHook(() => useHotCopyModelCatalog(21))
 
-    await waitFor(() => expect(result.current.error).toBe('当前工作空间暂无可用的参考生视频或 Seedance 2.0 模型'))
+    await waitFor(() => expect(result.current.error).toBe('当前工作空间暂无可用的爆款复制视频模型'))
 
     expect(result.current.loading).toBe(false)
     expect(result.current.ready).toBe(false)
@@ -232,7 +236,7 @@ describe('useHotCopyModelCatalog', () => {
       expect.objectContaining({
         name: '暂无可用模型',
         disabled: true,
-        unavailableReason: '当前工作空间暂无可用的参考生视频或 Seedance 2.0 模型',
+        unavailableReason: '当前工作空间暂无可用的爆款复制视频模型',
       }),
     ])
   })

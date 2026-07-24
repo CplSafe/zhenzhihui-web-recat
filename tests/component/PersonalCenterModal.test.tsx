@@ -101,6 +101,41 @@ describe('PersonalCenterModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the committed nickname when the refreshed profile briefly returns the old value', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    mocks.getCurrentUser.mockResolvedValue({
+      id: 101,
+      mobile: '17633125265',
+      nickname: 'Alice',
+      name: 'Alice',
+    })
+    render(<PersonalCenterModal onClose={onClose} />)
+
+    const nickname = screen.getByRole('textbox', { name: '昵称' })
+    await user.clear(nickname)
+    await user.type(nickname, '新名称')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    expect(mocks.setState).toHaveBeenCalledTimes(2)
+
+    const latestUpdater = mocks.setState.mock.calls[mocks.setState.mock.calls.length - 1]?.[0]
+    const nextState = latestUpdater({
+      authSession: {
+        user: {
+          id: 101,
+          nickname: 'Alice',
+          name: 'Alice',
+        },
+      },
+    })
+    expect(nextState.authSession.user).toMatchObject({
+      nickname: '新名称',
+      name: '新名称',
+    })
+  })
+
   it('ignores a save response after unmount', async () => {
     const user = userEvent.setup()
     const pending = deferred<any>()

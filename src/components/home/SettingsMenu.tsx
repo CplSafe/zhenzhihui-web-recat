@@ -5,12 +5,11 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { LockOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import PersonalCenterModal from '@/components/layout/PersonalCenterModal'
 import { useLogout } from '@/composables/useLogout'
 import { useConfirmDialog } from '@/composables/useToast'
-import lockIcon from '@/assets/f0664ce9dc6df70f76c69f9c034a047c.png'
-import logoutIcon from '@/assets/149cc9cc4f85b48451edcb6fa468dff0.png'
 import settingsIcon from '@/assets/sidebar/settings.svg'
 import './SettingsMenu.css'
 
@@ -18,12 +17,14 @@ import './SettingsMenu.css'
 const IconSettings = (
   <img className="app-sidebar__icon-img" src={settingsIcon} alt="" width={14} height={14} aria-hidden="true" />
 )
-// 个人中心 / 退出登录 共用「退出箭头」图标;修改密码 用「锁」图标(均为 PNG)
+/** 个人中心菜单图标。 */
+const IconProfile = <UserOutlined className="settings-menu__ico-vector" aria-hidden="true" />
+
 /** 修改密码菜单图标。 */
-const IconLockImg = <img className="settings-menu__ico-img" src={lockIcon} alt="" aria-hidden="true" />
+const IconLock = <LockOutlined className="settings-menu__ico-vector" aria-hidden="true" />
 
 /** 退出登录菜单图标。 */
-const IconLogoutImg = <img className="settings-menu__ico-img" src={logoutIcon} alt="" aria-hidden="true" />
+const IconLogout = <LogoutOutlined className="settings-menu__ico-vector" aria-hidden="true" />
 
 /** 设置菜单完成一个动作后的可选收尾回调。 */
 interface SettingsMenuProps {
@@ -135,11 +136,11 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
             style={{ left: pos.left, top: pos.top }}
           >
             <button type="button" className="settings-menu__item" role="menuitem" onClick={openProfile}>
-              <span className="settings-menu__ico settings-menu__ico--blue">{IconLogoutImg}</span>
+              <span className="settings-menu__ico settings-menu__ico--blue">{IconProfile}</span>
               <span className="settings-menu__label">个人中心</span>
             </button>
             <button type="button" className="settings-menu__item" role="menuitem" onClick={openPwd}>
-              <span className="settings-menu__ico settings-menu__ico--green">{IconLockImg}</span>
+              <span className="settings-menu__ico settings-menu__ico--green">{IconLock}</span>
               <span className="settings-menu__label">修改密码</span>
             </button>
             <button
@@ -149,7 +150,7 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
               onClick={() => void doLogout()}
               disabled={isLoggingOut}
             >
-              <span className="settings-menu__ico settings-menu__ico--red">{IconLogoutImg}</span>
+              <span className="settings-menu__ico settings-menu__ico--red">{IconLogout}</span>
               <span className="settings-menu__label">{isLoggingOut ? '退出中…' : '退出登录'}</span>
             </button>
           </div>,
