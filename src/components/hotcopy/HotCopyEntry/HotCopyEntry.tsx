@@ -89,8 +89,8 @@ interface HotCopyEntryProps {
   onDraftChange?: (payload: HotCopyEntryPayload) => void
   /** 入口右上角「创建新视频」:清空当前输入,回到全新入口态 */
   onNewVideo?: () => void
-  /** 外部正在发起生成(含点击后到 running 生效前的短窗口),用于禁用重复点击 */
-  busy?: boolean
+  /** 当前入口正在预检/提交；后台已有视频生成不能借此锁住新建与返回操作。 */
+  submissionBusy?: boolean
   /** 从第二步返回第一页时,可直接回到已生成/生成中的视频页而不重新发起生成 */
   canResume?: boolean
   /** 恢复到第二步:只切回流程,不重新提交生成 */
@@ -302,7 +302,7 @@ export default function HotCopyEntry({
   onSubmit,
   onDraftChange,
   onNewVideo,
-  busy = false,
+  submissionBusy = false,
   canResume,
   onResume,
   initial,
@@ -780,7 +780,7 @@ export default function HotCopyEntry({
   const hasHotVideo = (videoSource === 'local' && !!videoFile) || (videoSource === 'library' && !!libraryVideo)
   // 至少一张替换素材【图片】(products 里 isVideo=false 的)
   const hasProductImage = products.some((p) => !p.isVideo)
-  // 齐全(视频 + 图片都有)才点亮发送图标;但按钮始终可点,缺哪个由 submit 弹提示
+  // 只有必需素材齐全后才允许发起制作；模型未选择时仍允许点击，以便主动展开模型选择器说明原因。
   const canSend = hasHotVideo && hasProductImage
   // 恢复态:从第二步回到第一页后,主按钮变「下一步」回到已生成内容;旁边提供「重新生成」。
   const resumeMode = !!canResume
@@ -805,7 +805,7 @@ export default function HotCopyEntry({
           ? '请先选择本次爆款复制使用的视频模型'
           : modelSelectionConflicts[0] || '当前参数与所选模型不兼容'
   // 用户点击生成后立即锁定本次模型选择；异步读取时长/估价期间也不能切换成另一模型。
-  const modelsLocked = busy || (resumeMode && modelGatePassed)
+  const modelsLocked = submissionBusy
 
   const buildPayload = (): HotCopyEntryPayload => ({
     tab,
@@ -873,16 +873,12 @@ export default function HotCopyEntry({
   }
 
   const submit = () => {
-    if (busy) return
+    if (submissionBusy) return
     if (!validateBeforeSubmit()) return
     onSubmit(buildPayload())
   }
   const resume = () => {
-    if (busy) return
-    if (!modelGatePassed) {
-      requestModelSelectionAttention()
-      return
-    }
+    if (submissionBusy) return
     onResume?.()
   }
 
@@ -933,9 +929,9 @@ export default function HotCopyEntry({
           <button
             type="button"
             className="hotcopy__newVideoBtn"
-            disabled={busy}
+            disabled={submissionBusy}
             onClick={onNewVideo}
-            title={busy ? '本次生成正在启动，请稍候' : '创建新视频'}
+            title={submissionBusy ? '本次生成正在启动，请稍候' : '创建新视频'}
           >
             创建新视频
           </button>
@@ -1027,7 +1023,7 @@ export default function HotCopyEntry({
                 ref={taRef}
                 className="hotcopy__text"
                 value={text}
-                placeholder="最多上传9张图片,输入文字或@参考素材,生成精彩广告视频。例如:把 @图片1 中的产品放到 @图片2 中的场景里"
+                placeholder="最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里"
                 onChange={(e) => {
                   setText(e.target.value)
                   caretRef.current = e.target.selectionStart ?? e.target.value.length
@@ -1124,6 +1120,7 @@ export default function HotCopyEntry({
                 conflicts={modelSelectionConflicts}
                 attentionRequest={modelAttentionRequest}
                 attentionMessage={modelGateMessage}
+                onOpen={modelLoading ? undefined : () => onReloadModels?.()}
                 onRetry={() => onReloadModels?.()}
                 onChange={(_groupKey, nextModelId, subgroupKey) => {
                   if (subgroupKey !== 'video.replicate') return
@@ -1159,10 +1156,11 @@ export default function HotCopyEntry({
                 type="button"
                 className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ' hotcopy__send--plain'}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
                 /* 恢复态下真正返回下一步;普通态仍走首次去制作。 */
-                disabled={busy}
+                disabled={submissionBusy || (!resumeMode && !canSend)}
                 onClick={() => (resumeMode ? resume() : submit())}
+                aria-busy={submissionBusy}
                 aria-label={resumeMode ? '返回下一步' : '去制作'}
-                title={busy ? '视频生成启动中…' : resumeMode ? '返回下一步' : '去制作'}
+                title={submissionBusy ? '正在准备视频任务…' : resumeMode ? '返回下一步' : '去制作'}
               >
                 {resumeMode ? (
                   <svg
@@ -1179,14 +1177,14 @@ export default function HotCopyEntry({
                     />
                   </svg>
                 ) : (
-                  <span className="hotcopy__sendPlainText">去制作</span>
+                  <span className="hotcopy__sendPlainText">{submissionBusy ? '准备中…' : '去制作'}</span>
                 )}
               </button>
               {resumeMode && (
                 <button
                   type="button"
                   className="hotcopy__regen"
-                  disabled={busy}
+                  disabled={submissionBusy || !canSend}
                   onClick={() => submit()}
                   title="去制作"
                 >

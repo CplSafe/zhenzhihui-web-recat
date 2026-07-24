@@ -94,6 +94,13 @@ describe('HotCopyEntry project asset access', () => {
     mocks.workspaceId = 21
   })
 
+  it('disables creating on a new empty entry and does not show the next-step action', () => {
+    render(<HotCopyEntry onSubmit={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: '去制作' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '返回下一步' })).not.toBeInTheDocument()
+  })
+
   it('shows unlinked and accessible-project videos but hides restricted and unknown linked videos', async () => {
     mocks.listCreativeProjects.mockResolvedValue([project(1, [7]), project(2, [9])])
     mocks.listAssets.mockResolvedValue({
@@ -300,6 +307,56 @@ describe('HotCopyEntry project asset access', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 220, duration: '7s' }))
   })
 
+  it('keeps creating a new video and returning to generation available outside submission preflight', async () => {
+    const user = userEvent.setup()
+    const onNewVideo = vi.fn()
+    const onResume = vi.fn()
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        onNewVideo={onNewVideo}
+        canResume
+        onResume={onResume}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          products: [{ assetId: 201, url: '/201.png', file: null, isVideo: false }],
+          ratio: '16:9',
+          duration: '7s',
+          modelVersionId: 220,
+        }}
+        modelGroups={[
+          {
+            key: 'hotCopyVideo',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.replicate',
+                label: '视频生成模型',
+                required: true,
+                models: [{ id: 220, name: 'Seedance 2.0' }],
+              },
+            ],
+          },
+        ]}
+        modelReady
+        requireModelSelection
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '创建新视频' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /生成模型，1\/1 已选择$/ })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '返回下一步' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: '返回下一步' }))
+    await user.click(screen.getByRole('button', { name: '创建新视频' }))
+
+    expect(onResume).toHaveBeenCalledOnce()
+    expect(onNewVideo).toHaveBeenCalledOnce()
+  })
+
   it('locks the selected model and disables creating a new video while generation preflight is busy', async () => {
     const user = userEvent.setup()
     const onNewVideo = vi.fn()
@@ -307,7 +364,7 @@ describe('HotCopyEntry project asset access', () => {
       <HotCopyEntry
         onSubmit={vi.fn()}
         onNewVideo={onNewVideo}
-        busy
+        submissionBusy
         initial={{
           tab: 'remake',
           videoSource: 'library',
@@ -342,6 +399,8 @@ describe('HotCopyEntry project asset access', () => {
 
     const createButton = screen.getByRole('button', { name: '创建新视频' })
     expect(createButton).toBeDisabled()
+    expect(screen.getByRole('button', { name: '去制作' })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByText('准备中…')).toBeInTheDocument()
     await user.click(createButton)
     expect(onNewVideo).not.toHaveBeenCalled()
 
@@ -350,7 +409,7 @@ describe('HotCopyEntry project asset access', () => {
     expect(screen.getByRole('combobox', { name: '视频生成模型' })).toBeDisabled()
   })
 
-  it('does not let a resumable legacy draft bypass the model gate', async () => {
+  it('lets a resumable draft view its previous step without depending on the current model catalog', async () => {
     const user = userEvent.setup()
     const onResume = vi.fn()
     render(
@@ -390,13 +449,8 @@ describe('HotCopyEntry project asset access', () => {
     const resumeButton = screen.getByRole('button', { name: '返回下一步' })
     await user.click(resumeButton)
 
-    expect(onResume).not.toHaveBeenCalled()
-    expect(mocks.showToast).toHaveBeenLastCalledWith('请先选择本次爆款复制使用的视频模型', 'info')
-    expect(await screen.findByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
-
-    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '220')
-    await user.click(resumeButton)
     expect(onResume).toHaveBeenCalledOnce()
+    expect(mocks.showToast).not.toHaveBeenCalledWith('请先选择本次爆款复制使用的视频模型', 'info')
   })
 
   it.each([

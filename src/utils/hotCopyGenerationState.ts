@@ -7,7 +7,27 @@ export interface HotCopyGenerationStateRecord {
   id?: unknown
   status?: unknown
   taskId?: unknown
+  idempotencyKey?: unknown
   createdAt?: unknown
+}
+
+/** 从任务对象中读取创建任务时使用的幂等键，兼容历史接口的蛇形/驼峰字段。 */
+export function getHotCopyTaskIdempotencyKey(task: any): string {
+  if (!task || typeof task !== 'object') return ''
+  const containers = [task, task.meta, task.metadata, task.request, task.input, task.params]
+  for (const container of containers) {
+    if (!container || typeof container !== 'object') continue
+    const value = container.idempotency_key ?? container.idempotencyKey
+    if (String(value || '').trim()) return String(value).trim()
+  }
+  return ''
+}
+
+/** 用幂等键在服务端任务列表中找回爆款复制任务。 */
+export function findHotCopyTaskByIdempotencyKey(tasks: unknown, idempotencyKey: unknown): any | null {
+  const expected = String(idempotencyKey || '').trim()
+  if (!expected || !Array.isArray(tasks)) return null
+  return tasks.find((task) => getHotCopyTaskIdempotencyKey(task) === expected) || null
 }
 
 /** 当前应绑定到界面的爆款复制生成状态。 */

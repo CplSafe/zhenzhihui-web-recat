@@ -18,6 +18,10 @@ export const GENERATION_OPERATION_CODES = [
 ] as const
 
 export type GenerationOperationCode = (typeof GENERATION_OPERATION_CODES)[number]
+export type ImageGenerationOperationCode = Extract<
+  GenerationOperationCode,
+  'image.text_to_image' | 'image.image_to_image'
+>
 
 /** 首页视频与图片两种创作模式各自必须具备的固定 operation 集合。 */
 export const VIDEO_REQUIRED_GENERATION_OPERATION_CODES = GENERATION_OPERATION_CODES
@@ -202,21 +206,52 @@ export function createGenerationModelOperationStateMap(
   }
 }
 
+/**
+ * 根据当前有效引用图数量确定图片生成操作。
+ *
+ * 入口可能从表单、草稿或 URL 中读取数量，因此兼容有限的正数字符串；
+ * 负数、空值、NaN、Infinity 和其他无效值都按“没有引用图”处理。
+ */
+export function getImageGenerationOperationCode(referenceImageCount: unknown): ImageGenerationOperationCode {
+  const normalizedCount =
+    typeof referenceImageCount === 'number'
+      ? referenceImageCount
+      : typeof referenceImageCount === 'string' && referenceImageCount.trim()
+        ? Number(referenceImageCount)
+        : 0
+
+  return Number.isFinite(normalizedCount) && normalizedCount > 0 ? 'image.image_to_image' : 'image.text_to_image'
+}
+
+/** 返回指定 operation 集合中尚未加载为 ready 的项。 */
+export function getUnavailableGenerationOperations(
+  states: Readonly<GenerationModelOperationStateMap>,
+  operations: readonly GenerationOperationCode[],
+): GenerationOperationCode[] {
+  return operations.filter((operationCode) => states[operationCode]?.status !== 'ready')
+}
+
+/** 判断指定 operation 集合是否都已加载为 ready。 */
+export function areGenerationModelOperationsReady(
+  states: Readonly<GenerationModelOperationStateMap>,
+  operations: readonly GenerationOperationCode[],
+): boolean {
+  return getUnavailableGenerationOperations(states, operations).length === 0
+}
+
 /** 返回指定创作模式下尚不可用的固定 operation，可直接用于入口门禁与诊断。 */
 export function getUnavailableRequiredGenerationOperations(
   states: Readonly<GenerationModelOperationStateMap>,
   mode: GenerationModelCatalogMode,
 ): GenerationOperationCode[] {
-  return REQUIRED_GENERATION_OPERATION_CODES_BY_MODE[mode].filter(
-    (operationCode) => states[operationCode].status !== 'ready',
-  )
+  return getUnavailableGenerationOperations(states, REQUIRED_GENERATION_OPERATION_CODES_BY_MODE[mode])
 }
 
 export function isGenerationModelCatalogReadyForMode(
   states: Readonly<GenerationModelOperationStateMap>,
   mode: GenerationModelCatalogMode,
 ): boolean {
-  return getUnavailableRequiredGenerationOperations(states, mode).length === 0
+  return areGenerationModelOperationsReady(states, REQUIRED_GENERATION_OPERATION_CODES_BY_MODE[mode])
 }
 
 /** 读取非空后端文本；不提供任何前端兜底名称。 */

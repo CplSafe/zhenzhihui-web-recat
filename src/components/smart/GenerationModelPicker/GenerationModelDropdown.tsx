@@ -31,9 +31,11 @@ export interface GenerationModelDropdownProps {
   error?: GenerationModelErrorState
   onChange: GenerationModelPickerProps['onChange']
   onRetry?: GenerationModelPickerProps['onRetry']
-  /** 仅在核价、生成或任务恢复期间临时禁用切换；创作流程本身不会永久锁定模型。 */
+  /** 用户主动打开模型面板时刷新目录，使后台新上架模型无需整页刷新即可出现。 */
+  onOpen?: () => void
+  /** 入口提交期间可临时锁定选择，避免同一次创建混入两个模型快照。 */
   locked?: boolean
-  /** 入口与生成流程使用不同的说明文案，选择结构和后端模型数据保持一致。 */
+  /** 保留兼容旧调用；产品入口统一说明“进入流程后沿用本次选择”。 */
   context?: 'entry' | 'generation'
   /** 临时禁用时展示的具体原因，例如“视频正在生成中”。 */
   lockedReason?: string
@@ -136,8 +138,8 @@ export default function GenerationModelDropdown({
   error,
   onChange,
   onRetry,
+  onOpen,
   locked = false,
-  context = 'entry',
   lockedReason = '',
   conflicts = [],
   attentionRequest = 0,
@@ -253,10 +255,8 @@ export default function GenerationModelDropdown({
           ? `模型 ${selectedCount}/${slots.length}`
           : `选择模型 ${selectedCount}/${slots.length}`
   const contextDescription = locked
-    ? lockedReason || '当前有生成任务进行中，任务结束后即可切换模型'
-    : context === 'generation'
-      ? '流程中可以切换模型；已有对应产物时会先确认并重新生成'
-      : '开始创作后仍可切换模型；已有对应产物时会先确认并重新生成'
+    ? lockedReason || '正在进入创作，本次模型选择已锁定'
+    : '请在首页完成模型选择；进入后续步骤后将始终沿用本次选择'
 
   return (
     <div
@@ -275,7 +275,10 @@ export default function GenerationModelDropdown({
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         onClick={() => {
-          if (!open) updatePanelPosition()
+          if (!open) {
+            updatePanelPosition()
+            if (!locked) onOpen?.()
+          }
           setOpen((value) => !value)
         }}
       >
@@ -416,7 +419,7 @@ export default function GenerationModelDropdown({
                 ) : (
                   <p className={styles.ready} role="status">
                     <CheckCircleFilled aria-hidden="true" />
-                    {locked ? '当前任务结束后可继续切换模型' : '模型配置完成，空闲时可以随时切换'}
+                    {locked ? '本次模型选择已锁定' : '模型配置完成，开始创作后将沿用本次选择'}
                   </p>
                 )}
               </footer>

@@ -81,6 +81,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
 
   const renderItem = (item: SidebarItem) => {
     const active = activeKey === item.key
+    const iconSize = item.iconSize ?? 16
     return (
       <button
         key={item.key}
@@ -94,8 +95,9 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
             className="app-sidebar__icon-img"
             src={active && item.activeIcon ? item.activeIcon : item.icon}
             alt=""
-            width={item.iconSize ?? 16}
-            height={item.iconSize ?? 16}
+            width={iconSize}
+            height={iconSize}
+            style={{ width: iconSize, height: iconSize, minWidth: iconSize, minHeight: iconSize }}
           />
         </span>
         <span className="app-sidebar__label">{item.label}</span>

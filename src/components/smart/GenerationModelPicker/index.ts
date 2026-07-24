@@ -17,3 +17,4 @@ export {
   getGenerationModelSelectionConflicts,
   type GenerationModelDropdownProps,
 } from './GenerationModelDropdown'
+export { filterGenerationModelGroupsByOperations } from './filterGenerationModelGroupsByOperations'

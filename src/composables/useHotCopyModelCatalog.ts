@@ -1,6 +1,7 @@
 /**
  * 加载爆款复制 video.replicate 模型，并投影为首页通用模型下拉的数据。
- * 目录只保留产品当前开放的参考生视频与 Seedance 2.0，完整后端记录用于费用预估和正式提交。
+ * 目录以后端为权威：展示当前工作空间已启用且明确支持 video.replicate 的全部模型，
+ * 完整后端记录用于参数校验、费用预估和正式提交。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getBusinessErrorMessage, listAiModels } from '@/api/business'
@@ -13,7 +14,6 @@ import {
   unwrapGenerationModelCatalogResponse,
   type BackendGenerationModel,
 } from '@/utils/generationModelCatalog'
-import { filterFeaturedCreativeVideoModels, isFeaturedCreativeVideoModel } from '@/utils/featuredVideoModels'
 import { buildModelRestrictionSummary } from '@/utils/modelRestrictions'
 
 export const HOT_COPY_MODEL_OPERATION_CODE = 'video.replicate'
@@ -81,11 +81,7 @@ function readBackendText(source: BackendGenerationModel, ...keys: string[]): str
 }
 
 function normalizeCatalogModel(model: BackendGenerationModel): HotCopyCatalogModel | null {
-  if (
-    !isBackendGenerationModelEnabled(model) ||
-    !matchesReplicateOperation(model) ||
-    !isFeaturedCreativeVideoModel(model)
-  ) {
+  if (!isBackendGenerationModelEnabled(model) || !matchesReplicateOperation(model)) {
     return null
   }
   const id = getBackendGenerationModelVersionId(model)
@@ -174,19 +170,15 @@ export function useHotCopyModelCatalog(workspaceId: number): HotCopyModelCatalog
             matchesReplicateOperation(model as BackendGenerationModel),
         )
         const normalized = dedupeModels(
-          filterFeaturedCreativeVideoModels(operationModels)
-            .map((model) =>
-              model && typeof model === 'object' && !Array.isArray(model)
-                ? normalizeCatalogModel(model as BackendGenerationModel)
-                : null,
-            )
+          operationModels
+            .map((model) => normalizeCatalogModel(model))
             .filter((model): model is HotCopyCatalogModel => Boolean(model)),
         )
         setModels(normalized)
         const available = normalized.filter((model) => !model.option.disabled)
         if (available.length) return
         const configurationError = normalized.find((model) => model.option.unavailableReason)?.option.unavailableReason
-        setError(configurationError || '当前工作空间暂无可用的参考生视频或 Seedance 2.0 模型')
+        setError(configurationError || '当前工作空间暂无可用的爆款复制视频模型')
       })
       .catch((reason) => {
         if (isStale()) return
@@ -217,7 +209,7 @@ export function useHotCopyModelCatalog(workspaceId: number): HotCopyModelCatalog
                     id: '__unavailable_hot_copy_video_model__',
                     name: '暂无可用模型',
                     disabled: true,
-                    unavailableReason: error || '暂无可用的参考生视频或 Seedance 2.0 模型',
+                    unavailableReason: error || '暂无可用的爆款复制视频模型',
                   },
                 ],
             required: true,

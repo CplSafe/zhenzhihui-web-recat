@@ -128,6 +128,38 @@ const MAX_IMAGES = 9
 const OUTPUT_COUNT_OPTIONS = Array.from({ length: MAX_IMAGES }, (_, index) => `${index + 1}张`)
 const clampOutputCount = (value: unknown) => Math.min(MAX_IMAGES, Math.max(1, Math.floor(Number(value) || 1)))
 
+interface ImageChatMessageRow {
+  key: string
+  messages: ChatMessage[]
+}
+
+/**
+ * 同一批次的图片任务仍保持独立消息，确保 taskId、幂等键和重试互不影响；
+ * 展示时把相邻批次消息放进同一行，让完成卡与后续加载卡共享稳定的横向位置。
+ */
+const groupImageChatMessages = (messages: ChatMessage[]): ImageChatMessageRow[] => {
+  const rows: ImageChatMessageRow[] = []
+  for (const message of messages) {
+    const previous = rows[rows.length - 1]
+    const previousMessage = previous?.messages[0]
+    if (
+      message.role === 'assistant' &&
+      message.batchId &&
+      previousMessage?.role === 'assistant' &&
+      previousMessage.batchId === message.batchId
+    ) {
+      previous.messages.push(message)
+      previous.messages.sort((left, right) => Number(left.batchIndex || 0) - Number(right.batchIndex || 0))
+      continue
+    }
+    rows.push({
+      key: message.role === 'assistant' && message.batchId ? `batch:${message.batchId}` : `message:${message.id}`,
+      messages: [message],
+    })
+  }
+  return rows
+}
+
 /** 图片生成输入框的示例提示文案。 */
 const PLACEHOLDER =
   '最多上传9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
@@ -555,6 +587,109 @@ export default function ImageChat({
     onBack({ text, ratio, images, outputCount })
   }
 
+  const messageRows = groupImageChatMessages(messages)
+
+  const renderGenerationStateCard = (message: ChatMessage): ReactNode | null => {
+    if (message.status === 'pending') {
+      return (
+        <div className={styles.pending} role="status" aria-live="polite" key={`pending:${message.id}`}>
+          <span className={styles.spin} aria-hidden="true" />
+          {Number(message.batchTotal || 0) > 1
+            ? `正在生成第 ${Number(message.batchIndex || 0) + 1}/${message.batchTotal} 张图片…`
+            : '营销图片生成中…'}
+        </div>
+      )
+    }
+    if (message.status !== 'error') return null
+
+    const hasMessageRetryGate = typeof isRetryDisabled === 'function'
+    const retryDisabled = hasMessageRetryGate
+      ? Boolean(isRetryDisabled(message))
+      : Boolean(costInsufficient || generationDisabled)
+    const retryDisabledReason =
+      getRetryDisabledReason?.(message) ||
+      (retryDisabled
+        ? costInsufficient
+          ? '积分不足，请先充值'
+          : generationDisabledReason || '当前图片任务暂时无法重试'
+        : '')
+
+    return (
+      <div className={styles.errorCard} key={`error:${message.id}`}>
+        <div className={styles.aiError} role="alert">
+          {message.error || '生成失败，请重试'}
+        </div>
+        {onRetry && (
+          <button
+            type="button"
+            className={styles.retry}
+            onClick={() => onRetry(message)}
+            disabled={busy || submitting || retryDisabled}
+            aria-label="重新生成这张图片"
+            title={retryDisabledReason || undefined}
+          >
+            <ResultActionIcon type="retry" />
+            重新生成
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  const renderResultCard = (message: ChatMessage, image: ChatImg, index: number, displayIndex = index + 1) => (
+    <figure
+      className={`${styles.resultCard}${editingImageKey === chatImageKey(image) ? ' ' + styles.resultCardSelected : ''}${selectedVideoImageKeySet.has(chatImageKey(image)) ? ' ' + styles.resultCardVideoSelected : ''}`}
+      key={`${message.id}:${image.url}:${index}`}
+    >
+      {onContinueToVideo && (
+        <button
+          type="button"
+          className={styles.videoSelect}
+          onClick={() => toggleVideoSelection(image)}
+          aria-label={`${selectedVideoImageKeySet.has(chatImageKey(image)) ? '取消选择' : '选择'}图片 ${videoCandidateNumberByKey.get(chatImageKey(image)) || displayIndex} 用于制作视频`}
+          aria-pressed={selectedVideoImageKeySet.has(chatImageKey(image))}
+          disabled={continuingToVideo}
+        >
+          <span aria-hidden="true">{selectedVideoImageKeySet.has(chatImageKey(image)) ? '✓' : ''}</span>
+        </button>
+      )}
+      <button
+        type="button"
+        className={styles.resultPreview}
+        onClick={() => previewImage(image, message, `AI 生成图片 ${displayIndex}`)}
+        aria-label={`预览生成图片 ${displayIndex}`}
+      >
+        <img className={styles.aiImg} src={image.url} alt={`AI 生成图片 ${displayIndex}`} />
+        <span className={styles.previewHint} aria-hidden="true">
+          查看原图
+        </span>
+      </button>
+      <figcaption className={styles.resultActions}>
+        <button
+          type="button"
+          onClick={() => previewImage(image, message, `AI 生成图片 ${displayIndex}`)}
+          aria-label={`预览图片 ${displayIndex}`}
+        >
+          <ResultActionIcon type="preview" />
+          预览
+        </button>
+        <button type="button" onClick={() => downloadImage(image, message)} aria-label={`下载图片 ${displayIndex}`}>
+          <ResultActionIcon type="download" />
+          下载
+        </button>
+        <button
+          type="button"
+          onClick={() => selectImageForEdit(image, message)}
+          aria-label={`修改图片 ${displayIndex}`}
+          aria-pressed={editingImageKey === chatImageKey(image)}
+        >
+          <ResultActionIcon type="edit" />
+          {editingImageKey === chatImageKey(image) ? '修改中' : '修改'}
+        </button>
+      </figcaption>
+    </figure>
+  )
+
   return (
     <div className={styles.chat}>
       <header className={styles.pageHeader}>
@@ -569,135 +704,84 @@ export default function ImageChat({
 
       {/* 消息流 */}
       <div className={styles.list} ref={listRef}>
-        {messages.map((msg) =>
-          msg.role === 'user' ? (
-            <div className={`${styles.row} ${styles.user}`} key={msg.id}>
-              <div className={styles.userCol}>
-                {!!msg.images?.length && (
-                  <div className={styles.userImgs}>
-                    {msg.images.map((im, i) => (
-                      <img className={styles.userImg} src={im.url} alt={`用户参考图片 ${i + 1}`} key={im.url + i} />
-                    ))}
-                  </div>
-                )}
-                {!!msg.text && <div className={styles.userBubble}>{renderHighlight(msg.text)}</div>}
-              </div>
-            </div>
-          ) : (
-            <div className={`${styles.row} ${styles.ai}`} key={msg.id}>
-              <div className={`${styles.aiCol}${(msg.images?.length || 0) > 1 ? ' ' + styles.aiColWide : ''}`}>
-                {msg.status === 'pending' ? (
-                  <div className={styles.pending} role="status" aria-live="polite">
-                    <span className={styles.spin} aria-hidden="true" />
-                    {Number(msg.batchTotal || 0) > 1
-                      ? `正在生成第 ${Number(msg.batchIndex || 0) + 1}/${msg.batchTotal} 张图片…`
-                      : '营销图片生成中…'}
-                  </div>
-                ) : msg.status === 'error' ? (
-                  <div className={styles.errorCard}>
-                    <div className={styles.aiError} role="alert">
-                      {msg.error || '生成失败，请重试'}
+        {messageRows.map((row) => {
+          const message = row.messages[0]
+          if (message.role === 'user') {
+            return (
+              <div className={`${styles.row} ${styles.user}`} key={row.key}>
+                <div className={styles.userCol}>
+                  {!!message.images?.length && (
+                    <div className={styles.userImgs}>
+                      {message.images.map((image, index) => (
+                        <img
+                          className={styles.userImg}
+                          src={image.url}
+                          alt={`用户参考图片 ${index + 1}`}
+                          key={image.url + index}
+                        />
+                      ))}
                     </div>
-                    {onRetry &&
-                      (() => {
-                        const hasMessageRetryGate = typeof isRetryDisabled === 'function'
-                        const retryDisabled = hasMessageRetryGate
-                          ? Boolean(isRetryDisabled(msg))
-                          : Boolean(costInsufficient || generationDisabled)
-                        const retryDisabledReason =
-                          getRetryDisabledReason?.(msg) ||
-                          (retryDisabled
-                            ? costInsufficient
-                              ? '积分不足，请先充值'
-                              : generationDisabledReason || '当前图片任务暂时无法重试'
-                            : '')
-                        return (
-                          <button
-                            type="button"
-                            className={styles.retry}
-                            onClick={() => onRetry(msg)}
-                            disabled={busy || submitting || retryDisabled}
-                            aria-label="重新生成这张图片"
-                            title={retryDisabledReason || undefined}
-                          >
-                            <ResultActionIcon type="retry" />
-                            重新生成
-                          </button>
-                        )
-                      })()}
-                  </div>
-                ) : (
+                  )}
+                  {!!message.text && <div className={styles.userBubble}>{renderHighlight(message.text)}</div>}
+                </div>
+              </div>
+            )
+          }
+
+          const isBatchRow = row.messages.length > 1
+          const imageCount = row.messages.reduce((total, item) => total + (item.images?.length || 0), 0)
+          const batchTotal = Math.max(row.messages.length, ...row.messages.map((item) => Number(item.batchTotal || 0)))
+          const stateCard = renderGenerationStateCard(message)
+
+          return (
+            <div className={`${styles.row} ${styles.ai}`} key={row.key}>
+              <div className={`${styles.aiCol}${isBatchRow || imageCount > 1 ? ' ' + styles.aiColWide : ''}`}>
+                {isBatchRow ? (
                   <>
-                    {!!msg.text && <div className={styles.aiText}>{msg.text}</div>}
-                    {!!msg.images?.length && (
-                      <div className={styles.aiImgs}>
-                        {msg.images.map((im, i) => (
-                          <figure
-                            className={`${styles.resultCard}${editingImageKey === chatImageKey(im) ? ' ' + styles.resultCardSelected : ''}${selectedVideoImageKeySet.has(chatImageKey(im)) ? ' ' + styles.resultCardVideoSelected : ''}`}
-                            key={im.url + i}
-                          >
-                            {onContinueToVideo && (
-                              <button
-                                type="button"
-                                className={styles.videoSelect}
-                                onClick={() => toggleVideoSelection(im)}
-                                aria-label={`${selectedVideoImageKeySet.has(chatImageKey(im)) ? '取消选择' : '选择'}图片 ${videoCandidateNumberByKey.get(chatImageKey(im)) || i + 1} 用于制作视频`}
-                                aria-pressed={selectedVideoImageKeySet.has(chatImageKey(im))}
-                                disabled={continuingToVideo}
-                              >
-                                <span aria-hidden="true">
-                                  {selectedVideoImageKeySet.has(chatImageKey(im)) ? '✓' : ''}
-                                </span>
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className={styles.resultPreview}
-                              onClick={() => previewImage(im, msg, `AI 生成图片 ${i + 1}`)}
-                              aria-label={`预览生成图片 ${i + 1}`}
-                            >
-                              <img className={styles.aiImg} src={im.url} alt={`AI 生成图片 ${i + 1}`} />
-                              <span className={styles.previewHint} aria-hidden="true">
-                                查看原图
-                              </span>
-                            </button>
-                            <figcaption className={styles.resultActions}>
-                              <button
-                                type="button"
-                                onClick={() => previewImage(im, msg, `AI 生成图片 ${i + 1}`)}
-                                aria-label={`预览图片 ${i + 1}`}
-                              >
-                                <ResultActionIcon type="preview" />
-                                预览
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => downloadImage(im, msg)}
-                                aria-label={`下载图片 ${i + 1}`}
-                              >
-                                <ResultActionIcon type="download" />
-                                下载
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => selectImageForEdit(im, msg)}
-                                aria-label={`修改图片 ${i + 1}`}
-                                aria-pressed={editingImageKey === chatImageKey(im)}
-                              >
-                                <ResultActionIcon type="edit" />
-                                {editingImageKey === chatImageKey(im) ? '修改中' : '修改'}
-                              </button>
-                            </figcaption>
-                          </figure>
-                        ))}
-                      </div>
+                    {row.messages.map(
+                      (item) =>
+                        !!item.text && (
+                          <div className={styles.aiText} key={`text:${item.id}`}>
+                            {item.text}
+                          </div>
+                        ),
                     )}
+                    <div className={styles.aiImgs} role="list" aria-label="批量图片生成进度">
+                      {row.messages.map((item) => {
+                        const batchIndex = Number(item.batchIndex || 0)
+                        const itemStateCard = renderGenerationStateCard(item)
+                        return (
+                          <div
+                            className={styles.batchSlot}
+                            role="listitem"
+                            aria-label={`第 ${batchIndex + 1}/${batchTotal} 张图片`}
+                            key={item.id}
+                          >
+                            {itemStateCard ||
+                              (item.images || []).map((image, index) =>
+                                renderResultCard(item, image, index, batchIndex + index + 1),
+                              )}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </>
+                ) : (
+                  stateCard || (
+                    <>
+                      {!!message.text && <div className={styles.aiText}>{message.text}</div>}
+                      {!!message.images?.length && (
+                        <div className={styles.aiImgs}>
+                          {message.images.map((image, index) => renderResultCard(message, image, index))}
+                        </div>
+                      )}
+                    </>
+                  )
                 )}
               </div>
             </div>
-          ),
-        )}
+          )
+        })}
       </div>
 
       {/* 输入框(沉底);「创建新对话」位于输入框右上角 */}

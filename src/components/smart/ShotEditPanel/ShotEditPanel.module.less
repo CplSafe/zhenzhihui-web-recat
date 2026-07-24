@@ -765,10 +765,21 @@
 
 /* ════ 镜头编排右栏(还原 Figma 421-3105)════ */
 
-/* 顶部:当前分镜图(大)+ 历史生成 */
+/* 顶部媒体工作区:主体和素材 + 当前分镜图 + 历史生成 */
+.seMediaRow {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(270px, 1.35fr) minmax(180px, 1fr);
+  gap: 24px;
+  align-items: start;
+  min-width: 0;
+}
+.seMediaRowNoMats {
+  grid-template-columns: minmax(270px, 1.35fr) minmax(180px, 1fr);
+}
+
 /* 使用到的主体和素材:图片展示,样式对齐分镜图(圆角缩略 + 下方名称) */
 .seMats {
-  margin-bottom: 4px;
+  min-width: 0;
 }
 .seMatsTitle {
   font-size: 18px;
@@ -778,22 +789,29 @@
 }
 .seMatsGrid {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
 }
 .seMatCell {
+  flex: 0 0 72px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .seMatThumb {
   position: relative;
-  width: auto;
-  height: 120px;
+  width: 72px;
+  height: 54px;
   min-width: 0;
-  aspect-ratio: var(--frame-ratio, 16 / 9);
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
   background: linear-gradient(135deg, #eef1f6, #f6f8fb);
   display: flex;
@@ -803,7 +821,7 @@
   img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
   }
 }
 .seMatPh {
@@ -813,32 +831,34 @@
   text-align: center;
 }
 .seMatLabel {
-  font-size: 14px;
+  width: 100%;
+  font-size: 12px;
   color: #555;
   line-height: 1;
-  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: center;
+}
+.seMatThumb .seZoom {
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
 }
 
-.seTop {
-  display: flex;
-  gap: 20px;
-  align-items: flex-start;
-}
 .seCurBox {
-  flex: 0 0 auto;
+  min-width: 0;
 }
 .seCurBox .seditCur {
-  /* 定高 220,宽按项目比例(--frame-ratio):竖屏窄、横屏宽、方形 220×220。
-     不再写死方形,使大图预览与所选比例一致。 */
-  height: 220px;
+  /* 宽屏保持 220px 高度；空间收窄时同步缩小，避免挤压素材和历史版本。 */
+  height: clamp(170px, 14vw, 220px);
   width: auto;
+  max-width: 100%;
   aspect-ratio: var(--frame-ratio, 16 / 9);
 }
 .seHistory {
-  flex: 1 1 auto;
   min-width: 0;
 }
 .seHistTitle {
@@ -849,20 +869,27 @@
 }
 .seHistGrid {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
+  flex-wrap: nowrap;
+  gap: 12px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
 }
 /* 单个版本:缩略图 + 下方 V 标号 */
 .seHistCell {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .seHistItem {
   position: relative;
   width: auto;
-  height: 120px;
+  height: 88px;
   min-width: 0;
   aspect-ratio: var(--frame-ratio, 16 / 9);
   box-sizing: border-box;
@@ -896,6 +923,19 @@
   font-size: 13px;
   color: #9aa3af;
   padding: 12px 0;
+}
+
+@media (max-width: 760px) {
+  .seMediaRow,
+  .seMediaRowNoMats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .seCurBox .seditCur {
+    width: 100%;
+    height: auto;
+    max-height: none;
+  }
 }
 
 /* 上传素材:顶部行里的高方框(与分镜图同高,对齐 Figma) */

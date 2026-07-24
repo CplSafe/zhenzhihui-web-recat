@@ -1,11 +1,35 @@
 import { describe, expect, it } from 'vitest'
 import {
   HOT_COPY_PENDING_TASK_GRACE_MS,
+  findHotCopyTaskByIdempotencyKey,
+  getHotCopyTaskIdempotencyKey,
   mergeHotCopyGenerationCheckpoint,
   resolveHotCopyActiveGenerationState,
   resolveHotCopyPaidTaskCheckpoint,
   resolveHotCopyPendingRecovery,
 } from '@/utils/hotCopyGenerationState'
+
+describe('hot-copy task credential recovery', () => {
+  it('finds a created task by its top-level idempotency key', () => {
+    const task = { id: 3549, idempotency_key: 'hot-copy:21:204:run-1' }
+    expect(findHotCopyTaskByIdempotencyKey([task], 'hot-copy:21:204:run-1')).toBe(task)
+  })
+
+  it('supports nested metadata and camel-case response fields', () => {
+    const task = { task_id: 3550, metadata: { idempotencyKey: 'hot-copy:21:204:run-2' } }
+    expect(getHotCopyTaskIdempotencyKey(task)).toBe('hot-copy:21:204:run-2')
+    expect(findHotCopyTaskByIdempotencyKey([task], 'hot-copy:21:204:run-2')).toBe(task)
+  })
+
+  it('does not attach an unrelated task', () => {
+    expect(
+      findHotCopyTaskByIdempotencyKey(
+        [{ id: 3549, idempotency_key: 'hot-copy:21:204:another-run' }],
+        'hot-copy:21:204:run-1',
+      ),
+    ).toBeNull()
+  })
+})
 
 describe('mergeHotCopyGenerationCheckpoint', () => {
   it('does not leave a task-less processing record when initial creation fails at the final checkpoint', () => {

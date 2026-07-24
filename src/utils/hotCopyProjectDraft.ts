@@ -51,11 +51,10 @@ export function resolveHotCopySubmissionProjectId(input: HotCopyProjectBindingIn
   return toProjectId(input.routeProjectId) || toProjectId(input.restartProjectId) || toProjectId(input.boundProjectId)
 }
 
-/** 恢复入口或视频步骤但不发起供应商操作；旧快照根据持久证据推断是否已进入生成步骤。 */
+/** 根据持久证据判断项目历史上是否到达过生成步骤；它不决定编辑器当前显示哪一页。 */
 export function resolveHotCopyRestoredStarted(smartValue: unknown, projectDraftValue: unknown = null): boolean {
   const smart = asRecord(smartValue) || {}
   const projectDraft = asRecord(projectDraftValue) || {}
-  if (typeof smart.started === 'boolean') return smart.started
 
   const hasResult = Boolean(
     toProjectId(smart.fullVideoAssetId) ||
@@ -71,7 +70,15 @@ export function resolveHotCopyRestoredStarted(smartValue: unknown, projectDraftV
     (Array.isArray(smart.videoGenerations) &&
       smart.videoGenerations.some((generation: any) => String(generation?.status || '') === 'processing')),
   )
-  return hasResult || hasActiveTask || Number(smart.step || 0) > 0
+  const hasGenerationHistory =
+    (Array.isArray(smart.videoGenerations) && smart.videoGenerations.length > 0) ||
+    (Array.isArray(projectDraft.videoHistoryList) && projectDraft.videoHistoryList.length > 0)
+  const hasReachedMarker = Number(smart.maxReached || 0) >= 1
+
+  // 结果、任务、失败记录和明确的历史进度比旧 started=false 更可靠。
+  if (hasResult || hasActiveTask || hasGenerationHistory || hasReachedMarker) return true
+  if (typeof smart.started === 'boolean') return smart.started
+  return Number(smart.step || 0) > 0
 }
 
 /** 判断草稿是否没有任何可恢复的爆款复制内容。 */

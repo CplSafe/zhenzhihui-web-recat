@@ -331,7 +331,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
   })
 
-  it('requires both image models on the homepage before image creation starts', async () => {
+  it('requires only the image model matching the current reference-image mode', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
     render(
@@ -363,15 +363,10 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     const submit = screen.getByRole('button', { name: '去制作' })
     expect(submit).toBeEnabled()
 
-    await user.click(screen.getByRole('button', { name: '生成模型，0/2 已选择' }))
+    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
+    expect(screen.getByRole('combobox', { name: '文生图模型' })).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '图生图模型' })).not.toBeInTheDocument()
     await user.selectOptions(screen.getByRole('combobox', { name: '文生图模型' }), '811')
-    await user.click(submit)
-    expect(onSubmit).not.toHaveBeenCalled()
-    await user.selectOptions(screen.getByRole('combobox', { name: '图生图模型' }), '812')
-
-    await user.upload(screen.getByLabelText('选择上传图片'), file())
-    expect(await screen.findByRole('button', { name: '继续上传' })).toBeInTheDocument()
-    expect(submit).toBeEnabled()
     await user.click(submit)
 
     expect(onSubmit).toHaveBeenCalledWith(
@@ -379,7 +374,6 @@ describe('SmartEntry mode, options, validation, and submission', () => {
       expect.objectContaining({
         generationModels: {
           'image.text_to_image': 811,
-          'image.image_to_image': 812,
         },
       }),
     )
@@ -424,8 +418,8 @@ describe('SmartEntry mode, options, validation, and submission', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: '生成模型，0/2 已选择' }))
-    await user.selectOptions(screen.getByRole('combobox', { name: '文生图模型' }), '821')
+    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
+    expect(screen.queryByRole('combobox', { name: '文生图模型' })).not.toBeInTheDocument()
     await user.selectOptions(screen.getByRole('combobox', { name: '图生图模型' }), '822')
 
     expect(screen.getByText('当前创作参数与所选模型不兼容')).toBeInTheDocument()

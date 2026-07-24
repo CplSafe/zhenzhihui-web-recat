@@ -17,6 +17,8 @@ export interface HotCopyGenRecord {
   id: string
   status: HotCopyGenStatus
   taskId: number
+  /** 创建供应商任务时使用的幂等键；taskId 回写丢失时可据此从任务列表恢复。 */
+  idempotencyKey?: string
   note: string
   /** 原始修改要求；note 可包含“重新生成”等 UI 标签。 */
   modificationNote?: string

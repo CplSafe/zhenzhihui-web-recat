@@ -55,6 +55,10 @@ describe('ShotEditPanel', () => {
     expect(screen.getByText('原始分镜描述')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: '产品' })).toHaveAttribute('src', 'https://cdn.example.com/product.png')
     expect(screen.getByText('V2')).toBeInTheDocument()
+    const mediaRow = screen.getByRole('group', { name: '分镜图片与素材' })
+    expect(within(mediaRow).getByText('使用到的主体和素材')).toBeInTheDocument()
+    expect(within(mediaRow).getByRole('button', { name: '放大当前分镜图' })).toBeInTheDocument()
+    expect(within(mediaRow).getByText('历史生成')).toBeInTheDocument()
 
     rerender(
       <ShotEditPanel

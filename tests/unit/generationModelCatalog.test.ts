@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  areGenerationModelOperationsReady,
   buildGenerationModelGroups,
   createGenerationModelOperationStateMap,
   getBackendGenerationModelVersionId,
   getBackendGenerationModelName,
+  getImageGenerationOperationCode,
+  getUnavailableGenerationOperations,
   getUnavailableRequiredGenerationOperations,
   isBackendGenerationModelEnabled,
   isGenerationModelCatalogReadyForMode,
@@ -391,6 +394,36 @@ describe('generation model catalog', () => {
     }
     expect(isGenerationModelCatalogReadyForMode(states, 'image')).toBe(false)
     expect(getUnavailableRequiredGenerationOperations(states, 'image')).toEqual(['image.text_to_image'])
+  })
+
+  it('selects the active image operation from a normalized reference image count', () => {
+    expect(getImageGenerationOperationCode(0)).toBe('image.text_to_image')
+    expect(getImageGenerationOperationCode(-1)).toBe('image.text_to_image')
+    expect(getImageGenerationOperationCode(Number.NaN)).toBe('image.text_to_image')
+    expect(getImageGenerationOperationCode(Number.POSITIVE_INFINITY)).toBe('image.text_to_image')
+    expect(getImageGenerationOperationCode('')).toBe('image.text_to_image')
+    expect(getImageGenerationOperationCode('not-a-number')).toBe('image.text_to_image')
+    expect(getImageGenerationOperationCode(true)).toBe('image.text_to_image')
+
+    expect(getImageGenerationOperationCode(1)).toBe('image.image_to_image')
+    expect(getImageGenerationOperationCode(0.5)).toBe('image.image_to_image')
+    expect(getImageGenerationOperationCode(' 2 ')).toBe('image.image_to_image')
+  })
+
+  it('checks readiness for an explicit operation subset', () => {
+    const states = createGenerationModelOperationStateMap('ready')
+    states['image.image_to_image'] = {
+      operationCode: 'image.image_to_image',
+      status: 'error',
+      availableModelCount: 0,
+      message: '图生图模型加载失败',
+    }
+
+    expect(areGenerationModelOperationsReady(states, ['image.text_to_image'])).toBe(true)
+    expect(areGenerationModelOperationsReady(states, ['image.image_to_image'])).toBe(false)
+    expect(getUnavailableGenerationOperations(states, ['image.text_to_image', 'image.image_to_image'])).toEqual([
+      'image.image_to_image',
+    ])
   })
 
   it('returns an empty catalog and empty selection map for invalid input', () => {

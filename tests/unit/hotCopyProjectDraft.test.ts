@@ -105,4 +105,15 @@ describe('HotCopy project binding and restore state', () => {
     expect(resolveHotCopyRestoredStarted({ vidGenTaskId: 301, videoGenerating: true }, {})).toBe(true)
     expect(resolveHotCopyRestoredStarted({}, {})).toBe(false)
   })
+
+  it('trusts generation evidence over a stale started=false flag', () => {
+    expect(resolveHotCopyRestoredStarted({ started: false, fullVideoAssetId: 91 }, {})).toBe(true)
+    expect(
+      resolveHotCopyRestoredStarted({
+        started: false,
+        videoGenerations: [{ id: 'failed-run', status: 'failed', taskId: 0 }],
+      }),
+    ).toBe(true)
+    expect(resolveHotCopyRestoredStarted({ started: false, maxReached: 1 }, {})).toBe(true)
+  })
 })

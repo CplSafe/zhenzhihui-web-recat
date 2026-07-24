@@ -12,14 +12,13 @@ import {
   estimateAiTaskCost,
   getAiTaskId,
 } from './business'
-import { buildVideoGenerationParams } from '@/utils/videoTasks'
 import { normalizeSeedanceRatio } from '@/utils/videoOptions'
 import { validateSmartVideoDuration } from '@/utils/videoDurationValue'
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
 import { readAiTaskProgress } from '@/utils/taskProgress'
-import { getModelParamFields } from '@/utils/modelSchema'
 import { getBackendGenerationModelName, getBackendGenerationModelVersionId } from '@/utils/generationModelCatalog'
 import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/utils/modelRestrictions'
+import { buildHotCopyReplicateModelParams } from '@/utils/hotCopyModelAdapters'
 
 /** 爆款复制的模型筛选、任务超时与模型预热缓存策略。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
@@ -27,6 +26,8 @@ const VIDEO_MODEL_KEYWORDS = ['seedance']
 const HOT_COPY_VIDEO_TIMEOUT_MS = 60 * 60 * 1000
 /** 正式提交前模型查询的超时时间。 */
 const HOT_COPY_MODEL_LOOKUP_TIMEOUT_MS = 8000
+/** 点击去制作后的费用预估不得无限阻塞页面切换。 */
+const HOT_COPY_ESTIMATE_TIMEOUT_MS = 15000
 /** 按工作空间预热模型的缓存有效期。 */
 const HOT_COPY_MODEL_CACHE_TTL_MS = 5 * 60 * 1000
 /** 已成功解析的爆款复制模型缓存。 */
@@ -300,23 +301,11 @@ function buildReplicateVideoParams(
   if (!durationValidation.valid) {
     throw new Error('爆款复制时长必须是 1 至 15 秒内的整数')
   }
-  const params = buildVideoGenerationParams(model, {
-    duration: durationValidation.seconds,
-    durationMode: 'exact',
-    sourceVideoDuration: args.sourceVideoDurationSec,
-    resolution: '720p',
+  return buildHotCopyReplicateModelParams(model, {
+    durationSec: durationValidation.seconds,
+    sourceVideoDurationSec: args.sourceVideoDurationSec,
     ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
-    generateAudio: true,
   })
-  const declaredFields = getModelParamFields(model)
-  const supportsAudio = declaredFields.some((field: any) =>
-    ['generate_audio', 'generateAudio'].includes(String(field?.name || '')),
-  )
-  if (!supportsAudio) {
-    delete params.generate_audio
-    delete params.generateAudio
-  }
-  return params
 }
 
 /**
@@ -665,12 +654,16 @@ export async function estimateReplicateCost(args: {
 }): Promise<any> {
   const snapshot = resolveHotCopyReplicateSnapshot(args)
   try {
-    return await estimateAiTaskCost({
-      workspaceId: snapshot.workspaceId,
-      modelVersionId: snapshot.modelVersionId,
-      operationCode: 'video.replicate',
-      params: snapshot.params,
-    })
+    return await withTimeout(
+      estimateAiTaskCost({
+        workspaceId: snapshot.workspaceId,
+        modelVersionId: snapshot.modelVersionId,
+        operationCode: 'video.replicate',
+        params: snapshot.params,
+      }),
+      HOT_COPY_ESTIMATE_TIMEOUT_MS,
+      '视频费用预估超时，请稍后重试',
+    )
   } catch (error) {
     if (isHotCopyModelUnavailableError(error)) {
       throw createHotCopyModelUnavailableError('所选视频模型已下架或当前空间不可用，请重新选择', error)

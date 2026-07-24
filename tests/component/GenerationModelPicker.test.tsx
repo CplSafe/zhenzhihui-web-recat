@@ -2,6 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import GenerationModelPicker, {
+  filterGenerationModelGroupsByOperations,
   getMissingGenerationModelKeys,
   isGenerationModelSelectionComplete,
   type GenerationModelGroup,
@@ -50,6 +51,48 @@ const groups: GenerationModelGroup[] = [
 ]
 
 describe('GenerationModelPicker', () => {
+  it('filters top-level and subgroup operations without mutating the catalog', () => {
+    const mixedGroups: GenerationModelGroup[] = [
+      {
+        key: 'image',
+        label: 'Images',
+        models: [{ id: 'stage-model', name: 'Stage model' }],
+        subgroups: [
+          {
+            key: 'image.text_to_image',
+            label: 'Text to image',
+            models: [{ id: 'text-model', name: 'Text model' }],
+          },
+          {
+            key: 'image.image_to_image',
+            label: 'Image to image',
+            models: [{ id: 'reference-model', name: 'Reference model' }],
+          },
+        ],
+      },
+      {
+        key: 'video.generate',
+        label: 'Video',
+        models: [{ id: 'video-model', name: 'Video model' }],
+      },
+    ]
+    const originalSnapshot = structuredClone(mixedGroups)
+
+    const filtered = filterGenerationModelGroupsByOperations(mixedGroups, ['image.image_to_image', 'video.generate'])
+
+    expect(filtered).toHaveLength(2)
+    expect(filtered[0]).not.toBe(mixedGroups[0])
+    expect(filtered[0].models).toBeUndefined()
+    expect(filtered[0].subgroups?.map((subgroup) => subgroup.key)).toEqual(['image.image_to_image'])
+    expect(filtered[0].subgroups?.[0]).not.toBe(mixedGroups[0].subgroups?.[1])
+    expect(filtered[1].models).not.toBe(mixedGroups[1].models)
+    expect(mixedGroups).toEqual(originalSnapshot)
+  })
+
+  it('removes every group when no operation is active', () => {
+    expect(filterGenerationModelGroupsByOperations(groups, [])).toEqual([])
+  })
+
   it('renders every non-empty backend group and its backend-provided model names', () => {
     render(<GenerationModelPicker groups={groups} selected={{}} onChange={vi.fn()} />)
 
