@@ -220,6 +220,82 @@ describe('ImageChat', () => {
     expect(props.onSend).not.toHaveBeenCalled()
   })
 
+  it('disables generation and retry when no model is selected without blocking a new chat', async () => {
+    const user = userEvent.setup()
+    const props = baseProps()
+    const onRetry = vi.fn()
+    const onNewChat = vi.fn()
+    const reason = '请先选择图生图模型'
+    render(
+      <ImageChat
+        {...props}
+        messages={[{ id: 'failed', role: 'assistant', status: 'error', error: '生成失败' }]}
+        generationDisabled
+        generationDisabledReason={reason}
+        onRetry={onRetry}
+        onNewChat={onNewChat}
+      />,
+    )
+
+    await user.type(screen.getByRole('textbox', { name: '图片创作描述' }), '修改商品海报')
+    const generate = screen.getByRole('button', { name: '生成' })
+    const retry = screen.getByRole('button', { name: '重新生成这张图片' })
+    expect(generate).toBeDisabled()
+    expect(generate).toHaveAttribute('title', reason)
+    expect(retry).toBeDisabled()
+
+    await user.keyboard('{Control>}{Enter}{/Control}')
+    await user.click(retry)
+    expect(props.onSend).not.toHaveBeenCalled()
+    expect(onRetry).not.toHaveBeenCalled()
+
+    const newChat = screen.getByRole('button', { name: '创建新对话' })
+    expect(newChat).toBeEnabled()
+    await user.click(newChat)
+    expect(onNewChat).toHaveBeenCalledOnce()
+  })
+
+  it('supports retry gates that are evaluated for each failed message', async () => {
+    const user = userEvent.setup()
+    const onRetry = vi.fn()
+    const recoverable = {
+      id: 'recoverable',
+      role: 'assistant' as const,
+      status: 'error' as const,
+      taskId: 91,
+      error: '连接中断',
+    }
+    const needsImageToImageModel = {
+      id: 'new-i2i-task',
+      role: 'assistant' as const,
+      status: 'error' as const,
+      operationCode: 'image.image_to_image' as const,
+      error: '任务失败',
+    }
+    render(
+      <ImageChat
+        {...baseProps()}
+        messages={[recoverable, needsImageToImageModel]}
+        generationDisabled
+        generationDisabledReason="当前输入框缺少文生图模型"
+        costInsufficient
+        onRetry={onRetry}
+        isRetryDisabled={(message) => message.id === needsImageToImageModel.id}
+        getRetryDisabledReason={(message) => (message.id === needsImageToImageModel.id ? '请先选择图生图模型' : '')}
+      />,
+    )
+
+    const retryButtons = screen.getAllByRole('button', { name: '重新生成这张图片' })
+    expect(retryButtons[0]).toBeEnabled()
+    expect(retryButtons[1]).toBeDisabled()
+    expect(retryButtons[1]).toHaveAttribute('title', '请先选择图生图模型')
+
+    await user.click(retryButtons[0])
+    await user.click(retryButtons[1])
+    expect(onRetry).toHaveBeenCalledOnce()
+    expect(onRetry).toHaveBeenCalledWith(recoverable)
+  })
+
   it('disables creating a new chat while a generation is running', async () => {
     const user = userEvent.setup()
     const onNewChat = vi.fn()

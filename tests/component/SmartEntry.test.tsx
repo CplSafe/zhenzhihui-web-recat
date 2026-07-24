@@ -1,8 +1,9 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SmartEntry from '@/components/smart/SmartEntry/SmartEntry'
+import { createGenerationModelOperationStateMap } from '@/utils/generationModelCatalog'
 import { loadSmartEntryDraft, saveSmartEntryDraft, setSmartEntryDraftScope } from '@/utils/smartEntryDraft'
 
 const mocks = vi.hoisted(() => ({
@@ -176,6 +177,263 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
   })
 
+  it('requires every homepage model slot and submits the backend model ids after dropdown selection', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <TestSmartEntry
+        onSubmit={onSubmit}
+        initial={{ text: '生成一条新品短视频' }}
+        requireModelSelection
+        modelGroups={[
+          {
+            key: 'script',
+            label: '生成脚本',
+            subgroups: [
+              {
+                key: 'responses.multimodal',
+                label: '脚本生成模型',
+                models: [{ id: 731, name: '后端返回的脚本模型' }],
+              },
+            ],
+          },
+          {
+            key: 'video',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.generate',
+                label: '视频生成模型',
+                models: [{ id: 732, name: '后端返回的视频模型' }],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    const submit = screen.getByRole('button', { name: '去制作' })
+    expect(submit).toBeEnabled()
+    await user.click(submit)
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenCalledWith('请先选择本次创作使用的全部模型', 'info')
+    expect(screen.getByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
+    const attentionTrigger = screen.getByRole('button', { name: '生成模型，0/2 已选择' })
+    await waitFor(() => expect(attentionTrigger).toHaveFocus())
+    expect(attentionTrigger.closest('[data-attention]')).toHaveAttribute('data-attention', 'true')
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '脚本生成模型' }), '731')
+    await user.click(submit)
+    expect(onSubmit).not.toHaveBeenCalled()
+    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '732')
+
+    await user.click(submit)
+    expect(onSubmit).toHaveBeenCalledWith(
+      '生成一条新品短视频',
+      expect.objectContaining({
+        generationModels: {
+          'responses.multimodal': 731,
+          'video.generate': 732,
+        },
+      }),
+    )
+  })
+
+  it('does not infer readiness from the remaining groups when one required operation failed to load', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    const operationStates = createGenerationModelOperationStateMap('ready')
+    operationStates['video.generate'] = {
+      operationCode: 'video.generate',
+      status: 'error',
+      availableModelCount: 0,
+      message: '视频生成模型加载失败，请重试',
+    }
+
+    render(
+      <TestSmartEntry
+        onSubmit={onSubmit}
+        initial={{
+          text: '生成一条短视频',
+          generationModels: { 'responses.multimodal': 731 },
+        }}
+        requireModelSelection
+        modelOperationStates={operationStates}
+        modelGroups={[
+          {
+            key: 'script',
+            label: '生成脚本',
+            subgroups: [
+              {
+                key: 'responses.multimodal',
+                label: '脚本生成模型',
+                models: [{ id: 731, name: '后端脚本模型' }],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    const submit = screen.getByRole('button', { name: '去制作' })
+    expect(submit).toBeEnabled()
+    await user.click(submit)
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenCalledWith('当前有必需模型不可用，请在模型选择中检查后重试', 'info')
+    expect(screen.getByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
+  })
+
+  it('keeps backend restrictions hidden while still blocking incompatible entry duration or ratio', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        initial={{ text: '生成受限模型视频', duration: '6s', ratio: '9:16' }}
+        requireModelSelection
+        modelGroups={[
+          {
+            key: 'video',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.generate',
+                label: '视频生成模型',
+                models: [
+                  {
+                    id: 901,
+                    name: '后端受限视频模型',
+                    restrictions: ['时长仅支持：5 秒、10 秒', '画面比例支持：16:9'],
+                    constraints: { duration: { options: [5, 10] }, ratios: ['16:9'] },
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '901')
+    expect(screen.queryByText('时长仅支持：5 秒、10 秒')).not.toBeInTheDocument()
+    expect(screen.queryByText('画面比例支持：16:9')).not.toBeInTheDocument()
+    expect(screen.getByText('当前创作参数与所选模型不兼容')).toBeInTheDocument()
+    const submit = screen.getByRole('button', { name: '去制作' })
+    expect(submit).toBeEnabled()
+    await user.click(submit)
+    expect(mocks.showToast).toHaveBeenCalledWith('当前创作参数与所选模型不兼容，请调整模型或创作参数', 'info')
+
+    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
+    await user.click(screen.getByRole('button', { name: '6s' }))
+    await user.click(screen.getByRole('option', { name: '5s' }))
+    await user.click(screen.getByRole('button', { name: '9:16' }))
+    await user.click(screen.getByRole('option', { name: '16:9' }))
+    expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
+  })
+
+  it('requires both image models on the homepage before image creation starts', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <TestSmartEntry
+        onSubmit={onSubmit}
+        initial={{ mode: 'image', text: '生成商品海报' }}
+        requireModelSelection
+        modelGroups={[
+          {
+            key: 'image',
+            label: '生成图片',
+            subgroups: [
+              {
+                key: 'image.text_to_image',
+                label: '文生图模型',
+                models: [{ id: 811, name: '后端文生图模型' }],
+              },
+              {
+                key: 'image.image_to_image',
+                label: '图生图模型',
+                models: [{ id: 812, name: '后端图生图模型' }],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    const submit = screen.getByRole('button', { name: '去制作' })
+    expect(submit).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: '生成模型，0/2 已选择' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '文生图模型' }), '811')
+    await user.click(submit)
+    expect(onSubmit).not.toHaveBeenCalled()
+    await user.selectOptions(screen.getByRole('combobox', { name: '图生图模型' }), '812')
+
+    await user.upload(screen.getByLabelText('选择上传图片'), file())
+    expect(await screen.findByRole('button', { name: '继续上传' })).toBeInTheDocument()
+    expect(submit).toBeEnabled()
+    await user.click(submit)
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      '生成商品海报',
+      expect.objectContaining({
+        generationModels: {
+          'image.text_to_image': 811,
+          'image.image_to_image': 812,
+        },
+      }),
+    )
+  })
+
+  it('blocks image creation when uploaded references exceed the selected backend model limit', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <TestSmartEntry
+        onSubmit={onSubmit}
+        initial={{
+          mode: 'image',
+          text: '生成三图商品海报',
+          images: ['data:ref-1', 'data:ref-2', 'data:ref-3'],
+        }}
+        requireModelSelection
+        modelGroups={[
+          {
+            key: 'image',
+            label: '生成图片',
+            subgroups: [
+              {
+                key: 'image.text_to_image',
+                label: '文生图模型',
+                models: [{ id: 821, name: '后端文生图模型' }],
+              },
+              {
+                key: 'image.image_to_image',
+                label: '图生图模型',
+                models: [
+                  {
+                    id: 822,
+                    name: '最多双参考图模型',
+                    constraints: { referenceImages: { minimum: 1, maximum: 2 } },
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '生成模型，0/2 已选择' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '文生图模型' }), '821')
+    await user.selectOptions(screen.getByRole('combobox', { name: '图生图模型' }), '822')
+
+    expect(screen.getByText('当前创作参数与所选模型不兼容')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenCalledWith('当前创作参数与所选模型不兼容，请调整模型或创作参数', 'info')
+  })
+
   it('submits the selected ratio, duration, and skill while stripping the skill helper line', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
@@ -285,6 +543,44 @@ describe('SmartEntry uploads and recovery actions', () => {
     await user.click(screen.getByRole('button', { name: '@图片1' }))
 
     expect(textbox).toHaveValue('@图片1 放到场景中')
+  })
+
+  it('allows an old resumable draft to complete and persist its missing homepage models', async () => {
+    const user = userEvent.setup()
+    const onResume = vi.fn()
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        canResume
+        onResume={onResume}
+        requireModelSelection
+        initial={{ text: '没有模型配置的旧草稿' }}
+        modelGroups={[
+          {
+            key: 'script',
+            label: '生成脚本',
+            subgroups: [
+              {
+                key: 'responses.multimodal',
+                label: '脚本生成模型',
+                models: [{ id: 951, name: '后端脚本模型' }],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    const resumeButton = screen.getByRole('button', { name: '返回下一步' })
+    expect(resumeButton).toBeEnabled()
+    await user.click(resumeButton)
+    expect(onResume).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenLastCalledWith('请先选择本次创作使用的全部模型', 'info')
+    expect(await screen.findByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: '脚本生成模型' }), '951')
+
+    await user.click(resumeButton)
+    expect(onResume).toHaveBeenCalledWith({ 'responses.multimodal': 951 })
   })
 
   it('forwards new-video and resume actions without regenerating', async () => {

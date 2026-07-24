@@ -52,7 +52,21 @@ export interface Shot {
   selectedRefs?: string[] // 当前选中参与出图的素材 url(元素图 + extraRefs)
   extraRefs?: { url: string; assetId?: number }[] // 额外添加的素材(项目选/上传)
   // 每版带 asset_id(供水合刷新签名URL)+ 该版用到的提示词与素材 url
-  imageVersions?: { url: string; assetId: number; prompt?: string; refs?: string[] }[]
+  imageVersions?: {
+    url: string
+    assetId: number
+    prompt?: string
+    refs?: string[]
+    /** Backend operation that produced this immutable version. */
+    operationCode?: 'image.text_to_image' | 'image.image_to_image'
+    /** Exact backend model version used for this immutable version. */
+    modelVersionId?: number
+    /** Whether continuity with the previous generated frame made this an i2i request. */
+    dependsOnPrevious?: boolean
+  }[]
+  /** Provenance of the currently selected image; persisted independently from version order. */
+  imageOperationCode?: 'image.text_to_image' | 'image.image_to_image'
+  imageModelVersionId?: number
   // 人脸脱敏(正式出视频前对分镜图脱敏):脱敏版图 + asset_id,以及它脱敏自哪张原图(缓存有效性判定)
   blurredImageUrl?: string
   blurredImageAssetId?: number

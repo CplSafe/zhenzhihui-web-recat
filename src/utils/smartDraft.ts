@@ -4,6 +4,7 @@
  * 超限时退化为「不存图、只存文本结构」。
  */
 import { sanitizePersistentMediaUrl } from './persistentMediaUrl'
+import type { SmartModelSwitchRecoveryDescriptor } from './smartModelSwitchSafety'
 import { sanitizeTelemetryText } from './observabilitySanitizer'
 import { isLogoutDraftWriteBlocked } from './logoutBarrier'
 
@@ -68,6 +69,8 @@ export interface SmartDraft {
   scriptPending?: boolean
   /** 流式脚本未完整结束时的错误；恢复后继续阻止把部分分镜误当作完整脚本确认。 */
   scriptError?: string
+  /** 模型切换付费重生成的云端恢复描述符；任务开始前必须先成功保存。 */
+  modelSwitchRecovery?: SmartModelSwitchRecoveryDescriptor
   /** 整片视频历史版本(每版带 asset_id,供水合刷新签名URL) */
   videoVersions?: { url: string; assetId: number; createdAt?: string }[]
   /** 每次「重新生成」的独立记录:生成中 / 失败(成功的成片仍进 videoVersions)。
@@ -110,6 +113,10 @@ export interface SmartDraft {
       durationSec: number
       thumbnailUrl?: string
       sourceVideo?: { url: string; assetId: number }
+      /** 入队时锁定的显式模型，确保多视频批次和刷新恢复不会切换模型。 */
+      modelVersionId?: number
+      modelVersion?: Record<string, unknown>
+      operationCode?: 'video.generate' | 'video.edit'
       lockedSig: string
     }
   }[]
@@ -187,6 +194,8 @@ export function mergeCompletedVideoGenerationIds(...sources: unknown[]): string[
 // 整片视频的「内容签名」:参与视频的分镜稳定内容(优先 imageAssetId,其次去掉签名参数的图 URL,
 // 避免 S3 预签名/工作空间参数变化导致误判)+ 时长/台词/字幕/音效/顺序 + 风格/比例/大纲。
 // 与 SmartCreateView.videoInputSig 同口径,但只用「落盘后稳定」的字段,以便跨保存/刷新可靠比较。
+const VIDEO_CONTENT_SIG_VERSION = 2
+
 export function computeVideoContentSig(shots: any[], entryMeta: any, base: string): string {
   const stableImg = (s: any): string => {
     const aid = Number(s?.imageAssetId || s?.asset_id || s?.assetId || 0) || 0
@@ -198,8 +207,10 @@ export function computeVideoContentSig(shots: any[], entryMeta: any, base: strin
     return `u:${u.split('?')[0]}`
   }
   return JSON.stringify({
+    signatureVersion: VIDEO_CONTENT_SIG_VERSION,
     ratio: entryMeta?.ratio || '',
     style: entryMeta?.style || '',
+    videoModel: entryMeta?.generationModels?.['video.generate'] || '',
     // trim:出片锁定端传原始 reqSummary(LLM 常带尾部换行/空格),项目列表端传 pickString 已 trim 的值。
     // 两端不一致会让签名不等 → 明明没改却永久显示「· 草稿(内容已改)」。统一在此 trim,两端一致。
     base: String(base || '').trim(),
@@ -214,6 +225,50 @@ export function computeVideoContentSig(shots: any[], entryMeta: any, base: strin
         sfx: s?.sfx || '',
       })),
   })
+}
+
+function parseVideoContentSig(value: unknown): Record<string, unknown> | null {
+  const signature = String(value || '').trim()
+  if (!signature) return null
+  try {
+    const parsed = JSON.parse(signature)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function withoutVideoContentSigVersionFields(signature: Record<string, unknown>): string {
+  const legacyComparable = { ...signature }
+  delete legacyComparable.signatureVersion
+  delete legacyComparable.videoModelVersionId
+  delete legacyComparable.videoModel
+  return JSON.stringify(legacyComparable)
+}
+
+/**
+ * 判断上一版成片签名是否仍匹配当前内容。
+ *
+ * v1 历史签名没有 signatureVersion，且可能没有模型字段，或带有旧切换模型功能遗留的
+ * videoModel/videoModelVersionId。仅在「上一版为 v1、当前为 v2」时忽略这些迁移字段；
+ * 两边都是 v2 时直接严格比较完整签名，确保真实的模型变化仍会被识别为内容变更。
+ */
+export function isVideoContentSigMatch(lastVideoSig: unknown, currentVideoSig: unknown): boolean {
+  const lastSignature = String(lastVideoSig || '').trim()
+  const currentSignature = String(currentVideoSig || '').trim()
+  if (!lastSignature || !currentSignature) return lastSignature === currentSignature
+  if (lastSignature === currentSignature) return true
+
+  const lastParsed = parseVideoContentSig(lastSignature)
+  const currentParsed = parseVideoContentSig(currentSignature)
+  if (!lastParsed || !currentParsed) return false
+
+  const lastVersion = lastParsed.signatureVersion
+  const currentVersion = Number(currentParsed.signatureVersion || 0)
+  const isLegacyLastSignature = lastVersion === undefined || lastVersion === 1
+  if (!isLegacyLastSignature || currentVersion !== VIDEO_CONTENT_SIG_VERSION) return false
+
+  return withoutVideoContentSigVersionFields(lastParsed) === withoutVideoContentSigVersionFields(currentParsed)
 }
 
 /** 删除刷新后必然失效的 blob 地址，同时保留其他可恢复地址。 */

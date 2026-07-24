@@ -181,6 +181,7 @@ describe('HotCopyEntry project asset access', () => {
           products: [{ assetId: 201, url: '/201.png', file: null, isVideo: false }],
           ratio: '16:9',
           duration: '10s',
+          modelVersionId: 220,
           text: '',
         }}
       />,
@@ -202,6 +203,7 @@ describe('HotCopyEntry project asset access', () => {
           text: '保留节奏，突出产品',
           ratio: '16:9',
           duration: '7s',
+          modelVersionId: 220,
         }),
       )
     })
@@ -243,5 +245,284 @@ describe('HotCopyEntry project asset access', () => {
     await user.click(screen.getByRole('button', { name: '去制作' }))
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ duration: '7s' }))
+  })
+
+  it('shakes and opens the model dropdown until a video model is selected, then submits its backend id', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <HotCopyEntry
+        onSubmit={onSubmit}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          products: [{ assetId: 201, url: '/201.png', file: null, isVideo: false }],
+          ratio: '16:9',
+          duration: '7s',
+          text: '',
+        }}
+        modelGroups={[
+          {
+            key: 'hotCopyVideo',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.replicate',
+                label: '视频生成模型',
+                required: true,
+                models: [
+                  { id: 220, name: 'Seedance 2.0', restrictions: ['仅支持 1 至 10 秒'] },
+                  { id: 221, name: 'HappyHorse参考生视频' },
+                ],
+              },
+            ],
+          },
+        ]}
+        modelReady
+        requireModelSelection
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenLastCalledWith('请先选择本次爆款复制使用的视频模型', 'info')
+    expect(await screen.findByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /生成模型，0\/1 已选择/ }).closest('[data-attention="true"]'),
+    ).not.toBeNull()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '220')
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 220, duration: '7s' }))
+  })
+
+  it('locks the selected model and disables creating a new video while generation preflight is busy', async () => {
+    const user = userEvent.setup()
+    const onNewVideo = vi.fn()
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        onNewVideo={onNewVideo}
+        busy
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          products: [{ assetId: 201, url: '/201.png', file: null, isVideo: false }],
+          ratio: '16:9',
+          duration: '7s',
+          modelVersionId: 220,
+        }}
+        modelGroups={[
+          {
+            key: 'hotCopyVideo',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.replicate',
+                label: '视频生成模型',
+                required: true,
+                models: [
+                  { id: 220, name: 'Seedance 2.0' },
+                  { id: 221, name: 'HappyHorse参考生视频' },
+                ],
+              },
+            ],
+          },
+        ]}
+        modelReady
+        requireModelSelection
+      />,
+    )
+
+    const createButton = screen.getByRole('button', { name: '创建新视频' })
+    expect(createButton).toBeDisabled()
+    await user.click(createButton)
+    expect(onNewVideo).not.toHaveBeenCalled()
+
+    const modelTrigger = screen.getByRole('button', { name: /生成模型，1\/1 已选择，处理中不可切换/ })
+    await user.click(modelTrigger)
+    expect(screen.getByRole('combobox', { name: '视频生成模型' })).toBeDisabled()
+  })
+
+  it('does not let a resumable legacy draft bypass the model gate', async () => {
+    const user = userEvent.setup()
+    const onResume = vi.fn()
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        canResume
+        onResume={onResume}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          products: [{ assetId: 201, url: '/201.png', file: null, isVideo: false }],
+          ratio: '16:9',
+          duration: '7s',
+          text: '',
+        }}
+        modelGroups={[
+          {
+            key: 'hotCopyVideo',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.replicate',
+                label: '视频生成模型',
+                required: true,
+                models: [{ id: 220, name: 'Seedance 2.0' }],
+              },
+            ],
+          },
+        ]}
+        modelReady
+        requireModelSelection
+      />,
+    )
+
+    const resumeButton = screen.getByRole('button', { name: '返回下一步' })
+    await user.click(resumeButton)
+
+    expect(onResume).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenLastCalledWith('请先选择本次爆款复制使用的视频模型', 'info')
+    expect(await screen.findByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '220')
+    await user.click(resumeButton)
+    expect(onResume).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    {
+      label: 'fixed 720p resolution',
+      constraints: { resolution: { options: ['1080p'] } },
+      productCount: 1,
+      expected: '视频生成模型「Seedance 2.0」：当前分辨率 720p 不在支持范围 1080p 内',
+    },
+    {
+      label: 'enabled audio',
+      constraints: { audio: { options: [false] } },
+      productCount: 1,
+      expected: '视频生成模型「Seedance 2.0」：当前模型不支持生成音频',
+    },
+    {
+      label: 'actual reference image count',
+      constraints: { referenceImages: { maximum: 1 } },
+      productCount: 2,
+      expected: '视频生成模型「Seedance 2.0」：当前参考图数量 2 不符合最大 1 张',
+    },
+  ])(
+    'blocks submission when $label conflicts with the selected model',
+    async ({ constraints, productCount, expected }) => {
+      const user = userEvent.setup()
+      const onSubmit = vi.fn()
+      render(
+        <HotCopyEntry
+          onSubmit={onSubmit}
+          initial={{
+            tab: 'remake',
+            videoSource: 'library',
+            libraryVideo: { assetId: 101, src: '/101.mp4' },
+            videoPreview: '/101.mp4',
+            products: Array.from({ length: productCount }, (_, index) => ({
+              assetId: 201 + index,
+              url: `/${201 + index}.png`,
+              file: null,
+              isVideo: false,
+            })),
+            ratio: '16:9',
+            duration: '7s',
+            text: '',
+            modelVersionId: 220,
+          }}
+          modelGroups={[
+            {
+              key: 'hotCopyVideo',
+              label: '生成视频',
+              subgroups: [
+                {
+                  key: 'video.replicate',
+                  label: '视频生成模型',
+                  required: true,
+                  models: [{ id: 220, name: 'Seedance 2.0', constraints }],
+                },
+              ],
+            },
+          ]}
+          modelReady
+          requireModelSelection
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: '去制作' }))
+
+      expect(onSubmit).not.toHaveBeenCalled()
+      expect(mocks.showToast).toHaveBeenLastCalledWith(expected, 'info')
+    },
+  )
+
+  it('does not silently switch to another model when the selected model disappears from the catalog', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    const initial = {
+      tab: 'remake' as const,
+      videoSource: 'library' as const,
+      libraryVideo: { assetId: 101, src: '/101.mp4' },
+      videoPreview: '/101.mp4',
+      products: [{ assetId: 201, url: '/201.png', file: null, isVideo: false }],
+      ratio: '16:9',
+      duration: '7s',
+      text: '',
+      modelVersionId: 220,
+    }
+    const catalog = (models: Array<{ id: number; name: string }>) => [
+      {
+        key: 'hotCopyVideo',
+        label: '生成视频',
+        subgroups: [
+          {
+            key: 'video.replicate',
+            label: '视频生成模型',
+            required: true,
+            models,
+          },
+        ],
+      },
+    ]
+    const { rerender } = render(
+      <HotCopyEntry
+        onSubmit={onSubmit}
+        initial={initial}
+        modelGroups={catalog([
+          { id: 220, name: 'Seedance 2.0' },
+          { id: 221, name: 'HappyHorse参考生视频' },
+        ])}
+        modelReady
+        requireModelSelection
+      />,
+    )
+
+    rerender(
+      <HotCopyEntry
+        onSubmit={onSubmit}
+        initial={initial}
+        modelGroups={catalog([{ id: 221, name: 'HappyHorse参考生视频' }])}
+        modelReady
+        requireModelSelection
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenLastCalledWith('请先选择本次爆款复制使用的视频模型', 'info')
+    expect(await screen.findByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '视频生成模型' })).toHaveValue('')
   })
 })

@@ -20,6 +20,8 @@ import {
 import { resolveGeneratedMediaUrls, findAssetIdByTaskId, extractOutputAssetId } from '@/utils/taskMedia'
 import { buildStoryboardImageParams } from '@/utils/storyboardTasks'
 import { getModelParamFields } from '@/utils/modelSchema'
+import { getBackendGenerationModelName, getBackendGenerationModelVersionId } from '@/utils/generationModelCatalog'
+import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/utils/modelRestrictions'
 
 /** 从模型尺寸选项中选出像素量最小的一档，兼容分辨率、K 和纯数字写法。 */
 function smallestSize(options: string[]): string {
@@ -51,6 +53,14 @@ function buildImageParams(model: any, ratio?: string, lowRes?: boolean) {
   return params
 }
 
+/**
+ * 暴露给付费队列的纯参数编译入口。
+ * 报价确认、恢复校验和正式提交都以同一函数的结果为准，避免只比较比例却漏掉 schema 派生参数。
+ */
+export function compileShotImageRequestParams(model: any, ratio?: string, lowRes?: boolean) {
+  return buildImageParams(model, ratio, lowRes)
+}
+
 /** 以调用方缓存对象为生命周期，隔离在途上传与 URL 所属工作空间。 */
 const pendingAssetUploads = new WeakMap<Record<string, number>, Map<string, Promise<number>>>()
 /** 记录每个 URL 缓存 asset_id 所属的工作空间，防止跨空间复用。 */
@@ -62,12 +72,29 @@ function validAssetId(value: unknown): number {
   return Number.isSafeInteger(id) && id > 0 ? id : 0
 }
 
+/** 兼容 Safari 13 等尚未实现 AbortSignal.throwIfAborted 的浏览器。 */
+function throwIfAssetRequestAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  if (typeof DOMException === 'function') throw new DOMException('素材处理已取消', 'AbortError')
+  const error = new Error('素材处理已取消')
+  error.name = 'AbortError'
+  throw error
+}
+
+/** 素材持久化允许普通失败回退本地 URL，但用户取消必须继续向上传播。 */
+function rethrowAssetCancellation(error: any, signal?: AbortSignal): void {
+  if (signal?.aborted) throwIfAssetRequestAborted(signal)
+  if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || error?.cause === 'aborted') throw error
+}
+
 /** 把图片(objectURL / dataURL / http)上传为后端素材,返回 asset_id;带缓存避免重复上传。 */
 export async function ensureAssetId(
   workspaceId: number,
   url: string,
   cache: Record<string, number> = {},
+  signal?: AbortSignal,
 ): Promise<number> {
+  throwIfAssetRequestAborted(signal)
   if (!url) return 0
   const normalizedWorkspaceId = validAssetId(workspaceId)
   const cachedId = validAssetId(cache[url])
@@ -92,16 +119,22 @@ export async function ensureAssetId(
   }
   const uploadKey = `${normalizedWorkspaceId}:${url}`
   const pending = cacheUploads.get(uploadKey)
-  if (pending) return pending
+  if (pending) {
+    const id = await pending
+    throwIfAssetRequestAborted(signal)
+    return id
+  }
 
   const upload = (async () => {
-    const res = await fetch(url)
+    const res = await fetch(url, signal ? { signal } : undefined)
     if (!res.ok) throw new Error(`图片读取失败（HTTP ${res.status || 0}）`)
     const blob = await res.blob()
+    throwIfAssetRequestAborted(signal)
     const type = blob.type || 'image/jpeg'
     const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : 'jpg'
     const file = new File([blob], `ref_${Math.floor(performance.now())}.${ext}`, { type })
-    const out = await uploadAssetFile({ workspaceId, file })
+    const out = await uploadAssetFile({ workspaceId, file, signal })
+    throwIfAssetRequestAborted(signal)
     const id = validAssetId(out?.asset?.id)
     if (id) {
       cache[url] = id
@@ -131,20 +164,31 @@ export async function persistImageAsset(
   workspaceId: number,
   url: string,
   cache: Record<string, number> = {},
+  signal?: AbortSignal,
 ): Promise<{ url: string; assetId: number }> {
+  throwIfAssetRequestAborted(signal)
   if (!url) return { url: '', assetId: 0 }
   if (!/^(data:|blob:)/.test(url)) return { url, assetId: 0 } // 已是后端/外链 http,无需上传
   let assetId = 0
   try {
-    assetId = await ensureAssetId(workspaceId, url, cache)
-  } catch {
+    assetId = await ensureAssetId(workspaceId, url, cache, signal)
+  } catch (error) {
+    rethrowAssetCancellation(error, signal)
     return { url, assetId: 0 } // 上传失败:本会话内仍用 dataURL
   }
+  throwIfAssetRequestAborted(signal)
   if (!assetId) return { url, assetId: 0 }
   let hosted = url
   try {
-    hosted = (await getAssetDownloadUrl({ workspaceId, assetId })) || url
-  } catch {
+    hosted =
+      (await getAssetDownloadUrl({
+        workspaceId,
+        assetId,
+        ...(signal ? { signal } : {}),
+      })) || url
+    throwIfAssetRequestAborted(signal)
+  } catch (error) {
+    rethrowAssetCancellation(error, signal)
     /* 取签名URL失败,保留原 url */
   }
   return { url: hosted, assetId }
@@ -163,6 +207,42 @@ export async function refreshAssetUrl(workspaceId: number, assetId: number): Pro
 
 /** 分镜图模型偏好、任务重试退避与资产入库就绪等待策略。 */
 const STORYBOARD_MODEL_KEYWORDS = ['gpt-image-2', 'gpt-image', 'gpt image', 'seedream', 'doubao']
+
+/** 归一化页面显式选择的模型；ID 与详情不一致时直接拦截，避免预估和提交串用两个模型。 */
+function getExplicitImageModel(args: { modelVersionId?: number; modelVersion?: any }): {
+  id: number
+  model: any
+} | null {
+  const model = args.modelVersion && typeof args.modelVersion === 'object' ? args.modelVersion : null
+  const hasExplicitSelection = args.modelVersionId !== undefined || model !== null
+  if (!hasExplicitSelection) return null
+
+  const detailId = getBackendGenerationModelVersionId(model) || 0
+  const requestedId = Number(args.modelVersionId !== undefined ? args.modelVersionId : detailId)
+  if (!Number.isSafeInteger(requestedId) || requestedId <= 0) {
+    throw new Error('已选择的图像模型无效，请重新选择')
+  }
+
+  if (detailId > 0 && detailId !== requestedId) {
+    throw new Error('已选择的图像模型 ID 与模型详情不一致，请重新选择')
+  }
+  return {
+    id: requestedId,
+    model: model ? { ...model, id: requestedId } : { id: requestedId },
+  }
+}
+
+/** 在创建付费图片任务前，按所选后端模型的真实 schema 校验比例与参考图数量。 */
+function assertImageModelCompatibility(model: any, args: { ratio?: string; referenceImageCount: number }): void {
+  const conflicts = getModelConstraintConflicts(buildModelRestrictionSummary(model).constraints, {
+    ratio: String(args.ratio || '').trim(),
+    referenceImageCount: args.referenceImageCount,
+  })
+  if (!conflicts.length) return
+  const modelName = getBackendGenerationModelName(model) || '所选图片模型'
+  throw new Error(`${modelName} 与当前生成参数不兼容：${conflicts.join('；')}`)
+}
+
 /** 分镜图任务提交/轮询暂时失败的退避表。 */
 const IMAGE_TASK_RETRY_DELAYS_MS = [1200, 2400]
 /** 任务完成后等待资产实际可下载的退避表。 */
@@ -559,6 +639,10 @@ export async function generateShotImage(args: {
   workspaceId: number
   prompt: string
   refAssetIds?: number[]
+  /** 用户显式选择的图像模型版本 ID。 */
+  modelVersionId?: number
+  /** 与 modelVersionId 对应的后端模型详情，用于按该模型 schema 构建参数。 */
+  modelVersion?: any
   modelPlanCandidates?: string[]
   ratio?: string
   /** 最低分辨率出图(素材元素用,省时省额度) */
@@ -573,6 +657,7 @@ export async function generateShotImage(args: {
   allowTextToImageFallback?: boolean
 }): Promise<{ url: string; assetId: number }> {
   const refs = (args.refAssetIds || []).filter((n) => Number(n) > 0)
+  const explicitModel = getExplicitImageModel(args)
   const idempotencyRoot = String(args.idempotencyKey || '').trim() || createShotImageIdempotencyRoot()
   let outputSafetyRetryUsed = false
 
@@ -580,20 +665,39 @@ export async function generateShotImage(args: {
     operationCode: string,
     inputAssetIds: number[],
     idempotencyKey: string,
-  ): Promise<{ task: any; taskId: number }> =>
-    retryShotImageStage(
+  ): Promise<{ task: any; taskId: number }> => {
+    if (explicitModel) {
+      assertImageModelCompatibility(explicitModel.model, {
+        ratio: args.ratio,
+        referenceImageCount: inputAssetIds.length,
+      })
+    }
+    return retryShotImageStage(
       async () => {
         const task = await createAiTask({
           workspaceId: args.workspaceId,
           capability: 'image',
           operationCode,
-          preferredModelKeywords: STORYBOARD_MODEL_KEYWORDS,
-          ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
+          ...(explicitModel
+            ? {
+                modelVersionId: explicitModel.id,
+                modelVersion: explicitModel.model,
+              }
+            : {
+                preferredModelKeywords: STORYBOARD_MODEL_KEYWORDS,
+                ...(args.modelPlanCandidates?.length ? { modelPlanCandidates: args.modelPlanCandidates } : {}),
+              }),
           idempotencyKey,
           signal: args.signal,
           prompt: args.prompt,
           inputAssets: inputAssetIds.map((id) => ({ asset_id: id, role: 'reference_image' })),
-          params: (model: any) => buildImageParams(model, args.ratio, args.lowRes),
+          params: (model: any) => {
+            assertImageModelCompatibility(model, {
+              ratio: args.ratio,
+              referenceImageCount: inputAssetIds.length,
+            })
+            return buildImageParams(model, args.ratio, args.lowRes)
+          },
         })
         const taskId = getAiTaskId(task)
         if (!taskId) {
@@ -606,6 +710,7 @@ export async function generateShotImage(args: {
       isRetryableShotImageError,
       args.signal,
     )
+  }
 
   const runShotTask = async (
     operationCode: string,
@@ -665,7 +770,9 @@ export async function generateShotImage(args: {
     // Only an explicit capability/operation rejection permits a text-to-image
     // fallback. Network, polling, provider, and result-URL errors may describe
     // a task that already ran and must not silently create a second charge.
-    if (args.allowTextToImageFallback === false || !isExplicitlyUnsupportedImageToImageError(error)) throw error
+    if (explicitModel || args.allowTextToImageFallback === false || !isExplicitlyUnsupportedImageToImageError(error)) {
+      throw error
+    }
     return runShotTaskWithOutputSafetyRetry('image.text_to_image', [], `${idempotencyRoot}_text_to_image_fallback`)
   }
 }
@@ -676,12 +783,30 @@ export async function generateShotImage(args: {
  */
 export async function estimateShotImageCost(args: {
   workspaceId: number
+  /** 实际会随任务提交的参考图数量；用于保证核价校验与任务创建完全一致。 */
+  referenceImageCount?: number
+  /** @deprecated 仅用于兼容旧调用；新调用应传 referenceImageCount。 */
   hasRefs?: boolean
   ratio?: string
   lowRes?: boolean
+  /** 用户显式选择的图像模型版本 ID。 */
+  modelVersionId?: number
+  /** 与 modelVersionId 对应的后端模型详情，用于保持估价与提交参数一致。 */
+  modelVersion?: any
   modelPlanCandidates?: string[]
 }): Promise<any> {
-  const operationCode = args.hasRefs ? 'image.image_to_image' : 'image.text_to_image'
+  const fallbackReferenceCount = args.hasRefs ? 1 : 0
+  const referenceImageCount =
+    args.referenceImageCount === undefined ? fallbackReferenceCount : Number(args.referenceImageCount)
+  if (
+    !Number.isSafeInteger(referenceImageCount) ||
+    referenceImageCount < 0 ||
+    (args.hasRefs !== undefined && args.hasRefs !== referenceImageCount > 0)
+  ) {
+    throw new Error('参考图数量参数无效，请重新选择参考图后再试')
+  }
+  const operationCode = referenceImageCount > 0 ? 'image.image_to_image' : 'image.text_to_image'
+  const explicitModel = getExplicitImageModel(args)
   // 与出片同口径解析模型(capability:'image' + 套餐候选);先按关键词(gpt-image-2)、查不到退回任意图像模型。
   const pick = (kw: string[]) =>
     resolveTaskModel({
@@ -690,9 +815,19 @@ export async function estimateShotImageCost(args: {
       preferredModelKeywords: kw,
       modelPlanCandidates: args.modelPlanCandidates,
     }).catch(() => null)
-  let model = await pick(STORYBOARD_MODEL_KEYWORDS)
+  let model = explicitModel?.model
+  if (!model?.id) model = await pick(STORYBOARD_MODEL_KEYWORDS)
   if (!model?.id) model = await pick([])
   if (!model?.id) throw new Error('暂无可用的图像生成模型')
+  assertImageModelCompatibility(model, {
+    ratio: args.ratio,
+    referenceImageCount,
+  })
   const params = buildImageParams(model, args.ratio, args.lowRes)
-  return estimateAiTaskCost({ workspaceId: args.workspaceId, modelVersionId: model.id, operationCode, params })
+  return estimateAiTaskCost({
+    workspaceId: args.workspaceId,
+    modelVersionId: explicitModel?.id || model.id,
+    operationCode,
+    params,
+  })
 }

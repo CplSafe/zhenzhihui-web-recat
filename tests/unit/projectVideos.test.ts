@@ -212,9 +212,11 @@ describe('projectVideos 派生视频', () => {
     const project = projectWithVersions()
     const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '7s', line: '新品上市' }]
     const entryMeta = { ratio: '16:9', style: '写实' }
-    const fixedSignature = computeVideoContentSig(shots, entryMeta, '夏日饮品')
+    const fixedSignature = JSON.parse(computeVideoContentSig(shots, entryMeta, '夏日饮品'))
+    delete fixedSignature.signatureVersion
+    delete fixedSignature.videoModel
     const legacySignature = JSON.stringify({
-      ...JSON.parse(fixedSignature),
+      ...fixedSignature,
       videoModelVersionId: 7301,
       videoModel: 'happyhorse',
     })
@@ -231,6 +233,63 @@ describe('projectVideos 派生视频', () => {
 
     expect(videos).toHaveLength(1)
     expect(videos[0]).toMatchObject({ status: 'published', videoAssetId: 105 })
+  })
+
+  it('兼容不含模型字段的历史成片签名，不把已发布视频误判为新草稿', () => {
+    const project = projectWithVersions()
+    const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '7s', line: '新品上市' }]
+    const entryMeta = {
+      ratio: '16:9',
+      style: '写实',
+      generationModels: { 'video.generate': 7301 },
+    }
+    const legacySignature = JSON.parse(computeVideoContentSig(shots, entryMeta, '夏日饮品'))
+    delete legacySignature.signatureVersion
+    delete legacySignature.videoModel
+    project.draft_json.smart = {
+      shots,
+      entryMeta,
+      reqSummary: '夏日饮品',
+      lastVideoSig: JSON.stringify(legacySignature),
+      fullVideoAssetId: 105,
+      videoVersions: [],
+    }
+
+    const videos = deriveProjectVideos({ project, workspaceId: 7 })
+
+    expect(videos).toHaveLength(1)
+    expect(videos[0]).toMatchObject({ status: 'published', videoAssetId: 105 })
+  })
+
+  it('新版成片签名中的模型真实变化会派生一条新草稿', () => {
+    const project = projectWithVersions()
+    const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '7s', line: '新品上市' }]
+    const previousEntryMeta = {
+      ratio: '16:9',
+      style: '写实',
+      generationModels: { 'video.generate': 7301 },
+    }
+    project.draft_json.smart = {
+      shots,
+      entryMeta: {
+        ...previousEntryMeta,
+        generationModels: { 'video.generate': 7302 },
+      },
+      reqSummary: '夏日饮品',
+      lastVideoSig: computeVideoContentSig(shots, previousEntryMeta, '夏日饮品'),
+      fullVideoAssetId: 105,
+      videoVersions: [],
+    }
+
+    const videos = deriveProjectVideos({ project, workspaceId: 7 })
+
+    expect(videos).toHaveLength(2)
+    expect(videos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'derived-gen-dirty-21', status: 'draft' }),
+        expect.objectContaining({ status: 'published', videoAssetId: 105 }),
+      ]),
+    )
   })
 
   it.each([

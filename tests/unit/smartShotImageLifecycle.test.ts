@@ -50,9 +50,19 @@ vi.mock('@/utils/storyboardTasks', () => ({
 
 vi.mock('@/utils/modelSchema', () => ({
   getModelParamFields: mocks.getModelParamFields,
+  getModelParamFieldNames: (field: Record<string, unknown>) => [
+    String(field.name || ''),
+    ...((field.aliases as unknown[]) || []).map(String),
+  ],
+  getModelParamOptionValues: (field: Record<string, unknown>) => (Array.isArray(field.options) ? field.options : []),
+  normalizeModelParamName: (value: unknown) =>
+    String(value || '')
+      .replace(/[^a-z0-9]/gi, '')
+      .toLowerCase(),
 }))
 
 import {
+  compileShotImageRequestParams,
   ensureAssetId,
   estimateShotImageCost,
   generateShotImage,
@@ -150,6 +160,29 @@ describe('generateShotImage task lifecycle', () => {
   beforeEach(() => {
     vi.useRealTimers()
     resetMocks()
+  })
+
+  it('rejects an explicit image model before task creation when reference-image limits are exceeded', async () => {
+    const selectedModel = {
+      id: 620,
+      display_name: '单参考图模型',
+      params_schema: {
+        fields: [{ name: 'reference_images', type: 'array', minItems: 1, maxItems: 1 }],
+      },
+    }
+    mocks.getModelParamFields.mockReturnValue(selectedModel.params_schema.fields)
+
+    await expect(
+      generateShotImage({
+        workspaceId: 7,
+        prompt: 'shot',
+        refAssetIds: [11, 12],
+        modelVersionId: selectedModel.id,
+        modelVersion: selectedModel,
+      }),
+    ).rejects.toThrow('单参考图模型 与当前生成参数不兼容：当前参考图数量 2 不符合1–1 张')
+
+    expect(mocks.createAiTask).not.toHaveBeenCalled()
   })
 
   it('reuses one idempotency key while retrying task submission', async () => {
@@ -482,6 +515,100 @@ describe('generateShotImage task lifecycle', () => {
     expect(mocks.createAiTask).toHaveBeenCalledWith(expect.objectContaining({ operationCode: 'image.image_to_image' }))
   })
 
+  it('does not switch operation or model after an explicitly selected image-to-image model fails', async () => {
+    const selectedModel = {
+      id: 611,
+      display_name: '后端图生图模型',
+      operation_codes: ['image.image_to_image'],
+    }
+    mocks.createAiTask.mockRejectedValue({
+      status: 422,
+      code: 'UNSUPPORTED_OPERATION',
+      message: 'image.image_to_image is not supported',
+    })
+
+    await expect(
+      generateShotImage({
+        workspaceId: 7,
+        prompt: 'shot',
+        refAssetIds: [11],
+        modelVersionId: selectedModel.id,
+        modelVersion: selectedModel,
+      }),
+    ).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' })
+
+    expect(mocks.createAiTask).toHaveBeenCalledOnce()
+    expect(mocks.createAiTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationCode: 'image.image_to_image',
+        modelVersionId: 611,
+        modelVersion: selectedModel,
+      }),
+    )
+    expect(mocks.resolveTaskModel).not.toHaveBeenCalled()
+  })
+
+  it.each(['model_version_id', 'modelVersionId', 'id'])(
+    'preserves the full explicit image model schema and canonicalizes the %s alias',
+    async (idField) => {
+      const selectedModel = {
+        [idField]: '613',
+        display_name: '后端图片模型',
+        operation_codes: ['image.text_to_image'],
+        params_schema: { fields: [{ name: 'watermark' }] },
+      }
+      mocks.createAiTask.mockResolvedValue({ task_id: 89, status: 'processing' })
+      mocks.waitForAiTask.mockResolvedValue({ task_id: 89, status: 'completed' })
+
+      await generateShotImage({
+        workspaceId: 7,
+        prompt: 'shot',
+        modelVersion: selectedModel,
+      })
+
+      expect(mocks.createAiTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelVersionId: 613,
+          modelVersion: {
+            ...selectedModel,
+            id: 613,
+          },
+        }),
+      )
+      expect(mocks.resolveTaskModel).not.toHaveBeenCalled()
+    },
+  )
+
+  it('uses canonical model_version_id before modelVersionId and id for image submission', async () => {
+    const selectedModel = {
+      model_version_id: '614',
+      modelVersionId: '615',
+      id: 616,
+      display_name: '后端图片模型',
+      operation_codes: ['image.text_to_image'],
+      params_schema: { fields: [{ name: 'watermark' }] },
+    }
+    mocks.createAiTask.mockResolvedValue({ task_id: 90, status: 'processing' })
+    mocks.waitForAiTask.mockResolvedValue({ task_id: 90, status: 'completed' })
+
+    await generateShotImage({
+      workspaceId: 7,
+      prompt: 'shot',
+      modelVersion: selectedModel,
+    })
+
+    expect(mocks.createAiTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVersionId: 614,
+        modelVersion: {
+          ...selectedModel,
+          id: 614,
+        },
+      }),
+    )
+    expect(mocks.resolveTaskModel).not.toHaveBeenCalled()
+  })
+
   it('does not create a fallback task after a terminal provider failure', async () => {
     mocks.createAiTask.mockResolvedValue({ id: 74, status: 'processing' })
     mocks.waitForAiTask.mockRejectedValue({
@@ -622,6 +749,70 @@ describe('smart shot image asset persistence', () => {
     expect(mocks.uploadAssetFile).not.toHaveBeenCalled()
   })
 
+  it('fails before download or upload when the asset request is already cancelled', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    controller.abort()
+
+    await expect(ensureAssetId(7, 'blob:cancelled', {}, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mocks.uploadAssetFile).not.toHaveBeenCalled()
+  })
+
+  it('forwards cancellation to image download and allows a clean retry afterwards', async () => {
+    const controller = new AbortController()
+    const cache: Record<string, number> = {}
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      return new Promise((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+          once: true,
+        })
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const request = ensureAssetId(7, 'blob:cancel-download', cache, controller.signal)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal)
+    controller.abort()
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    expect(mocks.uploadAssetFile).not.toHaveBeenCalled()
+    expect(cache).toEqual({})
+
+    fetchMock.mockResolvedValueOnce(imageResponse())
+    mocks.uploadAssetFile.mockResolvedValueOnce({ asset: { id: 29 } })
+    await expect(ensureAssetId(7, 'blob:cancel-download', cache)).resolves.toBe(29)
+    expect(cache).toEqual({ 'blob:cancel-download': 29 })
+  })
+
+  it('forwards cancellation to the backend upload and never caches its incomplete result', async () => {
+    const controller = new AbortController()
+    const cache: Record<string, number> = {}
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(imageResponse()))
+    mocks.uploadAssetFile.mockImplementationOnce(({ signal }: { signal?: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+      })
+    })
+
+    const request = ensureAssetId(7, 'blob:cancel-upload', cache, controller.signal)
+    await vi.waitFor(() => expect(mocks.uploadAssetFile).toHaveBeenCalledOnce())
+    expect(mocks.uploadAssetFile.mock.calls[0]?.[0]?.signal).toBe(controller.signal)
+    controller.abort()
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    expect(cache).toEqual({})
+
+    mocks.uploadAssetFile.mockResolvedValueOnce({ asset: { id: 30 } })
+    await expect(ensureAssetId(7, 'blob:cancel-upload', cache)).resolves.toBe(30)
+    expect(cache).toEqual({ 'blob:cancel-upload': 30 })
+  })
+
   it('uploads an image once, derives its file extension, and reuses the populated cache', async () => {
     const fetchMock = vi.fn().mockResolvedValue(imageResponse('image/webp'))
     vi.stubGlobal('fetch', fetchMock)
@@ -727,6 +918,38 @@ describe('smart shot image asset persistence', () => {
     })
   })
 
+  it('propagates upload cancellation instead of disguising it as a local-URL fallback', async () => {
+    const controller = new AbortController()
+    const abortError = new DOMException('aborted', 'AbortError')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(imageResponse()))
+    mocks.uploadAssetFile.mockRejectedValue(abortError)
+
+    await expect(persistImageAsset(7, 'blob:cancel-persist', {}, controller.signal)).rejects.toBe(abortError)
+
+    expect(mocks.getAssetDownloadUrl).not.toHaveBeenCalled()
+  })
+
+  it('passes cancellation to signed-URL resolution and keeps AbortError observable', async () => {
+    const controller = new AbortController()
+    const abortError = new DOMException('aborted', 'AbortError')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(imageResponse()))
+    mocks.uploadAssetFile.mockResolvedValue({ asset: { id: 73 } })
+    mocks.getAssetDownloadUrl.mockImplementation(({ signal }: { signal?: AbortSignal }) => {
+      expect(signal).toBe(controller.signal)
+      controller.abort()
+      throw abortError
+    })
+
+    await expect(persistImageAsset(7, 'blob:cancel-signing', {}, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+    expect(mocks.getAssetDownloadUrl).toHaveBeenCalledWith({
+      workspaceId: 7,
+      assetId: 73,
+      signal: controller.signal,
+    })
+  })
+
   it('refreshes only valid positive asset IDs and fails closed on signing errors', async () => {
     mocks.getAssetDownloadUrl
       .mockResolvedValueOnce('/api/v1/assets/81/download?workspace_id=7')
@@ -746,6 +969,86 @@ describe('estimateShotImageCost', () => {
     vi.useRealTimers()
     resetMocks()
     mocks.estimateAiTaskCost.mockResolvedValue({ credits: 4 })
+  })
+
+  it('rejects estimate before billing when the selected model requires more references', async () => {
+    const selectedModel = {
+      id: 621,
+      display_name: '双参考图模型',
+      params_schema: {
+        fields: [{ name: 'reference_images', type: 'array', minItems: 2, maxItems: 4 }],
+      },
+    }
+    mocks.getModelParamFields.mockReturnValue(selectedModel.params_schema.fields)
+
+    await expect(
+      estimateShotImageCost({
+        workspaceId: 7,
+        referenceImageCount: 1,
+        ratio: '16:9',
+        modelVersionId: selectedModel.id,
+        modelVersion: selectedModel,
+      }),
+    ).rejects.toThrow('双参考图模型 与当前生成参数不兼容：当前参考图数量 1 不符合2–4 张')
+
+    expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
+  })
+
+  it('uses the exact reference count when validating and estimating the selected model', async () => {
+    const selectedModel = {
+      id: 613,
+      display_name: '多参考图模型',
+      params_schema: {
+        fields: [{ name: 'reference_images', type: 'array', minItems: 2, maxItems: 3 }],
+      },
+    }
+    mocks.getModelParamFields.mockReturnValue(selectedModel.params_schema.fields)
+
+    await expect(
+      estimateShotImageCost({
+        workspaceId: 7,
+        referenceImageCount: 3,
+        ratio: '16:9',
+        modelVersionId: selectedModel.id,
+        modelVersion: selectedModel,
+      }),
+    ).resolves.toEqual({ credits: 4 })
+
+    expect(mocks.estimateAiTaskCost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVersionId: 613,
+        operationCode: 'image.image_to_image',
+      }),
+    )
+  })
+
+  it('rejects contradictory legacy and exact reference-count arguments before billing', async () => {
+    await expect(
+      estimateShotImageCost({
+        workspaceId: 7,
+        hasRefs: false,
+        referenceImageCount: 2,
+      }),
+    ).rejects.toThrow('参考图数量参数无效')
+
+    expect(mocks.resolveTaskModel).not.toHaveBeenCalled()
+    expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
+  })
+
+  it('exposes the exact schema-derived params used by estimate and submission for quote snapshots', () => {
+    const selectedModel = {
+      id: 612,
+      params_schema: { fields: [{ name: 'watermark' }, { name: 'size', options: ['2K', '512x512'] }] },
+    }
+    mocks.buildStoryboardImageParams.mockReturnValue({ ratio: '16:9', count: 1 })
+    mocks.getModelParamFields.mockReturnValue(selectedModel.params_schema.fields)
+
+    expect(compileShotImageRequestParams(selectedModel, '16:9', true)).toEqual({
+      ratio: '16:9',
+      count: 1,
+      watermark: false,
+      size: '512x512',
+    })
   })
 
   it.each([
@@ -782,6 +1085,42 @@ describe('estimateShotImageCost', () => {
       operationCode,
       params: { ratio: '9:16', count: 1, watermark: false, size: '512x512' },
     })
+  })
+
+  it('uses the same explicitly selected model and schema params for estimate and submission', async () => {
+    const selectedModel = {
+      id: 612,
+      display_name: '后端图片模型',
+      operation_codes: ['image.text_to_image'],
+      params_schema: { fields: [{ name: 'watermark' }] },
+    }
+    mocks.createAiTask.mockResolvedValue({ task_id: 88, status: 'processing' })
+    mocks.waitForAiTask.mockResolvedValue({ task_id: 88, status: 'completed' })
+    mocks.buildStoryboardImageParams.mockReturnValue({ ratio: '16:9', count: 1 })
+    mocks.getModelParamFields.mockReturnValue([{ name: 'watermark' }])
+
+    const selection = {
+      workspaceId: 7,
+      ratio: '16:9',
+      modelVersionId: selectedModel.id,
+      modelVersion: selectedModel,
+    }
+    await generateShotImage({ ...selection, prompt: 'shot' })
+    await estimateShotImageCost(selection)
+
+    const submitted = mocks.createAiTask.mock.calls[0]![0]
+    const estimated = mocks.estimateAiTaskCost.mock.calls[0]![0]
+    expect(submitted).toMatchObject({
+      modelVersionId: 612,
+      modelVersion: selectedModel,
+      operationCode: 'image.text_to_image',
+    })
+    expect(estimated).toMatchObject({
+      modelVersionId: 612,
+      operationCode: 'image.text_to_image',
+    })
+    expect(submitted.params(selectedModel)).toEqual(estimated.params)
+    expect(mocks.resolveTaskModel).not.toHaveBeenCalled()
   })
 
   it('falls back from preferred keywords to any available image model', async () => {

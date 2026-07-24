@@ -1,9 +1,73 @@
 import { describe, expect, it } from 'vitest'
 import {
   HOT_COPY_PENDING_TASK_GRACE_MS,
+  mergeHotCopyGenerationCheckpoint,
   resolveHotCopyActiveGenerationState,
+  resolveHotCopyPaidTaskCheckpoint,
   resolveHotCopyPendingRecovery,
 } from '@/utils/hotCopyGenerationState'
+
+describe('mergeHotCopyGenerationCheckpoint', () => {
+  it('does not leave a task-less processing record when initial creation fails at the final checkpoint', () => {
+    const afterCreativeSave = mergeHotCopyGenerationCheckpoint(
+      [],
+      { id: 'initial-run', status: 'processing', taskId: 0, createdAt: 100 },
+      'creative-only',
+    )
+
+    expect(afterCreativeSave).toEqual([])
+    expect(resolveHotCopyActiveGenerationState(afterCreativeSave)).toEqual({
+      videoGenerating: false,
+      vidGenTaskId: 0,
+      generationId: '',
+    })
+  })
+
+  it('keeps regeneration history unchanged until the final checkpoint writes the new processing record', () => {
+    const history = [{ id: 'previous', status: 'published', taskId: 0, createdAt: 100 }]
+    const pending = { id: 'regeneration', status: 'processing', taskId: 0, createdAt: 200 }
+
+    const afterCreativeSave = mergeHotCopyGenerationCheckpoint(history, pending, 'creative-only')
+    expect(afterCreativeSave).toEqual(history)
+
+    const afterFinalCheckpoint = mergeHotCopyGenerationCheckpoint(afterCreativeSave, pending, 'task-progress')
+    expect(afterFinalCheckpoint).toEqual([pending, ...history])
+    expect(resolveHotCopyActiveGenerationState(afterFinalCheckpoint)).toEqual({
+      videoGenerating: true,
+      vidGenTaskId: 0,
+      generationId: 'regeneration',
+    })
+  })
+})
+
+describe('resolveHotCopyPaidTaskCheckpoint', () => {
+  it('allows the paid task only after a conflict-free cloud draft save', () => {
+    expect(resolveHotCopyPaidTaskCheckpoint({ draft: { flow: 'hot-copy' }, creativeConflict: false })).toEqual({
+      ok: true,
+    })
+  })
+
+  it('blocks the paid task when a foreign flow or missing project returns no saved draft', () => {
+    expect(resolveHotCopyPaidTaskCheckpoint({ draft: null, creativeConflict: false })).toMatchObject({
+      ok: false,
+      reason: 'draft-not-saved',
+    })
+  })
+
+  it('blocks the paid task when concurrent creative content conflicts', () => {
+    expect(resolveHotCopyPaidTaskCheckpoint({ draft: { flow: 'hot-copy' }, creativeConflict: true })).toMatchObject({
+      ok: false,
+      reason: 'creative-conflict',
+    })
+  })
+
+  it('blocks the paid task when the cloud save throws', () => {
+    expect(resolveHotCopyPaidTaskCheckpoint(undefined, new Error('offline'))).toMatchObject({
+      ok: false,
+      reason: 'save-error',
+    })
+  })
+})
 
 describe('resolveHotCopyActiveGenerationState', () => {
   it('keeps the newer active task when an older callback arrives later', () => {

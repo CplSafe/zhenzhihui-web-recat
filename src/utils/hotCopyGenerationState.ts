@@ -41,6 +41,75 @@ export interface HotCopyPendingRecoveryInput {
   graceMs?: number
 }
 
+/** 创建付费任务前一次云端草稿检查的最小结果。 */
+export interface HotCopyPaidTaskCheckpointResult {
+  draft?: unknown
+  creativeConflict?: boolean
+}
+
+/** 两阶段保存中，创作配置预保存与最终任务恢复占位的写入模式。 */
+export type HotCopyGenerationCheckpointMode = 'creative-only' | 'task-progress'
+
+/** 付费任务能否继续提交的显式判定。 */
+export type HotCopyPaidTaskCheckpointDecision =
+  | { ok: true }
+  | {
+      ok: false
+      reason: 'save-error' | 'creative-conflict' | 'draft-not-saved'
+      message: string
+    }
+
+/**
+ * 只有云端明确返回已保存、且没有内容冲突的草稿时，才允许创建付费任务。
+ * 网络异常、外来流程或无法确认保存都会 fail closed，避免扣费任务与项目草稿失联。
+ */
+export function resolveHotCopyPaidTaskCheckpoint(
+  result?: HotCopyPaidTaskCheckpointResult | null,
+  saveError?: unknown,
+): HotCopyPaidTaskCheckpointDecision {
+  if (saveError) {
+    return {
+      ok: false,
+      reason: 'save-error',
+      message: '生成配置保存失败，视频任务尚未启动；请检查网络后重试',
+    }
+  }
+  if (result?.creativeConflict) {
+    return {
+      ok: false,
+      reason: 'creative-conflict',
+      message: '项目已在其他页面修改，视频任务尚未启动；请刷新确认后重试',
+    }
+  }
+  if (!result?.draft) {
+    return {
+      ok: false,
+      reason: 'draft-not-saved',
+      message: '生成配置未能保存到当前项目，视频任务尚未启动；请重新进入项目后重试',
+    }
+  }
+  return { ok: true }
+}
+
+/**
+ * 创作配置预保存不得提前制造 taskId=0 的 processing；只有最终付费门禁才写任务恢复记录。
+ * 使用泛型保留完整生成记录字段，供草稿持久化直接复用。
+ */
+export function mergeHotCopyGenerationCheckpoint<T extends HotCopyGenerationStateRecord>(
+  current: readonly T[],
+  generation: T,
+  mode: HotCopyGenerationCheckpointMode,
+): T[] {
+  const generations = Array.isArray(current) ? current.slice() : []
+  if (mode === 'creative-only') return generations
+
+  const generationId = String(generation?.id || '')
+  const index = generations.findIndex((item) => String(item?.id || '') === generationId)
+  if (index >= 0) generations[index] = generation
+  else generations.unshift(generation)
+  return generations
+}
+
 /** 项目活动任务始终跟随最新 processing 记录，而不是最后到达的浏览器回调。 */
 export function resolveHotCopyActiveGenerationState(
   generations: HotCopyGenerationStateRecord[],

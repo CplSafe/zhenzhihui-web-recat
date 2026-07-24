@@ -5,7 +5,7 @@
  * 见 ./aiResponses。workspaceId / 套餐候选由其内部从 store 读取,调用方无需关心。
  * (此前为临时直连「本地 vLLM Qwen」,现已对齐 Vue 切回后端网关。)
  */
-import { runResponseText } from './aiResponses'
+import { runResponseText, type AiResponseRequestContext } from './aiResponses'
 // skill 方法论说明书(原样导入 .md,不在此硬编码长文本,便于维护)
 import skillEcommerceManual from './skills/信息电商.md?raw'
 import skillLocalLifeManual from './skills/本地生活.md?raw'
@@ -34,6 +34,10 @@ export interface PolishOptions {
   kind?: PolishKind
   /** 额外上下文(如所属分镜主体/场景),拼到用户消息里帮助润色 */
   context?: string
+  /** 智能成片入口锁定的 responses.multimodal 模型版本。 */
+  modelVersionId?: number
+  /** 与模型版本绑定的工作空间和 schema 快照。 */
+  requestContext?: AiResponseRequestContext
   signal?: AbortSignal
   maxTokens?: number
 }
@@ -91,6 +95,8 @@ export async function polishText(text: string, opts: PolishOptions = {}): Promis
     user: userContent,
     temperature: 0.7,
     maxTokens: opts.maxTokens ?? 512,
+    modelVersionId: opts.modelVersionId,
+    requestContext: opts.requestContext,
     signal: opts.signal,
   })
   const cleaned = cleanPolishOutput(out)
@@ -101,8 +107,15 @@ export async function polishText(text: string, opts: PolishOptions = {}): Promis
 /**
  * 低层:发一轮纯文本对话,返回纯文本(供起名等复用)。
  */
-async function chatOnce(system: string, user: string, signal?: AbortSignal, maxTokens = 64): Promise<string> {
-  return runResponseText({ system, user, temperature: 0.6, maxTokens, signal })
+async function chatOnce(
+  system: string,
+  user: string,
+  signal?: AbortSignal,
+  maxTokens = 64,
+  modelVersionId?: number,
+  requestContext?: AiResponseRequestContext,
+): Promise<string> {
+  return runResponseText({ system, user, temperature: 0.6, maxTokens, modelVersionId, requestContext, signal })
 }
 
 /** 智能成片与爆款复制两种项目命名语境。 */
@@ -112,6 +125,10 @@ export type ProjectNameFlow = 'smart' | 'hot-copy'
 export interface ProjectNameContext {
   flow?: ProjectNameFlow
   durationSec?: number
+  /** 智能成片入口锁定的 responses.multimodal 模型版本。 */
+  modelVersionId?: number
+  /** 与模型版本绑定的工作空间和 schema 快照。 */
+  requestContext?: AiResponseRequestContext
 }
 
 /** 通过文字需求生成项目名的参数。 */
@@ -291,9 +308,21 @@ export async function generateProjectName(
   const options = typeof input === 'string' ? undefined : input
   const req = (typeof input === 'string' ? input : input?.requirement || '').trim()
   if (!req) throw new Error('请输入创作需求')
-  const context: ProjectNameContext = { flow: options?.flow, durationSec: options?.durationSec }
+  const context: ProjectNameContext = {
+    flow: options?.flow,
+    durationSec: options?.durationSec,
+    modelVersionId: options?.modelVersionId,
+    requestContext: options?.requestContext,
+  }
   const name = cleanProjectNameOutput(
-    await chatOnce(projectNameSystemPrompt(context), req, signal ?? options?.signal, 32),
+    await chatOnce(
+      projectNameSystemPrompt(context),
+      req,
+      signal ?? options?.signal,
+      32,
+      context.modelVersionId,
+      context.requestContext,
+    ),
   )
   // 兜底清洗:去引号/标点/空白,只取首行(不截断字数,保留完整名称)
   if (!name) throw new Error('生成名称为空,请重试')
@@ -334,7 +363,12 @@ export async function generateProjectNameFromImages(
   if (!imgs.length) throw new Error('请先上传素材')
   const options = typeof input === 'string' ? undefined : input
   const requirement = typeof input === 'string' ? input : options?.requirement
-  const context: ProjectNameContext = { flow: options?.flow, durationSec: options?.durationSec }
+  const context: ProjectNameContext = {
+    flow: options?.flow,
+    durationSec: options?.durationSec,
+    modelVersionId: options?.modelVersionId,
+    requestContext: options?.requestContext,
+  }
   const system =
     '你是素材理解专家。下面随请求附上了用户上传的素材图(产品/主体/场景)。请逐张看清图中实际出现的物体/品牌/场景,' +
     '据此为这条短视频项目起一个简洁、贴切、有吸引力的中文项目名称。' +
@@ -350,6 +384,8 @@ export async function generateProjectNameFromImages(
       images: imgs,
       temperature: 0.6,
       maxTokens: 48,
+      modelVersionId: context.modelVersionId,
+      requestContext: context.requestContext,
       signal: signal ?? options?.signal,
     }),
   )
@@ -371,6 +407,8 @@ export async function matchUploadsToSubjects(
   images: string[],
   subjectNames: string[],
   signal?: AbortSignal,
+  modelVersionId?: number,
+  requestContext?: AiResponseRequestContext,
 ): Promise<{ products: { product: string; kind: string; imageIndexes: number[]; matches: string[] }[] }> {
   const imgs = (images || []).filter(Boolean)
   if (!imgs.length) return { products: [] }
@@ -386,8 +424,18 @@ export async function matchUploadsToSubjects(
   const user = `共 ${imgs.length} 张素材图(按顺序附上)。分镜主体清单:${names.length ? names.join('、') : '(空)'}`
   let raw = ''
   try {
-    raw = await runResponseText({ system, user, images: imgs, temperature: 0.3, maxTokens: 500, signal })
-  } catch {
+    raw = await runResponseText({
+      system,
+      user,
+      images: imgs,
+      temperature: 0.3,
+      maxTokens: 500,
+      modelVersionId,
+      requestContext,
+      signal,
+    })
+  } catch (error) {
+    if (signal?.aborted || (error as any)?.name === 'AbortError') throw error
     return { products: [] }
   }
   raw = raw
@@ -438,6 +486,8 @@ export async function matchUploadsToSubjects(
 export async function suggestOptions(
   input: { label: string; hint?: string; context?: string; exclude?: string[] },
   signal?: AbortSignal,
+  modelVersionId?: number,
+  requestContext?: AiResponseRequestContext,
 ): Promise<string[]> {
   const { label, hint = '', context = '', exclude = [] } = input
   const system =
@@ -450,8 +500,9 @@ export async function suggestOptions(
     (exclude.length ? `\n请避免与这些重复:${exclude.join('、')}` : '')
   let raw = ''
   try {
-    raw = await chatOnce(system, user, signal, 200)
-  } catch {
+    raw = await chatOnce(system, user, signal, 200, modelVersionId, requestContext)
+  } catch (error) {
+    if (signal?.aborted || (error as any)?.name === 'AbortError') throw error
     return []
   }
   raw = raw
@@ -548,7 +599,13 @@ export function patchMarketingField(
  * 维度不写死——不同产品/skill 拆出的模块可不同;前端只按返回结构渲染(保留表格样式)。
  */
 export async function skillBreakdownStructured(
-  input: { skill: string; requirement: string; images?: string[] },
+  input: {
+    skill: string
+    requirement: string
+    images?: string[]
+    modelVersionId?: number
+    requestContext?: AiResponseRequestContext
+  },
   signal?: AbortSignal,
 ): Promise<MarketingBreakdownData> {
   const req = (input.requirement || '').trim()
@@ -573,6 +630,8 @@ export async function skillBreakdownStructured(
     temperature: 0.6,
     maxTokens: 2200,
     signal,
+    modelVersionId: input.modelVersionId,
+    requestContext: input.requestContext,
   })
   raw = (raw || '')
     .replace(/^```(json)?/i, '')
@@ -638,6 +697,10 @@ export async function refineShotPrompt(
     ratio?: string
     /** 该镜「选中参与出图」的素材:看图识别真实外观;有 url 走多模态读图 */
     materials?: { name?: string; kind?: string; url?: string }[]
+    /** 智能成片入口锁定的 responses.multimodal 模型版本。 */
+    modelVersionId?: number
+    /** 与模型版本绑定的工作空间和 schema 快照。 */
+    requestContext?: AiResponseRequestContext
   },
   signal?: AbortSignal,
 ): Promise<{ prompt: string; debug: any }> {
@@ -689,6 +752,8 @@ export async function refineShotPrompt(
       images: withImg.map((m) => m.url as string),
       temperature: 0.6,
       maxTokens: 400,
+      modelVersionId: input.modelVersionId,
+      requestContext: input.requestContext,
       signal,
     })
     prompt = clean(raw) || desc
@@ -706,7 +771,7 @@ export async function refineShotPrompt(
     ]
       .filter(Boolean)
       .join('\n')
-    raw = await chatOnce(system, textPart, signal, 300)
+    raw = await chatOnce(system, textPart, signal, 300, input.modelVersionId, input.requestContext)
     prompt = clean(raw) || desc
   }
   return {
@@ -729,7 +794,14 @@ export async function refineShotPrompt(
 export async function refineElementPromptWithImage(
   intent: string,
   imageUrl: string,
-  opts: { name?: string; kind?: string; style?: string; signal?: AbortSignal } = {},
+  opts: {
+    name?: string
+    kind?: string
+    style?: string
+    modelVersionId?: number
+    requestContext?: AiResponseRequestContext
+    signal?: AbortSignal
+  } = {},
 ): Promise<string> {
   const src = (intent || '').trim()
   if (!imageUrl) return src
@@ -757,6 +829,8 @@ export async function refineElementPromptWithImage(
       images: [imageUrl],
       temperature: 0.5,
       maxTokens: 280,
+      modelVersionId: opts.modelVersionId,
+      requestContext: opts.requestContext,
       signal: opts.signal,
     })
   )
@@ -772,13 +846,18 @@ export async function refineElementPromptWithImage(
 /**
  * 把(可能很长的)创作需求浓缩成 100 字以内的核心摘要(纯文本,用于页面展示)。
  */
-export async function summarizeRequirement(text: string, signal?: AbortSignal): Promise<string> {
+export async function summarizeRequirement(
+  text: string,
+  signal?: AbortSignal,
+  modelVersionId?: number,
+  requestContext?: AiResponseRequestContext,
+): Promise<string> {
   const req = (text || '').trim()
   if (!req) return ''
   const system =
     '你是文案助手。把下面的创作需求浓缩成一段核心摘要,100字以内,点明产品+人群+核心卖点+目标即可。' +
     '纯文本,不要 markdown 符号(不要 *、#、- 等)、不要标题、不要分点,直接输出摘要。'
-  const out = await chatOnce(system, req, signal, 200)
+  const out = await chatOnce(system, req, signal, 200, modelVersionId, requestContext)
   // 不再清洗 markdown(前端按 md 渲染),仅去代码块围栏与裁剪长度
   const cleaned = out
     .replace(/^```(\w+)?/i, '')
@@ -795,7 +874,14 @@ export async function summarizeRequirement(text: string, signal?: AbortSignal): 
  */
 export async function refineElementPrompt(
   intent: string,
-  opts: { name?: string; kind?: string; style?: string; signal?: AbortSignal } = {},
+  opts: {
+    name?: string
+    kind?: string
+    style?: string
+    modelVersionId?: number
+    requestContext?: AiResponseRequestContext
+    signal?: AbortSignal
+  } = {},
 ): Promise<string> {
   const src = (intent || '').trim()
   if (!src) return ''
@@ -814,7 +900,7 @@ export async function refineElementPrompt(
   ]
     .filter(Boolean)
     .join('\n')
-  const out = await chatOnce(system, user, opts.signal, 220)
+  const out = await chatOnce(system, user, opts.signal, 220, opts.modelVersionId, opts.requestContext)
   const cleaned = out
     .replace(/^```(\w+)?/i, '')
     .replace(/```$/i, '')

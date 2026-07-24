@@ -7,6 +7,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
+import {
+  GenerationModelDropdown,
+  getGenerationModelSelectionConflicts,
+  isGenerationModelSelectionComplete,
+  type GenerationModelErrorState,
+  type GenerationModelGroup,
+  type GenerationModelLoadingState,
+} from '../GenerationModelPicker'
 import RatioIcon from '@/components/common/RatioIcon'
 import { fileToDataUrl } from '@/utils/imageFile'
 import {
@@ -18,6 +26,13 @@ import {
 import { ALL_SMART_SCRIPT_NAMES, SMART_SCRIPT_OPTIONS, normalizeSmartScriptName } from '@/utils/smartScriptOptions'
 import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
 import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
+import {
+  isGenerationModelCatalogReadyForMode,
+  type GenerationModelOperationStateMap,
+  type GenerationModelSelectionMap,
+  type GenerationOperationCode,
+} from '@/utils/generationModelCatalog'
+import { parseDurationSeconds } from '@/utils/videoDurationValue'
 import { useToast } from '@/composables/useToast'
 import styles from './SmartEntry.module.less'
 
@@ -34,6 +49,8 @@ export interface EntryMeta {
   outputCount?: number
   /** 选中的营销 SKILL(空=不使用,走现有逻辑;非空=多一步「营销思路拆解」) */
   skill?: string
+  /** 按后端 operation_code 保存的模型版本选择；草稿恢复和后续任务都使用同一份配置。 */
+  generationModels?: GenerationModelSelectionMap
 }
 
 /** 智能成片入口的提交、恢复、新建及初始草稿参数。 */
@@ -52,8 +69,20 @@ interface SmartEntryProps {
    * 并显示「重新生成」(走 onSubmit,按当前输入重新生成)。
    */
   canResume?: boolean
-  /** 「下一步」:回到已生成的流程(只往前一步),不重新生成。 */
-  onResume?: () => void
+  /**
+   * 「下一步」:回到已生成的流程(只往前一步),不重新生成。
+   * 旧草稿可能没有模型配置，因此把用户在首页补选的配置一并交回父级持久化。
+   */
+  onResume?: (generationModels: GenerationModelSelectionMap) => void | Promise<void>
+  /** 后端动态返回的生成模型分组；模型名称不会在入口组件中写死。 */
+  modelGroups?: GenerationModelGroup[]
+  modelLoading?: GenerationModelLoadingState
+  modelError?: GenerationModelErrorState
+  /** 每个固定 operation 的加载/可用状态；用于防止部分接口失败时只校验剩余分组。 */
+  modelOperationStates?: GenerationModelOperationStateMap
+  onReloadModels?: () => void
+  /** 已登录且工作空间就绪后开启当前步骤模型门禁；游客仍可先点击并进入登录流程。 */
+  requireModelSelection?: boolean
   /**
    * 回填初始值:从分镜脚本「上一步」返回输入框时,恢复上次输入(需求文本/图片/风格/比例/时长/模式/skill)。
    * 仅在挂载时生效(useState 初值);路由切换会卸载本组件,数据随之清空。
@@ -67,6 +96,7 @@ interface SmartEntryProps {
     imageAssetIds?: number[]
     outputCount?: number
     skill?: string
+    generationModels?: GenerationModelSelectionMap
   }
 }
 
@@ -121,6 +151,12 @@ export default function SmartEntry({
   onNewVideo,
   canResume,
   onResume,
+  modelGroups = [],
+  modelLoading = false,
+  modelError = '',
+  modelOperationStates,
+  onReloadModels,
+  requireModelSelection = false,
   initial,
   restoreSessionDraft = true,
 }: SmartEntryProps) {
@@ -155,6 +191,10 @@ export default function SmartEntry({
   )
   // 选中的营销 SKILL(单选,空=不使用)
   const [skill, setSkill] = useState(seedSkill)
+  const [generationModels, setGenerationModels] = useState<GenerationModelSelectionMap>(
+    () => initial?.generationModels ?? stored?.generationModels ?? {},
+  )
+  const [modelAttentionRequest, setModelAttentionRequest] = useState(0)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const dragDepthRef = useRef(0)
@@ -178,10 +218,11 @@ export default function SmartEntry({
         images,
         imageAssetIds,
         outputCount,
+        generationModels,
       })
     }, 300)
     return () => window.clearTimeout(t)
-  }, [mode, text, ratio, duration, skill, images, imageAssetIds, outputCount])
+  }, [mode, text, ratio, duration, skill, images, imageAssetIds, outputCount, generationModels])
   // 本地图片先转成受控 data URL；过滤非图片并限制数量，避免无效文件进入后续资产上传流程。
   const pickImages = async (files: FileList | File[] | null) => {
     if (!files?.length) return
@@ -268,11 +309,44 @@ export default function SmartEntry({
 
   // 正文(剥离 skill 提示语后)用于提交/校验,保证需求干净
   const cleanText = stripSkillLine(text).trim()
+  // 视频在入口一次配置完整工作流；图片只配置文生图/图生图，后续转视频时会回到视频入口重新选择。
+  const visibleModelGroups = mode === 'video' ? modelGroups : modelGroups.filter((group) => group.key === 'image')
+  const modelSelectionComplete = isGenerationModelSelectionComplete(visibleModelGroups, generationModels)
+  const modelSelectionConflicts = getGenerationModelSelectionConflicts(visibleModelGroups, generationModels, {
+    ratio,
+    ...(mode === 'video'
+      ? { durationSec: parseDurationSeconds(duration) ?? undefined }
+      : { referenceImageCount: images.length }),
+  })
+  const modelCatalogReady = !modelOperationStates || isGenerationModelCatalogReadyForMode(modelOperationStates, mode)
+  const modelGatePassed =
+    !requireModelSelection || (modelCatalogReady && modelSelectionComplete && modelSelectionConflicts.length === 0)
+  const modelGateMessage = !requireModelSelection
+    ? ''
+    : !modelCatalogReady
+      ? '当前有必需模型不可用，请在模型选择中检查后重试'
+      : !modelSelectionComplete
+        ? '请先选择本次创作使用的全部模型'
+        : modelSelectionConflicts.length > 0
+          ? '当前创作参数与所选模型不兼容，请调整模型或创作参数'
+          : ''
   const canSubmit = cleanText.length > 0 || images.length > 0
   // 恢复态:已有生成结果且当前在视频 Tab → 发送按钮变「下一步」,并显示「重新生成」
   const resumeMode = !!canResume && mode === (initial?.mode || 'video')
+  const updateGenerationModel = (groupKey: string, modelId: number | string, subgroupKey?: string) => {
+    const operationCode = (subgroupKey || groupKey) as GenerationOperationCode
+    setGenerationModels((previous) => ({ ...previous, [operationCode]: modelId }))
+  }
+  const requestModelSelectionAttention = () => {
+    setModelAttentionRequest((request) => request + 1)
+    showToast(modelGateMessage || '请先完成本次创作的模型选择', 'info')
+  }
   const submit = async () => {
     if (!canSubmit || submittingRef.current) return
+    if (!modelGatePassed) {
+      requestModelSelectionAttention()
+      return
+    }
     submittingRef.current = true
     setSubmitting(true)
     try {
@@ -286,6 +360,7 @@ export default function SmartEntry({
         ...(imageAssetIds.some((assetId) => assetId > 0) ? { imageAssetIds } : {}),
         ...(mode === 'image' ? { outputCount } : {}),
         skill: mode === 'video' && skill ? skill : undefined,
+        ...(Object.keys(generationModels).length ? { generationModels } : {}),
       })
       // 项目和临时素材均准备成功后才清空入口暂存。失败时保留输入，刷新后仍可重试。
       if (accepted !== false) {
@@ -296,6 +371,14 @@ export default function SmartEntry({
       submittingRef.current = false
       setSubmitting(false)
     }
+  }
+  const resume = () => {
+    if (submittingRef.current) return
+    if (!modelGatePassed) {
+      requestModelSelectionAttention()
+      return
+    }
+    void onResume?.(generationModels)
   }
 
   // 选中/切换 SKILL:把提示语插入输入框(替换旧的);未选则移除
@@ -593,6 +676,20 @@ export default function SmartEntry({
                   />
                 </span>
               )}
+
+              {(visibleModelGroups.length > 0 || Boolean(modelLoading) || Boolean(modelError)) && (
+                <GenerationModelDropdown
+                  groups={visibleModelGroups}
+                  selected={generationModels}
+                  loading={modelLoading}
+                  error={modelError}
+                  onRetry={onReloadModels ? () => onReloadModels() : undefined}
+                  onChange={updateGenerationModel}
+                  conflicts={modelSelectionConflicts}
+                  attentionRequest={modelAttentionRequest}
+                  attentionMessage={modelGateMessage}
+                />
+              )}
             </div>
 
             <div className={styles.sendArea}>
@@ -602,7 +699,7 @@ export default function SmartEntry({
                   className={`${styles.send} ${styles.sendResume}`}
                   data-guide="smart-next"
                   disabled={submitting}
-                  onClick={() => onResume?.()}
+                  onClick={resume}
                   aria-label={mode === 'image' ? '返回图片对话' : '返回下一步'}
                   title={mode === 'image' ? '返回图片对话' : '返回下一步'}
                 >

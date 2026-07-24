@@ -32,7 +32,7 @@ vi.mock('@/stores/workspaceSession', () => ({
   deriveModelPlanCandidates: () => mocks.modelPlanCandidates,
 }))
 
-import { runResponseText, streamResponseText } from '@/api/aiResponses'
+import { buildResponseModelParams, runResponseText, streamResponseText } from '@/api/aiResponses'
 
 const operationPayload = {
   workspaceId: 41,
@@ -98,6 +98,130 @@ describe('aiResponses context and request payloads', () => {
     )
   })
 
+  it('显式请求上下文锁定工作空间且不再读取可变全局会话', async () => {
+    mocks.workspaceId = 7
+    mocks.modelPlanCandidates = ['global-plan']
+    mocks.createAiResponse.mockResolvedValue('成功')
+
+    await runResponseText({
+      user: '问题',
+      requestContext: { workspaceId: 88, modelPlanCandidates: ['locked-plan'] },
+    })
+
+    expect(mocks.ensureModelPlanCandidatesLoaded).not.toHaveBeenCalled()
+    expect(mocks.createAiResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 88,
+        modelPlanCandidates: ['locked-plan'],
+      }),
+    )
+  })
+
+  it('允许由锁定的请求上下文提供模型版本 ID', async () => {
+    mocks.createAiResponse.mockResolvedValue('成功')
+
+    await runResponseText({
+      user: '问题',
+      requestContext: {
+        workspaceId: 88,
+        modelVersionId: 704,
+      },
+    })
+
+    expect(mocks.createAiResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 88,
+        modelVersionId: 704,
+      }),
+    )
+  })
+
+  it('允许从同一请求上下文的模型快照推导模型版本 ID', async () => {
+    mocks.createAiResponse.mockResolvedValue('成功')
+
+    await runResponseText({
+      user: '问题',
+      requestContext: {
+        workspaceId: 88,
+        modelVersion: {
+          model_version_id: '705',
+          display_name: '锁定脚本模型',
+        },
+      },
+    })
+
+    expect(mocks.createAiResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 88,
+        modelVersionId: 705,
+      }),
+    )
+  })
+
+  it.each([
+    {
+      label: '调用参数与请求上下文',
+      stream: false,
+      modelVersionId: 701,
+      requestContext: {
+        workspaceId: 88,
+        modelVersionId: 702,
+        modelVersion: { id: 702 },
+      },
+    },
+    {
+      label: '请求上下文与模型快照',
+      stream: true,
+      modelVersionId: undefined,
+      requestContext: {
+        workspaceId: 88,
+        modelVersionId: 702,
+        modelVersion: { model_version_id: 703 },
+      },
+    },
+    {
+      label: '调用参数与模型快照',
+      stream: false,
+      modelVersionId: 701,
+      requestContext: {
+        workspaceId: 88,
+        modelVersion: { modelVersionId: 703 },
+      },
+    },
+  ])('$label 的模型版本 ID 不一致时在素材上传和付费请求前失败', async (testCase) => {
+    const args = {
+      user: '问题',
+      images: ['one.png'],
+      modelVersionId: testCase.modelVersionId,
+      requestContext: testCase.requestContext,
+    }
+
+    await expect(testCase.stream ? streamResponseText(args) : runResponseText(args)).rejects.toThrow(
+      '模型版本 ID 与模型参数快照不一致',
+    )
+
+    expect(mocks.ensureAssetId).not.toHaveBeenCalled()
+    expect(mocks.createAiResponse).not.toHaveBeenCalled()
+    expect(mocks.streamAiResponse).not.toHaveBeenCalled()
+  })
+
+  it('请求开始前已经取消时不上传素材也不调用 AI', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      runResponseText({
+        user: '问题',
+        images: ['one.png'],
+        requestContext: { workspaceId: 88 },
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(mocks.ensureAssetId).not.toHaveBeenCalled()
+    expect(mocks.createAiResponse).not.toHaveBeenCalled()
+  })
+
   it('只提交上传成功且 id 有效的图片，并保留输入顺序和数量', async () => {
     const images = ['', 'one.png', 'failed.png', 'zero.png', 'two.png', 'three.png']
     mocks.ensureAssetId.mockImplementation(async (_workspaceId: number, url: string) => {
@@ -135,6 +259,19 @@ describe('aiResponses context and request payloads', () => {
     })
   })
 
+  it('非流式请求透传用户显式选择的模型版本', async () => {
+    mocks.createAiResponse.mockResolvedValue('完成')
+
+    await runResponseText({ user: '用户问题', modelVersionId: 701 })
+
+    expect(mocks.createAiResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVersionId: 701,
+        operationCode: 'responses.multimodal',
+      }),
+    )
+  })
+
   it('保留零值在内的自定义参数，且空 system 不产生多余换行', async () => {
     mocks.createAiResponse.mockResolvedValue('完成')
 
@@ -146,6 +283,86 @@ describe('aiResponses context and request payloads', () => {
         params: { temperature: 0, max_output_tokens: 0 },
       }),
     )
+  })
+
+  it('显式模型只发送 schema 声明的参数并保留后端字段名', async () => {
+    mocks.createAiResponse.mockResolvedValue('完成')
+
+    await runResponseText({
+      user: '用户问题',
+      temperature: 0.4,
+      maxTokens: 800,
+      modelVersionId: 701,
+      requestContext: {
+        workspaceId: 41,
+        modelVersion: {
+          model_version_id: 701,
+          params_schema: {
+            type: 'object',
+            properties: {
+              temperature: { type: 'number', minimum: 0, maximum: 1 },
+              maxTokens: { type: 'integer', minimum: 1, maximum: 2000 },
+              response_format: { type: 'string', default: 'json' },
+            },
+            required: ['temperature', 'maxTokens', 'response_format'],
+          },
+        },
+      },
+    })
+
+    expect(mocks.createAiResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: {
+          temperature: 0.4,
+          maxTokens: 800,
+          response_format: 'json',
+        },
+      }),
+    )
+  })
+
+  it('模型含流程无法提供的必填参数时在创建付费任务前失败', async () => {
+    await expect(
+      runResponseText({
+        user: '用户问题',
+        modelVersionId: 701,
+        requestContext: {
+          workspaceId: 41,
+          modelVersion: {
+            id: 701,
+            display_name: '严格脚本模型',
+            params_schema: {
+              fields: [{ name: 'tenant_prompt_profile', required: true }],
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow('tenant_prompt_profile')
+
+    expect(mocks.createAiResponse).not.toHaveBeenCalled()
+    expect(mocks.streamAiResponse).not.toHaveBeenCalled()
+  })
+})
+
+describe('buildResponseModelParams', () => {
+  it('旧模型没有 schema 时保持兼容参数', () => {
+    expect(buildResponseModelParams(undefined, { temperature: 0.3, maxOutputTokens: 256 })).toEqual({
+      temperature: 0.3,
+      max_output_tokens: 256,
+    })
+  })
+
+  it('必填枚举只有一个值时使用该后端值', () => {
+    expect(
+      buildResponseModelParams(
+        {
+          params_schema: {
+            fields: [{ name: 'response_mode', required: true, options: [{ value: 'structured' }] }],
+          },
+        },
+        { temperature: 0.7, maxOutputTokens: 512 },
+      ),
+    ).toEqual({ response_mode: 'structured' })
   })
 })
 
@@ -184,10 +401,9 @@ describe('aiResponses text extraction', () => {
     expect(mocks.streamAiResponse).not.toHaveBeenCalled()
   })
 
-  it('非流式响应为空时转为流式，并传递同一 payload 和 signal', async () => {
+  it('非流式成功但响应为空时 fail closed，不再另发流式任务', async () => {
     const controller = new AbortController()
     mocks.createAiResponse.mockResolvedValue({ response: { output: [] } })
-    mocks.streamAiResponse.mockResolvedValue({ response: { output_text: '  流式兜底文本  ' } })
 
     await expect(
       runResponseText({
@@ -197,18 +413,19 @@ describe('aiResponses text extraction', () => {
         maxTokens: 99,
         signal: controller.signal,
       }),
-    ).resolves.toBe('流式兜底文本')
+    ).rejects.toThrow('已停止重试以避免重复生成')
 
-    const submittedPayload = mocks.createAiResponse.mock.calls[0][0]
-    expect(mocks.streamAiResponse).toHaveBeenCalledWith({ ...submittedPayload, signal: controller.signal })
+    expect(mocks.createAiResponse).toHaveBeenCalledOnce()
+    expect(mocks.streamAiResponse).not.toHaveBeenCalled()
   })
 
-  it('空响应转流式失败时原样传播错误', async () => {
-    const streamError = new Error('流式请求失败')
+  it('非流式 null 响应同样不会创建第二个任务', async () => {
     mocks.createAiResponse.mockResolvedValue(null)
-    mocks.streamAiResponse.mockRejectedValue(streamError)
 
-    await expect(runResponseText({ user: '问题' })).rejects.toBe(streamError)
+    await expect(runResponseText({ user: '问题' })).rejects.toThrow('未返回可解析文本')
+
+    expect(mocks.createAiResponse).toHaveBeenCalledOnce()
+    expect(mocks.streamAiResponse).not.toHaveBeenCalled()
   })
 })
 
@@ -249,13 +466,13 @@ describe('aiResponses streaming and fallback policy', () => {
   })
 
   it.each([
-    ['HTTP 500', { status: 500, message: 'server failed' }],
-    ['HTTP 599', { status: 599, message: 'upstream failed' }],
-    ['HTTP 400', { status: 400, message: 'Bad Request' }],
-    ['bad_request 文本', new Error('bad_request: invalid payload')],
-    ['SSE 原始错误', new Error('SSE event-stream disconnected')],
-    ['规范化响应流错误', { message: 'gateway', businessMessage: '响应流中断' }],
-  ])('%s 流式错误回退到非流式', async (_label, streamError) => {
+    ['HTTP 400 明确拒绝 streaming', { status: 400, code: 'STREAMING_NOT_SUPPORTED', message: 'Bad Request' }],
+    ['HTTP 405 明确拒绝 SSE', { status: 405, message: 'SSE is not supported' }],
+    ['HTTP 415 明确拒绝 event-stream', { status: 415, message: 'event-stream unsupported' }],
+    ['HTTP 422 中文明确拒绝流式', { status: 422, businessMessage: '当前模型不支持流式响应' }],
+    ['HTTP 501 明确未实现 stream', { status: 501, code_string: 'STREAM_NOT_IMPLEMENTED' }],
+    ['嵌套后端错误码明确拒绝 SSE', { status: 406, response: { data: { code: 'SSE_UNSUPPORTED' } } }],
+  ])('%s 时才安全回退到非流式', async (_label, streamError) => {
     mocks.streamAiResponse.mockRejectedValue(streamError)
     mocks.createAiResponse.mockResolvedValue({ text: '  非流式兜底  ' })
 
@@ -271,12 +488,38 @@ describe('aiResponses streaming and fallback policy', () => {
     )
   })
 
+  it('显式模型的流式请求失败后使用同一模型进行非流式回退', async () => {
+    mocks.streamAiResponse.mockRejectedValue({ status: 415, code: 'STREAM_UNSUPPORTED' })
+    mocks.createAiResponse.mockResolvedValue({ text: '固定模型回退结果' })
+
+    await expect(streamResponseText({ user: '问题', modelVersionId: 702 })).resolves.toBe('固定模型回退结果')
+
+    expect(mocks.streamAiResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVersionId: 702,
+        operationCode: 'responses.multimodal',
+      }),
+    )
+    expect(mocks.createAiResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVersionId: 702,
+        operationCode: 'responses.multimodal',
+      }),
+    )
+  })
+
   it.each([
     ['HTTP 401 即使包含 SSE 文本', { status: 401, message: 'SSE token expired' }],
     ['HTTP 403', { status: 403, message: 'forbidden' }],
+    ['HTTP 500', { status: 500, message: 'server failed' }],
+    ['HTTP 599', { status: 599, message: 'upstream failed' }],
+    ['HTTP 400 泛化 Bad Request', { status: 400, message: 'Bad Request' }],
+    ['HTTP 400 普通参数错误', { status: 400, code: 'INVALID_PARAMS', message: 'invalid payload' }],
+    ['断流', new Error('SSE event-stream disconnected')],
+    ['规范化响应流中断', { status: 502, message: 'gateway', businessMessage: '响应流中断' }],
+    ['普通网络错误', new TypeError('Failed to fetch')],
     ['非标准 600 状态', { status: 600, message: 'unknown status' }],
-    ['普通网络错误', new Error('network offline')],
-  ])('%s 不回退并原样传播', async (_label, streamError) => {
+  ])('%s 属于模糊失败，不回退并原样传播', async (_label, streamError) => {
     mocks.streamAiResponse.mockRejectedValue(streamError)
 
     await expect(streamResponseText({ user: '问题' })).rejects.toBe(streamError)
@@ -299,16 +542,21 @@ describe('aiResponses streaming and fallback policy', () => {
     const streamError = new Error('SSE stream closed')
     mocks.streamAiResponse.mockRejectedValue(streamError)
 
-    await expect(streamResponseText({ user: '问题', signal: controller.signal })).rejects.toBe(streamError)
+    await expect(streamResponseText({ user: '问题', signal: controller.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    })
 
+    expect(mocks.streamAiResponse).not.toHaveBeenCalled()
     expect(mocks.createAiResponse).not.toHaveBeenCalled()
   })
 
   it('非流式回退失败时传播最终错误', async () => {
     const fallbackError = new Error('非流式也失败')
-    mocks.streamAiResponse.mockRejectedValue({ status: 503, message: 'service unavailable' })
+    mocks.streamAiResponse.mockRejectedValue({ status: 415, message: 'streaming not supported' })
     mocks.createAiResponse.mockRejectedValue(fallbackError)
 
     await expect(streamResponseText({ user: '问题' })).rejects.toBe(fallbackError)
+
+    expect(mocks.createAiResponse).toHaveBeenCalledOnce()
   })
 })

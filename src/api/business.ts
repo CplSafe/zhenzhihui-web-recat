@@ -192,7 +192,13 @@ export function setActiveWorkspaceId(id) {
 }
 
 /** 按工作空间、能力和操作码列出当前订阅真正可用的 AI 模型。 */
-export async function listAiModels({ capability = '', operationCode = '', plan = 'pro', workspaceId = 0 }: any = {}) {
+export async function listAiModels({
+  capability = '',
+  operationCode = '',
+  plan = 'pro',
+  workspaceId = 0,
+  signal,
+}: any = {}) {
   // 开发 mock:模拟"当前套餐不允许该模型"(用于手测前端受限 UI / 报错提示)
   if (devMock('model-locked')) {
     throw new BusinessApiError('当前模型需要开通对应套餐后才能使用（mock）', {
@@ -222,7 +228,9 @@ export async function listAiModels({ capability = '', operationCode = '', plan =
   }
 
   try {
-    return await requestJson(`/api/v1/ai/models${query.toString() ? `?${query}` : ''}`)
+    return await requestJson(`/api/v1/ai/models${query.toString() ? `?${query}` : ''}`, {
+      signal,
+    })
   } catch (error) {
     if (
       error instanceof BusinessApiError &&
@@ -285,7 +293,7 @@ function getModelForOperationFromPlan(operationCode, preferredKeywords = [], _pl
 
 /**
  * 发起非流式 AI Responses 请求；显式模型只在供应商暂时失败时原模型重试。
- * 自动选模型只对可重试错误切换候选，内容安全拦截不会绕过。
+ * 自动选模型只对明确的模型选择错误切换候选；网络、5xx 与内容安全错误均 fail closed。
  */
 export async function createAiResponse({
   workspaceId,
@@ -297,8 +305,11 @@ export async function createAiResponse({
   modelVersionId,
   modelPlanCandidates = DEFAULT_MODEL_PLAN_CANDIDATES,
   stream = false,
+  signal,
 }: any) {
   if (modelVersionId) {
+    // 同一次显式模型调用的非流式重试必须复用幂等键，防止首请求已被供应商接收后重复计费。
+    const idempotencyKey = createIdempotencyKey('resp')
     let lastError = null
     for (let attempt = 0; attempt <= PROVIDER_TASK_RETRY_LIMIT; attempt += 1) {
       try {
@@ -306,49 +317,53 @@ export async function createAiResponse({
           workspaceId,
           modelId: modelVersionId,
           operationCode,
-          idempotencyKey: createIdempotencyKey('resp'),
+          idempotencyKey,
           prompt,
           messages,
           inputAssets,
           params,
           stream,
+          signal,
         })
       } catch (error) {
         lastError = error
         if (!isProviderTaskFailedError(error) || attempt >= PROVIDER_TASK_RETRY_LIMIT) {
           throw error
         }
-        await sleep(PROVIDER_TASK_RETRY_BACKOFF_MS[attempt] || 1400)
+        await sleepWithSignal(PROVIDER_TASK_RETRY_BACKOFF_MS[attempt] || 1400, signal)
       }
     }
     throw lastError || new BusinessApiError('AI 请求失败，请稍后重试')
   }
 
   return submitWithPlanCandidates(modelPlanCandidates, async (plan) => {
-    const models = await listAiModels({ operationCode, plan })
+    const models = await listAiModels({ workspaceId, operationCode, plan, signal })
     const candidates = getEligibleModelsForOperation(models, operationCode)
     const preferred = pickModel(candidates, operationCode, [])
     const ordered = buildOrderedModelCandidates(candidates, preferred)
     let lastError = null
 
     for (const model of ordered) {
+      // 同一候选模型的重试必须复用幂等键；只有明确切换候选模型时才生成新键。
+      const idempotencyKey = createIdempotencyKey('resp')
       for (let attempt = 0; attempt <= PROVIDER_TASK_RETRY_LIMIT; attempt += 1) {
         try {
           return await submitAiResponse({
             workspaceId,
             modelId: model.id,
             operationCode,
-            idempotencyKey: createIdempotencyKey('resp'),
+            idempotencyKey,
             prompt,
             messages,
             inputAssets,
             params,
             stream,
+            signal,
           })
         } catch (error) {
           lastError = error
           if (isProviderTaskFailedError(error) && attempt < PROVIDER_TASK_RETRY_LIMIT) {
-            await sleep(PROVIDER_TASK_RETRY_BACKOFF_MS[attempt] || 1400)
+            await sleepWithSignal(PROVIDER_TASK_RETRY_BACKOFF_MS[attempt] || 1400, signal)
             continue
           }
           if (!shouldRetryWithNextModel(error)) {
@@ -371,12 +386,42 @@ export async function streamAiResponse({
   messages,
   inputAssets,
   params,
+  modelVersionId,
   modelPlanCandidates = DEFAULT_MODEL_PLAN_CANDIDATES,
   onDelta,
   signal,
 }: any) {
+  if (modelVersionId) {
+    // 用户已明确选择模型时，流式重试只能复用这个模型；不能因瞬时故障静默切换成其他模型。
+    const idempotencyKey = createIdempotencyKey('resp')
+    let lastError = null
+    for (let attempt = 0; attempt <= PROVIDER_TASK_RETRY_LIMIT; attempt += 1) {
+      try {
+        return await openAiResponseStream({
+          workspaceId,
+          modelId: modelVersionId,
+          operationCode,
+          idempotencyKey,
+          prompt,
+          messages,
+          inputAssets,
+          params,
+          onDelta,
+          signal,
+        })
+      } catch (error) {
+        lastError = error
+        if (!isProviderTaskFailedError(error) || attempt >= PROVIDER_TASK_RETRY_LIMIT) {
+          throw error
+        }
+        await sleepWithSignal(PROVIDER_TASK_RETRY_BACKOFF_MS[attempt] || 1400, signal)
+      }
+    }
+    throw lastError || new BusinessApiError('AI 流式响应失败，请稍后重试')
+  }
+
   return submitWithPlanCandidates(modelPlanCandidates, async (plan) => {
-    const models = await listAiModels({ operationCode, plan })
+    const models = await listAiModels({ workspaceId, operationCode, plan, signal })
     const candidates = getEligibleModelsForOperation(models, operationCode)
     const preferred = pickModel(candidates, operationCode, [])
     const ordered = buildOrderedModelCandidates(candidates, preferred)
@@ -402,7 +447,7 @@ export async function streamAiResponse({
         } catch (error) {
           lastError = error
           if (isProviderTaskFailedError(error) && attempt < PROVIDER_TASK_RETRY_LIMIT) {
-            await sleep(PROVIDER_TASK_RETRY_BACKOFF_MS[attempt] || 1400)
+            await sleepWithSignal(PROVIDER_TASK_RETRY_BACKOFF_MS[attempt] || 1400, signal)
             continue
           }
           if (!shouldRetryWithNextModel(error)) {
@@ -727,7 +772,8 @@ function extractStreamDelta(payload) {
 
 /**
  * 创建异步 AI 任务，支持显式模型或按工作空间能力选模型。
- * 每次重试使用可预测的幂等键；只在明确参数/输入不兼容时降级，避免静默重复计费。
+ * 网络类重试始终复用同一幂等键；业务参数或输入资产被拒绝时原样失败，
+ * 禁止在付费请求后静默改变素材或参数再创建另一个任务。
  */
 export async function createAiTask({
   workspaceId,
@@ -744,68 +790,17 @@ export async function createAiTask({
   idempotencyKey: providedIdempotencyKey,
   signal,
 }: any) {
-  const fallbackIdempotencyKey = (suffix: string) =>
-    providedIdempotencyKey ? `${providedIdempotencyKey}_${suffix}` : createIdempotencyKey('task')
-  const submitTask = async ({ idempotencyKey, modelId, resolvedParams, resolvedInputAssets }) => {
-    try {
-      return await submitAiTask({
-        workspaceId,
-        modelId,
-        operationCode,
-        idempotencyKey,
-        prompt,
-        params: resolvedParams,
-        inputAssets: resolvedInputAssets,
-        signal,
-      })
-    } catch (error) {
-      const shouldDropInputAssets = shouldDropInputAssetsForOperationError(error, operationCode, resolvedInputAssets)
-
-      if (shouldDropInputAssets) {
-        try {
-          return await submitAiTask({
-            workspaceId,
-            modelId,
-            operationCode,
-            idempotencyKey: fallbackIdempotencyKey('no_assets'),
-            prompt,
-            params: resolvedParams,
-            inputAssets: [],
-            signal,
-          })
-        } catch (nextError) {
-          if (!shouldDropVideoParamsForOperationError(nextError, operationCode)) {
-            throw nextError
-          }
-          return submitAiTask({
-            workspaceId,
-            modelId,
-            operationCode,
-            idempotencyKey: fallbackIdempotencyKey('no_assets_simple'),
-            prompt,
-            params: simplifyVideoTaskParams(resolvedParams),
-            inputAssets: [],
-            signal,
-          })
-        }
-      }
-
-      if (!shouldDropVideoParamsForOperationError(error, operationCode)) {
-        throw error
-      }
-
-      return submitAiTask({
-        workspaceId,
-        modelId,
-        operationCode,
-        idempotencyKey: fallbackIdempotencyKey('simple'),
-        prompt,
-        params: simplifyVideoTaskParams(resolvedParams),
-        inputAssets: resolvedInputAssets,
-        signal,
-      })
-    }
-  }
+  const submitTask = ({ idempotencyKey, modelId, resolvedParams, resolvedInputAssets }) =>
+    submitAiTask({
+      workspaceId,
+      modelId,
+      operationCode,
+      idempotencyKey,
+      prompt,
+      params: resolvedParams,
+      inputAssets: resolvedInputAssets,
+      signal,
+    })
 
   // 幂等键:同一次 createAiTask 操作全程复用一个 key。后端按 (workspace, idempotency_key) 去重——
   // 换新键会新建任务并再次冻结积分(= 重复扣费,尤其"provider 实际成功但响应 5xx"时换模型重试会双扣);
@@ -818,6 +813,7 @@ export async function createAiTask({
       modelVersion,
       capability,
       operationCode,
+      workspaceId,
     })
     const resolvedParams = resolveTaskField(params, model)
     const resolvedInputAssets = resolveTaskField(inputAssets, model)
@@ -922,24 +918,13 @@ function buildOrderedModelCandidates(models, preferredModel) {
   return preferred ? [preferred, ...rest] : rest
 }
 
-/** 仅对模型选择、网络或上游暂时错误切换候选模型，内容安全拦截不切换。 */
+/**
+ * 仅在服务端明确表示当前候选模型不可用或套餐不允许时切换模型。
+ * 网络、超时、5xx 和 provider task failed 都可能发生在请求已被接收之后；
+ * 此时切换模型会绕过原模型的幂等范围并造成重复生成或重复计费，必须原样失败。
+ */
 function shouldRetryWithNextModel(error) {
-  if (!error) return false
-  if (isNonRetryableContentSafetyError(error)) return false
-  if (isRetryableModelSelectionError(error)) return true
-  if (!(error instanceof BusinessApiError)) return false
-  const message = String(error.message || '').toLowerCase()
-  const responseMessage = String(
-    error.response?.message || error.response?.error?.message || error.response?.data?.message || '',
-  ).toLowerCase()
-  const code = String(error.code || '').toUpperCase()
-  // 网络错误(status=0)或服务端错误 → 换下一个模型重试
-  if (error.status === 0) return true
-  if (error.status >= 500) return true
-  if (code === 'INTERNAL_ERROR' || code === '50008') return true
-  return /provider task failed|status failed|upstream|model.*(failed|error)|internal_error|服务内部错误|服务器内部错误|网络请求失败/i.test(
-    `${message} ${responseMessage}`,
-  )
+  return isRetryableModelSelectionError(error)
 }
 
 /** 识别可在同一模型上重试的供应商暂时故障。 */
@@ -956,40 +941,6 @@ function isProviderTaskFailedError(error) {
   return /provider task failed|status failed|internal_error|服务内部错误|服务器内部错误/i.test(
     `${message} ${responseMessage}`,
   )
-}
-
-/** 判断视频提交是否因 provider 明确拒绝 input asset role 而可降级去掉输入资产。 */
-function shouldDropInputAssetsForOperationError(error, operationCode, inputAssets) {
-  if (!(error instanceof BusinessApiError)) return false
-  if (!operationCode || !String(operationCode).startsWith('video.')) return false
-  if (!Array.isArray(inputAssets) || inputAssets.length === 0) return false
-  const message = String(error.message || '').toLowerCase()
-  const responseMessage = String(error.response?.message || '').toLowerCase()
-  return /input asset role .*not allowed|invalidparameter/.test(`${message} ${responseMessage}`)
-}
-
-/** 判断视频提交是否因非法参数可降级到最小时长字段集。 */
-function shouldDropVideoParamsForOperationError(error, operationCode) {
-  if (!(error instanceof BusinessApiError)) return false
-  if (!operationCode || !String(operationCode).startsWith('video.')) return false
-  const message = String(error.message || '').toLowerCase()
-  const responseMessage = String(error.response?.message || '').toLowerCase()
-  return /invalidparameter/.test(`${message} ${responseMessage}`)
-}
-
-/** 视频 provider 拒绝扩展参数时，只保留 duration/seconds 这类基础时长字段。 */
-function simplifyVideoTaskParams(params) {
-  if (!params || typeof params !== 'object' || Array.isArray(params)) {
-    return params
-  }
-  const payload = {}
-  if (Object.prototype.hasOwnProperty.call(params, 'duration')) {
-    payload.duration = params.duration
-  }
-  if (Object.prototype.hasOwnProperty.call(params, 'seconds')) {
-    payload.seconds = params.seconds
-  }
-  return payload
 }
 
 /** 将多段消息内容归一化为后端 Responses 端点可接受的单文本 content。 */
@@ -1038,7 +989,7 @@ function normalizeResponseMessages(messages) {
 }
 
 /** 解析调用方指定的模型详情，查询失败时保留 ID 交由正式提交返回真实错误。 */
-async function resolveExplicitTaskModel({ modelVersionId, modelVersion, capability, operationCode }) {
+async function resolveExplicitTaskModel({ modelVersionId, modelVersion, capability, operationCode, workspaceId }) {
   if (modelVersion && typeof modelVersion === 'object') {
     return modelVersion
   }
@@ -1051,7 +1002,7 @@ async function resolveExplicitTaskModel({ modelVersionId, modelVersion, capabili
 
   if (modelId > 0) {
     try {
-      const models = await listAiModels({ capability, operationCode })
+      const models = await listAiModels({ capability, operationCode, plan: '', workspaceId })
       const model = Array.isArray(models) ? models.find((item) => Number(item?.id || 0) === modelId) : null
 
       if (model) {
@@ -1076,10 +1027,12 @@ function submitAiResponse({
   inputAssets,
   params,
   stream = false,
+  signal,
 }: any) {
   const normalizedMessages = normalizeResponseMessages(messages)
   return requestJson(`/api/v1/ai/responses${stream ? '?stream=true' : ''}`, {
     method: 'POST',
+    signal,
     // 流式响应由调用方主动取消；非流式 AI 响应需要比普通接口更长的等待窗口。
     timeoutMs: stream ? 0 : LONG_RUNNING_API_REQUEST_TIMEOUT_MS,
     headers: {
