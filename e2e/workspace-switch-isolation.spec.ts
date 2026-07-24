@@ -21,7 +21,7 @@ async function switchWorkspaceThroughUi(page: Page, workspaceName: string) {
   await userPanel.getByRole('button', { name: workspaceName, exact: true }).click()
 }
 
-async function waitForEditorStartupRequests(api: StrictApiState, workspaceId: number) {
+async function waitForEditorStartupRequests(api: StrictApiState, workspaceId: number, minimumModelRequests = 2) {
   await expect
     .poll(
       () =>
@@ -29,7 +29,7 @@ async function waitForEditorStartupRequests(api: StrictApiState, workspaceId: nu
           .length,
       { message: `编辑器未完成空间 ${workspaceId} 的模型能力初始化` },
     )
-    .toBeGreaterThanOrEqual(2)
+    .toBeGreaterThanOrEqual(minimumModelRequests)
 }
 
 function expectPostSwitchScope(api: StrictApiState, requestIndex: number, targetWorkspaceId: number) {
@@ -129,10 +129,13 @@ test.describe('创作页空间切换隔离', () => {
       })
 
       await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}`)
+      const resumeGeneration = page.getByRole('button', { name: '返回下一步' })
+      await expect(resumeGeneration).toBeVisible({ timeout: 30_000 })
+      await resumeGeneration.click()
       await expect(page.getByRole('button', { name: `项目 /${scenario.oldProjectName}` })).toBeVisible({
         timeout: 30_000,
       })
-      await waitForEditorStartupRequests(api, scenario.sourceWorkspaceId)
+      await waitForEditorStartupRequests(api, scenario.sourceWorkspaceId, 1)
       const requestIndex = api.seen.length
 
       await switchWorkspaceThroughUi(page, scenario.targetWorkspaceName)
