@@ -328,11 +328,10 @@ test.describe('已认证关键路由与读取链路', () => {
 
     await page.goto('/smart')
     await page.getByRole('tab', { name: '制作图片' }).click()
-    const entryModelTrigger = page.getByRole('button', { name: '生成模型，0/2 已选择' })
+    const entryModelTrigger = page.getByRole('button', { name: '生成模型，0/1 已选择' })
     await expect(entryModelTrigger).toBeVisible()
     await entryModelTrigger.click()
     await page.getByRole('combobox', { name: '文生图模型' }).selectOption('9901')
-    await page.getByRole('combobox', { name: '图生图模型' }).selectOption('9902')
     await page.getByRole('button', { name: '关闭模型选择' }).click()
     await page.getByRole('button', { name: '生成图片数量' }).click()
     await page.getByRole('option', { name: '3张' }).click()
@@ -477,6 +476,9 @@ test.describe('已认证关键路由与读取链路', () => {
     await expect(page.getByRole('button', { name: /^生成模型，/ })).toBeVisible({ timeout: 30_000 })
     await page.goto(`/hot-copy/${HOT_COPY_PROJECT_ID}`)
 
+    const resumeGeneration = page.getByRole('button', { name: '返回下一步' })
+    await expect(resumeGeneration).toBeVisible({ timeout: 30_000 })
+    await resumeGeneration.click()
     await expect(page.getByText('/E2E 爆款项目', { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(page.getByText('已完成', { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)

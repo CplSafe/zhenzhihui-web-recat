@@ -8289,6 +8289,19 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
     const initialOperation: GenerationOperationCode =
       meta.mode === 'video' ? 'responses.multimodal' : getImageGenerationOperationCode(entryReferenceImageCount)
     if (!requireGenerationModel(initialOperation, meta.generationModels)) return false
+    let durableMeta = meta
+    if (meta.mode === 'image') {
+      const generationModels = { ...(meta.generationModels || {}) }
+      for (const operationCode of ['image.text_to_image', 'image.image_to_image'] as const) {
+        if (generationModels[operationCode]) continue
+        const fallback = generationModelCatalog.groups
+          .flatMap((group) => group.operationGroups)
+          .find((group) => group.operationCode === operationCode)
+          ?.models.find((model) => !model.unavailableReason)
+        if (fallback) generationModels[operationCode] = fallback.modelVersionId
+      }
+      durableMeta = { ...meta, generationModels }
+    }
     // 从已有图片项目返回入口后切到「制作视频」时，必须先 fork 新会话，不能覆盖当前图片项目。
     if (entryMeta?.mode === 'image' && meta.mode === 'video' && Number(projectIdRef.current || 0) > 0) {
       const sourceWorkspaceId = Number(workspaceIdRef.current || workspaceId || 0) || 0
@@ -8326,7 +8339,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       })
       return true
     }
-    return startCreation(req, meta)
+    return startCreation(req, durableMeta)
   }
   const startCreation = async (req: string, meta: EntryMeta): Promise<boolean> => {
     if (creationStartingRef.current) return false

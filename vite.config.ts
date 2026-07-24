@@ -44,6 +44,14 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       target: 'safari13',
+      rollupOptions: {
+        output: {
+          // Merge only tiny chunks that share the same loading boundary. This
+          // keeps route-level lazy loading intact while avoiding dozens of
+          // separate gzip streams and import wrappers in the production build.
+          experimentalMinChunkSize: 6_000,
+        },
+      },
     },
     resolve: {
       alias: {
