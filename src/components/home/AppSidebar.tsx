@@ -16,6 +16,8 @@ import projectsIcon from '@/assets/sidebar/projects.svg'
 import projectsActiveIcon from '@/assets/sidebar/projects-active.svg'
 import resourcesIcon from '@/assets/sidebar/resources.svg'
 import resourcesActiveIcon from '@/assets/sidebar/resources-active.svg'
+import distributionIcon from '@/assets/distribution/direct-invite.svg'
+import { useDistributionAccess } from '@/composables/useDistributionAccess'
 import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
 import SidebarTeamGroup from './SidebarTeamGroup'
@@ -62,6 +64,7 @@ const GROUPS: SidebarGroup[] = [
     items: [
       { key: 'projects', label: '项目管理', icon: projectsIcon, activeIcon: projectsActiveIcon, iconSize: 14 },
       { key: 'resources', label: '我的素材', icon: resourcesIcon, activeIcon: resourcesActiveIcon, iconSize: 14 },
+      { key: 'distribution', label: '邀请返利', icon: distributionIcon, iconSize: 16 },
     ],
   },
 ]
@@ -73,6 +76,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
   // 桌面端收起态:跨页面保持,放全局 ui store。
   const collapsed = useUiStore((s) => s.sidebarCollapsed)
   const toggleCollapsed = useUiStore((s) => s.toggleSidebarCollapsed)
+  const { isDistributor } = useDistributionAccess()
 
   const go = (key: string) => {
     onNavigate?.(key)
@@ -181,7 +185,10 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
           {GROUPS.slice(0, 3).map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>
-              {group.items.filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key)).map(renderItem)}
+              {group.items
+                .filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key))
+                .filter((item) => item.key !== 'distribution' || isDistributor)
+                .map(renderItem)}
             </div>
           ))}
 
@@ -191,7 +198,10 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
           {GROUPS.slice(3).map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>
-              {group.items.filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key)).map(renderItem)}
+              {group.items
+                .filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key))
+                .filter((item) => item.key !== 'distribution' || isDistributor)
+                .map(renderItem)}
             </div>
           ))}
         </nav>

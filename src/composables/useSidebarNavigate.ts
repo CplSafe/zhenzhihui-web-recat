@@ -15,6 +15,7 @@ const ROUTE_MAP: Record<string, string> = {
   projects: '/projects',
   resources: '/resources',
   templates: '/templates',
+  distribution: '/distribution',
 }
 
 /** 返回侧边栏统一导航处理器，未开放入口改为展示全局提示。 */

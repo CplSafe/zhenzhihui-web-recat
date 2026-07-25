@@ -2322,6 +2322,47 @@ export async function getReferralMyCode(): Promise<string> {
   return String(data?.code || '').trim()
 }
 
+/** 读取当前营销人员的分销概览；非营销人员由服务端返回 403。 */
+export function getDistributionOverview({ signal }: { signal?: AbortSignal } = {}) {
+  return requestJson('/api/v1/distribution/me', { signal })
+}
+
+/** 将分销筛选条件转换为后端通用的 snake_case 查询参数。 */
+function buildDistributionQuery(params: any = {}): string {
+  const query = new URLSearchParams()
+  const fields: Array<[string, any]> = [
+    ['keyword', params.keyword],
+    ['relationship', params.relationship],
+    ['distributor_id', params.distributorId],
+    ['status', params.status],
+    ['start_time', params.startTime],
+    ['end_time', params.endTime],
+    ['offset', params.offset],
+    ['limit', params.limit],
+  ]
+  fields.forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      query.set(key, String(value))
+    }
+  })
+  const suffix = query.toString()
+  return suffix ? `?${suffix}` : ''
+}
+
+/** 分页读取当前营销人员的邀请关系。 */
+export function listDistributionInvitees(params: any = {}) {
+  return requestJson(`/api/v1/distribution/invitees${buildDistributionQuery(params)}`, {
+    signal: params.signal,
+  })
+}
+
+/** 分页读取客户付款与返佣明细。 */
+export function listDistributionCommissions(params: any = {}) {
+  return requestJson(`/api/v1/distribution/commissions${buildDistributionQuery(params)}`, {
+    signal: params.signal,
+  })
+}
+
 /** 局部修改项目标题/名称，不覆盖草稿其他内容。 */
 export function patchCreativeProject({ projectId, workspaceId, title, name }: any = {}) {
   const id = requirePositiveInteger(projectId, '项目 ID 无效')
