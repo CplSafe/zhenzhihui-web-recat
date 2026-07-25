@@ -82,6 +82,8 @@ const ProjectVideoDetailView = lazy(() => import('../views/ProjectVideoDetailVie
 const ResourceManagementView = lazy(() => import('../views/ResourceManagementView'))
 /** 团队数据看板路由组件。 */
 const SpaceDashboardView = lazy(() => import('../views/SpaceDashboardView'))
+/** 营销人员邀请收益明细页。 */
+const DistributionView = lazy(() => import('../views/DistributionView'))
 
 /** 智能成片路由 state 中使用的一次性建项、重启和空间切换标记。 */
 interface SmartRouteState {
@@ -246,6 +248,7 @@ export const router = createBrowserRouter([
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
       { path: 'team', element: lazyPage(<SpaceDashboardView />) },
+      { path: 'distribution', element: lazyPage(<DistributionView />) },
       { path: '*', element: <Navigate to="/home" replace />, handle: { requiresAuth: false } },
     ],
   },
