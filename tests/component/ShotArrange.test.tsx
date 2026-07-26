@@ -55,6 +55,7 @@ vi.mock('@/components/smart/ShotEditDialog', () => ({
     props.open ? (
       <section aria-label="分镜编辑弹窗测试替身">
         <output aria-label="弹窗模式">{props.mode}</output>
+        <output aria-label="风格参考图">{props.styleReferenceUrl || ''}</output>
         <button
           type="button"
           onClick={() => void props.onUpload?.(new File(['image'], 'reference.png', { type: 'image/png' }))}
@@ -217,18 +218,23 @@ describe('ShotArrange orchestration', () => {
     expect(screen.queryByLabelText('分镜编辑弹窗测试替身')).not.toBeInTheDocument()
   })
 
-  it('auto-generates each inserted shot once and remains usable after rejected generation', async () => {
+  it('opens the insert input and includes the previous shot as an image-to-image style reference', async () => {
     const user = userEvent.setup()
-    const onGenerateShot = vi.fn().mockRejectedValue(new Error('生成服务暂不可用'))
+    const onGenerateShot = vi.fn().mockResolvedValue(true)
     render(<ControlledArrange initialShots={[makeShot('shot-1')]} onGenerateShot={onGenerateShot} />)
 
     await user.click(screen.getByRole('button', { name: '末尾插入镜头' }))
-    await waitFor(() => expect(onGenerateShot).toHaveBeenCalledTimes(1))
-    expect(onGenerateShot.mock.calls[0][1]).toEqual({ mode: 'insert', intent: '', uploadRefUrls: [] })
+    expect(onGenerateShot).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('弹窗模式')).toHaveTextContent('insert')
+    expect(screen.getByLabelText('风格参考图')).toHaveTextContent('https://cdn.example.com/shot-1.png')
 
-    await user.click(screen.getByRole('button', { name: '末尾插入镜头' }))
-    await waitFor(() => expect(onGenerateShot).toHaveBeenCalledTimes(2))
-    expect(onGenerateShot.mock.calls[1][0].id).not.toBe(onGenerateShot.mock.calls[0][0].id)
+    await user.click(screen.getByRole('button', { name: '生成分镜' }))
+    await waitFor(() => expect(onGenerateShot).toHaveBeenCalledOnce())
+    expect(onGenerateShot.mock.calls[0][1]).toEqual({
+      mode: 'insert',
+      intent: '新描述',
+      uploadRefUrls: ['https://cdn.example.com/shot-1.png', 'https://cdn.example.com/reference.png'],
+    })
   })
 
   it('opens and closes the preview lightbox through accessible controls', async () => {

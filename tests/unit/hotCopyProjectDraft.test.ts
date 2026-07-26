@@ -86,6 +86,17 @@ describe('HotCopy project binding and restore state', () => {
     expect(resolveHotCopySubmissionProjectId({ routeProjectId: 'invalid' })).toBe(0)
   })
 
+  it('never reuses a bound project for an explicit new-video session', () => {
+    expect(
+      resolveHotCopySubmissionProjectId({
+        routeProjectId: 171,
+        restartProjectId: 172,
+        boundProjectId: 173,
+        forceNewProject: true,
+      }),
+    ).toBe(0)
+  })
+
   it('restores an explicitly unfinished entry draft without starting a provider operation', () => {
     expect(
       resolveHotCopyRestoredStarted(

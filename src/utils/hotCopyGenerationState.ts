@@ -70,6 +70,17 @@ export interface HotCopyPaidTaskCheckpointResult {
 /** 两阶段保存中，创作配置预保存与最终任务恢复占位的写入模式。 */
 export type HotCopyGenerationCheckpointMode = 'creative-only' | 'task-progress'
 
+/**
+ * 新建项目在首个供应商任务建立前由本次生成独占，素材上传和脱敏产生的创作字段变化属于同一事务。
+ * 已有项目仍只允许一次显式初始化，随后恢复严格的内容指纹保护。
+ */
+export function canHotCopyJobReplaceCreativeContent(input: {
+  allowCreativeReplace?: boolean
+  ownsNewProject?: boolean
+}): boolean {
+  return input.allowCreativeReplace === true || input.ownsNewProject === true
+}
+
 /** 付费任务能否继续提交的显式判定。 */
 export type HotCopyPaidTaskCheckpointDecision =
   | { ok: true }

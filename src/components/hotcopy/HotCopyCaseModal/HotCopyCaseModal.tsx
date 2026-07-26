@@ -7,10 +7,9 @@
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import remakeImg from '@/assets/hotcopy-cases/remake.jpg'
-import replicaImg from '@/assets/hotcopy-cases/replica.jpg'
 
-/** 当前展示的案例类型，对应“同款翻拍”和“精准复刻”两个入口。 */
-export type HotCopyCaseTab = 'remake' | 'replica'
+/** 当前仅开放“同款翻拍”案例。 */
+export type HotCopyCaseTab = 'remake'
 
 /** 在 Portal 中展示对应案例整图，并统一处理焦点、Esc、遮罩和关闭按钮。 */
 export default function HotCopyCaseModal({ tab, onClose }: { tab: HotCopyCaseTab | null; onClose: () => void }) {
@@ -25,7 +24,7 @@ export default function HotCopyCaseModal({ tab, onClose }: { tab: HotCopyCaseTab
   }, [tab, onClose])
 
   if (!tab) return null
-  const src = tab === 'replica' ? replicaImg : remakeImg
+  const src = remakeImg
 
   return createPortal(
     <div
@@ -45,7 +44,7 @@ export default function HotCopyCaseModal({ tab, onClose }: { tab: HotCopyCaseTab
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={tab === 'replica' ? '精准复刻案例' : '同款翻拍案例'}
+        aria-label="同款翻拍案例"
         tabIndex={-1}
         style={{
           position: 'relative',
@@ -58,7 +57,7 @@ export default function HotCopyCaseModal({ tab, onClose }: { tab: HotCopyCaseTab
       >
         <img
           src={src}
-          alt={tab === 'replica' ? '精准复刻案例' : '同款翻拍案例'}
+          alt="同款翻拍案例"
           style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
         />
         {/* 右上角 × 命中区:精确盖在图内的关闭图标上(Figma 中 × 中心约在弹窗 96.25% / 7.14% 处) */}

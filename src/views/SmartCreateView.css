@@ -39,6 +39,14 @@
   min-width: 0;
 }
 
+.smart__flow-content {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .smart__image-workspace {
   display: flex;
   min-width: 0;
@@ -54,7 +62,8 @@
 /* 创建新视频:流程区最右上(复用入口「制作新视频」样式),点击重置为全新入口、重新走一遍 */
 .smart__newvideo {
   position: absolute;
-  top: 68px;
+  /* 跟随右侧流程内容区定位；任务管理展开时不再以外层整页为参照。 */
+  top: 20px;
   right: 24px;
   z-index: 5;
   padding: 7px 16px;

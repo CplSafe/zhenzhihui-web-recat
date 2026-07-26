@@ -65,6 +65,9 @@ export interface FaceBlurResult {
   ok: boolean
   /** 已知的“未检测到人脸”业务结果；调用方应直接复用原图。 */
   noFace?: boolean
+  /** 便于调用方区分配置错误、暂时服务错误和无有效输出。 */
+  errorCode?: 'MODEL_UNAVAILABLE' | 'INVALID_INPUT' | 'TASK_FAILED' | 'OUTPUT_MISSING'
+  retryable?: boolean
   /** 本次未请求后端，直接复用同 workspace + asset 的检测结果。 */
   cached?: boolean
   /** 调试:模型/输入/输出/状态/错误,供「脱敏调试」弹窗展示 */
@@ -100,6 +103,20 @@ async function executeFaceBlur(args: {
   }
   try {
     if (!args.workspaceId || !args.assetId) throw new Error('缺少工作空间或图片 asset_id')
+    if (!model) {
+      return {
+        url: '',
+        assetId: 0,
+        ok: false,
+        errorCode: 'MODEL_UNAVAILABLE',
+        retryable: false,
+        debug: {
+          ...debug,
+          status: 'model_unavailable',
+          error: '当前工作空间未启用人脸脱敏模型，请联系管理员配置 image.face_detect',
+        },
+      }
+    }
     // 对齐 Vue 版:无条件传 modelVersionId,走 createAiTask 的显式模型分支(resolveExplicitTaskModel),
     // 绕过 plan 候选 + pickModel —— 避免套餐/能力不匹配时误报"没有启用支持 image.face_detect 的模型"。
     // 不再传 capability / modelPlanCandidates(那会把任务推向 plan 分支)。
@@ -120,7 +137,16 @@ async function executeFaceBlur(args: {
       url = await getAssetDownloadUrl({ workspaceId: args.workspaceId, assetId: outId }).catch(() => '')
     debug.outUrl = url
     debug.outAssetId = outId
-    if (!url || !outId) throw new Error('脱敏任务未返回结果')
+    if (!url || !outId) {
+      return {
+        url: '',
+        assetId: 0,
+        ok: false,
+        errorCode: 'OUTPUT_MISSING',
+        retryable: true,
+        debug: { ...debug, status: 'output_missing', error: '脱敏任务未返回可用的图片资源' },
+      }
+    }
     return { url, assetId: outId, ok: true, debug }
   } catch (e: any) {
     debug.error = e?.message || String(e)
@@ -128,7 +154,15 @@ async function executeFaceBlur(args: {
       debug.status = 'no_face'
       return { url: '', assetId: 0, ok: false, noFace: true, debug }
     }
-    return { url: '', assetId: 0, ok: false, debug }
+    const invalidInput = /缺少工作空间|asset_id/i.test(debug.error)
+    return {
+      url: '',
+      assetId: 0,
+      ok: false,
+      errorCode: invalidInput ? 'INVALID_INPUT' : 'TASK_FAILED',
+      retryable: !invalidInput,
+      debug,
+    }
   }
 }
 

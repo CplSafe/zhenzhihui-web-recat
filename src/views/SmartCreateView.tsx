@@ -82,6 +82,7 @@ import {
 } from '@/api/smartVideo'
 import { blurFacesOnAsset, isNoFaceDetectedError } from '@/api/smartFaceBlur'
 import { readVideoDurationSec } from '@/utils/videoDuration'
+import { getSmartMarketingRecoveryKey } from '@/utils/smartMarketingRecovery'
 import {
   createCreativeProject,
   patchCreativeProject,
@@ -1494,13 +1495,11 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
     nameAbortRef.current = null
     autoNameResumeKeyRef.current = ''
     setNaming(false)
-    cancelMarketingRequests()
-    cancelSummaryRequest()
     return () => {
       insertTextRequestRef.current?.controller.abort()
       nameAbortRef.current?.abort()
     }
-  }, [cancelMarketingRequests, cancelSummaryRequest, routeId])
+  }, [routeId])
   useEffect(() => {
     const ws = Number(workspaceId || 0)
     const pid = Number(projectId || 0)
@@ -7624,7 +7623,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
 
   // 选中 SKILL:把「想法 + 素材」交给技能包,自动拆解出营销思路建议(只读展示在营销思路拆解步)。
   // 此时 meta.images 多为入口刚转好的 dataURL(尚未落库),正好可直接喂多模态视觉模型。
-  const runSkillBreakdown = async (req: string, meta: EntryMeta) => {
+  const runSkillBreakdown = useLatestCallback(async (req: string, meta: EntryMeta) => {
     if (!meta.skill) return
     const modelSelection = requireGenerationModel('responses.multimodal', meta.generationModels)
     if (!modelSelection) {
@@ -7661,16 +7660,27 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
     setMarketingData(null)
     try {
       // 产品信息:用户文字 + 全部上传素材(最多 9 张,与入口上限一致)一并喂入(方案 A 多模态),结构化产出
-      const data = await skillBreakdownStructured(
-        {
-          skill: meta.skill,
-          requirement: req,
-          images: (meta.images || []).slice(0, 9),
-          modelVersionId: modelSelection.modelVersionId,
-          requestContext: responseRequestContextFor(modelSelection, executionWorkspaceId),
-        },
-        controller.signal,
-      )
+      let data: MarketingBreakdownData | null = null
+      let lastError: unknown = null
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          data = await skillBreakdownStructured(
+            {
+              skill: meta.skill,
+              requirement: req,
+              images: (meta.images || []).slice(0, 9),
+              modelVersionId: modelSelection.modelVersionId,
+              requestContext: responseRequestContextFor(modelSelection, executionWorkspaceId),
+            },
+            controller.signal,
+          )
+          break
+        } catch (error) {
+          if (controller.signal.aborted || (error as any)?.name === 'AbortError' || !isCurrentRun()) return
+          lastError = error
+        }
+      }
+      if (!data) throw lastError || new Error('营销思路拆解失败，请重试')
       if (!isCurrentRun()) return
       setMarketingData(data)
       setMarketingText(marketingDataToText(data)) // 派生纯文本,供脚本生成/持久化/续接判断复用
@@ -7683,7 +7693,40 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         setMarketingLoading(false)
       }
     }
-  }
+  })
+
+  const marketingRecoveryKeyRef = useRef('')
+  useEffect(() => {
+    const recoveryKey = getSmartMarketingRecoveryKey({
+      applied: appliedRef.current,
+      started,
+      marketingOpen,
+      marketingLoading,
+      hasMarketingData: Boolean(marketingData),
+      hasMarketingError: Boolean(marketingError),
+      workspaceId: Number(workspaceIdRef.current || workspaceId || 0),
+      projectId: Number(projectIdRef.current || projectId || 0),
+      routeSessionToken,
+      skill: entryMeta?.skill || '',
+      requirement,
+      imageCount: entryMeta?.images?.length || 0,
+    })
+    if (!recoveryKey || marketingRecoveryKeyRef.current === recoveryKey || !entryMeta) return
+    marketingRecoveryKeyRef.current = recoveryKey
+    void runSkillBreakdown(requirement, entryMeta)
+  }, [
+    entryMeta,
+    marketingData,
+    marketingError,
+    marketingLoading,
+    marketingOpen,
+    projectId,
+    requirement,
+    routeSessionToken,
+    runSkillBreakdown,
+    started,
+    workspaceId,
+  ])
 
   // marketingText 始终由 marketingData 派生(供脚本生成/持久化复用)。放 effect 里,
   // 不在事件处理中手动同步,避免和「换一批」等更新方式不一致。
@@ -9980,267 +10023,280 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
             </div>
           </div>
         ) : (
-          <>
-            {/* 创建新视频:固定在流程区最右上,点击重置为全新入口、重新走一遍生成流程 */}
-            <button type="button" className="smart__newvideo" onClick={() => resetToNewVideo('video')}>
-              创建新视频
-            </button>
-            {/* 进度条:用了 SKILL 时在最前面加一步「营销思路拆解」,索引整体后移 1 */}
-            <div className="smart__progress" data-guide="smart-stepbar">
-              <StepProgress
-                steps={usedSkill ? [MARKETING_STEP, ...STEPS] : STEPS}
-                current={usedSkill ? (marketingOpen ? 0 : step + 1) : step}
-                clickableMax={usedSkill ? maxReached + 1 : maxReached}
-                statuses={(() => {
-                  // 4 个流程步的子状态:脚本有分镜 / 已进入镜头编排(素材就绪) / 有任一分镜图 / 有整片视频
-                  const hasVideoOutput = Boolean(fullVideo.url || fullVideo.assetId || videoVersions.length)
-                  const hasShotImage = shots.some((s) => s.image || Number(s.imageAssetId || 0) > 0)
-                  // 上游新增/修改后 maxReached 会回退；旧分镜图/成片不能让后续步骤继续显示为可跳转的“已完成”。
-                  const done = [
-                    shots.length > 0 || hasVideoOutput,
-                    maxReached >= 1 && (maxReached >= 2 || hasShotImage || hasVideoOutput),
-                    maxReached >= 2 && (hasShotImage || hasVideoOutput),
-                    maxReached >= 3 && hasVideoOutput,
-                  ]
-                  const running = [scriptLoading || insertTextGenerating, false, shotGenRunning, actualVideoGenerating]
-                  const flow = STEPS.map((_, i) =>
-                    running[i]
-                      ? ACTIVE_STATUS[i]
-                      : done[i]
-                        ? '已完成'
-                        : !marketingOpen && i === step
+          <div className="smart__entry-with-tasks">
+            <TaskCenterDrawer scope="smart" />
+            <div className="smart__entry-content">
+              <div className="smart__flow-content">
+                {/* 创建新视频:固定在流程区最右上,点击重置为全新入口、重新走一遍生成流程 */}
+                <button type="button" className="smart__newvideo" onClick={() => resetToNewVideo('video')}>
+                  创建新视频
+                </button>
+                {/* 进度条:用了 SKILL 时在最前面加一步「营销思路拆解」,索引整体后移 1 */}
+                <div className="smart__progress" data-guide="smart-stepbar">
+                  <StepProgress
+                    steps={usedSkill ? [MARKETING_STEP, ...STEPS] : STEPS}
+                    current={usedSkill ? (marketingOpen ? 0 : step + 1) : step}
+                    clickableMax={usedSkill ? maxReached + 1 : maxReached}
+                    statuses={(() => {
+                      // 4 个流程步的子状态:脚本有分镜 / 已进入镜头编排(素材就绪) / 有任一分镜图 / 有整片视频
+                      const hasVideoOutput = Boolean(fullVideo.url || fullVideo.assetId || videoVersions.length)
+                      const hasShotImage = shots.some((s) => s.image || Number(s.imageAssetId || 0) > 0)
+                      // 上游新增/修改后 maxReached 会回退；旧分镜图/成片不能让后续步骤继续显示为可跳转的“已完成”。
+                      const done = [
+                        shots.length > 0 || hasVideoOutput,
+                        maxReached >= 1 && (maxReached >= 2 || hasShotImage || hasVideoOutput),
+                        maxReached >= 2 && (hasShotImage || hasVideoOutput),
+                        maxReached >= 3 && hasVideoOutput,
+                      ]
+                      const running = [
+                        scriptLoading || insertTextGenerating,
+                        false,
+                        shotGenRunning,
+                        actualVideoGenerating,
+                      ]
+                      const flow = STEPS.map((_, i) =>
+                        running[i]
                           ? ACTIVE_STATUS[i]
-                          : '待生成',
-                  )
-                  if (!usedSkill) return flow
-                  const mkt = marketingLoading ? '思路拆解中' : marketingText ? '已完成' : '待生成'
-                  return [mkt, ...flow]
-                })()}
-                onStepClick={(i) => {
-                  const targetStep = usedSkill ? i - 1 : i
-                  if (insertTextRequestRef.current && targetStep !== step) {
-                    showToast('请等待新增分镜的 AI 分镜词生成完成', 'error')
-                    return
-                  }
-                  if (targetStep > maxReached) {
-                    showToast('请先完成当前步骤，再进入后续流程', 'error')
-                    return
-                  }
-                  if (!usedSkill) return goStep(i)
-                  if (i === 0) setMarketingOpen(true)
-                  else {
-                    setMarketingOpen(false)
-                    goStep(i - 1)
-                  }
-                }}
-              />
-            </div>
-
-            {/* 项目名 + 改名:单独一行,内层与正文同宽居中(1240),使项目名与「我的描述」左缘对齐 */}
-            <div className="smart__projbar">
-              <div className="smart__projbar-inner">
-                {editingName ? (
-                  <input
-                    ref={nameInputRef}
-                    className="smart__name-input"
-                    value={draftName}
-                    autoFocus
-                    onChange={(e) => setDraftName(e.target.value)}
-                    onBlur={commitRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitRename()
-                      if (e.key === 'Escape') setEditingName(false)
+                          : done[i]
+                            ? '已完成'
+                            : !marketingOpen && i === step
+                              ? ACTIVE_STATUS[i]
+                              : '待生成',
+                      )
+                      if (!usedSkill) return flow
+                      const mkt = marketingLoading ? '思路拆解中' : marketingText ? '已完成' : '待生成'
+                      return [mkt, ...flow]
+                    })()}
+                    onStepClick={(i) => {
+                      const targetStep = usedSkill ? i - 1 : i
+                      if (insertTextRequestRef.current && targetStep !== step) {
+                        showToast('请等待新增分镜的 AI 分镜词生成完成', 'error')
+                        return
+                      }
+                      if (targetStep > maxReached) {
+                        showToast('请先完成当前步骤，再进入后续流程', 'error')
+                        return
+                      }
+                      if (!usedSkill) return goStep(i)
+                      if (i === 0) setMarketingOpen(true)
+                      else {
+                        setMarketingOpen(false)
+                        goStep(i - 1)
+                      }
                     }}
                   />
-                ) : (
-                  <button type="button" className="smart__name" onClick={startRename} title="点击修改名称">
-                    <span className="smart__name-text">{projectName}</span>
-                    {naming && <span className="smart__name-naming">AI 命名中…</span>}
-                    <img className="smart__name-edit" src={iconProjectEdit} alt="" width={20} height={20} />
-                  </button>
-                )}
-                {/* 本项目钉在与当前活跃空间不同的空间:提示保存/计费走该空间(顶栏钱包显示的是活跃空间) */}
-                {pinnedWsName && (
-                  <span className="smart__name-space" title={`本项目属于「${pinnedWsName}」空间,保存与计费走该空间`}>
-                    空间：{pinnedWsName}
-                  </span>
-                )}
-                <DraftSaveIndicator status={draftSaveStatus} onRetry={() => void retrySmartCloudSave()} />
-                {showGenerationModelSelection && (
-                  <GenerationModelDropdown
-                    groups={flowGenerationModelGroups}
-                    selected={entryMeta?.generationModels || {}}
-                    loading={generationModelCatalog.loading}
-                    error={generationModelCatalog.error}
-                    onChange={(groupKey, nextModelId, subgroupKey) =>
-                      void switchGenerationModel(groupKey, nextModelId, subgroupKey)
-                    }
-                    onRetry={generationModelCatalog.reload}
-                    context="generation"
-                    locked={generationModelSwitchLocked}
-                    lockedReason={generationModelSwitchLockedReason}
-                    conflicts={flowGenerationModelConflicts}
-                    className="smart__generation-model"
-                  />
+                </div>
+
+                {/* 项目名 + 改名:单独一行,内层与正文同宽居中(1240),使项目名与「我的描述」左缘对齐 */}
+                <div className="smart__projbar">
+                  <div className="smart__projbar-inner">
+                    {editingName ? (
+                      <input
+                        ref={nameInputRef}
+                        className="smart__name-input"
+                        value={draftName}
+                        autoFocus
+                        onChange={(e) => setDraftName(e.target.value)}
+                        onBlur={commitRename}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') commitRename()
+                          if (e.key === 'Escape') setEditingName(false)
+                        }}
+                      />
+                    ) : (
+                      <button type="button" className="smart__name" onClick={startRename} title="点击修改名称">
+                        <span className="smart__name-text">{projectName}</span>
+                        {naming && <span className="smart__name-naming">AI 命名中…</span>}
+                        <img className="smart__name-edit" src={iconProjectEdit} alt="" width={20} height={20} />
+                      </button>
+                    )}
+                    {/* 本项目钉在与当前活跃空间不同的空间:提示保存/计费走该空间(顶栏钱包显示的是活跃空间) */}
+                    {pinnedWsName && (
+                      <span
+                        className="smart__name-space"
+                        title={`本项目属于「${pinnedWsName}」空间,保存与计费走该空间`}
+                      >
+                        空间：{pinnedWsName}
+                      </span>
+                    )}
+                    <DraftSaveIndicator status={draftSaveStatus} onRetry={() => void retrySmartCloudSave()} />
+                    {showGenerationModelSelection && (
+                      <GenerationModelDropdown
+                        groups={flowGenerationModelGroups}
+                        selected={entryMeta?.generationModels || {}}
+                        loading={generationModelCatalog.loading}
+                        error={generationModelCatalog.error}
+                        onChange={(groupKey, nextModelId, subgroupKey) =>
+                          void switchGenerationModel(groupKey, nextModelId, subgroupKey)
+                        }
+                        onRetry={generationModelCatalog.reload}
+                        context="generation"
+                        locked={generationModelSwitchLocked}
+                        lockedReason={generationModelSwitchLockedReason}
+                        conflicts={flowGenerationModelConflicts}
+                        className="smart__generation-model"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* 步骤内容:营销思路拆解步 / 现有流程步 */}
+                <div className="smart__body">
+                  <Suspense fallback={<LazyEditorFallback />}>
+                    {marketingOpen ? renderMarketingBody() : renderStepBody()}
+                  </Suspense>
+                </div>
+
+                {/* 底栏:上一步/下一步 导航箭头 + 各步主操作按钮(整组居中)。
+                视频生成步(step3)总按钮在中间 VideoStage 内,这里不渲染。 */}
+                {!marketingOpen && step !== 3 && (
+                  <footer className={`smart__footer ${step === 2 ? 'smart__footer--center' : 'smart__footer--right'}`}>
+                    {/* 前瞻预估:当前步显示「下一步生成」要花多少(估到价才显示) */}
+                    {stepCost.estimate &&
+                      (() => {
+                        const insufficient =
+                          stepCost.estimate.canAfford === false ||
+                          stepCost.estimate.estimatedCost > stepCost.estimate.balance
+                        return (
+                          <div className="smart__cost">
+                            <span className={insufficient ? 'smart__cost--err' : undefined}>
+                              {step === 0
+                                ? `下一步准备素材 · ${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}`
+                                : step === 1
+                                  ? `下一步镜头编排 · ${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}`
+                                  : step === 2
+                                    ? '下一步生成视频 · 约 '
+                                    : stepCost.count > 1
+                                      ? `共 ${stepCost.count} 张约 `
+                                      : '约 '}
+                              {stepCost.estimate.estimatedCost} 积分 · 余额 {stepCost.estimate.balance} 积分
+                              {stepCost.estimate.perOne != null && step !== 2 && (
+                                <span className="smart__cost-per"> · 每加一张约 {stepCost.estimate.perOne} 积分</span>
+                              )}
+                              {insufficient && (
+                                <>
+                                  {' · 积分不足,'}
+                                  <button type="button" className="smart__cost-recharge" onClick={openMemberCenter}>
+                                    请前往充值积分
+                                  </button>
+                                </>
+                              )}
+                            </span>
+                          </div>
+                        )
+                      })()}
+                    <div className="smart__footer-inner" data-guide="smart-foot">
+                      {/* 上一步(悬停 tooltip:上一步) */}
+                      <button
+                        type="button"
+                        className="smart__nav-btn"
+                        data-guide="smart-foot-prev"
+                        onClick={goPrev}
+                        aria-label="上一步"
+                        data-tip="上一步"
+                      >
+                        <svg width="26" height="21" viewBox="0 0 29 23" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path
+                            d="M27.8881 22.0104L28.1187 21.8116C28.3625 21.6053 28.5088 21.4777 27.5336 17.4193C25.8513 10.3938 19.1616 5.85705 11.6728 5.18001V0L0 9.06596L11.6728 18.1319V12.95C16.5247 12.5824 20.7876 13.0063 23.6458 16.0708C25.0542 17.588 26.7515 20.585 27.1585 21.4684C27.2166 21.594 27.3217 21.8247 27.5786 21.911L27.8881 22.0104Z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      {/* 下一步:仅在已生成的步骤间导航;前沿置灰(悬停 tooltip:下一步) */}
+                      <button
+                        type="button"
+                        className="smart__nav-btn"
+                        data-guide="smart-foot-next"
+                        onClick={goNext}
+                        disabled={!canGoNext}
+                        aria-label="下一步"
+                        data-tip="下一步"
+                      >
+                        <svg width="27" height="27" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path
+                            d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      {/* 各步主操作按钮 */}
+                      {bottomButtons.map((b, bi) =>
+                        b.variant === 'split' ? (
+                          <span
+                            key={b.label}
+                            className="smart__btn-split"
+                            data-guide={bi === bottomButtons.length - 1 ? 'smart-foot-confirm' : undefined}
+                            title={b.disabled ? b.tip : undefined}
+                          >
+                            <button
+                              type="button"
+                              className="smart__btn-split--main"
+                              onClick={b.action}
+                              disabled={b.disabled}
+                            >
+                              {b.label}
+                            </button>
+                            <span className="smart__btn-split--sep" aria-hidden="true" />
+                            <button
+                              type="button"
+                              className="smart__btn-split--count"
+                              disabled={b.disabled}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSplitOpen((prev) => !prev)
+                              }}
+                            >
+                              <span>{b.splitCount ?? 1}个</span>
+                              <svg width="14" height="14" viewBox="0 0 12 12" fill="none" style={{ marginLeft: 4 }}>
+                                <path
+                                  d="M3 4.5L6 7.5L9 4.5"
+                                  stroke="currentColor"
+                                  strokeWidth="1.5"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </button>
+                            {splitOpen && (
+                              <span className="smart__btn-split--dropdown">
+                                {(b.splitCountOptions ?? [1, 2, 3]).map((n: number) => (
+                                  <button
+                                    key={n}
+                                    type="button"
+                                    className={`smart__btn-split--option${n === (b.splitCount ?? 1) ? ' is-active' : ''}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      b.onSplitCountChange?.(n)
+                                      setSplitOpen(false)
+                                    }}
+                                  >
+                                    {n}个
+                                  </button>
+                                ))}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <button
+                            key={b.label}
+                            type="button"
+                            className={`smart__btn smart__btn--${b.variant}`}
+                            data-guide={bi === bottomButtons.length - 1 ? 'smart-foot-confirm' : undefined}
+                            onClick={b.action}
+                            disabled={b.disabled}
+                            title={b.disabled ? b.tip : undefined}
+                          >
+                            {b.icon}
+                            {b.label}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  </footer>
                 )}
               </div>
             </div>
-
-            {/* 步骤内容:营销思路拆解步 / 现有流程步 */}
-            <div className="smart__body">
-              <Suspense fallback={<LazyEditorFallback />}>
-                {marketingOpen ? renderMarketingBody() : renderStepBody()}
-              </Suspense>
-            </div>
-
-            {/* 底栏:上一步/下一步 导航箭头 + 各步主操作按钮(整组居中)。
-                视频生成步(step3)总按钮在中间 VideoStage 内,这里不渲染。 */}
-            {!marketingOpen && step !== 3 && (
-              <footer className={`smart__footer ${step === 2 ? 'smart__footer--center' : 'smart__footer--right'}`}>
-                {/* 前瞻预估:当前步显示「下一步生成」要花多少(估到价才显示) */}
-                {stepCost.estimate &&
-                  (() => {
-                    const insufficient =
-                      stepCost.estimate.canAfford === false ||
-                      stepCost.estimate.estimatedCost > stepCost.estimate.balance
-                    return (
-                      <div className="smart__cost">
-                        <span className={insufficient ? 'smart__cost--err' : undefined}>
-                          {step === 0
-                            ? `下一步准备素材 · ${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}`
-                            : step === 1
-                              ? `下一步镜头编排 · ${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}`
-                              : step === 2
-                                ? '下一步生成视频 · 约 '
-                                : stepCost.count > 1
-                                  ? `共 ${stepCost.count} 张约 `
-                                  : '约 '}
-                          {stepCost.estimate.estimatedCost} 积分 · 余额 {stepCost.estimate.balance} 积分
-                          {stepCost.estimate.perOne != null && step !== 2 && (
-                            <span className="smart__cost-per"> · 每加一张约 {stepCost.estimate.perOne} 积分</span>
-                          )}
-                          {insufficient && (
-                            <>
-                              {' · 积分不足,'}
-                              <button type="button" className="smart__cost-recharge" onClick={openMemberCenter}>
-                                请前往充值积分
-                              </button>
-                            </>
-                          )}
-                        </span>
-                      </div>
-                    )
-                  })()}
-                <div className="smart__footer-inner" data-guide="smart-foot">
-                  {/* 上一步(悬停 tooltip:上一步) */}
-                  <button
-                    type="button"
-                    className="smart__nav-btn"
-                    data-guide="smart-foot-prev"
-                    onClick={goPrev}
-                    aria-label="上一步"
-                    data-tip="上一步"
-                  >
-                    <svg width="26" height="21" viewBox="0 0 29 23" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path
-                        d="M27.8881 22.0104L28.1187 21.8116C28.3625 21.6053 28.5088 21.4777 27.5336 17.4193C25.8513 10.3938 19.1616 5.85705 11.6728 5.18001V0L0 9.06596L11.6728 18.1319V12.95C16.5247 12.5824 20.7876 13.0063 23.6458 16.0708C25.0542 17.588 26.7515 20.585 27.1585 21.4684C27.2166 21.594 27.3217 21.8247 27.5786 21.911L27.8881 22.0104Z"
-                        fill="currentColor"
-                      />
-                    </svg>
-                  </button>
-                  {/* 下一步:仅在已生成的步骤间导航;前沿置灰(悬停 tooltip:下一步) */}
-                  <button
-                    type="button"
-                    className="smart__nav-btn"
-                    data-guide="smart-foot-next"
-                    onClick={goNext}
-                    disabled={!canGoNext}
-                    aria-label="下一步"
-                    data-tip="下一步"
-                  >
-                    <svg width="27" height="27" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path
-                        d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
-                        fill="currentColor"
-                      />
-                    </svg>
-                  </button>
-                  {/* 各步主操作按钮 */}
-                  {bottomButtons.map((b, bi) =>
-                    b.variant === 'split' ? (
-                      <span
-                        key={b.label}
-                        className="smart__btn-split"
-                        data-guide={bi === bottomButtons.length - 1 ? 'smart-foot-confirm' : undefined}
-                        title={b.disabled ? b.tip : undefined}
-                      >
-                        <button
-                          type="button"
-                          className="smart__btn-split--main"
-                          onClick={b.action}
-                          disabled={b.disabled}
-                        >
-                          {b.label}
-                        </button>
-                        <span className="smart__btn-split--sep" aria-hidden="true" />
-                        <button
-                          type="button"
-                          className="smart__btn-split--count"
-                          disabled={b.disabled}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setSplitOpen((prev) => !prev)
-                          }}
-                        >
-                          <span>{b.splitCount ?? 1}个</span>
-                          <svg width="14" height="14" viewBox="0 0 12 12" fill="none" style={{ marginLeft: 4 }}>
-                            <path
-                              d="M3 4.5L6 7.5L9 4.5"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </button>
-                        {splitOpen && (
-                          <span className="smart__btn-split--dropdown">
-                            {(b.splitCountOptions ?? [1, 2, 3]).map((n: number) => (
-                              <button
-                                key={n}
-                                type="button"
-                                className={`smart__btn-split--option${n === (b.splitCount ?? 1) ? ' is-active' : ''}`}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  b.onSplitCountChange?.(n)
-                                  setSplitOpen(false)
-                                }}
-                              >
-                                {n}个
-                              </button>
-                            ))}
-                          </span>
-                        )}
-                      </span>
-                    ) : (
-                      <button
-                        key={b.label}
-                        type="button"
-                        className={`smart__btn smart__btn--${b.variant}`}
-                        data-guide={bi === bottomButtons.length - 1 ? 'smart-foot-confirm' : undefined}
-                        onClick={b.action}
-                        disabled={b.disabled}
-                        title={b.disabled ? b.tip : undefined}
-                      >
-                        {b.icon}
-                        {b.label}
-                      </button>
-                    ),
-                  )}
-                </div>
-              </footer>
-            )}
-          </>
+          </div>
         )}
       </div>
 

@@ -170,6 +170,18 @@ describe('task-center store normalization and terminal transitions', () => {
     )
   })
 
+  it('removes a provisional task after it is rebound to a real project', () => {
+    useTaskCenterStore.getState().upsertTask(task({ scope: 'hot-copy', projectId: 0 }))
+    const provisionalId = buildTaskCenterId('hot-copy', 7, 0, 'generation-1')
+
+    expect(useTaskCenterStore.getState().tasks).toHaveLength(1)
+    useTaskCenterStore.getState().removeTask(provisionalId)
+    useTaskCenterStore.getState().upsertTask(task({ scope: 'hot-copy', projectId: 91 }))
+
+    expect(useTaskCenterStore.getState().tasks).toHaveLength(1)
+    expect(useTaskCenterStore.getState().tasks[0]?.id).toBe('hot-copy:7:91:generation-1')
+  })
+
   it('clears stale terminal output when the same generation is restarted', () => {
     useTaskCenterStore.getState().upsertTask(
       task({

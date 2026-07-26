@@ -733,15 +733,143 @@
   cursor: default;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 900px) {
+  .hotcopy__main {
+    padding: 48px 20px 88px;
+  }
+
+  .hotcopy__title {
+    margin-bottom: 28px;
+  }
+
+  .hotcopy__panel {
+    width: min(760px, 100%);
+  }
+
+  .hotcopy__newVideoBtn {
+    top: -44px;
+    right: 4px;
+  }
+
+  .hotcopy__tabs {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .hotcopy__tab {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
   .hotcopy__body {
     flex-direction: column;
+    gap: 18px;
   }
-  .hotcopy__tabs {
-    margin-left: 0;
+
+  .hotcopy__tiles {
+    width: 100%;
   }
-  .hotcopy__tab {
+
+  .hotcopy__tilewrap {
+    flex: 1 1 0;
     min-width: 0;
-    flex: 1;
+  }
+
+  .hotcopy__tile {
+    width: 100%;
+  }
+
+  .hotcopy__inputWrap {
+    width: 100%;
+    flex-basis: auto;
+  }
+
+  .hotcopy__bottom {
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+
+  .hotcopy__tools {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .hotcopy__main {
+    padding: 36px 14px 96px;
+  }
+
+  .hotcopy__title {
+    margin-bottom: 22px;
+    font-size: clamp(26px, 8vw, 34px);
+  }
+
+  .hotcopy__newVideoBtn {
+    position: static;
+    display: block;
+    margin: 0 4px 6px auto;
+    padding: 8px 4px;
+  }
+
+  .hotcopy__tabs {
+    gap: 4px;
+    padding: 4px 4px 24px;
+  }
+
+  .hotcopy__tab {
+    padding: 9px 10px;
+  }
+
+  .hotcopy__tab-name {
+    font-size: 15px;
+  }
+
+  .hotcopy__tab-sub {
+    font-size: 12px;
+  }
+
+  .hotcopy__card {
+    border-radius: 18px;
+    padding: 16px;
+  }
+
+  .hotcopy__tiles {
+    gap: 12px;
+  }
+
+  .hotcopy__tile {
+    height: 104px;
+  }
+
+  .hotcopy__tile-label {
+    font-size: 14px;
+  }
+
+  .hotcopy__inputHl,
+  .hotcopy__text {
+    font-size: 16px;
+  }
+
+  .hotcopy__bottom,
+  .hotcopy__sendArea {
+    width: 100%;
+  }
+
+  .hotcopy__sendArea {
+    justify-content: flex-end;
+    box-sizing: border-box;
+    padding-right: 64px;
+  }
+
+  .hotcopy__send--plain,
+  .hotcopy__regen {
+    min-height: 44px;
+  }
+
+  .hotcopy__resume-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }

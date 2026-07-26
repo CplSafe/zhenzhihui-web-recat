@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { listDistributionCommissions, listDistributionInvitees } from '@/api/business'
+import { getReferralMyCode, listDistributionCommissions, listDistributionInvitees } from '@/api/business'
 import { useDistributionAccess } from '@/composables/useDistributionAccess'
 import arrowRightIcon from '@/assets/distribution/arrow-right.svg'
 import backIcon from '@/assets/distribution/back.svg'
@@ -124,7 +124,7 @@ function csvCell(value: any): string {
 
 export default function DistributionView() {
   const navigate = useNavigate()
-  const { status: accessStatus, overview: rawOverview, error: accessError, retry } = useDistributionAccess()
+  const { overview: rawOverview } = useDistributionAccess()
   const [draftFilters, setDraftFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [filters, setFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [page, setPage] = useState(1)
@@ -134,15 +134,16 @@ export default function DistributionView() {
   const [loading, setLoading] = useState(false)
   const [listError, setListError] = useState('')
   const [rulesOpen, setRulesOpen] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [inviteCode, setInviteCode] = useState('')
+  const [inviteLoading, setInviteLoading] = useState(false)
+  const [inviteError, setInviteError] = useState('')
+  const [copyFeedback, setCopyFeedback] = useState('')
 
   const overview = useMemo(() => unwrap(rawOverview) || {}, [rawOverview])
+  const inviteUrl = inviteCode ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}` : ''
 
   useEffect(() => {
-    if (accessStatus === 'denied') navigate('/home', { replace: true })
-  }, [accessStatus, navigate])
-
-  useEffect(() => {
-    if (accessStatus !== 'allowed') return
     const controller = new AbortController()
     void listDistributionInvitees({ limit: 200, signal: controller.signal })
       .then((payload) => {
@@ -157,10 +158,9 @@ export default function DistributionView() {
       })
       .catch(() => undefined)
     return () => controller.abort()
-  }, [accessStatus])
+  }, [])
 
   const loadRows = useCallback(() => {
-    if (accessStatus !== 'allowed') return () => undefined
     const controller = new AbortController()
     setLoading(true)
     setListError('')
@@ -185,7 +185,7 @@ export default function DistributionView() {
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [accessStatus, filters, page])
+  }, [filters, page])
 
   useEffect(() => loadRows(), [loadRows])
 
@@ -321,25 +321,35 @@ export default function DistributionView() {
     URL.revokeObjectURL(url)
   }
 
-  if (accessStatus === 'idle' || accessStatus === 'checking' || accessStatus === 'denied') {
-    return <div className="distribution-access-state" aria-label="正在验证营销人员权限" />
+  const loadInviteCode = useCallback(() => {
+    setInviteLoading(true)
+    setInviteError('')
+    void getReferralMyCode()
+      .then((code) => {
+        if (!code) throw new Error('后端未返回专属邀请码')
+        setInviteCode(code)
+      })
+      .catch((error: any) => {
+        setInviteCode('')
+        setInviteError(error?.message || '邀请码加载失败，请稍后重试')
+      })
+      .finally(() => setInviteLoading(false))
+  }, [])
+
+  const openInvite = () => {
+    setInviteOpen(true)
+    setCopyFeedback('')
+    if (!inviteCode && !inviteLoading) loadInviteCode()
   }
 
-  if (accessStatus === 'error') {
-    return (
-      <main className="distribution-access-error">
-        <h1>邀请收益暂时无法打开</h1>
-        <p>{(accessError as any)?.message || '营销人员权限验证失败，请检查网络后重试。'}</p>
-        <div>
-          <button type="button" onClick={() => navigate(-1)}>
-            返回
-          </button>
-          <button type="button" className="primary" onClick={retry}>
-            重新加载
-          </button>
-        </div>
-      </main>
-    )
+  const copyInviteValue = async (value: string, label: string) => {
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopyFeedback(`${label}已复制`)
+    } catch {
+      setCopyFeedback('复制失败，请手动复制')
+    }
   }
 
   return (
@@ -350,6 +360,9 @@ export default function DistributionView() {
             <img src={backIcon} alt="" width={28} height={28} />
           </button>
           <h1>邀请收益</h1>
+          <button type="button" className="distribution-invite-button" onClick={openInvite}>
+            邀请客户
+          </button>
         </header>
 
         <section className="distribution-notice" aria-label="邀请收益说明">
@@ -544,6 +557,69 @@ export default function DistributionView() {
             <button type="button" onClick={() => setRulesOpen(false)}>
               我知道了
             </button>
+          </section>
+        </div>
+      ) : null}
+
+      {inviteOpen ? (
+        <div className="distribution-rules-backdrop" role="presentation" onMouseDown={() => setInviteOpen(false)}>
+          <section
+            className="distribution-invite-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="distribution-invite-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <h2 id="distribution-invite-title">邀请客户</h2>
+                <p>分享您的专属链接，客户注册后将自动建立邀请关系</p>
+              </div>
+              <button type="button" onClick={() => setInviteOpen(false)} aria-label="关闭邀请客户弹窗">
+                ×
+              </button>
+            </header>
+
+            {inviteLoading ? <div className="distribution-invite-state">正在获取专属邀请码…</div> : null}
+            {!inviteLoading && inviteError ? (
+              <div className="distribution-invite-state is-error">
+                <span>{inviteError}</span>
+                <button type="button" onClick={loadInviteCode}>
+                  重新获取
+                </button>
+              </div>
+            ) : null}
+            {!inviteLoading && !inviteError && inviteCode ? (
+              <>
+                <div className="distribution-invite-field">
+                  <label>专属邀请码</label>
+                  <div>
+                    <strong>{inviteCode}</strong>
+                    <button type="button" onClick={() => void copyInviteValue(inviteCode, '邀请码')}>
+                      复制邀请码
+                    </button>
+                  </div>
+                </div>
+                <div className="distribution-invite-field">
+                  <label>专属邀请链接</label>
+                  <div>
+                    <input value={inviteUrl} readOnly aria-label="专属邀请链接" />
+                    <button type="button" onClick={() => void copyInviteValue(inviteUrl, '邀请链接')}>
+                      复制链接
+                    </button>
+                  </div>
+                </div>
+                <p className="distribution-invite-tip">
+                  客户通过该链接完成注册后，系统会根据后端返利规则记录客户关系与收益。
+                </p>
+                <div className="distribution-invite-actions">
+                  <span role="status">{copyFeedback}</span>
+                  <button type="button" onClick={() => void copyInviteValue(inviteUrl, '邀请链接')}>
+                    复制链接并邀请
+                  </button>
+                </div>
+              </>
+            ) : null}
           </section>
         </div>
       ) : null}

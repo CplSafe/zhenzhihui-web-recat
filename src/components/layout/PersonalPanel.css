@@ -15,6 +15,36 @@
   justify-content: space-between;
   gap: 12px;
 }
+.ppl__head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.ppl__head-action {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+.ppl__head-action:hover {
+  background: #eef8f5;
+  transform: translateY(-1px);
+}
+.ppl__head-action img {
+  display: block;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
 .ppl__id {
   display: flex;
   align-items: flex-start;

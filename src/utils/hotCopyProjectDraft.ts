@@ -20,6 +20,8 @@ export interface HotCopyProjectBindingInput {
   routeProjectId?: unknown
   restartProjectId?: unknown
   boundProjectId?: unknown
+  /** 用户明确点击“创建新视频”后的新会话，禁止重新接管旧页面的内存绑定。 */
+  forceNewProject?: boolean
 }
 
 /** 安全判断记录是否直接拥有指定字段。 */
@@ -48,6 +50,7 @@ function toProjectId(value: unknown): number {
  * URL 替换渲染完成前使用内存绑定，确保刚创建的项目不会漂移。
  */
 export function resolveHotCopySubmissionProjectId(input: HotCopyProjectBindingInput): number {
+  if (input.forceNewProject) return 0
   return toProjectId(input.routeProjectId) || toProjectId(input.restartProjectId) || toProjectId(input.boundProjectId)
 }
 

@@ -68,6 +68,7 @@ export interface TaskCenterState {
   ownerUserId: number
   upsertTask: (task: TaskCenterTask) => void
   patchTask: (id: string, patch: Partial<TaskCenterTask>) => void
+  removeTask: (id: string) => void
   archiveTask: (id: string, archived?: boolean) => void
   setDrawerExpanded: (expanded: boolean) => void
   setOwnerUserId: (ownerUserId: number) => void
@@ -307,6 +308,13 @@ export const useTaskCenterStore = create<TaskCenterState>()(
           return {
             tasks: pruneTasks([...state.tasks.filter((task) => task.id !== taskId), merged], now),
           }
+        }),
+
+      removeTask: (id) =>
+        set((state) => {
+          const taskId = String(id || '').trim()
+          if (!taskId || !state.tasks.some((task) => task.id === taskId)) return state
+          return { tasks: state.tasks.filter((task) => task.id !== taskId) }
         }),
 
       archiveTask: (id, archived = true) =>

@@ -16,8 +16,6 @@ import projectsIcon from '@/assets/sidebar/projects.svg'
 import projectsActiveIcon from '@/assets/sidebar/projects-active.svg'
 import resourcesIcon from '@/assets/sidebar/resources.svg'
 import resourcesActiveIcon from '@/assets/sidebar/resources-active.svg'
-import distributionIcon from '@/assets/distribution/sidebar-distribution.svg'
-import { useDistributionAccess } from '@/composables/useDistributionAccess'
 import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
 import SidebarTeamGroup from './SidebarTeamGroup'
@@ -66,10 +64,6 @@ const GROUPS: SidebarGroup[] = [
       { key: 'resources', label: '我的素材', icon: resourcesIcon, activeIcon: resourcesActiveIcon, iconSize: 14 },
     ],
   },
-  {
-    title: '其他',
-    items: [{ key: 'distribution', label: '邀请返利', icon: distributionIcon, iconSize: 14 }],
-  },
 ]
 
 const HIDDEN_SIDEBAR_ITEM_KEYS = new Set(['video-edit'])
@@ -79,8 +73,6 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
   // 桌面端收起态:跨页面保持,放全局 ui store。
   const collapsed = useUiStore((s) => s.sidebarCollapsed)
   const toggleCollapsed = useUiStore((s) => s.toggleSidebarCollapsed)
-  const { isDistributor } = useDistributionAccess()
-  const showDistributionEntry = isDistributor
 
   const go = (key: string) => {
     onNavigate?.(key)
@@ -189,23 +181,12 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
           {GROUPS.slice(0, 2).map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>
-              {group.items
-                .filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key))
-                .filter((item) => item.key !== 'distribution' || showDistributionEntry)
-                .map(renderItem)}
+              {group.items.filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key)).map(renderItem)}
             </div>
           ))}
 
           {/* 团队：当前空间下拉 + 空间切换浮层 + 数据统计/团队管理(团队空间) */}
           <SidebarTeamGroup collapsed={collapsed} />
-
-          {showDistributionEntry &&
-            GROUPS.slice(2).map((group) => (
-              <div className="app-sidebar__group" key={group.title}>
-                <div className="app-sidebar__group-title">{group.title}</div>
-                {group.items.filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key)).map(renderItem)}
-              </div>
-            ))}
         </nav>
 
         {/* 底部：设置 —— 点击弹出菜单(个人中心 / 修改密码 / 退出登录) */}

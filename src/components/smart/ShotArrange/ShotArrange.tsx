@@ -102,50 +102,32 @@ export default function ShotArrange({
     mode: 'edit',
     shotId: null,
   })
-  const [pendingAutoGenerateId, setPendingAutoGenerateId] = useState<Shot['id'] | null>(null)
-  const autoGenerateStartedRef = useRef(new Set<Shot['id']>())
+  const [insertStyleReferenceUrl, setInsertStyleReferenceUrl] = useState('')
   // 插入态:是否已成功生成(用于取消时清理「占位空分镜」,避免误删已出图的)
   const insertCommittedRef = useRef(false)
 
   const openEditShot = (shot: Shot) => {
     setSelectedId(shot.id)
+    setInsertStyleReferenceUrl('')
     setDlg({ open: true, mode: 'edit', shotId: shot.id })
   }
   const openInsertShot = (index: number) => {
     const s = blankShot()
+    const styleReferenceUrl = shots[Math.max(0, index - 1)]?.image || ''
     const list = shots.slice()
     list.splice(index, 0, s)
     onShotsChange(renumber(list))
     setSelectedId(s.id)
-    if (onGenerateShot) {
-      setPendingAutoGenerateId(s.id)
-    } else {
-      insertCommittedRef.current = false
-      setDlg({ open: true, mode: 'insert', shotId: s.id })
-    }
+    insertCommittedRef.current = false
+    setInsertStyleReferenceUrl(styleReferenceUrl)
+    setDlg({ open: true, mode: 'insert', shotId: s.id })
   }
-
-  // 等父级接收新增分镜后再生成，确保父级能拿到正确插入位置及完整前后文。
-  useEffect(() => {
-    if (pendingAutoGenerateId == null || !onGenerateShot) return
-    const sh = shots.find((s) => s.id === pendingAutoGenerateId)
-    if (!sh || autoGenerateStartedRef.current.has(sh.id)) return
-
-    autoGenerateStartedRef.current.add(sh.id)
-    setPendingAutoGenerateId(null)
-    void Promise.resolve()
-      .then(() => onGenerateShot(sh, { mode: 'insert', intent: '', uploadRefUrls: [] }))
-      // 业务层负责提示具体生成错误；协调层必须消费拒绝态，避免产生全局未处理 Promise。
-      .catch(() => false)
-      .finally(() => {
-        autoGenerateStartedRef.current.delete(sh.id)
-      })
-  }, [onGenerateShot, pendingAutoGenerateId, shots])
   const closeDlg = () => {
     // 取消新增:移除未出图的占位空分镜(已成功生成则保留)
     if (dlg.mode === 'insert' && !insertCommittedRef.current && dlg.shotId != null) {
       onShotsChange(renumber(shots.filter((s) => s.id !== dlg.shotId)))
     }
+    setInsertStyleReferenceUrl('')
     setDlg((d) => ({ ...d, open: false }))
   }
 
@@ -157,7 +139,13 @@ export default function ShotArrange({
     // 弹框点生成后立即关闭(后台生成)。插入模式须在 await 前【同步】提交占位,
     // 否则关闭(closeDlg)时占位空分镜会被当作「未提交」删掉,导致后台生成无处回填。
     if (dlg.mode === 'insert') insertCommittedRef.current = true
-    const ok = await onGenerateShot(sh, { mode: dlg.mode, intent: text, uploadRefUrls })
+    const referenceUrls = Array.from(
+      new Set([
+        ...(dlg.mode === 'insert' && insertStyleReferenceUrl ? [insertStyleReferenceUrl] : []),
+        ...uploadRefUrls,
+      ]),
+    )
+    const ok = await onGenerateShot(sh, { mode: dlg.mode, intent: text, uploadRefUrls: referenceUrls })
     return ok
   }
 
@@ -195,6 +183,7 @@ export default function ShotArrange({
       <ShotEditDialog
         open={dlg.open}
         mode={dlg.mode}
+        styleReferenceUrl={dlg.mode === 'insert' ? insertStyleReferenceUrl : ''}
         onUpload={onUploadRef}
         onPolish={onPolishPrompt}
         onGenerate={handleDialogGenerate}
