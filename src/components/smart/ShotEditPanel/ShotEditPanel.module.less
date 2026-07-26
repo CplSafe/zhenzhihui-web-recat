@@ -9,6 +9,21 @@
   gap: 16px;
 }
 
+/* 标准镜头编辑布局：文字编辑在上，媒体工作区整体在下。 */
+.seditStandard {
+  > .seCard {
+    order: 1;
+  }
+
+  > .seditTexts {
+    order: 2;
+  }
+
+  > .seMediaRow {
+    order: 3;
+  }
+}
+
 .seditSub {
   font-size: 12px;
   color: #9aa3af;
@@ -765,13 +780,18 @@
 
 /* ════ 镜头编排右栏(还原 Figma 421-3105)════ */
 
-/* 顶部媒体工作区:主体和素材 + 当前分镜图 + 历史生成 */
+/* 媒体工作区：主体和素材 + 当前分镜图 + 历史生成，统一收进一张大卡片。 */
 .seMediaRow {
   display: grid;
   grid-template-columns: minmax(170px, 0.8fr) minmax(270px, 1.35fr) minmax(180px, 1fr);
   gap: 24px;
   align-items: start;
   min-width: 0;
+  padding: 24px 28px;
+  border: 1px solid #edf0f3;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 8px 26px rgba(31, 42, 55, 0.05);
 }
 .seMediaRowNoMats {
   grid-template-columns: minmax(270px, 1.35fr) minmax(180px, 1fr);
@@ -929,6 +949,7 @@
   .seMediaRow,
   .seMediaRowNoMats {
     grid-template-columns: minmax(0, 1fr);
+    padding: 18px;
   }
 
   .seCurBox .seditCur {

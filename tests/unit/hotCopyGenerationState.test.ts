@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   HOT_COPY_PENDING_TASK_GRACE_MS,
+  canHotCopyJobReplaceCreativeContent,
   findHotCopyTaskByIdempotencyKey,
   getHotCopyTaskIdempotencyKey,
   mergeHotCopyGenerationCheckpoint,
@@ -8,6 +9,17 @@ import {
   resolveHotCopyPaidTaskCheckpoint,
   resolveHotCopyPendingRecovery,
 } from '@/utils/hotCopyGenerationState'
+
+describe('hot-copy creative ownership', () => {
+  it('keeps a newly created project writable throughout upload and face-processing checkpoints', () => {
+    expect(canHotCopyJobReplaceCreativeContent({ allowCreativeReplace: false, ownsNewProject: true })).toBe(true)
+  })
+
+  it('restores strict fingerprint protection for an existing project after initialization', () => {
+    expect(canHotCopyJobReplaceCreativeContent({ allowCreativeReplace: false, ownsNewProject: false })).toBe(false)
+    expect(canHotCopyJobReplaceCreativeContent({ allowCreativeReplace: true, ownsNewProject: false })).toBe(true)
+  })
+})
 
 describe('hot-copy task credential recovery', () => {
   it('finds a created task by its top-level idempotency key', () => {

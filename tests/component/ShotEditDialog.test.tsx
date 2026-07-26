@@ -115,10 +115,11 @@ describe('ShotEditDialog', () => {
 
     await user.upload(fileInput, new File(['ok'], 'ok.png', { type: 'image/png' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '移除' })).toBeInTheDocument())
-    expect(screen.getByRole('button', { name: '生成分镜' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '生成分镜' })).toBeDisabled()
 
+    await user.type(screen.getByRole('textbox', { name: '分镜描述' }), '增加桌上的咖啡杯')
     await user.click(screen.getByRole('button', { name: '生成分镜' }))
-    expect(props.onGenerate).toHaveBeenCalledWith('', ['https://cdn.example.com/ref.png'])
+    expect(props.onGenerate).toHaveBeenCalledWith('增加桌上的咖啡杯', ['https://cdn.example.com/ref.png'])
   })
 
   it('ignores a late polish success after close and reopen', async () => {

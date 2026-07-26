@@ -66,10 +66,4 @@ describe('HotCopyCaseModal', () => {
     fireEvent.click(dialog.parentElement as Element)
     expect(onClose).toHaveBeenCalledTimes(3)
   })
-
-  it('selects the replica case artwork', () => {
-    render(<HotCopyCaseModal tab="replica" onClose={vi.fn()} />)
-    expect(screen.getByRole('dialog', { name: '精准复刻案例' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: '精准复刻案例' })).toBeInTheDocument()
-  })
 })

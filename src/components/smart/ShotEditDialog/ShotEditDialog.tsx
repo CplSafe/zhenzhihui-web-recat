@@ -17,6 +17,8 @@ export interface ShotEditDialogProps {
   open: boolean
   /** edit=编辑现有分镜;insert=新增/插入分镜 */
   mode: 'edit' | 'insert'
+  /** 新增分镜时自动沿用的上一镜头画面，用作图生图风格参考。 */
+  styleReferenceUrl?: string
   /** 上传素材:直传后端取 http url + asset_id(失败回退本地 dataURL 由父级处理) */
   onUpload?: (file: File) => Promise<{ url: string; assetId?: number }>
   /** AI一键润色:润色当前描述文本,返回润色后的文本 */
@@ -29,7 +31,15 @@ export interface ShotEditDialogProps {
 /**
  * 收集单镜修改描述和参考素材；通过生命周期序号阻止弹窗关闭后旧上传/润色结果回写新会话。
  */
-export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGenerate, onClose }: ShotEditDialogProps) {
+export default function ShotEditDialog({
+  open,
+  mode,
+  styleReferenceUrl = '',
+  onUpload,
+  onPolish,
+  onGenerate,
+  onClose,
+}: ShotEditDialogProps) {
   const { showToast } = useToast()
   const [text, setText] = useState('')
   const [uploads, setUploads] = useState<{ url: string; assetId?: number }[]>([])
@@ -81,7 +91,8 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
 
   if (!open) return null
 
-  const canGenerate = (text.trim().length > 0 || uploads.length > 0) && !uploading
+  const canGenerate =
+    (mode === 'insert' ? text.trim().length > 0 : text.trim().length > 0 || uploads.length > 0) && !uploading
   const isCurrentSession = (scope: number) => openRef.current && lifecycleRef.current === scope
 
   // 文件串行上传以保持用户选择顺序，并在弹窗关闭或重开后停止接收旧会话结果。
@@ -115,7 +126,7 @@ export default function ShotEditDialog({ open, mode, onUpload, onPolish, onGener
       // 带上本次上传的素材图 → 润色时 VL 读图理解诉求(如「把产品换成这张图里的」)
       const out = await onPolish(
         text,
-        uploads.map((u) => u.url),
+        Array.from(new Set([...(styleReferenceUrl ? [styleReferenceUrl] : []), ...uploads.map((u) => u.url)])),
       )
       if (out && isCurrentSession(scope)) setText(out)
     } catch (e: any) {

@@ -99,7 +99,7 @@
 .tabs {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: 1fr 1fr 0.86fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   min-height: 45px;
   padding: 0 12px;
   border-bottom: 1px solid #eef1f3;
@@ -233,11 +233,11 @@
 
 .active {
   .progressValue {
-    background: #5767e5;
+    background: #26c8a6;
   }
 
   .statusText {
-    color: #5767e5;
+    color: #1eaf91;
   }
 }
 

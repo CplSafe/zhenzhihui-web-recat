@@ -199,7 +199,7 @@ export default function ShotEditPanel({
   }
 
   return (
-    <div className={`${styles.sedit}${className ? ' ' + className : ''}`}>
+    <div className={`${styles.sedit} ${styles.seditStandard}${className ? ' ' + className : ''}`}>
       <div
         className={`${styles.seMediaRow}${shot.subjects.length === 0 ? ` ${styles.seMediaRowNoMats}` : ''}`}
         role="group"

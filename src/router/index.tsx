@@ -10,6 +10,12 @@ import { createBrowserRouter, Navigate, useLocation, useParams, useRouteError } 
 import App from '../App'
 import { hasAuthSessionMarker } from '../api/auth'
 import { useWorkspaceId } from '../stores/workspaceSession'
+import {
+  getHotCopyRouteSessionToken,
+  resolveHotCopyRouteSession,
+  type HotCopyRouteSession,
+  type HotCopyRouteState,
+} from '../utils/hotCopyRouteSession'
 import WorkspaceSwitchBridge from './WorkspaceSwitchBridge'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
@@ -198,12 +204,45 @@ function WorkspaceScopedSmartCreateRoute() {
   )
 }
 
-/** 用工作空间和项目 id 作为 key，隔离不同爆款复制会话。 */
+/** 爆款复制路由会话：首次建项目保活，真实的项目/空间/新建切换仍隔离状态。 */
+let hotCopyRouteMountSequence = 0
+function createHotCopyRouteMountNonce(): string {
+  hotCopyRouteMountSequence += 1
+  return globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${hotCopyRouteMountSequence.toString(36)}`
+}
+
 function WorkspaceScopedHotCopyRoute() {
-  // 爆款复制没有智能成片的首次绑定协议，项目或工作空间变化时直接通过 key 创建干净实例。
   const workspaceId = useWorkspaceId()
   const { id } = useParams()
-  return <HotCopyCreateView key={`hot-copy-ws-${Number(workspaceId || 0)}-project-${id || 'new'}`} />
+  const location = useLocation()
+  const ws = Number(workspaceId || 0)
+  const projectId = String(id || '')
+  const routeState = (location.state || {}) as HotCopyRouteState
+  const [routeSession, setRouteSession] = useState<HotCopyRouteSession>(() => ({
+    workspaceId: ws,
+    projectId,
+    version: 0,
+    locationKey: location.key,
+    mountNonce: createHotCopyRouteMountNonce(),
+  }))
+  const nextRouteSession = resolveHotCopyRouteSession(routeSession, {
+    workspaceId: ws,
+    projectId,
+    locationKey: location.key,
+    routeState,
+  })
+
+  if (nextRouteSession !== routeSession) {
+    setRouteSession(nextRouteSession)
+    return null
+  }
+
+  return (
+    <HotCopyCreateView
+      key={`hot-copy-route-session-${routeSession.version}`}
+      routeSessionToken={getHotCopyRouteSessionToken(routeSession)}
+    />
+  )
 }
 
 /** 为懒加载页面统一提供无布局抖动的加载占位。 */

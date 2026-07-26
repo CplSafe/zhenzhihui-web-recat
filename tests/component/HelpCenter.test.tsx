@@ -124,6 +124,14 @@ describe('HelpCenter interactions', () => {
     expect(second.ball).toHaveStyle({ left: '8px', top: '536px' })
   })
 
+  it('moves a remembered position to the safe corner on compact hot-copy screens', async () => {
+    window.localStorage.setItem(POSITION_KEY, JSON.stringify({ x: 400, y: 300 }))
+
+    const { ball } = await renderHelpCenter('/hot-copy')
+
+    expect(ball).toHaveStyle({ left: '728px', top: '528px' })
+  })
+
   it('runs guide and tutorial shortcuts with the expected route and safe window features', async () => {
     const user = userEvent.setup()
     const { ball } = await renderHelpCenter('/home')

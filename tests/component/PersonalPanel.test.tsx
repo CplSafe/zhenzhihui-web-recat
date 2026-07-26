@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   openTeamManage: vi.fn(),
+  navigate: vi.fn(),
   renameTeam: vi.fn(),
   safeSwitch: vi.fn(),
   showToast: vi.fn(),
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
+vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }))
 vi.mock('@/composables/useSafeWorkspaceSwitch', () => ({ useSafeWorkspaceSwitch: () => mocks.safeSwitch }))
 vi.mock('@/composables/useToast', () => ({
   useConfirmDialog: () => ({ requestConfirm: mocks.confirm }),
@@ -89,6 +91,19 @@ describe('PersonalPanel', () => {
     mocks.confirm.mockResolvedValue(null)
     mocks.renameTeam.mockResolvedValue(undefined)
     mocks.safeSwitch.mockReturnValue(true)
+  })
+
+  it('shows invitation rebate and opens its page', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const view = render(<PersonalPanel onClose={onClose} />)
+
+    await user.click(screen.getByRole('button', { name: /邀请返利/ }))
+    expect(onClose).toHaveBeenCalled()
+    expect(mocks.navigate).toHaveBeenCalledWith('/distribution')
+
+    view.rerender(<PersonalPanel onClose={onClose} />)
+    expect(screen.getByRole('button', { name: /邀请返利/ })).toBeInTheDocument()
   })
 
   it('shows role, membership usage, and switches one non-active workspace before closing', async () => {

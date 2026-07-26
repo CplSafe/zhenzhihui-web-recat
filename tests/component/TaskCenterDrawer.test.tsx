@@ -120,34 +120,62 @@ beforeEach(() => {
 })
 
 describe('TaskCenterDrawer isolation and reconciliation', () => {
+  it('shows active and queued work from every scope in the generating tab', async () => {
+    const user = userEvent.setup()
+    seed(
+      task({ id: 'smart:7:11:active', generationId: 'active', title: '智能生成中', status: 'processing' }),
+      task({
+        id: 'hot-copy:7:11:queued',
+        scope: 'hot-copy',
+        generationId: 'queued',
+        title: '翻拍排队中',
+        status: 'queued',
+      }),
+      task({ id: 'smart:7:11:done', generationId: 'done', title: '已完成任务', status: 'succeeded' }),
+    )
+
+    render(<TaskCenterDrawer scope="smart" />)
+    expect(await screen.findByText('已完成任务')).toBeInTheDocument()
+    expect(screen.queryByText('智能生成中')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '正在生成' }))
+
+    expect(await screen.findByText('智能生成中')).toBeInTheDocument()
+    expect(screen.getByText('翻拍排队中')).toBeInTheDocument()
+    expect(screen.queryByText('已完成任务')).not.toBeInTheDocument()
+  })
+
   it.each([
     ['smart', '智能成片'],
     ['hot-copy', '爆款复制'],
-  ] as const)('limits %s video tasks to 20 and opens project management for the remainder', async (scope, label) => {
-    const user = userEvent.setup()
-    seed(
-      ...Array.from({ length: 21 }, (_, index) =>
-        task({
-          id: `${scope}:7:11:generation-${index + 1}`,
-          scope,
-          generationId: `generation-${index + 1}`,
-          operationCode: scope === 'hot-copy' ? 'video.replicate' : 'video.generate',
-          title: `${label}任务 ${index + 1}`,
-          updatedAt: 1_000 + index,
-        }),
-      ),
-    )
+  ] as const)(
+    'limits %s completed video tasks to 20 and opens project management for the remainder',
+    async (scope, label) => {
+      const user = userEvent.setup()
+      seed(
+        ...Array.from({ length: 21 }, (_, index) =>
+          task({
+            id: `${scope}:7:11:generation-${index + 1}`,
+            scope,
+            generationId: `generation-${index + 1}`,
+            operationCode: scope === 'hot-copy' ? 'video.replicate' : 'video.generate',
+            title: `${label}任务 ${index + 1}`,
+            status: 'succeeded',
+            updatedAt: 1_000 + index,
+          }),
+        ),
+      )
 
-    render(<TaskCenterDrawer scope={scope} />)
+      render(<TaskCenterDrawer scope={scope} />)
 
-    await waitFor(() => expect(screen.getAllByRole('button', { name: /打开项目/ })).toHaveLength(20))
-    expect(screen.queryByText(`${label}任务 1`)).not.toBeInTheDocument()
-    const viewAll = screen.getByRole('button', { name: '前往项目管理查看全部视频' })
-    expect(viewAll).toHaveAttribute('title', '还有 1 条视频，请前往项目管理查看')
+      await waitFor(() => expect(screen.getAllByRole('button', { name: /打开项目/ })).toHaveLength(20))
+      expect(screen.queryByText(`${label}任务 1`)).not.toBeInTheDocument()
+      const viewAll = screen.getByRole('button', { name: '前往项目管理查看全部视频' })
+      expect(viewAll).toHaveAttribute('title', '还有 1 条视频，请前往项目管理查看')
 
-    await user.click(viewAll)
-    expect(mocks.navigate).toHaveBeenCalledWith('/projects')
-  })
+      await user.click(viewAll)
+      expect(mocks.navigate).toHaveBeenCalledWith('/projects')
+    },
+  )
 
   it('does not show the project-management shortcut when all video tasks fit in the drawer', async () => {
     seed(
@@ -156,6 +184,7 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
           id: `smart:7:11:generation-${index + 1}`,
           generationId: `generation-${index + 1}`,
           title: `任务 ${index + 1}`,
+          status: 'succeeded',
           updatedAt: 1_000 + index,
         }),
       ),
@@ -168,6 +197,7 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
   })
 
   it('fails closed until project permissions load, then reveals only accessible live tasks', async () => {
+    const user = userEvent.setup()
     const projects = deferred<unknown[]>()
     mocks.listAllCreativeProjects.mockReturnValue(projects.promise)
     seed(
@@ -191,11 +221,14 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     )
 
     render(<TaskCenterDrawer scope="smart" />)
+    await user.click(screen.getByRole('tab', { name: '正在生成' }))
 
-    expect(screen.getByRole('status')).toHaveTextContent('正在加载历史视频')
     expect(screen.queryByRole('button', { name: /当前任务.*打开项目/ })).not.toBeInTheDocument()
 
-    projects.resolve([project(11)])
+    await act(async () => {
+      projects.resolve([project(11)])
+      await projects.promise
+    })
     expect(await screen.findByRole('button', { name: /当前任务.*打开项目/ })).toBeInTheDocument()
     expect(screen.queryByText('其他空间任务')).not.toBeInTheDocument()
     expect(screen.queryByText('其他账号任务')).not.toBeInTheDocument()
@@ -259,9 +292,9 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     expect(screen.queryByText('历史任务')).not.toBeInTheDocument()
   })
 
-  it('archives a live task immediately without mutating historical data', async () => {
+  it('archives a generated task immediately without mutating historical data', async () => {
     const user = userEvent.setup()
-    seed(task())
+    seed(task({ status: 'succeeded' }))
     render(<TaskCenterDrawer scope="smart" />)
 
     await screen.findByText('当前任务')
@@ -291,7 +324,9 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
         scope: 'smart',
         generationId: 'legacy-image-generation',
         operationCode: 'image.image_to_image',
+        status: 'succeeded',
         title: '兼容旧图片任务',
+        resultUrl: '/legacy-result.png',
       }),
     )
 
@@ -310,7 +345,8 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     expect(screen.queryByRole('dialog', { name: '视频预览' })).not.toBeInTheDocument()
   })
 
-  it('hides failed image generations while keeping active, completed, and cancelled tasks', async () => {
+  it('keeps generating images in the generating tab and terminal images in the image tab', async () => {
+    const user = userEvent.setup()
     seed(
       task({
         id: 'image:7:11:image-processing',
@@ -350,10 +386,14 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
 
     render(<TaskCenterDrawer scope="image" />)
 
-    expect(await screen.findByText('生成中的图片')).toBeInTheDocument()
-    expect(screen.getByText('已生成的图片')).toBeInTheDocument()
+    expect(screen.queryByText('生成中的图片')).not.toBeInTheDocument()
+    expect(await screen.findByText('已生成的图片')).toBeInTheDocument()
     expect(screen.getByText('已取消的图片')).toBeInTheDocument()
     expect(screen.queryByText('生成失败的图片')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: '正在生成' }))
+    expect(await screen.findByText('生成中的图片')).toBeInTheDocument()
+    expect(screen.queryByText('已生成的图片')).not.toBeInTheDocument()
   })
 
   it('derives image history from saved project messages without another backend endpoint', async () => {

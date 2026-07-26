@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   retry: vi.fn(),
   listCommissions: vi.fn(),
   listInvitees: vi.fn(),
+  getReferralMyCode: vi.fn(),
   access: {
     status: 'allowed',
     overview: {
@@ -33,6 +34,7 @@ vi.mock('@/composables/useDistributionAccess', () => ({
 }))
 
 vi.mock('@/api/business', () => ({
+  getReferralMyCode: mocks.getReferralMyCode,
   listDistributionCommissions: mocks.listCommissions,
   listDistributionInvitees: mocks.listInvitees,
 }))
@@ -45,6 +47,7 @@ describe('DistributionView', () => {
     mocks.retry.mockReset()
     mocks.listCommissions.mockReset()
     mocks.listInvitees.mockReset()
+    mocks.getReferralMyCode.mockReset()
     mocks.access.status = 'allowed'
     mocks.access.error = null
     mocks.access.overview = {
@@ -72,6 +75,7 @@ describe('DistributionView', () => {
       ],
       total: 1,
     })
+    mocks.getReferralMyCode.mockResolvedValue('ZZH-TEST-001')
   })
 
   it('renders the Figma summary and commission data returned by the backend', async () => {
@@ -108,13 +112,27 @@ describe('DistributionView', () => {
     })
   })
 
-  it('redirects a non-marketing user away from the protected page', async () => {
+  it('keeps the page visible for a non-marketing user', async () => {
     mocks.access.status = 'denied'
     mocks.access.overview = null
 
     render(<DistributionView />)
 
-    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/home', { replace: true }))
-    expect(screen.queryByRole('heading', { name: '邀请收益' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '邀请收益' })).toBeInTheDocument()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    await waitFor(() => expect(mocks.listCommissions).toHaveBeenCalled())
+  })
+
+  it('loads a backend referral code and builds the customer invitation link', async () => {
+    const user = userEvent.setup()
+    render(<DistributionView />)
+
+    await user.click(screen.getByRole('button', { name: '邀请客户' }))
+
+    expect(await screen.findByText('ZZH-TEST-001')).toBeInTheDocument()
+    expect(mocks.getReferralMyCode).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('专属邀请链接')).toHaveValue(
+      `${window.location.origin}/login?invite_code=ZZH-TEST-001`,
+    )
   })
 })

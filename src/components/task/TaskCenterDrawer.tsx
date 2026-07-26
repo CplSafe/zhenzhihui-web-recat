@@ -33,8 +33,12 @@ type TaskRecord = TaskCenterTask & Record<string, unknown>
 /** 卡片视觉归类，与后端细粒度状态解耦。 */
 type TaskTone = 'active' | 'queued' | 'failed' | 'completed'
 
+/** 业务类型页签之外，补充跨业务汇总的“正在生成”状态页签。 */
+type TaskCenterTab = TaskCenterScope | 'generating'
+
 /** 任务中心支持的业务页签。 */
-const SCOPE_TABS: Array<{ value: TaskCenterScope; label: string }> = [
+const SCOPE_TABS: Array<{ value: TaskCenterTab; label: string }> = [
+  { value: 'generating', label: '正在生成' },
   { value: 'smart', label: '智能成片' },
   { value: 'hot-copy', label: '爆款复制' },
   { value: 'image', label: '图片' },
@@ -133,6 +137,11 @@ function getTaskTone(task: TaskRecord): TaskTone {
   }
   if (status.includes('queue') || status === 'pending' || status.includes('排队')) return 'queued'
   return 'active'
+}
+
+/** 生成中的任务只在汇总页展示，避免在业务分类里与已完成结果混在一起。 */
+function isGeneratingTone(tone: TaskTone): boolean {
+  return tone === 'active' || tone === 'queued'
 }
 
 /** 图片页不展示生成失败记录；用户主动取消的任务仍保留，避免混淆两种终态。 */
@@ -622,8 +631,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   const navigate = useNavigate()
   const drawerRef = useRef<HTMLElement | null>(null)
   const collapseButtonRef = useRef<HTMLButtonElement | null>(null)
-  const scopeTabRefs = useRef<Partial<Record<TaskCenterScope, HTMLButtonElement | null>>>({})
-  const [activeScope, setActiveScope] = useState(scope)
+  const scopeTabRefs = useRef<Partial<Record<TaskCenterTab, HTMLButtonElement | null>>>({})
+  const [activeScope, setActiveScope] = useState<TaskCenterTab>(scope)
   const [playingUrl, setPlayingUrl] = useState('')
   const [historicalTasks, setHistoricalTasks] = useState<TaskCenterTask[]>([])
   const [accessibleProjectIds, setAccessibleProjectIds] = useState<Set<number>>(() => new Set())
@@ -750,10 +759,15 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     const liveTasks = tasks.filter((task) => {
       const record = task as TaskRecord
       const taskWorkspaceId = String(readValue(record, 'workspaceId', 'workspace_id') ?? '')
+      const tone = getTaskTone(record)
+      const matchesTab =
+        activeScope === 'generating'
+          ? isGeneratingTone(tone)
+          : getTaskScope(record) === activeScope && !isGeneratingTone(tone)
       return (
         taskWorkspaceId === activeWorkspaceId &&
         Number(record.ownerUserId || 0) === currentUserId &&
-        getTaskScope(record) === activeScope &&
+        matchesTab &&
         !shouldHideFailedImageTask(record) &&
         isTaskCenterTaskAccessible(task, accessibleProjectIds, projectPermissionsLoaded) &&
         !isArchived(record)
@@ -764,15 +778,23 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
       if (task.resultAssetId) liveMediaKeys.add(`asset:${task.resultAssetId}`)
       if (task.resultUrl) liveMediaKeys.add(`url:${task.resultUrl}`)
     })
-    const history = historicalTasks.filter((task) => {
-      const record = task as TaskRecord
-      if (getTaskScope(record) !== activeScope || shouldHideFailedImageTask(record) || hiddenHistoryIds.has(task.id)) {
-        return false
-      }
-      if (task.resultAssetId && liveMediaKeys.has(`asset:${task.resultAssetId}`)) return false
-      if (task.resultUrl && liveMediaKeys.has(`url:${task.resultUrl}`)) return false
-      return true
-    })
+    const history =
+      activeScope === 'generating'
+        ? []
+        : historicalTasks.filter((task) => {
+            const record = task as TaskRecord
+            if (
+              getTaskScope(record) !== activeScope ||
+              isGeneratingTone(getTaskTone(record)) ||
+              shouldHideFailedImageTask(record) ||
+              hiddenHistoryIds.has(task.id)
+            ) {
+              return false
+            }
+            if (task.resultAssetId && liveMediaKeys.has(`asset:${task.resultAssetId}`)) return false
+            if (task.resultUrl && liveMediaKeys.has(`url:${task.resultUrl}`)) return false
+            return true
+          })
     return [...liveTasks, ...history].sort((left, right) => {
       const leftRecord = left as TaskRecord
       const rightRecord = right as TaskRecord
@@ -793,7 +815,10 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     workspaceId,
   ])
   const displayedTasks = activeScope === 'image' ? visibleTasks : visibleTasks.slice(0, MAX_VISIBLE_VIDEO_TASKS)
-  const hiddenVideoCount = activeScope === 'image' ? 0 : Math.max(0, visibleTasks.length - displayedTasks.length)
+  const hiddenVideoCount =
+    activeScope === 'image' || activeScope === 'generating'
+      ? 0
+      : Math.max(0, visibleTasks.length - displayedTasks.length)
 
   if (!workspaceId || !currentUserId) return null
 
@@ -857,7 +882,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
               tabIndex={activeScope === tab.value ? 0 : -1}
               onClick={() => {
                 setActiveScope(tab.value)
-                onScopeChange?.(tab.value)
+                if (tab.value !== 'generating') onScopeChange?.(tab.value)
               }}
               onKeyDown={(event) => {
                 const currentIndex = SCOPE_TABS.findIndex((candidate) => candidate.value === tab.value)
@@ -871,7 +896,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                 event.preventDefault()
                 const nextScope = SCOPE_TABS[nextIndex].value
                 setActiveScope(nextScope)
-                onScopeChange?.(nextScope)
+                if (nextScope !== 'generating') onScopeChange?.(nextScope)
                 scopeTabRefs.current[nextScope]?.focus()
               }}
             >
@@ -880,13 +905,17 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
           ))}
         </div>
 
-        <div className={styles.body} role="tabpanel" aria-label={`${getScopeLabel(activeScope)}任务`}>
+        <div
+          className={styles.body}
+          role="tabpanel"
+          aria-label={activeScope === 'generating' ? '正在生成任务' : `${getScopeLabel(activeScope)}任务`}
+        >
           {visibleTasks.length ? (
             <div className={styles.taskList}>
               {displayedTasks.map((task) => {
                 const record = task as TaskRecord
                 const taskId = String(readValue(record, 'id', 'taskId', 'task_id') ?? '')
-                const taskScope = getTaskScope(record) || activeScope
+                const taskScope = getTaskScope(record) || 'smart'
                 const projectId = readValue(record, 'projectId', 'project_id')
                 return (
                   <TaskCard
@@ -934,7 +963,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                 )
               })}
             </div>
-          ) : historyLoading ? (
+          ) : historyLoading && activeScope !== 'generating' ? (
             <div className={styles.empty} role="status">
               <LoadingOutlined className={styles.emptySpinner} spin aria-hidden="true" />
               <span className={styles.emptyTitle}>正在加载历史{activeScope === 'image' ? '图片' : '视频'}</span>

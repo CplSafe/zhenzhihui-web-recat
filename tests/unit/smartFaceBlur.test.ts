@@ -74,6 +74,35 @@ describe('smartFaceBlur', () => {
     expect(mocks.createAiTask).toHaveBeenCalledTimes(2)
   })
 
+  it('没有可用人脸模型时不创建无效任务并返回明确配置错误', async () => {
+    mocks.listAiModels.mockResolvedValue([])
+
+    const result = await blurFacesOnAsset({ workspaceId: 61, assetId: 2549 })
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'MODEL_UNAVAILABLE',
+      retryable: false,
+    })
+    expect(result.debug.error).toContain('image.face_detect')
+    expect(mocks.createAiTask).not.toHaveBeenCalled()
+  })
+
+  it('脱敏任务缺少输出素材时返回可重试的结构化错误', async () => {
+    mocks.waitForAiTask.mockResolvedValue({ id: 101, status: 'succeeded' })
+    mocks.extractOutputAssetId.mockReturnValue(0)
+    mocks.findAssetIdByTaskId.mockResolvedValue(0)
+    mocks.resolveGeneratedMediaUrls.mockResolvedValue([])
+
+    const result = await blurFacesOnAsset({ workspaceId: 61, assetId: 2549 })
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'OUTPUT_MISSING',
+      retryable: true,
+    })
+  })
+
   it('从嵌套后端字段识别无人脸语义', () => {
     expect(isNoFaceDetectedError({ response: { error_message: 'no faces detected' } })).toBe(true)
   })

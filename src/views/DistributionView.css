@@ -40,6 +40,20 @@
   line-height: 28px;
 }
 
+.distribution-invite-button {
+  height: 32px;
+  margin-left: auto;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--distribution-primary);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
 .distribution-back {
   display: grid;
   width: 28px;
@@ -552,6 +566,156 @@
   display: block;
   height: 36px;
   margin-left: auto;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--distribution-primary);
+  color: #fff;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.distribution-invite-dialog {
+  width: min(560px, 100%);
+  padding: 28px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgb(15 23 42 / 18%);
+}
+
+.distribution-invite-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.distribution-invite-dialog h2 {
+  margin: 0;
+  color: var(--distribution-text);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+}
+
+.distribution-invite-dialog header p {
+  margin: 6px 0 0;
+  color: var(--distribution-secondary);
+  font-size: 13px;
+  font-weight: 300;
+  line-height: 20px;
+}
+
+.distribution-invite-dialog header > button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 24px;
+  line-height: 28px;
+  cursor: pointer;
+}
+
+.distribution-invite-state {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--distribution-secondary);
+  font-size: 14px;
+}
+
+.distribution-invite-state.is-error {
+  color: #b91c1c;
+}
+
+.distribution-invite-state button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--distribution-primary);
+  cursor: pointer;
+}
+
+.distribution-invite-field {
+  margin-top: 22px;
+}
+
+.distribution-invite-field > label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--distribution-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.distribution-invite-field > div {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  border: 1px solid var(--distribution-border);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.distribution-invite-field strong,
+.distribution-invite-field input {
+  min-width: 0;
+  flex: 1;
+  padding: 0 14px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--distribution-text);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.distribution-invite-field strong {
+  color: var(--distribution-primary);
+  font-size: 18px;
+  letter-spacing: 1px;
+}
+
+.distribution-invite-field button {
+  height: 30px;
+  margin-right: 7px;
+  padding: 0 12px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 6px;
+  background: #eef2ff;
+  color: var(--distribution-primary);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.distribution-invite-tip {
+  margin: 18px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 300;
+  line-height: 20px;
+}
+
+.distribution-invite-actions {
+  display: flex;
+  min-height: 36px;
+  margin-top: 20px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+}
+
+.distribution-invite-actions span {
+  color: #16a34a;
+  font-size: 12px;
+}
+
+.distribution-invite-actions button {
+  height: 36px;
   padding: 0 20px;
   border: 0;
   border-radius: 8px;

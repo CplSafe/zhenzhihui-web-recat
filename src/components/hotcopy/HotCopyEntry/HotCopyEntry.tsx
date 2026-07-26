@@ -109,19 +109,13 @@ interface HotCopyEntryProps {
   requireModelSelection?: boolean
 }
 
-/** 两种爆款复制模式的标题、说明与帮助提示。 */
+/** 当前开放的爆款复制模式。 */
 const TABS = [
   {
     key: 'remake',
     title: '同款翻拍',
     sub: '拆解底层逻辑,创造爆款视频',
     tip: '保留原视频镜头节奏与爆点结构,把主体替换为你的产品。(案例示例待补充)',
-  },
-  {
-    key: 'replica',
-    title: '精准复刻',
-    sub: '还原原作巅峰,复刻热门爆款',
-    tip: '尽量 1:1 还原原视频画面与运镜,适合高度复用爆款模板。(案例示例待补充)',
   },
 ] as const
 
@@ -321,7 +315,8 @@ export default function HotCopyEntry({
   const workspaceId = useWorkspaceId()
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
-  const initialTab = (initial?.tab as HotCopyTab) ?? 'remake'
+  // 旧草稿中的 replica 兼容为同款翻拍，界面不再暴露精准复刻模式。
+  const initialTab: HotCopyTab = 'remake'
   const blankTabDraft = (): HotCopyTabDraft => ({
     videoSource: '',
     videoFile: null,
@@ -348,8 +343,8 @@ export default function HotCopyEntry({
     modelVersionId: initial?.modelVersionId,
   })
   const tabDraftsRef = useRef<Record<HotCopyTab, HotCopyTabDraft>>({
-    remake: initialTab === 'remake' ? initialTabDraft() : blankTabDraft(),
-    replica: initialTab === 'replica' ? initialTabDraft() : blankTabDraft(),
+    remake: initialTabDraft(),
+    replica: blankTabDraft(),
   })
   const [tab, setTab] = useState<HotCopyTab>(initialTab)
   // 点击 Tab 旁的「?」打开对应案例弹窗(Figma 还原);null=关闭

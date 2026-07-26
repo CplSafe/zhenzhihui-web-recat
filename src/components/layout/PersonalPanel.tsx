@@ -6,6 +6,7 @@
 */
 import { useEffect, useRef, useState } from 'react'
 import { Tooltip } from 'antd'
+import { useNavigate } from 'react-router-dom'
 import {
   useAllWorkspaces,
   useCurrentMember,
@@ -27,6 +28,7 @@ import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import crownImg from '@/assets/vip/5dc4125fc31865adb710a7f65ad2df60.png'
 import teamIcon from '@/assets/5d214dea973d5d1dd62b8be882e775c2.png'
 import editIcon from '@/assets/81926ea1670cd86f6fc1adec90042f08.png'
+import distributionIcon from '@/assets/distribution/sidebar-distribution.svg'
 import './PersonalPanel.css'
 
 /** 把后端成员角色转换为面板展示文案。 */
@@ -89,6 +91,7 @@ interface PersonalPanelProps {
 
 /** 展示当前用户、空间角色、会员积分及安全的空间切换/团队重命名入口。 */
 export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps) {
+  const navigate = useNavigate()
   const user = useCurrentUser()
   const member = useCurrentMember()
   const currentWs = useCurrentWorkspace()
@@ -236,27 +239,43 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
             </div>
           </div>
         </div>
-        {/* 当前空间:团队空间只显示图标,悬停弹出「团队成员」黑色圆角浮层,点击打开团队管理查看成员 */}
-        {isTeamWs && canRevealTeamInfo ? (
-          <Tooltip title="团队成员" placement="bottom" zIndex={4000}>
+        <div className="ppl__head-actions">
+          <Tooltip title="邀请返利" placement="bottom" zIndex={4000}>
             <button
               type="button"
-              className="ppl__ws ppl__ws--btn ppl__ws--icononly"
-              aria-label="团队成员"
+              className="ppl__head-action"
+              aria-label="邀请返利"
               onClick={() => {
                 onClose?.()
-                openTeamManage()
+                navigate('/distribution')
               }}
             >
-              <span className="ppl__ws-ico">{IconMembers}</span>
+              <img src={distributionIcon} alt="" aria-hidden="true" />
             </button>
           </Tooltip>
-        ) : (
-          <div className="ppl__ws" title={wsName}>
-            <span className="ppl__ws-ico">{IconMembers}</span>
-            <span className="ppl__ws-txt">{wsName}</span>
-          </div>
-        )}
+
+          {/* 当前空间:团队空间只显示图标,悬停弹出「团队成员」黑色圆角浮层,点击打开团队管理查看成员 */}
+          {isTeamWs && canRevealTeamInfo ? (
+            <Tooltip title="团队成员" placement="bottom" zIndex={4000}>
+              <button
+                type="button"
+                className="ppl__ws ppl__ws--btn ppl__ws--icononly"
+                aria-label="团队成员"
+                onClick={() => {
+                  onClose?.()
+                  openTeamManage()
+                }}
+              >
+                <span className="ppl__ws-ico">{IconMembers}</span>
+              </button>
+            </Tooltip>
+          ) : (
+            <div className="ppl__ws" title={wsName}>
+              <span className="ppl__ws-ico">{IconMembers}</span>
+              <span className="ppl__ws-txt">{wsName}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 会员卡:套餐 + 到期 + 积分进度(点整卡进会员中心) */}

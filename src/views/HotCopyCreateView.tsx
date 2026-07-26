@@ -52,6 +52,7 @@ import {
   mergeHotCopyGenerationCheckpoint,
   resolveHotCopyActiveGenerationState,
   resolveHotCopyPaidTaskCheckpoint,
+  canHotCopyJobReplaceCreativeContent,
   resolveHotCopyPendingRecovery,
   type HotCopyGenerationCheckpointMode,
   type HotCopyPendingRecoveryAction,
@@ -228,6 +229,8 @@ interface HotCopyJobContext {
   resolveContentBaseFingerprint?: () => string
   /** 只有新项目或显式重启流程才允许初始化/替换创作内容。 */
   allowCreativeReplace?: boolean
+  /** 本次生成刚创建的独立项目；素材准备期间的变化均属于同一生成事务。 */
+  ownsNewProject?: boolean
 }
 
 /** 成片修改与重新生成共用入口的可选参数。 */
@@ -643,6 +646,7 @@ async function persistHotCopyJobProgress(
         const revision = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
         const latestDraftValue = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
         const draftInspection = inspectHotCopyProjectDraft(latestDraftValue)
+        const canReplaceCreativeContent = canHotCopyJobReplaceCreativeContent(context)
         if (draftInspection.kind === 'foreign' && !context.allowFlowReplace) {
           return { draft: null, creativeConflict: false }
         }
@@ -650,7 +654,7 @@ async function persistHotCopyJobProgress(
           ? { obj: draftInspection.obj, smart: draftInspection.smart }
           : null
         const hasUnreadableDraft = latestDraftValue != null && latestDraftValue !== '' && !parsed
-        if (hasUnreadableDraft && !context.allowCreativeReplace) {
+        if (hasUnreadableDraft && !canReplaceCreativeContent) {
           return { draft: null, creativeConflict: true }
         }
         const draft: any = parsed?.obj && typeof parsed.obj === 'object' ? { ...parsed.obj } : {}
@@ -659,8 +663,8 @@ async function persistHotCopyJobProgress(
           return { draft: null, creativeConflict: false }
         }
 
-        let creativeConflict = !context.contentBaseFingerprint && !context.allowCreativeReplace
-        if (context.contentBaseFingerprint && !context.allowCreativeReplace) {
+        let creativeConflict = !context.contentBaseFingerprint && !canReplaceCreativeContent
+        if (context.contentBaseFingerprint && !canReplaceCreativeContent) {
           try {
             assertCreativeDraftContentUnchanged(context.contentBaseFingerprint, latestDraftValue)
           } catch (error) {
@@ -798,7 +802,11 @@ async function persistHotCopyJobResult(
 }
 
 /** 编排爆款复制入口、任务提交/恢复、草稿保存和成片修改。 */
-export default function HotCopyCreateView() {
+interface HotCopyCreateViewProps {
+  routeSessionToken?: string
+}
+
+export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCreateViewProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const params = useParams()
@@ -1298,6 +1306,7 @@ export default function HotCopyCreateView() {
     replicateQuote?: HotCopyReplicateQuote
     allowFlowReplace?: boolean
     allowCreativeReplace?: boolean
+    ownsNewProject?: boolean
   }): HotCopyJobContext => ({
     epoch: args.epoch,
     workspaceId: Number(args.workspaceId || 0) || 0,
@@ -1321,6 +1330,7 @@ export default function HotCopyCreateView() {
     resolveContentBaseFingerprint: () =>
       baseDraftContentFingerprintByProjectRef.current.get(hotCopyProjectKey(args.workspaceId, args.projectId)) || '',
     allowCreativeReplace: args.allowCreativeReplace === true,
+    ownsNewProject: args.ownsNewProject === true,
   })
 
   const persistTrackedHotCopyJobProgress = useLatestCallback(
@@ -2129,7 +2139,11 @@ export default function HotCopyCreateView() {
           routeBindingProjectIdRef.current = restartProjectId
           navigate(`/hot-copy/${restartProjectId}`, {
             replace: true,
-            state: { hotCopyProjectBound: true },
+            state: {
+              hotCopyCreationBindProjectId: restartProjectId,
+              hotCopyCreationBindSessionToken: routeSessionToken,
+              hotCopyCreationBindWorkspaceId: ws,
+            },
           })
         })
         .catch((error: any) => {
@@ -3874,7 +3888,7 @@ export default function HotCopyCreateView() {
 
     setJobPhase(context, `替换素材人脸检测 ${index}/${total}…`)
     const face = await blurFacesOnAsset({ workspaceId: ws, assetId: sourceAssetId })
-    if (!face.ok && isNoFaceDetectedError(face.debug?.error)) {
+    if (!face.ok && (face.noFace || isNoFaceDetectedError(face.debug?.error))) {
       return {
         product: {
           ...product,
@@ -3898,7 +3912,7 @@ export default function HotCopyCreateView() {
         },
         submitAssetId: 0,
         failed: true,
-        error: face.debug?.error || '人脸脱敏任务未返回可用素材',
+        error: `${face.debug?.error || '人脸脱敏任务未返回可用素材'}${face.retryable ? '，请稍后重试' : ''}`,
       }
     }
 
@@ -4051,6 +4065,8 @@ export default function HotCopyCreateView() {
         productAssetIds: productIds,
         entryInitial: nextEntryInitial,
       })
+      // 最终生成配置已完整落库；从此恢复普通指纹保护，避免任务运行期间覆盖用户在其他页面的新编辑。
+      context.ownsNewProject = false
       setJobPhase(context, '正在提交视频任务…')
       await doReplicate(ws, videoAssetId, productIds, prompt, srcDur, generation, context)
       if (isJobUiActive(context)) markGen(generation.id, 'published')
@@ -4553,7 +4569,8 @@ export default function HotCopyCreateView() {
     const d = ws ? loadCurrentHotCopyDraft(ws) : null
     const pendingTask = Number(d?.vidGenTaskId || 0) || 0
     const hasResult = hasVideoResult(d?.fullVideo, d?.videoVersions)
-    if (ws && pendingTask > 0 && !hasResult) {
+    const explicitNewSession = Boolean((location.state as any)?.taskCenterNewSession)
+    if (ws && pendingTask > 0 && !hasResult && !explicitNewSession) {
       void requireAuth(async () => {
         const recoveredSourceVideo = resolveHotCopySourceVideo(d?.sourceVideo, d?.entryInitial)
         const recoveredProductAssetIds = resolveHotCopyProductAssetIds(d?.productAssetIds, d?.entryInitial)
@@ -4685,6 +4702,7 @@ export default function HotCopyCreateView() {
       routeProjectId: routeId,
       restartProjectId: navigationRestartProjectId,
       boundProjectId: projectIdRef.current,
+      forceNewProject: Boolean((location.state as any)?.taskCenterNewSession),
     })
     if (targetProjectId) terminalJobResultsRef.current.delete(targetProjectId)
     const prompt = buildBasePrompt(payload.tab, payload.text)
@@ -4730,6 +4748,24 @@ export default function HotCopyCreateView() {
     setProjectId(targetProjectId)
     // 立即落一份干净草稿(重置上一次结果),防止刚开始生成就切走时恢复到旧视频
     const generation = reserveGen('生成')
+    const provisionalContext = createJobContext({
+      epoch,
+      workspaceId: ws,
+      projectId: 0,
+      generation,
+      title: initialProjectTitle,
+      prompt,
+      ratio: pickedRatio,
+      durationSec: pickedDurSec,
+      operationCode: 'video.replicate',
+      entryInitial: nextEntryInitial,
+      replicateSnapshot: requestSnapshot,
+      replicateQuote: confirmedQuote,
+    })
+    upsertHotCopyTaskCenter(provisionalContext, 'preparing', {
+      taskId: 0,
+      error: '',
+    })
     if (ws) {
       saveHotCopyDraft(ws, {
         entryInitial: nextEntryInitial,
@@ -4801,8 +4837,10 @@ export default function HotCopyCreateView() {
           replicateQuote: confirmedQuote,
           allowFlowReplace: targetProjectId > 0,
           allowCreativeReplace: true,
+          ownsNewProject: targetProjectId === 0,
         })
         jobContext = context
+        useTaskCenterStore.getState().removeTask(provisionalContext.taskCenterId)
         upsertHotCopyTaskCenter(context, 'preparing', { taskId: 0 })
         // 项目先落创作配置；素材尚未处理完成前不创建云端 processing 占位。
         await persistHotCopyCreativeCheckpoint(context, {
@@ -4828,13 +4866,28 @@ export default function HotCopyCreateView() {
           if (localDraft) saveHotCopyDraft(ws, { ...localDraft, projectId: id })
           if (!targetProjectId) {
             routeBindingProjectIdRef.current = id
-            navigate(`/hot-copy/${id}`, { replace: true, state: { hotCopyProjectBound: true } })
+            navigate(`/hot-copy/${id}`, {
+              replace: true,
+              state: {
+                hotCopyCreationBindProjectId: id,
+                hotCopyCreationBindSessionToken: routeSessionToken,
+                hotCopyCreationBindWorkspaceId: ws,
+              },
+            })
           }
           void autoNameProject(prompt, pickedDurSec)
         }
         await prepareAndGenerate(payload, prompt, context, generation)
       } catch (error: any) {
         const message = error?.message || '项目创建失败，请重试'
+        if (!jobContext) {
+          patchHotCopyTaskCenter(provisionalContext, {
+            status: 'failed',
+            taskId: 0,
+            progress: 0,
+            error: message,
+          })
+        }
         if (jobContext && isHotCopyBeforePaidTaskError(error)) {
           const updateCurrentUi = aliveRef.current && sessionEpochRef.current === epoch
           failHotCopyBeforePaidTask(jobContext, generation, message, updateCurrentUi)
@@ -5059,111 +5112,121 @@ export default function HotCopyCreateView() {
             </div>
           </div>
         ) : (
-          <>
-            <button type="button" className="smart__newvideo" onClick={resetToNewVideo}>
-              创建新视频
-            </button>
-            <div className="smart__progress">
-              <StepProgress
-                steps={STEPS}
-                current={step}
-                statuses={[
-                  '已完成',
-                  hotCopyStepGenerating ? hotCopyPhase || '视频生成中' : fullVideo.url ? '已完成' : '待生成',
-                ]}
-                onStepClick={(i) => goStep(i)}
-              />
-            </div>
-
-            <div className="smart__projbar">
-              <div className="smart__projbar-inner">
-                {editingName ? (
-                  <input
-                    ref={nameInputRef}
-                    className="smart__name-input"
-                    value={draftName}
-                    autoFocus
-                    onChange={(e) => setDraftName(e.target.value)}
-                    onBlur={commitRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitRename()
-                      if (e.key === 'Escape') setEditingName(false)
-                    }}
+          <div className="smart__entry-with-tasks">
+            <TaskCenterDrawer scope="hot-copy" />
+            <div className="smart__entry-content">
+              <div className="smart__flow-content">
+                <button type="button" className="smart__newvideo" onClick={resetToNewVideo}>
+                  创建新视频
+                </button>
+                <div className="smart__progress">
+                  <StepProgress
+                    steps={STEPS}
+                    current={step}
+                    statuses={[
+                      '已完成',
+                      hotCopyStepGenerating ? hotCopyPhase || '视频生成中' : fullVideo.url ? '已完成' : '待生成',
+                    ]}
+                    onStepClick={(i) => goStep(i)}
                   />
-                ) : (
-                  <button type="button" className="smart__name" onClick={startRename} title="点击修改项目名">
-                    <span className="smart__name-label">项目</span>
-                    <span className="smart__name-text">/{projectName}</span>
-                    {naming && <span className="smart__name-naming">AI 命名中…</span>}
-                    <img className="smart__name-edit" src={iconProjectEdit} alt="" width={20} height={20} />
-                  </button>
-                )}
-                <DraftSaveIndicator status={draftSaveStatus} onRetry={() => void retryHotCopyCloudSave()} />
+                </div>
+
+                <div className="smart__projbar">
+                  <div className="smart__projbar-inner">
+                    {editingName ? (
+                      <input
+                        ref={nameInputRef}
+                        className="smart__name-input"
+                        value={draftName}
+                        autoFocus
+                        onChange={(e) => setDraftName(e.target.value)}
+                        onBlur={commitRename}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') commitRename()
+                          if (e.key === 'Escape') setEditingName(false)
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="smart__name"
+                        onClick={startRename}
+                        title="点击修改项目名"
+                        aria-label={`修改项目名称：${projectName}`}
+                      >
+                        <span className="smart__name-text">{projectName}</span>
+                        {naming && <span className="smart__name-naming">AI 命名中…</span>}
+                        <img className="smart__name-edit" src={iconProjectEdit} alt="" width={20} height={20} />
+                      </button>
+                    )}
+                    <DraftSaveIndicator status={draftSaveStatus} onRetry={() => void retryHotCopyCloudSave()} />
+                  </div>
+                </div>
+
+                <div className="smart__body">
+                  <Suspense fallback={<LazyHotCopyFallback label="正在加载视频编辑器…" />}>
+                    <VideoStage
+                      key={`hot-copy-video-stage-${videoStageKey}`}
+                      shots={[]}
+                      videoUrl={fullVideo.url}
+                      videoAssetId={fullVideo.assetId}
+                      videoGenerating={hotCopyVideoGenerating}
+                      videoStatusText={hotCopyVideoGenerating ? hotCopyPhase || '爆款复制生成中…' : undefined}
+                      loadingTitle="爆款复制生成中"
+                      videoStartedAt={visiblePendingGenerations[0]?.createdAt || 0}
+                      costEstimate={videoCost.estimate}
+                      costLoading={videoCost.loading}
+                      costError={videoCost.error}
+                      onEstimateEditCost={async (note) => {
+                        const ws = Number(workspaceId || 0)
+                        if (!ws || !fullVideo.assetId || !fullVideo.url) throw new Error('缺少可编辑的视频')
+                        const plans = await resolvePlanCandidates()
+                        const editPrompt = [
+                          '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
+                          note || '',
+                        ]
+                          .filter(Boolean)
+                          .join('\n')
+                        const sourceVideoDurationSec =
+                          (await readVideoDurationSec(fullVideo.url)) || boundSourceVideoDurSec || 0
+                        const result: any = await estimateVideoEditCost({
+                          workspaceId: ws,
+                          prompt: editPrompt,
+                          ratio: genRatio,
+                          durationSec: genDurationSec,
+                          sourceVideoDurationSec,
+                          modelPlanCandidates: plans,
+                        })
+                        return {
+                          estimatedCost: Number(result?.estimated_cost ?? 0),
+                          balance: Number(result?.balance ?? 0),
+                          canAfford: result?.can_afford === true,
+                        }
+                      }}
+                      videoVersions={videoVersions}
+                      failedGenerations={[...videoGenerations]
+                        .filter((g) => g.status === 'failed')
+                        .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0))
+                        .map((g) => ({ id: g.id, note: g.note, error: g.error, createdAt: g.createdAt }))}
+                      pendingGenerations={visiblePendingGenerations.map((g) => ({
+                        id: g.id,
+                        createdAt: g.createdAt,
+                        // 爆款复制不支持多任务排队；processing 历史统一按「生成中」展示，避免误导成排队态。
+                        running: true,
+                      }))}
+                      pendingVideoCount={visiblePendingGenerations.length}
+                      modificationDraft={videoModificationDraft}
+                      onModificationDraftChange={setVideoModificationDraft}
+                      onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
+                      onRegenerateVideo={(note, opts) => regenerate(note, opts)}
+                      onDownloadVideo={handleDownloadVideo}
+                      onPrev={() => goStep(0)}
+                    />
+                  </Suspense>
+                </div>
               </div>
             </div>
-
-            <div className="smart__body">
-              <Suspense fallback={<LazyHotCopyFallback label="正在加载视频编辑器…" />}>
-                <VideoStage
-                  key={`hot-copy-video-stage-${videoStageKey}`}
-                  shots={[]}
-                  videoUrl={fullVideo.url}
-                  videoAssetId={fullVideo.assetId}
-                  videoGenerating={hotCopyVideoGenerating}
-                  videoStatusText={hotCopyVideoGenerating ? hotCopyPhase || '爆款复制生成中…' : undefined}
-                  loadingTitle="爆款复制生成中"
-                  videoStartedAt={visiblePendingGenerations[0]?.createdAt || 0}
-                  costEstimate={videoCost.estimate}
-                  costLoading={videoCost.loading}
-                  costError={videoCost.error}
-                  onEstimateEditCost={async (note) => {
-                    const ws = Number(workspaceId || 0)
-                    if (!ws || !fullVideo.assetId || !fullVideo.url) throw new Error('缺少可编辑的视频')
-                    const plans = await resolvePlanCandidates()
-                    const editPrompt = [
-                      '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
-                      note || '',
-                    ]
-                      .filter(Boolean)
-                      .join('\n')
-                    const sourceVideoDurationSec =
-                      (await readVideoDurationSec(fullVideo.url)) || boundSourceVideoDurSec || 0
-                    const result: any = await estimateVideoEditCost({
-                      workspaceId: ws,
-                      prompt: editPrompt,
-                      ratio: genRatio,
-                      durationSec: genDurationSec,
-                      sourceVideoDurationSec,
-                      modelPlanCandidates: plans,
-                    })
-                    return {
-                      estimatedCost: Number(result?.estimated_cost ?? 0),
-                      balance: Number(result?.balance ?? 0),
-                      canAfford: result?.can_afford === true,
-                    }
-                  }}
-                  videoVersions={videoVersions}
-                  failedGenerations={[...videoGenerations]
-                    .filter((g) => g.status === 'failed')
-                    .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0))
-                    .map((g) => ({ id: g.id, note: g.note, error: g.error, createdAt: g.createdAt }))}
-                  pendingGenerations={visiblePendingGenerations.map((g) => ({
-                    id: g.id,
-                    createdAt: g.createdAt,
-                    // 爆款复制不支持多任务排队；processing 历史统一按「生成中」展示，避免误导成排队态。
-                    running: true,
-                  }))}
-                  pendingVideoCount={visiblePendingGenerations.length}
-                  modificationDraft={videoModificationDraft}
-                  onModificationDraftChange={setVideoModificationDraft}
-                  onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
-                  onRegenerateVideo={(note, opts) => regenerate(note, opts)}
-                  onDownloadVideo={handleDownloadVideo}
-                  onPrev={() => goStep(0)}
-                />
-              </Suspense>
-            </div>
-          </>
+          </div>
         )}
       </div>
     </div>

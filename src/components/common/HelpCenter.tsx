@@ -80,6 +80,8 @@ const BALL = 56
 
 /** 悬浮球与视口边缘的最小距离。 */
 const MARGIN = 8
+const COMPACT_HOT_COPY_BREAKPOINT = 900
+const COMPACT_HOT_COPY_MARGIN = 16
 
 /** 悬浮球与弹出面板之间的间距。 */
 const GAP = 14
@@ -137,6 +139,14 @@ function clampPos(p: Pos): Pos {
     x: Math.min(Math.max(MARGIN, p.x), maxX),
     y: Math.min(Math.max(MARGIN, p.y), maxY),
   }
+}
+
+function compactHotCopyBallPos(pathname: string): Pos | null {
+  if (!pathname.startsWith('/hot-copy') || window.innerWidth > COMPACT_HOT_COPY_BREAKPOINT) return null
+  return clampPos({
+    x: window.innerWidth - BALL - COMPACT_HOT_COPY_MARGIN,
+    y: window.innerHeight - BALL - COMPACT_HOT_COPY_MARGIN,
+  })
 }
 
 // ── 面板图标(内联,描边色 currentColor)──
@@ -303,17 +313,20 @@ export default function HelpCenter() {
     } catch {
       init = null
     }
+    init = compactHotCopyBallPos(location.pathname) || init
     if (!init) init = { x: window.innerWidth - BALL - 24, y: window.innerHeight - BALL - 24 }
     setPosBoth(init)
-  }, [setPosBoth])
+  }, [location.pathname, setPosBoth])
 
   useEffect(() => {
     function onResize() {
-      if (posRef.current) setPosBoth(posRef.current)
+      const compactPosition = compactHotCopyBallPos(location.pathname)
+      if (compactPosition) setPosBoth(compactPosition)
+      else if (posRef.current) setPosBoth(posRef.current)
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [setPosBoth])
+  }, [location.pathname, setPosBoth])
 
   useEffect(() => {
     if (!open) {
