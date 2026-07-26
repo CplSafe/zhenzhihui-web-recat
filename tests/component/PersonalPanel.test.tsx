@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
+  distributionAccess: { isDistributor: true },
   openTeamManage: vi.fn(),
   navigate: vi.fn(),
   renameTeam: vi.fn(),
@@ -29,6 +30,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }))
 vi.mock('@/composables/useSafeWorkspaceSwitch', () => ({ useSafeWorkspaceSwitch: () => mocks.safeSwitch }))
+vi.mock('@/composables/useDistributionAccess', () => ({
+  useDistributionAccess: () => ({
+    status: mocks.distributionAccess.isDistributor ? 'allowed' : 'denied',
+    isDistributor: mocks.distributionAccess.isDistributor,
+  }),
+}))
 vi.mock('@/composables/useToast', () => ({
   useConfirmDialog: () => ({ requestConfirm: mocks.confirm }),
   useToast: () => ({ showToast: mocks.showToast }),
@@ -91,6 +98,7 @@ describe('PersonalPanel', () => {
     mocks.confirm.mockResolvedValue(null)
     mocks.renameTeam.mockResolvedValue(undefined)
     mocks.safeSwitch.mockReturnValue(true)
+    mocks.distributionAccess.isDistributor = true
   })
 
   it('shows invitation rebate and opens its page', async () => {
@@ -104,6 +112,14 @@ describe('PersonalPanel', () => {
 
     view.rerender(<PersonalPanel onClose={onClose} />)
     expect(screen.getByRole('button', { name: /邀请返利/ })).toBeInTheDocument()
+  })
+
+  it('does not render the invitation rebate entry for non-marketing users', () => {
+    mocks.distributionAccess.isDistributor = false
+
+    render(<PersonalPanel />)
+
+    expect(screen.queryByRole('button', { name: /邀请返利/ })).not.toBeInTheDocument()
   })
 
   it('shows role, membership usage, and switches one non-active workspace before closing', async () => {

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   auth: { isAuthenticated: false },
   confirm: vi.fn(),
+  getDistributionOverview: vi.fn(),
   getReferralMyCode: vi.fn(),
   loadSubscriptionLabel: vi.fn(),
   openMemberCenter: vi.fn(),
@@ -27,7 +28,10 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('@/api/business', () => ({ getReferralMyCode: mocks.getReferralMyCode }))
+vi.mock('@/api/business', () => ({
+  getDistributionOverview: mocks.getDistributionOverview,
+  getReferralMyCode: mocks.getReferralMyCode,
+}))
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => mocks.auth }))
 vi.mock('@/composables/useSafeWorkspaceSwitch', () => ({ useSafeWorkspaceSwitch: () => mocks.safeSwitch }))
 vi.mock('@/composables/useToast', () => ({
@@ -96,6 +100,7 @@ function renderTopbar(props: React.ComponentProps<typeof AppTopbar> = {}) {
 describe('AppTopbar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.getDistributionOverview.mockResolvedValue({ is_distributor: false })
     mocks.auth.isAuthenticated = false
     Object.assign(mocks.state, {
       activeId: 0,

@@ -43,4 +43,15 @@ describe('same-origin client API routing', () => {
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe('/deepauth/api/v1/public/auth/sms/send')
   })
+
+  it('keeps invitation attribution on the OAuth start context', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => success())
+    vi.stubGlobal('fetch', fetchMock)
+
+    await startOAuth({ redirectTo: '/home', inviteCode: 'DIST-001' })
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      '/api/v1/auth/oauth-start?redirect_to=%2Fhome&invite_code=DIST-001',
+    )
+  })
 })

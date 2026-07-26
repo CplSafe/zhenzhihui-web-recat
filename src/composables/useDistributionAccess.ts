@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { getDistributionOverview } from '@/api/business'
-import { useCurrentUser } from '@/stores/workspaceSession'
+import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 
 export type DistributionAccessStatus = 'idle' | 'checking' | 'allowed' | 'denied' | 'error'
 
@@ -86,8 +86,8 @@ function getUserKey(user: any): string {
   return String(user?.id ?? user?.user_id ?? user?.userId ?? user?.uid ?? '').trim()
 }
 
-function requestAccess(userKey: string): Promise<AccessCacheEntry> {
-  const cached = accessCache.get(userKey)
+function requestAccess(userKey: string, revalidate = false): Promise<AccessCacheEntry> {
+  const cached = revalidate ? null : accessCache.get(userKey)
   if (cached) return Promise.resolve(cached)
   const pending = accessRequests.get(userKey)
   if (pending) return pending
@@ -122,8 +122,11 @@ function requestAccess(userKey: string): Promise<AccessCacheEntry> {
 /** 用分销概览接口同时完成营销身份识别与首屏概览预取。 */
 export function useDistributionAccess() {
   const user = useCurrentUser()
-  const userKey = useMemo(() => getUserKey(user), [user])
-  const [revision, setRevision] = useState(0)
+  const workspaceId = useWorkspaceId()
+  const userKey = useMemo(() => {
+    const identity = getUserKey(user)
+    return identity ? `${identity}:${Number(workspaceId || 0) || 'account'}` : ''
+  }, [user, workspaceId])
   const [state, setState] = useState<{
     status: DistributionAccessStatus
     overview: any
@@ -144,25 +147,22 @@ export function useDistributionAccess() {
     const cached = accessCache.get(userKey)
     if (cached) {
       setState(cached)
-      return () => {
-        active = false
-      }
+    } else {
+      setState({ status: 'checking', overview: null, error: null })
     }
-    setState({ status: 'checking', overview: null, error: null })
-    void requestAccess(userKey).then((entry) => {
+    // 缓存只用于避免入口闪烁；每次组件挂载都后台重取概览，确保邀请人数和金额不会长期陈旧。
+    void requestAccess(userKey, Boolean(cached)).then((entry) => {
       if (active) setState(entry)
     })
     return () => {
       active = false
     }
-  }, [revision, userKey])
+  }, [userKey])
 
   const retry = useCallback(() => {
-    if (userKey) {
-      accessCache.delete(userKey)
-      accessRequests.delete(userKey)
-    }
-    setRevision((value) => value + 1)
+    if (!userKey) return
+    accessCache.delete(userKey)
+    void requestAccess(userKey, true).then(setState)
   }, [userKey])
 
   return { ...state, retry, isDistributor: state.status === 'allowed' }

@@ -28,9 +28,13 @@ export class AuthApiError extends Error {
   }
 }
 
-/** 向业务后端申请 OAuth 上下文，可携带登录完成后的目标页。 */
-export async function startOAuth({ redirectTo }: any = {}) {
-  const query = redirectTo ? `?${new URLSearchParams({ redirect_to: redirectTo })}` : ''
+/** 向业务后端申请 OAuth 上下文，可携带登录完成后的目标页和待确认的邀请归因。 */
+export async function startOAuth({ redirectTo, inviteCode = '' }: any = {}) {
+  const params = new URLSearchParams()
+  if (redirectTo) params.set('redirect_to', redirectTo)
+  if (String(inviteCode || '').trim()) params.set('invite_code', String(inviteCode).trim())
+  const suffix = params.toString()
+  const query = suffix ? `?${suffix}` : ''
 
   return requestJson(buildUrl(businessApiBaseUrl, `/api/v1/auth/oauth-start${query}`))
 }

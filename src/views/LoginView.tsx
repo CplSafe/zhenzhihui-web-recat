@@ -32,6 +32,7 @@ import { isPreloaded } from '@/utils/mediaPreload'
 import { logger } from '@/observability/openobserve-logger'
 import { createLoginBridgeDiagnostic, type LoginBridgeWarningReason } from '@/utils/loginObservability'
 import { hasConfiguredDevBackend } from '@/utils/devBackend'
+import { getInviteCode } from '@/utils/inviteCode'
 
 /** 短信登录前的人机验证码会话状态。 */
 interface CaptchaState {
@@ -246,7 +247,7 @@ export default function LoginView() {
     // 缓存进行中的 OAuth start Promise，避免发送验证码与提交登录并发创建不同 state。
     if (authStartRef.current) return authStartRef.current
     if (!authStartPromiseRef.current) {
-      authStartPromiseRef.current = startOAuth({ redirectTo: getRedirectTo() })
+      authStartPromiseRef.current = startOAuth({ redirectTo: getRedirectTo(), inviteCode: getInviteCode() })
         .then((data) => {
           authStartRef.current = data
           return data
