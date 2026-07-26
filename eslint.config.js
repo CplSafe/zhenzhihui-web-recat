@@ -18,7 +18,11 @@ export default tseslint.config(
       'react-refresh': reactRefresh,
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      // Preserve the pre-upgrade Hooks policy. react-hooks 7 additionally
+      // enables React Compiler migration rules that require a dedicated,
+      // project-wide refactor and are not part of this dependency patch.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       'react-refresh/only-export-components': 'off',
       // 迁移代码大量使用 any（API/store 宽松类型，见 MIGRATION.md 的类型债务），刻意放开。
       '@typescript-eslint/no-explicit-any': 'off',

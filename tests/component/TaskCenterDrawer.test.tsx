@@ -129,7 +129,7 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
         scope: 'hot-copy',
         generationId: 'queued',
         title: '翻拍排队中',
-        status: 'pending',
+        status: 'queued',
       }),
       task({ id: 'smart:7:11:done', generationId: 'done', title: '已完成任务', status: 'succeeded' }),
     )
@@ -197,6 +197,7 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
   })
 
   it('fails closed until project permissions load, then reveals only accessible live tasks', async () => {
+    const user = userEvent.setup()
     const projects = deferred<unknown[]>()
     mocks.listAllCreativeProjects.mockReturnValue(projects.promise)
     seed(
@@ -219,7 +220,8 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
       }),
     )
 
-    render(<TaskCenterDrawer scope="generating" />)
+    render(<TaskCenterDrawer scope="smart" />)
+    await user.click(screen.getByRole('tab', { name: '正在生成' }))
 
     expect(screen.queryByRole('button', { name: /当前任务.*打开项目/ })).not.toBeInTheDocument()
 

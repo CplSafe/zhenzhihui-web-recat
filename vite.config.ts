@@ -49,7 +49,15 @@ export default defineConfig(({ mode }) => {
           // Merge only tiny chunks that share the same loading boundary. This
           // keeps route-level lazy loading intact while avoiding dozens of
           // separate gzip streams and import wrappers in the production build.
-          experimentalMinChunkSize: 6_000,
+          experimentalMinChunkSize: 50_000,
+          manualChunks(id) {
+            const normalizedId = id.replaceAll('\\', '/')
+            if (!normalizedId.includes('/node_modules/')) return undefined
+            if (/\/node_modules\/(?:react|react-dom|react-router|react-router-dom|scheduler)\//.test(normalizedId)) {
+              return 'vendor-react'
+            }
+            return undefined
+          },
         },
       },
     },
