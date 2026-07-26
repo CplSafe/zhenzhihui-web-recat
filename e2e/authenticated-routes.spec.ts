@@ -479,7 +479,9 @@ test.describe('已认证关键路由与读取链路', () => {
     const resumeGeneration = page.getByRole('button', { name: '返回下一步' })
     await expect(resumeGeneration).toBeVisible({ timeout: 30_000 })
     await resumeGeneration.click()
-    await expect(page.getByText('/E2E 爆款项目', { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByRole('button', { name: '修改项目名称：E2E 爆款项目' })).toBeVisible({
+      timeout: 30_000,
+    })
     await expect(page.getByText('已完成', { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)
     await expect(page.getByRole('dialog', { name: '本次创作使用的模型' })).toHaveCount(0)

@@ -132,7 +132,7 @@ test.describe('创作页空间切换隔离', () => {
       const resumeGeneration = page.getByRole('button', { name: '返回下一步' })
       await expect(resumeGeneration).toBeVisible({ timeout: 30_000 })
       await resumeGeneration.click()
-      await expect(page.getByRole('button', { name: `项目 /${scenario.oldProjectName}` })).toBeVisible({
+      await expect(page.getByRole('button', { name: `修改项目名称：${scenario.oldProjectName}` })).toBeVisible({
         timeout: 30_000,
       })
       await waitForEditorStartupRequests(api, scenario.sourceWorkspaceId, 1)
