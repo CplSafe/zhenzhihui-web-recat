@@ -108,7 +108,7 @@ describe('DistributionView', () => {
     expect(screen.queryByText('300912345678')).not.toBeInTheDocument()
     expect(screen.queryByRole('columnheader', { name: '客户账户ID' })).not.toBeInTheDocument()
     expect(screen.getAllByText('我的客户')).toHaveLength(3)
-    expect(screen.getByText('结算中', { selector: '.distribution-status' })).toBeInTheDocument()
+    expect(await screen.findByText('结算中', { selector: '.distribution-status' })).toBeInTheDocument()
   })
 
   it('submits filters using the backend query contract', async () => {

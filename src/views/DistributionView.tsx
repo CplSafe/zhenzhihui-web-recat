@@ -131,8 +131,16 @@ function relationLabel(value: any): string {
   const normalized = String(value || '')
     .trim()
     .toLowerCase()
-  if (['direct', 'mine', 'my_customer', 'direct_customer'].includes(normalized)) return '我的客户'
+  if (['direct', 'mine', 'my_customer', 'direct_customer', 'customer'].includes(normalized)) return '我的客户'
   if (['distributor', 'indirect', 'distributor_customer'].includes(normalized)) return '分销商客户'
+  return String(value || '---')
+}
+
+function orderTypeLabel(value: any): string {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'subscription_initial') return '首次订阅'
   return String(value || '---')
 }
 
@@ -140,10 +148,12 @@ function statusMeta(value: any): { label: string; tone: 'pending' | 'settled' | 
   const normalized = String(value || '')
     .trim()
     .toLowerCase()
-  if (['settled', 'completed', 'paid', 'success'].includes(normalized)) return { label: '已结算', tone: 'settled' }
+  if (['settled', 'completed', 'paid', 'success', 'credited'].includes(normalized))
+    return { label: '已入账', tone: 'settled' }
   if (['cancelled', 'canceled', 'refunded', 'failed'].includes(normalized)) {
     return { label: '已取消', tone: 'cancelled' }
   }
+  if (normalized === 'not_credited') return { label: '未入账', tone: 'pending' }
   if (['pending', 'processing', 'settling'].includes(normalized)) return { label: '结算中', tone: 'pending' }
   return { label: normalized ? String(value) : '状态待同步', tone: 'unknown' }
 }
@@ -184,9 +194,27 @@ export default function DistributionView() {
   const inviteesRequestRef = useRef<AbortController | null>(null)
   const commissionsRequestRef = useRef<AbortController | null>(null)
 
+  useEffect(() => {
+    document.documentElement.classList.add('distribution-document-scroll')
+    return () => document.documentElement.classList.remove('distribution-document-scroll')
+  }, [])
+
   const overview = useMemo(() => unwrap(rawOverview) || {}, [rawOverview])
   const overviewInviteCode = String(pick(overview, ['invite_code', 'inviteCode', 'referral_code'], '')).trim()
   const inviteUrl = inviteCode ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}` : ''
+
+  useEffect(() => {
+    const app = document.getElementById('app')
+    if (!app) return undefined
+    const previousOverflowX = app.style.overflowX
+    const previousOverflowY = app.style.overflowY
+    app.style.overflowX = 'auto'
+    app.style.overflowY = 'auto'
+    return () => {
+      app.style.overflowX = previousOverflowX
+      app.style.overflowY = previousOverflowY
+    }
+  }, [])
 
   useEffect(() => {
     if (accessStatus === 'denied' || accessStatus === 'error') {
@@ -386,7 +414,11 @@ export default function DistributionView() {
       invitees.map((item, index) => ({
         key: `invitee-${String(pick(item, ['invitee_id', 'customer_id', 'user_id', 'id'], index))}`,
         matchId: String(
-          pick(item, ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id', 'invitee_id'], ''),
+          pick(
+            item,
+            ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id', 'invitee_id', 'mobile'],
+            '',
+          ),
         ).trim(),
         registeredAt: formatDateTime(
           pick(item, ['registered_at', 'bound_at', 'invited_at', 'created_at', 'registration_time']),
@@ -396,7 +428,9 @@ export default function DistributionView() {
           ['customer_name', 'invitee_name', 'display_name', 'user_name', 'username', 'account_name', 'nickname'],
           '---',
         ),
-        relationship: relationLabel(pick(item, ['relationship', 'relation', 'relation_type'], 'direct')),
+        relationship: relationLabel(pick(item, ['relationship', 'relation', 'relation_type', 'kind'], 'direct')),
+        mobile: String(pick(item, ['mobile', 'masked_mobile'], '')).trim(),
+        paidOrderCount: Number(pick(item, ['paid_order_count', 'order_count'], 0)) || 0,
         distributorName: pick(item, ['distributor_name', 'owner_name', 'referrer_name'], '---'),
         customerStatus: String(
           pick(item, ['customer_status', 'operation_status', 'usage_status', 'status'], ''),
@@ -404,8 +438,10 @@ export default function DistributionView() {
         totalRecharge: optionalNumeric(
           item,
           ['total_recharge_amount', 'total_recharge', 'recharge_total', 'total_paid_amount'],
-          ['total_recharge_cents', 'total_recharge_amount_cents', 'total_paid_amount_cents'],
+          ['total_recharge_cents', 'total_recharge_amount_cents', 'total_paid_amount_cents', 'total_paid_cents'],
         ),
+        totalRebate: optionalNumeric(item, ['total_rebate_amount', 'total_rebate'], ['total_rebate_cents']),
+        lastPaymentAt: formatDateTime(pick(item, ['last_payment_at', 'last_paid_at'])),
         totalConsumed: optionalNumeric(
           item,
           ['total_consumed_amount', 'total_consumed', 'consumption_total', 'total_usage_amount'],
@@ -438,15 +474,17 @@ export default function DistributionView() {
         return {
           key: String(pick(row, ['commission_id', 'id', 'order_id'], index)),
           matchId: String(
-            pick(row, ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id'], ''),
+            pick(row, ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id', 'mobile'], ''),
           ).trim(),
           consumedAt,
           customerName: pick(
             row,
-            ['customer_name', 'invitee_name', 'display_name', 'user_name', 'username', 'account_name'],
+            ['customer_name', 'invitee_name', 'display_name', 'user_name', 'username', 'account_name', 'nickname'],
             '---',
           ),
-          relationship: relationLabel(pick(row, ['relationship', 'relation', 'relation_type'])),
+          relationship: relationLabel(pick(row, ['relationship', 'relation', 'relation_type', 'kind'])),
+          mobile: String(pick(row, ['mobile', 'masked_mobile'], '')).trim(),
+          orderType: orderTypeLabel(pick(row, ['order_type', 'payment_type'])),
           distributorName: pick(row, ['distributor_name', 'owner_name', 'referrer_name'], '---'),
           paidAmount: optionalNumeric(
             row,
@@ -471,9 +509,13 @@ export default function DistributionView() {
       registeredAt: normalizedInvitees.some((row) => row.registeredAt.date !== '---'),
       customerName: normalizedInvitees.some((row) => row.customerName !== '---'),
       relationship: normalizedInvitees.some((row) => row.relationship !== '---'),
+      mobile: normalizedInvitees.some((row) => Boolean(row.mobile)),
+      paidOrderCount: normalizedInvitees.some((row) => row.paidOrderCount > 0),
       distributorName: normalizedInvitees.some((row) => row.distributorName !== '---'),
       customerStatus: normalizedInvitees.some((row) => Boolean(row.customerStatus)),
       totalRecharge: normalizedInvitees.some((row) => row.totalRecharge !== null),
+      totalRebate: normalizedInvitees.some((row) => row.totalRebate !== null),
+      lastPaymentAt: normalizedInvitees.some((row) => row.lastPaymentAt.date !== '---'),
       totalConsumed: normalizedInvitees.some((row) => row.totalConsumed !== null),
       balance: normalizedInvitees.some((row) => row.balance !== null),
     }),
@@ -485,6 +527,8 @@ export default function DistributionView() {
       consumedAt: normalizedRows.some((row) => row.consumedAt.date !== '---'),
       customerName: normalizedRows.some((row) => row.customerName !== '---'),
       relationship: normalizedRows.some((row) => row.relationship !== '---'),
+      mobile: normalizedRows.some((row) => Boolean(row.mobile)),
+      orderType: normalizedRows.some((row) => row.orderType !== '---'),
       distributorName: normalizedRows.some((row) => row.distributorName !== '---'),
       paidAmount: normalizedRows.some((row) => row.paidAmount !== null),
       commissionAmount: normalizedRows.some((row) => row.commissionAmount !== null),
@@ -498,7 +542,7 @@ export default function DistributionView() {
       normalizedRows.filter(
         (row) =>
           (row.paidAmount !== null || row.commissionAmount !== null) &&
-          (row.customerName === '---' || row.relationship === '---' || row.distributorName === '---'),
+          (row.customerName === '---' || row.relationship === '---'),
       ).length,
     [normalizedRows],
   )
@@ -642,10 +686,14 @@ export default function DistributionView() {
                 <tr>
                   {inviteeFields.registeredAt ? <th>注册时间</th> : null}
                   {inviteeFields.customerName ? <th>客户名称</th> : null}
+                  {inviteeFields.mobile ? <th>手机号</th> : null}
                   {inviteeFields.relationship ? <th>关系</th> : null}
+                  {inviteeFields.paidOrderCount ? <th>已支付订单</th> : null}
                   {inviteeFields.distributorName ? <th>所属分销商</th> : null}
                   {inviteeFields.customerStatus ? <th>客户状态</th> : null}
                   {inviteeFields.totalRecharge ? <th>累计充值</th> : null}
+                  {inviteeFields.totalRebate ? <th>累计返利</th> : null}
+                  {inviteeFields.lastPaymentAt ? <th>最近支付时间</th> : null}
                   {inviteeFields.totalConsumed ? <th>累计消耗</th> : null}
                   {inviteeFields.balance ? <th>剩余金额</th> : null}
                 </tr>
@@ -662,10 +710,21 @@ export default function DistributionView() {
                       </td>
                     ) : null}
                     {inviteeFields.customerName ? <td>{row.customerName}</td> : null}
+                    {inviteeFields.mobile ? <td>{row.mobile || '---'}</td> : null}
                     {inviteeFields.relationship ? <td>{row.relationship}</td> : null}
+                    {inviteeFields.paidOrderCount ? <td>{row.paidOrderCount}</td> : null}
                     {inviteeFields.distributorName ? <td>{row.distributorName}</td> : null}
                     {inviteeFields.customerStatus ? <td>{row.customerStatus || '---'}</td> : null}
                     {inviteeFields.totalRecharge ? <td>{formatOptionalMoney(row.totalRecharge)}</td> : null}
+                    {inviteeFields.totalRebate ? <td>{formatOptionalMoney(row.totalRebate)}</td> : null}
+                    {inviteeFields.lastPaymentAt ? (
+                      <td>
+                        <span className="date-time">
+                          <span>{row.lastPaymentAt.date}</span>
+                          <span>{row.lastPaymentAt.time}</span>
+                        </span>
+                      </td>
+                    ) : null}
                     {inviteeFields.totalConsumed ? <td>{formatOptionalMoney(row.totalConsumed)}</td> : null}
                     {inviteeFields.balance ? <td>{formatOptionalMoney(row.balance)}</td> : null}
                   </tr>
@@ -753,7 +812,9 @@ export default function DistributionView() {
               <tr>
                 {commissionFields.consumedAt ? <th>消费时间</th> : null}
                 {commissionFields.customerName ? <th>客户名称</th> : null}
+                {commissionFields.mobile ? <th>手机号</th> : null}
                 {commissionFields.relationship ? <th>关系</th> : null}
+                {commissionFields.orderType ? <th>订单类型</th> : null}
                 {commissionFields.distributorName ? <th>所属分销商</th> : null}
                 {commissionFields.paidAmount ? <th>充值金额</th> : null}
                 {commissionFields.commissionAmount ? <th>我的收益</th> : null}
@@ -773,7 +834,9 @@ export default function DistributionView() {
                     </td>
                   ) : null}
                   {commissionFields.customerName ? <td>{row.customerName}</td> : null}
+                  {commissionFields.mobile ? <td>{row.mobile || '---'}</td> : null}
                   {commissionFields.relationship ? <td>{row.relationship}</td> : null}
+                  {commissionFields.orderType ? <td>{row.orderType}</td> : null}
                   {commissionFields.distributorName ? <td>{row.distributorName}</td> : null}
                   {commissionFields.paidAmount ? <td>{formatOptionalMoney(row.paidAmount)}</td> : null}
                   {commissionFields.commissionAmount ? (
