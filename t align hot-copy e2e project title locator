@@ -1,0 +1,373 @@
+[1mdiff --git a/artifacts/sidebar-preview-debug.png b/artifacts/sidebar-preview-debug.png[m
+[1mnew file mode 100644[m
+[1mindex 0000000..63aeee1[m
+Binary files /dev/null and b/artifacts/sidebar-preview-debug.png differ
+[1mdiff --git a/design-qa.md b/design-qa.md[m
+[1mnew file mode 100644[m
+[1mindex 0000000..85f9a2f[m
+[1m--- /dev/null[m
+[1m+++ b/design-qa.md[m
+[36m@@ -0,0 +1,139 @@[m
+[32m+[m[32m# Design QA — 智能成片任务管理[m
+[32m+[m
+[32m+[m[32m- Source: `C:\Users\admin\AppData\Local\Temp\zhenzhihui-task-audit\figma-task-manager.png`[m
+[32m+[m[32m- Source viewport: `1920 × 1080`[m
+[32m+[m[32m- Implementation URL: `http://127.0.0.1:4173/smart`[m
+[32m+[m[32m- Requested implementation state: 已登录、任务管理展开、同时包含已生成/生成中/排队中的智能成片任务[m
+[32m+[m[32m- Implementation screenshot: 未生成（当前 Codex Desktop 会话没有可用的内置浏览器；按照浏览器使用约束，未擅自改用 Playwright CLI 或其他浏览器）[m
+[32m+[m
+[32m+[m[32m## Comparison history[m
+[32m+[m
+[32m+[m[32m1. 检查 Figma 正式节点（忽略标记为“作废”的方案）：确认任务管理位于主侧栏右侧，展开宽度约 330px，任务缩略图 100 × 100px，包含智能成片/爆款复制/图片三个标签及中部收起把手。[m
+[32m+[m[32m2. 代码级对照：任务面板按 330px 推挤主内容，桌面收起态保留 20 × 60px 把手；任务缩略图、标签、标题层级和状态色按来源实现。排队状态使用灰色，完成/失败项不显示进度轨道，活动与排队项显示进度轨道。[m
+[32m+[m[32m3. 交互级检查：标签切换（含方向键/Home/End）、任务跳转、隐藏任务、展开/收起、Esc/遮罩关闭、窄屏焦点圈定与后台状态恢复均已接线；窄屏收起把手扩大为 24 × 60px，并避免占据整页左侧高度。[m
+[32m+[m[32m4. 辅助功能复核：移除轮询任务列表上的 `aria-live`，避免进度更新持续触发读屏播报；TypeScript、ESLint 与生产构建用于验证实现完整性。[m
+[32m+[m[32m5. 像素截图合并对比：阻塞。缺少同视口、同登录态的实现截图，因此未声称完成最终视觉一致性验收。[m
+[32m+[m
+[32m+[m[32m## Unverified visual details[m
+[32m+[m
+[32m+[m[32m- 真实登录数据下任务列表的首屏密度与滚动位置[m
+[32m+[m[32m- 1920 × 1080 下标题、标签和第一张任务缩略图的最终纵向偏移[m
+[32m+[m[32m- 900px 以下覆盖层的焦点顺序、遮罩透明度和触控反馈[m
+[32m+[m[32m- 真实视频签名地址加载后的首帧缩略图表现[m
+[32m+[m
+[32m+[m[32m## Final result[m
+[32m+[m
+[32m+[m[32m`blocked` — 功能与代码验证可完成，但缺少获准使用的浏览器截图工具，无法执行来源图与实现图的最终并排视觉 QA。[m
+[32m+[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m# Design QA — 我的素材·真人素材库[m
+[32m+[m
+[32m+[m[32m- Source visual truth: `C:\Users\admin\AppData\Local\Temp\codex-clipboard-7086dad9-d2a9-48e3-a16b-1a51909d4223.png`[m
+[32m+[m[32m- Source composition: 5 个桌面画板纵向拼接；单画板基准约 `1600 × 900`[m
+[32m+[m[32m- Implementation URL: `http://127.0.0.1:5174/resources?tab=people`[m
+[32m+[m[32m- Intended states: 真人素材库列表、真人认证、上传照片、创建完成、创建后列表[m
+[32m+[m[32m- Implementation screenshot: 未生成（当前 Codex Desktop 会话没有可用的内置浏览器；未擅自改用 Playwright CLI）[m
+[32m+[m[32m- Browser-rendered evidence: blocked[m
+[32m+[m[32m- Console errors checked: blocked；开发服务器编译输出无错误[m
+[32m+[m
+[32m+[m[32m## Full-view comparison evidence[m
+[32m+[m
+[32m+[m[32m- 来源图已打开并按 `1600 × 900` 画板比例拆解；确认顶部标签、220 × 280 人物卡、新增卡、全屏三步向导与左右两栏布局。[m
+[32m+[m[32m- 实现页可由本地开发服务器返回，生产构建通过；由于缺少浏览器截图，无法把实现图与来源图合并进行同视口对照。[m
+[32m+[m
+[32m+[m[32m## Focused region comparison evidence[m
+[32m+[m
+[32m+[m[32m- 来源图重点区域已检查：人物卡、创建卡、Stepper、认证方式卡、上传面板、完成状态。[m
+[32m+[m[32m- 实现截图缺失，因此字体渲染、最终像素间距、图标光学大小和真实浏览器裁切无法完成聚焦对照。[m
+[32m+[m
+[32m+[m[32m## Findings[m
+[32m+[m
+[32m+[m[32m- [P2] 缺少实现截图，最终像素一致性未验证。[m
+[32m+[m[32m  - Location: `/resources?tab=people` 及三步创建向导。[m
+[32m+[m[32m  - Evidence: 来源图可见，实现仅完成代码、类型、Lint、构建与服务响应验证。[m
+[32m+[m[32m  - Impact: 不能确认 `1600 × 900` 下的卡片首屏密度、两栏宽度和文字换行是否完全一致。[m
+[32m+[m[32m  - Fix: 使用获准浏览器分别捕获列表、Step 1、Step 2、Step 3，再与来源画板合并对比。[m
+[32m+[m
+[32m+[m[32m## Required fidelity surfaces[m
+[32m+[m
+[32m+[m[32m- Fonts and typography: 已按 12/13/14/16/18/20px 层级实现；浏览器字形与换行待截图确认。[m
+[32m+[m[32m- Spacing and layout rhythm: 列表使用 220px 卡片、24px 间距；向导以 1600 × 900 基准还原；待截图确认最终缩放。[m
+[32m+[m[32m- Colors and visual tokens: 主绿 `#03A976`、页面 `#F8F9FA`、浅青面板与灰阶已映射。[m
+[32m+[m[32m- Image quality and asset fidelity: 使用两张项目内高分辨率真人肖像；认证与流程图标使用 Ant Design 图标，不使用占位图。[m
+[32m+[m[32m- Copy and content: 已覆盖来源图中的真人素材库、认证、上传与完成文案。[m
+[32m+[m
+[32m+[m[32m## Primary interactions checked[m
+[32m+[m
+[32m+[m[32m- 标签切换与 `?tab=people` 直达状态。[m
+[32m+[m[32m- 搜索过滤、创建入口、认证方式选择、JPG/PNG 与 5MB 校验、拖拽上传、创建完成返回。[m
+[32m+[m[32m- 形象重命名、删除与工作空间隔离的本地持久化。[m
+[32m+[m[32m- TypeScript、ESLint `--quiet`、生产构建与开发服务器响应均通过。[m
+[32m+[m
+[32m+[m[32m## Comparison history[m
+[32m+[m
+[32m+[m[32m1. 从参考长图识别并排除 Figma frame 名和蓝色选中线，避免误实现为产品 UI。[m
+[32m+[m[32m2. 按首屏和三步向导拆解布局、颜色、文案与状态；完成代码实现及项目人物资产。[m
+[32m+[m[32m3. 代码验证通过；浏览器截图能力缺失，未进行像素修正迭代。[m
+[32m+[m
+[32m+[m[32m## Final result[m
+[32m+[m
+[32m+[m[32m`blocked` — 当前仍缺少同视口浏览器实现截图，无法完成来源图与实现图的最终并排视觉 QA。[m
+[32m+[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m# Design QA — 智能成片首页模型下拉[m
+[32m+[m
+[32m+[m[32m- Source visual truth: `C:\Users\admin\AppData\Local\Temp\codex-clipboard-1f1e81dd-68c5-4436-a645-484d2c106d77.png`[m
+[32m+[m[32m- Source pixels: `5104 × 2712`[m
+[32m+[m[32m- Intended implementation route: `/smart`[m
+[32m+[m[32m- Intended state: 已登录、智能成片初始页、模型下拉打开、尚未开始后续创作步骤[m
+[32m+[m[32m- Implementation screenshot: 未生成[m
+[32m+[m[32m- Browser-rendered evidence: blocked（当前 Codex Desktop 会话没有可用的内置浏览器工具；未擅自改用 Playwright CLI）[m
+[32m+[m[32m- Viewport / CSS size / density normalization: 无实现截图，无法确认[m
+[32m+[m[32m- Console errors checked: blocked；由 TypeScript、组件测试和生产构建代替代码级校验，但不等同于浏览器控制台检查[m
+[32m+[m
+[32m+[m[32m## Full-view comparison evidence[m
+[32m+[m
+[32m+[m[32m- 已打开原始参考图，确认红框位置位于输入卡片底部工具栏中，处在脚本下拉之后、发送区之前。[m
+[32m+[m[32m- 实现把唯一模型入口放在该工具栏位置；原先占据首页下方的大型模型面板以及后续创作步骤中的模型选择器均已移除。[m
+[32m+[m[32m- 缺少同视口实现截图，不能对工具栏最终换行、弹层裁切和任务管理展开态下的可用宽度做像素判断。[m
+[32m+[m
+[32m+[m[32m## Focused region comparison evidence[m
+[32m+[m
+[32m+[m[32m- 代码与组件测试覆盖模型胶囊按钮、下拉弹层、五类 operation、模型限制、不可用原因、关闭回焦和锁定状态。[m
+[32m+[m[32m- 参考图红框区域已聚焦检查；由于实现截图缺失，字体光学大小、按钮垂直居中、阴影和圆角不能完成并排对照。[m
+[32m+[m
+[32m+[m[32m## Findings[m
+[32m+[m
+[32m+[m[32m- [P2] 缺少浏览器实现截图，最终位置与弹层像素表现未验证。[m
+[32m+[m[32m  - Location: 智能成片入口工具栏的模型按钮及其下拉弹层。[m
+[32m+[m[32m  - Evidence: 来源图已打开；实现仅有代码、组件测试、类型检查和构建证据。[m
+[32m+[m[32m  - Impact: 不能确认目标桌面宽度下是否发生非预期换行，以及弹层在窄屏/任务栏展开时是否完全可见。[m
+[32m+[m[32m  - Fix: 使用获准的浏览器在同一登录态打开 `/smart`，捕获关闭与打开两种状态并和来源红框区域合并比较。[m
+[32m+[m
+[32m+[m[32m## Required fidelity surfaces[m
+[32m+[m
+[32m+[m[32m- Fonts and typography: 复用项目现有字体栈和 11–16px 层级；浏览器字形、行高与换行待截图确认。[m
+[32m+[m[32m- Spacing and layout rhythm: 入口位于比例、时长、@、脚本控件之后；按钮 44px 触控高度，弹层 520px 最大宽度并带移动端底部面板规则；最终像素间距待确认。[m
+[32m+[m[32m- Colors and visual tokens: 延续项目青绿色主色、白色卡片和浅灰边框；限制使用琥珀色语义提示。[m
+[32m+[m[32m- Image quality and asset fidelity: 本次区域无图片资产；新增图标使用项目现有 Ant Design 图标，不使用占位图或手绘 SVG。[m
+[32m+[m[32m- Copy and content: 模型名来自后端；界面仅维护 operation 类型、选择状态、使用限制和错误说明。[m
+[32m+[m
+[32m+[m[32m## Primary interactions checked[m
+[32m+[m
+[32m+[m[32m- 单个工具栏入口打开/关闭模型下拉，Escape 和关闭按钮回焦。[m
+[32m+[m[32m- 视频模式要求五类模型，图片模式要求文生图与图生图；任何必选 operation 失败、为空或配置损坏都会阻止下一步。[m
+[32m+[m[32m- 选择后展示后端限制；比例/时长不兼容时禁止提交。[m
+[32m+[m[32m- 旧草稿可在首页补齐模型，完整配置在恢复态锁定；后续步骤不再显示模型选择器。[m
+[32m+[m[32m- 浏览器鼠标、触控、真实滚动和控制台检查仍被截图工具缺失阻塞。[m
+[32m+[m
+[32m+[m[32m## Comparison history[m
+[32m+[m
+[32m+[m[32m1. 打开 `5104 × 2712` 参考图并确认模型入口目标区域与周边控件顺序。[m
+[32m+[m[32m2. 将大型模型面板收敛为工具栏下拉，补全限制、错误、锁定、响应式与无障碍状态；组件和逻辑测试通过。[m
+[32m+[m[32m3. 尝试按 Codex Desktop 内置浏览器规则进行渲染验证，但当前会话未提供对应工具，因此未进行像素修正迭代。[m
+[32m+[m
+[32m+[m[32m## Final result[m
+[32m+[m
+[32m+[m[32mblocked — 功能和代码验证已完成，但缺少同视口浏览器实现截图，不能宣称视觉 QA 通过。[m
+[1mdiff --git a/e2e/authenticated-routes.spec.ts b/e2e/authenticated-routes.spec.ts[m
+[1mindex 32b4463..0fc8cf4 100644[m
+[1m--- a/e2e/authenticated-routes.spec.ts[m
+[1m+++ b/e2e/authenticated-routes.spec.ts[m
+[36m@@ -479,7 +479,9 @@[m [mtest.describe('已认证关键路由与读取链路', () => {[m
+     const resumeGeneration = page.getByRole('button', { name: '返回下一步' })[m
+     await expect(resumeGeneration).toBeVisible({ timeout: 30_000 })[m
+     await resumeGeneration.click()[m
+[31m-    await expect(page.getByText('/E2E 爆款项目', { exact: true })).toBeVisible({ timeout: 30_000 })[m
+[32m+[m[32m    await expect(page.getByRole('button', { name: '修改项目名称：E2E 爆款项目' })).toBeVisible({[m
+[32m+[m[32m      timeout: 30_000,[m
+[32m+[m[32m    })[m
+     await expect(page.getByText('已完成', { exact: true }).first()).toBeVisible()[m
+     await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)[m
+     await expect(page.getByRole('dialog', { name: '本次创作使用的模型' })).toHaveCount(0)[m
+[1mdiff --git a/e2e/workspace-switch-isolation.spec.ts b/e2e/workspace-switch-isolation.spec.ts[m
+[1mindex 40c6002..d4ecbd3 100644[m
+[1m--- a/e2e/workspace-switch-isolation.spec.ts[m
+[1m+++ b/e2e/workspace-switch-isolation.spec.ts[m
+[36m@@ -132,7 +132,7 @@[m [mtest.describe('创作页空间切换隔离', () => {[m
+       const resumeGeneration = page.getByRole('button', { name: '返回下一步' })[m
+       await expect(resumeGeneration).toBeVisible({ timeout: 30_000 })[m
+       await resumeGeneration.click()[m
+[31m-      await expect(page.getByRole('button', { name: `项目 /${scenario.oldProjectName}` })).toBeVisible({[m
+[32m+[m[32m      await expect(page.getByRole('button', { name: `修改项目名称：${scenario.oldProjectName}` })).toBeVisible({[m
+         timeout: 30_000,[m
+       })[m
+       await waitForEditorStartupRequests(api, scenario.sourceWorkspaceId, 1)[m
+[1mdiff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml[m
+[1mnew file mode 100644[m
+[1mindex 0000000..00f6fc4[m
+[1m--- /dev/null[m
+[1m+++ b/pnpm-workspace.yaml[m
+[36m@@ -0,0 +1,2 @@[m
+[32m+[m[32mallowBuilds:[m
+[32m+[m[32m  esbuild: set this to true or false[m
+[1mdiff --git a/src/components/layout/PersonalPanel.tsx b/src/components/layout/PersonalPanel.tsx[m
+[1mindex 2911930..a2d09b3 100644[m
+[1m--- a/src/components/layout/PersonalPanel.tsx[m
+[1m+++ b/src/components/layout/PersonalPanel.tsx[m
+[36m@@ -22,6 +22,7 @@[m [mimport {[m
+ import { openTeamManage, useUiStore } from '@/stores/ui'[m
+ import { useToast, useConfirmDialog } from '@/composables/useToast'[m
+ import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'[m
+[32m+[m[32mimport { useDistributionAccess } from '@/composables/useDistributionAccess'[m
+ import { validateWorkspaceName, normalizeWorkspaceNameForCompare } from '@/utils/workspaceName'[m
+ import UserAvatar from '@/components/common/UserAvatar'[m
+ import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'[m
+[36m@@ -92,6 +93,8 @@[m [minterface PersonalPanelProps {[m
+ /** 展示当前用户、空间角色、会员积分及安全的空间切换/团队重命名入口。 */[m
+ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps) {[m
+   const navigate = useNavigate()[m
+[32m+[m[32m  // 未完成校验或无营销权限时保持入口不渲染，避免图标闪现。[m
+[32m+[m[32m  const { isDistributor } = useDistributionAccess()[m
+   const user = useCurrentUser()[m
+   const member = useCurrentMember()[m
+   const currentWs = useCurrentWorkspace()[m
+[36m@@ -240,19 +243,21 @@[m [mexport default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)[m
+           </div>[m
+         </div>[m
+         <div className="ppl__head-actions">[m
+[31m-          <Tooltip title="邀请返利" placement="bottom" zIndex={4000}>[m
+[31m-            <button[m
+[31m-              type="button"[m
+[31m-              className="ppl__head-action"[m
+[31m-              aria-label="邀请返利"[m
+[31m-              onClick={() => {[m
+[31m-                onClose?.()[m
+[31m-                navigate('/distribution')[m
+[31m-              }}[m
+[31m-            >[m
+[31m-              <img src={distributionIcon} alt="" aria-hidden="true" />[m
+[31m-            </button>[m
+[31m-          </Tooltip>[m
+[32m+[m[32m          {isDistributor && ([m
+[32m+[m[32m            <Tooltip title="邀请返利" placement="bottom" zIndex={4000}>[m
+[32m+[m[32m              <button[m
+[32m+[m[32m                type="button"[m
+[32m+[m[32m                className="ppl__head-action"[m
+[32m+[m[32m                aria-label="邀请返利"[m
+[32m+[m[32m                onClick={() => {[m
+[32m+[m[32m                  onClose?.()[m
+[32m+[m[32m                  navigate('/distribution')[m
+[32m+[m[32m                }}[m
+[32m+[m[32m              >[m
+[32m+[m[32m                <img src={distributionIcon} alt="" aria-hidden="true" />[m
+[32m+[m[32m              </button>[m
+[32m+[m[32m            </Tooltip>[m
+[32m+[m[32m          )}[m
+ [m
+           {/* 当前空间:团队空间只显示图标,悬停弹出「团队成员」黑色圆角浮层,点击打开团队管理查看成员 */}[m
+           {isTeamWs && canRevealTeamInfo ? ([m
+[1mdiff --git a/src/views/DistributionView.tsx b/src/views/DistributionView.tsx[m
+[1mindex 19a95d5..2f64eac 100644[m
+[1m--- a/src/views/DistributionView.tsx[m
+[1m+++ b/src/views/DistributionView.tsx[m
+[36m@@ -124,7 +124,7 @@[m [mfunction csvCell(value: any): string {[m
+ [m
+ export default function DistributionView() {[m
+   const navigate = useNavigate()[m
+[31m-  const { overview: rawOverview } = useDistributionAccess()[m
+[32m+[m[32m  const { status: accessStatus, overview: rawOverview, isDistributor } = useDistributionAccess()[m
+   const [draftFilters, setDraftFilters] = useState<DistributionFilters>(EMPTY_FILTERS)[m
+   const [filters, setFilters] = useState<DistributionFilters>(EMPTY_FILTERS)[m
+   const [page, setPage] = useState(1)[m
+[36m@@ -143,7 +143,15 @@[m [mexport default function DistributionView() {[m
+   const overview = useMemo(() => unwrap(rawOverview) || {}, [rawOverview])[m
+   const inviteUrl = inviteCode ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}` : ''[m
+ [m
+[32m+[m[32m  // 入口隐藏不足以构成访问控制；手动输入路由的非营销人员也不能看到页面或请求返利数据。[m
+   useEffect(() => {[m
+[32m+[m[32m    if (accessStatus === 'denied' || accessStatus === 'error') {[m
+[32m+[m[32m      navigate('/home', { replace: true })[m
+[32m+[m[32m    }[m
+[32m+[m[32m  }, [accessStatus, navigate])[m
+[32m+[m
+[32m+[m[32m  useEffect(() => {[m
+[32m+[m[32m    if (!isDistributor) return[m
+     const controller = new AbortController()[m
+     void listDistributionInvitees({ limit: 200, signal: controller.signal })[m
+       .then((payload) => {[m
+[36m@@ -158,9 +166,10 @@[m [mexport default function DistributionView() {[m
+       })[m
+       .catch(() => undefined)[m
+     return () => controller.abort()[m
+[31m-  }, [])[m
+[32m+[m[32m  }, [isDistributor])[m
+ [m
+   const loadRows = useCallback(() => {[m
+[32m+[m[32m    if (!isDistributor) return undefined[m
+     const controller = new AbortController()[m
+     setLoading(true)[m
+     setListError('')[m
+[36m@@ -185,9 +194,15 @@[m [mexport default function DistributionView() {[m
+         if (!controller.signal.aborted) setLoading(false)[m
+       })[m
+     return () => controller.abort()[m
+[31m-  }, [filters, page])[m
+[32m+[m[32m  }, [filters, isDistributor, page])[m
+[32m+[m
+[32m+[m[32m  useEffect(() => {[m
+[32m+[m[32m    if (!isDistributor) return[m
+[32m+[m[32m    return loadRows()[m
+[32m+[m[32m  }, [isDistributor, loadRows])[m
+ [m
+[31m-  useEffect(() => loadRows(), [loadRows])[m
+[32m+[m[32m  // 校验期间和无权限时均不渲染内容，避免非营销人员短暂看到邀请返利页面。[m
+[32m+[m[32m  if (!isDistributor) return null[m
+ [m
+   const cards = useMemo([m
+     () => [[m
+[1mdiff --git a/tests/component/DistributionView.test.tsx b/tests/component/DistributionView.test.tsx[m
+[1mindex d4e7c73..8b48254 100644[m
+[1m--- a/tests/component/DistributionView.test.tsx[m
+[1m+++ b/tests/component/DistributionView.test.tsx[m
+[36m@@ -112,15 +112,16 @@[m [mdescribe('DistributionView', () => {[m
+     })[m
+   })[m
+ [m
+[31m-  it('keeps the page visible for a non-marketing user', async () => {[m
+[32m+[m[32m  it('redirects non-marketing users without loading distribution data', async () => {[m
+     mocks.access.status = 'denied'[m
+     mocks.access.overview = null[m
+ [m
+     render(<DistributionView />)[m
+ [m
+[31m-    expect(screen.getByRole('heading', { name: '邀请收益' })).toBeInTheDocument()[m
+[31m-    expect(mocks.navigate).not.toHaveBeenCalled()[m
+[31m-    await waitFor(() => expect(mocks.listCommissions).toHaveBeenCalled())[m
+[32m+[m[32m    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/home', { replace: true }))[m
+[32m+[m[32m    expect(screen.queryByRole('heading', { name: '邀请收益' })).not.toBeInTheDocument()[m
+[32m+[m[32m    expect(mocks.listCommissions).not.toHaveBeenCalled()[m
+[32m+[m[32m    expect(mocks.listInvitees).not.toHaveBeenCalled()[m
+   })[m
+ [m
+   it('loads a backend referral code and builds the customer invitation link', async () => {[m
+[1mdiff --git a/tests/component/PersonalPanel.test.tsx b/tests/component/PersonalPanel.test.tsx[m
+[1mindex 8be7c81..632de67 100644[m
+[1m--- a/tests/component/PersonalPanel.test.tsx[m
+[1m+++ b/tests/component/PersonalPanel.test.tsx[m
+[36m@@ -4,6 +4,7 @@[m [mimport { beforeEach, describe, expect, it, vi } from 'vitest'[m
+ [m
+ const mocks = vi.hoisted(() => ({[m
+   confirm: vi.fn(),[m
+[32m+[m[32m  distributionAccess: { isDistributor: true },[m
+   openTeamManage: vi.fn(),[m
+   navigate: vi.fn(),[m
+   renameTeam: vi.fn(),[m
+[36m@@ -29,6 +30,12 @@[m [mconst mocks = vi.hoisted(() => ({[m
+ [m
+ vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }))[m
+ vi.mock('@/composables/useSafeWorkspaceSwitch', () => ({ useSafeWorkspaceSwitch: () => mocks.safeSwitch }))[m
+[32m+[m[32mvi.mock('@/composables/useDistributionAccess', () => ({[m
+[32m+[m[32m  useDistributionAccess: () => ({[m
+[32m+[m[32m    status: mocks.distributionAccess.isDistributor ? 'allowed' : 'denied',[m
+[32m+[m[32m    isDistributor: mocks.distributionAccess.isDistributor,[m
+[32m+[m[32m  }),[m
+[32m+[m[32m}))[m
+ vi.mock('@/composables/useToast', () => ({[m
+   useConfirmDialog: () => ({ requestConfirm: mocks.confirm }),[m
+   useToast: () => ({ showToast: mocks.showToast }),[m
+[36m@@ -91,6 +98,7 @@[m [mdescribe('PersonalPanel', () => {[m
+     mocks.confirm.mockResolvedValue(null)[m
+     mocks.renameTeam.mockResolvedValue(undefined)[m
+     mocks.safeSwitch.mockReturnValue(true)[m
+[32m+[m[32m    mocks.distributionAccess.isDistributor = true[m
+   })[m
+ [m
+   it('shows invitation rebate and opens its page', async () => {[m
+[36m@@ -106,6 +114,14 @@[m [mdescribe('PersonalPanel', () => {[m
+     expect(screen.getByRole('button', { name: /邀请返利/ })).toBeInTheDocument()[m
+   })[m
+ [m
+[32m+[m[32m  it('does not render the invitation rebate icon for non-marketing users', () => {[m
+[32m+[m[32m    mocks.distributionAccess.isDistributor = false[m
+[32m+[m
+[32m+[m[32m    render(<PersonalPanel />)[m
+[32m+[m
+[32m+[m[32m    expect(screen.queryByRole('button', { name: /邀请返利/ })).not.toBeInTheDocument()[m
+[32m+[m[32m  })[m
+[32m+[m
+   it('shows role, membership usage, and switches one non-active workspace before closing', async () => {[m
+     const user = userEvent.setup()[m
+     const onClose = vi.fn()[m

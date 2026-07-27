@@ -1,3 +1,20 @@
+.distribution-document-scroll,
+.distribution-document-scroll body,
+.distribution-document-scroll #app {
+  height: auto;
+  min-height: 100%;
+}
+
+.distribution-document-scroll {
+  overflow-x: auto;
+  overflow-y: scroll;
+}
+
+.distribution-document-scroll body,
+.distribution-document-scroll #app {
+  overflow: visible;
+}
+
 .distribution-page {
   --distribution-canvas: #f8fafc;
   --distribution-card: #fff;
@@ -6,8 +23,10 @@
   --distribution-text: #0f172a;
   --distribution-secondary: #475569;
   --distribution-border: #e2e8f0;
+  width: 100%;
   min-height: 100vh;
-  overflow-x: auto;
+  min-height: 100dvh;
+  overflow: visible;
   background: var(--distribution-canvas);
   color: var(--distribution-text);
   font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
@@ -23,7 +42,7 @@
   width: 100%;
   min-width: 1440px;
   min-height: 1080px;
-  padding: 24px 60px 48px;
+  padding: 24px 60px 96px;
 }
 
 .distribution-header {
