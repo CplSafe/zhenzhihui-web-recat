@@ -4278,6 +4278,9 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
           }
           if (updateCurrentUi()) setBlurPhase('')
           const completeImageAssetIds = requireOrderedShotAssetIds(activeShots, imageAssetIds)
+          if (Number(workspaceIdRef.current || 0) !== ws) {
+            throw new Error('工作空间已切换，本次视频生成已安全停止')
+          }
           // 人脸处理可能耗时较长；真正创建视频任务前再按锁定快照核价，避免使用准备阶段的旧余额/旧价格。
           const submissionEstimate = await estimateFullVideoCost({
             workspaceId: ws,

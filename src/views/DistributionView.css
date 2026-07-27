@@ -61,7 +61,6 @@
 
 .distribution-invite-button {
   height: 32px;
-  margin-left: auto;
   padding: 0 18px;
   border: 0;
   border-radius: 8px;
@@ -71,6 +70,24 @@
   font-size: 14px;
   font-weight: 400;
   cursor: pointer;
+}
+
+.distribution-channel-invite-button {
+  height: 32px;
+  margin-left: auto;
+  padding: 0 18px;
+  border: 1px solid var(--distribution-primary);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--distribution-primary);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.distribution-channel-invite-button:hover {
+  background: #eef2ff;
 }
 
 .distribution-back {
@@ -849,6 +866,140 @@
   color: #fff;
   font-family: inherit;
   cursor: pointer;
+}
+
+.distribution-channel-dialog {
+  width: min(560px, 100%);
+}
+
+.distribution-channel-badge {
+  display: inline-flex;
+  min-height: 24px;
+  margin-bottom: 10px;
+  padding: 0 10px;
+  align-items: center;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: var(--distribution-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.distribution-channel-link-panel {
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid #dfe3ff;
+  border-radius: 12px;
+  background: #f8faff;
+}
+
+.distribution-channel-link-panel h3 {
+  margin: 0;
+  color: var(--distribution-text);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.distribution-channel-link-panel > p {
+  margin: 6px 0 22px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.distribution-channel-link-panel > label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--distribution-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.distribution-channel-link-box {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  border: 1px solid var(--distribution-border);
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.distribution-channel-link-box:focus-within {
+  border-color: var(--distribution-primary);
+  box-shadow: 0 0 0 3px rgb(79 70 229 / 12%);
+}
+
+.distribution-channel-link-box input {
+  min-width: 0;
+  padding: 0 14px;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--distribution-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.distribution-channel-link-box button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 7px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.distribution-channel-link-box button {
+  margin-right: 2px;
+  padding: 0 14px;
+  background: var(--distribution-primary);
+  color: #fff;
+}
+
+.distribution-channel-link-box button:hover {
+  filter: brightness(0.97);
+}
+
+.distribution-channel-dialog-footer {
+  display: flex;
+  min-height: 22px;
+  margin-top: 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.distribution-channel-dialog-footer p {
+  margin: 0;
+  color: #f97316;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.distribution-channel-dialog-footer span {
+  flex: 0 0 auto;
+  color: #16a34a;
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .distribution-channel-dialog {
+    max-height: calc(100vh - 32px);
+    padding: 22px;
+    overflow-y: auto;
+  }
+
+  .distribution-channel-link-panel {
+    padding: 16px;
+  }
+
+  .distribution-channel-dialog-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 
 .distribution-access-state {

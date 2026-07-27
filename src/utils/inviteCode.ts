@@ -4,14 +4,45 @@
  * 进站即从 URL 捕获并暂存(sessionStorage),避免后续路由跳转丢掉 query;注册成功后清除。
  */
 const KEY = 'zzh_invite_code'
+const TYPE_KEY = 'zzh_invite_type'
+
+export type InviteType = 'customer' | 'channel'
+
+function normalizeInviteType(value: unknown): InviteType {
+  return String(value || '')
+    .trim()
+    .toLowerCase() === 'channel'
+    ? 'channel'
+    : 'customer'
+}
 
 /** 进站时调用:URL 带 invite_code 就暂存,供后续注册读取(即便之后跳转丢了 query)。 */
 export function captureInviteCode(): void {
   try {
-    const code = String(new URLSearchParams(window.location.search).get('invite_code') || '').trim()
-    if (code) sessionStorage.setItem(KEY, code)
+    const params = new URLSearchParams(window.location.search)
+    const code = String(params.get('invite_code') || '').trim()
+    if (code) {
+      sessionStorage.setItem(KEY, code)
+      sessionStorage.setItem(TYPE_KEY, normalizeInviteType(params.get('invite_type')))
+    }
   } catch {
     /* 忽略(隐私模式等) */
+  }
+}
+
+/** 读取邀请关系类型；老链接和非法类型均按普通客户处理。 */
+export function getInviteType(): InviteType {
+  try {
+    const params = new URLSearchParams(window.location.search)
+    const fromUrlCode = String(params.get('invite_code') || '').trim()
+    if (fromUrlCode) {
+      const type = normalizeInviteType(params.get('invite_type'))
+      sessionStorage.setItem(TYPE_KEY, type)
+      return type
+    }
+    return normalizeInviteType(sessionStorage.getItem(TYPE_KEY))
+  } catch {
+    return 'customer'
   }
 }
 
@@ -33,6 +64,7 @@ export function getInviteCode(): string {
 export function clearInviteCode(): void {
   try {
     sessionStorage.removeItem(KEY)
+    sessionStorage.removeItem(TYPE_KEY)
   } catch {
     /* 忽略 */
   }

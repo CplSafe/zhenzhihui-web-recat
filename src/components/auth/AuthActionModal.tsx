@@ -16,7 +16,7 @@ import {
   sendAuthSms,
 } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
-import { getInviteCode, clearInviteCode } from '@/utils/inviteCode'
+import { getInviteCode, getInviteType, clearInviteCode } from '@/utils/inviteCode'
 import './AuthActionModal.css'
 
 /** 弹窗支持的注册、找回密码和短信登录补注册三种业务模式。 */
@@ -221,6 +221,7 @@ export default function AuthActionModal({
       const pwd = password.trim() || (mode === 'sms-register' ? randomPassword() : '')
       const smsCode = needsCodeInput ? code.trim() : prefill?.smsCode || ''
       const inviteCode = getInviteCode()
+      const inviteType = inviteCode ? getInviteType() : ''
       const result = await registerAccount({
         authStart: as,
         mobile: m,
@@ -228,6 +229,7 @@ export default function AuthActionModal({
         smsCode,
         termsAccepted: true,
         inviteCode, // 分享链接带来的推广码(空则接口层去掉)
+        inviteType,
       })
       if (!aliveRef.current) return
       clearInviteCode() // 注册成功即清除,避免后续误归因

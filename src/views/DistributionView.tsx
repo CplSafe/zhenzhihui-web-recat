@@ -175,7 +175,13 @@ function csvCell(value: any): string {
 
 export default function DistributionView() {
   const navigate = useNavigate()
-  const { status: accessStatus, overview: rawOverview, isDistributor, retry: refreshOverview } = useDistributionAccess()
+  const {
+    status: accessStatus,
+    overview: rawOverview,
+    error: accessError,
+    retry: refreshOverview,
+    isDistributor,
+  } = useDistributionAccess()
   const [draftFilters, setDraftFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [filters, setFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [page, setPage] = useState(1)
@@ -187,6 +193,8 @@ export default function DistributionView() {
   const [listError, setListError] = useState('')
   const [rulesOpen, setRulesOpen] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
+  const [channelInviteOpen, setChannelInviteOpen] = useState(false)
+  const [channelCopyFeedback, setChannelCopyFeedback] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState('')
@@ -199,9 +207,16 @@ export default function DistributionView() {
     return () => document.documentElement.classList.remove('distribution-document-scroll')
   }, [])
 
+  useEffect(() => {
+    if (accessStatus === 'denied') navigate('/home', { replace: true })
+  }, [accessStatus, navigate])
+
   const overview = useMemo(() => unwrap(rawOverview) || {}, [rawOverview])
   const overviewInviteCode = String(pick(overview, ['invite_code', 'inviteCode', 'referral_code'], '')).trim()
   const inviteUrl = inviteCode ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}` : ''
+  const channelInviteUrl = inviteCode
+    ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}&invite_type=channel`
+    : ''
 
   useEffect(() => {
     const app = document.getElementById('app')
@@ -215,12 +230,6 @@ export default function DistributionView() {
       app.style.overflowY = previousOverflowY
     }
   }, [])
-
-  useEffect(() => {
-    if (accessStatus === 'denied' || accessStatus === 'error') {
-      navigate('/home', { replace: true })
-    }
-  }, [accessStatus, navigate])
 
   const loadInvitees = useCallback(() => {
     if (!isDistributor) return undefined
@@ -271,9 +280,8 @@ export default function DistributionView() {
   }, [isDistributor])
 
   useEffect(() => {
-    if (!isDistributor) return
     return loadInvitees()
-  }, [isDistributor, loadInvitees])
+  }, [loadInvitees])
 
   const loadRows = useCallback(() => {
     if (!isDistributor) return undefined
@@ -309,9 +317,8 @@ export default function DistributionView() {
   }, [filters, isDistributor, page])
 
   useEffect(() => {
-    if (!isDistributor) return
     return loadRows()
-  }, [isDistributor, loadRows])
+  }, [loadRows])
 
   const refreshDistributionData = useCallback(() => {
     refreshOverview()
@@ -320,7 +327,7 @@ export default function DistributionView() {
   }, [loadInvitees, loadRows, refreshOverview])
 
   useEffect(() => {
-    if (!isDistributor) return
+    if (!isDistributor) return undefined
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') refreshDistributionData()
     }
@@ -618,9 +625,51 @@ export default function DistributionView() {
     }
   }
 
-  // 校验期间和无权限时均不渲染内容，避免非营销人员短暂看到邀请返利页面。
-  // 必须放在所有 Hooks 之后，保证每次渲染的 Hooks 调用顺序一致。
-  if (!isDistributor) return null
+  const openChannelInvite = () => {
+    setChannelCopyFeedback('')
+    setChannelInviteOpen(true)
+    if (!inviteCode && !inviteLoading) loadInviteCode()
+  }
+
+  const copyChannelInviteLink = async () => {
+    if (!channelInviteUrl) return
+    try {
+      await navigator.clipboard.writeText(channelInviteUrl)
+      setChannelCopyFeedback('渠道邀请链接已复制')
+    } catch {
+      setChannelCopyFeedback('复制失败，请手动复制')
+    }
+  }
+
+  if (accessStatus === 'idle' || accessStatus === 'checking' || accessStatus === 'denied') {
+    return (
+      <main className="distribution-access-state" aria-busy="true">
+        <div className="distribution-access-error" role="status">
+          <h1>正在验证销售权限</h1>
+          <p>{accessStatus === 'denied' ? '当前账号无权访问，正在返回首页…' : '请稍候…'}</p>
+        </div>
+      </main>
+    )
+  }
+
+  if (accessStatus === 'error') {
+    return (
+      <main className="distribution-access-state">
+        <div className="distribution-access-error" role="alert">
+          <h1>销售权限验证失败</h1>
+          <p>{String((accessError as any)?.message || '暂时无法验证当前账号权限，请稍后重试')}</p>
+          <div>
+            <button type="button" onClick={() => navigate('/home', { replace: true })}>
+              返回首页
+            </button>
+            <button type="button" className="primary" onClick={refreshOverview}>
+              重新验证
+            </button>
+          </div>
+        </div>
+      </main>
+    )
+  }
 
   return (
     <main className="distribution-page">
@@ -630,6 +679,9 @@ export default function DistributionView() {
             <img src={backIcon} alt="" width={28} height={28} />
           </button>
           <h1>邀请收益</h1>
+          <button type="button" className="distribution-channel-invite-button" onClick={openChannelInvite}>
+            邀请渠道
+          </button>
           <button type="button" className="distribution-invite-button" onClick={openInvite}>
             邀请客户
           </button>
@@ -966,6 +1018,71 @@ export default function DistributionView() {
                 </div>
               </>
             ) : null}
+          </section>
+        </div>
+      ) : null}
+
+      {channelInviteOpen ? (
+        <div
+          className="distribution-rules-backdrop"
+          role="presentation"
+          onMouseDown={() => setChannelInviteOpen(false)}
+        >
+          <section
+            className="distribution-invite-dialog distribution-channel-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="distribution-channel-invite-title"
+            aria-describedby="distribution-channel-invite-description"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <span className="distribution-channel-badge">渠道身份</span>
+                <h2 id="distribution-channel-invite-title">邀请渠道</h2>
+                <p id="distribution-channel-invite-description">
+                  对方接受邀请后，可继续邀请渠道和成员；普通成员仍不可查看邀请收益。
+                </p>
+              </div>
+              <button type="button" onClick={() => setChannelInviteOpen(false)} aria-label="关闭邀请渠道弹窗">
+                ×
+              </button>
+            </header>
+
+            {inviteLoading ? <div className="distribution-invite-state">正在获取专属渠道邀请链接…</div> : null}
+            {!inviteLoading && inviteError ? (
+              <div className="distribution-invite-state is-error">
+                <span>{inviteError}</span>
+                <button type="button" onClick={loadInviteCode}>
+                  重新获取
+                </button>
+              </div>
+            ) : null}
+            {!inviteLoading && !inviteError && channelInviteUrl ? (
+              <div className="distribution-channel-link-panel">
+                <h3>分享邀请链接</h3>
+                <p>复制链接发送给对方，对方打开后即可进入渠道邀请注册流程。</p>
+                <label htmlFor="distribution-channel-invite-link">渠道邀请链接</label>
+                <div className="distribution-channel-link-box">
+                  <input
+                    id="distribution-channel-invite-link"
+                    value={channelInviteUrl}
+                    readOnly
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                  <button type="button" onClick={() => void copyChannelInviteLink()}>
+                    复制链接
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="distribution-channel-dialog-footer">
+              <p>对方通过该链接完成注册后，后端将按渠道邀请类型建立邀请关系。</p>
+              <span role="status" aria-live="polite">
+                {channelCopyFeedback}
+              </span>
+            </div>
           </section>
         </div>
       ) : null}
