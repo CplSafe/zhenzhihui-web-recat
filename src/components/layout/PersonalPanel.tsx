@@ -22,13 +22,13 @@ import {
 import { openTeamManage, useUiStore } from '@/stores/ui'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'
+import { useDistributionAccess } from '@/composables/useDistributionAccess'
 import { validateWorkspaceName, normalizeWorkspaceNameForCompare } from '@/utils/workspaceName'
 import UserAvatar from '@/components/common/UserAvatar'
 import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import crownImg from '@/assets/vip/5dc4125fc31865adb710a7f65ad2df60.png'
 import teamIcon from '@/assets/5d214dea973d5d1dd62b8be882e775c2.png'
 import editIcon from '@/assets/81926ea1670cd86f6fc1adec90042f08.png'
-import distributionIcon from '@/assets/distribution/sidebar-distribution.svg'
 import './PersonalPanel.css'
 
 /** 把后端成员角色转换为面板展示文案。 */
@@ -92,6 +92,8 @@ interface PersonalPanelProps {
 /** 展示当前用户、空间角色、会员积分及安全的空间切换/团队重命名入口。 */
 export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps) {
   const navigate = useNavigate()
+  // 未完成校验或无营销权限时保持入口不渲染，避免图标闪现。
+  const { isDistributor } = useDistributionAccess()
   const user = useCurrentUser()
   const member = useCurrentMember()
   const currentWs = useCurrentWorkspace()
@@ -240,19 +242,21 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
           </div>
         </div>
         <div className="ppl__head-actions">
-          <Tooltip title="邀请返利" placement="bottom" zIndex={4000}>
-            <button
-              type="button"
-              className="ppl__head-action"
-              aria-label="邀请返利"
-              onClick={() => {
-                onClose?.()
-                navigate('/distribution')
-              }}
-            >
-              <img src={distributionIcon} alt="" aria-hidden="true" />
-            </button>
-          </Tooltip>
+          {isDistributor && (
+            <Tooltip title="邀请返利" placement="bottom" zIndex={4000}>
+              <button
+                type="button"
+                className="ppl__head-action ppl__head-action--distribution-text"
+                aria-label="邀请返利"
+                onClick={() => {
+                  onClose?.()
+                  navigate('/distribution')
+                }}
+              >
+                邀请返利
+              </button>
+            </Tooltip>
+          )}
 
           {/* 当前空间:团队空间只显示图标,悬停弹出「团队成员」黑色圆角浮层,点击打开团队管理查看成员 */}
           {isTeamWs && canRevealTeamInfo ? (

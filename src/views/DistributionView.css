@@ -207,6 +207,97 @@
   margin-left: 0;
 }
 
+.distribution-invitees {
+  margin-top: 32px;
+  padding: 20px 24px 24px;
+  border: 1px solid var(--distribution-border);
+  border-radius: 12px;
+  background: var(--distribution-card);
+}
+
+.distribution-invitees > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.distribution-invitees > header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.distribution-invitees h2 {
+  margin: 0;
+  color: var(--distribution-text);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.distribution-invitees header span {
+  color: var(--distribution-secondary);
+  font-size: 12px;
+}
+
+.distribution-invitees header button {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--distribution-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--distribution-primary);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.distribution-invitees header button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.distribution-invitees .distribution-table-wrap {
+  margin-top: 16px;
+}
+
+.distribution-invitees .distribution-table {
+  min-width: 1540px;
+}
+
+.distribution-customer-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.distribution-customer-summary > span {
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: #f5f7ff;
+  color: var(--distribution-secondary);
+  font-size: 12px;
+}
+
+.distribution-customer-summary strong {
+  margin-left: 5px;
+  color: var(--distribution-primary);
+  font-size: 14px;
+}
+
+.distribution-customer-summary small {
+  margin-left: auto;
+  color: var(--distribution-secondary);
+  font-size: 12px;
+}
+
+.distribution-invitation-status {
+  display: block;
+  margin-top: 5px;
+  color: var(--distribution-secondary);
+  font-size: 11px;
+}
+
 .distribution-filters {
   display: flex;
   min-width: 1318px;
@@ -475,6 +566,12 @@
   border-color: #16a34a;
   background: linear-gradient(246deg, #dcfce7 0.6%, #eefff4 46%, #dcfce7 100%);
   color: #16a34a;
+}
+
+.distribution-status.is-warning {
+  border-color: #d97706;
+  background: linear-gradient(245deg, #fef3c7 0%, #fffbeb 50%, #fef3c7 100%);
+  color: #b45309;
 }
 
 .distribution-status.is-cancelled {

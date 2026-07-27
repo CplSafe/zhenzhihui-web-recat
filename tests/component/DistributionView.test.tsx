@@ -58,7 +58,22 @@ describe('DistributionView', () => {
       distributor_invitee_count: 68,
     }
     mocks.listInvitees.mockResolvedValue({
-      items: [{ distributor_id: 9, distributor_name: '杭州云创科技有限公司' }],
+      items: [
+        {
+          invitee_id: 77,
+          invitee_name: '刚注册的邀请客户',
+          relationship: 'direct',
+          registered_at: '2026-07-26T15:30:00+08:00',
+          distributor_id: 9,
+          distributor_name: '杭州云创科技有限公司',
+          status: 'registered',
+          total_recharge_cents: 20000,
+          total_consumed_cents: 0,
+          balance_cents: 20000,
+          pending_commission_cents: 1000,
+        },
+      ],
+      total: 1,
     })
     mocks.listCommissions.mockResolvedValue({
       items: [
@@ -86,8 +101,13 @@ describe('DistributionView', () => {
     expect(screen.getByText('8,320.00')).toBeInTheDocument()
     expect(screen.getByText('4,240.00')).toBeInTheDocument()
     expect(await screen.findByText('上海云创科技有限公司')).toBeInTheDocument()
+    expect(screen.getByText('刚注册的邀请客户')).toBeInTheDocument()
+    expect(screen.getAllByText(/已充值未消耗/)).toHaveLength(2)
+    expect(screen.getAllByText('￥200.00')).toHaveLength(2)
+    expect(screen.getByText('￥0.00')).toBeInTheDocument()
+    expect(screen.getByText('￥10.00')).toBeInTheDocument()
     expect(screen.getByText('300912345678')).toBeInTheDocument()
-    expect(screen.getAllByText('我的客户')).toHaveLength(2)
+    expect(screen.getAllByText('我的客户')).toHaveLength(3)
     expect(screen.getByText('结算中')).toBeInTheDocument()
   })
 
@@ -112,15 +132,16 @@ describe('DistributionView', () => {
     })
   })
 
-  it('keeps the page visible for a non-marketing user', async () => {
+  it('redirects non-marketing users without loading distribution data', async () => {
     mocks.access.status = 'denied'
     mocks.access.overview = null
 
     render(<DistributionView />)
 
-    expect(screen.getByRole('heading', { name: '邀请收益' })).toBeInTheDocument()
-    expect(mocks.navigate).not.toHaveBeenCalled()
-    await waitFor(() => expect(mocks.listCommissions).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/home', { replace: true }))
+    expect(screen.queryByRole('heading', { name: '邀请收益' })).not.toBeInTheDocument()
+    expect(mocks.listCommissions).not.toHaveBeenCalled()
+    expect(mocks.listInvitees).not.toHaveBeenCalled()
   })
 
   it('loads a backend referral code and builds the customer invitation link', async () => {
@@ -129,10 +150,37 @@ describe('DistributionView', () => {
 
     await user.click(screen.getByRole('button', { name: '邀请客户' }))
 
-    expect(await screen.findByText('ZZH-TEST-001')).toBeInTheDocument()
-    expect(mocks.getReferralMyCode).toHaveBeenCalledTimes(1)
-    expect(screen.getByLabelText('专属邀请链接')).toHaveValue(
+    expect(await screen.findByLabelText('专属邀请链接')).toHaveValue(
       `${window.location.origin}/login?invite_code=ZZH-TEST-001`,
     )
+    expect(mocks.getReferralMyCode).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('专属邀请码')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '复制邀请码' })).not.toBeInTheDocument()
+  })
+
+  it('prefers the distribution-specific invite code from the overview', async () => {
+    const user = userEvent.setup()
+    mocks.access.overview = { ...mocks.access.overview, invite_code: 'DIST-ONLY-001' }
+    render(<DistributionView />)
+
+    await user.click(screen.getByRole('button', { name: '邀请客户' }))
+
+    expect(await screen.findByLabelText('专属邀请链接')).toHaveValue(
+      `${window.location.origin}/login?invite_code=DIST-ONLY-001`,
+    )
+    expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
+  })
+
+  it('refreshes both the overview and invitation relationships on demand', async () => {
+    const user = userEvent.setup()
+    render(<DistributionView />)
+    await screen.findByText('刚注册的邀请客户')
+    expect(mocks.listInvitees).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: '刷新数据' }))
+
+    expect(mocks.retry).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(mocks.listInvitees).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mocks.listCommissions).toHaveBeenCalledTimes(2))
   })
 })

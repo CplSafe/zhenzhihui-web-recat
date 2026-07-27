@@ -45,6 +45,16 @@
   height: 18px;
   object-fit: contain;
 }
+.ppl__head-action--distribution-text {
+  width: auto;
+  min-width: 64px;
+  padding: 0 8px;
+  color: #303746;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 30px;
+  white-space: nowrap;
+}
 .ppl__id {
   display: flex;
   align-items: flex-start;

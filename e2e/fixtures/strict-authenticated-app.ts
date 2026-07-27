@@ -405,6 +405,10 @@ export async function installStrictAuthenticatedApp(
       await json(route, { user })
       return
     }
+    if (method === 'GET' && path === '/api/v1/distribution/me') {
+      await json(route, { is_distributor: false, status: 'not_distributor' })
+      return
+    }
     if (method === 'GET' && path === '/api/v1/workspaces') {
       await json(route, workspaces)
       return
