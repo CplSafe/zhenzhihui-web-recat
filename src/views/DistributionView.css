@@ -968,15 +968,8 @@
   min-height: 22px;
   margin-top: 18px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
-}
-
-.distribution-channel-dialog-footer p {
-  margin: 0;
-  color: #f97316;
-  font-size: 12px;
-  line-height: 18px;
 }
 
 .distribution-channel-dialog-footer span {

@@ -7,7 +7,7 @@
  * 数据与隔离：收藏按工作空间保存；异步详情跳转会校验发起请求时的工作空间，避免切换空间后误入旧项目。
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import { type TemplateItem } from '@/api/templates'
 import { DEMO_TEMPLATES } from '@/data/demoTemplates'
@@ -38,6 +38,7 @@ const RATIO_LABELS: Record<string, string> = {
 /** 渲染模板筛选、卡片列表及预览/复用交互。 */
 export default function TemplatesView() {
   const navigate = useNavigate()
+  const location = useLocation()
   const workspaceId = useWorkspaceId()
   const currentUserId = resolveUserId(useCurrentUser())
   const requireAuth = useRequireAuth()
@@ -164,11 +165,18 @@ export default function TemplatesView() {
   }, [templates])
 
   const onNavigate = useSidebarNavigate()
+  const templateCategory = new URLSearchParams(location.search).get('category')
+  const sidebarActiveKey =
+    templateCategory === 'local-life'
+      ? 'template-local-life'
+      : templateCategory === 'ecommerce'
+        ? 'template-ecommerce'
+        : 'templates'
 
   return (
     <div className="home">
       <AppSidebar
-        activeKey="templates"
+        activeKey={sidebarActiveKey}
         onNavigate={onNavigate}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}

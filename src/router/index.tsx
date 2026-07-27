@@ -287,8 +287,8 @@ export const router = createBrowserRouter([
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
       { path: 'team', element: lazyPage(<SpaceDashboardView />) },
-      // 邀请返利要求有效会话；页面内部再按后端分销身份执行二次守卫。
-      { path: 'distribution', element: lazyPage(<DistributionView />) },
+      // 产品验收期间开放邀请返利入口和页面；后端仍负责数据权限与邀请关系校验。
+      { path: 'distribution', element: lazyPage(<DistributionView />), handle: { requiresAuth: false } },
       { path: '*', element: <Navigate to="/home" replace />, handle: { requiresAuth: false } },
     ],
   },

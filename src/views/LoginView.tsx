@@ -33,6 +33,8 @@ import { logger } from '@/observability/openobserve-logger'
 import { createLoginBridgeDiagnostic, type LoginBridgeWarningReason } from '@/utils/loginObservability'
 import { hasConfiguredDevBackend } from '@/utils/devBackend'
 import { getInviteCode, getInviteType } from '@/utils/inviteCode'
+import MediaSoundToggle from '@/components/common/MediaSoundToggle'
+import { useBackgroundVideoSound } from '@/composables/useBackgroundVideoSound'
 
 /** 短信登录前的人机验证码会话状态。 */
 interface CaptchaState {
@@ -469,6 +471,7 @@ export default function LoginView() {
   const activeBanner = hasBanners ? loginBanners![safeIndex] : null
 
   const heroVideoRef = useRef<HTMLVideoElement | null>(null)
+  const { muted, needsInteraction, playVideo, toggleVideoSound } = useBackgroundVideoSound()
   // 切下一张:基于「钳位后的当前索引」推进,避免列表长度变化后 heroIndex 越界导致跳/重。
   const goNextHero = () =>
     setHeroIndex((i) => {
@@ -501,10 +504,9 @@ export default function LoginView() {
       } catch {
         /* 元数据未就绪时忽略 */
       }
-      v.play().catch(() => {})
+      void playVideo(v)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [safeIndex, activeBanner?.mediaUrl])
+  }, [safeIndex, activeBanner, playVideo])
 
   return (
     <main className="zlogin">
@@ -525,11 +527,14 @@ export default function LoginView() {
                 ref={heroVideoRef}
                 className="zlogin-hero-video"
                 src={activeBanner.mediaUrl}
-                muted
+                muted={muted}
                 playsInline
                 autoPlay
                 preload="auto"
-                onCanPlay={() => setMediaReady(true)}
+                onCanPlay={(event) => {
+                  setMediaReady(true)
+                  void playVideo(event.currentTarget)
+                }}
                 onEnded={goNextHero}
                 onError={handleMediaError}
               />
@@ -543,6 +548,14 @@ export default function LoginView() {
               />
             )}
           </div>
+        )}
+        {activeBanner?.mediaType === 'video' && (
+          <MediaSoundToggle
+            className="zlogin-sound-toggle"
+            muted={muted}
+            needsInteraction={needsInteraction}
+            onToggle={() => toggleVideoSound(heroVideoRef.current)}
+          />
         )}
         <nav className="zlogin-nav">
           {navTitles.map((title, i) => (

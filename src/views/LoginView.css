@@ -93,6 +93,13 @@
   pointer-events: none;
 }
 
+.zlogin-sound-toggle {
+  position: absolute;
+  top: 82px;
+  left: 40px;
+  z-index: 3;
+}
+
 .zlogin-nav {
   position: absolute;
   top: 28px;
@@ -408,6 +415,9 @@
     gap: 24px;
     left: 24px;
     right: 24px;
+  }
+  .zlogin-sound-toggle {
+    left: 24px;
   }
   .zlogin-nav-item {
     font-size: 16px;

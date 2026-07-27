@@ -16,6 +16,10 @@ import projectsIcon from '@/assets/sidebar/projects.svg'
 import projectsActiveIcon from '@/assets/sidebar/projects-active.svg'
 import resourcesIcon from '@/assets/sidebar/resources.svg'
 import resourcesActiveIcon from '@/assets/sidebar/resources-active.svg'
+import localLifeIcon from '@/assets/sidebar/local-life.svg'
+import localLifeActiveIcon from '@/assets/sidebar/local-life-active.svg'
+import ecommerceIcon from '@/assets/sidebar/ecommerce.svg'
+import ecommerceActiveIcon from '@/assets/sidebar/ecommerce-active.svg'
 import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
 import SidebarTeamGroup from './SidebarTeamGroup'
@@ -65,6 +69,28 @@ const GROUPS: SidebarGroup[] = [
     ],
   },
 ]
+
+const TEMPLATE_GROUP: SidebarGroup = {
+  title: '模板库',
+  items: [
+    {
+      key: 'template-local-life',
+      label: '本地生活',
+      icon: localLifeIcon,
+      activeIcon: localLifeActiveIcon,
+      iconSize: 16,
+    },
+    {
+      key: 'template-ecommerce',
+      label: '电商',
+      icon: ecommerceIcon,
+      activeIcon: ecommerceActiveIcon,
+      iconSize: 16,
+    },
+  ],
+}
+
+const SHOW_TEMPLATE_GROUP = false
 
 const HIDDEN_SIDEBAR_ITEM_KEYS = new Set(['video-edit'])
 
@@ -187,6 +213,13 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
 
           {/* 团队：当前空间下拉 + 空间切换浮层 + 数据统计/团队管理(团队空间) */}
           <SidebarTeamGroup collapsed={collapsed} />
+
+          {SHOW_TEMPLATE_GROUP ? (
+            <div className="app-sidebar__group app-sidebar__template-group">
+              <div className="app-sidebar__group-title">{TEMPLATE_GROUP.title}</div>
+              {TEMPLATE_GROUP.items.map(renderItem)}
+            </div>
+          ) : null}
         </nav>
 
         {/* 底部：设置 —— 点击弹出菜单(个人中心 / 修改密码 / 退出登录) */}

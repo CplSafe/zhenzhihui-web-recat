@@ -15,6 +15,8 @@ import { listBanners } from '@/api/banners'
 import { useSwr } from '@/composables/useSwr' // 复用首页同一套 SWR 缓存(先返缓存秒出、后台刷新)
 import { swrFetch } from '@/utils/swrCache'
 import { preloadMedia } from '@/utils/mediaPreload'
+import MediaSoundToggle from '@/components/common/MediaSoundToggle'
+import { useBackgroundVideoSound } from '@/composables/useBackgroundVideoSound'
 
 /** 开屏页可提前预热媒体的下一跳页面。 */
 type NextRouteBannerTarget = 'home' | 'login'
@@ -74,8 +76,10 @@ function scheduleIdle(callback: () => void): () => void {
 /** 渲染游客开屏媒体，并按用户意图预热首页或登录页。 */
 export default function SplashView() {
   const navigate = useNavigate()
+  const backgroundVideoRef = useRef<HTMLVideoElement | null>(null)
   const warmedTargetsRef = useRef(new Set<NextRouteBannerTarget>())
   const scheduledWarmupsRef = useRef(new Map<NextRouteBannerTarget, () => void>())
+  const { muted, needsInteraction, playVideo, toggleVideoSound } = useBackgroundVideoSound()
 
   // 开屏背景:slug=welcome 的 banner(只取第一条,不轮播)。useSwr 负责缓存秒出 + 后台刷新。
   const { data: welcomeBanners } = useSwr('welcome-banner', () => listBanners('welcome'), { fallback: [] })
@@ -176,19 +180,30 @@ export default function SplashView() {
       {/* 视频背景:铺满 + 自动播放(静音,循环),不轮播;加载失败回退静态底图 */}
       {isVideo && (
         <video
+          ref={backgroundVideoRef}
           className="splash-media"
           src={welcomeBanner!.mediaUrl}
           autoPlay
-          muted
+          muted={muted}
           loop
           playsInline
           aria-hidden="true"
+          onCanPlay={(event) => void playVideo(event.currentTarget)}
           onError={() => setMediaFailed(true)}
         />
       )}
 
       {/* 全屏深色蒙版(Figma #333 @40%) */}
       <div className="splash-mask" aria-hidden="true" />
+
+      {isVideo && (
+        <MediaSoundToggle
+          className="splash-sound-toggle"
+          muted={muted}
+          needsInteraction={needsInteraction}
+          onToggle={() => toggleVideoSound(backgroundVideoRef.current)}
+        />
+      )}
 
       {/* 顶部磨砂条(Figma #333 @60% + 模糊):左 logo+帧智汇,右 登录 */}
       <div className="splash-overlay">
