@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -29,7 +29,8 @@ vi.mock('@/composables/useDistributionAccess', () => ({
   useDistributionAccess: () => ({
     ...mocks.access,
     retry: mocks.retry,
-    isDistributor: mocks.access.status === 'allowed',
+    isDistributor: true,
+    previewEnabled: true,
   }),
 }))
 
@@ -99,16 +100,16 @@ describe('DistributionView', () => {
     expect(screen.getByRole('heading', { name: '邀请收益' })).toBeInTheDocument()
     expect(screen.getByText('12,560.00')).toBeInTheDocument()
     expect(screen.getByText('8,320.00')).toBeInTheDocument()
-    expect(screen.getByText('4,240.00')).toBeInTheDocument()
+    expect(screen.queryByText('4,240.00')).not.toBeInTheDocument()
     expect(await screen.findByText('上海云创科技有限公司')).toBeInTheDocument()
     expect(screen.getByText('刚注册的邀请客户')).toBeInTheDocument()
-    expect(screen.getAllByText(/已充值未消耗/)).toHaveLength(2)
-    expect(screen.getAllByText('￥200.00')).toHaveLength(2)
-    expect(screen.getByText('￥0.00')).toBeInTheDocument()
-    expect(screen.getByText('￥10.00')).toBeInTheDocument()
-    expect(screen.getByText('300912345678')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '邀请客户' })).toBeInTheDocument()
+    expect(screen.getByText('￥1,200.00')).toBeInTheDocument()
+    expect(screen.getByText('￥60.00')).toBeInTheDocument()
+    expect(screen.queryByText('300912345678')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '客户账户ID' })).not.toBeInTheDocument()
     expect(screen.getAllByText('我的客户')).toHaveLength(3)
-    expect(screen.getByText('结算中')).toBeInTheDocument()
+    expect(screen.getByText('结算中', { selector: '.distribution-status' })).toBeInTheDocument()
   })
 
   it('submits filters using the backend query contract', async () => {
@@ -132,16 +133,16 @@ describe('DistributionView', () => {
     })
   })
 
-  it('redirects non-marketing users without loading distribution data', async () => {
+  it('keeps the invitation earnings page visible to non-marketing users during acceptance', async () => {
     mocks.access.status = 'denied'
     mocks.access.overview = null
 
     render(<DistributionView />)
 
-    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/home', { replace: true }))
-    expect(screen.queryByRole('heading', { name: '邀请收益' })).not.toBeInTheDocument()
-    expect(mocks.listCommissions).not.toHaveBeenCalled()
-    expect(mocks.listInvitees).not.toHaveBeenCalled()
+    expect(await screen.findByRole('heading', { name: '邀请收益' })).toBeInTheDocument()
+    expect(mocks.navigate).not.toHaveBeenCalledWith('/home', { replace: true })
+    expect(mocks.listCommissions).toHaveBeenCalled()
+    expect(mocks.listInvitees).toHaveBeenCalled()
   })
 
   it('loads a backend referral code and builds the customer invitation link', async () => {
@@ -171,16 +172,86 @@ describe('DistributionView', () => {
     expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
   })
 
-  it('refreshes both the overview and invitation relationships on demand', async () => {
-    const user = userEvent.setup()
+  it('loads invitation relationships for summary counts without rendering a second list', async () => {
     render(<DistributionView />)
-    await screen.findByText('刚注册的邀请客户')
-    expect(mocks.listInvitees).toHaveBeenCalledTimes(1)
 
-    await user.click(screen.getByRole('button', { name: '刷新数据' }))
+    await waitFor(() => expect(mocks.listInvitees).toHaveBeenCalledTimes(1))
+    expect(mocks.listCommissions).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('刚注册的邀请客户')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '刷新数据' })).not.toBeInTheDocument()
+  })
 
-    expect(mocks.retry).toHaveBeenCalledTimes(1)
-    await waitFor(() => expect(mocks.listInvitees).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(mocks.listCommissions).toHaveBeenCalledTimes(2))
+  it('refreshes invitation and commission data every three seconds while visible', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<DistributionView />)
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(mocks.listInvitees).toHaveBeenCalledTimes(1)
+      expect(mocks.listCommissions).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        vi.advanceTimersByTime(3_000)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(mocks.listInvitees).toHaveBeenCalledTimes(2)
+      expect(mocks.listCommissions).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not present missing backend money and status fields as zero or settling', async () => {
+    mocks.access.overview = {
+      successful_invitees: 1,
+      distributor_invitee_count: 0,
+    }
+    mocks.listInvitees.mockResolvedValue({
+      items: [
+        {
+          invitee_id: 88,
+          invitee_name: '消费字段缺失客户',
+          relationship: 'direct',
+          registered_at: '2026-07-26T15:30:00+08:00',
+          status: 'registered',
+        },
+      ],
+      total: 1,
+    })
+    mocks.listCommissions.mockResolvedValue({
+      items: [{ id: 2, paid_amount: 29.9 }],
+      total: 1,
+    })
+
+    render(<DistributionView />)
+
+    expect(await screen.findByRole('heading', { name: '邀请收益' })).toBeInTheDocument()
+    expect(screen.getByText('消费字段缺失客户')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('1 条收益记录缺少客户归属信息')
+    expect(screen.queryByText('消费数据待同步')).not.toBeInTheDocument()
+    expect(screen.queryByText('状态待同步')).not.toBeInTheDocument()
+    expect(screen.queryByText('数据待同步')).not.toBeInTheDocument()
+    expect(screen.getByText('累计返利金额')).toBeInTheDocument()
+    expect(screen.getByText('可提现金额')).toBeInTheDocument()
+    expect(screen.queryByText('待结算金额')).not.toBeInTheDocument()
+    expect(screen.queryByText('分销商邀请客户')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '消费时间' })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '客户名称' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '客户账户ID' })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '关系' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '所属分销商' })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '客户状态' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '注册时间' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '充值金额' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '我的收益' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '收益状态' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '结算时间' })).not.toBeInTheDocument()
+    expect(screen.queryByText('结算中', { selector: '.distribution-status' })).not.toBeInTheDocument()
+    expect(screen.getAllByText('0.00')).toHaveLength(2)
   })
 })

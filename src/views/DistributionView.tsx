@@ -25,6 +25,16 @@ interface DistributionFilters {
   endTime: string
 }
 
+interface DistributionSummaryCard {
+  label: string
+  value: string
+  unit: string
+  icon: string
+  action?: string
+  backgroundIcon?: string
+  hidden?: boolean
+}
+
 const EMPTY_FILTERS: DistributionFilters = {
   keyword: '',
   relationship: '',
@@ -35,10 +45,9 @@ const EMPTY_FILTERS: DistributionFilters = {
 }
 
 const PAGE_SIZE = 50
-const INVITEE_PAGE_SIZE = 20
 const INVITEE_FETCH_SIZE = 200
 const MAX_INVITEE_RECORDS = 5000
-const DISTRIBUTION_REFRESH_INTERVAL_MS = 15_000
+const DISTRIBUTION_REFRESH_INTERVAL_MS = 3_000
 
 function pick(source: any, keys: string[], fallback: any = ''): any {
   for (const key of keys) {
@@ -65,17 +74,6 @@ function pageTotal(payload: any, fallback: number): number {
     pick(source, ['total', 'count', 'total_count'], pick(pagination, ['total', 'count', 'total_count'], fallback)),
   )
   return Number.isFinite(value) ? value : fallback
-}
-
-function numeric(source: any, yuanKeys: string[], centsKeys: string[] = []): number {
-  const cents = Number(pick(source, centsKeys, Number.NaN))
-  if (Number.isFinite(cents)) return cents / 100
-  const yuan = Number(pick(source, yuanKeys, 0))
-  if (!Number.isFinite(yuan)) return 0
-  const unit = String(pick(source, ['amount_unit', 'money_unit', 'currency_unit'], ''))
-    .trim()
-    .toLowerCase()
-  return ['cent', 'cents', 'fen', '分'].includes(unit) ? yuan / 100 : yuan
 }
 
 function optionalNumeric(source: any, yuanKeys: string[], centsKeys: string[] = []): number | null {
@@ -138,7 +136,7 @@ function relationLabel(value: any): string {
   return String(value || '---')
 }
 
-function statusMeta(value: any): { label: string; tone: 'pending' | 'settled' | 'cancelled' } {
+function statusMeta(value: any): { label: string; tone: 'pending' | 'settled' | 'cancelled' | 'unknown' } {
   const normalized = String(value || '')
     .trim()
     .toLowerCase()
@@ -146,57 +144,19 @@ function statusMeta(value: any): { label: string; tone: 'pending' | 'settled' | 
   if (['cancelled', 'canceled', 'refunded', 'failed'].includes(normalized)) {
     return { label: '已取消', tone: 'cancelled' }
   }
-  return { label: normalized ? String(value) : '结算中', tone: 'pending' }
+  if (['pending', 'processing', 'settling'].includes(normalized)) return { label: '结算中', tone: 'pending' }
+  return { label: normalized ? String(value) : '状态待同步', tone: 'unknown' }
 }
 
-function inviteeStatusLabel(value: any): string {
-  const normalized = String(value || '')
-    .trim()
-    .toLowerCase()
-  if (['active', 'registered', 'success', 'valid', 'bound'].includes(normalized)) return '已注册'
-  if (['pending', 'invited', 'waiting'].includes(normalized)) return '待注册'
-  if (['disabled', 'invalid', 'cancelled', 'canceled'].includes(normalized)) return '已失效'
-  return String(value || '已注册')
-}
-
-type CustomerOperationTone = 'pending' | 'warning' | 'settled' | 'cancelled'
-
-function customerOperationStatus(
+function moneyCardValue(
   source: any,
-  totalRecharge: number | null,
-  totalConsumed: number | null,
-  balance: number | null,
-): { label: string; tone: CustomerOperationTone } {
-  const explicit = String(pick(source, ['customer_status', 'operation_status', 'usage_status'], ''))
-    .trim()
-    .toLowerCase()
-  if (['unrecharged', 'registered_unpaid', 'registered_not_recharged', 'not_recharged'].includes(explicit)) {
-    return { label: '已注册未充值', tone: 'pending' }
-  }
-  if (['recharged_unused', 'paid_unused', 'not_consumed'].includes(explicit)) {
-    return { label: '已充值未消耗', tone: 'warning' }
-  }
-  if (['low_balance', 'balance_low'].includes(explicit) || source?.is_low_balance === true) {
-    return { label: '余额不足', tone: 'cancelled' }
-  }
-  if (['active', 'consuming', 'normal'].includes(explicit)) return { label: '正常消耗', tone: 'settled' }
-
-  if (totalRecharge !== null && totalRecharge <= 0) return { label: '已注册未充值', tone: 'pending' }
-  if (totalRecharge !== null && totalRecharge > 0 && totalConsumed !== null && totalConsumed <= 0) {
-    return { label: '已充值未消耗', tone: 'warning' }
-  }
-  if (
-    totalRecharge !== null &&
-    totalRecharge > 0 &&
-    totalConsumed !== null &&
-    totalConsumed > 0 &&
-    balance !== null &&
-    balance <= totalRecharge * 0.1
-  ) {
-    return { label: '余额不足', tone: 'cancelled' }
-  }
-  if (totalConsumed !== null && totalConsumed > 0) return { label: '正常消耗', tone: 'settled' }
-  return { label: '暂无消费数据', tone: 'pending' }
+  yuanKeys: string[],
+  centsKeys: string[],
+): { value: string; unit: string; hidden: boolean } {
+  const amount = optionalNumeric(source, yuanKeys, centsKeys)
+  return amount === null
+    ? { value: formatMoney(0), unit: '￥', hidden: false }
+    : { value: formatMoney(amount), unit: '￥', hidden: false }
 }
 
 function csvCell(value: any): string {
@@ -205,17 +165,13 @@ function csvCell(value: any): string {
 
 export default function DistributionView() {
   const navigate = useNavigate()
-  const { status: accessStatus, overview: rawOverview, isDistributor, retry: refreshOverview } = useDistributionAccess()
+  const { overview: rawOverview, isDistributor, retry: refreshOverview } = useDistributionAccess()
   const [draftFilters, setDraftFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [filters, setFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [page, setPage] = useState(1)
   const [rows, setRows] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [invitees, setInvitees] = useState<any[]>([])
-  const [inviteePage, setInviteePage] = useState(1)
-  const [inviteeTotal, setInviteeTotal] = useState(0)
-  const [inviteesLoading, setInviteesLoading] = useState(false)
-  const [inviteesError, setInviteesError] = useState('')
   const [distributors, setDistributors] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [listError, setListError] = useState('')
@@ -232,20 +188,11 @@ export default function DistributionView() {
   const overviewInviteCode = String(pick(overview, ['invite_code', 'inviteCode', 'referral_code'], '')).trim()
   const inviteUrl = inviteCode ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}` : ''
 
-  // 入口隐藏不足以构成访问控制；手动输入路由的非营销人员也不能看到页面或请求返利数据。
-  useEffect(() => {
-    if (accessStatus === 'denied' || accessStatus === 'error') {
-      navigate('/home', { replace: true })
-    }
-  }, [accessStatus, navigate])
-
   const loadInvitees = useCallback(() => {
     if (!isDistributor) return undefined
     inviteesRequestRef.current?.abort()
     const controller = new AbortController()
     inviteesRequestRef.current = controller
-    setInviteesLoading(true)
-    setInviteesError('')
     void (async () => {
       const collected: any[] = []
       let expectedTotal = 0
@@ -267,10 +214,8 @@ export default function DistributionView() {
 
       return { items: collected, total: expectedTotal || collected.length }
     })()
-      .then(({ items, total: nextTotal }) => {
+      .then(({ items }) => {
         setInvitees(items)
-        setInviteeTotal(nextTotal)
-        setInviteePage(1)
         const seen = new Map<string, any>()
         items.forEach((item) => {
           const id = String(pick(item, ['distributor_id', 'distributorId', 'owner_id'], '')).trim()
@@ -279,16 +224,13 @@ export default function DistributionView() {
         })
         setDistributors([...seen.values()])
       })
-      .catch((error: any) => {
+      .catch(() => {
         if (controller.signal.aborted) return
         setInvitees([])
-        setInviteeTotal(0)
-        setInviteesError(error?.message || '邀请关系列表加载失败，请稍后重试')
       })
       .finally(() => {
         if (inviteesRequestRef.current === controller) {
           inviteesRequestRef.current = null
-          if (!controller.signal.aborted) setInviteesLoading(false)
         }
       })
     return () => controller.abort()
@@ -339,8 +281,8 @@ export default function DistributionView() {
 
   const refreshDistributionData = useCallback(() => {
     refreshOverview()
-    loadInvitees()
-    loadRows()
+    if (!inviteesRequestRef.current) loadInvitees()
+    if (!commissionsRequestRef.current) loadRows()
   }, [loadInvitees, loadRows, refreshOverview])
 
   useEffect(() => {
@@ -374,175 +316,186 @@ export default function DistributionView() {
     [invitees],
   )
 
-  const cards = useMemo(
-    () => [
-      {
-        label: '累计返利金额',
-        value: formatMoney(
-          numeric(
+  const cards = useMemo<DistributionSummaryCard[]>(
+    () =>
+      [
+        {
+          label: '累计返利金额',
+          ...moneyCardValue(
             overview,
             ['total_commission', 'total_commission_amount', 'total_rebate'],
             ['total_commission_cents'],
           ),
-        ),
-        unit: '￥',
-        icon: totalRebateIcon,
-      },
-      {
-        label: '可提现金额',
-        value: formatMoney(
-          numeric(
+          icon: totalRebateIcon,
+        },
+        {
+          label: '可提现金额',
+          ...moneyCardValue(
             overview,
             ['withdrawable_commission', 'withdrawable_amount', 'available_commission'],
             ['withdrawable_commission_cents', 'withdrawable_amount_cents'],
           ),
-        ),
-        unit: '￥',
-        icon: withdrawableIcon,
-        action: '可提现',
-      },
-      {
-        label: '待结算金额',
-        value: formatMoney(
-          numeric(
+          icon: withdrawableIcon,
+          action: '可提现',
+        },
+        {
+          label: '待结算金额',
+          ...moneyCardValue(
             overview,
             ['pending_commission', 'pending_amount'],
             ['pending_commission_cents', 'pending_amount_cents'],
           ),
-        ),
-        unit: '￥',
-        icon: pendingIcon,
-        backgroundIcon: pendingBackground,
-      },
-      {
-        label: '成功邀请客户',
-        value: String(
-          Math.max(
-            Number(pick(overview, ['direct_invitee_count', 'successful_invitees', 'invitee_count'], 0)) || 0,
-            inviteeCounts.direct,
+          icon: pendingIcon,
+          backgroundIcon: pendingBackground,
+        },
+        {
+          label: '成功邀请客户',
+          value: String(
+            Math.max(
+              Number(pick(overview, ['direct_invitee_count', 'successful_invitees', 'invitee_count'], 0)) || 0,
+              inviteeCounts.direct,
+            ),
           ),
-        ),
-        unit: '人',
-        icon: directInviteIcon,
-      },
-      {
-        label: '分销商邀请客户',
-        value: String(
-          Math.max(
-            Number(pick(overview, ['distributor_invitee_count', 'indirect_invitee_count', 'sub_invitee_count'], 0)) ||
-              0,
-            inviteeCounts.distributor,
+          unit: '人',
+          icon: directInviteIcon,
+        },
+        {
+          label: '分销商邀请客户',
+          value: String(
+            Math.max(
+              Number(pick(overview, ['distributor_invitee_count', 'indirect_invitee_count', 'sub_invitee_count'], 0)) ||
+                0,
+              inviteeCounts.distributor,
+            ),
           ),
-        ),
-        unit: '人',
-        icon: distributorInviteIcon,
-      },
-    ],
+          unit: '人',
+          icon: distributorInviteIcon,
+        },
+      ].filter((card) => card.icon !== pendingIcon && card.icon !== distributorInviteIcon),
     [inviteeCounts, overview],
   )
 
-  const normalizedRows = useMemo(
+  const normalizedInvitees = useMemo(
+    () =>
+      invitees.map((item, index) => ({
+        key: `invitee-${String(pick(item, ['invitee_id', 'customer_id', 'user_id', 'id'], index))}`,
+        matchId: String(
+          pick(item, ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id', 'invitee_id'], ''),
+        ).trim(),
+        registeredAt: formatDateTime(
+          pick(item, ['registered_at', 'bound_at', 'invited_at', 'created_at', 'registration_time']),
+        ),
+        customerName: pick(
+          item,
+          ['customer_name', 'invitee_name', 'display_name', 'user_name', 'username', 'account_name', 'nickname'],
+          '---',
+        ),
+        relationship: relationLabel(pick(item, ['relationship', 'relation', 'relation_type'], 'direct')),
+        distributorName: pick(item, ['distributor_name', 'owner_name', 'referrer_name'], '---'),
+        customerStatus: String(
+          pick(item, ['customer_status', 'operation_status', 'usage_status', 'status'], ''),
+        ).trim(),
+        totalRecharge: optionalNumeric(
+          item,
+          ['total_recharge_amount', 'total_recharge', 'recharge_total', 'total_paid_amount'],
+          ['total_recharge_cents', 'total_recharge_amount_cents', 'total_paid_amount_cents'],
+        ),
+        totalConsumed: optionalNumeric(
+          item,
+          ['total_consumed_amount', 'total_consumed', 'consumption_total', 'total_usage_amount'],
+          ['total_consumed_cents', 'total_consumed_amount_cents', 'total_usage_amount_cents'],
+        ),
+        balance: optionalNumeric(
+          item,
+          ['balance_amount', 'available_balance', 'balance'],
+          ['balance_amount_cents', 'available_balance_cents', 'balance_cents'],
+        ),
+      })),
+    [invitees],
+  )
+
+  const normalizedCommissions = useMemo(
     () =>
       rows.map((row, index) => {
-        const consumedAt = formatDateTime(pick(row, ['consumed_at', 'paid_at', 'payment_time', 'created_at']))
+        const consumedAt = formatDateTime(
+          pick(row, [
+            'consumed_at',
+            'paid_at',
+            'payment_time',
+            'recharged_at',
+            'order_paid_at',
+            'occurred_at',
+            'created_at',
+          ]),
+        )
         const settledAt = formatDateTime(pick(row, ['settled_at', 'settlement_time']))
         return {
           key: String(pick(row, ['commission_id', 'id', 'order_id'], index)),
+          matchId: String(
+            pick(row, ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id'], ''),
+          ).trim(),
           consumedAt,
-          customerName: pick(row, ['customer_name', 'invitee_name', 'display_name', 'user_name'], '---'),
-          customerId: pick(row, ['customer_account_id', 'customer_id', 'invitee_id', 'user_id'], '---'),
-          relationship: relationLabel(pick(row, ['relationship', 'relation', 'relation_type'])),
-          distributorName: pick(
+          customerName: pick(
             row,
-            ['distributor_name', 'owner_name', 'referrer_name'],
-            relationLabel(pick(row, ['relationship', 'relation'])) === '我的客户' ? '直接客户' : '---',
+            ['customer_name', 'invitee_name', 'display_name', 'user_name', 'username', 'account_name'],
+            '---',
           ),
-          paidAmount: numeric(row, ['paid_amount', 'payment_amount', 'recharge_amount'], ['paid_amount_cents']),
-          commissionAmount: numeric(
+          relationship: relationLabel(pick(row, ['relationship', 'relation', 'relation_type'])),
+          distributorName: pick(row, ['distributor_name', 'owner_name', 'referrer_name'], '---'),
+          paidAmount: optionalNumeric(
+            row,
+            ['paid_amount', 'payment_amount', 'recharge_amount', 'order_amount'],
+            ['paid_amount_cents', 'payment_amount_cents', 'recharge_amount_cents', 'order_amount_cents'],
+          ),
+          commissionAmount: optionalNumeric(
             row,
             ['commission_amount', 'rebate_amount', 'income_amount'],
-            ['commission_amount_cents'],
+            ['commission_amount_cents', 'rebate_amount_cents', 'income_amount_cents'],
           ),
-          status: statusMeta(pick(row, ['status', 'commission_status', 'settlement_status'])),
+          status: statusMeta(pick(row, ['status', 'commission_status', 'settlement_status', 'rebate_status'])),
           settledAt,
         }
       }),
     [rows],
   )
 
-  const normalizedInvitees = useMemo(
-    () =>
-      invitees.map((item, index) => {
-        const totalRecharge = optionalNumeric(
-          item,
-          ['total_recharge_amount', 'total_recharge', 'recharge_total', 'total_paid_amount'],
-          ['total_recharge_cents', 'total_recharge_amount_cents', 'total_paid_amount_cents'],
-        )
-        const totalConsumed = optionalNumeric(
-          item,
-          ['total_consumed_amount', 'total_consumed', 'consumption_total', 'total_usage_amount'],
-          ['total_consumed_cents', 'total_consumed_amount_cents', 'total_usage_amount_cents'],
-        )
-        const balance = optionalNumeric(
-          item,
-          ['balance_amount', 'available_balance', 'balance'],
-          ['balance_amount_cents', 'available_balance_cents', 'balance_cents'],
-        )
-        return {
-          key: String(pick(item, ['invitee_id', 'customer_id', 'user_id', 'id'], index)),
-          registeredAt: formatDateTime(
-            pick(item, ['registered_at', 'bound_at', 'invited_at', 'created_at', 'registration_time']),
-          ),
-          customerName: pick(
-            item,
-            ['customer_name', 'invitee_name', 'display_name', 'user_name', 'nickname', 'mobile_masked', 'mobile'],
-            '---',
-          ),
-          customerId: pick(item, ['customer_account_id', 'customer_id', 'invitee_id', 'user_id', 'account_id'], '---'),
-          relationship: relationLabel(pick(item, ['relationship', 'relation', 'relation_type'], 'direct')),
-          distributorName: pick(
-            item,
-            ['distributor_name', 'owner_name', 'referrer_name'],
-            relationLabel(pick(item, ['relationship', 'relation'], 'direct')) === '我的客户' ? '直接客户' : '---',
-          ),
-          invitationStatus: inviteeStatusLabel(
-            pick(item, ['invite_status', 'relationship_status', 'account_status', 'status']),
-          ),
-          operationStatus: customerOperationStatus(item, totalRecharge, totalConsumed, balance),
-          totalRecharge,
-          totalConsumed,
-          balance,
-          pendingCommission: optionalNumeric(
-            item,
-            ['pending_commission', 'pending_commission_amount', 'pending_rebate'],
-            ['pending_commission_cents', 'pending_commission_amount_cents', 'pending_rebate_cents'],
-          ),
-          lastConsumedAt: formatDateTime(
-            pick(item, ['last_consumed_at', 'last_consumption_at', 'last_usage_at', 'last_used_at']),
-          ),
-        }
-      }),
-    [invitees],
-  )
-  const operationCounts = useMemo(
-    () =>
-      normalizedInvitees.reduce(
-        (counts, item) => {
-          if (item.operationStatus.label === '已注册未充值') counts.unrecharged += 1
-          if (item.operationStatus.label === '已充值未消耗') counts.unused += 1
-          if (item.operationStatus.label === '余额不足') counts.lowBalance += 1
-          return counts
-        },
-        { unrecharged: 0, unused: 0, lowBalance: 0 },
-      ),
+  const normalizedRows = normalizedCommissions
+  const inviteeFields = useMemo(
+    () => ({
+      registeredAt: normalizedInvitees.some((row) => row.registeredAt.date !== '---'),
+      customerName: normalizedInvitees.some((row) => row.customerName !== '---'),
+      relationship: normalizedInvitees.some((row) => row.relationship !== '---'),
+      distributorName: normalizedInvitees.some((row) => row.distributorName !== '---'),
+      customerStatus: normalizedInvitees.some((row) => Boolean(row.customerStatus)),
+      totalRecharge: normalizedInvitees.some((row) => row.totalRecharge !== null),
+      totalConsumed: normalizedInvitees.some((row) => row.totalConsumed !== null),
+      balance: normalizedInvitees.some((row) => row.balance !== null),
+    }),
     [normalizedInvitees],
   )
-  const visibleInvitees = useMemo(
-    () => normalizedInvitees.slice((inviteePage - 1) * INVITEE_PAGE_SIZE, inviteePage * INVITEE_PAGE_SIZE),
-    [inviteePage, normalizedInvitees],
-  )
-  const inviteePageCount = Math.max(1, Math.ceil(inviteeTotal / INVITEE_PAGE_SIZE))
 
+  const commissionFields = useMemo(
+    () => ({
+      consumedAt: normalizedRows.some((row) => row.consumedAt.date !== '---'),
+      customerName: normalizedRows.some((row) => row.customerName !== '---'),
+      relationship: normalizedRows.some((row) => row.relationship !== '---'),
+      distributorName: normalizedRows.some((row) => row.distributorName !== '---'),
+      paidAmount: normalizedRows.some((row) => row.paidAmount !== null),
+      commissionAmount: normalizedRows.some((row) => row.commissionAmount !== null),
+      status: normalizedRows.some((row) => row.status.tone !== 'unknown'),
+      settledAt: normalizedRows.some((row) => row.settledAt.date !== '---'),
+    }),
+    [normalizedRows],
+  )
+  const incompleteCommissionRows = useMemo(
+    () =>
+      normalizedRows.filter(
+        (row) =>
+          (row.paidAmount !== null || row.commissionAmount !== null) &&
+          (row.customerName === '---' || row.relationship === '---' || row.distributorName === '---'),
+      ).length,
+    [normalizedRows],
+  )
   const updateFilter = (key: keyof DistributionFilters, value: string) => {
     setDraftFilters((current) => ({ ...current, [key]: value }))
   }
@@ -559,25 +512,14 @@ export default function DistributionView() {
   }
 
   const exportRows = () => {
-    const header = [
-      '消费时间',
-      '客户名称',
-      '客户账户ID',
-      '关系',
-      '所属分销商',
-      '充值金额',
-      '我的收益',
-      '收益状态',
-      '结算时间',
-    ]
+    const header = ['消费时间', '客户名称', '关系', '所属分销商', '充值金额', '我的收益', '收益状态', '结算时间']
     const body = normalizedRows.map((row) => [
       `${row.consumedAt.date} ${row.consumedAt.time}`.trim(),
       row.customerName,
-      row.customerId,
       row.relationship,
       row.distributorName,
-      formatMoney(row.paidAmount),
-      formatMoney(row.commissionAmount),
+      row.paidAmount === null ? '暂无数据' : formatMoney(row.paidAmount),
+      row.commissionAmount === null ? '暂无数据' : formatMoney(row.commissionAmount),
       row.status.label,
       `${row.settledAt.date} ${row.settledAt.time}`.trim(),
     ])
@@ -653,138 +595,79 @@ export default function DistributionView() {
         </section>
 
         <section className="distribution-stats">
-          {cards.map((card) => (
-            <article className="distribution-stat-card" key={card.label}>
-              <span className="distribution-stat-card__icon">
-                {card.backgroundIcon ? <img src={card.backgroundIcon} alt="" aria-hidden="true" /> : null}
-                <img src={card.icon} alt="" width={62} height={62} />
-              </span>
-              <span className="distribution-stat-card__content">
-                <span className="distribution-stat-card__label">
-                  {card.label}
-                  {card.action ? (
-                    <button type="button">
-                      {card.action}
-                      <img src={arrowRightIcon} alt="" />
-                    </button>
-                  ) : null}
+          {cards
+            .filter((card) => !card.hidden)
+            .map((card) => (
+              <article className="distribution-stat-card" key={card.label}>
+                <span className="distribution-stat-card__icon">
+                  {card.backgroundIcon ? <img src={card.backgroundIcon} alt="" aria-hidden="true" /> : null}
+                  <img src={card.icon} alt="" width={62} height={62} />
                 </span>
-                <strong>
-                  <small>{card.unit === '￥' ? card.unit : ''}</small>
-                  {card.value}
-                  <small>{card.unit === '人' ? card.unit : ''}</small>
-                </strong>
-              </span>
-            </article>
-          ))}
+                <span className="distribution-stat-card__content">
+                  <span className="distribution-stat-card__label">
+                    {card.label}
+                    {card.action ? (
+                      <button type="button">
+                        {card.action}
+                        <img src={arrowRightIcon} alt="" />
+                      </button>
+                    ) : null}
+                  </span>
+                  <strong>
+                    <small>{card.unit === '￥' ? card.unit : ''}</small>
+                    {card.value}
+                    <small>{card.unit === '人' ? card.unit : ''}</small>
+                  </strong>
+                </span>
+              </article>
+            ))}
         </section>
 
         <section className="distribution-invitees" aria-labelledby="distribution-invitees-title">
           <header>
             <div>
               <h2 id="distribution-invitees-title">邀请客户</h2>
-              <span>已建立邀请关系 {inviteeTotal} 人</span>
+              <span>已建立邀请关系 {normalizedInvitees.length} 人</span>
             </div>
-            <button type="button" onClick={refreshDistributionData} disabled={inviteesLoading || loading}>
-              {inviteesLoading || loading ? '刷新中…' : '刷新数据'}
-            </button>
           </header>
-          <div className="distribution-customer-summary" aria-label="客户跟进摘要">
-            <span>
-              已注册未充值 <strong>{operationCounts.unrecharged}</strong>
-            </span>
-            <span>
-              已充值未消耗 <strong>{operationCounts.unused}</strong>
-            </span>
-            <span>
-              余额不足 <strong>{operationCounts.lowBalance}</strong>
-            </span>
-            <small>页面打开时每 15 秒自动同步</small>
-          </div>
           <div className="distribution-table-wrap">
             <table className="distribution-table">
               <thead>
                 <tr>
-                  <th>注册时间</th>
-                  <th>客户名称</th>
-                  <th>客户账户ID</th>
-                  <th>关系</th>
-                  <th>所属分销商</th>
-                  <th>客户状态</th>
-                  <th>累计充值</th>
-                  <th>累计消耗</th>
-                  <th>剩余余额</th>
-                  <th>最近消费</th>
-                  <th>待结算返利</th>
+                  {inviteeFields.registeredAt ? <th>注册时间</th> : null}
+                  {inviteeFields.customerName ? <th>客户名称</th> : null}
+                  {inviteeFields.relationship ? <th>关系</th> : null}
+                  {inviteeFields.distributorName ? <th>所属分销商</th> : null}
+                  {inviteeFields.customerStatus ? <th>客户状态</th> : null}
+                  {inviteeFields.totalRecharge ? <th>累计充值</th> : null}
+                  {inviteeFields.totalConsumed ? <th>累计消耗</th> : null}
+                  {inviteeFields.balance ? <th>剩余金额</th> : null}
                 </tr>
               </thead>
               <tbody>
-                {visibleInvitees.map((item) => (
-                  <tr key={item.key}>
-                    <td>
-                      <span className="date-time">
-                        <span>{item.registeredAt.date}</span>
-                        <span>{item.registeredAt.time}</span>
-                      </span>
-                    </td>
-                    <td>{item.customerName}</td>
-                    <td>{item.customerId}</td>
-                    <td>{item.relationship}</td>
-                    <td>{item.distributorName}</td>
-                    <td>
-                      <span className={`distribution-status is-${item.operationStatus.tone}`}>
-                        {item.operationStatus.label}
-                      </span>
-                      <small className="distribution-invitation-status">{item.invitationStatus}</small>
-                    </td>
-                    <td>{formatOptionalMoney(item.totalRecharge)}</td>
-                    <td>{formatOptionalMoney(item.totalConsumed)}</td>
-                    <td>{formatOptionalMoney(item.balance)}</td>
-                    <td>
-                      <span className="date-time">
-                        <span>{item.lastConsumedAt.date}</span>
-                        <span>{item.lastConsumedAt.time}</span>
-                      </span>
-                    </td>
-                    <td className="distribution-income">{formatOptionalMoney(item.pendingCommission)}</td>
+                {normalizedInvitees.map((row) => (
+                  <tr key={row.key}>
+                    {inviteeFields.registeredAt ? (
+                      <td>
+                        <span className="date-time">
+                          <span>{row.registeredAt.date}</span>
+                          <span>{row.registeredAt.time}</span>
+                        </span>
+                      </td>
+                    ) : null}
+                    {inviteeFields.customerName ? <td>{row.customerName}</td> : null}
+                    {inviteeFields.relationship ? <td>{row.relationship}</td> : null}
+                    {inviteeFields.distributorName ? <td>{row.distributorName}</td> : null}
+                    {inviteeFields.customerStatus ? <td>{row.customerStatus || '---'}</td> : null}
+                    {inviteeFields.totalRecharge ? <td>{formatOptionalMoney(row.totalRecharge)}</td> : null}
+                    {inviteeFields.totalConsumed ? <td>{formatOptionalMoney(row.totalConsumed)}</td> : null}
+                    {inviteeFields.balance ? <td>{formatOptionalMoney(row.balance)}</td> : null}
                   </tr>
                 ))}
               </tbody>
             </table>
-            {inviteesLoading ? <div className="distribution-table-state">正在加载邀请关系…</div> : null}
-            {!inviteesLoading && inviteesError ? (
-              <div className="distribution-table-state is-error">
-                {inviteesError}
-                <button type="button" onClick={loadInvitees}>
-                  重试
-                </button>
-              </div>
-            ) : null}
-            {!inviteesLoading && !inviteesError && !visibleInvitees.length ? (
-              <div className="distribution-table-state">暂无已注册的邀请客户</div>
-            ) : null}
+            {!normalizedInvitees.length ? <div className="distribution-table-state">暂无邀请客户</div> : null}
           </div>
-          {inviteeTotal > INVITEE_PAGE_SIZE ? (
-            <nav className="distribution-pagination" aria-label="邀请客户分页">
-              <button
-                type="button"
-                disabled={inviteePage === 1}
-                onClick={() => setInviteePage((value) => Math.max(1, value - 1))}
-              >
-                上一页
-              </button>
-              <span>
-                第 {inviteePage} 页，共 {inviteePageCount} 页
-              </span>
-              <button
-                type="button"
-                disabled={inviteePage >= inviteePageCount}
-                onClick={() => setInviteePage((value) => Math.min(inviteePageCount, value + 1))}
-              >
-                下一页
-              </button>
-            </nav>
-          ) : null}
         </section>
 
         <section className="distribution-filters" aria-label="收益明细筛选">
@@ -851,45 +734,62 @@ export default function DistributionView() {
           </button>
         </section>
 
+        {incompleteCommissionRows ? (
+          <p className="distribution-data-warning" role="status">
+            当前有 {incompleteCommissionRows}{' '}
+            条收益记录缺少客户归属信息，金额与客户无法可靠对应，请联系管理员核对返佣接口。
+          </p>
+        ) : null}
+
         <section className="distribution-table-wrap" aria-live="polite">
           <table className="distribution-table">
             <thead>
               <tr>
-                <th>消费时间</th>
-                <th>客户名称</th>
-                <th>客户账户ID</th>
-                <th>关系</th>
-                <th>所属分销商</th>
-                <th>充值金额</th>
-                <th>我的收益</th>
-                <th>收益状态</th>
-                <th>结算时间</th>
+                {commissionFields.consumedAt ? <th>消费时间</th> : null}
+                {commissionFields.customerName ? <th>客户名称</th> : null}
+                {commissionFields.relationship ? <th>关系</th> : null}
+                {commissionFields.distributorName ? <th>所属分销商</th> : null}
+                {commissionFields.paidAmount ? <th>充值金额</th> : null}
+                {commissionFields.commissionAmount ? <th>我的收益</th> : null}
+                {commissionFields.status ? <th>收益状态</th> : null}
+                {commissionFields.settledAt ? <th>结算时间</th> : null}
               </tr>
             </thead>
             <tbody>
               {normalizedRows.map((row) => (
                 <tr key={row.key}>
-                  <td>
-                    <span className="date-time">
-                      <span>{row.consumedAt.date}</span>
-                      <span>{row.consumedAt.time}</span>
-                    </span>
-                  </td>
-                  <td>{row.customerName}</td>
-                  <td>{row.customerId}</td>
-                  <td>{row.relationship}</td>
-                  <td>{row.distributorName}</td>
-                  <td>￥{formatMoney(row.paidAmount)}</td>
-                  <td className="distribution-income">￥{formatMoney(row.commissionAmount)}</td>
-                  <td>
-                    <span className={`distribution-status is-${row.status.tone}`}>{row.status.label}</span>
-                  </td>
-                  <td>
-                    <span className="date-time">
-                      <span>{row.settledAt.date}</span>
-                      <span>{row.settledAt.time}</span>
-                    </span>
-                  </td>
+                  {commissionFields.consumedAt ? (
+                    <td>
+                      <span className="date-time">
+                        <span>{row.consumedAt.date}</span>
+                        <span>{row.consumedAt.time}</span>
+                      </span>
+                    </td>
+                  ) : null}
+                  {commissionFields.customerName ? <td>{row.customerName}</td> : null}
+                  {commissionFields.relationship ? <td>{row.relationship}</td> : null}
+                  {commissionFields.distributorName ? <td>{row.distributorName}</td> : null}
+                  {commissionFields.paidAmount ? <td>{formatOptionalMoney(row.paidAmount)}</td> : null}
+                  {commissionFields.commissionAmount ? (
+                    <td className="distribution-income">{formatOptionalMoney(row.commissionAmount)}</td>
+                  ) : null}
+                  {commissionFields.status ? (
+                    <td>
+                      {row.status.tone === 'unknown' ? (
+                        '---'
+                      ) : (
+                        <span className={`distribution-status is-${row.status.tone}`}>{row.status.label}</span>
+                      )}
+                    </td>
+                  ) : null}
+                  {commissionFields.settledAt ? (
+                    <td>
+                      <span className="date-time">
+                        <span>{row.settledAt.date}</span>
+                        <span>{row.settledAt.time}</span>
+                      </span>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
