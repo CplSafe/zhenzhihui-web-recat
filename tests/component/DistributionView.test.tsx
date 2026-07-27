@@ -133,17 +133,18 @@ describe('DistributionView', () => {
     })
   })
 
-  it('redirects non-marketing users without loading rebate data', () => {
+  it('renders the rebate page and loads available data for non-marketing users', async () => {
     mocks.access.status = 'denied'
     mocks.access.overview = null
 
     render(<DistributionView />)
 
-    expect(screen.queryByRole('heading', { name: '邀请收益' })).not.toBeInTheDocument()
-    expect(screen.getByText('当前账号无权访问，正在返回首页…')).toBeInTheDocument()
-    expect(mocks.navigate).toHaveBeenCalledWith('/home', { replace: true })
-    expect(mocks.listCommissions).not.toHaveBeenCalled()
-    expect(mocks.listInvitees).not.toHaveBeenCalled()
+    expect(screen.getByRole('heading', { name: '邀请收益' })).toBeInTheDocument()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(mocks.listCommissions).toHaveBeenCalledTimes(1)
+      expect(mocks.listInvitees).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('loads a backend referral code and builds the customer invitation link', async () => {
@@ -229,18 +230,48 @@ describe('DistributionView', () => {
     expect(screen.queryByLabelText('渠道邀请二维码')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '下载二维码' })).not.toBeInTheDocument()
     expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
-    expect(screen.getByText('对方通过该链接完成注册后，后端将按渠道邀请类型建立邀请关系。')).toBeInTheDocument()
+    expect(screen.queryByText('对方通过该链接完成注册后，后端将按渠道邀请类型建立邀请关系。')).not.toBeInTheDocument()
   })
 
-  it('shows a clear message when the sales identity is disabled', () => {
+  it('uses the overview referral code when the backend omits a separate distributor code', async () => {
+    const user = userEvent.setup()
+    mocks.access.overview = {
+      ...mocks.access.overview,
+      code: 'ZZH-MARKETING-001',
+    }
+    render(<DistributionView />)
+
+    await user.click(screen.getByRole('button', { name: '邀请渠道' }))
+
+    expect(screen.getByLabelText('渠道邀请链接')).toHaveValue(
+      `${window.location.origin}/login?invite_code=ZZH-MARKETING-001&invite_type=channel`,
+    )
+    expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the marketing referral code when the overview has no distributor code', async () => {
+    const user = userEvent.setup()
+    render(<DistributionView />)
+
+    await user.click(screen.getByRole('button', { name: '邀请渠道' }))
+
+    expect(await screen.findByLabelText('渠道邀请链接')).toHaveValue(
+      `${window.location.origin}/login?invite_code=ZZH-TEST-001&invite_type=channel`,
+    )
+    expect(mocks.getReferralMyCode).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the rebate page visible when the sales identity is disabled', async () => {
     mocks.access.status = 'disabled'
     mocks.access.overview = { distributor_status: 'disabled', distributor_code: 'ZZH-D-JAZ589JR' }
 
     render(<DistributionView />)
 
-    expect(screen.getByRole('heading', { name: '销售身份被停用，请联系客服' })).toBeInTheDocument()
-    expect(mocks.listCommissions).not.toHaveBeenCalled()
-    expect(mocks.listInvitees).not.toHaveBeenCalled()
+    expect(screen.getByRole('heading', { name: '邀请收益' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mocks.listCommissions).toHaveBeenCalledTimes(1)
+      expect(mocks.listInvitees).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('does not present missing backend money and status fields as zero or settling', async () => {

@@ -115,12 +115,12 @@ describe('PersonalPanel', () => {
     expect(screen.getByRole('button', { name: /邀请返利/ })).toBeInTheDocument()
   })
 
-  it('hides the invitation rebate entry for non-marketing users', () => {
+  it('shows the invitation rebate entry for non-marketing users', () => {
     mocks.distributionAccess.isDistributor = false
 
     render(<PersonalPanel />)
 
-    expect(screen.queryByRole('button', { name: /邀请返利/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /邀请返利/ })).toBeInTheDocument()
   })
 
   it('shows role, membership usage, and switches one non-active workspace before closing', async () => {

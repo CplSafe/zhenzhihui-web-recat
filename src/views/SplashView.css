@@ -49,6 +49,13 @@
   z-index: 1;
 }
 
+.splash-sound-toggle {
+  position: absolute;
+  top: calc(9.26vmin + 18px);
+  left: 4.6vmin;
+  z-index: 3;
+}
+
 /* 顶部磨砂条(Figma Rectangle 337:1920×100 #333 @60% + 背景模糊);全 vmin 等比 */
 .splash-overlay {
   position: absolute;

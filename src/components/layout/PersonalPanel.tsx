@@ -22,7 +22,6 @@ import {
 import { openTeamManage, useUiStore } from '@/stores/ui'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'
-import { useDistributionAccess } from '@/composables/useDistributionAccess'
 import { validateWorkspaceName, normalizeWorkspaceNameForCompare } from '@/utils/workspaceName'
 import UserAvatar from '@/components/common/UserAvatar'
 import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
@@ -92,7 +91,6 @@ interface PersonalPanelProps {
 /** 展示当前用户、空间角色、会员积分及安全的空间切换/团队重命名入口。 */
 export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps) {
   const navigate = useNavigate()
-  const { isDistributionIdentity } = useDistributionAccess()
   const user = useCurrentUser()
   const member = useCurrentMember()
   const currentWs = useCurrentWorkspace()
@@ -241,21 +239,19 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
           </div>
         </div>
         <div className="ppl__head-actions">
-          {isDistributionIdentity ? (
-            <Tooltip title="邀请返利" placement="bottom" zIndex={4000}>
-              <button
-                type="button"
-                className="ppl__head-action ppl__head-action--distribution-text"
-                aria-label="邀请返利"
-                onClick={() => {
-                  onClose?.()
-                  navigate('/distribution')
-                }}
-              >
-                邀请返利
-              </button>
-            </Tooltip>
-          ) : null}
+          <Tooltip title="邀请返利" placement="bottom" zIndex={4000}>
+            <button
+              type="button"
+              className="ppl__head-action ppl__head-action--distribution-text"
+              aria-label="邀请返利"
+              onClick={() => {
+                onClose?.()
+                navigate('/distribution')
+              }}
+            >
+              邀请返利
+            </button>
+          </Tooltip>
 
           {/* 当前空间:团队空间只显示图标,悬停弹出「团队成员」黑色圆角浮层,点击打开团队管理查看成员 */}
           {isTeamWs && canRevealTeamInfo ? (

@@ -15,6 +15,8 @@ const ROUTE_MAP: Record<string, string> = {
   projects: '/projects',
   resources: '/resources',
   templates: '/templates',
+  'template-local-life': '/templates?category=local-life',
+  'template-ecommerce': '/templates?category=ecommerce',
   distribution: '/distribution',
 }
 
