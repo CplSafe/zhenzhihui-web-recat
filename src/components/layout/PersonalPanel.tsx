@@ -92,7 +92,7 @@ interface PersonalPanelProps {
 /** 展示当前用户、空间角色、会员积分及安全的空间切换/团队重命名入口。 */
 export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps) {
   const navigate = useNavigate()
-  const { isDistributor } = useDistributionAccess()
+  const { isDistributionIdentity } = useDistributionAccess()
   const user = useCurrentUser()
   const member = useCurrentMember()
   const currentWs = useCurrentWorkspace()
@@ -241,7 +241,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
           </div>
         </div>
         <div className="ppl__head-actions">
-          {isDistributor ? (
+          {isDistributionIdentity ? (
             <Tooltip title="邀请返利" placement="bottom" zIndex={4000}>
               <button
                 type="button"

@@ -34,6 +34,7 @@ vi.mock('@/composables/useDistributionAccess', () => ({
   useDistributionAccess: () => ({
     status: mocks.distributionAccess.isDistributor ? 'allowed' : 'denied',
     isDistributor: mocks.distributionAccess.isDistributor,
+    isDistributionIdentity: mocks.distributionAccess.isDistributor,
   }),
 }))
 vi.mock('@/composables/useToast', () => ({

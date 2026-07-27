@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isDistributionAccessGranted } from '@/composables/useDistributionAccess'
+import { isDistributionAccessDisabled, isDistributionAccessGranted } from '@/composables/useDistributionAccess'
 
 describe('isDistributionAccessGranted', () => {
   it('denies an HTTP 200 payload that explicitly says the user is not a distributor', () => {
@@ -16,5 +16,11 @@ describe('isDistributionAccessGranted', () => {
   it('does not infer access from distribution metrics', () => {
     expect(isDistributionAccessGranted({ total_commission: 0, pending_amount: 0 })).toBe(false)
     expect(isDistributionAccessGranted({ message: 'ok' })).toBe(false)
+  })
+
+  it('recognizes a disabled distributor identity', () => {
+    expect(isDistributionAccessDisabled({ is_distributor: true, distributor_status: 'disabled' })).toBe(true)
+    expect(isDistributionAccessDisabled({ data: { sales_status: 'suspended' } })).toBe(true)
+    expect(isDistributionAccessDisabled({ distributor_status: 'active' })).toBe(false)
   })
 })
