@@ -29,8 +29,7 @@ vi.mock('@/composables/useDistributionAccess', () => ({
   useDistributionAccess: () => ({
     ...mocks.access,
     retry: mocks.retry,
-    isDistributor: true,
-    previewEnabled: true,
+    isDistributor: mocks.access.status === 'allowed',
   }),
 }))
 
@@ -133,16 +132,16 @@ describe('DistributionView', () => {
     })
   })
 
-  it('keeps the invitation earnings page visible to non-marketing users during acceptance', async () => {
+  it('redirects non-marketing users home instead of rendering the rebate page', async () => {
     mocks.access.status = 'denied'
     mocks.access.overview = null
 
     render(<DistributionView />)
 
-    expect(await screen.findByRole('heading', { name: '邀请收益' })).toBeInTheDocument()
-    expect(mocks.navigate).not.toHaveBeenCalledWith('/home', { replace: true })
-    expect(mocks.listCommissions).toHaveBeenCalled()
-    expect(mocks.listInvitees).toHaveBeenCalled()
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/home', { replace: true }))
+    expect(screen.queryByRole('heading', { name: '邀请收益' })).not.toBeInTheDocument()
+    expect(mocks.listCommissions).not.toHaveBeenCalled()
+    expect(mocks.listInvitees).not.toHaveBeenCalled()
   })
 
   it('loads a backend referral code and builds the customer invitation link', async () => {

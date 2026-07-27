@@ -36,20 +36,6 @@ export function isDistributionAccessGranted(overview: any): boolean {
     return explicitFlags.some((value) => value === true || value === 1 || String(value).toLowerCase() === 'true')
   }
 
-  const status = String(
-    source.distributor_status ?? source.distributorStatus ?? source.status ?? source.account_status ?? '',
-  )
-    .trim()
-    .toLowerCase()
-  if (status) {
-    if (['active', 'approved', 'enabled', 'normal', 'verified'].includes(status)) return true
-    if (
-      ['inactive', 'disabled', 'rejected', 'pending', 'none', 'not_distributor', 'non_distributor'].includes(status)
-    ) {
-      return false
-    }
-  }
-
   const roles = [
     ...(Array.isArray(source.roles) ? source.roles : []),
     source.role,
@@ -64,16 +50,7 @@ export function isDistributionAccessGranted(overview: any): boolean {
   }
 
   // 兼容旧版概览：没有权限字段，但确实返回了分销账户或收益指标。
-  return [
-    source.distributor_id,
-    source.distributorId,
-    source.invite_code,
-    source.inviteCode,
-    source.total_commission,
-    source.total_commission_amount,
-    source.withdrawable_amount,
-    source.pending_amount,
-  ].some((value) => value !== undefined && value !== null)
+  return false
 }
 
 function isDistributionDeniedError(error: any): boolean {
@@ -166,12 +143,9 @@ export function useDistributionAccess() {
   }, [userKey])
 
   // 产品验收期间临时开放邀请返利入口和页面，后续恢复营销身份限制。
-  const previewEnabled = true
-
   return {
     ...state,
     retry,
-    isDistributor: true,
-    previewEnabled,
+    isDistributor: state.status === 'allowed',
   }
 }

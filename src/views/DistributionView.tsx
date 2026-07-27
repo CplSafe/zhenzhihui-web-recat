@@ -165,7 +165,7 @@ function csvCell(value: any): string {
 
 export default function DistributionView() {
   const navigate = useNavigate()
-  const { overview: rawOverview, isDistributor, retry: refreshOverview } = useDistributionAccess()
+  const { status: accessStatus, overview: rawOverview, isDistributor, retry: refreshOverview } = useDistributionAccess()
   const [draftFilters, setDraftFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [filters, setFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [page, setPage] = useState(1)
@@ -187,6 +187,12 @@ export default function DistributionView() {
   const overview = useMemo(() => unwrap(rawOverview) || {}, [rawOverview])
   const overviewInviteCode = String(pick(overview, ['invite_code', 'inviteCode', 'referral_code'], '')).trim()
   const inviteUrl = inviteCode ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}` : ''
+
+  useEffect(() => {
+    if (accessStatus === 'denied' || accessStatus === 'error') {
+      navigate('/home', { replace: true })
+    }
+  }, [accessStatus, navigate])
 
   const loadInvitees = useCallback(() => {
     if (!isDistributor) return undefined

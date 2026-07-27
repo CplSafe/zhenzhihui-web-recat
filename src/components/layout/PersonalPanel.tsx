@@ -93,7 +93,7 @@ interface PersonalPanelProps {
 export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps) {
   const navigate = useNavigate()
   // 未完成校验或无营销权限时保持入口不渲染，避免图标闪现。
-  const { isDistributor, previewEnabled } = useDistributionAccess()
+  const { isDistributor } = useDistributionAccess()
   const user = useCurrentUser()
   const member = useCurrentMember()
   const currentWs = useCurrentWorkspace()
@@ -250,7 +250,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
                 aria-label="邀请返利"
                 onClick={() => {
                   onClose?.()
-                  navigate(previewEnabled ? '/distribution?preview=1' : '/distribution')
+                  navigate('/distribution')
                 }}
               >
                 邀请返利
