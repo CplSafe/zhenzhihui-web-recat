@@ -7,14 +7,14 @@ describe('isDistributionAccessGranted', () => {
     expect(isDistributionAccessGranted({ data: { distributor_status: 'not_distributor' } })).toBe(false)
   })
 
-  it('allows explicit sales and distributor identities', () => {
+  it('allows only explicit sales and distributor identities', () => {
     expect(isDistributionAccessGranted({ is_distributor: true })).toBe(true)
     expect(isDistributionAccessGranted({ data: { role: 'sales' } })).toBe(true)
-    expect(isDistributionAccessGranted({ distributor_status: 'active' })).toBe(true)
+    expect(isDistributionAccessGranted({ distributor_status: 'active' })).toBe(false)
   })
 
-  it('keeps compatibility with an older overview containing distribution metrics', () => {
-    expect(isDistributionAccessGranted({ total_commission: 0, pending_amount: 0 })).toBe(true)
+  it('does not infer access from distribution metrics', () => {
+    expect(isDistributionAccessGranted({ total_commission: 0, pending_amount: 0 })).toBe(false)
     expect(isDistributionAccessGranted({ message: 'ok' })).toBe(false)
   })
 })

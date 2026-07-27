@@ -289,7 +289,7 @@ export const router = createBrowserRouter([
       { path: 'team', element: lazyPage(<SpaceDashboardView />) },
       // 页面自身通过分销概览接口校验营销身份；路由层不抢先重定向，
       // 这样本地开发预览可以完整渲染，生产环境无权限时仍由页面保持隐藏。
-      { path: 'distribution', element: lazyPage(<DistributionView />), handle: { requiresAuth: false } },
+      { path: 'distribution', element: lazyPage(<DistributionView />), handle: { requiresAuth: true } },
       { path: '*', element: <Navigate to="/home" replace />, handle: { requiresAuth: false } },
     ],
   },
