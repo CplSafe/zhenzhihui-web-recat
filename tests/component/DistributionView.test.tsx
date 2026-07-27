@@ -160,15 +160,19 @@ describe('DistributionView', () => {
     expect(screen.queryByRole('button', { name: '复制邀请码' })).not.toBeInTheDocument()
   })
 
-  it('prefers the distribution-specific invite code from the overview', async () => {
+  it('uses the customer code returned by the distribution overview', async () => {
     const user = userEvent.setup()
-    mocks.access.overview = { ...mocks.access.overview, invite_code: 'DIST-ONLY-001' }
+    mocks.access.overview = {
+      ...mocks.access.overview,
+      code: 'ZZH-CUSTOMER-001',
+      distributor_code: 'ZZH-D-CHANNEL-001',
+    }
     render(<DistributionView />)
 
     await user.click(screen.getByRole('button', { name: '邀请客户' }))
 
     expect(await screen.findByLabelText('专属邀请链接')).toHaveValue(
-      `${window.location.origin}/login?invite_code=DIST-ONLY-001`,
+      `${window.location.origin}/login?invite_code=ZZH-CUSTOMER-001`,
     )
     expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
   })

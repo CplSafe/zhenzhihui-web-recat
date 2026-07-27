@@ -201,7 +201,6 @@ export default function DistributionView() {
   const [copyFeedback, setCopyFeedback] = useState('')
   const inviteesRequestRef = useRef<AbortController | null>(null)
   const commissionsRequestRef = useRef<AbortController | null>(null)
-
   useEffect(() => {
     document.documentElement.classList.add('distribution-document-scroll')
     return () => document.documentElement.classList.remove('distribution-document-scroll')
@@ -212,7 +211,7 @@ export default function DistributionView() {
   }, [accessStatus, navigate])
 
   const overview = useMemo(() => unwrap(rawOverview) || {}, [rawOverview])
-  const overviewInviteCode = String(pick(overview, ['invite_code', 'inviteCode', 'referral_code'], '')).trim()
+  const overviewInviteCode = String(pick(overview, ['code', 'invite_code', 'inviteCode', 'referral_code'], '')).trim()
   const distributorCode = String(pick(overview, ['distributor_code', 'distributorCode'], '')).trim()
   const inviteUrl = inviteCode ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}` : ''
   const channelInviteUrl = distributorCode

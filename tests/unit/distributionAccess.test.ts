@@ -10,6 +10,8 @@ describe('isDistributionAccessGranted', () => {
   it('allows only explicit sales and distributor identities', () => {
     expect(isDistributionAccessGranted({ is_distributor: true })).toBe(true)
     expect(isDistributionAccessGranted({ data: { role: 'sales' } })).toBe(true)
+    expect(isDistributionAccessGranted({ code: 'ZZH-CUSTOMER-001', distributor_code: 'ZZH-D-CHANNEL-001' })).toBe(true)
+    expect(isDistributionAccessGranted({ code: 'ZZH-CUSTOMER-001' })).toBe(false)
     expect(isDistributionAccessGranted({ distributor_status: 'active' })).toBe(false)
   })
 

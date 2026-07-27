@@ -22,6 +22,10 @@ export function isDistributionAccessGranted(overview: any): boolean {
   const source = unwrapOverview(overview)
   if (!source || typeof source !== 'object' || Array.isArray(source)) return false
 
+  // 分销概览只会为销售身份返回渠道专属码；普通客户邀请码 code 不能作为销售权限依据。
+  const distributorCode = String(source.distributor_code ?? source.distributorCode ?? '').trim()
+  if (distributorCode) return true
+
   const explicitFlags = [
     source.is_distributor,
     source.isDistributor,
