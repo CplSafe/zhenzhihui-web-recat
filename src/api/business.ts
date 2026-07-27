@@ -2331,12 +2331,10 @@ export function getDistributionOverview({ signal }: { signal?: AbortSignal } = {
 function buildDistributionQuery(params: any = {}): string {
   const query = new URLSearchParams()
   const fields: Array<[string, any]> = [
-    ['keyword', params.keyword],
-    ['relationship', params.relationship],
-    ['distributor_id', params.distributorId],
+    ['kind', params.kind],
+    ['level', params.level],
+    ['order_type', params.orderType],
     ['status', params.status],
-    ['start_time', params.startTime],
-    ['end_time', params.endTime],
     ['offset', params.offset],
     ['limit', params.limit],
   ]
@@ -2359,6 +2357,76 @@ export function listDistributionInvitees(params: any = {}) {
 /** 分页读取客户付款与返佣明细。 */
 export function listDistributionCommissions(params: any = {}) {
   return requestJson(`/api/v1/distribution/commissions${buildDistributionQuery(params)}`, {
+    signal: params.signal,
+  })
+}
+
+/** 查询当前销售已配置的提现方式。 */
+export function listDistributionWithdrawalMethods({ signal }: { signal?: AbortSignal } = {}) {
+  return requestJson('/api/v1/distribution/withdrawal-methods', { signal })
+}
+
+/** 新增银行卡提现方式。 */
+export function createDistributionWithdrawalMethod(params: any = {}) {
+  const methodType = String(params.methodType || params.method_type || '').trim()
+  const accountName = String(params.accountName || params.account_name || '').trim()
+  const accountNumber = String(params.accountNumber || params.account_number || '')
+    .replace(/[\s-]+/g, '')
+    .trim()
+  const bankName = String(params.bankName || params.bank_name || '').trim()
+  if (methodType !== 'bank_card') throw new BusinessApiError('当前仅支持银行卡提现')
+  if (!accountName) throw new BusinessApiError('请输入账户姓名')
+  if (!accountNumber) throw new BusinessApiError('请输入收款账号')
+  if (!/^\d{10,30}$/.test(accountNumber)) throw new BusinessApiError('请输入有效的银行卡号')
+  if (!bankName) throw new BusinessApiError('银行卡提现必须填写开户银行')
+
+  return requestJson('/api/v1/distribution/withdrawal-methods', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      method_type: methodType,
+      account_name: accountName,
+      account_number: accountNumber,
+      bank_name: bankName,
+      is_default: Boolean(params.isDefault ?? params.is_default),
+    }),
+    signal: params.signal,
+  })
+}
+
+/** 删除指定提现方式。 */
+export function deleteDistributionWithdrawalMethod(params: any = {}) {
+  const id = requirePositiveInteger(params.id ?? params.methodId ?? params.method_id, '提现方式 ID 无效')
+  return requestJson(`/api/v1/distribution/withdrawal-methods/${id}`, {
+    method: 'DELETE',
+    signal: params.signal,
+  })
+}
+
+/** 使用稳定幂等键提交提现申请；调用方重试同一申请时必须复用该键。 */
+export function createDistributionWithdrawal(params: any = {}) {
+  const methodId = requirePositiveInteger(params.methodId ?? params.method_id, '请选择提现方式')
+  const amountCents = requirePositiveInteger(params.amountCents ?? params.amount_cents, '提现金额必须大于 0')
+  const idempotencyKey = String(params.idempotencyKey || params.idempotency_key || '').trim()
+  if (!idempotencyKey) throw new BusinessApiError('提现申请缺少 Idempotency-Key')
+
+  return requestJson('/api/v1/distribution/withdrawals', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: JSON.stringify({
+      method_id: methodId,
+      amount_cents: amountCents,
+    }),
+    signal: params.signal,
+  })
+}
+
+/** 分页读取提现申请记录。 */
+export function listDistributionWithdrawals(params: any = {}) {
+  return requestJson(`/api/v1/distribution/withdrawals${buildDistributionQuery(params)}`, {
     signal: params.signal,
   })
 }

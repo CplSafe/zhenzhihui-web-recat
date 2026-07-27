@@ -144,6 +144,46 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     expect(screen.queryByText('已完成任务')).not.toBeInTheDocument()
   })
 
+  it('restores a persisted hot-copy thumbnail from the project source asset on first open', async () => {
+    const user = userEvent.setup()
+    mocks.getAssetDownloadUrl.mockResolvedValue('/api/v1/assets/321/download?workspace_id=7')
+    mocks.listAllCreativeProjects.mockResolvedValue([
+      {
+        id: 11,
+        title: '爆款项目',
+        draft_json: {
+          flow: 'hot-copy',
+          smart: {
+            flow: 'hot-copy',
+            sourceVideo: { assetId: 321, url: '' },
+            entryInitial: {
+              libraryVideo: { assetId: 321, src: '' },
+            },
+          },
+        },
+      },
+    ])
+    seed(
+      task({
+        id: 'hot-copy:7:11:generation-1',
+        scope: 'hot-copy',
+        operationCode: 'video.replicate',
+        title: '首次恢复的爆款任务',
+        thumbnailUrl: '',
+        thumbnailAssetId: undefined,
+      }),
+    )
+
+    render(<TaskCenterDrawer scope="hot-copy" />)
+    await user.click(screen.getByRole('tab', { name: '正在生成' }))
+
+    expect(await screen.findByText('首次恢复的爆款任务')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(useTaskCenterStore.getState().tasks[0]?.thumbnailAssetId).toBe(321)
+      expect(mocks.getAssetDownloadUrl).toHaveBeenCalledWith({ workspaceId: 7, assetId: 321 })
+    })
+  })
+
   it.each([
     ['smart', '智能成片'],
     ['hot-copy', '爆款复制'],

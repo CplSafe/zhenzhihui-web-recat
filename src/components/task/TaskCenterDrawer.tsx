@@ -36,6 +36,19 @@ type TaskTone = 'active' | 'queued' | 'failed' | 'completed'
 /** 业务类型页签之外，补充跨业务汇总的“正在生成”状态页签。 */
 type TaskCenterTab = TaskCenterScope | 'generating'
 
+/** 项目草稿中可用于任务中心恢复封面的稳定源视频信息。 */
+interface TaskThumbnailSource {
+  assetId: number
+  url: string
+}
+
+/** 任务历史加载结果同时携带旧实时任务的封面回填数据。 */
+interface TaskCenterHistoryResult {
+  tasks: TaskCenterTask[]
+  accessibleProjectIds: Set<number>
+  thumbnailSourcesByProjectId: Map<number, TaskThumbnailSource>
+}
+
 /** 任务中心支持的业务页签。 */
 const SCOPE_TABS: Array<{ value: TaskCenterTab; label: string }> = [
   { value: 'generating', label: '正在生成' },
@@ -321,6 +334,21 @@ function readImageProjectState(project: any): { smart: any; messages: any[]; ima
   return { smart, messages, imageMode: mode === 'image' || messages.length > 0 }
 }
 
+/** 从爆款复制项目草稿中读取源视频；优先使用稳定资产 ID，兼容旧版入口快照。 */
+function readHotCopyThumbnailSource(project: any): TaskThumbnailSource {
+  const draft = getCreativeProjectDraft(project)
+  const smart = toPlainObject(draft?.smart) || draft || {}
+  const sourceVideo = toPlainObject(smart?.sourceVideo) || {}
+  const entryInitial = toPlainObject(smart?.entryInitial) || {}
+  const libraryVideo = toPlainObject(entryInitial?.libraryVideo) || {}
+  return {
+    assetId:
+      Number(sourceVideo?.assetId || sourceVideo?.asset_id || libraryVideo?.assetId || libraryVideo?.asset_id || 0) ||
+      0,
+    url: String(sourceVideo?.url || sourceVideo?.src || libraryVideo?.src || entryInitial?.videoPreview || '').trim(),
+  }
+}
+
 /** 将项目草稿里已成功保存的图片结果转换为历史任务，不额外请求后端接口。 */
 function deriveHistoricalImageTasks(project: any, workspaceId: number, ownerUserId: number): TaskCenterTask[] {
   const { smart, messages, imageMode } = readImageProjectState(project)
@@ -386,9 +414,16 @@ async function loadHistoricalTasks(
   workspaceId: number,
   ownerUserId: number,
   isCurrent: () => boolean,
-): Promise<{ tasks: TaskCenterTask[]; accessibleProjectIds: Set<number> }> {
+): Promise<TaskCenterHistoryResult> {
   const projects = await listAllCreativeProjects({ workspaceId, isCurrent })
   const accessibleProjectIds = getAccessibleTaskCenterProjectIds(projects, ownerUserId)
+  const thumbnailSourcesByProjectId = new Map<number, TaskThumbnailSource>()
+  filterTaskCenterHistoricalProjects(projects, ownerUserId).forEach((project) => {
+    const projectId = Number(project?.id ?? project?.project_id ?? project?.projectId ?? project?.data?.id ?? 0) || 0
+    if (!projectId) return
+    const source = readHotCopyThumbnailSource(project)
+    if (source.assetId || source.url) thumbnailSourcesByProjectId.set(projectId, source)
+  })
 
   const tasks = filterTaskCenterHistoricalProjects(projects, ownerUserId).flatMap((project) => {
     const videoTasks = deriveProjectVideos({ project, workspaceId })
@@ -422,7 +457,7 @@ async function loadHistoricalTasks(
     return [...videoTasks, ...deriveHistoricalImageTasks(project, workspaceId, ownerUserId)]
   })
 
-  return { tasks, accessibleProjectIds }
+  return { tasks, accessibleProjectIds, thumbnailSourcesByProjectId }
 }
 
 /** 优先展示已有视频/封面，地址失效时按资产 ID 重新取签名地址并读取真实媒体元数据。 */
@@ -682,6 +717,23 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
           setHistoricalTasks(result.tasks)
           setAccessibleProjectIds(result.accessibleProjectIds)
           setProjectPermissionsLoaded(true)
+          const store = useTaskCenterStore.getState()
+          store.tasks.forEach((task) => {
+            if (
+              task.scope !== 'hot-copy' ||
+              task.workspaceId !== Number(workspaceId) ||
+              Number(task.ownerUserId || 0) !== currentUserId ||
+              !isGeneratingTone(getTaskTone(task as TaskRecord))
+            ) {
+              return
+            }
+            const source = result.thumbnailSourcesByProjectId.get(task.projectId)
+            if (!source) return
+            const patch: Partial<TaskCenterTask> = {}
+            if (!task.thumbnailAssetId && source.assetId) patch.thumbnailAssetId = source.assetId
+            if (!task.thumbnailUrl && source.url) patch.thumbnailUrl = source.url
+            if (Object.keys(patch).length) store.patchTask(task.id, patch)
+          })
         }
       })
       .catch(() => {

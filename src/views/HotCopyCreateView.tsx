@@ -1441,13 +1441,17 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       )
     const resolvedOperationCode: HotCopyTaskOperation =
       operationCode || (storedTask?.operationCode === 'video.edit' ? 'video.edit' : 'video.replicate')
+    const recoveryEntry = draft?.entryInitial || entryInitial
+    const recoverySourceVideo = resolveHotCopySourceVideo(draft?.sourceVideo, recoveryEntry)
+    const recoveryProductAssetIds = resolveHotCopyProductAssetIds(draft?.productAssetIds, recoveryEntry)
+    const recoveredEntryInitial = withResolvedHotCopyAssets(recoveryEntry, recoverySourceVideo, recoveryProductAssetIds)
     return createJobContext({
       epoch: sessionEpochRef.current,
       workspaceId: ws,
       projectId: pid,
       generation,
       operationCode: resolvedOperationCode,
-      entryInitial: draft?.entryInitial || entryInitial,
+      entryInitial: recoveredEntryInitial,
     })
   }
 
@@ -4021,6 +4025,12 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         libraryVideo: { assetId: videoAssetId, src: videoUrl },
         videoPreview: videoUrl,
         products: preparedProducts,
+      })
+      // 临时预览地址不会写入任务中心持久化数据；素材上传成功后立即保存稳定资产 ID，
+      // 这样刷新页面时任务中心无需先进入爆款复制页面，也能重新解析视频缩略图。
+      patchHotCopyTaskCenter(context, {
+        thumbnailUrl: videoUrl,
+        thumbnailAssetId: videoAssetId,
       })
       const cachedSourceDuration = isJobUiActive(context)
         ? resolveStoredSourceDuration(videoAssetId, loadCurrentHotCopyDraft(ws))
