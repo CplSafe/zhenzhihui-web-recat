@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getReferralMyCode, listDistributionCommissions, listDistributionInvitees } from '@/api/business'
+import WithdrawalDialog from '@/components/distribution/WithdrawalDialog'
 import { useDistributionAccess } from '@/composables/useDistributionAccess'
 import arrowRightIcon from '@/assets/distribution/arrow-right.svg?no-inline'
 import backIcon from '@/assets/distribution/back.svg?no-inline'
@@ -18,11 +20,14 @@ import './DistributionView.css'
 
 interface DistributionFilters {
   keyword: string
+  mobile: string
   relationship: string
-  distributorId: string
+  orderType: string
   status: string
   startTime: string
   endTime: string
+  minAmount: string
+  maxAmount: string
 }
 
 interface DistributionSummaryCard {
@@ -35,16 +40,23 @@ interface DistributionSummaryCard {
   hidden?: boolean
 }
 
+type InviteeView = 'customer' | 'distributor'
+
 const EMPTY_FILTERS: DistributionFilters = {
   keyword: '',
+  mobile: '',
   relationship: '',
-  distributorId: '',
+  orderType: '',
   status: '',
   startTime: '',
   endTime: '',
+  minAmount: '',
+  maxAmount: '',
 }
 
 const PAGE_SIZE = 50
+const COMMISSION_FETCH_SIZE = 100
+const MAX_COMMISSION_RECORDS = 5000
 const INVITEE_FETCH_SIZE = 200
 const MAX_INVITEE_RECORDS = 5000
 const DISTRIBUTION_REFRESH_INTERVAL_MS = 3_000
@@ -76,11 +88,11 @@ function pageTotal(payload: any, fallback: number): number {
   return Number.isFinite(value) ? value : fallback
 }
 
-function optionalNumeric(source: any, yuanKeys: string[], centsKeys: string[] = []): number | null {
+function optionalMoneyCents(source: any, yuanKeys: string[], centsKeys: string[] = []): number | null {
   const centsValue = pick(source, centsKeys, null)
   if (centsValue !== null) {
     const cents = Number(centsValue)
-    if (Number.isFinite(cents)) return cents / 100
+    if (Number.isSafeInteger(cents)) return cents
   }
   const yuanValue = pick(source, yuanKeys, null)
   if (yuanValue === null) return null
@@ -89,18 +101,33 @@ function optionalNumeric(source: any, yuanKeys: string[], centsKeys: string[] = 
   const unit = String(pick(source, ['amount_unit', 'money_unit', 'currency_unit'], ''))
     .trim()
     .toLowerCase()
-  return ['cent', 'cents', 'fen', '分'].includes(unit) ? yuan / 100 : yuan
+  const cents = ['cent', 'cents', 'fen', '分'].includes(unit) ? yuan : Math.round(yuan * 100)
+  return Number.isSafeInteger(cents) ? cents : null
 }
 
-function formatMoney(value: number, fractionDigits = 2): string {
-  return value.toLocaleString('zh-CN', {
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
-  })
+function formatMoneyFromCents(value: number): string {
+  const cents = Number.isSafeInteger(value) ? value : 0
+  const sign = cents < 0 ? '-' : ''
+  const absolute = Math.abs(cents)
+  const yuan = Math.floor(absolute / 100).toLocaleString('zh-CN')
+  const fraction = String(absolute % 100).padStart(2, '0')
+  return `${sign}${yuan}.${fraction}`
 }
 
-function formatOptionalMoney(value: number | null): string {
-  return value === null ? '暂无数据' : `￥${formatMoney(value)}`
+function formatOptionalMoneyFromCents(value: number | null): string {
+  return value === null ? '暂无数据' : `￥${formatMoneyFromCents(value)}`
+}
+
+function centsFrom(source: any, keys: string[]): number {
+  const value = Number(pick(source, keys, 0))
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
+}
+
+function optionalNumber(source: any, keys: string[]): number | null {
+  const value = pick(source, keys, null)
+  if (value === null) return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function formatDateTime(value: any): { date: string; time: string } {
@@ -127,13 +154,36 @@ function formatDateTime(value: any): { date: string; time: string } {
   }
 }
 
+function isDistributorRelation(value: any): boolean {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+  return ['distributor', 'indirect', 'distributor_customer'].includes(normalized)
+}
+
 function relationLabel(value: any): string {
   const normalized = String(value || '')
     .trim()
     .toLowerCase()
   if (['direct', 'mine', 'my_customer', 'direct_customer', 'customer'].includes(normalized)) return '我的客户'
-  if (['distributor', 'indirect', 'distributor_customer'].includes(normalized)) return '分销商客户'
+  if (isDistributorRelation(normalized)) return '分销商'
   return String(value || '---')
+}
+
+function commissionRelationship(row: any): { label: string; value: '' | 'direct' | 'distributor' } {
+  const level = Number(pick(row, ['relation_level', 'relationLevel', 'level'], 0)) || 0
+  if (level >= 2) return { label: '分销商客户', value: 'distributor' }
+
+  const rawValue = pick(row, ['relationship', 'relation', 'relation_type', 'kind'], '')
+  if (!rawValue && level <= 0) return { label: '---', value: '' }
+  const normalized = String(rawValue || '')
+    .trim()
+    .toLowerCase()
+  const isDistributor = ['distributor', 'indirect', 'distributor_customer'].includes(normalized)
+  return {
+    label: isDistributor ? relationLabel(rawValue) : '我的客户',
+    value: isDistributor ? 'distributor' : 'direct',
+  }
 }
 
 function orderTypeLabel(value: any): string {
@@ -141,6 +191,7 @@ function orderTypeLabel(value: any): string {
     .trim()
     .toLowerCase()
   if (normalized === 'subscription_initial') return '首次订阅'
+  if (normalized === 'subscription_renewal') return '续订'
   return String(value || '---')
 }
 
@@ -163,10 +214,31 @@ function moneyCardValue(
   yuanKeys: string[],
   centsKeys: string[],
 ): { value: string; unit: string; hidden: boolean } {
-  const amount = optionalNumeric(source, yuanKeys, centsKeys)
-  return amount === null
-    ? { value: formatMoney(0), unit: '￥', hidden: false }
-    : { value: formatMoney(amount), unit: '￥', hidden: false }
+  const amountCents = optionalMoneyCents(source, yuanKeys, centsKeys)
+  return {
+    value: formatMoneyFromCents(amountCents ?? 0),
+    unit: '￥',
+    hidden: false,
+  }
+}
+
+function withdrawnMoneyCardValue(source: any): { value: string; unit: string; hidden: boolean } {
+  const explicitAmountCents = optionalMoneyCents(
+    source,
+    ['withdrawn_amount', 'total_withdrawn', 'total_withdrawn_amount'],
+    ['withdrawn_cents', 'withdrawn_amount_cents', 'total_withdrawn_cents', 'total_withdrawn_amount_cents'],
+  )
+  return explicitAmountCents === null
+    ? { value: '--', unit: '￥', hidden: false }
+    : { value: formatMoneyFromCents(explicitAmountCents), unit: '￥', hidden: false }
+}
+
+function parseYuanInputToCents(value: string): number | null {
+  const normalized = value.trim()
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null
+  const [yuan = '0', fraction = ''] = normalized.split('.')
+  const cents = Number(yuan) * 100 + Number(fraction.padEnd(2, '0'))
+  return Number.isSafeInteger(cents) ? cents : null
 }
 
 function csvCell(value: any): string {
@@ -175,17 +247,18 @@ function csvCell(value: any): string {
 
 export default function DistributionView() {
   const navigate = useNavigate()
-  const { overview: rawOverview, retry: refreshOverview } = useDistributionAccess()
+  const { overview: rawOverview, retry: refreshOverview, status: distributionStatus } = useDistributionAccess()
+  const canManageDistribution = distributionStatus === 'allowed'
   const [draftFilters, setDraftFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [filters, setFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [page, setPage] = useState(1)
   const [rows, setRows] = useState<any[]>([])
-  const [total, setTotal] = useState(0)
   const [invitees, setInvitees] = useState<any[]>([])
-  const [distributors, setDistributors] = useState<any[]>([])
+  const [inviteeView, setInviteeView] = useState<InviteeView>('customer')
   const [loading, setLoading] = useState(false)
   const [listError, setListError] = useState('')
   const [rulesOpen, setRulesOpen] = useState(false)
+  const [withdrawalOpen, setWithdrawalOpen] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [channelInviteOpen, setChannelInviteOpen] = useState(false)
   const [channelCopyFeedback, setChannelCopyFeedback] = useState('')
@@ -195,12 +268,51 @@ export default function DistributionView() {
   const [copyFeedback, setCopyFeedback] = useState('')
   const inviteesRequestRef = useRef<AbortController | null>(null)
   const commissionsRequestRef = useRef<AbortController | null>(null)
+  const startDateInputRef = useRef<HTMLInputElement | null>(null)
+  const endDateInputRef = useRef<HTMLInputElement | null>(null)
+  const openDatePicker = (input: HTMLInputElement | null) => {
+    if (!input) return
+    input.focus()
+    try {
+      input.showPicker?.()
+    } catch {
+      // 某些浏览器只允许原生点击打开日期面板，保留焦点供用户直接输入。
+    }
+  }
+  const openDateRangePicker = () => {
+    const target = draftFilters.startTime && !draftFilters.endTime ? endDateInputRef.current : startDateInputRef.current
+    openDatePicker(target)
+  }
+  const handleInviteeTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const nextView: InviteeView = event.key === 'ArrowLeft' || event.key === 'Home' ? 'customer' : 'distributor'
+    setInviteeView(nextView)
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(nextView === 'customer' ? 'distribution-customer-tab' : 'distribution-distributor-tab')
+        ?.focus()
+    })
+  }
   useEffect(() => {
     document.documentElement.classList.add('distribution-document-scroll')
     return () => document.documentElement.classList.remove('distribution-document-scroll')
   }, [])
 
   const overview = useMemo(() => unwrap(rawOverview) || {}, [rawOverview])
+  const withdrawableCents = centsFrom(overview, [
+    'withdrawable_cents',
+    'balance_cents',
+    'withdrawable_commission_cents',
+    'withdrawable_amount_cents',
+  ])
+  const withdrawingCents = centsFrom(overview, ['withdrawing_cents'])
+  const withdrawnCents = centsFrom(overview, [
+    'withdrawn_cents',
+    'withdrawn_amount_cents',
+    'total_withdrawn_cents',
+    'total_withdrawn_amount_cents',
+  ])
   const overviewInviteCode = String(pick(overview, ['code', 'invite_code', 'inviteCode', 'referral_code'], '')).trim()
   const distributorCode = String(
     pick(
@@ -257,13 +369,6 @@ export default function DistributionView() {
     })()
       .then(({ items }) => {
         setInvitees(items)
-        const seen = new Map<string, any>()
-        items.forEach((item) => {
-          const id = String(pick(item, ['distributor_id', 'distributorId', 'owner_id'], '')).trim()
-          const name = String(pick(item, ['distributor_name', 'distributorName', 'owner_name', 'ownerName'], '')).trim()
-          if (id && name) seen.set(id, { id, name })
-        })
-        setDistributors([...seen.values()])
       })
       .catch(() => {
         if (controller.signal.aborted) return
@@ -287,21 +392,34 @@ export default function DistributionView() {
     commissionsRequestRef.current = controller
     setLoading(true)
     setListError('')
-    void listDistributionCommissions({
-      ...filters,
-      offset: (page - 1) * PAGE_SIZE,
-      limit: PAGE_SIZE,
-      signal: controller.signal,
-    })
-      .then((payload) => {
+    void (async () => {
+      const collected: any[] = []
+      let expectedTotal = 0
+      let offset = 0
+
+      while (!controller.signal.aborted && collected.length < MAX_COMMISSION_RECORDS) {
+        const payload = await listDistributionCommissions({
+          offset,
+          limit: COMMISSION_FETCH_SIZE,
+          signal: controller.signal,
+        })
         const items = pageItems(payload)
+        const reportedTotal = pageTotal(payload, Number.NaN)
+        if (Number.isFinite(reportedTotal)) expectedTotal = reportedTotal
+        collected.push(...items)
+        offset += items.length
+        if (!items.length || items.length < COMMISSION_FETCH_SIZE || (expectedTotal > 0 && offset >= expectedTotal))
+          break
+      }
+
+      return collected
+    })()
+      .then((items) => {
         setRows(items)
-        setTotal(pageTotal(payload, items.length))
       })
       .catch((error: any) => {
         if (controller.signal.aborted) return
         setRows([])
-        setTotal(0)
         setListError(error?.message || '收益明细加载失败，请稍后重试')
       })
       .finally(() => {
@@ -311,7 +429,7 @@ export default function DistributionView() {
         }
       })
     return () => controller.abort()
-  }, [filters, page])
+  }, [])
 
   useEffect(() => {
     return loadRows()
@@ -344,7 +462,7 @@ export default function DistributionView() {
           const relation = String(pick(item, ['relationship', 'relation', 'relation_type'], 'direct'))
             .trim()
             .toLowerCase()
-          if (['distributor', 'indirect', 'distributor_customer'].includes(relation)) counts.distributor += 1
+          if (isDistributorRelation(relation)) counts.distributor += 1
           else counts.direct += 1
           return counts
         },
@@ -354,147 +472,214 @@ export default function DistributionView() {
   )
 
   const cards = useMemo<DistributionSummaryCard[]>(
-    () =>
-      [
-        {
-          label: '累计返利金额',
-          ...moneyCardValue(
-            overview,
-            ['total_commission', 'total_commission_amount', 'total_rebate'],
-            ['total_commission_cents'],
+    () => [
+      {
+        label: '累计返利金额',
+        ...moneyCardValue(
+          overview,
+          ['total_earned', 'total_commission', 'total_commission_amount', 'total_rebate'],
+          ['total_earned_cents', 'total_commission_cents'],
+        ),
+        icon: totalRebateIcon,
+      },
+      {
+        label: '可提现金额',
+        ...moneyCardValue(
+          overview,
+          ['balance', 'withdrawable_commission', 'withdrawable_amount', 'available_commission'],
+          ['withdrawable_cents', 'balance_cents', 'withdrawable_commission_cents', 'withdrawable_amount_cents'],
+        ),
+        icon: withdrawableIcon,
+        action: '提现',
+      },
+      {
+        label: '已提现金额',
+        ...withdrawnMoneyCardValue(overview),
+        icon: pendingIcon,
+        backgroundIcon: pendingBackground,
+      },
+      {
+        label: '成功邀请客户',
+        value: String(
+          Math.max(
+            Number(pick(overview, ['direct_invitee_count', 'successful_invitees', 'invitee_count'], 0)) || 0,
+            inviteeCounts.direct,
           ),
-          icon: totalRebateIcon,
-        },
-        {
-          label: '可提现金额',
-          ...moneyCardValue(
-            overview,
-            ['withdrawable_commission', 'withdrawable_amount', 'available_commission'],
-            ['withdrawable_commission_cents', 'withdrawable_amount_cents'],
-          ),
-          icon: withdrawableIcon,
-          action: '可提现',
-        },
-        {
-          label: '待结算金额',
-          ...moneyCardValue(
-            overview,
-            ['pending_commission', 'pending_amount'],
-            ['pending_commission_cents', 'pending_amount_cents'],
-          ),
-          icon: pendingIcon,
-          backgroundIcon: pendingBackground,
-        },
-        {
-          label: '成功邀请客户',
-          value: String(
-            Math.max(
-              Number(pick(overview, ['direct_invitee_count', 'successful_invitees', 'invitee_count'], 0)) || 0,
-              inviteeCounts.direct,
-            ),
-          ),
-          unit: '人',
-          icon: directInviteIcon,
-        },
-        {
-          label: '分销商邀请客户',
-          value: String(
-            Math.max(
-              Number(pick(overview, ['distributor_invitee_count', 'indirect_invitee_count', 'sub_invitee_count'], 0)) ||
+        ),
+        unit: '人',
+        icon: directInviteIcon,
+      },
+      {
+        label: '成功邀请渠道',
+        value: String(
+          Math.max(
+            Number(
+              pick(
+                overview,
+                [
+                  'channel_invitee_count',
+                  'successful_channel_invitees',
+                  'invited_distributor_count',
+                  'distributor_invitee_count',
+                  'indirect_invitee_count',
+                  'sub_invitee_count',
+                ],
                 0,
-              inviteeCounts.distributor,
-            ),
+              ),
+            ) || 0,
+            inviteeCounts.distributor,
           ),
-          unit: '人',
-          icon: distributorInviteIcon,
-        },
-      ].filter((card) => card.icon !== pendingIcon && card.icon !== distributorInviteIcon),
+        ),
+        unit: '个',
+        icon: distributorInviteIcon,
+      },
+    ],
     [inviteeCounts, overview],
   )
 
+  const overviewDetails = useMemo(() => {
+    const items: Array<{ label: string; value: string; hint: string }> = []
+    const withdrawingCentsValue = optionalMoneyCents(overview, [], ['withdrawing_cents'])
+    const totalRechargedCents = optionalMoneyCents(overview, [], ['total_recharged_cents'])
+    const totalConsumed = optionalNumber(overview, ['total_consumed_credits'])
+    const directRebateCents = optionalMoneyCents(overview, [], ['direct_rebate_cents'])
+    const directRebateCount = optionalNumber(overview, ['direct_rebate_count'])
+    const indirectRebateCents = optionalMoneyCents(overview, [], ['indirect_rebate_cents'])
+    const indirectRebateCount = optionalNumber(overview, ['indirect_rebate_count'])
+
+    if (withdrawingCentsValue !== null) {
+      items.push({
+        label: '提现中',
+        value: `￥${formatMoneyFromCents(withdrawingCentsValue)}`,
+        hint: '申请已提交，等待处理',
+      })
+    }
+    if (totalRechargedCents !== null) {
+      items.push({
+        label: '累计充值',
+        value: `￥${formatMoneyFromCents(totalRechargedCents)}`,
+        hint: '仅统计积分充值订单',
+      })
+    }
+    if (totalConsumed !== null) {
+      items.push({
+        label: '累计消耗积分',
+        value: String(totalConsumed),
+        hint: '累计实际消耗积分',
+      })
+    }
+    if (directRebateCents !== null || directRebateCount !== null) {
+      items.push({
+        label: '直接返利',
+        value: `￥${formatMoneyFromCents(directRebateCents ?? 0)}`,
+        hint: `${directRebateCount ?? 0} 笔订单`,
+      })
+    }
+    if (indirectRebateCents !== null || indirectRebateCount !== null) {
+      items.push({
+        label: '间接返利',
+        value: `￥${formatMoneyFromCents(indirectRebateCents ?? 0)}`,
+        hint: `${indirectRebateCount ?? 0} 笔订单`,
+      })
+    }
+    return items
+  }, [overview])
+
   const normalizedInvitees = useMemo(
     () =>
-      invitees.map((item, index) => ({
-        key: `invitee-${String(pick(item, ['invitee_id', 'customer_id', 'user_id', 'id'], index))}`,
-        matchId: String(
-          pick(
-            item,
-            ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id', 'invitee_id', 'mobile'],
-            '',
+      invitees.map((item, index) => {
+        const relationshipValue = pick(item, ['relationship', 'relation', 'relation_type', 'kind'], 'direct')
+        return {
+          key: `invitee-${String(pick(item, ['invitee_id', 'customer_id', 'user_id', 'id'], index))}`,
+          matchId: String(
+            pick(
+              item,
+              ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id', 'invitee_id', 'mobile'],
+              '',
+            ),
+          ).trim(),
+          registeredAt: formatDateTime(
+            pick(item, ['registered_at', 'bound_at', 'invited_at', 'created_at', 'registration_time']),
           ),
-        ).trim(),
-        registeredAt: formatDateTime(
-          pick(item, ['registered_at', 'bound_at', 'invited_at', 'created_at', 'registration_time']),
-        ),
-        customerName: pick(
-          item,
-          ['customer_name', 'invitee_name', 'display_name', 'user_name', 'username', 'account_name', 'nickname'],
-          '---',
-        ),
-        relationship: relationLabel(pick(item, ['relationship', 'relation', 'relation_type', 'kind'], 'direct')),
-        mobile: String(pick(item, ['mobile', 'masked_mobile'], '')).trim(),
-        paidOrderCount: Number(pick(item, ['paid_order_count', 'order_count'], 0)) || 0,
-        distributorName: pick(item, ['distributor_name', 'owner_name', 'referrer_name'], '---'),
-        customerStatus: String(
-          pick(item, ['customer_status', 'operation_status', 'usage_status', 'status'], ''),
-        ).trim(),
-        totalRecharge: optionalNumeric(
-          item,
-          ['total_recharge_amount', 'total_recharge', 'recharge_total', 'total_paid_amount'],
-          ['total_recharge_cents', 'total_recharge_amount_cents', 'total_paid_amount_cents', 'total_paid_cents'],
-        ),
-        totalRebate: optionalNumeric(item, ['total_rebate_amount', 'total_rebate'], ['total_rebate_cents']),
-        lastPaymentAt: formatDateTime(pick(item, ['last_payment_at', 'last_paid_at'])),
-        totalConsumed: optionalNumeric(
-          item,
-          ['total_consumed_amount', 'total_consumed', 'consumption_total', 'total_usage_amount'],
-          ['total_consumed_cents', 'total_consumed_amount_cents', 'total_usage_amount_cents'],
-        ),
-        balance: optionalNumeric(
-          item,
-          ['balance_amount', 'available_balance', 'balance'],
-          ['balance_amount_cents', 'available_balance_cents', 'balance_cents'],
-        ),
-      })),
+          customerName: pick(
+            item,
+            ['customer_name', 'invitee_name', 'display_name', 'user_name', 'username', 'account_name', 'nickname'],
+            '---',
+          ),
+          relationship: relationLabel(relationshipValue),
+          isDistributor: isDistributorRelation(relationshipValue),
+          mobile: String(pick(item, ['mobile', 'masked_mobile'], '')).trim(),
+          paidOrderCount: Number(pick(item, ['paid_order_count', 'order_count'], 0)) || 0,
+          invitedCustomerCount: optionalNumber(item, ['invited_customer_count']),
+          distributorName: pick(item, ['distributor_name', 'owner_name', 'referrer_name'], '---'),
+          customerStatus: String(
+            pick(item, ['customer_status', 'operation_status', 'usage_status', 'status'], ''),
+          ).trim(),
+          totalRechargeCents: optionalMoneyCents(
+            item,
+            ['total_recharge_amount', 'total_recharge', 'recharge_total', 'total_paid_amount'],
+            ['total_recharge_cents', 'total_recharge_amount_cents', 'total_paid_amount_cents', 'total_paid_cents'],
+          ),
+          totalRebateCents: optionalMoneyCents(item, ['total_rebate_amount', 'total_rebate'], ['total_rebate_cents']),
+          lastPaymentAt: formatDateTime(pick(item, ['last_payment_at', 'last_paid_at'])),
+          totalConsumedCredits: optionalNumber(item, ['total_consumed_credits']),
+          balanceCents: optionalMoneyCents(
+            item,
+            ['balance_amount', 'available_balance', 'balance'],
+            ['balance_amount_cents', 'available_balance_cents', 'balance_cents'],
+          ),
+        }
+      }),
     [invitees],
+  )
+
+  const visibleInvitees = useMemo(
+    () => normalizedInvitees.filter((row) => row.isDistributor === (inviteeView === 'distributor')),
+    [inviteeView, normalizedInvitees],
   )
 
   const normalizedCommissions = useMemo(
     () =>
       rows.map((row, index) => {
-        const consumedAt = formatDateTime(
-          pick(row, [
-            'consumed_at',
-            'paid_at',
-            'payment_time',
-            'recharged_at',
-            'order_paid_at',
-            'occurred_at',
-            'created_at',
-          ]),
-        )
+        const occurredAt = pick(row, [
+          'consumed_at',
+          'paid_at',
+          'payment_time',
+          'recharged_at',
+          'order_paid_at',
+          'occurred_at',
+          'created_at',
+        ])
+        const consumedAt = formatDateTime(occurredAt)
         const settledAt = formatDateTime(pick(row, ['settled_at', 'settlement_time']))
+        const relationship = commissionRelationship(row)
+        const orderTypeValue = String(pick(row, ['order_type', 'payment_type'], ''))
+          .trim()
+          .toLowerCase()
         return {
           key: String(pick(row, ['commission_id', 'id', 'order_id'], index)),
           matchId: String(
-            pick(row, ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id', 'mobile'], ''),
+            pick(row, ['customer_id', 'customer_user_id', 'invitee_user_id', 'user_id', 'account_id'], ''),
           ).trim(),
           consumedAt,
+          occurredAtMs: new Date(occurredAt).getTime(),
           customerName: pick(
             row,
             ['customer_name', 'invitee_name', 'display_name', 'user_name', 'username', 'account_name', 'nickname'],
             '---',
           ),
-          relationship: relationLabel(pick(row, ['relationship', 'relation', 'relation_type', 'kind'])),
+          relationship: relationship.label,
+          relationshipValue: relationship.value,
           mobile: String(pick(row, ['mobile', 'masked_mobile'], '')).trim(),
-          orderType: orderTypeLabel(pick(row, ['order_type', 'payment_type'])),
+          orderType: orderTypeLabel(orderTypeValue),
+          orderTypeValue,
           distributorName: pick(row, ['distributor_name', 'owner_name', 'referrer_name'], '---'),
-          paidAmount: optionalNumeric(
+          paidAmountCents: optionalMoneyCents(
             row,
             ['paid_amount', 'payment_amount', 'recharge_amount', 'order_amount'],
             ['paid_amount_cents', 'payment_amount_cents', 'recharge_amount_cents', 'order_amount_cents'],
           ),
-          commissionAmount: optionalNumeric(
+          commissionAmountCents: optionalMoneyCents(
             row,
             ['commission_amount', 'rebate_amount', 'income_amount'],
             ['commission_amount_cents', 'rebate_amount_cents', 'income_amount_cents'],
@@ -506,23 +691,71 @@ export default function DistributionView() {
     [rows],
   )
 
-  const normalizedRows = normalizedCommissions
+  const filteredCommissionRows = useMemo(() => {
+    const keyword = filters.keyword.trim().toLowerCase()
+    const mobile = filters.mobile.replace(/[^\d]/g, '')
+    const startTime = filters.startTime ? new Date(`${filters.startTime}T00:00:00`).getTime() : Number.NEGATIVE_INFINITY
+    const endTime = filters.endTime ? new Date(`${filters.endTime}T23:59:59.999`).getTime() : Number.POSITIVE_INFINITY
+    const minAmountCents =
+      filters.minAmount === '' ? Number.NEGATIVE_INFINITY : (parseYuanInputToCents(filters.minAmount) ?? Number.NaN)
+    const maxAmountCents =
+      filters.maxAmount === '' ? Number.POSITIVE_INFINITY : (parseYuanInputToCents(filters.maxAmount) ?? Number.NaN)
+
+    return normalizedCommissions.filter((row) => {
+      const rowMobile = row.mobile.replace(/[^\d]/g, '')
+      const matchesKeyword =
+        !keyword ||
+        String(row.customerName).toLowerCase().includes(keyword) ||
+        String(row.matchId).toLowerCase().includes(keyword)
+      const matchesMobile = !mobile || rowMobile.includes(mobile)
+      const matchesRelationship = !filters.relationship || row.relationshipValue === filters.relationship
+      const matchesOrderType = !filters.orderType || row.orderTypeValue === filters.orderType
+      const matchesStatus = !filters.status || row.status.tone === filters.status
+      const matchesAmount =
+        (!filters.minAmount && !filters.maxAmount) ||
+        (row.paidAmountCents !== null && row.paidAmountCents >= minAmountCents && row.paidAmountCents <= maxAmountCents)
+      const matchesTime =
+        (!filters.startTime && !filters.endTime) ||
+        (Number.isFinite(row.occurredAtMs) && row.occurredAtMs >= startTime && row.occurredAtMs <= endTime)
+      return (
+        matchesKeyword &&
+        matchesMobile &&
+        matchesRelationship &&
+        matchesOrderType &&
+        matchesStatus &&
+        matchesAmount &&
+        matchesTime
+      )
+    })
+  }, [filters, normalizedCommissions])
+  const total = filteredCommissionRows.length
+  const normalizedRows = useMemo(
+    () => filteredCommissionRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filteredCommissionRows, page],
+  )
+
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE))
+    if (page > lastPage) setPage(lastPage)
+  }, [page, total])
   const inviteeFields = useMemo(
     () => ({
-      registeredAt: normalizedInvitees.some((row) => row.registeredAt.date !== '---'),
-      customerName: normalizedInvitees.some((row) => row.customerName !== '---'),
-      relationship: normalizedInvitees.some((row) => row.relationship !== '---'),
-      mobile: normalizedInvitees.some((row) => Boolean(row.mobile)),
-      paidOrderCount: normalizedInvitees.some((row) => row.paidOrderCount > 0),
-      distributorName: normalizedInvitees.some((row) => row.distributorName !== '---'),
-      customerStatus: normalizedInvitees.some((row) => Boolean(row.customerStatus)),
-      totalRecharge: normalizedInvitees.some((row) => row.totalRecharge !== null),
-      totalRebate: normalizedInvitees.some((row) => row.totalRebate !== null),
-      lastPaymentAt: normalizedInvitees.some((row) => row.lastPaymentAt.date !== '---'),
-      totalConsumed: normalizedInvitees.some((row) => row.totalConsumed !== null),
-      balance: normalizedInvitees.some((row) => row.balance !== null),
+      registeredAt: visibleInvitees.some((row) => row.registeredAt.date !== '---'),
+      customerName: visibleInvitees.some((row) => row.customerName !== '---'),
+      relationship: visibleInvitees.some((row) => row.relationship !== '---'),
+      mobile: visibleInvitees.some((row) => Boolean(row.mobile)),
+      paidOrderCount: visibleInvitees.some((row) => row.paidOrderCount > 0),
+      invitedCustomerCount: visibleInvitees.some((row) => row.invitedCustomerCount !== null),
+      distributorName: visibleInvitees.some((row) => row.distributorName !== '---'),
+      customerStatus: visibleInvitees.some((row) => Boolean(row.customerStatus)),
+      totalRecharge: visibleInvitees.some((row) => row.totalRechargeCents !== null),
+      // 后端字段尚未完全上线，先固定展示列；缺失值显示为 ---。
+      totalConsumedCredits: true,
+      totalRebate: visibleInvitees.some((row) => row.totalRebateCents !== null),
+      lastPaymentAt: visibleInvitees.some((row) => row.lastPaymentAt.date !== '---'),
+      balance: visibleInvitees.some((row) => row.balanceCents !== null),
     }),
-    [normalizedInvitees],
+    [visibleInvitees],
   )
 
   const commissionFields = useMemo(
@@ -533,8 +766,8 @@ export default function DistributionView() {
       mobile: normalizedRows.some((row) => Boolean(row.mobile)),
       orderType: normalizedRows.some((row) => row.orderType !== '---'),
       distributorName: normalizedRows.some((row) => row.distributorName !== '---'),
-      paidAmount: normalizedRows.some((row) => row.paidAmount !== null),
-      commissionAmount: normalizedRows.some((row) => row.commissionAmount !== null),
+      paidAmount: normalizedRows.some((row) => row.paidAmountCents !== null),
+      commissionAmount: normalizedRows.some((row) => row.commissionAmountCents !== null),
       status: normalizedRows.some((row) => row.status.tone !== 'unknown'),
       settledAt: normalizedRows.some((row) => row.settledAt.date !== '---'),
     }),
@@ -544,7 +777,7 @@ export default function DistributionView() {
     () =>
       normalizedRows.filter(
         (row) =>
-          (row.paidAmount !== null || row.commissionAmount !== null) &&
+          (row.paidAmountCents !== null || row.commissionAmountCents !== null) &&
           (row.customerName === '---' || row.relationship === '---'),
       ).length,
     [normalizedRows],
@@ -554,8 +787,22 @@ export default function DistributionView() {
   }
 
   const submitFilters = () => {
+    const nextFilters = { ...draftFilters }
+    const minAmountCents = parseYuanInputToCents(nextFilters.minAmount)
+    const maxAmountCents = parseYuanInputToCents(nextFilters.maxAmount)
+    if (
+      nextFilters.minAmount !== '' &&
+      nextFilters.maxAmount !== '' &&
+      minAmountCents !== null &&
+      maxAmountCents !== null &&
+      minAmountCents > maxAmountCents
+    ) {
+      nextFilters.minAmount = draftFilters.maxAmount
+      nextFilters.maxAmount = draftFilters.minAmount
+      setDraftFilters(nextFilters)
+    }
     setPage(1)
-    setFilters(draftFilters)
+    setFilters(nextFilters)
   }
 
   const resetFilters = () => {
@@ -565,14 +812,27 @@ export default function DistributionView() {
   }
 
   const exportRows = () => {
-    const header = ['消费时间', '客户名称', '关系', '所属分销商', '充值金额', '我的收益', '收益状态', '结算时间']
-    const body = normalizedRows.map((row) => [
+    const header = [
+      '消费时间',
+      '客户名称',
+      '手机号',
+      '关系',
+      '订单类型',
+      '所属分销商',
+      '充值金额',
+      '我的收益',
+      '收益状态',
+      '结算时间',
+    ]
+    const body = filteredCommissionRows.map((row) => [
       `${row.consumedAt.date} ${row.consumedAt.time}`.trim(),
       row.customerName,
+      row.mobile,
       row.relationship,
+      row.orderType,
       row.distributorName,
-      row.paidAmount === null ? '暂无数据' : formatMoney(row.paidAmount),
-      row.commissionAmount === null ? '暂无数据' : formatMoney(row.commissionAmount),
+      row.paidAmountCents === null ? '暂无数据' : formatMoneyFromCents(row.paidAmountCents),
+      row.commissionAmountCents === null ? '暂无数据' : formatMoneyFromCents(row.commissionAmountCents),
       row.status.label,
       `${row.settledAt.date} ${row.settledAt.time}`.trim(),
     ])
@@ -645,17 +905,29 @@ export default function DistributionView() {
             <img src={backIcon} alt="" width={28} height={28} />
           </button>
           <h1>邀请收益</h1>
-          <button type="button" className="distribution-channel-invite-button" onClick={openChannelInvite}>
+          <button
+            type="button"
+            className="distribution-channel-invite-button"
+            onClick={openChannelInvite}
+            disabled={!canManageDistribution}
+            title={!canManageDistribution ? '当前分销状态不可邀请渠道' : undefined}
+          >
             邀请渠道
           </button>
-          <button type="button" className="distribution-invite-button" onClick={openInvite}>
+          <button
+            type="button"
+            className="distribution-invite-button"
+            onClick={openInvite}
+            disabled={!canManageDistribution}
+            title={!canManageDistribution ? '当前分销状态不可邀请客户' : undefined}
+          >
             邀请客户
           </button>
         </header>
 
         <section className="distribution-notice" aria-label="邀请收益说明">
           <img src={noticeIcon} alt="" width={14} height={14} />
-          <span>邀请收益说明：您成功邀请的客户首次成功后，系统将于三个月内按照返利规则进行金额结算。</span>
+          <span>邀请收益说明：您成功邀请的客户首次成功后，系统将于一个月内按照返利规则进行金额结算。</span>
           <button type="button" onClick={() => setRulesOpen(true)}>
             查看规则
             <img src={arrowRightIcon} alt="" width={16} height={16} />
@@ -675,7 +947,12 @@ export default function DistributionView() {
                   <span className="distribution-stat-card__label">
                     {card.label}
                     {card.action ? (
-                      <button type="button">
+                      <button
+                        type="button"
+                        onClick={() => setWithdrawalOpen(true)}
+                        disabled={!canManageDistribution}
+                        title={!canManageDistribution ? '当前分销状态不可申请提现' : undefined}
+                      >
                         {card.action}
                         <img src={arrowRightIcon} alt="" />
                       </button>
@@ -684,21 +961,69 @@ export default function DistributionView() {
                   <strong>
                     <small>{card.unit === '￥' ? card.unit : ''}</small>
                     {card.value}
-                    <small>{card.unit === '人' ? card.unit : ''}</small>
+                    <small>{['人', '个'].includes(card.unit) ? card.unit : ''}</small>
                   </strong>
                 </span>
               </article>
             ))}
         </section>
 
+        {overviewDetails.length > 0 ? (
+          <section className="distribution-overview-details" aria-label="分销业务概览">
+            {overviewDetails.map((item) => (
+              <article key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <small>{item.hint}</small>
+              </article>
+            ))}
+          </section>
+        ) : null}
+
         <section className="distribution-invitees" aria-labelledby="distribution-invitees-title">
           <header>
             <div>
-              <h2 id="distribution-invitees-title">邀请客户</h2>
-              <span>已建立邀请关系 {normalizedInvitees.length} 人</span>
+              <h2 id="distribution-invitees-title" className="distribution-sr-only">
+                邀请客户
+              </h2>
+              <div className="distribution-invitee-tabs" role="tablist" aria-label="邀请关系列表">
+                <button
+                  id="distribution-customer-tab"
+                  type="button"
+                  role="tab"
+                  aria-selected={inviteeView === 'customer'}
+                  aria-controls="distribution-invitee-table-panel"
+                  tabIndex={inviteeView === 'customer' ? 0 : -1}
+                  onClick={() => setInviteeView('customer')}
+                  onKeyDown={handleInviteeTabKeyDown}
+                >
+                  邀请客户
+                </button>
+                <button
+                  id="distribution-distributor-tab"
+                  type="button"
+                  role="tab"
+                  aria-selected={inviteeView === 'distributor'}
+                  aria-controls="distribution-invitee-table-panel"
+                  tabIndex={inviteeView === 'distributor' ? 0 : -1}
+                  onClick={() => setInviteeView('distributor')}
+                  onKeyDown={handleInviteeTabKeyDown}
+                >
+                  分销商
+                </button>
+              </div>
+              <span aria-live="polite">
+                {inviteeView === 'customer' ? '已邀请客户' : '已邀请分销商'} {visibleInvitees.length}{' '}
+                {inviteeView === 'customer' ? '人' : '个'}
+              </span>
             </div>
           </header>
-          <div className="distribution-table-wrap">
+          <div
+            id="distribution-invitee-table-panel"
+            className="distribution-table-wrap"
+            role="tabpanel"
+            aria-labelledby={inviteeView === 'customer' ? 'distribution-customer-tab' : 'distribution-distributor-tab'}
+          >
             <table className="distribution-table">
               <thead>
                 <tr>
@@ -707,17 +1032,18 @@ export default function DistributionView() {
                   {inviteeFields.mobile ? <th>手机号</th> : null}
                   {inviteeFields.relationship ? <th>关系</th> : null}
                   {inviteeFields.paidOrderCount ? <th>已支付订单</th> : null}
+                  {inviteeFields.invitedCustomerCount ? <th>邀请客户数</th> : null}
                   {inviteeFields.distributorName ? <th>所属分销商</th> : null}
                   {inviteeFields.customerStatus ? <th>客户状态</th> : null}
                   {inviteeFields.totalRecharge ? <th>累计充值</th> : null}
-                  {inviteeFields.totalRebate ? <th>累计返利</th> : null}
+                  {inviteeFields.totalConsumedCredits ? <th>累计消耗积分</th> : null}
+                  {inviteeFields.totalRebate ? <th>返利</th> : null}
                   {inviteeFields.lastPaymentAt ? <th>最近支付时间</th> : null}
-                  {inviteeFields.totalConsumed ? <th>累计消耗</th> : null}
                   {inviteeFields.balance ? <th>剩余金额</th> : null}
                 </tr>
               </thead>
               <tbody>
-                {normalizedInvitees.map((row) => (
+                {visibleInvitees.map((row) => (
                   <tr key={row.key}>
                     {inviteeFields.registeredAt ? (
                       <td>
@@ -731,10 +1057,16 @@ export default function DistributionView() {
                     {inviteeFields.mobile ? <td>{row.mobile || '---'}</td> : null}
                     {inviteeFields.relationship ? <td>{row.relationship}</td> : null}
                     {inviteeFields.paidOrderCount ? <td>{row.paidOrderCount}</td> : null}
+                    {inviteeFields.invitedCustomerCount ? <td>{row.invitedCustomerCount ?? '---'}</td> : null}
                     {inviteeFields.distributorName ? <td>{row.distributorName}</td> : null}
                     {inviteeFields.customerStatus ? <td>{row.customerStatus || '---'}</td> : null}
-                    {inviteeFields.totalRecharge ? <td>{formatOptionalMoney(row.totalRecharge)}</td> : null}
-                    {inviteeFields.totalRebate ? <td>{formatOptionalMoney(row.totalRebate)}</td> : null}
+                    {inviteeFields.totalRecharge ? (
+                      <td>{formatOptionalMoneyFromCents(row.totalRechargeCents)}</td>
+                    ) : null}
+                    {inviteeFields.totalConsumedCredits ? (
+                      <td>{row.totalConsumedCredits === null ? '---' : row.totalConsumedCredits}</td>
+                    ) : null}
+                    {inviteeFields.totalRebate ? <td>{formatOptionalMoneyFromCents(row.totalRebateCents)}</td> : null}
                     {inviteeFields.lastPaymentAt ? (
                       <td>
                         <span className="date-time">
@@ -743,13 +1075,16 @@ export default function DistributionView() {
                         </span>
                       </td>
                     ) : null}
-                    {inviteeFields.totalConsumed ? <td>{formatOptionalMoney(row.totalConsumed)}</td> : null}
-                    {inviteeFields.balance ? <td>{formatOptionalMoney(row.balance)}</td> : null}
+                    {inviteeFields.balance ? <td>{formatOptionalMoneyFromCents(row.balanceCents)}</td> : null}
                   </tr>
                 ))}
               </tbody>
             </table>
-            {!normalizedInvitees.length ? <div className="distribution-table-state">暂无邀请客户</div> : null}
+            {!visibleInvitees.length ? (
+              <div className="distribution-table-state">
+                {inviteeView === 'customer' ? '暂无邀请客户' : '暂无分销商'}
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -761,48 +1096,103 @@ export default function DistributionView() {
               onChange={(event) => updateFilter('keyword', event.target.value)}
               onKeyDown={(event) => event.key === 'Enter' && submitFilters()}
               placeholder="搜索客户名称/账号ID"
+              aria-label="搜索客户名称或账号ID"
+            />
+          </label>
+          <label className="distribution-search distribution-search--mobile">
+            <img src={searchIcon} alt="" width={16} height={16} />
+            <input
+              value={draftFilters.mobile}
+              onChange={(event) => updateFilter('mobile', event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && submitFilters()}
+              placeholder="搜索手机号"
+              aria-label="搜索手机号"
+              inputMode="numeric"
             />
           </label>
           <select
             value={draftFilters.relationship}
             onChange={(event) => updateFilter('relationship', event.target.value)}
+            aria-label="关系分类"
           >
             <option value="">全部关系</option>
             <option value="direct">我的客户</option>
             <option value="distributor">分销商客户</option>
           </select>
-          <label className="distribution-date">
+          <select
+            value={draftFilters.orderType}
+            onChange={(event) => updateFilter('orderType', event.target.value)}
+            aria-label="订单类型"
+          >
+            <option value="">全部订单类型</option>
+            <option value="subscription_initial">首次订阅</option>
+            <option value="subscription_renewal">续订</option>
+          </select>
+          <div className="distribution-date" role="group" aria-label="消费时间区间">
             <span>消费时间</span>
             <input
+              ref={startDateInputRef}
               type="date"
               value={draftFilters.startTime}
               onChange={(event) => updateFilter('startTime', event.target.value)}
+              onClick={(event) => openDatePicker(event.currentTarget)}
+              max={draftFilters.endTime || undefined}
               aria-label="消费开始日期"
             />
             <i>—</i>
             <input
+              ref={endDateInputRef}
               type="date"
               value={draftFilters.endTime}
               onChange={(event) => updateFilter('endTime', event.target.value)}
+              onClick={(event) => openDatePicker(event.currentTarget)}
+              min={draftFilters.startTime || undefined}
               aria-label="消费结束日期"
             />
-            <img src={calendarIcon} alt="" width={20} height={20} />
-          </label>
+            <button
+              type="button"
+              className="distribution-date__picker"
+              onClick={openDateRangePicker}
+              aria-label={draftFilters.startTime && !draftFilters.endTime ? '选择消费结束日期' : '选择消费开始日期'}
+            >
+              <img src={calendarIcon} alt="" width={20} height={20} />
+            </button>
+          </div>
+          <div className="distribution-amount" role="group" aria-label="充值金额区间">
+            <span>充值金额</span>
+            <input
+              type="number"
+              min="0"
+              max={draftFilters.maxAmount || undefined}
+              step="0.01"
+              inputMode="decimal"
+              value={draftFilters.minAmount}
+              onChange={(event) => updateFilter('minAmount', event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && submitFilters()}
+              placeholder="最低"
+              aria-label="最低充值金额"
+            />
+            <i>—</i>
+            <input
+              type="number"
+              min={draftFilters.minAmount || '0'}
+              step="0.01"
+              inputMode="decimal"
+              value={draftFilters.maxAmount}
+              onChange={(event) => updateFilter('maxAmount', event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && submitFilters()}
+              placeholder="最高"
+              aria-label="最高充值金额"
+            />
+          </div>
           <select
-            value={draftFilters.distributorId}
-            onChange={(event) => updateFilter('distributorId', event.target.value)}
+            value={draftFilters.status}
+            onChange={(event) => updateFilter('status', event.target.value)}
+            aria-label="收益状态"
           >
-            <option value="">全部分销商</option>
-            {distributors.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-          <select value={draftFilters.status} onChange={(event) => updateFilter('status', event.target.value)}>
             <option value="">全部状态</option>
-            <option value="pending">结算中</option>
-            <option value="settled">已结算</option>
+            <option value="pending">未入账/结算中</option>
+            <option value="settled">已入账</option>
             <option value="cancelled">已取消</option>
           </select>
           <button type="button" className="distribution-button distribution-button--reset" onClick={resetFilters}>
@@ -856,9 +1246,9 @@ export default function DistributionView() {
                   {commissionFields.relationship ? <td>{row.relationship}</td> : null}
                   {commissionFields.orderType ? <td>{row.orderType}</td> : null}
                   {commissionFields.distributorName ? <td>{row.distributorName}</td> : null}
-                  {commissionFields.paidAmount ? <td>{formatOptionalMoney(row.paidAmount)}</td> : null}
+                  {commissionFields.paidAmount ? <td>{formatOptionalMoneyFromCents(row.paidAmountCents)}</td> : null}
                   {commissionFields.commissionAmount ? (
-                    <td className="distribution-income">{formatOptionalMoney(row.commissionAmount)}</td>
+                    <td className="distribution-income">{formatOptionalMoneyFromCents(row.commissionAmountCents)}</td>
                   ) : null}
                   {commissionFields.status ? (
                     <td>
@@ -925,7 +1315,7 @@ export default function DistributionView() {
           >
             <h2 id="distribution-rules-title">邀请收益规则</h2>
             <p>
-              成功邀请的客户完成符合返利条件的首次消费后，系统会根据当前返利规则计算收益，并在三个月内完成结算。实际金额与结算状态以收益明细为准。
+              成功邀请的客户完成符合返利条件的首次消费后，系统会根据当前返利规则计算收益，并在一个月内完成结算。实际金额与结算状态以收益明细为准。
             </p>
             <button type="button" onClick={() => setRulesOpen(false)}>
               我知道了
@@ -1054,6 +1444,16 @@ export default function DistributionView() {
             ) : null}
           </section>
         </div>
+      ) : null}
+
+      {withdrawalOpen ? (
+        <WithdrawalDialog
+          withdrawableCents={withdrawableCents}
+          withdrawingCents={withdrawingCents}
+          withdrawnCents={withdrawnCents}
+          onClose={() => setWithdrawalOpen(false)}
+          onSuccess={refreshOverview}
+        />
       ) : null}
     </main>
   )
