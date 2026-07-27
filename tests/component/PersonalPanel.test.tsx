@@ -114,7 +114,7 @@ describe('PersonalPanel', () => {
     expect(screen.getByRole('button', { name: /邀请返利/ })).toBeInTheDocument()
   })
 
-  it('does not render the invitation rebate entry for non-marketing users', () => {
+  it('hides the invitation rebate entry for non-marketing users', () => {
     mocks.distributionAccess.isDistributor = false
 
     render(<PersonalPanel />)

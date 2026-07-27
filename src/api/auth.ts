@@ -29,10 +29,13 @@ export class AuthApiError extends Error {
 }
 
 /** 向业务后端申请 OAuth 上下文，可携带登录完成后的目标页和待确认的邀请归因。 */
-export async function startOAuth({ redirectTo, inviteCode = '' }: any = {}) {
+export async function startOAuth({ redirectTo, inviteCode = '', inviteType = '' }: any = {}) {
   const params = new URLSearchParams()
   if (redirectTo) params.set('redirect_to', redirectTo)
   if (String(inviteCode || '').trim()) params.set('invite_code', String(inviteCode).trim())
+  if (String(inviteCode || '').trim() && String(inviteType || '').trim()) {
+    params.set('invite_type', String(inviteType).trim())
+  }
   const suffix = params.toString()
   const query = suffix ? `?${suffix}` : ''
 
@@ -86,7 +89,15 @@ export function loginWithSmsCode({ authStart, mobile, smsCode, captchaId, captch
 }
 
 /** 注册新账号，并透传用户条款确认和可选邀请码。 */
-export function registerAccount({ authStart, mobile, password, smsCode, termsAccepted, inviteCode = '' }) {
+export function registerAccount({
+  authStart,
+  mobile,
+  password,
+  smsCode,
+  termsAccepted,
+  inviteCode = '',
+  inviteType = '',
+}) {
   return requestDeepAuth(PUBLIC_AUTH.register, {
     return_to: authStart?.return_to, // register 字段无 client_id,只带 return_to(空则被 removeEmptyFields 去掉)
     mobile,
@@ -94,6 +105,7 @@ export function registerAccount({ authStart, mobile, password, smsCode, termsAcc
     sms_code: smsCode,
     terms_accepted: termsAccepted,
     invite_code: inviteCode, // 分享链接带来的推广码(空则被 removeEmptyFields 去掉)
+    invite_type: inviteCode ? inviteType : '',
   })
 }
 

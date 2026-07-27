@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   ensureAuthStart: vi.fn(),
   getCaptcha: vi.fn(),
   getInviteCode: vi.fn(),
+  getInviteType: vi.fn(),
   onAuthed: vi.fn(),
   onClose: vi.fn(),
   onResetDone: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('@/utils/inviteCode', () => ({
   clearInviteCode: mocks.clearInviteCode,
   getInviteCode: mocks.getInviteCode,
+  getInviteType: mocks.getInviteType,
 }))
 
 import AuthActionModal from '@/components/auth/AuthActionModal'
@@ -72,6 +74,7 @@ describe('AuthActionModal behavior', () => {
     mocks.ensureAuthStart.mockResolvedValue({ state: 'auth-state' })
     mocks.getCaptcha.mockResolvedValue({ id: 'captcha', image: 'data:image/png;base64,AA' })
     mocks.getInviteCode.mockReturnValue('')
+    mocks.getInviteType.mockReturnValue('customer')
     mocks.registerAccount.mockResolvedValue({ ok: true })
     mocks.resetPassword.mockResolvedValue({ ok: true })
     mocks.sendAuthSms.mockResolvedValue(undefined)

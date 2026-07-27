@@ -132,14 +132,15 @@ describe('DistributionView', () => {
     })
   })
 
-  it('redirects non-marketing users home instead of rendering the rebate page', async () => {
+  it('redirects non-marketing users without loading rebate data', () => {
     mocks.access.status = 'denied'
     mocks.access.overview = null
 
     render(<DistributionView />)
 
-    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/home', { replace: true }))
     expect(screen.queryByRole('heading', { name: '邀请收益' })).not.toBeInTheDocument()
+    expect(screen.getByText('当前账号无权访问，正在返回首页…')).toBeInTheDocument()
+    expect(mocks.navigate).toHaveBeenCalledWith('/home', { replace: true })
     expect(mocks.listCommissions).not.toHaveBeenCalled()
     expect(mocks.listInvitees).not.toHaveBeenCalled()
   })
@@ -203,6 +204,23 @@ describe('DistributionView', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('uses the current referral code for a channel invitation link without a QR code', async () => {
+    const user = userEvent.setup()
+    mocks.access.overview = { ...mocks.access.overview, invite_code: 'DIST-CHANNEL-001' }
+    render(<DistributionView />)
+
+    await user.click(screen.getByRole('button', { name: '邀请渠道' }))
+
+    expect(screen.getByRole('dialog', { name: '邀请渠道' })).toBeInTheDocument()
+    expect(screen.getByLabelText('渠道邀请链接')).toHaveValue(
+      `${window.location.origin}/login?invite_code=DIST-CHANNEL-001&invite_type=channel`,
+    )
+    expect(screen.queryByLabelText('渠道邀请二维码')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '下载二维码' })).not.toBeInTheDocument()
+    expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
+    expect(screen.getByText('对方通过该链接完成注册后，后端将按渠道邀请类型建立邀请关系。')).toBeInTheDocument()
   })
 
   it('does not present missing backend money and status fields as zero or settling', async () => {

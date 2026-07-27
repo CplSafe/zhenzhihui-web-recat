@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getSession, sendAuthSms, startOAuth } from '@/api/auth'
+import { getSession, registerAccount, sendAuthSms, startOAuth } from '@/api/auth'
 import { listWorkspaces } from '@/api/business'
 
 function success(data: unknown = { ok: true }): Response {
@@ -53,5 +53,29 @@ describe('same-origin client API routing', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       '/api/v1/auth/oauth-start?redirect_to=%2Fhome&invite_code=DIST-001',
     )
+  })
+
+  it('passes the channel invitation type through OAuth and registration', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => success())
+    vi.stubGlobal('fetch', fetchMock)
+
+    await startOAuth({ redirectTo: '/home', inviteCode: 'DIST-CHANNEL-001', inviteType: 'channel' })
+    await registerAccount({
+      authStart: { return_to: '/home' },
+      mobile: '17633125265',
+      password: 'Safe-Password-1!',
+      smsCode: '592442',
+      termsAccepted: true,
+      inviteCode: 'DIST-CHANNEL-001',
+      inviteType: 'channel',
+    })
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      '/api/v1/auth/oauth-start?redirect_to=%2Fhome&invite_code=DIST-CHANNEL-001&invite_type=channel',
+    )
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      invite_code: 'DIST-CHANNEL-001',
+      invite_type: 'channel',
+    })
   })
 })
