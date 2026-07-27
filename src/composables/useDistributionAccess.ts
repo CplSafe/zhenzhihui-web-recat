@@ -165,5 +165,13 @@ export function useDistributionAccess() {
     void requestAccess(userKey, true).then(setState)
   }, [userKey])
 
-  return { ...state, retry, isDistributor: state.status === 'allowed' }
+  // 产品验收期间临时开放邀请返利入口和页面，后续恢复营销身份限制。
+  const previewEnabled = true
+
+  return {
+    ...state,
+    retry,
+    isDistributor: true,
+    previewEnabled,
+  }
 }

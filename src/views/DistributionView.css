@@ -111,7 +111,7 @@
 .distribution-stats {
   display: grid;
   margin-top: 20px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 24px;
 }
 
@@ -289,13 +289,6 @@
   margin-left: auto;
   color: var(--distribution-secondary);
   font-size: 12px;
-}
-
-.distribution-invitation-status {
-  display: block;
-  margin-top: 5px;
-  color: var(--distribution-secondary);
-  font-size: 11px;
 }
 
 .distribution-filters {
@@ -574,10 +567,27 @@
   color: #b45309;
 }
 
+.distribution-status.is-unknown {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #64748b;
+}
+
 .distribution-status.is-cancelled {
   border-color: #94a3b8;
   background: #f1f5f9;
   color: #64748b;
+}
+
+.distribution-data-warning {
+  min-width: 1318px;
+  margin: 14px 0 -34px;
+  padding: 10px 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 12px;
 }
 
 .distribution-table-state {
