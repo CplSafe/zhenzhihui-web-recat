@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { getDistributionOverview } from '@/api/business'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 
-export type DistributionAccessStatus = 'idle' | 'checking' | 'allowed' | 'denied' | 'error'
+export type DistributionAccessStatus = 'idle' | 'checking' | 'allowed' | 'disabled' | 'denied' | 'error'
 
 interface AccessCacheEntry {
   status: Exclude<DistributionAccessStatus, 'idle' | 'checking'>
@@ -53,10 +53,34 @@ export function isDistributionAccessGranted(overview: any): boolean {
   return false
 }
 
+/** 后端停用销售身份时仍保留其身份，只禁止访问返利数据和邀请能力。 */
+export function isDistributionAccessDisabled(overview: any): boolean {
+  const source = unwrapOverview(overview)
+  const status = String(
+    source?.distributor_status ??
+      source?.distributorStatus ??
+      source?.sales_status ??
+      source?.salesStatus ??
+      source?.distributor?.status ??
+      '',
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+  return ['disabled', 'inactive', 'suspended', 'deactivated', 'stopped', 'banned', 'frozen'].includes(status)
+}
+
 function isDistributionDeniedError(error: any): boolean {
   if (Number(error?.status || 0) === 403) return true
   const message = String(error?.message || error?.response?.message || error?.response?.msg || '').toLowerCase()
   return /不是.*分销|非分销|无分销权限|not[\s_-]*(a[\s_-]*)?distributor|non[\s_-]*distributor/.test(message)
+}
+
+function isDistributionDisabledError(error: any): boolean {
+  const message = String(error?.message || error?.response?.message || error?.response?.msg || '').toLowerCase()
+  return /销售身份.*(?:停用|禁用)|分销身份.*(?:停用|禁用)|distributor[\s_-]*(?:is[\s_-]*)?(?:disabled|inactive|suspended)/i.test(
+    message,
+  )
 }
 
 function getUserKey(user: any): string {
@@ -71,17 +95,22 @@ function requestAccess(userKey: string, revalidate = false): Promise<AccessCache
 
   const request = getDistributionOverview()
     .then((overview) => {
-      const allowed = isDistributionAccessGranted(overview)
+      const disabled = isDistributionAccessDisabled(overview)
+      const allowed = !disabled && isDistributionAccessGranted(overview)
       return {
-        status: allowed ? 'allowed' : 'denied',
-        overview: allowed ? overview : null,
+        status: disabled ? 'disabled' : allowed ? 'allowed' : 'denied',
+        overview: disabled || allowed ? overview : null,
         error: null,
       } as AccessCacheEntry
     })
     .catch(
       (error: any) =>
         ({
-          status: isDistributionDeniedError(error) ? 'denied' : 'error',
+          status: isDistributionDisabledError(error)
+            ? 'disabled'
+            : isDistributionDeniedError(error)
+              ? 'denied'
+              : 'error',
           overview: null,
           error,
         }) as AccessCacheEntry,
@@ -147,5 +176,6 @@ export function useDistributionAccess() {
     ...state,
     retry,
     isDistributor: state.status === 'allowed',
+    isDistributionIdentity: state.status === 'allowed' || state.status === 'disabled',
   }
 }

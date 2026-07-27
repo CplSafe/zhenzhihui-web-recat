@@ -30,6 +30,7 @@ vi.mock('@/composables/useDistributionAccess', () => ({
     ...mocks.access,
     retry: mocks.retry,
     isDistributor: mocks.access.status === 'allowed',
+    isDistributionIdentity: ['allowed', 'disabled'].includes(mocks.access.status),
   }),
 }))
 
@@ -206,21 +207,36 @@ describe('DistributionView', () => {
     }
   })
 
-  it('uses the current referral code for a channel invitation link without a QR code', async () => {
+  it('uses the distributor code for a channel invitation link without a QR code', async () => {
     const user = userEvent.setup()
-    mocks.access.overview = { ...mocks.access.overview, invite_code: 'DIST-CHANNEL-001' }
+    mocks.access.overview = {
+      ...mocks.access.overview,
+      invite_code: 'DIST-CUSTOMER-001',
+      distributor_code: 'ZZH-D-JAZ589JR',
+    }
     render(<DistributionView />)
 
     await user.click(screen.getByRole('button', { name: '邀请渠道' }))
 
     expect(screen.getByRole('dialog', { name: '邀请渠道' })).toBeInTheDocument()
     expect(screen.getByLabelText('渠道邀请链接')).toHaveValue(
-      `${window.location.origin}/login?invite_code=DIST-CHANNEL-001&invite_type=channel`,
+      `${window.location.origin}/login?invite_code=ZZH-D-JAZ589JR&invite_type=channel`,
     )
     expect(screen.queryByLabelText('渠道邀请二维码')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '下载二维码' })).not.toBeInTheDocument()
     expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
     expect(screen.getByText('对方通过该链接完成注册后，后端将按渠道邀请类型建立邀请关系。')).toBeInTheDocument()
+  })
+
+  it('shows a clear message when the sales identity is disabled', () => {
+    mocks.access.status = 'disabled'
+    mocks.access.overview = { distributor_status: 'disabled', distributor_code: 'ZZH-D-JAZ589JR' }
+
+    render(<DistributionView />)
+
+    expect(screen.getByRole('heading', { name: '销售身份被停用，请联系客服' })).toBeInTheDocument()
+    expect(mocks.listCommissions).not.toHaveBeenCalled()
+    expect(mocks.listInvitees).not.toHaveBeenCalled()
   })
 
   it('does not present missing backend money and status fields as zero or settling', async () => {

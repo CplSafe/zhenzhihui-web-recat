@@ -213,9 +213,10 @@ export default function DistributionView() {
 
   const overview = useMemo(() => unwrap(rawOverview) || {}, [rawOverview])
   const overviewInviteCode = String(pick(overview, ['invite_code', 'inviteCode', 'referral_code'], '')).trim()
+  const distributorCode = String(pick(overview, ['distributor_code', 'distributorCode'], '')).trim()
   const inviteUrl = inviteCode ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}` : ''
-  const channelInviteUrl = inviteCode
-    ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}&invite_type=channel`
+  const channelInviteUrl = distributorCode
+    ? `${window.location.origin}/login?invite_code=${encodeURIComponent(distributorCode)}&invite_type=channel`
     : ''
 
   useEffect(() => {
@@ -628,7 +629,6 @@ export default function DistributionView() {
   const openChannelInvite = () => {
     setChannelCopyFeedback('')
     setChannelInviteOpen(true)
-    if (!inviteCode && !inviteLoading) loadInviteCode()
   }
 
   const copyChannelInviteLink = async () => {
@@ -666,6 +666,19 @@ export default function DistributionView() {
               重新验证
             </button>
           </div>
+        </div>
+      </main>
+    )
+  }
+
+  if (accessStatus === 'disabled') {
+    return (
+      <main className="distribution-access-state">
+        <div className="distribution-access-error" role="alert">
+          <h1>销售身份被停用，请联系客服</h1>
+          <button type="button" onClick={() => navigate('/home', { replace: true })}>
+            返回首页
+          </button>
         </div>
       </main>
     )
@@ -1049,16 +1062,15 @@ export default function DistributionView() {
               </button>
             </header>
 
-            {inviteLoading ? <div className="distribution-invite-state">正在获取专属渠道邀请链接…</div> : null}
-            {!inviteLoading && inviteError ? (
+            {!channelInviteUrl ? (
               <div className="distribution-invite-state is-error">
-                <span>{inviteError}</span>
-                <button type="button" onClick={loadInviteCode}>
-                  重新获取
+                <span>未获取到渠道邀请码，请稍后重试</span>
+                <button type="button" onClick={refreshOverview}>
+                  刷新
                 </button>
               </div>
             ) : null}
-            {!inviteLoading && !inviteError && channelInviteUrl ? (
+            {channelInviteUrl ? (
               <div className="distribution-channel-link-panel">
                 <h3>分享邀请链接</h3>
                 <p>复制链接发送给对方，对方打开后即可进入渠道邀请注册流程。</p>
