@@ -22,6 +22,7 @@ interface EntryDropdownProps {
   placeholder?: string
   /** 只读/禁用:按钮不可点击、不弹出浮层(用于只读复用场景) */
   disabled?: boolean
+  disabledOptions?: readonly string[]
   /** 单选可清空:再次点击已选项则清空(onChange('')) */
   clearable?: boolean
   /** 值文字区最小宽度(px):固定后切换不同长度的值(如比例 16:9/1:1)时按钮整体宽度不抖动 */
@@ -39,6 +40,7 @@ export default function EntryDropdown({
   multiple = false,
   placeholder = '请选择',
   disabled = false,
+  disabledOptions = [],
   clearable = false,
   valueMinWidth,
 }: EntryDropdownProps) {
@@ -61,6 +63,7 @@ export default function EntryDropdown({
   const label = multiple ? (selected.length ? selected.join(' ') : placeholder) : String(value || placeholder)
 
   const handlePick = (o: string) => {
+    if (disabledOptions.includes(o)) return
     if (multiple) {
       // 切换选中态,保持浮层打开以便连续多选
       const next = selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o]
@@ -120,6 +123,8 @@ export default function EntryDropdown({
               type="button"
               role="option"
               aria-selected={isSel(o)}
+              aria-disabled={disabledOptions.includes(o)}
+              disabled={disabledOptions.includes(o)}
               className={`${styles.opt}${isSel(o) ? ' ' + styles.active : ''}${multiple ? ' ' + styles.optMulti : ''}`}
               onClick={() => handlePick(o)}
             >

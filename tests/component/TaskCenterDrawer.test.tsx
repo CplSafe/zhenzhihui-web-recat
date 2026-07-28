@@ -332,6 +332,55 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     expect(screen.queryByText('历史任务')).not.toBeInTheDocument()
   })
 
+  it('deduplicates a live result and history when only signed URL parameters differ', async () => {
+    mocks.listAllCreativeProjects.mockResolvedValue([
+      project(11, [
+        historyVideo({
+          videoAssetId: 0,
+          videoUrl: '/api/v1/assets/88/download?workspace_id=7&token=history',
+        }),
+      ]),
+    ])
+    seed(
+      task({
+        status: 'succeeded',
+        progress: 100,
+        taskId: 0,
+        resultAssetId: undefined,
+        resultUrl: '/api/v1/assets/88/download?workspace_id=7&token=live',
+        title: 'unique completed task',
+      }),
+    )
+
+    render(<TaskCenterDrawer scope="smart" />)
+
+    expect(await screen.findByText('unique completed task')).toBeInTheDocument()
+    expect(screen.queryByText('历史任务')).not.toBeInTheDocument()
+  })
+
+  it('does not mutate task storage when repeatedly switching tabs', async () => {
+    const user = userEvent.setup()
+    seed(
+      task({
+        scope: 'hot-copy',
+        generationId: 'stable-generation',
+        taskId: 903,
+        status: 'processing',
+        title: 'stable generating task',
+      }),
+    )
+    render(<TaskCenterDrawer scope="hot-copy" />)
+    const originalIds = useTaskCenterStore.getState().tasks.map((item) => item.id)
+    const tabs = screen.getAllByRole('tab')
+
+    for (let index = 0; index < 5; index += 1) {
+      await user.click(tabs[0])
+      await user.click(tabs[2])
+    }
+
+    expect(useTaskCenterStore.getState().tasks.map((item) => item.id)).toEqual(originalIds)
+  })
+
   it('archives a generated task immediately without mutating historical data', async () => {
     const user = userEvent.setup()
     seed(task({ status: 'succeeded' }))

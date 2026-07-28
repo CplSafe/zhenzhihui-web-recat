@@ -181,6 +181,13 @@ test.describe('已认证关键路由与读取链路', () => {
     let projectCreations = 0
     let projectRevision = 0
     let draftConflicts = 0
+    let imageCheckpointFailuresRemaining = 3
+    let failedCheckpointImageMessages: Record<string, unknown>[] = []
+    let releaseFirstImageTaskRequest: () => void = () => {}
+    let notifyFirstImageTaskRequestStarted: () => void
+    const firstImageTaskRequestStarted = new Promise<void>((resolve) => {
+      notifyFirstImageTaskRequestStarted = resolve
+    })
     const acceptedDraftRevisions: number[] = []
     // 新建项目在真实后端以占位标题返回，随后才由当前页面安全回写 AI 标题。
     // 使用真实初态，避免把测试夹具预置的“正式标题”误判成另一标签页改名。
@@ -265,6 +272,29 @@ test.describe('已认证关键路由与读取链路', () => {
           return
         }
         const nextDraft = typeof body.draft === 'string' ? JSON.parse(body.draft) : body.draft
+        const nextImageMessages: Record<string, unknown>[] = Array.isArray(nextDraft?.smart?.imageMessages)
+          ? nextDraft.smart.imageMessages
+          : []
+        const pendingImageQueue = nextImageMessages.length
+          ? nextImageMessages.some(
+              (message: Record<string, unknown>) =>
+                message?.role === 'assistant' && message?.status === 'pending' && Number(message?.taskId || 0) === 0,
+            )
+          : false
+        // 首轮队列 checkpoint 连续失败到前端重试上限，验证不会创建任何付费任务；
+        // 用户点击“重新生成”后本 mock 恢复，必须原地恢复同一子任务并真正提交。
+        if (pendingImageQueue && imageCheckpointFailuresRemaining > 0) {
+          if (!failedCheckpointImageMessages.length) {
+            failedCheckpointImageMessages = nextImageMessages.map((message) => ({ ...message }))
+          }
+          imageCheckpointFailuresRemaining -= 1
+          await route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ code: 500, message: 'temporary draft storage failure' }),
+          })
+          return
+        }
         if (nextDraft && typeof nextDraft === 'object') projectDraft = nextDraft as Record<string, unknown>
         acceptedDraftRevisions.push(expectedRevision)
         projectRevision += 1
@@ -289,6 +319,12 @@ test.describe('已认证关键路由与读取链路', () => {
       const taskBody = route.request().postDataJSON() as Record<string, unknown>
       imageTaskBodies.push(taskBody)
       const taskIndex = imageTaskBodies.length - 1
+      if (taskIndex === 0) {
+        notifyFirstImageTaskRequestStarted()
+        await new Promise<void>((resolve) => {
+          releaseFirstImageTaskRequest = resolve
+        })
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -361,6 +397,54 @@ test.describe('已认证关键路由与读取链路', () => {
     await expect(page).toHaveURL(/\/smart\/303$/)
     await expect(page.getByRole('button', { name: /^生成模型，/ })).toHaveCount(0)
     await expect(page.getByRole('dialog', { name: '本次创作使用的模型' })).toHaveCount(0)
+    const preparationErrors = page.getByText('生成队列保存失败，请稍后重试，未提交任何付费任务', {
+      exact: true,
+    })
+    await expect(preparationErrors).toHaveCount(3)
+    expect(imageCheckpointFailuresRemaining).toBe(0)
+    expect(imageTaskBodies).toHaveLength(0)
+    expect(failedCheckpointImageMessages.filter((message) => message.role === 'user')).toHaveLength(1)
+    const failedCheckpointAssistantMessages = failedCheckpointImageMessages.filter(
+      (message) => message.role === 'assistant',
+    )
+    expect(failedCheckpointAssistantMessages).toHaveLength(3)
+    expect(new Set(failedCheckpointAssistantMessages.map((message) => String(message.id || ''))).size).toBe(3)
+    const originalIdempotencyKeys = failedCheckpointAssistantMessages.map((message) =>
+      String(message.idempotencyKey || ''),
+    )
+    expect(originalIdempotencyKeys.every(Boolean)).toBe(true)
+    await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(1)
+
+    // 三张失败卡逐张原地恢复；不会追加重复用户消息，也不会重新弹费用确认。
+    const retryButtons = page.getByRole('button', { name: '重新生成这张图片' })
+    await retryButtons.first().click()
+    await firstImageTaskRequestStarted
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const raw = window.localStorage.getItem('zzh_task_center_v1')
+          if (!raw) return []
+          const parsed = JSON.parse(raw)
+          return (parsed?.state?.tasks || [])
+            .filter((task: { scope?: string }) => task.scope === 'image')
+            .map((task: { status?: string }) => String(task.status || ''))
+            .sort()
+        }),
+      )
+      .toEqual(['failed', 'failed', 'preparing'])
+    releaseFirstImageTaskRequest()
+    await expect.poll(() => imageTaskBodies.length).toBe(1)
+    await expect(retryButtons).toHaveCount(2)
+    await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(1)
+    await retryButtons.first().click()
+    await expect.poll(() => imageTaskBodies.length).toBe(2)
+    await expect(retryButtons).toHaveCount(1)
+    await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(1)
+    await retryButtons.first().click()
+    await expect.poll(() => imageTaskBodies.length).toBe(3)
+    await expect(retryButtons).toHaveCount(0)
+    await expect(page.getByText('生成一张青绿色夏日饮品海报', { exact: true })).toHaveCount(1)
+    await expect(page.getByRole('alertdialog', { name: '确认生成图片' })).toHaveCount(0)
     // 串行队列完成前，每个子消息里的首图都会暂时使用“AI 生成图片 1”作为 alt。
     // 先等待真实结果总数，再用第 3 张的唯一选择按钮等待批次合并。
     const generatedImages = page.locator('img[alt^="AI 生成图片 "]')
@@ -373,11 +457,9 @@ test.describe('已认证关键路由与读取链路', () => {
       operation_code: 'image.text_to_image',
       model_version_id: 9901,
     })
-    expect(imageTaskBodies.map((body) => String(body.idempotency_key || ''))).toEqual([
-      expect.stringMatching(/^smart_image_.+_01_/),
-      expect.stringMatching(/^smart_image_.+_02_/),
-      expect.stringMatching(/^smart_image_.+_03_/),
-    ])
+    expect(imageTaskBodies.map((body) => String(body.idempotency_key || ''))).toEqual(
+      originalIdempotencyKeys.map((key) => `${key}_text_to_image`),
+    )
 
     const selectThirdForVideo = page.getByRole('button', { name: '选择图片 3 用于制作视频' })
     await expect(selectThirdForVideo).toBeVisible()

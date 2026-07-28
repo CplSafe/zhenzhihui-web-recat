@@ -54,12 +54,40 @@ const EMPTY_FILTERS: DistributionFilters = {
   maxAmount: '',
 }
 
-const PAGE_SIZE = 50
+const PAGE_SIZE = 10
 const COMMISSION_FETCH_SIZE = 100
 const MAX_COMMISSION_RECORDS = 5000
 const INVITEE_FETCH_SIZE = 200
 const MAX_INVITEE_RECORDS = 5000
 const DISTRIBUTION_REFRESH_INTERVAL_MS = 3_000
+
+function DistributionPagination({
+  page,
+  total,
+  label,
+  onPageChange,
+}: {
+  page: number
+  total: number
+  label: string
+  onPageChange: (page: number) => void
+}) {
+  const pageCount = Math.ceil(total / PAGE_SIZE)
+  if (pageCount <= 1) return null
+  return (
+    <nav className="distribution-pagination" aria-label={label}>
+      <button type="button" disabled={page === 1} onClick={() => onPageChange(Math.max(1, page - 1))}>
+        上一页
+      </button>
+      <span>
+        第 {page} 页，共 {pageCount} 页
+      </span>
+      <button type="button" disabled={page >= pageCount} onClick={() => onPageChange(page + 1)}>
+        下一页
+      </button>
+    </nav>
+  )
+}
 
 function pick(source: any, keys: string[], fallback: any = ''): any {
   for (const key of keys) {
@@ -252,6 +280,7 @@ export default function DistributionView() {
   const [draftFilters, setDraftFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [filters, setFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
   const [page, setPage] = useState(1)
+  const [inviteePage, setInviteePage] = useState(1)
   const [rows, setRows] = useState<any[]>([])
   const [invitees, setInvitees] = useState<any[]>([])
   const [inviteeView, setInviteeView] = useState<InviteeView>('customer')
@@ -288,6 +317,7 @@ export default function DistributionView() {
     event.preventDefault()
     const nextView: InviteeView = event.key === 'ArrowLeft' || event.key === 'Home' ? 'customer' : 'distributor'
     setInviteeView(nextView)
+    setInviteePage(1)
     window.requestAnimationFrame(() => {
       document
         .getElementById(nextView === 'customer' ? 'distribution-customer-tab' : 'distribution-distributor-tab')
@@ -637,6 +667,15 @@ export default function DistributionView() {
     () => normalizedInvitees.filter((row) => row.isDistributor === (inviteeView === 'distributor')),
     [inviteeView, normalizedInvitees],
   )
+  const visibleInviteeRows = useMemo(
+    () => visibleInvitees.slice((inviteePage - 1) * PAGE_SIZE, inviteePage * PAGE_SIZE),
+    [inviteePage, visibleInvitees],
+  )
+
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(visibleInvitees.length / PAGE_SIZE))
+    if (inviteePage > lastPage) setInviteePage(lastPage)
+  }, [inviteePage, visibleInvitees.length])
 
   const normalizedCommissions = useMemo(
     () =>
@@ -994,7 +1033,10 @@ export default function DistributionView() {
                   aria-selected={inviteeView === 'customer'}
                   aria-controls="distribution-invitee-table-panel"
                   tabIndex={inviteeView === 'customer' ? 0 : -1}
-                  onClick={() => setInviteeView('customer')}
+                  onClick={() => {
+                    setInviteeView('customer')
+                    setInviteePage(1)
+                  }}
                   onKeyDown={handleInviteeTabKeyDown}
                 >
                   邀请客户
@@ -1006,7 +1048,10 @@ export default function DistributionView() {
                   aria-selected={inviteeView === 'distributor'}
                   aria-controls="distribution-invitee-table-panel"
                   tabIndex={inviteeView === 'distributor' ? 0 : -1}
-                  onClick={() => setInviteeView('distributor')}
+                  onClick={() => {
+                    setInviteeView('distributor')
+                    setInviteePage(1)
+                  }}
                   onKeyDown={handleInviteeTabKeyDown}
                 >
                   分销商
@@ -1043,7 +1088,7 @@ export default function DistributionView() {
                 </tr>
               </thead>
               <tbody>
-                {visibleInvitees.map((row) => (
+                {visibleInviteeRows.map((row) => (
                   <tr key={row.key}>
                     {inviteeFields.registeredAt ? (
                       <td>
@@ -1086,6 +1131,12 @@ export default function DistributionView() {
               </div>
             ) : null}
           </div>
+          <DistributionPagination
+            page={inviteePage}
+            total={visibleInvitees.length}
+            label="邀请关系列表分页"
+            onPageChange={setInviteePage}
+          />
         </section>
 
         <section className="distribution-filters" aria-label="收益明细筛选">
@@ -1285,23 +1336,7 @@ export default function DistributionView() {
           ) : null}
         </section>
 
-        {total > PAGE_SIZE ? (
-          <nav className="distribution-pagination" aria-label="收益明细分页">
-            <button type="button" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-              上一页
-            </button>
-            <span>
-              第 {page} 页，共 {Math.ceil(total / PAGE_SIZE)} 页
-            </span>
-            <button
-              type="button"
-              disabled={page >= Math.ceil(total / PAGE_SIZE)}
-              onClick={() => setPage((value) => value + 1)}
-            >
-              下一页
-            </button>
-          </nav>
-        ) : null}
+        <DistributionPagination page={page} total={total} label="收益明细分页" onPageChange={setPage} />
       </div>
 
       {rulesOpen ? (

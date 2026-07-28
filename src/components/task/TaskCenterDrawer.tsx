@@ -49,6 +49,31 @@ interface TaskCenterHistoryResult {
   thumbnailSourcesByProjectId: Map<number, TaskThumbnailSource>
 }
 
+function stableMediaUrl(value: unknown): string {
+  const url = String(value || '').trim()
+  if (!url) return ''
+  return url.split(/[?#]/, 1)[0].replace(/\/+$/, '')
+}
+
+function taskIdentityKeys(task: TaskCenterTask): string[] {
+  const prefix = `${task.scope}:${task.workspaceId}`
+  if (task.resultAssetId) return [`${prefix}:asset:${task.resultAssetId}`]
+  const resultUrl = stableMediaUrl(task.resultUrl)
+  return resultUrl ? [`${prefix}:url:${resultUrl}`] : []
+}
+
+export function deduplicateTaskCenterRecords(tasks: TaskCenterTask[]): TaskCenterTask[] {
+  const result: TaskCenterTask[] = []
+  const seen = new Set<string>()
+  tasks.forEach((task) => {
+    const keys = taskIdentityKeys(task)
+    if (keys.length > 0 && keys.some((key) => seen.has(key))) return
+    result.push(task)
+    keys.forEach((key) => seen.add(key))
+  })
+  return result
+}
+
 /** 任务中心支持的业务页签。 */
 const SCOPE_TABS: Array<{ value: TaskCenterTab; label: string }> = [
   { value: 'generating', label: '正在生成' },
@@ -825,11 +850,6 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
         !isArchived(record)
       )
     })
-    const liveMediaKeys = new Set<string>()
-    liveTasks.forEach((task) => {
-      if (task.resultAssetId) liveMediaKeys.add(`asset:${task.resultAssetId}`)
-      if (task.resultUrl) liveMediaKeys.add(`url:${task.resultUrl}`)
-    })
     const history =
       activeScope === 'generating'
         ? []
@@ -843,11 +863,9 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
             ) {
               return false
             }
-            if (task.resultAssetId && liveMediaKeys.has(`asset:${task.resultAssetId}`)) return false
-            if (task.resultUrl && liveMediaKeys.has(`url:${task.resultUrl}`)) return false
             return true
           })
-    return [...liveTasks, ...history].sort((left, right) => {
+    return deduplicateTaskCenterRecords([...liveTasks, ...history]).sort((left, right) => {
       const leftRecord = left as TaskRecord
       const rightRecord = right as TaskRecord
       const rank: Record<TaskTone, number> = { active: 0, queued: 1, failed: 2, completed: 3 }

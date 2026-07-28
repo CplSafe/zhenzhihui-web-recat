@@ -35,6 +35,8 @@ export interface ChatMessage {
   taskId?: number
   /** 只有后端明确返回失败/取消等终态时为 true；否则重试必须继续查询原 taskId。 */
   terminalFailure?: boolean
+  /** 付费任务创建前的队列落盘失败；重试时恢复本条队列，不能再追加一组重复消息。 */
+  preparationFailure?: boolean
   idempotencyKey?: string
   operationCode?: 'image.text_to_image' | 'image.image_to_image'
   /** 同一轮多图生成的分组信息；每张图片仍对应一个独立、可恢复的后端任务。 */
@@ -82,6 +84,7 @@ export interface ImageChatProps {
   /** 当前图片操作尚未选择模型等原因，仅禁用新生成，不影响返回或新建对话。 */
   generationDisabled?: boolean
   generationDisabledReason?: string
+  supportedRatios?: readonly string[]
   /** 提交前积分预估文案(单张口径,如「每张约 X 积分 · 余额 Y」);空则不显示 */
   costText?: string
   /** 预估超过余额:在 costText 后追加「积分不足,请前往充值积分」(可点击跳会员中心) */
@@ -230,6 +233,7 @@ export default function ImageChat({
   busy,
   generationDisabled = false,
   generationDisabledReason = '',
+  supportedRatios = [],
   costText,
   costInsufficient,
   onSend,
@@ -268,6 +272,10 @@ export default function ImageChat({
     message: ChatMessage
     label: string
   } | null>(null)
+  const supportedRatioKey = supportedRatios.join('|')
+  const disabledRatioOptions = supportedRatios.length
+    ? RATIO_OPTIONS.filter((option) => !supportedRatios.includes(option))
+    : []
 
   const fileRef = useRef<HTMLInputElement | null>(null)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
@@ -310,6 +318,13 @@ export default function ImageChat({
   useEffect(() => {
     setRatio(initialComposerDraft?.ratio || initialRatio || '16:9')
   }, [initialComposerDraft?.ratio, initialRatio])
+
+  useEffect(() => {
+    const supported = supportedRatioKey ? supportedRatioKey.split('|') : []
+    if (!supported.length || supported.includes(ratio)) return
+    const fallbackRatio = supported.find((option) => RATIO_OPTIONS.includes(option))
+    if (fallbackRatio) setRatio(fallbackRatio)
+  }, [ratio, supportedRatioKey])
 
   useEffect(() => {
     setOutputCount(clampOutputCount(initialComposerDraft?.outputCount ?? initialOutputCount ?? 1))
@@ -960,6 +975,7 @@ export default function ImageChat({
                 value={ratio}
                 options={RATIO_OPTIONS}
                 onChange={setRatio}
+                disabledOptions={disabledRatioOptions}
                 icon={<RatioIcon ratio={ratio} />}
                 valueMinWidth={34}
                 ariaLabel="图片比例"
