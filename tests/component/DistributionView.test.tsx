@@ -149,6 +149,49 @@ describe('DistributionView', () => {
     expect(inviteeHeaders).toContain('邀请客户数')
   })
 
+  it('paginates invitees and commissions independently with ten rows per page', async () => {
+    const user = userEvent.setup()
+    mocks.listInvitees.mockResolvedValue({
+      items: Array.from({ length: 11 }, (_, index) => ({
+        invitee_id: index + 1,
+        invitee_name: `邀请客户-${index + 1}`,
+        relationship: 'direct',
+        registered_at: `2026-07-${String(index + 1).padStart(2, '0')}T10:00:00+08:00`,
+      })),
+      total: 11,
+    })
+    mocks.listCommissions.mockResolvedValue({
+      items: Array.from({ length: 11 }, (_, index) => ({
+        id: index + 1,
+        customer_name: `返利客户-${index + 1}`,
+        paid_at: `2026-07-${String(index + 1).padStart(2, '0')}T12:00:00+08:00`,
+        paid_amount_cents: 1000 + index,
+        rebate_amount_cents: 100,
+        rebate_status: 'credited',
+      })),
+      total: 11,
+    })
+
+    render(<DistributionView />)
+
+    expect(await screen.findByText('邀请客户-1')).toBeInTheDocument()
+    expect(screen.getByText('邀请客户-10')).toBeInTheDocument()
+    expect(screen.queryByText('邀请客户-11')).not.toBeInTheDocument()
+    expect(await screen.findByText('返利客户-1')).toBeInTheDocument()
+    expect(screen.getByText('返利客户-10')).toBeInTheDocument()
+    expect(screen.queryByText('返利客户-11')).not.toBeInTheDocument()
+
+    const inviteePagination = screen.getByRole('navigation', { name: '邀请关系列表分页' })
+    await user.click(within(inviteePagination).getByRole('button', { name: '下一页' }))
+    expect(screen.getByText('邀请客户-11')).toBeInTheDocument()
+    expect(screen.queryByText('邀请客户-1')).not.toBeInTheDocument()
+
+    const commissionPagination = screen.getByRole('navigation', { name: '收益明细分页' })
+    await user.click(within(commissionPagination).getByRole('button', { name: '下一页' }))
+    expect(screen.getByText('返利客户-11')).toBeInTheDocument()
+    expect(screen.queryByText('返利客户-1')).not.toBeInTheDocument()
+  })
+
   it('renders the new distribution overview fields in cents and credits', async () => {
     mocks.access.overview = {
       total_earned_cents: 12301,

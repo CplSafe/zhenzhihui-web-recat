@@ -22,6 +22,7 @@ import {
 import { openTeamManage, useUiStore } from '@/stores/ui'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'
+import { useDistributionAccess } from '@/composables/useDistributionAccess'
 import { validateWorkspaceName, normalizeWorkspaceNameForCompare } from '@/utils/workspaceName'
 import UserAvatar from '@/components/common/UserAvatar'
 import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
@@ -105,6 +106,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const workspaceSwitchLockReason = useUiStore((s) => s.workspaceSwitchLockReason)
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
+  const { isDistributor } = useDistributionAccess()
   const [renamingTeam, setRenamingTeam] = useState(false)
   const aliveRef = useRef(true)
   const renameFlowRef = useRef(false)
@@ -239,11 +241,10 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
           </div>
         </div>
         <div className="ppl__head-actions">
-          <Tooltip title="邀请返利" placement="bottom" zIndex={4000}>
+          {isDistributor ? (
             <button
               type="button"
               className="ppl__head-action ppl__head-action--distribution-text"
-              aria-label="邀请返利"
               onClick={() => {
                 onClose?.()
                 navigate('/distribution')
@@ -251,7 +252,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
             >
               邀请返利
             </button>
-          </Tooltip>
+          ) : null}
 
           {/* 当前空间:团队空间只显示图标,悬停弹出「团队成员」黑色圆角浮层,点击打开团队管理查看成员 */}
           {isTeamWs && canRevealTeamInfo ? (

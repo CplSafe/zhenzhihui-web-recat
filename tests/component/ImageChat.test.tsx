@@ -17,11 +17,13 @@ vi.mock('@/components/smart/EntryDropdown', () => ({
     options,
     onChange,
     ariaLabel,
+    disabledOptions = [],
   }: {
     value: string
     options: (string | { value: string; label: string })[]
     onChange: (v: string) => void
     ariaLabel?: string
+    disabledOptions?: readonly string[]
   }) => (
     <label>
       {ariaLabel || '图片比例'}
@@ -30,6 +32,7 @@ vi.mock('@/components/smart/EntryDropdown', () => ({
           <option
             key={typeof option === 'string' ? option : option.value}
             value={typeof option === 'string' ? option : option.value}
+            disabled={disabledOptions.includes(typeof option === 'string' ? option : option.value)}
           >
             {typeof option === 'string' ? option : option.label}
           </option>
@@ -209,6 +212,26 @@ describe('ImageChat', () => {
     view.rerender(<ImageChat {...props} initialRatio="9:16" onRatioChange={onRatioChange} />)
     expect(screen.getByRole('combobox', { name: '图片比例' })).toHaveValue('9:16')
     expect(onRatioChange).toHaveBeenLastCalledWith('9:16')
+  })
+
+  it('disables unsupported model ratios and falls back to the first supported ratio', async () => {
+    const onRatioChange = vi.fn()
+    render(
+      <ImageChat
+        {...baseProps()}
+        initialRatio="4:3"
+        supportedRatios={['1:1', '16:9']}
+        onRatioChange={onRatioChange}
+      />,
+    )
+
+    const ratioSelect = screen.getByRole('combobox', { name: '图片比例' })
+    await waitFor(() => expect(ratioSelect).toHaveValue('1:1'))
+    expect(screen.getByRole('option', { name: '4:3' })).toBeDisabled()
+    expect(screen.getByRole('option', { name: '9:16' })).toBeDisabled()
+    expect(screen.getByRole('option', { name: '1:1' })).toBeEnabled()
+    expect(screen.getByRole('option', { name: '16:9' })).toBeEnabled()
+    expect(onRatioChange).toHaveBeenLastCalledWith('1:1')
   })
 
   it('uploads images, removes the exact duplicate and renumbers text references', async () => {

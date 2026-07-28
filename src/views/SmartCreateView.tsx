@@ -117,6 +117,7 @@ import {
 import { openGuide, isSmartGuideArmed, disarmSmartGuide, syncSmartGuideStage, useGuideStore } from '@/stores/guide'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
+import { buildModelRestrictionSummary } from '@/utils/modelRestrictions'
 import { useAuth } from '@/auth/AuthContext'
 import {
   saveSmartDraft,
@@ -282,6 +283,16 @@ const smartProjectKey = (workspaceId: number, projectId: number) =>
 function createImageChatIdempotencyKey(): string {
   const randomId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
   return `smart_image_${randomId}`
+}
+
+/** 付费任务尚未创建、仅因队列 checkpoint 失败而可原地恢复的图片消息。 */
+function isUnsubmittedImagePreparationFailure(message: ChatMessage): boolean {
+  return (
+    Number(message.taskId || 0) === 0 &&
+    Boolean(message.request && message.idempotencyKey) &&
+    (message.preparationFailure === true ||
+      (message.terminalFailure === true && /未提交任何付费任务/.test(String(message.error || ''))))
+  )
 }
 
 // 后端在不同接口里会用下划线、驼峰或嵌套 data 返回草稿版本号。
@@ -1129,7 +1140,25 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
    * 不受当前输入框参考图和模型选择影响，也不会再次创建付费任务。
    */
   const getImageRetryDisabledReason = (message: ChatMessage): string => {
+    if (!Number(workspaceIdRef.current || workspaceId || 0)) {
+      return '当前工作空间尚未就绪，请刷新页面后重试'
+    }
+    if (!Number(projectIdRef.current || projectId || 0)) {
+      return '当前图片项目尚未创建完成，请返回入口重新发起生成'
+    }
+    if (!appliedRef.current || !started) {
+      return '当前图片项目仍在加载，请等待加载完成后重试'
+    }
+    // 已付费且未确认终态的任务只恢复原 taskId，不依赖当前模型选择，也不创建第二笔任务。
     if (Number(message.taskId || 0) > 0 && message.terminalFailure !== true) return ''
+    if (draftSaveStatusRef.current === 'conflict') {
+      return '项目已在其他页面更新，请刷新页面载入最新项目后再重新生成'
+    }
+    // checkpoint 失败的未提交任务使用消息自身锁定的模型与幂等键恢复；
+    // 当前入口的模型选择可能在刷新/迁移草稿后丢失，不能据此错误禁用安全恢复。
+    if (isUnsubmittedImagePreparationFailure(message)) {
+      return getImageQueueModelLockError(message)
+    }
     const operationCode = message.operationCode
     if (operationCode !== 'image.text_to_image' && operationCode !== 'image.image_to_image') {
       return '该失败记录缺少图片生成类型，请在输入框重新发起生成'
@@ -3780,11 +3809,16 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
     const id = buildTaskCenterId('image', ws, pid, message.id)
     const store = useTaskCenterStore.getState()
     const existing = store.tasks.find((task) => task.id === id)
+    const revivingUnsubmittedPreparationFailure =
+      existing?.status === 'failed' &&
+      Number(existing.taskId || 0) === 0 &&
+      isUnsubmittedImagePreparationFailure(message)
     if (
       existing &&
       isTaskCenterTerminalStatus(existing.status) &&
       status !== existing.status &&
-      status !== 'succeeded'
+      status !== 'succeeded' &&
+      !revivingUnsubmittedPreparationFailure
     ) {
       return
     }
@@ -6368,7 +6402,11 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
           return true
         } catch (error) {
           if (isCreativeDraftContentConflictError(error)) throw error
-          if (!isRetryableDraftSaveError(error) || attempt >= 2) return false
+          // 新项目创建成功后，读节点可能短暂尚未可见。只对“本页面刚创建且拥有首次整版写入权”
+          // 的项目把 404 当作可重试，旧项目/无权限项目仍立即失败，不能用重试掩盖真实越权。
+          const freshProjectReadLag =
+            request.allowCreativeReplace && Number((error as { status?: number } | null)?.status || 0) === 404
+          if ((!freshProjectReadLag && !isRetryableDraftSaveError(error)) || attempt >= 2) return false
           await waitForDraftSaveRetry(attempt)
         }
       }
@@ -8068,14 +8106,17 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       queuedWorkspaceId = ws
       return true
     } catch (error: any) {
-      const errorMessage = getBusinessErrorMessage(error, '图片生成准备失败，请重试')
+      const errorMessage =
+        getBusinessErrorMessage(error, '') ||
+        (error instanceof Error ? String(error.message || '').trim() : '') ||
+        '图片生成准备失败，请重试'
       if (preparedMessages.length) {
         const preparedIds = new Set(preparedMessages.map((message) => message.id))
         const safeError = `${errorMessage}，未提交任何付费任务`
         commitImageMessages((messages) =>
           messages.map((message) =>
             preparedIds.has(message.id)
-              ? { ...message, status: 'error', terminalFailure: true, error: safeError }
+              ? { ...message, status: 'error', terminalFailure: true, preparationFailure: true, error: safeError }
               : message,
           ),
         )
@@ -8102,12 +8143,17 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
    * 已有 taskId 且未确认终态时只恢复原任务，不弹新费用确认也不创建新任务；
    * 只有后端明确终态失败，才按原输入重新确认费用并生成。
    */
-  const retryImageMessage = (message: ChatMessage): Promise<boolean> => {
+  const retryImageMessage = async (message: ChatMessage): Promise<boolean> => {
     const existingTaskId = Number(message.taskId || 0) || 0
+    const retryDisabledReason = getImageRetryDisabledReason(message)
+    if (retryDisabledReason) {
+      showToast(retryDisabledReason, 'error')
+      return false
+    }
     if (existingTaskId > 0 && message.terminalFailure !== true) {
       if (imageGenerationLockRef.current || imageQueueCheckpointBlockedRef.current) {
         showToast('已有图片任务正在处理，请稍后再试', 'info')
-        return Promise.resolve(false)
+        return false
       }
       commitImageMessages((messages) =>
         messages.map((item) =>
@@ -8121,13 +8167,78 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       syncImageTask(message, 'reconnecting', { taskId: existingTaskId, error: '' }, context)
       checkpointImageDraft(context.workspaceId)
       window.setTimeout(() => void processPendingImageQueue(context.workspaceId), 0)
-      return Promise.resolve(true)
+      return true
     }
 
-    const retryDisabledReason = getImageRetryDisabledReason(message)
-    if (retryDisabledReason) {
-      showToast(retryDisabledReason, 'error')
-      return Promise.resolve(false)
+    if (isUnsubmittedImagePreparationFailure(message)) {
+      if (imageGenerationLockRef.current || imageQueueCheckpointBlockedRef.current) {
+        showToast('已有图片任务正在处理，请稍后再试', 'info')
+        return false
+      }
+      const context = {
+        workspaceId: Number(workspaceIdRef.current || workspaceId || 0) || 0,
+        projectId: Number(projectIdRef.current || projectId || 0) || 0,
+      }
+      let queued = false
+      imageGenerationLockRef.current = true
+      imageQueueCheckpointBlockedRef.current = true
+      setImagePreparing(true)
+      commitImageMessages((messages) =>
+        messages.map((item) =>
+          item.id === message.id
+            ? {
+                ...item,
+                status: 'pending',
+                terminalFailure: false,
+                preparationFailure: false,
+                error: undefined,
+              }
+            : item,
+        ),
+      )
+      syncImageTask(message, 'preparing', { taskId: 0, error: '' }, context)
+      try {
+        const checkpointResult = await persistImageQueueBeforePaidTask(context.workspaceId)
+        if (checkpointResult !== 'saved') {
+          throw new Error(
+            checkpointResult === 'conflict'
+              ? '项目已在其他页面更新，请刷新页面载入最新项目后再重新生成'
+              : '生成队列保存失败，请稍后重试',
+          )
+        }
+        queued = true
+        return true
+      } catch (error) {
+        const errorMessage =
+          getBusinessErrorMessage(error, '') ||
+          (error instanceof Error ? String(error.message || '').trim() : '') ||
+          '图片生成准备失败，请重试'
+        const safeError = `${errorMessage}，未提交任何付费任务`
+        commitImageMessages((messages) =>
+          messages.map((item) =>
+            item.id === message.id
+              ? {
+                  ...item,
+                  status: 'error',
+                  terminalFailure: true,
+                  preparationFailure: true,
+                  error: safeError,
+                }
+              : item,
+          ),
+        )
+        syncImageTask(message, 'failed', { taskId: 0, error: safeError }, context)
+        saveCurrentImageDraftLocally(context.workspaceId)
+        showToast(safeError, 'error')
+        return false
+      } finally {
+        imageQueueCheckpointBlockedRef.current = false
+        imageGenerationLockRef.current = false
+        setImagePreparing(false)
+        if (queued) {
+          window.setTimeout(() => void processPendingImageQueue(context.workspaceId), 0)
+        }
+      }
     }
 
     const storedRequest = message.request
@@ -8939,6 +9050,12 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   const canResumeFlow = entryMeta?.mode === 'image' ? imageMessages.length > 0 : shots.length > 0 || !!marketingText
 
   const activeImageGenerationOperation = getImageGenerationOperationCode(imageComposerRefCount)
+  const activeImageGenerationModel = selectedGenerationModel(activeImageGenerationOperation)
+  const activeImageModelConstraints = activeImageGenerationModel
+    ? buildModelRestrictionSummary(activeImageGenerationModel.source).constraints
+    : {}
+  const activeImageSupportedRatios =
+    activeImageModelConstraints.ratio?.options ?? activeImageModelConstraints.ratios ?? []
   const flowGenerationModelGroups =
     entryMeta?.mode === 'image'
       ? filterGenerationModelGroupsByOperations(generationModelCatalog.pickerGroups, [activeImageGenerationOperation])
@@ -9990,6 +10107,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
                     generationDisabledReason={`入口选择的${
                       activeImageGenerationOperation === 'image.image_to_image' ? '图生图' : '文生图'
                     }模型缺失或已失效，请返回首页重新选择`}
+                    supportedRatios={activeImageSupportedRatios}
                     newChatDisabled={imageBusy}
                     costText={
                       stepCost.loading

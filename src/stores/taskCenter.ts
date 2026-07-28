@@ -154,6 +154,26 @@ function optionalText(value: unknown): string | undefined {
   return text || undefined
 }
 
+function getTaskStableKeys(task: TaskCenterTask): string[] {
+  const prefix = `${task.scope}:${task.workspaceId}`
+  const keys: string[] = []
+  if (task.taskId > 0) keys.push(`${prefix}:task:${task.taskId}`)
+  if (task.resultAssetId) keys.push(`${prefix}:asset:${task.resultAssetId}`)
+  return keys
+}
+
+function tasksShareStableIdentity(left: TaskCenterTask, right: TaskCenterTask): boolean {
+  const rightKeys = new Set(getTaskStableKeys(right))
+  return getTaskStableKeys(left).some((key) => rightKeys.has(key))
+}
+
+function preferTaskRecord(left: TaskCenterTask, right: TaskCenterTask): TaskCenterTask {
+  const leftTerminal = isTaskCenterTerminalStatus(left.status)
+  const rightTerminal = isTaskCenterTerminalStatus(right.status)
+  if (leftTerminal !== rightTerminal) return leftTerminal ? left : right
+  return left.updatedAt >= right.updatedAt ? left : right
+}
+
 /** 兼容旧缓存和部分字段输入，规范化为完整的任务中心记录。 */
 function normalizeTask(raw: Partial<TaskCenterTask>, now = Date.now(), fallbackOwnerUserId = 0): TaskCenterTask {
   const scope: TaskCenterScope = isTaskCenterImageTask(raw) ? 'image' : raw.scope === 'hot-copy' ? 'hot-copy' : 'smart'
@@ -205,9 +225,19 @@ function pruneTasks(tasks: TaskCenterTask[], now = Date.now()): TaskCenterTask[]
     if (!previous || task.updatedAt >= previous.updatedAt) byId.set(task.id, task)
   })
 
+  const deduplicated: TaskCenterTask[] = []
+  byId.forEach((task) => {
+    const duplicateIndex = deduplicated.findIndex((candidate) => tasksShareStableIdentity(candidate, task))
+    if (duplicateIndex < 0) {
+      deduplicated.push(task)
+      return
+    }
+    deduplicated[duplicateIndex] = preferTaskRecord(deduplicated[duplicateIndex], task)
+  })
+
   const active: TaskCenterTask[] = []
   const completed: TaskCenterTask[] = []
-  byId.forEach((task) => {
+  deduplicated.forEach((task) => {
     if (isTaskCenterActiveStatus(task.status)) {
       active.push(task)
       return
@@ -241,7 +271,17 @@ export const useTaskCenterStore = create<TaskCenterState>()(
             now,
             state.ownerUserId,
           )
-          const previous = state.tasks.find((task) => task.id === input.id)
+          const previous =
+            state.tasks.find((task) => task.id === input.id) ||
+            state.tasks.find((task) => tasksShareStableIdentity(task, input))
+          if (
+            previous &&
+            previous.id !== input.id &&
+            isTaskCenterTerminalStatus(previous.status) &&
+            isTaskCenterActiveStatus(input.status)
+          ) {
+            return state
+          }
           const restarted = Boolean(
             previous && !isTaskCenterActiveStatus(previous.status) && isTaskCenterActiveStatus(input.status),
           )
@@ -269,7 +309,15 @@ export const useTaskCenterStore = create<TaskCenterState>()(
             state.ownerUserId,
           )
           return {
-            tasks: pruneTasks([...state.tasks.filter((task) => task.id !== merged.id), merged], now),
+            tasks: pruneTasks(
+              [
+                ...state.tasks.filter(
+                  (task) => task.id !== merged.id && (!previous || task.id !== previous.id),
+                ),
+                merged,
+              ],
+              now,
+            ),
           }
         }),
 

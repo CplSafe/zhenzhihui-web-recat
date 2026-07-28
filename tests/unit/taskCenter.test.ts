@@ -170,6 +170,40 @@ describe('task-center store normalization and terminal transitions', () => {
     )
   })
 
+  it('deduplicates the same backend task across restored generation ids', () => {
+    useTaskCenterStore.getState().upsertTask(
+      task({ scope: 'hot-copy', generationId: 'generation-a', taskId: 901, status: 'processing' }),
+    )
+    useTaskCenterStore.getState().upsertTask(
+      task({ scope: 'hot-copy', generationId: 'generation-b', taskId: 901, status: 'processing' }),
+    )
+
+    expect(useTaskCenterStore.getState().tasks).toHaveLength(1)
+    expect(useTaskCenterStore.getState().tasks[0]?.generationId).toBe('generation-b')
+  })
+
+  it('does not resurrect a completed backend task under a new generation id', () => {
+    useTaskCenterStore.getState().upsertTask(
+      task({
+        scope: 'hot-copy',
+        generationId: 'generation-completed',
+        taskId: 902,
+        status: 'succeeded',
+        resultAssetId: 188,
+      }),
+    )
+    useTaskCenterStore.getState().upsertTask(
+      task({ scope: 'hot-copy', generationId: 'generation-restored', taskId: 902, status: 'processing' }),
+    )
+
+    expect(useTaskCenterStore.getState().tasks).toHaveLength(1)
+    expect(useTaskCenterStore.getState().tasks[0]).toMatchObject({
+      generationId: 'generation-completed',
+      status: 'succeeded',
+      resultAssetId: 188,
+    })
+  })
+
   it('removes a provisional task after it is rebound to a real project', () => {
     useTaskCenterStore.getState().upsertTask(task({ scope: 'hot-copy', projectId: 0 }))
     const provisionalId = buildTaskCenterId('hot-copy', 7, 0, 'generation-1')
