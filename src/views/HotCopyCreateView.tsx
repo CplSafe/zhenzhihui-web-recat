@@ -20,6 +20,7 @@ import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import {
   awaitHotVideoResult,
   createHotCopyReplicateSnapshot,
+  ensureHotCopyTemplateVideoSource,
   estimateHotCopyReplicateQuote,
   getHotCopyReplicateSnapshotKey,
   isHotCopyModelUnavailableError,
@@ -3998,8 +3999,12 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       let videoAssetId = 0
       let videoUrl = ''
       if (payload.videoSource === 'library' && payload.libraryVideo) {
-        videoAssetId = payload.libraryVideo.assetId
-        videoUrl = payload.libraryVideo.src
+        if (!payload.libraryVideo.assetId) {
+          setJobPhase(context, '模板视频导入中…')
+        }
+        const preparedVideo = await ensureHotCopyTemplateVideoSource(ws, payload.libraryVideo)
+        videoAssetId = preparedVideo.assetId
+        videoUrl = preparedVideo.src
       } else if (payload.videoSource === 'local' && payload.videoFile) {
         setJobPhase(context, '爆款视频上传中…')
         videoAssetId = await uploadHotCopyAsset(ws, payload.videoFile)
@@ -4625,12 +4630,32 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         sessionEpochRef.current === capturedEpoch &&
         Number(workspaceIdRef.current || 0) === capturedWorkspaceId
       try {
-        let sourceDurationSec = boundSourceVideoDurSec
+        let preparedPayload = payload
+        if (payload.videoSource === 'library' && payload.libraryVideo) {
+          setHotCopyPhase(payload.libraryVideo.assetId ? '正在准备模板视频…' : '模板视频导入中…')
+          const preparedVideo = await ensureHotCopyTemplateVideoSource(capturedWorkspaceId, payload.libraryVideo)
+          preparedPayload = {
+            ...payload,
+            libraryVideo: preparedVideo,
+            videoPreview: preparedVideo.src,
+          }
+        }
+        if (!triggerIsCurrent()) {
+          releaseGenTriggerLock(undefined, triggerToken)
+          return
+        }
+        const preparedLibraryAssetId = Number(preparedPayload.libraryVideo?.assetId || 0) || 0
+        const canReuseBoundDuration =
+          preparedPayload.videoSource === 'library' &&
+          preparedLibraryAssetId > 0 &&
+          preparedLibraryAssetId === Number(sourceVideo.assetId || 0)
+        let sourceDurationSec = canReuseBoundDuration ? boundSourceVideoDurSec : 0
         if (!(sourceDurationSec > 0)) {
           // 入口组件切到下一步后会释放自己的 blob 预览地址；本地文件需由本流程持有独立临时 URL。
-          const ownedDurationUrl = payload.videoFile ? URL.createObjectURL(payload.videoFile) : ''
-          const durationUrl = ownedDurationUrl || String(payload.videoPreview || payload.libraryVideo?.src || '')
-          const durationAssetId = Number(payload.libraryVideo?.assetId || 0) || 0
+          const ownedDurationUrl = preparedPayload.videoFile ? URL.createObjectURL(preparedPayload.videoFile) : ''
+          const durationUrl =
+            ownedDurationUrl || String(preparedPayload.videoPreview || preparedPayload.libraryVideo?.src || '')
+          const durationAssetId = Number(preparedPayload.libraryVideo?.assetId || 0) || 0
           try {
             sourceDurationSec = await readSourceVideoDuration(durationAssetId, durationUrl)
           } finally {
@@ -4650,13 +4675,13 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           workspaceId: capturedWorkspaceId,
           modelVersion: selectedModel,
           sourceVideoDurationSec: sourceDurationSec,
-          referenceImageCount: payload.products.filter((product) => !product.isVideo).slice(0, 9).length,
-          ratio: payload.ratio || DEFAULT_RATIO,
-          durationSec: parseDurationSeconds(payload.duration) || DEFAULT_DURATION_SEC,
+          referenceImageCount: preparedPayload.products.filter((product) => !product.isVideo).slice(0, 9).length,
+          ratio: preparedPayload.ratio || DEFAULT_RATIO,
+          durationSec: parseDurationSeconds(preparedPayload.duration) || DEFAULT_DURATION_SEC,
         })
         if (
           !triggerIsCurrent() ||
-          Number(requestSnapshot.modelVersionId || 0) !== Number(payload.modelVersionId || 0)
+          Number(requestSnapshot.modelVersionId || 0) !== Number(preparedPayload.modelVersionId || 0)
         ) {
           releaseGenTriggerLock(undefined, triggerToken)
           return
@@ -4674,7 +4699,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           return
         }
         setHotCopyPhase('正在创建视频任务…')
-        startGenerate(payload, requestSnapshot, confirmedQuote, capturedEpoch, triggerToken)
+        startGenerate(preparedPayload, requestSnapshot, confirmedQuote, capturedEpoch, triggerToken)
       } catch (error: any) {
         if (isHotCopyModelUnavailableError(error)) hotCopyModelCatalog.reload()
         if (triggerIsCurrent()) {

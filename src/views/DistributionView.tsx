@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { DatePicker } from 'antd'
+import dayjs from 'dayjs'
 import { getReferralMyCode, listDistributionCommissions, listDistributionInvitees } from '@/api/business'
 import WithdrawalDialog from '@/components/distribution/WithdrawalDialog'
 import { useDistributionAccess } from '@/composables/useDistributionAccess'
@@ -40,6 +42,14 @@ interface DistributionSummaryCard {
   hidden?: boolean
 }
 
+interface DistributionOverviewDetail {
+  label: string
+  value: string
+  hint: string
+  explanation: string
+  source: string
+}
+
 type InviteeView = 'customer' | 'distributor'
 
 const EMPTY_FILTERS: DistributionFilters = {
@@ -60,6 +70,40 @@ const MAX_COMMISSION_RECORDS = 5000
 const INVITEE_FETCH_SIZE = 200
 const MAX_INVITEE_RECORDS = 5000
 const DISTRIBUTION_REFRESH_INTERVAL_MS = 3_000
+
+const ORDER_TYPE_DEFINITIONS = [
+  {
+    value: 'subscription_initial',
+    label: '首次订阅',
+    aliases: ['subscription_initial', 'initial_subscription', 'first_subscription', 'new_subscription'],
+  },
+  {
+    value: 'subscription_renewal',
+    label: '续订',
+    aliases: ['subscription_renewal', 'renewal', 'subscription_renew', 'recurring_subscription'],
+  },
+  {
+    value: 'credits_recharge',
+    label: '积分充值',
+    aliases: [
+      'credits_recharge',
+      'credit_recharge',
+      'points_recharge',
+      'point_recharge',
+      'balance_recharge',
+      'credit_purchase',
+      'points_purchase',
+      'recharge',
+      'top_up',
+      'topup',
+    ],
+  },
+  {
+    value: 'membership_subscription',
+    label: '会员订阅',
+    aliases: ['membership', 'membership_subscription', 'member_subscription', 'vip_subscription'],
+  },
+] as const
 
 function DistributionPagination({
   page,
@@ -86,6 +130,29 @@ function DistributionPagination({
         下一页
       </button>
     </nav>
+  )
+}
+
+function DistributionMetricHelp({
+  label,
+  explanation,
+  source,
+}: {
+  label: string
+  explanation: string
+  source: string
+}) {
+  return (
+    <details className="distribution-metric-help">
+      <summary aria-label={`查看“${label}”说明`} title={`查看“${label}”说明`}>
+        i
+      </summary>
+      <div className="distribution-metric-help__popover" role="note">
+        <strong>{label}是什么？</strong>
+        <p>{explanation}</p>
+        <small>数据来源：{source}</small>
+      </div>
+    </details>
   )
 }
 
@@ -214,13 +281,15 @@ function commissionRelationship(row: any): { label: string; value: '' | 'direct'
   }
 }
 
-function orderTypeLabel(value: any): string {
+function orderTypeMeta(value: any): { label: string; value: string } {
   const normalized = String(value || '')
     .trim()
     .toLowerCase()
-  if (normalized === 'subscription_initial') return '首次订阅'
-  if (normalized === 'subscription_renewal') return '续订'
-  return String(value || '---')
+  if (!normalized) return { label: '---', value: '' }
+  const definition = ORDER_TYPE_DEFINITIONS.find((item) => (item.aliases as readonly string[]).includes(normalized))
+  if (definition) return { label: definition.label, value: definition.value }
+  if (/[\u3400-\u9fff]/u.test(normalized)) return { label: String(value).trim(), value: 'other' }
+  return { label: '其他订单', value: 'other' }
 }
 
 function statusMeta(value: any): { label: string; tone: 'pending' | 'settled' | 'cancelled' | 'unknown' } {
@@ -297,21 +366,6 @@ export default function DistributionView() {
   const [copyFeedback, setCopyFeedback] = useState('')
   const inviteesRequestRef = useRef<AbortController | null>(null)
   const commissionsRequestRef = useRef<AbortController | null>(null)
-  const startDateInputRef = useRef<HTMLInputElement | null>(null)
-  const endDateInputRef = useRef<HTMLInputElement | null>(null)
-  const openDatePicker = (input: HTMLInputElement | null) => {
-    if (!input) return
-    input.focus()
-    try {
-      input.showPicker?.()
-    } catch {
-      // 某些浏览器只允许原生点击打开日期面板，保留焦点供用户直接输入。
-    }
-  }
-  const openDateRangePicker = () => {
-    const target = draftFilters.startTime && !draftFilters.endTime ? endDateInputRef.current : startDateInputRef.current
-    openDatePicker(target)
-  }
   const handleInviteeTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
     event.preventDefault()
@@ -568,7 +622,7 @@ export default function DistributionView() {
   )
 
   const overviewDetails = useMemo(() => {
-    const items: Array<{ label: string; value: string; hint: string }> = []
+    const items: DistributionOverviewDetail[] = []
     const withdrawingCentsValue = optionalMoneyCents(overview, [], ['withdrawing_cents'])
     const totalRechargedCents = optionalMoneyCents(overview, [], ['total_recharged_cents'])
     const totalConsumed = optionalNumber(overview, ['total_consumed_credits'])
@@ -581,35 +635,45 @@ export default function DistributionView() {
       items.push({
         label: '提现中',
         value: `￥${formatMoneyFromCents(withdrawingCentsValue)}`,
-        hint: '申请已提交，等待处理',
+        hint: '已申请、尚未完成打款',
+        explanation: '已提交提现申请，但平台尚未处理完成的金额；处理完成后会转入“已提现金额”。',
+        source: '系统汇总状态为“提现中”的提现申请',
       })
     }
     if (totalRechargedCents !== null) {
       items.push({
         label: '累计充值',
         value: `￥${formatMoneyFromCents(totalRechargedCents)}`,
-        hint: '仅统计积分充值订单',
+        hint: '受邀用户积分充值订单总额',
+        explanation: '您邀请关系内的用户，已成功支付的积分充值订单实付总额，不包含其他类型订单。',
+        source: '系统汇总受邀用户的积分充值订单',
       })
     }
     if (totalConsumed !== null) {
       items.push({
         label: '累计消耗积分',
         value: String(totalConsumed),
-        hint: '累计实际消耗积分',
+        hint: '受邀用户实际使用的积分',
+        explanation: '您邀请关系内的用户在使用平台功能时，已经实际扣除的积分总数。',
+        source: '系统汇总受邀用户的积分实际扣减记录',
       })
     }
     if (directRebateCents !== null || directRebateCount !== null) {
       items.push({
         label: '直接返利',
         value: `￥${formatMoneyFromCents(directRebateCents ?? 0)}`,
-        hint: `${directRebateCount ?? 0} 笔订单`,
+        hint: `直接客户贡献 · ${directRebateCount ?? 0} 笔订单`,
+        explanation: '您直接邀请的客户，其符合返利规则的订单为您产生的返利金额。',
+        source: '系统汇总直接邀请客户产生返利的订单',
       })
     }
     if (indirectRebateCents !== null || indirectRebateCount !== null) {
       items.push({
         label: '间接返利',
         value: `￥${formatMoneyFromCents(indirectRebateCents ?? 0)}`,
-        hint: `${indirectRebateCount ?? 0} 笔订单`,
+        hint: `下级分销关系贡献 · ${indirectRebateCount ?? 0} 笔订单`,
+        explanation: '由您邀请的下级分销关系所带来的客户订单，为您产生的返利金额。',
+        source: '系统汇总下级分销关系产生返利的订单',
       })
     }
     return items
@@ -692,9 +756,8 @@ export default function DistributionView() {
         const consumedAt = formatDateTime(occurredAt)
         const settledAt = formatDateTime(pick(row, ['settled_at', 'settlement_time']))
         const relationship = commissionRelationship(row)
-        const orderTypeValue = String(pick(row, ['order_type', 'payment_type'], ''))
-          .trim()
-          .toLowerCase()
+        // payment_type 表示支付方式，不能作为业务订单类型使用。
+        const orderType = orderTypeMeta(pick(row, ['order_type'], ''))
         return {
           key: String(pick(row, ['commission_id', 'id', 'order_id'], index)),
           matchId: String(
@@ -710,8 +773,8 @@ export default function DistributionView() {
           relationship: relationship.label,
           relationshipValue: relationship.value,
           mobile: String(pick(row, ['mobile', 'masked_mobile'], '')).trim(),
-          orderType: orderTypeLabel(orderTypeValue),
-          orderTypeValue,
+          orderType: orderType.label,
+          orderTypeValue: orderType.value,
           distributorName: pick(row, ['distributor_name', 'owner_name', 'referrer_name'], '---'),
           paidAmountCents: optionalMoneyCents(
             row,
@@ -729,6 +792,14 @@ export default function DistributionView() {
       }),
     [rows],
   )
+
+  const orderTypeOptions = useMemo(() => {
+    const options = new Map<string, string>()
+    normalizedCommissions.forEach((row) => {
+      if (row.orderTypeValue && row.orderType !== '---') options.set(row.orderTypeValue, row.orderType)
+    })
+    return Array.from(options, ([value, label]) => ({ value, label }))
+  }, [normalizedCommissions])
 
   const filteredCommissionRows = useMemo(() => {
     const keyword = filters.keyword.trim().toLowerCase()
@@ -1011,7 +1082,10 @@ export default function DistributionView() {
           <section className="distribution-overview-details" aria-label="分销业务概览">
             {overviewDetails.map((item) => (
               <article key={item.label}>
-                <span>{item.label}</span>
+                <div className="distribution-overview-details__label">
+                  <span>{item.label}</span>
+                  <DistributionMetricHelp label={item.label} explanation={item.explanation} source={item.source} />
+                </div>
                 <strong>{item.value}</strong>
                 <small>{item.hint}</small>
               </article>
@@ -1176,38 +1250,32 @@ export default function DistributionView() {
             aria-label="订单类型"
           >
             <option value="">全部订单类型</option>
-            <option value="subscription_initial">首次订阅</option>
-            <option value="subscription_renewal">续订</option>
+            {orderTypeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
           <div className="distribution-date" role="group" aria-label="消费时间区间">
             <span>消费时间</span>
-            <input
-              ref={startDateInputRef}
-              type="date"
-              value={draftFilters.startTime}
-              onChange={(event) => updateFilter('startTime', event.target.value)}
-              onClick={(event) => openDatePicker(event.currentTarget)}
-              max={draftFilters.endTime || undefined}
-              aria-label="消费开始日期"
+            <DatePicker.RangePicker
+              value={[
+                draftFilters.startTime ? dayjs(draftFilters.startTime) : null,
+                draftFilters.endTime ? dayjs(draftFilters.endTime) : null,
+              ]}
+              format="YYYY年MM月DD日"
+              placeholder={['开始年月日', '结束年月日']}
+              separator="—"
+              suffixIcon={<img src={calendarIcon} alt="" width={20} height={20} />}
+              allowClear
+              onChange={(dates) => {
+                setDraftFilters((current) => ({
+                  ...current,
+                  startTime: dates?.[0]?.format('YYYY-MM-DD') || '',
+                  endTime: dates?.[1]?.format('YYYY-MM-DD') || '',
+                }))
+              }}
             />
-            <i>—</i>
-            <input
-              ref={endDateInputRef}
-              type="date"
-              value={draftFilters.endTime}
-              onChange={(event) => updateFilter('endTime', event.target.value)}
-              onClick={(event) => openDatePicker(event.currentTarget)}
-              min={draftFilters.startTime || undefined}
-              aria-label="消费结束日期"
-            />
-            <button
-              type="button"
-              className="distribution-date__picker"
-              onClick={openDateRangePicker}
-              aria-label={draftFilters.startTime && !draftFilters.endTime ? '选择消费结束日期' : '选择消费开始日期'}
-            >
-              <img src={calendarIcon} alt="" width={20} height={20} />
-            </button>
           </div>
           <div className="distribution-amount" role="group" aria-label="充值金额区间">
             <span>充值金额</span>

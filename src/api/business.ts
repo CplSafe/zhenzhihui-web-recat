@@ -2690,6 +2690,21 @@ function refreshBusinessSession() {
  * 业务 API 的统一 JSON 请求层：同源 cookie、超时/取消、业务信封解包与错误归一。
  * 401 最多经单飞 refresh 重放一次，且不对 refresh 本身递归重放，防止无限鉴权循环。
  */
+export interface BusinessJsonRequestOptions extends RequestInit {
+  timeoutMs?: number
+}
+
+/**
+ * 供聚焦业务客户端复用统一 JSON 请求语义。
+ * 保留 requestJson 的同源 cookie、401 单飞续期、超时取消、响应解包与 BusinessApiError 行为。
+ */
+export async function requestBusinessJson<T = unknown>(
+  path: string,
+  options: BusinessJsonRequestOptions = {},
+): Promise<T> {
+  return requestJson(path, options)
+}
+
 async function requestJson(path, options: any = {}, _retried = false) {
   let response
   let payload

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -123,7 +123,7 @@ describe('DistributionView', () => {
   })
 
   it('renders the Figma summary and commission data returned by the backend', async () => {
-    render(<DistributionView />)
+    const { container } = render(<DistributionView />)
 
     expect(screen.getByRole('heading', { name: '邀请收益' })).toBeInTheDocument()
     expect(screen.getByText('12,560.00')).toBeInTheDocument()
@@ -147,6 +147,7 @@ describe('DistributionView', () => {
       .map((header) => header.textContent)
     expect(inviteeHeaders.indexOf('累计消耗积分')).toBe(inviteeHeaders.indexOf('累计充值') + 1)
     expect(inviteeHeaders).toContain('邀请客户数')
+    expect(container.querySelectorAll('table.distribution-table')).toHaveLength(2)
   })
 
   it('paginates invitees and commissions independently with ten rows per page', async () => {
@@ -218,9 +219,24 @@ describe('DistributionView', () => {
     expect(within(details).getByText('￥123.01')).toBeInTheDocument()
     expect(within(details).getByText('200')).toBeInTheDocument()
     expect(within(details).getByText('￥70.01')).toBeInTheDocument()
-    expect(within(details).getByText('3 笔订单')).toBeInTheDocument()
+    expect(within(details).getByText('直接客户贡献 · 3 笔订单')).toBeInTheDocument()
     expect(within(details).getByText('￥26.01')).toBeInTheDocument()
-    expect(within(details).getByText('2 笔订单')).toBeInTheDocument()
+    expect(within(details).getByText('下级分销关系贡献 · 2 笔订单')).toBeInTheDocument()
+    ;['提现中', '累计充值', '累计消耗积分', '直接返利', '间接返利'].forEach((label) => {
+      expect(within(details).getByLabelText(`查看“${label}”说明`)).toBeInTheDocument()
+    })
+
+    const rechargeHelp = within(details).getByLabelText('查看“累计充值”说明')
+    await userEvent.setup().click(rechargeHelp)
+    expect(rechargeHelp.closest('details')).toHaveAttribute('open')
+    expect(
+      within(rechargeHelp.closest('article') as HTMLElement).getByText(
+        '您邀请关系内的用户，已成功支付的积分充值订单实付总额，不包含其他类型订单。',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(rechargeHelp.closest('article') as HTMLElement).getByText('数据来源：系统汇总受邀用户的积分充值订单'),
+    ).toBeInTheDocument()
   })
 
   it('loads withdrawal methods and submits a withdrawal with an idempotency key', async () => {
@@ -332,7 +348,7 @@ describe('DistributionView', () => {
           mobile: '138****1001',
           relation_level: 1,
           kind: 'customer',
-          order_type: 'subscription_initial',
+          order_type: 'credits_recharge',
           paid_amount_cents: 120000,
           rebate_amount_cents: 6000,
           rebate_status: 'credited',
@@ -349,29 +365,41 @@ describe('DistributionView', () => {
           rebate_amount_cents: 0,
           rebate_status: 'not_credited',
         },
+        {
+          id: 3,
+          occurred_at: '2026-07-03T10:00:00+08:00',
+          nickname: '未知类型客户',
+          mobile: '13700003003',
+          relation_level: 1,
+          order_type: 'legacy_campaign_order',
+          paid_amount_cents: 5000,
+          rebate_amount_cents: 200,
+          rebate_status: 'credited',
+        },
       ],
-      total: 2,
+      total: 3,
     })
     render(<DistributionView />)
     await screen.findByText('上海云创科技有限公司')
     expect(screen.getByText('北京渠道客户')).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '积分充值' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '其他订单' })).toBeInTheDocument()
+    expect(screen.queryByText('legacy_campaign_order')).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: '所属分销商' })).not.toBeInTheDocument()
 
-    const startDateInput = screen.getByLabelText('消费开始日期')
-    const endDateInput = screen.getByLabelText('消费结束日期')
-    const showPicker = vi.fn()
-    Object.defineProperty(startDateInput, 'showPicker', { configurable: true, value: showPicker })
-    await user.click(screen.getByRole('button', { name: '选择消费开始日期' }))
-    expect(showPicker).toHaveBeenCalledTimes(1)
+    const startDateInput = screen.getByPlaceholderText('开始年月日')
+    const endDateInput = screen.getByPlaceholderText('结束年月日')
+    expect(screen.queryByPlaceholderText(/yyyy|mm|dd/i)).not.toBeInTheDocument()
 
     await user.type(screen.getByLabelText('搜索客户名称或账号ID'), '北京')
     await user.type(screen.getByLabelText('搜索手机号'), '2002')
     await user.selectOptions(screen.getByLabelText('关系分类'), 'distributor')
     await user.selectOptions(screen.getByLabelText('订单类型'), 'subscription_renewal')
-    fireEvent.change(startDateInput, { target: { value: '2026-06-30' } })
-    expect(endDateInput).toHaveAttribute('min', '2026-06-30')
-    fireEvent.change(endDateInput, { target: { value: '2026-07-02' } })
-    expect(startDateInput).toHaveAttribute('max', '2026-07-02')
+    await user.click(startDateInput)
+    await user.click(await screen.findByTitle('2026-07-01'))
+    await user.click(await screen.findByTitle('2026-07-02'))
+    expect(startDateInput).toHaveValue('2026年07月01日')
+    expect(endDateInput).toHaveValue('2026年07月02日')
     await user.selectOptions(screen.getByLabelText('收益状态'), 'pending')
     await user.click(screen.getByRole('button', { name: '查询' }))
 
