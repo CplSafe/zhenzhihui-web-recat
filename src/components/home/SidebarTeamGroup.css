@@ -138,6 +138,9 @@
   width: 12px;
   height: 12px;
 }
+.stg-current__collapsed-icon {
+  display: none;
+}
 
 /* 收起态侧栏:只留邀请图标居中,隐藏文字/加入按钮 */
 .app-sidebar.is-collapsed .stg-current {
@@ -145,6 +148,14 @@
   margin: 4px auto 8px;
   padding: 6px;
   justify-content: center;
+}
+.app-sidebar.is-collapsed .stg-current__collapsed-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.app-sidebar.is-collapsed .stg-current__collapsed-icon img {
+  display: block;
 }
 .app-sidebar.is-collapsed .stg-current__name,
 .app-sidebar.is-collapsed .stg-current__divider,

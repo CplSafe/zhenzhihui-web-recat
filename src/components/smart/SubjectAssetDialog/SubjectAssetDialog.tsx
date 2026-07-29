@@ -59,6 +59,7 @@ export default function SubjectAssetDialog({
   const [picker, setPicker] = useState<null | 'ref' | 'use'>(null) // 项目图片选择器目标
   const fileRef = useRef<HTMLInputElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
+  const pickerRef = useRef<HTMLDivElement | null>(null)
   const uploadModeRef = useRef<'version' | 'ref'>('version')
   const autoRef = useRef(false)
   const generatingRef = useRef(false)
@@ -88,6 +89,16 @@ export default function SubjectAssetDialog({
       setPicker(null)
     }
   }
+
+  // “替换/添加参考图”后把新出现的选择区滚入视野并转移焦点，避免状态已切换但用户看不到反馈。
+  useEffect(() => {
+    if (!picker) return
+    const frame = window.requestAnimationFrame(() => {
+      pickerRef.current?.scrollIntoView?.({ block: 'nearest' })
+      pickerRef.current?.focus()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [picker])
 
   // 打开时:先回显原始意图,若提供 refinePrompt 则用本地 Qwen 润成干净提示词后替换;
   // autoGen 且无版本则在(润色后的)提示词就绪后自动生成一次。
@@ -348,7 +359,13 @@ export default function SubjectAssetDialog({
 
           {/* 项目图片选择器(添加参考图 / 替换) */}
           {picker && (
-            <div className={styles.sadPicker}>
+            <div
+              ref={pickerRef}
+              className={styles.sadPicker}
+              role="region"
+              aria-label={picker === 'ref' ? '选择参考图' : '选择替换图片'}
+              tabIndex={-1}
+            >
               <div className={styles.sadPickerHead}>
                 {picker === 'ref'
                   ? `选择参考图(可多选${refImages.length ? `,已选${refImages.length}张` : ''})`

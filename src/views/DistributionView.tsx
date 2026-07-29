@@ -3,7 +3,12 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DatePicker } from 'antd'
 import dayjs from 'dayjs'
-import { getReferralMyCode, listDistributionCommissions, listDistributionInvitees } from '@/api/business'
+import {
+  getDistributionOverview,
+  getReferralMyCode,
+  listDistributionCommissions,
+  listDistributionInvitees,
+} from '@/api/business'
 import WithdrawalDialog from '@/components/distribution/WithdrawalDialog'
 import { useDistributionAccess } from '@/composables/useDistributionAccess'
 import arrowRightIcon from '@/assets/distribution/arrow-right.svg?no-inline'
@@ -360,12 +365,17 @@ export default function DistributionView() {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [channelInviteOpen, setChannelInviteOpen] = useState(false)
   const [channelCopyFeedback, setChannelCopyFeedback] = useState('')
-  const [inviteCode, setInviteCode] = useState('')
-  const [inviteLoading, setInviteLoading] = useState(false)
-  const [inviteError, setInviteError] = useState('')
+  const [customerInviteCode, setCustomerInviteCode] = useState('')
+  const [customerInviteLoading, setCustomerInviteLoading] = useState(false)
+  const [customerInviteError, setCustomerInviteError] = useState('')
+  const [channelInviteCode, setChannelInviteCode] = useState('')
+  const [channelInviteLoading, setChannelInviteLoading] = useState(false)
+  const [channelInviteError, setChannelInviteError] = useState('')
   const [copyFeedback, setCopyFeedback] = useState('')
   const inviteesRequestRef = useRef<AbortController | null>(null)
   const commissionsRequestRef = useRef<AbortController | null>(null)
+  const customerInviteRequestRef = useRef(0)
+  const channelInviteRequestRef = useRef(0)
   const handleInviteeTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
     event.preventDefault()
@@ -380,7 +390,11 @@ export default function DistributionView() {
   }
   useEffect(() => {
     document.documentElement.classList.add('distribution-document-scroll')
-    return () => document.documentElement.classList.remove('distribution-document-scroll')
+    return () => {
+      document.documentElement.classList.remove('distribution-document-scroll')
+      customerInviteRequestRef.current += 1
+      channelInviteRequestRef.current += 1
+    }
   }, [])
 
   const overview = useMemo(() => unwrap(rawOverview) || {}, [rawOverview])
@@ -397,18 +411,9 @@ export default function DistributionView() {
     'total_withdrawn_cents',
     'total_withdrawn_amount_cents',
   ])
-  const overviewInviteCode = String(pick(overview, ['code', 'invite_code', 'inviteCode', 'referral_code'], '')).trim()
-  const distributorCode = String(
-    pick(
-      overview,
-      ['distributor_code', 'distributorCode', 'channel_invite_code', 'channelInviteCode'],
-      pick(overview?.distributor, ['code', 'invite_code', 'inviteCode'], ''),
-    ),
-  ).trim()
-  const inviteUrl = inviteCode ? `${window.location.origin}/login?invite_code=${encodeURIComponent(inviteCode)}` : ''
-  // 部分后端版本没有单独返回 distributor_code，渠道关系由 invite_type=channel 区分；
-  // 因此优先使用渠道专属码，缺失时兼容当前营销人员的普通推广码。
-  const channelInviteCode = distributorCode || overviewInviteCode || inviteCode
+  const inviteUrl = customerInviteCode
+    ? `${window.location.origin}/login?invite_code=${encodeURIComponent(customerInviteCode)}`
+    : ''
   const channelInviteUrl = channelInviteCode
     ? `${window.location.origin}/login?invite_code=${encodeURIComponent(channelInviteCode)}&invite_type=channel`
     : ''
@@ -922,30 +927,67 @@ export default function DistributionView() {
   }
 
   const exportRows = () => {
-    const header = [
-      '消费时间',
-      '客户名称',
-      '手机号',
-      '关系',
-      '订单类型',
-      '所属分销商',
-      '充值金额',
-      '我的收益',
-      '收益状态',
-      '结算时间',
+    type CommissionRow = (typeof filteredCommissionRows)[number]
+    const exportColumns: Array<{
+      visible: boolean
+      header: string
+      value: (row: CommissionRow) => string
+    }> = [
+      {
+        visible: commissionFields.consumedAt,
+        header: '消费时间',
+        value: (row) => `${row.consumedAt.date} ${row.consumedAt.time}`.trim(),
+      },
+      {
+        visible: commissionFields.customerName,
+        header: '客户名称',
+        value: (row) => row.customerName,
+      },
+      {
+        visible: commissionFields.mobile,
+        header: '手机号',
+        value: (row) => row.mobile || '---',
+      },
+      {
+        visible: commissionFields.relationship,
+        header: '关系',
+        value: (row) => row.relationship,
+      },
+      {
+        visible: commissionFields.orderType,
+        header: '订单类型',
+        value: (row) => row.orderType,
+      },
+      {
+        visible: commissionFields.distributorName,
+        header: '所属分销商',
+        value: (row) => row.distributorName,
+      },
+      {
+        visible: commissionFields.paidAmount,
+        header: '充值金额',
+        value: (row) => (row.paidAmountCents === null ? '暂无数据' : formatMoneyFromCents(row.paidAmountCents)),
+      },
+      {
+        visible: commissionFields.commissionAmount,
+        header: '我的收益',
+        value: (row) =>
+          row.commissionAmountCents === null ? '暂无数据' : formatMoneyFromCents(row.commissionAmountCents),
+      },
+      {
+        visible: commissionFields.status,
+        header: '收益状态',
+        value: (row) => (row.status.tone === 'unknown' ? '---' : row.status.label),
+      },
+      {
+        visible: commissionFields.settledAt,
+        header: '结算时间',
+        value: (row) => `${row.settledAt.date} ${row.settledAt.time}`.trim(),
+      },
     ]
-    const body = filteredCommissionRows.map((row) => [
-      `${row.consumedAt.date} ${row.consumedAt.time}`.trim(),
-      row.customerName,
-      row.mobile,
-      row.relationship,
-      row.orderType,
-      row.distributorName,
-      row.paidAmountCents === null ? '暂无数据' : formatMoneyFromCents(row.paidAmountCents),
-      row.commissionAmountCents === null ? '暂无数据' : formatMoneyFromCents(row.commissionAmountCents),
-      row.status.label,
-      `${row.settledAt.date} ${row.settledAt.time}`.trim(),
-    ])
+    const visibleColumns = exportColumns.filter((column) => column.visible)
+    const header = visibleColumns.map((column) => column.header)
+    const body = filteredCommissionRows.map((row) => visibleColumns.map((column) => column.value(row)))
     const csv = [header, ...body].map((line) => line.map(csvCell).join(',')).join('\r\n')
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }))
     const link = document.createElement('a')
@@ -955,30 +997,51 @@ export default function DistributionView() {
     URL.revokeObjectURL(url)
   }
 
-  const loadInviteCode = useCallback(() => {
-    if (overviewInviteCode) {
-      setInviteCode(overviewInviteCode)
-      setInviteError('')
-      return
+  const loadCustomerInviteCode = useCallback(async () => {
+    const requestId = ++customerInviteRequestRef.current
+    setCustomerInviteLoading(true)
+    setCustomerInviteError('')
+    setCustomerInviteCode('')
+    try {
+      const code = await getReferralMyCode()
+      if (!code) throw new Error('后端未返回客户邀请码')
+      if (requestId === customerInviteRequestRef.current) setCustomerInviteCode(code)
+    } catch (error: any) {
+      if (requestId !== customerInviteRequestRef.current) return
+      setCustomerInviteError(error?.message || '客户邀请码加载失败，请稍后重试')
+    } finally {
+      if (requestId === customerInviteRequestRef.current) setCustomerInviteLoading(false)
     }
-    setInviteLoading(true)
-    setInviteError('')
-    void getReferralMyCode()
-      .then((code) => {
-        if (!code) throw new Error('后端未返回专属邀请码')
-        setInviteCode(code)
-      })
-      .catch((error: any) => {
-        setInviteCode('')
-        setInviteError(error?.message || '邀请码加载失败，请稍后重试')
-      })
-      .finally(() => setInviteLoading(false))
-  }, [overviewInviteCode])
+  }, [])
+
+  const loadChannelInviteCode = useCallback(async () => {
+    const requestId = ++channelInviteRequestRef.current
+    setChannelInviteLoading(true)
+    setChannelInviteError('')
+    setChannelInviteCode('')
+    try {
+      const channelOverview = unwrap(await getDistributionOverview()) || {}
+      const code = String(
+        pick(
+          channelOverview,
+          ['distributor_code', 'distributorCode', 'channel_invite_code', 'channelInviteCode'],
+          pick(channelOverview?.distributor, ['code', 'invite_code', 'inviteCode'], ''),
+        ),
+      ).trim()
+      if (!code) throw new Error('后端未返回渠道邀请码')
+      if (requestId === channelInviteRequestRef.current) setChannelInviteCode(code)
+    } catch (error: any) {
+      if (requestId !== channelInviteRequestRef.current) return
+      setChannelInviteError(error?.message || '渠道邀请码加载失败，请稍后重试')
+    } finally {
+      if (requestId === channelInviteRequestRef.current) setChannelInviteLoading(false)
+    }
+  }, [])
 
   const openInvite = () => {
     setInviteOpen(true)
     setCopyFeedback('')
-    if (!inviteCode && !inviteLoading) loadInviteCode()
+    void loadCustomerInviteCode()
   }
 
   const copyInviteValue = async (value: string, label: string) => {
@@ -994,7 +1057,7 @@ export default function DistributionView() {
   const openChannelInvite = () => {
     setChannelCopyFeedback('')
     setChannelInviteOpen(true)
-    if (!channelInviteCode && !inviteLoading) loadInviteCode()
+    void loadChannelInviteCode()
   }
 
   const copyChannelInviteLink = async () => {
@@ -1446,16 +1509,16 @@ export default function DistributionView() {
               </button>
             </header>
 
-            {inviteLoading ? <div className="distribution-invite-state">正在获取专属邀请码…</div> : null}
-            {!inviteLoading && inviteError ? (
+            {customerInviteLoading ? <div className="distribution-invite-state">正在获取专属邀请码…</div> : null}
+            {!customerInviteLoading && customerInviteError ? (
               <div className="distribution-invite-state is-error">
-                <span>{inviteError}</span>
-                <button type="button" onClick={loadInviteCode}>
+                <span>{customerInviteError}</span>
+                <button type="button" onClick={() => void loadCustomerInviteCode()}>
                   重新获取
                 </button>
               </div>
             ) : null}
-            {!inviteLoading && !inviteError && inviteCode ? (
+            {!customerInviteLoading && !customerInviteError && customerInviteCode ? (
               <>
                 <div className="distribution-invite-field">
                   <label>专属邀请链接</label>
@@ -1508,18 +1571,16 @@ export default function DistributionView() {
               </button>
             </header>
 
-            {!channelInviteUrl && inviteLoading ? (
-              <div className="distribution-invite-state">正在获取渠道邀请码…</div>
-            ) : null}
-            {!channelInviteUrl && !inviteLoading ? (
+            {channelInviteLoading ? <div className="distribution-invite-state">正在获取渠道邀请码…</div> : null}
+            {!channelInviteLoading && channelInviteError ? (
               <div className="distribution-invite-state is-error">
-                <span>{inviteError || '未获取到渠道邀请码，请稍后重试'}</span>
-                <button type="button" onClick={loadInviteCode}>
+                <span>{channelInviteError}</span>
+                <button type="button" onClick={() => void loadChannelInviteCode()}>
                   重新获取
                 </button>
               </div>
             ) : null}
-            {channelInviteUrl ? (
+            {!channelInviteLoading && !channelInviteError && channelInviteUrl ? (
               <div className="distribution-channel-link-panel">
                 <h3>分享邀请链接</h3>
                 <p>复制链接发送给对方，对方打开后即可进入渠道邀请注册流程。</p>

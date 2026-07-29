@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   applyOverrides: vi.fn((user: any) => user),
+  bustAvatarCache: vi.fn((url: string) => `${url}?_profile_v=1`),
   getCurrentUser: vi.fn(),
   saveAvatarOverride: vi.fn(),
   setState: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock('@/stores/workspaceSession', () => ({
 }))
 vi.mock('@/utils/profileOverrides', () => ({
   applyUserProfileOverrides: mocks.applyOverrides,
+  bustUserAvatarCache: mocks.bustAvatarCache,
   saveUserAvatarOverride: mocks.saveAvatarOverride,
 }))
 

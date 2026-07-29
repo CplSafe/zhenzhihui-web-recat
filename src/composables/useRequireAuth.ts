@@ -16,10 +16,16 @@ export function useRequireAuth() {
 
   // 返回稳定的动作守卫，调用方可在登录成功分支内直接执行原操作。
   const requireAuth = useCallback(
-    async (onAuthenticated?: () => void): Promise<boolean> => {
+    async (onAuthenticated?: () => void, options: { prompt?: boolean; returnTo?: string } = {}): Promise<boolean> => {
       if (isAuthenticated) {
         onAuthenticated?.()
         return true
+      }
+
+      if (options.prompt === false) {
+        if (options.returnTo) navigate('/login', { state: { returnTo: options.returnTo } })
+        else navigate('/login')
+        return false
       }
 
       const result = await requestConfirm('登录后即可使用此功能', {
@@ -29,7 +35,8 @@ export function useRequireAuth() {
       })
 
       if (result) {
-        navigate('/login')
+        if (options.returnTo) navigate('/login', { state: { returnTo: options.returnTo } })
+        else navigate('/login')
       }
 
       return false

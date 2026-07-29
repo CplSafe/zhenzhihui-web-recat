@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   logout: vi.fn(),
   requestConfirm: vi.fn(),
+  requireAuth: vi.fn(),
+  allowProtectedAction: true,
   state: { isLoggingOut: false },
 }))
 
@@ -20,6 +22,9 @@ vi.mock('@/composables/useLogout', () => ({
 vi.mock('@/composables/useToast', () => ({
   useConfirmDialog: () => ({ requestConfirm: mocks.requestConfirm }),
 }))
+vi.mock('@/composables/useRequireAuth', () => ({
+  useRequireAuth: () => mocks.requireAuth,
+}))
 
 import SettingsMenu from '@/components/home/SettingsMenu'
 
@@ -27,8 +32,27 @@ describe('SettingsMenu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.state.isLoggingOut = false
+    mocks.allowProtectedAction = true
+    mocks.requireAuth.mockImplementation(async (action: () => void) => {
+      if (mocks.allowProtectedAction) action()
+      return mocks.allowProtectedAction
+    })
     mocks.logout.mockResolvedValue(undefined)
     mocks.requestConfirm.mockResolvedValue(false)
+  })
+
+  it('redirect guard prevents guests from opening the settings menu', async () => {
+    const user = userEvent.setup()
+    mocks.allowProtectedAction = false
+    render(<SettingsMenu />)
+
+    await user.click(screen.getByRole('button', { name: '设置' }))
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(mocks.requireAuth).toHaveBeenCalledWith(expect.any(Function), {
+      prompt: false,
+      returnTo: expect.any(String),
+    })
   })
 
   it('opens an accessible menu, focuses its first item, and closes with Escape', async () => {

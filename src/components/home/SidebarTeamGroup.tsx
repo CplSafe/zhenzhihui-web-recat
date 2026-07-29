@@ -18,6 +18,7 @@ import {
 import { openTeamManage, openJoinTeam } from '@/stores/ui'
 import inviteIcon from '@/assets/logo/image copy 3.png'
 import joinSpaceIcon from '@/assets/sidebar/join.svg'
+import workspaceIcon from '@/assets/sidebar/projects.svg'
 import './SidebarTeamGroup.css'
 
 /** 根据空间类型区分团队空间与个人空间，决定是否显示邀请入口。 */
@@ -94,6 +95,11 @@ export default function SidebarTeamGroup({ collapsed = false }: SidebarTeamGroup
           }
         }}
       >
+        {collapsed && !isTeam && (
+          <span className="stg-current__collapsed-icon" aria-hidden="true">
+            <img src={workspaceIcon} alt="" width={16} height={16} />
+          </span>
+        )}
         <span className="stg-current__name" title={collapsed ? wsName : undefined}>
           {wsName}
         </span>

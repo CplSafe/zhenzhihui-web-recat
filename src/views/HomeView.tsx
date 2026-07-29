@@ -313,6 +313,23 @@ const TABS = [
 ] as const
 
 const HOME_HISTORY_LIMIT = 20
+const HOME_TEMPLATE_LIMIT = 20
+
+/** 按标题、风格以及后端配置的分类/标签/关键词过滤首页模板。 */
+export function filterHomeTemplates(items: TemplateItem[], keyword: string): TemplateItem[] {
+  const normalizedKeyword = keyword.trim().toLocaleLowerCase()
+  if (!normalizedKeyword) return items
+  return items.filter((template) =>
+    [template.title, template.style, ...(template.searchTerms || [])]
+      .filter(Boolean)
+      .some((value) => String(value).toLocaleLowerCase().includes(normalizedKeyword)),
+  )
+}
+
+/** 首页只承担模板预览职责，完整目录由模板库页面承载。 */
+export function limitHomeTemplates(items: TemplateItem[]): TemplateItem[] {
+  return items.slice(0, HOME_TEMPLATE_LIMIT)
+}
 
 /* 历史视频卡片：素材市场风格（autoPlay 静音循环缩略图）+ URL 过期自动刷新 */
 function HistoryVideoCard({
@@ -698,10 +715,9 @@ export default function HomeView() {
 
   // 按关键词过滤模板(比例筛选 chips 已按设计稿移除)
   const filteredTemplates = useMemo(() => {
-    let list = templateItems
-    if (keywordTrim) list = list.filter((t) => t.title.includes(keywordTrim))
-    return list
+    return filterHomeTemplates(templateItems, keywordTrim)
   }, [templateItems, keywordTrim])
+  const visibleTemplates = limitHomeTemplates(filteredTemplates)
 
   // 切到「历史项目」标签且有工作空间时拉取真实项目（首次/切空间时）。
   // 游客模式不请求数据（API 会 401）
@@ -1031,15 +1047,15 @@ export default function HomeView() {
                     <button
                       type="button"
                       className="home__proj home__proj--more"
-                      onClick={() => navigate('/resources')}
-                      aria-label="查看更多素材，前往我的素材"
+                      onClick={() => navigate('/projects')}
+                      aria-label="查看更多历史项目，前往项目管理"
                     >
                       <span className="home__proj-thumb home__proj-thumb--more">
                         <span className="home__proj-more-icon" aria-hidden="true">
                           →
                         </span>
-                        <span className="home__proj-more-text">查看更多素材</span>
-                        <span className="home__proj-more-hint">前往我的素材</span>
+                        <span className="home__proj-more-text">查看更多项目</span>
+                        <span className="home__proj-more-hint">前往项目管理</span>
                       </span>
                     </button>
                   </div>
@@ -1070,7 +1086,7 @@ export default function HomeView() {
               ) : (
                 <>
                   <div className="home__masonry">
-                    {filteredTemplates.map((tpl, tplIdx) => (
+                    {visibleTemplates.map((tpl, tplIdx) => (
                       <TemplateVideoCard
                         key={`${tpl.id}-${tplIdx}`}
                         tpl={tpl}

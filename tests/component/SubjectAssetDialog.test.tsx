@@ -183,6 +183,7 @@ describe('SubjectAssetDialog', () => {
     await user.click(screen.getByRole('button', { name: '版本 2' }))
     expect(props.onSelect).toHaveBeenCalledWith('/v2.png')
     await user.click(screen.getByRole('button', { name: '替换' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: '选择替换图片' })).toHaveFocus())
     await user.click(screen.getByRole('button', { name: '选择我上传的图 1' }))
     expect(props.onSelect).toHaveBeenLastCalledWith('/replacement.png')
     expect(props.onGenerate).not.toHaveBeenCalled()
