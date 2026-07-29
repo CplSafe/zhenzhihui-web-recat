@@ -59,6 +59,15 @@ const VALID_REPLICATE_INPUTS = {
   referenceImageCount: 1,
 } as const
 
+function createVideoResponse(): Response {
+  const blob = new Blob(['video'], { type: 'video/mp4' })
+  return {
+    ok: true,
+    status: 200,
+    blob: vi.fn().mockResolvedValue(blob),
+  } as unknown as Response
+}
+
 describe('template video import', () => {
   beforeEach(() => {
     mocks.getAssetDownloadUrl.mockReset()
@@ -67,13 +76,7 @@ describe('template video import', () => {
   })
 
   it('downloads a URL-only template and uploads it as a workspace video asset', async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(new Blob(['video'], { type: 'video/mp4' }), {
-          status: 200,
-          headers: { 'Content-Type': 'video/mp4' },
-        }),
-    )
+    const fetchMock = vi.fn(async () => createVideoResponse())
     vi.stubGlobal('fetch', fetchMock)
     mocks.uploadAssetFile.mockResolvedValue({ asset: { id: 731 } })
 
@@ -93,13 +96,7 @@ describe('template video import', () => {
   })
 
   it('reads a built-in OSS template through the fixed same-origin proxy', async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(new Blob(['video'], { type: 'video/mp4' }), {
-          status: 200,
-          headers: { 'Content-Type': 'video/mp4' },
-        }),
-    )
+    const fetchMock = vi.fn(async () => createVideoResponse())
     vi.stubGlobal('fetch', fetchMock)
     mocks.uploadAssetFile.mockResolvedValue({ asset: { id: 914 } })
 
@@ -123,13 +120,7 @@ describe('template video import', () => {
   })
 
   it('returns a stable workspace URL before the template enters duration and quote checks', async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(new Blob(['video'], { type: 'video/mp4' }), {
-          status: 200,
-          headers: { 'Content-Type': 'video/mp4' },
-        }),
-    )
+    const fetchMock = vi.fn(async () => createVideoResponse())
     vi.stubGlobal('fetch', fetchMock)
     mocks.uploadAssetFile.mockResolvedValue({ asset: { id: 845 } })
     mocks.getAssetDownloadUrl.mockResolvedValue('/api/v1/assets/845/download?workspace_id=9')
