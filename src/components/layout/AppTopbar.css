@@ -168,7 +168,9 @@
 }
 .apptop__user-name {
   font-size: 13px;
+  line-height: 1.35;
   color: #444d5b;
+  padding-bottom: 1px;
 }
 .apptop__caret {
   color: #a0a7b4;

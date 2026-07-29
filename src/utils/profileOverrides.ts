@@ -52,10 +52,37 @@ export function saveUserAvatarOverride(user: any, avatar: string) {
     writeProfileOverride(uid, rest)
     return
   }
-  writeProfileOverride(uid, { ...current, avatar: nextAvatar })
+  writeProfileOverride(uid, { ...current, avatar: nextAvatar, avatarUpdatedAt: Date.now() })
 }
 
-/** 在服务端头像为空时把本地覆盖应用到用户对象。 */
+/** 去除仅用于刷新浏览器图片缓存的版本参数，便于比较是否仍是同一个头像资源。 */
+function avatarIdentity(value: string): string {
+  const raw = String(value || '').trim()
+  if (!raw || /^data:|^blob:/i.test(raw)) return raw
+  try {
+    const url = new URL(raw, window.location.origin)
+    url.searchParams.delete('_profile_v')
+    return `${url.origin}${url.pathname}${url.search}`
+  } catch {
+    return raw.replace(/([?&])_profile_v=\d+(&|$)/, '$1').replace(/[?&]$/, '')
+  }
+}
+
+/** 给非签名头像地址追加版本参数，避免保存成功后浏览器继续显示旧缓存。 */
+export function bustUserAvatarCache(avatar: string): string {
+  const raw = String(avatar || '').trim()
+  if (!raw || /^data:|^blob:/i.test(raw) || /X-Amz-(?:Signature|Credential)/i.test(raw)) return raw
+  try {
+    const url = new URL(raw, window.location.origin)
+    url.searchParams.set('_profile_v', String(Date.now()))
+    if (/^https?:/i.test(raw)) return url.toString()
+    return `${url.pathname}${url.search}${url.hash}`
+  } catch {
+    return raw
+  }
+}
+
+/** 在服务端未返回新头像或仍返回同一资源地址时应用带缓存版本的本地覆盖。 */
 export function applyUserProfileOverrides(user: any): any {
   if (!user || typeof user !== 'object') return user
   const uid = pickUserProfileId(user)
@@ -63,6 +90,7 @@ export function applyUserProfileOverrides(user: any): any {
   const override = readProfileOverride(uid)
   const cachedAvatar = String(override?.avatar || '').trim()
   const serverAvatar = String(user?.avatar || user?.avatar_url || user?.avatarUrl || '').trim()
-  if (!cachedAvatar || serverAvatar) return user
-  return { ...user, avatar: cachedAvatar }
+  if (!cachedAvatar) return user
+  if (serverAvatar && avatarIdentity(serverAvatar) !== avatarIdentity(cachedAvatar)) return user
+  return { ...user, avatar: cachedAvatar, avatar_url: cachedAvatar, avatarUrl: cachedAvatar }
 }

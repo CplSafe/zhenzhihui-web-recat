@@ -59,6 +59,19 @@ describe('useRequireAuth', () => {
     expect(mocks.navigate).toHaveBeenCalledWith('/login')
   })
 
+  it('can redirect a guest immediately and preserve the return path', async () => {
+    const action = vi.fn()
+    const { result } = renderHook(() => useRequireAuth())
+
+    await expect(result.current(action, { prompt: false, returnTo: '/home?tab=history' })).resolves.toBe(false)
+
+    expect(mocks.requestConfirm).not.toHaveBeenCalled()
+    expect(action).not.toHaveBeenCalled()
+    expect(mocks.navigate).toHaveBeenCalledWith('/login', {
+      state: { returnTo: '/home?tab=history' },
+    })
+  })
+
   it('uses the latest authentication state after a session update', async () => {
     mocks.requestConfirm.mockResolvedValue(false)
     const action = vi.fn()

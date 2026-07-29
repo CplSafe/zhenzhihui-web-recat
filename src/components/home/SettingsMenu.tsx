@@ -10,6 +10,7 @@ import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import PersonalCenterModal from '@/components/layout/PersonalCenterModal'
 import { useLogout } from '@/composables/useLogout'
 import { useConfirmDialog } from '@/composables/useToast'
+import { useRequireAuth } from '@/composables/useRequireAuth'
 import settingsIcon from '@/assets/sidebar/settings.svg'
 import './SettingsMenu.css'
 
@@ -44,17 +45,23 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
   const logoutConfirmRef = useRef(false)
   const { logout, isLoggingOut } = useLogout()
   const { requestConfirm } = useConfirmDialog()
+  const requireAuth = useRequireAuth()
 
   // 菜单向上展开(设置项在侧栏底部):菜单底边对齐按钮顶边上方 8px。用 portal 避免被侧栏裁切。
   const toggle = () => {
-    setOpen((v) => {
-      const next = !v
-      if (next && btnRef.current) {
-        const r = btnRef.current.getBoundingClientRect()
-        setPos({ left: r.left, top: r.top - 8 })
-      }
-      return next
-    })
+    void requireAuth(
+      () => {
+        setOpen((v) => {
+          const next = !v
+          if (next && btnRef.current) {
+            const r = btnRef.current.getBoundingClientRect()
+            setPos({ left: r.left, top: r.top - 8 })
+          }
+          return next
+        })
+      },
+      { prompt: false, returnTo: window.location.pathname + window.location.search },
+    )
   }
 
   useEffect(() => {

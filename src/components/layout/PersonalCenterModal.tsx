@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom'
 import { updateMyProfile, getCurrentUser, uploadMyAvatar } from '@/api/auth'
 import { useCurrentUser, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
-import { applyUserProfileOverrides, saveUserAvatarOverride } from '@/utils/profileOverrides'
+import { applyUserProfileOverrides, bustUserAvatarCache, saveUserAvatarOverride } from '@/utils/profileOverrides'
 import UserAvatar from '@/components/common/UserAvatar'
 import './PersonalCenterModal.css'
 
@@ -172,9 +172,9 @@ export default function PersonalCenterModal({ onClose }: { onClose: () => void }
       if (avatarFile) {
         const uploaded: any = await uploadMyAvatar(avatarFile)
         if (!aliveRef.current || requestId !== saveRequestRef.current || requestScope !== userScopeRef.current) return
-        nextAvatarUrl = String(
-          uploaded?.avatar_url || uploaded?.avatarUrl || uploaded?.avatar || uploaded?.url || avatarData || '',
-        ).trim()
+        nextAvatarUrl = bustUserAvatarCache(
+          String(uploaded?.avatar_url || uploaded?.avatarUrl || uploaded?.avatar || uploaded?.url || avatarData || ''),
+        )
       }
       const payload: Record<string, any> = {}
       if (nameChanged) {

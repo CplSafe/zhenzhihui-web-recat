@@ -128,7 +128,7 @@ export default function LoginView() {
   function normalizeMobile(value: string) {
     return value.replace(/\s/g, '')
   }
-  // 短信验证码只能发送到中国大陆手机号；密码登录仍允许后端支持的账号标识。
+  // 当前短信和密码登录接口都以中国大陆手机号作为账号标识。
   // 与 ChangePasswordModal / AuthActionModal 现有规则保持一致。
   function isValidSmsMobile(value: string) {
     return /^1\d{10}$/.test(value)
@@ -341,7 +341,7 @@ export default function LoginView() {
     if (!mobile) {
       nextErrors.phone = '请输入手机号'
       hasError = true
-    } else if (loginMode === 'sms' && !isValidSmsMobile(mobile)) {
+    } else if (!isValidSmsMobile(mobile)) {
       nextErrors.phone = '请输入正确的手机号'
       hasError = true
     }
@@ -618,11 +618,13 @@ export default function LoginView() {
               <input
                 type="tel"
                 inputMode="numeric"
-                placeholder="账号 / 手机号"
-                aria-label="账号或手机号"
+                autoComplete="tel"
+                maxLength={11}
+                placeholder="手机号"
+                aria-label="手机号"
                 value={phone}
                 onChange={(e) => {
-                  setPhone(e.target.value)
+                  setPhone(e.target.value.replace(/\D/g, '').slice(0, 11))
                   clearLoginError('phone')
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}

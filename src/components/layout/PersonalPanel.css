@@ -114,12 +114,14 @@
 }
 .ppl__name {
   font-size: 17px;
+  line-height: 1.35;
   font-weight: 700;
   color: #1d2130;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  padding-bottom: 1px;
 }
 .ppl__role {
   flex: 0 0 auto;

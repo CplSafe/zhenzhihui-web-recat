@@ -28,6 +28,8 @@ export interface TemplateItem {
   duration?: number
   /** 视频风格（写实/动漫 等） */
   style: string
+  /** 后端配置的分类、标签、关键词和描述，供首页模板检索。 */
+  searchTerms?: string[]
   /** 使用/引用次数 */
   useCount: number
   /** 创建时间 */
@@ -75,6 +77,16 @@ function pickFirstText(...values: any[]): string {
     if (s) return s
   }
   return ''
+}
+
+/** 将后端可能返回的字符串、数组或逗号分隔字段归一化为检索词。 */
+function collectSearchTerms(...values: any[]): string[] {
+  const terms = values.flatMap((value) => {
+    if (Array.isArray(value)) return value
+    if (value && typeof value === 'object') return Object.values(value)
+    return String(value ?? '').split(/[,，;；|]/)
+  })
+  return [...new Set(terms.map((value) => String(value ?? '').trim()).filter(Boolean))]
 }
 
 /** 将后端字段转为数值，非法值归零。 */
@@ -282,6 +294,18 @@ function normalizeProject(raw: any, index: number): TemplateItem {
   }
 
   const style = extractStyleFromDraft(raw)
+  const searchTerms = collectSearchTerms(
+    style,
+    raw?.category,
+    raw?.category_name,
+    raw?.module_name,
+    raw?.moduleName,
+    raw?.keywords,
+    raw?.keyword,
+    raw?.tags,
+    raw?.description,
+    raw?.summary,
+  )
 
   return {
     id: toNumber(raw?.id || raw?.project_id || raw?.projectId),
@@ -295,6 +319,7 @@ function normalizeProject(raw: any, index: number): TemplateItem {
     videoAssetId: videoAssetId || undefined,
     duration: toNumber(raw?.duration || raw?.video_duration) || undefined,
     style,
+    searchTerms,
     useCount: toNumber(raw?.useCount || raw?.use_count || raw?.usage || raw?.used_count),
     createdAt: pickFirstText(raw?.createdAt, raw?.created_at, raw?.createTime) || new Date().toISOString(),
     grad: pickGrad(index),
@@ -343,6 +368,7 @@ export async function listBackendTemplates(): Promise<TemplateItem[]> {
       const ratio = normalizeRatio(String(t?.ratio || '').trim() || (w && h ? `${w} / ${h}` : '9 / 16'))
       const thumbnailUrl = String(t?.thumbnail_url || '').trim()
       const videoAssetId = toNumber(t?.video_asset_id ?? t?.videoAssetId)
+      const style = String(t?.style || '').trim()
       return {
         id: Number(t?.id || 0),
         title: String(t?.title || '').trim(),
@@ -352,7 +378,19 @@ export async function listBackendTemplates(): Promise<TemplateItem[]> {
         ratio,
         width: w || undefined,
         height: h || undefined,
-        style: String(t?.style || '').trim(),
+        style,
+        searchTerms: collectSearchTerms(
+          style,
+          t?.category,
+          t?.category_name,
+          t?.module_name,
+          t?.moduleName,
+          t?.keywords,
+          t?.keyword,
+          t?.tags,
+          t?.description,
+          t?.summary,
+        ),
         useCount: 0,
         createdAt: String(t?.created_at || ''),
         grad: pickGrad(i),

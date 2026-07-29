@@ -52,6 +52,7 @@ describe('backend template catalog', () => {
               video_asset_id: 88,
               ratio: '9:16',
               style: '写实',
+              keywords: ['食品', '餐饮广告'],
               created_at: '2026-07-21T00:00:00Z',
             },
             {
@@ -80,6 +81,7 @@ describe('backend template catalog', () => {
       videoAssetId: 88,
       ratio: '9 / 16',
       style: '写实',
+      searchTerms: ['写实', '食品', '餐饮广告'],
     })
     expect(result[1]).toMatchObject({
       thumbnailUrl: '/covers/2.jpg',

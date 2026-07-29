@@ -26,6 +26,7 @@ import { setHotCopyDraftUserScope } from '../utils/hotCopyDraft'
 import { setSmartEntryDraftScope } from '../utils/smartEntryDraft'
 import { setSmartDraftUserScope, setSmartDraftWorkspaceScope } from '../utils/smartDraft'
 import { setVideoGenOwnerScope } from '../utils/videoGenRegistry'
+import { applyUserProfileOverrides } from '../utils/profileOverrides'
 import {
   buildModelPlanCandidatesFromBillingPlans,
   buildModelPlanCandidatesFromSession,
@@ -391,6 +392,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       }
       const normalizedSession = {
         ...session,
+        user: applyUserProfileOverrides(session.user),
         workspaces: deriveSessionWorkspaces(session),
       }
       set({

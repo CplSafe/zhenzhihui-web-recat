@@ -95,7 +95,7 @@ async function fillPasswordLogin(
   { mobile = '17633125265', password = 'Secret-987!' } = {},
 ) {
   await selectPasswordLogin(user)
-  await user.type(screen.getByRole('textbox', { name: '账号或手机号' }), mobile)
+  await user.type(screen.getByRole('textbox', { name: '手机号' }), mobile)
   await user.type(screen.getByLabelText('密码'), password)
 }
 
@@ -122,7 +122,7 @@ describe('LoginView behavior', () => {
     await user.click(screen.getByRole('button', { name: '登录' }))
     expect(screen.getByText('请输入手机号')).toBeInTheDocument()
 
-    await user.type(screen.getByRole('textbox', { name: '账号或手机号' }), '   ')
+    await user.type(screen.getByRole('textbox', { name: '手机号' }), '   ')
     await user.type(screen.getByRole('textbox', { name: '短信验证码' }), '123456')
     await user.click(screen.getByRole('button', { name: '登录' }))
     expect(screen.getByText('请输入手机号')).toBeInTheDocument()
@@ -139,12 +139,12 @@ describe('LoginView behavior', () => {
     const user = userEvent.setup()
     render(<LoginView />)
 
-    await user.type(screen.getByRole('textbox', { name: '账号或手机号' }), '   ')
+    await user.type(screen.getByRole('textbox', { name: '手机号' }), '   ')
     await user.click(screen.getByRole('button', { name: '获取验证码' }))
     expect(screen.getByText('请输入手机号')).toBeInTheDocument()
 
-    await user.clear(screen.getByRole('textbox', { name: '账号或手机号' }))
-    await user.type(screen.getByRole('textbox', { name: '账号或手机号' }), '123')
+    await user.clear(screen.getByRole('textbox', { name: '手机号' }))
+    await user.type(screen.getByRole('textbox', { name: '手机号' }), '123')
     await user.click(screen.getByRole('button', { name: '获取验证码' }))
 
     expect(mocks.startOAuth).not.toHaveBeenCalled()
@@ -156,7 +156,7 @@ describe('LoginView behavior', () => {
     const user = userEvent.setup()
     render(<LoginView />)
 
-    await user.type(screen.getByRole('textbox', { name: '账号或手机号' }), '17633125265')
+    await user.type(screen.getByRole('textbox', { name: '手机号' }), '17633125265')
     await user.click(screen.getByRole('button', { name: '获取验证码' }))
 
     await waitFor(() =>
@@ -171,7 +171,7 @@ describe('LoginView behavior', () => {
     const user = userEvent.setup()
     render(<LoginView />)
 
-    await user.type(screen.getByRole('textbox', { name: '账号或手机号' }), '123')
+    await user.type(screen.getByRole('textbox', { name: '手机号' }), '123')
     await user.type(screen.getByRole('textbox', { name: '短信验证码' }), '592442')
     await user.click(screen.getByRole('checkbox'))
     await user.click(screen.getByRole('button', { name: '登录' }))
@@ -243,7 +243,7 @@ describe('LoginView behavior', () => {
     await user.click(screen.getByRole('button', { name: '登录' }))
 
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('认证失败', 'error', 5000))
-    expect(screen.getByRole('textbox', { name: '账号或手机号' })).toHaveValue(mobile)
+    expect(screen.getByRole('textbox', { name: '手机号' })).toHaveValue(mobile)
     expect(window.location.href).not.toContain(secret)
     expect(window.location.href).not.toContain(mobile)
 
@@ -256,7 +256,7 @@ describe('LoginView behavior', () => {
     const user = userEvent.setup()
     const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     render(<LoginView />)
-    await user.type(screen.getByRole('textbox', { name: '账号或手机号' }), '176 3312 5265')
+    await user.type(screen.getByRole('textbox', { name: '手机号' }), '176 3312 5265')
     await user.type(screen.getByRole('textbox', { name: '短信验证码' }), ' 592442 ')
     await user.click(screen.getByRole('checkbox'))
     await user.click(screen.getByRole('button', { name: '登录' }))
