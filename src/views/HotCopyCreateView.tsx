@@ -602,6 +602,7 @@ function upsertHotCopyTaskCenter(
     operationCode: context.operationCode,
     startedAt: context.createdAt,
     updatedAt: Date.now(),
+    locallyInitiated: true,
     ...patch,
   })
   if (status === 'preparing') store.setDrawerExpanded(true)

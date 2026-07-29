@@ -317,14 +317,16 @@ export default function TemplatesView() {
                           <button
                             type="button"
                             className={`home__tpl-fav${favKeys.has(favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl)) ? ' is-on' : ''}`}
-                            aria-label="收藏"
+                            aria-label={
+                              favKeys.has(favoriteKeyOf(tpl.videoAssetId || 0, tpl.videoUrl)) ? '取消收藏' : '收藏'
+                            }
                             onClick={(e) => {
                               e.stopPropagation()
                               toggleFav(tpl)
                             }}
                           >
                             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                              <path d="M12 20.3l-1.45-1.32C5.4 14.36 2 11.28 2 7.5 2 4.42 4.42 2 7.5 2c1.74 0 3.41.81 4.5 2.09C13.09 2.81 14.76 2 16.5 2 19.58 2 22 4.42 22 7.5c0 3.78-3.4 6.86-8.55 11.54L12 20.3z" />
+                              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
                             </svg>
                           </button>
                         )}

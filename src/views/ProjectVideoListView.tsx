@@ -30,7 +30,6 @@ import {
   isCreativeProjectRestrictedForUser,
   resolveCreativeProjectOwnerId,
   resolveUserId,
-  toPlainObject as toPlainObj,
 } from '@/utils/creativeDraftMetadata'
 import { LazyMediaVideo, useMediaCardActivation } from '@/components/common/LazyMediaVideo'
 import './ProjectVideoListView.css'
@@ -79,13 +78,6 @@ type StatusFilter = 'all' | 'draft' | 'processing' | 'published' | 'failed'
 type DurationFilter = 'all' | 'short' | 'mid' | 'long'
 /** 智能成片与爆款复制流程筛选项。 */
 type FlowFilter = 'all' | 'smart' | 'hot-copy'
-// 从后端项目草稿解析流程标识(与 projectVideos.ts resolveProjectFlow 口径一致)
-function resolveProjectFlowFromDraft(draft: any): string {
-  if (!draft || typeof draft !== 'object') return ''
-  const smart = draft.smart && typeof draft.smart === 'object' ? draft.smart : null
-  return String(smart?.flow || draft.flow || '').toLowerCase()
-}
-
 /** 判断一条视频是否命中当前时长筛选区间。 */
 function matchesDuration(item: ProjectVideo, duration: DurationFilter): boolean {
   if (duration === 'all') return true
@@ -388,7 +380,6 @@ export default function ProjectVideoListView() {
   const [status, setStatus] = useState<StatusFilter>('all')
   const [duration, setDuration] = useState<DurationFilter>('all')
   const [flowFilter, setFlowFilter] = useState<FlowFilter>('all')
-  const [projectFlow, setProjectFlow] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [openMenuId, setOpenMenuId] = useState('')
@@ -448,11 +439,6 @@ export default function ProjectVideoListView() {
         ) || 0
       setEditorCount(Number.isFinite(count) && count > 0 ? Math.floor(count) : 0)
       setVideos(payload.videos)
-      // 项目当前草稿的流程标识:用于后续新建视频/进入编辑默认走正确的编辑器
-      const draft = toPlainObj(
-        payload.project?.draft_json ?? payload.project?.data?.draft_json ?? payload.project?.draft,
-      )
-      setProjectFlow(resolveProjectFlowFromDraft(draft) || '')
     } catch (error: any) {
       if (!isCurrentRequest()) return
       setVideos([])
@@ -748,22 +734,7 @@ export default function ProjectVideoListView() {
                     </select>
                   </label>
                 </div>
-                <button
-                  type="button"
-                  className="pvlist-create-btn"
-                  onClick={() => {
-                    // 项目已有明确流程:直接进入对应编辑器,不弹选择框
-                    if (projectFlow === 'hot-copy') {
-                      goCreateVia('hot')
-                      return
-                    }
-                    if (projectFlow === 'smart') {
-                      goCreateVia('smart')
-                      return
-                    }
-                    setNewVideoOpen(true)
-                  }}
-                >
+                <button type="button" className="pvlist-create-btn" onClick={() => setNewVideoOpen(true)}>
                   + 新建视频
                 </button>
               </div>

@@ -1,17 +1,25 @@
 /**
- * 收藏的视频(纯前端 localStorage 占位 —— 后端暂无"收藏"概念)。
- * 案例库里点爱心收藏的视频存这里,素材市场「我收藏的」从这里读取展示。
+ * 收藏的图片/视频(纯前端 localStorage 占位 —— 后端暂无"收藏"概念)。
+ * 首页模板库和我的素材共用这份存储，「我收藏的」从这里读取展示。
  */
 import { readJson, writeJson } from '@/utils/storage'
 import { sanitizePersistentMediaUrl } from '@/utils/persistentMediaUrl'
 
-/** 收藏视频在本地存储中的稳定结构。 */
+export type FavoriteMediaKind = 'image' | 'video'
+
+/** 收藏素材在本地存储中的稳定结构；旧视频结构继续兼容。 */
 export interface FavoriteVideo {
   key: string
   title: string
+  /** 历史收藏没有该字段时按视频处理。 */
+  mediaKind?: FavoriteMediaKind
+  /** 图片/视频共用的稳定资产 ID；videoAssetId 保留给旧调用方。 */
+  assetId?: number
   /** 可稳定换取当前工作空间下载地址的资产 ID；旧收藏可从 `key` 兼容恢复。 */
   videoAssetId?: number
-  videoUrl: string
+  /** 图片/视频共用地址；videoUrl 保留给首页模板库等旧调用方。 */
+  mediaUrl?: string
+  videoUrl?: string
   thumbnailUrl: string
   ratio: string
   ts: number
@@ -36,14 +44,14 @@ const legacyKeyOf = (workspaceId: number) => `zzh_favorite_videos_${normalizedWo
 const scopedKeyOf = (workspaceId: number, userScope = favoriteUserScope) =>
   `zzh_favorite_videos_v2_u${encodeURIComponent(userScope || 'anon')}_ws${normalizedWorkspaceId(workspaceId)}`
 
-/** 视频的稳定标识:assetId 优先,否则用视频 URL */
+/** 素材的稳定标识:assetId 优先,否则用媒体 URL。 */
 export function favoriteKeyOf(videoAssetId: number, videoUrl: string): string {
   return videoAssetId ? `a${videoAssetId}` : `u${String(videoUrl || '').trim()}`
 }
 
-/** 兼容读取旧收藏：历史数据未保存 videoAssetId，但 asset 收藏的 key 中已经包含它。 */
-export function favoriteVideoAssetIdOf(item: Pick<FavoriteVideo, 'key' | 'videoAssetId'>): number {
-  const explicitId = Number(item?.videoAssetId || 0)
+/** 从新旧收藏结构中读取稳定资产 ID。 */
+export function favoriteAssetIdOf(item: Pick<FavoriteVideo, 'key' | 'assetId' | 'videoAssetId'>): number {
+  const explicitId = Number(item?.assetId || item?.videoAssetId || 0)
   if (Number.isSafeInteger(explicitId) && explicitId > 0) return explicitId
 
   const match = /^a([1-9]\d*)$/.exec(String(item?.key || '').trim())
@@ -52,22 +60,47 @@ export function favoriteVideoAssetIdOf(item: Pick<FavoriteVideo, 'key' | 'videoA
   return Number.isSafeInteger(keyId) && keyId > 0 ? keyId : 0
 }
 
+/** 兼容读取旧收藏：历史数据未保存 videoAssetId，但 asset 收藏的 key 中已经包含它。 */
+export function favoriteVideoAssetIdOf(item: Pick<FavoriteVideo, 'key' | 'videoAssetId'>): number {
+  return favoriteAssetIdOf(item)
+}
+
+/** 历史收藏没有 mediaKind，统一视为视频。 */
+export function favoriteMediaKindOf(item: Pick<FavoriteVideo, 'mediaKind'>): FavoriteMediaKind {
+  return item?.mediaKind === 'image' ? 'image' : 'video'
+}
+
+/** 从新旧收藏结构中读取媒体地址。 */
+export function favoriteMediaUrlOf(item: Pick<FavoriteVideo, 'mediaUrl' | 'videoUrl'>): string {
+  return String(item?.mediaUrl || item?.videoUrl || '').trim()
+}
+
 /** 清洗单条收藏数据，并将可恢复的素材 ID 转为当前工作区地址。 */
 function normalizeFavorite(item: FavoriteVideo, workspaceId: number): FavoriteVideo | null {
-  const videoAssetId = favoriteVideoAssetIdOf(item)
-  const videoUrl = sanitizePersistentMediaUrl(item?.videoUrl, {
-    assetId: videoAssetId,
+  const mediaKind = favoriteMediaKindOf(item)
+  const assetId = favoriteAssetIdOf(item)
+  const mediaUrl = sanitizePersistentMediaUrl(favoriteMediaUrlOf(item), {
+    assetId,
     workspaceId,
   })
-  if (!videoAssetId && !videoUrl) return null
+  if (!assetId && !mediaUrl) return null
   const thumbnailUrl = sanitizePersistentMediaUrl(item?.thumbnailUrl)
-  return {
+  const normalized: FavoriteVideo = {
     ...item,
-    key: videoAssetId ? `a${videoAssetId}` : favoriteKeyOf(0, videoUrl),
-    ...(videoAssetId ? { videoAssetId } : {}),
-    videoUrl,
+    key: assetId ? `a${assetId}` : favoriteKeyOf(0, mediaUrl),
     thumbnailUrl,
   }
+  if (mediaKind === 'image') {
+    normalized.mediaKind = 'image'
+    normalized.mediaUrl = mediaUrl
+    normalized.assetId = assetId || undefined
+    normalized.videoAssetId = undefined
+    normalized.videoUrl = undefined
+  } else {
+    normalized.videoAssetId = assetId || undefined
+    normalized.videoUrl = mediaUrl
+  }
+  return normalized
 }
 
 /** 读取当前用户在指定工作区的收藏，并兼容迁移旧键数据。 */

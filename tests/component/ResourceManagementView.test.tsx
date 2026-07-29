@@ -6,10 +6,18 @@ const mocks = vi.hoisted(() => ({
   listAiTasks: vi.fn(),
   listAssets: vi.fn(),
   listCreativeProjects: vi.fn(),
+  navigate: vi.fn(),
+  downloadToDisk: vi.fn(),
+  buildDownloadName: vi.fn(),
   showToast: vi.fn(),
   user: { id: 7 },
   workspace: { id: 21 },
 }))
+
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router-dom')>()
+  return { ...actual, useNavigate: () => mocks.navigate }
+})
 
 vi.mock('@/components/home/AppSidebar', () => ({
   default: () => <nav aria-label="应用侧边栏" />,
@@ -34,6 +42,11 @@ vi.mock('@/composables/useSidebarNavigate', () => ({
 
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ showToast: mocks.showToast }),
+}))
+
+vi.mock('@/utils/downloadToDisk', () => ({
+  downloadToDisk: mocks.downloadToDisk,
+  buildDownloadName: mocks.buildDownloadName,
 }))
 
 vi.mock('@/api/business', () => ({
@@ -75,6 +88,18 @@ function asset(id: number, name: string, previewUrl = '') {
   }
 }
 
+function imageAsset(id: number, name: string, previewUrl = '') {
+  return {
+    created_at: '2026-07-17T00:00:00.000Z',
+    id,
+    mime_type: 'image/png',
+    name,
+    preview_url: previewUrl,
+    source: 'upload',
+    type: 'image',
+  }
+}
+
 function project(id: number, title: string, assetId: number) {
   return {
     id,
@@ -102,7 +127,13 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     mocks.listAssets.mockReset()
     mocks.listCreativeProjects.mockReset()
     mocks.listCreativeProjects.mockResolvedValue([])
+    mocks.navigate.mockReset()
+    mocks.downloadToDisk.mockReset()
+    mocks.downloadToDisk.mockResolvedValue('done')
+    mocks.buildDownloadName.mockReset()
+    mocks.buildDownloadName.mockReturnValue('收藏视频.mp4')
     mocks.showToast.mockReset()
+    window.localStorage.clear()
     window.history.replaceState({}, '', '/resources')
   })
 
@@ -115,6 +146,56 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     expect(screen.queryByRole('tab', { name: '真人素材库' })).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '全部' })).toHaveAttribute('aria-selected', 'true')
     await waitFor(() => expect(mocks.listAssets).toHaveBeenCalled())
+  })
+
+  it('favorites both images and videos and restores them in my favorites', async () => {
+    mocks.listAssets.mockResolvedValue({
+      items: [imageAsset(401, '产品主图', '/product.png'), asset(402, '产品视频', '/product.mp4')],
+    })
+
+    render(<ResourceManagementView />)
+
+    const favoriteImage = await screen.findByRole('button', { name: '收藏产品主图' })
+    const favoriteVideo = screen.getByRole('button', { name: '收藏产品视频' })
+    expect(favoriteImage).toHaveAttribute('aria-pressed', 'false')
+    expect(favoriteVideo).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(favoriteImage)
+    fireEvent.click(favoriteVideo)
+
+    expect(screen.getByRole('button', { name: '取消收藏产品主图' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '取消收藏产品视频' })).toHaveAttribute('aria-pressed', 'true')
+    expect(mocks.showToast).toHaveBeenCalledWith('已收藏到我的收藏', 'success')
+
+    const stored = JSON.parse(window.localStorage.getItem('zzh_favorite_videos_v2_u7_ws21') || '[]')
+    expect(stored).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'a401', mediaKind: 'image', assetId: 401 }),
+        expect.objectContaining({ key: 'a402', videoAssetId: 402 }),
+      ]),
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '我收藏的' }))
+
+    expect(await screen.findByRole('button', { name: '取消收藏产品主图' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '取消收藏产品视频' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '预览产品主图' })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: '播放产品视频' })).toBeInTheDocument()
+  })
+
+  it('shows play, download and remake actions on every video in my assets', async () => {
+    mocks.listAssets.mockResolvedValue({
+      items: [imageAsset(411, '静态产品图', '/product-image.png'), asset(412, '上传产品视频', '/uploaded-video.mp4')],
+    })
+    mocks.getAssetDownloadUrl.mockResolvedValue('/fresh-uploaded-video.mp4')
+
+    render(<ResourceManagementView />)
+
+    expect(await screen.findByRole('button', { name: '播放上传产品视频' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下载上传产品视频' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '用上传产品视频做同款' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '下载静态产品图' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '用静态产品图做同款' })).not.toBeInTheDocument()
   })
 
   it('immediately hides A assets and closes its preview when switching to B', async () => {
@@ -208,6 +289,50 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     await waitFor(() => expect(mocks.getAssetDownloadUrl).toHaveBeenCalledWith({ workspaceId: 21, assetId: 701 }))
     await waitFor(() => expect(screen.getByLabelText('可刷新收藏')).toHaveAttribute('src', '/fresh.mp4'))
     expect(screen.getByLabelText('降级收藏')).toHaveAttribute('src', '/api/v1/assets/702/download?workspace_id=21')
+  })
+
+  it('offers play, download, remake and unfavorite actions for collected videos', async () => {
+    window.localStorage.setItem(
+      'zzh_favorite_videos_v2_u7_ws21',
+      JSON.stringify([
+        {
+          key: 'a701',
+          videoAssetId: 701,
+          ratio: '16:9',
+          thumbnailUrl: '/favorite-cover.jpg',
+          title: '收藏案例',
+          ts: 2,
+          videoUrl: '/favorite.mp4',
+        },
+      ]),
+    )
+    mocks.getAssetDownloadUrl.mockResolvedValue('/fresh-favorite.mp4')
+
+    render(<ResourceManagementView />)
+    fireEvent.click(screen.getByRole('tab', { name: '我收藏的' }))
+
+    const play = await screen.findByRole('button', { name: '播放收藏案例' })
+    fireEvent.click(play)
+    expect(await screen.findByText('收藏案例')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '下载收藏案例' }))
+    await waitFor(() =>
+      expect(mocks.downloadToDisk).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileName: '收藏视频.mp4',
+          resolveUrl: expect.any(Function),
+        }),
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '用收藏案例做同款' }))
+    expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy', {
+      state: { carryVideo: { url: '/fresh-favorite.mp4', assetId: 701 } },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '取消收藏收藏案例' }))
+    expect(screen.queryByRole('button', { name: '播放收藏案例' })).not.toBeInTheDocument()
+    expect(mocks.showToast).toHaveBeenCalledWith('已取消收藏', 'success')
   })
 
   it('refreshes collected cards when the account changes inside the same workspace', async () => {

@@ -3637,6 +3637,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       operationCode: job.opts?.edit ? 'video.edit' : 'video.generate',
       startedAt: Number(existing?.startedAt || Date.now()),
       updatedAt: Date.now(),
+      locallyInitiated: true,
       ...patch,
     })
   }

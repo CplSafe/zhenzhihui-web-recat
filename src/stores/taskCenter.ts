@@ -45,6 +45,11 @@ export interface TaskCenterTask {
   notifiedAt?: number
   /** 本地缓存所属账号；仅用于阻止同一浏览器切换账号时串任务。 */
   ownerUserId?: number
+  /**
+   * 当前页面会话主动发起的任务可立即展示，不必等待新建项目出现在项目权限接口中。
+   * 该字段不会持久化；刷新后仍由后端项目权限重新确认。
+   */
+  locallyInitiated?: boolean
 }
 
 /** 兼容旧记录：scope 尚未分流时，也可由真实图片 operation_code 识别任务类型。 */
@@ -215,6 +220,7 @@ function normalizeTask(raw: Partial<TaskCenterTask>, now = Date.now(), fallbackO
     ...(raw.archived === undefined ? {} : { archived: Boolean(raw.archived) }),
     ...(notifiedAt ? { notifiedAt } : {}),
     ownerUserId: positiveInteger(raw.ownerUserId) || positiveInteger(fallbackOwnerUserId),
+    ...(raw.locallyInitiated === true ? { locallyInitiated: true } : {}),
   }
 }
 
@@ -419,6 +425,7 @@ export const useTaskCenterStore = create<TaskCenterState>()(
           thumbnailUrl: '',
           resultUrl: undefined,
           error: undefined,
+          locallyInitiated: undefined,
         })),
         drawerExpanded: state.drawerExpanded,
         ownerUserId: state.ownerUserId,

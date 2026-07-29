@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  favoriteAssetIdOf,
+  favoriteMediaKindOf,
+  favoriteMediaUrlOf,
   favoriteVideoAssetIdOf,
   loadFavorites,
   setFavoriteVideoUserScope,
@@ -42,6 +45,27 @@ describe('favoriteVideos stable asset identity', () => {
     expect(favoriteVideoAssetIdOf(assetFavorite)).toBe(77)
     expect(urlFavorite.videoAssetId).toBeUndefined()
     expect(favoriteVideoAssetIdOf(urlFavorite)).toBe(0)
+  })
+
+  it('persists image favorites without changing legacy video records', () => {
+    expect(
+      toggleFavorite(21, {
+        key: 'a88',
+        title: '测试图片',
+        mediaKind: 'image',
+        assetId: 88,
+        mediaUrl: 'https://storage.example.test/image.png?token=secret',
+        thumbnailUrl: '',
+        ratio: '1:1',
+        ts: 2,
+      }),
+    ).toBe(true)
+
+    const [imageFavorite] = loadFavorites(21)
+    expect(favoriteMediaKindOf(imageFavorite)).toBe('image')
+    expect(favoriteAssetIdOf(imageFavorite)).toBe(88)
+    expect(favoriteMediaUrlOf(imageFavorite)).toBe('/api/v1/assets/88/download?workspace_id=21')
+    expect(imageFavorite.videoUrl).toBeUndefined()
   })
 
   it('isolates favorites by user and workspace', () => {

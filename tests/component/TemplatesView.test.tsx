@@ -231,8 +231,12 @@ describe('TemplatesView', () => {
     expect(dialog).toHaveAttribute('data-poster', '/poster.jpg')
     await user.click(screen.getByRole('button', { name: '关闭预览' }))
 
-    const favorite = screen.getByRole('button', { name: '收藏' })
+    const favorite = screen.getByRole('button', { name: '取消收藏' })
     expect(favorite).toHaveClass('is-on')
+    expect(favorite.querySelector('path')).toHaveAttribute(
+      'd',
+      'M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z',
+    )
     await user.click(favorite)
     expect(mocks.toggleFavorite).toHaveBeenCalledWith(
       21,

@@ -603,7 +603,7 @@ function TaskCard({ task, onOpen, onArchive }: { task: TaskCenterTask; onOpen: (
     taskScope !== 'image' && Boolean((tone === 'completed' && resultAssetId) || taskScope === 'hot-copy')
   const errorMessage = readText(record, 'errorMessage', 'error_message', 'error', 'message')
   const hasDestination = Boolean(readValue(record, 'projectId', 'project_id'))
-  const canPlay = taskScope !== 'image' && tone === 'completed' && Boolean(resultVideo || resultAssetId)
+  const canPreview = taskScope === 'smart' && tone === 'completed' && Boolean(resultVideo || resultAssetId)
   const operationCode = readText(record, 'operationCode', 'operation_code').toLowerCase()
   const mediaLabel =
     taskScope === 'image'
@@ -623,7 +623,7 @@ function TaskCard({ task, onOpen, onArchive }: { task: TaskCenterTask; onOpen: (
         disabled={!hasDestination}
         aria-label={
           hasDestination
-            ? `${title}，${getStatusLabel(record, tone)}，${canPlay ? '播放视频' : '打开项目'}`
+            ? `${title}，${getStatusLabel(record, tone)}，${canPreview ? '播放视频' : '打开项目'}`
             : `${title}，暂时无法打开项目`
         }
       >
@@ -714,6 +714,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   const playbackContext = `${Number(workspaceId || 0)}:${currentUserId}`
   const playbackContextRef = useRef(playbackContext)
   const playbackRequestRef = useRef(0)
+  const observedGeneratingContextRef = useRef('')
+  const observedGeneratingTaskIdsRef = useRef<Set<string>>(new Set())
   playbackContextRef.current = playbackContext
   const tasks = useTaskCenterStore((state) => state.tasks)
   const expanded = useTaskCenterStore((state) => state.drawerExpanded)
@@ -777,6 +779,35 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   }, [currentUserId, expanded, workspaceId])
 
   useEffect(() => setActiveScope(scope), [scope])
+  useEffect(() => {
+    const context = `${Number(workspaceId || 0)}:${currentUserId}`
+    const nextTaskIds = new Set(
+      tasks
+        .filter((task) => {
+          const record = task as TaskRecord
+          return (
+            String(readValue(record, 'workspaceId', 'workspace_id') ?? '') === String(workspaceId ?? '') &&
+            Number(record.ownerUserId || 0) === currentUserId &&
+            isGeneratingTone(getTaskTone(record)) &&
+            !isArchived(record)
+          )
+        })
+        .map((task) => task.id),
+    )
+
+    if (observedGeneratingContextRef.current !== context) {
+      observedGeneratingContextRef.current = context
+      observedGeneratingTaskIdsRef.current = nextTaskIds
+      return
+    }
+
+    const previousTaskIds = observedGeneratingTaskIdsRef.current
+    observedGeneratingTaskIdsRef.current = nextTaskIds
+    if (![...nextTaskIds].some((taskId) => !previousTaskIds.has(taskId))) return
+
+    setActiveScope('generating')
+    setDrawerExpanded(true)
+  }, [currentUserId, setDrawerExpanded, tasks, workspaceId])
   useEffect(() => {
     const media = window.matchMedia('(max-width: 900px)')
     const onChange = () => setIsNarrow(media.matches)
@@ -846,7 +877,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
         Number(record.ownerUserId || 0) === currentUserId &&
         matchesTab &&
         !shouldHideFailedImageTask(record) &&
-        isTaskCenterTaskAccessible(task, accessibleProjectIds, projectPermissionsLoaded) &&
+        (record.locallyInitiated === true ||
+          isTaskCenterTaskAccessible(task, accessibleProjectIds, projectPermissionsLoaded)) &&
         !isArchived(record)
       )
     })
@@ -1000,6 +1032,12 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                         navigate(`/smart/${projectId}`)
                         return
                       }
+                      // 爆款复制任务点击后始终回到该项目的数据编辑/生成页。即使任务已完成，
+                      // 也不在任务抽屉里抢先打开播放器，避免用户无法继续调整素材与参数。
+                      if (taskScope === 'hot-copy') {
+                        navigate(`/hot-copy/${projectId}`)
+                        return
+                      }
                       if (tone === 'completed' && (resultUrl || resultAssetId)) {
                         if (resultUrl) {
                           playbackRequestRef.current += 1
@@ -1023,7 +1061,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                         }
                         return
                       }
-                      navigate(`/${taskScope === 'hot-copy' ? 'hot-copy' : 'smart'}/${projectId}`)
+                      navigate(`/smart/${projectId}`)
                     }}
                     onArchive={() => {
                       if (tasks.some((storedTask) => storedTask.id === taskId)) archiveTask(taskId)

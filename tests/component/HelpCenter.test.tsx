@@ -124,12 +124,18 @@ describe('HelpCenter interactions', () => {
     expect(second.ball).toHaveStyle({ left: '8px', top: '536px' })
   })
 
-  it('moves a remembered position to the safe corner on compact hot-copy screens', async () => {
+  it('moves a remembered position above the fixed action area on creative screens', async () => {
     window.localStorage.setItem(POSITION_KEY, JSON.stringify({ x: 400, y: 300 }))
 
     const { ball } = await renderHelpCenter('/hot-copy')
 
-    expect(ball).toHaveStyle({ left: '728px', top: '528px' })
+    expect(ball).toHaveStyle({ left: '728px', top: '424px' })
+  })
+
+  it('keeps the assistant clear of the smart image generation button', async () => {
+    const { ball } = await renderHelpCenter('/smart/21')
+
+    expect(ball).toHaveStyle({ left: '720px', top: '424px' })
   })
 
   it('runs guide and tutorial shortcuts with the expected route and safe window features', async () => {
