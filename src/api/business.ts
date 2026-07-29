@@ -2361,6 +2361,17 @@ export function listDistributionCommissions(params: any = {}) {
   })
 }
 
+/**
+ * 按后端支持的筛选条件导出客户付款与返点明细。
+ * 接口直接返回 XLSX 文件，前端不得重新拼装列或转换数据。
+ */
+export function exportDistributionCommissions(params: any = {}) {
+  return requestFile(`/api/v1/distribution/commissions/export${buildDistributionQuery(params)}`, {
+    signal: params.signal,
+    defaultFileName: `邀请收益明细-${new Date().toISOString().slice(0, 10)}.xlsx`,
+  })
+}
+
 /** 查询当前销售已配置的提现方式。 */
 export function listDistributionWithdrawalMethods({ signal }: { signal?: AbortSignal } = {}) {
   return requestJson('/api/v1/distribution/withdrawal-methods', { signal })
@@ -2703,6 +2714,110 @@ export async function requestBusinessJson<T = unknown>(
   options: BusinessJsonRequestOptions = {},
 ): Promise<T> {
   return requestJson(path, options)
+}
+
+/** 后端附件响应，文件内容与文件名均以接口返回为准。 */
+export interface BusinessFileResult {
+  blob: Blob
+  fileName: string
+  contentType: string
+}
+
+/** 从 Content-Disposition 中读取 RFC 5987 或普通 filename。 */
+function readAttachmentFileName(contentDisposition: string): string {
+  const encodedMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)
+  const plainMatch = contentDisposition.match(/filename\s*=\s*"?([^";]+)"?/i)
+  const candidate = encodedMatch?.[1] || plainMatch?.[1] || ''
+  if (!candidate) return ''
+
+  try {
+    return decodeURIComponent(candidate.trim())
+  } catch {
+    return candidate.trim()
+  }
+}
+
+/** 过滤文件名中的路径及 Windows 非法字符，避免响应头影响下载目录。 */
+function safeAttachmentFileName(fileName: string, fallback: string): string {
+  const normalized = Array.from(String(fileName || ''))
+    .filter((character) => character.charCodeAt(0) >= 32)
+    .join('')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .trim()
+  return normalized || fallback
+}
+
+/**
+ * 业务 API 的附件请求层：复用 JSON 请求的 cookie、超时、401 单飞续期与错误语义，
+ * 但成功响应保持原始二进制内容，不经过 JSON 解包。
+ */
+async function requestFile(path: string, options: any = {}, _retried = false): Promise<BusinessFileResult> {
+  let response
+  let body
+  const hasTimeoutOverride = Object.prototype.hasOwnProperty.call(options || {}, 'timeoutMs')
+  const { timeoutMs: _timeoutMs, signal: externalSignal, defaultFileName = '下载文件', ...fetchOptions } = options || {}
+
+  try {
+    const result = await withRequestTimeout(
+      async (signal) => {
+        const nextResponse = await fetch(buildUrl(businessApiBaseUrl, path), {
+          credentials: 'include',
+          ...fetchOptions,
+          ...(signal ? { signal } : {}),
+        })
+        const nextBody = await nextResponse.arrayBuffer()
+        return { response: nextResponse, body: nextBody }
+      },
+      {
+        signal: externalSignal,
+        defaultTimeoutMs: DEFAULT_API_REQUEST_TIMEOUT_MS,
+        ...(hasTimeoutOverride ? { timeoutMs: _timeoutMs } : {}),
+      },
+    )
+    response = result.response
+    body = result.body
+  } catch (error) {
+    if (error instanceof RequestAbortError) {
+      const abortedByCaller = error.abortCause === 'aborted'
+      throw new BusinessApiError(abortedByCaller ? '网络请求已取消' : '网络请求超时，请稍后重试', {
+        response: error.originalError,
+        cause: error.abortCause,
+      })
+    }
+    throw new BusinessApiError('网络请求失败，请检查接口服务或本地代理配置', {
+      response: error,
+    })
+  }
+
+  if (response.status === 401 && !_retried && !String(path).includes(AUTH_REFRESH_PATH)) {
+    const ok = await refreshBusinessSession()
+    if (ok) return requestFile(path, options, true)
+  }
+
+  const contentType = String(response.headers.get('Content-Type') || '').toLowerCase()
+  if (!response.ok || contentType.includes('application/json')) {
+    const text = new TextDecoder().decode(body)
+    let payload: any = text
+    try {
+      payload = text ? JSON.parse(text) : null
+    } catch {
+      // 非 JSON 错误正文保留原文，交由统一异常展示。
+    }
+    throw new BusinessApiError(payload?.message || text || `导出失败 (${response.status})`, {
+      status: response.status,
+      code: payload?.code ?? payload?.code_string ?? null,
+      response: payload,
+    })
+  }
+
+  const responseFileName = readAttachmentFileName(String(response.headers.get('Content-Disposition') || ''))
+  return {
+    blob: new Blob([body], {
+      type: contentType || 'application/octet-stream',
+    }),
+    fileName: safeAttachmentFileName(responseFileName, defaultFileName),
+    contentType,
+  }
 }
 
 async function requestJson(path, options: any = {}, _retried = false) {
