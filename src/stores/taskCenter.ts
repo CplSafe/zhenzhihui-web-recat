@@ -311,9 +311,7 @@ export const useTaskCenterStore = create<TaskCenterState>()(
           return {
             tasks: pruneTasks(
               [
-                ...state.tasks.filter(
-                  (task) => task.id !== merged.id && (!previous || task.id !== previous.id),
-                ),
+                ...state.tasks.filter((task) => task.id !== merged.id && (!previous || task.id !== previous.id)),
                 merged,
               ],
               now,

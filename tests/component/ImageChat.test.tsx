@@ -217,12 +217,7 @@ describe('ImageChat', () => {
   it('disables unsupported model ratios and falls back to the first supported ratio', async () => {
     const onRatioChange = vi.fn()
     render(
-      <ImageChat
-        {...baseProps()}
-        initialRatio="4:3"
-        supportedRatios={['1:1', '16:9']}
-        onRatioChange={onRatioChange}
-      />,
+      <ImageChat {...baseProps()} initialRatio="4:3" supportedRatios={['1:1', '16:9']} onRatioChange={onRatioChange} />,
     )
 
     const ratioSelect = screen.getByRole('combobox', { name: '图片比例' })

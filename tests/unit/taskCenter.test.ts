@@ -171,12 +171,12 @@ describe('task-center store normalization and terminal transitions', () => {
   })
 
   it('deduplicates the same backend task across restored generation ids', () => {
-    useTaskCenterStore.getState().upsertTask(
-      task({ scope: 'hot-copy', generationId: 'generation-a', taskId: 901, status: 'processing' }),
-    )
-    useTaskCenterStore.getState().upsertTask(
-      task({ scope: 'hot-copy', generationId: 'generation-b', taskId: 901, status: 'processing' }),
-    )
+    useTaskCenterStore
+      .getState()
+      .upsertTask(task({ scope: 'hot-copy', generationId: 'generation-a', taskId: 901, status: 'processing' }))
+    useTaskCenterStore
+      .getState()
+      .upsertTask(task({ scope: 'hot-copy', generationId: 'generation-b', taskId: 901, status: 'processing' }))
 
     expect(useTaskCenterStore.getState().tasks).toHaveLength(1)
     expect(useTaskCenterStore.getState().tasks[0]?.generationId).toBe('generation-b')
@@ -192,9 +192,9 @@ describe('task-center store normalization and terminal transitions', () => {
         resultAssetId: 188,
       }),
     )
-    useTaskCenterStore.getState().upsertTask(
-      task({ scope: 'hot-copy', generationId: 'generation-restored', taskId: 902, status: 'processing' }),
-    )
+    useTaskCenterStore
+      .getState()
+      .upsertTask(task({ scope: 'hot-copy', generationId: 'generation-restored', taskId: 902, status: 'processing' }))
 
     expect(useTaskCenterStore.getState().tasks).toHaveLength(1)
     expect(useTaskCenterStore.getState().tasks[0]).toMatchObject({
