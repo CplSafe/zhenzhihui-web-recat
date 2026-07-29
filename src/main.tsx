@@ -7,9 +7,14 @@ import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
 import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
+import dayjs from 'dayjs'
+import 'dayjs/locale/zh-cn'
 import 'normalize.css'
 import './style.css'
 import { router } from './router'
+
+// Ant Design 的组件文案由 ConfigProvider 控制，日期面板的月份和星期则读取 dayjs locale。
+dayjs.locale('zh-cn')
 
 /** 兼容未原生声明 requestIdleCallback 的浏览器 Window 类型。 */
 type IdleWindow = Window & {

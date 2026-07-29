@@ -813,6 +813,7 @@
   background: transparent;
   font-weight: 300;
   line-height: 22px;
+  text-align: center;
 }
 
 .distribution-table td:first-child {
@@ -853,6 +854,7 @@
 
 .date-time {
   display: flex;
+  justify-content: center;
   gap: 10px;
 }
 

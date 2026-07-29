@@ -2315,11 +2315,36 @@ export function getCreativeProject({ projectId, workspaceId }: any = {}) {
 }
 
 // 我的专属推广码(GET /api/v1/referral/my-code)。会话鉴权、无参数。
-// 返回 data:{ code:"ZZH-XXXX" };这里直接取出推广码字符串,拿不到则空串。
-/** 读取当前用户的推广邀请码。 */
+// 客户与渠道必须使用不同字段，不能用其中一个邀请码替代另一个。
+export interface ReferralInviteCodes {
+  customerCode: string
+  channelCode: string
+  distributorStatus: string
+}
+
+/** 同时读取客户邀请码与渠道邀请码，并兼容后端 snake_case / camelCase 字段。 */
+export async function getReferralInviteCodes(): Promise<ReferralInviteCodes> {
+  const payload: any = await requestJson('/api/v1/referral/my-code')
+  const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload || {}
+  return {
+    customerCode: String(data?.code ?? data?.invite_code ?? data?.inviteCode ?? data?.referral_code ?? '').trim(),
+    channelCode: String(
+      data?.distributor_code ??
+        data?.distributorCode ??
+        data?.channel_invite_code ??
+        data?.channelInviteCode ??
+        data?.distributor?.code ??
+        '',
+    ).trim(),
+    distributorStatus: String(data?.distributor_status ?? data?.distributorStatus ?? '')
+      .trim()
+      .toLowerCase(),
+  }
+}
+
+/** 读取当前用户的普通客户推广邀请码，保留原有分享入口的字符串返回值。 */
 export async function getReferralMyCode(): Promise<string> {
-  const data: any = await requestJson('/api/v1/referral/my-code')
-  return String(data?.code || '').trim()
+  return (await getReferralInviteCodes()).customerCode
 }
 
 /** 读取当前营销人员的分销概览；非营销人员由服务端返回 403。 */

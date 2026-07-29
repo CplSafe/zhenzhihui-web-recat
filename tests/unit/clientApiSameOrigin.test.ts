@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getSession, registerAccount, sendAuthSms, startOAuth } from '@/api/auth'
-import { listWorkspaces } from '@/api/business'
+import { getReferralInviteCodes, getReferralMyCode, listWorkspaces } from '@/api/business'
 
 function success(data: unknown = { ok: true }): Response {
   return new Response(JSON.stringify({ data }), {
@@ -77,5 +77,28 @@ describe('same-origin client API routing', () => {
       invite_code: 'DIST-CHANNEL-001',
       invite_type: 'channel',
     })
+  })
+
+  it('reads customer and channel invitation codes from the dedicated referral endpoint', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      success({
+        code: 'ZZH-CUSTOMER-001',
+        distributor_code: 'ZZH-D-CHANNEL-001',
+        distributor_status: 'active',
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getReferralInviteCodes()).resolves.toEqual({
+      customerCode: 'ZZH-CUSTOMER-001',
+      channelCode: 'ZZH-D-CHANNEL-001',
+      distributorStatus: 'active',
+    })
+    await expect(getReferralMyCode()).resolves.toBe('ZZH-CUSTOMER-001')
+
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      '/api/v1/referral/my-code',
+      '/api/v1/referral/my-code',
+    ])
   })
 })

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   listCommissions: vi.fn(),
   listInvitees: vi.fn(),
   exportCommissions: vi.fn(),
-  getDistributionOverview: vi.fn(),
+  getReferralInviteCodes: vi.fn(),
   listWithdrawalMethods: vi.fn(),
   listWithdrawals: vi.fn(),
   createWithdrawalMethod: vi.fn(),
@@ -43,7 +43,7 @@ vi.mock('@/composables/useDistributionAccess', () => ({
 }))
 
 vi.mock('@/api/business', () => ({
-  getDistributionOverview: mocks.getDistributionOverview,
+  getReferralInviteCodes: mocks.getReferralInviteCodes,
   listDistributionCommissions: mocks.listCommissions,
   listDistributionInvitees: mocks.listInvitees,
   exportDistributionCommissions: mocks.exportCommissions,
@@ -68,7 +68,7 @@ describe('DistributionView', () => {
     mocks.listCommissions.mockReset()
     mocks.listInvitees.mockReset()
     mocks.exportCommissions.mockReset()
-    mocks.getDistributionOverview.mockReset()
+    mocks.getReferralInviteCodes.mockReset()
     mocks.listWithdrawalMethods.mockReset()
     mocks.listWithdrawals.mockReset()
     mocks.createWithdrawalMethod.mockReset()
@@ -120,9 +120,10 @@ describe('DistributionView', () => {
       ],
       total: 1,
     })
-    mocks.getDistributionOverview.mockResolvedValue({
-      code: 'ZZH-CUSTOMER-001',
-      distributor_code: 'ZZH-D-CHANNEL-001',
+    mocks.getReferralInviteCodes.mockResolvedValue({
+      customerCode: 'ZZH-CUSTOMER-001',
+      channelCode: 'ZZH-D-CHANNEL-001',
+      distributorStatus: 'active',
     })
     mocks.listWithdrawalMethods.mockResolvedValue({ items: [] })
     mocks.listWithdrawals.mockResolvedValue({ items: [] })
@@ -555,27 +556,44 @@ describe('DistributionView', () => {
     expect(await screen.findByLabelText('专属邀请链接')).toHaveValue(
       `${window.location.origin}/login?invite_code=ZZH-CUSTOMER-001`,
     )
-    expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(1)
+    expect(mocks.getReferralInviteCodes).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('专属邀请码')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '复制邀请码' })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '关闭邀请客户弹窗' }))
     await user.click(screen.getByRole('button', { name: '邀请客户' }))
-    await waitFor(() => expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mocks.getReferralInviteCodes).toHaveBeenCalledTimes(2))
   })
 
   it('does not substitute the distributor code when the customer code is missing', async () => {
     const user = userEvent.setup()
-    mocks.getDistributionOverview.mockResolvedValue({
-      distributor_code: 'ZZH-D-CHANNEL-001',
+    mocks.getReferralInviteCodes.mockResolvedValue({
+      customerCode: '',
+      channelCode: 'ZZH-D-CHANNEL-001',
+      distributorStatus: 'active',
     })
     render(<DistributionView />)
 
     await user.click(screen.getByRole('button', { name: '邀请客户' }))
 
-    expect(await screen.findByText('后端未返回客户邀请码')).toBeInTheDocument()
+    expect(await screen.findByText('未获取到邀请码')).toBeInTheDocument()
     expect(screen.queryByLabelText('专属邀请链接')).not.toBeInTheDocument()
-    expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(1)
+    expect(mocks.getReferralInviteCodes).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the sales-disabled message returned by the referral identity state', async () => {
+    const user = userEvent.setup()
+    mocks.getReferralInviteCodes.mockResolvedValue({
+      customerCode: 'ZZH-CUSTOMER-001',
+      channelCode: 'ZZH-D-CHANNEL-001',
+      distributorStatus: 'disabled',
+    })
+    render(<DistributionView />)
+
+    await user.click(screen.getByRole('button', { name: '邀请客户' }))
+
+    expect(await screen.findByText('销售身份被停用，请联系客服')).toBeInTheDocument()
+    expect(screen.queryByLabelText('专属邀请链接')).not.toBeInTheDocument()
   })
 
   it('loads invitation relationships for summary counts without rendering a second list', async () => {
@@ -648,9 +666,10 @@ describe('DistributionView', () => {
 
   it('uses the distributor code for a channel invitation link without a QR code', async () => {
     const user = userEvent.setup()
-    mocks.getDistributionOverview.mockResolvedValue({
-      invite_code: 'DIST-CUSTOMER-001',
-      distributor_code: 'ZZH-D-JAZ589JR',
+    mocks.getReferralInviteCodes.mockResolvedValue({
+      customerCode: 'DIST-CUSTOMER-001',
+      channelCode: 'ZZH-D-JAZ589JR',
+      distributorStatus: 'active',
     })
     render(<DistributionView />)
 
@@ -662,33 +681,37 @@ describe('DistributionView', () => {
     )
     expect(screen.queryByLabelText('渠道邀请二维码')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '下载二维码' })).not.toBeInTheDocument()
-    expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(1)
+    expect(mocks.getReferralInviteCodes).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('对方通过该链接完成注册后，后端将按渠道邀请类型建立邀请关系。')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '关闭邀请渠道弹窗' }))
     await user.click(screen.getByRole('button', { name: '邀请渠道' }))
-    await waitFor(() => expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mocks.getReferralInviteCodes).toHaveBeenCalledTimes(2))
   })
 
   it('does not substitute the customer code when the channel endpoint omits a distributor code', async () => {
     const user = userEvent.setup()
-    mocks.getDistributionOverview.mockResolvedValue({
-      code: 'ZZH-MARKETING-001',
+    mocks.getReferralInviteCodes.mockResolvedValue({
+      customerCode: 'ZZH-MARKETING-001',
+      channelCode: '',
+      distributorStatus: 'active',
     })
     render(<DistributionView />)
 
     await user.click(screen.getByRole('button', { name: '邀请渠道' }))
 
-    expect(await screen.findByText('后端未返回渠道邀请码')).toBeInTheDocument()
+    expect(await screen.findByText('未获取到邀请码')).toBeInTheDocument()
     expect(screen.queryByLabelText('渠道邀请链接')).not.toBeInTheDocument()
-    expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(1)
+    expect(mocks.getReferralInviteCodes).toHaveBeenCalledTimes(1)
   })
 
   it('retries the channel endpoint without calling the customer-code endpoint', async () => {
     const user = userEvent.setup()
-    mocks.getDistributionOverview
-      .mockRejectedValueOnce(new Error('渠道接口暂不可用'))
-      .mockResolvedValueOnce({ distributor_code: 'ZZH-D-RETRY-001' })
+    mocks.getReferralInviteCodes.mockRejectedValueOnce(new Error('渠道接口暂不可用')).mockResolvedValueOnce({
+      customerCode: 'ZZH-CUSTOMER-001',
+      channelCode: 'ZZH-D-RETRY-001',
+      distributorStatus: 'active',
+    })
     render(<DistributionView />)
 
     await user.click(screen.getByRole('button', { name: '邀请渠道' }))
@@ -698,7 +721,7 @@ describe('DistributionView', () => {
     expect(await screen.findByLabelText('渠道邀请链接')).toHaveValue(
       `${window.location.origin}/login?invite_code=ZZH-D-RETRY-001&invite_type=channel`,
     )
-    expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(2)
+    expect(mocks.getReferralInviteCodes).toHaveBeenCalledTimes(2)
   })
 
   it('keeps the rebate page visible when the sales identity is disabled', async () => {
