@@ -35,6 +35,14 @@ export default defineConfig(({ mode }) => {
     'http://172.10.0.102:8004',
     'AI_IMG_ORIGIN',
   )
+  // 内置精选模板存放在公共 OSS。该桶允许 video 标签播放，但没有开放浏览器
+  // fetch 所需的 CORS 响应头；开发环境通过固定目标代理读取，随后仍按正常素材
+  // 上传流程写入当前工作空间。固定 target + 固定前缀可避免任意 URL 代理风险。
+  const templateMediaTarget = resolveProxyTarget(
+    env.TEMPLATE_MEDIA_ORIGIN || env.VITE_TEMPLATE_MEDIA_ORIGIN,
+    'https://zzh-zhongdahengrui.oss-accelerate.aliyuncs.com',
+    'TEMPLATE_MEDIA_ORIGIN',
+  )
   const businessCallbackUrl = `${normalizeBaseUrl(businessTarget)}/auth/callback`
 
   return {
@@ -101,6 +109,17 @@ export default defineConfig(({ mode }) => {
         '/zzh-api': {
           ...createBusinessProxy(businessTarget),
           rewrite: (p) => p.replace(/^\/zzh-api/, ''),
+        },
+        '/template-media': {
+          target: templateMediaTarget,
+          changeOrigin: true,
+          secure: true,
+          rewrite: (p) => p.replace(/^\/template-media/, ''),
+          configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq) => {
+              proxyReq.removeHeader('origin')
+            })
+          },
         },
         '/aimodel-vl': {
           target: aiVlTarget,

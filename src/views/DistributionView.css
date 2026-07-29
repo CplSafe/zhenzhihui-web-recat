@@ -257,6 +257,7 @@
 }
 
 .distribution-overview-details article {
+  position: relative;
   display: grid;
   min-height: 88px;
   padding: 14px 16px;
@@ -267,20 +268,106 @@
   gap: 4px 12px;
 }
 
-.distribution-overview-details span {
+.distribution-overview-details__label {
+  display: flex;
   align-self: center;
+  align-items: center;
+  gap: 6px;
   color: var(--distribution-secondary);
   font-size: 13px;
 }
 
-.distribution-overview-details strong {
+.distribution-metric-help {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+}
+
+.distribution-metric-help summary {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #aab4c8;
+  border-radius: 50%;
+  background: #fff;
+  color: #7c879d;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1;
+  list-style: none;
+  cursor: help;
+}
+
+.distribution-metric-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.distribution-metric-help summary:hover,
+.distribution-metric-help summary:focus-visible,
+.distribution-metric-help[open] summary {
+  border-color: var(--distribution-primary);
+  background: #eef2ff;
+  color: var(--distribution-primary);
+}
+
+.distribution-metric-help summary:focus-visible {
+  outline: 2px solid rgb(79 70 229 / 20%);
+  outline-offset: 2px;
+}
+
+.distribution-metric-help__popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: -8px;
+  width: 280px;
+  padding: 14px 16px;
+  border: 1px solid #dbe2f2;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 14px 36px rgb(30 41 59 / 14%);
+  color: var(--distribution-secondary);
+  text-align: left;
+}
+
+.distribution-overview-details article:nth-child(n + 4) .distribution-metric-help__popover {
+  right: -8px;
+  left: auto;
+}
+
+.distribution-metric-help__popover strong {
+  display: block;
+  color: var(--distribution-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.distribution-metric-help__popover p {
+  margin: 8px 0;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: normal;
+}
+
+.distribution-metric-help__popover small {
+  display: block;
+  color: #8a94a8;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.distribution-overview-details article > strong {
   align-self: center;
   color: var(--distribution-text);
   font-size: 18px;
   font-weight: 600;
 }
 
-.distribution-overview-details small {
+.distribution-overview-details article > small {
   align-self: start;
   color: #9aa3b6;
   font-size: 11px;
@@ -497,7 +584,7 @@
 
 .distribution-date {
   display: flex;
-  width: 294px;
+  width: 390px;
   height: 32px;
   align-items: center;
   border: 1px solid var(--distribution-border);
@@ -515,53 +602,71 @@
 
 .distribution-date > span {
   width: 68px;
+  flex: 0 0 68px;
   padding-left: 10px;
   line-height: 30px;
   border-right: 1px solid var(--distribution-border);
 }
 
-.distribution-date input {
-  width: 90px;
-  padding: 0 4px;
+.distribution-date .ant-picker {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  flex: 1;
   border: 0;
   outline: none;
+  background: transparent;
+  box-shadow: none;
   color: var(--distribution-secondary);
   cursor: pointer;
+}
+
+.distribution-date .ant-picker:hover,
+.distribution-date .ant-picker-focused {
+  border: 0;
+  box-shadow: none;
+}
+
+.distribution-date .ant-picker-input {
+  min-width: 0;
+}
+
+.distribution-date .ant-picker-input > input {
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  color: var(--distribution-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  text-align: center;
+}
+
+.distribution-date .ant-picker-input > input::placeholder {
+  color: #8f98aa;
+  opacity: 1;
+}
+
+.distribution-date .ant-picker-range-separator {
+  padding: 0 5px;
+  color: var(--distribution-secondary);
   font-size: 11px;
 }
 
-.distribution-date input::-webkit-calendar-picker-indicator {
-  display: none;
+.distribution-date .ant-picker-suffix {
+  margin-left: 6px;
 }
 
-.distribution-date i {
-  width: 6px;
-  font-style: normal;
-}
-
-.distribution-date__picker {
-  display: grid;
-  width: 32px;
-  height: 30px;
-  padding: 0;
-  place-items: center;
-  border: 0;
-  margin-left: auto;
-  background: transparent;
-  cursor: pointer;
-}
-
-.distribution-date__picker img {
+.distribution-date .ant-picker-suffix img {
   width: 20px;
   height: 20px;
   margin: 0;
   pointer-events: none;
 }
 
-.distribution-date__picker:focus-visible {
-  border-radius: 6px;
-  outline: 2px solid var(--distribution-primary);
-  outline-offset: -2px;
+.distribution-date .ant-picker-clear {
+  right: 6px;
+  background: var(--distribution-card);
 }
 
 .distribution-amount {
@@ -691,6 +796,7 @@
   background: #eef2ff;
   font-weight: 400;
   line-height: 20px;
+  text-align: center;
 }
 
 .distribution-table th:first-child {

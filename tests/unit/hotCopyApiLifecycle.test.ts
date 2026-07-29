@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   createAiTask: vi.fn(),
   estimateAiTaskCost: vi.fn(),
+  getAssetDownloadUrl: vi.fn(),
   getModelForOperation: vi.fn(),
   resolveTaskVideoResult: vi.fn(),
+  uploadAssetFile: vi.fn(),
   waitForAiTask: vi.fn(),
 }))
 
@@ -16,8 +18,9 @@ vi.mock('@/api/business', () => ({
     return Number.isFinite(id) && id > 0 ? Math.floor(id) : 0
   },
   getModelForOperation: mocks.getModelForOperation,
+  getAssetDownloadUrl: mocks.getAssetDownloadUrl,
   resolveTaskModel: vi.fn(),
-  uploadAssetFile: vi.fn(),
+  uploadAssetFile: mocks.uploadAssetFile,
   waitForAiTask: mocks.waitForAiTask,
 }))
 
@@ -43,6 +46,8 @@ import {
   HOT_COPY_MODEL_UNAVAILABLE_CODE,
   HOT_COPY_QUOTE_CHANGED_CODE,
   HOT_COPY_QUOTE_INVALID_CODE,
+  ensureHotCopyTemplateVideoSource,
+  importHotCopyTemplateVideo,
   invalidateHotCopyVideoModel,
   replicateHotVideo,
   type HotCopyReplicateQuote,
@@ -53,6 +58,117 @@ const VALID_REPLICATE_INPUTS = {
   sourceVideoDurationSec: 10,
   referenceImageCount: 1,
 } as const
+
+describe('template video import', () => {
+  beforeEach(() => {
+    mocks.getAssetDownloadUrl.mockReset()
+    mocks.uploadAssetFile.mockReset()
+    vi.unstubAllGlobals()
+  })
+
+  it('downloads a URL-only template and uploads it as a workspace video asset', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(new Blob(['video'], { type: 'video/mp4' }), {
+          status: 200,
+          headers: { 'Content-Type': 'video/mp4' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    mocks.uploadAssetFile.mockResolvedValue({ asset: { id: 731 } })
+
+    await expect(importHotCopyTemplateVideo(7, 'https://cdn.example.com/templates/source.mp4')).resolves.toBe(731)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://cdn.example.com/templates/source.mp4',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+    expect(mocks.uploadAssetFile).toHaveBeenCalledWith({
+      workspaceId: 7,
+      file: expect.objectContaining({
+        name: 'source.mp4',
+        type: 'video/mp4',
+      }),
+    })
+  })
+
+  it('reads a built-in OSS template through the fixed same-origin proxy', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(new Blob(['video'], { type: 'video/mp4' }), {
+          status: 200,
+          headers: { 'Content-Type': 'video/mp4' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    mocks.uploadAssetFile.mockResolvedValue({ asset: { id: 914 } })
+
+    await expect(
+      importHotCopyTemplateVideo(21, 'https://zzh-zhongdahengrui.oss-accelerate.aliyuncs.com/demo-template.mp4'),
+    ).resolves.toBe(914)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/template-media/demo-template.mp4',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
+  it('rejects unsafe template URLs before downloading or creating an asset', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(importHotCopyTemplateVideo(7, 'javascript:alert(1)')).rejects.toThrow('模板视频地址无效')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mocks.uploadAssetFile).not.toHaveBeenCalled()
+  })
+
+  it('returns a stable workspace URL before the template enters duration and quote checks', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(new Blob(['video'], { type: 'video/mp4' }), {
+          status: 200,
+          headers: { 'Content-Type': 'video/mp4' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    mocks.uploadAssetFile.mockResolvedValue({ asset: { id: 845 } })
+    mocks.getAssetDownloadUrl.mockResolvedValue('/api/v1/assets/845/download?workspace_id=9')
+
+    await expect(
+      ensureHotCopyTemplateVideoSource(9, {
+        assetId: 0,
+        src: 'https://cdn.example.com/templates/preflight.mp4',
+      }),
+    ).resolves.toEqual({
+      assetId: 845,
+      src: '/api/v1/assets/845/download?workspace_id=9',
+    })
+
+    expect(mocks.getAssetDownloadUrl).toHaveBeenCalledWith({
+      workspaceId: 9,
+      assetId: 845,
+    })
+  })
+
+  it('does not download a template again when the catalog already provides an asset id', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    mocks.getAssetDownloadUrl.mockResolvedValue('/api/v1/assets/222/download?workspace_id=9')
+
+    await expect(
+      ensureHotCopyTemplateVideoSource(9, {
+        assetId: 222,
+        src: 'https://cdn.example.com/templates/existing.mp4',
+      }),
+    ).resolves.toEqual({
+      assetId: 222,
+      src: '/api/v1/assets/222/download?workspace_id=9',
+    })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mocks.uploadAssetFile).not.toHaveBeenCalled()
+  })
+})
 
 function confirmedQuoteFor(
   snapshot: HotCopyReplicateSnapshot,

@@ -9,7 +9,6 @@
  * 权限与数据安全：页面按用户和工作空间隔离状态，隐藏无权访问项目的关联素材，并排除人脸脱敏等流程中间产物。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { SearchOutlined } from '@ant-design/icons'
 import { Pagination } from 'antd'
 import '../styles/creative.css'
 import './ResourceManagementView.css'
@@ -21,7 +20,7 @@ import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { favoriteVideoAssetIdOf, loadFavorites } from '@/utils/favoriteVideos'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
-import RealPersonLibrary, { REAL_PERSON_ASSET_SOURCE } from '@/components/resource/RealPersonLibrary'
+import resourceSearchIcon from '@/assets/resource/figma-resource-search.svg'
 import AiBadge from '@/components/common/AiBadge'
 import { useAssetPreview } from '@/composables/useAssetPreview'
 import { extractAssetPageItems, getAssetDownloadUrl, getBusinessErrorMessage, listAiTasks } from '@/api/business'
@@ -66,12 +65,9 @@ const MAIN_TABS = [
     label: '我收藏的',
     subs: [] as { k: string; l: string }[],
   },
-  {
-    key: 'people',
-    label: '真人素材库',
-    subs: [] as { k: string; l: string }[],
-  },
 ] as const
+/** 真人素材继续与普通素材隔离；真人素材库入口隐藏期间不加载其页面组件。 */
+const REAL_PERSON_ASSET_SOURCE = 'real_person'
 
 /** 素材页主标签的受限键类型。 */
 type MainTabKey = (typeof MAIN_TABS)[number]['key']
@@ -1170,11 +1166,13 @@ export default function ResourceManagementView() {
 
         <section className="rm2-main" aria-label="我的素材">
           {/* 主 Tab */}
-          <div className="rm2-tabs">
+          <div className="rm2-tabs" role="tablist" aria-label="素材分类">
             {MAIN_TABS.map((t) => (
               <button
                 key={t.key}
                 type="button"
+                role="tab"
+                aria-selected={mainTab === t.key}
                 className={`rm2-tab${mainTab === t.key ? ' is-active' : ''}`}
                 onClick={() => onSelectMain(t.key)}
               >
@@ -1182,11 +1180,12 @@ export default function ResourceManagementView() {
               </button>
             ))}
             <label className="rm2-search">
-              <SearchOutlined aria-hidden="true" />
+              <img src={resourceSearchIcon} alt="" aria-hidden="true" />
               <input
                 value={searchQuery}
                 type="text"
-                placeholder="搜索素材名称、关键词"
+                placeholder="搜索素材名称、关键词..."
+                aria-label="搜索素材名称、关键词"
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </label>
@@ -1209,9 +1208,7 @@ export default function ResourceManagementView() {
           )}
 
           {/* 内容 */}
-          {mainTab === 'people' ? (
-            <RealPersonLibrary key={currentWorkspaceId} workspaceId={currentWorkspaceId} query={searchQuery} />
-          ) : showProjectList ? (
+          {showProjectList ? (
             // 我上传的/我生成的:按项目分组的项目列表
             projectsForMode.length ? (
               <>

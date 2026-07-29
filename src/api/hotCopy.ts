@@ -11,6 +11,7 @@ import {
   getModelForOperation,
   estimateAiTaskCost,
   getAiTaskId,
+  getAssetDownloadUrl,
 } from './business'
 import { normalizeSeedanceRatio } from '@/utils/videoOptions'
 import { validateSmartVideoDuration } from '@/utils/videoDurationValue'
@@ -19,6 +20,7 @@ import { readAiTaskProgress } from '@/utils/taskProgress'
 import { getBackendGenerationModelName, getBackendGenerationModelVersionId } from '@/utils/generationModelCatalog'
 import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/utils/modelRestrictions'
 import { buildHotCopyReplicateModelParams } from '@/utils/hotCopyModelAdapters'
+import { isSafeMediaUrl } from '@/utils/urlSafety'
 
 /** 爆款复制的模型筛选、任务超时与模型预热缓存策略。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
@@ -290,6 +292,143 @@ export async function preloadHotCopyVideoModel(args: {
 export async function uploadHotCopyAsset(workspaceId: number, file: File): Promise<number> {
   const out: any = await uploadAssetFile({ workspaceId, file })
   return Number(out?.asset?.id || 0) || 0
+}
+
+const importedTemplateVideoIds = new Map<string, number>()
+const pendingTemplateVideoImports = new Map<string, Promise<number>>()
+const BUILTIN_TEMPLATE_MEDIA_HOST = 'zzh-zhongdahengrui.oss-accelerate.aliyuncs.com'
+
+/**
+ * 内置模板 OSS 没有开放浏览器 fetch 的 CORS 响应头。开发环境使用 Vite 的
+ * 固定目标同源代理读取；后端模板只要返回 asset_id 就不会进入此兜底。
+ */
+function templateVideoReadCandidates(url: string): string[] {
+  const candidates = [url]
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol === 'https:' && parsed.hostname === BUILTIN_TEMPLATE_MEDIA_HOST) {
+      candidates.unshift(`/template-media${parsed.pathname}${parsed.search}`)
+    }
+  } catch {
+    // URL 已在调用方完成安全校验；解析失败时让原始请求给出统一错误。
+  }
+  return [...new Set(candidates)]
+}
+
+function templateVideoFileName(url: string, mimeType: string): string {
+  const extensions: Record<string, string> = {
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/quicktime': 'mov',
+    'video/x-matroska': 'mkv',
+  }
+  let rawName = ''
+  try {
+    const base =
+      typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://template.local'
+    rawName = decodeURIComponent(new URL(url, base).pathname.split('/').pop() || '')
+  } catch {
+    rawName = ''
+  }
+  const safeName = rawName.replace(/[^\w.-]+/g, '_').slice(-120)
+  if (safeName && /\.[a-z0-9]{2,5}$/i.test(safeName)) return safeName
+  return `template_${Date.now()}.${extensions[mimeType] || 'mp4'}`
+}
+
+/**
+ * 将只有 URL、没有 asset_id 的模板视频导入当前工作空间。
+ * video.replicate 只接受 asset_id，因此正式提交前必须先完成这一步。
+ */
+export async function importHotCopyTemplateVideo(workspaceId: number, url: string): Promise<number> {
+  const normalizedWorkspaceId = Number(workspaceId || 0) || 0
+  const normalizedUrl = String(url || '').trim()
+  if (!normalizedWorkspaceId) throw new Error('未选择工作空间，无法导入模板视频')
+  if (!isSafeMediaUrl(normalizedUrl)) throw new Error('模板视频地址无效，请重新选择模板')
+
+  const cacheKey = `${normalizedWorkspaceId}:${normalizedUrl}`
+  const cachedId = Number(importedTemplateVideoIds.get(cacheKey) || 0) || 0
+  if (cachedId) return cachedId
+  const pending = pendingTemplateVideoImports.get(cacheKey)
+  if (pending) return pending
+
+  const importPromise = (async () => {
+    let response: Response | null = null
+    let lastCause: unknown
+    for (const readUrl of templateVideoReadCandidates(normalizedUrl)) {
+      try {
+        const candidateResponse = await fetch(readUrl, {
+          cache: 'no-store',
+          headers: { Accept: 'video/*,application/octet-stream;q=0.8,*/*;q=0.1' },
+        })
+        if (candidateResponse.ok) {
+          response = candidateResponse
+          break
+        }
+        lastCause = new Error(`HTTP ${candidateResponse.status || 0}`)
+      } catch (cause) {
+        lastCause = cause
+      }
+    }
+    if (!response) {
+      throw new Error('模板视频读取失败，请稍后重试或重新选择模板', { cause: lastCause })
+    }
+
+    const blob = await response.blob()
+    if (!blob.size) throw new Error('模板视频内容为空，请重新选择模板')
+    const responseType = String(blob.type || '')
+      .split(';')[0]
+      .trim()
+      .toLowerCase()
+    if (responseType && responseType !== 'application/octet-stream' && !responseType.startsWith('video/')) {
+      throw new Error('模板地址返回的不是视频文件，请重新选择模板')
+    }
+
+    const mimeType = responseType.startsWith('video/') ? responseType : 'video/mp4'
+    const file = new File([blob], templateVideoFileName(normalizedUrl, mimeType), { type: mimeType })
+    const assetId = await uploadHotCopyAsset(normalizedWorkspaceId, file)
+    if (!assetId) throw new Error('模板视频导入后未返回可用的资源 ID，请重试')
+    importedTemplateVideoIds.set(cacheKey, assetId)
+    return assetId
+  })()
+
+  pendingTemplateVideoImports.set(cacheKey, importPromise)
+  try {
+    return await importPromise
+  } finally {
+    if (pendingTemplateVideoImports.get(cacheKey) === importPromise) {
+      pendingTemplateVideoImports.delete(cacheKey)
+    }
+  }
+}
+
+/**
+ * 将模板入口统一成当前工作空间可提交、可读取时长的稳定素材。
+ * 已有 asset_id 时只刷新同源地址；URL-only 模板会先导入，再返回同源地址。
+ */
+export async function ensureHotCopyTemplateVideoSource(
+  workspaceId: number,
+  source: { assetId?: number; src?: string } | null | undefined,
+): Promise<{ assetId: number; src: string }> {
+  const normalizedWorkspaceId = Number(workspaceId || 0) || 0
+  const originalUrl = String(source?.src || '').trim()
+  let assetId = Number(source?.assetId || 0) || 0
+  if (!normalizedWorkspaceId) throw new Error('未选择工作空间，无法准备模板视频')
+  if (!assetId) assetId = await importHotCopyTemplateVideo(normalizedWorkspaceId, originalUrl)
+
+  let hostedUrl = ''
+  try {
+    hostedUrl = String(
+      (await getAssetDownloadUrl({
+        workspaceId: normalizedWorkspaceId,
+        assetId,
+      })) || '',
+    ).trim()
+  } catch {
+    hostedUrl = ''
+  }
+  const src = hostedUrl || originalUrl
+  if (!src) throw new Error('模板视频缺少可用的播放地址，请重新选择模板')
+  return { assetId, src }
 }
 
 /** 按模型 schema 构建 video.replicate 参数，确保时长、比例和声音与正式提交一致。 */

@@ -342,11 +342,13 @@ export async function listBackendTemplates(): Promise<TemplateItem[]> {
       const h = Number(t?.height || 0)
       const ratio = normalizeRatio(String(t?.ratio || '').trim() || (w && h ? `${w} / ${h}` : '9 / 16'))
       const thumbnailUrl = String(t?.thumbnail_url || '').trim()
+      const videoAssetId = toNumber(t?.video_asset_id ?? t?.videoAssetId)
       return {
         id: Number(t?.id || 0),
         title: String(t?.title || '').trim(),
         thumbnailUrl: isSafeMediaUrl(thumbnailUrl) ? thumbnailUrl : '',
         videoUrl: String(t?.video_url || '').trim(),
+        videoAssetId: videoAssetId || undefined,
         ratio,
         width: w || undefined,
         height: h || undefined,

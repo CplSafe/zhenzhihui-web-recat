@@ -19,11 +19,6 @@ vi.mock('@/components/layout/AppTopbar', () => ({
   default: () => <header aria-label="应用顶栏" />,
 }))
 
-vi.mock('@/components/resource/RealPersonLibrary', () => ({
-  default: () => null,
-  REAL_PERSON_ASSET_SOURCE: 'real_person',
-}))
-
 vi.mock('@/components/common/AiBadge', () => ({
   default: () => null,
 }))
@@ -111,6 +106,17 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     window.history.replaceState({}, '', '/resources')
   })
 
+  it('hides the real-person library and falls back to all assets for legacy direct links', async () => {
+    window.history.replaceState({}, '', '/resources?tab=people')
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ResourceManagementView />)
+
+    expect(screen.queryByRole('tab', { name: '真人素材库' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '全部' })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(mocks.listAssets).toHaveBeenCalled())
+  })
+
   it('immediately hides A assets and closes its preview when switching to B', async () => {
     const workspaceB = deferred<{ items: unknown[] }>()
     mocks.listAssets.mockImplementation(({ workspaceId }: { workspaceId: number }) =>
@@ -146,7 +152,7 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     )
 
     const { rerender } = render(<ResourceManagementView />)
-    fireEvent.click(screen.getByRole('button', { name: '我上传的' }))
+    fireEvent.click(screen.getByRole('tab', { name: '我上传的' }))
     await waitFor(() =>
       expect(mocks.listCreativeProjects).toHaveBeenCalledWith({ workspaceId: 21, offset: 0, limit: 100 }),
     )
@@ -197,7 +203,7 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     )
 
     render(<ResourceManagementView />)
-    fireEvent.click(screen.getByRole('button', { name: '我收藏的' }))
+    fireEvent.click(screen.getByRole('tab', { name: '我收藏的' }))
 
     await waitFor(() => expect(mocks.getAssetDownloadUrl).toHaveBeenCalledWith({ workspaceId: 21, assetId: 701 }))
     await waitFor(() => expect(screen.getByLabelText('可刷新收藏')).toHaveAttribute('src', '/fresh.mp4'))
@@ -234,7 +240,7 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     mocks.listAssets.mockResolvedValue({ items: [] })
 
     const { rerender } = render(<ResourceManagementView />)
-    fireEvent.click(screen.getByRole('button', { name: '我收藏的' }))
+    fireEvent.click(screen.getByRole('tab', { name: '我收藏的' }))
     expect(await screen.findByLabelText('用户 7 收藏')).toHaveAttribute('src', '/user-7.mp4')
 
     mocks.user.id = 8
@@ -283,7 +289,7 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     ])
 
     render(<ResourceManagementView />)
-    fireEvent.click(screen.getByRole('button', { name: '我上传的' }))
+    fireEvent.click(screen.getByRole('tab', { name: '我上传的' }))
 
     expect(await screen.findByText('Accessible project')).toBeInTheDocument()
     expect(screen.queryByText('Restricted project')).not.toBeInTheDocument()
@@ -372,7 +378,7 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     render(<ResourceManagementView />)
     expect(await screen.findByLabelText('首屏足球素材')).toBeInTheDocument()
 
-    fireEvent.change(screen.getByPlaceholderText('搜索素材名称、关键词'), {
+    fireEvent.change(screen.getByPlaceholderText('搜索素材名称、关键词...'), {
       target: { value: '足球' },
     })
     expect(await screen.findByLabelText('首屏足球素材')).toBeInTheDocument()
@@ -462,12 +468,12 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     mocks.listCreativeProjects.mockResolvedValue([project(1, '足球项目', 601)])
 
     render(<ResourceManagementView />)
-    fireEvent.click(screen.getByRole('button', { name: '我上传的' }))
+    fireEvent.click(screen.getByRole('tab', { name: '我上传的' }))
     const projectCard = (await screen.findByText('足球项目')).closest('button')
     expect(projectCard).not.toBeNull()
     fireEvent.click(projectCard!)
 
-    const search = screen.getByPlaceholderText('搜索素材名称、关键词')
+    const search = screen.getByPlaceholderText('搜索素材名称、关键词...')
     fireEvent.change(search, { target: { value: '海边' } })
     expect(await screen.findByAltText('海边人物')).toBeInTheDocument()
     expect(screen.getByText('足球项目')).toBeInTheDocument()

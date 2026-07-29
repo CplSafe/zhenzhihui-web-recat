@@ -49,6 +49,7 @@ describe('backend template catalog', () => {
               title: '竖屏案例',
               thumbnail_url: 'javascript:alert(1)',
               video_url: 'https://cdn.example.com/vertical.mp4',
+              video_asset_id: 88,
               ratio: '9:16',
               style: '写实',
               created_at: '2026-07-21T00:00:00Z',
@@ -76,6 +77,7 @@ describe('backend template catalog', () => {
       title: '竖屏案例',
       thumbnailUrl: '',
       videoUrl: 'https://cdn.example.com/vertical.mp4',
+      videoAssetId: 88,
       ratio: '9 / 16',
       style: '写实',
     })
