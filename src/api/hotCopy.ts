@@ -352,7 +352,7 @@ export async function importHotCopyTemplateVideo(workspaceId: number, url: strin
   if (pending) return pending
 
   const importPromise = (async () => {
-    let response: Response | null = null
+    let videoBlob: Blob | null = null
     let lastCause: unknown
     for (const readUrl of templateVideoReadCandidates(normalizedUrl)) {
       try {
@@ -360,31 +360,52 @@ export async function importHotCopyTemplateVideo(workspaceId: number, url: strin
           cache: 'no-store',
           headers: { Accept: 'video/*,application/octet-stream;q=0.8,*/*;q=0.1' },
         })
-        if (candidateResponse.ok) {
-          response = candidateResponse
-          break
+        if (!candidateResponse.ok) {
+          lastCause = new Error(`HTTP ${candidateResponse.status || 0}`)
+          continue
         }
-        lastCause = new Error(`HTTP ${candidateResponse.status || 0}`)
+
+        const candidateBlob = await candidateResponse.blob()
+        const candidateType = String(candidateBlob.type || '')
+          .split(';')[0]
+          .trim()
+          .toLowerCase()
+        if (!candidateBlob.size) {
+          lastCause = new Error('模板视频内容为空')
+          continue
+        }
+        if (candidateType && candidateType !== 'application/octet-stream' && !candidateType.startsWith('video/')) {
+          lastCause = new Error(`模板媒体响应类型错误：${candidateType}`)
+          continue
+        }
+        videoBlob = candidateBlob
+        break
       } catch (cause) {
         lastCause = cause
       }
     }
-    if (!response) {
-      throw new Error('模板视频读取失败，请稍后重试或重新选择模板', { cause: lastCause })
+    if (!videoBlob) {
+      const isBuiltinTemplate = (() => {
+        try {
+          return new URL(normalizedUrl).hostname === BUILTIN_TEMPLATE_MEDIA_HOST
+        } catch {
+          return false
+        }
+      })()
+      throw new Error(
+        isBuiltinTemplate
+          ? '模板视频读取失败，请检查线上 /template-media 代理配置后重试'
+          : '模板视频读取失败，请稍后重试或重新选择模板',
+        { cause: lastCause },
+      )
     }
 
-    const blob = await response.blob()
-    if (!blob.size) throw new Error('模板视频内容为空，请重新选择模板')
-    const responseType = String(blob.type || '')
+    const responseType = String(videoBlob.type || '')
       .split(';')[0]
       .trim()
       .toLowerCase()
-    if (responseType && responseType !== 'application/octet-stream' && !responseType.startsWith('video/')) {
-      throw new Error('模板地址返回的不是视频文件，请重新选择模板')
-    }
-
     const mimeType = responseType.startsWith('video/') ? responseType : 'video/mp4'
-    const file = new File([blob], templateVideoFileName(normalizedUrl, mimeType), { type: mimeType })
+    const file = new File([videoBlob], templateVideoFileName(normalizedUrl, mimeType), { type: mimeType })
     const assetId = await uploadHotCopyAsset(normalizedWorkspaceId, file)
     if (!assetId) throw new Error('模板视频导入后未返回可用的资源 ID，请重试')
     importedTemplateVideoIds.set(cacheKey, assetId)

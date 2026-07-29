@@ -68,6 +68,15 @@ function createVideoResponse(): Response {
   } as unknown as Response
 }
 
+function createHtmlResponse(): Response {
+  const blob = new Blob(['<!doctype html><title>app</title>'], { type: 'text/html' })
+  return {
+    ok: true,
+    status: 200,
+    blob: vi.fn().mockResolvedValue(blob),
+  } as unknown as Response
+}
+
 describe('template video import', () => {
   beforeEach(() => {
     mocks.getAssetDownloadUrl.mockReset()
@@ -108,6 +117,25 @@ describe('template video import', () => {
       '/template-media/demo-template.mp4',
       expect.objectContaining({ cache: 'no-store' }),
     )
+  })
+
+  it('rejects an SPA fallback response instead of uploading index.html as a video', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(createHtmlResponse())
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      importHotCopyTemplateVideo(22, 'https://zzh-zhongdahengrui.oss-accelerate.aliyuncs.com/missing-proxy.mp4'),
+    ).rejects.toThrow('请检查线上 /template-media 代理配置')
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/template-media/missing-proxy.mp4',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+    expect(mocks.uploadAssetFile).not.toHaveBeenCalled()
   })
 
   it('rejects unsafe template URLs before downloading or creating an asset', async () => {
