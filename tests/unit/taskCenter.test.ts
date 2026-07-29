@@ -182,6 +182,22 @@ describe('task-center store normalization and terminal transitions', () => {
     expect(useTaskCenterStore.getState().tasks[0]?.generationId).toBe('generation-b')
   })
 
+  it('preserves one backend task linked to different projects for conflict validation', () => {
+    useTaskCenterStore
+      .getState()
+      .upsertTask(
+        task({ scope: 'hot-copy', projectId: 11, generationId: 'generation-a', taskId: 903, status: 'processing' }),
+      )
+    useTaskCenterStore
+      .getState()
+      .upsertTask(
+        task({ scope: 'hot-copy', projectId: 12, generationId: 'generation-b', taskId: 903, status: 'processing' }),
+      )
+
+    expect(useTaskCenterStore.getState().tasks).toHaveLength(2)
+    expect(useTaskCenterStore.getState().tasks.map((item) => item.projectId)).toEqual(expect.arrayContaining([11, 12]))
+  })
+
   it('does not resurrect a completed backend task under a new generation id', () => {
     useTaskCenterStore.getState().upsertTask(
       task({

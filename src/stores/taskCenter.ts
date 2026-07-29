@@ -163,6 +163,9 @@ function getTaskStableKeys(task: TaskCenterTask): string[] {
 }
 
 function tasksShareStableIdentity(left: TaskCenterTask, right: TaskCenterTask): boolean {
+  // 同一个后端任务被绑定到不同项目时属于数据冲突，必须同时保留给协调器拦截；
+  // 如果在这里静默去重，会把错误关联隐藏掉并可能将结果写入错误项目。
+  if (left.projectId !== right.projectId) return false
   const rightKeys = new Set(getTaskStableKeys(right))
   return getTaskStableKeys(left).some((key) => rightKeys.has(key))
 }
