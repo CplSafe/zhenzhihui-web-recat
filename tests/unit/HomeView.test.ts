@@ -82,8 +82,9 @@ describe('home template preview', () => {
 
   it('limits the homepage template preview to twenty items', () => {
     const items = Array.from({ length: 25 }, (_, index) => template(index + 1))
+    const visible = limitHomeTemplates(items)
 
-    expect(limitHomeTemplates(items)).toHaveLength(20)
-    expect(limitHomeTemplates(items).at(-1)?.id).toBe(20)
+    expect(visible).toHaveLength(20)
+    expect(visible[visible.length - 1]?.id).toBe(20)
   })
 })
