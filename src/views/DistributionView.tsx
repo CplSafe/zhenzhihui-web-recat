@@ -5,7 +5,7 @@ import { DatePicker } from 'antd'
 import dayjs from 'dayjs'
 import {
   exportDistributionCommissions,
-  getDistributionOverview,
+  getReferralInviteCodes,
   listDistributionCommissions,
   listDistributionInvitees,
 } from '@/api/business'
@@ -57,6 +57,16 @@ interface DistributionOverviewDetail {
 }
 
 type InviteeView = 'customer' | 'distributor'
+
+const DISABLED_DISTRIBUTOR_STATUSES = new Set([
+  'disabled',
+  'inactive',
+  'suspended',
+  'deactivated',
+  'stopped',
+  'banned',
+  'frozen',
+])
 
 const EMPTY_FILTERS: DistributionFilters = {
   keyword: '',
@@ -961,9 +971,12 @@ export default function DistributionView() {
     setCustomerInviteError('')
     setCustomerInviteCode('')
     try {
-      const customerOverview = unwrap(await getDistributionOverview()) || {}
-      const code = String(pick(customerOverview, ['code', 'invite_code', 'inviteCode', 'referral_code'], '')).trim()
-      if (!code) throw new Error('后端未返回客户邀请码')
+      const inviteCodes = await getReferralInviteCodes()
+      if (DISABLED_DISTRIBUTOR_STATUSES.has(inviteCodes.distributorStatus)) {
+        throw new Error('销售身份被停用，请联系客服')
+      }
+      const code = inviteCodes.customerCode
+      if (!code) throw new Error('未获取到邀请码')
       if (requestId === customerInviteRequestRef.current) setCustomerInviteCode(code)
     } catch (error: any) {
       if (requestId !== customerInviteRequestRef.current) return
@@ -979,15 +992,12 @@ export default function DistributionView() {
     setChannelInviteError('')
     setChannelInviteCode('')
     try {
-      const channelOverview = unwrap(await getDistributionOverview()) || {}
-      const code = String(
-        pick(
-          channelOverview,
-          ['distributor_code', 'distributorCode', 'channel_invite_code', 'channelInviteCode'],
-          pick(channelOverview?.distributor, ['code', 'invite_code', 'inviteCode'], ''),
-        ),
-      ).trim()
-      if (!code) throw new Error('后端未返回渠道邀请码')
+      const inviteCodes = await getReferralInviteCodes()
+      if (DISABLED_DISTRIBUTOR_STATUSES.has(inviteCodes.distributorStatus)) {
+        throw new Error('销售身份被停用，请联系客服')
+      }
+      const code = inviteCodes.channelCode
+      if (!code) throw new Error('未获取到邀请码')
       if (requestId === channelInviteRequestRef.current) setChannelInviteCode(code)
     } catch (error: any) {
       if (requestId !== channelInviteRequestRef.current) return
@@ -998,6 +1008,10 @@ export default function DistributionView() {
   }, [])
 
   const openInvite = () => {
+    if (!canManageDistribution) {
+      showToast('仅销售人员可以邀请客户', 'error')
+      return
+    }
     setInviteOpen(true)
     setCopyFeedback('')
     void loadCustomerInviteCode()
@@ -1014,6 +1028,10 @@ export default function DistributionView() {
   }
 
   const openChannelInvite = () => {
+    if (!canManageDistribution) {
+      showToast('仅销售人员可以邀请渠道', 'error')
+      return
+    }
     setChannelCopyFeedback('')
     setChannelInviteOpen(true)
     void loadChannelInviteCode()

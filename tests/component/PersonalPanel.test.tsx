@@ -102,7 +102,7 @@ describe('PersonalPanel', () => {
     mocks.distributionAccess.isDistributor = true
   })
 
-  it('shows invitation rebate and opens its page', async () => {
+  it('shows invitation rebate for sales users and opens its page', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
     const view = render(<PersonalPanel onClose={onClose} />)
@@ -115,9 +115,8 @@ describe('PersonalPanel', () => {
     expect(screen.getByRole('button', { name: /邀请返利/ })).toBeInTheDocument()
   })
 
-  it('hides the invitation rebate entry for non-marketing users', () => {
+  it('hides the invitation rebate entry without a sales identity', () => {
     mocks.distributionAccess.isDistributor = false
-
     render(<PersonalPanel />)
 
     expect(screen.queryByRole('button', { name: /邀请返利/ })).not.toBeInTheDocument()
