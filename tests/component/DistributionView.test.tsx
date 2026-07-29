@@ -167,6 +167,70 @@ describe('DistributionView', () => {
     expect(container.querySelectorAll('table.distribution-table')).toHaveLength(2)
   })
 
+  it('uses backend customer and distributor totals instead of overriding them with the loaded invitee list', async () => {
+    mocks.access.overview = {
+      withdrawn_cents: 35,
+      total_customer_count: 7,
+      direct_customer_count: 5,
+      downline_customer_count: 0,
+      direct_distributor_count: 2,
+    }
+    mocks.listInvitees.mockResolvedValue({
+      items: Array.from({ length: 7 }, (_, index) => ({
+        invitee_id: index + 1,
+        invitee_name: `列表客户-${index + 1}`,
+        relationship: 'direct',
+      })),
+      total: 7,
+    })
+
+    render(<DistributionView />)
+
+    const customerCard = screen.getByText('成功邀请客户').closest('article')
+    const distributorCard = screen.getByText('成功邀请渠道').closest('article')
+    expect(customerCard).toHaveTextContent('5人')
+    expect(distributorCard).toHaveTextContent('2个')
+    expect(screen.getByText('0.35')).toBeInTheDocument()
+  })
+
+  it('counts channel invitees as distributors and customer invitees as customers', async () => {
+    mocks.access.overview = {
+      withdrawn_cents: 0,
+    }
+    mocks.listInvitees.mockResolvedValue({
+      items: [
+        {
+          invitee_id: 1,
+          invitee_name: '渠道邀请用户',
+          kind: 'distributor',
+          relation_level: 1,
+        },
+        {
+          invitee_id: 2,
+          invitee_name: '用户邀请用户',
+          kind: 'customer',
+          relation_level: 1,
+        },
+        {
+          invitee_id: 3,
+          invitee_name: '经销商的客户',
+          kind: 'customer',
+          relationship: 'indirect',
+          relation_level: 2,
+        },
+      ],
+      total: 3,
+    })
+
+    render(<DistributionView />)
+
+    await screen.findByText('用户邀请用户')
+    const customerCard = screen.getByText('成功邀请客户').closest('article')
+    const distributorCard = screen.getByText('成功邀请渠道').closest('article')
+    expect(customerCard).toHaveTextContent('2人')
+    expect(distributorCard).toHaveTextContent('1个')
+  })
+
   it('paginates invitees and commissions independently with ten rows per page', async () => {
     const user = userEvent.setup()
     mocks.listInvitees.mockResolvedValue({

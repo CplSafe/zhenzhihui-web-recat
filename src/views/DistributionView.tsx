@@ -199,6 +199,14 @@ function pageTotal(payload: any, fallback: number): number {
   return Number.isFinite(value) ? value : fallback
 }
 
+/** 读取后端明确返回的非负统计数量；字段缺失时返回 null，交由调用方决定是否采用列表兜底。 */
+function optionalCount(source: any, keys: string[]): number | null {
+  const value = pick(source, keys, null)
+  if (value === null) return null
+  const count = Number(value)
+  return Number.isFinite(count) && count >= 0 ? Math.floor(count) : null
+}
+
 function optionalMoneyCents(source: any, yuanKeys: string[], centsKeys: string[] = []): number | null {
   const centsValue = pick(source, centsKeys, null)
   if (centsValue !== null) {
@@ -270,6 +278,18 @@ function isDistributorRelation(value: any): boolean {
     .trim()
     .toLowerCase()
   return ['distributor', 'indirect', 'distributor_customer'].includes(normalized)
+}
+
+function isDistributorInvitee(item: any): boolean {
+  const kind = String(pick(item, ['kind', 'invitee_kind', 'invitee_type', 'user_type'], ''))
+    .trim()
+    .toLowerCase()
+  if (kind) return kind === 'distributor'
+
+  const relationship = String(pick(item, ['relationship', 'relation', 'relation_type'], ''))
+    .trim()
+    .toLowerCase()
+  return relationship === 'distributor'
 }
 
 function relationLabel(value: any): string {
@@ -557,10 +577,7 @@ export default function DistributionView() {
     () =>
       invitees.reduce(
         (counts, item) => {
-          const relation = String(pick(item, ['relationship', 'relation', 'relation_type'], 'direct'))
-            .trim()
-            .toLowerCase()
-          if (isDistributorRelation(relation)) counts.distributor += 1
+          if (isDistributorInvitee(item)) counts.distributor += 1
           else counts.direct += 1
           return counts
         },
@@ -568,6 +585,21 @@ export default function DistributionView() {
       ),
     [invitees],
   )
+  const successfulCustomerCount =
+    optionalCount(overview, [
+      'direct_customer_count',
+      'direct_invitee_count',
+      'successful_customer_invitees',
+      'customer_invitee_count',
+    ]) ?? inviteeCounts.direct
+  const successfulDistributorCount =
+    optionalCount(overview, [
+      'direct_distributor_count',
+      'channel_invitee_count',
+      'successful_channel_invitees',
+      'invited_distributor_count',
+      'distributor_invitee_count',
+    ]) ?? inviteeCounts.distributor
 
   const cards = useMemo<DistributionSummaryCard[]>(
     () => [
@@ -598,41 +630,18 @@ export default function DistributionView() {
       },
       {
         label: '成功邀请客户',
-        value: String(
-          Math.max(
-            Number(pick(overview, ['direct_invitee_count', 'successful_invitees', 'invitee_count'], 0)) || 0,
-            inviteeCounts.direct,
-          ),
-        ),
+        value: String(successfulCustomerCount),
         unit: '人',
         icon: directInviteIcon,
       },
       {
         label: '成功邀请渠道',
-        value: String(
-          Math.max(
-            Number(
-              pick(
-                overview,
-                [
-                  'channel_invitee_count',
-                  'successful_channel_invitees',
-                  'invited_distributor_count',
-                  'distributor_invitee_count',
-                  'indirect_invitee_count',
-                  'sub_invitee_count',
-                ],
-                0,
-              ),
-            ) || 0,
-            inviteeCounts.distributor,
-          ),
-        ),
+        value: String(successfulDistributorCount),
         unit: '个',
         icon: distributorInviteIcon,
       },
     ],
-    [inviteeCounts, overview],
+    [overview, successfulCustomerCount, successfulDistributorCount],
   )
 
   const overviewDetails = useMemo(() => {
@@ -696,7 +705,11 @@ export default function DistributionView() {
   const normalizedInvitees = useMemo(
     () =>
       invitees.map((item, index) => {
-        const relationshipValue = pick(item, ['relationship', 'relation', 'relation_type', 'kind'], 'direct')
+        const relationshipValue = pick(item, ['kind', 'invitee_kind', 'invitee_type', 'user_type'], '')
+          ? isDistributorInvitee(item)
+            ? 'distributor'
+            : 'customer'
+          : pick(item, ['relationship', 'relation', 'relation_type'], 'direct')
         return {
           key: `invitee-${String(pick(item, ['invitee_id', 'customer_id', 'user_id', 'id'], index))}`,
           matchId: String(
@@ -715,7 +728,7 @@ export default function DistributionView() {
             '---',
           ),
           relationship: relationLabel(relationshipValue),
-          isDistributor: isDistributorRelation(relationshipValue),
+          isDistributor: isDistributorInvitee(item),
           mobile: String(pick(item, ['mobile', 'masked_mobile'], '')).trim(),
           paidOrderCount: Number(pick(item, ['paid_order_count', 'order_count'], 0)) || 0,
           invitedCustomerCount: optionalNumber(item, ['invited_customer_count']),
