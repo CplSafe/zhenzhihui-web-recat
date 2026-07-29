@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pagination } from 'antd'
+import { useNavigate } from 'react-router-dom'
 import '../styles/creative.css'
 import './ResourceManagementView.css'
 import AppSidebar from '@/components/home/AppSidebar'
@@ -17,7 +18,15 @@ import AppTopbar from '@/components/layout/AppTopbar'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
-import { favoriteVideoAssetIdOf, loadFavorites } from '@/utils/favoriteVideos'
+import {
+  favoriteAssetIdOf,
+  favoriteKeyOf,
+  favoriteMediaKindOf,
+  favoriteMediaUrlOf,
+  loadFavorites,
+  toggleFavorite,
+  type FavoriteVideo,
+} from '@/utils/favoriteVideos'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
 import resourceSearchIcon from '@/assets/resource/figma-resource-search.svg'
@@ -30,6 +39,7 @@ import {
   resolveUserId,
   toPlainObject as toPlainObj,
 } from '@/utils/creativeDraftMetadata'
+import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 
 // 主 Tab + 各自子分类(全部 = 我上传的 + 我生成的 的所有素材)
 const MAIN_TABS = [
@@ -581,8 +591,26 @@ function AssetThumb({
 }
 
 // 素材卡片:比例随媒体真实宽高同步(AssetThumb 加载后回传)
-function ResourceCard({ card, workspaceId, onPreview }: { card: any; workspaceId: any; onPreview: () => void }) {
+function ResourceCard({
+  card,
+  workspaceId,
+  onPreview,
+  favorite,
+  onToggleFavorite,
+  favoriteActions,
+}: {
+  card: any
+  workspaceId: any
+  onPreview: () => void
+  favorite: boolean
+  onToggleFavorite: () => void
+  favoriteActions?: {
+    onDownload: () => void
+    onUseTemplate?: () => void
+  }
+}) {
   const [ratio, setRatio] = useState<string>(card.duration || '')
+  const isImage = card.mediaKind === 'image'
   return (
     <article className="resource-asset-card">
       <button type="button" className="resource-asset-cover" aria-label={`预览${card.title}`} onClick={onPreview}>
@@ -590,6 +618,64 @@ function ResourceCard({ card, workspaceId, onPreview }: { card: any; workspaceId
         {card.isAi && card.mediaKind === 'image' && <AiBadge />}
         <span className="resource-asset-type">{card.type}</span>
       </button>
+      <button
+        type="button"
+        className={`resource-asset-favorite${favorite ? ' is-on' : ''}`}
+        aria-label={`${favorite ? '取消收藏' : '收藏'}${card.title}`}
+        aria-pressed={favorite}
+        title={favorite ? '取消收藏' : '收藏'}
+        onClick={onToggleFavorite}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+        </svg>
+      </button>
+      {favoriteActions ? (
+        <div className="resource-favorite-actions" aria-label={`${card.title}操作`}>
+          <button
+            type="button"
+            className="resource-favorite-action-btn"
+            onClick={onPreview}
+            aria-label={`${isImage ? '预览' : '播放'}${card.title}`}
+          >
+            {!isImage ? (
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            ) : null}
+            {isImage ? '预览' : '播放'}
+          </button>
+          <button
+            type="button"
+            className="resource-favorite-action-btn"
+            onClick={favoriteActions.onDownload}
+            aria-label={`下载${card.title}`}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+            </svg>
+            下载
+          </button>
+          {favoriteActions.onUseTemplate ? (
+            <button
+              type="button"
+              className="resource-favorite-action-btn"
+              onClick={favoriteActions.onUseTemplate}
+              aria-label={`用${card.title}做同款`}
+            >
+              做同款
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="resource-asset-info">
         <div className="resource-asset-meta">
           {ratio ? <span className="resource-asset-ratio">比例 {ratio}</span> : <span />}
@@ -602,6 +688,7 @@ function ResourceCard({ card, workspaceId, onPreview }: { card: any; workspaceId
 
 /** 加载并渲染当前账号/空间下的素材分类、项目分组和真人素材库。 */
 export default function ResourceManagementView() {
+  const navigate = useNavigate()
   const workspaceId = useWorkspaceId()
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
@@ -663,6 +750,7 @@ export default function ResourceManagementView() {
     userId: 0,
     items: [],
   })
+  const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set())
   const favoriteCards =
     favoriteCardState.workspaceId === currentWorkspaceId && favoriteCardState.userId === currentUserId
       ? favoriteCardState.items
@@ -892,45 +980,59 @@ export default function ResourceManagementView() {
   useEffect(() => {
     let cancelled = false
     const wsId = currentWorkspaceId
-    if (!wsId || mainTab !== 'collected') {
+    if (!wsId) {
+      setFavoriteKeys(new Set())
       setFavoriteCardState({ workspaceId: wsId, userId: currentUserId, items: [] })
       return
     }
 
     const favorites = loadFavorites(wsId)
+    setFavoriteKeys(new Set(favorites.map((favorite) => favorite.key)))
+    if (mainTab !== 'collected') {
+      setFavoriteCardState({ workspaceId: wsId, userId: currentUserId, items: [] })
+      return
+    }
+
     const toCard = (favorite: (typeof favorites)[number], mediaUrl: string) => {
-      const assetId = favoriteVideoAssetIdOf(favorite)
+      const assetId = favoriteAssetIdOf(favorite)
+      const mediaKind = favoriteMediaKindOf(favorite)
       return {
         id: favorite.key,
         assetId,
         workspaceId: wsId,
         title: favorite.title,
-        type: '视频',
+        type: mediaKind === 'image' ? '图片' : '视频',
         tags: [],
         duration: favorite.ratio || '',
         size: '',
         source: 'collected',
-        kind: 'video',
+        kind: mediaKind,
         roleScene: '',
         isAi: true,
         ts: favorite.ts || 0,
-        mediaKind: 'video',
+        mediaKind,
         mediaUrl,
-        posterUrl: favorite.thumbnailUrl,
+        posterUrl: mediaKind === 'image' ? mediaUrl : favorite.thumbnailUrl,
       }
     }
     setFavoriteCardState({
       workspaceId: wsId,
       userId: currentUserId,
-      items: favorites.map((favorite) => toCard(favorite, favorite.videoUrl || '')),
+      items: favorites.map((favorite) => toCard(favorite, favoriteMediaUrlOf(favorite))),
     })
 
     Promise.all(
       favorites.map(async (favorite) => {
-        const assetId = favoriteVideoAssetIdOf(favorite)
-        if (!assetId) return toCard(favorite, favorite.videoUrl || '')
-        const freshUrl = await getAssetDownloadUrl({ workspaceId: wsId, assetId }).catch(() => '')
-        return toCard(favorite, String(freshUrl || favorite.videoUrl || '').trim())
+        const assetId = favoriteAssetIdOf(favorite)
+        const fallbackUrl = favoriteMediaUrlOf(favorite)
+        if (!assetId) return toCard(favorite, fallbackUrl)
+        let freshUrl = ''
+        try {
+          freshUrl = (await getAssetDownloadUrl({ workspaceId: wsId, assetId })) || ''
+        } catch {
+          freshUrl = ''
+        }
+        return toCard(favorite, String(freshUrl || fallbackUrl).trim())
       }),
     ).then((items) => {
       if (!cancelled) setFavoriteCardState({ workspaceId: wsId, userId: currentUserId, items })
@@ -1152,6 +1254,87 @@ export default function ResourceManagementView() {
     openPreview(previewItems, index >= 0 ? index : 0)
   }
 
+  const favoriteItemFromCard = (card: any): FavoriteVideo => {
+    const assetId = Number(card.assetId || 0) || 0
+    const mediaKind = card.mediaKind === 'image' ? 'image' : 'video'
+    const mediaUrl = String(card.mediaUrl || '')
+    const shared = {
+      key: favoriteKeyOf(assetId, mediaUrl),
+      title: String(card.title || (mediaKind === 'image' ? '收藏图片' : '收藏视频')),
+      thumbnailUrl: String(card.posterUrl || (mediaKind === 'image' ? mediaUrl : '')),
+      ratio: String(card.duration || ''),
+      ts: Number(card.ts || Date.now()),
+    }
+    if (mediaKind === 'image') {
+      return {
+        ...shared,
+        mediaKind,
+        assetId: assetId || undefined,
+        mediaUrl,
+      }
+    }
+    return {
+      ...shared,
+      videoAssetId: assetId || undefined,
+      videoUrl: mediaUrl,
+    }
+  }
+
+  const toggleFavoriteCard = (card: any) => {
+    const wsId = currentWorkspaceId
+    if (!wsId) return
+    const item = favoriteItemFromCard(card)
+    const isFavorite = toggleFavorite(wsId, item)
+    setFavoriteKeys((current) => {
+      const next = new Set(current)
+      if (isFavorite) next.add(item.key)
+      else next.delete(item.key)
+      return next
+    })
+    if (!isFavorite) {
+      setFavoriteCardState((current) => ({
+        ...current,
+        items: current.items.filter((favoriteCard) => favoriteCard.id !== item.key),
+      }))
+    }
+    showToast(isFavorite ? '已收藏到我的收藏' : '已取消收藏', 'success')
+  }
+
+  const downloadResourceCard = (card: any) => {
+    const assetId = Number(card.assetId || 0) || 0
+    const isImage = card.mediaKind === 'image'
+    void downloadToDisk({
+      fileName: buildDownloadName(
+        String(card.title || (isImage ? '收藏图片' : '收藏视频')),
+        new Date(),
+        isImage ? 'png' : 'mp4',
+      ),
+      mimeType: isImage ? 'image/png' : 'video/mp4',
+      preserveResponseMediaType: isImage,
+      resolveUrl: async () => {
+        if (assetId && currentWorkspaceId) {
+          const freshUrl = await getAssetDownloadUrl({
+            workspaceId: currentWorkspaceId,
+            assetId,
+          }).catch(() => '')
+          if (freshUrl) return freshUrl
+        }
+        return String(card.mediaUrl || '')
+      },
+    }).catch((error) => showToast(getBusinessErrorMessage(error, '下载失败，请稍后重试'), 'error'))
+  }
+
+  const openVideoInHotCopy = (card: any) => {
+    navigate('/hot-copy', {
+      state: {
+        carryVideo: {
+          url: String(card.mediaUrl || ''),
+          assetId: Number(card.assetId || 0) || 0,
+        },
+      },
+    })
+  }
+
   return (
     <div className="rm2-page">
       <AppSidebar
@@ -1299,6 +1482,18 @@ export default function ResourceManagementView() {
                       card={card}
                       workspaceId={workspaceId}
                       onPreview={() => previewCard(card)}
+                      favorite={favoriteKeys.has(
+                        favoriteKeyOf(Number(card.assetId || 0) || 0, String(card.mediaUrl || '')),
+                      )}
+                      onToggleFavorite={() => toggleFavoriteCard(card)}
+                      favoriteActions={
+                        card.mediaKind === 'video' || mainTab === 'collected'
+                          ? {
+                              onDownload: () => downloadResourceCard(card),
+                              onUseTemplate: card.mediaKind === 'video' ? () => openVideoInHotCopy(card) : undefined,
+                            }
+                          : undefined
+                      }
                     />
                   ))}
                 </div>

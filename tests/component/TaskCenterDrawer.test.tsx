@@ -144,6 +144,34 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     expect(screen.queryByText('已完成任务')).not.toBeInTheDocument()
   })
 
+  it('automatically switches to generating when a new task starts without trapping manual tab changes', async () => {
+    const user = userEvent.setup()
+    seed()
+    render(<TaskCenterDrawer scope="smart" />)
+
+    expect(screen.getByRole('tab', { name: '智能成片' })).toHaveAttribute('aria-selected', 'true')
+
+    act(() => {
+      useTaskCenterStore.getState().upsertTask(
+        task({
+          id: 'smart:7:11:new-generation',
+          generationId: 'new-generation',
+          status: 'processing',
+          title: '刚开始生成',
+        }),
+      )
+    })
+
+    expect(await screen.findByRole('tab', { name: '正在生成' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('刚开始生成')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: '智能成片' }))
+    act(() => {
+      useTaskCenterStore.getState().patchTask('smart:7:11:new-generation', { progress: 35 })
+    })
+    expect(screen.getByRole('tab', { name: '智能成片' })).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('restores a persisted hot-copy thumbnail from the project source asset on first open', async () => {
     const user = userEvent.setup()
     mocks.getAssetDownloadUrl.mockResolvedValue('/api/v1/assets/321/download?workspace_id=7')
@@ -182,6 +210,27 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
       expect(useTaskCenterStore.getState().tasks[0]?.thumbnailAssetId).toBe(321)
       expect(mocks.getAssetDownloadUrl).toHaveBeenCalledWith({ workspaceId: 7, assetId: 321 })
     })
+  })
+
+  it('opens a completed hot-copy task in its editable project instead of intercepting it with video preview', async () => {
+    const user = userEvent.setup()
+    seed(
+      task({
+        id: 'hot-copy:7:11:completed',
+        scope: 'hot-copy',
+        operationCode: 'video.replicate',
+        status: 'succeeded',
+        title: '可继续编辑的爆款任务',
+        resultUrl: '/completed-hot-copy.mp4',
+        resultAssetId: 91,
+      }),
+    )
+
+    render(<TaskCenterDrawer scope="hot-copy" />)
+    await user.click(await screen.findByText('可继续编辑的爆款任务'))
+
+    expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy/11')
+    expect(screen.queryByRole('dialog', { name: '视频预览' })).not.toBeInTheDocument()
   })
 
   it.each([
@@ -272,6 +321,31 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     expect(await screen.findByRole('button', { name: /当前任务.*打开项目/ })).toBeInTheDocument()
     expect(screen.queryByText('其他空间任务')).not.toBeInTheDocument()
     expect(screen.queryByText('其他账号任务')).not.toBeInTheDocument()
+  })
+
+  it('shows a locally initiated generating task immediately while the new project permission list is still stale', async () => {
+    const user = userEvent.setup()
+    const projects = deferred<unknown[]>()
+    mocks.listAllCreativeProjects.mockReturnValue(projects.promise)
+    seed(
+      task({
+        id: 'hot-copy:7:99:new-project-generation',
+        scope: 'hot-copy',
+        projectId: 99,
+        generationId: 'new-project-generation',
+        taskId: 0,
+        status: 'preparing',
+        title: '刚点击生成的爆款任务',
+        operationCode: 'video.replicate',
+        locallyInitiated: true,
+      }),
+    )
+
+    render(<TaskCenterDrawer scope="hot-copy" />)
+    await user.click(screen.getByRole('tab', { name: '正在生成' }))
+
+    expect(screen.getByText('刚点击生成的爆款任务')).toBeInTheDocument()
+    expect(screen.getByText('准备中')).toBeInTheDocument()
   })
 
   it('keeps project-bound live tasks hidden when permission loading fails', async () => {

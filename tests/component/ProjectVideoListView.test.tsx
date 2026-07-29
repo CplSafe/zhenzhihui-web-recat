@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   deleteProjectVideo: vi.fn(),
   downloadToDisk: vi.fn(),
+  getCreativeProject: vi.fn(),
   listProjectVideos: vi.fn(),
   listWorkspaceMembers: vi.fn(),
   navigate: vi.fn(),
@@ -61,7 +62,7 @@ vi.mock('@/api/projectVideos', () => ({
 }))
 
 vi.mock('@/api/business', () => ({
-  getCreativeProject: vi.fn(),
+  getCreativeProject: mocks.getCreativeProject,
 }))
 
 vi.mock('@/utils/downloadToDisk', () => ({
@@ -111,6 +112,8 @@ describe('ProjectVideoListView reliability', () => {
     mocks.workspace.id = 21
     mocks.deleteProjectVideo.mockReset()
     mocks.downloadToDisk.mockReset()
+    mocks.getCreativeProject.mockReset()
+    mocks.getCreativeProject.mockResolvedValue({ draft_json: {} })
     mocks.listProjectVideos.mockReset()
     mocks.listWorkspaceMembers.mockReset()
     mocks.listWorkspaceMembers.mockImplementation(() => new Promise(() => undefined))
@@ -186,6 +189,34 @@ describe('ProjectVideoListView reliability', () => {
       },
     )
     expect(JSON.stringify(mocks.navigate.mock.calls[mocks.navigate.mock.calls.length - 1])).not.toContain('do-not-copy')
+  })
+
+  it('allows a hot-copy project to start a new smart video in the same project', async () => {
+    mocks.listProjectVideos.mockResolvedValue({
+      ...payload(1, '爆款复制项目'),
+      project: {
+        ...payload(1, '爆款复制项目').project,
+        draft_json: { flow: 'hot-copy', smart: { flow: 'hot-copy' } },
+      },
+    })
+
+    render(<ProjectVideoListView />)
+    expect(await screen.findByText('爆款复制项目')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '+ 新建视频' }))
+    const dialog = screen.getByRole('dialog', { name: '新建视频' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /智能成片/ }))
+
+    await waitFor(() => {
+      expect(mocks.navigate).toHaveBeenCalledWith('/smart', {
+        state: {
+          newProjectName: '爆款复制项目',
+          restartProjectId: 1,
+          carryImages: [],
+          carryVideo: null,
+        },
+      })
+    })
   })
 
   it('普通成员即使是视频创建者也可以查看和下载，但不能删除', async () => {
