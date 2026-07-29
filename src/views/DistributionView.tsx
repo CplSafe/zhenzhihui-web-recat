@@ -4,13 +4,14 @@ import { useNavigate } from 'react-router-dom'
 import { DatePicker } from 'antd'
 import dayjs from 'dayjs'
 import {
+  exportDistributionCommissions,
   getDistributionOverview,
-  getReferralMyCode,
   listDistributionCommissions,
   listDistributionInvitees,
 } from '@/api/business'
 import WithdrawalDialog from '@/components/distribution/WithdrawalDialog'
 import { useDistributionAccess } from '@/composables/useDistributionAccess'
+import { useToast } from '@/composables/useToast'
 import arrowRightIcon from '@/assets/distribution/arrow-right.svg?no-inline'
 import backIcon from '@/assets/distribution/back.svg?no-inline'
 import calendarIcon from '@/assets/distribution/calendar.svg?no-inline'
@@ -343,12 +344,9 @@ function parseYuanInputToCents(value: string): number | null {
   return Number.isSafeInteger(cents) ? cents : null
 }
 
-function csvCell(value: any): string {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`
-}
-
 export default function DistributionView() {
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const { overview: rawOverview, retry: refreshOverview, status: distributionStatus } = useDistributionAccess()
   const canManageDistribution = distributionStatus === 'allowed'
   const [draftFilters, setDraftFilters] = useState<DistributionFilters>(EMPTY_FILTERS)
@@ -359,6 +357,7 @@ export default function DistributionView() {
   const [invitees, setInvitees] = useState<any[]>([])
   const [inviteeView, setInviteeView] = useState<InviteeView>('customer')
   const [loading, setLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [listError, setListError] = useState('')
   const [rulesOpen, setRulesOpen] = useState(false)
   const [withdrawalOpen, setWithdrawalOpen] = useState(false)
@@ -926,75 +925,34 @@ export default function DistributionView() {
     setPage(1)
   }
 
-  const exportRows = () => {
-    type CommissionRow = (typeof filteredCommissionRows)[number]
-    const exportColumns: Array<{
-      visible: boolean
-      header: string
-      value: (row: CommissionRow) => string
-    }> = [
-      {
-        visible: commissionFields.consumedAt,
-        header: '消费时间',
-        value: (row) => `${row.consumedAt.date} ${row.consumedAt.time}`.trim(),
-      },
-      {
-        visible: commissionFields.customerName,
-        header: '客户名称',
-        value: (row) => row.customerName,
-      },
-      {
-        visible: commissionFields.mobile,
-        header: '手机号',
-        value: (row) => row.mobile || '---',
-      },
-      {
-        visible: commissionFields.relationship,
-        header: '关系',
-        value: (row) => row.relationship,
-      },
-      {
-        visible: commissionFields.orderType,
-        header: '订单类型',
-        value: (row) => row.orderType,
-      },
-      {
-        visible: commissionFields.distributorName,
-        header: '所属分销商',
-        value: (row) => row.distributorName,
-      },
-      {
-        visible: commissionFields.paidAmount,
-        header: '充值金额',
-        value: (row) => (row.paidAmountCents === null ? '暂无数据' : formatMoneyFromCents(row.paidAmountCents)),
-      },
-      {
-        visible: commissionFields.commissionAmount,
-        header: '我的收益',
-        value: (row) =>
-          row.commissionAmountCents === null ? '暂无数据' : formatMoneyFromCents(row.commissionAmountCents),
-      },
-      {
-        visible: commissionFields.status,
-        header: '收益状态',
-        value: (row) => (row.status.tone === 'unknown' ? '---' : row.status.label),
-      },
-      {
-        visible: commissionFields.settledAt,
-        header: '结算时间',
-        value: (row) => `${row.settledAt.date} ${row.settledAt.time}`.trim(),
-      },
-    ]
-    const visibleColumns = exportColumns.filter((column) => column.visible)
-    const header = visibleColumns.map((column) => column.header)
-    const body = filteredCommissionRows.map((row) => visibleColumns.map((column) => column.value(row)))
-    const csv = [header, ...body].map((line) => line.map(csvCell).join(',')).join('\r\n')
-    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `邀请收益明细-${new Date().toISOString().slice(0, 10)}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
+  const exportRows = async () => {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const relationshipParams =
+        filters.relationship === 'direct'
+          ? { kind: 'customer', level: 1 }
+          : filters.relationship === 'distributor'
+            ? { kind: 'customer', level: 2 }
+            : {}
+      const exported = await exportDistributionCommissions({
+        ...relationshipParams,
+        orderType: filters.orderType || undefined,
+      })
+      const url = URL.createObjectURL(exported.blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = exported.fileName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      showToast('明细已导出', 'success')
+    } catch (error: any) {
+      showToast(error?.message || '导出失败，请稍后重试', 'error')
+    } finally {
+      setExporting(false)
+    }
   }
 
   const loadCustomerInviteCode = useCallback(async () => {
@@ -1003,7 +961,8 @@ export default function DistributionView() {
     setCustomerInviteError('')
     setCustomerInviteCode('')
     try {
-      const code = await getReferralMyCode()
+      const customerOverview = unwrap(await getDistributionOverview()) || {}
+      const code = String(pick(customerOverview, ['code', 'invite_code', 'inviteCode', 'referral_code'], '')).trim()
       if (!code) throw new Error('后端未返回客户邀请码')
       if (requestId === customerInviteRequestRef.current) setCustomerInviteCode(code)
     } catch (error: any) {
@@ -1383,9 +1342,14 @@ export default function DistributionView() {
           <button type="button" className="distribution-button distribution-button--query" onClick={submitFilters}>
             查询
           </button>
-          <button type="button" className="distribution-export" onClick={exportRows} disabled={!normalizedRows.length}>
+          <button
+            type="button"
+            className="distribution-export"
+            onClick={exportRows}
+            disabled={!normalizedRows.length || exporting}
+          >
             <img src={exportIcon} alt="" width={14} height={14} />
-            导出明细
+            {exporting ? '导出中…' : '导出明细'}
           </button>
         </section>
 

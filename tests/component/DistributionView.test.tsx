@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   retry: vi.fn(),
   listCommissions: vi.fn(),
   listInvitees: vi.fn(),
-  getReferralMyCode: vi.fn(),
+  exportCommissions: vi.fn(),
   getDistributionOverview: vi.fn(),
   listWithdrawalMethods: vi.fn(),
   listWithdrawals: vi.fn(),
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   deleteWithdrawalMethod: vi.fn(),
   createWithdrawal: vi.fn(),
   requestConfirm: vi.fn(),
+  showToast: vi.fn(),
   access: {
     status: 'allowed',
     overview: {
@@ -43,9 +44,9 @@ vi.mock('@/composables/useDistributionAccess', () => ({
 
 vi.mock('@/api/business', () => ({
   getDistributionOverview: mocks.getDistributionOverview,
-  getReferralMyCode: mocks.getReferralMyCode,
   listDistributionCommissions: mocks.listCommissions,
   listDistributionInvitees: mocks.listInvitees,
+  exportDistributionCommissions: mocks.exportCommissions,
   listDistributionWithdrawalMethods: mocks.listWithdrawalMethods,
   listDistributionWithdrawals: mocks.listWithdrawals,
   createDistributionWithdrawalMethod: mocks.createWithdrawalMethod,
@@ -55,6 +56,7 @@ vi.mock('@/api/business', () => ({
 
 vi.mock('@/composables/useToast', () => ({
   useConfirmDialog: () => ({ requestConfirm: mocks.requestConfirm }),
+  useToast: () => ({ showToast: mocks.showToast }),
 }))
 
 import DistributionView from '@/views/DistributionView'
@@ -65,7 +67,7 @@ describe('DistributionView', () => {
     mocks.retry.mockReset()
     mocks.listCommissions.mockReset()
     mocks.listInvitees.mockReset()
-    mocks.getReferralMyCode.mockReset()
+    mocks.exportCommissions.mockReset()
     mocks.getDistributionOverview.mockReset()
     mocks.listWithdrawalMethods.mockReset()
     mocks.listWithdrawals.mockReset()
@@ -73,6 +75,7 @@ describe('DistributionView', () => {
     mocks.deleteWithdrawalMethod.mockReset()
     mocks.createWithdrawal.mockReset()
     mocks.requestConfirm.mockReset()
+    mocks.showToast.mockReset()
     mocks.requestConfirm.mockResolvedValue(true)
     mocks.access.status = 'allowed'
     mocks.access.error = null
@@ -117,7 +120,6 @@ describe('DistributionView', () => {
       ],
       total: 1,
     })
-    mocks.getReferralMyCode.mockResolvedValue('ZZH-TEST-001')
     mocks.getDistributionOverview.mockResolvedValue({
       code: 'ZZH-CUSTOMER-001',
       distributor_code: 'ZZH-D-CHANNEL-001',
@@ -127,6 +129,13 @@ describe('DistributionView', () => {
     mocks.createWithdrawalMethod.mockResolvedValue({ id: 1 })
     mocks.deleteWithdrawalMethod.mockResolvedValue({})
     mocks.createWithdrawal.mockResolvedValue({ id: 1, status: 'pending' })
+    mocks.exportCommissions.mockResolvedValue({
+      blob: new Blob(['backend-xlsx'], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }),
+      fileName: '后端返回的邀请收益明细.xlsx',
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
   })
 
   it('renders the Figma summary and commission data returned by the backend', async () => {
@@ -426,8 +435,16 @@ describe('DistributionView', () => {
     expect(screen.getByText('北京渠道客户')).toBeInTheDocument()
   })
 
-  it('exports the same visible columns and normalized order type as the commission table', async () => {
+  it('downloads the backend export unchanged with the supported relationship and order filters', async () => {
     const user = userEvent.setup()
+    const backendBlob = new Blob(['backend-xlsx'], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    mocks.exportCommissions.mockResolvedValue({
+      blob: backendBlob,
+      fileName: '后端明细.xlsx',
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
     mocks.listCommissions.mockResolvedValue({
       items: [
         {
@@ -435,7 +452,7 @@ describe('DistributionView', () => {
           occurred_at: '2026-07-27T20:44:44+08:00',
           nickname: '导出测试客户',
           mobile: '189****4806',
-          relation_level: 1,
+          relation_level: 2,
           kind: 'customer',
           order_type: 'credits_recharge',
           paid_amount_cents: 2691,
@@ -445,33 +462,37 @@ describe('DistributionView', () => {
       ],
       total: 1,
     })
-    let exportedBlob: Blob | undefined
-    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
-      exportedBlob = blob
+    let downloadedFileName = ''
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockImplementation((value) => {
+      expect(value).toBe(backendBlob)
       return 'blob:distribution-export'
     })
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
-    const clickLink = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    const clickLink = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloadedFileName = this.download
+    })
 
     try {
       render(<DistributionView />)
       const orderTypeCell = await screen.findByRole('cell', { name: '积分充值' })
-      const commissionTable = orderTypeCell.closest('table')
-      expect(commissionTable).not.toBeNull()
-
-      expect(within(commissionTable!).queryByRole('columnheader', { name: '所属分销商' })).not.toBeInTheDocument()
-      expect(within(commissionTable!).queryByRole('columnheader', { name: '结算时间' })).not.toBeInTheDocument()
+      expect(orderTypeCell).toBeInTheDocument()
+      await user.selectOptions(screen.getByLabelText('关系分类'), 'distributor')
+      await user.selectOptions(screen.getByLabelText('订单类型'), 'credits_recharge')
+      await user.click(screen.getByRole('button', { name: '查询' }))
 
       await user.click(screen.getByRole('button', { name: '导出明细' }))
 
-      expect(exportedBlob).toBeDefined()
-      const csv = (await exportedBlob!.text()).replace(/^\uFEFF/u, '')
-      const [header] = csv.split('\r\n')
-      expect(header).toBe('"消费时间","客户名称","手机号","关系","订单类型","充值金额","我的收益","收益状态"')
-      expect(csv).toContain('积分充值')
-      expect(csv).not.toContain('credits_recharge')
-      expect(csv).not.toContain('所属分销商')
-      expect(csv).not.toContain('结算时间')
+      expect(mocks.exportCommissions).toHaveBeenCalledWith({
+        kind: 'customer',
+        level: 2,
+        orderType: 'credits_recharge',
+      })
+      expect(downloadedFileName).toBe('后端明细.xlsx')
+      expect(createObjectUrl).toHaveBeenCalledWith(backendBlob)
+      expect(revokeObjectUrl).toHaveBeenCalledWith('blob:distribution-export')
+      expect(mocks.showToast).toHaveBeenCalledWith('明细已导出', 'success')
     } finally {
       createObjectUrl.mockRestore()
       revokeObjectUrl.mockRestore()
@@ -532,32 +553,29 @@ describe('DistributionView', () => {
     await user.click(screen.getByRole('button', { name: '邀请客户' }))
 
     expect(await screen.findByLabelText('专属邀请链接')).toHaveValue(
-      `${window.location.origin}/login?invite_code=ZZH-TEST-001`,
+      `${window.location.origin}/login?invite_code=ZZH-CUSTOMER-001`,
     )
-    expect(mocks.getReferralMyCode).toHaveBeenCalledTimes(1)
+    expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('专属邀请码')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '复制邀请码' })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '关闭邀请客户弹窗' }))
     await user.click(screen.getByRole('button', { name: '邀请客户' }))
-    await waitFor(() => expect(mocks.getReferralMyCode).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(2))
   })
 
-  it('always requests the dedicated customer-code endpoint instead of reusing the distribution overview', async () => {
+  it('does not substitute the distributor code when the customer code is missing', async () => {
     const user = userEvent.setup()
-    mocks.access.overview = {
-      ...mocks.access.overview,
-      code: 'ZZH-CUSTOMER-001',
+    mocks.getDistributionOverview.mockResolvedValue({
       distributor_code: 'ZZH-D-CHANNEL-001',
-    }
+    })
     render(<DistributionView />)
 
     await user.click(screen.getByRole('button', { name: '邀请客户' }))
 
-    expect(await screen.findByLabelText('专属邀请链接')).toHaveValue(
-      `${window.location.origin}/login?invite_code=ZZH-TEST-001`,
-    )
-    expect(mocks.getReferralMyCode).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('后端未返回客户邀请码')).toBeInTheDocument()
+    expect(screen.queryByLabelText('专属邀请链接')).not.toBeInTheDocument()
+    expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(1)
   })
 
   it('loads invitation relationships for summary counts without rendering a second list', async () => {
@@ -645,7 +663,6 @@ describe('DistributionView', () => {
     expect(screen.queryByLabelText('渠道邀请二维码')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '下载二维码' })).not.toBeInTheDocument()
     expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(1)
-    expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
     expect(screen.queryByText('对方通过该链接完成注册后，后端将按渠道邀请类型建立邀请关系。')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '关闭邀请渠道弹窗' }))
@@ -665,7 +682,6 @@ describe('DistributionView', () => {
     expect(await screen.findByText('后端未返回渠道邀请码')).toBeInTheDocument()
     expect(screen.queryByLabelText('渠道邀请链接')).not.toBeInTheDocument()
     expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(1)
-    expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
   })
 
   it('retries the channel endpoint without calling the customer-code endpoint', async () => {
@@ -683,7 +699,6 @@ describe('DistributionView', () => {
       `${window.location.origin}/login?invite_code=ZZH-D-RETRY-001&invite_type=channel`,
     )
     expect(mocks.getDistributionOverview).toHaveBeenCalledTimes(2)
-    expect(mocks.getReferralMyCode).not.toHaveBeenCalled()
   })
 
   it('keeps the rebate page visible when the sales identity is disabled', async () => {

@@ -2,6 +2,7 @@ import {
   createDistributionWithdrawal,
   createDistributionWithdrawalMethod,
   deleteDistributionWithdrawalMethod,
+  exportDistributionCommissions,
   listDistributionWithdrawalMethods,
   listDistributionWithdrawals,
 } from '@/api/business'
@@ -40,6 +41,37 @@ describe('business distribution withdrawal API contract', () => {
     expect(url.searchParams.get('status')).toBe('pending')
     expect(url.searchParams.get('limit')).toBe('20')
     expect(url.searchParams.get('offset')).toBe('0')
+  })
+
+  it('exports the backend XLSX file with supported filters and response filename', async () => {
+    const fileBytes = new Uint8Array([80, 75, 3, 4])
+    fetchMock.mockResolvedValueOnce(
+      new Response(fileBytes, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Disposition':
+            "attachment; filename*=UTF-8''%E9%82%80%E8%AF%B7%E6%94%B6%E7%9B%8A%E6%98%8E%E7%BB%86.xlsx",
+        },
+      }),
+    )
+
+    const exported = await exportDistributionCommissions({
+      kind: 'customer',
+      level: 2,
+      orderType: 'credits_recharge',
+    })
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://app.example.com')
+    expect(url.pathname).toBe('/api/v1/distribution/commissions/export')
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      kind: 'customer',
+      level: '2',
+      order_type: 'credits_recharge',
+    })
+    expect(exported.fileName).toBe('邀请收益明细.xlsx')
+    expect(exported.contentType).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    expect(Array.from(new Uint8Array(await exported.blob.arrayBuffer()))).toEqual(Array.from(fileBytes))
   })
 
   it('creates and deletes a bank-card withdrawal method', async () => {
