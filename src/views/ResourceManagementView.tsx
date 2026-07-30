@@ -29,6 +29,7 @@ import {
 } from '@/utils/favoriteVideos'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
+import RealPersonLibrary from '@/components/resource/RealPersonLibrary'
 import resourceSearchIcon from '@/assets/resource/figma-resource-search.svg'
 import AiBadge from '@/components/common/AiBadge'
 import { useAssetPreview } from '@/composables/useAssetPreview'
@@ -75,8 +76,13 @@ const MAIN_TABS = [
     label: '我收藏的',
     subs: [] as { k: string; l: string }[],
   },
+  {
+    key: 'people',
+    label: '真人素材库',
+    subs: [] as { k: string; l: string }[],
+  },
 ] as const
-/** 真人素材继续与普通素材隔离；真人素材库入口隐藏期间不加载其页面组件。 */
+/** 真人素材继续与普通素材隔离，避免真人认证素材混入普通上传/生成素材。 */
 const REAL_PERSON_ASSET_SOURCE = 'real_person'
 
 /** 素材页主标签的受限键类型。 */
@@ -1391,7 +1397,9 @@ export default function ResourceManagementView() {
           )}
 
           {/* 内容 */}
-          {showProjectList ? (
+          {mainTab === 'people' ? (
+            <RealPersonLibrary workspaceId={currentWorkspaceId} userId={currentUserId} query={searchQuery} />
+          ) : showProjectList ? (
             // 我上传的/我生成的:按项目分组的项目列表
             projectsForMode.length ? (
               <>

@@ -31,6 +31,12 @@ vi.mock('@/components/common/AiBadge', () => ({
   default: () => null,
 }))
 
+vi.mock('@/components/resource/RealPersonLibrary', () => ({
+  default: ({ workspaceId, userId, query }: { workspaceId: number; userId: number; query?: string }) => (
+    <section aria-label="真人素材内容" data-workspace-id={workspaceId} data-user-id={userId} data-query={query} />
+  ),
+}))
+
 vi.mock('@/stores/workspaceSession', () => ({
   useCurrentUser: () => mocks.user,
   useWorkspaceId: () => mocks.workspace.id,
@@ -137,15 +143,15 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     window.history.replaceState({}, '', '/resources')
   })
 
-  it('hides the real-person library and falls back to all assets for legacy direct links', async () => {
+  it('shows the real-person library and restores direct links', async () => {
     window.history.replaceState({}, '', '/resources?tab=people')
     mocks.listAssets.mockResolvedValue({ items: [] })
 
     render(<ResourceManagementView />)
 
-    expect(screen.queryByRole('tab', { name: '真人素材库' })).not.toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '全部' })).toHaveAttribute('aria-selected', 'true')
-    await waitFor(() => expect(mocks.listAssets).toHaveBeenCalled())
+    expect(screen.getByRole('tab', { name: '真人素材库' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('region', { name: '真人素材内容' })).toHaveAttribute('data-workspace-id', '21')
+    expect(screen.getByRole('region', { name: '真人素材内容' })).toHaveAttribute('data-user-id', '7')
   })
 
   it('favorites both images and videos and restores them in my favorites', async () => {
