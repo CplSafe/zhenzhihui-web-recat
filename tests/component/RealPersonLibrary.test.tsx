@@ -78,7 +78,9 @@ const verifiedPerson = {
 
 describe('RealPersonLibrary', () => {
   beforeEach(() => {
+    vi.restoreAllMocks()
     Object.values(mocks).forEach((mock) => mock.mockReset())
+    vi.spyOn(window, 'open').mockReturnValue(null)
     sessionStorage.clear()
     mocks.listRealPeople.mockResolvedValue([])
     mocks.getAssetDownloadUrl.mockImplementation(({ assetId }: { assetId: number }) =>
@@ -104,6 +106,13 @@ describe('RealPersonLibrary', () => {
 
   it('creates a profile only after explicit consent and renders the backend KYC link', async () => {
     const user = userEvent.setup()
+    const replaceVerificationLocation = vi.fn()
+    const closeVerificationWindow = vi.fn()
+    vi.mocked(window.open).mockReturnValue({
+      location: { replace: replaceVerificationLocation },
+      close: closeVerificationWindow,
+      opener: window,
+    } as unknown as Window)
     const session = {
       h5_link: 'https://verify.example.test/session-9',
       expires_at: '2099-07-28T08:30:00Z',
@@ -137,6 +146,9 @@ describe('RealPersonLibrary', () => {
     const links = within(dialog).getAllByRole('link')
     expect(links).toHaveLength(2)
     expect(links.every((link) => link.getAttribute('href') === session.h5_link)).toBe(true)
+    expect(window.open).toHaveBeenCalledWith('about:blank', '_blank')
+    expect(replaceVerificationLocation).toHaveBeenCalledWith(session.h5_link)
+    expect(closeVerificationWindow).not.toHaveBeenCalled()
   })
 
   it('rejects an unsafe KYC link and asks for a new verification session', async () => {
@@ -157,6 +169,47 @@ describe('RealPersonLibrary', () => {
     expect(await screen.findByRole('heading', { name: '需要认证链接' })).toBeInTheDocument()
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /重新发起认证/ })).toBeEnabled()
+  })
+
+  it('opens the renewed H5 session when restarting an expired verification', async () => {
+    const user = userEvent.setup()
+    const replaceVerificationLocation = vi.fn()
+    const closeVerificationWindow = vi.fn()
+    vi.mocked(window.open).mockReturnValue({
+      location: { replace: replaceVerificationLocation },
+      close: closeVerificationWindow,
+      opener: window,
+    } as unknown as Window)
+    const expiredPerson = {
+      id: 9,
+      name: '过期形象',
+      status: 'verification_expired',
+      verification_expires_at: '2020-01-01T00:00:00Z',
+      consent_confirmed_at: '2026-07-28T08:00:00Z',
+      assets: [],
+    }
+    const renewedSession = {
+      person: { ...expiredPerson, status: 'pending_verification' },
+      h5_link: 'https://verify.example.test/session-renewed',
+      expires_at: '2099-07-28T09:00:00Z',
+    }
+    mocks.listRealPeople.mockResolvedValue([expiredPerson])
+    mocks.getRealPerson.mockResolvedValue(expiredPerson)
+    mocks.restartRealPersonVerification.mockResolvedValue(renewedSession)
+
+    render(<RealPersonLibrary workspaceId={21} userId={7} />)
+
+    await user.click(await screen.findByRole('button', { name: '继续创建过期形象' }))
+    await user.click(await screen.findByRole('button', { name: /重新发起认证/ }))
+
+    await waitFor(() => {
+      expect(mocks.restartRealPersonVerification).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: 21, personId: 9 }),
+      )
+    })
+    expect(window.open).toHaveBeenCalledWith('about:blank', '_blank')
+    expect(replaceVerificationLocation).toHaveBeenCalledWith(renewedSession.h5_link)
+    expect(closeVerificationWindow).not.toHaveBeenCalled()
   })
 
   it('does not turn an existing profile opened for management into a recoverable new-profile draft', async () => {

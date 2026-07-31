@@ -8,7 +8,7 @@
  * - 支持名称/标签搜索、图片/视频筛选、分页、懒加载缩略图，以及在预览弹窗中前后切换。
  * 权限与数据安全：页面按用户和工作空间隔离状态，隐藏无权访问项目的关联素材，并排除人脸脱敏等流程中间产物。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pagination } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import '../styles/creative.css'
@@ -29,7 +29,6 @@ import {
 } from '@/utils/favoriteVideos'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
-import RealPersonLibrary from '@/components/resource/RealPersonLibrary'
 import resourceSearchIcon from '@/assets/resource/figma-resource-search.svg'
 import AiBadge from '@/components/common/AiBadge'
 import { useAssetPreview } from '@/composables/useAssetPreview'
@@ -41,6 +40,8 @@ import {
   toPlainObject as toPlainObj,
 } from '@/utils/creativeDraftMetadata'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
+
+const RealPersonLibrary = lazy(() => import('@/components/resource/RealPersonLibrary'))
 
 // 主 Tab + 各自子分类(全部 = 我上传的 + 我生成的 的所有素材)
 const MAIN_TABS = [
@@ -1398,7 +1399,9 @@ export default function ResourceManagementView() {
 
           {/* 内容 */}
           {mainTab === 'people' ? (
-            <RealPersonLibrary workspaceId={currentWorkspaceId} userId={currentUserId} query={searchQuery} />
+            <Suspense fallback={<div className="rm2-empty">正在加载真人素材库…</div>}>
+              <RealPersonLibrary workspaceId={currentWorkspaceId} userId={currentUserId} query={searchQuery} />
+            </Suspense>
           ) : showProjectList ? (
             // 我上传的/我生成的:按项目分组的项目列表
             projectsForMode.length ? (

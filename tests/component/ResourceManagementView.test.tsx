@@ -150,7 +150,7 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     render(<ResourceManagementView />)
 
     expect(screen.getByRole('tab', { name: '真人素材库' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('region', { name: '真人素材内容' })).toHaveAttribute('data-workspace-id', '21')
+    expect(await screen.findByRole('region', { name: '真人素材内容' })).toHaveAttribute('data-workspace-id', '21')
     expect(screen.getByRole('region', { name: '真人素材内容' })).toHaveAttribute('data-user-id', '7')
   })
 
