@@ -651,7 +651,7 @@ function ResourceCard({
             type="button"
             className="resource-favorite-action-btn"
             onClick={onPreview}
-            aria-label={`${isImage ? '预览' : '播放'}${card.title}`}
+            aria-label={`${isImage ? '查看素材：' : '播放素材：'}${card.title}`}
           >
             {!isImage ? (
               <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
