@@ -10,7 +10,10 @@ const MAX_SINGLE_JS_BYTES = 460 * 1024
 // This total includes every route-level lazy chunk, even though browsers do
 // not download them all on first load. Keep a small ceiling above the current
 // full product surface while the single-chunk budget guards initial payloads.
-const MAX_TOTAL_JS_GZIP_BYTES = 760 * 1024
+// The real-person KYC/material workflow is a separately loaded product surface.
+// Keep enough headroom for that route while the single-chunk limit continues
+// to protect initial and per-route payloads from accidental regressions.
+const MAX_TOTAL_JS_GZIP_BYTES = 790 * 1024
 const MAX_IMAGE_BYTES = 450 * 1024
 const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.webp'])
 const FORBIDDEN_CLIENT_ENV_KEY =

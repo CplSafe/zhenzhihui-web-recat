@@ -209,6 +209,37 @@ function safeKycUrl(value: unknown): string {
   return ''
 }
 
+function openVerificationWindow(): Window | null {
+  try {
+    const verificationWindow = window.open('about:blank', '_blank')
+    if (verificationWindow) verificationWindow.opener = null
+    return verificationWindow
+  } catch {
+    return null
+  }
+}
+
+function closeVerificationWindow(verificationWindow: Window | null): void {
+  try {
+    verificationWindow?.close()
+  } catch {
+    // The manual QR/link entry remains available if the browser owns the popup.
+  }
+}
+
+function navigateVerificationWindow(verificationWindow: Window | null, h5Link: unknown): void {
+  const verificationUrl = safeKycUrl(h5Link)
+  if (!verificationUrl) {
+    closeVerificationWindow(verificationWindow)
+    return
+  }
+  try {
+    verificationWindow?.location.replace(verificationUrl)
+  } catch {
+    closeVerificationWindow(verificationWindow)
+  }
+}
+
 function creationStorageKey(workspaceId: number, userId: number): string {
   return `zzh:real-person-creation:${Math.floor(Number(userId) || 0)}:${Math.floor(Number(workspaceId) || 0)}`
 }
@@ -1063,6 +1094,9 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
     if (!name || !consentConfirmed || creatingProfile) return
     const signal = flowAbortRef.current?.signal
     const existingPersonIds = new Set(people.map((record) => record.id))
+    // Open synchronously from the user's click so browsers do not block the
+    // provider page after the asynchronous profile request resolves.
+    const verificationWindow = openVerificationWindow()
     setCreatingProfile(true)
     try {
       const session = await createRealPerson({
@@ -1077,7 +1111,9 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
       setVerificationSession(session)
       persistFlow(session.person, session, null, null)
       showToast('真人档案已创建，请完成真人认证', 'success')
+      navigateVerificationWindow(verificationWindow, session.h5_link)
     } catch (error: unknown) {
+      closeVerificationWindow(verificationWindow)
       if (!isAbortError(error)) {
         let recoveredPerson: RealPerson | null = null
         try {
@@ -1106,6 +1142,10 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
   const handleRestartVerification = useCallback(async () => {
     if (!activePerson?.id || creatingProfile || syncingKyc) return
     const signal = flowAbortRef.current?.signal
+    // Keep the restart flow consistent with initial creation: reserve a window
+    // during the click event, then navigate it after the API returns the new
+    // short-lived H5 link.
+    const verificationWindow = openVerificationWindow()
     setCreatingProfile(true)
     try {
       const session = await restartRealPersonVerification({
@@ -1118,7 +1158,9 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
       setVerificationSession(session)
       persistFlow(session.person, session, pendingLocalAsset, pendingMapping)
       showToast('已生成新的认证链接', 'success')
+      navigateVerificationWindow(verificationWindow, session.h5_link)
     } catch (error: unknown) {
+      closeVerificationWindow(verificationWindow)
       if (!isAbortError(error)) {
         showToast(getRealPeopleErrorMessage(error, '重新发起认证失败，请稍后重试'), 'error')
       }
