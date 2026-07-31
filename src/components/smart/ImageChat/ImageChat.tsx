@@ -462,8 +462,9 @@ export default function ImageChat({
   }
 
   const handleAt = () => {
-    const ta = taRef.current
-    caretRef.current = ta ? (ta.selectionStart ?? text.length) : text.length
+    // 点击工具栏会让 textarea 先失焦；部分浏览器/测试环境会在失焦后把
+    // selectionStart 重置到文本末尾。光标位置已经由 onChange/onSelect 持续记录，
+    // 此处必须沿用记录值，才能稳定地在用户最后选定的位置插入引用。
     if (images.length === 0) {
       insertAtCaret('@')
       return
