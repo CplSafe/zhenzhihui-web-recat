@@ -345,6 +345,23 @@
   color: #ffffff;
 }
 
+.resource-favorite-actions .resource-favorite-action-btn.is-danger {
+  border-color: rgba(255, 150, 150, 0.8);
+  color: #ffd4d4;
+}
+
+.resource-favorite-actions .resource-favorite-action-btn.is-danger:hover,
+.resource-favorite-actions .resource-favorite-action-btn.is-danger:focus-visible {
+  border-color: #ffb0b0;
+  background: rgba(184, 35, 35, 0.72);
+  color: #ffffff;
+}
+
+.resource-favorite-actions .resource-favorite-action-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .resource-favorite-actions .resource-favorite-remove {
   display: inline-grid;
   min-width: 30px;
@@ -557,7 +574,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 106px 60px 48px 20px;
+  padding: 28px 60px 48px 20px;
 }
 .rm2-tabs {
   display: flex;

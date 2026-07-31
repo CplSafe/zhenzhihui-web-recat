@@ -16,7 +16,7 @@ import './ResourceManagementView.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
-import { useToast } from '@/composables/useToast'
+import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import {
   favoriteAssetIdOf,
@@ -32,7 +32,13 @@ import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
 import resourceSearchIcon from '@/assets/resource/figma-resource-search.svg'
 import AiBadge from '@/components/common/AiBadge'
 import { useAssetPreview } from '@/composables/useAssetPreview'
-import { extractAssetPageItems, getAssetDownloadUrl, getBusinessErrorMessage, listAiTasks } from '@/api/business'
+import {
+  deleteAsset,
+  extractAssetPageItems,
+  getAssetDownloadUrl,
+  getBusinessErrorMessage,
+  listAiTasks,
+} from '@/api/business'
 import { listAllCreativeProjects, listAssetPage } from '@/utils/businessPagination'
 import {
   isCreativeProjectRestrictedForUser,
@@ -614,6 +620,8 @@ function ResourceCard({
   favoriteActions?: {
     onDownload: () => void
     onUseTemplate?: () => void
+    onDelete?: () => void
+    deleting?: boolean
   }
 }) {
   const [ratio, setRatio] = useState<string>(card.duration || '')
@@ -681,6 +689,28 @@ function ResourceCard({
               做同款
             </button>
           ) : null}
+          {favoriteActions.onDelete ? (
+            <button
+              type="button"
+              className="resource-favorite-action-btn is-danger"
+              onClick={favoriteActions.onDelete}
+              aria-label={`删除${card.title}`}
+              disabled={favoriteActions.deleting}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                aria-hidden="true"
+              >
+                <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 10v6M14 10v6" />
+              </svg>
+              {favoriteActions.deleting ? '删除中' : '删除'}
+            </button>
+          ) : null}
         </div>
       ) : null}
       <div className="resource-asset-info">
@@ -703,6 +733,7 @@ export default function ResourceManagementView() {
   // 所有异步结果都绑定“工作空间 + 用户”作用域，切换任一身份后旧结果不得继续渲染。
   const accessScope = `${currentWorkspaceId}:${currentUserId}`
   const { showToast } = useToast()
+  const { requestConfirm } = useConfirmDialog()
   const { previewState, openPreview, closePreview, goPrev, goNext } = useAssetPreview()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -712,6 +743,7 @@ export default function ResourceManagementView() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [loadingMoreAssets, setLoadingMoreAssets] = useState(false)
+  const [deletingAssetId, setDeletingAssetId] = useState(0)
   const [assetState, setAssetState] = useState<ResourceAssetState>({
     workspaceId: 0,
     userId: 0,
@@ -1331,6 +1363,54 @@ export default function ResourceManagementView() {
     }).catch((error) => showToast(getBusinessErrorMessage(error, '下载失败，请稍后重试'), 'error'))
   }
 
+  const deleteResourceCard = async (card: any) => {
+    const assetId = Number(card.assetId || 0) || 0
+    if (!assetId || !currentWorkspaceId || deletingAssetId) return
+
+    const confirmed = await requestConfirm(`删除“${String(card.title || '该素材')}”后将无法恢复，是否继续？`, {
+      title: '删除素材',
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      danger: true,
+    })
+    if (confirmed !== true) return
+
+    setDeletingAssetId(assetId)
+    try {
+      await deleteAsset({ workspaceId: currentWorkspaceId, assetId })
+      const current = assetStateRef.current
+      if (current.workspaceId === currentWorkspaceId && current.userId === currentUserId) {
+        const nextState = {
+          ...current,
+          items: current.items.filter((item: any) => Number(item?.id ?? item?.asset_id ?? 0) !== assetId),
+          total: Math.max(0, current.total - 1),
+        }
+        assetStateRef.current = nextState
+        setAssetState(nextState)
+      }
+
+      const favoriteItem = favoriteItemFromCard(card)
+      if (favoriteKeys.has(favoriteItem.key)) {
+        toggleFavorite(currentWorkspaceId, favoriteItem)
+        setFavoriteKeys((currentKeys) => {
+          const nextKeys = new Set(currentKeys)
+          nextKeys.delete(favoriteItem.key)
+          return nextKeys
+        })
+        setFavoriteCardState((currentFavorites) => ({
+          ...currentFavorites,
+          items: currentFavorites.items.filter((item) => item.id !== favoriteItem.key),
+        }))
+      }
+      closePreview()
+      showToast('素材已删除', 'success')
+    } catch (error) {
+      showToast(getBusinessErrorMessage(error, '删除失败，请稍后重试'), 'error')
+    } finally {
+      setDeletingAssetId(0)
+    }
+  }
+
   const openVideoInHotCopy = (card: any) => {
     navigate('/hot-copy', {
       state: {
@@ -1497,14 +1577,15 @@ export default function ResourceManagementView() {
                         favoriteKeyOf(Number(card.assetId || 0) || 0, String(card.mediaUrl || '')),
                       )}
                       onToggleFavorite={() => toggleFavoriteCard(card)}
-                      favoriteActions={
-                        card.mediaKind === 'video' || mainTab === 'collected'
-                          ? {
-                              onDownload: () => downloadResourceCard(card),
-                              onUseTemplate: card.mediaKind === 'video' ? () => openVideoInHotCopy(card) : undefined,
-                            }
-                          : undefined
-                      }
+                      favoriteActions={{
+                        onDownload: () => downloadResourceCard(card),
+                        onUseTemplate: card.mediaKind === 'video' ? () => openVideoInHotCopy(card) : undefined,
+                        onDelete:
+                          mainTab !== 'collected' && Number(card.assetId || 0) > 0
+                            ? () => void deleteResourceCard(card)
+                            : undefined,
+                        deleting: deletingAssetId === Number(card.assetId || 0),
+                      }}
                     />
                   ))}
                 </div>

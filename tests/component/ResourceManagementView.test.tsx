@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  deleteAsset: vi.fn(),
   getAssetDownloadUrl: vi.fn(),
   listAiTasks: vi.fn(),
   listAssets: vi.fn(),
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   downloadToDisk: vi.fn(),
   buildDownloadName: vi.fn(),
+  requestConfirm: vi.fn(),
   showToast: vi.fn(),
   user: { id: 7 },
   workspace: { id: 21 },
@@ -48,6 +50,7 @@ vi.mock('@/composables/useSidebarNavigate', () => ({
 
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ showToast: mocks.showToast }),
+  useConfirmDialog: () => ({ requestConfirm: mocks.requestConfirm }),
 }))
 
 vi.mock('@/utils/downloadToDisk', () => ({
@@ -56,6 +59,7 @@ vi.mock('@/utils/downloadToDisk', () => ({
 }))
 
 vi.mock('@/api/business', () => ({
+  deleteAsset: mocks.deleteAsset,
   extractAssetPage: (payload: { items?: unknown[]; limit?: number; offset?: number; total?: number } | null) => ({
     items: payload?.items ?? [],
     limit: payload?.limit ?? payload?.items?.length ?? 0,
@@ -127,6 +131,8 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     mocks.workspace.id = 21
     mocks.user.id = 7
     setFavoriteVideoUserScope('7')
+    mocks.deleteAsset.mockReset()
+    mocks.deleteAsset.mockResolvedValue({ code: 0 })
     mocks.getAssetDownloadUrl.mockReset()
     mocks.listAiTasks.mockReset()
     mocks.listAiTasks.mockResolvedValue({ items: [] })
@@ -137,6 +143,8 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     mocks.downloadToDisk.mockReset()
     mocks.downloadToDisk.mockResolvedValue('done')
     mocks.buildDownloadName.mockReset()
+    mocks.requestConfirm.mockReset()
+    mocks.requestConfirm.mockResolvedValue(true)
     mocks.buildDownloadName.mockReturnValue('收藏视频.mp4')
     mocks.showToast.mockReset()
     window.localStorage.clear()
@@ -200,8 +208,30 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     expect(await screen.findByRole('button', { name: '播放上传产品视频' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '下载上传产品视频' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '用上传产品视频做同款' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '下载静态产品图' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下载静态产品图' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '用静态产品图做同款' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '删除静态产品图' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '删除上传产品视频' })).toBeInTheDocument()
+  })
+
+  it('confirms deletion and removes the deleted asset card', async () => {
+    mocks.listAssets.mockResolvedValue({
+      items: [imageAsset(421, '待删除图片', '/delete-me.png')],
+    })
+
+    render(<ResourceManagementView />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '删除待删除图片' }))
+
+    await waitFor(() =>
+      expect(mocks.requestConfirm).toHaveBeenCalledWith(
+        '删除“待删除图片”后将无法恢复，是否继续？',
+        expect.objectContaining({ title: '删除素材', danger: true }),
+      ),
+    )
+    await waitFor(() => expect(mocks.deleteAsset).toHaveBeenCalledWith({ workspaceId: 21, assetId: 421 }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '删除待删除图片' })).not.toBeInTheDocument())
+    expect(mocks.showToast).toHaveBeenCalledWith('素材已删除', 'success')
   })
 
   it('immediately hides A assets and closes its preview when switching to B', async () => {
