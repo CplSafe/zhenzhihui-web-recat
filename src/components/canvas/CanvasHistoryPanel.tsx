@@ -3,7 +3,7 @@
  * 图片/视频 Tab 切换，3 列网格缩略图展示，参考素材库面板
  */
 import { useState, useEffect, useMemo } from 'react'
-import styles from './CanvasHistoryPanel.module.less'
+import styles from './CanvasHistoryPanel.module.css'
 
 interface HistoryItem {
   id: string
@@ -15,7 +15,8 @@ interface HistoryItem {
 
 interface CanvasHistoryPanelProps {
   visible: boolean
-  position: { x: number; y: number } | null
+  position?: { x: number; y: number } | null
+  variant?: 'popover' | 'drawer'
   onClose: () => void
   onSelect?: (item: HistoryItem) => void
 }
@@ -33,14 +34,20 @@ const MOCK_ITEMS: HistoryItem[] = [
   { id: '9', title: 'Logo 设计稿', type: 'image' },
 ]
 
-export default function CanvasHistoryPanel({ visible, position, onClose, onSelect }: CanvasHistoryPanelProps) {
+export default function CanvasHistoryPanel({
+  visible,
+  position,
+  variant = 'popover',
+  onClose,
+  onSelect,
+}: CanvasHistoryPanelProps) {
   const [tab, setTab] = useState<'image' | 'video'>('image')
 
   const items = useMemo(() => MOCK_ITEMS.filter((item) => item.type === tab), [tab])
 
   // 点击外部关闭
   useEffect(() => {
-    if (!visible) return
+    if (!visible || variant !== 'popover') return
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement
       if (target.closest(`.${styles.panel}`)) return
@@ -48,21 +55,51 @@ export default function CanvasHistoryPanel({ visible, position, onClose, onSelec
     }
     setTimeout(() => document.addEventListener('mousedown', handler), 0)
     return () => document.removeEventListener('mousedown', handler)
-  }, [visible, onClose])
+  }, [visible, variant, onClose])
 
-  if (!visible || !position) return null
+  if (!visible) return null
+  if (variant === 'popover' && !position) return null
 
-  const panelStyle: React.CSSProperties = {
-    left: position.x,
-    top: position.y - 160,
-  }
+  const panelStyle: React.CSSProperties | undefined =
+    variant === 'popover' && position
+      ? {
+          left: position.x,
+          top: position.y - 160,
+        }
+      : undefined
 
   return (
-    <div className={styles.panel} style={panelStyle}>
+    <div
+      className={[styles.panel, variant === 'drawer' ? styles.panelDrawer : ''].filter(Boolean).join(' ')}
+      style={panelStyle}
+    >
       {/* 头部 */}
-      <div className={styles.header}>
-        <span className={styles.title}>历史记录</span>
-        <button className={styles.closeBtn} onClick={onClose}>
+      <div className={`${styles.header} ${variant === 'drawer' ? styles.headerDrawer : ''}`}>
+        {variant === 'drawer' ? (
+          <>
+            {/* 左侧：返回icon + 标题 */}
+            <div className={styles.headerLeft}>
+              <button className={styles.backBtn} onClick={onClose} aria-label="返回画布">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M10 3 5 8l5 5" />
+                </svg>
+              </button>
+              <span className={styles.title}>历史记录</span>
+            </div>
+          </>
+        ) : (
+          <span className={styles.title}>历史记录</span>
+        )}
+        <button className={styles.closeBtn} onClick={onClose} aria-label="关闭历史记录">
           <svg
             width="16"
             height="16"

@@ -1,8 +1,8 @@
 .panel {
   width: 800px;
   max-width: 90vw;
-  background: #F9F9FA;
-  border: 1px solid #E3F7F2;
+  background: #f9f9fa;
+  border: 1px solid #e3f7f2;
   border-radius: 14px;
   box-shadow: 0px 0px 30px 0px rgba(0, 0, 0, 0.1);
   padding: 16px 20px;
@@ -69,10 +69,10 @@
   justify-content: center;
   padding: 0;
   transition: background 0.15s;
+}
 
-  &:hover {
-    background: #c03939;
-  }
+.refDelete:hover {
+  background: #c03939;
 }
 
 .refAddBtn {
@@ -86,12 +86,14 @@
   justify-content: center;
   color: #aaa;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
 
-  &:hover {
-    border-color: #5767e5;
-    color: #5767e5;
-  }
+.refAddBtn:hover {
+  border-color: #5767e5;
+  color: #5767e5;
 }
 
 .refSwapIcon {
@@ -122,10 +124,10 @@
   color: #333;
   background: transparent;
   font-family: 'PingFang SC', sans-serif;
+}
 
-  &::placeholder {
-    color: #909090;
-  }
+.textarea::placeholder {
+  color: #909090;
 }
 
 .actions {
@@ -159,21 +161,21 @@
   max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
 
-  &:hover {
-    border-color: #5767e5;
-    color: #5767e5;
-  }
+.selector:hover {
+  border-color: #5767e5;
+  color: #5767e5;
 }
 
 .selectorDisabled {
   color: #bbb;
   cursor: not-allowed;
+}
 
-  &:hover {
-    border-color: #e0e0e0;
-    color: #bbb;
-  }
+.selectorDisabled:hover {
+  border-color: #e0e0e0;
+  color: #bbb;
 }
 
 .ratioLabel {
@@ -204,10 +206,10 @@
   border-radius: 6px;
   text-align: left;
   font-family: 'PingFang SC', sans-serif;
+}
 
-  &:hover {
-    background: rgba(87, 103, 229, 0.06);
-  }
+.popoverItem:hover {
+  background: rgba(87, 103, 229, 0.06);
 }
 
 .popoverItemActive {
@@ -224,10 +226,10 @@
 
 .videoMenuGroup {
   padding: 8px 0;
+}
 
-  & + & {
-    border-top: 1px solid #eee;
-  }
+.videoMenuGroup + .videoMenuGroup {
+  border-top: 1px solid #eee;
 }
 
 .videoMenuTitle {
@@ -255,29 +257,29 @@
   text-align: center;
   white-space: nowrap;
   transition: all 0.15s;
+}
 
-  /* 相邻按钮共享边框，形成连接式按钮组 */
-  & + & {
-    margin-left: -1px;
-  }
+/* 相邻按钮共享边框，形成连接式按钮组 */
+.videoBtnGroupItem + .videoBtnGroupItem {
+  margin-left: -1px;
+}
 
-  &:first-child {
-    border-radius: 8px 0 0 8px;
-  }
+.videoBtnGroupItem:first-child {
+  border-radius: 8px 0 0 8px;
+}
 
-  &:last-child {
-    border-radius: 0 8px 8px 0;
-  }
+.videoBtnGroupItem:last-child {
+  border-radius: 0 8px 8px 0;
+}
 
-  &:only-child {
-    border-radius: 8px;
-  }
+.videoBtnGroupItem:only-child {
+  border-radius: 8px;
+}
 
-  &:hover {
-    border-color: #5767e5;
-    color: #5767e5;
-    z-index: 1;
-  }
+.videoBtnGroupItem:hover {
+  border-color: #5767e5;
+  color: #5767e5;
+  z-index: 1;
 }
 
 .videoBtnGroupItemActive {
@@ -298,8 +300,8 @@
   cursor: pointer;
   font-family: 'PingFang SC', sans-serif;
   white-space: nowrap;
+}
 
-  &:hover {
-    background: #4a5ad4;
-  }
+.generateBtn:hover {
+  background: #4a5ad4;
 }

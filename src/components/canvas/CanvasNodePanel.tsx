@@ -5,8 +5,8 @@
  * 图片：模型 + 比例 + 生成
  * 视频：模型 + 集合选择器(生成方式/比例/秒数/音频) + 生成
  */
-import React, { useState, useRef, useEffect } from 'react'
-import styles from './CanvasNodePanel.module.less'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
+import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
 
 /** 连线来源引用信息 */
@@ -79,7 +79,15 @@ export default function CanvasNodePanel({
   // 受控回显：优先取节点数据中的比例/模式
   const ratio = node?.ratio || (kind === 'video' ? '自适应' : '1:1')
   const videoMode = (node?.videoMode as VideoMode) || 'first-last'
-  const sourceRefs = node?.sourceRefs || []
+  // 按 edgeId 去重，兜底防止重复连线/重复记录渲染出重复缩略图
+  const sourceRefs = useMemo(() => {
+    const seen = new Set<string>()
+    return (node?.sourceRefs || []).filter((ref) => {
+      if (seen.has(ref.edgeId)) return false
+      seen.add(ref.edgeId)
+      return true
+    })
+  }, [node?.sourceRefs])
   const maxRefs = kind === 'video' ? 2 : 3
   const kindModels = models?.[kind as 'text' | 'image' | 'video'] || []
 

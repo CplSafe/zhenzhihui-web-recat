@@ -4,6 +4,7 @@
  * 页面职责：提供无限画布，通过节点+连线方式组织 AI 生成管线。
  */
 import { useCallback, useRef, useState, useEffect, useMemo } from 'react'
+import { useParams } from 'react-router-dom'
 import brandLogo from '@/img/image copy 7.png'
 import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
 import type { DraftSaveStatus } from '@/utils/creativeDraftPersistence'
@@ -126,6 +127,77 @@ function getTypePlaceholder(kind: string) {
 /** 击打区半径 = 130/2 */
 const HANDLE_RADIUS = 65
 
+/** 打开抽屉前，左侧工具栏收起动画的时长（毫秒） */
+const TOOLBAR_LEAVE_MS = 220
+
+/** 新节点渐入动画时长（毫秒），与 CSS 动画时长保持一致 */
+const NODE_ENTER_MS = 350
+
+/** 生成防冲突的节点唯一 id（时间戳 + 计数器 + 随机串），避免同毫秒内重复创建导致 id 冲突 */
+let nodeIdSequence = 0
+function createNodeId(type: string): string {
+  nodeIdSequence = (nodeIdSequence + 1) % 1000
+  const rand = Math.random().toString(36).slice(2, 7)
+  return `${type}-${Date.now()}-${nodeIdSequence}-${rand}`
+}
+
+/** 历史快照保留的最大步数，防止无界增长 */
+const HISTORY_LIMIT = 50
+
+/** 右键浮动菜单的宽高（用于防止菜单溢出视口） */
+const CONTEXT_MENU_WIDTH = 184
+const CONTEXT_MENU_HEIGHT = 276
+
+/** 历史快照：nodes/edges + 文本内容（文本独立于 nodes 存储，必须一并快照才能正确撤销） */
+interface CanvasHistorySnapshot {
+  nodes: Node[]
+  edges: Edge[]
+  textContents: Record<string, string>
+}
+
+/** 从全局 Map 收集文本内容快照 */
+function collectTextContents(): Record<string, string> {
+  const map = (window as any).__canvasTextContents as Map<string, string> | undefined
+  const result: Record<string, string> = {}
+  if (map) {
+    map.forEach((v, k) => {
+      if (v) result[k] = v
+    })
+  }
+  return result
+}
+
+/** 把文本快照写回全局 Map */
+function restoreTextContents(snapshot: Record<string, string>) {
+  if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+  const map = (window as any).__canvasTextContents as Map<string, string>
+  map.clear()
+  Object.entries(snapshot || {}).forEach(([k, v]) => map.set(k, v))
+}
+
+/** 快照只保留可序列化字段，剔除 React Flow 运行时字段（measured 等） */
+function sanitizeSnapshotNodes(nodes: Node[]): Node[] {
+  return nodes.map((n) => ({
+    id: n.id,
+    type: n.type,
+    position: { ...n.position },
+    data: JSON.parse(JSON.stringify(n.data || {})),
+    ...(n.style ? { style: { ...n.style } } : {}),
+    ...(n.className ? { className: n.className } : {}),
+  }))
+}
+
+function sanitizeSnapshotEdges(edges: Edge[]): Edge[] {
+  return edges.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    ...(e.sourceHandle != null ? { sourceHandle: e.sourceHandle } : {}),
+    ...(e.targetHandle != null ? { targetHandle: e.targetHandle } : {}),
+    ...(e.data ? { data: JSON.parse(JSON.stringify(e.data)) } : {}),
+  }))
+}
+
 function calcHandleOffset(
   mouseClientX: number,
   mouseClientY: number,
@@ -193,12 +265,22 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     setEditing(true)
   }
 
+  // 输入过程中实时写入全局文本 Map，并标记画布待保存（避免仅 blur 才落盘导致刷新丢内容）
+  const handleEditChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value
+    setTextContent(value)
+    if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+    ;(window as any).__canvasTextContents.set(id, value)
+    ;(window as any).__canvasMarkDirty?.()
+  }
+
   const handleEditBlur = () => {
     setEditing(false)
     const trimmed = textContent.trim()
     setTextContent(trimmed)
     if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
     ;(window as any).__canvasTextContents.set(id, trimmed)
+    ;(window as any).__canvasMarkDirty?.()
   }
 
   const elRef = useRef<HTMLDivElement>(null)
@@ -247,7 +329,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
             <textarea
               className="canvas-node-editor"
               value={textContent}
-              onChange={(e) => setTextContent(e.target.value)}
+              onChange={handleEditChange}
               onBlur={handleEditBlur}
               autoFocus
             />
@@ -328,6 +410,8 @@ export default function CanvasView() {
 
 /** 画布主体逻辑 */
 function CanvasInner() {
+  // 路由参数中的项目 id：用于草稿按项目隔离，避免不同画布项目互相覆盖
+  const { id: routeProjectId } = useParams()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const { fitView } = useReactFlow()
@@ -365,30 +449,64 @@ function CanvasInner() {
   const [pickingTargetId, setPickingTargetId] = useState<string | null>(null)
   const [pickingSlotIndex, setPickingSlotIndex] = useState<number | null>(null)
   const [pickError, setPickError] = useState('')
-  const [materialPickerOpen, setMaterialPickerOpen] = useState<{ x: number; y: number } | null>(null)
-  const [historyPanelOpen, setHistoryPanelOpen] = useState<{ x: number; y: number } | null>(null)
+  const [drawerPanel, setDrawerPanel] = useState<'assets' | 'history' | null>(null)
+  // 工具栏收起动画期间为 true：先播放收起动画，动画结束再挂载抽屉
+  const [toolbarLeaving, setToolbarLeaving] = useState(false)
+  const toolbarLeaveTimerRef = useRef<number | null>(null)
+  // 右键浮动菜单
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  // 撤销/重做历史栈：存储 nodes/edges + 文本内容快照
+  const historyRef = useRef<{ undo: CanvasHistorySnapshot[]; redo: CanvasHistorySnapshot[] }>({
+    undo: [],
+    redo: [],
+  })
+  // 能否撤销/重做的状态（ref 变化不触发渲染，需显式同步）
+  const [historyFlags, setHistoryFlags] = useState({ canUndo: false, canRedo: false })
+  // 最新 nodes/edges 引用：供历史快照在任何回调里读取当前状态
+  const latestRef = useRef<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] })
+  latestRef.current = { nodes, edges }
   const transform = useStore((s) => s.transform)
 
   ;(window as any).__canvasNodes = nodes
   ;(window as any).__canvasEdges = edges
 
-  const getSourceRefs = useCallback(
-    (nodeId: string): CanvasSourceRef[] =>
-      edges
-        .filter((e) => e.target === nodeId)
-        .map((e) => {
-          const src = nodes.find((n) => n.id === e.source)
-          return {
-            kind: (src?.data?.kind as string) || 'text',
-            edgeId: e.id,
-            slotIndex: (e.data?.slotIndex as number) ?? 0,
-            // 来源节点有实际素材内容（图片/视频）时带缩略图地址
-            ...((src?.data as any)?.resultUrl ? { thumbnailUrl: (src.data as any).resultUrl as string } : {}),
-          }
+  // 基于最新 edges 状态判断是否已存在同源连线（防重检查必须用最新状态，避免闭包过期导致重复插入）
+  const hasEdgeBetween = useCallback((sourceId: string, targetId: string, slotIndex?: number): boolean => {
+    const latest = latestRef.current.edges
+    return latest.some(
+      (e) =>
+        e.source === sourceId &&
+        e.target === targetId &&
+        // 指定 slot 时按 slot 精确匹配；未指定时同源同目标即视为重复
+        (slotIndex === undefined || (e.data?.slotIndex as number) === slotIndex),
+    )
+  }, [])
+
+  /** 从 edges 派生 sourceRefs，按 edgeId 去重兜底（防止历史重复边造成重复缩略图） */
+  const deriveSourceRefs = useCallback(
+    (nodeId: string): CanvasSourceRef[] => {
+      const seenEdgeIds = new Set<string>()
+      const refs: CanvasSourceRef[] = []
+      for (const e of edges) {
+        if (e.target !== nodeId) continue
+        if (seenEdgeIds.has(e.id)) continue
+        seenEdgeIds.add(e.id)
+        const src = nodes.find((n) => n.id === e.source)
+        refs.push({
+          kind: (src?.data?.kind as string) || 'text',
+          edgeId: e.id,
+          slotIndex: (e.data?.slotIndex as number) ?? 0,
+          // 来源节点有实际素材内容（图片/视频）时带缩略图地址
+          ...((src?.data as any)?.resultUrl ? { thumbnailUrl: (src.data as any).resultUrl as string } : {}),
         })
-        .sort((a, b) => a.slotIndex - b.slotIndex),
+      }
+      return refs.sort((a, b) => a.slotIndex - b.slotIndex)
+    },
     [edges, nodes],
   )
+
+  // 点击节点时使用去重后的 sourceRefs
+  const getSourceRefs = useCallback((nodeId: string): CanvasSourceRef[] => deriveSourceRefs(nodeId), [deriveSourceRefs])
 
   /** 参考选择：目标节点种类对应的允许来源种类 */
   const allowedSourceKinds: Record<string, string[]> = {
@@ -396,6 +514,24 @@ function CanvasInner() {
     image: ['text'],
     text: ['text', 'image', 'video'],
   }
+
+  /** 校验连线是否合法：重复（基于最新状态）、类型匹配、数量上限。返回错误信息，合法返回 null */
+  const validateConnection = useCallback(
+    (sourceId: string, targetId: string): string | null => {
+      if (hasEdgeBetween(sourceId, targetId)) return '已存在相同连线'
+      const targetKind = (latestRef.current.nodes.find((n) => n.id === targetId)?.data?.kind as string) || 'text'
+      const sourceKind = (latestRef.current.nodes.find((n) => n.id === sourceId)?.data?.kind as string) || 'text'
+      const allowed = allowedSourceKinds[targetKind] || []
+      if (!allowed.includes(sourceKind)) return '该节点类型不能作为此节点的参考来源'
+      const existingRefs = latestRef.current.edges.filter((e) => e.target === targetId).length
+      const maxRefs = targetKind === 'video' ? 2 : 3
+      if (existingRefs >= maxRefs) return `参考数量已达上限（${maxRefs} 个）`
+      return null
+    },
+    // allowedSourceKinds 为模块常量，引用不会随渲染变化；显式声明以消除 exhaustive-deps 提示
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hasEdgeBetween],
+  )
 
   const startPickRef = useCallback((targetId: string, slotIndex?: number) => {
     setPickingTargetId(targetId)
@@ -410,8 +546,175 @@ function CanvasInner() {
     setPickError('')
   }, [])
 
+  const closeDrawerPanel = useCallback(() => {
+    setDrawerPanel(null)
+  }, [])
+
+  // 打开抽屉的时序动效：先播放工具栏收起动画，动画结束后再卸载工具栏并挂载抽屉
+  const openDrawerPanel = useCallback(
+    (type: 'assets' | 'history') => {
+      // 已在目标抽屉中：无需重复动画
+      if (drawerPanel === type) return
+      setAddMenu(null)
+      setToolbarLeaving(true)
+      if (toolbarLeaveTimerRef.current) window.clearTimeout(toolbarLeaveTimerRef.current)
+      toolbarLeaveTimerRef.current = window.setTimeout(() => {
+        toolbarLeaveTimerRef.current = null
+        setToolbarLeaving(false)
+        setDrawerPanel(type)
+      }, TOOLBAR_LEAVE_MS)
+    },
+    [drawerPanel],
+  )
+
+  // 组件卸载时清理定时器，避免切页后触发 setState
+  useEffect(() => {
+    return () => {
+      if (toolbarLeaveTimerRef.current) window.clearTimeout(toolbarLeaveTimerRef.current)
+    }
+  }, [])
+
+  // ── 撤销 / 重做 ────────────────────────────────────────────
+  // 记录一次「当前状态」到撤销栈（在结构性变更发生前调用）
+  const commitHistory = useCallback(() => {
+    const { undo } = historyRef.current
+    undo.push({
+      nodes: sanitizeSnapshotNodes(latestRef.current.nodes),
+      edges: sanitizeSnapshotEdges(latestRef.current.edges),
+      textContents: collectTextContents(),
+    })
+    if (undo.length > HISTORY_LIMIT) undo.shift()
+    historyRef.current.redo.length = 0
+    setHistoryFlags({ canUndo: true, canRedo: false })
+  }, [])
+
+  // 撤销：当前状态入重做栈，恢复撤销栈顶
+  const undo = useCallback(() => {
+    const { undo: undoStack, redo: redoStack } = historyRef.current
+    const prev = undoStack.pop()
+    if (!prev) return
+    redoStack.push({
+      nodes: sanitizeSnapshotNodes(latestRef.current.nodes),
+      edges: sanitizeSnapshotEdges(latestRef.current.edges),
+      textContents: collectTextContents(),
+    })
+    setNodes(prev.nodes as Node[])
+    setEdges(prev.edges as Edge[])
+    // 同步恢复文本内容，保证文本节点与结构状态一致
+    restoreTextContents(prev.textContents)
+    setSelectedNode(null)
+    setSaveStatus('dirty')
+    setContextMenu(null)
+    setHistoryFlags({ canUndo: undoStack.length > 0, canRedo: true })
+  }, [setNodes, setEdges])
+
+  // 重做：当前状态入撤销栈，恢复重做栈顶
+  const redo = useCallback(() => {
+    const { undo: undoStack, redo: redoStack } = historyRef.current
+    const next = redoStack.pop()
+    if (!next) return
+    undoStack.push({
+      nodes: sanitizeSnapshotNodes(latestRef.current.nodes),
+      edges: sanitizeSnapshotEdges(latestRef.current.edges),
+      textContents: collectTextContents(),
+    })
+    setNodes(next.nodes as Node[])
+    setEdges(next.edges as Edge[])
+    // 同步恢复文本内容
+    restoreTextContents(next.textContents)
+    setSelectedNode(null)
+    setSaveStatus('dirty')
+    setContextMenu(null)
+    setHistoryFlags({ canUndo: true, canRedo: redoStack.length > 0 })
+  }, [setNodes, setEdges])
+
+  // 键盘 Delete/Backspace 删除节点：清理关联连线 + 同步选中态 + 入撤销栈
+  const handleNodesDelete = useCallback(
+    (deleted: Node[]) => {
+      if (!deleted.length) return
+      // 删除前记录历史，供撤销使用
+      commitHistory()
+      const deletedIds = new Set(deleted.map((n) => n.id))
+      setEdges((eds) => eds.filter((e) => !deletedIds.has(e.source) && !deletedIds.has(e.target)))
+      // 若删除的是当前选中节点，清空编辑面板
+      setSelectedNode((prev) => (prev && deletedIds.has(prev.id) ? null : prev))
+      setSaveStatus('dirty')
+    },
+    [commitHistory, setEdges],
+  )
+
+  // 键盘 Delete/Backspace 删除连线（选中连线时）：入撤销栈
+  const handleEdgesDelete = useCallback(
+    (deleted: Edge[]) => {
+      if (!deleted.length) return
+      commitHistory()
+      setSelectedNode((prev) => {
+        if (!prev) return prev
+        const deletedIds = new Set(deleted.map((e) => e.id))
+        const newRefs = (prev.sourceRefs || []).filter((r) => !deletedIds.has(r.edgeId))
+        return { ...prev, sourceRefs: newRefs }
+      })
+      setSaveStatus('dirty')
+    },
+    [commitHistory, setSelectedNode],
+  )
+
+  // 右键菜单：点击外部 / Esc 关闭
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('.canvas-context-menu')) return
+      setContextMenu(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null)
+    }
+    // 延迟挂载，避免触发本次右键的 mousedown 立即关闭菜单
+    const timer = window.setTimeout(() => {
+      window.addEventListener('mousedown', close)
+      window.addEventListener('keydown', onKey)
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [contextMenu])
+
+  // 快捷键：Ctrl/Cmd+Z 撤销，Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y 重做
+  // 输入框/文本域/可编辑区域内不拦截（保留浏览器原生撤销），避免破坏文本编辑
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest('textarea, input, [contenteditable="true"]')) return
+      const key = e.key.toLowerCase()
+      if (key === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+      } else if (key === 'y') {
+        e.preventDefault()
+        redo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [undo, redo])
+
+  useEffect(() => {
+    if (!drawerPanel) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDrawerPanel(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [drawerPanel])
+
   const handleRemoveRef = useCallback(
     (edgeId: string) => {
+      // 删除连线前记录历史，供撤销使用
+      commitHistory()
       setEdges((eds) => eds.filter((e) => e.id !== edgeId))
       // 立即更新 selectedNode 以消除闪烁
       if (selectedNode) {
@@ -419,7 +722,7 @@ function CanvasInner() {
         setSelectedNode({ ...selectedNode, sourceRefs: newRefs })
       }
     },
-    [selectedNode, setEdges],
+    [selectedNode, setEdges, commitHistory],
   )
 
   // ESC 退出参考选择模式
@@ -444,29 +747,15 @@ function CanvasInner() {
         failWith('不能选择节点自身作为参考')
         return
       }
-      // 不能重复添加：检查是否已有连线
-      const alreadyConnected = edges.some((e) => e.source === sourceNode.id && e.target === pickingTargetId)
-      if (alreadyConnected) {
-        failWith('该节点已添加为参考')
+      // 统一校验：重复（基于最新状态）、类型匹配、数量上限
+      const validationError = validateConnection(sourceNode.id, pickingTargetId)
+      if (validationError) {
+        failWith(validationError)
         return
       }
-      // 校验类型
-      const targetKind = (nodes.find((n) => n.id === pickingTargetId)?.data?.kind as string) || 'text'
       const sourceKind = (sourceNode.data?.kind as string) || 'text'
-      const allowed = allowedSourceKinds[targetKind] || []
-      if (!allowed.includes(sourceKind)) {
-        failWith('该节点类型不能作为此节点的参考来源')
-        return
-      }
-      // 校验数量上限
-      const existingRefs = edges.filter((e) => e.target === pickingTargetId).length
-      const maxRefs = targetKind === 'video' ? 2 : 3
-      if (existingRefs >= maxRefs) {
-        failWith(`参考数量已达上限（${maxRefs} 个）`)
-        return
-      }
       // 确定 slotIndex：优先使用传入值，否则自动分配
-      const existingSlots = edges
+      const existingSlots = latestRef.current.edges
         .filter((e) => e.target === pickingTargetId)
         .map((e) => (e.data?.slotIndex as number) ?? 0)
       let slotIndex = pickingSlotIndex
@@ -484,58 +773,64 @@ function CanvasInner() {
         targetHandle: null,
         data: { slotIndex },
       }
+      // 添加参考连线前记录历史，供撤销使用
+      commitHistory()
       setEdges((eds) => [...eds, newEdge])
       // 退出选择模式
       setIsPickingRef(false)
       setPickingTargetId(null)
       setPickingSlotIndex(null)
-      // 刷新 selectedNode 的 sourceRefs
+      // 刷新 selectedNode 的 sourceRefs（按 edgeId 去重，防止重复缩略图）
       setSelectedNode((prev) => {
         if (!prev) return null
-        const newRefs = [
-          ...(prev.sourceRefs || []),
-          {
-            kind: sourceKind,
-            edgeId: newEdgeId,
-            slotIndex,
-            // 来源节点有实际素材内容（图片/视频）时带缩略图地址
-            ...((sourceNode.data as any)?.resultUrl
-              ? { thumbnailUrl: (sourceNode.data as any).resultUrl as string }
-              : {}),
-          },
-        ].sort((a, b) => a.slotIndex - b.slotIndex)
-        return { ...prev, sourceRefs: newRefs }
+        const newRef = {
+          kind: sourceKind,
+          edgeId: newEdgeId,
+          slotIndex,
+          // 来源节点有实际素材内容（图片/视频）时带缩略图地址
+          ...((sourceNode.data as any)?.resultUrl
+            ? { thumbnailUrl: (sourceNode.data as any).resultUrl as string }
+            : {}),
+        }
+        const next = [...(prev.sourceRefs || []).filter((r) => r.edgeId !== newEdgeId), newRef].sort(
+          (a, b) => a.slotIndex - b.slotIndex,
+        )
+        return { ...prev, sourceRefs: next }
       })
     },
-    [pickingTargetId, pickingSlotIndex, nodes, edges, setEdges],
+    [pickingTargetId, pickingSlotIndex, setEdges, commitHistory, validateConnection],
   )
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      // 防止重复连线
-      const exists = edges.some((e) => e.source === connection.source && e.target === connection.target)
-      if (exists) return
+      if (!connection.source || !connection.target) return
+      // 统一校验：重复（基于最新状态）、类型匹配、数量上限
+      if (validateConnection(connection.source, connection.target)) return
       // 自动分配 slotIndex
-      const existingSlots = edges
+      const existingSlots = latestRef.current.edges
         .filter((e) => e.target === connection.target)
         .map((e) => (e.data?.slotIndex as number) ?? 0)
       let slotIndex = 0
       while (existingSlots.includes(slotIndex)) slotIndex++
+      // 添加连线前记录历史，供撤销使用
+      commitHistory()
       setEdges((eds) => addEdge({ ...connection, data: { slotIndex } }, eds))
     },
-    [edges, setEdges],
+    [setEdges, commitHistory, validateConnection],
   )
 
   /** 剪刀点击删除连线，同步清理缩略图 */
   const handleEdgeDelete = useCallback(
     (edgeId: string) => {
+      // 删除连线前记录历史，供撤销使用
+      commitHistory()
       setEdges((eds) => eds.filter((ed) => ed.id !== edgeId))
       if (selectedNode) {
         const newRefs = (selectedNode.sourceRefs || []).filter((r) => r.edgeId !== edgeId)
         setSelectedNode({ ...selectedNode, sourceRefs: newRefs })
       }
     },
-    [selectedNode, setEdges],
+    [selectedNode, setEdges, commitHistory],
   )
 
   /**
@@ -567,14 +862,18 @@ function CanvasInner() {
         const nearRight = Math.abs(mx - rightCX) < 65 * tz && Math.abs(my - cy) < 65 * tz
 
         if (nearLeft || nearRight) {
-          // 防止重复连线
-          if (edges.some((e) => e.source === sourceId && e.target === node.id)) return
+          // 统一校验：重复（基于最新状态）、类型匹配、数量上限
+          if (validateConnection(sourceId, node.id)) return
           // 自动分配 slotIndex
-          const existingSlots = edges.filter((e) => e.target === node.id).map((e) => (e.data?.slotIndex as number) ?? 0)
+          const existingSlots = latestRef.current.edges
+            .filter((e) => e.target === node.id)
+            .map((e) => (e.data?.slotIndex as number) ?? 0)
           let slotIndex = 0
           while (existingSlots.includes(slotIndex)) slotIndex++
           // 自动连线
           const targetHandle = nearRight ? `${node.id}-right-source` : `${node.id}-left-target`
+          // 自动连线前记录历史，供撤销使用
+          commitHistory()
           setEdges((eds) =>
             addEdge(
               {
@@ -594,7 +893,61 @@ function CanvasInner() {
       // 未命中任何节点 → 弹出创建菜单
       setAddMenu({ x: mx, y: my, sourceId })
     },
-    [nodes, edges, transform, setEdges],
+    [nodes, transform, setEdges, commitHistory, validateConnection],
+  )
+
+  // 统一创建新节点：默认选中 + 渐入动画；动画结束后移除动画类，避免草稿恢复/重进页面时重复播放
+  const appendNewNode = useCallback(
+    (
+      type: string,
+      position: { x: number; y: number },
+      options?: { ratio?: string; extraData?: Record<string, unknown> },
+    ) => {
+      // 结构变更前记录历史，供撤销使用
+      commitHistory()
+      const nodeW = type === 'video' ? 444 : 250
+      const nodeH = type === 'video' ? 250 : 250
+      const id = createNodeId(type)
+      const ratio = options?.ratio
+      const newNode: Node = {
+        id,
+        type,
+        position,
+        data: {
+          kind: type,
+          ratio,
+          videoMode: type === 'video' ? 'first-last' : undefined,
+          ...options?.extraData,
+        },
+        style: { width: nodeW, height: nodeH },
+        selected: true,
+        className: 'is-node-entering',
+      }
+      setNodes((nds) => [
+        // 清除其他节点的选中态，保证同一时刻只有一个节点被选中
+        ...nds.map((n) => (n.selected ? { ...n, selected: false } : n)),
+        newNode,
+      ])
+      // 同步选中态回显：新节点默认选中，立即显示节点编辑面板
+      setSelectedNode({
+        id,
+        kind: type,
+        sourceRefs: [],
+        ratio,
+        videoMode: type === 'video' ? 'first-last' : undefined,
+        modelVersionId: undefined,
+      })
+      setSaveStatus('dirty')
+      // 动画结束后移除渐入类，避免节点被持久化后再恢复时重复播放动画
+      window.setTimeout(() => {
+        setNodes((nds) =>
+          nds.map((n) =>
+            n.id === id && String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n,
+          ),
+        )
+      }, NODE_ENTER_MS)
+    },
+    [setNodes, commitHistory],
   )
 
   const handleMenuSelect = useCallback(
@@ -606,39 +959,20 @@ function CanvasInner() {
       const flowY = (addMenu.y - ty) / tz
       const nodeW = type === 'video' ? 444 : 250
       const nodeH = type === 'video' ? 250 : 250
-      const newNode: Node = {
-        id: `${type}-${Date.now()}`,
+      appendNewNode(
         type,
-        position: { x: flowX - nodeW / 2, y: flowY - nodeH / 2 },
-        data: {
-          kind: type,
-          ratio: type === 'video' ? '自适应' : type === 'image' ? '1:1' : undefined,
-          videoMode: type === 'video' ? 'first-last' : undefined,
-        },
-        style: { width: nodeW, height: nodeH },
-      }
-      setNodes((nds) => [...nds, newNode])
+        { x: flowX - nodeW / 2, y: flowY - nodeH / 2 },
+        { ratio: type === 'video' ? '自适应' : type === 'image' ? '1:1' : undefined },
+      )
       setAddMenu(null)
     },
-    [addMenu, setNodes, transform],
+    [addMenu, transform, appendNewNode],
   )
 
-  // edges 变化时同步 selectedNode.sourceRefs
+  // edges 变化时同步 selectedNode.sourceRefs（用去重派生，兜底清理历史重复边）
   useEffect(() => {
     if (!selectedNode) return
-    const refs: CanvasSourceRef[] = edges
-      .filter((e) => e.target === selectedNode.id)
-      .map((e) => {
-        const src = nodes.find((n) => n.id === e.source)
-        return {
-          kind: (src?.data?.kind as string) || 'text',
-          edgeId: e.id,
-          slotIndex: (e.data?.slotIndex as number) ?? 0,
-          // 来源节点有实际素材内容（图片/视频）时带缩略图地址
-          ...((src?.data as any)?.resultUrl ? { thumbnailUrl: (src.data as any).resultUrl as string } : {}),
-        }
-      })
-      .sort((a, b) => a.slotIndex - b.slotIndex)
+    const refs: CanvasSourceRef[] = deriveSourceRefs(selectedNode.id)
     const prevRefs = selectedNode.sourceRefs || []
     // 对比必须包含 thumbnailUrl：来源节点素材变化时（应用新素材）缩略图也要同步更新
     if (
@@ -647,16 +981,20 @@ function CanvasInner() {
     ) {
       setSelectedNode((prev) => (prev ? { ...prev, sourceRefs: refs } : prev))
     }
-  }, [edges, selectedNode?.id, nodes])
+  }, [selectedNode?.id, deriveSourceRefs])
 
-  // 初始化：从 localStorage 恢复草稿
+  // 初始化：从 localStorage 恢复草稿（draftLoadedRef 保证只执行一次，切换项目后需重挂载组件）
   const draftLoadedRef = useRef(false)
   useEffect(() => {
     if (draftLoadedRef.current) return
     draftLoadedRef.current = true
-    const draft = loadCanvasDraft()
+    const draft = loadCanvasDraft(routeProjectId)
     if (draft && draft.nodes.length > 0) {
-      setNodes(draft.nodes as Node[])
+      // 恢复时移除渐入标记类，避免已持久化的新节点重播渐入动画
+      const restoredNodes = (draft.nodes as Node[]).map((n) =>
+        String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n,
+      )
+      setNodes(restoredNodes)
       setEdges(draft.edges as Edge[])
       // 恢复文本内容
       if (draft.textContents) {
@@ -671,15 +1009,27 @@ function CanvasInner() {
         })
       })
     }
-  }, [setNodes, setEdges, fitView])
+  }, [setNodes, setEdges, fitView, routeProjectId])
 
-  // 自动保存：nodes/edges 变化后防抖 1 秒落盘
+  // 自动保存：nodes/edges 变化后防抖 1 秒落盘（按项目 id 隔离草稿）
   useEffect(() => {
     const timer = setTimeout(() => {
-      saveCanvasDraft(nodes, edges)
+      saveCanvasDraft(nodes, edges, routeProjectId)
     }, 1000)
     return () => clearTimeout(timer)
-  }, [nodes, edges])
+  }, [nodes, edges, routeProjectId])
+
+  // 文本编辑时标记「未保存」并触发保存（文本内容不经过 nodes/edges，需显式驱动）
+  useEffect(() => {
+    ;(window as any).__canvasMarkDirty = () => {
+      setSaveStatus('dirty')
+      // 读取最新节点/边并立即落盘，确保文本与结构一并持久化
+      saveCanvasDraft(latestRef.current.nodes, latestRef.current.edges, routeProjectId)
+    }
+    return () => {
+      delete (window as any).__canvasMarkDirty
+    }
+  }, [routeProjectId])
 
   // 比例变更时同步更新节点宽高与数据
   const handleRatioChange = useCallback(
@@ -687,6 +1037,8 @@ function CanvasInner() {
       if (!selectedNode) return
       const baseSize = 250
       const { width, height } = calcNodeSize(ratio, baseSize)
+      // 节点尺寸/数据变更前记录历史，供撤销使用
+      commitHistory()
       setNodes((nds) =>
         nds.map((n) =>
           n.id === selectedNode.id
@@ -701,7 +1053,7 @@ function CanvasInner() {
       // 同步选中态回显
       setSelectedNode((prev) => (prev ? { ...prev, ratio } : prev))
     },
-    [selectedNode, setNodes],
+    [selectedNode, setNodes, commitHistory],
   )
 
   // 视频生成方式变更：同步模式与比例
@@ -709,6 +1061,8 @@ function CanvasInner() {
     (mode: 'first-last' | 'full-ref') => {
       if (!selectedNode) return
       const baseSize = 250
+      // 视频模式变更前记录历史，供撤销使用
+      commitHistory()
       setNodes((nds) =>
         nds.map((n) => {
           if (n.id !== selectedNode.id) return n
@@ -734,7 +1088,7 @@ function CanvasInner() {
         return { ...prev, videoMode: mode, ratio }
       })
     },
-    [selectedNode, setNodes],
+    [selectedNode, setNodes, commitHistory],
   )
 
   // 应用素材：优先应用到已选中的节点（类型匹配时替换素材内容），否则创建新节点
@@ -748,6 +1102,8 @@ function CanvasInner() {
         if (type === 'video' ? isVideoTarget : true) {
           const assetId = Number(material.assetId || 0)
           const resultUrl = String(material.src || '')
+          // 替换素材前记录历史，供撤销使用
+          commitHistory()
           // 更新画布节点数据
           setNodes((nds) =>
             nds.map((n) =>
@@ -776,30 +1132,28 @@ function CanvasInner() {
       const [tx, ty, tz] = transform
       const flowX = (window.innerWidth / 2 - tx) / tz - nodeW / 2 + (Math.random() * 80 - 40)
       const flowY = (window.innerHeight / 2 - ty) / tz - nodeH / 2 + (Math.random() * 80 - 40)
-      const newNode: Node = {
-        id: `${type}-${Date.now()}`,
+      appendNewNode(
         type,
-        position: { x: flowX, y: flowY },
-        data: {
-          kind: type,
+        { x: flowX, y: flowY },
+        {
           ratio: type === 'video' ? '自适应' : '1:1',
-          videoMode: type === 'video' ? 'first-last' : undefined,
           // 素材来源：assetId + 同源流式地址，供节点渲染/后续生成任务使用
-          assetId: Number(material.assetId || 0),
-          resultUrl: String(material.src || ''),
+          extraData: {
+            assetId: Number(material.assetId || 0),
+            resultUrl: String(material.src || ''),
+          },
         },
-        style: { width: nodeW, height: nodeH },
-      }
-      setNodes((nds) => [...nds, newNode])
-      setSaveStatus('dirty')
+      )
     },
-    [selectedNode, transform, setNodes],
+    [selectedNode, transform, appendNewNode, commitHistory],
   )
 
   // 模型变更：保存 modelVersionId 到节点数据并回显
   const handleModelChange = useCallback(
     (modelVersionId: number) => {
       if (!selectedNode) return
+      // 模型变更前记录历史，供撤销使用
+      commitHistory()
       setNodes((nds) =>
         nds.map((n) =>
           n.id === selectedNode.id ? { ...n, data: { ...(n.data as Record<string, unknown>), modelVersionId } } : n,
@@ -807,28 +1161,39 @@ function CanvasInner() {
       )
       setSelectedNode((prev) => (prev ? { ...prev, modelVersionId } : prev))
     },
-    [selectedNode, setNodes],
+    [selectedNode, setNodes, commitHistory],
   )
 
   const handleAddNode = useCallback(
     (type: string) => {
+      appendNewNode(
+        type,
+        { x: 300 + Math.random() * 200, y: 200 + Math.random() * 200 },
+        {
+          ratio: type === 'video' ? '自适应' : type === 'image' ? '2:3' : undefined,
+        },
+      )
+    },
+    [appendNewNode],
+  )
+
+  // 右键菜单「添加节点」：菜单坐标转画布坐标后创建（默认选中 + 渐入）
+  const handleContextAddNode = useCallback(
+    (type: string) => {
+      if (!contextMenu) return
+      const [tx, ty, tz] = transform
+      const flowX = (contextMenu.x - tx) / tz
+      const flowY = (contextMenu.y - ty) / tz
       const nodeW = type === 'video' ? 444 : 250
       const nodeH = type === 'video' ? 250 : 250
-      const newNode: Node = {
-        id: `${type}-${Date.now()}`,
+      appendNewNode(
         type,
-        position: { x: 300 + Math.random() * 200, y: 200 + Math.random() * 200 },
-        data: {
-          kind: type,
-          ratio: type === 'video' ? '自适应' : type === 'image' ? '2:3' : undefined,
-          videoMode: type === 'video' ? 'first-last' : undefined,
-        },
-        style: { width: nodeW, height: nodeH },
-      }
-      setNodes((nds) => [...nds, newNode])
-      setSaveStatus('dirty')
+        { x: flowX - nodeW / 2, y: flowY - nodeH / 2 },
+        { ratio: type === 'video' ? '自适应' : type === 'image' ? '1:1' : undefined },
+      )
+      setContextMenu(null)
     },
-    [setNodes],
+    [contextMenu, transform, appendNewNode],
   )
 
   // 参考选择模式下，标记不可选节点
@@ -859,21 +1224,19 @@ function CanvasInner() {
         </div>
       </div>
 
-      <CanvasFloatingToolbar
-        onAddNode={handleAddNode}
-        selectMode={selectMode}
-        onSelectModeChange={handleSelectModeChange}
-        panMode={panMode}
-        onPanModeChange={handlePanModeChange}
-        onOpenAssets={(e) => {
-          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-          setMaterialPickerOpen({ x: rect.right + 12, y: rect.bottom })
-        }}
-        onOpenHistory={(e) => {
-          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-          setHistoryPanelOpen({ x: rect.right + 12, y: rect.bottom })
-        }}
-      />
+      {/* 抽屉未打开（或正在播放收起动画）时渲染工具栏 */}
+      {!drawerPanel && (
+        <CanvasFloatingToolbar
+          leaving={toolbarLeaving}
+          onAddNode={handleAddNode}
+          selectMode={selectMode}
+          onSelectModeChange={handleSelectModeChange}
+          panMode={panMode}
+          onPanModeChange={handlePanModeChange}
+          onOpenAssets={() => openDrawerPanel('assets')}
+          onOpenHistory={() => openDrawerPanel('history')}
+        />
+      )}
 
       {/* 参考选择横幅 */}
       {isPickingRef && (
@@ -893,8 +1256,34 @@ function CanvasInner() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
+        /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步） */
+        onNodesDelete={handleNodesDelete}
+        onEdgesDelete={handleEdgesDelete}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={60}
+        /* 禁用多选：任何情况下都只允许同时选中一个节点 */
+        multiSelectionKeyCode={null}
+        /* 拖动开始前记录历史：撤销可还原节点位置 */
+        onNodeDragStart={() => commitHistory()}
+        /* 劫持右键：空白区域 / 节点 / 连线统一弹出浮动菜单 */
+        onPaneContextMenu={(e) => {
+          e.preventDefault()
+          setAddMenu(null)
+          setContextMenu({ x: e.clientX, y: e.clientY })
+        }}
+        onNodeContextMenu={(e) => {
+          // 文本编辑框内保留默认菜单（复制/粘贴）
+          const target = e.target as HTMLElement
+          if (target.closest('textarea, input, [contenteditable="true"]')) return
+          e.preventDefault()
+          setAddMenu(null)
+          setContextMenu({ x: e.clientX, y: e.clientY })
+        }}
+        onEdgeContextMenu={(e) => {
+          e.preventDefault()
+          setAddMenu(null)
+          setContextMenu({ x: e.clientX, y: e.clientY })
+        }}
         onNodeClick={(_e, node) => {
           if (isPickingRef) {
             handlePickRefNode(node as unknown as Node)
@@ -1003,27 +1392,91 @@ function CanvasInner() {
           })}
       </EdgeLabelRenderer>
 
-      {/* 素材库浮动面板 */}
+      {/* 右键浮动菜单：添加节点 / 撤销 / 重做 */}
+      {contextMenu && (
+        <div
+          className="canvas-context-menu"
+          style={{
+            left: Math.min(contextMenu.x, window.innerWidth - CONTEXT_MENU_WIDTH),
+            top: Math.min(contextMenu.y, window.innerHeight - CONTEXT_MENU_HEIGHT),
+          }}
+        >
+          <div className="canvas-context-menu__label">添加节点</div>
+          <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('text')}>
+            <span className="canvas-context-menu__icon">{getTypeIcon('text')}</span>
+            文本节点
+          </button>
+          <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('image')}>
+            <span className="canvas-context-menu__icon">{getTypeIcon('image')}</span>
+            图片节点
+          </button>
+          <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('video')}>
+            <span className="canvas-context-menu__icon">{getTypeIcon('video')}</span>
+            视频节点
+          </button>
+          <div className="canvas-context-menu__divider" />
+          <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canUndo} onClick={undo}>
+            <span className="canvas-context-menu__icon">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M9 14 4 9l5-5" />
+                <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
+              </svg>
+            </span>
+            撤销
+            <span className="canvas-context-menu__kbd">Ctrl+Z</span>
+          </button>
+          <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canRedo} onClick={redo}>
+            <span className="canvas-context-menu__icon">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m15 14 5-5-5-5" />
+                <path d="M20 9H10a6 6 0 0 0 0 12h3" />
+              </svg>
+            </span>
+            重做
+            <span className="canvas-context-menu__kbd">Ctrl+Shift+Z</span>
+          </button>
+        </div>
+      )}
+
+      {/* 素材库抽屉 */}
       <CanvasMaterialPicker
         workspaceId={workspaceId}
-        visible={materialPickerOpen !== null}
-        position={materialPickerOpen}
-        onClose={() => setMaterialPickerOpen(null)}
+        visible={drawerPanel === 'assets'}
+        variant="drawer"
+        onClose={closeDrawerPanel}
         onApply={(material) => {
-          // 应用素材 → 创建对应类型的图片/视频节点到画布（面板保持打开，可连续应用）
+          // 应用素材 → 创建对应类型的图片/视频节点到画布（抽屉保持打开，可连续应用）
           handleApplyMaterial(material)
         }}
       />
 
-      {/* 历史记录浮动面板 */}
+      {/* 历史记录抽屉 */}
       <CanvasHistoryPanel
-        visible={historyPanelOpen !== null}
-        position={historyPanelOpen}
-        onClose={() => setHistoryPanelOpen(null)}
+        visible={drawerPanel === 'history'}
+        variant="drawer"
+        onClose={closeDrawerPanel}
         onSelect={(item: HistoryItem) => {
           console.log('选择历史项目:', item)
           // TODO: 恢复历史画布项目
-          setHistoryPanelOpen(null)
+          setDrawerPanel(null)
         }}
       />
 

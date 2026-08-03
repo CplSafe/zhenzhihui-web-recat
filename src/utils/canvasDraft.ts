@@ -1,10 +1,17 @@
 /**
  * 画布线图草稿持久化（localStorage）
  * 防抖自动保存 nodes + edges + 文本内容，刷新页面后恢复
+ * 草稿键按项目 id 隔离，避免不同画布项目互相覆盖
  */
 import type { Node, Edge } from '@xyflow/react'
 
-const DRAFT_KEY = 'zzh_canvas_draft'
+const DRAFT_KEY_PREFIX = 'zzh_canvas_draft'
+
+/** 按项目 id 生成隔离的草稿存储键：不同画布项目互不覆盖 */
+function draftKey(projectId?: string | number): string {
+  const id = String(projectId ?? '').trim()
+  return id ? `${DRAFT_KEY_PREFIX}_p${encodeURIComponent(id)}` : DRAFT_KEY_PREFIX
+}
 
 interface CanvasDraft {
   nodes: Array<{
@@ -35,8 +42,8 @@ interface CanvasDraft {
   updatedAt: number
 }
 
-/** 保存草稿（仅保留可序列化字段） */
-export function saveCanvasDraft(nodes: Node[], edges: Edge[]) {
+/** 保存草稿（仅保留可序列化字段）；projectId 用于按项目隔离，缺省时使用全局键（兼容旧行为） */
+export function saveCanvasDraft(nodes: Node[], edges: Edge[], projectId?: string | number) {
   const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
   const textContents: Record<string, string> = {}
   if (textMap) {
@@ -73,16 +80,16 @@ export function saveCanvasDraft(nodes: Node[], edges: Edge[]) {
     updatedAt: Date.now(),
   }
   try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+    localStorage.setItem(draftKey(projectId), JSON.stringify(draft))
   } catch {
     // localStorage 配额满或其他异常，静默跳过
   }
 }
 
 /** 读取草稿，无草稿或解析失败返回 null */
-export function loadCanvasDraft(): CanvasDraft | null {
+export function loadCanvasDraft(projectId?: string | number): CanvasDraft | null {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY)
+    const raw = localStorage.getItem(draftKey(projectId))
     if (!raw) return null
     return JSON.parse(raw) as CanvasDraft
   } catch {
@@ -90,10 +97,10 @@ export function loadCanvasDraft(): CanvasDraft | null {
   }
 }
 
-/** 清除草稿 */
-export function clearCanvasDraft() {
+/** 清除指定项目的草稿 */
+export function clearCanvasDraft(projectId?: string | number) {
   try {
-    localStorage.removeItem(DRAFT_KEY)
+    localStorage.removeItem(draftKey(projectId))
   } catch {
     // 静默
   }

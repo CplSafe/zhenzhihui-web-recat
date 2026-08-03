@@ -4,7 +4,7 @@
  * 五个图标：Add(加号弹出菜单) / Select(选中模式) / Drag(拖拽模式) / 素材库 / 历史记录
  */
 import { memo, useState, useRef, useEffect } from 'react'
-import styles from './CanvasFloatingToolbar.module.less'
+import styles from './CanvasFloatingToolbar.module.css'
 
 interface CanvasFloatingToolbarProps {
   onAddNode: (type: string) => void
@@ -12,8 +12,10 @@ interface CanvasFloatingToolbarProps {
   onSelectModeChange: (v: boolean) => void
   panMode: boolean
   onPanModeChange: (v: boolean) => void
-  onOpenAssets: (e: React.MouseEvent) => void
-  onOpenHistory: (e: React.MouseEvent) => void
+  onOpenAssets: () => void
+  onOpenHistory: () => void
+  /** 打开抽屉前播放的收起动画标记 */
+  leaving?: boolean
 }
 
 function CanvasFloatingToolbar({
@@ -24,6 +26,7 @@ function CanvasFloatingToolbar({
   onPanModeChange,
   onOpenAssets,
   onOpenHistory,
+  leaving = false,
 }: CanvasFloatingToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -41,7 +44,10 @@ function CanvasFloatingToolbar({
   }, [menuOpen])
 
   return (
-    <div className={styles.toolbar}>
+    <div
+      className={[styles.toolbar, leaving ? styles.toolbarLeaving : ''].filter(Boolean).join(' ')}
+      aria-hidden={leaving || undefined}
+    >
       {/* 1. 加号 — 弹出节点类型菜单 */}
       <div className={styles.addBtnWrap} ref={menuRef}>
         <button

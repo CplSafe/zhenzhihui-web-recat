@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { listAssets, getAssetDownloadUrl } from '@/api/business'
 import { createMaterialFromAsset, isVideoMaterial } from '@/utils/materials'
-import styles from './CanvasMaterialPicker.module.less'
+import styles from './CanvasMaterialPicker.module.css'
 
 interface MaterialItem {
   id: string
@@ -25,7 +25,8 @@ interface CanvasMaterialPickerProps {
   /** 所属工作空间 ID，素材按 workspace 隔离 */
   workspaceId: number
   visible: boolean
-  position: { x: number; y: number } | null
+  position?: { x: number; y: number } | null
+  variant?: 'popover' | 'drawer'
   onClose: () => void
   /** 点击「应用」时回调（解析好同源流式地址后传入） */
   onApply: (material: MaterialItem) => void
@@ -137,6 +138,7 @@ export default function CanvasMaterialPicker({
   workspaceId,
   visible,
   position,
+  variant = 'popover',
   onClose,
   onApply,
 }: CanvasMaterialPickerProps) {
@@ -242,7 +244,7 @@ export default function CanvasMaterialPicker({
 
   // 点击外部关闭
   useEffect(() => {
-    if (!visible) return
+    if (!visible || variant !== 'popover') return
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement
       if (target.closest(`.${styles.panel}`)) return
@@ -250,21 +252,51 @@ export default function CanvasMaterialPicker({
     }
     setTimeout(() => document.addEventListener('mousedown', handler), 0)
     return () => document.removeEventListener('mousedown', handler)
-  }, [visible, onClose])
+  }, [visible, variant, onClose])
 
-  if (!visible || !position) return null
+  if (!visible) return null
+  if (variant === 'popover' && !position) return null
 
-  const panelStyle: React.CSSProperties = {
-    left: position.x,
-    top: position.y - 160,
-  }
+  const panelStyle: React.CSSProperties | undefined =
+    variant === 'popover' && position
+      ? {
+          left: position.x,
+          top: position.y - 160,
+        }
+      : undefined
 
   return (
-    <div className={styles.panel} style={panelStyle}>
+    <div
+      className={[styles.panel, variant === 'drawer' ? styles.panelDrawer : ''].filter(Boolean).join(' ')}
+      style={panelStyle}
+    >
       {/* 头部 */}
-      <div className={styles.header}>
-        <span className={styles.title}>素材库</span>
-        <button className={styles.closeBtn} onClick={onClose}>
+      <div className={`${styles.header} ${variant === 'drawer' ? styles.headerDrawer : ''}`}>
+        {variant === 'drawer' ? (
+          <>
+            {/* 左侧：返回icon + 标题 */}
+            <div className={styles.headerLeft}>
+              <button className={styles.backBtn} onClick={onClose} aria-label="返回画布">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M10 3 5 8l5 5" />
+                </svg>
+              </button>
+              <span className={styles.title}>素材库</span>
+            </div>
+          </>
+        ) : (
+          <span className={styles.title}>素材库</span>
+        )}
+        <button className={styles.closeBtn} onClick={onClose} aria-label="关闭素材库">
           <svg
             width="16"
             height="16"
@@ -304,17 +336,6 @@ export default function CanvasMaterialPicker({
               {/* 悬浮操作栏（参考 resource-favorite-actions）：hover 时浮现「应用」 */}
               <div className={styles.materialActions}>
                 <button className={styles.materialActionBtn} onClick={() => handleApply(item)}>
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="12"
-                    height="12"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    aria-hidden="true"
-                  >
-                    <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
-                  </svg>
                   应用
                 </button>
               </div>

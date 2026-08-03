@@ -12,6 +12,36 @@
   backdrop-filter: blur(12px);
   border-radius: 14px;
   box-shadow: 0px 2px 12px rgba(0, 0, 0, 0.08);
+  animation: toolbar-enter 0.2s ease-out;
+  will-change: opacity, transform;
+}
+
+/* 抽屉打开前：工具栏向左收起并淡出 */
+.toolbarLeaving {
+  animation: toolbar-leave 0.22s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes toolbar-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes toolbar-leave {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-28px) scale(0.96);
+  }
 }
 
 .toolBtn {
@@ -25,12 +55,14 @@
   color: #777;
   cursor: pointer;
   border-radius: 10px;
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
 
-  &:hover {
-    background: rgba(87, 103, 229, 0.08);
-    color: #5767e5;
-  }
+.toolBtn:hover {
+  background: rgba(87, 103, 229, 0.08);
+  color: #5767e5;
 }
 
 .toolBtnActive {
@@ -69,10 +101,10 @@
   white-space: nowrap;
   transition: background 0.15s;
   text-align: left;
+}
 
-  &:hover {
-    background: rgba(87, 103, 229, 0.06);
-  }
+.addMenuItem:hover {
+  background: rgba(87, 103, 229, 0.06);
 }
 
 .addMenuText {
