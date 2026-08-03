@@ -60,6 +60,7 @@ import { observeElementResize } from '@/utils/observeElementResize'
 /** 侧边栏导航键与页面路径映射。 */
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
+  canvas: '/canvas',
   creative: '/smart',
   'hot-copy': '/hot-copy',
   projects: '/projects',

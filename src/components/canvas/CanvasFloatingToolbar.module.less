@@ -1,0 +1,100 @@
+.toolbar {
+  position: absolute;
+  top: 160px;
+  left: 40px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 10px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  border-radius: 14px;
+  box-shadow: 0px 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+.toolBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  background: transparent;
+  color: #777;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background 0.2s, color 0.2s;
+
+  &:hover {
+    background: rgba(87, 103, 229, 0.08);
+    color: #5767e5;
+  }
+}
+
+.toolBtnActive {
+  background: rgba(87, 103, 229, 0.12);
+  color: #5767e5;
+}
+
+.addBtnWrap {
+  position: relative;
+}
+
+.addMenu {
+  position: absolute;
+  left: 52px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  z-index: 20;
+}
+
+.addMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+  text-align: left;
+
+  &:hover {
+    background: rgba(87, 103, 229, 0.06);
+  }
+}
+
+.addMenuText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.addMenuLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.addMenuDesc {
+  font-size: 11px;
+  color: #999;
+}
+
+.addMenuIcon {
+  display: flex;
+  align-items: center;
+  color: #777;
+  flex-shrink: 0;
+}

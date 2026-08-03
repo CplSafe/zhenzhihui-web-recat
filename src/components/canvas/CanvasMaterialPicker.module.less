@@ -1,0 +1,269 @@
+.panel {
+  position: fixed;
+  z-index: 100;
+  width: 480px;
+  max-height: 440px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 8px;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+}
+
+.closeBtn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+
+  &:hover {
+    background: #f0f0f0;
+    color: #333;
+  }
+}
+
+.tabs {
+  display: flex;
+  padding: 0 16px 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.tab {
+  padding: 6px 16px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: #999;
+  cursor: pointer;
+  font-family: 'PingFang SC', sans-serif;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+
+  &:hover {
+    color: #5767e5;
+  }
+}
+
+.tabActive {
+  color: #5767e5;
+  border-bottom-color: #5767e5;
+  font-weight: 500;
+}
+
+.grid {
+  flex: 1;
+  min-height: 200px;
+  overflow-y: auto;
+  padding: 10px 16px 16px;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #ddd;
+    border-radius: 2px;
+  }
+}
+
+.gridInner {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+/* 素材卡片 — 参考 ResourceManagementView .resource-asset-card（去除底部 info 区） */
+.materialCard {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid rgba(51, 51, 51, 0.08);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
+  cursor: pointer;
+  transition: opacity 0.15s;
+
+  &:hover {
+    opacity: 0.85;
+  }
+}
+
+/* 类型标签 — 参考 resource-asset-type（左上角） */
+.materialType {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 2;
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  border-radius: 6px;
+  padding: 0 8px;
+  background: rgba(51, 51, 51, 0.38);
+  color: #ffffff;
+  font-size: 10px;
+  line-height: 14px;
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+}
+
+/* 封面区域 — 参考 resource-asset-cover */
+.materialCover {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #e5e7eb;
+}
+
+/* 封面媒体容器：占满卡片（img/video 尺寸对齐 resource-asset-cover img/video） */
+.itemMedia {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+
+  img,
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+/* 未进视口的轻量占位 */
+.itemPlaceholder {
+  width: 100%;
+  height: 100%;
+  background: #f5f5f5;
+}
+
+/* 悬浮操作栏 — 参考 resource-favorite-actions（卡片底部渐变浮现） */
+.materialActions {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 10px 10px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+  pointer-events: none;
+}
+
+.materialCard:hover .materialActions,
+.materialCard:focus-within .materialActions {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.materialActionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 14px;
+  padding: 4px 12px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #ffffff;
+  font-size: 12px;
+  font-family: 'PingFang SC', sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    border-color: #ffffff;
+    background: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+  }
+}
+
+/* 数据未返回时的非媒体占位（参考 resource-asset-cover-placeholder） */
+.itemMediaPlaceholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  background: linear-gradient(135deg, rgba(87, 103, 229, 0.12), rgba(109, 109, 227, 0.04)), #f3f4f6;
+  color: #8b8b95;
+  text-align: center;
+
+  span {
+    font-size: 11px;
+    line-height: 15px;
+  }
+
+  b {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 18px;
+  }
+}
+
+
+.empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  color: #ccc;
+  font-size: 14px;
+}
+
+.loading {
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  color: #999;
+  font-size: 12px;
+}
+
+/* 底部加载哨兵：占位触发 IntersectionObserver 加载下一页 */
+.loadMoreSentinel {
+  height: 40px;
+  width: 100%;
+}

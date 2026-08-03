@@ -10,6 +10,7 @@ import { openComingSoon } from '@/stores/ui'
 // 侧边栏导航键 → 路由(creative 即智能成片 /smart)
 const ROUTE_MAP: Record<string, string> = {
   home: '/home',
+  canvas: '/canvas',
   creative: '/smart',
   'hot-copy': '/hot-copy',
   projects: '/projects',

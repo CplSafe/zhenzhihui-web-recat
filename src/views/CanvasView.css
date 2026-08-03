@@ -1,0 +1,473 @@
+.canvas-view {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background: #f8f9fa;
+}
+
+/* 固定底部面板 */
+.canvas-panel-area {
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+}
+
+/* 参考选择横幅 — 居中置顶 */
+.canvas-pick-banner {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: #5767e5;
+  color: #fff;
+  border-radius: 20px;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 14px;
+  box-shadow: 0 2px 12px rgba(87, 103, 229, 0.3);
+}
+
+.canvas-pick-banner__text {
+  white-space: nowrap;
+}
+
+.canvas-pick-banner__exit {
+  padding: 4px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: transparent;
+  color: #fff;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'PingFang SC', sans-serif;
+  transition: background 0.15s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+}
+
+/* 参考选择模式：不可选节点灰化（selectable:false 阻止选中，视觉 dim 但保留点击事件） */
+.react-flow__node.is-ref-disabled {
+  opacity: 0.35 !important;
+  filter: grayscale(0.6);
+}
+.canvas-brand {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.canvas-brand-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.canvas-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.canvas-brand-name {
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  color: #333;
+  line-height: 1;
+}
+
+.canvas-brand-saved {
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  color: #333;
+}
+
+/* DraftSaveIndicator 在画布品牌区的字体 */
+.canvas-brand .creative-draft-save {
+  font-size: 12px;
+}
+
+/* 连线删除按钮 */
+.canvas-edge-delete {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #d94c4c;
+  padding: 0;
+  transition: transform 0.15s;
+
+  &:hover {
+    transform: scale(1.2);
+  }
+}
+
+/* 左下角复位按钮 */
+.canvas-reset-btn {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 15;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+
+  &:hover {
+    border-color: #5767e5;
+    color: #5767e5;
+  }
+}
+
+/* 覆盖 React Flow 默认节点样式 */
+.react-flow__node-default {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* 参考选择模式：可选节点 hover 跑马灯（className 在 React Flow 节点 wrapper 上） */
+.react-flow__node.is-ref-pickable {
+  cursor: pointer !important;
+  border-radius: 14px;
+  outline: 2px solid transparent;
+  outline-offset: 4px;
+  transition: outline-color 0.15s;
+}
+
+.react-flow__node.is-ref-pickable:hover {
+  outline-color: transparent;
+  animation: marquee-border 1.5s linear infinite;
+}
+
+@keyframes marquee-border {
+  0% {
+    outline-color: #5767e5;
+    outline-offset: 4px;
+  }
+  25% {
+    outline-color: #a78bfa;
+    outline-offset: 6px;
+  }
+  50% {
+    outline-color: #ec4899;
+    outline-offset: 8px;
+  }
+  75% {
+    outline-color: #a78bfa;
+    outline-offset: 6px;
+  }
+  100% {
+    outline-color: #5767e5;
+    outline-offset: 4px;
+  }
+}
+
+/* 自定义画布节点 */
+.canvas-default-node {
+  position: relative;
+  overflow: visible;
+  border-radius: 14px;
+  background: #fff;
+  border: none;
+  box-shadow:
+    0px 2px 5px rgba(0, 0, 0, 0.1),
+    0px 9px 9px rgba(0, 0, 0, 0.09),
+    0px 21px 12px rgba(0, 0, 0, 0.05);
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 14px;
+  color: #333;
+  box-sizing: border-box;
+}
+
+/* React Flow 内置选中态 */
+.react-flow__node.selected {
+  outline: rgb(122, 122, 122) solid 2px !important;
+  border-radius: 14px;
+}
+
+/* React Flow hover 阴影清除 */
+.react-flow__node-input.selectable:hover,
+.react-flow__node-default.selectable:hover,
+.react-flow__node-output.selectable:hover,
+.react-flow__node-group.selectable:hover {
+  box-shadow: none;
+}
+
+/* hover 保持默认阴影 */
+.canvas-default-node:hover {
+  box-shadow:
+    0px 2px 5px rgba(0, 0, 0, 0.1),
+    0px 9px 9px rgba(0, 0, 0, 0.09),
+    0px 21px 12px rgba(0, 0, 0, 0.05);
+}
+
+.canvas-default-node__label {
+  user-select: none;
+}
+
+/* 类型头部：浮在节点上方 */
+.canvas-node-header {
+  position: absolute;
+  z-index: 1;
+  left: 4px;
+  top: 0;
+  transform: translateY(-100%);
+  padding-bottom: 8px;
+  width: 100%;
+  color: rgba(51, 51, 51, 0.6);
+  font-size: 12px;
+  line-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.canvas-node-header__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  width: 12px;
+  height: 12px;
+}
+
+.canvas-node-header__label {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 主体占位 */
+.canvas-node-body {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ccc;
+  overflow: hidden;
+  min-height: 0;
+  padding: 8px;
+  box-sizing: border-box;
+  border-radius: 14px;
+}
+
+/* 文本节点提示文字 */
+.canvas-node-prompt {
+  width: 100%;
+  height: 100%;
+  padding: 2px;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-start;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.canvas-node-prompt.is-placeholder {
+  color: #999;
+}
+
+/* 素材节点内容（来自素材库的图片/视频） */
+.canvas-node-media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+/* 文本节点内嵌编辑器 */
+.canvas-node-editor {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
+  background: #fff;
+  border-radius: 0 0 14px 14px;
+  scrollbar-width: none;
+}
+
+.canvas-node-editor::-webkit-scrollbar {
+  display: none;
+}
+
+/* Handle 零尺寸锚点 */
+.canvas-default-node .react-flow__handle {
+  width: 0 !important;
+  height: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  top: 50% !important;
+}
+
+/* Handle 移动层：80×80，中心在节点外 45px */
+.canvas-handle-mover {
+  position: absolute;
+  margin-top: -40px;
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  will-change: transform;
+}
+
+.canvas-handle-mover--left {
+  left: 0;
+  top: 50%;
+  margin-left: -85px;
+}
+
+.canvas-handle-mover--right {
+  right: 0;
+  top: 50%;
+  margin-right: -85px;
+}
+
+/* Handle 图标层：圆形边框，hover/显示时滑入 */
+.canvas-handle-icon {
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  border: 2px solid #999;
+  opacity: 0;
+  transition:
+    opacity 0.2s,
+    transform 0.25s ease-out,
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.canvas-handle-icon--left {
+  transform: translateX(20px);
+}
+
+.canvas-handle-icon--left[data-visible='true'] {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.canvas-handle-icon--right {
+  transform: translateX(-20px);
+}
+
+.canvas-handle-icon--right[data-visible='true'] {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.canvas-handle-icon:hover {
+  color: #e0e0e0;
+  border-color: #e0e0e0;
+}
+
+/* MiniMap */
+.canvas-view .react-flow__minimap {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* 空连线弹出菜单 */
+.canvas-add-menu {
+  position: fixed;
+  z-index: 100;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  transform: translate(-50%, 12px);
+}
+
+.canvas-add-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.canvas-add-menu__item:hover {
+  background: rgba(87, 103, 229, 0.08);
+}
+
+.canvas-add-menu__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.canvas-add-menu__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.canvas-add-menu__desc {
+  font-size: 11px;
+  color: #999;
+}
+
+.canvas-add-menu__icon {
+  display: flex;
+  align-items: center;
+  width: 12px;
+  height: 12px;
+  color: #999;
+  flex-shrink: 0;
+}

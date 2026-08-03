@@ -1,0 +1,305 @@
+.panel {
+  width: 800px;
+  max-width: 90vw;
+  background: #F9F9FA;
+  border: 1px solid #E3F7F2;
+  border-radius: 14px;
+  box-shadow: 0px 0px 30px 0px rgba(0, 0, 0, 0.1);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.refImages {
+  display: flex;
+  gap: 6px;
+}
+
+.refThumb {
+  width: 50px;
+  height: 50px;
+  background: #e8e8ea;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  position: relative;
+  /* 注意：不能在这里 overflow:hidden，否则右上角删除按钮(-6px 超出)会被裁剪 */
+}
+
+/* 来源节点有实际素材时的真实图片缩略图（图片自身裁圆角，不影响删除按钮） */
+.refThumbImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.refThumbEmpty {
+  background: transparent;
+}
+
+.refDelete {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: #d94c4c;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s;
+
+  &:hover {
+    background: #c03939;
+  }
+}
+
+.refAddBtn {
+  width: 50px;
+  height: 50px;
+  background: transparent;
+  border: 1.5px dashed #d0d0d0;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #aaa;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+
+  &:hover {
+    border-color: #5767e5;
+    color: #5767e5;
+  }
+}
+
+.refSwapIcon {
+  display: flex;
+  align-items: center;
+  color: #ccc;
+  padding: 0 2px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: rgba(87, 103, 229, 0.08);
+  color: #5767e5;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 80px;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 20px;
+  line-height: 30px;
+  color: #333;
+  background: transparent;
+  font-family: 'PingFang SC', sans-serif;
+
+  &::placeholder {
+    color: #909090;
+  }
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.selectors {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.selectorWrap {
+  position: relative;
+}
+
+.selector {
+  padding: 6px 12px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #555;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: 'PingFang SC', sans-serif;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &:hover {
+    border-color: #5767e5;
+    color: #5767e5;
+  }
+}
+
+.selectorDisabled {
+  color: #bbb;
+  cursor: not-allowed;
+
+  &:hover {
+    border-color: #e0e0e0;
+    color: #bbb;
+  }
+}
+
+.ratioLabel {
+  font-family: monospace;
+}
+
+.popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  min-width: 140px;
+  z-index: 60;
+}
+
+.popoverItem {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+  font-family: 'PingFang SC', sans-serif;
+
+  &:hover {
+    background: rgba(87, 103, 229, 0.06);
+  }
+}
+
+.popoverItemActive {
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
+  font-weight: 500;
+}
+
+/* ── 视频集合菜单 ── */
+.videoMenu {
+  min-width: 260px;
+  padding: 8px;
+}
+
+.videoMenuGroup {
+  padding: 8px 0;
+
+  & + & {
+    border-top: 1px solid #eee;
+  }
+}
+
+.videoMenuTitle {
+  font-size: 11px;
+  color: #999;
+  padding: 0 4px 8px;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+/* 按钮组：铺满宽度，连接式分段控件 */
+.videoBtnGroup {
+  display: flex;
+  width: 100%;
+}
+
+.videoBtnGroupItem {
+  flex: 1;
+  padding: 7px 0;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  font-size: 13px;
+  color: #666;
+  cursor: pointer;
+  font-family: 'PingFang SC', sans-serif;
+  text-align: center;
+  white-space: nowrap;
+  transition: all 0.15s;
+
+  /* 相邻按钮共享边框，形成连接式按钮组 */
+  & + & {
+    margin-left: -1px;
+  }
+
+  &:first-child {
+    border-radius: 8px 0 0 8px;
+  }
+
+  &:last-child {
+    border-radius: 0 8px 8px 0;
+  }
+
+  &:only-child {
+    border-radius: 8px;
+  }
+
+  &:hover {
+    border-color: #5767e5;
+    color: #5767e5;
+    z-index: 1;
+  }
+}
+
+.videoBtnGroupItemActive {
+  background: rgba(87, 103, 229, 0.1);
+  border-color: #5767e5;
+  color: #5767e5;
+  z-index: 2;
+}
+
+.generateBtn {
+  padding: 8px 24px;
+  background: #5767e5;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: 'PingFang SC', sans-serif;
+  white-space: nowrap;
+
+  &:hover {
+    background: #4a5ad4;
+  }
+}
