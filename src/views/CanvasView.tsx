@@ -33,14 +33,32 @@ import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
 import CanvasNodePanel, {
   type CanvasNodeInfo,
   type CanvasSourceRef,
+  AUTO_RATIO,
   calcNodeSize,
+  isAutoRatio,
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
 import { saveCanvasDraft, loadCanvasDraft } from '@/utils/canvasDraft'
-import { useWorkspaceId } from '@/stores/workspaceSession'
+import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
+import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
+import {
+  createCanvas,
+  fetchCanvasElements,
+  saveCanvasElementsBatched,
+  type CanvasElementMutation,
+} from '@/api/canvasApi'
+import {
+  buildFullUpsertMutations,
+  comparableEdge,
+  comparableNode,
+  diffCanvasMutations,
+  elementsToGraph,
+  type ComparableNode,
+  type ComparableEdge,
+} from '@/utils/canvasElements'
 import './CanvasView.css'
 
 /** 类型小图标（头部用，12×12） */
@@ -140,6 +158,16 @@ function createNodeId(type: string): string {
   const rand = Math.random().toString(36).slice(2, 7)
   return `${type}-${Date.now()}-${nodeIdSequence}-${rand}`
 }
+
+/** 连线拖至画布空白处弹出的「添加节点」菜单项（按来源限制过滤可用性） */
+const ADD_MENU_ITEMS: ReadonlyArray<{ type: string; label: string; desc: string }> = [
+  { type: 'text', label: '文本节点', desc: '脚本、广告词、品牌文案' },
+  { type: 'image', label: '图片节点', desc: '宣传图、海报、封面' },
+  { type: 'video', label: '视频节点', desc: '宣传视频、动画、电影' },
+]
+
+/** 节点类型中文名（菜单禁用提示用） */
+const KIND_LABELS: Record<string, string> = { text: '文本', image: '图片', video: '视频' }
 
 /** 历史快照保留的最大步数，防止无界增长 */
 const HISTORY_LIMIT = 50
@@ -257,7 +285,28 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const [rightHovered, setRightHovered] = useState(false)
   const [editing, setEditing] = useState(false)
   const [textContent, setTextContent] = useState(() => ((window as any).__canvasTextContents?.get(id) as string) || '')
+  // 视频播放态：默认暂停，点击播放按钮后播放，播放中显示暂停按钮
+  const [playing, setPlaying] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const placeholder = '双击开始编辑...'
+  // 视频地址变化（应用新素材）时重置播放态，避免旧视频继续播放
+  const videoUrl = (data as any)?.resultUrl
+  useEffect(() => {
+    setPlaying(false)
+  }, [videoUrl])
+
+  /** 播放/暂停切换：由用户点击按钮触发，非自动播放 */
+  const toggleVideoPlay = () => {
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) {
+      v.play().catch(() => setPlaying(false))
+      setPlaying(true)
+    } else {
+      v.pause()
+      setPlaying(false)
+    }
+  }
 
   const handleDoubleClick = () => {
     if (kind !== 'text') return
@@ -338,19 +387,37 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               {textContent.trim() || placeholder}
             </div>
           )
-        ) : (data as any)?.resultUrl ? (
-          kind === 'video' ? (
+        ) : kind === 'video' && (data as any)?.resultUrl ? (
+          <div className="canvas-node-video-wrap">
+            {/* 非自动播放：默认暂停，仅显示封面帧；点击播放按钮后才播放 */}
             <video
+              ref={videoRef}
               className="canvas-node-media"
               src={(data as any).resultUrl}
               poster={(data as any).poster}
-              muted
               playsInline
               preload="metadata"
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+              onEnded={() => setPlaying(false)}
             />
-          ) : (
-            <img className="canvas-node-media" src={(data as any).resultUrl} alt={kind} loading="lazy" />
-          )
+            {!playing ? (
+              <button className="canvas-node-play-btn" onClick={toggleVideoPlay} aria-label="播放视频">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+                  <path d="M8 5.14v13.72a1 1 0 0 0 1.52.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" />
+                </svg>
+              </button>
+            ) : (
+              <button className="canvas-node-pause-btn" onClick={toggleVideoPlay} aria-label="暂停视频">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+                  <rect x="6" y="5" width="4" height="14" rx="1.2" />
+                  <rect x="14" y="5" width="4" height="14" rx="1.2" />
+                </svg>
+              </button>
+            )}
+          </div>
+        ) : kind === 'image' && (data as any)?.resultUrl ? (
+          <img className="canvas-node-media" src={(data as any).resultUrl} alt={kind} loading="lazy" />
         ) : (
           getTypePlaceholder(kind)
         )}
@@ -416,6 +483,9 @@ function CanvasInner() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const { fitView } = useReactFlow()
   const workspaceId = useWorkspaceId()
+  // 当前用户：收藏 tab 按用户隔离读取
+  const currentUser = useCurrentUser()
+  const currentUserId = resolveUserId(currentUser)
   // 模型目录：来自 /api/v1/ai/models
   const { groups, loading: modelsLoading } = useGenerationModelCatalog(workspaceId)
   // 按节点类型提取模型列表
@@ -432,17 +502,13 @@ function CanvasInner() {
     }
   }, [groups])
   const [addMenu, setAddMenu] = useState<{ x: number; y: number; sourceId: string } | null>(null)
-  const [selectMode, setSelectMode] = useState(false)
-  const [panMode, setPanMode] = useState(false)
-  // 选中/拖拽模式互斥：开启其一自动关闭另一个，避免「拖拽模式下节点不可选中」且无感知
-  const handleSelectModeChange = useCallback((v: boolean) => {
-    setSelectMode(v)
-    if (v) setPanMode(false)
-  }, [])
-  const handlePanModeChange = useCallback((v: boolean) => {
-    setPanMode(v)
-    if (v) setSelectMode(false)
-  }, [])
+  // 工具栏模式开关（独立、初始均开启，按钮默认高亮）：
+  // - moveEnabled：画布平移开关（panOnDrag），关闭后画布不能移动
+  // - dragEnabled：节点拖拽开关（nodesDraggable），关闭后节点不能拖拽
+  const [moveEnabled, setMoveEnabled] = useState(true)
+  const [dragEnabled, setDragEnabled] = useState(true)
+  const handleMoveToggle = useCallback(() => setMoveEnabled((v) => !v), [])
+  const handleDragToggle = useCallback(() => setDragEnabled((v) => !v), [])
   const [selectedNode, setSelectedNode] = useState<CanvasNodeInfo | null>(null)
   const [saveStatus, setSaveStatus] = useState<DraftSaveStatus>('saved')
   const [isPickingRef, setIsPickingRef] = useState(false)
@@ -466,6 +532,10 @@ function CanvasInner() {
   const latestRef = useRef<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] })
   latestRef.current = { nodes, edges }
   const transform = useStore((s) => s.transform)
+  // 拖线中（从 handle 拖出连线）的起始源节点 id；结束/取消时为 null。用于对连线目标做来源限制的视觉提示
+  const connectSourceId = useStore((s) =>
+    s.connection.inProgress && s.connection.fromHandle?.type === 'source' ? s.connection.fromNode.id : null,
+  )
 
   ;(window as any).__canvasNodes = nodes
   ;(window as any).__canvasEdges = edges
@@ -662,8 +732,10 @@ function CanvasInner() {
   // 右键菜单：点击外部 / Esc 关闭
   useEffect(() => {
     if (!contextMenu) return
+    // 捕获阶段监听：window 捕获最先触发，即使 ReactFlow 内部对 mousedown 调用了
+    // stopPropagation（冒泡阶段事件到不了 window），点击外部仍能可靠关闭菜单
     const close = (e: MouseEvent) => {
-      if ((e.target as HTMLElement).closest('.canvas-context-menu')) return
+      if ((e.target as HTMLElement)?.closest?.('.canvas-context-menu')) return
       setContextMenu(null)
     }
     const onKey = (e: KeyboardEvent) => {
@@ -671,13 +743,13 @@ function CanvasInner() {
     }
     // 延迟挂载，避免触发本次右键的 mousedown 立即关闭菜单
     const timer = window.setTimeout(() => {
-      window.addEventListener('mousedown', close)
-      window.addEventListener('keydown', onKey)
+      window.addEventListener('mousedown', close, true)
+      window.addEventListener('keydown', onKey, true)
     }, 0)
     return () => {
       window.clearTimeout(timer)
-      window.removeEventListener('mousedown', close)
-      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('mousedown', close, true)
+      window.removeEventListener('keydown', onKey, true)
     }
   }, [contextMenu])
 
@@ -724,16 +796,6 @@ function CanvasInner() {
     },
     [selectedNode, setEdges, commitHistory],
   )
-
-  // ESC 退出参考选择模式
-  useEffect(() => {
-    if (!isPickingRef) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') stopPickRef()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [isPickingRef, stopPickRef])
 
   const handlePickRefNode = useCallback(
     (sourceNode: Node) => {
@@ -929,14 +991,19 @@ function CanvasInner() {
         newNode,
       ])
       // 同步选中态回显：新节点默认选中，立即显示节点编辑面板
-      setSelectedNode({
-        id,
-        kind: type,
-        sourceRefs: [],
-        ratio,
-        videoMode: type === 'video' ? 'first-last' : undefined,
-        modelVersionId: undefined,
-      })
+      // 例外：画布为空时创建的是首个节点（画布源头），不弹面板
+      if (latestRef.current.nodes.length === 0) {
+        setSelectedNode(null)
+      } else {
+        setSelectedNode({
+          id,
+          kind: type,
+          sourceRefs: [],
+          ratio,
+          videoMode: type === 'video' ? 'first-last' : undefined,
+          modelVersionId: undefined,
+        })
+      }
       setSaveStatus('dirty')
       // 动画结束后移除渐入类，避免节点被持久化后再恢复时重复播放动画
       window.setTimeout(() => {
@@ -946,6 +1013,8 @@ function CanvasInner() {
           ),
         )
       }, NODE_ENTER_MS)
+      // 返回新节点 id，供调用方（如连线创建）建立后续关系
+      return id
     },
     [setNodes, commitHistory],
   )
@@ -959,14 +1028,29 @@ function CanvasInner() {
       const flowY = (addMenu.y - ty) / tz
       const nodeW = type === 'video' ? 444 : 250
       const nodeH = type === 'video' ? 250 : 250
-      appendNewNode(
+      const newNodeId = appendNewNode(
         type,
         { x: flowX - nodeW / 2, y: flowY - nodeH / 2 },
-        { ratio: type === 'video' ? '自适应' : type === 'image' ? '1:1' : undefined },
+        { ratio: type === 'video' ? AUTO_RATIO : type === 'image' ? '1:1' : undefined },
       )
+      // 自动连线：拖线源节点 → 新节点（来源限制已在菜单项过滤时校验，新节点参考数不会超限）
+      const sourceNode = latestRef.current.nodes.find((n) => n.id === addMenu.sourceId)
+      if (newNodeId && sourceNode) {
+        setEdges((eds) => [
+          ...eds,
+          {
+            id: `e-${addMenu.sourceId}-${newNodeId}-0`,
+            source: addMenu.sourceId,
+            sourceHandle: null,
+            target: newNodeId,
+            targetHandle: null,
+            data: { slotIndex: 0 },
+          },
+        ])
+      }
       setAddMenu(null)
     },
-    [addMenu, transform, appendNewNode],
+    [addMenu, transform, appendNewNode, setEdges],
   )
 
   // edges 变化时同步 selectedNode.sourceRefs（用去重派生，兜底清理历史重复边）
@@ -983,25 +1067,100 @@ function CanvasInner() {
     }
   }, [selectedNode?.id, deriveSourceRefs])
 
-  // 初始化：从 localStorage 恢复草稿（draftLoadedRef 保证只执行一次，切换项目后需重挂载组件）
+  // ===== 云端画布：创建/加载 + 增量保存（对齐 /api/v1/canvases 契约）=====
+  // 画布 ID：路由带数字 id 时复用已有画布；否则进入后自动创建新画布
+  const canvasIdRef = useRef<number | null>(null)
+  // 服务端同步 revision：保存时作为 base_revision 做乐观锁
+  const syncRevisionRef = useRef(0)
+  // 首次云加载完成标记：加载后第一次 nodes/edges 变化不应触发保存
+  const cloudLoadedRef = useRef(false)
+  // 云端加载失败时回退 localStorage 的标记（仅提示，不阻断画布使用）
+  const cloudErrorRef = useRef('')
+
+  /**
+   * 增量保存到云端（对齐 5.6「只提交变化元素」）：
+   * 对比 syncedRef 快照与当前状态 → upsert 新增/变更 + delete 消失。
+   * 409 冲突：拉远端增量 → 应用到本地 → 重放本地未提交变更 → 用最新 revision 重试。
+   */
+  const syncRef = useRef<{ nodes: ComparableNode[]; edges: ComparableEdge[] }>({ nodes: [], edges: [] })
+  const pushCanvasMutations = useCallback(
+    (nodes: Node[], edges: Edge[]) => {
+      const canvasId = canvasIdRef.current
+      if (!canvasId || !cloudLoadedRef.current) return
+      const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+      const mutations = diffCanvasMutations(syncRef.current, { nodes, edges }, textMap)
+      if (mutations.length === 0) return
+      saveCanvasElementsBatched({
+        workspaceId,
+        canvasId,
+        baseRevision: syncRevisionRef.current,
+        mutations,
+      })
+        .then(({ sync_revision }) => {
+          syncRevisionRef.current = sync_revision
+          // 保存成功后同步快照：用当前状态 + 文本 Map 重建（diff 依赖含文本的快照精确比较）
+          syncRef.current = {
+            nodes: nodes.map((n) => comparableNode(n, textMap)),
+            edges: edges.map((e) => comparableEdge(e)),
+          }
+          setSaveStatus('saved')
+        })
+        .catch(async () => {
+          // 乐观锁冲突或网络失败：按 5.6 规范处理 —— 拉取远端增量并合并后重放本地变更
+          try {
+            const page = await fetchCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
+            syncRevisionRef.current = page.sync_revision
+            const textMap2 = (window as any).__canvasTextContents as Map<string, string> | undefined
+            const retryMutations = buildFullUpsertMutations(nodes, edges, textMap2)
+            if (retryMutations.length === 0) return
+            const result = await saveCanvasElementsBatched({
+              workspaceId,
+              canvasId,
+              baseRevision: syncRevisionRef.current,
+              mutations: retryMutations,
+            })
+            syncRevisionRef.current = result.sync_revision
+            syncRef.current = {
+              nodes: nodes.map((n) => comparableNode(n, textMap2)),
+              edges: edges.map((e) => comparableEdge(e)),
+            }
+            setSaveStatus('saved')
+          } catch {
+            // 仍失败：保留 dirty 状态，下次变化再试；本地草稿兜底
+            setSaveStatus('dirty')
+          }
+        })
+    },
+    [workspaceId],
+  )
+  // 初始化：云端优先（复用画布或新建），失败回退 localStorage 草稿
   const draftLoadedRef = useRef(false)
   useEffect(() => {
     if (draftLoadedRef.current) return
     draftLoadedRef.current = true
-    const draft = loadCanvasDraft(routeProjectId)
-    if (draft && draft.nodes.length > 0) {
-      // 恢复时移除渐入标记类，避免已持久化的新节点重播渐入动画
-      const restoredNodes = (draft.nodes as Node[]).map((n) =>
-        String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n,
-      )
-      setNodes(restoredNodes)
-      setEdges(draft.edges as Edge[])
-      // 恢复文本内容
-      if (draft.textContents) {
-        if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
-        const map = (window as any).__canvasTextContents as Map<string, string>
-        Object.entries(draft.textContents).forEach(([k, v]) => map.set(k, v))
+    const projectIdNum = Number(routeProjectId)
+    const hasProjectId = Number.isSafeInteger(projectIdNum) && projectIdNum > 0
+
+    const applyLocalDraft = () => {
+      const draft = loadCanvasDraft(routeProjectId)
+      if (draft && draft.nodes.length > 0) {
+        // 恢复时移除渐入标记类，避免已持久化的新节点重播渐入动画
+        const restoredNodes = (draft.nodes as Node[]).map((n) =>
+          String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n,
+        )
+        setNodes(restoredNodes)
+        setEdges(draft.edges as Edge[])
+        // 恢复文本内容
+        if (draft.textContents) {
+          if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+          const map = (window as any).__canvasTextContents as Map<string, string>
+          Object.entries(draft.textContents).forEach(([k, v]) => map.set(k, v))
+        }
       }
+      fitCanvasView()
+    }
+
+    const fitCanvasView = () => {
       // 节点渲染完成后适配视图，让恢复的画布落在可视区域内
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -1009,27 +1168,94 @@ function CanvasInner() {
         })
       })
     }
-  }, [setNodes, setEdges, fitView, routeProjectId])
 
-  // 自动保存：nodes/edges 变化后防抖 1 秒落盘（按项目 id 隔离草稿）
+    ;(async () => {
+      try {
+        // 1) 解析或创建画布 ID
+        let canvasId = hasProjectId ? projectIdNum : null
+        if (!canvasId) {
+          const created = await createCanvas({ workspaceId, title: '创意画布' })
+          canvasId = Number(created?.id) || 0
+          if (!canvasId) throw new Error('创建画布失败')
+        }
+        canvasIdRef.current = canvasId
+        // 2) 全量加载元素（after_revision=0，循环取完所有分页）
+        const allElements: CanvasElementMutation[] = []
+        let cursor = ''
+        let page: Awaited<ReturnType<typeof fetchCanvasElements>>
+        do {
+          page = await fetchCanvasElements({
+            workspaceId,
+            canvasId,
+            afterRevision: 0,
+            cursor,
+          })
+          syncRevisionRef.current = page.sync_revision || syncRevisionRef.current
+          allElements.push(...(page.elements || []))
+          cursor = page.next_cursor || ''
+        } while (page.has_more && cursor)
+        const { nodes: cloudNodes, edges: cloudEdges } = elementsToGraph(allElements)
+        if (cloudNodes.length > 0 || cloudEdges.length > 0) {
+          setNodes(cloudNodes)
+          setEdges(cloudEdges)
+          // 还原文本内容：云端节点 data 中的 text 字段写回全局 Map（渲染期由节点组件读取）
+          if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+          const map = (window as any).__canvasTextContents as Map<string, string>
+          cloudNodes.forEach((n) => {
+            const text = (n.data as any)?.text
+            if (typeof text === 'string' && text.trim()) map.set(n.id, text)
+          })
+          // 建立已同步快照：云加载的内容视为已同步，避免首次渲染被 diff 误判为「删除」
+          syncRef.current = {
+            nodes: cloudNodes.map((n) => comparableNode(n, map)),
+            edges: cloudEdges.map((e) => comparableEdge(e)),
+          }
+          cloudLoadedRef.current = true
+          fitCanvasView()
+        } else {
+          // 云端空画布（无论有无项目 id）：恢复本地草稿兜底，保证云端无数据/接口异常时画布仍可用
+          applyLocalDraft()
+          cloudLoadedRef.current = true
+        }
+      } catch (error: any) {
+        // 云端不可用时静默回退本地草稿，保证画布可用
+        cloudErrorRef.current = String(error?.message || '云端画布加载失败')
+        applyLocalDraft()
+      }
+    })()
+  }, [setNodes, setEdges, fitView, routeProjectId, workspaceId])
+
+  // 增量保存：nodes/edges 变化后防抖 1 秒，同步到云端（本地草稿同时保留为兜底）
+  const saveTimerRef = useRef<number | null>(null)
   useEffect(() => {
-    const timer = setTimeout(() => {
-      saveCanvasDraft(nodes, edges, routeProjectId)
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
+    // 云加载完成前的首次渲染不保存
+    if (!cloudLoadedRef.current) return
+    saveTimerRef.current = window.setTimeout(() => {
+      const latest = latestRef.current
+      // 本地草稿同步落盘兜底（云端失败时仍可恢复）
+      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId)
+      pushCanvasMutations(latest.nodes, latest.edges)
     }, 1000)
-    return () => clearTimeout(timer)
-  }, [nodes, edges, routeProjectId])
+    return () => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
+    }
+  }, [nodes, edges, routeProjectId, workspaceId])
 
   // 文本编辑时标记「未保存」并触发保存（文本内容不经过 nodes/edges，需显式驱动）
   useEffect(() => {
     ;(window as any).__canvasMarkDirty = () => {
       setSaveStatus('dirty')
-      // 读取最新节点/边并立即落盘，确保文本与结构一并持久化
-      saveCanvasDraft(latestRef.current.nodes, latestRef.current.edges, routeProjectId)
+      const latest = latestRef.current
+      // 本地草稿兜底
+      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId)
+      // 云端增量保存：文本已写入节点 data，全量 upsert 同步
+      pushCanvasMutations(latest.nodes, latest.edges)
     }
     return () => {
       delete (window as any).__canvasMarkDirty
     }
-  }, [routeProjectId])
+  }, [routeProjectId, workspaceId])
 
   // 比例变更时同步更新节点宽高与数据
   const handleRatioChange = useCallback(
@@ -1069,11 +1295,11 @@ function CanvasInner() {
           const data: Record<string, unknown> = { ...(n.data as Record<string, unknown>), videoMode: mode }
           if (mode === 'first-last') {
             // 首尾帧：强制自适应 444×250
-            data.ratio = '自适应'
+            data.ratio = AUTO_RATIO
             return { ...n, data, style: { ...(n.style as Record<string, unknown>), width: 444, height: 250 } }
           }
           // 全能参考：无比例或自适应时默认 16:9
-          if (!data.ratio || data.ratio === '自适应') {
+          if (!data.ratio || isAutoRatio(data.ratio as string)) {
             data.ratio = '16:9'
             const { width, height } = calcNodeSize('16:9', baseSize)
             return { ...n, data, style: { ...(n.style as Record<string, unknown>), width, height } }
@@ -1081,10 +1307,16 @@ function CanvasInner() {
           return { ...n, data }
         }),
       )
-      // 同步选中态回显
+      // 同步选中态回显（与 setNodes 同一套归一化逻辑）：
+      // 首尾帧 → auto；全能参考下原为无比例/自适应 → 默认 16:9
       setSelectedNode((prev) => {
         if (!prev) return null
-        const ratio = mode === 'first-last' ? '自适应' : prev.ratio || '16:9'
+        let ratio = prev.ratio
+        if (mode === 'first-last') {
+          ratio = AUTO_RATIO
+        } else if (!ratio || isAutoRatio(ratio)) {
+          ratio = '16:9'
+        }
         return { ...prev, videoMode: mode, ratio }
       })
     },
@@ -1136,7 +1368,7 @@ function CanvasInner() {
         type,
         { x: flowX, y: flowY },
         {
-          ratio: type === 'video' ? '自适应' : '1:1',
+          ratio: type === 'video' ? AUTO_RATIO : '1:1',
           // 素材来源：assetId + 同源流式地址，供节点渲染/后续生成任务使用
           extraData: {
             assetId: Number(material.assetId || 0),
@@ -1170,7 +1402,7 @@ function CanvasInner() {
         type,
         { x: 300 + Math.random() * 200, y: 200 + Math.random() * 200 },
         {
-          ratio: type === 'video' ? '自适应' : type === 'image' ? '2:3' : undefined,
+          ratio: type === 'video' ? AUTO_RATIO : type === 'image' ? '2:3' : undefined,
         },
       )
     },
@@ -1189,11 +1421,36 @@ function CanvasInner() {
       appendNewNode(
         type,
         { x: flowX - nodeW / 2, y: flowY - nodeH / 2 },
-        { ratio: type === 'video' ? '自适应' : type === 'image' ? '1:1' : undefined },
+        { ratio: type === 'video' ? AUTO_RATIO : type === 'image' ? '1:1' : undefined },
       )
       setContextMenu(null)
     },
     [contextMenu, transform, appendNewNode],
+  )
+
+  // 按下节点即选中（不依赖 ReactFlow 的 click 判定）：
+  // 节点可拖拽时，鼠标按下后轻微移动（>阈值）会被判定为拖拽，onNodeClick 不触发，
+  // 导致首次点击有概率选不中；改为 mousedown 立即选中，任何点击/拖拽都稳定响应。
+  // 参考选择模式仍由 click 确认触发（避免 mousedown+click 双触发创建重复连线）。
+  const handleSelectNodeOnDown = useCallback(
+    (node: Node) => {
+      if (isPickingRef) return
+      // 首个节点（画布源头）：选中时只高亮，不弹出编辑面板
+      const firstNode = latestRef.current.nodes[0]
+      if (firstNode && firstNode.id === node.id) {
+        setSelectedNode(null)
+        return
+      }
+      setSelectedNode({
+        id: node.id,
+        kind: (node.data?.kind as string) || 'text',
+        sourceRefs: getSourceRefs(node.id),
+        ratio: (node.data as any)?.ratio,
+        videoMode: (node.data as any)?.videoMode,
+        modelVersionId: (node.data as any)?.modelVersionId,
+      })
+    },
+    [isPickingRef, getSourceRefs],
   )
 
   // 参考选择模式下，标记不可选节点
@@ -1212,7 +1469,18 @@ function CanvasInner() {
           }
           return { ...n, selectable: true, draggable: false, className: 'is-ref-pickable' }
         })
-      : nodes
+      : // 拖线中（从 handle 拖出连线）：不能作为连线目标的节点灰化，与参考选择模式视觉一致
+        connectSourceId
+        ? nodes.map((n) => {
+            // 源节点自身保持正常
+            if (n.id === connectSourceId) return n
+            // 校验：类型不匹配 / 已存在同源连线 / 目标参考数达上限 → 不可连接
+            const invalid = validateConnection(connectSourceId, n.id) !== null
+            return invalid
+              ? { ...n, className: n.className ? `${n.className} is-connect-disabled` : 'is-connect-disabled' }
+              : n
+          })
+        : nodes
 
   return (
     <div className="canvas-view">
@@ -1229,10 +1497,10 @@ function CanvasInner() {
         <CanvasFloatingToolbar
           leaving={toolbarLeaving}
           onAddNode={handleAddNode}
-          selectMode={selectMode}
-          onSelectModeChange={handleSelectModeChange}
-          panMode={panMode}
-          onPanModeChange={handlePanModeChange}
+          moveEnabled={moveEnabled}
+          onMoveToggle={handleMoveToggle}
+          dragEnabled={dragEnabled}
+          onDragToggle={handleDragToggle}
           onOpenAssets={() => openDrawerPanel('assets')}
           onOpenHistory={() => openDrawerPanel('history')}
         />
@@ -1241,7 +1509,7 @@ function CanvasInner() {
       {/* 参考选择横幅 */}
       {isPickingRef && (
         <div className="canvas-pick-banner">
-          <span className="canvas-pick-banner__text">{pickError || '从画布选择参考（点击空白处退出）'}</span>
+          <span className="canvas-pick-banner__text">{pickError || '从画布选择参考'}</span>
           <button className="canvas-pick-banner__exit" onClick={stopPickRef}>
             退出
           </button>
@@ -1256,6 +1524,11 @@ function CanvasInner() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
+        /* 连线预览/建立统一走来源限制校验：不可连的 handle 不显示预览连线 */
+        isValidConnection={(connection) => {
+          if (!connection.source || !connection.target) return false
+          return !validateConnection(connection.source, connection.target)
+        }}
         /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步） */
         onNodesDelete={handleNodesDelete}
         onEdgesDelete={handleEdgesDelete}
@@ -1264,7 +1537,12 @@ function CanvasInner() {
         /* 禁用多选：任何情况下都只允许同时选中一个节点 */
         multiSelectionKeyCode={null}
         /* 拖动开始前记录历史：撤销可还原节点位置 */
-        onNodeDragStart={() => commitHistory()}
+        onNodeDragStart={(_e, node) => {
+          commitHistory()
+          // 节点按下后轻微移动（>拖拽阈值）会被判定为拖拽而非点击，onNodeClick 不触发，
+          // 导致首次点击有概率选不中；拖拽开始同样立即选中，保证稳定响应
+          handleSelectNodeOnDown(node as unknown as Node)
+        }}
         /* 劫持右键：空白区域 / 节点 / 连线统一弹出浮动菜单 */
         onPaneContextMenu={(e) => {
           e.preventDefault()
@@ -1289,6 +1567,12 @@ function CanvasInner() {
             handlePickRefNode(node as unknown as Node)
             return
           }
+          // 首个节点（画布源头）：选中时只高亮，不弹出编辑面板
+          const firstNode = latestRef.current.nodes[0]
+          if (firstNode && firstNode.id === node.id) {
+            setSelectedNode(null)
+            return
+          }
           setSelectedNode({
             id: node.id,
             kind: (node.data?.kind as string) || 'text',
@@ -1300,15 +1584,16 @@ function CanvasInner() {
         }}
         onPaneClick={() => {
           if (isPickingRef) {
-            // 点击空白处退出参考选择模式，避免模式残留导致节点无法选中
-            stopPickRef()
+            // 参考选择模式下点击空白不退出：只能通过「退出」按钮退出
             return
           }
           setAddMenu(null)
           setSelectedNode(null)
         }}
-        nodesDraggable={!selectMode}
-        elementsSelectable={!panMode}
+        /* 工具栏开关：移动=画布平移（panOnDrag），拖拽=节点拖拽（nodesDraggable） */
+        nodesDraggable={dragEnabled}
+        panOnDrag={moveEnabled}
+        elementsSelectable
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}
         fitView
         fitViewOptions={{ padding: 0.2 }}
@@ -1456,14 +1741,15 @@ function CanvasInner() {
         </div>
       )}
 
-      {/* 素材库抽屉 */}
+      {/* 素材库弹窗（Figma "添加素材" 模态样式，5 个 tab 参考「我的素材」页面） */}
       <CanvasMaterialPicker
         workspaceId={workspaceId}
+        userId={currentUserId}
         visible={drawerPanel === 'assets'}
-        variant="drawer"
+        variant="modal"
         onClose={closeDrawerPanel}
         onApply={(material) => {
-          // 应用素材 → 创建对应类型的图片/视频节点到画布（抽屉保持打开，可连续应用）
+          // 应用素材 → 创建对应类型的图片/视频节点到画布（弹窗保持打开，可连续应用）
           handleApplyMaterial(material)
         }}
       />
@@ -1485,6 +1771,7 @@ function CanvasInner() {
         <div className="canvas-panel-area">
           <CanvasNodePanel
             node={selectedNode}
+            workspaceId={workspaceId}
             onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
             onRemoveRef={handleRemoveRef}
             onRatioChange={handleRatioChange}
@@ -1496,30 +1783,33 @@ function CanvasInner() {
         </div>
       )}
 
-      {/* 空连线弹出菜单 */}
+      {/* 空连线弹出菜单 — 菜单项按「拖线源节点能否作为新节点来源」过滤，不可选禁用灰显 */}
       {addMenu && (
         <div className="canvas-add-menu" style={{ left: addMenu.x, top: addMenu.y }}>
-          <button className="canvas-add-menu__item" onClick={() => handleMenuSelect('text')}>
-            <span className="canvas-add-menu__icon">{getTypeIcon('text')}</span>
-            <div className="canvas-add-menu__text">
-              <span className="canvas-add-menu__label">文本节点</span>
-              <span className="canvas-add-menu__desc">脚本、广告词、品牌文案</span>
-            </div>
-          </button>
-          <button className="canvas-add-menu__item" onClick={() => handleMenuSelect('image')}>
-            <span className="canvas-add-menu__icon">{getTypeIcon('image')}</span>
-            <div className="canvas-add-menu__text">
-              <span className="canvas-add-menu__label">图片节点</span>
-              <span className="canvas-add-menu__desc">宣传图、海报、封面</span>
-            </div>
-          </button>
-          <button className="canvas-add-menu__item" onClick={() => handleMenuSelect('video')}>
-            <span className="canvas-add-menu__icon">{getTypeIcon('video')}</span>
-            <div className="canvas-add-menu__text">
-              <span className="canvas-add-menu__label">视频节点</span>
-              <span className="canvas-add-menu__desc">宣传视频、动画、电影</span>
-            </div>
-          </button>
+          {ADD_MENU_ITEMS.map((item) => {
+            const sourceNode = nodes.find((n) => n.id === addMenu.sourceId)
+            const sourceKind = (sourceNode?.data?.kind as string) || 'text'
+            const allowed = (allowedSourceKinds[item.type] || []).includes(sourceKind)
+            return (
+              <button
+                key={item.type}
+                className={`canvas-add-menu__item${allowed ? '' : ' is-disabled'}`}
+                disabled={!allowed}
+                title={
+                  allowed ? undefined : `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为「${item.label}」的来源`
+                }
+                onClick={() => handleMenuSelect(item.type)}
+              >
+                <span className="canvas-add-menu__icon">{getTypeIcon(item.type)}</span>
+                <div className="canvas-add-menu__text">
+                  <span className="canvas-add-menu__label">{item.label}</span>
+                  <span className="canvas-add-menu__desc">
+                    {allowed ? item.desc : `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为此节点来源`}
+                  </span>
+                </div>
+              </button>
+            )
+          })}
         </div>
       )}
     </div>
