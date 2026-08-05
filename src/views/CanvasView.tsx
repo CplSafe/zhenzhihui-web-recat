@@ -1,10 +1,10 @@
 /**
- * 创意画布（/canvas, /canvas/:id）
+ * 无限画布（/canvas/:id）
  *
  * 页面职责：提供无限画布，通过节点+连线方式组织 AI 生成管线。
  */
 import { useCallback, useRef, useState, useEffect, useMemo } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import brandLogo from '@/img/image copy 7.png'
 import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
 import type { DraftSaveStatus } from '@/utils/creativeDraftPersistence'
@@ -39,19 +39,13 @@ import CanvasNodePanel, {
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
-import { saveCanvasDraft, loadCanvasDraft } from '@/utils/canvasDraft'
+import { saveCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId } from '@/utils/canvasDraft'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
+import { fetchCanvasElements, saveCanvasElementsBatched, type CanvasElementMutation } from '@/api/canvasApi'
 import {
-  createCanvas,
-  fetchCanvasElements,
-  saveCanvasElementsBatched,
-  type CanvasElementMutation,
-} from '@/api/canvasApi'
-import {
-  buildFullUpsertMutations,
   comparableEdge,
   comparableNode,
   diffCanvasMutations,
@@ -466,7 +460,7 @@ const nodeTypes: NodeTypes = {
   video: CanvasDefaultNode,
 }
 
-/** 创意画布入口页（提供 ReactFlowProvider 上下文） */
+/** 无限画布入口页（提供 ReactFlowProvider 上下文） */
 export default function CanvasView() {
   return (
     <ReactFlowProvider>
@@ -477,8 +471,9 @@ export default function CanvasView() {
 
 /** 画布主体逻辑 */
 function CanvasInner() {
-  // 路由参数中的项目 id：用于草稿按项目隔离，避免不同画布项目互相覆盖
+  // 路由参数中的项目 id：画布 ID 的唯一真相源（只接受合法数字 id）
   const { id: routeProjectId } = useParams()
+  const navigate = useNavigate()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const { fitView } = useReactFlow()
@@ -1080,39 +1075,74 @@ function CanvasInner() {
   /**
    * 增量保存到云端（对齐 5.6「只提交变化元素」）：
    * 对比 syncedRef 快照与当前状态 → upsert 新增/变更 + delete 消失。
-   * 409 冲突：拉远端增量 → 应用到本地 → 重放本地未提交变更 → 用最新 revision 重试。
+   * 通过队列串行化所有保存请求，避免并发保存竞态（旧状态覆盖新状态）。
+   * 409 冲突：拉远端增量 → 合并本地未提交变更 → 用最新 revision 重试（真合并，非全量覆盖）。
    */
   const syncRef = useRef<{ nodes: ComparableNode[]; edges: ComparableEdge[] }>({ nodes: [], edges: [] })
-  const pushCanvasMutations = useCallback(
-    (nodes: Node[], edges: Edge[]) => {
-      const canvasId = canvasIdRef.current
-      if (!canvasId || !cloudLoadedRef.current) return
-      const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
-      const mutations = diffCanvasMutations(syncRef.current, { nodes, edges }, textMap)
-      if (mutations.length === 0) return
-      saveCanvasElementsBatched({
-        workspaceId,
-        canvasId,
-        baseRevision: syncRevisionRef.current,
-        mutations,
-      })
-        .then(({ sync_revision }) => {
+  // 保存队列：串行执行，保证同一时刻只有一个保存请求在途，杜绝并发 409 竞态
+  const syncQueueRef = useRef<Promise<void>>(Promise.resolve())
+  // 请求在途期间节点是否又发生了变化（变化后再补一次保存）
+  const syncPendingRef = useRef(false)
+  const syncInFlightRef = useRef(false)
+
+  // 增量保存到云端：对比 syncRef 快照与最新状态 → upsert/delete；内部串行 + 冲突合并重试
+  const pushCanvasMutations = useCallback(() => {
+    const canvasId = canvasIdRef.current
+    if (!canvasId || !cloudLoadedRef.current) return
+    syncPendingRef.current = true
+    // 若已有请求在途，标记待补即可，避免重复入队
+    if (syncInFlightRef.current) return
+    syncInFlightRef.current = true
+    syncQueueRef.current = syncQueueRef.current.then(async () => {
+      // 循环处理：执行期间若有新变化（syncPendingRef），继续以最新状态补存
+      while (syncPendingRef.current) {
+        syncPendingRef.current = false
+        const latest = latestRef.current
+        const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+        const mutations = diffCanvasMutations(syncRef.current, latest, textMap)
+        if (mutations.length === 0) continue
+        try {
+          const { sync_revision } = await saveCanvasElementsBatched({
+            workspaceId,
+            canvasId,
+            baseRevision: syncRevisionRef.current,
+            mutations,
+          })
           syncRevisionRef.current = sync_revision
-          // 保存成功后同步快照：用当前状态 + 文本 Map 重建（diff 依赖含文本的快照精确比较）
+          // 成功基线重建必须用「本次提交的内容」（latest 即当时的最新状态），
+          // 且以请求时刻为准；若期间又变化，循环会继续补存
           syncRef.current = {
-            nodes: nodes.map((n) => comparableNode(n, textMap)),
-            edges: edges.map((e) => comparableEdge(e)),
+            nodes: latest.nodes.map((n) => comparableNode(n, textMap)),
+            edges: latest.edges.map((e) => comparableEdge(e)),
           }
           setSaveStatus('saved')
-        })
-        .catch(async () => {
-          // 乐观锁冲突或网络失败：按 5.6 规范处理 —— 拉取远端增量并合并后重放本地变更
+        } catch {
+          // 乐观锁冲突或网络失败：拉取远端全量，把本地状态合并重放（非全量覆盖，避免覆盖他人修改）
           try {
             const page = await fetchCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
-            syncRevisionRef.current = page.sync_revision
+            syncRevisionRef.current = page.sync_revision || syncRevisionRef.current
+            const latest2 = latestRef.current
             const textMap2 = (window as any).__canvasTextContents as Map<string, string> | undefined
-            const retryMutations = buildFullUpsertMutations(nodes, edges, textMap2)
-            if (retryMutations.length === 0) return
+            // 重拉后：远端已同步的内容并入基线，本地与远端差异用 diff 生成（保留他人修改）
+            const { nodes: remoteNodes, edges: remoteEdges } = elementsToGraph(page.elements || [])
+            const textMap3 = (window as any).__canvasTextContents as Map<string, string> | undefined
+            const mergedSync: { nodes: ComparableNode[]; edges: ComparableEdge[] } = {
+              nodes: [
+                ...remoteNodes.map((n) => comparableNode(n, textMap3)),
+                // 本地有而远端没有的节点（刚新增未同步）也加入基线，避免误判为 delete
+                ...latest2.nodes
+                  .filter((n) => !remoteNodes.some((rn) => rn.id === n.id))
+                  .map((n) => comparableNode(n, textMap2)),
+              ],
+              edges: [
+                ...remoteEdges.map((e) => comparableEdge(e)),
+                ...latest2.edges.filter((e) => !remoteEdges.some((re) => re.id === e.id)).map((e) => comparableEdge(e)),
+              ],
+            }
+            syncRef.current = mergedSync
+            // 用 diff 重试（保留远端 + 本地差异），而非全量覆盖
+            const retryMutations = diffCanvasMutations(syncRef.current, latest2, textMap2)
+            if (retryMutations.length === 0) continue
             const result = await saveCanvasElementsBatched({
               workspaceId,
               canvasId,
@@ -1120,30 +1150,54 @@ function CanvasInner() {
               mutations: retryMutations,
             })
             syncRevisionRef.current = result.sync_revision
+            // 重试成功后：以「远端 + 本地最新」合并状态为基线
             syncRef.current = {
-              nodes: nodes.map((n) => comparableNode(n, textMap2)),
-              edges: edges.map((e) => comparableEdge(e)),
+              nodes: [
+                ...remoteNodes.map((n) => comparableNode(n, textMap3)),
+                ...latest2.nodes
+                  .filter((n) => !remoteNodes.some((rn) => rn.id === n.id))
+                  .map((n) => comparableNode(n, textMap2)),
+              ],
+              edges: [
+                ...remoteEdges.map((e) => comparableEdge(e)),
+                ...latest2.edges.filter((e) => !remoteEdges.some((re) => re.id === e.id)).map((e) => comparableEdge(e)),
+              ],
             }
             setSaveStatus('saved')
           } catch {
             // 仍失败：保留 dirty 状态，下次变化再试；本地草稿兜底
             setSaveStatus('dirty')
           }
-        })
-    },
-    [workspaceId],
-  )
+        }
+      }
+    })
+    // 队列尾部挂 catch，防止未处理 rejection 影响后续任务；随后释放在途标记
+    syncQueueRef.current = syncQueueRef.current
+      .catch(() => undefined)
+      .then(() => {
+        syncInFlightRef.current = false
+      })
+  }, [workspaceId])
   // 初始化：云端优先（复用画布或新建），失败回退 localStorage 草稿
   const draftLoadedRef = useRef(false)
   useEffect(() => {
     if (draftLoadedRef.current) return
     draftLoadedRef.current = true
+    // 画布 ID 唯一真相源 = 路由参数；缺失或非合法数字 → 跳回列表页，杜绝隐式新建造成画布重复
     const projectIdNum = Number(routeProjectId)
     const hasProjectId = Number.isSafeInteger(projectIdNum) && projectIdNum > 0
+    if (!hasProjectId) {
+      navigate('/canvas', { replace: true })
+      return
+    }
+    const canvasId = projectIdNum
+    canvasIdRef.current = canvasId
 
     const applyLocalDraft = () => {
+      // 云端失败回退本地草稿：同样校验草稿绑定当前画布，防止展示/上传其他画布的内容
       const draft = loadCanvasDraft(routeProjectId)
-      if (draft && draft.nodes.length > 0) {
+      const draftBoundId = readDraftBoundCanvasId(routeProjectId)
+      if (draft && draft.nodes.length > 0 && draftBoundId === canvasId) {
         // 恢复时移除渐入标记类，避免已持久化的新节点重播渐入动画
         const restoredNodes = (draft.nodes as Node[]).map((n) =>
           String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n,
@@ -1171,19 +1225,15 @@ function CanvasInner() {
 
     ;(async () => {
       try {
-        // 1) 解析或创建画布 ID
-        let canvasId = hasProjectId ? projectIdNum : null
-        if (!canvasId) {
-          const created = await createCanvas({ workspaceId, title: '创意画布' })
-          canvasId = Number(created?.id) || 0
-          if (!canvasId) throw new Error('创建画布失败')
-        }
-        canvasIdRef.current = canvasId
-        // 2) 全量加载元素（after_revision=0，循环取完所有分页）
+        // 1) 全量加载元素（after_revision=0，循环取完所有分页）
         const allElements: CanvasElementMutation[] = []
         let cursor = ''
+        let pageCount = 0
+        const MAX_PAGES = 50
         let page: Awaited<ReturnType<typeof fetchCanvasElements>>
         do {
+          // 分页保护：防止后端异常返回相同 cursor 时无限循环
+          if (++pageCount > MAX_PAGES) break
           page = await fetchCanvasElements({
             workspaceId,
             canvasId,
@@ -1213,9 +1263,29 @@ function CanvasInner() {
           cloudLoadedRef.current = true
           fitCanvasView()
         } else {
-          // 云端空画布（无论有无项目 id）：恢复本地草稿兜底，保证云端无数据/接口异常时画布仍可用
-          applyLocalDraft()
-          cloudLoadedRef.current = true
+          // 云端空画布：仅当本地草稿绑定当前画布时才恢复并上传（保证画布唯一，防止把其他画布内容复制进来）
+          const draft = loadCanvasDraft(routeProjectId)
+          const draftBoundId = readDraftBoundCanvasId(routeProjectId)
+          if (draft && draft.nodes.length > 0 && draftBoundId === canvasId) {
+            const restoredNodes = (draft.nodes as Node[]).map((n) =>
+              String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n,
+            )
+            setNodes(restoredNodes)
+            setEdges(draft.edges as Edge[])
+            if (draft.textContents) {
+              if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+              const map = (window as any).__canvasTextContents as Map<string, string>
+              Object.entries(draft.textContents).forEach(([k, v]) => map.set(k, v))
+            }
+            // 云加载完成后，把本地草稿内容推送到云端（云端当前为空，diff 会全量 upsert）
+            cloudLoadedRef.current = true
+            syncRef.current = { nodes: [], edges: [] }
+            scheduleSyncRef.current(true)
+          } else {
+            // 草稿不匹配当前画布（或为空）：不恢复不上传，云端以空画布呈现，保证画布内容唯一
+            cloudLoadedRef.current = true
+          }
+          fitCanvasView()
         }
       } catch (error: any) {
         // 云端不可用时静默回退本地草稿，保证画布可用
@@ -1223,20 +1293,34 @@ function CanvasInner() {
         applyLocalDraft()
       }
     })()
-  }, [setNodes, setEdges, fitView, routeProjectId, workspaceId])
+  }, [setNodes, setEdges, fitView, routeProjectId, navigate, workspaceId])
 
-  // 增量保存：nodes/edges 变化后防抖 1 秒，同步到云端（本地草稿同时保留为兜底）
+  // 增量保存调度：防抖 1 秒后统一执行（本地草稿 + 云端），支持立即 flush
   const saveTimerRef = useRef<number | null>(null)
-  useEffect(() => {
+  const scheduleSyncRef = useRef<(immediate?: boolean) => void>(() => undefined)
+  scheduleSyncRef.current = (immediate?: boolean) => {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
-    // 云加载完成前的首次渲染不保存
+    // 草稿必须绑定当前画布 id：所有数据保存都对应画布，防止串画布
+    const boundId = canvasIdRef.current ?? 0
+    if (immediate) {
+      const latest = latestRef.current
+      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId)
+      pushCanvasMutations()
+      return
+    }
     if (!cloudLoadedRef.current) return
     saveTimerRef.current = window.setTimeout(() => {
       const latest = latestRef.current
       // 本地草稿同步落盘兜底（云端失败时仍可恢复）
-      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId)
-      pushCanvasMutations(latest.nodes, latest.edges)
+      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId, boundId)
+      pushCanvasMutations()
     }, 1000)
+  }
+
+  // nodes/edges 变化 → 防抖调度保存
+  useEffect(() => {
+    if (!cloudLoadedRef.current) return
+    scheduleSyncRef.current()
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
     }
@@ -1246,16 +1330,37 @@ function CanvasInner() {
   useEffect(() => {
     ;(window as any).__canvasMarkDirty = () => {
       setSaveStatus('dirty')
-      const latest = latestRef.current
-      // 本地草稿兜底
-      saveCanvasDraft(latest.nodes, latest.edges, routeProjectId)
-      // 云端增量保存：文本已写入节点 data，全量 upsert 同步
-      pushCanvasMutations(latest.nodes, latest.edges)
+      scheduleSyncRef.current()
     }
     return () => {
       delete (window as any).__canvasMarkDirty
     }
   }, [routeProjectId, workspaceId])
+
+  // 卸载/切页前 flush 未保存的防抖任务（同步本地草稿 + 云端），避免丢最近 1 秒改动
+  const flushOnUnload = useCallback(() => {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    scheduleSyncRef.current(true)
+  }, [])
+  // 路由切换（组件卸载）时 flush
+  useEffect(() => {
+    return () => {
+      flushOnUnload()
+    }
+  }, [flushOnUnload])
+  // 页面关闭/刷新/切后台时 flush（beforeunload / pagehide 兜底）
+  useEffect(() => {
+    const onHide = () => flushOnUnload()
+    window.addEventListener('beforeunload', onHide)
+    window.addEventListener('pagehide', onHide)
+    return () => {
+      window.removeEventListener('beforeunload', onHide)
+      window.removeEventListener('pagehide', onHide)
+    }
+  }, [flushOnUnload])
 
   // 比例变更时同步更新节点宽高与数据
   const handleRatioChange = useCallback(

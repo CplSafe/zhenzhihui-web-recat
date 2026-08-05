@@ -40,10 +40,24 @@ interface CanvasDraft {
   /** 文本节点内容映射 nodeId → 文本 */
   textContents: Record<string, string>
   updatedAt: number
+  /** 草稿绑定的画布 id：用于判断本地草稿是否属于当前画布，避免误上传到新画布 */
+  boundCanvasId?: number
 }
 
-/** 保存草稿（仅保留可序列化字段）；projectId 用于按项目隔离，缺省时使用全局键（兼容旧行为） */
-export function saveCanvasDraft(nodes: Node[], edges: Edge[], projectId?: string | number) {
+/** 读取草稿绑定的画布 id（无草稿或未绑定时返回 0）。 */
+export function readDraftBoundCanvasId(projectId?: string | number): number {
+  try {
+    const raw = localStorage.getItem(draftKey(projectId))
+    if (!raw) return 0
+    const parsed = JSON.parse(raw) as { boundCanvasId?: number }
+    return Number(parsed?.boundCanvasId || 0) || 0
+  } catch {
+    return 0
+  }
+}
+
+/** 保存草稿（仅保留可序列化字段）；projectId 用于按项目隔离，canvasId 用于把草稿绑定到画布 */
+export function saveCanvasDraft(nodes: Node[], edges: Edge[], projectId?: string | number, boundCanvasId?: number) {
   const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
   const textContents: Record<string, string> = {}
   if (textMap) {
@@ -78,6 +92,8 @@ export function saveCanvasDraft(nodes: Node[], edges: Edge[], projectId?: string
     })),
     textContents,
     updatedAt: Date.now(),
+    // 画布绑定：草稿归属的唯一真相源，防止误上传到其他画布
+    boundCanvasId: Number(boundCanvasId || 0) || 0,
   }
   try {
     localStorage.setItem(draftKey(projectId), JSON.stringify(draft))

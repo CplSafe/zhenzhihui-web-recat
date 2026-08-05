@@ -66,6 +66,44 @@ export interface CanvasSummary {
   revision?: number
 }
 
+/**
+ * 归一化画布对象：Swagger 未定义画布响应结构，后端不同接口返回的字段名可能不统一
+ * （id/canvas_id、title/name 等），统一映射为 CanvasSummary，避免列表/详情字段取不到。
+ */
+function normalizeCanvas(raw: unknown): CanvasSummary {
+  if (!raw || typeof raw !== 'object') return { id: 0 }
+  const o = raw as Record<string, unknown>
+  const inner = o.data && typeof o.data === 'object' ? (o.data as Record<string, unknown>) : undefined
+  const id = Number(o.id ?? o.canvas_id ?? o.canvasId ?? o.canvasID ?? inner?.id ?? 0) || 0
+  const title = String(o.title ?? o.name ?? o.canvas_name ?? o.canvasName ?? inner?.title ?? '').trim()
+  const status = String(o.status ?? inner?.status ?? '') as CanvasSummary['status']
+  const created_at = String(o.created_at ?? o.createdAt ?? o.create_time ?? inner?.created_at ?? '') || undefined
+  const updated_at = String(o.updated_at ?? o.updatedAt ?? o.update_time ?? inner?.updated_at ?? '') || undefined
+  const revision = Number(o.revision ?? o.sync_revision ?? inner?.revision ?? 0) || 0
+  return {
+    id,
+    ...(title ? { title } : {}),
+    ...(status === 'active' || status === 'archived' ? { status } : {}),
+    ...(created_at ? { created_at } : {}),
+    ...(updated_at ? { updated_at } : {}),
+    ...(revision ? { revision } : {}),
+  }
+}
+
+/** 把响应中的数组归一化为 CanvasSummary[]（兼容 items/list/直接数组三种形态）。 */
+function normalizeCanvasList(data: unknown): CanvasSummary[] {
+  if (!data || typeof data !== 'object') return []
+  const o = data as Record<string, unknown>
+  const raw = Array.isArray(data)
+    ? (data as unknown[])
+    : Array.isArray(o.items)
+      ? (o.items as unknown[])
+      : Array.isArray(o.list)
+        ? (o.list as unknown[])
+        : []
+  return raw.map(normalizeCanvas).filter((c) => c.id > 0)
+}
+
 /** 统一对业务返回做一次 data 解包并容忍 null。 */
 function unwrap<T>(payload: unknown): T | null {
   if (payload && typeof payload === 'object' && 'data' in (payload as object)) {
@@ -100,7 +138,7 @@ export async function createCanvas({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title: String(title || '') }),
   })
-  return unwrap<CanvasSummary>(payload) || ({} as CanvasSummary)
+  return normalizeCanvas(unwrap<unknown>(payload))
 }
 
 /** 分页列出工作空间画布（GET /canvases）。 */
@@ -123,8 +161,7 @@ export async function listCanvases({
   })
   if (includeArchived) query.set('include_archived', 'true')
   const payload = await requestBusinessJson<unknown>(`/api/v1/canvases?${query}`)
-  const data = unwrap<{ items?: CanvasSummary[]; list?: CanvasSummary[] }>(payload)
-  return Array.isArray(data?.items) ? data.items : Array.isArray(data?.list) ? data.list : []
+  return normalizeCanvasList(unwrap<unknown>(payload))
 }
 
 /** 读取画布详情（GET /canvases/{id}）。 */
@@ -138,7 +175,8 @@ export async function getCanvas({
   const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
   const id = requirePositiveInteger(canvasId, '画布 ID 无效')
   const payload = await requestBusinessJson<unknown>(`/api/v1/canvases/${id}?workspace_id=${wsId}`)
-  return unwrap<CanvasSummary>(payload)
+  const data = unwrap<unknown>(payload)
+  return data ? normalizeCanvas(data) : null
 }
 
 /** 更新画布元信息（PATCH /canvases/{id}）：标题或状态 active/archived。 */
@@ -163,7 +201,8 @@ export async function patchCanvas({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  return unwrap<CanvasSummary>(payload)
+  const data = unwrap<unknown>(payload)
+  return data ? normalizeCanvas(data) : null
 }
 
 /** 删除画布（DELETE /canvases/{id}）。 */

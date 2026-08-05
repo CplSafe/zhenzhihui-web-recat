@@ -93,6 +93,8 @@ const SpaceDashboardView = lazy(() => import('../views/SpaceDashboardView'))
 const DistributionView = lazy(() => import('../views/DistributionView'))
 /** 创意画布路由组件。 */
 const CanvasView = lazy(() => import('../views/CanvasView'))
+/** 无限画布列表路由组件。 */
+const CanvasListView = lazy(() => import('../views/CanvasListView'))
 
 /** 智能成片路由 state 中使用的一次性建项、重启和空间切换标记。 */
 interface SmartRouteState {
@@ -301,7 +303,7 @@ export const router = createBrowserRouter([
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
       { path: 'team', element: lazyPage(<SpaceDashboardView />) },
       { path: 'distribution', element: <DistributionAccessRoute /> },
-      { path: 'canvas', element: lazyPage(<CanvasView />) },
+      { path: 'canvas', element: lazyPage(<CanvasListView />) },
       { path: 'canvas/:id', element: lazyPage(<CanvasView />) },
       { path: '*', element: <Navigate to="/home" replace />, handle: { requiresAuth: false } },
     ],

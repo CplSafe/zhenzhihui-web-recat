@@ -1,0 +1,91 @@
+/* 无限画布列表页 —— 复用 project-management.css 的 pm2 布局类，此处补充画布专属样式 */
+
+/* 卡片封面占位：柔和渐变 + 网格图标 */
+.cl-cover {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: #8ea3bf;
+}
+
+.cl-cover svg {
+  width: 44px;
+  height: 44px;
+  opacity: 0.85;
+}
+
+/* 新建按钮禁用态 */
+.pm2-new-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 编辑弹窗：状态标签与名称输入框拉开间距 */
+.cl-edit-status-label {
+  margin-top: 16px;
+}
+
+/* 编辑弹窗：状态选择（活动 / 归档） */
+.cl-edit-status {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.cl-edit-status__item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 14px;
+  color: #4b5563;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s,
+    color 0.15s;
+}
+
+.cl-edit-status__item:hover {
+  border-color: #c7cdda;
+}
+
+.cl-edit-status__item.is-active {
+  border-color: #5767e5;
+  background: #f4f6ff;
+  color: #5767e5;
+  font-weight: 600;
+}
+
+.cl-edit-status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.cl-edit-status__dot.is-active-dot {
+  background: #22c55e;
+}
+
+.cl-edit-status__dot.is-archive-dot {
+  background: #9aa3af;
+}
+
+/* 卡片标题旁的归档状态徽标 */
+.cl-status-badge {
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #eef0f4;
+  color: #6b7280;
+  white-space: nowrap;
+}
