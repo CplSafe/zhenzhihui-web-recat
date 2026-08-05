@@ -60,6 +60,12 @@
   filter: grayscale(0.6);
 }
 
+/* 拖线中：不能作为连线目标的节点灰化（与参考选择模式视觉一致，仍保留事件以显示拒绝反馈） */
+.react-flow__node.is-connect-disabled {
+  opacity: 0.35 !important;
+  filter: grayscale(0.6);
+}
+
 /* ── 新节点渐入动画 ── */
 /* wrapper 层只做透明度淡入：transform 由 React Flow 内联控制节点定位，不能覆盖 */
 .react-flow__node.is-node-entering {
@@ -347,6 +353,56 @@
   pointer-events: none;
 }
 
+/* 视频节点：容器持有交互（pointer-events），媒体本身保持 none 以免拖拽冲突 */
+.canvas-node-video-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+/* 播放/暂停按钮：均居中显示，大小一致（44px 圆形） */
+.canvas-node-play-btn,
+.canvas-node-pause-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition:
+    background 0.15s,
+    transform 0.15s;
+}
+
+/* 播放按钮图标微右移，视觉居中 */
+.canvas-node-play-btn {
+  padding: 0 0 0 2px;
+}
+
+.canvas-node-play-btn:hover,
+.canvas-node-pause-btn:hover {
+  background: rgba(0, 0, 0, 0.68);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
 /* 文本节点内嵌编辑器 */
 .canvas-node-editor {
   width: 100%;
@@ -574,6 +630,18 @@
 
 .canvas-add-menu__item:hover {
   background: rgba(87, 103, 229, 0.08);
+}
+
+/* 空连线菜单：来源限制不满足的节点类型，禁用灰显 */
+.canvas-add-menu__item.is-disabled,
+.canvas-add-menu__item.is-disabled:hover {
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.canvas-add-menu__item.is-disabled .canvas-add-menu__desc {
+  color: #c0c0c0;
 }
 
 .canvas-add-menu__text {

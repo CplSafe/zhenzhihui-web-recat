@@ -8,6 +8,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
+import { estimateAiTaskCost } from '@/api/business'
 
 /** 连线来源引用信息 */
 export interface CanvasSourceRef {
@@ -33,6 +34,8 @@ export interface CanvasNodeInfo {
 
 interface CanvasNodePanelProps {
   node: CanvasNodeInfo | null
+  /** 工作空间 ID：预估费用 / 提交生成需要 */
+  workspaceId: number
   /** slotIndex 标识槽位：0=首帧, 1=尾帧(视频)；其他节点按顺序 */
   onStartPickRef?: (slotIndex?: number) => void
   onRemoveRef?: (edgeId: string) => void
@@ -46,13 +49,36 @@ interface CanvasNodePanelProps {
   models?: Partial<Record<'text' | 'image' | 'video', GenerationModelOption[]>>
   /** 模型列表加载中 */
   modelsLoading?: boolean
+  /** 点击生成按钮回调（面板内部先预估费用，调用方提交实际任务） */
+  onGenerate?: (params: {
+    kind: string
+    prompt: string
+    modelVersionId: number
+    operationCode: string
+    params: Record<string, unknown>
+  }) => void
 }
 
 type VideoMode = 'first-last' | 'full-ref'
 
+/** 视频「自适应」比例的存储值（英文，避免中文写入节点数据/接口参数）。 */
+export const AUTO_RATIO = 'auto'
+/** 「自适应」比例的界面显示文案（中文）。 */
+export const AUTO_RATIO_LABEL = '自适应'
+
+/** 判断比例是否为自适应（兼容旧数据中的中文「自适应」存储值）。 */
+export function isAutoRatio(ratio: string | undefined | null): boolean {
+  return ratio === AUTO_RATIO || ratio === AUTO_RATIO_LABEL
+}
+
+/** 比例显示文案：自适应显示中文，其余（2:3 等）原样显示。 */
+export function formatRatio(ratio: string): string {
+  return isAutoRatio(ratio) ? AUTO_RATIO_LABEL : ratio
+}
+
 /** 根据比例字符串计算节点尺寸，baseSize 为短边基准 */
 export function calcNodeSize(ratio: string, baseSize: number): { width: number; height: number } {
-  if (ratio === '自适应') return { width: 444, height: 250 }
+  if (isAutoRatio(ratio)) return { width: 444, height: 250 }
   const [w, h] = ratio.split(':').map(Number)
   if (!w || !h) return { width: baseSize, height: baseSize }
   if (w > h) return { width: (baseSize * w) / h, height: baseSize }
@@ -66,6 +92,7 @@ function findRefBySlot(refs: CanvasSourceRef[] | undefined, slot: number): Canva
 
 export default function CanvasNodePanel({
   node,
+  workspaceId,
   onStartPickRef,
   onRemoveRef,
   onRatioChange,
@@ -73,11 +100,14 @@ export default function CanvasNodePanel({
   onModelChange,
   models,
   modelsLoading,
+  onGenerate,
 }: CanvasNodePanelProps) {
   const kind = node?.kind || 'text'
   const [prompt, setPrompt] = useState('')
-  // 受控回显：优先取节点数据中的比例/模式
-  const ratio = node?.ratio || (kind === 'video' ? '自适应' : '1:1')
+  // 视频秒数（与面板生命周期保持一致：选择器变更后同步到预估接口）
+  const [seconds, setSeconds] = useState(5)
+  // 受控回显：优先取节点数据中的比例/模式（存储值为英文 auto）
+  const ratio = node?.ratio || (kind === 'video' ? AUTO_RATIO : '1:1')
   const videoMode = (node?.videoMode as VideoMode) || 'first-last'
   // 按 edgeId 去重，兜底防止重复连线/重复记录渲染出重复缩略图
   const sourceRefs = useMemo(() => {
@@ -90,6 +120,91 @@ export default function CanvasNodePanel({
   }, [node?.sourceRefs])
   const maxRefs = kind === 'video' ? 2 : 3
   const kindModels = models?.[kind as 'text' | 'image' | 'video'] || []
+
+  // 选中模型（按 modelVersionId 匹配，无匹配时取第一个可用）
+  const selectedModel: GenerationModelOption | undefined = useMemo(() => {
+    if (!node?.modelVersionId) return kindModels.find((m) => !m.unavailableReason)
+    return (
+      kindModels.find((m) => m.modelVersionId === node.modelVersionId && !m.unavailableReason) ||
+      kindModels.find((m) => !m.unavailableReason)
+    )
+  }, [kindModels, node?.modelVersionId])
+
+  // 从选中模型的 operationCodes 里推导本次生成使用的 operation_code
+  const operationCode = useMemo(() => {
+    if (!selectedModel?.operationCodes?.length) return ''
+    const codes = selectedModel.operationCodes
+    // text → responses.multimodal; image → image.text_to_image; video → video.generate
+    if (kind === 'text') return codes.find((c) => c === 'responses.multimodal') || codes[0]
+    if (kind === 'image') return codes.find((c) => c === 'image.text_to_image') || codes[0]
+    if (kind === 'video') return codes.find((c) => c === 'video.generate' || c === 'video.edit') || codes[0]
+    return codes[0]
+  }, [selectedModel, kind])
+
+  // 视频额外的 params 字段（需要传给 estimate 接口，否则预估不准确）
+  const videoExtraParams = useMemo<Record<string, unknown>>(() => {
+    if (kind !== 'video') return {}
+    return {
+      resolution: '720p',
+      duration: seconds,
+    }
+  }, [kind, seconds])
+
+  // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
+  const [costEstimate, setCostEstimate] = useState<{
+    estimated_cost?: number
+    balance?: number
+    can_afford?: boolean
+    loading: boolean
+    error?: string
+  }>({ loading: false })
+  const costTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
+    const modelVersionId = selectedModel?.modelVersionId
+    if (!modelVersionId || !operationCode || !workspaceId) {
+      setCostEstimate({ loading: false })
+      return
+    }
+    setCostEstimate((prev) => ({ ...prev, loading: true }))
+    costTimerRef.current = window.setTimeout(() => {
+      estimateAiTaskCost({
+        workspaceId,
+        modelVersionId,
+        operationCode,
+        prompt: prompt.trim() || '',
+        params: kind === 'video' ? videoExtraParams : {},
+      })
+        .then((result: any) => {
+          setCostEstimate({
+            estimated_cost: Number(result?.estimated_cost) || 0,
+            balance: Number(result?.balance) || 0,
+            can_afford: Boolean(result?.can_afford),
+            loading: false,
+          })
+        })
+        .catch((err: any) => {
+          setCostEstimate({ loading: false, error: String(err?.message || '预估失败') })
+        })
+    }, 600)
+    return () => {
+      if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
+    }
+  }, [selectedModel?.modelVersionId, operationCode, prompt, kind, videoExtraParams, workspaceId])
+
+  // 生成按钮点击
+  const handleGenerate = () => {
+    const modelVersionId = selectedModel?.modelVersionId
+    if (!modelVersionId || !operationCode) return
+    onGenerate?.({
+      kind,
+      prompt: prompt.trim(),
+      modelVersionId,
+      operationCode,
+      params: kind === 'video' ? videoExtraParams : {},
+    })
+  }
 
   return (
     <div className={styles.panel}>
@@ -206,13 +321,43 @@ export default function CanvasNodePanel({
             <VideoComboSelector
               mode={videoMode}
               ratio={ratio}
+              seconds={seconds}
+              onSecondsChange={setSeconds}
               onModeChange={onVideoModeChange}
               onRatioChange={onRatioChange}
             />
           )}
         </div>
 
-        <button className={styles.generateBtn}>生成</button>
+        <button
+          className={`${styles.generateBtn} ${styles.generatePill}`}
+          onClick={handleGenerate}
+          disabled={!selectedModel || !operationCode}
+          title="发送生成"
+        >
+          {/* 左侧：预估积分数字 */}
+          <span
+            className={`${styles.costBadge} ${
+              costEstimate.loading
+                ? styles.costBadgeLoading
+                : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
+                  ? styles.costBadgeInsufficient
+                  : ''
+            }`}
+          >
+            {costEstimate.loading
+              ? '…'
+              : costEstimate.estimated_cost !== undefined && costEstimate.estimated_cost > 0
+                ? costEstimate.estimated_cost
+                : '—'}
+          </span>
+          {/* 右侧：发送 icon（不显示文字） */}
+          <span className={styles.sendIcon}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+              <path d="M3.4 20.4l17.45-7.48a1 1 0 0 0 0-1.84L3.4 3.6a.993.993 0 0 0-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87.99l.01 4.61c0 .71.73 1.2 1.39.92z" />
+            </svg>
+          </span>
+        </button>
       </div>
     </div>
   )
@@ -327,19 +472,22 @@ function RatioSelector({ value, onRatioChange }: { value: string; onRatioChange?
 function VideoComboSelector({
   mode,
   ratio,
+  seconds,
   onModeChange,
   onRatioChange,
+  onSecondsChange,
 }: {
   mode: VideoMode
   ratio: string
+  seconds: number
   onModeChange?: (m: VideoMode) => void
   onRatioChange?: (r: string) => void
+  onSecondsChange?: (s: number) => void
 }) {
   const [open, setOpen] = useState(false)
-  const [seconds, setSeconds] = useState(5)
   const [audio, setAudio] = useState(false)
 
-  const display = `${mode === 'first-last' ? '首尾帧' : '全能参考'} · ${ratio} · ${seconds}秒 · ${audio ? '🔊' : '🔇'}`
+  const display = `${mode === 'first-last' ? '首尾帧' : '全能参考'} · ${formatRatio(ratio)} · ${seconds}秒 · ${audio ? '🔊' : '🔇'}`
 
   return (
     <div className={styles.selectorWrap}>
@@ -368,13 +516,13 @@ function VideoComboSelector({
           <div className={styles.videoMenuGroup}>
             <div className={styles.videoMenuTitle}>比例</div>
             <div className={styles.videoBtnGroup}>
-              {(mode === 'first-last' ? ['自适应'] : aspectRatios).map((r) => (
+              {(mode === 'first-last' ? [AUTO_RATIO] : aspectRatios).map((r) => (
                 <button
                   key={r}
                   className={`${styles.videoBtnGroupItem} ${ratio === r ? styles.videoBtnGroupItemActive : ''}`}
                   onClick={() => onRatioChange?.(r)}
                 >
-                  {r}
+                  {formatRatio(r)}
                 </button>
               ))}
             </div>
@@ -388,7 +536,7 @@ function VideoComboSelector({
                 <button
                   key={s}
                   className={`${styles.videoBtnGroupItem} ${seconds === s ? styles.videoBtnGroupItemActive : ''}`}
-                  onClick={() => setSeconds(s)}
+                  onClick={() => onSecondsChange?.(s)}
                 >
                   {s}s
                 </button>

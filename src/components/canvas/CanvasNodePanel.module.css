@@ -290,18 +290,88 @@
 }
 
 .generateBtn {
-  padding: 8px 24px;
+  padding: 0;
   background: #5767e5;
   color: #fff;
   border: none;
-  border-radius: 10px;
+  border-radius: 999px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   font-family: 'PingFang SC', sans-serif;
   white-space: nowrap;
+  transition: background 0.15s;
+  display: inline-flex;
+  align-items: center;
 }
 
-.generateBtn:hover {
+/* 胶囊按钮：左侧积分数字 + 右侧发送 icon，整体圆角胶囊 */
+.generatePill {
+  height: 36px;
+  padding: 0 6px 0 4px;
+  gap: 6px;
+  overflow: hidden;
+}
+
+/* 左侧积分徽标：白底圆角小块，数字居中 */
+.costBadge {
+  min-width: 44px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 预估中：数字淡出 */
+.costBadgeLoading {
+  opacity: 0.75;
+  animation: costPulse 1s ease-in-out infinite;
+}
+
+@keyframes costPulse {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* 余额不足：徽标底色变警示色 */
+.costBadgeInsufficient {
+  background: rgba(230, 84, 84, 0.85);
+}
+
+/* 右侧发送 icon */
+.sendIcon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  transition: background 0.15s;
+}
+
+.generateBtn:hover:not(:disabled) {
   background: #4a5ad4;
+}
+
+.generateBtn:hover:not(:disabled) .sendIcon {
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.generateBtn:disabled {
+  background: #c0c4d0;
+  cursor: not-allowed;
 }

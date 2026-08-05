@@ -1,17 +1,20 @@
 /**
  * 左侧浮动工具图标列
  *
- * 五个图标：Add(加号弹出菜单) / Select(选中模式) / Drag(拖拽模式) / 素材库 / 历史记录
+ * 五个图标：Add(加号弹出菜单) / Move(画布平移开关) / Drag(节点拖拽开关) / 素材库 / 历史记录
+ * Move 与 Drag 为独立开关，初始均开启（高亮）：移动作用于画布平移，拖拽作用于节点拖拽。
  */
 import { memo, useState, useRef, useEffect } from 'react'
 import styles from './CanvasFloatingToolbar.module.css'
 
 interface CanvasFloatingToolbarProps {
   onAddNode: (type: string) => void
-  selectMode: boolean
-  onSelectModeChange: (v: boolean) => void
-  panMode: boolean
-  onPanModeChange: (v: boolean) => void
+  /** 画布平移开关：true=可移动画布 */
+  moveEnabled: boolean
+  onMoveToggle: () => void
+  /** 节点拖拽开关：true=可拖拽节点 */
+  dragEnabled: boolean
+  onDragToggle: () => void
   onOpenAssets: () => void
   onOpenHistory: () => void
   /** 打开抽屉前播放的收起动画标记 */
@@ -20,10 +23,10 @@ interface CanvasFloatingToolbarProps {
 
 function CanvasFloatingToolbar({
   onAddNode,
-  selectMode,
-  onSelectModeChange,
-  panMode,
-  onPanModeChange,
+  moveEnabled,
+  onMoveToggle,
+  dragEnabled,
+  onDragToggle,
   onOpenAssets,
   onOpenHistory,
   leaving = false,
@@ -108,20 +111,20 @@ function CanvasFloatingToolbar({
         )}
       </div>
 
-      {/* 2. 选中模式 */}
+      {/* 2. 移动（画布平移） */}
       <button
-        className={`${styles.toolBtn} ${selectMode ? styles.toolBtnActive : ''}`}
-        onClick={() => onSelectModeChange(!selectMode)}
-        title="选中"
+        className={`${styles.toolBtn} ${moveEnabled ? styles.toolBtnActive : ''}`}
+        onClick={onMoveToggle}
+        title="画布移动"
       >
-        <SelectIcon />
+        <MoveIcon />
       </button>
 
-      {/* 3. 拖拽模式 */}
+      {/* 3. 拖拽（节点拖拽） */}
       <button
-        className={`${styles.toolBtn} ${panMode ? styles.toolBtnActive : ''}`}
-        onClick={() => onPanModeChange(!panMode)}
-        title="拖拽"
+        className={`${styles.toolBtn} ${dragEnabled ? styles.toolBtnActive : ''}`}
+        onClick={onDragToggle}
+        title="节点拖拽"
       >
         <DragIcon />
       </button>
@@ -150,10 +153,11 @@ function PlusIcon() {
   )
 }
 
-function SelectIcon() {
+function MoveIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M3 3l7.07 16.97 2.54-7.38 7.39-2.54z" strokeLinejoin="round" />
+      <path d="M12 2v20M2 12h20" strokeLinecap="round" />
+      <path d="M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

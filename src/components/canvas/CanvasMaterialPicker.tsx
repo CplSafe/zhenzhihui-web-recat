@@ -1,15 +1,29 @@
 /**
- * CanvasMaterialPicker — 画布素材库浮动面板
+ * CanvasMaterialPicker — 画布素材库（"添加素材"弹窗）
+ *
+ * 支持三种形态：
+ * - modal：居中模态弹窗（对齐 Figma "添加素材"设计：遮罩 rgba(51,51,51,0.6)、
+ *   弹窗 1660×776 白底圆角 14px、22px 大 Tab、250×320 素材卡片带比例/大小信息）
+ * - drawer：左侧抽屉（画布场景）
+ * - popover：鼠标位置贴附小面板
+ *
  * 数据来源：GET /api/v1/assets（按 workspace 分页，status=active）
- * 图片/视频 Tab 切换，3 列网格缩略图，滚动加载更多。
  * 封面加载对齐「我的素材」页面（ResourceManagementView.AssetThumb）：
  * 后端 /api/v1/assets 列表不返回可展示 URL（无 thumbnail/cover/url 字段），
  * 因此进入视口后统一按 assetId 调用 getAssetDownloadUrl
  * （/api/v1/assets/{id}/download?workspace_id=X）获取同源流式地址加载。
  */
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { listAssets, getAssetDownloadUrl } from '@/api/business'
 import { createMaterialFromAsset, isVideoMaterial } from '@/utils/materials'
+import {
+  favoriteAssetIdOf,
+  favoriteMediaKindOf,
+  favoriteMediaUrlOf,
+  loadFavorites,
+  setFavoriteVideoUserScope,
+  type FavoriteVideo,
+} from '@/utils/favoriteVideos'
 import styles from './CanvasMaterialPicker.module.css'
 
 interface MaterialItem {
@@ -19,14 +33,22 @@ interface MaterialItem {
   src: string
   name: string
   type: string
+  /** 素材大小（字节），用于卡片信息展示 */
+  sizeBytes?: number
+  /** 预设比例（收藏素材无真实媒体时可先用收藏时记录的比例） */
+  ratio?: string
+  /** 素材来源：upload / generated / collected / real_person */
+  source?: string
 }
 
 interface CanvasMaterialPickerProps {
   /** 所属工作空间 ID，素材按 workspace 隔离 */
   workspaceId: number
+  /** 当前用户 ID（收藏 tab 按用户隔离读取） */
+  userId?: number
   visible: boolean
   position?: { x: number; y: number } | null
-  variant?: 'popover' | 'drawer'
+  variant?: 'popover' | 'drawer' | 'modal'
   onClose: () => void
   /** 点击「应用」时回调（解析好同源流式地址后传入） */
   onApply: (material: MaterialItem) => void
@@ -34,14 +56,101 @@ interface CanvasMaterialPickerProps {
 
 const PAGE_SIZE = 30
 
+/** Tab 定义：参考「我的素材」页面（全部 / 我上传的 / 我生成的 / 我收藏的 / 真人素材库） */
+const TABS = [
+  { k: 'all', l: '全部' },
+  { k: 'upload', l: '我上传的' },
+  { k: 'generated', l: '我生成的' },
+  { k: 'collected', l: '我收藏的' },
+  { k: 'real_person', l: '真人素材库' },
+] as const
+type TabKey = (typeof TABS)[number]['k']
+
+/** tab → listAssets source 参数（收藏 tab 走本地收藏，无服务端 source） */
+function tabAssetSource(tab: TabKey): string {
+  if (tab === 'upload') return 'upload'
+  if (tab === 'generated') return 'generated'
+  if (tab === 'real_person') return 'real_person'
+  return ''
+}
+
+/** 收藏素材转素材卡片（对齐 ResourceManagementView 的 favoriteCards 转换） */
+function favoriteToMaterial(favorite: FavoriteVideo, mediaUrl: string): MaterialItem {
+  const assetId = favoriteAssetIdOf(favorite)
+  const mediaKind = favoriteMediaKindOf(favorite)
+  return {
+    id: favorite.key,
+    assetId,
+    src: mediaUrl,
+    name: String(favorite.title || (mediaKind === 'image' ? '收藏图片' : '收藏视频')),
+    type: mediaKind === 'image' ? '图片' : '视频',
+    ratio: favorite.ratio || '',
+    source: 'collected',
+  }
+}
+
+// ---- 纯函数工具（参考 ResourceManagementView）----
+function gcd(a: number, b: number): number {
+  a = Math.abs(Math.round(a))
+  b = Math.abs(Math.round(b))
+  while (b) {
+    ;[a, b] = [b, a % b]
+  }
+  return a || 1
+}
+
+/** 由真实宽高计算比例标签（吸附常见比例，否则 gcd 约分） */
+function ratioLabel(w: number, h: number): string {
+  w = Math.round(w)
+  h = Math.round(h)
+  if (!w || !h) return ''
+  const r = w / h
+  const common: [number, number][] = [
+    [9, 16],
+    [16, 9],
+    [3, 4],
+    [4, 3],
+    [4, 5],
+    [5, 4],
+    [1, 1],
+    [2, 3],
+    [3, 2],
+    [21, 9],
+  ]
+  for (const [a, b] of common) {
+    if (Math.abs(r - a / b) < 0.03) return `${a}:${b}`
+  }
+  const g = gcd(w, h)
+  return `${Math.round(w / g)}:${Math.round(h / g)}`
+}
+
+/** 字节数格式化为 B/KB/MB/GB */
+function formatBytes(sizeBytes: any): string {
+  const value = Number(sizeBytes || 0)
+  if (!Number.isFinite(value) || value <= 0) return ''
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`
+  return `${value} B`
+}
+
 /**
  * 素材封面缩略图（对齐 ResourceManagementView.AssetThumb）：
  * - IntersectionObserver 懒加载，滑入视口才请求
  * - 进入视口后按 assetId 调 getAssetDownloadUrl 获取同源流式地址
  * - 图片用 img；视频用 video（preload="metadata" 显示首帧）
  * - 加载失败按 assetId 重取一次，仍失败显示占位
+ * - 媒体加载完成后回调真实宽高比例（onRatio）
  */
-function MaterialThumb({ item, workspaceId }: { item: MaterialItem; workspaceId: number }) {
+function MaterialThumb({
+  item,
+  workspaceId,
+  onRatio,
+}: {
+  item: MaterialItem
+  workspaceId: number
+  onRatio?: (ratio: string) => void
+}) {
   const rootRef = useRef<HTMLDivElement>(null)
   const [inView, setInView] = useState(false)
   const [src, setSrc] = useState('')
@@ -58,7 +167,7 @@ function MaterialThumb({ item, workspaceId }: { item: MaterialItem; workspaceId:
       setInView(true)
       return
     }
-    // root 指向滚动容器：panel 为 position:fixed，默认 viewport root 在滚动容器内部
+    // root 指向滚动容器：modal/drawer 为 fixed 容器，默认 viewport root 在容器内部
     // 滚动时元素相对 viewport 可能不变化，必须用滚动容器作 root 才能可靠触发
     const scrollRoot = el.closest('.canvas-material-picker-grid')
     const io = new IntersectionObserver(
@@ -90,7 +199,7 @@ function MaterialThumb({ item, workspaceId }: { item: MaterialItem; workspaceId:
     }
   }, [assetId, inView, workspaceId])
 
-  // 加载失败：按 assetId 重取一次（结果写入缓存）
+  // 加载失败：按 assetId 重取一次
   const handleError = useCallback(() => {
     if (triedRef.current) {
       setSrc('')
@@ -112,7 +221,6 @@ function MaterialThumb({ item, workspaceId }: { item: MaterialItem; workspaceId:
   }
 
   // 数据（下载地址）未返回：渲染非媒体占位，不创建空 img/video 标签
-  // （参考 ResourceManagementView.AssetThumb：!src 时渲染占位 div）
   if (!src) {
     return (
       <div ref={rootRef} className={styles.itemMediaPlaceholder}>
@@ -122,41 +230,117 @@ function MaterialThumb({ item, workspaceId }: { item: MaterialItem; workspaceId:
     )
   }
 
-  // 数据返回后才渲染媒体节点
+  // 数据返回后才渲染媒体节点，并回传真实宽高比例
   return (
     <div ref={rootRef} className={styles.itemMedia}>
       {isVideo ? (
-        <video src={src} muted autoPlay loop playsInline preload="metadata" onError={handleError} />
+        <video
+          src={src}
+          muted
+          autoPlay
+          loop
+          playsInline
+          preload="metadata"
+          onError={handleError}
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget
+            if (v.videoWidth && v.videoHeight) onRatio?.(ratioLabel(v.videoWidth, v.videoHeight))
+          }}
+        />
       ) : (
-        <img src={src} loading="lazy" onError={handleError} />
+        <img
+          src={src}
+          loading="lazy"
+          onError={handleError}
+          onLoad={(e) => {
+            const im = e.currentTarget
+            if (im.naturalWidth && im.naturalHeight) onRatio?.(ratioLabel(im.naturalWidth, im.naturalHeight))
+          }}
+        />
       )}
+    </div>
+  )
+}
+
+/**
+ * Modal 形态的素材卡片（对齐 Figma）：
+ * 250×320 竖版，封面 250×250（上圆角），类型标签左上角，
+ * 底部信息区（比例 + 大小），hover 浮现「应用」按钮。
+ */
+function ModalCard({
+  item,
+  workspaceId,
+  onApply,
+}: {
+  item: MaterialItem
+  workspaceId: number
+  onApply: (item: MaterialItem) => void
+}) {
+  const [ratio, setRatio] = useState(item.ratio || '')
+  const sizeText = formatBytes(item.sizeBytes)
+  return (
+    <div className={styles.modalCard}>
+      {/* 类型标签（左上角） */}
+      <span className={styles.modalType}>{isVideoMaterial(item) ? '视频' : '图片'}</span>
+      {/* 封面区域：hover 时「应用」按钮浮现在图片上 */}
+      <div className={styles.modalCover}>
+        <MaterialThumb item={item} workspaceId={workspaceId} onRatio={setRatio} />
+        {/* 悬浮操作栏：图片上垂直居中浮现「应用」 */}
+        <div className={styles.materialActions}>
+          <button className={styles.materialActionBtn} onClick={() => onApply(item)}>
+            应用
+          </button>
+        </div>
+      </div>
+      {/* 底部信息区：比例 + 大小（不被应用按钮遮挡） */}
+      <div className={styles.modalInfo}>
+        <span className={styles.modalRatio}>
+          <svg
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            aria-hidden="true"
+          >
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="M3 15h18" />
+          </svg>
+          {ratio || '—'}
+        </span>
+        {sizeText && <span className={styles.modalSize}>{sizeText}</span>}
+      </div>
     </div>
   )
 }
 
 export default function CanvasMaterialPicker({
   workspaceId,
+  userId,
   visible,
   position,
   variant = 'popover',
   onClose,
   onApply,
 }: CanvasMaterialPickerProps) {
-  const [tab, setTab] = useState<'image' | 'video'>('image')
+  const [tab, setTab] = useState<TabKey>('all')
   const [items, setItems] = useState<MaterialItem[]>([])
   const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(true)
+  // 模糊匹配搜索：按素材名称过滤（客户端，参考 ResourceManagementView 搜索）
+  const [searchQuery, setSearchQuery] = useState('')
   const loadingRef = useRef(false)
   // 追踪当前展示的 tab：请求完成后仅当 tab 未切换才更新界面，避免旧请求覆盖新 tab
-  const tabRef = useRef<'image' | 'video'>(tab)
+  const tabRef = useRef<string>(tab)
   tabRef.current = tab
   // 请求序号：切换 tab 后旧请求结果直接丢弃
   const requestSeqRef = useRef(0)
 
-  /** 拉取一页素材并映射为展示结构 */
+  /** 拉取一页素材并映射为展示结构（按 tab 过滤来源；全部 tab 排除真人素材） */
   const fetchAssets = useCallback(
-    async (type: 'image' | 'video', pg: number, reset: boolean) => {
+    async (type: string, pg: number, reset: boolean) => {
       if (loadingRef.current) return
       loadingRef.current = true
       const seq = ++requestSeqRef.current
@@ -164,19 +348,25 @@ export default function CanvasMaterialPicker({
       try {
         const data = await listAssets({
           workspaceId,
-          type,
+          type: '',
+          source: tabAssetSource(type as TabKey),
           status: 'active',
           limit: PAGE_SIZE,
           offset: pg * PAGE_SIZE,
         })
         const rawItems = data?.items || []
-        const mapped: MaterialItem[] = rawItems.map((asset: any) => {
-          const m = createMaterialFromAsset(asset, '')
-          return {
-            ...m,
-            type: m.type || type,
-          }
-        })
+        const mapped: MaterialItem[] = rawItems
+          .map((asset: any) => {
+            const m = createMaterialFromAsset(asset, '')
+            return {
+              ...m,
+              type: m.type || '',
+              sizeBytes: Number(asset?.size_bytes || 0) || undefined,
+              source: String(asset?.source || ''),
+            }
+          })
+          // 真人素材与普通素材隔离：「全部」不混入真人素材（参考 ResourceManagementView）
+          .filter((item) => type !== 'all' || item.source !== 'real_person')
         // 请求期间 tab 已切换：丢弃结果，不更新界面
         if (tabRef.current !== type || requestSeqRef.current !== seq) return
         setItems((prev) => (reset ? mapped : [...prev, ...mapped]))
@@ -192,14 +382,44 @@ export default function CanvasMaterialPicker({
     [workspaceId],
   )
 
-  // 打开面板或切换 tab：总是重新加载第一页
+  // 打开面板或切换 tab：服务端 tab 重新加载第一页；收藏 tab 由下方 effect 加载
   useEffect(() => {
     if (!visible) return
+    if (tab === 'collected') return
     setItems([])
     setPage(0)
     setHasMore(true)
     fetchAssets(tab, 0, true)
   }, [visible, tab, fetchAssets])
+
+  // 收藏 tab：读取本地收藏（按用户隔离），并刷新可能过期的签名地址
+  useEffect(() => {
+    if (!visible || tab !== 'collected') return
+    let cancelled = false
+    if (userId) setFavoriteVideoUserScope(userId)
+    const favorites = loadFavorites(workspaceId)
+    setItems(favorites.map((f) => favoriteToMaterial(f, favoriteMediaUrlOf(f))))
+    setPage(0)
+    setHasMore(false)
+    Promise.all(
+      favorites.map(async (favorite) => {
+        const assetId = favoriteAssetIdOf(favorite)
+        const fallbackUrl = favoriteMediaUrlOf(favorite)
+        if (!assetId) return favoriteToMaterial(favorite, fallbackUrl)
+        try {
+          const freshUrl = (await getAssetDownloadUrl({ workspaceId, assetId })) || ''
+          return favoriteToMaterial(favorite, freshUrl || fallbackUrl)
+        } catch {
+          return favoriteToMaterial(favorite, fallbackUrl)
+        }
+      }),
+    ).then((cards) => {
+      if (!cancelled) setItems(cards)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [visible, tab, workspaceId, userId])
 
   const loadMore = useCallback(() => {
     const nextPage = page + 1
@@ -210,8 +430,7 @@ export default function CanvasMaterialPicker({
   const listRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
 
-  // 底部哨兵：进入滚动容器可视区（含 80px 预加载）即自动加载下一页，
-  // 加载完成后若仍接近底部会再次触发，实现连续加载（参考 ResourceManagementView 的增量取数）
+  // 底部哨兵：进入滚动容器可视区（含 80px 预加载）即自动加载下一页
   useEffect(() => {
     const el = sentinelRef.current
     const gridEl = listRef.current
@@ -242,7 +461,18 @@ export default function CanvasMaterialPicker({
     [workspaceId, onApply],
   )
 
-  // 点击外部关闭
+  // 模糊匹配过滤：按素材名称（不区分大小写）
+  const visibleItems = useMemo(() => {
+    const keyword = searchQuery.trim().toLowerCase()
+    if (!keyword) return items
+    return items.filter((item) =>
+      String(item.name || '')
+        .toLowerCase()
+        .includes(keyword),
+    )
+  }, [items, searchQuery])
+
+  // popover：点击外部关闭
   useEffect(() => {
     if (!visible || variant !== 'popover') return
     const handler = (e: MouseEvent) => {
@@ -257,6 +487,75 @@ export default function CanvasMaterialPicker({
   if (!visible) return null
   if (variant === 'popover' && !position) return null
 
+  // ---- Modal 形态：居中模态弹窗（对齐 Figma "添加素材"）----
+  if (variant === 'modal') {
+    return (
+      <div className={styles.overlay} onMouseDown={onClose}>
+        <div className={styles.modalPanel} onMouseDown={(e) => e.stopPropagation()}>
+          {/* 工具栏：Tab（左）+ 模糊搜索框（最右），无标题无关闭按钮 */}
+          <div className={styles.modalToolbar}>
+            <div className={styles.modalTabs}>
+              {TABS.map((t) => (
+                <button
+                  key={t.k}
+                  className={`${styles.modalTab} ${tab === t.k ? styles.modalTabActive : ''}`}
+                  onClick={() => setTab(t.k)}
+                >
+                  {t.l}
+                </button>
+              ))}
+            </div>
+            <label className={styles.modalSearch}>
+              <svg
+                className={styles.modalSearchIcon}
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path d="M16.5 16.5 21 21" />
+              </svg>
+              <input
+                className={styles.modalSearchInput}
+                type="text"
+                value={searchQuery}
+                placeholder="搜索素材名称..."
+                aria-label="搜索素材名称"
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </label>
+          </div>
+
+          {/* 素材网格 */}
+          <div className={`${styles.grid} ${styles.modalGrid} canvas-material-picker-grid`} ref={listRef}>
+            {visibleItems.length === 0 && !loading && (
+              <div className={styles.empty}>{searchQuery.trim() ? '未找到匹配素材' : '暂无素材'}</div>
+            )}
+            <div className={styles.modalGridInner}>
+              {visibleItems.map((item) => (
+                <ModalCard key={item.id} item={item} workspaceId={workspaceId} onApply={handleApply} />
+              ))}
+            </div>
+            {/* 底部状态：加载中 / 哨兵 / 已加载全部 */}
+            {loading ? (
+              <div className={styles.loading}>加载中...</div>
+            ) : hasMore ? (
+              <div ref={sentinelRef} className={styles.loadMoreSentinel} />
+            ) : (
+              visibleItems.length > 0 && <div className={styles.loading}>已加载全部</div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ---- popover / drawer：紧凑卡片形态 ----
   const panelStyle: React.CSSProperties | undefined =
     variant === 'popover' && position
       ? {
@@ -274,7 +573,6 @@ export default function CanvasMaterialPicker({
       <div className={`${styles.header} ${variant === 'drawer' ? styles.headerDrawer : ''}`}>
         {variant === 'drawer' ? (
           <>
-            {/* 左侧：返回icon + 标题 */}
             <div className={styles.headerLeft}>
               <button className={styles.backBtn} onClick={onClose} aria-label="返回画布">
                 <svg
@@ -311,29 +609,53 @@ export default function CanvasMaterialPicker({
         </button>
       </div>
 
-      {/* Tab 切换 */}
+      {/* Tab 切换 + 搜索框 */}
       <div className={styles.tabs}>
-        <button className={`${styles.tab} ${tab === 'image' ? styles.tabActive : ''}`} onClick={() => setTab('image')}>
-          图片
-        </button>
-        <button className={`${styles.tab} ${tab === 'video' ? styles.tabActive : ''}`} onClick={() => setTab('video')}>
-          视频
-        </button>
+        {TABS.map((t) => (
+          <button
+            key={t.k}
+            className={`${styles.tab} ${tab === t.k ? styles.tabActive : ''}`}
+            onClick={() => setTab(t.k)}
+          >
+            {t.l}
+          </button>
+        ))}
+        <label className={styles.search}>
+          <svg
+            viewBox="0 0 24 24"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="M16.5 16.5 21 21" />
+          </svg>
+          <input
+            type="text"
+            value={searchQuery}
+            placeholder="搜索素材名称..."
+            aria-label="搜索素材名称"
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </label>
       </div>
 
       {/* 缩略图网格 */}
       <div className={`${styles.grid} canvas-material-picker-grid`} ref={listRef}>
-        {items.length === 0 && !loading && <div className={styles.empty}>暂无素材</div>}
+        {visibleItems.length === 0 && !loading && (
+          <div className={styles.empty}>{searchQuery.trim() ? '未找到匹配素材' : '暂无素材'}</div>
+        )}
         <div className={styles.gridInner}>
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <div key={item.id} className={styles.materialCard}>
-              {/* 类型标签（参考 resource-asset-type） */}
               <span className={styles.materialType}>{isVideoMaterial(item) ? '视频' : '图片'}</span>
-              {/* 封面区域（参考 resource-asset-cover，不含底部信息区） */}
               <div className={styles.materialCover}>
                 <MaterialThumb item={item} workspaceId={workspaceId} />
               </div>
-              {/* 悬浮操作栏（参考 resource-favorite-actions）：hover 时浮现「应用」 */}
               <div className={styles.materialActions}>
                 <button className={styles.materialActionBtn} onClick={() => handleApply(item)}>
                   应用
@@ -342,13 +664,12 @@ export default function CanvasMaterialPicker({
             </div>
           ))}
         </div>
-        {/* 底部状态：加载中 / 哨兵（进入视口自动加载下一页）/ 已加载全部 */}
         {loading ? (
           <div className={styles.loading}>加载中...</div>
         ) : hasMore ? (
           <div ref={sentinelRef} className={styles.loadMoreSentinel} />
         ) : (
-          items.length > 0 && <div className={styles.loading}>已加载全部</div>
+          visibleItems.length > 0 && <div className={styles.loading}>已加载全部</div>
         )}
       </div>
     </div>
