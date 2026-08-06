@@ -5,14 +5,185 @@
  * 图片：模型 + 比例 + 生成
  * 视频：模型 + 集合选择器(生成方式/比例/秒数/音频) + 生成
  */
-import React, { useState, useRef, useEffect, useMemo } from 'react'
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost } from '@/api/business'
 
+/** 读取可能为字符串/数字/布尔的值，返回字符串文本；非法输入返回空串。 */
+function readText(value: unknown): string {
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return ''
+}
+
+/** 参数名归一化：aspect_ratio / aspectRatio / aspect-ratio 归一为同一键。 */
+function normalizeParamKey(name: string): string {
+  return String(name || '')
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+/** 布尔类型别名：boolean/bool/switch/toggle/checkbox，以及布尔语义 options 的字段（如 watermark）。 */
+const BOOLEAN_TYPES = new Set(['boolean', 'bool', 'switch', 'toggle', 'checkbox'])
+const BOOLEAN_OPTION_KEYS = new Set(['true', 'false', '1', '0', 'yes', 'no', 'on', 'off', '开', '关'])
+
+function isBooleanField(field: ParamsSchemaField): boolean {
+  if (BOOLEAN_TYPES.has(normalizeParamKey(field.type))) return true
+  // 水印等常见开关字段兜底：无论 type 都渲染成开关
+  if (normalizeParamKey(field.name).includes('watermark')) return true
+  // options 为布尔语义（<=2 项且均为 true/false 等）也按开关渲染
+  const opts = (field.options || []).map((o) => normalizeParamKey(o))
+  return opts.length > 0 && opts.length <= 2 && opts.every((o) => BOOLEAN_OPTION_KEYS.has(o))
+}
+
+/** 数字类型别名：number/int/integer/float。 */
+const NUMBER_TYPES = new Set(['number', 'int', 'integer', 'float'])
+
+function isNumberField(field: ParamsSchemaField): boolean {
+  return NUMBER_TYPES.has(normalizeParamKey(field.type))
+}
+
+/** 比例字段名别名（归一化后均相同）。 */
+function isRatioField(field: ParamsSchemaField): boolean {
+  return normalizeParamKey(field.name) === 'ratio' || normalizeParamKey(field.name) === 'aspectratio'
+}
+
+/** 识别 seedream 5.0 模型：displayName + 原始记录中的名称/版本字段拼接后匹配。 */
+function isSeedream50Model(model: { displayName?: string; source?: unknown } | undefined): boolean {
+  if (!model) return false
+  const source = (model.source || {}) as Readonly<Record<string, unknown>>
+  const parts = [
+    model.displayName,
+    source.display_name,
+    source.displayName,
+    source.name,
+    source.model_name,
+    source.modelName,
+    source.model,
+    source.version_name,
+    source.versionName,
+    source.version,
+  ]
+  const name = parts
+    .filter((v) => v !== undefined && v !== null)
+    .map(String)
+    .join(' ')
+  return /seedream/i.test(name) && /5(\.0)?/i.test(name)
+}
+
+/**
+ * 模型 params_schema.fields 中解析出的单个参数定义。
+ * 字段：name=参数名（回传 key）、display_name=菜单组标题、type=类型（select/boolean/number 等）、
+ * options=选择类型可选值、default=默认值、min/max=数字上下限、help=说明。
+ */
+export interface ParamsSchemaField {
+  name: string
+  displayName: string
+  type: string
+  options?: string[]
+  default?: unknown
+  min?: number
+  max?: number
+  help?: string
+}
+
+/** 解析单条字段定义 → ParamsSchemaField（字段不合法时返回 null）。 */
+function parseFieldRecord(raw: unknown): ParamsSchemaField | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const record = raw as Record<string, unknown>
+  const name = readText(record.name)
+  if (!name) return null
+  const options = Array.isArray(record.options)
+    ? record.options.filter((o): o is string => typeof o === 'string')
+    : undefined
+  return {
+    name,
+    displayName: readText(record.display_name) || name,
+    type: readText(record.type) || 'select',
+    ...(options && options.length ? { options } : {}),
+    ...(record.default !== undefined ? { default: record.default } : {}),
+    ...(typeof record.min === 'number' ? { min: record.min } : {}),
+    ...(typeof record.max === 'number' ? { max: record.max } : {}),
+    ...(readText(record.help) ? { help: readText(record.help) } : {}),
+  }
+}
+
+/** 解析字段数组 → ParamsSchemaField[]，过滤掉不合法条目。 */
+function parseFieldArray(fields: unknown): ParamsSchemaField[] {
+  if (!Array.isArray(fields)) return []
+  const parsed: ParamsSchemaField[] = []
+  for (const raw of fields) {
+    const field = parseFieldRecord(raw)
+    if (field) parsed.push(field)
+  }
+  return parsed
+}
+
+/**
+ * 从模型原始记录解析 params_schema.fields。
+ * 结构固定为对象容器：params_schema = { fields: [...] }（含字符串 JSON 包裹）。
+ */
+export function parseParamsSchema(model: { source?: unknown } | undefined): ParamsSchemaField[] {
+  if (!model) return []
+  const source = model.source as Readonly<Record<string, unknown>> | undefined
+  const rawSchema = source?.params_schema ?? source?.paramsSchema
+  if (rawSchema === undefined || rawSchema === null || rawSchema === '') return []
+
+  let schema: unknown = rawSchema
+  if (typeof rawSchema === 'string') {
+    if (!rawSchema.trim()) return []
+    try {
+      schema = JSON.parse(rawSchema)
+    } catch {
+      return []
+    }
+  }
+
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return []
+
+  const containers = [
+    schema as Record<string, unknown>,
+    ((schema as Record<string, unknown>).params as Record<string, unknown> | undefined) ?? {},
+    ((schema as Record<string, unknown>).parameters as Record<string, unknown> | undefined) ?? {},
+    ((schema as Record<string, unknown>).schema as Record<string, unknown> | undefined) ?? {},
+    ((schema as Record<string, unknown>).json_schema as Record<string, unknown> | undefined) ?? {},
+    ((schema as Record<string, unknown>).jsonSchema as Record<string, unknown> | undefined) ?? {},
+  ]
+  for (const container of containers) {
+    if (!container || typeof container !== 'object' || Array.isArray(container)) continue
+    const parsed = parseFieldArray((container as Record<string, unknown>).fields)
+    if (parsed.length) return parsed
+  }
+  return []
+}
+
+/** 按字段类型归一化参数值（default 或用户选择），保证回传类型正确。 */
+function normalizeFieldValue(field: ParamsSchemaField, value: unknown): unknown {
+  if (isBooleanField(field)) {
+    return value === true || value === 'true' || value === '1' || value === 1 || value === '开' || value === 'on'
+  }
+  if (isNumberField(field)) {
+    const n = Number(value)
+    if (Number.isNaN(n)) return field.min ?? 0
+    if (field.min !== undefined && n < field.min) return field.min
+    if (field.max !== undefined && n > field.max) return field.max
+    return n
+  }
+  return String(value ?? '')
+}
+
+/** 字段当前值 → 菜单按钮上显示的文本。 */
+function formatFieldValue(field: ParamsSchemaField, value: unknown): string {
+  if (isBooleanField(field)) return value ? '开' : '关'
+  return String(value ?? '')
+}
+
 /** 连线来源引用信息 */
 export interface CanvasSourceRef {
   kind: string
+  /** 来源节点 id：文本来源拼接 prompt 时用于读取文本内容 */
+  sourceId: string
   edgeId: string
   slotIndex: number
   /** 来源节点的实际图片/视频地址（有素材内容时用于缩略图显示） */
@@ -30,6 +201,8 @@ export interface CanvasNodeInfo {
   videoMode?: 'first-last' | 'full-ref'
   /** 当前选中的模型版本 ID（用于回显） */
   modelVersionId?: number
+  /** 节点已有素材/生成结果地址（视频节点判断「已有视频内容」用，上传或生成都会写入） */
+  resultUrl?: string
 }
 
 interface CanvasNodePanelProps {
@@ -38,6 +211,7 @@ interface CanvasNodePanelProps {
   workspaceId: number
   /** slotIndex 标识槽位：0=首帧, 1=尾帧(视频)；其他节点按顺序 */
   onStartPickRef?: (slotIndex?: number) => void
+  /** 点击删除引用回调 */
   onRemoveRef?: (edgeId: string) => void
   /** 比例变更回调，用于同步更新节点宽高 */
   onRatioChange?: (ratio: string) => void
@@ -104,8 +278,6 @@ export default function CanvasNodePanel({
 }: CanvasNodePanelProps) {
   const kind = node?.kind || 'text'
   const [prompt, setPrompt] = useState('')
-  // 视频秒数（与面板生命周期保持一致：选择器变更后同步到预估接口）
-  const [seconds, setSeconds] = useState(5)
   // 受控回显：优先取节点数据中的比例/模式（存储值为英文 auto）
   const ratio = node?.ratio || (kind === 'video' ? AUTO_RATIO : '1:1')
   const videoMode = (node?.videoMode as VideoMode) || 'first-last'
@@ -121,34 +293,92 @@ export default function CanvasNodePanel({
   const maxRefs = kind === 'video' ? 2 : 3
   const kindModels = models?.[kind as 'text' | 'image' | 'video'] || []
 
-  // 选中模型（按 modelVersionId 匹配，无匹配时取第一个可用）
-  const selectedModel: GenerationModelOption | undefined = useMemo(() => {
-    if (!node?.modelVersionId) return kindModels.find((m) => !m.unavailableReason)
-    return (
-      kindModels.find((m) => m.modelVersionId === node.modelVersionId && !m.unavailableReason) ||
-      kindModels.find((m) => !m.unavailableReason)
-    )
-  }, [kindModels, node?.modelVersionId])
-
-  // 从选中模型的 operationCodes 里推导本次生成使用的 operation_code
-  const operationCode = useMemo(() => {
-    if (!selectedModel?.operationCodes?.length) return ''
-    const codes = selectedModel.operationCodes
-    // text → responses.multimodal; image → image.text_to_image; video → video.generate
-    if (kind === 'text') return codes.find((c) => c === 'responses.multimodal') || codes[0]
-    if (kind === 'image') return codes.find((c) => c === 'image.text_to_image') || codes[0]
-    if (kind === 'video') return codes.find((c) => c === 'video.generate' || c === 'video.edit') || codes[0]
-    return codes[0]
-  }, [selectedModel, kind])
-
-  // 视频额外的 params 字段（需要传给 estimate 接口，否则预估不准确）
-  const videoExtraParams = useMemo<Record<string, unknown>>(() => {
-    if (kind !== 'video') return {}
-    return {
-      resolution: '720p',
-      duration: seconds,
+  /**
+   * 当前上下文应使用的 operation_code：
+   * 文本节点 → responses.multimodal
+   * 图片节点：无图片来源节点（参考图）→ image.text_to_image；有图片来源节点 → image.image_to_image
+   * 视频节点：无视频内容 → video.generate；已有视频内容（生成结果/上传）→ video.edit
+   */
+  const targetOperationCode = useMemo((): string => {
+    if (kind === 'text') return 'responses.multimodal'
+    if (kind === 'image') {
+      const hasImageSource = (node?.sourceRefs || []).some((ref) => ref.kind === 'image')
+      return hasImageSource ? 'image.image_to_image' : 'image.text_to_image'
     }
-  }, [kind, seconds])
+    if (kind === 'video') {
+      const hasVideoContent = Boolean(node?.resultUrl)
+      return hasVideoContent ? 'video.edit' : 'video.generate'
+    }
+    return ''
+  }, [kind, node?.sourceRefs, node?.resultUrl])
+
+  // 只显示支持目标 operation_code 的模型（模型可能同时支持多个 code）
+  const availableModels = useMemo(
+    () => kindModels.filter((m) => m.operationCodes?.some((code) => code === targetOperationCode)),
+    [kindModels, targetOperationCode],
+  )
+
+  // 选中模型（按 modelVersionId 匹配，无匹配时取第一个可用；优先保留用户已选）
+  const selectedModel: GenerationModelOption | undefined = useMemo(() => {
+    if (!node?.modelVersionId) return availableModels.find((m) => !m.unavailableReason)
+    return (
+      availableModels.find((m) => m.modelVersionId === node.modelVersionId && !m.unavailableReason) ||
+      availableModels.find((m) => !m.unavailableReason)
+    )
+  }, [availableModels, node?.modelVersionId])
+
+  // 本次生成使用的 operation_code：目标 code 有可用模型时固定使用，否则为空（按钮禁用）
+  const operationCode = useMemo(() => {
+    if (!availableModels.some((m) => !m.unavailableReason)) return ''
+    return targetOperationCode
+  }, [availableModels, targetOperationCode])
+
+  // 选中模型的 params_schema.fields（视频菜单动态渲染来源）
+  const schemaFields = useMemo(() => parseParamsSchema(selectedModel), [selectedModel])
+
+  // 字段值状态：模型/schema 变化时重置为 default
+  const [fieldValues, setFieldValues] = useState<Record<string, unknown>>({})
+  useEffect(() => {
+    const next: Record<string, unknown> = {}
+    for (const f of schemaFields) next[f.name] = normalizeFieldValue(f, f.default)
+    setFieldValues(next)
+  }, [schemaFields])
+
+  // 字段值变更：回写状态；比例字段（ratio/aspect_ratio/aspectRatio）同步节点比例（保持节点尺寸联动）
+  const handleFieldChange = useCallback(
+    (name: string, value: unknown) => {
+      setFieldValues((prev) => ({ ...prev, [name]: value }))
+      const field = schemaFields.find((f) => f.name === name)
+      if (field && isRatioField(field) && typeof value === 'string') onRatioChange?.(value)
+    },
+    [schemaFields, onRatioChange],
+  )
+
+  // 图片节点的 schema 里若已含比例字段（ratio/aspect_ratio/aspectRatio），则由 schema 菜单控制比例，隐藏固定 RatioSelector
+  const imageRatioInSchema = kind === 'image' && schemaFields.some(isRatioField)
+
+  // 参数 params：由所选模型的 schema fields 动态构建（所有节点类型通用，不再写死 resolution/duration）
+  const schemaParams = useMemo<Record<string, unknown>>(() => {
+    const params: Record<string, unknown> = {}
+    for (const f of schemaFields) {
+      params[f.name] = fieldValues[f.name] !== undefined ? fieldValues[f.name] : normalizeFieldValue(f, f.default)
+    }
+    return params
+  }, [schemaFields, fieldValues])
+
+  // 拼接最终 prompt：文本来源节点的内容在前（按连线顺序），用户提示词在后；
+  // 图片/视频来源作为素材引用（input_assets）单独传参，不拼进 prompt。
+  const buildFullPrompt = useCallback(
+    (userPrompt: string): string => {
+      const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+      const sourceTexts = (node?.sourceRefs || [])
+        .filter((ref) => ref.kind === 'text')
+        .map((ref) => (textMap?.get(ref.sourceId) || '').trim())
+        .filter(Boolean)
+      return [...sourceTexts, userPrompt.trim()].filter(Boolean).join('\n\n')
+    },
+    [node?.sourceRefs],
+  )
 
   // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
   const [costEstimate, setCostEstimate] = useState<{
@@ -173,8 +403,9 @@ export default function CanvasNodePanel({
         workspaceId,
         modelVersionId,
         operationCode,
-        prompt: prompt.trim() || '',
-        params: kind === 'video' ? videoExtraParams : {},
+        // 预估口径与实扣一致：同样使用拼接文本来源后的完整 prompt
+        prompt: buildFullPrompt(prompt),
+        params: schemaParams,
       })
         .then((result: any) => {
           setCostEstimate({
@@ -191,18 +422,18 @@ export default function CanvasNodePanel({
     return () => {
       if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
     }
-  }, [selectedModel?.modelVersionId, operationCode, prompt, kind, videoExtraParams, workspaceId])
+  }, [selectedModel?.modelVersionId, operationCode, prompt, kind, schemaParams, workspaceId, buildFullPrompt])
 
-  // 生成按钮点击
+  // 生成按钮点击：将文本来源节点的内容拼接进 prompt 后提交
   const handleGenerate = () => {
     const modelVersionId = selectedModel?.modelVersionId
     if (!modelVersionId || !operationCode) return
     onGenerate?.({
       kind,
-      prompt: prompt.trim(),
+      prompt: buildFullPrompt(prompt),
       modelVersionId,
       operationCode,
-      params: kind === 'video' ? videoExtraParams : {},
+      params: schemaParams,
     })
   }
 
@@ -257,32 +488,29 @@ export default function CanvasNodePanel({
           </div>
         ) : sourceRefs.length > 0 ? (
           <div className={styles.refImages}>
-            {sourceRefs.map((ref) => (
-              <div
-                key={ref.edgeId}
-                className={styles.refThumb}
-                title={ref.kind === 'text' ? '文本' : ref.kind === 'image' ? '图片' : '视频'}
-              >
-                {ref.thumbnailUrl ? (
-                  <img className={styles.refThumbImg} src={ref.thumbnailUrl} alt={ref.kind} />
-                ) : ref.kind === 'text' ? (
-                  <TextRefIcon />
-                ) : ref.kind === 'image' ? (
-                  <ImageRefIcon />
-                ) : (
-                  <VideoRefIcon />
-                )}
-                <button
-                  className={styles.refDelete}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onRemoveRef?.(ref.edgeId)
-                  }}
-                >
-                  &times;
-                </button>
-              </div>
-            ))}
+            {/* 文本来源节点不显示缩略图（仅作为 prompt 文本引用），只展示图片/视频缩略图 */}
+            {sourceRefs
+              .filter((ref) => ref.kind !== 'text')
+              .map((ref) => (
+                <div key={ref.edgeId} className={styles.refThumb} title={ref.kind === 'image' ? '图片' : '视频'}>
+                  {ref.thumbnailUrl ? (
+                    <img className={styles.refThumbImg} src={ref.thumbnailUrl} alt={ref.kind} />
+                  ) : ref.kind === 'image' ? (
+                    <ImageRefIcon />
+                  ) : (
+                    <VideoRefIcon />
+                  )}
+                  <button
+                    className={styles.refDelete}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemoveRef?.(ref.edgeId)
+                    }}
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
             {sourceRefs.length < maxRefs && (
               <button className={styles.refAddBtn} title="添加参考" onClick={() => onStartPickRef?.(sourceRefs.length)}>
                 <PlusSmIcon />
@@ -309,22 +537,26 @@ export default function CanvasNodePanel({
         <div className={styles.selectors}>
           <ModelSelector
             kind={kind}
-            models={kindModels}
+            models={availableModels}
             value={node?.modelVersionId}
             loading={modelsLoading}
             onChange={onModelChange}
           />
 
-          {kind === 'image' && <RatioSelector value={ratio} onRatioChange={onRatioChange} />}
+          {/* 比例选择器：schema 已含比例字段时由菜单控制；seedream 5.0 模型不提供独立比例选项 */}
+          {kind === 'image' && !imageRatioInSchema && !isSeedream50Model(selectedModel) && (
+            <RatioSelector value={ratio} onRatioChange={onRatioChange} />
+          )}
 
-          {kind === 'video' && (
-            <VideoComboSelector
-              mode={videoMode}
-              ratio={ratio}
-              seconds={seconds}
-              onSecondsChange={setSeconds}
+          {/* 模型 params_schema 参数菜单：所有节点类型通用；视频额外含生成方式组 */}
+          {schemaFields.length > 0 && (
+            <SchemaFieldMenu
+              kind={kind}
+              mode={kind === 'video' ? videoMode : undefined}
+              fields={schemaFields}
+              values={fieldValues}
               onModeChange={onVideoModeChange}
-              onRatioChange={onRatioChange}
+              onFieldChange={handleFieldChange}
             />
           )}
         </div>
@@ -468,26 +700,43 @@ function RatioSelector({ value, onRatioChange }: { value: string; onRatioChange?
   )
 }
 
-/* ── 视频集合选择器（受控 mode/ratio） ── */
-function VideoComboSelector({
+/* ── 模型参数菜单（生成方式[视频] + params_schema 动态参数，所有节点类型通用） ── */
+function SchemaFieldMenu({
+  kind,
   mode,
-  ratio,
-  seconds,
+  fields,
+  values,
   onModeChange,
-  onRatioChange,
-  onSecondsChange,
+  onFieldChange,
 }: {
-  mode: VideoMode
-  ratio: string
-  seconds: number
+  kind: string
+  mode?: VideoMode
+  fields: ParamsSchemaField[]
+  values: Record<string, unknown>
   onModeChange?: (m: VideoMode) => void
-  onRatioChange?: (r: string) => void
-  onSecondsChange?: (s: number) => void
+  onFieldChange?: (name: string, value: unknown) => void
 }) {
   const [open, setOpen] = useState(false)
-  const [audio, setAudio] = useState(false)
 
-  const display = `${mode === 'first-last' ? '首尾帧' : '全能参考'} · ${formatRatio(ratio)} · ${seconds}秒 · ${audio ? '🔊' : '🔇'}`
+  // 按钮摘要：视频先显示生成方式，再拼接各字段当前值
+  const displayParts = kind === 'video' ? [`${mode === 'first-last' ? '首尾帧' : '全能参考'}`] : []
+  for (const f of fields) {
+    const v = values[f.name]
+    if (v === undefined || v === null || v === '') continue
+    displayParts.push(formatFieldValue(f, v))
+  }
+  const display = displayParts.join(' · ')
+
+  /** number 滑块步进：default 带小数点则按小数位数（0.5→0.1，0.05→0.01），否则按 1 */
+  const sliderStep = (f: ParamsSchemaField): number => {
+    const s = String(f.default ?? '')
+    const dot = s.indexOf('.')
+    if (dot >= 0) {
+      const dec = s.length - dot - 1
+      if (dec > 0) return 1 / Math.pow(10, dec)
+    }
+    return 1
+  }
 
   return (
     <div className={styles.selectorWrap}>
@@ -496,72 +745,89 @@ function VideoComboSelector({
       </button>
       <SelectorPopover open={open} onClose={() => setOpen(false)}>
         <div className={styles.videoMenu}>
-          {/* 生成方式 */}
-          <div className={styles.videoMenuGroup}>
-            <div className={styles.videoMenuTitle}>生成方式</div>
-            <div className={styles.videoBtnGroup}>
-              {(['first-last', 'full-ref'] as VideoMode[]).map((m) => (
-                <button
-                  key={m}
-                  className={`${styles.videoBtnGroupItem} ${mode === m ? styles.videoBtnGroupItemActive : ''}`}
-                  onClick={() => onModeChange?.(m)}
-                >
-                  {m === 'first-last' ? '首尾帧' : '全能参考'}
-                </button>
-              ))}
+          {/* 生成方式（仅视频；保留首尾帧/全能参考切换，不由 schema 驱动） */}
+          {kind === 'video' && (
+            <div className={styles.videoMenuGroup}>
+              <div className={styles.videoMenuTitle}>生成方式</div>
+              <div className={styles.videoBtnGroup}>
+                {(['first-last', 'full-ref'] as VideoMode[]).map((m) => (
+                  <button
+                    key={m}
+                    className={`${styles.videoBtnGroupItem} ${mode === m ? styles.videoBtnGroupItemActive : ''}`}
+                    onClick={() => onModeChange?.(m)}
+                  >
+                    {m === 'first-last' ? '首尾帧' : '全能参考'}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* 比例 */}
-          <div className={styles.videoMenuGroup}>
-            <div className={styles.videoMenuTitle}>比例</div>
-            <div className={styles.videoBtnGroup}>
-              {(mode === 'first-last' ? [AUTO_RATIO] : aspectRatios).map((r) => (
-                <button
-                  key={r}
-                  className={`${styles.videoBtnGroupItem} ${ratio === r ? styles.videoBtnGroupItemActive : ''}`}
-                  onClick={() => onRatioChange?.(r)}
-                >
-                  {formatRatio(r)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 秒数 */}
-          <div className={styles.videoMenuGroup}>
-            <div className={styles.videoMenuTitle}>秒数</div>
-            <div className={styles.videoBtnGroup}>
-              {secondsOptions.map((s) => (
-                <button
-                  key={s}
-                  className={`${styles.videoBtnGroupItem} ${seconds === s ? styles.videoBtnGroupItemActive : ''}`}
-                  onClick={() => onSecondsChange?.(s)}
-                >
-                  {s}s
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 音频 */}
-          <div className={styles.videoMenuGroup}>
-            <div className={styles.videoMenuTitle}>音频</div>
-            <div className={styles.videoBtnGroup}>
-              <button
-                className={`${styles.videoBtnGroupItem} ${audio ? styles.videoBtnGroupItemActive : ''}`}
-                onClick={() => setAudio(true)}
-              >
-                开
-              </button>
-              <button
-                className={`${styles.videoBtnGroupItem} ${!audio ? styles.videoBtnGroupItemActive : ''}`}
-                onClick={() => setAudio(false)}
-              >
-                关
-              </button>
-            </div>
-          </div>
+          {/* 模型 params_schema.fields 动态参数 */}
+          {fields.map((f) => {
+            const current = values[f.name]
+            const isActive = (v: unknown) => String(current) === String(v)
+            return (
+              <div key={f.name} className={styles.videoMenuGroup}>
+                <div className={styles.videoMenuTitle}>
+                  {f.displayName}
+                  {/* help 字段：标题后显示 ? 图标，hover 展示说明气泡 */}
+                  {f.help && (
+                    <span className={styles.helpIconWrap}>
+                      <span className={styles.helpIcon} aria-hidden="true">
+                        ?
+                      </span>
+                      <span className={styles.helpTooltip} role="tooltip">
+                        {f.help}
+                      </span>
+                    </span>
+                  )}
+                </div>
+                {isBooleanField(f) ? (
+                  <div className={styles.videoBtnGroup}>
+                    <button
+                      className={`${styles.videoBtnGroupItem} ${current ? styles.videoBtnGroupItemActive : ''}`}
+                      onClick={() => onFieldChange?.(f.name, true)}
+                    >
+                      开
+                    </button>
+                    <button
+                      className={`${styles.videoBtnGroupItem} ${!current ? styles.videoBtnGroupItemActive : ''}`}
+                      onClick={() => onFieldChange?.(f.name, false)}
+                    >
+                      关
+                    </button>
+                  </div>
+                ) : isNumberField(f) ? (
+                  /* 数字类型：滑块，min/max 为范围，步进由 default 是否有小数点决定 */
+                  <div className={styles.sliderWrap}>
+                    <input
+                      type="range"
+                      className={styles.slider}
+                      min={f.min ?? 0}
+                      max={f.max ?? 100}
+                      step={sliderStep(f)}
+                      value={Number(current) || 0}
+                      onChange={(e) => onFieldChange?.(f.name, Number(e.target.value))}
+                    />
+                    <span className={styles.sliderValue}>{String(current ?? '')}</span>
+                  </div>
+                ) : (
+                  <div className={styles.videoBtnGroup}>
+                    {(f.options || []).map((o) => (
+                      <button
+                        key={o}
+                        className={`${styles.videoBtnGroupItem} ${isActive(o) ? styles.videoBtnGroupItemActive : ''}`}
+                        onClick={() => onFieldChange?.(f.name, o)}
+                      >
+                        {o}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       </SelectorPopover>
     </div>
@@ -570,7 +836,6 @@ function VideoComboSelector({
 
 /* ── 常量 ── */
 const aspectRatios = ['2:3', '1:1', '4:3', '16:9', '9:16']
-const secondsOptions = [4, 5, 6, 7, 8, 9, 10]
 
 /* ── 小图标 ── */
 function PlusSmIcon() {

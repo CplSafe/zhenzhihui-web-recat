@@ -237,6 +237,128 @@
   color: #999;
   padding: 0 4px 8px;
   font-family: 'PingFang SC', sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 字段说明（help）的 ? 图标 + hover 气泡 */
+.helpIconWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: help;
+}
+
+.helpIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #d8dce5;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.helpTooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  min-width: 180px;
+  max-width: 260px;
+  padding: 7px 10px;
+  background: #2f3440;
+  color: #f0f1f5;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  border-radius: 8px;
+  white-space: normal;
+  word-break: break-word;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.18s,
+    transform 0.18s,
+    visibility 0.18s;
+  z-index: 5;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+/* 小三角箭头 */
+.helpTooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #2f3440;
+}
+
+.helpIconWrap:hover .helpTooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 数字字段滑块 */
+.sliderWrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px;
+}
+
+.slider {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: #e0e0e0;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #5767e5;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(87, 103, 229, 0.4);
+  cursor: pointer;
+}
+
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #5767e5;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(87, 103, 229, 0.4);
+  cursor: pointer;
+}
+
+.sliderValue {
+  flex: none;
+  min-width: 28px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5767e5;
+  font-family: 'PingFang SC', sans-serif;
 }
 
 /* 按钮组：铺满宽度，连接式分段控件 */

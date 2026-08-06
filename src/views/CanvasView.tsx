@@ -277,6 +277,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const [rightOffset, setRightOffset] = useState<{ x: number; y: number } | null>(null)
   const [leftHovered, setLeftHovered] = useState(false)
   const [rightHovered, setRightHovered] = useState(false)
+  const [topHovered, setTopHovered] = useState(false)
   const [editing, setEditing] = useState(false)
   const [textContent, setTextContent] = useState(() => ((window as any).__canvasTextContents?.get(id) as string) || '')
   // 视频播放态：默认暂停，点击播放按钮后播放，播放中显示暂停按钮
@@ -329,8 +330,6 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const elRef = useRef<HTMLDivElement>(null)
   const zoom = useStore((s) => s.transform[2])
 
-  const allNodes = (window as any).__canvasNodes || []
-  const isFirst = allNodes.length > 0 && allNodes[0]?.id === id
   const kind = (data.kind as string) || 'text'
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -355,6 +354,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const leftVisible = selected || leftHovered
   const rightVisible = selected || rightHovered
 
+  // 顶部上传按钮：图片/视频节点显示；视频节点已有内容（生成结果/上传）时隐藏
+  // 图片节点无内容显示「上传」，有内容显示「替换」——与左右侧加号 handle 同款交互（选中/悬停出现）
+  const nodeResultUrl = (data as any)?.resultUrl as string | undefined
+  const showUploadBtn = (kind === 'image' || kind === 'video') && !(kind === 'video' && !!nodeResultUrl)
+  const uploadLabel = kind === 'image' && nodeResultUrl ? '替换' : '上传'
+
   const labelMap: Record<string, string> = { text: '文本', image: '图片', video: '视频' }
 
   return (
@@ -364,6 +369,40 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         <span className="canvas-node-header__icon">{getTypeIcon(kind)}</span>
         <span className="canvas-node-header__label">{labelMap[kind] || kind}</span>
       </div>
+
+      {/* 顶部上传按钮：图片/视频节点专属，样式与左右侧连接点图标一致（圆形胶囊，选中/悬停出现） */}
+      {showUploadBtn && (
+        <button
+          type="button"
+          className="canvas-node-upload-btn"
+          title={uploadLabel}
+          data-visible={selected || topHovered}
+          onMouseEnter={() => setTopHovered(true)}
+          onMouseLeave={() => setTopHovered(false)}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            ;(window as any).__canvasRequestUpload?.(id)
+          }}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 16V4" />
+            <path d="m6 10 6-6 6 6" />
+            <path d="M4 20h16" />
+          </svg>
+          <span className="canvas-node-upload-btn__label">{uploadLabel}</span>
+        </button>
+      )}
 
       {/* 主体：文本节点可编辑；图片/视频显示素材内容或占位图标 */}
       <div className="canvas-node-body" onDoubleClick={handleDoubleClick}>
@@ -417,23 +456,16 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         )}
       </div>
 
-      {!isFirst && (
-        <Handle
-          id={`${id}-left-target`}
-          type="target"
-          position={Position.Left}
-          onMouseEnter={() => setLeftHovered(true)}
-          onMouseLeave={() => setLeftHovered(false)}
-        >
-          <HandleIcon
-            side="left"
-            visible={leftVisible}
-            mouseOffset={leftPos}
-            zoom={zoom}
-            onMouseMove={handleMouseMove}
-          />
-        </Handle>
-      )}
+      {/* 所有节点（含首个/画布源头）都保留左右两个连接点：可从左侧被连线、向右连接下游 */}
+      <Handle
+        id={`${id}-left-target`}
+        type="target"
+        position={Position.Left}
+        onMouseEnter={() => setLeftHovered(true)}
+        onMouseLeave={() => setLeftHovered(false)}
+      >
+        <HandleIcon side="left" visible={leftVisible} mouseOffset={leftPos} zoom={zoom} onMouseMove={handleMouseMove} />
+      </Handle>
 
       <Handle
         id={`${id}-right-source`}
@@ -516,6 +548,8 @@ function CanvasInner() {
   const toolbarLeaveTimerRef = useRef<number | null>(null)
   // 右键浮动菜单
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  // 图片/视频节点上传：隐藏的 file input，供顶部胶囊上传按钮触发
+  const uploadInputRef = useRef<HTMLInputElement>(null)
   // 撤销/重做历史栈：存储 nodes/edges + 文本内容快照
   const historyRef = useRef<{ undo: CanvasHistorySnapshot[]; redo: CanvasHistorySnapshot[] }>({
     undo: [],
@@ -559,6 +593,7 @@ function CanvasInner() {
         const src = nodes.find((n) => n.id === e.source)
         refs.push({
           kind: (src?.data?.kind as string) || 'text',
+          sourceId: e.source,
           edgeId: e.id,
           slotIndex: (e.data?.slotIndex as number) ?? 0,
           // 来源节点有实际素材内容（图片/视频）时带缩略图地址
@@ -842,6 +877,7 @@ function CanvasInner() {
         if (!prev) return null
         const newRef = {
           kind: sourceKind,
+          sourceId: sourceNode.id,
           edgeId: newEdgeId,
           slotIndex,
           // 来源节点有实际素材内容（图片/视频）时带缩略图地址
@@ -985,20 +1021,15 @@ function CanvasInner() {
         ...nds.map((n) => (n.selected ? { ...n, selected: false } : n)),
         newNode,
       ])
-      // 同步选中态回显：新节点默认选中，立即显示节点编辑面板
-      // 例外：画布为空时创建的是首个节点（画布源头），不弹面板
-      if (latestRef.current.nodes.length === 0) {
-        setSelectedNode(null)
-      } else {
-        setSelectedNode({
-          id,
-          kind: type,
-          sourceRefs: [],
-          ratio,
-          videoMode: type === 'video' ? 'first-last' : undefined,
-          modelVersionId: undefined,
-        })
-      }
+      // 同步选中态回显：新节点默认选中，立即显示节点编辑面板（首个节点同样弹出）
+      setSelectedNode({
+        id,
+        kind: type,
+        sourceRefs: [],
+        ratio,
+        videoMode: type === 'video' ? 'first-last' : undefined,
+        modelVersionId: undefined,
+      })
       setSaveStatus('dirty')
       // 动画结束后移除渐入类，避免节点被持久化后再恢复时重复播放动画
       window.setTimeout(() => {
@@ -1282,8 +1313,31 @@ function CanvasInner() {
             syncRef.current = { nodes: [], edges: [] }
             scheduleSyncRef.current(true)
           } else {
-            // 草稿不匹配当前画布（或为空）：不恢复不上传，云端以空画布呈现，保证画布内容唯一
+            // 草稿不匹配当前画布（或为空）：不恢复不上传，云端以空画布呈现，保证画布内容唯一。
+            // 初始项目预置一个默认文本节点作为画布起点，避免用户面对空白画布无从下手；
+            // 默认选中并弹出编辑面板，用户可直接输入提示词开始创作
+            const seedNode: Node = {
+              id: createNodeId('text'),
+              type: 'text',
+              position: { x: 0, y: 0 },
+              data: { kind: 'text' },
+              style: { width: 250, height: 250 },
+              selected: true,
+            }
+            setNodes([seedNode])
+            setEdges([])
+            setSelectedNode({
+              id: seedNode.id,
+              kind: 'text',
+              sourceRefs: [],
+              ratio: undefined,
+              videoMode: undefined,
+              modelVersionId: undefined,
+            })
+            // 预置节点也会同步到云端（本地草稿同样落盘绑定当前画布）
             cloudLoadedRef.current = true
+            syncRef.current = { nodes: [], edges: [] }
+            scheduleSyncRef.current(true)
           }
           fitCanvasView()
         }
@@ -1293,7 +1347,7 @@ function CanvasInner() {
         applyLocalDraft()
       }
     })()
-  }, [setNodes, setEdges, fitView, routeProjectId, navigate, workspaceId])
+  }, [setNodes, setEdges, setSelectedNode, fitView, routeProjectId, navigate, workspaceId])
 
   // 增量保存调度：防抖 1 秒后统一执行（本地草稿 + 云端），支持立即 flush
   const saveTimerRef = useRef<number | null>(null)
@@ -1485,6 +1539,63 @@ function CanvasInner() {
     [selectedNode, transform, appendNewNode, commitHistory],
   )
 
+  // 节点顶部上传按钮通过全局钩子触发：确保该节点先被选中（其内容将作为上传目标）
+  useEffect(() => {
+    ;(window as any).__canvasRequestUpload = (nodeId: string) => {
+      const node = latestRef.current.nodes.find((n) => n.id === nodeId)
+      if (!node) return
+      // 同步选中态，上传文件将应用到该节点
+      setSelectedNode({
+        id: node.id,
+        kind: (node.data?.kind as string) || 'text',
+        sourceRefs: getSourceRefs(node.id),
+        ratio: (node.data as any)?.ratio,
+        videoMode: (node.data as any)?.videoMode,
+        modelVersionId: (node.data as any)?.modelVersionId,
+        resultUrl: (node.data as any)?.resultUrl,
+      })
+      uploadInputRef.current?.click()
+    }
+    return () => {
+      delete (window as any).__canvasRequestUpload
+    }
+  }, [getSourceRefs])
+
+  // 文件选择后：将本地文件转为对象 URL 作为节点内容（resultUrl），并同步画布节点与选中态
+  const handleUploadFile = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      e.target.value = ''
+      if (!file || !selectedNode) return
+      const isImage = file.type.startsWith('image/')
+      const isVideo = file.type.startsWith('video/')
+      const nodeKind = selectedNode.kind
+      // 图片节点只接受图片；视频节点只接受视频
+      if (nodeKind === 'image' && !isImage) {
+        window.alert('图片节点仅支持上传图片文件')
+        return
+      }
+      if (nodeKind === 'video' && !isVideo) {
+        window.alert('视频节点仅支持上传视频文件')
+        return
+      }
+      const objectUrl = URL.createObjectURL(file)
+      // 替换内容前记录历史，供撤销使用
+      commitHistory()
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === selectedNode.id
+            ? { ...n, data: { ...(n.data as Record<string, unknown>), resultUrl: objectUrl } }
+            : n,
+        ),
+      )
+      // 同步选中态回显（视频节点一旦有内容，顶部上传按钮自动隐藏 → video.edit 模型）
+      setSelectedNode((prev) => (prev && prev.id === selectedNode.id ? { ...prev, resultUrl: objectUrl } : prev))
+      setSaveStatus('dirty')
+    },
+    [selectedNode, commitHistory, setSaveStatus],
+  )
+
   // 模型变更：保存 modelVersionId 到节点数据并回显
   const handleModelChange = useCallback(
     (modelVersionId: number) => {
@@ -1507,7 +1618,7 @@ function CanvasInner() {
         type,
         { x: 300 + Math.random() * 200, y: 200 + Math.random() * 200 },
         {
-          ratio: type === 'video' ? AUTO_RATIO : type === 'image' ? '2:3' : undefined,
+          ratio: type === 'video' ? AUTO_RATIO : type === 'image' ? '1:1' : undefined,
         },
       )
     },
@@ -1540,12 +1651,7 @@ function CanvasInner() {
   const handleSelectNodeOnDown = useCallback(
     (node: Node) => {
       if (isPickingRef) return
-      // 首个节点（画布源头）：选中时只高亮，不弹出编辑面板
-      const firstNode = latestRef.current.nodes[0]
-      if (firstNode && firstNode.id === node.id) {
-        setSelectedNode(null)
-        return
-      }
+      // 首个节点（画布源头）与其他节点一致：选中即弹出编辑面板
       setSelectedNode({
         id: node.id,
         kind: (node.data?.kind as string) || 'text',
@@ -1553,6 +1659,7 @@ function CanvasInner() {
         ratio: (node.data as any)?.ratio,
         videoMode: (node.data as any)?.videoMode,
         modelVersionId: (node.data as any)?.modelVersionId,
+        resultUrl: (node.data as any)?.resultUrl,
       })
     },
     [isPickingRef, getSourceRefs],
@@ -1610,6 +1717,15 @@ function CanvasInner() {
           onOpenHistory={() => openDrawerPanel('history')}
         />
       )}
+
+      {/* 隐藏文件选择：由节点顶部上传按钮触发，接收本地图片/视频文件 */}
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept={selectedNode?.kind === 'video' ? 'video/*' : 'image/*'}
+        style={{ display: 'none' }}
+        onChange={handleUploadFile}
+      />
 
       {/* 参考选择横幅 */}
       {isPickingRef && (
@@ -1672,12 +1788,7 @@ function CanvasInner() {
             handlePickRefNode(node as unknown as Node)
             return
           }
-          // 首个节点（画布源头）：选中时只高亮，不弹出编辑面板
-          const firstNode = latestRef.current.nodes[0]
-          if (firstNode && firstNode.id === node.id) {
-            setSelectedNode(null)
-            return
-          }
+          // 首个节点（画布源头）与其他节点一致：点击弹出编辑面板
           setSelectedNode({
             id: node.id,
             kind: (node.data?.kind as string) || 'text',
@@ -1685,6 +1796,7 @@ function CanvasInner() {
             ratio: (node.data as any)?.ratio,
             videoMode: (node.data as any)?.videoMode,
             modelVersionId: (node.data as any)?.modelVersionId,
+            resultUrl: (node.data as any)?.resultUrl,
           })
         }}
         onPaneClick={() => {

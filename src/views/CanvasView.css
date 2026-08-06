@@ -15,6 +15,73 @@
   z-index: 50;
 }
 
+/* 节点顶部上传按钮 — 图片/视频节点专属，与左右侧连接点图标同款交互（选中/悬停出现） */
+.canvas-node-upload-btn {
+  position: absolute;
+  /* 水平居中，且更靠上（加大与节点顶部的间距）；节点头部位于左上角，二者横向/纵向均错开 */
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 34px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px 3px 7px;
+  border: 2px solid #999;
+  border-radius: 999px;
+  background: #fff;
+  color: #666;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.2s,
+    transform 0.25s ease-out,
+    color 0.2s,
+    border-color 0.2s,
+    background-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.canvas-node-upload-btn[data-visible='true'] {
+  opacity: 1;
+  /* 从下向上渐入：出现时从节点上方较低处滑到最终位置 */
+  transform: translateX(-50%) translateY(6px);
+  animation: canvas-upload-btn-rise 0.3s ease-out both;
+}
+
+.canvas-node-upload-btn:hover {
+  color: #5767e5;
+  border-color: #5767e5;
+  background: #f4f6ff;
+  box-shadow: 0 3px 10px rgba(87, 103, 229, 0.25);
+}
+
+.canvas-node-upload-btn:active {
+  transform: translateX(-50%) translateY(6px) scale(0.95);
+}
+
+.canvas-node-upload-btn__label {
+  font-weight: 600;
+}
+
+/* 从下向上渐入动画（按钮水平居中，动画仅在垂直方向滑移） */
+@keyframes canvas-upload-btn-rise {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(6px);
+  }
+}
+
 /* 参考选择横幅 — 居中置顶 */
 .canvas-pick-banner {
   position: absolute;
