@@ -163,7 +163,7 @@ export default function SplashView() {
     <main className="splash">
       <picture className="splash-static-background" aria-hidden="true">
         <source srcSet={loginHero} type="image/webp" />
-        <img src={loginHeroFallback} alt="" fetchPriority="high" decoding="async" />
+        <img src={loginHeroFallback} alt="" loading="eager" decoding="async" />
       </picture>
       {/* 图片背景:高优先加载 + 异步解码,首屏尽快出图;失败透出静态底图 */}
       {isImage && (
@@ -172,7 +172,7 @@ export default function SplashView() {
           src={welcomeBanner!.mediaUrl}
           alt=""
           aria-hidden="true"
-          fetchPriority="high"
+          loading="eager"
           decoding="async"
           onError={() => setMediaFailed(true)}
         />

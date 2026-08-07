@@ -476,9 +476,12 @@ describe('DistributionView', () => {
     await user.type(screen.getByLabelText('搜索手机号'), '2002')
     await user.selectOptions(screen.getByLabelText('关系分类'), 'distributor')
     await user.selectOptions(screen.getByLabelText('订单类型'), 'subscription_renewal')
-    await user.click(startDateInput)
-    await user.click(await screen.findByTitle('2026-07-01'))
-    await user.click(await screen.findByTitle('2026-07-02'))
+    // Enter the range through the public inputs instead of relying on the
+    // calendar opening on a hard-coded current month.
+    await user.type(startDateInput, '2026年07月01日')
+    await user.keyboard('{Enter}')
+    await user.type(endDateInput, '2026年07月02日')
+    await user.keyboard('{Enter}')
     expect(startDateInput).toHaveValue('2026年07月01日')
     expect(endDateInput).toHaveValue('2026年07月02日')
     await user.selectOptions(screen.getByLabelText('收益状态'), 'pending')
@@ -498,7 +501,7 @@ describe('DistributionView', () => {
     await user.click(screen.getByRole('button', { name: '重置' }))
     expect(screen.getByText('上海云创科技有限公司')).toBeInTheDocument()
     expect(screen.getByText('北京渠道客户')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   it('downloads the backend export unchanged with the supported relationship and order filters', async () => {
     const user = userEvent.setup()

@@ -514,7 +514,7 @@ export default function LoginView() {
       <aside className="zlogin-hero">
         <picture className="zlogin-hero-fallback" aria-hidden="true">
           <source srcSet={loginHero} type="image/webp" />
-          <img src={loginHeroFallback} alt="" fetchPriority="high" decoding="async" />
+          <img src={loginHeroFallback} alt="" loading="eager" decoding="async" />
         </picture>
         {/* 大图媒体:有 banner 数据时按当前幻灯片展示(图=图层,视频=播放并播完切下一张);
             加载失败时:多张→切下一张,单张→隐藏(透出静态底图)。 */}

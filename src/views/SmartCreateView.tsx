@@ -81,7 +81,9 @@ import {
   compileVideoEditModelRequest,
 } from '@/api/smartVideo'
 import { blurFacesOnAsset, isNoFaceDetectedError } from '@/api/smartFaceBlur'
+import { listRealPeople } from '@/api/realPeople'
 import { readVideoDurationSec } from '@/utils/videoDuration'
+import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import { getSmartMarketingRecoveryKey } from '@/utils/smartMarketingRecovery'
 import {
   createCreativeProject,
@@ -233,6 +235,13 @@ import {
   type SmartModelSwitchRecoveryDescriptor,
   type SmartSubjectAssetVersionRegistry,
 } from '@/utils/smartModelSwitchSafety'
+import {
+  isRealPersonReferenceStillAuthorized,
+  registerRealPersonReference,
+  requireRealPersonPreservationForShots,
+  resolveShotRealPersonPreservation,
+  type SmartRealPersonReference,
+} from '@/utils/smartRealPerson'
 import './SmartCreateView.css'
 
 /** 业务生成接口使用正整数模型版本 ID；目录中的数字字符串在这里统一收窄。 */
@@ -266,6 +275,12 @@ const STEPS: StepItem[] = [
   { key: 'material', label: '准备素材' },
   { key: 'shots', label: '镜头编排' },
   { key: 'video', label: '生成视频' },
+]
+const REAL_PERSON_STEPS: StepItem[] = [
+  { key: 'script', label: '真人策划' },
+  { key: 'material', label: '选择真人' },
+  { key: 'shots', label: '镜头编排' },
+  { key: 'video', label: '真人成片' },
 ]
 /** 流式脚本增量合并到界面的最小间隔。 */
 const SCRIPT_STREAM_RENDER_INTERVAL_MS = 120
@@ -364,14 +379,6 @@ function buildSmartVideoEditPrompt(note = '', variationIndex?: number, variation
 }
 
 /** 侧边栏导航键与页面路径映射。 */
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 /** 流程底栏主操作按钮的统一配置。 */
 interface BottomButton {
@@ -967,13 +974,18 @@ const GUIDE_TESTING = false
 /** 路由包装传入的会话令牌，用于隔离重挂载前后的异步回调。 */
 interface SmartCreateViewProps {
   routeSessionToken?: string
+  /** smart=普通智能成片；real-person=认证真人素材驱动且不做人脸脱敏的独立流程。 */
+  flowMode?: 'smart' | 'real-person'
 }
 
 /** 编排智能成片完整流程并负责草稿、任务、权限和结果恢复。 */
-export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateViewProps) {
+export default function SmartCreateView({ routeSessionToken = '', flowMode = 'smart' }: SmartCreateViewProps) {
   const navigate = useNavigate()
   const { id: routeId } = useParams()
   const location = useLocation()
+  const isRealPersonMode = flowMode === 'real-person'
+  const flowBasePath = isRealPersonMode ? '/real-person-video' : '/smart'
+  const draftFlow: SmartDraft['flow'] = isRealPersonMode ? 'real-person-video' : 'smart'
   const requestedProjectVideoSelection: RequestedProjectVideoSelection | null = readRequestedProjectVideoSelection(
     location.search,
     location.state,
@@ -1727,6 +1739,27 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
     setSubjectAssets(next)
     applySubjectImage(name, url, assetId)
   }
+  const selectRealPersonForSubject = (name: string, url: string, reference: SmartRealPersonReference) => {
+    const previous = subjectAssetsRef.current
+    const existing = previous[name] || { versions: [] }
+    const versions = (existing.versions || []).includes(url)
+      ? existing.versions || []
+      : [...(existing.versions || []), url]
+    const next = {
+      ...previous,
+      [name]: {
+        ...existing,
+        versions,
+        sources: { ...(existing.sources || {}), [url]: 'manual' as const },
+        ids: { ...(existing.ids || {}), [url]: reference.localAssetId },
+        realPersonRefs: { ...(existing.realPersonRefs || {}), [url]: reference },
+      },
+    }
+    subjectAssetsRef.current = next
+    setSubjectAssets(next)
+    applySubjectImage(name, url, reference.localAssetId)
+    showToast(`已选用认证真人「${reference.personName}」，生成时将保留人物特征`, 'success')
+  }
   // 弹窗内上传素材:File → 后端 asset → 加为该主体新版本(并应用到同名主体)
   const uploadForSubject = async (name: string, file: File) => {
     const ws = Number(workspaceId || 0)
@@ -1853,6 +1886,12 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       const anchored = subjectRefOf(name)
       const anchoredIds =
         anchored.assetIds && anchored.assetIds.length ? anchored.assetIds : anchored.assetId ? [anchored.assetId] : []
+      const isPersonSubject = /人物|人像|角色|person|portrait|model/i.test(subjectKindOf(name) || '')
+      const requiredRealPersonReference =
+        isRealPersonMode && isPersonSubject ? entryMeta?.realPersonReferences?.[0] : null
+      if (isRealPersonMode && isPersonSubject && !requiredRealPersonReference?.localAssetId) {
+        throw new Error(`素材「${name}」缺少已认证真人引用，请重新选择真人素材`)
+      }
       if (opts.refImageUrls?.length) {
         // 弹窗手动加的参考图(可多张):第一张给 VL 优化提示词;全部作图生图参考(gpt-image 支持多张)
         try {
@@ -1917,6 +1956,12 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
           }
         }
       }
+      if (
+        requiredRealPersonReference?.localAssetId &&
+        !refAssetIds.includes(requiredRealPersonReference.localAssetId)
+      ) {
+        refAssetIds.unshift(requiredRealPersonReference.localAssetId)
+      }
       const operationCode: SmartImageOperationCode = refAssetIds.length ? 'image.image_to_image' : 'image.text_to_image'
       const modelSelection =
         opts.lockedImageModels?.[operationCode] || requireGenerationModel(operationCode, opts.generationModels)
@@ -1930,6 +1975,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         modelPlanCandidates: plans,
         ratio: entryMeta?.ratio,
         lowRes: true,
+        allowTextToImageFallback: !requiredRealPersonReference,
         signal,
         onTask: (taskId) => {
           const normalizedTaskId = Number(taskId || 0)
@@ -2664,6 +2710,10 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       ? opts.refUrls!
       : (Array.from(new Set(sh.subjects.map((s) => s.image).filter(Boolean))) as string[])
     const refIds: number[] = []
+    const requiredRealPersonReference = isRealPersonMode ? entryMeta?.realPersonReferences?.[0] : null
+    if (isRealPersonMode && !requiredRealPersonReference?.localAssetId) {
+      throw new Error('当前镜头缺少已认证真人素材，无法生成真人画面')
+    }
     for (const u of elUrls) {
       try {
         const id = await ensureAssetId(ws, u, cache, opts.signal)
@@ -2684,6 +2734,9 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         throwIfSmartRequestAborted(opts.signal)
         /* ignore */
       }
+    }
+    if (requiredRealPersonReference?.localAssetId && !refIds.includes(requiredRealPersonReference.localAssetId)) {
+      refIds.unshift(requiredRealPersonReference.localAssetId)
     }
     // 该镜元素名(锚定画面只含这些主体,避免把无关产品/主题塞进来)
     const elNames = Array.from(new Set(sh.subjects.map((s) => stripAt(s.tag)).filter(Boolean))).join('、')
@@ -2716,6 +2769,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       modelVersion: modelSelection.source,
       modelPlanCandidates: plans,
       ratio: entryMeta?.ratio,
+      allowTextToImageFallback: !requiredRealPersonReference,
       signal: opts.signal,
       onTask: opts.onTask,
     })
@@ -3893,8 +3947,8 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   const [blurDebug, setBlurDebug] = useState<any[]>([])
   // 人脸脱敏恒开(不提供开关):正式出片前先对每张进入视频的分镜图抠人脸/脱敏,再提交给 Seedance。
   // 明确确认无人脸时使用原图；检测服务异常时停止本轮，不能把未经确认的原图送去生成。
-  const [faceBlurEnabled] = useState(true)
-  const faceBlurEnabledRef = useRef(true)
+  const faceBlurEnabled = !isRealPersonMode
+  const faceBlurEnabledRef = useRef(faceBlurEnabled)
   useEffect(() => {
     faceBlurEnabledRef.current = faceBlurEnabled
   }, [faceBlurEnabled])
@@ -4197,8 +4251,23 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
           const lockedPreparedIds = (job.preparedImageAssetIds || [])
             .map((id) => Number(id) || 0)
             .filter((id) => id > 0)
+          const requiredRealPersonReferences = isRealPersonMode
+            ? requireRealPersonPreservationForShots(activeShots, subjectAssetsRef.current)
+            : []
+          const hasRealPersonPreservation = requiredRealPersonReferences.length > 0
+          const authorizedRealPeople = isRealPersonMode ? await listRealPeople({ workspaceId: ws }) : []
+          if (
+            isRealPersonMode &&
+            requiredRealPersonReferences.some(
+              (reference) => !isRealPersonReferenceStillAuthorized(reference, authorizedRealPeople),
+            )
+          ) {
+            throw new Error('真人认证或素材授权已失效，请重新选择真人素材后再生成')
+          }
           const canReuseBatchAssets =
-            lockedSourceIds.length === activeShots.length && lockedPreparedIds.length === activeShots.length
+            !hasRealPersonPreservation &&
+            lockedSourceIds.length === activeShots.length &&
+            lockedPreparedIds.length === activeShots.length
 
           if (canReuseBatchAssets) {
             imageAssetIds.push(...lockedPreparedIds)
@@ -4248,6 +4317,26 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
               for (let j = 0; j < srcIds.length; j++) {
                 const { shotId, id } = srcIds[j]
                 const sh = currentShots.find((s) => s.id === shotId)
+                const realPersonReference =
+                  isRealPersonMode && sh ? resolveShotRealPersonPreservation(sh, subjectAssetsRef.current) : null
+                if (realPersonReference) {
+                  if (!isRealPersonReferenceStillAuthorized(realPersonReference, authorizedRealPeople)) {
+                    throw new Error(`${sh?.no || `分镜 ${j + 1}`}关联的真人认证或素材授权已失效，请重新选择真人素材`)
+                  }
+                  imageAssetIds.push(id)
+                  dbg.push({
+                    no: sh?.no || '',
+                    srcAssetId: id,
+                    outAssetId: id,
+                    outUrl: sh?.image || '',
+                    status: 'verified_real_person_preserved',
+                    ok: true,
+                    cached: false,
+                    noFace: false,
+                    realPersonId: realPersonReference.realPersonId,
+                  })
+                  continue
+                }
                 if (updateCurrentUi()) setBlurPhase(`人脸脱敏 ${j + 1}/${srcIds.length}…`)
                 const cached = roundCache.get(id)
                 if (cached) {
@@ -4289,7 +4378,21 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
               }
               if (updateCurrentUi()) setBlurDebug(dbg)
             } else {
-              for (const source of srcIds) imageAssetIds.push(source.id)
+              for (let j = 0; j < srcIds.length; j++) {
+                const source = srcIds[j]
+                const sh = currentShots.find((shot) => shot.id === source.shotId)
+                const realPersonReference = sh ? resolveShotRealPersonPreservation(sh, subjectAssetsRef.current) : null
+                if (isRealPersonMode && !realPersonReference) {
+                  throw new Error(`${sh?.no || `分镜 ${j + 1}`}缺少真人素材引用，已停止本次视频生成`)
+                }
+                if (
+                  realPersonReference &&
+                  !isRealPersonReferenceStillAuthorized(realPersonReference, authorizedRealPeople)
+                ) {
+                  throw new Error(`${sh?.no || `分镜 ${j + 1}`}关联的真人认证或素材授权已失效，请重新选择真人素材`)
+                }
+                imageAssetIds.push(source.id)
+              }
             }
 
             if (job.batchId && srcIds.length > 0 && imageAssetIds.length === srcIds.length) {
@@ -5901,6 +6004,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
     const activeVideoTaskId = recordTaskId || (hasProcessingVideo ? Number(vidGenTaskId || 0) || 0 : 0)
     return {
       ...latestState,
+      flow: draftFlow,
       fullVideoUrl: latestFullVideo.url,
       fullVideoAssetId: latestFullVideo.assetId,
       vidGenTaskId: activeVideoTaskId,
@@ -6491,6 +6595,16 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       navigate(`/hot-copy/${rid}`, { replace: true })
       return
     }
+    const parsedProjectDraft = parseDraftObject(draftJson)
+    const loadedFlow = String(parsedProjectDraft?.smart?.flow || parsedProjectDraft?.flow || 'smart').toLowerCase()
+    if (loadedFlow === 'real-person-video' && !isRealPersonMode) {
+      navigate(`/real-person-video/${rid}`, { replace: true })
+      return
+    }
+    if (loadedFlow !== 'real-person-video' && isRealPersonMode) {
+      navigate(`/smart/${rid}`, { replace: true })
+      return
+    }
     allowCreativeReplaceProjectIdRef.current = 0
     baseDraftContentFingerprintRef.current = createCreativeDraftContentFingerprint(draftJson)
     draftContentConflictNotifiedRef.current = false
@@ -6676,7 +6790,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         (location.state as any)?.autoResumed === true && Number(localDraft?.projectId || 0) === rid
       if ((status === 403 || status === 404) && cameFromLocalDraft) {
         clearSmartDraft(Number(workspaceId || 0))
-        navigate('/smart', { replace: true })
+        navigate(flowBasePath, { replace: true })
         return
       }
       // 其余情况(真实深链接、5xx/网络):暴露后端真实原因,不吞成笼统提示。
@@ -6725,7 +6839,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       pinProjectWorkspaceId(0) // 空白入口切空间:解除项目钉住,后续新建走新的全局空间
       hydratedRef.current = true
       appliedRef.current = true
-      navigate('/smart', { replace: true })
+      navigate(flowBasePath, { replace: true })
       return
     }
     // 从「项目管理 → 新建视频」进入(携带 restartProjectId):全新流程。
@@ -6752,7 +6866,9 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       // 故等 isCheckingSession=false(登录用户会话已载 / 匿名已确定)再决定;此处 return 不置 hydratedRef,
       // 会话就绪后 effect 依赖 isCheckingSession 变化会重跑。
       if (isCheckingSession) return
-      const runningProject = findRunningVideoGen('smart', Number(workspaceId || 0))
+      // 真人成片与普通智能成片当前共用底层任务登记 scope，根入口不能据此跨流程抢占项目；
+      // 真人流程依靠带 flow 的本地草稿或项目深链恢复，避免跳进普通智能成片项目。
+      const runningProject = isRealPersonMode ? null : findRunningVideoGen('smart', Number(workspaceId || 0))
       if (
         runningProject?.meta.projectId &&
         !deniedSmartProjectKeys.has(
@@ -6760,7 +6876,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         )
       ) {
         setProjectLoading(true)
-        navigate(`/smart/${runningProject.meta.projectId}`, {
+        navigate(`${flowBasePath}/${runningProject.meta.projectId}`, {
           replace: true,
           state: { registryResumed: true },
         })
@@ -6771,12 +6887,12 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       // 想新建走「创建新视频」(resetToNewVideo 会清草稿,清后此判断为 false → 回到入口)。
       const d = loadSmartDraft(Number(workspaceId || 0))
       const pendingPid = Number(d?.projectId || 0) || 0
-      const inProgress = !!d?.started && pendingPid > 0
+      const inProgress = !!d?.started && pendingPid > 0 && String(d?.flow || 'smart') === draftFlow
       if (inProgress) {
         // autoResumed:标记"由本地草稿自动跳转"。若目标项目不属于当前用户(403/404),
         // loadProjectById 会据此清掉陈旧草稿并回落空白入口,而不是弹错误页且每次循环。
         setProjectLoading(true)
-        navigate(`/smart/${pendingPid}`, { replace: true, state: { autoResumed: true } })
+        navigate(`${flowBasePath}/${pendingPid}`, { replace: true, state: { autoResumed: true } })
         return // 不置 hydratedRef,等重定向到 /smart/:id 再水合 + 续轮询
       }
       // 空白 /smart:始终以最初的空输入框进入,不恢复本地草稿。
@@ -7213,7 +7329,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       showToast('当前素材或分镜图片正在生成，请等待完成后再离开', 'info')
       return
     }
-    const path = ROUTE_MAP[key]
+    const path = getSidebarRoute(key)
     if (path) navigate(path)
     else openComingSoon() // 设置/视频编辑/投前预审/数据看板等未上线项:弹全局「功能待开放」弹窗
   }
@@ -7345,7 +7461,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
     serverTitleRef.current = ''
     autoVidRef.current = false
     setEntryKey((k) => k + 1)
-    navigate('/smart', { state: { taskCenterNewSession: true } })
+    navigate(flowBasePath, { state: { taskCenterNewSession: true } })
   }
 
   const startRename = () => {
@@ -7511,7 +7627,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       // 主推产品锚定:用上传素材识别主推产品并绑定到对应主体(后续走图生图保真、不合并、不进一键批量);
       // 匹配不到则注入「主推产品」主体到所有镜头。best-effort,失败则用原结果。
       let anchored = withSubjects
-      if (meta.images?.length) {
+      if (meta.images?.length && !isRealPersonMode) {
         try {
           anchored = await anchorUploadsToSubjects(
             withSubjects,
@@ -7550,6 +7666,42 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         if (controller.signal.aborted || (error as any)?.name === 'AbortError') throw error
         /* 合并失败 → 保持拆分结果 */
       }
+      const entryRealPersonReference = isRealPersonMode ? meta.realPersonReferences?.[0] : undefined
+      const entryRealPersonImage = isRealPersonMode ? meta.images?.[0] : undefined
+      const entryRealPersonNames = new Set<string>()
+      if (entryRealPersonReference && entryRealPersonImage) {
+        finalShots = finalShots.map((shot) => {
+          const subjects = [...(shot.subjects || [])]
+          const personIndexes = subjects
+            .map((subject, index) => (/人物|人像|角色|person|portrait|model/i.test(subject.kind || '') ? index : -1))
+            .filter((index) => index >= 0)
+          if (!personIndexes.length) {
+            const name = entryRealPersonReference.personName || '出镜人物'
+            entryRealPersonNames.add(name)
+            subjects.unshift({
+              tag: `@${name}`,
+              kind: '人物',
+              image: entryRealPersonImage,
+              assetId: entryRealPersonReference.localAssetId,
+              refImage: entryRealPersonImage,
+              refAssetId: entryRealPersonReference.localAssetId,
+            })
+          } else {
+            personIndexes.forEach((index) => {
+              const name = stripAt(subjects[index].tag) || entryRealPersonReference.personName || '出镜人物'
+              entryRealPersonNames.add(name)
+              subjects[index] = {
+                ...subjects[index],
+                image: entryRealPersonImage,
+                assetId: entryRealPersonReference.localAssetId,
+                refImage: entryRealPersonImage,
+                refAssetId: entryRealPersonReference.localAssetId,
+              }
+            })
+          }
+          return { ...shot, subjects }
+        })
+      }
       if (!isCurrentRun()) return false
       if (options.transactional) {
         const committed = mergeTransactionalScriptResult({
@@ -7560,16 +7712,35 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         shotsExplicitlyClearedRef.current = false
         shotsRef.current = committed.shots
         setShots(committed.shots)
-        subjectAssetsRef.current = committed.subjectAssets
-        setSubjectAssets(committed.subjectAssets)
+        const committedSubjectAssets =
+          entryRealPersonReference && entryRealPersonImage
+            ? registerRealPersonReference(
+                committed.subjectAssets,
+                entryRealPersonNames,
+                entryRealPersonImage,
+                entryRealPersonReference,
+              )
+            : committed.subjectAssets
+        subjectAssetsRef.current = committedSubjectAssets
+        setSubjectAssets(committedSubjectAssets)
         latestDraftStateRef.current = {
           ...latestDraftStateRef.current,
           shots: committed.shots,
-          subjectAssets: committed.subjectAssets,
+          subjectAssets: committedSubjectAssets,
         }
         autoGenRef.current = false
       } else {
         shotsRef.current = finalShots
+        if (entryRealPersonReference && entryRealPersonImage) {
+          const nextSubjectAssets = registerRealPersonReference(
+            subjectAssetsRef.current,
+            entryRealPersonNames,
+            entryRealPersonImage,
+            entryRealPersonReference,
+          )
+          subjectAssetsRef.current = nextSubjectAssets
+          setSubjectAssets(nextSubjectAssets)
+        }
       }
       succeeded = true
     } catch (e: any) {
@@ -8385,7 +8556,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       return
     }
 
-    navigate('/smart', {
+    navigate(flowBasePath, {
       state: {
         taskCenterNewSession: true,
         carryMode: 'video',
@@ -8410,6 +8581,28 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       }
     }
     if (!(await requireAuth())) return false
+    if (isRealPersonMode) {
+      const reference = meta.realPersonReferences?.[0]
+      if (
+        meta.images?.length !== 1 ||
+        Number(meta.imageAssetIds?.[0] || 0) <= 0 ||
+        !reference ||
+        Number(reference.localAssetId) !== Number(meta.imageAssetIds?.[0] || 0)
+      ) {
+        showToast('请先从真人素材库选择一张已认证真人图片', 'error')
+        return false
+      }
+      try {
+        const people = await listRealPeople({ workspaceId: Number(workspaceId || 0) })
+        if (!isRealPersonReferenceStillAuthorized(reference, people)) {
+          showToast('所选真人素材的认证或授权已失效，请重新选择', 'error')
+          return false
+        }
+      } catch (error) {
+        showToast(getBusinessErrorMessage(error, '真人素材授权校验失败，请稍后重试'), 'error')
+        return false
+      }
+    }
     const entryReferenceImageCount = meta.mode === 'image' ? (meta.images || []).length : 0
     const entryRequiredOperations = requiredGenerationOperations(meta.mode, entryReferenceImageCount)
     if (!areGenerationModelOperationsReady(generationModelCatalog.operationStates, entryRequiredOperations)) {
@@ -8481,7 +8674,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         )
         return false
       }
-      navigate('/smart', {
+      navigate(flowBasePath, {
         state: {
           taskCenterNewSession: true,
           carryMode: 'video',
@@ -8580,7 +8773,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
       // 立即绑定到正式项目地址并替换这份一次性状态，确保刷新时恢复已保存项目，
       // 而不是再次进入空白的“重新创建”分支。
       if (Number(routeId || 0) !== readyProjectId || explicitFreshEntrySession) {
-        navigate(`/smart/${readyProjectId}`, {
+        navigate(`${flowBasePath}/${readyProjectId}`, {
           replace: true,
           state: {
             autoNameRequirement: req,
@@ -9934,10 +10127,14 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
   }
 
   // 是否使用了营销 SKILL(决定流程是否多出「营销思路拆解」步、进度条是否整体后移)
-  const usedSkill = !!entryMeta?.skill
+  const usedSkill = !isRealPersonMode && !!entryMeta?.skill
+  const visibleFlowSteps = isRealPersonMode ? REAL_PERSON_STEPS : STEPS
+  const visibleActiveStatus = isRealPersonMode
+    ? ['策划生成中', '真人素材准备中', '镜头编排中', '真人视频生成中']
+    : ACTIVE_STATUS
 
   return (
-    <div className="smart">
+    <div className={`smart${isRealPersonMode ? ' smart--real-person' : ''}`}>
       {durGuard.open && (
         <div className="smart__durguard" role="dialog" aria-modal="true">
           <div
@@ -9993,7 +10190,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
         </div>
       )}
       <AppSidebar
-        activeKey="creative"
+        activeKey={isRealPersonMode ? 'real-person-video' : 'creative'}
         onNavigate={onNavigate}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -10035,6 +10232,8 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
             <div className="smart__entry-content">
               <SmartEntry
                 key={entryKey}
+                variant={isRealPersonMode ? 'real-person' : 'smart'}
+                workspaceId={Number(workspaceId || 0)}
                 onSubmit={handleStart}
                 restoreSessionDraft={!explicitFreshEntrySession}
                 onNewVideo={resetToNewVideo}
@@ -10065,6 +10264,7 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
                         (carriedEntry.imageAssetIds.some((assetId) => assetId > 0)
                           ? carriedEntry.imageAssetIds
                           : undefined)),
+                  realPersonReferences: entryMeta?.realPersonReferences,
                   outputCount: entryMeta?.outputCount ?? imageComposerDraft.outputCount,
                   skill: entryMeta?.skill,
                   generationModels: entryMeta?.generationModels,
@@ -10151,12 +10351,24 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
               <div className="smart__flow-content">
                 {/* 创建新视频:固定在流程区最右上,点击重置为全新入口、重新走一遍生成流程 */}
                 <button type="button" className="smart__newvideo" onClick={() => resetToNewVideo('video')}>
-                  创建新视频
+                  {isRealPersonMode ? '新建真人成片' : '创建新视频'}
                 </button>
+                {isRealPersonMode && (
+                  <section className="smart__real-flow-head" aria-label="真人成片项目">
+                    <div className="smart__real-flow-mark" aria-hidden="true">
+                      人
+                    </div>
+                    <div>
+                      <span>VERIFIED PERSON PROJECT</span>
+                      <strong>真人成片工作流</strong>
+                      <p>人物素材来自认证真人库，成片阶段保留人物特征并持续校验授权状态。</p>
+                    </div>
+                  </section>
+                )}
                 {/* 进度条:用了 SKILL 时在最前面加一步「营销思路拆解」,索引整体后移 1 */}
                 <div className="smart__progress" data-guide="smart-stepbar">
                   <StepProgress
-                    steps={usedSkill ? [MARKETING_STEP, ...STEPS] : STEPS}
+                    steps={usedSkill ? [MARKETING_STEP, ...visibleFlowSteps] : visibleFlowSteps}
                     current={usedSkill ? (marketingOpen ? 0 : step + 1) : step}
                     clickableMax={usedSkill ? maxReached + 1 : maxReached}
                     statuses={(() => {
@@ -10176,13 +10388,13 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
                         shotGenRunning,
                         actualVideoGenerating,
                       ]
-                      const flow = STEPS.map((_, i) =>
+                      const flow = visibleFlowSteps.map((_, i) =>
                         running[i]
-                          ? ACTIVE_STATUS[i]
+                          ? visibleActiveStatus[i]
                           : done[i]
                             ? '已完成'
                             : !marketingOpen && i === step
-                              ? ACTIVE_STATUS[i]
+                              ? visibleActiveStatus[i]
                               : '待生成',
                       )
                       if (!usedSkill) return flow
@@ -10451,9 +10663,14 @@ export default function SmartCreateView({ routeSessionToken = '' }: SmartCreateV
               }
         }
         projectImages={projectImages}
+        workspaceId={isRealPersonMode ? Number(workspaceId || 0) : 0}
+        realPersonOnly={isRealPersonMode}
         onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
         onGenerate={(p, opts) => genForSubject(subjectDlg.name, p, opts)}
         onSelect={(url) => applySubjectImage(subjectDlg.name, url, subjectAssets[subjectDlg.name]?.ids?.[url] || 0)}
+        onSelectRealPerson={
+          isRealPersonMode ? (url, reference) => selectRealPersonForSubject(subjectDlg.name, url, reference) : undefined
+        }
         onUpload={(file) => uploadForSubject(subjectDlg.name, file)}
       />
     </div>

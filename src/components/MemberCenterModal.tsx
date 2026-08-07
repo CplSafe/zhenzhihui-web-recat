@@ -53,6 +53,9 @@ import {
 } from '@/utils/pendingNewTeamOrder'
 import {
   getMemberCenterPaymentUserScope,
+  hasMemberCenterSubscriptionChanged,
+  hasMemberCenterWalletIncreased,
+  resolveMemberCenterPaymentOrderState,
   formatPriceCents,
   isSameMemberCenterPaymentScope,
   releaseMemberCenterPayment,
@@ -400,6 +403,7 @@ function PlanCard({
   disabled,
   disabledText,
   disabledReason,
+  actionText,
   onBuy,
 }: {
   plan: PlanVM
@@ -408,6 +412,7 @@ function PlanCard({
   disabled?: boolean
   disabledText?: string
   disabledReason?: string
+  actionText?: string
   onBuy: (p: PlanVM) => void
 }) {
   return (
@@ -435,7 +440,7 @@ function PlanCard({
         title={disabled ? disabledReason : undefined}
         onClick={() => onBuy(plan)}
       >
-        {buying ? '处理中…' : disabled ? disabledText || '暂不可购买' : purchased ? '续费' : '立即开通'}
+        {buying ? '处理中…' : disabled ? disabledText || '暂不可购买' : actionText || (purchased ? '续费' : '立即开通')}
       </button>
       <div className="mc-card-divider" />
       <ul className="mc-card-feats">
@@ -726,6 +731,11 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     : Number(subscription?.max_members || 0) > 1 ||
       /团队|team/i.test(`${subscription?.plan_name || ''} ${subscription?.plan_code || ''}`)
   const subscriptionExpiryMs = expiryTimeMs(subscription)
+  const hasSubscriptionPlan = Boolean(
+    Number(subscription?.plan_id ?? subscription?.planId ?? 0) ||
+    String(subscription?.plan_code || '').trim() ||
+    String(subscription?.plan_name || '').trim(),
+  )
   const hasActiveSubscription =
     Boolean(subscription?.active) && (!subscriptionExpiryMs || subscriptionExpiryMs > Date.now())
   const currentPlan = (() => {
@@ -750,7 +760,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   // ① 优先用唯一 plan_id 精确匹配;② 后端没返回 plan_id 时,退回 code/name 匹配,
   //    但必须叠加「团队/个人类型一致」—— 否则团队版与个人版同周期套餐重名(如都叫「年度会员」)会串台误判。
   const isPurchased = (p: PlanVM) => {
-    if (!subscription?.active) return false
+    // 到期后后端仍会保留原套餐信息。此时套餐卡应继续显示「续费」，
+    // 而不是退回「立即开通」，下单仍统一走 intent=subscribe。
+    if (!hasSubscriptionPlan) return false
     const subPlanId = Number(subscription.plan_id ?? subscription.planId ?? 0) || 0
     if (subPlanId) return subPlanId === p.id
     const codeOrNameHit =
@@ -813,8 +825,11 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     ) || 0
 
   // 查某订单是否仍「待支付(pending)」——复用前确认,已付/取消/过期则不复用。
-  const getOrderStatus = async (orderId: number, workspaceIds: number[] = []): Promise<string> => {
-    if (!orderId) return ''
+  const getOrderStatus = async (
+    orderId: number,
+    workspaceIds: number[] = [],
+  ): Promise<{ status: string; hasPaidEvidence: boolean }> => {
+    if (!orderId) return { status: '', hasPaidEvidence: false }
     const liveWorkspaceIds = (deriveAllWorkspaces(useWorkspaceSessionStore.getState()) as any[]).map((item: any) =>
       Math.floor(Number(item?.id || 0)),
     )
@@ -829,13 +844,14 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       try {
         const rows: any = await listPaymentOrders({ workspaceId: workspaceIdCandidate, limit: 50 })
         const list: any[] = Array.isArray(rows) ? rows : rows?.items || rows?.list || rows?.orders || []
-        const status = String(list.find((r: any) => Number(r?.id) === orderId)?.status || '')
-        if (status) return status
+        const order = list.find((r: any) => Number(r?.id) === orderId)
+        const state = resolveMemberCenterPaymentOrderState(order)
+        if (state.status) return state
       } catch {
         // 某个空间暂时不可查时继续尝试其他候选空间。
       }
     }
-    return ''
+    return { status: '', hasPaidEvidence: false }
   }
 
   // 复用未支付订单:同 key 上次的单若在 10 分钟内且仍 pending → 复用原 pay_url,不重复下单;否则新下一单并缓存。
@@ -863,7 +879,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         const cachedWorkspaceIds = [Number(cached.newWorkspaceId || 0), ...(cached.workspaceBaselineIds || [])].filter(
           (id) => id > 0,
         )
-        const status = await getOrderStatus(cached.orderId, cachedWorkspaceIds)
+        const { status } = await getOrderStatus(cached.orderId, cachedWorkspaceIds)
         assertScopeCurrent()
         // new_team 订单可能尚未挂到任何可查询空间。此时宁可复用原支付链接，
         // 也不能用新的幂等键再下单并创建第二个 activation_pending 团队。
@@ -966,6 +982,8 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     workspaceBaselineIds: number[] = [],
     pendingNewTeamIntent?: PendingNewTeamOrderIntent,
     orderedTeamName = '',
+    entitlementBaseline: { balance: number | null; subscription: any } = { balance: null, subscription: null },
+    paymentWindow?: Window | null,
   ) => {
     const ws = Number(workspaceId || 0)
     const orderUserScope = paymentUserScope
@@ -999,6 +1017,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       return
     }
     let tries = 0
+    let closedPendingChecks = 0
     const FAST_POLL_LIMIT = 40
     const orderWatchDeadline = Date.now() + REUSE_ORDER_MS
     const tick = async () => {
@@ -1038,7 +1057,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           stopWatching()
           return
         }
-        const st = await getOrderStatus(orderId, [
+        const paymentState = await getOrderStatus(orderId, [
           pollWs,
           resolvedTeamWorkspaceId,
           newWorkspaceId,
@@ -1049,11 +1068,11 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           return
         }
 
-        const normalizedStatus = st.toLowerCase()
+        const normalizedStatus = paymentState.status
         const isTerminalStatus = ['paid', 'failed', 'canceled', 'cancelled', 'expired', 'closed'].includes(
           normalizedStatus,
         )
-        if (isTerminalStatus) {
+        if (isTerminalStatus && normalizedStatus !== 'paid') {
           stopWatching()
           // 终态:清掉该订单的复用缓存,下次点支付重新下单
           for (const k of Object.keys(pendingOrderRef.current)) {
@@ -1069,20 +1088,21 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
             stopWatching()
             return
           }
-          // 支付成功 → 装填智能成片引导(仅该用户【首次支付】装填一次,续费/再买不再触发),
-          // 下次进 /smart 入口页触发跟随流程引导。
-          armSmartGuide(orderUserScope)
-          showToast(kind === 'recharge' ? '充值成功,积分已到账' : '支付成功,会员已开通', 'success')
-          getWallet(ws)
-            .then((w: any) => isOrderScopeCurrent() && setBalance(Number(w?.available ?? w?.balance ?? 0)))
-            .catch(() => {})
-          getSubscription(ws)
-            .then((s: any) => isOrderScopeCurrent() && setSubscription(s))
-            .catch(() => {})
-          // 同步刷新全局 store(顶栏/个人面板的会员套餐 + 积分进度据此显示):
-          // 否则关掉弹窗回到页面看不到刚开通/续费的会员、刚充的积分(弹窗 setSubscription 只更新弹窗局部)。
-          // 团队版新开走 adoptNewTeamWorkspace 切空间会再刷一次,此处对老空间刷一次也无害。
-          void useWorkspaceSessionStore.getState().loadSubscriptionLabel({ force: true })
+          let entitlementConfirmed = false
+          if (kind === 'recharge') {
+            const wallet = await getWallet(ws).catch(() => null)
+            if (!isOrderScopeCurrent()) return stopWatching()
+            if (wallet) setBalance(Number(wallet?.available ?? wallet?.balance ?? 0))
+            entitlementConfirmed = hasMemberCenterWalletIncreased(entitlementBaseline.balance, wallet)
+          } else if (!team) {
+            const nextSubscription = await getSubscription(ws).catch(() => null)
+            if (!isOrderScopeCurrent()) return stopWatching()
+            if (nextSubscription) setSubscription(nextSubscription)
+            entitlementConfirmed = hasMemberCenterSubscriptionChanged(
+              entitlementBaseline.subscription,
+              nextSubscription,
+            )
+          }
           // 买的是团队版:团队名已在下单前填好并随单创建 → 这里只把新团队空间适配/切换过去,不再二次弹命名框。
           if (kind === 'subscribe' && team) {
             const paidIntent = pendingNewTeamIntent
@@ -1103,13 +1123,42 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
             if (purchasedTeam && paidIntent) {
               clearPendingNewTeamOrder(paidIntent.userId, paidIntent.planId)
             }
+            entitlementConfirmed = Boolean(purchasedTeam)
           }
-          return
+          if (!entitlementConfirmed) {
+            // 订单可能已支付但权益仍在异步入账。继续轮询，绝不提前向用户宣告购买成功。
+            if (tries === 1 || tries % 5 === 0) {
+              showToast(
+                paymentState.hasPaidEvidence ? '支付已完成，权益正在同步，请稍候' : '正在核实支付结果，请稍候',
+                'info',
+              )
+            }
+          } else {
+            stopWatching()
+            for (const k of Object.keys(pendingOrderRef.current)) {
+              if (pendingOrderRef.current[k]?.orderId === orderId) delete pendingOrderRef.current[k]
+            }
+            armSmartGuide(orderUserScope)
+            showToast(kind === 'recharge' ? '充值成功,积分已到账' : '支付成功,会员已开通', 'success')
+            void useWorkspaceSessionStore.getState().loadSubscriptionLabel({ force: true })
+            return
+          }
         }
         if (['failed', 'canceled', 'cancelled', 'expired', 'closed'].includes(normalizedStatus)) {
           const canceled = ['canceled', 'cancelled', 'expired', 'closed'].includes(normalizedStatus)
           if (isOrderScopeCurrent()) showToast(canceled ? '支付已取消' : '支付失败,请重试', 'error')
           return
+        }
+        if (normalizedStatus === 'pending' && paymentWindow?.closed) {
+          closedPendingChecks += 1
+          // 支付页刚关闭时再给后端一次对账机会，避免“已付款后立即关页”被误报为未支付。
+          if (closedPendingChecks >= 2) {
+            stopWatching()
+            if (isOrderScopeCurrent()) showToast('支付未完成，订单仍可继续支付', 'info')
+            return
+          }
+        } else {
+          closedPendingChecks = 0
         }
       } catch {
         if (!isOrderScopeCurrent()) {
@@ -1123,6 +1172,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         window.setTimeout(tick, tries < FAST_POLL_LIMIT ? 3000 : 15_000)
       } else {
         stopWatching()
+        if (isOrderScopeCurrent()) showToast('暂未确认支付结果，可稍后在会员中心继续查看', 'info')
       }
     }
     window.setTimeout(tick, 3000)
@@ -1174,6 +1224,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     const isStartedScopeCurrent = () => isPaymentScopeCurrent(startedUserScope, startedWorkspaceId, startedScopeEpoch)
     if (!isStartedScopeCurrent()) return
     setPendingPayUrl('')
+    const entitlementBaseline = { balance, subscription }
     // ① 与点击同步开空白页(此刻一定还在用户手势上下文里)
     const win = window.open('about:blank', '_blank')
     if (win) win.opener = null // 安全:断开对本页的引用,等价 noopener
@@ -1200,7 +1251,17 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       const trackedNewTeamIntent = bindPendingNewTeamOrder(pendingNewTeamIntent, orderId, newWorkspaceId)
       if (trackedNewTeamIntent) savePendingNewTeamOrder(trackedNewTeamIntent)
       // ④ 附加:轮询订单状态,出「成功/失败」结果并刷新余额/订阅(不影响上面的下单/开窗)
-      watchOrder(orderId, kind, team, newWorkspaceId, workspaceBaselineIds, trackedNewTeamIntent, orderedTeamName)
+      watchOrder(
+        orderId,
+        kind,
+        team,
+        newWorkspaceId,
+        workspaceBaselineIds,
+        trackedNewTeamIntent,
+        orderedTeamName,
+        entitlementBaseline,
+        win,
+      )
     } catch (e) {
       win?.close()
       if (isStartedScopeCurrent()) showToast(getBusinessErrorMessage(e, failMsg), 'error')
@@ -1219,10 +1280,10 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       showToast(restriction.reason, 'info')
       return
     }
-    const renew = isPurchased(p)
-    // A方案:团队套餐一律「开新团队」——每买一次就新开一个团队(空间:套餐 1:1),同一套餐可反复买、各用于新团队。
-    // 续费某个已有团队走订阅信息区的「续费当前团队」按钮(intent=subscribe);个人版维持 开通/续费。
+    // 团队套餐卡只负责新建独立团队；当前团队续费固定由顶部「续费当前团队」入口处理。
+    // 两种意图不能再根据“是否同款套餐”隐式切换，否则同款团队套餐将失去新建团队能力。
     const newTeam = p.isTeam
+    const renew = !newTeam && isPurchased(p)
     const intent = newTeam ? 'new_team' : 'subscribe'
     const restoredNewTeamIntent = newTeam && paymentUserScope ? loadPendingNewTeamOrder(paymentUserScope, p.id) : null
     // new_team:随单建团队空间。团队名不在会员中心输入,统一用唯一默认名,并做校验/去重,避免后端因非法/重名建不出空间。
@@ -1424,9 +1485,10 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
     }
   }
 
-  // A方案:续费【当前所在团队】(团队套餐卡片已改为「开新团队」,续费独立到这)。intent=subscribe,不建新团队。
-  const handleRenewCurrentTeam = async () => {
-    if (renewing || buyingId || paymentActionLockRef.current || !workspaceId || !subscription?.active) return
+  // 续费当前空间的历史套餐。团队套餐卡片用于「开新团队」，所以团队续费固定走这里；
+  // 已到期的个人套餐也可走这里兜底，避免 active=false 后失去续费入口。
+  const handleRenewCurrentSubscription = async () => {
+    if (renewing || buyingId || paymentActionLockRef.current || !workspaceId || !hasSubscriptionPlan) return
     // 定位当前套餐 id:优先订阅自带 plan_id,否则按 code/name 从套餐列表匹配
     let planId = Number(subscription.plan_id ?? subscription.planId ?? 0) || 0
     if (!planId) {
@@ -1481,7 +1543,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         )}
 
         {/* 当前订阅信息(套餐 / 席位 / 并发);未订阅不显示 */}
-        {subscription?.active && (
+        {hasSubscriptionPlan && (
           <div className="mcm-sub">
             <span className="mcm-sub-plan">
               {(() => {
@@ -1520,8 +1582,8 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
                 {String(subscription.renew_mode).toLowerCase().includes('auto') ? '自动续费' : '手动续费'}
               </span>
             )}
-            {/* A方案:续费当前团队(团队套餐卡片改为开新团队后,续费走这里)。仅主账号、当前在团队里显示。 */}
-            {canRecharge && isTeamWs && subscriptionId > 0 && (
+            {/* 当前套餐统一提供明确续费入口，不要求用户再去套餐卡中寻找。 */}
+            {canRecharge && (
               <button
                 type="button"
                 className="mcm-sub-item mcm-sub-action"
@@ -1534,9 +1596,9 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
                   fontWeight: 600,
                 }}
                 disabled={renewing}
-                onClick={handleRenewCurrentTeam}
+                onClick={handleRenewCurrentSubscription}
               >
-                {renewing ? '续费中…' : '续费当前团队'}
+                {renewing ? '续费中…' : isTeamWs ? '续费当前团队' : '续费当前套餐'}
               </button>
             )}
             {/* 订阅管理:仅主账号。自动续费时可「关闭自动续费」;有订阅时可「取消订阅」 */}
@@ -1610,11 +1672,11 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
                       key={p.id}
                       plan={p}
                       buying={buyingId === p.id}
-                      /* 团队套餐卡片一律「开新团队」,不显示「续费」;续费走订阅信息区的「续费当前团队」 */
                       purchased={!p.isTeam && isPurchased(p)}
                       disabled={restriction.disabled}
                       disabledText={restriction.text}
                       disabledReason={restriction.reason}
+                      actionText={p.isTeam && isPurchased(p) ? '新建团队' : undefined}
                       onBuy={onBuy}
                     />
                   )

@@ -301,6 +301,110 @@ describe('MemberCenterModal behavior', () => {
     expect(mocks.showToast).toHaveBeenCalledWith(expect.stringContaining('浏览器拦截'), 'error')
   })
 
+  it('keeps an explicit renewal action when a personal subscription has expired', async () => {
+    const user = userEvent.setup()
+    const paymentWindow = fakePaymentWindow()
+    vi.spyOn(window, 'open').mockReturnValue(paymentWindow as any)
+    mocks.getSubscription.mockResolvedValue({
+      active: false,
+      id: 51,
+      plan_id: 1,
+      plan_code: 'personal-1',
+      plan_name: '一分体验会员',
+      plan_type: 'personal',
+      current_period_end: '2025-01-01T00:00:00+08:00',
+    })
+    mocks.createSubscriptionOrder.mockResolvedValue({ order: { id: 505 }, pay_url: 'https://pay.example/renew' })
+
+    renderModal()
+
+    expect(await screen.findByText('会员已到期，请续费后继续使用')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '续费当前套餐' }))
+
+    await waitFor(() =>
+      expect(mocks.createSubscriptionOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: 21, planId: 1, intent: 'subscribe' }),
+      ),
+    )
+    expect(paymentWindow.location.href).toBe('https://pay.example/renew')
+  })
+
+  it('shows a visible renewal action for an active personal subscription', async () => {
+    mocks.getSubscription.mockResolvedValue({
+      active: true,
+      id: 52,
+      plan_id: 1,
+      plan_code: 'personal-1',
+      plan_name: '一分体验会员',
+      plan_type: 'personal',
+      current_period_end: '2099-01-01T00:00:00+08:00',
+    })
+
+    renderModal()
+
+    expect(await screen.findByRole('button', { name: '续费当前套餐' })).toBeVisible()
+  })
+
+  it('creates a new team from the same team plan instead of renewing the current workspace', async () => {
+    const user = userEvent.setup()
+    const paymentWindow = fakePaymentWindow()
+    vi.spyOn(window, 'open').mockReturnValue(paymentWindow as any)
+    mocks.workspace.id = 30
+    mocks.workspace.current = { id: 30, name: '测试用户的团队', type: 'team', owner_user_id: 7 }
+    mocks.workspace.member = { user_id: 7, workspace_id: 30, role: 'owner' }
+    mocks.getSubscription.mockResolvedValue({
+      active: true,
+      id: 61,
+      plan_id: 2,
+      plan_code: 'team-2',
+      plan_name: '团队协作会员',
+      plan_type: 'team',
+    })
+    mocks.createSubscriptionOrder.mockResolvedValue({ order: { id: 606 }, pay_url: 'https://pay.example/new-team' })
+
+    renderModal()
+    await user.click(await screen.findByRole('button', { name: '团队版' }))
+    const currentTeamCard = screen.getByText('团队版/团队协作会员', { selector: '.mc-card-name' }).closest('.mc-card')
+    expect(currentTeamCard).not.toBeNull()
+    await user.click(within(currentTeamCard as HTMLElement).getByRole('button', { name: '新建团队' }))
+
+    await waitFor(() =>
+      expect(mocks.createSubscriptionOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ planId: 2, intent: 'new_team', newWorkspaceName: '测试用户的团队2' }),
+      ),
+    )
+  })
+
+  it('renews only the current team from the dedicated renewal action', async () => {
+    const user = userEvent.setup()
+    const paymentWindow = fakePaymentWindow()
+    vi.spyOn(window, 'open').mockReturnValue(paymentWindow as any)
+    mocks.workspace.id = 30
+    mocks.workspace.current = { id: 30, name: '测试用户的团队', type: 'team', owner_user_id: 7 }
+    mocks.workspace.member = { user_id: 7, workspace_id: 30, role: 'owner' }
+    mocks.getSubscription.mockResolvedValue({
+      active: true,
+      id: 61,
+      plan_id: 2,
+      plan_code: 'team-2',
+      plan_name: '团队协作会员',
+      plan_type: 'team',
+    })
+    mocks.createSubscriptionOrder.mockResolvedValue({ order: { id: 607 }, pay_url: 'https://pay.example/team-renew' })
+
+    renderModal()
+    await user.click(await screen.findByRole('button', { name: '续费当前团队' }))
+
+    await waitFor(() =>
+      expect(mocks.createSubscriptionOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: 30, planId: 2, intent: 'subscribe' }),
+      ),
+    )
+    expect(mocks.createSubscriptionOrder).toHaveBeenCalledWith(
+      expect.not.objectContaining({ intent: 'new_team', newWorkspaceName: expect.any(String) }),
+    )
+  })
+
   it('closes the blank popup and reports an error when the order has no pay_url', async () => {
     const user = userEvent.setup()
     const paymentWindow = fakePaymentWindow()

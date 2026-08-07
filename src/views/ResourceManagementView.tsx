@@ -16,7 +16,7 @@ import './ResourceManagementView.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
-import { useToast } from '@/composables/useToast'
+import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import {
   favoriteAssetIdOf,
@@ -32,7 +32,13 @@ import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
 import resourceSearchIcon from '@/assets/resource/figma-resource-search.svg'
 import AiBadge from '@/components/common/AiBadge'
 import { useAssetPreview } from '@/composables/useAssetPreview'
-import { extractAssetPageItems, getAssetDownloadUrl, getBusinessErrorMessage, listAiTasks } from '@/api/business'
+import {
+  deleteAsset,
+  extractAssetPageItems,
+  getAssetDownloadUrl,
+  getBusinessErrorMessage,
+  listAiTasks,
+} from '@/api/business'
 import { listAllCreativeProjects, listAssetPage } from '@/utils/businessPagination'
 import {
   isCreativeProjectRestrictedForUser,
@@ -604,6 +610,8 @@ function ResourceCard({
   onPreview,
   favorite,
   onToggleFavorite,
+  selected,
+  onToggleSelect,
   favoriteActions,
 }: {
   card: any
@@ -611,16 +619,29 @@ function ResourceCard({
   onPreview: () => void
   favorite: boolean
   onToggleFavorite: () => void
+  selected: boolean
+  onToggleSelect: () => void
   favoriteActions?: {
     onDownload: () => void
     onUseTemplate?: () => void
+    onDelete?: () => void
+    deleting?: boolean
   }
 }) {
   const [ratio, setRatio] = useState<string>(card.duration || '')
   const isImage = card.mediaKind === 'image'
   return (
-    <article className="resource-asset-card">
-      <button type="button" className="resource-asset-cover" aria-label={`预览${card.title}`} onClick={onPreview}>
+    <article className={`resource-asset-card${selected ? ' is-selected' : ''}`}>
+      <button
+        type="button"
+        className={`resource-asset-select${selected ? ' is-selected' : ''}`}
+        aria-label={`${selected ? '取消选择' : '选择'}${card.title}`}
+        aria-pressed={selected}
+        onClick={onToggleSelect}
+      >
+        <span aria-hidden="true">{selected ? '✓' : ''}</span>
+      </button>
+      <button type="button" className="resource-asset-cover" aria-label={`打开${card.title}`} onClick={onPreview}>
         <AssetThumb card={card} workspaceId={workspaceId} onRatio={setRatio} />
         {card.isAi && card.mediaKind === 'image' && <AiBadge />}
         <span className="resource-asset-type">{card.type}</span>
@@ -681,9 +702,35 @@ function ResourceCard({
               做同款
             </button>
           ) : null}
+          {favoriteActions.onDelete ? (
+            <button
+              type="button"
+              className="resource-favorite-action-btn is-danger"
+              onClick={favoriteActions.onDelete}
+              aria-label={`删除${card.title}`}
+              disabled={favoriteActions.deleting}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                aria-hidden="true"
+              >
+                <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 10v6M14 10v6" />
+              </svg>
+              {favoriteActions.deleting ? '删除中' : '删除'}
+            </button>
+          ) : null}
         </div>
       ) : null}
       <div className="resource-asset-info">
+        <h3 title={card.title}>
+          <span>{String(card.title || '').slice(0, 1)}</span>
+          <span>{String(card.title || '').slice(1)}</span>
+        </h3>
         <div className="resource-asset-meta">
           {ratio ? <span className="resource-asset-ratio">比例 {ratio}</span> : <span />}
           {card.size ? <span className="resource-asset-size">{card.size}</span> : null}
@@ -703,6 +750,7 @@ export default function ResourceManagementView() {
   // 所有异步结果都绑定“工作空间 + 用户”作用域，切换任一身份后旧结果不得继续渲染。
   const accessScope = `${currentWorkspaceId}:${currentUserId}`
   const { showToast } = useToast()
+  const { requestConfirm } = useConfirmDialog()
   const { previewState, openPreview, closePreview, goPrev, goNext } = useAssetPreview()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -712,6 +760,10 @@ export default function ResourceManagementView() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [loadingMoreAssets, setLoadingMoreAssets] = useState(false)
+  const [deletingAssetId, setDeletingAssetId] = useState(0)
+  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set())
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
+  const [batchProcessing, setBatchProcessing] = useState(false)
   const [assetState, setAssetState] = useState<ResourceAssetState>({
     workspaceId: 0,
     userId: 0,
@@ -1125,8 +1177,8 @@ export default function ResourceManagementView() {
       base = favoriteCards
     }
     if (keyword) base = base.filter((c) => [c.title, ...(c.tags || [])].join(' ').toLowerCase().includes(keyword))
-    return base.slice().sort((a, b) => b.ts - a.ts)
-  }, [cards, favoriteCards, mainTab, subTab, searchQuery])
+    return base.slice().sort((a, b) => (sortOrder === 'newest' ? b.ts - a.ts : a.ts - b.ts))
+  }, [cards, favoriteCards, mainTab, subTab, searchQuery, sortOrder])
 
   // 我上传的/我生成的:按项目分组(只列出有对应媒体的项目)
   const allProjectsForMode = useMemo(() => {
@@ -1209,9 +1261,12 @@ export default function ResourceManagementView() {
     () => gridCards.slice((safePage - 1) * RESOURCE_PAGE_SIZE, safePage * RESOURCE_PAGE_SIZE),
     [gridCards, safePage],
   )
+  const selectedCards = paginatedCards.filter((card: any) => selectedCardIds.has(String(card.id)))
+  const showAssetWorkspace = mainTab !== 'people' && !showProjectList
 
   useEffect(() => {
     setPage(1)
+    setSelectedCardIds(new Set())
   }, [accessScope, mainTab, searchQuery, selectedProjectId, subTab])
 
   useEffect(() => {
@@ -1331,6 +1386,54 @@ export default function ResourceManagementView() {
     }).catch((error) => showToast(getBusinessErrorMessage(error, '下载失败，请稍后重试'), 'error'))
   }
 
+  const deleteResourceCard = async (card: any) => {
+    const assetId = Number(card.assetId || 0) || 0
+    if (!assetId || !currentWorkspaceId || deletingAssetId) return
+
+    const confirmed = await requestConfirm(`删除“${String(card.title || '该素材')}”后将无法恢复，是否继续？`, {
+      title: '删除素材',
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      danger: true,
+    })
+    if (confirmed !== true) return
+
+    setDeletingAssetId(assetId)
+    try {
+      await deleteAsset({ workspaceId: currentWorkspaceId, assetId })
+      const current = assetStateRef.current
+      if (current.workspaceId === currentWorkspaceId && current.userId === currentUserId) {
+        const nextState = {
+          ...current,
+          items: current.items.filter((item: any) => Number(item?.id ?? item?.asset_id ?? 0) !== assetId),
+          total: Math.max(0, current.total - 1),
+        }
+        assetStateRef.current = nextState
+        setAssetState(nextState)
+      }
+
+      const favoriteItem = favoriteItemFromCard(card)
+      if (favoriteKeys.has(favoriteItem.key)) {
+        toggleFavorite(currentWorkspaceId, favoriteItem)
+        setFavoriteKeys((currentKeys) => {
+          const nextKeys = new Set(currentKeys)
+          nextKeys.delete(favoriteItem.key)
+          return nextKeys
+        })
+        setFavoriteCardState((currentFavorites) => ({
+          ...currentFavorites,
+          items: currentFavorites.items.filter((item) => item.id !== favoriteItem.key),
+        }))
+      }
+      closePreview()
+      showToast('素材已删除', 'success')
+    } catch (error) {
+      showToast(getBusinessErrorMessage(error, '删除失败，请稍后重试'), 'error')
+    } finally {
+      setDeletingAssetId(0)
+    }
+  }
+
   const openVideoInHotCopy = (card: any) => {
     navigate('/hot-copy', {
       state: {
@@ -1340,6 +1443,69 @@ export default function ResourceManagementView() {
         },
       },
     })
+  }
+
+  const toggleSelectedCard = (card: any) => {
+    const key = String(card.id)
+    setSelectedCardIds((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const toggleSelectPage = () => {
+    const pageKeys = paginatedCards.map((card: any) => String(card.id))
+    const allSelected = pageKeys.length > 0 && pageKeys.every((key) => selectedCardIds.has(key))
+    setSelectedCardIds((current) => {
+      const next = new Set(current)
+      pageKeys.forEach((key) => (allSelected ? next.delete(key) : next.add(key)))
+      return next
+    })
+  }
+
+  const downloadSelectedCards = () => {
+    selectedCards.forEach((card: any) => downloadResourceCard(card))
+  }
+
+  const deleteSelectedCards = async () => {
+    const deletable = selectedCards.filter((card: any) => Number(card.assetId || 0) > 0)
+    if (!deletable.length || batchProcessing) return
+    const confirmed = await requestConfirm(`确定删除选中的 ${deletable.length} 个素材吗？删除后无法恢复。`, {
+      title: '批量删除素材',
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      danger: true,
+    })
+    if (confirmed !== true) return
+
+    setBatchProcessing(true)
+    const results = await Promise.allSettled(
+      deletable.map((card: any) => deleteAsset({ workspaceId: currentWorkspaceId, assetId: Number(card.assetId) })),
+    )
+    const deletedIds = new Set(
+      deletable
+        .filter((_: any, index: number) => results[index]?.status === 'fulfilled')
+        .map((card: any) => Number(card.assetId)),
+    )
+    if (deletedIds.size) {
+      const current = assetStateRef.current
+      const nextState = {
+        ...current,
+        items: current.items.filter((item: any) => !deletedIds.has(Number(item?.id ?? item?.asset_id ?? 0))),
+        total: Math.max(0, current.total - deletedIds.size),
+      }
+      assetStateRef.current = nextState
+      setAssetState(nextState)
+      setSelectedCardIds(new Set())
+    }
+    const failed = results.length - deletedIds.size
+    showToast(
+      failed ? `已删除 ${deletedIds.size} 个素材，${failed} 个删除失败` : `已删除 ${deletedIds.size} 个素材`,
+      failed ? 'error' : 'success',
+    )
+    setBatchProcessing(false)
   }
 
   return (
@@ -1379,21 +1545,35 @@ export default function ResourceManagementView() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </label>
+            <label className="rm2-sort">
+              <span>排序</span>
+              <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as 'newest' | 'oldest')}>
+                <option value="newest">最近创建</option>
+                <option value="oldest">最早创建</option>
+              </select>
+            </label>
           </div>
 
           {/* 子分类(全部 tab,或进入项目后的图片/视频)*/}
-          {showSubs && (
-            <div className="rm2-subs">
-              {subs.map((s) => (
-                <button
-                  key={s.k}
-                  type="button"
-                  className={`rm2-sub${subTab === s.k ? ' is-active' : ''}`}
-                  onClick={() => onSelectSub(s.k)}
-                >
-                  {s.l}
+          {(showSubs || (showAssetWorkspace && paginatedCards.length > 0)) && (
+            <div className="rm2-filter-row">
+              <div className="rm2-subs">
+                {subs.map((s) => (
+                  <button
+                    key={s.k}
+                    type="button"
+                    className={`rm2-sub${subTab === s.k ? ' is-active' : ''}`}
+                    onClick={() => onSelectSub(s.k)}
+                  >
+                    {s.l}
+                  </button>
+                ))}
+              </div>
+              {showAssetWorkspace && paginatedCards.length ? (
+                <button type="button" className="rm2-select-page" onClick={toggleSelectPage}>
+                  {paginatedCards.every((card: any) => selectedCardIds.has(String(card.id))) ? '取消全选' : '选择本页'}
                 </button>
-              ))}
+              ) : null}
             </div>
           )}
 
@@ -1486,29 +1666,60 @@ export default function ResourceManagementView() {
                       : '暂无符合条件的素材'}
                 </div>
               ) : (
-                <div className="resource-grid">
-                  {paginatedCards.map((card: any) => (
-                    <ResourceCard
-                      key={card.id}
-                      card={card}
-                      workspaceId={workspaceId}
-                      onPreview={() => previewCard(card)}
-                      favorite={favoriteKeys.has(
-                        favoriteKeyOf(Number(card.assetId || 0) || 0, String(card.mediaUrl || '')),
-                      )}
-                      onToggleFavorite={() => toggleFavoriteCard(card)}
-                      favoriteActions={
-                        card.mediaKind === 'video' || mainTab === 'collected'
-                          ? {
-                              onDownload: () => downloadResourceCard(card),
-                              onUseTemplate: card.mediaKind === 'video' ? () => openVideoInHotCopy(card) : undefined,
-                            }
-                          : undefined
-                      }
-                    />
-                  ))}
+                <div className="rm2-asset-workspace">
+                  <div className="resource-grid">
+                    {paginatedCards.map((card: any) => (
+                      <ResourceCard
+                        key={card.id}
+                        card={card}
+                        workspaceId={workspaceId}
+                        onPreview={() => previewCard(card)}
+                        favorite={favoriteKeys.has(
+                          favoriteKeyOf(Number(card.assetId || 0) || 0, String(card.mediaUrl || '')),
+                        )}
+                        onToggleFavorite={() => toggleFavoriteCard(card)}
+                        selected={selectedCardIds.has(String(card.id))}
+                        onToggleSelect={() => toggleSelectedCard(card)}
+                        favoriteActions={{
+                          onDownload: () => downloadResourceCard(card),
+                          onUseTemplate: card.mediaKind === 'video' ? () => openVideoInHotCopy(card) : undefined,
+                          onDelete:
+                            mainTab !== 'collected' && Number(card.assetId || 0) > 0
+                              ? () => void deleteResourceCard(card)
+                              : undefined,
+                          deleting: deletingAssetId === Number(card.assetId || 0),
+                        }}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
+              {selectedCards.length ? (
+                <div className="rm2-batch-bar" role="region" aria-label="批量管理">
+                  <span>
+                    已选择 <b>{selectedCards.length}</b> 个素材
+                  </span>
+                  <button type="button" onClick={toggleSelectPage}>
+                    选择本页
+                  </button>
+                  <button type="button" onClick={downloadSelectedCards}>
+                    批量下载
+                  </button>
+                  {mainTab !== 'collected' ? (
+                    <button
+                      type="button"
+                      className="is-danger"
+                      disabled={batchProcessing}
+                      onClick={() => void deleteSelectedCards()}
+                    >
+                      {batchProcessing ? '删除中…' : '批量删除'}
+                    </button>
+                  ) : null}
+                  <button type="button" className="is-clear" onClick={() => setSelectedCardIds(new Set())}>
+                    取消选择
+                  </button>
+                </div>
+              ) : null}
               {paginationTotal > RESOURCE_PAGE_SIZE ? (
                 <div className="rm2-pagination" aria-label="素材分页">
                   <Pagination

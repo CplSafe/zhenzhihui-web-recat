@@ -405,23 +405,34 @@ export default function GenerationModelDropdown({
 
             {!globalLoading && !globalError && (
               <footer className={styles.footer}>
-                {hasConflict ? (
-                  <div className={styles.conflicts} role="alert">
-                    <strong>当前创作参数与所选模型不兼容</strong>
-                    <ul>
-                      {conflicts.map((conflict) => (
-                        <li key={conflict}>{conflict}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : !complete ? (
-                  <p role="status">请完成全部 {slots.length} 项模型选择后再开始创作。</p>
-                ) : (
-                  <p className={styles.ready} role="status">
-                    <CheckCircleFilled aria-hidden="true" />
-                    {locked ? '本次模型选择已锁定' : '模型配置完成，开始创作后将沿用本次选择'}
-                  </p>
-                )}
+                <div className={styles.footerContent}>
+                  {hasConflict ? (
+                    <div className={styles.conflicts} role="alert">
+                      <strong>当前创作参数与所选模型不兼容</strong>
+                      <ul>
+                        {conflicts.map((conflict) => (
+                          <li key={conflict}>{conflict}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : !complete ? (
+                    <p role="status">请完成全部 {slots.length} 项模型选择后再确认。</p>
+                  ) : (
+                    <p className={styles.ready} role="status">
+                      <CheckCircleFilled aria-hidden="true" />
+                      {locked ? '本次模型选择已锁定' : '模型配置完成，确认后将沿用本次选择'}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className={styles.confirm}
+                  disabled={!complete || hasConflict}
+                  aria-disabled={!complete || hasConflict}
+                  onClick={closeAndRestoreFocus}
+                >
+                  确认
+                </button>
               </footer>
             )}
           </section>,

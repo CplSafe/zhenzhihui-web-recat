@@ -257,6 +257,86 @@
   border-bottom: 1px solid #eef0f4;
 }
 
+/* 真人成片流程使用独立的项目识别区，不复制智能成片的纯工具页外观。 */
+.smart--real-person .smart__flow-content {
+  background:
+    radial-gradient(circle at 8% 0%, rgba(33, 199, 157, 0.08), transparent 24%),
+    linear-gradient(180deg, #f7fbf9 0, #fff 360px);
+}
+
+.smart--real-person .smart__newvideo {
+  top: 27px;
+  border-color: rgba(20, 132, 103, 0.22);
+  border-radius: 999px;
+  background: #fff;
+  color: #147e66;
+}
+
+.smart__real-flow-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 72px;
+  padding: 16px 190px 16px 28px;
+  border-bottom: 1px solid rgba(20, 126, 102, 0.1);
+  background: rgba(247, 253, 250, 0.9);
+}
+
+.smart__real-flow-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border-radius: 14px;
+  background: #173b33;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(23, 59, 51, 0.18);
+}
+
+.smart__real-flow-head div:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.smart__real-flow-head span {
+  color: #1b9e7e;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.smart__real-flow-head strong {
+  color: #213d36;
+  font-size: 17px;
+}
+
+.smart__real-flow-head p {
+  margin: 0;
+  color: #7b8985;
+  font-size: 12px;
+}
+
+.smart--real-person .smart__progress {
+  padding-top: 18px;
+  border-bottom-color: rgba(20, 126, 102, 0.1);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+@media (max-width: 760px) {
+  .smart__real-flow-head {
+    align-items: flex-start;
+    padding: 14px 20px 62px;
+  }
+
+  .smart--real-person .smart__newvideo {
+    top: 78px;
+    right: 20px;
+  }
+}
+
 /* 项目名:单独一行,横向内边距与正文 .smart__body 一致(28px) */
 .smart__projbar {
   padding: 16px 28px 4px;

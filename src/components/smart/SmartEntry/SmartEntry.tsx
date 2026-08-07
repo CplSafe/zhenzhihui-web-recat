@@ -37,6 +37,8 @@ import {
 } from '@/utils/generationModelCatalog'
 import { parseDurationSeconds } from '@/utils/videoDurationValue'
 import { useToast } from '@/composables/useToast'
+import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
+import RealPersonMaterialPicker from './RealPersonMaterialPicker'
 import styles from './SmartEntry.module.less'
 
 /** 入口提交给智能成片编排器的制作模式、画幅、时长和参考素材元数据。 */
@@ -48,6 +50,7 @@ export interface EntryMeta {
   imageCount: number
   images: string[]
   imageAssetIds?: number[]
+  realPersonReferences?: SmartRealPersonReference[]
   /** 图片模式单轮生成数量，限制为 1–9；视频模式忽略。 */
   outputCount?: number
   /** 选中的营销 SKILL(空=不使用,走现有逻辑;非空=多一步「营销思路拆解」) */
@@ -58,6 +61,9 @@ export interface EntryMeta {
 
 /** 智能成片入口的提交、恢复、新建及初始草稿参数。 */
 interface SmartEntryProps {
+  /** 真人成片只复用生成能力，入口视觉和交互语义保持独立。 */
+  variant?: 'smart' | 'real-person'
+  workspaceId?: number
   onSubmit: (requirement: string, meta: EntryMeta) => void | boolean | Promise<void | boolean>
   /**
    * 是否允许恢复当前标签页尚未提交的入口草稿。
@@ -97,6 +103,7 @@ interface SmartEntryProps {
     duration?: string
     images?: string[]
     imageAssetIds?: number[]
+    realPersonReferences?: SmartRealPersonReference[]
     outputCount?: number
     skill?: string
     generationModels?: GenerationModelSelectionMap
@@ -150,6 +157,8 @@ export type { SmartEntryDraftStore }
 
 /** 管理需求输入、参考图、比例时长、@ 引用和会话级草稿恢复。 */
 export default function SmartEntry({
+  variant = 'smart',
+  workspaceId = 0,
   onSubmit,
   onNewVideo,
   canResume,
@@ -163,6 +172,7 @@ export default function SmartEntry({
   initial,
   restoreSessionDraft = true,
 }: SmartEntryProps) {
+  const isRealPersonVariant = variant === 'real-person'
   const { showToast } = useToast()
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
@@ -175,7 +185,9 @@ export default function SmartEntry({
   const seedImages = (initial?.images && initial.images.length ? initial.images : stored?.images) ?? []
   const seedImageAssetIds =
     (initial?.images && initial.images.length ? initial.imageAssetIds : stored?.imageAssetIds) ?? []
-  const [mode, setMode] = useState<'video' | 'image'>(initial?.mode ?? stored?.mode ?? 'video')
+  const [mode, setMode] = useState<'video' | 'image'>(
+    isRealPersonVariant ? 'video' : (initial?.mode ?? stored?.mode ?? 'video'),
+  )
   // 切换 Tab:背景弥散位移 + 涟漪动画由 <EntryCanvasBg mode> 监听 mode 变化驱动(Canvas 实现,不卡)
   const switchMode = (m: 'video' | 'image') => {
     if (m === mode) return
@@ -189,6 +201,10 @@ export default function SmartEntry({
   const [imageAssetIds, setImageAssetIds] = useState<number[]>(() =>
     seedImages.map((_, index) => Math.max(0, Math.floor(Number(seedImageAssetIds[index]) || 0))),
   )
+  const [realPersonReferences, setRealPersonReferences] = useState<SmartRealPersonReference[]>(
+    () => initial?.realPersonReferences ?? stored?.realPersonReferences ?? [],
+  )
+  const [realPersonPickerOpen, setRealPersonPickerOpen] = useState(false)
   const [outputCount, setOutputCount] = useState(() =>
     clampImageOutputCount(initial?.outputCount ?? stored?.outputCount ?? 1),
   )
@@ -220,12 +236,13 @@ export default function SmartEntry({
         skill,
         images,
         imageAssetIds,
+        realPersonReferences,
         outputCount,
         generationModels,
       })
     }, 300)
     return () => window.clearTimeout(t)
-  }, [mode, text, ratio, duration, skill, images, imageAssetIds, outputCount, generationModels])
+  }, [mode, text, ratio, duration, skill, images, imageAssetIds, realPersonReferences, outputCount, generationModels])
   // 本地图片先转成受控 data URL；过滤非图片并限制数量，避免无效文件进入后续资产上传流程。
   const pickImages = async (files: FileList | File[] | null) => {
     if (!files?.length) return
@@ -253,6 +270,7 @@ export default function SmartEntry({
     const url = images[index]
     setImages((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
     setImageAssetIds((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
+    setRealPersonReferences((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
     URL.revokeObjectURL(url)
   }
 
@@ -341,7 +359,10 @@ export default function SmartEntry({
         : modelSelectionConflicts.length > 0
           ? '当前创作参数与所选模型不兼容，请调整模型或创作参数'
           : ''
-  const canSubmit = cleanText.length > 0 || images.length > 0
+  const hasRequiredRealPerson =
+    !isRealPersonVariant ||
+    (images.length === 1 && imageAssetIds[0] > 0 && Boolean(realPersonReferences[0]?.realPersonId))
+  const canSubmit = hasRequiredRealPerson && (isRealPersonVariant || cleanText.length > 0 || images.length > 0)
   // 恢复态:已有生成结果且当前在视频 Tab → 发送按钮变「下一步」,并显示「重新生成」
   const resumeMode = !!canResume && mode === (initial?.mode || 'video')
   const updateGenerationModel = (groupKey: string, modelId: number | string, subgroupKey?: string) => {
@@ -369,6 +390,7 @@ export default function SmartEntry({
         imageCount: images.length,
         images,
         ...(imageAssetIds.some((assetId) => assetId > 0) ? { imageAssetIds } : {}),
+        ...(isRealPersonVariant ? { realPersonReferences } : {}),
         ...(mode === 'image' ? { outputCount } : {}),
         skill: mode === 'video' && skill ? skill : undefined,
         ...(Object.keys(generationModels).length ? { generationModels } : {}),
@@ -400,9 +422,10 @@ export default function SmartEntry({
 
   return (
     <div
-      className={`${styles.screate}${isDraggingFiles ? ` ${styles.dragging}` : ''}`}
+      className={`${styles.screate}${isRealPersonVariant ? ` ${styles.realPerson}` : ''}${isDraggingFiles ? ` ${styles.dragging}` : ''}`}
       data-mode={mode}
       onPaste={(event) => {
+        if (isRealPersonVariant) return
         const files = Array.from(event.clipboardData?.items || [])
           .filter((item) => item.kind === 'file')
           .map((item) => item.getAsFile())
@@ -412,12 +435,14 @@ export default function SmartEntry({
         void pickImages(files)
       }}
       onDragEnter={(event) => {
+        if (isRealPersonVariant) return
         if (!Array.from(event.dataTransfer?.items || []).some((item) => item.kind === 'file')) return
         event.preventDefault()
         dragDepthRef.current += 1
         setIsDraggingFiles(true)
       }}
       onDragOver={(event) => {
+        if (isRealPersonVariant) return
         if (!Array.from(event.dataTransfer?.items || []).some((item) => item.kind === 'file')) return
         event.preventDefault()
         event.dataTransfer.dropEffect = 'copy'
@@ -427,6 +452,7 @@ export default function SmartEntry({
         if (!dragDepthRef.current) setIsDraggingFiles(false)
       }}
       onDrop={(event) => {
+        if (isRealPersonVariant) return
         event.preventDefault()
         dragDepthRef.current = 0
         setIsDraggingFiles(false)
@@ -439,36 +465,61 @@ export default function SmartEntry({
         <EntryCanvasBg index={mode === 'image' ? 1 : 0} count={2} anim="glide" />
       </div>
 
-      <h1 className={styles.title}>{mode === 'image' ? '想打造什么样的营销图片？' : '想打造什么样的爆款短视频？'}</h1>
+      {isRealPersonVariant ? (
+        <header className={styles.realPersonHero}>
+          <h1 className={styles.title}>让真实人物，成为视频主角</h1>
+          <p>使用已认证真人素材保持人物特征，完成脚本、镜头与成片的一站式创作。</p>
+          <div className={styles.realPersonTrust} aria-label="真人成片能力">
+            <span>身份已授权</span>
+            <span>人物特征保留</span>
+            <span>全流程可追踪</span>
+          </div>
+        </header>
+      ) : (
+        <h1 className={styles.title}>{mode === 'image' ? '想打造什么样的营销图片？' : '想打造什么样的爆款短视频？'}</h1>
+      )}
 
       <div className={styles.panel}>
         {/* 右上角:与 Tab 同一行、右对齐卡片;点击初始化为全新空白页(等同切换路由再回来) */}
         {onNewVideo && (
           <button type="button" className={styles.newVideoBtn} onClick={() => onNewVideo(mode)}>
-            {mode === 'image' ? '创建新对话' : '制作新视频'}
+            {isRealPersonVariant ? '新建真人成片' : mode === 'image' ? '创建新对话' : '制作新视频'}
           </button>
         )}
         {/* Tab:制作视频 / 制作图片 */}
-        <div className={styles.tabs} role="tablist" aria-label="创作类型">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'video'}
-            className={`${styles.tab}${mode === 'video' ? ' ' + styles.active : ''}`}
-            onClick={() => switchMode('video')}
-          >
-            制作视频
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'image'}
-            className={`${styles.tab}${mode === 'image' ? ' ' + styles.active : ''}`}
-            onClick={() => switchMode('image')}
-          >
-            制作图片
-          </button>
-        </div>
+        {!isRealPersonVariant && (
+          <div className={styles.tabs} role="tablist" aria-label="创作类型">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'video'}
+              className={`${styles.tab}${mode === 'video' ? ' ' + styles.active : ''}`}
+              onClick={() => switchMode('video')}
+            >
+              制作视频
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'image'}
+              className={`${styles.tab}${mode === 'image' ? ' ' + styles.active : ''}`}
+              onClick={() => switchMode('image')}
+            >
+              制作图片
+            </button>
+          </div>
+        )}
+        {isRealPersonVariant && (
+          <div className={styles.realPersonPanelTitle}>
+            <span className={styles.realPersonPanelIcon} aria-hidden="true">
+              人
+            </span>
+            <div>
+              <strong>真人成片工作台</strong>
+              <small>先从已认证真人素材库选择出镜人物，未选择不能进入下一步</small>
+            </div>
+          </div>
+        )}
 
         <div className={styles.card} data-guide="smart-input">
           {/* 已选图片:独立成一行(可换行),不挤压文本框;参考主流 AI 输入框做法 */}
@@ -482,7 +533,7 @@ export default function SmartEntry({
                   </button>
                 </div>
               ))}
-              {images.length < MAX_IMAGES && (
+              {!isRealPersonVariant && images.length < MAX_IMAGES && (
                 <button
                   type="button"
                   className={styles.add}
@@ -511,8 +562,8 @@ export default function SmartEntry({
               <button
                 type="button"
                 className={styles.upload}
-                onClick={() => fileRef.current?.click()}
-                aria-label="上传图片"
+                onClick={() => (isRealPersonVariant ? setRealPersonPickerOpen(true) : fileRef.current?.click())}
+                aria-label={isRealPersonVariant ? '从真人素材库选择' : '上传图片'}
               >
                 {/* 倾斜浅灰卡片 + 加号(还原 Figma Group 388,无虚线边) */}
                 <svg
@@ -539,18 +590,26 @@ export default function SmartEntry({
                 </svg>
               </button>
             )}
-            <input
-              ref={fileRef}
-              type="file"
-              aria-label="选择上传图片"
-              accept="image/*"
-              multiple
-              hidden
-              onChange={(e) => {
-                pickImages(e.target.files)
-                e.target.value = ''
-              }}
-            />
+            {!isRealPersonVariant && (
+              <input
+                ref={fileRef}
+                type="file"
+                aria-label="选择上传图片"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  pickImages(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+            )}
+            {isRealPersonVariant && images.length === 0 && (
+              <div className={styles.realPersonRequired}>
+                <strong>选择已认证真人素材</strong>
+                <span>必选项 · 未选择无法开始制作</span>
+              </div>
+            )}
             <div className={styles.inputWrap}>
               {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
               <div className={styles.inputHl} ref={hlRef} aria-hidden="true">
@@ -561,7 +620,13 @@ export default function SmartEntry({
                 className={styles.input}
                 aria-label="创作需求"
                 value={text}
-                placeholder={mode === 'image' ? PLACEHOLDER_IMAGE : PLACEHOLDER_VIDEO}
+                placeholder={
+                  isRealPersonVariant
+                    ? '描述真人出镜的场景、动作、台词与产品信息。真人素材必须从认证素材库选择。'
+                    : mode === 'image'
+                      ? PLACEHOLDER_IMAGE
+                      : PLACEHOLDER_VIDEO
+                }
                 onChange={(e) => {
                   setText(e.target.value)
                   caretRef.current = e.target.selectionStart ?? e.target.value.length
@@ -661,7 +726,7 @@ export default function SmartEntry({
               </span>
 
               {/* 智能成片脚本(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
-              {mode === 'video' && (
+              {mode === 'video' && !isRealPersonVariant && (
                 <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
                   <EntryDropdown
                     clearable
@@ -736,7 +801,13 @@ export default function SmartEntry({
                 disabled={!canSubmit || submitting}
                 onClick={() => void submit()}
                 aria-label={submitting ? '正在准备创作' : '去制作'}
-                title={submitting ? '正在准备创作' : '去制作'}
+                title={
+                  submitting
+                    ? '正在准备创作'
+                    : isRealPersonVariant && !hasRequiredRealPerson
+                      ? '请先从真人素材库选择一张已认证真人图片'
+                      : '去制作'
+                }
               >
                 <span className={styles.sendPlainText}>{submitting ? '准备中…' : '去制作'}</span>
               </button>
@@ -744,6 +815,16 @@ export default function SmartEntry({
           </div>
         </div>
       </div>
+      <RealPersonMaterialPicker
+        open={isRealPersonVariant && realPersonPickerOpen}
+        workspaceId={workspaceId}
+        onClose={() => setRealPersonPickerOpen(false)}
+        onSelect={(url, reference) => {
+          setImages([url])
+          setImageAssetIds([reference.localAssetId])
+          setRealPersonReferences([reference])
+        }}
+      />
     </div>
   )
 }

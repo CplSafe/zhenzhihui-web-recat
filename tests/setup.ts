@@ -35,3 +35,10 @@ class ResizeObserverMock {
 }
 
 vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+// jsdom does not implement canvas. Returning a harmless null context matches
+// browsers where a context is unavailable without emitting noisy errors.
+Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+  configurable: true,
+  value: vi.fn(() => null),
+})

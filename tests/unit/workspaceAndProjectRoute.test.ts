@@ -70,6 +70,8 @@ describe('resolveProjectPath', () => {
   it.each([
     [{ flow: 'hot-copy' }, '/hot-copy/171'],
     [{ smart: { flow: 'HOT-COPY' } }, '/hot-copy/171'],
+    [{ flow: 'real-person-video' }, '/real-person-video/171'],
+    [{ smart: { flow: 'REAL-PERSON-VIDEO' } }, '/real-person-video/171'],
     [{ flow: 'smart' }, '/smart/171'],
     [{ smart: { requirement: 'legacy smart draft' } }, '/smart/171'],
     [{ flow: 'legacy' }, '/smart/171'],

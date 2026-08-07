@@ -4,6 +4,7 @@
  */
 import { isLogoutDraftWriteBlocked } from './logoutBarrier'
 import type { GenerationModelSelectionMap } from './generationModelCatalog'
+import type { SmartRealPersonReference } from './smartRealPerson'
 
 /** 无归属信息的旧版入口草稿键。 */
 const LEGACY_ENTRY_DRAFT_KEY = 'zzh.smart-entry.draft'
@@ -20,6 +21,8 @@ export interface SmartEntryDraftStore {
   images?: string[]
   /** 与 images 按下标对齐的已落库素材 ID；本地新上传图片为 0。 */
   imageAssetIds?: number[]
+  /** 与真人成片入口图片按下标对齐的认证及授权信息。 */
+  realPersonReferences?: SmartRealPersonReference[]
   /** 图片模式单轮生成数量。 */
   outputCount?: number
   /** 按 operation_code 保存的后端模型版本选择。 */

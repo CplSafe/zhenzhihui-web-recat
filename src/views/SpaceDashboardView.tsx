@@ -35,18 +35,10 @@ import { openComingSoon } from '@/stores/ui'
 import dashboardHero from '@/assets/space-dashboard-hero.webp'
 import dashboardHeroFallback from '@/assets/space-dashboard-hero-fallback.png'
 import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
+import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import './SpaceDashboardView.css'
 
 /** 侧边栏导航键与页面路径映射。 */
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-  team: '/team',
-}
 
 /** 后端成员总数字段的兼容候选。 */
 const MEMBER_KEYS = ['member_count', 'members_total', 'members', 'memberCount', 'user_count', 'users_total']
@@ -914,7 +906,7 @@ export default function SpaceDashboardView() {
   )
 
   const handleNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
+    const path = getSidebarRoute(key)
     if (path) navigate(path)
     else openComingSoon()
   }

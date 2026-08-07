@@ -1,0 +1,146 @@
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(9, 34, 29, 0.48);
+  backdrop-filter: blur(8px);
+}
+.dialog {
+  width: min(860px, 100%);
+  max-height: min(720px, 88vh);
+  overflow: hidden;
+  border: 1px solid rgba(28, 173, 139, 0.22);
+  border-radius: 24px;
+  background: #fbfdfc;
+  box-shadow: 0 28px 80px rgba(7, 49, 39, 0.22);
+}
+.dialog header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 26px 30px 22px;
+  border-bottom: 1px solid #e5efeb;
+  background: linear-gradient(120deg, #eafaf5, #fffdf7);
+}
+.dialog header span {
+  color: #139b7a;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+.dialog h2 {
+  margin: 7px 0 5px;
+  color: #163c33;
+  font-size: 24px;
+}
+.dialog p {
+  margin: 0;
+  color: #71827d;
+  font-size: 13px;
+}
+.dialog header button {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  color: #49635c;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 24px;
+  cursor: pointer;
+}
+.content {
+  max-height: calc(88vh - 115px);
+  overflow: auto;
+  padding: 24px 30px 30px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 16px;
+}
+.item {
+  position: relative;
+  overflow: hidden;
+  padding: 0 0 14px;
+  border: 1px solid #e1ebe7;
+  border-radius: 17px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: 0.18s ease;
+}
+.item:hover {
+  transform: translateY(-2px);
+  border-color: #28c5a0;
+  box-shadow: 0 12px 28px rgba(21, 139, 111, 0.13);
+}
+.item:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  background: #edf4f1;
+}
+.imageLoading {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  place-items: center;
+  color: #85958f;
+  background: #edf4f1;
+  font-size: 12px;
+}
+.item strong,
+.item small {
+  display: block;
+  margin: 10px 12px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item strong {
+  color: #24463e;
+  font-size: 14px;
+}
+.item small {
+  margin-top: 4px;
+  color: #13a27f;
+}
+.verified {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(12, 143, 108, 0.9);
+  font-size: 11px;
+}
+.state {
+  padding: 56px 20px;
+  color: #778984;
+  text-align: center;
+}
+.error {
+  color: #cf4f4f;
+}
+@media (max-width: 640px) {
+  .mask {
+    padding: 12px;
+  }
+  .dialog header,
+  .content {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

@@ -133,6 +133,7 @@ import { sanitizePersistentMediaUrl, sanitizePersistentProjectVideoStore } from 
 import { sanitizeTelemetryText } from '@/utils/observabilitySanitizer'
 import { validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
 import { SMART_VIDEO_DURATIONS, parseDurationSeconds } from '@/utils/videoDurationValue'
+import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import './SmartCreateView.css'
 
 /** 按需加载爆款复制素材入口。 */
@@ -157,14 +158,6 @@ const STEPS: StepItem[] = [
 ]
 
 /** 侧边栏导航键与页面路径映射。 */
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 
 // 默认尺寸/时长与智能成片一致:16:9、10s
 const DEFAULT_RATIO = '16:9'
@@ -197,6 +190,23 @@ const deniedHotCopyProjectKeys = new Set<string>()
 /** 组合工作空间与项目 id，作为权限拒绝和草稿基线缓存键。 */
 const hotCopyProjectKey = (workspaceId: number, projectId: number) =>
   `${Math.floor(Number(workspaceId) || 0)}:${Math.floor(Number(projectId) || 0)}`
+
+/** 把提交前的可观察业务节点映射到 1–18%，不把“准备中”伪装成后端生成进度。 */
+function resolveHotCopyPreparationProgress(phase: string): number {
+  const text = String(phase || '')
+  if (/创建视频任务|提交视频任务|准备视频任务/.test(text)) return 18
+  if (/计算生成费用/.test(text)) return 15
+  if (/确认模型参数/.test(text)) return 12
+  if (/上传|导入/.test(text)) return 9
+  if (/素材|模板视频|源视频/.test(text)) return 5
+  return 2
+}
+
+/** 后端任务进度只占 20–95%；100% 只由完成响应驱动。 */
+function mapHotCopyProviderProgress(progress: number): number {
+  const normalized = Math.max(0, Math.min(100, Number(progress) || 0))
+  return Math.round(20 + normalized * 0.75)
+}
 // 同一个 provider task 可能同时被原生成链和路由恢复链消费；跨组件重挂载也只允许落库一次。
 const hotCopyCompletionPromises = new Map<string, Promise<void>>()
 
@@ -902,6 +912,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   // 在途生成任务 id(>0=有任务在跑):持久化后,刷新/切换页面回来用它续轮询,不丢生成结果
   const [vidGenTaskId, setVidGenTaskId] = useState(0)
   const [hotCopyPhase, setHotCopyPhase] = useState('')
+  const [hotCopyProviderProgress, setHotCopyProviderProgress] = useState<number | null>(null)
   const [projectLoading, setProjectLoading] = useState(true)
   const [projectLoadError, setProjectLoadError] = useState('')
   const [projectLoadRetry, setProjectLoadRetry] = useState(0)
@@ -988,7 +999,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   }, [])
   // 命令式立即落盘:在关键节点(开始生成 / 拿到 task id / 拿到源素材)直接写 localStorage,
   // 不依赖 effect 时机 —— 防止「刚点生成就切走、setState 还没触发保存就卸载」导致 task id 丢失。
-  const persistNow = useLatestCallback((partial: Partial<HotCopyDraft>) => {
+  const persistNow = useLatestCallback((partial: Partial<HotCopyDraft>, options: { allowTaskClear?: boolean } = {}) => {
     const ws = Number(workspaceId || 0)
     if (!ws) return
     const base: HotCopyDraft = loadCurrentHotCopyDraft(ws) || {
@@ -1014,7 +1025,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       genRatio,
       genDurationSec,
     }
-    saveHotCopyDraft(ws, { ...base, ...partial })
+    saveHotCopyDraft(ws, { ...base, ...partial }, options)
   })
 
   useEffect(() => {
@@ -1176,7 +1187,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         })
       }
       if (!next.some((g) => g.status === 'processing')) {
-        persistNow({ videoGenerating: false, vidGenTaskId: 0, videoGenerations: next })
+        persistNow({ videoGenerating: false, vidGenTaskId: 0, videoGenerations: next }, { allowTaskClear: true })
       } else {
         persistNow({ videoGenerations: next })
       }
@@ -1405,6 +1416,13 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     if (!context || isJobUiActive(context)) setHotCopyPhase(phase)
   }
 
+  const updateHotCopyProviderProgress = (context: HotCopyJobContext | undefined, progress: number) => {
+    if (!context || isJobUiActive(context)) {
+      setHotCopyProviderProgress((current) => Math.max(current ?? 0, Number(progress) || 0))
+    }
+    if (context) patchHotCopyTaskCenter(context, { status: 'processing', progress, error: '' })
+  }
+
   const createRecoveryJobContext = (
     ws: number,
     pid: number,
@@ -1531,6 +1549,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         const uiCommitKey = `${context.taskCenterId}:${context.epoch}`
         if (isJobUiActive(context) && !completedJobUiKeysRef.current.has(uiCommitKey)) {
           completedJobUiKeysRef.current.add(uiCommitKey)
+          setHotCopyProviderProgress(100)
           commitGeneratedVideo(context.workspaceId, safeVideo, safeTaskId, context.generationId, context)
         }
       },
@@ -1719,7 +1738,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         )
         keepPending = !terminalPersisted
         if (terminalPersisted && isJobUiActive(context)) {
-          persistNow({ videoGenerating: false })
+          persistNow({ videoGenerating: false }, { allowTaskClear: true })
           if (isTaskCancelled(e)) {
             markGen(null, 'cancelled')
             showToast('视频生成已中断', 'info')
@@ -1733,7 +1752,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         if (runningVideoPromiseRef.current === inflight) runningVideoPromiseRef.current = null
         if (keepPending) return
         if (isJobUiActive(context)) {
-          persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+          persistNow({ videoGenerating: false, vidGenTaskId: 0 }, { allowTaskClear: true })
           setVidGenRunning(false)
           setVidGenTaskId(0)
         }
@@ -1773,6 +1792,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     upsertHotCopyTaskCenter(context, 'reconnecting', { taskId })
     setVidGenTaskId(taskId)
     setVidGenRunning(true)
+    setHotCopyProviderProgress(null)
     setHotCopyPhase('正在恢复生成任务…')
     persistNow({ videoGenerating: true, vidGenTaskId: taskId })
     const ctrl = new AbortController()
@@ -1783,7 +1803,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         workspaceId: ws,
         taskId,
         signal: ctrl.signal,
-        onProgress: (progress) => patchHotCopyTaskCenter(context, { status: 'processing', progress, error: '' }),
+        onProgress: (progress) => updateHotCopyProviderProgress(context, progress),
       }),
       {
         taskId,
@@ -1810,7 +1830,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         const terminalPersisted = await failHotCopyJob(context, cancelled ? 'cancelled' : 'failed', message, taskId)
         keepPending = !terminalPersisted
         if (!terminalPersisted || !isJobUiActive(context)) return
-        persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+        persistNow({ videoGenerating: false, vidGenTaskId: 0 }, { allowTaskClear: true })
         if (cancelled) {
           markGen(null, 'cancelled')
           showToast('视频生成已中断', 'info')
@@ -1821,7 +1841,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       })
       .finally(() => {
         if (!keepPending && isJobUiActive(context)) {
-          persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+          persistNow({ videoGenerating: false, vidGenTaskId: 0 }, { allowTaskClear: true })
           setVidGenRunning(false)
           setVidGenTaskId(0)
         }
@@ -1947,6 +1967,18 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     if (!pending) return null
     const idempotencyKey =
       String(pending.idempotencyKey || '').trim() || buildTaskCenterId('hot-copy', ws, pid, pending.id)
+    const recoveryContext = createJobContext({
+      epoch: verificationEpoch,
+      workspaceId: ws,
+      projectId: pid,
+      generation: pending,
+      title: String(draft?.projectName || '爆款复制项目'),
+      prompt: String(draft?.basePrompt || ''),
+      ratio: String(draft?.genRatio || DEFAULT_RATIO),
+      durationSec: Number(draft?.genDurationSec || DEFAULT_DURATION_SEC) || DEFAULT_DURATION_SEC,
+      operationCode: 'video.replicate',
+      entryInitial: draft?.entryInitial,
+    })
 
     pendingTaskVerificationAtRef.current = now
     const verification = (async () => {
@@ -1962,21 +1994,9 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         const matched = findHotCopyTaskByIdempotencyKey(tasks, idempotencyKey)
         const recoveredTaskId = getAiTaskId(matched)
         if (recoveredTaskId > 0) {
-          const context = createJobContext({
-            epoch: verificationEpoch,
-            workspaceId: ws,
-            projectId: pid,
-            generation: pending,
-            title: String(draft?.projectName || '爆款复制项目'),
-            prompt: String(draft?.basePrompt || ''),
-            ratio: String(draft?.genRatio || DEFAULT_RATIO),
-            durationSec: Number(draft?.genDurationSec || DEFAULT_DURATION_SEC) || DEFAULT_DURATION_SEC,
-            operationCode: 'video.replicate',
-            entryInitial: draft?.entryInitial,
-          })
-          upsertHotCopyTaskCenter(context, 'processing', { taskId: recoveredTaskId })
-          activateGen(pending, recoveredTaskId, context)
-          void persistRecoveryCredential(context, { status: 'processing', taskId: recoveredTaskId }).catch(
+          upsertHotCopyTaskCenter(recoveryContext, 'processing', { taskId: recoveredTaskId })
+          activateGen(pending, recoveredTaskId, recoveryContext)
+          void persistRecoveryCredential(recoveryContext, { status: 'processing', taskId: recoveredTaskId }).catch(
             () => undefined,
           )
           // 用户已创建新视频时由全局任务中心继续跟踪旧任务，禁止恢复逻辑重新占用新页面。
@@ -1986,7 +2006,14 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         if (tasks.length < 100) break
       }
       if (isVerificationCurrent()) {
-        setHotCopyPhase('生成任务仍在同步，正在重试…')
+        const message = '未检测到已创建的视频任务，请重新点击“去制作”'
+        failHotCopyBeforePaidTask(recoveryContext, pending, message)
+        clearPendingUiGeneration(pending.id)
+        releaseGenTriggerLock(verificationEpoch)
+        stopPendingTaskIdPolling()
+        setVidGenRunning(false)
+        setVidGenTaskId(0)
+        setHotCopyPhase('')
       }
     })()
       .catch(() => {
@@ -2600,11 +2627,14 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     if (pendingUiGenerationRef.current || hasProcessing || vidGenTaskId > 0 || hasInflight) return
     releaseGenTriggerLock()
     setVidGenRunning(false)
-    persistNow({
-      videoGenerating: false,
-      vidGenTaskId: 0,
-      videoGenerations: dropProcessingGenerations(videoGenerations),
-    })
+    persistNow(
+      {
+        videoGenerating: false,
+        vidGenTaskId: 0,
+        videoGenerations: dropProcessingGenerations(videoGenerations),
+      },
+      { allowTaskClear: true },
+    )
   }, [
     genTriggerBusy,
     isActiveProcessingGen,
@@ -2759,17 +2789,21 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       }),
     )
     immediateSaveRef.current = true
-    persistNow({
-      fullVideo: safeVideo,
-      videoVersions: nextVersions,
-      videoGenerating: false,
-      vidGenTaskId: 0,
-      videoGenerations: nextGenerations,
-      videoModificationDraft: nextVideoModificationDraft,
-    })
+    persistNow(
+      {
+        fullVideo: safeVideo,
+        videoVersions: nextVersions,
+        videoGenerating: false,
+        vidGenTaskId: 0,
+        videoGenerations: nextGenerations,
+        videoModificationDraft: nextVideoModificationDraft,
+      },
+      { allowTaskClear: true },
+    )
     // 带 context 的结果已经由 persistHotCopyJobResult 按锁定 projectId 落库，禁止再读可变 projectIdRef。
     if (!context && projectIdRef.current) void putHotCopyDraftToBackend(ws)
     if (aliveRef.current) {
+      setHotCopyProviderProgress(100)
       setFullVideo(safeVideo)
       setVideoVersions((prev) => mergeVideoVersions(draft?.videoVersions, prev, draft?.fullVideo, fullVideo, safeVideo))
       setVideoGenerations(nextGenerations)
@@ -3817,9 +3851,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
             if (!context && projectIdRef.current) void putHotCopyDraftToBackend(ws)
           }
         },
-        onProgress: (progress) => {
-          if (context) patchHotCopyTaskCenter(context, { status: 'processing', progress, error: '' })
-        },
+        onProgress: (progress) => updateHotCopyProviderProgress(context, progress),
       }),
       { generationId: generation?.id || context?.generationId || '', status: 'preparing', context },
     )
@@ -4114,7 +4146,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       const terminalPersisted = await failHotCopyJob(context, cancelled ? 'cancelled' : 'failed', message, taskId)
       aborted = !terminalPersisted
       if (terminalPersisted && isJobUiActive(context)) {
-        persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+        persistNow({ videoGenerating: false, vidGenTaskId: 0 }, { allowTaskClear: true })
         if (cancelled) {
           markGen(generation.id, 'cancelled')
           showToast('视频生成已中断', 'info')
@@ -4127,7 +4159,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       if (isJobUiActive(context)) clearPendingUiGeneration(generation.id)
       releaseGenTriggerLock(context.epoch)
       if (!aborted && isJobUiActive(context)) {
-        persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+        persistNow({ videoGenerating: false, vidGenTaskId: 0 }, { allowTaskClear: true })
         setVidGenRunning(false)
         setVidGenTaskId(0)
         setHotCopyPhase('')
@@ -4167,6 +4199,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     if (opts?.edit && fullVideo.assetId) {
       setVidGenRunning(true)
       setHotCopyPhase('视频修改生成中…')
+      setHotCopyProviderProgress(null)
       const generation = reserveGen('确认修改', note || '')
       const context = createJobContext({
         epoch,
@@ -4227,7 +4260,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                 if (isJobUiActive(context)) clearPendingUiGeneration(generation.id)
               }
             },
-            onProgress: (progress) => patchHotCopyTaskCenter(context, { status: 'processing', progress, error: '' }),
+            onProgress: (progress) => updateHotCopyProviderProgress(context, progress),
           }),
           { generationId: generation.id, status: 'preparing', context },
         )
@@ -4258,7 +4291,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         if (isJobUiActive(context)) clearPendingUiGeneration(generation.id)
         releaseGenTriggerLock(context.epoch)
         if (!keepPending && isJobUiActive(context)) {
-          persistNow({ videoGenerating: false, vidGenTaskId: 0 })
+          persistNow({ videoGenerating: false, vidGenTaskId: 0 }, { allowTaskClear: true })
           setVidGenRunning(false)
           setVidGenTaskId(0)
           setHotCopyPhase('')
@@ -4746,6 +4779,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     // 先显式置为生成中,再切到视频页,避免首帧短暂落到「暂无视频」占位态。
     setVidGenRunning(true)
     setVidGenTaskId(0)
+    setHotCopyProviderProgress(null)
     setEntryInitial(nextEntryInitial)
     setBasePrompt(prompt)
     // 采用用户在入口选择的成片尺寸/时长(默认 16:9、10s)
@@ -4966,6 +5000,18 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   const hasCommittedVideo = hasVideoResult(fullVideo, videoVersions)
   const hotCopyVideoGenerating =
     visiblePendingGenerations.length > 0 || vidGenRunning || (genTriggerBusy && !hasCommittedVideo)
+  const resolveVisibleGenerationTaskId = (generation: ReservedGen) =>
+    Number(videoGenerations.find((item) => item.id === generation.id)?.taskId || 0) || 0
+  const taskBackedGeneration = visiblePendingGenerations.find(
+    (generation) => resolveVisibleGenerationTaskId(generation) > 0,
+  )
+  const hotCopyTaskPreparing = hotCopyVideoGenerating && !taskBackedGeneration && Number(vidGenTaskId || 0) <= 0
+  const hasProviderProgress = hotCopyProviderProgress != null && Number.isFinite(hotCopyProviderProgress)
+  const hotCopyDisplayedProgress = hotCopyTaskPreparing
+    ? resolveHotCopyPreparationProgress(hotCopyPhase)
+    : hasProviderProgress
+      ? mapHotCopyProviderProgress(hotCopyProviderProgress)
+      : undefined
   const hotCopyStepGenerating =
     vidGenRunning || visiblePendingGenerations.length > 0 || (genTriggerBusy && !hasCommittedVideo)
 
@@ -5060,7 +5106,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   }
 
   const onNavigate = (key: string) => {
-    const path = ROUTE_MAP[key]
+    const path = getSidebarRoute(key)
     if (path) navigate(path)
     else openComingSoon() // 设置/视频编辑/投前预审/数据看板等未上线项:弹全局「功能待开放」弹窗
   }
@@ -5207,9 +5253,22 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                       videoUrl={fullVideo.url}
                       videoAssetId={fullVideo.assetId}
                       videoGenerating={hotCopyVideoGenerating}
-                      videoStatusText={hotCopyVideoGenerating ? hotCopyPhase || '爆款复制生成中…' : undefined}
-                      loadingTitle="爆款复制生成中"
-                      videoStartedAt={visiblePendingGenerations[0]?.createdAt || 0}
+                      videoStatusText={
+                        hotCopyVideoGenerating
+                          ? hotCopyTaskPreparing
+                            ? hotCopyPhase || '正在上传素材并提交任务…'
+                            : hotCopyPhase || '爆款复制生成中…'
+                          : undefined
+                      }
+                      loadingTitle={hotCopyTaskPreparing ? '正在准备视频任务' : '爆款复制生成中'}
+                      allowEstimatedProgress={!hotCopyTaskPreparing && !hasProviderProgress}
+                      videoProgress={hotCopyDisplayedProgress}
+                      videoProgressLabel={
+                        hotCopyTaskPreparing ? '准备进度' : hasProviderProgress ? '真实生成进度' : '预计生成进度'
+                      }
+                      estimatedProgressMin={20}
+                      estimatedProgressMax={95}
+                      videoStartedAt={taskBackedGeneration?.createdAt || 0}
                       costEstimate={videoCost.estimate}
                       costLoading={videoCost.loading}
                       costError={videoCost.error}
@@ -5244,12 +5303,16 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                         .filter((g) => g.status === 'failed')
                         .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0))
                         .map((g) => ({ id: g.id, note: g.note, error: g.error, createdAt: g.createdAt }))}
-                      pendingGenerations={visiblePendingGenerations.map((g) => ({
-                        id: g.id,
-                        createdAt: g.createdAt,
-                        // 爆款复制不支持多任务排队；processing 历史统一按「生成中」展示，避免误导成排队态。
-                        running: true,
-                      }))}
+                      pendingGenerations={visiblePendingGenerations.map((g) => {
+                        const hasTaskId = resolveVisibleGenerationTaskId(g) > 0
+                        return {
+                          id: g.id,
+                          createdAt: g.createdAt,
+                          // task_id 是正式任务已创建的唯一凭据；此前只能展示“提交中”，不能伪装成生成中。
+                          preparing: !hasTaskId,
+                          running: hasTaskId,
+                        }
+                      })}
                       pendingVideoCount={visiblePendingGenerations.length}
                       modificationDraft={videoModificationDraft}
                       onModificationDraftChange={setVideoModificationDraft}

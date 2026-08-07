@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   formatPriceCents,
   getMemberCenterPaymentUserScope,
+  hasMemberCenterSubscriptionChanged,
+  hasMemberCenterWalletIncreased,
   isSameMemberCenterPaymentScope,
   releaseMemberCenterPayment,
+  resolveMemberCenterPaymentOrderState,
   resolvePurchasedTeamWorkspace,
   stopTrackingMemberCenterOrder,
   tryAcquireMemberCenterPayment,
@@ -18,6 +21,47 @@ describe('会员中心价格精度', () => {
     [undefined, '0'],
   ])('将 %s 分显示为 %s 元', (cents, expected) => {
     expect(formatPriceCents(cents)).toBe(expected)
+  })
+})
+
+describe('会员中心支付结果确认', () => {
+  it('优先采用支付状态，避免通用订单状态误报成功', () => {
+    expect(resolveMemberCenterPaymentOrderState({ status: 'paid', payment_status: 'cancelled' })).toEqual({
+      status: 'cancelled',
+      hasPaidEvidence: false,
+    })
+    expect(resolveMemberCenterPaymentOrderState({ status: 'created', payment_status: 'paid' })).toEqual({
+      status: 'paid',
+      hasPaidEvidence: true,
+    })
+  })
+
+  it('兼容旧接口，但不把缺少支付凭证的通用 paid 当作明确到账凭证', () => {
+    expect(resolveMemberCenterPaymentOrderState({ status: 'paid' })).toEqual({
+      status: 'paid',
+      hasPaidEvidence: false,
+    })
+    expect(resolveMemberCenterPaymentOrderState({ status: 'paid', paid_at: '2026-08-06T12:00:00+08:00' })).toEqual({
+      status: 'paid',
+      hasPaidEvidence: true,
+    })
+  })
+
+  it('只有余额或订阅权益真实变化才确认成功', () => {
+    expect(hasMemberCenterWalletIncreased(100, { available: 100 })).toBe(false)
+    expect(hasMemberCenterWalletIncreased(100, { available: 180 })).toBe(true)
+    expect(
+      hasMemberCenterSubscriptionChanged(
+        { active: true, plan_id: 2, current_period_end: '2026-08-01T00:00:00+08:00' },
+        { active: true, plan_id: 2, current_period_end: '2026-09-01T00:00:00+08:00' },
+      ),
+    ).toBe(true)
+    expect(
+      hasMemberCenterSubscriptionChanged(
+        { active: true, plan_id: 2, current_period_end: '2026-08-01T00:00:00+08:00' },
+        { active: true, plan_id: 2, current_period_end: '2026-08-01T00:00:00+08:00' },
+      ),
+    ).toBe(false)
   })
 })
 
@@ -125,6 +169,18 @@ describe('member-center payment concurrency', () => {
           { id: 22, type: 'team', name: '旧团队' },
         ],
         { targetWorkspaceId: 21, workspaceBaselineIds: [22] },
+      ),
+    ).toBeNull()
+  })
+
+  it('does not treat an unpaid activation-pending team as a purchased entitlement', () => {
+    expect(
+      resolvePurchasedTeamWorkspace(
+        [
+          { id: 21, type: 'personal', name: '个人空间' },
+          { id: 31, type: 'team', name: '待支付团队', status: 'activation_pending' },
+        ],
+        { targetWorkspaceId: 31, workspaceBaselineIds: [21] },
       ),
     ).toBeNull()
   })

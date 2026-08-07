@@ -6,26 +6,15 @@
 import { useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { openComingSoon } from '@/stores/ui'
+import { getSidebarRoute } from '@/utils/sidebarNavigation'
 
 // 侧边栏导航键 → 路由(creative 即智能成片 /smart)
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-  'template-local-life': '/templates?category=local-life',
-  'template-ecommerce': '/templates?category=ecommerce',
-  distribution: '/distribution',
-}
-
 /** 返回侧边栏统一导航处理器，未开放入口改为展示全局提示。 */
 export function useSidebarNavigate() {
   const navigate = useNavigate()
   return useCallback(
     (key: string) => {
-      const path = ROUTE_MAP[key]
+      const path = getSidebarRoute(key)
       if (path) navigate(path)
       else openComingSoon()
     },

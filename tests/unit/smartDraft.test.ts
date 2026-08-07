@@ -472,6 +472,13 @@ describe('smartDraft 后端快照', () => {
     expect(buildSmartSnapshot({ step: 3 }).currentStep).toBe('video')
   })
 
+  it('preserves the real-person flow marker in backend snapshots', () => {
+    const snapshot = buildSmartSnapshot({ flow: 'real-person-video', projectName: '真人口播' }, 21)
+
+    expect(snapshot.flow).toBe('real-person-video')
+    expect(snapshot.smart.flow).toBe('real-person-video')
+  })
+
   it.each([
     ['不是 JSON', null],
     [null, null],
