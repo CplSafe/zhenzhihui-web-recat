@@ -142,6 +142,17 @@ interface VideoLoadingProps {
   startedAt?: number
   /** 主标题文案覆盖(缺省「视频生成中」);仅整体标题,不暴露内部阶段(如人脸脱敏)。 */
   title?: string
+  /** 任务提交成功前不展示基于时间推算的虚拟进度。 */
+  showProgress?: boolean
+  /** 是否允许使用基于耗时的估算百分比；关闭后仅展示不定进度，避免被误认为后端真实进度。 */
+  allowEstimatedProgress?: boolean
+  /** 后端或业务阶段给出的明确百分比。传入后优先于耗时估算。 */
+  progress?: number
+  /** 百分比左侧标签，用于区分准备进度、真实生成进度和预计生成进度。 */
+  progressLabel?: string
+  /** 耗时估算只在这个区间内增长；完成态必须由后端确认。 */
+  estimatedProgressMin?: number
+  estimatedProgressMax?: number
 }
 
 /** 根据真实已流逝时间计算单调逼近 99% 的估算进度，不伪造完成终态。 */
@@ -153,7 +164,19 @@ function calcProgress(startedAt?: number): number {
 }
 
 /** 自适应渲染生成等待视觉，并在页面重挂载后继续显示同一任务的时间进度。 */
-export default function VideoLoading({ note, tip, startedAt, title = '视频生成中' }: VideoLoadingProps) {
+export default function VideoLoading({
+  statusText,
+  note,
+  tip,
+  startedAt,
+  title = '视频生成中',
+  showProgress = true,
+  allowEstimatedProgress = true,
+  progress,
+  progressLabel,
+  estimatedProgressMin = 1,
+  estimatedProgressMax = 99,
+}: VideoLoadingProps) {
   const frameRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
 
@@ -177,6 +200,13 @@ export default function VideoLoading({ note, tip, startedAt, title = '视频生�
     const id = window.setInterval(tick, 400)
     return () => window.clearInterval(id)
   }, [startedAt])
+
+  const hasExplicitProgress = Number.isFinite(progress)
+  const estimatedMin = clamp(0, estimatedProgressMin, 99)
+  const estimatedMax = clamp(estimatedMin, estimatedProgressMax, 99)
+  const estimatedPct = Math.round(estimatedMin + (pct / 99) * (estimatedMax - estimatedMin))
+  const displayedPct = hasExplicitProgress ? clamp(0, Number(progress), 100) : estimatedPct
+  const showPercentage = hasExplicitProgress || allowEstimatedProgress
 
   const unit = Math.min(size.w || 400, size.h || 400)
   const statusSize = clamp(13, unit * 0.045, 20)
@@ -239,31 +269,49 @@ export default function VideoLoading({ note, tip, startedAt, title = '视频生�
           {title}
         </p>
 
-        {/* 进度:百分比 + 细进度条 */}
-        <div style={{ width: barW, maxWidth: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              fontSize: noteSize,
-              color: 'rgba(200,200,255,0.75)',
-            }}
-          >
-            <span>生成进度</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums', color: 'rgba(160,210,255,0.95)' }}>{pct}%</span>
-          </div>
-          <div style={{ height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.12)', overflow: 'hidden' }}>
+        {showProgress ? (
+          /* 只有后端任务已创建时才展示时间推算进度。 */
+          <div style={{ width: barW, maxWidth: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div
               style={{
-                width: `${pct}%`,
-                height: '100%',
-                borderRadius: 999,
-                background: 'linear-gradient(90deg, #00d8ff, #6633ff, #ff2088)',
-                transition: 'width 0.5s ease',
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: noteSize,
+                color: 'rgba(200,200,255,0.75)',
               }}
-            />
+            >
+              <span>
+                {progressLabel ||
+                  (hasExplicitProgress
+                    ? '当前进度'
+                    : allowEstimatedProgress
+                      ? '预计生成进度'
+                      : statusText || '生成任务处理中')}
+              </span>
+              {showPercentage ? (
+                <span style={{ fontVariantNumeric: 'tabular-nums', color: 'rgba(160,210,255,0.95)' }}>
+                  {displayedPct}%
+                </span>
+              ) : null}
+            </div>
+            <div style={{ height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.12)', overflow: 'hidden' }}>
+              <div
+                style={{
+                  width: showPercentage ? `${displayedPct}%` : '100%',
+                  height: '100%',
+                  borderRadius: 999,
+                  background: 'linear-gradient(90deg, #00d8ff, #6633ff, #ff2088)',
+                  opacity: showPercentage ? 1 : 0.65,
+                  transition: 'width 0.5s ease',
+                }}
+              />
+            </div>
           </div>
-        </div>
+        ) : (
+          <p role="status" style={{ margin: 0, color: 'rgba(200,200,255,0.75)', fontSize: noteSize, lineHeight: 1.6 }}>
+            {statusText || '正在提交视频任务…'}
+          </p>
+        )}
 
         {showExtras && note && (
           <p

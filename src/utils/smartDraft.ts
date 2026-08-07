@@ -43,6 +43,8 @@ function scopedDraftOwnerOf(storageKey: string | null): string | null {
 
 /** 智能成片从入口到视频生成的可恢复会话状态。 */
 export interface SmartDraft {
+  /** 创作流程来源；真人成片复用智能成片结构，但必须保持项目入口和素材授权语义独立。 */
+  flow?: 'smart' | 'real-person-video'
   workspaceId?: number
   started?: boolean
   requirement?: string
@@ -719,7 +721,7 @@ export function buildSmartSnapshot(d: SmartDraft, workspaceId = Number(d.workspa
     return out
   })
   return {
-    flow: 'smart',
+    flow: clean.flow || 'smart',
     title: clean.projectName || '',
     currentStep: STEP_CODES[clean.step || 0] || 'script',
     description: clean.requirement || '',

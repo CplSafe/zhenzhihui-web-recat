@@ -12,6 +12,7 @@ import 'dayjs/locale/zh-cn'
 import 'normalize.css'
 import './style.css'
 import { router } from './router'
+import { initObservability } from './observability/openobserve-logger'
 
 // Ant Design 的组件文案由 ConfigProvider 控制，日期面板的月份和星期则读取 dayjs locale。
 dayjs.locale('zh-cn')
@@ -25,11 +26,7 @@ type IdleWindow = Window & {
 function scheduleObservability(): void {
   if (!import.meta.env.VITE_O2_CLIENT_TOKEN || !import.meta.env.VITE_O2_SITE) return
 
-  const start = () => {
-    void import('./observability/openobserve-logger')
-      .then(({ initObservability }) => initObservability())
-      .catch(() => undefined)
-  }
+  const start = () => initObservability()
   const idleWindow = window as IdleWindow
   if (typeof idleWindow.requestIdleCallback === 'function') {
     idleWindow.requestIdleCallback(start, { timeout: 2000 })

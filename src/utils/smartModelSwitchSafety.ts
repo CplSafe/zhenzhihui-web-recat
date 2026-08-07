@@ -38,6 +38,18 @@ export interface SmartSubjectAssetVersionRegistry {
   ids?: Record<string, number>
   operations?: Record<string, SmartImageOperationCode>
   modelVersionIds?: Record<string, number>
+  /** 已完成 KYC 的真人素材来源。键为版本 URL，ID 分层保存，避免把映射 ID 当成本地素材 ID。 */
+  realPersonRefs?: Record<
+    string,
+    {
+      realPersonId: number
+      mappingId: number
+      localAssetId: number
+      personName: string
+      verificationStatus: string
+      assetStatus: string
+    }
+  >
 }
 
 export interface SmartShotImageVersion {

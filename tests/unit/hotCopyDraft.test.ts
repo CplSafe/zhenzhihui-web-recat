@@ -84,6 +84,51 @@ describe('hot-copy 本地草稿隔离', () => {
     expect(loadHotCopyDraft(21)?.projectName).toBe('用户 A 项目')
   })
 
+  it('较晚到达的旧快照不能把活动 taskId 覆盖成 0', () => {
+    setHotCopyDraftUserScope('user-7')
+    saveHotCopyDraft(21, draft({ projectId: 11 }))
+
+    saveHotCopyDraft(
+      21,
+      draft({
+        projectId: 11,
+        projectName: '旧快照仍可更新普通字段',
+        vidGenTaskId: 0,
+        videoGenerating: false,
+        videoGenerations: [],
+      }),
+    )
+
+    expect(loadHotCopyDraft(21)).toMatchObject({
+      projectName: '旧快照仍可更新普通字段',
+      vidGenTaskId: 301,
+      videoGenerating: true,
+      videoGenerations: [expect.objectContaining({ id: 'generation-1', taskId: 301, status: 'processing' })],
+    })
+  })
+
+  it('明确终态写入可以清除活动 taskId', () => {
+    setHotCopyDraftUserScope('user-7')
+    saveHotCopyDraft(21, draft({ projectId: 11 }))
+
+    saveHotCopyDraft(
+      21,
+      draft({
+        projectId: 11,
+        vidGenTaskId: 0,
+        videoGenerating: false,
+        videoGenerations: [],
+      }),
+      { allowTaskClear: true },
+    )
+
+    expect(loadHotCopyDraft(21)).toMatchObject({
+      vidGenTaskId: 0,
+      videoGenerating: false,
+      videoGenerations: [],
+    })
+  })
+
   it('删除无归属的旧版工作空间键且不分配给任何会话', () => {
     window.localStorage.setItem('zzh_hotcopy_draft_v1_ws21', JSON.stringify(draft({ projectName: '旧版草稿' })))
     setHotCopyDraftUserScope('')

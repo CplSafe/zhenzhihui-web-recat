@@ -167,7 +167,7 @@ function resolveSmartRouteSession(
 }
 
 /** 为智能成片提供工作空间隔离和首次建项保活的路由包装。 */
-function WorkspaceScopedSmartCreateRoute() {
+function WorkspaceScopedSmartCreateRoute({ flowMode = 'smart' }: { flowMode?: 'smart' | 'real-person' }) {
   const workspaceId = useWorkspaceId()
   const { id } = useParams()
   const location = useLocation()
@@ -199,8 +199,9 @@ function WorkspaceScopedSmartCreateRoute() {
 
   return (
     <SmartCreateView
-      key={`smart-route-session-${routeSession.version}`}
+      key={`${flowMode}-route-session-${routeSession.version}`}
       routeSessionToken={getSmartRouteSessionToken(routeSession)}
+      flowMode={flowMode}
     />
   )
 }
@@ -289,6 +290,10 @@ export const router = createBrowserRouter([
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },
       // 智能成片 / 爆款复制:免登录可进入并交互,仅「生成」动作需登录(组件内拦截)
       { path: 'smart/:id?', element: lazyPage(<WorkspaceScopedSmartCreateRoute />), handle: { requiresAuth: false } },
+      {
+        path: 'real-person-video/:id?',
+        element: lazyPage(<WorkspaceScopedSmartCreateRoute flowMode="real-person" />),
+      },
       { path: 'hot-copy', element: lazyPage(<WorkspaceScopedHotCopyRoute />), handle: { requiresAuth: false } },
       { path: 'hot-copy/:id', element: lazyPage(<WorkspaceScopedHotCopyRoute />), handle: { requiresAuth: false } },
       { path: 'workspace-switch', element: <WorkspaceSwitchBridge />, handle: { requiresAuth: false } },

@@ -101,12 +101,19 @@ describe('GenerationModelDropdown', () => {
     await user.click(trigger)
 
     const dialog = screen.getByRole('dialog', { name: '本次创作使用的模型' })
+    expect(within(dialog).getByRole('button', { name: '确认' })).toBeDisabled()
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '脚本生成模型' }), '101')
     expect(screen.queryByText('每次最多生成 10 个镜头')).not.toBeInTheDocument()
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '图生图模型' }), '301')
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '视频生成模型' }), '201')
-    expect(screen.getByText('模型配置完成，开始创作后将沿用本次选择')).toBeInTheDocument()
+    expect(screen.getByText('模型配置完成，确认后将沿用本次选择')).toBeInTheDocument()
     expect(trigger).toHaveAccessibleName('生成模型，3/3 已选择')
+
+    const confirm = within(dialog).getByRole('button', { name: '确认' })
+    expect(confirm).toBeEnabled()
+    await user.click(confirm)
+    expect(screen.queryByRole('dialog', { name: '本次创作使用的模型' })).not.toBeInTheDocument()
+    await waitFor(() => expect(trigger).toHaveFocus())
   })
 
   it('keeps backend restrictions hidden while retaining selection validation and restores focus on Escape', async () => {

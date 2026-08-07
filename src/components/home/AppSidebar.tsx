@@ -57,6 +57,7 @@ const GROUPS: SidebarGroup[] = [
     title: '创作',
     items: [
       { key: 'creative', label: '智能成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
+      { key: 'real-person-video', label: '真人成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
       { key: 'hot-copy', label: '爆款复制', icon: hotCopyIcon, activeIcon: hotCopyActiveIcon, iconSize: 16 },
       { key: 'video-edit', label: '视频编辑', icon: videoEditIcon, iconSize: 16 },
     ],
@@ -92,7 +93,8 @@ const TEMPLATE_GROUP: SidebarGroup = {
 
 const SHOW_TEMPLATE_GROUP = false
 
-const HIDDEN_SIDEBAR_ITEM_KEYS = new Set(['video-edit'])
+// 真人成片当前作为定向测试入口：保留完整路由和项目恢复能力，但不在公共导航中曝光。
+const HIDDEN_SIDEBAR_ITEM_KEYS = new Set(['video-edit', 'real-person-video'])
 
 /** 渲染全站主导航，并把实际路由跳转交由页面侧栏 Hook 统一处理。 */
 export default function AppSidebar({ activeKey = 'home', onNavigate, open = false, onClose }: AppSidebarProps) {

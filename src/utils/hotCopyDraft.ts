@@ -60,6 +60,11 @@ export interface HotCopyDraft {
   videoGenerations?: HotCopyGenRecord[]
 }
 
+/** 草稿写入选项；活动任务凭证默认不可回退，只有明确终态才能清除。 */
+export interface SaveHotCopyDraftOptions {
+  allowTaskClear?: boolean
+}
+
 /** 当前登录用户的草稿作用域，防止同浏览器账号间串稿。 */
 let draftUserScope = ''
 /** 更新爆款复制草稿所属用户，后续读写据此选择隔离键。 */
@@ -191,13 +196,52 @@ function sanitizeHotCopyDraft(draft: HotCopyDraft, workspaceId: number): HotCopy
   }
 }
 
+/** 保留已经落盘的活动任务凭证，防止较晚完成的旧快照把正数 taskId 覆盖成 0。 */
+function preserveActiveTaskCredential(current: HotCopyDraft | null, incoming: HotCopyDraft): HotCopyDraft {
+  const currentTaskId = Number(current?.vidGenTaskId || 0) || 0
+  const incomingTaskId = Number(incoming?.vidGenTaskId || 0) || 0
+  const sameProject = Number(current?.projectId || 0) === Number(incoming?.projectId || 0)
+  if (!current || !sameProject || currentTaskId <= 0 || incomingTaskId > 0) return incoming
+
+  const incomingGenerations = Array.isArray(incoming.videoGenerations) ? incoming.videoGenerations : []
+  const currentTaskGeneration = (Array.isArray(current.videoGenerations) ? current.videoGenerations : []).find(
+    (generation) => generation.status === 'processing' && Number(generation.taskId || 0) === currentTaskId,
+  )
+  const mergedGenerations = currentTaskGeneration
+    ? [currentTaskGeneration, ...incomingGenerations.filter((generation) => generation.id !== currentTaskGeneration.id)]
+    : incomingGenerations
+
+  return {
+    ...incoming,
+    videoGenerating: true,
+    vidGenTaskId: currentTaskId,
+    videoGenerations: mergedGenerations,
+  }
+}
+
 /** 写入当前用户与工作区草稿；退出屏障生效时禁止旧页面回写。 */
-export function saveHotCopyDraft(workspaceId: number, draft: HotCopyDraft): void {
+export function saveHotCopyDraft(
+  workspaceId: number,
+  draft: HotCopyDraft,
+  options: SaveHotCopyDraftOptions = {},
+): void {
   if (isLogoutDraftWriteBlocked(draftUserScope)) return
   const ws = Number(workspaceId || 0)
   if (!ws) return
   try {
-    localStorage.setItem(keyOf(ws), JSON.stringify(sanitizeHotCopyDraft(draft, ws)))
+    const storageKey = keyOf(ws)
+    const currentRaw = localStorage.getItem(storageKey)
+    let currentValue: unknown = null
+    if (currentRaw) {
+      try {
+        currentValue = JSON.parse(currentRaw)
+      } catch {
+        currentValue = null
+      }
+    }
+    const current = currentValue && typeof currentValue === 'object' ? (currentValue as HotCopyDraft) : null
+    const protectedDraft = options.allowTaskClear ? draft : preserveActiveTaskCredential(current, draft)
+    localStorage.setItem(storageKey, JSON.stringify(sanitizeHotCopyDraft(protectedDraft, ws)))
   } catch {
     /* 配额满 / 隐私模式:忽略 */
   }

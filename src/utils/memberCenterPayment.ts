@@ -12,6 +12,9 @@ export interface MemberCenterWorkspaceCandidate {
   id?: unknown
   type?: unknown
   name?: unknown
+  status?: unknown
+  workspace_status?: unknown
+  workspaceStatus?: unknown
 }
 
 /** 从刷新后的工作区列表识别新购团队所需的信息。 */
@@ -25,6 +28,72 @@ export interface ResolvePurchasedTeamWorkspaceOptions {
 export interface MemberCenterPaymentScope {
   userId: unknown
   workspaceId: unknown
+}
+
+/** 支付订单的统一判定结果。支付专用字段优先于容易混淆的业务订单 status。 */
+export interface MemberCenterPaymentOrderState {
+  status: string
+  hasPaidEvidence: boolean
+}
+
+/**
+ * 兼容后端不同版本的支付订单字段。
+ * payment_status 一旦存在，就不能再被通用 status 覆盖，避免业务订单已创建却被误判为已付款。
+ */
+export function resolveMemberCenterPaymentOrderState(order: any): MemberCenterPaymentOrderState {
+  if (!order || typeof order !== 'object') return { status: '', hasPaidEvidence: false }
+  const paymentStatus = String(order.payment_status ?? order.paymentStatus ?? '').trim()
+  const genericStatus = String(order.status ?? order.order_status ?? order.orderStatus ?? '').trim()
+  const status = (paymentStatus || genericStatus).toLowerCase()
+  const paidAt = order.paid_at ?? order.paidAt ?? order.payment_paid_at ?? order.paymentPaidAt
+  const tradeNo =
+    order.provider_trade_no ??
+    order.providerTradeNo ??
+    order.trade_no ??
+    order.tradeNo ??
+    order.alipay_trade_no ??
+    order.alipayTradeNo
+  return {
+    status,
+    hasPaidEvidence: status === 'paid' && Boolean(paymentStatus || paidAt || tradeNo),
+  }
+}
+
+/** 会员购买/续费只有在订阅权益确实变化后才允许展示成功。 */
+export function hasMemberCenterSubscriptionChanged(before: any, after: any): boolean {
+  if (!after || typeof after !== 'object') return false
+  const activeAfter = Boolean(after.active ?? after.is_active ?? after.isActive)
+  if (!before || typeof before !== 'object') return activeAfter
+  const activeBefore = Boolean(before.active ?? before.is_active ?? before.isActive)
+  const beforeExpiry = memberCenterSubscriptionExpiry(before)
+  const afterExpiry = memberCenterSubscriptionExpiry(after)
+  if (afterExpiry > beforeExpiry) return true
+  if (!activeBefore && activeAfter) return true
+  const beforePlan = String(before.plan_id ?? before.planId ?? before.plan_code ?? before.planCode ?? '')
+  const afterPlan = String(after.plan_id ?? after.planId ?? after.plan_code ?? after.planCode ?? '')
+  return Boolean(afterPlan) && afterPlan !== beforePlan && activeAfter
+}
+
+/** 充值只有在可用积分确实增加后才允许展示到账成功。 */
+export function hasMemberCenterWalletIncreased(before: unknown, after: any): boolean {
+  const beforeValue = Number(before)
+  const afterValue = Number(after?.available ?? after?.balance)
+  return Number.isFinite(beforeValue) && Number.isFinite(afterValue) && afterValue > beforeValue
+}
+
+function memberCenterSubscriptionExpiry(subscription: any): number {
+  const raw =
+    subscription?.current_period_end ??
+    subscription?.currentPeriodEnd ??
+    subscription?.expire_at ??
+    subscription?.expires_at ??
+    subscription?.expired_at ??
+    subscription?.end_at ??
+    subscription?.end_time
+  if (!raw) return 0
+  if (typeof raw === 'number') return raw < 1e12 ? raw * 1000 : raw
+  const parsed = Date.parse(String(raw))
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 /**
@@ -99,10 +168,20 @@ export function resolvePurchasedTeamWorkspace<T extends MemberCenterWorkspaceCan
       .toLowerCase()
     return Boolean(type) && type !== 'personal'
   }
+  const isActivatedWorkspace = (workspace: T): boolean => {
+    const status = String(workspace?.status ?? workspace?.workspace_status ?? workspace?.workspaceStatus ?? '')
+      .trim()
+      .toLowerCase()
+    // 旧接口不返回状态时保持兼容；明确的待支付/待激活状态绝不能作为购买成功凭据。
+    return (
+      !status ||
+      !/(activation_pending|pending_activation|payment_pending|pending_payment|unpaid|inactive|disabled)/.test(status)
+    )
+  }
   const beforeIds = new Set(workspaceBaselineIds.map((id) => Math.floor(Number(id) || 0)).filter((id) => id > 0))
   const isNewTeamWorkspace = (workspace: T): boolean => {
     const id = Math.floor(Number(workspace?.id) || 0)
-    return id > 0 && isTeamWorkspace(workspace) && !beforeIds.has(id)
+    return id > 0 && isTeamWorkspace(workspace) && isActivatedWorkspace(workspace) && !beforeIds.has(id)
   }
 
   const normalizedTargetId = Math.floor(Number(targetWorkspaceId) || 0)

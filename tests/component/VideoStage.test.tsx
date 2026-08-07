@@ -362,4 +362,84 @@ describe('VideoStage playback loading', () => {
     expect(screen.getByRole('button', { name: '确认修改' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '重新估价' })).toBeEnabled()
   })
+
+  it('任务尚未返回 task_id 时展示提交态且不显示虚拟生成进度', () => {
+    render(
+      <VideoStage
+        shots={[]}
+        onRegenerateVideo={vi.fn()}
+        videoGenerating
+        videoStatusText="正在上传素材并提交任务…"
+        pendingVideoCount={1}
+        pendingGenerations={[
+          {
+            id: 'preparing-task',
+            createdAt: Date.now(),
+            preparing: true,
+            running: false,
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('正在准备视频任务')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('正在上传素材并提交任务…')
+    expect(screen.queryByText('生成进度')).not.toBeInTheDocument()
+  })
+
+  it('准备任务时可展示明确的业务节点百分比', () => {
+    render(
+      <VideoStage
+        shots={[]}
+        onRegenerateVideo={vi.fn()}
+        videoGenerating
+        videoStatusText="正在计算生成费用…"
+        videoProgress={15}
+        videoProgressLabel="准备进度"
+        allowEstimatedProgress={false}
+        pendingVideoCount={1}
+        pendingGenerations={[{ id: 'preparing-with-progress', createdAt: Date.now(), preparing: true }]}
+      />,
+    )
+
+    expect(screen.getByText('准备进度')).toBeInTheDocument()
+    expect(screen.getByText('15%')).toBeInTheDocument()
+  })
+
+  it('后端暂未返回进度时在20%到95%之间显示预计百分比', () => {
+    render(
+      <VideoStage
+        shots={[]}
+        onRegenerateVideo={vi.fn()}
+        videoGenerating
+        videoStatusText="爆款复制生成中…"
+        videoStartedAt={Date.now()}
+        allowEstimatedProgress
+        estimatedProgressMin={20}
+        estimatedProgressMax={95}
+        pendingVideoCount={1}
+        pendingGenerations={[{ id: 'estimated-task', createdAt: Date.now(), running: true }]}
+      />,
+    )
+
+    expect(screen.getByText('预计生成进度')).toBeInTheDocument()
+    expect(screen.getByText('21%')).toBeInTheDocument()
+  })
+
+  it('后端未提供真实进度时不显示估算百分比', () => {
+    render(
+      <VideoStage
+        shots={[]}
+        onRegenerateVideo={vi.fn()}
+        videoGenerating
+        videoStatusText="爆款复制生成中…"
+        allowEstimatedProgress={false}
+        pendingVideoCount={1}
+        pendingGenerations={[{ id: 'created-task', createdAt: Date.now(), running: true }]}
+      />,
+    )
+
+    expect(screen.getByText('爆款复制生成中…')).toBeInTheDocument()
+    expect(screen.queryByText(/\d+%/)).not.toBeInTheDocument()
+  })
 })

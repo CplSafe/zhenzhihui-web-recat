@@ -6,7 +6,39 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { fileToDataUrl } from '@/utils/imageFile'
 import AiBadge from '@/components/common/AiBadge'
+import { getAssetDownloadUrl, getBusinessErrorMessage } from '@/api/business'
+import { listRealPeople, type RealPerson } from '@/api/realPeople'
+import {
+  createSmartRealPersonReference,
+  isReadyRealPersonAsset,
+  isVerifiedRealPerson,
+  type SmartRealPersonReference,
+} from '@/utils/smartRealPerson'
 import styles from './SubjectAssetDialog.module.less'
+
+function RealPersonAssetThumbnail({
+  workspaceId,
+  assetId,
+  alt,
+}: {
+  workspaceId: number
+  assetId: number
+  alt: string
+}) {
+  const [src, setSrc] = useState('')
+
+  useEffect(() => {
+    let active = true
+    void getAssetDownloadUrl({ workspaceId, assetId }).then((url) => {
+      if (active) setSrc(url)
+    })
+    return () => {
+      active = false
+    }
+  }, [assetId, workspaceId])
+
+  return src ? <img src={src} alt={alt} /> : <span className={styles.sadPickerEmpty}>素材加载中…</span>
+}
 
 /** 主体素材弹窗的当前版本、参考图、生成能力和受控回调。 */
 interface SubjectAssetDialogProps {
@@ -24,10 +56,14 @@ interface SubjectAssetDialogProps {
   refinePrompt?: (intent: string) => Promise<string>
   /** 当前项目内所有图(带来源):供"添加参考图/替换"从项目里选,按上传/AI生成分组 */
   projectImages?: { url: string; source: 'ai' | 'upload' }[]
+  workspaceId?: number
+  /** 真人成片中的人物主体只能从已认证真人库选择，不能误走普通上传或 AI 生成人物。 */
+  realPersonOnly?: boolean
   onClose: () => void
   /** 生成:prompt + 选项(refImageUrl 参考图;carryCurrent 携带当前图=修改/不带=重新生成) */
   onGenerate: (prompt: string, opts: { refImageUrls?: string[]; carryCurrent?: boolean }) => Promise<void | boolean>
   onSelect: (url: string) => void
+  onSelectRealPerson?: (url: string, reference: SmartRealPersonReference) => void
   /** 上传素材:直接交 File,由父级经后端 uploadAssetFile 存服务器取 asset_id。
    *  不传 → 视为「用户上传已下线」,弹窗内不显示任何「上传」入口,仅 AI 生成 / 从项目选。 */
   onUpload?: (file: File) => void
@@ -45,18 +81,26 @@ export default function SubjectAssetDialog({
   autoGen,
   refinePrompt,
   projectImages = [],
+  workspaceId = 0,
+  realPersonOnly = false,
   onClose,
   onGenerate,
   onSelect,
+  onSelectRealPerson,
   onUpload,
 }: SubjectAssetDialogProps) {
   const [prompt, setPrompt] = useState(defaultPrompt)
+  const isPersonSubject = /人物|人像|角色|person|portrait|model/i.test(kind || '')
+  const requireVerifiedRealPerson = realPersonOnly && isPersonSubject && Boolean(onSelectRealPerson)
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [refining, setRefining] = useState(false)
   const [refImages, setRefImages] = useState<string[]>([]) // 参考图(产品真实照片)dataURL,支持多选
   const [carryCurrent, setCarryCurrent] = useState(false) // 携带当前图(修改)/ 不带(重新生成)
-  const [picker, setPicker] = useState<null | 'ref' | 'use'>(null) // 项目图片选择器目标
+  const [picker, setPicker] = useState<null | 'ref' | 'use' | 'person'>(null) // 项目图片/真人素材选择器目标
+  const [realPeople, setRealPeople] = useState<RealPerson[]>([])
+  const [realPeopleLoading, setRealPeopleLoading] = useState(false)
+  const [realPeopleError, setRealPeopleError] = useState('')
   const fileRef = useRef<HTMLInputElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const pickerRef = useRef<HTMLDivElement | null>(null)
@@ -100,6 +144,22 @@ export default function SubjectAssetDialog({
     return () => window.cancelAnimationFrame(frame)
   }, [picker])
 
+  useEffect(() => {
+    if (picker !== 'person' || !workspaceId || !onSelectRealPerson) return
+    const controller = new AbortController()
+    setRealPeopleLoading(true)
+    setRealPeopleError('')
+    void listRealPeople({ workspaceId, signal: controller.signal })
+      .then((items) => setRealPeople(items.filter(isVerifiedRealPerson)))
+      .catch((error) => {
+        if (!controller.signal.aborted) setRealPeopleError(getBusinessErrorMessage(error, '真人素材加载失败'))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setRealPeopleLoading(false)
+      })
+    return () => controller.abort()
+  }, [onSelectRealPerson, picker, workspaceId])
+
   // 打开时:先回显原始意图,若提供 refinePrompt 则用本地 Qwen 润成干净提示词后替换;
   // autoGen 且无版本则在(润色后的)提示词就绪后自动生成一次。
   useEffect(() => {
@@ -129,7 +189,7 @@ export default function SubjectAssetDialog({
         setRefining(false)
         setPrompt(p)
       }
-      if (autoGen && !autoRef.current && versions.length === 0) {
+      if (autoGen && !requireVerifiedRealPerson && !autoRef.current && versions.length === 0) {
         autoRef.current = true
         void runGen(p)
       }
@@ -194,12 +254,17 @@ export default function SubjectAssetDialog({
               <span className={styles.sadPreviewPh}>还没有素材,输入提示词生成,或上传/替换</span>
             )}
             <div className={styles.sadImgActions}>
-              <button type="button" onClick={() => setPicker('use')}>
-                替换
+              <button type="button" onClick={() => setPicker(requireVerifiedRealPerson ? 'person' : 'use')}>
+                {requireVerifiedRealPerson ? '选择真人' : '替换'}
               </button>
-              {onUpload && (
+              {onUpload && !requireVerifiedRealPerson && (
                 <button type="button" onClick={() => triggerUpload('version')}>
                   上传
+                </button>
+              )}
+              {onSelectRealPerson && isPersonSubject && !requireVerifiedRealPerson && (
+                <button type="button" onClick={() => setPicker('person')}>
+                  真人素材
                 </button>
               )}
             </div>
@@ -319,22 +384,32 @@ export default function SubjectAssetDialog({
                 e.target.value = ''
               }}
             />
-            <button
-              type="button"
-              className={`${styles.sadBtn} ${styles.sadBtnPrimary}`}
-              onClick={() => runGen(prompt)}
-              disabled={generating || refining}
-            >
-              {generating
-                ? '生成中…'
-                : refining
-                  ? '提示词优化中…'
-                  : carryCurrent
-                    ? '修改生成'
-                    : versions.length
-                      ? '重新生成'
-                      : '生成分镜图'}
-            </button>
+            {requireVerifiedRealPerson ? (
+              <button
+                type="button"
+                className={`${styles.sadBtn} ${styles.sadBtnPrimary}`}
+                onClick={() => setPicker('person')}
+              >
+                从真人素材库选择
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={`${styles.sadBtn} ${styles.sadBtnPrimary}`}
+                onClick={() => runGen(prompt)}
+                disabled={generating || refining}
+              >
+                {generating
+                  ? '生成中…'
+                  : refining
+                    ? '提示词优化中…'
+                    : carryCurrent
+                      ? '修改生成'
+                      : versions.length
+                        ? '重新生成'
+                        : '生成分镜图'}
+              </button>
+            )}
           </div>
 
           {/* 版本图:直接点击选用(上传/替换在上方大图预览处统一处理,此处不再重复) */}
@@ -367,9 +442,11 @@ export default function SubjectAssetDialog({
               tabIndex={-1}
             >
               <div className={styles.sadPickerHead}>
-                {picker === 'ref'
-                  ? `选择参考图(可多选${refImages.length ? `,已选${refImages.length}张` : ''})`
-                  : '选择要使用的图'}
+                {picker === 'person'
+                  ? '选择已认证真人素材'
+                  : picker === 'ref'
+                    ? `选择参考图(可多选${refImages.length ? `,已选${refImages.length}张` : ''})`
+                    : '选择要使用的图'}
                 {picker === 'ref' ? (
                   <button type="button" aria-label="完成选择参考图" onClick={() => setPicker(null)}>
                     完成
@@ -380,67 +457,128 @@ export default function SubjectAssetDialog({
                   </button>
                 )}
               </div>
-              {onUpload && (
-                <div className={styles.sadPickerGrid}>
-                  <button
-                    type="button"
-                    className={styles.sadPickerUp}
-                    onClick={() => triggerUpload(picker === 'ref' ? 'ref' : 'version')}
-                  >
-                    ↑<br />
-                    上传
-                  </button>
+              {picker === 'person' ? (
+                <div className={styles.sadRealPeople}>
+                  <p className={styles.sadRealPeopleNotice}>
+                    仅展示认证完成且同步可用的真人图片；选用后将保留该人物特征。
+                  </p>
+                  {realPeopleLoading && <span className={styles.sadPickerEmpty}>真人素材加载中…</span>}
+                  {realPeopleError && <span className={styles.sadPickerError}>{realPeopleError}</span>}
+                  {!realPeopleLoading &&
+                    !realPeopleError &&
+                    realPeople.map((person) => {
+                      const assets = (person.assets || []).filter(
+                        (asset) => isReadyRealPersonAsset(asset) && !/video/i.test(asset.asset_type || ''),
+                      )
+                      if (!assets.length) return null
+                      return (
+                        <div className={styles.sadPickerGroup} key={person.id}>
+                          <div className={styles.sadPickerGroupTitle}>
+                            {person.name || '已认证真人'} <span className={styles.sadVerifiedBadge}>已认证</span>
+                          </div>
+                          <div className={styles.sadPickerGrid}>
+                            {assets.map((asset) => {
+                              const localAssetId = Number(asset.local_asset_id || 0)
+                              return (
+                                <button
+                                  key={asset.id}
+                                  type="button"
+                                  className={styles.sadPickerItem}
+                                  aria-label={`选择真人素材 ${person.name || ''}`}
+                                  onClick={async () => {
+                                    const url = await getAssetDownloadUrl({ workspaceId, assetId: localAssetId })
+                                    onSelectRealPerson(url, createSmartRealPersonReference(person, asset))
+                                    setPicker(null)
+                                  }}
+                                >
+                                  <RealPersonAssetThumbnail
+                                    workspaceId={workspaceId}
+                                    assetId={localAssetId}
+                                    alt={person.name || '真人素材'}
+                                  />
+                                  <span className={styles.sadIdentityBadge}>保留人物</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  {!realPeopleLoading &&
+                    !realPeopleError &&
+                    !realPeople.some((person) =>
+                      (person.assets || []).some(
+                        (asset) => isReadyRealPersonAsset(asset) && !/video/i.test(asset.asset_type || ''),
+                      ),
+                    ) && <span className={styles.sadPickerEmpty}>暂无已认证且同步完成的真人图片</span>}
                 </div>
-              )}
-              {(['upload', 'ai'] as const).map((src) => {
-                const list = projectImages.filter((p) => p.source === src)
-                if (!list.length) return null
-                return (
-                  <div key={src} className={styles.sadPickerGroup}>
-                    <div className={styles.sadPickerGroupTitle}>{src === 'upload' ? '我上传的图' : 'AI 生成的图'}</div>
+              ) : (
+                <>
+                  {onUpload && (
                     <div className={styles.sadPickerGrid}>
-                      {list.map((p, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          className={styles.sadPickerItem}
-                          aria-label={`选择${src === 'upload' ? '我上传的图' : 'AI 生成的图'} ${i + 1}`}
-                          style={
-                            picker === 'ref' && refImages.includes(p.url)
-                              ? { outline: '2px solid #5767e5', outlineOffset: '-2px' }
-                              : undefined
-                          }
-                          onClick={() => pickProjectImage(p.url)}
-                        >
-                          <img src={p.url} alt="" />
-                          {src === 'ai' && <AiBadge size={15} />}
-                          {picker === 'ref' && refImages.includes(p.url) && (
-                            <span
-                              style={{
-                                position: 'absolute',
-                                top: 2,
-                                left: 2,
-                                background: '#5767e5',
-                                color: '#fff',
-                                borderRadius: '50%',
-                                width: 16,
-                                height: 16,
-                                fontSize: 11,
-                                lineHeight: '16px',
-                                textAlign: 'center',
-                              }}
-                            >
-                              ✓
-                            </span>
-                          )}
-                        </button>
-                      ))}
+                      <button
+                        type="button"
+                        className={styles.sadPickerUp}
+                        onClick={() => triggerUpload(picker === 'ref' ? 'ref' : 'version')}
+                      >
+                        ↑<br />
+                        上传
+                      </button>
                     </div>
-                  </div>
-                )
-              })}
-              {!projectImages.length && (
-                <span className={styles.sadPickerEmpty}>项目里暂无可选图片,可点上方「上传」</span>
+                  )}
+                  {(['upload', 'ai'] as const).map((src) => {
+                    const list = projectImages.filter((p) => p.source === src)
+                    if (!list.length) return null
+                    return (
+                      <div key={src} className={styles.sadPickerGroup}>
+                        <div className={styles.sadPickerGroupTitle}>
+                          {src === 'upload' ? '我上传的图' : 'AI 生成的图'}
+                        </div>
+                        <div className={styles.sadPickerGrid}>
+                          {list.map((p, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              className={styles.sadPickerItem}
+                              aria-label={`选择${src === 'upload' ? '我上传的图' : 'AI 生成的图'} ${i + 1}`}
+                              style={
+                                picker === 'ref' && refImages.includes(p.url)
+                                  ? { outline: '2px solid #5767e5', outlineOffset: '-2px' }
+                                  : undefined
+                              }
+                              onClick={() => pickProjectImage(p.url)}
+                            >
+                              <img src={p.url} alt="" />
+                              {src === 'ai' && <AiBadge size={15} />}
+                              {picker === 'ref' && refImages.includes(p.url) && (
+                                <span
+                                  style={{
+                                    position: 'absolute',
+                                    top: 2,
+                                    left: 2,
+                                    background: '#5767e5',
+                                    color: '#fff',
+                                    borderRadius: '50%',
+                                    width: 16,
+                                    height: 16,
+                                    fontSize: 11,
+                                    lineHeight: '16px',
+                                    textAlign: 'center',
+                                  }}
+                                >
+                                  ✓
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {!projectImages.length && (
+                    <span className={styles.sadPickerEmpty}>项目里暂无可选图片,可点上方「上传」</span>
+                  )}
+                </>
               )}
             </div>
           )}

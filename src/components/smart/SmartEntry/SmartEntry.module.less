@@ -82,6 +82,159 @@
   letter-spacing: 0.5px;
 }
 
+/* 真人成片：共用生成能力，但以“已授权人物工作室”建立独立页面识别。 */
+.realPerson {
+  padding-top: clamp(42px, 9vh, 108px);
+  background:
+    radial-gradient(circle at 18% 18%, rgba(38, 198, 163, 0.14), transparent 32%),
+    radial-gradient(circle at 82% 72%, rgba(255, 190, 92, 0.13), transparent 34%),
+    linear-gradient(145deg, #f5fbf8 0%, #fbfaf6 52%, #f6f8f7 100%);
+}
+
+.realPerson .bg {
+  opacity: 0.18;
+  filter: saturate(0.7);
+}
+
+.realPersonHero {
+  position: relative;
+  z-index: 1;
+  width: min(920px, 94%);
+  margin-bottom: 30px;
+  text-align: left;
+}
+
+.realPersonHero .title {
+  margin: 10px 0 10px;
+  color: #173b33;
+  font-size: clamp(32px, 4vw, 52px);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+.realPersonHero p {
+  max-width: 650px;
+  margin: 0;
+  color: #64736e;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.realPersonTrust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.realPersonTrust span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid rgba(18, 147, 115, 0.15);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.66);
+  color: #35675b;
+  font-size: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.realPersonTrust span::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #24c49d;
+  content: '';
+  box-shadow: 0 0 0 4px rgba(36, 196, 157, 0.1);
+}
+
+.realPerson .panel {
+  width: min(980px, 94%);
+  padding: 72px 22px 22px;
+  border: 1px solid rgba(27, 119, 96, 0.12);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: 0 28px 80px rgba(41, 79, 68, 0.1);
+  backdrop-filter: blur(20px);
+}
+
+.realPerson .newVideoBtn {
+  top: 22px;
+  right: 24px;
+  padding: 8px 14px;
+  border: 1px solid rgba(22, 157, 123, 0.2);
+  border-radius: 999px;
+  background: #fff;
+  color: #168d70;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.realPersonPanelTitle {
+  position: absolute;
+  top: 18px;
+  left: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.realPersonPanelIcon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 11px;
+  background: #173b33;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.realPersonPanelTitle div {
+  display: grid;
+  gap: 2px;
+}
+
+.realPersonPanelTitle strong {
+  color: #223c35;
+  font-size: 14px;
+}
+
+.realPersonPanelTitle small {
+  color: #82908c;
+  font-size: 11px;
+}
+
+.realPerson .card {
+  border: 1px solid rgba(23, 117, 93, 0.12);
+  border-radius: 22px;
+  box-shadow: 0 18px 46px rgba(32, 70, 60, 0.09);
+}
+
+@media (max-width: 720px) {
+  .realPersonHero {
+    text-align: center;
+  }
+
+  .realPersonTrust {
+    justify-content: center;
+  }
+
+  .realPerson .panel {
+    padding: 92px 12px 12px;
+  }
+
+  .realPersonPanelTitle {
+    right: 18px;
+  }
+
+  .realPerson .newVideoBtn {
+    top: 58px;
+  }
+}
+
 .panel {
   position: relative;
   z-index: 1;
@@ -168,6 +321,27 @@
 
 .uploadCard {
   display: block;
+}
+
+.realPersonRequired {
+  flex: 0 0 auto;
+  align-self: center;
+  max-width: 190px;
+}
+
+.realPersonRequired strong,
+.realPersonRequired span {
+  display: block;
+}
+
+.realPersonRequired strong {
+  color: #183f35;
+  font-size: 14px;
+}
+.realPersonRequired span {
+  margin-top: 6px;
+  color: #d17b45;
+  font-size: 12px;
 }
 
 /* 已选图片缩略图行(独立成行,可换行) */

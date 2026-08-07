@@ -193,7 +193,9 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
 
     expect(await screen.findByRole('button', { name: '取消收藏产品主图' })).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: '取消收藏产品视频' })).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: '预览产品主图' })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: '打开产品主图' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '预览产品主图' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开产品视频' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '播放产品视频' })).toBeInTheDocument()
   })
 

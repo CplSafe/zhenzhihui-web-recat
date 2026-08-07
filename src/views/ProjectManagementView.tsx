@@ -56,16 +56,9 @@ import { listWorkspaceMembers } from '@/api/auth'
 import UserAvatar from '@/components/common/UserAvatar'
 import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import { observeElementResize } from '@/utils/observeElementResize'
+import { getSidebarRoute } from '@/utils/sidebarNavigation'
 
 /** 侧边栏导航键与页面路径映射。 */
-const ROUTE_MAP: Record<string, string> = {
-  home: '/home',
-  creative: '/smart',
-  'hot-copy': '/hot-copy',
-  projects: '/projects',
-  resources: '/resources',
-  templates: '/templates',
-}
 /** 成员权限尚未加载时复用的稳定空数组。 */
 const EMPTY_WORKSPACE_MEMBERS: any[] = []
 /** 项目请求尚未完成时复用的稳定空数组。 */
@@ -314,7 +307,7 @@ function extract20Videos(
     if (!draft) continue
     const smart = toPlainObject(draft.smart) || draft
     const flow = String(draft?.flow || smart?.flow || '').toLowerCase()
-    if (flow === 'smart' || flow === 'hot-copy') continue // 2.1 → 跳过
+    if (flow === 'smart' || flow === 'real-person-video' || flow === 'hot-copy') continue // 2.1 → 跳过
     const hasVid =
       !!String(draft?.generatedVideoUrl || draft?.generated_video_url || '').trim() ||
       Number(draft?.generatedVideoAssetId || draft?.generated_video_asset_id || 0) > 0 ||
@@ -702,7 +695,7 @@ export default function ProjectManagementView() {
 
   const handleNavigate = useCallback(
     (key: string) => {
-      const path = ROUTE_MAP[key]
+      const path = getSidebarRoute(key)
       if (path) navigate(path)
       else openComingSoon() // 未上线项:弹全局「功能待开放」弹窗
     },

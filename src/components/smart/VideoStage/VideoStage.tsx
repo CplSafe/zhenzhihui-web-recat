@@ -115,6 +115,15 @@ interface VideoStageProps {
   videoStartedAt?: number
   /** 加载动效主标题覆盖(缺省「视频生成中」);如爆款复制传「爆款复制生成中…」 */
   loadingTitle?: string
+  /** 是否允许加载动效显示按耗时估算的百分比。 */
+  allowEstimatedProgress?: boolean
+  /** 后端或业务阶段提供的明确百分比。 */
+  videoProgress?: number
+  /** 进度类型标签，例如“准备进度”“真实生成进度”。 */
+  videoProgressLabel?: string
+  /** 无后端进度时，耗时估算允许显示的起止区间。 */
+  estimatedProgressMin?: number
+  estimatedProgressMax?: number
   /** 提交前积分预估(estimate-cost):展示「预计消耗 X 积分 · 余额 Y」。缺省不显示 */
   costEstimate?: VideoCostEstimate | null
   costLoading?: boolean
@@ -142,7 +151,7 @@ interface VideoStageProps {
   /** 历史生成里的失败记录(无视频可播,仅展示失败态与原因) */
   failedGenerations?: { id: string; note?: string; error?: string; createdAt?: number }[]
   /** 历史生成里的 processing 记录:支持点选切到对应生成中/排队中的占位 */
-  pendingGenerations?: { id: string; createdAt?: number; running?: boolean }[]
+  pendingGenerations?: { id: string; createdAt?: number; running?: boolean; preparing?: boolean }[]
   /** 仍处于 processing 的历史生成占位数量 */
   pendingVideoCount?: number
   /** 未提交的修改框、范围和各历史版本说明；父级传入后会随项目草稿持久化。 */
@@ -193,7 +202,7 @@ interface VideoStageProps {
 }
 
 /** 历史区一条排队中或执行中的视频生成占位。 */
-type PendingGenerationItem = { id: string; createdAt?: number; running?: boolean }
+type PendingGenerationItem = { id: string; createdAt?: number; running?: boolean; preparing?: boolean }
 
 type StageVideo = { url: string; assetId: number }
 
@@ -250,6 +259,11 @@ export default function VideoStage({
   videoStatusText,
   videoStartedAt,
   loadingTitle,
+  allowEstimatedProgress = true,
+  videoProgress,
+  videoProgressLabel,
+  estimatedProgressMin,
+  estimatedProgressMax,
   costEstimate,
   costLoading,
   costError,
@@ -450,6 +464,7 @@ export default function VideoStage({
       id: g.id,
       createdAt: Number(g.createdAt || 0),
       running: !!g.running,
+      preparing: !!g.preparing,
     }))
     const mergedGenItems = [...failedGens, ...pendingGens].sort(
       (a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0),
@@ -998,7 +1013,9 @@ export default function VideoStage({
   // 生成中若已有上一版视频,仍允许继续播放/查看历史;仅在未手动切到某个已生成视频时,默认显示当前生成中的占位。
   const activePendingGeneration =
     pendingGenerations.find((g) => g.id === selectedPendingId) ||
-    (!hasExplicitHistorySelection && videoGenerating ? pendingGenerations.find((g) => g.running) || null : null)
+    (!hasExplicitHistorySelection && videoGenerating
+      ? pendingGenerations.find((g) => g.running) || pendingGenerations.find((g) => g.preparing) || null
+      : null)
   const showingPendingGeneration = !!activePendingGeneration
   const showLoadingView = showingPendingGeneration || (!videoUrl && !!videoGenerating)
   const hasPlayableVideo = !!videoUrl && !showingPendingGeneration
@@ -1072,19 +1089,31 @@ export default function VideoStage({
             {showLoadingView ? (
               <VideoLoading
                 statusText={
-                  activePendingGeneration?.running
-                    ? videoStatusText || '视频生成中'
-                    : activePendingGeneration
-                      ? '排队中'
-                      : '视频生成中'
+                  activePendingGeneration?.preparing
+                    ? videoStatusText || '正在上传素材并提交任务…'
+                    : activePendingGeneration?.running
+                      ? videoStatusText || '视频生成中'
+                      : activePendingGeneration
+                        ? '排队中'
+                        : '视频生成中'
                 }
-                title={loadingTitle}
+                title={activePendingGeneration?.preparing ? '正在准备视频任务' : loadingTitle}
+                showProgress={!activePendingGeneration?.preparing || Number.isFinite(videoProgress)}
+                allowEstimatedProgress={allowEstimatedProgress}
+                progress={videoProgress}
+                progressLabel={videoProgressLabel}
+                estimatedProgressMin={estimatedProgressMin}
+                estimatedProgressMax={estimatedProgressMax}
                 startedAt={
                   activePendingGeneration?.running
                     ? videoStartedAt || activePendingGeneration?.createdAt
                     : activePendingGeneration?.createdAt || videoStartedAt
                 }
-                note="视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。"
+                note={
+                  activePendingGeneration?.preparing
+                    ? '任务创建成功后将显示生成进度，请勿重复提交。'
+                    : '视频生成耗时较长;生成后会自动保存,你现在可以新建一个项目继续创作。'
+                }
                 tip={VIDEO_TIPS[tipIdx]}
               />
             ) : mediaError ? (
@@ -1267,8 +1296,8 @@ export default function VideoStage({
                           ? ' ' + styles.active
                           : ''
                       }`}
-                      title={item.running ? '生成中' : '排队中'}
-                      aria-label={`版本${historyItems.publishedVersions.length + i + 1}${item.running ? '生成中' : '排队中'}`}
+                      title={item.preparing ? '提交中' : item.running ? '生成中' : '排队中'}
+                      aria-label={`版本${historyItems.publishedVersions.length + i + 1}${item.preparing ? '提交中' : item.running ? '生成中' : '排队中'}`}
                       aria-pressed={activePendingGeneration?.id === item.id}
                       onClick={() => {
                         setSelectedPendingId(item.id)
@@ -1276,7 +1305,9 @@ export default function VideoStage({
                     >
                       <span className={styles.vstageVerPendingBody}>
                         <span className={styles.vstageSpin} aria-hidden="true" />
-                        <span className={styles.vstageVerPendingText}>{item.running ? '生成中' : '排队中'}</span>
+                        <span className={styles.vstageVerPendingText}>
+                          {item.preparing ? '提交中' : item.running ? '生成中' : '排队中'}
+                        </span>
                       </span>
                       <span className={styles.vstageVerNo}>{historyItems.publishedVersions.length + i + 1}</span>
                     </button>

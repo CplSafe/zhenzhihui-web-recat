@@ -85,6 +85,47 @@ describe('SmartEntry draft and session initialization', () => {
 })
 
 describe('SmartEntry mode, options, validation, and submission', () => {
+  it('renders the real-person studio as a video-only entry with independent copy', () => {
+    render(<TestSmartEntry variant="real-person" onSubmit={vi.fn()} initial={{ mode: 'image' }} />)
+
+    expect(screen.getByRole('heading', { name: '让真实人物，成为视频主角' })).toBeInTheDocument()
+    expect(screen.getByText('真人成片工作台')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '制作视频' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '制作图片' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /爆款脚本自动生成/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '10s' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '从真人素材库选择' })).toBeInTheDocument()
+    expect(screen.getByText('必选项 · 未选择无法开始制作')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '去制作' })).toBeDisabled()
+    expect(screen.queryByLabelText('选择上传图片')).not.toBeInTheDocument()
+  })
+
+  it('enables real-person creation only with an authenticated library reference', () => {
+    render(
+      <TestSmartEntry
+        variant="real-person"
+        onSubmit={vi.fn()}
+        initial={{
+          images: ['https://assets.example/person.jpg'],
+          imageAssetIds: [731],
+          realPersonReferences: [
+            {
+              realPersonId: 13,
+              mappingId: 27,
+              localAssetId: 731,
+              personName: '已认证人物',
+              verificationStatus: 'verified',
+              assetStatus: 'ready',
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: '继续上传' })).not.toBeInTheDocument()
+  })
+
   it('does not expose the removed AI guide controls', () => {
     render(<TestSmartEntry onSubmit={vi.fn()} />)
 

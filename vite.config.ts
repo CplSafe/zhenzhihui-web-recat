@@ -52,6 +52,14 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       target: 'safari13',
+      // Terser costs a little more build time than esbuild, but gives the
+      // route-heavy client a stable gzip margin without weakening the bundle
+      // policy or changing any lazy-loading boundary.
+      minify: 'terser',
+      terserOptions: {
+        compress: { passes: 2 },
+        format: { comments: false },
+      },
       rollupOptions: {
         output: {
           // Merge only tiny chunks that share the same loading boundary. This
