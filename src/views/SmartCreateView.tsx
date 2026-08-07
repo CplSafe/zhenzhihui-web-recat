@@ -236,7 +236,9 @@ import {
   type SmartSubjectAssetVersionRegistry,
 } from '@/utils/smartModelSwitchSafety'
 import {
+  buildRealPersonIdentityPrompt,
   isRealPersonReferenceStillAuthorized,
+  prioritizeRealPersonReferenceAssetIds,
   registerRealPersonReference,
   requireRealPersonPreservationForShots,
   resolveShotRealPersonPreservation,
@@ -1956,11 +1958,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           }
         }
       }
-      if (
-        requiredRealPersonReference?.localAssetId &&
-        !refAssetIds.includes(requiredRealPersonReference.localAssetId)
-      ) {
-        refAssetIds.unshift(requiredRealPersonReference.localAssetId)
+      if (requiredRealPersonReference?.localAssetId) {
+        refAssetIds.splice(
+          0,
+          refAssetIds.length,
+          ...prioritizeRealPersonReferenceAssetIds(refAssetIds, requiredRealPersonReference.localAssetId),
+        )
+        finalPrompt = buildRealPersonIdentityPrompt(finalPrompt, requiredRealPersonReference.personName)
       }
       const operationCode: SmartImageOperationCode = refAssetIds.length ? 'image.image_to_image' : 'image.text_to_image'
       const modelSelection =
@@ -2735,14 +2739,18 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         /* ignore */
       }
     }
-    if (requiredRealPersonReference?.localAssetId && !refIds.includes(requiredRealPersonReference.localAssetId)) {
-      refIds.unshift(requiredRealPersonReference.localAssetId)
+    if (requiredRealPersonReference?.localAssetId) {
+      refIds.splice(
+        0,
+        refIds.length,
+        ...prioritizeRealPersonReferenceAssetIds(refIds, requiredRealPersonReference.localAssetId),
+      )
     }
     // 该镜元素名(锚定画面只含这些主体,避免把无关产品/主题塞进来)
     const elNames = Array.from(new Set(sh.subjects.map((s) => stripAt(s.tag)).filter(Boolean))).join('、')
     // 提示词:① 用户编辑过的 imagePrompt 直接用;② 否则按 该镜画面描述 + 该镜元素 + 风格 组合
     // 注意:不再注入"整体广告主题",否则会把全局产品(如雅迪车)塞进每个无关镜头。
-    const prompt = opts.editPrompt
+    let prompt = opts.editPrompt
       ? [opts.editPrompt, feedback && `修改要求:${feedback}`].filter(Boolean).join(';')
       : [
           sh.desc,
@@ -2756,6 +2764,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         ]
           .filter(Boolean)
           .join(';')
+    if (requiredRealPersonReference) {
+      prompt = buildRealPersonIdentityPrompt(prompt, requiredRealPersonReference.personName)
+    }
     const operationCode: SmartImageOperationCode = refIds.length ? 'image.image_to_image' : 'image.text_to_image'
     const modelSelection =
       opts.lockedImageModels?.[operationCode] || requireGenerationModel(operationCode, opts.generationModels)
