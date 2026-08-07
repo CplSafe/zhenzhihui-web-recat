@@ -18,8 +18,8 @@ function readText(value: unknown): string {
 }
 
 /** 参数名归一化：aspect_ratio / aspectRatio / aspect-ratio 归一为同一键。 */
-function normalizeParamKey(name: string): string {
-  return String(name || '')
+function normalizeParamKey(name: string | number): string {
+  return String(name ?? '')
     .toLocaleLowerCase()
     .replace(/[^a-z0-9]+/g, '')
 }
@@ -81,7 +81,7 @@ export interface ParamsSchemaField {
   name: string
   displayName: string
   type: string
-  options?: string[]
+  options?: (string | number)[]
   default?: unknown
   min?: number
   max?: number
@@ -94,8 +94,9 @@ function parseFieldRecord(raw: unknown): ParamsSchemaField | null {
   const record = raw as Record<string, unknown>
   const name = readText(record.name)
   if (!name) return null
+  // 选项既可能是字符串（"16:9"），也可能是数字（时长秒 5/10/15）；两者都必须保留。
   const options = Array.isArray(record.options)
-    ? record.options.filter((o): o is string => typeof o === 'string')
+    ? record.options.filter((o): o is string | number => typeof o === 'string' || typeof o === 'number')
     : undefined
   return {
     name,
@@ -170,6 +171,8 @@ function normalizeFieldValue(field: ParamsSchemaField, value: unknown): unknown 
     if (field.max !== undefined && n > field.max) return field.max
     return n
   }
+  // select/string 字段：数字值（如时长秒 5/10/15）保留数字类型，其余转字符串展示。
+  if (typeof value === 'number') return value
   return String(value ?? '')
 }
 
@@ -188,6 +191,8 @@ export interface CanvasSourceRef {
   slotIndex: number
   /** 来源节点的实际图片/视频地址（有素材内容时用于缩略图显示） */
   thumbnailUrl?: string
+  /** 来源节点的素材 asset_id（有素材内容时用于组装 input_assets） */
+  assetId?: number
 }
 
 export interface CanvasNodeInfo {
@@ -203,6 +208,10 @@ export interface CanvasNodeInfo {
   modelVersionId?: number
   /** 节点已有素材/生成结果地址（视频节点判断「已有视频内容」用，上传或生成都会写入） */
   resultUrl?: string
+  /** 节点持久化的 operation_code（生成时写入，刷新后回显/复用） */
+  operationCode?: string
+  /** 节点持久化的 params（生成时写入，刷新后回显/复用） */
+  params?: Record<string, unknown>
 }
 
 interface CanvasNodePanelProps {
@@ -230,6 +239,10 @@ interface CanvasNodePanelProps {
     modelVersionId: number
     operationCode: string
     params: Record<string, unknown>
+    /** 来源引用（含 assetId），由调用方按 role 约定组装 input_assets */
+    sourceRefs: CanvasSourceRef[]
+    ratio?: string
+    videoMode?: 'first-last' | 'full-ref'
   }) => void
 }
 
@@ -290,16 +303,21 @@ export default function CanvasNodePanel({
       return true
     })
   }, [node?.sourceRefs])
-  const maxRefs = kind === 'video' ? 2 : 3
-  const kindModels = models?.[kind as 'text' | 'image' | 'video'] || []
+  // 来源数量上限只统计素材类来源（图片/视频节点），文本节点不计入（其内容拼入 prompt）：
+  // 视频：全能参考最多 5 个图片参考；首尾帧 2 个（首帧+尾帧）。其他节点最多 5 个素材来源。
+  const maxRefs = kind === 'video' ? (videoMode === 'full-ref' ? 5 : 2) : 5
+  // 素材来源引用数量（文本来源不计入数量限制）
+  const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind !== 'text').length, [sourceRefs])
+  const kindModels = useMemo(() => models?.[kind as 'text' | 'image' | 'video'] || [], [models, kind])
 
   /**
    * 当前上下文应使用的 operation_code：
    * 文本节点 → responses.multimodal
    * 图片节点：无图片来源节点（参考图）→ image.text_to_image；有图片来源节点 → image.image_to_image
    * 视频节点：无视频内容 → video.generate；已有视频内容（生成结果/上传）→ video.edit
+   * 节点已持久化 operationCode 且所选模型仍支持时，优先复用（刷新后回显不变）
    */
-  const targetOperationCode = useMemo((): string => {
+  const contextualOperationCode = useMemo((): string => {
     if (kind === 'text') return 'responses.multimodal'
     if (kind === 'image') {
       const hasImageSource = (node?.sourceRefs || []).some((ref) => ref.kind === 'image')
@@ -311,6 +329,15 @@ export default function CanvasNodePanel({
     }
     return ''
   }, [kind, node?.sourceRefs, node?.resultUrl])
+
+  const targetOperationCode = useMemo((): string => {
+    const persisted = String(node?.operationCode || '').trim()
+    // 持久化的 operation_code 若仍被当前 kind 的模型支持，则复用；否则回退上下文推断
+    if (persisted && kindModels.some((m) => (m.operationCodes as string[] | undefined)?.includes(persisted))) {
+      return persisted
+    }
+    return contextualOperationCode
+  }, [node?.operationCode, kindModels, contextualOperationCode])
 
   // 只显示支持目标 operation_code 的模型（模型可能同时支持多个 code）
   const availableModels = useMemo(
@@ -336,13 +363,16 @@ export default function CanvasNodePanel({
   // 选中模型的 params_schema.fields（视频菜单动态渲染来源）
   const schemaFields = useMemo(() => parseParamsSchema(selectedModel), [selectedModel])
 
-  // 字段值状态：模型/schema 变化时重置为 default
+  // 字段值状态：模型/schema 变化时重置为 default；优先读取节点已持久化的 params（刷新后回显用户选择）
   const [fieldValues, setFieldValues] = useState<Record<string, unknown>>({})
   useEffect(() => {
+    const persisted = (node?.params || {}) as Record<string, unknown>
     const next: Record<string, unknown> = {}
-    for (const f of schemaFields) next[f.name] = normalizeFieldValue(f, f.default)
+    for (const f of schemaFields) {
+      next[f.name] = persisted[f.name] !== undefined ? persisted[f.name] : normalizeFieldValue(f, f.default)
+    }
     setFieldValues(next)
-  }, [schemaFields])
+  }, [schemaFields, node?.params])
 
   // 字段值变更：回写状态；比例字段（ratio/aspect_ratio/aspectRatio）同步节点比例（保持节点尺寸联动）
   const handleFieldChange = useCallback(
@@ -424,7 +454,7 @@ export default function CanvasNodePanel({
     }
   }, [selectedModel?.modelVersionId, operationCode, prompt, kind, schemaParams, workspaceId, buildFullPrompt])
 
-  // 生成按钮点击：将文本来源节点的内容拼接进 prompt 后提交
+  // 生成按钮点击：将文本来源节点的内容拼接进 prompt 后提交；图片/视频来源以 sourceRefs(含 assetId) 交给调用方组装 input_assets
   const handleGenerate = () => {
     const modelVersionId = selectedModel?.modelVersionId
     if (!modelVersionId || !operationCode) return
@@ -434,6 +464,9 @@ export default function CanvasNodePanel({
       modelVersionId,
       operationCode,
       params: schemaParams,
+      sourceRefs,
+      ratio,
+      videoMode: kind === 'video' ? videoMode : undefined,
     })
   }
 
@@ -442,14 +475,14 @@ export default function CanvasNodePanel({
       {/* tags / 缩略图 */}
       <div className={styles.tags}>
         {kind === 'video' ? (
-          /* 视频节点：首帧(slot=0) / 尾帧(slot=1) 双槽 */
+          /* 视频节点：槽位随生成方式变化 —— 首尾帧=首帧+尾帧双槽（含交换）；全能参考=最多 5 个参考槽 */
           <div className={styles.refImages}>
-            {[0, 1].map((slot) => {
+            {(videoMode === 'full-ref' ? [0, 1, 2, 3, 4] : [0, 1]).map((slot) => {
               const ref = findRefBySlot(sourceRefs, slot)
-              const title = slot === 0 ? '首帧' : '尾帧'
+              const title = videoMode === 'full-ref' ? `参考 ${slot + 1}` : slot === 0 ? '首帧' : '尾帧'
               return (
                 <React.Fragment key={slot}>
-                  {slot === 1 && (
+                  {videoMode !== 'full-ref' && slot === 1 && (
                     <span className={styles.refSwapIcon}>
                       <SwapIcon />
                     </span>
@@ -511,7 +544,7 @@ export default function CanvasNodePanel({
                   </button>
                 </div>
               ))}
-            {sourceRefs.length < maxRefs && (
+            {mediaRefCount < maxRefs && (
               <button className={styles.refAddBtn} title="添加参考" onClick={() => onStartPickRef?.(sourceRefs.length)}>
                 <PlusSmIcon />
               </button>

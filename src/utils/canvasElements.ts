@@ -24,6 +24,14 @@ interface SerializableNodeData {
   assetId?: number
   resultUrl?: string
   prompt?: string
+  /** 节点选定的 operation_code（生成时写入，刷新后可直接复用） */
+  operationCode?: string
+  /** 节点 params_schema 参数（生成时写入，刷新后回显/复用） */
+  params?: Record<string, unknown>
+  /** 最近一次生成任务 ID（在途/已完成均可，用于刷新后续轮询） */
+  taskId?: number
+  /** 最近一次任务状态 */
+  taskStatus?: string
 }
 
 /** 与 textContents 无关的节点可比较快照（含 id，供增量 diff 比较，排除 ReactFlow 运行态字段）。 */
@@ -45,6 +53,20 @@ export interface ComparableEdge {
   data?: Record<string, unknown>
 }
 
+/**
+ * 生成连线稳定 id：e-{source}-{target}-{slotIndex}。
+ *
+ * 不能依赖 React Flow addEdge 自动生成 id：默认格式
+ * `xy-edge__{source}{sourceHandle}-{target}{targetHandle}` 会把源/目标 node id
+ * 连同 handle 后缀（{nodeId}-right-source / {nodeId}-left-target）各拼接两次，
+ * 实测可达 140+ bytes，超过后端 element_id 128 bytes 上限导致保存失败。
+ * 本函数生成的 id 长度约 60 bytes，且对同一 (source, target, slotIndex) 唯一，
+ * 与 handlePickRefNode / handleMenuSelect 的既有生成逻辑保持一致。
+ */
+export function buildEdgeId(sourceId: string, targetId: string, slotIndex: number | string): string {
+  return `e-${sourceId}-${targetId}-${slotIndex}`
+}
+
 /** 将节点序列化为可比较快照（排除 ReactFlow 运行态字段；text 由 textContents 并入，供增量 diff 精确比较）。 */
 export function comparableNode(
   node: Node,
@@ -60,6 +82,10 @@ export function comparableNode(
     ['assetId', data.assetId],
     ['resultUrl', data.resultUrl],
     ['prompt', data.prompt],
+    ['operationCode', data.operationCode],
+    ['params', data.params],
+    ['taskId', data.taskId],
+    ['taskStatus', data.taskStatus],
   ]
   for (const [key, value] of fields) {
     if (value !== undefined && value !== null) serializable[key] = value
@@ -102,6 +128,10 @@ export function nodeToMutation(
     ['assetId', data.assetId],
     ['resultUrl', data.resultUrl],
     ['prompt', data.prompt],
+    ['operationCode', data.operationCode],
+    ['params', data.params],
+    ['taskId', data.taskId],
+    ['taskStatus', data.taskStatus],
   ]
   for (const [key, value] of fields) {
     if (value !== undefined && value !== null) serializable[key] = value

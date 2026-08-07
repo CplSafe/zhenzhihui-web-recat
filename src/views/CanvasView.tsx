@@ -45,7 +45,11 @@ import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
 import { fetchCanvasElements, saveCanvasElementsBatched, type CanvasElementMutation } from '@/api/canvasApi'
+import { createAiTask, getAiTaskId, uploadAssetFile } from '@/api/business'
+import { assetStreamUrl } from '@/utils/assetUrl'
+import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import {
+  buildEdgeId,
   comparableEdge,
   comparableNode,
   diffCanvasMutations,
@@ -54,6 +58,96 @@ import {
   type ComparableEdge,
 } from '@/utils/canvasElements'
 import './CanvasView.css'
+
+/** 节点素材回显地址归一化：blob:（本地上传的会话级临时地址）或缺失但 assetId 存在时，用同源流式地址重建。 */
+export function resolveNodeMediaUrl(data: Record<string, unknown> | undefined, workspaceId: number): string {
+  const record = data || {}
+  const resultUrl = String(record.resultUrl || '')
+  const assetId = Number(record.assetId || 0)
+  if (resultUrl && !resultUrl.startsWith('blob:')) return resultUrl
+  if (Number.isSafeInteger(assetId) && assetId > 0) return assetStreamUrl(assetId, workspaceId)
+  return resultUrl
+}
+
+/** 归一化节点素材：把 blob: 临时地址替换为可持久回显的同源流式地址（旧数据兜底）。 */
+export function normalizeNodeMedia(node: Node, workspaceId: number): Node {
+  const data = (node.data || {}) as Record<string, unknown>
+  const resultUrl = String(data.resultUrl || '')
+  const assetId = Number(data.assetId || 0)
+  if (resultUrl.startsWith('blob:') && Number.isSafeInteger(assetId) && assetId > 0) {
+    return { ...node, data: { ...data, resultUrl: assetStreamUrl(assetId, workspaceId) } }
+  }
+  return node
+}
+
+/**
+ * 由来源引用组装 input_assets（文档 6.3 约定）：
+ * - image.image_to_image → role: reference_image
+ * - 其余（video.generate / video.edit 等）→ role: image
+ * - 文本来源不传素材（内容已拼入 prompt）；无 assetId 的来源跳过。
+ */
+export function buildCanvasInputAssets(
+  sourceRefs: Array<{ kind?: string; assetId?: number }>,
+  operationCode: string,
+): Array<{ asset_id: number; role: 'image' | 'reference_image' }> {
+  const isImageToImage = operationCode === 'image.image_to_image'
+  return (sourceRefs || [])
+    .filter((ref) => ref.kind !== 'text' && Number(ref.assetId) > 0)
+    .map((ref) => ({
+      asset_id: Number(ref.assetId) as number,
+      role: isImageToImage ? ('reference_image' as const) : ('image' as const),
+    }))
+}
+
+/** 视频文件首帧 poster（压缩 dataURL，随节点持久化）；失败静默返回空串。 */
+function captureVideoPoster(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const video = document.createElement('video')
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'metadata'
+    const cleanup = () => {
+      URL.revokeObjectURL(url)
+      video.removeAttribute('src')
+      video.load?.()
+    }
+    const fail = () => {
+      cleanup()
+      resolve('')
+    }
+    video.onerror = fail
+    video.onloadeddata = () => {
+      try {
+        video.currentTime = 0
+      } catch {
+        fail()
+      }
+    }
+    video.onseeked = () => {
+      try {
+        const sw = video.videoWidth
+        const sh = video.videoHeight
+        if (!sw || !sh) return fail()
+        const scale = Math.min(1, 1280 / Math.max(sw, sh))
+        const w = Math.max(1, Math.round(sw * scale))
+        const h = Math.max(1, Math.round(sh * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return fail()
+        ctx.drawImage(video, 0, 0, w, h)
+        const poster = canvas.toDataURL('image/jpeg', 0.85)
+        cleanup()
+        resolve(poster)
+      } catch {
+        fail()
+      }
+    }
+    video.src = url
+  })
+}
 
 /** 类型小图标（头部用，12×12） */
 function getTypeIcon(kind: string) {
@@ -284,8 +378,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const [playing, setPlaying] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const placeholder = '双击开始编辑...'
+  // 素材回显地址：blob: 临时地址或缺失但 assetId 存在时，用同源流式地址重建（刷新后不丢）
+  const workspaceId = useWorkspaceId()
+  const mediaUrl = resolveNodeMediaUrl(data as Record<string, unknown> | undefined, workspaceId)
   // 视频地址变化（应用新素材）时重置播放态，避免旧视频继续播放
-  const videoUrl = (data as any)?.resultUrl
+  const videoUrl = mediaUrl
   useEffect(() => {
     setPlaying(false)
   }, [videoUrl])
@@ -354,11 +451,38 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const leftVisible = selected || leftHovered
   const rightVisible = selected || rightHovered
 
-  // 顶部上传按钮：图片/视频节点显示；视频节点已有内容（生成结果/上传）时隐藏
-  // 图片节点无内容显示「上传」，有内容显示「替换」——与左右侧加号 handle 同款交互（选中/悬停出现）
-  const nodeResultUrl = (data as any)?.resultUrl as string | undefined
-  const showUploadBtn = (kind === 'image' || kind === 'video') && !(kind === 'video' && !!nodeResultUrl)
-  const uploadLabel = kind === 'image' && nodeResultUrl ? '替换' : '上传'
+  // 顶部操作胶囊：图片/视频节点专属
+  // - 图片：无内容 → 「上传」；有内容 → 「替换」+「下载」
+  // - 视频：无内容 → 「上传」；有内容 → 「下载」（视频有内容时不再隐藏，改为可下载）
+  const nodeResultUrl = mediaUrl
+  const isImageNode = kind === 'image'
+  const isVideoNode = kind === 'video'
+  const hasContent = Boolean(nodeResultUrl)
+  const showUploadAction = isImageNode || isVideoNode ? !(isVideoNode && hasContent) : false
+  const uploadLabel = isImageNode && hasContent ? '替换' : '上传'
+  const showDownloadAction = (isImageNode || isVideoNode) && hasContent
+  const showTopActions = showUploadAction || showDownloadAction
+
+  /** 下载节点素材：优先按 assetId 走素材下载接口（/api/v1/assets/{id}/download），无 assetId 时退回 resultUrl。 */
+  const handleDownloadMedia = () => {
+    const assetId = Number((data as any)?.assetId || 0) || 0
+    const fileName = buildDownloadName(
+      kind === 'image' ? '画布图片' : '画布视频',
+      new Date(),
+      kind === 'image' ? 'jpg' : 'mp4',
+    )
+    void downloadToDisk({
+      fileName,
+      mimeType: kind === 'image' ? 'image/jpeg' : 'video/mp4',
+      preserveResponseMediaType: kind === 'image',
+      resolveUrl: () => {
+        if (assetId > 0) return assetStreamUrl(assetId, workspaceId)
+        return mediaUrl
+      },
+    }).catch(() => {
+      // 下载失败静默：浏览器可能已接管（iframe 下载 / 微信内打开），不打断用户
+    })
+  }
 
   const labelMap: Record<string, string> = { text: '文本', image: '图片', video: '视频' }
 
@@ -370,38 +494,72 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         <span className="canvas-node-header__label">{labelMap[kind] || kind}</span>
       </div>
 
-      {/* 顶部上传按钮：图片/视频节点专属，样式与左右侧连接点图标一致（圆形胶囊，选中/悬停出现） */}
-      {showUploadBtn && (
-        <button
-          type="button"
-          className="canvas-node-upload-btn"
-          title={uploadLabel}
+      {/* 顶部操作胶囊：上传/替换 + 下载（图片/视频节点专属，与左右侧连接点图标同款交互：选中/悬停出现） */}
+      {showTopActions && (
+        <div
+          className="canvas-node-upload-group"
           data-visible={selected || topHovered}
           onMouseEnter={() => setTopHovered(true)}
           onMouseLeave={() => setTopHovered(false)}
           onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            ;(window as any).__canvasRequestUpload?.(id)
-          }}
         >
-          <svg
-            viewBox="0 0 24 24"
-            width="13"
-            height="13"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M12 16V4" />
-            <path d="m6 10 6-6 6 6" />
-            <path d="M4 20h16" />
-          </svg>
-          <span className="canvas-node-upload-btn__label">{uploadLabel}</span>
-        </button>
+          {showUploadAction && (
+            <button
+              type="button"
+              className="canvas-node-upload-btn"
+              title={uploadLabel}
+              onClick={(e) => {
+                e.stopPropagation()
+                ;(window as any).__canvasRequestUpload?.(id)
+              }}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 16V4" />
+                <path d="m6 10 6-6 6 6" />
+                <path d="M4 20h16" />
+              </svg>
+              <span className="canvas-node-upload-btn__label">{uploadLabel}</span>
+            </button>
+          )}
+          {showDownloadAction && (
+            <button
+              type="button"
+              className="canvas-node-upload-btn"
+              title="下载"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleDownloadMedia()
+              }}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 4v12" />
+                <path d="m6 10 6 6 6-6" />
+                <path d="M4 20h16" />
+              </svg>
+              <span className="canvas-node-upload-btn__label">下载</span>
+            </button>
+          )}
+        </div>
       )}
 
       {/* 主体：文本节点可编辑；图片/视频显示素材内容或占位图标 */}
@@ -420,13 +578,13 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               {textContent.trim() || placeholder}
             </div>
           )
-        ) : kind === 'video' && (data as any)?.resultUrl ? (
+        ) : kind === 'video' && mediaUrl ? (
           <div className="canvas-node-video-wrap">
             {/* 非自动播放：默认暂停，仅显示封面帧；点击播放按钮后才播放 */}
             <video
               ref={videoRef}
               className="canvas-node-media"
-              src={(data as any).resultUrl}
+              src={mediaUrl}
               poster={(data as any).poster}
               playsInline
               preload="metadata"
@@ -449,8 +607,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               </button>
             )}
           </div>
-        ) : kind === 'image' && (data as any)?.resultUrl ? (
-          <img className="canvas-node-media" src={(data as any).resultUrl} alt={kind} loading="lazy" />
+        ) : kind === 'image' && mediaUrl ? (
+          <img className="canvas-node-media" src={mediaUrl} alt={kind} loading="lazy" />
         ) : (
           getTypePlaceholder(kind)
         )}
@@ -598,6 +756,8 @@ function CanvasInner() {
           slotIndex: (e.data?.slotIndex as number) ?? 0,
           // 来源节点有实际素材内容（图片/视频）时带缩略图地址
           ...((src?.data as any)?.resultUrl ? { thumbnailUrl: (src.data as any).resultUrl as string } : {}),
+          // 来源节点有素材 asset_id 时带上，供组装 input_assets
+          ...(Number((src?.data as any)?.assetId) > 0 ? { assetId: Number((src.data as any).assetId) } : {}),
         })
       }
       return refs.sort((a, b) => a.slotIndex - b.slotIndex)
@@ -619,12 +779,20 @@ function CanvasInner() {
   const validateConnection = useCallback(
     (sourceId: string, targetId: string): string | null => {
       if (hasEdgeBetween(sourceId, targetId)) return '已存在相同连线'
-      const targetKind = (latestRef.current.nodes.find((n) => n.id === targetId)?.data?.kind as string) || 'text'
+      const targetNode = latestRef.current.nodes.find((n) => n.id === targetId)
+      const targetKind = (targetNode?.data?.kind as string) || 'text'
       const sourceKind = (latestRef.current.nodes.find((n) => n.id === sourceId)?.data?.kind as string) || 'text'
       const allowed = allowedSourceKinds[targetKind] || []
       if (!allowed.includes(sourceKind)) return '该节点类型不能作为此节点的参考来源'
-      const existingRefs = latestRef.current.edges.filter((e) => e.target === targetId).length
-      const maxRefs = targetKind === 'video' ? 2 : 3
+      // 数量上限只统计素材类来源（图片/视频）；文本来源不计入（其内容拼入 prompt，可无限连接）
+      const existingRefs = latestRef.current.edges.filter((e) => {
+        if (e.target !== targetId) return false
+        const src = latestRef.current.nodes.find((n) => n.id === e.source)
+        return (src?.data?.kind as string) !== 'text'
+      }).length
+      // 视频节点：全能参考最多 5 个素材参考（与面板顶部 5 槽一致）；首尾帧模式 2 个（首帧+尾帧）
+      // 其他节点：最多 5 个素材来源（与对话框缩略图最多显示 5 个一致）
+      const maxRefs = targetKind === 'video' ? ((targetNode?.data?.videoMode as string) === 'full-ref' ? 5 : 2) : 5
       if (existingRefs >= maxRefs) return `参考数量已达上限（${maxRefs} 个）`
       return null
     },
@@ -651,6 +819,8 @@ function CanvasInner() {
   }, [])
 
   // 打开抽屉的时序动效：先播放工具栏收起动画，动画结束后再卸载工具栏并挂载抽屉
+  // 注意：素材库/历史记录入口按钮当前已暂时隐藏，此函数暂无调用方；保留逻辑供后续恢复
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const openDrawerPanel = useCallback(
     (type: 'assets' | 'history') => {
       // 已在目标抽屉中：无需重复动画
@@ -855,8 +1025,8 @@ function CanvasInner() {
         slotIndex = 0
         while (existingSlots.includes(slotIndex)) slotIndex++
       }
-      // 创建连线（带 slotIndex）
-      const newEdgeId = `e-${sourceNode.id}-${pickingTargetId}-${slotIndex}`
+      // 创建连线（带 slotIndex）；显式生成短 id，避免 React Flow 自动 id 超过后端 128 bytes 上限
+      const newEdgeId = buildEdgeId(sourceNode.id, pickingTargetId, slotIndex)
       const newEdge: Edge = {
         id: newEdgeId,
         source: sourceNode.id,
@@ -884,6 +1054,10 @@ function CanvasInner() {
           ...((sourceNode.data as any)?.resultUrl
             ? { thumbnailUrl: (sourceNode.data as any).resultUrl as string }
             : {}),
+          // 来源节点有素材 asset_id 时带上，供组装 input_assets
+          ...(Number((sourceNode.data as any)?.assetId) > 0
+            ? { assetId: Number((sourceNode.data as any).assetId) }
+            : {}),
         }
         const next = [...(prev.sourceRefs || []).filter((r) => r.edgeId !== newEdgeId), newRef].sort(
           (a, b) => a.slotIndex - b.slotIndex,
@@ -907,7 +1081,14 @@ function CanvasInner() {
       while (existingSlots.includes(slotIndex)) slotIndex++
       // 添加连线前记录历史，供撤销使用
       commitHistory()
-      setEdges((eds) => addEdge({ ...connection, data: { slotIndex } }, eds))
+      // 显式传短 id：React Flow addEdge 自动生成的 id（xy-edge__…）会把 node id 拼接 4 次，
+      // 超过后端 element_id 128 bytes 上限，导致保存失败
+      setEdges((eds) =>
+        addEdge(
+          { ...connection, id: buildEdgeId(connection.source, connection.target, slotIndex), data: { slotIndex } },
+          eds,
+        ),
+      )
     },
     [setEdges, commitHistory, validateConnection],
   )
@@ -967,9 +1148,11 @@ function CanvasInner() {
           const targetHandle = nearRight ? `${node.id}-right-source` : `${node.id}-left-target`
           // 自动连线前记录历史，供撤销使用
           commitHistory()
+          // 显式传短 id（同 onConnect）：避免 React Flow 自动 id 超长
           setEdges((eds) =>
             addEdge(
               {
+                id: buildEdgeId(sourceId, node.id, slotIndex),
                 source: sourceId,
                 sourceHandle: connectionState.fromHandle?.id || null,
                 target: node.id,
@@ -1065,7 +1248,7 @@ function CanvasInner() {
         setEdges((eds) => [
           ...eds,
           {
-            id: `e-${addMenu.sourceId}-${newNodeId}-0`,
+            id: buildEdgeId(addMenu.sourceId, newNodeId, 0),
             source: addMenu.sourceId,
             sourceHandle: null,
             target: newNodeId,
@@ -1230,9 +1413,11 @@ function CanvasInner() {
       const draftBoundId = readDraftBoundCanvasId(routeProjectId)
       if (draft && draft.nodes.length > 0 && draftBoundId === canvasId) {
         // 恢复时移除渐入标记类，避免已持久化的新节点重播渐入动画
-        const restoredNodes = (draft.nodes as Node[]).map((n) =>
-          String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n,
-        )
+        const restoredNodes = (draft.nodes as Node[]).map((n) => {
+          const cleaned = String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n
+          // 旧草稿可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址
+          return normalizeNodeMedia(cleaned, workspaceId)
+        })
         setNodes(restoredNodes)
         setEdges(draft.edges as Edge[])
         // 恢复文本内容
@@ -1275,7 +1460,9 @@ function CanvasInner() {
           allElements.push(...(page.elements || []))
           cursor = page.next_cursor || ''
         } while (page.has_more && cursor)
-        const { nodes: cloudNodes, edges: cloudEdges } = elementsToGraph(allElements)
+        const { nodes: rawCloudNodes, edges: cloudEdges } = elementsToGraph(allElements)
+        // 旧数据可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址，避免刷新后破图
+        const cloudNodes = rawCloudNodes.map((n) => normalizeNodeMedia(n, workspaceId))
         if (cloudNodes.length > 0 || cloudEdges.length > 0) {
           setNodes(cloudNodes)
           setEdges(cloudEdges)
@@ -1298,9 +1485,13 @@ function CanvasInner() {
           const draft = loadCanvasDraft(routeProjectId)
           const draftBoundId = readDraftBoundCanvasId(routeProjectId)
           if (draft && draft.nodes.length > 0 && draftBoundId === canvasId) {
-            const restoredNodes = (draft.nodes as Node[]).map((n) =>
-              String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n,
-            )
+            const restoredNodes = (draft.nodes as Node[]).map((n) => {
+              const cleaned = String(n.className || '').includes('is-node-entering')
+                ? { ...n, className: undefined }
+                : n
+              // 旧草稿可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址
+              return normalizeNodeMedia(cleaned, workspaceId)
+            })
             setNodes(restoredNodes)
             setEdges(draft.edges as Edge[])
             if (draft.textContents) {
@@ -1441,13 +1632,16 @@ function CanvasInner() {
     [selectedNode, setNodes, commitHistory],
   )
 
-  // 视频生成方式变更：同步模式与比例
+  // 视频生成方式变更：同步模式与比例；切换时清除该节点已有的参考连线
+  // （首尾帧 ↔ 全能参考的槽位语义互斥：首尾帧=首帧+尾帧，全能参考=1~5 张参考图，旧引用不再适用）
   const handleVideoModeChange = useCallback(
     (mode: 'first-last' | 'full-ref') => {
       if (!selectedNode) return
       const baseSize = 250
       // 视频模式变更前记录历史，供撤销使用
       commitHistory()
+      // 清除该节点所有入边（参考连线），避免旧模式的参考数据污染新模式槽位
+      setEdges((eds) => eds.filter((e) => e.target !== selectedNode.id))
       setNodes((nds) =>
         nds.map((n) => {
           if (n.id !== selectedNode.id) return n
@@ -1467,7 +1661,7 @@ function CanvasInner() {
         }),
       )
       // 同步选中态回显（与 setNodes 同一套归一化逻辑）：
-      // 首尾帧 → auto；全能参考下原为无比例/自适应 → 默认 16:9
+      // 首尾帧 → auto；全能参考下原为无比例/自适应 → 默认 16:9；参考连线已清除
       setSelectedNode((prev) => {
         if (!prev) return null
         let ratio = prev.ratio
@@ -1476,10 +1670,10 @@ function CanvasInner() {
         } else if (!ratio || isAutoRatio(ratio)) {
           ratio = '16:9'
         }
-        return { ...prev, videoMode: mode, ratio }
+        return { ...prev, videoMode: mode, ratio, sourceRefs: [] }
       })
     },
-    [selectedNode, setNodes, commitHistory],
+    [selectedNode, setNodes, setEdges, commitHistory],
   )
 
   // 应用素材：优先应用到已选中的节点（类型匹配时替换素材内容），否则创建新节点
@@ -1492,7 +1686,8 @@ function CanvasInner() {
         const isVideoTarget = targetNode.kind === 'video'
         if (type === 'video' ? isVideoTarget : true) {
           const assetId = Number(material.assetId || 0)
-          const resultUrl = String(material.src || '')
+          // 素材库 src 为同源流式地址；缺失或为 blob: 时按 assetId 重建，保证持久回显
+          const resultUrl = resolveNodeMediaUrl({ assetId, resultUrl: material.src }, workspaceId)
           // 替换素材前记录历史，供撤销使用
           commitHistory()
           // 更新画布节点数据
@@ -1531,12 +1726,15 @@ function CanvasInner() {
           // 素材来源：assetId + 同源流式地址，供节点渲染/后续生成任务使用
           extraData: {
             assetId: Number(material.assetId || 0),
-            resultUrl: String(material.src || ''),
+            resultUrl: resolveNodeMediaUrl(
+              { assetId: Number(material.assetId || 0), resultUrl: material.src },
+              workspaceId,
+            ),
           },
         },
       )
     },
-    [selectedNode, transform, appendNewNode, commitHistory],
+    [selectedNode, transform, appendNewNode, commitHistory, workspaceId],
   )
 
   // 节点顶部上传按钮通过全局钩子触发：确保该节点先被选中（其内容将作为上传目标）
@@ -1561,9 +1759,9 @@ function CanvasInner() {
     }
   }, [getSourceRefs])
 
-  // 文件选择后：将本地文件转为对象 URL 作为节点内容（resultUrl），并同步画布节点与选中态
+  // 文件选择后：上传到素材中心拿 asset_id，节点存持久地址（刷新后可回显），视频同时生成首帧 poster
   const handleUploadFile = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       e.target.value = ''
       if (!file || !selectedNode) return
@@ -1579,21 +1777,30 @@ function CanvasInner() {
         window.alert('视频节点仅支持上传视频文件')
         return
       }
-      const objectUrl = URL.createObjectURL(file)
-      // 替换内容前记录历史，供撤销使用
-      commitHistory()
-      setNodes((nds) =>
-        nds.map((n) =>
-          n.id === selectedNode.id
-            ? { ...n, data: { ...(n.data as Record<string, unknown>), resultUrl: objectUrl } }
-            : n,
-        ),
-      )
-      // 同步选中态回显（视频节点一旦有内容，顶部上传按钮自动隐藏 → video.edit 模型）
-      setSelectedNode((prev) => (prev && prev.id === selectedNode.id ? { ...prev, resultUrl: objectUrl } : prev))
-      setSaveStatus('dirty')
+      try {
+        // 上传到素材中心，取得持久 asset_id（刷新后可经 /download 回显，不再依赖会话级 objectURL）
+        const out: any = await uploadAssetFile({ workspaceId, file })
+        const assetId = Number(out?.asset?.id || 0)
+        if (!assetId) throw new Error('上传素材失败，请稍后重试')
+        const resultUrl = assetStreamUrl(assetId, workspaceId)
+        // 视频节点生成首帧 poster（dataURL 随节点持久化，回显时直接显示封面帧）
+        const poster = isVideo ? await captureVideoPoster(file) : ''
+        // 替换内容前记录历史，供撤销使用
+        commitHistory()
+        const nextData: Record<string, unknown> = {
+          assetId,
+          resultUrl,
+          ...(poster ? { poster } : {}),
+        }
+        setNodes((nds) => nds.map((n) => (n.id === selectedNode.id ? { ...n, data: { ...n.data, ...nextData } } : n)))
+        // 同步选中态回显（视频节点一旦有内容，顶部上传按钮自动隐藏 → video.edit 模型）
+        setSelectedNode((prev) => (prev && prev.id === selectedNode.id ? { ...prev, ...nextData } : prev))
+        setSaveStatus('dirty')
+      } catch (error: any) {
+        window.alert(String(error?.message || '上传素材失败，请稍后重试'))
+      }
     },
-    [selectedNode, commitHistory, setSaveStatus],
+    [selectedNode, workspaceId, commitHistory, setSaveStatus],
   )
 
   // 模型变更：保存 modelVersionId 到节点数据并回显
@@ -1610,6 +1817,60 @@ function CanvasInner() {
       setSelectedNode((prev) => (prev ? { ...prev, modelVersionId } : prev))
     },
     [selectedNode, setNodes, commitHistory],
+  )
+
+  /**
+   * 节点「生成」按钮接线：组装 input_assets → 持久化 operationCode/params → 创建 AI 任务 → 回写 task_id/status。
+   * 参考图片通过 input_assets 数组传递（文档 6.3），role 按 operation 约定：
+   * - video.generate / video.edit → image（首尾帧、参考图统一）
+   * - image.image_to_image → reference_image
+   * 文本来源节点不传素材（其内容已拼入 prompt）。
+   */
+  const handleNodeGenerate = useCallback(
+    async (generate: {
+      kind: string
+      prompt: string
+      modelVersionId: number
+      operationCode: string
+      params: Record<string, unknown>
+      sourceRefs: CanvasSourceRef[]
+      ratio?: string
+      videoMode?: 'first-last' | 'full-ref'
+    }) => {
+      if (!generate || !selectedNode) return
+      const targetNodeId = selectedNode.id
+      const inputAssets = buildCanvasInputAssets(generate.sourceRefs || [], generate.operationCode)
+      try {
+        // 1) 先把当前配置（operationCode + params）持久化到节点，保证刷新后配置不丢
+        const configData: Record<string, unknown> = {
+          operationCode: generate.operationCode,
+          params: generate.params || {},
+        }
+        setNodes((nds) => nds.map((n) => (n.id === targetNodeId ? { ...n, data: { ...n.data, ...configData } } : n)))
+        setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...configData } : prev))
+        setSaveStatus('dirty')
+        // 2) 创建 AI 任务（同幂等键重试可复用同一任务；网络失败不静默换模型）
+        const task = await createAiTask({
+          workspaceId,
+          capability: generate.kind === 'text' ? 'responses' : generate.kind,
+          operationCode: generate.operationCode,
+          prompt: generate.prompt,
+          params: generate.params,
+          inputAssets,
+          modelVersionId: generate.modelVersionId,
+        })
+        const taskId = getAiTaskId(task)
+        if (!taskId) throw new Error('任务创建后未返回任务 ID')
+        // 3) 回写 task_id/task_status 到节点
+        const taskData: Record<string, unknown> = { taskId, taskStatus: String(task?.status || 'pending') }
+        setNodes((nds) => nds.map((n) => (n.id === targetNodeId ? { ...n, data: { ...n.data, ...taskData } } : n)))
+        setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...taskData } : prev))
+        setSaveStatus('dirty')
+      } catch (error: any) {
+        window.alert(String(error?.message || '任务创建失败，请稍后重试'))
+      }
+    },
+    [selectedNode, workspaceId, setNodes, setSaveStatus],
   )
 
   const handleAddNode = useCallback(
@@ -1704,6 +1965,28 @@ function CanvasInner() {
         </div>
       </div>
 
+      {/* 独立返回按钮：始终显示，不随工具栏/抽屉隐藏或消失 */}
+      <button
+        className="canvas-back-btn"
+        onClick={() => navigate('/canvas')}
+        title="返回画布列表"
+        aria-label="返回画布列表"
+      >
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M19 12H5" />
+          <path d="m12 19-7-7 7-7" />
+        </svg>
+      </button>
+
       {/* 抽屉未打开（或正在播放收起动画）时渲染工具栏 */}
       {!drawerPanel && (
         <CanvasFloatingToolbar
@@ -1713,8 +1996,6 @@ function CanvasInner() {
           onMoveToggle={handleMoveToggle}
           dragEnabled={dragEnabled}
           onDragToggle={handleDragToggle}
-          onOpenAssets={() => openDrawerPanel('assets')}
-          onOpenHistory={() => openDrawerPanel('history')}
         />
       )}
 
@@ -1811,7 +2092,7 @@ function CanvasInner() {
         nodesDraggable={dragEnabled}
         panOnDrag={moveEnabled}
         elementsSelectable
-        defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+        defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         proOptions={{ hideAttribution: true }}
@@ -1994,6 +2275,7 @@ function CanvasInner() {
             onRatioChange={handleRatioChange}
             onVideoModeChange={handleVideoModeChange}
             onModelChange={handleModelChange}
+            onGenerate={handleNodeGenerate}
             models={canvasModels}
             modelsLoading={modelsLoading}
           />

@@ -15,8 +15,6 @@ interface CanvasFloatingToolbarProps {
   /** 节点拖拽开关：true=可拖拽节点 */
   dragEnabled: boolean
   onDragToggle: () => void
-  onOpenAssets: () => void
-  onOpenHistory: () => void
   /** 打开抽屉前播放的收起动画标记 */
   leaving?: boolean
 }
@@ -27,8 +25,6 @@ function CanvasFloatingToolbar({
   onMoveToggle,
   dragEnabled,
   onDragToggle,
-  onOpenAssets,
-  onOpenHistory,
   leaving = false,
 }: CanvasFloatingToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -128,16 +124,6 @@ function CanvasFloatingToolbar({
       >
         <DragIcon />
       </button>
-
-      {/* 4. 素材库 */}
-      <button className={styles.toolBtn} onClick={onOpenAssets} title="素材库">
-        <GridIcon />
-      </button>
-
-      {/* 5. 历史记录 */}
-      <button className={styles.toolBtn} onClick={onOpenHistory} title="历史记录">
-        <ClockIcon />
-      </button>
     </div>
   )
 }
@@ -171,26 +157,6 @@ function DragIcon() {
       <circle cx="16" cy="6" r="1" fill="currentColor" />
       <circle cx="16" cy="12" r="1" fill="currentColor" />
       <circle cx="16" cy="18" r="1" fill="currentColor" />
-    </svg>
-  )
-}
-
-function GridIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
-    </svg>
-  )
-}
-
-function ClockIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12,6 12,12 16,14" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

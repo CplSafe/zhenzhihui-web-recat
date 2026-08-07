@@ -15,8 +15,9 @@
   z-index: 50;
 }
 
-/* 节点顶部上传按钮 — 图片/视频节点专属，与左右侧连接点图标同款交互（选中/悬停出现） */
-.canvas-node-upload-btn {
+/* 节点顶部操作胶囊组 — 图片/视频节点专属，与左右侧连接点图标同款交互（选中/悬停出现）
+   组内可含多个胶囊按钮（图片有内容：替换|下载；视频有内容：下载；无内容：上传） */
+.canvas-node-upload-group {
   position: absolute;
   /* 水平居中，且更靠上（加大与节点顶部的间距）；节点头部位于左上角，二者横向/纵向均错开 */
   top: auto;
@@ -27,8 +28,25 @@
   z-index: 3;
   display: flex;
   align-items: center;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.canvas-node-upload-group[data-visible='true'] {
+  opacity: 1;
+  pointer-events: auto;
+  /* 从下向上渐入：出现时从节点上方较低处滑到最终位置 */
+  transform: translateX(-50%) translateY(6px);
+  animation: canvas-upload-btn-rise 0.3s ease-out both;
+}
+
+.canvas-node-upload-btn {
+  display: flex;
+  align-items: center;
   gap: 4px;
-  padding: 3px 10px 3px 7px;
+  padding: 4px 10px;
   border: 2px solid #999;
   border-radius: 999px;
   background: #fff;
@@ -38,21 +56,11 @@
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
-  opacity: 0;
   transition:
-    opacity 0.2s,
-    transform 0.25s ease-out,
     color 0.2s,
     border-color 0.2s,
     background-color 0.2s,
     box-shadow 0.2s;
-}
-
-.canvas-node-upload-btn[data-visible='true'] {
-  opacity: 1;
-  /* 从下向上渐入：出现时从节点上方较低处滑到最终位置 */
-  transform: translateX(-50%) translateY(6px);
-  animation: canvas-upload-btn-rise 0.3s ease-out both;
 }
 
 .canvas-node-upload-btn:hover {
@@ -63,14 +71,14 @@
 }
 
 .canvas-node-upload-btn:active {
-  transform: translateX(-50%) translateY(6px) scale(0.95);
+  transform: scale(0.95);
 }
 
 .canvas-node-upload-btn__label {
   font-weight: 600;
 }
 
-/* 从下向上渐入动画（按钮水平居中，动画仅在垂直方向滑移） */
+/* 从下向上渐入动画（胶囊组水平居中，动画仅在垂直方向滑移） */
 @keyframes canvas-upload-btn-rise {
   from {
     opacity: 0;
@@ -251,6 +259,39 @@
   &:hover {
     border-color: #5767e5;
     color: #5767e5;
+  }
+}
+
+/* 独立返回按钮：位于左侧工具栏上方、留出间距，构成独立工具组；始终显示不随抽屉隐藏 */
+.canvas-back-btn {
+  position: absolute;
+  top: 104px;
+  left: 47px;
+  z-index: 10;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  color: #5767e5;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.2s,
+    color 0.2s,
+    transform 0.15s;
+
+  &:hover {
+    background: rgba(87, 103, 229, 0.12);
+    color: #4352cc;
+  }
+
+  &:active {
+    transform: scale(0.92);
   }
 }
 
