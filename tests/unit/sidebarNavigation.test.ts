@@ -13,4 +13,7 @@ describe('sidebarNavigation', () => {
   it('路由表不能在运行时被页面篡改', () => {
     expect(Object.isFrozen(SIDEBAR_ROUTE_MAP)).toBe(true)
   })
+  it('resolves the creative canvas route', () => {
+    expect(getSidebarRoute('canvas')).toBe('/canvas')
+  })
 })

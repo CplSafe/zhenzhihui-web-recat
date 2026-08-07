@@ -157,8 +157,6 @@ const STEPS: StepItem[] = [
   { key: 'video', label: '生成视频' },
 ]
 
-/** 侧边栏导航键与页面路径映射。 */
-
 // 默认尺寸/时长与智能成片一致:16:9、10s
 const DEFAULT_RATIO = '16:9'
 /** 源视频时长尚未读取时的默认生成秒数。 */

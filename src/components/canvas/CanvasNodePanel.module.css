@@ -1,0 +1,499 @@
+.panel {
+  width: 800px;
+  max-width: 90vw;
+  background: #f9f9fa;
+  border: 1px solid #e3f7f2;
+  border-radius: 14px;
+  box-shadow: 0px 0px 30px 0px rgba(0, 0, 0, 0.1);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.refImages {
+  display: flex;
+  gap: 6px;
+}
+
+.refThumb {
+  width: 50px;
+  height: 50px;
+  background: #e8e8ea;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  position: relative;
+  /* 注意：不能在这里 overflow:hidden，否则右上角删除按钮(-6px 超出)会被裁剪 */
+}
+
+/* 来源节点有实际素材时的真实图片缩略图（图片自身裁圆角，不影响删除按钮） */
+.refThumbImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.refThumbEmpty {
+  background: transparent;
+}
+
+.refDelete {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: #d94c4c;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.refDelete:hover {
+  background: #c03939;
+}
+
+.refAddBtn {
+  width: 50px;
+  height: 50px;
+  background: transparent;
+  border: 1.5px dashed #d0d0d0;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #aaa;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.refAddBtn:hover {
+  border-color: #5767e5;
+  color: #5767e5;
+}
+
+.refSwapIcon {
+  display: flex;
+  align-items: center;
+  color: #ccc;
+  padding: 0 2px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: rgba(87, 103, 229, 0.08);
+  color: #5767e5;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 80px;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 20px;
+  line-height: 30px;
+  color: #333;
+  background: transparent;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.textarea::placeholder {
+  color: #909090;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.selectors {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.selectorWrap {
+  position: relative;
+}
+
+.selector {
+  padding: 6px 12px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #555;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: 'PingFang SC', sans-serif;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.selector:hover {
+  border-color: #5767e5;
+  color: #5767e5;
+}
+
+.selectorDisabled {
+  color: #bbb;
+  cursor: not-allowed;
+}
+
+.selectorDisabled:hover {
+  border-color: #e0e0e0;
+  color: #bbb;
+}
+
+.ratioLabel {
+  font-family: monospace;
+}
+
+.popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  min-width: 140px;
+  z-index: 60;
+}
+
+.popoverItem {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.popoverItem:hover {
+  background: rgba(87, 103, 229, 0.06);
+}
+
+.popoverItemActive {
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
+  font-weight: 500;
+}
+
+/* ── 视频集合菜单 ── */
+.videoMenu {
+  min-width: 260px;
+  padding: 8px;
+}
+
+.videoMenuGroup {
+  padding: 8px 0;
+}
+
+.videoMenuGroup + .videoMenuGroup {
+  border-top: 1px solid #eee;
+}
+
+.videoMenuTitle {
+  font-size: 11px;
+  color: #999;
+  padding: 0 4px 8px;
+  font-family: 'PingFang SC', sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 字段说明（help）的 ? 图标 + hover 气泡 */
+.helpIconWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: help;
+}
+
+.helpIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #d8dce5;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.helpTooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  min-width: 180px;
+  max-width: 260px;
+  padding: 7px 10px;
+  background: #2f3440;
+  color: #f0f1f5;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  border-radius: 8px;
+  white-space: normal;
+  word-break: break-word;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.18s,
+    transform 0.18s,
+    visibility 0.18s;
+  z-index: 5;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+/* 小三角箭头 */
+.helpTooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #2f3440;
+}
+
+.helpIconWrap:hover .helpTooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 数字字段滑块 */
+.sliderWrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px;
+}
+
+.slider {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: #e0e0e0;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #5767e5;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(87, 103, 229, 0.4);
+  cursor: pointer;
+}
+
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #5767e5;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(87, 103, 229, 0.4);
+  cursor: pointer;
+}
+
+.sliderValue {
+  flex: none;
+  min-width: 28px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5767e5;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+/* 按钮组：铺满宽度，连接式分段控件 */
+.videoBtnGroup {
+  display: flex;
+  width: 100%;
+}
+
+.videoBtnGroupItem {
+  flex: 1;
+  padding: 7px 0;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  font-size: 13px;
+  color: #666;
+  cursor: pointer;
+  font-family: 'PingFang SC', sans-serif;
+  text-align: center;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+/* 相邻按钮共享边框，形成连接式按钮组 */
+.videoBtnGroupItem + .videoBtnGroupItem {
+  margin-left: -1px;
+}
+
+.videoBtnGroupItem:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.videoBtnGroupItem:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.videoBtnGroupItem:only-child {
+  border-radius: 8px;
+}
+
+.videoBtnGroupItem:hover {
+  border-color: #5767e5;
+  color: #5767e5;
+  z-index: 1;
+}
+
+.videoBtnGroupItemActive {
+  background: rgba(87, 103, 229, 0.1);
+  border-color: #5767e5;
+  color: #5767e5;
+  z-index: 2;
+}
+
+.generateBtn {
+  padding: 0;
+  background: #5767e5;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: 'PingFang SC', sans-serif;
+  white-space: nowrap;
+  transition: background 0.15s;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 胶囊按钮：左侧积分数字 + 右侧发送 icon，整体圆角胶囊 */
+.generatePill {
+  height: 36px;
+  padding: 0 6px 0 4px;
+  gap: 6px;
+  overflow: hidden;
+}
+
+/* 左侧积分徽标：白底圆角小块，数字居中 */
+.costBadge {
+  min-width: 44px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 预估中：数字淡出 */
+.costBadgeLoading {
+  opacity: 0.75;
+  animation: costPulse 1s ease-in-out infinite;
+}
+
+@keyframes costPulse {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* 余额不足：徽标底色变警示色 */
+.costBadgeInsufficient {
+  background: rgba(230, 84, 84, 0.85);
+}
+
+/* 右侧发送 icon */
+.sendIcon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  transition: background 0.15s;
+}
+
+.generateBtn:hover:not(:disabled) {
+  background: #4a5ad4;
+}
+
+.generateBtn:hover:not(:disabled) .sendIcon {
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.generateBtn:disabled {
+  background: #c0c4d0;
+  cursor: not-allowed;
+}

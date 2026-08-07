@@ -8,7 +8,6 @@ import { useNavigate } from 'react-router-dom'
 import { openComingSoon } from '@/stores/ui'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 
-// 侧边栏导航键 → 路由(creative 即智能成片 /smart)
 /** 返回侧边栏统一导航处理器，未开放入口改为展示全局提示。 */
 export function useSidebarNavigate() {
   const navigate = useNavigate()

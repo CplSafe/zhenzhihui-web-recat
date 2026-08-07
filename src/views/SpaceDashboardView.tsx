@@ -38,8 +38,6 @@ import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import './SpaceDashboardView.css'
 
-/** 侧边栏导航键与页面路径映射。 */
-
 /** 后端成员总数字段的兼容候选。 */
 const MEMBER_KEYS = ['member_count', 'members_total', 'members', 'memberCount', 'user_count', 'users_total']
 /** 后端项目总数字段的兼容候选。 */

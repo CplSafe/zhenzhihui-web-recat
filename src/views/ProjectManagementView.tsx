@@ -58,7 +58,6 @@ import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import { observeElementResize } from '@/utils/observeElementResize'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 
-/** 侧边栏导航键与页面路径映射。 */
 /** 成员权限尚未加载时复用的稳定空数组。 */
 const EMPTY_WORKSPACE_MEMBERS: any[] = []
 /** 项目请求尚未完成时复用的稳定空数组。 */

@@ -12,6 +12,8 @@ import smartActiveIcon from '@/assets/sidebar/smart-active.svg'
 import hotCopyIcon from '@/assets/sidebar/hotcopy.svg'
 import hotCopyActiveIcon from '@/assets/sidebar/hotcopy-active.svg'
 import videoEditIcon from '@/assets/sidebar/videoedit.svg'
+import gridIcon from '@/assets/sidebar/grid.svg'
+import gridActiveIcon from '@/assets/sidebar/grid-active.svg'
 import projectsIcon from '@/assets/sidebar/projects.svg'
 import projectsActiveIcon from '@/assets/sidebar/projects-active.svg'
 import resourcesIcon from '@/assets/sidebar/resources.svg'
@@ -56,6 +58,7 @@ const GROUPS: SidebarGroup[] = [
   {
     title: '创作',
     items: [
+      { key: 'canvas', label: '无限画布', icon: gridIcon, activeIcon: gridActiveIcon, iconSize: 16 },
       { key: 'creative', label: '智能成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
       { key: 'real-person-video', label: '真人成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
       { key: 'hot-copy', label: '爆款复制', icon: hotCopyIcon, activeIcon: hotCopyActiveIcon, iconSize: 16 },

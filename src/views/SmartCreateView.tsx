@@ -380,8 +380,6 @@ function buildSmartVideoEditPrompt(note = '', variationIndex?: number, variation
     .join('\n')
 }
 
-/** 侧边栏导航键与页面路径映射。 */
-
 /** 流程底栏主操作按钮的统一配置。 */
 interface BottomButton {
   label: string
