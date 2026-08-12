@@ -40,11 +40,11 @@ describe('AI task identifier boundaries', () => {
 
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5])(
     'does not issue a cancellation request for invalid task ID %j',
-    (taskId) => {
+    async (taskId) => {
       const fetchMock = vi.fn()
       vi.stubGlobal('fetch', fetchMock)
 
-      expect(() => cancelAiTask({ workspaceId: 7, taskId })).toThrow('任务 ID 无效')
+      await expect(cancelAiTask({ workspaceId: 7, taskId })).rejects.toThrow('任务 ID 无效')
       expect(fetchMock).not.toHaveBeenCalled()
     },
   )
@@ -77,6 +77,30 @@ describe('AI task identifier boundaries', () => {
 })
 
 describe('paid AI task submission safety', () => {
+  it('keeps input_assets as an empty array when no reference image is selected', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ data: { task_id: 30, status: 'pending' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      createAiTask({
+        workspaceId: 7,
+        capability: 'video',
+        operationCode: 'video.generate',
+        modelVersionId: 91,
+        modelVersion: { id: 91 },
+        prompt: '生成视频',
+        params: { duration: 5 },
+        inputAssets: [],
+      }),
+    ).resolves.toMatchObject({ id: 30, status: 'pending' })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [, requestInit] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit]
+    const body = JSON.parse(String(requestInit?.body || '{}'))
+    expect(body).toHaveProperty('input_assets')
+    expect(body.input_assets).toEqual([])
+  })
+
   it('reuses one idempotency key when retrying a non-streaming explicit script model', async () => {
     vi.useFakeTimers()
     vi.spyOn(Math, 'random').mockReturnValue(0)

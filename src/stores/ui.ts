@@ -9,6 +9,7 @@ import { create } from 'zustand'
 
 /** 全局提示消息的视觉类型。 */
 export type ToastType = 'info' | 'success' | 'error'
+export type MemberCenterTab = 'basic' | 'team' | 'recharge'
 
 /** 当前 Toast 的渲染状态。 */
 export interface ToastState {
@@ -61,6 +62,7 @@ export interface UiState {
   workspaceSwitchLockSources: ReadonlyMap<WorkspaceSwitchLockSource, string>
   // 会员中心:全局单例弹窗开关(取代原 /membership 路由页),由顶层 <MemberCenterModal/> 渲染。
   memberCenterOpen: boolean
+  memberCenterTab: MemberCenterTab
   // 团队管理:全局单例弹窗开关(邀请成员 / 成员管理 / 团队数据),由顶层 <TeamManagementModal/> 渲染。
   teamManageOpen: boolean
   // 打开时初始 tab:'members'(成员管理,默认)/ 'data'(团队数据,点团队空间名进入)
@@ -83,7 +85,7 @@ export interface UiState {
   setWorkspaceSwitchLockSource: (source: WorkspaceSwitchLockSource, locked: boolean, reason?: string) => void
   setWorkspaceSwitchLock: (locked: boolean, reason?: string) => void
 
-  openMemberCenter: () => void
+  openMemberCenter: (tab?: MemberCenterTab) => void
   closeMemberCenter: () => void
 
   openTeamManage: (tab?: 'members' | 'data') => void
@@ -134,6 +136,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   workspaceSwitchLockReason: '',
   workspaceSwitchLockSources: new Map(),
   memberCenterOpen: false,
+  memberCenterTab: 'basic',
   teamManageOpen: false,
   teamManageTab: 'members',
   joinTeamOpen: false,
@@ -213,7 +216,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   setWorkspaceSwitchLock: (locked, reason = '') =>
     get().setWorkspaceSwitchLockSource(LEGACY_WORKSPACE_SWITCH_LOCK_SOURCE, locked, reason),
 
-  openMemberCenter: () => set({ memberCenterOpen: true }),
+  openMemberCenter: (tab: MemberCenterTab = 'basic') => set({ memberCenterOpen: true, memberCenterTab: tab }),
   closeMemberCenter: () => set({ memberCenterOpen: false }),
 
   openTeamManage: (tab: 'members' | 'data' = 'members') => set({ teamManageOpen: true, teamManageTab: tab }),
@@ -243,6 +246,8 @@ export const openComingSoon = () => useUiStore.getState().openComingSoon()
 
 /** 弹出全局「会员中心」弹窗(含积分充值;任意上下文可调用)。 */
 export const openMemberCenter = () => useUiStore.getState().openMemberCenter()
+/** 打开会员中心并定位到指定标签。 */
+export const openMemberCenterTab = (tab: MemberCenterTab) => useUiStore.getState().openMemberCenter(tab)
 /** 打开团队管理弹窗，并可指定初始标签。 */
 export const openTeamManage = (tab?: 'members' | 'data') => useUiStore.getState().openTeamManage(tab)
 /** 打开加入团队弹窗。 */

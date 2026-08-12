@@ -7,6 +7,7 @@ import styles from './CanvasHistoryPanel.module.css'
 
 interface HistoryItem {
   id: string
+  nodeId?: string
   title: string
   type: 'image' | 'video'
   src?: string
@@ -19,20 +20,8 @@ interface CanvasHistoryPanelProps {
   variant?: 'popover' | 'drawer'
   onClose: () => void
   onSelect?: (item: HistoryItem) => void
+  items?: HistoryItem[]
 }
-
-/** 模拟数据 */
-const MOCK_ITEMS: HistoryItem[] = [
-  { id: '1', title: '服饰广告创意 A', type: 'image' },
-  { id: '2', title: '护肤品推广视频', type: 'video' },
-  { id: '3', title: '新品发布会海报', type: 'image' },
-  { id: '4', title: '品牌故事封面图', type: 'image' },
-  { id: '5', title: '618 大促主视觉', type: 'image' },
-  { id: '6', title: '夏日促销短片', type: 'video' },
-  { id: '7', title: '口红试色对比', type: 'image' },
-  { id: '8', title: '产品动画演示', type: 'video' },
-  { id: '9', title: 'Logo 设计稿', type: 'image' },
-]
 
 export default function CanvasHistoryPanel({
   visible,
@@ -40,10 +29,11 @@ export default function CanvasHistoryPanel({
   variant = 'popover',
   onClose,
   onSelect,
+  items: sourceItems = [],
 }: CanvasHistoryPanelProps) {
   const [tab, setTab] = useState<'image' | 'video'>('image')
 
-  const items = useMemo(() => MOCK_ITEMS.filter((item) => item.type === tab), [tab])
+  const items = useMemo(() => sourceItems.filter((item) => item.type === tab), [sourceItems, tab])
 
   // 点击外部关闭
   useEffect(() => {
@@ -142,7 +132,11 @@ export default function CanvasHistoryPanel({
               <div key={item.id} className={styles.item} onClick={() => onSelect?.(item)}>
                 {item.src ? (
                   <>
-                    <img src={item.src} alt={item.title} loading="lazy" />
+                    {item.type === 'video' ? (
+                      <video src={item.src} poster={item.poster} muted preload="metadata" aria-label={item.title} />
+                    ) : (
+                      <img src={item.src} alt={item.title} loading="lazy" />
+                    )}
                     <div className={styles.itemOverlay}>
                       <span>{item.title}</span>
                     </div>

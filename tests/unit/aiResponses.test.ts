@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   streamAiResponse: vi.fn(),
   getBusinessErrorMessage: vi.fn(),
   extractTaskText: vi.fn(),
+  getAiTaskId: vi.fn(),
+  waitForAiTask: vi.fn(),
   ensureAssetId: vi.fn(),
 }))
 
@@ -16,6 +18,8 @@ vi.mock('@/api/business', () => ({
   streamAiResponse: mocks.streamAiResponse,
   getBusinessErrorMessage: mocks.getBusinessErrorMessage,
   extractTaskText: mocks.extractTaskText,
+  getAiTaskId: mocks.getAiTaskId,
+  waitForAiTask: mocks.waitForAiTask,
 }))
 
 vi.mock('@/api/smartShotImage', () => ({
@@ -54,6 +58,7 @@ describe('aiResponses context and request payloads', () => {
       (error: any, fallback: string) => error?.businessMessage || fallback,
     )
     mocks.extractTaskText.mockImplementation((result: any) => result?.taskText || '')
+    mocks.getAiTaskId.mockImplementation((result: any) => Number(result?.id || result?.task_id || 0) || 0)
   })
 
   it.each([
@@ -246,6 +251,38 @@ describe('aiResponses context and request payloads', () => {
     )
     const caches = mocks.ensureAssetId.mock.calls.map(([, , cache]) => cache)
     expect(new Set(caches).size).toBe(1)
+  })
+
+  it('优先复用已上传素材 ID，只为缺少 ID 的图片补传', async () => {
+    mocks.ensureAssetId.mockResolvedValue(202)
+    mocks.createAiResponse.mockResolvedValue('完成')
+
+    await runResponseText({
+      user: '识图',
+      images: ['/api/v1/assets/101/download?workspace_id=41', 'local.png'],
+      imageAssetIds: [101, 0],
+    })
+
+    expect(mocks.ensureAssetId).toHaveBeenCalledOnce()
+    expect(mocks.ensureAssetId).toHaveBeenCalledWith(41, 'local.png', expect.any(Object), undefined)
+    expect(mocks.createAiResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inputAssets: [
+          { asset_id: 101, role: 'image' },
+          { asset_id: 202, role: 'image' },
+        ],
+      }),
+    )
+  })
+
+  it('所有参考图片转换失败时阻止纯文本请求继续提交', async () => {
+    mocks.ensureAssetId.mockRejectedValue(new Error('上传失败'))
+
+    await expect(runResponseText({ user: '识图', images: ['failed.png'] })).rejects.toThrow(
+      '参考图片未能转换为有效素材',
+    )
+
+    expect(mocks.createAiResponse).not.toHaveBeenCalled()
   })
 
   it('使用非流式默认参数并正确拼接 system/user', async () => {

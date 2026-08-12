@@ -178,7 +178,7 @@ export function useHotCopyModelCatalog(workspaceId: number): HotCopyModelCatalog
         const available = normalized.filter((model) => !model.option.disabled)
         if (available.length) return
         const configurationError = normalized.find((model) => model.option.unavailableReason)?.option.unavailableReason
-        setError(configurationError || '当前工作空间暂无可用的爆款复制视频模型')
+        setError(configurationError || '当前套餐暂无可用的爆款复制视频模型，请充值或开通会员后使用')
       })
       .catch((reason) => {
         if (isStale()) return
@@ -209,7 +209,7 @@ export function useHotCopyModelCatalog(workspaceId: number): HotCopyModelCatalog
                     id: '__unavailable_hot_copy_video_model__',
                     name: '暂无可用模型',
                     disabled: true,
-                    unavailableReason: error || '暂无可用的爆款复制视频模型',
+                    unavailableReason: error || '当前套餐暂无可用的爆款复制视频模型，请充值或开通会员后使用',
                   },
                 ],
             required: true,

@@ -14,6 +14,7 @@
  */
 import type { Node, Edge } from '@xyflow/react'
 import type { CanvasElementMutation } from '@/api/canvasApi'
+import { inferCanvasConnectionRole, type CanvasConnectionRole } from '@/utils/canvasGeneration'
 
 /** 节点可序列化字段白名单：排除 ReactFlow 运行态字段（selected/measured/dragging 等）。 */
 interface SerializableNodeData {
@@ -32,6 +33,12 @@ interface SerializableNodeData {
   taskId?: number
   /** 最近一次任务状态 */
   taskStatus?: string
+  /** 最近一次任务进度（0-100，后端未提供时可为空） */
+  taskProgress?: number
+  /** 最近一次任务失败原因 */
+  taskError?: string
+  taskStartedAt?: string
+  taskUpdatedAt?: string
 }
 
 /** 与 textContents 无关的节点可比较快照（含 id，供增量 diff 比较，排除 ReactFlow 运行态字段）。 */
@@ -51,6 +58,95 @@ export interface ComparableEdge {
   sourceHandle?: string | null
   targetHandle?: string | null
   data?: Record<string, unknown>
+}
+
+export interface CanvasGraphSourceRef {
+  kind: string
+  sourceId: string
+  edgeId: string
+  slotIndex: number
+  thumbnailUrl?: string
+  assetId?: number
+  role?: CanvasConnectionRole
+  /** 该素材是否通过文本等中间节点向上追溯得到。 */
+  inherited?: boolean
+}
+
+/**
+ * 收集目标节点的完整参考链路。
+ *
+ * 直接文本来源会被保留用于拼接提示词；文本节点上游的图片/视频素材也会继续
+ * 传递给下游生成任务。这样「参考图 -> 文本 -> 图片」不会在文本节点处丢失参考图。
+ * 遍历包含循环保护，并按素材 ID 去重，避免异常连线导致重复提交。
+ */
+export function collectCanvasSourceRefs(
+  targetNodeId: string,
+  nodes: Array<Pick<Node, 'id' | 'type' | 'data'>>,
+  edges: Array<Pick<Edge, 'id' | 'source' | 'target' | 'data'>>,
+): CanvasGraphSourceRef[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]))
+  const incomingByTarget = new Map<string, Array<Pick<Edge, 'id' | 'source' | 'target' | 'data'>>>()
+  for (const edge of edges) {
+    const incoming = incomingByTarget.get(edge.target) || []
+    incoming.push(edge)
+    incomingByTarget.set(edge.target, incoming)
+  }
+  for (const incoming of incomingByTarget.values()) {
+    incoming.sort((a, b) => Number(a.data?.slotIndex || 0) - Number(b.data?.slotIndex || 0))
+  }
+
+  const refs: CanvasGraphSourceRef[] = []
+  const seenEdges = new Set<string>()
+  const seenAssets = new Set<number>()
+  const visiting = new Set<string>()
+
+  const visit = (nodeId: string, inherited: boolean) => {
+    if (visiting.has(nodeId)) return
+    visiting.add(nodeId)
+    for (const edge of incomingByTarget.get(nodeId) || []) {
+      if (seenEdges.has(edge.id)) continue
+      seenEdges.add(edge.id)
+      const source = nodeById.get(edge.source)
+      if (!source) continue
+      const target = nodeById.get(nodeId)
+      const data = (source.data || {}) as Record<string, unknown>
+      const kind = String(data.kind || source.type || 'text')
+      const targetData = (target?.data || {}) as Record<string, unknown>
+      const slotIndex = Number(edge.data?.slotIndex || 0)
+      const assetId = Number(data.assetId || 0)
+      const ref: CanvasGraphSourceRef = {
+        kind,
+        sourceId: source.id,
+        edgeId: edge.id,
+        slotIndex,
+        role: String(
+          edge.data?.role ||
+            inferCanvasConnectionRole({
+              targetKind: String(targetData.kind || target?.type || 'text'),
+              sourceKind: kind,
+              videoMode: String(targetData.videoMode || ''),
+              slotIndex,
+            }),
+        ) as CanvasConnectionRole,
+        ...(data.resultUrl ? { thumbnailUrl: String(data.resultUrl) } : {}),
+        ...(assetId > 0 ? { assetId } : {}),
+        ...(inherited ? { inherited: true } : {}),
+      }
+
+      if (kind === 'text') {
+        // 只有直接文本参与当前提示词拼接；其上游素材继续向下游透传。
+        if (!inherited) refs.push(ref)
+        visit(source.id, true)
+      } else if (assetId <= 0 || !seenAssets.has(assetId)) {
+        refs.push(ref)
+        if (assetId > 0) seenAssets.add(assetId)
+      }
+    }
+    visiting.delete(nodeId)
+  }
+
+  visit(targetNodeId, false)
+  return refs
 }
 
 /**
@@ -86,6 +182,10 @@ export function comparableNode(
     ['params', data.params],
     ['taskId', data.taskId],
     ['taskStatus', data.taskStatus],
+    ['taskProgress', data.taskProgress],
+    ['taskError', data.taskError],
+    ['taskStartedAt', data.taskStartedAt],
+    ['taskUpdatedAt', data.taskUpdatedAt],
   ]
   for (const [key, value] of fields) {
     if (value !== undefined && value !== null) serializable[key] = value
@@ -132,6 +232,10 @@ export function nodeToMutation(
     ['params', data.params],
     ['taskId', data.taskId],
     ['taskStatus', data.taskStatus],
+    ['taskProgress', data.taskProgress],
+    ['taskError', data.taskError],
+    ['taskStartedAt', data.taskStartedAt],
+    ['taskUpdatedAt', data.taskUpdatedAt],
   ]
   for (const [key, value] of fields) {
     if (value !== undefined && value !== null) serializable[key] = value
@@ -246,6 +350,44 @@ export function elementsToGraph(elements: CanvasElementMutation[]): { nodes: Nod
     }
   }
   return { nodes, edges }
+}
+
+/**
+ * 把服务端的增量 mutation 应用到当前图。
+ *
+ * 与 elementsToGraph（全量恢复）不同，本函数保留未出现在本次增量里的本地元素；
+ * 删除节点时同时清理其关联边，避免协作同步后留下悬空连线。
+ */
+export function applyCanvasElementMutations(
+  current: { nodes: Node[]; edges: Edge[] },
+  mutations: CanvasElementMutation[],
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes = new Map(current.nodes.map((node) => [node.id, node]))
+  const edges = new Map(current.edges.map((edge) => [edge.id, edge]))
+
+  for (const mutation of mutations || []) {
+    const id = String(mutation.element_id || '')
+    if (!id) continue
+    if (mutation.kind === 'node') {
+      if (mutation.op === 'delete') {
+        nodes.delete(id)
+        for (const [edgeId, edge] of edges) {
+          if (edge.source === id || edge.target === id) edges.delete(edgeId)
+        }
+      } else {
+        const node = elementToNode(mutation)
+        if (node) nodes.set(id, node)
+      }
+    } else if (mutation.kind === 'edge') {
+      if (mutation.op === 'delete') edges.delete(id)
+      else {
+        const edge = elementToEdge(mutation)
+        if (edge) edges.set(id, edge)
+      }
+    }
+  }
+
+  return { nodes: [...nodes.values()], edges: [...edges.values()] }
 }
 
 /**

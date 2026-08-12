@@ -9,6 +9,8 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost } from '@/api/business'
+import { buildCanvasInputAssets, type CanvasConnectionRole, type CanvasVideoMode } from '@/utils/canvasGeneration'
+import { resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
 
 /** 读取可能为字符串/数字/布尔的值，返回字符串文本；非法输入返回空串。 */
 function readText(value: unknown): string {
@@ -27,6 +29,7 @@ function normalizeParamKey(name: string | number): string {
 /** 布尔类型别名：boolean/bool/switch/toggle/checkbox，以及布尔语义 options 的字段（如 watermark）。 */
 const BOOLEAN_TYPES = new Set(['boolean', 'bool', 'switch', 'toggle', 'checkbox'])
 const BOOLEAN_OPTION_KEYS = new Set(['true', 'false', '1', '0', 'yes', 'no', 'on', 'off', '开', '关'])
+const AUDIO_FIELD_KEYS = new Set(['generateaudio', 'audio', 'withaudio', 'enableaudio'])
 
 function isBooleanField(field: ParamsSchemaField): boolean {
   if (BOOLEAN_TYPES.has(normalizeParamKey(field.type))) return true
@@ -35,6 +38,10 @@ function isBooleanField(field: ParamsSchemaField): boolean {
   // options 为布尔语义（<=2 项且均为 true/false 等）也按开关渲染
   const opts = (field.options || []).map((o) => normalizeParamKey(o))
   return opts.length > 0 && opts.length <= 2 && opts.every((o) => BOOLEAN_OPTION_KEYS.has(o))
+}
+
+function isAudioField(field: ParamsSchemaField): boolean {
+  return AUDIO_FIELD_KEYS.has(normalizeParamKey(field.name))
 }
 
 /** 数字类型别名：number/int/integer/float。 */
@@ -47,6 +54,12 @@ function isNumberField(field: ParamsSchemaField): boolean {
 /** 比例字段名别名（归一化后均相同）。 */
 function isRatioField(field: ParamsSchemaField): boolean {
   return normalizeParamKey(field.name) === 'ratio' || normalizeParamKey(field.name) === 'aspectratio'
+}
+
+/** 视频时长字段名兼容：后端常见 duration / video_duration / duration_seconds。 */
+function isDurationField(field: ParamsSchemaField): boolean {
+  const key = normalizeParamKey(field.name)
+  return key === 'duration' || key === 'videoduration' || key === 'durationseconds' || key === 'seconds'
 }
 
 /** 识别 seedream 5.0 模型：displayName + 原始记录中的名称/版本字段拼接后匹配。 */
@@ -161,24 +174,33 @@ export function parseParamsSchema(model: { source?: unknown } | undefined): Para
 
 /** 按字段类型归一化参数值（default 或用户选择），保证回传类型正确。 */
 function normalizeFieldValue(field: ParamsSchemaField, value: unknown): unknown {
+  const canonicalValue = resolveCanvasModelParamOption(field.options, value, field.default)
   if (isBooleanField(field)) {
-    return value === true || value === 'true' || value === '1' || value === 1 || value === '开' || value === 'on'
+    return (
+      canonicalValue === true ||
+      canonicalValue === 'true' ||
+      canonicalValue === '1' ||
+      canonicalValue === 1 ||
+      canonicalValue === '开' ||
+      canonicalValue === 'on'
+    )
   }
   if (isNumberField(field)) {
-    const n = Number(value)
+    const n = Number(canonicalValue)
     if (Number.isNaN(n)) return field.min ?? 0
     if (field.min !== undefined && n < field.min) return field.min
     if (field.max !== undefined && n > field.max) return field.max
     return n
   }
   // select/string 字段：数字值（如时长秒 5/10/15）保留数字类型，其余转字符串展示。
-  if (typeof value === 'number') return value
-  return String(value ?? '')
+  if (typeof canonicalValue === 'number') return canonicalValue
+  return String(canonicalValue ?? '')
 }
 
 /** 字段当前值 → 菜单按钮上显示的文本。 */
 function formatFieldValue(field: ParamsSchemaField, value: unknown): string {
   if (isBooleanField(field)) return value ? '开' : '关'
+  if (isDurationField(field)) return `${String(value ?? '')}秒`
   return String(value ?? '')
 }
 
@@ -193,17 +215,21 @@ export interface CanvasSourceRef {
   thumbnailUrl?: string
   /** 来源节点的素材 asset_id（有素材内容时用于组装 input_assets） */
   assetId?: number
+  /** 该连接在目标节点中的用途，仅用于画布语义展示。 */
+  role?: CanvasConnectionRole
 }
 
 export interface CanvasNodeInfo {
   id: string
   kind: string
+  /** 用户确认的文本提示词，供下游图片和视频节点直接使用。 */
+  text?: string
   /** 连线来源引用列表，已按 slotIndex 排序 */
   sourceRefs?: CanvasSourceRef[]
   /** 当前比例（用于回显） */
   ratio?: string
   /** 视频生成方式（用于回显） */
-  videoMode?: 'first-last' | 'full-ref'
+  videoMode?: CanvasVideoMode
   /** 当前选中的模型版本 ID（用于回显） */
   modelVersionId?: number
   /** 节点已有素材/生成结果地址（视频节点判断「已有视频内容」用，上传或生成都会写入） */
@@ -212,6 +238,11 @@ export interface CanvasNodeInfo {
   operationCode?: string
   /** 节点持久化的 params（生成时写入，刷新后回显/复用） */
   params?: Record<string, unknown>
+  generationIntent?: 'edit' | 'new-model'
+  taskId?: number
+  taskStatus?: string
+  taskProgress?: number
+  taskError?: string
 }
 
 interface CanvasNodePanelProps {
@@ -225,7 +256,7 @@ interface CanvasNodePanelProps {
   /** 比例变更回调，用于同步更新节点宽高 */
   onRatioChange?: (ratio: string) => void
   /** 视频生成方式变更回调 */
-  onVideoModeChange?: (mode: 'first-last' | 'full-ref') => void
+  onVideoModeChange?: (mode: CanvasVideoMode) => void
   /** 模型变更回调 */
   onModelChange?: (modelVersionId: number) => void
   /** 各节点类型对应的可选模型（来自 /api/v1/ai/models） */
@@ -242,11 +273,15 @@ interface CanvasNodePanelProps {
     /** 来源引用（含 assetId），由调用方按 role 约定组装 input_assets */
     sourceRefs: CanvasSourceRef[]
     ratio?: string
-    videoMode?: 'first-last' | 'full-ref'
+    videoMode?: CanvasVideoMode
   }) => void
+  /** 费用预估判定积分不足时，由页面展示充值引导。 */
+  onInsufficientCredits?: () => void
+  onSaveText?: (text: string) => void
+  onPolishText?: (params: { prompt: string; kind: string }) => Promise<string>
 }
 
-type VideoMode = 'first-last' | 'full-ref'
+type VideoMode = CanvasVideoMode
 
 /** 视频「自适应」比例的存储值（英文，避免中文写入节点数据/接口参数）。 */
 export const AUTO_RATIO = 'auto'
@@ -288,12 +323,34 @@ export default function CanvasNodePanel({
   models,
   modelsLoading,
   onGenerate,
+  onInsufficientCredits,
+  onSaveText,
+  onPolishText,
 }: CanvasNodePanelProps) {
   const kind = node?.kind || 'text'
-  const [prompt, setPrompt] = useState('')
+  const taskRunning = [
+    'submitting',
+    'queued',
+    'pending',
+    'processing',
+    'running',
+    'reconnecting',
+    'result_pending',
+  ].includes(String(node?.taskStatus || '').toLowerCase())
+  const isNewModelGeneration = kind === 'video' && node?.generationIntent === 'new-model'
+  const isEditingVideo = kind === 'video' && Boolean(node?.resultUrl) && !isNewModelGeneration
+  const [prompt, setPrompt] = useState(() => (kind === 'text' ? String(node?.text || '') : ''))
+  const [polishing, setPolishing] = useState(false)
+  const [polishError, setPolishError] = useState('')
+
+  useEffect(() => {
+    if (kind !== 'text') return
+    setPrompt(String(node?.text || ''))
+    setPolishError('')
+  }, [kind, node?.id, node?.text])
   // 受控回显：优先取节点数据中的比例/模式（存储值为英文 auto）
   const ratio = node?.ratio || (kind === 'video' ? AUTO_RATIO : '1:1')
-  const videoMode = (node?.videoMode as VideoMode) || 'first-last'
+  const videoMode = (node?.videoMode as VideoMode) || 'auto'
   // 按 edgeId 去重，兜底防止重复连线/重复记录渲染出重复缩略图
   const sourceRefs = useMemo(() => {
     const seen = new Set<string>()
@@ -305,7 +362,7 @@ export default function CanvasNodePanel({
   }, [node?.sourceRefs])
   // 来源数量上限只统计素材类来源（图片/视频节点），文本节点不计入（其内容拼入 prompt）：
   // 视频：全能参考最多 5 个图片参考；首尾帧 2 个（首帧+尾帧）。其他节点最多 5 个素材来源。
-  const maxRefs = kind === 'video' ? (videoMode === 'full-ref' ? 5 : 2) : 5
+  const maxRefs = kind === 'video' ? (videoMode === 'first-last' ? 2 : 5) : 5
   // 素材来源引用数量（文本来源不计入数量限制）
   const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind !== 'text').length, [sourceRefs])
   const kindModels = useMemo(() => models?.[kind as 'text' | 'image' | 'video'] || [], [models, kind])
@@ -325,19 +382,26 @@ export default function CanvasNodePanel({
     }
     if (kind === 'video') {
       const hasVideoContent = Boolean(node?.resultUrl)
-      return hasVideoContent ? 'video.edit' : 'video.generate'
+      return node?.generationIntent === 'new-model'
+        ? 'video.generate'
+        : hasVideoContent
+          ? 'video.edit'
+          : 'video.generate'
     }
     return ''
-  }, [kind, node?.sourceRefs, node?.resultUrl])
+  }, [kind, node?.sourceRefs, node?.resultUrl, node?.generationIntent])
 
   const targetOperationCode = useMemo((): string => {
+    // 图片生成模式必须跟随当前参考链实时切换：接入（包括经文本节点继承的）参考图后，
+    // 不能继续复用节点历史上保存的 image.text_to_image，否则参考素材不会进入模型。
+    if (kind === 'image') return contextualOperationCode
     const persisted = String(node?.operationCode || '').trim()
     // 持久化的 operation_code 若仍被当前 kind 的模型支持，则复用；否则回退上下文推断
     if (persisted && kindModels.some((m) => (m.operationCodes as string[] | undefined)?.includes(persisted))) {
       return persisted
     }
     return contextualOperationCode
-  }, [node?.operationCode, kindModels, contextualOperationCode])
+  }, [kind, node?.operationCode, kindModels, contextualOperationCode])
 
   // 只显示支持目标 operation_code 的模型（模型可能同时支持多个 code）
   const availableModels = useMemo(
@@ -369,17 +433,24 @@ export default function CanvasNodePanel({
     const persisted = (node?.params || {}) as Record<string, unknown>
     const next: Record<string, unknown> = {}
     for (const f of schemaFields) {
-      next[f.name] = persisted[f.name] !== undefined ? persisted[f.name] : normalizeFieldValue(f, f.default)
+      const hasPersistedValue = Object.prototype.hasOwnProperty.call(persisted, f.name)
+      const initialValue = hasPersistedValue
+        ? persisted[f.name]
+        : kind === 'video' && isAudioField(f)
+          ? true
+          : f.default
+      next[f.name] = normalizeFieldValue(f, initialValue)
     }
     setFieldValues(next)
-  }, [schemaFields, node?.params])
+  }, [kind, schemaFields, node?.params])
 
   // 字段值变更：回写状态；比例字段（ratio/aspect_ratio/aspectRatio）同步节点比例（保持节点尺寸联动）
   const handleFieldChange = useCallback(
     (name: string, value: unknown) => {
-      setFieldValues((prev) => ({ ...prev, [name]: value }))
       const field = schemaFields.find((f) => f.name === name)
-      if (field && isRatioField(field) && typeof value === 'string') onRatioChange?.(value)
+      const normalizedValue = field ? normalizeFieldValue(field, value) : value
+      setFieldValues((prev) => ({ ...prev, [name]: normalizedValue }))
+      if (field && isRatioField(field) && typeof normalizedValue === 'string') onRatioChange?.(normalizedValue)
     },
     [schemaFields, onRatioChange],
   )
@@ -391,10 +462,13 @@ export default function CanvasNodePanel({
   const schemaParams = useMemo<Record<string, unknown>>(() => {
     const params: Record<string, unknown> = {}
     for (const f of schemaFields) {
-      params[f.name] = fieldValues[f.name] !== undefined ? fieldValues[f.name] : normalizeFieldValue(f, f.default)
+      if (kind === 'text' && ['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'maxTokens'].includes(f.name)) {
+        continue
+      }
+      params[f.name] = normalizeFieldValue(f, fieldValues[f.name] !== undefined ? fieldValues[f.name] : f.default)
     }
     return params
-  }, [schemaFields, fieldValues])
+  }, [schemaFields, fieldValues, kind])
 
   // 拼接最终 prompt：文本来源节点的内容在前（按连线顺序），用户提示词在后；
   // 图片/视频来源作为素材引用（input_assets）单独传参，不拼进 prompt。
@@ -403,12 +477,14 @@ export default function CanvasNodePanel({
       const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
       const sourceTexts = (node?.sourceRefs || [])
         .filter((ref) => ref.kind === 'text')
-        .map((ref) => (textMap?.get(ref.sourceId) || '').trim())
+        .map((ref) => String(textMap?.get(ref.sourceId) || '').trim())
         .filter(Boolean)
       return [...sourceTexts, userPrompt.trim()].filter(Boolean).join('\n\n')
     },
     [node?.sourceRefs],
   )
+
+  const inputAssets = useMemo(() => buildCanvasInputAssets(sourceRefs, operationCode), [sourceRefs, operationCode])
 
   // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
   const [costEstimate, setCostEstimate] = useState<{
@@ -422,6 +498,10 @@ export default function CanvasNodePanel({
 
   useEffect(() => {
     if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
+    if (kind === 'text') {
+      setCostEstimate({ loading: false })
+      return
+    }
     const modelVersionId = selectedModel?.modelVersionId
     if (!modelVersionId || !operationCode || !workspaceId) {
       setCostEstimate({ loading: false })
@@ -436,6 +516,7 @@ export default function CanvasNodePanel({
         // 预估口径与实扣一致：同样使用拼接文本来源后的完整 prompt
         prompt: buildFullPrompt(prompt),
         params: schemaParams,
+        inputAssets,
       })
         .then((result: any) => {
           setCostEstimate({
@@ -452,12 +533,42 @@ export default function CanvasNodePanel({
     return () => {
       if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
     }
-  }, [selectedModel?.modelVersionId, operationCode, prompt, kind, schemaParams, workspaceId, buildFullPrompt])
+  }, [
+    selectedModel?.modelVersionId,
+    operationCode,
+    prompt,
+    kind,
+    schemaParams,
+    inputAssets,
+    workspaceId,
+    buildFullPrompt,
+  ])
 
   // 生成按钮点击：将文本来源节点的内容拼接进 prompt 后提交；图片/视频来源以 sourceRefs(含 assetId) 交给调用方组装 input_assets
   const handleGenerate = () => {
+    if (kind === 'text') {
+      const value = prompt.trim()
+      if (!value) return
+      onSaveText?.(value)
+      return
+    }
     const modelVersionId = selectedModel?.modelVersionId
     if (!modelVersionId || !operationCode) return
+    if (costEstimate.can_afford === false) {
+      onInsufficientCredits?.()
+      return
+    }
+    if (taskRunning) return
+    const cost = Number(costEstimate.estimated_cost || 0)
+    if (kind === 'video' && cost > 0) {
+      const operationLabel = isEditingVideo ? '修改当前视频' : '使用新模型生成视频'
+      if (
+        !window.confirm(
+          `${operationLabel}预计消耗 ${cost} 积分，当前余额 ${Number(costEstimate.balance || 0)} 积分，是否继续？`,
+        )
+      )
+        return
+    }
     onGenerate?.({
       kind,
       prompt: buildFullPrompt(prompt),
@@ -470,6 +581,22 @@ export default function CanvasNodePanel({
     })
   }
 
+  const handlePolishText = async () => {
+    const value = prompt.trim()
+    if (!value || !onPolishText || polishing) return
+    setPolishing(true)
+    setPolishError('')
+    try {
+      const polished = String(await onPolishText({ prompt: value, kind })).trim()
+      if (!polished) throw new Error('AI 未返回可用的润色内容')
+      setPrompt(polished)
+    } catch (error: any) {
+      setPolishError(String(error?.message || '润色失败，请稍后重试'))
+    } finally {
+      setPolishing(false)
+    }
+  }
+
   return (
     <div className={styles.panel}>
       {/* tags / 缩略图 */}
@@ -477,12 +604,12 @@ export default function CanvasNodePanel({
         {kind === 'video' ? (
           /* 视频节点：槽位随生成方式变化 —— 首尾帧=首帧+尾帧双槽（含交换）；全能参考=最多 5 个参考槽 */
           <div className={styles.refImages}>
-            {(videoMode === 'full-ref' ? [0, 1, 2, 3, 4] : [0, 1]).map((slot) => {
+            {(videoMode === 'first-last' ? [0, 1] : [0, 1, 2, 3, 4]).map((slot) => {
               const ref = findRefBySlot(sourceRefs, slot)
-              const title = videoMode === 'full-ref' ? `参考 ${slot + 1}` : slot === 0 ? '首帧' : '尾帧'
+              const title = videoMode === 'first-last' ? (slot === 0 ? '首帧' : '尾帧') : `参考 ${slot + 1}`
               return (
                 <React.Fragment key={slot}>
-                  {videoMode !== 'full-ref' && slot === 1 && (
+                  {videoMode === 'first-last' && slot === 1 && (
                     <span className={styles.refSwapIcon}>
                       <SwapIcon />
                     </span>
@@ -501,6 +628,7 @@ export default function CanvasNodePanel({
                         )}
                         <button
                           className={styles.refDelete}
+                          disabled={taskRunning}
                           onClick={(e) => {
                             e.stopPropagation()
                             onRemoveRef?.(ref.edgeId)
@@ -510,7 +638,12 @@ export default function CanvasNodePanel({
                         </button>
                       </>
                     ) : (
-                      <button className={styles.refAddBtn} title={title} onClick={() => onStartPickRef?.(slot)}>
+                      <button
+                        className={styles.refAddBtn}
+                        disabled={taskRunning}
+                        title={taskRunning ? '生成中不可修改素材' : title}
+                        onClick={() => onStartPickRef?.(slot)}
+                      >
                         <PlusSmIcon />
                       </button>
                     )}
@@ -535,6 +668,7 @@ export default function CanvasNodePanel({
                   )}
                   <button
                     className={styles.refDelete}
+                    disabled={taskRunning}
                     onClick={(e) => {
                       e.stopPropagation()
                       onRemoveRef?.(ref.edgeId)
@@ -545,13 +679,23 @@ export default function CanvasNodePanel({
                 </div>
               ))}
             {mediaRefCount < maxRefs && (
-              <button className={styles.refAddBtn} title="添加参考" onClick={() => onStartPickRef?.(sourceRefs.length)}>
+              <button
+                className={styles.refAddBtn}
+                disabled={taskRunning}
+                title={taskRunning ? '生成中不可修改素材' : '添加参考'}
+                onClick={() => onStartPickRef?.(sourceRefs.length)}
+              >
                 <PlusSmIcon />
               </button>
             )}
           </div>
         ) : (
-          <button className={styles.refAddBtn} title="添加参考" onClick={() => onStartPickRef?.(0)}>
+          <button
+            className={styles.refAddBtn}
+            disabled={taskRunning}
+            title={taskRunning ? '生成中不可修改素材' : '添加参考'}
+            onClick={() => onStartPickRef?.(0)}
+          >
             <PlusSmIcon />
           </button>
         )}
@@ -560,35 +704,69 @@ export default function CanvasNodePanel({
       {/* textarea */}
       <textarea
         className={styles.textarea}
-        placeholder={`描述你想要生成的${kind === 'video' ? '视频' : ''}内容...`}
+        placeholder={
+          kind === 'text' ? '输入主题或完整的生图提示词...' : `描述你想要生成的${kind === 'video' ? '视频' : ''}内容...`
+        }
         value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
+        onChange={(e) => {
+          if (taskRunning) return
+          setPrompt(e.target.value)
+          if (polishError) setPolishError('')
+        }}
       />
+
+      <div className={styles.textPromptTools}>
+        <div className={`${styles.textPromptHint} ${polishError ? styles.textPromptError : ''}`}>
+          {taskRunning
+            ? '当前节点正在生成，模型、提示词和素材已锁定；如需更换模型，请添加新的节点。'
+            : polishError ||
+              (kind === 'text'
+                ? '保存后将原文直接作为下游图片、视频的生成提示词'
+                : kind === 'video'
+                  ? '参考图片为可选项；不添加图片时将直接按文案生成视频'
+                  : '润色后只更新图片描述，不会自动开始生成')}
+        </div>
+        <button
+          type="button"
+          className={styles.polishBtn}
+          onClick={handlePolishText}
+          disabled={taskRunning || !prompt.trim() || !onPolishText || polishing}
+          title={`扩写为更完整的${kind === 'video' ? '视频' : '图片'}生成提示词`}
+        >
+          <span aria-hidden="true">✦</span>
+          {polishing ? '润色中...' : 'AI 一键润色'}
+        </button>
+      </div>
 
       {/* 底部操作栏 */}
       <div className={styles.actions}>
         <div className={styles.selectors}>
-          <ModelSelector
-            models={availableModels}
-            value={node?.modelVersionId}
-            loading={modelsLoading}
-            onChange={onModelChange}
-          />
+          {kind !== 'text' && (
+            <ModelSelector
+              models={availableModels}
+              value={node?.modelVersionId}
+              loading={modelsLoading}
+              disabled={taskRunning}
+              onChange={(value) => {
+                if (!taskRunning) onModelChange?.(value)
+              }}
+            />
+          )}
 
           {/* 比例选择器：schema 已含比例字段时由菜单控制；seedream 5.0 模型不提供独立比例选项 */}
           {kind === 'image' && !imageRatioInSchema && !isSeedream50Model(selectedModel) && (
-            <RatioSelector value={ratio} onRatioChange={onRatioChange} />
+            <RatioSelector value={ratio} onRatioChange={taskRunning ? undefined : onRatioChange} />
           )}
 
           {/* 模型 params_schema 参数菜单：所有节点类型通用；视频额外含生成方式组 */}
-          {schemaFields.length > 0 && (
+          {kind !== 'text' && schemaFields.length > 0 && (
             <SchemaFieldMenu
               kind={kind}
               mode={kind === 'video' ? videoMode : undefined}
               fields={schemaFields}
               values={fieldValues}
-              onModeChange={onVideoModeChange}
-              onFieldChange={handleFieldChange}
+              onModeChange={taskRunning ? undefined : onVideoModeChange}
+              onFieldChange={taskRunning ? () => undefined : handleFieldChange}
             />
           )}
         </div>
@@ -596,25 +774,31 @@ export default function CanvasNodePanel({
         <button
           className={`${styles.generateBtn} ${styles.generatePill}`}
           onClick={handleGenerate}
-          disabled={!selectedModel || !operationCode}
-          title="发送生成"
+          disabled={taskRunning || (kind === 'text' ? !prompt.trim() : !selectedModel || !operationCode)}
+          title={
+            taskRunning ? '生成过程中不能修改，请添加新的节点使用其他模型' : kind === 'text' ? '保存提示词' : '发送生成'
+          }
         >
           {/* 左侧：预估积分数字 */}
-          <span
-            className={`${styles.costBadge} ${
-              costEstimate.loading
-                ? styles.costBadgeLoading
-                : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
-                  ? styles.costBadgeInsufficient
-                  : ''
-            }`}
-          >
-            {costEstimate.loading
-              ? '…'
-              : costEstimate.estimated_cost !== undefined && costEstimate.estimated_cost > 0
-                ? costEstimate.estimated_cost
-                : '—'}
-          </span>
+          {kind === 'text' ? (
+            <span className={styles.saveTextLabel}>保存提示词</span>
+          ) : (
+            <span
+              className={`${styles.costBadge} ${
+                costEstimate.loading
+                  ? styles.costBadgeLoading
+                  : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
+                    ? styles.costBadgeInsufficient
+                    : ''
+              }`}
+            >
+              {costEstimate.loading
+                ? '…'
+                : costEstimate.estimated_cost !== undefined && costEstimate.estimated_cost > 0
+                  ? costEstimate.estimated_cost
+                  : '—'}
+            </span>
+          )}
           {/* 右侧：发送 icon（不显示文字） */}
           <span className={styles.sendIcon}>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -660,11 +844,13 @@ function ModelSelector({
   models,
   value,
   loading,
+  disabled,
   onChange,
 }: {
   models: GenerationModelOption[]
   value?: number
   loading?: boolean
+  disabled?: boolean
   onChange?: (modelVersionId: number) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -676,9 +862,9 @@ function ModelSelector({
   return (
     <div className={styles.selectorWrap}>
       <button
-        className={`${styles.selector} ${availableModels.length === 0 ? styles.selectorDisabled : ''}`}
+        className={`${styles.selector} ${availableModels.length === 0 || disabled ? styles.selectorDisabled : ''}`}
         onClick={() => {
-          if (availableModels.length === 0) return
+          if (availableModels.length === 0 || disabled) return
           setOpen((v) => !v)
         }}
       >
@@ -749,7 +935,8 @@ function SchemaFieldMenu({
   const [open, setOpen] = useState(false)
 
   // 按钮摘要：视频先显示生成方式，再拼接各字段当前值
-  const displayParts = kind === 'video' ? [`${mode === 'first-last' ? '首尾帧' : '全能参考'}`] : []
+  const modeLabel = mode === 'first-last' ? '首尾帧' : mode === 'full-ref' ? '全能参考' : '自由生成'
+  const displayParts = kind === 'video' ? [modeLabel] : []
   for (const f of fields) {
     const v = values[f.name]
     if (v === undefined || v === null || v === '') continue
@@ -780,16 +967,19 @@ function SchemaFieldMenu({
             <div className={styles.videoMenuGroup}>
               <div className={styles.videoMenuTitle}>生成方式</div>
               <div className={styles.videoBtnGroup}>
-                {(['first-last', 'full-ref'] as VideoMode[]).map((m) => (
+                {(['auto', 'first-last', 'full-ref'] as VideoMode[]).map((m) => (
                   <button
                     key={m}
                     className={`${styles.videoBtnGroupItem} ${mode === m ? styles.videoBtnGroupItemActive : ''}`}
                     onClick={() => onModeChange?.(m)}
                   >
-                    {m === 'first-last' ? '首尾帧' : '全能参考'}
+                    {m === 'auto' ? '自由生成' : m === 'first-last' ? '首尾帧' : '全能参考'}
                   </button>
                 ))}
               </div>
+              {mode === 'auto' && (
+                <div className={styles.videoMenuHint}>不添加图片即文生视频，也可添加 1–5 张参考图。</div>
+              )}
             </div>
           )}
 
@@ -840,7 +1030,7 @@ function SchemaFieldMenu({
                       value={Number(current) || 0}
                       onChange={(e) => onFieldChange?.(f.name, Number(e.target.value))}
                     />
-                    <span className={styles.sliderValue}>{String(current ?? '')}</span>
+                    <span className={styles.sliderValue}>{formatFieldValue(f, current)}</span>
                   </div>
                 ) : (
                   <div className={styles.videoBtnGroup}>
@@ -850,7 +1040,7 @@ function SchemaFieldMenu({
                         className={`${styles.videoBtnGroupItem} ${isActive(o) ? styles.videoBtnGroupItemActive : ''}`}
                         onClick={() => onFieldChange?.(f.name, o)}
                       >
-                        {o}
+                        {formatFieldValue(f, o)}
                       </button>
                     ))}
                   </div>

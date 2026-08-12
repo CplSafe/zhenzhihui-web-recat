@@ -17,9 +17,6 @@ import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 
-/** 新建画布时的默认标题（进入画布后可继续编辑）。 */
-const DEFAULT_CANVAS_TITLE = '未命名画布'
-
 /** 时间字段 → 可读格式（yyyy-MM-dd HH:mm），非法/缺失返回空串。 */
 function formatTime(value?: string): string {
   if (!value) return ''
@@ -126,8 +123,11 @@ export default function CanvasListView() {
       return
     }
     if (creating) return
-    // 名称为空时使用默认标题
-    const title = newName.trim() || DEFAULT_CANVAS_TITLE
+    const title = newName.trim()
+    if (!title) {
+      showToast('请输入画布名称', 'info')
+      return
+    }
     setCreating(true)
     try {
       const created = await createCanvas({ workspaceId: wsId, title })
@@ -152,6 +152,20 @@ export default function CanvasListView() {
     setCreateOpen(false)
     setNewName('')
   }, [])
+
+  useEffect(() => {
+    if (!createOpen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !creating) closeCreateModal()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [closeCreateModal, createOpen, creating])
 
   // 打开编辑弹窗：预填当前画布名称与状态
   const openEditModal = useCallback((item: CanvasSummary) => {
@@ -402,42 +416,59 @@ export default function CanvasListView() {
         </section>
       </div>
 
-      {/* 新建画布弹窗：可输入画布名称 */}
+      {/* 创建画布：只收集名称，创建成功后进入空白画布自由添加节点。 */}
       {createOpen && (
-        <div className="pm2-modal-mask" onClick={() => !creating && closeCreateModal()}>
-          <div className="pm2-modal" role="dialog" aria-label="新建画布" onClick={(e) => e.stopPropagation()}>
-            <div className="pm2-modal-head">
-              新建画布
-              <button type="button" className="pm2-modal-close" aria-label="关闭" onClick={closeCreateModal}>
-                ×
-              </button>
-            </div>
-            <div className="pm2-modal-body">
-              <label className="pm2-modal-label">画布名称</label>
-              <input
-                className="pm2-modal-input"
-                value={newName}
-                placeholder="输入画布名称（留空则使用默认名称）"
-                autoFocus
-                maxLength={60}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !creating && handleCreate()}
-              />
-            </div>
-            <div className="pm2-modal-foot">
-              <button type="button" className="pm2-modal-btn" disabled={creating} onClick={closeCreateModal}>
-                取消
-              </button>
+        <div className="cl-brief-mask" onClick={() => !creating && closeCreateModal()}>
+          <section
+            className="cl-brief-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="canvas-brief-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="cl-brief-head">
+              <div>
+                <span className="cl-brief-kicker">创意画布</span>
+                <h2 id="canvas-brief-title">创建新画布</h2>
+                <p>为画布起一个便于识别的名称，创建后即可自由添加文本、图片和视频。</p>
+              </div>
               <button
                 type="button"
-                className="pm2-modal-btn pm2-modal-btn--primary"
+                className="cl-brief-close"
+                aria-label="关闭"
                 disabled={creating}
-                onClick={handleCreate}
+                onClick={closeCreateModal}
               >
-                {creating ? '创建中…' : '创建'}
+                ×
               </button>
+            </header>
+
+            <div className="cl-brief-content">
+              <label className="cl-brief-name">
+                <span>画布名称</span>
+                <input
+                  value={newName}
+                  autoFocus
+                  maxLength={60}
+                  placeholder="请输入画布名称"
+                  onChange={(event) => setNewName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && newName.trim() && !creating) void handleCreate()
+                  }}
+                />
+                <small>{newName.length}/60</small>
+              </label>
             </div>
-          </div>
+
+            <footer className="cl-brief-foot">
+              <button type="button" className="cl-brief-cancel" disabled={creating} onClick={closeCreateModal}>
+                取消
+              </button>
+              <button type="button" disabled={creating || !newName.trim()} onClick={handleCreate}>
+                {creating ? '正在创建…' : '创建画布'}
+              </button>
+            </footer>
+          </section>
         </div>
       )}
       {/* 编辑画布弹窗：重命名画布 */}

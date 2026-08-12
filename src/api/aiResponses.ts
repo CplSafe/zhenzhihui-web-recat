@@ -11,7 +11,14 @@
  *
  * 替代此前直连「本地 vLLM Qwen」(/aimodel、/aimodel-vl)的临时实现。
  */
-import { createAiResponse, streamAiResponse, getBusinessErrorMessage, extractTaskText } from './business'
+import {
+  createAiResponse,
+  streamAiResponse,
+  getBusinessErrorMessage,
+  extractTaskText,
+  getAiTaskId,
+  waitForAiTask,
+} from './business'
 import { ensureAssetId } from './smartShotImage'
 import { useWorkspaceSessionStore, deriveWorkspaceId, deriveModelPlanCandidates } from '@/stores/workspaceSession'
 import {
@@ -67,14 +74,27 @@ async function resolveContext(
 async function toInputAssets(
   workspaceId: number,
   images?: string[],
+  imageAssetIds?: number[],
   signal?: AbortSignal,
 ): Promise<{ asset_id: number; role: string }[] | undefined> {
-  const list = (images || []).filter(Boolean)
-  if (!workspaceId || !list.length) return undefined
+  const urls = images || []
+  const knownIds = imageAssetIds || []
+  const itemCount = Math.max(urls.length, knownIds.length)
+  if (!workspaceId || !itemCount) return undefined
   const cache: Record<string, number> = {}
   const assets: { asset_id: number; role: string }[] = []
-  for (const url of list) {
+  let requestedCount = 0
+  for (let index = 0; index < itemCount; index += 1) {
     throwIfResponseRequestAborted(signal)
+    const knownId = Math.floor(Number(knownIds[index]) || 0)
+    const url = String(urls[index] || '').trim()
+    if (knownId > 0) {
+      requestedCount += 1
+      assets.push({ asset_id: knownId, role: 'image' })
+      continue
+    }
+    if (!url) continue
+    requestedCount += 1
     try {
       const id = await ensureAssetId(workspaceId, url, cache, signal)
       throwIfResponseRequestAborted(signal)
@@ -83,6 +103,9 @@ async function toInputAssets(
       throwIfResponseRequestAborted(signal)
       /* 单张上传失败则跳过该图 */
     }
+  }
+  if (requestedCount > 0 && !assets.length) {
+    throw new Error('参考图片未能转换为有效素材，请重新上传后再生成')
   }
   return assets.length ? assets : undefined
 }
@@ -252,6 +275,8 @@ export interface ResponseTextArgs {
   user: string
   /** 随请求一起送入的素材图(url/dataURL),会先上传成 asset 再以 inputAssets 传 */
   images?: string[]
+  /** 与 images 按下标对应的已上传素材 ID；有效 ID 会直接复用，避免重复下载和上传。 */
+  imageAssetIds?: number[]
   temperature?: number
   /** 映射为后端 params.max_output_tokens */
   maxTokens?: number
@@ -268,7 +293,7 @@ export async function runResponseText(args: ResponseTextArgs): Promise<string> {
   const modelVersionId = resolveResponseModelVersionId(args)
   const { workspaceId, modelPlanCandidates } = await resolveContext(args.requestContext)
   if (!workspaceId) throw new Error('未选择工作空间,无法调用 AI')
-  const inputAssets = await toInputAssets(workspaceId, args.images, args.signal)
+  const inputAssets = await toInputAssets(workspaceId, args.images, args.imageAssetIds, args.signal)
   throwIfResponseRequestAborted(args.signal)
   const modelVersion = args.requestContext?.modelVersion
   const payload = {
@@ -285,8 +310,21 @@ export async function runResponseText(args: ResponseTextArgs): Promise<string> {
     }),
   }
   const result = await createAiResponse(payload)
-  const text = extractText(result)
+  let text = extractText(result)
   if (text) return text
+  // 部分 responses 模型异步创建任务：创建响应只有 task_id/status，最终文本需从任务详情读取。
+  // 复用已创建的任务进行轮询，不重新提交请求，避免重复生成和重复计费。
+  if (getAiTaskId(result)) {
+    const completed = await waitForAiTask({
+      workspaceId,
+      task: result,
+      intervalMs: 1500,
+      timeoutMs: 5 * 60 * 1000,
+      signal: args.signal,
+    })
+    text = extractText(completed)
+    if (text) return text
+  }
   // 非流式请求已经可能创建并计费；成功响应无法解析时禁止换成流式再发一单。
   throw new Error('AI 请求已完成但未返回可解析文本，已停止重试以避免重复生成')
 }
@@ -345,7 +383,7 @@ export async function streamResponseText(args: ResponseStreamArgs): Promise<stri
   const modelVersionId = resolveResponseModelVersionId(args)
   const { workspaceId, modelPlanCandidates } = await resolveContext(args.requestContext)
   if (!workspaceId) throw new Error('未选择工作空间,无法调用 AI')
-  const inputAssets = await toInputAssets(workspaceId, args.images, args.signal)
+  const inputAssets = await toInputAssets(workspaceId, args.images, args.imageAssetIds, args.signal)
   throwIfResponseRequestAborted(args.signal)
   const modelVersion = args.requestContext?.modelVersion
   const payload = {

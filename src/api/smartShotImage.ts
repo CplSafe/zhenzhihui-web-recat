@@ -87,6 +87,47 @@ function rethrowAssetCancellation(error: any, signal?: AbortSignal): void {
   if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || error?.cause === 'aborted') throw error
 }
 
+const SUPPORTED_REFERENCE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+function imageTypeFromSignature(bytes: Uint8Array): string {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  )
+    return 'image/png'
+  if (
+    bytes.length >= 12 &&
+    String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
+    String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP'
+  )
+    return 'image/webp'
+  return ''
+}
+
+async function validateReferenceImageBlob(blob: Blob): Promise<string> {
+  const declaredType = String(blob.type || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase()
+  if (!blob.size) throw new Error('参考图片内容为空，请重新选择素材')
+  if (!SUPPORTED_REFERENCE_IMAGE_TYPES.has(declaredType)) {
+    throw new Error(`参考素材不是支持的图片格式（${declaredType || '未知格式'}），请重新选择素材`)
+  }
+  const signatureType = imageTypeFromSignature(new Uint8Array(await blob.slice(0, 16).arrayBuffer()))
+  if (!signatureType || signatureType !== declaredType) {
+    throw new Error('参考图片文件内容与格式不一致，请重新选择或重新上传素材')
+  }
+  return signatureType
+}
+
 /** 把图片(objectURL / dataURL / http)上传为后端素材,返回 asset_id;带缓存避免重复上传。 */
 export async function ensureAssetId(
   workspaceId: number,
@@ -130,7 +171,7 @@ export async function ensureAssetId(
     if (!res.ok) throw new Error(`图片读取失败（HTTP ${res.status || 0}）`)
     const blob = await res.blob()
     throwIfAssetRequestAborted(signal)
-    const type = blob.type || 'image/jpeg'
+    const type = await validateReferenceImageBlob(blob)
     const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : 'jpg'
     const file = new File([blob], `ref_${Math.floor(performance.now())}.${ext}`, { type })
     const out = await uploadAssetFile({ workspaceId, file, signal })
@@ -707,7 +748,10 @@ export async function generateShotImage(args: {
         }
         return { task, taskId }
       },
-      isRetryableShotImageError,
+      // 502 只是一层 HTTP 包装；若响应中已经带有 failed/cancelled 等任务终态，
+      // 说明供应商任务已结束。继续用同一幂等键 POST 只会再次取回该失败任务，
+      // 随后也不会产生任何可轮询的新任务。
+      (error) => !isTerminalShotImageTaskError(error) && isRetryableShotImageError(error),
       args.signal,
     )
   }

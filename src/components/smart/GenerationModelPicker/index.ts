@@ -16,5 +16,7 @@ export {
   default as GenerationModelDropdown,
   getGenerationModelSelectionConflicts,
   type GenerationModelDropdownProps,
+  type GenerationModelEstimateRequest,
+  type GenerationModelEstimateResult,
 } from './GenerationModelDropdown'
 export { filterGenerationModelGroupsByOperations } from './filterGenerationModelGroupsByOperations'

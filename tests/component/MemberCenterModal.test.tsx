@@ -218,7 +218,13 @@ describe('MemberCenterModal behavior', () => {
     expect(screen.queryByText('个人版/一分体验会员')).not.toBeInTheDocument()
   })
 
-  it('shows recharge only to a personal-space user or team owner', async () => {
+  it('shows recharge only to an active personal-space member or active team owner', async () => {
+    mocks.getSubscription.mockResolvedValue({
+      active: true,
+      plan_id: 1,
+      plan_type: 'personal',
+      current_period_end: '2099-01-01T00:00:00+08:00',
+    })
     const personal = renderModal()
     expect(await screen.findByRole('button', { name: '积分充值' })).toBeInTheDocument()
     personal.unmount()
@@ -233,8 +239,53 @@ describe('MemberCenterModal behavior', () => {
 
     mocks.workspace.current = { id: 30, name: '我的团队', type: 'team', owner_user_id: 7 }
     mocks.workspace.member = { user_id: 7, workspace_id: 30, role: 'owner' }
+    mocks.getSubscription.mockResolvedValue({
+      active: true,
+      plan_id: 2,
+      plan_type: 'team',
+      current_period_end: '2099-01-01T00:00:00+08:00',
+    })
     renderModal()
     expect(await screen.findByRole('button', { name: '积分充值' })).toBeInTheDocument()
+  })
+
+  it('hides recharge when the current workspace has no active membership', async () => {
+    const noMembership = renderModal()
+    await screen.findByText('个人版/一分体验会员')
+    expect(screen.queryByRole('button', { name: '积分充值' })).not.toBeInTheDocument()
+    noMembership.unmount()
+
+    mocks.getSubscription.mockResolvedValue({
+      active: false,
+      plan_id: 1,
+      plan_type: 'personal',
+      current_period_end: '2025-01-01T00:00:00+08:00',
+    })
+    renderModal()
+    expect(await screen.findByText('会员已到期，请续费后继续使用')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '积分充值' })).not.toBeInTheDocument()
+  })
+
+  it('shows and confirms the team attribution before creating a recharge order', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'open').mockReturnValue(fakePaymentWindow() as any)
+    mocks.workspace.id = 30
+    mocks.workspace.current = { id: 30, name: '品牌运营团队', type: 'team', owner_user_id: 7 }
+    mocks.workspace.member = { user_id: 7, workspace_id: 30, role: 'owner' }
+    mocks.getSubscription.mockResolvedValue({
+      active: true,
+      plan_id: 2,
+      plan_type: 'team',
+      current_period_end: '2099-01-01T00:00:00+08:00',
+    })
+
+    renderModal()
+    await user.click(await screen.findByRole('button', { name: '积分充值' }))
+    expect(screen.getByText('充值到团队「品牌运营团队」')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '立即充值' }))
+
+    expect(mocks.requestConfirm).toHaveBeenCalledWith(expect.stringContaining('团队「品牌运营团队」'))
+    await waitFor(() => expect(mocks.createRechargeOrder).toHaveBeenCalledWith({ workspaceId: 30, creditPackageId: 8 }))
   })
 
   it('deduplicates a rapid double click while the purchase request is pending', async () => {

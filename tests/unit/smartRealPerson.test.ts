@@ -24,8 +24,18 @@ describe('smartRealPerson', () => {
     const prompt = buildRealPersonIdentityPrompt('在咖啡馆微笑，暖色光线', '测试人物')
     expect(prompt).toContain('真人身份强约束：测试人物')
     expect(prompt).toContain('第一张参考图是已授权真人的唯一身份基准')
+    expect(prompt).toContain('所有镜头中保持身份一致')
     expect(prompt).toContain('禁止换脸')
+    expect(prompt).toContain('身份漂移')
     expect(prompt.indexOf('真人身份强约束')).toBeLessThan(prompt.indexOf('在咖啡馆微笑'))
+  })
+
+  it('重复构造真人图生图提示词时不会叠加身份约束', () => {
+    const once = buildRealPersonIdentityPrompt('在咖啡馆微笑，暖色光线', '测试人物')
+    const twice = buildRealPersonIdentityPrompt(once, '测试人物')
+
+    expect(twice.match(/【真人身份强约束/g)).toHaveLength(1)
+    expect(twice).toContain('在咖啡馆微笑，暖色光线')
   })
 
   it('只把已认证人物和同步完成的本地素材视为可用', () => {

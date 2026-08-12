@@ -22,6 +22,50 @@ const sameTaskId = (left: unknown, right: unknown): boolean => {
   return leftId > 0 && rightId > 0 && leftId === rightId
 }
 
+const RESULT_CONTAINER_KEYS = ['result_json', 'result', 'response', 'output', 'outputs', 'data'] as const
+const ASSET_ID_KEYS = [
+  'asset_id',
+  'assetId',
+  'output_asset_id',
+  'outputAssetId',
+  'result_asset_id',
+  'resultAssetId',
+] as const
+
+const parseResultValue = (value: unknown): unknown => {
+  if (typeof value !== 'string') return value
+  const source = value.trim()
+  if (!source || (!source.startsWith('{') && !source.startsWith('['))) return value
+  try {
+    return JSON.parse(source)
+  } catch {
+    return value
+  }
+}
+
+const collectResultAssetIds = (value: unknown, target: number[], depth = 0): void => {
+  if (depth > 8) return
+  const parsed = parseResultValue(value)
+  if (Array.isArray(parsed)) {
+    parsed.forEach((item) => collectResultAssetIds(item, target, depth + 1))
+    return
+  }
+  if (!parsed || typeof parsed !== 'object') return
+
+  const record = parsed as Record<string, unknown>
+  ASSET_ID_KEYS.forEach((key) => {
+    const assetId = Number(record[key] || 0)
+    if (Number.isFinite(assetId) && assetId > 0) target.push(assetId)
+  })
+  Object.values(record).forEach((child) => collectResultAssetIds(child, target, depth + 1))
+}
+
+const extractResultAssetIds = (task: any): number[] => {
+  const ids: number[] = []
+  RESULT_CONTAINER_KEYS.forEach((key) => collectResultAssetIds(task?.[key], ids))
+  return [...new Set(ids)]
+}
+
 /** 分页查找绑定到指定任务的素材，并防止重复页造成死循环。 */
 async function findAssetsByTaskId({
   workspaceId,
@@ -49,7 +93,17 @@ async function findAssetsByTaskId({
     })
     const page = extractAssetPage(payload)
     const items = Array.isArray(page.items) ? page.items : []
-    const matches = items.filter((asset: any) => sameTaskId(asset?.task_id ?? asset?.taskId, normalizedTaskId))
+    const matches = items.filter((asset: any) =>
+      sameTaskId(
+        asset?.task_id ??
+          asset?.taskId ??
+          asset?.ai_task_id ??
+          asset?.aiTaskId ??
+          asset?.source_task_id ??
+          asset?.sourceTaskId,
+        normalizedTaskId,
+      ),
+    )
     if (matches.length) return matches
 
     const pageIds = items.map((asset: any) => String(asset?.id ?? '').trim())
@@ -77,10 +131,7 @@ async function findAssetsByTaskId({
 // type 会传给素材列表作为兜底筛选条件。
 export async function resolveGeneratedMediaUrls({ workspaceId, task, type }) {
   const wsId = Number(workspaceId || 0)
-  const outputAssetIds = Array.isArray(task?.outputs)
-    ? task.outputs.map((output) => output?.asset_id).filter(Boolean)
-    : []
-  const uniqueAssetIds = [...new Set(outputAssetIds)]
+  const uniqueAssetIds = extractResultAssetIds(task)
   const urls = []
 
   for (const assetId of uniqueAssetIds) {
@@ -119,7 +170,7 @@ export async function resolveGeneratedMediaUrls({ workspaceId, task, type }) {
 // smartVideo/hotCopy(原名 extractVideoAssetId)与 smartShotImage/smartFaceBlur(原名 outputAssetId)
 // 曾各有一份字节相同的实现,统一到此。
 export function extractOutputAssetId(task: any): number {
-  return Number(task?.outputs?.find?.((o: any) => o?.asset_id)?.asset_id || 0)
+  return extractResultAssetIds(task)[0] || 0
 }
 
 const VIDEO_TYPE_HINT_PATTERN = /(^|[^a-z0-9])(?:video|mp4|m4v|mov|webm|avi|mkv|mpeg|mpg|ogv)(?:$|[^a-z0-9])/i

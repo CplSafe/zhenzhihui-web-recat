@@ -4,7 +4,7 @@
  * 比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
  * 提交 → 调 onSubmit(需求文本, 选项),由父级进入分镜脚本流程。
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import {
@@ -15,6 +15,8 @@ import {
   type GenerationModelErrorState,
   type GenerationModelGroup,
   type GenerationModelLoadingState,
+  type GenerationModelEstimateRequest,
+  type GenerationModelEstimateResult,
 } from '../GenerationModelPicker'
 import RatioIcon from '@/components/common/RatioIcon'
 import { fileToDataUrl } from '@/utils/imageFile'
@@ -39,6 +41,7 @@ import { parseDurationSeconds } from '@/utils/videoDurationValue'
 import { useToast } from '@/composables/useToast'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import RealPersonMaterialPicker from './RealPersonMaterialPicker'
+import { estimateAiTaskCost } from '@/api/business'
 import styles from './SmartEntry.module.less'
 
 /** 入口提交给智能成片编排器的制作模式、画幅、时长和参考素材元数据。 */
@@ -369,6 +372,35 @@ export default function SmartEntry({
     const operationCode = (subgroupKey || groupKey) as GenerationOperationCode
     setGenerationModels((previous) => ({ ...previous, [operationCode]: modelId }))
   }
+  const estimateSelectedModel = useCallback(
+    async ({
+      operationCode,
+      modelVersionId,
+    }: GenerationModelEstimateRequest): Promise<GenerationModelEstimateResult> => {
+      if (!workspaceId) throw new Error('工作空间未就绪')
+      const durationSec = parseDurationSeconds(duration) || 5
+      const params =
+        operationCode === 'responses.multimodal'
+          ? { temperature: 0.7, max_output_tokens: 1200 }
+          : operationCode.startsWith('image.')
+            ? { ratio, count: mode === 'image' ? outputCount : 1 }
+            : { duration: durationSec, ratio }
+      const result = await estimateAiTaskCost({
+        workspaceId,
+        modelVersionId,
+        operationCode,
+        prompt: cleanText,
+        params,
+        inputAssets: imageAssetIds.filter((assetId) => assetId > 0),
+      })
+      return {
+        estimatedCost: Number(result?.estimated_cost ?? 0),
+        balance: Number.isFinite(Number(result?.balance)) ? Number(result.balance) : undefined,
+        canAfford: result?.can_afford,
+      }
+    },
+    [cleanText, duration, imageAssetIds, mode, outputCount, ratio, workspaceId],
+  )
   const requestModelSelectionAttention = () => {
     setModelAttentionRequest((request) => request + 1)
     showToast(modelGateMessage || '请先完成本次创作的模型选择', 'info')
@@ -761,6 +793,7 @@ export default function SmartEntry({
                   error={modelError}
                   onRetry={onReloadModels ? () => onReloadModels() : undefined}
                   onChange={updateGenerationModel}
+                  estimateModelCost={workspaceId > 0 ? estimateSelectedModel : undefined}
                   conflicts={modelSelectionConflicts}
                   attentionRequest={modelAttentionRequest}
                   attentionMessage={modelGateMessage}

@@ -79,6 +79,7 @@ import {
   getCreativeProject,
   patchCreativeProject,
   isAbortedTaskError,
+  getBusinessErrorMessage,
   listAiTasks,
   extractAssetPageItems,
   getAiTaskId,
@@ -1742,7 +1743,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
             showToast('视频生成已中断', 'info')
           } else {
             markGen(null, 'failed')
-            showToast(`视频生成失败:${e?.message || '请重试'}`, 'error')
+            showToast(`视频生成失败:${getBusinessErrorMessage(e, '请重试')}`, 'error')
           }
         }
       })
@@ -1824,7 +1825,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           return
         }
         const cancelled = isTaskCancelled(e)
-        const message = e?.message || '请重试'
+        const message = getBusinessErrorMessage(e, '请重试')
         const terminalPersisted = await failHotCopyJob(context, cancelled ? 'cancelled' : 'failed', message, taskId)
         keepPending = !terminalPersisted
         if (!terminalPersisted || !isJobUiActive(context)) return
@@ -4140,7 +4141,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       }
       if (isHotCopyModelUnavailableError(e)) void hotCopyModelCatalog.reload()
       const cancelled = isTaskCancelled(e)
-      const message = e?.message || '请重试'
+      const message = getBusinessErrorMessage(e, '请重试')
       const terminalPersisted = await failHotCopyJob(context, cancelled ? 'cancelled' : 'failed', message, taskId)
       aborted = !terminalPersisted
       if (terminalPersisted && isJobUiActive(context)) {
@@ -4531,7 +4532,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       }
       if (isHotCopyModelUnavailableError(e)) void hotCopyModelCatalog.reload()
       const cancelled = isTaskCancelled(e)
-      const message = withPreviousVideoHint(e?.message || '请重试')
+      const message = withPreviousVideoHint(getBusinessErrorMessage(e, '请重试'))
       const terminalPersisted = await failHotCopyJob(context, cancelled ? 'cancelled' : 'failed', message, taskId)
       keepPending = !terminalPersisted
       if (terminalPersisted && isJobUiActive(context)) {

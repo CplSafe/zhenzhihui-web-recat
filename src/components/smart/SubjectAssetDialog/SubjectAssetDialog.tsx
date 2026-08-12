@@ -64,9 +64,12 @@ interface SubjectAssetDialogProps {
   onGenerate: (prompt: string, opts: { refImageUrls?: string[]; carryCurrent?: boolean }) => Promise<void | boolean>
   onSelect: (url: string) => void
   onSelectRealPerson?: (url: string, reference: SmartRealPersonReference) => void
-  /** 上传素材:直接交 File,由父级经后端 uploadAssetFile 存服务器取 asset_id。
+  /** 上传素材:同时传递当前主体上下文，由父级经后端 uploadAssetFile 存服务器取 asset_id。
    *  不传 → 视为「用户上传已下线」,弹窗内不显示任何「上传」入口,仅 AI 生成 / 从项目选。 */
-  onUpload?: (file: File) => void
+  onUpload?: (
+    file: File,
+    context: { name: string; kind: string; prompt: string },
+  ) => Promise<void | boolean> | void | boolean
 }
 
 /** 管理同名主体的提示词、参考图和生成版本，并把最终选择同步到所有同名主体。 */
@@ -94,6 +97,7 @@ export default function SubjectAssetDialog({
   const requireVerifiedRealPerson = realPersonOnly && isPersonSubject && Boolean(onSelectRealPerson)
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [refining, setRefining] = useState(false)
   const [refImages, setRefImages] = useState<string[]>([]) // 参考图(产品真实照片)dataURL,支持多选
   const [carryCurrent, setCarryCurrent] = useState(false) // 携带当前图(修改)/ 不带(重新生成)
@@ -108,6 +112,7 @@ export default function SubjectAssetDialog({
   const autoRef = useRef(false)
   const generatingRef = useRef(false)
   const generationEpochRef = useRef(0)
+  const uploadEpochRef = useRef(0)
 
   useEffect(() => {
     if (!open) return
@@ -121,8 +126,21 @@ export default function SubjectAssetDialog({
 
   // 触发文件上传:mode=version → onUpload(新版本);mode=ref → 设为参考图
   const triggerUpload = (mode: 'version' | 'ref') => {
+    if (uploading) return
     uploadModeRef.current = mode
     fileRef.current?.click()
+  }
+
+  const uploadVersion = async (file: File) => {
+    if (!onUpload || uploading) return
+    const epoch = uploadEpochRef.current + 1
+    uploadEpochRef.current = epoch
+    setUploading(true)
+    try {
+      await onUpload(file, { name, kind: kind || '', prompt: prompt.trim() })
+    } finally {
+      if (uploadEpochRef.current === epoch) setUploading(false)
+    }
   }
   // 项目图片选择器选中某图:ref→参考图(多选,点击切换,不自动关闭);use→设为当前版本(同名联动)
   const pickProjectImage = (url: string) => {
@@ -258,8 +276,8 @@ export default function SubjectAssetDialog({
                 {requireVerifiedRealPerson ? '选择真人' : '替换'}
               </button>
               {onUpload && !requireVerifiedRealPerson && (
-                <button type="button" onClick={() => triggerUpload('version')}>
-                  上传
+                <button type="button" onClick={() => triggerUpload('version')} disabled={uploading}>
+                  {uploading ? '上传中…' : '上传'}
                 </button>
               )}
               {onSelectRealPerson && isPersonSubject && !requireVerifiedRealPerson && (
@@ -371,6 +389,7 @@ export default function SubjectAssetDialog({
               ref={fileRef}
               type="file"
               accept="image/*"
+              aria-label="上传当前主体素材"
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0]
@@ -379,7 +398,7 @@ export default function SubjectAssetDialog({
                     fileToDataUrl(f)
                       .then((u) => setRefImages((prev) => [...prev, u]))
                       .catch(() => {})
-                  else onUpload(f) // 上传成新版本(后端 asset)
+                  else void uploadVersion(f) // 上传成新版本(后端 asset),并等待父级完成素材绑定
                 }
                 e.target.value = ''
               }}

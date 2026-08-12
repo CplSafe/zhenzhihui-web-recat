@@ -15,6 +15,8 @@ interface CanvasFloatingToolbarProps {
   /** 节点拖拽开关：true=可拖拽节点 */
   dragEnabled: boolean
   onDragToggle: () => void
+  onOpenAssets: () => void
+  onOpenHistory: () => void
   /** 打开抽屉前播放的收起动画标记 */
   leaving?: boolean
 }
@@ -25,6 +27,8 @@ function CanvasFloatingToolbar({
   onMoveToggle,
   dragEnabled,
   onDragToggle,
+  onOpenAssets,
+  onOpenHistory,
   leaving = false,
 }: CanvasFloatingToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -55,6 +59,7 @@ function CanvasFloatingToolbar({
           title="添加节点"
         >
           <PlusIcon />
+          <span className={styles.toolLabel}>添加</span>
         </button>
         {menuOpen && (
           <div className={styles.addMenu}>
@@ -114,6 +119,7 @@ function CanvasFloatingToolbar({
         title="画布移动"
       >
         <MoveIcon />
+        <span className={styles.toolLabel}>选择</span>
       </button>
 
       {/* 3. 拖拽（节点拖拽） */}
@@ -123,6 +129,17 @@ function CanvasFloatingToolbar({
         title="节点拖拽"
       >
         <DragIcon />
+        <span className={styles.toolLabel}>移动</span>
+      </button>
+
+      <button className={styles.toolBtn} onClick={onOpenAssets} title="素材库">
+        <FolderIcon />
+        <span className={styles.toolLabel}>素材</span>
+      </button>
+
+      <button className={styles.toolBtn} onClick={onOpenHistory} title="历史记录">
+        <HistoryIcon />
+        <span className={styles.toolLabel}>历史</span>
       </button>
     </div>
   )
@@ -157,6 +174,25 @@ function DragIcon() {
       <circle cx="16" cy="6" r="1" fill="currentColor" />
       <circle cx="16" cy="12" r="1" fill="currentColor" />
       <circle cx="16" cy="18" r="1" fill="currentColor" />
+    </svg>
+  )
+}
+
+function FolderIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M3.5 7.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V7.5Z" strokeLinejoin="round" />
+      <path d="M3.5 7.5V5A1.5 1.5 0 0 1 5 3.5h4l2 2h7A1.5 1.5 0 0 1 19.5 7v2.5" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function HistoryIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M4 5v5h5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5.4 9.7A8 8 0 1 1 4.6 15" strokeLinecap="round" />
+      <path d="M12 7.5V12l3 2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

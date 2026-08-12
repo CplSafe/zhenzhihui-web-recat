@@ -89,3 +89,429 @@
   color: #6b7280;
   white-space: nowrap;
 }
+
+/* 创意画布初始化：沿用 Figma 的右侧需求抽屉，并适配现有绿色品牌色。 */
+.cl-brief-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(15, 23, 42, 0.36);
+  backdrop-filter: blur(2px);
+}
+
+.cl-brief-drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, calc(100vw - 24px));
+  height: 100%;
+  overflow: hidden;
+  border-left: 1px solid rgba(15, 118, 110, 0.12);
+  background: #fff;
+  box-shadow: -24px 0 64px rgba(15, 23, 42, 0.14);
+  animation: cl-brief-enter 0.22s ease-out;
+}
+
+.cl-brief-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 34px 38px 28px;
+  border-bottom: 1px solid #edf1ef;
+  background: linear-gradient(135deg, #f0fbf7 0%, #fff 72%);
+}
+
+.cl-brief-kicker {
+  display: block;
+  margin-bottom: 8px;
+  color: #0d9f78;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.cl-brief-head h2 {
+  margin: 0;
+  color: #17231f;
+  font-size: 28px;
+  line-height: 1.3;
+}
+
+.cl-brief-head p {
+  margin: 10px 0 0;
+  color: #6b7772;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.cl-brief-close {
+  display: grid;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #e2e8e5;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.86);
+  color: #53605a;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.cl-brief-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 30px;
+  overflow-y: auto;
+  padding: 34px 38px;
+}
+
+.cl-brief-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.cl-brief-section-title h3 {
+  margin: 0;
+  color: #1d2925;
+  font-size: 17px;
+}
+
+.cl-brief-section-title span {
+  color: #94a19b;
+  font-size: 12px;
+}
+
+.cl-brief-materials {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cl-brief-material,
+.cl-brief-add-material {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 1;
+  min-width: 0;
+  border: 1px solid #dfe8e4;
+  border-radius: 14px;
+  background: #f7faf9;
+}
+
+.cl-brief-material img,
+.cl-brief-material video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cl-brief-material > button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  cursor: pointer;
+}
+
+.cl-brief-add-material {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 7px;
+  border-style: dashed;
+  color: #61706a;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cl-brief-add-material span {
+  color: #12ae82;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.cl-brief-add-material:hover {
+  border-color: #25b890;
+  background: #effbf7;
+  color: #087e60;
+}
+
+.cl-brief-textarea {
+  width: 100%;
+  min-height: 220px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 18px 20px;
+  border: 1px solid #dfe7e4;
+  border-radius: 16px;
+  outline: none;
+  background: #fbfcfc;
+  color: #1f2b27;
+  font: inherit;
+  line-height: 1.75;
+}
+
+.cl-brief-name {
+  display: grid;
+  gap: 10px;
+  color: #3d4b45;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cl-brief-name input {
+  height: 46px;
+  padding: 0 15px;
+  border: 1px solid #dfe7e4;
+  border-radius: 12px;
+  outline: none;
+  color: #1f2b27;
+  font: inherit;
+  font-weight: 400;
+}
+
+.cl-brief-textarea:focus,
+.cl-brief-name input:focus {
+  border-color: #21b88b;
+  box-shadow: 0 0 0 3px rgba(33, 184, 139, 0.12);
+}
+
+.cl-brief-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 38px;
+  border-top: 1px solid #edf1ef;
+  background: #fff;
+}
+
+.cl-brief-foot > span {
+  color: #829089;
+  font-size: 13px;
+}
+
+.cl-brief-foot > button {
+  min-width: 180px;
+  height: 46px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 12px;
+  background: #19b889;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(25, 184, 137, 0.2);
+}
+
+.cl-brief-foot > button:disabled {
+  background: #cdd7d3;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.cl-brief-close:focus-visible,
+.cl-brief-material button:focus-visible,
+.cl-brief-add-material:focus-visible,
+.cl-brief-foot > button:focus-visible {
+  outline: 3px solid rgba(33, 184, 139, 0.28);
+  outline-offset: 2px;
+}
+
+@keyframes cl-brief-enter {
+  from {
+    transform: translateX(40px);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .cl-brief-drawer {
+    width: 100%;
+  }
+
+  .cl-brief-head,
+  .cl-brief-content,
+  .cl-brief-foot {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .cl-brief-materials {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .cl-brief-foot {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .cl-brief-foot > button {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cl-brief-drawer {
+    animation: none;
+  }
+}
+
+/* 创建画布改为居中弹窗：只填写名称，不再承载素材和制作需求。 */
+.cl-brief-mask {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(20, 31, 28, 0.34);
+  backdrop-filter: blur(4px);
+}
+
+.cl-brief-drawer {
+  width: min(480px, calc(100vw - 32px));
+  height: auto;
+  max-height: calc(100vh - 48px);
+  border: 1px solid rgba(15, 118, 110, 0.12);
+  border-radius: 22px;
+  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.2);
+  animation: cl-brief-modal-enter 0.2s ease-out;
+}
+
+.cl-brief-head {
+  align-items: center;
+  padding: 26px 28px 22px;
+  background: linear-gradient(145deg, #effbf7 0%, #fff 78%);
+}
+
+.cl-brief-kicker {
+  margin-bottom: 6px;
+}
+
+.cl-brief-head h2 {
+  font-size: 23px;
+}
+
+.cl-brief-head p {
+  max-width: 360px;
+  margin-top: 7px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.cl-brief-content {
+  flex: none;
+  padding: 28px;
+  overflow: visible;
+}
+
+.cl-brief-name {
+  position: relative;
+  gap: 9px;
+}
+
+.cl-brief-name > span::after {
+  content: ' *';
+  color: #dc5a4f;
+}
+
+.cl-brief-name input {
+  height: 50px;
+  padding-right: 58px;
+}
+
+.cl-brief-name small {
+  position: absolute;
+  right: 14px;
+  bottom: 16px;
+  color: #9aa6a1;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.cl-brief-foot {
+  justify-content: flex-end;
+  flex-direction: row;
+  gap: 10px;
+  padding: 18px 28px 24px;
+  border-top: 0;
+}
+
+.cl-brief-foot > button {
+  width: auto;
+  min-width: 112px;
+  height: 42px;
+  padding: 0 20px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 14px;
+  box-shadow: 0 8px 20px rgba(25, 184, 137, 0.17);
+}
+
+.cl-brief-foot > .cl-brief-cancel {
+  border-color: #dfe7e4;
+  background: #fff;
+  color: #52605b;
+  box-shadow: none;
+}
+
+.cl-brief-foot > .cl-brief-cancel:hover {
+  border-color: #a9cfc3;
+  background: #f6fbf9;
+  color: #15866b;
+}
+
+.cl-brief-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+@keyframes cl-brief-modal-enter {
+  from {
+    transform: translateY(12px) scale(0.98);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .cl-brief-mask {
+    padding: 16px;
+  }
+
+  .cl-brief-drawer {
+    width: 100%;
+  }
+
+  .cl-brief-head,
+  .cl-brief-content,
+  .cl-brief-foot {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .cl-brief-foot {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .cl-brief-foot > button {
+    width: auto;
+    flex: 1;
+  }
+}

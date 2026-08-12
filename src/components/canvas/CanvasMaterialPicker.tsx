@@ -26,7 +26,7 @@ import {
 } from '@/utils/favoriteVideos'
 import styles from './CanvasMaterialPicker.module.css'
 
-interface MaterialItem {
+export interface MaterialItem {
   id: string
   assetId: number
   /** 选中后解析出的同源流式地址（生成任务用） */
