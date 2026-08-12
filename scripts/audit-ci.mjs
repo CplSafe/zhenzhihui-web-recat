@@ -5,16 +5,11 @@ const AUDIT_LEVEL = 'moderate'
 const REGISTRY = 'https://registry.npmjs.org'
 const SEVERITY_RANK = { info: 0, low: 1, moderate: 2, high: 3, critical: 4 }
 const AUDIT_LEVEL_RANK = SEVERITY_RANK[AUDIT_LEVEL]
-const ALLOWED_ADVISORIES = new Map([
-  [
-    'react-router:GHSA-QWWW-VCR4-C8H2',
-    {
-      versions: new Set(['7.18.1']),
-      reason:
-        'The application is a client-only Vite SPA and does not use React Router unstable RSC APIs or Server Actions.',
-    },
-  ],
-])
+// Documented exceptions for advisories that do not apply to this application.
+// Key: `<package>:<GHSA-ID>`. Pin `versions` to the exact installed versions the
+// analysis covers, so a later bump re-blocks until someone re-checks it.
+// Entries belong here only while no fixed release exists — prefer upgrading.
+const ALLOWED_ADVISORIES = new Map([])
 
 function runAudit() {
   const npmCli = process.env.npm_execpath
