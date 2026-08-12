@@ -28,6 +28,35 @@ export interface CanvasInputAsset {
   role: 'image' | 'reference_image'
 }
 
+/** 连线来源中可作为读图输入的最小信息。 */
+export interface CanvasPolishImageRef {
+  kind?: string
+  assetId?: number
+  thumbnailUrl?: string
+}
+
+/**
+ * 从连线来源里挑出可交给 AI 润色的参考图，并保持 url 与 assetId 的下标对应（网关按下标配对）。
+ *
+ * 只取图片来源：视频来源不能作为读图输入，文本来源的内容已经拼进 prompt。
+ * 润色缺图时只能凭空补出主体，产出的长描述会在图生图/图生视频里压过参考图并替换原主体，
+ * 因此这里宁可多带、不可漏带。
+ */
+export function buildPolishImageRefs(refs: CanvasPolishImageRef[] | undefined): {
+  images?: string[]
+  imageAssetIds?: number[]
+} {
+  const usable = (refs || []).filter(
+    (ref) => ref?.kind === 'image' && (Number(ref.assetId) > 0 || Boolean(String(ref.thumbnailUrl || '').trim())),
+  )
+  if (!usable.length) return {}
+
+  return {
+    images: usable.map((ref) => String(ref.thumbnailUrl || '').trim()),
+    imageAssetIds: usable.map((ref) => Math.floor(Number(ref.assetId) || 0)),
+  }
+}
+
 /** Keep task submission and cost estimation on the same input-assets contract. */
 export function buildCanvasInputAssets(
   sourceRefs: CanvasGenerationSourceRef[],

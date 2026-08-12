@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildRealPersonIdentityPrompt,
+  buildRealPersonVideoIdentityConstraint,
+  buildRealPersonVideoIdentityPrompt,
   createSmartRealPersonReference,
   isReadyRealPersonAsset,
   isRealPersonReferenceStillAuthorized,
@@ -36,6 +38,35 @@ describe('smartRealPerson', () => {
 
     expect(twice.match(/【真人身份强约束/g)).toHaveLength(1)
     expect(twice).toContain('在咖啡馆微笑，暖色光线')
+  })
+
+  it('视频身份约束覆盖整片每一帧，并强调镜头切换与动作中的身份保持', () => {
+    const constraint = buildRealPersonVideoIdentityConstraint('测试人物')
+    expect(constraint).toContain('真人出镜身份强约束：测试人物')
+    expect(constraint).toContain('参考帧中的人物是已授权真人')
+    expect(constraint).toContain('第一帧到最后一帧必须始终是同一个人')
+    expect(constraint).toContain('禁止换脸')
+    expect(constraint).toContain('中途换人')
+    // 未知人名时不带冒号后缀，其余约束照常下发
+    expect(buildRealPersonVideoIdentityConstraint()).toContain('【真人出镜身份强约束】')
+  })
+
+  it('把视频身份约束放在修改意见之前，重复注入也不叠加', () => {
+    const once = buildRealPersonVideoIdentityPrompt('把发型换成短发', '测试人物')
+    expect(once.indexOf('真人出镜身份强约束')).toBeLessThan(once.indexOf('把发型换成短发'))
+
+    const twice = buildRealPersonVideoIdentityPrompt(once, '测试人物')
+    expect(twice.match(/【真人出镜身份强约束/g)).toHaveLength(1)
+    expect(twice).toContain('把发型换成短发')
+  })
+
+  it('图片与视频两套约束互不干扰（标记不同，各去重各的）', () => {
+    const imagePrompt = buildRealPersonIdentityPrompt('在咖啡馆微笑', '测试人物')
+    const both = buildRealPersonVideoIdentityPrompt(imagePrompt, '测试人物')
+
+    expect(both.match(/【真人身份强约束/g)).toHaveLength(1)
+    expect(both.match(/【真人出镜身份强约束/g)).toHaveLength(1)
+    expect(both).toContain('在咖啡馆微笑')
   })
 
   it('只把已认证人物和同步完成的本地素材视为可用', () => {

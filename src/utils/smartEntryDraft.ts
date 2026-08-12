@@ -17,6 +17,8 @@ export interface SmartEntryDraftStore {
   text?: string
   ratio?: string
   duration?: string
+  /** 视频出片分辨率；仅视频模式使用。 */
+  resolution?: string
   skill?: string
   images?: string[]
   /** 与 images 按下标对齐的已落库素材 ID；本地新上传图片为 0。 */

@@ -14,8 +14,12 @@ export {
 } from './GenerationModelPicker'
 export {
   default as GenerationModelDropdown,
+  getGenerationModelDurationOptions,
+  getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
+  isDurationSupportedByGenerationModel,
   type GenerationModelDropdownProps,
+  type GenerationModelSelectionConstraintValues,
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
 } from './GenerationModelDropdown'

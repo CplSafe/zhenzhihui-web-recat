@@ -14,6 +14,7 @@ import {
   normalizeImageRatio,
   normalizeSeedanceDuration,
   normalizeSeedanceRatio,
+  normalizeVideoResolution,
 } from '@/utils/videoOptions'
 import { buildVideoGenerationParams } from '@/utils/videoTasks'
 
@@ -135,6 +136,17 @@ describe('video option boundaries', () => {
     )
     expect(getModelParamOptions({ params_schema: '{bad' }, 'ratio')).toEqual([])
   })
+
+  it('keeps the selected resolution tier across spelling differences', () => {
+    // 模型声明 720P、入口存 720p 时属于同一档位：保留该档并采用模型的原始拼写，
+    // 不能因大小写把用户已选的分辨率悄悄换掉。
+    expect(normalizeVideoResolution('720p', ['720P', '1080P'])).toBe('720P')
+    expect(normalizeVideoResolution(' 1080P ', ['720p', '1080p'])).toBe('1080p')
+    // 真正不支持时仍按既有规则回退：优先 720p，其次首个档位。
+    expect(normalizeVideoResolution('4k', ['1080P', '720P'])).toBe('720P')
+    expect(normalizeVideoResolution('4k', ['1080p', '480p'])).toBe('1080p')
+    expect(normalizeVideoResolution('720p', [])).toBe('720p')
+  })
 })
 
 describe('buildVideoGenerationParams', () => {
@@ -210,6 +222,28 @@ describe('buildVideoGenerationParams', () => {
       sourceVideoDuration: 4.6,
       generateAudio: true,
     })
+  })
+
+  it('matches option values case-insensitively and submits the schema spelling', () => {
+    // 模型把档位声明为大写 720P，入口传的是小写 720p：同一档位，不应报「不支持」，
+    // 且下发给 provider 的必须是 schema 的原始拼写。
+    const model = {
+      display_name: '后端视频编辑模型',
+      params_schema: {
+        fields: [
+          { name: 'resolution', options: ['720P', '1080P'] },
+          { name: 'ratio', options: ['16:9', '9:16'] },
+        ],
+      },
+    }
+
+    expect(buildVideoGenerationParams(model, { ratio: '16:9', resolution: '720p' })).toEqual({
+      resolution: '720P',
+      ratio: '16:9',
+    })
+    expect(() => buildVideoGenerationParams(model, { ratio: '16:9', resolution: '480p' })).toThrow(
+      '后端视频编辑模型 不支持当前分辨率 480p，可选值：720P、1080P',
+    )
   })
 
   it('rejects explicitly selected unsupported ratio, resolution and audio values', () => {

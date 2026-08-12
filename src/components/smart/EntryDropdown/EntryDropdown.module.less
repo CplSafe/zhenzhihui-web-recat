@@ -11,6 +11,12 @@
   &.open .caret {
     transform: rotate(180deg);
   }
+
+  /* 前置条件未满足：视觉上表明暂不可选，但按钮仍可点击——点击后由调用方说明原因。 */
+  &.blocked {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
 }
 
 .val {

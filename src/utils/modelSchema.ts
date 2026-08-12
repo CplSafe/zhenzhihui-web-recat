@@ -135,6 +135,24 @@ export function getModelParamOptionValues(field: unknown): unknown[] {
   return values.filter((value) => value !== undefined && value !== null)
 }
 
+/**
+ * 规范化枚举选项值用于比较。
+ *
+ * 同一档位在不同模型 schema 里常有拼写差异（`720p` / `720P` / ` 720p `），这属于拼写而非能力差异。
+ * 比较时统一忽略首尾空格与大小写；下发给后端时仍取 schema 的原始拼写。
+ */
+export function normalizeModelParamOptionValue(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number') return ''
+  return String(value).trim().toLocaleLowerCase()
+}
+
+/** 返回 options 中与 value 同档的那一项（保持原始拼写）；没有同档项时返回 undefined。 */
+export function matchModelParamOptionValue<T>(value: unknown, options: readonly T[] | null | undefined): T | undefined {
+  const target = normalizeModelParamOptionValue(value)
+  if (!target || !options?.length) return undefined
+  return options.find((option) => normalizeModelParamOptionValue(option) === target)
+}
+
 function schemaContainers(schema: ModelParamSchema): ModelParamSchema[] {
   const candidates = [schema, schema.params, schema.parameters, schema.schema, schema.json_schema, schema.jsonSchema]
   return candidates.filter(isRecord)

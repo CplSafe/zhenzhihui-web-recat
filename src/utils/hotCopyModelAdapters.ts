@@ -4,15 +4,17 @@
  * Seedance 沿用上线模型切换前已经验证过的标准参数兜底；参考生视频等其他模型
  * 只发送其 schema 明确声明的字段，避免把一个供应商的私有参数套给另一个供应商。
  */
-import { getCreativeVideoModelKind } from './featuredVideoModels'
+import { getCreativeVideoModelKind } from './creativeVideoModelKind'
 import { getModelParamFields } from './modelSchema'
-import { normalizeSeedanceRatio } from './videoOptions'
+import { LEGACY_DEFAULT_VIDEO_RESOLUTION, normalizeSeedanceRatio } from './videoOptions'
 import { buildVideoGenerationParams } from './videoTasks'
 
 export interface HotCopyModelParamInput {
   durationSec: number
   sourceVideoDurationSec?: number
   ratio?: string
+  /** 用户在入口选择的出片分辨率；留空时沿用历史默认 720p。 */
+  resolution?: string
 }
 
 const AUDIO_FIELD_NAMES = new Set(['generate_audio', 'generateAudio'])
@@ -21,7 +23,7 @@ const AUDIO_FIELD_NAMES = new Set(['generate_audio', 'generateAudio'])
 function buildSeedanceFallbackParams(input: HotCopyModelParamInput): Record<string, unknown> {
   return {
     duration: input.durationSec,
-    resolution: '720p',
+    resolution: input.resolution || LEGACY_DEFAULT_VIDEO_RESOLUTION,
     ratio: normalizeSeedanceRatio(input.ratio || '16:9'),
     generate_audio: true,
   }
@@ -42,7 +44,7 @@ export function buildHotCopyReplicateModelParams(
     duration: input.durationSec,
     durationMode: 'exact',
     sourceVideoDuration: input.sourceVideoDurationSec,
-    resolution: '720p',
+    resolution: input.resolution || LEGACY_DEFAULT_VIDEO_RESOLUTION,
     ratio: normalizeSeedanceRatio(input.ratio || '16:9'),
     generateAudio: true,
   }) as Record<string, unknown>

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+﻿import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -93,7 +93,8 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.queryByRole('tab', { name: '制作视频' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '制作图片' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /爆款脚本自动生成/ })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '10s' })).toBeInTheDocument()
+    // 时长默认未选，需先选模型再选秒数。
+    expect(screen.getByRole('button', { name: '选择时长' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '从真人素材库选择' })).toBeInTheDocument()
     expect(screen.getByText('必选项 · 未选择无法开始制作')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '去制作' })).toBeDisabled()
@@ -133,11 +134,40 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.queryByRole('dialog', { name: 'AI 引导' })).not.toBeInTheDocument()
   })
 
-  it('offers every whole-second duration from 1s through 15s', async () => {
+  it('requires a video model before the duration can be chosen and starts unselected', async () => {
     const user = userEvent.setup()
     render(<TestSmartEntry onSubmit={vi.fn()} initial={{ text: '逐秒时长' }} />)
 
-    await user.click(screen.getByRole('button', { name: '10s' }))
+    // 时长默认未选（显示占位文案）：档位由模型决定，先选秒数只会选到模型并不支持的值。
+    const durationTrigger = screen.getByRole('button', { name: '选择时长' })
+    await user.click(durationTrigger)
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(mocks.showToast).toHaveBeenCalledWith('请先选择视频模型', 'info')
+  })
+
+  it('offers every whole-second duration once a model without duration constraints is selected', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        initial={{ text: '逐秒时长' }}
+        modelGroups={[
+          {
+            key: 'video',
+            label: '生成视频',
+            subgroups: [
+              { key: 'video.generate', label: '视频生成模型', models: [{ id: 701, name: '不限时长的视频模型' }] },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '701')
+    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
+
+    await user.click(screen.getByRole('button', { name: '选择时长' }))
     expect(
       within(screen.getByRole('listbox'))
         .getAllByRole('option')
@@ -154,14 +184,14 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(mocks.showToast).not.toHaveBeenCalledWith('功能暂未开放', 'info')
     expect(screen.getByRole('tab', { name: '制作图片' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('heading')).toHaveTextContent('营销图片')
-    expect(screen.queryByRole('button', { name: '10s' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '选择时长' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '爆款脚本自动生成' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '视频生成模型' })).not.toBeInTheDocument()
     unmount()
 
     render(<TestSmartEntry onSubmit={onSubmit} initial={{ mode: 'image', text: '生成商品主图' }} />)
     expect(screen.getByRole('heading')).toHaveTextContent('营销图片')
-    expect(screen.queryByRole('button', { name: '10s' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '选择时长' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '爆款脚本自动生成' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '视频生成模型' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '生成图片数量' }))
@@ -169,7 +199,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     await user.click(screen.getByRole('button', { name: '去制作' }))
     expect(onSubmit).toHaveBeenLastCalledWith(
       '生成商品主图',
-      expect.objectContaining({ mode: 'image', ratio: '16:9', duration: '10s', imageCount: 0, outputCount: 9 }),
+      expect.objectContaining({ mode: 'image', ratio: '16:9', imageCount: 0, outputCount: 9 }),
     )
   })
 
@@ -188,6 +218,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
         initial={{
           mode: 'video',
           text: '让画面缓慢推进',
+          duration: '10s',
           images,
           imageAssetIds,
         }}
@@ -224,7 +255,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     render(
       <TestSmartEntry
         onSubmit={onSubmit}
-        initial={{ text: '生成一条新品短视频' }}
+        initial={{ text: '生成一条新品短视频', duration: '10s' }}
         requireModelSelection
         modelGroups={[
           {
@@ -365,7 +396,12 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(mocks.showToast).toHaveBeenCalledWith('当前创作参数与所选模型不兼容，请调整模型或创作参数', 'info')
 
     await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
-    await user.click(screen.getByRole('button', { name: '6s' }))
+    // 时长档位跟随模型：不受支持的 6s 已就近吸附为 5s，下拉里也只剩模型声明的秒数。
+    expect(screen.queryByRole('button', { name: '6s' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '5s' }))
+    expect(screen.getByRole('option', { name: '10s' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: '6s' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: '15s' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('option', { name: '5s' }))
     await user.click(screen.getByRole('button', { name: '9:16' }))
     await user.click(screen.getByRole('option', { name: '16:9' }))
@@ -472,33 +508,101 @@ describe('SmartEntry mode, options, validation, and submission', () => {
   it('submits the selected ratio, duration, and skill while stripping the skill helper line', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
-    render(<TestSmartEntry onSubmit={onSubmit} />)
+    render(
+      <TestSmartEntry
+        onSubmit={onSubmit}
+        modelGroups={[
+          {
+            key: 'video',
+            label: '生成视频',
+            subgroups: [
+              { key: 'video.generate', label: '视频生成模型', models: [{ id: 741, name: '不限时长的视频模型' }] },
+            ],
+          },
+        ]}
+      />,
+    )
 
     await user.type(screen.getByRole('textbox', { name: '创作需求' }), '推广新品咖啡')
     await user.click(screen.getByRole('button', { name: '16:9' }))
     await user.click(screen.getByRole('option', { name: '9:16' }))
-    await user.click(screen.getByRole('button', { name: '10s' }))
+    // 时长必须先选模型才能选：模型决定可用档位。
+    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '741')
+    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
+    await user.click(screen.getByRole('button', { name: '选择时长' }))
     await user.click(screen.getByRole('option', { name: '7s' }))
     await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
     expect(screen.getByRole('option', { name: '本地生活广告' })).toBeInTheDocument()
     await user.click(screen.getByRole('option', { name: '电商广告' }))
     expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('推广新品咖啡\n\n使用电商广告帮我优化')
     await user.click(screen.getByRole('button', { name: '去制作' }))
-    expect(onSubmit).toHaveBeenCalledWith('推广新品咖啡', {
-      mode: 'video',
-      style: '',
-      ratio: '9:16',
-      duration: '7s',
-      imageCount: 0,
-      images: [],
-      skill: '电商广告',
-    })
+    expect(onSubmit).toHaveBeenCalledWith(
+      '推广新品咖啡',
+      expect.objectContaining({
+        mode: 'video',
+        style: '',
+        ratio: '9:16',
+        duration: '7s',
+        imageCount: 0,
+        images: [],
+        skill: '电商广告',
+      }),
+    )
+  })
+
+  it('按所选视频模型收敛分辨率档位，并提交用户选择的分辨率', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <TestSmartEntry
+        onSubmit={onSubmit}
+        modelGroups={[
+          {
+            key: 'video',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.generate',
+                label: '视频生成模型',
+                models: [
+                  {
+                    id: 751,
+                    name: '高清视频模型',
+                    constraints: { resolution: { options: ['720p', '1080p'] } },
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    await user.type(screen.getByRole('textbox', { name: '创作需求' }), '推广新品咖啡')
+    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '751')
+    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
+    await user.click(screen.getByRole('button', { name: '选择时长' }))
+    await user.click(screen.getByRole('option', { name: '7s' }))
+
+    // 档位只来自模型 schema：480p 不在其中，不应出现在下拉里。
+    await user.click(screen.getByRole('button', { name: '视频分辨率' }))
+    expect(
+      within(screen.getByRole('listbox', { name: '视频分辨率' }))
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['720p', '1080p'])
+    await user.click(screen.getByRole('option', { name: '1080p' }))
+
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+    expect(onSubmit).toHaveBeenCalledWith('推广新品咖啡', expect.objectContaining({ resolution: '1080p' }))
   })
 
   it('submits with Ctrl+Enter and exposes meaningful tab and textbox semantics', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
-    render(<TestSmartEntry onSubmit={onSubmit} initial={{ text: '键盘提交需求' }} />)
+    render(<TestSmartEntry onSubmit={onSubmit} initial={{ text: '键盘提交需求', duration: '10s' }} />)
 
     expect(screen.getByRole('tab', { name: '制作视频' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveAccessibleName('创作需求')
@@ -512,7 +616,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     const user = userEvent.setup()
     const request = deferred<boolean>()
     const onSubmit = vi.fn(() => request.promise)
-    saveSmartEntryDraft({ text: '费用不足时保留' })
+    saveSmartEntryDraft({ text: '费用不足时保留', duration: '10s' })
     render(<TestSmartEntry onSubmit={onSubmit} />)
 
     const submit = screen.getByRole('button', { name: '去制作' })
@@ -527,7 +631,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
 
   it('does not recreate a cleared draft after an accepted submission', async () => {
     const user = userEvent.setup()
-    saveSmartEntryDraft({ text: '提交后必须清理' })
+    saveSmartEntryDraft({ text: '提交后必须清理', duration: '10s' })
     render(<TestSmartEntry onSubmit={vi.fn().mockResolvedValue(true)} />)
 
     await user.click(screen.getByRole('button', { name: '去制作' }))
@@ -629,7 +733,7 @@ describe('SmartEntry uploads and recovery actions', () => {
         onNewVideo={onNewVideo}
         canResume
         onResume={onResume}
-        initial={{ text: '已有流程' }}
+        initial={{ text: '已有流程', duration: '10s' }}
       />,
     )
 

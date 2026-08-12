@@ -34,12 +34,47 @@ export interface PolishOptions {
   kind?: PolishKind
   /** 额外上下文(如所属分镜主体/场景),拼到用户消息里帮助润色 */
   context?: string
+  /** 参考图地址(与 imageAssetIds 按下标对应);传入后润色改为读图模式。 */
+  images?: string[]
+  /** 与 images 按下标对应的已上传素材 ID;有效 ID 直接复用,避免重复下载上传。 */
+  imageAssetIds?: number[]
   /** 智能成片入口锁定的 responses.multimodal 模型版本。 */
   modelVersionId?: number
   /** 与模型版本绑定的工作空间和 schema 快照。 */
   requestContext?: AiResponseRequestContext
   signal?: AbortSignal
   maxTokens?: number
+}
+
+/**
+ * 附带参考图时追加到系统提示词的接地约束。
+ *
+ * 润色若看不到参考图,只能按字面凭空补出主体与场景;这段凭空生成的长描述随后会和参考图一起
+ * 送进图生图/图生视频模型,并压过参考图,把原主体换成描述里的通用主体。附图后必须显式要求以图为准。
+ */
+const IMAGE_GROUNDED_SUFFIX =
+  '本次随请求附上了参考图。请先逐张看清图中真实出现的主体(人物/产品/场景),' +
+  '润色必须以参考图中的主体为准:忠实保留其身份、外观与关键特征,不得替换、改写或臆造成其他主体;' +
+  '只在此基础上补充镜头运动、光线、氛围与节奏等画面表达。'
+
+/**
+ * 归一参考图输入,保留 url 与 assetId 的下标对应关系(网关按下标配对),
+ * 丢弃两者都不可用的项;没有任何可用参考图时返回空对象,调用方据此回退纯文本润色。
+ */
+function normalizePolishImages(opts: PolishOptions): { images?: string[]; imageAssetIds?: number[] } {
+  const urls = opts.images || []
+  const assetIds = opts.imageAssetIds || []
+  const count = Math.max(urls.length, assetIds.length)
+  const nextUrls: string[] = []
+  const nextAssetIds: number[] = []
+  for (let index = 0; index < count; index += 1) {
+    const url = String(urls[index] || '').trim()
+    const assetId = Math.floor(Number(assetIds[index]) || 0)
+    if (!url && assetId <= 0) continue
+    nextUrls.push(url)
+    nextAssetIds.push(assetId > 0 ? assetId : 0)
+  }
+  return nextUrls.length ? { images: nextUrls, imageAssetIds: nextAssetIds } : {}
 }
 
 /**
@@ -88,11 +123,13 @@ export async function polishText(text: string, opts: PolishOptions = {}): Promis
   if (!input) throw new Error('请输入内容后再润色')
 
   const kind = opts.kind || 'generic'
+  const { images, imageAssetIds } = normalizePolishImages(opts)
   const userContent = opts.context ? `【上下文】${opts.context}\n【待润色文本】${input}` : input
 
   const out = await runResponseText({
-    system: SYSTEM_PROMPTS[kind],
+    system: images ? `${SYSTEM_PROMPTS[kind]}${IMAGE_GROUNDED_SUFFIX}` : SYSTEM_PROMPTS[kind],
     user: userContent,
+    ...(images ? { images, imageAssetIds } : {}),
     temperature: 0.7,
     maxTokens: opts.maxTokens ?? 512,
     modelVersionId: opts.modelVersionId,

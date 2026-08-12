@@ -1,10 +1,10 @@
-/**
+﻿/**
  * HotCopyEntry — 爆款复制「入口/上传」步(三步流程的第 1 步)。
  * 标题 + 两 Tab(同款翻拍 / 精准复刻)+ 卡片(左:上传爆款视频 / 上传替换素材;右:文案输入)
  * + @ 引用替换素材 + 圆形发送。受控:点发送回调 onSubmit(payload),由编排器(HotCopyCreateView)进入「准备素材」。
  * 不含壳子(侧栏/顶栏)与出视频逻辑——那些在编排器里。
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useToast } from '@/composables/useToast'
 import { fileToDataUrl } from '@/utils/imageFile'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
@@ -14,13 +14,20 @@ import { assetStreamUrl } from '@/utils/assetUrl'
 import { createMaterialFromAsset } from '@/utils/materials'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { filterAssetsByProjectAccess, getAccessibleProjectIds } from '@/utils/projectAssetAccess'
-import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
+import { SMART_VIDEO_DURATIONS, parseDurationSeconds } from '@/utils/videoDurationValue'
+import {
+  DEFAULT_VIDEO_RESOLUTIONS,
+  LEGACY_DEFAULT_VIDEO_RESOLUTION,
+  normalizeVideoResolution,
+} from '@/utils/videoOptions'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import HotCopyCaseModal, { type HotCopyCaseTab } from '@/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
 import EntryDropdown from '@/components/smart/EntryDropdown'
 import {
   GenerationModelDropdown,
+  getGenerationModelDurationOptions,
+  getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
   isGenerationModelSelectionComplete,
   type GenerationModelErrorState,
@@ -69,6 +76,8 @@ export interface HotCopyEntryPayload {
   /** 用户选择的成片尺寸(画面比例)与时长(秒数带 s,如 15s) */
   ratio: string
   duration: string
+  /** 用户选择的出片分辨率；档位来自所选 replicate 模型 schema。 */
+  resolution: string
   /** 本次爆款复制固定使用的 video.replicate 后端模型版本 ID。 */
   modelVersionId?: number
 }
@@ -76,10 +85,19 @@ export interface HotCopyEntryPayload {
 /** 每个制作模式独立保存的入口草稿，模式键由外层映射维护。 */
 type HotCopyTabDraft = Omit<HotCopyEntryPayload, 'tab'>
 
-// 成片尺寸/时长可选项 —— 与智能成片完全一致(同样的列表顺序与默认值 16:9 / 10s)。
+// 成片尺寸可选项 —— 与智能成片完全一致(同样的列表顺序与默认值 16:9)。
 const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
-/** 爆款复制同样支持从 1 秒到 15 秒逐秒选择。 */
-const DURATION_OPTIONS = SMART_VIDEO_DURATIONS.map((seconds) => `${seconds}s`)
+
+/**
+ * 尚未选择时长时的取值：空串而不是 '0s'。
+ *
+ * '0s' 看起来是个可解析的秒数，下游 `parseDurationSeconds(duration) || DEFAULT_DURATION_SEC`
+ * 会把它静默回落成默认时长，用户就拿到了自己没选过的秒数；空串则只会走「未选」分支。
+ */
+const UNSET_DURATION = ''
+
+/** 未选择时长时下拉按钮上的占位文案。 */
+const DURATION_PLACEHOLDER = '选择时长'
 
 /** 入口页与父级编排器之间的提交、草稿同步及恢复协议。 */
 interface HotCopyEntryProps {
@@ -328,7 +346,8 @@ export default function HotCopyEntry({
     products: [],
     text: '',
     ratio: defaultRatio,
-    duration: '10s',
+    duration: UNSET_DURATION,
+    resolution: LEGACY_DEFAULT_VIDEO_RESOLUTION,
     modelVersionId: undefined,
   })
   const initialTabDraft = (): HotCopyTabDraft => ({
@@ -341,7 +360,8 @@ export default function HotCopyEntry({
     products: initial?.products ?? [],
     text: initial?.text ?? '',
     ratio: initial?.ratio ?? defaultRatio,
-    duration: initial?.duration ?? '10s',
+    duration: initial?.duration ?? UNSET_DURATION,
+    resolution: initial?.resolution ?? LEGACY_DEFAULT_VIDEO_RESOLUTION,
     modelVersionId: initial?.modelVersionId,
   })
   const tabDraftsRef = useRef<Record<HotCopyTab, HotCopyTabDraft>>({
@@ -364,6 +384,7 @@ export default function HotCopyEntry({
       text,
       ratio,
       duration,
+      resolution,
       modelVersionId: modelVersionId || undefined,
     }
     const next = tabDraftsRef.current[k] || blankTabDraft()
@@ -376,6 +397,7 @@ export default function HotCopyEntry({
     setText(next.text)
     setRatio(next.ratio)
     setDuration(next.duration)
+    setResolution(next.resolution)
     setModelVersionId(next.modelVersionId)
     caretRef.current = next.text.length
     setVideoMenuOpen(false)
@@ -441,6 +463,7 @@ export default function HotCopyEntry({
   // 成片尺寸/时长(用户可选);默认与智能成片一致:16:9、10s
   const [ratio, setRatio] = useState(tabDraftsRef.current[initialTab].ratio)
   const [duration, setDuration] = useState(tabDraftsRef.current[initialTab].duration)
+  const [resolution, setResolution] = useState(tabDraftsRef.current[initialTab].resolution)
   const [modelVersionId, setModelVersionId] = useState<number | undefined>(
     tabDraftsRef.current[initialTab].modelVersionId,
   )
@@ -786,10 +809,46 @@ export default function HotCopyEntry({
   const modelSelectionConflicts = getGenerationModelSelectionConflicts(modelGroups, modelSelection, {
     ratio,
     durationSec: Number.parseInt(duration, 10) || undefined,
-    resolution: '720p',
+    resolution,
     generateAudio: true,
     referenceImageCount: products.filter((product) => !product.isVideo).length,
   })
+  // 时长档位跟随所选复制模型：schema 声明了支持哪些秒数就只展示哪些，未声明才回落 1–15 秒。
+  const durationOptions = useMemo(
+    () => getGenerationModelDurationOptions(modelGroups, modelSelection, 'video.replicate', SMART_VIDEO_DURATIONS),
+    // modelSelection 每次渲染都是新对象，按其唯一取值 modelVersionId 追踪即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modelGroups, modelVersionId],
+  )
+  const durationChoices = useMemo(() => durationOptions.map((seconds) => `${seconds}s`), [durationOptions])
+  // 视频模型选定前不允许选秒数：模型决定了有哪些档位，先选秒数只会选到模型并不支持的值。
+  const videoModelSelected = Boolean(modelVersionId)
+  const durationUnset = parseDurationSeconds(duration) === null
+  // 换模型后原选择可能不再受支持：就近吸附到新档位，避免停留在必然失败的秒数上。
+  // 尚未选择（0s）时保持未选状态，交由用户显式选择，不代替用户做决定。
+  useEffect(() => {
+    if (durationOptions.length === 0) return
+    const current = parseDurationSeconds(duration)
+    if (current === null || durationOptions.includes(current)) return
+    const nearest = durationOptions.reduce((best, seconds) =>
+      Math.abs(seconds - current) < Math.abs(best - current) ? seconds : best,
+    )
+    setDuration(`${nearest}s`)
+  }, [duration, durationOptions])
+  // 分辨率档位同样跟随所选复制模型；模型未声明 resolution/size 时回落到通用档位。
+  const resolutionOptions = useMemo(
+    () =>
+      getGenerationModelResolutionOptions(modelGroups, modelSelection, 'video.replicate', DEFAULT_VIDEO_RESOLUTIONS),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modelGroups, modelVersionId],
+  )
+  // 换模型后原分辨率可能不再受支持：回退到 720p 或该模型首个档位。
+  useEffect(() => {
+    if (resolutionOptions.length === 0) return
+    const normalized = normalizeVideoResolution(resolution, resolutionOptions)
+    if (normalized !== resolution) setResolution(normalized)
+  }, [resolution, resolutionOptions])
+
   const modelGatePassed =
     !requireModelSelection || (modelReady && modelSelectionComplete && modelSelectionConflicts.length === 0)
   const modelGateMessage = modelLoading
@@ -826,7 +885,7 @@ export default function HotCopyEntry({
         params: {
           ratio,
           duration: Number.parseInt(duration, 10) || 10,
-          resolution: '720p',
+          resolution,
           generate_audio: true,
           reference_image_count: products.filter((product) => !product.isVideo).length,
         },
@@ -838,7 +897,7 @@ export default function HotCopyEntry({
         canAfford: result?.can_afford,
       }
     },
-    [duration, libraryVideo?.assetId, products, ratio, text, workspaceId],
+    [duration, libraryVideo?.assetId, products, ratio, resolution, text, workspaceId],
   )
 
   const buildPayload = (): HotCopyEntryPayload => ({
@@ -852,6 +911,7 @@ export default function HotCopyEntry({
     text,
     ratio,
     duration,
+    resolution,
     ...(modelVersionId ? { modelVersionId } : {}),
   })
 
@@ -867,10 +927,12 @@ export default function HotCopyEntry({
       text,
       ratio,
       duration,
+      resolution,
       ...(modelVersionId ? { modelVersionId } : {}),
     })
   }, [
     duration,
+    resolution,
     libraryVideo,
     modelVersionId,
     onDraftChange,
@@ -889,6 +951,12 @@ export default function HotCopyEntry({
     showToast(modelGateMessage || '请先选择视频生成模型', 'info')
   }
 
+  /** 未选视频模型就去点时长：强调模型入口并说明先后顺序，而不是让用户选到模型不支持的秒数。 */
+  const requestVideoModelBeforeDuration = () => {
+    setModelAttentionRequest((value) => value + 1)
+    showToast('请先选择视频模型', 'info')
+  }
+
   // 提交前同时要求原视频和至少一张替换图片，防止创建后端无法执行的空任务。
   const validateBeforeSubmit = () => {
     if (!hasHotVideo) {
@@ -901,6 +969,11 @@ export default function HotCopyEntry({
     }
     if (!modelGatePassed) {
       requestModelSelectionAttention()
+      return false
+    }
+    // 时长必须由用户显式选择：0s 是未选状态，提交会被后端按无效时长拒绝。
+    if (durationUnset) {
+      showToast(videoModelSelected ? '请先选择视频时长' : '请先选择视频模型', 'info')
       return false
     }
     return true
@@ -1127,8 +1200,11 @@ export default function HotCopyEntry({
               {/* 成片时长 */}
               <EntryDropdown
                 value={duration}
-                options={DURATION_OPTIONS}
+                options={durationChoices}
                 onChange={setDuration}
+                placeholder={DURATION_PLACEHOLDER}
+                blocked={!videoModelSelected}
+                onBlockedClick={requestVideoModelBeforeDuration}
                 icon={
                   <svg
                     viewBox="0 0 24 24"
@@ -1143,6 +1219,32 @@ export default function HotCopyEntry({
                     <path d="M12 8v4l3 2" />
                   </svg>
                 }
+              />
+              {/* 成片分辨率:档位取自所选 replicate 模型 schema */}
+              <EntryDropdown
+                value={resolution}
+                options={resolutionOptions}
+                onChange={setResolution}
+                ariaLabel="视频分辨率"
+                blocked={!videoModelSelected}
+                onBlockedClick={requestVideoModelBeforeDuration}
+                icon={
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="3.5" y="6" width="17" height="12" rx="2" />
+                    <path d="M8 10.5v3M12 9v6M16 10.5v3" />
+                  </svg>
+                }
+                valueMinWidth={40}
               />
               <GenerationModelDropdown
                 groups={modelGroups}

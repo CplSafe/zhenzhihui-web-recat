@@ -113,14 +113,38 @@ export interface CreativeDurationPolicyOptions {
   supportedDurationLabel?: string
 }
 
-/** 把连续范围压缩成“1至15秒”，离散档位仍显示完整列表。 */
-function formatSupportedDurationLabel(durations: readonly number[]): string {
-  if (!durations.length) return '有效时长'
-  const continuous = durations.every((duration, index) => index === 0 || duration === durations[index - 1] + 1)
-  if (continuous && durations.length > 2) {
-    return `${durations[0]}至${durations[durations.length - 1]}秒`
+/**
+ * 把档位压缩成可读文案：连续的一段写成“1至15秒”，孤立档位逐个列出。
+ *
+ * 模型可以同时声明连续区间和离散档位（例如 1–15 秒外还支持 30 秒），
+ * 逐个罗列十几个秒数没人看得下去，整体当成一段又会谎报中间不存在的档位。
+ */
+export function formatSupportedDurationLabel(durations: readonly number[]): string {
+  const sorted = Array.from(new Set(durations.map(Number)))
+    .filter((seconds) => Number.isFinite(seconds) && seconds > 0)
+    .sort((left, right) => left - right)
+  if (!sorted.length) return '有效时长'
+
+  const segments: string[] = []
+  let start = sorted[0]
+  let previous = sorted[0]
+  const flush = () => {
+    // 三档以上才压缩成区间：两档写成“1至2秒”反而比“1秒、2秒”更难读。
+    if (previous - start >= 2) segments.push(`${start}至${previous}秒`)
+    else for (let seconds = start; seconds <= previous; seconds += 1) segments.push(`${seconds}秒`)
   }
-  return durations.map((seconds) => `${seconds}秒`).join('、')
+
+  for (const seconds of sorted.slice(1)) {
+    if (seconds === previous + 1) {
+      previous = seconds
+      continue
+    }
+    flush()
+    start = seconds
+    previous = seconds
+  }
+  flush()
+  return segments.join('、')
 }
 
 /** 同时校验结构化时长选择和需求文本中明确写出的总时长。 */

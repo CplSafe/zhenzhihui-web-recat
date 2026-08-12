@@ -67,6 +67,37 @@ describe('polishText', () => {
     )
   })
 
+  it('keeps polishing text-only when no usable reference image is supplied', async () => {
+    mocks.runResponseText.mockResolvedValue('纯文本润色结果')
+
+    await expect(polishText('篮球', { images: ['', '   '], imageAssetIds: [0, Number.NaN] })).resolves.toBe(
+      '纯文本润色结果',
+    )
+
+    const [args] = mocks.runResponseText.mock.calls[0]
+    expect(args.images).toBeUndefined()
+    expect(args.imageAssetIds).toBeUndefined()
+    expect(args.system).not.toContain('参考图')
+  })
+
+  it('grounds the polish on reference images and keeps url/assetId aligned by index', async () => {
+    mocks.runResponseText.mockResolvedValue('保留主体的润色结果')
+
+    await expect(
+      polishText('篮球', {
+        // 第 2 项只有 assetId、第 3 项两者皆空：归一后必须丢掉空项且不打乱前两项的配对。
+        images: ['https://cdn.example.com/kobe.png', '', ''],
+        imageAssetIds: [0, 4242, 0],
+      }),
+    ).resolves.toBe('保留主体的润色结果')
+
+    const [args] = mocks.runResponseText.mock.calls[0]
+    expect(args.images).toEqual(['https://cdn.example.com/kobe.png', ''])
+    expect(args.imageAssetIds).toEqual([0, 4242])
+    // 附图后必须显式要求以图中主体为准，否则模型会凭空改写主体。
+    expect(args.system).toContain('以参考图中的主体为准')
+  })
+
   it('cleans storyboard markers, fenced JSON and extracts readable fields', async () => {
     mocks.runResponseText.mockResolvedValue(
       '<<<STORYBOARD_JSON>>>```json\n[{"prompt":"晨光中的产品"},{"voiceover":"现在出发"}]\n```<<<END_STORYBOARD_JSON>>>',

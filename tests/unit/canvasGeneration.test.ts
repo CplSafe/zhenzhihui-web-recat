@@ -1,5 +1,40 @@
 import { describe, expect, it } from 'vitest'
-import { buildCanvasInputAssets, inferCanvasConnectionRole, validateCanvasVideoInputs } from '@/utils/canvasGeneration'
+import {
+  buildCanvasInputAssets,
+  buildPolishImageRefs,
+  inferCanvasConnectionRole,
+  validateCanvasVideoInputs,
+} from '@/utils/canvasGeneration'
+
+describe('canvas polish reference images', () => {
+  it('returns nothing when no image source is connected', () => {
+    expect(buildPolishImageRefs(undefined)).toEqual({})
+    expect(buildPolishImageRefs([])).toEqual({})
+    // 文本内容已拼进 prompt，视频来源不能作为读图输入。
+    expect(
+      buildPolishImageRefs([
+        { kind: 'text', assetId: 7 },
+        { kind: 'video', assetId: 8, thumbnailUrl: 'https://cdn.example.com/a.mp4' },
+      ]),
+    ).toEqual({})
+  })
+
+  it('collects image sources and keeps url/assetId aligned by index', () => {
+    expect(
+      buildPolishImageRefs([
+        { kind: 'image', assetId: 11, thumbnailUrl: 'https://cdn.example.com/first.png' },
+        { kind: 'text', assetId: 99 },
+        { kind: 'image', thumbnailUrl: 'https://cdn.example.com/second.png' },
+        { kind: 'image', assetId: 13 },
+        // 既无 assetId 也无地址：无法读图，必须丢弃而不是留空占位。
+        { kind: 'image' },
+      ]),
+    ).toEqual({
+      images: ['https://cdn.example.com/first.png', 'https://cdn.example.com/second.png', ''],
+      imageAssetIds: [11, 0, 13],
+    })
+  })
+})
 
 describe('canvas video generation inputs', () => {
   it('allows text-to-video without a reference image', () => {

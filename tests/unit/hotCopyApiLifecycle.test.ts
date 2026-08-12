@@ -27,6 +27,7 @@ vi.mock('@/api/business', () => ({
 vi.mock('@/utils/videoOptions', () => ({
   normalizeSeedanceDuration: (value: number) => value,
   normalizeSeedanceRatio: (value: string) => value,
+  LEGACY_DEFAULT_VIDEO_RESOLUTION: '720p',
 }))
 
 vi.mock('@/utils/taskMedia', () => ({
@@ -273,28 +274,49 @@ describe('replicateHotVideo lifecycle', () => {
     })
   })
 
-  it.each([0, 7.5, 16])(
-    'rejects invalid duration %s before estimating or creating a paid task',
-    async (durationSec) => {
-      const modelVersion = {
-        id: 3,
-        operation_codes: ['video.replicate'],
-        params_schema: { fields: [] },
-      }
+  // 模型未声明时长档位（空 schema）时才回落到 1–15 秒；0 不是「档位不支持」而是根本不成其为时长。
+  it.each([
+    [0, '爆款复制时长无效，请重新选择时长'],
+    [7.5, '爆款复制时长必须是 1 至 15 秒内的整数'],
+    [16, '爆款复制时长必须是 1 至 15 秒内的整数'],
+  ])('rejects invalid duration %s before estimating or creating a paid task', async (durationSec, expected) => {
+    const modelVersion = {
+      id: 3,
+      operation_codes: ['video.replicate'],
+      params_schema: { fields: [] },
+    }
 
-      await expect(
-        estimateReplicateCost({
-          workspaceId: 7,
-          durationSec,
-          modelVersion,
-          ...VALID_REPLICATE_INPUTS,
-        }),
-      ).rejects.toThrow('爆款复制时长必须是 1 至 15 秒内的整数')
+    await expect(
+      estimateReplicateCost({
+        workspaceId: 7,
+        durationSec,
+        modelVersion,
+        ...VALID_REPLICATE_INPUTS,
+      }),
+    ).rejects.toThrow(String(expected))
 
-      expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
-      expect(mocks.createAiTask).not.toHaveBeenCalled()
-    },
-  )
+    expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
+    expect(mocks.createAiTask).not.toHaveBeenCalled()
+  })
+
+  it('accepts a duration the model declares even when it exceeds the default 1–15 second range', async () => {
+    // 模型声明 30 秒就必须能走通：前端的默认范围只是模型未声明时的兜底，不是硬上限。
+    const modelVersion = {
+      id: 31,
+      operation_codes: ['video.replicate'],
+      params_schema: { fields: [{ name: 'duration', options: [15, 30] }] },
+    }
+
+    await estimateReplicateCost({
+      workspaceId: 7,
+      durationSec: 30,
+      modelVersion,
+      ...VALID_REPLICATE_INPUTS,
+    })
+
+    expect(mocks.estimateAiTaskCost).toHaveBeenCalledTimes(1)
+    expect(mocks.estimateAiTaskCost.mock.calls[0][0].params).toMatchObject({ duration: 30 })
+  })
 
   it.each([undefined, 0, Number.NaN])(
     'fails closed when the source video duration is unavailable: %s',

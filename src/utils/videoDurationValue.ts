@@ -71,6 +71,30 @@ export function validateVideoDuration(value: unknown): VideoDurationValidation {
   return { valid: true, seconds, reason: null }
 }
 
+/** 按任意档位集合校验时长的结构化结果；秒数不再限定为 1–15 的字面量。 */
+export type VideoDurationRangeValidation =
+  | { valid: true; seconds: number; reason: null }
+  | { valid: false; seconds: number | null; reason: 'invalid' | 'unsupported' }
+
+/**
+ * 按调用方给出的档位校验时长，不取整也不吸附。
+ *
+ * 档位应当来自所选模型声明的 schema：模型支持 30 秒时，界面能选、提交就必须能过。
+ * 只有档位为空（模型未声明）时才回落到智能成片默认的 1–15 秒。
+ */
+export function validateVideoDurationWithin(
+  value: unknown,
+  supportedDurations: readonly number[] | null | undefined,
+): VideoDurationRangeValidation {
+  const seconds = parseDurationSeconds(value)
+  if (seconds === null) return { valid: false, seconds: null, reason: 'invalid' }
+  const supported = supportedDurations?.length ? supportedDurations : SMART_VIDEO_DURATIONS
+  if (!supported.some((duration) => Number(duration) === seconds)) {
+    return { valid: false, seconds, reason: 'unsupported' }
+  }
+  return { valid: true, seconds, reason: null }
+}
+
 /** 不取整、不吸附地校验智能成片的 1–15 秒整数时长。 */
 export function validateSmartVideoDuration(value: unknown): SmartVideoDurationValidation {
   const seconds = parseDurationSeconds(value)

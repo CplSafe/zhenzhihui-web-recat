@@ -7,6 +7,7 @@ import {
   resolveVideoDuration,
   validateSmartVideoDuration,
   validateVideoDuration,
+  validateVideoDurationWithin,
 } from '@/utils/videoDurationValue'
 
 describe('video duration values', () => {
@@ -43,6 +44,20 @@ describe('video duration values', () => {
     expect(validateSmartVideoDuration(0)).toEqual({ valid: false, seconds: null, reason: 'invalid' })
     expect(validateSmartVideoDuration(7.5)).toEqual({ valid: false, seconds: 7.5, reason: 'unsupported' })
     expect(validateSmartVideoDuration(16)).toEqual({ valid: false, seconds: 16, reason: 'unsupported' })
+  })
+
+  it('validates against the tiers the selected model declares, not a fixed range', () => {
+    const modelTiers = [5, 10, 15, 30]
+    expect(validateVideoDurationWithin('30s', modelTiers)).toEqual({ valid: true, seconds: 30, reason: null })
+    expect(validateVideoDurationWithin(11, modelTiers)).toEqual({ valid: false, seconds: 11, reason: 'unsupported' })
+    expect(validateVideoDurationWithin(0, modelTiers)).toEqual({ valid: false, seconds: null, reason: 'invalid' })
+  })
+
+  it('falls back to the smart-video 1–15 range when the model declares no tiers', () => {
+    for (const tiers of [undefined, null, []]) {
+      expect(validateVideoDurationWithin(15, tiers)).toEqual({ valid: true, seconds: 15, reason: null })
+      expect(validateVideoDurationWithin(30, tiers)).toEqual({ valid: false, seconds: 30, reason: 'unsupported' })
+    }
   })
 
   it('keeps compatibility snapping while offering strict resolution', () => {

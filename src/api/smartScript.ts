@@ -123,8 +123,10 @@ function renumberScriptShots(shots: Shot[]): Shot[] {
 /** 按总时长计算允许的最大镜头数，避免出现过多 1 秒碎镜。 */
 function maxShotCountForDuration(totalSec: number): number {
   if (!(totalSec > 0)) return 0
-  // 每个镜头至少 1 秒；按约 3 秒一个镜头限制碎片数量，并延续 5/10/15 秒原有的 2/4/5 镜上限。
-  return Math.min(Math.floor(totalSec), 5, Math.ceil(totalSec / 3))
+  // 每个镜头至少 1 秒；按约 3 秒一个镜头限制碎片数量，5/10/15 秒仍是原有的 2/4/5 镜上限
+  // （15 秒以内 ceil(totalSec/3) 本就不超过 5，所以这里不再另设固定上限）。
+  // 固定上限会让 30 秒这类长档位只剩 5 个 6 秒长镜，还会把 prompt 要求的镜头数凭空截掉。
+  return Math.min(Math.floor(totalSec), Math.ceil(totalSec / 3))
 }
 
 /** 将脚本裁剪到目标时长可承载的镜头数，并保留有内容的镜头。 */

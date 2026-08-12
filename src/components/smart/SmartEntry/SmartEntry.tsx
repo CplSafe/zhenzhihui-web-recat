@@ -4,13 +4,16 @@
  * 比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
  * 提交 → 调 onSubmit(需求文本, 选项),由父级进入分镜脚本流程。
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import {
   filterGenerationModelGroupsByOperations,
   GenerationModelDropdown,
+  getGenerationModelDurationOptions,
+  getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
+  isDurationSupportedByGenerationModel,
   isGenerationModelSelectionComplete,
   type GenerationModelErrorState,
   type GenerationModelGroup,
@@ -27,7 +30,12 @@ import {
   type SmartEntryDraftStore,
 } from '@/utils/smartEntryDraft'
 import { ALL_SMART_SCRIPT_NAMES, SMART_SCRIPT_OPTIONS, normalizeSmartScriptName } from '@/utils/smartScriptOptions'
-import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
+import {
+  DEFAULT_VIDEO_RESOLUTIONS,
+  ENTRY_RATIO_OPTIONS as RATIO_OPTIONS,
+  LEGACY_DEFAULT_VIDEO_RESOLUTION,
+  normalizeVideoResolution,
+} from '@/utils/videoOptions'
 import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 import {
   REQUIRED_GENERATION_OPERATION_CODES_BY_MODE,
@@ -50,6 +58,8 @@ export interface EntryMeta {
   style: string
   ratio: string
   duration: string
+  /** 视频出片分辨率；档位来自所选视频模型 schema，图片模式忽略。 */
+  resolution?: string
   imageCount: number
   images: string[]
   imageAssetIds?: number[]
@@ -104,6 +114,7 @@ interface SmartEntryProps {
     text?: string
     ratio?: string
     duration?: string
+    resolution?: string
     images?: string[]
     imageAssetIds?: number[]
     realPersonReferences?: SmartRealPersonReference[]
@@ -113,8 +124,16 @@ interface SmartEntryProps {
   }
 }
 
-/** 智能成片支持从 1 秒到 15 秒逐秒选择。 */
-const DURATION_OPTIONS = SMART_VIDEO_DURATIONS.map((seconds) => `${seconds}s`)
+/**
+ * 尚未选择时长时的取值：空串而不是 '0s'。
+ *
+ * '0s' 看起来是个可解析的秒数，下游 `parseDurationSeconds(duration) || DEFAULT_DURATION_SEC`
+ * 会把它静默回落成默认时长，用户就拿到了自己没选过的秒数；空串则只会走「未选」分支。
+ */
+const UNSET_DURATION = ''
+
+/** 未选择时长时下拉按钮上的占位文案。 */
+const DURATION_PLACEHOLDER = '选择时长'
 
 /** 可选的智能成片脚本。 */
 const SCRIPT_OPTIONS = [...SMART_SCRIPT_OPTIONS]
@@ -199,7 +218,12 @@ export default function SmartEntry({
   // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
   const [text, setText] = useState(() => composeWithSkill(seedText, seedSkill))
   const [ratio, setRatio] = useState(initial?.ratio ?? stored?.ratio ?? '16:9')
-  const [duration, setDuration] = useState(initial?.duration ?? stored?.duration ?? '10s')
+  // 默认 0s = 尚未选择：时长必须在选定视频模型、看到该模型真实支持的档位之后再由用户选。
+  const [duration, setDuration] = useState(initial?.duration ?? stored?.duration ?? UNSET_DURATION)
+  // 分辨率沿用历史默认 720p；所选模型不支持时，下面的档位副作用会就近吸附到该模型真实支持的规格。
+  const [resolution, setResolution] = useState(
+    initial?.resolution ?? stored?.resolution ?? LEGACY_DEFAULT_VIDEO_RESOLUTION,
+  )
   const [images, setImages] = useState<string[]>(seedImages)
   const [imageAssetIds, setImageAssetIds] = useState<number[]>(() =>
     seedImages.map((_, index) => Math.max(0, Math.floor(Number(seedImageAssetIds[index]) || 0))),
@@ -236,6 +260,7 @@ export default function SmartEntry({
         text: stripSkillLine(text).trim(),
         ratio,
         duration,
+        resolution,
         skill,
         images,
         imageAssetIds,
@@ -245,7 +270,19 @@ export default function SmartEntry({
       })
     }, 300)
     return () => window.clearTimeout(t)
-  }, [mode, text, ratio, duration, skill, images, imageAssetIds, realPersonReferences, outputCount, generationModels])
+  }, [
+    mode,
+    text,
+    ratio,
+    duration,
+    resolution,
+    skill,
+    images,
+    imageAssetIds,
+    realPersonReferences,
+    outputCount,
+    generationModels,
+  ])
   // 本地图片先转成受控 data URL；过滤非图片并限制数量，避免无效文件进入后续资产上传流程。
   const pickImages = async (files: FileList | File[] | null) => {
     if (!files?.length) return
@@ -346,9 +383,71 @@ export default function SmartEntry({
   const modelSelectionConflicts = getGenerationModelSelectionConflicts(conflictModelGroups, generationModels, {
     ratio,
     ...(mode === 'video'
-      ? { durationSec: parseDurationSeconds(duration) ?? undefined }
+      ? { durationSec: parseDurationSeconds(duration) ?? undefined, resolution }
       : { referenceImageCount: images.length }),
   })
+  // 视频修改是生成之后的下游能力，其时长上限可能低于生成模型（例如生成支持 30 秒、修改只支持 15 秒）。
+  // 这不阻塞创作：照常生成，但要在选时长的当下就告诉用户这一档生成完不能再改，别等走到最后才发现。
+  const videoEditUnsupportedByDuration =
+    mode === 'video' &&
+    !isDurationSupportedByGenerationModel(
+      visibleModelGroups,
+      generationModels,
+      'video.edit',
+      parseDurationSeconds(duration),
+    )
+  // 模型面板里同步说明：视频修改模型本轮用不上，因此不预估它的积分，直接说明原因。
+  const modelSlotNotices = useMemo(
+    () => (videoEditUnsupportedByDuration ? { 'video.edit': `当前 ${duration} 不适用，生成后不能修改` } : undefined),
+    [videoEditUnsupportedByDuration, duration],
+  )
+  // 时长档位跟随所选视频模型：schema 声明了支持哪些秒数就只展示哪些，未声明才回落 1–15 秒。
+  const durationOptions = useMemo(
+    () =>
+      getGenerationModelDurationOptions(visibleModelGroups, generationModels, 'video.generate', SMART_VIDEO_DURATIONS),
+    [visibleModelGroups, generationModels],
+  )
+  const durationChoices = useMemo(() => durationOptions.map((seconds) => `${seconds}s`), [durationOptions])
+  // 还能保住「视频修改」的最长档位：用于把提示写成用户可执行的建议，而不是只说不支持。
+  const videoEditMaxDurationSec = useMemo(() => {
+    if (mode !== 'video') return 0
+    const supported = durationOptions.filter((seconds) =>
+      isDurationSupportedByGenerationModel(visibleModelGroups, generationModels, 'video.edit', seconds),
+    )
+    return supported.length ? supported[supported.length - 1] : 0
+  }, [mode, durationOptions, visibleModelGroups, generationModels])
+  // 视频模型选定前不允许选秒数：模型决定了有哪些档位，先选秒数只会选到模型并不支持的值。
+  const videoModelSelected = mode !== 'video' || Boolean(generationModels['video.generate'])
+  const durationUnset = parseDurationSeconds(duration) === null
+  // 换模型后原选择可能不再受支持：就近吸附到新档位，避免停留在必然失败的秒数上。
+  // 尚未选择（0s）时保持未选状态，交由用户显式选择，不代替用户做决定。
+  useEffect(() => {
+    if (mode !== 'video' || durationOptions.length === 0) return
+    const current = parseDurationSeconds(duration)
+    if (current === null || durationOptions.includes(current)) return
+    const nearest = durationOptions.reduce((best, seconds) =>
+      Math.abs(seconds - current) < Math.abs(best - current) ? seconds : best,
+    )
+    setDuration(`${nearest}s`)
+  }, [mode, duration, durationOptions])
+  // 分辨率档位同样跟随所选视频模型；模型未声明 resolution/size 时回落到通用档位。
+  const resolutionOptions = useMemo(
+    () =>
+      getGenerationModelResolutionOptions(
+        visibleModelGroups,
+        generationModels,
+        'video.generate',
+        DEFAULT_VIDEO_RESOLUTIONS,
+      ),
+    [visibleModelGroups, generationModels],
+  )
+  // 换模型后原分辨率可能不再受支持：回退到 720p 或该模型首个档位，避免提交必然失败的规格。
+  useEffect(() => {
+    if (mode !== 'video' || resolutionOptions.length === 0) return
+    const normalized = normalizeVideoResolution(resolution, resolutionOptions)
+    if (normalized !== resolution) setResolution(normalized)
+  }, [mode, resolution, resolutionOptions])
+
   const modelCatalogReady =
     !modelOperationStates || areGenerationModelOperationsReady(modelOperationStates, requiredModelOperations)
   const modelGatePassed =
@@ -384,7 +483,7 @@ export default function SmartEntry({
           ? { temperature: 0.7, max_output_tokens: 1200 }
           : operationCode.startsWith('image.')
             ? { ratio, count: mode === 'image' ? outputCount : 1 }
-            : { duration: durationSec, ratio }
+            : { duration: durationSec, ratio, resolution }
       const result = await estimateAiTaskCost({
         workspaceId,
         modelVersionId,
@@ -399,16 +498,26 @@ export default function SmartEntry({
         canAfford: result?.can_afford,
       }
     },
-    [cleanText, duration, imageAssetIds, mode, outputCount, ratio, workspaceId],
+    [cleanText, duration, imageAssetIds, mode, outputCount, ratio, resolution, workspaceId],
   )
   const requestModelSelectionAttention = () => {
     setModelAttentionRequest((request) => request + 1)
     showToast(modelGateMessage || '请先完成本次创作的模型选择', 'info')
   }
+  /** 未选视频模型就去点时长/分辨率：强调模型入口并说明先后顺序，而不是让用户选到模型不支持的档位。 */
+  const requestVideoModelFirst = () => {
+    setModelAttentionRequest((request) => request + 1)
+    showToast('请先选择视频模型', 'info')
+  }
   const submit = async () => {
     if (!canSubmit || submittingRef.current) return
     if (!modelGatePassed) {
       requestModelSelectionAttention()
+      return
+    }
+    // 时长必须由用户显式选择：0s 是未选状态，提交会被后端按无效时长拒绝。
+    if (mode === 'video' && durationUnset) {
+      showToast(videoModelSelected ? '请先选择视频时长' : '请先选择视频模型', 'info')
       return
     }
     submittingRef.current = true
@@ -419,6 +528,7 @@ export default function SmartEntry({
         style: '',
         ratio,
         duration,
+        ...(mode === 'video' ? { resolution } : {}),
         imageCount: images.length,
         images,
         ...(imageAssetIds.some((assetId) => assetId > 0) ? { imageAssetIds } : {}),
@@ -689,8 +799,11 @@ export default function SmartEntry({
               {mode === 'video' && (
                 <EntryDropdown
                   value={duration}
-                  options={DURATION_OPTIONS}
+                  options={durationChoices}
                   onChange={setDuration}
+                  placeholder={DURATION_PLACEHOLDER}
+                  blocked={!videoModelSelected}
+                  onBlockedClick={requestVideoModelFirst}
                   icon={
                     <svg
                       viewBox="0 0 24 24"
@@ -705,6 +818,35 @@ export default function SmartEntry({
                       <path d="M12 8v4l3 2" />
                     </svg>
                   }
+                />
+              )}
+
+              {/* 分辨率同样只在「制作视频」出现，档位来自所选视频模型 schema */}
+              {mode === 'video' && (
+                <EntryDropdown
+                  value={resolution}
+                  options={resolutionOptions}
+                  onChange={setResolution}
+                  ariaLabel="视频分辨率"
+                  blocked={!videoModelSelected}
+                  onBlockedClick={requestVideoModelFirst}
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="20"
+                      height="20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="3.5" y="6" width="17" height="12" rx="2" />
+                      <path d="M8 10.5v3M12 9v6M16 10.5v3" />
+                    </svg>
+                  }
+                  valueMinWidth={40}
                 />
               )}
 
@@ -794,6 +936,7 @@ export default function SmartEntry({
                   onRetry={onReloadModels ? () => onReloadModels() : undefined}
                   onChange={updateGenerationModel}
                   estimateModelCost={workspaceId > 0 ? estimateSelectedModel : undefined}
+                  slotNotices={modelSlotNotices}
                   conflicts={modelSelectionConflicts}
                   attentionRequest={modelAttentionRequest}
                   attentionMessage={modelGateMessage}
@@ -846,6 +989,16 @@ export default function SmartEntry({
               </button>
             </div>
           </div>
+
+          {/* 能力降级告知：这一档时长生成后用不了「视频修改」。不拦截创作，只让用户在选择的当下知情。 */}
+          {videoEditUnsupportedByDuration && (
+            <div className={styles.capabilityNotice} role="note">
+              {`当前 ${duration} 生成后不支持「视频修改」，可继续创作`}
+              {videoEditMaxDurationSec > 0
+                ? `；如需生成后再修改，请选择 ${videoEditMaxDurationSec}s 及以内的时长。`
+                : '；当前修改模型不支持任一可选时长。'}
+            </div>
+          )}
         </div>
       </div>
       <RealPersonMaterialPicker

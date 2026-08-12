@@ -84,7 +84,7 @@ import {
   extractAssetPageItems,
   getAiTaskId,
 } from '@/api/business'
-import { getModelParamOptions } from '@/utils/videoOptions'
+import { LEGACY_DEFAULT_VIDEO_RESOLUTION, getModelParamOptions, normalizeVideoResolution } from '@/utils/videoOptions'
 import {
   useWorkspaceId,
   useCurrentUser,
@@ -132,6 +132,7 @@ import { buildTaskCenterId, isTaskCenterTerminalStatus, useTaskCenterStore } fro
 import { sanitizeHotCopyPersistentDraft } from '@/utils/hotCopyPersistentDraft'
 import { sanitizePersistentMediaUrl, sanitizePersistentProjectVideoStore } from '@/utils/persistentMediaUrl'
 import { sanitizeTelemetryText } from '@/utils/observabilitySanitizer'
+import { getGenerationModelDurationOptions } from '@/components/smart/GenerationModelPicker'
 import { validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
 import { SMART_VIDEO_DURATIONS, parseDurationSeconds } from '@/utils/videoDurationValue'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
@@ -225,6 +226,8 @@ interface HotCopyJobContext {
   title: string
   prompt: string
   ratio: string
+  /** 本次生成锁定的出片分辨率；估价与提交共用同一个值。 */
+  resolution: string
   durationSec: number
   operationCode: HotCopyTaskOperation
   entryInitial?: Partial<HotCopyEntryPayload>
@@ -503,6 +506,7 @@ function buildEntrySnapshot(payload?: Partial<HotCopyEntryPayload> | null): Part
     text: String(payload.text || ''),
     ratio: String(payload.ratio || DEFAULT_RATIO),
     duration: String(payload.duration || `${DEFAULT_DURATION_SEC}s`),
+    resolution: String(payload.resolution || LEGACY_DEFAULT_VIDEO_RESOLUTION),
     ...(Number.isSafeInteger(Number(payload.modelVersionId)) && Number(payload.modelVersionId) > 0
       ? { modelVersionId: Number(payload.modelVersionId) }
       : {}),
@@ -745,6 +749,7 @@ async function persistHotCopyJobProgress(
             productAssetIds: nextProductAssetIds,
             genRatio: context.ratio,
             genDurationSec: context.durationSec,
+            genResolution: context.resolution,
             step: 1,
             maxReached: 1,
           })
@@ -1023,6 +1028,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       videoGenerations,
       genRatio,
       genDurationSec,
+      genResolution,
     }
     saveHotCopyDraft(ws, { ...base, ...partial }, options)
   })
@@ -1047,6 +1053,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   // 用户在入口选择的成片尺寸(画面比例)与时长(秒);默认与智能成片一致 16:9、10s。
   const [genRatio, setGenRatio] = useState(DEFAULT_RATIO)
   const [genDurationSec, setGenDurationSec] = useState(DEFAULT_DURATION_SEC)
+  // 用户在入口选择的出片分辨率;档位由所选 replicate 模型 schema 决定,默认沿用历史的 720p。
+  const [genResolution, setGenResolution] = useState(LEGACY_DEFAULT_VIDEO_RESOLUTION)
   // replicate 模型支持的比例选项(取自模型 params_schema 的 ratio 字段);供入口下拉只放模型真做得了的比例。
   const [ratioOptions, setRatioOptions] = useState<string[]>([])
   const selectedHotCopyModel = hotCopyModelCatalog.resolveModel(entryInitial?.modelVersionId)
@@ -1311,6 +1319,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     title?: string
     prompt?: string
     ratio?: string
+    resolution?: string
     durationSec?: number
     operationCode: HotCopyTaskOperation
     entryInitial?: Partial<HotCopyEntryPayload>
@@ -1331,6 +1340,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     title: String(args.title || projectName || '爆款复制项目'),
     prompt: String(args.prompt ?? basePrompt ?? ''),
     ratio: String(args.ratio || genRatio || DEFAULT_RATIO),
+    resolution: String(args.resolution || genResolution || LEGACY_DEFAULT_VIDEO_RESOLUTION),
     durationSec: Number(args.durationSec || genDurationSec || DEFAULT_DURATION_SEC) || DEFAULT_DURATION_SEC,
     operationCode: args.operationCode,
     entryInitial: args.entryInitial,
@@ -1974,6 +1984,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       title: String(draft?.projectName || '爆款复制项目'),
       prompt: String(draft?.basePrompt || ''),
       ratio: String(draft?.genRatio || DEFAULT_RATIO),
+      resolution: String(draft?.genResolution || LEGACY_DEFAULT_VIDEO_RESOLUTION),
       durationSec: Number(draft?.genDurationSec || DEFAULT_DURATION_SEC) || DEFAULT_DURATION_SEC,
       operationCode: 'video.replicate',
       entryInitial: draft?.entryInitial,
@@ -2286,6 +2297,9 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           const restoredNameTouched = Boolean(smart.nameTouched || localFallback?.nameTouched)
           const restoredGenDurationSec =
             parseDurationSeconds(smart.genDurationSec || localFallback?.genDurationSec) || DEFAULT_DURATION_SEC
+          const restoredGenResolution = String(
+            smart.genResolution || localFallback?.genResolution || LEGACY_DEFAULT_VIDEO_RESOLUTION,
+          )
           const restoredSourceDuration = resolveStoredSourceDuration(restoredSourceVideo.assetId, smart, localDraft)
           // 留存项目视频清单存档(归类记录),保存时原样写回,避免被本编辑器的草稿快照覆盖
           projectVideoStoreRef.current = obj && typeof obj === 'object' ? obj.projectVideoStore || null : null
@@ -2351,6 +2365,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           if (restoredIsGenerating && !restoredTaskId) setHotCopyPhase('素材准备中…')
           if (smart.genRatio || localFallback?.genRatio) setGenRatio(String(smart.genRatio || localFallback?.genRatio))
           setGenDurationSec(restoredGenDurationSec)
+          setGenResolution(restoredGenResolution)
           const t = String(proj?.title || proj?.name || '').trim()
           const restoredTitle = t || String(smart.projectName || localFallback?.projectName || '').trim()
           const restoredProjectName = repairLegacyHotCopyProjectName({
@@ -2394,6 +2409,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
             videoGenerations: restoredGenerations,
             genRatio: String(smart.genRatio || localFallback?.genRatio || DEFAULT_RATIO),
             genDurationSec: restoredGenDurationSec,
+            genResolution: restoredGenResolution,
           })
           if (restoredVersions.some((item) => Number(item.assetId || 0) > 0)) {
             void (async () => {
@@ -2540,6 +2556,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       }
       if (d.genRatio) setGenRatio(String(d.genRatio))
       setGenDurationSec(restoredGenDurationSec)
+      if (d.genResolution) setGenResolution(String(d.genResolution))
       // 同会话切回时优先订阅原 Promise；只有登记表不存在时才凭 taskId 恢复，避免同一任务重复轮询。
       const subscribed = pid > 0 && subscribeRunningVideo(pid, pendingTaskId)
       if (!subscribed && pendingTaskId > 0 && restoredIsGenerating) resumeVideoTask(ws, pendingTaskId)
@@ -2697,6 +2714,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       videoGenerations: draftVideoGenerations,
       genRatio,
       genDurationSec,
+      genResolution,
     })
   }, [
     isActiveProcessingGen,
@@ -2723,6 +2741,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     videoGenerations,
     genRatio,
     genDurationSec,
+    genResolution,
   ])
 
   // 素材恢复后在后台预读真实时长。生成按钮点击时优先命中该缓存；失败仍保留原来的点击时读取兜底。
@@ -2946,6 +2965,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         videoGenerations: snapshotGenerations,
         genRatio,
         genDurationSec,
+        genResolution,
         step,
         maxReached,
       },
@@ -3499,6 +3519,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       videoGenerations: draftVideoGenerations,
       genRatio,
       genDurationSec,
+      genResolution,
     })
     if (projectIdRef.current) void putHotCopyDraftToBackend(ws)
   })
@@ -3540,6 +3561,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     videoGenerations,
     genRatio,
     genDurationSec,
+    genResolution,
   ])
 
   // 生成记录(生成中/失败)变化 → 立即落后端,不等防抖:草稿/失败态即时出现在项目管理里。
@@ -3621,6 +3643,16 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     const opts = (getModelParamOptions(selectedHotCopyModel, 'ratio') || []).map(String).filter(Boolean)
     setRatioOptions(opts)
     if (opts.length) setGenRatio((current) => (opts.includes(current) ? current : opts[0]))
+    // 分辨率同样以所选模型 schema 为准：模型不支持当前档位时回退 720p 或其首个档位。
+    const resolutionOpts = [
+      ...(getModelParamOptions(selectedHotCopyModel, 'resolution') || []),
+      ...(getModelParamOptions(selectedHotCopyModel, 'size') || []),
+    ]
+      .map(String)
+      .filter(Boolean)
+    if (resolutionOpts.length) {
+      setGenResolution((current) => normalizeVideoResolution(current, resolutionOpts))
+    }
   }, [selectedHotCopyModel])
 
   // 提交前积分预估(estimate-cost):进入生成视频步、有源视频且非生成中时估一次(口径同「重新生成」replicate)。
@@ -3654,6 +3686,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         sourceVideoDurationSec: boundSourceVideoDurSec,
         referenceImageCount: selectedReferenceImageCount,
         ratio: genRatio,
+        resolution: genResolution,
         durationSec: genDurationSec,
       })
     } catch (error: any) {
@@ -3703,6 +3736,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     boundSourceVideoDurSec,
     selectedReferenceImageCount,
     genRatio,
+    genResolution,
     genDurationSec,
     selectedHotCopyModel,
   ])
@@ -4208,6 +4242,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         title: projectName,
         prompt: note || basePrompt,
         ratio: genRatio,
+        resolution: genResolution,
         durationSec: genDurationSec,
         operationCode: 'video.edit',
         entryInitial,
@@ -4234,6 +4269,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
             videoAssetId: fullVideo.assetId,
             prompt: editPrompt,
             ratio: genRatio,
+            resolution: genResolution,
             durationSec: genDurationSec,
             sourceVideoDurationSec: editSrcDur,
             modelPlanCandidates: plans,
@@ -4385,6 +4421,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         sourceVideoDurationSec: reSrcDur,
         referenceImageCount: recoveredProductAssetIds.slice(0, 9).length,
         ratio: genRatio,
+        resolution: genResolution,
         durationSec: genDurationSec,
       })
       if (Number(requestSnapshot.modelVersionId || 0) !== Number(entryBase?.modelVersionId || 0)) {
@@ -4445,6 +4482,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       title: projectName,
       prompt: replicatePrompt,
       ratio: genRatio,
+      resolution: genResolution,
       durationSec: genDurationSec,
       operationCode: 'video.replicate',
       entryInitial: recoveredEntryInitial,
@@ -4585,6 +4623,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     const nextSourceVideo = resolveHotCopySourceVideo(undefined, nextEntry)
     const nextProductAssetIds = resolveHotCopyProductAssetIds(undefined, nextEntry)
     const nextDurationSec = parseDurationSeconds(payload.duration) || DEFAULT_DURATION_SEC
+    const nextResolution = String(payload.resolution || LEGACY_DEFAULT_VIDEO_RESOLUTION)
     const nextRatio = String(payload.ratio || DEFAULT_RATIO)
     const sourceChanged =
       Number(nextSourceVideo.assetId || 0) !== Number(sourceVideo.assetId || 0) ||
@@ -4596,6 +4635,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     setProductAssetIds(nextProductAssetIds)
     setGenRatio(nextRatio)
     setGenDurationSec(nextDurationSec)
+    setGenResolution(nextResolution)
     if (sourceChanged) {
       setSourceVideoDurSec(0)
       setSourceVideoDurAssetId(0)
@@ -4605,9 +4645,15 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
 
   // 入口提交「做同款/生成视频」→ 需登录(免登录可进页面/上传,但生成需登录)
   const handleStart = (payload: HotCopyEntryPayload) => {
+    // 档位取自本次提交所选的 replicate 模型，与入口下拉同源：
+    // 入口允许选的秒数在这里必须能通过，模型支持 30 秒就不该被写死的 1–15 秒挡下。
     const durationValidation = validateCreativeDurationSelection(payload.text, payload.duration, {
-      supportedDurations: SMART_VIDEO_DURATIONS,
-      supportedDurationLabel: '1至15秒内的整数',
+      supportedDurations: getGenerationModelDurationOptions(
+        hotCopyModelCatalog.pickerGroups,
+        { 'video.replicate': payload.modelVersionId ?? null },
+        'video.replicate',
+        SMART_VIDEO_DURATIONS,
+      ),
     })
     if (!durationValidation.valid) {
       showToast(durationValidation.message, 'error')
@@ -4640,6 +4686,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         setVideoGenerations(normalizeGenRecords((d as any)?.videoGenerations))
         if (d?.genRatio) setGenRatio(String(d.genRatio))
         if (Number(d?.genDurationSec) > 0) setGenDurationSec(Number(d.genDurationSec))
+        if (d?.genResolution) setGenResolution(String(d.genResolution))
         showToast('检测到视频正在生成，已为你恢复进度', 'info')
         resumeVideoTask(ws, pendingTask)
       })
@@ -4784,6 +4831,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     // 采用用户在入口选择的成片尺寸/时长(默认 16:9、10s)
     const pickedRatio = payload.ratio || DEFAULT_RATIO
     const pickedDurSec = parseDurationSeconds(payload.duration) || DEFAULT_DURATION_SEC
+    const pickedResolution = String(payload.resolution || LEGACY_DEFAULT_VIDEO_RESOLUTION)
     const initialProjectTitle = (() => {
       const current = String(projectName || '').trim()
       if (current && !isUnnamedTitle(current)) return current
@@ -4795,6 +4843,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     })()
     setGenRatio(pickedRatio)
     setGenDurationSec(pickedDurSec)
+    setGenResolution(pickedResolution)
     setStarted(true)
     setStep(1)
     setMaxReached(1)
@@ -4858,6 +4907,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         videoGenerations: [],
         genRatio: pickedRatio, // 用本地刚算出的值(setState 异步,此刻 state 还没更新)
         genDurationSec: pickedDurSec,
+        genResolution: pickedResolution,
       })
     }
     beginPendingUiGeneration(generation)
@@ -5287,6 +5337,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                           workspaceId: ws,
                           prompt: editPrompt,
                           ratio: genRatio,
+                          resolution: genResolution,
                           durationSec: genDurationSec,
                           sourceVideoDurationSec,
                           modelPlanCandidates: plans,

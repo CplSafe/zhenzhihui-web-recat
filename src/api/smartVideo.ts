@@ -193,7 +193,7 @@ async function resolveVideoEditModel(args: {
  */
 function buildVideoEditParams(
   model: any,
-  args: { ratio?: string; durationSec?: number; sourceVideoDurationSec?: number },
+  args: { ratio?: string; durationSec?: number; sourceVideoDurationSec?: number; resolution?: string },
 ): Record<string, any> {
   const fields = getModelParamFields(model)
   if (!fields.length) return {}
@@ -202,8 +202,8 @@ function buildVideoEditParams(
     duration: args.durationSec,
     durationMode: 'exact',
     sourceVideoDuration: args.sourceVideoDurationSec,
-    // 720p 是旧默认而非用户显式选择；留空后由模型 schema 选 720p 或其首个支持值。
-    resolution: '',
+    // 用户在入口选择的分辨率；未选择时留空，由模型 schema 选 720p 或其首个支持值。
+    resolution: String(args.resolution || '').trim(),
     ratio: normalizeSeedanceRatio(args.ratio || '9:16'),
     generateAudio: shouldGenerateAudio(model),
   })
@@ -223,7 +223,13 @@ export interface VideoEditModelRequestCompilation {
  */
 export function compileVideoEditModelRequest(
   model: any,
-  args: { prompt?: string; ratio?: string; durationSec?: number; sourceVideoDurationSec?: number },
+  args: {
+    prompt?: string
+    ratio?: string
+    durationSec?: number
+    sourceVideoDurationSec?: number
+    resolution?: string
+  },
 ): VideoEditModelRequestCompilation {
   const modelVersionId = getBackendGenerationModelVersionId(model)
   if (!modelVersionId) throw new Error('已选择的视频修改模型无效，请重新选择')
@@ -290,7 +296,7 @@ export interface FullVideoModelRequestCompilation {
  */
 export function compileFullVideoModelRequest(
   model: any,
-  args: { shots: any[]; ratio?: string; referenceImageCount?: number },
+  args: { shots: any[]; ratio?: string; referenceImageCount?: number; resolution?: string },
 ): FullVideoModelRequestCompilation {
   const modelVersionId = getBackendGenerationModelVersionId(model)
   if (!modelVersionId) throw new Error('已选择的视频模型无效，请重新选择')
@@ -299,9 +305,20 @@ export function compileFullVideoModelRequest(
     throw new Error('已选择的模型不支持视频生成(video.generate)')
   }
 
+  const constraints = buildModelRestrictionSummary(model).constraints
   const duration = totalDurationSec(args.shots)
-  const durationValidation = validateSmartVideoDuration(duration)
-  if (!durationValidation.valid) {
+  const durationSeconds = parseDurationSeconds(duration)
+  if (durationSeconds === null) {
+    throw new Error('智能成片总时长无效，请调整分镜时长后重试')
+  }
+  // 时长以所选模型声明的档位为准：模型支持 30 秒时不能被前端的 1–15 秒挡下。
+  // 仅当模型没有声明任何时长约束时，才回落到智能成片默认的 1–15 秒整数。
+  if (constraints.duration) {
+    const durationConflicts = getModelConstraintConflicts(constraints, { durationSec: durationSeconds })
+    if (durationConflicts.length) {
+      throw new Error(`所选视频模型不支持当前总时长：${durationConflicts[0]}`)
+    }
+  } else if (!validateSmartVideoDuration(durationSeconds).valid) {
     throw new Error('智能成片总时长必须是 1 至 15 秒内的整数')
   }
 
@@ -313,7 +330,7 @@ export function compileFullVideoModelRequest(
     throw new Error('参考图数量无效，请重新准备分镜素材')
   }
 
-  const referenceImageConflicts = getModelConstraintConflicts(buildModelRestrictionSummary(model).constraints, {
+  const referenceImageConflicts = getModelConstraintConflicts(constraints, {
     referenceImageCount,
   })
   if (referenceImageConflicts.length) {
@@ -322,11 +339,11 @@ export function compileFullVideoModelRequest(
 
   const generateAudio = shouldGenerateAudio(model)
   const params = buildVideoGenerationParams(model, {
-    duration: durationValidation.seconds,
+    duration: durationSeconds,
     durationMode: 'exact',
     validateExactDuration: true,
-    // 未提供分辨率选择时让 schema 决定默认值；无 schema 的旧模型仍由通用构建器回退 720p。
-    resolution: '',
+    // 用户在入口选择的分辨率；未提供时让 schema 决定默认值，无 schema 的旧模型仍由通用构建器回退 720p。
+    resolution: String(args.resolution || '').trim(),
     ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
     generateAudio,
   })
@@ -345,8 +362,13 @@ export function buildTimelinePrompt(args: {
   basePrompt?: string
   ratio?: string
   style?: string
+  /** 真人成片的出镜身份约束正文；置于提示词最前，优先级高于时间线与广告描述。 */
+  identityConstraint?: string
 }): string {
-  const lines = ['请按照下面的时间线生成一条短视频广告,逐段对齐画面、旁白、字幕、音效。']
+  const lines: string[] = []
+  const identityConstraint = String(args.identityConstraint || '').trim()
+  if (identityConstraint) lines.push(identityConstraint)
+  lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面、旁白、字幕、音效。')
   if (args.basePrompt) lines.push(`广告描述:${args.basePrompt}`)
   let t = 0
   ;(args.shots || []).forEach((s, i) => {
@@ -382,6 +404,8 @@ export async function generateFullVideo(args: {
   shots: any[]
   basePrompt?: string
   ratio?: string
+  /** 用户在入口选择的出片分辨率；留空时由模型 schema 决定。 */
+  resolution?: string
   style?: string
   /** 所有分镜图的 asset_id(按镜头顺序;全部作为图生视频的参考帧) */
   imageAssetIds?: number[]
@@ -396,13 +420,24 @@ export async function generateFullVideo(args: {
   modelVersion?: any
   modelPlanCandidates?: string[]
   idempotencyKey?: string
+  /**
+   * 真人成片的出镜身份约束正文（见 utils/smartRealPerson）。
+   * 整片由分镜图驱动，身份主要靠参考帧继承，但运动生成过程仍可能漂；这里把约束显式写进提示词。
+   */
+  identityConstraint?: string
   /** 任务一创建就回调 task_id,供上层持久化(切路由/刷新后凭它续轮询,不重新生成) */
   onTask?: (taskId: number) => void
   /** 后端任务返回的真实进度；后端未提供进度时不回调。 */
   onProgress?: (progress: number) => void
 }): Promise<{ url: string; assetId: number }> {
   const prompt =
-    buildTimelinePrompt({ shots: args.shots, basePrompt: args.basePrompt, ratio: args.ratio, style: args.style }) +
+    buildTimelinePrompt({
+      shots: args.shots,
+      basePrompt: args.basePrompt,
+      ratio: args.ratio,
+      style: args.style,
+      identityConstraint: args.identityConstraint,
+    }) +
     (args.note ? `\n额外修改要求:${args.note}` : '') +
     (args.variationTotal && args.variationTotal > 1
       ? `\n变体要求:这是同一需求下的第 ${args.variationIndex || 1}/${args.variationTotal} 个不同版本。请保持脚本主线一致，但在构图、镜头运动、人物状态、细节节奏上给出明显不同的创意变体，避免与其他版本完全相同。`
@@ -416,6 +451,7 @@ export async function generateFullVideo(args: {
   const request = compileFullVideoModelRequest(model, {
     shots: args.shots,
     ratio: args.ratio,
+    resolution: args.resolution,
     referenceImageCount: imgIds.length,
   })
   // schema 未声明时继续使用 role:'image'；显式声明唯一角色时按模型要求下发。
@@ -508,6 +544,8 @@ export async function editFullVideo(args: {
   /** 修改提示 */
   prompt?: string
   ratio?: string
+  /** 用户在入口选择的出片分辨率；留空时由模型 schema 决定。 */
+  resolution?: string
   durationSec?: number
   /** 源视频真实时长(秒):video.edit 按它计费(优先于 duration),前端读源视频 HTML5 元数据得到 */
   sourceVideoDurationSec?: number
@@ -565,6 +603,8 @@ export async function estimateVideoEditCost(args: {
   workspaceId: number
   prompt?: string
   ratio?: string
+  /** 用户在入口选择的出片分辨率；必须与提交保持一致，保证「预估 = 实扣」。 */
+  resolution?: string
   durationSec?: number
   sourceVideoDurationSec?: number
   /** 用户显式选择的视频修改模型版本 ID。 */
@@ -593,6 +633,8 @@ export async function estimateFullVideoCost(args: {
   workspaceId: number
   shots: any[]
   ratio?: string
+  /** 用户在入口选择的出片分辨率；必须与提交保持一致，保证「预估 = 实扣」。 */
+  resolution?: string
   /** 用户显式选择的视频生成模型版本 ID。 */
   modelVersionId?: number
   /** 与 modelVersionId 对应的后端模型详情，用于保持估价与提交参数一致。 */
@@ -603,6 +645,7 @@ export async function estimateFullVideoCost(args: {
   const request = compileFullVideoModelRequest(model, {
     shots: args.shots,
     ratio: args.ratio,
+    resolution: args.resolution,
   })
   return estimateAiTaskCost({
     workspaceId: args.workspaceId,

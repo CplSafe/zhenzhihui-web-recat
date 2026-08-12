@@ -121,6 +121,24 @@ describe('model restriction metadata', () => {
     ])
   })
 
+  it('treats option values that differ only in spelling as the same tier', () => {
+    // 后端 HappyHorse 视频编辑模型把档位写成大写 720P/1080P，入口存的是小写 720p，
+    // 这只是拼写差异；按大小写严格比较会把它误报成「不在支持范围」，让用户无从调整。
+    const result = buildModelRestrictionSummary({
+      params_schema: {
+        fields: [
+          { name: 'resolution', options: ['720P', '1080P'] },
+          { name: 'ratio', options: ['16:9', '9:16'] },
+        ],
+      },
+    })
+
+    expect(getModelConstraintConflicts(result.constraints, { resolution: '720p', ratio: ' 9:16 ' })).toEqual([])
+    expect(getModelConstraintConflicts(result.constraints, { resolution: '480p' })).toEqual([
+      '当前分辨率 480p 不在支持范围 720P、1080P 内',
+    ])
+  })
+
   it('does not invent restrictions when the backend declares none', () => {
     expect(buildModelRestrictionSummary({ display_name: '后端模型名称' })).toEqual({
       messages: [],

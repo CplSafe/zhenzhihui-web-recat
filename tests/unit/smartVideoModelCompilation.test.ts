@@ -39,6 +39,75 @@ describe('compileFullVideoModelRequest', () => {
     expect(compiled.params).not.toHaveProperty('generateAudio')
   })
 
+  it('提交用户在入口选择的分辨率，模型不支持时直接报错而不是静默改档', () => {
+    const model = {
+      model_version_id: 901,
+      display_name: 'Seedance 2.0',
+      operation_codes: ['video.generate'],
+      params_schema: {
+        fields: [
+          { name: 'duration', options: [5, 10] },
+          { name: 'ratio', options: ['16:9'] },
+          { name: 'resolution', options: ['720p', '1080p'] },
+        ],
+      },
+    }
+    const args = { shots: [{ duration: '5s' }, { duration: '5s' }], ratio: '16:9', referenceImageCount: 2 }
+
+    expect(compileFullVideoModelRequest(model, { ...args, resolution: '1080p' }).params).toMatchObject({
+      resolution: '1080p',
+    })
+    // 未选择时沿用 schema 默认（这里是 720p），保持旧项目的出片规格不变。
+    expect(compileFullVideoModelRequest(model, args).params).toMatchObject({ resolution: '720p' })
+    expect(() => compileFullVideoModelRequest(model, { ...args, resolution: '4k' })).toThrow('不支持当前分辨率 4k')
+  })
+
+  it('lets the model decide the duration range instead of a hardcoded 1–15 seconds', () => {
+    // 模型声明 30 秒档位就必须能编译出请求：入口下拉允许选 30s，
+    // 走到这里再用写死的 1–15 秒拒绝，会让整条流程在最后一步断掉。
+    const model = {
+      model_version_id: 951,
+      display_name: 'Seedance 2.5',
+      operation_codes: ['video.generate'],
+      params_schema: {
+        fields: [
+          { name: 'duration', options: [5, 10, 15, 30] },
+          { name: 'ratio', options: ['16:9'] },
+        ],
+      },
+    }
+    const shots = [{ duration: '10s' }, { duration: '10s' }, { duration: '10s' }]
+
+    expect(compileFullVideoModelRequest(model, { shots, ratio: '16:9', referenceImageCount: 3 }).params).toMatchObject({
+      duration: 30,
+    })
+    // 模型没有的档位仍然拦下，且报错点名是模型不支持，而不是笼统的「必须 1 至 15 秒」。
+    expect(() =>
+      compileFullVideoModelRequest(model, {
+        shots: [{ duration: '10s' }, { duration: '11s' }],
+        ratio: '16:9',
+        referenceImageCount: 2,
+      }),
+    ).toThrow('所选视频模型不支持当前总时长')
+  })
+
+  it('falls back to the default 1–15 second range only when the model declares no duration', () => {
+    const model = {
+      model_version_id: 952,
+      display_name: '无时长声明的视频模型',
+      operation_codes: ['video.generate'],
+      params_schema: { fields: [{ name: 'ratio', options: ['16:9'] }] },
+    }
+
+    expect(() =>
+      compileFullVideoModelRequest(model, {
+        shots: [{ duration: '10s' }, { duration: '10s' }, { duration: '10s' }],
+        ratio: '16:9',
+        referenceImageCount: 3,
+      }),
+    ).toThrow('智能成片总时长必须是 1 至 15 秒内的整数')
+  })
+
   it('uses explicit reference role, supported resolution and disabled audio for a reference-video schema', () => {
     const compiled = compileFullVideoModelRequest(
       {

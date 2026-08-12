@@ -4,7 +4,10 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import {
   GenerationModelDropdown,
+  getGenerationModelDurationOptions,
+  getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
+  isDurationSupportedByGenerationModel,
   type GenerationModelGroup,
   type GenerationModelSelection,
 } from '@/components/smart/GenerationModelPicker'
@@ -297,5 +300,179 @@ describe('GenerationModelDropdown', () => {
         { ratio: '16:9', referenceImageCount: 3 },
       ),
     ).toEqual(['图生图模型「后端图生图模型」：当前参考图数量 3 不符合1–2 张'])
+  })
+
+  it('offers only the durations the selected video model declares', () => {
+    const fallback = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    // 模型声明了 options：入口默认档位让位于模型，即便档位数变少。
+    expect(getGenerationModelDurationOptions(groups, { 'video.generate': 201 }, 'video.generate', fallback)).toEqual([
+      5, 10, 15,
+    ])
+    // 未选模型时保持入口默认档位，不凭空缩小可选范围。
+    expect(getGenerationModelDurationOptions(groups, {}, 'video.generate', fallback)).toEqual(fallback)
+    // operation 不存在时同样回落默认档位。
+    expect(getGenerationModelDurationOptions(groups, { 'video.generate': 201 }, 'video.replicate', fallback)).toEqual(
+      fallback,
+    )
+  })
+
+  it('filters the entry durations by a declared range and never yields an empty list', () => {
+    const rangeGroups: GenerationModelGroup[] = [
+      {
+        key: 'video',
+        label: '生成视频',
+        subgroups: [
+          {
+            key: 'video.generate',
+            label: '视频生成模型',
+            models: [
+              { id: 401, name: '范围模型', constraints: { duration: { minimum: 4, maximum: 8 } } },
+              { id: 402, name: '越界模型', constraints: { duration: { minimum: 30 } } },
+            ],
+          },
+        ],
+      },
+    ]
+    expect(
+      getGenerationModelDurationOptions(rangeGroups, { 'video.generate': 401 }, 'video.generate', [1, 5, 9, 12]),
+    ).toEqual([5])
+    // 上下限把默认档位全部排除：保留默认档位而不是给出空下拉，冲突提示负责解释原因。
+    expect(
+      getGenerationModelDurationOptions(rangeGroups, { 'video.generate': 402 }, 'video.generate', [1, 5, 9, 12]),
+    ).toEqual([1, 5, 9, 12])
+  })
+
+  it('offers only the resolutions the selected video model declares', () => {
+    const fallback = ['480p', '720p', '1080p']
+    const resolutionGroups: GenerationModelGroup[] = [
+      {
+        key: 'video',
+        label: '生成视频',
+        subgroups: [
+          {
+            key: 'video.generate',
+            label: '视频生成模型',
+            models: [
+              { id: 501, name: '声明 resolution 的模型', constraints: { resolution: { options: ['720p', '1080p'] } } },
+              { id: 502, name: '只给简洁字段的模型', constraints: { resolutions: ['4k'] } },
+              { id: 503, name: '未声明分辨率的模型' },
+            ],
+          },
+        ],
+      },
+    ]
+
+    expect(
+      getGenerationModelResolutionOptions(resolutionGroups, { 'video.generate': 501 }, 'video.generate', fallback),
+    ).toEqual(['720p', '1080p'])
+    // 兼容只提供 resolutions 简洁字段的后端记录。
+    expect(
+      getGenerationModelResolutionOptions(resolutionGroups, { 'video.generate': 502 }, 'video.generate', fallback),
+    ).toEqual(['4k'])
+    // 模型未声明约束、未选模型或 operation 不匹配时，保持入口默认档位。
+    expect(
+      getGenerationModelResolutionOptions(resolutionGroups, { 'video.generate': 503 }, 'video.generate', fallback),
+    ).toEqual(fallback)
+    expect(getGenerationModelResolutionOptions(resolutionGroups, {}, 'video.generate', fallback)).toEqual(fallback)
+    expect(
+      getGenerationModelResolutionOptions(resolutionGroups, { 'video.generate': 501 }, 'video.replicate', fallback),
+    ).toEqual(fallback)
+  })
+})
+
+describe('video.edit duration is judged against the source video, not the target duration', () => {
+  // 生成模型支持 30 秒、视频修改模型只支持到 15 秒：真实后端目录里的能力落差。
+  const mixedGroups: GenerationModelGroup[] = [
+    {
+      key: 'video',
+      label: '生成视频',
+      subgroups: [
+        {
+          key: 'video.generate',
+          label: '视频生成模型',
+          models: [{ id: 201, name: '生成模型 2.5', constraints: { duration: { options: [5, 10, 15, 30] } } }],
+        },
+        {
+          key: 'video.edit',
+          label: '视频修改模型',
+          models: [
+            { id: 901, name: '修改模型', constraints: { duration: { minimum: 1, maximum: 15, required: true } } },
+          ],
+        },
+      ],
+    },
+  ]
+  const selection = { 'video.generate': 201, 'video.edit': 901 }
+
+  it('lets a 30s generation start even though the edit model tops out at 15s', () => {
+    // 源视频还不存在 → 修改模型本轮不参与时长校验，30 秒照常开工。
+    // 修改模型声明了 duration.required，这里也不能误报「要求提供时长」。
+    expect(getGenerationModelSelectionConflicts(mixedGroups, selection, { durationSec: 30 })).toEqual([])
+  })
+
+  it('reports the conflict once a real source video exceeds the edit model limit', () => {
+    expect(getGenerationModelSelectionConflicts(mixedGroups, selection, { sourceVideoDurationSec: 30 })).toEqual([
+      '视频修改模型「修改模型」：当前 30 秒不符合1–15 秒',
+    ])
+  })
+
+  it('accepts a source video inside the edit model limit', () => {
+    expect(
+      getGenerationModelSelectionConflicts(mixedGroups, selection, { durationSec: 30, sourceVideoDurationSec: 10 }),
+    ).toEqual([])
+  })
+
+  it('still validates the generation model against the target duration', () => {
+    expect(getGenerationModelSelectionConflicts(mixedGroups, selection, { durationSec: 7 })).toEqual([
+      '视频生成模型「生成模型 2.5」：当前 7 秒不在可选时长 5 秒、10 秒、15 秒、30 秒 内',
+    ])
+  })
+
+  it('warns instead of erroring when an estimate fails, and never blocks creation', async () => {
+    const user = userEvent.setup()
+    render(
+      <GenerationModelDropdown
+        groups={groups}
+        selected={{ 'responses.multimodal': 101 }}
+        onChange={vi.fn()}
+        estimateModelCost={() => Promise.reject(new Error('后端估价接口 500'))}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '生成模型，1/3 已选择' }))
+    const badge = await screen.findByText('暂无法预估，不影响创作')
+    // 具体报错留在悬浮提示里，面板上只给一句不吓人的说明
+    expect(badge).toHaveAttribute('title', '后端估价接口 500')
+    expect(screen.queryByText('预估失败')).not.toBeInTheDocument()
+  })
+
+  it('explains an unusable slot instead of estimating it', async () => {
+    const user = userEvent.setup()
+    const estimateModelCost = vi.fn().mockResolvedValue({ estimatedCost: 5, balance: 100, canAfford: true })
+    render(
+      <GenerationModelDropdown
+        groups={mixedGroups}
+        selected={selection}
+        onChange={vi.fn()}
+        estimateModelCost={estimateModelCost}
+        slotNotices={{ 'video.edit': '当前 30s 不适用，生成后不能修改' }}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '生成模型，2/2 已选择' }))
+    expect(screen.getByText('当前 30s 不适用，生成后不能修改')).toBeInTheDocument()
+    // 用不上的槽位不发预估请求，也就不会有「重新预估」这种需要用户处理的残留
+    await waitFor(() => expect(estimateModelCost).toHaveBeenCalled())
+    expect(estimateModelCost.mock.calls.every(([request]) => request.operationCode !== 'video.edit')).toBe(true)
+    expect(screen.queryByRole('button', { name: '重新预估' })).not.toBeInTheDocument()
+  })
+
+  it('answers whether a duration keeps the edit capability available', () => {
+    expect(isDurationSupportedByGenerationModel(mixedGroups, selection, 'video.edit', 30)).toBe(false)
+    expect(isDurationSupportedByGenerationModel(mixedGroups, selection, 'video.edit', 15)).toBe(true)
+    // 未选模型 / 时长未知 / operation 不存在时不替后端下结论，一律视为支持。
+    expect(isDurationSupportedByGenerationModel(mixedGroups, {}, 'video.edit', 30)).toBe(true)
+    expect(isDurationSupportedByGenerationModel(mixedGroups, selection, 'video.edit', null)).toBe(true)
+    expect(isDurationSupportedByGenerationModel(mixedGroups, selection, 'video.replicate', 30)).toBe(true)
   })
 })

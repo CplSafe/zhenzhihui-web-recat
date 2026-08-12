@@ -45,6 +45,12 @@ export interface GenerationModelDropdownProps {
   onRetry?: GenerationModelPickerProps['onRetry']
   /** 按当前入口参数预估单个模型执行一次所需积分。预估失败不会阻断模型选择。 */
   estimateModelCost?: (request: GenerationModelEstimateRequest) => Promise<GenerationModelEstimateResult>
+  /**
+   * 按 operation 给出的降级说明（如「当前 30s 不适用，生成后不能修改」）。
+   * 有说明的槽位不再发起积分预估——它本轮不会被执行，预估必然失败，
+   * 与其让用户看到一个红色的「预估失败」，不如直接说明为什么用不上。
+   */
+  slotNotices?: Record<string, string>
   /** 用户主动打开模型面板时刷新目录，使后台新上架模型无需整页刷新即可出现。 */
   onOpen?: () => void
   /** 入口提交期间可临时锁定选择，避免同一次创建混入两个模型快照。 */
@@ -116,25 +122,137 @@ function isRechargeRequiredError(message: string): boolean {
   return /套餐|会员|订阅|充值|暂无可用.*模型|没有可用.*模型/.test(message)
 }
 
-/** 返回入口当前画幅/时长与已选后端模型之间的冲突。 */
+/**
+ * 返回指定 operation 下「已选模型实际支持」的时长档位（秒，升序去重）。
+ *
+ * 档位只来自后端 params schema，不按模型名称猜测：
+ * - schema 给了 options → 直接采用，即便它超出入口默认档位（模型才是事实来源）；
+ * - schema 只给上下限 → 用上下限过滤入口默认档位；
+ * - 未声明约束或尚未选中模型 → 原样返回入口默认档位，避免前端凭空缩小可选范围。
+ *
+ * 显式传 operationCode 而不是扫描所有 video.* 槽位：一个入口的时长只提交给一个 operation，
+ * 跨槽位取交集会在两个模型档位不相交时得到空列表，反而让用户无从选择。
+ */
+export function getGenerationModelDurationOptions(
+  groups: GenerationModelGroup[],
+  selected: GenerationModelSelection,
+  operationCode: string,
+  fallback: readonly number[],
+): number[] {
+  const normalize = (values: readonly number[]) =>
+    Array.from(new Set(values.map(Number)))
+      .filter((seconds) => Number.isFinite(seconds) && seconds > 0)
+      .sort((left, right) => left - right)
+
+  const fallbackOptions = normalize(fallback)
+  const slot = slotsOf(groups).find((item) => item.key === operationCode)
+  const duration = slot ? selectedModelOf(slot, selected)?.constraints?.duration : undefined
+  if (!duration) return fallbackOptions
+
+  if (duration.options?.length) return normalize(duration.options)
+
+  const { minimum, maximum } = duration
+  if (minimum === undefined && maximum === undefined) return fallbackOptions
+  const ranged = fallbackOptions.filter(
+    (seconds) => (minimum === undefined || seconds >= minimum) && (maximum === undefined || seconds <= maximum),
+  )
+  // 上下限把默认档位全部排除时保留默认档位：宁可让冲突提示解释原因，也不给一个空下拉。
+  return ranged.length ? ranged : fallbackOptions
+}
+
+/**
+ * 返回指定 operation 下「已选模型实际支持」的分辨率档位（去重、保持后端顺序）。
+ *
+ * 与时长档位同源：只采信后端 params schema 声明的可选值；模型未声明或尚未选中时
+ * 返回入口默认档位，避免前端凭空缩小或杜撰模型并不支持的规格。
+ */
+export function getGenerationModelResolutionOptions(
+  groups: GenerationModelGroup[],
+  selected: GenerationModelSelection,
+  operationCode: string,
+  fallback: readonly string[],
+): string[] {
+  const normalize = (values: readonly string[]) =>
+    Array.from(new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean)))
+
+  const fallbackOptions = normalize(fallback)
+  const slot = slotsOf(groups).find((item) => item.key === operationCode)
+  const constraints = slot ? selectedModelOf(slot, selected)?.constraints : undefined
+  const options = constraints?.resolution?.options ?? constraints?.resolutions
+  if (!options?.length) return fallbackOptions
+
+  const normalized = normalize(options)
+  return normalized.length ? normalized : fallbackOptions
+}
+
+/**
+ * 指定 operation 的已选模型能否处理该时长（秒）。
+ *
+ * 复用同一套约束引擎，不另写一份时长规则。以下情况一律视为「支持」，
+ * 前端不替后端下结论：尚未选中模型、模型未声明时长约束、时长本身还未知。
+ *
+ * 典型用途：整片时长选到 30 秒时，提前判断生成后还能不能用「视频修改」。
+ */
+export function isDurationSupportedByGenerationModel(
+  groups: GenerationModelGroup[],
+  selected: GenerationModelSelection,
+  operationCode: string,
+  durationSec: number | null | undefined,
+): boolean {
+  const seconds = Number(durationSec)
+  if (!Number.isFinite(seconds) || seconds <= 0) return true
+  const slot = slotsOf(groups).find((item) => item.key === operationCode)
+  const model = slot ? selectedModelOf(slot, selected) : null
+  if (!model) return true
+  return getModelConstraintConflicts(model.constraints, { durationSec: seconds }).length === 0
+}
+
+/**
+ * 按源视频时长计费/执行的 operation：它们的时长约束针对「已有的那条视频」，
+ * 而不是本次要生成的目标时长。生成尚未发生时源视频还不存在，此时不参与时长校验。
+ */
+const SOURCE_VIDEO_DURATION_OPERATIONS = new Set(['video.edit'])
+
+export interface GenerationModelSelectionConstraintValues extends GenerationModelConstraintValues {
+  /**
+   * 源视频真实时长（秒）。只有 video.edit 这类「改已有视频」的 operation 读它；
+   * 留空表示源视频还不存在（生成前），该 operation 本轮不做时长校验。
+   */
+  sourceVideoDurationSec?: number
+}
+
+/**
+ * 返回入口当前画幅/时长与已选后端模型之间的冲突。
+ *
+ * 注意时长的两种口径：video.generate 校验「要生成多长」，video.edit 校验「被改的那条视频多长」。
+ * 早期版本对所有 video.* 槽位共用目标时长，导致「生成模型支持 30 秒、修改模型只支持 15 秒」
+ * 时在入口就被判定冲突、整个流程都开不了工——而视频修改是生成之后才可能用到的下游能力。
+ */
 export function getGenerationModelSelectionConflicts(
   groups: GenerationModelGroup[],
   selected: GenerationModelSelection,
-  values: GenerationModelConstraintValues,
+  values: GenerationModelSelectionConstraintValues,
 ): string[] {
   return slotsOf(groups).flatMap((slot) => {
     const model = selectedModelOf(slot, selected)
     if (!model) return []
-    const operationUsesDuration = slot.key.startsWith('video.')
-    const operationUsesRatio = slot.key.startsWith('video.') || slot.key.startsWith('image.')
-    const operationUsesReferenceImages = operationUsesDuration || slot.key.startsWith('image.')
+    const operationIsVideo = slot.key.startsWith('video.')
+    const usesSourceVideoDuration = SOURCE_VIDEO_DURATION_OPERATIONS.has(slot.key)
+    // 源视频时长未知时整个 durationSec 字段都不能下传：模型若声明 duration.required，
+    // 传 undefined 会被判成「要求提供时长」，同样把流程堵死。
+    const operationUsesDuration =
+      operationIsVideo && (!usesSourceVideoDuration || values.sourceVideoDurationSec !== undefined)
+    const operationUsesRatio = operationIsVideo || slot.key.startsWith('image.')
+    const operationUsesReferenceImages = operationIsVideo || slot.key.startsWith('image.')
     return getModelConstraintConflicts(model.constraints, {
-      ...(operationUsesDuration ? { durationSec: values.durationSec } : {}),
+      ...(operationUsesDuration
+        ? { durationSec: usesSourceVideoDuration ? values.sourceVideoDurationSec : values.durationSec }
+        : {}),
       ...(operationUsesRatio ? { ratio: values.ratio } : {}),
       ...(operationUsesReferenceImages && Object.prototype.hasOwnProperty.call(values, 'referenceImageCount')
         ? { referenceImageCount: values.referenceImageCount }
         : {}),
-      ...(operationUsesDuration
+      ...(operationIsVideo
         ? {
             ...(Object.prototype.hasOwnProperty.call(values, 'resolution') ? { resolution: values.resolution } : {}),
             ...(Object.prototype.hasOwnProperty.call(values, 'generateAudio')
@@ -158,6 +276,7 @@ export default function GenerationModelDropdown({
   onChange,
   onRetry,
   estimateModelCost,
+  slotNotices,
   onOpen,
   locked = false,
   lockedReason = '',
@@ -203,12 +322,20 @@ export default function GenerationModelDropdown({
   const estimateFingerprint = slots
     .map((slot) => `${slot.key}:${String(selectedModelOf(slot, selected)?.id ?? '')}`)
     .join('|')
+  // 调用方每次渲染都可能新建 slotNotices 对象，按内容指纹触发重估，避免无限重估。
+  const slotNoticeFingerprint = JSON.stringify(slotNotices || {})
+  const slotNoticesRef = useRef(slotNotices)
+  slotNoticesRef.current = slotNotices
 
   useEffect(() => {
     if (!open || !estimateModelCost) return
     const selectedSlots = slots
       .map((slot) => ({ slot, model: selectedModelOf(slot, selected) }))
-      .filter((item): item is { slot: ModelSelectionSlot; model: GenerationModelOption } => Boolean(item.model))
+      .filter(
+        (item): item is { slot: ModelSelectionSlot; model: GenerationModelOption } =>
+          // 本轮用不上的槽位不预估：省一次必然失败的请求，也不把它算进合计积分。
+          Boolean(item.model) && !slotNoticesRef.current?.[item.slot.key],
+      )
     if (!selectedSlots.length) {
       setEstimates({})
       return
@@ -250,7 +377,7 @@ export default function GenerationModelDropdown({
       window.clearTimeout(timer)
       estimateRequestRef.current += 1
     }
-  }, [estimateFingerprint, estimateModelCost, estimateVersion, open, selected, slots])
+  }, [estimateFingerprint, estimateModelCost, estimateVersion, open, selected, slotNoticeFingerprint, slots])
 
   const estimateItems = Object.values(estimates)
   const estimateLoading = estimateItems.some((item) => item.status === 'loading')
@@ -524,21 +651,32 @@ export default function GenerationModelDropdown({
                           {currentModel.description && (
                             <p className={styles.modelDescription}>{currentModel.description}</p>
                           )}
-                          {estimateModelCost && (
-                            <span
-                              className={`${styles.modelEstimate} ${
-                                estimates[slot.key]?.status === 'error' ? styles.modelEstimateError : ''
-                              }`}
-                            >
-                              {estimates[slot.key]?.status === 'loading'
-                                ? '正在预估…'
-                                : estimates[slot.key]?.status === 'success'
-                                  ? `预计 ${estimates[slot.key]?.estimatedCost ?? 0} 积分`
-                                  : estimates[slot.key]?.status === 'error'
-                                    ? '预估失败'
-                                    : '等待预估'}
-                            </span>
-                          )}
+                          {estimateModelCost &&
+                            (() => {
+                              // 预估失败不阻断创作，因此按提醒（黄）而非错误（红）呈现：
+                              // 红色会让用户以为必须先解决它才能继续，实际上只是这一项算不出来。
+                              const notice = slotNotices?.[slot.key] || ''
+                              const estimate = estimates[slot.key]
+                              const warned = Boolean(notice) || estimate?.status === 'error'
+                              const label = notice
+                                ? notice
+                                : estimate?.status === 'loading'
+                                  ? '正在预估…'
+                                  : estimate?.status === 'success'
+                                    ? `预计 ${estimate?.estimatedCost ?? 0} 积分`
+                                    : estimate?.status === 'error'
+                                      ? '暂无法预估，不影响创作'
+                                      : '等待预估'
+                              return (
+                                <span
+                                  className={`${styles.modelEstimate} ${warned ? styles.modelEstimateNotice : ''}`}
+                                  // 具体原因（后端返回的报错）留在悬浮提示里，不占用面板版面
+                                  title={notice || (estimate?.status === 'error' ? estimate?.message : undefined)}
+                                >
+                                  {label}
+                                </span>
+                              )
+                            })()}
                         </div>
                       )}
                     </div>
