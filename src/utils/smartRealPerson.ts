@@ -10,6 +10,51 @@ export interface SmartRealPersonReference {
   assetStatus: string
 }
 
+const REAL_PERSON_IDENTITY_PROMPT_MARKER = '【真人身份强约束'
+
+const REAL_PERSON_IDENTITY_INSTRUCTION = [
+  '第一张参考图是已授权真人的唯一身份基准',
+  '生成结果必须是参考图中的同一个人，并在所有镜头中保持身份一致',
+  '必须严格保留其脸型、头骨轮廓、五官比例、眼睛、鼻子、嘴唇、眉形、肤色、发际线和可识别身份特征',
+  '保持真实自然的人脸纹理与年龄特征，不做美型、网红脸或卡通化处理',
+  '只允许改变场景、服装、姿势、光线和镜头构图',
+  '禁止换脸、混合其他人的脸、身份漂移、改变年龄、改变性别或重新设计五官',
+].join('；')
+
+/**
+ * 真人图必须始终占据参考图第一位。模型通常按输入顺序分配参考权重；若真人素材
+ * 已经出现在后续位置，也必须先移除再置顶，避免被场景图或上一帧稀释身份特征。
+ */
+export function prioritizeRealPersonReferenceAssetIds(assetIds: number[], realPersonAssetId: number): number[] {
+  const identityId = Number(realPersonAssetId || 0)
+  const normalized = Array.from(
+    new Set(assetIds.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0 && id !== identityId)),
+  )
+  return identityId > 0 ? [identityId, ...normalized] : normalized
+}
+
+/** 为真人图生图注入不可被普通润色覆盖的身份保持约束。 */
+export function buildRealPersonIdentityPrompt(prompt: string, personName?: string): string {
+  const identityLabel = String(personName || '').trim()
+  const originalPrompt = String(prompt || '').trim()
+  const markerIndex = originalPrompt.indexOf(REAL_PERSON_IDENTITY_PROMPT_MARKER)
+  const promptWithoutExistingConstraint =
+    markerIndex < 0
+      ? originalPrompt
+      : originalPrompt
+          .slice(markerIndex)
+          .split('；')
+          .slice(REAL_PERSON_IDENTITY_INSTRUCTION.split('；').length)
+          .join('；')
+          .trim()
+  return [
+    `【真人身份强约束${identityLabel ? `：${identityLabel}` : ''}】${REAL_PERSON_IDENTITY_INSTRUCTION}`,
+    promptWithoutExistingConstraint,
+  ]
+    .filter(Boolean)
+    .join('；')
+}
+
 const VERIFIED_PERSON_STATUSES = new Set(['verified', 'approved', 'succeeded', 'success'])
 const READY_ASSET_STATUSES = new Set(['ready', 'active', 'verified', 'approved', 'succeeded', 'success', 'completed'])
 

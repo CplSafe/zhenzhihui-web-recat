@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { CheckCircleFilled, CloseOutlined, ControlOutlined, DownOutlined, LoadingOutlined } from '@ant-design/icons'
+import { openMemberCenter } from '@/stores/ui'
 import { getModelConstraintConflicts, type GenerationModelConstraintValues } from '@/utils/modelRestrictions'
 import {
   getMissingGenerationModelKeys,
@@ -24,6 +25,17 @@ interface ModelSelectionSlot {
   models: GenerationModelOption[]
 }
 
+export interface GenerationModelEstimateResult {
+  estimatedCost: number
+  balance?: number
+  canAfford?: boolean
+}
+
+export interface GenerationModelEstimateRequest {
+  operationCode: string
+  modelVersionId: GenerationModelId
+}
+
 export interface GenerationModelDropdownProps {
   groups: GenerationModelGroup[]
   selected: GenerationModelSelection
@@ -31,6 +43,8 @@ export interface GenerationModelDropdownProps {
   error?: GenerationModelErrorState
   onChange: GenerationModelPickerProps['onChange']
   onRetry?: GenerationModelPickerProps['onRetry']
+  /** 按当前入口参数预估单个模型执行一次所需积分。预估失败不会阻断模型选择。 */
+  estimateModelCost?: (request: GenerationModelEstimateRequest) => Promise<GenerationModelEstimateResult>
   /** 用户主动打开模型面板时刷新目录，使后台新上架模型无需整页刷新即可出现。 */
   onOpen?: () => void
   /** 入口提交期间可临时锁定选择，避免同一次创建混入两个模型快照。 */
@@ -97,6 +111,11 @@ function readError(state: GenerationModelErrorState | undefined, slot: ModelSele
   return state?.[slot.key] || state?.[slot.groupKey] || ''
 }
 
+/** 区分“目录加载失败”和“当前套餐没有可用模型”，避免把充值问题误报为系统故障。 */
+function isRechargeRequiredError(message: string): boolean {
+  return /套餐|会员|订阅|充值|暂无可用.*模型|没有可用.*模型/.test(message)
+}
+
 /** 返回入口当前画幅/时长与已选后端模型之间的冲突。 */
 export function getGenerationModelSelectionConflicts(
   groups: GenerationModelGroup[],
@@ -138,6 +157,7 @@ export default function GenerationModelDropdown({
   error,
   onChange,
   onRetry,
+  estimateModelCost,
   onOpen,
   locked = false,
   lockedReason = '',
@@ -153,6 +173,20 @@ export default function GenerationModelDropdown({
   const panelId = useId()
   const [open, setOpen] = useState(false)
   const [panelStyle, setPanelStyle] = useState<CSSProperties>()
+  const [estimateVersion, setEstimateVersion] = useState(0)
+  const [estimates, setEstimates] = useState<
+    Record<
+      string,
+      {
+        status: 'loading' | 'success' | 'error'
+        estimatedCost?: number
+        balance?: number
+        canAfford?: boolean
+        message?: string
+      }
+    >
+  >({})
+  const estimateRequestRef = useRef(0)
   const slots = useMemo(() => slotsOf(groups), [groups])
   const missingKeys = useMemo(() => getMissingGenerationModelKeys(groups, selected), [groups, selected])
   const selectedCount = slots.filter((slot) => selectedModelOf(slot, selected)).length
@@ -160,10 +194,77 @@ export default function GenerationModelDropdown({
   const hasConflict = conflicts.length > 0
   const globalLoading = typeof loading === 'boolean' && loading
   const globalError = typeof error === 'string' ? error : ''
+  const rechargeRequired = Boolean(globalError) && isRechargeRequiredError(globalError)
   const closeAndRestoreFocus = useCallback(() => {
     setOpen(false)
     requestAnimationFrame(() => triggerRef.current?.focus())
   }, [])
+
+  const estimateFingerprint = slots
+    .map((slot) => `${slot.key}:${String(selectedModelOf(slot, selected)?.id ?? '')}`)
+    .join('|')
+
+  useEffect(() => {
+    if (!open || !estimateModelCost) return
+    const selectedSlots = slots
+      .map((slot) => ({ slot, model: selectedModelOf(slot, selected) }))
+      .filter((item): item is { slot: ModelSelectionSlot; model: GenerationModelOption } => Boolean(item.model))
+    if (!selectedSlots.length) {
+      setEstimates({})
+      return
+    }
+
+    const requestId = ++estimateRequestRef.current
+    setEstimates(Object.fromEntries(selectedSlots.map(({ slot }) => [slot.key, { status: 'loading' as const }])))
+    const timer = window.setTimeout(() => {
+      void Promise.all(
+        selectedSlots.map(async ({ slot, model }) => {
+          try {
+            const result = await estimateModelCost({ operationCode: slot.key, modelVersionId: model.id })
+            return [
+              slot.key,
+              {
+                status: 'success' as const,
+                estimatedCost: Math.max(0, Number(result.estimatedCost) || 0),
+                balance: Number.isFinite(Number(result.balance)) ? Number(result.balance) : undefined,
+                canAfford: result.canAfford,
+              },
+            ] as const
+          } catch (error) {
+            return [
+              slot.key,
+              {
+                status: 'error' as const,
+                message: error instanceof Error ? error.message : '暂时无法预估',
+              },
+            ] as const
+          }
+        }),
+      ).then((results) => {
+        if (requestId !== estimateRequestRef.current) return
+        setEstimates(Object.fromEntries(results))
+      })
+    }, 260)
+
+    return () => {
+      window.clearTimeout(timer)
+      estimateRequestRef.current += 1
+    }
+  }, [estimateFingerprint, estimateModelCost, estimateVersion, open, selected, slots])
+
+  const estimateItems = Object.values(estimates)
+  const estimateLoading = estimateItems.some((item) => item.status === 'loading')
+  const estimateFailed = estimateItems.some((item) => item.status === 'error')
+  const estimateTotal = estimateItems.reduce(
+    (total, item) => total + (item.status === 'success' ? Number(item.estimatedCost) || 0 : 0),
+    0,
+  )
+  const estimateBalance = estimateItems.find(
+    (item) => item.status === 'success' && Number.isFinite(item.balance),
+  )?.balance
+  const estimateCanAfford =
+    !estimateItems.some((item) => item.status === 'success' && item.canAfford === false) &&
+    (estimateBalance == null || estimateTotal <= estimateBalance)
 
   /** 将面板挂到 body 并限制在可视区域内，彻底绕开任务栏和入口滚动容器的 overflow 裁切。 */
   const updatePanelPosition = useCallback(() => {
@@ -248,7 +349,9 @@ export default function GenerationModelDropdown({
   const triggerText = globalLoading
     ? '模型加载中'
     : globalError
-      ? '模型不可用'
+      ? rechargeRequired
+        ? '需要充值'
+        : '模型不可用'
       : locked
         ? `模型处理中 ${selectedCount}/${slots.length}`
         : complete
@@ -327,11 +430,37 @@ export default function GenerationModelDropdown({
               </div>
             ) : globalError ? (
               <div className={`${styles.globalState} ${styles.error}`} role="alert">
-                <span>{globalError}</span>
-                {onRetry && (
-                  <button type="button" onClick={() => onRetry()}>
-                    重新加载
-                  </button>
+                {rechargeRequired ? (
+                  <div className={styles.rechargeState}>
+                    <strong>当前套餐暂无可用模型</strong>
+                    <span>充值或开通会员后，即可选择模型并开始创作。</span>
+                    <div className={styles.stateActions}>
+                      <button
+                        type="button"
+                        className={styles.primaryStateAction}
+                        onClick={() => {
+                          closeAndRestoreFocus()
+                          openMemberCenter()
+                        }}
+                      >
+                        去充值
+                      </button>
+                      {onRetry && (
+                        <button type="button" onClick={() => onRetry()}>
+                          我已充值，重新加载
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <span>{globalError}</span>
+                    {onRetry && (
+                      <button type="button" onClick={() => onRetry()}>
+                        重新加载
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             ) : (
@@ -395,12 +524,62 @@ export default function GenerationModelDropdown({
                           {currentModel.description && (
                             <p className={styles.modelDescription}>{currentModel.description}</p>
                           )}
+                          {estimateModelCost && (
+                            <span
+                              className={`${styles.modelEstimate} ${
+                                estimates[slot.key]?.status === 'error' ? styles.modelEstimateError : ''
+                              }`}
+                            >
+                              {estimates[slot.key]?.status === 'loading'
+                                ? '正在预估…'
+                                : estimates[slot.key]?.status === 'success'
+                                  ? `预计 ${estimates[slot.key]?.estimatedCost ?? 0} 积分`
+                                  : estimates[slot.key]?.status === 'error'
+                                    ? '预估失败'
+                                    : '等待预估'}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
                   )
                 })}
               </div>
+            )}
+
+            {!globalLoading && !globalError && complete && estimateModelCost && (
+              <section className={styles.estimateSummary} aria-live="polite" aria-label="模型费用预估">
+                <div className={styles.estimateSummaryTop}>
+                  <div>
+                    <strong>模型参考预估</strong>
+                    <span>当前配置下，各模型分别执行 1 次</span>
+                  </div>
+                  <div className={styles.estimateTotal}>
+                    {estimateLoading ? (
+                      <span>
+                        <LoadingOutlined spin aria-hidden="true" /> 正在计算
+                      </span>
+                    ) : (
+                      <>
+                        <b>{estimateTotal}</b>
+                        <span>积分</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className={styles.estimateSummaryBottom}>
+                  <span>
+                    {estimateBalance == null
+                      ? '实际消耗以镜头数、生成次数及最终结算为准'
+                      : `当前余额 ${estimateBalance} 积分${estimateCanAfford ? '' : '，余额不足'}`}
+                  </span>
+                  {estimateFailed && (
+                    <button type="button" onClick={() => setEstimateVersion((value) => value + 1)}>
+                      重新预估
+                    </button>
+                  )}
+                </div>
+              </section>
             )}
 
             {!globalLoading && !globalError && (

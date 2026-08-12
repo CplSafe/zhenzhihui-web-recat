@@ -32,6 +32,8 @@ import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 // banner 数据走 SWR 缓存(先返缓存秒出、后台刷新);切换前预取相邻媒体,见下方接入处。
 import { swrFetch, peekCache } from '@/utils/swrCache'
 import { preloadMedia, type MediaItem } from '@/utils/mediaPreload'
+import { createIpDemand, getCommunityIp, listCommunityIps, type CommunityIpProfile } from '@/api/communityIp'
+import { useToast } from '@/composables/useToast'
 
 /** 首页轮播数据的 SWR 缓存键 */
 const BANNERS_CACHE_KEY = 'home-banners'
@@ -314,6 +316,23 @@ const TABS = [
 
 const HOME_HISTORY_LIMIT = 20
 const HOME_TEMPLATE_LIMIT = 20
+
+type IpProfile = CommunityIpProfile
+
+function formatFollowers(value: number): string {
+  if (value >= 10000) return `${(value / 10000).toFixed(value % 10000 ? 1 : 0)}w`
+  return String(value)
+}
+
+/** 后端未返回头像时使用轻量占位，避免把大尺寸演示图片打入首屏产物。 */
+function IpAvatar({ profile }: { profile: IpProfile }) {
+  if (profile.avatar) return <img src={profile.avatar} alt="" />
+  return (
+    <span className="home__ip-avatar-fallback" aria-hidden="true">
+      {profile.name.trim().slice(0, 1).toLocaleUpperCase() || 'IP'}
+    </span>
+  )
+}
 
 /** 按标题、风格以及后端配置的分类/标签/关键词过滤首页模板。 */
 export function filterHomeTemplates(items: TemplateItem[], keyword: string): TemplateItem[] {
@@ -612,6 +631,7 @@ export default function HomeView() {
   const navigate = useNavigate()
   const workspaceId = useWorkspaceId()
   const requireAuth = useRequireAuth()
+  const { showToast } = useToast()
   const prefersReducedMotion = usePrefersReducedMotion()
   const { isAuthenticated } = useAuth()
   const currentUser = useCurrentUser()
@@ -621,6 +641,16 @@ export default function HomeView() {
   const [apiBanners, setApiBanners] = useState<Banner[] | null>(() => peekCache<Banner[]>(BANNERS_CACHE_KEY) ?? null)
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
   const [keyword, setKeyword] = useState('')
+  const [ipSort, setIpSort] = useState<
+    keyof Pick<IpProfile, 'category' | 'contentType' | 'followers' | 'averageOrderValue'> | ''
+  >('')
+  const [selectedIp, setSelectedIp] = useState<IpProfile | null>(null)
+  const [ipProfiles, setIpProfiles] = useState<IpProfile[]>([])
+  const [ipLoading, setIpLoading] = useState(false)
+  const [ipError, setIpError] = useState('')
+  const [ipSubmitting, setIpSubmitting] = useState(false)
+  const [ipRequirement, setIpRequirement] = useState('')
+  const [ipProductImages, setIpProductImages] = useState<string[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   // 案例库点击放大预览(与 /templates 页一致;外链 OSS 视频,弹窗不带 crossOrigin)
   const [watching, setWatching] = useState<{ url: string; poster: string } | null>(null)
@@ -712,6 +742,91 @@ export default function HomeView() {
   }, [activeTab])
 
   const keywordTrim = keyword.trim()
+
+  useEffect(() => {
+    if (activeTab !== 'ip') return
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      setIpLoading(true)
+      setIpError('')
+      listCommunityIps({ query: keywordTrim, limit: 100, signal: controller.signal })
+        .then(({ items }) => setIpProfiles(items))
+        .catch((error: any) => {
+          if (error?.name !== 'AbortError') setIpError(error?.message || 'IP 列表加载失败')
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setIpLoading(false)
+        })
+    }, 250)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [activeTab, keywordTrim])
+
+  const visibleIpProfiles = useMemo(() => {
+    const normalized = keywordTrim.toLocaleLowerCase()
+    const items = normalized
+      ? ipProfiles.filter((profile) =>
+          [profile.name, profile.category, profile.contentType].some((value) =>
+            value.toLocaleLowerCase().includes(normalized),
+          ),
+        )
+      : [...ipProfiles]
+    if (!ipSort) return items
+    return items.sort((a, b) => {
+      const left = a[ipSort]
+      const right = b[ipSort]
+      return typeof left === 'number' && typeof right === 'number'
+        ? right - left
+        : String(left).localeCompare(String(right), 'zh-CN')
+    })
+  }, [ipProfiles, ipSort, keywordTrim])
+
+  const openIpPanel = useCallback(async (profile: IpProfile) => {
+    setSelectedIp(profile)
+    try {
+      const detail = await getCommunityIp(profile.id)
+      setSelectedIp((current) => (current?.id === profile.id ? { ...profile, ...detail } : current))
+    } catch {
+      // 列表数据足以打开面板；详情读取失败不阻断用户填写需求。
+    }
+  }, [])
+
+  const handleIpProductUpload = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files || []).slice(0, Math.max(0, 3 - ipProductImages.length))
+      if (!files.length) return
+      setIpProductImages((current) => [...current, ...files.map((file) => URL.createObjectURL(file))].slice(0, 3))
+      event.target.value = ''
+    },
+    [ipProductImages.length],
+  )
+
+  const closeIpPanel = useCallback(() => {
+    setSelectedIp(null)
+    setIpRequirement('')
+    setIpProductImages((current) => {
+      current.forEach((url) => URL.revokeObjectURL(url))
+      return []
+    })
+  }, [])
+
+  const submitIpDemand = useCallback(() => {
+    if (!selectedIp || !ipRequirement.trim() || ipSubmitting) return
+    requireAuth(async () => {
+      setIpSubmitting(true)
+      try {
+        await createIpDemand(selectedIp, ipRequirement)
+        showToast('需求草稿已创建', 'success')
+        closeIpPanel()
+      } catch (error: any) {
+        showToast(error?.message || '需求创建失败，请稍后重试', 'error')
+      } finally {
+        setIpSubmitting(false)
+      }
+    })
+  }, [closeIpPanel, ipRequirement, ipSubmitting, requireAuth, selectedIp, showToast])
 
   // 按关键词过滤模板(比例筛选 chips 已按设计稿移除)
   const filteredTemplates = useMemo(() => {
@@ -1063,7 +1178,59 @@ export default function HomeView() {
                   <div className="home__placeholder">暂无生成视频</div>
                 )
               ) : activeTab === 'ip' ? (
-                <div className="home__placeholder">IP 功能敬请期待</div>
+                ipLoading ? (
+                  <div className="home__placeholder">正在加载 IP 创作者...</div>
+                ) : ipError ? (
+                  <div className="home__placeholder">{ipError}</div>
+                ) : (
+                  <div className="home__ip-table" role="table" aria-label="IP 列表">
+                    <div className="home__ip-row home__ip-row--head" role="row">
+                      <span role="columnheader">名称</span>
+                      {(
+                        [
+                          ['category', '主推类目'],
+                          ['contentType', '内容类型'],
+                          ['followers', '粉丝数'],
+                          ['averageOrderValue', '平均客单价'],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          role="columnheader"
+                          className={ipSort === key ? 'is-active' : ''}
+                          onClick={() => setIpSort((current) => (current === key ? '' : key))}
+                          aria-label={`按${label}排序`}
+                        >
+                          {label}
+                          <span aria-hidden="true">⌄</span>
+                        </button>
+                      ))}
+                    </div>
+                    {visibleIpProfiles.length ? (
+                      visibleIpProfiles.map((profile) => (
+                        <button
+                          type="button"
+                          className="home__ip-row home__ip-row--body"
+                          role="row"
+                          key={profile.id}
+                          onClick={() => openIpPanel(profile)}
+                        >
+                          <span className="home__ip-person" role="cell">
+                            <IpAvatar profile={profile} />
+                            <strong>{profile.name}</strong>
+                          </span>
+                          <span role="cell">{profile.category}</span>
+                          <span role="cell">{profile.contentType}</span>
+                          <span role="cell">{formatFollowers(profile.followers)}</span>
+                          <span role="cell">{profile.averageOrderValue}元</span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="home__placeholder">没有找到匹配的 IP</div>
+                    )}
+                  </div>
+                )
               ) : templateLoading ? (
                 <div className="home__tpl-skeleton">
                   {Array.from({ length: 8 }).map((_, i) => (
@@ -1106,6 +1273,66 @@ export default function HomeView() {
 
       {/* 案例库点击放大预览(外链 OSS、无 CORS 头 → 不带 crossOrigin,否则卡 0:00) */}
       <VideoPreviewModal src={watching?.url || ''} poster={watching?.poster} onClose={() => setWatching(null)} />
+
+      {selectedIp && (
+        <div className="home__ip-modal-mask" role="presentation" onMouseDown={closeIpPanel}>
+          <section
+            className="home__ip-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ip-panel-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button type="button" className="home__ip-modal-close" onClick={closeIpPanel} aria-label="关闭">
+              ×
+            </button>
+            <div className="home__ip-modal-profile">
+              <IpAvatar profile={selectedIp} />
+              <div>
+                <strong id="ip-panel-title">{selectedIp.name}</strong>
+                <span>
+                  {selectedIp.category} · {selectedIp.contentType}
+                </span>
+              </div>
+            </div>
+            <h3>添加产品信息</h3>
+            <div className="home__ip-products">
+              {ipProductImages.map((url, index) => (
+                <div className="home__ip-product" key={url}>
+                  <img src={url} alt={`产品图片 ${index + 1}`} />
+                  <button
+                    type="button"
+                    onClick={() => setIpProductImages((items) => items.filter((item) => item !== url))}
+                    aria-label="移除图片"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              {ipProductImages.length < 3 && (
+                <label className="home__ip-product-add">
+                  <span>＋</span>
+                  <small>添加图片</small>
+                  <input type="file" accept="image/*" multiple onChange={handleIpProductUpload} />
+                </label>
+              )}
+            </div>
+            <h3>添加制作需求</h3>
+            <textarea
+              value={ipRequirement}
+              onChange={(event) => setIpRequirement(event.target.value.slice(0, 2000))}
+              placeholder="请详细描述你的制作需求..."
+              aria-label="制作需求"
+            />
+            <div className="home__ip-modal-footer">
+              <span>{ipRequirement.length}/2000</span>
+              <button type="button" disabled={!ipRequirement.trim() || ipSubmitting} onClick={submitIpDemand}>
+                {ipSubmitting ? '提交中...' : '确定'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   )
 }

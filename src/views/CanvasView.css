@@ -1,0 +1,1027 @@
+.canvas-view {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background: #f8f9fa;
+}
+
+/* 固定底部面板 */
+.canvas-panel-area {
+  position: fixed;
+  bottom: clamp(42px, 8vh, 108px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+}
+
+/* 节点顶部操作胶囊组 — 图片/视频节点专属，与左右侧连接点图标同款交互（选中/悬停出现）
+   组内可含多个胶囊按钮（图片有内容：替换|下载；视频有内容：下载；无内容：上传） */
+.canvas-node-upload-group {
+  position: absolute;
+  /* 水平居中，且更靠上（加大与节点顶部的间距）；节点头部位于左上角，二者横向/纵向均错开 */
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 34px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.canvas-node-upload-group[data-visible='true'] {
+  opacity: 1;
+  pointer-events: auto;
+  /* 从下向上渐入：出现时从节点上方较低处滑到最终位置 */
+  transform: translateX(-50%) translateY(6px);
+  animation: canvas-upload-btn-rise 0.3s ease-out both;
+}
+
+/* 鼠标经过节点时也展示基础操作，避免必须先选中才能发现删除入口。 */
+.canvas-default-node:hover .canvas-node-upload-group {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.canvas-node-upload-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 2px solid #999;
+  border-radius: 999px;
+  background: #fff;
+  color: #666;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: calc(12px * var(--canvas-readable-text-scale, 1));
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.canvas-node-upload-btn:hover {
+  color: #5767e5;
+  border-color: #5767e5;
+  background: #f4f6ff;
+  box-shadow: 0 3px 10px rgba(87, 103, 229, 0.25);
+}
+
+.canvas-node-delete-btn {
+  color: #b34a4a;
+  border-color: rgb(179 74 74 / 55%);
+}
+
+.canvas-node-delete-btn:hover {
+  color: #fff;
+  border-color: #d14343;
+  background: #d14343;
+  box-shadow: 0 3px 10px rgb(209 67 67 / 24%);
+}
+
+.canvas-node-delete-btn:focus-visible {
+  outline: 3px solid rgb(209 67 67 / 22%);
+  outline-offset: 2px;
+}
+
+.canvas-node-upload-btn:active {
+  transform: scale(0.95);
+}
+
+.canvas-node-upload-btn__label {
+  font-weight: 600;
+}
+
+/* 从下向上渐入动画（胶囊组水平居中，动画仅在垂直方向滑移） */
+@keyframes canvas-upload-btn-rise {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(6px);
+  }
+}
+
+/* 参考选择横幅 — 居中置顶 */
+.canvas-pick-banner {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: #5767e5;
+  color: #fff;
+  border-radius: 20px;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 14px;
+  box-shadow: 0 2px 12px rgba(87, 103, 229, 0.3);
+}
+
+.canvas-pick-banner__text {
+  white-space: nowrap;
+}
+
+.canvas-pick-banner__exit {
+  padding: 4px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: transparent;
+  color: #fff;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'PingFang SC', sans-serif;
+  transition: background 0.15s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+}
+
+/* 参考选择模式：不可选节点灰化（selectable:false 阻止选中，视觉 dim 但保留点击事件） */
+.react-flow__node.is-ref-disabled {
+  opacity: 0.35 !important;
+  filter: grayscale(0.6);
+}
+
+/* 拖线中：不能作为连线目标的节点灰化（与参考选择模式视觉一致，仍保留事件以显示拒绝反馈） */
+.react-flow__node.is-connect-disabled {
+  opacity: 0.35 !important;
+  filter: grayscale(0.6);
+}
+
+/* ── 新节点渐入动画 ── */
+/* wrapper 层只做透明度淡入：transform 由 React Flow 内联控制节点定位，不能覆盖 */
+.react-flow__node.is-node-entering {
+  animation: canvas-node-fade-in 0.35s ease-out;
+}
+
+@keyframes canvas-node-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 节点内容层做「缩放 + 上移」生长动效，不影响节点定位 */
+.react-flow__node.is-node-entering .canvas-default-node {
+  animation: canvas-node-pop 0.35s ease-out;
+}
+
+@keyframes canvas-node-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.canvas-brand {
+  position: absolute;
+  top: 28px;
+  left: 28px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.canvas-brand-logo {
+  width: 50px;
+  height: 50px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.canvas-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.canvas-brand-name {
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+  line-height: 1;
+}
+
+.canvas-brand-saved {
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  color: #333;
+}
+
+/* DraftSaveIndicator 在画布品牌区的字体 */
+.canvas-brand .creative-draft-save {
+  font-size: 12px;
+}
+
+.canvas-cloud-status {
+  max-width: 230px;
+  color: #8a6d1d;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.canvas-cloud-status.is-error,
+.canvas-cloud-status.is-offline {
+  color: #d14343;
+}
+
+/* 连线删除按钮 */
+.canvas-edge-delete {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #d94c4c;
+  padding: 0;
+  transition: transform 0.15s;
+
+  &:hover {
+    transform: scale(1.2);
+  }
+}
+
+/* 左下角复位按钮 */
+.canvas-reset-btn {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 15;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+
+  &:hover {
+    border-color: #5767e5;
+    color: #5767e5;
+  }
+}
+
+/* 独立返回按钮：位于左侧工具栏上方、留出间距，构成独立工具组；始终显示不随抽屉隐藏 */
+.canvas-back-btn {
+  position: absolute;
+  top: 104px;
+  left: 47px;
+  z-index: 10;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  color: #5767e5;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.2s,
+    color 0.2s,
+    transform 0.15s;
+
+  &:hover {
+    background: rgba(87, 103, 229, 0.12);
+    color: #4352cc;
+  }
+
+  &:active {
+    transform: scale(0.92);
+  }
+}
+
+/* 覆盖 React Flow 默认节点样式 */
+.react-flow__node-default {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* 参考选择模式：可选节点 hover 跑马灯（className 在 React Flow 节点 wrapper 上） */
+.react-flow__node.is-ref-pickable {
+  cursor: pointer !important;
+  border-radius: 14px;
+  outline: 2px solid transparent;
+  outline-offset: 4px;
+  transition: outline-color 0.15s;
+}
+
+.react-flow__node.is-ref-pickable:hover {
+  outline-color: transparent;
+  animation: marquee-border 1.5s linear infinite;
+}
+
+@keyframes marquee-border {
+  0% {
+    outline-color: #5767e5;
+    outline-offset: 4px;
+  }
+  25% {
+    outline-color: #a78bfa;
+    outline-offset: 6px;
+  }
+  50% {
+    outline-color: #ec4899;
+    outline-offset: 8px;
+  }
+  75% {
+    outline-color: #a78bfa;
+    outline-offset: 6px;
+  }
+  100% {
+    outline-color: #5767e5;
+    outline-offset: 4px;
+  }
+}
+
+/* 自定义画布节点 */
+.canvas-default-node {
+  --canvas-readable-text-scale: 1;
+  position: relative;
+  overflow: visible;
+  border-radius: 14px;
+  background: #fff;
+  border: none;
+  box-shadow:
+    0px 2px 5px rgba(0, 0, 0, 0.1),
+    0px 9px 9px rgba(0, 0, 0, 0.09),
+    0px 21px 12px rgba(0, 0, 0, 0.05);
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: calc(14px * var(--canvas-readable-text-scale));
+  color: #333;
+  box-sizing: border-box;
+}
+
+/* React Flow 内置选中态 */
+.react-flow__node.selected {
+  outline: rgb(122, 122, 122) solid 2px !important;
+  border-radius: 14px;
+}
+
+/* React Flow hover 阴影清除 */
+.react-flow__node-input.selectable:hover,
+.react-flow__node-default.selectable:hover,
+.react-flow__node-output.selectable:hover,
+.react-flow__node-group.selectable:hover {
+  box-shadow: none;
+}
+
+/* hover 保持默认阴影 */
+.canvas-default-node:hover {
+  box-shadow:
+    0px 2px 5px rgba(0, 0, 0, 0.1),
+    0px 9px 9px rgba(0, 0, 0, 0.09),
+    0px 21px 12px rgba(0, 0, 0, 0.05);
+}
+
+.canvas-default-node__label {
+  user-select: none;
+}
+
+/* 类型头部：浮在节点上方 */
+.canvas-node-header {
+  position: absolute;
+  z-index: 1;
+  left: 4px;
+  top: 0;
+  transform: translateY(-100%);
+  padding-bottom: 8px;
+  width: 100%;
+  color: rgba(51, 51, 51, 0.6);
+  font-size: calc(14px * var(--canvas-readable-text-scale));
+  line-height: calc(18px * var(--canvas-readable-text-scale));
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.canvas-node-header__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  width: 14px;
+  height: 14px;
+}
+
+.canvas-node-header__label {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 主体占位 */
+.canvas-node-body {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ccc;
+  overflow: hidden;
+  min-height: 0;
+  padding: 8px;
+  box-sizing: border-box;
+  border-radius: 14px;
+}
+
+.canvas-node-generation-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 24px;
+  border-radius: 14px;
+  background: rgba(248, 255, 252, 0.94);
+  color: #177e68;
+  text-align: center;
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+
+.canvas-node-generation-mask strong {
+  font-size: calc(14px * var(--canvas-readable-text-scale));
+  font-weight: 600;
+}
+
+.canvas-node-generation-mask > span:last-child {
+  color: #6b8f86;
+  font-size: calc(11px * var(--canvas-readable-text-scale));
+  line-height: 1.4;
+}
+
+.canvas-node-generation-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(34, 197, 160, 0.2);
+  border-top-color: #22c5a0;
+  border-radius: 50%;
+  animation: canvas-node-generation-spin 0.8s linear infinite;
+}
+
+@keyframes canvas-node-generation-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.canvas-node-task {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  left: 10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgb(34 197 160 / 22%);
+  border-radius: 9px;
+  background: rgb(240 253 249 / 94%);
+  color: #177e68;
+  font-size: calc(12px * var(--canvas-readable-text-scale));
+  line-height: 1.25;
+  box-shadow: 0 4px 16px rgb(15 118 110 / 8%);
+  pointer-events: none;
+}
+
+.canvas-node-task span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-node-task strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas-node-task.is-failed {
+  border-color: rgb(220 38 38 / 18%);
+  background: rgb(254 242 242 / 96%);
+  color: #c53d3d;
+}
+
+/* 文本节点提示文字 */
+.canvas-node-prompt {
+  width: 100%;
+  height: 100%;
+  padding: 2px;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: calc(14px * var(--canvas-readable-text-scale));
+  line-height: calc(22.4px * var(--canvas-readable-text-scale));
+  color: #333;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-start;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.canvas-node-prompt.is-placeholder {
+  color: #999;
+}
+
+.canvas-storyboard {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  color: #26332f;
+  text-align: left;
+}
+
+.canvas-storyboard__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px 12px;
+  border-bottom: 1px solid #e6efeb;
+}
+
+.canvas-storyboard__summary > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.canvas-storyboard__eyebrow {
+  color: #169678;
+  font-size: calc(11px * var(--canvas-readable-text-scale));
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.canvas-storyboard__summary strong {
+  color: #1e2f2a;
+  font-size: calc(15px * var(--canvas-readable-text-scale));
+}
+
+.canvas-storyboard__edit-hint {
+  flex: none;
+  color: #8a9b96;
+  font-size: calc(11px * var(--canvas-readable-text-scale));
+}
+
+.canvas-storyboard__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 6px 10px 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #c8d8d2 transparent;
+}
+
+.canvas-storyboard__item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px 9px;
+  border-radius: 11px;
+}
+
+.canvas-storyboard__item + .canvas-storyboard__item {
+  border-top: 1px solid #edf2f0;
+}
+
+.canvas-storyboard__item:hover {
+  background: #f3faf7;
+}
+
+.canvas-storyboard__index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 24px;
+  border-radius: 7px;
+  background: #e7f7f1;
+  color: #168a70;
+  font-size: calc(11px * var(--canvas-readable-text-scale));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas-storyboard__content {
+  min-width: 0;
+}
+
+.canvas-storyboard__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.canvas-storyboard__title-row strong {
+  overflow: hidden;
+  color: #24332f;
+  font-size: calc(13px * var(--canvas-readable-text-scale));
+  line-height: calc(18.85px * var(--canvas-readable-text-scale));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-storyboard__meta {
+  flex: none;
+  color: #789088;
+  font-size: calc(10px * var(--canvas-readable-text-scale));
+}
+
+.canvas-storyboard__content p {
+  display: -webkit-box;
+  margin: 5px 0 0;
+  overflow: hidden;
+  color: #65746f;
+  font-size: calc(12px * var(--canvas-readable-text-scale));
+  line-height: calc(18.6px * var(--canvas-readable-text-scale));
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* 素材节点内容（来自素材库的图片/视频） */
+.canvas-node-media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+/* 视频节点：容器持有交互（pointer-events），媒体本身保持 none 以免拖拽冲突 */
+.canvas-node-video-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+/* 播放/暂停按钮：均居中显示，大小一致（44px 圆形） */
+.canvas-node-play-btn,
+.canvas-node-pause-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition:
+    background 0.15s,
+    transform 0.15s;
+}
+
+/* 播放按钮图标微右移，视觉居中 */
+.canvas-node-play-btn {
+  padding: 0 0 0 2px;
+}
+
+.canvas-node-play-btn:hover,
+.canvas-node-pause-btn:hover {
+  background: rgba(0, 0, 0, 0.68);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+/* 文本节点内嵌编辑器 */
+.canvas-node-editor {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: calc(14px * var(--canvas-readable-text-scale));
+  line-height: calc(22.4px * var(--canvas-readable-text-scale));
+  color: #333;
+  background: #fff;
+  border-radius: 0 0 14px 14px;
+  scrollbar-width: none;
+}
+
+.canvas-node-editor::-webkit-scrollbar {
+  display: none;
+}
+
+/* Handle 零尺寸锚点 */
+.canvas-default-node .react-flow__handle {
+  width: 0 !important;
+  height: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  top: 50% !important;
+}
+
+/* Handle 移动层：80×80，中心在节点外 30px */
+.canvas-handle-mover {
+  position: absolute;
+  margin-top: -40px;
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  will-change: transform;
+}
+
+.canvas-handle-mover--left {
+  left: 0;
+  top: 50%;
+  margin-left: -70px;
+}
+
+.canvas-handle-mover--right {
+  right: 0;
+  top: 50%;
+  margin-right: -70px;
+}
+
+/* Handle 图标层：圆形边框，hover/显示时滑入 */
+.canvas-handle-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  border: none;
+  background: #22c5a0;
+  opacity: 0;
+  transition:
+    opacity 0.2s,
+    transform 0.25s ease-out,
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.canvas-handle-icon:focus-visible {
+  outline: 3px solid rgb(38 201 167 / 24%);
+  outline-offset: 3px;
+}
+
+.canvas-handle-icon--left {
+  transform: translateX(20px);
+}
+
+.canvas-handle-icon--left[data-visible='true'] {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.canvas-handle-icon--right {
+  transform: translateX(-20px);
+}
+
+.canvas-handle-icon--right[data-visible='true'] {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.canvas-handle-icon:hover {
+  color: #e0e0e0;
+  border-color: #e0e0e0;
+}
+
+/* MiniMap */
+.canvas-view .react-flow__minimap {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* 空连线弹出菜单 */
+.canvas-add-menu {
+  position: fixed;
+  z-index: 100;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  transform: translate(-50%, 12px);
+}
+
+/* ── 右键浮动菜单 ── */
+.canvas-context-menu {
+  position: fixed;
+  z-index: 130;
+  min-width: 184px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 14px;
+  box-shadow:
+    0 16px 48px rgba(15, 23, 42, 0.16),
+    0 4px 14px rgba(15, 23, 42, 0.08);
+  font-family: 'PingFang SC', sans-serif;
+  animation: canvas-context-menu-in 0.16s ease-out;
+}
+
+@keyframes canvas-context-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.canvas-context-menu__label {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9aa3b2;
+  user-select: none;
+}
+
+.canvas-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.canvas-context-menu__item:hover:not(:disabled) {
+  background: rgba(87, 103, 229, 0.08);
+  color: #5767e5;
+}
+
+.canvas-context-menu__item:disabled {
+  color: #c2c7d0;
+  cursor: not-allowed;
+}
+
+.canvas-context-menu__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: #7a8496;
+}
+
+.canvas-context-menu__item:hover:not(:disabled) .canvas-context-menu__icon {
+  color: #5767e5;
+}
+
+.canvas-context-menu__item:disabled .canvas-context-menu__icon {
+  color: #d3d8e0;
+}
+
+.canvas-context-menu__kbd {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 11px;
+  color: #b3bac7;
+}
+
+.canvas-context-menu__divider {
+  height: 1px;
+  margin: 5px 6px;
+  background: rgba(15, 23, 42, 0.07);
+}
+
+.canvas-add-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.canvas-add-menu__item:hover {
+  background: rgba(87, 103, 229, 0.08);
+}
+
+/* 空连线菜单：来源限制不满足的节点类型，禁用灰显 */
+.canvas-add-menu__item.is-disabled,
+.canvas-add-menu__item.is-disabled:hover {
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.canvas-add-menu__item.is-disabled .canvas-add-menu__desc {
+  color: #c0c0c0;
+}
+
+.canvas-add-menu__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.canvas-add-menu__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.canvas-add-menu__desc {
+  font-size: 11px;
+  color: #999;
+}
+
+.canvas-add-menu__icon {
+  display: flex;
+  align-items: center;
+  width: 12px;
+  height: 12px;
+  color: #999;
+  flex-shrink: 0;
+}

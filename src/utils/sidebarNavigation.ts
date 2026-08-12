@@ -1,6 +1,7 @@
 /** 全站侧边栏已上线入口的唯一路由表，页面不应再复制这份映射。 */
 export const SIDEBAR_ROUTE_MAP: Readonly<Record<string, string>> = Object.freeze({
   home: '/home',
+  canvas: '/canvas',
   creative: '/smart',
   'real-person-video': '/real-person-video',
   'hot-copy': '/hot-copy',

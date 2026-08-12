@@ -115,6 +115,68 @@ function isNonRetryableContentSafetyError(error) {
   )
 }
 
+/** 汇总供应商错误的所有常见嵌套位置，避免只读取顶层 message 而丢失真实审核原因。 */
+function collectBusinessErrorText(error) {
+  if (!(error instanceof BusinessApiError)) return ''
+  const response = error.response && typeof error.response === 'object' ? error.response : {}
+  const data = response?.data && typeof response.data === 'object' ? response.data : {}
+  return [
+    error.message,
+    error.code,
+    response?.code,
+    response?.code_string,
+    response?.message,
+    response?.error?.code,
+    response?.error?.message,
+    response?.error_message,
+    data?.code,
+    data?.code_string,
+    data?.message,
+    data?.error?.code,
+    data?.error?.message,
+    data?.error_message,
+  ]
+    .filter(Boolean)
+    .map(String)
+    .join(' ')
+    .trim()
+}
+
+/**
+ * 将内容审核失败细分为可操作提示。
+ * 文案只描述“可能触发审核”，不把模型拒绝误判成用户已经侵权。
+ */
+function getContentSafetyErrorMessage(error) {
+  const message = collectBusinessErrorText(error)
+  if (!message) return ''
+
+  if (
+    /SensitiveContentDetected|PrivacyInformation|人脸|肖像|隐私|真实人物|真人|名人|公众人物|celebrity|public\s*figure|real\s*person|face\s*(?:detected|identity)|biometric/i.test(
+      message,
+    )
+  ) {
+    return '提示词或参考素材可能包含真人肖像、身份或隐私信息，未通过模型服务商审核。请确认人物素材已获授权，并移除证件、车牌等敏感信息后重试'
+  }
+
+  if (
+    /版权限制|版权审核|版权|著作权|商标|品牌标识|角色形象|影视片段|copyright|trademark|intellectual\s*property|IP\s*infringement|protected\s*(?:character|content)|brand\s*(?:logo|name)|logo|watermark/i.test(
+      message,
+    )
+  ) {
+    return '提示词或参考素材可能包含受保护的品牌、角色、影视画面、Logo 或水印，未通过模型服务商的版权审核。请改用通用描述，并更换为自有或已获授权的素材后重试'
+  }
+
+  if (
+    /安全审核|内容审核|内容安全|未通过.{0,8}审核|审核未通过|敏感内容|content\s*policy|policy\s*violation|moderation|safety\s*review|safety\s*check/i.test(
+      message,
+    )
+  ) {
+    return '提示词、参考素材或生成结果未通过模型服务商的内容安全审核。请调整敏感描述或更换参考素材后重试'
+  }
+
+  return ''
+}
+
 /** 将常见业务码、权限、并发和内容安全错误转为准确的中文用户提示。 */
 export function getBusinessErrorMessage(error, fallback = '业务接口请求失败，请稍后重试') {
   if (error instanceof BusinessApiError && error.message) {
@@ -159,9 +221,8 @@ export function getBusinessErrorMessage(error, fallback = '业务接口请求失
       return '当前模型需要开通对应套餐后才能使用；如果只用积分包也要可用，需要后端放开无套餐用户的模型授权'
     }
 
-    if (/SensitiveContentDetected|PrivacyInformation/i.test(error.message)) {
-      return '输入图片包含人脸或隐私信息，已被内容安全审核拦截。请更换不含真实人物、证件、车牌等敏感内容的分镜图后重试'
-    }
+    const contentSafetyMessage = getContentSafetyErrorMessage(error)
+    if (contentSafetyMessage) return contentSafetyMessage
 
     return error.message
   }
@@ -1147,6 +1208,20 @@ async function submitAiTask({
   inputAssets,
   signal,
 }) {
+  const requestBody = removeEmptyFields({
+    workspace_id: workspaceId,
+    model_version_id: modelId,
+    operation_code: operationCode,
+    idempotency_key: idempotencyKey,
+    prompt,
+    params,
+  })
+
+  // Keep the task contract stable for text-to-media requests: when the user does
+  // not select a reference image, send an explicit empty collection instead of
+  // dropping input_assets during empty-field cleanup.
+  requestBody.input_assets = Array.isArray(inputAssets) ? inputAssets : []
+
   const payload = await requestJsonWithRetry(
     '/api/v1/ai/tasks',
     {
@@ -1155,17 +1230,7 @@ async function submitAiTask({
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(
-        removeEmptyFields({
-          workspace_id: workspaceId,
-          model_version_id: modelId,
-          operation_code: operationCode,
-          idempotency_key: idempotencyKey,
-          prompt,
-          params,
-          input_assets: inputAssets,
-        }),
-      ),
+      body: JSON.stringify(requestBody),
     },
     {
       retries: 2,
@@ -1192,6 +1257,17 @@ export async function getAiTask({ workspaceId, taskId, signal = undefined }) {
   return normalizeAiTask(payload)
 }
 
+/** 取消仍在执行的 AI 任务；后端同时负责释放该任务冻结的积分与并发名额。 */
+export async function cancelAiTask({ workspaceId, taskId, signal = undefined }) {
+  const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
+  const id = requirePositiveInteger(taskId, '任务 ID 无效')
+  const payload = await requestJson(`/api/v1/ai/tasks/${id}/cancel?workspace_id=${wsId}`, {
+    method: 'POST',
+    signal,
+  })
+  return normalizeAiTask(payload)
+}
+
 /** 按工作空间、状态、操作码和创建者分页列出 AI 任务。 */
 export function listAiTasks({ workspaceId, status = '', operationCode = '', mine, limit = 20, offset = 0 }: any = {}) {
   const wsId = Number(workspaceId || 0)
@@ -1207,13 +1283,6 @@ export function listAiTasks({ workspaceId, status = '', operationCode = '', mine
   if (operationCode) query.set('operation_code', String(operationCode))
   if (mine !== undefined && mine !== null && mine !== '') query.set('mine', String(mine))
   return requestJson(`/api/v1/ai/tasks?${query}`)
-}
-
-/** 取消指定工作空间中的 AI 任务。 */
-export function cancelAiTask({ workspaceId, taskId }: any = {}) {
-  const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
-  const id = requirePositiveInteger(taskId, '任务 ID 无效')
-  return requestJson(`/api/v1/ai/tasks/${id}/cancel?workspace_id=${wsId}`, { method: 'POST' })
 }
 
 /** 从各供应商响应形态中读取正安全整数任务 ID。 */
@@ -1414,7 +1483,14 @@ export function listBillingPlans() {
 }
 
 /** 按与正式提交一致的模型、操作码和参数预估 AI 任务积分。 */
-export function estimateAiTaskCost({ workspaceId, modelVersionId, operationCode, prompt = '', params = {} }: any = {}) {
+export function estimateAiTaskCost({
+  workspaceId,
+  modelVersionId,
+  operationCode,
+  prompt = '',
+  params = {},
+  inputAssets = [],
+}: any = {}) {
   const wsId = Number(workspaceId || 0)
   const modelId = Number(modelVersionId || 0)
   const op = String(operationCode || '').trim()
@@ -1437,6 +1513,7 @@ export function estimateAiTaskCost({ workspaceId, modelVersionId, operationCode,
         operation_code: op,
         prompt: String(prompt || ''),
         params: params && typeof params === 'object' ? params : {},
+        input_assets: Array.isArray(inputAssets) ? inputAssets : [],
       }),
     ),
   })
@@ -2539,9 +2616,40 @@ export function restoreCreativeTrashItem({ id, trashId, workspaceId }: any = {})
 
 /** 从 AI 任务的直接字段或 result_json 中提取最终文本。 */
 export function extractTaskText(task) {
-  const raw = normalizeResultJson(task?.result_json)
+  if (!task || typeof task !== 'object') {
+    return ''
+  }
 
-  return findTextOutput(raw) || task?.output_text || ''
+  // Different providers persist text in different task fields. Search the
+  // explicit text field first, then the persisted result and output envelopes.
+  // Passing only result_json here caused completed tasks whose provider wrote
+  // to outputs/result/response to be incorrectly shown as empty.
+  const candidates = [
+    task.output_text,
+    task.generated_text,
+    task.response_text,
+    task.answer,
+    task.text,
+    task.content,
+    normalizeResultJson(task.result_json),
+    normalizeResultJson(task.response_json),
+    normalizeResultJson(task.output_json),
+    normalizeResultJson(task.result),
+    task.outputs,
+    task.output,
+    task.response,
+    task.data,
+  ]
+
+  for (const candidate of candidates) {
+    const text = findTextOutput(candidate)
+
+    if (text) {
+      return text
+    }
+  }
+
+  return ''
 }
 
 /** 从 AI 任务 outputs 与 result_json 中收集并去重媒体地址。 */
@@ -2556,7 +2664,9 @@ export function extractTaskMediaUrls(task) {
     })
   }
 
-  collectUrls(normalizeResultJson(task?.result_json), urls)
+  ;['result_json', 'result', 'response', 'output', 'data'].forEach((key) => {
+    collectUrls(normalizeResultJson(task?.[key]), urls)
+  })
 
   return [...new Set(urls)]
 }
@@ -2938,7 +3048,8 @@ function normalizeResultJson(resultJson) {
 
   if (typeof resultJson === 'string') {
     try {
-      return JSON.parse(resultJson)
+      const parsed = JSON.parse(resultJson)
+      return parsed === resultJson ? parsed : normalizeResultJson(parsed)
     } catch {
       return resultJson
     }
@@ -2948,7 +3059,7 @@ function normalizeResultJson(resultJson) {
 }
 
 /** 在嵌套任务结果中递归查找首个可用文本输出。 */
-function findTextOutput(value) {
+function findTextOutput(value, visited = new Set()) {
   if (!value) {
     return ''
   }
@@ -2959,7 +3070,7 @@ function findTextOutput(value) {
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      const text = findTextOutput(item)
+      const text = findTextOutput(item, visited)
 
       if (text) {
         return text
@@ -2973,16 +3084,23 @@ function findTextOutput(value) {
     return ''
   }
 
-  for (const key of ['output_text', 'text', 'content', 'message']) {
-    const text = findTextOutput(value[key])
+  if (visited.has(value)) {
+    return ''
+  }
+
+  visited.add(value)
+
+  for (const key of ['output_text', 'generated_text', 'response_text', 'answer', 'text', 'content']) {
+    const text = findTextOutput(value[key], visited)
 
     if (text) {
       return text
     }
   }
 
-  for (const key of ['response', 'data', 'output', 'choices']) {
-    const text = findTextOutput(value[key])
+  for (const key of ['response', 'result', 'result_json', 'data', 'output', 'outputs', 'choices', 'message', 'delta']) {
+    const nestedValue = key === 'result_json' ? normalizeResultJson(value[key]) : value[key]
+    const text = findTextOutput(nestedValue, visited)
 
     if (text) {
       return text

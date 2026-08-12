@@ -31,6 +31,8 @@ import {
   filterGenerationModelGroupsByOperations,
   getGenerationModelSelectionConflicts,
   isGenerationModelSelectionComplete,
+  type GenerationModelEstimateRequest,
+  type GenerationModelEstimateResult,
 } from '@/components/smart/GenerationModelPicker'
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
 import type { Shot } from '@/components/smart/ScriptStoryboardTable'
@@ -94,6 +96,7 @@ import {
   updateCreativeProjectDraft,
   uploadAssetFile,
   getAssetDownloadUrl,
+  estimateAiTaskCost,
   listAiModels,
   restoreCreativeTrashItem,
   deleteCreativeTrashItem,
@@ -236,7 +239,9 @@ import {
   type SmartSubjectAssetVersionRegistry,
 } from '@/utils/smartModelSwitchSafety'
 import {
+  buildRealPersonIdentityPrompt,
   isRealPersonReferenceStillAuthorized,
+  prioritizeRealPersonReferenceAssetIds,
   registerRealPersonReference,
   requireRealPersonPreservationForShots,
   resolveShotRealPersonPreservation,
@@ -377,8 +382,6 @@ function buildSmartVideoEditPrompt(note = '', variationIndex?: number, variation
     .filter(Boolean)
     .join('\n')
 }
-
-/** 侧边栏导航键与页面路径映射。 */
 
 /** 流程底栏主操作按钮的统一配置。 */
 interface BottomButton {
@@ -1761,19 +1764,29 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     showToast(`已选用认证真人「${reference.personName}」，生成时将保留人物特征`, 'success')
   }
   // 弹窗内上传素材:File → 后端 asset → 加为该主体新版本(并应用到同名主体)
-  const uploadForSubject = async (name: string, file: File) => {
+  const uploadForSubject = async (
+    name: string,
+    file: File,
+    context?: { name: string; kind: string; prompt: string },
+  ) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法上传素材', 'error')
       return
     }
     try {
-      const out: any = await uploadAssetFile({ workspaceId: ws, file })
+      const out: any = await uploadAssetFile({
+        workspaceId: ws,
+        file,
+        prompt: context?.prompt || '',
+        source: 'upload',
+      })
       const assetId = Number(out?.asset?.id || 0) || 0
       if (!assetId) throw new Error('未取得素材 asset_id')
       const url = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
       if (!url) throw new Error('未取得素材地址')
       addSubjectVersion(name, url, assetId, 'upload')
+      showToast(`素材「${context?.name || name}」上传成功`, 'success')
     } catch (e: any) {
       showToast(`素材上传失败:${e?.message || '请检查存储配置/网络'}`, 'error')
     }
@@ -1956,11 +1969,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           }
         }
       }
-      if (
-        requiredRealPersonReference?.localAssetId &&
-        !refAssetIds.includes(requiredRealPersonReference.localAssetId)
-      ) {
-        refAssetIds.unshift(requiredRealPersonReference.localAssetId)
+      if (requiredRealPersonReference?.localAssetId) {
+        refAssetIds.splice(
+          0,
+          refAssetIds.length,
+          ...prioritizeRealPersonReferenceAssetIds(refAssetIds, requiredRealPersonReference.localAssetId),
+        )
+        finalPrompt = buildRealPersonIdentityPrompt(finalPrompt, requiredRealPersonReference.personName)
       }
       const operationCode: SmartImageOperationCode = refAssetIds.length ? 'image.image_to_image' : 'image.text_to_image'
       const modelSelection =
@@ -2716,11 +2731,16 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     }
     for (const u of elUrls) {
       try {
-        const id = await ensureAssetId(ws, u, cache, opts.signal)
+        // 自动分镜已经持有后端 assetId 时直接复用。过去这里只按 URL 重新下载上传，
+        // 同一素材可能被复制成损坏的新 asset，最终被供应商判为 invalid_image_file。
+        const existingAssetId = manual
+          ? 0
+          : Number(sh.subjects.find((subject) => subject.image === u)?.assetId || 0) || 0
+        const id = existingAssetId || (await ensureAssetId(ws, u, cache, opts.signal))
         if (id) refIds.push(id)
-      } catch {
+      } catch (error) {
         throwIfSmartRequestAborted(opts.signal)
-        /* 单张参考上传失败则跳过 */
+        throw error
       }
     }
     // 是否携带当前分镜图作底图(img2img):manual 看 carryCurrent;批量靠 prevUrl 连贯
@@ -2728,21 +2748,26 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     const baseUrl = carry ? sh.image || '' : manual ? '' : prevUrl
     if (baseUrl) {
       try {
-        const id = await ensureAssetId(ws, baseUrl, cache, opts.signal)
+        const currentAssetId = carry ? Number(sh.imageAssetId || 0) || 0 : 0
+        const id = currentAssetId || (await ensureAssetId(ws, baseUrl, cache, opts.signal))
         if (id) refIds.push(id)
-      } catch {
+      } catch (error) {
         throwIfSmartRequestAborted(opts.signal)
-        /* ignore */
+        throw error
       }
     }
-    if (requiredRealPersonReference?.localAssetId && !refIds.includes(requiredRealPersonReference.localAssetId)) {
-      refIds.unshift(requiredRealPersonReference.localAssetId)
+    if (requiredRealPersonReference?.localAssetId) {
+      refIds.splice(
+        0,
+        refIds.length,
+        ...prioritizeRealPersonReferenceAssetIds(refIds, requiredRealPersonReference.localAssetId),
+      )
     }
     // 该镜元素名(锚定画面只含这些主体,避免把无关产品/主题塞进来)
     const elNames = Array.from(new Set(sh.subjects.map((s) => stripAt(s.tag)).filter(Boolean))).join('、')
     // 提示词:① 用户编辑过的 imagePrompt 直接用;② 否则按 该镜画面描述 + 该镜元素 + 风格 组合
     // 注意:不再注入"整体广告主题",否则会把全局产品(如雅迪车)塞进每个无关镜头。
-    const prompt = opts.editPrompt
+    let prompt = opts.editPrompt
       ? [opts.editPrompt, feedback && `修改要求:${feedback}`].filter(Boolean).join(';')
       : [
           sh.desc,
@@ -2756,6 +2781,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         ]
           .filter(Boolean)
           .join(';')
+    if (requiredRealPersonReference) {
+      prompt = buildRealPersonIdentityPrompt(prompt, requiredRealPersonReference.personName)
+    }
     const operationCode: SmartImageOperationCode = refIds.length ? 'image.image_to_image' : 'image.text_to_image'
     const modelSelection =
       opts.lockedImageModels?.[operationCode] || requireGenerationModel(operationCode, opts.generationModels)
@@ -4509,7 +4537,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       if (!persisted) throw new Error('视频已生成，但保存到项目失败')
       syncSmartTask(job, 'succeeded', { resultUrl: url, resultAssetId: assetId, progress: 100, error: '' })
     } catch (e: any) {
-      const msg = e?.message || '请重试'
+      const msg = getBusinessErrorMessage(e, '请重试')
       const resultSavePending = msg === '视频已生成，但保存到项目失败'
       const cancelled = isCancelledVideoTaskError(e)
       const terminalPersisted = resultSavePending
@@ -5161,7 +5189,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         if (isCurrentVideoSession(subscribedSessionId)) adoptVideoResult(url, assetId, trackedGenId)
       })
       .catch(async (e: any) => {
-        const message = e?.message || '视频生成失败，请重试'
+        const message = getBusinessErrorMessage(e, '视频生成失败，请重试')
         const terminalPersisted = await persistSmartJobTerminal(
           subscribedJob,
           isCancelledVideoTaskError(e) ? 'cancelled' : 'failed',
@@ -5289,7 +5317,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       if (!persisted) throw new Error('视频已生成，但保存到项目失败')
       syncSmartTask(resumeJob, 'succeeded', { resultUrl: url, resultAssetId: assetId, progress: 100, error: '' })
     } catch (e: any) {
-      const msg = e?.message || '请重试'
+      const msg = getBusinessErrorMessage(e, '请重试')
       const resultSavePending = msg === '视频已生成，但保存到项目失败'
       const cancelled = isCancelledVideoTaskError(e)
       const terminalPersisted = resultSavePending
@@ -7580,6 +7608,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           ratio: meta.ratio,
           duration: meta.duration,
           images: meta.images,
+          imageAssetIds: meta.imageAssetIds,
           modelVersionId: modelSelection.modelVersionId,
           requestContext,
           signal: controller.signal,
@@ -9254,6 +9283,39 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     entryMeta?.mode === 'image'
       ? filterGenerationModelGroupsByOperations(generationModelCatalog.pickerGroups, [activeImageGenerationOperation])
       : generationModelCatalog.pickerGroups
+  /** 制作图片的模型面板按当前对话参数预估一次出图费用，展示口径与真正提交保持一致。 */
+  const estimateImageModelSelection = useCallback(
+    async ({
+      operationCode,
+      modelVersionId,
+    }: GenerationModelEstimateRequest): Promise<GenerationModelEstimateResult> => {
+      const ws = Number(workspaceIdRef.current || workspaceId || 0)
+      if (!ws) throw new Error('工作空间未就绪')
+      if (operationCode !== 'image.text_to_image' && operationCode !== 'image.image_to_image') {
+        throw new Error('当前模型不属于图片生成')
+      }
+      const result: any = await estimateAiTaskCost({
+        workspaceId: ws,
+        modelVersionId,
+        operationCode,
+        prompt: imageComposerDraft.text.trim(),
+        params: {
+          ratio: imageComposerDraft.ratio || entryMeta?.ratio || '16:9',
+          count: Math.max(1, Number(imageComposerDraft.outputCount || entryMeta?.outputCount || 1)),
+        },
+        inputAssets:
+          operationCode === 'image.image_to_image'
+            ? imageComposerDraft.images.map((reference) => Number(reference.assetId || 0)).filter((id) => id > 0)
+            : [],
+      })
+      return {
+        estimatedCost: Number(result?.estimated_cost ?? 0),
+        balance: Number.isFinite(Number(result?.balance)) ? Number(result.balance) : undefined,
+        canAfford: result?.can_afford,
+      }
+    },
+    [entryMeta?.outputCount, entryMeta?.ratio, imageComposerDraft, workspaceId],
+  )
   const flowGenerationModelConflicts = entryMeta
     ? getGenerationModelSelectionConflicts(flowGenerationModelGroups, entryMeta.generationModels || {}, {
         ratio: entryMeta.mode === 'image' ? imageComposerRatio || entryMeta.ratio : entryMeta.ratio,
@@ -10285,6 +10347,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                       selected={entryMeta?.generationModels || {}}
                       loading={generationModelCatalog.loading}
                       error={generationModelCatalog.error}
+                      estimateModelCost={
+                        entryMeta?.mode === 'image' && Number(workspaceId || 0) > 0
+                          ? estimateImageModelSelection
+                          : undefined
+                      }
                       onChange={(groupKey, nextModelId, subgroupKey) =>
                         void switchGenerationModel(groupKey, nextModelId, subgroupKey)
                       }
@@ -10460,6 +10527,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                         selected={entryMeta?.generationModels || {}}
                         loading={generationModelCatalog.loading}
                         error={generationModelCatalog.error}
+                        estimateModelCost={
+                          entryMeta?.mode === 'image' && Number(workspaceId || 0) > 0
+                            ? estimateImageModelSelection
+                            : undefined
+                        }
                         onChange={(groupKey, nextModelId, subgroupKey) =>
                           void switchGenerationModel(groupKey, nextModelId, subgroupKey)
                         }
@@ -10671,7 +10743,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         onSelectRealPerson={
           isRealPersonMode ? (url, reference) => selectRealPersonForSubject(subjectDlg.name, url, reference) : undefined
         }
-        onUpload={(file) => uploadForSubject(subjectDlg.name, file)}
+        onUpload={(file, context) => uploadForSubject(subjectDlg.name, file, context)}
       />
     </div>
   )

@@ -18,6 +18,8 @@ interface GenerateArgs {
   ratio?: string
   duration?: string
   images?: string[] // objectURL / dataURL / http,送入后端前会上传成 asset(inputAssets)
+  /** 与 images 同序的后端素材 ID；已有 ID 时必须直接复用，不能再次上传图片。 */
+  imageAssetIds?: number[]
   /** 用户在“生成脚本”阶段显式选择的模型版本。 */
   modelVersionId?: number
   /** 本轮脚本生成锁定的工作空间，后续主体提取和合并必须复用。 */
@@ -460,6 +462,7 @@ export async function generateScriptShotsStream(args: GenerateArgs, onShots: (sh
     system: SYSTEM,
     user: buildUserText(args),
     images: images.slice(0, 6),
+    imageAssetIds: (args.imageAssetIds || []).slice(0, 6),
     temperature: 0.8,
     maxTokens: 4000,
     modelVersionId: args.modelVersionId,

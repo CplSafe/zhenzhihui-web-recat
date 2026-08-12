@@ -1204,7 +1204,8 @@
   background: #fff;
   border: 1px solid #eef0f6;
   border-radius: 14px;
-  overflow: hidden;
+  /* 不能用 overflow:hidden：会裁剪卡片内弹出菜单（如「删除画布」浮动菜单）。
+     封面/图片裁剪由 .pm2-pcard-cover 自身的 overflow:hidden 负责。 */
   cursor: pointer;
   transition:
     transform 0.15s,
@@ -1222,6 +1223,8 @@
   position: relative;
   aspect-ratio: 16 / 10;
   overflow: hidden;
+  /* 卡片不再裁剪溢出内容，顶部圆角由封面自己承担，保持视觉与原来一致 */
+  border-radius: 14px 14px 0 0;
   background:
     var(--c, none),
     linear-gradient(135deg, #e7eafc, #f1f3ff);

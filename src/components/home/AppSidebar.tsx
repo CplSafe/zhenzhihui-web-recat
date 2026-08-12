@@ -93,8 +93,8 @@ const TEMPLATE_GROUP: SidebarGroup = {
 
 const SHOW_TEMPLATE_GROUP = false
 
-// 真人成片当前作为定向测试入口：保留完整路由和项目恢复能力，但不在公共导航中曝光。
-const HIDDEN_SIDEBAR_ITEM_KEYS = new Set(['video-edit', 'real-person-video'])
+// 尚未开放或暂时下线的功能隐藏入口；保留路由与草稿兼容，避免已有项目数据丢失。
+const HIDDEN_SIDEBAR_ITEM_KEYS = new Set(['real-person-video', 'video-edit'])
 
 /** 渲染全站主导航，并把实际路由跳转交由页面侧栏 Hook 统一处理。 */
 export default function AppSidebar({ activeKey = 'home', onNavigate, open = false, onClose }: AppSidebarProps) {

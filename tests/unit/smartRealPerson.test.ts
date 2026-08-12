@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildRealPersonIdentityPrompt,
   createSmartRealPersonReference,
   isReadyRealPersonAsset,
   isRealPersonReferenceStillAuthorized,
   isVerifiedRealPerson,
+  prioritizeRealPersonReferenceAssetIds,
   registerRealPersonReference,
   requireRealPersonPreservationForShots,
   resolveShotRealPersonPreservation,
@@ -13,6 +15,29 @@ const person = { id: 13, name: '测试人物', status: 'verified', assets: [] }
 const asset = { id: 21, local_asset_id: 108, status: 'ready', asset_type: 'image' }
 
 describe('smartRealPerson', () => {
+  it('始终把已认证真人素材放在参考图第一位并去重', () => {
+    expect(prioritizeRealPersonReferenceAssetIds([201, 108, 202, 108, 0], 108)).toEqual([108, 201, 202])
+    expect(prioritizeRealPersonReferenceAssetIds([201, 201], 0)).toEqual([201])
+  })
+
+  it('把真人身份保持约束放在普通画面提示词之前', () => {
+    const prompt = buildRealPersonIdentityPrompt('在咖啡馆微笑，暖色光线', '测试人物')
+    expect(prompt).toContain('真人身份强约束：测试人物')
+    expect(prompt).toContain('第一张参考图是已授权真人的唯一身份基准')
+    expect(prompt).toContain('所有镜头中保持身份一致')
+    expect(prompt).toContain('禁止换脸')
+    expect(prompt).toContain('身份漂移')
+    expect(prompt.indexOf('真人身份强约束')).toBeLessThan(prompt.indexOf('在咖啡馆微笑'))
+  })
+
+  it('重复构造真人图生图提示词时不会叠加身份约束', () => {
+    const once = buildRealPersonIdentityPrompt('在咖啡馆微笑，暖色光线', '测试人物')
+    const twice = buildRealPersonIdentityPrompt(once, '测试人物')
+
+    expect(twice.match(/【真人身份强约束/g)).toHaveLength(1)
+    expect(twice).toContain('在咖啡馆微笑，暖色光线')
+  })
+
   it('只把已认证人物和同步完成的本地素材视为可用', () => {
     expect(isVerifiedRealPerson(person)).toBe(true)
     expect(isVerifiedRealPerson({ ...person, status: 'pending_verification' })).toBe(false)

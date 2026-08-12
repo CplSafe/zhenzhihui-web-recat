@@ -19,11 +19,23 @@ vi.mock('@/api/business', () => ({
 }))
 
 import {
+  extractOutputAssetId,
   extractVideoOutputAssetId,
   findAssetIdByTaskId,
   resolveGeneratedMediaUrls,
   resolveTaskVideoResult,
 } from '@/utils/taskMedia'
+
+describe('generic output asset selection', () => {
+  it('reads asset ids from nested result envelopes and serialized result_json', () => {
+    expect(extractOutputAssetId({ result: { output: { assetId: 701 } } })).toBe(701)
+    expect(extractOutputAssetId({ result_json: JSON.stringify({ images: [{ asset_id: 702 }] }) })).toBe(702)
+  })
+
+  it('does not inspect task input_assets when resolving generated results', () => {
+    expect(extractOutputAssetId({ input_assets: [{ asset_id: 999 }] })).toBe(0)
+  })
+})
 
 describe('video output asset selection', () => {
   it('selects the explicitly typed video when an image output appears first', () => {
@@ -92,6 +104,18 @@ describe('task media durable asset resolution', () => {
     expect(mocks.getAssetDownloadUrl).toHaveBeenCalledOnce()
     expect(mocks.getAssetDownloadUrl).toHaveBeenCalledWith({ workspaceId: 21, assetId: 202 })
     expect(mocks.listAssets).not.toHaveBeenCalled()
+  })
+
+  it('resolves a generated image asset nested inside result_json', async () => {
+    mocks.getAssetDownloadUrl.mockImplementation(async ({ assetId }) => `/api/v1/assets/${assetId}/download`)
+
+    await expect(
+      resolveGeneratedMediaUrls({
+        workspaceId: 21,
+        task: { id: 778, result_json: JSON.stringify({ output: { assetId: 703 } }) },
+        type: 'image',
+      }),
+    ).resolves.toEqual(['/api/v1/assets/703/download'])
   })
 
   it('paginates beyond the first 100 assets and prefers the stable asset URL over a provider URL', async () => {

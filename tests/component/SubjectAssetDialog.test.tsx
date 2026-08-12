@@ -188,4 +188,28 @@ describe('SubjectAssetDialog', () => {
     expect(props.onSelect).toHaveBeenLastCalledWith('/replacement.png')
     expect(props.onGenerate).not.toHaveBeenCalled()
   })
+
+  it('uploads the current subject with its exact generation context and waits for completion', async () => {
+    const user = userEvent.setup()
+    const pending = deferred<void>()
+    const props = baseProps()
+    const onUpload = vi.fn(() => pending.promise)
+    render(<SubjectAssetDialog {...props} onUpload={onUpload} />)
+
+    await user.click(screen.getByRole('button', { name: '上传' }))
+    await user.upload(
+      screen.getByLabelText('上传当前主体素材'),
+      new File(['image'], 'product.png', { type: 'image/png' }),
+    )
+
+    expect(onUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'product.png', type: 'image/png' }), {
+      name: '精华液瓶',
+      kind: '产品',
+      prompt: '透明玻璃瓶',
+    })
+    expect(screen.getByRole('button', { name: '上传中…' })).toBeDisabled()
+
+    pending.resolve()
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传' })).toBeEnabled())
+  })
 })

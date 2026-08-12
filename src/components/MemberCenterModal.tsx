@@ -512,6 +512,7 @@ function PackageCard({ pkg, buying, onBuy }: { pkg: PackageVM; buying: boolean; 
 interface MemberCenterModalProps {
   open: boolean
   onClose: () => void
+  initialTab?: 'basic' | 'team' | 'recharge'
   /** 页面模式:不渲染遮罩/portal,内容内联交由外层页面承载;onClose 用于「完成」后返回 */
   embedded?: boolean
 }
@@ -519,7 +520,12 @@ interface MemberCenterModalProps {
 /**
  * 加载套餐、订阅、钱包和订单，协调个人/团队购买、支付跳转、订单补偿及购买后空间切换。
  */
-export default function MemberCenterModal({ open, onClose, embedded = false }: MemberCenterModalProps) {
+export default function MemberCenterModal({
+  open,
+  onClose,
+  embedded = false,
+  initialTab = 'basic',
+}: MemberCenterModalProps) {
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const switchWorkspaceSafely = useSafeWorkspaceSwitch()
@@ -540,7 +546,7 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   // 用户在【充值/开通前】就把团队名输入好(见团队版 tab 的团队名输入框),随下单直接建好空间,不再支付后二次命名。
   const defaultTeamName = `${String(currentUser?.nickname || currentUser?.name || currentUser?.username || '我').trim()}的团队`
   // 顶层 tab:基础版(个人套餐)/ 团队版(团队套餐)/ 积分充值
-  const [mainTab, setMainTab] = useState<'basic' | 'team' | 'recharge'>('basic')
+  const [mainTab, setMainTab] = useState<'basic' | 'team' | 'recharge'>(initialTab)
   // 名下已有团队名(去空格、忽略大小写),用于给「下单默认名」去重,避免后端因重名建不出空间。
   const allWorkspaces = useAllWorkspaces()
   const existingTeamNames = useMemo(
@@ -571,9 +577,6 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   const [teamNameInput, setTeamNameInput] = useState('')
   const [renamingTeam, setRenamingTeam] = useState(false)
   // 子账号(不可充值)若正停在积分充值 tab(如切空间后)→ 退回基础版,避免看到充值内容
-  useEffect(() => {
-    if (!canRecharge && mainTab === 'recharge') setMainTab('basic')
-  }, [canRecharge, mainTab])
   const [plans, setPlans] = useState<PlanVM[]>([])
   const [packages, setPackages] = useState<PackageVM[]>([])
   const [loading, setLoading] = useState(false)
@@ -738,6 +741,14 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
   )
   const hasActiveSubscription =
     Boolean(subscription?.active) && (!subscriptionExpiryMs || subscriptionExpiryMs > Date.now())
+  // 积分充值属于当前空间的会员权益；状态未加载、会员无效或没有充值权限时不展示入口。
+  const canViewRecharge = canRecharge && !subscriptionLoading && hasActiveSubscription
+  const currentWorkspaceName = String(currentWs?.name || (isTeamWs ? '当前团队' : '个人空间')).trim()
+
+  // 切换空间或会员状态失效时退出充值页，避免继续展示旧空间的充值内容。
+  useEffect(() => {
+    if (!canViewRecharge && mainTab === 'recharge') setMainTab('basic')
+  }, [canViewRecharge, mainTab])
   const currentPlan = (() => {
     if (!hasActiveSubscription) return null
     const planId = Number(subscription?.plan_id ?? subscription?.planId ?? 0) || 0
@@ -1401,9 +1412,23 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
       showToast('仅主账号可充值,子账号请联系主账号', 'error')
       return
     }
+    if (subscriptionLoading) {
+      showToast('正在确认当前空间会员状态，请稍后再试', 'info')
+      return
+    }
+    if (!hasActiveSubscription) {
+      showToast(expiredBanner ? '当前会员已过期，请先续费后再充值' : '当前空间尚未开通会员，请先开通会员', 'error')
+      return
+    }
     if (!workspaceId) {
       showToast('缺少 workspace,无法充值', 'error')
       return
+    }
+    if (isTeamWs) {
+      const confirmed = await requestConfirm(
+        `本次充值将进入团队「${currentWorkspaceName}」，仅该团队可使用，不会进入个人空间或其他团队，充值后不可转移。是否确认充值？`,
+      )
+      if (!confirmed) return
     }
     const paymentActionToken = acquirePaymentAction()
     if (!paymentActionToken) return
@@ -1643,8 +1668,8 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
           >
             团队版
           </button>
-          {/* 积分充值:仅主账号(所有者)可见;子账号(团队成员)不展示,不允许充值 */}
-          {canRecharge && (
+          {/* 积分充值:仅当前空间会员有效且具备充值权限时展示。 */}
+          {canViewRecharge && (
             <button
               type="button"
               className={`mcm-tab${mainTab === 'recharge' ? ' is-active' : ''}`}
@@ -1689,11 +1714,24 @@ export default function MemberCenterModal({ open, onClose, embedded = false }: M
         ) : !packages.length ? (
           <div className="mcm-hint">暂无可充值的积分包</div>
         ) : (
-          <div className="mcm-cards mcm-cards--recharge">
-            {packages.map((pkg) => (
-              <PackageCard key={pkg.id} pkg={pkg} buying={buyingId === pkg.id} onBuy={onRecharge} />
-            ))}
-          </div>
+          <>
+            {isTeamWs && (
+              <div className="mcm-recharge-scope" role="note">
+                <span className="mcm-recharge-scope__icon" aria-hidden="true">
+                  !
+                </span>
+                <div>
+                  <strong>充值到团队「{currentWorkspaceName}」</strong>
+                  <p>本次充值积分仅供该团队使用，不会进入个人空间或其他团队，充值后不可转移。</p>
+                </div>
+              </div>
+            )}
+            <div className="mcm-cards mcm-cards--recharge">
+              {packages.map((pkg) => (
+                <PackageCard key={pkg.id} pkg={pkg} buying={buyingId === pkg.id} onBuy={onRecharge} />
+              ))}
+            </div>
+          </>
         )}
       </>
     </div>

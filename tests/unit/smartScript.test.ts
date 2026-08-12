@@ -41,15 +41,20 @@ describe('smart script generation', () => {
   it('allows an image-only request and caps uploaded references at six', async () => {
     mocks.streamResponseText.mockResolvedValue(JSON.stringify({ shots: [rawShot('产品')] }))
     const images = Array.from({ length: 8 }, (_, index) => `/image-${index}.png`)
+    const imageAssetIds = Array.from({ length: 8 }, (_, index) => 100 + index)
 
     const result = await generateScriptShotsStream(
-      { requirement: ' ', images, duration: '5', modelVersionId: 801 },
+      { requirement: ' ', images, imageAssetIds, duration: '5', modelVersionId: 801 },
       vi.fn(),
     )
 
     expect(result).toHaveLength(1)
     expect(mocks.streamResponseText).toHaveBeenCalledWith(
-      expect.objectContaining({ images: images.slice(0, 6), modelVersionId: 801 }),
+      expect.objectContaining({
+        images: images.slice(0, 6),
+        imageAssetIds: imageAssetIds.slice(0, 6),
+        modelVersionId: 801,
+      }),
     )
   })
 

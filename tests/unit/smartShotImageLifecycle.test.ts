@@ -83,11 +83,17 @@ function deferred<T>() {
 }
 
 function imageResponse(type = 'image/png') {
+  const bytes =
+    type === 'image/jpeg'
+      ? new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
+      : type === 'image/webp'
+        ? new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])
+        : new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
   return {
     ok: true,
     status: 200,
     statusText: 'OK',
-    blob: async () => new Blob(['image'], { type }),
+    blob: async () => new Blob([bytes], { type }),
   }
 }
 
@@ -209,6 +215,38 @@ describe('generateShotImage task lifecycle', () => {
     expect(mocks.createAiTask.mock.calls[0]?.[0]?.idempotencyKey).toBe('shot-action-1_text_to_image')
     expect(mocks.createAiTask.mock.calls[1]?.[0]?.idempotencyKey).toBe('shot-action-1_text_to_image')
     expect(onTask).toHaveBeenCalledWith(41)
+  })
+
+  it('does not resubmit or start polling when task creation already returned a terminal invalid image failure', async () => {
+    const invalidImageFailure = {
+      status: 502,
+      code: 10502,
+      message: 'openai HTTP 400: invalid_image_file',
+      response: {
+        code: 10502,
+        code_string: 'PROVIDER_FAILED',
+        data: {
+          id: 11500,
+          status: 'failed',
+          outputs: [],
+          actual_cost: 0,
+          error_message: 'openai HTTP 400: invalid_image_file',
+        },
+      },
+    }
+    mocks.createAiTask.mockRejectedValue(invalidImageFailure)
+
+    await expect(
+      generateShotImage({
+        workspaceId: 7,
+        prompt: '篮球运动员',
+        refAssetIds: [11],
+        idempotencyKey: 'shot-invalid-image',
+      }),
+    ).rejects.toMatchObject({ status: 502 })
+
+    expect(mocks.createAiTask).toHaveBeenCalledOnce()
+    expect(mocks.waitForAiTask).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -871,6 +909,36 @@ describe('smart shot image asset persistence', () => {
     )
 
     await expect(ensureAssetId(7, 'https://cdn.example.com/missing.png', {})).rejects.toThrow()
+    expect(mocks.uploadAssetFile).not.toHaveBeenCalled()
+  })
+
+  it('rejects successful JSON responses instead of disguising them as JPEG references', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        blob: async () => new Blob(['{"code":0}'], { type: 'application/json' }),
+      }),
+    )
+
+    await expect(ensureAssetId(7, '/api/v1/assets/12/download?workspace_id=7', {})).rejects.toThrow(
+      '参考素材不是支持的图片格式',
+    )
+    expect(mocks.uploadAssetFile).not.toHaveBeenCalled()
+  })
+
+  it('rejects corrupted bytes even when the response claims to be an image', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        blob: async () => new Blob(['not an image'], { type: 'image/jpeg' }),
+      }),
+    )
+
+    await expect(ensureAssetId(7, 'blob:corrupted', {})).rejects.toThrow('参考图片文件内容与格式不一致')
     expect(mocks.uploadAssetFile).not.toHaveBeenCalled()
   })
 

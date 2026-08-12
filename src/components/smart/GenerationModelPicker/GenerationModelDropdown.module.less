@@ -271,6 +271,26 @@
   line-height: 1.55;
 }
 
+.modelEstimate {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 7px;
+  padding: 3px 8px;
+  border: 1px solid #caeee5;
+  border-radius: 999px;
+  background: #f2fbf8;
+  color: #128a72;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.modelEstimateError {
+  border-color: #f2d4cf;
+  background: #fff7f5;
+  color: #b34e40;
+}
+
 .restrictions {
   margin-top: 8px;
   padding: 9px 11px;
@@ -327,6 +347,34 @@
   color: #b34e40;
 }
 
+.rechargeState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  color: #6f7d78;
+  text-align: center;
+
+  strong {
+    color: #2f3d39;
+    font-size: 15px;
+  }
+}
+
+.stateActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 8px;
+}
+
+.globalState .primaryStateAction {
+  border-color: #20b99a;
+  background: #20b99a;
+  color: #fff;
+}
+
 .spinner {
   width: 17px;
   height: 17px;
@@ -354,6 +402,79 @@
     color: #168f76;
     font: inherit;
     text-decoration: underline;
+    cursor: pointer;
+  }
+}
+
+.estimateSummary {
+  margin: 2px 18px 12px;
+  padding: 13px 14px 11px;
+  border: 1px solid #d7eee8;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f3fbf8 0%, #fbfdfc 72%);
+}
+
+.estimateSummaryTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+
+  > div:first-child {
+    display: grid;
+    gap: 3px;
+  }
+
+  strong {
+    color: #263c36;
+    font-size: 13px;
+  }
+
+  span {
+    color: #7a8a84;
+    font-size: 10px;
+  }
+}
+
+.estimateTotal {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex: 0 0 auto;
+  color: #118a72;
+
+  b {
+    font-size: 22px;
+    line-height: 1;
+  }
+
+  span {
+    color: #118a72;
+    font-size: 11px;
+    font-weight: 700;
+  }
+}
+
+.estimateSummaryBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid #e2f1ed;
+  color: #71817b;
+  font-size: 10px;
+  line-height: 1.45;
+
+  button {
+    flex: 0 0 auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #128a72;
+    font: inherit;
+    font-weight: 700;
     cursor: pointer;
   }
 }

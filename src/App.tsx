@@ -121,6 +121,7 @@ export function AppShell() {
 
   // 会员中心:全局单例弹窗,任意页面顶栏点「会员中心」均可唤出(取代原 /membership 路由页)。
   const memberCenterOpen = useUiStore((s) => s.memberCenterOpen)
+  const memberCenterTab = useUiStore((s) => s.memberCenterTab)
   const closeMemberCenter = useUiStore((s) => s.closeMemberCenter)
   const teamManageOpen = useUiStore((s) => s.teamManageOpen)
   const joinTeamOpen = useUiStore((s) => s.joinTeamOpen)
@@ -196,7 +197,7 @@ export function AppShell() {
       {/* 会员中心全局弹窗:最高优先级全屏遮罩 + 右上角 X 关闭,任意页面可唤出 */}
       {memberCenterOpen ? (
         <Suspense fallback={null}>
-          <MemberCenterModal open onClose={closeMemberCenter} />
+          <MemberCenterModal open initialTab={memberCenterTab} onClose={closeMemberCenter} />
         </Suspense>
       ) : null}
 

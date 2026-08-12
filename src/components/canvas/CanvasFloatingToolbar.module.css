@@ -1,0 +1,167 @@
+.toolbar {
+  position: absolute;
+  top: 50%;
+  left: 46px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 20px 12px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+  animation: toolbar-enter 0.2s ease-out;
+  transform: translateY(-50%);
+  will-change: opacity, transform;
+}
+
+/* 抽屉打开前：工具栏向左收起并淡出 */
+.toolbarLeaving {
+  animation: toolbar-leave 0.22s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes toolbar-enter {
+  from {
+    opacity: 0;
+    transform: translate(-16px, -50%);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+}
+
+@keyframes toolbar-leave {
+  from {
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-28px, -50%) scale(0.96);
+  }
+}
+
+.toolBtn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: none;
+  background: transparent;
+  color: #333;
+  cursor: pointer;
+  border-radius: 10px;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+
+.toolBtn:hover {
+  background: rgba(34, 197, 160, 0.12);
+  color: #16a889;
+}
+
+.toolBtnActive {
+  background: rgba(34, 197, 160, 0.14);
+  color: #16a889;
+}
+
+.addBtnWrap:first-child .toolBtn {
+  border-radius: 50%;
+  background: #333;
+  color: #fff;
+}
+
+.toolLabel {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: #404040;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.16s,
+    transform 0.16s;
+}
+
+.toolBtn:hover .toolLabel,
+.toolBtn:focus-visible .toolLabel {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.addBtnWrap {
+  position: relative;
+}
+
+.addMenu {
+  position: absolute;
+  left: 52px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  z-index: 20;
+}
+
+.addMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+  text-align: left;
+}
+
+.addMenuItem:hover {
+  background: rgba(87, 103, 229, 0.06);
+}
+
+.addMenuText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.addMenuLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.addMenuDesc {
+  font-size: 11px;
+  color: #999;
+}
+
+.addMenuIcon {
+  display: flex;
+  align-items: center;
+  color: #777;
+  flex-shrink: 0;
+}

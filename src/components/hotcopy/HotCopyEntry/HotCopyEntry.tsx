@@ -4,11 +4,11 @@
  * + @ 引用替换素材 + 圆形发送。受控:点发送回调 onSubmit(payload),由编排器(HotCopyCreateView)进入「准备素材」。
  * 不含壳子(侧栏/顶栏)与出视频逻辑——那些在编排器里。
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useToast } from '@/composables/useToast'
 import { fileToDataUrl } from '@/utils/imageFile'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
-import { listAiTasks, extractAssetPageItems } from '@/api/business'
+import { estimateAiTaskCost, listAiTasks, extractAssetPageItems } from '@/api/business'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { createMaterialFromAsset } from '@/utils/materials'
@@ -26,6 +26,8 @@ import {
   type GenerationModelErrorState,
   type GenerationModelGroup,
   type GenerationModelLoadingState,
+  type GenerationModelEstimateRequest,
+  type GenerationModelEstimateResult,
 } from '@/components/smart/GenerationModelPicker'
 import RatioIcon from '@/components/common/RatioIcon'
 import videoIcon from '@/assets/icons/hotcopy-video.svg'
@@ -802,6 +804,43 @@ export default function HotCopyEntry({
   // 用户点击生成后立即锁定本次模型选择；异步读取时长/估价期间也不能切换成另一模型。
   const modelsLocked = submissionBusy
 
+  /** 模型面板内的费用预估与当前爆款复制参数保持一致，切换模型时可直接比较单次积分。 */
+  const estimateSelectedModel = useCallback(
+    async ({
+      operationCode,
+      modelVersionId: nextModelVersionId,
+    }: GenerationModelEstimateRequest): Promise<GenerationModelEstimateResult> => {
+      const ws = Number(workspaceId || 0)
+      if (!ws) throw new Error('工作空间未就绪')
+      const inputAssets = [
+        Number(libraryVideo?.assetId || 0),
+        ...products
+          .filter((product) => !product.isVideo)
+          .map((product) => Number(product.submitAssetId || product.assetId || 0)),
+      ].filter((assetId) => Number.isSafeInteger(assetId) && assetId > 0)
+      const result = await estimateAiTaskCost({
+        workspaceId: ws,
+        modelVersionId: nextModelVersionId,
+        operationCode,
+        prompt: text.trim(),
+        params: {
+          ratio,
+          duration: Number.parseInt(duration, 10) || 10,
+          resolution: '720p',
+          generate_audio: true,
+          reference_image_count: products.filter((product) => !product.isVideo).length,
+        },
+        inputAssets,
+      })
+      return {
+        estimatedCost: Number(result?.estimated_cost ?? 0),
+        balance: Number.isFinite(Number(result?.balance)) ? Number(result.balance) : undefined,
+        canAfford: result?.can_afford,
+      }
+    },
+    [duration, libraryVideo?.assetId, products, ratio, text, workspaceId],
+  )
+
   const buildPayload = (): HotCopyEntryPayload => ({
     tab,
     videoSource,
@@ -1111,6 +1150,7 @@ export default function HotCopyEntry({
                 placement="start"
                 loading={modelLoading}
                 error={modelError}
+                estimateModelCost={Number(workspaceId || 0) > 0 ? estimateSelectedModel : undefined}
                 locked={modelsLocked}
                 conflicts={modelSelectionConflicts}
                 attentionRequest={modelAttentionRequest}
