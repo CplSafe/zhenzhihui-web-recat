@@ -9,6 +9,7 @@ import {
   findFirstField,
   getModelParamSchema,
   hasModelParamSchema,
+  normalizeModelParamOptionValue,
 } from './modelSchema.js'
 import { parseDurationSeconds, resolveVideoDuration } from './videoDurationValue.js'
 
@@ -103,7 +104,8 @@ function booleanOptionValue(value) {
 
 function optionMatches(value, option) {
   if (typeof value === 'boolean') return booleanOptionValue(option) === value
-  return String(option) === String(value ?? '')
+  // 仅大小写/首尾空格不同（720p 与 720P）视为同一档位；命中后 pickOption 仍下发 schema 的原始拼写。
+  return normalizeModelParamOptionValue(option) === normalizeModelParamOptionValue(value ?? '')
 }
 
 /**

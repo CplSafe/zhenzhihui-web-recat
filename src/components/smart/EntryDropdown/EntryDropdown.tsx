@@ -22,6 +22,13 @@ interface EntryDropdownProps {
   placeholder?: string
   /** 只读/禁用:按钮不可点击、不弹出浮层(用于只读复用场景) */
   disabled?: boolean
+  /**
+   * 有前置条件未满足:按钮【仍可点击】但不展开浮层，改为回调让调用方说明原因。
+   * 与 disabled 的区别在于用户点得动——否则无从得知为什么不能选。
+   */
+  blocked?: boolean
+  /** blocked 状态下被点击时触发，用于提示前置条件。 */
+  onBlockedClick?: () => void
   disabledOptions?: readonly string[]
   /** 单选可清空:再次点击已选项则清空(onChange('')) */
   clearable?: boolean
@@ -40,6 +47,8 @@ export default function EntryDropdown({
   multiple = false,
   placeholder = '请选择',
   disabled = false,
+  blocked = false,
+  onBlockedClick,
   disabledOptions = [],
   clearable = false,
   valueMinWidth,
@@ -55,6 +64,11 @@ export default function EntryDropdown({
     window.addEventListener('pointerdown', onDown, true)
     return () => window.removeEventListener('pointerdown', onDown, true)
   }, [open])
+
+  // 前置条件在浮层展开后失效(如清空了模型选择)时收起，避免继续选到不该选的值。
+  useEffect(() => {
+    if (blocked) setOpen(false)
+  }, [blocked])
 
   // 多选时把 value 规整成数组;单选时按字符串处理
   const selected = multiple ? (Array.isArray(value) ? value : value ? [String(value)] : []) : []
@@ -79,8 +93,16 @@ export default function EntryDropdown({
     <div className={`${styles.entrydd}${placement === 'top' ? ' ' + styles.top : ''}`} ref={ref}>
       <button
         type="button"
-        className={`${styles.btn}${open ? ' ' + styles.open : ''}`}
-        onClick={() => !disabled && setOpen((o) => !o)}
+        className={`${styles.btn}${open ? ' ' + styles.open : ''}${blocked && !disabled ? ' ' + styles.blocked : ''}`}
+        onClick={() => {
+          if (disabled) return
+          // 前置条件未满足：不展开，只解释原因；已展开时仍允许收起。
+          if (blocked && !open) {
+            onBlockedClick?.()
+            return
+          }
+          setOpen((o) => !o)
+        }}
         disabled={disabled}
         aria-label={ariaLabel}
         aria-haspopup="listbox"

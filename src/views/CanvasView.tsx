@@ -39,6 +39,8 @@ import CanvasNodePanel, {
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
+import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
+import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
 import { saveCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId } from '@/utils/canvasDraft'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
@@ -66,7 +68,15 @@ import {
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
 import { getCanvasTaskPresentation } from '@/utils/canvasTaskState'
-import { openMemberCenterTab, requestConfirm } from '@/stores/ui'
+import {
+  LOCAL_IMAGE_IMPORT_LIMIT,
+  extractImageFiles,
+  hasFileDrag,
+  pickImageFiles,
+  readImageNaturalSize,
+  snapImageRatio,
+} from '@/utils/canvasLocalImage'
+import { openMemberCenterTab, requestConfirm, showToast } from '@/stores/ui'
 import {
   buildEdgeId,
   applyCanvasElementMutations,
@@ -265,6 +275,9 @@ const TOOLBAR_LEAVE_MS = 220
 /** 新节点渐入动画时长（毫秒），与 CSS 动画时长保持一致 */
 const NODE_ENTER_MS = 350
 
+/** 本地图片预览地址的释放延迟（毫秒）：等正式地址加载完再释放，避免画面闪断 */
+const LOCAL_PREVIEW_REVOKE_MS = 5000
+
 /** 生成防冲突的节点唯一 id（时间戳 + 计数器 + 随机串），避免同毫秒内重复创建导致 id 冲突 */
 let nodeIdSequence = 0
 function createNodeId(type: string): string {
@@ -288,7 +301,7 @@ const HISTORY_LIMIT = 50
 
 /** 右键浮动菜单的宽高（用于防止菜单溢出视口） */
 const CONTEXT_MENU_WIDTH = 184
-const CONTEXT_MENU_HEIGHT = 276
+const CONTEXT_MENU_HEIGHT = 314
 
 /** 历史快照：nodes/edges + 文本内容（文本独立于 nodes 存储，必须一并快照才能正确撤销） */
 interface CanvasHistorySnapshot {
@@ -427,28 +440,219 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   }, [data, editing, id, textContent])
   // 视频播放态：默认暂停，点击播放按钮后播放，播放中显示暂停按钮
   const [playing, setPlaying] = useState(false)
+  // 视频时长（秒）：由 <video> 元数据回填（preload="metadata" 已足够拿到 duration）
+  const [videoDurationSec, setVideoDurationSec] = useState(0)
+  // 播放进度（秒）：驱动进度条与时间读数，拖动进度条时同步回写 video.currentTime
+  const [videoCurrentSec, setVideoCurrentSec] = useState(0)
+  const [videoScrubbing, setVideoScrubbing] = useState(false)
+  // 放大查看：全屏预览弹窗开关
+  const [videoPreviewOpen, setVideoPreviewOpen] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const videoTrackRef = useRef<HTMLDivElement>(null)
+  // 目标进度（秒）：用户拖动/按键设定的位置。
+  // 部分媒体源在起播或重新拉流时会把 currentTime 抹回 0（典型是上游不支持 Range 分段请求），
+  // 表现为「拖到 22 秒却从头开始播」。这里记住目标位置，在元数据就绪与起播时补一次 seek。
+  const pendingSeekRef = useRef(0)
+  const pendingSeekTriesRef = useRef(0)
+  // 用户真正开始看这个视频后才升级 preload：让浏览器把数据缓冲下来，
+  // 跳转就能落在已缓冲区间内（源不支持分段请求时也能跳）。默认 metadata，避免画布上每个视频都整片预载。
+  const [videoPreload, setVideoPreload] = useState<'metadata' | 'auto'>('metadata')
+  // 兜底可跳转源：整片抓到本地后的 object URL（见 ensureSeekableSource）
+  const [videoLocalSrc, setVideoLocalSrc] = useState('')
+  const [videoPreparing, setVideoPreparing] = useState(false)
+  const videoLocalSrcRef = useRef('')
+  const videoPreparingRef = useRef(false)
+  const resumeAfterSwapRef = useRef(false)
+  const seekCheckTimerRef = useRef(0)
   const placeholder = '双击开始编辑...'
   // 素材回显地址：blob: 临时地址或缺失但 assetId 存在时，用同源流式地址重建（刷新后不丢）
   const workspaceId = useWorkspaceId()
-  const mediaUrl = resolveNodeMediaUrl(data as Record<string, unknown> | undefined, workspaceId)
-  // 视频地址变化（应用新素材）时重置播放态，避免旧视频继续播放
+  // 本地导入的图片在上传完成前先用会话级预览地址显示；previewUrl/uploading 均不在持久化白名单内
+  const uploadingLocalFile = Boolean((data as any)?.uploading)
+  const localPreviewUrl = String((data as any)?.previewUrl || '')
+  const mediaUrl = resolveNodeMediaUrl(data as Record<string, unknown> | undefined, workspaceId) || localPreviewUrl
+  const mediaUrlRef = useRef(mediaUrl)
+  mediaUrlRef.current = mediaUrl
+  // 视频地址变化（应用新素材）时重置播放态与时长，避免旧视频继续播放或残留旧时长角标
   const videoUrl = mediaUrl
   useEffect(() => {
     setPlaying(false)
+    setVideoDurationSec(0)
+    setVideoCurrentSec(0)
+    setVideoScrubbing(false)
+    setVideoPreviewOpen(false)
+    setVideoPreload('metadata')
+    setVideoLocalSrc('')
+    pendingSeekRef.current = 0
+    pendingSeekTriesRef.current = 0
+    return () => {
+      // 换素材/卸载时释放本地整片，避免 blob 常驻内存
+      window.clearTimeout(seekCheckTimerRef.current)
+      if (videoLocalSrcRef.current) {
+        URL.revokeObjectURL(videoLocalSrcRef.current)
+        videoLocalSrcRef.current = ''
+      }
+    }
   }, [videoUrl])
+  // 实际播放地址：优先本地整片（可任意跳转），否则用流式地址
+  const videoPlaybackSrc = videoLocalSrc || mediaUrl
+
+  const videoDurationLabel = formatVideoDurationLabel(videoDurationSec)
+  const videoProgressPercent =
+    videoDurationSec > 0 ? Math.min(100, Math.max(0, (videoCurrentSec / videoDurationSec) * 100)) : 0
+
+  /**
+   * 让视频变得可跳转：把整片抓到本地，改用 object URL 播放。
+   * 源不支持 Range 分段请求时，浏览器停不住 currentTime——设完就被抹回 0，表现为「拖到 15 秒仍从头播」。
+   * 本地 blob 的跳转完全在内存里完成，不依赖服务端。只在跳转确实失败的那个节点触发，不整片预载画布。
+   */
+  const ensureSeekableSource = async () => {
+    if (videoLocalSrcRef.current || videoPreparingRef.current) return
+    const url = mediaUrl
+    if (!url || url.startsWith('blob:') || url.startsWith('data:')) return
+    videoPreparingRef.current = true
+    setVideoPreparing(true)
+    resumeAfterSwapRef.current = !videoRef.current?.paused
+    try {
+      const res = await fetch(url, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      if (!blob.size) throw new Error('empty media')
+      const objectUrl = URL.createObjectURL(blob)
+      if (mediaUrlRef.current !== url) {
+        // 抓取期间换了素材：丢弃这份，避免播成上一个视频
+        URL.revokeObjectURL(objectUrl)
+        return
+      }
+      videoLocalSrcRef.current = objectUrl
+      pendingSeekTriesRef.current = 0
+      setVideoLocalSrc(objectUrl)
+    } catch {
+      // 拉取失败（鉴权/跨域/网络）：继续用流式地址，跳转能力取决于源是否支持分段请求
+      resumeAfterSwapRef.current = false
+    } finally {
+      videoPreparingRef.current = false
+      setVideoPreparing(false)
+    }
+  }
+
+  /**
+   * 校验跳转是否真的落住。只有 currentTime 被抹回目标之前才算失败——
+   * 正常播放会向后走，不能当成失败，否则会平白触发整片下载。
+   */
+  const verifySeekLanded = () => {
+    window.clearTimeout(seekCheckTimerRef.current)
+    seekCheckTimerRef.current = window.setTimeout(() => {
+      const video = videoRef.current
+      const target = pendingSeekRef.current
+      if (!video || !(target > 0) || videoLocalSrcRef.current) return
+      if (video.currentTime >= target - 0.5) return
+      void ensureSeekableSource()
+    }, 600)
+  }
+
+  /** 跳转到指定秒，并记下目标位置供起播时补偿 */
+  const seekVideoTo = (seconds: number) => {
+    const video = videoRef.current
+    if (!video || !(videoDurationSec > 0)) return
+    const clamped = Math.min(videoDurationSec, Math.max(0, seconds))
+    pendingSeekRef.current = clamped
+    pendingSeekTriesRef.current = 0
+    setVideoPreload('auto')
+    video.currentTime = clamped
+    setVideoCurrentSec(clamped)
+    verifySeekLanded()
+  }
+
+  /**
+   * 起播 / 重新拉流时把进度补回用户拖到的位置。
+   * 容差 0.35s：已经停在目标位置就不动它；补两次仍回不去说明这个源真的跳不动，
+   * 放弃补偿让位给用户，避免和播放器来回抢控制权。
+   */
+  const applyPendingSeek = (video: HTMLVideoElement) => {
+    const target = pendingSeekRef.current
+    if (!(target > 0)) return
+    const duration = Number(video.duration)
+    if (!Number.isFinite(duration) || target >= duration) return
+    if (Math.abs(video.currentTime - target) <= 0.35) return
+    if (pendingSeekTriesRef.current >= 2) return
+    pendingSeekTriesRef.current += 1
+    video.currentTime = target
+  }
+
+  /** 按指针横坐标跳转到对应秒：轨道 rect 已含画布缩放，无需再按 zoom 换算 */
+  const seekVideoToClientX = (clientX: number) => {
+    const track = videoTrackRef.current
+    if (!track || !(videoDurationSec > 0)) return
+    const rect = track.getBoundingClientRect()
+    if (!(rect.width > 0)) return
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
+    seekVideoTo(ratio * videoDurationSec)
+  }
+
+  /** 拖动进度条：指针按下即跳转，捕获指针后允许拖出轨道继续拖动 */
+  const handleTrackPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.stopPropagation()
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setVideoScrubbing(true)
+    seekVideoToClientX(event.clientX)
+  }
+
+  const handleTrackPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!videoScrubbing) return
+    event.stopPropagation()
+    seekVideoToClientX(event.clientX)
+  }
+
+  const handleTrackPointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!videoScrubbing) return
+    event.stopPropagation()
+    setVideoScrubbing(false)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  /** 键盘调帧：左右（Shift 加速）逐秒跳转，Home/End 跳到首尾；阻止冒泡避免画布接管方向键 */
+  const handleTrackKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const video = videoRef.current
+    if (!video || !(videoDurationSec > 0)) return
+    const step = event.shiftKey ? 5 : 1
+    let next: number | null = null
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next = videoCurrentSec - step
+    else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') next = videoCurrentSec + step
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = videoDurationSec
+    if (next === null) return
+    event.preventDefault()
+    event.stopPropagation()
+    seekVideoTo(next)
+  }
 
   /** 播放/暂停切换：由用户点击按钮触发，非自动播放 */
   const toggleVideoPlay = () => {
     const v = videoRef.current
     if (!v) return
     if (v.paused) {
+      setVideoPreload('auto')
+      // 起播前先把进度对回目标位置：暂停态是最可靠的补 seek 时机
+      applyPendingSeek(v)
       v.play().catch(() => setPlaying(false))
       setPlaying(true)
+      // 起播后再验一次：被抹回 0 就切本地整片
+      verifySeekLanded()
     } else {
       v.pause()
       setPlaying(false)
     }
+  }
+
+  /** 放大查看：先暂停节点内的视频，避免与弹窗里的播放重叠出声 */
+  const openVideoPreview = () => {
+    videoRef.current?.pause()
+    setPlaying(false)
+    setVideoPreviewOpen(true)
   }
 
   const handleDoubleClick = () => {
@@ -499,9 +703,10 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   })
   const taskRunning = taskPresentation.running
   const taskFailed = taskPresentation.failed
-  const showUploadAction = isImageNode || isVideoNode ? !(isVideoNode && hasContent) : false
+  // 本地图片上传中：素材尚未落库，替换/下载都拿不到 assetId，先隐藏这两个动作
+  const showUploadAction = isImageNode || isVideoNode ? !(isVideoNode && hasContent) && !uploadingLocalFile : false
   const uploadLabel = isImageNode && hasContent ? '替换' : '上传'
-  const showDownloadAction = (isImageNode || isVideoNode) && hasContent
+  const showDownloadAction = (isImageNode || isVideoNode) && hasContent && !uploadingLocalFile
   // 删除属于所有节点的基础操作，因此文本、图片和视频节点都保留顶部操作组。
   const showTopActions = true
 
@@ -521,8 +726,10 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         if (assetId > 0) return assetStreamUrl(assetId, workspaceId)
         return mediaUrl
       },
-    }).catch(() => {
-      // 下载失败静默：浏览器可能已接管（iframe 下载 / 微信内打开），不打断用户
+    }).catch((error: any) => {
+      // 不能静默：另存为对话框已经在磁盘上建好了空文件，用户看到的是一个 0 字节的成品，
+      // 不给原因就会以为下载功能坏了。'started' 等浏览器接管的情况不会走到这里。
+      showToast(String(error?.message || '下载失败，请稍后重试'), 'error')
     })
   }
 
@@ -690,14 +897,116 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
             <video
               ref={videoRef}
               className="canvas-node-media"
-              src={mediaUrl}
+              src={videoPlaybackSrc}
               poster={(data as any).poster}
               playsInline
-              preload="metadata"
-              onPlay={() => setPlaying(true)}
+              preload={videoPreload}
+              onLoadedMetadata={(event) => {
+                const el = event.currentTarget
+                setVideoDurationSec(el.duration)
+                // 媒体重新拉流（含切到本地整片、被抹回 0 的情况）后把进度补回目标位置
+                applyPendingSeek(el)
+                if (resumeAfterSwapRef.current) {
+                  // 换源前正在播 → 换源后接着播，不让用户重按一次播放
+                  resumeAfterSwapRef.current = false
+                  el.play().catch(() => setPlaying(false))
+                }
+              }}
+              onSeeked={(event) => {
+                // 以元素实际落点为准回填，进度条不谎报位置
+                if (!videoScrubbing) setVideoCurrentSec(event.currentTarget.currentTime)
+              }}
+              onTimeUpdate={(event) => {
+                // 拖动过程中以指针位置为准，避免元素回报的旧时间把滑块拽回去
+                if (videoScrubbing) return
+                const el = event.currentTarget
+                setVideoCurrentSec(el.currentTime)
+                // 已经播过目标位置说明用户在正常往下看，撤掉补偿，避免下次播放被拉回去
+                if (pendingSeekRef.current > 0 && el.currentTime > pendingSeekRef.current + 0.5) {
+                  pendingSeekRef.current = 0
+                }
+              }}
+              onPlay={(event) => {
+                applyPendingSeek(event.currentTarget)
+                setPlaying(true)
+                verifySeekLanded()
+              }}
+              onPlaying={(event) => applyPendingSeek(event.currentTarget)}
               onPause={() => setPlaying(false)}
-              onEnded={() => setPlaying(false)}
+              onEnded={() => {
+                // 播完后回到自然行为：下次点播放从头开始
+                pendingSeekRef.current = 0
+                pendingSeekTriesRef.current = 0
+                setPlaying(false)
+              }}
             />
+            {videoDurationLabel ? (
+              <div
+                className="canvas-node-video-bar nodrag nopan"
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onDoubleClick={(event) => event.stopPropagation()}
+              >
+                <span className="canvas-node-video-time">
+                  {formatVideoTimeLabel(videoCurrentSec)} / {videoDurationLabel}
+                </span>
+                {videoPreparing ? (
+                  <span className="canvas-node-video-hint" role="status">
+                    缓冲中…
+                  </span>
+                ) : null}
+                <div
+                  ref={videoTrackRef}
+                  className="canvas-node-video-track"
+                  data-scrubbing={videoScrubbing}
+                  role="slider"
+                  tabIndex={0}
+                  aria-label="视频进度"
+                  aria-valuemin={0}
+                  aria-valuemax={Math.round(videoDurationSec)}
+                  aria-valuenow={Math.floor(videoCurrentSec)}
+                  aria-valuetext={`${formatVideoTimeLabel(videoCurrentSec)} / ${videoDurationLabel}`}
+                  onPointerDown={handleTrackPointerDown}
+                  onPointerMove={handleTrackPointerMove}
+                  onPointerUp={handleTrackPointerEnd}
+                  onPointerCancel={handleTrackPointerEnd}
+                  onKeyDown={handleTrackKeyDown}
+                >
+                  <div className="canvas-node-video-track__fill" style={{ width: `${videoProgressPercent}%` }}>
+                    <span className="canvas-node-video-track__thumb" />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="canvas-node-video-expand nodrag nopan"
+              title="放大查看"
+              aria-label="放大查看视频"
+              onPointerDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                openVideoPreview()
+              }}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="15"
+                height="15"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M15 3h6v6" />
+                <path d="M9 21H3v-6" />
+                <path d="M21 3l-7 7" />
+                <path d="M3 21l7-7" />
+              </svg>
+            </button>
             {!playing ? (
               <button className="canvas-node-play-btn" onClick={toggleVideoPlay} aria-label="播放视频">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
@@ -720,7 +1029,15 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         )}
       </div>
 
-      {taskRunning && (
+      {uploadingLocalFile && (
+        <div className="canvas-node-generation-mask" role="status" aria-live="polite">
+          <span className="canvas-node-generation-spinner" aria-hidden="true" />
+          <strong>正在上传</strong>
+          <span>本地图片上传中，请稍候</span>
+        </div>
+      )}
+
+      {taskRunning && !uploadingLocalFile && (
         <div className="canvas-node-generation-mask" role="status" aria-live="polite">
           <span className="canvas-node-generation-spinner" aria-hidden="true" />
           <strong>{taskPresentation.title}</strong>
@@ -734,6 +1051,18 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           {taskRunning && taskProgress > 0 ? <strong>{Math.round(taskProgress)}%</strong> : null}
         </div>
       )}
+
+      {/* 放大查看弹窗：portal 到 body，不受画布 transform 影响 */}
+      {videoPreviewOpen && kind === 'video' && mediaUrl ? (
+        <CanvasVideoPreviewModal
+          // 已抓到本地整片时预览也复用它：省一次下载，且弹窗里的原生进度条同样能任意跳转
+          src={videoPlaybackSrc}
+          poster={(data as any).poster}
+          durationLabel={videoDurationLabel}
+          startTime={videoCurrentSec}
+          onClose={() => setVideoPreviewOpen(false)}
+        />
+      ) : null}
 
       {/* 所有节点（含首个/画布源头）都保留左右两个连接点：可从左侧被连线、向右连接下游 */}
       <Handle
@@ -781,23 +1110,24 @@ function CanvasInner() {
   const navigate = useNavigate()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
-  const { fitView } = useReactFlow()
+  const { fitView, screenToFlowPosition } = useReactFlow()
   const workspaceId = useWorkspaceId()
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
   // 模型目录：来自 /api/v1/ai/models
   const { groups, loading: modelsLoading } = useGenerationModelCatalog(workspaceId)
-  // 按节点类型提取模型列表
+  // 按节点类型提取模型列表。
+  // 三类都取阶段内去重后的模型合集：图片节点会随参考链在 image.text_to_image 与 image.image_to_image
+  // 之间实时切换 operation，面板再按当前 operation 过滤，因此这里不能只装其中一种——
+  // 只装文生图会让「接入参考图的图片节点」筛不出任何模型，直接退化成无法生成。
   const canvasModels = useMemo(() => {
     const scriptGroup = groups.find((g) => g.key === 'script')
     const imageGroup = groups.find((g) => g.key === 'image')
     const videoGroup = groups.find((g) => g.key === 'video')
-    const imageTextModels =
-      imageGroup?.operationGroups.find((og) => og.operationCode === 'image.text_to_image')?.models || []
     return {
       text: scriptGroup?.models || ([] as GenerationModelOption[]),
-      image: imageTextModels,
+      image: imageGroup?.models || ([] as GenerationModelOption[]),
       video: videoGroup?.models || ([] as GenerationModelOption[]),
     }
   }, [groups])
@@ -827,6 +1157,16 @@ function CanvasInner() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   // 图片/视频节点上传：隐藏的 file input，供顶部胶囊上传按钮触发
   const uploadInputRef = useRef<HTMLInputElement>(null)
+  // 本地图片导入：隐藏的多选 file input，供工具栏 / 右键菜单「本地图片」触发
+  const localImageInputRef = useRef<HTMLInputElement>(null)
+  // 选择文件前记录的落点（视口坐标）：右键菜单从菜单位置落点，工具栏落在视口中心
+  const localImageAnchorRef = useRef<{ x: number; y: number } | null>(null)
+  // 是否有文件正拖到画布上方（显示拖放提示遮罩）
+  const [fileDragActive, setFileDragActive] = useState(false)
+  // dragenter/dragleave 会随子元素冒泡反复触发，用计数抵消，避免提示闪烁
+  const fileDragDepthRef = useRef(0)
+  // 最近一次鼠标位置（视口坐标）：粘贴图片时作为落点
+  const pointerRef = useRef<{ x: number; y: number } | null>(null)
   // 撤销/重做历史栈：存储 nodes/edges + 文本内容快照
   const historyRef = useRef<{ undo: CanvasHistorySnapshot[]; redo: CanvasHistorySnapshot[] }>({
     undo: [],
@@ -903,10 +1243,16 @@ function CanvasInner() {
     })
   }, [nodes, workspaceId])
 
-  /** 参考选择：目标节点种类对应的允许来源种类 */
+  /**
+   * 参考选择：目标节点种类对应的允许来源种类。
+   *
+   * 图片节点同时接受文本与图片来源：接入图片即为「图生图」，面板会把 operation 切到
+   * image.image_to_image，该图以 role=reference_image 进入 input_assets。
+   * 图片节点不接受视频来源——后端图片 operation 没有以视频为参考的契约。
+   */
   const allowedSourceKinds: Record<string, string[]> = {
     video: ['image', 'video'],
-    image: ['text'],
+    image: ['text', 'image'],
     text: ['text', 'image', 'video'],
   }
 
@@ -1447,12 +1793,19 @@ function CanvasInner() {
     (
       type: string,
       position: { x: number; y: number },
-      options?: { ratio?: string; extraData?: Record<string, unknown> },
+      options?: {
+        ratio?: string
+        extraData?: Record<string, unknown>
+        /** 显式节点尺寸（本地图片按原图比例创建时使用），缺省按类型取默认值 */
+        size?: { width: number; height: number }
+        /** 跳过历史快照：批量创建（一次导入多张图片）时由调用方先统一记录一次，撤销才是一步到位 */
+        skipHistory?: boolean
+      },
     ) => {
       // 结构变更前记录历史，供撤销使用
-      commitHistory()
-      const nodeW = type === 'video' ? 444 : 250
-      const nodeH = type === 'video' ? 250 : 250
+      if (!options?.skipHistory) commitHistory()
+      const nodeW = options?.size?.width || (type === 'video' ? 444 : 250)
+      const nodeH = options?.size?.height || (type === 'video' ? 250 : 250)
       const id = createNodeId(type)
       const ratio = options?.ratio
       const newNode: Node = {
@@ -2175,6 +2528,180 @@ function CanvasInner() {
     [selectedNode, workspaceId, commitHistory, setSaveStatus, setNodes],
   )
 
+  // ===== 本地图片导入：工具栏「本地图片」/ 粘贴（Ctrl+V）/ 拖拽文件到画布，三个入口共用 =====
+
+  /** 本次会话创建的预览地址集合：页面卸载时统一释放，避免 objectURL 泄漏 */
+  const localPreviewUrlsRef = useRef(new Set<string>())
+  useEffect(
+    () => () => {
+      for (const url of localPreviewUrlsRef.current) URL.revokeObjectURL(url)
+      localPreviewUrlsRef.current.clear()
+    },
+    [],
+  )
+
+  /** 释放预览地址：延迟到正式地址加载完成之后，避免图片出现短暂空白 */
+  const releasePreviewUrl = useCallback((url: string) => {
+    if (!url) return
+    window.setTimeout(() => {
+      if (!localPreviewUrlsRef.current.has(url)) return
+      URL.revokeObjectURL(url)
+      localPreviewUrlsRef.current.delete(url)
+    }, LOCAL_PREVIEW_REVOKE_MS)
+  }, [])
+
+  /**
+   * 导入本地图片：先按原图比例落一个带本地预览的占位节点，再上传素材中心换成持久地址。
+   *
+   * 预览地址只存在 previewUrl（不在持久化白名单内），因此不会有 blob: 地址被写进云端；
+   * 上传失败的占位节点直接移除，不留下永远空白的图片节点。
+   * anchor 为视口坐标（拖拽落点 / 鼠标位置 / 右键位置），缺省落在视口中心。
+   */
+  const importLocalImages = useCallback(
+    async (files: File[], anchor?: { x: number; y: number }) => {
+      const images = pickImageFiles(files)
+      if (images.length === 0) {
+        window.alert('仅支持导入图片文件')
+        return
+      }
+      const accepted = images.slice(0, LOCAL_IMAGE_IMPORT_LIMIT)
+      const skipped = images.length - accepted.length
+      const origin = anchor || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+      // 整批只记一次历史：一次撤销即可撤掉本次导入的全部节点
+      commitHistory()
+      const created = await Promise.all(
+        accepted.map(async (file, index) => {
+          // 原图长宽比就近吸附到节点可选比例，导入后不再需要手动调比例
+          const natural = await readImageNaturalSize(file)
+          const ratio = natural ? snapImageRatio(natural.width, natural.height) : '1:1'
+          const size = calcNodeSize(ratio, 250)
+          const previewUrl = URL.createObjectURL(file)
+          localPreviewUrlsRef.current.add(previewUrl)
+          // 多张图片沿对角线错开，避免完全重叠
+          const offset = index * 36
+          const point = screenToFlowPosition({ x: origin.x + offset, y: origin.y + offset })
+          const nodeId = appendNewNode(
+            'image',
+            { x: point.x - size.width / 2, y: point.y - size.height / 2 },
+            { ratio, size, skipHistory: true, extraData: { previewUrl, uploading: true } },
+          )
+          return { nodeId, file, previewUrl }
+        }),
+      )
+      const failures: string[] = []
+      await Promise.all(
+        created.map(async ({ nodeId, file, previewUrl }) => {
+          try {
+            // 上传到素材中心，取得持久 asset_id（刷新后经同源流式地址回显）
+            const out: any = await uploadAssetFile({ workspaceId, file })
+            const assetId = Number(out?.asset?.id || 0)
+            if (!assetId) throw new Error('上传素材失败，请稍后重试')
+            const nextData: Record<string, unknown> = {
+              assetId,
+              resultUrl: assetStreamUrl(assetId, workspaceId),
+              uploading: false,
+              previewUrl: '',
+            }
+            setNodes((nds) => nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...nextData } } : n)))
+            setSelectedNode((prev) => (prev && prev.id === nodeId ? { ...prev, ...nextData } : prev))
+          } catch (error: any) {
+            failures.push(String(error?.message || '上传素材失败，请稍后重试'))
+            setNodes((nds) => nds.filter((n) => n.id !== nodeId))
+            setSelectedNode((prev) => (prev && prev.id === nodeId ? null : prev))
+          } finally {
+            releasePreviewUrl(previewUrl)
+          }
+        }),
+      )
+      setSaveStatus('dirty')
+      if (failures.length > 0) {
+        window.alert(failures.length > 1 ? `${failures.length} 张图片上传失败：${failures[0]}` : failures[0])
+      } else if (skipped > 0) {
+        window.alert(`一次最多导入 ${LOCAL_IMAGE_IMPORT_LIMIT} 张图片，其余 ${skipped} 张已忽略`)
+      }
+    },
+    [appendNewNode, commitHistory, releasePreviewUrl, screenToFlowPosition, setNodes, setSaveStatus, workspaceId],
+  )
+
+  /** 打开本地图片选择框；anchor 为落点（视口坐标），缺省落在视口中心 */
+  const openLocalImagePicker = useCallback((anchor?: { x: number; y: number }) => {
+    const input = localImageInputRef.current
+    if (!input) return
+    localImageAnchorRef.current = anchor || null
+    input.value = ''
+    input.click()
+  }, [])
+
+  const handleLocalImageInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files || [])
+      event.target.value = ''
+      const anchor = localImageAnchorRef.current
+      localImageAnchorRef.current = null
+      if (files.length === 0) return
+      void importLocalImages(files, anchor || undefined)
+    },
+    [importLocalImages],
+  )
+
+  // 记录鼠标位置：粘贴的图片落在鼠标处，更贴近「粘到我看的地方」的预期
+  useEffect(() => {
+    const onMove = (event: MouseEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY }
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [])
+
+  // 粘贴导入：Ctrl+V 把剪贴板里的图片（截图或复制的图片文件）落到画布
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      // 文本编辑中保留浏览器默认粘贴；素材库弹窗、参考选择模式下不接管
+      const active = document.activeElement as HTMLElement | null
+      if (active?.closest?.('textarea, input, [contenteditable="true"]')) return
+      if (drawerPanel || isPickingRef) return
+      const files = extractImageFiles(event.clipboardData)
+      if (files.length === 0) return
+      event.preventDefault()
+      void importLocalImages(files, pointerRef.current || undefined)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [drawerPanel, isPickingRef, importLocalImages])
+
+  const handleFileDragEnter = useCallback((event: React.DragEvent) => {
+    if (!hasFileDrag(event.dataTransfer)) return
+    event.preventDefault()
+    fileDragDepthRef.current += 1
+    setFileDragActive(true)
+  }, [])
+
+  const handleFileDragOver = useCallback((event: React.DragEvent) => {
+    if (!hasFileDrag(event.dataTransfer)) return
+    // 必须阻止默认行为，否则浏览器会直接打开被拖入的图片文件
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const handleFileDragLeave = useCallback((event: React.DragEvent) => {
+    if (!hasFileDrag(event.dataTransfer)) return
+    fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1)
+    if (fileDragDepthRef.current === 0) setFileDragActive(false)
+  }, [])
+
+  const handleFileDrop = useCallback(
+    (event: React.DragEvent) => {
+      if (!hasFileDrag(event.dataTransfer)) return
+      event.preventDefault()
+      fileDragDepthRef.current = 0
+      setFileDragActive(false)
+      // 参考选择模式下画布正在等待点选来源节点，此时不接受导入
+      if (isPickingRef) return
+      void importLocalImages(extractImageFiles(event.dataTransfer), { x: event.clientX, y: event.clientY })
+    },
+    [importLocalImages, isPickingRef],
+  )
+
   // 模型变更：保存 modelVersionId 到节点数据并回显
   const handleModelChange = useCallback(
     (modelVersionId: number) => {
@@ -2236,22 +2763,44 @@ function CanvasInner() {
     [selectedNode, commitHistory, setNodes, setSaveStatus],
   )
 
-  /** AI 润色是显式的可选动作：只返回润色结果，仍需用户确认并保存。 */
+  /**
+   * AI 润色是显式的可选动作：只返回润色结果，仍需用户确认并保存。
+   *
+   * 节点已连线的参考图会一并送进润色模型。缺图时润色只能凭字面凭空补出主体和场景，
+   * 那段描述随后与参考图一起提交给图生图/图生视频模型并压过参考图，主体就被换掉了；
+   * 因此有图时改用「保持图中主体不变」的上下文，只补镜头与光影表达。
+   */
   const handlePolishNodeText = useCallback(
-    async ({ prompt, kind }: { prompt: string; kind: string }): Promise<string> => {
+    async ({
+      prompt,
+      kind,
+      images,
+      imageAssetIds,
+    }: {
+      prompt: string
+      kind: string
+      images?: string[]
+      imageAssetIds?: number[]
+    }): Promise<string> => {
       const theme = String(prompt || '').trim()
       if (!theme) throw new Error('请先输入一个主题或提示词')
       const polishModel = canvasModels.text.find((model) => model.operationCodes.includes('responses.multimodal'))
       if (!polishModel) throw new Error('暂无可用的 AI 润色模型，请稍后重试')
       const targetLabel = kind === 'video' ? '视频' : '图片'
-      const polishContext =
-        kind === 'video'
+      const hasReferenceImages = Boolean(images?.length || imageAssetIds?.length)
+      const polishContext = hasReferenceImages
+        ? kind === 'video'
+          ? `目标是 AI ${targetLabel}生成提示词，且已连接参考图。请保持参考图中的主体不变，只补充镜头运动、光线、节奏和画面风格，不要替换主体或增加无关主体。`
+          : `目标是 AI ${targetLabel}生成提示词，且已连接参考图。请保持参考图中的主体不变，只补充构图、视角、光线、材质和画面风格，不要替换主体或增加无关主体。`
+        : kind === 'video'
           ? `目标是 AI ${targetLabel}生成提示词。请补充场景、构图、镜头运动、主体动作、光线、节奏和画面风格，不要增加无关主体。`
           : `目标是 AI ${targetLabel}生成提示词。请补充场景、构图、视角、光线、材质和画面风格，不要增加无关主体。`
       const polished = String(
         await polishText(theme, {
           kind: 'generic',
           context: polishContext,
+          images,
+          imageAssetIds,
           modelVersionId: polishModel.modelVersionId,
           requestContext: {
             workspaceId,
@@ -2622,7 +3171,13 @@ function CanvasInner() {
         : nodes
 
   return (
-    <div className="canvas-view">
+    <div
+      className="canvas-view"
+      onDragEnter={handleFileDragEnter}
+      onDragOver={handleFileDragOver}
+      onDragLeave={handleFileDragLeave}
+      onDrop={handleFileDrop}
+    >
       <div className="canvas-brand">
         <img src={brandLogo} alt="帧智汇" className="canvas-brand-logo" />
         <div className="canvas-brand-text">
@@ -2667,6 +3222,7 @@ function CanvasInner() {
           onMoveToggle={handleMoveToggle}
           dragEnabled={dragEnabled}
           onDragToggle={handleDragToggle}
+          onAddLocalImage={() => openLocalImagePicker()}
           onOpenAssets={() => openDrawerPanel('assets')}
           onOpenHistory={() => openDrawerPanel('history')}
         />
@@ -2680,6 +3236,41 @@ function CanvasInner() {
         style={{ display: 'none' }}
         onChange={handleUploadFile}
       />
+
+      {/* 隐藏文件选择：由工具栏 / 右键菜单「本地图片」触发，支持一次选择多张 */}
+      <input
+        ref={localImageInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleLocalImageInputChange}
+      />
+
+      {/* 拖拽文件到画布时的提示遮罩 */}
+      {fileDragActive && (
+        <div className="canvas-drop-overlay">
+          <div className="canvas-drop-overlay__card">
+            <svg
+              width="34"
+              height="34"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 16V4" />
+              <path d="m6 10 6-6 6 6" />
+              <path d="M4 20h16" />
+            </svg>
+            <strong>松开即可添加到画布</strong>
+            <span>支持拖入本地图片，也可以直接 Ctrl+V 粘贴</span>
+          </div>
+        </div>
+      )}
 
       {/* 参考选择横幅 */}
       {isPickingRef && (
@@ -2873,6 +3464,33 @@ function CanvasInner() {
           <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('video')}>
             <span className="canvas-context-menu__icon">{getTypeIcon('video')}</span>
             视频节点
+          </button>
+          <button
+            type="button"
+            className="canvas-context-menu__item"
+            onClick={() => {
+              const anchor = { x: contextMenu.x, y: contextMenu.y }
+              setContextMenu(null)
+              openLocalImagePicker(anchor)
+            }}
+          >
+            <span className="canvas-context-menu__icon">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 16V4" />
+                <path d="m6 10 6-6 6 6" />
+                <path d="M4 20h16" />
+              </svg>
+            </span>
+            本地图片
           </button>
           <div className="canvas-context-menu__divider" />
           <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canUndo} onClick={undo}>

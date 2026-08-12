@@ -277,7 +277,7 @@ describe('useGenerationModelCatalog', () => {
     expect(isGenerationModelCatalogReadyForMode(result.current.operationStates, 'video')).toBe(false)
   })
 
-  it('only exposes reference-video and Seedance 2.0 video models', async () => {
+  it('exposes every enabled video model except the two unopened HappyHorse ones', async () => {
     mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) => {
       if (operationCode !== 'video.generate') return []
       return [
@@ -325,14 +325,21 @@ describe('useGenerationModelCatalog', () => {
         },
         {
           id: 926,
-          model_code: 'happyhorse-reference-to-video-v2',
-          display_name: 'HappyHorse 参考生视频（重复记录）',
+          model_code: 'brand-new-video-model',
+          display_name: '后端新增视频模型',
           operation_codes: ['video.generate'],
         },
         {
           id: 927,
-          model_code: 'other-reference-to-video',
-          display_name: '其他厂商参考生视频',
+          model_code: 'disabled-video-model',
+          display_name: '已停用视频模型',
+          enabled: false,
+          operation_codes: ['video.generate'],
+        },
+        {
+          id: 930,
+          model_code: 'minimax-image-to-video',
+          display_name: 'MiniMax 图生视频',
           operation_codes: ['video.generate'],
         },
       ]
@@ -351,22 +358,60 @@ describe('useGenerationModelCatalog', () => {
       { modelVersionId: 922, displayName: 'Seedance 2.0' },
       { modelVersionId: 928, displayName: 'Seedance 2.0 Fast' },
       { modelVersionId: 929, displayName: 'Seedance 2.0 Mini' },
+      { modelVersionId: 925, displayName: '其他视频生成模型' },
+      { modelVersionId: 926, displayName: '后端新增视频模型' },
+      { modelVersionId: 930, displayName: 'MiniMax 图生视频' },
     ])
     expect(result.current.operationStates['video.generate']).toMatchObject({
       status: 'ready',
-      availableModelCount: 4,
+      availableModelCount: 7,
     })
 
     const dropdownModels =
       result.current.pickerGroups
         .find((group) => group.key === 'video')
         ?.subgroups?.find((group) => group.key === 'video.generate')?.models ?? []
-    expect(dropdownModels.map(({ id, name }) => ({ id, name }))).toEqual([
-      { id: 921, name: 'HappyHorse 参考生视频' },
-      { id: 922, name: 'Seedance 2.0' },
-      { id: 928, name: 'Seedance 2.0 Fast' },
-      { id: 929, name: 'Seedance 2.0 Mini' },
+    expect(dropdownModels.map(({ name }) => name)).toEqual([
+      'HappyHorse 参考生视频',
+      'Seedance 2.0',
+      'Seedance 2.0 Fast',
+      'Seedance 2.0 Mini',
+      '其他视频生成模型',
+      '后端新增视频模型',
+      'MiniMax 图生视频',
     ])
+  })
+
+  it('hides Seedance 2.5 from the smart flow only, leaving other flows untouched', async () => {
+    mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) => {
+      if (operationCode !== 'video.generate') return []
+      return [
+        { id: 941, model: 'seedance-2.0', display_name: 'Seedance 2.0', operation_codes: ['video.generate'] },
+        { id: 942, model: 'seedance-2.5', display_name: 'Seedance 2.5', operation_codes: ['video.generate'] },
+        {
+          id: 943,
+          model_code: 'third-party-video',
+          display_name: '其他视频生成模型',
+          operation_codes: ['video.generate'],
+        },
+      ]
+    })
+
+    const readVideoModelNames = (state: { groups: unknown }) =>
+      (state as ReturnType<typeof useGenerationModelCatalog>).groups
+        .find((group) => group.key === 'video')
+        ?.operationGroups.find((group) => group.operationCode === 'video.generate')
+        ?.models.map((model) => model.displayName) ?? []
+
+    const smart = renderHook(() => useGenerationModelCatalog(41, 'smart'))
+    await waitFor(() => expect(smart.result.current.loading).toBe(false))
+    expect(readVideoModelNames(smart.result.current)).toEqual(['Seedance 2.0', '其他视频生成模型'])
+    expect(smart.result.current.operationStates['video.generate']).toMatchObject({ availableModelCount: 2 })
+
+    // 画布等入口沿用默认 flow，2.5 照常展示。
+    const other = renderHook(() => useGenerationModelCatalog(41))
+    await waitFor(() => expect(other.result.current.loading).toBe(false))
+    expect(readVideoModelNames(other.result.current)).toEqual(['Seedance 2.0', 'Seedance 2.5', '其他视频生成模型'])
   })
 
   it('projects backend schema restrictions into the homepage dropdown without inventing model names', () => {

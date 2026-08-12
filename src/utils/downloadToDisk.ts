@@ -157,10 +157,25 @@ export async function downloadToDisk(opts: {
     }
   }
 
+  // showSaveFilePicker 在用户确认保存位置的那一刻就已经在磁盘上建好了空文件。
+  // 之后任何一条失败路径（内容为空、HTTP 错误、CORS 走 iframe）如果直接返回，
+  // 这个 0 字节文件就会留在用户目录里，看起来像“下载成功但文件是空的”。
+  // 因此所有不写盘的出口都必须先尝试清掉它。
+  const discardEmptyFile = async () => {
+    if (!fileHandle) return
+    try {
+      await fileHandle.remove?.()
+    } catch {
+      // 浏览器不支持 FileSystemHandle.remove()（或权限不足）时无法删除，
+      // 只能交由调用方的错误提示说明这个空文件不可用。
+    }
+  }
+
   // ② 解析并校验视频数据 URL。必须在 fetch / iframe 之前完成，避免危险协议或
   // 协议相对/反斜杠地址被浏览器重新解释成可执行或非预期的外部地址。
   const safeUrl = resolveSafeDownloadUrl(await opts.resolveUrl(), globalThis.location?.origin || '')
   if (!safeUrl) {
+    await discardEmptyFile()
     const unsafe = new Error('下载地址不安全，已停止下载')
     unsafe.name = 'UnsafeDownloadUrlError'
     throw unsafe
@@ -170,6 +185,7 @@ export async function downloadToDisk(opts: {
   // 微信 WebView 对 blob: + a[download] 的支持不稳定，可能创建空文件或在异步读取前丢失 Blob。
   // HTTP(S) 资源直接交给微信/后端响应处理：支持附件下载的环境会下载，其余环境会打开原图/视频供长按保存。
   if (weChatBrowser && safeUrl.kind === 'http') {
+    await discardEmptyFile()
     openWechatMediaUrl(url)
     return 'started'
   }
@@ -204,12 +220,20 @@ export async function downloadToDisk(opts: {
       throw empty
     }
   } catch (err: any) {
-    if (err?.name === 'AbortError') return 'cancelled'
-    if (err?.name === 'EmptyContentError') throw err // 空内容:别静默回退到 iframe(同样是空),交给调用方提示
+    if (err?.name === 'AbortError') {
+      await discardEmptyFile()
+      return 'cancelled'
+    }
+    if (err?.name === 'EmptyContentError') {
+      // 空内容:别静默回退到 iframe(同样是空),交给调用方提示
+      await discardEmptyFile()
+      throw err
+    }
     const isNetworkTypeError = err instanceof TypeError || err?.name === 'TypeError'
     // 同源地址不存在 CORS 兜底价值；blob:、HTTP 错误及其他真实失败也绝不进入 iframe。
     // 只有跨域 http(s) 的网络 TypeError 才可能是“资源可下载但 fetch 被 CORS 拦截”。
     if (!safeUrl.isCrossOrigin || safeUrl.kind !== 'http' || !isNetworkTypeError) {
+      await discardEmptyFile()
       const failure = new Error('视频下载失败，请稍后重试')
       failure.name = 'DownloadFetchError'
       throw failure
@@ -238,6 +262,9 @@ export async function downloadToDisk(opts: {
   }
 
   // ④ 隐藏 iframe 触发下载(跨域未放行 CORS 的 CDN 走这条路,不跳转页面)
+  // 走到这里说明拿不到 blob，选好的文件句柄永远不会被写入，必须先清掉那个空文件，
+  // 否则浏览器另存一份的同时，用户选定位置还躺着一个 0 字节的同名文件。
+  await discardEmptyFile()
   const iframe = document.createElement('iframe')
   iframe.style.display = 'none'
   iframe.tabIndex = -1

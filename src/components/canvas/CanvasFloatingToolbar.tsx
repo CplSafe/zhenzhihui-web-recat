@@ -9,6 +9,8 @@ import styles from './CanvasFloatingToolbar.module.css'
 
 interface CanvasFloatingToolbarProps {
   onAddNode: (type: string) => void
+  /** 添加本地图片：打开文件选择框，选中的图片上传后落成图片节点 */
+  onAddLocalImage: () => void
   /** 画布平移开关：true=可移动画布 */
   moveEnabled: boolean
   onMoveToggle: () => void
@@ -23,6 +25,7 @@ interface CanvasFloatingToolbarProps {
 
 function CanvasFloatingToolbar({
   onAddNode,
+  onAddLocalImage,
   moveEnabled,
   onMoveToggle,
   dragEnabled,
@@ -106,6 +109,21 @@ function CanvasFloatingToolbar({
               <div className={styles.addMenuText}>
                 <span className={styles.addMenuLabel}>视频节点</span>
                 <span className={styles.addMenuDesc}>宣传视频、动画、电影</span>
+              </div>
+            </button>
+            <button
+              className={styles.addMenuItem}
+              onClick={() => {
+                onAddLocalImage()
+                setMenuOpen(false)
+              }}
+            >
+              <span className={styles.addMenuIcon}>
+                <UploadTypeIcon />
+              </span>
+              <div className={styles.addMenuText}>
+                <span className={styles.addMenuLabel}>本地图片</span>
+                <span className={styles.addMenuDesc}>也可直接拖拽或 Ctrl+V 粘贴</span>
               </div>
             </button>
           </div>
@@ -220,6 +238,16 @@ function ImageTypeIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  )
+}
+
+function UploadTypeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 16V4" strokeLinecap="round" />
+      <path d="m6 10 6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 20h16" strokeLinecap="round" />
     </svg>
   )
 }

@@ -13,8 +13,8 @@ import {
   getAiTaskId,
   getAssetDownloadUrl,
 } from './business'
-import { normalizeSeedanceRatio } from '@/utils/videoOptions'
-import { validateSmartVideoDuration } from '@/utils/videoDurationValue'
+import { LEGACY_DEFAULT_VIDEO_RESOLUTION, normalizeSeedanceRatio } from '@/utils/videoOptions'
+import { parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoDurationValue'
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
 import { readAiTaskProgress } from '@/utils/taskProgress'
 import { getBackendGenerationModelName, getBackendGenerationModelVersionId } from '@/utils/generationModelCatalog'
@@ -194,6 +194,7 @@ function assertHotCopyReplicateConstraints(
   args: {
     durationSec?: number
     ratio?: string
+    resolution?: string
     sourceVideoDurationSec?: number
     referenceImageCount?: number
   },
@@ -208,14 +209,19 @@ function assertHotCopyReplicateConstraints(
     throw new Error('爆款复制需要 1 至 9 张可用参考图片')
   }
 
-  const durationValidation = validateSmartVideoDuration(args.durationSec ?? 10)
-  if (!durationValidation.valid) {
+  const modelConstraints = buildModelRestrictionSummary(model).constraints
+  const durationSeconds = parseDurationSeconds(args.durationSec ?? 10)
+  if (durationSeconds === null) {
+    throw new Error('爆款复制时长无效，请重新选择时长')
+  }
+  // 下面的模型约束校验才是权威口径；模型未声明时长档位时，才沿用默认的 1–15 秒整数。
+  if (!modelConstraints.duration && !validateSmartVideoDuration(durationSeconds).valid) {
     throw new Error('爆款复制时长必须是 1 至 15 秒内的整数')
   }
-  const conflicts = getModelConstraintConflicts(buildModelRestrictionSummary(model).constraints, {
-    durationSec: durationValidation.seconds,
+  const conflicts = getModelConstraintConflicts(modelConstraints, {
+    durationSec: durationSeconds,
     ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
-    resolution: '720p',
+    resolution: String(args.resolution || LEGACY_DEFAULT_VIDEO_RESOLUTION),
     generateAudio: true,
     referenceImageCount,
   })
@@ -455,16 +461,22 @@ export async function ensureHotCopyTemplateVideoSource(
 /** 按模型 schema 构建 video.replicate 参数，确保时长、比例和声音与正式提交一致。 */
 function buildReplicateVideoParams(
   model: any,
-  args: { durationSec?: number; sourceVideoDurationSec?: number; ratio?: string },
+  args: { durationSec?: number; sourceVideoDurationSec?: number; ratio?: string; resolution?: string },
 ): Record<string, any> {
-  const durationValidation = validateSmartVideoDuration(args.durationSec ?? 10)
-  if (!durationValidation.valid) {
+  const durationSeconds = parseDurationSeconds(args.durationSec ?? 10)
+  if (durationSeconds === null) {
+    throw new Error('爆款复制时长无效，请重新选择时长')
+  }
+  // 时长档位以模型 schema 为准（buildHotCopyReplicateModelParams 会按 schema 再校验一次）；
+  // 模型未声明档位时才沿用默认的 1–15 秒整数。
+  if (!buildModelRestrictionSummary(model).constraints.duration && !validateSmartVideoDuration(durationSeconds).valid) {
     throw new Error('爆款复制时长必须是 1 至 15 秒内的整数')
   }
   return buildHotCopyReplicateModelParams(model, {
-    durationSec: durationValidation.seconds,
+    durationSec: durationSeconds,
     sourceVideoDurationSec: args.sourceVideoDurationSec,
     ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
+    resolution: args.resolution,
   })
 }
 
@@ -478,6 +490,8 @@ export function createHotCopyReplicateSnapshot(args: {
   sourceVideoDurationSec?: number
   referenceImageCount?: number
   ratio?: string
+  /** 用户在入口选择的出片分辨率；留空时沿用历史默认 720p。 */
+  resolution?: string
   durationSec?: number
 }): HotCopyReplicateSnapshot {
   const workspaceId = Math.floor(Number(args.workspaceId) || 0)
@@ -489,6 +503,7 @@ export function createHotCopyReplicateSnapshot(args: {
   const params = buildReplicateVideoParams(modelVersion, {
     sourceVideoDurationSec,
     ratio: args.ratio,
+    resolution: args.resolution,
     durationSec: args.durationSec,
   })
   return deepFreeze({
@@ -529,6 +544,7 @@ function resolveHotCopyReplicateSnapshot(args: {
   sourceVideoDurationSec?: number
   referenceImageCount?: number
   ratio?: string
+  resolution?: string
   durationSec?: number
 }): HotCopyReplicateSnapshot {
   const workspaceId = Math.floor(Number(args.workspaceId) || 0)
@@ -557,6 +573,7 @@ function resolveHotCopyReplicateSnapshot(args: {
     sourceVideoDurationSec: args.sourceVideoDurationSec,
     referenceImageCount: args.referenceImageCount,
     ratio: args.ratio,
+    resolution: args.resolution,
     durationSec: args.durationSec,
   })
 }

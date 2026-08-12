@@ -44,6 +44,29 @@ describe('buildHotCopyReplicateModelParams', () => {
     })
   })
 
+  it('使用用户选择的分辨率，未选择时才回退历史默认 720p', () => {
+    const model = {
+      display_name: 'Seedance 2.0',
+      params_schema: {
+        fields: [{ name: 'duration' }, { name: 'ratio' }, { name: 'resolution', options: ['720p', '1080p'] }],
+      },
+    }
+
+    expect(
+      buildHotCopyReplicateModelParams(model, { durationSec: 8, ratio: '9:16', resolution: '1080p' }),
+    ).toMatchObject({ resolution: '1080p' })
+    expect(buildHotCopyReplicateModelParams(model, { durationSec: 8, ratio: '9:16' })).toMatchObject({
+      resolution: '720p',
+    })
+    // 无 schema 的旧 Seedance 记录同样沿用所选分辨率。
+    expect(
+      buildHotCopyReplicateModelParams(
+        { display_name: 'Seedance 2.0', params_schema: { fields: [] } },
+        { durationSec: 10, ratio: '16:9', resolution: '1080p' },
+      ),
+    ).toMatchObject({ resolution: '1080p' })
+  })
+
   it('does not leak the Seedance audio fallback into a reference-video model', () => {
     expect(
       buildHotCopyReplicateModelParams(

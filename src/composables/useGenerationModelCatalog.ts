@@ -24,7 +24,7 @@ import {
 } from '@/utils/generationModelCatalog'
 export { unwrapGenerationModelCatalogResponse } from '@/utils/generationModelCatalog'
 import { buildModelRestrictionSummary } from '@/utils/modelRestrictions'
-import { filterFeaturedCreativeVideoModels } from '@/utils/featuredVideoModels'
+import { isHiddenCreativeVideoModel, isHiddenSmartVideoModel } from '@/utils/creativeVideoModelKind'
 
 /** 各 operation 的用户可读名称；这里只描述业务能力，不包含任何具体模型名称。 */
 const OPERATION_LABELS: Record<GenerationOperationCode, string> = {
@@ -154,13 +154,19 @@ export interface GenerationModelCatalogState {
   reload: () => void
 }
 
+/** 调用方所属的创作流程；智能成片有一条额外的临时屏蔽规则，画布等入口不受影响。 */
+export type GenerationModelCatalogFlow = 'smart' | 'all'
+
 /**
  * 加载当前工作空间所有相关 operation 的模型。
  *
  * 每个 operation 独立容错：只要至少有一个可用模型，成功的类型就照常展示；只有所有请求失败
  * 或所有成功响应都没有可用模型时才显示全局错误，避免单个未开通能力拖垮整条创作流程。
  */
-export function useGenerationModelCatalog(workspaceId: number): GenerationModelCatalogState {
+export function useGenerationModelCatalog(
+  workspaceId: number,
+  flow: GenerationModelCatalogFlow = 'all',
+): GenerationModelCatalogState {
   const normalizedWorkspaceId = Math.max(0, Math.floor(Number(workspaceId) || 0))
   const requestSequenceRef = useRef(0)
   const [reloadToken, setReloadToken] = useState(0)
@@ -197,12 +203,16 @@ export function useGenerationModelCatalog(workspaceId: number): GenerationModelC
           signal: abortController.signal,
         })
         const list = unwrapGenerationModelCatalogResponse(response)
-        const boundModels = list
+        // 目录以后端为权威：后端新增/开通的模型无需改前端即可展示。
+        // 仅两条屏蔽规则：全流程屏蔽 HappyHorse 图生视频 / 文生视频；智能成片额外屏蔽 Seedance 2.5。
+        return list
           .map((model) => bindQueriedOperation(model, operationCode))
-          .filter((model): model is BackendGenerationModel => Boolean(model))
-        if (operationCode !== 'video.generate') return boundModels
-
-        return filterFeaturedCreativeVideoModels(boundModels)
+          .filter(
+            (model): model is BackendGenerationModel =>
+              Boolean(model) &&
+              !isHiddenCreativeVideoModel(model) &&
+              !(flow === 'smart' && isHiddenSmartVideoModel(model)),
+          )
       }),
     )
       .then((results) => {
@@ -260,7 +270,7 @@ export function useGenerationModelCatalog(workspaceId: number): GenerationModelC
       })
 
     return () => abortController.abort()
-  }, [normalizedWorkspaceId, reloadToken])
+  }, [flow, normalizedWorkspaceId, reloadToken])
 
   const reload = useCallback(() => setReloadToken((value) => value + 1), [])
   const pickerGroups = useMemo(() => toGenerationModelPickerGroups(groups, operationStates), [groups, operationStates])

@@ -196,7 +196,16 @@ export function mergeCompletedVideoGenerationIds(...sources: unknown[]): string[
 // 整片视频的「内容签名」:参与视频的分镜稳定内容(优先 imageAssetId,其次去掉签名参数的图 URL,
 // 避免 S3 预签名/工作空间参数变化导致误判)+ 时长/台词/字幕/音效/顺序 + 风格/比例/大纲。
 // 与 SmartCreateView.videoInputSig 同口径,但只用「落盘后稳定」的字段,以便跨保存/刷新可靠比较。
-const VIDEO_CONTENT_SIG_VERSION = 2
+const VIDEO_CONTENT_SIG_VERSION = 3
+
+/**
+ * 各版本新增的签名字段。
+ * 与更旧版本的历史签名比较时忽略这些字段，避免升级后把未改动的项目误判为「内容已改」。
+ */
+const VIDEO_CONTENT_SIG_FIELDS_BY_VERSION: Readonly<Record<number, readonly string[]>> = {
+  2: ['videoModel', 'videoModelVersionId'],
+  3: ['resolution'],
+}
 
 export function computeVideoContentSig(shots: any[], entryMeta: any, base: string): string {
   const stableImg = (s: any): string => {
@@ -211,6 +220,7 @@ export function computeVideoContentSig(shots: any[], entryMeta: any, base: strin
   return JSON.stringify({
     signatureVersion: VIDEO_CONTENT_SIG_VERSION,
     ratio: entryMeta?.ratio || '',
+    resolution: entryMeta?.resolution || '',
     style: entryMeta?.style || '',
     videoModel: entryMeta?.generationModels?.['video.generate'] || '',
     // trim:出片锁定端传原始 reqSummary(LLM 常带尾部换行/空格),项目列表端传 pickString 已 trim 的值。
@@ -240,20 +250,29 @@ function parseVideoContentSig(value: unknown): Record<string, unknown> | null {
   }
 }
 
-function withoutVideoContentSigVersionFields(signature: Record<string, unknown>): string {
-  const legacyComparable = { ...signature }
-  delete legacyComparable.signatureVersion
-  delete legacyComparable.videoModelVersionId
-  delete legacyComparable.videoModel
-  return JSON.stringify(legacyComparable)
+/** 无 signatureVersion 的历史签名一律视为 v1。 */
+function normalizeVideoContentSigVersion(value: unknown): number {
+  const version = Number(value)
+  return Number.isFinite(version) && version >= 1 ? version : 1
+}
+
+/** 去掉版本号，以及 sinceVersion 之后各版本才引入的字段，得到可跨版本比较的签名。 */
+function comparableVideoContentSig(signature: Record<string, unknown>, sinceVersion: number): string {
+  const comparable = { ...signature }
+  delete comparable.signatureVersion
+  Object.entries(VIDEO_CONTENT_SIG_FIELDS_BY_VERSION).forEach(([version, fields]) => {
+    if (Number(version) <= sinceVersion) return
+    fields.forEach((field) => delete comparable[field])
+  })
+  return JSON.stringify(comparable)
 }
 
 /**
  * 判断上一版成片签名是否仍匹配当前内容。
  *
- * v1 历史签名没有 signatureVersion，且可能没有模型字段，或带有旧切换模型功能遗留的
- * videoModel/videoModelVersionId。仅在「上一版为 v1、当前为 v2」时忽略这些迁移字段；
- * 两边都是 v2 时直接严格比较完整签名，确保真实的模型变化仍会被识别为内容变更。
+ * 历史签名可能没有 signatureVersion、没有模型字段、没有分辨率，或带有旧切换模型功能遗留的
+ * videoModel/videoModelVersionId。只有「上一版更旧」时才忽略这些新增字段；两边同为当前版本时
+ * 严格比较完整签名，确保真实的模型或分辨率变化仍会被识别为内容变更。
  */
 export function isVideoContentSigMatch(lastVideoSig: unknown, currentVideoSig: unknown): boolean {
   const lastSignature = String(lastVideoSig || '').trim()
@@ -265,12 +284,11 @@ export function isVideoContentSigMatch(lastVideoSig: unknown, currentVideoSig: u
   const currentParsed = parseVideoContentSig(currentSignature)
   if (!lastParsed || !currentParsed) return false
 
-  const lastVersion = lastParsed.signatureVersion
-  const currentVersion = Number(currentParsed.signatureVersion || 0)
-  const isLegacyLastSignature = lastVersion === undefined || lastVersion === 1
-  if (!isLegacyLastSignature || currentVersion !== VIDEO_CONTENT_SIG_VERSION) return false
+  const lastVersion = normalizeVideoContentSigVersion(lastParsed.signatureVersion)
+  const currentVersion = normalizeVideoContentSigVersion(currentParsed.signatureVersion)
+  if (lastVersion >= currentVersion || currentVersion !== VIDEO_CONTENT_SIG_VERSION) return false
 
-  return withoutVideoContentSigVersionFields(lastParsed) === withoutVideoContentSigVersionFields(currentParsed)
+  return comparableVideoContentSig(lastParsed, lastVersion) === comparableVideoContentSig(currentParsed, lastVersion)
 }
 
 /** 删除刷新后必然失效的 blob 地址，同时保留其他可恢复地址。 */

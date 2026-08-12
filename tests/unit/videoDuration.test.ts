@@ -1,5 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { readVideoDurationSec } from '@/utils/videoDuration'
+import { formatVideoDurationLabel, formatVideoTimeLabel, readVideoDurationSec } from '@/utils/videoDuration'
+
+describe('formatVideoTimeLabel', () => {
+  it.each([
+    [0, '00:00'],
+    [0.4, '00:00'],
+    // 播放进度向下取整：4.9s 的播放头还没走完第 5 秒
+    [4.9, '00:04'],
+    [59, '00:59'],
+    [60, '01:00'],
+    [125.7, '02:05'],
+  ])('formats %p seconds as %p', (seconds, expected) => {
+    expect(formatVideoTimeLabel(seconds)).toBe(expected)
+  })
+
+  it.each([-3, Number.NaN, Number.POSITIVE_INFINITY])('falls back to 00:00 for %p', (seconds) => {
+    expect(formatVideoTimeLabel(seconds)).toBe('00:00')
+  })
+})
+
+describe('formatVideoDurationLabel', () => {
+  it.each([
+    [5, '00:05'],
+    [4.6, '00:05'],
+    [59, '00:59'],
+    [60, '01:00'],
+    [125, '02:05'],
+  ])('formats %p seconds as %p', (seconds, expected) => {
+    expect(formatVideoDurationLabel(seconds)).toBe(expected)
+  })
+
+  it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY, 0.4])('returns an empty label for %p', (seconds) => {
+    expect(formatVideoDurationLabel(seconds)).toBe('')
+  })
+})
 
 interface FakeVideo {
   duration: number

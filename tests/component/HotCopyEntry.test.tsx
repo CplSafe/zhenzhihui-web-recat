@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+﻿import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -217,11 +217,41 @@ describe('HotCopyEntry project asset access', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
-  it('offers the same 1s through 15s whole-second range as smart video', async () => {
+  it('requires a video model before the duration can be chosen and starts unselected', async () => {
     const user = userEvent.setup()
     render(<HotCopyEntry onSubmit={vi.fn()} />)
 
-    await user.click(screen.getByRole('button', { name: '10s' }))
+    // 时长默认未选（显示占位文案）：档位由模型决定，先选秒数只会选到模型并不支持的值。
+    await user.click(screen.getByRole('button', { name: '选择时长' }))
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(mocks.showToast).toHaveBeenCalledWith('请先选择视频模型', 'info')
+  })
+
+  it('offers the same 1s through 15s range once a model without duration constraints is selected', async () => {
+    const user = userEvent.setup()
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        initial={{ modelVersionId: 240 }}
+        modelGroups={[
+          {
+            key: 'hotCopyVideo',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.replicate',
+                label: '视频生成模型',
+                required: true,
+                models: [{ id: 240, name: '不限时长的复制模型' }],
+              },
+            ],
+          },
+        ]}
+        modelReady
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '选择时长' }))
     expect(
       within(screen.getByRole('listbox'))
         .getAllByRole('option')
@@ -455,12 +485,6 @@ describe('HotCopyEntry project asset access', () => {
 
   it.each([
     {
-      label: 'fixed 720p resolution',
-      constraints: { resolution: { options: ['1080p'] } },
-      productCount: 1,
-      expected: '视频生成模型「Seedance 2.0」：当前分辨率 720p 不在支持范围 1080p 内',
-    },
-    {
       label: 'enabled audio',
       constraints: { audio: { options: [false] } },
       productCount: 1,
@@ -521,6 +545,50 @@ describe('HotCopyEntry project asset access', () => {
       expect(mocks.showToast).toHaveBeenLastCalledWith(expected, 'info')
     },
   )
+
+  it('收敛到所选模型支持的分辨率并按该档位提交', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <HotCopyEntry
+        onSubmit={onSubmit}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          products: [{ assetId: 201, url: '/201.png', file: null, isVideo: false }],
+          ratio: '16:9',
+          duration: '7s',
+          text: '',
+          modelVersionId: 220,
+        }}
+        modelGroups={[
+          {
+            key: 'hotCopyVideo',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.replicate',
+                label: '视频生成模型',
+                required: true,
+                models: [{ id: 220, name: 'Seedance 2.0', constraints: { resolution: { options: ['1080p'] } } }],
+              },
+            ],
+          },
+        ]}
+        modelReady
+        requireModelSelection
+      />,
+    )
+
+    // 默认 720p 不在该模型支持范围内 → 自动吸附到 1080p，而不是把用户卡在必然失败的档位上。
+    await waitFor(() => expect(screen.getByRole('button', { name: '视频分辨率' })).toHaveTextContent('1080p'))
+
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ resolution: '1080p' }))
+  })
 
   it('does not silently switch to another model when the selected model disappears from the catalog', async () => {
     const user = userEvent.setup()

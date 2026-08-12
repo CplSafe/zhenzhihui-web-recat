@@ -113,6 +113,44 @@
   }
 }
 
+/* 拖拽文件到画布的提示遮罩 — 覆盖整个画布，不拦截拖放事件（由 .canvas-view 统一处理） */
+.canvas-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(87, 103, 229, 0.08);
+  border: 2px dashed #5767e5;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.canvas-drop-overlay__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 26px 38px;
+  border-radius: 16px;
+  background: #fff;
+  color: #5767e5;
+  font-family: 'PingFang SC', sans-serif;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(31, 41, 92, 0.18);
+}
+
+.canvas-drop-overlay__card strong {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.canvas-drop-overlay__card span {
+  color: #8a90a8;
+  font-size: 12px;
+}
+
 /* 参考选择横幅 — 居中置顶 */
 .canvas-pick-banner {
   position: absolute;
@@ -745,6 +783,133 @@
 .canvas-node-pause-btn:hover {
   background: rgba(0, 0, 0, 0.68);
   transform: translate(-50%, -50%) scale(1.06);
+}
+
+/* 视频底部控制条：当前时间/总时长 + 可点击拖动的进度条（跳转到指定秒） */
+.canvas-node-video-bar {
+  position: absolute;
+  left: 8px;
+  right: 44px; /* 让开右下角的放大按钮 */
+  bottom: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+/* 时间读数：字号随缩放做反向补偿保持可读 */
+.canvas-node-video-time {
+  flex: none;
+  color: #ffffff;
+  font-size: calc(11px * var(--canvas-readable-text-scale));
+  line-height: calc(16px * var(--canvas-readable-text-scale));
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 整片缓冲提示：跳转落不住时切本地整片，期间给个可见反馈 */
+.canvas-node-video-hint {
+  flex: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: calc(11px * var(--canvas-readable-text-scale));
+  line-height: calc(16px * var(--canvas-readable-text-scale));
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 轨道：命中区域比视觉轨道更高，方便在缩小的画布上点中 */
+.canvas-node-video-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 14px;
+  min-width: 40px;
+  cursor: pointer;
+  touch-action: none;
+  border-radius: 999px;
+  outline: none;
+}
+
+.canvas-node-video-track::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.32);
+  transform: translateY(-50%);
+}
+
+.canvas-node-video-track__fill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: #ffffff;
+  transform: translateY(-50%);
+}
+
+/* 滑块：悬停/拖动/键盘聚焦时出现，静态时保持画面干净 */
+.canvas-node-video-track__thumb {
+  position: absolute;
+  top: 50%;
+  right: -5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.canvas-node-video-wrap:hover .canvas-node-video-track__thumb,
+.canvas-node-video-track:focus-visible .canvas-node-video-track__thumb,
+.canvas-node-video-track[data-scrubbing='true'] .canvas-node-video-track__thumb {
+  opacity: 1;
+}
+
+.canvas-node-video-track:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+}
+
+/* 放大查看：右下角按钮，与播放/暂停同款视觉 */
+.canvas-node-video-expand {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition:
+    background 0.15s,
+    transform 0.15s;
+}
+
+.canvas-node-video-expand:hover {
+  background: rgba(0, 0, 0, 0.68);
+  transform: scale(1.06);
 }
 
 /* 文本节点内嵌编辑器 */

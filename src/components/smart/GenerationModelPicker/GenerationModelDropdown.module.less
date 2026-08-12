@@ -285,10 +285,12 @@
   line-height: 1.35;
 }
 
-.modelEstimateError {
-  border-color: #f2d4cf;
-  background: #fff7f5;
-  color: #b34e40;
+/* 提醒态（预估失败 / 本轮用不上该模型）：黄色。这类情况不阻断创作，用红色会误导成必须先修复。 */
+.modelEstimateNotice {
+  border-color: #f4dfb0;
+  background: #fdf8ec;
+  color: #a16207;
+  font-weight: 600;
 }
 
 .restrictions {

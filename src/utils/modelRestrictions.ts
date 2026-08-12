@@ -7,6 +7,7 @@ import {
   getModelParamFieldNames,
   getModelParamFields,
   getModelParamOptionValues,
+  matchModelParamOptionValue,
   normalizeModelParamName,
 } from './modelSchema'
 import { parseDurationSeconds } from './videoDurationValue'
@@ -319,7 +320,8 @@ export function getModelConstraintConflicts(
 
   const ratio = String(values.ratio || '').trim()
   const ratios = constraints.ratio?.options ?? constraints.ratios
-  if (ratio && ratios?.length && !ratios.includes(ratio)) {
+  // 只在拼写上不同（大小写、首尾空格）视为同一档位：`720p` 与 `720P` 不是能力差异，不该报冲突。
+  if (ratio && ratios?.length && matchModelParamOptionValue(ratio, ratios) === undefined) {
     conflicts.push(`当前比例 ${ratio} 不在支持范围 ${ratios.join('、')} 内`)
   } else if (!ratio && constraints.ratio?.required && hasOwn(values, 'ratio')) {
     conflicts.push('当前模型要求提供画面比例')
@@ -327,7 +329,7 @@ export function getModelConstraintConflicts(
 
   const resolution = String(values.resolution || '').trim()
   const resolutions = constraints.resolution?.options ?? constraints.resolutions
-  if (resolution && resolutions?.length && !resolutions.includes(resolution)) {
+  if (resolution && resolutions?.length && matchModelParamOptionValue(resolution, resolutions) === undefined) {
     conflicts.push(`当前分辨率 ${resolution} 不在支持范围 ${resolutions.join('、')} 内`)
   } else if (!resolution && constraints.resolution?.required && hasOwn(values, 'resolution')) {
     conflicts.push('当前模型要求提供分辨率')

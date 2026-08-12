@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { extractExplicitTotalDurationSeconds, validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
+import {
+  extractExplicitTotalDurationSeconds,
+  formatSupportedDurationLabel,
+  validateCreativeDurationSelection,
+} from '@/utils/creativeDurationPolicy'
 import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 
 describe('creative duration policy', () => {
@@ -69,5 +73,30 @@ describe('creative duration policy', () => {
       issue: 'unsupported-requirement',
       requestedSeconds: 16,
     })
+  })
+
+  it('accepts a model tier beyond the default range and names it in the message', () => {
+    // 模型声明 1–15 秒之外还支持 30 秒时，30s 必须放行；被拒的档位文案也要如实列出 30 秒。
+    const options = { supportedDurations: [...SMART_VIDEO_DURATIONS, 30] }
+
+    expect(validateCreativeDurationSelection('制作一条30秒视频', '30s', options)).toMatchObject({
+      valid: true,
+      selectedSeconds: 30,
+      requestedSeconds: 30,
+    })
+    expect(validateCreativeDurationSelection('展示新品', '20s', options).message).toBe(
+      '当前选择的20秒不受支持，请选择1至15秒、30秒',
+    )
+  })
+
+  it.each([
+    [[...SMART_VIDEO_DURATIONS], '1至15秒'],
+    [[...SMART_VIDEO_DURATIONS, 30], '1至15秒、30秒'],
+    [[5, 10, 15], '5秒、10秒、15秒'],
+    [[1, 2], '1秒、2秒'],
+    [[10], '10秒'],
+    [[], '有效时长'],
+  ])('formats %j as %s', (durations, expected) => {
+    expect(formatSupportedDurationLabel(durations)).toBe(expected)
   })
 })

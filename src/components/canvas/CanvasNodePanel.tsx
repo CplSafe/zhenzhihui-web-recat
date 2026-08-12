@@ -9,7 +9,12 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost } from '@/api/business'
-import { buildCanvasInputAssets, type CanvasConnectionRole, type CanvasVideoMode } from '@/utils/canvasGeneration'
+import {
+  buildCanvasInputAssets,
+  buildPolishImageRefs,
+  type CanvasConnectionRole,
+  type CanvasVideoMode,
+} from '@/utils/canvasGeneration'
 import { resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
 
 /** 读取可能为字符串/数字/布尔的值，返回字符串文本；非法输入返回空串。 */
@@ -278,7 +283,14 @@ interface CanvasNodePanelProps {
   /** 费用预估判定积分不足时，由页面展示充值引导。 */
   onInsufficientCredits?: () => void
   onSaveText?: (text: string) => void
-  onPolishText?: (params: { prompt: string; kind: string }) => Promise<string>
+  onPolishText?: (params: {
+    prompt: string
+    kind: string
+    /** 已连线的参考图地址，与 imageAssetIds 按下标对应。 */
+    images?: string[]
+    /** 已连线参考图的素材 ID，优先于地址复用，避免重复上传。 */
+    imageAssetIds?: number[]
+  }) => Promise<string>
 }
 
 type VideoMode = CanvasVideoMode
@@ -587,7 +599,9 @@ export default function CanvasNodePanel({
     setPolishing(true)
     setPolishError('')
     try {
-      const polished = String(await onPolishText({ prompt: value, kind })).trim()
+      // 已连线的参考图必须一并交给润色模型：润色看不到图时会凭空补出主体，
+      // 生成的长描述随后会在图生图/图生视频里压过参考图，把原主体换掉。
+      const polished = String(await onPolishText({ prompt: value, kind, ...buildPolishImageRefs(sourceRefs) })).trim()
       if (!polished) throw new Error('AI 未返回可用的润色内容')
       setPrompt(polished)
     } catch (error: any) {

@@ -536,6 +536,24 @@ describe('smartDraft 后端快照', () => {
     expect(isVideoContentSigMatch(firstModelSig, secondModelSig)).toBe(false)
   })
 
+  it('把出片分辨率纳入内容签名，但不因升级把历史签名判成已改', () => {
+    const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '5s' }]
+    const at720 = computeVideoContentSig(shots, { ratio: '16:9', resolution: '720p' }, '夏日饮品')
+    const at1080 = computeVideoContentSig(shots, { ratio: '16:9', resolution: '1080p' }, '夏日饮品')
+
+    expect(isVideoContentSigMatch(at720, at1080)).toBe(false)
+
+    // 升级前保存的 v2 签名没有 resolution 字段：内容未变时不应被判成「内容已改」。
+    const legacyPayload = JSON.parse(at720)
+    legacyPayload.signatureVersion = 2
+    delete legacyPayload.resolution
+    expect(isVideoContentSigMatch(JSON.stringify(legacyPayload), at720)).toBe(true)
+    expect(isVideoContentSigMatch(JSON.stringify(legacyPayload), at1080)).toBe(true)
+    // 但历史签名与当前签名的其他真实差异仍会被识别出来。
+    const changedBase = computeVideoContentSig(shots, { ratio: '16:9', resolution: '720p' }, '冬日热饮')
+    expect(isVideoContentSigMatch(JSON.stringify(legacyPayload), changedBase)).toBe(false)
+  })
+
   it('兼容不含模型字段的历史签名，但仍比较其他真实内容变化', () => {
     const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '5s' }]
     const currentSig = computeVideoContentSig(

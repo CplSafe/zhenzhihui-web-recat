@@ -15,6 +15,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -29,7 +30,9 @@ import SmartEntry, { clearSmartEntryDraft, type EntryMeta } from '@/components/s
 import {
   GenerationModelDropdown,
   filterGenerationModelGroupsByOperations,
+  getGenerationModelDurationOptions,
   getGenerationModelSelectionConflicts,
+  isDurationSupportedByGenerationModel,
   isGenerationModelSelectionComplete,
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
@@ -168,8 +171,8 @@ import {
   scriptStreamFailureMessage,
   stableGenerationAssetKey,
 } from '@/utils/smartGenerationGuards'
-import { validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
-import { SMART_VIDEO_DURATIONS, parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoDurationValue'
+import { formatSupportedDurationLabel, validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
+import { SMART_VIDEO_DURATIONS, parseDurationSeconds, validateVideoDurationWithin } from '@/utils/videoDurationValue'
 import {
   bindVideoModificationNote,
   parseVideoModificationDraft,
@@ -240,6 +243,8 @@ import {
 } from '@/utils/smartModelSwitchSafety'
 import {
   buildRealPersonIdentityPrompt,
+  buildRealPersonVideoIdentityConstraint,
+  buildRealPersonVideoIdentityPrompt,
   isRealPersonReferenceStillAuthorized,
   prioritizeRealPersonReferenceAssetIds,
   registerRealPersonReference,
@@ -328,15 +333,12 @@ function normRev(payload: any): number {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : NaN
 }
 
-/** 智能成片支持时长的用户可读范围。 */
-const SUPPORTED_VIDEO_DURATION_LABEL = '1至15秒内的整数'
-
-/** 为不受模型支持的总时长生成明确调整提示。 */
-function unsupportedVideoDurationMessage(value: unknown): string {
+/** 为不受模型支持的总时长生成明确调整提示；档位文案由所选模型实际支持的秒数推导。 */
+function unsupportedVideoDurationMessage(value: unknown, supportedLabel: string): string {
   const seconds = parseDurationSeconds(value)
   return seconds === null
-    ? `参与生成的分镜总时长无效，请调整为${SUPPORTED_VIDEO_DURATION_LABEL}`
-    : `当前参与生成的分镜总时长为${seconds}秒，视频模型仅支持${SUPPORTED_VIDEO_DURATION_LABEL}，请调整分镜时长后重试`
+    ? `参与生成的分镜总时长无效，请调整为${supportedLabel}`
+    : `当前参与生成的分镜总时长为${seconds}秒，视频模型仅支持${supportedLabel}，请调整分镜时长后重试`
 }
 
 /** 后端模型、镜头和队列上下文均按 JSON 数据复制，避免目录刷新或页面编辑改写已确认任务。 */
@@ -370,9 +372,18 @@ interface EphemeralImageRequest {
   taskIds: Set<number>
 }
 
-/** 视频修改的估价、入队快照和正式提交共用同一段提示词。 */
-function buildSmartVideoEditPrompt(note = '', variationIndex?: number, variationTotal?: number): string {
-  return [
+/**
+ * 视频修改的估价、入队快照和正式提交共用同一段提示词。
+ * identityPersonName 非空（真人成片）时前置出镜身份约束：修改意见里「换个发型」「换套衣服」
+ * 这类表述最容易把脸一起改掉，约束必须先于用户文字出现。
+ */
+function buildSmartVideoEditPrompt(
+  note = '',
+  variationIndex?: number,
+  variationTotal?: number,
+  identityPersonName = '',
+): string {
+  const body = [
     '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
     note,
     variationTotal && variationTotal > 1
@@ -381,6 +392,7 @@ function buildSmartVideoEditPrompt(note = '', variationIndex?: number, variation
   ]
     .filter(Boolean)
     .join('\n')
+  return identityPersonName ? buildRealPersonVideoIdentityPrompt(body, identityPersonName) : body
 }
 
 /** 流程底栏主操作按钮的统一配置。 */
@@ -1055,6 +1067,12 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   // 流程内切换模型后，紧接着发起的重生成必须读取这次不可变选择，不能等下一次 render 再读旧闭包。
   const entryMetaRef = useRef<EntryMeta | null>(null)
   entryMetaRef.current = entryMeta
+  /**
+   * 真人成片本次出镜的真人名；非真人流程返回空串（不注入任何身份约束）。
+   * 走 ref 取值：视频生成/修改都在异步任务里拼提示词，闭包里的 entryMeta 可能已经过期。
+   */
+  const resolveRealPersonIdentityName = (): string =>
+    isRealPersonMode ? String(entryMetaRef.current?.realPersonReferences?.[0]?.personName || '已认证真人') : ''
   const modelSwitchSequenceRef = useRef(0)
   const modelSwitchingRef = useRef(false)
   const modelSwitchRecoveryRef = useRef<SmartModelSwitchRecoveryDescriptor | null>(null)
@@ -1068,12 +1086,33 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     },
     [],
   )
-  const generationModelCatalog = useGenerationModelCatalog(workspaceId)
+  // 'smart'：智能成片 / 真人成片额外屏蔽 Seedance 2.5（画布不受影响）。
+  const generationModelCatalog = useGenerationModelCatalog(workspaceId, 'smart')
   const generationModelCatalogRef = useRef(generationModelCatalog)
   generationModelCatalogRef.current = generationModelCatalog
   const textToImageModelSelectionId = entryMeta?.generationModels?.['image.text_to_image']
   const imageToImageModelSelectionId = entryMeta?.generationModels?.['image.image_to_image']
   const videoGenerationModelSelectionId = entryMeta?.generationModels?.['video.generate']
+
+  // 全流程的时长档位与入口下拉同源（同一个 getGenerationModelDurationOptions）：
+  // 模型 schema 声明了哪些秒数就以哪些为准，未声明才回落 1–15 秒。
+  // 此前流程各处写死 1–15，模型支持 30 秒时会出现「下拉能选、提交被拒」。
+  const supportedVideoDurations = useMemo(
+    () =>
+      getGenerationModelDurationOptions(
+        generationModelCatalog.pickerGroups,
+        entryMeta?.generationModels || {},
+        'video.generate',
+        SMART_VIDEO_DURATIONS,
+      ),
+    [generationModelCatalog.pickerGroups, entryMeta?.generationModels],
+  )
+  const supportedVideoDurationLabel = useMemo(
+    () => formatSupportedDurationLabel(supportedVideoDurations),
+    [supportedVideoDurations],
+  )
+  /** 分镜总时长上限：取所选模型的最长档位，模型未声明时仍是 15 秒。 */
+  const maxVideoDurationSec = supportedVideoDurations[supportedVideoDurations.length - 1] ?? 15
 
   const requiredGenerationOperations = (
     mode: EntryMeta['mode'],
@@ -3171,9 +3210,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     }
     const current = shotsRef.current
     const currentSec = totalDurationSec(current)
-    const remainingSec = 15 - currentSec
+    const remainingSec = maxVideoDurationSec - currentSec
     if (remainingSec < 1) {
-      showToast('当前分镜总时长已达到15秒，请先缩短已有镜头再新增', 'error')
+      showToast(`当前分镜总时长已达到${maxVideoDurationSec}秒，请先缩短已有镜头再新增`, 'error')
       return
     }
 
@@ -3429,6 +3468,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       shots: Shot[]
       basePrompt: string
       ratio?: string
+      /** 入队时锁定的出片分辨率；估价与提交共用同一个值。 */
+      resolution?: string
       style?: string
       durationSec: number
       thumbnailUrl?: string
@@ -3993,6 +4034,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     const pid = Number(context?.projectId || 0) || 0
     const currentShots = Array.isArray(context?.shots) ? context.shots : []
     const currentRatio = context && Object.prototype.hasOwnProperty.call(context, 'ratio') ? context.ratio : undefined
+    const currentResolution =
+      context && Object.prototype.hasOwnProperty.call(context, 'resolution') ? context.resolution : undefined
     const currentStyle = context && Object.prototype.hasOwnProperty.call(context, 'style') ? context.style : undefined
     const currentPrompt =
       context && Object.prototype.hasOwnProperty.call(context, 'basePrompt') ? context.basePrompt : ''
@@ -4032,9 +4075,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       await failBeforePaidTask(msg)
       return
     }
-    const durationValidation = validateSmartVideoDuration(totalDurationSec(currentShots))
+    const durationValidation = validateVideoDurationWithin(totalDurationSec(currentShots), supportedVideoDurations)
     if (!durationValidation.valid) {
-      const msg = unsupportedVideoDurationMessage(durationValidation.seconds)
+      const msg = unsupportedVideoDurationMessage(durationValidation.seconds, supportedVideoDurationLabel)
       await failBeforePaidTask(msg)
       return
     }
@@ -4079,14 +4122,22 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         compileVideoEditModelRequest(context.modelVersion, {
           prompt: context.videoEditPrompt,
           ratio: currentRatio,
+          resolution: currentResolution,
           durationSec: context.durationSec,
           sourceVideoDurationSec: context.sourceVideoDurationSec,
         })
         currentEstimate = await estimateVideoEditCost({
           workspaceId: ws,
           prompt:
-            context.videoEditPrompt || buildSmartVideoEditPrompt(job.note, job.variationIndex, job.variationTotal),
+            context.videoEditPrompt ||
+            buildSmartVideoEditPrompt(
+              job.note,
+              job.variationIndex,
+              job.variationTotal,
+              resolveRealPersonIdentityName(),
+            ),
           ratio: currentRatio,
+          resolution: currentResolution,
           durationSec: durationValidation.seconds,
           sourceVideoDurationSec: Number(context.sourceVideoDurationSec || 0) || 0,
           modelVersionId: context.modelVersionId,
@@ -4097,12 +4148,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         compileFullVideoModelRequest(context.modelVersion, {
           shots: currentShots,
           ratio: currentRatio,
+          resolution: currentResolution,
           referenceImageCount: currentShots.filter((shot) => shot.includeInVideo !== false).length,
         })
         currentEstimate = await estimateFullVideoCost({
           workspaceId: ws,
           shots: currentShots,
           ratio: currentRatio,
+          resolution: currentResolution,
           modelVersionId: context.modelVersionId,
           modelVersion: context.modelVersion,
           modelPlanCandidates: lockedPlans,
@@ -4136,13 +4189,15 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       try {
         const plans = lockedPlans
         const editPrompt =
-          context.videoEditPrompt || buildSmartVideoEditPrompt(job.note, job.variationIndex, job.variationTotal)
+          context.videoEditPrompt ||
+          buildSmartVideoEditPrompt(job.note, job.variationIndex, job.variationTotal, resolveRealPersonIdentityName())
         const editSrcDur = Number(context.sourceVideoDurationSec || 0) || 0
         const editPromise = editFullVideo({
           workspaceId: ws,
           videoAssetId: sourceVideo.assetId,
           prompt: editPrompt,
           ratio: currentRatio,
+          resolution: currentResolution,
           durationSec: totalDurationSec(currentShots) || 10,
           sourceVideoDurationSec: editSrcDur, // 使用估价时锁定的源视频真实时长(video.edit)
           modelVersionId: context?.modelVersionId,
@@ -4452,6 +4507,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             workspaceId: ws,
             shots: currentShots,
             ratio: currentRatio,
+            resolution: currentResolution,
             modelVersionId: context.modelVersionId,
             modelVersion: context.modelVersion,
             modelPlanCandidates: lockedPlans,
@@ -4463,8 +4519,17 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             shots: activeShots,
             basePrompt: currentPrompt,
             ratio: currentRatio,
+            resolution: currentResolution,
             style: currentStyle,
             imageAssetIds: completeImageAssetIds,
+            // 真人成片：分镜图只是参考帧，运动生成过程仍会漂，身份约束必须显式写进整片提示词。
+            ...(hasRealPersonPreservation
+              ? {
+                  identityConstraint: buildRealPersonVideoIdentityConstraint(
+                    requiredRealPersonReferences[0]?.personName || resolveRealPersonIdentityName(),
+                  ),
+                }
+              : {}),
             note: job.note,
             variationIndex: job.variationIndex,
             variationTotal: job.variationTotal,
@@ -4674,9 +4739,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     const modelSelection = requireGenerationModel(operationCode, opts?.generationModels)
     if (!modelSelection) return
     const modelVersion = cloneGenerationSnapshot(modelSelection.source)
-    const durationValidation = validateSmartVideoDuration(totalDurationSec(currentShots))
+    const durationValidation = validateVideoDurationWithin(totalDurationSec(currentShots), supportedVideoDurations)
     if (!durationValidation.valid) {
-      showToast(unsupportedVideoDurationMessage(durationValidation.seconds), 'error')
+      showToast(unsupportedVideoDurationMessage(durationValidation.seconds, supportedVideoDurationLabel), 'error')
       return
     }
     const total = normalizeVideoGenerateCount(count)
@@ -4692,6 +4757,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         ? { ...currentEntryMeta, generationModels: opts.generationModels }
         : currentEntryMeta
     const ratio = generationMeta?.ratio
+    const resolution = generationMeta?.resolution
     const style = generationMeta?.style
     const basePrompt = reqSummary || requirement
     const sourceVideo = cloneGenerationSnapshot(fullVideoRef.current || fullVideo)
@@ -4742,10 +4808,12 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             note,
             total > 1 ? index + 1 : undefined,
             total > 1 ? total : undefined,
+            resolveRealPersonIdentityName(),
           )
           compileVideoEditModelRequest(modelVersion, {
             prompt: videoEditPrompt,
             ratio,
+            resolution,
             durationSec: durationValidation.seconds,
             sourceVideoDurationSec,
           })
@@ -4754,6 +4822,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
               workspaceId: ws,
               prompt: videoEditPrompt,
               ratio,
+              resolution,
               durationSec: durationValidation.seconds,
               sourceVideoDurationSec,
               modelVersionId: modelSelection.modelVersionId,
@@ -4771,12 +4840,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         compileFullVideoModelRequest(modelVersion, {
           shots: currentShots,
           ratio,
+          resolution,
           referenceImageCount: currentShots.filter((shot) => shot.includeInVideo !== false).length,
         })
         const estimate: any = await estimateFullVideoCost({
           workspaceId: ws,
           shots: currentShots,
           ratio,
+          resolution,
           modelVersionId: modelSelection.modelVersionId,
           modelVersion,
           modelPlanCandidates: plans,
@@ -4884,6 +4955,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             shots: cloneGenerationSnapshot(currentShots),
             basePrompt,
             ratio,
+            resolution,
             style,
             durationSec: durationValidation.seconds,
             thumbnailUrl: currentShots.find((shot) => shot.image)?.image || '',
@@ -4891,7 +4963,12 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             sourceVideoDurationSec,
             ...(opts?.edit
               ? {
-                  videoEditPrompt: buildSmartVideoEditPrompt(note, variationIndex, variationTotal),
+                  videoEditPrompt: buildSmartVideoEditPrompt(
+                    note,
+                    variationIndex,
+                    variationTotal,
+                    resolveRealPersonIdentityName(),
+                  ),
                 }
               : {}),
             modelVersionId: modelSelection.modelVersionId,
@@ -5168,6 +5245,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           subscribedDraft.reqSummary || subscribedDraft.requirement || reqSummary || requirement || '',
         ),
         ratio: subscribedEntryMeta?.ratio,
+        resolution: subscribedEntryMeta?.resolution,
         style: subscribedEntryMeta?.style,
         durationSec: totalDurationSec(shotsRef.current) || 0,
         thumbnailUrl: shotsRef.current.find((shot) => shot.image)?.image || '',
@@ -5260,6 +5338,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         shots: shotsRef.current.map((shot) => ({ ...shot })),
         basePrompt: String(restoredDraft.reqSummary || restoredDraft.requirement || reqSummary || requirement || ''),
         ratio: restoredEntryMeta?.ratio,
+        resolution: restoredEntryMeta?.resolution,
         style: restoredEntryMeta?.style,
         durationSec: totalDurationSec(shotsRef.current) || 0,
         thumbnailUrl: shotsRef.current.find((shot) => shot.image)?.image || '',
@@ -5389,6 +5468,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           workspaceId: ws,
           shots,
           ratio: entryMeta?.ratio,
+          resolution: entryMeta?.resolution,
           modelVersionId: modelSelection.modelVersionId,
           modelVersion: modelSelection.source,
           modelPlanCandidates: [],
@@ -5494,6 +5574,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             workspaceId: ws,
             shots,
             ratio: entryMeta?.ratio,
+            resolution: entryMeta?.resolution,
             modelVersionId: modelSelection.modelVersionId,
             modelVersion: modelSelection.source,
             modelPlanCandidates: [],
@@ -7307,21 +7388,20 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     }
     const currentSec = totalDurationSec(shots)
     const expectedSec = parseDurationSeconds(entryMeta.duration) ?? 0
-    const maxSec = 15
-    if (currentSec > maxSec) {
+    if (currentSec > maxVideoDurationSec) {
       durGuardProceedRef.current = null
       setDurGuard({ open: true, currentSec, expectedSec, overMax: true })
       return
     }
-    const selectedDuration = validateSmartVideoDuration(entryMeta.duration)
+    const selectedDuration = validateVideoDurationWithin(entryMeta.duration, supportedVideoDurations)
     if (!selectedDuration.valid) {
-      showToast(`当前视频时长选项无效，请选择${SUPPORTED_VIDEO_DURATION_LABEL}`, 'error')
+      showToast(`当前视频时长选项无效，请选择${supportedVideoDurationLabel}`, 'error')
       return
     }
-    const shotDuration = validateSmartVideoDuration(currentSec)
+    const shotDuration = validateVideoDurationWithin(currentSec, supportedVideoDurations)
     if (!shotDuration.valid) {
       durGuardProceedRef.current = null
-      showToast(unsupportedVideoDurationMessage(shotDuration.seconds), 'error')
+      showToast(unsupportedVideoDurationMessage(shotDuration.seconds, supportedVideoDurationLabel), 'error')
       return
     }
     if (expectedSec > 0 && currentSec > 0 && currentSec !== expectedSec) {
@@ -8600,9 +8680,16 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   // 入口提交「输入文字生成」→ 需登录(免登录可进页面/输入,但生成需登录)
   const handleStart = async (req: string, meta: EntryMeta): Promise<boolean> => {
     if (meta.mode === 'video') {
+      // 档位取自本次提交所选的视频模型，与入口下拉完全同源：
+      // 界面允许选的秒数在这里必须能通过，否则用户会被自己刚选中的合法值挡住。
+      const entryDurations = getGenerationModelDurationOptions(
+        generationModelCatalog.pickerGroups,
+        meta.generationModels || {},
+        'video.generate',
+        SMART_VIDEO_DURATIONS,
+      )
       const durationValidation = validateCreativeDurationSelection(req, meta.duration, {
-        supportedDurations: SMART_VIDEO_DURATIONS,
-        supportedDurationLabel: SUPPORTED_VIDEO_DURATION_LABEL,
+        supportedDurations: entryDurations,
       })
       if (!durationValidation.valid) {
         showToast(durationValidation.message, 'error')
@@ -9324,6 +9411,35 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           : { referenceImageCount: imageComposerRefCount }),
       })
     : []
+
+  /**
+   * 「视频修改」在本片是否不可用及原因。
+   *
+   * video.edit 改的是已生成的那条视频，按源视频真实时长计费执行，其时长上限可能低于生成模型
+   * （例如生成支持 30 秒、修改只支持 15 秒）。这条约束在生成前无从判断，也不该拦住创作，
+   * 因此不进入模型冲突（见 getGenerationModelSelectionConflicts），改为在这里按成片时长判定：
+   * 超限就关掉修改入口并说明原因，其余流程照常。
+   */
+  const videoEditDisabledReason = (() => {
+    if (!entryMeta || entryMeta.mode !== 'video') return ''
+    const durationSec = parseDurationSeconds(entryMeta.duration)
+    if (!durationSec) return ''
+    if (
+      isDurationSupportedByGenerationModel(
+        flowGenerationModelGroups,
+        entryMeta.generationModels || {},
+        'video.edit',
+        durationSec,
+      )
+    )
+      return ''
+    return `当前所选「视频修改模型」不支持 ${durationSec} 秒的视频，本片暂不能提修改意见；可重新生成视频，或回到入口改用更短的时长/更换视频修改模型。`
+  })()
+
+  /** 流程内模型面板的同款说明：用不上的槽位不预估积分，直接讲清原因。 */
+  const flowGenerationModelSlotNotices = videoEditDisabledReason
+    ? { 'video.edit': `当前 ${entryMeta?.duration || '该时长'} 不适用，生成后不能修改` }
+    : undefined
 
   /** 只比较会影响切换决策的稳定字段，确认框停留期间产物变化则整次切换作废。 */
   const generationModelSwitchArtifactFingerprint = () =>
@@ -10090,22 +10206,26 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         costEstimate={videoCost.estimate}
         costLoading={videoCost.loading}
         costError={videoCost.error}
+        editDisabledReason={videoEditDisabledReason}
         onEstimateEditCost={async (note) => {
           const ws = Number(workspaceId || 0)
           if (!ws || !fullVideo.assetId || !fullVideo.url) throw new Error('缺少可编辑的视频')
           const modelSelection = selectedGenerationModel('video.edit')
           if (!modelSelection) throw new Error('请先选择视频修改模型')
-          const editPrompt = [
-            '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
+          // 与入队/提交共用同一个构建器：估价用的提示词必须和真正提交的一致，
+          // 真人成片的身份约束也才会一并进入估价口径。
+          const editPrompt = buildSmartVideoEditPrompt(
             note || '',
-          ]
-            .filter(Boolean)
-            .join('\n')
+            undefined,
+            undefined,
+            resolveRealPersonIdentityName(),
+          )
           const sourceVideoDurationSec = (await readVideoDurationSec(fullVideo.url)) || 0
           const result: any = await estimateVideoEditCost({
             workspaceId: ws,
             prompt: editPrompt,
             ratio: entryMeta?.ratio,
+            resolution: entryMeta?.resolution,
             durationSec: totalDurationSec(shots) || 10,
             sourceVideoDurationSec,
             modelVersionId: modelSelection.modelVersionId,
@@ -10218,7 +10338,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
               </span>
               <div className="smart__durguard-msg">
                 {durGuard.overMax
-                  ? `您目前的视频秒数为${durGuard.currentSec}s（已超过最大限制15s，无法生成视频）`
+                  ? `您目前的视频秒数为${durGuard.currentSec}s（已超过最大限制${maxVideoDurationSec}s，无法生成视频）`
                   : `您目前的视频秒数为${durGuard.currentSec}s（与期望的视频秒数${durGuard.expectedSec || parseDurationSeconds(entryMeta?.duration) || 0}s不符）`}
               </div>
             </div>
@@ -10315,6 +10435,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                       : requirement || carriedEntry.text,
                   ratio: entryMeta?.ratio ?? carriedEntry.ratio,
                   duration: entryMeta?.duration,
+                  resolution: entryMeta?.resolution,
                   images:
                     entryMeta?.mode === 'image' && imageComposerDraft.images.length
                       ? imageComposerDraft.images.map((image) => image.url)
@@ -10360,6 +10481,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                       locked={generationModelSwitchLocked}
                       lockedReason={generationModelSwitchLockedReason}
                       conflicts={flowGenerationModelConflicts}
+                      slotNotices={flowGenerationModelSlotNotices}
                       className="smart__generation-model"
                     />
                   </div>
@@ -10540,6 +10662,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                         locked={generationModelSwitchLocked}
                         lockedReason={generationModelSwitchLockedReason}
                         conflicts={flowGenerationModelConflicts}
+                        slotNotices={flowGenerationModelSlotNotices}
                         className="smart__generation-model"
                       />
                     )}

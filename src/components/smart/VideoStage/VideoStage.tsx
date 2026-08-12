@@ -133,6 +133,12 @@ interface VideoStageProps {
    * 估价失败时确认按钮保持禁用，避免用户在不知实际预估积分时提交。
    */
   onEstimateEditCost?: (note?: string) => Promise<VideoCostEstimate>
+  /**
+   * 本片不能用「视频修改」时的原因（如整片时长超出所选 video.edit 模型上限）。
+   * 非空即隐藏修改输入、改按钮为「重新生成视频」，并把原因显示给用户；
+   * 其余流程（播放、下载、重新生成、历史版本）不受影响。
+   */
+  editDisabledReason?: string
   /** 人脸脱敏调试:每镜的输入/输出/模型/状态(开发可见) */
   faceBlurDebug?: {
     no?: string
@@ -268,6 +274,7 @@ export default function VideoStage({
   costLoading,
   costError,
   onEstimateEditCost,
+  editDisabledReason = '',
   faceBlurDebug,
   videoVersions = [],
   failedGenerations = [],
@@ -871,8 +878,11 @@ export default function VideoStage({
     return parts.length ? parts.join('\n') : undefined
   }
 
+  // 本片不支持视频修改时，草稿里可能还留着上一版的修改文字：一律不当作修改，
+  // 否则主按钮会变成「确认修改」并去请求一个必然失败的 video.edit。
+  const editDisabled = Boolean(editDisabledReason)
   // 是否存在「片段/整段」修改:有则主按钮显示「确认修改」(基于原视频改),无则「重新生成视频」
-  const hasMods = frameSlots.some((s) => s.text.trim()) || overallNote.trim().length > 0
+  const hasMods = !editDisabled && (frameSlots.some((s) => s.text.trim()) || overallNote.trim().length > 0)
   const editRequestSignature = JSON.stringify({
     videoAssetId,
     videoUrl,
@@ -1316,7 +1326,11 @@ export default function VideoStage({
               </div>
             </div>
           )}
-          {showTimeline ? (
+          {showTimeline && editDisabled ? (
+            <div className={styles.vstageRightHint} role="note">
+              {editDisabledReason}
+            </div>
+          ) : showTimeline ? (
             <>
               <ModBox
                 title="整段视频修改"
