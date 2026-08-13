@@ -127,7 +127,9 @@ describe('smart script generation', () => {
 
     await generateScriptShotsStream({ requirement: '广告', duration: '30s' }, vi.fn())
 
-    const prompt = String(mocks.streamResponseText.mock.calls.at(-1)?.[0]?.user ?? '')
+    // 不用 Array.prototype.at：它是 ES2022，而 tsconfig 的 lib 停在 ES2021
+    const calls = mocks.streamResponseText.mock.calls
+    const prompt = String(calls[calls.length - 1]?.[0]?.user ?? '')
     expect(prompt).toContain('视频总时长 30 秒')
     expect(prompt).toContain('开头镜头固定 3 秒,结尾镜头固定 3 秒')
     expect(prompt).toContain('中间部分合计固定 24 秒')
