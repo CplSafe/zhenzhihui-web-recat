@@ -638,6 +638,63 @@ describe('AI task polling terminal states and recovery', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('waits at least as long as the backend poll_after_ms asks for', async () => {
+    // 后端用 poll_after_ms 声明「至少隔这么久再来问」，拥堵时会调大它做退避。
+    // 之前这个字段被完全忽略，前端始终按自己的固定间隔轮询，把「请求过于频繁」打了回来。
+    vi.useFakeTimers()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ data: { id: 61, status: 'PROCESSING', poll_after_ms: 30_000 } }))
+      .mockResolvedValueOnce(jsonResponse({ data: { id: 61, status: 'COMPLETED' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const request = waitForAiTask({
+      workspaceId: 7,
+      task: { id: 61, status: 'PROCESSING', poll_after_ms: 30_000 },
+      intervalMs: 4000,
+      timeoutMs: 10 * 60_000,
+    })
+
+    // 基础间隔到点时不能就去查——后端要求的是 30 秒。
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(26_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await vi.runAllTimersAsync()
+    await expect(request).resolves.toMatchObject({ id: 61, status: 'completed' })
+  })
+
+  it('keeps the caller interval when poll_after_ms is absent, shorter or invalid', async () => {
+    // poll_after_ms 是下限而不是替代值：它比基础间隔短（线上海螺就是 2000）时不该提高轮询频率。
+    vi.useFakeTimers()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ data: { id: 62, status: 'PROCESSING', poll_after_ms: 0 } }))
+      .mockResolvedValueOnce(jsonResponse({ data: { id: 62, status: 'COMPLETED' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const request = waitForAiTask({
+      workspaceId: 7,
+      task: { id: 62, status: 'PROCESSING', poll_after_ms: 2000 },
+      intervalMs: 4000,
+      timeoutMs: 10 * 60_000,
+    })
+
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    // poll_after_ms=0 同样不会退化成空转轮询，仍按基础间隔等待。
+    await vi.advanceTimersByTimeAsync(2001)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(3999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await vi.runAllTimersAsync()
+    await expect(request).resolves.toMatchObject({ id: 62, status: 'completed' })
+  })
+
   it('recovers after consecutive transient polling errors and preserves the task ID', async () => {
     vi.useFakeTimers()
     vi.spyOn(Math, 'random').mockReturnValue(0)

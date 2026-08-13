@@ -109,6 +109,44 @@ describe('smart script generation', () => {
     expect(result.map((item) => item.no)).toEqual(['镜头1', '镜头2', '镜头3', '镜头4'])
   })
 
+  it('applies the long-form rule to a 30s script: 3s head/tail and middle shots capped at 7s', async () => {
+    const shots = ['A', 'B', 'C', 'D', 'E', 'F'].map((desc) => rawShot(desc, '5s'))
+    mocks.streamResponseText.mockResolvedValue(JSON.stringify({ shots }))
+
+    const result = await generateScriptShotsStream({ requirement: '广告', duration: '30s' }, vi.fn())
+    const secs = result.map((item) => Number.parseFloat(String(item.duration).replace(/[^0-9.]/g, '')))
+
+    expect(secs.reduce((sum, value) => sum + value, 0)).toBe(30)
+    expect(secs[0]).toBe(3)
+    expect(secs[secs.length - 1]).toBe(3)
+    expect(Math.max(...secs.slice(1, -1))).toBeLessThanOrEqual(7)
+  })
+
+  it('tells the model the long-form allocation rule instead of the 15s template', async () => {
+    mocks.streamResponseText.mockResolvedValue(JSON.stringify({ shots: [rawShot('开场', '3s')] }))
+
+    await generateScriptShotsStream({ requirement: '广告', duration: '30s' }, vi.fn())
+
+    const prompt = String(mocks.streamResponseText.mock.calls.at(-1)?.[0]?.user ?? '')
+    expect(prompt).toContain('视频总时长 30 秒')
+    expect(prompt).toContain('开头镜头固定 3 秒,结尾镜头固定 3 秒')
+    expect(prompt).toContain('中间部分合计固定 24 秒')
+    expect(prompt).toContain('中间每个镜头不超过 7 秒')
+    // 24 秒中间段按每镜 3~7 秒 → 中间 4~8 镜 → 总 6~10 镜
+    expect(prompt).toContain('总镜头数控制在 6~10 个之间')
+  })
+
+  it('caps a 30s script at ten shots so long form does not explode into 1s fragments', async () => {
+    const shots = Array.from({ length: 20 }, (_value, index) => rawShot(`S${index}`, '1.5s'))
+    mocks.streamResponseText.mockResolvedValue(JSON.stringify({ shots }))
+
+    const result = await generateScriptShotsStream({ requirement: '广告', duration: '30s' }, vi.fn())
+    const secs = result.map((item) => Number.parseFloat(String(item.duration).replace(/[^0-9.]/g, '')))
+
+    expect(result.length).toBeLessThanOrEqual(10)
+    expect(secs.reduce((sum, value) => sum + value, 0)).toBe(30)
+  })
+
   it.each([1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 15])(
     'normalizes generated shots to an exact %s-second total',
     async (duration) => {

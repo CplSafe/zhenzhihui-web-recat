@@ -139,6 +139,51 @@ describe('model restriction metadata', () => {
     ])
   })
 
+  it('falls back to known duration tiers only when the backend declares none', () => {
+    // 海螺(MiniMax)只接受 6/10 秒，但后端 schema 声明了 duration 字段却没给可选值。
+    // 没有兜底时前端无从校验，5 秒、7 秒会被原样下发并换回 minimax HTTP 400: bad_request_error。
+    const hailuo = buildModelRestrictionSummary({
+      display_name: 'MiniMax 海螺',
+      params_schema: {
+        fields: [{ name: 'duration' }, { name: 'resolution', options: ['768P', '1080P'] }],
+      },
+    })
+
+    expect(hailuo.constraints.duration).toEqual({ options: [6, 10] })
+    expect(hailuo.messages).toContain('时长仅支持：6 秒、10 秒')
+    expect(getModelConstraintConflicts(hailuo.constraints, { durationSec: 6 })).toEqual([])
+    expect(getModelConstraintConflicts(hailuo.constraints, { durationSec: 5 })).toEqual([
+      '当前 5 秒不在可选时长 6 秒、10 秒 内',
+    ])
+    expect(getModelConstraintConflicts(hailuo.constraints, { durationSec: 7 })).toHaveLength(1)
+  })
+
+  it('always prefers the backend schema over the fallback duration table', () => {
+    // 后端一旦声明档位（或上下限），兜底表必须彻底让位，避免前端把正确配置改坏。
+    const declaredOptions = buildModelRestrictionSummary({
+      display_name: 'MiniMax 海螺',
+      params_schema: { fields: [{ name: 'duration', options: [5, 8] }] },
+    })
+    expect(declaredOptions.constraints.duration).toEqual({ options: [5, 8] })
+    expect(getModelConstraintConflicts(declaredOptions.constraints, { durationSec: 5 })).toEqual([])
+
+    const declaredRange = buildModelRestrictionSummary({
+      display_name: 'MiniMax 海螺',
+      params_schema: { fields: [{ name: 'duration', minimum: 1, maximum: 15 }] },
+    })
+    expect(declaredRange.constraints.duration).toEqual({ minimum: 1, maximum: 15 })
+    expect(getModelConstraintConflicts(declaredRange.constraints, { durationSec: 7 })).toEqual([])
+  })
+
+  it('leaves models without a fallback rule untouched', () => {
+    const other = buildModelRestrictionSummary({
+      display_name: '其他厂商视频模型',
+      params_schema: { fields: [{ name: 'duration' }] },
+    })
+    expect(other.constraints.duration).toBeUndefined()
+    expect(getModelConstraintConflicts(other.constraints, { durationSec: 7 })).toEqual([])
+  })
+
   it('does not invent restrictions when the backend declares none', () => {
     expect(buildModelRestrictionSummary({ display_name: '后端模型名称' })).toEqual({
       messages: [],

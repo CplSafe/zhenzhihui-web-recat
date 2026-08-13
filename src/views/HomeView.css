@@ -350,7 +350,8 @@
 /* 快捷入口 */
 .home__quick-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* 列数由 JS 按入口数量注入：增删入口后仍左右撑满整行，不会留半行空白 */
+  grid-template-columns: repeat(var(--home-quick-count, 4), 1fr);
   gap: 16px;
 }
 .home__quick-card {
@@ -498,6 +499,8 @@
 
 /* 响应式：网格列数自适应 4 → 2 → 1 */
 @media (max-width: 1280px) {
+  /* 快捷入口:窄屏固定两列(入口多于两个时换行),避免每张卡被压得过窄。
+     repeat() 的计数位置不接受 min() 等数学函数，只能写死列数。 */
   .home__quick-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -519,9 +522,8 @@
   }
 }
 @media (max-width: 560px) {
-  /* 快捷入口:窄屏 2×2 紧凑卡(原单列过空) */
+  /* 快捷入口:窄屏保持并排两卡,只收紧间距与内边距 */
   .home__quick-grid {
-    grid-template-columns: repeat(2, 1fr);
     gap: 12px;
   }
   .home__quick-card {

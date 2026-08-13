@@ -29,6 +29,7 @@ import {
   getGenerationModelDurationOptions,
   getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
+  isDurationSupportedByGenerationModel,
   isGenerationModelSelectionComplete,
   type GenerationModelErrorState,
   type GenerationModelGroup,
@@ -825,16 +826,23 @@ export default function HotCopyEntry({
   const videoModelSelected = Boolean(modelVersionId)
   const durationUnset = parseDurationSeconds(duration) === null
   // 换模型后原选择可能不再受支持：就近吸附到新档位，避免停留在必然失败的秒数上。
-  // 尚未选择（0s）时保持未选状态，交由用户显式选择，不代替用户做决定。
+  //
+  // 只有「所选模型明确不支持当前秒数」才纠正。durationOptions 在模型未选中、目录正在刷新
+  // 或模型没声明约束时会回落到入口默认档位（上限 15 秒），那只代表「不知道」而非「只允许这些」；
+  // 若据此吸附，用户选中的模型支持的 20 秒会被悄悄改成 15 秒。
+  // 尚未选择时同样保持未选状态，交由用户显式选择。
   useEffect(() => {
     if (durationOptions.length === 0) return
     const current = parseDurationSeconds(duration)
-    if (current === null || durationOptions.includes(current)) return
+    if (current === null) return
+    if (isDurationSupportedByGenerationModel(modelGroups, modelSelection, 'video.replicate', current)) return
     const nearest = durationOptions.reduce((best, seconds) =>
       Math.abs(seconds - current) < Math.abs(best - current) ? seconds : best,
     )
     setDuration(`${nearest}s`)
-  }, [duration, durationOptions])
+    // modelSelection 每次渲染都是新对象，按其唯一取值 modelVersionId 追踪即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [duration, durationOptions, modelGroups, modelVersionId])
   // 分辨率档位同样跟随所选复制模型；模型未声明 resolution/size 时回落到通用档位。
   const resolutionOptions = useMemo(
     () =>

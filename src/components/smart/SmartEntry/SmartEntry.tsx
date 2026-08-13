@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 智能成片「入口/需求输入」页(2.1,按 Figma 79:3966 还原)。
  * 大标题 + 制作视频/制作图片 Tab + 上传&提示词卡片 +
  * 比例(16:9)/时长(5s) 下拉 + @ + 发送。背景彩色渐变光晕。
@@ -376,8 +376,9 @@ export default function SmartEntry({
     mode === 'image'
       ? [getImageGenerationOperationCode(images.length)]
       : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
-  const visibleModelGroups =
-    mode === 'video' ? modelGroups : filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations)
+  // 两种模式都按「本次创作真正会用到的 operation」过滤：
+  // 视频模式下 video.edit 已不属于智能成片流程（修改走视频生视频），不能再出现在模型面板里。
+  const visibleModelGroups = filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations)
   const conflictModelGroups = visibleModelGroups
   const modelSelectionComplete = isGenerationModelSelectionComplete(visibleModelGroups, generationModels)
   const modelSelectionConflicts = getGenerationModelSelectionConflicts(conflictModelGroups, generationModels, {
@@ -386,21 +387,6 @@ export default function SmartEntry({
       ? { durationSec: parseDurationSeconds(duration) ?? undefined, resolution }
       : { referenceImageCount: images.length }),
   })
-  // 视频修改是生成之后的下游能力，其时长上限可能低于生成模型（例如生成支持 30 秒、修改只支持 15 秒）。
-  // 这不阻塞创作：照常生成，但要在选时长的当下就告诉用户这一档生成完不能再改，别等走到最后才发现。
-  const videoEditUnsupportedByDuration =
-    mode === 'video' &&
-    !isDurationSupportedByGenerationModel(
-      visibleModelGroups,
-      generationModels,
-      'video.edit',
-      parseDurationSeconds(duration),
-    )
-  // 模型面板里同步说明：视频修改模型本轮用不上，因此不预估它的积分，直接说明原因。
-  const modelSlotNotices = useMemo(
-    () => (videoEditUnsupportedByDuration ? { 'video.edit': `当前 ${duration} 不适用，生成后不能修改` } : undefined),
-    [videoEditUnsupportedByDuration, duration],
-  )
   // 时长档位跟随所选视频模型：schema 声明了支持哪些秒数就只展示哪些，未声明才回落 1–15 秒。
   const durationOptions = useMemo(
     () =>
@@ -408,28 +394,25 @@ export default function SmartEntry({
     [visibleModelGroups, generationModels],
   )
   const durationChoices = useMemo(() => durationOptions.map((seconds) => `${seconds}s`), [durationOptions])
-  // 还能保住「视频修改」的最长档位：用于把提示写成用户可执行的建议，而不是只说不支持。
-  const videoEditMaxDurationSec = useMemo(() => {
-    if (mode !== 'video') return 0
-    const supported = durationOptions.filter((seconds) =>
-      isDurationSupportedByGenerationModel(visibleModelGroups, generationModels, 'video.edit', seconds),
-    )
-    return supported.length ? supported[supported.length - 1] : 0
-  }, [mode, durationOptions, visibleModelGroups, generationModels])
   // 视频模型选定前不允许选秒数：模型决定了有哪些档位，先选秒数只会选到模型并不支持的值。
   const videoModelSelected = mode !== 'video' || Boolean(generationModels['video.generate'])
   const durationUnset = parseDurationSeconds(duration) === null
   // 换模型后原选择可能不再受支持：就近吸附到新档位，避免停留在必然失败的秒数上。
-  // 尚未选择（0s）时保持未选状态，交由用户显式选择，不代替用户做决定。
+  //
+  // 只有「所选模型明确不支持当前秒数」才纠正。durationOptions 在模型未选中、目录正在刷新
+  // 或模型没声明约束时会回落到入口默认档位（上限 15 秒），那只代表「不知道」而非「只允许这些」；
+  // 若据此吸附，用户选中的模型支持的 20 秒会被悄悄改成 15 秒。
+  // 尚未选择时同样保持未选状态，交由用户显式选择。
   useEffect(() => {
     if (mode !== 'video' || durationOptions.length === 0) return
     const current = parseDurationSeconds(duration)
-    if (current === null || durationOptions.includes(current)) return
+    if (current === null) return
+    if (isDurationSupportedByGenerationModel(visibleModelGroups, generationModels, 'video.generate', current)) return
     const nearest = durationOptions.reduce((best, seconds) =>
       Math.abs(seconds - current) < Math.abs(best - current) ? seconds : best,
     )
     setDuration(`${nearest}s`)
-  }, [mode, duration, durationOptions])
+  }, [mode, duration, durationOptions, visibleModelGroups, generationModels])
   // 分辨率档位同样跟随所选视频模型；模型未声明 resolution/size 时回落到通用档位。
   const resolutionOptions = useMemo(
     () =>
@@ -936,7 +919,6 @@ export default function SmartEntry({
                   onRetry={onReloadModels ? () => onReloadModels() : undefined}
                   onChange={updateGenerationModel}
                   estimateModelCost={workspaceId > 0 ? estimateSelectedModel : undefined}
-                  slotNotices={modelSlotNotices}
                   conflicts={modelSelectionConflicts}
                   attentionRequest={modelAttentionRequest}
                   attentionMessage={modelGateMessage}
@@ -989,16 +971,6 @@ export default function SmartEntry({
               </button>
             </div>
           </div>
-
-          {/* 能力降级告知：这一档时长生成后用不了「视频修改」。不拦截创作，只让用户在选择的当下知情。 */}
-          {videoEditUnsupportedByDuration && (
-            <div className={styles.capabilityNotice} role="note">
-              {`当前 ${duration} 生成后不支持「视频修改」，可继续创作`}
-              {videoEditMaxDurationSec > 0
-                ? `；如需生成后再修改，请选择 ${videoEditMaxDurationSec}s 及以内的时长。`
-                : '；当前修改模型不支持任一可选时长。'}
-            </div>
-          )}
         </div>
       </div>
       <RealPersonMaterialPicker

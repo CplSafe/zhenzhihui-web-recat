@@ -15,7 +15,7 @@ import {
   type CanvasConnectionRole,
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
-import { resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
+import { filterInputDerivedRatioOptions, resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
 
 /** 读取可能为字符串/数字/布尔的值，返回字符串文本；非法输入返回空串。 */
 function readText(value: unknown): string {
@@ -436,8 +436,19 @@ export default function CanvasNodePanel({
     return targetOperationCode
   }, [availableModels, targetOperationCode])
 
-  // 选中模型的 params_schema.fields（视频菜单动态渲染来源）
-  const schemaFields = useMemo(() => parseParamsSchema(selectedModel), [selectedModel])
+  /** 是否有素材输入（图片/视频连线）；纯文本来源不算，它只会拼进 prompt。 */
+  const hasMediaInput = useMemo(() => sourceRefs.some((ref) => ref.kind !== 'text'), [sourceRefs])
+
+  // 选中模型的 params_schema.fields（视频菜单动态渲染来源）。
+  // 没有素材输入时剔除「跟随素材」的比例档位（adaptive/auto）：模型无从推断画幅，官方 API 直接 400。
+  // 在这里一次性剔除，下拉菜单、默认值收敛和最终 params 三处就都拿不到这个档位。
+  const schemaFields = useMemo(() => {
+    const fields = parseParamsSchema(selectedModel)
+    if (hasMediaInput) return fields
+    return fields.map((field) =>
+      isRatioField(field) ? { ...field, options: filterInputDerivedRatioOptions(field.options, false) } : field,
+    )
+  }, [selectedModel, hasMediaInput])
 
   // 字段值状态：模型/schema 变化时重置为 default；优先读取节点已持久化的 params（刷新后回显用户选择）
   const [fieldValues, setFieldValues] = useState<Record<string, unknown>>({})

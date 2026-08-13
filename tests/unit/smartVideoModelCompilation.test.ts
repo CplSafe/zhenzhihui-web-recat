@@ -1,5 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { compileFullVideoModelRequest, compileVideoEditModelRequest } from '@/api/smartVideo'
+import { buildFullVideoInputAssets, compileFullVideoModelRequest, compileVideoEditModelRequest } from '@/api/smartVideo'
+
+describe('buildFullVideoInputAssets', () => {
+  it('keeps the shot images on the model-declared role', () => {
+    expect(buildFullVideoInputAssets({ imageAssetIds: [11, 12], imageRole: 'reference_image' })).toEqual([
+      { asset_id: 11, role: 'reference_image' },
+      { asset_id: 12, role: 'reference_image' },
+    ])
+  })
+
+  it('appends the source video under its own role instead of reusing the image role', () => {
+    expect(
+      buildFullVideoInputAssets({ imageAssetIds: [11], imageRole: 'reference_image', sourceVideoAssetId: 99 }),
+    ).toEqual([
+      { asset_id: 11, role: 'reference_image' },
+      { asset_id: 99, role: 'video' },
+    ])
+  })
+
+  it('falls back to the image role and drops unusable ids', () => {
+    expect(buildFullVideoInputAssets({ imageAssetIds: [0, -3, 12, Number.NaN] })).toEqual([
+      { asset_id: 12, role: 'image' },
+    ])
+    // 没有源视频时不追加任何视频输入，普通整片生成的请求体保持不变
+    expect(buildFullVideoInputAssets({ imageAssetIds: [12], sourceVideoAssetId: 0 })).toEqual([
+      { asset_id: 12, role: 'image' },
+    ])
+  })
+
+  it('still submits the source video when there is no shot image', () => {
+    expect(buildFullVideoInputAssets({ sourceVideoAssetId: 99 })).toEqual([{ asset_id: 99, role: 'video' }])
+  })
+})
 
 describe('compileFullVideoModelRequest', () => {
   it('compiles a Seedance schema without inventing audio or a non-declared input role', () => {
@@ -89,6 +121,35 @@ describe('compileFullVideoModelRequest', () => {
         referenceImageCount: 2,
       }),
     ).toThrow('所选视频模型不支持当前总时长')
+  })
+
+  it('keeps a schema-less MiniMax model on its real 6/10 second tiers', () => {
+    // 线上实况：海螺 schema 只声明了 duration 字段名和 resolution 档位，没有时长可选值。
+    // 修复前 5 秒会被原样编译并下发，换回 minimax HTTP 400: bad_request_error。
+    const hailuo = {
+      model_version_id: 20,
+      display_name: 'MiniMax 海螺',
+      operation_codes: ['video.generate'],
+      params_schema: {
+        fields: [
+          { name: 'duration' },
+          { name: 'ratio', options: ['16:9', '9:16'] },
+          { name: 'resolution', options: ['768P', '1080P'] },
+        ],
+      },
+    }
+    const args = { ratio: '16:9', resolution: '768P', referenceImageCount: 2 }
+
+    expect(() =>
+      compileFullVideoModelRequest(hailuo, { ...args, shots: [{ duration: '2s' }, { duration: '3s' }] }),
+    ).toThrow('所选视频模型不支持当前总时长')
+
+    expect(
+      compileFullVideoModelRequest(hailuo, { ...args, shots: [{ duration: '3s' }, { duration: '3s' }] }).params,
+    ).toMatchObject({ duration: 6, ratio: '16:9', resolution: '768P' })
+    expect(
+      compileFullVideoModelRequest(hailuo, { ...args, shots: [{ duration: '5s' }, { duration: '5s' }] }).params,
+    ).toMatchObject({ duration: 10 })
   })
 
   it('falls back to the default 1–15 second range only when the model declares no duration', () => {

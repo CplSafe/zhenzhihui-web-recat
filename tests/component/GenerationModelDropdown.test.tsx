@@ -316,6 +316,41 @@ describe('GenerationModelDropdown', () => {
     )
   })
 
+  it('treats a duration as supported whenever the model has no say over it', () => {
+    // 回归：用户选了模型支持的 20 秒，随后目录刷新/未命中模型时档位回落到入口默认（上限 15 秒）。
+    // 若此时把「不在默认档位里」当成不支持，20 秒会被悄悄吸附成 15 秒。
+    const longGroups: GenerationModelGroup[] = [
+      {
+        key: 'video',
+        label: '生成视频',
+        subgroups: [
+          {
+            key: 'video.replicate',
+            label: '视频生成模型',
+            models: [
+              { id: 501, name: '支持长片的模型', constraints: { duration: { options: [10, 15, 20] } } },
+              { id: 502, name: '未声明时长的模型' },
+            ],
+          },
+        ],
+      },
+    ]
+    // 模型声明支持 20 秒 → 不得纠正。
+    expect(isDurationSupportedByGenerationModel(longGroups, { 'video.replicate': 501 }, 'video.replicate', 20)).toBe(
+      true,
+    )
+    // 模型未选中 / operation 不匹配 / 模型没声明约束 → 都属于「不知道」，同样不得纠正。
+    expect(isDurationSupportedByGenerationModel(longGroups, {}, 'video.replicate', 20)).toBe(true)
+    expect(isDurationSupportedByGenerationModel([], { 'video.replicate': 501 }, 'video.replicate', 20)).toBe(true)
+    expect(isDurationSupportedByGenerationModel(longGroups, { 'video.replicate': 502 }, 'video.replicate', 20)).toBe(
+      true,
+    )
+    // 只有模型明确不支持时才返回 false，交由调用方就近吸附。
+    expect(isDurationSupportedByGenerationModel(longGroups, { 'video.replicate': 501 }, 'video.replicate', 7)).toBe(
+      false,
+    )
+  })
+
   it('filters the entry durations by a declared range and never yields an empty list', () => {
     const rangeGroups: GenerationModelGroup[] = [
       {

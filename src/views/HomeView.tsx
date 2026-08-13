@@ -8,7 +8,7 @@
  * - 历史项目仅向已登录用户展示当前工作空间内、本人有权访问且已经生成视频的项目，并支持播放、下载和继续编辑。
  * - 首次登录进入首页时展示一次新手引导；搜索框按当前标签过滤模板或历史项目。
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
@@ -271,8 +271,19 @@ export function BannerVideo({
   )
 }
 
-/* 快捷入口 4 卡（图标为 Figma 导出）*/
-const QUICK_ENTRIES = [
+/** 一张快捷入口卡：默认按 key 走路由跳转，带 tab 的改为切到本页对应案例标签。 */
+interface QuickEntry {
+  key: string
+  /** 指向本页案例区标签而非独立路由（如 IP 没有独立页面）；缺省表示走路由。 */
+  tab?: HomeCaseTabKey
+  title: string
+  desc: string
+  icon: string
+  grad: string
+}
+
+/* 快捷入口（图标为 Figma 导出）：只放已上线的创作流程 */
+const QUICK_ENTRIES: QuickEntry[] = [
   {
     key: 'creative',
     title: '智能成片',
@@ -280,6 +291,8 @@ const QUICK_ENTRIES = [
     icon: quick1,
     grad: 'linear-gradient(135deg, #e6fbf4, #f4fffc)',
   },
+  // 真人成片暂时下线（见 AppSidebar 的 HIDDEN_SIDEBAR_ITEM_KEYS：KYC 认证照会被上游拒绝），
+  // 待后端统一转码后再放回这里。
   {
     key: 'hot-copy',
     title: '爆款复制',
@@ -288,19 +301,22 @@ const QUICK_ENTRIES = [
     grad: 'linear-gradient(135deg, #e3f9f1, #f2fffb)',
   },
   {
-    key: 'hot-split',
-    title: '爆款裂变',
-    desc: '一个爆款，裂变出N个',
+    key: 'canvas',
+    title: '无限画布',
+    desc: '节点连线，自由编排',
     icon: quick3,
     grad: 'linear-gradient(135deg, #e6fbf4, #f4fffc)',
   },
   {
-    key: 'ip-video',
-    title: 'IP视频',
-    desc: '打造出属于你的个人IP',
+    // IP 没有独立页面，入口指向本页案例区的 IP 标签（见 tab 字段）。
+    key: 'ip',
+    tab: 'ip',
+    title: 'IP',
+    desc: '发现 IP 创作者与需求',
     icon: quick4,
     grad: 'linear-gradient(135deg, #e3f9f1, #f2fffb)',
   },
+  // 爆款裂变尚未上线（不在 SIDEBAR_ROUTE_MAP 中，点击只会弹「功能待开放」），先不在首页露出。
 ]
 
 import { type TemplateItem } from '@/api/templates'
@@ -313,6 +329,9 @@ const TABS = [
   { key: 'history', label: '历史项目' },
   { key: 'ip', label: 'IP' },
 ] as const
+
+/** 案例区标签键；快捷入口指向标签时复用同一套取值。 */
+type HomeCaseTabKey = (typeof TABS)[number]['key']
 
 const HOME_HISTORY_LIMIT = 20
 const HOME_TEMPLATE_LIMIT = 20
@@ -639,7 +658,8 @@ export default function HomeView() {
   const [bannerIndex, setBannerIndex] = useState(0)
   // 初始值从缓存秒出(有上次数据就不闪空),无缓存为 null 走占位兜底。
   const [apiBanners, setApiBanners] = useState<Banner[] | null>(() => peekCache<Banner[]>(BANNERS_CACHE_KEY) ?? null)
-  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['key']>('template')
+  const [activeTab, setActiveTab] = useState<HomeCaseTabKey>('template')
+  const caseTabsRef = useRef<HTMLDivElement>(null)
   const [keyword, setKeyword] = useState('')
   const [ipSort, setIpSort] = useState<
     keyof Pick<IpProfile, 'category' | 'contentType' | 'followers' | 'averageOrderValue'> | ''
@@ -884,6 +904,15 @@ export default function HomeView() {
 
   const handleNavigate = useSidebarNavigate()
 
+  /**
+   * 快捷入口指向本页案例标签（如 IP）时：切到该标签并滚到案例区。
+   * 案例区在首屏之下，只切标签用户看不到任何变化，会以为按钮没反应。
+   */
+  const goCaseTab = useCallback((tab: HomeCaseTabKey) => {
+    setActiveTab(tab)
+    caseTabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
   // 拉取后端轮播图(/api/v1/banners),走 SWR 缓存:
   //   - 有缓存 → 立即用缓存渲染(上面 useState 已秒出),同时后台刷新,新数据回来再更新;
   //   - 无缓存 → 等首个请求结果。
@@ -1055,14 +1084,15 @@ export default function HomeView() {
             <div className="home__section-head">
               <h3 className="home__section-title">快捷入口</h3>
             </div>
-            <div className="home__quick-grid">
+            {/* 列数跟随入口数量，无论几张卡都左右撑满整行 */}
+            <div className="home__quick-grid" style={{ '--home-quick-count': QUICK_ENTRIES.length } as CSSProperties}>
               {QUICK_ENTRIES.map((q) => (
                 <button
                   key={q.key}
                   type="button"
                   className="home__quick-card"
                   style={{ background: q.grad }}
-                  onClick={() => handleNavigate(q.key)}
+                  onClick={() => (q.tab ? goCaseTab(q.tab) : handleNavigate(q.key))}
                 >
                   <div className="home__quick-text">
                     <div className="home__quick-title">{q.title}</div>
@@ -1078,7 +1108,7 @@ export default function HomeView() {
 
           {/* 标签 + 比例筛选 + 搜索 */}
           <section className="home__section home__section--grow">
-            <div className="home__tabs-bar" data-guide="home-cases">
+            <div className="home__tabs-bar" data-guide="home-cases" ref={caseTabsRef}>
               <div className="home__tabs">
                 {TABS.map((t) => (
                   <button

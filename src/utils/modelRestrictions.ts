@@ -1,7 +1,10 @@
 /**
  * 将后端模型元数据转换为可展示、可校验的使用限制。
  *
- * 所有限制只来自后端字段与 params schema，不根据模型名称猜测能力。
+ * 限制原则上只来自后端字段与 params schema，不根据模型名称猜测能力。
+ * 唯一的例外是时长档位：个别模型声明了 duration 字段却没给可选值，前端因此无从校验，
+ * 只能把总时长原样下发再被 provider 以 400 拒绝。这种情况下回退到 creativeVideoModelKind
+ * 里的兜底表（见 getFallbackDurationOptions），且后端一旦声明就立即以后端为准。
  */
 import {
   getModelParamFieldNames,
@@ -10,6 +13,7 @@ import {
   matchModelParamOptionValue,
   normalizeModelParamName,
 } from './modelSchema'
+import { getFallbackDurationOptions } from './creativeVideoModelKind'
 import { parseDurationSeconds } from './videoDurationValue'
 
 export interface NumericModelConstraint {
@@ -277,6 +281,21 @@ export function buildModelRestrictionSummary(
   }
 
   if (requiredFields.length) constraints.requiredFields = Array.from(new Set(requiredFields))
+
+  // 后端没有给出任何时长约束时，才回退到按模型识别的兜底档位。
+  // schema 只要声明了 options 或上下限，这里就一律不介入——后端永远是权威。
+  const hasDeclaredDuration = Boolean(
+    constraints.duration?.options?.length ||
+    constraints.duration?.minimum !== undefined ||
+    constraints.duration?.maximum !== undefined,
+  )
+  if (!hasDeclaredDuration) {
+    const fallbackDurations = getFallbackDurationOptions(model)
+    if (fallbackDurations?.length) {
+      constraints.duration = { ...(constraints.duration ?? {}), options: fallbackDurations }
+      messages.push(`时长仅支持：${formatSeconds(fallbackDurations)}`)
+    }
+  }
 
   return {
     messages: Array.from(new Set(messages.map((message) => message.trim()).filter(Boolean))),

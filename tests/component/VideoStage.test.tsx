@@ -426,6 +426,44 @@ describe('VideoStage playback loading', () => {
     expect(screen.getByText('21%')).toBeInTheDocument()
   })
 
+  it('长时间等待时显示真实已等待时长与「仍在处理」说明', () => {
+    // 估算百分比几分钟后必然停在 99%，只看百分比会以为卡死；已等待时长是真实数据，必须显示出来。
+    render(
+      <VideoStage
+        shots={[]}
+        onRegenerateVideo={vi.fn()}
+        videoGenerating
+        videoStatusText="智能成片生成中…"
+        videoStartedAt={Date.now() - 21 * 60 * 1000 - 6 * 1000}
+        allowEstimatedProgress
+        pendingVideoCount={1}
+        pendingGenerations={[{ id: 'long-wait-task', createdAt: Date.now(), running: true }]}
+      />,
+    )
+
+    expect(screen.getByText('99%')).toBeInTheDocument()
+    expect(screen.getByText('已等待 21 分 6 秒')).toBeInTheDocument()
+    expect(screen.getByText('服务端仍在处理，可离开本页')).toBeInTheDocument()
+  })
+
+  it('刚开始等待时只显示秒数且不提示离开页面', () => {
+    render(
+      <VideoStage
+        shots={[]}
+        onRegenerateVideo={vi.fn()}
+        videoGenerating
+        videoStatusText="智能成片生成中…"
+        videoStartedAt={Date.now() - 12 * 1000}
+        allowEstimatedProgress
+        pendingVideoCount={1}
+        pendingGenerations={[{ id: 'short-wait-task', createdAt: Date.now(), running: true }]}
+      />,
+    )
+
+    expect(screen.getByText('已等待 12 秒')).toBeInTheDocument()
+    expect(screen.queryByText('服务端仍在处理，可离开本页')).not.toBeInTheDocument()
+  })
+
   it('后端未提供真实进度时不显示估算百分比', () => {
     render(
       <VideoStage

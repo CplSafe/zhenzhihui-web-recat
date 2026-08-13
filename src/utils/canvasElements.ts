@@ -15,6 +15,7 @@
 import type { Node, Edge } from '@xyflow/react'
 import type { CanvasElementMutation } from '@/api/canvasApi'
 import { inferCanvasConnectionRole, type CanvasConnectionRole } from '@/utils/canvasGeneration'
+import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 
 /** 节点可序列化字段白名单：排除 ReactFlow 运行态字段（selected/measured/dragging 等）。 */
 interface SerializableNodeData {
@@ -38,7 +39,10 @@ interface SerializableNodeData {
   /** 最近一次任务失败原因 */
   taskError?: string
   taskStartedAt?: string
+  /** 最近一次任务更新时间 */
   taskUpdatedAt?: string
+  /** 该节点素材来自真人素材库时的身份引用（含认证与授权信息），用于生成前回查与身份约束注入 */
+  realPerson?: SmartRealPersonReference
 }
 
 /** 与 textContents 无关的节点可比较快照（含 id，供增量 diff 比较，排除 ReactFlow 运行态字段）。 */
@@ -70,6 +74,8 @@ export interface CanvasGraphSourceRef {
   role?: CanvasConnectionRole
   /** 该素材是否通过文本等中间节点向上追溯得到。 */
   inherited?: boolean
+  /** 来源节点素材取自真人素材库时的身份引用；下游生成据此注入身份约束并置顶该图。 */
+  realPerson?: SmartRealPersonReference
 }
 
 /**
@@ -131,6 +137,8 @@ export function collectCanvasSourceRefs(
         ...(data.resultUrl ? { thumbnailUrl: String(data.resultUrl) } : {}),
         ...(assetId > 0 ? { assetId } : {}),
         ...(inherited ? { inherited: true } : {}),
+        // 真人身份必须随素材一路传到下游生成节点，经文本节点继承时同样不能丢。
+        ...(data.realPerson ? { realPerson: data.realPerson as SmartRealPersonReference } : {}),
       }
 
       if (kind === 'text') {
@@ -186,6 +194,8 @@ export function comparableNode(
     ['taskError', data.taskError],
     ['taskStartedAt', data.taskStartedAt],
     ['taskUpdatedAt', data.taskUpdatedAt],
+    // 真人素材的身份引用：刷新后仍要能回查授权并继续注入身份约束，必须持久化。
+    ['realPerson', data.realPerson],
   ]
   for (const [key, value] of fields) {
     if (value !== undefined && value !== null) serializable[key] = value
@@ -236,6 +246,8 @@ export function nodeToMutation(
     ['taskError', data.taskError],
     ['taskStartedAt', data.taskStartedAt],
     ['taskUpdatedAt', data.taskUpdatedAt],
+    // 真人素材的身份引用：刷新后仍要能回查授权并继续注入身份约束，必须持久化。
+    ['realPerson', data.realPerson],
   ]
   for (const [key, value] of fields) {
     if (value !== undefined && value !== null) serializable[key] = value

@@ -24,7 +24,7 @@ import {
 } from '@/utils/generationModelCatalog'
 export { unwrapGenerationModelCatalogResponse } from '@/utils/generationModelCatalog'
 import { buildModelRestrictionSummary } from '@/utils/modelRestrictions'
-import { isHiddenCreativeVideoModel, isHiddenSmartVideoModel } from '@/utils/creativeVideoModelKind'
+import { isHiddenCreativeVideoModel } from '@/utils/creativeVideoModelKind'
 
 /** 各 operation 的用户可读名称；这里只描述业务能力，不包含任何具体模型名称。 */
 const OPERATION_LABELS: Record<GenerationOperationCode, string> = {
@@ -204,15 +204,10 @@ export function useGenerationModelCatalog(
         })
         const list = unwrapGenerationModelCatalogResponse(response)
         // 目录以后端为权威：后端新增/开通的模型无需改前端即可展示。
-        // 仅两条屏蔽规则：全流程屏蔽 HappyHorse 图生视频 / 文生视频；智能成片额外屏蔽 Seedance 2.5。
+        // 只保留一条屏蔽规则：全流程屏蔽 HappyHorse 图生视频 / 文生视频。
         return list
           .map((model) => bindQueriedOperation(model, operationCode))
-          .filter(
-            (model): model is BackendGenerationModel =>
-              Boolean(model) &&
-              !isHiddenCreativeVideoModel(model) &&
-              !(flow === 'smart' && isHiddenSmartVideoModel(model)),
-          )
+          .filter((model): model is BackendGenerationModel => Boolean(model) && !isHiddenCreativeVideoModel(model))
       }),
     )
       .then((results) => {

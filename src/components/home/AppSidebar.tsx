@@ -97,6 +97,8 @@ const TEMPLATE_GROUP: SidebarGroup = {
 const SHOW_TEMPLATE_GROUP = false
 
 // 尚未开放或暂时下线的功能隐藏入口；保留路由与草稿兼容，避免已有项目数据丢失。
+// 真人成片：路由与页面均已就绪，但 KYC 认证照送去生成会被上游按 invalid_image_file 拒绝
+// （真人流程不做文生图兜底，会直接失败且已扣积分），待后端统一转码后再放开。
 const HIDDEN_SIDEBAR_ITEM_KEYS = new Set(['real-person-video', 'video-edit'])
 
 /** 渲染全站主导航，并把实际路由跳转交由页面侧栏 Hook 统一处理。 */

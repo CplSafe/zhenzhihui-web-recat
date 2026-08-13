@@ -96,6 +96,13 @@ interface ScriptStoryboardTableProps {
   /** 分镜脚本阶段延后到「确认脚本」再统一校验时长;编辑数字时只保存正数。 */
   deferDurationValidation?: boolean
   /**
+   * 总时长上限(秒)。由所选视频模型的 schema 档位决定，缺省沿用历史的 15 秒。
+   * 写死 15 会让支持 30 秒的模型在这里被拦住，而下拉和提交校验都已按模型放行。
+   */
+  maxTotalDurationSec?: number
+  /** 单镜时长上限(秒)。长片按「中间镜头最多 7 秒」传入，缺省与总时长上限一致。 */
+  maxShotDurationSec?: number
+  /**
    * 是否显示「准备素材」列。分镜脚本阶段传 false 隐藏;准备素材阶段传 true,
    * 列内每个主体按图二「@名称 + AI自动生成 + 上传图片」展示。默认显示。
    */
@@ -175,6 +182,8 @@ export default function ScriptStoryboardTable({
   insertDisabled = false,
   shotTextGenerating = {},
   deferDurationValidation = false,
+  maxTotalDurationSec = 15,
+  maxShotDurationSec,
   showSubjects = true,
   onRegenerate,
   regenerating = false,
@@ -194,6 +203,10 @@ export default function ScriptStoryboardTable({
   onClearTrash,
 }: ScriptStoryboardTableProps) {
   const { showToast } = useToast()
+  // 上限为正数时才采用，避免模型目录尚未加载出来时把上限算成 0 而卡住所有编辑。
+  const totalDurationCeiling = maxTotalDurationSec > 0 ? maxTotalDurationSec : 15
+  const shotDurationCeiling =
+    maxShotDurationSec !== undefined && maxShotDurationSec > 0 ? maxShotDurationSec : totalDurationCeiling
   const [hoveredRow, setHoveredRow] = useState<number | null>(null)
   const recentActionsRef = useRef(new Map<string, number>())
   const deletingShotsRef = useRef(new Set<Shot['id']>())
@@ -337,18 +350,18 @@ export default function ScriptStoryboardTable({
                         const orig = durationSeconds(shot.duration)
                         if (sec < 1) return
                         if (!deferDurationValidation) {
-                          if (sec > 15) {
-                            showToast('最长仅支持15秒，请修改秒数', 'error')
+                          if (sec > shotDurationCeiling) {
+                            showToast(`最长仅支持${shotDurationCeiling}秒，请修改秒数`, 'error')
                             return
                           }
-                          // 总时长约束:改完后所有镜头之和必须在 [1s, 15s]，超出弹提示、不允许改。
+                          // 总时长约束:改完后所有镜头之和必须落在 [1s, 上限]，超出弹提示、不允许改。
                           const othersTotal = shots.reduce(
                             (sum, s) => sum + (s.id === shot.id ? 0 : durationSeconds(s.duration)),
                             0,
                           )
                           const newTotal = othersTotal + sec
-                          if (newTotal > 15) {
-                            showToast(`总时长不能超过15秒（改后为 ${newTotal}s），请调整`, 'error')
+                          if (newTotal > totalDurationCeiling) {
+                            showToast(`总时长不能超过${totalDurationCeiling}秒（改后为 ${newTotal}s），请调整`, 'error')
                             return
                           }
                           if (sec !== orig) {

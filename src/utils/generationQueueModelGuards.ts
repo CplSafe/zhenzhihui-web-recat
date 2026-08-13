@@ -22,7 +22,6 @@ export interface ImageQueueModelLock {
 }
 
 export interface VideoQueueModelLock {
-  edit?: boolean
   modelVersionId?: unknown
   operationCode?: VideoGenerationOperationCode
 }
@@ -54,9 +53,15 @@ export const getImageQueueModelLockError = (message: ImageQueueModelLock): strin
   return ''
 }
 
-/** 未提交的视频队列必须锁定与“生成/修改”任务类型完全一致的后端模型。 */
+/**
+ * 未提交的视频队列必须锁定 video.generate 的后端模型。
+ *
+ * 「确认修改」改走视频生视频（video.generate + role:'video' 的源视频输入）后，
+ * 生成与修改共用同一个 operation。旧草稿里锁定的 video.edit 会在这里 fail closed：
+ * 提示用户重新生成，而不是拿一个对不上任务类型的模型去创建付费任务。
+ */
 export const getVideoQueueModelLockError = (lock: VideoQueueModelLock): string => {
-  const expectedOperation: VideoGenerationOperationCode = lock.edit ? 'video.edit' : 'video.generate'
+  const expectedOperation: VideoGenerationOperationCode = 'video.generate'
   if (!hasValidLockedModelVersionId(lock.modelVersionId) || lock.operationCode !== expectedOperation) {
     return '旧视频生成记录缺少与任务类型匹配的已锁定模型，请重新生成视频'
   }
