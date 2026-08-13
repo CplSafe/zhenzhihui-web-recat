@@ -9,6 +9,20 @@ import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './CanvasVideoPreviewModal.module.css'
 
+/** 放大预览右侧的视频信息；字段全部取自节点已有数据，缺失项不渲染。 */
+export interface CanvasVideoPreviewInfo {
+  /** 生成该视频所用的模型名 */
+  modelName?: string
+  /** 画面比例，如 16:9 */
+  ratio?: string
+  /** 时长文本（mm:ss） */
+  durationLabel?: string
+  /** 是否生成音频 */
+  generateAudio?: boolean
+  /** 生成时间（本地可读文本） */
+  createdAt?: string
+}
+
 interface CanvasVideoPreviewModalProps {
   /** 视频地址；为空则不渲染 */
   src: string
@@ -17,6 +31,8 @@ interface CanvasVideoPreviewModalProps {
   durationLabel?: string
   /** 起播位置（秒）：从节点当前播放进度接着看 */
   startTime?: number
+  /** 视频信息；有任一字段时在播放器右侧展示信息栏 */
+  info?: CanvasVideoPreviewInfo
   onClose: () => void
 }
 
@@ -25,6 +41,7 @@ export default function CanvasVideoPreviewModal({
   poster,
   durationLabel,
   startTime = 0,
+  info,
   onClose,
 }: CanvasVideoPreviewModalProps) {
   const startTimeRef = useRef(startTime)
@@ -56,10 +73,22 @@ export default function CanvasVideoPreviewModal({
 
   if (!src) return null
 
+  // 只展示节点上确实有的字段：缺失项直接不出现，不用「未知」占位撑满信息栏。
+  const infoRows: Array<{ label: string; value: string }> = [
+    { label: '模型', value: String(info?.modelName || '').trim() },
+    { label: '宽高比', value: String(info?.ratio || '').trim() },
+    { label: '时长', value: String(info?.durationLabel || durationLabel || '').trim() },
+    {
+      label: '生成音频',
+      value: typeof info?.generateAudio === 'boolean' ? (info.generateAudio ? '开启' : '关闭') : '',
+    },
+    { label: '生成时间', value: String(info?.createdAt || '').trim() },
+  ].filter((row) => row.value)
+
   return createPortal(
     <div className={styles.mask} onClick={onClose} role="presentation">
       <div
-        className={styles.dialog}
+        className={`${styles.dialog}${infoRows.length ? ` ${styles.hasInfo}` : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label="视频预览"
@@ -81,7 +110,22 @@ export default function CanvasVideoPreviewModal({
             if (start > 0 && start < event.currentTarget.duration) event.currentTarget.currentTime = start
           }}
         />
-        {durationLabel ? <span className={styles.duration}>时长 {durationLabel}</span> : null}
+        {/* 信息栏放在播放器之外：有字段才出现，没有时弹窗保持原来的纯播放形态 */}
+        {infoRows.length ? (
+          <aside className={styles.info} aria-label="视频信息">
+            <h3 className={styles.infoTitle}>信息</h3>
+            <dl className={styles.infoList}>
+              {infoRows.map((row) => (
+                <div key={row.label} className={styles.infoRow}>
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </aside>
+        ) : durationLabel ? (
+          <span className={styles.duration}>时长 {durationLabel}</span>
+        ) : null}
       </div>
     </div>,
     document.body,

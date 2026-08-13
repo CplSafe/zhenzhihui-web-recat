@@ -69,6 +69,14 @@
   bottom: calc(100% + 6px);
 }
 
+/* 滚轮浮层:滚动由滚轮自身承担，外层不再滚动，也不需要额外内边距把渐隐边缘挤掉 */
+.menuWheel {
+  min-width: 104px;
+  max-height: none;
+  overflow: visible;
+  padding: 4px;
+}
+
 .opt {
   display: block;
   width: 100%;

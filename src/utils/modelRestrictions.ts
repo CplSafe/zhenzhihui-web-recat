@@ -308,6 +308,26 @@ function hasOwn(values: GenerationModelConstraintValues, key: keyof GenerationMo
 }
 
 /** 校验当前入口值是否落在所选模型的后端约束内。 */
+/**
+ * 模型下拉里跟在模型名后的时长能力标注，例如「最长 15 秒」。
+ *
+ * 只描述后端声明过的能力：没有时长约束的模型（脚本、图片等）返回空串，
+ * 不能凭空写一个「最长 15 秒」让用户以为所有模型都做得到。
+ */
+export function getModelDurationLimitLabel(constraints: GenerationModelConstraints | undefined): string {
+  const duration = constraints?.duration
+  if (!duration) return ''
+
+  const options = (duration.options || []).filter((value) => Number.isFinite(value) && value > 0)
+  const declaredMax = Number.isFinite(duration.maximum as number) ? (duration.maximum as number) : null
+  const maximum = options.length ? Math.max(...options) : declaredMax
+  if (maximum !== null && maximum > 0) return `最长 ${maximum} 秒`
+
+  // 只声明了下限：仍然告诉用户这个模型的起步时长，避免看起来毫无约束。
+  const minimum = Number.isFinite(duration.minimum as number) ? (duration.minimum as number) : null
+  return minimum !== null && minimum > 0 ? `最短 ${minimum} 秒` : ''
+}
+
 export function getModelConstraintConflicts(
   constraints: GenerationModelConstraints | undefined,
   values: GenerationModelConstraintValues,

@@ -7,12 +7,18 @@
 }
 
 /* 固定底部面板 */
+/* 编辑面板跟随选中节点：位置由 JS 按节点屏幕坐标注入（随画布缩放/平移实时更新）。
+   translateX(-50%) 让面板相对节点水平居中；未能算出锚点时回落到底部居中。 */
 .canvas-panel-area {
   position: fixed;
   bottom: clamp(42px, 8vh, 108px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 50;
+}
+
+.canvas-panel-area.is-anchored {
+  bottom: auto;
 }
 
 /* 节点顶部操作胶囊组 — 图片/视频节点专属，与左右侧连接点图标同款交互（选中/悬停出现）

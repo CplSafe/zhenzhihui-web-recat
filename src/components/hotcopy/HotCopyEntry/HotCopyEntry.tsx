@@ -1211,6 +1211,7 @@ export default function HotCopyEntry({
                 options={durationChoices}
                 onChange={setDuration}
                 placeholder={DURATION_PLACEHOLDER}
+                variant="wheel"
                 blocked={!videoModelSelected}
                 onBlockedClick={requestVideoModelBeforeDuration}
                 icon={

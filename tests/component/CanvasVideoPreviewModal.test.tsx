@@ -15,7 +15,10 @@ describe('CanvasVideoPreviewModal', () => {
 
     const dialog = screen.getByRole('dialog', { name: '视频预览' })
     expect(dialog.closest('body')).toBe(document.body)
-    expect(screen.getByText('时长 00:05')).toBeTruthy()
+    // 只断言「时长和它的值都呈现出来了」，不绑定具体标签结构：
+    // 弹窗信息区的排版会调整，测试不该因为换了标签就红。
+    expect(screen.getByText('时长')).toBeTruthy()
+    expect(screen.getByText('00:05')).toBeTruthy()
     const video = dialog.querySelector('video')
     expect(video?.getAttribute('src')).toBe('https://cdn.example.com/a.mp4')
     expect(video?.hasAttribute('controls')).toBe(true)

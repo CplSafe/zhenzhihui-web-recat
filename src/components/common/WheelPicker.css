@@ -1,0 +1,98 @@
+/* 滚轮选择器:中间高亮带固定不动,选项列表滚动吸附。
+   档位高度由内联的 --zzh-wheel-item-h 提供,与 JS 计算滚动位置的值保持一致。 */
+.zzh-wheel {
+  position: relative;
+  width: 100%;
+  user-select: none;
+  /* 上下渐隐:越靠边缘越淡,不用叠加实色遮罩,便于放进任意底色的浮层 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 26%, #000 74%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 26%, #000 74%, transparent 100%);
+}
+
+.zzh-wheel__band {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 50%;
+  height: var(--zzh-wheel-item-h, 36px);
+  transform: translateY(-50%);
+  border-radius: 8px;
+  background: rgba(87, 103, 229, 0.09);
+  pointer-events: none;
+}
+
+.zzh-wheel__list {
+  height: 100%;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  outline: none;
+  overscroll-behavior: contain;
+}
+
+.zzh-wheel__list::-webkit-scrollbar {
+  display: none;
+}
+
+/* 键盘聚焦时把焦点环画在高亮带上:列表本身没有可见边框,直接加 outline 会被渐隐遮罩裁掉。 */
+.zzh-wheel:has(.zzh-wheel__list:focus-visible) .zzh-wheel__band {
+  box-shadow: 0 0 0 2px rgba(87, 103, 229, 0.45);
+}
+
+.zzh-wheel__item {
+  display: block;
+  width: 100%;
+  height: var(--zzh-wheel-item-h, 36px);
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: #333;
+  font-size: 14px;
+  line-height: var(--zzh-wheel-item-h, 36px);
+  text-align: center;
+  cursor: pointer;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    color 0.15s ease;
+}
+
+/* 距离中心越远越淡越小,形成纵深;中心档位加粗并使用主色 */
+.zzh-wheel__item[data-offset='1'] {
+  opacity: 0.6;
+  transform: scale(0.94);
+}
+
+.zzh-wheel__item[data-offset='2'] {
+  opacity: 0.36;
+  transform: scale(0.88);
+}
+
+.zzh-wheel__item[data-offset='3'] {
+  opacity: 0.2;
+  transform: scale(0.84);
+}
+
+.zzh-wheel__item.is-center {
+  opacity: 1;
+  transform: scale(1);
+  color: #5767e5;
+  font-weight: 600;
+}
+
+.zzh-wheel__item:disabled {
+  cursor: not-allowed;
+  color: #bbb;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zzh-wheel__list {
+    scroll-behavior: auto;
+  }
+
+  .zzh-wheel__item {
+    transition: none;
+  }
+}

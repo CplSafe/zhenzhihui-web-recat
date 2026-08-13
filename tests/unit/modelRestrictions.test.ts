@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/utils/modelRestrictions'
+import {
+  buildModelRestrictionSummary,
+  getModelConstraintConflicts,
+  getModelDurationLimitLabel,
+} from '@/utils/modelRestrictions'
 
 describe('model restriction metadata', () => {
   it('builds user-facing restrictions and structured constraints only from backend metadata', () => {
@@ -182,6 +186,18 @@ describe('model restriction metadata', () => {
     })
     expect(other.constraints.duration).toBeUndefined()
     expect(getModelConstraintConflicts(other.constraints, { durationSec: 7 })).toEqual([])
+  })
+
+  it('把后端声明的时长能力总结成下拉里的括注，未声明则不写', () => {
+    expect(getModelDurationLimitLabel({ duration: { options: [5, 10, 15] } })).toBe('最长 15 秒')
+    expect(getModelDurationLimitLabel({ duration: { minimum: 1, maximum: 15 } })).toBe('最长 15 秒')
+    // options 与上限同时存在时以真实可选档位为准。
+    expect(getModelDurationLimitLabel({ duration: { options: [5, 10], maximum: 30 } })).toBe('最长 10 秒')
+    // 只声明下限时告知起步时长，仍不杜撰上限。
+    expect(getModelDurationLimitLabel({ duration: { minimum: 3 } })).toBe('最短 3 秒')
+    // 没有时长约束的模型（脚本、图片）不加括注。
+    expect(getModelDurationLimitLabel({ ratios: ['16:9'] })).toBe('')
+    expect(getModelDurationLimitLabel(undefined)).toBe('')
   })
 
   it('does not invent restrictions when the backend declares none', () => {

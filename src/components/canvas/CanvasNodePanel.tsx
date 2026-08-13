@@ -16,6 +16,7 @@ import {
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
 import { filterInputDerivedRatioOptions, resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
+import WheelPicker, { type WheelPickerOption } from '@/components/common/WheelPicker'
 
 /** 读取可能为字符串/数字/布尔的值，返回字符串文本；非法输入返回空串。 */
 function readText(value: unknown): string {
@@ -209,6 +210,36 @@ function formatFieldValue(field: ParamsSchemaField, value: unknown): string {
   return String(value ?? '')
 }
 
+/**
+ * 时长字段的滚轮档位。
+ * schema 给了 options 就照用；只给数字范围时按整秒展开，保证滚轮始终有可停的档位。
+ */
+function durationWheelOptions(field: ParamsSchemaField): WheelPickerOption[] {
+  const declared = (field.options || []).map((option) => ({
+    value: String(option),
+    label: formatFieldValue(field, option),
+  }))
+  if (declared.length) return declared
+
+  const min = Math.ceil(Number(field.min))
+  const max = Math.floor(Number(field.max))
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) return []
+  // 上限保护：范围异常大时不生成上千个档位把面板拖垮。
+  if (max - min > 120) return []
+  return Array.from({ length: max - min + 1 }, (_, index) => ({
+    value: String(min + index),
+    label: formatFieldValue(field, min + index),
+  }))
+}
+
+/** 滚轮回传的是字符串，需还原成 schema 声明的原始类型（时长档位通常是数字）。 */
+function resolveDurationWheelValue(field: ParamsSchemaField, picked: string): string | number {
+  const declared = (field.options || []).find((option) => String(option) === picked)
+  if (declared !== undefined) return declared
+  const numeric = Number(picked)
+  return Number.isFinite(numeric) ? numeric : picked
+}
+
 /** 连线来源引用信息 */
 export interface CanvasSourceRef {
   kind: string
@@ -229,6 +260,8 @@ export interface CanvasNodeInfo {
   kind: string
   /** 用户确认的文本提示词，供下游图片和视频节点直接使用。 */
   text?: string
+  /** 图片/视频节点输入框里的提示词；随节点持久化，切换节点或刷新后仍要回显。 */
+  prompt?: string
   /** 连线来源引用列表，已按 slotIndex 排序 */
   sourceRefs?: CanvasSourceRef[]
   /** 当前比例（用于回显） */
@@ -283,6 +316,8 @@ interface CanvasNodePanelProps {
   /** 费用预估判定积分不足时，由页面展示充值引导。 */
   onInsufficientCredits?: () => void
   onSaveText?: (text: string) => void
+  /** 图片/视频节点输入框内容变更：由页面写回节点并持久化，切换节点/刷新后可回显。 */
+  onPromptChange?: (prompt: string) => void
   onPolishText?: (params: {
     prompt: string
     kind: string
@@ -337,6 +372,7 @@ export default function CanvasNodePanel({
   onGenerate,
   onInsufficientCredits,
   onSaveText,
+  onPromptChange,
   onPolishText,
 }: CanvasNodePanelProps) {
   const kind = node?.kind || 'text'
@@ -351,15 +387,27 @@ export default function CanvasNodePanel({
   ].includes(String(node?.taskStatus || '').toLowerCase())
   const isNewModelGeneration = kind === 'video' && node?.generationIntent === 'new-model'
   const isEditingVideo = kind === 'video' && Boolean(node?.resultUrl) && !isNewModelGeneration
-  const [prompt, setPrompt] = useState(() => (kind === 'text' ? String(node?.text || '') : ''))
+  // 文本节点的内容存在 text，图片/视频节点的输入框存在 prompt；两者都随节点持久化。
+  const [prompt, setPrompt] = useState(() => String((kind === 'text' ? node?.text : node?.prompt) || ''))
   const [polishing, setPolishing] = useState(false)
   const [polishError, setPolishError] = useState('')
 
+  // 切换选中节点时回填该节点自己的文案：面板是所有节点共用的一个实例，
+  // 不按 node.id 重新灌值就会把上一个节点的输入框内容留在这里。
+  const restoredNodeIdRef = useRef<string | undefined>(node?.id)
   useEffect(() => {
-    if (kind !== 'text') return
-    setPrompt(String(node?.text || ''))
+    if (kind === 'text') {
+      setPrompt(String(node?.text || ''))
+      setPolishError('')
+      restoredNodeIdRef.current = node?.id
+      return
+    }
+    // 同一节点内不跟随 node.prompt 回灌，否则用户正在输入时会被持久化回来的值打断。
+    if (restoredNodeIdRef.current === node?.id) return
+    restoredNodeIdRef.current = node?.id
+    setPrompt(String(node?.prompt || ''))
     setPolishError('')
-  }, [kind, node?.id, node?.text])
+  }, [kind, node?.id, node?.text, node?.prompt])
   // 受控回显：优先取节点数据中的比例/模式（存储值为英文 auto）
   const ratio = node?.ratio || (kind === 'video' ? AUTO_RATIO : '1:1')
   const videoMode = (node?.videoMode as VideoMode) || 'auto'
@@ -615,6 +663,8 @@ export default function CanvasNodePanel({
       const polished = String(await onPolishText({ prompt: value, kind, ...buildPolishImageRefs(sourceRefs) })).trim()
       if (!polished) throw new Error('AI 未返回可用的润色内容')
       setPrompt(polished)
+      // 润色结果同样要落到节点，否则润色完切走再回来就变回原文
+      if (kind !== 'text') onPromptChange?.(polished)
     } catch (error: any) {
       setPolishError(String(error?.message || '润色失败，请稍后重试'))
     } finally {
@@ -737,6 +787,9 @@ export default function CanvasNodePanel({
           if (taskRunning) return
           setPrompt(e.target.value)
           if (polishError) setPolishError('')
+          // 文本节点的内容由「保存」显式落到 text；图片/视频节点边输入边写回 prompt，
+          // 这样切到别的节点再切回来、以及刷新重进，输入框里的文案都还在。
+          if (kind !== 'text') onPromptChange?.(e.target.value)
         }}
       />
 
@@ -1043,6 +1096,16 @@ function SchemaFieldMenu({
                       关
                     </button>
                   </div>
+                ) : isDurationField(f) && durationWheelOptions(f).length ? (
+                  /* 时长：滚轮吸附选择，与智能成片、爆款复制的时长交互一致 */
+                  <WheelPicker
+                    options={durationWheelOptions(f)}
+                    value={String(current ?? '')}
+                    onChange={(picked) => onFieldChange?.(f.name, resolveDurationWheelValue(f, picked))}
+                    ariaLabel={f.displayName}
+                    itemHeight={32}
+                    className={styles.durationWheel}
+                  />
                 ) : isNumberField(f) ? (
                   /* 数字类型：滑块，min/max 为范围，步进由 default 是否有小数点决定 */
                   <div className={styles.sliderWrap}>

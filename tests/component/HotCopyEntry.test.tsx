@@ -337,6 +337,50 @@ describe('HotCopyEntry project asset access', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 220, duration: '7s' }))
   })
 
+  it('在模型下拉里标出各模型的时长上限，便于选之前比较', async () => {
+    const user = userEvent.setup()
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        modelGroups={[
+          {
+            key: 'hotCopyVideo',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.replicate',
+                label: '视频生成模型',
+                required: true,
+                models: [
+                  { id: 301, name: '帧智汇 1.0', constraints: { duration: { options: [5, 10, 15] } } },
+                  { id: 302, name: '帧智汇 2.0', constraints: { duration: { minimum: 1, maximum: 15 } } },
+                  { id: 303, name: 'Seedance 2.0 Fast', constraints: { duration: { options: [5, 10] } } },
+                  // 后端没声明时长约束的模型不加括注，不能凭空写一个上限。
+                  { id: 304, name: '未声明时长的模型' },
+                ],
+              },
+            ],
+          },
+        ]}
+        modelReady
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /生成模型/ }))
+    const select = await screen.findByRole('combobox', { name: '视频生成模型' })
+    expect(
+      within(select)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual([
+      '请选择模型',
+      '帧智汇 1.0（最长 15 秒）',
+      '帧智汇 2.0（最长 15 秒）',
+      'Seedance 2.0 Fast（最长 10 秒）',
+      '未声明时长的模型',
+    ])
+  })
+
   it('keeps creating a new video and returning to generation available outside submission preflight', async () => {
     const user = userEvent.setup()
     const onNewVideo = vi.fn()

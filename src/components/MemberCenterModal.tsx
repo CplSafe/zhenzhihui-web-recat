@@ -741,14 +741,17 @@ export default function MemberCenterModal({
   )
   const hasActiveSubscription =
     Boolean(subscription?.active) && (!subscriptionExpiryMs || subscriptionExpiryMs > Date.now())
-  // 积分充值属于当前空间的会员权益；状态未加载、会员无效或没有充值权限时不展示入口。
-  const canViewRecharge = canRecharge && !subscriptionLoading && hasActiveSubscription
+  // 入口可见性与可用性分开：有充值权限的成员始终看得到「积分充值」，
+  // 但积分是会员权益，未开通会员时入口置灰、点击只说明原因，不进充值页。
+  // 没有充值权限的子账号仍然完全不展示。
+  const canViewRecharge = canRecharge && !subscriptionLoading
+  const canUseRecharge = canViewRecharge && hasActiveSubscription
   const currentWorkspaceName = String(currentWs?.name || (isTeamWs ? '当前团队' : '个人空间')).trim()
 
   // 切换空间或会员状态失效时退出充值页，避免继续展示旧空间的充值内容。
   useEffect(() => {
-    if (!canViewRecharge && mainTab === 'recharge') setMainTab('basic')
-  }, [canViewRecharge, mainTab])
+    if (!canUseRecharge && mainTab === 'recharge') setMainTab('basic')
+  }, [canUseRecharge, mainTab])
   const currentPlan = (() => {
     if (!hasActiveSubscription) return null
     const planId = Number(subscription?.plan_id ?? subscription?.planId ?? 0) || 0
@@ -1668,12 +1671,21 @@ export default function MemberCenterModal({
           >
             团队版
           </button>
-          {/* 积分充值:仅当前空间会员有效且具备充值权限时展示。 */}
+          {/* 积分充值:有充值权限即可见；未开通会员时置灰，点击只说明原因。 */}
           {canViewRecharge && (
             <button
               type="button"
-              className={`mcm-tab${mainTab === 'recharge' ? ' is-active' : ''}`}
-              onClick={() => setMainTab('recharge')}
+              className={`mcm-tab${mainTab === 'recharge' ? ' is-active' : ''}${canUseRecharge ? '' : ' is-locked'}`}
+              // 用 aria-disabled 而非 disabled：按钮必须点得动，否则用户无从得知为什么不能充值
+              aria-disabled={!canUseRecharge}
+              title={canUseRecharge ? undefined : '需要成为会员才能购买积分'}
+              onClick={() => {
+                if (!canUseRecharge) {
+                  showToast('需要成为会员才能购买积分', 'info')
+                  return
+                }
+                setMainTab('recharge')
+              }}
             >
               积分充值
             </button>
