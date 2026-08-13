@@ -1,106 +1,159 @@
-/**
- * VideoLoading — 「生成视频」等待态:
- *  - 背景:深紫渐变 + 星空(缓慢漂移 + 偶尔流星,看得出在动),按框真实宽高实时绘制;
- *  - 光球 SiriOrb 随框自适应(横屏矮框自动缩小,给文字留位,横竖屏都不裁);
- *  - 文字 + 进度:框层渲染,字号 clamp 自适应;进度锚定「生成开始时间戳」startedAt(切页面/刷新组件重挂也按真实
- *    流逝时间续算,不从头来),从 1% 平滑逼近 99%;框太挤时只留「光球 + 视频生成中 + 进度」,说明/小技巧自动收起。
+﻿/**
+ * VideoLoading — 「生成视频」等待态。
+ *
+ * 视觉：深色舞台（与主流视频生成产品一致），配色取产品的薄荷绿 + 靛蓝。
+ * 中心是品牌标记 + 渐变呼吸光晕，取代原先的 Siri 光球——等待画面用自家标记
+ * 比通用光球更有辨识度；背景是极慢的极光位移，不再有星点闪烁和流星，
+ * 那两样在等待场景里最抢眼，而用户此刻要看的是进度和还要等多久。
+ *
+ * 文案分层：标题 > 进度 > 已等待 > 说明/小技巧。说明与小技巧压到最低对比度，
+ * 并允许换行（此前 nowrap + overflow:hidden 会把长句直接截断在框沿）。
+ *
+ * 进度锚定「生成开始时间戳」startedAt：切页面/刷新组件重挂也按真实流逝时间续算，
+ * 从 1% 平滑逼近 99%；框太挤时自动收起说明与小技巧，保证主信息不被挤压。
  */
 import { useEffect, useRef, useState } from 'react'
 import { observeElementResize } from '@/utils/observeElementResize'
-import SiriOrb from './SiriOrb'
+import brandMark from '@/assets/logo/splash-mark.png'
 
-/** 按容器真实尺寸绘制缓慢漂移、闪烁并偶发流星的星空背景。 */
-function StarField({ w, h }: { w: number; h: number }) {
-  const ref = useRef<HTMLCanvasElement>(null)
-  const raf = useRef<number>(0)
+/** 舞台主色：与产品一致的薄荷绿，用于进度条与强调数字。 */
+const BRAND_MINT = '#1fcfa9'
+/** 辅助色：靛蓝，与 antd 主色同源，做极光的第二层。 */
+const BRAND_INDIGO = '#5767e5'
 
-  useEffect(() => {
-    const c = ref.current
-    if (!c || w <= 0 || h <= 0) return
-    const ctx = c.getContext('2d')
-    if (!ctx) return
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    c.width = w * dpr
-    c.height = h * dpr
-    ctx.scale(dpr, dpr)
-    const count = Math.max(50, Math.min(220, Math.round((w * h) / 6000)))
-    const stars = Array.from({ length: count }, () => ({
-      x: Math.random() * w,
-      y: Math.random() * h,
-      r: Math.random() * 1.7 + 0.4,
-      phase: Math.random() * Math.PI * 2,
-      tw: Math.random() * 0.7 + 0.3, // 闪烁速度
-      vx: (Math.random() - 0.5) * 0.22, // 缓慢漂移
-      vy: (Math.random() - 0.5) * 0.22,
-      base: Math.random() * 0.45 + 0.4, // 基础亮度(分层)
-    }))
-    // 流星:不常出现,从上方斜划而过
-    let shoot: { x: number; y: number; vx: number; vy: number; life: number } | null = null
-    let cooldown = 120 // 帧数冷却
-
-    let t = 0
-    const draw = () => {
-      ctx.clearRect(0, 0, w, h)
-      t += 0.012
-      for (const s of stars) {
-        // 漂移 + 环绕
-        s.x += s.vx
-        s.y += s.vy
-        if (s.x < -2) s.x = w + 2
-        else if (s.x > w + 2) s.x = -2
-        if (s.y < -2) s.y = h + 2
-        else if (s.y > h + 2) s.y = -2
-        const a = (0.22 + Math.abs(Math.sin(t * s.tw + s.phase)) * 0.55) * s.base
-        // 大星点带柔光晕,层次更强
-        if (s.r > 1.3) {
-          const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r * 3)
-          g.addColorStop(0, `rgba(210,200,255,${a * 0.5})`)
-          g.addColorStop(1, 'rgba(210,200,255,0)')
-          ctx.fillStyle = g
-          ctx.beginPath()
-          ctx.arc(s.x, s.y, s.r * 3, 0, Math.PI * 2)
-          ctx.fill()
-        }
-        ctx.beginPath()
-        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(225,218,255,${a})`
-        ctx.fill()
-      }
-      // 流星
-      cooldown -= 1
-      if (!shoot && cooldown <= 0 && Math.random() < 0.02) {
-        const sx = Math.random() * w * 0.8
-        shoot = { x: sx, y: -10, vx: 3 + Math.random() * 2, vy: 4 + Math.random() * 2, life: 60 }
-        cooldown = 180 + Math.floor(Math.random() * 180)
-      }
-      if (shoot) {
-        const tailX = shoot.x - shoot.vx * 6
-        const tailY = shoot.y - shoot.vy * 6
-        const grad = ctx.createLinearGradient(tailX, tailY, shoot.x, shoot.y)
-        grad.addColorStop(0, 'rgba(180,200,255,0)')
-        grad.addColorStop(1, `rgba(220,225,255,${Math.min(1, shoot.life / 40)})`)
-        ctx.strokeStyle = grad
-        ctx.lineWidth = 1.6
-        ctx.beginPath()
-        ctx.moveTo(tailX, tailY)
-        ctx.lineTo(shoot.x, shoot.y)
-        ctx.stroke()
-        shoot.x += shoot.vx
-        shoot.y += shoot.vy
-        shoot.life -= 1
-        if (shoot.life <= 0 || shoot.x > w + 20 || shoot.y > h + 20) shoot = null
-      }
-      raf.current = requestAnimationFrame(draw)
-    }
-    raf.current = requestAnimationFrame(draw)
-    return () => cancelAnimationFrame(raf.current)
-  }, [w, h])
-
+/**
+ * 极慢位移的极光背景。
+ *
+ * 用两团高斯模糊的品牌色替代原来的星空 + 流星：等待场景里，闪烁星点和划过的流星
+ * 是最抢眼的动态元素，会把视线从进度上拽走；极光的位移周期在 20 秒以上，
+ * 只提供「界面还活着」的暗示。纯 CSS 实现，省掉一个常驻的 canvas 动画循环。
+ *
+ * 尊重 prefers-reduced-motion：该偏好下停止位移，只保留静态光晕。
+ */
+function AuroraBackdrop() {
   return (
-    <canvas
-      ref={ref}
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-    />
+    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }} aria-hidden="true">
+      <span className="video-loading-aurora video-loading-aurora--mint" />
+      <span className="video-loading-aurora video-loading-aurora--indigo" />
+      <style>{`
+        .video-loading-aurora {
+          position: absolute;
+          border-radius: 50%;
+          filter: blur(64px);
+          opacity: 0.5;
+          will-change: transform;
+        }
+        .video-loading-aurora--mint {
+          width: 62%;
+          height: 78%;
+          left: -8%;
+          top: -14%;
+          background: radial-gradient(circle, ${BRAND_MINT} 0%, rgba(31, 207, 169, 0) 70%);
+          animation: video-loading-drift-a 26s ease-in-out infinite;
+        }
+        .video-loading-aurora--indigo {
+          width: 68%;
+          height: 74%;
+          right: -12%;
+          bottom: -18%;
+          background: radial-gradient(circle, ${BRAND_INDIGO} 0%, rgba(87, 103, 229, 0) 70%);
+          animation: video-loading-drift-b 32s ease-in-out infinite;
+        }
+        @keyframes video-loading-drift-a {
+          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+          50%      { transform: translate3d(12%, 8%, 0) scale(1.12); }
+        }
+        @keyframes video-loading-drift-b {
+          0%, 100% { transform: translate3d(0, 0, 0) scale(1.06); }
+          50%      { transform: translate3d(-10%, -6%, 0) scale(1); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .video-loading-aurora { animation: none; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+/**
+ * 品牌标记 + 渐变光晕，替代原先的 Siri 光球。
+ *
+ * 光晕在标记背后缓慢呼吸（缩放 + 明暗），配合标记自身极小幅度的浮动，
+ * 传达「在处理」而不喧宾夺主；标记本身带薄荷绿→蓝渐变，光晕沿用同一色系。
+ * 尺寸由外部按可用空间计算传入，横竖屏都不裁。
+ */
+function BrandPulse({ size }: { size: number }) {
+  const markSize = Math.round(size * 0.52)
+  return (
+    <div
+      style={{ position: 'relative', width: size, height: size, display: 'grid', placeItems: 'center' }}
+      aria-hidden="true"
+    >
+      <span className="video-loading-halo" />
+      {/*
+        标记用 mask 而不是 <img>：位图只能显示烘焙好的静态配色，
+        遮罩方式让渐变成为可动的背景层，能沿标记缓慢流动，也不受源图分辨率限制。
+      */}
+      <span
+        className="video-loading-mark"
+        style={{
+          width: markSize,
+          height: markSize,
+          WebkitMaskImage: `url(${brandMark})`,
+          maskImage: `url(${brandMark})`,
+        }}
+      />
+      <style>{`
+        .video-loading-halo {
+          position: absolute;
+          inset: 0;
+          border-radius: 50%;
+          background: radial-gradient(
+            circle,
+            rgba(31, 207, 169, 0.5) 0%,
+            rgba(53, 199, 216, 0.3) 38%,
+            rgba(87, 103, 229, 0.14) 62%,
+            rgba(87, 103, 229, 0) 78%
+          );
+          filter: blur(20px);
+          animation: video-loading-breathe 3.6s ease-in-out infinite;
+        }
+        .video-loading-mark {
+          position: relative;
+          z-index: 1;
+          -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+          -webkit-mask-position: center;
+          mask-position: center;
+          -webkit-mask-size: contain;
+          mask-size: contain;
+          background: linear-gradient(
+            120deg,
+            ${BRAND_MINT} 0%,
+            #35c7d8 28%,
+            ${BRAND_INDIGO} 52%,
+            #35c7d8 74%,
+            ${BRAND_MINT} 100%
+          );
+          background-size: 280% 280%;
+          animation: video-loading-flow 7s linear infinite;
+        }
+        @keyframes video-loading-breathe {
+          0%, 100% { transform: scale(0.9); opacity: 0.7; }
+          50%      { transform: scale(1.08); opacity: 1; }
+        }
+        /* 渐变沿标记流动，比整体缩放更安静，也更像「正在处理」 */
+        @keyframes video-loading-flow {
+          0%   { background-position: 0% 50%; }
+          50%  { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .video-loading-halo,
+          .video-loading-mark { animation: none; }
+        }
+      `}</style>
+    </div>
   )
 }
 
@@ -115,7 +168,7 @@ function LoadingDots() {
             width: 5,
             height: 5,
             borderRadius: '80%',
-            background: 'rgba(160,120,255,0.7)',
+            background: 'rgba(31,207,169,0.75)',
             animation: `siri-dot 1.4s ease-in-out ${i * 0.22}s infinite`,
           }}
         />
@@ -236,10 +289,11 @@ export default function VideoLoading({
   const statusSize = clamp(13, unit * 0.045, 20)
   const noteSize = clamp(12, unit * 0.038, 16)
   const barW = clamp(160, unit * 0.7, 320)
-  // 光球随框自适应:不超过框宽,且给下方文字(圆点+视频生成中+进度+说明+小技巧)留 ~230px,横竖屏都不裁。
-  const orbSize = clamp(100, Math.min((size.w || 240) * 0.78, (size.h || 240) - 230), 240)
-  // 框够放下说明/小技巧(单行不换行)就显示;只有非常挤时才收起,保证不溢出。
-  const showExtras = (size.h || 0) - orbSize > 140 && (size.w || 0) > 380
+  // 光球随框自适应：不超过框宽，并给下方文字（圆点 + 标题 + 进度 + 已等待 + 说明/小技巧）留位。
+  // 预留 260px 而非 230px：说明与小技巧改为可换行后，最多会各占两行。
+  const orbSize = clamp(100, Math.min((size.w || 240) * 0.78, (size.h || 240) - 260), 240)
+  // 放得下换行后的说明/小技巧才显示；空间不够时整块收起，优先保住标题与进度。
+  const showExtras = (size.h || 0) - orbSize > 170 && (size.w || 0) > 380
 
   return (
     <div
@@ -249,7 +303,8 @@ export default function VideoLoading({
         height: '100%',
         position: 'relative',
         overflow: 'hidden',
-        background: 'radial-gradient(ellipse 80% 60% at 50% 42%, #241353 0%, #0e0828 56%, #070213 100%)',
+        // 深色中性底 + 极轻的青绿偏色：与产品同色系，又不会把画面染成紫色
+        background: 'radial-gradient(ellipse 80% 60% at 50% 40%, #16232a 0%, #0d161b 58%, #080f13 100%)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -260,10 +315,10 @@ export default function VideoLoading({
         textAlign: 'center',
       }}
     >
-      <StarField w={size.w} h={size.h} />
+      <AuroraBackdrop />
 
       <div style={{ position: 'relative', zIndex: 1 }}>
-        <SiriOrb size={orbSize} />
+        <BrandPulse size={orbSize} />
       </div>
 
       <div
@@ -282,7 +337,7 @@ export default function VideoLoading({
         <p
           style={{
             margin: '4px 0 0',
-            color: 'rgba(215,200,255,0.9)',
+            color: 'rgba(240,252,249,0.92)',
             letterSpacing: '0.18em',
             fontSize: statusSize,
             fontWeight: 400,
@@ -301,7 +356,7 @@ export default function VideoLoading({
                 display: 'flex',
                 justifyContent: 'space-between',
                 fontSize: noteSize,
-                color: 'rgba(200,200,255,0.75)',
+                color: 'rgba(214,232,227,0.72)',
               }}
             >
               <span>
@@ -313,7 +368,7 @@ export default function VideoLoading({
                       : statusText || '生成任务处理中')}
               </span>
               {showPercentage ? (
-                <span style={{ fontVariantNumeric: 'tabular-nums', color: 'rgba(160,210,255,0.95)' }}>
+                <span style={{ fontVariantNumeric: 'tabular-nums', color: BRAND_MINT, fontWeight: 600 }}>
                   {displayedPct}%
                 </span>
               ) : null}
@@ -324,7 +379,7 @@ export default function VideoLoading({
                   width: showPercentage ? `${displayedPct}%` : '100%',
                   height: '100%',
                   borderRadius: 999,
-                  background: 'linear-gradient(90deg, #00d8ff, #6633ff, #ff2088)',
+                  background: `linear-gradient(90deg, ${BRAND_MINT}, #35c7d8, ${BRAND_INDIGO})`,
                   opacity: showPercentage ? 1 : 0.65,
                   transition: 'width 0.5s ease',
                 }}
@@ -341,7 +396,7 @@ export default function VideoLoading({
                   gap: 2,
                   fontSize: noteSize,
                   lineHeight: 1.5,
-                  color: 'rgba(200,200,255,0.6)',
+                  color: 'rgba(214,232,227,0.55)',
                 }}
               >
                 <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
@@ -352,36 +407,29 @@ export default function VideoLoading({
             )}
           </div>
         ) : (
-          <p role="status" style={{ margin: 0, color: 'rgba(200,200,255,0.75)', fontSize: noteSize, lineHeight: 1.6 }}>
+          <p role="status" style={{ margin: 0, color: 'rgba(214,232,227,0.72)', fontSize: noteSize, lineHeight: 1.6 }}>
             {statusText || '正在提交视频任务…'}
           </p>
         )}
 
-        {showExtras && note && (
-          <p
+        {/* 说明与小技巧是最低优先级信息：压到最低对比度，且必须允许换行——
+            此前 nowrap 配合容器的 overflow:hidden，长句会被直接截断在框沿。 */}
+        {showExtras && (note || tip) && (
+          <div
             style={{
-              margin: '2px 0 0',
-              color: 'rgba(190,185,225,0.4)',
-              fontSize: noteSize - 1,
-              lineHeight: 1.6,
-              whiteSpace: 'nowrap',
+              marginTop: 6,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              maxWidth: Math.min(size.w ? size.w - 48 : 420, 420),
+              fontSize: Math.max(11, noteSize - 2),
+              lineHeight: 1.7,
+              color: 'rgba(226,240,236,0.34)',
             }}
           >
-            {note}
-          </p>
-        )}
-        {showExtras && tip && (
-          <p
-            style={{
-              margin: '2px 0 0',
-              color: 'rgba(170,195,240,0.45)',
-              fontSize: noteSize - 1,
-              lineHeight: 1.6,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            💡 {tip}
-          </p>
+            {note && <p style={{ margin: 0 }}>{note}</p>}
+            {tip && <p style={{ margin: 0 }}>{tip}</p>}
+          </div>
         )}
       </div>
     </div>
