@@ -363,7 +363,9 @@ export default function CanvasMaterialPicker({
       for (const person of people) {
         if (!isVerifiedRealPerson(person)) continue
         for (const asset of person.assets || []) {
-          if (!isReadyRealPersonAsset(asset)) continue
+          // 真人档案里除人脸照外还有 KYC 活体视频；把它当参考图送去生成会被上游按
+          // invalid_image_file 拒绝，因此和智能成片入口用同一条过滤规则排除视频型素材。
+          if (!isReadyRealPersonAsset(asset) || /video/i.test(asset.asset_type || '')) continue
           const reference = createSmartRealPersonReference(person, asset)
           mapped.push({
             id: `real-person-${reference.realPersonId}-${reference.mappingId}`,

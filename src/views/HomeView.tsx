@@ -291,6 +291,8 @@ const QUICK_ENTRIES: QuickEntry[] = [
     icon: quick1,
     grad: 'linear-gradient(135deg, #e6fbf4, #f4fffc)',
   },
+  // 真人成片暂时下线（见 AppSidebar 的 HIDDEN_SIDEBAR_ITEM_KEYS：KYC 认证照会被上游拒绝），
+  // 待后端统一转码后再放回这里。
   {
     key: 'hot-copy',
     title: '爆款复制',
