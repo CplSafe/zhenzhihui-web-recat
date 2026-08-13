@@ -43,8 +43,38 @@ const SYSTEM =
   '必须替换为真实内容,严禁原样输出「画面描述」「台词/旁白」「字幕」「音效」这类字段名作为值:' +
   '{"shots":[{"duration":"5s","desc":"<具体可拍摄的画面描述>","voiceover":"<台词或旁白,无则空字符串>","subtitle":"<字幕,无则空字符串>","sfx":"<音效,无则空字符串>","subjects":[{"name":"小雅","kind":"人物","imageIndex":2},{"name":"室内场景","kind":"场景"}]}]}'
 
+/**
+ * 长片（>15 秒）的分镜规则：开头与结尾各固定 3 秒，中间每镜最多 7 秒。
+ * 中间镜头同时保留 3 秒下限，避免 30 秒被切成一堆 1~2 秒的碎镜
+ * （每多一个镜头就多一张分镜图和一次素材生成，碎镜直接推高成本和出片时间）。
+ */
+export const LONG_FORM_EDGE_SHOT_SEC = 3
+export const LONG_FORM_MAX_MIDDLE_SHOT_SEC = 7
+const LONG_FORM_MIN_MIDDLE_SHOT_SEC = 3
+/** 达到该秒数即按长片规则处理；5/10/15 秒沿用既有的固定模板，不改动线上行为。 */
+export const LONG_FORM_MIN_TOTAL_SEC = 16
+
+/** 长片中间段的镜头数区间（不含首尾两镜）。 */
+function longFormMiddleShotRange(totalSec: number): { middleSec: number; min: number; max: number } {
+  const middleSec = totalSec - LONG_FORM_EDGE_SHOT_SEC * 2
+  const min = Math.max(1, Math.ceil(middleSec / LONG_FORM_MAX_MIDDLE_SHOT_SEC))
+  const max = Math.max(min, Math.floor(middleSec / LONG_FORM_MIN_MIDDLE_SHOT_SEC))
+  return { middleSec, min, max }
+}
+
 /** 按目标总时长生成镜头数量、单镜时长和台词字数约束。 */
 function buildDurationPromptLines(totalSec: number): string[] {
+  if (totalSec >= LONG_FORM_MIN_TOTAL_SEC) {
+    const { middleSec, min, max } = longFormMiddleShotRange(totalSec)
+    return [
+      `视频总时长 ${totalSec} 秒(硬性要求)。`,
+      `时长分配规则:开头镜头固定 ${LONG_FORM_EDGE_SHOT_SEC} 秒,结尾镜头固定 ${LONG_FORM_EDGE_SHOT_SEC} 秒,` +
+        `中间部分合计固定 ${middleSec} 秒。`,
+      `中间每个镜头不超过 ${LONG_FORM_MAX_MIDDLE_SHOT_SEC} 秒,也不要短于 ${LONG_FORM_MIN_MIDDLE_SHOT_SEC} 秒;` +
+        `所有中间镜头 duration 相加必须等于 ${middleSec} 秒。`,
+      `总镜头数控制在 ${min + 2}~${max + 2} 个之间,按叙事需要分配,不要切得过碎。`,
+    ]
+  }
   if (totalSec === 15) {
     return [
       '视频总时长 15 秒(硬性要求)。',
@@ -123,6 +153,8 @@ function renumberScriptShots(shots: Shot[]): Shot[] {
 /** 按总时长计算允许的最大镜头数，避免出现过多 1 秒碎镜。 */
 function maxShotCountForDuration(totalSec: number): number {
   if (!(totalSec > 0)) return 0
+  // 长片按「首尾各 3 秒 + 中间每镜 3~7 秒」推导上限，与提示词里给模型的区间保持同一套算法。
+  if (totalSec >= LONG_FORM_MIN_TOTAL_SEC) return longFormMiddleShotRange(totalSec).max + 2
   // 每个镜头至少 1 秒；按约 3 秒一个镜头限制碎片数量，5/10/15 秒仍是原有的 2/4/5 镜上限
   // （15 秒以内 ceil(totalSec/3) 本就不超过 5，所以这里不再另设固定上限）。
   // 固定上限会让 30 秒这类长档位只剩 5 个 6 秒长镜，还会把 prompt 要求的镜头数凭空截掉。
@@ -202,9 +234,47 @@ function scaleDurationsToTotal(values: number[], totalSec: number): number[] {
   return reduceMultipleOneSeconds(scaled, totalSec)
 }
 
+/**
+ * 在总时长不变的前提下把超出单镜上限的秒数挪给还有余量的镜头。
+ * 镜头数少到「每镜都顶到上限仍凑不满总时长」时返回空数组，由调用方回退到按比例缩放——
+ * 模型少给了镜头，前端不能凭空造出一个没有画面描述的镜头来凑规则。
+ */
+function capShotDurations(values: number[], totalSec: number, maxPerShot: number): number[] {
+  const scaled = scaleDurationsToTotal(values, totalSec)
+  if (!scaled.length || !(maxPerShot > 0)) return []
+  if (scaled.length * maxPerShot < totalSec) return []
+
+  const next = [...scaled]
+  let overflow = 0
+  for (let index = 0; index < next.length; index += 1) {
+    if (next[index] > maxPerShot) {
+      overflow += next[index] - maxPerShot
+      next[index] = maxPerShot
+    }
+  }
+  while (overflow > 0) {
+    const target = next.findIndex((value) => value < maxPerShot)
+    if (target < 0) return []
+    next[target] += 1
+    overflow -= 1
+  }
+  return next
+}
+
 /** 对常见短视频时长应用可剪辑的镜头分配，其他时长按原比例归一。 */
 function applyDurationPattern(totalSec: number, secs: number[]): number[] {
   if (!Array.isArray(secs) || !secs.length || !(totalSec > 0)) return []
+
+  // 长片:首尾各 3 秒,中间每镜不超过 7 秒。
+  if (totalSec >= LONG_FORM_MIN_TOTAL_SEC) {
+    if (secs.length < 3) return []
+    const middle = capShotDurations(
+      secs.slice(1, -1),
+      totalSec - LONG_FORM_EDGE_SHOT_SEC * 2,
+      LONG_FORM_MAX_MIDDLE_SHOT_SEC,
+    )
+    return middle.length ? [LONG_FORM_EDGE_SHOT_SEC, ...middle, LONG_FORM_EDGE_SHOT_SEC] : []
+  }
 
   if (totalSec === 10) {
     if (secs.length === 3) return [3, 4, 3]

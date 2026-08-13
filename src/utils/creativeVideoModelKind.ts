@@ -1,9 +1,10 @@
 /**
- * 视频生成模型的效果分类，以及唯一一条前端屏蔽规则。
+ * 视频生成模型的效果分类，以及少数几条按名称识别模型的前端规则。
  *
  * 分类用于按效果适配请求参数（例如爆款复制的 Seedance 参数兜底）。
  * 展示哪些模型原则上完全由后端 `/api/v1/ai/models` 决定，后端新增模型前端即可直接显示；
- * 这里**不维护白名单**，只保留 `isHiddenCreativeVideoModel` 一条明确的屏蔽规则。
+ * 这里**不维护白名单**，只保留两条明确的例外，且都以后端数据优先：
+ * `isHiddenCreativeVideoModel`（屏蔽规则）与 `getFallbackDurationOptions`（schema 漏声明时的时长兜底）。
  *
  * 优先读取后端明确的 capability/effect/model_family/operation 元数据；只有这些字段
  * 无法给出具体效果时，才兼容机器名称和展示名称。
@@ -159,22 +160,37 @@ export function isHiddenCreativeVideoModel(model: BackendGenerationModel | null 
   )
 }
 
-/** 版本字段单独声明 2.5 时（display_name 只写 Seedance）也要能识别。 */
-const VERSION_IDENTITY_KEYS = ['version_name', 'versionName', 'version'] as const
+interface FallbackDurationRule {
+  /** 命中任意一个标识即适用；比较时忽略大小写、空格与分隔符。 */
+  identities: readonly string[]
+  /** 该模型实际支持的时长档位（秒）。 */
+  durations: readonly number[]
+}
 
 /**
- * 智能成片入口暂不开放的模型：Seedance 2.5。
+ * 后端 params_schema 漏声明时长档位时的兜底表。
  *
- * 与 isHiddenCreativeVideoModel 分开维护：那条对所有流程生效，这条**只作用于智能成片**，
- * 画布等其他入口照常展示 2.5。后端确认 2.5 可在智能成片开放后，删除本函数及其调用即可。
+ * 海螺（MiniMax）官方只接受 6 秒与 10 秒，但后端目录给它的 schema 声明了 duration 字段
+ * 却没有给出可选值。前端因此没有任何依据做校验，只能把分镜总时长原样下发，
+ * 5 秒、7 秒都会被退回 `minimax HTTP 400: bad_request_error`，用户无从自救。
  */
-export function isHiddenSmartVideoModel(model: BackendGenerationModel | null | undefined): boolean {
-  if (!model) return false
+const FALLBACK_DURATION_RULES: readonly FallbackDurationRule[] = [
+  { identities: ['minimax', 'hailuo', '海螺'], durations: [6, 10] },
+]
+
+/**
+ * 返回「后端没有声明时」该模型应当采用的时长档位；没有对应规则时返回 null。
+ *
+ * 这是对「模型能力只来自后端 params_schema」原则的一处刻意例外。调用方必须让 schema 优先，
+ * 只有模型完全没有声明时长档位时才可使用本表；后端补齐声明后删掉对应条目即可，其余代码无需改动。
+ */
+export function getFallbackDurationOptions(model: BackendGenerationModel | null | undefined): number[] | null {
+  if (!model) return null
   const identities = textsFromKeys(model, [...FALLBACK_IDENTITY_KEYS, ...PROVIDER_IDENTITY_KEYS]).map(compactIdentity)
-  if (identities.some((identity) => identity.includes('seedance25') || identity.includes('seedancev25'))) return true
-  // 名称与版本分列两个字段：Seedance + 2.5 / v2.5.1 同样视为 2.5 线。
-  return (
-    identities.some((identity) => identity.includes('seedance')) &&
-    textsFromKeys(model, VERSION_IDENTITY_KEYS).some((version) => /^v?2\.5(\.|$)/.test(version.trim()))
+  const rule = FALLBACK_DURATION_RULES.find((candidate) =>
+    candidate.identities.some((identity) =>
+      identities.some((modelIdentity) => modelIdentity.includes(compactIdentity(identity))),
+    ),
   )
+  return rule ? [...rule.durations] : null
 }

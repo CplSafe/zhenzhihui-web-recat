@@ -281,6 +281,33 @@ async function resolveFullVideoModel(args: {
   return { ...model, id: modelVersionId }
 }
 
+/** 「以一条已有视频为输入」时使用的角色，与 video.edit 下发的角色保持一致。 */
+export const SOURCE_VIDEO_INPUT_ROLE = 'video'
+
+/**
+ * 组装整片生成的 input_assets。
+ *
+ * 分镜图按模型 schema 声明的角色下发；「视频生视频」再追加一条源视频。
+ * 两者角色不同，不能像早期实现那样把所有输入套用同一个 role——
+ * 源视频套上 image 角色，后端会按 INPUT_ASSET_ROLE_NOT_ALLOWED 拒绝，或者更糟：当成参考图去读。
+ */
+export function buildFullVideoInputAssets(args: {
+  imageAssetIds?: number[]
+  imageRole?: string
+  /** 源视频资产 ID；大于 0 时以 role:'video' 追加在图片之后。 */
+  sourceVideoAssetId?: number
+}): Array<{ asset_id: number; role: string }> {
+  const imageRole = String(args.imageRole || '').trim() || 'image'
+  const assets = (args.imageAssetIds || [])
+    .map((id) => Math.floor(Number(id) || 0))
+    .filter((id) => id > 0)
+    .map((id) => ({ asset_id: id, role: imageRole }))
+
+  const sourceVideoAssetId = Math.floor(Number(args.sourceVideoAssetId) || 0)
+  if (sourceVideoAssetId > 0) assets.push({ asset_id: sourceVideoAssetId, role: SOURCE_VIDEO_INPUT_ROLE })
+  return assets
+}
+
 export interface FullVideoModelRequestCompilation {
   modelVersionId: number
   modelVersion: any
@@ -425,6 +452,11 @@ export async function generateFullVideo(args: {
    * 整片由分镜图驱动，身份主要靠参考帧继承，但运动生成过程仍可能漂；这里把约束显式写进提示词。
    */
   identityConstraint?: string
+  /**
+   * 「视频生视频」的源视频资产 ID：以 role:'video' 与分镜图一起下发。
+   * 需要模型的 operation 角色白名单允许 video 输入，否则后端按 INPUT_ASSET_ROLE_NOT_ALLOWED 拒绝。
+   */
+  sourceVideoAssetId?: number
   /** 任务一创建就回调 task_id,供上层持久化(切路由/刷新后凭它续轮询,不重新生成) */
   onTask?: (taskId: number) => void
   /** 后端任务返回的真实进度；后端未提供进度时不回调。 */
@@ -455,7 +487,12 @@ export async function generateFullVideo(args: {
     referenceImageCount: imgIds.length,
   })
   // schema 未声明时继续使用 role:'image'；显式声明唯一角色时按模型要求下发。
-  const inputAssets = imgIds.map((id) => ({ asset_id: id, role: request.inputAssetRole }))
+  // 传了源视频（视频生视频）时，它以 role:'video' 追加，不跟着分镜图共用同一个角色。
+  const inputAssets = buildFullVideoInputAssets({
+    imageAssetIds: imgIds,
+    imageRole: request.inputAssetRole,
+    sourceVideoAssetId: args.sourceVideoAssetId,
+  })
   const task = await createAiTask({
     workspaceId: args.workspaceId,
     capability: 'video',

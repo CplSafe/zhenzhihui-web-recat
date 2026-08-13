@@ -376,15 +376,26 @@ describe('generation model catalog', () => {
     expect(isGenerationModelCatalogReadyForMode(states, 'video')).toBe(true)
     expect(isGenerationModelCatalogReadyForMode(states, 'image')).toBe(true)
 
+    // video.edit 不在视频模式的必选集合里：智能成片的修改已改走视频生视频，
+    // 该 operation 只服务于无限画布/爆款复制，它不可用不该拦住智能成片开工。
     states['video.edit'] = {
       operationCode: 'video.edit',
       status: 'empty',
       availableModelCount: 0,
       message: '视频修改模型暂无可用模型',
     }
+    expect(isGenerationModelCatalogReadyForMode(states, 'video')).toBe(true)
+    expect(getUnavailableRequiredGenerationOperations(states, 'video')).toEqual([])
+
+    states['video.generate'] = {
+      operationCode: 'video.generate',
+      status: 'empty',
+      availableModelCount: 0,
+      message: '视频生成模型暂无可用模型',
+    }
     expect(isGenerationModelCatalogReadyForMode(states, 'video')).toBe(false)
     expect(isGenerationModelCatalogReadyForMode(states, 'image')).toBe(true)
-    expect(getUnavailableRequiredGenerationOperations(states, 'video')).toEqual(['video.edit'])
+    expect(getUnavailableRequiredGenerationOperations(states, 'video')).toEqual(['video.generate'])
 
     states['image.text_to_image'] = {
       operationCode: 'image.text_to_image',

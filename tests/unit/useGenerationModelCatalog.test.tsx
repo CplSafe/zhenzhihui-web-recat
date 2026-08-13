@@ -16,7 +16,11 @@ import {
   unwrapGenerationModelCatalogResponse,
   useGenerationModelCatalog,
 } from '@/composables/useGenerationModelCatalog'
-import { isGenerationModelSelectionComplete } from '@/components/smart/GenerationModelPicker'
+import {
+  getGenerationModelDurationOptions,
+  isGenerationModelSelectionComplete,
+} from '@/components/smart/GenerationModelPicker'
+import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 import { buildGenerationModelGroups, isGenerationModelCatalogReadyForMode } from '@/utils/generationModelCatalog'
 
 describe('useGenerationModelCatalog', () => {
@@ -382,7 +386,7 @@ describe('useGenerationModelCatalog', () => {
     ])
   })
 
-  it('hides Seedance 2.5 from the smart flow only, leaving other flows untouched', async () => {
+  it('shows Seedance 2.5 in every flow, including smart', async () => {
     mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) => {
       if (operationCode !== 'video.generate') return []
       return [
@@ -403,12 +407,12 @@ describe('useGenerationModelCatalog', () => {
         ?.operationGroups.find((group) => group.operationCode === 'video.generate')
         ?.models.map((model) => model.displayName) ?? []
 
+    // 2.5 已在智能成片开放：smart 与其他入口拿到的列表应当完全一致。
     const smart = renderHook(() => useGenerationModelCatalog(41, 'smart'))
     await waitFor(() => expect(smart.result.current.loading).toBe(false))
-    expect(readVideoModelNames(smart.result.current)).toEqual(['Seedance 2.0', '其他视频生成模型'])
-    expect(smart.result.current.operationStates['video.generate']).toMatchObject({ availableModelCount: 2 })
+    expect(readVideoModelNames(smart.result.current)).toEqual(['Seedance 2.0', 'Seedance 2.5', '其他视频生成模型'])
+    expect(smart.result.current.operationStates['video.generate']).toMatchObject({ availableModelCount: 3 })
 
-    // 画布等入口沿用默认 flow，2.5 照常展示。
     const other = renderHook(() => useGenerationModelCatalog(41))
     await waitFor(() => expect(other.result.current.loading).toBe(false))
     expect(readVideoModelNames(other.result.current)).toEqual(['Seedance 2.0', 'Seedance 2.5', '其他视频生成模型'])
@@ -441,5 +445,32 @@ describe('useGenerationModelCatalog', () => {
         ratios: ['16:9', '9:16'],
       },
     })
+  })
+
+  it('offers only the real MiniMax tiers in the entry duration dropdown', () => {
+    // 线上该模型的 schema 声明了 duration 字段名却没有可选值，入口因此会放出 1–15 秒全部档位，
+    // 用户选到 5 秒或 7 秒就必然换回 minimax HTTP 400。补齐兜底后入口只应给出 6 秒和 10 秒。
+    const groups = buildGenerationModelGroups([
+      {
+        id: 20,
+        display_name: 'MiniMax 海螺',
+        operation_codes: ['video.generate'],
+        params_schema: { fields: [{ name: 'duration' }, { name: 'resolution', options: ['768P', '1080P'] }] },
+      },
+    ])
+    const pickerGroups = toGenerationModelPickerGroups(groups)
+
+    expect(
+      getGenerationModelDurationOptions(
+        pickerGroups,
+        { 'video.generate': 20 },
+        'video.generate',
+        SMART_VIDEO_DURATIONS,
+      ),
+    ).toEqual([6, 10])
+    expect(
+      pickerGroups.find((group) => group.key === 'video')?.subgroups?.find((group) => group.key === 'video.generate')
+        ?.models[0]?.restrictions,
+    ).toContain('时长仅支持：6 秒、10 秒')
   })
 })

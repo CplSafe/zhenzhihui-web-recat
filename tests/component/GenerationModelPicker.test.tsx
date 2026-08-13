@@ -7,6 +7,7 @@ import GenerationModelPicker, {
   isGenerationModelSelectionComplete,
   type GenerationModelGroup,
 } from '@/components/smart/GenerationModelPicker'
+import { VIDEO_REQUIRED_GENERATION_OPERATION_CODES } from '@/utils/generationModelCatalog'
 
 const groups: GenerationModelGroup[] = [
   {
@@ -91,6 +92,30 @@ describe('GenerationModelPicker', () => {
 
   it('removes every group when no operation is active', () => {
     expect(filterGenerationModelGroupsByOperations(groups, [])).toEqual([])
+  })
+
+  it('treats the smart video flow as complete without a video.edit selection', () => {
+    // 智能成片的「确认修改」已改走视频生视频，入口不再收集 video.edit。
+    // 校验方若沿用未过滤的目录，就会索要一个入口根本不提供的模型，导致永远无法提交。
+    const catalog: GenerationModelGroup[] = [
+      {
+        key: 'video',
+        label: 'Video',
+        subgroups: [
+          { key: 'video.generate', label: '视频生成模型', models: [{ id: 11, name: '视频生成模型 A' }] },
+          { key: 'video.edit', label: '视频修改模型', models: [{ id: 12, name: '视频修改模型 A' }] },
+        ],
+      },
+    ]
+    const entrySelection = { 'video.generate': 11 }
+
+    const flowGroups = filterGenerationModelGroupsByOperations(catalog, VIDEO_REQUIRED_GENERATION_OPERATION_CODES)
+    expect(flowGroups[0].subgroups?.map((subgroup) => subgroup.key)).toEqual(['video.generate'])
+    expect(getMissingGenerationModelKeys(flowGroups, entrySelection)).toEqual([])
+    expect(isGenerationModelSelectionComplete(flowGroups, entrySelection)).toBe(true)
+
+    // 回归：未过滤的目录仍会把 video.edit 记为缺失——这正是入口显示「4/4 完成」却提交被拒的原因。
+    expect(getMissingGenerationModelKeys(catalog, entrySelection)).toEqual(['video.edit'])
   })
 
   it('renders every non-empty backend group and its backend-provided model names', () => {

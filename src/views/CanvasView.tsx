@@ -68,6 +68,9 @@ import {
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
 import { getCanvasTaskPresentation } from '@/utils/canvasTaskState'
+import { applyCanvasRealPersonIdentity, resolveCanvasRealPersonReference } from '@/utils/canvasRealPerson'
+import { isRealPersonReferenceStillAuthorized, type SmartRealPersonReference } from '@/utils/smartRealPerson'
+import { listRealPeople } from '@/api/realPeople'
 import {
   LOCAL_IMAGE_IMPORT_LIMIT,
   extractImageFiles,
@@ -1392,25 +1395,40 @@ function CanvasInner() {
       })
       if (!confirmed) return false
 
+      // 任务还没拿到 task_id：此刻删掉节点会留下一个无人认领的付费任务，只能等提交完成。
       if (generatingVideos.some((node) => Number((node.data as any)?.taskId || 0) <= 0)) {
-        window.alert('视频任务正在提交，请稍后再删除')
+        showToast('视频任务正在提交，请稍后再删除', 'info')
         return false
       }
 
-      try {
-        await Promise.all(
-          generatingVideos.map(async (node) => {
-            const taskId = Number((node.data as any)?.taskId || 0)
-            await cancelAiTask({ workspaceId, taskId })
-            const request = (node.data as any)?.generationRequest as CanvasGenerationRequest | undefined
-            if (request) cancelledTasksRef.current.set(node.id, request)
-          }),
-        )
-        return true
-      } catch (error: any) {
-        window.alert(String(error?.message || '停止视频生成失败，请稍后重试'))
-        return false
-      }
+      // 逐个取消，互不影响：用 Promise.all 时一个失败会让其余已成功的任务漏记 cancelledTasksRef。
+      const results = await Promise.allSettled(
+        generatingVideos.map(async (node) => {
+          const taskId = Number((node.data as any)?.taskId || 0)
+          await cancelAiTask({ workspaceId, taskId })
+          const request = (node.data as any)?.generationRequest as CanvasGenerationRequest | undefined
+          if (request) cancelledTasksRef.current.set(node.id, request)
+        }),
+      )
+
+      const failed = results.filter((result) => result.status === 'rejected')
+      if (!failed.length) return true
+
+      // 取消失败不代表用户不能删这个节点：任务可能已经交给模型、或刚好已经跑完，
+      // 后端拒绝取消是正常的。这时把选择权交回用户，并如实说明后果，而不是把节点扣在画布上。
+      const reason = String((failed[0] as PromiseRejectedResult).reason?.message || '').trim()
+      return Boolean(
+        await requestConfirm(
+          `有 ${failed.length} 个视频任务未能停止${reason ? `（${reason}）` : ''}。仍要从画布删除吗？` +
+            '删除后这些任务可能继续在服务端执行并照常计费。',
+          {
+            title: '任务未能停止',
+            confirmLabel: '仍然删除',
+            cancelLabel: '保留节点',
+            danger: true,
+          },
+        ),
+      )
     },
     [workspaceId],
   )
@@ -2395,7 +2413,13 @@ function CanvasInner() {
 
   // 应用素材：优先应用到已选中的节点（类型匹配时替换素材内容），否则创建新节点
   const handleApplyMaterial = useCallback(
-    (material: { assetId: number; type: string; src: string; name?: string }) => {
+    (material: {
+      assetId: number
+      type: string
+      src: string
+      name?: string
+      realPerson?: SmartRealPersonReference
+    }) => {
       const type = material.type === 'video' ? 'video' : 'image'
       // 已选中节点且类型匹配（图片素材可应用到图片/文本节点，视频素材应用到视频节点）
       const targetNode = selectedNode
@@ -2407,6 +2431,8 @@ function CanvasInner() {
           const resultUrl = resolveNodeMediaUrl({ assetId, resultUrl: material.src }, workspaceId)
           // 替换素材前记录历史，供撤销使用
           commitHistory()
+          // 真人素材的身份引用随节点一起保存；换成普通素材时必须清掉，否则旧身份约束会残留
+          const realPerson = material.realPerson ?? null
           // 更新画布节点数据
           setNodes((nds) =>
             nds.map((n) =>
@@ -2417,13 +2443,16 @@ function CanvasInner() {
                       ...(n.data as Record<string, unknown>),
                       assetId,
                       resultUrl,
+                      realPerson,
                     },
                   }
                 : n,
             ),
           )
           // 同步选中态回显
-          setSelectedNode((prev) => (prev && prev.id === targetNode.id ? { ...prev, assetId, resultUrl } : prev))
+          setSelectedNode((prev) =>
+            prev && prev.id === targetNode.id ? { ...prev, assetId, resultUrl, realPerson } : prev,
+          )
           setSaveStatus('dirty')
           return
         }
@@ -2447,6 +2476,7 @@ function CanvasInner() {
               { assetId: Number(material.assetId || 0), resultUrl: material.src },
               workspaceId,
             ),
+            ...(material.realPerson ? { realPerson: material.realPerson } : {}),
           },
         },
       )
@@ -2823,6 +2853,24 @@ function CanvasInner() {
    * - image.image_to_image → reference_image
    * 文本来源节点不传素材（其内容已拼入 prompt）。
    */
+  /**
+   * 提交前按最新真人列表复核授权。
+   *
+   * 画布节点里的引用是选素材当时的快照，之后这个人可能被删除、认证被撤销、素材被下架。
+   * 接口异常时放行：真人素材本身已通过认证，不能因为一次网络抖动就拦住用户的付费生成。
+   */
+  const isRealPersonReferenceAuthorizedNow = useCallback(
+    async (reference: SmartRealPersonReference): Promise<boolean> => {
+      try {
+        const people = await listRealPeople({ workspaceId })
+        return isRealPersonReferenceStillAuthorized(reference, people)
+      } catch {
+        return true
+      }
+    },
+    [workspaceId],
+  )
+
   const handleInsufficientCredits = useCallback(async () => {
     const shouldRecharge = await requestConfirm('当前用户积分不足，请先去充值积分', {
       title: '积分不足',
@@ -2850,7 +2898,29 @@ function CanvasInner() {
           return
         }
       }
-      const inputAssets = buildCanvasInputAssets(generate.sourceRefs || [], generate.operationCode)
+      // 真人素材：一次生成只允许一个身份基准；连入两个不同真人时无法判断该保谁的脸。
+      const realPerson = resolveCanvasRealPersonReference(generate.sourceRefs || [])
+      if (realPerson.error) {
+        showToast(realPerson.error, 'error')
+        return
+      }
+      // 授权是会变的（人被删、认证被撤销、素材失效），必须在扣费提交前按最新列表复核一次。
+      if (realPerson.reference) {
+        const stillAuthorized = await isRealPersonReferenceAuthorizedNow(realPerson.reference)
+        if (!stillAuthorized) {
+          showToast('该真人素材已失效或未通过认证，请重新选择真人素材', 'error')
+          return
+        }
+      }
+      // 身份约束必须在这里注入：润色只改用户提示词，约束由提交环节兜底，避免被润色覆盖。
+      const identity = applyCanvasRealPersonIdentity({
+        kind: generate.kind,
+        videoMode: generate.videoMode,
+        prompt: generate.prompt,
+        inputAssets: buildCanvasInputAssets(generate.sourceRefs || [], generate.operationCode),
+        reference: realPerson.reference,
+      })
+      const inputAssets = identity.inputAssets
       const taskRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
       try {
         const taskStartedAt = new Date().toISOString()
@@ -2874,7 +2944,8 @@ function CanvasInner() {
           workspaceId,
           capability: generate.kind,
           operationCode: generate.operationCode,
-          prompt: generate.prompt,
+          // 已注入真人身份约束的提示词；无真人素材时与用户原文一致。
+          prompt: identity.prompt,
           params: generate.params,
           inputAssets,
           modelVersionId: generate.modelVersionId,
@@ -2938,7 +3009,15 @@ function CanvasInner() {
         window.alert(String(error?.message || '任务创建失败，请稍后重试'))
       }
     },
-    [handleInsufficientCredits, handleSaveNodeText, selectedNode, workspaceId, setNodes, setSaveStatus],
+    [
+      handleInsufficientCredits,
+      handleSaveNodeText,
+      isRealPersonReferenceAuthorizedNow,
+      selectedNode,
+      workspaceId,
+      setNodes,
+      setSaveStatus,
+    ],
   )
 
   restartGenerationRef.current = (nodeId, request) => {

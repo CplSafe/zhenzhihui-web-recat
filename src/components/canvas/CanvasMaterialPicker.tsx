@@ -15,7 +15,14 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { listAssets, getAssetDownloadUrl } from '@/api/business'
+import { listRealPeople } from '@/api/realPeople'
 import { createMaterialFromAsset, isVideoMaterial } from '@/utils/materials'
+import {
+  createSmartRealPersonReference,
+  isReadyRealPersonAsset,
+  isVerifiedRealPerson,
+  type SmartRealPersonReference,
+} from '@/utils/smartRealPerson'
 import {
   favoriteAssetIdOf,
   favoriteMediaKindOf,
@@ -39,6 +46,12 @@ export interface MaterialItem {
   ratio?: string
   /** 素材来源：upload / generated / collected / real_person */
   source?: string
+  /**
+   * 真人素材库素材的身份引用（含认证与授权信息）。
+   * 后端没有真人专用参数，身份保持完全靠前端携带这份引用去置顶参考图并注入约束，
+   * 因此真人 tab 必须走 listRealPeople 拿到认证状态，而不是只拿一条裸 asset。
+   */
+  realPerson?: SmartRealPersonReference
 }
 
 interface CanvasMaterialPickerProps {
@@ -338,6 +351,40 @@ export default function CanvasMaterialPicker({
   // 请求序号：切换 tab 后旧请求结果直接丢弃
   const requestSeqRef = useRef(0)
 
+  /**
+   * 真人素材库单独走 /api/v1/real-people：只有这个接口能带回「属于谁、是否仍在授权」。
+   * listAssets(source=real_person) 只有裸 asset，拿不到认证状态，生成前无从回查授权，
+   * 素材也就退化成一张普通参考图。这里只收录已认证的人 + 已就绪的素材。
+   */
+  const fetchRealPeopleAssets = useCallback(
+    async (seq: number) => {
+      const people = await listRealPeople({ workspaceId })
+      const mapped: MaterialItem[] = []
+      for (const person of people) {
+        if (!isVerifiedRealPerson(person)) continue
+        for (const asset of person.assets || []) {
+          if (!isReadyRealPersonAsset(asset)) continue
+          const reference = createSmartRealPersonReference(person, asset)
+          mapped.push({
+            id: `real-person-${reference.realPersonId}-${reference.mappingId}`,
+            assetId: reference.localAssetId,
+            src: '',
+            name: reference.personName,
+            type: 'image',
+            source: 'real_person',
+            realPerson: reference,
+          })
+        }
+      }
+      if (tabRef.current !== 'real_person' || requestSeqRef.current !== seq) return
+      setItems(mapped)
+      setPage(0)
+      // 真人素材按人聚合返回，接口不分页，一次取完。
+      setHasMore(false)
+    },
+    [workspaceId],
+  )
+
   /** 拉取一页素材并映射为展示结构（按 tab 过滤来源；全部 tab 排除真人素材） */
   const fetchAssets = useCallback(
     async (type: string, pg: number, reset: boolean) => {
@@ -346,6 +393,10 @@ export default function CanvasMaterialPicker({
       const seq = ++requestSeqRef.current
       setLoading(true)
       try {
+        if (type === 'real_person') {
+          await fetchRealPeopleAssets(seq)
+          return
+        }
         const data = await listAssets({
           workspaceId,
           type: '',
@@ -379,7 +430,7 @@ export default function CanvasMaterialPicker({
         loadingRef.current = false
       }
     },
-    [workspaceId],
+    [workspaceId, fetchRealPeopleAssets],
   )
 
   // 打开面板或切换 tab：服务端 tab 重新加载第一页；收藏 tab 由下方 effect 加载

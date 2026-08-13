@@ -163,6 +163,27 @@ function calcProgress(startedAt?: number): number {
   return Math.max(1, Math.min(99, Math.round(99 * (1 - Math.exp(-elapsedSec / T)))))
 }
 
+/** 已等待时长（秒）；没有起始时间戳时返回 null，不去猜。 */
+function calcElapsedSec(startedAt?: number): number | null {
+  if (!startedAt || startedAt <= 0) return null
+  return Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+}
+
+/** 把秒数写成「x 分 y 秒」；不足一分钟只显示秒。 */
+function formatElapsed(totalSec: number): string {
+  const minutes = Math.floor(totalSec / 60)
+  const seconds = totalSec % 60
+  return minutes > 0 ? `${minutes} 分 ${seconds} 秒` : `${seconds} 秒`
+}
+
+/**
+ * 超过这个时长就说明后端仍在处理、可以先离开。
+ *
+ * 估算进度是按耗时逼近 99% 的曲线，等够几分钟必然停在 99%，此后再久也不会变。
+ * 只显示百分比会让长时间等待看起来像卡死，所以补上真实已等待时长和一句说明。
+ */
+const LONG_WAIT_HINT_SEC = 5 * 60
+
 /** 自适应渲染生成等待视觉，并在页面重挂载后继续显示同一任务的时间进度。 */
 export default function VideoLoading({
   statusText,
@@ -191,10 +212,13 @@ export default function VideoLoading({
   // 缺省(无 startedAt)退化为按挂载时刻计。最低 1%(从 1 开始,不停在 0),按时间常数 T 平滑逼近 99%,单调不回退。
   // 关键:初始值直接按 startedAt 计算,避免切回页面重挂时先闪到 0%,看起来像从头开始。
   const [pct, setPct] = useState(() => calcProgress(startedAt))
+  // 已等待时长与估算进度同源于 startedAt，但它是真实数据：进度停在 99% 后仍然继续走。
+  const [elapsedSec, setElapsedSec] = useState<number | null>(() => calcElapsedSec(startedAt))
   useEffect(() => {
     setPct(calcProgress(startedAt))
     const tick = () => {
       setPct((p) => Math.max(p, calcProgress(startedAt)))
+      setElapsedSec(calcElapsedSec(startedAt))
     }
     tick()
     const id = window.setInterval(tick, 400)
@@ -306,6 +330,26 @@ export default function VideoLoading({
                 }}
               />
             </div>
+            {elapsedSec !== null && (
+              // 百分比是估算值、会长时间停在 99%；已等待时长是真实的，用它说明「还在跑」而不是「卡死」。
+              // 逐行排布：进度条只有 160–320px，两段并排会互相挤到断行（「48 分 57 / 秒」）。
+              <div
+                role="status"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                  fontSize: noteSize,
+                  lineHeight: 1.5,
+                  color: 'rgba(200,200,255,0.6)',
+                }}
+              >
+                <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  已等待 {formatElapsed(elapsedSec)}
+                </span>
+                {elapsedSec >= LONG_WAIT_HINT_SEC && <span>服务端仍在处理，可离开本页</span>}
+              </div>
+            )}
           </div>
         ) : (
           <p role="status" style={{ margin: 0, color: 'rgba(200,200,255,0.75)', fontSize: noteSize, lineHeight: 1.6 }}>

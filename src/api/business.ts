@@ -33,6 +33,8 @@ const AI_TASK_POLL_RETRY_LIMIT = 5
 const AI_TASK_POLL_RETRY_BASE_MS = 1000
 /** AI 任务轮询指数退避的最大等待时间。 */
 const AI_TASK_POLL_RETRY_MAX_MS = 8000
+/** 后端 poll_after_ms 能把轮询拉长到的上限，避免异常大的值把等待挂死。 */
+const AI_TASK_POLL_AFTER_MAX_MS = 60_000
 /** 非流式 AI 等长任务接口的请求超时。 */
 const LONG_RUNNING_API_REQUEST_TIMEOUT_MS = 120_000
 /** 对象存储大文件上传的超时上限。 */
@@ -1145,6 +1147,21 @@ function getAiTaskPollRetryDelay(attempt) {
   return Math.min(AI_TASK_POLL_RETRY_MAX_MS, base + jitter)
 }
 
+/**
+ * 计算下一次轮询前的等待时间。
+ *
+ * 后端在任务响应里用 `poll_after_ms` 声明「至少隔这么久再来问」，拥堵时会调大它做退避。
+ * 这里把它当作下限而不是替代值：调用方的基础间隔仍然生效，后端要求更慢时才延长，
+ * 所以正常情况下轮询频率不变，只有后端明确要求退让时才放慢，避免把「请求过于频繁」打回来。
+ * 缺失、非法或为 0 时按基础间隔处理；异常大的值夹到上限，以免等待被挂死。
+ */
+function getAiTaskPollDelay(task, intervalMs) {
+  const baseDelay = Math.max(0, Number(intervalMs) || 0)
+  const requested = Number(task?.poll_after_ms ?? task?.pollAfterMs)
+  if (!Number.isFinite(requested) || requested <= 0) return baseDelay
+  return Math.min(Math.max(baseDelay, requested), AI_TASK_POLL_AFTER_MAX_MS)
+}
+
 /** 可被 AbortSignal 中断的延迟，结束后清理计时器和监听器。 */
 function sleepWithSignal(ms, signal) {
   if (!signal) return sleep(ms)
@@ -1389,7 +1406,7 @@ export async function waitForAiTask({
       throw new BusinessApiError('AI 任务生成超时，请稍后在历史记录中查看')
     }
 
-    await sleepWithSignal(intervalMs, signal)
+    await sleepWithSignal(getAiTaskPollDelay(currentTask, intervalMs), signal)
     ensureNotAborted()
     try {
       const taskId = getAiTaskId(currentTask)

@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  getCreativeVideoModelKind,
-  isHiddenCreativeVideoModel,
-  isHiddenSmartVideoModel,
-} from '@/utils/creativeVideoModelKind'
+import { getCreativeVideoModelKind, isHiddenCreativeVideoModel } from '@/utils/creativeVideoModelKind'
 
 describe('creative video model kind', () => {
   it.each([
@@ -60,23 +56,13 @@ describe('creative video model kind', () => {
   })
 
   it.each([
-    [{ display_name: 'Seedance 2.5' }, true],
-    [{ model_code: 'seedance-2.5-pro' }, true],
-    [{ model: 'seedance_v2.5' }, true],
-    // 名称与版本分列两个字段时同样识别为 2.5 线。
-    [{ display_name: 'Seedance', version_name: '2.5' }, true],
-    [{ display_name: 'Seedance', version: 'v2.5.1' }, true],
-    // 只屏蔽 2.5 线：其余 Seedance 版本、其他厂商模型、以及仅版本号相同的非 Seedance 模型照常展示。
-    [{ display_name: 'Seedance 2.0' }, false],
-    [{ display_name: 'Seedance 1.5 Pro' }, false],
-    [{ display_name: '其他厂商 2.5' }, false],
-    [{ display_name: 'HappyHorse 参考生视频' }, false],
-    [{ display_name: '后端新增的视频模型', version_name: '2.5' }, false],
-    [null, false],
-  ])('hides %p from the smart-video dropdown=%p', (model, expected) => {
-    expect(isHiddenSmartVideoModel(model)).toBe(expected)
-    // 智能成片的屏蔽规则不得外溢到画布等其他入口。
-    if (expected) expect(isHiddenCreativeVideoModel(model)).toBe(false)
+    // Seedance 2.5 已在智能成片开放，任何流程都不再屏蔽它（仅剩 HappyHorse 图生/文生视频那条规则）。
+    { display_name: 'Seedance 2.5' },
+    { model_code: 'seedance-2.5-pro' },
+    { display_name: 'Seedance', version_name: '2.5' },
+    { display_name: 'Seedance', version: 'v2.5.1' },
+  ])('keeps Seedance 2.5 visible in every flow: %p', (model) => {
+    expect(isHiddenCreativeVideoModel(model)).toBe(false)
   })
 
   it('reports contradictory effect metadata instead of guessing one', () => {

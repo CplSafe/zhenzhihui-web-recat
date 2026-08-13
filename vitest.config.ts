@@ -28,6 +28,7 @@ export default defineConfig({
         'src/api/feedback.ts',
         'src/utils/businessPagination.ts',
         'src/utils/canvasLocalImage.ts',
+        'src/utils/canvasRealPerson.ts',
         'src/utils/creativeDraftSaveQueue.ts',
         'src/utils/downloadUrlSafety.ts',
         'src/utils/hotCopyDraft.ts',

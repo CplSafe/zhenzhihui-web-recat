@@ -23,8 +23,19 @@ export type ImageGenerationOperationCode = Extract<
   'image.text_to_image' | 'image.image_to_image'
 >
 
-/** 首页视频与图片两种创作模式各自必须具备的固定 operation 集合。 */
-export const VIDEO_REQUIRED_GENERATION_OPERATION_CODES = GENERATION_OPERATION_CODES
+/**
+ * 首页视频与图片两种创作模式各自必须具备的固定 operation 集合。
+ *
+ * 视频模式不含 video.edit：智能成片的「确认修改」已改走视频生视频
+ * （video.generate + role:'video' 的源视频输入），不再单独选一个视频修改模型。
+ * GENERATION_OPERATION_CODES 仍保留 video.edit —— 无限画布与爆款复制还在用它。
+ */
+export const VIDEO_REQUIRED_GENERATION_OPERATION_CODES = [
+  'responses.multimodal',
+  'image.text_to_image',
+  'image.image_to_image',
+  'video.generate',
+] as const satisfies readonly GenerationOperationCode[]
 export const IMAGE_REQUIRED_GENERATION_OPERATION_CODES = [
   'image.text_to_image',
   'image.image_to_image',

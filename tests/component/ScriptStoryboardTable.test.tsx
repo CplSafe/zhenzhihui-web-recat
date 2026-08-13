@@ -181,6 +181,50 @@ describe('duration editing boundaries', () => {
     expect(mocks.showToast).toHaveBeenCalledWith('总时长不能超过15秒（改后为 16s），请调整', 'error')
   })
 
+  it('follows the model-driven ceilings instead of the hardcoded 15 seconds', async () => {
+    const user = userEvent.setup()
+    const onShotsChange = vi.fn()
+    // 30 秒长片：总上限 30 秒，中间镜头上限 7 秒
+    render(
+      <ScriptStoryboardTable
+        shots={[shot(), shot({ id: 'shot-2', no: '镜头2', duration: '9s' })]}
+        onShotsChange={onShotsChange}
+        showSubjects={false}
+        maxTotalDurationSec={30}
+        maxShotDurationSec={7}
+      />,
+    )
+
+    // 原先会被「总时长不能超过15秒」拦住的 7 秒，现在应当放行
+    await editDuration(user, '5', '7')
+    await waitFor(() =>
+      expect(onShotsChange).toHaveBeenCalledWith([
+        expect.objectContaining({ duration: '7s' }),
+        expect.objectContaining({ duration: '9s' }),
+      ]),
+    )
+    expect(mocks.showToast).not.toHaveBeenCalled()
+  })
+
+  it('still enforces the per-shot ceiling on long form', async () => {
+    const user = userEvent.setup()
+    const onShotsChange = vi.fn()
+    render(
+      <ScriptStoryboardTable
+        shots={[shot()]}
+        onShotsChange={onShotsChange}
+        showSubjects={false}
+        maxTotalDurationSec={30}
+        maxShotDurationSec={7}
+      />,
+    )
+
+    await editDuration(user, '5', '8')
+
+    expect(onShotsChange).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenCalledWith('最长仅支持7秒，请修改秒数', 'error')
+  })
+
   it('preserves a decimal duration instead of silently truncating it', async () => {
     const user = userEvent.setup()
     const onShotsChange = vi.fn()

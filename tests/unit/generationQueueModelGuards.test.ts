@@ -28,24 +28,23 @@ describe('generation queue model guards', () => {
     ).toBe('')
   })
 
-  it('requires a video queue model operation that matches generate or edit', () => {
+  it('requires every video queue item to lock a video.generate model', () => {
     expect(
       getVideoQueueModelLockError({
-        edit: false,
+        operationCode: 'video.generate',
+        modelVersionId: 7201,
+      }),
+    ).toBe('')
+    // 生成与「确认修改」共用 video.generate；旧草稿里锁定的 video.edit 必须 fail closed，
+    // 提示重新生成，而不是拿一个对不上任务类型的模型去创建付费任务。
+    expect(
+      getVideoQueueModelLockError({
         operationCode: 'video.edit',
         modelVersionId: 7201,
       }),
     ).toMatch(/任务类型匹配/)
     expect(
       getVideoQueueModelLockError({
-        edit: true,
-        operationCode: 'video.edit',
-        modelVersionId: 7201,
-      }),
-    ).toBe('')
-    expect(
-      getVideoQueueModelLockError({
-        edit: false,
         operationCode: 'video.generate',
         modelVersionId: 0,
       }),
