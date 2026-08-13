@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 无限画布（/canvas/:id）
  *
  * 页面职责：提供无限画布，通过节点+连线方式组织 AI 生成管线。
@@ -42,6 +42,7 @@ import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/Canvas
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
 import { saveCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId } from '@/utils/canvasDraft'
+import { loadLastSelectedNodeId, saveLastSelectedNodeId } from '@/utils/canvasSelection'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
@@ -280,6 +281,27 @@ const NODE_ENTER_MS = 350
 
 /** 本地图片预览地址的释放延迟（毫秒）：等正式地址加载完再释放，避免画面闪断 */
 const LOCAL_PREVIEW_REVOKE_MS = 5000
+
+/** 编辑面板与选中节点之间的间距（像素），同时用作面板与视口边缘的安全距离 */
+const NODE_PANEL_GAP = 16
+
+/**
+ * 模型版本 ID → 展示名。
+ *
+ * 节点渲染在 React Flow 内部，拿不到 CanvasInner 里的模型目录；放大预览要显示模型名，
+ * 与其让每个节点各自去拉一次目录，不如由 CanvasInner 在目录就绪后写入这份共享映射。
+ * 与本文件既有的 __canvasTextContents 同一思路。
+ */
+let canvasModelNameByVersion: Record<number, string> = {}
+
+/** 判断 params 里的字段名是否表示「生成音频」；后端各模型命名不一。 */
+function isAudioParamKey(key: string): boolean {
+  return ['generateaudio', 'audio', 'withaudio', 'enableaudio'].includes(
+    String(key || '')
+      .toLocaleLowerCase()
+      .replace(/[^a-z0-9]+/g, ''),
+  )
+}
 
 /** 生成防冲突的节点唯一 id（时间戳 + 计数器 + 随机串），避免同毫秒内重复创建导致 id 冲突 */
 let nodeIdSequence = 0
@@ -637,7 +659,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const toggleVideoPlay = () => {
     const v = videoRef.current
     if (!v) return
+    // 用户手动接管后不再算「悬停自动播放」，移出画面时不该被自动暂停
+    hoverAutoPlayedRef.current = false
     if (v.paused) {
+      // 悬停预览是静音起播的；用户主动点播放时要把声音还回来
+      v.muted = false
       setVideoPreload('auto')
       // 起播前先把进度对回目标位置：暂停态是最可靠的补 seek 时机
       applyPendingSeek(v)
@@ -650,6 +676,60 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       setPlaying(false)
     }
   }
+
+  /**
+   * 悬停预览：鼠标移入自动播放、移出暂停。
+   *
+   * 静音起播——浏览器只允许静音视频自动播放，带声音的 play() 会被拒绝。
+   * 移出时只暂停不回到开头，鼠标再移回来能接着看；用户已用播放条手动播放的
+   * 不受影响（移出时不停），否则会打断正在看的人。
+   */
+  const hoverAutoPlayedRef = useRef(false)
+  const handleVideoHoverEnter = () => {
+    const v = videoRef.current
+    if (!v || !videoUrl || videoPreviewOpen || !v.paused) return
+    setVideoPreload('auto')
+    v.muted = true
+    applyPendingSeek(v)
+    void v
+      .play()
+      .then(() => {
+        hoverAutoPlayedRef.current = true
+        setPlaying(true)
+      })
+      .catch(() => {
+        // 自动播放被拒（策略或素材未就绪）：保持暂停态，用户仍可点播放按钮
+        hoverAutoPlayedRef.current = false
+      })
+  }
+  const handleVideoHoverLeave = () => {
+    const v = videoRef.current
+    if (!v || !hoverAutoPlayedRef.current) return
+    hoverAutoPlayedRef.current = false
+    v.pause()
+    setPlaying(false)
+  }
+
+  /**
+   * 放大预览右侧的视频信息：只取节点上已有的数据，缺失字段不展示。
+   * 文件大小、分辨率、创建者需要另查资产接口，这里不做。
+   */
+  const videoPreviewInfo = useMemo(() => {
+    const record = (data || {}) as Record<string, unknown>
+    const params = (record.params || {}) as Record<string, unknown>
+    const audioKey = Object.keys(params).find(isAudioParamKey)
+    const ratioValue = String(record.ratio || '')
+    const createdRaw = String(record.taskUpdatedAt || record.taskStartedAt || '')
+    const createdAt = createdRaw ? new Date(createdRaw) : null
+    return {
+      modelName: canvasModelNameByVersion[Number(record.modelVersionId || 0)] || '',
+      // auto 是「跟随输入」的占位，不是真实比例，不展示
+      ratio: isAutoRatio(ratioValue) ? '' : ratioValue,
+      durationLabel: videoDurationLabel,
+      ...(audioKey ? { generateAudio: Boolean(params[audioKey]) } : {}),
+      createdAt: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.toLocaleString('zh-CN') : '',
+    }
+  }, [data, videoDurationLabel])
 
   /** 放大查看：先暂停节点内的视频，避免与弹窗里的播放重叠出声 */
   const openVideoPreview = () => {
@@ -895,8 +975,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
             </div>
           )
         ) : kind === 'video' && mediaUrl ? (
-          <div className="canvas-node-video-wrap">
-            {/* 非自动播放：默认暂停，仅显示封面帧；点击播放按钮后才播放 */}
+          <div
+            className="canvas-node-video-wrap"
+            onMouseEnter={handleVideoHoverEnter}
+            onMouseLeave={handleVideoHoverLeave}
+          >
+            {/* 悬停自动静音播放、移出暂停；也可点播放按钮手动控制（手动播放不会因移出而暂停） */}
             <video
               ref={videoRef}
               className="canvas-node-media"
@@ -1063,6 +1147,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           poster={(data as any).poster}
           durationLabel={videoDurationLabel}
           startTime={videoCurrentSec}
+          info={videoPreviewInfo}
           onClose={() => setVideoPreviewOpen(false)}
         />
       ) : null}
@@ -1134,6 +1219,17 @@ function CanvasInner() {
       video: videoGroup?.models || ([] as GenerationModelOption[]),
     }
   }, [groups])
+  // 把模型名共享给节点：节点在 React Flow 内部，拿不到这里的目录，放大预览要显示模型名。
+  useEffect(() => {
+    const next: Record<number, string> = {}
+    for (const list of [canvasModels.text, canvasModels.image, canvasModels.video]) {
+      for (const model of list) {
+        const versionId = Number(model.modelVersionId || 0)
+        if (versionId > 0 && model.displayName) next[versionId] = model.displayName
+      }
+    }
+    canvasModelNameByVersion = next
+  }, [canvasModels])
   const [addMenu, setAddMenu] = useState<{ x: number; y: number; sourceId: string } | null>(null)
   // 节点两侧的“+”表示继续当前流程：点击后打开下一步节点类型菜单，
   // 选中类型后复用 handleMenuSelect 自动创建节点并连接当前节点。
@@ -1146,6 +1242,14 @@ function CanvasInner() {
   const handleDragToggle = useCallback(() => setDragEnabled((v) => !v), [])
   const [selectedNode, setSelectedNode] = useState<CanvasNodeInfo | null>(null)
   const [saveStatus, setSaveStatus] = useState<DraftSaveStatus>('saved')
+  /**
+   * 供轮询循环读取的保存状态。
+   *
+   * saveStatus 每次编辑都会走 dirty → saving → saved 三态；若把它放进同步 effect 的依赖数组，
+   * 整个循环会被反复销毁重建、每次都从最短间隔重新起步——编辑越频繁，轮询反而越密。
+   */
+  const saveStatusRef = useRef<DraftSaveStatus>('saved')
+  saveStatusRef.current = saveStatus
   const [cloudStatus, setCloudStatus] = useState<'loading' | 'online' | 'offline' | 'error'>('loading')
   const [cloudMessage, setCloudMessage] = useState('正在读取云端画布')
   const [isPickingRef, setIsPickingRef] = useState(false)
@@ -1193,6 +1297,57 @@ function CanvasInner() {
     }
   }, [])
   const transform = useStore((s) => s.transform)
+
+  // 编辑面板尺寸：算锚点要用它做居中与边界夹取，面板内容随节点类型变化，用 ResizeObserver 跟踪。
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [panelSize, setPanelSize] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    const el = panelRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) => {
+      setPanelSize({ width: entry.contentRect.width, height: entry.contentRect.height })
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [selectedNode?.id])
+
+  /**
+   * 选中节点下方的面板位置（视口坐标）。
+   *
+   * 节点位置是画布坐标，必须经 transform 换算成屏幕坐标，面板才会跟着缩放/平移一起动 ——
+   * 面板是 position: fixed，渲染在画布容器之外，直接用画布坐标会跑偏。
+   * 下方放不下就翻到节点上方；左右做夹取，保证面板始终完整可见。
+   */
+  const panelAnchor = useMemo(() => {
+    if (!selectedNode) return null
+    const node = nodes.find((item) => item.id === selectedNode.id)
+    if (!node) return null
+    const [tx, ty, tz] = transform
+    const style = (node.style || {}) as Record<string, unknown>
+    const nodeWidth = Number(node.measured?.width ?? style.width ?? 250) || 250
+    const nodeHeight = Number(node.measured?.height ?? style.height ?? 250) || 250
+    const centerX = (node.position.x + nodeWidth / 2) * tz + tx
+    const bottomY = (node.position.y + nodeHeight) * tz + ty
+    const topY = node.position.y * tz + ty
+
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    const halfWidth = (panelSize.width || 0) / 2
+    const height = panelSize.height || 0
+    const below = bottomY + NODE_PANEL_GAP
+    const above = topY - NODE_PANEL_GAP - height
+    const top = below + height + NODE_PANEL_GAP <= viewportHeight || above < NODE_PANEL_GAP ? below : above
+    return {
+      left: Math.min(Math.max(centerX, halfWidth + NODE_PANEL_GAP), viewportWidth - halfWidth - NODE_PANEL_GAP),
+      top: Math.min(Math.max(top, NODE_PANEL_GAP), Math.max(NODE_PANEL_GAP, viewportHeight - height - NODE_PANEL_GAP)),
+    }
+  }, [selectedNode, nodes, transform, panelSize.width, panelSize.height])
+
+  // 记住最后选中的节点：退出画布再进来时恢复选中态与编辑面板（含输入框内容）。
+  useEffect(() => {
+    saveLastSelectedNodeId(routeProjectId, selectedNode?.id || '')
+  }, [routeProjectId, selectedNode?.id])
+
   // 拖线中（从 handle 拖出连线）的起始源节点 id；结束/取消时为 null。用于对连线目标做来源限制的视觉提示
   const connectSourceId = useStore((s) =>
     s.connection.inProgress && s.connection.fromHandle?.type === 'source' ? s.connection.fromNode.id : null,
@@ -1223,6 +1378,40 @@ function CanvasInner() {
 
   // 点击节点时使用去重后的 sourceRefs
   const getSourceRefs = useCallback((nodeId: string): CanvasSourceRef[] => deriveSourceRefs(nodeId), [deriveSourceRefs])
+
+  /**
+   * 首次载入节点后恢复上次选中的节点，连同编辑面板与输入框内容一起回到用户离开时的样子。
+   *
+   * 只做一次：之后用户主动取消选中是明确意图，不能被这里再选回来。
+   * 记录可能指向已被删除的节点，找不到就跳过。
+   */
+  const selectionRestoredRef = useRef(false)
+  useEffect(() => {
+    if (selectionRestoredRef.current || !nodes.length) return
+    selectionRestoredRef.current = true
+    const savedId = loadLastSelectedNodeId(routeProjectId)
+    if (!savedId) return
+    const node = nodes.find((item) => item.id === savedId)
+    if (!node) return
+    setSelectedNode({
+      id: node.id,
+      kind: String((node.data as any)?.kind || node.type || 'text'),
+      sourceRefs: getSourceRefs(node.id),
+      ratio: (node.data as any)?.ratio,
+      videoMode: (node.data as any)?.videoMode,
+      modelVersionId: (node.data as any)?.modelVersionId,
+      resultUrl: (node.data as any)?.resultUrl,
+      text: (node.data as any)?.text,
+      prompt: (node.data as any)?.prompt,
+      operationCode: (node.data as any)?.operationCode,
+      params: (node.data as any)?.params,
+      taskId: (node.data as any)?.taskId,
+      taskStatus: (node.data as any)?.taskStatus,
+      taskProgress: (node.data as any)?.taskProgress,
+      taskError: (node.data as any)?.taskError,
+      generationIntent: (node.data as any)?.generationIntent,
+    })
+  }, [nodes, routeProjectId, getSourceRefs])
 
   const realHistoryItems = useMemo<HistoryItem[]>(() => {
     let imageIndex = 0
@@ -2241,7 +2430,14 @@ function CanvasInner() {
   useEffect(() => {
     let disposed = false
     let timer = 0
-    const schedule = (delay = 4000) => {
+    // 连续拉到空增量的轮次：画布闲置时逐步拉长间隔，一有变化立刻回到基础频率。
+    // 上限刻意压在 10 秒（而不是 30 秒）：这条循环同时承担多人协作的变更合并，
+    // 退避过久会让「别人改了我这边多久能看到」变得难以接受。
+    let idleRounds = 0
+    const BASE_DELAY = 4000
+    const MAX_IDLE_DELAY = 10000
+    const nextIdleDelay = () => Math.min(MAX_IDLE_DELAY, BASE_DELAY * Math.pow(1.5, Math.min(idleRounds, 4)))
+    const schedule = (delay = nextIdleDelay()) => {
       if (!disposed) timer = window.setTimeout(pullRemoteChanges, delay)
     }
     const pullRemoteChanges = async () => {
@@ -2252,7 +2448,11 @@ function CanvasInner() {
         setCloudMessage('网络已断开，内容已保存在本机')
         return schedule(3000)
       }
-      if (syncInFlightRef.current || syncPendingRef.current || saveStatus !== 'saved') return schedule(1500)
+      // 本地有未落盘的改动：先让保存队列跑完，短间隔重试，并把闲置计数清零
+      if (syncInFlightRef.current || syncPendingRef.current || saveStatusRef.current !== 'saved') {
+        idleRounds = 0
+        return schedule(1500)
+      }
       try {
         const knownRevision = syncRevisionRef.current
         const page = await fetchCanvasElements({ workspaceId, canvasId, afterRevision: knownRevision })
@@ -2279,6 +2479,7 @@ function CanvasInner() {
             edges: fullGraph.edges.map(comparableEdge),
           }
         } else if (page.elements.length > 0) {
+          idleRounds = 0
           const merged = applyCanvasElementMutations(latestRef.current, page.elements)
           merged.nodes = merged.nodes.map((node) => normalizeNodeMedia(node, workspaceId))
           for (const node of merged.nodes) {
@@ -2298,6 +2499,8 @@ function CanvasInner() {
             edges: merged.edges.map(comparableEdge),
           }
         } else {
+          // 空增量：画布闲置，下一轮拉长间隔
+          idleRounds += 1
           syncRevisionRef.current = page.sync_revision || knownRevision
         }
         setCloudStatus('online')
@@ -2319,15 +2522,26 @@ function CanvasInner() {
       setCloudStatus('offline')
       setCloudMessage('网络已断开，内容已保存在本机')
     }
+    // 切回本页时立刻同步一次并重置退避：隐藏期间别人可能已经改过，不该让用户再等一个周期
+    const onVisible = () => {
+      if (document.hidden) return
+      idleRounds = 0
+      window.clearTimeout(timer)
+      schedule(0)
+    }
+    document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
     return () => {
       disposed = true
       window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
     }
-  }, [saveStatus, setEdges, setNodes, workspaceId])
+    // 不依赖 saveStatus：它每次编辑都会三态翻转，进依赖数组会让整个循环反复重建、
+    // 每次都从最短间隔重新起步（编辑越频繁轮询越密）。循环内改用 saveStatusRef 读取。
+  }, [setEdges, setNodes, workspaceId])
 
   // 比例变更时同步更新节点宽高与数据
   const handleRatioChange = useCallback(
@@ -2499,6 +2713,7 @@ function CanvasInner() {
         modelVersionId: (node.data as any)?.modelVersionId,
         resultUrl: (node.data as any)?.resultUrl,
         text: (node.data as any)?.text,
+        prompt: (node.data as any)?.prompt,
         operationCode: (node.data as any)?.operationCode,
         params: (node.data as any)?.params,
         taskId: (node.data as any)?.taskId,
@@ -2794,6 +3009,25 @@ function CanvasInner() {
   )
 
   /**
+   * 图片/视频节点输入框内容随节点持久化：切到别的节点再切回、以及退出画布重进都要回显。
+   *
+   * 不进历史栈：逐字输入若每次都记快照，撤销会变成一个字一个字地退。
+   * prompt 已在 canvasElements 的持久化白名单内，标脏后由既有增量同步带上云端。
+   */
+  const handleNodePromptChange = useCallback(
+    (prompt: string) => {
+      const targetNodeId = selectedNode?.id
+      if (!targetNodeId || selectedNode?.kind === 'text') return
+      setNodes((items) =>
+        items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, prompt } } : item)),
+      )
+      setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, prompt } : current))
+      setSaveStatus('dirty')
+    },
+    [selectedNode?.id, selectedNode?.kind, setNodes, setSaveStatus],
+  )
+
+  /**
    * AI 润色是显式的可选动作：只返回润色结果，仍需用户确认并保存。
    *
    * 节点已连线的参考图会一并送进润色模型。缺图时润色只能凭字面凭空补出主体和场景，
@@ -3049,6 +3283,11 @@ function CanvasInner() {
       String(task?.error_message || task?.error?.message || task?.message || '生成失败，请重试')
 
     const tick = async () => {
+      // 页面在后台时不拉任务状态：与画布增量同步保持同一策略，切回来会立即补一次。
+      if (document.hidden) {
+        if (!disposed) timer = window.setTimeout(tick, 6000)
+        return
+      }
       const candidates = latestRef.current.nodes.filter((node) => {
         const taskId = Number((node.data as any)?.taskId || 0)
         const status = normalizeAiTaskStatus((node.data as any)?.taskStatus)
@@ -3160,9 +3399,17 @@ function CanvasInner() {
       if (!disposed) timer = window.setTimeout(tick, candidates.length > 0 ? 2500 : 6000)
     }
     timer = window.setTimeout(tick, 800)
+    // 切回本页立即补一次：后台期间没拉状态，不该让用户再等一个周期才看到结果
+    const onVisible = () => {
+      if (document.hidden || disposed) return
+      window.clearTimeout(timer)
+      timer = window.setTimeout(tick, 0)
+    }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       disposed = true
       window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [setNodes, workspaceId])
 
@@ -3215,6 +3462,7 @@ function CanvasInner() {
         modelVersionId: (node.data as any)?.modelVersionId,
         resultUrl: (node.data as any)?.resultUrl,
         text: (node.data as any)?.text,
+        prompt: (node.data as any)?.prompt,
       })
     },
     [isPickingRef, getSourceRefs],
@@ -3423,6 +3671,7 @@ function CanvasInner() {
             modelVersionId: (node.data as any)?.modelVersionId,
             resultUrl: (node.data as any)?.resultUrl,
             text: (node.data as any)?.text,
+            prompt: (node.data as any)?.prompt,
             operationCode: (node.data as any)?.operationCode,
             params: (node.data as any)?.params,
           })
@@ -3645,6 +3894,7 @@ function CanvasInner() {
             modelVersionId: (node.data as any)?.modelVersionId,
             resultUrl: (node.data as any)?.resultUrl,
             text: (node.data as any)?.text,
+            prompt: (node.data as any)?.prompt,
             operationCode: (node.data as any)?.operationCode,
             params: (node.data as any)?.params,
           })
@@ -3653,9 +3903,13 @@ function CanvasInner() {
         }}
       />
 
-      {/* 节点编辑面板 — 选中节点时显示 */}
+      {/* 节点编辑面板 — 跟随选中节点显示在其下方；算不出锚点时回落到底部居中 */}
       {selectedNode && (
-        <div className="canvas-panel-area">
+        <div
+          ref={panelRef}
+          className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}`}
+          style={panelAnchor ? { left: panelAnchor.left, top: panelAnchor.top } : undefined}
+        >
           <CanvasNodePanel
             node={selectedNode}
             workspaceId={workspaceId}
@@ -3667,6 +3921,7 @@ function CanvasInner() {
             onGenerate={handleNodeGenerate}
             onInsufficientCredits={handleInsufficientCredits}
             onSaveText={handleSaveNodeText}
+            onPromptChange={handleNodePromptChange}
             onPolishText={handlePolishNodeText}
             models={canvasModels}
             modelsLoading={modelsLoading}

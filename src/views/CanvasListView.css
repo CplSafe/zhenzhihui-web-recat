@@ -10,6 +10,16 @@
   color: #8ea3bf;
 }
 
+/* 封面媒体（最后生成的图/视频首帧）：铺满卡片封面区，按短边裁切保持构图 */
+.cl-cover-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #eef1f7;
+  pointer-events: none;
+}
+
 .cl-cover svg {
   width: 44px;
   height: 44px;

@@ -6,6 +6,7 @@
  * 按钮内以空格连接展示已选项(如「叫卖 幽默 商业」)。
  */
 import { useEffect, useRef, useState } from 'react'
+import WheelPicker from '@/components/common/WheelPicker'
 import styles from './EntryDropdown.module.less'
 
 /** 下拉选项、单/多选受控值、清空策略和禁用状态。 */
@@ -34,6 +35,11 @@ interface EntryDropdownProps {
   clearable?: boolean
   /** 值文字区最小宽度(px):固定后切换不同长度的值(如比例 16:9/1:1)时按钮整体宽度不抖动 */
   valueMinWidth?: number
+  /**
+   * 浮层形态:list=平铺选项(默认);wheel=滚轮吸附选择。
+   * 滚轮只适合时长这类有序连续档位,且仅支持单选。
+   */
+  variant?: 'list' | 'wheel'
 }
 
 /** 渲染入口工具栏统一下拉，并支持外部点击关闭和连续多选。 */
@@ -52,7 +58,10 @@ export default function EntryDropdown({
   disabledOptions = [],
   clearable = false,
   valueMinWidth,
+  variant = 'list',
 }: EntryDropdownProps) {
+  // 滚轮是单选形态：多选语义（连续勾选、复选标记）在滚轮里没有对应交互，退回平铺列表。
+  const useWheel = variant === 'wheel' && !multiple
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -137,7 +146,20 @@ export default function EntryDropdown({
           <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </button>
-      {open && (
+      {open && useWheel && (
+        <div className={`${styles.menu} ${styles.menuWheel}`}>
+          <WheelPicker
+            options={options.map((o) => ({ value: o, label: o, disabled: disabledOptions.includes(o) }))}
+            value={String(value || '')}
+            // 滚动停下即生效，但不收起浮层——中途每停顿一次就关掉会让人没法继续往下找档位。
+            onChange={onChange}
+            // 点击某档位/回车是明确的确认动作，这时才收起。点击浮层外同样收起。
+            onCommit={() => setOpen(false)}
+            ariaLabel={ariaLabel}
+          />
+        </div>
+      )}
+      {open && !useWheel && (
         <div className={styles.menu} role="listbox" aria-label={ariaLabel} aria-multiselectable={multiple}>
           {options.map((o) => (
             <button

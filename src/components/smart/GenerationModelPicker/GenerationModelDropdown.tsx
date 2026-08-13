@@ -2,7 +2,11 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSPrope
 import { createPortal } from 'react-dom'
 import { CheckCircleFilled, CloseOutlined, ControlOutlined, DownOutlined, LoadingOutlined } from '@ant-design/icons'
 import { openMemberCenter } from '@/stores/ui'
-import { getModelConstraintConflicts, type GenerationModelConstraintValues } from '@/utils/modelRestrictions'
+import {
+  getModelConstraintConflicts,
+  getModelDurationLimitLabel,
+  type GenerationModelConstraintValues,
+} from '@/utils/modelRestrictions'
 import {
   getMissingGenerationModelKeys,
   type GenerationModelErrorState,
@@ -115,6 +119,17 @@ function readLoading(state: GenerationModelLoadingState | undefined, slot: Model
 function readError(state: GenerationModelErrorState | undefined, slot: ModelSelectionSlot): string {
   if (typeof state === 'string') return state
   return state?.[slot.key] || state?.[slot.groupKey] || ''
+}
+
+/**
+ * 模型下拉选项名后的括注：时长上限 + 不可用标记。
+ *
+ * 原生 select 的选项只能是纯文本，所以能力提示只能拼进文案；
+ * 两条信息合并进同一对括号，避免出现「模型名（最长 15 秒）（不可用）」这种叠括号。
+ */
+export function formatModelOptionNotes(model: GenerationModelOption): string {
+  const notes = [getModelDurationLimitLabel(model.constraints), model.disabled ? '不可用' : ''].filter(Boolean)
+  return notes.length ? `（${notes.join(' · ')}）` : ''
 }
 
 /** 区分“目录加载失败”和“当前套餐没有可用模型”，避免把充值问题误报为系统故障。 */
@@ -628,7 +643,7 @@ export default function GenerationModelDropdown({
                             {slot.models.map((model) => (
                               <option key={String(model.id)} value={String(model.id)} disabled={model.disabled}>
                                 {model.name}
-                                {model.disabled ? '（不可用）' : ''}
+                                {formatModelOptionNotes(model)}
                               </option>
                             ))}
                           </select>

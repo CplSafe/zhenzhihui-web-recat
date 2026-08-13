@@ -205,6 +205,14 @@
   color: #1f2330;
 }
 
+/* 未开通会员时的积分充值入口：看得见但不可用。
+   仍保留 cursor: pointer 之外的可点性（用 aria-disabled 而非 disabled），
+   点击时由页面弹出「需要成为会员才能购买积分」说明原因。 */
+.mcm-tab.is-locked {
+  color: #b7bcc5;
+  cursor: not-allowed;
+}
+
 .mcm-tab.is-active::after {
   content: '';
   position: absolute;

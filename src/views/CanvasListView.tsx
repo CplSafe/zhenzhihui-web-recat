@@ -5,14 +5,22 @@
  * 点击画布卡片进入 /canvas/:id 编辑器。
  * 数据源：/api/v1/canvases 的 list / create / delete 接口（canvasApi）。
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import '@/styles/project-management.css'
 import './CanvasListView.css'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import { getBusinessErrorMessage } from '@/api/business'
-import { createCanvas, deleteCanvas, listCanvases, patchCanvas, type CanvasSummary } from '@/api/canvasApi'
+import {
+  createCanvas,
+  deleteCanvas,
+  fetchCanvasElements,
+  listCanvases,
+  patchCanvas,
+  type CanvasSummary,
+} from '@/api/canvasApi'
+import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useWorkspaceId } from '@/stores/workspaceSession'
@@ -55,12 +63,65 @@ export default function CanvasListView() {
   const [editStatus, setEditStatus] = useState<'active' | 'archived'>('active')
   const [editing, setEditing] = useState(false)
 
+  // 封面：后端列表不返回封面，按画布 id 缓存「最后生成的图/视频」；
+  // 值为 null 表示这张画布确实没有可用媒体，避免反复拉同一张画布的元素。
+  const [covers, setCovers] = useState<Record<number, CanvasCover | null>>({})
+  const coverLoadedRef = useRef(new Set<string>())
+
   useEffect(() => {
     workspaceIdRef.current = Number(workspaceId || 0)
   }, [workspaceId])
 
   const activeWsId = Number(workspaceId || 0)
-  const effectiveCanvases = canvasesWorkspaceId === activeWsId ? canvases : []
+  // memo 化：它是下面封面副作用的依赖，每次渲染新建数组会让副作用反复触发。
+  const effectiveCanvases = useMemo(
+    () => (canvasesWorkspaceId === activeWsId ? canvases : []),
+    [canvasesWorkspaceId, activeWsId, canvases],
+  )
+
+  /**
+   * 逐张补齐封面。
+   *
+   * 缓存键带上 revision：画布有新产出时会重新取封面，没变化则一张也不重复请求。
+   * 并发限制为 3：列表页不该为了封面把元素接口打满，画布编辑器本身已经在轮询同一个接口。
+   */
+  useEffect(() => {
+    const wsId = activeWsId
+    if (!wsId || !effectiveCanvases.length) return
+    let disposed = false
+
+    const pending = effectiveCanvases
+      .map((item) => ({ id: Number(item.id || 0), key: `${wsId}:${item.id}:${item.revision || 0}` }))
+      .filter((item) => item.id > 0 && !coverLoadedRef.current.has(item.key))
+    if (!pending.length) return
+
+    const loadOne = async ({ id, key }: { id: number; key: string }) => {
+      coverLoadedRef.current.add(key)
+      try {
+        const page = await fetchCanvasElements({ workspaceId: wsId, canvasId: id, afterRevision: 0 })
+        if (disposed) return
+        setCovers((prev) => ({ ...prev, [id]: pickCanvasCover(page.elements, wsId) }))
+      } catch {
+        // 单张封面取不到不影响列表：卡片继续显示占位图，下次 revision 变化再试
+        coverLoadedRef.current.delete(key)
+      }
+    }
+
+    void (async () => {
+      const queue = [...pending]
+      const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+        while (queue.length && !disposed) {
+          const next = queue.shift()
+          if (next) await loadOne(next)
+        }
+      })
+      await Promise.all(workers)
+    })()
+
+    return () => {
+      disposed = true
+    }
+  }, [activeWsId, effectiveCanvases])
 
   // 拉取画布列表；请求序号 + workspace 快照共同阻止过期响应覆盖当前页面
   const loadCanvases = useCallback(async () => {
@@ -342,14 +403,29 @@ export default function CanvasListView() {
                     }}
                   >
                     <div className="pm2-pcard-cover">
-                      <span className="cl-cover" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4">
-                          <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
-                          <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
-                          <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
-                          <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
-                        </svg>
-                      </span>
+                      {covers[Number(item.id)] ? (
+                        covers[Number(item.id)]!.kind === 'video' ? (
+                          // 视频封面用首帧：preload=metadata 只取元数据和第一帧，不下载整片
+                          <video
+                            className="cl-cover-media"
+                            src={covers[Number(item.id)]!.url}
+                            preload="metadata"
+                            muted
+                            playsInline
+                          />
+                        ) : (
+                          <img className="cl-cover-media" src={covers[Number(item.id)]!.url} alt="" loading="lazy" />
+                        )
+                      ) : (
+                        <span className="cl-cover" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4">
+                            <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
+                            <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
+                            <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
+                            <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
+                          </svg>
+                        </span>
+                      )}
                     </div>
                     <div className="pm2-pcard-body">
                       <div className="pm2-pcard-head">

@@ -785,6 +785,7 @@ export default function SmartEntry({
                   options={durationChoices}
                   onChange={setDuration}
                   placeholder={DURATION_PLACEHOLDER}
+                  variant="wheel"
                   blocked={!videoModelSelected}
                   onBlockedClick={requestVideoModelFirst}
                   icon={

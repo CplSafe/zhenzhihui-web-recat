@@ -417,6 +417,11 @@
   width: 100%;
 }
 
+/* 时长滚轮：与相邻按钮组保持同样的左右留白（档位高度由组件的 itemHeight 决定） */
+.durationWheel {
+  margin: 2px 0;
+}
+
 .videoMenuHint {
   margin-top: 8px;
   padding: 0 4px;

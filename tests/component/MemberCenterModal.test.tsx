@@ -249,10 +249,19 @@ describe('MemberCenterModal behavior', () => {
     expect(await screen.findByRole('button', { name: '积分充值' })).toBeInTheDocument()
   })
 
-  it('hides recharge when the current workspace has no active membership', async () => {
+  it('keeps recharge visible but locked when the current workspace has no active membership', async () => {
+    const user = userEvent.setup()
     const noMembership = renderModal()
     await screen.findByText('个人版/一分体验会员')
-    expect(screen.queryByRole('button', { name: '积分充值' })).not.toBeInTheDocument()
+
+    // 入口可见但不可用：用户看得到能买积分，也知道为什么现在买不了。
+    const lockedTab = screen.getByRole('button', { name: '积分充值' })
+    expect(lockedTab).toHaveAttribute('aria-disabled', 'true')
+    expect(lockedTab).toHaveAttribute('title', '需要成为会员才能购买积分')
+    await user.click(lockedTab)
+    expect(mocks.showToast).toHaveBeenCalledWith('需要成为会员才能购买积分', 'info')
+    // 点击不得进入充值页
+    expect(screen.queryByText('积分套餐加载中…')).not.toBeInTheDocument()
     noMembership.unmount()
 
     mocks.getSubscription.mockResolvedValue({
@@ -263,7 +272,8 @@ describe('MemberCenterModal behavior', () => {
     })
     renderModal()
     expect(await screen.findByText('会员已到期，请续费后继续使用')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '积分充值' })).not.toBeInTheDocument()
+    // 会员过期同样只置灰，不再隐藏入口
+    expect(screen.getByRole('button', { name: '积分充值' })).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('shows and confirms the team attribution before creating a recharge order', async () => {
