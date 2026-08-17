@@ -27,21 +27,17 @@ import {
   ReactFlowProvider,
   EdgeLabelRenderer,
   getBezierPath,
-  MarkerType,
-  type EdgeMarker,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 /**
  * 连线箭头仅属于画布展示层，不写入元素持久化数据。
  * 这样历史画布与新建画布都能统一显示方向，同时不会制造无意义的云端 revision。
+ *
+ * 取值是 CanvasEdgeArrowDefs 里那份常驻定义的 id，而不是 marker 对象——原因见该文件。
  */
-const CANVAS_EDGE_END_MARKER: EdgeMarker = {
-  type: MarkerType.ArrowClosed,
-  width: 26,
-  height: 26,
-  color: '#66717f',
-}
+const CANVAS_EDGE_END_MARKER = CANVAS_EDGE_ARROW_ID
+import CanvasEdgeArrowDefs, { CANVAS_EDGE_ARROW_ID } from '@/components/canvas/CanvasEdgeArrowDefs'
 import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
 import CanvasNodePanel, {
   type CanvasNodeInfo,
@@ -858,6 +854,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   }
 
   const handleDoubleClick = () => {
+    // 视频：双击画面直接放大查看，与右下角的放大按钮同一入口。
+    // 看大图是这个节点最高频的诉求，不该要求先找到那个悬停才显眼的小图标。
+    if (kind === 'video' && mediaUrl) {
+      openVideoPreview()
+      return
+    }
     if (kind !== 'text') return
     if (!textContent.trim()) setTextContent('')
     setEditing(true)
@@ -1150,7 +1152,15 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           )
         ) : kind === 'video' && mediaUrl ? (
           <div
-            className="canvas-node-video-wrap"
+            /*
+             * nopan 不是为了禁止平移，而是为了让双击落在这里时 React Flow 放行：
+             * zoomOnDoubleClick 默认开启，画面上的双击会被 d3-zoom 当成「放大一级画布」，
+             * 于是放大弹窗打开的同时画布也被拉近。React Flow 的手势过滤只认 nopan 这个类名
+             * （见 @xyflow/system createFilter），而 d3 的原生监听在祖先节点上先于 React 合成事件触发，
+             * 在这里 stopPropagation 是拦不住的。
+             * 代价仅限于「关掉节点拖拽后，从视频画面上拖不动画布」，其余位置照常。
+             */
+            className="canvas-node-video-wrap nopan"
             onMouseEnter={handleVideoHoverEnter}
             onMouseLeave={handleVideoHoverLeave}
           >
@@ -1482,7 +1492,7 @@ function CanvasInner() {
   const navigate = useNavigate()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
-  const { fitView, screenToFlowPosition } = useReactFlow()
+  const { fitView, screenToFlowPosition, setViewport } = useReactFlow()
   // 正在编辑剪辑时间线的节点 id；空串表示编辑器关闭
   const [timelineEditorNodeId, setTimelineEditorNodeId] = useState('')
   // 合成进行中（下载素材 → 无损拼接 → 上传成片），期间禁止重复触发
@@ -1626,15 +1636,60 @@ function CanvasInner() {
     const height = panelSize.height || 0
     const below = bottomY + NODE_PANEL_GAP
     const above = topY - NODE_PANEL_GAP - height
-    const top = below + height + NODE_PANEL_GAP <= viewportHeight || above < NODE_PANEL_GAP ? below : above
+    const fitsBelow = below + height + NODE_PANEL_GAP <= viewportHeight
+    const fitsAbove = above >= NODE_PANEL_GAP
+
+    /*
+     * 纵向只在选定的那一侧取值，绝不做「拉回视口内」的夹取。
+     *
+     * 之前那一版把 top 夹到 [GAP, viewportHeight - height - GAP]：面板一旦比节点下方的
+     * 空间还高，夹取就把它往上拽，正好压在它自己正在编辑的那个节点上——用户看不见刚生成的东西。
+     * 现在放不下就让它先溢出视口，由下面的「腾位置」副作用平移画布来解决，而不是牺牲节点。
+     */
+    const top = fitsBelow || !fitsAbove ? below : above
+
     // 左界为工具栏让出竖带；面板宽到放不下时右界优先，此时仍会压住工具栏（窄屏遗留限制）
     const minCenterX = halfWidth + NODE_PANEL_LEFT_SAFE
     const maxCenterX = viewportWidth - halfWidth - NODE_PANEL_GAP
     return {
       left: Math.min(Math.max(centerX, minCenterX), Math.max(minCenterX, maxCenterX)),
-      top: Math.min(Math.max(top, NODE_PANEL_GAP), Math.max(NODE_PANEL_GAP, viewportHeight - height - NODE_PANEL_GAP)),
+      top,
     }
   }, [selectedNode, nodes, transform, panelSize.width, panelSize.height])
+
+  /**
+   * 面板在节点下方放不下时，把画布上移腾出位置。
+   *
+   * 不能靠夹取把面板拉回视口——那等于用「盖住正在编辑的节点」换「面板完整可见」，
+   * 而节点上正是刚生成的结果，挡住它比面板露出视口更糟。
+   * 平移量不会超过节点到视口顶部的距离，保证节点本身始终留在画面里。
+   *
+   * 每个 (节点, 面板高度) 只调整一次：transform 变化会让本副作用重跑，
+   * 不设这个闸门就会出现「平移 → 重算 → 再平移」的自激。
+   */
+  const panelPanRef = useRef('')
+  useEffect(() => {
+    const height = panelSize.height
+    if (!selectedNode || !(height > 0)) return
+    const key = `${selectedNode.id}:${Math.round(height)}`
+    if (panelPanRef.current === key) return
+    panelPanRef.current = key
+
+    const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+    if (!node) return
+    const [tx, ty, tz] = transform
+    const style = (node.style || {}) as Record<string, unknown>
+    const nodeHeight = Number(node.measured?.height ?? style.height ?? 250) || 250
+    const bottomY = (node.position.y + nodeHeight) * tz + ty
+    const topY = node.position.y * tz + ty
+
+    const deficit = bottomY + NODE_PANEL_GAP * 2 + height - window.innerHeight
+    if (deficit <= 0) return
+    // 节点顶部到视口顶的余量就是可平移的上限，再多节点自己就被推出去了
+    const shift = Math.min(deficit, Math.max(0, topY - NODE_PANEL_GAP))
+    if (shift <= 1) return
+    setViewport({ x: tx, y: ty - shift, zoom: tz }, { duration: 200 })
+  }, [selectedNode, panelSize.height, transform, setViewport])
 
   // 记住最后选中的节点：退出画布再进来时恢复选中态与编辑面板（含输入框内容）。
   useEffect(() => {
@@ -1671,6 +1726,44 @@ function CanvasInner() {
 
   // 点击节点时使用去重后的 sourceRefs
   const getSourceRefs = useCallback((nodeId: string): CanvasSourceRef[] => deriveSourceRefs(nodeId), [deriveSourceRefs])
+
+  /**
+   * 文本内容的版本号，用来把「文本节点被改了」这件事传导给编辑面板。
+   *
+   * 文本内容刻意不走 nodes/edges（每敲一个字都 setNodes 会让整块画布重渲染），而是存在
+   * window.__canvasTextContents 这个可变 Map 里——代价是它不是响应式的，下游读了也不会重渲染。
+   * 所以这里用一个计数器做信号：改文本时 bump 一次，依赖它的 memo 重新从 Map 取值。
+   * bump 走 60ms 防抖，连续打字不会一个字一次重渲染。
+   */
+  const [textRevision, setTextRevision] = useState(0)
+  const textRevisionTimerRef = useRef(0)
+  const bumpTextRevisionRef = useRef<() => void>(() => undefined)
+  bumpTextRevisionRef.current = () => {
+    window.clearTimeout(textRevisionTimerRef.current)
+    textRevisionTimerRef.current = window.setTimeout(() => setTextRevision((value) => value + 1), 60)
+  }
+  useEffect(() => () => window.clearTimeout(textRevisionTimerRef.current), [])
+
+  /**
+   * 选中节点从上游文本节点继承来的提示词内容。
+   *
+   * 之所以要把它交给面板显示：这段文本本来就会在提交时被前置进 prompt，但界面上一点痕迹都没有，
+   * 用户看到输入框还是空的，只会认为「文本没跟过去」。面板拿到同一份数据既用于显示也用于拼接，
+   * 显示的和发出去的就必然是同一个东西。
+   */
+  const inheritedPromptTexts = useMemo(() => {
+    const map = (window as any).__canvasTextContents as Map<string, string> | undefined
+    return (selectedNode?.sourceRefs || [])
+      .filter((ref) => ref.kind === 'text')
+      .map((ref) => ({
+        sourceId: ref.sourceId,
+        edgeId: ref.edgeId,
+        text: String(map?.get(ref.sourceId) || '').trim(),
+      }))
+      .filter((item) => item.text)
+    // textRevision 不出现在函数体里，但它正是「Map 变了」的唯一信号，必须留在依赖里
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNode?.sourceRefs, textRevision])
 
   /**
    * 首次载入节点后恢复上次选中的节点，连同编辑面板与输入框内容一起回到用户离开时的样子。
@@ -2089,6 +2182,42 @@ function CanvasInner() {
     },
     [selectedNode, setEdges, commitHistory],
   )
+
+  /**
+   * 把继承来的文本落成本节点自己的提示词，并断开这些文本连线。
+   *
+   * 「继承」和「自己的副本」只能有一个：留着连线又把内容复制进输入框，同一段文字会被拼两遍，
+   * 而且之后改文本节点，用户会困惑于「为什么改了没生效」。所以这里是一次性的转移动作。
+   * 全程只提交一次历史，撤销能一步回到继承状态。
+   */
+  const handleAdoptInheritedText = useCallback(() => {
+    const targetNodeId = selectedNode?.id
+    if (!targetNodeId) return
+    const inherited = inheritedPromptTexts
+    if (!inherited.length) return
+    const droppedEdgeIds = new Set(inherited.map((item) => item.edgeId))
+    const currentPrompt = String(
+      (latestRef.current.nodes.find((node) => node.id === targetNodeId)?.data as Record<string, unknown> | undefined)
+        ?.prompt || '',
+    )
+    const merged = [...inherited.map((item) => item.text), currentPrompt.trim()].filter(Boolean).join('\n\n')
+
+    commitHistory()
+    setEdges((items) => items.filter((edge) => !droppedEdgeIds.has(edge.id)))
+    setNodes((items) =>
+      items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, prompt: merged } } : item)),
+    )
+    setSelectedNode((current) =>
+      current?.id === targetNodeId
+        ? {
+            ...current,
+            prompt: merged,
+            sourceRefs: (current.sourceRefs || []).filter((ref) => !droppedEdgeIds.has(ref.edgeId)),
+          }
+        : current,
+    )
+    setSaveStatus('dirty')
+  }, [selectedNode?.id, inheritedPromptTexts, commitHistory, setEdges, setNodes, setSaveStatus])
 
   const handlePickRefNode = useCallback(
     (sourceNode: Node) => {
@@ -2723,6 +2852,7 @@ function CanvasInner() {
     ;(window as any).__canvasMarkDirty = () => {
       setSaveStatus('dirty')
       scheduleSyncRef.current()
+      bumpTextRevisionRef.current()
     }
     return () => {
       delete (window as any).__canvasMarkDirty
@@ -4823,6 +4953,9 @@ function CanvasInner() {
           </div>
         )}
 
+        {/* 箭头定义必须常驻、且先于任何连线存在于文档中，否则新建的第一条线要刷新才有箭头 */}
+        <CanvasEdgeArrowDefs />
+
         {/* 节点内的动作（截帧、时间线增删与合成）经 context 交回这里执行：
           回调不能塞进节点 data——data 会被持久化，放不了函数 */}
         <CanvasNodeActionsContext.Provider value={nodeActions}>
@@ -5177,6 +5310,8 @@ function CanvasInner() {
               onSaveText={handleSaveNodeText}
               onPromptChange={handleNodePromptChange}
               onParamsChange={handleNodeParamsChange}
+              inheritedTexts={inheritedPromptTexts}
+              onAdoptInheritedText={handleAdoptInheritedText}
               onPolishText={handlePolishNodeText}
               models={canvasModels}
               modelsLoading={modelsLoading}
