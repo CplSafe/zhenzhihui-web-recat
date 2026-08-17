@@ -13,13 +13,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   continueSession,
+  getSession,
   listChatModels,
+  listSessions,
+  setExecMode as setExecModeApi,
   startSession,
   type AgentChatModel,
   type AgentEvent,
   type AgentExecMode,
   type AgentKind,
+  type AgentMessage,
   type AgentPendingCall,
+  type AgentSession,
 } from '@/api/agent'
 import { uploadAssetFile } from '@/api/business'
 import styles from './AgentChatPanel.module.css'
@@ -89,10 +94,18 @@ const PARAM_LABELS: [string, string][] = [
 
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
 
+const STATUS_LABELS: Record<string, string> = {
+  idle: '待开始',
+  running: '进行中',
+  awaiting_confirm: '等待确认',
+  completed: '已完成',
+  failed: '失败',
+}
+
 export default function AgentChatPanel({
   workspaceId,
   kind = 'product_analysis',
-  title = '新建对话',
+  title: initialTitle = '新建对话',
   userName,
   suggestions = DEFAULT_SUGGESTIONS,
   onCollapse,
@@ -110,6 +123,10 @@ export default function AgentChatPanel({
   const [models, setModels] = useState<AgentChatModel[]>([])
   const [modelId, setModelId] = useState<number>(0)
   const [openMenu, setOpenMenu] = useState<'mode' | 'model' | 'plus' | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [sessions, setSessions] = useState<AgentSession[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [title, setTitle] = useState(initialTitle)
 
   const sessionRef = useRef<number>(0)
   const abortRef = useRef<AbortController | null>(null)
@@ -215,6 +232,7 @@ export default function AgentChatPanel({
       switch (ev.type) {
         case 'session':
           sessionRef.current = ev.data.session_id
+          if (ev.data.title) setTitle(ev.data.title)
           break
 
         case 'thinking':
@@ -372,6 +390,52 @@ export default function AgentChatPanel({
     [send],
   )
 
+  /** 打开历史列表并拉取。每次打开都重拉:会话在别处也可能新增。 */
+  const openHistory = useCallback(() => {
+    setHistoryOpen(true)
+    setHistoryLoading(true)
+    listSessions(workspaceId, kind)
+      .then(({ items }) => setSessions(items))
+      .catch((err: Error) => setError(err?.message || '加载历史对话失败'))
+      .finally(() => setHistoryLoading(false))
+  }, [workspaceId, kind])
+
+  /** 载入一个历史会话:把库里的消息还原成界面条目。 */
+  const loadSession = useCallback(
+    (id: number) => {
+      if (running) return
+      setHistoryOpen(false)
+      setError('')
+      getSession(id, workspaceId)
+        .then(({ session, messages }) => {
+          abortRef.current?.abort()
+          sessionRef.current = session.id
+          setTitle(session.title || '历史对话')
+          setExecMode(session.exec_mode)
+          if (session.model_version_id) setModelId(session.model_version_id)
+          setEntries(restoreEntries(messages))
+          setAttachments([])
+          setInput('')
+        })
+        .catch((err: Error) => setError(err?.message || '载入会话失败'))
+    },
+    [running, workspaceId],
+  )
+
+  /** 切换执行模式。已有会话要同步到后端,否则续跑仍按旧模式判断闸门。 */
+  const switchExecMode = useCallback(
+    (mode: AgentExecMode) => {
+      setExecMode(mode)
+      closeMenu()
+      if (sessionRef.current) {
+        void setExecModeApi(sessionRef.current, workspaceId, mode).catch((err: Error) =>
+          setError(err?.message || '切换模式失败'),
+        )
+      }
+    },
+    [closeMenu, workspaceId],
+  )
+
   /** 开新对话:清空本地状态,下次发送会重新建会话。 */
   const newChat = useCallback(() => {
     abortRef.current?.abort()
@@ -380,7 +444,8 @@ export default function AgentChatPanel({
     setAttachments([])
     setInput('')
     setError('')
-  }, [])
+    setTitle(initialTitle)
+  }, [initialTitle])
 
   const currentModel = useMemo(() => models.find((m) => m.id === modelId), [models, modelId])
   const currentMode = EXEC_MODES.find((m) => m.value === execMode) ?? EXEC_MODES[0]
@@ -396,11 +461,16 @@ export default function AgentChatPanel({
       }}
     >
       <div className={styles.header}>
-        {onOpenHistory && (
-          <button className={styles.iconBtn} onClick={onOpenHistory} title="历史对话">
-            <ListIcon />
-          </button>
-        )}
+        <button
+          className={styles.iconBtn}
+          onClick={() => {
+            onOpenHistory?.()
+            openHistory()
+          }}
+          title="历史对话"
+        >
+          <ListIcon />
+        </button>
         <span className={styles.title}>{title}</span>
         <div className={styles.headerActions}>
           {headerExtra}
@@ -414,6 +484,39 @@ export default function AgentChatPanel({
           )}
         </div>
       </div>
+
+      {historyOpen && (
+        <div className={styles.historyPanel}>
+          <div className={styles.historyHeader}>
+            <span>历史对话</span>
+            <button className={styles.iconBtn} onClick={() => setHistoryOpen(false)} title="关闭">
+              <CloseIcon />
+            </button>
+          </div>
+          <div className={styles.historyList}>
+            {historyLoading ? (
+              <div className={styles.historyEmpty}>加载中…</div>
+            ) : sessions.length === 0 ? (
+              <div className={styles.historyEmpty}>还没有历史对话</div>
+            ) : (
+              sessions.map((sess) => (
+                <button
+                  key={sess.id}
+                  className={styles.historyItem}
+                  onClick={() => loadSession(sess.id)}
+                  disabled={running}
+                >
+                  <span className={styles.historyItemTitle}>{sess.title || `会话 #${sess.id}`}</span>
+                  <span className={styles.historyItemMeta}>
+                    {STATUS_LABELS[sess.status] ?? sess.status}
+                    {sess.spent_credits > 0 ? ` · ${sess.spent_credits} 积分` : ''}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       <div className={styles.scroll} ref={scrollRef}>
         {empty ? (
@@ -542,14 +645,7 @@ export default function AgentChatPanel({
             {openMenu === 'mode' && (
               <div className={styles.menu}>
                 {EXEC_MODES.map((m) => (
-                  <button
-                    key={m.value}
-                    className={styles.menuItem}
-                    onClick={() => {
-                      setExecMode(m.value)
-                      closeMenu()
-                    }}
-                  >
+                  <button key={m.value} className={styles.menuItem} onClick={() => switchExecMode(m.value)}>
                     <span className={styles.menuItemIcon}>{m.value === 'manual' ? <HandIcon /> : <AutoIcon />}</span>
                     <span className={styles.menuItemBody}>
                       <span className={styles.menuItemTitle}>{m.title}</span>
@@ -613,6 +709,54 @@ export default function AgentChatPanel({
       </div>
     </div>
   )
+}
+
+/**
+ * 把持久化的消息还原成界面条目。
+ *
+ * system 消息不显示(是行为约束不是对话);tool 消息还原成轨迹而非正文——
+ * 工具结果动辄上万字,原样铺开会把历史对话变成搜索日志。
+ */
+function restoreEntries(messages: AgentMessage[]): Entry[] {
+  const out: Entry[] = []
+  for (const m of messages) {
+    if (m.role === 'system') continue
+
+    if (m.role === 'user') {
+      // 压缩摘要与工具占位是内部机制,不该出现在用户看到的历史里。
+      if (m.content.startsWith('[以下是此前对话的摘要]') || m.content.startsWith('[当前任务清单]')) {
+        continue
+      }
+      if (m.content.trim()) out.push({ kind: 'user', text: m.content })
+      continue
+    }
+
+    if (m.role === 'assistant') {
+      if (m.content.trim()) out.push({ kind: 'assistant', text: m.content })
+      // tool_calls 还原成轨迹,让用户看到 Agent 当时做了什么。
+      const calls = Array.isArray(m.tool_calls) ? m.tool_calls : []
+      for (const raw of calls) {
+        const call = raw as { function?: { name?: string; arguments?: string } }
+        const name = call?.function?.name
+        if (!name) continue
+        out.push({ kind: 'trace', label: TOOL_LABELS[name] ?? name, text: traceArg(call.function?.arguments) })
+      }
+      continue
+    }
+    // role === 'tool':结果本身不展示,轨迹已由上面的 tool_calls 表达。
+  }
+  return out
+}
+
+/** 从工具参数里取一个可读的摘要词,解析失败就不显示。 */
+function traceArg(rawArgs?: string): string {
+  if (!rawArgs) return ''
+  try {
+    const args = JSON.parse(rawArgs) as Record<string, unknown>
+    return String(args.query || args.topic || args.url || args.name || '')
+  } catch {
+    return ''
+  }
 }
 
 /* ── 条目渲染 ───────────────────────────────────────────── */

@@ -133,6 +133,14 @@ export function listSessions(workspaceId: number, kind?: AgentKind) {
   return requestJson<{ items: AgentSession[]; total: number }>(`${API_BASE}/sessions?${params}`)
 }
 
+/** 切换会话执行模式。会话已存在时必须同步到后端,否则续跑仍按旧模式判断闸门。 */
+export function setExecMode(sessionId: number, workspaceId: number, execMode: AgentExecMode) {
+  return requestJson<{ exec_mode: AgentExecMode }>(`${API_BASE}/sessions/${sessionId}/exec-mode`, {
+    method: 'PUT',
+    body: JSON.stringify({ workspace_id: workspaceId, exec_mode: execMode }),
+  })
+}
+
 export function getSession(sessionId: number, workspaceId: number) {
   return requestJson<{
     session: AgentSession

@@ -3,6 +3,7 @@
    panel 撑满容器高度,由宿主决定放在侧栏、抽屉还是整页。 */
 
 .panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -639,4 +640,92 @@
   .menu {
     animation: none;
   }
+}
+
+/* ── 历史对话 ─────────────────────────────────────────── */
+
+/* 覆盖在消息区之上而非挤占布局:关掉后对话位置不跳。 */
+.historyPanel {
+  position: absolute;
+  inset: 53px 0 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-surface);
+  animation: history-in 0.16s ease-out;
+}
+
+@keyframes history-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.historyHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-heading);
+  flex-shrink: 0;
+}
+
+.historyList {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.historyItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.historyItem:hover:not(:disabled) {
+  background: var(--color-brand-light);
+}
+
+.historyItem:disabled {
+  opacity: var(--opacity-semi-disabled);
+  cursor: not-allowed;
+}
+
+.historyItemTitle {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historyItemMeta {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.historyEmpty {
+  padding: var(--space-2xl) 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
 }
