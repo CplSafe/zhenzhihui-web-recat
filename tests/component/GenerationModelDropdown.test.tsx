@@ -104,18 +104,18 @@ describe('GenerationModelDropdown', () => {
     await user.click(trigger)
 
     const dialog = screen.getByRole('dialog', { name: '本次创作使用的模型' })
-    // 面板里没有「确认」：选择在 onChange 当下就已生效，无需再点一次确认
-    expect(within(dialog).queryByRole('button', { name: '确认' })).not.toBeInTheDocument()
-    expect(screen.getByText('请完成全部 3 项模型选择。')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '确认' })).toBeDisabled()
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '脚本生成模型' }), '101')
     // 选中即说明该模型的能力边界，用户不必等参数下拉变少或提交被拒才知道
     expect(screen.getByText('每次最多生成 10 个镜头')).toBeInTheDocument()
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '图生图模型' }), '301')
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '视频生成模型' }), '201')
-    expect(screen.getByText('模型配置完成，将沿用本次选择')).toBeInTheDocument()
+    expect(screen.getByText('模型配置完成，确认后将沿用本次选择')).toBeInTheDocument()
     expect(trigger).toHaveAccessibleName('生成模型，3/3 已选择')
 
-    await user.click(within(dialog).getByRole('button', { name: '关闭模型选择' }))
+    const confirm = within(dialog).getByRole('button', { name: '确认' })
+    expect(confirm).toBeEnabled()
+    await user.click(confirm)
     expect(screen.queryByRole('dialog', { name: '本次创作使用的模型' })).not.toBeInTheDocument()
     await waitFor(() => expect(trigger).toHaveFocus())
   })
