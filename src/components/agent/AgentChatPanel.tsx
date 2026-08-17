@@ -1,5 +1,8 @@
 /**
- * AgentChatPanel —— 画布右侧智能体对话栏。
+ * AgentChatPanel —— 独立的智能体对话组件。
+ *
+ * 不依赖画布或任何具体页面:传 workspaceId 即可用,画布、创意页、独立页面都能挂。
+ * 与宿主的联系只有可选回调(onCollapse / onOpenHistory / onGenerated)和 headerExtra 插槽。
  *
  * 交互要点:
  *  - SSE 单向流,无法在流内回传输入。「等待确认」不是挂起连接,而是结束当前流,
@@ -7,7 +10,7 @@
  *  - 生成前的确认闸门是钱包安全的最后一道:手动模式下必须用户点确认才提交扣费,
  *    只带 message 的追问("能不能改成10秒")绝不当作确认。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   continueSession,
   listChatModels,
@@ -18,25 +21,44 @@ import {
   type AgentKind,
   type AgentPendingCall,
 } from '@/api/agent'
+import { uploadAssetFile } from '@/api/business'
 import styles from './AgentChatPanel.module.css'
 
 /** 会话内渲染的一条内容。工具轨迹与对话消息同列展示,靠样式区分权重。 */
 type Entry =
-  | { kind: 'user'; text: string }
+  | { kind: 'user'; text: string; images?: string[] }
   | { kind: 'assistant'; text: string }
   | { kind: 'trace'; label: string; text: string; running?: boolean }
   | { kind: 'question'; text: string; options: string[]; answered?: boolean }
   | { kind: 'confirm'; call: AgentPendingCall; settled?: 'done' | 'cancelled' }
+
+/** 待发送的附件。上传完成前 url 为空,用本地预览图占位。 */
+interface Attachment {
+  id: string
+  name: string
+  previewUrl: string
+  url?: string
+  uploading: boolean
+  error?: string
+}
 
 interface AgentChatPanelProps {
   workspaceId: number
   kind?: AgentKind
   /** 面板标题,默认「新建对话」。 */
   title?: string
+  /** 问候语里的称呼,如用户昵称。 */
+  userName?: string
+  /** 快捷提示,不传用默认三条;传空数组则不显示。 */
+  suggestions?: string[]
   /** 收起面板。未传则不显示收起按钮。 */
   onCollapse?: () => void
-  /** 生成任务提交后回调,便于画布侧插入节点或刷新任务列表。 */
+  /** 打开历史会话列表。未传则不显示该按钮。 */
+  onOpenHistory?: () => void
+  /** 生成任务提交后回调,宿主可据此插入节点或刷新任务列表。 */
   onGenerated?: (info: { callId: string; estimatedCredits: number }) => void
+  /** 顶栏额外内容,宿主按需注入(如积分余额、通知)。 */
+  headerExtra?: ReactNode
 }
 
 const EXEC_MODES: { value: AgentExecMode; title: string; desc: string }[] = [
@@ -44,7 +66,7 @@ const EXEC_MODES: { value: AgentExecMode; title: string; desc: string }[] = [
   { value: 'auto', title: '自动生成', desc: 'Agent 会自主规划生成任务并自动执行' },
 ]
 
-const SUGGESTIONS = ['分析这个产品的选品价值', '帮我追踪这个品类的热点', '规划下一步怎么创作']
+const DEFAULT_SUGGESTIONS = ['分析这个产品的选品价值', '帮我追踪这个品类的热点', '规划下一步怎么创作']
 
 /** 工具名 → 展示标签。未知工具直接显示原名,不隐藏信息。 */
 const TOOL_LABELS: Record<string, string> = {
@@ -64,28 +86,35 @@ const PARAM_LABELS: [string, string][] = [
   ['count', '数量'],
 ]
 
+const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
+
 export default function AgentChatPanel({
   workspaceId,
   kind = 'product_analysis',
   title = '新建对话',
+  userName,
+  suggestions = DEFAULT_SUGGESTIONS,
   onCollapse,
+  onOpenHistory,
   onGenerated,
+  headerExtra,
 }: AgentChatPanelProps) {
   const [entries, setEntries] = useState<Entry[]>([])
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const [focused, setFocused] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const [execMode, setExecMode] = useState<AgentExecMode>('manual')
   const [models, setModels] = useState<AgentChatModel[]>([])
   const [modelId, setModelId] = useState<number>(0)
-  const [openMenu, setOpenMenu] = useState<'mode' | 'model' | null>(null)
+  const [openMenu, setOpenMenu] = useState<'mode' | 'model' | 'plus' | null>(null)
 
   const sessionRef = useRef<number>(0)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   // 模型列表来自后端 catalog,运营上下架模型后前端自动跟随。
   useEffect(() => {
@@ -104,7 +133,6 @@ export default function AgentChatPanel({
     }
   }, [])
 
-  // 新内容到达时贴底。
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
@@ -133,7 +161,43 @@ export default function AgentChatPanel({
 
   const push = useCallback((e: Entry) => setEntries((prev) => [...prev, e]), [])
 
-  /** 把 SSE 事件翻译成界面条目。 */
+  /* ── 附件上传 ─────────────────────────────────────────── */
+
+  const addFiles = useCallback(
+    (files: FileList | File[]) => {
+      const list = Array.from(files).filter((f) => f.type.startsWith('image/'))
+      if (list.length === 0) return
+
+      list.forEach((file) => {
+        const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`
+        const previewUrl = URL.createObjectURL(file)
+        setAttachments((prev) => [...prev, { id, name: file.name, previewUrl, uploading: true }])
+
+        uploadAssetFile({ workspaceId, file, source: 'agent-chat' })
+          .then((res: { asset?: { url?: string; public_url?: string } }) => {
+            const url = res?.asset?.url || res?.asset?.public_url || ''
+            setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, uploading: false, url } : a)))
+          })
+          .catch((err: Error) => {
+            setAttachments((prev) =>
+              prev.map((a) => (a.id === id ? { ...a, uploading: false, error: err?.message || '上传失败' } : a)),
+            )
+          })
+      })
+    },
+    [workspaceId],
+  )
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => {
+      const hit = prev.find((a) => a.id === id)
+      if (hit) URL.revokeObjectURL(hit.previewUrl)
+      return prev.filter((a) => a.id !== id)
+    })
+  }, [])
+
+  /* ── SSE 事件 → 界面条目 ──────────────────────────────── */
+
   const handleEvent = useCallback(
     (ev: AgentEvent) => {
       switch (ev.type) {
@@ -154,7 +218,7 @@ export default function AgentChatPanel({
         }
 
         case 'tool_result':
-          // 把最近一条同名 running 轨迹标记完成,而不是再加一条。
+          // 把最近一条 running 轨迹标记完成,而不是再加一条。
           setEntries((prev) => {
             const next = [...prev]
             for (let i = next.length - 1; i >= 0; i -= 1) {
@@ -169,11 +233,7 @@ export default function AgentChatPanel({
           break
 
         case 'await_input':
-          push({
-            kind: 'question',
-            text: ev.data.question,
-            options: ev.data.options ?? [],
-          })
+          push({ kind: 'question', text: ev.data.question, options: ev.data.options ?? [] })
           break
 
         case 'await_confirm':
@@ -222,12 +282,19 @@ export default function AgentChatPanel({
     [running, handleEvent],
   )
 
+  const uploading = attachments.some((a) => a.uploading)
+  const canSend = (input.trim().length > 0 || attachments.length > 0) && !running && !uploading
+
   const send = useCallback(
     (text: string) => {
       const message = text.trim()
-      if (!message || running) return
-      push({ kind: 'user', text: message })
+      const imageUrls = attachments.map((a) => a.url).filter((u): u is string => !!u)
+      if ((!message && imageUrls.length === 0) || running || uploading) return
+
+      push({ kind: 'user', text: message, images: attachments.map((a) => a.previewUrl) })
       setInput('')
+      // 预览 URL 交给已发出的消息继续引用,这里不 revoke,否则气泡里的图会裂。
+      setAttachments([])
 
       void runStream((onEvent, signal) =>
         sessionRef.current
@@ -246,6 +313,7 @@ export default function AgentChatPanel({
                 workspaceId,
                 kind,
                 message,
+                imageUrls,
                 execMode,
                 modelVersionId: modelId || undefined,
               },
@@ -254,7 +322,7 @@ export default function AgentChatPanel({
             ),
       )
     },
-    [running, push, runStream, workspaceId, kind, execMode, modelId],
+    [attachments, running, uploading, push, runStream, workspaceId, kind, execMode, modelId],
   )
 
   /** 确认或取消一次待定的生成。confirm=true 才会真正提交扣费。 */
@@ -267,22 +335,12 @@ export default function AgentChatPanel({
         ),
       )
       void runStream((onEvent, signal) =>
-        continueSession(
-          {
-            workspaceId,
-            sessionId: sessionRef.current,
-            confirm,
-            cancel: !confirm,
-          },
-          onEvent,
-          signal,
-        ),
+        continueSession({ workspaceId, sessionId: sessionRef.current, confirm, cancel: !confirm }, onEvent, signal),
       )
     },
     [running, runStream, workspaceId],
   )
 
-  /** 回答 Agent 的提问。 */
   const answer = useCallback(
     (text: string) => {
       setEntries((prev) => prev.map((e) => (e.kind === 'question' && !e.answered ? { ...e, answered: true } : e)))
@@ -291,25 +349,53 @@ export default function AgentChatPanel({
     [send],
   )
 
+  /** 开新对话:清空本地状态,下次发送会重新建会话。 */
+  const newChat = useCallback(() => {
+    abortRef.current?.abort()
+    sessionRef.current = 0
+    setEntries([])
+    setAttachments([])
+    setInput('')
+    setError('')
+  }, [])
+
   const currentModel = useMemo(() => models.find((m) => m.id === modelId), [models, modelId])
   const currentMode = EXEC_MODES.find((m) => m.value === execMode) ?? EXEC_MODES[0]
   const empty = entries.length === 0
 
   return (
-    <div className={styles.panel}>
+    <div
+      className={styles.panel}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault()
+        if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files)
+      }}
+    >
       <div className={styles.header}>
-        <span className={styles.title}>{title}</span>
-        {onCollapse && (
-          <button className={styles.iconBtn} onClick={onCollapse} aria-label="收起对话">
-            <CollapseIcon />
+        {onOpenHistory && (
+          <button className={styles.iconBtn} onClick={onOpenHistory} title="历史对话">
+            <ListIcon />
           </button>
         )}
+        <span className={styles.title}>{title}</span>
+        <div className={styles.headerActions}>
+          {headerExtra}
+          <button className={styles.iconBtn} onClick={newChat} title="新建对话">
+            <NewChatIcon />
+          </button>
+          {onCollapse && (
+            <button className={styles.iconBtn} onClick={onCollapse} title="收起对话">
+              <CollapseIcon />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className={styles.scroll} ref={scrollRef}>
         {empty ? (
           <div className={styles.greeting}>
-            <div className={styles.greetingHi}>Hi，</div>
+            <div className={styles.greetingHi}>Hi{userName ? ` ${userName}` : ''}!</div>
             <div className={styles.greetingAsk}>今天一起创作点什么？</div>
           </div>
         ) : (
@@ -325,9 +411,9 @@ export default function AgentChatPanel({
       )}
       {error && <div className={styles.errorBar}>{error}</div>}
 
-      {empty && !running && (
+      {empty && !running && suggestions.length > 0 && (
         <div className={styles.suggestions}>
-          {SUGGESTIONS.map((s) => (
+          {suggestions.map((s) => (
             <button key={s} className={styles.suggestion} onClick={() => send(s)}>
               <SparkIcon />
               {s}
@@ -337,8 +423,26 @@ export default function AgentChatPanel({
       )}
 
       <div className={`${styles.composer} ${focused ? styles.composerFocused : ''}`}>
+        {attachments.length > 0 && (
+          <div className={styles.attachments}>
+            {attachments.map((a) => (
+              <div
+                key={a.id}
+                className={`${styles.thumb} ${a.error ? styles.thumbError : ''}`}
+                title={a.error || a.name}
+              >
+                <img src={a.previewUrl} alt={a.name} />
+                {a.uploading && <span className={styles.thumbMask}>上传中</span>}
+                {a.error && <span className={styles.thumbMask}>失败</span>}
+                <button className={styles.thumbRemove} onClick={() => removeAttachment(a.id)} aria-label="移除附件">
+                  <CloseIcon />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <textarea
-          ref={textareaRef}
           className={styles.textarea}
           rows={2}
           value={input}
@@ -346,16 +450,64 @@ export default function AgentChatPanel({
           onChange={(e) => setInput(e.target.value)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData.files)
+            if (files.length) {
+              e.preventDefault()
+              addFiles(files)
+            }
+          }}
           onKeyDown={(e) => {
             // Enter 发送，Shift+Enter 换行。
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
-              send(input)
+              if (canSend) send(input)
             }
           }}
         />
 
         <div className={styles.composerBar} ref={barRef}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept={ACCEPT}
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files) addFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
+
+          <div className={styles.menuWrap}>
+            <button
+              className={`${styles.pickerBtn} ${openMenu === 'plus' ? styles.pickerBtnActive : ''}`}
+              onClick={() => setOpenMenu(openMenu === 'plus' ? null : 'plus')}
+              title="添加内容"
+            >
+              <PlusIcon />
+            </button>
+            {openMenu === 'plus' && (
+              <div className={styles.menu}>
+                <button
+                  className={styles.menuItem}
+                  onClick={() => {
+                    fileRef.current?.click()
+                    closeMenu()
+                  }}
+                >
+                  <span className={styles.menuItemIcon}>
+                    <ClipIcon />
+                  </span>
+                  <span className={styles.menuItemBody}>
+                    <span className={styles.menuItemTitle}>上传附件</span>
+                    <span className={styles.menuItemDesc}>支持图片，也可直接拖入或粘贴</span>
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className={styles.menuWrap}>
             <button
               className={`${styles.pickerBtn} ${openMenu === 'mode' ? styles.pickerBtnActive : ''}`}
@@ -431,12 +583,7 @@ export default function AgentChatPanel({
             )}
           </div>
 
-          <button
-            className={styles.sendBtn}
-            disabled={!input.trim() || running}
-            onClick={() => send(input)}
-            aria-label="发送"
-          >
+          <button className={styles.sendBtn} disabled={!canSend} onClick={() => send(input)} aria-label="发送">
             <ArrowUpIcon />
           </button>
         </div>
@@ -456,7 +603,20 @@ function EntryView({
   onAnswer: (text: string) => void
   onSettle: (callId: string, confirm: boolean) => void
 }) {
-  if (entry.kind === 'user') return <div className={styles.bubbleUser}>{entry.text}</div>
+  if (entry.kind === 'user') {
+    return (
+      <div className={styles.userGroup}>
+        {entry.images && entry.images.length > 0 && (
+          <div className={styles.userImages}>
+            {entry.images.map((src) => (
+              <img key={src} src={src} alt="" />
+            ))}
+          </div>
+        )}
+        {entry.text && <div className={styles.bubbleUser}>{entry.text}</div>}
+      </div>
+    )
+  }
   if (entry.kind === 'assistant') return <div className={styles.bubbleAssistant}>{entry.text}</div>
 
   if (entry.kind === 'trace') {
@@ -532,10 +692,53 @@ const stroke = {
   strokeLinejoin: 'round' as const,
 }
 
+function ListIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
+      <circle cx="4" cy="4.5" r="1.6" />
+      <circle cx="4" cy="11.5" r="1.6" />
+      <path d="M8.5 3.5h5M8.5 6h3M8.5 10.5h5M8.5 13h3" />
+    </svg>
+  )
+}
+
+function NewChatIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
+      <path d="M13.5 9.5a2 2 0 01-2 2H6l-3 2.5v-2.5H4a2 2 0 01-2-2v-6a2 2 0 012-2h7.5a2 2 0 012 2z" />
+      <path d="M7.75 4.75v3.5M6 6.5h3.5" />
+    </svg>
+  )
+}
+
 function CollapseIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
-      <path d="M9.5 2.5v11M3 6l2.5 2L3 10" />
+      <path d="M6.5 9.5L2.5 13.5M6.5 9.5H3.5M6.5 9.5V12.5M9.5 6.5L13.5 2.5M9.5 6.5H12.5M9.5 6.5V3.5" />
+    </svg>
+  )
+}
+
+function PlusIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
+      <path d="M8 3.5v9M3.5 8h9" />
+    </svg>
+  )
+}
+
+function ClipIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" {...stroke}>
+      <path d="M11.5 7.5l-4 4a2.5 2.5 0 01-3.5-3.5l5-5a1.7 1.7 0 012.4 2.4l-5 5a.9.9 0 01-1.2-1.2l4.3-4.3" />
+    </svg>
+  )
+}
+
+function CloseIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 16 16" {...stroke} strokeWidth={2}>
+      <path d="M4 4l8 8M12 4l-8 8" />
     </svg>
   )
 }
