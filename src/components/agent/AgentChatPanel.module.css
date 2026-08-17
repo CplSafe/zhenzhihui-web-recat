@@ -1,5 +1,6 @@
-/* AgentChatPanel —— 画布右侧智能体对话栏。
-   配色全部走 tokens.css,与项目主题一致(品牌色 #5767e5)。 */
+/* AgentChatPanel —— 独立智能体对话组件。
+   配色全部走 tokens.css,与项目主题一致(品牌色 #5767e5)。
+   panel 撑满容器高度,由宿主决定放在侧栏、抽屉还是整页。 */
 
 .panel {
   display: flex;
@@ -31,6 +32,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .iconBtn {
@@ -88,9 +96,31 @@
   line-height: 1.35;
 }
 
-.bubbleUser {
+.userGroup {
   align-self: flex-end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
   max-width: 85%;
+}
+
+.userImages {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.userImages img {
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+}
+
+.bubbleUser {
   padding: 10px 14px;
   border-radius: var(--radius-2xl) var(--radius-2xl) var(--radius-sm) var(--radius-2xl);
   background: var(--color-brand);
@@ -313,6 +343,73 @@
 .composerFocused {
   border-color: var(--color-brand);
   box-shadow: var(--shadow-focus-ring);
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+
+.thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  flex-shrink: 0;
+}
+
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.thumbError {
+  border-color: var(--color-error);
+}
+
+/* 上传中 / 失败的遮罩:盖住缩略图给出状态,不额外占布局空间。 */
+.thumbMask {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(17, 24, 39, 0.55);
+  color: #fff;
+  font-size: 11px;
+}
+
+.thumbRemove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: rgba(17, 24, 39, 0.6);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.thumb:hover .thumbRemove {
+  opacity: 1;
+}
+
+.thumbRemove:focus-visible {
+  opacity: 1;
+  outline: none;
 }
 
 .textarea {
