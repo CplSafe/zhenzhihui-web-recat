@@ -81,6 +81,9 @@ const TOOL_LABELS: Record<string, string> = {
   save_finding: '记录',
   list_findings: '盘点',
   generate_video: '生成视频',
+  update_todo: '规划任务',
+  load_skill: '加载技能',
+  dispatch_subagents: '并行调研',
 }
 
 /** 确认卡片里展示的参数,按这个顺序排;其余参数不展示避免噪音。 */
@@ -123,6 +126,9 @@ export default function AgentChatPanel({
   const [models, setModels] = useState<AgentChatModel[]>([])
   const [modelId, setModelId] = useState<number>(0)
   const [openMenu, setOpenMenu] = useState<'mode' | 'model' | 'plus' | null>(null)
+  // status 是"当前正在做什么"的一句话,替代静态的「正在思考」。
+  // Agent 一轮要十几秒,静态文案会让用户以为卡住了。
+  const [status, setStatus] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -235,12 +241,21 @@ export default function AgentChatPanel({
           if (ev.data.title) setTitle(ev.data.title)
           break
 
+        case 'turn':
+          setStatus(
+            ev.data.turn === 1
+              ? '正在思考…'
+              : `正在思考…(第 ${ev.data.turn} 轮 · 已用 ${Math.round(ev.data.tokens / 1000)}k tokens)`,
+          )
+          break
+
         case 'thinking':
           if (ev.data.content) push({ kind: 'assistant', text: ev.data.content })
           break
 
         case 'tool_call': {
           const label = TOOL_LABELS[ev.data.name] ?? ev.data.name
+          setStatus(`${label}中…`)
           const text =
             (ev.data.args?.query as string) || (ev.data.args?.topic as string) || (ev.data.args?.url as string) || ''
           push({ kind: 'trace', label, text, running: true })
@@ -273,6 +288,7 @@ export default function AgentChatPanel({
         case 'subagent': {
           const d = ev.data
           if (d.stage === 'start') {
+            setStatus(`正在并行调研 ${d.topics?.length ?? 0} 个方向…`)
             push({
               kind: 'trace',
               label: '并行调研',
@@ -280,6 +296,7 @@ export default function AgentChatPanel({
               running: true,
             })
           } else if (d.stage === 'tool') {
+            setStatus(`${d.topic} · 搜索中…`)
             push({ kind: 'trace', label: `${d.topic} · 搜索`, text: d.query ?? '', running: true })
           } else if (d.stage === 'done') {
             // 标完成而不是再加一条:否则几十条轨迹会把对话淹没。
@@ -294,20 +311,24 @@ export default function AgentChatPanel({
               }
               return next
             })
+            setStatus(`调研进度 ${d.finished}/${d.total}…`)
             if (d.finished === d.total) {
               push({ kind: 'trace', label: '调研完成', text: `${d.total} 项已汇总` })
+              setStatus('正在汇总调研结果…')
             }
           }
           break
         }
 
         case 'compaction':
+          setStatus('正在压缩上下文…')
           if (ev.data.stage === 'summarize' && ev.data.replaced) {
             push({ kind: 'trace', label: '上下文压缩', text: `已归纳 ${ev.data.replaced} 条历史` })
           }
           break
 
         case 'generating':
+          setStatus('正在提交视频生成…')
           push({ kind: 'trace', label: '生成视频', text: '已提交，生成中', running: true })
           onGenerated?.({
             callId: ev.data.call_id,
@@ -343,6 +364,7 @@ export default function AgentChatPanel({
         }
       } finally {
         setRunning(false)
+        setStatus('')
         abortRef.current = null
       }
     },
@@ -569,7 +591,7 @@ export default function AgentChatPanel({
       {running && (
         <div className={styles.statusBar}>
           <span className={styles.dot} />
-          Agent 正在思考…
+          {status || '正在思考…'}
         </div>
       )}
       {error && <div className={styles.errorBar}>{error}</div>}
@@ -783,6 +805,28 @@ function restoreEntries(messages: AgentMessage[]): Entry[] {
     // role === 'tool':结果本身不展示,轨迹已由上面的 tool_calls 表达。
   }
   return out
+}
+
+/**
+ * 从工具参数里取一句可读摘要。
+ *
+ * 不同工具的"关键参数"不同:搜索看 query,规划看清单条数——
+ * 统一取 query 会让规划、盘点这类工具显示成空白轨迹条。
+ */
+function traceText(name: string, args?: Record<string, unknown>): string {
+  if (!args) return ''
+  if (name === 'update_todo') {
+    const items = Array.isArray(args.items) ? args.items : []
+    return items.length ? `${items.length} 个步骤` : ''
+  }
+  if (name === 'dispatch_subagents') {
+    const tasks = (Array.isArray(args.tasks) ? args.tasks : []) as { topic?: string }[]
+    return tasks
+      .map((t) => t.topic)
+      .filter(Boolean)
+      .join(' / ')
+  }
+  return String(args.query || args.topic || args.url || args.name || '')
 }
 
 /** 从工具参数里取一个可读的摘要词,解析失败就不显示。 */

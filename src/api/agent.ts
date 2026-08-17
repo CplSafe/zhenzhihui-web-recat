@@ -79,6 +79,7 @@ export interface AgentPendingCall {
 /** SSE 事件。type 决定 data 的形状。 */
 export type AgentEvent =
   | { type: 'session'; data: { session_id: number; title: string } }
+  | { type: 'turn'; data: { turn: number; max_turns: number; tokens: number } }
   | { type: 'thinking'; data: { content: string } }
   | { type: 'tool_call'; data: { name: string; args: Record<string, unknown> } }
   | { type: 'tool_result'; data: { name: string; preview: string } }
