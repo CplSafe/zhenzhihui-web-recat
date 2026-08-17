@@ -1,0 +1,127 @@
+/* 画布视频下拉：由轨道末尾的「+」唤起，向上展开避免被节点底边裁掉 */
+.addMenu {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 190px;
+  max-height: 210px;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid #2b303b;
+  border-radius: 10px;
+  background: #1c1f27;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 50%);
+}
+
+.addMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #e6e8ee;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.addMenuItem:hover {
+  background: rgb(87 103 229 / 26%);
+}
+
+.addMenuThumb {
+  width: 40px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: #0f1116;
+  object-fit: cover;
+}
+
+.addMenuLabel {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.addMenuEmpty {
+  padding: 8px 6px;
+  color: #9aa3b2;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* 剪辑时间线节点卡片：预览在上，片段条与操作行贴底，整体撑满节点 */
+.body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 2px;
+  text-align: left;
+}
+
+/* 播放器会占满节点，提供一个不拦截播放控件的稳定拖拽落点。 */
+.dragHandle {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 38px;
+  height: 20px;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 999px;
+  background: rgb(15 17 22 / 72%);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 20%);
+  cursor: grab;
+  user-select: none;
+  backdrop-filter: blur(4px);
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.dragHandle span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 88%);
+}
+
+/* 预览区吃掉剩余高度；min-height 保底避免片段多时被压没 */
+.preview {
+  flex: 1;
+  min-height: 96px;
+}
+
+.composed {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  background: #0f1116;
+  object-fit: contain;
+}
+
+.pending {
+  flex: none;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgb(251 191 36 / 14%);
+  color: #a16207;
+  font-size: 11px;
+  line-height: 1.3;
+}

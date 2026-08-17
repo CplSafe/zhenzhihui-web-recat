@@ -36,6 +36,15 @@ interface WheelPickerProps {
 /** 滚动停止判定:滚轮惯性结束后再提交,过短会在滑动途中误提交。 */
 const SETTLE_DELAY_MS = 140
 
+/**
+ * 触发一次步进所需的累计 deltaY(px)。
+ *
+ * 取一个远小于档位高度的值:鼠标滚轮一格(Chrome 下 deltaY≈100)会立刻满足阈值走一档,
+ * 触控板的连续小 delta 则累计到这个值才走一档。每个 wheel 事件最多走一档,
+ * 所以一格就是一档,不会因为 delta 大而一路冲过去。
+ */
+const WHEEL_STEP_THRESHOLD_PX = 16
+
 export default function WheelPicker({
   options,
   value,
@@ -112,6 +121,48 @@ export default function WheelPicker({
     window.clearTimeout(settleTimerRef.current)
     settleTimerRef.current = window.setTimeout(() => commitIndex(index), SETTLE_DELAY_MS)
   }
+
+  /**
+   * 滚轮步进一档。放在 ref 里，供下面非被动的原生 wheel 监听调用，避免闭包读到过期的 centerIndex。
+   */
+  const stepRef = useRef<(direction: number) => void>(() => undefined)
+  stepRef.current = (direction: number) => {
+    const total = latestRef.current.options.length
+    if (!total) return
+    const next = Math.min(total - 1, Math.max(0, centerIndex + direction))
+    if (next === centerIndex) return
+    setCenterIndex(next)
+    scrollToIndex(next, true)
+    window.clearTimeout(settleTimerRef.current)
+    settleTimerRef.current = window.setTimeout(() => commitIndex(next), SETTLE_DELAY_MS)
+  }
+
+  /**
+   * 自己消费 wheel 事件，按「格数」而不是「像素」步进。
+   *
+   * 交给原生滚动的话，deltaY 会被当成像素距离：Chrome 一格滚轮 deltaY≈100，而档位只有 36px，
+   * 一格就跨过约三档——5 秒想选 6 秒根本停不住，只能改用点击，等于滚轮白做了。
+   * 必须用 addEventListener 且 passive:false：React 的 onWheel 在根节点是被动监听，
+   * 里面调 preventDefault 不生效，原生滚动照样发生。
+   */
+  useEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    let accumulated = 0
+    const onWheel = (event: WheelEvent) => {
+      // deltaMode 为行/页时 deltaY 不是像素，按档位高度折算，保证阈值判断口径一致
+      const delta = event.deltaMode === 0 ? event.deltaY : event.deltaY * itemHeight
+      if (!delta) return
+      event.preventDefault()
+      accumulated += delta
+      if (Math.abs(accumulated) < WHEEL_STEP_THRESHOLD_PX) return
+      const direction = accumulated > 0 ? 1 : -1
+      accumulated = 0
+      stepRef.current(direction)
+    }
+    list.addEventListener('wheel', onWheel, { passive: false })
+    return () => list.removeEventListener('wheel', onWheel)
+  }, [itemHeight])
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {

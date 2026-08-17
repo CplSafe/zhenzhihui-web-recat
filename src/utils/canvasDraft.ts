@@ -4,6 +4,7 @@
  * 草稿键按项目 id 隔离，避免不同画布项目互相覆盖
  */
 import type { Node, Edge } from '@xyflow/react'
+import { pickPersistedNodeData } from '@/utils/canvasElements'
 
 const DRAFT_KEY_PREFIX = 'zzh_canvas_draft'
 
@@ -18,15 +19,11 @@ interface CanvasDraft {
     id: string
     type: string
     position: { x: number; y: number }
-    data: {
-      kind: string
-      ratio?: string
-      videoMode?: string
-      modelVersionId?: number
-      /** 素材来源：素材库应用后需持久化，刷新才能恢复节点内容 */
-      assetId?: number
-      resultUrl?: string
-    }
+    /**
+     * 节点业务数据。字段集合与云端 mutation 共用 PERSISTED_NODE_DATA_FIELDS——
+     * 两处各写一份白名单时，草稿曾经漏掉 prompt / realPerson / timeline。
+     */
+    data: Record<string, unknown>
     style?: { width: number; height: number }
   }>
   edges: Array<{
@@ -71,15 +68,7 @@ export function saveCanvasDraft(nodes: Node[], edges: Edge[], projectId?: string
       id: n.id,
       type: n.type || 'text',
       position: n.position,
-      data: {
-        kind: (n.data?.kind as string) || 'text',
-        ratio: (n.data as any)?.ratio as string | undefined,
-        videoMode: (n.data as any)?.videoMode as string | undefined,
-        modelVersionId: (n.data as any)?.modelVersionId as number | undefined,
-        // 素材来源字段一并持久化，刷新后节点才能恢复素材内容
-        assetId: (n.data as any)?.assetId as number | undefined,
-        resultUrl: (n.data as any)?.resultUrl as string | undefined,
-      },
+      data: { kind: 'text', ...pickPersistedNodeData((n.data || {}) as Record<string, unknown>) },
       style: n.style as { width: number; height: number } | undefined,
     })),
     edges: edges.map((e) => ({

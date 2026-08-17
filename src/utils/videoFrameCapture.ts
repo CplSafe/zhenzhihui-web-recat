@@ -210,3 +210,84 @@ export async function seekVideoToDecodedFrame(
     }
   })
 }
+
+/** 截帧位置。首帧用来接续上一个镜头，尾帧用来给下一个镜头当起点。 */
+export type VideoFramePosition = 'current' | 'first' | 'last'
+
+/**
+ * 末帧不能直接取 duration。
+ * 正好落在结尾时多数浏览器不会解码出新帧，还会顺带触发 ended；
+ * 往回退约一帧（按 20fps 算）既能拿到画面，视觉上仍是最后一帧。
+ */
+const LAST_FRAME_BACKOFF_SEC = 0.05
+
+/**
+ * 把 video 当前画面画进离屏 canvas，返回 JPEG dataURL。
+ *
+ * 画布素材走同源 /download，canvas 不会被污染；万一取到的是跨域直链导致污染，
+ * toDataURL 会抛错，这里返回空串由调用方提示，而不是让异常冒到渲染层。
+ */
+export function captureVideoFrameDataUrl(video: HTMLVideoElement | null): string {
+  if (!video) return ''
+  const width = video.videoWidth
+  const height = video.videoHeight
+  if (!(width > 0) || !(height > 0)) return ''
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) return ''
+    context.drawImage(video, 0, 0, width, height)
+    return canvas.toDataURL('image/jpeg', 0.92)
+  } catch {
+    return ''
+  }
+}
+
+/** 求某个截帧位置对应的时刻；时长未知时返回 null，交由调用方提示而不是画出一张黑图。 */
+export function resolveFrameTimeSec(position: VideoFramePosition, durationSec: number): number | null {
+  if (position === 'current') return null
+  const duration = Number(durationSec)
+  if (!Number.isFinite(duration) || duration <= 0) return null
+  return position === 'first' ? 0 : Math.max(0, duration - LAST_FRAME_BACKOFF_SEC)
+}
+
+/**
+ * 取指定位置的一帧。
+ *
+ * current 直接画当前画面；first/last 先定位过去、确认该帧已解码再画，
+ * 画完把播放位置与播放状态还原——截帧是旁路动作，不该把用户正在看的位置带走。
+ * 定位失败（超时/取消/时长未知）返回空串，由调用方提示。
+ */
+export async function captureVideoFrame(
+  video: HTMLVideoElement | null,
+  position: VideoFramePosition = 'current',
+  options: SeekVideoFrameOptions = {},
+): Promise<string> {
+  if (!video) return ''
+  const target = resolveFrameTimeSec(position, video.duration)
+  if (target === null) return position === 'current' ? captureVideoFrameDataUrl(video) : ''
+
+  const previousTime = Number(video.currentTime) || 0
+  const wasPlaying = !video.paused
+  if (wasPlaying) video.pause()
+
+  try {
+    await seekVideoToDecodedFrame(video, target, options)
+    return captureVideoFrameDataUrl(video)
+  } catch {
+    return ''
+  } finally {
+    // 还原不该影响截帧结果：即便回不到原位置，已经拿到的那一帧照常返回
+    try {
+      await seekVideoToDecodedFrame(video, previousTime, options)
+    } catch {
+      /* 回不去就算了，用户可以自己拖回来 */
+    }
+    if (wasPlaying) {
+      const played = video.play()
+      if (played && typeof played.catch === 'function') played.catch(() => undefined)
+    }
+  }
+}

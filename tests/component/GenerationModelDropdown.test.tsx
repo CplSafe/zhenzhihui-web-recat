@@ -106,7 +106,8 @@ describe('GenerationModelDropdown', () => {
     const dialog = screen.getByRole('dialog', { name: '本次创作使用的模型' })
     expect(within(dialog).getByRole('button', { name: '确认' })).toBeDisabled()
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '脚本生成模型' }), '101')
-    expect(screen.queryByText('每次最多生成 10 个镜头')).not.toBeInTheDocument()
+    // 选中即说明该模型的能力边界，用户不必等参数下拉变少或提交被拒才知道
+    expect(screen.getByText('每次最多生成 10 个镜头')).toBeInTheDocument()
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '图生图模型' }), '301')
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '视频生成模型' }), '201')
     expect(screen.getByText('模型配置完成，确认后将沿用本次选择')).toBeInTheDocument()
@@ -119,14 +120,15 @@ describe('GenerationModelDropdown', () => {
     await waitFor(() => expect(trigger).toHaveFocus())
   })
 
-  it('keeps backend restrictions hidden while retaining selection validation and restores focus on Escape', async () => {
+  it('shows the selected model restrictions without a section header and restores focus on Escape', async () => {
     const user = userEvent.setup()
     render(<StatefulDropdown initial={{ 'responses.multimodal': 101 }} />)
 
     const trigger = screen.getByRole('button', { name: '生成模型，1/3 已选择' })
     await user.click(trigger)
+    // 限制直接跟在模型下面，不再另起一个「使用限制」小标题占版面
     expect(screen.queryByText('使用限制')).not.toBeInTheDocument()
-    expect(screen.queryByText('每次最多生成 10 个镜头')).not.toBeInTheDocument()
+    expect(screen.getByText('每次最多生成 10 个镜头')).toBeInTheDocument()
 
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -509,5 +511,45 @@ describe('video.edit duration is judged against the source video, not the target
     expect(isDurationSupportedByGenerationModel(mixedGroups, {}, 'video.edit', 30)).toBe(true)
     expect(isDurationSupportedByGenerationModel(mixedGroups, selection, 'video.edit', null)).toBe(true)
     expect(isDurationSupportedByGenerationModel(mixedGroups, selection, 'video.replicate', 30)).toBe(true)
+  })
+})
+
+describe('游客态的模型入口', () => {
+  it('没有任何可选模型时也保留入口，让未登录用户看得见这项能力', () => {
+    render(<GenerationModelDropdown groups={[]} selected={{}} onChange={vi.fn()} authRequired />)
+    expect(screen.getByRole('button', { name: '生成模型，登录后可选择' })).toBeInTheDocument()
+  })
+
+  it('点击后交给登录引导，而不是展开一个空面板', async () => {
+    const user = userEvent.setup()
+    const onAuthRequired = vi.fn()
+    const onChange = vi.fn()
+    render(
+      <GenerationModelDropdown
+        groups={groups}
+        selected={{}}
+        onChange={onChange}
+        authRequired
+        onAuthRequired={onAuthRequired}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '生成模型，登录后可选择' }))
+    expect(onAuthRequired).toHaveBeenCalledTimes(1)
+    // 面板一旦展开，游客就会对着一个空列表反复点击，误以为功能坏了
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('已登录且目录为空时维持原行为：不渲染入口', () => {
+    const { container } = render(<GenerationModelDropdown groups={[]} selected={{}} onChange={vi.fn()} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('已登录时不受影响，入口照常展开', async () => {
+    const user = userEvent.setup()
+    render(<GenerationModelDropdown groups={groups} selected={{}} onChange={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: /生成模型/ }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 })

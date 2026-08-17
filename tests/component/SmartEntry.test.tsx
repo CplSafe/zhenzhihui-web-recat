@@ -134,15 +134,17 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.queryByRole('dialog', { name: 'AI 引导' })).not.toBeInTheDocument()
   })
 
-  it('requires a video model before the duration can be chosen and starts unselected', async () => {
+  it('lets the duration be chosen before any model, starting unselected', async () => {
     const user = userEvent.setup()
     render(<TestSmartEntry onSubmit={vi.fn()} initial={{ text: '逐秒时长' }} />)
 
-    // 时长默认未选（显示占位文案）：档位由模型决定，先选秒数只会选到模型并不支持的值。
-    const durationTrigger = screen.getByRole('button', { name: '选择时长' })
-    await user.click(durationTrigger)
-    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
-    expect(mocks.showToast).toHaveBeenCalledWith('请先选择视频模型', 'info')
+    // 时长默认未选（显示占位文案），但不锁：秒数是需求、模型是实现选择，谁先定都合理。
+    await user.click(screen.getByRole('button', { name: '选择时长' }))
+    const options = within(screen.getByRole('listbox'))
+      .getAllByRole('option')
+      .map((option) => option.textContent)
+    expect(options).toContain('5s')
+    expect(mocks.showToast).not.toHaveBeenCalledWith('请先选择视频模型', 'info')
   })
 
   it('offers every whole-second duration once a model without duration constraints is selected', async () => {
@@ -387,23 +389,28 @@ describe('SmartEntry mode, options, validation, and submission', () => {
 
     await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
     await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '901')
-    expect(screen.queryByText('时长仅支持：5 秒、10 秒')).not.toBeInTheDocument()
-    expect(screen.queryByText('画面比例支持：16:9')).not.toBeInTheDocument()
+    // 选中模型的当下就说明它做不了什么，不必等下拉档位变少或提交被拒才发现
+    expect(screen.getByText('时长仅支持：5 秒、10 秒')).toBeInTheDocument()
+    expect(screen.getByText('画面比例支持：16:9')).toBeInTheDocument()
     expect(screen.getByText('当前创作参数与所选模型不兼容')).toBeInTheDocument()
     const submit = screen.getByRole('button', { name: '去制作' })
     expect(submit).toBeEnabled()
     await user.click(submit)
     expect(mocks.showToast).toHaveBeenCalledWith('当前创作参数与所选模型不兼容，请调整模型或创作参数', 'info')
 
+    // 列表反过来标出做不到本次秒数的模型，用户不必逐个试
+    expect(screen.getByRole('option', { name: /本次 6 秒不支持/ })).toBeInTheDocument()
+
     await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
-    // 时长档位跟随模型：不受支持的 6s 已就近吸附为 5s，下拉里也只剩模型声明的秒数。
-    expect(screen.queryByRole('button', { name: '6s' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '5s' }))
+    // 用户选的 6s 原样保留：模型不支持不等于可以替他改成 5s，静默吸附就是在丢掉用户的输入。
+    await user.click(screen.getByRole('button', { name: '6s' }))
+    // 档位本身仍跟随模型，只剩它声明的秒数
     expect(screen.getByRole('option', { name: '10s' })).toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: '6s' })).not.toBeInTheDocument()
     expect(screen.queryByRole('option', { name: '15s' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('option', { name: '5s' }))
-    await user.click(screen.getByRole('button', { name: '9:16' }))
+    // 比例同样只剩模型支持的那一项；它没被用户显式选过，所以跟着模型收敛到 16:9
+    await user.click(screen.getByRole('button', { name: '16:9' }))
+    expect(screen.queryByRole('option', { name: '9:16' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('option', { name: '16:9' }))
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
   })

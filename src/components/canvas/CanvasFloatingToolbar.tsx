@@ -114,6 +114,21 @@ function CanvasFloatingToolbar({
             <button
               className={styles.addMenuItem}
               onClick={() => {
+                onAddNode('timeline')
+                setMenuOpen(false)
+              }}
+            >
+              <span className={styles.addMenuIcon}>
+                <TimelineTypeIcon />
+              </span>
+              <div className={styles.addMenuText}>
+                <span className={styles.addMenuLabel}>视频剪辑</span>
+                <span className={styles.addMenuDesc}>把多段视频串成一条成片</span>
+              </div>
+            </button>
+            <button
+              className={styles.addMenuItem}
+              onClick={() => {
                 onAddLocalImage()
                 setMenuOpen(false)
               }}
@@ -257,6 +272,16 @@ function VideoTypeIcon() {
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
       <rect x="1" y="2.5" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
       <polygon points="6,5 10,7 6,9" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** 胶片格子：与「多段素材串成一条」的语义对应 */
+function TimelineTypeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <rect x="1" y="3" width="12" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M5 3v8M9 3v8" stroke="currentColor" strokeWidth="1.2" />
     </svg>
   )
 }

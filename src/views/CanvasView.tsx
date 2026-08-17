@@ -3,8 +3,8 @@
  *
  * 页面职责：提供无限画布，通过节点+连线方式组织 AI 生成管线。
  */
-import { useCallback, useRef, useState, useEffect, useMemo, type CSSProperties } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { createContext, useCallback, useContext, useRef, useState, useEffect, useMemo, type CSSProperties } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import brandLogo from '@/img/image copy 7.png'
 import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
 import type { DraftSaveStatus } from '@/utils/creativeDraftPersistence'
@@ -27,8 +27,21 @@ import {
   ReactFlowProvider,
   EdgeLabelRenderer,
   getBezierPath,
+  MarkerType,
+  type EdgeMarker,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+
+/**
+ * 连线箭头仅属于画布展示层，不写入元素持久化数据。
+ * 这样历史画布与新建画布都能统一显示方向，同时不会制造无意义的云端 revision。
+ */
+const CANVAS_EDGE_END_MARKER: EdgeMarker = {
+  type: MarkerType.ArrowClosed,
+  width: 26,
+  height: 26,
+  color: '#66717f',
+}
 import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
 import CanvasNodePanel, {
   type CanvasNodeInfo,
@@ -46,8 +59,9 @@ import { loadLastSelectedNodeId, saveLastSelectedNodeId } from '@/utils/canvasSe
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
-import type { GenerationModelOption } from '@/utils/generationModelCatalog'
-import { fetchCanvasElements, saveCanvasElementsBatched, type CanvasElementMutation } from '@/api/canvasApi'
+import { buildCanvasModelBuckets } from '@/utils/canvasModelBuckets'
+import { findFreeNodePosition } from '@/utils/canvasNodePlacement'
+import { fetchAllCanvasElements, saveCanvasElementsBatched } from '@/api/canvasApi'
 import {
   cancelAiTask,
   createAiTask,
@@ -59,7 +73,11 @@ import {
 } from '@/api/business'
 import { polishText } from '@/api/aiPolish'
 import { assetStreamUrl } from '@/utils/assetUrl'
-import { extractOutputAssetId, resolveGeneratedMediaUrls } from '@/utils/taskMedia'
+import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
+import { readVideoDurationSecExact } from '@/utils/videoDuration'
+import { captureVideoFrame, type VideoFramePosition } from '@/utils/videoFrameCapture'
+import { resolveGeneratedMediaUrls, resolveVerifiedResultAssetId } from '@/utils/taskMedia'
+import { resolveModelInputAssetRole } from '@/utils/modelInputAssetRole'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText } from '@/utils/canvasStructuredText'
 import {
@@ -69,6 +87,29 @@ import {
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
 import { getCanvasTaskPresentation } from '@/utils/canvasTaskState'
+import { resolveInheritedNodeRatio } from '@/utils/canvasNodeDefaults'
+import CanvasTimelineEditor from '@/components/canvas/CanvasTimelineEditor'
+import CanvasTimelinePlayer from '@/components/canvas/CanvasTimelinePlayer'
+import CanvasTimelineNodeBody from '@/components/canvas/CanvasTimelineNodeBody'
+import CanvasTimelineNodeActions, { type CanvasTimelineSource } from '@/components/canvas/CanvasTimelineNodeActions'
+import {
+  MAX_TIMELINE_CLIPS,
+  attachClipSourceDuration,
+  attachTimelineSource,
+  buildTimelineCutlist,
+  extractTimelineRange,
+  removeTimelineClip,
+  getClipDuration,
+  getClipOffsets,
+  getTimelineDuration,
+  isSameTimelineClips,
+  parseTimelineState,
+  syncTimelineClipsFromSources,
+  type TimelineClip,
+  type TimelineCutlist,
+  type TimelineState,
+} from '@/utils/timelineClips'
+import type { ConcatSource } from '@/utils/videoConcat'
 import { applyCanvasRealPersonIdentity, resolveCanvasRealPersonReference } from '@/utils/canvasRealPerson'
 import { isRealPersonReferenceStillAuthorized, type SmartRealPersonReference } from '@/utils/smartRealPerson'
 import { listRealPeople } from '@/api/realPeople'
@@ -89,6 +130,7 @@ import {
   diffCanvasMutations,
   elementsToGraph,
   collectCanvasSourceRefs,
+  isCanvasProvenanceEdge,
   type ComparableNode,
   type ComparableEdge,
 } from '@/utils/canvasElements'
@@ -233,6 +275,61 @@ function getTypeIcon(kind: string) {
 }
 
 /** 类型大占位图标（主体用） */
+/**
+ * 合成在浏览器本地完成（见 utils/videoConcat）：不解码不重编码，画质与源片一致。
+ * 代价是裁剪点只能落在关键帧上，这一点必须提前告诉用户，而不是等出片后才发现对不上。
+ */
+const TIMELINE_COMPOSE_NOTE = '本地无损合成：画质与源片一致，裁剪点会吸附到最近的关键帧'
+
+/**
+ * 时间线节点尺寸。
+ *
+ * 比其他节点高一截：卡片上直接放预览 + 片段条 + 添加/合成，常用操作不必先双击进弹窗。
+ * 弹窗编辑器保留给逐帧裁剪与分割这类精修动作。
+ */
+const TIMELINE_NODE_SIZE = { width: 460, height: 400 }
+// 浏览器本地合成需要同时持有源文件和输出文件；超过该体积改由后端合成更安全。
+const MAX_LOCAL_TIMELINE_SOURCE_BYTES = 512 * 1024 * 1024
+
+/**
+ * 节点 → 画布的动作通道。
+ *
+ * 节点组件由 React Flow 渲染，只拿得到 data，够不到 setNodes / 上传 / 历史栈。
+ * 截帧这类「在节点里取素材、由画布落地成新节点」的动作走这个 context 交回上层，
+ * 而不是把回调塞进节点 data（data 会被持久化，放不了函数）。
+ */
+interface CanvasNodeActions {
+  /** 把视频节点当前画面截成一张图，交给画布上传并落成图片节点。 */
+  onCaptureFrame?: (nodeId: string, frameDataUrl: string) => void
+  /** 该节点是否正在截帧上传中。 */
+  capturingNodeId?: string
+  /**
+   * 剪辑时间线的常用操作，直接在节点卡片上完成。
+   *
+   * 双击进弹窗才能加片段太重了——挑素材、删片段、合成都是高频动作，
+   * 应当在当前这一步就地可做；弹窗只留给逐帧裁剪与分割这类精修。
+   */
+  timeline?: {
+    /** 点开下拉时才调用：挂进 context 值里会让任何节点变动都触发全体重渲染。 */
+    getAddableSources: (timelineNodeId: string) => CanvasTimelineSource[]
+    onAddClip: (timelineNodeId: string, sourceNodeId: string) => void
+    onRemoveClip: (timelineNodeId: string, clipId: string) => void
+    onCompose: (timelineNodeId: string) => void
+    onOpenEditor: (timelineNodeId: string) => void
+    composingNodeId: string
+    composeProgress: string
+  }
+}
+
+const CanvasNodeActionsContext = createContext<CanvasNodeActions>({})
+
+/** 截帧位置及其文案：首帧接续上一个镜头，尾帧给下一个镜头当起点。 */
+const CAPTURE_POSITIONS: Array<{ position: VideoFramePosition; label: string }> = [
+  { position: 'first', label: '首帧' },
+  { position: 'current', label: '当前帧' },
+  { position: 'last', label: '尾帧' },
+]
+
 function getTypePlaceholder(kind: string) {
   const size = 48
   if (kind === 'image') {
@@ -284,6 +381,15 @@ const LOCAL_PREVIEW_REVOKE_MS = 5000
 
 /** 编辑面板与选中节点之间的间距（像素），同时用作面板与视口边缘的安全距离 */
 const NODE_PANEL_GAP = 16
+
+/**
+ * 面板左边缘要为左侧浮动工具栏让出的宽度。
+ *
+ * 工具栏在 left:46px、宽约 68px（见 CanvasFloatingToolbar.module.css），z-index:10，
+ * 而面板是 z-index:50——两者一重叠，工具栏底部的按钮就被面板压住点不到
+ * （实测「历史记录」被面板的参考图行完全遮住）。夹取时把这条竖带让出来。
+ */
+const NODE_PANEL_LEFT_SAFE = 128
 
 /**
  * 模型版本 ID → 展示名。
@@ -344,6 +450,8 @@ interface CanvasGenerationRequest {
   sourceRefs: CanvasSourceRef[]
   ratio?: string
   videoMode?: CanvasVideoMode
+  /** 视频生视频的源视频（节点自己已有的那条）；为 0/缺省表示从头生成。 */
+  selfVideoAssetId?: number
 }
 
 const ACTIVE_TASK_STATUSES = new Set([
@@ -353,6 +461,7 @@ const ACTIVE_TASK_STATUSES = new Set([
   'processing',
   'running',
   'reconnecting',
+  'status_query_failed',
   'result_pending',
 ])
 
@@ -442,6 +551,15 @@ function HandleIcon({ nodeId, side, visible }: { nodeId: string; side: 'left' | 
   )
 }
 
+/**
+ * 画布缩放范围。
+ *
+ * 下限比 React Flow 默认的 0.5 低得多：后期节点一多，0.5 根本装不下整张图。
+ * 上限保持 2，与节点内文字反向补偿的上限一致（见 readableTextScale）。
+ */
+const MIN_CANVAS_ZOOM = 0.02
+const MAX_CANVAS_ZOOM = 2
+
 /** 自定义画布节点 */
 function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const canvasZoom = useStore((state) => state.transform[2])
@@ -486,6 +604,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const [videoLocalSrc, setVideoLocalSrc] = useState('')
   const [videoPreparing, setVideoPreparing] = useState(false)
   const videoLocalSrcRef = useRef('')
+  const videoSeekableHandleRef = useRef<SeekableSourceHandle | null>(null)
   const videoPreparingRef = useRef(false)
   const resumeAfterSwapRef = useRef(false)
   const seekCheckTimerRef = useRef(0)
@@ -511,12 +630,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     pendingSeekRef.current = 0
     pendingSeekTriesRef.current = 0
     return () => {
-      // 换素材/卸载时释放本地整片，避免 blob 常驻内存
+      // 换素材/卸载时释放本地整片，避免 blob 常驻内存。
+      // blob 归 seekableMediaSource 所有（可能还被别处共用），这里只还引用，不自己 revoke
       window.clearTimeout(seekCheckTimerRef.current)
-      if (videoLocalSrcRef.current) {
-        URL.revokeObjectURL(videoLocalSrcRef.current)
-        videoLocalSrcRef.current = ''
-      }
+      videoSeekableHandleRef.current?.release()
+      videoSeekableHandleRef.current = null
+      videoLocalSrcRef.current = ''
     }
   }, [videoUrl])
   // 实际播放地址：优先本地整片（可任意跳转），否则用流式地址
@@ -530,6 +649,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
    * 让视频变得可跳转：把整片抓到本地，改用 object URL 播放。
    * 源不支持 Range 分段请求时，浏览器停不住 currentTime——设完就被抹回 0，表现为「拖到 15 秒仍从头播」。
    * 本地 blob 的跳转完全在内存里完成，不依赖服务端。只在跳转确实失败的那个节点触发，不整片预载画布。
+   *
+   * 抓取走全站共用的 seekableMediaSource：同一条素材在放大预览、时间线、抽帧里只下载一次。
    */
   const ensureSeekableSource = async () => {
     if (videoLocalSrcRef.current || videoPreparingRef.current) return
@@ -538,23 +659,21 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     videoPreparingRef.current = true
     setVideoPreparing(true)
     resumeAfterSwapRef.current = !videoRef.current?.paused
+    const handle = acquireSeekableSource(url)
     try {
-      const res = await fetch(url, { cache: 'no-store' })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const blob = await res.blob()
-      if (!blob.size) throw new Error('empty media')
-      const objectUrl = URL.createObjectURL(blob)
-      if (mediaUrlRef.current !== url) {
-        // 抓取期间换了素材：丢弃这份，避免播成上一个视频
-        URL.revokeObjectURL(objectUrl)
+      const ready = await handle.ready
+      // 抓取期间换了素材，或压根没抓下来（鉴权/跨域/网络）：丢弃这次，
+      // 继续用流式地址，跳转能力取决于源是否支持分段请求
+      if (mediaUrlRef.current !== url || !ready.local) {
+        handle.release()
+        resumeAfterSwapRef.current = false
         return
       }
-      videoLocalSrcRef.current = objectUrl
+      videoSeekableHandleRef.current?.release()
+      videoSeekableHandleRef.current = handle
+      videoLocalSrcRef.current = ready.url
       pendingSeekTriesRef.current = 0
-      setVideoLocalSrc(objectUrl)
-    } catch {
-      // 拉取失败（鉴权/跨域/网络）：继续用流式地址，跳转能力取决于源是否支持分段请求
-      resumeAfterSwapRef.current = false
+      setVideoLocalSrc(ready.url)
     } finally {
       videoPreparingRef.current = false
       setVideoPreparing(false)
@@ -764,6 +883,45 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
 
   const kind = (data.kind as string) || 'text'
   const structuredText = useMemo(() => parseCanvasStructuredText(textContent), [textContent])
+  // 截帧动作由画布提供：节点只负责取出画面，上传与建节点在上层做
+  const { onCaptureFrame, capturingNodeId, timeline: timelineActions } = useContext(CanvasNodeActionsContext)
+  const capturing = capturingNodeId === id
+  // 截帧位置选择（首帧/当前帧/尾帧）的展开态
+  const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
+  // 点到别处收起，避免菜单一直盖在画面上
+  useEffect(() => {
+    if (!captureMenuOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if ((event.target as HTMLElement)?.closest?.('.canvas-node-video-capture-wrap')) return
+      setCaptureMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [captureMenuOpen])
+
+  // 时间线节点：卡片内直接渲染可操作的编辑面，弹窗只用于精修
+  const nodeWorkspaceId = useWorkspaceId()
+  const timelineSummary = useMemo(() => {
+    if (kind !== 'timeline') return { clips: [] as TimelineClip[], totalSec: 0 }
+    const timeline = parseTimelineState((data as Record<string, unknown>)?.timeline)
+    return { clips: timeline.clips, totalSec: getTimelineDuration(timeline) }
+  }, [kind, data])
+  /**
+   * 连进来但素材还没就绪的视频数量。
+   *
+   * 直接从 React Flow store 读，而不是让上层算好写进节点 data——
+   * data 会被持久化，这类派生的瞬时值不该混进去。选择器返回标量，值不变就不会重渲染。
+   */
+  const timelinePendingSourceCount = useStore((state) => {
+    if (kind !== 'timeline') return 0
+    let count = 0
+    for (const edge of state.edges) {
+      if (edge.target !== id) continue
+      const source = state.nodeLookup.get(edge.source)
+      if (!(Number((source?.data as Record<string, unknown> | undefined)?.assetId || 0) > 0)) count += 1
+    }
+    return count
+  })
   const leftVisible = selected || leftHovered
   const rightVisible = selected || rightHovered
 
@@ -816,7 +974,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     })
   }
 
-  const labelMap: Record<string, string> = { text: '文本', image: '图片', video: '视频' }
+  const labelMap: Record<string, string> = {
+    text: '文本',
+    image: '图片',
+    video: '视频',
+    timeline: '视频剪辑',
+  }
 
   return (
     <div className="canvas-default-node" style={{ '--canvas-readable-text-scale': readableTextScale } as CSSProperties}>
@@ -862,6 +1025,17 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               </svg>
               <span className="canvas-node-upload-btn__label">{uploadLabel}</span>
             </button>
+          )}
+          {/* 时间线：添加视频 / 精修 / 合成 与「删除」同处这一组，卡片内只留预览与片段条 */}
+          {kind === 'timeline' && timelineActions && (
+            <CanvasTimelineNodeActions
+              nodeId={id}
+              clipCount={timelineSummary.clips.length}
+              composing={timelineActions.composingNodeId === id}
+              composeProgress={timelineActions.composeProgress}
+              onCompose={timelineActions.onCompose}
+              onOpenEditor={timelineActions.onOpenEditor}
+            />
           )}
           {showDownloadAction && (
             <button
@@ -991,6 +1165,14 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               onLoadedMetadata={(event) => {
                 const el = event.currentTarget
                 setVideoDurationSec(el.duration)
+                const clipStart = Math.max(0, Number((data as any).clipInSec) || 0)
+                if (Number((data as any).clipOutSec) > clipStart) {
+                  try {
+                    el.currentTime = Math.min(clipStart, el.duration || clipStart)
+                  } catch {
+                    /* 元数据尚未完全就绪时由浏览器稍后完成 seek */
+                  }
+                }
                 // 媒体重新拉流（含切到本地整片、被抹回 0 的情况）后把进度补回目标位置
                 applyPendingSeek(el)
                 if (resumeAfterSwapRef.current) {
@@ -1007,11 +1189,31 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 // 拖动过程中以指针位置为准，避免元素回报的旧时间把滑块拽回去
                 if (videoScrubbing) return
                 const el = event.currentTarget
+                const clipStart = Math.max(0, Number((data as any).clipInSec) || 0)
+                const clipEnd = Number((data as any).clipOutSec) || 0
+                if (clipEnd > clipStart && el.currentTime >= clipEnd - 0.03) {
+                  el.pause()
+                  try {
+                    el.currentTime = clipEnd
+                  } catch {
+                    /* ignore seek race */
+                  }
+                  setVideoCurrentSec(clipEnd)
+                  return
+                }
                 setVideoCurrentSec(el.currentTime)
                 // 已经播过目标位置说明用户在正常往下看，撤掉补偿，避免下次播放被拉回去
                 if (pendingSeekRef.current > 0 && el.currentTime > pendingSeekRef.current + 0.5) {
                   pendingSeekRef.current = 0
                 }
+              }}
+              onSeeking={(event) => {
+                const clipStart = Math.max(0, Number((data as any).clipInSec) || 0)
+                const clipEnd = Number((data as any).clipOutSec) || 0
+                if (clipEnd <= clipStart) return
+                const el = event.currentTarget
+                if (el.currentTime < clipStart) el.currentTime = clipStart
+                if (el.currentTime > clipEnd) el.currentTime = clipEnd
               }}
               onPlay={(event) => {
                 applyPendingSeek(event.currentTarget)
@@ -1065,6 +1267,69 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 </div>
               </div>
             ) : null}
+            {/* 截帧：把某一帧存成图片节点，可直接拿去做图生图。首尾帧是最常用的两张 */}
+            {onCaptureFrame ? (
+              <div
+                className="canvas-node-video-capture-wrap nodrag nopan"
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onDoubleClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="canvas-node-video-capture"
+                  title={capturing ? '正在截帧…' : '截取画面为图片'}
+                  aria-label="截帧"
+                  aria-expanded={captureMenuOpen}
+                  disabled={capturing}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setCaptureMenuOpen((open) => !open)
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="17"
+                    height="17"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M4 7h3l1.5-2h7L17 7h3v12H4z" />
+                    <circle cx="12" cy="13" r="3.4" />
+                  </svg>
+                  <span className="canvas-node-video-capture__label">截帧</span>
+                </button>
+                {captureMenuOpen ? (
+                  <div className="canvas-node-capture-menu" role="menu" aria-label="截帧位置">
+                    {CAPTURE_POSITIONS.map((item) => (
+                      <button
+                        key={item.position}
+                        type="button"
+                        role="menuitem"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setCaptureMenuOpen(false)
+                          void (async () => {
+                            const frame = await captureVideoFrame(videoRef.current, item.position)
+                            if (!frame) {
+                              showToast('画面还没准备好，稍后再试', 'info')
+                              return
+                            }
+                            onCaptureFrame(id, frame)
+                          })()
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <button
               type="button"
               className="canvas-node-video-expand nodrag nopan"
@@ -1111,6 +1376,24 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           </div>
         ) : kind === 'image' && mediaUrl ? (
           <img className="canvas-node-media" src={mediaUrl} alt={kind} loading="lazy" />
+        ) : kind === 'timeline' ? (
+          // 卡片本身就是编辑面：预览 + 片段条 + 添加/合成，常用操作不必先双击进弹窗
+          <div className="canvas-node-timeline">
+            {timelineActions ? (
+              <CanvasTimelineNodeBody
+                nodeId={id}
+                clips={timelineSummary.clips}
+                workspaceId={nodeWorkspaceId}
+                composedUrl={mediaUrl}
+                pendingSourceCount={timelinePendingSourceCount}
+                onRemoveClip={timelineActions.onRemoveClip}
+                getAddableSources={timelineActions.getAddableSources}
+                onAddSource={timelineActions.onAddClip}
+              />
+            ) : (
+              <CanvasTimelinePlayer clips={timelineSummary.clips} workspaceId={nodeWorkspaceId} compact />
+            )}
+          </div>
         ) : (
           getTypePlaceholder(kind)
         )}
@@ -1180,6 +1463,7 @@ const nodeTypes: NodeTypes = {
   text: CanvasDefaultNode,
   image: CanvasDefaultNode,
   video: CanvasDefaultNode,
+  timeline: CanvasDefaultNode,
 }
 
 /** 无限画布入口页（提供 ReactFlowProvider 上下文） */
@@ -1199,26 +1483,32 @@ function CanvasInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const { fitView, screenToFlowPosition } = useReactFlow()
+  // 正在编辑剪辑时间线的节点 id；空串表示编辑器关闭
+  const [timelineEditorNodeId, setTimelineEditorNodeId] = useState('')
+  // 合成进行中（下载素材 → 无损拼接 → 上传成片），期间禁止重复触发
+  const [timelineComposing, setTimelineComposing] = useState(false)
+  // 正在合成的时间线节点 id：卡片按钮据此显示进度，其余节点不受影响
+  const [composingNodeId, setComposingNodeId] = useState('')
+  // 拖拽视频节点时命中的时间线节点 id，用于高亮「松手就会放进这里」
+  const [timelineDropTargetId, setTimelineDropTargetId] = useState('')
+  // 拖拽起点：放进时间线后要把视频节点弹回原位
+  const dragOriginRef = useRef<{ id: string; position: { x: number; y: number } } | null>(null)
+  const [composeProgress, setComposeProgress] = useState('')
+  // 已量过时长的片段（node:clip），避免同一条素材被反复探测
+  const measuredClipAssetsRef = useRef<Set<string>>(new Set())
+  const clipDurationAttemptsRef = useRef<Map<string, number>>(new Map())
+  const clipDurationRetryTimersRef = useRef<Set<number>>(new Set())
+  const [clipDurationRetryTick, setClipDurationRetryTick] = useState(0)
+  // 正在截帧上传的视频节点 id；同一时刻只允许一个，避免连点建出一堆重复图片节点
+  const [capturingNodeId, setCapturingNodeId] = useState('')
   const workspaceId = useWorkspaceId()
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
   // 模型目录：来自 /api/v1/ai/models
   const { groups, loading: modelsLoading } = useGenerationModelCatalog(workspaceId)
-  // 按节点类型提取模型列表。
-  // 三类都取阶段内去重后的模型合集：图片节点会随参考链在 image.text_to_image 与 image.image_to_image
-  // 之间实时切换 operation，面板再按当前 operation 过滤，因此这里不能只装其中一种——
-  // 只装文生图会让「接入参考图的图片节点」筛不出任何模型，直接退化成无法生成。
-  const canvasModels = useMemo(() => {
-    const scriptGroup = groups.find((g) => g.key === 'script')
-    const imageGroup = groups.find((g) => g.key === 'image')
-    const videoGroup = groups.find((g) => g.key === 'video')
-    return {
-      text: scriptGroup?.models || ([] as GenerationModelOption[]),
-      image: imageGroup?.models || ([] as GenerationModelOption[]),
-      video: videoGroup?.models || ([] as GenerationModelOption[]),
-    }
-  }, [groups])
+  // 按节点类型提取模型列表；分组键 → 节点类型的映射与「视频必须合并两组」的原因见 canvasModelBuckets。
+  const canvasModels = useMemo(() => buildCanvasModelBuckets(groups), [groups])
   // 把模型名共享给节点：节点在 React Flow 内部，拿不到这里的目录，放大预览要显示模型名。
   useEffect(() => {
     const next: Record<number, string> = {}
@@ -1337,8 +1627,11 @@ function CanvasInner() {
     const below = bottomY + NODE_PANEL_GAP
     const above = topY - NODE_PANEL_GAP - height
     const top = below + height + NODE_PANEL_GAP <= viewportHeight || above < NODE_PANEL_GAP ? below : above
+    // 左界为工具栏让出竖带；面板宽到放不下时右界优先，此时仍会压住工具栏（窄屏遗留限制）
+    const minCenterX = halfWidth + NODE_PANEL_LEFT_SAFE
+    const maxCenterX = viewportWidth - halfWidth - NODE_PANEL_GAP
     return {
-      left: Math.min(Math.max(centerX, halfWidth + NODE_PANEL_GAP), viewportWidth - halfWidth - NODE_PANEL_GAP),
+      left: Math.min(Math.max(centerX, minCenterX), Math.max(minCenterX, maxCenterX)),
       top: Math.min(Math.max(top, NODE_PANEL_GAP), Math.max(NODE_PANEL_GAP, viewportHeight - height - NODE_PANEL_GAP)),
     }
   }, [selectedNode, nodes, transform, panelSize.width, panelSize.height])
@@ -1401,6 +1694,7 @@ function CanvasInner() {
       videoMode: (node.data as any)?.videoMode,
       modelVersionId: (node.data as any)?.modelVersionId,
       resultUrl: (node.data as any)?.resultUrl,
+      assetId: (node.data as any)?.assetId,
       text: (node.data as any)?.text,
       prompt: (node.data as any)?.prompt,
       operationCode: (node.data as any)?.operationCode,
@@ -1443,9 +1737,12 @@ function CanvasInner() {
    * 图片节点不接受视频来源——后端图片 operation 没有以视频为参考的契约。
    */
   const allowedSourceKinds: Record<string, string[]> = {
-    video: ['image', 'video'],
+    // 合成后的时间线节点自身就是一条视频素材，可以继续作为下游节点的输入
+    video: ['image', 'video', 'timeline'],
     image: ['text', 'image'],
-    text: ['text', 'image', 'video'],
+    text: ['text', 'image', 'video', 'timeline'],
+    // 剪辑时间线只接视频：连进来的每条视频自动成为一个片段
+    timeline: ['video', 'timeline'],
   }
 
   /** 校验连线是否合法：重复（基于最新状态）、类型匹配、数量上限。返回错误信息，合法返回 null */
@@ -1457,15 +1754,24 @@ function CanvasInner() {
       const sourceKind = (latestRef.current.nodes.find((n) => n.id === sourceId)?.data?.kind as string) || 'text'
       const allowed = allowedSourceKinds[targetKind] || []
       if (!allowed.includes(sourceKind)) return '该节点类型不能作为此节点的参考来源'
-      // 数量上限只统计素材类来源（图片/视频）；文本来源不计入（其内容拼入 prompt，可无限连接）
+      // 数量上限只统计素材类来源（图片/视频）；文本来源不计入（其内容拼入 prompt，可无限连接）。
+      // 血缘边（截帧图 ← 源视频）同样不计入：它不参与生成，占掉参考名额纯属误伤
       const existingRefs = latestRef.current.edges.filter((e) => {
         if (e.target !== targetId) return false
+        if (isCanvasProvenanceEdge(e)) return false
         const src = latestRef.current.nodes.find((n) => n.id === e.source)
         return (src?.data?.kind as string) !== 'text'
       }).length
       // 视频节点：全能参考最多 5 个素材参考（与面板顶部 5 槽一致）；首尾帧模式 2 个（首帧+尾帧）
       // 其他节点：最多 5 个素材来源（与对话框缩略图最多显示 5 个一致）
-      const maxRefs = targetKind === 'video' ? ((targetNode?.data?.videoMode as string) === 'first-last' ? 2 : 5) : 5
+      const maxRefs =
+        targetKind === 'timeline'
+          ? MAX_TIMELINE_CLIPS
+          : targetKind === 'video'
+            ? (targetNode?.data?.videoMode as string) === 'first-last'
+              ? 2
+              : 5
+            : 5
       if (existingRefs >= maxRefs) return `参考数量已达上限（${maxRefs} 个）`
       return null
     },
@@ -1849,6 +2155,8 @@ function CanvasInner() {
           ...((sourceNode.data as any)?.resultUrl
             ? { thumbnailUrl: (sourceNode.data as any).resultUrl as string }
             : {}),
+          // 视频来源单独带封面：mp4 地址当图片渲染只会得到碎图
+          ...((sourceNode.data as any)?.poster ? { posterUrl: (sourceNode.data as any).poster as string } : {}),
           // 来源节点有素材 asset_id 时带上，供组装 input_assets
           ...(Number((sourceNode.data as any)?.assetId) > 0
             ? { assetId: Number((sourceNode.data as any).assetId) }
@@ -1995,6 +2303,18 @@ function CanvasInner() {
     [nodes, transform, setEdges, commitHistory, validateConnection],
   )
 
+  /**
+   * 新节点的默认比例：沿用画布上「上一个同类节点」的选择。
+   *
+   * 连着做几个节点时比例通常一致，每次重选是纯重复劳动。从现有节点推导而不是记在内存里，
+   * 刷新页面或换标签页继续编辑时继承关系依然成立。文本节点没有比例概念，返回 undefined。
+   */
+  const inheritNodeRatio = useCallback((type: string): string | undefined => {
+    if (type !== 'video' && type !== 'image') return undefined
+    const fallback = type === 'video' ? AUTO_RATIO : '1:1'
+    return resolveInheritedNodeRatio(latestRef.current.nodes, type, fallback)
+  }, [])
+
   // 统一创建新节点：默认选中 + 渐入动画；动画结束后移除动画类，避免草稿恢复/重进页面时重复播放
   const appendNewNode = useCallback(
     (
@@ -2070,7 +2390,7 @@ function CanvasInner() {
       const newNodeId = appendNewNode(
         type,
         { x: flowX - nodeW / 2, y: flowY - nodeH / 2 },
-        { ratio: type === 'video' ? AUTO_RATIO : type === 'image' ? '1:1' : undefined },
+        { ratio: inheritNodeRatio(type) },
       )
       // 自动连线：拖线源节点 → 新节点（来源限制已在菜单项过滤时校验，新节点参考数不会超限）
       const sourceNode = latestRef.current.nodes.find((n) => n.id === addMenu.sourceId)
@@ -2089,7 +2409,7 @@ function CanvasInner() {
       }
       setAddMenu(null)
     },
-    [addMenu, transform, appendNewNode, setEdges],
+    [addMenu, transform, appendNewNode, setEdges, inheritNodeRatio],
   )
 
   // edges 变化时同步 selectedNode.sourceRefs（用去重派生，兜底清理历史重复边）
@@ -2132,6 +2452,8 @@ function CanvasInner() {
   // 请求在途期间节点是否又发生了变化（变化后再补一次保存）
   const syncPendingRef = useRef(false)
   const syncInFlightRef = useRef(false)
+  const syncRetryTimerRef = useRef<number | null>(null)
+  const syncRetryAttemptRef = useRef(0)
 
   // 增量保存到云端：对比 syncRef 快照与最新状态 → upsert/delete；内部串行 + 冲突合并重试
   const pushCanvasMutations = useCallback(() => {
@@ -2166,10 +2488,17 @@ function CanvasInner() {
           setSaveStatus('saved')
           setCloudStatus('online')
           setCloudMessage('已同步到云端')
-        } catch {
-          // 乐观锁冲突或网络失败：拉取远端全量，把本地状态合并重放（非全量覆盖，避免覆盖他人修改）
+          syncRetryAttemptRef.current = 0
+          if (syncRetryTimerRef.current) {
+            window.clearTimeout(syncRetryTimerRef.current)
+            syncRetryTimerRef.current = null
+          }
+        } catch (error: any) {
+          const isConflict = Number(error?.status || error?.response?.status || 0) === 409
+          // 只有乐观锁冲突才拉远端合并。网络/服务异常直接进入退避重试，避免制造额外请求。
           try {
-            const page = await fetchCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
+            if (!isConflict) throw error
+            const page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
             syncRevisionRef.current = page.sync_revision || syncRevisionRef.current
             const { nodes: remoteNodes, edges: remoteEdges } = elementsToGraph(page.elements || [])
             // 三方合并：以最新远端为底，只重放本次真正发生的本地 mutation。
@@ -2178,13 +2507,13 @@ function CanvasInner() {
               { nodes: remoteNodes.map((node) => normalizeNodeMedia(node, workspaceId)), edges: remoteEdges },
               mutations,
             )
-            for (const node of merged.nodes) {
-              const text = String((node.data as any)?.text || '')
-              if (text) {
-                if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
-                ;(window as any).__canvasTextContents.set(node.id, text)
-              }
-            }
+            restoreTextContents(
+              Object.fromEntries(
+                merged.nodes
+                  .map((node) => [node.id, String((node.data as any)?.text || '')])
+                  .filter(([, text]) => Boolean(text)),
+              ),
+            )
             const result = await saveCanvasElementsBatched({
               workspaceId,
               canvasId,
@@ -2203,11 +2532,25 @@ function CanvasInner() {
             setSaveStatus('saved')
             setCloudStatus('online')
             setCloudMessage('冲突已合并并同步')
+            syncRetryAttemptRef.current = 0
+            if (syncRetryTimerRef.current) {
+              window.clearTimeout(syncRetryTimerRef.current)
+              syncRetryTimerRef.current = null
+            }
           } catch {
-            // 仍失败：保留 dirty 状态，下次变化再试；本地草稿兜底
+            // 仍失败：保留 dirty 状态并真正安排退避重试；本地草稿继续兜底。
             setSaveStatus('dirty')
             setCloudStatus(navigator.onLine ? 'error' : 'offline')
             setCloudMessage(navigator.onLine ? '云端同步失败，将自动重试' : '网络已断开，内容已保存在本机')
+            if (!syncRetryTimerRef.current) {
+              const delay = navigator.onLine
+                ? Math.min(30000, 1500 * 2 ** Math.min(syncRetryAttemptRef.current++, 4))
+                : 3000
+              syncRetryTimerRef.current = window.setTimeout(() => {
+                syncRetryTimerRef.current = null
+                scheduleSyncRef.current(true)
+              }, delay)
+            }
           }
         }
       }
@@ -2268,38 +2611,24 @@ function CanvasInner() {
 
     ;(async () => {
       try {
-        // 1) 全量加载元素（after_revision=0，循环取完所有分页）
-        const allElements: CanvasElementMutation[] = []
-        let cursor = ''
-        let pageCount = 0
-        const MAX_PAGES = 50
-        let page: Awaited<ReturnType<typeof fetchCanvasElements>>
-        do {
-          // 分页保护：防止后端异常返回相同 cursor 时无限循环
-          if (++pageCount > MAX_PAGES) break
-          page = await fetchCanvasElements({
-            workspaceId,
-            canvasId,
-            afterRevision: 0,
-            cursor,
-          })
-          syncRevisionRef.current = page.sync_revision || syncRevisionRef.current
-          allElements.push(...(page.elements || []))
-          cursor = page.next_cursor || ''
-        } while (page.has_more && cursor)
-        const { nodes: rawCloudNodes, edges: cloudEdges } = elementsToGraph(allElements)
+        // 1) 全量加载元素；只有全部分页成功后才推进 revision，避免大画布被截断。
+        const page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
+        syncRevisionRef.current = page.sync_revision || syncRevisionRef.current
+        const { nodes: rawCloudNodes, edges: cloudEdges } = elementsToGraph(page.elements)
         // 旧数据可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址，避免刷新后破图
         const cloudNodes = rawCloudNodes.map((n) => normalizeNodeMedia(n, workspaceId))
         if (cloudNodes.length > 0 || cloudEdges.length > 0) {
           setNodes(cloudNodes)
           setEdges(cloudEdges)
           // 还原文本内容：云端节点 data 中的 text 字段写回全局 Map（渲染期由节点组件读取）
-          if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+          restoreTextContents(
+            Object.fromEntries(
+              cloudNodes
+                .map((node) => [node.id, String((node.data as any)?.text || '')])
+                .filter(([, text]) => Boolean(text)),
+            ),
+          )
           const map = (window as any).__canvasTextContents as Map<string, string>
-          cloudNodes.forEach((n) => {
-            const text = (n.data as any)?.text
-            if (typeof text === 'string' && text.trim()) map.set(n.id, text)
-          })
           // 建立已同步快照：云加载的内容视为已同步，避免首次渲染被 diff 误判为「删除」
           syncRef.current = {
             nodes: cloudNodes.map((n) => comparableNode(n, map)),
@@ -2425,6 +2754,21 @@ function CanvasInner() {
     }
   }, [flushOnUnload])
 
+  // 切到后台时浏览器通常仍允许普通请求完成，比 unload 阶段才提交可靠得多。
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden) flushOnUnload()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [flushOnUnload])
+
+  useEffect(() => {
+    return () => {
+      if (syncRetryTimerRef.current) window.clearTimeout(syncRetryTimerRef.current)
+    }
+  }, [])
+
   // 定时拉取服务端 revision 后的增量，保证同一画布在其他标签页/成员修改后能自动合并。
   // 本地存在未保存变更时暂缓应用远端，先让保存队列完成，避免覆盖用户正在编辑的内容。
   useEffect(() => {
@@ -2448,6 +2792,12 @@ function CanvasInner() {
         setCloudMessage('网络已断开，内容已保存在本机')
         return schedule(3000)
       }
+      // 保存失败留下 dirty 状态时，主动重新驱动保存，不能只等待状态自行变化。
+      if (!syncInFlightRef.current && !syncPendingRef.current && saveStatusRef.current !== 'saved') {
+        pushCanvasMutations()
+        idleRounds = 0
+        return schedule(1500)
+      }
       // 本地有未落盘的改动：先让保存队列跑完，短间隔重试，并把闲置计数清零
       if (syncInFlightRef.current || syncPendingRef.current || saveStatusRef.current !== 'saved') {
         idleRounds = 0
@@ -2455,11 +2805,11 @@ function CanvasInner() {
       }
       try {
         const knownRevision = syncRevisionRef.current
-        const page = await fetchCanvasElements({ workspaceId, canvasId, afterRevision: knownRevision })
+        const page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: knownRevision })
         if (disposed) return
         if (page.history_floor_revision > knownRevision && knownRevision > 0) {
           // 增量历史已被服务端清理：下一轮用全量基线恢复，避免永久停在旧 revision。
-          const full = await fetchCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
+          const full = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
           const graph = elementsToGraph(full.elements).nodes.map((node) => normalizeNodeMedia(node, workspaceId))
           const fullGraph = { nodes: graph, edges: elementsToGraph(full.elements).edges }
           restoreTextContents(
@@ -2482,13 +2832,13 @@ function CanvasInner() {
           idleRounds = 0
           const merged = applyCanvasElementMutations(latestRef.current, page.elements)
           merged.nodes = merged.nodes.map((node) => normalizeNodeMedia(node, workspaceId))
-          for (const node of merged.nodes) {
-            const text = String((node.data as any)?.text || '')
-            if (text) {
-              if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
-              ;(window as any).__canvasTextContents.set(node.id, text)
-            }
-          }
+          restoreTextContents(
+            Object.fromEntries(
+              merged.nodes
+                .map((node) => [node.id, String((node.data as any)?.text || '')])
+                .filter(([, text]) => Boolean(text)),
+            ),
+          )
           setNodes(merged.nodes)
           setEdges(merged.edges)
           latestRef.current = merged
@@ -2541,7 +2891,7 @@ function CanvasInner() {
     }
     // 不依赖 saveStatus：它每次编辑都会三态翻转，进依赖数组会让整个循环反复重建、
     // 每次都从最短间隔重新起步（编辑越频繁轮询越密）。循环内改用 saveStatusRef 读取。
-  }, [setEdges, setNodes, workspaceId])
+  }, [pushCanvasMutations, setEdges, setNodes, workspaceId])
 
   // 比例变更时同步更新节点宽高与数据
   const handleRatioChange = useCallback(
@@ -2682,7 +3032,7 @@ function CanvasInner() {
         type,
         { x: flowX, y: flowY },
         {
-          ratio: type === 'video' ? AUTO_RATIO : '1:1',
+          ratio: inheritNodeRatio(type),
           // 素材来源：assetId + 同源流式地址，供节点渲染/后续生成任务使用
           extraData: {
             assetId: Number(material.assetId || 0),
@@ -2695,8 +3045,33 @@ function CanvasInner() {
         },
       )
     },
-    [selectedNode, transform, appendNewNode, commitHistory, workspaceId, setNodes],
+    [selectedNode, transform, appendNewNode, commitHistory, workspaceId, setNodes, inheritNodeRatio],
   )
+
+  /**
+   * 从「我的素材」带素材进入画布：落成一个新节点，省去用户先下载再上传。
+   *
+   * 与智能成片/爆款复制的 carryImages / carryVideo 同一套路由 state 约定。
+   * 只消费一次：节点建好后清掉 history state，否则刷新或返回会重复插入同一素材。
+   * 等节点数据加载完再落点，避免与云端拉取的节点同时 setNodes 造成互相覆盖。
+   */
+  const location = useLocation()
+  const carriedMaterialRef = useRef(false)
+  useEffect(() => {
+    if (carriedMaterialRef.current) return
+    const carried = (location.state as any)?.carryMaterial
+    const assetId = Number(carried?.assetId || 0) || 0
+    if (!carried || (!assetId && !carried.url)) return
+    if (cloudStatus === 'loading') return
+    carriedMaterialRef.current = true
+    handleApplyMaterial({
+      assetId,
+      type: String(carried.type || 'image'),
+      src: String(carried.url || ''),
+      name: String(carried.name || ''),
+    })
+    navigate(location.pathname, { replace: true, state: null })
+  }, [location.state, location.pathname, cloudStatus, handleApplyMaterial, navigate])
 
   // 节点顶部上传按钮通过全局钩子触发：确保该节点先被选中（其内容将作为上传目标）
   useEffect(() => {
@@ -2712,6 +3087,7 @@ function CanvasInner() {
         videoMode: (node.data as any)?.videoMode,
         modelVersionId: (node.data as any)?.modelVersionId,
         resultUrl: (node.data as any)?.resultUrl,
+        assetId: (node.data as any)?.assetId,
         text: (node.data as any)?.text,
         prompt: (node.data as any)?.prompt,
         operationCode: (node.data as any)?.operationCode,
@@ -2740,11 +3116,11 @@ function CanvasInner() {
       const nodeKind = selectedNode.kind
       // 图片节点只接受图片；视频节点只接受视频
       if (nodeKind === 'image' && !isImage) {
-        window.alert('图片节点仅支持上传图片文件')
+        showToast('图片节点仅支持上传图片文件', 'error')
         return
       }
       if (nodeKind === 'video' && !isVideo) {
-        window.alert('视频节点仅支持上传视频文件')
+        showToast('视频节点仅支持上传视频文件', 'error')
         return
       }
       try {
@@ -2767,7 +3143,7 @@ function CanvasInner() {
         setSelectedNode((prev) => (prev && prev.id === selectedNode.id ? { ...prev, ...nextData } : prev))
         setSaveStatus('dirty')
       } catch (error: any) {
-        window.alert(String(error?.message || '上传素材失败，请稍后重试'))
+        showToast(String(error?.message || '上传素材失败，请稍后重试'), 'error')
       }
     },
     [selectedNode, workspaceId, commitHistory, setSaveStatus, setNodes],
@@ -2806,7 +3182,7 @@ function CanvasInner() {
     async (files: File[], anchor?: { x: number; y: number }) => {
       const images = pickImageFiles(files)
       if (images.length === 0) {
-        window.alert('仅支持导入图片文件')
+        showToast('仅支持导入图片文件', 'error')
         return
       }
       const accepted = images.slice(0, LOCAL_IMAGE_IMPORT_LIMIT)
@@ -2860,9 +3236,10 @@ function CanvasInner() {
       )
       setSaveStatus('dirty')
       if (failures.length > 0) {
-        window.alert(failures.length > 1 ? `${failures.length} 张图片上传失败：${failures[0]}` : failures[0])
+        showToast(failures.length > 1 ? `${failures.length} 张图片上传失败：${failures[0]}` : failures[0], 'error')
       } else if (skipped > 0) {
-        window.alert(`一次最多导入 ${LOCAL_IMAGE_IMPORT_LIMIT} 张图片，其余 ${skipped} 张已忽略`)
+        // 其余图片已成功导入，这里只是数量提醒，不按错误呈现
+        showToast(`一次最多导入 ${LOCAL_IMAGE_IMPORT_LIMIT} 张图片，其余 ${skipped} 张已忽略`, 'info')
       }
     },
     [appendNewNode, commitHistory, releasePreviewUrl, screenToFlowPosition, setNodes, setSaveStatus, workspaceId],
@@ -3028,6 +3405,27 @@ function CanvasInner() {
   )
 
   /**
+   * 面板里改动的生成参数即时落到节点。
+   *
+   * 参数原本只在「发送生成」时才写进节点（configData.params），于是调好的分辨率、时长
+   * 刷新一下就退回模型默认值——而提示词是即时持久化的，同一个面板里两种行为不一致，
+   * 用户只会当成丢数据。面板读取侧本来就从 node.params 回显（见 CanvasNodePanel 里
+   * fieldValues 的初始化），缺的一直是写入侧。
+   */
+  const handleNodeParamsChange = useCallback(
+    (params: Record<string, unknown>) => {
+      const targetNodeId = selectedNode?.id
+      if (!targetNodeId) return
+      setNodes((items) =>
+        items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, params } } : item)),
+      )
+      setSelectedNode((current) => (current?.id === targetNodeId ? { ...current, params } : current))
+      setSaveStatus('dirty')
+    },
+    [selectedNode?.id, setNodes, setSaveStatus],
+  )
+
+  /**
    * AI 润色是显式的可选动作：只返回润色结果，仍需用户确认并保存。
    *
    * 节点已连线的参考图会一并送进润色模型。缺图时润色只能凭字面凭空补出主体和场景，
@@ -3128,7 +3526,7 @@ function CanvasInner() {
           sourceRefs: generate.sourceRefs || [],
         })
         if (validationError) {
-          window.alert(validationError)
+          showToast(validationError, 'error')
           return
         }
       }
@@ -3146,12 +3544,21 @@ function CanvasInner() {
           return
         }
       }
+      // 素材角色以模型 schema 为准，与智能成片同口径；模型查不到时退回历史默认值。
+      const submitModel = (canvasModels[generate.kind as 'text' | 'image' | 'video'] || []).find(
+        (model) => Number(model.modelVersionId || 0) === Number(generate.modelVersionId || 0),
+      )
       // 身份约束必须在这里注入：润色只改用户提示词，约束由提交环节兜底，避免被润色覆盖。
       const identity = applyCanvasRealPersonIdentity({
         kind: generate.kind,
         videoMode: generate.videoMode,
         prompt: generate.prompt,
-        inputAssets: buildCanvasInputAssets(generate.sourceRefs || [], generate.operationCode),
+        inputAssets: buildCanvasInputAssets(
+          generate.sourceRefs || [],
+          generate.operationCode,
+          generate.selfVideoAssetId,
+          submitModel ? resolveModelInputAssetRole(submitModel.source) : '',
+        ),
         reference: realPerson.reference,
       })
       const inputAssets = identity.inputAssets
@@ -3240,10 +3647,11 @@ function CanvasInner() {
         )
         setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...taskData } : prev))
         setSaveStatus('dirty')
-        window.alert(String(error?.message || '任务创建失败，请稍后重试'))
+        showToast(String(error?.message || '任务创建失败，请稍后重试'), 'error')
       }
     },
     [
+      canvasModels,
       handleInsufficientCredits,
       handleSaveNodeText,
       isRealPersonReferenceAuthorizedNow,
@@ -3322,6 +3730,7 @@ function CanvasInner() {
               taskStatus: status,
               taskProgress: progress,
               taskError: '',
+              taskStatusQueryFailures: 0,
               taskUpdatedAt: new Date().toISOString(),
             }
             if (successStatuses.has(status)) {
@@ -3345,7 +3754,15 @@ function CanvasInner() {
                   }
                 }
               } else {
-                const assetId = extractOutputAssetId(task)
+                // 只把「验证过确实存在」的资产写进节点：这个 assetId 会被下一次生成当作
+                // input_assets 提交（视频生视频尤其依赖它），存一个未经确认的 id 进去，
+                // 后端到时候只会回「参考素材不可用」，而且已经追不回是哪一步写坏的。
+                const assetId = await resolveVerifiedResultAssetId({
+                  workspaceId,
+                  task,
+                  type: kind === 'video' ? 'video' : 'image',
+                  fallbackTaskId: taskId,
+                })
                 const urls = await resolveGeneratedMediaUrls({ workspaceId, task, type: kind })
                 if (assetId > 0) nextData.assetId = assetId
                 if (assetId > 0 || urls[0])
@@ -3385,11 +3802,32 @@ function CanvasInner() {
             )
             setSelectedNode((current) => (current?.id === node.id ? { ...current, ...nextData } : current))
             setSaveStatus('dirty')
-          } catch {
+          } catch (error: any) {
             // 短暂网络错误不把任务误判为失败，保留任务 ID 供下一轮继续恢复。
             if (!disposed && !navigator.onLine) {
               setCloudStatus('offline')
               setCloudMessage('网络已断开，任务状态将在恢复联网后继续刷新')
+            }
+            if (!disposed && navigator.onLine) {
+              setNodes((items) =>
+                items.map((item) => {
+                  if (item.id !== node.id || Number((item.data as any)?.taskId || 0) !== taskId) return item
+                  const failures = Number((item.data as any)?.taskStatusQueryFailures || 0) + 1
+                  return {
+                    ...item,
+                    data: {
+                      ...item.data,
+                      taskStatusQueryFailures: failures,
+                      ...(failures >= 6
+                        ? {
+                            taskStatus: 'status_query_failed',
+                            taskError: `任务状态暂时无法查询，将继续自动重试${error?.message ? `：${error.message}` : ''}`,
+                          }
+                        : {}),
+                    },
+                  }
+                }),
+              )
             }
           } finally {
             polling.delete(taskId)
@@ -3413,17 +3851,750 @@ function CanvasInner() {
     }
   }, [setNodes, workspaceId])
 
-  const handleAddNode = useCallback(
-    (type: string) => {
-      appendNewNode(
-        type,
-        { x: 300 + Math.random() * 200, y: 200 + Math.random() * 200 },
-        {
-          ratio: type === 'video' ? AUTO_RATIO : type === 'image' ? '1:1' : undefined,
+  // 当前被编辑的时间线节点及其状态；节点被删除时编辑器自然关闭
+  const timelineEditorNode = timelineEditorNodeId
+    ? nodes.find((node) => node.id === timelineEditorNodeId) || null
+    : null
+  const timelineEditorState = useMemo(
+    () => parseTimelineState((timelineEditorNode?.data as Record<string, unknown> | undefined)?.timeline),
+    [timelineEditorNode],
+  )
+
+  /**
+   * 编辑器里「已连线、但来源视频还没有素材」的数量。
+   *
+   * 这类连线不会产生片段（没有 assetId 就没有可拼的内容），此前是完全静默的——
+   * 用户连上线却什么都没发生，只能以为功能坏了。数出来如实说明。
+   * 节点卡片上的同一提示直接从 React Flow store 读，不走这里。
+   */
+  const timelineEditorPendingCount = useMemo(() => {
+    if (!timelineEditorNodeId) return 0
+    return edges.filter((edge) => {
+      if (edge.target !== timelineEditorNodeId) return false
+      const source = nodes.find((item) => item.id === edge.source)
+      return !(Number((source?.data as Record<string, unknown> | undefined)?.assetId || 0) > 0)
+    }).length
+  }, [timelineEditorNodeId, edges, nodes])
+
+  /** 编辑器打开时可加入的画布视频（编辑器是模态，这里按当前状态算一次即可）。 */
+  const editorAddableSources = useMemo<CanvasTimelineSource[]>(() => {
+    if (!timelineEditorNodeId) return []
+    const used = new Set(timelineEditorState.clips.map((clip) => clip.sourceNodeId).filter(Boolean))
+    return nodes
+      .filter((node) => {
+        const data = node.data as Record<string, unknown> | undefined
+        if (data?.kind !== 'video') return false
+        if (node.id === timelineEditorNodeId || used.has(node.id)) return false
+        return Number(data?.assetId || 0) > 0
+      })
+      .map((node, index) => {
+        const data = node.data as Record<string, unknown>
+        return {
+          nodeId: node.id,
+          assetId: Number(data.assetId || 0),
+          label: `画布视频 ${index + 1}`,
+          thumbnailUrl: resolveNodeMediaUrl(data, workspaceId) || '',
+        }
+      })
+  }, [timelineEditorNodeId, timelineEditorState, nodes, workspaceId])
+
+  /**
+   * 连线 → 片段：视频节点连到时间线节点即成为一个片段，断开连线即移除对应片段。
+   *
+   * 只增删，不重排：用户在编辑器里排好的顺序与裁剪必须原样保留。
+   * 素材尚未就绪（没有 assetId）的视频节点先不产生片段，等它生成/上传完成后本副作用会补上。
+   */
+  useEffect(() => {
+    const updates = new Map<string, TimelineState>()
+    for (const node of nodes) {
+      if ((node.data as Record<string, unknown> | undefined)?.kind !== 'timeline') continue
+      const sources = edges
+        .filter((edge) => edge.target === node.id)
+        .slice()
+        .sort((left, right) => Number(left.data?.slotIndex ?? 0) - Number(right.data?.slotIndex ?? 0))
+        .map((edge) => {
+          const source = nodes.find((item) => item.id === edge.source)
+          return {
+            sourceNodeId: edge.source,
+            assetId: Number((source?.data as Record<string, unknown> | undefined)?.assetId || 0),
+          }
+        })
+      const current = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
+      const synced = syncTimelineClipsFromSources(current, sources)
+      if (!isSameTimelineClips(current.clips, synced.clips)) updates.set(node.id, synced)
+    }
+    if (!updates.size) return
+    setNodes((items) =>
+      items.map((node) =>
+        updates.has(node.id) ? { ...node, data: { ...node.data, timeline: updates.get(node.id) } } : node,
+      ),
+    )
+    setSaveStatus('dirty')
+  }, [nodes, edges, setNodes, setSaveStatus])
+
+  /**
+   * 把早期建的时间线节点抬到当前尺寸。
+   *
+   * 卡片以前只放摘要，320×168 够用；现在要放预览 + 片段条 + 操作行，那个高度会挤成一团。
+   * 只放大不缩小，已经够大的节点原样不动，因此正常情况下只会触发一次保存。
+   */
+  useEffect(() => {
+    const undersized = nodes.filter((node) => {
+      if ((node.data as Record<string, unknown> | undefined)?.kind !== 'timeline') return false
+      const style = (node.style || {}) as CSSProperties
+      return (
+        (Number(style.width) || 0) < TIMELINE_NODE_SIZE.width || (Number(style.height) || 0) < TIMELINE_NODE_SIZE.height
+      )
+    })
+    if (!undersized.length) return
+    const ids = new Set(undersized.map((node) => node.id))
+    setNodes((items) =>
+      items.map((node) => {
+        if (!ids.has(node.id)) return node
+        const style = (node.style || {}) as CSSProperties
+        return {
+          ...node,
+          style: {
+            ...style,
+            width: Math.max(Number(style.width) || 0, TIMELINE_NODE_SIZE.width),
+            height: Math.max(Number(style.height) || 0, TIMELINE_NODE_SIZE.height),
+          },
+        }
+      }),
+    )
+    setSaveStatus('dirty')
+  }, [nodes, setNodes, setSaveStatus])
+
+  /**
+   * 量出片段的源片真实时长。
+   *
+   * 连线自动生成的片段初始只是「整段待测量」的占位区间，不量出真实时长的话，
+   * 播放器只会各放 0.2 秒——看起来完全不像一条连续的片子。
+   * 同一条素材同时只量一次；失败后移除占用标记，让后续轮次可以重试。
+   *
+   * 刻意不做「取消」：本副作用依赖 nodes，而它自己写回时长又会改 nodes，
+   * 于是测量期间必然触发一次 cleanup。此前用 cancelled 标志会把已经量出的结果丢掉，
+   * 而对应 key 已经记进已测集合，那条片段就永远停在 0.2 秒占位区间——
+   * 用户看到的就是「加了两段视频，一段 10 秒一段 0.2 秒」。
+   * setNodes 用函数式更新且按 id 定位，节点已被删除时自然是空操作，无需取消。
+   */
+  useEffect(() => {
+    const pending: Array<{ nodeId: string; clipId: string; assetId: number }> = []
+    for (const node of nodes) {
+      if ((node.data as Record<string, unknown> | undefined)?.kind !== 'timeline') continue
+      const timeline = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
+      for (const clip of timeline.clips) {
+        if (clip.sourceDurationSec > 0 || !(clip.assetId > 0)) continue
+        // key 必须带 assetId：来源节点换素材后片段 id 不变、时长被重置为待测量，
+        // 只按 node:clip 记的话会命中旧标记，片段永远卡在 0.2 秒占位区间。
+        if (measuredClipAssetsRef.current.has(`${node.id}:${clip.id}:${clip.assetId}`)) continue
+        pending.push({ nodeId: node.id, clipId: clip.id, assetId: clip.assetId })
+      }
+    }
+    if (!pending.length) return
+
+    // 并行测量：串行时前一条的写回会改 nodes，后面几条要多等好几轮才轮得到
+    const retryMeasurement = (measurementKey: string) => {
+      measuredClipAssetsRef.current.delete(measurementKey)
+      const attempts = (clipDurationAttemptsRef.current.get(measurementKey) || 0) + 1
+      clipDurationAttemptsRef.current.set(measurementKey, attempts)
+      if (attempts >= 3) return
+      const timer = window.setTimeout(
+        () => {
+          clipDurationRetryTimersRef.current.delete(timer)
+          setClipDurationRetryTick((value) => value + 1)
         },
+        1200 * 2 ** (attempts - 1),
+      )
+      clipDurationRetryTimersRef.current.add(timer)
+    }
+
+    pending.forEach((item) => {
+      measuredClipAssetsRef.current.add(`${item.nodeId}:${item.clipId}:${item.assetId}`)
+      // 用不取整的时长：按秒取整会把 5.4 秒的片子当成 5 秒，末尾 0.4 秒直接丢掉
+      const measurementKey = `${item.nodeId}:${item.clipId}:${item.assetId}`
+      void readVideoDurationSecExact(assetStreamUrl(item.assetId, Number(workspaceId || 0)))
+        .then((duration) => {
+          if (!(duration > 0)) {
+            retryMeasurement(measurementKey)
+            return
+          }
+          clipDurationAttemptsRef.current.delete(measurementKey)
+          setNodes((items) =>
+            items.map((node) => {
+              if (node.id !== item.nodeId) return node
+              const current = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
+              const next = attachClipSourceDuration(current, item.clipId, duration)
+              if (isSameTimelineClips(current.clips, next.clips)) return node
+              return { ...node, data: { ...node.data, timeline: next } }
+            }),
+          )
+          setSaveStatus('dirty')
+        })
+        .catch(() => {
+          retryMeasurement(measurementKey)
+        })
+    })
+  }, [clipDurationRetryTick, nodes, workspaceId, setNodes, setSaveStatus])
+
+  useEffect(() => {
+    const retryTimers = clipDurationRetryTimersRef.current
+    return () => {
+      retryTimers.forEach((timer) => window.clearTimeout(timer))
+      retryTimers.clear()
+    }
+  }, [])
+
+  /**
+   * 把截出来的图连回它的源视频。
+   *
+   * 不连线时这张图落在画布上就是一座孤岛：看不出它截自哪条视频，
+   * 画布上视频一多就只能靠位置猜，而位置是会被拖散的。
+   *
+   * 这条边标成血缘边（provenance）：方向是「视频 → 图」，表示图是视频的产物。
+   * 它绝不能被当成生成输入——image 节点本来就不接受 video 来源
+   * （allowedSourceKinds.image 只有 text/image），真按输入发出去，
+   * 后端收到的会是「拿一整条视频当图片模型的素材」。
+   * 样式上用虚线与真正的输入边区分开。
+   */
+  const linkCapturedFrame = useCallback(
+    (videoNodeId: string, imageNodeId: string) => {
+      if (!videoNodeId || !imageNodeId) return
+      const edgeId = buildEdgeId(videoNodeId, imageNodeId, 0)
+      setEdges((current) =>
+        current.some((edge) => edge.id === edgeId)
+          ? current
+          : [
+              ...current,
+              {
+                id: edgeId,
+                source: videoNodeId,
+                sourceHandle: null,
+                target: imageNodeId,
+                targetHandle: null,
+                data: { slotIndex: 0, provenance: true },
+                style: { stroke: '#b6bdcb', strokeWidth: 1.5, strokeDasharray: '6 5' },
+              },
+            ],
       )
     },
-    [appendNewNode],
+    [setEdges],
+  )
+
+  /**
+   * 截帧：把视频节点当前画面落成一个图片节点。
+   *
+   * 先上传成正式素材再建节点——只留 dataURL 的话，这张图既不能作为 input_assets 参与下游生成，
+   * 也会把几百 KB 的 base64 写进画布草稿。上传失败就不建节点，不留一个点不动的空壳。
+   */
+  const handleCaptureFrame = useCallback(
+    async (nodeId: string, frameDataUrl: string) => {
+      const ws = Number(workspaceId || 0)
+      if (!ws || capturingNodeId) return
+      const sourceNode = latestRef.current.nodes.find((node) => node.id === nodeId)
+      if (!sourceNode) return
+
+      setCapturingNodeId(nodeId)
+      try {
+        const blob = await (await fetch(frameDataUrl)).blob()
+        const file = new File([blob], `canvas-frame-${Date.now()}.jpg`, { type: 'image/jpeg' })
+        const uploaded: any = await uploadAssetFile({ workspaceId: ws, file, source: 'canvas-capture' })
+        const assetId = Number(uploaded?.asset?.id || 0)
+        if (!assetId) throw new Error('截帧上传失败，请重试')
+
+        // 放在源视频节点右侧，避免叠在它上面
+        const width = Number((sourceNode.style as CSSProperties | undefined)?.width || 250) || 250
+        const imageNodeId = appendNewNode(
+          'image',
+          { x: sourceNode.position.x + width + 40, y: sourceNode.position.y },
+          {
+            ratio: AUTO_RATIO,
+            extraData: { assetId, resultUrl: assetStreamUrl(assetId, ws) },
+          },
+        )
+        linkCapturedFrame(nodeId, imageNodeId)
+        showToast('已截帧并生成图片节点', 'success')
+      } catch (error: any) {
+        showToast(String(error?.message || '截帧失败，请重试'), 'error')
+      } finally {
+        setCapturingNodeId('')
+      }
+    },
+    [workspaceId, capturingNodeId, appendNewNode, linkCapturedFrame],
+  )
+
+  /** 时间线改动写回节点 data，并标记草稿待保存（同步由既有的防抖保存链路负责）。 */
+  const handleTimelineChange = useCallback(
+    (next: TimelineState) => {
+      if (!timelineEditorNodeId) return
+      // 改动前记一次历史：否则 Ctrl+Z 会越过整段剪辑，直接跳回更早的画布状态
+      commitHistory()
+      setNodes((items) =>
+        items.map((node) =>
+          node.id === timelineEditorNodeId ? { ...node, data: { ...node.data, timeline: next } } : node,
+        ),
+      )
+      setSaveStatus('dirty')
+    },
+    [timelineEditorNodeId, setNodes, setSaveStatus, commitHistory],
+  )
+
+  /**
+   * 画布上可以加进指定时间线的视频节点。
+   *
+   * 只列已经有素材的（没有 assetId 就没有可拼的内容），并排除已经在时间线里的，
+   * 避免用户挑了一条什么都没发生。
+   *
+   * 做成「按需调用」而不是 useMemo：节点卡片上的下拉是点开才需要这份列表，
+   * 若挂进 context 的值里，任何节点变动都会让所有节点重渲染。
+   */
+  const getTimelineAddableSources = useCallback(
+    (timelineNodeId: string) => {
+      if (!timelineNodeId) return []
+      const current = latestRef.current.nodes.find((node) => node.id === timelineNodeId)
+      const timeline = parseTimelineState((current?.data as Record<string, unknown> | undefined)?.timeline)
+      const used = new Set(timeline.clips.map((clip) => clip.sourceNodeId).filter(Boolean))
+      return latestRef.current.nodes
+        .filter((node) => {
+          const data = node.data as Record<string, unknown> | undefined
+          if (data?.kind !== 'video') return false
+          if (node.id === timelineNodeId || used.has(node.id)) return false
+          return Number(data?.assetId || 0) > 0
+        })
+        .map((node, index) => {
+          const data = node.data as Record<string, unknown>
+          return {
+            nodeId: node.id,
+            assetId: Number(data.assetId || 0),
+            label: `画布视频 ${index + 1}`,
+            thumbnailUrl: resolveNodeMediaUrl(data, workspaceId) || '',
+          }
+        })
+    },
+    [workspaceId],
+  )
+
+  /**
+   * 把画布上的某个视频节点加成时间线片段，并补上对应连线。
+   *
+   * 走连线模型而不是「游离片段」：画布上看得见哪些节点在喂这条时间线，
+   * 和用户手动拉线的结果完全一致，后续断线移除等行为也统一。
+   * 时长留 0，交给既有的测量副作用补齐。
+   */
+  const handleAddTimelineClip = useCallback(
+    (targetId: string, sourceNodeId: string) => {
+      if (!targetId || !sourceNodeId) return
+      const source = latestRef.current.nodes.find((node) => node.id === sourceNodeId)
+      const assetId = Number((source?.data as Record<string, unknown> | undefined)?.assetId || 0)
+      if (!(assetId > 0)) {
+        showToast('该视频还没有生成完成，暂时不能加入时间线', 'error')
+        return
+      }
+
+      commitHistory()
+      setNodes((items) =>
+        items.map((node) => {
+          if (node.id !== targetId) return node
+          const current = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
+          if (current.clips.length >= MAX_TIMELINE_CLIPS) return node
+          return { ...node, data: { ...node.data, timeline: attachTimelineSource(current, { sourceNodeId, assetId }) } }
+        }),
+      )
+
+      // 连线可能已经存在（用户先拉了线、视频后生成完），这时只补片段不重复建边
+      setEdges((items) => {
+        if (items.some((edge) => edge.source === sourceNodeId && edge.target === targetId)) return items
+        const slotIndex = items.filter((edge) => edge.target === targetId).length
+        return [
+          ...items,
+          {
+            id: buildEdgeId(sourceNodeId, targetId, slotIndex),
+            source: sourceNodeId,
+            sourceHandle: null,
+            target: targetId,
+            targetHandle: null,
+            data: { slotIndex },
+          },
+        ]
+      })
+      setSaveStatus('dirty')
+    },
+    [setNodes, setEdges, setSaveStatus, commitHistory],
+  )
+
+  /**
+   * 拖到哪个时间线节点上了。
+   *
+   * 用被拖节点的中心点判定：按矩形相交会让「刚碰到边角」也算命中，误触很多。
+   * 只接受已经有素材的视频节点——空节点拖进去不会产生片段，高亮就成了假承诺。
+   */
+  const findTimelineDropTarget = useCallback((dragged: Node): string => {
+    const data = dragged.data as Record<string, unknown> | undefined
+    if (data?.kind !== 'video' || !(Number(data?.assetId || 0) > 0)) return ''
+    const size = (dragged.style || {}) as CSSProperties
+    const width = Number(size.width) || dragged.measured?.width || 250
+    const height = Number(size.height) || dragged.measured?.height || 250
+    const centerX = dragged.position.x + width / 2
+    const centerY = dragged.position.y + height / 2
+
+    for (const node of latestRef.current.nodes) {
+      if ((node.data as Record<string, unknown> | undefined)?.kind !== 'timeline') continue
+      const style = (node.style || {}) as CSSProperties
+      const nodeWidth = Number(style.width) || node.measured?.width || TIMELINE_NODE_SIZE.width
+      const nodeHeight = Number(style.height) || node.measured?.height || TIMELINE_NODE_SIZE.height
+      const withinX = centerX >= node.position.x && centerX <= node.position.x + nodeWidth
+      const withinY = centerY >= node.position.y && centerY <= node.position.y + nodeHeight
+      if (withinX && withinY) return node.id
+    }
+    return ''
+  }, [])
+
+  /** 从时间线移除一个片段（节点卡片上的 × 与编辑器共用）。 */
+  const handleRemoveTimelineClip = useCallback(
+    (targetId: string, clipId: string) => {
+      if (!targetId || !clipId) return
+      commitHistory()
+      setNodes((items) =>
+        items.map((node) => {
+          if (node.id !== targetId) return node
+          const current = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
+          return { ...node, data: { ...node.data, timeline: removeTimelineClip(current, clipId) } }
+        }),
+      )
+      setSaveStatus('dirty')
+    },
+    [setNodes, setSaveStatus, commitHistory],
+  )
+
+  /**
+   * 合成成片：把时间线的各段在浏览器里无损拼成一条 MP4，再落成素材。
+   *
+   * 全程不解码不重编码——样本字节原样搬运，因此画质与源片一致，几秒就能出片。
+   * 代价是裁剪点会吸附到关键帧，合成后把真实生效的区间写回时间线，
+   * 让编辑器显示的和成片里的是同一回事。
+   *
+   * 合成引擎按需 import()：它只在点「合成」时才用得到，不该压在画布首屏的包里。
+   */
+  /**
+   * 把时间线产出的节点连回时间线本身。
+   *
+   * 不连线时，剪出/合成的成片落在画布上是一座孤岛：看不出它从哪条时间线来，
+   * 隔天再打开只能靠位置猜。连线还是唯一会被持久化的血缘——
+   * composedFromNodeId 不在 PERSISTED_NODE_DATA_FIELDS 里，刷新一次就没了，而边是存的。
+   *
+   * 方向是「时间线 → 成片」：成片是下游产物，同时 timeline 本来就被当作一条视频素材
+   * （isCanvasVideoSourceKind），这条边天然是 source_video，不需要为它开特例。
+   *
+   * 必须定义在两个产出回调之前：useCallback 的依赖数组在渲染时就求值，
+   * 定义在后面会直接撞上 const 的暂时性死区，整块画布崩掉。
+   */
+  const linkTimelineOutput = useCallback(
+    (timelineNodeId: string, outputNodeId: string) => {
+      const slotIndex = 0
+      const edgeId = buildEdgeId(timelineNodeId, outputNodeId, slotIndex)
+      setEdges((current) =>
+        current.some((edge) => edge.id === edgeId)
+          ? current
+          : [
+              ...current,
+              {
+                id: edgeId,
+                source: timelineNodeId,
+                sourceHandle: null,
+                target: outputNodeId,
+                targetHandle: null,
+                data: {
+                  slotIndex,
+                  role: inferCanvasConnectionRole({
+                    targetKind: 'video',
+                    sourceKind: 'timeline',
+                    videoMode: 'auto',
+                    slotIndex,
+                  }),
+                },
+              },
+            ],
+      )
+    },
+    [setEdges],
+  )
+
+  const handleTimelineCompose = useCallback(
+    async (nodeId: string) => {
+      if (!nodeId || timelineComposing) return
+      const wsId = Number(workspaceId || 0)
+      if (!wsId) {
+        showToast('workspace_id 缺失，无法合成', 'error')
+        return
+      }
+
+      const target = latestRef.current.nodes.find((node) => node.id === nodeId)
+      let cutlist: TimelineCutlist
+      try {
+        // 校验不通过时 buildTimelineCutlist 会抛出第一条问题，直接透出给用户
+        cutlist = buildTimelineCutlist(
+          parseTimelineState((target?.data as Record<string, unknown> | undefined)?.timeline),
+        )
+      } catch (error) {
+        showToast(String((error as Error)?.message || '时间线还不能合成'), 'error')
+        return
+      }
+
+      setComposingNodeId(nodeId)
+      setTimelineComposing(true)
+      try {
+        const sources: ConcatSource[] = []
+        let totalSourceBytes = 0
+        for (let index = 0; index < cutlist.clips.length; index += 1) {
+          const item = cutlist.clips[index]
+          setComposeProgress(`正在读取素材 ${index + 1}/${cutlist.clips.length}`)
+          // 无损拼接要读样本表，而 moov 可能在文件尾部，因此必须取完整文件
+          const response = await fetch(assetStreamUrl(item.asset_id, wsId), { credentials: 'include' })
+          if (!response.ok) throw new Error(`片段 ${index + 1} 素材下载失败（HTTP ${response.status}）`)
+          const declaredBytes = Number(response.headers.get('content-length') || 0)
+          if (declaredBytes > 0 && totalSourceBytes + declaredBytes > MAX_LOCAL_TIMELINE_SOURCE_BYTES) {
+            throw new Error('时间线源视频超过 512MB，浏览器无法安全合成，请减少片段或缩短视频')
+          }
+          const buffer = await response.arrayBuffer()
+          totalSourceBytes += buffer.byteLength
+          if (totalSourceBytes > MAX_LOCAL_TIMELINE_SOURCE_BYTES) {
+            throw new Error('时间线源视频超过 512MB，浏览器无法安全合成，请减少片段或缩短视频')
+          }
+          sources.push({
+            buffer,
+            inSec: item.in_sec,
+            outSec: item.out_sec,
+            muted: item.muted,
+            label: `片段 ${index + 1}`,
+          })
+        }
+
+        setComposeProgress('正在合成成片…')
+        const { concatMp4SourcesAsync } = await import('@/utils/videoConcat')
+        // 规格一致时仍是逐字节无损拼接；只有对不上时才重编码，并把进度如实回显——
+        // 重编码要逐帧解码再编码，长片可能几十秒，不给进度用户会以为卡死。
+        const composed = await concatMp4SourcesAsync(sources, {
+          allowTranscode: true,
+          onTranscodeProgress: (done, total) => {
+            const percent = total > 0 ? Math.min(99, Math.round((done / total) * 100)) : 0
+            setComposeProgress(`片段规格不一致，正在重编码 ${percent}%`)
+          },
+        })
+
+        setComposeProgress('正在保存成片…')
+        const file = new File([composed.blob], `时间线成片-${Date.now()}.mp4`, { type: 'video/mp4' })
+        const uploaded: any = await uploadAssetFile({ workspaceId: wsId, file })
+        const assetId = Number(uploaded?.asset?.id || 0)
+        if (!assetId) throw new Error('成片上传失败，未拿到素材 ID')
+
+        // 只回写裁剪点，不动时间线节点自己的素材：
+        // 时间线是编辑台，成片是产出物。把成片盖到它身上会顶掉原来的内容，
+        // 而且再合成一次就再顶一次，用户拿不回上一版。
+        setNodes((items) =>
+          items.map((node) => {
+            if (node.id !== nodeId) return node
+            // 裁剪点回写成吸附后的真实值，编辑器与成片从此一致
+            const current = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
+            const clips = current.clips.map((clip, index) => {
+              const segment = composed.segments[index]
+              if (!segment) return clip
+              return { ...clip, inSec: segment.actualInSec, outSec: segment.actualOutSec }
+            })
+            return { ...node, data: { ...node.data, timeline: { ...current, clips } } }
+          }),
+        )
+        // 成片落成一个独立的视频节点：它能连出去做下一步生成、能单独预览和下载，
+        // 而时间线节点保持原样，随时可以改片段再合成一版。
+        const timelineNode = latestRef.current.nodes.find((node) => node.id === nodeId)
+        if (timelineNode) {
+          // 同一条时间线反复合成会产出多个版本，依次向下错开，不互相盖住也不覆盖上一版
+          const previousOutputs = latestRef.current.nodes.filter(
+            (node) => (node.data as Record<string, unknown> | undefined)?.composedFromNodeId === nodeId,
+          ).length
+          const timelineWidth = Number((timelineNode.style as CSSProperties | undefined)?.width || 320) || 320
+          const outputId = appendNewNode(
+            'video',
+            {
+              x: timelineNode.position.x + timelineWidth + 60,
+              y: timelineNode.position.y + previousOutputs * 260,
+            },
+            {
+              ratio: AUTO_RATIO,
+              extraData: { assetId, resultUrl: assetStreamUrl(assetId, wsId), composedFromNodeId: nodeId },
+            },
+          )
+          linkTimelineOutput(nodeId, outputId)
+        }
+
+        setSaveStatus('dirty')
+        // 降级信息要全部说出来，不能只报第一条：丢音和重编码同时发生时，
+        // 只显示其中一条会让另一条变成用户永远查不到的「怎么没声音了」
+        showToast(
+          composed.warnings.length ? `合成完成：${composed.warnings.join('；')}` : '合成完成，成片已添加到画布',
+          composed.warnings.length ? 'info' : 'success',
+        )
+      } catch (error) {
+        // 拼接失败的原因是用户可操作的（规格不一致 / 逐段静音），必须原样透出，不要吞成通用文案
+        showToast(String((error as Error)?.message || '合成失败，请稍后重试'), 'error')
+      } finally {
+        setTimelineComposing(false)
+        setComposingNodeId('')
+        setComposeProgress('')
+      }
+    },
+    [timelineComposing, workspaceId, appendNewNode, linkTimelineOutput, setNodes, setSaveStatus],
+  )
+
+  /**
+   * 把时间线上选中的一段剪出来：时间线去掉这段，剪出的内容落成画布上的视频节点。
+   *
+   * 剪出的片段是「某条素材的一个子区间」，不能直接拿 assetId 建节点——那样节点会播放整条素材。
+   * 因此每段都走一次单源拼接导出成新素材：单源的规格天然一致，永远是无损的，不会重编码。
+   */
+  const handleTimelineExtract = useCallback(
+    async (nodeId: string, fromSec: number, toSec: number) => {
+      const wsId = Number(workspaceId || 0)
+      if (!wsId || timelineComposing) return
+      const target = latestRef.current.nodes.find((node) => node.id === nodeId)
+      if (!target) return
+
+      const current = parseTimelineState((target.data as Record<string, unknown> | undefined)?.timeline)
+      const { state: nextState, extracted } = extractTimelineRange(current, fromSec, toSec)
+      if (!extracted.length) {
+        showToast('所选区间太短，没有可剪出的内容', 'error')
+        return
+      }
+
+      setComposingNodeId(nodeId)
+      setTimelineComposing(true)
+      try {
+        const { concatMp4Sources } = await import('@/utils/videoConcat')
+        const created: Array<{ assetId: number }> = []
+
+        for (let index = 0; index < extracted.length; index += 1) {
+          const clip = extracted[index]
+          setComposeProgress(`正在导出剪出的片段 ${index + 1}/${extracted.length}`)
+          const response = await fetch(assetStreamUrl(clip.assetId, wsId), { credentials: 'include' })
+          if (!response.ok) throw new Error(`剪出片段 ${index + 1} 的素材下载失败（HTTP ${response.status}）`)
+          const buffer = await response.arrayBuffer()
+          if (buffer.byteLength > MAX_LOCAL_TIMELINE_SOURCE_BYTES) {
+            throw new Error('源视频超过 512MB，浏览器无法安全导出，请先缩短这段素材')
+          }
+          // 单源拼接 = 纯裁剪：规格必然一致，走无损路径，画质与源片逐字节相同
+          const trimmed = concatMp4Sources([
+            { buffer, inSec: clip.inSec, outSec: clip.outSec, muted: clip.muted, label: `剪出片段 ${index + 1}` },
+          ])
+          const file = new File([trimmed.blob], `剪辑片段-${Date.now()}-${index + 1}.mp4`, { type: 'video/mp4' })
+          const uploaded: any = await uploadAssetFile({ workspaceId: wsId, file })
+          const assetId = Number(uploaded?.asset?.id || 0)
+          if (!assetId) throw new Error(`剪出片段 ${index + 1} 上传失败，未拿到素材 ID`)
+          created.push({ assetId })
+        }
+
+        // 时间线先更新，再落节点：两步都成功才算剪辑完成，中途失败不会留下半个状态
+        setNodes((items) =>
+          items.map((node) => (node.id === nodeId ? { ...node, data: { ...node.data, timeline: nextState } } : node)),
+        )
+
+        const timelineWidth = Number((target.style as CSSProperties | undefined)?.width || 320) || 320
+        const existingOutputs = latestRef.current.nodes.filter(
+          (node) => (node.data as Record<string, unknown> | undefined)?.composedFromNodeId === nodeId,
+        ).length
+        created.forEach((item, index) => {
+          const outputId = appendNewNode(
+            'video',
+            {
+              x: target.position.x + timelineWidth + 60,
+              y: target.position.y + (existingOutputs + index) * 260,
+            },
+            {
+              ratio: AUTO_RATIO,
+              extraData: {
+                assetId: item.assetId,
+                resultUrl: assetStreamUrl(item.assetId, wsId),
+                composedFromNodeId: nodeId,
+              },
+            },
+          )
+          linkTimelineOutput(nodeId, outputId)
+        })
+
+        setSaveStatus('dirty')
+        showToast(created.length > 1 ? `已剪出 ${created.length} 段并添加到画布` : '已剪出选区并添加到画布', 'success')
+      } catch (error) {
+        showToast(String((error as Error)?.message || '剪辑失败，请稍后重试'), 'error')
+      } finally {
+        setTimelineComposing(false)
+        setComposingNodeId('')
+        setComposeProgress('')
+      }
+    },
+    [timelineComposing, workspaceId, appendNewNode, linkTimelineOutput, setNodes, setSaveStatus],
+  )
+
+  /**
+   * 交给节点卡片的动作集合。
+   *
+   * 必须声明在上面这些 handler 之后：依赖数组是就地求值的，提前声明会撞上 TDZ。
+   */
+  const nodeActions = useMemo<CanvasNodeActions>(
+    () => ({
+      onCaptureFrame: handleCaptureFrame,
+      capturingNodeId,
+      timeline: {
+        getAddableSources: getTimelineAddableSources,
+        onAddClip: handleAddTimelineClip,
+        onRemoveClip: handleRemoveTimelineClip,
+        onCompose: handleTimelineCompose,
+        onOpenEditor: setTimelineEditorNodeId,
+        composingNodeId,
+        composeProgress,
+      },
+    }),
+    [
+      handleCaptureFrame,
+      capturingNodeId,
+      getTimelineAddableSources,
+      handleAddTimelineClip,
+      handleRemoveTimelineClip,
+      handleTimelineCompose,
+      composingNodeId,
+      composeProgress,
+    ],
+  )
+
+  const handleAddNode = useCallback(
+    (type: string) => {
+      // 时间线卡片是可直接操作的编辑面（预览 + 片段条 + 操作行），要给足高度
+      const size = type === 'timeline' ? TIMELINE_NODE_SIZE : { width: type === 'video' ? 444 : 250, height: 250 }
+      /*
+       * 落点：视口中心，再避开已有节点。
+       *
+       * 这里原本是 { x: 300 + random*200, y: 200 + random*200 } —— 画布固定坐标，
+       * 既与当前视口无关（平移过就落到屏幕外），也完全不看已有节点。
+       * 于是新节点经常正好压在旧节点上，而 React Flow 会把选中节点抬到 z-index:1000，
+       * 被盖住的那个连按钮都点不到：新建的时间线节点播放/精修/合成全部失效。
+       */
+      const center = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      const position = findFreeNodePosition({
+        anchor: { x: center.x - size.width / 2, y: center.y - size.height / 2 },
+        size,
+        occupied: latestRef.current.nodes.map((node) => {
+          const style = (node.style || {}) as CSSProperties
+          return {
+            x: node.position.x,
+            y: node.position.y,
+            width: Number(style.width) || node.measured?.width || 250,
+            height: Number(style.height) || node.measured?.height || 250,
+          }
+        }),
+      })
+      appendNewNode(type, position, {
+        ratio: inheritNodeRatio(type),
+        ...(type === 'timeline' ? { size: TIMELINE_NODE_SIZE } : {}),
+      })
+    },
+    [appendNewNode, inheritNodeRatio, screenToFlowPosition],
   )
 
   // 右键菜单「添加节点」：菜单坐标转画布坐标后创建（默认选中 + 渐入）
@@ -3435,14 +4606,10 @@ function CanvasInner() {
       const flowY = (contextMenu.y - ty) / tz
       const nodeW = type === 'video' ? 444 : 250
       const nodeH = type === 'video' ? 250 : 250
-      appendNewNode(
-        type,
-        { x: flowX - nodeW / 2, y: flowY - nodeH / 2 },
-        { ratio: type === 'video' ? AUTO_RATIO : type === 'image' ? '1:1' : undefined },
-      )
+      appendNewNode(type, { x: flowX - nodeW / 2, y: flowY - nodeH / 2 }, { ratio: inheritNodeRatio(type) })
       setContextMenu(null)
     },
-    [contextMenu, transform, appendNewNode],
+    [contextMenu, transform, appendNewNode, inheritNodeRatio],
   )
 
   // 按下节点即选中（不依赖 ReactFlow 的 click 判定）：
@@ -3461,6 +4628,7 @@ function CanvasInner() {
         videoMode: (node.data as any)?.videoMode,
         modelVersionId: (node.data as any)?.modelVersionId,
         resultUrl: (node.data as any)?.resultUrl,
+        assetId: (node.data as any)?.assetId,
         text: (node.data as any)?.text,
         prompt: (node.data as any)?.prompt,
       })
@@ -3495,469 +4663,557 @@ function CanvasInner() {
               ? { ...n, className: n.className ? `${n.className} is-connect-disabled` : 'is-connect-disabled' }
               : n
           })
-        : nodes
+        : // 拖着视频节点悬在时间线上：高亮该时间线，让「松手会放进这里」在松手前就看得见
+          timelineDropTargetId
+          ? nodes.map((n) =>
+              n.id === timelineDropTargetId
+                ? { ...n, className: n.className ? `${n.className} is-timeline-drop` : 'is-timeline-drop' }
+                : n,
+            )
+          : nodes
+
+  // 为所有来源的连线补上方向箭头：包含历史恢复、协作增量同步和本次新建的连线。
+  // 保留边自身显式配置，便于未来为特殊边型定义不同的起止标记。
+  const displayEdges = useMemo(
+    () =>
+      edges.map((edge) => ({
+        ...edge,
+        markerEnd: edge.markerEnd ?? CANVAS_EDGE_END_MARKER,
+      })),
+    [edges],
+  )
 
   return (
-    <div
-      className="canvas-view"
-      onDragEnter={handleFileDragEnter}
-      onDragOver={handleFileDragOver}
-      onDragLeave={handleFileDragLeave}
-      onDrop={handleFileDrop}
-    >
-      <div className="canvas-brand">
-        <img src={brandLogo} alt="帧智汇" className="canvas-brand-logo" />
-        <div className="canvas-brand-text">
-          <span className="canvas-brand-name">帧智汇</span>
-          <DraftSaveIndicator status={saveStatus} />
-          {cloudStatus !== 'online' && (
-            <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
-              {cloudMessage}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* 独立返回按钮：始终显示，不随工具栏/抽屉隐藏或消失 */}
-      <button
-        className="canvas-back-btn"
-        onClick={() => navigate('/canvas')}
-        title="返回画布列表"
-        aria-label="返回画布列表"
+    <CanvasNodeActionsContext.Provider value={nodeActions}>
+      <div
+        className="canvas-view"
+        onDragEnter={handleFileDragEnter}
+        onDragOver={handleFileDragOver}
+        onDragLeave={handleFileDragLeave}
+        onDrop={handleFileDrop}
       >
-        <svg
-          width="22"
-          height="22"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M19 12H5" />
-          <path d="m12 19-7-7 7-7" />
-        </svg>
-      </button>
-
-      {/* 抽屉未打开（或正在播放收起动画）时渲染工具栏 */}
-      {!drawerPanel && (
-        <CanvasFloatingToolbar
-          leaving={toolbarLeaving}
-          onAddNode={handleAddNode}
-          moveEnabled={moveEnabled}
-          onMoveToggle={handleMoveToggle}
-          dragEnabled={dragEnabled}
-          onDragToggle={handleDragToggle}
-          onAddLocalImage={() => openLocalImagePicker()}
-          onOpenAssets={() => openDrawerPanel('assets')}
-          onOpenHistory={() => openDrawerPanel('history')}
-        />
-      )}
-
-      {/* 隐藏文件选择：由节点顶部上传按钮触发，接收本地图片/视频文件 */}
-      <input
-        ref={uploadInputRef}
-        type="file"
-        accept={selectedNode?.kind === 'video' ? 'video/*' : 'image/*'}
-        style={{ display: 'none' }}
-        onChange={handleUploadFile}
-      />
-
-      {/* 隐藏文件选择：由工具栏 / 右键菜单「本地图片」触发，支持一次选择多张 */}
-      <input
-        ref={localImageInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        style={{ display: 'none' }}
-        onChange={handleLocalImageInputChange}
-      />
-
-      {/* 拖拽文件到画布时的提示遮罩 */}
-      {fileDragActive && (
-        <div className="canvas-drop-overlay">
-          <div className="canvas-drop-overlay__card">
-            <svg
-              width="34"
-              height="34"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M12 16V4" />
-              <path d="m6 10 6-6 6 6" />
-              <path d="M4 20h16" />
-            </svg>
-            <strong>松开即可添加到画布</strong>
-            <span>支持拖入本地图片，也可以直接 Ctrl+V 粘贴</span>
+        <div className="canvas-brand">
+          <img src={brandLogo} alt="帧智汇" className="canvas-brand-logo" />
+          <div className="canvas-brand-text">
+            <span className="canvas-brand-name">帧智汇</span>
+            <DraftSaveIndicator status={saveStatus} />
+            {cloudStatus !== 'online' && (
+              <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
+                {cloudMessage}
+              </span>
+            )}
           </div>
         </div>
-      )}
 
-      {/* 参考选择横幅 */}
-      {isPickingRef && (
-        <div className="canvas-pick-banner">
-          <span className="canvas-pick-banner__text">{pickError || '从画布选择参考'}</span>
-          <button className="canvas-pick-banner__exit" onClick={stopPickRef}>
-            退出
-          </button>
-        </div>
-      )}
-
-      <ReactFlow
-        nodes={displayNodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onConnectEnd={onConnectEnd}
-        /* 连线预览/建立统一走来源限制校验：不可连的 handle 不显示预览连线 */
-        isValidConnection={(connection) => {
-          if (!connection.source || !connection.target) return false
-          return !validateConnection(connection.source, connection.target)
-        }}
-        /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步） */
-        onBeforeDelete={handleBeforeDelete}
-        onNodesDelete={handleNodesDelete}
-        onEdgesDelete={handleEdgesDelete}
-        connectionMode={ConnectionMode.Loose}
-        connectionRadius={60}
-        /* 禁用多选：任何情况下都只允许同时选中一个节点 */
-        multiSelectionKeyCode={null}
-        /* 拖动开始前记录历史：撤销可还原节点位置 */
-        onNodeDragStart={(_e, node) => {
-          commitHistory()
-          // 节点按下后轻微移动（>拖拽阈值）会被判定为拖拽而非点击，onNodeClick 不触发，
-          // 导致首次点击有概率选不中；拖拽开始同样立即选中，保证稳定响应
-          handleSelectNodeOnDown(node as unknown as Node)
-        }}
-        /* 劫持右键：空白区域 / 节点 / 连线统一弹出浮动菜单 */
-        onPaneContextMenu={(e) => {
-          e.preventDefault()
-          setAddMenu(null)
-          setContextMenu({ x: e.clientX, y: e.clientY })
-        }}
-        onNodeContextMenu={(e) => {
-          // 文本编辑框内保留默认菜单（复制/粘贴）
-          const target = e.target as HTMLElement
-          if (target.closest('textarea, input, [contenteditable="true"]')) return
-          e.preventDefault()
-          setAddMenu(null)
-          setContextMenu({ x: e.clientX, y: e.clientY })
-        }}
-        onEdgeContextMenu={(e) => {
-          e.preventDefault()
-          setAddMenu(null)
-          setContextMenu({ x: e.clientX, y: e.clientY })
-        }}
-        onNodeClick={(_e, node) => {
-          if (isPickingRef) {
-            handlePickRefNode(node as unknown as Node)
-            return
-          }
-          // 首个节点（画布源头）与其他节点一致：点击弹出编辑面板
-          setSelectedNode({
-            id: node.id,
-            kind: (node.data?.kind as string) || 'text',
-            sourceRefs: getSourceRefs(node.id),
-            ratio: (node.data as any)?.ratio,
-            videoMode: (node.data as any)?.videoMode,
-            modelVersionId: (node.data as any)?.modelVersionId,
-            resultUrl: (node.data as any)?.resultUrl,
-            text: (node.data as any)?.text,
-            prompt: (node.data as any)?.prompt,
-            operationCode: (node.data as any)?.operationCode,
-            params: (node.data as any)?.params,
-          })
-        }}
-        onPaneClick={() => {
-          if (isPickingRef) {
-            // 参考选择模式下点击空白不退出：只能通过「退出」按钮退出
-            return
-          }
-          setAddMenu(null)
-          setSelectedNode(null)
-        }}
-        /* 工具栏开关：移动=画布平移（panOnDrag），拖拽=节点拖拽（nodesDraggable） */
-        nodesDraggable={dragEnabled}
-        panOnDrag={moveEnabled}
-        elementsSelectable
-        defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background />
-      </ReactFlow>
-
-      {/* 左下角复位视图按钮 */}
-      <button className="canvas-reset-btn" title="复位视图" onClick={() => fitView({ padding: 0.2, duration: 300 })}>
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+        {/* 独立返回按钮：始终显示，不随工具栏/抽屉隐藏或消失 */}
+        <button
+          className="canvas-back-btn"
+          onClick={() => navigate('/canvas')}
+          title="返回画布列表"
+          aria-label="返回画布列表"
         >
-          <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
-          <line x1="12" y1="8" x2="12" y2="16" />
-          <line x1="8" y1="12" x2="16" y2="12" />
-        </svg>
-      </button>
-
-      {/* 连线剪刀图标层 — 选中连线时显示 */}
-      <EdgeLabelRenderer>
-        {edges
-          .filter((e) => e.selected)
-          .map((edge) => {
-            const source = nodes.find((n) => n.id === edge.source)
-            const target = nodes.find((n) => n.id === edge.target)
-            if (!source || !target) return null
-
-            const sx = source.position.x + (source.measured?.width || (source.style?.width as number) || 250) / 2
-            const sy = source.position.y + (source.measured?.height || (source.style?.height as number) || 250) / 2
-            const tx = target.position.x + (target.measured?.width || (target.style?.width as number) || 250) / 2
-            const ty = target.position.y + (target.measured?.height || (target.style?.height as number) || 250) / 2
-
-            const [_, labelX, labelY] = getBezierPath({
-              sourceX: sx,
-              sourceY: sy,
-              targetX: tx,
-              targetY: ty,
-            })
-
-            return (
-              <div
-                key={edge.id}
-                style={{
-                  position: 'absolute',
-                  transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-                  pointerEvents: 'all',
-                  zIndex: 100,
-                }}
-              >
-                <button
-                  className="canvas-edge-delete"
-                  title="删除连线"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleEdgeDelete(edge.id)
-                  }}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  >
-                    <path d="M4 4l6 6M10 4l-6 6" />
-                    <circle cx="7" cy="7" r="5" />
-                  </svg>
-                </button>
-              </div>
-            )
-          })}
-      </EdgeLabelRenderer>
-
-      {/* 右键浮动菜单：添加节点 / 撤销 / 重做 */}
-      {contextMenu && (
-        <div
-          className="canvas-context-menu"
-          style={{
-            left: Math.min(contextMenu.x, window.innerWidth - CONTEXT_MENU_WIDTH),
-            top: Math.min(contextMenu.y, window.innerHeight - CONTEXT_MENU_HEIGHT),
-          }}
-        >
-          <div className="canvas-context-menu__label">添加节点</div>
-          <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('text')}>
-            <span className="canvas-context-menu__icon">{getTypeIcon('text')}</span>
-            文本节点
-          </button>
-          <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('image')}>
-            <span className="canvas-context-menu__icon">{getTypeIcon('image')}</span>
-            图片节点
-          </button>
-          <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('video')}>
-            <span className="canvas-context-menu__icon">{getTypeIcon('video')}</span>
-            视频节点
-          </button>
-          <button
-            type="button"
-            className="canvas-context-menu__item"
-            onClick={() => {
-              const anchor = { x: contextMenu.x, y: contextMenu.y }
-              setContextMenu(null)
-              openLocalImagePicker(anchor)
-            }}
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           >
-            <span className="canvas-context-menu__icon">
+            <path d="M19 12H5" />
+            <path d="m12 19-7-7 7-7" />
+          </svg>
+        </button>
+
+        {/* 抽屉未打开（或正在播放收起动画）时渲染工具栏 */}
+        {!drawerPanel && (
+          <CanvasFloatingToolbar
+            leaving={toolbarLeaving}
+            onAddNode={handleAddNode}
+            moveEnabled={moveEnabled}
+            onMoveToggle={handleMoveToggle}
+            dragEnabled={dragEnabled}
+            onDragToggle={handleDragToggle}
+            onAddLocalImage={() => openLocalImagePicker()}
+            onOpenAssets={() => openDrawerPanel('assets')}
+            onOpenHistory={() => openDrawerPanel('history')}
+          />
+        )}
+
+        {/* 剪辑时间线编辑器：节点上的「精修」或双击打开，用于逐帧裁剪与分割；
+          加片段/删片段/合成在节点卡片上就能做，不必进这里 */}
+        {timelineEditorNode && (
+          <CanvasTimelineEditor
+            open
+            workspaceId={Number(workspaceId || 0)}
+            state={timelineEditorState}
+            onChange={handleTimelineChange}
+            onClose={() => setTimelineEditorNodeId('')}
+            onCompose={() => void handleTimelineCompose(timelineEditorNodeId)}
+            onAddClip={(sourceNodeId) => handleAddTimelineClip(timelineEditorNodeId, sourceNodeId)}
+            addableSources={editorAddableSources}
+            pendingSourceCount={timelineEditorPendingCount}
+            composing={timelineComposing}
+            composeProgress={composeProgress}
+            compatibilityNote={TIMELINE_COMPOSE_NOTE}
+            // 剪出选中片段：按它在成片时间轴上的起止换算成区间，交给同一套剪出逻辑
+            onAddClipToCanvas={(clip) => {
+              const offsets = getClipOffsets(timelineEditorState)
+              const index = (timelineEditorState.clips || []).findIndex((item) => item.id === clip.id)
+              if (index < 0) return
+              const fromSec = offsets[index]
+              void handleTimelineExtract(timelineEditorNodeId, fromSec, fromSec + getClipDuration(clip))
+            }}
+          />
+        )}
+
+        {/* 隐藏文件选择：由节点顶部上传按钮触发，接收本地图片/视频文件 */}
+        <input
+          ref={uploadInputRef}
+          type="file"
+          accept={selectedNode?.kind === 'video' ? 'video/*' : 'image/*'}
+          style={{ display: 'none' }}
+          onChange={handleUploadFile}
+        />
+
+        {/* 隐藏文件选择：由工具栏 / 右键菜单「本地图片」触发，支持一次选择多张 */}
+        <input
+          ref={localImageInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleLocalImageInputChange}
+        />
+
+        {/* 拖拽文件到画布时的提示遮罩 */}
+        {fileDragActive && (
+          <div className="canvas-drop-overlay">
+            <div className="canvas-drop-overlay__card">
               <svg
-                width="14"
-                height="14"
+                width="34"
+                height="34"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="2"
+                strokeWidth="1.6"
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                aria-hidden="true"
               >
                 <path d="M12 16V4" />
                 <path d="m6 10 6-6 6 6" />
                 <path d="M4 20h16" />
               </svg>
-            </span>
-            本地图片
-          </button>
-          <div className="canvas-context-menu__divider" />
-          <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canUndo} onClick={undo}>
-            <span className="canvas-context-menu__icon">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M9 14 4 9l5-5" />
-                <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
-              </svg>
-            </span>
-            撤销
-            <span className="canvas-context-menu__kbd">Ctrl+Z</span>
-          </button>
-          <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canRedo} onClick={redo}>
-            <span className="canvas-context-menu__icon">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="m15 14 5-5-5-5" />
-                <path d="M20 9H10a6 6 0 0 0 0 12h3" />
-              </svg>
-            </span>
-            重做
-            <span className="canvas-context-menu__kbd">Ctrl+Shift+Z</span>
-          </button>
-        </div>
-      )}
+              <strong>松开即可添加到画布</strong>
+              <span>支持拖入本地图片，也可以直接 Ctrl+V 粘贴</span>
+            </div>
+          </div>
+        )}
 
-      {/* 素材库弹窗（Figma "添加素材" 模态样式，5 个 tab 参考「我的素材」页面） */}
-      <CanvasMaterialPicker
-        workspaceId={workspaceId}
-        userId={currentUserId}
-        visible={drawerPanel === 'assets'}
-        variant="modal"
-        onClose={closeDrawerPanel}
-        onApply={(material) => {
-          // 应用素材 → 创建对应类型的图片/视频节点到画布（弹窗保持打开，可连续应用）
-          handleApplyMaterial(material)
-        }}
-      />
+        {/* 参考选择横幅 */}
+        {isPickingRef && (
+          <div className="canvas-pick-banner">
+            <span className="canvas-pick-banner__text">{pickError || '从画布选择参考'}</span>
+            <button className="canvas-pick-banner__exit" onClick={stopPickRef}>
+              退出
+            </button>
+          </div>
+        )}
 
-      {/* 历史记录抽屉 */}
-      <CanvasHistoryPanel
-        visible={drawerPanel === 'history'}
-        variant="drawer"
-        items={realHistoryItems}
-        onClose={closeDrawerPanel}
-        onSelect={(item: HistoryItem) => {
-          const node = nodes.find((candidate) => candidate.id === item.nodeId)
-          if (!node) return
-          setNodes((current) => current.map((candidate) => ({ ...candidate, selected: candidate.id === node.id })))
-          setSelectedNode({
-            id: node.id,
-            kind: String((node.data as any)?.kind || node.type || 'image'),
-            sourceRefs: getSourceRefs(node.id),
-            ratio: (node.data as any)?.ratio,
-            videoMode: (node.data as any)?.videoMode,
-            modelVersionId: (node.data as any)?.modelVersionId,
-            resultUrl: (node.data as any)?.resultUrl,
-            text: (node.data as any)?.text,
-            prompt: (node.data as any)?.prompt,
-            operationCode: (node.data as any)?.operationCode,
-            params: (node.data as any)?.params,
-          })
-          void fitView({ nodes: [node], padding: 0.5, duration: 300 })
-          closeDrawerPanel()
-        }}
-      />
+        {/* 节点内的动作（截帧、时间线增删与合成）经 context 交回这里执行：
+          回调不能塞进节点 data——data 会被持久化，放不了函数 */}
+        <CanvasNodeActionsContext.Provider value={nodeActions}>
+          <ReactFlow
+            nodes={displayNodes}
+            edges={displayEdges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onConnectEnd={onConnectEnd}
+            /* 连线预览/建立统一走来源限制校验：不可连的 handle 不显示预览连线 */
+            isValidConnection={(connection) => {
+              if (!connection.source || !connection.target) return false
+              return !validateConnection(connection.source, connection.target)
+            }}
+            /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步） */
+            onBeforeDelete={handleBeforeDelete}
+            onNodesDelete={handleNodesDelete}
+            onEdgesDelete={handleEdgesDelete}
+            connectionMode={ConnectionMode.Loose}
+            connectionRadius={60}
+            /* 禁用多选：任何情况下都只允许同时选中一个节点 */
+            multiSelectionKeyCode={null}
+            /* 双击时间线节点打开剪辑编辑器（其余节点保持原行为） */
+            onNodeDoubleClick={(_e, node) => {
+              if ((node.data as Record<string, unknown> | undefined)?.kind === 'timeline') {
+                setTimelineEditorNodeId(node.id)
+              }
+            }}
+            /* 拖动开始前记录历史：撤销可还原节点位置 */
+            onNodeDragStart={(_e, node) => {
+              commitHistory()
+              // 节点按下后轻微移动（>拖拽阈值）会被判定为拖拽而非点击，onNodeClick 不触发，
+              // 导致首次点击有概率选不中；拖拽开始同样立即选中，保证稳定响应
+              handleSelectNodeOnDown(node as unknown as Node)
+              // 记下起点：拖到时间线上时要把节点弹回原位，不能让它压在时间线底下
+              dragOriginRef.current = { id: node.id, position: { ...node.position } }
+            }}
+            /* 拖动中高亮可接收的时间线节点，让「能不能放进去」在松手前就看得见 */
+            onNodeDrag={(_e, node) => setTimelineDropTargetId(findTimelineDropTarget(node))}
+            onNodeDragStop={(_e, node) => {
+              const targetId = findTimelineDropTarget(node)
+              setTimelineDropTargetId('')
+              if (!targetId) return
+              handleAddTimelineClip(targetId, node.id)
+              // 弹回原位：视频节点是被「拖进」时间线的，本身不该留在时间线的位置上
+              const origin = dragOriginRef.current
+              if (origin?.id === node.id) {
+                setNodes((items) =>
+                  items.map((item) => (item.id === node.id ? { ...item, position: origin.position } : item)),
+                )
+              }
+            }}
+            /* 劫持右键：空白区域 / 节点 / 连线统一弹出浮动菜单 */
+            onPaneContextMenu={(e) => {
+              e.preventDefault()
+              setAddMenu(null)
+              setContextMenu({ x: e.clientX, y: e.clientY })
+            }}
+            onNodeContextMenu={(e) => {
+              // 文本编辑框内保留默认菜单（复制/粘贴）
+              const target = e.target as HTMLElement
+              if (target.closest('textarea, input, [contenteditable="true"]')) return
+              e.preventDefault()
+              setAddMenu(null)
+              setContextMenu({ x: e.clientX, y: e.clientY })
+            }}
+            onEdgeContextMenu={(e) => {
+              e.preventDefault()
+              setAddMenu(null)
+              setContextMenu({ x: e.clientX, y: e.clientY })
+            }}
+            onNodeClick={(_e, node) => {
+              if (isPickingRef) {
+                handlePickRefNode(node as unknown as Node)
+                return
+              }
+              // 首个节点（画布源头）与其他节点一致：点击弹出编辑面板
+              setSelectedNode({
+                id: node.id,
+                kind: (node.data?.kind as string) || 'text',
+                sourceRefs: getSourceRefs(node.id),
+                ratio: (node.data as any)?.ratio,
+                videoMode: (node.data as any)?.videoMode,
+                modelVersionId: (node.data as any)?.modelVersionId,
+                resultUrl: (node.data as any)?.resultUrl,
+                assetId: (node.data as any)?.assetId,
+                text: (node.data as any)?.text,
+                prompt: (node.data as any)?.prompt,
+                operationCode: (node.data as any)?.operationCode,
+                params: (node.data as any)?.params,
+              })
+            }}
+            onPaneClick={() => {
+              if (isPickingRef) {
+                // 参考选择模式下点击空白不退出：只能通过「退出」按钮退出
+                return
+              }
+              setAddMenu(null)
+              setSelectedNode(null)
+            }}
+            /* 工具栏开关：移动=画布平移（panOnDrag），拖拽=节点拖拽（nodesDraggable） */
+            nodesDraggable={dragEnabled}
+            panOnDrag={moveEnabled}
+            elementsSelectable
+            /*
+             * 缩放范围。
+             *
+             * React Flow 默认 minZoom 是 0.5，节点一多就会「缩到一半再也缩不动」，
+             * 复位视图同样受此限制——画布装不下时 fitView 也只能停在 0.5，看不到全貌。
+             * 放到 0.02（50 倍）足以俯瞰几百个节点，且仍是有限值：
+             * 真的做成无下限会让视口在极小倍率下失去精度，反而拖不动、点不中。
+             */
+            minZoom={MIN_CANVAS_ZOOM}
+            maxZoom={MAX_CANVAS_ZOOM}
+            defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
+            fitView
+            fitViewOptions={{ padding: 0.2, minZoom: MIN_CANVAS_ZOOM, maxZoom: MAX_CANVAS_ZOOM }}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background />
+          </ReactFlow>
+        </CanvasNodeActionsContext.Provider>
 
-      {/* 节点编辑面板 — 跟随选中节点显示在其下方；算不出锚点时回落到底部居中 */}
-      {selectedNode && (
-        <div
-          ref={panelRef}
-          className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}`}
-          style={panelAnchor ? { left: panelAnchor.left, top: panelAnchor.top } : undefined}
-        >
-          <CanvasNodePanel
-            node={selectedNode}
-            workspaceId={workspaceId}
-            onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
-            onRemoveRef={handleRemoveRef}
-            onRatioChange={handleRatioChange}
-            onVideoModeChange={handleVideoModeChange}
-            onModelChange={handleModelChange}
-            onGenerate={handleNodeGenerate}
-            onInsufficientCredits={handleInsufficientCredits}
-            onSaveText={handleSaveNodeText}
-            onPromptChange={handleNodePromptChange}
-            onPolishText={handlePolishNodeText}
-            models={canvasModels}
-            modelsLoading={modelsLoading}
-          />
-        </div>
-      )}
+        {/* 左下角复位视图按钮 */}
+        <button className="canvas-reset-btn" title="复位视图" onClick={() => fitView({ padding: 0.2, duration: 300 })}>
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+            <line x1="12" y1="8" x2="12" y2="16" />
+            <line x1="8" y1="12" x2="16" y2="12" />
+          </svg>
+        </button>
 
-      {/* 空连线弹出菜单 — 菜单项按「拖线源节点能否作为新节点来源」过滤，不可选禁用灰显 */}
-      {addMenu && (
-        <div className="canvas-add-menu" style={{ left: addMenu.x, top: addMenu.y }}>
-          {ADD_MENU_ITEMS.map((item) => {
-            const sourceNode = nodes.find((n) => n.id === addMenu.sourceId)
-            const sourceKind = (sourceNode?.data?.kind as string) || 'text'
-            const allowed = (allowedSourceKinds[item.type] || []).includes(sourceKind)
-            return (
-              <button
-                key={item.type}
-                className={`canvas-add-menu__item${allowed ? '' : ' is-disabled'}`}
-                disabled={!allowed}
-                title={
-                  allowed ? undefined : `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为「${item.label}」的来源`
-                }
-                onClick={() => handleMenuSelect(item.type)}
-              >
-                <span className="canvas-add-menu__icon">{getTypeIcon(item.type)}</span>
-                <div className="canvas-add-menu__text">
-                  <span className="canvas-add-menu__label">{item.label}</span>
-                  <span className="canvas-add-menu__desc">
-                    {allowed ? item.desc : `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为此节点来源`}
-                  </span>
+        {/* 连线剪刀图标层 — 选中连线时显示 */}
+        <EdgeLabelRenderer>
+          {edges
+            .filter((e) => e.selected)
+            .map((edge) => {
+              const source = nodes.find((n) => n.id === edge.source)
+              const target = nodes.find((n) => n.id === edge.target)
+              if (!source || !target) return null
+
+              const sx = source.position.x + (source.measured?.width || (source.style?.width as number) || 250) / 2
+              const sy = source.position.y + (source.measured?.height || (source.style?.height as number) || 250) / 2
+              const tx = target.position.x + (target.measured?.width || (target.style?.width as number) || 250) / 2
+              const ty = target.position.y + (target.measured?.height || (target.style?.height as number) || 250) / 2
+
+              const [_, labelX, labelY] = getBezierPath({
+                sourceX: sx,
+                sourceY: sy,
+                targetX: tx,
+                targetY: ty,
+              })
+
+              return (
+                <div
+                  key={edge.id}
+                  style={{
+                    position: 'absolute',
+                    transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+                    pointerEvents: 'all',
+                    zIndex: 100,
+                  }}
+                >
+                  <button
+                    className="canvas-edge-delete"
+                    title="删除连线"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleEdgeDelete(edge.id)
+                    }}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    >
+                      <path d="M4 4l6 6M10 4l-6 6" />
+                      <circle cx="7" cy="7" r="5" />
+                    </svg>
+                  </button>
                 </div>
-              </button>
-            )
-          })}
-        </div>
-      )}
-    </div>
+              )
+            })}
+        </EdgeLabelRenderer>
+
+        {/* 右键浮动菜单：添加节点 / 撤销 / 重做 */}
+        {contextMenu && (
+          <div
+            className="canvas-context-menu"
+            style={{
+              left: Math.min(contextMenu.x, window.innerWidth - CONTEXT_MENU_WIDTH),
+              top: Math.min(contextMenu.y, window.innerHeight - CONTEXT_MENU_HEIGHT),
+            }}
+          >
+            <div className="canvas-context-menu__label">添加节点</div>
+            <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('text')}>
+              <span className="canvas-context-menu__icon">{getTypeIcon('text')}</span>
+              文本节点
+            </button>
+            <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('image')}>
+              <span className="canvas-context-menu__icon">{getTypeIcon('image')}</span>
+              图片节点
+            </button>
+            <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('video')}>
+              <span className="canvas-context-menu__icon">{getTypeIcon('video')}</span>
+              视频节点
+            </button>
+            <button
+              type="button"
+              className="canvas-context-menu__item"
+              onClick={() => {
+                const anchor = { x: contextMenu.x, y: contextMenu.y }
+                setContextMenu(null)
+                openLocalImagePicker(anchor)
+              }}
+            >
+              <span className="canvas-context-menu__icon">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 16V4" />
+                  <path d="m6 10 6-6 6 6" />
+                  <path d="M4 20h16" />
+                </svg>
+              </span>
+              本地图片
+            </button>
+            <div className="canvas-context-menu__divider" />
+            <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canUndo} onClick={undo}>
+              <span className="canvas-context-menu__icon">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M9 14 4 9l5-5" />
+                  <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
+                </svg>
+              </span>
+              撤销
+              <span className="canvas-context-menu__kbd">Ctrl+Z</span>
+            </button>
+            <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canRedo} onClick={redo}>
+              <span className="canvas-context-menu__icon">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="m15 14 5-5-5-5" />
+                  <path d="M20 9H10a6 6 0 0 0 0 12h3" />
+                </svg>
+              </span>
+              重做
+              <span className="canvas-context-menu__kbd">Ctrl+Shift+Z</span>
+            </button>
+          </div>
+        )}
+
+        {/* 素材库弹窗（Figma "添加素材" 模态样式，5 个 tab 参考「我的素材」页面） */}
+        <CanvasMaterialPicker
+          workspaceId={workspaceId}
+          userId={currentUserId}
+          visible={drawerPanel === 'assets'}
+          variant="modal"
+          onClose={closeDrawerPanel}
+          onApply={(material) => {
+            // 应用素材 → 创建对应类型的图片/视频节点到画布（弹窗保持打开，可连续应用）
+            handleApplyMaterial(material)
+          }}
+        />
+
+        {/* 历史记录抽屉 */}
+        <CanvasHistoryPanel
+          visible={drawerPanel === 'history'}
+          variant="drawer"
+          items={realHistoryItems}
+          onClose={closeDrawerPanel}
+          onSelect={(item: HistoryItem) => {
+            const node = nodes.find((candidate) => candidate.id === item.nodeId)
+            if (!node) return
+            setNodes((current) => current.map((candidate) => ({ ...candidate, selected: candidate.id === node.id })))
+            setSelectedNode({
+              id: node.id,
+              kind: String((node.data as any)?.kind || node.type || 'image'),
+              sourceRefs: getSourceRefs(node.id),
+              ratio: (node.data as any)?.ratio,
+              videoMode: (node.data as any)?.videoMode,
+              modelVersionId: (node.data as any)?.modelVersionId,
+              resultUrl: (node.data as any)?.resultUrl,
+              assetId: (node.data as any)?.assetId,
+              text: (node.data as any)?.text,
+              prompt: (node.data as any)?.prompt,
+              operationCode: (node.data as any)?.operationCode,
+              params: (node.data as any)?.params,
+            })
+            void fitView({ nodes: [node], padding: 0.5, duration: 300 })
+            closeDrawerPanel()
+          }}
+        />
+
+        {/* 节点编辑面板 — 跟随选中节点显示在其下方；算不出锚点时回落到底部居中。
+          时间线节点没有模型/提示词的概念，编辑入口是双击打开的剪辑编辑器，这里不渲染面板。 */}
+        {selectedNode && selectedNode.kind !== 'timeline' && (
+          <div
+            ref={panelRef}
+            className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}`}
+            style={panelAnchor ? { left: panelAnchor.left, top: panelAnchor.top } : undefined}
+          >
+            <CanvasNodePanel
+              node={selectedNode}
+              workspaceId={workspaceId}
+              onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
+              onRemoveRef={handleRemoveRef}
+              onRatioChange={handleRatioChange}
+              onVideoModeChange={handleVideoModeChange}
+              onModelChange={handleModelChange}
+              onGenerate={handleNodeGenerate}
+              onInsufficientCredits={handleInsufficientCredits}
+              onSaveText={handleSaveNodeText}
+              onPromptChange={handleNodePromptChange}
+              onParamsChange={handleNodeParamsChange}
+              onPolishText={handlePolishNodeText}
+              models={canvasModels}
+              modelsLoading={modelsLoading}
+            />
+          </div>
+        )}
+
+        {/* 空连线弹出菜单 — 菜单项按「拖线源节点能否作为新节点来源」过滤，不可选禁用灰显 */}
+        {addMenu && (
+          <div className="canvas-add-menu" style={{ left: addMenu.x, top: addMenu.y }}>
+            {ADD_MENU_ITEMS.map((item) => {
+              const sourceNode = nodes.find((n) => n.id === addMenu.sourceId)
+              const sourceKind = (sourceNode?.data?.kind as string) || 'text'
+              const allowed = (allowedSourceKinds[item.type] || []).includes(sourceKind)
+              return (
+                <button
+                  key={item.type}
+                  className={`canvas-add-menu__item${allowed ? '' : ' is-disabled'}`}
+                  disabled={!allowed}
+                  title={
+                    allowed ? undefined : `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为「${item.label}」的来源`
+                  }
+                  onClick={() => handleMenuSelect(item.type)}
+                >
+                  <span className="canvas-add-menu__icon">{getTypeIcon(item.type)}</span>
+                  <div className="canvas-add-menu__text">
+                    <span className="canvas-add-menu__label">{item.label}</span>
+                    <span className="canvas-add-menu__desc">
+                      {allowed ? item.desc : `「${KIND_LABELS[sourceKind] || sourceKind}」不能作为此节点来源`}
+                    </span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </CanvasNodeActionsContext.Provider>
   )
 }

@@ -42,3 +42,13 @@ Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
   configurable: true,
   value: vi.fn(() => null),
 })
+
+// jsdom does not implement load() either: every test that renders a <video>
+// prints "Not implemented: HTMLMediaElement's load() method" to stderr, which
+// buried ~100 lines of noise in each full run and hid real failures. Tests that
+// care about load() still vi.spyOn it on top of this no-op.
+Object.defineProperty(HTMLMediaElement.prototype, 'load', {
+  configurable: true,
+  writable: true,
+  value: () => undefined,
+})

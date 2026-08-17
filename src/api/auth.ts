@@ -4,7 +4,7 @@
  * 登录/注册/登出、短信验证码、会话管理、DeepAuth 扫码登录、团队邀请码操作。
  */
 import { shouldRequestAuthenticatedSession } from '../utils/workflowGuards'
-import { createSingleFlight } from '../utils/singleFlight'
+import { createKeyedSingleFlight, createSingleFlight } from '../utils/singleFlight'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
 
 /** 记录浏览器是否期待存在已登录会话，避免匿名页反复请求鉴权端点。 */
@@ -178,9 +178,21 @@ export function uploadMyAvatar(file) {
   })
 }
 
+/**
+ * 成员列表的并发去重：同一 workspace 的在途请求共用一个 Promise。
+ *
+ * 这个接口的调用方很分散——workspaceSession 初始化、useWorkspaceMemberAccess、
+ * 侧边栏团队分组、项目管理与空间看板，一次导航里它们几乎同时开火，
+ * 实测同一个 workspace 打出 8 次完全相同的请求。
+ * 只合并在途请求、不做 TTL 缓存：成员增删后紧跟的重拉仍是一次真实请求，不会读到旧数据。
+ */
+const workspaceMembersRequest = createKeyedSingleFlight<any>()
+
 /** 读取指定工作空间的成员列表。 */
 export function listWorkspaceMembers(workspaceId) {
-  return requestJson(buildUrl(businessApiBaseUrl, `/api/v1/workspaces/${workspaceId}/members`))
+  return workspaceMembersRequest.run(workspaceId, () =>
+    requestJson(buildUrl(businessApiBaseUrl, `/api/v1/workspaces/${workspaceId}/members`)),
+  )
 }
 
 /**

@@ -24,7 +24,49 @@ import {
   findAssetIdByTaskId,
   resolveGeneratedMediaUrls,
   resolveTaskVideoResult,
+  resolveVerifiedResultAssetId,
 } from '@/utils/taskMedia'
+
+describe('verified result asset selection', () => {
+  beforeEach(() => {
+    mocks.listAssets.mockReset()
+    mocks.getAssetDownloadUrl.mockReset()
+  })
+
+  it('keeps an output asset id only when it actually resolves in this workspace', async () => {
+    mocks.getAssetDownloadUrl.mockResolvedValue('https://cdn.example/asset-701.mp4')
+
+    await expect(
+      resolveVerifiedResultAssetId({ workspaceId: 2, task: { id: 11, outputs: [{ asset_id: 701 }] } }),
+    ).resolves.toBe(701)
+    expect(mocks.getAssetDownloadUrl).toHaveBeenCalledWith({ workspaceId: 2, assetId: 701 })
+    expect(mocks.listAssets).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the task-id lookup when the output id is not a usable asset', async () => {
+    // 这正是画布过去把未经确认的 id 存进节点、下次当输入提交时后端回
+    // 「参考素材不可用，请确认素材已上传完成且属于当前工作空间」的成因。
+    mocks.getAssetDownloadUrl.mockImplementation(async ({ assetId }: { assetId: number }) => {
+      if (assetId === 999) throw new Error('asset not found')
+      return 'https://cdn.example/asset-808.mp4'
+    })
+    mocks.listAssets.mockResolvedValue({ items: [{ id: 808, ai_task_id: 11 }], total: 1 })
+
+    await expect(
+      resolveVerifiedResultAssetId({ workspaceId: 2, task: { id: 11, outputs: [{ asset_id: 999 }] } }),
+    ).resolves.toBe(808)
+  })
+
+  // 反查会按 [0,400,900,1800,3000,3000]ms 退避重试完整走一轮，实际耗时约 9 秒。
+  it('returns 0 rather than a guessed id when nothing can be verified', async () => {
+    mocks.getAssetDownloadUrl.mockRejectedValue(new Error('asset not found'))
+    mocks.listAssets.mockResolvedValue({ items: [], total: 0 })
+
+    await expect(
+      resolveVerifiedResultAssetId({ workspaceId: 2, task: { id: 11, outputs: [{ asset_id: 999 }] } }),
+    ).resolves.toBe(0)
+  }, 20000)
+})
 
 describe('generic output asset selection', () => {
   it('reads asset ids from nested result envelopes and serialized result_json', () => {

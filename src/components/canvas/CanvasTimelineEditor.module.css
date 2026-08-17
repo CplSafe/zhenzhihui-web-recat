@@ -1,0 +1,789 @@
+/*
+ * 剪辑时间线编辑器：覆盖在画布之上的独立编辑层，视觉沿用画布面板的深色调。
+ *
+ * 版面按剪辑器的惯例分三段：上半是「预览 + 右侧属性」，中间是工具条，下半是整条时间轴。
+ * 时间轴横跨整个面板宽度——它是这个界面里最需要横向空间的东西，被挤在半边就没法用。
+ */
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(8, 10, 16, 0.72);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(1180px, 100%);
+  height: min(90vh, 820px);
+  padding: 16px 18px 18px;
+  border: 1px solid #2b303b;
+  border-radius: 14px;
+  background: #1c1f27;
+  color: #e6e8ee;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+}
+
+.title strong {
+  font-size: 15px;
+}
+
+.total {
+  margin-left: 10px;
+  color: #9aa3b2;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.headActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.headTool {
+  padding: 6px 10px;
+  border: 1px solid #2b303b;
+  border-radius: 7px;
+  background: transparent;
+  color: #c7cdff;
+  cursor: pointer;
+}
+
+.headTool:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.addWrap {
+  position: relative;
+}
+
+/* 画布视频下拉：贴着「添加片段」按钮展开，超出高度时内部滚动 */
+.addMenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-height: 280px;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid #2b303b;
+  border-radius: 12px;
+  background: #1c1f27;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.addMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #e6e8ee;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.addMenuItem:hover {
+  background: rgb(87 103 229 / 22%);
+}
+
+.addMenuThumb {
+  width: 48px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: #0f1116;
+  object-fit: cover;
+}
+
+.addMenuLabel {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 添加片段：空时间线唯一不依赖连线的入口，做成主动作的样式 */
+.addClip {
+  padding: 6px 14px;
+  border: 1px solid rgba(87, 103, 229, 0.55);
+  border-radius: 999px;
+  background: rgba(87, 103, 229, 0.16);
+  color: #c7cdff;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.addClip:hover:not(:disabled) {
+  background: rgba(87, 103, 229, 0.3);
+  color: #fff;
+}
+
+.addClip:disabled {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: transparent;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+/* 连线已建立但素材未就绪的说明条 */
+.pending {
+  flex: none;
+  padding: 8px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  border-radius: 10px;
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #9aa3b2;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e6e8ee;
+}
+
+/* 上半区：预览占满剩余宽度，属性面板固定一栏 */
+.body {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.stage {
+  flex: 1;
+  min-width: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #14161c;
+}
+
+/*
+ * 播放器高度必须由外面给死。
+ *
+ * 它内部画面区是 flex:1，而两个 video 是绝对定位、不产生布局高度，
+ * 父级高度不确定时画面区会被算成 0：视频在放但看不见。
+ */
+.player {
+  height: 100%;
+}
+
+/* ── 右侧片段属性 ─────────────────────────────────────────── */
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: none;
+  width: 246px;
+  padding: 12px;
+  overflow-y: auto;
+  border: 1px solid #2b303b;
+  border-radius: 10px;
+  background: #191c24;
+  font-size: 12px;
+}
+
+.inspectorHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #2b303b;
+}
+
+.inspectorHead strong {
+  font-size: 13px;
+}
+
+.inspectorEmpty {
+  color: #7d8492;
+  line-height: 1.7;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #9aa3b2;
+}
+
+.field input {
+  width: 108px;
+  padding: 6px 8px;
+  border: 1px solid #2b303b;
+  border-radius: 6px;
+  background: #12141a;
+  color: #e6e8ee;
+  font-variant-numeric: tabular-nums;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #7d8492;
+}
+
+.meta b {
+  color: #c8cdd8;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspectorRow {
+  display: flex;
+  gap: 8px;
+}
+
+.inspectorRow button,
+.inspectorWide {
+  flex: 1;
+  padding: 7px 8px;
+  border: 1px solid #2b303b;
+  border-radius: 8px;
+  background: transparent;
+  color: #e6e8ee;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.inspectorRow button:hover:not(:disabled),
+.inspectorWide:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.inspectorRow button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.inspectorWide {
+  width: 100%;
+  color: #c7cdff;
+  border-color: rgba(87, 103, 229, 0.45);
+}
+
+.keyframes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid #2b303b;
+}
+
+.keyframesHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #9aa3b2;
+}
+
+.keyframesHead button {
+  padding: 4px 8px;
+  border: 1px solid #2b303b;
+  border-radius: 6px;
+  background: transparent;
+  color: #c7cdff;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.keyframesHead button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.keyframeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.keyframeChip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #2b303b;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.keyframeChip button {
+  padding: 3px 6px;
+  border: 0;
+  background: transparent;
+  color: #c8cdd8;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.keyframeChip button:last-child {
+  color: #7d8492;
+  border-left: 1px solid #2b303b;
+}
+
+.keyframeChip button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── 工具条 ──────────────────────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 6px 8px;
+  border: 1px solid #2b303b;
+  border-radius: 10px;
+  background: #191c24;
+}
+
+.toolGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolGroup button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #e6e8ee;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toolGroup button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.toolGroup button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* 静音是个开关，按下态要留在按钮上，不能点完就没反馈 */
+.toolGroup button[aria-pressed='true'] {
+  background: rgba(87, 103, 229, 0.24);
+  color: #c7cdff;
+}
+
+.toolSpacer {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+
+.zoomValue {
+  min-width: 58px;
+  color: #7d8492;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* ── 时间轴 ──────────────────────────────────────────────── */
+
+.timelineScroll {
+  flex: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  border-radius: 10px;
+  background: #12141a;
+}
+
+/*
+ * 刻度尺、轨道、播放头共用这一层坐标系：
+ * 宽度 = 总时长 × 每秒像素，所以三者的 left 都能直接由秒数算出来，永远对得齐。
+ */
+.timelineContent {
+  position: relative;
+  min-width: 100%;
+  padding: 0;
+}
+
+/*
+ * 刻度尺同时是定位区：这是剪辑器里最常用的动作，必须是一条一眼看得见、随手就能按中的宽带。
+ * 22px 太窄——用户会以为只能拖那条 2px 的播放头线，而那条线原本还接不到指针事件。
+ */
+.ruler {
+  position: relative;
+  height: 30px;
+  cursor: ew-resize;
+  touch-action: none;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ruler:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tick,
+.tickMajor {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.tick {
+  height: 5px;
+}
+
+.tickMajor {
+  height: 9px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+/* 标签贴在刻度线右侧而不是居中：读数与刻度的对应关系更明确，也不会在左端被裁掉 */
+.rulerLabel {
+  position: absolute;
+  top: 1px;
+  margin-left: 4px;
+  color: #6b7280;
+  font-size: 10px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 一条主视频轨道。片段绝对定位在时间坐标上，不用 flex——宽度就是时长 */
+.track {
+  position: relative;
+  height: 76px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: #0b0d12;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.trackEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #7d8492;
+  font-size: 12px;
+}
+
+.clip {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  border-radius: 6px;
+  background: #2f3a7a;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+/* 播放头正落在这一段：亮边标出，铺了缩略图之后靠改底色已经区分不出来了 */
+.clipActive {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
+.clipSelected {
+  box-shadow:
+    inset 0 0 0 2px #5767e5,
+    0 2px 10px rgba(87, 103, 229, 0.35);
+}
+
+/* 拖动中的片段抬起一层，避免被相邻片段盖住 */
+.clipDragging {
+  z-index: 4;
+  opacity: 0.92;
+  box-shadow:
+    inset 0 0 0 2px #5767e5,
+    0 10px 24px rgba(0, 0, 0, 0.5);
+}
+
+/* 胶片条：按源片时间铺开，再按裁剪区间平移，露出的正是这段真正用到的画面 */
+.film {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.filmInner {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+}
+
+.filmInner img {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+  /* 压暗一点，上面的序号与时长才读得清 */
+  filter: brightness(0.7);
+}
+
+/* 片段中段：按下拖动排序，轻点则选中并把播放头落到点的位置 */
+.clipBody {
+  position: absolute;
+  inset: 0 10px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 0 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: grab;
+  touch-action: none;
+}
+
+.clipBody:active {
+  cursor: grabbing;
+}
+
+.clipLabel {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 85%);
+}
+
+.clipLabel b {
+  font-size: 12px;
+}
+
+.clipLabel span {
+  color: rgba(255, 255, 255, 0.72);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 关键帧在片段上的位置标记 */
+.keyframeMark {
+  position: absolute;
+  top: 4px;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  transform: rotate(45deg);
+  background: #fbbf24;
+  pointer-events: none;
+}
+
+/*
+ * 左右裁剪手柄。
+ *
+ * 做成 10px 宽的竖条压在片段两端：既是视觉上的「可拉」提示，也是够得着的热区——
+ * 再窄就成了要瞄准的像素，剪辑器里最常用的动作不该考验准头。
+ */
+.handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  padding: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.35);
+  cursor: ew-resize;
+  touch-action: none;
+  transition: background 0.15s;
+}
+
+.handleIn {
+  left: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.handleOut {
+  right: 0;
+  border-radius: 0 6px 6px 0;
+}
+
+.handle i {
+  display: block;
+  width: 2px;
+  height: 18px;
+  margin: 0 auto;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.handle:hover,
+.handle:focus-visible {
+  background: #5767e5;
+  outline: none;
+}
+
+.clipSelected .handle {
+  background: rgba(87, 103, 229, 0.85);
+}
+
+/* 播放头贯穿刻度尺与轨道：亮白细线 + 顶端圆点，深色底上一眼就能找到 */
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+/*
+ * 播放头的拖拽热区：线本身只有 2px，直接拖等于要瞄准。
+ * 透明加宽到 16px 才是能稳稳抓住的尺寸，视觉上仍然只看得到那条细线。
+ */
+.playheadGrip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 16px;
+  transform: translateX(-50%);
+  cursor: ew-resize;
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.playheadGrip:focus-visible {
+  outline: 2px solid rgba(120, 160, 255, 0.9);
+  outline-offset: 1px;
+}
+
+/*
+ * 播放头抓手：坐在刻度尺里的一枚方头。
+ * 原来是 10px 的小圆点，视觉上不像能抓的东西，实际也难点中；
+ * 加宽并做成上宽下尖的形状，是各家剪辑器通用的「这里可以拖」的信号。
+ */
+.playhead i {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 15px;
+  height: 18px;
+  transform: translateX(-50%);
+  border-radius: 3px 3px 5px 5px;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+}
+
+/* 吸附命中时的参考线：拖动裁剪贴到边界/播放头那一刻亮起来 */
+.snapLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
+  width: 1px;
+  background: #fbbf24;
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.8);
+  pointer-events: none;
+}
+
+/* ── 底栏 ────────────────────────────────────────────────── */
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.notes {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.time {
+  color: #7d8492;
+  font-variant-numeric: tabular-nums;
+}
+
+.time b {
+  color: #e6e8ee;
+  font-weight: 500;
+}
+
+.note {
+  color: #9aa3b2;
+}
+
+.problem {
+  color: #fbbf24;
+}
+
+.dim {
+  color: #7d8492;
+}
+
+.compose {
+  padding: 9px 18px;
+  border: 0;
+  border-radius: 9px;
+  background: #5767e5;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.compose:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

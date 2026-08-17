@@ -353,6 +353,42 @@
   pointer-events: auto;
 }
 
+/* 「去创作」及其去向菜单：菜单向上弹出，避免被卡片底部的信息栏裁掉 */
+.resource-create-menu {
+  position: relative;
+  min-width: 0;
+}
+
+.resource-create-menu__list {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 4;
+  min-width: 112px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border-radius: 10px;
+  background: rgba(23, 26, 33, 0.96);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.36);
+}
+
+.resource-create-menu__item {
+  border: none;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: none;
+  color: #ffffff;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.resource-create-menu__item:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .resource-favorite-actions .resource-favorite-action-btn {
   display: inline-flex;
   box-sizing: border-box;

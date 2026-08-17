@@ -1,9 +1,40 @@
+/*
+ * 画布交互的统一动效口径。
+ *
+ * 此前十几个画布样式文件里只有二十来条 transition，时长在 0.15/0.16/0.2/0.22/0.25 之间随手取，
+ * 缓动一律是默认的 ease（两头慢），于是同一块画布上每个控件的手感都不一样。
+ * 这里定死三档时长和一条 ease-out-quart：起手快、收尾稳，界面反馈跟手而不飘。
+ */
 .canvas-view {
+  --canvas-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --canvas-dur-fast: 120ms;
+  --canvas-dur: 180ms;
+  --canvas-dur-slow: 260ms;
+  --canvas-brand: #5767e5;
+  --canvas-focus-ring: 0 0 0 3px rgb(87 103 229 / 32%);
+
   width: 100vw;
   height: 100vh;
   position: relative;
   overflow: hidden;
   background: #f8f9fa;
+}
+
+/*
+ * 关掉动效偏好时的统一兜底。
+ *
+ * 画布上原来没有任何 reduced-motion 处理：参考选择模式那圈跑马灯是无限循环的，
+ * 对前庭敏感的用户来说这类持续运动不是「好看」而是不适。
+ * 位移与循环动画一律停掉，颜色与阴影这类不产生运动的反馈保留，交互不会因此变哑。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .canvas-view *,
+  .canvas-view *::before,
+  .canvas-view *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* 固定底部面板 */
@@ -69,10 +100,11 @@
   white-space: nowrap;
   cursor: pointer;
   transition:
-    color 0.2s,
-    border-color 0.2s,
-    background-color 0.2s,
-    box-shadow 0.2s;
+    color var(--canvas-dur) var(--canvas-ease),
+    border-color var(--canvas-dur) var(--canvas-ease),
+    background-color var(--canvas-dur) var(--canvas-ease),
+    box-shadow var(--canvas-dur) var(--canvas-ease),
+    transform var(--canvas-dur-fast) var(--canvas-ease);
 }
 
 .canvas-node-upload-btn:hover {
@@ -80,6 +112,12 @@
   border-color: #5767e5;
   background: #f4f6ff;
   box-shadow: 0 3px 10px rgba(87, 103, 229, 0.25);
+}
+
+/* 键盘焦点环：删除按钮下面另有一条红色的，这条必须写在它前面，否则会把它盖掉 */
+.canvas-node-upload-btn:focus-visible {
+  outline: 3px solid rgb(87 103 229 / 26%);
+  outline-offset: 2px;
 }
 
 .canvas-node-delete-btn {
@@ -206,6 +244,13 @@
 .react-flow__node.is-connect-disabled {
   opacity: 0.35 !important;
   filter: grayscale(0.6);
+}
+
+/* 拖着视频节点悬在时间线上：亮边 + 光晕，松手前就能确认会放进这里 */
+.react-flow__node.is-timeline-drop .canvas-default-node {
+  outline: 2px solid #5767e5;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgb(87 103 229 / 18%);
 }
 
 /* ── 新节点渐入动画 ── */
@@ -390,31 +435,26 @@
   transition: outline-color 0.15s;
 }
 
+/*
+ * 「可选作参考」的提示改成品牌色呼吸。
+ *
+ * 原来是蓝→紫→粉的三色跑马灯，无限循环。彩虹在这套界面里没有任何语义来源，
+ * 只是「要显眼」的直觉，结果是整块画布最抢眼的东西反而是个临时提示。
+ * 单一品牌色 + 明暗与外扩的呼吸同样看得见，而且和选中态（静止实线、贴边）分得开。
+ */
 .react-flow__node.is-ref-pickable:hover {
-  outline-color: transparent;
-  animation: marquee-border 1.5s linear infinite;
+  animation: canvas-ref-pick-pulse 1.6s var(--canvas-ease) infinite;
 }
 
-@keyframes marquee-border {
-  0% {
-    outline-color: #5767e5;
+@keyframes canvas-ref-pick-pulse {
+  0%,
+  100% {
+    outline-color: rgb(87 103 229 / 92%);
     outline-offset: 4px;
-  }
-  25% {
-    outline-color: #a78bfa;
-    outline-offset: 6px;
   }
   50% {
-    outline-color: #ec4899;
-    outline-offset: 8px;
-  }
-  75% {
-    outline-color: #a78bfa;
-    outline-offset: 6px;
-  }
-  100% {
-    outline-color: #5767e5;
-    outline-offset: 4px;
+    outline-color: rgb(87 103 229 / 42%);
+    outline-offset: 7px;
   }
 }
 
@@ -440,10 +480,26 @@
   box-sizing: border-box;
 }
 
-/* React Flow 内置选中态 */
+/*
+ * 选中态。
+ *
+ * 原来是 rgb(122,122,122) 的灰框——灰色在界面里的语义是「不可用」，
+ * 用它标「这是你正在编辑的那个节点」正好说反了，而且和品牌色毫无关系。
+ * 改成品牌色实线 + 一层同色柔光：远看能一眼扫到，近看不喧宾夺主。
+ * !important 必须留着，React Flow 自带的 .selected 样式优先级在这之上。
+ */
 .react-flow__node.selected {
-  outline: rgb(122, 122, 122) solid 2px !important;
+  outline: var(--canvas-brand) solid 2px !important;
+  outline-offset: 1px;
   border-radius: 14px;
+}
+
+.react-flow__node.selected .canvas-default-node {
+  box-shadow:
+    0 0 0 6px rgb(87 103 229 / 10%),
+    0px 4px 10px rgba(0, 0, 0, 0.12),
+    0px 14px 18px rgba(0, 0, 0, 0.1),
+    0px 26px 20px rgba(0, 0, 0, 0.06);
 }
 
 /* React Flow hover 阴影清除 */
@@ -454,12 +510,34 @@
   box-shadow: none;
 }
 
-/* hover 保持默认阴影 */
+/*
+ * 悬停：抬起 1px + 阴影加深。
+ *
+ * 这条规则原来把和默认态一模一样的阴影又写了一遍，等于什么都没做——
+ * 节点是画布上最主要的操作对象，鼠标移上去却毫无反应，界面看着就是「死」的。
+ * 位移只给 1px：画布上常有几十个节点，动静大了会显得整片都在抖。
+ */
+.canvas-default-node {
+  transition:
+    box-shadow var(--canvas-dur) var(--canvas-ease),
+    transform var(--canvas-dur) var(--canvas-ease);
+}
+
 .canvas-default-node:hover {
+  transform: translateY(-1px);
   box-shadow:
-    0px 2px 5px rgba(0, 0, 0, 0.1),
-    0px 9px 9px rgba(0, 0, 0, 0.09),
-    0px 21px 12px rgba(0, 0, 0, 0.05);
+    0px 4px 10px rgba(0, 0, 0, 0.12),
+    0px 14px 18px rgba(0, 0, 0, 0.1),
+    0px 26px 20px rgba(0, 0, 0, 0.06);
+}
+
+/* 正在拖动的节点抬得更高，和底下那层拉开距离，一眼看出哪个跟着手走 */
+.react-flow__node.dragging .canvas-default-node {
+  transform: translateY(-2px) scale(1.008);
+  box-shadow:
+    0px 8px 16px rgba(0, 0, 0, 0.14),
+    0px 20px 28px rgba(0, 0, 0, 0.12),
+    0px 36px 32px rgba(0, 0, 0, 0.08);
 }
 
 .canvas-default-node__label {
@@ -741,6 +819,137 @@
   pointer-events: none;
 }
 
+/* 截帧按钮：与「放大查看」并排放在视频右上角 */
+/* 定位挪到外层容器：截帧位置菜单要贴着按钮展开，按钮本身得回到常规流里 */
+.canvas-node-video-capture-wrap {
+  position: absolute;
+  top: 8px;
+  right: 40px;
+  z-index: 3;
+}
+
+/* 带文字的胶囊而不是 26px 的纯图标钮：点击目标够大，也不用猜这个相机图标是干什么的 */
+.canvas-node-video-capture {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 17, 22, 0.72);
+  color: #fff;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease;
+}
+
+.canvas-node-video-capture__label {
+  font-weight: 500;
+}
+
+/* 菜单展开时按钮必须保持可见，否则鼠标移到菜单上按钮就消失了 */
+.canvas-node-video-wrap:hover .canvas-node-video-capture,
+.canvas-node-video-capture[aria-expanded='true'] {
+  opacity: 1;
+}
+
+/* 截帧位置菜单：贴着按钮向下展开，落在画面上 */
+.canvas-node-capture-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 96px;
+  padding: 5px;
+  border-radius: 10px;
+  background: rgba(15, 17, 22, 0.94);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+.canvas-node-capture-menu button {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #e6e8ee;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 13px;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.canvas-node-capture-menu button {
+  transition:
+    background var(--canvas-dur-fast) var(--canvas-ease),
+    color var(--canvas-dur-fast) var(--canvas-ease);
+}
+
+.canvas-node-capture-menu button:hover {
+  background: rgb(87 103 229 / 55%);
+  color: #fff;
+}
+
+.canvas-node-capture-menu button:active {
+  background: rgb(87 103 229 / 78%);
+}
+
+.canvas-node-capture-menu button:focus-visible {
+  outline: 2px solid rgb(255 255 255 / 55%);
+  outline-offset: -2px;
+}
+
+.canvas-node-video-capture:hover:not(:disabled) {
+  background: rgba(15, 17, 22, 0.85);
+}
+
+.canvas-node-video-capture:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+/* 剪辑时间线节点：卡片只显示片段摘要，编辑在双击打开的编辑器里进行 */
+.canvas-node-timeline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+}
+
+.canvas-node-timeline strong {
+  font-size: 15px;
+}
+
+.canvas-node-timeline span {
+  color: #9aa3b2;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas-node-timeline em {
+  margin-top: 4px;
+  color: #7d8492;
+  font-size: 12px;
+  font-style: normal;
+}
+
 /* 视频节点：容器持有交互（pointer-events），媒体本身保持 none 以免拖拽冲突 */
 .canvas-node-video-wrap {
   position: relative;
@@ -987,11 +1196,12 @@
   border: none;
   background: #22c5a0;
   opacity: 0;
+  box-shadow: 0 2px 6px rgb(15 23 42 / 18%);
   transition:
-    opacity 0.2s,
-    transform 0.25s ease-out,
-    color 0.2s,
-    border-color 0.2s;
+    opacity var(--canvas-dur) var(--canvas-ease),
+    transform var(--canvas-dur-slow) var(--canvas-ease),
+    background var(--canvas-dur) var(--canvas-ease),
+    box-shadow var(--canvas-dur) var(--canvas-ease);
 }
 
 .canvas-handle-icon:focus-visible {
@@ -1017,9 +1227,30 @@
   transform: translateX(0);
 }
 
+/*
+ * 连接点是画布上「把两个节点连起来」的唯一入口，反馈得配得上它的分量。
+ *
+ * 原来 hover 只是把图标从 #fff 调暗成 #e0e0e0（还顺手写了个 border-color，
+ * 而这个元素 border: none，那条声明从来没生效过）——把最要紧的操作做成了最弱的反馈。
+ * 现在放大一圈、底色加深、外扩一圈同色柔光，按下时回落，明确「抓住了」。
+ * transform 要带上原有的 translateX，否则滑入动画的位移会被这里覆盖掉。
+ */
 .canvas-handle-icon:hover {
-  color: #e0e0e0;
-  border-color: #e0e0e0;
+  background: #16a889;
+  box-shadow:
+    0 0 0 5px rgb(34 197 160 / 18%),
+    0 4px 10px rgb(15 23 42 / 22%);
+}
+
+.canvas-handle-icon--left[data-visible='true']:hover,
+.canvas-handle-icon--right[data-visible='true']:hover {
+  transform: translateX(0) scale(1.14);
+}
+
+.canvas-handle-icon--left[data-visible='true']:active,
+.canvas-handle-icon--right[data-visible='true']:active {
+  transform: translateX(0) scale(0.96);
+  transition-duration: var(--canvas-dur-fast);
 }
 
 /* MiniMap */

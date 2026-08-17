@@ -29,7 +29,6 @@ import {
   getGenerationModelDurationOptions,
   getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
-  isDurationSupportedByGenerationModel,
   isGenerationModelSelectionComplete,
   type GenerationModelErrorState,
   type GenerationModelGroup,
@@ -128,6 +127,9 @@ interface HotCopyEntryProps {
   onReloadModels?: () => void
   /** 登录且工作空间就绪后开启模型必选门禁；游客仍先走原有登录拦截。 */
   requireModelSelection?: boolean
+  /** 游客态：模型入口照常展示但置灰，点击交由 onAuthRequired 引导登录。 */
+  authRequired?: boolean
+  onAuthRequired?: () => void
 }
 
 /** 当前开放的爆款复制模式。 */
@@ -328,6 +330,8 @@ export default function HotCopyEntry({
   modelReady = false,
   onReloadModels,
   requireModelSelection = false,
+  authRequired = false,
+  onAuthRequired,
 }: HotCopyEntryProps) {
   // 比例下拉:优先用模型实际支持的 options(避免选了模型做不了的比例被悄悄回退);缺省用默认列表。
   const ratioOpts = ratioOptions && ratioOptions.length ? ratioOptions : RATIO_OPTIONS
@@ -822,27 +826,14 @@ export default function HotCopyEntry({
     [modelGroups, modelVersionId],
   )
   const durationChoices = useMemo(() => durationOptions.map((seconds) => `${seconds}s`), [durationOptions])
-  // 视频模型选定前不允许选秒数：模型决定了有哪些档位，先选秒数只会选到模型并不支持的值。
-  const videoModelSelected = Boolean(modelVersionId)
   const durationUnset = parseDurationSeconds(duration) === null
-  // 换模型后原选择可能不再受支持：就近吸附到新档位，避免停留在必然失败的秒数上。
+  const selectedDurationSec = parseDurationSeconds(duration) ?? undefined
   //
-  // 只有「所选模型明确不支持当前秒数」才纠正。durationOptions 在模型未选中、目录正在刷新
-  // 或模型没声明约束时会回落到入口默认档位（上限 15 秒），那只代表「不知道」而非「只允许这些」；
-  // 若据此吸附，用户选中的模型支持的 20 秒会被悄悄改成 15 秒。
-  // 尚未选择时同样保持未选状态，交由用户显式选择。
-  useEffect(() => {
-    if (durationOptions.length === 0) return
-    const current = parseDurationSeconds(duration)
-    if (current === null) return
-    if (isDurationSupportedByGenerationModel(modelGroups, modelSelection, 'video.replicate', current)) return
-    const nearest = durationOptions.reduce((best, seconds) =>
-      Math.abs(seconds - current) < Math.abs(best - current) ? seconds : best,
-    )
-    setDuration(`${nearest}s`)
-    // modelSelection 每次渲染都是新对象，按其唯一取值 modelVersionId 追踪即可
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [duration, durationOptions, modelGroups, modelVersionId])
+  // 时长与模型是双向约束，不是单向顺序：秒数是用户的需求，模型是实现选择，谁先定都合理。
+  // 这里既不锁时长（未选模型时 getGenerationModelDurationOptions 本来就返回默认档位），
+  // 也不在换模型后把用户选的 30 秒静默吸附成 15 秒——那是在悄悄丢掉用户的输入。
+  // 不兼容的组合交给 modelSelectionConflicts 明说，并由 modelGatePassed 拦住提交。
+  //
   // 分辨率档位同样跟随所选复制模型；模型未声明 resolution/size 时回落到通用档位。
   const resolutionOptions = useMemo(
     () =>
@@ -850,9 +841,19 @@ export default function HotCopyEntry({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [modelGroups, modelVersionId],
   )
-  // 换模型后原分辨率可能不再受支持：回退到 720p 或该模型首个档位。
+  /**
+   * 分辨率与时长的差别：它一直带着默认值（720p），用户可能压根没碰过。
+   * 换模型后若把这个从没被选择过的默认值也报成冲突，用户会被要求去解决一个不是自己造成的问题；
+   * 所以未经手时继续就近收敛，一旦用户显式选过就不再改写，交给冲突提示。
+   */
+  const resolutionTouchedRef = useRef(false)
+  const pickResolution = useCallback((value: string) => {
+    resolutionTouchedRef.current = true
+    setResolution(value)
+  }, [])
   useEffect(() => {
     if (resolutionOptions.length === 0) return
+    if (resolutionTouchedRef.current) return
     const normalized = normalizeVideoResolution(resolution, resolutionOptions)
     if (normalized !== resolution) setResolution(normalized)
   }, [resolution, resolutionOptions])
@@ -959,12 +960,6 @@ export default function HotCopyEntry({
     showToast(modelGateMessage || '请先选择视频生成模型', 'info')
   }
 
-  /** 未选视频模型就去点时长：强调模型入口并说明先后顺序，而不是让用户选到模型不支持的秒数。 */
-  const requestVideoModelBeforeDuration = () => {
-    setModelAttentionRequest((value) => value + 1)
-    showToast('请先选择视频模型', 'info')
-  }
-
   // 提交前同时要求原视频和至少一张替换图片，防止创建后端无法执行的空任务。
   const validateBeforeSubmit = () => {
     if (!hasHotVideo) {
@@ -981,7 +976,8 @@ export default function HotCopyEntry({
     }
     // 时长必须由用户显式选择：0s 是未选状态，提交会被后端按无效时长拒绝。
     if (durationUnset) {
-      showToast(videoModelSelected ? '请先选择视频时长' : '请先选择视频模型', 'info')
+      // 模型未选的情况已由上面的 modelGatePassed 拦下并给出自己的文案，这里只谈时长
+      showToast('请先选择视频时长', 'info')
       return false
     }
     return true
@@ -1197,6 +1193,35 @@ export default function HotCopyEntry({
           {/* 底部:尺寸/时长 + @ 参考素材(左) + 圆形发送(右) */}
           <div className="hotcopy__bottom">
             <div className="hotcopy__tools">
+              {/*
+                模型排在工具条第一位：时长与分辨率的档位由所选 replicate 模型的 schema 决定，
+                多数人也确实会先定模型，把它放在最左符合主路径的阅读顺序。
+                但这只是默认顺序、不是强制：时长可以先选，模型列表会反过来标出做不到的那些。
+              */}
+              <GenerationModelDropdown
+                groups={modelGroups}
+                selected={modelSelection}
+                placement="start"
+                // 已选时长回喂给列表：做不到这个秒数的模型会被标出来，用户不必逐个试
+                durationSec={selectedDurationSec}
+                durationOperationCode="video.replicate"
+                authRequired={authRequired}
+                onAuthRequired={onAuthRequired}
+                loading={modelLoading}
+                error={modelError}
+                estimateModelCost={Number(workspaceId || 0) > 0 ? estimateSelectedModel : undefined}
+                locked={modelsLocked}
+                conflicts={modelSelectionConflicts}
+                attentionRequest={modelAttentionRequest}
+                attentionMessage={modelGateMessage}
+                onOpen={modelLoading ? undefined : () => onReloadModels?.()}
+                onRetry={() => onReloadModels?.()}
+                onChange={(_groupKey, nextModelId, subgroupKey) => {
+                  if (subgroupKey !== 'video.replicate') return
+                  const normalizedId = Number(nextModelId)
+                  setModelVersionId(Number.isSafeInteger(normalizedId) && normalizedId > 0 ? normalizedId : undefined)
+                }}
+              />
               {/* 成片尺寸(画面比例):选项取自 replicate 模型支持的比例 */}
               <EntryDropdown
                 value={ratio}
@@ -1212,8 +1237,6 @@ export default function HotCopyEntry({
                 onChange={setDuration}
                 placeholder={DURATION_PLACEHOLDER}
                 variant="wheel"
-                blocked={!videoModelSelected}
-                onBlockedClick={requestVideoModelBeforeDuration}
                 icon={
                   <svg
                     viewBox="0 0 24 24"
@@ -1233,10 +1256,8 @@ export default function HotCopyEntry({
               <EntryDropdown
                 value={resolution}
                 options={resolutionOptions}
-                onChange={setResolution}
+                onChange={pickResolution}
                 ariaLabel="视频分辨率"
-                blocked={!videoModelSelected}
-                onBlockedClick={requestVideoModelBeforeDuration}
                 icon={
                   <svg
                     viewBox="0 0 24 24"
@@ -1254,25 +1275,6 @@ export default function HotCopyEntry({
                   </svg>
                 }
                 valueMinWidth={40}
-              />
-              <GenerationModelDropdown
-                groups={modelGroups}
-                selected={modelSelection}
-                placement="start"
-                loading={modelLoading}
-                error={modelError}
-                estimateModelCost={Number(workspaceId || 0) > 0 ? estimateSelectedModel : undefined}
-                locked={modelsLocked}
-                conflicts={modelSelectionConflicts}
-                attentionRequest={modelAttentionRequest}
-                attentionMessage={modelGateMessage}
-                onOpen={modelLoading ? undefined : () => onReloadModels?.()}
-                onRetry={() => onReloadModels?.()}
-                onChange={(_groupKey, nextModelId, subgroupKey) => {
-                  if (subgroupKey !== 'video.replicate') return
-                  const normalizedId = Number(nextModelId)
-                  setModelVersionId(Number.isSafeInteger(normalizedId) && normalizedId > 0 ? normalizedId : undefined)
-                }}
               />
               <span className="hotcopy__atAnchor">
                 <button type="button" className="hotcopy__at" onClick={handleAt} title="引用替换素材">

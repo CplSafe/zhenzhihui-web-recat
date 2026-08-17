@@ -120,7 +120,6 @@
   border-left: 1px solid rgba(15, 118, 110, 0.12);
   background: #fff;
   box-shadow: -24px 0 64px rgba(15, 23, 42, 0.14);
-  animation: cl-brief-enter 0.22s ease-out;
 }
 
 .cl-brief-head {
@@ -180,103 +179,6 @@
   padding: 34px 38px;
 }
 
-.cl-brief-section-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-.cl-brief-section-title h3 {
-  margin: 0;
-  color: #1d2925;
-  font-size: 17px;
-}
-
-.cl-brief-section-title span {
-  color: #94a19b;
-  font-size: 12px;
-}
-
-.cl-brief-materials {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.cl-brief-material,
-.cl-brief-add-material {
-  position: relative;
-  overflow: hidden;
-  aspect-ratio: 1;
-  min-width: 0;
-  border: 1px solid #dfe8e4;
-  border-radius: 14px;
-  background: #f7faf9;
-}
-
-.cl-brief-material img,
-.cl-brief-material video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.cl-brief-material > button {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: grid;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  place-items: center;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(15, 23, 42, 0.72);
-  color: #fff;
-  cursor: pointer;
-}
-
-.cl-brief-add-material {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 7px;
-  border-style: dashed;
-  color: #61706a;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.cl-brief-add-material span {
-  color: #12ae82;
-  font-size: 28px;
-  line-height: 1;
-}
-
-.cl-brief-add-material:hover {
-  border-color: #25b890;
-  background: #effbf7;
-  color: #087e60;
-}
-
-.cl-brief-textarea {
-  width: 100%;
-  min-height: 220px;
-  box-sizing: border-box;
-  resize: vertical;
-  padding: 18px 20px;
-  border: 1px solid #dfe7e4;
-  border-radius: 16px;
-  outline: none;
-  background: #fbfcfc;
-  color: #1f2b27;
-  font: inherit;
-  line-height: 1.75;
-}
-
 .cl-brief-name {
   display: grid;
   gap: 10px;
@@ -296,7 +198,6 @@
   font-weight: 400;
 }
 
-.cl-brief-textarea:focus,
 .cl-brief-name input:focus {
   border-color: #21b88b;
   box-shadow: 0 0 0 3px rgba(33, 184, 139, 0.12);
@@ -310,11 +211,6 @@
   padding: 20px 38px;
   border-top: 1px solid #edf1ef;
   background: #fff;
-}
-
-.cl-brief-foot > span {
-  color: #829089;
-  font-size: 13px;
 }
 
 .cl-brief-foot > button {
@@ -338,18 +234,9 @@
 }
 
 .cl-brief-close:focus-visible,
-.cl-brief-material button:focus-visible,
-.cl-brief-add-material:focus-visible,
 .cl-brief-foot > button:focus-visible {
   outline: 3px solid rgba(33, 184, 139, 0.28);
   outline-offset: 2px;
-}
-
-@keyframes cl-brief-enter {
-  from {
-    transform: translateX(40px);
-    opacity: 0;
-  }
 }
 
 @media (max-width: 720px) {
@@ -364,10 +251,6 @@
     padding-left: 20px;
   }
 
-  .cl-brief-materials {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .cl-brief-foot {
     align-items: stretch;
     flex-direction: column;
@@ -376,12 +259,6 @@
 
   .cl-brief-foot > button {
     width: 100%;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cl-brief-drawer {
-    animation: none;
   }
 }
 
@@ -499,6 +376,18 @@
   }
 }
 
+/*
+ * 必须放在所有 .cl-brief-drawer 的 animation 声明之后。
+ * 之前这段写在上面的抽屉样式区里，被后面同优先级 (0,1,0) 的
+ * `.cl-brief-drawer { animation: cl-brief-modal-enter }` 直接压掉，
+ * 开了「减少动态效果」的用户照样会吃到入场动画。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .cl-brief-drawer {
+    animation: none;
+  }
+}
+
 @media (max-width: 520px) {
   .cl-brief-mask {
     padding: 16px;
@@ -524,4 +413,42 @@
     width: auto;
     flex: 1;
   }
+}
+
+/* 携带素材进入列表页时的引导条（我的素材 → 去创作 → 无限画布） */
+.cl-carry-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 10px 16px;
+  border: 1px solid rgb(87 103 229 / 22%);
+  border-radius: 12px;
+  background: rgb(87 103 229 / 8%);
+  color: #3a4590;
+  font-size: 13px;
+}
+
+.cl-carry-banner__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cl-carry-banner__exit {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: 1px solid rgb(87 103 229 / 35%);
+  border-radius: 12px;
+  background: transparent;
+  color: #5767e5;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.cl-carry-banner__exit:hover {
+  background: rgb(87 103 229 / 12%);
 }

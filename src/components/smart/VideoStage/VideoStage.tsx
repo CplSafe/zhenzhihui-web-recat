@@ -22,6 +22,8 @@ import {
   type VideoModificationDraft,
 } from '@/utils/videoModificationDraft'
 import { seekVideoToDecodedFrame } from '@/utils/videoFrameCapture'
+import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
+import SeekableVideo from '@/components/common/SeekableVideo'
 import VideoLoading from './VideoLoading'
 import styles from './VideoStage.module.less'
 
@@ -669,7 +671,7 @@ export default function VideoStage({
     if (timelineCaptureReadyUrl !== videoUrl || total <= 0) return
     setFrameThumbs(null)
     let cancelled = false
-    let fallbackObjectUrl = ''
+    let fallbackHandle: SeekableSourceHandle | null = null
     const abortController = new AbortController()
     const v = document.createElement('video')
     v.muted = true
@@ -734,10 +736,9 @@ export default function VideoStage({
     const releaseCaptureResources = () => {
       v.removeAttribute('src')
       v.load()
-      if (fallbackObjectUrl) {
-        URL.revokeObjectURL(fallbackObjectUrl)
-        fallbackObjectUrl = ''
-      }
+      // blob 归 seekableMediaSource 所有（可能还被播放器共用），这里只还引用
+      fallbackHandle?.release()
+      fallbackHandle = null
     }
     const capture = async () => {
       try {
@@ -752,16 +753,13 @@ export default function VideoStage({
         }
         try {
           // 仅时间轴直读失败时才完整下载，且不会替换或阻塞正在播放的主视频。
+          // 走共用缓存：同一条素材在播放器那边可能已经抓过，这里直接复用，不会再下一遍。
           setFrameThumbs(null)
-          const response = await fetch(videoUrl, {
-            credentials: 'include',
-            signal: abortController.signal,
-          })
-          if (!response.ok) throw new Error(`video ${response.status}`)
-          const rawBlob = await response.blob()
-          const blob = rawBlob.type.startsWith('video/') ? rawBlob : rawBlob.slice(0, rawBlob.size, 'video/mp4')
-          fallbackObjectUrl = URL.createObjectURL(blob)
-          await captureFromSource(fallbackObjectUrl)
+          fallbackHandle = acquireSeekableSource(videoUrl)
+          const ready = await fallbackHandle.ready
+          if (abortController.signal.aborted) return
+          if (!ready.local) throw new Error('no seekable copy')
+          await captureFromSource(ready.url)
         } catch {
           if (!cancelled && !abortController.signal.aborted) setFrameThumbs(null) // 解码/CORS 失败 → 秒标占位
         }
@@ -1135,7 +1133,9 @@ export default function VideoStage({
                 </button>
               </div>
             ) : playbackUrl ? (
-              <video
+              // SeekableVideo：/download 不支持 Range，原生播放器拖进度条会被抹回 0，
+              // 时间轴上点第 N 秒也就跳不过去
+              <SeekableVideo
                 key={`${sourceIdentity}:${playbackReloadKey}`}
                 ref={bindVideoRef}
                 src={playbackUrl}

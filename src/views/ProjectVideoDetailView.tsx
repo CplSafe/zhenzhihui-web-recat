@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
+import SeekableVideo from '@/components/common/SeekableVideo'
 import { useCurrentUser, useCurrentWorkspace, useWorkspaceId } from '@/stores/workspaceSession'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
@@ -320,7 +321,8 @@ export default function ProjectVideoDetailView() {
                 <div className={`pvdetail-player${isPortrait ? ' is-portrait' : ''}`}>
                   {detail.videoUrl ? (
                     <>
-                      <video
+                      {/* SeekableVideo：/download 不支持 Range，原生播放器拖进度条会被抹回 0 */}
+                      <SeekableVideo
                         src={detail.videoUrl}
                         poster={detail.coverUrl || undefined}
                         controls

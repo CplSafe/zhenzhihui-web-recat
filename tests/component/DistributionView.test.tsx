@@ -418,8 +418,11 @@ describe('DistributionView', () => {
     expect(mocks.listWithdrawalMethods).toHaveBeenCalledTimes(2)
   })
 
-  it('filters orders by keyword, mobile, relationship, order type, time and status', async () => {
-    const user = userEvent.setup()
+  /**
+   * 三条明细：横跨 6/1、7/1、7/3 三个日期，覆盖两种关系层级与三种订单类型，
+   * 下面的筛选用例共用它。
+   */
+  function mockThreeCommissions() {
     mocks.listCommissions.mockResolvedValue({
       items: [
         {
@@ -460,6 +463,18 @@ describe('DistributionView', () => {
       ],
       total: 3,
     })
+  }
+
+  /*
+   * 筛选原本是一个用例，把关键词、手机号、关系、订单类型、状态、日期区间和重置
+   * 全串在一起跑：30+ 次 userEvent，其中两次还要往日期输入框逐字符敲 13 个字符。
+   * 单跑没问题，全量并行时这一条会偶发挂掉（同一份代码两次全量跑一次挂一次过）。
+   * 按「非日期筛选」和「日期区间筛选」拆成两条，每条的交互量减半；
+   * 日期那条顺带补上原来没断言的「区间真的把区间外的记录筛掉了」。
+   */
+  it('filters orders by keyword, mobile, relationship, order type and status', async () => {
+    const user = userEvent.setup()
+    mockThreeCommissions()
     render(<DistributionView />)
     await screen.findByText('上海云创科技有限公司')
     expect(screen.getByText('北京渠道客户')).toBeInTheDocument()
@@ -468,22 +483,10 @@ describe('DistributionView', () => {
     expect(screen.queryByText('legacy_campaign_order')).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: '所属分销商' })).not.toBeInTheDocument()
 
-    const startDateInput = screen.getByPlaceholderText('开始年月日')
-    const endDateInput = screen.getByPlaceholderText('结束年月日')
-    expect(screen.queryByPlaceholderText(/yyyy|mm|dd/i)).not.toBeInTheDocument()
-
     await user.type(screen.getByLabelText('搜索客户名称或账号ID'), '北京')
     await user.type(screen.getByLabelText('搜索手机号'), '2002')
     await user.selectOptions(screen.getByLabelText('关系分类'), 'distributor')
     await user.selectOptions(screen.getByLabelText('订单类型'), 'subscription_renewal')
-    // Enter the range through the public inputs instead of relying on the
-    // calendar opening on a hard-coded current month.
-    await user.type(startDateInput, '2026年07月01日')
-    await user.keyboard('{Enter}')
-    await user.type(endDateInput, '2026年07月02日')
-    await user.keyboard('{Enter}')
-    expect(startDateInput).toHaveValue('2026年07月01日')
-    expect(endDateInput).toHaveValue('2026年07月02日')
     await user.selectOptions(screen.getByLabelText('收益状态'), 'pending')
     await user.click(screen.getByRole('button', { name: '查询' }))
 
@@ -501,6 +504,33 @@ describe('DistributionView', () => {
     await user.click(screen.getByRole('button', { name: '重置' }))
     expect(screen.getByText('上海云创科技有限公司')).toBeInTheDocument()
     expect(screen.getByText('北京渠道客户')).toBeInTheDocument()
+  }, 15_000)
+
+  it('filters orders by the time range entered through the date inputs', async () => {
+    const user = userEvent.setup()
+    mockThreeCommissions()
+    render(<DistributionView />)
+    await screen.findByText('上海云创科技有限公司')
+
+    const startDateInput = screen.getByPlaceholderText('开始年月日')
+    const endDateInput = screen.getByPlaceholderText('结束年月日')
+    expect(screen.queryByPlaceholderText(/yyyy|mm|dd/i)).not.toBeInTheDocument()
+
+    // Enter the range through the public inputs instead of relying on the
+    // calendar opening on a hard-coded current month.
+    await user.type(startDateInput, '2026年07月01日')
+    await user.keyboard('{Enter}')
+    await user.type(endDateInput, '2026年07月02日')
+    await user.keyboard('{Enter}')
+    expect(startDateInput).toHaveValue('2026年07月01日')
+    expect(endDateInput).toHaveValue('2026年07月02日')
+
+    await user.click(screen.getByRole('button', { name: '查询' }))
+
+    // 只留区间内的 7/1，区间外的 6/1 与 7/3 都该被筛掉
+    expect(screen.getByText('北京渠道客户')).toBeInTheDocument()
+    expect(screen.queryByText('上海云创科技有限公司')).not.toBeInTheDocument()
+    expect(screen.queryByText('未知类型客户')).not.toBeInTheDocument()
   }, 15_000)
 
   it('downloads the backend export unchanged with the supported relationship and order filters', async () => {

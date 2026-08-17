@@ -244,6 +244,7 @@ import {
   type SmartModelSwitchRecoveryDescriptor,
   type SmartSubjectAssetVersionRegistry,
 } from '@/utils/smartModelSwitchSafety'
+import { findDuplicateSubjectGroups, type DuplicateSubjectGroup } from '@/utils/subjectDuplicates'
 import {
   buildRealPersonIdentityPrompt,
   buildRealPersonVideoIdentityConstraint,
@@ -1019,7 +1020,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   const currentUser = useCurrentUser() as any
   const currentUserId = resolveUserId(currentUser)
   const requireAuth = useRequireAuth()
-  const { isCheckingSession } = useAuth()
+  const { isAuthenticated, isCheckingSession } = useAuth()
+  // 模型目录按 workspace 拉取，游客拿不到任何模型：入口置灰，点击走统一登录引导。
+  // 会话仍在校验时不算游客，否则刷新瞬间入口会闪一下「登录后选择模型」。
+  const modelEntryAuthRequired = !isAuthenticated && !isCheckingSession
+  const requestModelEntryLogin = useCallback(() => {
+    void requireAuth(undefined, { returnTo: `${location.pathname}${location.search}` })
+  }, [requireAuth, location.pathname, location.search])
   const globalWorkspaceId = useWorkspaceId()
   // 打开项目「钉住」的所属空间(0=空白入口/无项目)。切换全局空间时,已打开的项目仍走它自己的空间
   // (保存 / 计费 / 素材加载),避免被全局切换重置。见 loadProjectById / startCreation 处的写入。
@@ -1722,6 +1729,68 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   // 不复用 subjectAssets 版本库,也不自动带入入口上传图。
   const forceFreshMaterialsRef = useRef(false)
   // 把某元素的选定图(url+assetId)写回所有同名 subject
+  /**
+   * 疑似重复主体：同一产品被 AI 起了不同名字时，素材按名字共享的机制就失效了。
+   * 只在准备素材阶段提示，检测本身是纯函数，不发任何请求。
+   */
+  const duplicateSubjectGroups = useMemo(() => findDuplicateSubjectGroups(shots), [shots])
+
+  /**
+   * 把一组疑似重复的主体统一成同一个名字。
+   *
+   * 改名即完成合并：素材本来就按名字全局共享（见 applySubjectImage），
+   * 统一名字后这些镜头会立即共用同一张图，无需搬运素材本身。
+   * 目标名已有素材时一并铺到组内其它镜头，避免留下空占位。
+   */
+  const mergeDuplicateSubjects = (group: DuplicateSubjectGroup) => {
+    const canonical = group.canonical
+    const aliases = new Set(group.names.filter((name) => name !== canonical))
+    if (!aliases.size) return
+
+    setShots((prev) => {
+      // 先找出该组里已经绑定过的素材，作为统一后的用图
+      let image = ''
+      let assetId = 0
+      for (const shot of prev) {
+        for (const subject of shot.subjects || []) {
+          const name = stripAt(subject.tag)
+          if (name !== canonical && !aliases.has(name)) continue
+          if (!image && subject.image) {
+            image = subject.image
+            assetId = Number(subject.assetId || 0)
+          }
+        }
+      }
+
+      const next = prev.map((shot) => {
+        const seen = new Set<string>()
+        const subjects = shot.subjects
+          .map((subject) => {
+            const name = stripAt(subject.tag)
+            if (name !== canonical && !aliases.has(name)) return subject
+            return {
+              ...subject,
+              tag: `@${canonical}`,
+              ...(image ? { image, assetId } : {}),
+            }
+          })
+          // 同一镜头里两个别名都出现过时，改名后会重名，去重保留第一个
+          .filter((subject) => {
+            const name = stripAt(subject.tag)
+            if (name !== canonical) return true
+            if (seen.has(name)) return false
+            seen.add(name)
+            return true
+          })
+        return { ...shot, subjects }
+      })
+      shotsRef.current = next
+      return next
+    })
+
+    showToast(`已统一为「${canonical}」，这些镜头将使用同一张素材`, 'success')
+  }
+
   const applySubjectImage = (name: string, url: string, assetId = 0) =>
     setShots((prev) => {
       const next = prev.map((sh) => ({
@@ -9902,6 +9971,33 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                   ? '分镜脚本生成失败'
                   : '分镜脚本生成完成'}
           </div>
+          {/* 疑似重复主体：AI 可能给同一个产品在不同镜头起了不同名字，素材因此各生成各的，
+              成片就会前后不一致。这里只提示不自动合并——万一真是两个产品，自动合并的错误更难发现。 */}
+          {materialMode && duplicateSubjectGroups.length > 0 && (
+            <div className="smart__subject-dup" role="note">
+              <strong className="smart__subject-dup-title">
+                ⚠️ 发现 {duplicateSubjectGroups.length} 组疑似重复的素材
+              </strong>
+              <p className="smart__subject-dup-desc">
+                下面这些名称看起来指向同一个东西，但它们各自使用不同的素材，成片会前后不一致。确认是同一个的话点「统一素材」。
+              </p>
+              {duplicateSubjectGroups.map((group) => (
+                <div className="smart__subject-dup-row" key={group.key}>
+                  <span className="smart__subject-dup-names">
+                    {group.names.map((name) => `「${name}」`).join(' 与 ')}
+                  </span>
+                  <button
+                    type="button"
+                    className="smart__subject-dup-merge"
+                    onClick={() => mergeDuplicateSubjects(group)}
+                  >
+                    统一为「{group.canonical}」
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {shots.length || (!scriptLoading && !scriptError) ? (
             <>
               <ScriptStoryboardTable
@@ -10250,6 +10346,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                 modelError={generationModelCatalog.error}
                 onReloadModels={generationModelCatalog.reload}
                 requireModelSelection={workspaceId > 0 && !isCheckingSession}
+                authRequired={modelEntryAuthRequired}
+                onAuthRequired={requestModelEntryLogin}
                 initial={{
                   mode: entryMeta?.mode ?? carriedEntry.mode,
                   text:

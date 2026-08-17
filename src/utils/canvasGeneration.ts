@@ -16,7 +16,7 @@ export function inferCanvasConnectionRole(args: {
   slotIndex?: number
 }): CanvasConnectionRole {
   if (args.sourceKind === 'text') return 'prompt'
-  if (args.sourceKind === 'video') return 'source_video'
+  if (isCanvasVideoSourceKind(args.sourceKind)) return 'source_video'
   if (args.targetKind === 'video' && args.videoMode === 'first-last') {
     return Number(args.slotIndex || 0) === 1 ? 'last_frame' : 'first_frame'
   }
@@ -25,7 +25,19 @@ export function inferCanvasConnectionRole(args: {
 
 export interface CanvasInputAsset {
   asset_id: number
-  role: 'image' | 'reference_image'
+  /** 素材角色。图片角色可由模型 schema 声明覆盖，因此不是固定枚举。 */
+  role: string
+}
+
+/** 「以一条已有视频为输入」时使用的角色，与智能成片的视频生视频保持同一口径。 */
+export const CANVAS_SOURCE_VIDEO_ROLE = 'video'
+
+/**
+ * 哪些来源算「一条视频」。
+ * timeline 是多段合成后的结果，本身就是一条可继续加工的视频素材，与 video 同等对待。
+ */
+export function isCanvasVideoSourceKind(kind: string | undefined): boolean {
+  return kind === 'video' || kind === 'timeline'
 }
 
 /** 连线来源中可作为读图输入的最小信息。 */
@@ -57,44 +69,94 @@ export function buildPolishImageRefs(refs: CanvasPolishImageRef[] | undefined): 
   }
 }
 
-/** Keep task submission and cost estimation on the same input-assets contract. */
+/**
+ * Keep task submission and cost estimation on the same input-assets contract.
+ *
+ * 视频来源单独用 role:'video' 下发（视频生视频）：套上 image 角色后端会按参考图去读，
+ * 轻则拒绝，重则当成静态参考图，生成结果完全不是「在这条视频上改」。
+ *
+ * @param selfVideoAssetId 目标节点自己已有的视频（在原片基础上改时作为源视频一并下发）
+ * @param declaredImageRole 模型 schema 声明的素材角色（见 resolveModelInputAssetRole）；
+ *   缺省时沿用历史的 image / reference_image。写死角色会在模型声明了非 image 角色时被后端拒绝，
+ *   智能成片一直是按 schema 下发的，画布不跟上就会出现「同一模型这边行那边不行」。
+ */
 export function buildCanvasInputAssets(
   sourceRefs: CanvasGenerationSourceRef[],
   operationCode: string,
+  selfVideoAssetId = 0,
+  declaredImageRole = '',
 ): CanvasInputAsset[] {
-  const role = operationCode === 'image.image_to_image' ? 'reference_image' : 'image'
+  const imageRole =
+    String(declaredImageRole || '').trim() || (operationCode === 'image.image_to_image' ? 'reference_image' : 'image')
+  const seen = new Set<number>()
+  const assets: CanvasInputAsset[] = []
 
-  return (sourceRefs || [])
-    .filter((ref) => ref.kind !== 'text' && Number.isSafeInteger(Number(ref.assetId)) && Number(ref.assetId) > 0)
-    .map((ref) => ({ asset_id: Number(ref.assetId), role }))
+  const push = (assetId: unknown, role: CanvasInputAsset['role']) => {
+    const id = Number(assetId)
+    if (!Number.isSafeInteger(id) || id <= 0 || seen.has(id)) return
+    seen.add(id)
+    assets.push({ asset_id: id, role })
+  }
+
+  for (const ref of sourceRefs || []) {
+    if (ref.kind === 'text') continue
+    push(ref.assetId, isCanvasVideoSourceKind(ref.kind) ? CANVAS_SOURCE_VIDEO_ROLE : imageRole)
+  }
+  // 节点自身的视频排在最后：它是「被改的那条」，前面的连线素材才是参考
+  push(selfVideoAssetId, CANVAS_SOURCE_VIDEO_ROLE)
+  return assets
 }
 
 /**
- * Video generation accepts four input shapes:
- * text only, one first-frame image, first + last frames, or 1-5 full references.
+ * Video generation accepts five input shapes:
+ * text only, one first-frame image, first + last frames, 1-5 full references,
+ * or an existing video as the source clip (video-to-video).
+ *
+ * 带源视频的那一种走 video.edit，因此两个 operation 都要走这里校验：
+ * 只认 video.generate 会让「视频生视频」完全绕过素材落库与数量检查。
  */
 export function validateCanvasVideoInputs(args: {
   operationCode: string
   videoMode?: CanvasVideoMode
   sourceRefs: CanvasGenerationSourceRef[]
 }): string | null {
-  if (args.operationCode !== 'video.generate') return null
+  const isGenerate = args.operationCode === 'video.generate'
+  const isEdit = args.operationCode === 'video.edit'
+  if (!isGenerate && !isEdit) return null
 
   const mediaRefs = (args.sourceRefs || []).filter((ref) => ref.kind !== 'text')
   if (mediaRefs.length === 0) return null
 
-  const invalidRefs = mediaRefs.filter(
-    (ref) => ref.kind !== 'image' || !Number.isSafeInteger(Number(ref.assetId)) || Number(ref.assetId) <= 0,
-  )
-  if (invalidRefs.length) return '视频生成仅支持已上传完成的图片作为参考素材，请检查连线后重试'
+  const hasUsableAsset = (ref: CanvasGenerationSourceRef) =>
+    Number.isSafeInteger(Number(ref.assetId)) && Number(ref.assetId) > 0
 
-  if (args.videoMode === 'full-ref' || args.videoMode === 'auto') {
-    return mediaRefs.length > 5 ? '自由生成和全能参考模式最多支持 5 张参考图片' : null
+  // 素材必须已落库：本地还没上传完的连线没有 assetId，提交上去就是一个拿不到输入的付费任务
+  if (mediaRefs.some((ref) => !hasUsableAsset(ref))) {
+    return '参考素材尚未上传完成，请稍候或重新选择素材后重试'
+  }
+  // 图片和视频之外的来源不能作为视频输入
+  if (mediaRefs.some((ref) => ref.kind !== 'image' && !isCanvasVideoSourceKind(ref.kind))) {
+    return '视频生成仅支持图片或视频作为参考素材，请检查连线后重试'
   }
 
-  if (mediaRefs.length > 2) return '首尾帧模式最多支持首帧和尾帧两张参考图片'
-  const slots = new Set(mediaRefs.map((ref) => Number(ref.slotIndex)))
+  // 视频来源即「视频生视频」：把连进来的那条视频作为源片重新生成。
+  // 一次只能有一条源视频，多条无法判断以哪条为准；此时图片继续作为参考素材同时下发。
+  const videoRefs = mediaRefs.filter((ref) => isCanvasVideoSourceKind(ref.kind))
+  if (videoRefs.length > 1) return '视频生视频一次只能连接一条源视频，请去掉多余的视频连线'
+
+  const imageRefs = mediaRefs.filter((ref) => ref.kind === 'image')
+  // 带源视频时，首尾帧的槽位规则不再适用：画面时序由源视频决定，图片只是风格/主体参考
+  if (videoRefs.length === 1 || isEdit) {
+    return imageRefs.length > 5 ? '视频生视频最多再附带 5 张参考图片' : null
+  }
+
+  if (args.videoMode === 'full-ref' || args.videoMode === 'auto') {
+    return imageRefs.length > 5 ? '自由生成和全能参考模式最多支持 5 张参考图片' : null
+  }
+
+  if (imageRefs.length > 2) return '首尾帧模式最多支持首帧和尾帧两张参考图片'
+  const slots = new Set(imageRefs.map((ref) => Number(ref.slotIndex)))
   if (!slots.has(0)) return '添加一张参考图片时请将其放在首帧位置'
-  if (mediaRefs.length === 2 && !slots.has(1)) return '添加两张参考图片时请同时提供首帧和尾帧'
+  if (imageRefs.length === 2 && !slots.has(1)) return '添加两张参考图片时请同时提供首帧和尾帧'
   return null
 }

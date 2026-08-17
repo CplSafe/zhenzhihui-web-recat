@@ -472,9 +472,17 @@
   align-items: center;
   justify-content: center;
   z-index: 2;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s;
+  /* 常驻可见：原先默认全透明、只有滑过整行才浮出，剪辑同学根本找不到删除入口，
+     触摸屏更是完全摸不到。改为始终可见，悬停只做视觉强调。 */
+  opacity: 0.85;
+  pointer-events: auto;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+.sbcMatImgX:hover {
+  opacity: 1;
+  transform: scale(1.12);
 }
 /* 鼠标滑过该素材行 → 显示「去图 ×」 */
 .sbcMatRow:hover .sbcMatImgX {

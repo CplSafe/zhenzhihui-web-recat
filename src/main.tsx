@@ -13,6 +13,7 @@ import 'normalize.css'
 import './style.css'
 import { router } from './router'
 import { initObservability } from './observability/openobserve-logger'
+import { installChunkFailureRecovery } from './utils/chunkReload'
 
 // Ant Design 的组件文案由 ConfigProvider 控制，日期面板的月份和星期则读取 dayjs locale。
 dayjs.locale('zh-cn')
@@ -34,6 +35,10 @@ function scheduleObservability(): void {
   }
   window.setTimeout(start, 1200)
 }
+
+// 发布新版本后，旧页面引用的分片已被替换；在错误冒泡到路由错误边界之前先自动刷新一次，
+// 用户看不到「页面加载失败」。必须在渲染前安装，否则首个懒加载路由就会漏掉这个事件。
+installChunkFailureRecovery()
 
 // 全局组件只在此处挂载一次，页面内容交由 data router 按路由懒加载。
 createRoot(document.getElementById('app')!).render(

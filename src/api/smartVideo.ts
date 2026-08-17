@@ -13,6 +13,7 @@ import {
   normalizeModelParamName,
 } from '@/utils/modelSchema'
 import { getBackendGenerationModelVersionId } from '@/utils/generationModelCatalog'
+import { resolveModelInputAssetRole } from '@/utils/modelInputAssetRole'
 import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/utils/modelRestrictions'
 import { normalizeSeedanceRatio } from '@/utils/videoOptions'
 import { parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoDurationValue'
@@ -55,18 +56,6 @@ function getExplicitVideoModel(args: { modelVersionId?: number; modelVersion?: a
   }
 }
 
-/** 后端 schema 中用于声明输入素材角色的字段名。 */
-const INPUT_ASSET_ROLE_FIELD_NAMES = [
-  'input_asset_role',
-  'inputAssetRole',
-  'input_role',
-  'inputRole',
-  'image_input_role',
-  'imageInputRole',
-  'reference_image_role',
-  'referenceImageRole',
-]
-
 /** 将 schema 中的布尔值选项归一化，避免把字符串 "false" 当成 true。 */
 function readBooleanOption(value: unknown): boolean | null {
   if (typeof value === 'boolean') return value
@@ -107,50 +96,6 @@ function shouldGenerateAudio(model: any): boolean {
     .filter((value): value is boolean => value !== null)
   if (!options.length || options.includes(true)) return true
   return false
-}
-
-/** 读取 input_assets 数组项里的标准 JSON Schema role 声明。 */
-function readNestedInputAssetRoleField(fields: any[]): any | null {
-  const inputAssetsField = findModelParamField(fields, ['input_assets', 'inputAssets'])
-  const items = inputAssetsField?.items && typeof inputAssetsField.items === 'object' ? inputAssetsField.items : null
-  const properties = items?.properties && typeof items.properties === 'object' ? items.properties : null
-  const role = properties?.role && typeof properties.role === 'object' ? properties.role : null
-  if (!role) return null
-  const required = Array.isArray(items?.required)
-    ? items.required.some((name: unknown) => normalizeModelParamName(name) === 'role')
-    : false
-  return { ...role, name: 'role', ...(required ? { required: true } : {}) }
-}
-
-function readInputRoleText(value: unknown): string {
-  return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : ''
-}
-
-/**
- * 只在后端 schema 明确声明输入角色时采用该声明。
- * 未声明时继续使用历史 role:'image'；多种非 image 角色且无默认值时不猜测，付费任务前拦截。
- */
-function resolveInputAssetRole(model: any): string {
-  const fields = getModelParamFields(model)
-  const field = findModelParamField(fields, INPUT_ASSET_ROLE_FIELD_NAMES) || readNestedInputAssetRoleField(fields)
-  if (!field) return 'image'
-
-  const options = Array.from(new Set(getModelParamOptionValues(field).map(readInputRoleText).filter(Boolean)))
-  const defaultRole = readInputRoleText(field.default ?? field.default_value ?? field.defaultValue)
-  if (defaultRole) {
-    if (options.length && !options.includes(defaultRole)) {
-      throw new Error('所选视频模型的输入素材角色默认值不在允许范围内，请联系管理员检查模型配置')
-    }
-    return defaultRole
-  }
-
-  const imageRole = options.find((role) => normalizeModelParamName(role) === 'image')
-  if (imageRole) return imageRole
-  if (options.length === 1) return options[0]
-  if (options.length > 1 || field.required === true) {
-    throw new Error('所选视频模型声明了输入素材角色，但未提供唯一可用角色，请联系管理员检查模型配置')
-  }
-  return 'image'
 }
 
 /** 确认候选模型显式声明了 video.edit 操作。 */
@@ -378,7 +323,7 @@ export function compileFullVideoModelRequest(
     modelVersionId,
     modelVersion: model?.id === modelVersionId ? model : { ...model, id: modelVersionId },
     params,
-    inputAssetRole: resolveInputAssetRole(model),
+    inputAssetRole: resolveModelInputAssetRole(model),
     referenceImageCount,
   }
 }

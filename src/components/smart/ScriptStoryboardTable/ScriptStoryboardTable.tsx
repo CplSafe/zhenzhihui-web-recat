@@ -466,7 +466,9 @@ export default function ScriptStoryboardTable({
                                 type="button"
                                 className={styles.sbcMatUpload}
                                 aria-label={genning ? `${name}素材生成中` : su.image ? name : `上传或生成${name}`}
-                                title={su.image ? '查看 / 重新生成该素材' : '点击上传 / 生成该素材'}
+                                title={
+                                  su.image ? '点击替换这张素材（可上传自己的图或重新生成）' : '点击上传 / 生成该素材'
+                                }
                                 onClick={() => onOpenSubject?.(name)}
                               >
                                 {genning ? (

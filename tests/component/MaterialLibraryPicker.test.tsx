@@ -27,6 +27,7 @@ vi.mock('@/stores/workspaceSession', () => ({
 }))
 
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
+import { useUiStore } from '@/stores/ui'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -293,12 +294,14 @@ describe('MaterialLibraryPicker workspace isolation', () => {
   })
 
   it('fails closed when project access cannot be loaded', async () => {
-    const alert = vi.spyOn(window, 'alert').mockImplementation(() => undefined)
     mocks.listCreativeProjects.mockRejectedValue(new Error('权限列表暂不可用'))
 
     render(<MaterialLibraryPicker {...pickerProps(21)} />)
 
-    await waitFor(() => expect(alert).toHaveBeenCalledWith('权限列表暂不可用'))
+    // 失败提示走全局 Toast，不再是浏览器原生 alert
+    await waitFor(() =>
+      expect(useUiStore.getState().toast).toMatchObject({ visible: true, message: '权限列表暂不可用', type: 'error' }),
+    )
     expect(screen.queryByText('全部素材')).not.toBeInTheDocument()
     expect(screen.queryByAltText('人物照片')).not.toBeInTheDocument()
   })

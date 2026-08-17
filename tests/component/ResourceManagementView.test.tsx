@@ -209,11 +209,41 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
 
     expect(await screen.findByRole('button', { name: '播放上传产品视频' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '下载上传产品视频' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '用上传产品视频做同款' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '下载静态产品图' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '用静态产品图做同款' })).not.toBeInTheDocument()
+    // 原「做同款」已并入「去创作」菜单：图片和视频都有入口，去向按类型不同。
+    expect(screen.getByRole('button', { name: '把上传产品视频添加到创作' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '把静态产品图添加到创作' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '删除静态产品图' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '删除上传产品视频' })).toBeInTheDocument()
+  })
+
+  it('routes an image to 智能成片 / 爆款复制 as a reference and to 无限画布 as carried material', async () => {
+    mocks.listAssets.mockResolvedValue({ items: [imageAsset(431, '主体图', '/subject.png')] })
+
+    render(<ResourceManagementView />)
+
+    const openMenu = async () => {
+      fireEvent.click(await screen.findByRole('button', { name: '把主体图添加到创作' }))
+    }
+
+    await openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: '智能成片' }))
+    expect(mocks.navigate).toHaveBeenCalledWith('/smart', {
+      state: { carryImages: [{ url: '/subject.png', assetId: 431 }] },
+    })
+
+    await openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: '爆款复制' }))
+    expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy', {
+      state: { carryImages: [{ url: '/subject.png', assetId: 431 }] },
+    })
+
+    // 无限画布走列表页：/canvas 是列表而不是编辑器，素材由列表页透传给用户选中/新建的画布。
+    await openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: '无限画布' }))
+    expect(mocks.navigate).toHaveBeenCalledWith('/canvas', {
+      state: { carryMaterial: { url: '/subject.png', assetId: 431, type: 'image', name: '主体图' } },
+    })
   })
 
   it('confirms deletion and removes the deleted asset card', async () => {
@@ -363,7 +393,9 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
       ),
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '用收藏案例做同款' }))
+    // 视频走「去创作 → 爆款复制」，仍以源爆款视频（carryVideo）的身份带入，与原「做同款」一致。
+    fireEvent.click(screen.getByRole('button', { name: '把收藏案例添加到创作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '爆款复制' }))
     expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy', {
       state: { carryVideo: { url: '/fresh-favorite.mp4', assetId: 701 } },
     })
