@@ -85,6 +85,20 @@ export type AgentEvent =
   | { type: 'await_confirm'; data: AgentPendingCall }
   | { type: 'await_input'; data: { call_id: string; question: string; options?: string[] } }
   | { type: 'generating'; data: { call_id: string; estimated_credits: number } }
+  | {
+      type: 'subagent'
+      data: {
+        stage: 'start' | 'running' | 'tool' | 'done'
+        topics?: string[]
+        topic?: string
+        name?: string
+        query?: string
+        finished?: number
+        total?: number
+        failed?: boolean
+      }
+    }
+  | { type: 'compaction'; data: { stage: string; saved_chars?: number; replaced?: number } }
   | { type: 'done'; data: { content: string } }
   | { type: 'error'; data: { message: string } }
 

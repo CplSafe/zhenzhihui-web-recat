@@ -270,6 +270,43 @@ export default function AgentChatPanel({
           push({ kind: 'confirm', call: ev.data })
           break
 
+        case 'subagent': {
+          const d = ev.data
+          if (d.stage === 'start') {
+            push({
+              kind: 'trace',
+              label: '并行调研',
+              text: (d.topics ?? []).join(' / '),
+              running: true,
+            })
+          } else if (d.stage === 'tool') {
+            push({ kind: 'trace', label: `${d.topic} · 搜索`, text: d.query ?? '', running: true })
+          } else if (d.stage === 'done') {
+            // 标完成而不是再加一条:否则几十条轨迹会把对话淹没。
+            setEntries((prev) => {
+              const next = [...prev]
+              for (let i = next.length - 1; i >= 0; i -= 1) {
+                const e = next[i]
+                if (e.kind === 'trace' && e.running) {
+                  next[i] = { ...e, running: false }
+                  break
+                }
+              }
+              return next
+            })
+            if (d.finished === d.total) {
+              push({ kind: 'trace', label: '调研完成', text: `${d.total} 项已汇总` })
+            }
+          }
+          break
+        }
+
+        case 'compaction':
+          if (ev.data.stage === 'summarize' && ev.data.replaced) {
+            push({ kind: 'trace', label: '上下文压缩', text: `已归纳 ${ev.data.replaced} 条历史` })
+          }
+          break
+
         case 'generating':
           push({ kind: 'trace', label: '生成视频', text: '已提交，生成中', running: true })
           onGenerated?.({
