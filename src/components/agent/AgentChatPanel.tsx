@@ -403,6 +403,7 @@ export default function AgentChatPanel({
                 workspaceId,
                 sessionId: sessionRef.current,
                 message,
+                assetIds,
                 modelVersionId: modelId || undefined,
               },
               onEvent,

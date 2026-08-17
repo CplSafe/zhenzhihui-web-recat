@@ -273,6 +273,8 @@ export interface ContinueSessionInput {
   workspaceId: number
   sessionId: number
   message?: string
+  /** 本轮追加的商品图资产 ID。续跑同样要能带图。 */
+  assetIds?: number[]
   /** 显式确认执行待定的生成。只带 message 的追问不会被当作确认。 */
   confirm?: boolean
   /** 用户在确认框里改过的参数,为空则用模型原本给的。 */
@@ -288,6 +290,7 @@ export function continueSession(input: ContinueSessionInput, onEvent: (e: AgentE
     {
       workspace_id: input.workspaceId,
       message: input.message,
+      asset_ids: input.assetIds,
       confirm: input.confirm,
       confirmed_args: input.confirmedArgs,
       cancel: input.cancel,
