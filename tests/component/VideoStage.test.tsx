@@ -63,6 +63,34 @@ describe('VideoStage playback loading', () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
+  /*
+   * 爆款复制与智能成片共用这一个 VideoStage（前者 shots 为空），所以「拖到第 N 秒看到第 N 秒」
+   * 这件事在两条流程里必须一致。这条用例锁的就是共用关系：哪天有人给爆款复制单独接一个播放器，
+   * 它会先红。
+   */
+  it('爆款复制（无分镜）模式下，源不可跳转时播放器照样换成本地可跳转副本', async () => {
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: () => 'blob:hot-copy-local' })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => undefined })
+
+    const videoUrl = '/api/v1/assets/8801/download?workspace_id=7'
+    const { container } = render(
+      <VideoStage shots={[]} videoUrl={videoUrl} videoAssetId={8801} onRegenerateVideo={vi.fn()} />,
+    )
+
+    const player = container.querySelector('video[controls]') as HTMLVideoElement
+    expect(player.getAttribute('src')).toBe(videoUrl)
+
+    // 铺成「不支持 Range」的源：时长读得到，但一段可跳转范围都没有
+    Object.defineProperty(player, 'duration', { value: 30, configurable: true })
+    Object.defineProperty(player, 'seekable', {
+      configurable: true,
+      value: { length: 0, start: () => 0, end: () => 0 },
+    })
+    fireEvent.loadedMetadata(player)
+
+    await waitFor(() => expect(player.getAttribute('src')).toBe('blob:hot-copy-local'), { timeout: 3000 })
+  })
+
   it('releases the previous native player when its URL changes and when the stage unmounts', () => {
     const props = {
       shots: [],

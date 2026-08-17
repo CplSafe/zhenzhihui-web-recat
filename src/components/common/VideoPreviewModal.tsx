@@ -4,6 +4,7 @@
  * 取代此前在 HomeView(历史项目播放 + 模板预览)与 TemplatesView 里三份重复的同款弹窗。
  */
 import { useEffect, useRef } from 'react'
+import SeekableVideo from './SeekableVideo'
 
 /** 预览视频地址、封面、跨域策略和关闭事件。 */
 interface VideoPreviewModalProps {
@@ -82,7 +83,9 @@ export default function VideoPreviewModal({ src, poster, crossOrigin, onClose }:
         >
           ✕
         </button>
-        <video
+        {/* 用 SeekableVideo 而不是原生 <video>：/download 不支持 Range，
+            原生播放器拖进度条会被抹回 0，这里在跳转失败后自动换本地副本 */}
+        <SeekableVideo
           className="home__video-modal-player"
           src={src}
           poster={poster || undefined}

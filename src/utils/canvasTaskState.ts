@@ -44,6 +44,15 @@ export function getCanvasTaskPresentation(args: {
   if (status === 'result_pending' || succeeded) {
     return { running: true, failed: false, title: '正在同步生成结果', detail: '任务已完成，正在读取结果', progress }
   }
+  if (status === 'status_query_failed') {
+    return {
+      running: true,
+      failed: false,
+      title: '任务状态查询异常',
+      detail: String(args.error || '暂时无法连接任务服务，将继续自动重试'),
+      progress,
+    }
+  }
   return {
     running: true,
     failed: false,

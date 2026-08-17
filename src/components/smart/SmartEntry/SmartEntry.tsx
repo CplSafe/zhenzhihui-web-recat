@@ -11,9 +11,9 @@ import {
   filterGenerationModelGroupsByOperations,
   GenerationModelDropdown,
   getGenerationModelDurationOptions,
+  getGenerationModelRatioOptions,
   getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
-  isDurationSupportedByGenerationModel,
   isGenerationModelSelectionComplete,
   type GenerationModelErrorState,
   type GenerationModelGroup,
@@ -36,6 +36,7 @@ import {
   LEGACY_DEFAULT_VIDEO_RESOLUTION,
   normalizeVideoResolution,
 } from '@/utils/videoOptions'
+import { matchModelParamOptionValue } from '@/utils/modelSchema'
 import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 import {
   REQUIRED_GENERATION_OPERATION_CODES_BY_MODE,
@@ -105,6 +106,9 @@ interface SmartEntryProps {
   onReloadModels?: () => void
   /** 已登录且工作空间就绪后开启当前步骤模型门禁；游客仍可先点击并进入登录流程。 */
   requireModelSelection?: boolean
+  /** 游客态：模型入口照常展示但置灰，点击交由 onAuthRequired 引导登录。 */
+  authRequired?: boolean
+  onAuthRequired?: () => void
   /**
    * 回填初始值:从分镜脚本「上一步」返回输入框时,恢复上次输入(需求文本/图片/风格/比例/时长/模式/skill)。
    * 仅在挂载时生效(useState 初值);路由切换会卸载本组件,数据随之清空。
@@ -191,6 +195,8 @@ export default function SmartEntry({
   modelOperationStates,
   onReloadModels,
   requireModelSelection = false,
+  authRequired = false,
+  onAuthRequired,
   initial,
   restoreSessionDraft = true,
 }: SmartEntryProps) {
@@ -394,25 +400,15 @@ export default function SmartEntry({
     [visibleModelGroups, generationModels],
   )
   const durationChoices = useMemo(() => durationOptions.map((seconds) => `${seconds}s`), [durationOptions])
-  // 视频模型选定前不允许选秒数：模型决定了有哪些档位，先选秒数只会选到模型并不支持的值。
-  const videoModelSelected = mode !== 'video' || Boolean(generationModels['video.generate'])
   const durationUnset = parseDurationSeconds(duration) === null
-  // 换模型后原选择可能不再受支持：就近吸附到新档位，避免停留在必然失败的秒数上。
+  const selectedDurationSec = parseDurationSeconds(duration) ?? undefined
   //
-  // 只有「所选模型明确不支持当前秒数」才纠正。durationOptions 在模型未选中、目录正在刷新
-  // 或模型没声明约束时会回落到入口默认档位（上限 15 秒），那只代表「不知道」而非「只允许这些」；
-  // 若据此吸附，用户选中的模型支持的 20 秒会被悄悄改成 15 秒。
-  // 尚未选择时同样保持未选状态，交由用户显式选择。
-  useEffect(() => {
-    if (mode !== 'video' || durationOptions.length === 0) return
-    const current = parseDurationSeconds(duration)
-    if (current === null) return
-    if (isDurationSupportedByGenerationModel(visibleModelGroups, generationModels, 'video.generate', current)) return
-    const nearest = durationOptions.reduce((best, seconds) =>
-      Math.abs(seconds - current) < Math.abs(best - current) ? seconds : best,
-    )
-    setDuration(`${nearest}s`)
-  }, [mode, duration, durationOptions, visibleModelGroups, generationModels])
+  // 时长与模型是双向约束，不是单向顺序：秒数是用户的需求，模型是实现选择，谁先定都合理。
+  // 这里既不锁时长（未选模型时 getGenerationModelDurationOptions 本来就返回默认档位），
+  // 也不在换模型后把用户选的 30 秒静默吸附成 15 秒——那是在悄悄丢掉用户的输入。
+  // 不兼容的组合交给 modelSelectionConflicts 明说，并由 modelGatePassed 拦住提交，
+  // 改模型还是改秒数由用户自己决定。
+  //
   // 分辨率档位同样跟随所选视频模型；模型未声明 resolution/size 时回落到通用档位。
   const resolutionOptions = useMemo(
     () =>
@@ -424,12 +420,50 @@ export default function SmartEntry({
       ),
     [visibleModelGroups, generationModels],
   )
-  // 换模型后原分辨率可能不再受支持：回退到 720p 或该模型首个档位，避免提交必然失败的规格。
+  /**
+   * 分辨率与时长的差别：它一直带着默认值（720p），用户可能压根没碰过。
+   * 换模型后若把这个从没被选择过的默认值也报成冲突，用户会被要求去解决一个不是自己造成的问题；
+   * 所以未经手时继续就近收敛，一旦用户显式选过就不再改写，交给冲突提示。
+   */
+  const resolutionTouchedRef = useRef(false)
+  const pickResolution = useCallback((value: string) => {
+    resolutionTouchedRef.current = true
+    setResolution(value)
+  }, [])
   useEffect(() => {
     if (mode !== 'video' || resolutionOptions.length === 0) return
+    if (resolutionTouchedRef.current) return
     const normalized = normalizeVideoResolution(resolution, resolutionOptions)
     if (normalized !== resolution) setResolution(normalized)
   }, [mode, resolution, resolutionOptions])
+
+  /**
+   * 画面比例同样只放模型做得了的那几项。
+   *
+   * 比例此前是固定五项，与时长/分辨率不同口径：模型只支持 16:9 时，
+   * 9:16 照样能选，要等提交被后端拒才知道。三者必须同源。
+   * 图片模式不参与——比例约束取自 video.generate 槽位。
+   */
+  const ratioOptions = useMemo(() => {
+    if (mode !== 'video') return [...RATIO_OPTIONS]
+    return getGenerationModelRatioOptions(visibleModelGroups, generationModels, 'video.generate', RATIO_OPTIONS)
+  }, [mode, visibleModelGroups, generationModels])
+  // 与分辨率同一条原则：用户显式选过就不再改写，只有没碰过的默认值才跟着模型收敛
+  const ratioTouchedRef = useRef(false)
+  const pickRatio = useCallback((value: string) => {
+    ratioTouchedRef.current = true
+    setRatio(value)
+  }, [])
+  useEffect(() => {
+    if (mode !== 'video' || ratioOptions.length === 0) return
+    if (ratioTouchedRef.current) return
+    // 必须和冲突校验用同一个比较函数：那边是归一化匹配（忽略大小写与首尾空格），
+    // 这里若用精确 includes，两处会对同一个值给出相反结论——本轮反复修的正是这类分歧。
+    // 命中后统一写回 schema 的原始拼写，提交时才不会被后端按未知取值拒掉。
+    const matched = matchModelParamOptionValue(ratio, ratioOptions)
+    if (matched === undefined) setRatio(ratioOptions[0])
+    else if (matched !== ratio) setRatio(matched)
+  }, [mode, ratio, ratioOptions])
 
   const modelCatalogReady =
     !modelOperationStates || areGenerationModelOperationsReady(modelOperationStates, requiredModelOperations)
@@ -487,11 +521,6 @@ export default function SmartEntry({
     setModelAttentionRequest((request) => request + 1)
     showToast(modelGateMessage || '请先完成本次创作的模型选择', 'info')
   }
-  /** 未选视频模型就去点时长/分辨率：强调模型入口并说明先后顺序，而不是让用户选到模型不支持的档位。 */
-  const requestVideoModelFirst = () => {
-    setModelAttentionRequest((request) => request + 1)
-    showToast('请先选择视频模型', 'info')
-  }
   const submit = async () => {
     if (!canSubmit || submittingRef.current) return
     if (!modelGatePassed) {
@@ -500,7 +529,8 @@ export default function SmartEntry({
     }
     // 时长必须由用户显式选择：0s 是未选状态，提交会被后端按无效时长拒绝。
     if (mode === 'video' && durationUnset) {
-      showToast(videoModelSelected ? '请先选择视频时长' : '请先选择视频模型', 'info')
+      // 模型未选的情况已由上面的 modelGatePassed 拦下并给出自己的文案，这里只谈时长
+      showToast('请先选择视频时长', 'info')
       return
     }
     submittingRef.current = true
@@ -771,10 +801,38 @@ export default function SmartEntry({
 
           <div className={styles.toolbar}>
             <div className={styles.tools}>
+              {/*
+                模型排在工具条第一位：时长与分辨率的档位由所选模型的 schema 决定，
+                多数人也确实会先定模型，把它放在最左符合主路径的阅读顺序。
+                但这只是默认顺序、不是强制：时长可以先选，模型列表会反过来标出做不到的那些。
+              */}
+              {/* 游客态也要保留入口（置灰 + 点击引导登录），否则未登录时这一格直接消失，
+                  用户根本不知道创作前可以选模型 */}
+              {(authRequired || visibleModelGroups.length > 0 || Boolean(modelLoading) || Boolean(modelError)) && (
+                <GenerationModelDropdown
+                  groups={visibleModelGroups}
+                  authRequired={authRequired}
+                  onAuthRequired={onAuthRequired}
+                  selected={generationModels}
+                  // 触发器已是工具条最左端，面板改为左对齐；默认的 end 会让它向左展开再被视口夹回来
+                  placement="start"
+                  // 已选时长回喂给列表：做不到这个秒数的模型会被标出来，用户不必逐个试
+                  durationSec={mode === 'video' ? selectedDurationSec : undefined}
+                  durationOperationCode="video.generate"
+                  loading={modelLoading}
+                  error={modelError}
+                  onRetry={onReloadModels ? () => onReloadModels() : undefined}
+                  onChange={updateGenerationModel}
+                  estimateModelCost={workspaceId > 0 ? estimateSelectedModel : undefined}
+                  conflicts={modelSelectionConflicts}
+                  attentionRequest={modelAttentionRequest}
+                  attentionMessage={modelGateMessage}
+                />
+              )}
               <EntryDropdown
                 value={ratio}
-                options={RATIO_OPTIONS}
-                onChange={setRatio}
+                options={ratioOptions}
+                onChange={pickRatio}
                 icon={<RatioIcon ratio={ratio} />}
                 valueMinWidth={34}
               />
@@ -786,8 +844,6 @@ export default function SmartEntry({
                   onChange={setDuration}
                   placeholder={DURATION_PLACEHOLDER}
                   variant="wheel"
-                  blocked={!videoModelSelected}
-                  onBlockedClick={requestVideoModelFirst}
                   icon={
                     <svg
                       viewBox="0 0 24 24"
@@ -810,10 +866,8 @@ export default function SmartEntry({
                 <EntryDropdown
                   value={resolution}
                   options={resolutionOptions}
-                  onChange={setResolution}
+                  onChange={pickResolution}
                   ariaLabel="视频分辨率"
-                  blocked={!videoModelSelected}
-                  onBlockedClick={requestVideoModelFirst}
                   icon={
                     <svg
                       viewBox="0 0 24 24"
@@ -909,21 +963,6 @@ export default function SmartEntry({
                     }
                   />
                 </span>
-              )}
-
-              {(visibleModelGroups.length > 0 || Boolean(modelLoading) || Boolean(modelError)) && (
-                <GenerationModelDropdown
-                  groups={visibleModelGroups}
-                  selected={generationModels}
-                  loading={modelLoading}
-                  error={modelError}
-                  onRetry={onReloadModels ? () => onReloadModels() : undefined}
-                  onChange={updateGenerationModel}
-                  estimateModelCost={workspaceId > 0 ? estimateSelectedModel : undefined}
-                  conflicts={modelSelectionConflicts}
-                  attentionRequest={modelAttentionRequest}
-                  attentionMessage={modelGateMessage}
-                />
               )}
             </div>
 

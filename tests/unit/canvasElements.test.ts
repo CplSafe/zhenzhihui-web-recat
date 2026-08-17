@@ -8,6 +8,7 @@ import {
   collectCanvasSourceRefs,
   diffCanvasMutations,
   elementsToGraph,
+  isCanvasProvenanceEdge,
   nodeToMutation,
 } from '@/utils/canvasElements'
 
@@ -43,6 +44,40 @@ describe('canvasElements', () => {
         role: 'reference_image',
       }),
     ])
+  })
+
+  it('血缘边不进参考链路：截帧图连回源视频只表示出处，不是生成输入', () => {
+    const nodes = [
+      { id: 'source-video', type: 'video', position: { x: 0, y: 0 }, data: { kind: 'video', assetId: 501 } },
+      { id: 'captured-frame', type: 'image', position: { x: 0, y: 0 }, data: { kind: 'image', assetId: 502 } },
+      { id: 'next-image', type: 'image', position: { x: 0, y: 0 }, data: { kind: 'image' } },
+    ] as Node[]
+    const edges = [
+      // 血缘边：视频 → 截出来的图
+      {
+        id: 'video-to-frame',
+        source: 'source-video',
+        target: 'captured-frame',
+        data: { slotIndex: 0, provenance: true },
+      },
+      // 真正的输入边：截出来的图作为下游图片的参考
+      { id: 'frame-to-next', source: 'captured-frame', target: 'next-image', data: { slotIndex: 0 } },
+    ] as Edge[]
+
+    // 图片节点自己的参考链路里不该出现那条视频
+    expect(collectCanvasSourceRefs('captured-frame', nodes, edges)).toEqual([])
+
+    // 而且血缘边不能被顺着向上追溯：否则视频会经由截帧图渗进下游节点的 input_assets
+    expect(collectCanvasSourceRefs('next-image', nodes, edges)).toEqual([
+      expect.objectContaining({ kind: 'image', sourceId: 'captured-frame', assetId: 502 }),
+    ])
+  })
+
+  it('识别血缘边标记，缺省或非血缘边一律按输入边处理', () => {
+    expect(isCanvasProvenanceEdge({ data: { provenance: true } })).toBe(true)
+    expect(isCanvasProvenanceEdge({ data: { slotIndex: 0 } })).toBe(false)
+    expect(isCanvasProvenanceEdge({})).toBe(false)
+    expect(isCanvasProvenanceEdge(null)).toBe(false)
   })
 
   it('restores first and last frame connection purposes from target mode', () => {

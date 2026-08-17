@@ -6,7 +6,7 @@
  * 数据源：/api/v1/canvases 的 list / create / delete 接口（canvasApi）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import '@/styles/project-management.css'
 import './CanvasListView.css'
 import AppSidebar from '@/components/home/AppSidebar'
@@ -15,7 +15,7 @@ import { getBusinessErrorMessage } from '@/api/business'
 import {
   createCanvas,
   deleteCanvas,
-  fetchCanvasElements,
+  fetchAllCanvasElements,
   listCanvases,
   patchCanvas,
   type CanvasSummary,
@@ -37,7 +37,20 @@ function formatTime(value?: string): string {
 /** 无限画布列表页主组件。 */
 export default function CanvasListView() {
   const navigate = useNavigate()
+  const location = useLocation()
   const handleNavigate = useSidebarNavigate()
+  /**
+   * 从「我的素材 → 去创作 → 无限画布」带过来的素材。
+   *
+   * /canvas 是列表页而不是编辑器，素材不能就地落下：这里正是「选一个已有画布
+   * 或新建一个」的地方，因此把素材原样透传给下一跳，由编辑器落成节点。
+   */
+  const carriedMaterial = (location.state as any)?.carryMaterial || null
+  // useMemo 保持引用稳定，否则 openCanvas 每次渲染都会重建，卡片列表跟着重渲染。
+  const carriedState = useMemo(
+    () => (carriedMaterial ? { carryMaterial: carriedMaterial } : undefined),
+    [carriedMaterial],
+  )
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const workspaceId = useWorkspaceId()
@@ -67,6 +80,9 @@ export default function CanvasListView() {
   // 值为 null 表示这张画布确实没有可用媒体，避免反复拉同一张画布的元素。
   const [covers, setCovers] = useState<Record<number, CanvasCover | null>>({})
   const coverLoadedRef = useRef(new Set<string>())
+  // 只有「曾经进入视口」的画布才去取封面，见下方 IntersectionObserver 副作用
+  const [coverVisibleIds, setCoverVisibleIds] = useState<Set<number>>(() => new Set())
+  const gridRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     workspaceIdRef.current = Number(workspaceId || 0)
@@ -78,6 +94,46 @@ export default function CanvasListView() {
     () => (canvasesWorkspaceId === activeWsId ? canvases : []),
     [canvasesWorkspaceId, activeWsId, canvases],
   )
+
+  /**
+   * 记录哪些卡片进入过视口，供封面副作用挑选目标。
+   *
+   * 列表一页最多 50 张画布，而首屏通常只看得到 6~8 张。之前不看可见性、开页就把
+   * 整页都排进封面队列，等于为了几张缩略图对元素接口打出几十个 limit=500 的请求。
+   * 只记录「曾经可见」并随即 unobserve：封面取到就不再关心它是否还在视口内。
+   */
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid || !effectiveCanvases.length) return
+    // 环境不支持时退回原来的全量行为，保证封面仍然会显示
+    if (typeof IntersectionObserver === 'undefined') {
+      setCoverVisibleIds(new Set(effectiveCanvases.map((item) => Number(item.id || 0))))
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const appeared: number[] = []
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          observer.unobserve(entry.target)
+          const id = Number((entry.target as HTMLElement).dataset.canvasId || 0)
+          if (id > 0) appeared.push(id)
+        }
+        if (!appeared.length) return
+        setCoverVisibleIds((prev) => {
+          const next = new Set(prev)
+          for (const id of appeared) next.add(id)
+          // 尺寸没变说明这批都已记录过，返回原引用避免多一次无意义渲染
+          return next.size === prev.size ? prev : next
+        })
+      },
+      // 提前 240px 预取：滚动时不会先看到占位图再跳成封面
+      { root: null, rootMargin: '240px' },
+    )
+    grid.querySelectorAll('[data-canvas-id]').forEach((el) => observer.observe(el))
+    return () => observer.disconnect()
+  }, [effectiveCanvases])
 
   /**
    * 逐张补齐封面。
@@ -92,13 +148,13 @@ export default function CanvasListView() {
 
     const pending = effectiveCanvases
       .map((item) => ({ id: Number(item.id || 0), key: `${wsId}:${item.id}:${item.revision || 0}` }))
-      .filter((item) => item.id > 0 && !coverLoadedRef.current.has(item.key))
+      .filter((item) => item.id > 0 && coverVisibleIds.has(item.id) && !coverLoadedRef.current.has(item.key))
     if (!pending.length) return
 
     const loadOne = async ({ id, key }: { id: number; key: string }) => {
       coverLoadedRef.current.add(key)
       try {
-        const page = await fetchCanvasElements({ workspaceId: wsId, canvasId: id, afterRevision: 0 })
+        const page = await fetchAllCanvasElements({ workspaceId: wsId, canvasId: id, afterRevision: 0 })
         if (disposed) return
         setCovers((prev) => ({ ...prev, [id]: pickCanvasCover(page.elements, wsId) }))
       } catch {
@@ -121,7 +177,7 @@ export default function CanvasListView() {
     return () => {
       disposed = true
     }
-  }, [activeWsId, effectiveCanvases])
+  }, [activeWsId, effectiveCanvases, coverVisibleIds])
 
   // 拉取画布列表；请求序号 + workspace 快照共同阻止过期响应覆盖当前页面
   const loadCanvases = useCallback(async () => {
@@ -198,7 +254,7 @@ export default function CanvasListView() {
       showToast('画布已创建', 'success')
       setCreateOpen(false)
       setNewName('')
-      navigate(`/canvas/${newId}`)
+      navigate(`/canvas/${newId}`, carriedState ? { state: carriedState } : undefined)
     } catch (error) {
       if (Number(workspaceIdRef.current || 0) === wsId) {
         showToast(getBusinessErrorMessage(error, '创建失败,请稍后重试'), 'error')
@@ -206,7 +262,7 @@ export default function CanvasListView() {
     } finally {
       setCreating(false)
     }
-  }, [creating, newName, navigate, showToast])
+  }, [creating, newName, navigate, showToast, carriedState])
 
   // 关闭新建弹窗：同时清空输入框，避免下次打开残留上次内容
   const closeCreateModal = useCallback(() => {
@@ -339,9 +395,9 @@ export default function CanvasListView() {
   const openCanvas = useCallback(
     (item: CanvasSummary) => {
       if (!item?.id) return
-      navigate(`/canvas/${item.id}`)
+      navigate(`/canvas/${item.id}`, carriedState ? { state: carriedState } : undefined)
     },
-    [navigate],
+    [navigate, carriedState],
   )
 
   return (
@@ -380,6 +436,22 @@ export default function CanvasListView() {
             </div>
           </div>
 
+          {/* 携带素材进来时的引导条：说明素材去向，并给一个「不带素材」的退出口 */}
+          {carriedMaterial ? (
+            <div className="cl-carry-banner" role="status">
+              <span className="cl-carry-banner__text">
+                已选素材「{String(carriedMaterial.name || '未命名素材')}」，选择一个画布加入，或新建画布
+              </span>
+              <button
+                type="button"
+                className="cl-carry-banner__exit"
+                onClick={() => navigate(location.pathname, { replace: true, state: null })}
+              >
+                取消
+              </button>
+            </div>
+          ) : null}
+
           {/* 画布卡片网格 */}
           <section className="pm2-section">
             {loading && !effectiveCanvases.length ? (
@@ -387,11 +459,12 @@ export default function CanvasListView() {
             ) : !effectiveCanvases.length ? (
               <div className="pm2-hint">还没有画布，点右上角「新建画布」开始</div>
             ) : (
-              <div className="pm2-card-grid">
+              <div className="pm2-card-grid" ref={gridRef}>
                 {effectiveCanvases.map((item) => (
                   <div
                     key={item.id}
                     className="pm2-pcard"
+                    data-canvas-id={item.id}
                     role="button"
                     tabIndex={0}
                     aria-label={`打开画布 ${item.title || '未命名画布'}`}

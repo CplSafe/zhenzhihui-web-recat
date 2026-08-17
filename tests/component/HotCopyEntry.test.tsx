@@ -217,14 +217,14 @@ describe('HotCopyEntry project asset access', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
-  it('requires a video model before the duration can be chosen and starts unselected', async () => {
+  it('lets the duration be chosen before any model, starting unselected', async () => {
     const user = userEvent.setup()
     render(<HotCopyEntry onSubmit={vi.fn()} />)
 
-    // 时长默认未选（显示占位文案）：档位由模型决定，先选秒数只会选到模型并不支持的值。
+    // 时长默认未选（显示占位文案），但不锁：秒数是需求、模型是实现选择，谁先定都合理。
     await user.click(screen.getByRole('button', { name: '选择时长' }))
-    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
-    expect(mocks.showToast).toHaveBeenCalledWith('请先选择视频模型', 'info')
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(mocks.showToast).not.toHaveBeenCalledWith('请先选择视频模型', 'info')
   })
 
   it('offers the same 1s through 15s range once a model without duration constraints is selected', async () => {

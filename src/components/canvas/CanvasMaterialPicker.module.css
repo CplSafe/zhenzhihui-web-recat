@@ -351,6 +351,17 @@
   gap: 4px;
   padding: 0 16px 8px;
   border-bottom: 1px solid #eee;
+  /*
+   * 窄屏下标签会溢出被裁掉：实测 658px 宽时「我收藏的」整个露不出来，也没有任何办法滚到它。
+   * 改成横向可滚：标签保持自身宽度不被压缩，装不下就滚过去，而不是凭空消失。
+   * 隐藏滚动条是因为这一行本来就只有 30 来像素高，系统滚动条会把标签挤变形。
+   */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .panelDrawer .tabs {
@@ -400,6 +411,9 @@
 }
 
 .tab {
+  /* 不参与压缩、文案不折行：溢出交给 .tabs 横向滚动处理 */
+  flex: none;
+  white-space: nowrap;
   padding: 6px 16px;
   border: none;
   background: transparent;

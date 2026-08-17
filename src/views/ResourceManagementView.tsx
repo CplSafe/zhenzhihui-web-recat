@@ -623,13 +623,16 @@ function ResourceCard({
   onToggleSelect: () => void
   favoriteActions?: {
     onDownload: () => void
-    onUseTemplate?: () => void
     onDelete?: () => void
     deleting?: boolean
+    /** 可直接把该素材带进创作的去向；为空时不展示「去创作」。 */
+    createTargets?: Array<{ key: string; label: string; onSelect: () => void }>
   }
 }) {
   const [ratio, setRatio] = useState<string>(card.duration || '')
+  const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const isImage = card.mediaKind === 'image'
+  const createTargets = favoriteActions?.createTargets || []
   return (
     <article className={`resource-asset-card${selected ? ' is-selected' : ''}`}>
       <button
@@ -692,15 +695,39 @@ function ResourceCard({
             </svg>
             下载
           </button>
-          {favoriteActions.onUseTemplate ? (
-            <button
-              type="button"
-              className="resource-favorite-action-btn"
-              onClick={favoriteActions.onUseTemplate}
-              aria-label={`用${card.title}做同款`}
-            >
-              做同款
-            </button>
+          {/* 去创作：直接把素材带进创作流程，省去「先下载到本地再上传」。
+              原来的「做同款」已并入本菜单——它本质上就是「视频 → 爆款复制」这一个去向。 */}
+          {createTargets.length ? (
+            <div className="resource-create-menu">
+              <button
+                type="button"
+                className="resource-favorite-action-btn"
+                aria-haspopup="menu"
+                aria-expanded={createMenuOpen}
+                aria-label={`把${card.title}添加到创作`}
+                onClick={() => setCreateMenuOpen((open) => !open)}
+              >
+                去创作
+              </button>
+              {createMenuOpen ? (
+                <div className="resource-create-menu__list" role="menu">
+                  {createTargets.map((target) => (
+                    <button
+                      key={target.key}
+                      type="button"
+                      role="menuitem"
+                      className="resource-create-menu__item"
+                      onClick={() => {
+                        setCreateMenuOpen(false)
+                        target.onSelect()
+                      }}
+                    >
+                      {target.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ) : null}
           {favoriteActions.onDelete ? (
             <button
@@ -1445,6 +1472,47 @@ export default function ResourceManagementView() {
     })
   }
 
+  /**
+   * 「去创作」的可选去向：把素材直接带进创作流程，省去先下载到本地再上传。
+   *
+   * 各流程能接的素材类型不同，按类型给出可行去向而不是一律列全：
+   * - 智能成片 / 爆款复制的替换素材只收图片（carryImages）；
+   * - 爆款复制的原视频只收视频（carryVideo，即已有的「做同款」）；
+   * - 无限画布图片和视频都能落成节点。
+   */
+  const createTargetsForCard = (card: any) => {
+    const assetId = Number(card.assetId || 0) || 0
+    const url = String(card.mediaUrl || '')
+    if (!assetId && !url) return []
+    const isImage = card.mediaKind === 'image'
+    const carry = { url, assetId }
+    const targets: Array<{ key: string; label: string; onSelect: () => void }> = []
+    if (isImage) {
+      targets.push({
+        key: 'smart',
+        label: '智能成片',
+        onSelect: () => navigate('/smart', { state: { carryImages: [carry] } }),
+      })
+      targets.push({
+        key: 'hot-copy',
+        label: '爆款复制',
+        onSelect: () => navigate('/hot-copy', { state: { carryImages: [carry] } }),
+      })
+    } else {
+      // 视频进爆款复制即原来的「做同款」：作为源爆款视频，而不是替换素材。
+      targets.push({ key: 'hot-copy', label: '爆款复制', onSelect: () => openVideoInHotCopy(card) })
+    }
+    targets.push({
+      key: 'canvas',
+      label: '无限画布',
+      onSelect: () =>
+        navigate('/canvas', {
+          state: { carryMaterial: { ...carry, type: isImage ? 'image' : 'video', name: String(card.title || '') } },
+        }),
+    })
+    return targets
+  }
+
   const toggleSelectedCard = (card: any) => {
     const key = String(card.id)
     setSelectedCardIds((current) => {
@@ -1682,7 +1750,7 @@ export default function ResourceManagementView() {
                         onToggleSelect={() => toggleSelectedCard(card)}
                         favoriteActions={{
                           onDownload: () => downloadResourceCard(card),
-                          onUseTemplate: card.mediaKind === 'video' ? () => openVideoInHotCopy(card) : undefined,
+                          createTargets: createTargetsForCard(card),
                           onDelete:
                             mainTab !== 'collected' && Number(card.assetId || 0) > 0
                               ? () => void deleteResourceCard(card)

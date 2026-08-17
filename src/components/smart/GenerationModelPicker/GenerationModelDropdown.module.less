@@ -57,6 +57,17 @@
   animation: model-trigger-attention 520ms ease-in-out;
 }
 
+/*
+ * 游客态入口：整体降饱和 + 虚线边，一眼看出「现在还用不了」，
+ * 但仍保留 pointer 与 hover——它是可点的，点下去走登录引导。
+ */
+.triggerAuthRequired {
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.6);
+  color: #8a9491;
+  box-shadow: none;
+}
+
 .visuallyHidden {
   position: absolute;
   width: 1px;
@@ -269,6 +280,34 @@
   color: #7c8984;
   font-size: 11px;
   line-height: 1.55;
+}
+
+// 模型能力边界（「时长仅支持：5 秒、10 秒」）。
+// 用中性灰而不是警告色：这是模型的固有属性，不是用户犯了错。
+.modelRestrictions {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: #7c8984;
+  font-size: 11px;
+  line-height: 1.55;
+
+  li {
+    position: relative;
+    padding-left: 10px;
+  }
+
+  li::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 0;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentcolor;
+    opacity: 0.55;
+  }
 }
 
 .modelEstimate {

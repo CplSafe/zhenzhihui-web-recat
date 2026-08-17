@@ -835,6 +835,12 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   const currentUserId = resolveUserId(currentUser)
   const workspaceId = useWorkspaceId()
   const hotCopyModelCatalog = useHotCopyModelCatalog(Number(workspaceId || 0))
+  // 模型目录按 workspace 拉取，游客拿不到任何模型：入口置灰，点击走统一登录引导。
+  // 会话仍在校验时不算游客，否则刷新瞬间入口会闪一下「登录后选择模型」。
+  const modelEntryAuthRequired = !isAuthenticated && !isCheckingSession
+  const requestModelEntryLogin = useCallback(() => {
+    void requireAuth(undefined, { returnTo: `${location.pathname}${location.search}` })
+  }, [requireAuth, location.pathname, location.search])
   const workspaceIdRef = useRef(0)
   workspaceIdRef.current = Number(workspaceId || 0)
   const modelPlanCandidates = useModelPlanCandidates() as string[]
@@ -5238,6 +5244,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                   modelReady={hotCopyModelCatalog.ready}
                   onReloadModels={hotCopyModelCatalog.reload}
                   requireModelSelection={Boolean(isAuthenticated && workspaceId)}
+                  authRequired={modelEntryAuthRequired}
+                  onAuthRequired={requestModelEntryLogin}
                 />
               </Suspense>
             </div>

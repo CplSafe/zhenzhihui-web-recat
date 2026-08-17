@@ -29,7 +29,13 @@ export function formatVideoTimeLabel(seconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
 }
 
-export function readVideoDurationSec(url: string, timeoutMs = 8000): Promise<number> {
+/**
+ * 读取未取整的真实时长(秒)。
+ *
+ * 剪辑时间线要用它:按秒取整会把 5.4 秒的片子当成 5 秒,末尾 0.4 秒直接丢掉。
+ * 计费场景仍用 readVideoDurationSec(整秒),两者共用同一段加载逻辑。
+ */
+export function readVideoDurationSecExact(url: string, timeoutMs = 8000): Promise<number> {
   return new Promise((resolve) => {
     if (!url) {
       resolve(0)
@@ -42,7 +48,7 @@ export function readVideoDurationSec(url: string, timeoutMs = 8000): Promise<num
       done = true
       v.removeAttribute('src')
       v.load()
-      resolve(Number.isFinite(sec) && sec > 0 ? Math.round(sec) : 0)
+      resolve(Number.isFinite(sec) && sec > 0 ? sec : 0)
     }
     v.preload = 'metadata'
     v.muted = true
@@ -51,4 +57,9 @@ export function readVideoDurationSec(url: string, timeoutMs = 8000): Promise<num
     window.setTimeout(() => finish(v.duration || 0), timeoutMs)
     v.src = url
   })
+}
+
+export async function readVideoDurationSec(url: string, timeoutMs = 8000): Promise<number> {
+  const seconds = await readVideoDurationSecExact(url, timeoutMs)
+  return seconds > 0 ? Math.round(seconds) : 0
 }

@@ -59,8 +59,9 @@
   cursor: pointer;
   border-radius: 10px;
   transition:
-    background 0.2s,
-    color 0.2s;
+    background var(--canvas-dur, 180ms) var(--canvas-ease, ease-out),
+    color var(--canvas-dur, 180ms) var(--canvas-ease, ease-out),
+    transform var(--canvas-dur, 180ms) var(--canvas-ease, ease-out);
 }
 
 .toolBtn:hover {
@@ -68,9 +69,26 @@
   color: #16a889;
 }
 
-.toolBtnActive {
-  background: rgba(34, 197, 160, 0.14);
-  color: #16a889;
+/* 按下去要有落点。原来只有 hover，点击时按钮纹丝不动，像是没接住这一下 */
+.toolBtn:active {
+  transform: scale(0.92);
+  transition-duration: var(--canvas-dur-fast, 120ms);
+}
+
+.toolBtn:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 2px;
+}
+
+/*
+ * 选中态原来只比 hover 深 0.02 的透明度（0.12 → 0.14），肉眼分不出「我停在上面」
+ * 和「这个开关是开着的」。改成实心底色反白，两种状态一眼可辨。
+ */
+.toolBtnActive,
+.toolBtnActive:hover {
+  background: #16a889;
+  color: #fff;
+  box-shadow: 0 2px 8px rgb(22 168 137 / 32%);
 }
 
 .addBtnWrap:first-child .toolBtn {
@@ -109,11 +127,13 @@
   position: relative;
 }
 
+/* 菜单从按钮那一侧展开：工具栏自己有进场动画，菜单却是硬弹出来的，两者对不上 */
 .addMenu {
   position: absolute;
   left: 52px;
   top: 50%;
   transform: translateY(-50%);
+  transform-origin: left center;
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
@@ -122,6 +142,18 @@
   flex-direction: column;
   min-width: 140px;
   z-index: 20;
+  animation: add-menu-enter 0.16s var(--canvas-ease, ease-out);
+}
+
+@keyframes add-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) translateX(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0) scale(1);
+  }
 }
 
 .addMenuItem {
@@ -134,12 +166,29 @@
   border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s;
+  transition:
+    background var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out),
+    color var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out);
   text-align: left;
 }
 
+/* 0.06 的品牌色底在白卡上几乎看不出来，扫过一列时不知道自己停在哪一项 */
 .addMenuItem:hover {
-  background: rgba(87, 103, 229, 0.06);
+  background: rgba(87, 103, 229, 0.1);
+}
+
+.addMenuItem:hover .addMenuLabel,
+.addMenuItem:hover .addMenuIcon {
+  color: #5767e5;
+}
+
+.addMenuItem:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: -2px;
+}
+
+.addMenuItem:active {
+  background: rgba(87, 103, 229, 0.16);
 }
 
 .addMenuText {
@@ -152,6 +201,7 @@
   font-size: 13px;
   font-weight: 500;
   color: #333;
+  transition: color var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out);
 }
 
 .addMenuDesc {
@@ -164,4 +214,5 @@
   align-items: center;
   color: #777;
   flex-shrink: 0;
+  transition: color var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out);
 }

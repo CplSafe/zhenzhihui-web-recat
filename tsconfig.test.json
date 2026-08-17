@@ -4,5 +4,10 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
     "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
   },
-  "include": ["tests/**/*.ts", "tests/**/*.tsx"]
+  "include": ["tests/**/*.ts", "tests/**/*.tsx"],
+  // 临时 spike 用例用到 fs / Buffer / process。给这里加 "node" 类型行不通：
+  // 测试会 import src，@types/node 会连带让 src 按 Node 类型检查，setTimeout
+  // 变成 NodeJS.Timeout，src/api/requestTimeout.ts 立即报错——正是 CLAUDE.md
+  // 「types 限制为 vite/client」那条类型债要防的情况。spike 删除时一并移除本项。
+  "exclude": ["tests/unit/spike-mp4-parser.test.ts"]
 }

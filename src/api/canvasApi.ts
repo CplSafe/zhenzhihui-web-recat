@@ -262,6 +262,63 @@ export async function fetchCanvasElements({
 }
 
 /**
+ * 拉取同一 revision 范围内的全部画布元素分页。
+ *
+ * 服务端游标只允许与最初的 after_revision 配套使用；调用方不能在分页过程中推进
+ * revision，否则会跳过尚未读取的 mutation。遇到异常游标时直接失败，避免把不完整
+ * 的页面误当成完整基线写入画布。
+ */
+export async function fetchAllCanvasElements({
+  workspaceId,
+  canvasId,
+  afterRevision = 0,
+  limit = 500,
+  maxPages = 200,
+}: {
+  workspaceId: number
+  canvasId: number
+  afterRevision?: number
+  limit?: number
+  maxPages?: number
+}): Promise<CanvasElementsPage> {
+  const elements: CanvasElementMutation[] = []
+  const seenCursors = new Set<string>()
+  let cursor = ''
+  let firstPage: CanvasElementsPage | null = null
+  let lastPage: CanvasElementsPage | null = null
+
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const page = await fetchCanvasElements({ workspaceId, canvasId, afterRevision, cursor, limit })
+    firstPage ||= page
+    lastPage = page
+    elements.push(...page.elements)
+
+    if (!page.has_more) {
+      return {
+        ...page,
+        elements,
+        state: firstPage.state,
+        schema_version: firstPage.schema_version,
+        history_floor_revision: Math.max(firstPage.history_floor_revision, page.history_floor_revision),
+        next_cursor: undefined,
+        has_more: false,
+      }
+    }
+
+    const nextCursor = String(page.next_cursor || '')
+    if (!nextCursor || seenCursors.has(nextCursor)) {
+      throw new BusinessApiError('画布分页游标异常，已停止同步以避免数据不完整')
+    }
+    seenCursors.add(nextCursor)
+    cursor = nextCursor
+  }
+
+  throw new BusinessApiError(`画布元素超过 ${maxPages} 页，已停止同步以避免数据不完整`, {
+    response: lastPage,
+  })
+}
+
+/**
  * 增量保存画布元素（PATCH /canvases/{id}/elements）。
  * 乐观锁：base_revision 与服务端不一致返回 409；调用方应拉增量、应用远端、重放本地后重试。
  * mutations 可为空（仅提交 state）；返回服务端最新 revision（data.revision）。

@@ -79,40 +79,80 @@
   word-break: break-word;
 }
 
+/*
+ * 关闭按钮落在弹窗内的右上角。
+ *
+ * 原来是浮在弹窗外（top/right 负值）：那个位置既不属于面板也不属于遮罩，
+ * 看上去像掉在外面的一个孤立圆点，窄屏还得额外写规则把它拉回来。
+ * 放进右上角之后，有信息栏时它落在信息栏的留白里、与「信息」标题同一行，
+ * 没有信息栏时压在画面右上角——与左上角的时长角标正好对称。
+ *
+ * 样式做成毛玻璃：底下既可能是明亮的视频画面，也可能是深色信息栏，
+ * 纯白或纯黑的实心底在其中一种情况下必然糊掉。
+ */
 .close {
   position: absolute;
-  top: -14px;
-  right: -14px;
-  z-index: 1;
-  width: 34px;
-  height: 34px;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.92);
-  color: #1f2937;
-  font-size: 15px;
+  background: rgba(18, 20, 26, 0.5);
+  backdrop-filter: blur(8px);
+  color: #f2f3f5;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  /* 进场用 backwards 而不是 both：forwards/both 会把最后一帧的 transform 留在元素上，
+     之后 hover 的 transform 再也压不过它，按钮会变得点得动但没有任何反馈 */
+  animation: canvas-video-preview-close-in 0.24s ease-out 0.1s backwards;
   transition:
-    background 0.15s,
-    transform 0.15s;
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.22s ease,
+    transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* 悬停：轻微抬起 + 底色提亮，同时推出一圈涟漪 */
 .close:hover {
-  background: #ffffff;
-  transform: scale(1.06);
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.42);
+  color: #ffffff;
+  transform: scale(1.09);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.36);
 }
 
-/* 有信息栏时关闭按钮仍浮在弹窗外的右上角（含信息栏在内的最外侧角上），
-   位置比只有视频时再抬高一点，避免贴着面板上沿显得挤。 */
-.hasInfo .close {
-  top: -18px;
-  right: -18px;
+.close:active {
+  transform: scale(0.94);
+  transition-duration: 0.08s;
+}
+
+.close:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 3px;
+}
+
+/* 涟漪：只在 hover 那一刻跑一次，从按钮边缘向外扩散后消失 */
+.close::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.close:hover::after {
+  animation: canvas-video-preview-close-ring 0.55s ease-out;
 }
 
 .duration {
@@ -138,21 +178,56 @@
   }
 }
 
+@keyframes canvas-video-preview-close-in {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes canvas-video-preview-close-ring {
+  from {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.55);
+  }
+}
+
+/* 关掉动效偏好：位移与缩放全部去掉，只留颜色变化——反馈还在，但不会有任何运动 */
+@media (prefers-reduced-motion: reduce) {
+  .close {
+    animation: none;
+    transition:
+      background 0.18s ease,
+      border-color 0.18s ease,
+      color 0.18s ease;
+  }
+
+  .close:hover,
+  .close:active {
+    transform: none;
+  }
+
+  .close:hover::after {
+    animation: none;
+  }
+}
+
 @media (max-width: 768px) {
   .mask {
     padding: 20px;
   }
 
   .close {
-    top: 8px;
-    right: 8px;
-  }
-
-  /* 窄屏弹窗贴边，按钮浮在角外会被裁掉，改为压在视频右上角内侧。
-     选择器要带 .hasInfo，否则被上面同名规则的更高优先级盖住。 */
-  .hasInfo .close {
-    top: 8px;
-    right: 8px;
+    top: 10px;
+    right: 10px;
   }
 
   /* 窄屏改为上下排布：信息栏挪到播放器下方，不再挤压画面宽度 */

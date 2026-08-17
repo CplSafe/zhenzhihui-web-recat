@@ -113,6 +113,95 @@ describe('WheelPicker', () => {
     }
   })
 
+  /**
+   * 一格滚轮只走一档。
+   *
+   * 交给原生滚动时 deltaY 会被当成像素：Chrome 一格 deltaY≈100，档位高 36px，
+   * 一格跨过约三档——5s 想选 6s 根本停不住，只能改用点击，滚轮等于白做。
+   */
+  it('一格鼠标滚轮只移动一档，而不是按像素跨过好几档', () => {
+    vi.useFakeTimers()
+    try {
+      const onChange = vi.fn()
+      function ControlledWheel() {
+        const [value, setValue] = useState('5s')
+        return (
+          <WheelPicker
+            options={durations}
+            value={value}
+            onChange={(next) => {
+              onChange(next)
+              setValue(next)
+            }}
+            ariaLabel="视频时长"
+            itemHeight={36}
+          />
+        )
+      }
+      render(<ControlledWheel />)
+      const list = screen.getByRole('listbox', { name: '视频时长' })
+
+      const notch = (deltaY: number) => {
+        fireEvent.wheel(list, { deltaY, deltaMode: 0 })
+        act(() => {
+          vi.advanceTimersByTime(200)
+        })
+      }
+
+      // Chrome 下一格滚轮就是 deltaY=100：只能前进一档
+      notch(100)
+      expect(onChange).toHaveBeenLastCalledWith('6s')
+      notch(100)
+      expect(onChange).toHaveBeenLastCalledWith('7s')
+      // 反向同理
+      notch(-100)
+      expect(onChange).toHaveBeenLastCalledWith('6s')
+      expect(onChange).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('触控板的连续小 delta 累计到阈值才走一档', () => {
+    vi.useFakeTimers()
+    try {
+      const onChange = vi.fn()
+      function ControlledWheel() {
+        const [value, setValue] = useState('5s')
+        return (
+          <WheelPicker
+            options={durations}
+            value={value}
+            onChange={(next) => {
+              onChange(next)
+              setValue(next)
+            }}
+            ariaLabel="视频时长"
+            itemHeight={36}
+          />
+        )
+      }
+      render(<ControlledWheel />)
+      const list = screen.getByRole('listbox', { name: '视频时长' })
+
+      // 单次 4px 远低于阈值，不该动
+      fireEvent.wheel(list, { deltaY: 4, deltaMode: 0 })
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+      expect(onChange).not.toHaveBeenCalled()
+
+      // 累计过阈值后走一档
+      for (let i = 0; i < 3; i += 1) fireEvent.wheel(list, { deltaY: 4, deltaMode: 0 })
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+      expect(onChange).toHaveBeenCalledExactlyOnceWith('6s')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('停在不可选档位时不提交，档位仍不可点击', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()

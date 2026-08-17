@@ -12,11 +12,14 @@ import { estimateAiTaskCost } from '@/api/business'
 import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
+  isCanvasVideoSourceKind,
   type CanvasConnectionRole,
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
 import { filterInputDerivedRatioOptions, resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
+import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
 import WheelPicker, { type WheelPickerOption } from '@/components/common/WheelPicker'
+import { requestConfirm } from '@/stores/ui'
 
 /** 读取可能为字符串/数字/布尔的值，返回字符串文本；非法输入返回空串。 */
 function readText(value: unknown): string {
@@ -249,6 +252,8 @@ export interface CanvasSourceRef {
   slotIndex: number
   /** 来源节点的实际图片/视频地址（有素材内容时用于缩略图显示） */
   thumbnailUrl?: string
+  /** 视频来源的封面帧；视频的 thumbnailUrl 是 mp4 地址，不能直接当图片渲染。 */
+  posterUrl?: string
   /** 来源节点的素材 asset_id（有素材内容时用于组装 input_assets） */
   assetId?: number
   /** 该连接在目标节点中的用途，仅用于画布语义展示。 */
@@ -272,6 +277,8 @@ export interface CanvasNodeInfo {
   modelVersionId?: number
   /** 节点已有素材/生成结果地址（视频节点判断「已有视频内容」用，上传或生成都会写入） */
   resultUrl?: string
+  /** 节点已有素材的 asset_id：视频生视频时作为源视频下发。 */
+  assetId?: number
   /** 节点持久化的 operation_code（生成时写入，刷新后回显/复用） */
   operationCode?: string
   /** 节点持久化的 params（生成时写入，刷新后回显/复用） */
@@ -312,12 +319,20 @@ interface CanvasNodePanelProps {
     sourceRefs: CanvasSourceRef[]
     ratio?: string
     videoMode?: CanvasVideoMode
+    /** 视频生视频的源视频（节点自己已有的那条）；为 0 表示从头生成。 */
+    selfVideoAssetId?: number
   }) => void
   /** 费用预估判定积分不足时，由页面展示充值引导。 */
   onInsufficientCredits?: () => void
   onSaveText?: (text: string) => void
   /** 图片/视频节点输入框内容变更：由页面写回节点并持久化，切换节点/刷新后可回显。 */
   onPromptChange?: (prompt: string) => void
+  /**
+   * 生成参数变更：同样由页面写回节点并持久化。
+   * 不持久化的话，调好的分辨率/时长刷新即退回模型默认值，而提示词却留着——
+   * 同一个面板两种行为，用户只会当成丢数据。
+   */
+  onParamsChange?: (params: Record<string, unknown>) => void
   onPolishText?: (params: {
     prompt: string
     kind: string
@@ -373,6 +388,7 @@ export default function CanvasNodePanel({
   onInsufficientCredits,
   onSaveText,
   onPromptChange,
+  onParamsChange,
   onPolishText,
 }: CanvasNodePanelProps) {
   const kind = node?.kind || 'text'
@@ -387,6 +403,15 @@ export default function CanvasNodePanel({
   ].includes(String(node?.taskStatus || '').toLowerCase())
   const isNewModelGeneration = kind === 'video' && node?.generationIntent === 'new-model'
   const isEditingVideo = kind === 'video' && Boolean(node?.resultUrl) && !isNewModelGeneration
+  /**
+   * 本次生成是否带着一条视频进去（决定走 video.edit 还是 video.generate）。
+   *
+   * 两种来源：连线接进来的视频/时间线节点，或节点自己已有的那条视频（改片）。
+   * 「使用新模型重新生成」是从头再生成一次，不带源视频，因此不算。
+   */
+  const hasVideoSourceRef =
+    kind === 'video' && (node?.sourceRefs || []).some((ref) => isCanvasVideoSourceKind(ref.kind))
+  const hasVideoInput = hasVideoSourceRef || isEditingVideo
   // 文本节点的内容存在 text，图片/视频节点的输入框存在 prompt；两者都随节点持久化。
   const [prompt, setPrompt] = useState(() => String((kind === 'text' ? node?.text : node?.prompt) || ''))
   const [polishing, setPolishing] = useState(false)
@@ -431,7 +456,15 @@ export default function CanvasNodePanel({
    * 当前上下文应使用的 operation_code：
    * 文本节点 → responses.multimodal
    * 图片节点：无图片来源节点（参考图）→ image.text_to_image；有图片来源节点 → image.image_to_image
-   * 视频节点：无视频内容 → video.generate；已有视频内容（生成结果/上传）→ video.edit
+   * 视频节点：无视频输入 → video.generate；有视频输入（连线来源是视频/时间线，或在改自己那条）→ video.edit
+   *
+   * 这里曾经一律用 video.generate，把源视频当成 role:'video' 的输入一起下发。
+   * 后端不接受这个组合，一律回 INVALID_MODEL_PARAMS（「素材类型不适用于当前操作」）：
+   * 全仓「以一条视频为输入」只有两条被验证过的通道——智能成片的 video.edit + role:'video'，
+   * 以及爆款复制的 video.replicate，没有一条走 video.generate。
+   * 而且 operation 恒为 video.generate 时，下面的模型过滤只会列出文/图生视频模型，
+   * 用户根本选不到能吃视频的模型，看起来就像「素材没问题却总是被拒」。
+   *
    * 节点已持久化 operationCode 且所选模型仍支持时，优先复用（刷新后回显不变）
    */
   const contextualOperationCode = useMemo((): string => {
@@ -440,21 +473,18 @@ export default function CanvasNodePanel({
       const hasImageSource = (node?.sourceRefs || []).some((ref) => ref.kind === 'image')
       return hasImageSource ? 'image.image_to_image' : 'image.text_to_image'
     }
-    if (kind === 'video') {
-      const hasVideoContent = Boolean(node?.resultUrl)
-      return node?.generationIntent === 'new-model'
-        ? 'video.generate'
-        : hasVideoContent
-          ? 'video.edit'
-          : 'video.generate'
-    }
+    if (kind === 'video') return hasVideoInput ? 'video.edit' : 'video.generate'
     return ''
-  }, [kind, node?.sourceRefs, node?.resultUrl, node?.generationIntent])
+  }, [kind, node?.sourceRefs, hasVideoInput])
 
   const targetOperationCode = useMemo((): string => {
     // 图片生成模式必须跟随当前参考链实时切换：接入（包括经文本节点继承的）参考图后，
     // 不能继续复用节点历史上保存的 image.text_to_image，否则参考素材不会进入模型。
     if (kind === 'image') return contextualOperationCode
+    // 视频同理：generate / edit 完全由「本次有没有视频输入」决定。
+    // 复用持久化值会让一个跑过 video.generate 的节点在接入视频后仍然发 video.generate，
+    // 后端照样拒——上下文推断必须赢过历史值。
+    if (kind === 'video') return contextualOperationCode
     const persisted = String(node?.operationCode || '').trim()
     // 持久化的 operation_code 若仍被当前 kind 的模型支持，则复用；否则回退上下文推断
     if (persisted && kindModels.some((m) => (m.operationCodes as string[] | undefined)?.includes(persisted))) {
@@ -515,6 +545,29 @@ export default function CanvasNodePanel({
     setFieldValues(next)
   }, [kind, schemaFields, node?.params])
 
+  /**
+   * 由 schema fields + 当前字段值构建 params。
+   *
+   * 抽成函数是为了让「渲染期用的 schemaParams」和「字段变更时持久化的那份」共用同一套规则：
+   * 两处各写一遍迟早会漂移，届时提交的参数和存下来的参数就不是一回事了。
+   *
+   * 必须定义在 handleFieldChange 之前：useCallback 的依赖数组在渲染期就求值，
+   * 定义在后面会直接撞上 const 的暂时性死区，整块面板崩掉。
+   */
+  const buildSchemaParams = useCallback(
+    (values: Record<string, unknown>): Record<string, unknown> => {
+      const params: Record<string, unknown> = {}
+      for (const f of schemaFields) {
+        if (kind === 'text' && ['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'maxTokens'].includes(f.name)) {
+          continue
+        }
+        params[f.name] = normalizeFieldValue(f, values[f.name] !== undefined ? values[f.name] : f.default)
+      }
+      return params
+    },
+    [schemaFields, kind],
+  )
+
   // 字段值变更：回写状态；比例字段（ratio/aspect_ratio/aspectRatio）同步节点比例（保持节点尺寸联动）
   const handleFieldChange = useCallback(
     (name: string, value: unknown) => {
@@ -522,24 +575,21 @@ export default function CanvasNodePanel({
       const normalizedValue = field ? normalizeFieldValue(field, value) : value
       setFieldValues((prev) => ({ ...prev, [name]: normalizedValue }))
       if (field && isRatioField(field) && typeof normalizedValue === 'string') onRatioChange?.(normalizedValue)
+      // 即时落到节点：只在用户真的改了字段时写，不在挂载/换模型时把默认值写进去，
+      // 否则单纯点开一个节点就会把画布标记成 dirty 并触发一次云端同步。
+      onParamsChange?.(buildSchemaParams({ ...fieldValues, [name]: normalizedValue }))
     },
-    [schemaFields, onRatioChange],
+    [schemaFields, onRatioChange, onParamsChange, buildSchemaParams, fieldValues],
   )
 
   // 图片节点的 schema 里若已含比例字段（ratio/aspect_ratio/aspectRatio），则由 schema 菜单控制比例，隐藏固定 RatioSelector
   const imageRatioInSchema = kind === 'image' && schemaFields.some(isRatioField)
 
   // 参数 params：由所选模型的 schema fields 动态构建（所有节点类型通用，不再写死 resolution/duration）
-  const schemaParams = useMemo<Record<string, unknown>>(() => {
-    const params: Record<string, unknown> = {}
-    for (const f of schemaFields) {
-      if (kind === 'text' && ['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'maxTokens'].includes(f.name)) {
-        continue
-      }
-      params[f.name] = normalizeFieldValue(f, fieldValues[f.name] !== undefined ? fieldValues[f.name] : f.default)
-    }
-    return params
-  }, [schemaFields, fieldValues, kind])
+  const schemaParams = useMemo<Record<string, unknown>>(
+    () => buildSchemaParams(fieldValues),
+    [buildSchemaParams, fieldValues],
+  )
 
   // 拼接最终 prompt：文本来源节点的内容在前（按连线顺序），用户提示词在后；
   // 图片/视频来源作为素材引用（input_assets）单独传参，不拼进 prompt。
@@ -555,7 +605,21 @@ export default function CanvasNodePanel({
     [node?.sourceRefs],
   )
 
-  const inputAssets = useMemo(() => buildCanvasInputAssets(sourceRefs, operationCode), [sourceRefs, operationCode])
+  // 估价必须和提交用同一份 input_assets：改片时节点自己的那条视频也要计入，
+  // 否则源视频只在提交时下发，预估按「没有源视频」算，出现预估 ≠ 实扣。
+  //
+  // 只在真正改片时下发：「使用新模型重新生成」是从头再生成一次，
+  // 把自己那条视频当输入发出去会让 video.generate 收到一个它不接受的视频素材而被拒。
+  const selfVideoAssetId = isEditingVideo ? Number(node?.assetId || 0) : 0
+  // 角色同样要与提交一致；这里在渲染期求值，模型配置有歧义时退回 image 而不是抛错炸掉面板。
+  const declaredImageRole = useMemo(
+    () => (selectedModel ? resolveModelInputAssetRoleSafe(selectedModel.source) : ''),
+    [selectedModel],
+  )
+  const inputAssets = useMemo(
+    () => buildCanvasInputAssets(sourceRefs, operationCode, selfVideoAssetId, declaredImageRole),
+    [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole],
+  )
 
   // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
   const [costEstimate, setCostEstimate] = useState<{
@@ -616,7 +680,8 @@ export default function CanvasNodePanel({
   ])
 
   // 生成按钮点击：将文本来源节点的内容拼接进 prompt 后提交；图片/视频来源以 sourceRefs(含 assetId) 交给调用方组装 input_assets
-  const handleGenerate = () => {
+  // 视频生成前要等用户确认积分消耗，因此是异步的
+  const handleGenerate = async () => {
     if (kind === 'text') {
       const value = prompt.trim()
       if (!value) return
@@ -633,12 +698,11 @@ export default function CanvasNodePanel({
     const cost = Number(costEstimate.estimated_cost || 0)
     if (kind === 'video' && cost > 0) {
       const operationLabel = isEditingVideo ? '修改当前视频' : '使用新模型生成视频'
-      if (
-        !window.confirm(
-          `${operationLabel}预计消耗 ${cost} 积分，当前余额 ${Number(costEstimate.balance || 0)} 积分，是否继续？`,
-        )
+      const confirmed = await requestConfirm(
+        `${operationLabel}预计消耗 ${cost} 积分，当前余额 ${Number(costEstimate.balance || 0)} 积分，是否继续？`,
+        { title: '确认消耗积分', confirmLabel: '继续生成', cancelLabel: '再想想' },
       )
-        return
+      if (confirmed !== true) return
     }
     onGenerate?.({
       kind,
@@ -649,6 +713,8 @@ export default function CanvasNodePanel({
       sourceRefs,
       ratio,
       videoMode: kind === 'video' ? videoMode : undefined,
+      // 视频生视频：节点自己已有的那条视频作为源视频下发；新模型重生成则不带，等于从头生成
+      selfVideoAssetId: isEditingVideo ? Number(node?.assetId || 0) || 0 : 0,
     })
   }
 
@@ -692,15 +758,7 @@ export default function CanvasNodePanel({
                   <div className={`${styles.refThumb} ${ref ? '' : styles.refThumbEmpty}`}>
                     {ref ? (
                       <>
-                        {ref.thumbnailUrl ? (
-                          <img className={styles.refThumbImg} src={ref.thumbnailUrl} alt={title} />
-                        ) : ref.kind === 'image' ? (
-                          <ImageRefIcon />
-                        ) : ref.kind === 'text' ? (
-                          <TextRefIcon />
-                        ) : (
-                          <VideoRefIcon />
-                        )}
+                        <RefThumbMedia sourceRef={ref} label={title} />
                         <button
                           className={styles.refDelete}
                           disabled={taskRunning}
@@ -734,13 +792,7 @@ export default function CanvasNodePanel({
               .filter((ref) => ref.kind !== 'text')
               .map((ref) => (
                 <div key={ref.edgeId} className={styles.refThumb} title={ref.kind === 'image' ? '图片' : '视频'}>
-                  {ref.thumbnailUrl ? (
-                    <img className={styles.refThumbImg} src={ref.thumbnailUrl} alt={ref.kind} />
-                  ) : ref.kind === 'image' ? (
-                    <ImageRefIcon />
-                  ) : (
-                    <VideoRefIcon />
-                  )}
+                  <RefThumbMedia sourceRef={ref} label={ref.kind} />
                   <button
                     className={styles.refDelete}
                     disabled={taskRunning}
@@ -825,6 +877,9 @@ export default function CanvasNodePanel({
               value={node?.modelVersionId}
               loading={modelsLoading}
               disabled={taskRunning}
+              // 带视频输入时用的是 video.edit：这个操作没有模型时要说清原因，
+              // 否则用户看到的只是一句「暂无可用模型」，会以为是素材或连线出了问题。
+              emptyLabel={hasVideoInput ? '暂无可用的视频修改模型' : undefined}
               onChange={(value) => {
                 if (!taskRunning) onModelChange?.(value)
               }}
@@ -923,19 +978,22 @@ function ModelSelector({
   value,
   loading,
   disabled,
+  emptyLabel,
   onChange,
 }: {
   models: GenerationModelOption[]
   value?: number
   loading?: boolean
   disabled?: boolean
+  /** 没有可用模型时的说明，用于区分「目录还没加载出来」和「这个操作没有可用模型」。 */
+  emptyLabel?: string
   onChange?: (modelVersionId: number) => void
 }) {
   const [open, setOpen] = useState(false)
   const availableModels = models.filter((m) => !m.unavailableReason)
   const selected =
     availableModels.find((m) => m.modelVersionId === value) || (availableModels.length ? availableModels[0] : undefined)
-  const display = loading ? '加载中...' : selected?.displayName || '暂无可用模型'
+  const display = loading ? '加载中...' : selected?.displayName || emptyLabel || '暂无可用模型'
 
   return (
     <div className={styles.selectorWrap}>
@@ -1163,6 +1221,38 @@ function TextRefIcon() {
       <line x1="6" y1="12" x2="11" y2="12" />
     </svg>
   )
+}
+
+/**
+ * 来源缩略图。
+ *
+ * 视频来源的 thumbnailUrl 是 mp4 地址，塞进 <img> 只会得到一个碎图图标（这正是面板里
+ * 出现两个「video」碎图的原因）。优先用封面帧；没有封面就用 <video> 取首帧
+ * （#t=0.1 让浏览器 seek 到该位置并渲染出画面，否则可能只是一块黑底）；都没有才回落图标。
+ */
+function RefThumbMedia({ sourceRef, label }: { sourceRef: CanvasSourceRef; label: string }) {
+  const isVideo = sourceRef.kind === 'video'
+
+  if (sourceRef.posterUrl) {
+    return <img className={styles.refThumbImg} src={sourceRef.posterUrl} alt={label} />
+  }
+  if (sourceRef.thumbnailUrl) {
+    return isVideo ? (
+      <video
+        className={styles.refThumbImg}
+        src={`${sourceRef.thumbnailUrl}#t=0.1`}
+        muted
+        playsInline
+        preload="metadata"
+        aria-label={label}
+      />
+    ) : (
+      <img className={styles.refThumbImg} src={sourceRef.thumbnailUrl} alt={label} />
+    )
+  }
+  if (sourceRef.kind === 'image') return <ImageRefIcon />
+  if (sourceRef.kind === 'text') return <TextRefIcon />
+  return <VideoRefIcon />
 }
 
 function ImageRefIcon() {

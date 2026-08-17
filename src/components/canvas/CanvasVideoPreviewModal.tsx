@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import SeekableVideo from '@/components/common/SeekableVideo'
 import styles from './CanvasVideoPreviewModal.module.css'
 
 /** 放大预览右侧的视频信息；字段全部取自节点已有数据，缺失项不渲染。 */
@@ -88,7 +89,7 @@ export default function CanvasVideoPreviewModal({
   return createPortal(
     <div className={styles.mask} onClick={onClose} role="presentation">
       <div
-        className={`${styles.dialog}${infoRows.length ? ` ${styles.hasInfo}` : ''}`}
+        className={styles.dialog}
         role="dialog"
         aria-modal="true"
         aria-label="视频预览"
@@ -97,7 +98,8 @@ export default function CanvasVideoPreviewModal({
         <button ref={closeButtonRef} type="button" className={styles.close} onClick={onClose} aria-label="关闭视频预览">
           ✕
         </button>
-        <video
+        {/* SeekableVideo：/download 不支持 Range，原生播放器拖进度条会被抹回 0 */}
+        <SeekableVideo
           className={styles.player}
           src={src}
           poster={poster || undefined}

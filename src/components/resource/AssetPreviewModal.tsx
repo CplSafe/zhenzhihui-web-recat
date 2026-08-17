@@ -12,6 +12,7 @@ import type { MouseEvent } from 'react'
 import type { AssetPreviewState } from '@/composables/useAssetPreview'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { getAssetDownloadUrl } from '@/api/business'
+import SeekableVideo from '@/components/common/SeekableVideo'
 import './AssetPreviewModal.css'
 
 /** 预览队列状态及关闭、前后切换回调。 */
@@ -75,8 +76,9 @@ function PreviewMedia({ item, workspaceId, videoKey }: { item: any; workspaceId:
     return <img src={src} alt={item.title} className="asset-preview-image" onError={handleError} />
   }
   if (item?.mediaKind === 'video' && src) {
+    // SeekableVideo：/download 不支持 Range，原生播放器拖不动进度条
     return (
-      <video
+      <SeekableVideo
         key={'v' + videoKey}
         src={src}
         poster={item.posterUrl || undefined}

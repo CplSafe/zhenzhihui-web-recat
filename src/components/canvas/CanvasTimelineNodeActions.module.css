@@ -1,0 +1,91 @@
+/*
+ * 时间线节点顶部胶囊的补充样式。
+ * 按钮外观复用全局 .canvas-node-upload-btn，这里只处理下拉定位与「合成」的主动作配色。
+ */
+.addWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 胶囊组浮在节点上方，下拉朝下展开正好落在节点画面上，不会被视口顶边裁掉 */
+.menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 190px;
+  max-height: 220px;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgb(31 41 92 / 20%);
+  cursor: default;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #333;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover {
+  background: rgb(87 103 229 / 12%);
+}
+
+.menuThumb {
+  width: 40px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: #0f1116;
+  object-fit: cover;
+}
+
+.menuLabel {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menuEmpty {
+  padding: 8px 6px;
+  color: #9aa3b2;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* 合成是这条链路的终点动作，做成实心主色，和其余次要操作区分开 */
+.compose {
+  border-color: #5767e5;
+  background: #5767e5;
+  color: #fff;
+}
+
+.compose:hover:not(:disabled) {
+  border-color: #4453c9;
+  background: #4453c9;
+  color: #fff;
+  box-shadow: 0 3px 10px rgb(87 103 229 / 30%);
+}
+
+.compose:disabled {
+  border-color: #e5e7eb;
+  background: #f3f4f6;
+  color: #9ca3af;
+  cursor: not-allowed;
+}

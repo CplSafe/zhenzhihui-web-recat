@@ -54,6 +54,7 @@ import { openComingSoon } from '@/stores/ui'
 import { useWorkspaceId, useCurrentUser, useCurrentWorkspace } from '@/stores/workspaceSession'
 import { listWorkspaceMembers } from '@/api/auth'
 import UserAvatar from '@/components/common/UserAvatar'
+import SeekableVideo from '@/components/common/SeekableVideo'
 import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import { observeElementResize } from '@/utils/observeElementResize'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
@@ -1674,7 +1675,8 @@ export default function ProjectManagementView() {
       {effectivePlayUrl &&
         createPortal(
           <div className="pm2-lightbox" onClick={closeLooseVideo} role="dialog" aria-label="视频播放">
-            <video
+            {/* SeekableVideo：/download 不支持 Range，原生播放器拖进度条会被抹回 0 */}
+            <SeekableVideo
               src={effectivePlayUrl}
               controls
               autoPlay

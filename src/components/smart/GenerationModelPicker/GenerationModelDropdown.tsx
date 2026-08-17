@@ -59,6 +59,16 @@ export interface GenerationModelDropdownProps {
   onOpen?: () => void
   /** 入口提交期间可临时锁定选择，避免同一次创建混入两个模型快照。 */
   locked?: boolean
+  /**
+   * 游客态：入口照常展示但不展开面板。
+   *
+   * 模型目录按 workspace 拉取，未登录时必然是空的；此时展开只会给用户一个空面板，
+   * 让人以为功能坏了。入口保留是为了让游客知道有「选模型」这件事，点击直接交回调用方
+   * 走站内统一的登录引导。
+   */
+  authRequired?: boolean
+  /** 游客点击模型入口时的登录引导，由调用方接 useRequireAuth。 */
+  onAuthRequired?: () => void
   /** 保留兼容旧调用；产品入口统一说明“进入流程后沿用本次选择”。 */
   context?: 'entry' | 'generation'
   /** 临时禁用时展示的具体原因，例如“视频正在生成中”。 */
@@ -71,6 +81,15 @@ export interface GenerationModelDropdownProps {
   attentionMessage?: string
   /** 面板优先与触发器左边或右边对齐；最终位置仍会按视口自动防碰撞。 */
   placement?: 'start' | 'end'
+  /**
+   * 用户已选定的本次时长（秒）。给出后，该 operation 下做不到这个时长的模型会被标注出来。
+   *
+   * 必须与 durationOperationCode 成对使用：video.edit 这类 operation 的时长约束
+   * 说的是「被改的那条源视频多长」，拿本次目标时长去标它只会得出相反的结论。
+   */
+  durationSec?: number
+  /** 上面这个时长提交给哪个 operation；只有该槽位的模型参与兼容性标注。 */
+  durationOperationCode?: string
   className?: string
 }
 
@@ -122,13 +141,27 @@ function readError(state: GenerationModelErrorState | undefined, slot: ModelSele
 }
 
 /**
- * 模型下拉选项名后的括注：时长上限 + 不可用标记。
+ * 模型下拉选项名后的括注：时长上限 + 与本次时长的兼容性 + 不可用标记。
  *
  * 原生 select 的选项只能是纯文本，所以能力提示只能拼进文案；
- * 两条信息合并进同一对括号，避免出现「模型名（最长 15 秒）（不可用）」这种叠括号。
+ * 几条信息合并进同一对括号，避免出现「模型名（最长 15 秒）（不可用）」这种叠括号。
+ *
+ * durationSec 是「用户已经选定的本次时长」。给出它之后列表才是双向的：
+ * 光有「最长 15 秒」还要用户自己换算，标出「本次 30 秒不支持」才能一眼挑出可用的那个。
+ * 注意只标不禁用——用户完全可能想先换模型再回头改秒数，
+ * 禁用会把这条路堵死；真正的拦截由提交前的冲突校验负责。
  */
-export function formatModelOptionNotes(model: GenerationModelOption): string {
-  const notes = [getModelDurationLimitLabel(model.constraints), model.disabled ? '不可用' : ''].filter(Boolean)
+export function formatModelOptionNotes(model: GenerationModelOption, durationSec?: number): string {
+  const seconds = Number(durationSec)
+  const mismatched =
+    Number.isFinite(seconds) &&
+    seconds > 0 &&
+    getModelConstraintConflicts(model.constraints, { durationSec: seconds }).length > 0
+  const notes = [
+    getModelDurationLimitLabel(model.constraints),
+    mismatched ? `本次 ${seconds} 秒不支持` : '',
+    model.disabled ? '不可用' : '',
+  ].filter(Boolean)
   return notes.length ? `（${notes.join(' · ')}）` : ''
 }
 
@@ -194,6 +227,31 @@ export function getGenerationModelResolutionOptions(
   const slot = slotsOf(groups).find((item) => item.key === operationCode)
   const constraints = slot ? selectedModelOf(slot, selected)?.constraints : undefined
   const options = constraints?.resolution?.options ?? constraints?.resolutions
+  if (!options?.length) return fallbackOptions
+
+  const normalized = normalize(options)
+  return normalized.length ? normalized : fallbackOptions
+}
+
+/**
+ * 返回指定 operation 下「已选模型实际支持」的画面比例（去重、保持后端顺序）。
+ *
+ * 与时长/分辨率同源。之前只有时长和分辨率跟随模型、比例是固定五项，
+ * 于是「模型只做 16:9」这件事要等到提交被拒才知道；三者必须同一口径。
+ */
+export function getGenerationModelRatioOptions(
+  groups: GenerationModelGroup[],
+  selected: GenerationModelSelection,
+  operationCode: string,
+  fallback: readonly string[],
+): string[] {
+  const normalize = (values: readonly string[]) =>
+    Array.from(new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean)))
+
+  const fallbackOptions = normalize(fallback)
+  const slot = slotsOf(groups).find((item) => item.key === operationCode)
+  const constraints = slot ? selectedModelOf(slot, selected)?.constraints : undefined
+  const options = constraints?.ratio?.options ?? constraints?.ratios
   if (!options?.length) return fallbackOptions
 
   const normalized = normalize(options)
@@ -294,11 +352,15 @@ export default function GenerationModelDropdown({
   slotNotices,
   onOpen,
   locked = false,
+  authRequired = false,
+  onAuthRequired,
   lockedReason = '',
   conflicts = [],
   attentionRequest = 0,
   attentionMessage = '请先完成本次创作的模型选择',
   placement = 'end',
+  durationSec,
+  durationOperationCode = '',
   className = '',
 }: GenerationModelDropdownProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -479,26 +541,30 @@ export default function GenerationModelDropdown({
   }, [closeAndRestoreFocus, open, updatePanelPosition])
 
   useEffect(() => {
-    if (!attentionRequest || locked) return
+    // 游客态没有可选模型，强调入口只会弹出一个空面板
+    if (!attentionRequest || locked || authRequired) return
     updatePanelPosition()
     setOpen(true)
     const frame = requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }))
     return () => cancelAnimationFrame(frame)
-  }, [attentionRequest, locked, updatePanelPosition])
+  }, [attentionRequest, authRequired, locked, updatePanelPosition])
 
-  if (!slots.length && !globalLoading && !globalError) return null
+  // 游客态即使没有任何槽位也要渲染入口：让人看得见这项能力，点击才引导登录
+  if (!authRequired && !slots.length && !globalLoading && !globalError) return null
 
-  const triggerText = globalLoading
-    ? '模型加载中'
-    : globalError
-      ? rechargeRequired
-        ? '需要充值'
-        : '模型不可用'
-      : locked
-        ? `模型处理中 ${selectedCount}/${slots.length}`
-        : complete
-          ? `模型 ${selectedCount}/${slots.length}`
-          : `选择模型 ${selectedCount}/${slots.length}`
+  const triggerText = authRequired
+    ? '登录后选择模型'
+    : globalLoading
+      ? '模型加载中'
+      : globalError
+        ? rechargeRequired
+          ? '需要充值'
+          : '模型不可用'
+        : locked
+          ? `模型处理中 ${selectedCount}/${slots.length}`
+          : complete
+            ? `模型 ${selectedCount}/${slots.length}`
+            : `选择模型 ${selectedCount}/${slots.length}`
   const contextDescription = locked
     ? lockedReason || '正在进入创作，本次模型选择已锁定'
     : '请在首页完成模型选择；进入后续步骤后将始终沿用本次选择'
@@ -514,12 +580,24 @@ export default function GenerationModelDropdown({
         key={`model-attention-${attentionRequest}`}
         ref={triggerRef}
         type="button"
-        className={`${styles.trigger}${attentionRequest > 0 ? ` ${styles.triggerAttention}` : ''}`}
-        aria-label={`生成模型，${selectedCount}/${slots.length} 已选择${locked ? '，处理中不可切换' : ''}`}
-        aria-haspopup="dialog"
-        aria-expanded={open}
+        className={`${styles.trigger}${attentionRequest > 0 ? ` ${styles.triggerAttention}` : ''}${
+          authRequired ? ` ${styles.triggerAuthRequired}` : ''
+        }`}
+        aria-label={
+          authRequired
+            ? '生成模型，登录后可选择'
+            : `生成模型，${selectedCount}/${slots.length} 已选择${locked ? '，处理中不可切换' : ''}`
+        }
+        aria-haspopup={authRequired ? undefined : 'dialog'}
+        aria-expanded={authRequired ? undefined : open}
         aria-controls={open ? panelId : undefined}
+        title={authRequired ? '登录后即可选择本次创作使用的模型' : undefined}
         onClick={() => {
+          // 游客态不展开面板：模型目录按 workspace 拉取，未登录时里面必然是空的
+          if (authRequired) {
+            onAuthRequired?.()
+            return
+          }
           if (!open) {
             updatePanelPosition()
             if (!locked) onOpen?.()
@@ -529,7 +607,9 @@ export default function GenerationModelDropdown({
       >
         <ControlOutlined className={styles.triggerIcon} aria-hidden="true" />
         <span>{triggerText}</span>
-        <DownOutlined className={`${styles.chevron}${open ? ` ${styles.chevronOpen}` : ''}`} aria-hidden="true" />
+        {!authRequired && (
+          <DownOutlined className={`${styles.chevron}${open ? ` ${styles.chevronOpen}` : ''}`} aria-hidden="true" />
+        )}
       </button>
 
       {attentionRequest > 0 && attentionMessage && (
@@ -643,7 +723,10 @@ export default function GenerationModelDropdown({
                             {slot.models.map((model) => (
                               <option key={String(model.id)} value={String(model.id)} disabled={model.disabled}>
                                 {model.name}
-                                {formatModelOptionNotes(model)}
+                                {formatModelOptionNotes(
+                                  model,
+                                  slot.key === durationOperationCode ? durationSec : undefined,
+                                )}
                               </option>
                             ))}
                           </select>
@@ -666,6 +749,20 @@ export default function GenerationModelDropdown({
                           {currentModel.description && (
                             <p className={styles.modelDescription}>{currentModel.description}</p>
                           )}
+                          {/*
+                            选中模型后立刻说明它的能力边界（「时长仅支持：5 秒、10 秒」这类）。
+                            这些文案一直由 buildModelRestrictionSummary 生成却从没展示过：
+                            用户只能等下拉里的档位莫名变少、或等提交被拒才知道模型做不了什么。
+                            比例/时长/清晰度的下拉此时已经收敛成模型支持的那几项，
+                            这段文字回答的是「为什么只剩这几项」。
+                          */}
+                          {currentModel.restrictions?.length ? (
+                            <ul className={styles.modelRestrictions}>
+                              {currentModel.restrictions.map((restriction) => (
+                                <li key={restriction}>{restriction}</li>
+                              ))}
+                            </ul>
+                          ) : null}
                           {estimateModelCost &&
                             (() => {
                               // 预估失败不阻断创作，因此按提醒（黄）而非错误（红）呈现：

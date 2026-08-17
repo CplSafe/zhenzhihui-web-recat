@@ -561,6 +561,62 @@
   color: #333;
   margin-bottom: 8px;
 }
+
+/* 疑似重复素材提示：黄色告知态，不是错误——创作不被拦住，只是让用户在出片前看见 */
+.smart__subject-dup {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid #f4dfb0;
+  border-radius: 10px;
+  background: #fdf8ec;
+}
+
+.smart__subject-dup-title {
+  display: block;
+  color: #a16207;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.smart__subject-dup-desc {
+  margin: 6px 0 10px;
+  color: #8a6d1d;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.smart__subject-dup-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.smart__subject-dup-names {
+  color: #4b3a10;
+  font-size: 13px;
+}
+
+.smart__subject-dup-merge {
+  padding: 4px 12px;
+  border: 1px solid #d9a441;
+  border-radius: 999px;
+  background: #fff;
+  color: #a16207;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.smart__subject-dup-merge:hover {
+  background: #a16207;
+  border-color: #a16207;
+  color: #fff;
+}
 .smart__uploads-row {
   display: flex;
   flex-wrap: wrap;

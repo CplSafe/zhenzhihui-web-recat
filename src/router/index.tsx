@@ -18,11 +18,16 @@ import {
 } from '../utils/hotCopyRouteSession'
 import WorkspaceSwitchBridge from './WorkspaceSwitchBridge'
 import { useDistributionAccess } from '../composables/useDistributionAccess'
+import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReload'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
 function RouteErrorBoundary() {
   const error = useRouteError() as any
+  // 分片失效（发布后旧 chunk 被替换）刷新即可自愈：自动刷新一次，不打扰用户。
+  // 冷却窗口内再次失败说明刷新救不回来（真离线 / 产物缺失），此时才展示错误页。
+  const recovering = isChunkLoadError(error) && reloadOnceForChunkFailure()
+  if (recovering) return null
   return (
     <div
       role="alert"

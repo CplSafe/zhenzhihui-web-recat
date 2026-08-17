@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from 'antd'
 import { getBusinessErrorMessage } from '@/api/business'
+import { showToast } from '@/stores/ui'
 import { createInitializedProjectFolder } from '@/utils/creativeProjectInitialization'
 import { useCurrentUser } from '@/stores/workspaceSession'
 import { listAllCreativeProjects } from '@/utils/businessPagination'
@@ -372,7 +373,7 @@ export default function MaterialLibraryPicker({
           restrictedAssetIds: [],
           accessLoaded: false,
         })
-        window.alert(getBusinessErrorMessage(error, '文件夹列表加载失败，请稍后重试'))
+        showToast(getBusinessErrorMessage(error, '文件夹列表加载失败，请稍后重试'), 'error')
       }
     } finally {
       if (isCurrentProjectRequest(requestId, wsId, targetTab, targetUserId)) {
@@ -755,7 +756,7 @@ export default function MaterialLibraryPicker({
     const wsId = Number(workspaceId || 0)
     const targetTab = tab
     if (!Number.isFinite(wsId) || wsId <= 0) {
-      window.alert('workspace_id 缺失，无法创建文件夹')
+      showToast('workspace_id 缺失，无法创建文件夹', 'error')
       return
     }
     createInitializedProjectFolder({ workspaceId: wsId, title })
@@ -768,7 +769,7 @@ export default function MaterialLibraryPicker({
       .catch((error: any) => {
         const current = currentScopeRef.current
         if (current.modelValue && current.workspaceId === wsId && current.tab === targetTab) {
-          window.alert(getBusinessErrorMessage(error, '新建文件夹失败，请稍后重试'))
+          showToast(getBusinessErrorMessage(error, '新建文件夹失败，请稍后重试'), 'error')
         }
       })
   }

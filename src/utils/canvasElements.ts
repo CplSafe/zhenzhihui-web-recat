@@ -16,6 +16,7 @@ import type { Node, Edge } from '@xyflow/react'
 import type { CanvasElementMutation } from '@/api/canvasApi'
 import { inferCanvasConnectionRole, type CanvasConnectionRole } from '@/utils/canvasGeneration'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
+import type { TimelineState } from '@/utils/timelineClips'
 
 /** 节点可序列化字段白名单：排除 ReactFlow 运行态字段（selected/measured/dragging 等）。 */
 interface SerializableNodeData {
@@ -43,6 +44,52 @@ interface SerializableNodeData {
   taskUpdatedAt?: string
   /** 该节点素材来自真人素材库时的身份引用（含认证与授权信息），用于生成前回查与身份约束注入 */
   realPerson?: SmartRealPersonReference
+  /** 剪辑时间线节点的片段表（顺序/裁剪/静音），是该节点唯一的业务内容 */
+  timeline?: TimelineState
+}
+
+/**
+ * 需要持久化的节点 data 字段，云端 mutation / 增量 diff / 本地草稿共用同一份。
+ *
+ * 曾经三处各写一份硬编码字段表，新增字段漏掉任意一处就会静默丢数据——
+ * realPerson 和 timeline 都踩过。下面的 exhaustive 断言让漏字段在 tsc 阶段就报错。
+ */
+export const PERSISTED_NODE_DATA_FIELDS = [
+  'kind',
+  'ratio',
+  'videoMode',
+  'modelVersionId',
+  'assetId',
+  'resultUrl',
+  'prompt',
+  'operationCode',
+  'params',
+  'taskId',
+  'taskStatus',
+  'taskProgress',
+  'taskError',
+  'taskStartedAt',
+  'taskUpdatedAt',
+  'realPerson',
+  'timeline',
+] as const satisfies readonly (keyof SerializableNodeData)[]
+
+/**
+ * 编译期穷尽性检查：SerializableNodeData 新增字段而没进上面的数组时，这里立刻报错。
+ * 运行时没有任何开销，纯类型断言。
+ */
+type MissingPersistedField = Exclude<keyof SerializableNodeData, (typeof PERSISTED_NODE_DATA_FIELDS)[number]>
+const _assertAllNodeDataFieldsPersisted: MissingPersistedField extends never ? true : never = true
+void _assertAllNodeDataFieldsPersisted
+
+/** 按白名单挑出可持久化字段，丢弃 undefined/null 与 ReactFlow 运行态字段。 */
+export function pickPersistedNodeData(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of PERSISTED_NODE_DATA_FIELDS) {
+    const value = data[key]
+    if (value !== undefined && value !== null) out[key] = value
+  }
+  return out
 }
 
 /** 与 textContents 无关的节点可比较快照（含 id，供增量 diff 比较，排除 ReactFlow 运行态字段）。 */
@@ -70,12 +117,30 @@ export interface CanvasGraphSourceRef {
   edgeId: string
   slotIndex: number
   thumbnailUrl?: string
+  /**
+   * 视频来源的封面帧地址。
+   * 视频的 thumbnailUrl 是 mp4 地址，塞进 <img> 只会得到一个碎图图标，
+   * 因此单独带上封面；没有封面时由展示层自行取首帧兜底。
+   */
+  posterUrl?: string
   assetId?: number
   role?: CanvasConnectionRole
   /** 该素材是否通过文本等中间节点向上追溯得到。 */
   inherited?: boolean
   /** 来源节点素材取自真人素材库时的身份引用；下游生成据此注入身份约束并置顶该图。 */
   realPerson?: SmartRealPersonReference
+}
+
+/**
+ * 血缘边：只表示「这个节点是从那个节点产出的」，不参与任何生成输入。
+ *
+ * 画布上的边默认都是「上游素材喂给下游生成」。截帧图与源视频的关系正好相反——
+ * 图是视频的产物，不是视频的输入；而且 allowedSourceKinds 里 image 根本不接受 video 来源，
+ * 手动也连不出这条线。所以它必须带标记，让收集参考链路、统计数量上限的地方一律跳过。
+ * 标记写在 edge.data 里，随画布元素一起持久化，刷新后仍然是血缘边。
+ */
+export function isCanvasProvenanceEdge(edge: { data?: Record<string, unknown> | null } | null | undefined): boolean {
+  return Boolean(edge?.data?.provenance)
 }
 
 /**
@@ -112,6 +177,9 @@ export function collectCanvasSourceRefs(
     for (const edge of incomingByTarget.get(nodeId) || []) {
       if (seenEdges.has(edge.id)) continue
       seenEdges.add(edge.id)
+      // 血缘边只记录「谁来自谁」，不是生成输入：截帧图连回源视频只为看清出处，
+      // 顺着它把整条视频当成图片节点的 input_assets 发出去，模型只会报错
+      if (isCanvasProvenanceEdge(edge)) continue
       const source = nodeById.get(edge.source)
       if (!source) continue
       const target = nodeById.get(nodeId)
@@ -135,6 +203,7 @@ export function collectCanvasSourceRefs(
             }),
         ) as CanvasConnectionRole,
         ...(data.resultUrl ? { thumbnailUrl: String(data.resultUrl) } : {}),
+        ...(data.poster ? { posterUrl: String(data.poster) } : {}),
         ...(assetId > 0 ? { assetId } : {}),
         ...(inherited ? { inherited: true } : {}),
         // 真人身份必须随素材一路传到下游生成节点，经文本节点继承时同样不能丢。
@@ -177,29 +246,7 @@ export function comparableNode(
   textContents?: Map<string, string> | Record<string, string>,
 ): ComparableNode {
   const data = (node.data || {}) as SerializableNodeData & Record<string, unknown>
-  const serializable: Record<string, unknown> = {}
-  const fields: Array<[string, unknown]> = [
-    ['kind', data.kind],
-    ['ratio', data.ratio],
-    ['videoMode', data.videoMode],
-    ['modelVersionId', data.modelVersionId],
-    ['assetId', data.assetId],
-    ['resultUrl', data.resultUrl],
-    ['prompt', data.prompt],
-    ['operationCode', data.operationCode],
-    ['params', data.params],
-    ['taskId', data.taskId],
-    ['taskStatus', data.taskStatus],
-    ['taskProgress', data.taskProgress],
-    ['taskError', data.taskError],
-    ['taskStartedAt', data.taskStartedAt],
-    ['taskUpdatedAt', data.taskUpdatedAt],
-    // 真人素材的身份引用：刷新后仍要能回查授权并继续注入身份约束，必须持久化。
-    ['realPerson', data.realPerson],
-  ]
-  for (const [key, value] of fields) {
-    if (value !== undefined && value !== null) serializable[key] = value
-  }
+  const serializable = pickPersistedNodeData(data)
   // text 内容从 textContents 并入快照（文本编辑不经过 nodes/edges，需显式带上才能正确 diff）
   const textValue = textContents instanceof Map ? textContents.get(node.id) : textContents?.[node.id]
   if (typeof textValue === 'string' && textValue !== '') serializable.text = textValue
@@ -228,30 +275,8 @@ export function nodeToMutation(
   textContents?: Map<string, string> | Record<string, string>,
 ): CanvasElementMutation {
   const data = (node.data || {}) as SerializableNodeData & Record<string, unknown>
-  const serializable: Record<string, unknown> = {}
   // 只保留业务字段，避免把 ReactFlow 注入的运行态字段带上云端
-  const fields: Array<[string, unknown]> = [
-    ['kind', data.kind],
-    ['ratio', data.ratio],
-    ['videoMode', data.videoMode],
-    ['modelVersionId', data.modelVersionId],
-    ['assetId', data.assetId],
-    ['resultUrl', data.resultUrl],
-    ['prompt', data.prompt],
-    ['operationCode', data.operationCode],
-    ['params', data.params],
-    ['taskId', data.taskId],
-    ['taskStatus', data.taskStatus],
-    ['taskProgress', data.taskProgress],
-    ['taskError', data.taskError],
-    ['taskStartedAt', data.taskStartedAt],
-    ['taskUpdatedAt', data.taskUpdatedAt],
-    // 真人素材的身份引用：刷新后仍要能回查授权并继续注入身份约束，必须持久化。
-    ['realPerson', data.realPerson],
-  ]
-  for (const [key, value] of fields) {
-    if (value !== undefined && value !== null) serializable[key] = value
-  }
+  const serializable = pickPersistedNodeData(data)
   // 文本节点：把全局文本 Map 中的内容并入节点 data（文本编辑不经过 nodes/edges，需显式带上）
   const textValue = textContents instanceof Map ? textContents.get(node.id) : textContents?.[node.id]
   if (textValue !== undefined && textValue !== null && String(textValue) !== '') {

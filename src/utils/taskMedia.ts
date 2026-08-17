@@ -173,6 +173,40 @@ export function extractOutputAssetId(task: any): number {
   return extractResultAssetIds(task)[0] || 0
 }
 
+/**
+ * 解析「确认存在于该工作空间」的结果资产 ID；一个都验证不过时返回 0。
+ *
+ * outputs 里的 id 只是任务回执，未必是可用素材：可能还没入库，也可能压根不是资产 ID。
+ * 把它直接存成节点素材，等下次拿它当生成输入时，后端只会回一句
+ * 「参考素材不可用，请确认素材已上传完成且属于当前工作空间」，而且此时早已看不出是哪一步写坏的。
+ * 因此这里逐个用 getAssetDownloadUrl 验证，全都取不到再按 task_id 反查兜底 ——
+ * 与 resolveTaskVideoResult 同一套口径。
+ */
+export async function resolveVerifiedResultAssetId({
+  workspaceId,
+  task,
+  type = 'video',
+  fallbackTaskId,
+}: {
+  workspaceId: number
+  task: any
+  type?: 'video' | 'image'
+  fallbackTaskId?: unknown
+}): Promise<number> {
+  const wsId = Math.floor(Number(workspaceId) || 0)
+  if (!wsId) return 0
+
+  for (const assetId of extractResultAssetIds(task)) {
+    try {
+      if (await getAssetDownloadUrl({ workspaceId: wsId, assetId })) return assetId
+    } catch {
+      // 单个 id 取不到签名地址不代表其他 id 也不行；继续验证剩下的，最后再走 task_id 反查。
+    }
+  }
+
+  return findAssetIdByTaskId(wsId, task?.id ?? fallbackTaskId, type)
+}
+
 const VIDEO_TYPE_HINT_PATTERN = /(^|[^a-z0-9])(?:video|mp4|m4v|mov|webm|avi|mkv|mpeg|mpg|ogv)(?:$|[^a-z0-9])/i
 const VIDEO_URL_EXTENSION_PATTERN = /\.(?:mp4|m4v|mov|webm|avi|mkv|mpeg|mpg|ogv)(?:$|[?#&])/i
 const MEDIA_URL_EXTENSION_PATTERN =

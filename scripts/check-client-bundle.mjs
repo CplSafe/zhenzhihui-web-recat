@@ -15,7 +15,11 @@ const MAX_SINGLE_JS_BYTES = 460 * 1024
 // initial or per-route chunk ceiling, so keep a small measured allowance for
 // the complete lazy-loaded product surface while the single-chunk budget still
 // protects initial and per-route payloads from accidental regressions.
-const MAX_TOTAL_JS_GZIP_BYTES = 870 * 1024
+// 剪辑时间线（画布节点内的多段视频拼接）新增了一块产品面：编辑器 + 双缓冲播放器，
+// 以及零依赖的本地无损合成引擎（mp4 demux/mux）。合成引擎是按需 import() 的独立
+// chunk，只有点「合成」才会下载，不影响首屏与任何单个路由的体积；单 chunk 上限保持
+// 不变，仍然守着初始载荷。这里只上调「全部懒加载 chunk 之和」这条测量值。
+const MAX_TOTAL_JS_GZIP_BYTES = 900 * 1024
 const MAX_IMAGE_BYTES = 450 * 1024
 const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.webp'])
 const FORBIDDEN_CLIENT_ENV_KEY =

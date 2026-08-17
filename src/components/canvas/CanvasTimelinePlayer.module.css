@@ -1,0 +1,414 @@
+/*
+ * 时间线播放器：画面与控制区是同一块深色面板。
+ *
+ * 之前控制区是一条独立的圆角药丸浮在白卡上，和上面的画面各自为政——
+ * 一个卡片里出现三套视觉语言（画面 / 深色药丸 / 浅色胶囊），怎么调都显得是拼的。
+ * 现在整块统一成剪辑器常见的样子：画面在上，刻度尺与片段轨道紧贴其下，不留缝。
+ */
+.player {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: 10px;
+  background: #14161c;
+  overflow: hidden;
+}
+
+/* 空态：居中的「+」加一句话，和参考里的 Playlist 空态一致 */
+.empty {
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 18px;
+  color: #7d8492;
+  font-size: 12px;
+  text-align: center;
+}
+
+.emptyAdd {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e6e8ee;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.emptyAdd:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/*
+ * 画面区。
+ *
+ * min-height 是保底而不是摆设：两个 video 都是 position:absolute，本身不产生布局高度，
+ * 所以父级高度不确定时 flex:1 会把这里算成 0——视频照常在放（有声音），但一个像素都看不见。
+ * 紧凑模式（画布节点内）由节点尺寸给出确定高度，不需要保底，见下方 .compact .stage。
+ */
+.stage {
+  position: relative;
+  flex: 1;
+  min-height: 180px;
+  background: #000;
+  overflow: hidden;
+}
+
+.compact .stage {
+  min-height: 0;
+}
+
+/* 播放故障说明：压在画面正中，黑屏时至少让人知道发生了什么 */
+.mediaError {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 3;
+  max-width: 82%;
+  padding: 8px 14px;
+  transform: translate(-50%, -50%);
+  border-radius: 8px;
+  background: rgba(17, 24, 39, 0.86);
+  color: #fca5a5;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* 两个槽位完全重叠：切换只改可见性，位置与尺寸不变，才不会有跳动 */
+.video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.videoActive {
+  opacity: 1;
+}
+
+/* 控制区：紧贴画面下方，和画面同处一块面板，中间不留缝 */
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+  padding: 8px 10px 10px;
+}
+
+/* 播放键与读数一行，时间轴独占一行——挤在一行会让时间轴短得没法拖 */
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.play {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #e6e8ee;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.play:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.time {
+  color: #6b7280;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.time b {
+  color: #e6e8ee;
+  font-weight: 500;
+}
+
+/* 刻度尺 + 片段轨道共用一条时间轴，播放头与拖动层覆盖两者 */
+.timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+
+/*
+ * hideTimeline 时要真的藏起来。
+ * 浏览器给 [hidden] 的 display:none 来自 UA 样式表，被上面这条 display:flex 盖掉，
+ * 必须在这里显式写一条更高优先级的规则，否则「隐藏」根本不生效。
+ */
+.timeline[hidden] {
+  display: none;
+}
+
+/* 高度同时是拖动热区的高度，太薄会很难拖中 */
+.ruler {
+  position: relative;
+  height: 18px;
+  flex: none;
+}
+
+.tick,
+.tickMajor {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* 次刻度只画下半截，主刻度更高更亮，扫一眼就分得出层级 */
+.tick {
+  height: 4px;
+}
+
+.tickMajor {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+/* 标签贴在刻度线右侧而不是居中：读数与刻度的对应关系更明确，也不会在左端被裁掉 */
+.rulerLabel {
+  position: absolute;
+  top: 0;
+  margin-left: 4px;
+  color: #6b7280;
+  font-size: 10px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 片段轨道：每段是一块可读的色块，段与段之间靠深色缝隙分隔 */
+.track {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  flex: none;
+  min-width: 0;
+  height: 30px;
+  border-radius: 5px;
+  background: #0b0d12;
+  overflow: hidden;
+}
+
+.clip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-basis: 0;
+  min-width: 8px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #2f3a7a;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+/* 当前播放到的那一段用亮边标出：铺了缩略图之后，靠改底色已经区分不出来了 */
+.clipActive {
+  border-color: rgba(255, 255, 255, 0.75);
+}
+
+/* 胶片条：几帧缩略图等分铺满整块，是这一段内容的直观索引 */
+.clipFilm {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+}
+
+.clipFilm img {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+  /* 压暗一点，上面的序号与时长才读得清 */
+  filter: brightness(0.72);
+}
+
+/* 轨道末尾的添加入口，与片段块同高 */
+.trackAdd {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e6e8ee;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.trackAdd:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* 整块都是跳转热区；文字左对齐，窄片段时自然被裁掉而不是溢出 */
+.clipSeek {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  width: 100%;
+  height: 100%;
+  padding: 0 7px;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 80%);
+  cursor: pointer;
+}
+
+.clipIndex {
+  font-weight: 600;
+}
+
+.clipTime {
+  color: rgba(255, 255, 255, 0.68);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 移除按钮常驻会挤占窄片段，改成悬停出现 */
+.clipRemove {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.clip:hover .clipRemove {
+  opacity: 1;
+}
+
+.clipRemove:hover {
+  background: #d14343;
+}
+
+/* 已播区间：一层淡覆盖，真正指示位置的是播放头 */
+.progress {
+  position: absolute;
+  top: 18px;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  border-radius: 5px 0 0 5px;
+  background: rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+
+/* 播放头贯穿刻度尺与轨道：亮白细线 + 顶端圆点，深色底上一眼就能找到 */
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  transition: left 0.1s linear;
+}
+
+.playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+}
+
+/*
+ * 拖动层只盖住刻度尺那一条，不盖片段轨道。
+ *
+ * 剪辑器的惯例就是在刻度尺上拖动定位；把片段轨道让出来，
+ * 片段块的跳转与移除按钮才点得到。touch-action:none 让触摸拖动不被当成页面滚动。
+ */
+.scrub {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 5;
+  height: 18px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+/* 紧凑模式：画布节点内嵌，控件压小一档 */
+.compact {
+  gap: 6px;
+}
+
+.compact .controls {
+  gap: 8px;
+  padding: 5px 8px;
+}
+
+.compact .track {
+  height: 16px;
+}
+
+.compact .play {
+  width: 22px;
+  height: 22px;
+  font-size: 9px;
+}
+
+.compact .time {
+  font-size: 10px;
+}
