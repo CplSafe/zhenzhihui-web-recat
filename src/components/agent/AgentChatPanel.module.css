@@ -1,0 +1,545 @@
+/* AgentChatPanel —— 画布右侧智能体对话栏。
+   配色全部走 tokens.css,与项目主题一致(品牌色 #5767e5)。 */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--color-bg-surface);
+  border-left: 1px solid var(--color-border);
+  font-family: var(--font-sans);
+  overflow: hidden;
+}
+
+/* ── 顶栏 ─────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 12px var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-heading);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.iconBtn:hover {
+  background: var(--color-brand-light);
+  color: var(--color-brand);
+}
+
+.iconBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus-ring);
+}
+
+/* ── 消息区 ───────────────────────────────────────────── */
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.greeting {
+  margin: auto 0;
+  padding-bottom: var(--space-2xl);
+}
+
+.greetingHi {
+  font-size: 20px;
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--space-xs);
+}
+
+.greetingAsk {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--color-heading);
+  line-height: 1.35;
+}
+
+.bubbleUser {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: var(--radius-2xl) var(--radius-2xl) var(--radius-sm) var(--radius-2xl);
+  background: var(--color-brand);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubbleAssistant {
+  align-self: flex-start;
+  max-width: 92%;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 工具调用轨迹:压低视觉权重,是过程不是结论。 */
+.trace {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 92%;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-app);
+  border: 1px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.traceLabel {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.traceText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traceRunning .traceLabel {
+  color: var(--color-brand);
+}
+
+/* ── 确认卡片(花钱前的闸门) ─────────────────────────── */
+
+.confirmCard {
+  align-self: stretch;
+  padding: var(--space-lg);
+  border-radius: var(--radius-xl);
+  background: var(--color-brand-bg);
+  border: 1px solid var(--color-brand-border);
+}
+
+.confirmTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-heading);
+  margin-bottom: var(--space-sm);
+}
+
+.confirmRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  padding: 3px 0;
+}
+
+.confirmRow span:last-child {
+  color: var(--color-text-primary);
+  font-weight: 500;
+  text-align: right;
+  word-break: break-word;
+}
+
+.confirmCredits {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-brand-border);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.confirmCreditsValue {
+  color: var(--color-brand);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.confirmActions {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.btnPrimary,
+.btnGhost {
+  flex: 1;
+  height: 34px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-button);
+}
+
+.btnPrimary {
+  border: none;
+  background: var(--color-brand);
+  color: #fff;
+  box-shadow: var(--shadow-primary-button);
+}
+
+.btnPrimary:hover {
+  background: var(--color-brand-hover);
+  box-shadow: var(--shadow-primary-button-hover);
+}
+
+.btnGhost {
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+}
+
+.btnGhost:hover {
+  border-color: var(--color-brand-border);
+  color: var(--color-brand);
+}
+
+/* ── Agent 提问 ───────────────────────────────────────── */
+
+.questionCard {
+  align-self: flex-start;
+  max-width: 92%;
+}
+
+.questionText {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-sm);
+}
+
+.optionList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.optionBtn {
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.optionBtn:hover {
+  border-color: var(--color-brand);
+  background: var(--color-brand-light);
+  color: var(--color-brand);
+}
+
+/* ── 快捷提示 ─────────────────────────────────────────── */
+
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0 var(--space-lg) var(--space-md);
+  flex-shrink: 0;
+}
+
+.suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-app);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.suggestion:hover {
+  border-color: var(--color-brand-border);
+  background: var(--color-brand-light);
+  color: var(--color-brand);
+}
+
+/* ── 输入区 ───────────────────────────────────────────── */
+
+.composer {
+  margin: 0 var(--space-lg) var(--space-lg);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-3xl);
+  background: var(--color-bg-surface);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.composerFocused {
+  border-color: var(--color-brand);
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  padding: 12px 14px 6px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-primary);
+  max-height: 140px;
+}
+
+.textarea::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.composerBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 8px 10px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* 模式 / 模型选择器触发按钮 */
+.pickerBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+  max-width: 130px;
+}
+
+.pickerBtn:hover {
+  background: var(--color-brand-light);
+  color: var(--color-brand);
+}
+
+.pickerBtnActive {
+  background: var(--color-brand-light);
+  color: var(--color-brand);
+}
+
+.pickerLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sendBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-brand);
+  color: #fff;
+  cursor: pointer;
+  transition: var(--transition-button);
+  flex-shrink: 0;
+}
+
+.sendBtn:hover:not(:disabled) {
+  background: var(--color-brand-hover);
+}
+
+.sendBtn:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* ── 下拉菜单 ─────────────────────────────────────────── */
+
+.menuWrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 248px;
+  padding: 6px;
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-modal);
+  animation: menu-in 0.14s ease-out;
+}
+
+.menuRight {
+  left: auto;
+  right: 0;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.menuItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.menuItem:hover {
+  background: var(--color-brand-light);
+}
+
+.menuItemIcon {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.menuItemBody {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.menuItemTitle {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.menuItemDesc {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
+}
+
+.menuItemCheck {
+  color: var(--color-brand);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.menuEmpty {
+  padding: 12px 10px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+/* ── 状态条 ───────────────────────────────────────────── */
+
+.statusBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--space-lg) var(--space-sm);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.errorBar {
+  margin: 0 var(--space-lg) var(--space-sm);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-brand);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 尊重系统的减弱动效设置。 */
+@media (prefers-reduced-motion: reduce) {
+  .dot,
+  .menu {
+    animation: none;
+  }
+}
