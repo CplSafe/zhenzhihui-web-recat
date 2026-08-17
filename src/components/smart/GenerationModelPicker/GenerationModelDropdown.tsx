@@ -845,23 +845,20 @@ export default function GenerationModelDropdown({
                       </ul>
                     </div>
                   ) : !complete ? (
-                    <p role="status">请完成全部 {slots.length} 项模型选择后再确认。</p>
+                    <p role="status">请完成全部 {slots.length} 项模型选择。</p>
                   ) : (
                     <p className={styles.ready} role="status">
                       <CheckCircleFilled aria-hidden="true" />
-                      {locked ? '本次模型选择已锁定' : '模型配置完成，确认后将沿用本次选择'}
+                      {locked ? '本次模型选择已锁定' : '模型配置完成，将沿用本次选择'}
                     </p>
                   )}
                 </div>
-                <button
-                  type="button"
-                  className={styles.confirm}
-                  disabled={!complete || hasConflict}
-                  aria-disabled={!complete || hasConflict}
-                  onClick={closeAndRestoreFocus}
-                >
-                  确认
-                </button>
+                {/*
+                  这里不再放「确认」按钮。它只是关掉面板，本身不提交任何东西——
+                  选择在 onChange 的当下就已生效；而它按 !complete || hasConflict 置灰，
+                  反而让「选了个不兼容的模型」的用户无法从这里退出，只能去找右上角的 ✕。
+                  面板照常由 ✕ / Esc / 点击面板外关闭，真正的拦截在入口提交前那道校验。
+                */}
               </footer>
             )}
           </section>,
