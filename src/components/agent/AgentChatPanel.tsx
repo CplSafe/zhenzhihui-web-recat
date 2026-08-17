@@ -37,7 +37,8 @@ interface Attachment {
   id: string
   name: string
   previewUrl: string
-  url?: string
+  /** 上传成功后的资产 ID。为 0 表示尚未就绪,不能随消息发出。 */
+  assetId: number
   uploading: boolean
   error?: string
 }
@@ -171,12 +172,23 @@ export default function AgentChatPanel({
       list.forEach((file) => {
         const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`
         const previewUrl = URL.createObjectURL(file)
-        setAttachments((prev) => [...prev, { id, name: file.name, previewUrl, uploading: true }])
+        setAttachments((prev) => [...prev, { id, name: file.name, previewUrl, assetId: 0, uploading: true }])
 
         uploadAssetFile({ workspaceId, file, source: 'agent-chat' })
-          .then((res: { asset?: { url?: string; public_url?: string } }) => {
-            const url = res?.asset?.url || res?.asset?.public_url || ''
-            setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, uploading: false, url } : a)))
+          .then((res: { asset?: { id?: number } }) => {
+            const assetId = Number(res?.asset?.id) || 0
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.id === id
+                  ? {
+                      ...a,
+                      uploading: false,
+                      assetId,
+                      error: assetId ? undefined : '上传未返回资产 ID',
+                    }
+                  : a,
+              ),
+            )
           })
           .catch((err: Error) => {
             setAttachments((prev) =>
@@ -283,13 +295,24 @@ export default function AgentChatPanel({
   )
 
   const uploading = attachments.some((a) => a.uploading)
-  const canSend = (input.trim().length > 0 || attachments.length > 0) && !running && !uploading
+  // 有附件时必须至少一张就绪:否则发出去的是一条"看不见图"的消息,
+  // 模型会答非所问(它只看到文字),用户却以为图已送达。
+  const attachmentsReady = attachments.length === 0 || attachments.some((a) => a.assetId > 0)
+  const canSend = (input.trim().length > 0 || attachments.length > 0) && !running && !uploading && attachmentsReady
 
   const send = useCallback(
     (text: string) => {
       const message = text.trim()
-      const imageUrls = attachments.map((a) => a.url).filter((u): u is string => !!u)
-      if ((!message && imageUrls.length === 0) || running || uploading) return
+      if (running || uploading) return
+
+      const assetIds = attachments.map((a) => a.assetId).filter((id) => id > 0)
+      // 有附件但一个都没就绪:静默丢弃会让用户以为图发出去了,
+      // 而模型那边根本没收到——必须显式拦下并说明原因。
+      if (attachments.length > 0 && assetIds.length === 0) {
+        setError('图片上传失败，请移除后重试；或先删掉图片只发文字。')
+        return
+      }
+      if (!message && assetIds.length === 0) return
 
       push({ kind: 'user', text: message, images: attachments.map((a) => a.previewUrl) })
       setInput('')
@@ -313,7 +336,7 @@ export default function AgentChatPanel({
                 workspaceId,
                 kind,
                 message,
-                imageUrls,
+                assetIds,
                 execMode,
                 modelVersionId: modelId || undefined,
               },

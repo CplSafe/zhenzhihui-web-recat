@@ -219,7 +219,8 @@ export interface StartSessionInput {
   modelVersionId?: number
   execMode?: AgentExecMode
   creditCap?: number
-  imageUrls?: string[]
+  /** 商品图的资产 ID(上传后由 /api/v1/assets 返回)。 */
+  assetIds?: number[]
 }
 
 /**
@@ -238,7 +239,7 @@ export function startSession(input: StartSessionInput, onEvent: (e: AgentEvent) 
       model_version_id: input.modelVersionId,
       exec_mode: input.execMode ?? 'manual',
       credit_cap: input.creditCap,
-      image_urls: input.imageUrls,
+      asset_ids: input.assetIds,
     },
     onEvent,
     signal,
