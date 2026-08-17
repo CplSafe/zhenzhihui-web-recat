@@ -17,6 +17,7 @@ import {
   type HotCopyRouteState,
 } from '../utils/hotCopyRouteSession'
 import WorkspaceSwitchBridge from './WorkspaceSwitchBridge'
+import AgentChatView from '@/views/AgentChatView'
 import { useDistributionAccess } from '../composables/useDistributionAccess'
 import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReload'
 
@@ -313,6 +314,7 @@ export const router = createBrowserRouter([
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
       { path: 'team', element: lazyPage(<SpaceDashboardView />) },
       { path: 'distribution', element: <DistributionAccessRoute /> },
+      { path: 'agent', element: lazyPage(<AgentChatView />) },
       { path: 'canvas', element: lazyPage(<CanvasListView />) },
       { path: 'canvas/:id', element: lazyPage(<CanvasView />) },
       { path: '*', element: <Navigate to="/home" replace />, handle: { requiresAuth: false } },
