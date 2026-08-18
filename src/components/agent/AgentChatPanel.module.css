@@ -964,3 +964,15 @@
   opacity: var(--opacity-semi-disabled);
   cursor: not-allowed;
 }
+
+.confirmCheckbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-brand);
+  cursor: pointer;
+}
+
+.confirmCheckbox:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-semi-disabled);
+}

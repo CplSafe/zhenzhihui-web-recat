@@ -1034,9 +1034,12 @@ function ConfirmCard({
                 </option>
               ))}
             </select>
-          ) : f.type === 'bool' ? (
+          ) : f.type === 'bool' || f.type === 'boolean' ? (
+            // 两种写法都要认:后端 schema 里 bool 与 boolean 混用,
+            // 漏掉一种会让开关渲染成文本框,用户改不了也看不懂。
             <input
               type="checkbox"
+              className={styles.confirmCheckbox}
               checked={!!valueOf(f)}
               disabled={!!settled}
               onChange={(e) => setEdits((prev) => ({ ...prev, [f.name]: e.target.checked }))}
