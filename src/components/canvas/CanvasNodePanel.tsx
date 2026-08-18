@@ -260,6 +260,12 @@ export interface CanvasSourceRef {
   role?: CanvasConnectionRole
 }
 
+interface InheritedPromptText {
+  sourceId: string
+  edgeId: string
+  text: string
+}
+
 export interface CanvasNodeInfo {
   id: string
   kind: string
@@ -333,6 +339,10 @@ interface CanvasNodePanelProps {
    * 同一个面板两种行为，用户只会当成丢数据。
    */
   onParamsChange?: (params: Record<string, unknown>) => void
+  /** 从上游文本节点继承来的提示词内容。 */
+  inheritedTexts?: InheritedPromptText[]
+  /** 将继承文本转为本节点自己的 prompt，并由页面断开对应文本连线。 */
+  onAdoptInheritedText?: () => void
   onPolishText?: (params: {
     prompt: string
     kind: string
@@ -389,6 +399,8 @@ export default function CanvasNodePanel({
   onSaveText,
   onPromptChange,
   onParamsChange,
+  inheritedTexts = [],
+  onAdoptInheritedText,
   onPolishText,
 }: CanvasNodePanelProps) {
   const kind = node?.kind || 'text'
@@ -451,6 +463,7 @@ export default function CanvasNodePanel({
   // 素材来源引用数量（文本来源不计入数量限制）
   const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind !== 'text').length, [sourceRefs])
   const kindModels = useMemo(() => models?.[kind as 'text' | 'image' | 'video'] || [], [models, kind])
+  const hasInheritedTexts = inheritedTexts.length > 0
 
   /**
    * 当前上下文应使用的 operation_code：
@@ -738,6 +751,14 @@ export default function CanvasNodePanel({
     }
   }
 
+  const handleAdoptInheritedText = () => {
+    if (!hasInheritedTexts || taskRunning) return
+    const merged = [...inheritedTexts.map((item) => item.text), prompt.trim()].filter(Boolean).join('\n\n')
+    setPrompt(merged)
+    if (kind !== 'text') onPromptChange?.(merged)
+    onAdoptInheritedText?.()
+  }
+
   return (
     <div className={styles.panel}>
       {/* tags / 缩略图 */}
@@ -827,6 +848,23 @@ export default function CanvasNodePanel({
           </button>
         )}
       </div>
+
+      {hasInheritedTexts && (
+        <div className={styles.inheritedPrompt}>
+          <div className={styles.inheritedPromptMain}>
+            <span className={styles.inheritedPromptLabel}>继承文本</span>
+            <span className={styles.inheritedPromptText}>{inheritedTexts.map((item) => item.text).join(' / ')}</span>
+          </div>
+          <button
+            type="button"
+            className={styles.inheritedPromptBtn}
+            onClick={handleAdoptInheritedText}
+            disabled={taskRunning || !onAdoptInheritedText}
+          >
+            转为本节点提示词
+          </button>
+        </div>
+      )}
 
       {/* textarea */}
       <textarea

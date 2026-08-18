@@ -405,12 +405,35 @@
   justify-content: center;
 }
 
-/* 输入区:高亮层(渲染 @图片N 绿色)在底,透明文字的 textarea 叠在上,光标可见 */
+/*
+ * 输入区:高亮层(渲染 @图片N 绿色)在底,透明文字的 textarea 叠在上,光标可见。
+ *
+ * 两层显示的是同一段文字,必须逐字换行在同一个位置,否则用户看到的(高亮层)和
+ * 光标所在的(textarea)会错位。这里的关键是**只允许存在一个滚动容器**:
+ * 之前两层各自可滚,textarea 一长出纵向滚动条就被吃掉约 15px 内容宽度,
+ * 同一段文字在它里面要多折几行;高亮层没有滚动条、宽度不变。
+ * 于是长文本下 textarea 能滚到 23709px 而高亮层最多只能滚到 20292px,
+ * 在文末打字时看见的是光标上方一百多行的位置——字进去了,但看不见。
+ *
+ * 现在滚动只发生在 .inputWrap 上,两层都不产生自己的滚动条,内容宽度恒等。
+ */
 .inputWrap {
   flex: 1 1 240px;
   min-width: 0;
-  position: relative;
   min-height: 108px;
+  max-height: 108px;
+  overflow-y: auto;
+}
+
+/*
+ * 这层不可滚,且必须存在。
+ * 绝对定位的 inset: 0 只会解析到滚动容器的「裁剪框」,把 textarea 直接挂在
+ * .inputWrap 上时它只有可视高度,照样会内部滚动,等于没改。这层高度由高亮层撑开,
+ * textarea 才能铺满整段文字。
+ */
+.inputInner {
+  position: relative;
+  min-height: 106px;
 }
 
 .inputHl,
@@ -425,13 +448,11 @@
   word-break: break-word;
 }
 
+/* 正常流:它的高度就是整段文字的高度,外层据此滚动 */
 .inputHl {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
+  min-height: 106px;
   color: #333;
   pointer-events: none;
-  z-index: 0;
 }
 
 .refTag {
@@ -445,15 +466,21 @@
   font-weight: 600;
 }
 
+/*
+ * 铺满 .inputInner:高度等于整段文字,因此自身永远不需要滚动,也就永远不会长出滚动条。
+ * 尺寸只由 inset: 0 决定,不写 width/height:一旦这里加上水平 padding,
+ * content-box 下的 width: 100% 会把 padding 加在外面,内容宽度和高亮层又对不上。
+ */
 .input {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 1;
   display: block;
-  width: 100%;
-  min-height: 108px;
+  box-sizing: border-box;
   border: none;
   outline: none;
   resize: none;
+  overflow: hidden;
   background: transparent;
   color: transparent; /* 文字透明,显示底层高亮文本 */
   caret-color: #333; /* 但光标保持可见 */

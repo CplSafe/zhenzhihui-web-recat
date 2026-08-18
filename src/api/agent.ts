@@ -79,12 +79,27 @@ export interface AgentPendingCall {
 /** SSE 事件。type 决定 data 的形状。 */
 export type AgentEvent =
   | { type: 'session'; data: { session_id: number; title: string } }
+  | { type: 'turn'; data: { turn: number; max_turns: number; tokens: number } }
   | { type: 'thinking'; data: { content: string } }
   | { type: 'tool_call'; data: { name: string; args: Record<string, unknown> } }
   | { type: 'tool_result'; data: { name: string; preview: string } }
   | { type: 'await_confirm'; data: AgentPendingCall }
   | { type: 'await_input'; data: { call_id: string; question: string; options?: string[] } }
   | { type: 'generating'; data: { call_id: string; estimated_credits: number } }
+  | {
+      type: 'subagent'
+      data: {
+        stage: 'start' | 'running' | 'tool' | 'done'
+        topics?: string[]
+        topic?: string
+        name?: string
+        query?: string
+        finished?: number
+        total?: number
+        failed?: boolean
+      }
+    }
+  | { type: 'compaction'; data: { stage: string; saved_chars?: number; replaced?: number } }
   | { type: 'done'; data: { content: string } }
   | { type: 'error'; data: { message: string } }
 
@@ -131,6 +146,14 @@ export function listSessions(workspaceId: number, kind?: AgentKind) {
   const params = new URLSearchParams({ workspace_id: String(workspaceId) })
   if (kind) params.set('kind', kind)
   return requestJson<{ items: AgentSession[]; total: number }>(`${API_BASE}/sessions?${params}`)
+}
+
+/** 切换会话执行模式。会话已存在时必须同步到后端,否则续跑仍按旧模式判断闸门。 */
+export function setExecMode(sessionId: number, workspaceId: number, execMode: AgentExecMode) {
+  return requestJson<{ exec_mode: AgentExecMode }>(`${API_BASE}/sessions/${sessionId}/exec-mode`, {
+    method: 'PUT',
+    body: JSON.stringify({ workspace_id: workspaceId, exec_mode: execMode }),
+  })
 }
 
 export function getSession(sessionId: number, workspaceId: number) {
@@ -250,6 +273,8 @@ export interface ContinueSessionInput {
   workspaceId: number
   sessionId: number
   message?: string
+  /** 本轮追加的商品图资产 ID。续跑同样要能带图。 */
+  assetIds?: number[]
   /** 显式确认执行待定的生成。只带 message 的追问不会被当作确认。 */
   confirm?: boolean
   /** 用户在确认框里改过的参数,为空则用模型原本给的。 */
@@ -265,6 +290,7 @@ export function continueSession(input: ContinueSessionInput, onEvent: (e: AgentE
     {
       workspace_id: input.workspaceId,
       message: input.message,
+      asset_ids: input.assetIds,
       confirm: input.confirm,
       confirmed_args: input.confirmedArgs,
       cancel: input.cancel,

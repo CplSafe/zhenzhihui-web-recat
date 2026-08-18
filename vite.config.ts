@@ -235,8 +235,12 @@ function createBusinessProxy(target: string): ProxyOptions {
     changeOrigin: true,
     secure: false,
     cookieDomainRewrite: '',
-    proxyTimeout: 120000,
-    timeout: 120000,
+    // Agent 会话是 SSE 长响应:多轮搜索 + 并行子任务调研,实测 3-5 分钟。
+    // 原来的 120s 会在中途切断连接,浏览器报 ERR_INCOMPLETE_CHUNKED_ENCODING,
+    // 而后端毫无察觉(日志里没有任何错误)——这个组合极难排查。
+    // 设 0 表示不超时,交给后端自己的 15 分钟上限兜底。
+    proxyTimeout: 0,
+    timeout: 0,
     configure: (proxy) => {
       proxy.on('proxyReq', (proxyReq) => {
         proxyReq.removeHeader('origin')

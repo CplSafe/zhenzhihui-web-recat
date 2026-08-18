@@ -259,12 +259,32 @@
 }
 
 /* 右侧文案输入:高亮层(@图片N 绿)在底,透明文字 textarea 叠上,光标可见(对齐智能成片)*/
+/*
+ * 输入区两层显示同一段文字,必须逐字换行在同一位置,否则用户看到的(高亮层)和
+ * 光标所在的(textarea)会错位。关键是**只允许存在一个滚动容器**:
+ * 之前两层各自可滚,textarea 一长出纵向滚动条就被吃掉约 15px 内容宽度,
+ * 同一段文字在它里面要多折几行,长文本下就会看不见自己正在敲的字。
+ * 现在滚动只发生在 inputWrap 上,两层都不产生自己的滚动条,内容宽度恒等。
+ * 与智能成片的 SmartEntry 是同一套结构,改动要一起同步。
+ */
 .hotcopy__inputWrap {
   flex: 1 1 240px;
   min-width: 0;
+  min-height: 110px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/*
+ * 这层不可滚,且必须存在。
+ * 绝对定位的 inset: 0 只会解析到滚动容器的「裁剪框」,把 textarea 直接挂在
+ * inputWrap 上时它只有可视高度,照样会内部滚动,等于没改。
+ */
+.hotcopy__inputInner {
   position: relative;
   min-height: 110px;
 }
+
 .hotcopy__inputHl,
 .hotcopy__text {
   font-size: 18px;
@@ -276,28 +296,32 @@
   word-break: break-word;
   padding: 6px 4px;
 }
+/* 正常流:它的高度就是整段文字的高度,外层据此滚动 */
 .hotcopy__inputHl {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
+  min-height: 110px;
   color: #333;
   pointer-events: none;
-  z-index: 0;
 }
 .hotcopy__refTag {
   color: #1fcfa9;
   font-weight: 600;
 }
+/*
+ * 铺满 inputInner:高度等于整段文字,自身永远不需要滚动,也就永远不会长出滚动条。
+ * 尺寸只由 inset: 0 决定,不写 width/height:这个输入框有水平 padding,
+ * 在 content-box 下 width: 100% 会把 padding 加在外面,内容宽度比高亮层多出 8px,
+ * 换行照样分家——正是这次要根治的那个错位,换个成因而已。
+ */
 .hotcopy__text {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 1;
   display: block;
-  width: 100%;
-  min-height: 110px;
-  max-height: 260px;
+  box-sizing: border-box;
   resize: none;
   border: none;
   outline: none;
+  overflow: hidden;
   background: transparent;
   color: transparent; /* 文字透明,显示底层高亮文本 */
   caret-color: #333; /* 但光标保持可见 */

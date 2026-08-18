@@ -253,7 +253,6 @@ export default function SmartEntry({
 
   // ── @ 引用素材:点击 @ 在光标处弹出已上传素材;选中插入「@图片N」;无素材则直接插入「@」──
   const taRef = useRef<HTMLTextAreaElement | null>(null)
-  const hlRef = useRef<HTMLDivElement | null>(null)
   const caretRef = useRef(0) // 最近一次光标位置(点 @ 按钮会失焦,需提前记下)
   const [atOpen, setAtOpen] = useState(false)
 
@@ -765,37 +764,37 @@ export default function SmartEntry({
                 <span>必选项 · 未选择无法开始制作</span>
               </div>
             )}
+            {/* 滚动只发生在 inputWrap 上；inputInner 不可滚，负责给 textarea 撑出整段文字的高度 */}
             <div className={styles.inputWrap}>
-              {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
-              <div className={styles.inputHl} ref={hlRef} aria-hidden="true">
-                {renderHighlight(text)}
+              <div className={styles.inputInner}>
+                {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
+                <div className={styles.inputHl} aria-hidden="true">
+                  {renderHighlight(text)}
+                </div>
+                <textarea
+                  ref={taRef}
+                  className={styles.input}
+                  aria-label="创作需求"
+                  value={text}
+                  placeholder={
+                    isRealPersonVariant
+                      ? '描述真人出镜的场景、动作、台词与产品信息。真人素材必须从认证素材库选择。'
+                      : mode === 'image'
+                        ? PLACEHOLDER_IMAGE
+                        : PLACEHOLDER_VIDEO
+                  }
+                  onChange={(e) => {
+                    setText(e.target.value)
+                    caretRef.current = e.target.selectionStart ?? e.target.value.length
+                  }}
+                  onSelect={(e) => {
+                    caretRef.current = e.currentTarget.selectionStart ?? 0
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
+                  }}
+                />
               </div>
-              <textarea
-                ref={taRef}
-                className={styles.input}
-                aria-label="创作需求"
-                value={text}
-                placeholder={
-                  isRealPersonVariant
-                    ? '描述真人出镜的场景、动作、台词与产品信息。真人素材必须从认证素材库选择。'
-                    : mode === 'image'
-                      ? PLACEHOLDER_IMAGE
-                      : PLACEHOLDER_VIDEO
-                }
-                onChange={(e) => {
-                  setText(e.target.value)
-                  caretRef.current = e.target.selectionStart ?? e.target.value.length
-                }}
-                onScroll={(e) => {
-                  if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop
-                }}
-                onSelect={(e) => {
-                  caretRef.current = e.currentTarget.selectionStart ?? 0
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
-                }}
-              />
             </div>
           </div>
 

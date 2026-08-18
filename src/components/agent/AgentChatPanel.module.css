@@ -3,6 +3,7 @@
    panel 撑满容器高度,由宿主决定放在侧栏、抽屉还是整页。 */
 
 .panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -159,12 +160,6 @@
 .traceLabel {
   color: var(--color-text-secondary);
   flex-shrink: 0;
-}
-
-.traceText {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .traceRunning .traceLabel {
@@ -593,16 +588,17 @@
   text-align: center;
 }
 
-/* ── 状态条 ───────────────────────────────────────────── */
+/* ── 行内状态 ─────────────────────────────────────────── */
 
-.statusBar {
+/* 跟着对话流走,而不是钉在底部:进度本身是过程的一部分,
+   固定在角落会让视线在「读对话」和「看状态」之间来回跳。 */
+.statusInline {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 var(--space-lg) var(--space-sm);
+  padding: 2px 0;
   font-size: 12px;
   color: var(--color-text-tertiary);
-  flex-shrink: 0;
 }
 
 .errorBar {
@@ -639,4 +635,264 @@
   .menu {
     animation: none;
   }
+}
+
+/* ── 历史对话 ─────────────────────────────────────────── */
+
+/* 覆盖在消息区之上而非挤占布局:关掉后对话位置不跳。 */
+.historyPanel {
+  position: absolute;
+  inset: 53px 0 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-surface);
+  animation: history-in 0.16s ease-out;
+}
+
+@keyframes history-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.historyHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-heading);
+  flex-shrink: 0;
+}
+
+.historyList {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.historyItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.historyItem:hover:not(:disabled) {
+  background: var(--color-brand-light);
+}
+
+.historyItem:disabled {
+  opacity: var(--opacity-semi-disabled);
+  cursor: not-allowed;
+}
+
+.historyItemTitle {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historyItemMeta {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.historyEmpty {
+  padding: var(--space-2xl) 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+}
+
+/* ── 思考折叠块 ───────────────────────────────────────── */
+
+.thinking {
+  margin: 2px 0;
+}
+
+.thinkingToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  transition: background var(--transition-fast);
+}
+
+.thinkingToggle:hover {
+  background: var(--color-brand-light);
+}
+
+.thinkingCaret {
+  display: inline-block;
+  transition: transform var(--transition-fast);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.thinkingCaretOpen {
+  transform: rotate(90deg);
+}
+
+.thinkingLabel {
+  flex-shrink: 0;
+}
+
+/* 折叠时给一句预览:完全不给线索的话,用户不知道值不值得展开。 */
+.thinkingPreview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.thinkingBody {
+  margin: 4px 0 6px 14px;
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border-strong);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+}
+
+/* ── Markdown 正文 ────────────────────────────────────── */
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p {
+  margin: 0 0 10px;
+  line-height: 1.75;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.markdown h1 {
+  font-size: 17px;
+}
+.markdown h2 {
+  font-size: 15px;
+}
+.markdown h3 {
+  font-size: 14px;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.markdown li {
+  margin-bottom: 4px;
+  line-height: 1.7;
+}
+
+.markdown strong {
+  font-weight: 600;
+  color: var(--color-heading);
+}
+
+.markdown code {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-app);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.markdown pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-app);
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+/* 选品报告大量用表格(价格带、竞品对比),必须能横向滚动而不撑破面板 */
+.markdown table {
+  display: block;
+  width: 100%;
+  margin: 0 0 10px;
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.markdown th,
+.markdown td {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-strong);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.markdown th {
+  background: var(--color-bg-app);
+  font-weight: 600;
+}
+
+.markdown blockquote {
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 3px solid var(--color-brand-border);
+  color: var(--color-text-secondary);
+}
+
+.markdown a {
+  color: var(--color-brand);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+/* 同类工具连续调用的次数标记。弱化处理:它是补充信息,
+   用户扫一眼知道"搜了 5 次"即可,不该和工具名抢注意力。 */
+.traceCount {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  opacity: 0.8;
 }

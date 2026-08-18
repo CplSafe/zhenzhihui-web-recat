@@ -13,22 +13,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   continueSession,
+  getSession,
   listChatModels,
+  listSessions,
+  setExecMode as setExecModeApi,
   startSession,
   type AgentChatModel,
   type AgentEvent,
   type AgentExecMode,
   type AgentKind,
+  type AgentMessage,
   type AgentPendingCall,
+  type AgentSession,
 } from '@/api/agent'
 import { uploadAssetFile } from '@/api/business'
+import Markdown from '@/components/common/Markdown'
 import styles from './AgentChatPanel.module.css'
 
 /** 会话内渲染的一条内容。工具轨迹与对话消息同列展示,靠样式区分权重。 */
 type Entry =
   | { kind: 'user'; text: string; images?: string[] }
   | { kind: 'assistant'; text: string }
-  | { kind: 'trace'; label: string; text: string; running?: boolean }
+  // 模型在调工具前输出的中间文字。默认折叠:它是推理过程不是结论,
+  // 平铺出来会把真正的答案淹没。
+  | { kind: 'thinking'; text: string }
+  // 行内进度。放在对话流里而不是底部状态条——进度是过程的一部分,
+  // 固定在角落会让用户在"看对话"和"看状态"之间来回切换视线。
+  | { kind: 'status'; text: string }
+  // 只有工具名与次数:搜索词、URL 这些是内部实现细节,对用户没有价值,
+  // 露出来既是噪音也是信息泄露。count>1 表示同类连续调用合并。
+  | { kind: 'trace'; label: string; running?: boolean; count?: number }
   | { kind: 'question'; text: string; options: string[]; answered?: boolean }
   | { kind: 'confirm'; call: AgentPendingCall; settled?: 'done' | 'cancelled' }
 
@@ -76,6 +90,9 @@ const TOOL_LABELS: Record<string, string> = {
   save_finding: '记录',
   list_findings: '盘点',
   generate_video: '生成视频',
+  update_todo: '规划任务',
+  load_skill: '加载技能',
+  dispatch_subagents: '并行调研',
 }
 
 /** 确认卡片里展示的参数,按这个顺序排;其余参数不展示避免噪音。 */
@@ -89,10 +106,18 @@ const PARAM_LABELS: [string, string][] = [
 
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
 
+const STATUS_LABELS: Record<string, string> = {
+  idle: '待开始',
+  running: '进行中',
+  awaiting_confirm: '等待确认',
+  completed: '已完成',
+  failed: '失败',
+}
+
 export default function AgentChatPanel({
   workspaceId,
   kind = 'product_analysis',
-  title = '新建对话',
+  title: initialTitle = '新建对话',
   userName,
   suggestions = DEFAULT_SUGGESTIONS,
   onCollapse,
@@ -110,6 +135,26 @@ export default function AgentChatPanel({
   const [models, setModels] = useState<AgentChatModel[]>([])
   const [modelId, setModelId] = useState<number>(0)
   const [openMenu, setOpenMenu] = useState<'mode' | 'model' | 'plus' | null>(null)
+  // 行内状态:替换对话流末尾的 status 条目而不是追加,
+  // 否则十几轮下来会积几十条"正在搜索…"把对话挤没。
+  const setStatus = useCallback((text: string) => {
+    setEntries((prev) => {
+      // 先摘掉旧的 status(它可能已被 trace 挤到中间),再追加到末尾。
+      // 不这么做的话每次搜索都会留下一条"搜索中…",与紧随其后的
+      // trace 内容重复,几轮下来就是满屏噪音。
+      const next = prev.filter((e) => e.kind !== 'status')
+      return [...next, { kind: 'status', text }]
+    })
+  }, [])
+
+  /** 流结束时清掉行内状态条——它只在运行中有意义。 */
+  const clearStatus = useCallback(() => {
+    setEntries((prev) => (prev.length && prev[prev.length - 1].kind === 'status' ? prev.slice(0, -1) : prev))
+  }, [])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [sessions, setSessions] = useState<AgentSession[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [title, setTitle] = useState(initialTitle)
 
   const sessionRef = useRef<number>(0)
   const abortRef = useRef<AbortController | null>(null)
@@ -160,7 +205,33 @@ export default function AgentChatPanel({
     }
   }, [openMenu, closeMenu])
 
-  const push = useCallback((e: Entry) => setEntries((prev) => [...prev, e]), [])
+  /**
+   * 追加轨迹。与末尾同类轨迹合并成一条并计数。
+   *
+   * 用户需要知道的是「Agent 在搜索」,不是搜了什么词——
+   * 查询词是内部实现细节,对用户没有价值。
+   */
+  const pushTrace = useCallback((label: string, running?: boolean) => {
+    setEntries((prev) => {
+      const rest = prev.filter((x) => x.kind !== 'status')
+      const status = prev.find((x) => x.kind === 'status')
+      const last = rest[rest.length - 1]
+      const next =
+        last?.kind === 'trace' && last.label === label
+          ? [...rest.slice(0, -1), { ...last, running, count: (last.count ?? 1) + 1 } as Entry]
+          : [...rest, { kind: 'trace', label, running } as Entry]
+      return status ? [...next, status] : next
+    })
+  }, [])
+
+  // status 条目永远排在末尾:它表示「正在做什么」,被后续条目盖住就失去意义。
+  const push = useCallback((e: Entry) => {
+    setEntries((prev) => {
+      const idx = prev.findIndex((x) => x.kind === 'status')
+      if (idx === -1) return [...prev, e]
+      return [...prev.slice(0, idx), ...prev.slice(idx + 1), e, prev[idx]]
+    })
+  }, [])
 
   /* ── 附件上传 ─────────────────────────────────────────── */
 
@@ -215,17 +286,25 @@ export default function AgentChatPanel({
       switch (ev.type) {
         case 'session':
           sessionRef.current = ev.data.session_id
+          if (ev.data.title) setTitle(ev.data.title)
+          break
+
+        case 'turn':
+          setStatus(
+            ev.data.turn === 1
+              ? '正在思考…'
+              : `正在思考…(第 ${ev.data.turn} 轮 · 已用 ${Math.round(ev.data.tokens / 1000)}k tokens)`,
+          )
           break
 
         case 'thinking':
-          if (ev.data.content) push({ kind: 'assistant', text: ev.data.content })
+          if (ev.data.content) push({ kind: 'thinking', text: ev.data.content })
           break
 
         case 'tool_call': {
           const label = TOOL_LABELS[ev.data.name] ?? ev.data.name
-          const text =
-            (ev.data.args?.query as string) || (ev.data.args?.topic as string) || (ev.data.args?.url as string) || ''
-          push({ kind: 'trace', label, text, running: true })
+          setStatus(`${label}中…`)
+          pushTrace(label, true)
           break
         }
 
@@ -252,8 +331,46 @@ export default function AgentChatPanel({
           push({ kind: 'confirm', call: ev.data })
           break
 
+        case 'subagent': {
+          const d = ev.data
+          if (d.stage === 'start') {
+            setStatus(`正在并行调研 ${d.topics?.length ?? 0} 个方向…`)
+            push({ kind: 'trace', label: '并行调研', running: true })
+          } else if (d.stage === 'tool') {
+            setStatus('调研搜索中…')
+            pushTrace('调研搜索', true)
+          } else if (d.stage === 'done') {
+            // 标完成而不是再加一条:否则几十条轨迹会把对话淹没。
+            setEntries((prev) => {
+              const next = [...prev]
+              for (let i = next.length - 1; i >= 0; i -= 1) {
+                const e = next[i]
+                if (e.kind === 'trace' && e.running) {
+                  next[i] = { ...e, running: false }
+                  break
+                }
+              }
+              return next
+            })
+            setStatus(`调研进度 ${d.finished}/${d.total}…`)
+            if (d.finished === d.total) {
+              push({ kind: 'trace', label: '调研完成' })
+              setStatus('正在汇总调研结果…')
+            }
+          }
+          break
+        }
+
+        case 'compaction':
+          setStatus('正在压缩上下文…')
+          if (ev.data.stage === 'summarize' && ev.data.replaced) {
+            push({ kind: 'trace', label: '上下文压缩' })
+          }
+          break
+
         case 'generating':
-          push({ kind: 'trace', label: '生成视频', text: '已提交，生成中', running: true })
+          setStatus('正在提交视频生成…')
+          push({ kind: 'trace', label: '生成视频', running: true })
           onGenerated?.({
             callId: ev.data.call_id,
             estimatedCredits: ev.data.estimated_credits,
@@ -269,7 +386,7 @@ export default function AgentChatPanel({
           break
       }
     },
-    [push, onGenerated],
+    [push, pushTrace, setStatus, onGenerated],
   )
 
   /** 统一的流执行入口:管好 running 状态、abort 与错误。 */
@@ -288,10 +405,11 @@ export default function AgentChatPanel({
         }
       } finally {
         setRunning(false)
+        clearStatus()
         abortRef.current = null
       }
     },
-    [running, handleEvent],
+    [running, handleEvent, clearStatus],
   )
 
   const uploading = attachments.some((a) => a.uploading)
@@ -326,6 +444,7 @@ export default function AgentChatPanel({
                 workspaceId,
                 sessionId: sessionRef.current,
                 message,
+                assetIds,
                 modelVersionId: modelId || undefined,
               },
               onEvent,
@@ -372,6 +491,52 @@ export default function AgentChatPanel({
     [send],
   )
 
+  /** 打开历史列表并拉取。每次打开都重拉:会话在别处也可能新增。 */
+  const openHistory = useCallback(() => {
+    setHistoryOpen(true)
+    setHistoryLoading(true)
+    listSessions(workspaceId, kind)
+      .then(({ items }) => setSessions(items))
+      .catch((err: Error) => setError(err?.message || '加载历史对话失败'))
+      .finally(() => setHistoryLoading(false))
+  }, [workspaceId, kind])
+
+  /** 载入一个历史会话:把库里的消息还原成界面条目。 */
+  const loadSession = useCallback(
+    (id: number) => {
+      if (running) return
+      setHistoryOpen(false)
+      setError('')
+      getSession(id, workspaceId)
+        .then(({ session, messages }) => {
+          abortRef.current?.abort()
+          sessionRef.current = session.id
+          setTitle(session.title || '历史对话')
+          setExecMode(session.exec_mode)
+          if (session.model_version_id) setModelId(session.model_version_id)
+          setEntries(restoreEntries(messages))
+          setAttachments([])
+          setInput('')
+        })
+        .catch((err: Error) => setError(err?.message || '载入会话失败'))
+    },
+    [running, workspaceId],
+  )
+
+  /** 切换执行模式。已有会话要同步到后端,否则续跑仍按旧模式判断闸门。 */
+  const switchExecMode = useCallback(
+    (mode: AgentExecMode) => {
+      setExecMode(mode)
+      closeMenu()
+      if (sessionRef.current) {
+        void setExecModeApi(sessionRef.current, workspaceId, mode).catch((err: Error) =>
+          setError(err?.message || '切换模式失败'),
+        )
+      }
+    },
+    [closeMenu, workspaceId],
+  )
+
   /** 开新对话:清空本地状态,下次发送会重新建会话。 */
   const newChat = useCallback(() => {
     abortRef.current?.abort()
@@ -380,7 +545,8 @@ export default function AgentChatPanel({
     setAttachments([])
     setInput('')
     setError('')
-  }, [])
+    setTitle(initialTitle)
+  }, [initialTitle])
 
   const currentModel = useMemo(() => models.find((m) => m.id === modelId), [models, modelId])
   const currentMode = EXEC_MODES.find((m) => m.value === execMode) ?? EXEC_MODES[0]
@@ -396,11 +562,16 @@ export default function AgentChatPanel({
       }}
     >
       <div className={styles.header}>
-        {onOpenHistory && (
-          <button className={styles.iconBtn} onClick={onOpenHistory} title="历史对话">
-            <ListIcon />
-          </button>
-        )}
+        <button
+          className={styles.iconBtn}
+          onClick={() => {
+            onOpenHistory?.()
+            openHistory()
+          }}
+          title="历史对话"
+        >
+          <ListIcon />
+        </button>
         <span className={styles.title}>{title}</span>
         <div className={styles.headerActions}>
           {headerExtra}
@@ -415,6 +586,39 @@ export default function AgentChatPanel({
         </div>
       </div>
 
+      {historyOpen && (
+        <div className={styles.historyPanel}>
+          <div className={styles.historyHeader}>
+            <span>历史对话</span>
+            <button className={styles.iconBtn} onClick={() => setHistoryOpen(false)} title="关闭">
+              <CloseIcon />
+            </button>
+          </div>
+          <div className={styles.historyList}>
+            {historyLoading ? (
+              <div className={styles.historyEmpty}>加载中…</div>
+            ) : sessions.length === 0 ? (
+              <div className={styles.historyEmpty}>还没有历史对话</div>
+            ) : (
+              sessions.map((sess) => (
+                <button
+                  key={sess.id}
+                  className={styles.historyItem}
+                  onClick={() => loadSession(sess.id)}
+                  disabled={running}
+                >
+                  <span className={styles.historyItemTitle}>{sess.title || `会话 #${sess.id}`}</span>
+                  <span className={styles.historyItemMeta}>
+                    {STATUS_LABELS[sess.status] ?? sess.status}
+                    {sess.spent_credits > 0 ? ` · ${sess.spent_credits} 积分` : ''}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       <div className={styles.scroll} ref={scrollRef}>
         {empty ? (
           <div className={styles.greeting}>
@@ -426,12 +630,6 @@ export default function AgentChatPanel({
         )}
       </div>
 
-      {running && (
-        <div className={styles.statusBar}>
-          <span className={styles.dot} />
-          Agent 正在思考…
-        </div>
-      )}
       {error && <div className={styles.errorBar}>{error}</div>}
 
       {empty && !running && suggestions.length > 0 && (
@@ -542,14 +740,7 @@ export default function AgentChatPanel({
             {openMenu === 'mode' && (
               <div className={styles.menu}>
                 {EXEC_MODES.map((m) => (
-                  <button
-                    key={m.value}
-                    className={styles.menuItem}
-                    onClick={() => {
-                      setExecMode(m.value)
-                      closeMenu()
-                    }}
-                  >
+                  <button key={m.value} className={styles.menuItem} onClick={() => switchExecMode(m.value)}>
                     <span className={styles.menuItemIcon}>{m.value === 'manual' ? <HandIcon /> : <AutoIcon />}</span>
                     <span className={styles.menuItemBody}>
                       <span className={styles.menuItemTitle}>{m.title}</span>
@@ -615,6 +806,77 @@ export default function AgentChatPanel({
   )
 }
 
+/**
+ * 把持久化的消息还原成界面条目。
+ *
+ * system 消息不显示(是行为约束不是对话);tool 消息还原成轨迹而非正文——
+ * 工具结果动辄上万字,原样铺开会把历史对话变成搜索日志。
+ */
+function restoreEntries(messages: AgentMessage[]): Entry[] {
+  const out: Entry[] = []
+  for (const m of messages) {
+    if (m.role === 'system') continue
+
+    if (m.role === 'user') {
+      // 压缩摘要与工具占位是内部机制,不该出现在用户看到的历史里。
+      if (m.content.startsWith('[以下是此前对话的摘要]') || m.content.startsWith('[当前任务清单]')) {
+        continue
+      }
+      if (m.content.trim()) out.push({ kind: 'user', text: m.content })
+      continue
+    }
+
+    if (m.role === 'assistant') {
+      if (m.content.trim()) out.push({ kind: 'assistant', text: m.content })
+      // tool_calls 还原成轨迹,让用户看到 Agent 当时做了什么。
+      const calls = Array.isArray(m.tool_calls) ? m.tool_calls : []
+      for (const raw of calls) {
+        const call = raw as { function?: { name?: string; arguments?: string } }
+        const name = call?.function?.name
+        if (!name) continue
+        const label = TOOL_LABELS[name] ?? name
+        const last = out[out.length - 1]
+        // 与实时渲染同一套合并规则,否则历史看起来比当时更啰嗦。
+        if (last?.kind === 'trace' && last.label === label) {
+          out[out.length - 1] = { ...last, count: (last.count ?? 1) + 1 }
+        } else {
+          out.push({ kind: 'trace', label })
+        }
+      }
+      continue
+    }
+    // role === 'tool':结果本身不展示,轨迹已由上面的 tool_calls 表达。
+  }
+  return out
+}
+
+/**
+ * 模型的中间思考,默认折叠。
+ *
+ * 这些文字是推理过程("我先查供货价,再对比竞品…"),不是给用户的结论。
+ * 平铺出来会让真正的答案淹没在过程里;完全隐藏又失去了可解释性,
+ * 所以折叠——想看的人点开,不想看的人只读最终正文。
+ */
+function ThinkingBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const preview = text.length > 40 ? `${text.slice(0, 40)}…` : text
+
+  return (
+    <div className={styles.thinking}>
+      <button className={styles.thinkingToggle} onClick={() => setOpen((v) => !v)}>
+        <span className={`${styles.thinkingCaret} ${open ? styles.thinkingCaretOpen : ''}`}>›</span>
+        <span className={styles.thinkingLabel}>思考</span>
+        {!open && <span className={styles.thinkingPreview}>{preview}</span>}
+      </button>
+      {open && (
+        <div className={styles.thinkingBody}>
+          <Markdown>{text}</Markdown>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── 条目渲染 ───────────────────────────────────────────── */
 
 function EntryView({
@@ -640,13 +902,36 @@ function EntryView({
       </div>
     )
   }
-  if (entry.kind === 'assistant') return <div className={styles.bubbleAssistant}>{entry.text}</div>
+  if (entry.kind === 'assistant') {
+    // 模型输出的是 Markdown(加粗/表格/列表/分级标题),纯文本渲染会把
+    // **卖点** 这类标记原样显示。用项目现成的 Markdown 组件——
+    // 不引 streamdown:它会把 shiki + mermaid 全打包进来(数 MB),
+    // 而选品报告只需要 GFM 文本能力(见 common/Markdown.tsx 的说明)。
+    return (
+      <div className={`${styles.bubbleAssistant} ${styles.markdown}`}>
+        <Markdown>{entry.text}</Markdown>
+      </div>
+    )
+  }
+
+  if (entry.kind === 'status') {
+    return (
+      <div className={styles.statusInline}>
+        <span className={styles.dot} />
+        {entry.text}
+      </div>
+    )
+  }
+
+  if (entry.kind === 'thinking') {
+    return <ThinkingBlock text={entry.text} />
+  }
 
   if (entry.kind === 'trace') {
     return (
       <div className={`${styles.trace} ${entry.running ? styles.traceRunning : ''}`}>
         <span className={styles.traceLabel}>{entry.label}</span>
-        {entry.text && <span className={styles.traceText}>{entry.text}</span>}
+        {entry.count && entry.count > 1 && <span className={styles.traceCount}>×{entry.count}</span>}
       </div>
     )
   }
