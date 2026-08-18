@@ -80,6 +80,7 @@ export interface AgentPendingCall {
 export type AgentEvent =
   | { type: 'session'; data: { session_id: number; title: string } }
   | { type: 'turn'; data: { turn: number; max_turns: number; tokens: number } }
+  | { type: 'delta'; data: { text: string } }
   | { type: 'thinking'; data: { content: string } }
   | { type: 'tool_call'; data: { name: string; args: Record<string, unknown> } }
   | { type: 'tool_result'; data: { name: string; preview: string } }

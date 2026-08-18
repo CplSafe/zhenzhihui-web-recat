@@ -90,6 +90,7 @@ const TOOL_LABELS: Record<string, string> = {
   save_finding: '记录',
   list_findings: '盘点',
   generate_video: '生成视频',
+  generate_image: '生成图片',
   update_todo: '规划任务',
   load_skill: '加载技能',
   dispatch_subagents: '并行调研',
@@ -158,6 +159,9 @@ export default function AgentChatPanel({
 
   const sessionRef = useRef<number>(0)
   const abortRef = useRef<AbortController | null>(null)
+  // 本轮是否收到过 delta。done 事件据此决定要不要补正文——
+  // 支持流式的模型不补(会重复),不支持的必须补(否则没有回复)。
+  const streamedRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -290,11 +294,31 @@ export default function AgentChatPanel({
           break
 
         case 'turn':
+          streamedRef.current = false
           setStatus(
             ev.data.turn === 1
               ? '正在思考…'
               : `正在思考…(第 ${ev.data.turn} 轮 · 已用 ${Math.round(ev.data.tokens / 1000)}k tokens)`,
           )
+          break
+
+        case 'delta':
+          // 逐字追加到末尾的 assistant 气泡;没有就新建一个。
+          // 这是与 Claude 对话手感一致的关键:文字边生成边出现,
+          // 而不是等整轮跑完一次性弹出。
+          if (ev.data.text) {
+            streamedRef.current = true
+            setEntries((prev) => {
+              const rest = prev.filter((x) => x.kind !== 'status')
+              const status = prev.find((x) => x.kind === 'status')
+              const last = rest[rest.length - 1]
+              const next: Entry[] =
+                last?.kind === 'assistant'
+                  ? [...rest.slice(0, -1), { kind: 'assistant', text: last.text + ev.data.text }]
+                  : [...rest, { kind: 'assistant', text: ev.data.text }]
+              return status ? [...next, status] : next
+            })
+          }
           break
 
         case 'thinking':
@@ -378,7 +402,13 @@ export default function AgentChatPanel({
           break
 
         case 'done':
-          if (ev.data.content) push({ kind: 'assistant', text: ev.data.content })
+          // 流式下正文已由 delta 逐字铺好,再 push 会出现两份。
+          // 用显式标记而非文本比对:模型可能正好输出与增量相同的内容,
+          // 比对相等就漏掉了该补的那一份。
+          if (ev.data.content && !streamedRef.current) {
+            push({ kind: 'assistant', text: ev.data.content })
+          }
+          streamedRef.current = false
           break
 
         case 'error':
