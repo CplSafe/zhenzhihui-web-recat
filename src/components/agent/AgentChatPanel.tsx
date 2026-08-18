@@ -493,7 +493,12 @@ export default function AgentChatPanel({
   /** 确认或取消一次待定的生成。confirm=true 才会真正提交扣费。 */
   const settleConfirm = useCallback(
     (callId: string, confirm: boolean, confirmedArgs?: Record<string, unknown>) => {
-      if (running) return
+      // 上一轮流还没结束时点确认会被静默丢弃——用户点了没反应,
+      // 只会以为按钮坏了。给出明确提示而不是无声 return。
+      if (running) {
+        setError('上一步还在进行中，请等它结束后再确认。')
+        return
+      }
       setEntries((prev) =>
         prev.map((e) =>
           e.kind === 'confirm' && e.call.call_id === callId ? { ...e, settled: confirm ? 'done' : 'cancelled' } : e,
@@ -653,7 +658,9 @@ export default function AgentChatPanel({
             <div className={styles.greetingAsk}>今天一起创作点什么？</div>
           </div>
         ) : (
-          entries.map((entry, i) => <EntryView key={i} entry={entry} onAnswer={answer} onSettle={settleConfirm} />)
+          entries.map((entry, i) => (
+            <EntryView key={i} entry={entry} busy={running} onAnswer={answer} onSettle={settleConfirm} />
+          ))
         )}
       </div>
 
@@ -909,9 +916,11 @@ function ThinkingBlock({ text }: { text: string }) {
 function EntryView({
   entry,
   onAnswer,
+  busy,
   onSettle,
 }: {
   entry: Entry
+  busy: boolean
   onAnswer: (text: string) => void
   onSettle: (callId: string, confirm: boolean, args?: Record<string, unknown>) => void
 }) {
@@ -980,7 +989,7 @@ function EntryView({
     )
   }
 
-  return <ConfirmCard entry={entry} onSettle={onSettle} />
+  return <ConfirmCard entry={entry} busy={busy} onSettle={onSettle} />
 }
 
 /**
@@ -992,9 +1001,12 @@ function EntryView({
  */
 function ConfirmCard({
   entry,
+  busy,
   onSettle,
 }: {
   entry: Extract<Entry, { kind: 'confirm' }>
+  /** 上一轮流是否仍在进行。为 true 时禁用按钮,避免点了没反应。 */
+  busy: boolean
   onSettle: (callId: string, confirm: boolean, args?: Record<string, unknown>) => void
 }) {
   const { call, settled } = entry
@@ -1009,7 +1021,11 @@ function ConfirmCard({
       <div className={styles.confirmTitle}>{isImage ? '确认生成图片' : '确认生成视频'}</div>
 
       {/* 模型也要能换:只显示名字而不给切换,等于把选择权留在模型手里。
-          只有一个可选模型时退化成文本,避免给一个点了没反应的下拉框。 */}
+          只有一个可选模型时退化成文本,避免给一个点了没反应的下拉框。
+
+          已知限制:切换模型后下方参数仍是原模型的档位(各模型 schema 不同)。
+          后端在提交时会按新模型的 schema 重新校验并兜底,不会提交非法值,
+          但界面上看不到新模型的可选项。要彻底解决需要切换时回后端重取 schema。 */}
       {call.models && call.models.length > 1 ? (
         <div className={styles.confirmField}>
           <span className={styles.confirmFieldLabel}>模型</span>
@@ -1017,7 +1033,11 @@ function ConfirmCard({
             className={styles.confirmSelect}
             value={String(edits.model ?? call.models.find((m) => m.selected)?.value ?? '')}
             disabled={!!settled}
-            onChange={(e) => setEdits((prev) => ({ ...prev, model: e.target.value }))}
+            onChange={(e) => {
+              // 换模型时清掉已改的参数:旧模型的档位在新模型上多半非法,
+              // 留着会被后端兜底成默认值,用户以为自己选的生效了。
+              setEdits({ model: e.target.value })
+            }}
           >
             {call.models.map((m) => (
               <option key={m.value} value={m.value}>
@@ -1095,11 +1115,13 @@ function ConfirmCard({
         <div className={styles.confirmCredits}>{settled === 'done' ? '已确认执行' : '已取消'}</div>
       ) : (
         <div className={styles.confirmActions}>
-          <button className={styles.btnGhost} onClick={() => onSettle(call.call_id, false)}>
+          <button className={styles.btnGhost} disabled={busy} onClick={() => onSettle(call.call_id, false)}>
             取消
           </button>
           <button
             className={styles.btnPrimary}
+            disabled={busy}
+            title={busy ? '上一步还在进行中' : undefined}
             onClick={() => {
               // 只提交改动过的字段:未改的交给后端用模型建议值,
               // 全量回传会把 schema 默认值固化成用户显式选择。
