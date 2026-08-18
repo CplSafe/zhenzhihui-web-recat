@@ -162,12 +162,6 @@
   flex-shrink: 0;
 }
 
-.traceText {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .traceRunning .traceLabel {
   color: var(--color-brand);
 }

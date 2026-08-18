@@ -40,9 +40,9 @@ type Entry =
   // 行内进度。放在对话流里而不是底部状态条——进度是过程的一部分,
   // 固定在角落会让用户在"看对话"和"看状态"之间来回切换视线。
   | { kind: 'status'; text: string }
-  // count>1 表示同类工具连续调用了多次。合并而非逐条铺开——
-  // 一次分析动辄七八次搜索,每条占一行会把对话撑成日志。
-  | { kind: 'trace'; label: string; text: string; running?: boolean; count?: number }
+  // 只有工具名与次数:搜索词、URL 这些是内部实现细节,对用户没有价值,
+  // 露出来既是噪音也是信息泄露。count>1 表示同类连续调用合并。
+  | { kind: 'trace'; label: string; running?: boolean; count?: number }
   | { kind: 'question'; text: string; options: string[]; answered?: boolean }
   | { kind: 'confirm'; call: AgentPendingCall; settled?: 'done' | 'cancelled' }
 
@@ -208,18 +208,18 @@ export default function AgentChatPanel({
   /**
    * 追加轨迹。与末尾同类轨迹合并成一条并计数。
    *
-   * 用户需要知道的是「Agent 在搜索」,不是每一条搜索词。
-   * 保留最新一条的摘要 + 次数,既压缩了噪音又不丢当前进展。
+   * 用户需要知道的是「Agent 在搜索」,不是搜了什么词——
+   * 查询词是内部实现细节,对用户没有价值。
    */
-  const pushTrace = useCallback((label: string, text: string, running?: boolean) => {
+  const pushTrace = useCallback((label: string, running?: boolean) => {
     setEntries((prev) => {
       const rest = prev.filter((x) => x.kind !== 'status')
       const status = prev.find((x) => x.kind === 'status')
       const last = rest[rest.length - 1]
       const next =
         last?.kind === 'trace' && last.label === label
-          ? [...rest.slice(0, -1), { ...last, text, running, count: (last.count ?? 1) + 1 } as Entry]
-          : [...rest, { kind: 'trace', label, text, running } as Entry]
+          ? [...rest.slice(0, -1), { ...last, running, count: (last.count ?? 1) + 1 } as Entry]
+          : [...rest, { kind: 'trace', label, running } as Entry]
       return status ? [...next, status] : next
     })
   }, [])
@@ -304,9 +304,7 @@ export default function AgentChatPanel({
         case 'tool_call': {
           const label = TOOL_LABELS[ev.data.name] ?? ev.data.name
           setStatus(`${label}中…`)
-          const text =
-            (ev.data.args?.query as string) || (ev.data.args?.topic as string) || (ev.data.args?.url as string) || ''
-          pushTrace(label, text, true)
+          pushTrace(label, true)
           break
         }
 
@@ -337,15 +335,10 @@ export default function AgentChatPanel({
           const d = ev.data
           if (d.stage === 'start') {
             setStatus(`正在并行调研 ${d.topics?.length ?? 0} 个方向…`)
-            push({
-              kind: 'trace',
-              label: '并行调研',
-              text: (d.topics ?? []).join(' / '),
-              running: true,
-            })
+            push({ kind: 'trace', label: '并行调研', running: true })
           } else if (d.stage === 'tool') {
-            setStatus(`${d.topic} · 搜索中…`)
-            pushTrace(`${d.topic} · 搜索`, d.query ?? '', true)
+            setStatus('调研搜索中…')
+            pushTrace('调研搜索', true)
           } else if (d.stage === 'done') {
             // 标完成而不是再加一条:否则几十条轨迹会把对话淹没。
             setEntries((prev) => {
@@ -361,7 +354,7 @@ export default function AgentChatPanel({
             })
             setStatus(`调研进度 ${d.finished}/${d.total}…`)
             if (d.finished === d.total) {
-              push({ kind: 'trace', label: '调研完成', text: `${d.total} 项已汇总` })
+              push({ kind: 'trace', label: '调研完成' })
               setStatus('正在汇总调研结果…')
             }
           }
@@ -371,13 +364,13 @@ export default function AgentChatPanel({
         case 'compaction':
           setStatus('正在压缩上下文…')
           if (ev.data.stage === 'summarize' && ev.data.replaced) {
-            push({ kind: 'trace', label: '上下文压缩', text: `已归纳 ${ev.data.replaced} 条历史` })
+            push({ kind: 'trace', label: '上下文压缩' })
           }
           break
 
         case 'generating':
           setStatus('正在提交视频生成…')
-          push({ kind: 'trace', label: '生成视频', text: '已提交，生成中', running: true })
+          push({ kind: 'trace', label: '生成视频', running: true })
           onGenerated?.({
             callId: ev.data.call_id,
             estimatedCredits: ev.data.estimated_credits,
@@ -842,13 +835,12 @@ function restoreEntries(messages: AgentMessage[]): Entry[] {
         const name = call?.function?.name
         if (!name) continue
         const label = TOOL_LABELS[name] ?? name
-        const text = traceText(name, parseArgs(call.function?.arguments))
         const last = out[out.length - 1]
         // 与实时渲染同一套合并规则,否则历史看起来比当时更啰嗦。
         if (last?.kind === 'trace' && last.label === label) {
-          out[out.length - 1] = { ...last, text, count: (last.count ?? 1) + 1 }
+          out[out.length - 1] = { ...last, count: (last.count ?? 1) + 1 }
         } else {
-          out.push({ kind: 'trace', label, text })
+          out.push({ kind: 'trace', label })
         }
       }
       continue
@@ -856,38 +848,6 @@ function restoreEntries(messages: AgentMessage[]): Entry[] {
     // role === 'tool':结果本身不展示,轨迹已由上面的 tool_calls 表达。
   }
   return out
-}
-
-/**
- * 从工具参数里取一句可读摘要。
- *
- * 不同工具的"关键参数"不同:搜索看 query,规划看清单条数——
- * 统一取 query 会让规划、盘点这类工具显示成空白轨迹条。
- */
-function traceText(name: string, args?: Record<string, unknown>): string {
-  if (!args) return ''
-  if (name === 'update_todo') {
-    const items = Array.isArray(args.items) ? args.items : []
-    return items.length ? `${items.length} 个步骤` : ''
-  }
-  if (name === 'dispatch_subagents') {
-    const tasks = (Array.isArray(args.tasks) ? args.tasks : []) as { topic?: string }[]
-    return tasks
-      .map((t) => t.topic)
-      .filter(Boolean)
-      .join(' / ')
-  }
-  return String(args.query || args.topic || args.url || args.name || '')
-}
-
-/** 解析工具调用参数,失败返回 undefined(历史里偶有截断的脏数据)。 */
-function parseArgs(rawArgs?: string): Record<string, unknown> | undefined {
-  if (!rawArgs) return undefined
-  try {
-    return JSON.parse(rawArgs) as Record<string, unknown>
-  } catch {
-    return undefined
-  }
 }
 
 /**
@@ -972,7 +932,6 @@ function EntryView({
       <div className={`${styles.trace} ${entry.running ? styles.traceRunning : ''}`}>
         <span className={styles.traceLabel}>{entry.label}</span>
         {entry.count && entry.count > 1 && <span className={styles.traceCount}>×{entry.count}</span>}
-        {entry.text && <span className={styles.traceText}>{entry.text}</span>}
       </div>
     )
   }
