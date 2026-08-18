@@ -479,7 +479,6 @@ export default function HotCopyEntry({
   }, [ratioOpts, ratio])
   // @ 引用替换素材(交互对齐智能成片;数据源是上传的替换素材 products)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
-  const hlRef = useRef<HTMLDivElement | null>(null)
   const caretRef = useRef(0) // 最近一次光标位置(点 @ 会失焦,需提前记下)
   const [atOpen, setAtOpen] = useState(false)
 
@@ -1125,31 +1124,31 @@ export default function HotCopyEntry({
               </div>
             </div>
 
+            {/* 滚动只发生在 inputWrap 上；inputInner 不可滚，负责给 textarea 撑出整段文字的高度 */}
             <div className="hotcopy__inputWrap">
-              {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
-              <div className="hotcopy__inputHl" ref={hlRef} aria-hidden="true">
-                {renderHighlight(text)}
+              <div className="hotcopy__inputInner">
+                {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
+                <div className="hotcopy__inputHl" aria-hidden="true">
+                  {renderHighlight(text)}
+                </div>
+                <textarea
+                  ref={taRef}
+                  className="hotcopy__text"
+                  value={text}
+                  placeholder="最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里"
+                  onChange={(e) => {
+                    setText(e.target.value)
+                    caretRef.current = e.target.selectionStart ?? e.target.value.length
+                  }}
+                  onSelect={(e) => {
+                    caretRef.current = e.currentTarget.selectionStart ?? 0
+                  }}
+                  onKeyDown={(e) => {
+                    // Ctrl/Cmd+Enter 也走 submit:缺视频/图片会弹提示(校验在 submit 内)
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
+                  }}
+                />
               </div>
-              <textarea
-                ref={taRef}
-                className="hotcopy__text"
-                value={text}
-                placeholder="最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里"
-                onChange={(e) => {
-                  setText(e.target.value)
-                  caretRef.current = e.target.selectionStart ?? e.target.value.length
-                }}
-                onScroll={(e) => {
-                  if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop
-                }}
-                onSelect={(e) => {
-                  caretRef.current = e.currentTarget.selectionStart ?? 0
-                }}
-                onKeyDown={(e) => {
-                  // Ctrl/Cmd+Enter 也走 submit:缺视频/图片会弹提示(校验在 submit 内)
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
-                }}
-              />
             </div>
           </div>
 
