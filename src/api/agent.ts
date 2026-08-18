@@ -69,11 +69,28 @@ export interface AgentChatModel {
 }
 
 /** 待确认的生成调用,由 await_confirm 事件携带。 */
+/** 确认框里的一个可调参数,由后端按模型 schema 下发。 */
+export interface AgentPendingField {
+  name: string
+  display_name?: string
+  type: string
+  /** 模型给出的建议值,作为控件默认选中项。 */
+  value?: unknown
+  options?: unknown[]
+  min?: number
+  max?: number
+  help?: string
+}
+
 export interface AgentPendingCall {
   call_id: string
   name: string
   args: Record<string, unknown>
   estimated_credits: number
+  /** 可调参数。为空时确认框退化成只读展示。 */
+  fields?: AgentPendingField[]
+  /** 实际会用到的模型展示名。 */
+  model_name?: string
 }
 
 /** SSE 事件。type 决定 data 的形状。 */
@@ -278,6 +295,8 @@ export interface ContinueSessionInput {
   assetIds?: number[]
   /** 显式确认执行待定的生成。只带 message 的追问不会被当作确认。 */
   confirm?: boolean
+  /** 用户在确认框里改过的参数;为空则用模型原本给的。 */
+  confirmedArgs?: Record<string, unknown>
   /** 用户在确认框里改过的参数,为空则用模型原本给的。 */
   confirmedArgs?: Record<string, unknown>
   cancel?: boolean

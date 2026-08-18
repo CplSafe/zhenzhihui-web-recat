@@ -24,6 +24,7 @@ import {
   type AgentKind,
   type AgentMessage,
   type AgentPendingCall,
+  type AgentPendingField,
   type AgentSession,
 } from '@/api/agent'
 import { uploadAssetFile } from '@/api/business'
@@ -97,14 +98,6 @@ const TOOL_LABELS: Record<string, string> = {
 }
 
 /** 确认卡片里展示的参数,按这个顺序排;其余参数不展示避免噪音。 */
-const PARAM_LABELS: [string, string][] = [
-  ['model', '模型'],
-  ['resolution', '清晰度'],
-  ['duration', '时长(秒)'],
-  ['aspect', '画幅'],
-  ['count', '数量'],
-]
-
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -499,7 +492,7 @@ export default function AgentChatPanel({
 
   /** 确认或取消一次待定的生成。confirm=true 才会真正提交扣费。 */
   const settleConfirm = useCallback(
-    (callId: string, confirm: boolean) => {
+    (callId: string, confirm: boolean, confirmedArgs?: Record<string, unknown>) => {
       if (running) return
       setEntries((prev) =>
         prev.map((e) =>
@@ -507,7 +500,11 @@ export default function AgentChatPanel({
         ),
       )
       void runStream((onEvent, signal) =>
-        continueSession({ workspaceId, sessionId: sessionRef.current, confirm, cancel: !confirm }, onEvent, signal),
+        continueSession(
+          { workspaceId, sessionId: sessionRef.current, confirm, cancel: !confirm, confirmedArgs },
+          onEvent,
+          signal,
+        ),
       )
     },
     [running, runStream, workspaceId],
@@ -916,7 +913,7 @@ function EntryView({
 }: {
   entry: Entry
   onAnswer: (text: string) => void
-  onSettle: (callId: string, confirm: boolean) => void
+  onSettle: (callId: string, confirm: boolean, args?: Record<string, unknown>) => void
 }) {
   if (entry.kind === 'user') {
     return (
@@ -983,27 +980,90 @@ function EntryView({
     )
   }
 
+  return <ConfirmCard entry={entry} onSettle={onSettle} />
+}
+
+/**
+ * 生成确认卡片。参数是可选的控件,不是只读展示。
+ *
+ * 生成参数(时长/画幅/画质/张数)本该由用户定,模型只给建议值——
+ * 所以这里按后端下发的 schema 渲染成下拉/数字框,默认选中模型的建议值,
+ * 用户改完再提交。fields 为空时(拿不到 schema)退化成只读。
+ */
+function ConfirmCard({
+  entry,
+  onSettle,
+}: {
+  entry: Extract<Entry, { kind: 'confirm' }>
+  onSettle: (callId: string, confirm: boolean, args?: Record<string, unknown>) => void
+}) {
   const { call, settled } = entry
+  const [edits, setEdits] = useState<Record<string, unknown>>({})
+
+  const fields = call.fields ?? []
+  const isImage = call.name === 'generate_image'
+  const valueOf = (f: AgentPendingField) => (f.name in edits ? edits[f.name] : f.value)
+
   return (
     <div className={styles.confirmCard}>
-      <div className={styles.confirmTitle}>确认生成视频</div>
-      {PARAM_LABELS.map(([key, label]) =>
-        call.args[key] == null ? null : (
-          <div key={key} className={styles.confirmRow}>
-            <span>{label}</span>
-            <span>{String(call.args[key])}</span>
-          </div>
-        ),
-      )}
-      {typeof call.args.prompt === 'string' && (
-        <div className={styles.confirmRow}>
-          <span>提示词</span>
-          <span>{call.args.prompt}</span>
+      <div className={styles.confirmTitle}>
+        {isImage ? '确认生成图片' : '确认生成视频'}
+        {call.model_name && <span className={styles.confirmModel}>{call.model_name}</span>}
+      </div>
+
+      {typeof call.args.prompt === 'string' && <div className={styles.confirmPrompt}>{call.args.prompt}</div>}
+
+      {fields.map((f) => (
+        <div key={f.name} className={styles.confirmField}>
+          <span className={styles.confirmFieldLabel}>{f.display_name || f.name}</span>
+          {f.options && f.options.length > 0 ? (
+            <select
+              className={styles.confirmSelect}
+              value={String(valueOf(f) ?? '')}
+              disabled={!!settled}
+              onChange={(e) => {
+                // 从 options 里取回原始类型:select 的 value 恒为 string,
+                // 直接提交会把数字档位(如 duration=5)变成 "5" 被上游拒。
+                const picked = f.options?.find((o) => String(o) === e.target.value)
+                setEdits((prev) => ({ ...prev, [f.name]: picked ?? e.target.value }))
+              }}
+            >
+              {f.options.map((o) => (
+                <option key={String(o)} value={String(o)}>
+                  {String(o)}
+                </option>
+              ))}
+            </select>
+          ) : f.type === 'bool' ? (
+            <input
+              type="checkbox"
+              checked={!!valueOf(f)}
+              disabled={!!settled}
+              onChange={(e) => setEdits((prev) => ({ ...prev, [f.name]: e.target.checked }))}
+            />
+          ) : (
+            <input
+              className={styles.confirmInput}
+              type={f.type === 'number' ? 'number' : 'text'}
+              value={String(valueOf(f) ?? '')}
+              min={f.min}
+              max={f.max}
+              disabled={!!settled}
+              onChange={(e) =>
+                setEdits((prev) => ({
+                  ...prev,
+                  [f.name]: f.type === 'number' ? Number(e.target.value) : e.target.value,
+                }))
+              }
+            />
+          )}
         </div>
-      )}
+      ))}
+
       <div className={styles.confirmCredits}>
         预计消耗 <span className={styles.confirmCreditsValue}>{call.estimated_credits}</span> 积分
       </div>
+
       {settled ? (
         <div className={styles.confirmCredits}>{settled === 'done' ? '已确认执行' : '已取消'}</div>
       ) : (
@@ -1011,7 +1071,14 @@ function EntryView({
           <button className={styles.btnGhost} onClick={() => onSettle(call.call_id, false)}>
             取消
           </button>
-          <button className={styles.btnPrimary} onClick={() => onSettle(call.call_id, true)}>
+          <button
+            className={styles.btnPrimary}
+            onClick={() => {
+              // 只提交改动过的字段:未改的交给后端用模型建议值,
+              // 全量回传会把 schema 默认值固化成用户显式选择。
+              onSettle(call.call_id, true, Object.keys(edits).length ? edits : undefined)
+            }}
+          >
             确认生成
           </button>
         </div>
