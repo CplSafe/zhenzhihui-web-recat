@@ -273,14 +273,13 @@ function DistributionAccessRoute() {
   return <Navigate to="/home" replace />
 }
 
-// 已登录(本地标记)用户不进开屏页,直接去首页;游客才看开屏。
-// 同步读 localStorage 标记,避免异步会话检查前先闪一帧开屏;全程 replace,不在历史里留开屏/根路径条目。
+// 根路径按会话状态进入：已登录用户直接进入首页，游客进入开屏页。
+// 同步读取本地会话标记，避免登录用户刷新时短暂闪现开屏页。
 function IndexRedirect() {
   return <Navigate to={hasAuthSessionMarker() ? '/home' : '/welcome'} replace />
 }
-/** 已登录用户跳过开屏页，游客才渲染品牌欢迎页。 */
+/** 显式访问品牌欢迎页时，已登录用户也可以查看开屏内容。 */
 function WelcomeRoute() {
-  if (hasAuthSessionMarker()) return <Navigate to="/home" replace />
   return <>{lazyPage(<SplashView />)}</>
 }
 

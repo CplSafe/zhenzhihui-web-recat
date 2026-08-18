@@ -118,6 +118,10 @@ function requestedCanvasIds(): number[] {
  * waitFor 的默认预算是 1000ms，全量套件并行跑时这里会不够
  * （「进入视口 → setState → 副作用 → mock fetch settle」这条链在负载下会超）。
  * 放宽到 5s：这是等一条异步链，不是等一个可能永远不来的结果。
+ *
+ * findBy* 必须显式传第三个参数才吃这份预算——它不读 waitFor 的调用点配置，
+ * 而是走 Testing Library 自己的 asyncUtilTimeout（同样是 1000ms）。
+ * 漏传这一处会让「列表首次渲染」在满负载下偶发超时，表现为随机红。
  */
 const WAIT = { timeout: 5_000 } as const
 
@@ -132,7 +136,7 @@ describe('CanvasListView 封面加载', () => {
 
   it('列表渲染后不预取任何封面，只有进入视口的卡片才请求', async () => {
     render(<CanvasListView />)
-    await screen.findByLabelText('打开画布 甲')
+    await screen.findByLabelText('打开画布 甲', undefined, WAIT)
 
     // 三张卡片都在 DOM 里，但一张封面都不该请求
     expect(screen.getByLabelText('打开画布 乙')).toBeInTheDocument()
@@ -148,7 +152,7 @@ describe('CanvasListView 封面加载', () => {
 
   it('滚动后进入视口的卡片各自补齐，且同一张不重复请求', async () => {
     render(<CanvasListView />)
-    await screen.findByLabelText('打开画布 甲')
+    await screen.findByLabelText('打开画布 甲', undefined, WAIT)
 
     await intersect(101)
     await waitFor(() => expect(requestedCanvasIds()).toEqual([101]), WAIT)
@@ -164,7 +168,7 @@ describe('CanvasListView 封面加载', () => {
   it('环境不支持 IntersectionObserver 时退回全量预取，封面不至于永远不显示', async () => {
     vi.stubGlobal('IntersectionObserver', undefined)
     render(<CanvasListView />)
-    await screen.findByLabelText('打开画布 甲')
+    await screen.findByLabelText('打开画布 甲', undefined, WAIT)
 
     await waitFor(() => expect(requestedCanvasIds()).toEqual([101, 102, 103]), WAIT)
   })
