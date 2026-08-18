@@ -27,12 +27,19 @@ import {
   type AgentSession,
 } from '@/api/agent'
 import { uploadAssetFile } from '@/api/business'
+import Markdown from '@/components/common/Markdown'
 import styles from './AgentChatPanel.module.css'
 
 /** 会话内渲染的一条内容。工具轨迹与对话消息同列展示,靠样式区分权重。 */
 type Entry =
   | { kind: 'user'; text: string; images?: string[] }
   | { kind: 'assistant'; text: string }
+  // 模型在调工具前输出的中间文字。默认折叠:它是推理过程不是结论,
+  // 平铺出来会把真正的答案淹没。
+  | { kind: 'thinking'; text: string }
+  // 行内进度。放在对话流里而不是底部状态条——进度是过程的一部分,
+  // 固定在角落会让用户在"看对话"和"看状态"之间来回切换视线。
+  | { kind: 'status'; text: string }
   | { kind: 'trace'; label: string; text: string; running?: boolean }
   | { kind: 'question'; text: string; options: string[]; answered?: boolean }
   | { kind: 'confirm'; call: AgentPendingCall; settled?: 'done' | 'cancelled' }
@@ -126,9 +133,22 @@ export default function AgentChatPanel({
   const [models, setModels] = useState<AgentChatModel[]>([])
   const [modelId, setModelId] = useState<number>(0)
   const [openMenu, setOpenMenu] = useState<'mode' | 'model' | 'plus' | null>(null)
-  // status 是"当前正在做什么"的一句话,替代静态的「正在思考」。
-  // Agent 一轮要十几秒,静态文案会让用户以为卡住了。
-  const [status, setStatus] = useState('')
+  // 行内状态:替换对话流末尾的 status 条目而不是追加,
+  // 否则十几轮下来会积几十条"正在搜索…"把对话挤没。
+  const setStatus = useCallback((text: string) => {
+    setEntries((prev) => {
+      // 先摘掉旧的 status(它可能已被 trace 挤到中间),再追加到末尾。
+      // 不这么做的话每次搜索都会留下一条"搜索中…",与紧随其后的
+      // trace 内容重复,几轮下来就是满屏噪音。
+      const next = prev.filter((e) => e.kind !== 'status')
+      return [...next, { kind: 'status', text }]
+    })
+  }, [])
+
+  /** 流结束时清掉行内状态条——它只在运行中有意义。 */
+  const clearStatus = useCallback(() => {
+    setEntries((prev) => (prev.length && prev[prev.length - 1].kind === 'status' ? prev.slice(0, -1) : prev))
+  }, [])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -183,7 +203,14 @@ export default function AgentChatPanel({
     }
   }, [openMenu, closeMenu])
 
-  const push = useCallback((e: Entry) => setEntries((prev) => [...prev, e]), [])
+  // status 条目永远排在末尾:它表示「正在做什么」,被后续条目盖住就失去意义。
+  const push = useCallback((e: Entry) => {
+    setEntries((prev) => {
+      const idx = prev.findIndex((x) => x.kind === 'status')
+      if (idx === -1) return [...prev, e]
+      return [...prev.slice(0, idx), ...prev.slice(idx + 1), e, prev[idx]]
+    })
+  }, [])
 
   /* ── 附件上传 ─────────────────────────────────────────── */
 
@@ -250,7 +277,7 @@ export default function AgentChatPanel({
           break
 
         case 'thinking':
-          if (ev.data.content) push({ kind: 'assistant', text: ev.data.content })
+          if (ev.data.content) push({ kind: 'thinking', text: ev.data.content })
           break
 
         case 'tool_call': {
@@ -364,7 +391,7 @@ export default function AgentChatPanel({
         }
       } finally {
         setRunning(false)
-        setStatus('')
+        clearStatus()
         abortRef.current = null
       }
     },
@@ -589,12 +616,6 @@ export default function AgentChatPanel({
         )}
       </div>
 
-      {running && (
-        <div className={styles.statusBar}>
-          <span className={styles.dot} />
-          {status || '正在思考…'}
-        </div>
-      )}
       {error && <div className={styles.errorBar}>{error}</div>}
 
       {empty && !running && suggestions.length > 0 && (
@@ -841,6 +862,33 @@ function traceArg(rawArgs?: string): string {
   }
 }
 
+/**
+ * 模型的中间思考,默认折叠。
+ *
+ * 这些文字是推理过程("我先查供货价,再对比竞品…"),不是给用户的结论。
+ * 平铺出来会让真正的答案淹没在过程里;完全隐藏又失去了可解释性,
+ * 所以折叠——想看的人点开,不想看的人只读最终正文。
+ */
+function ThinkingBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const preview = text.length > 40 ? `${text.slice(0, 40)}…` : text
+
+  return (
+    <div className={styles.thinking}>
+      <button className={styles.thinkingToggle} onClick={() => setOpen((v) => !v)}>
+        <span className={`${styles.thinkingCaret} ${open ? styles.thinkingCaretOpen : ''}`}>›</span>
+        <span className={styles.thinkingLabel}>思考</span>
+        {!open && <span className={styles.thinkingPreview}>{preview}</span>}
+      </button>
+      {open && (
+        <div className={styles.thinkingBody}>
+          <Markdown>{text}</Markdown>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── 条目渲染 ───────────────────────────────────────────── */
 
 function EntryView({
@@ -866,7 +914,30 @@ function EntryView({
       </div>
     )
   }
-  if (entry.kind === 'assistant') return <div className={styles.bubbleAssistant}>{entry.text}</div>
+  if (entry.kind === 'assistant') {
+    // 模型输出的是 Markdown(加粗/表格/列表/分级标题),纯文本渲染会把
+    // **卖点** 这类标记原样显示。用项目现成的 Markdown 组件——
+    // 不引 streamdown:它会把 shiki + mermaid 全打包进来(数 MB),
+    // 而选品报告只需要 GFM 文本能力(见 common/Markdown.tsx 的说明)。
+    return (
+      <div className={`${styles.bubbleAssistant} ${styles.markdown}`}>
+        <Markdown>{entry.text}</Markdown>
+      </div>
+    )
+  }
+
+  if (entry.kind === 'status') {
+    return (
+      <div className={styles.statusInline}>
+        <span className={styles.dot} />
+        {entry.text}
+      </div>
+    )
+  }
+
+  if (entry.kind === 'thinking') {
+    return <ThinkingBlock text={entry.text} />
+  }
 
   if (entry.kind === 'trace') {
     return (

@@ -594,16 +594,17 @@
   text-align: center;
 }
 
-/* ── 状态条 ───────────────────────────────────────────── */
+/* ── 行内状态 ─────────────────────────────────────────── */
 
-.statusBar {
+/* 跟着对话流走,而不是钉在底部:进度本身是过程的一部分,
+   固定在角落会让视线在「读对话」和「看状态」之间来回跳。 */
+.statusInline {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 var(--space-lg) var(--space-sm);
+  padding: 2px 0;
   font-size: 12px;
   color: var(--color-text-tertiary);
-  flex-shrink: 0;
 }
 
 .errorBar {
@@ -728,4 +729,167 @@
   text-align: center;
   font-size: 13px;
   color: var(--color-text-tertiary);
+}
+
+/* ── 思考折叠块 ───────────────────────────────────────── */
+
+.thinking {
+  margin: 2px 0;
+}
+
+.thinkingToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  transition: background var(--transition-fast);
+}
+
+.thinkingToggle:hover {
+  background: var(--color-brand-light);
+}
+
+.thinkingCaret {
+  display: inline-block;
+  transition: transform var(--transition-fast);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.thinkingCaretOpen {
+  transform: rotate(90deg);
+}
+
+.thinkingLabel {
+  flex-shrink: 0;
+}
+
+/* 折叠时给一句预览:完全不给线索的话,用户不知道值不值得展开。 */
+.thinkingPreview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.thinkingBody {
+  margin: 4px 0 6px 14px;
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border-strong);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+}
+
+/* ── Markdown 正文 ────────────────────────────────────── */
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p {
+  margin: 0 0 10px;
+  line-height: 1.75;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.markdown h1 {
+  font-size: 17px;
+}
+.markdown h2 {
+  font-size: 15px;
+}
+.markdown h3 {
+  font-size: 14px;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.markdown li {
+  margin-bottom: 4px;
+  line-height: 1.7;
+}
+
+.markdown strong {
+  font-weight: 600;
+  color: var(--color-heading);
+}
+
+.markdown code {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-app);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.markdown pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-app);
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+/* 选品报告大量用表格(价格带、竞品对比),必须能横向滚动而不撑破面板 */
+.markdown table {
+  display: block;
+  width: 100%;
+  margin: 0 0 10px;
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.markdown th,
+.markdown td {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-strong);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.markdown th {
+  background: var(--color-bg-app);
+  font-weight: 600;
+}
+
+.markdown blockquote {
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 3px solid var(--color-brand-border);
+  color: var(--color-text-secondary);
+}
+
+.markdown a {
+  color: var(--color-brand);
+  text-decoration: underline;
+  word-break: break-all;
 }
