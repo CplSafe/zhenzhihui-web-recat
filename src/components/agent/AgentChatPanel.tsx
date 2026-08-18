@@ -1006,17 +1006,51 @@ function ConfirmCard({
 
   return (
     <div className={styles.confirmCard}>
-      <div className={styles.confirmTitle}>
-        {isImage ? '确认生成图片' : '确认生成视频'}
-        {call.model_name && <span className={styles.confirmModel}>{call.model_name}</span>}
-      </div>
+      <div className={styles.confirmTitle}>{isImage ? '确认生成图片' : '确认生成视频'}</div>
+
+      {/* 模型也要能换:只显示名字而不给切换,等于把选择权留在模型手里。
+          只有一个可选模型时退化成文本,避免给一个点了没反应的下拉框。 */}
+      {call.models && call.models.length > 1 ? (
+        <div className={styles.confirmField}>
+          <span className={styles.confirmFieldLabel}>模型</span>
+          <select
+            className={styles.confirmSelect}
+            value={String(edits.model ?? call.models.find((m) => m.selected)?.value ?? '')}
+            disabled={!!settled}
+            onChange={(e) => setEdits((prev) => ({ ...prev, model: e.target.value }))}
+          >
+            {call.models.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.display_name}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        call.model_name && (
+          <div className={styles.confirmField}>
+            <span className={styles.confirmFieldLabel}>模型</span>
+            <span className={styles.confirmModel}>{call.model_name}</span>
+          </div>
+        )
+      )}
 
       {typeof call.args.prompt === 'string' && <div className={styles.confirmPrompt}>{call.args.prompt}</div>}
 
       {fields.map((f) => (
         <div key={f.name} className={styles.confirmField}>
           <span className={styles.confirmFieldLabel}>{f.display_name || f.name}</span>
-          {f.options && f.options.length > 0 ? (
+          {/* 类型判断必须排在 options 之前:布尔字段即使带了 options
+              也该渲染成开关,落进下拉框会变成手填 true/false。 */}
+          {f.type === 'bool' || f.type === 'boolean' ? (
+            <input
+              type="checkbox"
+              className={styles.confirmCheckbox}
+              checked={!!valueOf(f)}
+              disabled={!!settled}
+              onChange={(e) => setEdits((prev) => ({ ...prev, [f.name]: e.target.checked }))}
+            />
+          ) : f.options && f.options.length > 0 ? (
             <select
               className={styles.confirmSelect}
               value={String(valueOf(f) ?? '')}
@@ -1034,16 +1068,6 @@ function ConfirmCard({
                 </option>
               ))}
             </select>
-          ) : f.type === 'bool' || f.type === 'boolean' ? (
-            // 两种写法都要认:后端 schema 里 bool 与 boolean 混用,
-            // 漏掉一种会让开关渲染成文本框,用户改不了也看不懂。
-            <input
-              type="checkbox"
-              className={styles.confirmCheckbox}
-              checked={!!valueOf(f)}
-              disabled={!!settled}
-              onChange={(e) => setEdits((prev) => ({ ...prev, [f.name]: e.target.checked }))}
-            />
           ) : (
             <input
               className={styles.confirmInput}

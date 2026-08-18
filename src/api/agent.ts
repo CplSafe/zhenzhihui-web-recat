@@ -91,6 +91,16 @@ export interface AgentPendingCall {
   fields?: AgentPendingField[]
   /** 实际会用到的模型展示名。 */
   model_name?: string
+  /** 可切换的生成模型。 */
+  models?: AgentPendingModel[]
+}
+
+/** 确认框里可选的生成模型。 */
+export interface AgentPendingModel {
+  /** 提交时填回 args.model。 */
+  value: string
+  display_name: string
+  selected: boolean
 }
 
 /** SSE 事件。type 决定 data 的形状。 */
