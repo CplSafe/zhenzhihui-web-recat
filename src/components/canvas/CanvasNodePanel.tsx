@@ -12,7 +12,6 @@ import { estimateAiTaskCost } from '@/api/business'
 import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
-  isCanvasVideoSourceKind,
   type CanvasConnectionRole,
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
@@ -69,6 +68,20 @@ function isRatioField(field: ParamsSchemaField): boolean {
 function isDurationField(field: ParamsSchemaField): boolean {
   const key = normalizeParamKey(field.name)
   return key === 'duration' || key === 'videoduration' || key === 'durationseconds' || key === 'seconds'
+}
+
+/**
+ * 前端一律不暴露的参数字段。
+ *
+ * 随机种子（seed / random_seed / noise_seed）对使用者没有可理解的含义：改它既不能稳定复现
+ * 同一张图（同种子在服务端排队、版本变动下并不保证同结果），也不能让画面变好，
+ * 只是在参数栏白占一格、还诱使用户以为它是个可调质量的旋钮。
+ * 从 schemaFields 源头剔除，菜单不渲染、params 也不带上，交给后端用自己的默认值。
+ */
+const HIDDEN_PARAM_KEYS = new Set(['seed', 'randomseed', 'noiseseed', 'seednumber'])
+
+function isHiddenParamField(field: ParamsSchemaField): boolean {
+  return HIDDEN_PARAM_KEYS.has(normalizeParamKey(field.name))
 }
 
 /** 识别 seedream 5.0 模型：displayName + 原始记录中的名称/版本字段拼接后匹配。 */
@@ -339,7 +352,12 @@ interface CanvasNodePanelProps {
    * 同一个面板两种行为，用户只会当成丢数据。
    */
   onParamsChange?: (params: Record<string, unknown>) => void
-  /** 从上游文本节点继承来的提示词内容。 */
+  /**
+   * 从上游文本节点继承来的提示词，按连线顺序。
+   *
+   * 输入框为空时会自动填进去（见下方 useEffect），所以它既是展示数据也是 prompt 的来源；
+   * 拼接时会剔除输入框里已包含的段落，避免同一段内容被拼两遍。
+   */
   inheritedTexts?: InheritedPromptText[]
   /** 将继承文本转为本节点自己的 prompt，并由页面断开对应文本连线。 */
   onAdoptInheritedText?: () => void
@@ -415,15 +433,6 @@ export default function CanvasNodePanel({
   ].includes(String(node?.taskStatus || '').toLowerCase())
   const isNewModelGeneration = kind === 'video' && node?.generationIntent === 'new-model'
   const isEditingVideo = kind === 'video' && Boolean(node?.resultUrl) && !isNewModelGeneration
-  /**
-   * 本次生成是否带着一条视频进去（决定走 video.edit 还是 video.generate）。
-   *
-   * 两种来源：连线接进来的视频/时间线节点，或节点自己已有的那条视频（改片）。
-   * 「使用新模型重新生成」是从头再生成一次，不带源视频，因此不算。
-   */
-  const hasVideoSourceRef =
-    kind === 'video' && (node?.sourceRefs || []).some((ref) => isCanvasVideoSourceKind(ref.kind))
-  const hasVideoInput = hasVideoSourceRef || isEditingVideo
   // 文本节点的内容存在 text，图片/视频节点的输入框存在 prompt；两者都随节点持久化。
   const [prompt, setPrompt] = useState(() => String((kind === 'text' ? node?.text : node?.prompt) || ''))
   const [polishing, setPolishing] = useState(false)
@@ -469,16 +478,18 @@ export default function CanvasNodePanel({
    * 当前上下文应使用的 operation_code：
    * 文本节点 → responses.multimodal
    * 图片节点：无图片来源节点（参考图）→ image.text_to_image；有图片来源节点 → image.image_to_image
-   * 视频节点：无视频输入 → video.generate；有视频输入（连线来源是视频/时间线，或在改自己那条）→ video.edit
+   * 视频节点：一律 video.generate——包括「视频生视频」（连线来源是视频/时间线，或在改自己那条）。
    *
-   * 这里曾经一律用 video.generate，把源视频当成 role:'video' 的输入一起下发。
-   * 后端不接受这个组合，一律回 INVALID_MODEL_PARAMS（「素材类型不适用于当前操作」）：
-   * 全仓「以一条视频为输入」只有两条被验证过的通道——智能成片的 video.edit + role:'video'，
-   * 以及爆款复制的 video.replicate，没有一条走 video.generate。
-   * 而且 operation 恒为 video.generate 时，下面的模型过滤只会列出文/图生视频模型，
-   * 用户根本选不到能吃视频的模型，看起来就像「素材没问题却总是被拒」。
+   * 这里曾经在有视频输入时切成 video.edit，于是模型下拉只剩 happyhorse 那个视频编辑模型：
+   * 用户想用哪个视频生成模型来做视频生视频都选不了，只能被塞给编辑模型。
+   * 当初那么写的理由是「后端不接受 video.generate + role:'video'」，这个结论现在已经不成立——
+   * 智能成片的视频生视频正是 video.generate + role:'video'（见 smartVideo.buildFullVideoInputAssets），
+   * 一直在生产上跑。画布的 input_assets 本来就按来源类型下发 role（视频来源恒为 'video'，
+   * 见 buildCanvasInputAssets），与 operation 无关，所以这里改回 video.generate 不影响素材角色。
    *
-   * 节点已持久化 operationCode 且所选模型仍支持时，优先复用（刷新后回显不变）
+   * 改完之后画布不再产出 video.edit：视频节点的 operation 不复用持久化值（见下面 targetOperationCode），
+   * 所以老节点重新生成时也会走 video.generate。happyhorse 那类只声明 video.edit 的模型
+   * 因此不再出现在画布的模型下拉里——爆款复制仍在用 video.edit，那条通道不受影响。
    */
   const contextualOperationCode = useMemo((): string => {
     if (kind === 'text') return 'responses.multimodal'
@@ -486,17 +497,17 @@ export default function CanvasNodePanel({
       const hasImageSource = (node?.sourceRefs || []).some((ref) => ref.kind === 'image')
       return hasImageSource ? 'image.image_to_image' : 'image.text_to_image'
     }
-    if (kind === 'video') return hasVideoInput ? 'video.edit' : 'video.generate'
+    // 视频一律 video.generate：有没有源视频只改 input_assets（多一条 role:'video'），不换 operation
+    if (kind === 'video') return 'video.generate'
     return ''
-  }, [kind, node?.sourceRefs, hasVideoInput])
+  }, [kind, node?.sourceRefs])
 
   const targetOperationCode = useMemo((): string => {
     // 图片生成模式必须跟随当前参考链实时切换：接入（包括经文本节点继承的）参考图后，
     // 不能继续复用节点历史上保存的 image.text_to_image，否则参考素材不会进入模型。
     if (kind === 'image') return contextualOperationCode
-    // 视频同理：generate / edit 完全由「本次有没有视频输入」决定。
-    // 复用持久化值会让一个跑过 video.generate 的节点在接入视频后仍然发 video.generate，
-    // 后端照样拒——上下文推断必须赢过历史值。
+    // 视频恒为 video.generate，不复用持久化值：历史节点上可能存着 video.edit，
+    // 那是画布还在用编辑模型时留下的，继续复用会把用户重新拽回 happyhorse
     if (kind === 'video') return contextualOperationCode
     const persisted = String(node?.operationCode || '').trim()
     // 持久化的 operation_code 若仍被当前 kind 的模型支持，则复用；否则回退上下文推断
@@ -527,14 +538,29 @@ export default function CanvasNodePanel({
     return targetOperationCode
   }, [availableModels, targetOperationCode])
 
+  /** 缺模型时的说明文案：按目标 operation 指名道姓，不要笼统说「暂无可用模型」。 */
+  const emptyModelLabel = useMemo(() => {
+    const labels: Record<string, string> = {
+      'image.image_to_image': '暂无可用的图生图模型',
+      'image.text_to_image': '暂无可用的文生图模型',
+      'video.edit': '暂无可用的视频修改模型',
+      'video.generate': '暂无可用的视频生成模型',
+    }
+    return labels[targetOperationCode] || ''
+  }, [targetOperationCode])
+
   /** 是否有素材输入（图片/视频连线）；纯文本来源不算，它只会拼进 prompt。 */
   const hasMediaInput = useMemo(() => sourceRefs.some((ref) => ref.kind !== 'text'), [sourceRefs])
 
   // 选中模型的 params_schema.fields（视频菜单动态渲染来源）。
   // 没有素材输入时剔除「跟随素材」的比例档位（adaptive/auto）：模型无从推断画幅，官方 API 直接 400。
   // 在这里一次性剔除，下拉菜单、默认值收敛和最终 params 三处就都拿不到这个档位。
+  //
+  // 随机种子同样在这里整条剔除：它对使用者没有可理解的含义，调它既不能复现也不能改善画面，
+  // 只是白占一格参数位。从 schemaFields 源头去掉，菜单不再渲染它，params 里也不会带上，
+  // 后端未传时按其自身默认处理。
   const schemaFields = useMemo(() => {
-    const fields = parseParamsSchema(selectedModel)
+    const fields = parseParamsSchema(selectedModel).filter((field) => !isHiddenParamField(field))
     if (hasMediaInput) return fields
     return fields.map((field) =>
       isRatioField(field) ? { ...field, options: filterInputDerivedRatioOptions(field.options, false) } : field,
@@ -604,18 +630,48 @@ export default function CanvasNodePanel({
     [buildSchemaParams, fieldValues],
   )
 
-  // 拼接最终 prompt：文本来源节点的内容在前（按连线顺序），用户提示词在后；
-  // 图片/视频来源作为素材引用（input_assets）单独传参，不拼进 prompt。
+  /**
+   * 拼接最终 prompt：继承来的文本在前（按连线顺序），用户自己的提示词在后；
+   * 图片/视频来源作为素材引用（input_assets）单独传参，不拼进 prompt。
+   *
+   * 这里刻意用 inheritedTexts 而不是再去读一次 window.__canvasTextContents：
+   * 上方展示的就是这份数据，两处同源才能保证「看到的」等于「发出去的」。
+   * 各自去读全局 Map 的话，一旦取值口径出现分歧（比如 trim 与否），
+   * 用户就会对着一段显示正常的文本却拿到另一种结果，这类问题几乎无法排查。
+   */
+  const inheritedPromptText = useMemo(
+    () => (inheritedTexts || []).map((item) => item.text.trim()).filter(Boolean),
+    [inheritedTexts],
+  )
+  /**
+   * 上游文本自动落进输入框：连上文本节点后不用再点一次「转为可编辑」，改完直接点生成。
+   *
+   * 只在输入框为空时填，绝不覆盖用户已经写下的内容——这是唯一会丢字的方向。
+   * 填完仍保留连线（画布上还看得见来源关系），因此提交时必须把这段从「继承」里排除掉，
+   * 否则同一段文字会拼两遍。
+   */
+  useEffect(() => {
+    if (kind === 'text' || !inheritedPromptText.length || prompt.trim()) return
+    const filled = inheritedPromptText.join('\n\n')
+    setPrompt(filled)
+    onPromptChange?.(filled)
+  }, [kind, inheritedPromptText, prompt, onPromptChange])
+
+  /**
+   * 还没进输入框的继承文本。已经落进输入框的那些不再重复拼接，也不再单独展示：
+   * 输入框里那份才是用户看得见、改得动的，展示两份只会让人分不清最终发出去的是哪个。
+   */
+  const pendingInheritedText = useMemo(
+    () => inheritedPromptText.filter((text) => !prompt.includes(text)),
+    [inheritedPromptText, prompt],
+  )
+
   const buildFullPrompt = useCallback(
     (userPrompt: string): string => {
-      const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
-      const sourceTexts = (node?.sourceRefs || [])
-        .filter((ref) => ref.kind === 'text')
-        .map((ref) => String(textMap?.get(ref.sourceId) || '').trim())
-        .filter(Boolean)
-      return [...sourceTexts, userPrompt.trim()].filter(Boolean).join('\n\n')
+      const userText = userPrompt.trim()
+      return [...inheritedPromptText.filter((text) => !userText.includes(text)), userText].filter(Boolean).join('\n\n')
     },
-    [node?.sourceRefs],
+    [inheritedPromptText],
   )
 
   // 估价必须和提交用同一份 input_assets：改片时节点自己的那条视频也要计入，
@@ -849,11 +905,17 @@ export default function CanvasNodePanel({
         )}
       </div>
 
-      {hasInheritedTexts && (
+      {/*
+        继承自上游文本节点、但还没落进输入框的那部分。
+        输入框为空时上游文本会自动填进去（见上方 useEffect），正常路径下这里不显示；
+        只有用户自己清空或改写过输入框，剩下的那段才露出来——它提交时仍会被拼上，
+        不显示就成了「发出去的和看到的不一致」。
+      */}
+      {pendingInheritedText.length > 0 && (
         <div className={styles.inheritedPrompt}>
           <div className={styles.inheritedPromptMain}>
             <span className={styles.inheritedPromptLabel}>继承文本</span>
-            <span className={styles.inheritedPromptText}>{inheritedTexts.map((item) => item.text).join(' / ')}</span>
+            <span className={styles.inheritedPromptText}>{pendingInheritedText.join(' / ')}</span>
           </div>
           <button
             type="button"
@@ -915,9 +977,10 @@ export default function CanvasNodePanel({
               value={node?.modelVersionId}
               loading={modelsLoading}
               disabled={taskRunning}
-              // 带视频输入时用的是 video.edit：这个操作没有模型时要说清原因，
-              // 否则用户看到的只是一句「暂无可用模型」，会以为是素材或连线出了问题。
-              emptyLabel={hasVideoInput ? '暂无可用的视频修改模型' : undefined}
+              // 缺模型时要说清缺的是哪一种能力：接了参考图走图生图、没接走文生图，
+              // 两者在后端是不同的 operation_code，可用性也各自独立。
+              // 只说一句「暂无可用模型」，用户会以为是素材或连线出了问题。
+              emptyLabel={emptyModelLabel}
               onChange={(value) => {
                 if (!taskRunning) onModelChange?.(value)
               }}
@@ -946,8 +1009,16 @@ export default function CanvasNodePanel({
           className={`${styles.generateBtn} ${styles.generatePill}`}
           onClick={handleGenerate}
           disabled={taskRunning || (kind === 'text' ? !prompt.trim() : !selectedModel || !operationCode)}
+          // 按钮灰着时必须说明是被什么挡住的：缺模型和缺提示词是两回事，
+          // 只写「发送生成」等于让用户对着一个点不动的按钮自己猜
           title={
-            taskRunning ? '生成过程中不能修改，请添加新的节点使用其他模型' : kind === 'text' ? '保存提示词' : '发送生成'
+            taskRunning
+              ? '生成过程中不能修改，请添加新的节点使用其他模型'
+              : kind === 'text'
+                ? '保存提示词'
+                : !selectedModel
+                  ? emptyModelLabel || '暂无可用模型，请先在上方选择模型'
+                  : '发送生成'
           }
         >
           {/* 左侧：预估积分数字 */}
@@ -1029,22 +1100,36 @@ function ModelSelector({
 }) {
   const [open, setOpen] = useState(false)
   const availableModels = models.filter((m) => !m.unavailableReason)
+  /**
+   * 目录里有、但当前用不了的模型（未开通会员、余额不足、套餐不含等）。
+   *
+   * 这些模型原来被直接滤掉，控件只剩一句「暂无可用模型」且连点都点不开——
+   * 后端明明给了 unavailableReason，用户却看不到，只能以为是素材或连线出了毛病。
+   * 有原因就把原因显示出来，让人知道下一步该做什么。
+   */
+  const blockedModels = models.filter((m) => m.unavailableReason)
+  const blockedReason = String(blockedModels[0]?.unavailableReason || '')
   const selected =
     availableModels.find((m) => m.modelVersionId === value) || (availableModels.length ? availableModels[0] : undefined)
-  const display = loading ? '加载中...' : selected?.displayName || emptyLabel || '暂无可用模型'
+  const display = loading
+    ? '加载中...'
+    : selected?.displayName || (blockedModels.length ? '模型暂不可用' : emptyLabel || '暂无可用模型')
+  // 有被挡住的模型时仍然允许展开：列表里逐条写明为什么用不了
+  const canOpen = !disabled && (availableModels.length > 0 || blockedModels.length > 0)
 
   return (
     <div className={styles.selectorWrap}>
       <button
-        className={`${styles.selector} ${availableModels.length === 0 || disabled ? styles.selectorDisabled : ''}`}
+        className={`${styles.selector} ${canOpen ? '' : styles.selectorDisabled}`}
+        title={selected ? undefined : blockedReason || emptyLabel || undefined}
         onClick={() => {
-          if (availableModels.length === 0 || disabled) return
+          if (!canOpen) return
           setOpen((v) => !v)
         }}
       >
         {display}
       </button>
-      {open && availableModels.length > 0 && (
+      {open && canOpen && (
         <SelectorPopover open={open} onClose={() => setOpen(false)}>
           {availableModels.map((m) => (
             <button
@@ -1057,6 +1142,12 @@ function ModelSelector({
             >
               {m.displayName}
             </button>
+          ))}
+          {blockedModels.map((m) => (
+            <span key={m.modelVersionId} className={styles.popoverItemBlocked} title={String(m.unavailableReason)}>
+              <b>{m.displayName}</b>
+              <em>{String(m.unavailableReason)}</em>
+            </span>
           ))}
         </SelectorPopover>
       )}

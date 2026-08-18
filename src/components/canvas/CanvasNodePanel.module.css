@@ -114,9 +114,134 @@
   font-size: 12px;
 }
 
+/*
+ * 继承自上游文本节点的提示词块。
+ *
+ * 视觉上要一眼看出「这段不是我敲的、但会一起发出去」：左侧竖条 + 浅底与下方输入框区分开，
+ * 同时排版与输入框同字号同行高，让人读起来就是同一段提示词的上半部分。
+ */
+.inheritedText {
+  margin-bottom: 8px;
+  padding: 8px 10px 8px 12px;
+  border-left: 3px solid #5767e5;
+  border-radius: 4px 8px 8px 4px;
+  background: #f4f6ff;
+}
+
+.inheritedTextHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.inheritedTextActions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+}
+
+/* 标题、按钮、脚注都是装饰文字：一次误拖不该把整块刷成蓝色选区，正文仍可正常选中复制 */
+.inheritedTextLabel,
+.inheritedTextFoot,
+.inheritedTextToggle,
+.inheritedTextAdopt {
+  user-select: none;
+}
+
+.inheritedTextLabel {
+  min-width: 0;
+  overflow: hidden;
+  color: #5767e5;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.inheritedTextToggle {
+  flex: none;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #5767e5;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.inheritedTextToggle:hover {
+  background: #e6eaff;
+}
+
+.inheritedTextAdopt {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid rgba(87, 103, 229, 0.32);
+  border-radius: 999px;
+  background: #fff;
+  color: #5767e5;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.inheritedTextAdopt:hover {
+  border-color: #5767e5;
+  background: #eef1ff;
+}
+
+/*
+ * 收起态：只露两行。
+ *
+ * 图生图的提示词本来就常有五六行，整段铺开会把下方真正要填的输入框顶出面板，
+ * 用户看到的是一大片读不完的灰字，反而不知道该在哪里写。
+ */
+.inheritedTextBodyClamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+/* 展开态：给一个上限并可滚，长脚本不会把面板撑到屏幕外 */
+.inheritedTextBodyOpen {
+  max-height: 150px;
+  overflow-y: auto;
+  margin-bottom: 4px;
+}
+
+.inheritedTextParagraph {
+  margin: 0 0 6px;
+  color: #3a4152;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inheritedTextParagraph:last-child {
+  margin-bottom: 0;
+}
+
+.inheritedTextFoot {
+  color: #858a96;
+  font-size: 11px;
+}
+
 .textarea {
   width: 100%;
   min-height: 82px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-sizing: border-box;
   border: none;
   outline: none;
   resize: none;
@@ -319,6 +444,30 @@
 
 .popoverItem:hover {
   background: rgba(87, 103, 229, 0.06);
+}
+
+/* 用不了的模型：名字压暗，下面一行直接写清为什么，用户不用猜 */
+.popoverItemBlocked {
+  display: block;
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: #9aa0aa;
+  font-size: 13px;
+  cursor: not-allowed;
+}
+
+.popoverItemBlocked b {
+  display: block;
+  font-weight: 500;
+}
+
+.popoverItemBlocked em {
+  display: block;
+  margin-top: 2px;
+  color: #b0763a;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
 }
 
 .popoverItemActive {
