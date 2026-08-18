@@ -51,7 +51,6 @@
 .canvas-panel-area.is-anchored {
   bottom: auto;
 }
-
 /* 节点顶部操作胶囊组 — 图片/视频节点专属，与左右侧连接点图标同款交互（选中/悬停出现）
    组内可含多个胶囊按钮（图片有内容：替换|下载；视频有内容：下载；无内容：上传） */
 .canvas-node-upload-group {

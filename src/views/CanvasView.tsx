@@ -29,15 +29,18 @@ import {
   getBezierPath,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
 
 /**
  * 连线箭头仅属于画布展示层，不写入元素持久化数据。
  * 这样历史画布与新建画布都能统一显示方向，同时不会制造无意义的云端 revision。
  *
- * 取值是 CanvasEdgeArrowDefs 里那份常驻定义的 id，而不是 marker 对象——原因见该文件。
+ * 箭头由边自己画（见 CanvasArrowEdge），不走 SVG marker 的 url(#id) 引用——
+ * 那条路上新建的第一条线要刷新才有箭头。
  */
-const CANVAS_EDGE_END_MARKER = CANVAS_EDGE_ARROW_ID
-import CanvasEdgeArrowDefs, { CANVAS_EDGE_ARROW_ID } from '@/components/canvas/CanvasEdgeArrowDefs'
+const CANVAS_ARROW_EDGE_TYPE = 'canvasArrow'
+
+const edgeTypes = { [CANVAS_ARROW_EDGE_TYPE]: CanvasArrowEdge }
 import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
 import CanvasNodePanel, {
   type CanvasNodeInfo,
@@ -378,13 +381,7 @@ const LOCAL_PREVIEW_REVOKE_MS = 5000
 /** 编辑面板与选中节点之间的间距（像素），同时用作面板与视口边缘的安全距离 */
 const NODE_PANEL_GAP = 16
 
-/**
- * 面板左边缘要为左侧浮动工具栏让出的宽度。
- *
- * 工具栏在 left:46px、宽约 68px（见 CanvasFloatingToolbar.module.css），z-index:10，
- * 而面板是 z-index:50——两者一重叠，工具栏底部的按钮就被面板压住点不到
- * （实测「历史记录」被面板的参考图行完全遮住）。夹取时把这条竖带让出来。
- */
+/** 面板左边缘要为左侧浮动工具栏让出的宽度 */
 const NODE_PANEL_LEFT_SAFE = 128
 
 /**
@@ -1598,7 +1595,7 @@ function CanvasInner() {
   }, [])
   const transform = useStore((s) => s.transform)
 
-  // 编辑面板尺寸：算锚点要用它做居中与边界夹取，面板内容随节点类型变化，用 ResizeObserver 跟踪。
+  // 编辑面板尺寸与锚点位置
   const panelRef = useRef<HTMLDivElement>(null)
   const [panelSize, setPanelSize] = useState({ width: 0, height: 0 })
   useEffect(() => {
@@ -1611,62 +1608,33 @@ function CanvasInner() {
     return () => observer.disconnect()
   }, [selectedNode?.id])
 
-  /**
-   * 选中节点下方的面板位置（视口坐标）。
-   *
-   * 节点位置是画布坐标，必须经 transform 换算成屏幕坐标，面板才会跟着缩放/平移一起动 ——
-   * 面板是 position: fixed，渲染在画布容器之外，直接用画布坐标会跑偏。
-   * 下方放不下就翻到节点上方；左右做夹取，保证面板始终完整可见。
-   */
   const panelAnchor = useMemo(() => {
     if (!selectedNode) return null
     const node = nodes.find((item) => item.id === selectedNode.id)
     if (!node) return null
     const [tx, ty, tz] = transform
+    const domNode = Array.from(document.querySelectorAll<HTMLElement>('.react-flow__node')).find(
+      (element) => element.dataset.id === selectedNode.id,
+    )
+    const nodeRect = domNode?.getBoundingClientRect()
     const style = (node.style || {}) as Record<string, unknown>
     const nodeWidth = Number(node.measured?.width ?? style.width ?? 250) || 250
     const nodeHeight = Number(node.measured?.height ?? style.height ?? 250) || 250
-    const centerX = (node.position.x + nodeWidth / 2) * tz + tx
-    const bottomY = (node.position.y + nodeHeight) * tz + ty
-    const topY = node.position.y * tz + ty
-
-    const viewportWidth = window.innerWidth
-    const viewportHeight = window.innerHeight
+    const centerX = nodeRect ? nodeRect.left + nodeRect.width / 2 : (node.position.x + nodeWidth / 2) * tz + tx
+    const bottomY = nodeRect ? nodeRect.bottom : (node.position.y + nodeHeight) * tz + ty
     const halfWidth = (panelSize.width || 0) / 2
-    const height = panelSize.height || 0
     const below = bottomY + NODE_PANEL_GAP
-    const above = topY - NODE_PANEL_GAP - height
-    const fitsBelow = below + height + NODE_PANEL_GAP <= viewportHeight
-    const fitsAbove = above >= NODE_PANEL_GAP
-
-    /*
-     * 纵向只在选定的那一侧取值，绝不做「拉回视口内」的夹取。
-     *
-     * 之前那一版把 top 夹到 [GAP, viewportHeight - height - GAP]：面板一旦比节点下方的
-     * 空间还高，夹取就把它往上拽，正好压在它自己正在编辑的那个节点上——用户看不见刚生成的东西。
-     * 现在放不下就让它先溢出视口，由下面的「腾位置」副作用平移画布来解决，而不是牺牲节点。
-     */
-    const top = fitsBelow || !fitsAbove ? below : above
-
-    // 左界为工具栏让出竖带；面板宽到放不下时右界优先，此时仍会压住工具栏（窄屏遗留限制）
+    // 编辑面板始终放在节点下方；空间不足时由下方的画布平移逻辑腾出空间，
+    // 不再翻到节点上方，避免遮挡节点本身。
+    const top = below
     const minCenterX = halfWidth + NODE_PANEL_LEFT_SAFE
-    const maxCenterX = viewportWidth - halfWidth - NODE_PANEL_GAP
+    const maxCenterX = window.innerWidth - halfWidth - NODE_PANEL_GAP
     return {
       left: Math.min(Math.max(centerX, minCenterX), Math.max(minCenterX, maxCenterX)),
       top,
     }
   }, [selectedNode, nodes, transform, panelSize.width, panelSize.height])
 
-  /**
-   * 面板在节点下方放不下时，把画布上移腾出位置。
-   *
-   * 不能靠夹取把面板拉回视口——那等于用「盖住正在编辑的节点」换「面板完整可见」，
-   * 而节点上正是刚生成的结果，挡住它比面板露出视口更糟。
-   * 平移量不会超过节点到视口顶部的距离，保证节点本身始终留在画面里。
-   *
-   * 每个 (节点, 面板高度) 只调整一次：transform 变化会让本副作用重跑，
-   * 不设这个闸门就会出现「平移 → 重算 → 再平移」的自激。
-   */
   const panelPanRef = useRef('')
   useEffect(() => {
     const height = panelSize.height
@@ -1674,7 +1642,6 @@ function CanvasInner() {
     const key = `${selectedNode.id}:${Math.round(height)}`
     if (panelPanRef.current === key) return
     panelPanRef.current = key
-
     const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
     if (!node) return
     const [tx, ty, tz] = transform
@@ -1682,15 +1649,12 @@ function CanvasInner() {
     const nodeHeight = Number(node.measured?.height ?? style.height ?? 250) || 250
     const bottomY = (node.position.y + nodeHeight) * tz + ty
     const topY = node.position.y * tz + ty
-
     const deficit = bottomY + NODE_PANEL_GAP * 2 + height - window.innerHeight
     if (deficit <= 0) return
-    // 节点顶部到视口顶的余量就是可平移的上限，再多节点自己就被推出去了
     const shift = Math.min(deficit, Math.max(0, topY - NODE_PANEL_GAP))
     if (shift <= 1) return
     setViewport({ x: tx, y: ty - shift, zoom: tz }, { duration: 200 })
   }, [selectedNode, panelSize.height, transform, setViewport])
-
   // 记住最后选中的节点：退出画布再进来时恢复选中态与编辑面板（含输入框内容）。
   useEffect(() => {
     saveLastSelectedNodeId(routeProjectId, selectedNode?.id || '')
@@ -4802,14 +4766,14 @@ function CanvasInner() {
             )
           : nodes
 
-  // 为所有来源的连线补上方向箭头：包含历史恢复、协作增量同步和本次新建的连线。
-  // 保留边自身显式配置，便于未来为特殊边型定义不同的起止标记。
+  // 为所有来源的连线换上带箭头的边型：包含历史恢复、协作增量同步和本次新建的连线。
+  // 历史数据里可能残留 markerEnd（旧的 marker 引用方案），一并去掉，避免两套箭头叠加。
   const displayEdges = useMemo(
     () =>
-      edges.map((edge) => ({
-        ...edge,
-        markerEnd: edge.markerEnd ?? CANVAS_EDGE_END_MARKER,
-      })),
+      edges.map((edge) => {
+        const { markerEnd: _markerEnd, ...rest } = edge
+        return { ...rest, type: CANVAS_ARROW_EDGE_TYPE }
+      }),
     [edges],
   )
 
@@ -4953,9 +4917,6 @@ function CanvasInner() {
           </div>
         )}
 
-        {/* 箭头定义必须常驻、且先于任何连线存在于文档中，否则新建的第一条线要刷新才有箭头 */}
-        <CanvasEdgeArrowDefs />
-
         {/* 节点内的动作（截帧、时间线增删与合成）经 context 交回这里执行：
           回调不能塞进节点 data——data 会被持久化，放不了函数 */}
         <CanvasNodeActionsContext.Provider value={nodeActions}>
@@ -4963,6 +4924,7 @@ function CanvasInner() {
             nodes={displayNodes}
             edges={displayEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
