@@ -386,7 +386,7 @@ export default function AgentChatPanel({
           break
       }
     },
-    [push, onGenerated],
+    [push, pushTrace, setStatus, onGenerated],
   )
 
   /** 统一的流执行入口:管好 running 状态、abort 与错误。 */
@@ -409,7 +409,7 @@ export default function AgentChatPanel({
         abortRef.current = null
       }
     },
-    [running, handleEvent],
+    [running, handleEvent, clearStatus],
   )
 
   const uploading = attachments.some((a) => a.uploading)

@@ -131,6 +131,65 @@
   color: #9a9a9a;
 }
 
+.inheritedPrompt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(87, 103, 229, 0.16);
+  border-radius: 8px;
+  background: rgba(87, 103, 229, 0.05);
+}
+
+.inheritedPromptMain {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inheritedPromptLabel {
+  flex: none;
+  color: #5767e5;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inheritedPromptText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #555b66;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.inheritedPromptBtn {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(87, 103, 229, 0.24);
+  border-radius: 999px;
+  background: #fff;
+  color: #5767e5;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.inheritedPromptBtn:hover:not(:disabled) {
+  border-color: rgba(87, 103, 229, 0.45);
+  background: rgba(87, 103, 229, 0.08);
+}
+
+.inheritedPromptBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .textPromptTools {
   display: flex;
   align-items: center;
