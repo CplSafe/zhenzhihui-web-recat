@@ -893,3 +893,12 @@
   text-decoration: underline;
   word-break: break-all;
 }
+
+/* 同类工具连续调用的次数标记。弱化处理:它是补充信息,
+   用户扫一眼知道"搜了 5 次"即可,不该和工具名抢注意力。 */
+.traceCount {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  opacity: 0.8;
+}

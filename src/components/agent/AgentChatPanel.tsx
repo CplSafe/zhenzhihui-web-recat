@@ -40,7 +40,9 @@ type Entry =
   // 行内进度。放在对话流里而不是底部状态条——进度是过程的一部分,
   // 固定在角落会让用户在"看对话"和"看状态"之间来回切换视线。
   | { kind: 'status'; text: string }
-  | { kind: 'trace'; label: string; text: string; running?: boolean }
+  // count>1 表示同类工具连续调用了多次。合并而非逐条铺开——
+  // 一次分析动辄七八次搜索,每条占一行会把对话撑成日志。
+  | { kind: 'trace'; label: string; text: string; running?: boolean; count?: number }
   | { kind: 'question'; text: string; options: string[]; answered?: boolean }
   | { kind: 'confirm'; call: AgentPendingCall; settled?: 'done' | 'cancelled' }
 
@@ -203,6 +205,25 @@ export default function AgentChatPanel({
     }
   }, [openMenu, closeMenu])
 
+  /**
+   * 追加轨迹。与末尾同类轨迹合并成一条并计数。
+   *
+   * 用户需要知道的是「Agent 在搜索」,不是每一条搜索词。
+   * 保留最新一条的摘要 + 次数,既压缩了噪音又不丢当前进展。
+   */
+  const pushTrace = useCallback((label: string, text: string, running?: boolean) => {
+    setEntries((prev) => {
+      const rest = prev.filter((x) => x.kind !== 'status')
+      const status = prev.find((x) => x.kind === 'status')
+      const last = rest[rest.length - 1]
+      const next =
+        last?.kind === 'trace' && last.label === label
+          ? [...rest.slice(0, -1), { ...last, text, running, count: (last.count ?? 1) + 1 } as Entry]
+          : [...rest, { kind: 'trace', label, text, running } as Entry]
+      return status ? [...next, status] : next
+    })
+  }, [])
+
   // status 条目永远排在末尾:它表示「正在做什么」,被后续条目盖住就失去意义。
   const push = useCallback((e: Entry) => {
     setEntries((prev) => {
@@ -285,7 +306,7 @@ export default function AgentChatPanel({
           setStatus(`${label}中…`)
           const text =
             (ev.data.args?.query as string) || (ev.data.args?.topic as string) || (ev.data.args?.url as string) || ''
-          push({ kind: 'trace', label, text, running: true })
+          pushTrace(label, text, true)
           break
         }
 
@@ -324,7 +345,7 @@ export default function AgentChatPanel({
             })
           } else if (d.stage === 'tool') {
             setStatus(`${d.topic} · 搜索中…`)
-            push({ kind: 'trace', label: `${d.topic} · 搜索`, text: d.query ?? '', running: true })
+            pushTrace(`${d.topic} · 搜索`, d.query ?? '', true)
           } else if (d.stage === 'done') {
             // 标完成而不是再加一条:否则几十条轨迹会把对话淹没。
             setEntries((prev) => {
@@ -820,7 +841,15 @@ function restoreEntries(messages: AgentMessage[]): Entry[] {
         const call = raw as { function?: { name?: string; arguments?: string } }
         const name = call?.function?.name
         if (!name) continue
-        out.push({ kind: 'trace', label: TOOL_LABELS[name] ?? name, text: traceArg(call.function?.arguments) })
+        const label = TOOL_LABELS[name] ?? name
+        const text = traceText(name, parseArgs(call.function?.arguments))
+        const last = out[out.length - 1]
+        // 与实时渲染同一套合并规则,否则历史看起来比当时更啰嗦。
+        if (last?.kind === 'trace' && last.label === label) {
+          out[out.length - 1] = { ...last, text, count: (last.count ?? 1) + 1 }
+        } else {
+          out.push({ kind: 'trace', label, text })
+        }
       }
       continue
     }
@@ -851,14 +880,13 @@ function traceText(name: string, args?: Record<string, unknown>): string {
   return String(args.query || args.topic || args.url || args.name || '')
 }
 
-/** 从工具参数里取一个可读的摘要词,解析失败就不显示。 */
-function traceArg(rawArgs?: string): string {
-  if (!rawArgs) return ''
+/** 解析工具调用参数,失败返回 undefined(历史里偶有截断的脏数据)。 */
+function parseArgs(rawArgs?: string): Record<string, unknown> | undefined {
+  if (!rawArgs) return undefined
   try {
-    const args = JSON.parse(rawArgs) as Record<string, unknown>
-    return String(args.query || args.topic || args.url || args.name || '')
+    return JSON.parse(rawArgs) as Record<string, unknown>
   } catch {
-    return ''
+    return undefined
   }
 }
 
@@ -943,6 +971,7 @@ function EntryView({
     return (
       <div className={`${styles.trace} ${entry.running ? styles.traceRunning : ''}`}>
         <span className={styles.traceLabel}>{entry.label}</span>
+        {entry.count && entry.count > 1 && <span className={styles.traceCount}>×{entry.count}</span>}
         {entry.text && <span className={styles.traceText}>{entry.text}</span>}
       </div>
     )
