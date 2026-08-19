@@ -158,6 +158,35 @@ describe('CanvasNodePanel 视频生视频用的是视频生成模型', () => {
     expect(screen.getByRole('button', { name: 'Seedance 视频生成' })).toBeInTheDocument()
   })
 
+  /**
+   * 只按 operation 过滤是不够的：「参考生视频」这类同样声明 video.generate，
+   * 但输入只认参考图。选中提交后要等后端回一句「素材类型不适用于当前操作」才知道，
+   * 而那一步已经付过费了。
+   */
+  it('接了源视频时，不吃视频的模型标为不可用并写明原因', async () => {
+    const user = userEvent.setup()
+    renderVideoPanel([
+      { modelVersionId: 41, displayName: 'Seedance 图生视频', operationCodes: VIDEO_GENERATE },
+      { modelVersionId: 43, displayName: 'HappyHorse 参考生视频', operationCodes: VIDEO_GENERATE },
+    ])
+
+    // 默认选中的必须是收视频的那个，而不是排在后面的参考生视频
+    const selector = screen.getByRole('button', { name: 'Seedance 图生视频' })
+    await user.click(selector)
+    expect(screen.getByText('该模型不支持把视频作为输入素材，请改用图生视频类模型，或去掉视频连线')).toBeInTheDocument()
+  })
+
+  it('没有视频输入时不做这道筛选：参考生视频照常可选', () => {
+    renderVideoPanel([{ modelVersionId: 43, displayName: 'HappyHorse 参考生视频', operationCodes: VIDEO_GENERATE }], {
+      id: 'node-video',
+      kind: 'video',
+      prompt: '一只猫',
+      sourceRefs: [],
+    })
+
+    expect(screen.getByRole('button', { name: 'HappyHorse 参考生视频' })).toBeInTheDocument()
+  })
+
   it('提交时带出去的是 video.generate 与那条源视频来源', async () => {
     const user = userEvent.setup()
     const onGenerate = vi.fn()

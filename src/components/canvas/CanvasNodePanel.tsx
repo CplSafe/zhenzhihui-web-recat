@@ -17,6 +17,9 @@ import {
 } from '@/utils/canvasGeneration'
 import { filterInputDerivedRatioOptions, resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
 import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
+import { resolveModelVideoInputSupport, VIDEO_INPUT_UNSUPPORTED_REASON } from '@/utils/modelVideoInputSupport'
+import { buildModelRestrictionSummary, getModelReferenceImageLimit } from '@/utils/modelRestrictions'
+import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS } from '@/utils/canvasNodeDefaults'
 import WheelPicker, { type WheelPickerOption } from '@/components/common/WheelPicker'
 import { requestConfirm } from '@/stores/ui'
 
@@ -466,9 +469,6 @@ export default function CanvasNodePanel({
       return true
     })
   }, [node?.sourceRefs])
-  // 来源数量上限只统计素材类来源（图片/视频节点），文本节点不计入（其内容拼入 prompt）：
-  // 视频：全能参考最多 5 个图片参考；首尾帧 2 个（首帧+尾帧）。其他节点最多 5 个素材来源。
-  const maxRefs = kind === 'video' ? (videoMode === 'first-last' ? 2 : 5) : 5
   // 素材来源引用数量（文本来源不计入数量限制）
   const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind !== 'text').length, [sourceRefs])
   const kindModels = useMemo(() => models?.[kind as 'text' | 'image' | 'video'] || [], [models, kind])
@@ -517,11 +517,34 @@ export default function CanvasNodePanel({
     return contextualOperationCode
   }, [kind, node?.operationCode, kindModels, contextualOperationCode])
 
-  // 只显示支持目标 operation_code 的模型（模型可能同时支持多个 code）
-  const availableModels = useMemo(
-    () => kindModels.filter((m) => m.operationCodes?.some((code) => code === targetOperationCode)),
-    [kindModels, targetOperationCode],
-  )
+  /**
+   * 本次生成是否要把一条视频作为输入素材下发（role:'video'）。
+   * 两种来源：连线接了视频/时间线节点，或是在改节点自己那条视频。
+   */
+  const needsVideoInputAsset = useMemo(() => {
+    if (kind !== 'video') return false
+    if (isEditingVideo) return true
+    return (node?.sourceRefs || []).some((ref) => ref.kind === 'video' || ref.kind === 'timeline')
+  }, [kind, isEditingVideo, node?.sourceRefs])
+
+  /**
+   * 只显示支持目标 operation_code 的模型（模型可能同时支持多个 code）。
+   *
+   * 要下发视频素材时再筛一道「这个模型收不收视频」：光看 operation 是不够的——
+   * 「参考生视频」这类同样声明 video.generate，但输入只认参考图，
+   * 选中提交后要等后端回一句「素材类型不适用于当前操作」才知道，而那一步已经付过费了。
+   * 不可用的模型仍留在列表里并写明原因，和会员/余额挡住时的处理一致：
+   * 直接消失会让用户以为模型没配好，反而更难自查。
+   */
+  const availableModels = useMemo(() => {
+    const matched = kindModels.filter((m) => m.operationCodes?.some((code) => code === targetOperationCode))
+    if (!needsVideoInputAsset) return matched
+    return matched.map((model) => {
+      if (model.unavailableReason) return model
+      if (resolveModelVideoInputSupport(model) !== 'unsupported') return model
+      return { ...model, unavailableReason: VIDEO_INPUT_UNSUPPORTED_REASON }
+    })
+  }, [kindModels, targetOperationCode, needsVideoInputAsset])
 
   // 选中模型（按 modelVersionId 匹配，无匹配时取第一个可用；优先保留用户已选）
   const selectedModel: GenerationModelOption | undefined = useMemo(() => {
@@ -531,6 +554,25 @@ export default function CanvasNodePanel({
       availableModels.find((m) => !m.unavailableReason)
     )
   }, [availableModels, node?.modelVersionId])
+
+  /**
+   * 素材来源数量上限：跟随所选模型在 params schema 里声明的参考图上限。
+   *
+   * 模型没声明才回退到 DEFAULT_MAX_REFS（即改造前写死的 5），因为「后端没说」和
+   * 「后端说了正好是 5」是两件事，不能让前端替模型编一个能力。
+   *
+   * 首尾帧是唯一不跟模型走的情况：它固定就是首帧 + 尾帧两槽，属于语义约束而非数量约束，
+   * 模型即便声明能收 9 张，这个模式下也没有第三张的位置可放。
+   * 文本来源同样不受这个上限约束（内容拼进 prompt），见 mediaRefCount 的过滤。
+   */
+  const maxRefs = useMemo(() => {
+    if (kind === 'video' && videoMode === 'first-last') return FIRST_LAST_REF_SLOTS
+    const constraints = buildModelRestrictionSummary(selectedModel?.source).constraints
+    return getModelReferenceImageLimit(constraints) ?? DEFAULT_MAX_REFS
+  }, [kind, videoMode, selectedModel])
+
+  /** 视频节点顶部的参考槽位下标，数量跟随 maxRefs。 */
+  const refSlots = useMemo(() => Array.from({ length: maxRefs }, (_, index) => index), [maxRefs])
 
   // 本次生成使用的 operation_code：目标 code 有可用模型时固定使用，否则为空（按钮禁用）
   const operationCode = useMemo(() => {
@@ -546,8 +588,13 @@ export default function CanvasNodePanel({
       'video.edit': '暂无可用的视频修改模型',
       'video.generate': '暂无可用的视频生成模型',
     }
+    // 视频输入是被筛掉的原因时要说清楚，否则用户对着「暂无可用的视频生成模型」
+    // 只会以为模型没配好——而下拉里明明有一堆视频模型
+    if (needsVideoInputAsset && targetOperationCode === 'video.generate') {
+      return '暂无支持视频输入的视频生成模型'
+    }
     return labels[targetOperationCode] || ''
-  }, [targetOperationCode])
+  }, [targetOperationCode, needsVideoInputAsset])
 
   /** 是否有素材输入（图片/视频连线）；纯文本来源不算，它只会拼进 prompt。 */
   const hasMediaInput = useMemo(() => sourceRefs.some((ref) => ref.kind !== 'text'), [sourceRefs])
@@ -820,9 +867,10 @@ export default function CanvasNodePanel({
       {/* tags / 缩略图 */}
       <div className={styles.tags}>
         {kind === 'video' ? (
-          /* 视频节点：槽位随生成方式变化 —— 首尾帧=首帧+尾帧双槽（含交换）；全能参考=最多 5 个参考槽 */
+          /* 视频节点：槽位随生成方式变化 —— 首尾帧=首帧+尾帧双槽（含交换）；
+             全能参考=所选模型声明的参考图上限（未声明则回退默认值），见 maxRefs */
           <div className={styles.refImages}>
-            {(videoMode === 'first-last' ? [0, 1] : [0, 1, 2, 3, 4]).map((slot) => {
+            {refSlots.map((slot) => {
               const ref = findRefBySlot(sourceRefs, slot)
               const title = videoMode === 'first-last' ? (slot === 0 ? '首帧' : '尾帧') : `参考 ${slot + 1}`
               return (
@@ -1284,13 +1332,15 @@ function SchemaFieldMenu({
                     </button>
                   </div>
                 ) : isDurationField(f) && durationWheelOptions(f).length ? (
-                  /* 时长：滚轮吸附选择，与智能成片、爆款复制的时长交互一致 */
+                  /* 时长：横向档位条吸附选择，与智能成片、爆款复制的时长交互一致 */
                   <WheelPicker
                     options={durationWheelOptions(f)}
                     value={String(current ?? '')}
                     onChange={(picked) => onFieldChange?.(f.name, resolveDurationWheelValue(f, picked))}
                     ariaLabel={f.displayName}
-                    itemHeight={32}
+                    // 画布参数菜单比入口浮层窄，档位相应收窄一档宽度
+                    visibleCount={5}
+                    itemWidth={56}
                     className={styles.durationWheel}
                   />
                 ) : isNumberField(f) ? (
