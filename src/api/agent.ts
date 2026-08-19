@@ -103,11 +103,30 @@ export interface AgentPendingModel {
   selected: boolean
 }
 
+/** 一次运行的用量与耗时统计,展示在输入框底部。 */
+export interface AgentRunStats {
+  turns: number
+  steps: number
+  /** LLM 与工具耗时分开:优化方向不同,混在一起看不出该改哪边。 */
+  llm_ms: number
+  tool_ms: number
+  input_tokens: number
+  output_tokens: number
+  cached_tokens: number
+  total_tokens: number
+  /** 上下文三段占用,用于「上下文已用」弹窗。 */
+  context_system: number
+  context_tools: number
+  context_messages: number
+  context_limit: number
+}
+
 /** SSE 事件。type 决定 data 的形状。 */
 export type AgentEvent =
   | { type: 'session'; data: { session_id: number; title: string } }
   | { type: 'turn'; data: { turn: number; max_turns: number; tokens: number } }
   | { type: 'delta'; data: { text: string } }
+  | { type: 'stats'; data: AgentRunStats }
   | { type: 'thinking'; data: { content: string } }
   | { type: 'tool_call'; data: { name: string; args: Record<string, unknown> } }
   | { type: 'tool_result'; data: { name: string; preview: string } }

@@ -975,3 +975,143 @@
   cursor: not-allowed;
   opacity: var(--opacity-semi-disabled);
 }
+
+/* ── 底部统计栏 ───────────────────────────────────────── */
+
+/* 贴在输入框内侧底部:它是整轮汇总,不属于任何一条消息;
+   放对话流里会被滚走,而用户想看时通常是在输入框附近。 */
+.statsBar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px 8px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  line-height: 1.6;
+}
+
+.statsDot {
+  opacity: 0.4;
+}
+
+.statsCtxBtn {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.statsCtxBtn:hover {
+  background: var(--color-brand-light);
+  color: var(--color-brand);
+}
+
+/* ── 上下文占用弹窗 ───────────────────────────────────── */
+
+.ctxPopover {
+  position: absolute;
+  right: 8px;
+  bottom: 26px;
+  z-index: 30;
+  width: 240px;
+  padding: 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-surface);
+  box-shadow: var(--shadow-popover);
+  animation: ctx-in 0.14s ease-out;
+}
+
+@keyframes ctx-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ctxHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.ctxTotal {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+/* 三段堆叠的进度条:一眼看出是谁占满了上下文 */
+.ctxTrack {
+  display: flex;
+  height: 5px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-app);
+  overflow: hidden;
+}
+
+.ctxSeg {
+  height: 100%;
+}
+
+.ctxSegSystem {
+  background: var(--color-text-tertiary);
+}
+
+.ctxSegTools {
+  background: #a78bfa;
+}
+
+.ctxSegMsgs {
+  background: var(--color-brand);
+}
+
+.ctxRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+
+.ctxDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.ctxDotSystem {
+  background: var(--color-text-tertiary);
+}
+
+.ctxDotTools {
+  background: #a78bfa;
+}
+
+.ctxDotMsgs {
+  background: var(--color-brand);
+}
+
+.ctxLabel {
+  flex: 1;
+  color: var(--color-text-secondary);
+}
+
+.ctxValue {
+  color: var(--color-text-tertiary);
+}

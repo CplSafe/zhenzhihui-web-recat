@@ -24,6 +24,7 @@ import {
   type AgentKind,
   type AgentMessage,
   type AgentPendingCall,
+  type AgentRunStats,
   type AgentPendingField,
   type AgentSession,
 } from '@/api/agent'
@@ -145,6 +146,9 @@ export default function AgentChatPanel({
   const clearStatus = useCallback(() => {
     setEntries((prev) => (prev.length && prev[prev.length - 1].kind === 'status' ? prev.slice(0, -1) : prev))
   }, [])
+  // 用量统计。保留上一轮的值:流结束后仍要显示,不能一跑完就清空。
+  const [stats, setStats] = useState<AgentRunStats | null>(null)
+  const [ctxOpen, setCtxOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -293,6 +297,10 @@ export default function AgentChatPanel({
               ? '正在思考…'
               : `正在思考…(第 ${ev.data.turn} 轮 · 已用 ${Math.round(ev.data.tokens / 1000)}k tokens)`,
           )
+          break
+
+        case 'stats':
+          setStats(ev.data)
           break
 
         case 'delta':
@@ -835,9 +843,105 @@ export default function AgentChatPanel({
             <ArrowUpIcon />
           </button>
         </div>
+
+        {stats && <StatsBar stats={stats} open={ctxOpen} onToggle={() => setCtxOpen((v) => !v)} />}
       </div>
     </div>
   )
+}
+
+/**
+ * 输入框底部的用量与耗时统计。
+ *
+ * 放在底部而不是浮在对话流里:它是整轮的汇总,不属于任何一条消息;
+ * 而且用户多数时候不看它,占据对话区不划算。
+ */
+function StatsBar({ stats, open, onToggle }: { stats: AgentRunStats; open: boolean; onToggle: () => void }) {
+  const used = stats.context_system + stats.context_tools + stats.context_messages
+  const pct = stats.context_limit > 0 ? Math.round((used / stats.context_limit) * 100) : 0
+  // 缓存命中率按输入 token 算:缓存只作用于重复前缀(system + 工具 + 历史)。
+  const cacheRate = stats.input_tokens > 0 ? Math.round((stats.cached_tokens / stats.input_tokens) * 100) : 0
+
+  return (
+    <div className={styles.statsBar}>
+      <span>
+        {stats.turns} 轮 · {stats.steps} 步
+      </span>
+      <span className={styles.statsDot}>|</span>
+      <span>
+        LLM {fmtSec(stats.llm_ms)} · 工具 {fmtSec(stats.tool_ms)}
+      </span>
+      {stats.cached_tokens > 0 && (
+        <>
+          <span className={styles.statsDot}>|</span>
+          <span>缓存命中 {cacheRate}%</span>
+        </>
+      )}
+      <span className={styles.statsDot}>|</span>
+      <span>
+        输入 {fmtTok(stats.input_tokens)} · 输出 {fmtTok(stats.output_tokens)}
+      </span>
+
+      <button className={styles.statsCtxBtn} onClick={onToggle} title="上下文占用明细">
+        上下文 {pct}%
+      </button>
+
+      {open && (
+        <div className={styles.ctxPopover}>
+          <div className={styles.ctxHeader}>
+            <span>上下文已用 {pct}%</span>
+            <span className={styles.ctxTotal}>
+              ~{fmtTok(used)} / {fmtTok(stats.context_limit)}
+            </span>
+          </div>
+          <div className={styles.ctxTrack}>
+            <span
+              className={`${styles.ctxSeg} ${styles.ctxSegSystem}`}
+              style={{ width: `${segPct(stats.context_system, stats.context_limit)}%` }}
+            />
+            <span
+              className={`${styles.ctxSeg} ${styles.ctxSegTools}`}
+              style={{ width: `${segPct(stats.context_tools, stats.context_limit)}%` }}
+            />
+            <span
+              className={`${styles.ctxSeg} ${styles.ctxSegMsgs}`}
+              style={{ width: `${segPct(stats.context_messages, stats.context_limit)}%` }}
+            />
+          </div>
+          <CtxRow color={styles.ctxDotSystem} label="系统提示词" value={stats.context_system} />
+          <CtxRow color={styles.ctxDotTools} label="工具" value={stats.context_tools} />
+          <CtxRow color={styles.ctxDotMsgs} label="对话消息" value={stats.context_messages} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CtxRow({ color, label, value }: { color: string; label: string; value: number }) {
+  return (
+    <div className={styles.ctxRow}>
+      <span className={`${styles.ctxDot} ${color}`} />
+      <span className={styles.ctxLabel}>{label}</span>
+      <span className={styles.ctxValue}>~{fmtTok(value)}</span>
+    </div>
+  )
+}
+
+/** 毫秒转秒,保留一位小数——统计栏里 34.3s 比 34300ms 好读。 */
+function fmtSec(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+/** token 数转 K,小于 1000 时直接显示原值。 */
+function fmtTok(n: number): string {
+  if (n < 1000) return String(n)
+  return `${(n / 1000).toFixed(1)}K`
+}
+
+/** 单段占总量的百分比,用于上下文进度条。 */
+function segPct(value: number, limit: number): number {
+  if (limit <= 0) return 0
+  return Math.min(100, (value / limit) * 100)
 }
 
 /**
