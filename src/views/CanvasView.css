@@ -51,6 +51,14 @@
 .canvas-panel-area.is-anchored {
   bottom: auto;
 }
+
+/* 拖动节点期间隐藏：面板锚在选中节点下方，会一路跟着指针跳，还挡住正要放节点的那片区域。
+   用不透明度而不是 display:none——保持挂载，输入框内容与积分预估不会在松手后重来一遍。 */
+.canvas-panel-area.is-drag-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
 /* 节点顶部操作胶囊组 — 图片/视频节点专属，与左右侧连接点图标同款交互（选中/悬停出现）
    组内可含多个胶囊按钮（图片有内容：替换|下载；视频有内容：下载；无内容：上传） */
 .canvas-node-upload-group {
@@ -1212,7 +1220,13 @@
   transform: translateX(20px);
 }
 
-.canvas-handle-icon--left[data-visible='true'] {
+/*
+ * 加号平时透明，鼠标滑入连接点区域才显形。
+ * :focus-visible 一并显形是必需的——否则键盘 Tab 过来会停在一个看不见的按钮上，
+ * 「添加下一步」对只用键盘的人就等于不存在了。
+ */
+.canvas-handle-icon--left[data-visible='true'],
+.canvas-handle-icon--left:focus-visible {
   opacity: 1;
   transform: translateX(0);
 }
@@ -1221,7 +1235,8 @@
   transform: translateX(-20px);
 }
 
-.canvas-handle-icon--right[data-visible='true'] {
+.canvas-handle-icon--right[data-visible='true'],
+.canvas-handle-icon--right:focus-visible {
   opacity: 1;
   transform: translateX(0);
 }
