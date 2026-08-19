@@ -69,12 +69,20 @@
   bottom: calc(100% + 6px);
 }
 
-/* 滚轮浮层:滚动由滚轮自身承担，外层不再滚动，也不需要额外内边距把渐隐边缘挤掉 */
+/*
+ * 档位浮层：滚动由档位条自身承担，外层不再滚动，也不需要额外内边距把渐隐边缘挤掉。
+ *
+ * 横排后浮层比触发器宽得多，左对齐会让当前档位跑到触发器右侧、和触发器上显示的值对不上。
+ * 以触发器中心为轴居中，当前档位正好落在触发器正下方——视线不用横向搬家。
+ */
 .menuWheel {
-  min-width: 104px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 0;
+  width: max-content;
   max-height: none;
   overflow: visible;
-  padding: 4px;
+  padding: 4px 0;
 }
 
 .opt {
