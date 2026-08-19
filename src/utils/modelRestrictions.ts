@@ -328,6 +328,24 @@ export function getModelDurationLimitLabel(constraints: GenerationModelConstrain
   return minimum !== null && minimum > 0 ? `最短 ${minimum} 秒` : ''
 }
 
+/**
+ * 模型声明的参考图数量上限（张）。
+ *
+ * 只采信后端 params schema：声明了可选值取其最大值，否则取 maximum。
+ * 后端没声明时返回 undefined —— 前端不替模型编一个上限，由调用方决定兜底多少，
+ * 这样「模型没说」和「模型说了正好是 N」不会被混成同一件事。
+ */
+export function getModelReferenceImageLimit(constraints: GenerationModelConstraints | undefined): number | undefined {
+  const referenceImages = constraints?.referenceImages
+  if (!referenceImages) return undefined
+
+  const options = (referenceImages.options || []).filter((value) => Number.isFinite(value) && value > 0)
+  if (options.length) return Math.max(...options)
+
+  const maximum = Number(referenceImages.maximum)
+  return Number.isFinite(maximum) && maximum > 0 ? maximum : undefined
+}
+
 export function getModelConstraintConflicts(
   constraints: GenerationModelConstraints | undefined,
   values: GenerationModelConstraintValues,

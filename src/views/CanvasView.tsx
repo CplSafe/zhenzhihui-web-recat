@@ -3,7 +3,17 @@
  *
  * 页面职责：提供无限画布，通过节点+连线方式组织 AI 生成管线。
  */
-import { createContext, useCallback, useContext, useRef, useState, useEffect, useMemo, type CSSProperties } from 'react'
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useRef,
+  useState,
+  useEffect,
+  useMemo,
+  type CSSProperties,
+} from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import brandLogo from '@/img/image copy 7.png'
 import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
@@ -29,15 +39,18 @@ import {
   getBezierPath,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
 
 /**
  * 连线箭头仅属于画布展示层，不写入元素持久化数据。
  * 这样历史画布与新建画布都能统一显示方向，同时不会制造无意义的云端 revision。
  *
- * 取值是 CanvasEdgeArrowDefs 里那份常驻定义的 id，而不是 marker 对象——原因见该文件。
+ * 箭头由边自己画（见 CanvasArrowEdge），不走 SVG marker 的 url(#id) 引用——
+ * 那条路上新建的第一条线要刷新才有箭头。
  */
-const CANVAS_EDGE_END_MARKER = CANVAS_EDGE_ARROW_ID
-import CanvasEdgeArrowDefs, { CANVAS_EDGE_ARROW_ID } from '@/components/canvas/CanvasEdgeArrowDefs'
+const CANVAS_ARROW_EDGE_TYPE = 'canvasArrow'
+
+const edgeTypes = { [CANVAS_ARROW_EDGE_TYPE]: CanvasArrowEdge }
 import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
 import CanvasNodePanel, {
   type CanvasNodeInfo,
@@ -83,7 +96,12 @@ import {
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
 import { getCanvasTaskPresentation } from '@/utils/canvasTaskState'
-import { resolveInheritedNodeRatio } from '@/utils/canvasNodeDefaults'
+import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS, resolveInheritedNodeRatio } from '@/utils/canvasNodeDefaults'
+import {
+  buildModelRestrictionSummary,
+  getModelReferenceImageLimit,
+  type GenerationModelConstraints,
+} from '@/utils/modelRestrictions'
 import CanvasTimelineEditor from '@/components/canvas/CanvasTimelineEditor'
 import CanvasTimelinePlayer from '@/components/canvas/CanvasTimelinePlayer'
 import CanvasTimelineNodeBody from '@/components/canvas/CanvasTimelineNodeBody'
@@ -111,9 +129,11 @@ import { isRealPersonReferenceStillAuthorized, type SmartRealPersonReference } f
 import { listRealPeople } from '@/api/realPeople'
 import {
   LOCAL_IMAGE_IMPORT_LIMIT,
-  extractImageFiles,
+  LOCAL_VIDEO_MAX_BYTES,
+  extractMediaFiles,
   hasFileDrag,
   pickImageFiles,
+  pickVideoFiles,
   readImageNaturalSize,
   snapImageRatio,
 } from '@/utils/canvasLocalImage'
@@ -378,13 +398,7 @@ const LOCAL_PREVIEW_REVOKE_MS = 5000
 /** 编辑面板与选中节点之间的间距（像素），同时用作面板与视口边缘的安全距离 */
 const NODE_PANEL_GAP = 16
 
-/**
- * 面板左边缘要为左侧浮动工具栏让出的宽度。
- *
- * 工具栏在 left:46px、宽约 68px（见 CanvasFloatingToolbar.module.css），z-index:10，
- * 而面板是 z-index:50——两者一重叠，工具栏底部的按钮就被面板压住点不到
- * （实测「历史记录」被面板的参考图行完全遮住）。夹取时把这条竖带让出来。
- */
+/** 面板左边缘要为左侧浮动工具栏让出的宽度 */
 const NODE_PANEL_LEFT_SAFE = 128
 
 /**
@@ -422,6 +436,25 @@ const ADD_MENU_ITEMS: ReadonlyArray<{ type: string; label: string; desc: string 
 
 /** 节点类型中文名（菜单禁用提示用） */
 const KIND_LABELS: Record<string, string> = { text: '文本', image: '图片', video: '视频' }
+
+/**
+ * 参考选择：目标节点种类对应的允许来源种类。
+ *
+ * 图片节点同时接受文本与图片来源：接入图片即为「图生图」，面板会把 operation 切到
+ * image.image_to_image，该图以 role=reference_image 进入 input_assets。
+ * 图片节点不接受视频来源——后端图片 operation 没有以视频为参考的契约。
+ *
+ * 放在模块作用域：取值全是静态的，写在组件里会每次渲染新建一个对象，
+ * 让所有以它为依赖的 useMemo / useCallback 每帧失效。
+ */
+const allowedSourceKinds: Record<string, string[]> = {
+  // 合成后的时间线节点自身就是一条视频素材，可以继续作为下游节点的输入
+  video: ['image', 'video', 'timeline'],
+  image: ['text', 'image'],
+  text: ['text', 'image', 'video', 'timeline'],
+  // 剪辑时间线只接视频：连进来的每条视频自动成为一个片段
+  timeline: ['video', 'timeline'],
+}
 
 /** 历史快照保留的最大步数，防止无界增长 */
 const HISTORY_LIMIT = 50
@@ -562,6 +595,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   // 画布负责节点的位置和尺寸缩放；文字做反向补偿，使屏幕上的阅读字号保持稳定。
   // React Flow 默认缩放范围内为精确补偿，极端倍率做保护，避免产生异常字号。
   const readableTextScale = 1 / Math.min(2.5, Math.max(0.4, canvasZoom || 1))
+  const [nodeHovered, setNodeHovered] = useState(false)
   const [leftHovered, setLeftHovered] = useState(false)
   const [rightHovered, setRightHovered] = useState(false)
   const [topHovered, setTopHovered] = useState(false)
@@ -924,8 +958,19 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     }
     return count
   })
-  const leftVisible = selected || leftHovered
-  const rightVisible = selected || rightHovered
+  /**
+   * 连接点加号在鼠标滑入节点时出现（不是滑到加号上才出现）。
+   *
+   * 不再看 selected：选中恰恰是要看清这个节点内容的时候，两个加号常驻压在边上反而碍事。
+   *
+   * 仍然保留各自的 hover：加号所在的 .canvas-handle-mover 中心在节点外 30px，
+   * 从节点往加号移动的途中会离开节点范围，只认 nodeHovered 的话加号会在手伸过去的
+   * 一瞬间消失，正好点不中。
+   *
+   * 键盘用户不依赖 hover——加号获得焦点时由 :focus-visible 显形，见 CanvasView.css。
+   */
+  const leftVisible = nodeHovered || leftHovered
+  const rightVisible = nodeHovered || rightHovered
 
   // 顶部操作胶囊：图片/视频节点专属
   // - 图片：无内容 → 「上传」；有内容 → 「替换」+「下载」
@@ -984,7 +1029,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   }
 
   return (
-    <div className="canvas-default-node" style={{ '--canvas-readable-text-scale': readableTextScale } as CSSProperties}>
+    <div
+      className="canvas-default-node"
+      style={{ '--canvas-readable-text-scale': readableTextScale } as CSSProperties}
+      onMouseEnter={() => setNodeHovered(true)}
+      onMouseLeave={() => setNodeHovered(false)}
+    >
       {/* 头部：类型图标 + 标签，浮在节点上方 */}
       <div className="canvas-node-header">
         <span className="canvas-node-header__icon">{getTypeIcon(kind)}</span>
@@ -1413,7 +1463,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         <div className="canvas-node-generation-mask" role="status" aria-live="polite">
           <span className="canvas-node-generation-spinner" aria-hidden="true" />
           <strong>正在上传</strong>
-          <span>本地图片上传中，请稍候</span>
+          <span>本地素材上传中，请稍候</span>
         </div>
       )}
 
@@ -1469,11 +1519,18 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   )
 }
 
+/**
+ * 四种节点共用同一个实现，这里统一包一层 memo。
+ * React Flow 从自己的 store 渲染每个节点，任一节点变化都会波及同层的其他节点；
+ * 不 memo 的话每次都要重跑整个卡片（含缩略图、操作胶囊、时间线派生计算）的渲染逻辑。
+ */
+const CanvasNode = memo(CanvasDefaultNode)
+
 const nodeTypes: NodeTypes = {
-  text: CanvasDefaultNode,
-  image: CanvasDefaultNode,
-  video: CanvasDefaultNode,
-  timeline: CanvasDefaultNode,
+  text: CanvasNode,
+  image: CanvasNode,
+  video: CanvasNode,
+  timeline: CanvasNode,
 }
 
 /** 无限画布入口页（提供 ReactFlowProvider 上下文） */
@@ -1503,6 +1560,14 @@ function CanvasInner() {
   const [timelineDropTargetId, setTimelineDropTargetId] = useState('')
   // 拖拽起点：放进时间线后要把视频节点弹回原位
   const dragOriginRef = useRef<{ id: string; position: { x: number; y: number } } | null>(null)
+  /**
+   * 是否正在拖动节点：拖动期间把底部编辑面板藏起来。
+   *
+   * 面板跟着选中节点走，而拖动开始时会立即选中被拖的那个节点，于是面板一路跟着指针跳，
+   * 还会挡住下半屏——正要把节点拖到那边去，落点却被面板盖住了。
+   * 只是视觉隐藏、不卸载：卸载会让输入框里的内容与积分预估重新初始化，松手后闪一下。
+   */
+  const [draggingNode, setDraggingNode] = useState(false)
   const [composeProgress, setComposeProgress] = useState('')
   // 已量过时长的片段（node:clip），避免同一条素材被反复探测
   const measuredClipAssetsRef = useRef<Set<string>>(new Set())
@@ -1519,16 +1584,29 @@ function CanvasInner() {
   const { groups, loading: modelsLoading } = useGenerationModelCatalog(workspaceId)
   // 按节点类型提取模型列表；分组键 → 节点类型的映射与「视频必须合并两组」的原因见 canvasModelBuckets。
   const canvasModels = useMemo(() => buildCanvasModelBuckets(groups), [groups])
+  /**
+   * modelVersionId → 该模型的后端约束。
+   *
+   * 放 ref 而不是 state：validateConnection 要读它，但那个回调必须保持稳定引用——
+   * 它是 displayNodes 这个 memo 的依赖，一变就会让整张图重新 map 一遍。
+   */
+  const modelConstraintsByVersionRef = useRef(new Map<number, GenerationModelConstraints>())
   // 把模型名共享给节点：节点在 React Flow 内部，拿不到这里的目录，放大预览要显示模型名。
   useEffect(() => {
     const next: Record<number, string> = {}
+    const constraints = new Map<number, GenerationModelConstraints>()
     for (const list of [canvasModels.text, canvasModels.image, canvasModels.video]) {
       for (const model of list) {
         const versionId = Number(model.modelVersionId || 0)
-        if (versionId > 0 && model.displayName) next[versionId] = model.displayName
+        if (versionId <= 0) continue
+        if (model.displayName) next[versionId] = model.displayName
+        // 约束在这里解析一次并缓存：buildModelRestrictionSummary 要遍历整份 params schema，
+        // 不该放在每次连线校验里重算。
+        constraints.set(versionId, buildModelRestrictionSummary(model.source).constraints)
       }
     }
     canvasModelNameByVersion = next
+    modelConstraintsByVersionRef.current = constraints
   }, [canvasModels])
   const [addMenu, setAddMenu] = useState<{ x: number; y: number; sourceId: string } | null>(null)
   // 节点两侧的“+”表示继续当前流程：点击后打开下一步节点类型菜单，
@@ -1598,7 +1676,7 @@ function CanvasInner() {
   }, [])
   const transform = useStore((s) => s.transform)
 
-  // 编辑面板尺寸：算锚点要用它做居中与边界夹取，面板内容随节点类型变化，用 ResizeObserver 跟踪。
+  // 编辑面板尺寸与锚点位置
   const panelRef = useRef<HTMLDivElement>(null)
   const [panelSize, setPanelSize] = useState({ width: 0, height: 0 })
   useEffect(() => {
@@ -1611,62 +1689,34 @@ function CanvasInner() {
     return () => observer.disconnect()
   }, [selectedNode?.id])
 
-  /**
-   * 选中节点下方的面板位置（视口坐标）。
-   *
-   * 节点位置是画布坐标，必须经 transform 换算成屏幕坐标，面板才会跟着缩放/平移一起动 ——
-   * 面板是 position: fixed，渲染在画布容器之外，直接用画布坐标会跑偏。
-   * 下方放不下就翻到节点上方；左右做夹取，保证面板始终完整可见。
-   */
   const panelAnchor = useMemo(() => {
     if (!selectedNode) return null
     const node = nodes.find((item) => item.id === selectedNode.id)
     if (!node) return null
     const [tx, ty, tz] = transform
+    const domNode = Array.from(document.querySelectorAll<HTMLElement>('.react-flow__node')).find(
+      (element) => element.dataset.id === selectedNode.id,
+    )
+    const nodeRect = domNode?.getBoundingClientRect()
     const style = (node.style || {}) as Record<string, unknown>
     const nodeWidth = Number(node.measured?.width ?? style.width ?? 250) || 250
     const nodeHeight = Number(node.measured?.height ?? style.height ?? 250) || 250
-    const centerX = (node.position.x + nodeWidth / 2) * tz + tx
-    const bottomY = (node.position.y + nodeHeight) * tz + ty
-    const topY = node.position.y * tz + ty
-
-    const viewportWidth = window.innerWidth
-    const viewportHeight = window.innerHeight
+    const centerX = nodeRect ? nodeRect.left + nodeRect.width / 2 : (node.position.x + nodeWidth / 2) * tz + tx
+    const bottomY = nodeRect ? nodeRect.bottom : (node.position.y + nodeHeight) * tz + ty
     const halfWidth = (panelSize.width || 0) / 2
-    const height = panelSize.height || 0
     const below = bottomY + NODE_PANEL_GAP
-    const above = topY - NODE_PANEL_GAP - height
-    const fitsBelow = below + height + NODE_PANEL_GAP <= viewportHeight
-    const fitsAbove = above >= NODE_PANEL_GAP
-
-    /*
-     * 纵向只在选定的那一侧取值，绝不做「拉回视口内」的夹取。
-     *
-     * 之前那一版把 top 夹到 [GAP, viewportHeight - height - GAP]：面板一旦比节点下方的
-     * 空间还高，夹取就把它往上拽，正好压在它自己正在编辑的那个节点上——用户看不见刚生成的东西。
-     * 现在放不下就让它先溢出视口，由下面的「腾位置」副作用平移画布来解决，而不是牺牲节点。
-     */
-    const top = fitsBelow || !fitsAbove ? below : above
-
-    // 左界为工具栏让出竖带；面板宽到放不下时右界优先，此时仍会压住工具栏（窄屏遗留限制）
+    // 编辑面板始终放在节点下方；空间不足时由下方的画布平移逻辑腾出空间，
+    // 不再翻到节点上方，避免遮挡节点本身。
+    const top = below
     const minCenterX = halfWidth + NODE_PANEL_LEFT_SAFE
-    const maxCenterX = viewportWidth - halfWidth - NODE_PANEL_GAP
+    const maxCenterX = window.innerWidth - halfWidth - NODE_PANEL_GAP
     return {
       left: Math.min(Math.max(centerX, minCenterX), Math.max(minCenterX, maxCenterX)),
       top,
     }
-  }, [selectedNode, nodes, transform, panelSize.width, panelSize.height])
+    // 面板不再上翻，高度已不参与定位计算，因此不依赖 panelSize.height
+  }, [selectedNode, nodes, transform, panelSize.width])
 
-  /**
-   * 面板在节点下方放不下时，把画布上移腾出位置。
-   *
-   * 不能靠夹取把面板拉回视口——那等于用「盖住正在编辑的节点」换「面板完整可见」，
-   * 而节点上正是刚生成的结果，挡住它比面板露出视口更糟。
-   * 平移量不会超过节点到视口顶部的距离，保证节点本身始终留在画面里。
-   *
-   * 每个 (节点, 面板高度) 只调整一次：transform 变化会让本副作用重跑，
-   * 不设这个闸门就会出现「平移 → 重算 → 再平移」的自激。
-   */
   const panelPanRef = useRef('')
   useEffect(() => {
     const height = panelSize.height
@@ -1674,7 +1724,6 @@ function CanvasInner() {
     const key = `${selectedNode.id}:${Math.round(height)}`
     if (panelPanRef.current === key) return
     panelPanRef.current = key
-
     const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
     if (!node) return
     const [tx, ty, tz] = transform
@@ -1682,15 +1731,12 @@ function CanvasInner() {
     const nodeHeight = Number(node.measured?.height ?? style.height ?? 250) || 250
     const bottomY = (node.position.y + nodeHeight) * tz + ty
     const topY = node.position.y * tz + ty
-
     const deficit = bottomY + NODE_PANEL_GAP * 2 + height - window.innerHeight
     if (deficit <= 0) return
-    // 节点顶部到视口顶的余量就是可平移的上限，再多节点自己就被推出去了
     const shift = Math.min(deficit, Math.max(0, topY - NODE_PANEL_GAP))
     if (shift <= 1) return
     setViewport({ x: tx, y: ty - shift, zoom: tz }, { duration: 200 })
   }, [selectedNode, panelSize.height, transform, setViewport])
-
   // 记住最后选中的节点：退出画布再进来时恢复选中态与编辑面板（含输入框内容）。
   useEffect(() => {
     saveLastSelectedNodeId(routeProjectId, selectedNode?.id || '')
@@ -1701,8 +1747,16 @@ function CanvasInner() {
     s.connection.inProgress && s.connection.fromHandle?.type === 'source' ? s.connection.fromNode.id : null,
   )
 
-  ;(window as any).__canvasNodes = nodes
-  ;(window as any).__canvasEdges = edges
+  // 供画布外的调试与集成读取当前图。必须写在 effect 里：渲染期间赋值是渲染副作用，
+  // React 18 并发渲染会丢弃部分渲染批次，外部因此可能读到一份从未提交过的中间状态。
+  useEffect(() => {
+    ;(window as any).__canvasNodes = nodes
+    ;(window as any).__canvasEdges = edges
+    return () => {
+      delete (window as any).__canvasNodes
+      delete (window as any).__canvasEdges
+    }
+  }, [nodes, edges])
 
   // 基于最新 edges 状态判断是否已存在同源连线（防重检查必须用最新状态，避免闭包过期导致重复插入）
   const hasEdgeBetween = useCallback((sourceId: string, targetId: string, slotIndex?: number): boolean => {
@@ -1822,22 +1876,6 @@ function CanvasInner() {
     })
   }, [nodes, workspaceId])
 
-  /**
-   * 参考选择：目标节点种类对应的允许来源种类。
-   *
-   * 图片节点同时接受文本与图片来源：接入图片即为「图生图」，面板会把 operation 切到
-   * image.image_to_image，该图以 role=reference_image 进入 input_assets。
-   * 图片节点不接受视频来源——后端图片 operation 没有以视频为参考的契约。
-   */
-  const allowedSourceKinds: Record<string, string[]> = {
-    // 合成后的时间线节点自身就是一条视频素材，可以继续作为下游节点的输入
-    video: ['image', 'video', 'timeline'],
-    image: ['text', 'image'],
-    text: ['text', 'image', 'video', 'timeline'],
-    // 剪辑时间线只接视频：连进来的每条视频自动成为一个片段
-    timeline: ['video', 'timeline'],
-  }
-
   /** 校验连线是否合法：重复（基于最新状态）、类型匹配、数量上限。返回错误信息，合法返回 null */
   const validateConnection = useCallback(
     (sourceId: string, targetId: string): string | null => {
@@ -1855,21 +1893,21 @@ function CanvasInner() {
         const src = latestRef.current.nodes.find((n) => n.id === e.source)
         return (src?.data?.kind as string) !== 'text'
       }).length
-      // 视频节点：全能参考最多 5 个素材参考（与面板顶部 5 槽一致）；首尾帧模式 2 个（首帧+尾帧）
-      // 其他节点：最多 5 个素材来源（与对话框缩略图最多显示 5 个一致）
+      // 上限跟随目标节点所选模型声明的参考图数量，与 CanvasNodePanel 的槽位数保持同一来源——
+      // 两边算法不一致会出现「面板给了 9 个槽，连第 6 根线却被拦下」这种自相矛盾的状态。
+      // 时间线片段数和视频首尾帧是语义约束，不跟模型走。
       const maxRefs =
         targetKind === 'timeline'
           ? MAX_TIMELINE_CLIPS
-          : targetKind === 'video'
-            ? (targetNode?.data?.videoMode as string) === 'first-last'
-              ? 2
-              : 5
-            : 5
+          : targetKind === 'video' && (targetNode?.data?.videoMode as string) === 'first-last'
+            ? FIRST_LAST_REF_SLOTS
+            : (getModelReferenceImageLimit(
+                modelConstraintsByVersionRef.current.get(Number(targetNode?.data?.modelVersionId || 0)),
+              ) ?? DEFAULT_MAX_REFS)
       if (existingRefs >= maxRefs) return `参考数量已达上限（${maxRefs} 个）`
       return null
     },
-    // allowedSourceKinds 为模块常量，引用不会随渲染变化；显式声明以消除 exhaustive-deps 提示
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // allowedSourceKinds 现在真的是模块常量，不必再进依赖数组，也不再需要 exhaustive-deps 豁免
     [hasEdgeBetween],
   )
 
@@ -3279,7 +3317,7 @@ function CanvasInner() {
     [selectedNode, workspaceId, commitHistory, setSaveStatus, setNodes],
   )
 
-  // ===== 本地图片导入：工具栏「本地图片」/ 粘贴（Ctrl+V）/ 拖拽文件到画布，三个入口共用 =====
+  // ===== 本地素材导入：工具栏「本地素材」/ 粘贴（Ctrl+V）/ 拖拽文件到画布，三个入口共用 =====
 
   /** 本次会话创建的预览地址集合：页面卸载时统一释放，避免 objectURL 泄漏 */
   const localPreviewUrlsRef = useRef(new Set<string>())
@@ -3302,37 +3340,58 @@ function CanvasInner() {
   }, [])
 
   /**
-   * 导入本地图片：先按原图比例落一个带本地预览的占位节点，再上传素材中心换成持久地址。
+   * 导入本地素材：先落一个带本地预览的占位节点，再上传素材中心换成持久地址。
+   *
+   * 图片落图片节点、视频落视频节点；节点渲染层本身与类型无关（mediaUrl 会回退到 previewUrl，
+   * 上传遮罩也通用），因此这里只需要选对节点类型和比例。
    *
    * 预览地址只存在 previewUrl（不在持久化白名单内），因此不会有 blob: 地址被写进云端；
-   * 上传失败的占位节点直接移除，不留下永远空白的图片节点。
+   * 上传失败的占位节点直接移除，不留下永远空白的节点。
    * anchor 为视口坐标（拖拽落点 / 鼠标位置 / 右键位置），缺省落在视口中心。
    */
-  const importLocalImages = useCallback(
+  const importLocalMedia = useCallback(
     async (files: File[], anchor?: { x: number; y: number }) => {
       const images = pickImageFiles(files)
-      if (images.length === 0) {
-        showToast('仅支持导入图片文件', 'error')
+      // 视频先按体积筛一遍：超限的不建节点，直接并入失败提示，
+      // 否则用户会看着一个占位节点转很久最后失败，还不知道原因是文件太大。
+      const allVideos = pickVideoFiles(files)
+      const videos = allVideos.filter((file) => file.size <= LOCAL_VIDEO_MAX_BYTES)
+      const oversized = allVideos.length - videos.length
+      if (images.length === 0 && allVideos.length === 0) {
+        showToast('仅支持导入图片或视频文件', 'error')
         return
       }
-      const accepted = images.slice(0, LOCAL_IMAGE_IMPORT_LIMIT)
-      const skipped = images.length - accepted.length
+      if (images.length === 0 && videos.length === 0) {
+        showToast('视频超过 512MB，请压缩后再导入', 'error')
+        return
+      }
+      // 图片在前、视频在后，保证超限被裁掉的总是排在后面的那些，顺序稳定可预期
+      const media: Array<{ file: File; kind: 'image' | 'video' }> = [
+        ...images.map((file) => ({ file, kind: 'image' as const })),
+        ...videos.map((file) => ({ file, kind: 'video' as const })),
+      ]
+      const accepted = media.slice(0, LOCAL_IMAGE_IMPORT_LIMIT)
+      const skipped = media.length - accepted.length
       const origin = anchor || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
       // 整批只记一次历史：一次撤销即可撤掉本次导入的全部节点
       commitHistory()
       const created = await Promise.all(
-        accepted.map(async (file, index) => {
-          // 原图长宽比就近吸附到节点可选比例，导入后不再需要手动调比例
-          const natural = await readImageNaturalSize(file)
-          const ratio = natural ? snapImageRatio(natural.width, natural.height) : '1:1'
+        accepted.map(async ({ file, kind }, index) => {
+          // 图片按原图长宽比就近吸附；视频统一用自适应，与生成/剪出的视频节点同一口径
+          const ratio =
+            kind === 'video'
+              ? AUTO_RATIO
+              : ((natural) => (natural ? snapImageRatio(natural.width, natural.height) : '1:1'))(
+                  await readImageNaturalSize(file),
+                )
           const size = calcNodeSize(ratio, 250)
           const previewUrl = URL.createObjectURL(file)
           localPreviewUrlsRef.current.add(previewUrl)
-          // 多张图片沿对角线错开，避免完全重叠
+          // 多个素材沿对角线错开，避免完全重叠
           const offset = index * 36
           const point = screenToFlowPosition({ x: origin.x + offset, y: origin.y + offset })
           const nodeId = appendNewNode(
-            'image',
+            kind,
             { x: point.x - size.width / 2, y: point.y - size.height / 2 },
             { ratio, size, skipHistory: true, extraData: { previewUrl, uploading: true } },
           )
@@ -3366,10 +3425,13 @@ function CanvasInner() {
       )
       setSaveStatus('dirty')
       if (failures.length > 0) {
-        showToast(failures.length > 1 ? `${failures.length} 张图片上传失败：${failures[0]}` : failures[0], 'error')
+        showToast(failures.length > 1 ? `${failures.length} 个素材上传失败：${failures[0]}` : failures[0], 'error')
+      } else if (oversized > 0) {
+        // 已成功导入的部分不受影响，这里只解释被跳过的那些为什么没进来
+        showToast(`${oversized} 个视频超过 512MB 已跳过，请压缩后再导入`, 'info')
       } else if (skipped > 0) {
-        // 其余图片已成功导入，这里只是数量提醒，不按错误呈现
-        showToast(`一次最多导入 ${LOCAL_IMAGE_IMPORT_LIMIT} 张图片，其余 ${skipped} 张已忽略`, 'info')
+        // 其余素材已成功导入，这里只是数量提醒，不按错误呈现
+        showToast(`一次最多导入 ${LOCAL_IMAGE_IMPORT_LIMIT} 个素材，其余 ${skipped} 个已忽略`, 'info')
       }
     },
     [appendNewNode, commitHistory, releasePreviewUrl, screenToFlowPosition, setNodes, setSaveStatus, workspaceId],
@@ -3391,9 +3453,9 @@ function CanvasInner() {
       const anchor = localImageAnchorRef.current
       localImageAnchorRef.current = null
       if (files.length === 0) return
-      void importLocalImages(files, anchor || undefined)
+      void importLocalMedia(files, anchor || undefined)
     },
-    [importLocalImages],
+    [importLocalMedia],
   )
 
   // 记录鼠标位置：粘贴的图片落在鼠标处，更贴近「粘到我看的地方」的预期
@@ -3412,14 +3474,15 @@ function CanvasInner() {
       const active = document.activeElement as HTMLElement | null
       if (active?.closest?.('textarea, input, [contenteditable="true"]')) return
       if (drawerPanel || isPickingRef) return
-      const files = extractImageFiles(event.clipboardData)
+      const { images, videos } = extractMediaFiles(event.clipboardData)
+      const files = [...images, ...videos]
       if (files.length === 0) return
       event.preventDefault()
-      void importLocalImages(files, pointerRef.current || undefined)
+      void importLocalMedia(files, pointerRef.current || undefined)
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  }, [drawerPanel, isPickingRef, importLocalImages])
+  }, [drawerPanel, isPickingRef, importLocalMedia])
 
   const handleFileDragEnter = useCallback((event: React.DragEvent) => {
     if (!hasFileDrag(event.dataTransfer)) return
@@ -3449,9 +3512,10 @@ function CanvasInner() {
       setFileDragActive(false)
       // 参考选择模式下画布正在等待点选来源节点，此时不接受导入
       if (isPickingRef) return
-      void importLocalImages(extractImageFiles(event.dataTransfer), { x: event.clientX, y: event.clientY })
+      const { images, videos } = extractMediaFiles(event.dataTransfer)
+      void importLocalMedia([...images, ...videos], { x: event.clientX, y: event.clientY })
     },
-    [importLocalImages, isPickingRef],
+    [importLocalMedia, isPickingRef],
   )
 
   // 模型变更：保存 modelVersionId 到节点数据并回显
@@ -4766,50 +4830,62 @@ function CanvasInner() {
     [isPickingRef, getSourceRefs],
   )
 
-  // 参考选择模式下，标记不可选节点
-  const displayNodes =
-    isPickingRef && pickingTargetId
-      ? nodes.map((n) => {
-          if (n.id === pickingTargetId) {
-            return { ...n, selectable: false, draggable: false, className: 'is-ref-disabled' }
-          }
-          const targetKind = (nodes.find((x) => x.id === pickingTargetId)?.data?.kind as string) || 'text'
-          const sourceKind = (n.data?.kind as string) || 'text'
-          const allowed = allowedSourceKinds[targetKind] || []
-          const alreadyConnected = edges.some((e) => e.source === n.id && e.target === pickingTargetId)
-          if (!allowed.includes(sourceKind) || alreadyConnected) {
-            return { ...n, selectable: false, draggable: false, className: 'is-ref-disabled' }
-          }
-          return { ...n, selectable: true, draggable: false, className: 'is-ref-pickable' }
-        })
-      : // 拖线中（从 handle 拖出连线）：不能作为连线目标的节点灰化，与参考选择模式视觉一致
-        connectSourceId
-        ? nodes.map((n) => {
-            // 源节点自身保持正常
-            if (n.id === connectSourceId) return n
-            // 校验：类型不匹配 / 已存在同源连线 / 目标参考数达上限 → 不可连接
-            const invalid = validateConnection(connectSourceId, n.id) !== null
-            return invalid
-              ? { ...n, className: n.className ? `${n.className} is-connect-disabled` : 'is-connect-disabled' }
-              : n
-          })
-        : // 拖着视频节点悬在时间线上：高亮该时间线，让「松手会放进这里」在松手前就看得见
-          timelineDropTargetId
-          ? nodes.map((n) =>
-              n.id === timelineDropTargetId
-                ? { ...n, className: n.className ? `${n.className} is-timeline-drop` : 'is-timeline-drop' }
-                : n,
-            )
-          : nodes
+  /**
+   * 交给 React Flow 的节点数组：按当前交互态给节点打上可选 / 灰化 / 高亮标记。
+   *
+   * 必须 memo：这三个分支都会 map 出全新的节点对象，React Flow 会据此认为「所有节点都变了」
+   * 而全量重渲染。不缓存的话，组件任何一次渲染（画布平移每帧都有）都要付这份代价。
+   */
+  const displayNodes = useMemo(() => {
+    // 参考选择模式下，标记不可选节点
+    if (isPickingRef && pickingTargetId) {
+      // 目标种类、允许来源、已连来源都与遍历项无关，提到循环外算一次。
+      // 原先写在 map 内部：nodes.find 让整段变成 O(N²)，edges.some 又叠了一层 O(N×E)。
+      const targetKind = (nodes.find((x) => x.id === pickingTargetId)?.data?.kind as string) || 'text'
+      const allowed = allowedSourceKinds[targetKind] || []
+      const connectedSourceIds = new Set(edges.filter((e) => e.target === pickingTargetId).map((e) => e.source))
+      return nodes.map((n) => {
+        if (n.id === pickingTargetId) {
+          return { ...n, selectable: false, draggable: false, className: 'is-ref-disabled' }
+        }
+        const sourceKind = (n.data?.kind as string) || 'text'
+        if (!allowed.includes(sourceKind) || connectedSourceIds.has(n.id)) {
+          return { ...n, selectable: false, draggable: false, className: 'is-ref-disabled' }
+        }
+        return { ...n, selectable: true, draggable: false, className: 'is-ref-pickable' }
+      })
+    }
+    // 拖线中（从 handle 拖出连线）：不能作为连线目标的节点灰化，与参考选择模式视觉一致
+    if (connectSourceId) {
+      return nodes.map((n) => {
+        // 源节点自身保持正常
+        if (n.id === connectSourceId) return n
+        // 校验：类型不匹配 / 已存在同源连线 / 目标参考数达上限 → 不可连接
+        const invalid = validateConnection(connectSourceId, n.id) !== null
+        return invalid
+          ? { ...n, className: n.className ? `${n.className} is-connect-disabled` : 'is-connect-disabled' }
+          : n
+      })
+    }
+    // 拖着视频节点悬在时间线上：高亮该时间线，让「松手会放进这里」在松手前就看得见
+    if (timelineDropTargetId) {
+      return nodes.map((n) =>
+        n.id === timelineDropTargetId
+          ? { ...n, className: n.className ? `${n.className} is-timeline-drop` : 'is-timeline-drop' }
+          : n,
+      )
+    }
+    return nodes
+  }, [isPickingRef, pickingTargetId, connectSourceId, timelineDropTargetId, nodes, edges, validateConnection])
 
-  // 为所有来源的连线补上方向箭头：包含历史恢复、协作增量同步和本次新建的连线。
-  // 保留边自身显式配置，便于未来为特殊边型定义不同的起止标记。
+  // 为所有来源的连线换上带箭头的边型：包含历史恢复、协作增量同步和本次新建的连线。
+  // 历史数据里可能残留 markerEnd（旧的 marker 引用方案），一并去掉，避免两套箭头叠加。
   const displayEdges = useMemo(
     () =>
-      edges.map((edge) => ({
-        ...edge,
-        markerEnd: edge.markerEnd ?? CANVAS_EDGE_END_MARKER,
-      })),
+      edges.map((edge) => {
+        const { markerEnd: _markerEnd, ...rest } = edge
+        return { ...rest, type: CANVAS_ARROW_EDGE_TYPE }
+      }),
     [edges],
   )
 
@@ -4908,11 +4984,11 @@ function CanvasInner() {
           onChange={handleUploadFile}
         />
 
-        {/* 隐藏文件选择：由工具栏 / 右键菜单「本地图片」触发，支持一次选择多张 */}
+        {/* 隐藏文件选择：由工具栏 / 右键菜单「本地素材」触发，支持一次选择多个图片或视频 */}
         <input
           ref={localImageInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           multiple
           style={{ display: 'none' }}
           onChange={handleLocalImageInputChange}
@@ -4938,7 +5014,7 @@ function CanvasInner() {
                 <path d="M4 20h16" />
               </svg>
               <strong>松开即可添加到画布</strong>
-              <span>支持拖入本地图片，也可以直接 Ctrl+V 粘贴</span>
+              <span>支持拖入本地图片与视频，也可以直接 Ctrl+V 粘贴</span>
             </div>
           </div>
         )}
@@ -4953,9 +5029,6 @@ function CanvasInner() {
           </div>
         )}
 
-        {/* 箭头定义必须常驻、且先于任何连线存在于文档中，否则新建的第一条线要刷新才有箭头 */}
-        <CanvasEdgeArrowDefs />
-
         {/* 节点内的动作（截帧、时间线增删与合成）经 context 交回这里执行：
           回调不能塞进节点 data——data 会被持久化，放不了函数 */}
         <CanvasNodeActionsContext.Provider value={nodeActions}>
@@ -4963,6 +5036,7 @@ function CanvasInner() {
             nodes={displayNodes}
             edges={displayEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -4988,6 +5062,7 @@ function CanvasInner() {
             }}
             /* 拖动开始前记录历史：撤销可还原节点位置 */
             onNodeDragStart={(_e, node) => {
+              setDraggingNode(true)
               commitHistory()
               // 节点按下后轻微移动（>拖拽阈值）会被判定为拖拽而非点击，onNodeClick 不触发，
               // 导致首次点击有概率选不中；拖拽开始同样立即选中，保证稳定响应
@@ -4998,6 +5073,8 @@ function CanvasInner() {
             /* 拖动中高亮可接收的时间线节点，让「能不能放进去」在松手前就看得见 */
             onNodeDrag={(_e, node) => setTimelineDropTargetId(findTimelineDropTarget(node))}
             onNodeDragStop={(_e, node) => {
+              // 放在最前面：下面「没命中时间线」会提前 return，写在后面面板就再也不出来了
+              setDraggingNode(false)
               const targetId = findTimelineDropTarget(node)
               setTimelineDropTargetId('')
               if (!targetId) return
@@ -5203,7 +5280,7 @@ function CanvasInner() {
                   <path d="M4 20h16" />
                 </svg>
               </span>
-              本地图片
+              本地素材
             </button>
             <div className="canvas-context-menu__divider" />
             <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canUndo} onClick={undo}>
@@ -5294,7 +5371,7 @@ function CanvasInner() {
         {selectedNode && selectedNode.kind !== 'timeline' && (
           <div
             ref={panelRef}
-            className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}`}
+            className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}`}
             style={panelAnchor ? { left: panelAnchor.left, top: panelAnchor.top } : undefined}
           >
             <CanvasNodePanel

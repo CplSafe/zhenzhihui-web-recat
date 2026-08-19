@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   continueSession,
+  describeGeneration,
   getSession,
   listChatModels,
   listSessions,
@@ -24,6 +25,8 @@ import {
   type AgentKind,
   type AgentMessage,
   type AgentPendingCall,
+  type AgentRunStats,
+  type AgentPendingField,
   type AgentSession,
 } from '@/api/agent'
 import { uploadAssetFile } from '@/api/business'
@@ -90,20 +93,13 @@ const TOOL_LABELS: Record<string, string> = {
   save_finding: '记录',
   list_findings: '盘点',
   generate_video: '生成视频',
+  generate_image: '生成图片',
   update_todo: '规划任务',
   load_skill: '加载技能',
   dispatch_subagents: '并行调研',
 }
 
 /** 确认卡片里展示的参数,按这个顺序排;其余参数不展示避免噪音。 */
-const PARAM_LABELS: [string, string][] = [
-  ['model', '模型'],
-  ['resolution', '清晰度'],
-  ['duration', '时长(秒)'],
-  ['aspect', '画幅'],
-  ['count', '数量'],
-]
-
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -151,6 +147,9 @@ export default function AgentChatPanel({
   const clearStatus = useCallback(() => {
     setEntries((prev) => (prev.length && prev[prev.length - 1].kind === 'status' ? prev.slice(0, -1) : prev))
   }, [])
+  // 用量统计。保留上一轮的值:流结束后仍要显示,不能一跑完就清空。
+  const [stats, setStats] = useState<AgentRunStats | null>(null)
+  const [ctxOpen, setCtxOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -158,6 +157,9 @@ export default function AgentChatPanel({
 
   const sessionRef = useRef<number>(0)
   const abortRef = useRef<AbortController | null>(null)
+  // 本轮是否收到过 delta。done 事件据此决定要不要补正文——
+  // 支持流式的模型不补(会重复),不支持的必须补(否则没有回复)。
+  const streamedRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -290,11 +292,35 @@ export default function AgentChatPanel({
           break
 
         case 'turn':
+          streamedRef.current = false
           setStatus(
             ev.data.turn === 1
               ? '正在思考…'
               : `正在思考…(第 ${ev.data.turn} 轮 · 已用 ${Math.round(ev.data.tokens / 1000)}k tokens)`,
           )
+          break
+
+        case 'stats':
+          setStats(ev.data)
+          break
+
+        case 'delta':
+          // 逐字追加到末尾的 assistant 气泡;没有就新建一个。
+          // 这是与 Claude 对话手感一致的关键:文字边生成边出现,
+          // 而不是等整轮跑完一次性弹出。
+          if (ev.data.text) {
+            streamedRef.current = true
+            setEntries((prev) => {
+              const rest = prev.filter((x) => x.kind !== 'status')
+              const status = prev.find((x) => x.kind === 'status')
+              const last = rest[rest.length - 1]
+              const next: Entry[] =
+                last?.kind === 'assistant'
+                  ? [...rest.slice(0, -1), { kind: 'assistant', text: last.text + ev.data.text }]
+                  : [...rest, { kind: 'assistant', text: ev.data.text }]
+              return status ? [...next, status] : next
+            })
+          }
           break
 
         case 'thinking':
@@ -378,7 +404,13 @@ export default function AgentChatPanel({
           break
 
         case 'done':
-          if (ev.data.content) push({ kind: 'assistant', text: ev.data.content })
+          // 流式下正文已由 delta 逐字铺好,再 push 会出现两份。
+          // 用显式标记而非文本比对:模型可能正好输出与增量相同的内容,
+          // 比对相等就漏掉了该补的那一份。
+          if (ev.data.content && !streamedRef.current) {
+            push({ kind: 'assistant', text: ev.data.content })
+          }
+          streamedRef.current = false
           break
 
         case 'error':
@@ -469,15 +501,24 @@ export default function AgentChatPanel({
 
   /** 确认或取消一次待定的生成。confirm=true 才会真正提交扣费。 */
   const settleConfirm = useCallback(
-    (callId: string, confirm: boolean) => {
-      if (running) return
+    (callId: string, confirm: boolean, confirmedArgs?: Record<string, unknown>) => {
+      // 上一轮流还没结束时点确认会被静默丢弃——用户点了没反应,
+      // 只会以为按钮坏了。给出明确提示而不是无声 return。
+      if (running) {
+        setError('上一步还在进行中，请等它结束后再确认。')
+        return
+      }
       setEntries((prev) =>
         prev.map((e) =>
           e.kind === 'confirm' && e.call.call_id === callId ? { ...e, settled: confirm ? 'done' : 'cancelled' } : e,
         ),
       )
       void runStream((onEvent, signal) =>
-        continueSession({ workspaceId, sessionId: sessionRef.current, confirm, cancel: !confirm }, onEvent, signal),
+        continueSession(
+          { workspaceId, sessionId: sessionRef.current, confirm, cancel: !confirm, confirmedArgs },
+          onEvent,
+          signal,
+        ),
       )
     },
     [running, runStream, workspaceId],
@@ -626,7 +667,16 @@ export default function AgentChatPanel({
             <div className={styles.greetingAsk}>今天一起创作点什么？</div>
           </div>
         ) : (
-          entries.map((entry, i) => <EntryView key={i} entry={entry} onAnswer={answer} onSettle={settleConfirm} />)
+          entries.map((entry, i) => (
+            <EntryView
+              key={i}
+              entry={entry}
+              busy={running}
+              workspaceId={workspaceId}
+              onAnswer={answer}
+              onSettle={settleConfirm}
+            />
+          ))
         )}
       </div>
 
@@ -801,9 +851,105 @@ export default function AgentChatPanel({
             <ArrowUpIcon />
           </button>
         </div>
+
+        {stats && <StatsBar stats={stats} open={ctxOpen} onToggle={() => setCtxOpen((v) => !v)} />}
       </div>
     </div>
   )
+}
+
+/**
+ * 输入框底部的用量与耗时统计。
+ *
+ * 放在底部而不是浮在对话流里:它是整轮的汇总,不属于任何一条消息;
+ * 而且用户多数时候不看它,占据对话区不划算。
+ */
+function StatsBar({ stats, open, onToggle }: { stats: AgentRunStats; open: boolean; onToggle: () => void }) {
+  const used = stats.context_system + stats.context_tools + stats.context_messages
+  const pct = stats.context_limit > 0 ? Math.round((used / stats.context_limit) * 100) : 0
+  // 缓存命中率按输入 token 算:缓存只作用于重复前缀(system + 工具 + 历史)。
+  const cacheRate = stats.input_tokens > 0 ? Math.round((stats.cached_tokens / stats.input_tokens) * 100) : 0
+
+  return (
+    <div className={styles.statsBar}>
+      <span>
+        {stats.turns} 轮 · {stats.steps} 步
+      </span>
+      <span className={styles.statsDot}>|</span>
+      <span>
+        LLM {fmtSec(stats.llm_ms)} · 工具 {fmtSec(stats.tool_ms)}
+      </span>
+      {stats.cached_tokens > 0 && (
+        <>
+          <span className={styles.statsDot}>|</span>
+          <span>缓存命中 {cacheRate}%</span>
+        </>
+      )}
+      <span className={styles.statsDot}>|</span>
+      <span>
+        输入 {fmtTok(stats.input_tokens)} · 输出 {fmtTok(stats.output_tokens)}
+      </span>
+
+      <button className={styles.statsCtxBtn} onClick={onToggle} title="上下文占用明细">
+        上下文 {pct}%
+      </button>
+
+      {open && (
+        <div className={styles.ctxPopover}>
+          <div className={styles.ctxHeader}>
+            <span>上下文已用 {pct}%</span>
+            <span className={styles.ctxTotal}>
+              ~{fmtTok(used)} / {fmtTok(stats.context_limit)}
+            </span>
+          </div>
+          <div className={styles.ctxTrack}>
+            <span
+              className={`${styles.ctxSeg} ${styles.ctxSegSystem}`}
+              style={{ width: `${segPct(stats.context_system, stats.context_limit)}%` }}
+            />
+            <span
+              className={`${styles.ctxSeg} ${styles.ctxSegTools}`}
+              style={{ width: `${segPct(stats.context_tools, stats.context_limit)}%` }}
+            />
+            <span
+              className={`${styles.ctxSeg} ${styles.ctxSegMsgs}`}
+              style={{ width: `${segPct(stats.context_messages, stats.context_limit)}%` }}
+            />
+          </div>
+          <CtxRow color={styles.ctxDotSystem} label="系统提示词" value={stats.context_system} />
+          <CtxRow color={styles.ctxDotTools} label="工具" value={stats.context_tools} />
+          <CtxRow color={styles.ctxDotMsgs} label="对话消息" value={stats.context_messages} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CtxRow({ color, label, value }: { color: string; label: string; value: number }) {
+  return (
+    <div className={styles.ctxRow}>
+      <span className={`${styles.ctxDot} ${color}`} />
+      <span className={styles.ctxLabel}>{label}</span>
+      <span className={styles.ctxValue}>~{fmtTok(value)}</span>
+    </div>
+  )
+}
+
+/** 毫秒转秒,保留一位小数——统计栏里 34.3s 比 34300ms 好读。 */
+function fmtSec(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+/** token 数转 K,小于 1000 时直接显示原值。 */
+function fmtTok(n: number): string {
+  if (n < 1000) return String(n)
+  return `${(n / 1000).toFixed(1)}K`
+}
+
+/** 单段占总量的百分比,用于上下文进度条。 */
+function segPct(value: number, limit: number): number {
+  if (limit <= 0) return 0
+  return Math.min(100, (value / limit) * 100)
 }
 
 /**
@@ -882,11 +1028,15 @@ function ThinkingBlock({ text }: { text: string }) {
 function EntryView({
   entry,
   onAnswer,
+  busy,
+  workspaceId,
   onSettle,
 }: {
   entry: Entry
+  busy: boolean
+  workspaceId: number
   onAnswer: (text: string) => void
-  onSettle: (callId: string, confirm: boolean) => void
+  onSettle: (callId: string, confirm: boolean, args?: Record<string, unknown>) => void
 }) {
   if (entry.kind === 'user') {
     return (
@@ -953,35 +1103,171 @@ function EntryView({
     )
   }
 
+  return <ConfirmCard entry={entry} busy={busy} workspaceId={workspaceId} onSettle={onSettle} />
+}
+
+/**
+ * 生成确认卡片。参数是可选的控件,不是只读展示。
+ *
+ * 生成参数(时长/画幅/画质/张数)本该由用户定,模型只给建议值——
+ * 所以这里按后端下发的 schema 渲染成下拉/数字框,默认选中模型的建议值,
+ * 用户改完再提交。fields 为空时(拿不到 schema)退化成只读。
+ */
+function ConfirmCard({
+  entry,
+  busy,
+  workspaceId,
+  onSettle,
+}: {
+  entry: Extract<Entry, { kind: 'confirm' }>
+  workspaceId: number
+  /** 上一轮流是否仍在进行。为 true 时禁用按钮,避免点了没反应。 */
+  busy: boolean
+  onSettle: (callId: string, confirm: boolean, args?: Record<string, unknown>) => void
+}) {
   const { call, settled } = entry
+  const [edits, setEdits] = useState<Record<string, unknown>>({})
+  // 换模型后重取的字段与模型名。null 表示仍用后端首次下发的。
+  //
+  // 必须重取:各模型档位差异很大(Seedance 2.5 支持到 30 秒,2.0 只到 15 秒),
+  // 沿用旧模型的选项会让用户选到一个非法值,提交时被兜底成默认值——
+  // 他以为自己选的生效了。
+  const [override, setOverride] = useState<{
+    fields: AgentPendingField[]
+    modelName: string
+  } | null>(null)
+  const [loadingSchema, setLoadingSchema] = useState(false)
+
+  const fields = override?.fields ?? call.fields ?? []
+  const isImage = call.name === 'generate_image'
+  const valueOf = (f: AgentPendingField) => (f.name in edits ? edits[f.name] : f.value)
+
   return (
     <div className={styles.confirmCard}>
-      <div className={styles.confirmTitle}>确认生成视频</div>
-      {PARAM_LABELS.map(([key, label]) =>
-        call.args[key] == null ? null : (
-          <div key={key} className={styles.confirmRow}>
-            <span>{label}</span>
-            <span>{String(call.args[key])}</span>
-          </div>
-        ),
-      )}
-      {typeof call.args.prompt === 'string' && (
-        <div className={styles.confirmRow}>
-          <span>提示词</span>
-          <span>{call.args.prompt}</span>
+      <div className={styles.confirmTitle}>{isImage ? '确认生成图片' : '确认生成视频'}</div>
+
+      {/* 模型也要能换:只显示名字而不给切换,等于把选择权留在模型手里。
+          只有一个可选模型时退化成文本,避免给一个点了没反应的下拉框。
+
+          已知限制:切换模型后下方参数仍是原模型的档位(各模型 schema 不同)。
+          后端在提交时会按新模型的 schema 重新校验并兜底,不会提交非法值,
+          但界面上看不到新模型的可选项。要彻底解决需要切换时回后端重取 schema。 */}
+      {call.models && call.models.length > 1 ? (
+        <div className={styles.confirmField}>
+          <span className={styles.confirmFieldLabel}>模型</span>
+          <select
+            className={styles.confirmSelect}
+            value={String(edits.model ?? call.models.find((m) => m.selected)?.value ?? '')}
+            disabled={!!settled || loadingSchema}
+            onChange={(e) => {
+              const model = e.target.value
+              // 清掉已改的参数:旧模型的档位在新模型上多半非法。
+              setEdits({ model })
+              // 重取新模型的档位——这是「选了 30 秒却只有 15 秒可选」的解法。
+              setLoadingSchema(true)
+              describeGeneration({
+                workspaceId,
+                tool: call.name,
+                args: { ...call.args, model },
+              })
+                .then((res) => setOverride({ fields: res.fields, modelName: res.model_name }))
+                .catch(() => {
+                  // 重取失败时保留旧档位:总好过让确认框变成空白。
+                  // 后端提交时仍会按新模型的 schema 校验并兜底。
+                  setOverride(null)
+                })
+                .finally(() => setLoadingSchema(false))
+            }}
+          >
+            {call.models.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.display_name}
+              </option>
+            ))}
+          </select>
         </div>
+      ) : (
+        call.model_name && (
+          <div className={styles.confirmField}>
+            <span className={styles.confirmFieldLabel}>模型</span>
+            <span className={styles.confirmModel}>{call.model_name}</span>
+          </div>
+        )
       )}
+
+      {typeof call.args.prompt === 'string' && <div className={styles.confirmPrompt}>{call.args.prompt}</div>}
+
+      {fields.map((f) => (
+        <div key={f.name} className={styles.confirmField}>
+          <span className={styles.confirmFieldLabel}>{f.display_name || f.name}</span>
+          {/* 类型判断必须排在 options 之前:布尔字段即使带了 options
+              也该渲染成开关,落进下拉框会变成手填 true/false。 */}
+          {f.type === 'bool' || f.type === 'boolean' ? (
+            <input
+              type="checkbox"
+              className={styles.confirmCheckbox}
+              checked={!!valueOf(f)}
+              disabled={!!settled}
+              onChange={(e) => setEdits((prev) => ({ ...prev, [f.name]: e.target.checked }))}
+            />
+          ) : f.options && f.options.length > 0 ? (
+            <select
+              className={styles.confirmSelect}
+              value={String(valueOf(f) ?? '')}
+              disabled={!!settled}
+              onChange={(e) => {
+                // 从 options 里取回原始类型:select 的 value 恒为 string,
+                // 直接提交会把数字档位(如 duration=5)变成 "5" 被上游拒。
+                const picked = f.options?.find((o) => String(o) === e.target.value)
+                setEdits((prev) => ({ ...prev, [f.name]: picked ?? e.target.value }))
+              }}
+            >
+              {f.options.map((o) => (
+                <option key={String(o)} value={String(o)}>
+                  {String(o)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className={styles.confirmInput}
+              type={f.type === 'number' ? 'number' : 'text'}
+              value={String(valueOf(f) ?? '')}
+              min={f.min}
+              max={f.max}
+              disabled={!!settled}
+              onChange={(e) =>
+                setEdits((prev) => ({
+                  ...prev,
+                  [f.name]: f.type === 'number' ? Number(e.target.value) : e.target.value,
+                }))
+              }
+            />
+          )}
+        </div>
+      ))}
+
       <div className={styles.confirmCredits}>
         预计消耗 <span className={styles.confirmCreditsValue}>{call.estimated_credits}</span> 积分
       </div>
+
       {settled ? (
         <div className={styles.confirmCredits}>{settled === 'done' ? '已确认执行' : '已取消'}</div>
       ) : (
         <div className={styles.confirmActions}>
-          <button className={styles.btnGhost} onClick={() => onSettle(call.call_id, false)}>
+          <button className={styles.btnGhost} disabled={busy} onClick={() => onSettle(call.call_id, false)}>
             取消
           </button>
-          <button className={styles.btnPrimary} onClick={() => onSettle(call.call_id, true)}>
+          <button
+            className={styles.btnPrimary}
+            disabled={busy}
+            title={busy ? '上一步还在进行中' : undefined}
+            onClick={() => {
+              // 只提交改动过的字段:未改的交给后端用模型建议值,
+              // 全量回传会把 schema 默认值固化成用户显式选择。
+              onSettle(call.call_id, true, Object.keys(edits).length ? edits : undefined)
+            }}
+          >
             确认生成
           </button>
         </div>

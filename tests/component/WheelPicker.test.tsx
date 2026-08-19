@@ -33,7 +33,7 @@ describe('WheelPicker', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('支持上下键逐档移动与 Home/End 直达首尾', async () => {
+  it('支持左右键逐档移动与 Home/End 直达首尾', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
     // 受控组件：父级要把新值写回去，逐档移动才会从最新档位继续。
@@ -55,6 +55,11 @@ describe('WheelPicker', () => {
 
     const list = screen.getByRole('listbox', { name: '视频时长' })
     list.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(onChange).toHaveBeenLastCalledWith('8s')
+    await user.keyboard('{ArrowLeft}')
+    expect(onChange).toHaveBeenLastCalledWith('7s')
+    // 档位横排后上下键仍然接住：「上一个/下一个」的直觉两套方向键都有人用
     await user.keyboard('{ArrowDown}')
     expect(onChange).toHaveBeenLastCalledWith('8s')
     await user.keyboard('{ArrowUp}')
@@ -82,7 +87,7 @@ describe('WheelPicker', () => {
             }}
             onCommit={onCommit}
             ariaLabel="视频时长"
-            itemHeight={36}
+            itemWidth={64}
           />
         )
       }
@@ -90,7 +95,7 @@ describe('WheelPicker', () => {
       const list = screen.getByRole('listbox', { name: '视频时长' })
 
       const scrollTo = (index: number) => {
-        list.scrollTop = index * 36
+        list.scrollLeft = index * 64
         fireEvent.scroll(list)
         act(() => {
           vi.advanceTimersByTime(200)
@@ -116,8 +121,8 @@ describe('WheelPicker', () => {
   /**
    * 一格滚轮只走一档。
    *
-   * 交给原生滚动时 deltaY 会被当成像素：Chrome 一格 deltaY≈100，档位高 36px，
-   * 一格跨过约三档——5s 想选 6s 根本停不住，只能改用点击，滚轮等于白做。
+   * 横向容器收不到有意义的纵向滚动，必须自己折算；而按像素折算又会跨档：
+   * Chrome 一格 deltaY≈100，档位宽 64px，一格跨过一档半——想停在某一档几乎不可能。
    */
   it('一格鼠标滚轮只移动一档，而不是按像素跨过好几档', () => {
     vi.useFakeTimers()
@@ -134,7 +139,7 @@ describe('WheelPicker', () => {
               setValue(next)
             }}
             ariaLabel="视频时长"
-            itemHeight={36}
+            itemWidth={64}
           />
         )
       }
@@ -177,7 +182,7 @@ describe('WheelPicker', () => {
               setValue(next)
             }}
             ariaLabel="视频时长"
-            itemHeight={36}
+            itemWidth={64}
           />
         )
       }
@@ -197,6 +202,38 @@ describe('WheelPicker', () => {
         vi.advanceTimersByTime(200)
       })
       expect(onChange).toHaveBeenCalledExactlyOnceWith('6s')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * 触控板双指左右滑必须交回给浏览器。
+   *
+   * 它带惯性和 scroll-snap 吸附，手感是系统级的；自己接管会把连续滑动切成一顿一顿的步进，
+   * 反而比原生差。所以横向为主的 wheel 事件既不 preventDefault、也不自行步进——
+   * 值的变化由随后的 scroll 事件（滚动停止后）提交。
+   */
+  it('触控板横向滑动交给原生滚动，不被自行步进接管', () => {
+    vi.useFakeTimers()
+    try {
+      const onChange = vi.fn()
+      render(<WheelPicker options={durations} value="5s" onChange={onChange} ariaLabel="视频时长" itemWidth={64} />)
+      const list = screen.getByRole('listbox', { name: '视频时长' })
+
+      // 横向分量占主导：连发多次也不该产生步进
+      for (let i = 0; i < 6; i += 1) {
+        fireEvent.wheel(list, { deltaX: 30, deltaY: 2, deltaMode: 0 })
+      }
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+      expect(onChange).not.toHaveBeenCalled()
+
+      const event = new WheelEvent('wheel', { deltaX: 30, deltaY: 2, cancelable: true, bubbles: true })
+      list.dispatchEvent(event)
+      // 没有 preventDefault，原生横向滚动才会照常发生
+      expect(event.defaultPrevented).toBe(false)
     } finally {
       vi.useRealTimers()
     }

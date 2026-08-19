@@ -156,6 +156,9 @@ export default function EntryDropdown({
             // 点击某档位/回车是明确的确认动作，这时才收起。点击浮层外同样收起。
             onCommit={() => setOpen(false)}
             ariaLabel={ariaLabel}
+            // 5 档 × 64px = 320px：当前档位左右各看得见两档，足以判断该往哪边滑，又不至于宽过输入卡片
+            visibleCount={5}
+            itemWidth={64}
           />
         </div>
       )}

@@ -114,9 +114,134 @@
   font-size: 12px;
 }
 
+/*
+ * 继承自上游文本节点的提示词块。
+ *
+ * 视觉上要一眼看出「这段不是我敲的、但会一起发出去」：左侧竖条 + 浅底与下方输入框区分开，
+ * 同时排版与输入框同字号同行高，让人读起来就是同一段提示词的上半部分。
+ */
+.inheritedText {
+  margin-bottom: 8px;
+  padding: 8px 10px 8px 12px;
+  border-left: 3px solid #5767e5;
+  border-radius: 4px 8px 8px 4px;
+  background: #f4f6ff;
+}
+
+.inheritedTextHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.inheritedTextActions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+}
+
+/* 标题、按钮、脚注都是装饰文字：一次误拖不该把整块刷成蓝色选区，正文仍可正常选中复制 */
+.inheritedTextLabel,
+.inheritedTextFoot,
+.inheritedTextToggle,
+.inheritedTextAdopt {
+  user-select: none;
+}
+
+.inheritedTextLabel {
+  min-width: 0;
+  overflow: hidden;
+  color: #5767e5;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.inheritedTextToggle {
+  flex: none;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #5767e5;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.inheritedTextToggle:hover {
+  background: #e6eaff;
+}
+
+.inheritedTextAdopt {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid rgba(87, 103, 229, 0.32);
+  border-radius: 999px;
+  background: #fff;
+  color: #5767e5;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.inheritedTextAdopt:hover {
+  border-color: #5767e5;
+  background: #eef1ff;
+}
+
+/*
+ * 收起态：只露两行。
+ *
+ * 图生图的提示词本来就常有五六行，整段铺开会把下方真正要填的输入框顶出面板，
+ * 用户看到的是一大片读不完的灰字，反而不知道该在哪里写。
+ */
+.inheritedTextBodyClamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+/* 展开态：给一个上限并可滚，长脚本不会把面板撑到屏幕外 */
+.inheritedTextBodyOpen {
+  max-height: 150px;
+  overflow-y: auto;
+  margin-bottom: 4px;
+}
+
+.inheritedTextParagraph {
+  margin: 0 0 6px;
+  color: #3a4152;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inheritedTextParagraph:last-child {
+  margin-bottom: 0;
+}
+
+.inheritedTextFoot {
+  color: #858a96;
+  font-size: 11px;
+}
+
 .textarea {
   width: 100%;
   min-height: 82px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-sizing: border-box;
   border: none;
   outline: none;
   resize: none;
@@ -217,10 +342,10 @@
   gap: 6px;
   height: 34px;
   padding: 0 14px;
-  border: 1px solid rgba(87, 103, 229, 0.24);
+  border: 1px solid var(--panel-pick-border);
   border-radius: 999px;
-  background: rgba(87, 103, 229, 0.08);
-  color: #5767e5;
+  background: var(--panel-pick-bg);
+  color: var(--panel-pick);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -230,8 +355,8 @@
 }
 
 .polishBtn:hover:not(:disabled) {
-  border-color: rgba(87, 103, 229, 0.45);
-  background: rgba(87, 103, 229, 0.14);
+  border-color: var(--panel-pick-border-hover);
+  background: #ddfbf3;
 }
 
 .polishBtn:disabled {
@@ -319,6 +444,30 @@
 
 .popoverItem:hover {
   background: rgba(87, 103, 229, 0.06);
+}
+
+/* 用不了的模型：名字压暗，下面一行直接写清为什么，用户不用猜 */
+.popoverItemBlocked {
+  display: block;
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: #9aa0aa;
+  font-size: 13px;
+  cursor: not-allowed;
+}
+
+.popoverItemBlocked b {
+  display: block;
+  font-weight: 500;
+}
+
+.popoverItemBlocked em {
+  display: block;
+  margin-top: 2px;
+  color: #b0763a;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
 }
 
 .popoverItemActive {
@@ -476,9 +625,10 @@
   width: 100%;
 }
 
-/* 时长滚轮：与相邻按钮组保持同样的左右留白（档位高度由组件的 itemHeight 决定） */
+/* 时长档位条：横排后可能比菜单还宽，居中放置并允许它自己横向滚动 */
 .durationWheel {
-  margin: 2px 0;
+  margin: 2px auto;
+  max-width: 100%;
 }
 
 .videoMenuHint {
@@ -487,6 +637,18 @@
   color: #7d8492;
   font-size: 11px;
   line-height: 1.5;
+}
+
+/*
+ * 分段按钮组的选中态配色，与同一个菜单里「视频时长」档位条保持一致（#11a98a / #ebfffb）。
+ * 生成方式、分辨率、画面比例、音频开关共用这套类名，改这里四组一起变——
+ * 同一张菜单里时长是青绿、其余是蓝紫，会读成两种不同性质的选择。
+ */
+.videoBtnGroup,
+.videoBtnGroupItem {
+  --panel-pick: #11a98a;
+  --panel-pick-bg: #ebfffb;
+  --panel-pick-border: rgba(17, 169, 138, 0.55);
 }
 
 .videoBtnGroupItem {
@@ -521,21 +683,34 @@
 }
 
 .videoBtnGroupItem:hover {
-  border-color: #5767e5;
-  color: #5767e5;
+  border-color: var(--panel-pick-border);
+  color: var(--panel-pick);
   z-index: 1;
 }
 
 .videoBtnGroupItemActive {
-  background: rgba(87, 103, 229, 0.1);
-  border-color: #5767e5;
-  color: #5767e5;
+  background: var(--panel-pick-bg);
+  border-color: var(--panel-pick);
+  color: var(--panel-pick);
   z-index: 2;
+}
+
+/*
+ * 生成按钮与润色按钮沿用面板里同一套青绿（与档位选中态、时长档位条一致）。
+ * 一张面板上主行动是蓝紫、而它上下左右的选中态都是青绿，会读成两个不同的产品。
+ */
+.generateBtn,
+.polishBtn {
+  --panel-pick: #11a98a;
+  --panel-pick-hover: #0e8f75;
+  --panel-pick-bg: #ebfffb;
+  --panel-pick-border: rgba(17, 169, 138, 0.28);
+  --panel-pick-border-hover: rgba(17, 169, 138, 0.5);
 }
 
 .generateBtn {
   padding: 0;
-  background: #5767e5;
+  background: var(--panel-pick);
   color: #fff;
   border: none;
   border-radius: 999px;
@@ -614,7 +789,7 @@
 }
 
 .generateBtn:hover:not(:disabled) {
-  background: #4a5ad4;
+  background: var(--panel-pick-hover);
 }
 
 .generateBtn:hover:not(:disabled) .sendIcon {

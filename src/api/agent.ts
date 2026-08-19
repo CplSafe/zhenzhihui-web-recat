@@ -69,17 +69,64 @@ export interface AgentChatModel {
 }
 
 /** 待确认的生成调用,由 await_confirm 事件携带。 */
+/** 确认框里的一个可调参数,由后端按模型 schema 下发。 */
+export interface AgentPendingField {
+  name: string
+  display_name?: string
+  type: string
+  /** 模型给出的建议值,作为控件默认选中项。 */
+  value?: unknown
+  options?: unknown[]
+  min?: number
+  max?: number
+  help?: string
+}
+
 export interface AgentPendingCall {
   call_id: string
   name: string
   args: Record<string, unknown>
   estimated_credits: number
+  /** 可调参数。为空时确认框退化成只读展示。 */
+  fields?: AgentPendingField[]
+  /** 实际会用到的模型展示名。 */
+  model_name?: string
+  /** 可切换的生成模型。 */
+  models?: AgentPendingModel[]
+}
+
+/** 确认框里可选的生成模型。 */
+export interface AgentPendingModel {
+  /** 提交时填回 args.model。 */
+  value: string
+  display_name: string
+  selected: boolean
+}
+
+/** 一次运行的用量与耗时统计,展示在输入框底部。 */
+export interface AgentRunStats {
+  turns: number
+  steps: number
+  /** LLM 与工具耗时分开:优化方向不同,混在一起看不出该改哪边。 */
+  llm_ms: number
+  tool_ms: number
+  input_tokens: number
+  output_tokens: number
+  cached_tokens: number
+  total_tokens: number
+  /** 上下文三段占用,用于「上下文已用」弹窗。 */
+  context_system: number
+  context_tools: number
+  context_messages: number
+  context_limit: number
 }
 
 /** SSE 事件。type 决定 data 的形状。 */
 export type AgentEvent =
   | { type: 'session'; data: { session_id: number; title: string } }
   | { type: 'turn'; data: { turn: number; max_turns: number; tokens: number } }
+  | { type: 'delta'; data: { text: string } }
+  | { type: 'stats'; data: AgentRunStats }
   | { type: 'thinking'; data: { content: string } }
   | { type: 'tool_call'; data: { name: string; args: Record<string, unknown> } }
   | { type: 'tool_result'; data: { name: string; preview: string } }
@@ -153,6 +200,22 @@ export function setExecMode(sessionId: number, workspaceId: number, execMode: Ag
   return requestJson<{ exec_mode: AgentExecMode }>(`${API_BASE}/sessions/${sessionId}/exec-mode`, {
     method: 'PUT',
     body: JSON.stringify({ workspace_id: workspaceId, exec_mode: execMode }),
+  })
+}
+
+/** 查询某个生成模型的可调参数与档位。换模型后必须重取——各模型档位差异很大。 */
+export function describeGeneration(input: { workspaceId: number; tool: string; args: Record<string, unknown> }) {
+  return requestJson<{
+    fields: AgentPendingField[]
+    model_name: string
+    models: AgentPendingModel[]
+  }>(`${API_BASE}/describe`, {
+    method: 'POST',
+    body: JSON.stringify({
+      workspace_id: input.workspaceId,
+      tool: input.tool,
+      args: input.args,
+    }),
   })
 }
 
@@ -277,7 +340,7 @@ export interface ContinueSessionInput {
   assetIds?: number[]
   /** 显式确认执行待定的生成。只带 message 的追问不会被当作确认。 */
   confirm?: boolean
-  /** 用户在确认框里改过的参数,为空则用模型原本给的。 */
+  /** 用户在确认框里改过的参数;为空则用模型原本给的。 */
   confirmedArgs?: Record<string, unknown>
   cancel?: boolean
   /** 非零时切换本会话后续使用的对话模型。 */
