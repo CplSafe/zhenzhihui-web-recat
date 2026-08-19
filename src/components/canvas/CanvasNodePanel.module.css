@@ -342,10 +342,10 @@
   gap: 6px;
   height: 34px;
   padding: 0 14px;
-  border: 1px solid rgba(87, 103, 229, 0.24);
+  border: 1px solid var(--panel-pick-border);
   border-radius: 999px;
-  background: rgba(87, 103, 229, 0.08);
-  color: #5767e5;
+  background: var(--panel-pick-bg);
+  color: var(--panel-pick);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -355,8 +355,8 @@
 }
 
 .polishBtn:hover:not(:disabled) {
-  border-color: rgba(87, 103, 229, 0.45);
-  background: rgba(87, 103, 229, 0.14);
+  border-color: var(--panel-pick-border-hover);
+  background: #ddfbf3;
 }
 
 .polishBtn:disabled {
@@ -625,9 +625,10 @@
   width: 100%;
 }
 
-/* 时长滚轮：与相邻按钮组保持同样的左右留白（档位高度由组件的 itemHeight 决定） */
+/* 时长档位条：横排后可能比菜单还宽，居中放置并允许它自己横向滚动 */
 .durationWheel {
-  margin: 2px 0;
+  margin: 2px auto;
+  max-width: 100%;
 }
 
 .videoMenuHint {
@@ -636,6 +637,18 @@
   color: #7d8492;
   font-size: 11px;
   line-height: 1.5;
+}
+
+/*
+ * 分段按钮组的选中态配色，与同一个菜单里「视频时长」档位条保持一致（#11a98a / #ebfffb）。
+ * 生成方式、分辨率、画面比例、音频开关共用这套类名，改这里四组一起变——
+ * 同一张菜单里时长是青绿、其余是蓝紫，会读成两种不同性质的选择。
+ */
+.videoBtnGroup,
+.videoBtnGroupItem {
+  --panel-pick: #11a98a;
+  --panel-pick-bg: #ebfffb;
+  --panel-pick-border: rgba(17, 169, 138, 0.55);
 }
 
 .videoBtnGroupItem {
@@ -670,21 +683,34 @@
 }
 
 .videoBtnGroupItem:hover {
-  border-color: #5767e5;
-  color: #5767e5;
+  border-color: var(--panel-pick-border);
+  color: var(--panel-pick);
   z-index: 1;
 }
 
 .videoBtnGroupItemActive {
-  background: rgba(87, 103, 229, 0.1);
-  border-color: #5767e5;
-  color: #5767e5;
+  background: var(--panel-pick-bg);
+  border-color: var(--panel-pick);
+  color: var(--panel-pick);
   z-index: 2;
+}
+
+/*
+ * 生成按钮与润色按钮沿用面板里同一套青绿（与档位选中态、时长档位条一致）。
+ * 一张面板上主行动是蓝紫、而它上下左右的选中态都是青绿，会读成两个不同的产品。
+ */
+.generateBtn,
+.polishBtn {
+  --panel-pick: #11a98a;
+  --panel-pick-hover: #0e8f75;
+  --panel-pick-bg: #ebfffb;
+  --panel-pick-border: rgba(17, 169, 138, 0.28);
+  --panel-pick-border-hover: rgba(17, 169, 138, 0.5);
 }
 
 .generateBtn {
   padding: 0;
-  background: #5767e5;
+  background: var(--panel-pick);
   color: #fff;
   border: none;
   border-radius: 999px;
@@ -763,7 +789,7 @@
 }
 
 .generateBtn:hover:not(:disabled) {
-  background: #4a5ad4;
+  background: var(--panel-pick-hover);
 }
 
 .generateBtn:hover:not(:disabled) .sendIcon {
