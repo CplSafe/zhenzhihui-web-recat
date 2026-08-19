@@ -203,6 +203,22 @@ export function setExecMode(sessionId: number, workspaceId: number, execMode: Ag
   })
 }
 
+/** 查询某个生成模型的可调参数与档位。换模型后必须重取——各模型档位差异很大。 */
+export function describeGeneration(input: { workspaceId: number; tool: string; args: Record<string, unknown> }) {
+  return requestJson<{
+    fields: AgentPendingField[]
+    model_name: string
+    models: AgentPendingModel[]
+  }>(`${API_BASE}/describe`, {
+    method: 'POST',
+    body: JSON.stringify({
+      workspace_id: input.workspaceId,
+      tool: input.tool,
+      args: input.args,
+    }),
+  })
+}
+
 export function getSession(sessionId: number, workspaceId: number) {
   return requestJson<{
     session: AgentSession

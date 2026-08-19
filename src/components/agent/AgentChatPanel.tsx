@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   continueSession,
+  describeGeneration,
   getSession,
   listChatModels,
   listSessions,
@@ -667,7 +668,14 @@ export default function AgentChatPanel({
           </div>
         ) : (
           entries.map((entry, i) => (
-            <EntryView key={i} entry={entry} busy={running} onAnswer={answer} onSettle={settleConfirm} />
+            <EntryView
+              key={i}
+              entry={entry}
+              busy={running}
+              workspaceId={workspaceId}
+              onAnswer={answer}
+              onSettle={settleConfirm}
+            />
           ))
         )}
       </div>
@@ -1021,10 +1029,12 @@ function EntryView({
   entry,
   onAnswer,
   busy,
+  workspaceId,
   onSettle,
 }: {
   entry: Entry
   busy: boolean
+  workspaceId: number
   onAnswer: (text: string) => void
   onSettle: (callId: string, confirm: boolean, args?: Record<string, unknown>) => void
 }) {
@@ -1093,7 +1103,7 @@ function EntryView({
     )
   }
 
-  return <ConfirmCard entry={entry} busy={busy} onSettle={onSettle} />
+  return <ConfirmCard entry={entry} busy={busy} workspaceId={workspaceId} onSettle={onSettle} />
 }
 
 /**
@@ -1106,17 +1116,29 @@ function EntryView({
 function ConfirmCard({
   entry,
   busy,
+  workspaceId,
   onSettle,
 }: {
   entry: Extract<Entry, { kind: 'confirm' }>
+  workspaceId: number
   /** 上一轮流是否仍在进行。为 true 时禁用按钮,避免点了没反应。 */
   busy: boolean
   onSettle: (callId: string, confirm: boolean, args?: Record<string, unknown>) => void
 }) {
   const { call, settled } = entry
   const [edits, setEdits] = useState<Record<string, unknown>>({})
+  // 换模型后重取的字段与模型名。null 表示仍用后端首次下发的。
+  //
+  // 必须重取:各模型档位差异很大(Seedance 2.5 支持到 30 秒,2.0 只到 15 秒),
+  // 沿用旧模型的选项会让用户选到一个非法值,提交时被兜底成默认值——
+  // 他以为自己选的生效了。
+  const [override, setOverride] = useState<{
+    fields: AgentPendingField[]
+    modelName: string
+  } | null>(null)
+  const [loadingSchema, setLoadingSchema] = useState(false)
 
-  const fields = call.fields ?? []
+  const fields = override?.fields ?? call.fields ?? []
   const isImage = call.name === 'generate_image'
   const valueOf = (f: AgentPendingField) => (f.name in edits ? edits[f.name] : f.value)
 
@@ -1137,10 +1159,25 @@ function ConfirmCard({
             className={styles.confirmSelect}
             value={String(edits.model ?? call.models.find((m) => m.selected)?.value ?? '')}
             disabled={!!settled}
+            disabled={!!settled || loadingSchema}
             onChange={(e) => {
-              // 换模型时清掉已改的参数:旧模型的档位在新模型上多半非法,
-              // 留着会被后端兜底成默认值,用户以为自己选的生效了。
-              setEdits({ model: e.target.value })
+              const model = e.target.value
+              // 清掉已改的参数:旧模型的档位在新模型上多半非法。
+              setEdits({ model })
+              // 重取新模型的档位——这是「选了 30 秒却只有 15 秒可选」的解法。
+              setLoadingSchema(true)
+              describeGeneration({
+                workspaceId,
+                tool: call.name,
+                args: { ...call.args, model },
+              })
+                .then((res) => setOverride({ fields: res.fields, modelName: res.model_name }))
+                .catch(() => {
+                  // 重取失败时保留旧档位:总好过让确认框变成空白。
+                  // 后端提交时仍会按新模型的 schema 校验并兜底。
+                  setOverride(null)
+                })
+                .finally(() => setLoadingSchema(false))
             }}
           >
             {call.models.map((m) => (
