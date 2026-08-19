@@ -342,8 +342,6 @@ export interface ContinueSessionInput {
   confirm?: boolean
   /** 用户在确认框里改过的参数;为空则用模型原本给的。 */
   confirmedArgs?: Record<string, unknown>
-  /** 用户在确认框里改过的参数,为空则用模型原本给的。 */
-  confirmedArgs?: Record<string, unknown>
   cancel?: boolean
   /** 非零时切换本会话后续使用的对话模型。 */
   modelVersionId?: number

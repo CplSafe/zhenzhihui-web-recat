@@ -27,3 +27,24 @@ export function writeJson(key: string, value: unknown): void {
     /* 忽略存储失败 */
   }
 }
+
+/** 会话级 JSON 读取，供列表筛选等临时状态使用。 */
+export function readSessionJson<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const raw = window.sessionStorage?.getItem(key)
+    return raw === null ? fallback : (JSON.parse(raw) as T)
+  } catch {
+    return fallback
+  }
+}
+
+/** 会话级 JSON 写入，失败时静默忽略。 */
+export function writeSessionJson(key: string, value: unknown): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage?.setItem(key, JSON.stringify(value))
+  } catch {
+    // 隐私模式或配额不足时不影响页面使用。
+  }
+}

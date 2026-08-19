@@ -1158,7 +1158,6 @@ function ConfirmCard({
           <select
             className={styles.confirmSelect}
             value={String(edits.model ?? call.models.find((m) => m.selected)?.value ?? '')}
-            disabled={!!settled}
             disabled={!!settled || loadingSchema}
             onChange={(e) => {
               const model = e.target.value
