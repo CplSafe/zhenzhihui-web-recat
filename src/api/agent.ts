@@ -219,6 +219,24 @@ export function describeGeneration(input: { workspaceId: number; tool: string; a
   })
 }
 
+/** 一条生成产出物的实时状态。 */
+export interface AgentArtifactStatus {
+  artifact_id: number
+  task_id: number
+  kind: string
+  title: string
+  status: string
+  assets?: string[]
+  error_message?: string
+}
+
+/** 轮询会话内全部生成任务的进度。视频要几分钟,靠这个把「生成中 → 完成」显示出来。 */
+export function listArtifacts(sessionId: number, workspaceId: number) {
+  return requestJson<{ items: AgentArtifactStatus[] }>(
+    `${API_BASE}/sessions/${sessionId}/artifacts?workspace_id=${workspaceId}`,
+  )
+}
+
 export function getSession(sessionId: number, workspaceId: number) {
   return requestJson<{
     session: AgentSession

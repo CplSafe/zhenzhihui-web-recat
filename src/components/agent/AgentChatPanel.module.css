@@ -1115,3 +1115,115 @@
 .ctxValue {
   color: var(--color-text-tertiary);
 }
+
+/* ── 生成产出物面板 ───────────────────────────────────── */
+
+/* 固定在对话区上方而不是随流滚动:视频生成要几分钟,
+   用户会一边等一边继续对话,进度被滚走就失去意义。 */
+.artifactPanel {
+  flex-shrink: 0;
+  padding: 10px var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-app);
+}
+
+.artifactHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-heading);
+}
+
+.artifactCount {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+/* 横向滚动:多条生成时不该把对话区挤没 */
+.artifactList {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.artifactCard {
+  flex-shrink: 0;
+  width: 116px;
+}
+
+.artifactThumb {
+  position: relative;
+  width: 116px;
+  /* 9:16 竖版是短视频主流,按它留位避免加载完成时布局跳动 */
+  aspect-ratio: 9 / 16;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  overflow: hidden;
+}
+
+.artifactMedia {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.artifactPlaceholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  background: linear-gradient(
+    110deg,
+    var(--color-bg-surface) 30%,
+    var(--color-brand-light) 50%,
+    var(--color-bg-surface) 70%
+  );
+  background-size: 200% 100%;
+}
+
+/* 生成中用流光而不是转圈:几分钟的等待里,持续的横向流动
+   比原地打转更能传达「在推进」而不是「卡住了」。 */
+.artifactPulse {
+  animation: artifact-shimmer 1.6s linear infinite;
+}
+
+@keyframes artifact-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.artifactMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 4px;
+}
+
+.artifactTitle {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifactStatus {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.artifactStatusFailed {
+  color: var(--color-error);
+}

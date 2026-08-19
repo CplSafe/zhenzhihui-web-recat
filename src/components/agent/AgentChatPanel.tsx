@@ -15,6 +15,7 @@ import {
   continueSession,
   describeGeneration,
   getSession,
+  listArtifacts,
   listChatModels,
   listSessions,
   setExecMode as setExecModeApi,
@@ -24,6 +25,7 @@ import {
   type AgentExecMode,
   type AgentKind,
   type AgentMessage,
+  type AgentArtifactStatus,
   type AgentPendingCall,
   type AgentRunStats,
   type AgentPendingField,
@@ -102,6 +104,12 @@ const TOOL_LABELS: Record<string, string> = {
 /** 确认卡片里展示的参数,按这个顺序排;其余参数不展示避免噪音。 */
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
 
+/** 生成任务的终态。到达这些状态就不必再轮询。 */
+const TERMINAL_STATUS = new Set(['succeeded', 'failed', 'cancelled', 'canceled'])
+
+/** 轮询间隔。视频生成动辄几分钟,3 秒足够及时又不至于打爆接口。 */
+const ARTIFACT_POLL_MS = 3000
+
 const STATUS_LABELS: Record<string, string> = {
   idle: '待开始',
   running: '进行中',
@@ -150,6 +158,9 @@ export default function AgentChatPanel({
   // 用量统计。保留上一轮的值:流结束后仍要显示,不能一跑完就清空。
   const [stats, setStats] = useState<AgentRunStats | null>(null)
   const [ctxOpen, setCtxOpen] = useState(false)
+  // 生成中的产出物。视频要几分钟,轮询这个把进度显示出来——
+  // 没有它用户提交后只看到一句「已提交」,再无下文。
+  const [artifacts, setArtifacts] = useState<AgentArtifactStatus[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -396,6 +407,8 @@ export default function AgentChatPanel({
 
         case 'generating':
           setStatus('正在提交视频生成…')
+          // 提交成功后立刻开始轮询,不等下一次自然触发。
+          setPollGen((n) => n + 1)
           push({ kind: 'trace', label: '生成视频', running: true })
           onGenerated?.({
             callId: ev.data.call_id,
@@ -532,6 +545,46 @@ export default function AgentChatPanel({
     [send],
   )
 
+  /**
+   * 轮询生成进度,直到所有任务都到终态。
+   *
+   * 视频生成要几分钟。不轮询的话用户提交后只看到「已提交」——
+   * 既不知道还要等多久,也拿不到最终的视频。
+   *
+   * 只在有未完成任务时继续:全部完成后停掉定时器,避免空转打接口。
+   */
+  // pollGen 递增即触发一次重新拉取。用它而不是把 artifacts 放进依赖:
+  // 后者会让每次轮询结果都重建定时器,间隔失去意义。
+  const [pollGen, setPollGen] = useState(0)
+  const hasPending = artifacts.some((a) => !TERMINAL_STATUS.has(a.status))
+
+  useEffect(() => {
+    const sid = sessionRef.current
+    if (!sid) return
+    // 已全部完成就不再轮询,避免空转打接口。
+    if (artifacts.length > 0 && !hasPending) return
+
+    let cancelled = false
+    const tick = () => {
+      listArtifacts(sid, workspaceId)
+        .then(({ items }) => {
+          if (!cancelled) setArtifacts(items)
+        })
+        .catch(() => {
+          // 轮询失败静默重试:网络抖动不该在对话里弹错误,
+          // 下一次 tick 会自己恢复。
+        })
+    }
+    tick()
+    const timer = window.setInterval(tick, ARTIFACT_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+    // 依赖只放「是否还需要轮询」与触发信号,不放 artifacts 本身。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, hasPending, pollGen])
+
   /** 打开历史列表并拉取。每次打开都重拉:会话在别处也可能新增。 */
   const openHistory = useCallback(() => {
     setHistoryOpen(true)
@@ -659,6 +712,8 @@ export default function AgentChatPanel({
           </div>
         </div>
       )}
+
+      {artifacts.length > 0 && <ArtifactPanel items={artifacts} />}
 
       <div className={styles.scroll} ref={scrollRef}>
         {empty ? (
@@ -856,6 +911,74 @@ export default function AgentChatPanel({
       </div>
     </div>
   )
+}
+
+/**
+ * 生成产出物面板:逐条显示视频/图片的生成进度与结果。
+ *
+ * 对标可灵/Seedance 的在线体验——提交后要能看到「排队中 → 生成中 → 完成」,
+ * 而不是一句「已提交」就没了下文。视频要几分钟,没有进度反馈用户会以为卡死。
+ */
+function ArtifactPanel({ items }: { items: AgentArtifactStatus[] }) {
+  const done = items.filter((a) => TERMINAL_STATUS.has(a.status)).length
+
+  return (
+    <div className={styles.artifactPanel}>
+      <div className={styles.artifactHeader}>
+        <span>生成结果</span>
+        <span className={styles.artifactCount}>
+          {done}/{items.length} 完成
+        </span>
+      </div>
+      <div className={styles.artifactList}>
+        {items.map((a) => (
+          <ArtifactCard key={a.artifact_id} item={a} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ArtifactCard({ item }: { item: AgentArtifactStatus }) {
+  const url = item.assets?.[0]
+  const failed = item.status === 'failed'
+  const running = !TERMINAL_STATUS.has(item.status)
+
+  return (
+    <div className={styles.artifactCard}>
+      <div className={styles.artifactThumb}>
+        {url ? (
+          item.kind === 'video' ? (
+            // 给 poster 留空:视频首帧由浏览器解码,比额外拉一张缩略图快。
+            <video className={styles.artifactMedia} src={url} controls preload="metadata" />
+          ) : (
+            <img className={styles.artifactMedia} src={url} alt={item.title} />
+          )
+        ) : (
+          <div className={`${styles.artifactPlaceholder} ${running ? styles.artifactPulse : ''}`}>
+            {failed ? '生成失败' : running ? '生成中' : '等待中'}
+          </div>
+        )}
+      </div>
+      <div className={styles.artifactMeta}>
+        <span className={styles.artifactTitle}>{item.title}</span>
+        <span className={`${styles.artifactStatus} ${failed ? styles.artifactStatusFailed : ''}`}>
+          {failed ? item.error_message || '生成失败' : ARTIFACT_STATUS_LABELS[item.status] || item.status}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+const ARTIFACT_STATUS_LABELS: Record<string, string> = {
+  queued: '排队中',
+  submitting: '提交中',
+  running: '生成中',
+  processing: '生成中',
+  succeeded: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  canceled: '已取消',
 }
 
 /**
