@@ -2,6 +2,7 @@
 export const SIDEBAR_ROUTE_MAP: Readonly<Record<string, string>> = Object.freeze({
   home: '/home',
   canvas: '/canvas',
+  studio: '/studio',
   creative: '/smart',
   'real-person-video': '/real-person-video',
   'hot-copy': '/hot-copy',
