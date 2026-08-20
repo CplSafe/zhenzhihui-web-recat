@@ -186,11 +186,23 @@ const FALLBACK_DURATION_RULES: readonly FallbackDurationRule[] = [
  */
 export function getFallbackDurationOptions(model: BackendGenerationModel | null | undefined): number[] | null {
   if (!model) return null
-  const identities = textsFromKeys(model, [...FALLBACK_IDENTITY_KEYS, ...PROVIDER_IDENTITY_KEYS]).map(compactIdentity)
-  const rule = FALLBACK_DURATION_RULES.find((candidate) =>
-    candidate.identities.some((identity) =>
-      identities.some((modelIdentity) => modelIdentity.includes(compactIdentity(identity))),
-    ),
-  )
+  const rule = FALLBACK_DURATION_RULES.find((candidate) => matchesModelIdentity(model, candidate.identities))
   return rule ? [...rule.durations] : null
+}
+
+/**
+ * 判断模型的名称 / 版本 / 供应商等身份字段是否命中给定关键字之一。
+ *
+ * 与 getFallbackDurationOptions 共用同一套「身份文本 + 归一化」规则，
+ * 供其他「后端尚未声明、只能按模型身份兜底」的场景复用（如参考视频时长上限）。
+ */
+export function matchesModelIdentity(
+  model: BackendGenerationModel | null | undefined,
+  keywords: readonly string[],
+): boolean {
+  if (!model) return false
+  const identities = textsFromKeys(model, [...FALLBACK_IDENTITY_KEYS, ...PROVIDER_IDENTITY_KEYS]).map(compactIdentity)
+  return keywords.some((keyword) =>
+    identities.some((modelIdentity) => modelIdentity.includes(compactIdentity(keyword))),
+  )
 }

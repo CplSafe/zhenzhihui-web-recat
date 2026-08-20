@@ -1,0 +1,372 @@
+/**
+ * AI 创作台页面布局：左侧参数控制台 + 右侧结果流的双栏工作台。
+ * 复用全站侧边栏与顶栏，配色沿用 tokens.css 的品牌浅色体系。
+ */
+/* html / body / #app 是 height:100% + overflow:hidden 的固定视口外壳，
+   页面不能靠文档流滚动，必须自己撑满高度并在内部开滚动容器。 */
+.studio-view {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg-app);
+}
+
+.studio-view__main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.studio-view__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
+/* ── 左侧控制台 ───────────────────────────────────────────── */
+.studio-console {
+  display: flex;
+  flex-direction: column;
+  width: 420px;
+  min-width: 360px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-surface);
+}
+
+.studio-console__tabs {
+  display: flex;
+  gap: 24px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.studio-console__tab {
+  position: relative;
+  padding: 16px 0;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.studio-console__tab:hover {
+  color: var(--color-brand);
+}
+
+.studio-console__tab.is-active {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+/* 选中态下划线用伪元素，避免切换时布局跳动 */
+.studio-console__tab.is-active::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-brand);
+}
+
+.studio-console__scroll {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+
+/* 提示词输入 */
+.studio-prompt {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-2xl);
+  background: var(--color-bg-surface);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.studio-prompt:focus-within {
+  border-color: var(--color-brand-border);
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.studio-prompt__input {
+  min-height: 132px;
+  padding: 14px;
+  border: none;
+  background: none;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  resize: none;
+}
+
+.studio-prompt__input::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.studio-prompt__input:focus {
+  outline: none;
+}
+
+.studio-prompt__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.studio-prompt__count {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-prompt__actions {
+  display: flex;
+  margin-left: auto;
+  gap: 8px;
+}
+
+.studio-ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.studio-ghost-btn:hover:not(:disabled) {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.studio-ghost-btn:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+/* 智能分镜开关行 */
+.studio-storyboard-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-2xl);
+  background: var(--color-bg-surface);
+}
+
+.studio-switch {
+  position: relative;
+  display: inline-flex;
+  width: 38px;
+  height: 21px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong);
+  cursor: pointer;
+  transition: background var(--transition-normal);
+}
+
+.studio-switch.is-on {
+  background: var(--color-brand);
+}
+
+.studio-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-normal);
+}
+
+.studio-switch.is-on::after {
+  transform: translateX(17px);
+}
+
+.studio-switch:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-semi-disabled);
+}
+
+.studio-storyboard-bar__label {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.studio-storyboard-bar__hint {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.studio-storyboard-bar__custom {
+  margin-left: auto;
+  padding: 5px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.studio-storyboard-bar__custom:hover:not(:disabled) {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.studio-storyboard-bar__custom:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+/* 底部提交区 */
+.studio-console__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-surface);
+}
+
+.studio-console__disclaimer {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.studio-console__submit-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 积分预估：与参数条同一行右对齐 */
+.studio-cost {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  text-align: right;
+}
+
+.studio-cost__value {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-cost__value.is-short {
+  color: var(--color-error);
+}
+
+.studio-cost__balance {
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-submit {
+  flex: 1;
+  padding: 12px 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-brand);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-primary-button);
+  transition: var(--transition-button);
+}
+
+.studio-submit:hover:not(:disabled) {
+  background: var(--color-brand-hover);
+  box-shadow: var(--shadow-primary-button-hover);
+}
+
+.studio-submit:active:not(:disabled) {
+  background: var(--color-brand-active);
+  transform: translateY(1px);
+}
+
+.studio-submit:disabled {
+  cursor: not-allowed;
+  box-shadow: none;
+  opacity: var(--opacity-semi-disabled);
+}
+
+/* ── 右侧结果流 ───────────────────────────────────────────── */
+.studio-view__feed {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--color-bg-app);
+}
+
+/* ── 响应式 ─────────────────────────────────────────────── */
+@media (max-width: 1080px) {
+  /* 窄屏两栏改为上下堆叠：此时由 body 这一层统一滚动，
+     控制台与结果流都放开固定高度，否则会挤成两个各自滚动的小窗口。 */
+  .studio-view__body {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .studio-console {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .studio-console__scroll {
+    flex: none;
+    overflow-y: visible;
+  }
+
+  .studio-view__feed {
+    flex: none;
+    min-height: 60vh;
+  }
+}

@@ -241,15 +241,25 @@ export function buildFullVideoInputAssets(args: {
   imageRole?: string
   /** 源视频资产 ID；大于 0 时以 role:'video' 追加在图片之后。 */
   sourceVideoAssetId?: number
+  /**
+   * 多条参考视频的资产 ID（创作台支持最多 3 条）。
+   * 与 sourceVideoAssetId 合并后按出现顺序去重，全部以 role:'video' 下发。
+   */
+  sourceVideoAssetIds?: number[]
 }): Array<{ asset_id: number; role: string }> {
   const imageRole = String(args.imageRole || '').trim() || 'image'
+  // 图片一律用同一个 role 下发：首尾帧与参考模式的区分走 params.reference_mode，
+  // 由后端按数组顺序翻译成 first_frame / last_frame（见 volcengineImageRole）。
   const assets = (args.imageAssetIds || [])
     .map((id) => Math.floor(Number(id) || 0))
     .filter((id) => id > 0)
     .map((id) => ({ asset_id: id, role: imageRole }))
 
-  const sourceVideoAssetId = Math.floor(Number(args.sourceVideoAssetId) || 0)
-  if (sourceVideoAssetId > 0) assets.push({ asset_id: sourceVideoAssetId, role: SOURCE_VIDEO_INPUT_ROLE })
+  // 单条与多条两个入口合并：老调用方继续传 sourceVideoAssetId，创作台传数组。
+  const videoIds = [args.sourceVideoAssetId, ...(args.sourceVideoAssetIds || [])]
+    .map((id) => Math.floor(Number(id) || 0))
+    .filter((id) => id > 0)
+  Array.from(new Set(videoIds)).forEach((id) => assets.push({ asset_id: id, role: SOURCE_VIDEO_INPUT_ROLE }))
   return assets
 }
 
@@ -268,7 +278,22 @@ export interface FullVideoModelRequestCompilation {
  */
 export function compileFullVideoModelRequest(
   model: any,
-  args: { shots: any[]; ratio?: string; referenceImageCount?: number; resolution?: string },
+  args: {
+    shots: any[]
+    ratio?: string
+    referenceImageCount?: number
+    resolution?: string
+    /**
+     * 用户显式选择的音频开关；省略时沿用「模型支持即开」的自动推导。
+     * 模型 schema 明确不允许开启时，这里传 true 也会被 shouldGenerateAudio 的结果否决。
+     */
+    generateAudio?: boolean
+    /**
+     * 参考模式（params.reference_mode）：false=首尾帧，true=参考图仅提供主体/风格。
+     * 仅在模型 schema 声明了该字段时下发；省略时沿用 schema 默认值。
+     */
+    referenceMode?: boolean
+  },
 ): FullVideoModelRequestCompilation {
   const modelVersionId = getBackendGenerationModelVersionId(model)
   if (!modelVersionId) throw new Error('已选择的视频模型无效，请重新选择')
@@ -309,7 +334,9 @@ export function compileFullVideoModelRequest(
     throw new Error(`所选视频模型不支持当前参考图：${referenceImageConflicts[0]}`)
   }
 
-  const generateAudio = shouldGenerateAudio(model)
+  // 模型是否允许开声是硬约束；用户开关只能在允许范围内关小，不能强行打开。
+  const modelAllowsAudio = shouldGenerateAudio(model)
+  const generateAudio = args.generateAudio === undefined ? modelAllowsAudio : args.generateAudio && modelAllowsAudio
   const params = buildVideoGenerationParams(model, {
     duration: durationSeconds,
     durationMode: 'exact',
@@ -319,6 +346,12 @@ export function compileFullVideoModelRequest(
     ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
     generateAudio,
   })
+  // reference_mode 不属于通用视频参数构建器的字段，按模型 schema 的真实字段名追加。
+  // 未声明该字段的模型（如 kling / minimax 各有自己的模式开关）不下发，避免塞入未知参数。
+  if (args.referenceMode !== undefined) {
+    const referenceField = findModelParamField(getModelParamFields(model), ['reference_mode', 'referenceMode'])
+    if (referenceField?.name) params[referenceField.name] = args.referenceMode
+  }
   return {
     modelVersionId,
     modelVersion: model?.id === modelVersionId ? model : { ...model, id: modelVersionId },
@@ -402,10 +435,20 @@ export async function generateFullVideo(args: {
    * 需要模型的 operation 角色白名单允许 video 输入，否则后端按 INPUT_ASSET_ROLE_NOT_ALLOWED 拒绝。
    */
   sourceVideoAssetId?: number
+  /** 多条参考视频（创作台最多 3 条）；与 sourceVideoAssetId 合并后一起以 role:'video' 下发。 */
+  sourceVideoAssetIds?: number[]
   /** 任务一创建就回调 task_id,供上层持久化(切路由/刷新后凭它续轮询,不重新生成) */
   onTask?: (taskId: number) => void
   /** 后端任务返回的真实进度；后端未提供进度时不回调。 */
   onProgress?: (progress: number) => void
+  /**
+   * 参考模式开关（params.reference_mode）：
+   * false=首尾帧（第 1 张首帧、第 2 张尾帧），true=参考图仅提供主体/风格。
+   * 省略时沿用模型 schema 的默认值。
+   */
+  referenceMode?: boolean
+  /** 用户选择的音频开关；省略时沿用「模型支持即开」。 */
+  generateAudio?: boolean
 }): Promise<{ url: string; assetId: number }> {
   const prompt =
     buildTimelinePrompt({
@@ -430,6 +473,8 @@ export async function generateFullVideo(args: {
     ratio: args.ratio,
     resolution: args.resolution,
     referenceImageCount: imgIds.length,
+    generateAudio: args.generateAudio,
+    referenceMode: args.referenceMode,
   })
   // schema 未声明时继续使用 role:'image'；显式声明唯一角色时按模型要求下发。
   // 传了源视频（视频生视频）时，它以 role:'video' 追加，不跟着分镜图共用同一个角色。
@@ -437,6 +482,7 @@ export async function generateFullVideo(args: {
     imageAssetIds: imgIds,
     imageRole: request.inputAssetRole,
     sourceVideoAssetId: args.sourceVideoAssetId,
+    sourceVideoAssetIds: args.sourceVideoAssetIds,
   })
   const task = await createAiTask({
     workspaceId: args.workspaceId,
@@ -622,12 +668,18 @@ export async function estimateFullVideoCost(args: {
   /** 与 modelVersionId 对应的后端模型详情，用于保持估价与提交参数一致。 */
   modelVersion?: any
   modelPlanCandidates?: string[]
+  /** 用户选择的音频开关；必须与提交一致，否则「预估 ≠ 实扣」。 */
+  generateAudio?: boolean
+  /** 参考模式；必须与提交一致，否则「预估 ≠ 实扣」。 */
+  referenceMode?: boolean
 }): Promise<any> {
   const model = await resolveFullVideoModel(args)
   const request = compileFullVideoModelRequest(model, {
     shots: args.shots,
     ratio: args.ratio,
     resolution: args.resolution,
+    generateAudio: args.generateAudio,
+    referenceMode: args.referenceMode,
   })
   return estimateAiTaskCost({
     workspaceId: args.workspaceId,

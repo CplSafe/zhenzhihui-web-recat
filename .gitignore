@@ -49,3 +49,9 @@ reports/
 Dockerfile
 nginx.conf
 .dockerignore
+
+# 本地环境备份（含真实后端地址与模型配置，禁止入库）
+.env.bak.*
+
+# Claude Code 本地配置
+.claude/

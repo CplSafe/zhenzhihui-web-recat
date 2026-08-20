@@ -97,6 +97,8 @@ const ResourceManagementView = lazy(() => import('../views/ResourceManagementVie
 const SpaceDashboardView = lazy(() => import('../views/SpaceDashboardView'))
 /** 营销人员邀请收益明细页。 */
 const DistributionView = lazy(() => import('../views/DistributionView'))
+/** AI 创作台（图片 / 视频生成 + 智能分镜）路由组件。 */
+const StudioCreateView = lazy(() => import('../views/StudioCreateView'))
 /** 创意画布路由组件。 */
 const CanvasView = lazy(() => import('../views/CanvasView'))
 /** 无限画布列表路由组件。 */
@@ -303,6 +305,8 @@ export const router = createBrowserRouter([
         path: 'real-person-video/:id?',
         element: lazyPage(<WorkspaceScopedSmartCreateRoute flowMode="real-person" />),
       },
+      // AI 创作台：与智能成片同为浏览型创作页，游客可进入并配置，生成动作在页面内鉴权。
+      { path: 'studio', element: lazyPage(<StudioCreateView />), handle: { requiresAuth: false } },
       { path: 'hot-copy', element: lazyPage(<WorkspaceScopedHotCopyRoute />), handle: { requiresAuth: false } },
       { path: 'hot-copy/:id', element: lazyPage(<WorkspaceScopedHotCopyRoute />), handle: { requiresAuth: false } },
       { path: 'workspace-switch', element: <WorkspaceSwitchBridge />, handle: { requiresAuth: false } },

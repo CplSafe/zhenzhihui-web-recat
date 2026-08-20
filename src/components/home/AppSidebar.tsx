@@ -58,6 +58,7 @@ const GROUPS: SidebarGroup[] = [
   {
     title: '创作',
     items: [
+      { key: 'studio', label: 'AI 创作台', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
       { key: 'creative', label: '智能成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
       { key: 'real-person-video', label: '真人成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
       { key: 'hot-copy', label: '爆款复制', icon: hotCopyIcon, activeIcon: hotCopyActiveIcon, iconSize: 16 },
