@@ -97,6 +97,51 @@
   color: #5767e5;
 }
 
+/* 「+」与它的来源菜单：菜单绝对定位在按钮上方，wrap 只负责提供定位上下文 */
+.refAddWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.refAddMenu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 30;
+  display: flex;
+  min-width: 132px;
+  flex-direction: column;
+  padding: 4px;
+  transform: translateX(-50%);
+  border: 1px solid #e2e6ef;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(23, 33, 61, 0.16);
+}
+
+.refAddMenu button {
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #2f3646;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.refAddMenu button:hover {
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
+}
+
+.refAddMenu button:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: -2px;
+}
+
 .refSwapIcon {
   display: flex;
   align-items: center;
@@ -464,6 +509,161 @@
 .popoverItemBlocked em {
   display: block;
   margin-top: 2px;
+  color: #b0763a;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+/* ── 模型列表行：厂商标记 + 名称 + NEW/✓/锁，下方一行标签 ── */
+.modelRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.modelRow:hover {
+  background: rgba(17, 169, 138, 0.06);
+}
+
+.modelRowActive {
+  background: #ebfffb;
+}
+
+.modelRowHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 没有图标资源时用厂商首字母占位：比一个通用图标更能区分不同厂商 */
+.modelRowAvatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: rgba(17, 169, 138, 0.12);
+  color: #11a98a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* 后端 logo：尺寸与首字母标记一致，两种形态切换时行高不跳 */
+.modelRowLogo {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: #f5f6f8;
+}
+
+.modelRowBlocked .modelRowLogo {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+.modelRowName {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #333;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.modelRowActive .modelRowName {
+  color: #11a98a;
+  font-weight: 600;
+}
+
+.modelRowNew {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #e8f1ff;
+  color: #2f6fd0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.modelRowCheck {
+  flex: none;
+  color: #11a98a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.modelRowLock {
+  flex: none;
+  color: #b0b5bf;
+}
+
+/* 标签行：特点、耗时、单价并排；数据缺失时整行不渲染，不留空槽 */
+.modelRowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 24px;
+}
+
+.modelRowTag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #f1f3f6;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+/* 支持的秒数：与普通标签区分开，选视频模型时它是最先要看的一项 */
+.modelRowTagDuration {
+  background: #ebfffb;
+  color: #0e8f75;
+  font-weight: 600;
+}
+
+.modelRowBlocked .modelRowTagDuration {
+  background: #f1f3f6;
+  color: #8b929c;
+}
+
+.modelRowBlocked {
+  cursor: not-allowed;
+}
+
+.modelRowBlocked .modelRowName,
+.modelRowBlocked .modelRowAvatar {
+  color: #9aa0aa;
+}
+
+.modelRowBlocked .modelRowAvatar {
+  background: #f1f3f6;
+}
+
+.modelRowBlocked:hover {
+  background: transparent;
+}
+
+/* 原因写在下面而不是只给个锁：锁说明「点不了」，文字才回答「为什么、下一步做什么」 */
+.modelRowReason {
+  padding-left: 24px;
   color: #b0763a;
   font-size: 11px;
   font-style: normal;

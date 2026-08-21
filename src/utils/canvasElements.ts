@@ -46,6 +46,16 @@ interface SerializableNodeData {
   realPerson?: SmartRealPersonReference
   /** 剪辑时间线节点的片段表（顺序/裁剪/静音），是该节点唯一的业务内容 */
   timeline?: TimelineState
+  /**
+   * 所属分组的 id；未分组时不写该字段。
+   *
+   * 分组刻意做在 data 上而不是 React Flow 原生的 parentId：后者是节点顶层字段，
+   * 要走这条路得同时改 nodeToMutation / elementToNode / comparableNode / 撤销快照，
+   * 而那正是 409 乐观锁合并所在的一层。挂在 data 上则复用这里已有的全部机制。
+   */
+  groupId?: string
+  /** 分组名；与 groupId 一样冗余存在每个成员上（画布只按节点持久化，没有分组实体） */
+  groupName?: string
 }
 
 /**
@@ -72,6 +82,8 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'taskUpdatedAt',
   'realPerson',
   'timeline',
+  'groupId',
+  'groupName',
 ] as const satisfies readonly (keyof SerializableNodeData)[]
 
 /**

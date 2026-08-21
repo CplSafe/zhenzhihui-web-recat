@@ -21,6 +21,8 @@ import type { DraftSaveStatus } from '@/utils/creativeDraftPersistence'
 import {
   ReactFlow,
   Background,
+  MiniMap,
+  ViewportPortal,
   Handle,
   Position,
   type Node,
@@ -52,6 +54,19 @@ const CANVAS_ARROW_EDGE_TYPE = 'canvasArrow'
 
 const edgeTypes = { [CANVAS_ARROW_EDGE_TYPE]: CanvasArrowEdge }
 import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
+import CanvasSelectionToolbar from '@/components/canvas/CanvasSelectionToolbar'
+import CanvasViewControls from '@/components/canvas/CanvasViewControls'
+import CanvasNodeSearch from '@/components/canvas/CanvasNodeSearch'
+import {
+  createGroupId,
+  expandSelectionToGroups,
+  formatGroupLabel,
+  getGroupBounds,
+  getNodeGroupId,
+  getNodeGroupName,
+  isCompleteGroupSelection,
+  type GroupableNode,
+} from '@/utils/canvasGrouping'
 import CanvasNodePanel, {
   type CanvasNodeInfo,
   type CanvasSourceRef,
@@ -60,10 +75,12 @@ import CanvasNodePanel, {
   isAutoRatio,
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
+import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
 import { saveCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId } from '@/utils/canvasDraft'
+import { humanizeCanvasTaskError } from '@/utils/canvasTaskError'
 import { loadLastSelectedNodeId, saveLastSelectedNodeId } from '@/utils/canvasSelection'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
@@ -392,6 +409,12 @@ const TOOLBAR_LEAVE_MS = 220
 /** 新节点渐入动画时长（毫秒），与 CSS 动画时长保持一致 */
 const NODE_ENTER_MS = 350
 
+/**
+ * 网格吸附步长。与 Background 默认的点阵间距一致，吸附结果落在看得见的格点上；
+ * 常量提到模块级是为了保持数组引用稳定，内联写会让 React Flow 每次渲染都收到新数组。
+ */
+const CANVAS_SNAP_GRID: [number, number] = [16, 16]
+
 /** 本地图片预览地址的释放延迟（毫秒）：等正式地址加载完再释放，避免画面闪断 */
 const LOCAL_PREVIEW_REVOKE_MS = 5000
 
@@ -436,6 +459,21 @@ const ADD_MENU_ITEMS: ReadonlyArray<{ type: string; label: string; desc: string 
 
 /** 节点类型中文名（菜单禁用提示用） */
 const KIND_LABELS: Record<string, string> = { text: '文本', image: '图片', video: '视频' }
+
+/**
+ * 小地图上的节点配色：按类型区分，让俯瞰时还能读出「哪片是视频、哪片是图片」。
+ * 全部同色的小地图只能告诉你「有东西」，读不出结构，等于只剩一个缩略轮廓。
+ */
+const MINIMAP_NODE_COLORS: Record<string, string> = {
+  text: '#c7cdd6',
+  image: '#8fa4f5',
+  video: '#5767e5',
+  timeline: '#f0a35e',
+}
+function miniMapNodeColor(node: Node): string {
+  const kind = String((node.data as Record<string, unknown> | undefined)?.kind || node.type || 'text')
+  return MINIMAP_NODE_COLORS[kind] || '#c7cdd6'
+}
 
 /**
  * 参考选择：目标节点种类对应的允许来源种类。
@@ -1549,7 +1587,13 @@ function CanvasInner() {
   const navigate = useNavigate()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
-  const { fitView, screenToFlowPosition, setViewport } = useReactFlow()
+  const { fitView, screenToFlowPosition, setViewport, zoomIn, zoomOut, zoomTo } = useReactFlow()
+  /** 节点搜索面板是否展开 */
+  const [searchOpen, setSearchOpen] = useState(false)
+  /** 网格吸附：开启后节点落点对齐到 16px 网格，手工摆位不再靠手感对齐 */
+  const [snapEnabled, setSnapEnabled] = useState(false)
+  /** 隐藏连线：节点密集时连线会糊成一片，这是一个纯展示层的降噪开关，不改任何数据 */
+  const [edgesHidden, setEdgesHidden] = useState(false)
   // 正在编辑剪辑时间线的节点 id；空串表示编辑器关闭
   const [timelineEditorNodeId, setTimelineEditorNodeId] = useState('')
   // 合成进行中（下载素材 → 无损拼接 → 上传成片），期间禁止重复触发
@@ -1577,6 +1621,12 @@ function CanvasInner() {
   // 正在截帧上传的视频节点 id；同一时刻只允许一个，避免连点建出一堆重复图片节点
   const [capturingNodeId, setCapturingNodeId] = useState('')
   const workspaceId = useWorkspaceId()
+  /**
+   * 当前画布 id（路由参数）。分享面向的是已经落库的画布：
+   * 新建但还没同步到云端的画布没有 id，也就没有可以分享的对象。
+   */
+  const canvasId = Math.max(0, Math.floor(Number(routeProjectId) || 0))
+  const [shareOpen, setShareOpen] = useState(false)
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
@@ -1619,6 +1669,14 @@ function CanvasInner() {
   const handleMoveToggle = useCallback(() => setMoveEnabled((v) => !v), [])
   const handleDragToggle = useCallback(() => setDragEnabled((v) => !v), [])
   const [selectedNode, setSelectedNode] = useState<CanvasNodeInfo | null>(null)
+  /**
+   * 多选中的节点 id。
+   *
+   * 与 selectedNode 是两套东西：selectedNode 承载「单个节点的编辑面板」，
+   * 只有恰好选中一个时才有意义；这里承载「只有多选才成立的批量动作」。
+   * 两者互斥展示，避免面板和批量条同时压在画布上。
+   */
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([])
   const [saveStatus, setSaveStatus] = useState<DraftSaveStatus>('saved')
   /**
    * 供轮询循环读取的保存状态。
@@ -1915,6 +1973,41 @@ function CanvasInner() {
     setPickingTargetId(targetId)
     setPickingSlotIndex(slotIndex ?? null)
     setIsPickingRef(true)
+  }, [])
+
+  /**
+   * 「从素材库选择参考」的待落位目标。
+   *
+   * 非空时素材库弹窗处于「选参考」模式：选中的素材不再当作新素材落在视口中央，
+   * 而是落在目标节点左侧并连成它的参考。用一个对象而不是复用 pickingTargetId，
+   * 是因为那套状态同时驱动画布的点选模式（横幅、节点高亮），两者混用会互相干扰。
+   */
+  const [libraryRefTarget, setLibraryRefTarget] = useState<{ targetId: string; slotIndex: number } | null>(null)
+
+  /**
+   * Alt 是否按下——按住时点击组内节点只选中它自己，不展开整组。
+   *
+   * 用全局按键状态而不是从点击事件里读 altKey：选中态由 React Flow 内部处理后
+   * 才回调 onSelectionChange，那时已经拿不到原始事件了；而事件顺序在不同浏览器上
+   * 并不一致，靠 onNodeClick 抢先写 ref 并不可靠。
+   */
+  const deepSelectRef = useRef(false)
+  useEffect(() => {
+    const sync = (event: KeyboardEvent) => {
+      deepSelectRef.current = event.altKey
+    }
+    // 切走再切回时按键状态会失效，统一清掉，免得 Alt「粘住」
+    const clear = () => {
+      deepSelectRef.current = false
+    }
+    window.addEventListener('keydown', sync)
+    window.addEventListener('keyup', sync)
+    window.addEventListener('blur', clear)
+    return () => {
+      window.removeEventListener('keydown', sync)
+      window.removeEventListener('keyup', sync)
+      window.removeEventListener('blur', clear)
+    }
   }, [])
 
   const stopPickRef = useCallback(() => {
@@ -3143,6 +3236,108 @@ function CanvasInner() {
     [selectedNode, setNodes, setEdges, commitHistory],
   )
 
+  /**
+   * 素材库 →「参考素材」：把选中的素材落成新节点，并连到发起的那个节点上。
+   *
+   * 落点放在目标节点左侧：画布的数据流是左进右出（左侧 target handle 收、右侧 source handle 发），
+   * 参考落在右边会让连线绕一圈回来，读图时看不出谁喂谁。
+   */
+  const applyMaterialAsReference = useCallback(
+    (material: { assetId: number; type: string; src: string; realPerson?: SmartRealPersonReference }) => {
+      const pending = libraryRefTarget
+      if (!pending) return false
+      const target = latestRef.current.nodes.find((node) => node.id === pending.targetId)
+      if (!target) {
+        setLibraryRefTarget(null)
+        return true
+      }
+
+      const sourceKind = material.type === 'video' ? 'video' : 'image'
+      const targetKind = String((target.data as Record<string, unknown> | undefined)?.kind || 'text')
+      // 先按类型拦一道：节点建出来再校验失败的话，画布上会留下一个用户没要的孤立节点
+      if (!(allowedSourceKinds[targetKind] || []).includes(sourceKind)) {
+        showToast(
+          `${KIND_LABELS[sourceKind] || sourceKind}素材不能作为${KIND_LABELS[targetKind] || targetKind}节点的参考`,
+          'error',
+        )
+        return true
+      }
+
+      const assetId = Number(material.assetId || 0)
+      const resultUrl = resolveNodeMediaUrl({ assetId, resultUrl: material.src }, workspaceId)
+      const size = calcNodeSize(sourceKind === 'video' ? AUTO_RATIO : '1:1', 250)
+      const targetStyle = (target.style || {}) as CSSProperties
+      const targetHeight = Number(targetStyle.height) || target.measured?.height || 250
+
+      commitHistory()
+      const sourceId = appendNewNode(
+        sourceKind,
+        {
+          x: target.position.x - size.width - 80,
+          // 与目标节点垂直居中对齐，连线才是一条平直的线而不是斜跨半个画布
+          y: target.position.y + targetHeight / 2 - size.height / 2,
+        },
+        {
+          ratio: sourceKind === 'video' ? AUTO_RATIO : '1:1',
+          size,
+          skipHistory: true,
+          extraData: {
+            assetId,
+            resultUrl,
+            ...(material.realPerson ? { realPerson: material.realPerson } : {}),
+          },
+        },
+      )
+
+      const edgeId = buildEdgeId(sourceId, pending.targetId, pending.slotIndex)
+      setEdges((items) => [
+        ...items,
+        {
+          id: edgeId,
+          source: sourceId,
+          sourceHandle: null,
+          target: pending.targetId,
+          targetHandle: null,
+          data: {
+            slotIndex: pending.slotIndex,
+            role: inferCanvasConnectionRole({
+              targetKind,
+              sourceKind,
+              videoMode: String((target.data as Record<string, unknown> | undefined)?.videoMode || 'auto'),
+              slotIndex: pending.slotIndex,
+            }),
+          },
+        },
+      ])
+
+      // appendNewNode 会把选中态切到新建的素材节点，但用户的意图是「给原来那个节点加参考」，
+      // 面板必须留在目标节点上，否则刚加完参考面板就跳走了
+      setSelectedNode({
+        id: pending.targetId,
+        kind: targetKind,
+        sourceRefs: [
+          ...getSourceRefs(pending.targetId),
+          { kind: sourceKind, sourceId, edgeId, slotIndex: pending.slotIndex, thumbnailUrl: resultUrl },
+        ],
+        ratio: (target.data as any)?.ratio,
+        videoMode: (target.data as any)?.videoMode,
+        modelVersionId: (target.data as any)?.modelVersionId,
+        resultUrl: (target.data as any)?.resultUrl,
+        assetId: (target.data as any)?.assetId,
+        text: (target.data as any)?.text,
+        prompt: (target.data as any)?.prompt,
+        operationCode: (target.data as any)?.operationCode,
+        params: (target.data as any)?.params,
+      })
+      setNodes((items) => items.map((node) => ({ ...node, selected: node.id === pending.targetId })))
+      setLibraryRefTarget(null)
+      setDrawerPanel(null)
+      setSaveStatus('dirty')
+      return true
+    },
+    [libraryRefTarget, workspaceId, commitHistory, appendNewNode, setEdges, setNodes, setSaveStatus, getSourceRefs],
+  )
+
   // 应用素材：优先应用到已选中的节点（类型匹配时替换素材内容），否则创建新节点
   const handleApplyMaterial = useCallback(
     (material: {
@@ -3829,7 +4024,7 @@ function CanvasInner() {
         const taskData = {
           taskStatus: 'submit_failed',
           taskProgress: 0,
-          taskError: String(error?.message || '任务创建失败，请稍后重试'),
+          taskError: humanizeCanvasTaskError(error?.message) || '任务创建失败，请稍后重试',
           taskUpdatedAt: new Date().toISOString(),
         }
         setNodes((nds) =>
@@ -3841,7 +4036,8 @@ function CanvasInner() {
         )
         setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...taskData } : prev))
         setSaveStatus('dirty')
-        showToast(String(error?.message || '任务创建失败，请稍后重试'), 'error')
+        // 顶部提示与节点上的错误必须是同一句：两处说法不一致时，用户会以为是两个问题
+        showToast(humanizeCanvasTaskError(error?.message) || '任务创建失败，请稍后重试', 'error')
       }
     },
     [
@@ -3882,7 +4078,7 @@ function CanvasInner() {
       return Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw))
     }
     const taskErrorOf = (task: any): string =>
-      String(task?.error_message || task?.error?.message || task?.message || '生成失败，请重试')
+      humanizeCanvasTaskError(task?.error_message || task?.error?.message || task?.message) || '生成失败，请重试'
 
     const tick = async () => {
       // 页面在后台时不拉任务状态：与画布增量同步保持同一策略，切回来会立即补一次。
@@ -4369,6 +4565,359 @@ function CanvasInner() {
   )
 
   /**
+   * React Flow 的选中态变化：只记 id，具体数据每次从 latestRef 现取，避免存一份会过期的快照。
+   *
+   * 选中组内任一节点会展开为选中整组——这是分组「一起移动」的实现方式：
+   * 展开后拖拽由 React Flow 现成的多选逻辑接管，不需要自己算位移。
+   */
+  const handleSelectionChange = useCallback(
+    ({ nodes: picked }: { nodes: Node[] }) => {
+      if (!picked.length) {
+        setSelectedNodeIds([])
+        return
+      }
+      const pickedIds = picked.map((node) => node.id)
+      // Alt 按住时不展开分组：这是「进组内选单个」的唯一入口。
+      // 没有它的话，组内节点点一次就整组选中、单节点操作胶囊随之隐藏，
+      // 组里任何一个节点都再也没法单独下载或删除。
+      if (deepSelectRef.current) {
+        setSelectedNodeIds(pickedIds.length > 1 ? pickedIds : [])
+        return
+      }
+      const expanded = expandSelectionToGroups(latestRef.current.nodes as GroupableNode[], pickedIds)
+      if (expanded.length > pickedIds.length) {
+        // 组内成员被漏选：补齐 React Flow 的 selected 标记，否则拖拽只会带走点中的那一个
+        const wanted = new Set(expanded)
+        setNodes((items) =>
+          items.map((node) =>
+            wanted.has(node.id) === Boolean(node.selected) ? node : { ...node, selected: wanted.has(node.id) },
+          ),
+        )
+      }
+      setSelectedNodeIds(expanded.length > 1 ? expanded : [])
+    },
+    [setNodes],
+  )
+
+  /** 选中的这批是否正好构成一个完整分组——决定批量条上给「打组」还是「解组」 */
+  const selectionIsGroup = useMemo(
+    () => isCompleteGroupSelection(nodes as GroupableNode[], selectedNodeIds),
+    [nodes, selectedNodeIds],
+  )
+
+  /** 把选中的节点归到一个新分组里；已有分组的成员会被重新归组 */
+  const groupSelectedNodes = useCallback(() => {
+    if (selectedNodeIds.length < 2) return
+    const wanted = new Set(selectedNodeIds)
+    const groupId = createGroupId()
+    commitHistory()
+    setNodes((items) =>
+      items.map((node) => (wanted.has(node.id) ? { ...node, data: { ...node.data, groupId } } : node)),
+    )
+    setSaveStatus('dirty')
+    showToast(`已将 ${wanted.size} 个节点编为一组`, 'success')
+  }, [selectedNodeIds, commitHistory, setNodes, setSaveStatus])
+
+  /** 解组：清掉成员的 groupId，节点本身与位置都不动 */
+  const ungroupSelectedNodes = useCallback(() => {
+    if (selectedNodeIds.length < 2) return
+    const wanted = new Set(selectedNodeIds)
+    commitHistory()
+    setNodes((items) =>
+      items.map((node) => {
+        if (!wanted.has(node.id)) return node
+        // groupName 必须跟着 groupId 一起删：只删 id 会把旧组名留在节点上，
+        // 下次这个节点被编进新组时就会顶着上一个组的名字。
+        // 删字段而不是置空串：持久化按 `value != null` 判断，空串会把无意义的值写上云端。
+        const { groupId: _groupId, groupName: _groupName, ...rest } = (node.data || {}) as Record<string, unknown>
+        return { ...node, data: rest }
+      }),
+    )
+    setSaveStatus('dirty')
+    showToast('已解组', 'success')
+  }, [selectedNodeIds, commitHistory, setNodes, setSaveStatus])
+
+  /** 分组框：只画成员≥2 的组，位置用画布坐标，由 ViewportPortal 跟随缩放平移 */
+  const groupFrames = useMemo(() => getGroupBounds(nodes as GroupableNode[]), [nodes])
+
+  /** 正在改名的分组 id；空串表示没有在改 */
+  const [renamingGroupId, setRenamingGroupId] = useState('')
+
+  /**
+   * 分组标签的反向缩放系数。
+   *
+   * 标签渲染在视口图层里，会跟着画布一起缩放——不补偿的话 38% 缩放时字号只剩 4px。
+   * 夹取区间与节点内文字保持一致（见 CanvasDefaultNode 的 readableTextScale）：
+   * 极端倍率下不做完全补偿，否则缩到 2% 时标签会大到盖住整个分组。
+   */
+  const groupLabelScale = useMemo(() => 1 / Math.min(2.5, Math.max(0.4, transform[2] || 1)), [transform])
+
+  /** 点分组标签：选中整组，批量条随之出现，接上打组/解组/删除等动作 */
+  const selectGroup = useCallback(
+    (groupId: string) => {
+      const memberIds = latestRef.current.nodes
+        .filter((node) => getNodeGroupId(node as GroupableNode) === groupId)
+        .map((node) => node.id)
+      if (memberIds.length < 2) return
+      const wanted = new Set(memberIds)
+      setNodes((items) => items.map((node) => ({ ...node, selected: wanted.has(node.id) })))
+      setSelectedNodeIds(memberIds)
+      setSelectedNode(null)
+    },
+    [setNodes],
+  )
+
+  /** 改名写到全部成员上（名字是冗余存储的）；名字没变则不产生历史记录与云端 revision */
+  const renameGroup = useCallback(
+    (groupId: string, nextName: string) => {
+      setRenamingGroupId('')
+      const trimmed = nextName.trim().slice(0, 40)
+      const current = latestRef.current.nodes.find((node) => getNodeGroupId(node as GroupableNode) === groupId)
+      if (!current || getNodeGroupName(current as GroupableNode) === trimmed) return
+      commitHistory()
+      setNodes((items) =>
+        items.map((node) => {
+          if (getNodeGroupId(node as GroupableNode) !== groupId) return node
+          if (!trimmed) {
+            // 清空即恢复默认名：删掉字段而不是存空串，避免把无意义的值写上云端
+            const { groupName: _groupName, ...rest } = (node.data || {}) as Record<string, unknown>
+            return { ...node, data: rest }
+          }
+          return { ...node, data: { ...node.data, groupName: trimmed } }
+        }),
+      )
+      setSaveStatus('dirty')
+    },
+    [commitHistory, setNodes, setSaveStatus],
+  )
+
+  /**
+   * 搜索用的节点清单。
+   *
+   * 文本节点的正文不在 node.data 里（它存在全局的 __canvasTextContents Map 中，
+   * 见 restoreTextContents），所以这里要两处都取，否则文本节点永远搜不到。
+   */
+  const searchableNodes = useMemo(() => {
+    if (!searchOpen) return []
+    const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+    const items = nodes
+      .map((node) => {
+        const data = (node.data || {}) as Record<string, unknown>
+        const kind = String(data.kind || node.type || 'text')
+        const text = String(textMap?.get(node.id) || data.text || data.prompt || '').trim()
+        return { id: node.id, kind, text, kindLabel: KIND_LABELS[kind] || kind }
+      })
+      .filter((item) => item.text.length > 0)
+
+    // 分组也要能搜到：否则一个滚出视口的分组就再也找不回来了。
+    // id 用组内第一个成员，命中后按该成员定位——视口会连带把整个组带进画面。
+    const groupItems = groupFrames
+      .map((frame) => {
+        const firstMember = nodes.find((node) => getNodeGroupId(node as GroupableNode) === frame.groupId)
+        if (!firstMember) return null
+        return {
+          id: firstMember.id,
+          kind: 'group',
+          text: formatGroupLabel(frame.name, frame.memberCount),
+          kindLabel: '分组',
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+
+    // 分组排在前面：它是更粗的定位单位，找「那一片东西」时通常先想到组
+    return [...groupItems, ...items]
+  }, [searchOpen, nodes, groupFrames])
+
+  /** 命中搜索结果：把视口移过去并选中该节点，画布本身不做任何过滤 */
+  const focusNodeFromSearch = useCallback(
+    (nodeId: string) => {
+      const node = latestRef.current.nodes.find((item) => item.id === nodeId)
+      if (!node) return
+      void fitView({ nodes: [{ id: nodeId }], padding: 0.5, duration: 300, maxZoom: 1.2 })
+      setNodes((items) => items.map((item) => ({ ...item, selected: item.id === nodeId })))
+      setSelectedNodeIds([])
+      setSearchOpen(false)
+    },
+    [fitView, setNodes],
+  )
+
+  // Ctrl/Cmd+F 打开搜索：浏览器自带的页内查找在画布上没有意义（节点是虚拟渲染的），
+  // 接管它比让用户去找按钮更符合直觉
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f') return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('textarea, input, [contenteditable="true"]')) return
+      event.preventDefault()
+      setSearchOpen(true)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  /** 取消多选：必须同时清掉 React Flow 上的 selected 标记，只清本地 id 会让选中框留在画布上 */
+  const clearSelection = useCallback(() => {
+    setSelectedNodeIds([])
+    setNodes((items) =>
+      items.some((node) => node.selected) ? items.map((node) => ({ ...node, selected: false })) : items,
+    )
+  }, [setNodes])
+
+  // Esc 取消多选：框选之后没有退路会让人只能去点空白，而点空白在密集画布上很难点准
+  useEffect(() => {
+    if (selectedNodeIds.length < 2) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('textarea, input, [contenteditable="true"]')) return
+      clearSelection()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selectedNodeIds.length, clearSelection])
+
+  /**
+   * 批量操作条的锚点（视口坐标）：贴在选区包围盒的上方居中。
+   *
+   * 固定放屏幕顶部会让人看不出它作用于哪一片；跟着选区走才有「这条是这堆节点的」这层关系。
+   * 两端做夹取，选区被拖到视口外时工具条仍留在屏幕内，不会跟着飞走。
+   */
+  const selectionAnchor = useMemo(() => {
+    if (selectedNodeIds.length < 2) return null
+    const wanted = new Set(selectedNodeIds)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    for (const node of nodes) {
+      if (!wanted.has(node.id)) continue
+      const style = (node.style || {}) as CSSProperties
+      const width = Number(style.width) || node.measured?.width || 250
+      minX = Math.min(minX, node.position.x)
+      maxX = Math.max(maxX, node.position.x + width)
+      minY = Math.min(minY, node.position.y)
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null
+    const [tx, ty, tz] = transform
+    const centerX = ((minX + maxX) / 2) * tz + tx
+    const topY = minY * tz + ty
+    return {
+      centerX: Math.min(Math.max(centerX, 160), Math.max(160, window.innerWidth - 160)),
+      bottom: Math.min(Math.max(window.innerHeight - topY + 14, 16), Math.max(16, window.innerHeight - 72)),
+    }
+  }, [selectedNodeIds, nodes, transform])
+
+  /** 当前多选里「已生成出素材、能进时间线」的视频节点，按画布上的先后顺序 */
+  const timelineReadySelection = useMemo(() => {
+    if (selectedNodeIds.length < 2) return []
+    const wanted = new Set(selectedNodeIds)
+    return nodes.filter((node) => {
+      if (!wanted.has(node.id)) return false
+      const data = node.data as Record<string, unknown> | undefined
+      return data?.kind === 'video' && Number(data?.assetId || 0) > 0
+    })
+  }, [selectedNodeIds, nodes])
+
+  /**
+   * 把多选的视频一次串成一条时间线。
+   *
+   * 不复用 handleAddTimelineClip 逐个调用：那个函数每次都会 commitHistory 并各自
+   * setNodes/setEdges，N 个视频会留下 N 条撤销记录，撤销时要按一次退一段。
+   * 这里整批只记一次历史、只写一次状态，撤销就是「把这条时间线连同片段一起撤掉」。
+   *
+   * 片段顺序取画布上的节点顺序，与用户框选时看到的从左到右一致。
+   */
+  const createTimelineFromSelection = useCallback(() => {
+    const sources = timelineReadySelection
+    if (!sources.length) return
+    const accepted = sources.slice(0, MAX_TIMELINE_CLIPS)
+    const dropped = sources.length - accepted.length
+
+    // 时间线落在选区右侧，不压住任何被选中的节点
+    let right = -Infinity
+    let top = Infinity
+    for (const node of accepted) {
+      const style = (node.style || {}) as CSSProperties
+      const width = Number(style.width) || node.measured?.width || 250
+      right = Math.max(right, node.position.x + width)
+      top = Math.min(top, node.position.y)
+    }
+    if (!Number.isFinite(right) || !Number.isFinite(top)) return
+
+    commitHistory()
+    const timelineId = appendNewNode(
+      'timeline',
+      { x: right + 80, y: top },
+      { size: TIMELINE_NODE_SIZE, skipHistory: true },
+    )
+
+    // 片段与连线一次性写入：一次状态更新，撤销也是一步
+    setNodes((items) =>
+      items.map((node) => {
+        if (node.id !== timelineId) return node
+        let timeline = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
+        for (const source of accepted) {
+          const assetId = Number((source.data as Record<string, unknown> | undefined)?.assetId || 0)
+          timeline = attachTimelineSource(timeline, { sourceNodeId: source.id, assetId })
+        }
+        return { ...node, data: { ...node.data, timeline } }
+      }),
+    )
+    setEdges((items) => [
+      ...items,
+      ...accepted.map((source, index) => ({
+        id: buildEdgeId(source.id, timelineId, index),
+        source: source.id,
+        sourceHandle: null,
+        target: timelineId,
+        targetHandle: null,
+        data: { slotIndex: index },
+      })),
+    ])
+    setSelectedNodeIds([])
+    setSaveStatus('dirty')
+    showToast(
+      dropped > 0
+        ? `已用 ${accepted.length} 个视频创建时间线，超出 ${MAX_TIMELINE_CLIPS} 段的 ${dropped} 个未加入`
+        : `已用 ${accepted.length} 个视频创建时间线`,
+      dropped > 0 ? 'info' : 'success',
+    )
+  }, [timelineReadySelection, appendNewNode, commitHistory, setNodes, setEdges, setSaveStatus])
+
+  /** 批量删除选中的节点及其连线；生成中的视频交由既有确认流程拦截 */
+  const deleteSelectedNodes = useCallback(async () => {
+    const ids = selectedNodeIds
+    if (ids.length < 2) return
+    const targets = latestRef.current.nodes.filter((node) => ids.includes(node.id))
+    const proceed = await confirmAndCancelGeneratingVideos(targets)
+    if (!proceed) return
+    const wanted = new Set(ids)
+    commitHistory()
+    setNodes((items) => items.filter((node) => !wanted.has(node.id)))
+    setEdges((items) => items.filter((edge) => !wanted.has(edge.source) && !wanted.has(edge.target)))
+    const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+    ids.forEach((id) => textMap?.delete(id))
+    setSelectedNodeIds([])
+    setSelectedNode((current) => (current && wanted.has(current.id) ? null : current))
+    // 这些残留状态都指向具体节点 id，删掉节点却留着它们，后续操作会打到一个已经不存在的目标
+    setAddMenu((current) => (current && wanted.has(current.sourceId) ? null : current))
+    if (pickingTargetId && wanted.has(pickingTargetId)) {
+      setPickingTargetId(null)
+      setPickingSlotIndex(null)
+      setIsPickingRef(false)
+      setPickError('')
+    }
+    setSaveStatus('dirty')
+  }, [
+    selectedNodeIds,
+    pickingTargetId,
+    confirmAndCancelGeneratingVideos,
+    commitHistory,
+    setNodes,
+    setEdges,
+    setSaveStatus,
+  ])
+
+  /**
    * 把画布上的某个视频节点加成时间线片段，并补上对应连线。
    *
    * 走连线模型而不是「游离片段」：画布上看得见哪些节点在喂这条时间线，
@@ -4813,6 +5362,12 @@ function CanvasInner() {
   const handleSelectNodeOnDown = useCallback(
     (node: Node) => {
       if (isPickingRef) return
+      /*
+       * 选中节点即关掉添加节点菜单：这一下点击表达的是「我要编辑这个节点」，
+       * 上一件事（挑新节点类型）就此作废。不显式关掉的话，面板的渲染条件里带着 !addMenu，
+       * 点了节点却什么都不弹，看起来像点击失灵。
+       */
+      setAddMenu(null)
       // 首个节点（画布源头）与其他节点一致：选中即弹出编辑面板
       setSelectedNode({
         id: node.id,
@@ -4884,15 +5439,22 @@ function CanvasInner() {
     () =>
       edges.map((edge) => {
         const { markerEnd: _markerEnd, ...rest } = edge
-        return { ...rest, type: CANVAS_ARROW_EDGE_TYPE }
+        // 隐藏连线走 hidden 而不是把边从数组里抽掉：抽掉会让 React Flow 认为连线被删除，
+        // 连带影响选中态与后续的增量 diff——这只是一个看不看得见的开关，不该动数据。
+        return { ...rest, type: CANVAS_ARROW_EDGE_TYPE, hidden: edgesHidden }
       }),
-    [edges],
+    [edges, edgesHidden],
   )
 
   return (
     <CanvasNodeActionsContext.Provider value={nodeActions}>
       <div
-        className="canvas-view"
+        /*
+          多选期间给根节点打个标记，供 CSS 收起节点上的单节点操作胶囊。
+          放在这里而不是逐个节点判断：节点组件拿不到多选状态，
+          再往 data 里塞一个字段又会污染持久化。
+        */
+        className={`canvas-view${selectedNodeIds.length > 1 ? ' is-multi-selecting' : ''}`}
         onDragEnter={handleFileDragEnter}
         onDragOver={handleFileDragOver}
         onDragLeave={handleFileDragLeave}
@@ -4910,6 +5472,43 @@ function CanvasInner() {
             )}
           </div>
         </div>
+
+        {/* 分享入口：只对已落库的画布开放——没有 canvasId 就没有可分享的对象 */}
+        {canvasId > 0 && workspaceId > 0 && (
+          <button
+            className="canvas-share-btn"
+            onClick={() => setShareOpen(true)}
+            title="分享这块画布"
+            aria-label="分享这块画布"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" />
+            </svg>
+            <span>分享</span>
+          </button>
+        )}
+
+        {shareOpen && canvasId > 0 && workspaceId > 0 && (
+          <CanvasShareDialog
+            workspaceId={workspaceId}
+            canvasId={canvasId}
+            onClose={() => setShareOpen(false)}
+            onToast={showToast}
+          />
+        )}
 
         {/* 独立返回按钮：始终显示，不随工具栏/抽屉隐藏或消失 */}
         <button
@@ -4943,6 +5542,7 @@ function CanvasInner() {
             dragEnabled={dragEnabled}
             onDragToggle={handleDragToggle}
             onAddLocalImage={() => openLocalImagePicker()}
+            onOpenSearch={() => setSearchOpen(true)}
             onOpenAssets={() => openDrawerPanel('assets')}
             onOpenHistory={() => openDrawerPanel('history')}
           />
@@ -5052,8 +5652,16 @@ function CanvasInner() {
             onEdgesDelete={handleEdgesDelete}
             connectionMode={ConnectionMode.Loose}
             connectionRadius={60}
-            /* 禁用多选：任何情况下都只允许同时选中一个节点 */
-            multiSelectionKeyCode={null}
+            /*
+             * 多选：Shift+拖拽框选（selectionKeyCode 默认即 Shift），Ctrl/Cmd+点击增减。
+             *
+             * 这里以前是 multiSelectionKeyCode={null}，即彻底禁用多选。
+             * 画布上百个节点之后，删除、整理、批量喂给时间线都只能一个一个来；
+             * 「框选若干视频 → 一次建成一条时间线」这类操作在单选下根本无法表达。
+             * 平移仍走左键拖空白（panOnDrag），两者靠 Shift 区分，互不打架。
+             */
+            selectionKeyCode="Shift"
+            onSelectionChange={handleSelectionChange}
             /* 双击时间线节点打开剪辑编辑器（其余节点保持原行为） */
             onNodeDoubleClick={(_e, node) => {
               if ((node.data as Record<string, unknown> | undefined)?.kind === 'timeline') {
@@ -5111,6 +5719,8 @@ function CanvasInner() {
                 handlePickRefNode(node as unknown as Node)
                 return
               }
+              // 选中节点即关掉添加节点菜单（理由见 handleSelectNodeOnDown）
+              setAddMenu(null)
               // 首个节点（画布源头）与其他节点一致：点击弹出编辑面板
               setSelectedNode({
                 id: node.id,
@@ -5138,6 +5748,8 @@ function CanvasInner() {
             /* 工具栏开关：移动=画布平移（panOnDrag），拖拽=节点拖拽（nodesDraggable） */
             nodesDraggable={dragEnabled}
             panOnDrag={moveEnabled}
+            snapToGrid={snapEnabled}
+            snapGrid={CANVAS_SNAP_GRID}
             elementsSelectable
             /*
              * 缩放范围。
@@ -5155,26 +5767,105 @@ function CanvasInner() {
             proOptions={{ hideAttribution: true }}
           >
             <Background />
+            {/*
+              分组框画在视口图层里，跟着缩放平移走。框本身 pointer-events 关掉不抢节点点击，
+              只有左上角那枚标签可交互——它是「这个分组是什么」的唯一可见入口：
+              点一下选中整组，双击改名。没有它的话，打完组只剩一个说不出名字的虚线框。
+            */}
+            <ViewportPortal>
+              {groupFrames.map((frame) => (
+                <div
+                  key={frame.groupId}
+                  className="canvas-group-frame"
+                  style={{
+                    transform: `translate(${frame.x}px, ${frame.y}px)`,
+                    width: frame.width,
+                    height: frame.height,
+                  }}
+                >
+                  {/*
+                    标签在视口图层里，默认会跟着画布一起缩小——38% 缩放时字号只剩 4px 左右，
+                    完全读不了。与节点内文字同一口径做反向补偿（见 readableTextScale），
+                    让它在屏幕上的阅读字号保持稳定。
+                  */}
+                  {renamingGroupId === frame.groupId ? (
+                    <input
+                      className="canvas-group-frame__input nodrag nopan"
+                      style={{ transform: `scale(${groupLabelScale})` }}
+                      defaultValue={frame.name}
+                      autoFocus
+                      aria-label="分组名"
+                      onBlur={(event) => renameGroup(frame.groupId, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') renameGroup(frame.groupId, event.currentTarget.value)
+                        // Esc 放弃本次输入，保持原名
+                        else if (event.key === 'Escape') setRenamingGroupId('')
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="canvas-group-frame__label nodrag nopan"
+                      style={{ transform: `scale(${groupLabelScale})` }}
+                      title="点击选中整组，双击改名；按住 Alt 点节点可单独选中组内成员"
+                      onClick={() => selectGroup(frame.groupId)}
+                      onDoubleClick={() => setRenamingGroupId(frame.groupId)}
+                    >
+                      {formatGroupLabel(frame.name, frame.memberCount)}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </ViewportPortal>
+            {/*
+              小地图：节点多到一定程度后，缩小到 minZoom(0.02) 虽然装得下全图，
+              但节点只剩色块、认不出谁是谁——「能缩出去」不等于「能定位」。
+              小地图给的是俯瞰 + 点击直达，这才是大图的导航手段。
+            */}
+            <MiniMap
+              className="canvas-minimap"
+              position="bottom-left"
+              pannable
+              zoomable
+              ariaLabel="画布缩略图"
+              nodeColor={miniMapNodeColor}
+              nodeStrokeWidth={0}
+              maskColor="rgba(248, 249, 250, 0.72)"
+            />
           </ReactFlow>
         </CanvasNodeActionsContext.Provider>
 
+        {/* 多选批量操作条：贴在选区上方，只有选中 2 个及以上时出现 */}
+        {selectionAnchor && (
+          <CanvasSelectionToolbar
+            count={selectedNodeIds.length}
+            timelineReadyCount={timelineReadySelection.length}
+            anchor={selectionAnchor}
+            isGroup={selectionIsGroup}
+            onGroup={groupSelectedNodes}
+            onUngroup={ungroupSelectedNodes}
+            onCreateTimeline={createTimelineFromSelection}
+            onDelete={() => void deleteSelectedNodes()}
+            onClear={clearSelection}
+          />
+        )}
+
         {/* 左下角复位视图按钮 */}
-        <button className="canvas-reset-btn" title="复位视图" onClick={() => fitView({ padding: 0.2, duration: 300 })}>
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
-            <line x1="12" y1="8" x2="12" y2="16" />
-            <line x1="8" y1="12" x2="16" y2="12" />
-          </svg>
-        </button>
+        {searchOpen && (
+          <CanvasNodeSearch nodes={searchableNodes} onPick={focusNodeFromSearch} onClose={() => setSearchOpen(false)} />
+        )}
+
+        <CanvasViewControls
+          zoom={transform[2]}
+          onZoomIn={() => zoomIn({ duration: 160 })}
+          onZoomOut={() => zoomOut({ duration: 160 })}
+          onZoomReset={() => zoomTo(1, { duration: 160 })}
+          onFitView={() => fitView({ padding: 0.2, duration: 300 })}
+          snapEnabled={snapEnabled}
+          onSnapToggle={() => setSnapEnabled((value) => !value)}
+          edgesHidden={edgesHidden}
+          onEdgesToggle={() => setEdgesHidden((value) => !value)}
+        />
 
         {/* 连线剪刀图标层 — 选中连线时显示 */}
         <EdgeLabelRenderer>
@@ -5255,6 +5946,33 @@ function CanvasInner() {
               <span className="canvas-context-menu__icon">{getTypeIcon('video')}</span>
               视频节点
             </button>
+            {/* 素材库与本地上传并列：两个入口给的选择必须一致，
+                在这里少一条会让用户以为右键菜单下没有素材库这条路 */}
+            <button
+              type="button"
+              className="canvas-context-menu__item"
+              onClick={() => {
+                setContextMenu(null)
+                openDrawerPanel('assets')
+              }}
+            >
+              <span className="canvas-context-menu__icon">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="5" width="14" height="14" rx="2" />
+                  <path d="M17 8h3a1 1 0 0 1 1 1v9a3 3 0 0 1-3 3H8" />
+                </svg>
+              </span>
+              素材库
+            </button>
             <button
               type="button"
               className="canvas-context-menu__item"
@@ -5280,7 +5998,7 @@ function CanvasInner() {
                   <path d="M4 20h16" />
                 </svg>
               </span>
-              本地素材
+              本地上传
             </button>
             <div className="canvas-context-menu__divider" />
             <button type="button" className="canvas-context-menu__item" disabled={!historyFlags.canUndo} onClick={undo}>
@@ -5330,8 +6048,14 @@ function CanvasInner() {
           userId={currentUserId}
           visible={drawerPanel === 'assets'}
           variant="modal"
-          onClose={closeDrawerPanel}
+          onClose={() => {
+            // 关掉弹窗即放弃这次「选参考」，否则下次打开素材库还会误连到上次那个节点
+            setLibraryRefTarget(null)
+            closeDrawerPanel()
+          }}
           onApply={(material) => {
+            // 「选参考」模式优先：此时素材要连到发起的节点上，而不是当作新素材落在视口中央
+            if (applyMaterialAsReference(material)) return
             // 应用素材 → 创建对应类型的图片/视频节点到画布（弹窗保持打开，可连续应用）
             handleApplyMaterial(material)
           }}
@@ -5367,8 +6091,13 @@ function CanvasInner() {
         />
 
         {/* 节点编辑面板 — 跟随选中节点显示在其下方；算不出锚点时回落到底部居中。
-          时间线节点没有模型/提示词的概念，编辑入口是双击打开的剪辑编辑器，这里不渲染面板。 */}
-        {selectedNode && selectedNode.kind !== 'timeline' && (
+          时间线节点没有模型/提示词的概念，编辑入口是双击打开的剪辑编辑器，这里不渲染面板。
+          多选期间一并让位给批量操作条：这个面板改的是「唯一那个节点」的参数，
+          多选时它既指代不明，又会和批量条一起压满画布。
+          添加节点菜单打开时同样收起：菜单从节点的 + 或拖线松手处弹出，位置常落在面板那一带，
+          与其比谁的层级高，不如让正在做的那件事独占画面——选完节点类型面板自然回来。
+          面板里的输入内容边打边写回节点（onPromptChange），收起再回来不会丢。 */}
+        {selectedNode && selectedNode.kind !== 'timeline' && selectedNodeIds.length < 2 && !addMenu && (
           <div
             ref={panelRef}
             className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}`}
@@ -5378,6 +6107,11 @@ function CanvasInner() {
               node={selectedNode}
               workspaceId={workspaceId}
               onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
+              onPickRefFromLibrary={(slotIndex) => {
+                if (!selectedNode) return
+                setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
+                openDrawerPanel('assets')
+              }}
               onRemoveRef={handleRemoveRef}
               onRatioChange={handleRatioChange}
               onVideoModeChange={handleVideoModeChange}

@@ -103,6 +103,7 @@ const StudioCreateView = lazy(() => import('../views/StudioCreateView'))
 const CanvasView = lazy(() => import('../views/CanvasView'))
 /** 无限画布列表路由组件。 */
 const CanvasListView = lazy(() => import('../views/CanvasListView'))
+const CanvasShareView = lazy(() => import('../views/CanvasShareView'))
 
 /** 智能成片路由 state 中使用的一次性建项、重启和空间切换标记。 */
 interface SmartRouteState {
@@ -319,6 +320,12 @@ export const router = createBrowserRouter([
       { path: 'distribution', element: <DistributionAccessRoute /> },
       { path: 'agent', element: lazyPage(<AgentChatView />) },
       { path: 'canvas', element: lazyPage(<CanvasListView />) },
+      /*
+       * 公开画布只读页必须排在 canvas/:id 之前：后者的 :id 会把 "share" 当成画布 id 吃掉，
+       * 于是分享链接进的是编辑页并因 id 非法而报错。
+       * requiresAuth:false —— 分享的意义就是拿到链接的人不必有账号。
+       */
+      { path: 'canvas/share/:token', element: lazyPage(<CanvasShareView />), handle: { requiresAuth: false } },
       { path: 'canvas/:id', element: lazyPage(<CanvasView />) },
       { path: '*', element: <Navigate to="/home" replace />, handle: { requiresAuth: false } },
     ],

@@ -746,6 +746,23 @@ export default function GenerationModelDropdown({
 
                       {currentModel && (
                         <div id={descriptionId} className={styles.modelMeta} aria-live="polite">
+                          {/*
+                            选中模型的图标 + 名称。
+                            图标放不进上面的 <option>——原生 select 的选项里只能有文本，
+                            所以选中之后在这里补上，让人确认自己选的是哪一家的模型。
+                          */}
+                          <p className={styles.modelIdentity}>
+                            {currentModel.logo && (
+                              <img className={styles.modelLogo} src={currentModel.logo} alt="" loading="lazy" />
+                            )}
+                            <span>{currentModel.name}</span>
+                            {/* 时长上限紧跟模型名：不用展开下面的限制列表就能确认它做不做得到 */}
+                            {getModelDurationLimitLabel(currentModel.constraints) && (
+                              <span className={styles.modelDuration}>
+                                {getModelDurationLimitLabel(currentModel.constraints)}
+                              </span>
+                            )}
+                          </p>
                           {currentModel.description && (
                             <p className={styles.modelDescription}>{currentModel.description}</p>
                           )}

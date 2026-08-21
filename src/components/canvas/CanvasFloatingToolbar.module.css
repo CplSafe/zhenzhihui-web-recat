@@ -2,7 +2,8 @@
   position: absolute;
   top: 50%;
   left: 46px;
-  z-index: 10;
+  /* chrome 档（见 CanvasView.css 顶部的层级口径）：低于 1000 会被选中的节点盖住 */
+  z-index: 1100;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -154,6 +155,26 @@
     opacity: 1;
     transform: translateY(-50%) translateX(0) scale(1);
   }
+}
+
+/*
+ * 菜单分组标题：「新建节点」/「添加素材」。
+ * 首条之外的标题上方留白更多，让两组在视觉上真的分开——
+ * 只靠文字不加间距的话，标题会被读成上一组的最后一项。
+ */
+.addMenuGroup {
+  padding: 8px 14px 4px;
+  color: #9aa1b1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.addMenuGroup:not(:first-child) {
+  margin-top: 4px;
+  border-top: 1px solid #eef1f7;
+  padding-top: 10px;
 }
 
 .addMenuItem {

@@ -1,0 +1,161 @@
+/*
+ * 画布分享弹窗。层级取「抽屉档」（见 CanvasView.css 顶部的层级口径）：
+ * 它从画布控件上唤出，必须盖住 1200 的面板与工具条。
+ */
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.dialog {
+  width: 460px;
+  max-width: 100%;
+  padding: 20px 22px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.title {
+  color: #1f2937;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.close {
+  border: 0;
+  background: transparent;
+  color: #98a1b0;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hint {
+  margin: 0 0 14px;
+  color: #7b8494;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 链接与复制按钮同一行：复制是这个弹窗里唯一的高频动作 */
+.linkRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.link {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #e3e7ee;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.copy {
+  flex: none;
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #11a98a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.copy:hover:not(:disabled) {
+  background: #0e8f75;
+}
+
+.copy:disabled {
+  background: #c3c9d4;
+  cursor: not-allowed;
+}
+
+.meta {
+  margin: 10px 0 0;
+  color: #7b8494;
+  font-size: 12px;
+}
+
+.error {
+  margin: 10px 0 0;
+  color: #d94c4c;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.primary {
+  height: 34px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: #11a98a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  background: #c3c9d4;
+  cursor: not-allowed;
+}
+
+.ghost {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid #e3e7ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #55606f;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* 关闭分享是不可逆动作（原链接立即失效），配色上与其它按钮区分开 */
+.danger {
+  margin-left: auto;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgba(217, 76, 76, 0.4);
+  border-radius: 999px;
+  background: #fff;
+  color: #d94c4c;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.danger:disabled,
+.ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

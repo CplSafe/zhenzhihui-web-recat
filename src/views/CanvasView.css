@@ -37,6 +37,25 @@
   }
 }
 
+/*
+ * 画布的层级口径（z-index）。
+ *
+ * 起因：React Flow 的 elevateNodesOnSelect 默认开启，**选中的节点会被抬到 zIndex + 1000**
+ * （见 @xyflow/system 的 getElevatedNodeZIndex）。画布上的浮层原本取值散落在 10~120 之间，
+ * 全部低于 1000，于是「选中节点后才出现的控件」必然被选中节点自己压住——
+ * 越是要用它的时候越点不到。
+ *
+ * 因此这里定死四档，新增浮层照此归档，不要再随手取值：
+ *   画布内容（节点/边，选中态自动 +1000）  0 – 1000
+ *   常驻 chrome（左侧工具栏、搜索、缩放条、品牌、模式横幅）   1100
+ *   选中相关浮层（节点编辑面板、批量工具条）                  1200
+ *   浮动菜单与抽屉（添加节点菜单、右键菜单、历史面板、素材选择器、分享弹窗）  1400 – 1450
+ *   全屏提示与模态（拖入遮罩 1500、剪辑编辑器 1600、视频预览 3000）          1500+
+ *
+ * 「浮动菜单」必须和抽屉同档而不是留在 100 上下：编辑面板铺在画布下半屏，
+ * 任何落在那一带的菜单只要低于 1200 就会被它整片吞掉。
+ */
+
 /* 固定底部面板 */
 /* 编辑面板跟随选中节点：位置由 JS 按节点屏幕坐标注入（随画布缩放/平移实时更新）。
    translateX(-50%) 让面板相对节点水平居中；未能算出锚点时回落到底部居中。 */
@@ -45,7 +64,9 @@
   bottom: clamp(42px, 8vh, 108px);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 50;
+  /* 同批量工具条：选中节点会被 React Flow 抬到 1000 以上，面板正是跟着选中节点走的，
+     停在 50 就会被自己所锚定的那个节点压住 */
+  z-index: 1200;
 }
 
 .canvas-panel-area.is-anchored {
@@ -90,6 +111,25 @@
 .canvas-default-node:hover .canvas-node-upload-group {
   opacity: 1;
   pointer-events: auto;
+}
+
+/*
+ * 多选期间收起单节点操作胶囊（下载/删除/截帧/精修…）。
+ *
+ * 两个理由，缺一条都不足以这么做：
+ * 1. 语义：这些都是「对这一个节点」的动作。选中 4 个节点时点「下载」，下载哪一个？
+ *    多选该有的动作已经由批量工具条承接。
+ * 2. 遮挡：批量条锚在选区上方，而选区最上面那个节点的胶囊也悬在它自己上方，
+ *    两者必然在同一条带上打架。靠加间距躲不掉——换个缩放倍率就又撞上了。
+ * hover 的那条规则也要一并压住，否则多选时划过节点胶囊照样冒出来。
+ */
+.canvas-view.is-multi-selecting .canvas-node-upload-group,
+.canvas-view.is-multi-selecting .canvas-default-node:hover .canvas-node-upload-group {
+  opacity: 0;
+  pointer-events: none;
+  /* 胶囊组的显示态带着 animation-fill-mode: both，动画终帧的 opacity:1 会盖过这里的声明，
+     不把动画一并停掉就只是「看起来还在」 */
+  animation: none;
 }
 
 .canvas-node-upload-btn {
@@ -168,7 +208,8 @@
 .canvas-drop-overlay {
   position: absolute;
   inset: 0;
-  z-index: 120;
+  /* 全屏提示档：拖文件进来时它要盖住所有画布控件，否则提示被节点切成几块 */
+  z-index: 1500;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -208,7 +249,8 @@
   top: 14px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 20;
+  /* chrome 档：它说明的正是「现在处于选择模式」，被选中节点盖住就没人知道怎么退出 */
+  z-index: 1100;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -290,11 +332,47 @@
     transform: scale(1) translateY(0);
   }
 }
+/* 分享入口：与品牌区同一行的右上角，chrome 档 */
+.canvas-share-btn {
+  position: absolute;
+  top: 28px;
+  right: 28px;
+  z-index: 1100;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid #e3e7ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #33403a;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(23, 33, 61, 0.1);
+  transition:
+    color var(--canvas-dur) var(--canvas-ease),
+    border-color var(--canvas-dur) var(--canvas-ease);
+}
+
+.canvas-share-btn:hover {
+  border-color: #11a98a;
+  color: #11a98a;
+}
+
+.canvas-share-btn:focus-visible {
+  outline: 3px solid rgba(17, 169, 138, 0.35);
+  outline-offset: 2px;
+}
+
 .canvas-brand {
   position: absolute;
   top: 28px;
   left: 28px;
-  z-index: 10;
+  /* chrome 档：品牌区右侧就是保存状态，被节点压住会让人以为没保存 */
+  z-index: 1100;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -367,30 +445,100 @@
 }
 
 /* 左下角复位按钮 */
-.canvas-reset-btn {
-  position: absolute;
-  bottom: 16px;
-  left: 16px;
-  z-index: 15;
-  width: 36px;
-  height: 36px;
-  border: 1px solid #ddd;
-  background: #fff;
-  border-radius: 8px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #666;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-  transition:
-    border-color 0.15s,
-    color 0.15s;
+/*
+ * 小地图落在左下角，复位按钮上移让位。
+ * 两者是同一组「视图导航」控件，堆在一起比分散在两角更好找。
+ */
+.canvas-minimap {
+  /* 位置交给 MiniMap 的 position="bottom-left"，这里只调外观与外边距，
+     免得用 !important 去顶 React Flow 自己的 .react-flow__panel 定位 */
+  width: 190px;
+  height: 130px;
+  margin: 16px;
+  border: 1px solid #e2e6ef;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 20px rgba(23, 33, 61, 0.12);
+  overflow: hidden;
+}
 
-  &:hover {
-    border-color: #5767e5;
-    color: #5767e5;
+/* 视口框：默认描边很淡，在浅色底上几乎看不见，落不到「我现在在哪」的作用 */
+.canvas-minimap .react-flow__minimap-mask {
+  stroke: #5767e5;
+  stroke-width: 2px;
+}
+
+@media (max-width: 768px) {
+  /* 小屏上小地图挤掉的操作面积多于它带来的价值 */
+  .canvas-minimap {
+    display: none !important;
   }
+}
+
+/* 原来的独立「复位视图」按钮已并入 CanvasViewControls，样式随之移除 */
+
+/*
+ * 分组框：画在视口图层里，随缩放平移一起走。
+ * position 用 absolute + transform 定位，与 React Flow 摆放节点的方式一致；
+ * pointer-events 必须关掉——它盖在节点区域上，不关会把整片区域的点击都吃掉。
+ */
+.canvas-group-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  pointer-events: none;
+  border: 1.5px dashed rgba(87, 103, 229, 0.45);
+  border-radius: 14px;
+  background: rgba(87, 103, 229, 0.045);
+}
+
+/*
+ * 分组标签：框上唯一可交互的部分，因此要单独把 pointer-events 打开。
+ * 挂在框的左上角外侧，避免压住第一个节点。
+ */
+.canvas-group-frame__label,
+.canvas-group-frame__input {
+  position: absolute;
+  bottom: 100%;
+  left: -1px;
+  /* 反向缩放的支点必须钉在左下角，否则标签会随倍率从框的左上角飘走 */
+  transform-origin: left bottom;
+  margin-bottom: 4px;
+  padding: 2px 8px;
+  border: 1px solid rgba(87, 103, 229, 0.35);
+  border-radius: 6px;
+  background: #fff;
+  color: #5767e5;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.canvas-group-frame__label {
+  max-width: 220px;
+  overflow: hidden;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.canvas-group-frame__label:hover {
+  border-color: #5767e5;
+  background: #f4f6ff;
+}
+
+.canvas-group-frame__label:focus-visible,
+.canvas-group-frame__input:focus-visible {
+  outline: 3px solid rgb(87 103 229 / 26%);
+  outline-offset: 1px;
+}
+
+.canvas-group-frame__input {
+  width: 160px;
+  outline: none;
 }
 
 /* 独立返回按钮：位于左侧工具栏上方、留出间距，构成独立工具组；始终显示不随抽屉隐藏 */
@@ -1276,7 +1424,9 @@
 /* 空连线弹出菜单 */
 .canvas-add-menu {
   position: fixed;
-  z-index: 100;
+  /* 抽屉档（见顶部层级口径）：它由「拖线松手」或节点上的 + 唤出，
+     必须盖住 1200 的编辑面板——面板正好铺在画布下半屏，菜单落在那一带就会被吞掉 */
+  z-index: 1400;
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
@@ -1290,7 +1440,9 @@
 /* ── 右键浮动菜单 ── */
 .canvas-context-menu {
   position: fixed;
-  z-index: 130;
+  /* 抽屉档：跟添加菜单同理，落在面板那一带不能被吞掉；
+     且要略高于添加菜单，两者同时在时右键菜单是后开的那个 */
+  z-index: 1450;
   min-width: 184px;
   padding: 6px;
   display: flex;

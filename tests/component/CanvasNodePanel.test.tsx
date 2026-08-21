@@ -3,6 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import CanvasNodePanel from '@/components/canvas/CanvasNodePanel'
 
+/**
+ * 积分预估是一次真实的网络调用，这里的用例只关心面板本身的渲染与提交口径。
+ * 不 mock 的话它会打到没有 handler 的接口上，整个文件挂在那条请求里跑不完。
+ */
+vi.mock('@/api/business', () => ({
+  estimateAiTaskCost: vi.fn().mockResolvedValue({ estimated_cost: 10, balance: 100, can_afford: true }),
+}))
+
 /** 一个接了参考图的图片节点：走 image.image_to_image。 */
 function imageNodeWithReference() {
   return {

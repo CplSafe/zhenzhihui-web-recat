@@ -35,6 +35,7 @@ import { hasConfiguredDevBackend } from '@/utils/devBackend'
 import { getInviteCode, getInviteType } from '@/utils/inviteCode'
 import MediaSoundToggle from '@/components/common/MediaSoundToggle'
 import { useBackgroundVideoSound } from '@/composables/useBackgroundVideoSound'
+import { useLatestCallback } from '@/composables/useLatestCallback'
 
 /** 短信登录前的人机验证码会话状态。 */
 interface CaptchaState {
@@ -472,6 +473,25 @@ export default function LoginView() {
 
   const heroVideoRef = useRef<HTMLVideoElement | null>(null)
   const { muted, needsInteraction, playVideo, toggleVideoSound } = useBackgroundVideoSound()
+
+  /**
+   * 窄屏是否隐藏了整块大图区（与 LoginView.css 的 max-width:768px 断点一致）。
+   *
+   * 光靠 CSS 的 display:none 拦不住媒体加载：元素仍在 DOM 里，autoPlay + preload 照常下载，
+   * 下面的 effect 还会主动 play()。结果是手机用户为一段自己根本看不见的视频付流量——
+   * 首屏那条 banner 实测 69.6MB。所以这里必须在 JSX 层面就不渲染它。
+   */
+  const [heroHidden, setHeroHidden] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches,
+  )
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const query = window.matchMedia('(max-width: 768px)')
+    const sync = () => setHeroHidden(query.matches)
+    sync()
+    query.addEventListener('change', sync)
+    return () => query.removeEventListener('change', sync)
+  }, [])
   // 切下一张:基于「钳位后的当前索引」推进,避免列表长度变化后 heroIndex 越界导致跳/重。
   const goNextHero = () =>
     setHeroIndex((i) => {
@@ -493,20 +513,29 @@ export default function LoginView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasBanners, navTitles.length, safeIndex, activeBanner?.mediaType])
 
-  // 切到新幻灯片:若该媒体已预加载(welcome 阶段已预热)则直接 ready、不闪骨架;
-  // 否则先显骨架屏,等 onCanPlay/onLoad 再 ready。视频则从头播放。
+  /**
+   * 切到新幻灯片时重置就绪态并起播。
+   *
+   * 必须以「媒体地址真的换了」为条件，不能只靠依赖数组：
+   * playVideo 来自 useBackgroundVideoSound，其引用随静音偏好变化（点喇叭就换一个），
+   * activeBanner 也会在 SWR 后台刷新时换成内容相同的新对象。这两种情况下 effect 都会重跑，
+   * 而重跑意味着 setMediaReady(false) —— 对图片幻灯片是**永久卡死**：
+   * src 没变，浏览器不会重新加载，onLoad 按规范绝不二次触发，骨架屏就一直转下去。
+   * 视频那边则表现为进度被倒回 0、骨架闪一下。
+   */
+  const lastMediaUrlRef = useRef('')
+  const playVideoLatest = useLatestCallback(playVideo)
   useEffect(() => {
-    setMediaReady(activeBanner ? isPreloaded(activeBanner.mediaUrl) : false)
+    const url = activeBanner?.mediaUrl || ''
+    if (url === lastMediaUrlRef.current) return
+    lastMediaUrlRef.current = url
+    // 预热只取元数据，不代表能立刻出画面，isPreloaded 现在只在真正预取完成时才为真
+    setMediaReady(activeBanner ? isPreloaded(url) : false)
     const v = heroVideoRef.current
-    if (v && activeBanner?.mediaType === 'video') {
-      try {
-        v.currentTime = 0
-      } catch {
-        /* 元数据未就绪时忽略 */
-      }
-      void playVideo(v)
-    }
-  }, [safeIndex, activeBanner, playVideo])
+    // 不再写 currentTime = 0：换了 src 浏览器本来就从头开始，
+    // 而在同一条视频上写它会触发一次 seek，白白丢掉已缓冲的播放进度。
+    if (v && activeBanner?.mediaType === 'video') void playVideoLatest(v)
+  }, [activeBanner, playVideoLatest])
 
   return (
     <main className="zlogin">
@@ -518,10 +547,8 @@ export default function LoginView() {
         </picture>
         {/* 大图媒体:有 banner 数据时按当前幻灯片展示(图=图层,视频=播放并播完切下一张);
             加载失败时:多张→切下一张,单张→隐藏(透出静态底图)。 */}
-        {hasBanners && activeBanner && (
+        {hasBanners && activeBanner && !heroHidden && (
           <div className={`zlogin-hero-media${mediaReady ? ' is-ready' : ''}`} aria-hidden="true">
-            {/* 媒体可显示前的浅绿骨架屏(渐变微动);就绪后媒体淡入盖住它 */}
-            <div className="zlogin-hero-skeleton" />
             {activeBanner.mediaType === 'video' ? (
               <video
                 ref={heroVideoRef}
@@ -530,7 +557,13 @@ export default function LoginView() {
                 muted={muted}
                 playsInline
                 autoPlay
-                preload="auto"
+                // 不用 auto：auto 会让浏览器尽力缓冲整片，而首屏那条 banner 实测 69.6MB，
+                // 用户只是想登录，却在后台跑一个几十兆的下载，把登录接口的带宽也挤掉。
+                preload="metadata"
+                // 多个幂等的就绪入口：canplay 之外补 loadeddata / playing，
+                // 任一先到就撤占位，避免个别浏览器某个事件不触发时一直显示不出来
+                onLoadedData={() => setMediaReady(true)}
+                onPlaying={() => setMediaReady(true)}
                 onCanPlay={(event) => {
                   setMediaReady(true)
                   void playVideo(event.currentTarget)
@@ -549,7 +582,7 @@ export default function LoginView() {
             )}
           </div>
         )}
-        {activeBanner?.mediaType === 'video' && (
+        {activeBanner?.mediaType === 'video' && !heroHidden && (
           <MediaSoundToggle
             className="zlogin-sound-toggle"
             muted={muted}

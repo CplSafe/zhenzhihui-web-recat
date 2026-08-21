@@ -1,0 +1,110 @@
+/*
+ * 多选批量操作条。位置由 JS 按选区包围盒算出，这里只负责「以传入的点为水平中心」。
+ * transform 里的 -50% 配合 left 完成居中，改成 margin 会在缩放时算错。
+ */
+.bar {
+  position: fixed;
+  /*
+   * 必须高过 1000：React Flow 的 elevateNodesOnSelect 默认开启，选中的节点会被抬到
+   * zIndex + 1000（见 @xyflow/system 的 getElevatedNodeZIndex）。这条工具条恰恰只在
+   * 有选中节点时出现，原来的 30 必然被选中节点连同它的「下载/删除」胶囊压住——
+   * 越是想点它的时候越点不到。
+   */
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  transform: translateX(-50%);
+  border: 1px solid #e2e6ef;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(23, 33, 61, 0.16);
+  font-family: 'PingFang SC', sans-serif;
+  white-space: nowrap;
+  animation: selection-bar-in 140ms ease-out;
+}
+
+@keyframes selection-bar-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    animation: none;
+  }
+}
+
+.count {
+  padding: 0 6px;
+  color: #6b7385;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.divider {
+  width: 1px;
+  height: 18px;
+  background: #e6e9f2;
+}
+
+.action,
+.plain {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #2f3646;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.action:hover {
+  background: #f1f3fb;
+  color: #5767e5;
+}
+
+.plain {
+  color: #8a91a2;
+  font-weight: 500;
+}
+
+.plain:hover {
+  background: #f4f5f8;
+  color: #2f3646;
+}
+
+.danger:hover {
+  background: #fdf1ef;
+  color: #c2452a;
+}
+
+.action:focus-visible,
+.plain:focus-visible {
+  outline: 3px solid rgb(87 103 229 / 26%);
+  outline-offset: 1px;
+}
+
+/* 「N 个视频」这类补充说明：弱化到不与主文案抢，但保证能读清 */
+.hint {
+  color: #8a91a2;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+}

@@ -7,7 +7,9 @@
 .mask {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  /* 全屏模态档（见 CanvasView.css 顶部的层级口径）：它是盖住整块画布的独立编辑层，
+     停在 60 会被 1100 的 chrome 和 1200 的面板穿透 */
+  z-index: 1600;
   display: flex;
   align-items: center;
   justify-content: center;

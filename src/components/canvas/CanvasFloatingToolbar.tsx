@@ -1,15 +1,15 @@
 /**
  * 左侧浮动工具图标列
  *
- * 五个图标：Add(加号弹出菜单) / Move(画布平移开关) / Drag(节点拖拽开关) / 素材库 / 历史记录
- * Move 与 Drag 为独立开关，初始均开启（高亮）：移动作用于画布平移，拖拽作用于节点拖拽。
+ * 六个图标：添加(弹出节点菜单) / 平移(画布平移开关) / 拖拽(节点拖拽开关) / 搜索 / 素材库 / 历史记录
+ * 平移与拖拽是两个独立开关，初始均开启（高亮），互不影响。
  */
 import { memo, useState, useRef, useEffect } from 'react'
 import styles from './CanvasFloatingToolbar.module.css'
 
 interface CanvasFloatingToolbarProps {
   onAddNode: (type: string) => void
-  /** 添加本地图片：打开文件选择框，选中的图片上传后落成图片节点 */
+  /** 添加本地素材：打开文件选择框，选中的图片/视频上传后各自落成图片或视频节点 */
   onAddLocalImage: () => void
   /** 画布平移开关：true=可移动画布 */
   moveEnabled: boolean
@@ -17,6 +17,8 @@ interface CanvasFloatingToolbarProps {
   /** 节点拖拽开关：true=可拖拽节点 */
   dragEnabled: boolean
   onDragToggle: () => void
+  /** 打开节点搜索面板 */
+  onOpenSearch: () => void
   onOpenAssets: () => void
   onOpenHistory: () => void
   /** 打开抽屉前播放的收起动画标记 */
@@ -30,6 +32,7 @@ function CanvasFloatingToolbar({
   onMoveToggle,
   dragEnabled,
   onDragToggle,
+  onOpenSearch,
   onOpenAssets,
   onOpenHistory,
   leaving = false,
@@ -66,6 +69,14 @@ function CanvasFloatingToolbar({
         </button>
         {menuOpen && (
           <div className={styles.addMenu}>
+            {/*
+              分成两组是因为它们回答的是两个不同的问题：
+              上面一组「新建节点」创建的是空节点，内容还要靠生成；
+              下面一组「添加素材」放进来的是已经存在的素材。
+              以前素材库只挂在工具栏的独立按钮上，用户在「添加」菜单里根本看不到它，
+              于是想加一张已有的图时只剩「本地上传」一条路——哪怕这张图就在素材库里。
+            */}
+            <span className={styles.addMenuGroup}>新建节点</span>
             <button
               className={styles.addMenuItem}
               onClick={() => {
@@ -126,6 +137,22 @@ function CanvasFloatingToolbar({
                 <span className={styles.addMenuDesc}>把多段视频串成一条成片</span>
               </div>
             </button>
+            <span className={styles.addMenuGroup}>添加素材</span>
+            <button
+              className={styles.addMenuItem}
+              onClick={() => {
+                onOpenAssets()
+                setMenuOpen(false)
+              }}
+            >
+              <span className={styles.addMenuIcon}>
+                <LibraryTypeIcon />
+              </span>
+              <div className={styles.addMenuText}>
+                <span className={styles.addMenuLabel}>素材库</span>
+                <span className={styles.addMenuDesc}>选用本项目已有的图片或视频</span>
+              </div>
+            </button>
             <button
               className={styles.addMenuItem}
               onClick={() => {
@@ -137,32 +164,44 @@ function CanvasFloatingToolbar({
                 <UploadTypeIcon />
               </span>
               <div className={styles.addMenuText}>
-                <span className={styles.addMenuLabel}>本地图片</span>
-                <span className={styles.addMenuDesc}>也可直接拖拽或 Ctrl+V 粘贴</span>
+                <span className={styles.addMenuLabel}>本地上传</span>
+                <span className={styles.addMenuDesc}>图片或视频，也可直接拖拽或 Ctrl+V 粘贴</span>
               </div>
             </button>
           </div>
         )}
       </div>
 
-      {/* 2. 移动（画布平移） */}
+      {/*
+        2. 画布平移（panOnDrag）
+        文案要说的是这个按钮控制什么。它以前标「选择」，实际管的却是拖空白处平移画布——
+        和隔壁管节点拖拽的按钮标「移动」正好互相串味，两个词都指不对自己的功能。
+      */}
       <button
         className={`${styles.toolBtn} ${moveEnabled ? styles.toolBtnActive : ''}`}
         onClick={onMoveToggle}
-        title="画布移动"
+        title="拖拽空白处平移画布"
+        aria-pressed={moveEnabled}
       >
         <MoveIcon />
-        <span className={styles.toolLabel}>选择</span>
+        <span className={styles.toolLabel}>平移</span>
       </button>
 
-      {/* 3. 拖拽（节点拖拽） */}
+      {/* 3. 节点拖拽（nodesDraggable） */}
       <button
         className={`${styles.toolBtn} ${dragEnabled ? styles.toolBtnActive : ''}`}
         onClick={onDragToggle}
-        title="节点拖拽"
+        title="允许拖动节点"
+        aria-pressed={dragEnabled}
       >
         <DragIcon />
-        <span className={styles.toolLabel}>移动</span>
+        <span className={styles.toolLabel}>拖拽</span>
+      </button>
+
+      {/* 4. 节点搜索：快捷键是 Ctrl/Cmd+F，但不能只有快捷键——没人会去猜 */}
+      <button className={styles.toolBtn} onClick={onOpenSearch} title="搜索节点（Ctrl+F）">
+        <SearchIcon />
+        <span className={styles.toolLabel}>搜索</span>
       </button>
 
       <button className={styles.toolBtn} onClick={onOpenAssets} title="素材库">
@@ -207,6 +246,33 @@ function DragIcon() {
       <circle cx="16" cy="6" r="1" fill="currentColor" />
       <circle cx="16" cy="12" r="1" fill="currentColor" />
       <circle cx="16" cy="18" r="1" fill="currentColor" />
+    </svg>
+  )
+}
+
+function LibraryTypeIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="3" y="5" width="14" height="14" rx="2" strokeLinejoin="round" />
+      <path d="M17 8h3a1 1 0 0 1 1 1v9a3 3 0 0 1-3 3H8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6 15l3-3 2.5 2.5 2-2L14 14" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+    >
+      <circle cx="11" cy="11" r="6.5" />
+      <line x1="16" y1="16" x2="21" y2="21" />
     </svg>
   )
 }

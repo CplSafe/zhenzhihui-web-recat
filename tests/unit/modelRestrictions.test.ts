@@ -3,6 +3,7 @@ import {
   buildModelRestrictionSummary,
   getModelConstraintConflicts,
   getModelDurationLimitLabel,
+  getModelReferenceImageLimit,
 } from '@/utils/modelRestrictions'
 
 describe('model restriction metadata', () => {
@@ -200,11 +201,55 @@ describe('model restriction metadata', () => {
     expect(getModelDurationLimitLabel(undefined)).toBe('')
   })
 
+  it('把后端声明的参考图上限读成数字，未声明时返回 undefined 而不是编一个默认值', () => {
+    // 画布的参考槽位数量直接取这个值，所以「没声明」必须能和「声明了正好是 N」区分开——
+    // 前者由调用方决定兜底多少，后者必须照后端给的数来。
+    expect(getModelReferenceImageLimit({ referenceImages: { maximum: 9 } })).toBe(9)
+    expect(getModelReferenceImageLimit({ referenceImages: { options: [1, 4, 9] } })).toBe(9)
+    // options 与 maximum 同时存在时以真实可选值为准，与时长括注的取舍一致。
+    expect(getModelReferenceImageLimit({ referenceImages: { options: [1, 2], maximum: 9 } })).toBe(2)
+    // 只声明下限、声明 0 或非法值都视为「没给上限」。
+    expect(getModelReferenceImageLimit({ referenceImages: { minimum: 1 } })).toBeUndefined()
+    expect(getModelReferenceImageLimit({ referenceImages: { maximum: 0 } })).toBeUndefined()
+    expect(getModelReferenceImageLimit({ duration: { options: [5] } })).toBeUndefined()
+    expect(getModelReferenceImageLimit(undefined)).toBeUndefined()
+  })
+
+  it('从后端 params schema 的 maxItems 解析出参考图上限', () => {
+    // 端到端走一遍：画布拿到的是原始模型记录，靠这条链路推出槽位数。
+    const summary = buildModelRestrictionSummary({
+      params_schema: {
+        type: 'object',
+        properties: {
+          reference_images: { type: 'array', minItems: 1, maxItems: 9 },
+        },
+      },
+    })
+    expect(getModelReferenceImageLimit(summary.constraints)).toBe(9)
+    expect(summary.messages).toContain('参考图数量：1–9 张')
+  })
+
   it('does not invent restrictions when the backend declares none', () => {
     expect(buildModelRestrictionSummary({ display_name: '后端模型名称' })).toEqual({
       messages: [],
       constraints: {},
     })
     expect(buildModelRestrictionSummary(null)).toEqual({ messages: [], constraints: {} })
+  })
+})
+
+/**
+ * 模型名下方展示的时长文案就是这一个函数的产出（画布、智能成片、爆款复制共用）。
+ * 只报上限：模型是 1 秒起、到上限为止，逐档列出会把可选范围说窄，
+ * 写成「几秒到几秒」又会让人误以为下限也是限制。
+ */
+describe('getModelDurationLimitLabel 作为模型行上的时长展示', () => {
+  it('范围声明同样只说上限，不写成「几秒到几秒」', () => {
+    expect(getModelDurationLimitLabel({ duration: { minimum: 5, maximum: 15 } })).toBe('最长 15 秒')
+  })
+
+  it('模型没声明时长约束就不显示，不编一个上限出来', () => {
+    expect(getModelDurationLimitLabel(undefined)).toBe('')
+    expect(getModelDurationLimitLabel({})).toBe('')
   })
 })

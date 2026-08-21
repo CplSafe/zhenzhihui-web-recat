@@ -1,6 +1,7 @@
 .panel {
   position: fixed;
-  z-index: 100;
+  /* 同历史面板：从节点面板唤出的抽屉，要盖住 1200 的面板与工具条 */
+  z-index: 1400;
   width: 480px;
   max-height: 440px;
   background: #fff;
@@ -18,7 +19,9 @@
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  /* 紧贴在自己那层抽屉（1400）之下：遮罩要盖住 1100 的 chrome 与 1200 的面板，
+     停在 1000 会让左侧工具栏、缩放条从遮罩上面透出来 */
+  z-index: 1390;
   background: rgba(51, 51, 51, 0.6);
   display: flex;
   align-items: center;

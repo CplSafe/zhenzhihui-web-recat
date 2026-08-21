@@ -1,0 +1,126 @@
+/* 搜索面板：浮在画布左上，避开顶部标题栏与左侧工具列 */
+.panel {
+  position: absolute;
+  top: 16px;
+  left: 96px;
+  /* chrome 档（见 CanvasView.css 顶部的层级口径） */
+  z-index: 1100;
+  width: 320px;
+  border: 1px solid #e2e6ef;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 34px rgba(23, 33, 61, 0.16);
+  font-family: 'PingFang SC', sans-serif;
+  overflow: hidden;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.searchIcon {
+  flex: 0 0 auto;
+  color: #8a91a2;
+}
+
+.input {
+  min-width: 0;
+  flex: 1;
+  height: 28px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #2f3646;
+  font: inherit;
+  font-size: 13px;
+}
+
+.input::placeholder {
+  color: #a8aebd;
+}
+
+.close {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #8a91a2;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.close:hover {
+  background: #f1f3fb;
+  color: #2f3646;
+}
+
+.results {
+  max-height: 320px;
+  border-top: 1px solid #eef1f7;
+  overflow-y: auto;
+}
+
+.item {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 键盘与鼠标共用同一套高亮，避免出现两个「当前项」 */
+.itemActive {
+  background: #f4f6ff;
+}
+
+.itemKind {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eef0ff;
+  color: #5767e5;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 单行截断：节点文本可能很长，换行会让结果行高度参差、扫读困难 */
+.itemText {
+  overflow: hidden;
+  color: #3b4252;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty,
+.more {
+  margin: 0;
+  padding: 12px;
+  color: #8a91a2;
+  font-size: 12px;
+  text-align: center;
+}
+
+.more {
+  border-top: 1px solid #eef1f7;
+}
+
+.close:focus-visible,
+.item:focus-visible {
+  outline: 3px solid rgb(87 103 229 / 26%);
+  outline-offset: -3px;
+}

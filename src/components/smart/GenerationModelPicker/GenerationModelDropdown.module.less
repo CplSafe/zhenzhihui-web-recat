@@ -275,6 +275,38 @@
   margin: 10px 0 0 calc(40.4% + 14px);
 }
 
+// 选中模型的图标 + 名称：原生 select 的 <option> 放不了图片，只能在这里补上
+.modelIdentity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  color: #2f3a36;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.modelLogo {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  object-fit: contain;
+  background: #f1f3f6;
+}
+
+// 支持的秒数：跟在模型名后面，选之前就能判断它做不做得到想要的时长
+.modelDuration {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #ebfffb;
+  color: #0e8f75;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .modelDescription {
   margin: 0;
   color: #7c8984;

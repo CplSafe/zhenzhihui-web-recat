@@ -24,6 +24,7 @@ import {
 } from '@/utils/generationModelCatalog'
 export { unwrapGenerationModelCatalogResponse } from '@/utils/generationModelCatalog'
 import { buildModelRestrictionSummary } from '@/utils/modelRestrictions'
+import { readModelPresentation } from '@/utils/modelPresentation'
 import { isHiddenCreativeVideoModel } from '@/utils/creativeVideoModelKind'
 
 /** 各 operation 的用户可读名称；这里只描述业务能力，不包含任何具体模型名称。 */
@@ -97,9 +98,12 @@ function toPickerOption(model: GenerationModelGroup['models'][number]): PickerOp
     ? { messages: [], constraints: {} }
     : buildModelRestrictionSummary(model.source)
 
+  const logo = readModelPresentation(model).logo
+
   return {
     id: model.modelVersionId,
     name: model.displayName,
+    ...(logo ? { logo } : {}),
     ...(description ? { description } : {}),
     ...(tags.length ? { tags } : {}),
     ...(restrictionSummary.messages.length ? { restrictions: restrictionSummary.messages } : {}),

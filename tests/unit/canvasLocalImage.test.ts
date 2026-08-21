@@ -1,13 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  LOCAL_VIDEO_MAX_BYTES,
   extractImageFiles,
+  extractMediaFiles,
   hasFileDrag,
   pickImageFiles,
+  pickVideoFiles,
   readImageNaturalSize,
   snapImageRatio,
 } from '@/utils/canvasLocalImage'
 
 function imageFile(name = 'a.png', type = 'image/png'): File {
+  return new File(['x'], name, { type })
+}
+
+function videoFile(name = 'a.mp4', type = 'video/mp4'): File {
   return new File(['x'], name, { type })
 }
 
@@ -56,6 +63,48 @@ describe('canvas local image import helpers', () => {
     expect(extractImageFiles(dataTransfer({ files: [dropped], items: [{ kind: 'file', file: other }] }))).toEqual([
       dropped,
     ])
+  })
+
+  it('keeps only video files', () => {
+    const mp4 = videoFile()
+    expect(pickVideoFiles([mp4, imageFile(), null])).toEqual([mp4])
+    expect(pickVideoFiles(null)).toEqual([])
+  })
+
+  it('extracts images and videos together so a pasted video is not dropped', () => {
+    const png = imageFile()
+    const mp4 = videoFile()
+    expect(extractMediaFiles(dataTransfer({ files: [png, mp4] }))).toEqual({ images: [png], videos: [mp4] })
+    expect(extractMediaFiles(null)).toEqual({ images: [], videos: [] })
+  })
+
+  it('does not fall through to items when the file list holds only a video', () => {
+    // 只看图片判断「files 是否为空」会在这里误判：复制单个视频时 files 非空但图片为空，
+    // 一旦落到 items 分支就会拿到重复或错误的文件
+    const dropped = videoFile('dropped.mp4')
+    const other = videoFile('other.mp4')
+    expect(extractMediaFiles(dataTransfer({ files: [dropped], items: [{ kind: 'file', file: other }] }))).toEqual({
+      images: [],
+      videos: [dropped],
+    })
+  })
+
+  it('falls back to clipboard items for videos as well as images', () => {
+    const mp4 = videoFile('clip.mp4')
+    expect(
+      extractMediaFiles(
+        dataTransfer({
+          items: [
+            { kind: 'string', file: null },
+            { kind: 'file', file: mp4 },
+          ],
+        }),
+      ),
+    ).toEqual({ images: [], videos: [mp4] })
+  })
+
+  it('caps a single local video at the same 512MB budget the timeline compositor uses', () => {
+    expect(LOCAL_VIDEO_MAX_BYTES).toBe(512 * 1024 * 1024)
   })
 
   it('only reports a file drag when the payload actually carries files', () => {

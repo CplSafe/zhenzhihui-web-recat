@@ -47,6 +47,14 @@ export interface MediaItem {
 /** 已发起 / 已完成的 url → Promise,保证幂等(同 url 复用同一个加载) */
 const cache = new Map<string, Promise<void>>()
 
+/**
+ * 真正预取完成的 url。
+ *
+ * 与 cache 分开记：cache 在「发起」时就写入，用它回答「是否已就绪」会把刚开始下载的资源
+ * 也算成已就绪——调用方据此跳过骨架屏/直接淡入，用户看到的却是还没数据的黑屏。
+ */
+const completed = new Set<string>()
+
 /** 预取单张图片:解码完成后视为就绪(decode 失败则退化为 onload)。 */
 export function preloadImage(url: string): Promise<void> {
   if (!url) return Promise.resolve()
@@ -54,21 +62,23 @@ export function preloadImage(url: string): Promise<void> {
   if (hit) return hit
 
   const p = new Promise<void>((resolve) => {
+    const done = () => {
+      completed.add(url)
+      resolve()
+    }
     const img = new Image()
     // 跨域图也尽量进缓存;匿名不带凭证,避免污染
     img.decoding = 'async'
     img.onload = () => {
       // decode() 能确保解码完成(避免首次绘制时再卡一下),不支持就直接完成
       if (typeof img.decode === 'function') {
-        img
-          .decode()
-          .then(() => resolve())
-          .catch(() => resolve())
+        img.decode().then(done).catch(done)
       } else {
-        resolve()
+        done()
       }
     }
-    img.onerror = () => resolve() // 预加载失败不抛错,主流程继续按需加载
+    // 预加载失败不抛错,主流程继续按需加载;但失败的不能记成「已就绪」
+    img.onerror = () => resolve()
     img.src = url
   })
 
@@ -79,6 +89,12 @@ export function preloadImage(url: string): Promise<void> {
 /**
  * 只预加载单个视频的元数据(preload=metadata + 等 loadedmetadata)。
  * 不主动缓冲完整媒体,避免后台预热与当前页面争抢带宽;真正展示时再由播放器按需加载。
+ *
+ * 注意:预热完成后**不会**登记进 completed。
+ * 元数据就绪 ≠ 可以立刻放出画面——此时一帧画面的数据都可能还没到。
+ * 若把它算作「已就绪」，调用方会跳过占位直接淡入，用户看到的是黑屏。
+ * 对未做 faststart 的 MP4，这次预热的真正价值是让浏览器提前把「找 moov 的那次尾部 Range 请求」
+ * 走完并进 HTTP 缓存，正式播放时少一轮往返。
  */
 function preloadVideo(url: string): Promise<void> {
   if (!url) return Promise.resolve()
@@ -146,7 +162,12 @@ export function preloadMedia(items: MediaItem[], options: PreloadOptions = {}): 
   return Promise.all(workers).then(() => undefined)
 }
 
-/** 某 url 是否已预取(已发起即视为命中)。 */
+/**
+ * 某 url 是否**已经预取完成**。
+ *
+ * 语义刻意是「完成」而不是「发起」：调用方拿它决定要不要跳过占位、直接把媒体淡入，
+ * 只要发起就返回 true 会让一个还在下载的视频被当成已就绪，用户看到的是黑屏而不是画面。
+ */
 export function isPreloaded(url: string): boolean {
-  return cache.has(url)
+  return completed.has(url)
 }
