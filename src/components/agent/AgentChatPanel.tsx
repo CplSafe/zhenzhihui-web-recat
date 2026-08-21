@@ -161,11 +161,22 @@ export default function AgentChatPanel({
   // 生成中的产出物。视频要几分钟,轮询这个把进度显示出来——
   // 没有它用户提交后只看到一句「已提交」,再无下文。
   const [artifacts, setArtifacts] = useState<AgentArtifactStatus[]>([])
+  // 提交生成的那一刻先摆出占位卡,不等首轮轮询返回。
+  //
+  // 后端写完产出物、前端再轮询回来,中间有一段空白:面板的渲染条件是
+  // artifacts.length > 0,这段时间里用户点了「确认生成」却什么都没看到,
+  // 会以为流程断了。pending 用负数 artifact_id,与真实产出物不会撞 key。
+  const [pendingCards, setPendingCards] = useState<AgentArtifactStatus[]>([])
+  // 摆出占位卡时列表里已有多少条。撤占位卡要用它做基线——
+  // 直接比总数会在第二次生成时立刻撤掉(上一批的产出物已经把总数撑起来了)。
+  const pendingBaseRef = useRef(0)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [title, setTitle] = useState(initialTitle)
 
+  // 当前列表长度的镜像,供事件回调读取(setState 的闭包里拿不到最新值)。
+  const artifactCountRef = useRef(0)
   const sessionRef = useRef<number>(0)
   const abortRef = useRef<AbortController | null>(null)
   // 本轮是否收到过 delta。done 事件据此决定要不要补正文——
@@ -405,8 +416,22 @@ export default function AgentChatPanel({
           }
           break
 
-        case 'generating':
-          setStatus('正在提交视频生成…')
+        case 'generating': {
+          const kind = ev.data.kind === 'image' ? 'image' : 'video'
+          const count = Math.max(1, Number(ev.data.count) || 1)
+          setStatus(kind === 'image' ? '正在提交图片生成…' : '正在提交视频生成…')
+          // 按条数摆占位卡:用户选了 3 条就该立刻看到 3 张「等待中」,
+          // 只摆一张会让他以为另外两条没提交上。
+          pendingBaseRef.current = artifactCountRef.current
+          setPendingCards(
+            Array.from({ length: count }, (_, i) => ({
+              artifact_id: -(i + 1),
+              task_id: 0,
+              kind,
+              title: count > 1 ? `生成中（${i + 1}/${count}）` : '生成中',
+              status: 'submitting',
+            })),
+          )
           // 提交成功后立刻开始轮询,不等下一次自然触发。
           setPollGen((n) => n + 1)
           push({ kind: 'trace', label: '生成视频', running: true })
@@ -415,6 +440,7 @@ export default function AgentChatPanel({
             estimatedCredits: ev.data.estimated_credits,
           })
           break
+        }
 
         case 'done':
           // 流式下正文已由 delta 逐字铺好,再 push 会出现两份。
@@ -562,13 +588,23 @@ export default function AgentChatPanel({
     const sid = sessionRef.current
     if (!sid) return
     // 已全部完成就不再轮询,避免空转打接口。
-    if (artifacts.length > 0 && !hasPending) return
+    //
+    // 但有占位卡时必须继续轮:第二次生成时 artifacts 里还是上一批(全是终态),
+    // 只看 hasPending 会直接 return,新视频永远不会出现在列表里。
+    if (pendingCards.length === 0 && artifacts.length > 0 && !hasPending) return
 
     let cancelled = false
     const tick = () => {
       listArtifacts(sid, workspaceId)
         .then(({ items }) => {
-          if (!cancelled) setArtifacts(items)
+          if (cancelled) return
+          setArtifacts(items)
+          artifactCountRef.current = items.length
+          // 本批产出物已全部落库就撤掉占位卡,避免同一批生成显示两遍。
+          // 比的是「相对基线新增了几条」,不是总数。
+          setPendingCards((prev) =>
+            prev.length > 0 && items.length - pendingBaseRef.current >= prev.length ? [] : prev,
+          )
         })
         .catch(() => {
           // 轮询失败静默重试:网络抖动不该在对话里弹错误,
@@ -581,9 +617,11 @@ export default function AgentChatPanel({
       cancelled = true
       window.clearInterval(timer)
     }
-    // 依赖只放「是否还需要轮询」与触发信号,不放 artifacts 本身。
+    // 依赖只放「是否还需要轮询」与触发信号,不放 artifacts 本身:
+    // 放进去会让每次轮询结果都重建定时器,间隔失去意义。
+    // pendingCards 同理只取长度。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, hasPending, pollGen])
+  }, [workspaceId, hasPending, pollGen, pendingCards.length])
 
   /** 打开历史列表并拉取。每次打开都重拉:会话在别处也可能新增。 */
   const openHistory = useCallback(() => {
@@ -605,6 +643,12 @@ export default function AgentChatPanel({
         .then(({ session, messages }) => {
           abortRef.current?.abort()
           sessionRef.current = session.id
+          // 换会话必须清掉上一个会话的产出物与占位卡,
+          // 否则上一条对话的「生成中」会跟着显示到这条对话里。
+          setArtifacts([])
+          setPendingCards([])
+          pendingBaseRef.current = 0
+          artifactCountRef.current = 0
           setTitle(session.title || '历史对话')
           setExecMode(session.exec_mode)
           if (session.model_version_id) setModelId(session.model_version_id)
@@ -635,6 +679,10 @@ export default function AgentChatPanel({
   const newChat = useCallback(() => {
     abortRef.current?.abort()
     sessionRef.current = 0
+    setArtifacts([])
+    setPendingCards([])
+    pendingBaseRef.current = 0
+    artifactCountRef.current = 0
     setEntries([])
     setAttachments([])
     setInput('')
@@ -713,7 +761,9 @@ export default function AgentChatPanel({
         </div>
       )}
 
-      {artifacts.length > 0 && <ArtifactPanel items={artifacts} />}
+      {(artifacts.length > 0 || pendingCards.length > 0) && (
+        <ArtifactPanel items={artifacts.length > 0 ? artifacts : pendingCards} />
+      )}
 
       <div className={styles.scroll} ref={scrollRef}>
         {empty ? (
