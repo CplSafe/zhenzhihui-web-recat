@@ -123,6 +123,21 @@ export function validateVideoModeImages(mode: StudioVideoMode, imageCount: numbe
   return ''
 }
 
+/**
+ * 点「生成」时是否应当先拆一份分镜给用户确认，而不是直接出片。
+ *
+ * 视频生成是计费动作：开着智能分镜却还没有任何分镜就直接提交，
+ * 等于让用户为一份自己没看过的镜头脚本付费。这里先拆再确认。
+ * 图片模式没有分镜概念；分镜已存在时说明用户已经看过，直接出片。
+ */
+export function shouldStoryboardBeforeGenerate(args: {
+  mode: 'image' | 'video'
+  storyboardOn: boolean
+  shotCount: number
+}): boolean {
+  return args.mode === 'video' && args.storyboardOn && args.shotCount === 0
+}
+
 /** 该模型是否支持音频输出开关（后端 params_schema 声明 audio 字段时才展示）。 */
 export function supportsAudioToggle(constraints?: GenerationModelConstraints): boolean {
   const options = constraints?.audio?.options

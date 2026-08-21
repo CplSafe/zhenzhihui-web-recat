@@ -5,6 +5,7 @@
  * 单条产物有 pending / done / failed 三种状态，分别渲染进度、成品与失败原因。
  */
 import AiBadge from '@/components/common/AiBadge'
+import type { CSSProperties } from 'react'
 import type { StudioMode } from '@/utils/studioParams'
 import styles from './StudioResultFeed.module.less'
 
@@ -29,6 +30,8 @@ export interface StudioResultBatch {
   items: StudioResultItem[]
   /** 该批次使用的分镜数，仅视频模式有意义。 */
   shotCount?: number
+  /** 画面比例（如 "16:9"），用于生成中按目标形状占位，避免出片后卡片跳动。 */
+  ratio?: string
 }
 
 /** 结果流的展示数据与交互回调。 */
@@ -45,6 +48,23 @@ const FILTERS: { key: 'all' | 'image' | 'video'; label: string }[] = [
   { key: 'image', label: '图片' },
   { key: 'video', label: '视频' },
 ]
+
+/** 把进度收敛到 0~100。 */
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value))
+}
+
+/**
+ * 把 "16:9" 这类比例转成 CSS aspect-ratio。
+ * 生成中就按目标形状占位，出片后卡片不会突然改变高度。
+ */
+function itemRatioStyle(ratio?: string): CSSProperties | undefined {
+  const [w, h] = String(ratio || '')
+    .split(':')
+    .map(Number)
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return undefined
+  return { '--studio-item-ratio': `${w} / ${h}` } as CSSProperties
+}
 
 /** 时间戳 → HH:mm。 */
 function formatTime(value: number): string {
@@ -109,20 +129,28 @@ export default function StudioResultFeed({
 
               <div className={styles.items}>
                 {batch.items.map((item) => (
-                  <div key={item.id} className={styles.item}>
+                  <div key={item.id} className={styles.item} style={itemRatioStyle(batch.ratio)}>
                     {item.status === 'pending' && (
-                      <div className={styles.state}>
-                        <span className={styles.spinner} aria-hidden="true" />
-                        <span>{batch.mode === 'video' ? '视频生成中…' : '图片生成中…'}</span>
-                        {typeof item.progress === 'number' && (
-                          <span className={styles.progressTrack}>
-                            <span
-                              className={styles.progressFill}
-                              style={{ width: `${Math.min(100, Math.max(0, item.progress))}%` }}
-                            />
+                      <>
+                        <span className={styles.skeleton} aria-hidden="true" />
+                        <div className={styles.pending} role="status" aria-live="polite">
+                          <span className={styles.pendingIcon} aria-hidden="true">
+                            {batch.mode === 'video' ? '🎬' : '🖼'}
                           </span>
-                        )}
-                      </div>
+                          <span>{batch.mode === 'video' ? '视频生成中…' : '图片生成中…'}</span>
+                          {typeof item.progress === 'number' && (
+                            <>
+                              <span className={styles.percent}>{Math.round(clampPercent(item.progress))}%</span>
+                              <span className={styles.progressTrack}>
+                                <span
+                                  className={styles.progressFill}
+                                  style={{ width: `${clampPercent(item.progress)}%` }}
+                                />
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </>
                     )}
 
                     {item.status === 'failed' && (
