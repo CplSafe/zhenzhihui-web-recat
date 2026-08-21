@@ -132,7 +132,12 @@ export type AgentEvent =
   | { type: 'tool_result'; data: { name: string; preview: string } }
   | { type: 'await_confirm'; data: AgentPendingCall }
   | { type: 'await_input'; data: { call_id: string; question: string; options?: string[] } }
-  | { type: 'generating'; data: { call_id: string; estimated_credits: number } }
+  // count / kind 让前端在提交那一刻就摆出对应数量的占位卡，
+  // 不必等首轮轮询返回——中间那段空白会让用户以为流程断了。
+  | {
+      type: 'generating'
+      data: { call_id: string; estimated_credits: number; count?: number; kind?: string }
+    }
   | {
       type: 'subagent'
       data: {

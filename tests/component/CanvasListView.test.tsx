@@ -5,7 +5,7 @@
  * 排进队列，等于为几张缩略图对元素接口打出几十个 limit=500 的请求。这里锁死
  * 「只有进入过视口的卡片才请求封面」这一条，防止哪天又退回全量预取。
  */
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -58,7 +58,14 @@ class IntersectionObserverMock implements IntersectionObserver {
   }
 }
 
-/** 让指定 canvasId 的卡片「进入视口」，触发对应回调。 */
+/**
+ * 让指定 canvasId 的卡片「进入视口」，并把由此引发的异步链路彻底跑完。
+ *
+ * 链路是：回调 → setState → 副作用 → 取封面的 async worker（内部多个 await）→ setCovers。
+ * 这里刻意不使用 waitFor：它靠墙钟轮询，机器一忙就得靠调大超时续命，
+ * 而超时多少算够永远说不准（这条用例已经因此挂过两次）。
+ * 改成显式把微任务队列抽干——次数是确定的，与机器快慢无关，跑完直接同步断言。
+ */
 async function intersect(...canvasIds: number[]) {
   const wanted = new Set(canvasIds.map(String))
   for (const observer of [...observers]) {
@@ -69,6 +76,16 @@ async function intersect(...canvasIds: number[]) {
         hits.map((target) => ({ isIntersecting: true, target }) as unknown as IntersectionObserverEntry),
         observer.instance,
       )
+    })
+  }
+  await flushAsync()
+}
+
+/** 抽干微任务队列：足够让「setState → 副作用 → async worker 的多层 await」全部结算。 */
+async function flushAsync() {
+  for (let i = 0; i < 10; i += 1) {
+    await act(async () => {
+      await Promise.resolve()
     })
   }
 }
@@ -115,13 +132,11 @@ function requestedCanvasIds(): number[] {
 }
 
 /**
- * waitFor 的默认预算是 1000ms，全量套件并行跑时这里会不够
- * （「进入视口 → setState → 副作用 → mock fetch settle」这条链在负载下会超）。
- * 放宽到 5s：这是等一条异步链，不是等一个可能永远不来的结果。
- *
+ * 只剩「等首次渲染」还需要墙钟预算：列表要等 listCanvases 这个真异步回来。
  * findBy* 必须显式传第三个参数才吃这份预算——它不读 waitFor 的调用点配置，
- * 而是走 Testing Library 自己的 asyncUtilTimeout（同样是 1000ms）。
- * 漏传这一处会让「列表首次渲染」在满负载下偶发超时，表现为随机红。
+ * 而是走 Testing Library 自己的 asyncUtilTimeout（默认 1000ms），
+ * 满负载下漏传这一处会表现为随机红。
+ * 其余断言一律走 flushAsync + 同步断言，不依赖机器快慢。
  */
 const WAIT = { timeout: 5_000 } as const
 
@@ -142,8 +157,9 @@ describe('CanvasListView 封面加载', () => {
     expect(screen.getByLabelText('打开画布 乙')).toBeInTheDocument()
     expect(requestedCanvasIds()).toEqual([])
 
+    // intersect 内部已把异步链抽干，这里直接同步断言，不再靠墙钟等待
     await intersect(102)
-    await waitFor(() => expect(requestedCanvasIds()).toEqual([102]), WAIT)
+    expect(requestedCanvasIds()).toEqual([102])
 
     // 其余两张仍未进入视口，不该被顺带拉上
     expect(requestedCanvasIds()).not.toContain(101)
@@ -155,10 +171,10 @@ describe('CanvasListView 封面加载', () => {
     await screen.findByLabelText('打开画布 甲', undefined, WAIT)
 
     await intersect(101)
-    await waitFor(() => expect(requestedCanvasIds()).toEqual([101]), WAIT)
+    expect(requestedCanvasIds()).toEqual([101])
 
     await intersect(103)
-    await waitFor(() => expect(requestedCanvasIds()).toEqual([101, 103]), WAIT)
+    expect(requestedCanvasIds()).toEqual([101, 103])
 
     // 再次「进入视口」不产生新请求（revision 未变 → 命中缓存）
     await intersect(101, 103)
@@ -170,6 +186,7 @@ describe('CanvasListView 封面加载', () => {
     render(<CanvasListView />)
     await screen.findByLabelText('打开画布 甲', undefined, WAIT)
 
-    await waitFor(() => expect(requestedCanvasIds()).toEqual([101, 102, 103]), WAIT)
+    await flushAsync()
+    expect(requestedCanvasIds()).toEqual([101, 102, 103])
   })
 })

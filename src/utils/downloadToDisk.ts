@@ -290,12 +290,22 @@ export async function downloadToDisk(opts: {
   return 'started'
 }
 
-/** 生成「安全文件名_YYYYMMDD.ext」。title 去掉非法字符;date 由调用方传入(模块内不可用 Date.now)。 */
+/**
+ * 生成「安全文件名_YYYYMMDD_HHmmss.ext」。title 去掉非法字符;date 由调用方传入(模块内不可用 Date.now)。
+ *
+ * 精确到秒而不是只到天：同一天里对同一个素材反复导出（改一版、下一版）是常态，
+ * 只带年月日会得到完全相同的文件名，浏览器只能追加「(1)」「(2)」——
+ * 落到磁盘上就分不清哪个是哪一版了。带上时分秒既天然唯一，也能按文件名直接排序。
+ * 用下划线分隔日期与时间，而不是连成 14 位数字，肉眼更容易读出时间。
+ */
 export function buildDownloadName(title: string, date: Date, ext = 'mp4'): string {
-  const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const dateStr = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+  // 冒号是 Windows 的非法文件名字符，时分秒只能连写
+  const timeStr = `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
   const safe =
     String(title || '视频')
       .replace(/[\\/:*?"<>|]/g, '')
       .trim() || '视频'
-  return `${safe}_${dateStr}.${ext}`
+  return `${safe}_${dateStr}_${timeStr}.${ext}`
 }

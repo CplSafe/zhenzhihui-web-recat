@@ -15,6 +15,7 @@ import {
   type BackendGenerationModel,
 } from '@/utils/generationModelCatalog'
 import { buildModelRestrictionSummary } from '@/utils/modelRestrictions'
+import { readModelPresentation } from '@/utils/modelPresentation'
 
 export const HOT_COPY_MODEL_OPERATION_CODE = 'video.replicate'
 
@@ -108,12 +109,15 @@ function normalizeCatalogModel(model: BackendGenerationModel): HotCopyCatalogMod
     readBackendText(source, 'version_name', 'versionName', 'version'),
   ].filter((tag, index, all) => tag && all.indexOf(tag) === index)
 
+  const logo = readModelPresentation(source).logo
+
   return {
     id,
     source,
     option: {
       id,
       name,
+      ...(logo ? { logo } : {}),
       ...(description ? { description } : {}),
       ...(tags.length ? { tags } : {}),
       ...(restrictionSummary.messages.length ? { restrictions: restrictionSummary.messages } : {}),

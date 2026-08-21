@@ -10,6 +10,13 @@ export interface GenerationModelOption {
   id: GenerationModelId
   name: string
   description?: string
+  /**
+   * 后端 logo 字段解析出的图标地址。
+   *
+   * 只用于「当前选中的模型」旁边：选项列表是原生 <select>，<option> 里放不了图片，
+   * 这是浏览器的限制，不是没做。
+   */
+  logo?: string
   tags?: string[]
   /** 从后端模型限制字段与 params_schema 生成的用户提示。 */
   restrictions?: string[]

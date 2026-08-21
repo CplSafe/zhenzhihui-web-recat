@@ -18,7 +18,12 @@ import {
 import { filterInputDerivedRatioOptions, resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
 import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
 import { resolveModelVideoInputSupport, VIDEO_INPUT_UNSUPPORTED_REASON } from '@/utils/modelVideoInputSupport'
-import { buildModelRestrictionSummary, getModelReferenceImageLimit } from '@/utils/modelRestrictions'
+import { readModelAccentHue, readModelInitial, readModelPresentation } from '@/utils/modelPresentation'
+import {
+  buildModelRestrictionSummary,
+  getModelDurationLimitLabel,
+  getModelReferenceImageLimit,
+} from '@/utils/modelRestrictions'
 import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS } from '@/utils/canvasNodeDefaults'
 import WheelPicker, { type WheelPickerOption } from '@/components/common/WheelPicker'
 import { requestConfirm } from '@/stores/ui'
@@ -316,8 +321,16 @@ interface CanvasNodePanelProps {
   node: CanvasNodeInfo | null
   /** 工作空间 ID：预估费用 / 提交生成需要 */
   workspaceId: number
-  /** slotIndex 标识槽位：0=首帧, 1=尾帧(视频)；其他节点按顺序 */
+  /** 从画布上点选一个已有节点作为参考。slotIndex 标识槽位：0=首帧, 1=尾帧(视频)；其他节点按顺序 */
   onStartPickRef?: (slotIndex?: number) => void
+  /**
+   * 从素材库挑一条素材作为参考：会先落成新节点再连到本节点。
+   *
+   * 与 onStartPickRef 并列而不是取代它——两者解决的是不同处境：
+   * 画布上已经有这条素材时点选最快，还没有时才需要从素材库取。
+   * 以前只有前者，导致「素材在库里但画布上没有」时只能先手动加节点再连线。
+   */
+  onPickRefFromLibrary?: (slotIndex?: number) => void
   /** 点击删除引用回调 */
   onRemoveRef?: (edgeId: string) => void
   /** 比例变更回调，用于同步更新节点宽高 */
@@ -405,10 +418,97 @@ function findRefBySlot(refs: CanvasSourceRef[] | undefined, slot: number): Canva
   return refs?.find((r) => r.slotIndex === slot)
 }
 
+/**
+ * 参考素材的「+」：点开给两条来源，而不是直接进入画布点选模式。
+ *
+ * 只有「从画布选择」时，素材已在库里但画布上还没有的情况下，用户得先自己加一个节点、
+ * 传上素材、再回来连线——三步做一件事。这里把「从素材库选择」摆到同一层。
+ */
+function RefAddButton({
+  disabled,
+  title,
+  onPickFromCanvas,
+  onPickFromLibrary,
+}: {
+  disabled?: boolean
+  title: string
+  onPickFromCanvas: () => void
+  onPickFromLibrary?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => {
+      if (wrapRef.current?.contains(event.target as Node)) return
+      setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // 没接素材库回调时退回原来的单一行为，不平白给一个只有一项的菜单
+  if (!onPickFromLibrary) {
+    return (
+      <button className={styles.refAddBtn} disabled={disabled} title={title} onClick={onPickFromCanvas}>
+        <PlusSmIcon />
+      </button>
+    )
+  }
+
+  return (
+    <span className={styles.refAddWrap} ref={wrapRef}>
+      <button
+        className={styles.refAddBtn}
+        disabled={disabled}
+        title={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <PlusSmIcon />
+      </button>
+      {open && (
+        <div className={styles.refAddMenu} role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              onPickFromCanvas()
+            }}
+          >
+            从画布选择
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              onPickFromLibrary()
+            }}
+          >
+            从素材库选择
+          </button>
+        </div>
+      )}
+    </span>
+  )
+}
+
 export default function CanvasNodePanel({
   node,
   workspaceId,
   onStartPickRef,
+  onPickRefFromLibrary,
   onRemoveRef,
   onRatioChange,
   onVideoModeChange,
@@ -896,14 +996,12 @@ export default function CanvasNodePanel({
                         </button>
                       </>
                     ) : (
-                      <button
-                        className={styles.refAddBtn}
+                      <RefAddButton
                         disabled={taskRunning}
                         title={taskRunning ? '生成中不可修改素材' : title}
-                        onClick={() => onStartPickRef?.(slot)}
-                      >
-                        <PlusSmIcon />
-                      </button>
+                        onPickFromCanvas={() => onStartPickRef?.(slot)}
+                        onPickFromLibrary={onPickRefFromLibrary ? () => onPickRefFromLibrary(slot) : undefined}
+                      />
                     )}
                   </div>
                 </React.Fragment>
@@ -931,25 +1029,21 @@ export default function CanvasNodePanel({
                 </div>
               ))}
             {mediaRefCount < maxRefs && (
-              <button
-                className={styles.refAddBtn}
+              <RefAddButton
                 disabled={taskRunning}
                 title={taskRunning ? '生成中不可修改素材' : '添加参考'}
-                onClick={() => onStartPickRef?.(sourceRefs.length)}
-              >
-                <PlusSmIcon />
-              </button>
+                onPickFromCanvas={() => onStartPickRef?.(sourceRefs.length)}
+                onPickFromLibrary={onPickRefFromLibrary ? () => onPickRefFromLibrary(sourceRefs.length) : undefined}
+              />
             )}
           </div>
         ) : (
-          <button
-            className={styles.refAddBtn}
+          <RefAddButton
             disabled={taskRunning}
             title={taskRunning ? '生成中不可修改素材' : '添加参考'}
-            onClick={() => onStartPickRef?.(0)}
-          >
-            <PlusSmIcon />
-          </button>
+            onPickFromCanvas={() => onStartPickRef?.(0)}
+            onPickFromLibrary={onPickRefFromLibrary ? () => onPickRefFromLibrary(0) : undefined}
+          />
         )}
       </div>
 
@@ -1179,27 +1273,156 @@ function ModelSelector({
       </button>
       {open && canOpen && (
         <SelectorPopover open={open} onClose={() => setOpen(false)}>
+          {/* 可用的排在前面：被锁住的混在中间会让人以为列表到此为止 */}
           {availableModels.map((m) => (
-            <button
+            <ModelOptionRow
               key={m.modelVersionId}
-              className={`${styles.popoverItem} ${m.modelVersionId === value ? styles.popoverItemActive : ''}`}
-              onClick={() => {
+              model={m}
+              selected={m.modelVersionId === (selected?.modelVersionId ?? value)}
+              onSelect={() => {
                 onChange?.(m.modelVersionId)
                 setOpen(false)
               }}
-            >
-              {m.displayName}
-            </button>
+            />
           ))}
           {blockedModels.map((m) => (
-            <span key={m.modelVersionId} className={styles.popoverItemBlocked} title={String(m.unavailableReason)}>
-              <b>{m.displayName}</b>
-              <em>{String(m.unavailableReason)}</em>
-            </span>
+            <ModelOptionRow key={m.modelVersionId} model={m} blockedReason={String(m.unavailableReason)} />
           ))}
         </SelectorPopover>
       )}
     </div>
+  )
+}
+
+/**
+ * 模型列表里的一行。
+ *
+ * 一行承载四类信息：厂商标记 + 模型名（可带 NEW）、特点标签、耗时、单价。
+ * 这些全部来自后端记录，读不到的就不渲染——宁可这一行只有名字，
+ * 也不能凭前端猜一个「高质量」出来，用户会照着它做选择。
+ *
+ * 不可用的模型同样走这一行：右侧换成锁标记，原因写在下方。
+ * 锁给出「点不了」的瞬时信号，文字回答「为什么、下一步做什么」，两者缺一不可。
+ */
+function ModelOptionRow({
+  model,
+  selected,
+  blockedReason,
+  onSelect,
+}: {
+  model: GenerationModelOption
+  selected?: boolean
+  blockedReason?: string
+  onSelect?: () => void
+}) {
+  const info = readModelPresentation(model)
+  const initial = readModelInitial(model.displayName, info.provider)
+  const hue = readModelAccentHue(model.displayName)
+  const blocked = Boolean(blockedReason)
+  /*
+   * 图标优先用后端给的 logo；加载失败再退回首字母。
+   * 不做失败回退的话，链接一坏这一列就全是碎图占位——比没有图标更糟。
+   */
+  const [logoFailed, setLogoFailed] = useState(false)
+  const showLogo = Boolean(info.logo) && !logoFailed
+  /*
+   * 模型的时长上限，直接展示在模型名下方。
+   * 不展示的话，用户只能先选中模型、再去时长档位条里看还剩哪几档，选错了还得退回来重选——
+   * 「我要的秒数它做不做得到」应当在选之前就看得见。
+   * 只报上限：模型是 1 秒起、到上限为止，逐档列出反而会把可选范围说窄。
+   */
+  const durationSupport = getModelDurationLimitLabel(buildModelRestrictionSummary(model.source).constraints)
+
+  const content = (
+    <>
+      <span className={styles.modelRowHead}>
+        {showLogo ? (
+          <img
+            className={styles.modelRowLogo}
+            src={info.logo}
+            alt=""
+            title={info.provider || undefined}
+            loading="lazy"
+            onError={() => setLogoFailed(true)}
+          />
+        ) : (
+          initial && (
+            <span
+              className={styles.modelRowAvatar}
+              // 厂商名放在 title 里：标记本身取的是模型名首字，厂商信息不该因此丢失
+              title={info.provider || undefined}
+              aria-hidden="true"
+              style={
+                blocked
+                  ? undefined
+                  : {
+                      // 同一模型每次打开都是同一个颜色（按名称哈希，不用随机值）
+                      background: `hsl(${hue} 62% 94%)`,
+                      color: `hsl(${hue} 46% 38%)`,
+                    }
+              }
+            >
+              {initial}
+            </span>
+          )
+        )}
+        <span className={styles.modelRowName}>{model.displayName}</span>
+        {info.isNew && !blocked && <span className={styles.modelRowNew}>NEW</span>}
+        {blocked ? (
+          <LockIcon />
+        ) : selected ? (
+          <span className={styles.modelRowCheck} aria-hidden="true">
+            ✓
+          </span>
+        ) : null}
+      </span>
+      {(durationSupport || info.tags.length > 0 || info.durationLabel || info.priceLabel) && (
+        <span className={styles.modelRowMeta}>
+          {/* 支持的秒数排在最前：选视频模型时这是最先要判断的一项 */}
+          {durationSupport && (
+            <span className={`${styles.modelRowTag} ${styles.modelRowTagDuration}`}>{durationSupport}</span>
+          )}
+          {info.tags.map((tag) => (
+            <span key={tag} className={styles.modelRowTag}>
+              {tag}
+            </span>
+          ))}
+          {info.durationLabel && <span className={styles.modelRowTag}>{info.durationLabel}</span>}
+          {info.priceLabel && <span className={styles.modelRowTag}>{info.priceLabel}</span>}
+        </span>
+      )}
+      {blocked && <em className={styles.modelRowReason}>{blockedReason}</em>}
+    </>
+  )
+
+  if (blocked) {
+    return (
+      <span className={`${styles.modelRow} ${styles.modelRowBlocked}`} title={blockedReason}>
+        {content}
+      </span>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={Boolean(selected)}
+      className={`${styles.modelRow} ${selected ? styles.modelRowActive : ''}`}
+      onClick={onSelect}
+    >
+      {content}
+    </button>
+  )
+}
+
+/** 不可用模型的锁标记。 */
+function LockIcon() {
+  return (
+    <svg className={styles.modelRowLock} viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+      <rect x="3.5" y="7" width="9" height="6.5" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5.8 7V5.4a2.2 2.2 0 0 1 4.4 0V7" fill="none" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
   )
 }
 

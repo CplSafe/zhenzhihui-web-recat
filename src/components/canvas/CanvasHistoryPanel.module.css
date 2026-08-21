@@ -1,6 +1,7 @@
 .panel {
   position: fixed;
-  z-index: 100;
+  /* 高过节点面板与批量工具条（1200）：它是从那些控件上唤出的抽屉，必须盖住来源 */
+  z-index: 1400;
   width: 480px;
   max-height: 440px;
   background: #fff;

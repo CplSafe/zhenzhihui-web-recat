@@ -1,10 +1,38 @@
 ﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   alignDownloadFileName,
+  buildDownloadName,
   detectDownloadedMediaType,
   downloadToDisk,
   isWeChatBrowser,
 } from '@/utils/downloadToDisk'
+
+describe('buildDownloadName', () => {
+  it('文件名精确到秒，同一天多次导出不会互相撞名', () => {
+    const first = buildDownloadName('宣传片', new Date(2026, 7, 19, 9, 5, 3))
+    const second = buildDownloadName('宣传片', new Date(2026, 7, 19, 20, 45, 12))
+
+    expect(first).toBe('宣传片_20260819_090503.mp4')
+    expect(second).toBe('宣传片_20260819_204512.mp4')
+    // 只带年月日时这两次会得到同一个名字，浏览器只能追加 (1)，落盘后分不清版本
+    expect(first).not.toBe(second)
+  })
+
+  it('月/日/时/分/秒都补零，按文件名排序即按时间排序', () => {
+    expect(buildDownloadName('片子', new Date(2026, 0, 2, 3, 4, 5))).toBe('片子_20260102_030405.mp4')
+  })
+
+  it('剔除 Windows 非法字符，扩展名可指定', () => {
+    expect(buildDownloadName('a/b:c*d?e"f<g>h|i', new Date(2026, 7, 19, 1, 2, 3), 'png')).toBe(
+      'abcdefghi_20260819_010203.png',
+    )
+  })
+
+  it('标题为空或被清空后退回默认名，不会产出以下划线开头的文件名', () => {
+    expect(buildDownloadName('', new Date(2026, 7, 19, 1, 2, 3))).toBe('视频_20260819_010203.mp4')
+    expect(buildDownloadName('///', new Date(2026, 7, 19, 1, 2, 3))).toBe('视频_20260819_010203.mp4')
+  })
+})
 
 type WindowWithPicker = Window & { showSaveFilePicker?: unknown }
 

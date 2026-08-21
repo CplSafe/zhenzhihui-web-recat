@@ -1,0 +1,92 @@
+/*
+ * 视图控制条：与小地图同处左下角，堆在小地图上方。
+ * 位置写在这里而不是父级，是因为它和小地图的高度绑定（见 CanvasView.css 的 .canvas-minimap）。
+ */
+.bar {
+  position: absolute;
+  bottom: 162px;
+  left: 16px;
+  /* chrome 档（见 CanvasView.css 顶部的层级口径） */
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border: 1px solid #e2e6ef;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 4px 14px rgba(23, 33, 61, 0.1);
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.btn {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #6b7385;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.btn:hover {
+  background: #f1f3fb;
+  color: #5767e5;
+}
+
+/* 开启态用实底而不是只换文字色：这是个「当前生效中」的状态，需要一眼可辨 */
+.btnActive {
+  background: #eef0ff;
+  color: #5767e5;
+}
+
+.btnActive:hover {
+  background: #e4e7ff;
+}
+
+.zoomValue {
+  min-width: 46px;
+  height: 28px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #2f3646;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.zoomValue:hover {
+  background: #f1f3fb;
+}
+
+.divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: #e6e9f2;
+}
+
+.btn:focus-visible,
+.zoomValue:focus-visible {
+  outline: 3px solid rgb(87 103 229 / 26%);
+  outline-offset: 1px;
+}
+
+@media (max-width: 768px) {
+  /* 小地图在小屏隐藏，控制条跟着落回底部 */
+  .bar {
+    bottom: 16px;
+  }
+}
