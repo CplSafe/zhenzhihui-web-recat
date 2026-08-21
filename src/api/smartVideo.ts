@@ -348,10 +348,16 @@ export function compileFullVideoModelRequest(
   })
   // reference_mode 不属于通用视频参数构建器的字段，按模型 schema 的真实字段名追加。
   // 未声明该字段的模型（如 kling / minimax 各有自己的模式开关）不下发，避免塞入未知参数。
-  if (args.referenceMode !== undefined) {
-    const referenceField = findModelParamField(getModelParamFields(model), ['reference_mode', 'referenceMode'])
-    if (referenceField?.name) params[referenceField.name] = args.referenceMode
-  }
+  //
+  // 调用方没给时不能省略这个字段：省略等于后端按 false 处理，单张参考图会被
+  // 翻译成 first_frame（"从这张图开始动"），而用户传一张商品图的意思是
+  // "照着这个商品生成"。线上现象是同一张图走 HappyHorse 能生成、走 Seedance
+  // 报「请求参数有误或所选模型不可用」。
+  //
+  // 单图默认参考模式；两图仍默认首尾帧（那是首尾帧的标准用法）。
+  const referenceMode = args.referenceMode ?? referenceImageCount === 1
+  const referenceField = findModelParamField(getModelParamFields(model), ['reference_mode', 'referenceMode'])
+  if (referenceField?.name) params[referenceField.name] = referenceMode
   return {
     modelVersionId,
     modelVersion: model?.id === modelVersionId ? model : { ...model, id: modelVersionId },
