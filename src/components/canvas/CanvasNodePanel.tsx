@@ -12,6 +12,10 @@ import { estimateAiTaskCost } from '@/api/business'
 import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
+  validateCanvasImageInputs,
+  validateCanvasVideoInputs,
+  type CanvasInputAsset,
+  type CanvasAssetSource,
   type CanvasConnectionRole,
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
@@ -25,6 +29,7 @@ import {
   getModelReferenceImageLimit,
 } from '@/utils/modelRestrictions'
 import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS } from '@/utils/canvasNodeDefaults'
+import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import WheelPicker, { type WheelPickerOption } from '@/components/common/WheelPicker'
 import { requestConfirm } from '@/stores/ui'
 
@@ -277,6 +282,10 @@ export interface CanvasSourceRef {
   posterUrl?: string
   /** 来源节点的素材 asset_id（有素材内容时用于组装 input_assets） */
   assetId?: number
+  source?: CanvasAssetSource
+  workspaceId?: number
+  /** 真人素材库引用：用于身份授权校验与生成时的身份约束注入。 */
+  realPerson?: SmartRealPersonReference
   /** 该连接在目标节点中的用途，仅用于画布语义展示。 */
   role?: CanvasConnectionRole
 }
@@ -331,6 +340,8 @@ interface CanvasNodePanelProps {
    * 以前只有前者，导致「素材在库里但画布上没有」时只能先手动加节点再连线。
    */
   onPickRefFromLibrary?: (slotIndex?: number) => void
+  /** 打开真人素材库，真人素材只能作为视频生成的输入。 */
+  onOpenRealPersonLibrary?: () => void
   /** 点击删除引用回调 */
   onRemoveRef?: (edgeId: string) => void
   /** 比例变更回调，用于同步更新节点宽高 */
@@ -352,6 +363,8 @@ interface CanvasNodePanelProps {
     params: Record<string, unknown>
     /** 来源引用（含 assetId），由调用方按 role 约定组装 input_assets */
     sourceRefs: CanvasSourceRef[]
+    /** 与积分预估完全相同的最终素材清单，调用方不得再次用另一套规则重建。 */
+    inputAssets: CanvasInputAsset[]
     ratio?: string
     videoMode?: CanvasVideoMode
     /** 视频生视频的源视频（节点自己已有的那条）；为 0 表示从头生成。 */
@@ -388,6 +401,9 @@ interface CanvasNodePanelProps {
 }
 
 type VideoMode = CanvasVideoMode
+
+/** 稳定的默认值：内联 [] 会让依赖它的 memo/effect 每次渲染都失效，反复触发积分预估。 */
+const EMPTY_INHERITED_TEXTS: InheritedPromptText[] = []
 
 /** 视频「自适应」比例的存储值（英文，避免中文写入节点数据/接口参数）。 */
 export const AUTO_RATIO = 'auto'
@@ -509,6 +525,7 @@ export default function CanvasNodePanel({
   workspaceId,
   onStartPickRef,
   onPickRefFromLibrary,
+  onOpenRealPersonLibrary,
   onRemoveRef,
   onRatioChange,
   onVideoModeChange,
@@ -520,7 +537,7 @@ export default function CanvasNodePanel({
   onSaveText,
   onPromptChange,
   onParamsChange,
-  inheritedTexts = [],
+  inheritedTexts,
   onAdoptInheritedText,
   onPolishText,
 }: CanvasNodePanelProps) {
@@ -572,7 +589,8 @@ export default function CanvasNodePanel({
   // 素材来源引用数量（文本来源不计入数量限制）
   const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind !== 'text').length, [sourceRefs])
   const kindModels = useMemo(() => models?.[kind as 'text' | 'image' | 'video'] || [], [models, kind])
-  const hasInheritedTexts = inheritedTexts.length > 0
+  const stableInheritedTexts = inheritedTexts || EMPTY_INHERITED_TEXTS
+  const hasInheritedTexts = stableInheritedTexts.length > 0
 
   /**
    * 当前上下文应使用的 operation_code：
@@ -594,6 +612,10 @@ export default function CanvasNodePanel({
   const contextualOperationCode = useMemo((): string => {
     if (kind === 'text') return 'responses.multimodal'
     if (kind === 'image') {
+      // 真人素材不是普通参考图：真人身份由生成层的身份约束处理，不能把它
+      // 当作 image-to-image 参考图提交，否则大多数图片模型会直接拒绝该操作。
+      const hasRealPersonSource = (node?.sourceRefs || []).some((ref) => ref.source === 'real_person')
+      if (hasRealPersonSource) return 'image.text_to_image'
       const hasImageSource = (node?.sourceRefs || []).some((ref) => ref.kind === 'image')
       return hasImageSource ? 'image.image_to_image' : 'image.text_to_image'
     }
@@ -787,8 +809,8 @@ export default function CanvasNodePanel({
    * 用户就会对着一段显示正常的文本却拿到另一种结果，这类问题几乎无法排查。
    */
   const inheritedPromptText = useMemo(
-    () => (inheritedTexts || []).map((item) => item.text.trim()).filter(Boolean),
-    [inheritedTexts],
+    () => stableInheritedTexts.map((item) => item.text.trim()).filter(Boolean),
+    [stableInheritedTexts],
   )
   /**
    * 上游文本自动落进输入框：连上文本节点后不用再点一次「转为可编辑」，改完直接点生成。
@@ -836,6 +858,30 @@ export default function CanvasNodePanel({
     () => buildCanvasInputAssets(sourceRefs, operationCode, selfVideoAssetId, declaredImageRole),
     [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole],
   )
+  const inputValidationError = useMemo(() => {
+    if (kind === 'image' && sourceRefs.some((ref) => ref.source === 'real_person')) {
+      return '真人素材图片节点仅用于素材展示/中转，不能直接生成图片；请连接到视频节点生成视频'
+    }
+    if (kind === 'image') {
+      return validateCanvasImageInputs({ operationCode, sourceRefs, workspaceId, maxImageRefs: maxRefs })
+    }
+    if (kind === 'video') {
+      return validateCanvasVideoInputs({ operationCode, videoMode, sourceRefs, maxImageRefs: maxRefs })
+    }
+    return null
+  }, [kind, maxRefs, node?.sourceRefs, operationCode, sourceRefs, videoMode, workspaceId])
+
+  const inputSummary = useMemo(() => {
+    let images = 0
+    let videos = 0
+    let texts = 0
+    for (const ref of sourceRefs) {
+      if (ref.kind === 'image') images += 1
+      else if (ref.kind === 'video' || ref.kind === 'timeline') videos += 1
+      else if (ref.kind === 'text') texts += 1
+    }
+    return { images, videos, texts, total: images + videos + texts }
+  }, [sourceRefs])
 
   // 预估积分：模型/提示词/参数变化后防抖 600ms 调用 estimateAiTaskCost
   const [costEstimate, setCostEstimate] = useState<{
@@ -905,7 +951,7 @@ export default function CanvasNodePanel({
       return
     }
     const modelVersionId = selectedModel?.modelVersionId
-    if (!modelVersionId || !operationCode) return
+    if (!modelVersionId || !operationCode || inputValidationError) return
     if (costEstimate.can_afford === false) {
       onInsufficientCredits?.()
       return
@@ -927,6 +973,7 @@ export default function CanvasNodePanel({
       operationCode,
       params: schemaParams,
       sourceRefs,
+      inputAssets,
       ratio,
       videoMode: kind === 'video' ? videoMode : undefined,
       // 视频生视频：节点自己已有的那条视频作为源视频下发；新模型重生成则不带，等于从头生成
@@ -966,6 +1013,19 @@ export default function CanvasNodePanel({
     <div className={styles.panel}>
       {/* tags / 缩略图 */}
       <div className={styles.tags}>
+        {inputSummary.total > 1 && (
+          <div className={styles.inputSummary} role="status" aria-live="polite">
+            <span className={styles.inputSummaryTitle}>多资产汇合</span>
+            {inputSummary.images > 0 && <span>{inputSummary.images} 张图片</span>}
+            {inputSummary.videos > 0 && <span>{inputSummary.videos} 条视频</span>}
+            {inputSummary.texts > 0 && <span>{inputSummary.texts} 段文本</span>}
+          </div>
+        )}
+        {inputValidationError && (
+          <div className={styles.inputError} role="alert">
+            {inputValidationError}
+          </div>
+        )}
         {kind === 'video' ? (
           /* 视频节点：槽位随生成方式变化 —— 首尾帧=首帧+尾帧双槽（含交换）；
              全能参考=所选模型声明的参考图上限（未声明则回退默认值），见 maxRefs */
@@ -1129,6 +1189,18 @@ export default function CanvasNodePanel({
             />
           )}
 
+          {kind === 'video' && onOpenRealPersonLibrary && (
+            <button
+              type="button"
+              className={styles.polishBtn}
+              onClick={onOpenRealPersonLibrary}
+              disabled={taskRunning}
+              title="打开真人素材库并选择真人素材"
+            >
+              真人素材库
+            </button>
+          )}
+
           {/* 比例选择器：schema 已含比例字段时由菜单控制；seedream 5.0 模型不提供独立比例选项 */}
           {kind === 'image' && !imageRatioInSchema && !isSeedream50Model(selectedModel) && (
             <RatioSelector value={ratio} onRatioChange={taskRunning ? undefined : onRatioChange} />
@@ -1150,7 +1222,10 @@ export default function CanvasNodePanel({
         <button
           className={`${styles.generateBtn} ${styles.generatePill}`}
           onClick={handleGenerate}
-          disabled={taskRunning || (kind === 'text' ? !prompt.trim() : !selectedModel || !operationCode)}
+          disabled={
+            taskRunning ||
+            (kind === 'text' ? !prompt.trim() : !selectedModel || !operationCode || Boolean(inputValidationError))
+          }
           // 按钮灰着时必须说明是被什么挡住的：缺模型和缺提示词是两回事，
           // 只写「发送生成」等于让用户对着一个点不动的按钮自己猜
           title={
@@ -1160,7 +1235,7 @@ export default function CanvasNodePanel({
                 ? '保存提示词'
                 : !selectedModel
                   ? emptyModelLabel || '暂无可用模型，请先在上方选择模型'
-                  : '发送生成'
+                  : inputValidationError || '发送生成'
           }
         >
           {/* 左侧：预估积分数字 */}
