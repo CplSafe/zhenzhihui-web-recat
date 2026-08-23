@@ -14,7 +14,12 @@
  */
 import type { Node, Edge } from '@xyflow/react'
 import type { CanvasElementMutation } from '@/api/canvasApi'
-import { inferCanvasConnectionRole, type CanvasConnectionRole } from '@/utils/canvasGeneration'
+import {
+  inferCanvasConnectionRole,
+  normalizeCanvasAssetSource,
+  type CanvasAssetSource,
+  type CanvasConnectionRole,
+} from '@/utils/canvasGeneration'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import type { TimelineState } from '@/utils/timelineClips'
 
@@ -25,6 +30,8 @@ interface SerializableNodeData {
   videoMode?: string
   modelVersionId?: number
   assetId?: number
+  assetSource?: CanvasAssetSource
+  assetWorkspaceId?: number
   resultUrl?: string
   prompt?: string
   /** 节点选定的 operation_code（生成时写入，刷新后可直接复用） */
@@ -70,6 +77,8 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'videoMode',
   'modelVersionId',
   'assetId',
+  'assetSource',
+  'assetWorkspaceId',
   'resultUrl',
   'prompt',
   'operationCode',
@@ -136,6 +145,8 @@ export interface CanvasGraphSourceRef {
    */
   posterUrl?: string
   assetId?: number
+  source?: CanvasAssetSource
+  workspaceId?: number
   role?: CanvasConnectionRole
   /** 该素材是否通过文本等中间节点向上追溯得到。 */
   inherited?: boolean
@@ -217,6 +228,16 @@ export function collectCanvasSourceRefs(
         ...(data.resultUrl ? { thumbnailUrl: String(data.resultUrl) } : {}),
         ...(data.poster ? { posterUrl: String(data.poster) } : {}),
         ...(assetId > 0 ? { assetId } : {}),
+        ...(data.assetSource || data.source || data.realPerson
+          ? {
+              source: normalizeCanvasAssetSource(
+                data.assetSource || data.source || (data.realPerson ? 'real_person' : 'canvas'),
+              ),
+            }
+          : {}),
+        ...(Number(data.assetWorkspaceId || data.workspaceId) > 0
+          ? { workspaceId: Number(data.assetWorkspaceId || data.workspaceId) }
+          : {}),
         ...(inherited ? { inherited: true } : {}),
         // 真人身份必须随素材一路传到下游生成节点，经文本节点继承时同样不能丢。
         ...(data.realPerson ? { realPerson: data.realPerson as SmartRealPersonReference } : {}),
@@ -250,6 +271,36 @@ export function collectCanvasSourceRefs(
  */
 export function buildEdgeId(sourceId: string, targetId: string, slotIndex: number | string): string {
   return `e-${sourceId}-${targetId}-${slotIndex}`
+}
+
+/**
+ * 判断新增 source → target 是否会形成依赖环。
+ *
+ * 收集引用时虽然有 visiting 保护，但那只能避免递归卡死；业务上若允许环存在，某些输入会被
+ * 静默丢弃，用户看到的连线与实际提交就不一致。连接前从 target 沿现有出边查到 source 即为成环。
+ */
+export function wouldCreateCanvasCycle(
+  sourceId: string,
+  targetId: string,
+  edges: Array<Pick<Edge, 'source' | 'target'>>,
+): boolean {
+  if (!sourceId || !targetId || sourceId === targetId) return true
+  const outgoing = new Map<string, string[]>()
+  for (const edge of edges) {
+    const targets = outgoing.get(edge.source) || []
+    targets.push(edge.target)
+    outgoing.set(edge.source, targets)
+  }
+  const pending = [targetId]
+  const visited = new Set<string>()
+  while (pending.length) {
+    const nodeId = pending.pop() as string
+    if (nodeId === sourceId) return true
+    if (visited.has(nodeId)) continue
+    visited.add(nodeId)
+    pending.push(...(outgoing.get(nodeId) || []))
+  }
+  return false
 }
 
 /** 将节点序列化为可比较快照（排除 ReactFlow 运行态字段；text 由 textContents 并入，供增量 diff 精确比较）。 */

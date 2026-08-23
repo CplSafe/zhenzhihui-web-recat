@@ -50,6 +50,38 @@ function modelWithFields(fields: any[]) {
 const IMAGE_OPERATIONS = ['image.text_to_image', 'image.image_to_image']
 
 describe('CanvasNodePanel 模型选择器', () => {
+  it('多资产汇合时展示最终输入数量，并在模型超限时阻止生成', () => {
+    renderPanel(
+      [
+        {
+          modelVersionId: 21,
+          displayName: '双参考模型',
+          operationCodes: IMAGE_OPERATIONS,
+          source: {
+            params_schema: {
+              fields: [{ name: 'reference_images', type: 'array', minItems: 0, maxItems: 2 }],
+            },
+          },
+        },
+      ],
+      {
+        ...imageNodeWithReference(),
+        sourceRefs: [1, 2, 3].map((assetId, slotIndex) => ({
+          kind: 'image',
+          sourceId: `node-${assetId}`,
+          edgeId: `edge-${assetId}`,
+          slotIndex,
+          assetId,
+        })),
+      },
+    )
+
+    expect(screen.getByText('多资产汇合')).toBeInTheDocument()
+    expect(screen.getByText('3 张图片')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('最多支持 2 张参考图片')
+    expect(screen.getByTitle(/最多支持 2 张参考图片/)).toBeDisabled()
+  })
+
   it('模型被会员/余额挡住时说明原因，而不是显示一句点不开的「暂无可用模型」', async () => {
     const user = userEvent.setup()
     renderPanel([

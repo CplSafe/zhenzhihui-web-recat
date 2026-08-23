@@ -239,6 +239,46 @@ describe('WheelPicker', () => {
     }
   })
 
+  it('可以按住鼠标横向拖拽，松手后吸附并选择对应秒数', () => {
+    const onChange = vi.fn()
+    const onCommit = vi.fn()
+    render(
+      <WheelPicker
+        options={durations}
+        value="5s"
+        onChange={onChange}
+        onCommit={onCommit}
+        ariaLabel="视频时长"
+        itemWidth={64}
+      />,
+    )
+    const list = screen.getByRole('listbox', { name: '视频时长' })
+    Object.defineProperty(list, 'setPointerCapture', { value: vi.fn(), configurable: true })
+    Object.defineProperty(list, 'releasePointerCapture', { value: vi.fn(), configurable: true })
+
+    // 向左拖 130px，相当于从第 0 档直接跨到第 2 档。
+    fireEvent.pointerDown(list, { pointerId: 1, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 200 })
+    fireEvent.pointerMove(list, { pointerId: 1, pointerType: 'mouse', isPrimary: true, clientX: 70 })
+    fireEvent.pointerUp(list, { pointerId: 1, pointerType: 'mouse', isPrimary: true, clientX: 70 })
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('7s')
+    // 拖拽是连续调整，不作为关闭浮层的显式确认动作。
+    expect(onCommit).not.toHaveBeenCalled()
+  })
+
+  it('轻微移动仍按普通点击处理，不会误判为拖拽', () => {
+    const onChange = vi.fn()
+    render(<WheelPicker options={durations} value="5s" onChange={onChange} ariaLabel="视频时长" itemWidth={64} />)
+    const list = screen.getByRole('listbox', { name: '视频时长' })
+
+    fireEvent.pointerDown(list, { pointerId: 2, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 100 })
+    fireEvent.pointerMove(list, { pointerId: 2, pointerType: 'mouse', isPrimary: true, clientX: 98 })
+    fireEvent.pointerUp(list, { pointerId: 2, pointerType: 'mouse', isPrimary: true, clientX: 98 })
+    fireEvent.click(screen.getByRole('option', { name: '6s' }))
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('6s')
+  })
+
   it('停在不可选档位时不提交，档位仍不可点击', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()

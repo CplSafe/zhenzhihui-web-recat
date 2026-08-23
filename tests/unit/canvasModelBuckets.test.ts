@@ -63,6 +63,19 @@ describe('buildCanvasModelBuckets', () => {
     expect(buckets.video.map((m) => m.modelVersionId)).toEqual([4])
   })
 
+  it('同一图片模型被后端拆成两个 operation 时合并能力，避免丢失文生图', () => {
+    const groups = buildGenerationModelGroups([
+      { ...model(8, '图片模型', ['image.text_to_image']), capability: 'image' },
+      { ...model(8, '图片模型', ['image.image_to_image']), capability: 'image' },
+    ])
+
+    const imageModels = buildCanvasModelBuckets(groups).image
+    expect(imageModels).toHaveLength(1)
+    expect(imageModels[0].operationCodes).toEqual(
+      expect.arrayContaining(['image.text_to_image', 'image.image_to_image']),
+    )
+  })
+
   it('空目录返回三个空桶而不是抛错', () => {
     expect(buildCanvasModelBuckets([])).toEqual({ text: [], image: [], video: [] })
     expect(buildCanvasModelBuckets(null)).toEqual({ text: [], image: [], video: [] })

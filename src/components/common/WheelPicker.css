@@ -47,6 +47,13 @@
   overscroll-behavior-x: contain;
   /* 触控板/触屏的惯性滑动交给系统，手感比自己模拟的步进好得多 */
   -webkit-overflow-scrolling: touch;
+  cursor: grab;
+  touch-action: pan-y;
+}
+
+.zzh-wheel__list.is-dragging {
+  cursor: grabbing;
+  scroll-snap-type: none;
 }
 
 .zzh-wheel__list::-webkit-scrollbar {

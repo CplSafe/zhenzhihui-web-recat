@@ -48,6 +48,9 @@ const SETTLE_DELAY_MS = 140
  */
 const WHEEL_STEP_THRESHOLD_PX = 16
 
+/** 超过这个距离才视为拖拽，避免普通点击因手部轻微移动被吞掉。 */
+const DRAG_THRESHOLD_PX = 4
+
 export default function WheelPicker({
   options,
   value,
@@ -65,6 +68,15 @@ export default function WheelPicker({
     options.findIndex((option) => option.value === value),
   )
   const [centerIndex, setCenterIndex] = useState(selectedIndex)
+  const [dragging, setDragging] = useState(false)
+  const dragRef = useRef<{
+    pointerId: number
+    startX: number
+    startScrollLeft: number
+    moved: boolean
+  } | null>(null)
+  // pointerup 后浏览器还会派发 click；拖动过时必须吞掉，否则松手处的档位会覆盖拖拽结果。
+  const suppressClickRef = useRef(false)
   // 停止滚动后的提交在定时器里执行，可能晚于本次渲染；用 ref 读最新值，避免回写一个已经过期的档位。
   const latestRef = useRef({ options, value, selectedIndex, onChange })
   latestRef.current = { options, value, selectedIndex, onChange }
@@ -196,6 +208,52 @@ export default function WheelPicker({
     commitIndex(target)
   }
 
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    // 触屏继续使用浏览器原生惯性滚动；鼠标/触控笔才需要补齐「按住拖动」。
+    if (!event.isPrimary || event.button !== 0 || event.pointerType === 'touch') return
+    const list = listRef.current
+    if (!list) return
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startScrollLeft: list.scrollLeft,
+      moved: false,
+    }
+    suppressClickRef.current = false
+    list.setPointerCapture?.(event.pointerId)
+  }
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    const list = listRef.current
+    if (!drag || !list || drag.pointerId !== event.pointerId) return
+    const deltaX = event.clientX - drag.startX
+    if (!drag.moved && Math.abs(deltaX) < DRAG_THRESHOLD_PX) return
+    if (!drag.moved) {
+      drag.moved = true
+      setDragging(true)
+    }
+    event.preventDefault()
+    list.scrollLeft = drag.startScrollLeft - deltaX
+    const index = Math.min(options.length - 1, Math.max(0, Math.round(list.scrollLeft / itemWidth)))
+    setCenterIndex(index)
+    window.clearTimeout(settleTimerRef.current)
+  }
+
+  const finishPointerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    const list = listRef.current
+    if (!drag || !list || drag.pointerId !== event.pointerId) return
+    dragRef.current = null
+    list.releasePointerCapture?.(event.pointerId)
+    setDragging(false)
+    if (!drag.moved) return
+    suppressClickRef.current = true
+    const index = Math.min(options.length - 1, Math.max(0, Math.round(list.scrollLeft / itemWidth)))
+    // 松手即吸附并生效，不需要再点击确认；浮层保持打开，方便继续微调。
+    commitIndex(index)
+  }
+
   const padding = ((visibleCount - 1) / 2) * itemWidth
 
   return (
@@ -207,12 +265,16 @@ export default function WheelPicker({
       <div className="zzh-wheel__band" aria-hidden="true" />
       <div
         ref={listRef}
-        className="zzh-wheel__list"
+        className={`zzh-wheel__list${dragging ? ' is-dragging' : ''}`}
         role="listbox"
         aria-label={ariaLabel}
         tabIndex={0}
         onScroll={handleScroll}
         onKeyDown={handleKeyDown}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={finishPointerDrag}
+        onPointerCancel={finishPointerDrag}
       >
         <div className="zzh-wheel__pad" style={{ width: padding }} aria-hidden="true" />
         {options.map((option, index) => (
@@ -226,7 +288,13 @@ export default function WheelPicker({
             className={`zzh-wheel__item${index === centerIndex ? ' is-center' : ''}`}
             // 距离中心越远越淡越小，形成滚轮的纵深感
             data-offset={Math.min(3, Math.abs(index - centerIndex))}
-            onClick={() => commitIndex(index, { explicit: true })}
+            onClick={() => {
+              if (suppressClickRef.current) {
+                suppressClickRef.current = false
+                return
+              }
+              commitIndex(index, { explicit: true })
+            }}
           >
             {option.label}
           </button>
