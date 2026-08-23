@@ -869,7 +869,7 @@ export default function CanvasNodePanel({
       return validateCanvasVideoInputs({ operationCode, videoMode, sourceRefs, maxImageRefs: maxRefs })
     }
     return null
-  }, [kind, maxRefs, node?.sourceRefs, operationCode, sourceRefs, videoMode, workspaceId])
+  }, [kind, maxRefs, operationCode, sourceRefs, videoMode, workspaceId])
 
   const inputSummary = useMemo(() => {
     let images = 0
