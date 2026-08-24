@@ -823,7 +823,8 @@ export default function HomeView() {
     const timer = window.setTimeout(() => {
       setMarketLoading(true)
       setMarketError('')
-      listMarketDemands({ query: keywordTrim, limit: 100, signal: controller.signal })
+      // 市场只展示可报名（open）的需求：后端公开列表会包含已完成的单，混排会误导接单者。
+      listMarketDemands({ query: keywordTrim, status: 'open', limit: 100, signal: controller.signal })
         .then(({ items }) => setMarketDemands(items))
         .catch((error: any) => {
           if (error?.name !== 'AbortError') setMarketError(error?.message || '需求市场加载失败')

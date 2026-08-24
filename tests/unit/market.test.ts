@@ -12,6 +12,7 @@ import {
   formatDemandDate,
   formatDemandPrice,
   getMarketDemand,
+  isDemandApplyDeadlinePassed,
   listDemandApplications,
   listMarketDemands,
   listMyApplications,
@@ -115,6 +116,16 @@ describe('展示格式化', () => {
     expect(formatDemandDate('2026/8/25')).toBe('2026/8/25')
     expect(formatDemandDate('')).toBe('')
     expect(formatDemandDate('not-a-date')).toBe('not-a-date')
+  })
+
+  it('isDemandApplyDeadlinePassed 截止日当天仍可报名，次日起截止', () => {
+    const noon = (day: string) => new Date(`${day}T12:00:00`).getTime()
+    expect(isDemandApplyDeadlinePassed('2026/08/25', noon('2026-08-25'))).toBe(false)
+    expect(isDemandApplyDeadlinePassed('2026/08/25', noon('2026-08-26'))).toBe(true)
+    expect(isDemandApplyDeadlinePassed('2026/08/25', noon('2026-08-24'))).toBe(false)
+    expect(isDemandApplyDeadlinePassed('', noon('2026-08-26'))).toBe(false)
+    expect(isDemandApplyDeadlinePassed(undefined, noon('2026-08-26'))).toBe(false)
+    expect(isDemandApplyDeadlinePassed('not-a-date', noon('2026-08-26'))).toBe(false)
   })
 
   it('状态文案映射', () => {

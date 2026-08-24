@@ -69,6 +69,9 @@ export default function ApplyDemandModal({ demand, onClose, onApplied }: ApplyDe
           placeholder="向发布者介绍你的优势与制作思路..."
           aria-label="申请留言"
         />
+        <p className={styles.hint}>
+          提示：平台暂不代传联系方式，建议在留言中附上你的联系方式，便于发布者接受后与你对接。
+        </p>
         <div className={styles.row}>
           <label>
             <span>报价</span>

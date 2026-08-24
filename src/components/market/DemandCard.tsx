@@ -21,7 +21,9 @@ function thumbnailOf(demand: MarketDemand): string {
 
 export default function DemandCard({ demand, onOpen }: DemandCardProps) {
   const thumbnail = thumbnailOf(demand)
-  const applyDeadline = demand.extras.applyDeadline || formatDemandDate(demand.deliveryDeadline)
+  // 报名截止只认元数据里的值，不再拿交付时间冒充；发布时间常显，便于区分同名需求。
+  const applyDeadline = demand.extras.applyDeadline || ''
+  const publishedLabel = formatDemandDate(demand.publishedAt || demand.createdAt)
   return (
     <button type="button" className={styles.card} onClick={() => onOpen(demand)}>
       <div className={styles.top}>
@@ -71,7 +73,10 @@ export default function DemandCard({ demand, onOpen }: DemandCardProps) {
           )}
           {demand.publisher.nickname}
         </span>
-        {applyDeadline && <span className={styles.deadline}>报名截止时间：{applyDeadline}</span>}
+        <span className={styles.dates}>
+          {publishedLabel && <span>发布时间：{publishedLabel}</span>}
+          {applyDeadline && <span>报名截止时间：{applyDeadline}</span>}
+        </span>
       </div>
     </button>
   )

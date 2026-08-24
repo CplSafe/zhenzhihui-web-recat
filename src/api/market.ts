@@ -232,6 +232,17 @@ export function formatDemandDate(value: unknown): string {
   return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
 }
 
+/** 报名截止时间（YYYY/MM/DD）是否已过：截止日当天 23:59:59 前仍可报名；无值或无法解析视为未截止。 */
+export function isDemandApplyDeadlinePassed(deadline: string | undefined, now: number = Date.now()): boolean {
+  const text = String(deadline || '').trim()
+  if (!text) return false
+  const match = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(text)
+  if (!match) return false
+  const end = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 23, 59, 59, 999)
+  if (Number.isNaN(end.getTime())) return false
+  return now > end.getTime()
+}
+
 export const DEMAND_STATUS_LABELS: Readonly<Record<string, string>> = Object.freeze({
   draft: '草稿',
   open: '报名中',

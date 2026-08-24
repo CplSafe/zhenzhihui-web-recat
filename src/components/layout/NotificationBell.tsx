@@ -6,10 +6,10 @@
  * 已读水位（时间戳）按用户存 localStorage，打开面板即视为全部已读。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { listMyApplications, listMyDemands, formatDemandDate } from '@/api/market'
+import { listDemandApplications, listMyApplications, listMyDemands, formatDemandDate } from '@/api/market'
 import './NotificationBell.css'
 
-interface NotificationItem {
+export interface NotificationItem {
   key: string
   text: string
   /** 排序与未读判断用的毫秒时间戳（解析失败为 0，视为已读旧消息） */
@@ -19,13 +19,16 @@ interface NotificationItem {
 
 const SEEN_STORAGE_PREFIX = 'zzh-market-notify-seen:'
 
+/** 「收到新申请」轮询的需求条数上限，避免铃铛为长列表打出请求风暴。 */
+const RECEIVED_APPLICATION_DEMAND_LIMIT = 10
+
 function tsOf(value: string): number {
   const parsed = new Date(value).getTime()
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-/** 从需求/申请状态推导通知列表（新在前，最多 20 条）。 */
-async function loadNotifications(signal?: AbortSignal): Promise<NotificationItem[]> {
+/** 从需求/申请状态推导通知列表（新在前，最多 20 条）。导出仅供单测使用。 */
+export async function loadNotifications(signal?: AbortSignal): Promise<NotificationItem[]> {
   const [demands, applications] = await Promise.all([
     listMyDemands({ signal }).catch(() => ({ items: [] as Awaited<ReturnType<typeof listMyDemands>>['items'] })),
     listMyApplications({ signal }).catch(() => ({
@@ -33,6 +36,29 @@ async function loadNotifications(signal?: AbortSignal): Promise<NotificationItem
     })),
   ])
   const items: NotificationItem[] = []
+  // 我发布的报名中需求收到的待处理申请 → 通知发布者（后端无推送，限量轮询）。
+  const openDemands = demands.items
+    .filter((demand) => demand.status === 'open')
+    .slice(0, RECEIVED_APPLICATION_DEMAND_LIMIT)
+  const receivedPages = await Promise.all(
+    openDemands.map((demand) =>
+      listDemandApplications(demand.id, { signal }).then(
+        (page) => ({ demand, received: page.items }),
+        () => ({ demand, received: [] as Awaited<ReturnType<typeof listDemandApplications>>['items'] }),
+      ),
+    ),
+  )
+  for (const { demand, received } of receivedPages) {
+    for (const application of received) {
+      if (application.status !== 'pending') continue
+      items.push({
+        key: `app-received-${application.id}`,
+        text: `你发布的需求「${demand.title}」收到 ${application.applicant.nickname} 的接单申请`,
+        ts: tsOf(application.createdAt),
+        dateLabel: formatDemandDate(application.createdAt),
+      })
+    }
+  }
   for (const demand of demands.items) {
     const publishedLabel = formatDemandDate(demand.publishedAt || demand.createdAt)
     if (demand.status === 'completed') {

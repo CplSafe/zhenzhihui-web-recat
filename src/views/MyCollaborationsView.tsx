@@ -87,8 +87,15 @@ export default function MyCollaborationsView() {
       .then(async ({ items }) => {
         setDemands(items)
         setDemandsLoading(false)
-        // 报名中的需求预取申请（限量 + 串行小批量），用于「待处理申请」统计与展开面板。
-        const openDemands = items.filter((demand) => demand.status === 'open').slice(0, APPLICATION_PREFETCH_LIMIT)
+        // 预取申请（限量 + 串行小批量）：报名中的用于「待处理申请」统计与展开面板；
+        // 面议（无固定单价）的已完成/制作中需求也要取，「总消耗」按其已接受报价累计。
+        const openDemands = items
+          .filter(
+            (demand) =>
+              demand.status === 'open' ||
+              ((demand.status === 'completed' || demand.status === 'in_progress') && !demand.budgetCents),
+          )
+          .slice(0, APPLICATION_PREFETCH_LIMIT)
         for (const demand of openDemands) {
           if (controller.signal.aborted) return
           try {
@@ -125,10 +132,12 @@ export default function MyCollaborationsView() {
   const publishedStats = useMemo(() => {
     const inProgress = demands.filter((demand) => demand.status === 'in_progress').length
     const completed = demands.filter((demand) => demand.status === 'completed')
-    const totalSpentYuan = completed.reduce(
-      (sum, demand) => sum + (demand.budgetCents / 100) * (demand.extras.quantity || 1),
-      0,
-    )
+    // 固定单价：单价 × 数量；面议：按已接受申请的报价计（报价视为总价）。
+    const totalSpentYuan = completed.reduce((sum, demand) => {
+      if (demand.budgetCents > 0) return sum + (demand.budgetCents / 100) * (demand.extras.quantity || 1)
+      const acceptedQuote = (applicationsByDemand[demand.id] || []).find((item) => item.status === 'accepted')
+      return sum + (acceptedQuote ? acceptedQuote.quoteCents / 100 : 0)
+    }, 0)
     return [
       { label: '全部请求', value: `${demands.length}个` },
       { label: '进行中', value: `${inProgress}个` },
@@ -136,7 +145,7 @@ export default function MyCollaborationsView() {
       { label: '已完成', value: `${completed.length}个` },
       { label: '总消耗', value: `¥ ${totalSpentYuan.toFixed(2)}` },
     ]
-  }, [demands, pendingApplicationCount])
+  }, [applicationsByDemand, demands, pendingApplicationCount])
 
   const acceptedStats = useMemo(() => {
     const pending = myApplications.filter((item) => item.status === 'pending').length
@@ -170,7 +179,7 @@ export default function MyCollaborationsView() {
       const key = `accept-${application.id}`
       if (busyKey) return
       const confirmed = await requestConfirm(
-        `确定接受「${application.applicant.nickname}」的接单申请吗？接受后需求进入制作中。`,
+        `确定接受「${application.applicant.nickname}」的接单申请吗？接受后需求进入制作中。平台暂不提供站内沟通，请与制作人自行约定联系方式与交付方式（可参考其申请留言）。`,
         { title: '接受申请', confirmLabel: '接受' },
       )
       if (confirmed !== true) return
@@ -182,7 +191,7 @@ export default function MyCollaborationsView() {
           items: [] as DemandApplication[],
         }))
         setApplicationsByDemand((current) => ({ ...current, [application.demandId]: items }))
-        showToast('已接受接单申请', 'success')
+        showToast('已接受接单申请，请尽快与制作人取得联系', 'success')
       } catch (error: any) {
         showToast(error?.message || '操作失败，请稍后重试', 'error')
       } finally {

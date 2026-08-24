@@ -57,6 +57,13 @@
   color: #c1c7d0;
 }
 
+.hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #9ca3af;
+}
+
 .row {
   display: flex;
   gap: 20px;

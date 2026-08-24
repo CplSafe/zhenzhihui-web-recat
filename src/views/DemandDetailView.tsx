@@ -10,7 +10,16 @@ import { useNavigate, useParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import ApplyDemandModal from '@/components/market/ApplyDemandModal'
-import { formatDemandDate, formatDemandPrice, getMarketDemand, type MarketDemand } from '@/api/market'
+import {
+  formatDemandDate,
+  formatDemandPrice,
+  getMarketDemand,
+  isDemandApplyDeadlinePassed,
+  listMyApplications,
+  type DemandApplication,
+  type MarketDemand,
+} from '@/api/market'
+import { useAuth } from '@/auth/AuthContext'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useCurrentUser } from '@/stores/workspaceSession'
@@ -34,14 +43,36 @@ export default function DemandDetailView() {
   const navigate = useNavigate()
   const requireAuth = useRequireAuth()
   const handleNavigate = useSidebarNavigate()
+  const { isAuthenticated } = useAuth()
   const currentUser = useCurrentUser()
   const currentUserId = Number(resolveUserId(currentUser) || 0)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [demand, setDemand] = useState<MarketDemand | null>(null)
   const [error, setError] = useState('')
   const [applying, setApplying] = useState(false)
+  // 我对该需求的有效申请（pending/accepted），用于「已申请」态与防重复提交
+  const [myApplication, setMyApplication] = useState<DemandApplication | null>(null)
 
   const demandId = useMemo(() => Math.floor(Number(id) || 0), [id])
+
+  const refreshMyApplication = useCallback(() => {
+    if (!demandId || !isAuthenticated) return
+    listMyApplications()
+      .then(({ items }) => {
+        const mine = items.find(
+          (item) => item.demandId === demandId && (item.status === 'pending' || item.status === 'accepted'),
+        )
+        setMyApplication(mine || null)
+      })
+      .catch(() => {
+        /* 查询失败不阻断申请入口，重复提交由后端兜底 */
+      })
+  }, [demandId, isAuthenticated])
+
+  useEffect(() => {
+    setMyApplication(null)
+    refreshMyApplication()
+  }, [refreshMyApplication])
 
   useEffect(() => {
     if (!demandId) {
@@ -70,7 +101,24 @@ export default function DemandDetailView() {
   const isPublisher = demand ? currentUserId > 0 && demand.publisher.id === currentUserId : false
   const materials = demand?.extras.materials || []
   const thumbnail = materials.find((item) => item.url && IMAGE_EXT.test(item.name))?.url || ''
-  const canApply = demand?.status === 'open' && !isPublisher
+  const deadlinePassed = isDemandApplyDeadlinePassed(demand?.extras.applyDeadline)
+  const canApply = demand?.status === 'open' && !isPublisher && !deadlinePassed && !myApplication
+  const applyLabel = myApplication
+    ? myApplication.status === 'accepted'
+      ? '已接单'
+      : '已申请'
+    : deadlinePassed
+      ? '报名已截止'
+      : '申请接单'
+  const applyBlockReason = myApplication
+    ? myApplication.status === 'accepted'
+      ? '你已是该需求的制作人'
+      : '你已提交过申请，等待发布者处理'
+    : deadlinePassed
+      ? '该需求报名已截止'
+      : demand?.status !== 'open'
+        ? '该需求当前不可报名'
+        : ''
 
   return (
     <div className="dmd">
@@ -194,10 +242,10 @@ export default function DemandDetailView() {
                     type="button"
                     className="dmd__btn dmd__btn--primary"
                     disabled={!canApply}
-                    title={canApply ? undefined : '该需求当前不可报名'}
+                    title={canApply ? undefined : applyBlockReason}
                     onClick={openApply}
                   >
-                    申请接单
+                    {applyLabel}
                   </button>
                 )}
               </footer>
@@ -206,7 +254,11 @@ export default function DemandDetailView() {
         </div>
       </div>
 
-      <ApplyDemandModal demand={applying ? demand : null} onClose={() => setApplying(false)} />
+      <ApplyDemandModal
+        demand={applying ? demand : null}
+        onClose={() => setApplying(false)}
+        onApplied={refreshMyApplication}
+      />
     </div>
   )
 }
