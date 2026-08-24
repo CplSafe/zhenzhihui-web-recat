@@ -3,8 +3,57 @@ import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
   inferCanvasConnectionRole,
+  normalizeCanvasAssetSource,
+  validateCanvasImageInputs,
   validateCanvasVideoInputs,
 } from '@/utils/canvasGeneration'
+
+describe('canvas image generation source validation', () => {
+  it('normalizes real-person source aliases without classifying ordinary uploads', () => {
+    expect(normalizeCanvasAssetSource('real-person')).toBe('real_person')
+    expect(normalizeCanvasAssetSource('upload')).toBe('upload')
+    expect(normalizeCanvasAssetSource('face-image')).toBe('unknown')
+  })
+
+  it('requires uploaded image assets and rejects cross-workspace references', () => {
+    expect(
+      validateCanvasImageInputs({
+        operationCode: 'image.image_to_image',
+        sourceRefs: [{ kind: 'image', assetId: 12, workspaceId: 21 }],
+        workspaceId: 21,
+      }),
+    ).toBeNull()
+    expect(
+      validateCanvasImageInputs({ operationCode: 'image.image_to_image', sourceRefs: [{ kind: 'image' }] }),
+    ).toContain('尚未上传')
+    expect(
+      validateCanvasImageInputs({
+        operationCode: 'image.image_to_image',
+        sourceRefs: [{ kind: 'image', assetId: 12, workspaceId: 9 }],
+        workspaceId: 21,
+      }),
+    ).toContain('工作空间')
+  })
+
+  it('does not allow video refs to leak into image-to-image input', () => {
+    expect(
+      validateCanvasImageInputs({
+        operationCode: 'image.image_to_image',
+        sourceRefs: [{ kind: 'video', assetId: 12 }],
+      }),
+    ).toContain('仅支持图片')
+  })
+
+  it('按当前模型能力阻止超量图片，而不是静默截断', () => {
+    expect(
+      validateCanvasImageInputs({
+        operationCode: 'image.image_to_image',
+        sourceRefs: [1, 2, 3].map((assetId) => ({ kind: 'image', assetId })),
+        maxImageRefs: 2,
+      }),
+    ).toContain('最多支持 2 张')
+  })
+})
 
 describe('canvas polish reference images', () => {
   it('returns nothing when no image source is connected', () => {

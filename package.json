@@ -14,7 +14,7 @@
     "check:bundle": "node scripts/check-client-bundle.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --maxWorkers=1",
     "test:coverage:all": "vitest run --coverage --maxWorkers=1 --coverage.include=\"src/**/*.{ts,tsx}\" --coverage.thresholds.perFile=false --coverage.thresholds.statements=45 --coverage.thresholds.branches=37 --coverage.thresholds.functions=48 --coverage.thresholds.lines=47 --coverage.reportsDirectory=coverage/all",
     "test:typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test:e2e:typecheck": "tsc -p tsconfig.e2e.json --noEmit",

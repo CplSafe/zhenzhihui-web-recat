@@ -2,6 +2,52 @@ export interface CanvasGenerationSourceRef {
   kind?: string
   assetId?: number
   slotIndex?: number
+  source?: CanvasAssetSource
+  workspaceId?: number
+}
+
+export type CanvasAssetSource = 'canvas' | 'upload' | 'materials' | 'generated' | 'real_person' | 'unknown'
+
+export function normalizeCanvasAssetSource(value: unknown): CanvasAssetSource {
+  const source = String(value || '')
+    .trim()
+    .toLowerCase()
+  if (source === 'real_person' || source === 'real-person' || source === 'realpeople') return 'real_person'
+  if (source === 'materials' || source === 'material' || source === 'library') return 'materials'
+  if (source === 'generated' || source === 'ai') return 'generated'
+  if (source === 'upload' || source === 'uploaded' || source === 'local') return 'upload'
+  if (source === 'canvas') return 'canvas'
+  return 'unknown'
+}
+
+export function validateCanvasImageInputs(args: {
+  operationCode: string
+  sourceRefs: CanvasGenerationSourceRef[]
+  workspaceId?: number
+  /** 当前模型声明的参考图上限；缺省时不在这一层臆测。 */
+  maxImageRefs?: number
+}): string | null {
+  if (args.operationCode !== 'image.image_to_image') return null
+  const refs = args.sourceRefs || []
+  const mediaRefs = refs.filter((ref) => ref.kind && ref.kind !== 'text')
+  if (mediaRefs.some((ref) => ref.kind !== 'image')) {
+    return '图生图仅支持图片素材，请移除视频或其他类型节点后重试'
+  }
+  const imageRefs = refs.filter((ref) => ref.kind === 'image')
+  if (!imageRefs.length) return null
+  if (Number(args.maxImageRefs) >= 0 && imageRefs.length > Number(args.maxImageRefs)) {
+    return `当前模型最多支持 ${Number(args.maxImageRefs)} 张参考图片，请移除多余连线或切换模型`
+  }
+  if (imageRefs.some((ref) => !Number.isSafeInteger(Number(ref.assetId)) || Number(ref.assetId) <= 0)) {
+    return '参考图片尚未上传完成，请稍候或重新选择图片后重试'
+  }
+  if (
+    Number(args.workspaceId) > 0 &&
+    imageRefs.some((ref) => Number(ref.workspaceId || 0) > 0 && Number(ref.workspaceId) !== Number(args.workspaceId))
+  ) {
+    return '参考图片不属于当前工作空间，请重新选择素材后重试'
+  }
+  return null
 }
 
 export type CanvasVideoMode = 'auto' | 'first-last' | 'full-ref'
@@ -119,6 +165,8 @@ export function validateCanvasVideoInputs(args: {
   operationCode: string
   videoMode?: CanvasVideoMode
   sourceRefs: CanvasGenerationSourceRef[]
+  /** 当前模型声明的参考图上限；未声明时沿用画布默认的 5 张。 */
+  maxImageRefs?: number
 }): string | null {
   const isGenerate = args.operationCode === 'video.generate'
   const isEdit = args.operationCode === 'video.edit'
@@ -145,13 +193,14 @@ export function validateCanvasVideoInputs(args: {
   if (videoRefs.length > 1) return '视频生视频一次只能连接一条源视频，请去掉多余的视频连线'
 
   const imageRefs = mediaRefs.filter((ref) => ref.kind === 'image')
+  const maxImageRefs = Number.isFinite(Number(args.maxImageRefs)) ? Math.max(0, Number(args.maxImageRefs)) : 5
   // 带源视频时，首尾帧的槽位规则不再适用：画面时序由源视频决定，图片只是风格/主体参考
   if (videoRefs.length === 1 || isEdit) {
-    return imageRefs.length > 5 ? '视频生视频最多再附带 5 张参考图片' : null
+    return imageRefs.length > maxImageRefs ? `视频生视频最多再附带 ${maxImageRefs} 张参考图片` : null
   }
 
   if (args.videoMode === 'full-ref' || args.videoMode === 'auto') {
-    return imageRefs.length > 5 ? '自由生成和全能参考模式最多支持 5 张参考图片' : null
+    return imageRefs.length > maxImageRefs ? `当前模型最多支持 ${maxImageRefs} 张参考图片` : null
   }
 
   if (imageRefs.length > 2) return '首尾帧模式最多支持首帧和尾帧两张参考图片'

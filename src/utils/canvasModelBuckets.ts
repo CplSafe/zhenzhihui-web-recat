@@ -35,16 +35,24 @@ const GROUP_KEYS_BY_NODE_KIND = {
 
 /** 按 modelVersionId 去重，保持首次出现的顺序。 */
 function dedupeByVersionId(models: readonly GenerationModelOption[]): GenerationModelOption[] {
-  const seen = new Set<number>()
-  const out: GenerationModelOption[] = []
+  const byVersion = new Map<number, GenerationModelOption>()
   for (const model of models) {
     const versionId = Number(model?.modelVersionId || 0)
-    // 同时支持 video.generate 与 video.edit 的模型会在两组各出现一次
-    if (seen.has(versionId)) continue
-    seen.add(versionId)
-    out.push(model)
+    const existing = byVersion.get(versionId)
+    if (!existing) {
+      byVersion.set(versionId, model)
+      continue
+    }
+    // 同一个模型版本会按 operation_code 被目录拆成多条记录。不能简单丢弃
+    // 后续记录，否则模型可能只保留 image_to_image 或 text_to_image 其中一种能力。
+    // 合并能力列表后，图片节点会根据是否有参考图正确切换两种模式。
+    byVersion.set(versionId, {
+      ...existing,
+      operationCodes: Array.from(new Set([...(existing.operationCodes || []), ...(model.operationCodes || [])])),
+      unavailableReason: existing.unavailableReason || model.unavailableReason,
+    })
   }
-  return out
+  return Array.from(byVersion.values())
 }
 
 /** 把目录分组投影为画布面板需要的三份模型列表。 */

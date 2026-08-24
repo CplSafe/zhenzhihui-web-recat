@@ -10,11 +10,22 @@ import {
   elementsToGraph,
   isCanvasProvenanceEdge,
   nodeToMutation,
+  wouldCreateCanvasCycle,
 } from '@/utils/canvasElements'
 
 describe('canvasElements', () => {
   it('builds stable edge ids', () => {
     expect(buildEdgeId('source-node', 'target-node', 2)).toBe('e-source-node-target-node-2')
+  })
+
+  it('连接前识别直接和间接循环依赖', () => {
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ] as Edge[]
+    expect(wouldCreateCanvasCycle('c', 'a', edges)).toBe(true)
+    expect(wouldCreateCanvasCycle('c', 'd', edges)).toBe(false)
+    expect(wouldCreateCanvasCycle('a', 'a', edges)).toBe(true)
   })
 
   it('keeps image assets across an image -> text -> image chain', () => {

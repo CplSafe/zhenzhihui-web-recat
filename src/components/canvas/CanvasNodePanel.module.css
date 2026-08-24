@@ -20,9 +20,41 @@
   flex-wrap: wrap;
 }
 
+.inputSummary {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  color: #647085;
+  font-size: 12px;
+}
+
+.inputSummary span:not(.inputSummaryTitle) {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f2f5f8;
+}
+
+.inputSummaryTitle {
+  color: #0e8f75;
+  font-weight: 600;
+}
+
+.inputError {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid rgba(217, 76, 76, 0.22);
+  border-radius: 8px;
+  background: rgba(217, 76, 76, 0.07);
+  color: #b53d3d;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .refImages {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .refThumb {

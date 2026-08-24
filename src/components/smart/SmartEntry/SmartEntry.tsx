@@ -843,6 +843,7 @@ export default function SmartEntry({
                   onChange={setDuration}
                   placeholder={DURATION_PLACEHOLDER}
                   variant="wheel"
+                  ariaLabel="视频时长"
                   icon={
                     <svg
                       viewBox="0 0 24 24"

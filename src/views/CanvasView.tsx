@@ -103,12 +103,11 @@ import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekab
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
 import { captureVideoFrame, type VideoFramePosition } from '@/utils/videoFrameCapture'
 import { resolveGeneratedMediaUrls, resolveVerifiedResultAssetId } from '@/utils/taskMedia'
-import { resolveModelInputAssetRole } from '@/utils/modelInputAssetRole'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText } from '@/utils/canvasStructuredText'
 import {
-  buildCanvasInputAssets,
   inferCanvasConnectionRole,
+  validateCanvasImageInputs,
   validateCanvasVideoInputs,
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
@@ -163,7 +162,7 @@ import {
   diffCanvasMutations,
   elementsToGraph,
   collectCanvasSourceRefs,
-  isCanvasProvenanceEdge,
+  wouldCreateCanvasCycle,
   type ComparableNode,
   type ComparableEdge,
 } from '@/utils/canvasElements'
@@ -460,6 +459,16 @@ const ADD_MENU_ITEMS: ReadonlyArray<{ type: string; label: string; desc: string 
 /** 节点类型中文名（菜单禁用提示用） */
 const KIND_LABELS: Record<string, string> = { text: '文本', image: '图片', video: '视频' }
 
+/** 素材库不同接口会返回 image/video 或 图片/视频，统一成画布节点类型。 */
+function normalizeCanvasMaterialType(type: unknown): 'image' | 'video' {
+  const value = String(type || '')
+    .trim()
+    .toLowerCase()
+  return value === 'video' || value === '视频' || value.startsWith('video/') || value.startsWith('mp4')
+    ? 'video'
+    : 'image'
+}
+
 /**
  * 小地图上的节点配色：按类型区分，让俯瞰时还能读出「哪片是视频、哪片是图片」。
  * 全部同色的小地图只能告诉你「有东西」，读不出结构，等于只剩一个缩略轮廓。
@@ -515,6 +524,8 @@ interface CanvasGenerationRequest {
   operationCode: string
   params: Record<string, unknown>
   sourceRefs: CanvasSourceRef[]
+  /** 面板估价时使用的最终素材清单；提交必须原样复用。 */
+  inputAssets: Array<{ asset_id: number; role: string }>
   ratio?: string
   videoMode?: CanvasVideoMode
   /** 视频生视频的源视频（节点自己已有的那条）；为 0/缺省表示从头生成。 */
@@ -1065,6 +1076,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     video: '视频',
     timeline: '视频剪辑',
   }
+  const isRealPersonAsset = isImageNode && (data as any)?.assetSource === 'real_person'
 
   return (
     <div
@@ -1076,7 +1088,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       {/* 头部：类型图标 + 标签，浮在节点上方 */}
       <div className="canvas-node-header">
         <span className="canvas-node-header__icon">{getTypeIcon(kind)}</span>
-        <span className="canvas-node-header__label">{labelMap[kind] || kind}</span>
+        <span className="canvas-node-header__label">{isRealPersonAsset ? '真人素材' : labelMap[kind] || kind}</span>
       </div>
 
       {/* 顶部操作胶囊：上传/替换 + 下载（图片/视频节点专属，与左右侧连接点图标同款交互：选中/悬停出现） */}
@@ -1938,6 +1950,7 @@ function CanvasInner() {
   const validateConnection = useCallback(
     (sourceId: string, targetId: string): string | null => {
       if (hasEdgeBetween(sourceId, targetId)) return '已存在相同连线'
+      if (wouldCreateCanvasCycle(sourceId, targetId, latestRef.current.edges)) return '不能创建循环依赖连线'
       const targetNode = latestRef.current.nodes.find((n) => n.id === targetId)
       const targetKind = (targetNode?.data?.kind as string) || 'text'
       const sourceKind = (latestRef.current.nodes.find((n) => n.id === sourceId)?.data?.kind as string) || 'text'
@@ -1945,12 +1958,22 @@ function CanvasInner() {
       if (!allowed.includes(sourceKind)) return '该节点类型不能作为此节点的参考来源'
       // 数量上限只统计素材类来源（图片/视频）；文本来源不计入（其内容拼入 prompt，可无限连接）。
       // 血缘边（截帧图 ← 源视频）同样不计入：它不参与生成，占掉参考名额纯属误伤
-      const existingRefs = latestRef.current.edges.filter((e) => {
-        if (e.target !== targetId) return false
-        if (isCanvasProvenanceEdge(e)) return false
-        const src = latestRef.current.nodes.find((n) => n.id === e.source)
-        return (src?.data?.kind as string) !== 'text'
-      }).length
+      const existingSlots = latestRef.current.edges
+        .filter((edge) => edge.target === targetId)
+        .map((edge) => Number(edge.data?.slotIndex || 0))
+      let prospectiveSlot = 0
+      while (existingSlots.includes(prospectiveSlot)) prospectiveSlot += 1
+      const prospectiveRefs = collectCanvasSourceRefs(targetId, latestRef.current.nodes, [
+        ...latestRef.current.edges,
+        {
+          id: `prospective-${sourceId}-${targetId}`,
+          source: sourceId,
+          target: targetId,
+          data: { slotIndex: prospectiveSlot },
+        },
+      ])
+      const imageRefCount = prospectiveRefs.filter((ref) => ref.kind === 'image').length
+      const videoRefCount = prospectiveRefs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length
       // 上限跟随目标节点所选模型声明的参考图数量，与 CanvasNodePanel 的槽位数保持同一来源——
       // 两边算法不一致会出现「面板给了 9 个槽，连第 6 根线却被拦下」这种自相矛盾的状态。
       // 时间线片段数和视频首尾帧是语义约束，不跟模型走。
@@ -1962,7 +1985,13 @@ function CanvasInner() {
             : (getModelReferenceImageLimit(
                 modelConstraintsByVersionRef.current.get(Number(targetNode?.data?.modelVersionId || 0)),
               ) ?? DEFAULT_MAX_REFS)
-      if (existingRefs >= maxRefs) return `参考数量已达上限（${maxRefs} 个）`
+      if ((targetKind === 'image' || targetKind === 'video') && imageRefCount > maxRefs) {
+        return `当前模型最多支持 ${maxRefs} 张参考图片`
+      }
+      if (targetKind === 'video' && videoRefCount > 1) {
+        return '视频生成只能连接一条源视频；多条视频请先汇入视频剪辑节点合成'
+      }
+      if (targetKind === 'timeline' && videoRefCount > maxRefs) return `时间线最多支持 ${maxRefs} 个视频片段`
       return null
     },
     // allowedSourceKinds 现在真的是模块常量，不必再进依赖数组，也不再需要 exhaustive-deps 豁免
@@ -1983,6 +2012,7 @@ function CanvasInner() {
    * 是因为那套状态同时驱动画布的点选模式（横幅、节点高亮），两者混用会互相干扰。
    */
   const [libraryRefTarget, setLibraryRefTarget] = useState<{ targetId: string; slotIndex: number } | null>(null)
+  const [libraryInitialTab, setLibraryInitialTab] = useState<'all' | 'real_person'>('all')
 
   /**
    * Alt 是否按下——按住时点击组内节点只选中它自己，不展开整组。
@@ -3252,8 +3282,10 @@ function CanvasInner() {
         return true
       }
 
-      const sourceKind = material.type === 'video' ? 'video' : 'image'
+      const sourceKind = normalizeCanvasMaterialType(material.type)
       const targetKind = String((target.data as Record<string, unknown> | undefined)?.kind || 'text')
+      // 真人素材也可以暂存到图片节点中作为展示/中转素材；图片节点自身的
+      // 生成会由 CanvasNodePanel 拦截，只有连接到视频节点后才可用于生成视频。
       // 先按类型拦一道：节点建出来再校验失败的话，画布上会留下一个用户没要的孤立节点
       if (!(allowedSourceKinds[targetKind] || []).includes(sourceKind)) {
         showToast(
@@ -3284,6 +3316,8 @@ function CanvasInner() {
           extraData: {
             assetId,
             resultUrl,
+            assetSource: material.realPerson ? 'real_person' : 'materials',
+            assetWorkspaceId: workspaceId,
             ...(material.realPerson ? { realPerson: material.realPerson } : {}),
           },
         },
@@ -3317,7 +3351,18 @@ function CanvasInner() {
         kind: targetKind,
         sourceRefs: [
           ...getSourceRefs(pending.targetId),
-          { kind: sourceKind, sourceId, edgeId, slotIndex: pending.slotIndex, thumbnailUrl: resultUrl },
+          {
+            kind: sourceKind,
+            sourceId,
+            edgeId,
+            slotIndex: pending.slotIndex,
+            thumbnailUrl: resultUrl,
+            // 立即把来源写入选中态，避免模型面板在边同步前把真人素材误判为普通图片参考。
+            source: material.realPerson ? 'real_person' : 'materials',
+            assetId,
+            workspaceId,
+            ...(material.realPerson ? { realPerson: material.realPerson } : {}),
+          },
         ],
         ratio: (target.data as any)?.ratio,
         videoMode: (target.data as any)?.videoMode,
@@ -3347,7 +3392,9 @@ function CanvasInner() {
       name?: string
       realPerson?: SmartRealPersonReference
     }) => {
-      const type = material.type === 'video' ? 'video' : 'image'
+      // 真人素材只能用于视频生成；即使素材本身是图片，也不能因此创建图片节点。
+      // 真人素材保留为图片节点，仅作为身份素材展示/中转；生成仍由视频节点完成。
+      const type = normalizeCanvasMaterialType(material.type)
       // 已选中节点且类型匹配（图片素材可应用到图片/文本节点，视频素材应用到视频节点）
       const targetNode = selectedNode
       if (targetNode) {
@@ -3371,6 +3418,8 @@ function CanvasInner() {
                       assetId,
                       resultUrl,
                       realPerson,
+                      assetSource: realPerson ? 'real_person' : 'materials',
+                      assetWorkspaceId: workspaceId,
                     },
                   }
                 : n,
@@ -3381,6 +3430,10 @@ function CanvasInner() {
             prev && prev.id === targetNode.id ? { ...prev, assetId, resultUrl, realPerson } : prev,
           )
           setSaveStatus('dirty')
+          return
+        }
+        if (material.realPerson) {
+          showToast('真人素材只能应用到视频节点，请先选择视频节点', 'error')
           return
         }
       }
@@ -3403,6 +3456,8 @@ function CanvasInner() {
               { assetId: Number(material.assetId || 0), resultUrl: material.src },
               workspaceId,
             ),
+            assetSource: material.realPerson ? 'real_person' : 'materials',
+            assetWorkspaceId: workspaceId,
             ...(material.realPerson ? { realPerson: material.realPerson } : {}),
           },
         },
@@ -3588,7 +3643,12 @@ function CanvasInner() {
           const nodeId = appendNewNode(
             kind,
             { x: point.x - size.width / 2, y: point.y - size.height / 2 },
-            { ratio, size, skipHistory: true, extraData: { previewUrl, uploading: true } },
+            {
+              ratio,
+              size,
+              skipHistory: true,
+              extraData: { previewUrl, uploading: true, assetSource: 'upload', assetWorkspaceId: workspaceId },
+            },
           )
           return { nodeId, file, previewUrl }
         }),
@@ -3908,11 +3968,17 @@ function CanvasInner() {
         if (selectedNode?.id === targetNodeId) handleSaveNodeText(generate.prompt)
         return
       }
+      const submitModel = (canvasModels[generate.kind as 'text' | 'image' | 'video'] || []).find(
+        (model) => Number(model.modelVersionId || 0) === Number(generate.modelVersionId || 0),
+      )
+      const submitMaxImageRefs =
+        getModelReferenceImageLimit(buildModelRestrictionSummary(submitModel?.source).constraints) ?? DEFAULT_MAX_REFS
       if (generate.kind === 'video') {
         const validationError = validateCanvasVideoInputs({
           operationCode: generate.operationCode,
           videoMode: generate.videoMode,
           sourceRefs: generate.sourceRefs || [],
+          maxImageRefs: submitMaxImageRefs,
         })
         if (validationError) {
           showToast(validationError, 'error')
@@ -3920,7 +3986,12 @@ function CanvasInner() {
         }
       }
       // 真人素材：一次生成只允许一个身份基准；连入两个不同真人时无法判断该保谁的脸。
-      const realPerson = resolveCanvasRealPersonReference(generate.sourceRefs || [])
+      // 普通画布生成与真人成片严格隔离：只有明确的真人 operation 才读取真人身份快照。
+      // 图片内容、人脸检测结果或素材缩略图都不能隐式切换业务流程。
+      const isRealPersonOperation = (generate.sourceRefs || []).some((ref) => ref.source === 'real_person')
+      const realPerson = isRealPersonOperation
+        ? resolveCanvasRealPersonReference(generate.sourceRefs || [])
+        : { reference: null, error: null }
       if (realPerson.error) {
         showToast(realPerson.error, 'error')
         return
@@ -3933,21 +4004,26 @@ function CanvasInner() {
           return
         }
       }
+      if (!isRealPersonOperation) {
+        const imageValidationError = validateCanvasImageInputs({
+          operationCode: generate.operationCode,
+          sourceRefs: generate.sourceRefs || [],
+          workspaceId,
+          maxImageRefs: submitMaxImageRefs,
+        })
+        if (imageValidationError) {
+          showToast(imageValidationError, 'error')
+          return
+        }
+      }
       // 素材角色以模型 schema 为准，与智能成片同口径；模型查不到时退回历史默认值。
-      const submitModel = (canvasModels[generate.kind as 'text' | 'image' | 'video'] || []).find(
-        (model) => Number(model.modelVersionId || 0) === Number(generate.modelVersionId || 0),
-      )
       // 身份约束必须在这里注入：润色只改用户提示词，约束由提交环节兜底，避免被润色覆盖。
       const identity = applyCanvasRealPersonIdentity({
         kind: generate.kind,
         videoMode: generate.videoMode,
         prompt: generate.prompt,
-        inputAssets: buildCanvasInputAssets(
-          generate.sourceRefs || [],
-          generate.operationCode,
-          generate.selfVideoAssetId,
-          submitModel ? resolveModelInputAssetRole(submitModel.source) : '',
-        ),
+        // 面板的费用预估已经使用这份清单，提交原样复用，避免两处规则漂移导致预估与实扣不一致。
+        inputAssets: generate.inputAssets,
         reference: realPerson.reference,
       })
       const inputAssets = identity.inputAssets
@@ -6048,16 +6124,22 @@ function CanvasInner() {
           userId={currentUserId}
           visible={drawerPanel === 'assets'}
           variant="modal"
+          initialTab={libraryInitialTab}
           onClose={() => {
             // 关掉弹窗即放弃这次「选参考」，否则下次打开素材库还会误连到上次那个节点
             setLibraryRefTarget(null)
+            setLibraryInitialTab('all')
             closeDrawerPanel()
           }}
           onApply={(material) => {
             // 「选参考」模式优先：此时素材要连到发起的节点上，而不是当作新素材落在视口中央
-            if (applyMaterialAsReference(material)) return
-            // 应用素材 → 创建对应类型的图片/视频节点到画布（弹窗保持打开，可连续应用）
-            handleApplyMaterial(material)
+            if (!applyMaterialAsReference(material)) {
+              // 应用素材 → 创建对应类型的图片/视频节点到画布
+              handleApplyMaterial(material)
+            }
+            // 单次选择完成后关闭素材弹窗，避免节点已添加但弹窗仍停留在画布上。
+            setLibraryRefTarget(null)
+            closeDrawerPanel()
           }}
         />
 
@@ -6110,8 +6192,20 @@ function CanvasInner() {
               onPickRefFromLibrary={(slotIndex) => {
                 if (!selectedNode) return
                 setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
+                setLibraryInitialTab('all')
                 openDrawerPanel('assets')
               }}
+              onOpenRealPersonLibrary={
+                selectedNode?.kind === 'video'
+                  ? () => {
+                      if (!selectedNode) return
+                      // 真人素材必须作为视频节点的输入连入画布，不能作为图片生图参考。
+                      setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: 0 })
+                      setLibraryInitialTab('real_person')
+                      openDrawerPanel('assets')
+                    }
+                  : undefined
+              }
               onRemoveRef={handleRemoveRef}
               onRatioChange={handleRatioChange}
               onVideoModeChange={handleVideoModeChange}

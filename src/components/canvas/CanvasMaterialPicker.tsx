@@ -62,6 +62,8 @@ interface CanvasMaterialPickerProps {
   visible: boolean
   position?: { x: number; y: number } | null
   variant?: 'popover' | 'drawer' | 'modal'
+  /** 打开时默认展示的素材分类。 */
+  initialTab?: TabKey
   onClose: () => void
   /** 点击「应用」时回调（解析好同源流式地址后传入） */
   onApply: (material: MaterialItem) => void
@@ -334,6 +336,7 @@ export default function CanvasMaterialPicker({
   visible,
   position,
   variant = 'popover',
+  initialTab = 'all',
   onClose,
   onApply,
 }: CanvasMaterialPickerProps) {
@@ -348,6 +351,10 @@ export default function CanvasMaterialPicker({
   // 追踪当前展示的 tab：请求完成后仅当 tab 未切换才更新界面，避免旧请求覆盖新 tab
   const tabRef = useRef<string>(tab)
   tabRef.current = tab
+
+  useEffect(() => {
+    if (visible) setTab(initialTab)
+  }, [visible, initialTab])
   // 请求序号：切换 tab 后旧请求结果直接丢弃
   const requestSeqRef = useRef(0)
 
