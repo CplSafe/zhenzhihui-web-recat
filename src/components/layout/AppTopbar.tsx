@@ -14,6 +14,7 @@ import { useUiStore } from '@/stores/ui'
 import UserAvatar from '@/components/common/UserAvatar'
 import memberIcon from '@/assets/image.png'
 import shareIcon from '@/assets/image copy 2.png'
+import NotificationBell from './NotificationBell'
 import PersonalPanel from './PersonalPanel'
 import brandLogo from '@/img/image copy 7.png'
 import { APP_VERSION } from '@/version'
@@ -203,6 +204,10 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
         </div>
       )}
       <div className="apptop__right">
+        {/* 通知铃铛:需求市场相关动态(已完成/被接单/申请结果),仅登录后展示 */}
+        {!isAnonymous && isAuthenticated && (
+          <NotificationBell userKey={String(currentUser?.id || currentUser?.user_id || currentUser?.mobile || '')} />
+        )}
         {/* 分享链接:仅登录后展示(未登录不可分享)。珊瑚圆角方块 + 链条图标 */}
         {!isAnonymous && (
           <button type="button" className="apptop__share" onClick={handleShare} disabled={shareLoading}>

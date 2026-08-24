@@ -13,6 +13,7 @@ export const SIDEBAR_ROUTE_MAP: Readonly<Record<string, string>> = Object.freeze
   'template-ecommerce': '/templates?category=ecommerce',
   distribution: '/distribution',
   team: '/team',
+  collaborations: '/collaborations',
 })
 
 /** 解析侧边栏键对应的页面路径；未上线入口返回 undefined。 */

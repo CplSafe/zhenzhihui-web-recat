@@ -1,0 +1,355 @@
+/* 发布需求右侧抽屉（设计稿「发布需求」）。 */
+
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex;
+  justify-content: flex-end;
+  animation: demandMaskIn 0.18s ease-out;
+}
+
+@keyframes demandMaskIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.drawer {
+  position: relative;
+  width: min(640px, 100%);
+  height: 100%;
+  background: #fff;
+  padding: 40px 44px 32px;
+  overflow-y: auto;
+  box-shadow: -12px 0 40px rgba(15, 23, 42, 0.12);
+  animation: demandDrawerIn 0.22s ease-out;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes demandDrawerIn {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.close {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.close:hover {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.target {
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #e6faf4;
+  color: #17806a;
+  font-size: 13px;
+}
+
+.target strong {
+  font-weight: 600;
+}
+
+.label {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 18px 0 10px;
+}
+
+.label:first-of-type {
+  margin-top: 0;
+}
+
+.input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  font-size: 14px;
+  color: #1f2937;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.input:focus {
+  border-color: #1fcfa9;
+}
+
+.input::placeholder {
+  color: #c1c7d0;
+}
+
+/* 描述框：textarea + 底部比例/时长选择 chips */
+.descBox {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.15s;
+}
+
+.descBox:focus-within {
+  border-color: #1fcfa9;
+}
+
+.descBox textarea {
+  width: 100%;
+  min-height: 110px;
+  border: none;
+  outline: none;
+  resize: vertical;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #1f2937;
+  font-family: inherit;
+}
+
+.descBox textarea::placeholder {
+  color: #c1c7d0;
+}
+
+.descChips {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 10px;
+  height: 32px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  color: #4b5563;
+  font-size: 13px;
+  background: #fff;
+}
+
+.chip select {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+/* 产品素材 */
+.materials {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.material,
+.materialAdd {
+  width: 76px;
+  height: 76px;
+  border-radius: 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+.material {
+  background: #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.material img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.materialDoc {
+  font-size: 12px;
+  font-weight: 700;
+  color: #5b6472;
+  letter-spacing: 0.5px;
+}
+
+.materialUploading {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 2px 0;
+  font-size: 10px;
+  text-align: center;
+  color: #fff;
+  background: rgba(17, 24, 39, 0.55);
+}
+
+.material button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(17, 24, 39, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.materialAdd {
+  border: 1px dashed #7edcc3;
+  background: #f2fdf9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #1fcfa9;
+  font-size: 24px;
+}
+
+.materialAdd:hover {
+  background: #e6faf4;
+}
+
+.materialAdd input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 时间 / 价格 / 数量行 */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-top: 22px;
+}
+
+.inlineField {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.inlineField > span:first-child {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  white-space: nowrap;
+}
+
+.inlineField input[type='date'] {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #1f2937;
+  outline: none;
+}
+
+.inlineField input[type='date']:focus {
+  border-color: #1fcfa9;
+}
+
+.suffixInput {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding-right: 10px;
+  transition: border-color 0.15s;
+}
+
+.suffixInput:focus-within {
+  border-color: #1fcfa9;
+}
+
+.suffixInput input {
+  width: 84px;
+  height: 100%;
+  border: none;
+  outline: none;
+  padding: 0 4px 0 10px;
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.suffixInput input::placeholder {
+  color: #c1c7d0;
+}
+
+.suffixInput em {
+  font-style: normal;
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.footer {
+  margin-top: auto;
+  padding-top: 32px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.submit {
+  min-width: 150px;
+  height: 40px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #45d4ae, #6fdec2);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    opacity 0.15s,
+    box-shadow 0.15s;
+}
+
+.submit:hover:not(:disabled) {
+  box-shadow: 0 8px 20px rgba(31, 207, 169, 0.35);
+}
+
+.submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .drawer {
+    padding: 32px 20px 24px;
+  }
+}

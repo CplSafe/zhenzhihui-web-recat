@@ -55,6 +55,7 @@ export default defineConfig({
         'src/utils/assetUrl.ts',
         'src/utils/swrCache.ts',
         'src/stores/taskCenter.ts',
+        'src/api/market.ts',
         'src/api/projectVideos.ts',
         'src/api/smartShotImage.ts',
         'src/api/smartScript.ts',

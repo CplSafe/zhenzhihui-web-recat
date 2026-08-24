@@ -1,0 +1,102 @@
+/* 顶栏通知铃铛与下拉面板（设计稿「通知」）。 */
+.notify {
+  position: relative;
+  display: inline-flex;
+}
+
+.notify__bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #ff4d4f;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.notify__bell:hover {
+  background: #f3f4f6;
+}
+
+.notify__dot {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4d4f;
+  border: 1.5px solid #fff;
+}
+
+.notify__panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -8px;
+  width: 292px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.16);
+  padding: 12px;
+  z-index: 1100;
+}
+
+.notify__panel-title {
+  font-size: 12px;
+  color: #9ca3af;
+  padding: 2px 4px 10px;
+}
+
+.notify__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notify__item {
+  position: relative;
+  padding: 10px 22px 10px 12px;
+  border-radius: 8px;
+  background: #f6f7f9;
+}
+
+.notify__item p {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #374151;
+}
+
+.notify__item time {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.notify__item-dot {
+  display: none;
+  position: absolute;
+  top: 12px;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ff4d4f;
+}
+
+.notify__item.is-unread .notify__item-dot {
+  display: block;
+}
+
+.notify__empty {
+  padding: 26px 0;
+  text-align: center;
+  font-size: 12px;
+  color: #9ca3af;
+}

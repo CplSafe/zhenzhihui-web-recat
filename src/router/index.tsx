@@ -104,6 +104,12 @@ const CanvasView = lazy(() => import('../views/CanvasView'))
 /** 无限画布列表路由组件。 */
 const CanvasListView = lazy(() => import('../views/CanvasListView'))
 const CanvasShareView = lazy(() => import('../views/CanvasShareView'))
+/** IP 创作者详情路由组件。 */
+const IpDetailView = lazy(() => import('../views/IpDetailView'))
+/** 需求市场需求详情路由组件。 */
+const DemandDetailView = lazy(() => import('../views/DemandDetailView'))
+/** 我的合作（需求发布/接单管理）路由组件。 */
+const MyCollaborationsView = lazy(() => import('../views/MyCollaborationsView'))
 
 /** 智能成片路由 state 中使用的一次性建项、重启和空间切换标记。 */
 interface SmartRouteState {
@@ -300,6 +306,10 @@ export const router = createBrowserRouter([
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },
       { path: 'home', element: lazyPage(<HomeView />), handle: { requiresAuth: false } },
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },
+      // IP 创作者主页与需求详情:与首页同为可浏览页,发起合作/申请接单在页面内鉴权。
+      { path: 'ip/:userId', element: lazyPage(<IpDetailView />), handle: { requiresAuth: false } },
+      { path: 'demand/:id', element: lazyPage(<DemandDetailView />), handle: { requiresAuth: false } },
+      { path: 'collaborations', element: lazyPage(<MyCollaborationsView />) },
       // 智能成片 / 爆款复制:免登录可进入并交互,仅「生成」动作需登录(组件内拦截)
       { path: 'smart/:id?', element: lazyPage(<WorkspaceScopedSmartCreateRoute />), handle: { requiresAuth: false } },
       {
