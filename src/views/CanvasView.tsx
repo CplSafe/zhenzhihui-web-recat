@@ -31,6 +31,7 @@ import {
   type NodeTypes,
   type NodeProps,
   ConnectionMode,
+  PanOnScrollMode,
   addEdge,
   useNodesState,
   useEdgesState,
@@ -5824,6 +5825,22 @@ function CanvasInner() {
             /* 工具栏开关：移动=画布平移（panOnDrag），拖拽=节点拖拽（nodesDraggable） */
             nodesDraggable={dragEnabled}
             panOnDrag={moveEnabled}
+            /*
+             * Mac 触控板采用设计工具式手势：
+             * - 双指滚动自由平移，不再一碰就缩放；
+             * - 双指捏合继续缩放；
+             * - Command + 双指滚动可主动缩放（React Flow 的 zoomActivationKeyCode）。
+             *
+             * panOnScroll 跟随「移动」开关，否则用户关掉画布移动后，触控板仍能偷偷把视口推走。
+             * 鼠标用户原有的拖空白平移不变，Shift + 拖动框选也不受影响。
+             */
+            panOnScroll={moveEnabled}
+            panOnScrollMode={PanOnScrollMode.Free}
+            panOnScrollSpeed={0.8}
+            zoomOnScroll={false}
+            zoomOnPinch
+            zoomActivationKeyCode="Meta"
+            preventScrolling
             snapToGrid={snapEnabled}
             snapGrid={CANVAS_SNAP_GRID}
             elementsSelectable

@@ -52,8 +52,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border: none;
   background: transparent;
   color: #333;
@@ -236,4 +236,52 @@
   color: #777;
   flex-shrink: 0;
   transition: color var(--canvas-dur-fast, 120ms) var(--canvas-ease, ease-out);
+}
+
+/*
+ * 窄屏不再把整条工具栏竖着压在左侧画布上：改为顶部横排，给节点和底部视图控件让路。
+ * 44px 按钮保持触控面积，不靠缩小按钮硬塞布局；空间不足时工具栏自身横向滚动。
+ */
+@media (max-width: 900px) {
+  .toolbar {
+    top: max(82px, env(safe-area-inset-top));
+    left: 50%;
+    max-width: calc(100vw - 32px);
+    flex-direction: row;
+    gap: 8px;
+    padding: 8px 10px;
+    overflow-x: auto;
+    overflow-y: visible;
+    animation: none;
+    transform: translateX(-50%);
+    scrollbar-width: none;
+  }
+
+  .toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toolbarLeaving {
+    animation: none;
+    opacity: 0;
+  }
+
+  .addMenu {
+    top: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    transform-origin: top center;
+    animation: none;
+  }
+
+  .toolLabel {
+    display: none;
+  }
+}
+
+@media (hover: none) {
+  /* 触屏没有可靠 hover，悬浮标签会粘住并挡住相邻按钮；title/aria-label 仍保留名称。 */
+  .toolLabel {
+    display: none;
+  }
 }
