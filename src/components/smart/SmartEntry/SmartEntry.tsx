@@ -219,6 +219,10 @@ export default function SmartEntry({
   // 切换 Tab:背景弥散位移 + 涟漪动画由 <EntryCanvasBg mode> 监听 mode 变化驱动(Canvas 实现,不卡)
   const switchMode = (m: 'video' | 'image') => {
     if (m === mode) return
+    if (m === 'image' && realPersonReferences.length > 0) {
+      showToast('已选择真人素材，真人素材仅支持生成视频', 'info')
+      return
+    }
     setMode(m)
   }
   // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
@@ -250,6 +254,12 @@ export default function SmartEntry({
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const dragDepthRef = useRef(0)
+
+  const hasSelectedRealPerson = realPersonReferences.some((reference) => Number(reference?.realPersonId) > 0)
+
+  useEffect(() => {
+    if (hasSelectedRealPerson && mode !== 'video') setMode('video')
+  }, [hasSelectedRealPerson, mode])
 
   // ── @ 引用素材:点击 @ 在光标处弹出已上传素材;选中插入「@图片N」;无素材则直接插入「@」──
   const taRef = useRef<HTMLTextAreaElement | null>(null)
@@ -291,6 +301,10 @@ export default function SmartEntry({
   // 本地图片先转成受控 data URL；过滤非图片并限制数量，避免无效文件进入后续资产上传流程。
   const pickImages = async (files: FileList | File[] | null) => {
     if (!files?.length) return
+    if (hasSelectedRealPerson) {
+      showToast('已选择真人素材，请先移除真人素材后再添加普通图片', 'info')
+      return
+    }
     const room = MAX_IMAGES - images.length
     if (room <= 0) {
       showToast(`最多上传 ${MAX_IMAGES} 张图片`, 'info')
@@ -380,7 +394,9 @@ export default function SmartEntry({
   const requiredModelOperations: readonly GenerationOperationCode[] =
     mode === 'image'
       ? [getImageGenerationOperationCode(images.length)]
-      : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
+      : hasSelectedRealPerson
+        ? Array.from(new Set([...REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video, 'image.image_to_image']))
+        : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
   // 两种模式都按「本次创作真正会用到的 operation」过滤：
   // 视频模式下 video.edit 已不属于智能成片流程（修改走视频生视频），不能再出现在模型面板里。
   const visibleModelGroups = filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations)
@@ -477,10 +493,17 @@ export default function SmartEntry({
         : modelSelectionConflicts.length > 0
           ? '当前创作参数与所选模型不兼容，请调整模型或创作参数'
           : ''
-  const hasRequiredRealPerson =
-    !isRealPersonVariant ||
-    (images.length === 1 && imageAssetIds[0] > 0 && Boolean(realPersonReferences[0]?.realPersonId))
-  const canSubmit = hasRequiredRealPerson && (isRealPersonVariant || cleanText.length > 0 || images.length > 0)
+  const hasValidSelectedRealPerson =
+    !hasSelectedRealPerson ||
+    (images.length === 1 &&
+      imageAssetIds[0] > 0 &&
+      Boolean(realPersonReferences[0]?.realPersonId) &&
+      Number(realPersonReferences[0]?.localAssetId) === Number(imageAssetIds[0]))
+  const hasRequiredRealPerson = !isRealPersonVariant || hasValidSelectedRealPerson
+  const canSubmit =
+    hasRequiredRealPerson &&
+    hasValidSelectedRealPerson &&
+    (isRealPersonVariant || cleanText.length > 0 || images.length > 0)
   // 恢复态:已有生成结果且当前在视频 Tab → 发送按钮变「下一步」,并显示「重新生成」
   const resumeMode = !!canResume && mode === (initial?.mode || 'video')
   const updateGenerationModel = (groupKey: string, modelId: number | string, subgroupKey?: string) => {
@@ -544,7 +567,7 @@ export default function SmartEntry({
         imageCount: images.length,
         images,
         ...(imageAssetIds.some((assetId) => assetId > 0) ? { imageAssetIds } : {}),
-        ...(isRealPersonVariant ? { realPersonReferences } : {}),
+        ...(realPersonReferences.length ? { realPersonReferences } : {}),
         ...(mode === 'image' ? { outputCount } : {}),
         skill: mode === 'video' && skill ? skill : undefined,
         ...(Object.keys(generationModels).length ? { generationModels } : {}),
@@ -687,7 +710,7 @@ export default function SmartEntry({
                   </button>
                 </div>
               ))}
-              {!isRealPersonVariant && images.length < MAX_IMAGES && (
+              {!isRealPersonVariant && !hasSelectedRealPerson && images.length < MAX_IMAGES && (
                 <button
                   type="button"
                   className={styles.add}
@@ -742,6 +765,15 @@ export default function SmartEntry({
                     fill="#909090"
                   />
                 </svg>
+              </button>
+            )}
+            {!isRealPersonVariant && mode === 'video' && !hasSelectedRealPerson && (
+              <button
+                type="button"
+                className={styles.realPersonPickerBtn}
+                onClick={() => setRealPersonPickerOpen(true)}
+              >
+                选择真人素材
               </button>
             )}
             {!isRealPersonVariant && (
@@ -1014,10 +1046,11 @@ export default function SmartEntry({
         </div>
       </div>
       <RealPersonMaterialPicker
-        open={isRealPersonVariant && realPersonPickerOpen}
+        open={realPersonPickerOpen}
         workspaceId={workspaceId}
         onClose={() => setRealPersonPickerOpen(false)}
         onSelect={(url, reference) => {
+          setMode('video')
           setImages([url])
           setImageAssetIds([reference.localAssetId])
           setRealPersonReferences([reference])
