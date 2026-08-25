@@ -226,3 +226,19 @@ export function requireRealPersonPreservationForShots(
     return reference
   })
 }
+
+/**
+ * 将供应商的人脸隐私拒绝转换成可执行的产品提示。
+ * 不再通过透明挖脸重试：那会破坏参考帧的人脸连续性并产生明显“贴脸”效果。
+ */
+export function getFacePrivacyGenerationMessage(message: string): string {
+  const normalized = String(message || '').trim()
+  if (
+    !/(?:InputImageSensitiveContentDetected\.PrivacyInformation|PrivacyInformation|人脸.{0,8}(?:隐私|敏感)|隐私.{0,8}人脸)/i.test(
+      normalized,
+    )
+  ) {
+    return normalized
+  }
+  return '当前视频模型限制了这张人物图片。请改用已认证真人素材，或选择支持人物参考图的视频模型后重试；系统不会通过挖空人脸降低成片质量。'
+}

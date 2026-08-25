@@ -4,6 +4,7 @@ import {
   buildRealPersonVideoIdentityConstraint,
   buildRealPersonVideoIdentityPrompt,
   createSmartRealPersonReference,
+  getFacePrivacyGenerationMessage,
   isReadyRealPersonAsset,
   isRealPersonReferenceStillAuthorized,
   isVerifiedRealPerson,
@@ -175,5 +176,13 @@ describe('smartRealPerson', () => {
         registry,
       ),
     ).toThrow('镜头2缺少唯一且有效的真人素材')
+  })
+
+  it('将模型的人脸隐私限制转换为认证或换模型提示，不建议挖脸重试', () => {
+    expect(
+      getFacePrivacyGenerationMessage('InputImageSensitiveContentDetected.PrivacyInformation: rejected'),
+    ).toContain('请改用已认证真人素材')
+    expect(getFacePrivacyGenerationMessage('图片包含人脸隐私敏感信息')).toContain('不会通过挖空人脸')
+    expect(getFacePrivacyGenerationMessage('网络连接失败')).toBe('网络连接失败')
   })
 })

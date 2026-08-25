@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { buildFullVideoInputAssets, compileFullVideoModelRequest, compileVideoEditModelRequest } from '@/api/smartVideo'
+import {
+  buildFullVideoInputAssets,
+  canReuseOriginalVideoFrameAssets,
+  compileFullVideoModelRequest,
+  compileVideoEditModelRequest,
+} from '@/api/smartVideo'
 
 describe('buildFullVideoInputAssets', () => {
+  it('只复用逐项等于原始分镜的缓存，拒绝历史挖脸替换资产', () => {
+    expect(canReuseOriginalVideoFrameAssets([11, 12], [11, 12], 2)).toBe(true)
+    expect(canReuseOriginalVideoFrameAssets([11, 12], [91, 92], 2)).toBe(false)
+    expect(canReuseOriginalVideoFrameAssets([11, 12], [11], 2)).toBe(false)
+    expect(canReuseOriginalVideoFrameAssets([], [], 0)).toBe(true)
+  })
+
   it('keeps the shot images on the model-declared role', () => {
     expect(buildFullVideoInputAssets({ imageAssetIds: [11, 12], imageRole: 'reference_image' })).toEqual([
       { asset_id: 11, role: 'reference_image' },

@@ -22,6 +22,10 @@ import localLifeIcon from '@/assets/sidebar/local-life.svg'
 import localLifeActiveIcon from '@/assets/sidebar/local-life-active.svg'
 import ecommerceIcon from '@/assets/sidebar/ecommerce.svg'
 import ecommerceActiveIcon from '@/assets/sidebar/ecommerce-active.svg'
+import agentJoinIcon from '@/assets/sidebar/agent-join.svg'
+import ipJoinIcon from '@/assets/sidebar/ip-join.svg'
+import cooperationIcon from '@/assets/sidebar/cooperation.svg'
+import cooperationActiveIcon from '@/assets/sidebar/cooperation-active.svg'
 import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
 import SidebarTeamGroup from './SidebarTeamGroup'
@@ -74,6 +78,25 @@ const GROUPS: SidebarGroup[] = [
     ],
   },
 ]
+
+/**
+ * 「其他」分组（设计稿 2.1 IP/需求市场）：我的合作已上线；
+ * 代理商入驻 / IP入驻 尚未开放，不在 SIDEBAR_ROUTE_MAP 中，点击弹「功能待开放」。
+ */
+const OTHERS_GROUP: SidebarGroup = {
+  title: '其他',
+  items: [
+    { key: 'agent-join', label: '代理商入驻', icon: agentJoinIcon, iconSize: 14 },
+    { key: 'ip-join', label: 'IP入驻', icon: ipJoinIcon, iconSize: 14 },
+    {
+      key: 'collaborations',
+      label: '我的合作',
+      icon: cooperationIcon,
+      activeIcon: cooperationActiveIcon,
+      iconSize: 14,
+    },
+  ],
+}
 
 const TEMPLATE_GROUP: SidebarGroup = {
   title: '模板库',
@@ -221,6 +244,12 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
 
           {/* 团队：当前空间下拉 + 空间切换浮层 + 数据统计/团队管理(团队空间) */}
           <SidebarTeamGroup collapsed={collapsed} />
+
+          {/* 其他：代理商入驻 / IP入驻（待开放）+ 我的合作 */}
+          <div className="app-sidebar__group">
+            <div className="app-sidebar__group-title">{OTHERS_GROUP.title}</div>
+            {OTHERS_GROUP.items.map(renderItem)}
+          </div>
 
           {SHOW_TEMPLATE_GROUP ? (
             <div className="app-sidebar__group app-sidebar__template-group">

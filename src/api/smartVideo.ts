@@ -263,6 +263,16 @@ export function buildFullVideoInputAssets(args: {
   return assets
 }
 
+/** 仅复用与原始分镜逐项一致的缓存，拒绝旧版透明挖脸等替换资产。 */
+export function canReuseOriginalVideoFrameAssets(
+  sourceAssetIds: number[],
+  preparedAssetIds: number[],
+  expectedCount: number,
+): boolean {
+  if (sourceAssetIds.length !== expectedCount || preparedAssetIds.length !== expectedCount) return false
+  return preparedAssetIds.every((id, index) => Number(id) > 0 && Number(id) === Number(sourceAssetIds[index]))
+}
+
 export interface FullVideoModelRequestCompilation {
   modelVersionId: number
   modelVersion: any

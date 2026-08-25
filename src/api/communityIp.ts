@@ -1,5 +1,11 @@
 /** 首页 IP 创作者与需求市场接口。 */
 
+/** 创作者绑定的外部平台（后端暂未建模，字段名做多种兼容，缺省为空数组）。 */
+export interface CommunityIpPlatform {
+  name: string
+  followers: number
+}
+
 export interface CommunityIpProfile {
   id: number
   name: string
@@ -9,6 +15,10 @@ export interface CommunityIpProfile {
   averageOrderValue: number
   avatar: string
   bio: string
+  platforms: CommunityIpPlatform[]
+  followingCount: number
+  publishedWorkCount: number
+  openDemandCount: number
 }
 
 export interface CommunityIpPage {
@@ -39,6 +49,25 @@ function unwrapItems(payload: any): any[] {
   return []
 }
 
+/** 兼容多种平台字段形态：[{name/platform, followers/follower_count}] 或 {抖音: 22000} 映射。 */
+function normalizePlatforms(raw: any): CommunityIpPlatform[] {
+  const source = raw?.platforms ?? raw?.platform_list ?? raw?.social_platforms
+  if (Array.isArray(source)) {
+    return source
+      .map((item: any) => ({
+        name: text(item?.name, item?.platform, item?.title),
+        followers: number(item?.followers, item?.follower_count, item?.fans),
+      }))
+      .filter((item) => item.name)
+  }
+  if (source && typeof source === 'object') {
+    return Object.entries(source)
+      .map(([name, followers]) => ({ name: name.trim(), followers: number(followers) }))
+      .filter((item) => item.name)
+  }
+  return []
+}
+
 /** 兼容社区公开主页当前及后续可能扩展的字段名。 */
 export function normalizeCommunityIp(raw: any): CommunityIpProfile {
   const user = raw?.user && typeof raw.user === 'object' ? raw.user : raw
@@ -57,6 +86,10 @@ export function normalizeCommunityIp(raw: any): CommunityIpProfile {
     ),
     avatar: text(raw?.avatar_url, raw?.avatar, user?.avatar_url, user?.avatar),
     bio: text(raw?.bio, profile?.bio, raw?.introduction, raw?.description),
+    platforms: normalizePlatforms(raw).length ? normalizePlatforms(raw) : normalizePlatforms(profile),
+    followingCount: number(raw?.following_count, profile?.following_count),
+    publishedWorkCount: number(raw?.published_work_count, profile?.published_work_count),
+    openDemandCount: number(raw?.open_demand_count, profile?.open_demand_count),
   }
 }
 
@@ -111,24 +144,56 @@ export async function getCommunityIp(userId: number, signal?: AbortSignal): Prom
   return normalizeCommunityIp(payload?.data)
 }
 
-/** POST /api/v1/market/demands：为所选 IP 创建一条视频制作需求草稿。 */
-export async function createIpDemand(profile: CommunityIpProfile, requirement: string): Promise<number> {
-  const description = [`目标创作者：${profile.name}（用户ID：${profile.id}）`, requirement.trim()]
-    .filter(Boolean)
-    .join('\n\n')
-  const response = await fetch('/api/v1/market/demands', {
-    method: 'POST',
+/** IP 详情页作品展示用的公开作品条目。 */
+export interface CommunityWorkItem {
+  id: number
+  title: string
+  coverUrl: string
+  mediaUrl: string
+  mediaType: 'image' | 'video'
+}
+
+/** 从作品的 cover_asset / assets 里挑出可展示的封面与媒体地址。 */
+export function normalizeCommunityWork(raw: any): CommunityWorkItem {
+  const assets: any[] = Array.isArray(raw?.assets) ? raw.assets : []
+  const cover = raw?.cover_asset && typeof raw.cover_asset === 'object' ? raw.cover_asset : null
+  const isVideo = (asset: any) =>
+    String(asset?.type || '').includes('video') || String(asset?.mime_type || '').startsWith('video/')
+  const media = assets.find((asset) => text(asset?.url)) || cover
+  return {
+    id: number(raw?.id),
+    title: text(raw?.title, '未命名作品'),
+    coverUrl: text(cover?.url, assets.find((asset) => !isVideo(asset))?.url),
+    mediaUrl: text(media?.url),
+    mediaType: media && isVideo(media) ? 'video' : 'image',
+  }
+}
+
+/** GET /api/v1/community/works：某位创作者的公开作品（IP 详情页作品展示）。 */
+export async function listCommunityWorks({
+  userId,
+  limit = 60,
+  offset = 0,
+  signal,
+}: {
+  userId: number
+  limit?: number
+  offset?: number
+  signal?: AbortSignal
+}): Promise<{ items: CommunityWorkItem[]; total: number }> {
+  const params = new URLSearchParams({
+    user_id: String(Math.floor(userId)),
+    limit: String(Math.min(100, Math.max(1, limit))),
+    offset: String(Math.max(0, offset)),
+  })
+  const response = await fetch(`/api/v1/community/works?${params}`, {
     credentials: 'include',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: `与 ${profile.name} 合作制作视频`,
-      description,
-      category: 'video',
-      budget_type: 'negotiable',
-      budget_cents: 0,
-      currency: 'CNY',
-    }),
+    headers: { Accept: 'application/json' },
+    signal,
   })
   const payload = await readPayload(response)
-  return number(payload?.data?.id, payload?.data?.demand_id)
+  const items = unwrapItems(payload)
+    .map(normalizeCommunityWork)
+    .filter((item) => item.id > 0)
+  return { items, total: number(payload?.data?.total, items.length) }
 }
