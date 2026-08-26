@@ -132,7 +132,7 @@ describe('CanvasNodePanel 模型选择器', () => {
 
     const selector = screen.getByRole('button', { name: '可用模型 A' })
     await user.click(selector)
-    expect(screen.getByRole('button', { name: '可用模型 B' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '可用模型 B' })).toBeInTheDocument()
   })
 })
 
@@ -295,8 +295,8 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
 
     // 以前这段内容只在提交时被静默前置，界面上毫无痕迹，用户只会以为文本没跟过来
     expect(screen.getByText('一只橘猫坐在窗台上')).toBeInTheDocument()
-    expect(screen.getByText('来自文本节点')).toBeInTheDocument()
-    expect(screen.getByText('提交时这段内容会拼在下方输入框之前')).toBeInTheDocument()
+    expect(screen.getByText('继承文本')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '转为本节点提示词' })).toBeInTheDocument()
     // 自己的提示词仍在输入框里独立编辑
     expect(screen.getByDisplayValue('再加一点暖光')).toBeInTheDocument()
   })
@@ -379,9 +379,8 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
       ],
     })
 
-    expect(screen.getByText('来自文本节点 · 2 段')).toBeInTheDocument()
-    expect(screen.getByText('第一段')).toBeInTheDocument()
-    expect(screen.getByText('第二段')).toBeInTheDocument()
+    expect(screen.getByText('继承文本')).toBeInTheDocument()
+    expect(screen.getByText('第一段 / 第二段')).toBeInTheDocument()
   })
 
   it('没有文本来源时不出现这块区域，输入框保持原样', () => {
@@ -389,22 +388,14 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
     expect(screen.queryByText(/来自文本节点/)).not.toBeInTheDocument()
   })
 
-  it('默认收起，展开后可再收起——长提示词不该一上来就把输入框挤出面板', async () => {
-    const user = userEvent.setup()
+  it('长继承文本保持紧凑展示且不增加展开控件', () => {
+    const long = '很长的一段提示词'.repeat(20)
     renderPanel([{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }], textNode, {
-      inheritedTexts: [{ sourceId: 'node-text', edgeId: 'e-text', text: '很长的一段提示词'.repeat(20) }],
+      inheritedTexts: [{ sourceId: 'node-text', edgeId: 'e-text', text: long }],
     })
 
-    const toggle = screen.getByRole('button', { name: '展开' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-
-    await user.click(toggle)
-    const collapse = screen.getByRole('button', { name: '收起' })
-    expect(collapse).toHaveAttribute('aria-expanded', 'true')
-
-    // 收起态下正文仍在 DOM 里（只是被裁剪显示），拼接不受展开与否影响
-    await user.click(collapse)
-    expect(screen.getByRole('button', { name: '展开' })).toBeInTheDocument()
+    expect(screen.getByText(long)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '展开' })).not.toBeInTheDocument()
   })
 
   it('收起状态不影响提交内容：发出去的仍是完整文本', async () => {
@@ -429,7 +420,7 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
       onAdoptInheritedText,
     })
 
-    await user.click(screen.getByRole('button', { name: '转为可编辑' }))
+    await user.click(screen.getByRole('button', { name: '转为本节点提示词' }))
     expect(onAdoptInheritedText).toHaveBeenCalledTimes(1)
   })
 })
