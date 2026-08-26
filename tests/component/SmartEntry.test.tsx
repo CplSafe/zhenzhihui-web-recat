@@ -97,7 +97,8 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.getByRole('button', { name: '视频时长' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '从真人素材库选择' })).toBeInTheDocument()
     expect(screen.getByText('必选项 · 未选择无法开始制作')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
+    // 与上面那句必选文案一致:没选真人就不能开始制作。
+    expect(screen.getByRole('button', { name: '去制作' })).toBeDisabled()
     expect(screen.queryByLabelText('选择上传图片')).not.toBeInTheDocument()
   })
 
@@ -124,7 +125,39 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     )
 
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
+    // 真人变体不走本地上传,但可以从素材库继续加人(多人同框)。
     expect(screen.queryByRole('button', { name: '继续上传' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '继续添加真人素材' })).toBeInTheDocument()
+  })
+
+  /**
+   * 多人同框、真人配产品图都是常见广告场景。后端逐个 asset 查真人库并各自校验授权，
+   * 并不要求素材列表里只有一个真人——限制只存在于前端，且随「准备素材」步一起失去了理由。
+   */
+  it('keeps multiple real-person references and matches them to assets by id', () => {
+    const person = (realPersonId: number, localAssetId: number, personName: string) => ({
+      realPersonId,
+      mappingId: realPersonId * 2,
+      localAssetId,
+      personName,
+      verificationStatus: 'verified' as const,
+      assetStatus: 'ready' as const,
+    })
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        initial={{
+          images: ['https://assets.example/a.jpg', 'https://assets.example/b.jpg', 'data:product'],
+          imageAssetIds: [731, 732, 733],
+          realPersonReferences: [person(13, 731, '甲'), person(14, 732, '乙')],
+        }}
+      />,
+    )
+
+    // 两个真人 + 一张产品图共用同一份素材列表，都会作为参考图提交。
+    expect(screen.getAllByRole('button', { name: '移除' })).toHaveLength(3)
+    expect(screen.getByText('3/9 张参考图')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
   })
 
   it('does not expose the removed AI guide controls', () => {

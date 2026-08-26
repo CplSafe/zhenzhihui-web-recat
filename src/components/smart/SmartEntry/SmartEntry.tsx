@@ -317,10 +317,6 @@ export default function SmartEntry({
   // 本地图片先转成受控 data URL；过滤非图片并限制数量，避免无效文件进入后续资产上传流程。
   const pickImages = async (files: FileList | File[] | null) => {
     if (!files?.length) return
-    if (hasSelectedRealPerson) {
-      showToast('已选择真人素材，请先移除真人素材后再添加普通图片', 'info')
-      return
-    }
     const room = referenceImageLimit - images.length
     if (room <= 0) {
       showToast(`当前模型最多支持 ${referenceImageLimit} 张参考图`, 'info')
@@ -343,9 +339,14 @@ export default function SmartEntry({
   }
   const removeImage = (index: number) => {
     const url = images[index]
+    const removedAssetId = Number(imageAssetIds[index] || 0)
     setImages((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
     setImageAssetIds((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
-    setRealPersonReferences((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
+    // 真人引用按 localAssetId 关联而不是按下标:真人与普通素材可以混着传,
+    // 下标会随普通图片的增删而错位,assetId 不会。
+    setRealPersonReferences((prev) =>
+      removedAssetId > 0 ? prev.filter((item) => Number(item?.localAssetId) !== removedAssetId) : prev,
+    )
     URL.revokeObjectURL(url)
   }
 
@@ -407,12 +408,12 @@ export default function SmartEntry({
   const cleanText = stripSkillLine(text).trim()
   // 模型只允许在入口选择。视频一次配置完整工作流；图片按当前是否有参考图，
   // 只展示并要求文生图或图生图中的一个，避免用户必须为一次创作选择两个图片模型。
+  // 选了真人不再额外要求图生图模型:真人素材曾经要先过一遍图生图重画,那一步已随
+  // 「准备素材」移除,现在真人素材原样作为参考图提交,只用得到视频模型。
   const requiredModelOperations: readonly GenerationOperationCode[] =
     mode === 'image'
       ? [getImageGenerationOperationCode(images.length)]
-      : hasSelectedRealPerson
-        ? Array.from(new Set([...REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video, 'image.image_to_image']))
-        : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
+      : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
   // 两种模式都按「本次创作真正会用到的 operation」过滤：
   // 视频模式下 video.edit 已不属于智能成片流程（修改走视频生视频），不能再出现在模型面板里。
   const visibleModelGroups = filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations)
@@ -528,13 +529,19 @@ export default function SmartEntry({
         : modelSelectionConflicts.length > 0
           ? '当前创作参数与所选模型不兼容，请调整模型或创作参数'
           : ''
+  // 每个真人引用都要仍然指向当前素材列表里的一张图(用户可能已经把它删掉了)。
+  // 不再限制「只能有一个真人」:多人同框、真人配产品图都是常见广告场景,后端逐个
+  // asset 查真人库并各自校验授权,并不要求列表里只有一个真人。
   const hasValidSelectedRealPerson =
     !hasSelectedRealPerson ||
-    (images.length === 1 &&
-      imageAssetIds[0] > 0 &&
-      Boolean(realPersonReferences[0]?.realPersonId) &&
-      Number(realPersonReferences[0]?.localAssetId) === Number(imageAssetIds[0]))
-  const hasRequiredRealPerson = !isRealPersonVariant || hasValidSelectedRealPerson
+    realPersonReferences.every(
+      (reference) =>
+        Boolean(reference?.realPersonId) &&
+        Number(reference?.localAssetId) > 0 &&
+        imageAssetIds.some((assetId) => Number(assetId) === Number(reference.localAssetId)),
+    )
+  // 真人成片必须至少选一个已认证真人;普通智能成片可选。
+  const hasRequiredRealPerson = !isRealPersonVariant || (hasSelectedRealPerson && hasValidSelectedRealPerson)
   const canSubmit =
     hasRequiredRealPerson &&
     hasValidSelectedRealPerson &&
@@ -745,12 +752,14 @@ export default function SmartEntry({
                   </button>
                 </div>
               ))}
-              {!isRealPersonVariant && !hasSelectedRealPerson && images.length < referenceImageLimit && (
+              {/* 真人变体从素材库继续加人;普通变体继续传图。两者都到模型上限为止,
+                  真人与普通素材可以混着传(后端逐个 asset 判断是不是真人)。 */}
+              {images.length < referenceImageLimit && (
                 <button
                   type="button"
                   className={styles.add}
-                  onClick={() => fileRef.current?.click()}
-                  aria-label="继续上传"
+                  onClick={() => (isRealPersonVariant ? setRealPersonPickerOpen(true) : fileRef.current?.click())}
+                  aria-label={isRealPersonVariant ? '继续添加真人素材' : '继续上传'}
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -767,11 +776,9 @@ export default function SmartEntry({
               )}
               {/* 上限跟着所选模型变，必须一直显示当前用量，否则用户不知道还能传几张、
                   也不知道为什么上传按钮消失了。 */}
-              {!isRealPersonVariant && !hasSelectedRealPerson && (
-                <span className={styles.attachmentCount} aria-live="polite">
-                  {images.length}/{referenceImageLimit} 张参考图
-                </span>
-              )}
+              <span className={styles.attachmentCount} aria-live="polite">
+                {images.length}/{referenceImageLimit} 张参考图
+              </span>
             </div>
           )}
 
@@ -809,13 +816,14 @@ export default function SmartEntry({
                 </svg>
               </button>
             )}
-            {!isRealPersonVariant && mode === 'video' && !hasSelectedRealPerson && (
+            {/* 可以继续加人:多人同框是常见广告场景,达到模型参考图上限才收起入口。 */}
+            {!isRealPersonVariant && mode === 'video' && images.length < referenceImageLimit && (
               <button
                 type="button"
                 className={styles.realPersonPickerBtn}
                 onClick={() => setRealPersonPickerOpen(true)}
               >
-                选择真人素材
+                {hasSelectedRealPerson ? '再加一个真人' : '选择真人素材'}
               </button>
             )}
             {!isRealPersonVariant && (
@@ -1093,9 +1101,20 @@ export default function SmartEntry({
         onClose={() => setRealPersonPickerOpen(false)}
         onSelect={(url, reference) => {
           setMode('video')
-          setImages([url])
-          setImageAssetIds([reference.localAssetId])
-          setRealPersonReferences([reference])
+          // 真人素材与普通素材平权:都作为参考图追加到同一份素材列表(三个数组按下标对齐,
+          // removeImage 据此同步移除)。多人同框、真人配产品图都是常见广告场景,
+          // 后端逐个 asset 查真人库、命中就换成可信资产 URI,并不限制只能有一个真人。
+          if (images.length >= referenceImageLimit) {
+            showToast(`当前模型最多支持 ${referenceImageLimit} 张参考图`, 'info')
+            return
+          }
+          if (realPersonReferences.some((item) => Number(item?.localAssetId) === Number(reference.localAssetId))) {
+            showToast('该真人素材已添加', 'info')
+            return
+          }
+          setImages((prev) => [...prev, url])
+          setImageAssetIds((prev) => [...prev, reference.localAssetId])
+          setRealPersonReferences((prev) => [...prev, reference])
         }}
       />
     </div>

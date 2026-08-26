@@ -1048,9 +1048,18 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   // 流程内切换模型后，紧接着发起的重生成必须读取这次不可变选择，不能等下一次 render 再读旧闭包。
   const entryMetaRef = useRef<EntryMeta | null>(null)
   entryMetaRef.current = entryMeta
-  /** 取本次已选真人的名字；普通智能成片选中真人素材时也必须保留身份约束。 */
+  /**
+   * 取本次已选真人的名字；普通智能成片选中真人素材时也必须保留身份约束。
+   * 支持多人同框：每个出镜人都要写进约束，只写第一个会让其余人的长相失去保护。
+   */
   const resolveRealPersonIdentityName = (): string =>
-    String(entryMetaRef.current?.realPersonReferences?.[0]?.personName || '')
+    Array.from(
+      new Set(
+        (entryMetaRef.current?.realPersonReferences || [])
+          .map((reference) => String(reference?.personName || '').trim())
+          .filter(Boolean),
+      ),
+    ).join('、')
   /**
    * 项目入口选定的真人素材是本次创作唯一的身份锚点。
    * 不依赖 AI 后续识别出的主体标签，避免标签/素材映射漂移后退回普通出图。
@@ -3069,8 +3078,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     const projectRealPersonReference = hasLockedRealPersonReference
       ? context?.realPersonReference || null
       : resolveProjectRealPersonReference()
+    // 入口可能选了多个真人，约束里要写全；resolveRealPersonIdentityName 已按入口列表汇总。
+    // context 带来的单个引用（视频修改链路）作为兜底。
     const realPersonIdentityName =
-      String(projectRealPersonReference?.personName || '') || resolveRealPersonIdentityName()
+      resolveRealPersonIdentityName() || String(projectRealPersonReference?.personName || '')
     const sourceVideo = context?.sourceVideo || { url: '', assetId: 0 }
     // 显式模型 ID 已锁定时禁止再混入全局套餐候选，避免候选顺序变化后静默切到其他模型。
     const lockedPlans: string[] = []
