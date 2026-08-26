@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   persistSmartEntryImages,
-  requireOrderedShotAssetIds,
+  requireReferenceImageAssetIds,
   scriptStreamFailureMessage,
   stableGenerationAssetKey,
 } from '@/utils/smartGenerationGuards'
@@ -19,11 +19,27 @@ describe('smartGenerationGuards', () => {
     )
   })
 
-  it('requires exactly one valid image asset for every active shot', () => {
-    const shots = [{ no: '镜头1' }, { no: '镜头2' }]
-    expect(requireOrderedShotAssetIds(shots, [11, 12])).toEqual([11, 12])
-    expect(() => requireOrderedShotAssetIds(shots, [11])).toThrow('需要 2 张')
-    expect(() => requireOrderedShotAssetIds(shots, [11, 0])).toThrow('镜头2')
+  /**
+   * 参考图不再与分镜一一对应：用户上传的素材整体作为参考图提交给视频模型，
+   * 张数由所选模型决定（Seedance 2.5 收 30 张、HappyHorse 图生视频只收 1 张）。
+   */
+  it('accepts any reference count within the model ceiling', () => {
+    expect(requireReferenceImageAssetIds([11, 12, 13], 30)).toEqual([11, 12, 13])
+    expect(requireReferenceImageAssetIds([11], 1)).toEqual([11])
+  })
+
+  it('drops unsaved assets rather than submitting a zero id the backend will reject', () => {
+    expect(requireReferenceImageAssetIds([11, 0, 12], 30)).toEqual([11, 12])
+  })
+
+  it('rejects counts above the selected model ceiling instead of silently truncating', () => {
+    // 静默截断等于把用户挑的素材悄悄丢掉；宁可拦下来让用户自己删。
+    expect(() => requireReferenceImageAssetIds([11, 12], 1)).toThrow('最多支持 1 张')
+  })
+
+  it('allows an empty reference set so pure text-to-video still works', () => {
+    expect(requireReferenceImageAssetIds([], 30)).toEqual([])
+    expect(requireReferenceImageAssetIds([0, 0], 30)).toEqual([])
   })
 
   it('persists entry images in parallel and replaces temporary URLs with durable asset URLs', async () => {

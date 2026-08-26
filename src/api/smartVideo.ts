@@ -19,7 +19,8 @@ import { normalizeSeedanceRatio } from '@/utils/videoOptions'
 import { parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoDurationValue'
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
 import { readAiTaskProgress } from '@/utils/taskProgress'
-import { requireOrderedShotAssetIds } from '@/utils/smartGenerationGuards'
+import { requireReferenceImageAssetIds } from '@/utils/smartGenerationGuards'
+import { getModelReferenceImageLimit } from '@/utils/modelInputConstraints'
 
 /** 整片生成与视频编辑的首选模型关键词。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
@@ -359,13 +360,13 @@ export function compileFullVideoModelRequest(
   // reference_mode 不属于通用视频参数构建器的字段，按模型 schema 的真实字段名追加。
   // 未声明该字段的模型（如 kling / minimax 各有自己的模式开关）不下发，避免塞入未知参数。
   //
-  // 调用方没给时不能省略这个字段：省略等于后端按 false 处理，单张参考图会被
-  // 翻译成 first_frame（"从这张图开始动"），而用户传一张商品图的意思是
-  // "照着这个商品生成"。线上现象是同一张图走 HappyHorse 能生成、走 Seedance
-  // 报「请求参数有误或所选模型不可用」。
+  // 智能成片一律走参考模式：下发的是用户上传的素材（产品图 / 真人素材），
+  // 语义是「照着这些素材生成」，而不是「从这张图开始动到那张图结束」。
+  // reference_mode=false 时后端会把前两张翻译成 first_frame / last_frame
+  //（见后端 volcengineImageRole），那是首尾帧的用法，会让产品图被当成起止画面。
   //
-  // 单图默认参考模式；两图仍默认首尾帧（那是首尾帧的标准用法）。
-  const referenceMode = args.referenceMode ?? referenceImageCount === 1
+  // 调用方显式指定时仍然尊重（首尾帧是合法用法，只是不该做本流程的默认）。
+  const referenceMode = args.referenceMode ?? true
   const referenceField = findModelParamField(getModelParamFields(model), ['reference_mode', 'referenceMode'])
   if (referenceField?.name) params[referenceField.name] = referenceMode
   return {
@@ -391,13 +392,18 @@ export function buildTimelinePrompt(args: {
   if (identityConstraint) lines.push(identityConstraint)
   lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面、旁白、字幕、音效。')
   if (args.basePrompt) lines.push(`广告描述:${args.basePrompt}`)
+  // 参考图是用户上传的素材(产品/真人),与镜头不是一一对应,所以镜号不能写成「图N」——
+  // 那会让模型把第 N 张参考图理解成第 N 个镜头的画面。
+  if ((args.shots || []).length) {
+    lines.push('参考图提供画面中出现的产品与人物形象,请在所有镜头中保持它们的外观一致,不要替换或重新设计。')
+  }
   let t = 0
   ;(args.shots || []).forEach((s, i) => {
     const dur = shotDurSec(s)
     const start = t
     const end = t + dur
     t = end
-    const frag = [`图${i + 1}（${start}-${end}s）:${s?.desc || s?.no || `分镜${i + 1}`}`]
+    const frag = [`镜头${i + 1}（${start}-${end}s）:${s?.desc || s?.no || `分镜${i + 1}`}`]
     if (s?.line) frag.push(`旁白:「${s.line}」`)
     if (s?.subtitle) frag.push(`字幕:「${s.subtitle}」`)
     if (s?.sfx) frag.push(`音效:${s.sfx}`)
@@ -478,12 +484,15 @@ export async function generateFullVideo(args: {
     (args.variationTotal && args.variationTotal > 1
       ? `\n变体要求:这是同一需求下的第 ${args.variationIndex || 1}/${args.variationTotal} 个不同版本。请保持脚本主线一致，但在构图、镜头运动、人物状态、细节节奏上给出明显不同的创意变体，避免与其他版本完全相同。`
       : '')
-  // 每个参与镜头必须按顺序对应一张已落库参考图；禁止静默过滤后拿错位/少图输入创建计费任务。
-  const imgIds = requireOrderedShotAssetIds(args.shots || [], args.imageAssetIds || [])
-
   // 已显式选择时使用页面传入模型；旧调用未选择时仍自动解析 Seedance，保持原生成链路兼容。
   // 两种路径都会让 createAiTask 走“显式模型”分支，不会在失败后静默切换模型。
   const model = await resolveFullVideoModel(args)
+  // 用户上传的素材整体作为参考图下发（不再逐镜一张图）。允许张数由所选模型声明，
+  // 超出直接拦下——静默截断会把用户挑的素材悄悄丢掉，比报错更难发现。
+  const imgIds = requireReferenceImageAssetIds(
+    args.imageAssetIds || [],
+    getModelReferenceImageLimit(model, 'video.generate'),
+  )
   const request = compileFullVideoModelRequest(model, {
     shots: args.shots,
     ratio: args.ratio,

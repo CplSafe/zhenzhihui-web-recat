@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   resolveTaskVideoResult: vi.fn(),
   waitForAiTask: vi.fn(),
   buildVideoGenerationParams: vi.fn(),
-  requireOrderedShotAssetIds: vi.fn(),
+  requireReferenceImageAssetIds: vi.fn(),
 }))
 
 vi.mock('@/api/business', () => ({
@@ -40,7 +40,7 @@ vi.mock('@/utils/taskProgress', () => ({
 }))
 
 vi.mock('@/utils/smartGenerationGuards', () => ({
-  requireOrderedShotAssetIds: mocks.requireOrderedShotAssetIds,
+  requireReferenceImageAssetIds: mocks.requireReferenceImageAssetIds,
 }))
 
 import {
@@ -68,7 +68,7 @@ describe('smart video lifecycle', () => {
       resolution: '720p',
       generate_audio: true,
     })
-    mocks.requireOrderedShotAssetIds.mockReturnValue([101])
+    mocks.requireReferenceImageAssetIds.mockReturnValue([101])
   })
 
   it('persists task_id aliases for video.edit recovery', async () => {
@@ -428,6 +428,38 @@ describe('smart video lifecycle', () => {
     )
   })
 
+  /**
+   * 用户上传的是产品图/真人素材，语义是「照着这些素材生成」。
+   * reference_mode=false 时后端会把前两张翻译成 first_frame / last_frame，
+   * 产品图会被当成视频的起止画面——那是首尾帧的用法，不是本流程要的。
+   */
+  it('defaults reference_mode to true so uploads are references, not first/last frames', () => {
+    const model = {
+      model_version_id: 77,
+      operation_codes: ['video.generate'],
+      params_schema: { fields: [{ name: 'reference_mode', type: 'boolean', default: false }] },
+    }
+    mocks.buildVideoGenerationParams.mockReturnValue({})
+
+    for (const referenceImageCount of [1, 2, 5]) {
+      const compiled = compileFullVideoModelRequest(model, {
+        shots: [{ duration: '5s' }],
+        ratio: '16:9',
+        referenceImageCount,
+      })
+      expect(compiled.params.reference_mode).toBe(true)
+    }
+
+    // 显式选首尾帧仍然生效——那是合法用法，只是不该做默认。
+    const explicit = compileFullVideoModelRequest(model, {
+      shots: [{ duration: '5s' }],
+      ratio: '16:9',
+      referenceImageCount: 2,
+      referenceMode: false,
+    })
+    expect(explicit.params.reference_mode).toBe(false)
+  })
+
   it('compiles a reference-video model role, image bounds and audio capability before estimate and submit', async () => {
     const selectedModel = {
       model_version_id: 52,
@@ -442,7 +474,7 @@ describe('smart video lifecycle', () => {
         ],
       },
     }
-    mocks.requireOrderedShotAssetIds.mockReturnValue([101, 102])
+    mocks.requireReferenceImageAssetIds.mockReturnValue([101, 102])
     mocks.buildVideoGenerationParams.mockImplementation((_model, params) => ({
       duration: params.duration,
       generate_audio: params.generateAudio,
@@ -496,7 +528,7 @@ describe('smart video lifecycle', () => {
         fields: [{ name: 'reference_images', minItems: 2, maxItems: 3 }],
       },
     }
-    mocks.requireOrderedShotAssetIds.mockReturnValue(imageAssetIds)
+    mocks.requireReferenceImageAssetIds.mockReturnValue(imageAssetIds)
 
     await expect(
       generateFullVideo({

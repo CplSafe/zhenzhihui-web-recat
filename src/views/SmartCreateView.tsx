@@ -78,7 +78,6 @@ import {
   generateFullVideo,
   resumeFullVideo,
   buildTimelinePrompt,
-  canReuseOriginalVideoFrameAssets,
   totalDurationSec,
   estimateFullVideoCost,
   compileFullVideoModelRequest,
@@ -161,10 +160,11 @@ import { useLatestCallback } from '@/composables/useLatestCallback'
 import { sanitizePersistentProjectVideoStore } from '@/utils/persistentMediaUrl'
 import {
   persistSmartEntryImages,
-  requireOrderedShotAssetIds,
+  requireReferenceImageAssetIds,
   scriptStreamFailureMessage,
   stableGenerationAssetKey,
 } from '@/utils/smartGenerationGuards'
+import { getModelReferenceImageLimit } from '@/utils/modelInputConstraints'
 import { formatSupportedDurationLabel, validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
 import { resolveShotElementReferenceAssetIds } from '@/utils/smartShotElementRefs'
 import { SMART_VIDEO_DURATIONS, parseDurationSeconds, validateVideoDurationWithin } from '@/utils/videoDurationValue'
@@ -243,7 +243,6 @@ import {
   buildRealPersonVideoIdentityPrompt,
   getFacePrivacyGenerationMessage,
   isRealPersonReferenceStillAuthorized,
-  requireRealPersonPreservationForShots,
   resolveShotRealPersonPreservation,
   type SmartRealPersonReference,
 } from '@/utils/smartRealPerson'
@@ -3042,7 +3041,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   const autoVidRef = useRef(false)
   // 人脸脱敏:正式出视频前对每张进入视频的分镜图脱敏。阶段提示 + 每镜调试信息(开发可见)
   const [blurPhase, setBlurPhase] = useState('')
-  const [blurDebug, setBlurDebug] = useState<any[]>([])
   // 视频必须使用完整分镜图。透明挖脸会迫使视频模型重新补脸，导致脸部边缘割裂和身份漂移。
   // AI 分镜直接使用原图；已认证真人在提交前另行校验授权并注入身份约束。
   const faceBlurEnabled = false
@@ -3228,140 +3226,17 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         pid,
         (async (): Promise<{ url: string; assetId: number }> => {
           const plans = lockedPlans
-          const cache: Record<string, number> = {}
-          const imageAssetIds: number[] = []
-          const lockedSourceIds = (job.sourceImageAssetIds || []).map((id) => Number(id) || 0).filter((id) => id > 0)
-          const lockedPreparedIds = (job.preparedImageAssetIds || [])
-            .map((id) => Number(id) || 0)
-            .filter((id) => id > 0)
-          const requiresProjectRealPersonPreservation = isRealPersonMode || Boolean(projectRealPersonReference)
-          if (requiresProjectRealPersonPreservation && !isValidRealPersonReference(projectRealPersonReference)) {
-            throw new Error('真人素材身份引用无效或已丢失，请重新选择已认证真人素材后再生成')
-          }
-          const shotRealPersonReferences = activeShots
-            .map(
-              (shot) => projectRealPersonReference || resolveShotRealPersonPreservation(shot, subjectAssetsRef.current),
-            )
-            .filter(isValidRealPersonReference)
-          const requiredRealPersonReferences = projectRealPersonReference
-            ? [projectRealPersonReference]
-            : isRealPersonMode
-              ? requireRealPersonPreservationForShots(activeShots, subjectAssetsRef.current)
-              : Array.from(
-                  new Map(shotRealPersonReferences.map((reference) => [reference.realPersonId, reference])).values(),
-                )
-          const hasRealPersonPreservation = requiredRealPersonReferences.length > 0
-          const authorizedRealPeople = hasRealPersonPreservation ? await listRealPeople({ workspaceId: ws }) : []
-          if (
-            hasRealPersonPreservation &&
-            requiredRealPersonReferences.some(
-              (reference) => !isRealPersonReferenceStillAuthorized(reference, authorizedRealPeople),
-            )
-          ) {
-            throw new Error('真人认证或素材授权已失效，请重新选择真人素材后再生成')
-          }
-          // 旧草稿可能缓存过“透明挖脸”资产。只有缓存资产与原始分镜逐项一致时才允许复用，
-          // 否则重新解析原始分镜，确保不会把历史脱敏图送入视频模型。
-          const canReuseBatchAssets = canReuseOriginalVideoFrameAssets(
-            lockedSourceIds,
-            lockedPreparedIds,
-            activeShots.length,
+          // 参考图 = 用户在入口上传/选择的素材（含从真人库选的真人素材）。
+          // 中间不再有任何重画环节，所以提交的就是用户自己那几张图；后端按
+          // local_asset_id 查真人库，命中的换成火山可信资产 URI 并校验授权
+          //（见后端 ResolveProviderAsset），普通素材走签名 URL。
+          const referenceAssetIds = ((lockedEntryMeta as any)?.imageAssetIds || [])
+            .map((id: any) => Number(id) || 0)
+            .filter((id: number) => id > 0)
+          const completeImageAssetIds = requireReferenceImageAssetIds(
+            referenceAssetIds,
+            getModelReferenceImageLimit(context.modelVersion, 'video.generate'),
           )
-
-          if (canReuseBatchAssets) {
-            imageAssetIds.push(...lockedPreparedIds)
-            if (updateCurrentUi())
-              setBlurDebug(
-                lockedPreparedIds.map((outAssetId, index) => ({
-                  no: activeShots[index]?.no || '',
-                  srcAssetId: lockedSourceIds[index],
-                  outAssetId,
-                  outUrl: '',
-                  status: 'batch_cached',
-                  ok: true,
-                  cached: true,
-                  noFace: outAssetId === lockedSourceIds[index],
-                })),
-              )
-          } else {
-            // ① 先确定每镜「原始分镜图」asset_id(按镜头顺序):优先已有 imageAssetId,缺则现传一次。
-            const sourceAssetIds = await Promise.all(
-              activeShots.map(async (sh, index) => {
-                const label = sh.no || `分镜 ${index + 1}`
-                if (!sh.image && !Number(sh.imageAssetId || 0)) {
-                  throw new Error(`${label}缺少分镜图，已停止本次视频生成`)
-                }
-                let id = Number(sh.imageAssetId || 0) || 0
-                if (!id && sh.image) {
-                  try {
-                    id = await ensureAssetId(ws, sh.image, cache)
-                  } catch (error: any) {
-                    throw new Error(`${label}的分镜图保存失败：${error?.message || '请稍后重试'}`)
-                  }
-                }
-                if (!id) throw new Error(`${label}的分镜图尚未保存，已停止本次视频生成`)
-                return id
-              }),
-            )
-            const completeSourceAssetIds = requireOrderedShotAssetIds(activeShots, sourceAssetIds)
-            const srcIds = activeShots.map((shot, index) => ({
-              shotId: shot.id,
-              id: completeSourceAssetIds[index],
-            }))
-
-            // ② 始终提交完整的原始分镜图。认证真人需保持授权有效；AI 分镜无需破坏人脸结构。
-            const frameDebug: any[] = []
-            for (let j = 0; j < srcIds.length; j++) {
-              const source = srcIds[j]
-              const sh = currentShots.find((shot) => shot.id === source.shotId)
-              const realPersonReference =
-                projectRealPersonReference ||
-                (sh ? resolveShotRealPersonPreservation(sh, subjectAssetsRef.current) : null)
-              if (requiresProjectRealPersonPreservation && !isValidRealPersonReference(realPersonReference)) {
-                throw new Error(`${sh?.no || `分镜 ${j + 1}`}缺少真人素材引用，已停止本次视频生成`)
-              }
-              if (
-                realPersonReference &&
-                !isRealPersonReferenceStillAuthorized(realPersonReference, authorizedRealPeople)
-              ) {
-                throw new Error(`${sh?.no || `分镜 ${j + 1}`}关联的真人认证或素材授权已失效，请重新选择真人素材`)
-              }
-              imageAssetIds.push(source.id)
-              frameDebug.push({
-                no: sh?.no || '',
-                srcAssetId: source.id,
-                outAssetId: source.id,
-                outUrl: sh?.image || '',
-                status: realPersonReference ? 'verified_real_person_original' : 'ai_storyboard_original',
-                ok: true,
-                cached: false,
-                noFace: false,
-                ...(realPersonReference ? { realPersonId: realPersonReference.realPersonId } : {}),
-              })
-            }
-            if (updateCurrentUi()) setBlurDebug(frameDebug)
-
-            if (job.batchId && srcIds.length > 0 && imageAssetIds.length === srcIds.length) {
-              const sourceImageAssetIds = srcIds.map((source) => source.id)
-              const preparedImageAssetIds = [...imageAssetIds]
-              syncVideoGenQueue(
-                sessionQueue.map((queuedJob) =>
-                  queuedJob.batchId === job.batchId
-                    ? { ...queuedJob, sourceImageAssetIds, preparedImageAssetIds }
-                    : queuedJob,
-                ),
-                sessionId,
-                sessionQueue,
-              )
-              // 在创建视频任务前先保存批次素材锁定结果，覆盖此刻刷新/切路由的恢复窗口。
-              if (updateCurrentUi()) {
-                saveSmartDraft(currentDraft(), ws)
-                if (projectIdRef.current === pid) void putSmartDraftToBackend(ws)
-              }
-            }
-          }
-          if (updateCurrentUi()) setBlurPhase('')
-          const completeImageAssetIds = requireOrderedShotAssetIds(activeShots, imageAssetIds)
           if (Number(workspaceIdRef.current || 0) !== ws) {
             throw new Error('工作空间已切换，本次视频生成已安全停止')
           }
@@ -3385,13 +3260,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             resolution: currentResolution,
             style: currentStyle,
             imageAssetIds: completeImageAssetIds,
-            // 真人成片：分镜图只是参考帧，运动生成过程仍会漂，身份约束必须显式写进整片提示词。
-            ...(hasRealPersonPreservation
-              ? {
-                  identityConstraint: buildRealPersonVideoIdentityConstraint(
-                    requiredRealPersonReferences[0]?.personName || realPersonIdentityName,
-                  ),
-                }
+            // 真人成片：参考图能带住长相，但运动生成过程仍会漂，身份约束要显式写进整片提示词。
+            // 出镜人取入口选中的真人素材（授权状态由后端在提交时校验）。
+            ...(realPersonIdentityName
+              ? { identityConstraint: buildRealPersonVideoIdentityConstraint(realPersonIdentityName) }
               : {}),
             // 「确认修改」：上一版整片以 role:'video' 一并下发，模型据此在原片基础上重新生成
             ...(editingExistingVideo ? { sourceVideoAssetId: sourceVideo.assetId } : {}),
@@ -8752,7 +8624,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             canAfford: result?.can_afford === true,
           }
         }}
-        faceBlurDebug={blurDebug}
         videoVersions={videoVersions}
         failedGenerations={[...videoGenerations]
           .filter((g) => g.status === 'failed')
