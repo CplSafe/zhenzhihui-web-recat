@@ -9,7 +9,8 @@
  */
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import AiBadge from '@/components/common/AiBadge'
-import { toCssAspectRatio } from '@/utils/aspectRatio'
+import type { CSSProperties } from 'react'
+import { parseRatio } from '@/utils/aspectRatio'
 import type { StudioMode } from '@/utils/studioParams'
 import styles from './StudioResultFeed.module.less'
 
@@ -41,7 +42,7 @@ export interface StudioResultBatch {
   items: StudioResultItem[]
   /** 该批次使用的分镜数，仅视频模式有意义。 */
   shotCount?: number
-  /** 画面比例，如 16:9；用于让占位格子从「生成中」阶段就保持正确形状。 */
+  /** 画面比例（如 "16:9"），用于生成中按目标形状占位，避免出片后卡片跳动。 */
   ratio?: string
 }
 
@@ -67,6 +68,24 @@ const FILTERS: { key: 'all' | 'image' | 'video'; label: string }[] = [
   { key: 'image', label: '图片' },
   { key: 'video', label: '视频' },
 ]
+
+/** 把进度收敛到 0~100。 */
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value))
+}
+
+/**
+ * 把 "16:9" 这类比例转成 CSS aspect-ratio。
+ * 生成中就按目标形状占位，出片后卡片不会突然改变高度。
+ *
+ * 解析走 utils/aspectRatio：历史任务回放的比例可能是全角冒号或斜杠写法，
+ * 只按半角冒号切分会解析失败、退回方形占位，出图时又跳一次。
+ */
+function itemRatioStyle(ratio?: string): CSSProperties | undefined {
+  const parsed = parseRatio(ratio)
+  if (!parsed) return undefined
+  return { '--studio-item-ratio': `${parsed.width} / ${parsed.height}` } as CSSProperties
+}
 
 /** 时间戳 → HH:mm。 */
 function formatTime(value: number): string {
@@ -198,26 +217,31 @@ export default function StudioResultFeed({
 
               {batch.prompt && <p className={styles.prompt}>{batch.prompt}</p>}
 
-              {/* 比例由该批次的生成参数决定，从「生成中」阶段就占好位，出图后不再跳变 */}
-              <div
-                className={styles.items}
-                style={{ '--frame-ratio': toCssAspectRatio(batch.ratio) } as React.CSSProperties}
-              >
+              {/* 比例由该批次的生成参数决定，逐格注入，从「生成中」阶段就占好位 */}
+              <div className={styles.items}>
                 {batch.items.map((item) => (
-                  <div key={item.id} className={styles.item}>
+                  <div key={item.id} className={styles.item} style={itemRatioStyle(batch.ratio)}>
                     {item.status === 'pending' && (
-                      <div className={styles.state}>
-                        <span className={styles.spinner} aria-hidden="true" />
-                        <span>{batch.mode === 'video' ? '视频生成中…' : '图片生成中…'}</span>
-                        {typeof item.progress === 'number' && (
-                          <span className={styles.progressTrack}>
-                            <span
-                              className={styles.progressFill}
-                              style={{ width: `${Math.min(100, Math.max(0, item.progress))}%` }}
-                            />
+                      <>
+                        <span className={styles.skeleton} aria-hidden="true" />
+                        <div className={styles.pending} role="status" aria-live="polite">
+                          <span className={styles.pendingIcon} aria-hidden="true">
+                            {batch.mode === 'video' ? '🎬' : '🖼'}
                           </span>
-                        )}
-                      </div>
+                          <span>{batch.mode === 'video' ? '视频生成中…' : '图片生成中…'}</span>
+                          {typeof item.progress === 'number' && (
+                            <>
+                              <span className={styles.percent}>{Math.round(clampPercent(item.progress))}%</span>
+                              <span className={styles.progressTrack}>
+                                <span
+                                  className={styles.progressFill}
+                                  style={{ width: `${clampPercent(item.progress)}%` }}
+                                />
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </>
                     )}
 
                     {item.status === 'failed' && (

@@ -4,6 +4,7 @@ import {
   getVideoModeSpec,
   normalizeVideoMode,
   resolveAvailableVideoModes,
+  shouldStoryboardBeforeGenerate,
   supportsAudioToggle,
   validateVideoModeImages,
   videoReferenceMode,
@@ -92,5 +93,23 @@ describe('supportsAudioToggle', () => {
   it('完全未声明 audio 时不展示开关', () => {
     expect(supportsAudioToggle({})).toBe(false)
     expect(supportsAudioToggle(undefined)).toBe(false)
+  })
+})
+
+describe('shouldStoryboardBeforeGenerate', () => {
+  it('开着智能分镜但还没有分镜时，先拆给用户确认而不是直接扣费出片', () => {
+    expect(shouldStoryboardBeforeGenerate({ mode: 'video', storyboardOn: true, shotCount: 0 })).toBe(true)
+  })
+
+  it('分镜已存在说明用户已看过，直接出片', () => {
+    expect(shouldStoryboardBeforeGenerate({ mode: 'video', storyboardOn: true, shotCount: 3 })).toBe(false)
+  })
+
+  it('关掉智能分镜就按单镜整段生成，不再拦一道', () => {
+    expect(shouldStoryboardBeforeGenerate({ mode: 'video', storyboardOn: false, shotCount: 0 })).toBe(false)
+  })
+
+  it('图片模式没有分镜概念', () => {
+    expect(shouldStoryboardBeforeGenerate({ mode: 'image', storyboardOn: true, shotCount: 0 })).toBe(false)
   })
 })

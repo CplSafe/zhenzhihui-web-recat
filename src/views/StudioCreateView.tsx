@@ -56,6 +56,7 @@ import {
   getVideoModeSpec,
   normalizeVideoMode,
   resolveAvailableVideoModes,
+  shouldStoryboardBeforeGenerate,
   validateVideoModeImages,
   videoReferenceMode,
 } from '@/utils/studioVideoMode'
@@ -96,6 +97,8 @@ export default function StudioCreateView() {
   const [customOpen, setCustomOpen] = useState(false)
   const [shots, setShots] = useState<StudioShot[]>([])
   const [scripting, setScripting] = useState(false)
+  // 已拆好分镜、等用户确认后才真正出片；避免拿着没看过的分镜白扣积分。
+  const [pendingConfirm, setPendingConfirm] = useState(false)
 
   const [submitting, setSubmitting] = useState(false)
   const [filter, setFilter] = useState<'all' | 'image' | 'video'>('all')
@@ -245,14 +248,18 @@ export default function StudioCreateView() {
   }
 
   /** 用 AI 把当前提示词拆成分镜脚本，写入分镜列表。 */
-  const runAiStoryboard = useCallback(async () => {
+  /**
+   * 调 AI 把当前提示词拆成分镜，写入分镜列表并展开面板。
+   *
+   * 返回是否成功：点「生成」时先拆分镜的流程要据此决定是否进入待确认态。
+   * 失败不阻断创作——用户仍可手动编分镜或关掉智能分镜直接出片。
+   */
+  const runAiStoryboard = useCallback(async (): Promise<boolean> => {
     const requirement = prompt.trim()
     if (!requirement) {
       showToast('请先填写创作需求，再生成智能分镜')
-      return
+      return false
     }
-    const authed = await requireAuth()
-    if (!authed) return
 
     setScripting(true)
     try {
@@ -268,16 +275,25 @@ export default function StudioCreateView() {
           if (aliveRef.current) setShots(fromScriptShots(streaming))
         },
       )
-      if (!aliveRef.current) return
-      setShots(fromScriptShots(scriptShots))
+      if (!aliveRef.current) return false
+      const next = fromScriptShots(scriptShots)
+      setShots(next)
       setCustomOpen(true)
-      showToast('智能分镜已生成，可继续调整每一镜')
+      return next.length > 0
     } catch (error: any) {
       if (aliveRef.current) showToast(getBusinessErrorMessage(error) || error?.message || '智能分镜生成失败')
+      return false
     } finally {
       if (aliveRef.current) setScripting(false)
     }
-  }, [prompt, params.ratio, params.durationSec, scriptModelVersionId, requireAuth, showToast])
+  }, [prompt, params.ratio, params.durationSec, scriptModelVersionId, showToast])
+
+  /** 手动点「用 AI 自动拆分镜」：拆完停在编辑态，由用户决定何时生成。 */
+  const handleManualStoryboard = useCallback(async () => {
+    const authed = await requireAuth()
+    if (!authed) return
+    if (await runAiStoryboard()) showToast('智能分镜已生成，可继续调整每一镜')
+  }, [requireAuth, runAiStoryboard, showToast])
 
   /**
    * 把本地参考图上传落库，返回与输入【同序】的 asset_id。
@@ -434,52 +450,67 @@ export default function StudioCreateView() {
     enabled: Boolean(selectedModel) && (Boolean(promptText) || refImages.length > 0),
   })
 
-  /** 提交一次生成：按模式分派到图片或视频链路，每条产物独立完成。 */
-  const submit = async () => {
-    const text = promptText
-
-    if (!text && !useStoryboard && !refImages.length) {
-      showToast('请先输入创作描述')
-      return
-    }
-    if (!ws) {
-      showToast('请先选择工作空间')
-      return
-    }
+  /** 提交前的统一校验；返回第一条阻塞原因，通过时返回空串。 */
+  const findSubmitBlocker = (): string => {
+    if (!promptText && !useStoryboard && !refImages.length) return '请先输入创作描述'
+    if (!ws) return '请先选择工作空间'
     if (useStoryboard) {
       const invalid = validateStudioShots(shots)
-      if (invalid) {
-        showToast(invalid)
-        return
-      }
+      if (invalid) return invalid
     }
     if (mode === 'video') {
-      // 生成模式对参考图数量有硬要求（首尾帧 1~2 张、参考生视频 1~9 张、文生视频不收图）。
+      // 生成模式对参考图数量有硬要求（首尾帧最多 2 张、参考生视频最多 9 张）。
       const invalidImages = validateVideoModeImages(videoMode, refImages.length)
-      if (invalidImages) {
-        showToast(invalidImages)
-        return
-      }
+      if (invalidImages) return invalidImages
       if (refVideos.length) {
         const invalidVideos = validateRefVideos(refVideos, refVideoLimits)
-        if (invalidVideos) {
-          showToast(invalidVideos)
-          return
-        }
+        if (invalidVideos) return invalidVideos
       }
     }
-    if (!selectedModel) {
-      showToast(modelLoading ? '模型目录加载中，请稍候' : '当前工作空间暂无可用模型')
-      return
-    }
+    if (!selectedModel) return modelLoading ? '模型目录加载中，请稍候' : '当前工作空间暂无可用模型'
     // 预估已明确算出余额不足时先拦一道，避免白跑一次上传再被后端拒绝。
     if (estimate && !estimate.canAfford) {
-      showToast(
-        `预计消耗 ${estimate.total} 积分${estimate.balance === null ? '' : `，当前余额 ${estimate.balance} 积分`}，积分不足`,
-        'error',
-      )
+      return `预计消耗 ${estimate.total} 积分${estimate.balance === null ? '' : `，当前余额 ${estimate.balance} 积分`}，积分不足`
+    }
+    return ''
+  }
+
+  /**
+   * 点「生成」的入口。
+   *
+   * 开启智能分镜但还没有分镜时，先拆一份出来让用户确认/修改，**不直接出片**——
+   * 视频生成是计费动作，让用户先看清将要生成的镜头再决定，避免拿着没看过的
+   * 分镜白扣一次积分。确认后再走 runGeneration 真正提交。
+   */
+  const submit = async () => {
+    const authed = await requireAuth()
+    if (!authed) return
+
+    if (shouldStoryboardBeforeGenerate({ mode, storyboardOn, shotCount: shots.length })) {
+      if (!promptText) {
+        showToast('请先输入创作描述')
+        return
+      }
+      if (await runAiStoryboard()) {
+        setPendingConfirm(true)
+        showToast('已拆好分镜，确认无误后点「确认生成」')
+      }
       return
     }
+
+    await runGeneration()
+  }
+
+  /** 真正创建生成任务。 */
+  const runGeneration = async () => {
+    const text = promptText
+    const blocker = findSubmitBlocker()
+    if (blocker) {
+      showToast(blocker, estimate && !estimate.canAfford ? 'error' : undefined)
+      return
+    }
+    if (!selectedModel) return
+    setPendingConfirm(false)
 
     const authed = await requireAuth()
     if (!authed) return
@@ -493,10 +524,10 @@ export default function StudioCreateView() {
       id: batchId,
       mode,
       prompt: text,
-      summary: formatParamsSummary(mode, params),
+      summary: formatParamsSummary(mode, params, paramOptions),
+      createdAt: Date.now(),
       // 比例随批次固定下来，右侧格子据此占位，生成中与出图后同形。
       ratio: params.ratio,
-      createdAt: Date.now(),
       items,
       ...(useStoryboard ? { shotCount: shots.length } : {}),
     }
@@ -754,13 +785,17 @@ export default function StudioCreateView() {
                         type="button"
                         className="studio-ghost-btn"
                         disabled={submitting || scripting || !prompt.trim()}
-                        onClick={() => void runAiStoryboard()}
+                        onClick={() => void handleManualStoryboard()}
                       >
                         {scripting ? '正在拆解分镜…' : '✦ 用 AI 自动拆分镜'}
                       </button>
                       <StudioShotList
                         shots={shots}
-                        onChange={setShots}
+                        onChange={(next) => {
+                          setShots(next)
+                          // 改过分镜就退出待确认态，避免按「确认生成」时出片内容与刚看过的不一致。
+                          setPendingConfirm(false)
+                        }}
                         onExit={() => setCustomOpen(false)}
                         targetSec={params.durationSec}
                         disabled={submitting}
@@ -801,7 +836,15 @@ export default function StudioCreateView() {
                 </span>
               </div>
               <button type="button" className="studio-submit" disabled={!canSubmit} onClick={() => void submit()}>
-                {submitting ? '生成中…' : estimate ? `生成 · ${estimate.total} 积分` : '生成'}
+                {scripting
+                  ? '正在拆解分镜…'
+                  : submitting
+                    ? '生成中…'
+                    : pendingConfirm
+                      ? `确认生成${estimate ? ` · ${estimate.total} 积分` : ''}`
+                      : estimate
+                        ? `生成 · ${estimate.total} 积分`
+                        : '生成'}
               </button>
               <p className="studio-console__disclaimer">内容由 AI 生成，请遵守平台规范，禁止用于违法用途。</p>
             </div>
