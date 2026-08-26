@@ -127,13 +127,17 @@
   border-radius: var(--radius-xl);
   overflow: hidden;
   background: var(--color-bg-app);
-  aspect-ratio: 1;
+  // 比例由父级按批次参数注入(--frame-ratio),固定不随内容变化:
+  // 生成中的占位与最终成品同形,出图时不会撑开布局造成跳变。
+  aspect-ratio: var(--frame-ratio, 1 / 1);
 }
 
 .media {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  // 格子已按生成比例开好,contain 能完整呈现成品;万一实际比例与参数不符也只留黑边,
+  // 不会像 cover 那样把画面裁掉一块。
+  object-fit: contain;
   display: block;
   cursor: zoom-in;
 }
@@ -194,6 +198,34 @@
 
 .failed {
   color: var(--color-error);
+}
+
+// 顶部哨兵本身不占视觉空间,只用来被 IntersectionObserver 观测。
+.sentinel {
+  height: 1px;
+  flex: none;
+}
+
+.loadingMore {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 4px 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+
+  .spinner {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.historyEnd {
+  padding: 4px 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  text-align: center;
 }
 
 .empty {
