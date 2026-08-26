@@ -19,7 +19,10 @@ const MAX_SINGLE_JS_BYTES = 460 * 1024
 // 以及零依赖的本地无损合成引擎（mp4 demux/mux）。合成引擎是按需 import() 的独立
 // chunk，只有点「合成」才会下载，不影响首屏与任何单个路由的体积；单 chunk 上限保持
 // 不变，仍然守着初始载荷。这里只上调「全部懒加载 chunk 之和」这条测量值。
-const MAX_TOTAL_JS_GZIP_BYTES = 900 * 1024
+// 创作台历史结果流与 Agent 对话（含 Markdown 渲染、语音输入和生成卡片）继续作为
+// 独立路由/按需功能加载。它们扩展了完整产品面，但没有增加首屏或单路由上限；为当前
+// 956 KiB 的完整产品面保留约 24 KiB 回归余量，后续异常增长仍会被 CI 拦截。
+const MAX_TOTAL_JS_GZIP_BYTES = 980 * 1024
 const MAX_IMAGE_BYTES = 450 * 1024
 const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.webp'])
 const FORBIDDEN_CLIENT_ENV_KEY =

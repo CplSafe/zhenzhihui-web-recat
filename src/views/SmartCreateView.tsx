@@ -175,6 +175,7 @@ import {
   stableGenerationAssetKey,
 } from '@/utils/smartGenerationGuards'
 import { formatSupportedDurationLabel, validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
+import { resolveShotElementReferenceAssetIds } from '@/utils/smartShotElementRefs'
 import { SMART_VIDEO_DURATIONS, parseDurationSeconds, validateVideoDurationWithin } from '@/utils/videoDurationValue'
 import {
   bindVideoModificationNote,
@@ -2852,8 +2853,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     if ((isRealPersonMode || projectRealPersonReference) && !isValidRealPersonReference(requiredRealPersonReference)) {
       throw new Error('当前镜头缺少已认证真人素材，无法生成真人画面')
     }
-    // 普通素材和上一镜只影响文字提示词，避免自动图生图；真人素材是唯一允许下发的身份参考图。
-    const refIds: number[] = requiredRealPersonReference?.localAssetId ? [requiredRealPersonReference.localAssetId] : []
+    // 当前镜头只携带脚本匹配到的上传元素；不同镜头不会互相混入无关产品。
+    const elementRefIds = resolveShotElementReferenceAssetIds(sh)
+    const refIds = Array.from(
+      new Set([
+        ...elementRefIds,
+        ...(requiredRealPersonReference?.localAssetId ? [requiredRealPersonReference.localAssetId] : []),
+      ]),
+    )
     // 是否沿用当前画面的文字语义：manual 看 carryCurrent；批量靠上一镜保持连贯。
     const carry = manual ? !!opts.carryCurrent : !!(feedback || opts.editPrompt)
     const baseUrl = carry ? sh.image || '' : manual ? '' : prevUrl
@@ -2875,6 +2882,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         ]
           .filter(Boolean)
           .join(';')
+    if (elementRefIds.length) {
+      prompt = [
+        prompt,
+        `必须携带参考图中的${elNames || '客户上传元素'}，保持其标志、文字、颜色、外形结构和比例一致，不得替换、遗漏或重新设计`,
+      ]
+        .filter(Boolean)
+        .join(';')
+    }
     if (requiredRealPersonReference) {
       prompt = buildRealPersonIdentityPrompt(prompt, requiredRealPersonReference.personName)
     }
@@ -2891,7 +2906,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       modelVersion: modelSelection.source,
       modelPlanCandidates: plans,
       ratio: entryMeta?.ratio,
-      allowTextToImageFallback: !requiredRealPersonReference,
+      // 只要镜头绑定了客户元素，就不允许静默退回文生图，否则会把产品/Logo凭空重画。
+      allowTextToImageFallback: refIds.length === 0,
       signal: opts.signal,
       onTask: opts.onTask,
     })
@@ -8743,6 +8759,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         images: mediaResult.value.images,
         imageAssetIds: mediaResult.value.imageAssetIds,
       }
+      // 新项目会在本轮异步函数中立即开始生成脚本；同步更新 ref，避免流式回调读取上传前的入口素材。
+      entryMetaRef.current = durableMeta
 
       if (!projectIdRef.current) {
         allowCreativeReplaceProjectIdRef.current = readyProjectId
@@ -9053,9 +9071,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         projectRealPersonReference?.localAssetId ||
         resolveShotRealPersonPreservation(shot, subjectAssetsRef.current)?.localAssetId,
       )
-    // 和 genShotFrame 保持同一规则：普通镜头文生图，只有真人身份参考才图生图。
-    const frameNeedsTextToImage = activeShotsForImages.some((shot) => !shotHasRealPersonReference(shot))
-    const frameNeedsImageToImage = activeShotsForImages.some(shotHasRealPersonReference)
+    const shotHasElementReference = (shot: Shot) => resolveShotElementReferenceAssetIds(shot).length > 0
+    // 和 genShotFrame 保持同一规则：绑定上传元素或真人参考的镜头走图生图，其余镜头文生图。
+    const frameNeedsTextToImage = activeShotsForImages.some(
+      (shot) => !shotHasElementReference(shot) && !shotHasRealPersonReference(shot),
+    )
+    const frameNeedsImageToImage = activeShotsForImages.some(
+      (shot) => shotHasElementReference(shot) || shotHasRealPersonReference(shot),
+    )
     const frameModelsReady =
       (!frameNeedsTextToImage || textToImageModelReady) && (!frameNeedsImageToImage || imageToImageModelReady)
     switch (step) {

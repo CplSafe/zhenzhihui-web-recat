@@ -573,6 +573,12 @@ export async function installStrictAuthenticatedApp(
       await json(route, { items: [], total: 0, offset: 0, limit: 100 })
       return
     }
+    if (method === 'GET' && (path === '/api/v1/market/me/demands' || path === '/api/v1/market/me/applications')) {
+      // 顶栏通知中心会在已认证页面加载当前用户的需求与接单状态。
+      // 这属于所有已认证路由的只读启动请求，不应被严格夹具误判为未声明调用。
+      await json(route, { items: [], total: 0, offset: 0, limit: 100 })
+      return
+    }
 
     state.unexpected.push(`${method} ${path}${url.search}`)
     await json(route, { code: 'UNEXPECTED_E2E_REQUEST', message: `${method} ${path} is not mocked` }, 500)
