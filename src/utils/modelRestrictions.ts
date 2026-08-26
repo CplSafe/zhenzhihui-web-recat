@@ -14,6 +14,7 @@ import {
   normalizeModelParamName,
 } from './modelSchema'
 import { getFallbackDurationOptions } from './creativeVideoModelKind'
+import { getModelInputConstraints } from './modelInputConstraints'
 import { parseDurationSeconds } from './videoDurationValue'
 
 export interface NumericModelConstraint {
@@ -186,6 +187,26 @@ function numericConstraintOf(
 }
 
 /**
+ * 从后端 input_constraints 读该模型的参考图上限。
+ *
+ * 目录层会把每个模型按 operation 拆开（source.operation_codes 只剩当前 operation），
+ * 所以这里取第一个 operation 即为该槽位对应的那一个。取不到约束时返回 0，
+ * 由调用方决定回退策略。
+ */
+function readInputConstraintImageLimit(model: Record<string, unknown>): number {
+  const operationCode = (Array.isArray(model.operation_codes) ? model.operation_codes : [])
+    .map((code) => String(code ?? '').trim())
+    .filter(Boolean)[0]
+  if (!operationCode) return 0
+  const { roles } = getModelInputConstraints(model, operationCode)
+  for (const role of ['image', 'reference_image']) {
+    const match = roles.find((entry) => entry.role === role)
+    if (match && match.maxCount > 0) return match.maxCount
+  }
+  return 0
+}
+
+/**
  * 读取单个后端模型的限制说明与入口兼容性约束。
  * 空 schema 或没有声明限制时返回空结果，不生成“默认限制”。
  */
@@ -281,6 +302,18 @@ export function buildModelRestrictionSummary(
   }
 
   if (requiredFields.length) constraints.requiredFields = Array.from(new Set(requiredFields))
+
+  // params_schema 没声明参考图数量时，用后端 input_constraints 的素材上限补上。
+  // 多数视频模型的 schema 不含该字段（数量限制属于 input_assets 而非 params），
+  // 此前这条约束一直是空的，入口只好硬编码 9 张——与 Seedance 2.5 的 30 张、
+  // HappyHorse i2v 的 1 张都对不上。schema 显式声明时仍以 schema 为准。
+  if (!constraints.referenceImages) {
+    const maximum = readInputConstraintImageLimit(model)
+    if (maximum > 0) {
+      constraints.referenceImages = { maximum }
+      messages.push(formatNumericRange('参考图数量', undefined, maximum, ' 张'))
+    }
+  }
 
   // 后端没有给出任何时长约束时，才回退到按模型识别的兜底档位。
   // schema 只要声明了 options 或上下限，这里就一律不介入——后端永远是权威。

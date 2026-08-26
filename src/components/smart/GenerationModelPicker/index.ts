@@ -16,6 +16,7 @@ export {
   default as GenerationModelDropdown,
   getGenerationModelDurationOptions,
   getGenerationModelRatioOptions,
+  getGenerationModelReferenceImageLimit,
   getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
   isDurationSupportedByGenerationModel,

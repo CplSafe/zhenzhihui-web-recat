@@ -234,6 +234,26 @@ export function getGenerationModelResolutionOptions(
 }
 
 /**
+ * 返回指定 operation 下「已选模型实际支持」的参考图张数上限。
+ *
+ * 与时长/分辨率/比例同源：上限来自后端（params_schema 或 input_constraints），
+ * 前端不写死。各模型差别很大——Seedance 2.5 收 30 张、2.0 收 9 张、万相 10 张、
+ * HappyHorse 图生视频只收 1 张——写死任何一个数字都会让另一些模型要么白传、
+ * 要么少传。尚未选中模型时返回 fallback，避免上传按钮无从判断。
+ */
+export function getGenerationModelReferenceImageLimit(
+  groups: GenerationModelGroup[],
+  selected: GenerationModelSelection,
+  operationCode: string,
+  fallback: number,
+): number {
+  const slot = slotsOf(groups).find((item) => item.key === operationCode)
+  const maximum = slot ? selectedModelOf(slot, selected)?.constraints?.referenceImages?.maximum : undefined
+  const limit = Math.floor(Number(maximum) || 0)
+  return limit > 0 ? limit : fallback
+}
+
+/**
  * 返回指定 operation 下「已选模型实际支持」的画面比例（去重、保持后端顺序）。
  *
  * 与时长/分辨率同源。之前只有时长和分辨率跟随模型、比例是固定五项，

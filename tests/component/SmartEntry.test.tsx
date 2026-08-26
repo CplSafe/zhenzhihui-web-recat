@@ -661,8 +661,55 @@ describe('SmartEntry uploads and recovery actions', () => {
     expect(screen.queryByRole('button', { name: '继续上传' })).not.toBeInTheDocument()
 
     await user.upload(input, file('overflow.png'))
-    expect(mocks.showToast).toHaveBeenCalledWith('最多上传 9 张图片', 'info')
+    // 上限跟着所选模型走；没选模型时回退到 9 张，提示文案也据此说明来源。
+    expect(mocks.showToast).toHaveBeenCalledWith('当前模型最多支持 9 张参考图', 'info')
     expect(screen.getAllByRole('button', { name: '移除' })).toHaveLength(9)
+  })
+
+  /**
+   * 用户上传的素材会直接作为参考图提交给视频模型，而各模型能收的张数差别很大
+   * （Seedance 2.5 收 30 张、HappyHorse 图生视频只收 1 张）。上限必须来自
+   * 后端 input_constraints，写死任何数字都会让一部分模型白传或少传。
+   */
+  it('follows the selected model reference-image ceiling instead of a fixed nine', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        initial={{ images: ['data:only-one'] }}
+        modelGroups={[
+          {
+            key: 'video',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.generate',
+                label: '视频生成模型',
+                models: [
+                  {
+                    id: 811,
+                    name: '只收一张参考图的模型',
+                    constraints: { referenceImages: { maximum: 1 } },
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '811')
+    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
+
+    // 已达该模型上限：继续上传的入口消失，用量提示显示模型真实上限而不是 9。
+    expect(screen.queryByRole('button', { name: '继续上传' })).not.toBeInTheDocument()
+    expect(screen.getByText('1/1 张参考图')).toBeInTheDocument()
+
+    await user.upload(screen.getByLabelText('选择上传图片'), file('second.png'))
+    expect(mocks.showToast).toHaveBeenCalledWith('当前模型最多支持 1 张参考图', 'info')
+    expect(screen.getAllByRole('button', { name: '移除' })).toHaveLength(1)
   })
 
   it('rejects non-image files and reports image-read failures without adding broken thumbnails', async () => {

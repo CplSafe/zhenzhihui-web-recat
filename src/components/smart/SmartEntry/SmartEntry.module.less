@@ -377,7 +377,17 @@
 .attachments {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
+}
+
+// 参考图用量：跟着缩略图行走，不额外占一行；上限随所选模型变化。
+.attachmentCount {
+  flex: 0 0 auto;
+  align-self: center;
+  color: #8a9099;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .add {

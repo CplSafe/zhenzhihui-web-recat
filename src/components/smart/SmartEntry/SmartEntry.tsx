@@ -12,6 +12,7 @@ import {
   GenerationModelDropdown,
   getGenerationModelDurationOptions,
   getGenerationModelRatioOptions,
+  getGenerationModelReferenceImageLimit,
   getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
   isGenerationModelSelectionComplete,
@@ -142,22 +143,37 @@ const DURATION_PLACEHOLDER = '选择时长'
 /** 可选的智能成片脚本。 */
 const SCRIPT_OPTIONS = [...SMART_SCRIPT_OPTIONS]
 
-/** 入口最多接收的参考图数量。 */
-const MAX_IMAGES = 9
-const IMAGE_OUTPUT_COUNT_OPTIONS = Array.from({ length: MAX_IMAGES }, (_, index) => `${index + 1}张`)
-const clampImageOutputCount = (value: unknown) => Math.min(MAX_IMAGES, Math.max(1, Math.floor(Number(value) || 1)))
+/**
+ * 图片模式单轮出图数量的上限（与参考图上限无关，后者跟随所选模型）。
+ */
+const MAX_IMAGE_OUTPUT_COUNT = 9
+const IMAGE_OUTPUT_COUNT_OPTIONS = Array.from({ length: MAX_IMAGE_OUTPUT_COUNT }, (_, index) => `${index + 1}张`)
+const clampImageOutputCount = (value: unknown) =>
+  Math.min(MAX_IMAGE_OUTPUT_COUNT, Math.max(1, Math.floor(Number(value) || 1)))
+
+/**
+ * 尚未选中视频模型时的参考图上限兜底。
+ *
+ * 参考图真实上限由所选模型决定（见 getGenerationModelReferenceImageLimit）。
+ * 没选模型时给 9：这是历史行为，也是主力模型 Seedance 2.0 的真实上限；
+ * 选定模型后立即收敛到该模型的真值。
+ */
+const FALLBACK_REFERENCE_IMAGE_LIMIT = 9
 /** 文件扩展名图片识别兜底规则。 */
 const IMAGE_FILE_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i
 
 /** 同时依据 MIME 与扩展名判断是否为可接收图片。 */
 const isImageFile = (file: File) => file.type.startsWith('image/') || IMAGE_FILE_RE.test(file.name)
 
-/** 视频模式的输入示例文案。 */
+/**
+ * 输入示例文案。不再写死张数——参考图上限跟着所选模型变（缩略图行有实时用量提示），
+ * 文案里再写一个固定数字只会和真实上限矛盾。
+ */
 const PLACEHOLDER_VIDEO =
-  '最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
+  '上传或粘贴图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 /** 图片模式的输入示例文案。 */
 const PLACEHOLDER_IMAGE =
-  '最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
+  '上传或粘贴图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 
 // 选中智能脚本后插入到输入框的提示语(高亮显示)。提交/展示前会被剥离,保持需求正文干净。
 const skillLine = (s: string) => `使用${normalizeSmartScriptName(s)}帮我优化`
@@ -305,9 +321,9 @@ export default function SmartEntry({
       showToast('已选择真人素材，请先移除真人素材后再添加普通图片', 'info')
       return
     }
-    const room = MAX_IMAGES - images.length
+    const room = referenceImageLimit - images.length
     if (room <= 0) {
-      showToast(`最多上传 ${MAX_IMAGES} 张图片`, 'info')
+      showToast(`当前模型最多支持 ${referenceImageLimit} 张参考图`, 'info')
       return
     }
     const sel = Array.from(files).filter(isImageFile).slice(0, room)
@@ -320,7 +336,7 @@ export default function SmartEntry({
       showToast(picked.length ? '部分图片读取失败，请重试' : '图片读取失败，请重试', 'error')
     }
     if (picked.length) {
-      const accepted = picked.slice(0, MAX_IMAGES - images.length)
+      const accepted = picked.slice(0, referenceImageLimit - images.length)
       setImages((prev) => [...prev, ...accepted])
       setImageAssetIds((prev) => [...prev, ...accepted.map(() => 0)])
     }
@@ -402,11 +418,12 @@ export default function SmartEntry({
   const visibleModelGroups = filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations)
   const conflictModelGroups = visibleModelGroups
   const modelSelectionComplete = isGenerationModelSelectionComplete(visibleModelGroups, generationModels)
+  // 视频模式也要报参考图数量冲突：上传的素材现在直接作为参考图提交给视频模型，
+  // 换到一个只收 1 张的模型时必须当场提示，而不是等提交被后端拒。
   const modelSelectionConflicts = getGenerationModelSelectionConflicts(conflictModelGroups, generationModels, {
     ratio,
-    ...(mode === 'video'
-      ? { durationSec: parseDurationSeconds(duration) ?? undefined, resolution }
-      : { referenceImageCount: images.length }),
+    referenceImageCount: images.length,
+    ...(mode === 'video' ? { durationSec: parseDurationSeconds(duration) ?? undefined, resolution } : {}),
   })
   // 时长档位跟随所选视频模型：schema 声明了支持哪些秒数就只展示哪些，未声明才回落 1–15 秒。
   const durationOptions = useMemo(
@@ -463,6 +480,24 @@ export default function SmartEntry({
     if (mode !== 'video') return [...RATIO_OPTIONS]
     return getGenerationModelRatioOptions(visibleModelGroups, generationModels, 'video.generate', RATIO_OPTIONS)
   }, [mode, visibleModelGroups, generationModels])
+
+  /**
+   * 参考图上限跟随所选模型（与时长/分辨率/比例同源）。
+   *
+   * 用户上传的素材会直接作为参考图提交给视频模型，各模型能收的张数差别很大，
+   * 写死 9 会让 Seedance 2.5 少传 21 张、让只收 1 张的模型白传后被后端拒。
+   * 图片模式取 image.* 槽位，视频模式取 video.generate。
+   */
+  const referenceImageLimit = useMemo(() => {
+    const operationCode: GenerationOperationCode =
+      mode === 'image' ? getImageGenerationOperationCode(images.length) : 'video.generate'
+    return getGenerationModelReferenceImageLimit(
+      visibleModelGroups,
+      generationModels,
+      operationCode,
+      FALLBACK_REFERENCE_IMAGE_LIMIT,
+    )
+  }, [mode, images.length, visibleModelGroups, generationModels])
   // 与分辨率同一条原则：用户显式选过就不再改写，只有没碰过的默认值才跟着模型收敛
   const ratioTouchedRef = useRef(false)
   const pickRatio = useCallback((value: string) => {
@@ -710,7 +745,7 @@ export default function SmartEntry({
                   </button>
                 </div>
               ))}
-              {!isRealPersonVariant && !hasSelectedRealPerson && images.length < MAX_IMAGES && (
+              {!isRealPersonVariant && !hasSelectedRealPerson && images.length < referenceImageLimit && (
                 <button
                   type="button"
                   className={styles.add}
@@ -729,6 +764,13 @@ export default function SmartEntry({
                     <path d="M12 5v14M5 12h14" />
                   </svg>
                 </button>
+              )}
+              {/* 上限跟着所选模型变，必须一直显示当前用量，否则用户不知道还能传几张、
+                  也不知道为什么上传按钮消失了。 */}
+              {!isRealPersonVariant && !hasSelectedRealPerson && (
+                <span className={styles.attachmentCount} aria-live="polite">
+                  {images.length}/{referenceImageLimit} 张参考图
+                </span>
               )}
             </div>
           )}
