@@ -30,12 +30,15 @@ import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatal
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useStudioCostEstimate } from '@/composables/useStudioCostEstimate'
+import { useStudioHistory } from '@/composables/useStudioHistory'
 import { useToast } from '@/composables/useToast'
+import { notifyGenerationDone } from '@/utils/studioNotify'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { getBusinessErrorMessage, uploadAssetFile } from '@/api/business'
 import { generateScriptShotsStream } from '@/api/smartScript'
 import { ensureAssetId, generateShotImage } from '@/api/smartShotImage'
-import { generateFullVideo } from '@/api/smartVideo'
+import { generateFullVideo, resumeFullVideo } from '@/api/smartVideo'
+import { findResumableItems } from '@/utils/studioHistory'
 import { toStudioModelChoice } from '@/utils/studioModelPresentation'
 import {
   type StudioMode,
@@ -98,7 +101,6 @@ export default function StudioCreateView() {
   const [pendingConfirm, setPendingConfirm] = useState(false)
 
   const [submitting, setSubmitting] = useState(false)
-  const [batches, setBatches] = useState<StudioResultBatch[]>([])
   const [filter, setFilter] = useState<'all' | 'image' | 'video'>('all')
 
   // 页面卸载后不再 setState，避免在途生成回调打到已卸载组件。
@@ -113,6 +115,16 @@ export default function StudioCreateView() {
   const ws = Number(workspaceId || 0)
   // 目录取 'all'：页面在图片/视频模式间切换，两类 operation 的模型都要就绪。
   const { groups, loading: modelLoading } = useGenerationModelCatalog(ws, 'all')
+
+  // 右侧结果流跨刷新累计：历史创作从后端任务列表恢复，新生成追加到尾部。
+  const {
+    batches,
+    setBatches,
+    loading: historyLoading,
+    loadingMore: historyLoadingMore,
+    hasMore: historyHasMore,
+    loadMore: loadOlderHistory,
+  } = useStudioHistory(ws)
 
   /** 每个 operation 可选的模型（含 logo、描述与后端声明的参数约束）。 */
   const modelsByOperation = useMemo(() => {
@@ -319,16 +331,74 @@ export default function StudioCreateView() {
   )
 
   /** 把某个批次内的单条产物更新为完成/失败。 */
-  const patchItem = useCallback((batchId: string, itemId: string, patch: Partial<StudioResultItem>) => {
-    if (!aliveRef.current) return
-    setBatches((current) =>
-      current.map((batch) =>
-        batch.id === batchId
-          ? { ...batch, items: batch.items.map((item) => (item.id === itemId ? { ...item, ...patch } : item)) }
-          : batch,
-      ),
-    )
+  const patchItem = useCallback(
+    (batchId: string, itemId: string, patch: Partial<StudioResultItem>) => {
+      if (!aliveRef.current) return
+      setBatches((current) =>
+        current.map((batch) =>
+          batch.id === batchId
+            ? { ...batch, items: batch.items.map((item) => (item.id === itemId ? { ...item, ...patch } : item)) }
+            : batch,
+        ),
+      )
+    },
+    [setBatches],
+  )
+
+  /** 滚动到指定批次，用于点击系统通知回到页面后定位。 */
+  const scrollToBatch = useCallback((batchId: string) => {
+    document.getElementById(`studio-batch-${batchId}`)?.scrollIntoView({ block: 'center' })
   }, [])
+
+  // 已认领续轮询的任务，避免历史刷新时对同一任务重复发起轮询。
+  const resumedTaskIdsRef = useRef<Set<number>>(new Set())
+  // 工作空间序号：切空间后在途的续轮询凭它判断自己是否已过期。
+  const resumeScopeRef = useRef(0)
+
+  // 切换工作空间后任务集合完全不同：清空认领记录，并让在途回调作废
+  // （否则旧空间的结果会打到新空间的列表上，或旧 task_id 挡住新空间的同号任务）。
+  useEffect(() => {
+    resumeScopeRef.current += 1
+    resumedTaskIdsRef.current = new Set()
+  }, [ws])
+
+  /**
+   * 续接刷新前还没跑完的视频任务。
+   *
+   * 历史流里状态仍是「生成中」的批次，如果不续轮询就会永远停在转圈上。这里凭
+   * task_id 直接续轮询到终态（不重新建任务、不重复扣积分）。
+   */
+  useEffect(() => {
+    if (!ws) return
+    const pending = findResumableItems(batches, resumedTaskIdsRef.current)
+    if (!pending.length) return
+
+    const scope = resumeScopeRef.current
+    pending.forEach(({ batchId, itemId, taskId }) => {
+      // 同步登记：本 effect 因 patchItem 触发的重跑会据此跳过该任务，不会重复轮询。
+      resumedTaskIdsRef.current.add(taskId)
+
+      void (async () => {
+        try {
+          const result = await resumeFullVideo({
+            workspaceId: ws,
+            taskId,
+            onProgress: (progress) => {
+              if (resumeScopeRef.current === scope) patchItem(batchId, itemId, { progress })
+            },
+          })
+          if (resumeScopeRef.current !== scope) return
+          patchItem(batchId, itemId, { status: 'done', url: result.url })
+        } catch (error: any) {
+          if (resumeScopeRef.current !== scope) return
+          patchItem(batchId, itemId, {
+            status: 'failed',
+            error: getBusinessErrorMessage(error) || error?.message || '生成失败',
+          })
+        }
+      })()
+    })
+  }, [batches, ws, patchItem])
 
   const promptText = prompt.trim()
   const useStoryboard = mode === 'video' && storyboardOn && shots.length > 0
@@ -456,11 +526,13 @@ export default function StudioCreateView() {
       prompt: text,
       summary: formatParamsSummary(mode, params, paramOptions),
       createdAt: Date.now(),
+      // 比例随批次固定下来，右侧格子据此占位，生成中与出图后同形。
       ratio: params.ratio,
       items,
       ...(useStoryboard ? { shotCount: shots.length } : {}),
     }
-    setBatches((current) => [batch, ...current])
+    // 聊天式排列：新的一次生成追加到底部。
+    setBatches((current) => [...current, batch])
     setSubmitting(true)
 
     try {
@@ -471,6 +543,7 @@ export default function StudioCreateView() {
       ])
 
       // 每条产物并发生成，单条失败不影响同批其他产物。
+      let succeeded = 0
       await Promise.all(
         items.map(async (item, index) => {
           try {
@@ -484,6 +557,7 @@ export default function StudioCreateView() {
                 ratio: params.ratio,
               })
               patchItem(batchId, item.id, { status: 'done', url: result.url })
+              succeeded += 1
               return
             }
 
@@ -501,9 +575,17 @@ export default function StudioCreateView() {
               ...(refVideoAssetIds.length ? { sourceVideoAssetIds: refVideoAssetIds } : {}),
               ...(paramOptions.supportsAudio ? { generateAudio: params.generateAudio } : {}),
               ...(params.count > 1 ? { variationIndex: index + 1, variationTotal: params.count } : {}),
+              // 任务一创建就把 task_id 记到【这条产物】上：刷新后凭它续轮询，而非重新生成。
+              // 一批多个视频会各自建任务，所以必须逐条记录，不能共用批次上的一个字段。
+              // 本次提交已经在轮询了，先登记为「已认领」，避免续轮询的 effect 再接一次。
+              onTask: (taskId) => {
+                resumedTaskIdsRef.current.add(taskId)
+                patchItem(batchId, item.id, { taskId })
+              },
               onProgress: (progress) => patchItem(batchId, item.id, { progress }),
             })
             patchItem(batchId, item.id, { status: 'done', url: result.url })
+            succeeded += 1
           } catch (error: any) {
             patchItem(batchId, item.id, {
               status: 'failed',
@@ -512,6 +594,16 @@ export default function StudioCreateView() {
           }
         }),
       )
+
+      // 生成成功且用户已经切走时叫他回来；页面就在眼前时不打扰（用户决策 2026-08-26）。
+      if (succeeded > 0) {
+        void notifyGenerationDone({
+          count: succeeded,
+          kind: mode,
+          prompt: text,
+          onClick: () => scrollToBatch(batchId),
+        })
+      }
     } catch (error: any) {
       // 参考图上传等前置步骤失败：整批标记失败，避免留下永久 pending。
       const message = getBusinessErrorMessage(error) || error?.message || '生成失败'
@@ -764,6 +856,10 @@ export default function StudioCreateView() {
               batches={batches}
               filter={filter}
               onFilterChange={setFilter}
+              loading={historyLoading}
+              loadingMore={historyLoadingMore}
+              hasMore={historyHasMore}
+              onLoadMore={() => void loadOlderHistory()}
               onPreview={(item) => item.url && window.open(item.url, '_blank', 'noopener,noreferrer')}
               onRetry={(target) => {
                 // 参数会由模式/模型 effect 自动收敛到目标模式的合法档位。

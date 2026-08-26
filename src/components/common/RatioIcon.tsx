@@ -5,6 +5,8 @@
  *   横屏(16:9)→ 约 18 宽的扁矩形(与原图标一样大)、竖屏(9:16)→ 高窄、1:1 → 中等方块,各比例视觉大小一致。
  * 图标宽随比例变化无妨:外层 pill 宽已由 valueMinWidth 固定,SVG 外框恒为 size×size,图标居中不推动布局。
  */
+import { parseRatio } from '@/utils/aspectRatio'
+
 /** 比例字符串与 SVG 画布尺寸。 */
 interface RatioIconProps {
   ratio?: string
@@ -16,14 +18,8 @@ const G = 14
 
 /** 将任意合法宽高比换算为画布内面积近似恒定的居中矩形。 */
 export default function RatioIcon({ ratio = '16:9', size = 20 }: RatioIconProps) {
-  const m = /(\d+(?:\.\d+)?)\s*[:：/]\s*(\d+(?:\.\d+)?)/.exec(String(ratio || ''))
-  let a = m ? Number(m[1]) : 16
-  let b = m ? Number(m[2]) : 9
-  if (!(a > 0) || !(b > 0)) {
-    a = 16
-    b = 9
-  }
-  const k = Math.sqrt(a / b)
+  const parsed = parseRatio(ratio) || { width: 16, height: 9 }
+  const k = Math.sqrt(parsed.width / parsed.height)
   const clamp = (v: number) => Math.max(7, Math.min(19, v)) // 防极端比例超出画布/过小
   const rw = clamp(G * k)
   const rh = clamp(G / k)

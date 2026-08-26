@@ -1286,7 +1286,15 @@ export async function cancelAiTask({ workspaceId, taskId, signal = undefined }) 
 }
 
 /** 按工作空间、状态、操作码和创建者分页列出 AI 任务。 */
-export function listAiTasks({ workspaceId, status = '', operationCode = '', mine, limit = 20, offset = 0 }: any = {}) {
+export function listAiTasks({
+  workspaceId,
+  status = '',
+  operationCode = '',
+  mine,
+  limit = 20,
+  offset = 0,
+  signal = undefined,
+}: any = {}) {
   const wsId = Number(workspaceId || 0)
   if (!Number.isFinite(wsId) || wsId <= 0) {
     throw new BusinessApiError('工作空间 ID 无效')
@@ -1299,7 +1307,7 @@ export function listAiTasks({ workspaceId, status = '', operationCode = '', mine
   if (status) query.set('status', String(status))
   if (operationCode) query.set('operation_code', String(operationCode))
   if (mine !== undefined && mine !== null && mine !== '') query.set('mine', String(mine))
-  return requestJson(`/api/v1/ai/tasks?${query}`)
+  return requestJson(`/api/v1/ai/tasks?${query}`, { signal })
 }
 
 /** 从各供应商响应形态中读取正安全整数任务 ID。 */

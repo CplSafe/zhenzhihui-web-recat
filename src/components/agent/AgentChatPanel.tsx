@@ -10,7 +10,7 @@
  *  - 生成前的确认闸门是钱包安全的最后一道:手动模式下必须用户点确认才提交扣费,
  *    只带 message 的追问("能不能改成10秒")绝不当作确认。
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   continueSession,
   describeGeneration,
@@ -33,9 +33,32 @@ import {
 } from '@/api/agent'
 import { uploadAssetFile } from '@/api/business'
 import Markdown from '@/components/common/Markdown'
+import { useSpeechInput } from '@/composables/useSpeechInput'
 import styles from './AgentChatPanel.module.css'
 
 /** 会话内渲染的一条内容。工具轨迹与对话消息同列展示,靠样式区分权重。 */
+/**
+ * 稳定的列表 key。
+ *
+ * 直接用下标做 key 时,status 条目进出、或流式追加导致列表长度变化,
+ * React 会认为下标之后的每一条都变了,整片重新挂载——长对话里既慢又会
+ * 让已展开的确认卡片状态丢失。这里按内容特征生成,同一条消息跨渲染保持一致。
+ */
+function entryKey(entry: Entry, index: number): string {
+  switch (entry.kind) {
+    // 确认卡片有服务端给的唯一 id,最稳。
+    case 'confirm':
+      return `confirm-${entry.call.call_id}`
+    case 'generation':
+      return `gen-${entry.callId}`
+    // status 全局只有一条,固定 key 免得它进出时影响别人。
+    case 'status':
+      return 'status'
+    default:
+      return `${entry.kind}-${index}`
+  }
+}
+
 type Entry =
   | { kind: 'user'; text: string; images?: string[] }
   | { kind: 'assistant'; text: string }
@@ -50,6 +73,10 @@ type Entry =
   | { kind: 'trace'; label: string; running?: boolean; count?: number }
   | { kind: 'question'; text: string; options: string[]; answered?: boolean }
   | { kind: 'confirm'; call: AgentPendingCall; settled?: 'done' | 'cancelled' }
+  // 生成结果。像 ChatGPT 生图那样直接长在对话里,而不是浮在顶部的独立面板——
+  // 用户看到的顺序就是「我提的要求 → 出的片子」,回溯时不必去别处找。
+  // callId 是锚点:轮询回来的产出物按它归属到这一轮。
+  | { kind: 'generation'; callId: string; count: number; mediaKind: string }
 
 /** 待发送的附件。上传完成前 url 为空,用本地预览图占位。 */
 interface Attachment {
@@ -161,28 +188,31 @@ export default function AgentChatPanel({
   // 生成中的产出物。视频要几分钟,轮询这个把进度显示出来——
   // 没有它用户提交后只看到一句「已提交」,再无下文。
   const [artifacts, setArtifacts] = useState<AgentArtifactStatus[]>([])
-  // 提交生成的那一刻先摆出占位卡,不等首轮轮询返回。
-  //
-  // 后端写完产出物、前端再轮询回来,中间有一段空白:面板的渲染条件是
-  // artifacts.length > 0,这段时间里用户点了「确认生成」却什么都没看到,
-  // 会以为流程断了。pending 用负数 artifact_id,与真实产出物不会撞 key。
-  const [pendingCards, setPendingCards] = useState<AgentArtifactStatus[]>([])
-  // 摆出占位卡时列表里已有多少条。撤占位卡要用它做基线——
-  // 直接比总数会在第二次生成时立刻撤掉(上一批的产出物已经把总数撑起来了)。
-  const pendingBaseRef = useRef(0)
+  // 对话里已声明的生成总条数。用来判断产出物是否已全部落库——
+  // 没到齐就要继续轮询,否则新提交的那批永远不会出现。
+  const expectedArtifacts = useMemo(
+    () => entries.reduce((n, e) => (e.kind === 'generation' ? n + e.count : n), 0),
+    [entries],
+  )
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [title, setTitle] = useState(initialTitle)
 
-  // 当前列表长度的镜像,供事件回调读取(setState 的闭包里拿不到最新值)。
-  const artifactCountRef = useRef(0)
   const sessionRef = useRef<number>(0)
   const abortRef = useRef<AbortController | null>(null)
   // 本轮是否收到过 delta。done 事件据此决定要不要补正文——
   // 支持流式的模型不补(会重复),不支持的必须补(否则没有回复)。
   const streamedRef = useRef(false)
+  const speech = useSpeechInput(
+    useCallback((text: string) => {
+      // 追加而非替换:用户可能先打了一半再改用说的。
+      setInput((prev) => (prev ? `${prev}${prev.endsWith(' ') ? '' : ' '}${text}` : text))
+    }, []),
+  )
   const scrollRef = useRef<HTMLDivElement>(null)
+  // 是否跟随到底部。用户往上翻时置 false,避免流式输出把他一次次拽回底部。
+  const stickToBottomRef = useRef(true)
   const barRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -203,10 +233,29 @@ export default function AgentChatPanel({
     }
   }, [])
 
+  // 自动滚动:只在用户本来就贴着底部时才跟随。
+  //
+  // 原来每次 entries 变化都无条件拉到底,流式输出时用户想往上翻看历史
+  // 会被每个字拽回去一次,根本读不了。48px 容差覆盖行高误差。
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    if (atBottom || stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+    }
   }, [entries])
+
+  // 用户手动往上翻就停止跟随,滚回底部再恢复。
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onScroll = () => {
+      stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
 
   // 卸载时中断进行中的流,避免离开页面后仍在后台跑。
   useEffect(() => () => abortRef.current?.abort(), [])
@@ -420,21 +469,10 @@ export default function AgentChatPanel({
           const kind = ev.data.kind === 'image' ? 'image' : 'video'
           const count = Math.max(1, Number(ev.data.count) || 1)
           setStatus(kind === 'image' ? '正在提交图片生成…' : '正在提交视频生成…')
-          // 按条数摆占位卡:用户选了 3 条就该立刻看到 3 张「等待中」,
-          // 只摆一张会让他以为另外两条没提交上。
-          pendingBaseRef.current = artifactCountRef.current
-          setPendingCards(
-            Array.from({ length: count }, (_, i) => ({
-              artifact_id: -(i + 1),
-              task_id: 0,
-              kind,
-              title: count > 1 ? `生成中（${i + 1}/${count}）` : '生成中',
-              status: 'submitting',
-            })),
-          )
           // 提交成功后立刻开始轮询,不等下一次自然触发。
           setPollGen((n) => n + 1)
-          push({ kind: 'trace', label: '生成视频', running: true })
+          // 占位骨架由 GenerationGroup 按 count 渲染,这里只声明「这一轮生成了几条」。
+          push({ kind: 'generation', callId: ev.data.call_id, count, mediaKind: kind })
           onGenerated?.({
             callId: ev.data.call_id,
             estimatedCredits: ev.data.estimated_credits,
@@ -591,7 +629,11 @@ export default function AgentChatPanel({
     //
     // 但有占位卡时必须继续轮:第二次生成时 artifacts 里还是上一批(全是终态),
     // 只看 hasPending 会直接 return,新视频永远不会出现在列表里。
-    if (pendingCards.length === 0 && artifacts.length > 0 && !hasPending) return
+    // 产出物已到齐且全是终态才停轮询。
+    //
+    // 只看 hasPending 不够:第二次生成时 artifacts 里还是上一批(全终态),
+    // 会直接 return,新提交的那批永远不出现。用「声明了几条」兜住这个缺口。
+    if (artifacts.length >= expectedArtifacts && artifacts.length > 0 && !hasPending) return
 
     let cancelled = false
     const tick = () => {
@@ -599,12 +641,6 @@ export default function AgentChatPanel({
         .then(({ items }) => {
           if (cancelled) return
           setArtifacts(items)
-          artifactCountRef.current = items.length
-          // 本批产出物已全部落库就撤掉占位卡,避免同一批生成显示两遍。
-          // 比的是「相对基线新增了几条」,不是总数。
-          setPendingCards((prev) =>
-            prev.length > 0 && items.length - pendingBaseRef.current >= prev.length ? [] : prev,
-          )
         })
         .catch(() => {
           // 轮询失败静默重试:网络抖动不该在对话里弹错误,
@@ -619,9 +655,8 @@ export default function AgentChatPanel({
     }
     // 依赖只放「是否还需要轮询」与触发信号,不放 artifacts 本身:
     // 放进去会让每次轮询结果都重建定时器,间隔失去意义。
-    // pendingCards 同理只取长度。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, hasPending, pollGen, pendingCards.length])
+  }, [workspaceId, hasPending, pollGen, expectedArtifacts])
 
   /** 打开历史列表并拉取。每次打开都重拉:会话在别处也可能新增。 */
   const openHistory = useCallback(() => {
@@ -646,9 +681,6 @@ export default function AgentChatPanel({
           // 换会话必须清掉上一个会话的产出物与占位卡,
           // 否则上一条对话的「生成中」会跟着显示到这条对话里。
           setArtifacts([])
-          setPendingCards([])
-          pendingBaseRef.current = 0
-          artifactCountRef.current = 0
           setTitle(session.title || '历史对话')
           setExecMode(session.exec_mode)
           if (session.model_version_id) setModelId(session.model_version_id)
@@ -680,9 +712,6 @@ export default function AgentChatPanel({
     abortRef.current?.abort()
     sessionRef.current = 0
     setArtifacts([])
-    setPendingCards([])
-    pendingBaseRef.current = 0
-    artifactCountRef.current = 0
     setEntries([])
     setAttachments([])
     setInput('')
@@ -761,10 +790,6 @@ export default function AgentChatPanel({
         </div>
       )}
 
-      {(artifacts.length > 0 || pendingCards.length > 0) && (
-        <ArtifactPanel items={artifacts.length > 0 ? artifacts : pendingCards} />
-      )}
-
       <div className={styles.scroll} ref={scrollRef}>
         {empty ? (
           <div className={styles.greeting}>
@@ -774,10 +799,11 @@ export default function AgentChatPanel({
         ) : (
           entries.map((entry, i) => (
             <EntryView
-              key={i}
+              key={entryKey(entry, i)}
               entry={entry}
               busy={running}
               workspaceId={workspaceId}
+              artifacts={artifacts}
               onAnswer={answer}
               onSettle={settleConfirm}
             />
@@ -841,6 +867,20 @@ export default function AgentChatPanel({
             }
           }}
         />
+
+        {/* 中间结果与错误:说话时要能看到「听到了什么」,
+            否则用户不知道该继续说还是重说。 */}
+        {speech.listening && (
+          <div className={styles.speechHint}>
+            <span className={styles.speechDot} />
+            {speech.interim || '正在聆听…'}
+          </div>
+        )}
+        {speech.error && (
+          <div className={styles.speechError} onClick={speech.clearError}>
+            {speech.error}
+          </div>
+        )}
 
         <div className={styles.composerBar} ref={barRef}>
           <input
@@ -912,6 +952,18 @@ export default function AgentChatPanel({
             )}
           </div>
 
+          {speech.supported && (
+            <button
+              className={`${styles.pickerBtn} ${speech.listening ? styles.micActive : ''}`}
+              onClick={speech.toggle}
+              title={speech.listening ? '停止语音输入' : '语音输入'}
+              aria-label={speech.listening ? '停止语音输入' : '语音输入'}
+              aria-pressed={speech.listening}
+            >
+              <MicIcon />
+            </button>
+          )}
+
           <div className={styles.spacer} />
 
           <div className={styles.menuWrap}>
@@ -958,32 +1010,6 @@ export default function AgentChatPanel({
         </div>
 
         {stats && <StatsBar stats={stats} open={ctxOpen} onToggle={() => setCtxOpen((v) => !v)} />}
-      </div>
-    </div>
-  )
-}
-
-/**
- * 生成产出物面板:逐条显示视频/图片的生成进度与结果。
- *
- * 对标可灵/Seedance 的在线体验——提交后要能看到「排队中 → 生成中 → 完成」,
- * 而不是一句「已提交」就没了下文。视频要几分钟,没有进度反馈用户会以为卡死。
- */
-function ArtifactPanel({ items }: { items: AgentArtifactStatus[] }) {
-  const done = items.filter((a) => TERMINAL_STATUS.has(a.status)).length
-
-  return (
-    <div className={styles.artifactPanel}>
-      <div className={styles.artifactHeader}>
-        <span>生成结果</span>
-        <span className={styles.artifactCount}>
-          {done}/{items.length} 完成
-        </span>
-      </div>
-      <div className={styles.artifactList}>
-        {items.map((a) => (
-          <ArtifactCard key={a.artifact_id} item={a} />
-        ))}
       </div>
     </div>
   )
@@ -1198,18 +1224,28 @@ function ThinkingBlock({ text }: { text: string }) {
 
 /* ── 条目渲染 ───────────────────────────────────────────── */
 
-function EntryView({
+/**
+ * 单条消息。用 memo 包住:流式逐字追加时每个字都触发一次 setEntries，
+ * 不记忆化的话整个列表每来一个字就全量重渲染一遍——长对话里这是卡顿主因。
+ *
+ * busy 只影响待确认/待回答那两种条目，其余条目不该因为 busy 变化而重渲染，
+ * 所以在比较函数里按 kind 区分对待。
+ */
+const EntryView = memo(function EntryView({
   entry,
   onAnswer,
   busy,
   workspaceId,
   onSettle,
+  artifacts,
 }: {
   entry: Entry
   busy: boolean
   workspaceId: number
   onAnswer: (text: string) => void
   onSettle: (callId: string, confirm: boolean, args?: Record<string, unknown>) => void
+  /** 实时产出物,供 generation 条目渲染进度与结果。 */
+  artifacts: AgentArtifactStatus[]
 }) {
   if (entry.kind === 'user') {
     return (
@@ -1276,7 +1312,55 @@ function EntryView({
     )
   }
 
+  if (entry.kind === 'generation') {
+    return <GenerationGroup entry={entry} artifacts={artifacts} />
+  }
+
   return <ConfirmCard entry={entry} busy={busy} workspaceId={workspaceId} onSettle={onSettle} />
+})
+
+/**
+ * 对话内的生成结果组。像 ChatGPT 生图那样:先出占位骨架,任务跑完就地换成成片。
+ *
+ * 产出物按会话维度轮询回来,这里按声明的条数取对应的几条。后端目前不回传
+ * call_id 归属,所以用「按顺序取前 count 条尚未被占用的」近似——单轮生成
+ * 场景下等价,多轮时最坏是显示顺序不同,不会串台或丢失。
+ */
+function GenerationGroup({
+  entry,
+  artifacts,
+}: {
+  entry: Extract<Entry, { kind: 'generation' }>
+  artifacts: AgentArtifactStatus[]
+}) {
+  const mine = artifacts.filter((a) => a.kind === entry.mediaKind).slice(0, entry.count)
+  const done = mine.filter((a) => TERMINAL_STATUS.has(a.status)).length
+  // 产出物还没落库时先摆骨架,数量按用户选的条数——
+  // 空窗期什么都不显示会让人以为没提交上。
+  const cards: (AgentArtifactStatus | null)[] = mine.length > 0 ? mine : Array.from({ length: entry.count }, () => null)
+
+  return (
+    <div className={styles.genGroup}>
+      <div className={styles.genHeader}>
+        <span>{entry.mediaKind === 'image' ? '生成图片' : '生成视频'}</span>
+        <span className={styles.genCount}>
+          {mine.length > 0 ? `${done}/${mine.length} 完成` : `${entry.count} 条排队中`}
+        </span>
+      </div>
+      <div className={styles.genList}>
+        {cards.map((a, i) =>
+          a ? (
+            <ArtifactCard key={a.artifact_id} item={a} />
+          ) : (
+            <div key={`skeleton-${i}`} className={styles.genSkeleton}>
+              <div className={styles.genSkeletonThumb} />
+              <span className={styles.genSkeletonLabel}>等待中…</span>
+            </div>
+          ),
+        )}
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -1482,6 +1566,15 @@ function CollapseIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
       <path d="M6.5 9.5L2.5 13.5M6.5 9.5H3.5M6.5 9.5V12.5M9.5 6.5L13.5 2.5M9.5 6.5H12.5M9.5 6.5V3.5" />
+    </svg>
+  )
+}
+
+function MicIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
+      <rect x="6" y="2" width="4" height="7.5" rx="2" />
+      <path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2" />
     </svg>
   )
 }
