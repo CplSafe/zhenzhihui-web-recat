@@ -38,7 +38,6 @@ import {
 } from '@/components/smart/GenerationModelPicker'
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
 import type { Shot } from '@/components/smart/ScriptStoryboardTable'
-import SubjectAssetDialog from '@/components/smart/SubjectAssetDialog'
 import type { ShotTrashItem } from '@/components/smart/ShotTrashBin/ShotTrashBin'
 import type { ChatImg, ChatMessage, ImageComposerDraft, ImageVideoSelection } from '@/components/smart/ImageChat'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
@@ -47,11 +46,7 @@ import {
   createProjectNameFallback,
   generateProjectName,
   generateProjectNameFromImages,
-  matchUploadsToSubjects,
   summarizeRequirement,
-  refineElementPrompt,
-  refineElementPromptWithImage,
-  refineShotPrompt,
   polishText,
   skillBreakdownStructured,
   marketingDataToText,
@@ -66,7 +61,6 @@ import {
   generateScriptShotsStream,
   generateShotInfo,
   extractSubjects,
-  mergeSingleUseSubjects,
   LONG_FORM_MAX_MIDDLE_SHOT_SEC,
   LONG_FORM_MIN_TOTAL_SEC,
 } from '@/api/smartScript'
@@ -100,14 +94,11 @@ import {
   getBusinessErrorMessage,
   cancelAiTask,
   updateCreativeProjectDraft,
-  uploadAssetFile,
-  getAssetDownloadUrl,
   estimateAiTaskCost,
   listAiModels,
   restoreCreativeTrashItem,
   deleteCreativeTrashItem,
 } from '@/api/business'
-import { listAllAssets } from '@/utils/businessPagination'
 import {
   useWorkspaceId,
   useCurrentUser,
@@ -250,10 +241,8 @@ import {
   buildRealPersonIdentityPrompt,
   buildRealPersonVideoIdentityConstraint,
   buildRealPersonVideoIdentityPrompt,
-  findRealPersonReference,
   getFacePrivacyGenerationMessage,
   isRealPersonReferenceStillAuthorized,
-  registerRealPersonReference,
   requireRealPersonPreservationForShots,
   resolveShotRealPersonPreservation,
   type SmartRealPersonReference,
@@ -267,7 +256,6 @@ type LockedSmartImageModels = Partial<Record<SmartImageOperationCode, SelectedGe
 /** 按需加载分镜脚本编辑表。 */
 const ScriptStoryboardTable = lazy(() => import('@/components/smart/ScriptStoryboardTable'))
 /** 按需加载镜头编排工作区。 */
-const ShotArrange = lazy(() => import('@/components/smart/ShotArrange'))
 /** 按需加载图片创作对话区。 */
 const ImageChat = lazy(() => import('@/components/smart/ImageChat'))
 /** 按需加载营销思路拆解表。 */
@@ -285,17 +273,21 @@ function LazyEditorFallback({ label = '正在加载编辑器…' }: { label?: st
   )
 }
 
-// 素材在分镜脚本步已准备,去掉「准备素材」步,流程:分镜脚本 → 镜头编排 → 生成视频
+/**
+ * 流程只有两步:分镜脚本 → 生成视频。
+ *
+ * 「准备素材」和「镜头编排」已移除:这两步会先用 AI 重画一遍用户上传的素材
+ * (主体素材图 → 分镜图),再拿重画后的结果去出片,用户的产品因此在成片里走样。
+ * 现在用户上传的素材直接作为参考图提交给视频模型,中间没有任何重画环节。
+ */
+const STEP_SCRIPT = 0
+const STEP_VIDEO = 1
 const STEPS: StepItem[] = [
   { key: 'script', label: '分镜脚本' },
-  { key: 'material', label: '准备素材' },
-  { key: 'shots', label: '镜头编排' },
   { key: 'video', label: '生成视频' },
 ]
 const REAL_PERSON_STEPS: StepItem[] = [
   { key: 'script', label: '真人策划' },
-  { key: 'material', label: '选择真人' },
-  { key: 'shots', label: '镜头编排' },
   { key: 'video', label: '真人成片' },
 ]
 /** 流式脚本增量合并到界面的最小间隔。 */
@@ -494,26 +486,6 @@ async function continueSmartVideoTaskAfterTransient(
       })
     }
   }
-}
-
-// 准备素材:每个主体只出「单一独立元素」(供镜头编排时再组合),简洁背景、便于抠图合成。
-// context = 广告主题 + 该元素出现的画面语境/用途,帮模型选对具体形态(如伞广告里的「地铁站」应是雨天出入口而非大厅)。
-function subjectPrompt(name: string, kind: string, style?: string, context?: string) {
-  const probe = name + kind
-  const frame = /人物|角色|人|男|女|主角|闺蜜|宝妈|宝爸|学生|白领|model|girl|boy/i.test(probe)
-    ? '只有一个人物,单人,全身或半身,正面清晰,纯色简洁背景,不要其他人物、不要文字'
-    : /场景|街道|背景|环境|室内|室外|校园|店|路|空间|夜景|门口|广场/i.test(probe)
-      ? '空场景/空镜,只有环境与背景,无任何人物、无产品,干净简洁'
-      : '只有这一个物体,单个产品特写,白色/纯色背景,不要其他物体、不要文字'
-  return [
-    `只画「${name}」这一个元素`,
-    frame,
-    context && `需贴合以下广告语境与用途(据此选择最贴切的具体形态,但画面仍只含该单一元素):${context}`,
-    style && `${style}视觉风格`,
-    '高清,单一主体',
-  ]
-    .filter(Boolean)
-    .join(',')
 }
 
 /** 兼容字符串和对象形式，把项目草稿安全解析为普通对象。 */
@@ -1681,14 +1653,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   const [subjectAssets, setSubjectAssets] = useState<Record<string, SmartSubjectAssetVersionRegistry>>({})
   const subjectAssetsRef = useRef<Record<string, SmartSubjectAssetVersionRegistry>>({})
   subjectAssetsRef.current = subjectAssets
-  const [subjectDlg, setSubjectDlg] = useState<{ open: boolean; name: string; kind: string; autoGen: boolean }>({
-    open: false,
-    name: '',
-    kind: '',
-    autoGen: false,
-  })
-  // 已选参考图(主推产品锚定的上传素材)的展示 URL 列表:打开弹窗时按 refAssetIds 解析(草稿恢复后也能显示多张)
-  const [anchorRefs, setAnchorRefs] = useState<string[]>([])
   // 准备素材「一键生成」:逐个主体生成时的 loading(键=主体名),以及整体批量进行中标记
   const [subjectGenerating, setSubjectGenerating] = useState<Record<string, boolean>>({})
   const [batchGenning, setBatchGenning] = useState(false)
@@ -1715,34 +1679,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     }
   }, [])
 
-  const beginSubjectGenerationRequest = (name: string): EphemeralImageRequest | null => {
-    if (subjectGenerationRequestsRef.current.has(name)) return null
-    const request: EphemeralImageRequest = {
-      controller: new AbortController(),
-      workspaceId: Number(workspaceIdRef.current || workspaceId || 0),
-      projectId: Number(projectIdRef.current || projectId || 0),
-      routeSessionToken,
-      taskIds: new Set(),
-    }
-    subjectGenerationRequestsRef.current.set(name, request)
-    setSubjectGenerating((current) => ({ ...current, [name]: true }))
-    return request
-  }
-
-  const isCurrentSubjectGenerationRequest = (name: string, request: EphemeralImageRequest): boolean =>
-    subjectGenerationRequestsRef.current.get(name) === request &&
-    !request.controller.signal.aborted &&
-    request.workspaceId === Number(workspaceIdRef.current || 0) &&
-    request.projectId === Number(projectIdRef.current || 0) &&
-    request.routeSessionToken === routeSessionToken
-
-  const finishSubjectGenerationRequest = (name: string, request: EphemeralImageRequest) => {
-    if (subjectGenerationRequestsRef.current.get(name) === request) {
-      subjectGenerationRequestsRef.current.delete(name)
-      setSubjectGenerating((current) => ({ ...current, [name]: false }))
-    }
-    request.taskIds.clear()
-  }
   // 从分镜脚本返回后点「确认脚本」触发的这次素材重生,要求整批走全新生成:
   // 不复用 subjectAssets 版本库,也不自动带入入口上传图。
   const forceFreshMaterialsRef = useRef(false)
@@ -1809,133 +1745,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     showToast(`已统一为「${canonical}」，这些镜头将使用同一张素材`, 'success')
   }
 
-  const applySubjectImage = (name: string, url: string, assetId = 0) =>
-    setShots((prev) => {
-      const next = prev.map((sh) => ({
-        ...sh,
-        subjects: sh.subjects.map((su) => (stripAt(su.tag) === name ? { ...su, image: url, assetId } : su)),
-      }))
-      shotsRef.current = next
-      return next
-    })
-  // 准备素材:去掉某主体当前应用的图 → 回到占位「上传图片」,可重新生成 / 上传。
-  // 必须同时清掉版本库该条,否则「同名素材图同步」effect 会用版本库里的图把它又补回来(× 看似无效)。
-  const removeSubjectImage = (name: string) => {
-    applySubjectImage(name, '', 0)
-    setSubjectAssets((a) => {
-      if (!a[name]) return a
-      const next = { ...a }
-      delete next[name]
-      return next
-    })
-  }
-  // 清空当前流程里所有主体的已生成/已选素材,让下一次批量生成从全新状态开始,不复用旧结果。
-  const clearAllSubjectMaterials = () => {
-    setShots((prev) =>
-      prev.map((sh) => ({
-        ...sh,
-        subjects: sh.subjects.map((su) => ({ ...su, image: '', assetId: 0 })),
-      })),
-    )
-    setSubjectAssets({})
-  }
-  // 清空镜头编排阶段产物,保留脚本/素材选择本身,让「生成分镜」按当前内容整页全新重生成。
-  const resetShotArrangementOutputs = (list: Shot[]) =>
-    (Array.isArray(list) ? list : []).map((sh) => ({
-      ...sh,
-      image: '',
-      imageAssetId: 0,
-      imagePrompt: '',
-      imageVersions: [],
-      blurredImageUrl: '',
-      blurredImageAssetId: 0,
-      blurredFromAssetId: 0,
-    }))
-  // 把生成/上传的图落库(dataURL→后端 asset,得签名URL+assetId),写入版本库 + 同名联动
-  const addSubjectVersion = (
-    name: string,
-    url: string,
-    assetId: number,
-    source: 'ai' | 'upload' | 'manual',
-    prompt?: string,
-    provenance?: { operationCode: SmartImageOperationCode; modelVersionId: number },
-  ) => {
-    const previous = subjectAssetsRef.current
-    const e = previous[name] || { versions: [] }
-    const next = {
-      ...previous,
-      [name]: {
-        versions: [...(e.versions || []), url],
-        prompt: prompt ?? e.prompt,
-        sources: { ...(e.sources || {}), [url]: source },
-        ids: { ...(e.ids || {}), [url]: assetId },
-        operations: provenance ? { ...(e.operations || {}), [url]: provenance.operationCode } : e.operations,
-        modelVersionIds: provenance
-          ? { ...(e.modelVersionIds || {}), [url]: provenance.modelVersionId }
-          : e.modelVersionIds,
-      },
-    }
-    subjectAssetsRef.current = next
-    setSubjectAssets(next)
-    applySubjectImage(name, url, assetId)
-  }
-  const selectRealPersonForSubject = (name: string, url: string, reference: SmartRealPersonReference) => {
-    const previous = subjectAssetsRef.current
-    const existing = previous[name] || { versions: [] }
-    const versions = (existing.versions || []).includes(url)
-      ? existing.versions || []
-      : [...(existing.versions || []), url]
-    const next = {
-      ...previous,
-      [name]: {
-        ...existing,
-        versions,
-        sources: { ...(existing.sources || {}), [url]: 'manual' as const },
-        ids: { ...(existing.ids || {}), [url]: reference.localAssetId },
-        realPersonRefs: { ...(existing.realPersonRefs || {}), [url]: reference },
-      },
-    }
-    subjectAssetsRef.current = next
-    setSubjectAssets(next)
-    applySubjectImage(name, url, reference.localAssetId)
-    showToast(`已选用认证真人「${reference.personName}」，生成时将保留人物特征`, 'success')
-  }
-  // 弹窗内上传素材:File → 后端 asset → 加为该主体新版本(并应用到同名主体)
-  const uploadForSubject = async (
-    name: string,
-    file: File,
-    context?: { name: string; kind: string; prompt: string },
-  ) => {
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      showToast('未选择工作空间,无法上传素材', 'error')
-      return
-    }
-    try {
-      const out: any = await uploadAssetFile({
-        workspaceId: ws,
-        file,
-        prompt: context?.prompt || '',
-        source: 'upload',
-      })
-      const assetId = Number(out?.asset?.id || 0) || 0
-      if (!assetId) throw new Error('未取得素材 asset_id')
-      const url = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
-      if (!url) throw new Error('未取得素材地址')
-      addSubjectVersion(name, url, assetId, 'upload')
-      showToast(`素材「${context?.name || name}」上传成功`, 'success')
-    } catch (e: any) {
-      showToast(`素材上传失败:${e?.message || '请检查存储配置/网络'}`, 'error')
-    }
-  }
-  const subjectKindOf = (name: string) => {
-    for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.kind) return su.kind
-    return ''
-  }
-  const subjectImageOf = (name: string) => {
-    for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.image) return su.image
-    return ''
-  }
   // 主体锚定的上传素材(主推产品):有则该主体生成时走「图生图保真」(从上传素材抠成干净单品)。
   // 多图归同一产品时返回全部 assetIds(都作图生图参考),url 取第一张供展示/VL 优化提示词。
   const subjectRefOf = (name: string): { url?: string; assetId?: number; assetIds?: number[] } => {
@@ -1954,29 +1763,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     for (const sh of shots) for (const su of sh.subjects) if (stripAt(su.tag) === name && su.manualGen) return true
     return false
   }
-  // 打开素材弹窗时:把该主体锚定的多张上传素材按 refAssetIds 解析出展示 URL(草稿恢复后 refImage 被剥离,靠 assetId 取回)。
-  useEffect(() => {
-    if (!subjectDlg.open) {
-      setAnchorRefs([])
-      return
-    }
-    const ref = subjectRefOf(subjectDlg.name)
-    const ids = ref.assetIds && ref.assetIds.length ? ref.assetIds : ref.assetId ? [ref.assetId] : []
-    const ws = Number(workspaceId || 0)
-    if (!ids.length || !ws) {
-      setAnchorRefs(ref.url ? [ref.url] : [])
-      return
-    }
-    let alive = true
-    void (async () => {
-      const urls = (await Promise.all(ids.map((id) => refreshAssetUrl(ws, id).catch(() => '')))).filter(Boolean)
-      if (alive) setAnchorRefs(urls.length ? urls : ref.url ? [ref.url] : [])
-    })()
-    return () => {
-      alive = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subjectDlg.open, subjectDlg.name, workspaceId])
   // 横屏/竖屏适配:把项目比例(如 9:16 / 16:9)写成全局 CSS 变量 --frame-ratio,
   // 各处分镜图/视频预览/缩略图据它设 aspect-ratio(默认 16/9)。卸载时清理。
   useEffect(() => {
@@ -1986,527 +1772,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       document.documentElement.style.removeProperty('--frame-ratio')
     }
   }, [entryMeta?.ratio])
-  // 素材出图:
-  //  - carryCurrent=true(修改):带上当前这张图作 img2img 底图,在其基础上改;
-  //  - carryCurrent=false(重新生成):不带当前图,从头生成;
-  //  - refImageUrl(参考图,产品真实照片):VL 读图优化提示词 + 作图生图参考(保证用你的产品)。
-  const genForSubject = async (
-    name: string,
-    prompt: string,
-    opts: {
-      refImageUrls?: string[]
-      carryCurrent?: boolean
-      notify?: boolean
-      request?: EphemeralImageRequest
-      generationModels?: GenerationModelSelectionMap
-      lockedImageModels?: LockedSmartImageModels
-      lockedResponseModel?: SelectedGenerationModel
-    } = {},
-  ): Promise<boolean> => {
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      if (opts.notify !== false) showToast('未选择工作空间,无法生成素材', 'error')
-      return false
-    }
-    const ownsRequest = !opts.request
-    const request = opts.request || beginSubjectGenerationRequest(name)
-    if (!request) {
-      if (opts.notify !== false) showToast(`素材「${name}」正在生成，请勿重复提交`, 'info')
-      return false
-    }
-    const signal = request.controller.signal
-    if (request.workspaceId !== ws || request.routeSessionToken !== routeSessionToken) {
-      if (ownsRequest) finishSubjectGenerationRequest(name, request)
-      if (opts.notify !== false) showToast('创作会话已变化，请重新发起素材生成', 'info')
-      return false
-    }
-    const responseModel =
-      opts.lockedResponseModel || requireGenerationModel('responses.multimodal', opts.generationModels)
-    if (!responseModel) {
-      if (ownsRequest) finishSubjectGenerationRequest(name, request)
-      return false
-    }
-    try {
-      const plans = opts.generationModels || opts.lockedImageModels ? [] : await resolvePlanCandidates()
-      throwIfSmartRequestAborted(signal)
-      let finalPrompt = prompt
-      const refAssetIds: number[] = []
-      // 普通素材只用于补充提示词，不再自动作为图生图输入；只有已认证真人素材可作为身份参考图。
-      const anchored = subjectRefOf(name)
-      const anchoredIds =
-        anchored.assetIds && anchored.assetIds.length ? anchored.assetIds : anchored.assetId ? [anchored.assetId] : []
-      const isPersonSubject = /人物|人像|角色|person|portrait|model/i.test(subjectKindOf(name) || '')
-      const projectRealPersonReference = resolveProjectRealPersonReference()
-      const requiredRealPersonReference = isPersonSubject
-        ? projectRealPersonReference ||
-          findRealPersonReference(subjectAssetsRef.current, name, subjectImageOf(name)) ||
-          null
-        : null
-      if (
-        (isRealPersonMode || projectRealPersonReference) &&
-        isPersonSubject &&
-        !requiredRealPersonReference?.localAssetId
-      ) {
-        throw new Error(`素材「${name}」缺少已认证真人引用，请重新选择真人素材`)
-      }
-      if (opts.refImageUrls?.length) {
-        // 弹窗手动加的参考图(可多张)：第一张仅用于优化提示词，不作为图生图输入。
-        try {
-          finalPrompt = await refineElementPromptWithImage(prompt, opts.refImageUrls[0], {
-            name,
-            kind: subjectKindOf(name),
-            style: entryMeta?.style,
-            modelVersionId: responseModel.modelVersionId,
-            requestContext: responseRequestContextFor(responseModel, ws),
-            signal,
-          })
-        } catch {
-          throwIfSmartRequestAborted(signal)
-          /* 优化失败则用原提示词 */
-        }
-      } else if (anchoredIds.length) {
-        // 锚定的上传素材：取第一张刷新出 URL 给 VL 优化提示词；不把普通素材下发为图生图参考。
-        let refUrl = anchored.url
-        try {
-          refUrl = await refreshAssetUrl(ws, anchoredIds[0])
-          throwIfSmartRequestAborted(signal)
-        } catch {
-          throwIfSmartRequestAborted(signal)
-          /* 刷新失败则沿用 refImage 原值 */
-        }
-        if (refUrl) {
-          try {
-            finalPrompt = await refineElementPromptWithImage(prompt, refUrl, {
-              name,
-              kind: subjectKindOf(name),
-              style: entryMeta?.style,
-              modelVersionId: responseModel.modelVersionId,
-              requestContext: responseRequestContextFor(responseModel, ws),
-              signal,
-            })
-          } catch {
-            throwIfSmartRequestAborted(signal)
-            /* 优化失败则用原提示词 */
-          }
-        }
-      }
-      if (requiredRealPersonReference?.localAssetId) {
-        refAssetIds.push(requiredRealPersonReference.localAssetId)
-        finalPrompt = buildRealPersonIdentityPrompt(finalPrompt, requiredRealPersonReference.personName)
-      }
-      const operationCode: SmartImageOperationCode = refAssetIds.length ? 'image.image_to_image' : 'image.text_to_image'
-      const modelSelection =
-        opts.lockedImageModels?.[operationCode] || requireGenerationModel(operationCode, opts.generationModels)
-      if (!modelSelection) return false
-      const { url, assetId } = await generateShotImage({
-        workspaceId: ws,
-        prompt: finalPrompt,
-        refAssetIds,
-        modelVersionId: modelSelection.modelVersionId,
-        modelVersion: modelSelection.source,
-        modelPlanCandidates: plans,
-        ratio: entryMeta?.ratio,
-        lowRes: true,
-        allowTextToImageFallback: !requiredRealPersonReference,
-        signal,
-        onTask: (taskId) => {
-          const normalizedTaskId = Number(taskId || 0)
-          if (normalizedTaskId > 0) request.taskIds.add(normalizedTaskId)
-        },
-      })
-      if (!isCurrentSubjectGenerationRequest(name, request)) return false
-      addSubjectVersion(name, url, assetId, 'ai', prompt, {
-        operationCode,
-        modelVersionId: modelSelection.modelVersionId,
-      })
-      return true
-    } catch (e: any) {
-      if (signal.aborted || e?.name === 'AbortError') return false
-      if (opts.notify !== false) showToast(`素材「${name}」生成失败:${e?.message || '请重试'}`, 'error')
-      return false
-    } finally {
-      if (ownsRequest) finishSubjectGenerationRequest(name, request)
-    }
-  }
-  // 主推产品锚定(支持多张上传素材):一次 VL 看全部上传图 + 主体清单 → 产品分组。
-  //  - 同一产品的多张图归一组,该组所有命中主体「产品合一」成 1 个产品素材,组内多张图都作图生图参考(保真);
-  //  - 不同产品 → 各自一个素材;主体归属互斥(由 VL 统一裁决);场景/背景/无关道具不锚定,保持 AI 文生图;
-  //  - 某产品在分镜清单里没有对应主体(matches 空)→ 注入该「主推产品」并标 manualGen(排除批量、须手动生成)。
-  const anchorUploadsToSubjects = async (
-    list: Shot[],
-    images: string[],
-    assetIds?: number[],
-    responseModelVersionId?: number,
-    request?: {
-      workspaceId: number
-      signal?: AbortSignal
-      modelVersionId?: number
-      modelVersion?: Record<string, unknown>
-      modelPlanCandidates?: string[]
-    },
-  ): Promise<Shot[]> => {
-    const ws = Number(request?.workspaceId || workspaceId || 0)
-    const signal = request?.signal
-    throwIfSmartRequestAborted(signal)
-    const imgs = (images || []).filter(Boolean)
-    if (!imgs.length || !list.length) return list
-    const allNames = Array.from(
-      new Set(list.flatMap((sh) => (sh.subjects || []).map((su) => stripAt(su.tag)).filter(Boolean))),
-    )
-    // 1) 持久化全部上传图,拿 durable {url, assetId}(已给 assetId 则复用)
-    const cache: Record<string, number> = {}
-    const persisted = await Promise.all(
-      imgs.map(async (url, i) => {
-        throwIfSmartRequestAborted(signal)
-        let u = url
-        let aid = Number(assetIds?.[i] || 0) || 0
-        if (!aid && ws) {
-          try {
-            const out: any = await persistImageAsset(ws, url, cache, signal)
-            u = out?.url || url
-            aid = Number(out?.assetId || 0) || 0
-          } catch {
-            throwIfSmartRequestAborted(signal)
-            /* 持久化失败:仍用原 url,生成时再 ensureAssetId */
-          }
-        }
-        throwIfSmartRequestAborted(signal)
-        return { url: u, assetId: aid }
-      }),
-    )
-    // 2) 一次 VL 看全部图 → 产品分组(同产品多图归组、主体互斥)
-    let products: { product: string; kind: string; imageIndexes: number[]; matches: string[] }[] = []
-    try {
-      products = (
-        await matchUploadsToSubjects(
-          persisted.map((p) => p.url),
-          allNames,
-          signal,
-          responseModelVersionId,
-          {
-            workspaceId: ws,
-            modelVersionId: request?.modelVersionId,
-            modelPlanCandidates: request?.modelPlanCandidates || [],
-            modelVersion: request?.modelVersion,
-          },
-        )
-      ).products
-    } catch (error) {
-      if (signal?.aborted || (error as any)?.name === 'AbortError') throw error
-      /* VL 失败 → 下面兜底成一个「主推产品」 */
-    }
-    throwIfSmartRequestAborted(signal)
-    // VL 完全没结果:兜底成一个引用全部上传图的「主推产品」(注入、手动生成),至少把素材锚上
-    if (!products.length) {
-      products = [{ product: '主推产品', kind: '产品', imageIndexes: persisted.map((_, i) => i + 1), matches: [] }]
-    }
-    // 3) 逐产品组:命中 → 产品合一合并;未命中 → 注入
-    let out = list.map((sh) => ({ ...sh, subjects: (sh.subjects || []).map((su) => ({ ...su })) }))
-    const injections: {
-      tag: string
-      kind: string
-      refImage?: string
-      refAssetId?: number
-      refAssetIds?: number[]
-      image?: string
-      assetId?: number
-    }[] = []
-    for (const p of products) {
-      const groupIds = (p.imageIndexes || []).map((i) => persisted[i - 1]?.assetId || 0).filter(Boolean)
-      const refImage = persisted[(p.imageIndexes?.[0] || 1) - 1]?.url || persisted[0]?.url
-      const refAssetId = groupIds[0] || persisted[0]?.assetId || 0
-      const refAssetIds = groupIds.length ? groupIds : refAssetId ? [refAssetId] : undefined
-      const prodName = p.product || p.matches[0] || '主推产品'
-      const prodKind = p.kind || '产品'
-      if (p.matches.length) {
-        const set = new Set(p.matches)
-        out = out.map((sh) => {
-          if (!sh.subjects.some((su) => set.has(stripAt(su.tag)))) return sh
-          const kept = sh.subjects.filter((su) => !set.has(stripAt(su.tag)))
-          const already = kept.some((su) => stripAt(su.tag) === prodName)
-          // 上传图直接作为该主体素材图(image/assetId):准备素材/分镜脚本立即展示,计入「已有图」、
-          // 一键生成自动跳过(不被 AI 覆盖);refImage 仍保留,供需要时手动「重新生成」做图生图参考。
-          const productSubject = {
-            tag: '@' + prodName,
-            kind: prodKind,
-            refImage,
-            refAssetId,
-            refAssetIds,
-            image: refImage,
-            assetId: refAssetId,
-          }
-          return { ...sh, subjects: already ? kept : [productSubject, ...kept] }
-        })
-      } else {
-        injections.push({
-          tag: '@' + prodName,
-          kind: prodKind,
-          refImage,
-          refAssetId,
-          refAssetIds,
-          image: refImage,
-          assetId: refAssetId,
-        })
-      }
-    }
-    if (injections.length) {
-      out = out.map((sh) => {
-        const have = new Set(sh.subjects.map((su) => stripAt(su.tag)))
-        const add = injections.filter((inj) => !have.has(stripAt(inj.tag))).map((inj) => ({ ...inj, manualGen: true })) // 注入的主推产品:排除批量、须手动生成
-        return add.length ? { ...sh, subjects: [...add, ...sh.subjects] } : sh
-      })
-    }
-    return out
-  }
-  // 上传「额外参考图」(镜头编排面板用):直传后端成 asset(http url + asset_id),供云端草稿持久化
-  const uploadRef = async (file: File): Promise<{ url: string; assetId?: number }> => {
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      showToast('未选择工作空间,无法上传参考图', 'error')
-      return { url: '' }
-    }
-    try {
-      const out: any = await uploadAssetFile({ workspaceId: ws, file })
-      const assetId = Number(out?.asset?.id || 0) || 0
-      if (!assetId) throw new Error('未取得 asset_id')
-      const url = (await getAssetDownloadUrl({ workspaceId: ws, assetId }).catch(() => '')) || ''
-      if (!url) throw new Error('未取得素材地址')
-      return { url, assetId }
-    } catch (e: any) {
-      showToast(`参考图上传失败:${e?.message || '请检查存储配置/网络'}`, 'error')
-      return { url: '' }
-    }
-  }
-  const openSubject = (name: string, autoGen = false) =>
-    setSubjectDlg({ open: true, name, kind: subjectKindOf(name), autoGen })
 
-  // 该主体的广告语境:整体主题 + 它出现的分镜画面描述(帮模型选对元素的具体形态)
-  const subjectContext = (name: string) => {
-    const theme = (reqSummary || requirement || '').slice(0, 80)
-    const descs: string[] = []
-    for (const sh of shots) {
-      if (sh.subjects.some((su) => stripAt(su.tag) === name) && sh.desc) descs.push(sh.desc)
-      if (descs.length >= 2) break
-    }
-    return [theme && `广告主题:${theme}`, descs.length && `该元素出现的画面:${descs.join(';').slice(0, 160)}`]
-      .filter(Boolean)
-      .join('。')
-  }
-
-  // 准备素材:某镜头脚本没给出主体素材时,给它加一个占位主体(全局唯一名)并打开素材弹窗。
-  // autoGen=true 时进弹窗即自动生成一次(供「AI自动生成」用);false 仅打开等用户上传/操作。
-  const addShotMaterial = (shot: Shot, autoGen = false) => {
-    const used = new Set<string>()
-    shots.forEach((sh) => sh.subjects.forEach((su) => used.add(stripAt(su.tag))))
-    let name = '素材'
-    let k = 1
-    while (used.has(name)) name = `素材${++k}`
-    setShots((prev) =>
-      prev.map((sh) => (sh.id === shot.id ? { ...sh, subjects: [...sh.subjects, { tag: `@${name}`, kind: '' }] } : sh)),
-    )
-    openSubject(name, autoGen)
-  }
-
-  // 无弹窗后台生成单个主体素材(与弹窗 autoGen 一致:构造默认提示词→润色→出图)。
-  const generateSubjectAuto = async (
-    name: string,
-    opts: {
-      notify?: boolean
-      generationModels?: GenerationModelSelectionMap
-      lockedImageModels?: LockedSmartImageModels
-      lockedResponseModel?: SelectedGenerationModel
-    } = {},
-  ): Promise<boolean> => {
-    const request = beginSubjectGenerationRequest(name)
-    if (!request) {
-      if (opts.notify !== false) showToast(`素材「${name}」正在生成，请勿重复提交`, 'info')
-      return false
-    }
-    const signal = request.controller.signal
-    try {
-      if (!request.workspaceId) {
-        if (opts.notify !== false) showToast('未选择工作空间,无法生成素材', 'error')
-        return false
-      }
-      const responseModel =
-        opts.lockedResponseModel || requireGenerationModel('responses.multimodal', opts.generationModels)
-      if (!responseModel) return false
-      const kind = subjectKindOf(name)
-      const saved = subjectAssets[name]?.prompt
-      let prompt = saved || subjectPrompt(name, kind, entryMeta?.style, subjectContext(name))
-      if (!saved) {
-        try {
-          prompt = await refineElementPrompt(prompt, {
-            name,
-            kind,
-            style: entryMeta?.style,
-            modelVersionId: responseModel.modelVersionId,
-            requestContext: responseRequestContextFor(responseModel, request.workspaceId),
-            signal,
-          })
-        } catch (error: any) {
-          if (signal.aborted || error?.name === 'AbortError') return false
-          /* 润色失败用原提示词 */
-        }
-      }
-      throwIfSmartRequestAborted(signal)
-      return await genForSubject(name, prompt, {
-        notify: opts.notify,
-        request,
-        generationModels: opts.generationModels,
-        lockedImageModels: opts.lockedImageModels,
-        lockedResponseModel: opts.lockedResponseModel,
-      })
-    } finally {
-      finishSubjectGenerationRequest(name, request)
-    }
-  }
-
-  // 真正执行批量:把所有还没有图的主体逐个后台生成,但 UI 上一次性全部显示「生成中…」,每张完成后逐个解除。
-  // 由下方 effect 据 materialBatchPending 触发(点按钮 / 切回来续作 都走这里)。
-  const runBatchGenerate = async () => {
-    if (batchRunningRef.current) return
-    if (!Number(workspaceId || 0)) {
-      setMaterialBatchPending(false)
-      return
-    }
-    // 去重主体名(按出现顺序),只生成还没有图的
-    const names: string[] = []
-    const seen = new Set<string>()
-    for (const sh of shots)
-      for (const su of sh.subjects) {
-        const n = stripAt(su.tag)
-        if (n && !seen.has(n)) {
-          seen.add(n)
-          names.push(n)
-        }
-      }
-    // 排除:已有图的;以及「注入的主推产品(manualGen)」——后者须用户手动生成,不进一键批量。
-    // 注:VL 命中的产品主体(有 refImage 但非 manualGen)仍进批量,自动走图生图保真(从上传素材抠成单品)。
-    const targets = names.filter((n) => !subjectImageOf(n) && !subjectManualOf(n))
-    if (!targets.length) {
-      setMaterialBatchPending(false) // 没有要生成的:清掉续作标记
-      return
-    }
-    if (generationModelCatalog.loading) return
-    const needsImageToImage = targets.some((name) => {
-      const reference = subjectRefOf(name)
-      return Boolean(reference.url || reference.assetId || reference.assetIds?.length)
-    })
-    const needsTextToImage = targets.some((name) => {
-      const reference = subjectRefOf(name)
-      return !reference.url && !reference.assetId && !reference.assetIds?.length
-    })
-    if (
-      (needsImageToImage && !selectedGenerationModel('image.image_to_image')) ||
-      (needsTextToImage && !selectedGenerationModel('image.text_to_image'))
-    ) {
-      return
-    }
-    batchRunningRef.current = true
-    setBatchGenning(true)
-    try {
-      setSubjectGenerating((m) => {
-        const next = { ...m }
-        targets.forEach((name) => (next[name] = true))
-        return next
-      })
-      // 降低并发，避免模型服务/素材存储在一键批量时被瞬时打满导致偶发 500。
-      const CONCURRENCY = 3
-      let successCount = 0
-      const failedNames: string[] = []
-      const pool = new Set<Promise<void>>()
-      for (const name of targets) {
-        const p = (async () => {
-          try {
-            const ok = await generateSubjectAuto(name, { notify: false })
-            if (ok) successCount += 1
-            else failedNames.push(name)
-          } catch {
-            failedNames.push(name)
-          } finally {
-            setSubjectGenerating((m) => ({ ...m, [name]: false }))
-            pool.delete(p)
-          }
-        })()
-        pool.add(p)
-        if (pool.size >= CONCURRENCY) await Promise.race(pool)
-      }
-      await Promise.all(pool)
-      if (failedNames.length) {
-        const preview = failedNames
-          .slice(0, 3)
-          .map((name) => `「${name}」`)
-          .join('、')
-        const suffix = preview ? ` (${preview}${failedNames.length > 3 ? '等' : ''})` : ''
-        showToast(`素材生成完成:成功 ${successCount} 张,失败 ${failedNames.length} 张${suffix},可再次点击重试`, 'error')
-      } else {
-        showToast(`素材生成完成:成功 ${successCount} 张`, 'success')
-      }
-    } finally {
-      batchRunningRef.current = false
-      setBatchGenning(false)
-      setMaterialBatchPending(false)
-    }
-  }
-
-  // 点「一键生成」:只置「批量进行中」标记并持久化进草稿,真正生成由下方 effect 启动。
-  // 这样中途切走再回来(草稿恢复标记)会自动续作未出图的素材,不被截断。
-  const generateAllSubjects = () => {
-    if (batchRunningRef.current || materialBatchPending) {
-      showToast('主体素材正在批量生成，请勿重复提交', 'info')
-      return
-    }
-    if (!Number(workspaceId || 0)) {
-      showToast('未选择工作空间,无法生成素材', 'error')
-      return
-    }
-    const names = Array.from(
-      new Set(
-        shots
-          .flatMap((shot) => shot.subjects || [])
-          .map((subject) => stripAt(subject.tag))
-          .filter((name) => name && !subjectImageOf(name) && !subjectManualOf(name)),
-      ),
-    )
-    const needsImageToImage = names.some((name) => {
-      const reference = subjectRefOf(name)
-      return Boolean(reference.url || reference.assetId || reference.assetIds?.length)
-    })
-    const needsTextToImage = names.some((name) => {
-      const reference = subjectRefOf(name)
-      return !reference.url && !reference.assetId && !reference.assetIds?.length
-    })
-    if (needsImageToImage && !requireGenerationModel('image.image_to_image')) return
-    if (needsTextToImage && !requireGenerationModel('image.text_to_image')) return
-    setMaterialBatchPending(true)
-  }
-
-  // 批量(续作)驱动:素材准备已并入脚本确认后的自动流程,在镜头编排步且标记为「批量进行中」时,
-  // 自动(继续)生成未出图的素材。
+  // 兼容旧草稿:旧版本把「准备素材」「镜头编排」保存为 step 1 / 2。两步都已从流程移除
+  // (用户上传的素材直接作为参考图提交给视频模型,不再中途重画),恢复后直接落到生成视频。
   useEffect(() => {
-    if (materialBatchPending && step === 2 && shots.length > 0 && !batchRunningRef.current) {
-      void runBatchGenerate()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    materialBatchPending,
-    step,
-    shots.length,
-    generationModelCatalog.loading,
-    generationModelCatalog.groups,
-    textToImageModelSelectionId,
-    imageToImageModelSelectionId,
-  ])
-
-  useEffect(() => {
-    if (step !== 2) forceFreshMaterialsRef.current = false
-  }, [step])
-
-  // 兼容旧草稿:旧版本可能把当前步骤保存为「准备素材」(step=1)。该步骤已从用户流程移除,
-  // 恢复后直接进入镜头编排,避免用户再次看到已删除的页面。
-  useEffect(() => {
-    if (step === 1) goStep(2)
+    if (step > STEP_VIDEO) goStep(STEP_VIDEO)
   }, [step])
 
   // 脚本续跑:恢复后若"脚本生成进行中"标记仍在(切走打断了)、当前没在生成、有入口信息 → 自动重新生成脚本。
@@ -2530,90 +1800,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     generationModelCatalog.groups,
   ])
 
-  // 去重后的主体素材(脚本步 / 镜头编排顶部共用)
-  // 后端"上传类"asset 的 id 集合(asset.source==='upload');用于可靠区分 上传/AI(对齐 2.0)
-  const [uploadAssetIds, setUploadAssetIds] = useState<Set<number>>(new Set())
-  useEffect(() => {
-    const ws = Number(workspaceId || 0)
-    if (!ws || !started) return
-    let cancelled = false
-    listAllAssets({
-      workspaceId: ws,
-      type: 'image',
-      isCurrent: () => !cancelled && Number(workspaceIdRef.current || 0) === ws,
-    })
-      .then((items: any[]) => {
-        if (cancelled) return
-        const ids = new Set<number>()
-        items.forEach((a: any) => {
-          if (String(a?.source || '') === 'upload' && Number(a?.id)) ids.add(Number(a.id))
-        })
-        setUploadAssetIds(ids)
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [workspaceId, started, subjectAssets, entryMeta])
-
-  // url → asset_id(各来源汇总),供按后端 source 判定
-  const urlAssetId = (() => {
-    const map = new Map<string, number>()
-    ;(entryMeta?.images || []).forEach((u: string, i: number) => {
-      const id = Number((entryMeta as any)?.imageAssetIds?.[i] || 0)
-      if (u && id) map.set(u, id)
-    })
-    Object.values(subjectAssets).forEach((e: any) =>
-      Object.entries(e?.ids || {}).forEach(([u, id]: any) => {
-        if (Number(id)) map.set(u, Number(id))
-      }),
-    )
-    shots.forEach((sh) => {
-      if (sh.image && sh.imageAssetId) map.set(sh.image, Number(sh.imageAssetId))
-    })
-    return map
-  })()
-
-  // 当前项目内所有图(去重,标注来源 + asset_id):入口上传原图 + 各元素版本 + 分镜图。
-  // 来源判定优先用后端 asset.source(uploadAssetIds);未知时回退创建时的客户端标记。
-  const projectImages: { url: string; source: 'ai' | 'upload'; assetId?: number }[] = (() => {
-    const classify = (url: string, guess: 'ai' | 'upload'): 'ai' | 'upload' => {
-      const id = urlAssetId.get(url)
-      if (id && uploadAssetIds.has(id)) return 'upload'
-      if (id && uploadAssetIds.size) return 'ai' // 已加载 asset 列表、该 id 不在 upload 集 → AI
-      return guess
-    }
-    const m = new Map<string, 'ai' | 'upload'>()
-    ;(entryMeta?.images || []).forEach((u: string) => u && m.set(u, classify(u, 'upload')))
-    Object.values(subjectAssets).forEach((e: any) =>
-      (e?.versions || []).forEach((u: string) => {
-        if (u) m.set(u, classify(u, e?.sources?.[u] || 'upload'))
-      }),
-    )
-    shots.forEach((sh) => {
-      if (sh.image) m.set(sh.image, classify(sh.image, 'ai'))
-    })
-    const built = [...m.entries()]
-      // 接受 http(s) / data: / 同源绝对路径(如 /api/v1/assets/:id/download —— 新建视频携带的素材就是这种)
-      .filter(([u]) => /^(https?:|data:|\/)/.test(u))
-      .map(([url, source]) => ({ url, source, assetId: urlAssetId.get(url) || 0 }))
-    // 再按 asset_id 收敛:同一张图(同一 asset)在项目里会以 data: / 签名URL / /api 下载等多种 URL 形态出现,
-    // 仅按 url 去重会把同一张图重复展示。有 asset_id 的按 asset_id 归一(只保留一条),无 asset_id 的退回按 url。
-    // 同一 asset 多个 URL 时保留更稳定的展示地址:同源 /api 下载(不过期) > http(s) 签名 > data:。
-    const urlRank = (u: string) => (/^\//.test(u) ? 3 : /^https?:/.test(u) ? 2 : 1)
-    const seen = new Map<string, { url: string; source: 'ai' | 'upload'; assetId: number }>()
-    for (const it of built) {
-      const key = it.assetId > 0 ? `id:${it.assetId}` : `url:${it.url}`
-      const prev = seen.get(key)
-      if (!prev) {
-        seen.set(key, it)
-      } else if (urlRank(it.url) > urlRank(prev.url)) {
-        seen.set(key, { ...prev, url: it.url }) // 来源沿用先到的判定,只升级展示 URL
-      }
-    }
-    return [...seen.values()]
-  })()
-
   // ── 镜头编排:按 画面描述 + 该镜头素材 + 上一张分镜图(连贯)+ 项目摘要 生成分镜图(后端文/图生图) ──
   const [shotGen, setShotGen] = useState<Record<string, boolean>>({})
   const [shotGenRunning, setShotGenRunning] = useState(false)
@@ -2635,33 +1821,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     if (!ws || !taskIds.length) return
     await Promise.allSettled(taskIds.map((taskId) => cancelAiTask({ workspaceId: ws, taskId })))
   }, [])
-
-  const beginShotDialogGenerationRequest = (shotId: Shot['id'], ws: number): EphemeralImageRequest | null => {
-    if (shotDialogGenerationRequestsRef.current.has(shotId)) return null
-    const request: EphemeralImageRequest = {
-      controller: new AbortController(),
-      workspaceId: ws,
-      projectId: Number(projectIdRef.current || projectId || 0),
-      routeSessionToken,
-      taskIds: new Set(),
-    }
-    shotDialogGenerationRequestsRef.current.set(shotId, request)
-    return request
-  }
-
-  const isCurrentShotDialogGenerationRequest = (shotId: Shot['id'], request: EphemeralImageRequest): boolean =>
-    shotDialogGenerationRequestsRef.current.get(shotId) === request &&
-    !request.controller.signal.aborted &&
-    request.workspaceId === Number(workspaceIdRef.current || 0) &&
-    request.projectId === Number(projectIdRef.current || 0) &&
-    request.routeSessionToken === routeSessionToken
-
-  const finishShotDialogGenerationRequest = (shotId: Shot['id'], request: EphemeralImageRequest) => {
-    if (shotDialogGenerationRequestsRef.current.get(shotId) === request) {
-      shotDialogGenerationRequestsRef.current.delete(shotId)
-    }
-    request.taskIds.clear()
-  }
 
   const cancelShotDialogGenerationRequest = (shotId: Shot['id']) => {
     const request = shotDialogGenerationRequestsRef.current.get(shotId)
@@ -2717,70 +1876,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     },
     [abortEphemeralImageRequests],
   )
-  // 分镜图加载失败追踪(键=shot.id):缩略图 onError 标记、onLoad 清除。
-  // 任一参与分镜的图加载失败 → 禁止「生成视频」(避免拿坏图/过期URL出片)。
-  const [shotImgError, setShotImgError] = useState<Record<string | number, boolean>>({})
-  const [shotImgRetryTokens, setShotImgRetryTokens] = useState<Record<string | number, number>>({})
-  const [shotImgReloading, setShotImgReloading] = useState<Record<string | number, boolean>>({})
-  const clearShotImgReloading = (id: string | number) =>
-    setShotImgReloading((current) => {
-      if (!current[id]) return current
-      const next = { ...current }
-      delete next[id]
-      return next
-    })
-  const markShotImgRetrying = (id: string | number) =>
-    setShotImgReloading((current) => (current[id] ? current : { ...current, [id]: true }))
-  const markShotImgError = (id: string | number) => {
-    clearShotImgReloading(id)
-    setShotImgError((current) => (current[id] ? current : { ...current, [id]: true }))
-  }
-  const markShotImgLoad = (id: string | number) => {
-    clearShotImgReloading(id)
-    setShotImgError((current) => {
-      if (!current[id]) return current
-      const next = { ...current }
-      delete next[id]
-      return next
-    })
-  }
-  const retryFailedShotImageLoads = async () => {
-    const failedShots = shotsRef.current.filter((shot) => shotImgError[shot.id] && shot.image)
-    if (!failedShots.length) return
-    setShotImgReloading((current) => ({
-      ...current,
-      ...Object.fromEntries(failedShots.map((shot) => [shot.id, true])),
-    }))
-    const ws = Number(workspaceIdRef.current || workspaceId || 0)
-    const refreshedUrls = new Map<Shot['id'], string>()
-    if (ws) {
-      await Promise.all(
-        failedShots.map(async (shot) => {
-          const assetId = Number(shot.imageAssetId || 0) || 0
-          if (!assetId) return
-          try {
-            const freshUrl = await refreshAssetUrl(ws, assetId)
-            if (freshUrl) refreshedUrls.set(shot.id, freshUrl)
-          } catch {
-            // 签名地址刷新失败时仍保留当前地址，交给下方有限次数的图片重试继续恢复。
-          }
-        }),
-      )
-    }
-    setShots((current) => {
-      const next = current.map((shot) => {
-        const freshUrl = refreshedUrls.get(shot.id)
-        return freshUrl ? { ...shot, image: freshUrl } : shot
-      })
-      shotsRef.current = next
-      return next
-    })
-    setShotImgRetryTokens((current) => {
-      const next = { ...current }
-      for (const shot of failedShots) next[shot.id] = Number(next[shot.id] || 0) + 1
-      return next
-    })
-  }
   const autoGenRef = useRef(false)
   // 上次「分镜图 / 整片视频」生成时的输入签名:用于区分「草稿恢复/未改动(沿用旧结果)」与
   // 「上游改动(需重新生成)」。进入下一步时输入签名变了 → 重新生成,与产品逻辑一致。
@@ -3024,112 +2119,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     return !ctrl.signal.aborted && runId === shotGenRunSeqRef.current && !failed
   }
 
-  // 单镜「编辑 / 新增」弹框统一生成(返回是否成功,供弹框「后端真正返回成功才关闭」)。
-  // 重点:把【全部现有分镜的完整信息】作上下文 + 用户描述 + 上传素材,
-  //   先由 LLM 产出/修改该镜头完整内容(画面描述 + 台词/字幕/音效 + 主体),与前后连贯,
-  //   再据此 + 上传素材出分镜图。这样新分镜不再与其它无关,且台词/字幕/音效会一并补全。
-  const generateShotFromDialog = async (
-    sh: Shot,
-    opts: { mode: 'edit' | 'insert'; intent: string; uploadRefUrls: string[] },
-  ): Promise<boolean> => {
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      showToast('未选择工作空间,无法生成', 'error')
-      return false
-    }
-    if (shotGen[sh.id]) return false
-    const request = beginShotDialogGenerationRequest(sh.id, ws)
-    if (!request) {
-      showToast(`分镜「${sh.no}」正在生成，请勿重复提交`, 'info')
-      return false
-    }
-    const signal = request.controller.signal
-    setShotGen((m) => ({ ...m, [sh.id]: true }))
-    try {
-      const plans = await resolvePlanCandidates()
-      throwIfSmartRequestAborted(signal)
-      const intent = (opts.intent || '').trim()
-      const doText = opts.mode === 'insert' || intent.length > 0
-      let target = sh
-      if (doText) {
-        const scriptModel = requireGenerationModel('responses.multimodal')
-        if (!scriptModel) return false
-        const idx = shots.findIndex((s) => s.id === sh.id)
-        // 上下文带「全部分镜」:新增时排除自身这条占位空分镜
-        const ctxShots = opts.mode === 'insert' ? shots.filter((s) => s.id !== sh.id) : shots
-        const info = await generateShotInfo({
-          shots: ctxShots,
-          targetIndex: idx < 0 ? ctxShots.length : idx,
-          mode: opts.mode,
-          intent,
-          style: entryMeta?.style,
-          ratio: entryMeta?.ratio,
-          images: opts.uploadRefUrls,
-          modelVersionId: scriptModel.modelVersionId,
-          requestContext: responseRequestContextFor(scriptModel, ws),
-          signal,
-        })
-        if (!isCurrentShotDialogGenerationRequest(sh.id, request)) return false
-        // 文本字段一律回填(台词/字幕/音效);主体与时长仅新增时采用 LLM 结果,编辑保留原有
-        const nextSubjects =
-          opts.mode === 'insert' ? (info.subjects?.length ? info.subjects : sh.subjects) : sh.subjects
-        target = {
-          ...sh,
-          desc: info.desc || sh.desc,
-          line: info.line,
-          subtitle: info.subtitle,
-          sfx: info.sfx,
-          duration: opts.mode === 'insert' ? info.duration || sh.duration : sh.duration,
-          subjects: nextSubjects,
-          isNew: false,
-        }
-        setShots((prev) =>
-          prev.map((x) =>
-            x.id === sh.id
-              ? {
-                  ...x,
-                  desc: target.desc,
-                  line: target.line,
-                  subtitle: target.subtitle,
-                  sfx: target.sfx,
-                  duration: target.duration,
-                  subjects: target.subjects,
-                }
-              : x,
-          ),
-        )
-      }
-      // 出图:已有主体素材 + 本次上传素材作参考;编辑在当前图基础上改(img2img)
-      const subjectUrls = (target.subjects || []).map((s) => s.image).filter(Boolean) as string[]
-      const refUrls = Array.from(new Set([...subjectUrls, ...opts.uploadRefUrls]))
-      await genShotFrame(ws, target, '', (reqSummary || '').slice(0, 60), plans, undefined, {
-        refUrls,
-        carryCurrent: opts.mode === 'edit',
-        signal,
-        onTask: (taskId) => {
-          const normalizedTaskId = Number(taskId || 0)
-          if (normalizedTaskId > 0) request.taskIds.add(normalizedTaskId)
-        },
-      })
-      if (!isCurrentShotDialogGenerationRequest(sh.id, request)) return false
-      // 单镜编辑/新增后,把「已生成」基线签名更新成当前最新 shots:
-      // 否则之后离开再回到镜头编排,会因签名变化被判为「上游改动」而整列重生成。
-      setShots((prev) => {
-        shotGenSigRef.current = shotImageInputSig(prev, entryMeta)
-        return prev
-      })
-      return true
-    } catch (e: any) {
-      if (signal.aborted || e?.name === 'AbortError') return false
-      showToast(`分镜「${sh.no}」生成失败:${e?.message || ''}`, 'error')
-      return false
-    } finally {
-      const wasCurrent = shotDialogGenerationRequestsRef.current.get(sh.id) === request
-      finishShotDialogGenerationRequest(sh.id, request)
-      if (wasCurrent) setShotGen((m) => ({ ...m, [sh.id]: false }))
-    }
-  }
-
   const removeShotLocally = (shotId: Shot['id']) => {
     cancelInsertTextGeneration(shotId)
     cancelShotDialogGenerationRequest(shotId)
@@ -3142,24 +2131,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     setShotGen((m) => {
       if (!m || !m[shotId]) return m
       const next = { ...m }
-      delete next[shotId]
-      return next
-    })
-    setShotImgError((m) => {
-      if (!m || !m[shotId]) return m
-      const next = { ...m }
-      delete next[shotId]
-      return next
-    })
-    setShotImgReloading((current) => {
-      if (!current[shotId]) return current
-      const next = { ...current }
-      delete next[shotId]
-      return next
-    })
-    setShotImgRetryTokens((current) => {
-      if (!Object.prototype.hasOwnProperty.call(current, shotId)) return current
-      const next = { ...current }
       delete next[shotId]
       return next
     })
@@ -7395,9 +6366,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     setShotGen({})
     setShotGenRunning(false)
     setFields({})
-    setShotImgError({})
-    setShotImgRetryTokens({})
-    setShotImgReloading({})
     fullVideoRef.current = { url: '', assetId: 0 }
     setFullVideo(fullVideoRef.current)
     replaceVideoVersions([])
@@ -7603,85 +6571,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           if (!options.transactional) setShots(withSubjects)
         }
       }
-      // 主推产品锚定:用上传素材识别主推产品并绑定到对应主体(后续走图生图保真、不合并、不进一键批量);
-      // 匹配不到则注入「主推产品」主体到所有镜头。best-effort,失败则用原结果。
-      let anchored = withSubjects
-      if (meta.images?.length && !isRealPersonMode) {
-        try {
-          anchored = await anchorUploadsToSubjects(
-            withSubjects,
-            meta.images,
-            (meta as any).imageAssetIds,
-            modelSelection.modelVersionId,
-            {
-              workspaceId: executionWorkspaceId,
-              signal: controller.signal,
-              modelVersionId: requestContext.modelVersionId,
-              modelVersion: requestContext.modelVersion,
-              modelPlanCandidates: requestContext.modelPlanCandidates,
-            },
-          )
-          if (!isCurrentRun()) return false
-          if (!options.transactional) setShots(anchored)
-        } catch (error) {
-          if (controller.signal.aborted || (error as any)?.name === 'AbortError') throw error
-          /* 锚定失败 → 用原结果 */
-        }
-      }
-      // 主体合并:把「仅单镜出现一次」的多个主体按画面语义并成 1 个组合主体,减少不必要的素材生成
-      //(跨镜复用 / 已绑定上传图 / 主推产品锚定的主体保持独立,确保一致性)。best-effort,失败则保持原拆分结果。
-      let finalShots = anchored
-      try {
-        const merged = await mergeSingleUseSubjects(
-          anchored,
-          controller.signal,
-          modelSelection.modelVersionId,
-          requestContext,
-        )
-        if (!isCurrentRun()) return false
-        finalShots = merged
-        if (!options.transactional) setShots(merged)
-      } catch (error) {
-        if (controller.signal.aborted || (error as any)?.name === 'AbortError') throw error
-        /* 合并失败 → 保持拆分结果 */
-      }
-      // 普通智能成片也允许选择已认证真人：将该真人注入所有人物主体，后续按真实引用保留身份。
-      const entryRealPersonReference = meta.realPersonReferences?.[0]
-      const entryRealPersonImage = entryRealPersonReference ? meta.images?.[0] : undefined
-      const entryRealPersonNames = new Set<string>()
-      if (entryRealPersonReference && entryRealPersonImage) {
-        finalShots = finalShots.map((shot) => {
-          const subjects = [...(shot.subjects || [])]
-          const personIndexes = subjects
-            .map((subject, index) => (/人物|人像|角色|person|portrait|model/i.test(subject.kind || '') ? index : -1))
-            .filter((index) => index >= 0)
-          if (!personIndexes.length) {
-            const name = entryRealPersonReference.personName || '出镜人物'
-            entryRealPersonNames.add(name)
-            subjects.unshift({
-              tag: `@${name}`,
-              kind: '人物',
-              image: entryRealPersonImage,
-              assetId: entryRealPersonReference.localAssetId,
-              refImage: entryRealPersonImage,
-              refAssetId: entryRealPersonReference.localAssetId,
-            })
-          } else {
-            personIndexes.forEach((index) => {
-              const name = stripAt(subjects[index].tag) || entryRealPersonReference.personName || '出镜人物'
-              entryRealPersonNames.add(name)
-              subjects[index] = {
-                ...subjects[index],
-                image: entryRealPersonImage,
-                assetId: entryRealPersonReference.localAssetId,
-                refImage: entryRealPersonImage,
-                refAssetId: entryRealPersonReference.localAssetId,
-              }
-            })
-          }
-          return { ...shot, subjects }
-        })
-      }
+      // 主推产品锚定与主体合并都已随「准备素材」步移除:两者都只为「少生成几张主体素材图」
+      // 服务,而主体素材图已经不再生成——用户上传的素材直接作为参考图提交给视频模型。
+      // 它们各自还要多跑一次 LLM,留着纯属给每次脚本生成加延迟。
+      const finalShots = withSubjects
+      // 真人身份不再注入主体:真人素材的 assetId 已经在 entryMeta.imageAssetIds 里,
+      // 会和普通素材一起作为参考图提交,后端按 local_asset_id 查真人库、换成可信资产 URI
+      // 并校验授权(见后端 ResolveProviderAsset)。出镜人名走提示词(见 identityConstraint)。
       if (!isCurrentRun()) return false
       if (options.transactional) {
         const committed = mergeTransactionalScriptResult({
@@ -7692,35 +6588,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         shotsExplicitlyClearedRef.current = false
         shotsRef.current = committed.shots
         setShots(committed.shots)
-        const committedSubjectAssets =
-          entryRealPersonReference && entryRealPersonImage
-            ? registerRealPersonReference(
-                committed.subjectAssets,
-                entryRealPersonNames,
-                entryRealPersonImage,
-                entryRealPersonReference,
-              )
-            : committed.subjectAssets
-        subjectAssetsRef.current = committedSubjectAssets
-        setSubjectAssets(committedSubjectAssets)
         latestDraftStateRef.current = {
           ...latestDraftStateRef.current,
           shots: committed.shots,
-          subjectAssets: committedSubjectAssets,
         }
         autoGenRef.current = false
       } else {
         shotsRef.current = finalShots
-        if (entryRealPersonReference && entryRealPersonImage) {
-          const nextSubjectAssets = registerRealPersonReference(
-            subjectAssetsRef.current,
-            entryRealPersonNames,
-            entryRealPersonImage,
-            entryRealPersonReference,
-          )
-          subjectAssetsRef.current = nextSubjectAssets
-          setSubjectAssets(nextSubjectAssets)
-        }
       }
       succeeded = true
     } catch (e: any) {
@@ -9042,68 +7916,24 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
 
   // 各步「主操作按钮」(不含上一步/下一步,导航箭头单独渲染)
   const bottomButtons: BottomButton[] = (() => {
-    // 任意分镜图生成中(批量 shotGenRunning 或单张 shotGen[id])→ 禁用镜头编排步的生成类按钮
-    const anyShotGenerating = shotGenRunning || Object.values(shotGen).some(Boolean)
-    // 准备素材:所有主体素材是否都已就绪 —— 每个主体名都要有图;批量/单体生成中视为未完成。
-    // 含主推产品(refImage 锚定)主体:它不进一键批量,须用户手动生成,这里同样要求它有图才放行。
-    const subjNames = Array.from(
-      new Set(shots.flatMap((sh) => sh.subjects.map((su) => stripAt(su.tag)).filter(Boolean))),
-    )
-    const anySubjectGenerating = batchGenning || Object.values(subjectGenerating).some(Boolean)
-    const materialsAllReady = !anySubjectGenerating && subjNames.every((n) => !!subjectImageOf(n))
-    const textToImageModelReady = Boolean(selectedGenerationModel('image.text_to_image'))
-    const imageToImageModelReady = Boolean(selectedGenerationModel('image.image_to_image'))
     const videoGenerationModelReady = Boolean(selectedGenerationModel('video.generate'))
-    const materialNeedsImageToImage = subjNames.some((name) => {
-      const reference = subjectRefOf(name)
-      return Boolean(reference.url || reference.assetId || reference.assetIds?.length)
-    })
-    const materialNeedsTextToImage = subjNames.some((name) => {
-      const reference = subjectRefOf(name)
-      return !reference.url && !reference.assetId && !reference.assetIds?.length
-    })
-    const materialModelsReady =
-      (!materialNeedsTextToImage || textToImageModelReady) && (!materialNeedsImageToImage || imageToImageModelReady)
-    const activeShotsForImages = shots.filter((shot) => shot.includeInVideo !== false)
-    const projectRealPersonReference = resolveProjectRealPersonReference()
-    const shotHasRealPersonReference = (shot: Shot) =>
-      Boolean(
-        projectRealPersonReference?.localAssetId ||
-        resolveShotRealPersonPreservation(shot, subjectAssetsRef.current)?.localAssetId,
-      )
-    const shotHasElementReference = (shot: Shot) => resolveShotElementReferenceAssetIds(shot).length > 0
-    // 和 genShotFrame 保持同一规则：绑定上传元素或真人参考的镜头走图生图，其余镜头文生图。
-    const frameNeedsTextToImage = activeShotsForImages.some(
-      (shot) => !shotHasElementReference(shot) && !shotHasRealPersonReference(shot),
-    )
-    const frameNeedsImageToImage = activeShotsForImages.some(
-      (shot) => shotHasElementReference(shot) || shotHasRealPersonReference(shot),
-    )
-    const frameModelsReady =
-      (!frameNeedsTextToImage || textToImageModelReady) && (!frameNeedsImageToImage || imageToImageModelReady)
+    const activeShots = shots.filter((shot) => shot.includeInVideo !== false)
     switch (step) {
-      case 0: {
-        const revisitingScriptStep = maxReached >= 1
+      case STEP_SCRIPT: {
+        // 确认脚本后直接进入生成视频:中间不再有素材/分镜图生成环节,
+        // 用户上传的素材原样作为参考图提交,产品外观不会被重画。
         return [
           {
-            // 文案始终保持「确认脚本」;从下一步返回后再点,行为改为进入「准备素材」并重生成素材。
-            label: '确认脚本',
-            variant: 'primary',
+            label: '生成视频',
+            variant: 'split',
             action: () => {
               guardInsertedShotBeforeNext(() => {
                 void guardDurationBeforeNext(() => {
-                  if (revisitingScriptStep) {
-                    forceFreshMaterialsRef.current = true
-                    clearAllSubjectMaterials()
-                  }
-                  // 准备素材不再作为独立页面展示。进入镜头编排时立刻生成分镜图，
-                  // 主体素材批量生成在后台并行执行，不再阻塞用户看到图片生成进度。
-                  const nextShots = shotsRef.current
-                  autoGenRef.current = nextShots.length > 0
-                  shotGenSigRef.current = ''
-                  goStep(2)
-                  if (nextShots.length > 0) void generateShotImages(nextShots)
-                  generateAllSubjects()
+                  videoGenSigRef.current = ''
+                  autoVidRef.current = false
+                  initialVideoGenerateCountRef.current = normalizeVideoGenerateCount(videoCount)
+                  setPendingVideoFocusToken((v) => v + 1)
+                  goStep(STEP_VIDEO)
                 })
               })
             },
@@ -9111,112 +7941,22 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
               scriptLoading ||
               insertTextGenerating ||
               Boolean(scriptError) ||
-              !materialModelsReady ||
-              !frameModelsReady,
+              activeShots.length === 0 ||
+              !videoGenerationModelReady,
             tip: scriptError
               ? '脚本生成未完整结束，请先重新生成'
-              : !materialModelsReady
-                ? '请先选择准备素材所需的图片生成模型'
-                : !frameModelsReady
-                  ? '请先选择生成分镜图所需的图片生成模型'
+              : activeShots.length === 0
+                ? '请先生成分镜脚本'
+                : !videoGenerationModelReady
+                  ? '请先选择视频生成模型'
                   : undefined,
-          },
-        ]
-      }
-      case 1: {
-        const revisitingShotStep = maxReached >= 2
-        return [
-          {
-            // 文案统一改为「生成分镜」;首次点击进入镜头编排,返回后再点则全量重新生成分镜。
-            label: '生成分镜',
-            variant: 'primary',
-            action: () => {
-              guardInsertedShotBeforeNext(() => {
-                void guardDurationBeforeNext(() => {
-                  if (revisitingShotStep) {
-                    void (async () => {
-                      await cancelShotGeneration()
-                      const nextShots = resetShotArrangementOutputs(shots)
-                      setShots(nextShots)
-                      setShotImgError({})
-                      setShotImgRetryTokens({})
-                      setShotImgReloading({})
-                      shotGenSigRef.current = ''
-                      autoGenRef.current = true
-                      goStep(2)
-                      void generateShotImages(nextShots)
-                    })()
-                    return
-                  }
-                  autoGenRef.current = false
-                  goStep(2)
-                })
-              })
-            },
-            // 素材未全部生成完毕不可进入镜头编排(含主推产品需手动生成)
-            disabled: scriptLoading || !materialsAllReady || !frameModelsReady,
-            tip: anySubjectGenerating
-              ? '素材生成中,请稍候…'
-              : !materialsAllReady
-                ? '请先完成所有素材的生成(主推产品需手动点击生成)再进入镜头编排'
-                : !frameModelsReady
-                  ? '请先选择生成分镜所需的图片模型'
-                  : undefined,
-          },
-        ]
-      }
-      case 2: {
-        // 参与视频的分镜:每张都要有图且加载成功(无图/加载失败 → 不能生成视频)
-        const activeShots = shots.filter((s) => s.includeInVideo !== false)
-        const failedShotImages = activeShots.filter((shot) => shotImgError[shot.id])
-        const imageReloading = activeShots.some((shot) => shotImgReloading[shot.id])
-        const shotImagesReady = activeShots.length > 0 && activeShots.every((s) => !!s.image && !shotImgError[s.id])
-        // 镜头编排:重新生成 + 生成视频
-        return [
-          {
-            label: imageReloading
-              ? '重新加载中…'
-              : failedShotImages.length
-                ? '重新加载失败分镜'
-                : shotGenRunning
-                  ? '生成中…'
-                  : '重新生成',
-            variant: 'ghost',
-            action: () => {
-              if (failedShotImages.length) void retryFailedShotImageLoads()
-              else void generateShotImages()
-            },
-            disabled: anyShotGenerating || imageReloading,
-          },
-          {
-            label: '生成视频',
-            variant: 'split',
-            action: () => {
-              void guardDurationBeforeNext(() => {
-                videoGenSigRef.current = ''
-                autoVidRef.current = false
-                initialVideoGenerateCountRef.current = normalizeVideoGenerateCount(videoCount)
-                setPendingVideoFocusToken((v) => v + 1)
-                goStep(3)
-              })
-            },
-            disabled: anyShotGenerating || imageReloading || !shotImagesReady || !videoGenerationModelReady,
-            tip: anyShotGenerating
-              ? '分镜图生成中,请稍候…'
-              : imageReloading
-                ? '分镜图正在自动重新加载,请稍候…'
-                : !shotImagesReady
-                  ? '有分镜图未生成或加载失败,请先重新加载失败分镜;资源确实失效时再单独编辑该分镜'
-                  : !videoGenerationModelReady
-                    ? '请先选择视频生成模型'
-                    : undefined,
             splitCount: videoCount,
             splitCountOptions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
             onSplitCountChange: (n: number) => setVideoCount(n),
           },
         ]
       }
-      case 3: // 生成视频:总按钮已移到中间 VideoStage,这里不再渲染底部条
+      case STEP_VIDEO: // 生成视频:总按钮在中间 VideoStage,这里不再渲染底部条
         return []
       default:
         return []
@@ -9679,97 +8419,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           if (!replayQueued) showToast('模型已切换；历史图片已保留，自动重生成未提交', 'info')
           return
         }
-        const imagePlan = videoImageRegenerationPlan
-        const subjectNames = imagePlan?.subjectNames || []
-        const plannedShotIds = new Set((imagePlan?.shotIds || []).map((id) => String(id)))
-        const plannedShots = shotsRef.current.filter((shot) => plannedShotIds.has(String(shot.id)))
-        const now = Date.now()
-        const recovery: SmartModelSwitchRecoveryDescriptor = {
-          version: 1,
-          id: `smart-model-switch-${now}-${sequence}`,
-          operationCode,
-          status: 'checkpoint',
-          phase: 'subjects',
-          workspaceId: owner.workspaceId,
-          projectId: owner.projectId,
-          fromModelId: currentModelId,
-          toModelId: nextModelId,
-          previousGenerationModels: { ...(currentMeta.generationModels || {}) },
-          nextGenerationModels: { ...nextGenerationModels },
-          pendingSubjectNames: [...subjectNames],
-          pendingShotIds: [...(imagePlan?.shotIds || [])],
-          completedSubjectNames: [],
-          completedShotIds: [],
-          createdAt: now,
-          updatedAt: now,
-        }
-        const checkpoint = await persistModelSwitchCheckpoint(nextMeta, recovery)
-        if (checkpoint !== 'saved') {
-          applyModelSwitchCheckpointState(currentMeta, null)
-          showToast(
-            checkpoint === 'conflict' ? '云端草稿已发生变化，已取消模型切换' : '模型切换保存失败，未开始重新生成',
-            'error',
-          )
-          return
-        }
-        const failedSubjects: string[] = []
-        for (const name of subjectNames) {
-          const regenerated = await generateSubjectAuto(name, {
-            notify: false,
-            generationModels: nextGenerationModels,
-          })
-          if (!regenerated) failedSubjects.push(name)
-        }
-        const hadShotImages = plannedShots.length > 0
-        if (failedSubjects.length) {
-          videoGenSigRef.current = ''
-          autoVidRef.current = true
-          failModelSwitchRecovery(nextMeta, recovery, '部分主体素材重生成失败，旧分镜和成片已保留')
-          showToast(
-            `模型已切换，但 ${failedSubjects.length} 个主体素材重生成失败；旧分镜和成片已保留，请重试失败素材后再更新分镜`,
-            'error',
-          )
-          return
-        }
-        if (hadShotImages) {
-          const shotsCheckpoint: SmartModelSwitchRecoveryDescriptor = {
-            ...recovery,
-            status: 'running',
-            phase: 'shots',
-            pendingSubjectNames: [],
-            completedSubjectNames: [...subjectNames],
-            updatedAt: Date.now(),
-          }
-          const shotsCheckpointResult = await persistModelSwitchCheckpoint(nextMeta, shotsCheckpoint)
-          if (shotsCheckpointResult !== 'saved') {
-            failModelSwitchRecovery(nextMeta, recovery, '分镜重生成前云端保存失败，旧版本已保留')
-            showToast('分镜重生成前云端保存失败，未开始新的付费任务', 'error')
-            return
-          }
-          const framesRegenerated = await generateShotImages(plannedShots, {
-            generationModels: nextGenerationModels,
-            stopOnFailure: true,
-          })
-          if (!framesRegenerated) {
-            videoGenSigRef.current = ''
-            autoVidRef.current = true
-            failModelSwitchRecovery(nextMeta, shotsCheckpoint, '部分分镜重生成失败，旧版本和旧成片已保留')
-            showToast('模型已切换，部分分镜重生成失败；旧版本和旧成片仍已保留，请重试分镜', 'error')
-            return
-          }
-          setStep(2)
-          setMaxReached((value) => Math.min(value, 2))
-        }
-        videoGenSigRef.current = ''
-        autoGenRef.current = true
-        autoVidRef.current = true
-        await completeModelSwitchRecovery(nextMeta, recovery)
-        showToast(
-          hadShotImages
-            ? '图片模型已切换并完成素材、分镜重生成；旧成片已保留，请按现有视频报价重新生成成片'
-            : '图片模型已切换并完成对应主体素材重生成',
-          'success',
-        )
+        // 视频模式下的图片模型已不参与智能成片:主体素材图与分镜图都不再生成,
+        // 所以切换图片模型不需要重跑任何付费任务,下次用到时(如图片模式)自然生效。
+        showToast('图片模型已切换，将在下一次生成时生效', 'success')
         return
       }
 
@@ -10001,25 +8653,15 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             <>
               <ScriptStoryboardTable
                 shots={shots}
-                showSubjects={materialMode}
-                deferDurationValidation={!materialMode}
+                /* 「准备素材」步已移除:主体素材不再由 AI 单独出图,这一列没有内容可展示。
+                   用户上传的素材直接作为参考图提交给视频模型。 */
+                showSubjects={false}
                 maxTotalDurationSec={maxVideoDurationSec}
                 maxShotDurationSec={maxShotDurationSec}
                 onInsertShot={insertStoryboardShot}
-                insertDisabled={
-                  scriptLoading ||
-                  insertTextGenerating ||
-                  batchGenning ||
-                  Object.values(subjectGenerating).some(Boolean)
-                }
+                insertDisabled={scriptLoading || insertTextGenerating}
                 shotTextGenerating={insertTextGeneratingId === null ? {} : { [String(insertTextGeneratingId)]: true }}
-                subjectGenerating={subjectGenerating}
-                onGenerateAll={materialMode ? generateAllSubjects : undefined}
-                batchGenning={batchGenning}
-                onRemoveSubject={removeSubjectImage}
                 onDeleteShot={deleteShot}
-                onGenerateMaterial={(s) => addShotMaterial(s, true)}
-                onOpenSubject={openSubject}
                 trashItems={shotTrashItems}
                 trashLoading={shotTrashLoading}
                 onLoadTrash={loadShotTrash}
@@ -10070,53 +8712,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         </div>
       )
     }
-    if (step === 2) {
-      // 镜头编排:左 分镜列表 + 右 素材修改(元素/分镜图版本/描述修改/台词/字幕/音效)
-      return (
-        <ShotArrange
-          shots={shots}
-          generating={shotGen}
-          generatingAll={shotGenRunning}
-          onShotsChange={updateShotsFromEditor}
-          onUploadRef={uploadRef}
-          onShotImgError={markShotImgError}
-          onShotImgLoad={markShotImgLoad}
-          onShotImgRetrying={markShotImgRetrying}
-          imageRetryTokens={shotImgRetryTokens}
-          onGenerateShot={generateShotFromDialog}
-          onDeleteShot={deleteShot}
-          trashItems={shotTrashItems}
-          trashLoading={shotTrashLoading}
-          onLoadTrash={loadShotTrash}
-          onRestoreTrash={restoreShotFromTrash}
-          onDeleteTrash={deleteShotTrash}
-          onRestoreAllTrash={restoreAllShotTrash}
-          onClearTrash={clearAllShotTrash}
-          onPolishPrompt={(text, uploadRefUrls) => {
-            const responseModel = requireInteractiveResponseModel()
-            return refineShotPrompt({
-              desc: text,
-              outline: reqSummary || requirement, // 整体大纲(仅调性参考)
-              // 把本次上传的素材图作为 materials(带 url → VL 读图),让润色理解用户上传的素材
-              materials: (uploadRefUrls || []).filter(Boolean).map((url) => ({ url })),
-              style: entryMeta?.style,
-              ratio: entryMeta?.ratio,
-              modelVersionId: responseModel.modelVersionId,
-              requestContext: responseRequestContextFor(responseModel),
-            }).then((r: any) => r?.prompt || text)
-          }}
-          onPolishText={(kind, text) => {
-            const responseModel = requireInteractiveResponseModel()
-            return polishText(text, {
-              kind,
-              modelVersionId: responseModel.modelVersionId,
-              requestContext: responseRequestContextFor(responseModel),
-            })
-          }}
-        />
-      )
-    }
-    // step === 3 生成视频(第四步):整片视频 + 时间轴选片段 + 片段/整段修改框 + 总按钮(本步不再改分镜)
+    // 生成视频(第二步):整片视频 + 时间轴选片段 + 片段/整段修改框 + 总按钮(本步不再改分镜)
     return (
       <VideoStage
         shots={shots}
@@ -10754,44 +9350,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           </div>
         )}
       </div>
-
-      <SubjectAssetDialog
-        /* 按主体名隔离实例:某主体生成/优化中,切到别的主体不会串状态(各自独立) */
-        key={subjectDlg.name}
-        open={subjectDlg.open}
-        name={subjectDlg.name}
-        kind={subjectDlg.kind}
-        currentImage={subjectImageOf(subjectDlg.name)}
-        anchorRefImages={anchorRefs}
-        versions={subjectAssets[subjectDlg.name]?.versions || []}
-        defaultPrompt={
-          subjectAssets[subjectDlg.name]?.prompt ||
-          subjectPrompt(subjectDlg.name, subjectDlg.kind, entryMeta?.style, subjectContext(subjectDlg.name))
-        }
-        autoGen={subjectDlg.autoGen}
-        refinePrompt={
-          subjectAssets[subjectDlg.name]?.prompt
-            ? undefined // 已有润色过/编辑过的提示词,直接显示,不再润色
-            : (intent: string) => {
-                const responseModel = requireInteractiveResponseModel()
-                return refineElementPrompt(intent, {
-                  name: subjectDlg.name,
-                  kind: subjectDlg.kind,
-                  style: entryMeta?.style,
-                  modelVersionId: responseModel.modelVersionId,
-                  requestContext: responseRequestContextFor(responseModel),
-                })
-              }
-        }
-        projectImages={projectImages}
-        workspaceId={Number(workspaceId || 0)}
-        realPersonOnly={isRealPersonMode}
-        onClose={() => setSubjectDlg((d) => ({ ...d, open: false }))}
-        onGenerate={(p, opts) => genForSubject(subjectDlg.name, p, opts)}
-        onSelect={(url) => applySubjectImage(subjectDlg.name, url, subjectAssets[subjectDlg.name]?.ids?.[url] || 0)}
-        onSelectRealPerson={(url, reference) => selectRealPersonForSubject(subjectDlg.name, url, reference)}
-        onUpload={(file, context) => uploadForSubject(subjectDlg.name, file, context)}
-      />
     </div>
   )
 }
