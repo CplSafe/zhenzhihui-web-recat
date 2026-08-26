@@ -1120,14 +1120,17 @@
 
 /* 固定在对话区上方而不是随流滚动:视频生成要几分钟,
    用户会一边等一边继续对话,进度被滚走就失去意义。 */
-.artifactPanel {
-  flex-shrink: 0;
-  padding: 10px var(--space-lg);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-app);
+/* 对话内的生成结果组。像 ChatGPT 生图那样长在消息流里,
+   所以对齐 assistant 气泡的左边缘,而不是像独立面板那样铺满宽度。 */
+.genGroup {
+  margin: 4px 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
 }
 
-.artifactHeader {
+.genHeader {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -1137,18 +1140,40 @@
   color: var(--color-heading);
 }
 
-.artifactCount {
+.genCount {
   font-size: 11px;
   font-weight: 400;
   color: var(--color-text-tertiary);
 }
 
-/* 横向滚动:多条生成时不该把对话区挤没 */
-.artifactList {
+.genList {
   display: flex;
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 2px;
+}
+
+/* 骨架屏:任务还没落库时先占位,数量等于用户选的条数。
+   尺寸与 .artifactThumb 完全一致,换成真卡片时不会跳动。 */
+.genSkeleton {
+  flex-shrink: 0;
+  width: 116px;
+}
+
+.genSkeletonThumb {
+  width: 116px;
+  aspect-ratio: 9 / 16;
+  border-radius: var(--radius-md);
+  background: linear-gradient(110deg, var(--color-bg-app) 30%, var(--color-brand-light) 50%, var(--color-bg-app) 70%);
+  background-size: 200% 100%;
+  animation: artifact-shimmer 1.6s linear infinite;
+}
+
+.genSkeletonLabel {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
 }
 
 .artifactCard {
@@ -1226,4 +1251,64 @@
 
 .artifactStatusFailed {
   color: var(--color-error);
+}
+
+/* 语音输入 --------------------------------------------------------------- */
+
+/* 录音中的麦克风按钮。用品牌色 + 呼吸而不是常亮红点:
+   红色在这个界面里是错误语义,会让人以为出问题了。 */
+.micActive {
+  color: var(--color-brand);
+  background: var(--color-brand-light);
+}
+
+.micActive svg {
+  animation: mic-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes mic-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* 中间识别结果。压在输入框下方一行,不挤占正文区域。 */
+.speechHint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  min-height: 20px;
+}
+
+.speechDot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-brand);
+  animation: mic-breathe 1.4s ease-in-out infinite;
+}
+
+.speechError {
+  padding: 4px 2px 0;
+  font-size: 12px;
+  color: var(--color-error);
+  cursor: pointer;
+}
+
+/* 用户明确表示要减少动画时,呼吸效果一律关掉 */
+@media (prefers-reduced-motion: reduce) {
+  .micActive svg,
+  .speechDot,
+  .genSkeletonThumb,
+  .artifactPulse {
+    animation: none;
+  }
 }
