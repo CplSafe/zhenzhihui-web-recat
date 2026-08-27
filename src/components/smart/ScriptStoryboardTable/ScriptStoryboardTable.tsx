@@ -249,6 +249,11 @@ export default function ScriptStoryboardTable({
           <div className={`${styles.sbHeadCell} ${styles.sbColNo}`}>镜头编号</div>
           <div className={`${styles.sbHeadCell} ${styles.sbColDur}`}>时长</div>
           <div className={`${styles.sbHeadCell} ${styles.sbColDesc}`}>画面描述</div>
+          {/* 台词 / 字幕 / 音效原本在「镜头编排」步编辑，那一步移除后并到这里——
+              它们和画面描述一样是脚本内容，本来就该在同一张表里改。 */}
+          <div className={`${styles.sbHeadCell} ${styles.sbColVoice}`}>台词/旁白</div>
+          <div className={`${styles.sbHeadCell} ${styles.sbColVoice}`}>字幕</div>
+          <div className={`${styles.sbHeadCell} ${styles.sbColVoice}`}>音效</div>
           {showSubjects && (
             <div className={`${styles.sbHeadCell} ${styles.sbColMat}`}>
               <span>准备素材</span>
@@ -403,6 +408,38 @@ export default function ScriptStoryboardTable({
                       onCommit={(v) => patchShot(shot.id, { desc: v })}
                     />
                   )}
+                </div>
+
+                {/* 台词 / 字幕 / 音效：与画面描述同为脚本内容，双击可改 */}
+                <div className={`${styles.sbCell} ${styles.sbColVoice}`}>
+                  <InlineEdit
+                    className={styles.sbVoice}
+                    value={shot.line || ''}
+                    multiline
+                    placeholder="双击添加台词…"
+                    editable={editable}
+                    onCommit={(v) => patchShot(shot.id, { line: v })}
+                  />
+                </div>
+                <div className={`${styles.sbCell} ${styles.sbColVoice}`}>
+                  <InlineEdit
+                    className={styles.sbVoice}
+                    value={shot.subtitle || ''}
+                    multiline
+                    placeholder="双击添加字幕…"
+                    editable={editable}
+                    onCommit={(v) => patchShot(shot.id, { subtitle: v })}
+                  />
+                </div>
+                <div className={`${styles.sbCell} ${styles.sbColVoice}`}>
+                  <InlineEdit
+                    className={styles.sbVoice}
+                    value={shot.sfx || ''}
+                    multiline
+                    placeholder="双击添加音效…"
+                    editable={editable}
+                    onCommit={(v) => patchShot(shot.id, { sfx: v })}
+                  />
                 </div>
 
                 {/* 准备素材(materialMode=图二:@名称 + AI自动生成 + 上传图片) */}

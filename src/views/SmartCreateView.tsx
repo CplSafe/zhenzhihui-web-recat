@@ -8101,10 +8101,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
 
   // 各步骤内容。0/1 暂为占位(等 Figma/后端);2/3 已接入「修改框 + AI 润色(本地模型)」。
   const renderStepBody = () => {
-    // 分镜脚本(step0)/ 准备素材(step1):共用「需求摘要 + 用户上传素材 + 分镜表」。
-    // step0 隐藏「准备素材」列;确认脚本后进入 step1,才把 AI 生成的主体素材回填、按图二样式展示。
-    if (step === 0 || step === 1) {
-      const materialMode = step === 1
+    // 分镜脚本(第一步):需求摘要 + 用户上传素材 + 分镜表。
+    // 「准备素材」步已移除,原来 step 1 走的也是这段;现在 step 1 是生成视频,
+    // 条件必须收窄到 STEP_SCRIPT,否则点「生成视频」后仍然停在这一页。
+    if (step === STEP_SCRIPT) {
       const promptText = requirement || '（未填写需求）'
       return (
         <div className="smart__script">
@@ -8141,9 +8141,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                   ? '分镜脚本生成失败'
                   : '分镜脚本生成完成'}
           </div>
-          {/* 疑似重复主体：AI 可能给同一个产品在不同镜头起了不同名字，素材因此各生成各的，
-              成片就会前后不一致。这里只提示不自动合并——万一真是两个产品，自动合并的错误更难发现。 */}
-          {materialMode && duplicateSubjectGroups.length > 0 && (
+          {/* 疑似重复主体：AI 可能给同一个产品在不同镜头起了不同名字。
+              只提示不自动合并——万一真是两个产品，自动合并的错误更难发现。 */}
+          {duplicateSubjectGroups.length > 0 && (
             <div className="smart__subject-dup" role="note">
               <strong className="smart__subject-dup-title">
                 ⚠️ 发现 {duplicateSubjectGroups.length} 组疑似重复的素材
@@ -8190,7 +8190,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                 onClearTrash={clearAllShotTrash}
                 /* AI自动生成:不后台直生,改为唤起素材弹窗并在弹窗内自动生成(autoGen),与「上传图片」一致 */
                 onShotsChange={updateShotsFromEditor}
-                onRegenerate={materialMode ? undefined : () => entryMeta && generateScript(requirement, entryMeta)}
+                onRegenerate={() => entryMeta && generateScript(requirement, entryMeta)}
                 regenerating={scriptLoading || insertTextGenerating}
               />
               {(scriptLoading || insertTextGenerating) && (
