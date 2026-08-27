@@ -1,17 +1,19 @@
 /**
  * 入口模型胶囊的局部微调。
- * 形态与「创作参数」胶囊一致（复用 StudioParamsBar 样式），这里只收窄摘要文本、放宽弹层。
+ * 形态与「创作参数」胶囊一致（复用 StudioParamsBar 样式），卡片本身用选择器的紧凑态。
  */
 
 /* 两个模型名连起来会很长，收窄并省略，避免胶囊把底栏撑开 */
 .summaryText {
-  max-width: 220px;
+  max-width: 190px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 弹层里要放两个创作台选择器，比参数弹层宽一些 */
+/* 比参数弹层略宽即可容纳两行模型卡片，不必铺到 400px */
 .popover {
-  width: 400px;
+  width: 300px;
+  gap: 12px;
+  padding: 14px;
 }

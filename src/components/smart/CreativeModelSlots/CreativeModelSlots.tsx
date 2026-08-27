@@ -126,6 +126,7 @@ export default function CreativeModelSlots({
                 onChange={(modelVersionId) => onChange(slot.groupKey, modelVersionId, slot.subgroupKey)}
                 loading={loading}
                 placeholderDescription="选择本次创作使用的模型"
+                compact
               />
             </div>
           ))}
