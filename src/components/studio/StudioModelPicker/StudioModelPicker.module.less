@@ -184,3 +184,35 @@
   font-size: 13px;
   text-align: center;
 }
+
+/*
+ * 紧凑态：给入口底栏的弹层用。侧边控制台有整列宽度，弹层没有——
+ * 只缩尺寸，不动信息层级（logo + 名称 + 描述照旧）。
+ */
+.isCompact {
+  .trigger {
+    gap: 9px;
+    padding: 8px 10px;
+    border-radius: var(--radius-xl);
+  }
+
+  .logo {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+  }
+
+  .name {
+    font-size: 13px;
+  }
+
+  .desc {
+    font-size: 11px;
+  }
+
+  .optionLogo {
+    width: 28px;
+    height: 28px;
+  }
+}

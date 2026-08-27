@@ -16,6 +16,7 @@ export {
   default as GenerationModelDropdown,
   getGenerationModelDurationOptions,
   getGenerationModelRatioOptions,
+  getGenerationModelReferenceImageLimit,
   getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
   isDurationSupportedByGenerationModel,
@@ -23,5 +24,6 @@ export {
   type GenerationModelSelectionConstraintValues,
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
+  type GenerationModelEstimateSummary,
 } from './GenerationModelDropdown'
 export { filterGenerationModelGroupsByOperations } from './filterGenerationModelGroupsByOperations'

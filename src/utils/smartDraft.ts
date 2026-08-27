@@ -196,7 +196,7 @@ export function mergeCompletedVideoGenerationIds(...sources: unknown[]): string[
 // 整片视频的「内容签名」:参与视频的分镜稳定内容(优先 imageAssetId,其次去掉签名参数的图 URL,
 // 避免 S3 预签名/工作空间参数变化导致误判)+ 时长/台词/字幕/音效/顺序 + 风格/比例/大纲。
 // 与 SmartCreateView.videoInputSig 同口径,但只用「落盘后稳定」的字段,以便跨保存/刷新可靠比较。
-const VIDEO_CONTENT_SIG_VERSION = 3
+const VIDEO_CONTENT_SIG_VERSION = 4
 
 /**
  * 各版本新增的签名字段。
@@ -226,11 +226,19 @@ export function computeVideoContentSig(shots: any[], entryMeta: any, base: strin
     // trim:出片锁定端传原始 reqSummary(LLM 常带尾部换行/空格),项目列表端传 pickString 已 trim 的值。
     // 两端不一致会让签名不等 → 明明没改却永久显示「· 草稿(内容已改)」。统一在此 trim,两端一致。
     base: String(base || '').trim(),
+    // 用户上传的素材现在直接作为参考图提交给视频模型，换图就是换输入。
+    // 不进签名的话，「返回入口换一张图再来生成」会被判成没改动，直接复用上一版成片。
+    entryAssets: (Array.isArray(entryMeta?.imageAssetIds) ? entryMeta.imageAssetIds : [])
+      .map((id: unknown) => Number(id) || 0)
+      .filter((id: number) => id > 0)
+      .join(','),
     shots: (Array.isArray(shots) ? shots : [])
       .filter((s) => s?.includeInVideo !== false)
       .map((s) => ({
         id: s?.id,
         img: stableImg(s),
+        // 画面描述是提示词主体，改了必须重算
+        desc: s?.desc || '',
         duration: s?.duration || '',
         line: s?.line || '',
         subtitle: s?.subtitle || '',

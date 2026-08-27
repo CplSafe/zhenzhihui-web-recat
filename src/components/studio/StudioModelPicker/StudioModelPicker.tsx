@@ -17,6 +17,11 @@ export interface StudioModelPickerProps {
   disabled?: boolean
   /** 没有可选模型时展示的兜底描述。 */
   placeholderDescription?: string
+  /**
+   * 紧凑态：logo 与内边距各收一档。
+   * 侧边控制台有整列宽度可用，入口底栏的弹层没有——同一份信息层级，换一个尺寸。
+   */
+  compact?: boolean
 }
 
 /** 渲染带 logo 的模型下拉选择器。 */
@@ -27,6 +32,7 @@ export default function StudioModelPicker({
   loading,
   disabled,
   placeholderDescription,
+  compact = false,
 }: StudioModelPickerProps) {
   const { open, setOpen, toggle, wrapRef } = useDismissablePopover<HTMLDivElement>()
 
@@ -34,7 +40,7 @@ export default function StudioModelPicker({
   const title = selected?.name || (loading ? '模型加载中…' : '暂无可用模型')
 
   return (
-    <div className={styles.wrap} ref={wrapRef}>
+    <div className={`${styles.wrap}${compact ? ` ${styles.isCompact}` : ''}`} ref={wrapRef}>
       <button
         type="button"
         className={`${styles.trigger}${open ? ` ${styles.isOpen}` : ''}`}

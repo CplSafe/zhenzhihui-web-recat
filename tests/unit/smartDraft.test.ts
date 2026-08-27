@@ -506,6 +506,49 @@ describe('smartDraft 后端快照', () => {
     expect(first).toBe(second)
   })
 
+  /**
+   * 签名决定「要不要重新出片」。少算一个字段，用户改完再点生成就会拿到上一版视频，
+   * 而且看不出哪里不对——这类漏字段的 bug 极难自查，所以逐项钉住。
+   */
+  it('画面描述与入口素材变化都会改变内容签名', () => {
+    const base = () =>
+      computeVideoContentSig(
+        [{ id: 'shot-1', desc: '航拍开场', duration: '3s' }],
+        { ratio: '16:9', imageAssetIds: [11, 12] },
+        '西山森林公园',
+      )
+
+    // 改画面描述
+    expect(
+      computeVideoContentSig(
+        [{ id: 'shot-1', desc: '改成近景特写', duration: '3s' }],
+        { ratio: '16:9', imageAssetIds: [11, 12] },
+        '西山森林公园',
+      ),
+    ).not.toBe(base())
+
+    // 回入口换一张参考图
+    expect(
+      computeVideoContentSig(
+        [{ id: 'shot-1', desc: '航拍开场', duration: '3s' }],
+        { ratio: '16:9', imageAssetIds: [11, 99] },
+        '西山森林公园',
+      ),
+    ).not.toBe(base())
+
+    // 删掉一张参考图
+    expect(
+      computeVideoContentSig(
+        [{ id: 'shot-1', desc: '航拍开场', duration: '3s' }],
+        { ratio: '16:9', imageAssetIds: [11] },
+        '西山森林公园',
+      ),
+    ).not.toBe(base())
+
+    // 素材没变则签名稳定
+    expect(base()).toBe(base())
+  })
+
   it('固定模型流程会忽略切换模型版本遗留的签名字段', () => {
     const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '5s' }]
 

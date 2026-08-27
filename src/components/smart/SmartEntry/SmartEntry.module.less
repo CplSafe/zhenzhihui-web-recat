@@ -310,6 +310,11 @@
   min-height: 108px;
 }
 
+.uploadWrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
 .upload {
   flex: 0 0 auto;
   border: none;
@@ -331,6 +336,47 @@
 
 .uploadCard {
   display: block;
+}
+
+/*
+ * 加号的来源菜单：本地上传 / 素材库 / 真人素材。
+ * 与爆款复制的来源菜单同一形态——两处都是「这份素材从哪来」，不该长成两个样子。
+ * 定位相对 .cardBody（加号与缩略图行都在其中），跟着加号落在它下方。
+ */
+.sourceMenu {
+  position: absolute;
+  /*
+   * 贴着加号右侧展开。加号在卡片左上角：向下会压住底栏的模型/参数胶囊，
+   * 向上会盖住 Tab 栏——横向展开两边都不挡。
+   */
+  top: 8px;
+  left: calc(100% + 8px);
+  z-index: 10;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(20, 20, 50, 0.14);
+
+  button {
+    display: block;
+    width: 100%;
+    padding: 9px 14px;
+    border: none;
+    border-radius: 7px;
+    background: none;
+    color: #444;
+    font-size: 14px;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+
+    &:hover {
+      background: #f3fffc;
+      color: #11a98a;
+    }
+  }
 }
 
 .realPersonPickerBtn {
@@ -377,7 +423,17 @@
 .attachments {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
+}
+
+// 参考图用量：跟着缩略图行走，不额外占一行；上限随所选模型变化。
+.attachmentCount {
+  flex: 0 0 auto;
+  align-self: center;
+  color: #8a9099;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .add {
@@ -598,6 +654,18 @@
   flex-wrap: wrap;
 }
 
+/* 提示行里的行内操作（如「重新加载」模型目录） */
+.noticeAction {
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #1fcfa9;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* 能力降级提示（如当前时长生成后不支持视频修改）：告知而非拦截，用弱化的黄字，不做成错误态 */
 .capabilityNotice {
   margin-top: -6px;
@@ -694,6 +762,25 @@
     background: transparent;
     opacity: 0.35;
   }
+}
+
+/*
+ * 主按钮旁的合计预估。
+ *
+ * 预估原本只在模型弹窗里，而弹窗选完就关——用户点「去制作」时反而看不到要花多少。
+ * 放在按钮左侧，与「花钱的那一下」同屏；余额不足转红，但不拦提交（拦截由校验负责）。
+ */
+.sendCost {
+  align-self: center;
+  margin-right: 10px;
+  color: #7c8794;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.sendCostShort {
+  color: #d4380d;
 }
 
 .sendPlain {

@@ -7,11 +7,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
+import { CreativeModelSlots } from '../CreativeModelSlots'
+import { CreativeParamsDropdown, type CreativeParamsOptions, type CreativeParamsValue } from '../CreativeParamsDropdown'
 import {
   filterGenerationModelGroupsByOperations,
-  GenerationModelDropdown,
   getGenerationModelDurationOptions,
   getGenerationModelRatioOptions,
+  getGenerationModelReferenceImageLimit,
   getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
   isGenerationModelSelectionComplete,
@@ -20,8 +22,8 @@ import {
   type GenerationModelLoadingState,
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
+  type GenerationModelEstimateSummary,
 } from '../GenerationModelPicker'
-import RatioIcon from '@/components/common/RatioIcon'
 import { fileToDataUrl } from '@/utils/imageFile'
 import {
   clearSmartEntryDraft,
@@ -50,6 +52,13 @@ import { parseDurationSeconds } from '@/utils/videoDurationValue'
 import { useToast } from '@/composables/useToast'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import RealPersonMaterialPicker from './RealPersonMaterialPicker'
+import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
+import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
+import { assetStreamUrl } from '@/utils/assetUrl'
+import { createMaterialFromAsset } from '@/utils/materials'
+import { filterAssetsByProjectAccess, getAccessibleProjectIds } from '@/utils/projectAssetAccess'
+import { resolveUserId } from '@/utils/creativeDraftMetadata'
+import { useCurrentUser } from '@/stores/workspaceSession'
 import { estimateAiTaskCost } from '@/api/business'
 import styles from './SmartEntry.module.less'
 
@@ -136,28 +145,39 @@ interface SmartEntryProps {
  */
 const UNSET_DURATION = ''
 
-/** 未选择时长时下拉按钮上的占位文案。 */
-const DURATION_PLACEHOLDER = '选择时长'
-
 /** 可选的智能成片脚本。 */
 const SCRIPT_OPTIONS = [...SMART_SCRIPT_OPTIONS]
 
-/** 入口最多接收的参考图数量。 */
-const MAX_IMAGES = 9
-const IMAGE_OUTPUT_COUNT_OPTIONS = Array.from({ length: MAX_IMAGES }, (_, index) => `${index + 1}张`)
-const clampImageOutputCount = (value: unknown) => Math.min(MAX_IMAGES, Math.max(1, Math.floor(Number(value) || 1)))
+/**
+ * 图片模式单轮出图数量的上限（与参考图上限无关，后者跟随所选模型）。
+ */
+const MAX_IMAGE_OUTPUT_COUNT = 9
+const clampImageOutputCount = (value: unknown) =>
+  Math.min(MAX_IMAGE_OUTPUT_COUNT, Math.max(1, Math.floor(Number(value) || 1)))
+
+/**
+ * 尚未选中视频模型时的参考图上限兜底。
+ *
+ * 参考图真实上限由所选模型决定（见 getGenerationModelReferenceImageLimit）。
+ * 没选模型时给 9：这是历史行为，也是主力模型 Seedance 2.0 的真实上限；
+ * 选定模型后立即收敛到该模型的真值。
+ */
+const FALLBACK_REFERENCE_IMAGE_LIMIT = 9
 /** 文件扩展名图片识别兜底规则。 */
 const IMAGE_FILE_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i
 
 /** 同时依据 MIME 与扩展名判断是否为可接收图片。 */
 const isImageFile = (file: File) => file.type.startsWith('image/') || IMAGE_FILE_RE.test(file.name)
 
-/** 视频模式的输入示例文案。 */
+/**
+ * 输入示例文案。不再写死张数——参考图上限跟着所选模型变（缩略图行有实时用量提示），
+ * 文案里再写一个固定数字只会和真实上限矛盾。
+ */
 const PLACEHOLDER_VIDEO =
-  '最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
+  '上传或粘贴图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 /** 图片模式的输入示例文案。 */
 const PLACEHOLDER_IMAGE =
-  '最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
+  '上传或粘贴图片，输入文字或@参考素材，生成精彩广告图片。例如：把 @图片1 中的产品放到 @图片2 中的场景里'
 
 // 选中智能脚本后插入到输入框的提示语(高亮显示)。提交/展示前会被剥离,保持需求正文干净。
 const skillLine = (s: string) => `使用${normalizeSmartScriptName(s)}帮我优化`
@@ -242,6 +262,105 @@ export default function SmartEntry({
     () => initial?.realPersonReferences ?? stored?.realPersonReferences ?? [],
   )
   const [realPersonPickerOpen, setRealPersonPickerOpen] = useState(false)
+  // 加号的来源菜单：本地上传 / 素材库 / 真人素材。与爆款复制同一套交互，
+  // 素材库复用 MaterialLibraryPicker，真人素材仍走已认证真人库。
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false)
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [libraryLoading, setLibraryLoading] = useState(false)
+  const [libraryMaterials, setLibraryMaterials] = useState<any[]>([])
+  const [libraryTab, setLibraryTab] = useState('mine')
+  const [libraryQuery, setLibraryQuery] = useState('')
+  const currentUser = useCurrentUser()
+  const currentUserId = resolveUserId(currentUser)
+  const sourceMenuRef = useRef<HTMLDivElement | null>(null)
+
+  // 点击菜单外部关闭
+  useEffect(() => {
+    if (!sourceMenuOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (!sourceMenuRef.current?.contains(event.target as Node)) setSourceMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    return () => document.removeEventListener('mousedown', onPointerDown)
+  }, [sourceMenuOpen])
+
+  /** 拉取素材库里的图片素材（只取本人可见的项目资产）。 */
+  const loadLibraryImages = async () => {
+    const ws = Number(workspaceId || 0)
+    if (!ws || !currentUserId) {
+      showToast(ws ? '登录身份尚未就绪，请稍后重试' : '未选择工作空间', 'error')
+      return
+    }
+    setLibraryLoading(true)
+    try {
+      const [assetItems, projectResult] = await Promise.all([
+        listAllAssets({ workspaceId: ws, type: 'image' }),
+        listAllCreativeProjects({ workspaceId: ws })
+          .then((items) => ({ loaded: true, items }))
+          .catch(() => ({ loaded: false, items: [] as any[] })),
+      ])
+      const assets = filterAssetsByProjectAccess(
+        assetItems,
+        getAccessibleProjectIds(projectResult.items, currentUserId),
+        projectResult.loaded,
+      ).filter((asset: any) => asset?.id && asset.type === 'image')
+      const materials = assets
+        .map((asset: any) => {
+          const src =
+            assetStreamUrl(Number(asset.id), ws) || asset?.thumbnail_url || asset?.preview_url || asset?.url || ''
+          return createMaterialFromAsset(asset, src)
+        })
+        .filter((material: any) => material.src)
+      setLibraryMaterials(materials)
+    } catch (error: any) {
+      showToast(error?.message || '素材库加载失败', 'error')
+    } finally {
+      setLibraryLoading(false)
+    }
+  }
+
+  /** 素材库确认：选中的图片已有 asset_id，直接进素材列表，不必再上传一次。 */
+  const confirmLibraryImages = (picked: any[]) => {
+    const room = referenceImageLimit - images.length
+    if (room <= 0) {
+      showToast(`当前模型最多支持 ${referenceImageLimit} 张参考图`, 'info')
+      setLibraryOpen(false)
+      return
+    }
+    const chosen = (picked || [])
+      .filter((material: any) => !/video/i.test(String(material?.type || material?.serverAsset?.type || '')))
+      .map((material: any) => ({
+        url: String(material?.src || ''),
+        assetId: Number(material?.assetId ?? material?.serverAsset?.id ?? material?.id ?? 0) || 0,
+      }))
+      .filter((item) => item.url && item.assetId > 0)
+      .slice(0, room)
+    if (chosen.length) {
+      setImages((prev) => [...prev, ...chosen.map((item) => item.url)])
+      setImageAssetIds((prev) => [...prev, ...chosen.map((item) => item.assetId)])
+    }
+    if (picked.length > chosen.length) showToast('部分素材不可用，已跳过', 'info')
+    setLibraryOpen(false)
+  }
+
+  /** 加号菜单选择来源。 */
+  const chooseImageSource = (source: 'local' | 'library' | 'realPerson') => {
+    setSourceMenuOpen(false)
+    if (images.length >= referenceImageLimit) {
+      showToast(`当前模型最多支持 ${referenceImageLimit} 张参考图`, 'info')
+      return
+    }
+    if (source === 'local') {
+      fileRef.current?.click()
+      return
+    }
+    if (source === 'realPerson') {
+      setRealPersonPickerOpen(true)
+      return
+    }
+    setLibraryOpen(true)
+    void loadLibraryImages()
+  }
   const [outputCount, setOutputCount] = useState(() =>
     clampImageOutputCount(initial?.outputCount ?? stored?.outputCount ?? 1),
   )
@@ -250,7 +369,6 @@ export default function SmartEntry({
   const [generationModels, setGenerationModels] = useState<GenerationModelSelectionMap>(
     () => initial?.generationModels ?? stored?.generationModels ?? {},
   )
-  const [modelAttentionRequest, setModelAttentionRequest] = useState(0)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const dragDepthRef = useRef(0)
@@ -301,13 +419,9 @@ export default function SmartEntry({
   // 本地图片先转成受控 data URL；过滤非图片并限制数量，避免无效文件进入后续资产上传流程。
   const pickImages = async (files: FileList | File[] | null) => {
     if (!files?.length) return
-    if (hasSelectedRealPerson) {
-      showToast('已选择真人素材，请先移除真人素材后再添加普通图片', 'info')
-      return
-    }
-    const room = MAX_IMAGES - images.length
+    const room = referenceImageLimit - images.length
     if (room <= 0) {
-      showToast(`最多上传 ${MAX_IMAGES} 张图片`, 'info')
+      showToast(`当前模型最多支持 ${referenceImageLimit} 张参考图`, 'info')
       return
     }
     const sel = Array.from(files).filter(isImageFile).slice(0, room)
@@ -320,16 +434,21 @@ export default function SmartEntry({
       showToast(picked.length ? '部分图片读取失败，请重试' : '图片读取失败，请重试', 'error')
     }
     if (picked.length) {
-      const accepted = picked.slice(0, MAX_IMAGES - images.length)
+      const accepted = picked.slice(0, referenceImageLimit - images.length)
       setImages((prev) => [...prev, ...accepted])
       setImageAssetIds((prev) => [...prev, ...accepted.map(() => 0)])
     }
   }
   const removeImage = (index: number) => {
     const url = images[index]
+    const removedAssetId = Number(imageAssetIds[index] || 0)
     setImages((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
     setImageAssetIds((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
-    setRealPersonReferences((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
+    // 真人引用按 localAssetId 关联而不是按下标:真人与普通素材可以混着传,
+    // 下标会随普通图片的增删而错位,assetId 不会。
+    setRealPersonReferences((prev) =>
+      removedAssetId > 0 ? prev.filter((item) => Number(item?.localAssetId) !== removedAssetId) : prev,
+    )
     URL.revokeObjectURL(url)
   }
 
@@ -391,22 +510,32 @@ export default function SmartEntry({
   const cleanText = stripSkillLine(text).trim()
   // 模型只允许在入口选择。视频一次配置完整工作流；图片按当前是否有参考图，
   // 只展示并要求文生图或图生图中的一个，避免用户必须为一次创作选择两个图片模型。
+  // 选了真人不再额外要求图生图模型:真人素材曾经要先过一遍图生图重画,那一步已随
+  // 「准备素材」移除,现在真人素材原样作为参考图提交,只用得到视频模型。
   const requiredModelOperations: readonly GenerationOperationCode[] =
     mode === 'image'
       ? [getImageGenerationOperationCode(images.length)]
-      : hasSelectedRealPerson
-        ? Array.from(new Set([...REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video, 'image.image_to_image']))
-        : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
+      : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
   // 两种模式都按「本次创作真正会用到的 operation」过滤：
   // 视频模式下 video.edit 已不属于智能成片流程（修改走视频生视频），不能再出现在模型面板里。
   const visibleModelGroups = filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations)
   const conflictModelGroups = visibleModelGroups
   const modelSelectionComplete = isGenerationModelSelectionComplete(visibleModelGroups, generationModels)
+  // 视频模式也要报参考图数量冲突：上传的素材现在直接作为参考图提交给视频模型，
+  // 换到一个只收 1 张的模型时必须当场提示，而不是等提交被后端拒。
+  // 只把「用户已经定下来」的参数交给冲突校验。
+  //
+  // 时长默认未选，若照样把这一项传下去，模型一被选中就会立刻报「当前模型要求提供时长」——
+  // 那是在指责用户还没来得及做的事。参数改成弹窗后这条更刺眼：提示挂在模型卡片上，
+  // 而要改的东西在另一个弹窗里。等用户真的选了时长，不兼容照样会报。
+  // 注意 getModelConstraintConflicts 用 hasOwn 判断「是否提供」，传 undefined 也算提供，
+  // 所以必须整个键不传。
+  const selectedDurationForConflicts = mode === 'video' ? (parseDurationSeconds(duration) ?? undefined) : undefined
   const modelSelectionConflicts = getGenerationModelSelectionConflicts(conflictModelGroups, generationModels, {
     ratio,
-    ...(mode === 'video'
-      ? { durationSec: parseDurationSeconds(duration) ?? undefined, resolution }
-      : { referenceImageCount: images.length }),
+    referenceImageCount: images.length,
+    ...(selectedDurationForConflicts !== undefined ? { durationSec: selectedDurationForConflicts } : {}),
+    ...(mode === 'video' && resolution ? { resolution } : {}),
   })
   // 时长档位跟随所选视频模型：schema 声明了支持哪些秒数就只展示哪些，未声明才回落 1–15 秒。
   const durationOptions = useMemo(
@@ -414,9 +543,7 @@ export default function SmartEntry({
       getGenerationModelDurationOptions(visibleModelGroups, generationModels, 'video.generate', SMART_VIDEO_DURATIONS),
     [visibleModelGroups, generationModels],
   )
-  const durationChoices = useMemo(() => durationOptions.map((seconds) => `${seconds}s`), [durationOptions])
   const durationUnset = parseDurationSeconds(duration) === null
-  const selectedDurationSec = parseDurationSeconds(duration) ?? undefined
   //
   // 时长与模型是双向约束，不是单向顺序：秒数是用户的需求，模型是实现选择，谁先定都合理。
   // 这里既不锁时长（未选模型时 getGenerationModelDurationOptions 本来就返回默认档位），
@@ -463,6 +590,24 @@ export default function SmartEntry({
     if (mode !== 'video') return [...RATIO_OPTIONS]
     return getGenerationModelRatioOptions(visibleModelGroups, generationModels, 'video.generate', RATIO_OPTIONS)
   }, [mode, visibleModelGroups, generationModels])
+
+  /**
+   * 参考图上限跟随所选模型（与时长/分辨率/比例同源）。
+   *
+   * 用户上传的素材会直接作为参考图提交给视频模型，各模型能收的张数差别很大，
+   * 写死 9 会让 Seedance 2.5 少传 21 张、让只收 1 张的模型白传后被后端拒。
+   * 图片模式取 image.* 槽位，视频模式取 video.generate。
+   */
+  const referenceImageLimit = useMemo(() => {
+    const operationCode: GenerationOperationCode =
+      mode === 'image' ? getImageGenerationOperationCode(images.length) : 'video.generate'
+    return getGenerationModelReferenceImageLimit(
+      visibleModelGroups,
+      generationModels,
+      operationCode,
+      FALLBACK_REFERENCE_IMAGE_LIMIT,
+    )
+  }, [mode, images.length, visibleModelGroups, generationModels])
   // 与分辨率同一条原则：用户显式选过就不再改写，只有没碰过的默认值才跟着模型收敛
   const ratioTouchedRef = useRef(false)
   const pickRatio = useCallback((value: string) => {
@@ -480,6 +625,47 @@ export default function SmartEntry({
     else if (matched !== ratio) setRatio(matched)
   }, [mode, ratio, ratioOptions])
 
+  /**
+   * 弹层里的档位。都在上面按所选模型的 schema 算好了，这里只做形状转换：
+   * 视频是 比例 / 分辨率 / 时长，图片是 比例 / 出图数量。
+   */
+  const creativeParamsOptions: CreativeParamsOptions = useMemo(
+    () => ({
+      ratios: ratioOptions,
+      durations: mode === 'video' ? durationOptions : [],
+      resolutions: mode === 'video' ? resolutionOptions : [],
+      counts: mode === 'video' ? [] : Array.from({ length: MAX_IMAGE_OUTPUT_COUNT }, (_, index) => index + 1),
+    }),
+    [mode, ratioOptions, durationOptions, resolutionOptions],
+  )
+
+  const creativeParamsValue: CreativeParamsValue = useMemo(
+    () => ({
+      ratio,
+      // 0 = 尚未选择；弹层据此显示占位而不是一个用户没选过的秒数。
+      durationSec: parseDurationSeconds(duration) ?? 0,
+      resolution,
+      count: outputCount,
+    }),
+    [ratio, duration, resolution, outputCount],
+  )
+
+  const applyCreativeParams = useCallback(
+    (next: CreativeParamsValue) => {
+      if (next.ratio !== ratio) pickRatio(next.ratio)
+      if (next.resolution !== resolution) pickResolution(next.resolution)
+      if (next.durationSec > 0 && `${next.durationSec}s` !== duration) setDuration(`${next.durationSec}s`)
+      if (next.count !== outputCount) setOutputCount(clampImageOutputCount(next.count))
+    },
+    [ratio, resolution, duration, outputCount, pickRatio, pickResolution],
+  )
+
+  /**
+   * 模型合计预估。放在「去制作」旁边而不是模型弹窗里：弹窗选完就关，
+   * 数字只在弹窗开着时可见，而用户恰恰是在点主按钮那一刻才需要知道要花多少。
+   */
+  const [modelEstimate, setModelEstimate] = useState<GenerationModelEstimateSummary | null>(null)
+
   const modelCatalogReady =
     !modelOperationStates || areGenerationModelOperationsReady(modelOperationStates, requiredModelOperations)
   const modelGatePassed =
@@ -493,13 +679,19 @@ export default function SmartEntry({
         : modelSelectionConflicts.length > 0
           ? '当前创作参数与所选模型不兼容，请调整模型或创作参数'
           : ''
+  // 每个真人引用都要仍然指向当前素材列表里的一张图(用户可能已经把它删掉了)。
+  // 不再限制「只能有一个真人」:多人同框、真人配产品图都是常见广告场景,后端逐个
+  // asset 查真人库并各自校验授权,并不要求列表里只有一个真人。
   const hasValidSelectedRealPerson =
     !hasSelectedRealPerson ||
-    (images.length === 1 &&
-      imageAssetIds[0] > 0 &&
-      Boolean(realPersonReferences[0]?.realPersonId) &&
-      Number(realPersonReferences[0]?.localAssetId) === Number(imageAssetIds[0]))
-  const hasRequiredRealPerson = !isRealPersonVariant || hasValidSelectedRealPerson
+    realPersonReferences.every(
+      (reference) =>
+        Boolean(reference?.realPersonId) &&
+        Number(reference?.localAssetId) > 0 &&
+        imageAssetIds.some((assetId) => Number(assetId) === Number(reference.localAssetId)),
+    )
+  // 真人成片必须至少选一个已认证真人;普通智能成片可选。
+  const hasRequiredRealPerson = !isRealPersonVariant || (hasSelectedRealPerson && hasValidSelectedRealPerson)
   const canSubmit =
     hasRequiredRealPerson &&
     hasValidSelectedRealPerson &&
@@ -539,8 +731,76 @@ export default function SmartEntry({
     },
     [cleanText, duration, imageAssetIds, mode, outputCount, ratio, resolution, workspaceId],
   )
+  /**
+   * 合计预估：把每个已选模型各跑一次估价后求和，显示在「去制作」旁边。
+   *
+   * 原本这段在模型弹窗内部；换成创作台样式的胶囊后那里没有落脚点，
+   * 而预估本来就该跟着「花钱的那一下」走，所以搬到入口自己算。
+   */
+  // 已选模型的稳定签名。visibleModelGroups 每次渲染都是新数组，直接进依赖会
+  // 「effect → setState → 重渲染 → 新数组 → effect」无限循环；这里压成字符串比较。
+  const estimateTargetsKey = useMemo(() => {
+    const slotKeys = visibleModelGroups.flatMap((group) => [
+      ...(group.models?.length ? [group.key] : []),
+      ...(group.subgroups ?? []).filter((subgroup) => subgroup.models.length > 0).map((subgroup) => subgroup.key),
+    ])
+    return slotKeys
+      .map((operationCode) => `${operationCode}:${Number(generationModels[operationCode] || 0)}`)
+      .filter((entry) => !entry.endsWith(':0'))
+      .join('|')
+  }, [visibleModelGroups, generationModels])
+
+  useEffect(() => {
+    const picked = estimateTargetsKey
+      .split('|')
+      .filter(Boolean)
+      .map((entry) => {
+        const [operationCode, modelVersionId] = entry.split(':')
+        return { operationCode, modelVersionId: Number(modelVersionId) }
+      })
+
+    if (!workspaceId || !modelSelectionComplete || !picked.length) {
+      setModelEstimate(null)
+      return
+    }
+
+    let alive = true
+    setModelEstimate({ total: 0, canAfford: true, loading: true, failed: false })
+    // 防抖：用户连着改比例/时长时不必每次都打一轮估价接口。
+    const timer = window.setTimeout(() => {
+      void Promise.all(
+        picked.map((item) =>
+          estimateSelectedModel(item)
+            .then((result) => ({ ok: true as const, result }))
+            .catch(() => ({ ok: false as const, result: null })),
+        ),
+      ).then((results) => {
+        if (!alive) return
+        const succeeded = results.filter((item) => item.ok).map((item) => item.result!)
+        const total = succeeded.reduce((sum, item) => sum + (Number(item.estimatedCost) || 0), 0)
+        const balance = succeeded.find((item) => Number.isFinite(Number(item.balance)))?.balance
+        setModelEstimate({
+          total,
+          balance,
+          canAfford: !succeeded.some((item) => item.canAfford === false) && (balance == null || total <= balance),
+          loading: false,
+          failed: results.some((item) => !item.ok),
+        })
+      })
+    }, 400)
+
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+  }, [estimateSelectedModel, estimateTargetsKey, modelSelectionComplete, workspaceId])
+
+  /**
+   * 提交时未选够模型：提示原因。
+   * 旧实现还会展开模型面板并高亮，换成创作台样式的胶囊后没有受控展开入口，
+   * 改为只给提示——胶囊本身就在工具条最左，不需要再被指出来。
+   */
   const requestModelSelectionAttention = () => {
-    setModelAttentionRequest((request) => request + 1)
     showToast(modelGateMessage || '请先完成本次创作的模型选择', 'info')
   }
   const submit = async () => {
@@ -596,6 +856,28 @@ export default function SmartEntry({
     setText((cur) => composeWithSkill(stripSkillLine(cur), s))
     setSkill(s)
   }
+
+  /*
+    来源菜单：本地上传 / 素材库 / 真人素材。
+    原来「选择真人素材」是底栏一枚独立按钮，与加号并列——两者都是「添加素材」，
+    拆成两个入口反而要用户先想清楚素材从哪来。现在统一收进加号。
+    空态大方块与缩略图行的「+」共用这一份。
+  */
+  const sourceMenu = !isRealPersonVariant && sourceMenuOpen && (
+    <div className={styles.sourceMenu} role="menu" aria-label="添加素材">
+      <button type="button" role="menuitem" onClick={() => chooseImageSource('local')}>
+        本地上传
+      </button>
+      <button type="button" role="menuitem" onClick={() => chooseImageSource('library')}>
+        素材库
+      </button>
+      {mode === 'video' && (
+        <button type="button" role="menuitem" onClick={() => chooseImageSource('realPerson')}>
+          真人素材
+        </button>
+      )}
+    </div>
+  )
 
   return (
     <div
@@ -710,71 +992,78 @@ export default function SmartEntry({
                   </button>
                 </div>
               ))}
-              {!isRealPersonVariant && !hasSelectedRealPerson && images.length < MAX_IMAGES && (
-                <button
-                  type="button"
-                  className={styles.add}
-                  onClick={() => fileRef.current?.click()}
-                  aria-label="继续上传"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
+              {/* 继续添加：真人变体只从真人库选，普通变体点开来源菜单（本地 / 素材库 / 真人） */}
+              {images.length < referenceImageLimit && (
+                <div className={styles.uploadWrap} ref={sourceMenuRef}>
+                  <button
+                    type="button"
+                    className={styles.add}
+                    onClick={() =>
+                      isRealPersonVariant ? setRealPersonPickerOpen(true) : setSourceMenuOpen((open) => !open)
+                    }
+                    aria-label={isRealPersonVariant ? '继续添加真人素材' : '继续添加素材'}
                   >
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                </button>
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="20"
+                      height="20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                    >
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </button>
+                  {sourceMenu}
+                </div>
               )}
+              {/* 上限跟着所选模型变，必须一直显示当前用量，否则用户不知道还能传几张、
+                  也不知道为什么上传按钮消失了。 */}
+              <span className={styles.attachmentCount} aria-live="polite">
+                {images.length}/{referenceImageLimit} 张参考图
+              </span>
             </div>
           )}
 
           <div className={styles.cardBody}>
             {/* 无图时:左侧上传框(Figma 初始态);有图时上传入口在上方缩略图行 */}
             {images.length === 0 && (
-              <button
-                type="button"
-                className={styles.upload}
-                onClick={() => (isRealPersonVariant ? setRealPersonPickerOpen(true) : fileRef.current?.click())}
-                aria-label={isRealPersonVariant ? '从真人素材库选择' : '上传图片'}
-              >
-                {/* 倾斜浅灰卡片 + 加号(还原 Figma Group 388,无虚线边) */}
-                <svg
-                  className={styles.uploadCard}
-                  width="96"
-                  height="117"
-                  viewBox="0 0 109 133"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
+              <div className={styles.uploadWrap} ref={sourceMenuRef}>
+                <button
+                  type="button"
+                  className={styles.upload}
+                  onClick={() =>
+                    isRealPersonVariant ? setRealPersonPickerOpen(true) : setSourceMenuOpen((open) => !open)
+                  }
+                  aria-label={isRealPersonVariant ? '从真人素材库选择' : '添加素材'}
                 >
-                  <rect
-                    x="-0.635504"
-                    y="15.0473"
-                    width="90.3131"
-                    height="120.417"
-                    rx="4"
-                    transform="rotate(-10 -0.635504 15.0473)"
-                    fill="#F8F8F8"
-                  />
-                  <path
-                    d="M52.5478 56.6177C52.839 56.5663 53.1387 56.6327 53.381 56.8024C53.6232 56.972 53.7881 57.2309 53.8395 57.5221L55.1948 65.2083L62.881 63.853C63.1722 63.8017 63.4719 63.8681 63.7142 64.0377C63.9564 64.2074 64.1213 64.4663 64.1727 64.7575C64.224 65.0487 64.1576 65.3484 63.988 65.5906C63.8184 65.8328 63.5595 65.9978 63.2683 66.0491L55.582 67.4044L56.9373 75.0907C56.9886 75.3819 56.9222 75.6816 56.7526 75.9238C56.583 76.166 56.3241 76.331 56.0329 76.3823C55.7416 76.4337 55.442 76.3672 55.1997 76.1976C54.9575 76.028 54.7926 75.7691 54.7412 75.4779L53.3859 67.7916L45.6997 69.1469C45.4084 69.1983 45.1087 69.1318 44.8665 68.9622C44.6243 68.7926 44.4594 68.5337 44.408 68.2425C44.3567 67.9513 44.4231 67.6516 44.5927 67.4094C44.7623 67.1671 45.0212 67.0022 45.3124 66.9509L52.9987 65.5956L51.6434 57.9093C51.592 57.6181 51.6585 57.3184 51.8281 57.0762C51.9977 56.8339 52.2566 56.669 52.5478 56.6177Z"
-                    fill="#909090"
-                  />
-                </svg>
-              </button>
-            )}
-            {!isRealPersonVariant && mode === 'video' && !hasSelectedRealPerson && (
-              <button
-                type="button"
-                className={styles.realPersonPickerBtn}
-                onClick={() => setRealPersonPickerOpen(true)}
-              >
-                选择真人素材
-              </button>
+                  {/* 倾斜浅灰卡片 + 加号(还原 Figma Group 388,无虚线边) */}
+                  <svg
+                    className={styles.uploadCard}
+                    width="96"
+                    height="117"
+                    viewBox="0 0 109 133"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <rect
+                      x="-0.635504"
+                      y="15.0473"
+                      width="90.3131"
+                      height="120.417"
+                      rx="4"
+                      transform="rotate(-10 -0.635504 15.0473)"
+                      fill="#F8F8F8"
+                    />
+                    <path
+                      d="M52.5478 56.6177C52.839 56.5663 53.1387 56.6327 53.381 56.8024C53.6232 56.972 53.7881 57.2309 53.8395 57.5221L55.1948 65.2083L62.881 63.853C63.1722 63.8017 63.4719 63.8681 63.7142 64.0377C63.9564 64.2074 64.1213 64.4663 64.1727 64.7575C64.224 65.0487 64.1576 65.3484 63.988 65.5906C63.8184 65.8328 63.5595 65.9978 63.2683 66.0491L55.582 67.4044L56.9373 75.0907C56.9886 75.3819 56.9222 75.6816 56.7526 75.9238C56.583 76.166 56.3241 76.331 56.0329 76.3823C55.7416 76.4337 55.442 76.3672 55.1997 76.1976C54.9575 76.028 54.7926 75.7691 54.7412 75.4779L53.3859 67.7916L45.6997 69.1469C45.4084 69.1983 45.1087 69.1318 44.8665 68.9622C44.6243 68.7926 44.4594 68.5337 44.408 68.2425C44.3567 67.9513 44.4231 67.6516 44.5927 67.4094C44.7623 67.1671 45.0212 67.0022 45.3124 66.9509L52.9987 65.5956L51.6434 57.9093C51.592 57.6181 51.6585 57.3184 51.8281 57.0762C51.9977 56.8339 52.2566 56.669 52.5478 56.6177Z"
+                      fill="#909090"
+                    />
+                  </svg>
+                </button>
+                {sourceMenu}
+              </div>
             )}
             {!isRealPersonVariant && (
               <input
@@ -830,121 +1119,60 @@ export default function SmartEntry({
             </div>
           </div>
 
+          {/*
+            模型不可用与参数不兼容的提示。原本长在模型弹窗内部，换成创作台样式的胶囊后
+            那里没有落脚点；放在工具条上方常驻，比藏进一个要点开才看得见的面板更早被看到。
+          */}
+          {(modelError || modelSelectionConflicts.length > 0) && (
+            <div className={styles.capabilityNotice} role="status">
+              {modelError ? (
+                <>
+                  {modelError}
+                  {onReloadModels && (
+                    <button type="button" className={styles.noticeAction} onClick={() => onReloadModels()}>
+                      重新加载
+                    </button>
+                  )}
+                </>
+              ) : (
+                modelSelectionConflicts[0]
+              )}
+            </div>
+          )}
+
           <div className={styles.toolbar}>
             <div className={styles.tools}>
               {/*
-                模型排在工具条第一位：时长与分辨率的档位由所选模型的 schema 决定，
-                多数人也确实会先定模型，把它放在最左符合主路径的阅读顺序。
-                但这只是默认顺序、不是强制：时长可以先选，模型列表会反过来标出做不到的那些。
+                模型排在工具条最前：参数档位由所选模型的 schema 决定，先定模型才有档位可选。
+                每个槽位一枚胶囊，与 AI 创作台同一套 UI。
+                游客态也保留入口（置灰 + 点击引导登录），否则未登录时这一格直接消失，
+                用户根本不知道创作前可以选模型。
               */}
-              {/* 游客态也要保留入口（置灰 + 点击引导登录），否则未登录时这一格直接消失，
-                  用户根本不知道创作前可以选模型 */}
-              {(authRequired || visibleModelGroups.length > 0 || Boolean(modelLoading) || Boolean(modelError)) && (
-                <GenerationModelDropdown
-                  groups={visibleModelGroups}
-                  authRequired={authRequired}
-                  onAuthRequired={onAuthRequired}
-                  selected={generationModels}
-                  // 触发器已是工具条最左端，面板改为左对齐；默认的 end 会让它向左展开再被视口夹回来
-                  placement="start"
-                  // 已选时长回喂给列表：做不到这个秒数的模型会被标出来，用户不必逐个试
-                  durationSec={mode === 'video' ? selectedDurationSec : undefined}
-                  durationOperationCode="video.generate"
-                  loading={modelLoading}
-                  error={modelError}
-                  onRetry={onReloadModels ? () => onReloadModels() : undefined}
-                  onChange={updateGenerationModel}
-                  estimateModelCost={workspaceId > 0 ? estimateSelectedModel : undefined}
-                  conflicts={modelSelectionConflicts}
-                  attentionRequest={modelAttentionRequest}
-                  attentionMessage={modelGateMessage}
-                />
-              )}
-              <EntryDropdown
-                value={ratio}
-                options={ratioOptions}
-                onChange={pickRatio}
-                icon={<RatioIcon ratio={ratio} />}
-                valueMinWidth={34}
+              <CreativeModelSlots
+                groups={visibleModelGroups}
+                selected={generationModels}
+                onChange={updateGenerationModel}
+                loading={Boolean(modelLoading)}
+                authRequired={authRequired}
+                onAuthRequired={onAuthRequired}
               />
-              {/* 时长仅「制作视频」需要;「制作图片」隐藏(对齐设计) */}
-              {mode === 'video' && (
-                <EntryDropdown
-                  value={duration}
-                  options={durationChoices}
-                  onChange={setDuration}
-                  placeholder={DURATION_PLACEHOLDER}
-                  variant="wheel"
-                  ariaLabel="视频时长"
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="20"
-                      height="20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                    >
-                      <circle cx="12" cy="12" r="8" />
-                      <path d="M12 8v4l3 2" />
-                    </svg>
-                  }
-                />
-              )}
-
-              {/* 分辨率同样只在「制作视频」出现，档位来自所选视频模型 schema */}
-              {mode === 'video' && (
-                <EntryDropdown
-                  value={resolution}
-                  options={resolutionOptions}
-                  onChange={pickResolution}
-                  ariaLabel="视频分辨率"
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="20"
-                      height="20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <rect x="3.5" y="6" width="17" height="12" rx="2" />
-                      <path d="M8 10.5v3M12 9v6M16 10.5v3" />
-                    </svg>
-                  }
-                  valueMinWidth={40}
-                />
-              )}
-
-              {mode === 'image' && (
-                <EntryDropdown
-                  value={`${outputCount}张`}
-                  options={IMAGE_OUTPUT_COUNT_OPTIONS}
-                  onChange={(value) => setOutputCount(clampImageOutputCount(String(value).replace('张', '')))}
-                  ariaLabel="生成图片数量"
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="20"
-                      height="20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <rect x="5" y="5" width="14" height="14" rx="3" />
-                      <path d="M8.5 15.5l3-3 2.2 2.2 1.8-2 3.5 3.5M9 9.5h.01" />
-                    </svg>
-                  }
-                  valueMinWidth={28}
-                />
-              )}
+              {/*
+                创作参数（比例 / 时长 / 分辨率 / 出图数量）收进一个弹窗，形式与「本次创作使用的模型」一致。
+                此前它们在底栏各占一个 chip，与模型 chip 等距排开——「用什么生成」和「生成成什么样」
+                是两层决策，平铺在一行读不出层次，chip 一多底栏也开始换行。
+              */}
+              <CreativeParamsDropdown
+                value={creativeParamsValue}
+                options={creativeParamsOptions}
+                onChange={applyCreativeParams}
+                /*
+                  先选模型再选参数：比例/时长/分辨率的可选档位都由所选模型的 schema 决定，
+                  没选模型时给出的只是兜底档位——用户可能选中一个该模型根本做不到的秒数，
+                  然后在提交时才被告知不兼容。锁上入口即可避免这条弯路。
+                */
+                disabled={!modelSelectionComplete}
+                disabledHint="请先选择本次创作使用的模型"
+              />
 
               <span className={styles.atAnchor} data-guide="smart-at">
                 <button type="button" className={styles.pillBtn} onClick={handleAt} title="引用参考素材">
@@ -1024,6 +1252,18 @@ export default function SmartEntry({
                   </svg>
                 </button>
               )}
+              {modelEstimate && (
+                <span
+                  className={`${styles.sendCost}${modelEstimate.canAfford ? '' : ` ${styles.sendCostShort}`}`}
+                  aria-live="polite"
+                >
+                  {modelEstimate.loading
+                    ? '预估中…'
+                    : modelEstimate.failed
+                      ? '预估失败'
+                      : `约 ${modelEstimate.total} 积分${modelEstimate.canAfford ? '' : ' · 余额不足'}`}
+                </span>
+              )}
               <button
                 type="button"
                 className={`${styles.send} ${styles.sendPlain}`}
@@ -1045,15 +1285,38 @@ export default function SmartEntry({
           </div>
         </div>
       </div>
+      <MaterialLibraryPicker
+        modelValue={libraryOpen}
+        workspaceId={Number(workspaceId || 0)}
+        materials={libraryMaterials}
+        tab={libraryTab}
+        query={libraryQuery}
+        isLoading={libraryLoading}
+        onModelValueChange={setLibraryOpen}
+        onTabChange={setLibraryTab}
+        onQueryChange={setLibraryQuery}
+        onConfirm={confirmLibraryImages}
+      />
       <RealPersonMaterialPicker
         open={realPersonPickerOpen}
         workspaceId={workspaceId}
         onClose={() => setRealPersonPickerOpen(false)}
         onSelect={(url, reference) => {
           setMode('video')
-          setImages([url])
-          setImageAssetIds([reference.localAssetId])
-          setRealPersonReferences([reference])
+          // 真人素材与普通素材平权:都作为参考图追加到同一份素材列表(三个数组按下标对齐,
+          // removeImage 据此同步移除)。多人同框、真人配产品图都是常见广告场景,
+          // 后端逐个 asset 查真人库、命中就换成可信资产 URI,并不限制只能有一个真人。
+          if (images.length >= referenceImageLimit) {
+            showToast(`当前模型最多支持 ${referenceImageLimit} 张参考图`, 'info')
+            return
+          }
+          if (realPersonReferences.some((item) => Number(item?.localAssetId) === Number(reference.localAssetId))) {
+            showToast('该真人素材已添加', 'info')
+            return
+          }
+          setImages((prev) => [...prev, url])
+          setImageAssetIds((prev) => [...prev, reference.localAssetId])
+          setRealPersonReferences((prev) => [...prev, reference])
         }}
       />
     </div>

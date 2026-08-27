@@ -145,6 +145,20 @@
   padding-left: 24px;
   padding-right: 24px;
 }
+/* 台词 / 字幕 / 音效：三列等宽，比画面描述窄——它们通常只有一句话 */
+.sbColVoice {
+  flex: 0 0 150px;
+  min-width: 0;
+  padding-right: 12px;
+}
+
+.sbVoice {
+  color: #666;
+  font-size: 13px;
+  line-height: 20px;
+  word-break: break-word;
+}
+
 .sbColMat {
   flex: 0 0 var(--sb-material-column-width);
   width: var(--sb-material-column-width);

@@ -24,21 +24,23 @@ export function stableGenerationAssetKey(url: unknown, assetId: unknown): string
   return value
 }
 
-/** 校验每个分镜均按顺序获得资产 ID，否则阻止生成并指出缺失位置。 */
-export function requireOrderedShotAssetIds(
-  shots: Array<{ no?: unknown; id?: unknown }>,
-  assetIds: unknown[],
-): number[] {
-  if (shots.length !== assetIds.length) {
-    throw new Error(`参考图不完整：需要 ${shots.length} 张，实际仅准备好 ${assetIds.length} 张`)
+/**
+ * 校验提交给视频模型的参考图 asset_id。
+ *
+ * 参考图不再与分镜一一对应：用户上传的素材整体作为参考图下发，模型据此生成全片，
+ * 中间没有逐镜出图环节。允许的张数由所选模型声明（后端 input_constraints），
+ * 各模型差别很大，所以上限由调用方按当前模型传入。
+ *
+ * 空集合合法（纯文生视频）；超过上限直接拦下而不是截断——静默丢掉用户挑的素材，
+ * 比报错更难被发现。
+ */
+export function requireReferenceImageAssetIds(assetIds: unknown[], maxCount: number): number[] {
+  const ids = (assetIds || []).map(positiveId).filter((id) => id > 0)
+  const ceiling = positiveId(maxCount)
+  if (ceiling && ids.length > ceiling) {
+    throw new Error(`当前模型最多支持 ${ceiling} 张参考图，请先移除多余素材（当前 ${ids.length} 张）`)
   }
-
-  return assetIds.map((value, index) => {
-    const id = positiveId(value)
-    if (id) return id
-    const label = String(shots[index]?.no || `分镜 ${index + 1}`)
-    throw new Error(`${label}的参考图尚未保存，已停止本次视频生成`)
-  })
+  return ids
 }
 
 /** 并行持久化入口图片并返回与原顺序严格对应的稳定地址和资产 ID。 */

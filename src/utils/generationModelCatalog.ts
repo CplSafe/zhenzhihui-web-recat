@@ -29,11 +29,13 @@ export type ImageGenerationOperationCode = Extract<
  * 视频模式不含 video.edit：智能成片的「确认修改」已改走视频生视频
  * （video.generate + role:'video' 的源视频输入），不再单独选一个视频修改模型。
  * GENERATION_OPERATION_CODES 仍保留 video.edit —— 无限画布与爆款复制还在用它。
+ *
+ * 也不含 image.*：「准备素材」「镜头编排」两步移除后，智能成片全程不再生成任何图片
+ * （用户上传的素材直接作为参考图提交给视频模型），再要求用户选两个图片模型
+ * 就是让他为一件不会发生的事做选择。
  */
 export const VIDEO_REQUIRED_GENERATION_OPERATION_CODES = [
   'responses.multimodal',
-  'image.text_to_image',
-  'image.image_to_image',
   'video.generate',
 ] as const satisfies readonly GenerationOperationCode[]
 export const IMAGE_REQUIRED_GENERATION_OPERATION_CODES = [
