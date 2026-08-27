@@ -1904,11 +1904,18 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       style: meta?.style || '',
       videoModel: meta?.generationModels?.['video.generate'] || '',
       base: base || '',
+      // 入口素材即参考图：换图就是换输入，必须让签名跟着变。
+      entryAssets: (meta?.imageAssetIds || [])
+        .map((id: unknown) => Number(id) || 0)
+        .filter((id: number) => id > 0)
+        .join(','),
       shots: (list || [])
         .filter((s) => s.includeInVideo !== false)
         .map((s) => ({
           id: s.id,
-          image: stableGenerationAssetKey(s.image, s.imageAssetId),
+          // 画面描述必须进签名：它是提示词的主体，改了却不重算签名，
+          // 「上一步改完再回来生成」会被判成没改动，直接复用上一版视频。
+          desc: s.desc || '',
           duration: s.duration || '',
           line: s.line || '',
           subtitle: s.subtitle || '',
@@ -3895,7 +3902,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   // 进入生成视频:整片未生成、或镜头编排已改动(分镜图/时长/文案/顺序/勾选)则自动生成一次。
   // 已有整片且分镜签名未变(草稿恢复 / 未改动)→ 不重生成;改了镜头编排 → 签名变化 → 重新出片。
   useEffect(() => {
-    if (modelSwitchingRef.current || step !== 3 || !shots.length || vidGenRunning) return
+    if (modelSwitchingRef.current || step !== STEP_VIDEO || !shots.length || vidGenRunning) return
     if (autoVidRef.current) return
     if (!selectedGenerationModel('video.generate')) return
     // 已有整片(url 或仅 assetId——可能正等签名URL刷新)且分镜未变 → 不再自动重生成,避免重复出片 / 误判「没视频」
@@ -3917,7 +3924,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     const ws = Number(workspaceId || 0)
     const pid = Number(projectIdRef.current || projectId || 0) || 0
     const hasInflight = pid > 0 && isVideoGenRunning('smart', ws, pid)
-    if (!ws || step !== 3 || videoQueuePlanningRef.current || actualVideoGenerating || hasInflight || !shots.length)
+    if (
+      !ws ||
+      step !== STEP_VIDEO ||
+      videoQueuePlanningRef.current ||
+      actualVideoGenerating ||
+      hasInflight ||
+      !shots.length
+    )
       return
     const modelSelection = selectedGenerationModel('video.generate')
     if (!modelSelection) {
@@ -8707,8 +8721,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                 </div>
 
                 {/* 底栏:上一步/下一步 导航箭头 + 各步主操作按钮(整组居中)。
-                视频生成步(step3)总按钮在中间 VideoStage 内,这里不渲染。 */}
-                {!marketingOpen && step !== 3 && (
+                生成视频步的总按钮在中间 VideoStage 内,这里不渲染。 */}
+                {!marketingOpen && step !== STEP_VIDEO && (
                   <footer className="smart__footer smart__footer--right">
                     {/* 前瞻预估:当前步显示「下一步生成」要花多少(估到价才显示) */}
                     {stepCost.estimate &&
