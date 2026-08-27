@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
+import { CreativeParamsDropdown, type CreativeParamField } from '../CreativeParamsDropdown'
 import {
   filterGenerationModelGroupsByOperations,
   GenerationModelDropdown,
@@ -21,8 +22,8 @@ import {
   type GenerationModelLoadingState,
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
+  type GenerationModelEstimateSummary,
 } from '../GenerationModelPicker'
-import RatioIcon from '@/components/common/RatioIcon'
 import { fileToDataUrl } from '@/utils/imageFile'
 import {
   clearSmartEntryDraft,
@@ -421,10 +422,19 @@ export default function SmartEntry({
   const modelSelectionComplete = isGenerationModelSelectionComplete(visibleModelGroups, generationModels)
   // 视频模式也要报参考图数量冲突：上传的素材现在直接作为参考图提交给视频模型，
   // 换到一个只收 1 张的模型时必须当场提示，而不是等提交被后端拒。
+  // 只把「用户已经定下来」的参数交给冲突校验。
+  //
+  // 时长默认未选，若照样把这一项传下去，模型一被选中就会立刻报「当前模型要求提供时长」——
+  // 那是在指责用户还没来得及做的事。参数改成弹窗后这条更刺眼：提示挂在模型卡片上，
+  // 而要改的东西在另一个弹窗里。等用户真的选了时长，不兼容照样会报。
+  // 注意 getModelConstraintConflicts 用 hasOwn 判断「是否提供」，传 undefined 也算提供，
+  // 所以必须整个键不传。
+  const selectedDurationForConflicts = mode === 'video' ? (parseDurationSeconds(duration) ?? undefined) : undefined
   const modelSelectionConflicts = getGenerationModelSelectionConflicts(conflictModelGroups, generationModels, {
     ratio,
     referenceImageCount: images.length,
-    ...(mode === 'video' ? { durationSec: parseDurationSeconds(duration) ?? undefined, resolution } : {}),
+    ...(selectedDurationForConflicts !== undefined ? { durationSec: selectedDurationForConflicts } : {}),
+    ...(mode === 'video' && resolution ? { resolution } : {}),
   })
   // 时长档位跟随所选视频模型：schema 声明了支持哪些秒数就只展示哪些，未声明才回落 1–15 秒。
   const durationOptions = useMemo(
@@ -515,6 +525,71 @@ export default function SmartEntry({
     if (matched === undefined) setRatio(ratioOptions[0])
     else if (matched !== ratio) setRatio(matched)
   }, [mode, ratio, ratioOptions])
+
+  /**
+   * 弹窗里的创作参数行。档位在上面已按所选模型的 schema 算好，这里只做呈现：
+   * 视频是 比例 / 时长 / 分辨率，图片是 比例 / 出图数量。
+   */
+  const creativeParamFields: CreativeParamField[] = useMemo(() => {
+    const ratioField: CreativeParamField = {
+      key: 'ratio',
+      label: '画面比例',
+      hint: '成片画幅',
+      value: ratio,
+      options: ratioOptions,
+      onChange: pickRatio,
+    }
+    if (mode !== 'video') {
+      return [
+        ratioField,
+        {
+          key: 'outputCount',
+          label: '生成数量',
+          hint: '单轮出图张数',
+          value: `${outputCount}张`,
+          options: IMAGE_OUTPUT_COUNT_OPTIONS,
+          onChange: (value) => setOutputCount(clampImageOutputCount(value.replace('张', ''))),
+        },
+      ]
+    }
+    return [
+      ratioField,
+      {
+        key: 'duration',
+        label: '视频时长',
+        hint: '成片总秒数',
+        value: duration,
+        options: durationChoices,
+        onChange: setDuration,
+        placeholder: DURATION_PLACEHOLDER,
+      },
+      {
+        key: 'resolution',
+        label: '分辨率',
+        hint: '出片清晰度',
+        value: resolution,
+        options: resolutionOptions,
+        onChange: pickResolution,
+      },
+    ]
+  }, [
+    mode,
+    ratio,
+    ratioOptions,
+    pickRatio,
+    duration,
+    durationChoices,
+    resolution,
+    resolutionOptions,
+    pickResolution,
+    outputCount,
+  ])
+
+  /**
+   * 模型合计预估。放在「去制作」旁边而不是模型弹窗里：弹窗选完就关，
+   * 数字只在弹窗开着时可见，而用户恰恰是在点主按钮那一刻才需要知道要花多少。
+   */
+  const [modelEstimate, setModelEstimate] = useState<GenerationModelEstimateSummary | null>(null)
 
   const modelCatalogReady =
     !modelOperationStates || areGenerationModelOperationsReady(modelOperationStates, requiredModelOperations)
@@ -905,96 +980,28 @@ export default function SmartEntry({
                   onRetry={onReloadModels ? () => onReloadModels() : undefined}
                   onChange={updateGenerationModel}
                   estimateModelCost={workspaceId > 0 ? estimateSelectedModel : undefined}
+                  onEstimateChange={setModelEstimate}
                   conflicts={modelSelectionConflicts}
                   attentionRequest={modelAttentionRequest}
                   attentionMessage={modelGateMessage}
                 />
               )}
-              <EntryDropdown
-                value={ratio}
-                options={ratioOptions}
-                onChange={pickRatio}
-                icon={<RatioIcon ratio={ratio} />}
-                valueMinWidth={34}
+              {/*
+                创作参数（比例 / 时长 / 分辨率 / 出图数量）收进一个弹窗，形式与「本次创作使用的模型」一致。
+                此前它们在底栏各占一个 chip，与模型 chip 等距排开——「用什么生成」和「生成成什么样」
+                是两层决策，平铺在一行读不出层次，chip 一多底栏也开始换行。
+              */}
+              <CreativeParamsDropdown
+                fields={creativeParamFields}
+                conflicts={modelSelectionConflicts}
+                /*
+                  先选模型再选参数：比例/时长/分辨率的可选档位都由所选模型的 schema 决定，
+                  没选模型时给出的只是兜底档位——用户可能选中一个该模型根本做不到的秒数，
+                  然后在提交时才被告知不兼容。锁上入口即可避免这条弯路。
+                */
+                disabled={!modelSelectionComplete}
+                disabledHint="请先选择本次创作使用的模型"
               />
-              {/* 时长仅「制作视频」需要;「制作图片」隐藏(对齐设计) */}
-              {mode === 'video' && (
-                <EntryDropdown
-                  value={duration}
-                  options={durationChoices}
-                  onChange={setDuration}
-                  placeholder={DURATION_PLACEHOLDER}
-                  variant="wheel"
-                  ariaLabel="视频时长"
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="20"
-                      height="20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                    >
-                      <circle cx="12" cy="12" r="8" />
-                      <path d="M12 8v4l3 2" />
-                    </svg>
-                  }
-                />
-              )}
-
-              {/* 分辨率同样只在「制作视频」出现，档位来自所选视频模型 schema */}
-              {mode === 'video' && (
-                <EntryDropdown
-                  value={resolution}
-                  options={resolutionOptions}
-                  onChange={pickResolution}
-                  ariaLabel="视频分辨率"
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="20"
-                      height="20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <rect x="3.5" y="6" width="17" height="12" rx="2" />
-                      <path d="M8 10.5v3M12 9v6M16 10.5v3" />
-                    </svg>
-                  }
-                  valueMinWidth={40}
-                />
-              )}
-
-              {mode === 'image' && (
-                <EntryDropdown
-                  value={`${outputCount}张`}
-                  options={IMAGE_OUTPUT_COUNT_OPTIONS}
-                  onChange={(value) => setOutputCount(clampImageOutputCount(String(value).replace('张', '')))}
-                  ariaLabel="生成图片数量"
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="20"
-                      height="20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <rect x="5" y="5" width="14" height="14" rx="3" />
-                      <path d="M8.5 15.5l3-3 2.2 2.2 1.8-2 3.5 3.5M9 9.5h.01" />
-                    </svg>
-                  }
-                  valueMinWidth={28}
-                />
-              )}
 
               <span className={styles.atAnchor} data-guide="smart-at">
                 <button type="button" className={styles.pillBtn} onClick={handleAt} title="引用参考素材">
@@ -1073,6 +1080,18 @@ export default function SmartEntry({
                     />
                   </svg>
                 </button>
+              )}
+              {modelEstimate && (
+                <span
+                  className={`${styles.sendCost}${modelEstimate.canAfford ? '' : ` ${styles.sendCostShort}`}`}
+                  aria-live="polite"
+                >
+                  {modelEstimate.loading
+                    ? '预估中…'
+                    : modelEstimate.failed
+                      ? '预估失败'
+                      : `约 ${modelEstimate.total} 积分${modelEstimate.canAfford ? '' : ' · 余额不足'}`}
+                </span>
               )}
               <button
                 type="button"

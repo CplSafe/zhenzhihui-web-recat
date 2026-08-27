@@ -706,6 +706,25 @@
   }
 }
 
+/*
+ * 主按钮旁的合计预估。
+ *
+ * 预估原本只在模型弹窗里，而弹窗选完就关——用户点「去制作」时反而看不到要花多少。
+ * 放在按钮左侧，与「花钱的那一下」同屏；余额不足转红，但不拦提交（拦截由校验负责）。
+ */
+.sendCost {
+  align-self: center;
+  margin-right: 10px;
+  color: #7c8794;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.sendCostShort {
+  color: #d4380d;
+}
+
 .sendPlain {
   min-width: 130px;
   width: auto;

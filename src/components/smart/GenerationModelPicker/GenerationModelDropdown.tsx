@@ -29,6 +29,15 @@ interface ModelSelectionSlot {
   models: GenerationModelOption[]
 }
 
+/** 合计预估快照，供调用方在主按钮旁展示。 */
+export interface GenerationModelEstimateSummary {
+  total: number
+  balance?: number
+  canAfford: boolean
+  loading: boolean
+  failed: boolean
+}
+
 export interface GenerationModelEstimateResult {
   estimatedCost: number
   balance?: number
@@ -49,6 +58,14 @@ export interface GenerationModelDropdownProps {
   onRetry?: GenerationModelPickerProps['onRetry']
   /** 按当前入口参数预估单个模型执行一次所需积分。预估失败不会阻断模型选择。 */
   estimateModelCost?: (request: GenerationModelEstimateRequest) => Promise<GenerationModelEstimateResult>
+  /**
+   * 把合计预估交给调用方展示。
+   *
+   * 预估要回答的是「这次点下去要花多少」，而模型弹窗是选完就关的临时界面——
+   * 数字只在弹窗开着时可见，等真的要提交时反而看不到了。给出这个回调后，
+   * 调用方可以把它放到主按钮旁边，与「花钱的那一下」同屏。
+   */
+  onEstimateChange?: (summary: GenerationModelEstimateSummary | null) => void
   /**
    * 按 operation 给出的降级说明（如「当前 30s 不适用，生成后不能修改」）。
    * 有说明的槽位不再发起积分预估——它本轮不会被执行，预估必然失败，
@@ -369,6 +386,7 @@ export default function GenerationModelDropdown({
   onChange,
   onRetry,
   estimateModelCost,
+  onEstimateChange,
   slotNotices,
   onOpen,
   locked = false,
@@ -489,6 +507,32 @@ export default function GenerationModelDropdown({
   const estimateCanAfford =
     !estimateItems.some((item) => item.status === 'success' && item.canAfford === false) &&
     (estimateBalance == null || estimateTotal <= estimateBalance)
+
+  // 把合计预估同步给调用方，让它显示在主按钮旁边——弹窗一关数字就看不见了，
+  // 而用户恰恰是在点主按钮那一刻才需要知道要花多少。
+  useEffect(() => {
+    if (!onEstimateChange) return
+    if (!estimateModelCost || !complete) {
+      onEstimateChange(null)
+      return
+    }
+    onEstimateChange({
+      total: estimateTotal,
+      balance: estimateBalance,
+      canAfford: estimateCanAfford,
+      loading: estimateLoading,
+      failed: estimateFailed,
+    })
+  }, [
+    complete,
+    estimateBalance,
+    estimateCanAfford,
+    estimateFailed,
+    estimateLoading,
+    estimateModelCost,
+    estimateTotal,
+    onEstimateChange,
+  ])
 
   /** 将面板挂到 body 并限制在可视区域内，彻底绕开任务栏和入口滚动容器的 overflow 裁切。 */
   const updatePanelPosition = useCallback(() => {
@@ -834,7 +878,7 @@ export default function GenerationModelDropdown({
               </div>
             )}
 
-            {!globalLoading && !globalError && complete && estimateModelCost && (
+            {!globalLoading && !globalError && complete && estimateModelCost && !onEstimateChange && (
               <section className={styles.estimateSummary} aria-live="polite" aria-label="模型费用预估">
                 <div className={styles.estimateSummaryTop}>
                   <div>

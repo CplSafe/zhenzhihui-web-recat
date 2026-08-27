@@ -24,5 +24,6 @@ export {
   type GenerationModelSelectionConstraintValues,
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
+  type GenerationModelEstimateSummary,
 } from './GenerationModelDropdown'
 export { filterGenerationModelGroupsByOperations } from './filterGenerationModelGroupsByOperations'

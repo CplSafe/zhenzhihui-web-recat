@@ -34,6 +34,30 @@ function TestSmartEntry(props: ComponentProps<typeof SmartEntry>) {
   return <SmartEntry {...props} />
 }
 
+/**
+ * 比例 / 时长 / 分辨率 / 出图数量都收进了「创作参数」弹窗（与模型弹窗同一形式），
+ * 底栏只留一个 chip。这两个小工具封装「打开弹窗」和「在弹窗里选一项」。
+ */
+function openCreativeParams() {
+  return screen.getByRole('button', { name: /创作参数/ })
+}
+
+async function pickCreativeParam(user: ReturnType<typeof userEvent.setup>, label: string, value: string) {
+  await user.click(openCreativeParams())
+  await user.selectOptions(screen.getByRole('combobox', { name: label }), value)
+  await user.click(screen.getByRole('button', { name: '关闭参数选择' }))
+}
+
+/** 读取弹窗内某个参数当前可选项（含占位项）。 */
+async function readCreativeParamOptions(user: ReturnType<typeof userEvent.setup>, label: string) {
+  await user.click(openCreativeParams())
+  const options = within(screen.getByRole('combobox', { name: label }))
+    .getAllByRole('option')
+    .map((option) => option.textContent)
+  await user.click(screen.getByRole('button', { name: '关闭参数选择' }))
+  return options
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   setSmartEntryDraftScope('user-4', 61)
@@ -50,8 +74,9 @@ describe('SmartEntry draft and session initialization', () => {
     render(<TestSmartEntry onSubmit={vi.fn()} />)
 
     expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('上一条视频的入口草稿')
-    expect(screen.getByRole('button', { name: '9:16' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '视频时长' })).toHaveTextContent('15s')
+    // 底栏只剩一个「创作参数」chip，摘要里能读到比例与时长
+    expect(openCreativeParams()).toHaveTextContent('9:16')
+    expect(openCreativeParams()).toHaveTextContent('15s')
   })
 
   it('renders a fresh entry on the first frame of an explicit new-video session', () => {
@@ -74,8 +99,8 @@ describe('SmartEntry draft and session initialization', () => {
       />,
     )
     expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('流程返回值\n\n使用本地生活广告帮我优化')
-    expect(screen.getByRole('button', { name: '1:1' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '视频时长' })).toHaveTextContent('5s')
+    expect(openCreativeParams()).toHaveTextContent('1:1')
+    expect(openCreativeParams()).toHaveTextContent('5s')
     unmount()
 
     setSmartEntryDraftScope('user-4', 62)
@@ -94,7 +119,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.queryByRole('tab', { name: '制作图片' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /爆款脚本自动生成/ })).not.toBeInTheDocument()
     // 时长默认未选，需先选模型再选秒数。
-    expect(screen.getByRole('button', { name: '视频时长' })).toBeInTheDocument()
+    expect(openCreativeParams()).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '从真人素材库选择' })).toBeInTheDocument()
     expect(screen.getByText('必选项 · 未选择无法开始制作')).toBeInTheDocument()
     // 与上面那句必选文案一致:没选真人就不能开始制作。
@@ -167,17 +192,17 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.queryByRole('dialog', { name: 'AI 引导' })).not.toBeInTheDocument()
   })
 
-  it('lets the duration be chosen before any model, starting unselected', async () => {
-    const user = userEvent.setup()
+  /**
+   * 参数档位由所选模型的 schema 决定，所以顺序是「先模型、后参数」。
+   * 没选模型时给出的只是兜底档位，用户可能挑中一个该模型根本做不到的秒数，
+   * 直到提交才被告知不兼容——锁上入口把这条弯路堵掉。
+   */
+  it('locks creative params until a model is selected', async () => {
     render(<TestSmartEntry onSubmit={vi.fn()} initial={{ text: '逐秒时长' }} />)
 
-    // 时长默认未选（显示占位文案），但不锁：秒数是需求、模型是实现选择，谁先定都合理。
-    await user.click(screen.getByRole('button', { name: '视频时长' }))
-    const options = within(screen.getByRole('listbox'))
-      .getAllByRole('option')
-      .map((option) => option.textContent)
-    expect(options).toContain('5s')
-    expect(mocks.showToast).not.toHaveBeenCalledWith('请先选择视频模型', 'info')
+    const chip = openCreativeParams()
+    expect(chip).toBeDisabled()
+    expect(chip).toHaveAttribute('title', '请先选择本次创作使用的模型')
   })
 
   it('offers every whole-second duration once a model without duration constraints is selected', async () => {
@@ -202,12 +227,25 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '701')
     await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
 
-    await user.click(screen.getByRole('button', { name: '视频时长' }))
-    expect(
-      within(screen.getByRole('listbox'))
-        .getAllByRole('option')
-        .map((option) => option.textContent),
-    ).toEqual(['1s', '2s', '3s', '4s', '5s', '6s', '7s', '8s', '9s', '10s', '11s', '12s', '13s', '14s', '15s'])
+    // 弹窗里的下拉带一个占位项，其后才是模型支持的档位
+    expect(await readCreativeParamOptions(user, '视频时长')).toEqual([
+      '选择时长',
+      '1s',
+      '2s',
+      '3s',
+      '4s',
+      '5s',
+      '6s',
+      '7s',
+      '8s',
+      '9s',
+      '10s',
+      '11s',
+      '12s',
+      '13s',
+      '14s',
+      '15s',
+    ])
   })
 
   it('switches to image mode and supports restored image-mode sessions', async () => {
@@ -224,13 +262,30 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.queryByRole('button', { name: '视频生成模型' })).not.toBeInTheDocument()
     unmount()
 
-    render(<TestSmartEntry onSubmit={onSubmit} initial={{ mode: 'image', text: '生成商品主图' }} />)
+    render(
+      <TestSmartEntry
+        onSubmit={onSubmit}
+        initial={{ mode: 'image', text: '生成商品主图' }}
+        modelGroups={[
+          {
+            key: 'image',
+            label: '生成图片',
+            subgroups: [
+              { key: 'image.text_to_image', label: '文生图模型', models: [{ id: 601, name: '文生图模型 A' }] },
+            ],
+          },
+        ]}
+      />,
+    )
     expect(screen.getByRole('heading')).toHaveTextContent('营销图片')
     expect(screen.queryByRole('button', { name: '视频时长' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '爆款脚本自动生成' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '视频生成模型' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '生成图片数量' }))
-    await user.click(screen.getByRole('option', { name: '9张' }))
+    // 参数在选定模型后才解锁（档位由模型 schema 决定）
+    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '文生图模型' }), '601')
+    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
+    await pickCreativeParam(user, '生成数量', '9张')
     await user.click(screen.getByRole('button', { name: '去制作' }))
     expect(onSubmit).toHaveBeenLastCalledWith(
       '生成商品主图',
@@ -436,15 +491,13 @@ describe('SmartEntry mode, options, validation, and submission', () => {
 
     await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
     // 用户选的 6s 原样保留：模型不支持不等于可以替他改成 5s，静默吸附就是在丢掉用户的输入。
-    await user.click(screen.getByRole('button', { name: '视频时长' }))
     // 档位本身仍跟随模型，只剩它声明的秒数
-    expect(screen.getByRole('option', { name: '10s' })).toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: '15s' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('option', { name: '5s' }))
+    const durationOptions = await readCreativeParamOptions(user, '视频时长')
+    expect(durationOptions).toContain('10s')
+    expect(durationOptions).not.toContain('15s')
+    await pickCreativeParam(user, '视频时长', '5s')
     // 比例同样只剩模型支持的那一项；它没被用户显式选过，所以跟着模型收敛到 16:9
-    await user.click(screen.getByRole('button', { name: '16:9' }))
-    expect(screen.queryByRole('option', { name: '9:16' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('option', { name: '16:9' }))
+    expect(await readCreativeParamOptions(user, '画面比例')).not.toContain('9:16')
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
   })
 
@@ -564,14 +617,12 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     )
 
     await user.type(screen.getByRole('textbox', { name: '创作需求' }), '推广新品咖啡')
-    await user.click(screen.getByRole('button', { name: '16:9' }))
-    await user.click(screen.getByRole('option', { name: '9:16' }))
-    // 时长必须先选模型才能选：模型决定可用档位。
+    // 参数必须先选模型才能选：模型决定可用档位。
     await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
     await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '741')
     await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
-    await user.click(screen.getByRole('button', { name: '视频时长' }))
-    await user.click(screen.getByRole('option', { name: '7s' }))
+    await pickCreativeParam(user, '画面比例', '9:16')
+    await pickCreativeParam(user, '视频时长', '7s')
     await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
     expect(screen.getByRole('option', { name: '本地生活广告' })).toBeInTheDocument()
     await user.click(screen.getByRole('option', { name: '电商广告' }))
@@ -623,17 +674,11 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
     await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '751')
     await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
-    await user.click(screen.getByRole('button', { name: '视频时长' }))
-    await user.click(screen.getByRole('option', { name: '7s' }))
+    await pickCreativeParam(user, '视频时长', '7s')
 
     // 档位只来自模型 schema：480p 不在其中，不应出现在下拉里。
-    await user.click(screen.getByRole('button', { name: '视频分辨率' }))
-    expect(
-      within(screen.getByRole('listbox', { name: '视频分辨率' }))
-        .getAllByRole('option')
-        .map((option) => option.textContent),
-    ).toEqual(['720p', '1080p'])
-    await user.click(screen.getByRole('option', { name: '1080p' }))
+    expect(await readCreativeParamOptions(user, '分辨率')).toEqual(['720p', '1080p'])
+    await pickCreativeParam(user, '分辨率', '1080p')
 
     await user.click(screen.getByRole('button', { name: '去制作' }))
     expect(onSubmit).toHaveBeenCalledWith('推广新品咖啡', expect.objectContaining({ resolution: '1080p' }))
