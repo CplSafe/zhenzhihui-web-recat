@@ -269,11 +269,16 @@ describe('SmartEntry mode, options, validation, and submission', () => {
    * 直到提交才被告知不兼容——锁上入口把这条弯路堵掉。
    */
   it('locks creative params until a model is selected', async () => {
+    const user = userEvent.setup()
     render(<TestSmartEntry onSubmit={vi.fn()} initial={{ text: '逐秒时长' }} />)
 
+    // 不用 disabled：点上去没反应的按钮不会告诉用户为什么。
+    // 照常可点，点了说明原因。
     const chip = openCreativeParams()
-    expect(chip).toBeDisabled()
-    expect(chip).toHaveAttribute('title', '请先选择本次创作使用的模型')
+    expect(chip).toBeEnabled()
+    await user.click(chip)
+    expect(screen.queryByRole('dialog', { name: '创作参数' })).not.toBeInTheDocument()
+    expect(mocks.showToast).toHaveBeenCalledWith('请先选择本次创作使用的模型', 'info')
   })
 
   it('offers every whole-second duration once a model without duration constraints is selected', async () => {

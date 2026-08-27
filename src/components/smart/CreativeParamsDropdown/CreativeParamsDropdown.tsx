@@ -36,8 +36,16 @@ export interface CreativeParamsDropdownProps {
   options: CreativeParamsOptions
   onChange: (next: CreativeParamsValue) => void
   disabled?: boolean
-  /** 禁用原因；作为 title 提示，让「点不动」有解释。 */
-  disabledHint?: string
+  /**
+   * 前置条件未满足时的原因。
+   *
+   * 给了它就不再真的 disabled：原生 disabled 按钮连 click 都不会触发，
+   * 用户点上去毫无反应，只能靠悬停看 title——移动端连悬停都没有。
+   * 改为照常可点，点击时把原因交给 onBlocked 说出来。
+   */
+  blockedReason?: string
+  /** 前置条件未满足时点击的回调，通常用来 toast 出 blockedReason。 */
+  onBlocked?: (reason: string) => void
 }
 
 /** 时长未选时摘要里的占位。 */
@@ -59,7 +67,8 @@ export default function CreativeParamsDropdown({
   options,
   onChange,
   disabled = false,
-  disabledHint,
+  blockedReason,
+  onBlocked,
 }: CreativeParamsDropdownProps) {
   const { open, toggle, wrapRef } = useDismissablePopover<HTMLDivElement>()
   const patch = (next: Partial<CreativeParamsValue>) => onChange({ ...value, ...next })
@@ -69,9 +78,15 @@ export default function CreativeParamsDropdown({
       <button
         type="button"
         className={`${styles.trigger}${open ? ` ${styles.isOpen}` : ''}`}
-        onClick={toggle}
-        disabled={disabled}
-        title={disabled ? disabledHint : undefined}
+        onClick={() => {
+          if (blockedReason) {
+            onBlocked?.(blockedReason)
+            return
+          }
+          toggle()
+        }}
+        disabled={disabled && !blockedReason}
+        title={blockedReason || undefined}
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-label={`创作参数，当前 ${formatSummary(value, options)}`}

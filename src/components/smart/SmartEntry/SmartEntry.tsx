@@ -1181,10 +1181,12 @@ export default function SmartEntry({
                 /*
                   先选模型再选参数：比例/时长/分辨率的可选档位都由所选模型的 schema 决定，
                   没选模型时给出的只是兜底档位——用户可能选中一个该模型根本做不到的秒数，
-                  然后在提交时才被告知不兼容。锁上入口即可避免这条弯路。
+                  然后在提交时才被告知不兼容。
+                  这里不用 disabled：点上去没反应的按钮不会告诉用户为什么，
+                  照常可点、点了说明原因，用户才知道下一步该做什么。
                 */
-                disabled={!modelSelectionComplete}
-                disabledHint="请先选择本次创作使用的模型"
+                blockedReason={modelSelectionComplete ? undefined : '请先选择本次创作使用的模型'}
+                onBlocked={(reason) => showToast(reason, 'info')}
               />
 
               <span className={styles.atAnchor} data-guide="smart-at">
