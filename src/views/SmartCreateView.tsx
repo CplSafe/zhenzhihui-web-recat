@@ -2354,11 +2354,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     }
   }
 
-  // 每次「进入」镜头编排(step→2)重置闸门,允许做一次自动生成/续作评估。
-  useEffect(() => {
-    if (step === 2) autoGenRef.current = false
-  }, [step])
-
   // 进入/返回镜头编排时评估【一次】:上游(脚本描述/素材)改动 → 全量重生成;否则只补「还没出图」的分镜
   //(续作被中断的那几张)。用 autoGenRef 闸门保证「本次进入只评估一次」:
   //  - 避免在镜头编排内「单镜编辑」改了 shots(签名变化)而触发整列重生成 + 把刚生成的那张又重生成一次;
@@ -4226,11 +4221,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     const ws = Number(workspaceId || 0)
     const isImg = isImageMode && started
     // 前瞻:每步显示【下一步】要花多少。
-    //   step0 分镜脚本 → 下一步「准备素材」= 元素图(按唯一主体数,AI 从描述生成 → 文生图口径)
-    //   step1 准备素材 → 下一步「镜头编排」= 分镜帧(首镜文生图 + 其余带上一帧 → 图生图,按分镜数)
-    //   step2 镜头编排 → 下一步「生成视频」= 整片
+    //   step0 分镜脚本 → 下一步「生成视频」= 整片
     //   图片模式 → 出图(单张)
-    const kind = isImg ? 'frames' : step === 0 ? 'elements' : step === 1 ? 'frames' : step === 2 ? 'video' : ''
+    const kind = isImg ? 'frames' : step === STEP_SCRIPT ? 'video' : ''
     if (!ws || marketingOpen || !kind) {
       setStepCost((s) =>
         s.estimate || s.loading || s.error
@@ -4241,20 +4234,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     }
     let alive = true
     const perImage = kind !== 'video'
-    // 分镜帧张数 = 参与视频的分镜数;元素图张数 = 分镜里唯一主体数。
-    const partShots = kind === 'frames' && !isImg ? shots.filter((s) => s.includeInVideo !== false) : []
-    const frameCount = partShots.length
-    const elementCount =
-      kind === 'elements'
-        ? new Set(shots.flatMap((s) => (s.subjects || []).map((su: any) => stripAt(su.tag || '')).filter(Boolean))).size
-        : 0
-    const count = isImg
-      ? Math.min(9, Math.max(1, Math.floor(Number(imageComposerOutputCount) || 1)))
-      : kind === 'elements'
-        ? elementCount
-        : kind === 'frames'
-          ? frameCount
-          : 0
+    // 图片模式按本轮出图张数计费；视频按整片一次计费。
+    const count = isImg ? Math.min(9, Math.max(1, Math.floor(Number(imageComposerOutputCount) || 1))) : 0
     setStepCost({ loading: true, error: '', perImage, count, estimate: null })
     const timer = window.setTimeout(async () => {
       try {
@@ -4315,74 +4296,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           })
           return
         }
-        if (kind === 'elements') {
-          const modelSelection = selectedGenerationModel('image.text_to_image')
-          if (!modelSelection) throw new Error('请先选择文生图模型')
-          // 准备素材:每个唯一主体出一张独立元素图,AI 从描述生成 → 文生图口径;总额 = 文生图单价 × 主体数。
-          const res: any = await estimateShotImageCost({
-            workspaceId: ws,
-            referenceImageCount: 0,
-            ratio: entryMeta?.ratio,
-            modelVersionId: modelSelection.modelVersionId,
-            modelVersion: modelSelection.source,
-            modelPlanCandidates: plans,
-          })
-          if (!alive) return
-          const per = Number(res?.estimated_cost ?? 0)
-          const balance = Number(res?.balance ?? 0)
-          const total = elementCount > 0 ? per * elementCount : per
-          setStepCost({
-            loading: false,
-            error: '',
-            perImage,
-            count: elementCount,
-            estimate: { estimatedCost: total, balance, canAfford: total <= balance, perOne: per },
-          })
-          return
-        }
-        // kind === 'frames'(镜头编排分镜帧):链式生成 —— 首镜(无自带素材)走【文生图】,第 2 镜起带上一帧 →【图生图】。
-        // 两者后端计费不同,故分别估价再按分镜数求和:总额 = 文生图×文生图数 + 图生图×图生图数。张数未知则按 1 张图生图估。
-        const n = frameCount
-        const firstHasMaterials = n > 0 ? (partShots[0]?.subjects || []).some((su: any) => Boolean(su?.image)) : false
-        const textCount = n > 0 && !firstHasMaterials ? 1 : 0
-        const i2iCount = n > 0 ? n - textCount : 1
-        const imageToImageModel = selectedGenerationModel('image.image_to_image')
-        const textToImageModel = textCount > 0 ? selectedGenerationModel('image.text_to_image') : null
-        if (!imageToImageModel) throw new Error('请先选择图生图模型')
-        if (textCount > 0 && !textToImageModel) throw new Error('请先选择文生图模型')
-        // 图生图始终估(供 total + 「每加一张」增量,新增分镜带上一帧=图生图);文生图仅首镜需要时估。
-        const [i2iRes, t2iRes]: any[] = await Promise.all([
-          estimateShotImageCost({
-            workspaceId: ws,
-            referenceImageCount: 1,
-            ratio: entryMeta?.ratio,
-            modelVersionId: imageToImageModel.modelVersionId,
-            modelVersion: imageToImageModel.source,
-            modelPlanCandidates: plans,
-          }),
-          textCount > 0
-            ? estimateShotImageCost({
-                workspaceId: ws,
-                referenceImageCount: 0,
-                ratio: entryMeta?.ratio,
-                modelVersionId: textToImageModel!.modelVersionId,
-                modelVersion: textToImageModel!.source,
-                modelPlanCandidates: plans,
-              })
-            : Promise.resolve(null),
-        ])
-        if (!alive) return
-        const i2iPer = Number(i2iRes?.estimated_cost ?? 0)
-        const t2iPer = Number(t2iRes?.estimated_cost ?? 0)
-        const total = i2iPer * i2iCount + t2iPer * textCount
-        const balance = Number(i2iRes?.balance ?? t2iRes?.balance ?? 0)
-        setStepCost({
-          loading: false,
-          error: '',
-          perImage,
-          count: n,
-          estimate: { estimatedCost: total, balance, canAfford: total <= balance, perOne: i2iPer },
-        })
       } catch (e: any) {
         if (alive) setStepCost({ loading: false, error: e?.message || '暂不支持预估', perImage, count, estimate: null })
       }
@@ -4907,7 +4820,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       hasRestoredVideoInProgress(d, restoredGenerations, restoredVideoQueue) || hasRestoredVideo
         ? STEPS.length - 1
         : Math.min(STEPS.length - 1, Math.max(0, d.step || 0))
-    const restoredMaxReached = Math.max(d.maxReached || 0, restoredStep)
+    // 旧草稿的 maxReached 可能是 2/3（当时有「准备素材」「镜头编排」两步）。
+    // 不夹住会让进度条把不存在的步骤算成"已到达"，点上去拿到 undefined。
+    const restoredMaxReached = Math.min(STEPS.length - 1, Math.max(d.maxReached || 0, restoredStep))
     const restoredShots = Array.isArray(d.shots) ? d.shots : []
     latestDraftStateRef.current = {
       ...d,
@@ -7781,13 +7696,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   // 上一步:step0 → 营销拆解(用了 skill)/ 入口;镜头编排(step2)直接回到分镜脚本(step0)。
   // step1 已删除，仅保留作旧草稿兼容，不能作为用户可见的导航目标。
   const goPrev = () => {
-    if (step === 0) {
+    if (step === STEP_SCRIPT) {
       if (entryMeta?.skill) setMarketingOpen(true)
       else setStarted(false)
-    } else if (step === 2) {
-      goStep(0)
     } else {
-      goStep(step - 1)
+      goStep(STEP_SCRIPT)
     }
   }
   // 下一步:仅在「已生成过」的步骤之间向前导航(step < maxReached);前沿(下一步尚未生成)置灰,
@@ -8335,13 +8248,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       lastSyncedStageRef.current = ''
       return
     }
-    const stage = !started
-      ? canResumeFlow
-        ? 'reentry'
-        : 'entry'
-      : entryMeta?.mode !== 'image' && !marketingOpen && step === 2
-        ? 'arrangeTrash'
-        : 'process'
+    const stage = !started ? (canResumeFlow ? 'reentry' : 'entry') : 'process'
     // 只在阶段【真正变化】时同步:否则返回入口时 started/canResumeFlow/step 连续变化会重复同步同一阶段,
     // 而 syncSmartStage 对"已展示过的同阶段再同步"会设 waiting=true → 刚弹出就被自己隐藏(闪退)。
     if (stage === lastSyncedStageRef.current) return
@@ -8677,7 +8584,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             requestContext: responseRequestContextFor(responseModel),
           })
         }}
-        onPrev={() => goStep(2)}
+        onPrev={() => goStep(STEP_SCRIPT)}
         regenCount={videoCount}
         regenCountOptions={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}
         onRegenCountChange={(n) => setVideoCount(n)}
@@ -8706,12 +8613,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
 
   // 是否使用了营销 SKILL(决定流程是否多出「营销思路拆解」步、进度条是否整体后移)
   const usedSkill = !isRealPersonMode && !!entryMeta?.skill
-  const visibleStepIndices = [0, 2, 3] as const
+  // 两步流程都可见（分镜脚本 / 生成视频）；不再有需要跳过的中间步。
+  const visibleStepIndices = [STEP_SCRIPT, STEP_VIDEO] as const
   const allFlowSteps = isRealPersonMode ? REAL_PERSON_STEPS : STEPS
-  const visibleFlowSteps = visibleStepIndices.map((index) => allFlowSteps[index])
-  const visibleActiveStatus = isRealPersonMode
-    ? ['策划生成中', '镜头编排中', '真人视频生成中']
-    : ['脚本生成中', '镜头编排中', '视频生成中']
+  // filter(Boolean) 是护栏：步骤数一旦再变（如又删一步），落单的索引会变成 undefined，
+  // 进度条读 .label 就整页白屏。宁可少画一格，也不要让流程页崩掉。
+  const visibleFlowSteps = visibleStepIndices.map((index) => allFlowSteps[index]).filter(Boolean)
+  const visibleActiveStatus = isRealPersonMode ? ['策划生成中', '真人视频生成中'] : ['脚本生成中', '视频生成中']
   const currentVisibleStep = Math.max(0, visibleStepIndices.indexOf(step as (typeof visibleStepIndices)[number]))
   const maxVisibleStep = visibleStepIndices.reduce<number>(
     (max, internalStep, visibleIndex) => (internalStep <= maxReached ? visibleIndex : max),
@@ -8965,22 +8873,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                     current={usedSkill ? (marketingOpen ? 0 : currentVisibleStep + 1) : currentVisibleStep}
                     clickableMax={usedSkill ? maxVisibleStep + 1 : maxVisibleStep}
                     statuses={(() => {
-                      // 4 个流程步的子状态:脚本有分镜 / 已进入镜头编排(素材就绪) / 有任一分镜图 / 有整片视频
+                      // 两个流程步的子状态:脚本已出分镜 / 已出整片视频。
                       const hasVideoOutput = Boolean(fullVideo.url || fullVideo.assetId || videoVersions.length)
-                      const hasShotImage = shots.some((s) => s.image || Number(s.imageAssetId || 0) > 0)
-                      // 上游新增/修改后 maxReached 会回退；旧分镜图/成片不能让后续步骤继续显示为可跳转的“已完成”。
-                      const done = [
-                        shots.length > 0 || hasVideoOutput,
-                        maxReached >= 1 && (maxReached >= 2 || hasShotImage || hasVideoOutput),
-                        maxReached >= 2 && (hasShotImage || hasVideoOutput),
-                        maxReached >= 3 && hasVideoOutput,
-                      ]
-                      const running = [
-                        scriptLoading || insertTextGenerating,
-                        false,
-                        shotGenRunning,
-                        actualVideoGenerating,
-                      ]
+                      // 上游新增/修改后 maxReached 会回退；旧成片不能让后续步骤继续显示为可跳转的“已完成”。
+                      const done = [shots.length > 0 || hasVideoOutput, maxReached >= STEP_VIDEO && hasVideoOutput]
+                      const running = [scriptLoading || insertTextGenerating, actualVideoGenerating]
                       const flow = visibleStepIndices.map((internalStep, visibleIndex) =>
                         running[internalStep]
                           ? visibleActiveStatus[visibleIndex]
@@ -9083,7 +8980,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                 {/* 底栏:上一步/下一步 导航箭头 + 各步主操作按钮(整组居中)。
                 视频生成步(step3)总按钮在中间 VideoStage 内,这里不渲染。 */}
                 {!marketingOpen && step !== 3 && (
-                  <footer className={`smart__footer ${step === 2 ? 'smart__footer--center' : 'smart__footer--right'}`}>
+                  <footer className="smart__footer smart__footer--right">
                     {/* 前瞻预估:当前步显示「下一步生成」要花多少(估到价才显示) */}
                     {stepCost.estimate &&
                       (() => {
@@ -9093,17 +8990,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                         return (
                           <div className="smart__cost">
                             <span className={insufficient ? 'smart__cost--err' : undefined}>
-                              {step === 0
-                                ? `下一步镜头编排 · ${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}`
-                                : step === 1
-                                  ? `下一步镜头编排 · ${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}`
-                                  : step === 2
-                                    ? '下一步生成视频 · 约 '
-                                    : stepCost.count > 1
-                                      ? `共 ${stepCost.count} 张约 `
-                                      : '约 '}
+                              {step === STEP_SCRIPT
+                                ? '下一步生成视频 · 约 '
+                                : stepCost.count > 1
+                                  ? `共 ${stepCost.count} 张约 `
+                                  : '约 '}
                               {stepCost.estimate.estimatedCost} 积分 · 余额 {stepCost.estimate.balance} 积分
-                              {stepCost.estimate.perOne != null && step !== 2 && (
+                              {stepCost.estimate.perOne != null && step !== STEP_SCRIPT && (
                                 <span className="smart__cost-per"> · 每加一张约 {stepCost.estimate.perOne} 积分</span>
                               )}
                               {insufficient && (
