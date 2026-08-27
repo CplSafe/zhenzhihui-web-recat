@@ -549,6 +549,54 @@ describe('smartDraft 后端快照', () => {
     expect(base()).toBe(base())
   })
 
+  /**
+   * 签名升版时必须同步登记新增字段，否则老草稿会被整体误判为「内容已改」，
+   * 进入生成视频步就立刻重跑一次付费出片——用户既没改东西也没得到提示。
+   */
+  it('升到 v4 后，内容未变的 v3 老签名仍判定为匹配', () => {
+    const shots = [{ id: 'shot-1', imageAssetId: 11, desc: '航拍开场', duration: '3s' }]
+    const meta = { ratio: '16:9', resolution: '720p', imageAssetIds: [11] }
+    const current = computeVideoContentSig(shots, meta, '西山森林公园')
+
+    // 构造一份内容相同、但按 v3 口径写下的历史签名
+    const legacy = JSON.parse(current)
+    legacy.signatureVersion = 3
+    delete legacy.entryAssets
+    legacy.shots = legacy.shots.map((shot: Record<string, unknown>) => {
+      const copy = { ...shot }
+      delete copy.desc
+      return copy
+    })
+
+    expect(isVideoContentSigMatch(JSON.stringify(legacy), current)).toBe(true)
+  })
+
+  it('v3 老签名遇到真实改动时仍判定为不匹配', () => {
+    const meta = { ratio: '16:9', resolution: '720p', imageAssetIds: [11] }
+    const current = computeVideoContentSig(
+      [{ id: 'shot-1', imageAssetId: 11, desc: '航拍开场', duration: '5s' }],
+      meta,
+      '西山森林公园',
+    )
+    const legacy = JSON.parse(
+      computeVideoContentSig(
+        [{ id: 'shot-1', imageAssetId: 11, desc: '航拍开场', duration: '3s' }],
+        meta,
+        '西山森林公园',
+      ),
+    )
+    legacy.signatureVersion = 3
+    delete legacy.entryAssets
+    legacy.shots = legacy.shots.map((shot: Record<string, unknown>) => {
+      const copy = { ...shot }
+      delete copy.desc
+      return copy
+    })
+
+    // 时长是 v3 就有的字段，改了必须仍然识别为内容变更
+    expect(isVideoContentSigMatch(JSON.stringify(legacy), current)).toBe(false)
+  })
+
   it('固定模型流程会忽略切换模型版本遗留的签名字段', () => {
     const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '5s' }]
 

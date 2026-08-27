@@ -293,6 +293,8 @@ export function compileFullVideoModelRequest(
     shots: any[]
     ratio?: string
     referenceImageCount?: number
+    /** 本次会提交的参考图 asset_id；未显式给出 referenceImageCount 时按它的长度推导。 */
+    imageAssetIds?: number[]
     resolution?: string
     /**
      * 用户显式选择的音频开关；省略时沿用「模型支持即开」的自动推导。
@@ -330,9 +332,15 @@ export function compileFullVideoModelRequest(
     throw new Error('智能成片总时长必须是 1 至 15 秒内的整数')
   }
 
+  // 参考图现在是用户上传的素材，与分镜数无关，所以不再回落成分镜数——
+  // 那会让「1 张产品图 + 5 个镜头」被当成 5 张参考图，在只收 2 张的模型上误报。
+  //
+  // 未传时按 imageAssetIds 的真实长度推导；两者都没有才当 0。
+  // 不能一律当 0：要求「至少 1 张参考图」的模型（如 HappyHorse 参考生视频）
+  // 会因此在估价阶段被误判为不满足下限。
   const referenceImageCount =
     args.referenceImageCount === undefined
-      ? (args.shots || []).filter((shot) => shot?.includeInVideo !== false).length
+      ? (args.imageAssetIds || []).map((id: unknown) => Number(id) || 0).filter((id: number) => id > 0).length
       : Number(args.referenceImageCount)
   if (!Number.isSafeInteger(referenceImageCount) || referenceImageCount < 0) {
     throw new Error('参考图数量无效，请重新准备分镜素材')
@@ -466,7 +474,9 @@ export async function generateFullVideo(args: {
   /**
    * 参考模式开关（params.reference_mode）：
    * false=首尾帧（第 1 张首帧、第 2 张尾帧），true=参考图仅提供主体/风格。
-   * 省略时沿用模型 schema 的默认值。
+   *
+   * **省略时按 true 处理**，不是沿用 schema 默认值——本流程下发的是用户上传的素材，
+   * 语义恒为「照着这些素材生成」。需要首尾帧语义的调用方必须显式传 false。
    */
   referenceMode?: boolean
   /** 用户选择的音频开关；省略时沿用「模型支持即开」。 */
@@ -697,6 +707,10 @@ export async function estimateFullVideoCost(args: {
   generateAudio?: boolean
   /** 参考模式；必须与提交一致，否则「预估 ≠ 实扣」。 */
   referenceMode?: boolean
+  /** 本次会提交的参考图张数；必须与提交一致，否则模型兼容性判定两端不同。 */
+  referenceImageCount?: number
+  /** 本次会提交的参考图 asset_id；未给 referenceImageCount 时按它推导。 */
+  imageAssetIds?: number[]
 }): Promise<any> {
   const model = await resolveFullVideoModel(args)
   const request = compileFullVideoModelRequest(model, {
@@ -705,6 +719,8 @@ export async function estimateFullVideoCost(args: {
     resolution: args.resolution,
     generateAudio: args.generateAudio,
     referenceMode: args.referenceMode,
+    referenceImageCount: args.referenceImageCount,
+    imageAssetIds: args.imageAssetIds,
   })
   return estimateAiTaskCost({
     workspaceId: args.workspaceId,

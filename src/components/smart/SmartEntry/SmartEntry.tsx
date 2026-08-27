@@ -22,7 +22,6 @@ import {
   type GenerationModelLoadingState,
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
-  type GenerationModelEstimateSummary,
 } from '../GenerationModelPicker'
 import { fileToDataUrl } from '@/utils/imageFile'
 import {
@@ -49,6 +48,8 @@ import {
   type GenerationOperationCode,
 } from '@/utils/generationModelCatalog'
 import { parseDurationSeconds } from '@/utils/videoDurationValue'
+import { DEFAULT_REFERENCE_IMAGE_LIMIT } from '@/utils/modelInputConstraints'
+import { useDismissablePopover } from '@/composables/useDismissablePopover'
 import { useToast } from '@/composables/useToast'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import RealPersonMaterialPicker from './RealPersonMaterialPicker'
@@ -145,6 +146,15 @@ interface SmartEntryProps {
  */
 const UNSET_DURATION = ''
 
+/** 主按钮旁展示的合计预估快照。 */
+interface CreationCostEstimate {
+  total: number
+  balance?: number
+  canAfford: boolean
+  loading: boolean
+  failed: boolean
+}
+
 /** 可选的智能成片脚本。 */
 const SCRIPT_OPTIONS = [...SMART_SCRIPT_OPTIONS]
 
@@ -158,11 +168,11 @@ const clampImageOutputCount = (value: unknown) =>
 /**
  * 尚未选中视频模型时的参考图上限兜底。
  *
- * 参考图真实上限由所选模型决定（见 getGenerationModelReferenceImageLimit）。
- * 没选模型时给 9：这是历史行为，也是主力模型 Seedance 2.0 的真实上限；
- * 选定模型后立即收敛到该模型的真值。
+ * 直接复用提交链路的同一个常量：两端各写一个数字，就会出现
+ * 「入口说能传 9 张、提交时按 1 拦下」这种只能靠用户撞出来的分歧。
+ * 选定模型后立即收敛到该模型 input_constraints 声明的真值。
  */
-const FALLBACK_REFERENCE_IMAGE_LIMIT = 9
+const FALLBACK_REFERENCE_IMAGE_LIMIT = DEFAULT_REFERENCE_IMAGE_LIMIT
 /** 文件扩展名图片识别兜底规则。 */
 const IMAGE_FILE_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i
 
@@ -264,7 +274,14 @@ export default function SmartEntry({
   const [realPersonPickerOpen, setRealPersonPickerOpen] = useState(false)
   // 加号的来源菜单：本地上传 / 素材库 / 真人素材。与爆款复制同一套交互，
   // 素材库复用 MaterialLibraryPicker，真人素材仍走已认证真人库。
-  const [sourceMenuOpen, setSourceMenuOpen] = useState(false)
+  // 复用全站统一的弹层开关：同批新增的 CreativeParamsDropdown / CreativeModelSlots 都用它，
+  // 手写一份不仅重复，还会漏掉 Esc 关闭——那正是这个菜单此前的行为。
+  const {
+    open: sourceMenuOpen,
+    setOpen: setSourceMenuOpen,
+    toggle: toggleSourceMenu,
+    wrapRef: sourceMenuRef,
+  } = useDismissablePopover<HTMLDivElement>()
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryMaterials, setLibraryMaterials] = useState<any[]>([])
@@ -272,17 +289,6 @@ export default function SmartEntry({
   const [libraryQuery, setLibraryQuery] = useState('')
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
-  const sourceMenuRef = useRef<HTMLDivElement | null>(null)
-
-  // 点击菜单外部关闭
-  useEffect(() => {
-    if (!sourceMenuOpen) return
-    const onPointerDown = (event: MouseEvent) => {
-      if (!sourceMenuRef.current?.contains(event.target as Node)) setSourceMenuOpen(false)
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    return () => document.removeEventListener('mousedown', onPointerDown)
-  }, [sourceMenuOpen])
 
   /** 拉取素材库里的图片素材（只取本人可见的项目资产）。 */
   const loadLibraryImages = async () => {
@@ -512,13 +518,24 @@ export default function SmartEntry({
   // 只展示并要求文生图或图生图中的一个，避免用户必须为一次创作选择两个图片模型。
   // 选了真人不再额外要求图生图模型:真人素材曾经要先过一遍图生图重画,那一步已随
   // 「准备素材」移除,现在真人素材原样作为参考图提交,只用得到视频模型。
-  const requiredModelOperations: readonly GenerationOperationCode[] =
-    mode === 'image'
-      ? [getImageGenerationOperationCode(images.length)]
-      : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video
+  // 同样要 memo：图片模式那一支是数组字面量，不缓存就让下游的 visibleModelGroups 白缓存。
+  const requiredModelOperations: readonly GenerationOperationCode[] = useMemo(
+    () =>
+      mode === 'image'
+        ? [getImageGenerationOperationCode(images.length)]
+        : REQUIRED_GENERATION_OPERATION_CODES_BY_MODE.video,
+    [mode, images.length],
+  )
   // 两种模式都按「本次创作真正会用到的 operation」过滤：
   // 视频模式下 video.edit 已不属于智能成片流程（修改走视频生视频），不能再出现在模型面板里。
-  const visibleModelGroups = filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations)
+  //
+  // 必须 memo：这个函数每次都返回新数组（内部对 models/subgroups 做浅拷贝），
+  // 不缓存的话下游依赖它的 5 个 useMemo（时长/分辨率/比例/参考图上限/预估目标）
+  // 全部失效，输入框每敲一个字都要重算一遍。
+  const visibleModelGroups = useMemo(
+    () => filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations),
+    [modelGroups, requiredModelOperations],
+  )
   const conflictModelGroups = visibleModelGroups
   const modelSelectionComplete = isGenerationModelSelectionComplete(visibleModelGroups, generationModels)
   // 视频模式也要报参考图数量冲突：上传的素材现在直接作为参考图提交给视频模型，
@@ -664,7 +681,7 @@ export default function SmartEntry({
    * 模型合计预估。放在「去制作」旁边而不是模型弹窗里：弹窗选完就关，
    * 数字只在弹窗开着时可见，而用户恰恰是在点主按钮那一刻才需要知道要花多少。
    */
-  const [modelEstimate, setModelEstimate] = useState<GenerationModelEstimateSummary | null>(null)
+  const [modelEstimate, setModelEstimate] = useState<CreationCostEstimate | null>(null)
 
   const modelCatalogReady =
     !modelOperationStates || areGenerationModelOperationsReady(modelOperationStates, requiredModelOperations)
@@ -998,9 +1015,7 @@ export default function SmartEntry({
                   <button
                     type="button"
                     className={styles.add}
-                    onClick={() =>
-                      isRealPersonVariant ? setRealPersonPickerOpen(true) : setSourceMenuOpen((open) => !open)
-                    }
+                    onClick={() => (isRealPersonVariant ? setRealPersonPickerOpen(true) : toggleSourceMenu())}
                     aria-label={isRealPersonVariant ? '继续添加真人素材' : '继续添加素材'}
                   >
                     <svg
@@ -1033,9 +1048,7 @@ export default function SmartEntry({
                 <button
                   type="button"
                   className={styles.upload}
-                  onClick={() =>
-                    isRealPersonVariant ? setRealPersonPickerOpen(true) : setSourceMenuOpen((open) => !open)
-                  }
+                  onClick={() => (isRealPersonVariant ? setRealPersonPickerOpen(true) : toggleSourceMenu())}
                   aria-label={isRealPersonVariant ? '从真人素材库选择' : '添加素材'}
                 >
                   {/* 倾斜浅灰卡片 + 加号(还原 Figma Group 388,无虚线边) */}
@@ -1285,18 +1298,22 @@ export default function SmartEntry({
           </div>
         </div>
       </div>
-      <MaterialLibraryPicker
-        modelValue={libraryOpen}
-        workspaceId={Number(workspaceId || 0)}
-        materials={libraryMaterials}
-        tab={libraryTab}
-        query={libraryQuery}
-        isLoading={libraryLoading}
-        onModelValueChange={setLibraryOpen}
-        onTabChange={setLibraryTab}
-        onQueryChange={setLibraryQuery}
-        onConfirm={confirmLibraryImages}
-      />
+      {/* 只在打开时挂载：它自己有一个按 workspace/tab 拉取项目列表的 effect，
+          常驻会让从未打开过素材库的用户也白跑一次分页扫描。 */}
+      {libraryOpen && (
+        <MaterialLibraryPicker
+          modelValue={libraryOpen}
+          workspaceId={Number(workspaceId || 0)}
+          materials={libraryMaterials}
+          tab={libraryTab}
+          query={libraryQuery}
+          isLoading={libraryLoading}
+          onModelValueChange={setLibraryOpen}
+          onTabChange={setLibraryTab}
+          onQueryChange={setLibraryQuery}
+          onConfirm={confirmLibraryImages}
+        />
+      )}
       <RealPersonMaterialPicker
         open={realPersonPickerOpen}
         workspaceId={workspaceId}

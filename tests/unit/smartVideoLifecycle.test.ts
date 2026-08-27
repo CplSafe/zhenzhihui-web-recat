@@ -429,6 +429,34 @@ describe('smart video lifecycle', () => {
   })
 
   /**
+   * 参考图现在是用户上传的素材，与分镜数无关。
+   * 曾经缺省回落成分镜数，于是「1 张产品图 + 5 个镜头」被当成 5 张参考图，
+   * 在只收 2 张的模型上误报「不支持当前参考图」，估价和出片一起被拦。
+   */
+  it('omitted referenceImageCount counts as zero, not the shot count', () => {
+    const model = {
+      model_version_id: 88,
+      operation_codes: ['video.generate'],
+      params_schema: {
+        fields: [
+          { name: 'duration', type: 'select', options: [5] },
+          { name: 'reference_images', type: 'number', minimum: 0, maximum: 2 },
+        ],
+      },
+    }
+    mocks.buildVideoGenerationParams.mockReturnValue({})
+    const shots = Array.from({ length: 5 }, (_, index) => ({ id: index, duration: '1s' }))
+
+    // 5 个镜头但没传参考图数：不该被当成 5 张而报冲突
+    expect(() => compileFullVideoModelRequest(model, { shots, ratio: '16:9' })).not.toThrow()
+
+    // 真的超限时仍然拦下
+    expect(() => compileFullVideoModelRequest(model, { shots, ratio: '16:9', referenceImageCount: 3 })).toThrow(
+      /参考图/,
+    )
+  })
+
+  /**
    * 用户上传的是产品图/真人素材，语义是「照着这些素材生成」。
    * reference_mode=false 时后端会把前两张翻译成 first_frame / last_frame，
    * 产品图会被当成视频的起止画面——那是首尾帧的用法，不是本流程要的。
@@ -502,8 +530,10 @@ describe('smart video lifecycle', () => {
       modelVersionId: 52,
       modelVersion: selectedModel,
     }
+    // 估价与提交必须喂同一份素材：参考图数量参与模型兼容性判定，
+    // 只给提交传、估价不传，两端就会得出相反结论。
     await generateFullVideo({ ...selection, imageAssetIds: [101, 102] })
-    await estimateFullVideoCost(selection)
+    await estimateFullVideoCost({ ...selection, imageAssetIds: [101, 102] })
 
     const submitted = mocks.createAiTask.mock.calls[0]![0]
     const estimated = mocks.estimateAiTaskCost.mock.calls[0]![0]

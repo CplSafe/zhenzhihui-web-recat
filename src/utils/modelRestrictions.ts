@@ -14,7 +14,9 @@ import {
   normalizeModelParamName,
 } from './modelSchema'
 import { getFallbackDurationOptions } from './creativeVideoModelKind'
-import { getModelInputConstraints } from './modelInputConstraints'
+// 本文件已有一个同名的 getModelReferenceImageLimit（读 constraints），起别名区分层次：
+// 这个读的是后端 input_constraints，那个读的是已解析出的 GenerationModelConstraints。
+import { getModelReferenceImageLimit as readReferenceImageLimitFromModel } from './modelInputConstraints'
 import { parseDurationSeconds } from './videoDurationValue'
 
 export interface NumericModelConstraint {
@@ -198,12 +200,8 @@ function readInputConstraintImageLimit(model: Record<string, unknown>): number {
     .map((code) => String(code ?? '').trim())
     .filter(Boolean)[0]
   if (!operationCode) return 0
-  const { roles } = getModelInputConstraints(model, operationCode)
-  for (const role of ['image', 'reference_image']) {
-    const match = roles.find((entry) => entry.role === role)
-    if (match && match.maxCount > 0) return match.maxCount
-  }
-  return 0
+  // fallback 传 0：这里要区分「模型声明了上限」和「没声明」，没声明时不写入约束。
+  return readReferenceImageLimitFromModel(model, operationCode, 0)
 }
 
 /**
