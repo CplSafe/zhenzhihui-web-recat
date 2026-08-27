@@ -37,7 +37,10 @@ export default function StudioModelPicker({
   const { open, setOpen, toggle, wrapRef } = useDismissablePopover<HTMLDivElement>()
 
   const selected = models.find((model) => model.id === value)
-  const title = selected?.name || (loading ? '模型加载中…' : '暂无可用模型')
+  // 「有模型但还没选」和「确实没有模型可选」是两回事：
+  // 前者要引导用户去选，后者才是空状态。混成一句会让首次进入的用户
+  // 以为系统坏了——明明点开就有得选。
+  const title = selected?.name || (loading ? '模型加载中…' : models.length ? '请选择模型' : '暂无可用模型')
 
   return (
     <div className={`${styles.wrap}${compact ? ` ${styles.isCompact}` : ''}`} ref={wrapRef}>
