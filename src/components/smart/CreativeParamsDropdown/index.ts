@@ -1,2 +1,2 @@
 export { default as CreativeParamsDropdown } from './CreativeParamsDropdown'
-export type { CreativeParamField, CreativeParamsDropdownProps } from './CreativeParamsDropdown'
+export type { CreativeParamsDropdownProps, CreativeParamsOptions, CreativeParamsValue } from './CreativeParamsDropdown'

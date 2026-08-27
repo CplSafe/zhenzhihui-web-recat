@@ -7,10 +7,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
-import { CreativeParamsDropdown, type CreativeParamField } from '../CreativeParamsDropdown'
+import { CreativeModelSlots } from '../CreativeModelSlots'
+import { CreativeParamsDropdown, type CreativeParamsOptions, type CreativeParamsValue } from '../CreativeParamsDropdown'
 import {
   filterGenerationModelGroupsByOperations,
-  GenerationModelDropdown,
   getGenerationModelDurationOptions,
   getGenerationModelRatioOptions,
   getGenerationModelReferenceImageLimit,
@@ -138,9 +138,6 @@ interface SmartEntryProps {
  */
 const UNSET_DURATION = ''
 
-/** 未选择时长时下拉按钮上的占位文案。 */
-const DURATION_PLACEHOLDER = '选择时长'
-
 /** 可选的智能成片脚本。 */
 const SCRIPT_OPTIONS = [...SMART_SCRIPT_OPTIONS]
 
@@ -148,7 +145,6 @@ const SCRIPT_OPTIONS = [...SMART_SCRIPT_OPTIONS]
  * 图片模式单轮出图数量的上限（与参考图上限无关，后者跟随所选模型）。
  */
 const MAX_IMAGE_OUTPUT_COUNT = 9
-const IMAGE_OUTPUT_COUNT_OPTIONS = Array.from({ length: MAX_IMAGE_OUTPUT_COUNT }, (_, index) => `${index + 1}张`)
 const clampImageOutputCount = (value: unknown) =>
   Math.min(MAX_IMAGE_OUTPUT_COUNT, Math.max(1, Math.floor(Number(value) || 1)))
 
@@ -267,7 +263,6 @@ export default function SmartEntry({
   const [generationModels, setGenerationModels] = useState<GenerationModelSelectionMap>(
     () => initial?.generationModels ?? stored?.generationModels ?? {},
   )
-  const [modelAttentionRequest, setModelAttentionRequest] = useState(0)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const dragDepthRef = useRef(0)
@@ -442,9 +437,7 @@ export default function SmartEntry({
       getGenerationModelDurationOptions(visibleModelGroups, generationModels, 'video.generate', SMART_VIDEO_DURATIONS),
     [visibleModelGroups, generationModels],
   )
-  const durationChoices = useMemo(() => durationOptions.map((seconds) => `${seconds}s`), [durationOptions])
   const durationUnset = parseDurationSeconds(duration) === null
-  const selectedDurationSec = parseDurationSeconds(duration) ?? undefined
   //
   // 时长与模型是双向约束，不是单向顺序：秒数是用户的需求，模型是实现选择，谁先定都合理。
   // 这里既不锁时长（未选模型时 getGenerationModelDurationOptions 本来就返回默认档位），
@@ -527,63 +520,39 @@ export default function SmartEntry({
   }, [mode, ratio, ratioOptions])
 
   /**
-   * 弹窗里的创作参数行。档位在上面已按所选模型的 schema 算好，这里只做呈现：
-   * 视频是 比例 / 时长 / 分辨率，图片是 比例 / 出图数量。
+   * 弹层里的档位。都在上面按所选模型的 schema 算好了，这里只做形状转换：
+   * 视频是 比例 / 分辨率 / 时长，图片是 比例 / 出图数量。
    */
-  const creativeParamFields: CreativeParamField[] = useMemo(() => {
-    const ratioField: CreativeParamField = {
-      key: 'ratio',
-      label: '画面比例',
-      hint: '成片画幅',
-      value: ratio,
-      options: ratioOptions,
-      onChange: pickRatio,
-    }
-    if (mode !== 'video') {
-      return [
-        ratioField,
-        {
-          key: 'outputCount',
-          label: '生成数量',
-          hint: '单轮出图张数',
-          value: `${outputCount}张`,
-          options: IMAGE_OUTPUT_COUNT_OPTIONS,
-          onChange: (value) => setOutputCount(clampImageOutputCount(value.replace('张', ''))),
-        },
-      ]
-    }
-    return [
-      ratioField,
-      {
-        key: 'duration',
-        label: '视频时长',
-        hint: '成片总秒数',
-        value: duration,
-        options: durationChoices,
-        onChange: setDuration,
-        placeholder: DURATION_PLACEHOLDER,
-      },
-      {
-        key: 'resolution',
-        label: '分辨率',
-        hint: '出片清晰度',
-        value: resolution,
-        options: resolutionOptions,
-        onChange: pickResolution,
-      },
-    ]
-  }, [
-    mode,
-    ratio,
-    ratioOptions,
-    pickRatio,
-    duration,
-    durationChoices,
-    resolution,
-    resolutionOptions,
-    pickResolution,
-    outputCount,
-  ])
+  const creativeParamsOptions: CreativeParamsOptions = useMemo(
+    () => ({
+      ratios: ratioOptions,
+      durations: mode === 'video' ? durationOptions : [],
+      resolutions: mode === 'video' ? resolutionOptions : [],
+      counts: mode === 'video' ? [] : Array.from({ length: MAX_IMAGE_OUTPUT_COUNT }, (_, index) => index + 1),
+    }),
+    [mode, ratioOptions, durationOptions, resolutionOptions],
+  )
+
+  const creativeParamsValue: CreativeParamsValue = useMemo(
+    () => ({
+      ratio,
+      // 0 = 尚未选择；弹层据此显示占位而不是一个用户没选过的秒数。
+      durationSec: parseDurationSeconds(duration) ?? 0,
+      resolution,
+      count: outputCount,
+    }),
+    [ratio, duration, resolution, outputCount],
+  )
+
+  const applyCreativeParams = useCallback(
+    (next: CreativeParamsValue) => {
+      if (next.ratio !== ratio) pickRatio(next.ratio)
+      if (next.resolution !== resolution) pickResolution(next.resolution)
+      if (next.durationSec > 0 && `${next.durationSec}s` !== duration) setDuration(`${next.durationSec}s`)
+      if (next.count !== outputCount) setOutputCount(clampImageOutputCount(next.count))
+    },
+    [ratio, resolution, duration, outputCount, pickRatio, pickResolution],
+  )
 
   /**
    * 模型合计预估。放在「去制作」旁边而不是模型弹窗里：弹窗选完就关，
@@ -656,8 +625,67 @@ export default function SmartEntry({
     },
     [cleanText, duration, imageAssetIds, mode, outputCount, ratio, resolution, workspaceId],
   )
+  /**
+   * 合计预估：把每个已选模型各跑一次估价后求和，显示在「去制作」旁边。
+   *
+   * 原本这段在模型弹窗内部；换成创作台样式的胶囊后那里没有落脚点，
+   * 而预估本来就该跟着「花钱的那一下」走，所以搬到入口自己算。
+   */
+  useEffect(() => {
+    // 槽位键即 operation：无子分组时是分组自身的 key，有子分组时是每个子分组的 key。
+    const slotKeys = visibleModelGroups.flatMap((group) => [
+      ...(group.models?.length ? [group.key] : []),
+      ...(group.subgroups ?? []).filter((subgroup) => subgroup.models.length > 0).map((subgroup) => subgroup.key),
+    ])
+    const picked = slotKeys
+      .map((operationCode) => ({
+        operationCode,
+        modelVersionId: Number(generationModels[operationCode] || 0),
+      }))
+      .filter((item) => item.modelVersionId > 0)
+
+    if (!workspaceId || !modelSelectionComplete || !picked.length) {
+      setModelEstimate(null)
+      return
+    }
+
+    let alive = true
+    setModelEstimate({ total: 0, canAfford: true, loading: true, failed: false })
+    // 防抖：用户连着改比例/时长时不必每次都打一轮估价接口。
+    const timer = window.setTimeout(() => {
+      void Promise.all(
+        picked.map((item) =>
+          estimateSelectedModel(item)
+            .then((result) => ({ ok: true as const, result }))
+            .catch(() => ({ ok: false as const, result: null })),
+        ),
+      ).then((results) => {
+        if (!alive) return
+        const succeeded = results.filter((item) => item.ok).map((item) => item.result!)
+        const total = succeeded.reduce((sum, item) => sum + (Number(item.estimatedCost) || 0), 0)
+        const balance = succeeded.find((item) => Number.isFinite(Number(item.balance)))?.balance
+        setModelEstimate({
+          total,
+          balance,
+          canAfford: !succeeded.some((item) => item.canAfford === false) && (balance == null || total <= balance),
+          loading: false,
+          failed: results.some((item) => !item.ok),
+        })
+      })
+    }, 400)
+
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+  }, [estimateSelectedModel, generationModels, modelSelectionComplete, visibleModelGroups, workspaceId])
+
+  /**
+   * 提交时未选够模型：提示原因。
+   * 旧实现还会展开模型面板并高亮，换成创作台样式的胶囊后没有受控展开入口，
+   * 改为只给提示——胶囊本身就在工具条最左，不需要再被指出来。
+   */
   const requestModelSelectionAttention = () => {
-    setModelAttentionRequest((request) => request + 1)
     showToast(modelGateMessage || '请先完成本次创作的模型选择', 'info')
   }
   const submit = async () => {
@@ -955,45 +983,52 @@ export default function SmartEntry({
             </div>
           </div>
 
+          {/*
+            模型不可用与参数不兼容的提示。原本长在模型弹窗内部，换成创作台样式的胶囊后
+            那里没有落脚点；放在工具条上方常驻，比藏进一个要点开才看得见的面板更早被看到。
+          */}
+          {(modelError || modelSelectionConflicts.length > 0) && (
+            <div className={styles.capabilityNotice} role="status">
+              {modelError ? (
+                <>
+                  {modelError}
+                  {onReloadModels && (
+                    <button type="button" className={styles.noticeAction} onClick={() => onReloadModels()}>
+                      重新加载
+                    </button>
+                  )}
+                </>
+              ) : (
+                modelSelectionConflicts[0]
+              )}
+            </div>
+          )}
+
           <div className={styles.toolbar}>
             <div className={styles.tools}>
               {/*
-                模型排在工具条第一位：时长与分辨率的档位由所选模型的 schema 决定，
-                多数人也确实会先定模型，把它放在最左符合主路径的阅读顺序。
-                但这只是默认顺序、不是强制：时长可以先选，模型列表会反过来标出做不到的那些。
+                模型排在工具条最前：参数档位由所选模型的 schema 决定，先定模型才有档位可选。
+                每个槽位一枚胶囊，与 AI 创作台同一套 UI。
+                游客态也保留入口（置灰 + 点击引导登录），否则未登录时这一格直接消失，
+                用户根本不知道创作前可以选模型。
               */}
-              {/* 游客态也要保留入口（置灰 + 点击引导登录），否则未登录时这一格直接消失，
-                  用户根本不知道创作前可以选模型 */}
-              {(authRequired || visibleModelGroups.length > 0 || Boolean(modelLoading) || Boolean(modelError)) && (
-                <GenerationModelDropdown
-                  groups={visibleModelGroups}
-                  authRequired={authRequired}
-                  onAuthRequired={onAuthRequired}
-                  selected={generationModels}
-                  // 触发器已是工具条最左端，面板改为左对齐；默认的 end 会让它向左展开再被视口夹回来
-                  placement="start"
-                  // 已选时长回喂给列表：做不到这个秒数的模型会被标出来，用户不必逐个试
-                  durationSec={mode === 'video' ? selectedDurationSec : undefined}
-                  durationOperationCode="video.generate"
-                  loading={modelLoading}
-                  error={modelError}
-                  onRetry={onReloadModels ? () => onReloadModels() : undefined}
-                  onChange={updateGenerationModel}
-                  estimateModelCost={workspaceId > 0 ? estimateSelectedModel : undefined}
-                  onEstimateChange={setModelEstimate}
-                  conflicts={modelSelectionConflicts}
-                  attentionRequest={modelAttentionRequest}
-                  attentionMessage={modelGateMessage}
-                />
-              )}
+              <CreativeModelSlots
+                groups={visibleModelGroups}
+                selected={generationModels}
+                onChange={updateGenerationModel}
+                loading={Boolean(modelLoading)}
+                authRequired={authRequired}
+                onAuthRequired={onAuthRequired}
+              />
               {/*
                 创作参数（比例 / 时长 / 分辨率 / 出图数量）收进一个弹窗，形式与「本次创作使用的模型」一致。
                 此前它们在底栏各占一个 chip，与模型 chip 等距排开——「用什么生成」和「生成成什么样」
                 是两层决策，平铺在一行读不出层次，chip 一多底栏也开始换行。
               */}
               <CreativeParamsDropdown
-                fields={creativeParamFields}
-                conflicts={modelSelectionConflicts}
+                value={creativeParamsValue}
+                options={creativeParamsOptions}
+                onChange={applyCreativeParams}
                 /*
                   先选模型再选参数：比例/时长/分辨率的可选档位都由所选模型的 schema 决定，
                   没选模型时给出的只是兜底档位——用户可能选中一个该模型根本做不到的秒数，

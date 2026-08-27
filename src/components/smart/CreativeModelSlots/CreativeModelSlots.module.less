@@ -1,0 +1,17 @@
+/**
+ * 入口模型胶囊的局部微调。
+ * 形态与「创作参数」胶囊一致（复用 StudioParamsBar 样式），这里只收窄摘要文本、放宽弹层。
+ */
+
+/* 两个模型名连起来会很长，收窄并省略，避免胶囊把底栏撑开 */
+.summaryText {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 弹层里要放两个创作台选择器，比参数弹层宽一些 */
+.popover {
+  width: 400px;
+}

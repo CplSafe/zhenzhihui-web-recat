@@ -1,4 +1,4 @@
-﻿import { act, render, screen, waitFor, within } from '@testing-library/react'
+﻿import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -29,6 +29,27 @@ function file(name = 'reference.png', type = 'image/png') {
   return new File(['image'], name, { type })
 }
 
+/**
+ * 模型改成每槽一枚胶囊（与 AI 创作台同一套 UI）：点开胶囊，在卡片列表里按名称点选。
+ * 选完列表自动收起，不需要再点「关闭」。
+ */
+async function pickModel(user: ReturnType<typeof userEvent.setup>, modelName: string) {
+  // 外层是一枚收窄的摘要胶囊，展开后每个槽位一个创作台选择器。
+  await user.click(screen.getByRole('button', { name: /生成模型/ }))
+  const triggers = screen.getAllByRole('button', { name: '选择生成模型' })
+  for (const trigger of triggers) {
+    await user.click(trigger)
+    const option = screen.queryByRole('option', { name: new RegExp(modelName) })
+    if (option) {
+      await user.click(option)
+      await user.keyboard('{Escape}')
+      return
+    }
+    await user.click(trigger)
+  }
+  throw new Error(`未找到模型选项：${modelName}`)
+}
+
 /** 统一挂载入口组件，便于各用例按需覆盖回调与初始值。 */
 function TestSmartEntry(props: ComponentProps<typeof SmartEntry>) {
   return <SmartEntry {...props} />
@@ -42,19 +63,40 @@ function openCreativeParams() {
   return screen.getByRole('button', { name: /创作参数/ })
 }
 
-async function pickCreativeParam(user: ReturnType<typeof userEvent.setup>, label: string, value: string) {
+/**
+ * 弹层里每个参数是一排分段控件（与 AI 创作台同一套 UI）：
+ * 比例/分辨率/数量是 button，时长档位是 radiogroup 里的 radio。
+ */
+async function pickCreativeParam(user: ReturnType<typeof userEvent.setup>, value: string) {
   await user.click(openCreativeParams())
-  await user.selectOptions(screen.getByRole('combobox', { name: label }), value)
-  await user.click(screen.getByRole('button', { name: '关闭参数选择' }))
+  const panel = within(screen.getByRole('dialog', { name: '创作参数' }))
+  const target = panel.queryByRole('button', { name: value }) || panel.getByRole('radio', { name: value })
+  await user.click(target)
+  await user.keyboard('{Escape}')
 }
 
-/** 读取弹窗内某个参数当前可选项（含占位项）。 */
-async function readCreativeParamOptions(user: ReturnType<typeof userEvent.setup>, label: string) {
+/** 读取时长档位条当前列出的秒数。 */
+async function readDurationOptions(user: ReturnType<typeof userEvent.setup>) {
   await user.click(openCreativeParams())
-  const options = within(screen.getByRole('combobox', { name: label }))
-    .getAllByRole('option')
-    .map((option) => option.textContent)
-  await user.click(screen.getByRole('button', { name: '关闭参数选择' }))
+  const group = screen.getByRole('radiogroup', { name: '视频时长' })
+  const options = within(group)
+    .getAllByRole('radio')
+    .map((radio) => radio.textContent?.trim())
+  await user.keyboard('{Escape}')
+  return options
+}
+
+/** 读取某一行分段按钮（比例 / 分辨率 / 数量）当前列出的档位。 */
+async function readSegmentOptions(user: ReturnType<typeof userEvent.setup>, rowLabel: string) {
+  await user.click(openCreativeParams())
+  const dialog = screen.getByRole('dialog', { name: '创作参数' })
+  const row = within(dialog)
+    .getByText(new RegExp(`^${rowLabel}$`))
+    .closest('div') as HTMLElement
+  const options = within(row)
+    .getAllByRole('button')
+    .map((button) => button.textContent?.trim())
+  await user.keyboard('{Escape}')
   return options
 }
 
@@ -223,13 +265,10 @@ describe('SmartEntry mode, options, validation, and submission', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
-    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '701')
-    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
+    await pickModel(user, '不限时长的视频模型')
 
-    // 弹窗里的下拉带一个占位项，其后才是模型支持的档位
-    expect(await readCreativeParamOptions(user, '视频时长')).toEqual([
-      '选择时长',
+    // 时长档位条只列模型枚举出的秒数
+    expect(await readDurationOptions(user)).toEqual([
       '1s',
       '2s',
       '3s',
@@ -282,10 +321,8 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.queryByRole('button', { name: '爆款脚本自动生成' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '视频生成模型' })).not.toBeInTheDocument()
     // 参数在选定模型后才解锁（档位由模型 schema 决定）
-    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
-    await user.selectOptions(screen.getByRole('combobox', { name: '文生图模型' }), '601')
-    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
-    await pickCreativeParam(user, '生成数量', '9张')
+    await pickModel(user, '文生图模型 A')
+    await pickCreativeParam(user, '9')
     await user.click(screen.getByRole('button', { name: '去制作' }))
     expect(onSubmit).toHaveBeenLastCalledWith(
       '生成商品主图',
@@ -378,16 +415,13 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(submit).toBeEnabled()
     await user.click(submit)
     expect(onSubmit).not.toHaveBeenCalled()
+    // 模型胶囊就在工具条最左，不再自动展开面板，只说明原因
     expect(mocks.showToast).toHaveBeenCalledWith('请先选择本次创作使用的全部模型', 'info')
-    expect(screen.getByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
-    const attentionTrigger = screen.getByRole('button', { name: '生成模型，0/2 已选择' })
-    await waitFor(() => expect(attentionTrigger).toHaveFocus())
-    expect(attentionTrigger.closest('[data-attention]')).toHaveAttribute('data-attention', 'true')
 
-    await user.selectOptions(screen.getByRole('combobox', { name: '脚本生成模型' }), '731')
+    await pickModel(user, '后端返回的脚本模型')
     await user.click(submit)
     expect(onSubmit).not.toHaveBeenCalled()
-    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '732')
+    await pickModel(user, '后端返回的视频模型')
 
     await user.click(submit)
     expect(onSubmit).toHaveBeenCalledWith(
@@ -442,7 +476,6 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     await user.click(submit)
     expect(onSubmit).not.toHaveBeenCalled()
     expect(mocks.showToast).toHaveBeenCalledWith('当前有必需模型不可用，请在模型选择中检查后重试', 'info')
-    expect(screen.getByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
   })
 
   it('keeps backend restrictions hidden while still blocking incompatible entry duration or ratio', async () => {
@@ -475,29 +508,29 @@ describe('SmartEntry mode, options, validation, and submission', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
-    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '901')
-    // 选中模型的当下就说明它做不了什么，不必等下拉档位变少或提交被拒才发现
-    expect(screen.getByText('时长仅支持：5 秒、10 秒')).toBeInTheDocument()
-    expect(screen.getByText('画面比例支持：16:9')).toBeInTheDocument()
-    expect(screen.getByText('当前创作参数与所选模型不兼容')).toBeInTheDocument()
+    // 模型卡片上就标出它做不了什么，不必等档位变少或提交被拒才发现（创作台同款标签）
+    await user.click(screen.getByRole('button', { name: /生成模型/ }))
+    await user.click(screen.getByRole('button', { name: '选择生成模型' }))
+    const restrictedOption = screen.getByRole('option', { name: /后端受限视频模型/ })
+    expect(within(restrictedOption).getByText('时长仅支持：5 秒、10 秒')).toBeInTheDocument()
+    expect(within(restrictedOption).getByText('画面比例支持：16:9')).toBeInTheDocument()
+    await user.click(restrictedOption)
+
+    // 不兼容提示常驻在工具条上方
+    expect(screen.getByText(/当前 6 秒不在可选时长/)).toBeInTheDocument()
     const submit = screen.getByRole('button', { name: '去制作' })
     expect(submit).toBeEnabled()
     await user.click(submit)
     expect(mocks.showToast).toHaveBeenCalledWith('当前创作参数与所选模型不兼容，请调整模型或创作参数', 'info')
 
-    // 列表反过来标出做不到本次秒数的模型，用户不必逐个试
-    expect(screen.getByRole('option', { name: /本次 6 秒不支持/ })).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
     // 用户选的 6s 原样保留：模型不支持不等于可以替他改成 5s，静默吸附就是在丢掉用户的输入。
     // 档位本身仍跟随模型，只剩它声明的秒数
-    const durationOptions = await readCreativeParamOptions(user, '视频时长')
+    const durationOptions = await readDurationOptions(user)
     expect(durationOptions).toContain('10s')
     expect(durationOptions).not.toContain('15s')
-    await pickCreativeParam(user, '视频时长', '5s')
+    await pickCreativeParam(user, '5s')
     // 比例同样只剩模型支持的那一项；它没被用户显式选过，所以跟着模型收敛到 16:9
-    expect(await readCreativeParamOptions(user, '画面比例')).not.toContain('9:16')
+    expect(await readSegmentOptions(user, '画面比例')).not.toContain('9:16')
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
   })
 
@@ -533,10 +566,13 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     const submit = screen.getByRole('button', { name: '去制作' })
     expect(submit).toBeEnabled()
 
-    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
-    expect(screen.getByRole('combobox', { name: '文生图模型' })).toBeInTheDocument()
-    expect(screen.queryByRole('combobox', { name: '图生图模型' })).not.toBeInTheDocument()
-    await user.selectOptions(screen.getByRole('combobox', { name: '文生图模型' }), '811')
+    // 只出现当前参考图模式对应的那一个槽位
+    await user.click(screen.getByRole('button', { name: /生成模型/ }))
+    expect(screen.getAllByRole('button', { name: '选择生成模型' })).toHaveLength(1)
+    expect(screen.getByText('文生图模型')).toBeInTheDocument()
+    expect(screen.queryByText('图生图模型')).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await pickModel(user, '后端文生图模型')
     await user.click(submit)
 
     expect(onSubmit).toHaveBeenCalledWith(
@@ -588,11 +624,10 @@ describe('SmartEntry mode, options, validation, and submission', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
-    expect(screen.queryByRole('combobox', { name: '文生图模型' })).not.toBeInTheDocument()
-    await user.selectOptions(screen.getByRole('combobox', { name: '图生图模型' }), '822')
+    expect(screen.queryByText('文生图模型')).not.toBeInTheDocument()
+    await pickModel(user, '最多双参考图模型')
 
-    expect(screen.getByText('当前创作参数与所选模型不兼容')).toBeInTheDocument()
+    expect(screen.getByText(/参考图数量|不在支持范围/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '去制作' }))
     expect(onSubmit).not.toHaveBeenCalled()
     expect(mocks.showToast).toHaveBeenCalledWith('当前创作参数与所选模型不兼容，请调整模型或创作参数', 'info')
@@ -618,11 +653,9 @@ describe('SmartEntry mode, options, validation, and submission', () => {
 
     await user.type(screen.getByRole('textbox', { name: '创作需求' }), '推广新品咖啡')
     // 参数必须先选模型才能选：模型决定可用档位。
-    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
-    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '741')
-    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
-    await pickCreativeParam(user, '画面比例', '9:16')
-    await pickCreativeParam(user, '视频时长', '7s')
+    await pickModel(user, '不限时长的视频模型')
+    await pickCreativeParam(user, '9:16')
+    await pickCreativeParam(user, '7s')
     await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
     expect(screen.getByRole('option', { name: '本地生活广告' })).toBeInTheDocument()
     await user.click(screen.getByRole('option', { name: '电商广告' }))
@@ -671,14 +704,12 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     )
 
     await user.type(screen.getByRole('textbox', { name: '创作需求' }), '推广新品咖啡')
-    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
-    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '751')
-    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
-    await pickCreativeParam(user, '视频时长', '7s')
+    await pickModel(user, '高清视频模型')
+    await pickCreativeParam(user, '7s')
 
     // 档位只来自模型 schema：480p 不在其中，不应出现在下拉里。
-    expect(await readCreativeParamOptions(user, '分辨率')).toEqual(['720p', '1080p'])
-    await pickCreativeParam(user, '分辨率', '1080p')
+    expect(await readSegmentOptions(user, '分辨率')).toEqual(['720p', '1080p'])
+    await pickCreativeParam(user, '1080p')
 
     await user.click(screen.getByRole('button', { name: '去制作' }))
     expect(onSubmit).toHaveBeenCalledWith('推广新品咖啡', expect.objectContaining({ resolution: '1080p' }))
@@ -777,9 +808,7 @@ describe('SmartEntry uploads and recovery actions', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: '生成模型，0/1 已选择' }))
-    await user.selectOptions(screen.getByRole('combobox', { name: '视频生成模型' }), '811')
-    await user.click(screen.getByRole('button', { name: '关闭模型选择' }))
+    await pickModel(user, '只收一张参考图的模型')
 
     // 已达该模型上限：继续上传的入口消失，用量提示显示模型真实上限而不是 9。
     expect(screen.queryByRole('button', { name: '继续上传' })).not.toBeInTheDocument()
@@ -847,8 +876,7 @@ describe('SmartEntry uploads and recovery actions', () => {
     await user.click(resumeButton)
     expect(onResume).not.toHaveBeenCalled()
     expect(mocks.showToast).toHaveBeenLastCalledWith('请先选择本次创作使用的全部模型', 'info')
-    expect(await screen.findByRole('dialog', { name: '本次创作使用的模型' })).toBeInTheDocument()
-    await user.selectOptions(screen.getByRole('combobox', { name: '脚本生成模型' }), '951')
+    await pickModel(user, '后端脚本模型')
 
     await user.click(resumeButton)
     expect(onResume).toHaveBeenCalledWith({ 'responses.multimodal': 951 })
