@@ -193,7 +193,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
 
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
     // 真人变体不走本地上传,但可以从素材库继续加人(多人同框)。
-    expect(screen.queryByRole('button', { name: '继续上传' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '继续添加素材' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '继续添加真人素材' })).toBeInTheDocument()
   })
 
@@ -225,6 +225,35 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.getAllByRole('button', { name: '移除' })).toHaveLength(3)
     expect(screen.getByText('3/9 张参考图')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
+  })
+
+  /**
+   * 素材可能来自本地、素材库或真人库。原来「选择真人素材」是底栏一枚独立按钮，
+   * 与加号并列——两者都是「添加素材」，拆成两个入口反而要用户先想清楚素材从哪来。
+   */
+  it('offers local, library and real-person sources from the plus tile', async () => {
+    const user = userEvent.setup()
+    render(<TestSmartEntry onSubmit={vi.fn()} />)
+
+    // 独立的真人按钮已并入加号菜单
+    expect(screen.queryByRole('button', { name: '选择真人素材' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '添加素材' }))
+    const menu = within(screen.getByRole('menu', { name: '添加素材' }))
+    expect(menu.getByRole('menuitem', { name: '本地上传' })).toBeInTheDocument()
+    expect(menu.getByRole('menuitem', { name: '素材库' })).toBeInTheDocument()
+    expect(menu.getByRole('menuitem', { name: '真人素材' })).toBeInTheDocument()
+  })
+
+  it('hides the real-person source in image mode', async () => {
+    const user = userEvent.setup()
+    render(<TestSmartEntry onSubmit={vi.fn()} initial={{ mode: 'image' }} />)
+
+    await user.click(screen.getByRole('button', { name: '添加素材' }))
+    const menu = within(screen.getByRole('menu', { name: '添加素材' }))
+    expect(menu.getByRole('menuitem', { name: '本地上传' })).toBeInTheDocument()
+    // 真人素材只用于视频出镜，图片模式不该出现
+    expect(menu.queryByRole('menuitem', { name: '真人素材' })).not.toBeInTheDocument()
   })
 
   it('does not expose the removed AI guide controls', () => {
@@ -372,7 +401,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
 
     expect(screen.getByRole('button', { name: '去制作' })).toBeDisabled()
     await user.upload(screen.getByLabelText('选择上传图片'), file())
-    expect(await screen.findByRole('button', { name: '继续上传' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '继续添加素材' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '去制作' })).toBeEnabled()
   })
 
@@ -767,7 +796,7 @@ describe('SmartEntry uploads and recovery actions', () => {
 
     await user.upload(input, [file('nine.png'), file('ignored.png')])
     expect(screen.getAllByRole('button', { name: '移除' })).toHaveLength(9)
-    expect(screen.queryByRole('button', { name: '继续上传' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '继续添加素材' })).not.toBeInTheDocument()
 
     await user.upload(input, file('overflow.png'))
     // 上限跟着所选模型走；没选模型时回退到 9 张，提示文案也据此说明来源。
@@ -811,7 +840,7 @@ describe('SmartEntry uploads and recovery actions', () => {
     await pickModel(user, '只收一张参考图的模型')
 
     // 已达该模型上限：继续上传的入口消失，用量提示显示模型真实上限而不是 9。
-    expect(screen.queryByRole('button', { name: '继续上传' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '继续添加素材' })).not.toBeInTheDocument()
     expect(screen.getByText('1/1 张参考图')).toBeInTheDocument()
 
     await user.upload(screen.getByLabelText('选择上传图片'), file('second.png'))
