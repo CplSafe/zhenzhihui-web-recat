@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
+import {
+  clampStep,
+  REAL_PERSON_STEPS,
+  STEP_SCRIPT,
+  STEP_VIDEO,
+  STEPS,
+  VISIBLE_STEP_INDICES,
+} from '@/utils/smartFlowSteps'
+
 /**
  * 智能成片流程步的形状约束。
  *
@@ -7,23 +16,9 @@ import { describe, expect, it } from 'vitest'
  * 进度条仍按 `[0, 2, 3]` 取步骤，索引 2/3 落到 undefined，渲染时读 `.label`
  * 直接抛 `Cannot read properties of undefined (reading 'label')`，整个流程页白屏。
  *
- * 这里不测 UI，只钉住两条不变式：可见索引必须都落在步骤数组内、且两套流程
- * （普通 / 真人）步数一致——后者一旦不同，共用的 step 判断就会开始错位。
+ * 这些断言必须跑在**真实常量**上。此前它们跑在文件内的一份副本上，
+ * 只能证明副本自洽——真正越界时照样全绿，白屏还是会上线。
  */
-
-/** 与 SmartCreateView 保持同一份定义；改那边必须同步改这里，测试会红。 */
-const STEP_SCRIPT = 0
-const STEP_VIDEO = 1
-const STEPS = [
-  { key: 'script', label: '分镜脚本' },
-  { key: 'video', label: '生成视频' },
-]
-const REAL_PERSON_STEPS = [
-  { key: 'script', label: '真人策划' },
-  { key: 'video', label: '真人成片' },
-]
-const VISIBLE_STEP_INDICES = [STEP_SCRIPT, STEP_VIDEO]
-
 describe('smart flow steps', () => {
   it('resolves every visible index to a real step in both flows', () => {
     for (const steps of [STEPS, REAL_PERSON_STEPS]) {
@@ -47,11 +42,13 @@ describe('smart flow steps', () => {
    * 恢复时必须夹到当前步数上限，否则进度条会把不存在的步骤算成"已到达"。
    */
   it('clamps restored step and maxReached from pre-2-step drafts', () => {
-    const clamp = (value: number) => Math.min(STEPS.length - 1, Math.max(0, value))
-    expect(clamp(3)).toBe(STEP_VIDEO)
-    expect(clamp(2)).toBe(STEP_VIDEO)
-    expect(clamp(1)).toBe(STEP_VIDEO)
-    expect(clamp(0)).toBe(STEP_SCRIPT)
-    expect(clamp(-1)).toBe(STEP_SCRIPT)
+    expect(clampStep(3)).toBe(STEP_VIDEO)
+    expect(clampStep(2)).toBe(STEP_VIDEO)
+    expect(clampStep(1)).toBe(STEP_VIDEO)
+    expect(clampStep(0)).toBe(STEP_SCRIPT)
+    expect(clampStep(-1)).toBe(STEP_SCRIPT)
+    // 非数字（草稿字段缺失/损坏）按第一步处理，不能变成 NaN 传下去
+    expect(clampStep(undefined)).toBe(STEP_SCRIPT)
+    expect(clampStep('abc')).toBe(STEP_SCRIPT)
   })
 })

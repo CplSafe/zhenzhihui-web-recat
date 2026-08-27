@@ -26,6 +26,14 @@ import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
+import {
+  clampStep,
+  REAL_PERSON_STEPS,
+  STEP_SCRIPT,
+  STEP_VIDEO,
+  STEPS,
+  VISIBLE_STEP_INDICES,
+} from '@/utils/smartFlowSteps'
 import SmartEntry, { clearSmartEntryDraft, type EntryMeta } from '@/components/smart/SmartEntry'
 import {
   GenerationModelDropdown,
@@ -267,23 +275,6 @@ function LazyEditorFallback({ label = '正在加载编辑器…' }: { label?: st
   )
 }
 
-/**
- * 流程只有两步:分镜脚本 → 生成视频。
- *
- * 「准备素材」和「镜头编排」已移除:这两步会先用 AI 重画一遍用户上传的素材
- * (主体素材图 → 分镜图),再拿重画后的结果去出片,用户的产品因此在成片里走样。
- * 现在用户上传的素材直接作为参考图提交给视频模型,中间没有任何重画环节。
- */
-const STEP_SCRIPT = 0
-const STEP_VIDEO = 1
-const STEPS: StepItem[] = [
-  { key: 'script', label: '分镜脚本' },
-  { key: 'video', label: '生成视频' },
-]
-const REAL_PERSON_STEPS: StepItem[] = [
-  { key: 'script', label: '真人策划' },
-  { key: 'video', label: '真人成片' },
-]
 /** 流式脚本增量合并到界面的最小间隔。 */
 const SCRIPT_STREAM_RENDER_INTERVAL_MS = 120
 // 选中 SKILL 时,在最前面多出的「营销思路拆解」步
@@ -1651,8 +1642,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   const subjectAssetsRef = useRef<Record<string, SmartSubjectAssetVersionRegistry>>({})
   subjectAssetsRef.current = subjectAssets
   // 准备素材「一键生成」:逐个主体生成时的 loading(键=主体名),以及整体批量进行中标记
-  const [subjectGenerating, setSubjectGenerating] = useState<Record<string, boolean>>({})
-  const [batchGenning, setBatchGenning] = useState(false)
   // 「一键生成」是否在进行中(持久化进草稿):切到别的页面再回来,据此【自动续作】还没出图的素材,不被截断
   const [materialBatchPending, setMaterialBatchPending] = useState(false)
   const batchRunningRef = useRef(false)
@@ -1798,8 +1787,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   ])
 
   // ── 镜头编排:按 画面描述 + 该镜头素材 + 上一张分镜图(连贯)+ 项目摘要 生成分镜图(后端文/图生图) ──
-  const [shotGen, setShotGen] = useState<Record<string, boolean>>({})
-  const [shotGenRunning, setShotGenRunning] = useState(false)
   const shotGenAbortRef = useRef<AbortController | null>(null)
   const shotGenRunSeqRef = useRef(0)
   const shotGenTaskIdsRef = useRef<Set<number>>(new Set())
@@ -1813,8 +1800,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     shotGenWorkspaceIdRef.current = 0
     const taskIds = [...shotGenTaskIdsRef.current]
     shotGenTaskIdsRef.current.clear()
-    setShotGen({})
-    setShotGenRunning(false)
     if (!ws || !taskIds.length) return
     await Promise.allSettled(taskIds.map((taskId) => cancelAiTask({ workspaceId: ws, taskId })))
   }, [])
@@ -1828,7 +1813,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       void cancelAiTask({ workspaceId: request.workspaceId, taskId }).catch(() => undefined)
     }
     request.taskIds.clear()
-    setShotGen((current) => ({ ...current, [shotId]: false }))
   }
 
   useEffect(() => {
@@ -1846,10 +1830,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     if (hasStaleEphemeralRequest) {
       abortEphemeralImageRequests()
       batchRunningRef.current = false
-      setBatchGenning(false)
       setMaterialBatchPending(false)
-      setSubjectGenerating({})
-      setShotGen({})
     }
     if (shotGenAbortRef.current && shotGenWorkspaceIdRef.current !== activeWorkspaceId) {
       void cancelShotGeneration()
@@ -1898,6 +1879,15 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
 
   // 整片视频的生成输入:参与视频的分镜(分镜图 + 时长 + 台词 + 字幕 + 音效 + 顺序)+ 风格/比例/大纲。
   // 镜头编排里改了任意分镜(图/时长/文案/顺序/勾选)后再进生成视频,签名变化 → 重新出片。
+  /**
+   * 本次会作为参考图提交的素材张数。
+   *
+   * 估价与提交必须用同一个数：compileFullVideoModelRequest 会拿它做模型兼容性判定，
+   * 两端不一致就会出现「估价说不支持、实际能提交」或反之。
+   */
+  const countReferenceImages = (meta: EntryMeta | null): number =>
+    (meta?.imageAssetIds || []).map((id) => Number(id) || 0).filter((id) => id > 0).length
+
   const videoInputSig = (list: Shot[], meta: EntryMeta | null, base: string) =>
     JSON.stringify({
       ratio: meta?.ratio || '',
@@ -1930,12 +1920,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       const next = renumberShots(prev.filter((s) => s.id !== shotId))
       if (prev.length > 0 && next.length === 0) shotsExplicitlyClearedRef.current = true
       shotsRef.current = next
-      return next
-    })
-    setShotGen((m) => {
-      if (!m || !m[shotId]) return m
-      const next = { ...m }
-      delete next[shotId]
       return next
     })
   }
@@ -2918,6 +2902,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         shots: currentShots,
         ratio: currentRatio,
         resolution: currentResolution,
+        referenceImageCount: countReferenceImages(entryMetaRef.current),
         modelVersionId: context.modelVersionId,
         modelVersion: context.modelVersion,
         modelPlanCandidates: lockedPlans,
@@ -3004,6 +2989,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             shots: currentShots,
             ratio: currentRatio,
             resolution: currentResolution,
+            referenceImageCount: completeImageAssetIds.length,
             modelVersionId: context.modelVersionId,
             modelVersion: context.modelVersion,
             modelPlanCandidates: lockedPlans,
@@ -3318,6 +3304,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           shots: currentShots,
           ratio,
           resolution,
+          referenceImageCount: countReferenceImages(entryMetaRef.current),
           modelVersionId: modelSelection.modelVersionId,
           modelVersion,
           modelPlanCandidates: plans,
@@ -3537,12 +3524,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   }
   const setWorkspaceSwitchLockSource = useUiStore((s) => s.setWorkspaceSwitchLockSource)
   const workspaceSwitchLockSourceRef = useRef(Symbol('smart-create-workspace-switch-lock'))
-  const ephemeralImageBusy =
-    batchGenning ||
-    materialBatchPending ||
-    shotGenRunning ||
-    Object.values(subjectGenerating).some(Boolean) ||
-    Object.values(shotGen).some(Boolean)
+  // 主体素材与分镜图生成都已随「准备素材」「镜头编排」移除，
+  // 原先这里的五个标志（batchGenning / materialBatchPending / shotGenRunning /
+  // subjectGenerating / shotGen）再没有任何代码把它们置为 true，恒为 false。
+  const ephemeralImageBusy = false
   const shouldLockWorkspaceSwitch =
     modelSwitching ||
     scriptLoading ||
@@ -3583,14 +3568,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       imageQueueCheckpointBlockedRef.current ||
       imagePreparing ||
       imageMessagesRef.current.some((message) => message.role === 'assistant' && message.status === 'pending') ||
-      batchRunningRef.current ||
-      materialBatchPending ||
-      subjectGenerationRequestsRef.current.size > 0 ||
-      shotDialogGenerationRequestsRef.current.size > 0 ||
-      shotGenAbortRef.current ||
-      shotGenRunning ||
-      Object.values(subjectGenerating).some(Boolean) ||
-      Object.values(shotGen).some(Boolean)
+      shotDialogGenerationRequestsRef.current.size > 0
     ) {
       return '图片正在核价、生成或恢复，完成后才能切换模型'
     }
@@ -4577,11 +4555,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     )
     const restoredStep =
       hasRestoredVideoInProgress(d, restoredGenerations, restoredVideoQueue) || hasRestoredVideo
-        ? STEPS.length - 1
-        : Math.min(STEPS.length - 1, Math.max(0, d.step || 0))
+        ? STEP_VIDEO
+        : clampStep(d.step)
     // 旧草稿的 maxReached 可能是 2/3（当时有「准备素材」「镜头编排」两步）。
     // 不夹住会让进度条把不存在的步骤算成"已到达"，点上去拿到 undefined。
-    const restoredMaxReached = Math.min(STEPS.length - 1, Math.max(d.maxReached || 0, restoredStep))
+    const restoredMaxReached = clampStep(Math.max(Number(d.maxReached) || 0, restoredStep))
     const restoredShots = Array.isArray(d.shots) ? d.shots : []
     latestDraftStateRef.current = {
       ...d,
@@ -5171,11 +5149,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       latestDraftStateRef.current = {
         ...latestDraftStateRef.current,
         started: true,
-        step: STEPS.length - 1,
-        maxReached: Math.max(Number(latestDraftStateRef.current.maxReached || 0), STEPS.length - 1),
+        step: STEP_VIDEO,
+        maxReached: clampStep(Math.max(Number(latestDraftStateRef.current.maxReached || 0), STEP_VIDEO)),
       }
-      setStep(STEPS.length - 1)
-      setMaxReached((value) => Math.max(value, STEPS.length - 1))
+      setStep(STEP_VIDEO)
+      setMaxReached((value) => clampStep(Math.max(value, STEP_VIDEO)))
     }
     const t = String(proj?.title || proj?.name || '').trim()
     const candidateTitle = t || projectNameRef.current.trim()
@@ -5774,7 +5752,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   }, [projectId, started, entryMeta, requirement, shots])
 
   const goStep = (i: number) => {
-    const next = Math.max(0, Math.min(STEPS.length - 1, i))
+    const next = clampStep(i)
     setStep(next)
     setMaxReached((m) => Math.max(m, next))
   }
@@ -5913,15 +5891,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     setMaxReached(0)
     subjectAssetsRef.current = {}
     setSubjectAssets({})
-    setSubjectGenerating({})
     batchRunningRef.current = false
-    setBatchGenning(false)
     setMaterialBatchPending(false)
     setScriptPending(false)
     setScriptError('')
     modelSwitchRecoveryRef.current = null
-    setShotGen({})
-    setShotGenRunning(false)
     setFields({})
     fullVideoRef.current = { url: '', assetId: 0 }
     setFullVideo(fullVideoRef.current)
@@ -6999,22 +6973,30 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       }
     }
     if (!(await requireAuth())) return false
-    const reference = meta.realPersonReferences?.[0]
-    const usesRealPersonMaterial = Boolean(reference?.realPersonId)
-    if (isRealPersonMode || usesRealPersonMaterial) {
-      if (
-        meta.images?.length !== 1 ||
-        Number(meta.imageAssetIds?.[0] || 0) <= 0 ||
-        !reference ||
-        Number(reference.localAssetId) !== Number(meta.imageAssetIds?.[0] || 0)
-      ) {
-        showToast('请先从真人素材库选择一张已认证真人图片', 'error')
+    // 真人素材与普通素材平权、可多选，所以这里不再要求「恰好 1 张图」，
+    // 而是逐个校验：每个真人引用都要仍然指向本次素材列表里的一张图，且授权仍然有效。
+    // 只查 [0] 会让第二个真人的授权状态从未被检查。
+    const realPersonReferences = (meta.realPersonReferences || []).filter((item) => Number(item?.realPersonId) > 0)
+    const submittedAssetIds = new Set((meta.imageAssetIds || []).map((id) => Number(id) || 0).filter((id) => id > 0))
+    if (isRealPersonMode && !realPersonReferences.length) {
+      showToast('请先从真人素材库选择已认证真人图片', 'error')
+      return false
+    }
+    if (realPersonReferences.length) {
+      const orphaned = realPersonReferences.filter((item) => !submittedAssetIds.has(Number(item?.localAssetId) || 0))
+      if (orphaned.length) {
+        showToast('部分真人素材已从列表中移除，请重新选择', 'error')
         return false
       }
       try {
         const people = await listRealPeople({ workspaceId: Number(workspaceId || 0) })
-        if (!isRealPersonReferenceStillAuthorized(reference, people)) {
-          showToast('所选真人素材的认证或授权已失效，请重新选择', 'error')
+        const expired = realPersonReferences.filter((item) => !isRealPersonReferenceStillAuthorized(item, people))
+        if (expired.length) {
+          const names = expired
+            .map((item) => item.personName)
+            .filter(Boolean)
+            .join('、')
+          showToast(`${names || '所选真人素材'}的认证或授权已失效，请重新选择`, 'error')
           return false
         }
       } catch (error) {
@@ -8357,7 +8339,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   // 是否使用了营销 SKILL(决定流程是否多出「营销思路拆解」步、进度条是否整体后移)
   const usedSkill = !isRealPersonMode && !!entryMeta?.skill
   // 两步流程都可见（分镜脚本 / 生成视频）；不再有需要跳过的中间步。
-  const visibleStepIndices = [STEP_SCRIPT, STEP_VIDEO] as const
+  const visibleStepIndices = VISIBLE_STEP_INDICES
   const allFlowSteps = isRealPersonMode ? REAL_PERSON_STEPS : STEPS
   // filter(Boolean) 是护栏：步骤数一旦再变（如又删一步），落单的索引会变成 undefined，
   // 进度条读 .label 就整页白屏。宁可少画一格，也不要让流程页崩掉。

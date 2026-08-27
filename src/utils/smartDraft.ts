@@ -205,6 +205,15 @@ const VIDEO_CONTENT_SIG_VERSION = 4
 const VIDEO_CONTENT_SIG_FIELDS_BY_VERSION: Readonly<Record<number, readonly string[]>> = {
   2: ['videoModel', 'videoModelVersionId'],
   3: ['resolution'],
+  4: ['entryAssets'],
+}
+
+/**
+ * 各版本在 shots[] 每一项里新增的字段。
+ * 与顶层字段分开登记：剔除时要逐个分镜删，不能只删顶层。
+ */
+const VIDEO_CONTENT_SIG_SHOT_FIELDS_BY_VERSION: Readonly<Record<number, readonly string[]>> = {
+  4: ['desc'],
 }
 
 export function computeVideoContentSig(shots: any[], entryMeta: any, base: string): string {
@@ -272,6 +281,19 @@ function comparableVideoContentSig(signature: Record<string, unknown>, sinceVers
     if (Number(version) <= sinceVersion) return
     fields.forEach((field) => delete comparable[field])
   })
+
+  // shots 内层的新增字段同样要逐项剔除，否则升级后每个分镜都比不上，
+  // 老项目会被整体误判为「内容已改」并在进入生成步时重跑一次付费出片。
+  const droppedShotFields = Object.entries(VIDEO_CONTENT_SIG_SHOT_FIELDS_BY_VERSION)
+    .filter(([version]) => Number(version) > sinceVersion)
+    .flatMap(([, fields]) => fields)
+  if (droppedShotFields.length && Array.isArray(comparable.shots)) {
+    comparable.shots = (comparable.shots as Record<string, unknown>[]).map((shot) => {
+      const copy = { ...shot }
+      droppedShotFields.forEach((field) => delete copy[field])
+      return copy
+    })
+  }
   return JSON.stringify(comparable)
 }
 

@@ -10,12 +10,18 @@
 const REFERENCE_IMAGE_ROLES = ['image', 'reference_image'] as const
 
 /**
- * 后端未返回 input_constraints 时的保守回退。
+ * 后端未返回 input_constraints 时的回退上限。
  *
- * 取 1 而不是 9：老后端的真实上限未知，放行 9 张可能让用户传满后在提交时被拒；
- * 放行 1 张最多是少传，用户还能换模型。宁可保守也不要制造「白传」。
+ * 取 9：这是主力模型 Seedance 2.0 的真实上限，也是本功能上线前的历史行为。
+ *
+ * 曾经取 1（「宁可少传」），但那会让前后端在灰度期直接打架：入口按 9 放行、
+ * 显示「3/9 张参考图」，提交时却按 1 拦下——用户看到的上限和实际拦截值差 9 倍，
+ * 且无从理解。真正的越界由后端 validateInputAssets 兜底，前端回退值的职责是
+ * 「拿不到约束时不要凭空制造拦截」，而不是替后端做更严的判断。
+ *
+ * 入口与提交链路必须共用这一个常量，否则又会出现两端说法不一。
  */
-export const DEFAULT_REFERENCE_IMAGE_LIMIT = 1
+export const DEFAULT_REFERENCE_IMAGE_LIMIT = 9
 
 export interface ModelInputRoleConstraint {
   role: string
@@ -79,13 +85,20 @@ export function getModelInputConstraints(model: unknown, operationCode: string):
 
 /**
  * 该模型在指定 operation 下允许的参考图张数。
- * 后端没给约束、或给了非正数时回退到 DEFAULT_REFERENCE_IMAGE_LIMIT。
+ *
+ * fallback 由调用方决定：上传入口拿不到约束时要放行（用 DEFAULT_REFERENCE_IMAGE_LIMIT），
+ * 而「模型声明了什么」的查询方要能区分「没声明」（传 0）。
+ * 唯一的 role 列表在这里，别处不要再抄一份——多一个 provider role 时只改这一处。
  */
-export function getModelReferenceImageLimit(model: unknown, operationCode: string): number {
+export function getModelReferenceImageLimit(
+  model: unknown,
+  operationCode: string,
+  fallback: number = DEFAULT_REFERENCE_IMAGE_LIMIT,
+): number {
   const { roles } = getModelInputConstraints(model, operationCode)
   for (const role of REFERENCE_IMAGE_ROLES) {
     const match = roles.find((entry) => entry.role === role)
     if (match && match.maxCount > 0) return match.maxCount
   }
-  return DEFAULT_REFERENCE_IMAGE_LIMIT
+  return fallback
 }
