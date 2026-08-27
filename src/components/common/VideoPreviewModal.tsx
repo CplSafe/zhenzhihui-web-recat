@@ -1,9 +1,11 @@
 /**
  * VideoPreviewModal — 全屏视频预览弹窗(点遮罩关闭)。
- * 复用 home__video-modal* 样式(由 HomeView.css 提供,首页/模板库均已载入)。
- * 取代此前在 HomeView(历史项目播放 + 模板预览)与 TemplatesView 里三份重复的同款弹窗。
+ * 样式自带(VideoPreviewModal.css):它被全局的任务侧栏使用,不能依赖某个
+ * 懒加载页面(如 HomeView)恰好载入过样式,否则在 /smart 直接点开视频时
+ * 弹窗会裸奔成流内元素,把页面挤乱。
  */
 import { useEffect, useRef } from 'react'
+import './VideoPreviewModal.css'
 import SeekableVideo from './SeekableVideo'
 
 /** 预览视频地址、封面、跨域策略和关闭事件。 */
