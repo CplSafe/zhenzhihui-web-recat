@@ -1,0 +1,49 @@
+/*
+ * VideoPreviewModal 自带样式。
+ *
+ * 此前复用 HomeView.css 里的 home__video-modal*，但路由是懒加载的：
+ * 用户不经过首页直接进 /smart，再从全局任务侧栏点开视频时，那份 CSS 根本没载入，
+ * 弹窗退化成普通流内 div——不遮罩、不居中，还把页面内容挤到旁边。
+ * 弹窗的样式必须跟组件走，不能指望"某个页面恰好载入过"。
+ * 类名保持不变，避免动到已载入 HomeView.css 的页面（重复定义等价，无副作用）。
+ */
+.home__video-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.home__video-modal {
+  position: relative;
+  width: 90vw;
+  max-width: 960px;
+  max-height: 90vh;
+}
+.home__video-modal-close {
+  position: absolute;
+  top: -36px;
+  right: 0;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.home__video-modal-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+.home__video-modal-player {
+  width: 100%;
+  max-height: 80vh;
+  border-radius: 12px;
+  display: block;
+}
