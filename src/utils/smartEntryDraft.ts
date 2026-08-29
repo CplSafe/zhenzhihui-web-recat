@@ -19,6 +19,8 @@ export interface SmartEntryDraftStore {
   duration?: string
   /** 视频出片分辨率；仅视频模式使用。 */
   resolution?: string
+  /** 是否自动生成背景音；仅视频模式使用。 */
+  generateAudio?: boolean
   skill?: string
   images?: string[]
   /** 与 images 按下标对齐的已落库素材 ID；本地新上传图片为 0。 */

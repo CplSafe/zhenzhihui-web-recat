@@ -156,6 +156,8 @@ export interface GenerationModelCatalogState {
   error: string
   operationStates: GenerationModelOperationStateMap
   reload: () => void
+  /** 按 operation_code + 模型版本 ID 取回后端原始模型（含 params_schema）。 */
+  resolveModel: (operationCode: string, modelVersionId: unknown) => BackendGenerationModel | null
 }
 
 /** 调用方所属的创作流程；智能成片有一条额外的临时屏蔽规则，画布等入口不受影响。 */
@@ -274,5 +276,28 @@ export function useGenerationModelCatalog(
   const reload = useCallback(() => setReloadToken((value) => value + 1), [])
   const pickerGroups = useMemo(() => toGenerationModelPickerGroups(groups, operationStates), [groups, operationStates])
 
-  return { groups, pickerGroups, loading, error, operationStates, reload }
+  /**
+   * 按 operation_code + 模型版本 ID 取回后端原始模型。
+   *
+   * pickerGroups 的选项只保留展示字段与结构化 constraints，原始 params_schema
+   * 只在数据层 groups 的 model.source 上。需要按 schema 判断能力（如是否声明
+   * generate_audio）的调用方必须走这里，不能从选择器选项上推断。
+   */
+  const resolveModel = useCallback(
+    (operationCode: string, modelVersionId: unknown): BackendGenerationModel | null => {
+      const targetId = String(modelVersionId ?? '').trim()
+      if (!targetId) return null
+      for (const group of groups) {
+        for (const operationGroup of group.operationGroups) {
+          if (operationGroup.operationCode !== operationCode) continue
+          const matched = operationGroup.models.find((model) => String(model.modelVersionId) === targetId)
+          if (matched) return matched.source
+        }
+      }
+      return null
+    },
+    [groups],
+  )
+
+  return { groups, pickerGroups, loading, error, operationStates, reload, resolveModel }
 }

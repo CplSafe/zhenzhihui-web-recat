@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useToast } from '@/composables/useToast'
 import { fileToDataUrl } from '@/utils/imageFile'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
-import { estimateAiTaskCost, listAiTasks, extractAssetPageItems } from '@/api/business'
+import { listAiTasks, extractAssetPageItems } from '@/api/business'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { createMaterialFromAsset } from '@/utils/materials'
@@ -21,11 +21,14 @@ import {
   normalizeVideoResolution,
 } from '@/utils/videoOptions'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
-import HotCopyCaseModal, { type HotCopyCaseTab } from '@/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
-import EntryDropdown from '@/components/smart/EntryDropdown'
 import {
-  GenerationModelDropdown,
+  CreativeParamsDropdown,
+  type CreativeParamsOptions,
+  type CreativeParamsValue,
+} from '@/components/smart/CreativeParamsDropdown'
+import { CreativeModelSlots } from '@/components/smart/CreativeModelSlots'
+import {
   getGenerationModelDurationOptions,
   getGenerationModelResolutionOptions,
   getGenerationModelSelectionConflicts,
@@ -33,13 +36,10 @@ import {
   type GenerationModelErrorState,
   type GenerationModelGroup,
   type GenerationModelLoadingState,
-  type GenerationModelEstimateRequest,
-  type GenerationModelEstimateResult,
 } from '@/components/smart/GenerationModelPicker'
-import RatioIcon from '@/components/common/RatioIcon'
+import { modelSupportsGeneratedAudio } from '@/utils/modelSchema'
 import videoIcon from '@/assets/icons/hotcopy-video.svg'
 import materialIcon from '@/assets/icons/hotcopy-material.svg'
-import helpIcon from '@/assets/icons/help-circle.svg'
 import './HotCopyEntry.css'
 
 /** 爆款复制入口当前选择的制作模式。 */
@@ -78,6 +78,13 @@ export interface HotCopyEntryPayload {
   duration: string
   /** 用户选择的出片分辨率；档位来自所选 replicate 模型 schema。 */
   resolution: string
+  /**
+   * 是否让模型自动生成背景音。
+   *
+   * 仅在所选模型 schema 声明了 generate_audio 时才会下发；未声明的模型
+   * 后端会兜底成 false，此时创作参数里也不显示这一行。
+   */
+  generateAudio: boolean
   /** 本次爆款复制固定使用的 video.replicate 后端模型版本 ID。 */
   modelVersionId?: number
 }
@@ -96,8 +103,14 @@ const RATIO_OPTIONS = ['16:9', '9:16', '1:1', '4:3', '3:4']
  */
 const UNSET_DURATION = ''
 
-/** 未选择时长时下拉按钮上的占位文案。 */
-const DURATION_PLACEHOLDER = '选择时长'
+/**
+ * 背景音默认开启。
+ *
+ * 后端 seed 注释里的默认值是 false（保守，规避音频版权风险），但爆款复制在这个
+ * 开关上线前一直硬编码下发 true —— 默认改成关会静默改变所有存量用户的出片效果，
+ * 而他们并没有要求过这个变化。默认保持开、把选择权交给开关本身。
+ */
+const DEFAULT_GENERATE_AUDIO = true
 
 /** 入口页与父级编排器之间的提交、草稿同步及恢复协议。 */
 interface HotCopyEntryProps {
@@ -121,6 +134,14 @@ interface HotCopyEntryProps {
   ratioOptions?: string[]
   /** 爆款复制首页可选的 video.replicate 模型目录。 */
   modelGroups?: GenerationModelGroup[]
+  /**
+   * 按模型版本 ID 取回后端原始模型（含 params_schema）。
+   *
+   * 选择器的 GenerationModelOption 只带结构化 constraints，而 constraints.audio
+   * 仅在字段声明了 options / required 时才生成——后端 seed 里的 generate_audio
+   * 两者都没有，靠它判断会漏判。所以背景音是否可选必须回到原始 schema 上判断。
+   */
+  resolveModel?: (modelVersionId: unknown) => Record<string, unknown> | null
   modelLoading?: GenerationModelLoadingState
   modelError?: GenerationModelErrorState
   modelReady?: boolean
@@ -131,16 +152,6 @@ interface HotCopyEntryProps {
   authRequired?: boolean
   onAuthRequired?: () => void
 }
-
-/** 当前开放的爆款复制模式。 */
-const TABS = [
-  {
-    key: 'remake',
-    title: '同款翻拍',
-    sub: '拆解底层逻辑,创造爆款视频',
-    tip: '保留原视频镜头节奏与爆点结构,把主体替换为你的产品。(案例示例待补充)',
-  },
-] as const
 
 /** 单次生成最多允许的替换主体数量。 */
 const MAX_PRODUCTS = 9
@@ -325,6 +336,7 @@ export default function HotCopyEntry({
   initial,
   ratioOptions,
   modelGroups = [],
+  resolveModel,
   modelLoading = false,
   modelError = null,
   modelReady = false,
@@ -353,6 +365,7 @@ export default function HotCopyEntry({
     ratio: defaultRatio,
     duration: UNSET_DURATION,
     resolution: LEGACY_DEFAULT_VIDEO_RESOLUTION,
+    generateAudio: DEFAULT_GENERATE_AUDIO,
     modelVersionId: undefined,
   })
   const initialTabDraft = (): HotCopyTabDraft => ({
@@ -367,74 +380,40 @@ export default function HotCopyEntry({
     ratio: initial?.ratio ?? defaultRatio,
     duration: initial?.duration ?? UNSET_DURATION,
     resolution: initial?.resolution ?? LEGACY_DEFAULT_VIDEO_RESOLUTION,
+    generateAudio: initial?.generateAudio ?? DEFAULT_GENERATE_AUDIO,
     modelVersionId: initial?.modelVersionId,
   })
-  const tabDraftsRef = useRef<Record<HotCopyTab, HotCopyTabDraft>>({
-    remake: initialTabDraft(),
-    replica: blankTabDraft(),
-  })
-  const [tab, setTab] = useState<HotCopyTab>(initialTab)
-  // 点击 Tab 旁的「?」打开对应案例弹窗(Figma 还原);null=关闭
-  const [caseTab, setCaseTab] = useState<HotCopyCaseTab | null>(null)
-  // 切换 Tab:背景的位移/上升动画由 <EntryCanvasBg mode={tab}> 监听 tab 变化驱动
-  const switchTab = (k: HotCopyTab) => {
-    if (k === tab) return
-    tabDraftsRef.current[tab] = {
-      videoSource,
-      videoFile,
-      libraryVideo,
-      videoFileName,
-      videoPreview,
-      products,
-      text,
-      ratio,
-      duration,
-      resolution,
-      modelVersionId: modelVersionId || undefined,
-    }
-    const next = tabDraftsRef.current[k] || blankTabDraft()
-    setVideoSource(next.videoSource)
-    setVideoFile(next.videoFile)
-    setLibraryVideo(next.libraryVideo)
-    setVideoFileName(next.videoFileName)
-    setVideoPreview(next.videoPreview)
-    setProducts(next.products)
-    setText(next.text)
-    setRatio(next.ratio)
-    setDuration(next.duration)
-    setResolution(next.resolution)
-    setModelVersionId(next.modelVersionId)
-    caretRef.current = next.text.length
-    setVideoMenuOpen(false)
-    setProductMenuOpen(false)
-    setLibraryOpen(false)
-    setProductLibOpen(false)
-    setAtOpen(false)
-    setTab(k)
-  }
+  // 只有一种模式，初始草稿也就只有一份；useRef 保证它不随重渲染重新计算。
+  const initialDraftRef = useRef<HotCopyTabDraft>(initialTabDraft())
+  const initialDraft = initialDraftRef.current
+  /**
+   * 界面上只剩「同款翻拍」一种模式，tab 恒为它。
+   *
+   * 保留这个常量而不是把 tab 从 payload 里删掉：编排器、草稿与历史任务都按
+   * payload.tab 存过值，去掉字段会让存量草稿反序列化后少一个键。
+   */
+  const tab: HotCopyTab = initialTab
 
   // 爆款视频来源(本地 / 素材库,二选一)
   const [videoMenuOpen, setVideoMenuOpen] = useState(false)
-  const [videoSource, setVideoSource] = useState<HotCopyVideoSource>(tabDraftsRef.current[initialTab].videoSource)
-  const [videoFile, setVideoFile] = useState<File | null>(tabDraftsRef.current[initialTab].videoFile)
-  const [videoFileName, setVideoFileName] = useState(tabDraftsRef.current[initialTab].videoFileName)
-  const [videoPreview, setVideoPreview] = useState(tabDraftsRef.current[initialTab].videoPreview)
+  const [videoSource, setVideoSource] = useState<HotCopyVideoSource>(initialDraft.videoSource)
+  const [videoFile, setVideoFile] = useState<File | null>(initialDraft.videoFile)
+  const [videoFileName, setVideoFileName] = useState(initialDraft.videoFileName)
+  const [videoPreview, setVideoPreview] = useState(initialDraft.videoPreview)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [libraryMaterials, setLibraryMaterials] = useState<any[]>([])
   const [libraryMaterialsScope, setLibraryMaterialsScope] = useState('')
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryTab, setLibraryTab] = useState('mine')
   const [libraryQuery, setLibraryQuery] = useState('')
-  const [libraryVideo, setLibraryVideo] = useState<{ assetId: number; src: string } | null>(
-    tabDraftsRef.current[initialTab].libraryVideo,
-  )
+  const [libraryVideo, setLibraryVideo] = useState<{ assetId: number; src: string } | null>(initialDraft.libraryVideo)
   const videoFileRef = useRef<HTMLInputElement | null>(null)
   const videoMenuRef = useRef<HTMLDivElement | null>(null)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const dragDepthRef = useRef(0)
 
   // 替换素材(仅图片):本地上传保留 File 待上传;素材库选择带 assetId
-  const [products, setProducts] = useState<HotCopyProduct[]>(tabDraftsRef.current[initialTab].products)
+  const [products, setProducts] = useState<HotCopyProduct[]>(initialDraft.products)
   const productFileRef = useRef<HTMLInputElement | null>(null)
   // 替换素材来源菜单(本地 / 素材库)+ 素材库选图弹窗
   const [productMenuOpen, setProductMenuOpen] = useState(false)
@@ -464,15 +443,13 @@ export default function HotCopyEntry({
     setProductLibOpen(false)
   }, [workspaceId, currentUserId])
 
-  const [text, setText] = useState(tabDraftsRef.current[initialTab].text)
+  const [text, setText] = useState(initialDraft.text)
   // 成片尺寸/时长(用户可选);默认与智能成片一致:16:9、10s
-  const [ratio, setRatio] = useState(tabDraftsRef.current[initialTab].ratio)
-  const [duration, setDuration] = useState(tabDraftsRef.current[initialTab].duration)
-  const [resolution, setResolution] = useState(tabDraftsRef.current[initialTab].resolution)
-  const [modelVersionId, setModelVersionId] = useState<number | undefined>(
-    tabDraftsRef.current[initialTab].modelVersionId,
-  )
-  const [modelAttentionRequest, setModelAttentionRequest] = useState(0)
+  const [ratio, setRatio] = useState(initialDraft.ratio)
+  const [duration, setDuration] = useState(initialDraft.duration)
+  const [resolution, setResolution] = useState(initialDraft.resolution)
+  const [generateAudio, setGenerateAudio] = useState(initialDraft.generateAudio)
+  const [modelVersionId, setModelVersionId] = useState<number | undefined>(initialDraft.modelVersionId)
   // 模型 options 到位后,若当前比例不在其中 → 收敛到第一个支持项(防止显示/提交一个模型做不了的比例)
   useEffect(() => {
     if (ratioOpts.length && !ratioOpts.includes(ratio)) setRatio(ratioOpts[0])
@@ -814,7 +791,7 @@ export default function HotCopyEntry({
     ratio,
     durationSec: Number.parseInt(duration, 10) || undefined,
     resolution,
-    generateAudio: true,
+    generateAudio,
     referenceImageCount: products.filter((product) => !product.isVideo).length,
   })
   // 时长档位跟随所选复制模型：schema 声明了支持哪些秒数就只展示哪些，未声明才回落 1–15 秒。
@@ -824,9 +801,7 @@ export default function HotCopyEntry({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [modelGroups, modelVersionId],
   )
-  const durationChoices = useMemo(() => durationOptions.map((seconds) => `${seconds}s`), [durationOptions])
   const durationUnset = parseDurationSeconds(duration) === null
-  const selectedDurationSec = parseDurationSeconds(duration) ?? undefined
   //
   // 时长与模型是双向约束，不是单向顺序：秒数是用户的需求，模型是实现选择，谁先定都合理。
   // 这里既不锁时长（未选模型时 getGenerationModelDurationOptions 本来就返回默认档位），
@@ -857,6 +832,52 @@ export default function HotCopyEntry({
     if (normalized !== resolution) setResolution(normalized)
   }, [resolution, resolutionOptions])
 
+  /**
+   * 所选模型是否支持自动生成背景音。
+   *
+   * 未选模型时按不支持处理：这一行的取值只有在知道是哪个模型之后才有意义，
+   * 先亮出来会让用户以为自己已经把背景音定下来了。
+   */
+  const supportsAudio = useMemo(() => {
+    if (!modelVersionId || !resolveModel) return false
+    const model = resolveModel(modelVersionId)
+    return model ? modelSupportsGeneratedAudio(model) : false
+  }, [modelVersionId, resolveModel])
+
+  const creativeParamsOptions: CreativeParamsOptions = useMemo(
+    () => ({
+      ratios: ratioOpts,
+      durations: durationOptions,
+      resolutions: resolutionOptions,
+      // 爆款复制一次只出一条视频，没有「出图数量」这一档。
+      counts: [],
+      supportsAudio,
+    }),
+    [ratioOpts, durationOptions, resolutionOptions, supportsAudio],
+  )
+
+  const creativeParamsValue: CreativeParamsValue = useMemo(
+    () => ({
+      ratio,
+      // 0 = 尚未选择；弹层据此显示占位而不是一个用户没选过的秒数。
+      durationSec: parseDurationSeconds(duration) ?? 0,
+      resolution,
+      count: 1,
+      generateAudio,
+    }),
+    [ratio, duration, resolution, generateAudio],
+  )
+
+  const applyCreativeParams = useCallback(
+    (next: CreativeParamsValue) => {
+      if (next.ratio !== ratio) setRatio(next.ratio)
+      if (next.resolution !== resolution) pickResolution(next.resolution)
+      if (next.durationSec > 0 && `${next.durationSec}s` !== duration) setDuration(`${next.durationSec}s`)
+      if (next.generateAudio !== generateAudio) setGenerateAudio(next.generateAudio)
+    },
+    [ratio, resolution, duration, generateAudio, pickResolution],
+  )
+
   const modelGatePassed =
     !requireModelSelection || (modelReady && modelSelectionComplete && modelSelectionConflicts.length === 0)
   const modelGateMessage = modelLoading
@@ -871,43 +892,6 @@ export default function HotCopyEntry({
   // 用户点击生成后立即锁定本次模型选择；异步读取时长/估价期间也不能切换成另一模型。
   const modelsLocked = submissionBusy
 
-  /** 模型面板内的费用预估与当前爆款复制参数保持一致，切换模型时可直接比较单次积分。 */
-  const estimateSelectedModel = useCallback(
-    async ({
-      operationCode,
-      modelVersionId: nextModelVersionId,
-    }: GenerationModelEstimateRequest): Promise<GenerationModelEstimateResult> => {
-      const ws = Number(workspaceId || 0)
-      if (!ws) throw new Error('工作空间未就绪')
-      const inputAssets = [
-        Number(libraryVideo?.assetId || 0),
-        ...products
-          .filter((product) => !product.isVideo)
-          .map((product) => Number(product.submitAssetId || product.assetId || 0)),
-      ].filter((assetId) => Number.isSafeInteger(assetId) && assetId > 0)
-      const result = await estimateAiTaskCost({
-        workspaceId: ws,
-        modelVersionId: nextModelVersionId,
-        operationCode,
-        prompt: text.trim(),
-        params: {
-          ratio,
-          duration: Number.parseInt(duration, 10) || 10,
-          resolution,
-          generate_audio: true,
-          reference_image_count: products.filter((product) => !product.isVideo).length,
-        },
-        inputAssets,
-      })
-      return {
-        estimatedCost: Number(result?.estimated_cost ?? 0),
-        balance: Number.isFinite(Number(result?.balance)) ? Number(result.balance) : undefined,
-        canAfford: result?.can_afford,
-      }
-    },
-    [duration, libraryVideo?.assetId, products, ratio, resolution, text, workspaceId],
-  )
-
   const buildPayload = (): HotCopyEntryPayload => ({
     tab,
     videoSource,
@@ -920,6 +904,7 @@ export default function HotCopyEntry({
     ratio,
     duration,
     resolution,
+    generateAudio,
     ...(modelVersionId ? { modelVersionId } : {}),
   })
 
@@ -936,11 +921,13 @@ export default function HotCopyEntry({
       ratio,
       duration,
       resolution,
+      generateAudio,
       ...(modelVersionId ? { modelVersionId } : {}),
     })
   }, [
     duration,
     resolution,
+    generateAudio,
     libraryVideo,
     modelVersionId,
     onDraftChange,
@@ -955,7 +942,6 @@ export default function HotCopyEntry({
   ])
 
   const requestModelSelectionAttention = () => {
-    setModelAttentionRequest((value) => value + 1)
     showToast(modelGateMessage || '请先选择视频生成模型', 'info')
   }
 
@@ -1027,9 +1013,10 @@ export default function HotCopyEntry({
         acceptLocalFiles(Array.from(event.dataTransfer.files))
       }}
     >
-      {/* 背景弥散:Canvas 实现(与智能成片同一套),配色用本页粉紫;切 Tab 时从底部上升 */}
+      {/* 背景弥散:Canvas 实现(与智能成片同一套),配色用本页粉紫 */}
       <div className="hotcopy__bg" aria-hidden="true">
-        <EntryCanvasBg index={tab === 'replica' ? 1 : 0} count={2} anim="bloom" layers={HOTCOPY_LAYERS} />
+        {/* 模式只剩一种，背景恒定第 0 层（原先第 1 层是「精准复刻」的切换态） */}
+        <EntryCanvasBg index={0} count={2} anim="bloom" layers={HOTCOPY_LAYERS} />
       </div>
 
       <h1 className="hotcopy__title">爆款作业直接抄,你的产品当主角!</h1>
@@ -1046,33 +1033,6 @@ export default function HotCopyEntry({
             创建新视频
           </button>
         )}
-        {/* 分段 Tab:同款翻拍 / 精准复刻(选中态白卡 + 名称 + ? + 副标题) */}
-        <div className="hotcopy__tabs">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              className={`hotcopy__tab${tab === t.key ? ' is-active' : ''}`}
-              onClick={() => switchTab(t.key)}
-            >
-              <span className="hotcopy__tab-head">
-                <span className="hotcopy__tab-name">{t.title}</span>
-                <img
-                  className="hotcopy__tip"
-                  src={helpIcon}
-                  alt=""
-                  title={`查看${t.title}案例`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setCaseTab(t.key as HotCopyCaseTab)
-                  }}
-                />
-              </span>
-              <span className="hotcopy__tab-sub">{t.sub}</span>
-            </button>
-          ))}
-        </div>
-
         {/* 主卡片:左 两个上传方块 + 右 文案输入;底部 @ + 圆形发送 */}
         <div className="hotcopy__card">
           <div className="hotcopy__body">
@@ -1196,84 +1156,42 @@ export default function HotCopyEntry({
                 模型排在工具条第一位：时长与分辨率的档位由所选 replicate 模型的 schema 决定，
                 多数人也确实会先定模型，把它放在最左符合主路径的阅读顺序。
                 但这只是默认顺序、不是强制：时长可以先选，模型列表会反过来标出做不到的那些。
+
+                与爆款成片共用同一枚胶囊（CreativeModelSlots），两个入口的模型选择
+                长成同一个样子；此前这里是 GenerationModelDropdown，形态与另一边不一致。
               */}
-              <GenerationModelDropdown
+              <CreativeModelSlots
                 groups={modelGroups}
                 selected={modelSelection}
-                placement="start"
-                // 已选时长回喂给列表：做不到这个秒数的模型会被标出来，用户不必逐个试
-                durationSec={selectedDurationSec}
-                durationOperationCode="video.replicate"
+                loading={Boolean(modelLoading)}
                 authRequired={authRequired}
                 onAuthRequired={onAuthRequired}
-                loading={modelLoading}
-                error={modelError}
-                estimateModelCost={Number(workspaceId || 0) > 0 ? estimateSelectedModel : undefined}
+                // 提交预检开始后模型已随快照冻结，这里必须一并锁住，
+                // 否则用户改了模型却发现出片用的还是旧的。
                 locked={modelsLocked}
-                conflicts={modelSelectionConflicts}
-                attentionRequest={modelAttentionRequest}
-                attentionMessage={modelGateMessage}
-                onOpen={modelLoading ? undefined : () => onReloadModels?.()}
-                onRetry={() => onReloadModels?.()}
+                // 目录加载失败后列表是空的，展开时重拉一次，用户不必刷新整页。
+                onOpen={modelLoading ? undefined : onReloadModels}
                 onChange={(_groupKey, nextModelId, subgroupKey) => {
                   if (subgroupKey !== 'video.replicate') return
                   const normalizedId = Number(nextModelId)
                   setModelVersionId(Number.isSafeInteger(normalizedId) && normalizedId > 0 ? normalizedId : undefined)
                 }}
               />
-              {/* 成片尺寸(画面比例):选项取自 replicate 模型支持的比例 */}
-              <EntryDropdown
-                value={ratio}
-                options={ratioOpts}
-                onChange={setRatio}
-                icon={<RatioIcon ratio={ratio} />}
-                valueMinWidth={34}
-              />
-              {/* 成片时长 */}
-              <EntryDropdown
-                value={duration}
-                options={durationChoices}
-                onChange={setDuration}
-                placeholder={DURATION_PLACEHOLDER}
-                variant="wheel"
-                icon={
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                  >
-                    <circle cx="12" cy="12" r="8" />
-                    <path d="M12 8v4l3 2" />
-                  </svg>
-                }
-              />
-              {/* 成片分辨率:档位取自所选 replicate 模型 schema */}
-              <EntryDropdown
-                value={resolution}
-                options={resolutionOptions}
-                onChange={pickResolution}
-                ariaLabel="视频分辨率"
-                icon={
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <rect x="3.5" y="6" width="17" height="12" rx="2" />
-                    <path d="M8 10.5v3M12 9v6M16 10.5v3" />
-                  </svg>
-                }
-                valueMinWidth={40}
+              {/*
+                创作参数（比例 / 时长 / 分辨率 / 背景音）收进一枚弹层胶囊，与智能成片同一组件。
+                此前它们在底栏各占一个 chip，与模型 chip 等距排开——「用什么生成」和
+                「生成成什么样」是两层决策，平铺一行读不出层次，chip 一多底栏还会换行。
+              */}
+              <CreativeParamsDropdown
+                value={creativeParamsValue}
+                options={creativeParamsOptions}
+                onChange={applyCreativeParams}
+                /*
+                  先选模型再选参数：档位都由所选模型 schema 决定，没选模型时给出的只是兜底档位。
+                  这里不用 disabled——点了没反应的按钮不会告诉用户为什么，照常可点、点了说明原因。
+                */
+                blockedReason={modelSelectionComplete ? undefined : '请先选择本次爆款复刻使用的模型'}
+                onBlocked={(reason) => showToast(reason, 'info')}
               />
               <span className="hotcopy__atAnchor">
                 <button type="button" className="hotcopy__at" onClick={handleAt} title="引用替换素材">
@@ -1394,9 +1312,6 @@ export default function HotCopyEntry({
         onQueryChange={setProductLibQuery}
         onConfirm={confirmLibraryProducts}
       />
-
-      {/* 同款翻拍 / 精准复刻 案例弹窗(点 Tab 旁「?」打开) */}
-      <HotCopyCaseModal tab={caseTab} onClose={() => setCaseTab(null)} />
     </section>
   )
 }

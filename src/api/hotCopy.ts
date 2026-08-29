@@ -195,6 +195,7 @@ function assertHotCopyReplicateConstraints(
     durationSec?: number
     ratio?: string
     resolution?: string
+    generateAudio?: boolean
     sourceVideoDurationSec?: number
     referenceImageCount?: number
   },
@@ -222,7 +223,7 @@ function assertHotCopyReplicateConstraints(
     durationSec: durationSeconds,
     ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
     resolution: String(args.resolution || LEGACY_DEFAULT_VIDEO_RESOLUTION),
-    generateAudio: true,
+    generateAudio: args.generateAudio ?? true,
     referenceImageCount,
   })
   if (conflicts.length) {
@@ -461,7 +462,13 @@ export async function ensureHotCopyTemplateVideoSource(
 /** 按模型 schema 构建 video.replicate 参数，确保时长、比例和声音与正式提交一致。 */
 function buildReplicateVideoParams(
   model: any,
-  args: { durationSec?: number; sourceVideoDurationSec?: number; ratio?: string; resolution?: string },
+  args: {
+    durationSec?: number
+    sourceVideoDurationSec?: number
+    ratio?: string
+    resolution?: string
+    generateAudio?: boolean
+  },
 ): Record<string, any> {
   const durationSeconds = parseDurationSeconds(args.durationSec ?? 10)
   if (durationSeconds === null) {
@@ -477,6 +484,7 @@ function buildReplicateVideoParams(
     sourceVideoDurationSec: args.sourceVideoDurationSec,
     ratio: normalizeSeedanceRatio(args.ratio || '16:9'),
     resolution: args.resolution,
+    generateAudio: args.generateAudio,
   })
 }
 
@@ -492,6 +500,8 @@ export function createHotCopyReplicateSnapshot(args: {
   ratio?: string
   /** 用户在入口选择的出片分辨率；留空时沿用历史默认 720p。 */
   resolution?: string
+  /** 用户在入口选择的背景音开关；留空时沿用历史默认（开）。 */
+  generateAudio?: boolean
   durationSec?: number
 }): HotCopyReplicateSnapshot {
   const workspaceId = Math.floor(Number(args.workspaceId) || 0)
@@ -504,6 +514,7 @@ export function createHotCopyReplicateSnapshot(args: {
     sourceVideoDurationSec,
     ratio: args.ratio,
     resolution: args.resolution,
+    generateAudio: args.generateAudio,
     durationSec: args.durationSec,
   })
   return deepFreeze({
@@ -545,6 +556,7 @@ function resolveHotCopyReplicateSnapshot(args: {
   referenceImageCount?: number
   ratio?: string
   resolution?: string
+  generateAudio?: boolean
   durationSec?: number
 }): HotCopyReplicateSnapshot {
   const workspaceId = Math.floor(Number(args.workspaceId) || 0)
@@ -574,6 +586,7 @@ function resolveHotCopyReplicateSnapshot(args: {
     referenceImageCount: args.referenceImageCount,
     ratio: args.ratio,
     resolution: args.resolution,
+    generateAudio: args.generateAudio,
     durationSec: args.durationSec,
   })
 }
@@ -706,6 +719,8 @@ export async function replicateHotVideo(args: {
   productAssetIds?: number[]
   prompt?: string
   ratio?: string
+  /** 用户在入口选择的背景音开关；留空时沿用历史默认（开）。 */
+  generateAudio?: boolean
   durationSec?: number
   /** 源视频真实时长(秒):video.replicate 按它计费(优先于 duration),前端读源视频 HTML5 元数据得到 */
   sourceVideoDurationSec?: number
@@ -822,6 +837,8 @@ export async function estimateReplicateCost(args: {
   sourceVideoDurationSec?: number
   referenceImageCount?: number
   ratio?: string
+  /** 用户在入口选择的背景音开关；必须与 replicateHotVideo 同值，否则估价与实扣口径不一致。 */
+  generateAudio?: boolean
   durationSec?: number
   modelPlanCandidates?: string[]
   /** 兼容旧调用的显式模型；不会再自动查询或切换其他模型。 */

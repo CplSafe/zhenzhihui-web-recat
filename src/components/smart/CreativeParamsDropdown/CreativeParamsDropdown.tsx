@@ -20,6 +20,8 @@ export interface CreativeParamsValue {
   resolution: string
   /** 图片模式的单轮出图数量；视频模式忽略。 */
   count: number
+  /** 是否让模型自动生成背景音；仅在模型 schema 声明了该能力时有意义。 */
+  generateAudio: boolean
 }
 
 export interface CreativeParamsOptions {
@@ -29,6 +31,13 @@ export interface CreativeParamsOptions {
   resolutions: readonly string[]
   /** 图片模式的出图数量档位；空数组表示不展示该行。 */
   counts: readonly number[]
+  /**
+   * 所选模型是否支持自动生成背景音（schema 声明了 generate_audio）。
+   *
+   * 由调用方读模型 schema 得出：模型没声明这个字段时后端不会接收它，
+   * 摆一个点了不生效的开关只会误导用户，所以此时整行不渲染。
+   */
+  supportsAudio: boolean
 }
 
 export interface CreativeParamsDropdownProps {
@@ -58,6 +67,9 @@ function formatSummary(value: CreativeParamsValue, options: CreativeParamsOption
   if (options.durations.length) parts.push(value.durationSec > 0 ? `${value.durationSec}s` : DURATION_PLACEHOLDER)
   if (options.resolutions.length) parts.push(value.resolution)
   if (options.counts.length) parts.push(`${value.count}张`)
+  // 关闭态也要出现在摘要里：背景音会实际改变成片内容，
+  // 只在开启时显示的话，用户折叠后无从确认自己刚刚关掉了它。
+  if (options.supportsAudio) parts.push(value.generateAudio ? '有背景音' : '无背景音')
   return parts.filter(Boolean).join(' · ') || '创作参数'
 }
 
@@ -152,6 +164,31 @@ export default function CreativeParamsDropdown({
                 value={value.durationSec}
                 onChange={(durationSec) => patch({ durationSec })}
               />
+            </div>
+          )}
+
+          {options.supportsAudio && (
+            <div className={styles.field}>
+              <span className={styles.label}>背景音</span>
+              <div className={styles.segments}>
+                {/* 两档而非勾选框：与同弹层里的分辨率/数量档位条同构，读起来是同一类选择 */}
+                <button
+                  type="button"
+                  className={`${styles.segment}${value.generateAudio ? ` ${styles.isActive}` : ''}`}
+                  onClick={() => patch({ generateAudio: true })}
+                  aria-pressed={value.generateAudio}
+                >
+                  生成
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.segment}${!value.generateAudio ? ` ${styles.isActive}` : ''}`}
+                  onClick={() => patch({ generateAudio: false })}
+                  aria-pressed={!value.generateAudio}
+                >
+                  不生成
+                </button>
+              </div>
             </div>
           )}
 

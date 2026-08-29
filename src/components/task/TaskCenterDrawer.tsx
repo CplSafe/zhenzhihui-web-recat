@@ -77,8 +77,8 @@ export function deduplicateTaskCenterRecords(tasks: TaskCenterTask[]): TaskCente
 /** 任务中心支持的业务页签。 */
 const SCOPE_TABS: Array<{ value: TaskCenterTab; label: string }> = [
   { value: 'generating', label: '正在生成' },
-  { value: 'smart', label: '智能成片' },
-  { value: 'hot-copy', label: '爆款复制' },
+  { value: 'smart', label: '爆款成片' },
+  { value: 'hot-copy', label: '爆款复刻' },
   { value: 'image', label: '图片' },
 ]
 
@@ -146,9 +146,9 @@ function getTaskScope(task: TaskRecord): TaskCenterScope | '' {
 
 /** 返回当前页签的用户可读名称。 */
 function getScopeLabel(scope: TaskCenterScope): string {
-  if (scope === 'hot-copy') return '爆款复制'
+  if (scope === 'hot-copy') return '爆款复刻'
   if (scope === 'image') return '图片'
-  return '智能成片'
+  return '爆款成片'
 }
 
 /** 读取并小写化任务状态。 */
@@ -1032,9 +1032,10 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                         navigate(`/smart/${projectId}`)
                         return
                       }
-                      // 爆款复制任务点击后始终回到该项目的数据编辑/生成页。即使任务已完成，
-                      // 也不在任务抽屉里抢先打开播放器，避免用户无法继续调整素材与参数。
-                      if (taskScope === 'hot-copy') {
+                      // 未完成的爆款复刻任务回到该项目的数据编辑/生成页，让用户继续调整素材与参数；
+                      // 已完成的则与爆款成片一致，就地打开播放器——两个入口点同一种卡片
+                      // 却得到两种结果，用户没有办法预期自己这一下会跳走还是会看到视频。
+                      if (taskScope === 'hot-copy' && !(tone === 'completed' && (resultUrl || resultAssetId))) {
                         navigate(`/hot-copy/${projectId}`)
                         return
                       }
@@ -1061,7 +1062,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                         }
                         return
                       }
-                      navigate(`/smart/${projectId}`)
+                      navigate(taskScope === 'hot-copy' ? `/hot-copy/${projectId}` : `/smart/${projectId}`)
                     }}
                     onArchive={() => {
                       if (tasks.some((storedTask) => storedTask.id === taskId)) archiveTask(taskId)

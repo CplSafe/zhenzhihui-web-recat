@@ -225,3 +225,18 @@ export function findFirstField(fields: readonly unknown[], names: readonly strin
 
 /** 语义更清晰的别名，便于新代码复用；旧入口 findFirstField 保持兼容。 */
 export const findModelParamField = findFirstField
+
+/** 后端可能采用的自动背景音字段名（下划线与驼峰两种拼写）。 */
+export const AUDIO_PARAM_FIELD_NAMES = ['generate_audio', 'generateAudio'] as const
+
+/**
+ * 该模型是否支持「自动生成背景音」。
+ *
+ * 判据只有一条：schema 声明了 generate_audio。后端 taskBody 对未声明的模型
+ * 会把缺失兜底成 false，前端硬塞也不会生效，所以这里既决定参数是否下发、
+ * 也决定创作参数弹层里那一行是否出现——两处必须同源，否则会出现
+ * 「开关开着但成片没有背景音」这类无法自查的错位。
+ */
+export function modelSupportsGeneratedAudio(model: unknown): boolean {
+  return Boolean(findFirstField(getModelParamFields(model), AUDIO_PARAM_FIELD_NAMES))
+}

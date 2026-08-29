@@ -149,7 +149,7 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     seed()
     render(<TaskCenterDrawer scope="smart" />)
 
-    expect(screen.getByRole('tab', { name: '智能成片' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '爆款成片' })).toHaveAttribute('aria-selected', 'true')
 
     act(() => {
       useTaskCenterStore.getState().upsertTask(
@@ -165,11 +165,11 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     expect(await screen.findByRole('tab', { name: '正在生成' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('刚开始生成')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('tab', { name: '智能成片' }))
+    await user.click(screen.getByRole('tab', { name: '爆款成片' }))
     act(() => {
       useTaskCenterStore.getState().patchTask('smart:7:11:new-generation', { progress: 35 })
     })
-    expect(screen.getByRole('tab', { name: '智能成片' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '爆款成片' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('restores a persisted hot-copy thumbnail from the project source asset on first open', async () => {
@@ -212,7 +212,7 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     })
   })
 
-  it('opens a completed hot-copy task in its editable project instead of intercepting it with video preview', async () => {
+  it('opens the video preview for a completed hot-copy task, matching 爆款成片', async () => {
     const user = userEvent.setup()
     seed(
       task({
@@ -229,13 +229,35 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     render(<TaskCenterDrawer scope="hot-copy" />)
     await user.click(await screen.findByText('可继续编辑的爆款任务'))
 
+    // 已完成的任务就地开播放器，与爆款成片一致：同一种卡片点下去不该有两种结果。
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    expect(await screen.findByRole('dialog', { name: '视频预览' })).toBeInTheDocument()
+  })
+
+  it('sends an unfinished hot-copy task back to its editable project', async () => {
+    const user = userEvent.setup()
+    seed(
+      task({
+        id: 'hot-copy:7:11:running',
+        scope: 'hot-copy',
+        operationCode: 'video.replicate',
+        status: 'processing',
+        title: '仍在生成的爆款任务',
+      }),
+    )
+
+    render(<TaskCenterDrawer scope="hot-copy" />)
+    // 生成中的任务只在「正在生成」汇总页展示。
+    await user.click(screen.getByRole('tab', { name: '正在生成' }))
+    await user.click(await screen.findByText('仍在生成的爆款任务'))
+
     expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy/11')
     expect(screen.queryByRole('dialog', { name: '视频预览' })).not.toBeInTheDocument()
   })
 
   it.each([
-    ['smart', '智能成片'],
-    ['hot-copy', '爆款复制'],
+    ['smart', '爆款成片'],
+    ['hot-copy', '爆款复刻'],
   ] as const)(
     'limits %s completed video tasks to 20 and opens project management for the remainder',
     async (scope, label) => {

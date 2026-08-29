@@ -27,6 +27,22 @@ export interface CreativeModelSlotsProps {
   /** 游客态：胶囊照常展示但点击交由调用方引导登录。 */
   authRequired?: boolean
   onAuthRequired?: () => void
+  /**
+   * 提交预检期间锁定选择。
+   *
+   * 任务的模型、估价与参数在点下「去制作」那一刻就冻结成快照了；此时还能改模型，
+   * 用户会以为自己换掉了本次生成，实际提交的仍是旧模型。锁住比事后解释更诚实。
+   */
+  locked?: boolean
+  /** 锁定时给出的原因，作为胶囊的 title 与无障碍名称后缀。 */
+  lockedReason?: string
+  /**
+   * 展开胶囊时触发，通常用来重新拉取模型目录。
+   *
+   * 目录加载失败后列表会是空的，用户唯一的自救动作就是再点开看看；
+   * 没有这个回调的话，只能刷新整页。
+   */
+  onOpen?: () => void
 }
 
 /**
@@ -57,6 +73,9 @@ export default function CreativeModelSlots({
   loading,
   authRequired = false,
   onAuthRequired,
+  locked = false,
+  lockedReason = '处理中不可切换',
+  onOpen,
 }: CreativeModelSlotsProps) {
   const { open, toggle, wrapRef } = useDismissablePopover<HTMLDivElement>()
 
@@ -77,7 +96,17 @@ export default function CreativeModelSlots({
     return [...own, ...subs]
   })
 
-  const chosenCount = slots.filter((slot) => Number(selected[slot.key] || 0) > 0).length
+  /**
+   * 「已选」必须以「选中的 ID 在当前目录里还找得到」为准，而不是「selected 里有个非零值」。
+   *
+   * 模型可能在用户选完之后被下架（后台停用、换套餐、切工作空间），此时 selected 仍留着旧 ID。
+   * 只数非零值会把这种情况算成已选满，摘要去查名字却查不到，最后渲染出一个空白胶囊——
+   * 用户既看不出选了什么，也看不出需要重选。
+   */
+  const chosenNames = slots.map(
+    (slot) => slot.models.find((model) => !model.disabled && String(model.id) === String(selected[slot.key]))?.name,
+  )
+  const chosenCount = chosenNames.filter(Boolean).length
   const summary = authRequired
     ? '登录后选择模型'
     : !slots.length
@@ -85,10 +114,7 @@ export default function CreativeModelSlots({
         ? '模型加载中…'
         : '暂无可用模型'
       : chosenCount === slots.length
-        ? slots
-            .map((slot) => slot.models.find((model) => String(model.id) === String(selected[slot.key]))?.name)
-            .filter(Boolean)
-            .join(' · ')
+        ? chosenNames.filter(Boolean).join(' · ')
         : `选择模型 ${chosenCount}/${slots.length}`
 
   return (
@@ -101,12 +127,15 @@ export default function CreativeModelSlots({
             onAuthRequired?.()
             return
           }
+          // 只在「即将展开」时回调：收起也触发会让每次关闭都白拉一次目录。
+          if (!open) onOpen?.()
           toggle()
         }}
         disabled={!authRequired && !slots.length}
+        title={locked ? lockedReason : undefined}
         aria-expanded={open}
         aria-haspopup="dialog"
-        aria-label={`生成模型，${summary}`}
+        aria-label={`生成模型，${summary}${locked ? `，${lockedReason}` : ''}`}
       >
         <span aria-hidden="true">◇</span>
         <span className={`${barStyles.summary} ${styles.summaryText}`}>{summary}</span>
@@ -125,6 +154,7 @@ export default function CreativeModelSlots({
                 value={Number(selected[slot.key] || 0)}
                 onChange={(modelVersionId) => onChange(slot.groupKey, modelVersionId, slot.subgroupKey)}
                 loading={loading}
+                disabled={locked}
                 placeholderDescription="选择本次创作使用的模型"
                 compact
               />

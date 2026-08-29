@@ -37,7 +37,7 @@ import {
   LEGACY_DEFAULT_VIDEO_RESOLUTION,
   normalizeVideoResolution,
 } from '@/utils/videoOptions'
-import { matchModelParamOptionValue } from '@/utils/modelSchema'
+import { matchModelParamOptionValue, modelSupportsGeneratedAudio } from '@/utils/modelSchema'
 import { SMART_VIDEO_DURATIONS } from '@/utils/videoDurationValue'
 import {
   REQUIRED_GENERATION_OPERATION_CODES_BY_MODE,
@@ -71,6 +71,13 @@ export interface EntryMeta {
   duration: string
   /** 视频出片分辨率；档位来自所选视频模型 schema，图片模式忽略。 */
   resolution?: string
+  /**
+   * 是否让模型自动生成背景音；图片模式忽略。
+   *
+   * 只在所选视频模型 schema 声明了 generate_audio 时才有意义——未声明的模型
+   * 后端会把缺失兜底成 false，此时创作参数里也不显示这一行。
+   */
+  generateAudio?: boolean
   imageCount: number
   images: string[]
   imageAssetIds?: number[]
@@ -109,6 +116,14 @@ interface SmartEntryProps {
   onResume?: (generationModels: GenerationModelSelectionMap) => void | Promise<void>
   /** 后端动态返回的生成模型分组；模型名称不会在入口组件中写死。 */
   modelGroups?: GenerationModelGroup[]
+  /**
+   * 按 operation_code + 模型版本 ID 取回后端原始模型（含 params_schema）。
+   *
+   * 选择器选项只带结构化 constraints，而 constraints.audio 仅在字段声明了
+   * options / required 时才生成——后端 schema 里的 generate_audio 两者都没有，
+   * 靠它判断会漏判。所以背景音是否可选必须回到原始 schema 上判断。
+   */
+  resolveModel?: (operationCode: string, modelVersionId: unknown) => Record<string, unknown> | null
   modelLoading?: GenerationModelLoadingState
   modelError?: GenerationModelErrorState
   /** 每个固定 operation 的加载/可用状态；用于防止部分接口失败时只校验剩余分组。 */
@@ -129,6 +144,7 @@ interface SmartEntryProps {
     ratio?: string
     duration?: string
     resolution?: string
+    generateAudio?: boolean
     images?: string[]
     imageAssetIds?: number[]
     realPersonReferences?: SmartRealPersonReference[]
@@ -145,6 +161,14 @@ interface SmartEntryProps {
  * 会把它静默回落成默认时长，用户就拿到了自己没选过的秒数；空串则只会走「未选」分支。
  */
 const UNSET_DURATION = ''
+
+/**
+ * 背景音默认开启，与开关上线前的实际行为一致。
+ *
+ * 后端 seed 的 schema 默认值是 false（保守，规避音频版权风险），但智能成片此前
+ * 对允许开声的模型一律按开生成；默认改成关会静默改变存量用户的出片效果。
+ */
+const DEFAULT_GENERATE_AUDIO = true
 
 /** 主按钮旁展示的合计预估快照。 */
 interface CreationCostEstimate {
@@ -220,6 +244,7 @@ export default function SmartEntry({
   canResume,
   onResume,
   modelGroups = [],
+  resolveModel,
   modelLoading = false,
   modelError = '',
   modelOperationStates,
@@ -263,6 +288,16 @@ export default function SmartEntry({
   // 分辨率沿用历史默认 720p；所选模型不支持时，下面的档位副作用会就近吸附到该模型真实支持的规格。
   const [resolution, setResolution] = useState(
     initial?.resolution ?? stored?.resolution ?? LEGACY_DEFAULT_VIDEO_RESOLUTION,
+  )
+  /**
+   * 背景音默认开启。
+   *
+   * 这个开关上线前，smartVideo 对「模型允许开声」的模型一律按开处理
+   * （shouldGenerateAudio 无用户输入时返回 true），默认改成关会静默改变
+   * 存量用户的出片效果。默认保持开，把选择权交给开关本身。
+   */
+  const [generateAudio, setGenerateAudio] = useState(
+    initial?.generateAudio ?? stored?.generateAudio ?? DEFAULT_GENERATE_AUDIO,
   )
   const [images, setImages] = useState<string[]>(seedImages)
   const [imageAssetIds, setImageAssetIds] = useState<number[]>(() =>
@@ -400,6 +435,7 @@ export default function SmartEntry({
         ratio,
         duration,
         resolution,
+        generateAudio,
         skill,
         images,
         imageAssetIds,
@@ -415,6 +451,7 @@ export default function SmartEntry({
     ratio,
     duration,
     resolution,
+    generateAudio,
     skill,
     images,
     imageAssetIds,
@@ -646,14 +683,29 @@ export default function SmartEntry({
    * 弹层里的档位。都在上面按所选模型的 schema 算好了，这里只做形状转换：
    * 视频是 比例 / 分辨率 / 时长，图片是 比例 / 出图数量。
    */
+  /**
+   * 所选整片视频模型是否支持自动生成背景音。
+   *
+   * 图片模式与未选模型时按不支持处理：这一行的取值只有在知道是哪个视频模型
+   * 之后才有意义，先亮出来会让用户以为自己已经把背景音定下来了。
+   */
+  const supportsAudio = useMemo(() => {
+    if (mode !== 'video' || !resolveModel) return false
+    const modelVersionId = generationModels['video.generate']
+    if (!modelVersionId) return false
+    const model = resolveModel('video.generate', modelVersionId)
+    return model ? modelSupportsGeneratedAudio(model) : false
+  }, [mode, resolveModel, generationModels])
+
   const creativeParamsOptions: CreativeParamsOptions = useMemo(
     () => ({
       ratios: ratioOptions,
       durations: mode === 'video' ? durationOptions : [],
       resolutions: mode === 'video' ? resolutionOptions : [],
       counts: mode === 'video' ? [] : Array.from({ length: MAX_IMAGE_OUTPUT_COUNT }, (_, index) => index + 1),
+      supportsAudio,
     }),
-    [mode, ratioOptions, durationOptions, resolutionOptions],
+    [mode, ratioOptions, durationOptions, resolutionOptions, supportsAudio],
   )
 
   const creativeParamsValue: CreativeParamsValue = useMemo(
@@ -663,8 +715,9 @@ export default function SmartEntry({
       durationSec: parseDurationSeconds(duration) ?? 0,
       resolution,
       count: outputCount,
+      generateAudio,
     }),
-    [ratio, duration, resolution, outputCount],
+    [ratio, duration, resolution, outputCount, generateAudio],
   )
 
   const applyCreativeParams = useCallback(
@@ -673,8 +726,9 @@ export default function SmartEntry({
       if (next.resolution !== resolution) pickResolution(next.resolution)
       if (next.durationSec > 0 && `${next.durationSec}s` !== duration) setDuration(`${next.durationSec}s`)
       if (next.count !== outputCount) setOutputCount(clampImageOutputCount(next.count))
+      if (next.generateAudio !== generateAudio) setGenerateAudio(next.generateAudio)
     },
-    [ratio, resolution, duration, outputCount, pickRatio, pickResolution],
+    [ratio, resolution, duration, outputCount, generateAudio, pickRatio, pickResolution],
   )
 
   /**
@@ -841,6 +895,9 @@ export default function SmartEntry({
         ratio,
         duration,
         ...(mode === 'video' ? { resolution } : {}),
+        // 只有模型真支持时才带上：未声明该字段的模型下发了也会被后端忽略，
+        // 却会让草稿里留下一个与实际出片无关的取值。
+        ...(mode === 'video' && supportsAudio ? { generateAudio } : {}),
         imageCount: images.length,
         images,
         ...(imageAssetIds.some((assetId) => assetId > 0) ? { imageAssetIds } : {}),
