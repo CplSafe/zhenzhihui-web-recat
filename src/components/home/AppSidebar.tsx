@@ -1,6 +1,6 @@
 /**
  * 2.1 左侧导航栏（自包含静态实现）。
- * 浅色窄侧栏：品牌 + 首页 + 分组（创作/管理/发布/团队/其他）+ 底部设置。
+ * 浅色窄侧栏：品牌 + 首页 + 分组（创作/社区/管理/团队）+ 底部设置。
  * props: activeKey 当前选中项；onNavigate(key) 点击回调（跳转由父级接线）。
  * 菜单图标直接使用 Figma 导出的默认态/选中态 SVG，保持造型、尺寸和颜色一致。
  */
@@ -71,6 +71,22 @@ const GROUPS: SidebarGroup[] = [
     ],
   },
   {
+    // 「社区」分组（设计稿 2.1 IP/需求市场）：我的合作已上线；
+    // 代理商入驻 / IP入驻 尚未开放，不在 SIDEBAR_ROUTE_MAP 中，点击弹「功能待开放」。
+    title: '社区',
+    items: [
+      { key: 'agent-join', label: '代理商入驻', icon: agentJoinIcon, iconSize: 14 },
+      { key: 'ip-join', label: 'IP入驻', icon: ipJoinIcon, iconSize: 14 },
+      {
+        key: 'collaborations',
+        label: '我的合作',
+        icon: cooperationIcon,
+        activeIcon: cooperationActiveIcon,
+        iconSize: 14,
+      },
+    ],
+  },
+  {
     title: '管理',
     items: [
       { key: 'projects', label: '项目管理', icon: projectsIcon, activeIcon: projectsActiveIcon, iconSize: 14 },
@@ -78,25 +94,6 @@ const GROUPS: SidebarGroup[] = [
     ],
   },
 ]
-
-/**
- * 「其他」分组（设计稿 2.1 IP/需求市场）：我的合作已上线；
- * 代理商入驻 / IP入驻 尚未开放，不在 SIDEBAR_ROUTE_MAP 中，点击弹「功能待开放」。
- */
-const OTHERS_GROUP: SidebarGroup = {
-  title: '其他',
-  items: [
-    { key: 'agent-join', label: '代理商入驻', icon: agentJoinIcon, iconSize: 14 },
-    { key: 'ip-join', label: 'IP入驻', icon: ipJoinIcon, iconSize: 14 },
-    {
-      key: 'collaborations',
-      label: '我的合作',
-      icon: cooperationIcon,
-      activeIcon: cooperationActiveIcon,
-      iconSize: 14,
-    },
-  ],
-}
 
 const TEMPLATE_GROUP: SidebarGroup = {
   title: '模板库',
@@ -234,8 +231,8 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
             {renderItem({ key: 'home', label: '首页', icon: homeIcon, activeIcon: homeActiveIcon, iconSize: 16 })}
           </div>
 
-          {/* 创作 / 管理 / 发布 / 其他 */}
-          {GROUPS.slice(0, 2).map((group) => (
+          {/* 创作 / 社区 / 管理 */}
+          {GROUPS.map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>
               {group.items.filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key)).map(renderItem)}
@@ -244,12 +241,6 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
 
           {/* 团队：当前空间下拉 + 空间切换浮层 + 数据统计/团队管理(团队空间) */}
           <SidebarTeamGroup collapsed={collapsed} />
-
-          {/* 其他：代理商入驻 / IP入驻（待开放）+ 我的合作 */}
-          <div className="app-sidebar__group">
-            <div className="app-sidebar__group-title">{OTHERS_GROUP.title}</div>
-            {OTHERS_GROUP.items.map(renderItem)}
-          </div>
 
           {SHOW_TEMPLATE_GROUP ? (
             <div className="app-sidebar__group app-sidebar__template-group">
