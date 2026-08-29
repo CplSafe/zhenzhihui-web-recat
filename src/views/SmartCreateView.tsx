@@ -2236,6 +2236,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       ratio?: string
       /** 入队时锁定的出片分辨率；估价与提交共用同一个值。 */
       resolution?: string
+      /** 入队时锁定的背景音开关；估价与提交共用同一个值。 */
+      generateAudio?: boolean
       style?: string
       durationSec: number
       thumbnailUrl?: string
@@ -2799,6 +2801,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     const currentRatio = context && Object.prototype.hasOwnProperty.call(context, 'ratio') ? context.ratio : undefined
     const currentResolution =
       context && Object.prototype.hasOwnProperty.call(context, 'resolution') ? context.resolution : undefined
+    // 与 resolution 同口径：任务入队时锁定的背景音开关，不读当前页面状态。
+    const currentGenerateAudio =
+      context && Object.prototype.hasOwnProperty.call(context, 'generateAudio') ? context.generateAudio : undefined
     const currentStyle = context && Object.prototype.hasOwnProperty.call(context, 'style') ? context.style : undefined
     const currentPrompt =
       context && Object.prototype.hasOwnProperty.call(context, 'basePrompt') ? context.basePrompt : ''
@@ -3002,6 +3007,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             basePrompt: currentPrompt,
             ratio: currentRatio,
             resolution: currentResolution,
+            ...(typeof currentGenerateAudio === 'boolean' ? { generateAudio: currentGenerateAudio } : {}),
             style: currentStyle,
             imageAssetIds: completeImageAssetIds,
             // 真人成片：参考图能带住长相，但运动生成过程仍会漂，身份约束要显式写进整片提示词。
@@ -3240,6 +3246,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         : currentEntryMeta
     const ratio = generationMeta?.ratio
     const resolution = generationMeta?.resolution
+    const generateAudio = generationMeta?.generateAudio
     const style = generationMeta?.style
     const basePrompt = reqSummary || requirement
     const sourceVideo = cloneGenerationSnapshot(fullVideoRef.current || fullVideo)
@@ -3297,6 +3304,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           shots: currentShots,
           ratio,
           resolution,
+          ...(typeof generateAudio === 'boolean' ? { generateAudio } : {}),
           referenceImageCount: currentShots.filter((shot) => shot.includeInVideo !== false).length,
         })
         const estimate: any = await estimateFullVideoCost({
@@ -3304,6 +3312,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           shots: currentShots,
           ratio,
           resolution,
+          ...(typeof generateAudio === 'boolean' ? { generateAudio } : {}),
           referenceImageCount: countReferenceImages(entryMetaRef.current),
           modelVersionId: modelSelection.modelVersionId,
           modelVersion,
@@ -3413,6 +3422,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             basePrompt,
             ratio,
             resolution,
+            ...(typeof generateAudio === 'boolean' ? { generateAudio } : {}),
             style,
             durationSec: durationValidation.seconds,
             thumbnailUrl: currentShots.find((shot) => shot.image)?.image || '',
@@ -3695,6 +3705,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         ),
         ratio: subscribedEntryMeta?.ratio,
         resolution: subscribedEntryMeta?.resolution,
+        // 恢复在途任务时同样带上背景音开关，否则「确认修改」重新生成会丢掉用户原本的选择。
+        ...(typeof subscribedEntryMeta?.generateAudio === 'boolean'
+          ? { generateAudio: subscribedEntryMeta.generateAudio }
+          : {}),
         style: subscribedEntryMeta?.style,
         durationSec: totalDurationSec(shotsRef.current) || 0,
         thumbnailUrl: shotsRef.current.find((shot) => shot.image)?.image || '',
@@ -3788,6 +3802,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         basePrompt: String(restoredDraft.reqSummary || restoredDraft.requirement || reqSummary || requirement || ''),
         ratio: restoredEntryMeta?.ratio,
         resolution: restoredEntryMeta?.resolution,
+        // 恢复在途任务时同样带上背景音开关，否则「确认修改」重新生成会丢掉用户原本的选择。
+        ...(typeof restoredEntryMeta?.generateAudio === 'boolean'
+          ? { generateAudio: restoredEntryMeta.generateAudio }
+          : {}),
         style: restoredEntryMeta?.style,
         durationSec: totalDurationSec(shotsRef.current) || 0,
         thumbnailUrl: shotsRef.current.find((shot) => shot.image)?.image || '',
@@ -3925,6 +3943,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           shots,
           ratio: entryMeta?.ratio,
           resolution: entryMeta?.resolution,
+          generateAudio: entryMeta?.generateAudio,
           modelVersionId: modelSelection.modelVersionId,
           modelVersion: modelSelection.source,
           modelPlanCandidates: [],
@@ -4017,6 +4036,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             shots,
             ratio: entryMeta?.ratio,
             resolution: entryMeta?.resolution,
+            generateAudio: entryMeta?.generateAudio,
             modelVersionId: modelSelection.modelVersionId,
             modelVersion: modelSelection.source,
             modelPlanCandidates: [],
@@ -8257,6 +8277,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             shots,
             ratio: entryMeta?.ratio,
             resolution: entryMeta?.resolution,
+            generateAudio: entryMeta?.generateAudio,
             modelVersionId: modelSelection.modelVersionId,
             modelVersion: modelSelection.source,
             modelPlanCandidates: [],
@@ -8458,6 +8479,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                 canResume={canResumeFlow}
                 onResume={resumeFlow}
                 modelGroups={generationModelCatalog.pickerGroups}
+                resolveModel={generationModelCatalog.resolveModel}
                 modelOperationStates={generationModelCatalog.operationStates}
                 modelLoading={generationModelCatalog.loading}
                 modelError={generationModelCatalog.error}
@@ -8474,6 +8496,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                   ratio: entryMeta?.ratio ?? carriedEntry.ratio,
                   duration: entryMeta?.duration,
                   resolution: entryMeta?.resolution,
+                  generateAudio: entryMeta?.generateAudio,
                   images:
                     entryMeta?.mode === 'image' && imageComposerDraft.images.length
                       ? imageComposerDraft.images.map((image) => image.url)

@@ -57,6 +57,8 @@ export interface HotCopyDraft {
   genDurationSec?: number
   /** 用户在入口选择的出片分辨率;恢复后重新生成沿用同样设置。 */
   genResolution?: string
+  /** 用户在入口选择的背景音开关;恢复后重新生成沿用同样设置。 */
+  genGenerateAudio?: boolean
   /** 每次生成的独立记录(生成中/失败 → 项目里显示成可重试「草稿」;成功并入成片后置 published 即从草稿列表消失)。
    *  进行中那条的 createdAt 同时作为「加载进度锚点」:切页面/刷新回来按真实流逝时间续算,不从头爬。 */
   videoGenerations?: HotCopyGenRecord[]

@@ -66,11 +66,12 @@
   width: min(1180px, 94%);
 }
 
+/* 原先靠 absolute + top:30px 卡在分段 Tab 那一行的右侧；Tab 整块移除后那个坐标
+   落进了卡片内部、压住占位文案。改为正常流里的独立一行，右对齐即可，
+   不再依赖任何被删元素的高度。 */
 .hotcopy__newVideoBtn {
-  position: absolute;
-  top: 30px;
-  right: 15px;
-  z-index: 2;
+  display: block;
+  margin: 0 4px 12px auto;
   padding: 6px 4px;
   border: none;
   background: transparent;
@@ -85,69 +86,6 @@
 
 .hotcopy__newVideoBtn:hover {
   color: #1fcfa9;
-}
-
-/* 分段 Tab(对齐智能成片 .tabs):灰底条在卡片下层,bottom:-20px 把底部塞进主卡,
-   卡片(z-index:1)盖住灰条底部 → 无缝「文件夹页签」;选中态为白色圆角卡 */
-.hotcopy__tabs {
-  display: inline-flex;
-  align-items: stretch;
-  gap: 8px;
-  background: rgba(244, 244, 244, 0.6);
-  border-radius: 8px 8px 0 0;
-  padding: 6px 6px 26px;
-  position: relative;
-  z-index: 0;
-  bottom: -20px;
-}
-.hotcopy__tab {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 205px;
-  border: none;
-  background: transparent;
-  border-radius: 12px;
-  padding: 10px 16px;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    box-shadow 0.15s;
-}
-.hotcopy__tab:hover:not(.is-active) .hotcopy__tab-name {
-  color: #333;
-}
-.hotcopy__tab.is-active {
-  background: #fff;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-}
-.hotcopy__tab-head {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.hotcopy__tab-name {
-  font-size: 16px;
-  font-weight: 500;
-  color: #666;
-}
-.hotcopy__tab.is-active .hotcopy__tab-name {
-  color: #333;
-}
-.hotcopy__tip {
-  width: 16px;
-  height: 16px;
-  cursor: help;
-  flex: 0 0 auto;
-  opacity: 0.5;
-}
-.hotcopy__tab.is-active .hotcopy__tip {
-  opacity: 0.85;
-}
-.hotcopy__tab-sub {
-  font-size: 14px;
-  color: #666;
 }
 
 /* 主卡片(对齐智能成片 .card:30px 圆角 + 柔和投影 + 浅白描边) */
@@ -770,22 +708,6 @@
     width: min(760px, 100%);
   }
 
-  .hotcopy__newVideoBtn {
-    top: -44px;
-    right: 4px;
-  }
-
-  .hotcopy__tabs {
-    display: flex;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .hotcopy__tab {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
   .hotcopy__body {
     flex-direction: column;
     gap: 18px;
@@ -831,27 +753,8 @@
   }
 
   .hotcopy__newVideoBtn {
-    position: static;
-    display: block;
-    margin: 0 4px 6px auto;
+    margin-bottom: 6px;
     padding: 8px 4px;
-  }
-
-  .hotcopy__tabs {
-    gap: 4px;
-    padding: 4px 4px 24px;
-  }
-
-  .hotcopy__tab {
-    padding: 9px 10px;
-  }
-
-  .hotcopy__tab-name {
-    font-size: 15px;
-  }
-
-  .hotcopy__tab-sub {
-    font-size: 12px;
   }
 
   .hotcopy__card {

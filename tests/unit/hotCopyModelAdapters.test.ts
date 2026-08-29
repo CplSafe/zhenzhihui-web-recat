@@ -67,6 +67,37 @@ describe('buildHotCopyReplicateModelParams', () => {
     ).toMatchObject({ resolution: '1080p' })
   })
 
+  /**
+   * 线上「爆款视频做同款」的 display_name / model 都不含 seedance 版本号，
+   * 分类落在 'other' 分支；只要后端 schema 声明了 generate_audio 就必须下发，
+   * 否则服务端 taskBody 会把缺失兜底成 false，做同款永远没有背景音。
+   */
+  it('下发做同款模型 schema 声明的 generate_audio', () => {
+    expect(
+      buildHotCopyReplicateModelParams(
+        {
+          display_name: '爆款视频做同款',
+          model: 'seedance-replicate',
+          provider: 'replicate',
+          params_schema: {
+            fields: [
+              { name: 'duration' },
+              { name: 'resolution', options: ['480p', '720p'] },
+              { name: 'ratio', options: ['16:9', '9:16', '1:1'] },
+              { name: 'generate_audio', type: 'boolean' },
+            ],
+          },
+        },
+        { durationSec: 10, ratio: '9:16', resolution: '720p' },
+      ),
+    ).toEqual({
+      duration: 10,
+      resolution: '720p',
+      ratio: '9:16',
+      generate_audio: true,
+    })
+  })
+
   it('does not leak the Seedance audio fallback into a reference-video model', () => {
     expect(
       buildHotCopyReplicateModelParams(

@@ -507,6 +507,8 @@ function buildEntrySnapshot(payload?: Partial<HotCopyEntryPayload> | null): Part
     ratio: String(payload.ratio || DEFAULT_RATIO),
     duration: String(payload.duration || `${DEFAULT_DURATION_SEC}s`),
     resolution: String(payload.resolution || LEGACY_DEFAULT_VIDEO_RESOLUTION),
+    // 未显式选择过时沿用默认（开）：这个开关上线前的行为就是一律开。
+    generateAudio: payload.generateAudio ?? true,
     ...(Number.isSafeInteger(Number(payload.modelVersionId)) && Number(payload.modelVersionId) > 0
       ? { modelVersionId: Number(payload.modelVersionId) }
       : {}),
@@ -1035,6 +1037,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       genRatio,
       genDurationSec,
       genResolution,
+      genGenerateAudio,
     }
     saveHotCopyDraft(ws, { ...base, ...partial }, options)
   })
@@ -1061,6 +1064,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   const [genDurationSec, setGenDurationSec] = useState(DEFAULT_DURATION_SEC)
   // 用户在入口选择的出片分辨率;档位由所选 replicate 模型 schema 决定,默认沿用历史的 720p。
   const [genResolution, setGenResolution] = useState(LEGACY_DEFAULT_VIDEO_RESOLUTION)
+  // 用户在入口选择的背景音开关;默认开,与这个开关上线前一直硬编码下发 true 的行为一致。
+  const [genGenerateAudio, setGenGenerateAudio] = useState(true)
   // replicate 模型支持的比例选项(取自模型 params_schema 的 ratio 字段);供入口下拉只放模型真做得了的比例。
   const [ratioOptions, setRatioOptions] = useState<string[]>([])
   const selectedHotCopyModel = hotCopyModelCatalog.resolveModel(entryInitial?.modelVersionId)
@@ -2563,6 +2568,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       if (d.genRatio) setGenRatio(String(d.genRatio))
       setGenDurationSec(restoredGenDurationSec)
       if (d.genResolution) setGenResolution(String(d.genResolution))
+      if (typeof d.genGenerateAudio === 'boolean') setGenGenerateAudio(d.genGenerateAudio)
       // 同会话切回时优先订阅原 Promise；只有登记表不存在时才凭 taskId 恢复，避免同一任务重复轮询。
       const subscribed = pid > 0 && subscribeRunningVideo(pid, pendingTaskId)
       if (!subscribed && pendingTaskId > 0 && restoredIsGenerating) resumeVideoTask(ws, pendingTaskId)
@@ -3693,6 +3699,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         referenceImageCount: selectedReferenceImageCount,
         ratio: genRatio,
         resolution: genResolution,
+        generateAudio: genGenerateAudio,
         durationSec: genDurationSec,
       })
     } catch (error: any) {
@@ -3743,6 +3750,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     selectedReferenceImageCount,
     genRatio,
     genResolution,
+    genGenerateAudio,
     genDurationSec,
     selectedHotCopyModel,
   ])
@@ -4428,6 +4436,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         referenceImageCount: recoveredProductAssetIds.slice(0, 9).length,
         ratio: genRatio,
         resolution: genResolution,
+        generateAudio: genGenerateAudio,
         durationSec: genDurationSec,
       })
       if (Number(requestSnapshot.modelVersionId || 0) !== Number(entryBase?.modelVersionId || 0)) {
@@ -4642,6 +4651,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     setGenRatio(nextRatio)
     setGenDurationSec(nextDurationSec)
     setGenResolution(nextResolution)
+    setGenGenerateAudio(payload.generateAudio ?? true)
     if (sourceChanged) {
       setSourceVideoDurSec(0)
       setSourceVideoDurAssetId(0)
@@ -4693,6 +4703,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         if (d?.genRatio) setGenRatio(String(d.genRatio))
         if (Number(d?.genDurationSec) > 0) setGenDurationSec(Number(d.genDurationSec))
         if (d?.genResolution) setGenResolution(String(d.genResolution))
+        if (typeof d?.genGenerateAudio === 'boolean') setGenGenerateAudio(d.genGenerateAudio)
         showToast('检测到视频正在生成，已为你恢复进度', 'info')
         resumeVideoTask(ws, pendingTask)
       })
@@ -4763,6 +4774,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           sourceVideoDurationSec: sourceDurationSec,
           referenceImageCount: preparedPayload.products.filter((product) => !product.isVideo).slice(0, 9).length,
           ratio: preparedPayload.ratio || DEFAULT_RATIO,
+          resolution: preparedPayload.resolution || genResolution || LEGACY_DEFAULT_VIDEO_RESOLUTION,
+          generateAudio: preparedPayload.generateAudio ?? genGenerateAudio,
           durationSec: parseDurationSeconds(preparedPayload.duration) || DEFAULT_DURATION_SEC,
         })
         if (
@@ -5239,6 +5252,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                   initial={entryInitial}
                   ratioOptions={ratioOptions}
                   modelGroups={hotCopyModelCatalog.pickerGroups}
+                  resolveModel={hotCopyModelCatalog.resolveModel}
                   modelLoading={hotCopyModelCatalog.loading}
                   modelError={hotCopyModelCatalog.error}
                   modelReady={hotCopyModelCatalog.ready}
