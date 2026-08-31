@@ -1052,16 +1052,15 @@ export default function CanvasNodePanel({
             {inputValidationError}
           </div>
         )}
-        {kind === 'video' ? (
-          /* 视频节点：槽位随生成方式变化 —— 首尾帧=首帧+尾帧双槽（含交换）；
-             全能参考=所选模型声明的参考图上限（未声明则回退默认值），见 maxRefs */
+        {kind === 'video' && videoMode === 'first-last' ? (
+          /* 首尾帧模式的两个槽位语义不同，必须同时保留，方便分别指定首帧和尾帧。 */
           <div className={styles.refImages}>
             {refSlots.map((slot) => {
               const ref = findRefBySlot(sourceRefs, slot)
-              const title = videoMode === 'first-last' ? (slot === 0 ? '首帧' : '尾帧') : `参考 ${slot + 1}`
+              const title = slot === 0 ? '首帧' : '尾帧'
               return (
                 <React.Fragment key={slot}>
-                  {videoMode === 'first-last' && slot === 1 && (
+                  {slot === 1 && (
                     <span className={styles.refSwapIcon}>
                       <SwapIcon />
                     </span>
@@ -1093,6 +1092,47 @@ export default function CanvasNodePanel({
                 </React.Fragment>
               )
             })}
+          </div>
+        ) : kind === 'video' ? (
+          /* 自由生成只展示已有素材，并在末尾保留一个添加入口；模型上限用于校验，不生成同等数量的空槽位。 */
+          <div className={styles.refImages}>
+            {sourceRefs
+              .filter((ref) => ref.kind !== 'text')
+              .map((ref) => (
+                <div key={ref.edgeId} className={styles.refThumb} title={ref.kind === 'image' ? '图片' : '视频'}>
+                  <RefThumbMedia sourceRef={ref} label={ref.kind} />
+                  <button
+                    type="button"
+                    className={styles.refDelete}
+                    disabled={taskRunning}
+                    aria-label={`删除${ref.kind === 'image' ? '图片' : '视频'}参考`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onRemoveRef?.(ref.edgeId)
+                    }}
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+            {mediaRefCount < maxRefs && (
+              <RefAddButton
+                disabled={taskRunning}
+                title={taskRunning ? '生成中不可修改素材' : '添加参考'}
+                onPickFromCanvas={() => {
+                  const nextSlot = refSlots.find((slot) => !findRefBySlot(sourceRefs, slot)) ?? mediaRefCount
+                  onStartPickRef?.(nextSlot)
+                }}
+                onPickFromLibrary={
+                  onPickRefFromLibrary
+                    ? () => {
+                        const nextSlot = refSlots.find((slot) => !findRefBySlot(sourceRefs, slot)) ?? mediaRefCount
+                        onPickRefFromLibrary(nextSlot)
+                      }
+                    : undefined
+                }
+              />
+            )}
           </div>
         ) : sourceRefs.length > 0 ? (
           <div className={styles.refImages}>

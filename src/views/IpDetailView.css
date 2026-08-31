@@ -249,6 +249,11 @@
 .ipd__work video {
   display: block;
   width: 100%;
+  height: auto;
+}
+
+.ipd__work video {
+  background: #171923;
 }
 
 .ipd__work-ph {

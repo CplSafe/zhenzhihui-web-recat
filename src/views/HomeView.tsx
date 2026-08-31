@@ -1413,10 +1413,10 @@ export default function HomeView() {
                                 className="home__ipcard-send"
                                 onClick={(event) => {
                                   event.stopPropagation()
-                                  openDemandForm({ id: profile.id, name: profile.name })
+                                  navigate(`/ip/${profile.id}`)
                                 }}
                               >
-                                发送需求
+                                查看详情
                               </button>
                             </div>
                           </div>

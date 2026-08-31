@@ -106,6 +106,8 @@ const CanvasListView = lazy(() => import('../views/CanvasListView'))
 const CanvasShareView = lazy(() => import('../views/CanvasShareView'))
 /** IP 创作者详情路由组件。 */
 const IpDetailView = lazy(() => import('../views/IpDetailView'))
+/** 社区作品展示、我的作品与作者管理详情。 */
+const CommunityWorksView = lazy(() => import('../views/CommunityWorksView'))
 /** 需求市场需求详情路由组件。 */
 const DemandDetailView = lazy(() => import('../views/DemandDetailView'))
 /** 我的合作（需求发布/接单管理）路由组件。 */
@@ -308,6 +310,9 @@ export const router = createBrowserRouter([
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },
       // IP 创作者主页与需求详情:与首页同为可浏览页,发起合作/申请接单在页面内鉴权。
       { path: 'ip/:userId', element: lazyPage(<IpDetailView />), handle: { requiresAuth: false } },
+      { path: 'works/:id', element: lazyPage(<CommunityWorksView />), handle: { requiresAuth: false } },
+      { path: 'my-works', element: lazyPage(<CommunityWorksView list />) },
+      { path: 'works/:id/manage', element: lazyPage(<CommunityWorksView manage />) },
       { path: 'demand/:id', element: lazyPage(<DemandDetailView />), handle: { requiresAuth: false } },
       { path: 'collaborations', element: lazyPage(<MyCollaborationsView />) },
       // 智能成片 / 爆款复制:免登录可进入并交互,仅「生成」动作需登录(组件内拦截)

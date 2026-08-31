@@ -557,9 +557,16 @@ export function attachClipSourceDuration(
       if (clip.id !== clipId) return clip
       const inSec = Math.min(clip.inSec, Math.max(0, roundSeconds(duration - MIN_CLIP_DURATION_SEC)))
       // 还没量过时长、且区间仍是创建时的占位值 → 这条片段本意是「整段使用」，展开到真实结尾；
-      // 其余情况（用户已裁剪过，或占位区间大于真实时长）一律收敛到真实结尾。
+      // 旧数据可能把模型生成参数（常见为 5 秒）误存成源片总时长；若片段当时覆盖了“整个已知源片”，
+      // 校准到更长的真实时长后仍应保持整段使用，而不是把那份错误的 5 秒当成用户主动裁剪。
+      // 其余情况（用户已裁剪过，或区间大于真实时长）一律收敛到真实结尾。
       const isPlaceholderRange = clip.sourceDurationSec <= 0 && clip.outSec <= MIN_CLIP_DURATION_SEC
-      const outSec = isPlaceholderRange ? duration : Math.min(clip.outSec > 0 ? clip.outSec : duration, duration)
+      const coveredWholeKnownSource =
+        clip.sourceDurationSec > 0 && clip.inSec <= 0.001 && Math.abs(clip.outSec - clip.sourceDurationSec) <= 0.01
+      const outSec =
+        isPlaceholderRange || coveredWholeKnownSource
+          ? duration
+          : Math.min(clip.outSec > 0 ? clip.outSec : duration, duration)
       return {
         ...clip,
         sourceDurationSec: duration,

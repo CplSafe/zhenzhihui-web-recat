@@ -148,9 +148,29 @@ export async function getCommunityIp(userId: number, signal?: AbortSignal): Prom
 export interface CommunityWorkItem {
   id: number
   title: string
+  description: string
   coverUrl: string
   mediaUrl: string
   mediaType: 'image' | 'video'
+  status: string
+  visibility: string
+  createdAt: string
+  authorId: number
+  authorName: string
+  authorAvatar: string
+  category: string
+  content: string
+  assetIds: number[]
+  coverAssetId: number
+}
+
+export interface CommunityWorkInput {
+  title: string
+  summary?: string
+  content?: string
+  category?: string
+  assetIds: number[]
+  coverAssetId?: number
 }
 
 /** 从作品的 cover_asset / assets 里挑出可展示的封面与媒体地址。 */
@@ -160,13 +180,34 @@ export function normalizeCommunityWork(raw: any): CommunityWorkItem {
   const isVideo = (asset: any) =>
     String(asset?.type || '').includes('video') || String(asset?.mime_type || '').startsWith('video/')
   const media = assets.find((asset) => text(asset?.url)) || cover
+  const imageCover = cover && !isVideo(cover) ? cover : assets.find((asset) => !isVideo(asset) && text(asset?.url))
   return {
     id: number(raw?.id),
     title: text(raw?.title, '未命名作品'),
-    coverUrl: text(cover?.url, assets.find((asset) => !isVideo(asset))?.url),
+    description: text(raw?.description, raw?.content, raw?.summary),
+    // 后端允许视频资产本身作为 cover_asset。视频 URL 不能交给 <img>，否则加载失败后卡片会塌成 0 高度。
+    coverUrl: text(imageCover?.url),
     mediaUrl: text(media?.url),
     mediaType: media && isVideo(media) ? 'video' : 'image',
+    status: text(raw?.status, raw?.publish_status),
+    visibility: text(
+      raw?.visibility,
+      raw?.is_public === true ? 'public' : '',
+      raw?.is_public === false ? 'private' : '',
+    ),
+    createdAt: text(raw?.created_at, raw?.createdAt, raw?.published_at),
+    authorId: number(raw?.user_id, raw?.userId, raw?.author?.id, raw?.user?.id),
+    authorName: text(raw?.author?.nickname, raw?.user?.nickname, raw?.nickname, raw?.author_name),
+    authorAvatar: text(raw?.author?.avatar_url, raw?.user?.avatar_url, raw?.avatar_url),
+    category: text(raw?.category),
+    content: text(raw?.content),
+    assetIds: assets.map((asset) => number(asset?.id, asset?.asset_id)).filter((id) => id > 0),
+    coverAssetId: number(cover?.id, cover?.asset_id, raw?.cover_asset_id),
   }
+}
+
+function normalizeWorkPayload(payload: any): CommunityWorkItem {
+  return normalizeCommunityWork(payload?.data?.work ?? payload?.data)
 }
 
 /** GET /api/v1/community/works：某位创作者的公开作品（IP 详情页作品展示）。 */
@@ -196,4 +237,93 @@ export async function listCommunityWorks({
     .map(normalizeCommunityWork)
     .filter((item) => item.id > 0)
   return { items, total: number(payload?.data?.total, items.length) }
+}
+
+/** GET /api/v1/community/me/works：当前用户的作品（包含未公开作品）。 */
+export async function listMyCommunityWorks({
+  limit = 60,
+  offset = 0,
+  signal,
+}: {
+  limit?: number
+  offset?: number
+  signal?: AbortSignal
+} = {}): Promise<{ items: CommunityWorkItem[]; total: number }> {
+  const params = new URLSearchParams({
+    limit: String(Math.min(100, Math.max(1, limit))),
+    offset: String(Math.max(0, offset)),
+  })
+  const response = await fetch(`/api/v1/community/me/works?${params}`, {
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  const payload = await readPayload(response)
+  const items = unwrapItems(payload)
+    .map(normalizeCommunityWork)
+    .filter((item) => item.id > 0)
+  return { items, total: number(payload?.data?.total, items.length) }
+}
+
+/** GET /api/v1/community/works/{id}：游客可访问的公开作品详情。 */
+export async function getCommunityWork(workId: number, signal?: AbortSignal): Promise<CommunityWorkItem> {
+  const response = await fetch(`/api/v1/community/works/${Math.floor(workId)}`, {
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  return normalizeWorkPayload(await readPayload(response))
+}
+
+/** GET /api/v1/community/works/{id}/manage：作者本人的管理视角详情。 */
+export async function getCommunityWorkManage(workId: number, signal?: AbortSignal): Promise<CommunityWorkItem> {
+  const response = await fetch(`/api/v1/community/works/${Math.floor(workId)}/manage`, {
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  return normalizeWorkPayload(await readPayload(response))
+}
+
+function communityWorkBody(input: CommunityWorkInput): string {
+  return JSON.stringify({
+    title: input.title.trim(),
+    summary: String(input.summary || '').trim(),
+    content: String(input.content || '').trim(),
+    category: String(input.category || '').trim(),
+    asset_ids: input.assetIds.map(Number).filter((id) => Number.isInteger(id) && id > 0),
+    cover_asset_id: Number(input.coverAssetId || input.assetIds[0] || 0) || undefined,
+  })
+}
+
+async function mutateCommunityWork(path: string, options: RequestInit): Promise<CommunityWorkItem> {
+  const response = await fetch(path, {
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...options.headers },
+    ...options,
+  })
+  return normalizeWorkPayload(await readPayload(response))
+}
+
+/** 创建可继续编辑的作品草稿。 */
+export function createCommunityWork(input: CommunityWorkInput): Promise<CommunityWorkItem> {
+  return mutateCommunityWork('/api/v1/community/works', { method: 'POST', body: communityWorkBody(input) })
+}
+
+/** 完整更新作者自己的作品信息。 */
+export function updateCommunityWork(workId: number, input: CommunityWorkInput): Promise<CommunityWorkItem> {
+  return mutateCommunityWork(`/api/v1/community/works/${Math.floor(workId)}`, {
+    method: 'PUT',
+    body: communityWorkBody(input),
+  })
+}
+
+/** 将草稿公开发布到创作者主页。 */
+export function publishCommunityWork(workId: number): Promise<CommunityWorkItem> {
+  return mutateCommunityWork(`/api/v1/community/works/${Math.floor(workId)}/publish`, { method: 'POST' })
+}
+
+/** 下架公开作品，保留在作者的作品管理中。 */
+export function archiveCommunityWork(workId: number): Promise<CommunityWorkItem> {
+  return mutateCommunityWork(`/api/v1/community/works/${Math.floor(workId)}/archive`, { method: 'POST' })
 }
