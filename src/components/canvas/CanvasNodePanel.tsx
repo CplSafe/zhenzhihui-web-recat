@@ -12,6 +12,7 @@ import { estimateAiTaskCost } from '@/api/business'
 import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
+  canvasVideoReferenceMode,
   validateCanvasImageInputs,
   validateCanvasVideoInputs,
   type CanvasInputAsset,
@@ -93,8 +94,22 @@ function isDurationField(field: ParamsSchemaField): boolean {
  */
 const HIDDEN_PARAM_KEYS = new Set(['seed', 'randomseed', 'noiseseed', 'seednumber'])
 
+/**
+ * reference_mode 由「生成方式」分段控件（首尾帧 / 全能参考）驱动，不作为独立参数暴露：
+ * 两个控件指向同一个开关，同屏出现必然打架。同时必须挡住 buildSchemaParams 用
+ * schema 的 Default 填它——后端 ValidateParams 刻意不注入 Default，好让「不传」
+ * 触发按素材数量的启发式；前端替它填 false 会把缺省探测变成「显式要首尾帧」，
+ * 于是用户选了全能参考、图片仍被翻译成 first_frame / last_frame。
+ */
+const REFERENCE_MODE_KEYS = new Set(['referencemode'])
+
+function isReferenceModeField(field: ParamsSchemaField): boolean {
+  return REFERENCE_MODE_KEYS.has(normalizeParamKey(field.name))
+}
+
 function isHiddenParamField(field: ParamsSchemaField): boolean {
-  return HIDDEN_PARAM_KEYS.has(normalizeParamKey(field.name))
+  const key = normalizeParamKey(field.name)
+  return HIDDEN_PARAM_KEYS.has(key) || REFERENCE_MODE_KEYS.has(key)
 }
 
 /** 识别 seedream 5.0 模型：displayName + 原始记录中的名称/版本字段拼接后匹配。 */
@@ -794,10 +809,21 @@ export default function CanvasNodePanel({
   const imageRatioInSchema = kind === 'image' && schemaFields.some(isRatioField)
 
   // 参数 params：由所选模型的 schema fields 动态构建（所有节点类型通用，不再写死 resolution/duration）
-  const schemaParams = useMemo<Record<string, unknown>>(
-    () => buildSchemaParams(fieldValues),
-    [buildSchemaParams, fieldValues],
-  )
+  //
+  // 视频再按「生成方式」补上 reference_mode：它被 isHiddenParamField 挡在 schemaFields 之外
+  // （避免与分段控件重复、也避免被 schema Default 顶成 false），只能在这里按模型声明的
+  // 真实字段名注入，与智能成片 buildSmartVideoParams 同口径。未声明该字段的模型
+  // （kling / minimax 各有自己的模式开关）不下发，免得塞入上游不认识的参数。
+  const schemaParams = useMemo<Record<string, unknown>>(() => {
+    const params = buildSchemaParams(fieldValues)
+    if (kind !== 'video') return params
+    const referenceMode = canvasVideoReferenceMode(videoMode)
+    if (referenceMode === undefined) return params
+    // 从未过滤的 schema 里找（schemaFields 已把它剔除），按模型声明的真实字段名下发。
+    const field = parseParamsSchema(selectedModel).find(isReferenceModeField)
+    if (field?.name) params[field.name] = referenceMode
+    return params
+  }, [buildSchemaParams, fieldValues, kind, videoMode, selectedModel])
 
   /**
    * 拼接最终 prompt：继承来的文本在前（按连线顺序），用户自己的提示词在后；
