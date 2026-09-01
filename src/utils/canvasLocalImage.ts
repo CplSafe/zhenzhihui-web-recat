@@ -100,6 +100,25 @@ export function snapImageRatio(width: number, height: number): string {
   return best
 }
 
+/** 原图真实长宽比，约分后用于画布素材节点尺寸；非法尺寸退回 1:1。 */
+export function naturalImageRatio(width: number, height: number): string {
+  const w = Math.round(Number(width))
+  const h = Math.round(Number(height))
+  if (!Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w <= 0 || h <= 0) return '1:1'
+  const gcd = (left: number, right: number): number => {
+    let a = left
+    let b = right
+    while (b > 0) {
+      const remainder = a % b
+      a = b
+      b = remainder
+    }
+    return a || 1
+  }
+  const divisor = gcd(w, h)
+  return `${w / divisor}:${h / divisor}`
+}
+
 /** 读取本地图片的原始宽高；解码失败返回 null（调用方退回默认比例） */
 export function readImageNaturalSize(file: File): Promise<{ width: number; height: number } | null> {
   return new Promise((resolve) => {

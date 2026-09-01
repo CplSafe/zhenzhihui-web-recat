@@ -4,7 +4,7 @@
  * 懒加载页面(如 HomeView)恰好载入过样式,否则在 /smart 直接点开视频时
  * 弹窗会裸奔成流内元素,把页面挤乱。
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
 import './VideoPreviewModal.css'
 import SeekableVideo from './SeekableVideo'
 
@@ -23,7 +23,17 @@ export default function VideoPreviewModal({ src, poster, crossOrigin, onClose }:
   const modalRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const onCloseRef = useRef(onClose)
+  const [videoAspect, setVideoAspect] = useState(16 / 9)
   onCloseRef.current = onClose
+
+  useEffect(() => {
+    setVideoAspect(16 / 9)
+  }, [src])
+
+  const handleLoadedMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget
+    if (video.videoWidth > 0 && video.videoHeight > 0) setVideoAspect(video.videoWidth / video.videoHeight)
+  }
 
   useEffect(() => {
     if (!src) return
@@ -66,11 +76,19 @@ export default function VideoPreviewModal({ src, poster, crossOrigin, onClose }:
   }, [src])
 
   if (!src) return null
+  const isExternalDirectMedia = (() => {
+    try {
+      return new URL(src, window.location.href).origin !== window.location.origin
+    } catch {
+      return false
+    }
+  })()
   return (
     <div className="home__video-modal-mask" onClick={onClose}>
       <div
         ref={modalRef}
         className="home__video-modal"
+        style={{ '--video-aspect': String(videoAspect) } as CSSProperties}
         role="dialog"
         aria-modal="true"
         aria-label="视频预览"
@@ -85,17 +103,31 @@ export default function VideoPreviewModal({ src, poster, crossOrigin, onClose }:
         >
           ✕
         </button>
-        {/* 用 SeekableVideo 而不是原生 <video>：/download 不支持 Range，
-            原生播放器拖进度条会被抹回 0，这里在跳转失败后自动换本地副本 */}
-        <SeekableVideo
-          className="home__video-modal-player"
-          src={src}
-          poster={poster || undefined}
-          controls
-          autoPlay
-          playsInline
-          {...(crossOrigin ? { crossOrigin } : {})}
-        />
+        {/* OSS/S3 直链已支持 Range，直接用原生分段播放，避免兼容层误判后下载整个大视频。
+            仅同源 /download 地址保留 SeekableVideo 的本地副本降级。 */}
+        {isExternalDirectMedia ? (
+          <video
+            className="home__video-modal-player"
+            src={src}
+            poster={poster || undefined}
+            controls
+            autoPlay
+            playsInline
+            preload="metadata"
+            onLoadedMetadata={handleLoadedMetadata}
+          />
+        ) : (
+          <SeekableVideo
+            className="home__video-modal-player"
+            src={src}
+            poster={poster || undefined}
+            controls
+            autoPlay
+            playsInline
+            onLoadedMetadata={handleLoadedMetadata}
+            {...(crossOrigin ? { crossOrigin } : {})}
+          />
+        )}
       </div>
     </div>
   )

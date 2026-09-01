@@ -627,6 +627,7 @@ function ResourceCard({
     deleting?: boolean
     /** 可直接把该素材带进创作的去向；为空时不展示「去创作」。 */
     createTargets?: Array<{ key: string; label: string; onSelect: () => void }>
+    onPublish?: () => void
   }
 }) {
   const [ratio, setRatio] = useState<string>(card.duration || '')
@@ -695,6 +696,16 @@ function ResourceCard({
             </svg>
             下载
           </button>
+          {favoriteActions.onPublish ? (
+            <button
+              type="button"
+              className="resource-favorite-action-btn"
+              onClick={favoriteActions.onPublish}
+              aria-label={`将${card.title}发布到作品展示`}
+            >
+              发布作品
+            </button>
+          ) : null}
           {/* 去创作：直接把素材带进创作流程，省去「先下载到本地再上传」。
               原来的「做同款」已并入本菜单——它本质上就是「视频 → 爆款复制」这一个去向。 */}
           {createTargets.length ? (
@@ -1750,6 +1761,19 @@ export default function ResourceManagementView() {
                         onToggleSelect={() => toggleSelectedCard(card)}
                         favoriteActions={{
                           onDownload: () => downloadResourceCard(card),
+                          onPublish:
+                            Number(card.assetId || 0) > 0
+                              ? () =>
+                                  navigate('/my-works', {
+                                    state: {
+                                      createWork: {
+                                        assetId: Number(card.assetId),
+                                        title: String(card.title || '未命名作品'),
+                                        category: card.mediaKind === 'video' ? 'video' : 'image',
+                                      },
+                                    },
+                                  })
+                              : undefined,
                           createTargets: createTargetsForCard(card),
                           onDelete:
                             mainTab !== 'collected' && Number(card.assetId || 0) > 0

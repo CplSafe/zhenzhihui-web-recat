@@ -227,6 +227,34 @@ describe('CanvasNodePanel 视频生视频用的是视频生成模型', () => {
     expect(screen.getByRole('button', { name: 'HappyHorse 参考生视频' })).toBeInTheDocument()
   })
 
+  it('自由生成模式无论模型支持多少张参考图都只显示一个添加入口', () => {
+    const sourceRefs = Array.from({ length: 5 }, (_, slotIndex) => ({
+      kind: 'image',
+      sourceId: `image-${slotIndex}`,
+      edgeId: `edge-${slotIndex}`,
+      slotIndex,
+      assetId: slotIndex + 1,
+    }))
+    renderVideoPanel(
+      [
+        {
+          modelVersionId: 43,
+          displayName: '多参考视频模型',
+          operationCodes: VIDEO_GENERATE,
+          source: {
+            params_schema: {
+              fields: [{ name: 'reference_images', type: 'array', minItems: 0, maxItems: 20 }],
+            },
+          },
+        },
+      ],
+      { id: 'node-video', kind: 'video', prompt: '生成产品视频', videoMode: 'auto', sourceRefs },
+    )
+
+    expect(screen.getAllByTitle('添加参考')).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: '删除图片参考' })).toHaveLength(5)
+  })
+
   it('提交时带出去的是 video.generate 与那条源视频来源', async () => {
     const user = userEvent.setup()
     const onGenerate = vi.fn()

@@ -18,6 +18,10 @@ export interface SeekVideoFrameOptions {
   frameTimeToleranceSec?: number
 }
 
+export interface CaptureVideoFrameFromUrlOptions extends SeekVideoFrameOptions {
+  metadataTimeoutMs?: number
+}
+
 const abortError = () => {
   if (typeof DOMException === 'function') return new DOMException('视频截帧已取消', 'AbortError')
   const error = new Error('视频截帧已取消')
@@ -289,5 +293,82 @@ export async function captureVideoFrame(
       const played = video.play()
       if (played && typeof played.catch === 'function') played.catch(() => undefined)
     }
+  }
+}
+
+/**
+ * 从一个可跳转的视频地址创建临时播放器并截帧。
+ *
+ * 画布的 /download 源可能不支持 Range，直接在正在展示的播放器上跳到尾部会被抹回 0。
+ * 调用方可先把源转换为本地 blob URL，再交给这里；临时播放器不会改动用户当前的播放位置。
+ */
+export async function captureVideoFrameFromUrl(
+  sourceUrl: string,
+  position: VideoFramePosition,
+  options: CaptureVideoFrameFromUrlOptions = {},
+): Promise<string> {
+  const source = String(sourceUrl || '').trim()
+  if (!source) return ''
+
+  const video = document.createElement('video')
+  video.muted = true
+  video.playsInline = true
+  video.preload = 'auto'
+
+  const metadataTimeoutMs = Math.max(1, options.metadataTimeoutMs ?? 10000)
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let timer = 0
+      let settled = false
+      const signal = options.signal
+
+      const cleanup = () => {
+        window.clearTimeout(timer)
+        video.removeEventListener('loadeddata', onReady)
+        video.removeEventListener('error', onError)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const finish = () => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve()
+      }
+      const fail = (error: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      }
+      const onReady = () => finish()
+      const onError = () => fail(new Error('视频元数据加载失败'))
+      const onAbort = () => fail(abortError())
+
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+      // 首帧恰好是 0 秒，只有 metadata 还不够：必须等第一帧真正解码，videoWidth 才可用于绘制。
+      video.addEventListener('loadeddata', onReady)
+      video.addEventListener('error', onError)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      timer = window.setTimeout(() => fail(new Error('视频元数据加载超时')), metadataTimeoutMs)
+      video.src = source
+      video.load()
+      if (
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        Number.isFinite(video.duration) &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0
+      )
+        finish()
+    })
+    return await captureVideoFrame(video, position, options)
+  } catch {
+    return ''
+  } finally {
+    video.pause()
+    video.removeAttribute('src')
+    video.load()
   }
 }

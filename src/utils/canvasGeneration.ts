@@ -52,6 +52,23 @@ export function validateCanvasImageInputs(args: {
 
 export type CanvasVideoMode = 'auto' | 'first-last' | 'full-ref'
 
+/**
+ * 画布生成方式 → `params.reference_mode`；返回 undefined 表示**不下发该字段**。
+ *
+ * 图片一律以 role:'image' 下发，是首尾帧还是参考由这个布尔值决定：后端
+ * volcengineImageRole 在 reference_mode=false 时把前两张按下标翻译成
+ * first_frame / last_frame，产品图会被当成起止画面。
+ *
+ * 'auto'(自由生成)必须返回 undefined 而不是 false：后端 ValidateParams 不注入
+ * schema 的 Default，就是为了让「前端不传」触发按素材数量的启发式(1~2 张=首尾帧、
+ * 超过 2 张或带视频音频=参考)。传 false 会把这个缺省探测变成显式指令。
+ */
+export function canvasVideoReferenceMode(mode?: CanvasVideoMode | string): boolean | undefined {
+  if (mode === 'first-last') return false
+  if (mode === 'full-ref') return true
+  return undefined
+}
+
 export type CanvasConnectionRole = 'prompt' | 'reference_image' | 'first_frame' | 'last_frame' | 'source_video'
 
 /** 连接语义只用于画布展示和持久化；提交时仍映射为后端已支持的 input_assets role。 */

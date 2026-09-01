@@ -77,6 +77,7 @@ import CanvasNodePanel, {
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
+import CanvasRenameNodeDialog from '@/components/canvas/CanvasRenameNodeDialog'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
@@ -102,7 +103,7 @@ import { polishText } from '@/api/aiPolish'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
-import { captureVideoFrame, type VideoFramePosition } from '@/utils/videoFrameCapture'
+import { captureVideoFrame, captureVideoFrameFromUrl, type VideoFramePosition } from '@/utils/videoFrameCapture'
 import { resolveGeneratedMediaUrls, resolveVerifiedResultAssetId } from '@/utils/taskMedia'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText } from '@/utils/canvasStructuredText'
@@ -149,10 +150,10 @@ import {
   LOCAL_VIDEO_MAX_BYTES,
   extractMediaFiles,
   hasFileDrag,
+  naturalImageRatio,
   pickImageFiles,
   pickVideoFiles,
   readImageNaturalSize,
-  snapImageRatio,
 } from '@/utils/canvasLocalImage'
 import { openMemberCenterTab, requestConfirm, showToast } from '@/stores/ui'
 import {
@@ -325,6 +326,26 @@ const TIMELINE_NODE_SIZE = { width: 460, height: 400 }
 const MAX_LOCAL_TIMELINE_SOURCE_BYTES = 512 * 1024 * 1024
 
 /**
+ * 可靠读取时间线源片时长：先走轻量元数据读取；源不支持 Range、moov 又在文件尾时，
+ * 再复用全站媒体缓存取得本地可跳转副本。不能用模型生成参数代替真实文件时长。
+ */
+async function readTimelineAssetDurationSec(assetId: number, workspaceId: number): Promise<number> {
+  const source = assetStreamUrl(assetId, workspaceId)
+  if (!source) return 0
+  const direct = await readVideoDurationSecExact(source, 10000)
+  if (direct > 0) return direct
+
+  const handle = acquireSeekableSource(source)
+  try {
+    const ready = await handle.ready
+    if (!ready.local) return 0
+    return readVideoDurationSecExact(ready.url, 15000)
+  } finally {
+    handle.release()
+  }
+}
+
+/**
  * 节点 → 画布的动作通道。
  *
  * 节点组件由 React Flow 渲染，只拿得到 data，够不到 setNodes / 上传 / 历史栈。
@@ -334,6 +355,8 @@ const MAX_LOCAL_TIMELINE_SOURCE_BYTES = 512 * 1024 * 1024
 interface CanvasNodeActions {
   /** 把视频节点当前画面截成一张图，交给画布上传并落成图片节点。 */
   onCaptureFrame?: (nodeId: string, frameDataUrl: string) => void
+  /** 图片解码后按真实宽高调整节点外框，避免统一方形节点裁掉横图/竖图。 */
+  onImageNaturalSize?: (nodeId: string, width: number, height: number) => void
   /** 该节点是否正在截帧上传中。 */
   capturingNodeId?: string
   /**
@@ -970,8 +993,14 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const kind = (data.kind as string) || 'text'
   const structuredText = useMemo(() => parseCanvasStructuredText(textContent), [textContent])
   // 截帧动作由画布提供：节点只负责取出画面，上传与建节点在上层做
-  const { onCaptureFrame, capturingNodeId, timeline: timelineActions } = useContext(CanvasNodeActionsContext)
+  const {
+    onCaptureFrame,
+    onImageNaturalSize,
+    capturingNodeId,
+    timeline: timelineActions,
+  } = useContext(CanvasNodeActionsContext)
   const capturing = capturingNodeId === id
+  const [preparingFrame, setPreparingFrame] = useState(false)
   // 截帧位置选择（首帧/当前帧/尾帧）的展开态
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   // 点到别处收起，避免菜单一直盖在画面上
@@ -984,6 +1013,47 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [captureMenuOpen])
+
+  /**
+   * 当前帧直接从画面读取；首尾帧需要可靠跳转，优先使用已经准备好的本地源，
+   * 否则通过全站共享缓存下载一次再截取，避免不支持 Range 的 /download 把 currentTime 抹回 0。
+   */
+  const captureRequestedFrame = async (position: VideoFramePosition): Promise<string> => {
+    const currentVideo = videoRef.current
+    if (videoLocalSrcRef.current) return captureVideoFrame(currentVideo, position)
+    if (position === 'current') {
+      const directFrame = await captureVideoFrame(currentVideo, position)
+      if (directFrame) return directFrame
+      // 外链视频能播放但 Canvas 可能因跨域而拒绝读取，继续走下面的同源素材兜底。
+    }
+    // 外部签名 URL 可以播放，但没有 CORS 时不能画入 Canvas；有 assetId 必须改走站内同源下载地址。
+    const captureAssetId = Number((data as Record<string, unknown> | undefined)?.assetId || 0)
+    const source =
+      Number.isSafeInteger(captureAssetId) && captureAssetId > 0
+        ? assetStreamUrl(captureAssetId, workspaceId)
+        : mediaUrlRef.current
+    if (!source) return ''
+
+    setPreparingFrame(true)
+    const handle = acquireSeekableSource(source)
+    try {
+      const ready = await handle.ready
+      const currentAssetId = Number((data as Record<string, unknown> | undefined)?.assetId || 0)
+      if (captureAssetId > 0 ? currentAssetId !== captureAssetId : mediaUrlRef.current !== source) return ''
+      if (ready.local) {
+        return captureVideoFrameFromUrl(ready.url, position, {
+          seekTimeoutMs: 8000,
+          frameTimeoutMs: 3000,
+          metadataTimeoutMs: 12000,
+        })
+      }
+      // 下载失败时仍尝试现有播放器，支持 Range 的源无需本地副本也能正常截取。
+      return captureVideoFrame(currentVideo, position, { seekTimeoutMs: 8000, frameTimeoutMs: 3000 })
+    } finally {
+      handle.release()
+      setPreparingFrame(false)
+    }
+  }
 
   // 时间线节点：卡片内直接渲染可操作的编辑面，弹窗只用于精修
   const nodeWorkspaceId = useWorkspaceId()
@@ -1078,6 +1148,9 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     timeline: '视频剪辑',
   }
   const isRealPersonAsset = isImageNode && (data as any)?.assetSource === 'real_person'
+  const defaultNodeName = isRealPersonAsset ? '真人素材' : labelMap[kind] || kind
+  const customNodeName = String((data as any)?.nodeName || '').trim()
+  const displayedNodeName = customNodeName || defaultNodeName
 
   return (
     <div
@@ -1089,7 +1162,27 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       {/* 头部：类型图标 + 标签，浮在节点上方 */}
       <div className="canvas-node-header">
         <span className="canvas-node-header__icon">{getTypeIcon(kind)}</span>
-        <span className="canvas-node-header__label">{isRealPersonAsset ? '真人素材' : labelMap[kind] || kind}</span>
+        <button
+          type="button"
+          className="canvas-node-header__rename nodrag nopan"
+          aria-label={`重命名节点：${displayedNodeName}`}
+          title="点击修改节点名称"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation()
+            ;(window as any).__canvasOpenRenameDialog?.({
+              nodeId: id,
+              currentName: customNodeName,
+              defaultName: defaultNodeName,
+            })
+          }}
+        >
+          <span className="canvas-node-header__label">{displayedNodeName}</span>
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="m10.8 2.3 2.9 2.9-7.8 7.8-3.6.7.7-3.6z" />
+            <path d="m9.6 3.5 2.9 2.9" />
+          </svg>
+        </button>
       </div>
 
       {/* 顶部操作胶囊：上传/替换 + 下载（图片/视频节点专属，与左右侧连接点图标同款交互：选中/悬停出现） */}
@@ -1389,10 +1482,10 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 <button
                   type="button"
                   className="canvas-node-video-capture"
-                  title={capturing ? '正在截帧…' : '截取画面为图片'}
+                  title={capturing || preparingFrame ? '正在准备画面…' : '截取画面为图片'}
                   aria-label="截帧"
                   aria-expanded={captureMenuOpen}
-                  disabled={capturing}
+                  disabled={capturing || preparingFrame}
                   onClick={(event) => {
                     event.stopPropagation()
                     setCaptureMenuOpen((open) => !open)
@@ -1425,9 +1518,9 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                           event.stopPropagation()
                           setCaptureMenuOpen(false)
                           void (async () => {
-                            const frame = await captureVideoFrame(videoRef.current, item.position)
+                            const frame = await captureRequestedFrame(item.position)
                             if (!frame) {
-                              showToast('画面还没准备好，稍后再试', 'info')
+                              showToast('截帧失败，请确认视频可以正常播放后重试', 'error')
                               return
                             }
                             onCaptureFrame(id, frame)
@@ -1486,7 +1579,16 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
             )}
           </div>
         ) : kind === 'image' && mediaUrl ? (
-          <img className="canvas-node-media" src={mediaUrl} alt={kind} loading="lazy" />
+          <img
+            className="canvas-node-media"
+            src={mediaUrl}
+            alt={kind}
+            loading="lazy"
+            onLoad={(event) => {
+              const image = event.currentTarget
+              onImageNaturalSize?.(id, image.naturalWidth, image.naturalHeight)
+            }}
+          />
         ) : kind === 'timeline' ? (
           // 卡片本身就是编辑面：预览 + 片段条 + 添加/合成，常用操作不必先双击进弹窗
           <div className="canvas-node-timeline">
@@ -1640,6 +1742,11 @@ function CanvasInner() {
    */
   const canvasId = Math.max(0, Math.floor(Number(routeProjectId) || 0))
   const [shareOpen, setShareOpen] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<{
+    nodeId: string
+    currentName: string
+    defaultName: string
+  } | null>(null)
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
@@ -2260,6 +2367,52 @@ function CanvasInner() {
       delete (window as any).__canvasDeleteNode
     }
   }, [deleteNodeById])
+
+  /**
+   * 节点标题重命名入口。空名称不落库，节点会自然回退到原有的类型名称。
+   * 修改前记录历史，使重命名也能跟随画布的撤销/重做行为。
+   */
+  const renameNodeById = useCallback(
+    (nodeId: string, nextName: string) => {
+      const node = latestRef.current.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node) return
+
+      const normalizedName = String(nextName || '')
+        .trim()
+        .slice(0, 40)
+      const currentName = String((node.data as any)?.nodeName || '').trim()
+      if (normalizedName === currentName) return
+
+      commitHistory()
+      setNodes((current) =>
+        current.map((candidate) => {
+          if (candidate.id !== nodeId) return candidate
+          const data = (candidate.data || {}) as Record<string, unknown>
+          if (!normalizedName) {
+            const { nodeName: _nodeName, ...rest } = data
+            return { ...candidate, data: rest }
+          }
+          return { ...candidate, data: { ...data, nodeName: normalizedName } }
+        }),
+      )
+      setSaveStatus('dirty')
+    },
+    [commitHistory, setNodes],
+  )
+
+  useEffect(() => {
+    ;(window as any).__canvasRenameNode = renameNodeById
+    return () => {
+      delete (window as any).__canvasRenameNode
+    }
+  }, [renameNodeById])
+
+  useEffect(() => {
+    ;(window as any).__canvasOpenRenameDialog = setRenameTarget
+    return () => {
+      delete (window as any).__canvasOpenRenameDialog
+    }
+  }, [])
 
   // 键盘 Delete/Backspace 删除连线（选中连线时）：入撤销栈
   const handleEdgesDelete = useCallback(
@@ -3628,11 +3781,11 @@ function CanvasInner() {
       commitHistory()
       const created = await Promise.all(
         accepted.map(async ({ file, kind }, index) => {
-          // 图片按原图长宽比就近吸附；视频统一用自适应，与生成/剪出的视频节点同一口径
+          // 图片严格使用原图比例；视频统一用自适应，与生成/剪出的视频节点同一口径。
           const ratio =
             kind === 'video'
               ? AUTO_RATIO
-              : ((natural) => (natural ? snapImageRatio(natural.width, natural.height) : '1:1'))(
+              : ((natural) => (natural ? naturalImageRatio(natural.width, natural.height) : '1:1'))(
                   await readImageNaturalSize(file),
                 )
           const size = calcNodeSize(ratio, 250)
@@ -4451,7 +4604,8 @@ function CanvasInner() {
       if ((node.data as Record<string, unknown> | undefined)?.kind !== 'timeline') continue
       const timeline = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
       for (const clip of timeline.clips) {
-        if (clip.sourceDurationSec > 0 || !(clip.assetId > 0)) continue
+        // 已有正数也要在本次会话校准一次：旧版本曾把生成参数（例如 5 秒）当成源片真实时长。
+        if (!(clip.assetId > 0)) continue
         // key 必须带 assetId：来源节点换素材后片段 id 不变、时长被重置为待测量，
         // 只按 node:clip 记的话会命中旧标记，片段永远卡在 0.2 秒占位区间。
         if (measuredClipAssetsRef.current.has(`${node.id}:${clip.id}:${clip.assetId}`)) continue
@@ -4480,7 +4634,7 @@ function CanvasInner() {
       measuredClipAssetsRef.current.add(`${item.nodeId}:${item.clipId}:${item.assetId}`)
       // 用不取整的时长：按秒取整会把 5.4 秒的片子当成 5 秒，末尾 0.4 秒直接丢掉
       const measurementKey = `${item.nodeId}:${item.clipId}:${item.assetId}`
-      void readVideoDurationSecExact(assetStreamUrl(item.assetId, Number(workspaceId || 0)))
+      void readTimelineAssetDurationSec(item.assetId, Number(workspaceId || 0))
         .then((duration) => {
           if (!(duration > 0)) {
             retryMeasurement(measurementKey)
@@ -4548,6 +4702,37 @@ function CanvasInner() {
     [setEdges],
   )
 
+  /** 图片节点统一按已解码图片的真实比例校准；短边固定，避免原始像素尺寸直接撑大画布。 */
+  const handleImageNaturalSize = useCallback(
+    (nodeId: string, naturalWidth: number, naturalHeight: number) => {
+      const ratio = naturalImageRatio(naturalWidth, naturalHeight)
+      const size = calcNodeSize(ratio, 250)
+      const current = latestRef.current.nodes.find((node) => node.id === nodeId)
+      if (!current || (current.data as Record<string, unknown> | undefined)?.kind !== 'image') return
+      const style = (current.style || {}) as CSSProperties
+      const unchanged =
+        String((current.data as Record<string, unknown> | undefined)?.ratio || '') === ratio &&
+        Math.abs((Number(style.width) || 0) - size.width) < 0.5 &&
+        Math.abs((Number(style.height) || 0) - size.height) < 0.5
+      if (unchanged) return
+
+      setNodes((items) =>
+        items.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                data: { ...node.data, ratio },
+                style: { ...(node.style as CSSProperties), width: size.width, height: size.height },
+              }
+            : node,
+        ),
+      )
+      setSelectedNode((selected) => (selected?.id === nodeId ? { ...selected, ratio } : selected))
+      setSaveStatus('dirty')
+    },
+    [setNodes, setSaveStatus],
+  )
+
   /**
    * 截帧：把视频节点当前画面落成一个图片节点。
    *
@@ -4565,6 +4750,9 @@ function CanvasInner() {
       try {
         const blob = await (await fetch(frameDataUrl)).blob()
         const file = new File([blob], `canvas-frame-${Date.now()}.jpg`, { type: 'image/jpeg' })
+        const natural = await readImageNaturalSize(file)
+        const ratio = natural ? naturalImageRatio(natural.width, natural.height) : '1:1'
+        const size = calcNodeSize(ratio, 250)
         const uploaded: any = await uploadAssetFile({ workspaceId: ws, file, source: 'canvas-capture' })
         const assetId = Number(uploaded?.asset?.id || 0)
         if (!assetId) throw new Error('截帧上传失败，请重试')
@@ -4575,7 +4763,8 @@ function CanvasInner() {
           'image',
           { x: sourceNode.position.x + width + 40, y: sourceNode.position.y },
           {
-            ratio: AUTO_RATIO,
+            ratio,
+            size,
             extraData: { assetId, resultUrl: assetStreamUrl(assetId, ws) },
           },
         )
@@ -4781,8 +4970,10 @@ function CanvasInner() {
       .map((node) => {
         const data = (node.data || {}) as Record<string, unknown>
         const kind = String(data.kind || node.type || 'text')
-        const text = String(textMap?.get(node.id) || data.text || data.prompt || '').trim()
-        return { id: node.id, kind, text, kindLabel: KIND_LABELS[kind] || kind }
+        const nodeName = String(data.nodeName || '').trim()
+        const content = String(textMap?.get(node.id) || data.text || data.prompt || '').trim()
+        const text = [nodeName, content].filter(Boolean).join(' ')
+        return { id: node.id, kind, text, kindLabel: nodeName || KIND_LABELS[kind] || kind }
       })
       .filter((item) => item.text.length > 0)
 
@@ -5149,20 +5340,34 @@ function CanvasInner() {
       }
 
       const target = latestRef.current.nodes.find((node) => node.id === nodeId)
-      let cutlist: TimelineCutlist
-      try {
-        // 校验不通过时 buildTimelineCutlist 会抛出第一条问题，直接透出给用户
-        cutlist = buildTimelineCutlist(
-          parseTimelineState((target?.data as Record<string, unknown> | undefined)?.timeline),
-        )
-      } catch (error) {
-        showToast(String((error as Error)?.message || '时间线还不能合成'), 'error')
-        return
-      }
+      const initialTimeline = parseTimelineState((target?.data as Record<string, unknown> | undefined)?.timeline)
 
       setComposingNodeId(nodeId)
       setTimelineComposing(true)
       try {
+        // 合成前必须以文件真实时长校准，不能信任旧草稿里可能由模型参数写入的 5/10/15 秒。
+        setComposeProgress('正在校验片段时长…')
+        const measuredDurations = await Promise.all(
+          initialTimeline.clips.map((clip) => readTimelineAssetDurationSec(clip.assetId, wsId)),
+        )
+        const unreadableIndex = measuredDurations.findIndex((duration) => !(duration > 0))
+        if (unreadableIndex >= 0) throw new Error(`片段 ${unreadableIndex + 1} 无法读取真实时长，请稍后重试`)
+
+        const calibratedTimeline = initialTimeline.clips.reduce(
+          (state, clip, index) => attachClipSourceDuration(state, clip.id, measuredDurations[index]),
+          initialTimeline,
+        )
+        // 校验不通过时 buildTimelineCutlist 会抛出第一条问题，直接透出给用户。
+        const cutlist: TimelineCutlist = buildTimelineCutlist(calibratedTimeline)
+        if (!isSameTimelineClips(initialTimeline.clips, calibratedTimeline.clips)) {
+          setNodes((items) =>
+            items.map((node) =>
+              node.id === nodeId ? { ...node, data: { ...node.data, timeline: calibratedTimeline } } : node,
+            ),
+          )
+          setSaveStatus('dirty')
+        }
+
         const sources: ConcatSource[] = []
         let totalSourceBytes = 0
         for (let index = 0; index < cutlist.clips.length; index += 1) {
@@ -5360,6 +5565,7 @@ function CanvasInner() {
   const nodeActions = useMemo<CanvasNodeActions>(
     () => ({
       onCaptureFrame: handleCaptureFrame,
+      onImageNaturalSize: handleImageNaturalSize,
       capturingNodeId,
       timeline: {
         getAddableSources: getTimelineAddableSources,
@@ -5373,6 +5579,7 @@ function CanvasInner() {
     }),
     [
       handleCaptureFrame,
+      handleImageNaturalSize,
       capturingNodeId,
       getTimelineAddableSources,
       handleAddTimelineClip,
@@ -5584,6 +5791,19 @@ function CanvasInner() {
             canvasId={canvasId}
             onClose={() => setShareOpen(false)}
             onToast={showToast}
+          />
+        )}
+
+        {renameTarget && (
+          <CanvasRenameNodeDialog
+            currentName={renameTarget.currentName}
+            defaultName={renameTarget.defaultName}
+            onClose={() => setRenameTarget(null)}
+            onConfirm={(name) => {
+              const normalizedName = name === renameTarget.defaultName ? '' : name
+              renameNodeById(renameTarget.nodeId, normalizedName)
+              setRenameTarget(null)
+            }}
           />
         )}
 

@@ -26,6 +26,8 @@ import type { TimelineState } from '@/utils/timelineClips'
 /** 节点可序列化字段白名单：排除 ReactFlow 运行态字段（selected/measured/dragging 等）。 */
 interface SerializableNodeData {
   kind?: string
+  /** 用户自定义节点名；缺省时展示节点类型原名。 */
+  nodeName?: string
   ratio?: string
   videoMode?: string
   modelVersionId?: number
@@ -73,6 +75,7 @@ interface SerializableNodeData {
  */
 export const PERSISTED_NODE_DATA_FIELDS = [
   'kind',
+  'nodeName',
   'ratio',
   'videoMode',
   'modelVersionId',

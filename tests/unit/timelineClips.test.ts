@@ -275,6 +275,27 @@ describe('时间线校验与 cutlist', () => {
     expect(state.clips.map((c) => c.sourceNodeId)).toEqual(['node-b', 'node-c'])
   })
 
+  it('校准旧版误存的5秒源时长时，整段片段扩展到真实时长', () => {
+    const legacy = {
+      clips: [createTimelineClip({ id: 'clip-1', assetId: 101, sourceDurationSec: 5, inSec: 0, outSec: 5 })],
+    }
+
+    const calibrated = attachClipSourceDuration(legacy, 'clip-1', 30)
+
+    expect(calibrated.clips[0]).toMatchObject({ sourceDurationSec: 30, inSec: 0, outSec: 30 })
+    expect(getTimelineDuration(calibrated)).toBe(30)
+  })
+
+  it('校准真实时长时保留用户主动设置的裁剪终点', () => {
+    const trimmed = {
+      clips: [createTimelineClip({ id: 'clip-1', assetId: 101, sourceDurationSec: 20, inSec: 2, outSec: 5 })],
+    }
+
+    const calibrated = attachClipSourceDuration(trimmed, 'clip-1', 30)
+
+    expect(calibrated.clips[0]).toMatchObject({ sourceDurationSec: 30, inSec: 2, outSec: 5 })
+  })
+
   it('同步时保留手动片段，并对分割出的同源片段不重复追加', () => {
     let state = addTimelineClips(createTimelineState(), [
       createTimelineClip({

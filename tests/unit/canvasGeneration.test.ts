@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
+  canvasVideoReferenceMode,
   inferCanvasConnectionRole,
   normalizeCanvasAssetSource,
   validateCanvasImageInputs,
@@ -330,5 +331,30 @@ describe('canvas video generation inputs', () => {
       { asset_id: 8, role: 'reference_image' },
       { asset_id: 21, role: 'video' },
     ])
+  })
+})
+
+/**
+ * 回归：画布选「全能参考」却拿到首尾帧。
+ *
+ * 图片一律以 role:'image' 下发，首尾帧还是参考由 params.reference_mode 决定
+ * （后端 volcengineImageRole 在 false 时把前两张翻译成 first_frame / last_frame）。
+ * 此前画布的 videoMode 只驱动 UI 槽位，从未翻译成该参数。
+ */
+describe('canvasVideoReferenceMode', () => {
+  it('首尾帧对应 reference_mode=false', () => {
+    expect(canvasVideoReferenceMode('first-last')).toBe(false)
+  })
+
+  it('全能参考对应 reference_mode=true', () => {
+    expect(canvasVideoReferenceMode('full-ref')).toBe(true)
+  })
+
+  // 自由生成必须**不下发**该字段：后端 ValidateParams 不注入 schema Default，
+  // 就是要靠「前端不传」触发按素材数量的启发式。传 false 会把缺省探测变成显式指令，
+  // 正是这个 bug 的形态，所以这里断言 undefined 而不是 false。
+  it('自由生成不下发 reference_mode，交给后端启发式', () => {
+    expect(canvasVideoReferenceMode('auto')).toBeUndefined()
+    expect(canvasVideoReferenceMode(undefined)).toBeUndefined()
   })
 })

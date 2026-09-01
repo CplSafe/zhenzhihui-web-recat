@@ -72,6 +72,17 @@ export default defineConfig(({ mode }) => {
             if (/\/node_modules\/(?:react|react-dom|react-router|react-router-dom|scheduler)\//.test(normalizedId)) {
               return 'vendor-react'
             }
+            // Markdown is used by the global Agent panel, but its parser stack
+            // is large enough to make the application entry chunk exceed the
+            // per-chunk CI budget. Keep that independently cacheable stack in
+            // one bounded vendor chunk instead of inflating assets/index-*.js.
+            if (
+              /\/node_modules\/(?:react-markdown|remark-gfm|unified|vfile|bail|trough|zwitch|devlop|micromark(?:-core-commonmark|-extension-[^/]+|-factory-[^/]+|-util-[^/]+)?|mdast-util-[^/]+|hast-util-[^/]+|unist-util-[^/]+|property-information|space-separated-tokens|comma-separated-tokens|decode-named-character-reference|character-entities(?:-html4|-legacy)?|html-void-elements|stringify-entities)\//.test(
+                normalizedId,
+              )
+            ) {
+              return 'vendor-markdown'
+            }
             return undefined
           },
         },

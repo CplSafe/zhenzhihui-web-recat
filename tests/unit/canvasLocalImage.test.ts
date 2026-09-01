@@ -4,6 +4,7 @@ import {
   extractImageFiles,
   extractMediaFiles,
   hasFileDrag,
+  naturalImageRatio,
   pickImageFiles,
   pickVideoFiles,
   readImageNaturalSize,
@@ -124,6 +125,13 @@ describe('canvas local image import helpers', () => {
   it('falls back to 1:1 for unusable dimensions', () => {
     expect(snapImageRatio(0, 100)).toBe('1:1')
     expect(snapImageRatio(Number.NaN, 100)).toBe('1:1')
+  })
+
+  it('keeps the exact reduced ratio for canvas material nodes', () => {
+    expect(naturalImageRatio(1920, 1080)).toBe('16:9')
+    expect(naturalImageRatio(1080, 1350)).toBe('4:5')
+    expect(naturalImageRatio(1000, 667)).toBe('1000:667')
+    expect(naturalImageRatio(0, 100)).toBe('1:1')
   })
 
   it('reads the natural size and always releases the temporary object url', async () => {

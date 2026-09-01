@@ -6,13 +6,16 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import UserAvatar from '@/components/common/UserAvatar'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
 import DemandFormModal from '@/components/market/DemandFormModal'
 import VideoPreviewModal from '@/components/common/VideoPreviewModal'
+import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
 import { getCommunityIp, listCommunityWorks, type CommunityIpProfile, type CommunityWorkItem } from '@/api/communityIp'
 import { useRequireAuth } from '@/composables/useRequireAuth'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
+import { useAssetPreview } from '@/composables/useAssetPreview'
 import './IpDetailView.css'
 
 function formatFollowers(value: number): string {
@@ -36,6 +39,7 @@ export default function IpDetailView() {
   const navigate = useNavigate()
   const requireAuth = useRequireAuth()
   const handleNavigate = useSidebarNavigate()
+  const { previewState, openPreview, closePreview, goPrev, goNext } = useAssetPreview()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [profile, setProfile] = useState<CommunityIpProfile | null>(null)
   const [profileError, setProfileError] = useState('')
@@ -45,6 +49,21 @@ export default function IpDetailView() {
   const [watchingUrl, setWatchingUrl] = useState('')
 
   const numericUserId = useMemo(() => Math.floor(Number(userId) || 0), [userId])
+  const imagePreviewItems = useMemo(
+    () =>
+      works
+        .filter((work) => work.mediaType === 'image' && (work.coverUrl || work.mediaUrl))
+        .map((work) => ({
+          id: work.id,
+          assetId: work.coverAssetId || work.assetIds[0] || 0,
+          title: work.title,
+          mediaKind: 'image',
+          mediaUrl: work.coverUrl || work.mediaUrl,
+          type: '图片',
+          tags: work.category ? [work.category] : [],
+        })),
+    [works],
+  )
 
   useEffect(() => {
     if (!numericUserId) {
@@ -98,13 +117,12 @@ export default function IpDetailView() {
             <>
               <section className="ipd__hero">
                 <div className="ipd__photo">
-                  {profile.avatar ? (
-                    <img src={profile.avatar} alt={`${profile.name}的头像`} />
-                  ) : (
-                    <span className="ipd__photo-fallback" aria-hidden="true">
-                      {profile.name.slice(0, 1)}
-                    </span>
-                  )}
+                  <UserAvatar
+                    src={profile.avatar}
+                    name={profile.name}
+                    fallbackClassName="ipd__photo-fallback"
+                    alt={`${profile.name}的头像`}
+                  />
                 </div>
                 <div className="ipd__profile">
                   <h1 className="ipd__name">{profile.name}</h1>
@@ -166,37 +184,50 @@ export default function IpDetailView() {
                   <div className="ipd__placeholder">正在加载作品...</div>
                 ) : works.length ? (
                   <div className="ipd__works-grid">
-                    {works.map((work) => {
+                    {works.map((work, index) => {
                       const cover = work.coverUrl || (work.mediaType === 'image' ? work.mediaUrl : '')
-                      const playable = work.mediaType === 'video' && work.mediaUrl
                       return (
                         <button
                           type="button"
                           className="ipd__work"
                           key={work.id}
                           title={work.title}
+                          aria-label={work.mediaType === 'video' ? `播放${work.title}` : `查看${work.title}`}
                           onClick={() => {
-                            if (playable) setWatchingUrl(work.mediaUrl)
+                            if (work.mediaType === 'video' && work.mediaUrl) {
+                              setWatchingUrl(work.mediaUrl)
+                              return
+                            }
+                            const previewIndex = imagePreviewItems.findIndex((item) => item.id === work.id)
+                            if (previewIndex >= 0) openPreview(imagePreviewItems, previewIndex)
                           }}
-                          style={{ cursor: playable ? 'pointer' : 'default' }}
                         >
                           {cover ? (
                             <img
                               src={cover}
                               alt={work.title}
-                              loading="lazy"
+                              loading={index < 4 ? 'eager' : 'lazy'}
+                              fetchPriority={index < 2 ? 'high' : 'auto'}
                               onError={(event) => {
                                 event.currentTarget.style.display = 'none'
                               }}
                             />
-                          ) : playable ? (
-                            <video src={work.mediaUrl} preload="metadata" muted playsInline />
+                          ) : work.mediaType === 'video' && work.mediaUrl ? (
+                            <video
+                              src={work.mediaUrl}
+                              preload="metadata"
+                              autoPlay
+                              muted
+                              loop
+                              playsInline
+                              aria-label={`${work.title}视频预览`}
+                            />
                           ) : (
                             <span className="ipd__work-ph" aria-hidden="true">
                               🎬
                             </span>
                           )}
-                          {playable && (
+                          {work.mediaType === 'video' && work.mediaUrl && (
                             <span className="ipd__work-play" aria-hidden="true">
                               ▶
                             </span>
@@ -221,8 +252,8 @@ export default function IpDetailView() {
           onClose={() => setDemandFormOpen(false)}
         />
       )}
-      {/* 作品为外链/签名地址，弹窗不带 crossOrigin（与首页案例预览一致） */}
       <VideoPreviewModal src={watchingUrl} onClose={() => setWatchingUrl('')} />
+      <AssetPreviewModal state={previewState} onClose={closePreview} onPrev={goPrev} onNext={goNext} />
     </div>
   )
 }
