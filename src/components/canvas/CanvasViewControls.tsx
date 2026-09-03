@@ -22,6 +22,9 @@ export interface CanvasViewControlsProps {
   onSnapToggle: () => void
   edgesHidden: boolean
   onEdgesToggle: () => void
+  /** 小地图当前是否显示；开关就放在这条控制条上（它本就是「怎么看画布」的一部分） */
+  minimapVisible: boolean
+  onMinimapToggle: () => void
 }
 
 export default function CanvasViewControls({
@@ -34,6 +37,8 @@ export default function CanvasViewControls({
   onSnapToggle,
   edgesHidden,
   onEdgesToggle,
+  minimapVisible,
+  onMinimapToggle,
 }: CanvasViewControlsProps) {
   // 极小倍率下 1% 的精度已经没有意义，但读数不能显示成 0%——那看起来像坏了
   const percent = Math.max(1, Math.round((Number(zoom) || 1) * 100))
@@ -86,6 +91,22 @@ export default function CanvasViewControls({
       >
         <EdgeIcon hidden={edgesHidden} />
       </button>
+
+      {/*
+       * 小地图开关。它本来只能一直占着左下角那 190×130，
+       * 画布内容靠近左下时挡视线也关不掉——开关放这里最顺手，
+       * 因为这条控制条本就是「怎么看这张画布」的集合。
+       */}
+      <button
+        type="button"
+        className={`${styles.btn} ${styles.minimapToggle} ${minimapVisible ? styles.btnActive : ''}`}
+        onClick={onMinimapToggle}
+        title={minimapVisible ? '隐藏小地图' : '显示小地图'}
+        aria-label="小地图"
+        aria-pressed={minimapVisible}
+      >
+        <MiniMapIcon />
+      </button>
     </div>
   )
 }
@@ -128,6 +149,24 @@ function GridIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
       <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+    </svg>
+  )
+}
+
+/** 小地图图标：一个外框 + 右下角的视口方块，正是小地图本身的样子。 */
+function MiniMapIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <rect x="12.5" y="12" width="6" height="5" rx="1" fill="currentColor" stroke="none" />
     </svg>
   )
 }

@@ -82,7 +82,12 @@ import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
 import { saveCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId } from '@/utils/canvasDraft'
 import { humanizeCanvasTaskError } from '@/utils/canvasTaskError'
-import { loadLastSelectedNodeId, saveLastSelectedNodeId } from '@/utils/canvasSelection'
+import {
+  loadLastSelectedNodeId,
+  loadMinimapVisible,
+  saveLastSelectedNodeId,
+  saveMinimapVisible,
+} from '@/utils/canvasSelection'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
@@ -1626,6 +1631,8 @@ function CanvasInner() {
   const [snapEnabled, setSnapEnabled] = useState(false)
   /** 隐藏连线：节点密集时连线会糊成一片，这是一个纯展示层的降噪开关，不改任何数据 */
   const [edgesHidden, setEdgesHidden] = useState(false)
+  /** 小地图显示与否；偏好记在本机，开关在左下角的视图控制条上 */
+  const [minimapVisible, setMinimapVisible] = useState(loadMinimapVisible)
   // 正在编辑剪辑时间线的节点 id；空串表示编辑器关闭
   const [timelineEditorNodeId, setTimelineEditorNodeId] = useState('')
   // 合成进行中（下载素材 → 无损拼接 → 上传成片），期间禁止重复触发
@@ -6138,16 +6145,18 @@ function CanvasInner() {
               但节点只剩色块、认不出谁是谁——「能缩出去」不等于「能定位」。
               小地图给的是俯瞰 + 点击直达，这才是大图的导航手段。
             */}
-            <MiniMap
-              className="canvas-minimap"
-              position="bottom-left"
-              pannable
-              zoomable
-              ariaLabel="画布缩略图"
-              nodeColor={miniMapNodeColor}
-              nodeStrokeWidth={0}
-              maskColor="rgba(248, 249, 250, 0.72)"
-            />
+            {minimapVisible && (
+              <MiniMap
+                className="canvas-minimap"
+                position="bottom-left"
+                pannable
+                zoomable
+                ariaLabel="画布缩略图"
+                nodeColor={miniMapNodeColor}
+                nodeStrokeWidth={0}
+                maskColor="rgba(248, 249, 250, 0.72)"
+              />
+            )}
           </ReactFlow>
         </CanvasNodeActionsContext.Provider>
 
@@ -6195,6 +6204,13 @@ function CanvasInner() {
           onFitView={() => fitView({ padding: 0.2, duration: 300 })}
           snapEnabled={snapEnabled}
           onSnapToggle={() => setSnapEnabled((value) => !value)}
+          minimapVisible={minimapVisible}
+          onMinimapToggle={() =>
+            setMinimapVisible((value) => {
+              saveMinimapVisible(!value)
+              return !value
+            })
+          }
           edgesHidden={edgesHidden}
           onEdgesToggle={() => setEdgesHidden((value) => !value)}
         />

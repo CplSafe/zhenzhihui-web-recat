@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearLastSelectedNodeId, loadLastSelectedNodeId, saveLastSelectedNodeId } from '@/utils/canvasSelection'
+import {
+  clearLastSelectedNodeId,
+  loadLastSelectedNodeId,
+  loadMinimapVisible,
+  saveLastSelectedNodeId,
+  saveMinimapVisible,
+} from '@/utils/canvasSelection'
 
 afterEach(() => {
   // 先恢复真实 localStorage 再清理：桩对象没有 clear，顺序反了会抛错
@@ -46,5 +52,32 @@ describe('canvas last selected node', () => {
     expect(() => saveLastSelectedNodeId(11, 'image-a')).not.toThrow()
     expect(loadLastSelectedNodeId(11)).toBe('')
     expect(() => clearLastSelectedNodeId(11)).not.toThrow()
+  })
+})
+
+describe('小地图显示偏好', () => {
+  it('从未设置过时默认显示，保持与既有行为一致', () => {
+    expect(loadMinimapVisible()).toBe(true)
+  })
+
+  it('关掉后能记住，重新打开画布不必再关一次', () => {
+    saveMinimapVisible(false)
+    expect(loadMinimapVisible()).toBe(false)
+    saveMinimapVisible(true)
+    expect(loadMinimapVisible()).toBe(true)
+  })
+
+  it('localStorage 不可用时退回「显示」，不抛错', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('denied')
+      },
+      setItem: () => {
+        throw new Error('denied')
+      },
+    })
+
+    expect(() => saveMinimapVisible(false)).not.toThrow()
+    expect(loadMinimapVisible()).toBe(true)
   })
 })

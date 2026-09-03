@@ -14,6 +14,8 @@ function renderControls(overrides: Partial<React.ComponentProps<typeof CanvasVie
     onSnapToggle: vi.fn(),
     edgesHidden: false,
     onEdgesToggle: vi.fn(),
+    minimapVisible: true,
+    onMinimapToggle: vi.fn(),
     ...overrides,
   }
   render(<CanvasViewControls {...props} />)
@@ -58,5 +60,24 @@ describe('CanvasViewControls', () => {
   it('开关的提示文案说的是「点下去会怎样」，而不是当前状态', () => {
     renderControls({ edgesHidden: true })
     expect(screen.getByRole('button', { name: '隐藏连线' })).toHaveAttribute('title', '显示连线')
+  })
+
+  it('小地图开关把点击转交出去，并报出当前显隐状态', async () => {
+    const user = userEvent.setup()
+    const props = renderControls({ minimapVisible: true })
+
+    const toggle = screen.getByRole('button', { name: '小地图' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(toggle).toHaveAttribute('title', '隐藏小地图')
+
+    await user.click(toggle)
+    expect(props.onMinimapToggle).toHaveBeenCalledOnce()
+  })
+
+  it('小地图已隐藏时，开关提示变成「显示」', () => {
+    renderControls({ minimapVisible: false })
+    const toggle = screen.getByRole('button', { name: '小地图' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).toHaveAttribute('title', '显示小地图')
   })
 })

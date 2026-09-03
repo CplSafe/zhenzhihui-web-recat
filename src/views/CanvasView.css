@@ -350,10 +350,12 @@
  */
 .canvas-minimap {
   /* 位置交给 MiniMap 的 position="bottom-left"，这里只调外观与外边距，
-     免得用 !important 去顶 React Flow 自己的 .react-flow__panel 定位 */
+     免得用 !important 去顶 React Flow 自己的 .react-flow__panel 定位。
+     下外边距要让开它下面那条视图控制条（36px 高 + 16px 间距 + 12px 呼吸）。 */
   width: 190px;
   height: 130px;
   margin: 16px;
+  margin-bottom: 64px;
   border: 1px solid #e2e6ef;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.92);

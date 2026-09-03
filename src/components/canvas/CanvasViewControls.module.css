@@ -1,10 +1,15 @@
 /*
- * 视图控制条：与小地图同处左下角，堆在小地图上方。
- * 位置写在这里而不是父级，是因为它和小地图的高度绑定（见 CanvasView.css 的 .canvas-minimap）。
+ * 视图控制条：左下角最靠下的一块，小地图叠在它上方。
+ *
+ * 原先反过来——控制条在上、小地图在下。但小地图是块头更大、更被动的「概览面板」，
+ * 而这条是随手要点的开关，把常用的小东西放在最顺手的屏幕最底角、
+ * 让大而静的面板往上排，才符合「越常用越靠近手」的顺序。
+ *
+ * 小地图隐藏后由 .barLower 把它落回底部，避免下方空出一块。
  */
 .bar {
   position: absolute;
-  bottom: 162px;
+  bottom: 16px;
   left: 16px;
   /* chrome 档（见 CanvasView.css 顶部的层级口径） */
   z-index: 1100;
@@ -84,13 +89,6 @@
   outline-offset: 1px;
 }
 
-@media (max-width: 768px) {
-  /* 小地图在小屏隐藏，控制条跟着落回底部 */
-  .bar {
-    bottom: 16px;
-  }
-}
-
 /* 中等宽度已经容不下「左工具栏 + 控制条 + 小地图」三列，控制条改为独占底部中央。 */
 @media (max-width: 1100px) {
   .bar {
@@ -98,5 +96,11 @@
     left: 50%;
     max-width: calc(100vw - 32px);
     transform: translateX(-50%);
+  }
+
+  /* 这个宽度下小地图本就被强制隐藏（见 CanvasView.css），
+     留着开关只会给出一个按了不生效的按钮。 */
+  .minimapToggle {
+    display: none;
   }
 }
