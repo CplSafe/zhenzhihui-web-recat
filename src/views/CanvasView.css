@@ -90,117 +90,6 @@
   pointer-events: none;
   transition: opacity 0.12s ease;
 }
-/* 节点顶部操作胶囊组 — 图片/视频节点专属，与左右侧连接点图标同款交互（选中/悬停出现）
-   组内可含多个胶囊按钮（图片有内容：替换|下载；视频有内容：下载；无内容：上传） */
-.canvas-node-upload-group {
-  position: absolute;
-  /* 水平居中，且更靠上（加大与节点顶部的间距）；节点头部位于左上角，二者横向/纵向均错开 */
-  top: auto;
-  right: auto;
-  bottom: calc(100% + 34px);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-}
-
-.canvas-node-upload-group[data-visible='true'] {
-  opacity: 1;
-  pointer-events: auto;
-  /* 从下向上渐入：出现时从节点上方较低处滑到最终位置 */
-  transform: translateX(-50%) translateY(6px);
-  animation: canvas-upload-btn-rise 0.3s ease-out both;
-}
-
-/* 鼠标经过节点时也展示基础操作，避免必须先选中才能发现删除入口。 */
-.canvas-default-node:hover .canvas-node-upload-group {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/*
- * 多选期间收起单节点操作胶囊（下载/删除/截帧/精修…）。
- *
- * 两个理由，缺一条都不足以这么做：
- * 1. 语义：这些都是「对这一个节点」的动作。选中 4 个节点时点「下载」，下载哪一个？
- *    多选该有的动作已经由批量工具条承接。
- * 2. 遮挡：批量条锚在选区上方，而选区最上面那个节点的胶囊也悬在它自己上方，
- *    两者必然在同一条带上打架。靠加间距躲不掉——换个缩放倍率就又撞上了。
- * hover 的那条规则也要一并压住，否则多选时划过节点胶囊照样冒出来。
- */
-.canvas-view.is-multi-selecting .canvas-node-upload-group,
-.canvas-view.is-multi-selecting .canvas-default-node:hover .canvas-node-upload-group {
-  opacity: 0;
-  pointer-events: none;
-  /* 胶囊组的显示态带着 animation-fill-mode: both，动画终帧的 opacity:1 会盖过这里的声明，
-     不把动画一并停掉就只是「看起来还在」 */
-  animation: none;
-}
-
-.canvas-node-upload-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border: 2px solid #999;
-  border-radius: 999px;
-  background: #fff;
-  color: #666;
-  font-family: 'PingFang SC', sans-serif;
-  font-size: calc(12px * var(--canvas-readable-text-scale, 1));
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    color var(--canvas-dur) var(--canvas-ease),
-    border-color var(--canvas-dur) var(--canvas-ease),
-    background-color var(--canvas-dur) var(--canvas-ease),
-    box-shadow var(--canvas-dur) var(--canvas-ease),
-    transform var(--canvas-dur-fast) var(--canvas-ease);
-}
-
-.canvas-node-upload-btn:hover {
-  color: #5767e5;
-  border-color: #5767e5;
-  background: #f4f6ff;
-  box-shadow: 0 3px 10px rgba(87, 103, 229, 0.25);
-}
-
-/* 键盘焦点环：删除按钮下面另有一条红色的，这条必须写在它前面，否则会把它盖掉 */
-.canvas-node-upload-btn:focus-visible {
-  outline: 3px solid rgb(87 103 229 / 26%);
-  outline-offset: 2px;
-}
-
-.canvas-node-delete-btn {
-  color: #b34a4a;
-  border-color: rgb(179 74 74 / 55%);
-}
-
-.canvas-node-delete-btn:hover {
-  color: #fff;
-  border-color: #d14343;
-  background: #d14343;
-  box-shadow: 0 3px 10px rgb(209 67 67 / 24%);
-}
-
-.canvas-node-delete-btn:focus-visible {
-  outline: 3px solid rgb(209 67 67 / 22%);
-  outline-offset: 2px;
-}
-
-.canvas-node-upload-btn:active {
-  transform: scale(0.95);
-}
-
-.canvas-node-upload-btn__label {
-  font-weight: 600;
-}
 
 /* 从下向上渐入动画（胶囊组水平居中，动画仅在垂直方向滑移） */
 @keyframes canvas-upload-btn-rise {
@@ -1040,108 +929,6 @@
   pointer-events: none;
 }
 
-/* 截帧按钮：与「放大查看」并排放在视频右上角 */
-/* 定位挪到外层容器：截帧位置菜单要贴着按钮展开，按钮本身得回到常规流里 */
-.canvas-node-video-capture-wrap {
-  position: absolute;
-  top: 8px;
-  right: 40px;
-  z-index: 3;
-}
-
-/* 带文字的胶囊而不是 26px 的纯图标钮：点击目标够大，也不用猜这个相机图标是干什么的 */
-.canvas-node-video-capture {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(15, 17, 22, 0.72);
-  color: #fff;
-  font-family: 'PingFang SC', sans-serif;
-  font-size: 12px;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  backdrop-filter: blur(2px);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
-  opacity: 0;
-  transition:
-    opacity 0.15s ease,
-    background 0.15s ease;
-}
-
-.canvas-node-video-capture__label {
-  font-weight: 500;
-}
-
-/* 菜单展开时按钮必须保持可见，否则鼠标移到菜单上按钮就消失了 */
-.canvas-node-video-wrap:hover .canvas-node-video-capture,
-.canvas-node-video-capture[aria-expanded='true'] {
-  opacity: 1;
-}
-
-/* 截帧位置菜单：贴着按钮向下展开，落在画面上 */
-.canvas-node-capture-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 4;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 96px;
-  padding: 5px;
-  border-radius: 10px;
-  background: rgba(15, 17, 22, 0.94);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
-}
-
-.canvas-node-capture-menu button {
-  padding: 9px 12px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #e6e8ee;
-  font-family: 'PingFang SC', sans-serif;
-  font-size: 13px;
-  line-height: 1;
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.canvas-node-capture-menu button {
-  transition:
-    background var(--canvas-dur-fast) var(--canvas-ease),
-    color var(--canvas-dur-fast) var(--canvas-ease);
-}
-
-.canvas-node-capture-menu button:hover {
-  background: rgb(87 103 229 / 55%);
-  color: #fff;
-}
-
-.canvas-node-capture-menu button:active {
-  background: rgb(87 103 229 / 78%);
-}
-
-.canvas-node-capture-menu button:focus-visible {
-  outline: 2px solid rgb(255 255 255 / 55%);
-  outline-offset: -2px;
-}
-
-.canvas-node-video-capture:hover:not(:disabled) {
-  background: rgba(15, 17, 22, 0.85);
-}
-
-.canvas-node-video-capture:disabled {
-  opacity: 1;
-  cursor: progress;
-}
-
 /* 剪辑时间线节点：卡片只显示片段摘要，编辑在双击打开的编辑器里进行 */
 .canvas-node-timeline {
   display: flex;
@@ -1658,4 +1445,33 @@
   height: 12px;
   color: #999;
   flex-shrink: 0;
+}
+
+/*
+ * 时间线节点的操作组（添加视频 / 精修 / 合成）。
+ *
+ * 原先这一组挂在节点上方，与「上传/下载/删除」共处一条。那三个动作已经移进
+ * 选中时浮出的 CanvasNodeToolbar，而工具条正是贴在节点上方——继续留在上面会两块叠在一起。
+ * 因此改到节点下方：与上方的工具条各占一边，互不遮挡。
+ */
+.canvas-node-upload-group {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.canvas-node-upload-group[data-visible='true'] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
 }

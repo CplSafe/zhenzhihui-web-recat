@@ -1,12 +1,25 @@
+/*
+ * 左侧竖排工具栏。
+ *
+ * 与视图控制条、小地图同属左下角这一列，三者必须共用一条左边线（16px）——
+ * 原先这里是 46px，与另外两个的 16px 差了 30px，看上去像三块各自为政的浮层。
+ *
+ * 垂直方向原先是 top:50% + translateY(-50%)，即以视口中线为中心向上下等量展开；
+ * 视口一矮，它的下沿就会长进 bottom:162px 的控制条里，两块浮层直接叠在一起。
+ * 改成上下都给边界、由 justify-content 居中：空间够时仍在中部，
+ * 空间不够时自然收在控制条上方，不再重叠。
+ */
 .toolbar {
   position: absolute;
-  top: 50%;
-  left: 46px;
+  top: 24px;
+  bottom: 186px;
+  left: 16px;
   /* chrome 档（见 CanvasView.css 顶部的层级口径）：低于 1000 会被选中的节点盖住 */
   z-index: 1100;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 18px;
   padding: 20px 12px;
   background: rgba(255, 255, 255, 0.94);
@@ -15,7 +28,6 @@
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
   animation: toolbar-enter 0.2s ease-out;
-  transform: translateY(-50%);
   will-change: opacity, transform;
 }
 
@@ -28,22 +40,22 @@
 @keyframes toolbar-enter {
   from {
     opacity: 0;
-    transform: translate(-16px, -50%);
+    transform: translateX(-16px);
   }
   to {
     opacity: 1;
-    transform: translate(0, -50%);
+    transform: translateX(0);
   }
 }
 
 @keyframes toolbar-leave {
   from {
     opacity: 1;
-    transform: translate(0, -50%);
+    transform: translateX(0);
   }
   to {
     opacity: 0;
-    transform: translate(-28px, -50%) scale(0.96);
+    transform: translateX(-28px) scale(0.96);
   }
 }
 
@@ -65,9 +77,11 @@
     transform var(--canvas-dur, 180ms) var(--canvas-ease, ease-out);
 }
 
+/* 与同一文件里的菜单项、以及全局主色保持一致：这条工具栏原本是一套独立的青绿，
+ * 和 antd 主色 #5767e5 并置时像是另一个产品的控件。 */
 .toolBtn:hover {
-  background: rgba(34, 197, 160, 0.12);
-  color: #16a889;
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
 }
 
 /* 按下去要有落点。原来只有 hover，点击时按钮纹丝不动，像是没接住这一下 */
@@ -87,9 +101,9 @@
  */
 .toolBtnActive,
 .toolBtnActive:hover {
-  background: #16a889;
+  background: #5767e5;
   color: #fff;
-  box-shadow: 0 2px 8px rgb(22 168 137 / 32%);
+  box-shadow: 0 2px 8px rgb(87 103 229 / 32%);
 }
 
 .addBtnWrap:first-child .toolBtn {
