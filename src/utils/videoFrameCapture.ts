@@ -123,7 +123,15 @@ export async function seekVideoToDecodedFrame(
   const signal = options.signal
   const seekTimeoutMs = Math.max(1, options.seekTimeoutMs ?? 5000)
   const frameTimeoutMs = Math.max(1, options.frameTimeoutMs ?? 1200)
-  const tolerance = Math.max(0.01, options.frameTimeToleranceSec ?? 0.35)
+  /*
+   * 命中判定的容差。
+   *
+   * 原值 0.35 秒过于宽松：30fps 下等于「差 10 帧也算命中」，
+   * 截尾帧时经常把结尾前若干帧的画面当成尾帧交出去。
+   * 收到 0.1 秒（约 2-3 帧）：既不会把明显偏离的旧帧误判为命中，
+   * 也留出了 seek 落到最近帧边界所需的余量——要求精确相等则回调永远不会确认。
+   */
+  const tolerance = Math.max(0.01, options.frameTimeToleranceSec ?? 0.1)
 
   if (signal?.aborted) throw abortError()
   if (!video.seeking && Number.isFinite(video.currentTime) && Math.abs(video.currentTime - target) <= 0.001) {
@@ -219,11 +227,21 @@ export async function seekVideoToDecodedFrame(
 export type VideoFramePosition = 'current' | 'first' | 'last'
 
 /**
- * 末帧不能直接取 duration。
- * 正好落在结尾时多数浏览器不会解码出新帧，还会顺带触发 ended；
- * 往回退约一帧（按 20fps 算）既能拿到画面，视觉上仍是最后一帧。
+ * 末帧的回退梯度（秒）。
+ *
+ * 末帧不能直接取 duration：正好落在结尾时多数浏览器不会解码出新帧，还会顺带触发 ended。
+ * 但「往回退多少」不能写死一个值——
+ * - 退太少：MP4 的 duration 元数据常比实际可解码内容长几十毫秒，退 0.02 仍落在最后一帧之后，
+ *   seek 过去解不出帧，一路等到超时，用户看到的就是「点了没反应」；
+ * - 退太多：30fps 下退 0.2 秒等于往回 6 帧，截出来的根本不是尾帧。
+ *
+ * 所以按梯度依次尝试：先贴着结尾取（对元数据准确的源就是真正的最后一帧），
+ * 解不出来再逐级往回退。0.042 ≈ 24fps 一帧，0.084 ≈ 两帧，够覆盖常见的元数据误差。
  */
-const LAST_FRAME_BACKOFF_SEC = 0.05
+export const LAST_FRAME_BACKOFF_LADDER_SEC = [0.02, 0.042, 0.084, 0.2] as const
+
+/** 默认回退量：单独求某个位置的时刻（不做重试）时用梯度的第一档。 */
+const LAST_FRAME_BACKOFF_SEC = LAST_FRAME_BACKOFF_LADDER_SEC[0]
 
 /**
  * 把 video 当前画面画进离屏 canvas，返回 JPEG dataURL。
@@ -250,11 +268,30 @@ export function captureVideoFrameDataUrl(video: HTMLVideoElement | null): string
 }
 
 /** 求某个截帧位置对应的时刻；时长未知时返回 null，交由调用方提示而不是画出一张黑图。 */
-export function resolveFrameTimeSec(position: VideoFramePosition, durationSec: number): number | null {
+export function resolveFrameTimeSec(
+  position: VideoFramePosition,
+  durationSec: number,
+  backoffSec: number = LAST_FRAME_BACKOFF_SEC,
+): number | null {
   if (position === 'current') return null
   const duration = Number(durationSec)
   if (!Number.isFinite(duration) || duration <= 0) return null
-  return position === 'first' ? 0 : Math.max(0, duration - LAST_FRAME_BACKOFF_SEC)
+  return position === 'first' ? 0 : Math.max(0, duration - backoffSec)
+}
+
+/**
+ * 尾帧要依次尝试的时刻表（由近到远）。
+ *
+ * 同一个退避值可能因 duration 太短而被夹到 0，去重后避免对同一时刻白试两次。
+ */
+export function resolveLastFrameCandidates(durationSec: number): number[] {
+  const candidates: number[] = []
+  for (const backoff of LAST_FRAME_BACKOFF_LADDER_SEC) {
+    const target = resolveFrameTimeSec('last', durationSec, backoff)
+    if (target === null) return []
+    if (!candidates.includes(target)) candidates.push(target)
+  }
+  return candidates
 }
 
 /**
@@ -270,17 +307,37 @@ export async function captureVideoFrame(
   options: SeekVideoFrameOptions = {},
 ): Promise<string> {
   if (!video) return ''
-  const target = resolveFrameTimeSec(position, video.duration)
-  if (target === null) return position === 'current' ? captureVideoFrameDataUrl(video) : ''
+  if (position === 'current') return captureVideoFrameDataUrl(video)
+
+  /*
+   * 尾帧按梯度依次尝试，首帧只有 0 这一个目标。
+   *
+   * 尾帧原先只试 duration-0.05 一次，解不出帧就返回空串——而这恰恰是最常见的情况：
+   * MP4 的 duration 元数据往往略长于实际可解码内容，第一个目标落在最后一帧之后，
+   * seek 过去等到超时，用户得到的是「点了没反应」。现在解不出来就往回退一档再试。
+   */
+  const targets =
+    position === 'last' ? resolveLastFrameCandidates(video.duration) : [resolveFrameTimeSec('first', video.duration)]
+  const validTargets = targets.filter((value): value is number => value !== null)
+  if (validTargets.length === 0) return ''
 
   const previousTime = Number(video.currentTime) || 0
   const wasPlaying = !video.paused
   if (wasPlaying) video.pause()
 
   try {
-    await seekVideoToDecodedFrame(video, target, options)
-    return captureVideoFrameDataUrl(video)
-  } catch {
+    for (const target of validTargets) {
+      try {
+        await seekVideoToDecodedFrame(video, target, options)
+      } catch (error) {
+        // 取消是用户意图，不该被当成「这一档不行」继续往下试
+        if ((error as { name?: string })?.name === 'AbortError') return ''
+        continue
+      }
+      const frame = captureVideoFrameDataUrl(video)
+      // 解出来了但画不出（跨域污染等）属于另一类问题，再退更多档也无济于事
+      if (frame) return frame
+    }
     return ''
   } finally {
     // 还原不该影响截帧结果：即便回不到原位置，已经拿到的那一帧照常返回

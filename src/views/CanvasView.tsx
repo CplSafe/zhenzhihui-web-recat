@@ -3031,6 +3031,34 @@ function CanvasInner() {
       })
     }
 
+    /*
+     * 先用本地草稿抢一次首屏（stale-while-revalidate）。
+     *
+     * 草稿是 localStorage 同步读，几毫秒就能画出来；而云端全量拉取要一个完整往返，
+     * 大画布还要串行翻页。原先只在云端失败时才读草稿，成功路径上一律白屏干等，
+     * 于是「明明本地就有一模一样的数据」却每次都要等网络。
+     *
+     * 这里画出来的只是过渡态：不置 cloudLoadedRef（保存链路仍等云端基线），
+     * 也不建 syncRef 快照，云端回来后整体替换，不会把草稿当成已同步内容而漏传。
+     */
+    let paintedDraft = false
+    const draftForPaint = loadCanvasDraft(routeProjectId)
+    if (draftForPaint && draftForPaint.nodes.length > 0 && readDraftBoundCanvasId(routeProjectId) === canvasId) {
+      const draftNodes = (draftForPaint.nodes as Node[]).map((n) => {
+        const cleaned = String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n
+        return normalizeNodeMedia(cleaned, workspaceId)
+      })
+      setNodes(draftNodes)
+      setEdges(draftForPaint.edges as Edge[])
+      if (draftForPaint.textContents) {
+        if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+        const map = (window as any).__canvasTextContents as Map<string, string>
+        Object.entries(draftForPaint.textContents).forEach(([k, v]) => map.set(k, v))
+      }
+      paintedDraft = true
+      fitCanvasView()
+    }
+
     ;(async () => {
       try {
         // 1) 全量加载元素；只有全部分页成功后才推进 revision，避免大画布被截断。
@@ -3104,7 +3132,8 @@ function CanvasInner() {
         cloudErrorRef.current = String(error?.message || '云端画布加载失败')
         setCloudStatus(navigator.onLine ? 'error' : 'offline')
         setCloudMessage(navigator.onLine ? '云端读取失败，当前使用本机草稿' : '网络已断开，当前使用本机草稿')
-        applyLocalDraft()
+        // 首屏已经画过同一份草稿就不必重画，否则会白白再触发一次 fitView 抖动
+        if (!paintedDraft) applyLocalDraft()
       }
     })()
   }, [setNodes, setEdges, setSelectedNode, fitView, routeProjectId, navigate, workspaceId])
