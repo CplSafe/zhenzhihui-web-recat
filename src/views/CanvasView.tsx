@@ -183,6 +183,29 @@ export function resolveNodeMediaUrl(data: Record<string, unknown> | undefined, w
   return resultUrl
 }
 
+/**
+ * 由节点 data 推出工具条需要的状态：显示哪些动作、上传还是替换。
+ *
+ * 单独抽出来是因为「有没有素材」有过一次判断错误：只看 data.resultUrl，
+ * 而云端拉回来的素材常常只有 assetId（resultUrl 为空或是 blob:），
+ * 于是被判成空节点，下载与截帧两个按钮直接不出现。这里与节点自身共用
+ * resolveNodeMediaUrl，保证两边对「有内容」的认定完全一致。
+ */
+export function resolveNodeToolbarState(
+  data: Record<string, unknown> | undefined,
+  workspaceId: number,
+): { kind: string; hasContent: boolean; uploading: boolean } {
+  const record = data || {}
+  const kind = String(record.kind || 'text')
+  const mediaUrl = resolveNodeMediaUrl(record, workspaceId) || String(record.previewUrl || '')
+  return {
+    kind,
+    // 文本没有素材；时间线的产出走它自己的合成流程，不归工具条的上传/下载管
+    hasContent: kind === 'text' || kind === 'timeline' ? false : Boolean(mediaUrl),
+    uploading: Boolean(record.uploading),
+  }
+}
+
 /** 归一化节点素材：把 blob: 临时地址替换为可持久回显的同源流式地址（旧数据兜底）。 */
 export function normalizeNodeMedia(node: Node, workspaceId: number): Node {
   const data = (node.data || {}) as Record<string, unknown>
@@ -1812,17 +1835,17 @@ function CanvasInner() {
     }
   }, [selectedNode, selectedNodeIds.length, nodes, transform])
 
-  /** 工具条要用的节点状态：决定「上传」还是「替换」、能否下载/截帧。 */
+  /**
+   * 工具条要用的节点状态：决定「上传」还是「替换」、能否下载/截帧。
+   *
+   * hasContent 必须走 resolveNodeMediaUrl —— 与节点自己判断有无素材用的是同一套规则。
+   * 早先这里只看 data.resultUrl，于是「只有 assetId、resultUrl 为空或是 blob:」的节点
+   * （云端拉回来的素材大多如此）被判成没有内容，下载与截帧两个按钮直接不出现。
+   */
   const selectedNodeToolbarState = useMemo(() => {
     const node = selectedNode ? nodes.find((item) => item.id === selectedNode.id) : null
-    const data = (node?.data || {}) as Record<string, unknown>
-    const kind = String(data.kind || node?.type || 'text')
-    return {
-      kind,
-      hasContent: kind === 'text' ? false : Boolean(String(data.resultUrl || '')),
-      uploading: Boolean(data.uploading),
-    }
-  }, [selectedNode, nodes])
+    return resolveNodeToolbarState((node?.data || {}) as Record<string, unknown>, workspaceId)
+  }, [selectedNode, nodes, workspaceId])
 
   const panelPanRef = useRef('')
   useEffect(() => {
