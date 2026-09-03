@@ -46,16 +46,26 @@ describe('demand description 元数据块', () => {
     expect(extras).toEqual(EXTRAS)
   })
 
+  it('正文为空且后端清理开头空白后仍能识别元数据', () => {
+    const encoded = encodeDemandDescription('', EXTRAS)
+    expect(encoded.startsWith('[ZZH-DEMAND-META]')).toBe(true)
+
+    const { text, extras } = splitDemandDescription(encoded.trim())
+    expect(text).toBe('')
+    expect(extras).toEqual(EXTRAS)
+  })
+
   it('没有扩展字段时不追加元数据块', () => {
     expect(encodeDemandDescription('  纯文本  ', {})).toBe('纯文本')
     expect(encodeDemandDescription('a', { materials: [] })).toBe('a')
   })
 
-  it('无元数据块或元数据损坏时按纯文本处理', () => {
+  it('无元数据块按纯文本处理，损坏的内部元数据不会展示给用户', () => {
     expect(splitDemandDescription('普通描述')).toEqual({ text: '普通描述', extras: {} })
     expect(splitDemandDescription(undefined)).toEqual({ text: '', extras: {} })
     const broken = `正文\n\n[ZZH-DEMAND-META]{not-json`
-    expect(splitDemandDescription(broken)).toEqual({ text: broken.trim(), extras: {} })
+    expect(splitDemandDescription(broken)).toEqual({ text: '正文', extras: {} })
+    expect(splitDemandDescription('[ZZH-DEMAND-META]{not-json')).toEqual({ text: '', extras: {} })
   })
 
   it('丢弃元数据里的非法字段值', () => {
