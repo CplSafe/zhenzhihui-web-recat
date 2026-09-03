@@ -709,35 +709,91 @@
   user-select: none;
 }
 
-/* 类型头部：浮在节点上方 */
+/* 类型头部：浮在节点上方
+ *
+ * 用 right:4px 约束右边界，而不是 width:100%——后者叠在 left:4px 上会让盒子
+ * 比节点宽 4px，标题稍长就顶出节点右缘并折行，把图标挤成上下两行。
+ */
 .canvas-node-header {
   position: absolute;
   z-index: 1;
   left: 4px;
+  right: 4px;
   top: 0;
   transform: translateY(-100%);
-  padding-bottom: 8px;
-  width: 100%;
-  color: rgba(51, 51, 51, 0.6);
-  font-size: calc(14px * var(--canvas-readable-text-scale));
-  line-height: calc(18px * var(--canvas-readable-text-scale));
+  padding-bottom: 6px;
+  color: rgba(51, 51, 51, 0.45);
+  font-size: calc(12px * var(--canvas-readable-text-scale));
+  line-height: calc(16px * var(--canvas-readable-text-scale));
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   pointer-events: auto;
 }
 
+/* 图标跟着字号一起缩放：写死 px 时缩小画布会让字变大而图标不动，
+ * 两者错位撑开整行，正是标签折行的另一半原因。 */
 .canvas-node-header__icon {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  width: 14px;
-  height: 14px;
+  justify-content: center;
+  width: calc(12px * var(--canvas-readable-text-scale));
+  height: calc(12px * var(--canvas-readable-text-scale));
+  opacity: 0.85;
 }
 
+.canvas-node-header__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* 隔离双击的包装层：min-width:0 必须一路传下去，否则 flex 子项不肯收缩，
+ * text-overflow 永远不会触发，长标题继续把节点顶宽。 */
+.canvas-node-header__label-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* 单行省略：标题现在带内容摘要，长度不可控，必须交给省略号而不是折行 */
 .canvas-node-header__label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: text;
+  border-radius: 4px;
+  padding: 0 2px;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+/* 悬停才提示「这里可以改」，静止时保持克制，不与缩略图抢注意力。
+ * InlineEdit 自带的 .ie-display:hover 是智能成片那套青绿，这里覆盖成画布主色。 */
+.canvas-node-header .ie-display:hover,
+.canvas-default-node:hover .canvas-node-header__label:hover {
+  background: rgba(87, 103, 229, 0.1);
+  color: rgba(51, 51, 51, 0.85);
+}
+
+/* 编辑态：输入框继承头部字号，避免进入编辑时标题跳一下 */
+.canvas-node-header .ie-input {
+  flex: 1;
+  min-width: 0;
+  font-size: inherit;
+  line-height: inherit;
+  font-family: inherit;
+  color: #333;
+  padding: 0 2px;
+  border: 1px solid #5767e5;
+  border-radius: 4px;
+  background: #fff;
+  outline: none;
 }
 
 /* 主体占位 */

@@ -77,7 +77,6 @@ import CanvasNodePanel, {
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
-import CanvasRenameNodeDialog from '@/components/canvas/CanvasRenameNodeDialog'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
@@ -107,6 +106,8 @@ import { captureVideoFrame, captureVideoFrameFromUrl, type VideoFramePosition } 
 import { resolveGeneratedMediaUrls, resolveVerifiedResultAssetId } from '@/utils/taskMedia'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText } from '@/utils/canvasStructuredText'
+import InlineEdit from '@/components/common/InlineEdit'
+import { CANVAS_TITLE_MAX_LENGTH, getCanvasKindLabel, resolveCanvasNodeTitle } from '@/utils/canvasNodeTitle'
 import {
   inferCanvasConnectionRole,
   validateCanvasImageInputs,
@@ -297,6 +298,16 @@ function getTypeIcon(kind: string) {
       </svg>
     )
   }
+  if (kind === 'timeline') {
+    // 胶片格：时间线节点此前没有自己的图标，会掉进下面的 text 分支显示成一支笔，
+    // 和「文本」节点撞脸。
+    return (
+      <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+        <rect x="1" y="2.5" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M4.2 2.5v9M9.8 2.5v9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    )
+  }
   // text
   return (
     <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
@@ -359,6 +370,8 @@ interface CanvasNodeActions {
   onImageNaturalSize?: (nodeId: string, width: number, height: number) => void
   /** 该节点是否正在截帧上传中。 */
   capturingNodeId?: string
+  /** 节点改名：写 data.title，空串表示恢复按内容推导的默认名。 */
+  onRenameNode?: (nodeId: string, nextTitle: string) => void
   /**
    * 剪辑时间线的常用操作，直接在节点卡片上完成。
    *
@@ -997,6 +1010,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     onCaptureFrame,
     onImageNaturalSize,
     capturingNodeId,
+    onRenameNode,
     timeline: timelineActions,
   } = useContext(CanvasNodeActionsContext)
   const capturing = capturingNodeId === id
@@ -1141,16 +1155,33 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     })
   }
 
-  const labelMap: Record<string, string> = {
-    text: '文本',
-    image: '图片',
-    video: '视频',
-    timeline: '视频剪辑',
-  }
-  const isRealPersonAsset = isImageNode && (data as any)?.assetSource === 'real_person'
-  const defaultNodeName = isRealPersonAsset ? '真人素材' : labelMap[kind] || kind
-  const customNodeName = String((data as any)?.nodeName || '').trim()
-  const displayedNodeName = customNodeName || defaultNodeName
+  /**
+   * 头部标题：用户改过名用改的，否则按内容推导。
+   *
+   * 依赖里带上 textContent：文本节点的正文不在 data 上（存在 __canvasTextContents），
+   * 漏了它标题就会停在旧摘要上不再更新。
+   */
+  const customTitle = String((data as any)?.title || '')
+  /**
+   * 推导出的默认名，与 headerTitle 分开算。
+   *
+   * 提交时要拿它（而不是当前显示的 headerTitle）判断「是否改回了默认」：
+   * 已改过名时 headerTitle 就是那个自定义名，用它比较永远不相等，
+   * 于是用户把名字改回默认样子后仍会被当成自定义值存下来，此后内容再变标题也不会跟着动。
+   */
+  const derivedTitle = useMemo(
+    () =>
+      resolveCanvasNodeTitle({
+        kind,
+        prompt: (data as any)?.prompt,
+        text: textContent,
+        realPerson: (data as any)?.realPerson,
+        assetSource: (data as any)?.assetSource,
+        timeline: (data as any)?.timeline,
+      }),
+    [kind, data, textContent],
+  )
+  const headerTitle = customTitle.trim() || derivedTitle
 
   return (
     <div
@@ -1159,30 +1190,28 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       onMouseEnter={() => setNodeHovered(true)}
       onMouseLeave={() => setNodeHovered(false)}
     >
-      {/* 头部：类型图标 + 标签，浮在节点上方 */}
-      <div className="canvas-node-header">
+      {/*
+       * 头部：类型图标 + 名称（双击改名），浮在节点上方。
+       *
+       * nodrag nopan 缺一不可：没有 nodrag，在标题上按下拖选文字会变成拖动整个节点；
+       * 没有 nopan，双击会穿到 React Flow 的 onNodeDoubleClick——时间线节点因此
+       * 在改名的同时弹出剪辑弹窗。React Flow 的手势过滤只认这两个类名（见下方视频区注释）。
+       */}
+      <div className="canvas-node-header nodrag nopan" title={headerTitle}>
         <span className="canvas-node-header__icon">{getTypeIcon(kind)}</span>
-        <button
-          type="button"
-          className="canvas-node-header__rename nodrag nopan"
-          aria-label={`重命名节点：${displayedNodeName}`}
-          title="点击修改节点名称"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation()
-            ;(window as any).__canvasOpenRenameDialog?.({
-              nodeId: id,
-              currentName: customNodeName,
-              defaultName: defaultNodeName,
-            })
-          }}
-        >
-          <span className="canvas-node-header__label">{displayedNodeName}</span>
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="m10.8 2.3 2.9 2.9-7.8 7.8-3.6.7.7-3.6z" />
-            <path d="m9.6 3.5 2.9 2.9" />
-          </svg>
-        </button>
+        <span className="canvas-node-header__label-wrap" onDoubleClick={(event) => event.stopPropagation()}>
+          <InlineEdit
+            className="canvas-node-header__label"
+            value={headerTitle}
+            maxLength={CANVAS_TITLE_MAX_LENGTH}
+            placeholder={getCanvasKindLabel(kind)}
+            onCommit={(next) => {
+              // 改回默认名等同于「没起名」：提交空串让上层删掉 title 字段，
+              // 之后标题继续跟着内容走。这里必须比 derivedTitle，不能比 headerTitle。
+              onRenameNode?.(id, next.trim() === derivedTitle.trim() ? '' : next)
+            }}
+          />
+        </span>
       </div>
 
       {/* 顶部操作胶囊：上传/替换 + 下载（图片/视频节点专属，与左右侧连接点图标同款交互：选中/悬停出现） */}
@@ -1264,8 +1293,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           <button
             type="button"
             className="canvas-node-upload-btn canvas-node-delete-btn"
-            title={`删除${labelMap[kind] || '节点'}`}
-            aria-label={`删除${labelMap[kind] || '节点'}`}
+            title={`删除${getCanvasKindLabel(kind)}`}
+            aria-label={`删除${getCanvasKindLabel(kind)}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.preventDefault()
@@ -1742,11 +1771,6 @@ function CanvasInner() {
    */
   const canvasId = Math.max(0, Math.floor(Number(routeProjectId) || 0))
   const [shareOpen, setShareOpen] = useState(false)
-  const [renameTarget, setRenameTarget] = useState<{
-    nodeId: string
-    currentName: string
-    defaultName: string
-  } | null>(null)
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
@@ -2367,52 +2391,6 @@ function CanvasInner() {
       delete (window as any).__canvasDeleteNode
     }
   }, [deleteNodeById])
-
-  /**
-   * 节点标题重命名入口。空名称不落库，节点会自然回退到原有的类型名称。
-   * 修改前记录历史，使重命名也能跟随画布的撤销/重做行为。
-   */
-  const renameNodeById = useCallback(
-    (nodeId: string, nextName: string) => {
-      const node = latestRef.current.nodes.find((candidate) => candidate.id === nodeId)
-      if (!node) return
-
-      const normalizedName = String(nextName || '')
-        .trim()
-        .slice(0, 40)
-      const currentName = String((node.data as any)?.nodeName || '').trim()
-      if (normalizedName === currentName) return
-
-      commitHistory()
-      setNodes((current) =>
-        current.map((candidate) => {
-          if (candidate.id !== nodeId) return candidate
-          const data = (candidate.data || {}) as Record<string, unknown>
-          if (!normalizedName) {
-            const { nodeName: _nodeName, ...rest } = data
-            return { ...candidate, data: rest }
-          }
-          return { ...candidate, data: { ...data, nodeName: normalizedName } }
-        }),
-      )
-      setSaveStatus('dirty')
-    },
-    [commitHistory, setNodes],
-  )
-
-  useEffect(() => {
-    ;(window as any).__canvasRenameNode = renameNodeById
-    return () => {
-      delete (window as any).__canvasRenameNode
-    }
-  }, [renameNodeById])
-
-  useEffect(() => {
-    ;(window as any).__canvasOpenRenameDialog = setRenameTarget
-    return () => {
-      delete (window as any).__canvasOpenRenameDialog
-    }
-  }, [])
 
   // 键盘 Delete/Backspace 删除连线（选中连线时）：入撤销栈
   const handleEdgesDelete = useCallback(
@@ -4933,6 +4911,34 @@ function CanvasInner() {
     [setNodes],
   )
 
+  /**
+   * 节点改名：写 data.title。
+   *
+   * 清空即恢复默认名——删字段而不是存空串，和 renameGroup 同一处理：
+   * 默认名是按内容推导的，存了空串反而会把「有一个空标题」这件事持久化上云。
+   */
+  const renameNode = useCallback(
+    (nodeId: string, nextTitle: string) => {
+      const trimmed = nextTitle.trim().slice(0, CANVAS_TITLE_MAX_LENGTH)
+      const current = latestRef.current.nodes.find((node) => node.id === nodeId)
+      if (!current) return
+      if (String((current.data as Record<string, unknown> | undefined)?.title || '') === trimmed) return
+      commitHistory()
+      setNodes((items) =>
+        items.map((node) => {
+          if (node.id !== nodeId) return node
+          if (!trimmed) {
+            const { title: _title, ...rest } = (node.data || {}) as Record<string, unknown>
+            return { ...node, data: rest }
+          }
+          return { ...node, data: { ...node.data, title: trimmed } }
+        }),
+      )
+      setSaveStatus('dirty')
+    },
+    [commitHistory, setNodes, setSaveStatus],
+  )
+
   /** 改名写到全部成员上（名字是冗余存储的）；名字没变则不产生历史记录与云端 revision */
   const renameGroup = useCallback(
     (groupId: string, nextName: string) => {
@@ -4970,10 +4976,11 @@ function CanvasInner() {
       .map((node) => {
         const data = (node.data || {}) as Record<string, unknown>
         const kind = String(data.kind || node.type || 'text')
-        const nodeName = String(data.nodeName || '').trim()
+        const customTitle = String(data.title || '').trim()
         const content = String(textMap?.get(node.id) || data.text || data.prompt || '').trim()
-        const text = [nodeName, content].filter(Boolean).join(' ')
-        return { id: node.id, kind, text, kindLabel: nodeName || KIND_LABELS[kind] || kind }
+        // 自定义名也要能搜到：用户给节点起了名，多半就是打算靠这个名字找回它
+        const text = [customTitle, content].filter(Boolean).join(' ')
+        return { id: node.id, kind, text, kindLabel: customTitle || KIND_LABELS[kind] || kind }
       })
       .filter((item) => item.text.length > 0)
 
@@ -5567,6 +5574,7 @@ function CanvasInner() {
       onCaptureFrame: handleCaptureFrame,
       onImageNaturalSize: handleImageNaturalSize,
       capturingNodeId,
+      onRenameNode: renameNode,
       timeline: {
         getAddableSources: getTimelineAddableSources,
         onAddClip: handleAddTimelineClip,
@@ -5581,6 +5589,7 @@ function CanvasInner() {
       handleCaptureFrame,
       handleImageNaturalSize,
       capturingNodeId,
+      renameNode,
       getTimelineAddableSources,
       handleAddTimelineClip,
       handleRemoveTimelineClip,
@@ -5791,19 +5800,6 @@ function CanvasInner() {
             canvasId={canvasId}
             onClose={() => setShareOpen(false)}
             onToast={showToast}
-          />
-        )}
-
-        {renameTarget && (
-          <CanvasRenameNodeDialog
-            currentName={renameTarget.currentName}
-            defaultName={renameTarget.defaultName}
-            onClose={() => setRenameTarget(null)}
-            onConfirm={(name) => {
-              const normalizedName = name === renameTarget.defaultName ? '' : name
-              renameNodeById(renameTarget.nodeId, normalizedName)
-              setRenameTarget(null)
-            }}
           />
         )}
 
