@@ -100,8 +100,8 @@ test('移动端智能成片与爆款复制入口可访问且无整页横向溢�
   await expectNoDocumentOverflow(page)
 
   await page.getByRole('button', { name: '打开菜单' }).click()
-  await expect(page.getByRole('button', { name: '爆款复制', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '爆款复制', exact: true }).click()
+  await expect(page.getByRole('button', { name: '爆款复刻', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '爆款复刻', exact: true }).click()
   await expect(page).toHaveURL(/\/hot-copy$/)
   // SPA 菜单跳转不会等待爆款复制的大型懒加载 chunk；WebKit 冷启动时给页面级加载留出预算。
   await expect(page.getByRole('heading', { name: '爆款作业直接抄,你的产品当主角!' })).toBeVisible({ timeout: 30_000 })
