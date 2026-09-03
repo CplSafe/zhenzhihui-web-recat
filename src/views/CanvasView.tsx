@@ -77,13 +77,17 @@ import CanvasNodePanel, {
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
-import CanvasRenameNodeDialog from '@/components/canvas/CanvasRenameNodeDialog'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
 import { saveCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId } from '@/utils/canvasDraft'
 import { humanizeCanvasTaskError } from '@/utils/canvasTaskError'
-import { loadLastSelectedNodeId, saveLastSelectedNodeId } from '@/utils/canvasSelection'
+import {
+  loadLastSelectedNodeId,
+  loadMinimapVisible,
+  saveLastSelectedNodeId,
+  saveMinimapVisible,
+} from '@/utils/canvasSelection'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
@@ -107,6 +111,10 @@ import { captureVideoFrame, captureVideoFrameFromUrl, type VideoFramePosition } 
 import { resolveGeneratedMediaUrls, resolveVerifiedResultAssetId } from '@/utils/taskMedia'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText } from '@/utils/canvasStructuredText'
+import InlineEdit from '@/components/common/InlineEdit'
+import CanvasNodeToolbar from '@/components/canvas/CanvasNodeToolbar'
+import { useLatestCallback } from '@/composables/useLatestCallback'
+import { CANVAS_TITLE_MAX_LENGTH, getCanvasKindLabel, resolveCanvasNodeTitle } from '@/utils/canvasNodeTitle'
 import {
   inferCanvasConnectionRole,
   validateCanvasImageInputs,
@@ -178,6 +186,29 @@ export function resolveNodeMediaUrl(data: Record<string, unknown> | undefined, w
   if (resultUrl && !resultUrl.startsWith('blob:')) return resultUrl
   if (Number.isSafeInteger(assetId) && assetId > 0) return assetStreamUrl(assetId, workspaceId)
   return resultUrl
+}
+
+/**
+ * 由节点 data 推出工具条需要的状态：显示哪些动作、上传还是替换。
+ *
+ * 单独抽出来是因为「有没有素材」有过一次判断错误：只看 data.resultUrl，
+ * 而云端拉回来的素材常常只有 assetId（resultUrl 为空或是 blob:），
+ * 于是被判成空节点，下载与截帧两个按钮直接不出现。这里与节点自身共用
+ * resolveNodeMediaUrl，保证两边对「有内容」的认定完全一致。
+ */
+export function resolveNodeToolbarState(
+  data: Record<string, unknown> | undefined,
+  workspaceId: number,
+): { kind: string; hasContent: boolean; uploading: boolean } {
+  const record = data || {}
+  const kind = String(record.kind || 'text')
+  const mediaUrl = resolveNodeMediaUrl(record, workspaceId) || String(record.previewUrl || '')
+  return {
+    kind,
+    // 文本没有素材；时间线的产出走它自己的合成流程，不归工具条的上传/下载管
+    hasContent: kind === 'text' || kind === 'timeline' ? false : Boolean(mediaUrl),
+    uploading: Boolean(record.uploading),
+  }
 }
 
 /** 归一化节点素材：把 blob: 临时地址替换为可持久回显的同源流式地址（旧数据兜底）。 */
@@ -297,6 +328,16 @@ function getTypeIcon(kind: string) {
       </svg>
     )
   }
+  if (kind === 'timeline') {
+    // 胶片格：时间线节点此前没有自己的图标，会掉进下面的 text 分支显示成一支笔，
+    // 和「文本」节点撞脸。
+    return (
+      <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+        <rect x="1" y="2.5" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M4.2 2.5v9M9.8 2.5v9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    )
+  }
   // text
   return (
     <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
@@ -359,6 +400,27 @@ interface CanvasNodeActions {
   onImageNaturalSize?: (nodeId: string, width: number, height: number) => void
   /** 该节点是否正在截帧上传中。 */
   capturingNodeId?: string
+  /** 节点改名：写 data.title，空串表示恢复按内容推导的默认名。 */
+  onRenameNode?: (nodeId: string, nextTitle: string) => void
+  /**
+   * 由工具条要求进入改名态的节点 id。
+   *
+   * 改名的输入框在节点头部，触发按钮却在视图层的工具条上，用这个 id 把两者接起来：
+   * 节点看到 id 是自己就自动展开编辑态。双击标题依然可以直接进入，两条路互不干扰。
+   */
+  renamingNodeId?: string
+  /** 节点退出改名态时回调，让视图层清掉上面的 id。 */
+  onRenamingDone?: () => void
+  /**
+   * 视频节点把「取某个位置的一帧」注册上来，供上方工具条调用。
+   *
+   * 截帧必须在持有 <video> 元素的节点内部完成（要读它的 duration、currentTime），
+   * 而按钮已经挪到了视图层的工具条上，所以由节点登记能力、视图层按 id 取用。
+   * 返回空串表示这一帧没取到，由调用方提示。
+   */
+  registerFrameCapture?: (nodeId: string, capture: ((position: VideoFramePosition) => Promise<string>) | null) => void
+  /** 同理，图片/视频节点把「下载自己的素材」登记上来供工具条调用。 */
+  registerNodeDownload?: (nodeId: string, download: (() => void) | null) => void
   /**
    * 剪辑时间线的常用操作，直接在节点卡片上完成。
    *
@@ -378,13 +440,6 @@ interface CanvasNodeActions {
 }
 
 const CanvasNodeActionsContext = createContext<CanvasNodeActions>({})
-
-/** 截帧位置及其文案：首帧接续上一个镜头，尾帧给下一个镜头当起点。 */
-const CAPTURE_POSITIONS: Array<{ position: VideoFramePosition; label: string }> = [
-  { position: 'first', label: '首帧' },
-  { position: 'current', label: '当前帧' },
-  { position: 'last', label: '尾帧' },
-]
 
 function getTypePlaceholder(kind: string) {
   const size = 48
@@ -994,25 +1049,14 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const structuredText = useMemo(() => parseCanvasStructuredText(textContent), [textContent])
   // 截帧动作由画布提供：节点只负责取出画面，上传与建节点在上层做
   const {
-    onCaptureFrame,
     onImageNaturalSize,
-    capturingNodeId,
+    onRenameNode,
+    registerFrameCapture,
+    registerNodeDownload,
+    renamingNodeId,
+    onRenamingDone,
     timeline: timelineActions,
   } = useContext(CanvasNodeActionsContext)
-  const capturing = capturingNodeId === id
-  const [preparingFrame, setPreparingFrame] = useState(false)
-  // 截帧位置选择（首帧/当前帧/尾帧）的展开态
-  const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
-  // 点到别处收起，避免菜单一直盖在画面上
-  useEffect(() => {
-    if (!captureMenuOpen) return
-    const onPointerDown = (event: PointerEvent) => {
-      if ((event.target as HTMLElement)?.closest?.('.canvas-node-video-capture-wrap')) return
-      setCaptureMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [captureMenuOpen])
 
   /**
    * 当前帧直接从画面读取；首尾帧需要可靠跳转，优先使用已经准备好的本地源，
@@ -1034,7 +1078,6 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         : mediaUrlRef.current
     if (!source) return ''
 
-    setPreparingFrame(true)
     const handle = acquireSeekableSource(source)
     try {
       const ready = await handle.ready
@@ -1051,7 +1094,6 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       return captureVideoFrame(currentVideo, position, { seekTimeoutMs: 8000, frameTimeoutMs: 3000 })
     } finally {
       handle.release()
-      setPreparingFrame(false)
     }
   }
 
@@ -1078,6 +1120,17 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     }
     return count
   })
+  /*
+   * 把截帧能力登记给视图层：按钮在上方工具条上，取帧却要用这里的 <video>。
+   * 用 ref 存最新实现，避免 captureRequestedFrame 每次渲染都变引起反复注册。
+   */
+  const captureFrameRef = useLatestCallback(captureRequestedFrame)
+  useEffect(() => {
+    if (kind !== 'video' || !registerFrameCapture) return
+    registerFrameCapture(id, (position) => captureFrameRef(position))
+    return () => registerFrameCapture(id, null)
+  }, [kind, id, registerFrameCapture, captureFrameRef])
+
   /**
    * 连接点加号在鼠标滑入节点时出现（不是滑到加号上才出现）。
    *
@@ -1092,13 +1145,6 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const leftVisible = nodeHovered || leftHovered
   const rightVisible = nodeHovered || rightHovered
 
-  // 顶部操作胶囊：图片/视频节点专属
-  // - 图片：无内容 → 「上传」；有内容 → 「替换」+「下载」
-  // - 视频：无内容 → 「上传」；有内容 → 「下载」（视频有内容时不再隐藏，改为可下载）
-  const nodeResultUrl = mediaUrl
-  const isImageNode = kind === 'image'
-  const isVideoNode = kind === 'video'
-  const hasContent = Boolean(nodeResultUrl)
   const taskStatus = normalizeAiTaskStatus((data as any)?.taskStatus)
   const taskProgress = Math.max(0, Math.min(100, Number((data as any)?.taskProgress || 0)))
   const taskError = String((data as any)?.taskError || '')
@@ -1111,12 +1157,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   })
   const taskRunning = taskPresentation.running
   const taskFailed = taskPresentation.failed
-  // 本地图片上传中：素材尚未落库，替换/下载都拿不到 assetId，先隐藏这两个动作
-  const showUploadAction = isImageNode || isVideoNode ? !(isVideoNode && hasContent) && !uploadingLocalFile : false
-  const uploadLabel = isImageNode && hasContent ? '替换' : '上传'
-  const showDownloadAction = (isImageNode || isVideoNode) && hasContent && !uploadingLocalFile
-  // 删除属于所有节点的基础操作，因此文本、图片和视频节点都保留顶部操作组。
-  const showTopActions = true
+  // 上传/替换/下载/删除的显隐判断已随按钮一起移到 CanvasNodeToolbar，
+  // 由 selectedNodeToolbarState 在视图层统一算。
 
   /** 下载节点素材：优先按 assetId 走素材下载接口（/api/v1/assets/{id}/download），无 assetId 时退回 resultUrl。 */
   const handleDownloadMedia = () => {
@@ -1141,16 +1183,45 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     })
   }
 
-  const labelMap: Record<string, string> = {
-    text: '文本',
-    image: '图片',
-    video: '视频',
-    timeline: '视频剪辑',
-  }
-  const isRealPersonAsset = isImageNode && (data as any)?.assetSource === 'real_person'
-  const defaultNodeName = isRealPersonAsset ? '真人素材' : labelMap[kind] || kind
-  const customNodeName = String((data as any)?.nodeName || '').trim()
-  const displayedNodeName = customNodeName || defaultNodeName
+  /*
+   * 下载同理：文件名、assetId 兜底、下载失败提示都在这里，
+   * 视图层的工具条只负责触发，不重复一遍这套逻辑。
+   * 必须放在 handleDownloadMedia 之后——const 有暂时性死区，提前引用会直接抛错。
+   */
+  const downloadMediaRef = useLatestCallback(handleDownloadMedia)
+  useEffect(() => {
+    if (!(kind === 'image' || kind === 'video') || !registerNodeDownload) return
+    registerNodeDownload(id, () => downloadMediaRef())
+    return () => registerNodeDownload(id, null)
+  }, [kind, id, registerNodeDownload, downloadMediaRef])
+
+  /**
+   * 头部标题：用户改过名用改的，否则按内容推导。
+   *
+   * 依赖里带上 textContent：文本节点的正文不在 data 上（存在 __canvasTextContents），
+   * 漏了它标题就会停在旧摘要上不再更新。
+   */
+  const customTitle = String((data as any)?.title || '')
+  /**
+   * 推导出的默认名，与 headerTitle 分开算。
+   *
+   * 提交时要拿它（而不是当前显示的 headerTitle）判断「是否改回了默认」：
+   * 已改过名时 headerTitle 就是那个自定义名，用它比较永远不相等，
+   * 于是用户把名字改回默认样子后仍会被当成自定义值存下来，此后内容再变标题也不会跟着动。
+   */
+  const derivedTitle = useMemo(
+    () =>
+      resolveCanvasNodeTitle({
+        kind,
+        prompt: (data as any)?.prompt,
+        text: textContent,
+        realPerson: (data as any)?.realPerson,
+        assetSource: (data as any)?.assetSource,
+        timeline: (data as any)?.timeline,
+      }),
+    [kind, data, textContent],
+  )
+  const headerTitle = customTitle.trim() || derivedTitle
 
   return (
     <div
@@ -1159,34 +1230,38 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       onMouseEnter={() => setNodeHovered(true)}
       onMouseLeave={() => setNodeHovered(false)}
     >
-      {/* 头部：类型图标 + 标签，浮在节点上方 */}
-      <div className="canvas-node-header">
+      {/*
+       * 头部：类型图标 + 名称（双击改名），浮在节点上方。
+       *
+       * nodrag nopan 缺一不可：没有 nodrag，在标题上按下拖选文字会变成拖动整个节点；
+       * 没有 nopan，双击会穿到 React Flow 的 onNodeDoubleClick——时间线节点因此
+       * 在改名的同时弹出剪辑弹窗。React Flow 的手势过滤只认这两个类名（见下方视频区注释）。
+       */}
+      <div className="canvas-node-header nodrag nopan" title={headerTitle}>
         <span className="canvas-node-header__icon">{getTypeIcon(kind)}</span>
-        <button
-          type="button"
-          className="canvas-node-header__rename nodrag nopan"
-          aria-label={`重命名节点：${displayedNodeName}`}
-          title="点击修改节点名称"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation()
-            ;(window as any).__canvasOpenRenameDialog?.({
-              nodeId: id,
-              currentName: customNodeName,
-              defaultName: defaultNodeName,
-            })
-          }}
-        >
-          <span className="canvas-node-header__label">{displayedNodeName}</span>
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="m10.8 2.3 2.9 2.9-7.8 7.8-3.6.7.7-3.6z" />
-            <path d="m9.6 3.5 2.9 2.9" />
-          </svg>
-        </button>
+        <span className="canvas-node-header__label-wrap" onDoubleClick={(event) => event.stopPropagation()}>
+          <InlineEdit
+            className="canvas-node-header__label"
+            value={headerTitle}
+            maxLength={CANVAS_TITLE_MAX_LENGTH}
+            placeholder={getCanvasKindLabel(kind)}
+            openSignal={renamingNodeId === id}
+            onEditingEnd={onRenamingDone}
+            onCommit={(next) => {
+              // 改回默认名等同于「没起名」：提交空串让上层删掉 title 字段，
+              // 之后标题继续跟着内容走。这里必须比 derivedTitle，不能比 headerTitle。
+              onRenameNode?.(id, next.trim() === derivedTitle.trim() ? '' : next)
+            }}
+          />
+        </span>
       </div>
 
-      {/* 顶部操作胶囊：上传/替换 + 下载（图片/视频节点专属，与左右侧连接点图标同款交互：选中/悬停出现） */}
-      {showTopActions && (
+      {/*
+       * 时间线节点的「添加视频 / 精修 / 合成」仍留在节点上：
+       * 它们是这个节点的编辑动作，不属于工具条那种通用操作（改名/上传/下载/删除）。
+       * 上传、下载、删除、截帧都已移到选中时浮出的 CanvasNodeToolbar。
+       */}
+      {kind === 'timeline' && timelineActions && (
         <div
           className="canvas-node-upload-group"
           data-visible={selected || topHovered}
@@ -1194,104 +1269,14 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           onMouseLeave={() => setTopHovered(false)}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {showUploadAction && (
-            <button
-              type="button"
-              className="canvas-node-upload-btn"
-              title={uploadLabel}
-              onClick={(e) => {
-                e.stopPropagation()
-                ;(window as any).__canvasRequestUpload?.(id)
-              }}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="13"
-                height="13"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M12 16V4" />
-                <path d="m6 10 6-6 6 6" />
-                <path d="M4 20h16" />
-              </svg>
-              <span className="canvas-node-upload-btn__label">{uploadLabel}</span>
-            </button>
-          )}
-          {/* 时间线：添加视频 / 精修 / 合成 与「删除」同处这一组，卡片内只留预览与片段条 */}
-          {kind === 'timeline' && timelineActions && (
-            <CanvasTimelineNodeActions
-              nodeId={id}
-              clipCount={timelineSummary.clips.length}
-              composing={timelineActions.composingNodeId === id}
-              composeProgress={timelineActions.composeProgress}
-              onCompose={timelineActions.onCompose}
-              onOpenEditor={timelineActions.onOpenEditor}
-            />
-          )}
-          {showDownloadAction && (
-            <button
-              type="button"
-              className="canvas-node-upload-btn"
-              title="下载"
-              onClick={(e) => {
-                e.stopPropagation()
-                handleDownloadMedia()
-              }}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="13"
-                height="13"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M12 4v12" />
-                <path d="m6 10 6 6 6-6" />
-                <path d="M4 20h16" />
-              </svg>
-              <span className="canvas-node-upload-btn__label">下载</span>
-            </button>
-          )}
-          <button
-            type="button"
-            className="canvas-node-upload-btn canvas-node-delete-btn"
-            title={`删除${labelMap[kind] || '节点'}`}
-            aria-label={`删除${labelMap[kind] || '节点'}`}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              ;(window as any).__canvasDeleteNode?.(id)
-            }}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 6h18" />
-              <path d="M8 6V4h8v2" />
-              <path d="m19 6-1 14H6L5 6" />
-              <path d="M10 11v5" />
-              <path d="M14 11v5" />
-            </svg>
-            <span className="canvas-node-upload-btn__label">删除</span>
-          </button>
+          <CanvasTimelineNodeActions
+            nodeId={id}
+            clipCount={timelineSummary.clips.length}
+            composing={timelineActions.composingNodeId === id}
+            composeProgress={timelineActions.composeProgress}
+            onCompose={timelineActions.onCompose}
+            onOpenEditor={timelineActions.onOpenEditor}
+          />
         </div>
       )}
 
@@ -1471,69 +1456,6 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 </div>
               </div>
             ) : null}
-            {/* 截帧：把某一帧存成图片节点，可直接拿去做图生图。首尾帧是最常用的两张 */}
-            {onCaptureFrame ? (
-              <div
-                className="canvas-node-video-capture-wrap nodrag nopan"
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                onDoubleClick={(event) => event.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  className="canvas-node-video-capture"
-                  title={capturing || preparingFrame ? '正在准备画面…' : '截取画面为图片'}
-                  aria-label="截帧"
-                  aria-expanded={captureMenuOpen}
-                  disabled={capturing || preparingFrame}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    setCaptureMenuOpen((open) => !open)
-                  }}
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="17"
-                    height="17"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M4 7h3l1.5-2h7L17 7h3v12H4z" />
-                    <circle cx="12" cy="13" r="3.4" />
-                  </svg>
-                  <span className="canvas-node-video-capture__label">截帧</span>
-                </button>
-                {captureMenuOpen ? (
-                  <div className="canvas-node-capture-menu" role="menu" aria-label="截帧位置">
-                    {CAPTURE_POSITIONS.map((item) => (
-                      <button
-                        key={item.position}
-                        type="button"
-                        role="menuitem"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          setCaptureMenuOpen(false)
-                          void (async () => {
-                            const frame = await captureRequestedFrame(item.position)
-                            if (!frame) {
-                              showToast('截帧失败，请确认视频可以正常播放后重试', 'error')
-                              return
-                            }
-                            onCaptureFrame(id, frame)
-                          })()
-                        }}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
             <button
               type="button"
               className="canvas-node-video-expand nodrag nopan"
@@ -1709,6 +1631,8 @@ function CanvasInner() {
   const [snapEnabled, setSnapEnabled] = useState(false)
   /** 隐藏连线：节点密集时连线会糊成一片，这是一个纯展示层的降噪开关，不改任何数据 */
   const [edgesHidden, setEdgesHidden] = useState(false)
+  /** 小地图显示与否；偏好记在本机，开关在左下角的视图控制条上 */
+  const [minimapVisible, setMinimapVisible] = useState(loadMinimapVisible)
   // 正在编辑剪辑时间线的节点 id；空串表示编辑器关闭
   const [timelineEditorNodeId, setTimelineEditorNodeId] = useState('')
   // 合成进行中（下载素材 → 无损拼接 → 上传成片），期间禁止重复触发
@@ -1742,11 +1666,6 @@ function CanvasInner() {
    */
   const canvasId = Math.max(0, Math.floor(Number(routeProjectId) || 0))
   const [shareOpen, setShareOpen] = useState(false)
-  const [renameTarget, setRenameTarget] = useState<{
-    nodeId: string
-    currentName: string
-    defaultName: string
-  } | null>(null)
   // 当前用户：收藏 tab 按用户隔离读取
   const currentUser = useCurrentUser()
   const currentUserId = resolveUserId(currentUser)
@@ -1894,6 +1813,46 @@ function CanvasInner() {
     }
     // 面板不再上翻，高度已不参与定位计算，因此不依赖 panelSize.height
   }, [selectedNode, nodes, transform, panelSize.width])
+
+  /**
+   * 单选工具条的位置：贴在节点上方。
+   *
+   * 编辑面板在节点下方，工具条放上方两者才不打架。多选时不出现——
+   * 那种情况由 CanvasSelectionToolbar 接管，两条同时浮出会分不清谁作用于什么。
+   * 两端做夹取，节点被拖到视口外时工具条仍留在屏幕内。
+   */
+  const nodeToolbarAnchor = useMemo(() => {
+    if (!selectedNode || selectedNodeIds.length > 1) return null
+    const node = nodes.find((item) => item.id === selectedNode.id)
+    if (!node) return null
+    const [tx, ty, tz] = transform
+    const domNode = Array.from(document.querySelectorAll<HTMLElement>('.react-flow__node')).find(
+      (element) => element.dataset.id === selectedNode.id,
+    )
+    const nodeRect = domNode?.getBoundingClientRect()
+    const style = (node.style || {}) as Record<string, unknown>
+    const nodeWidth = Number(node.measured?.width ?? style.width ?? 250) || 250
+    const centerX = nodeRect ? nodeRect.left + nodeRect.width / 2 : (node.position.x + nodeWidth / 2) * tz + tx
+    const topY = nodeRect ? nodeRect.top : node.position.y * tz + ty
+    // 让开节点上方的标题行，否则工具条会压住刚做好的名称
+    const gap = 42
+    return {
+      centerX: Math.min(Math.max(centerX, 150), Math.max(150, window.innerWidth - 150)),
+      bottom: Math.min(Math.max(window.innerHeight - topY + gap, 16), Math.max(16, window.innerHeight - 72)),
+    }
+  }, [selectedNode, selectedNodeIds.length, nodes, transform])
+
+  /**
+   * 工具条要用的节点状态：决定「上传」还是「替换」、能否下载/截帧。
+   *
+   * hasContent 必须走 resolveNodeMediaUrl —— 与节点自己判断有无素材用的是同一套规则。
+   * 早先这里只看 data.resultUrl，于是「只有 assetId、resultUrl 为空或是 blob:」的节点
+   * （云端拉回来的素材大多如此）被判成没有内容，下载与截帧两个按钮直接不出现。
+   */
+  const selectedNodeToolbarState = useMemo(() => {
+    const node = selectedNode ? nodes.find((item) => item.id === selectedNode.id) : null
+    return resolveNodeToolbarState((node?.data || {}) as Record<string, unknown>, workspaceId)
+  }, [selectedNode, nodes, workspaceId])
 
   const panelPanRef = useRef('')
   useEffect(() => {
@@ -2367,52 +2326,6 @@ function CanvasInner() {
       delete (window as any).__canvasDeleteNode
     }
   }, [deleteNodeById])
-
-  /**
-   * 节点标题重命名入口。空名称不落库，节点会自然回退到原有的类型名称。
-   * 修改前记录历史，使重命名也能跟随画布的撤销/重做行为。
-   */
-  const renameNodeById = useCallback(
-    (nodeId: string, nextName: string) => {
-      const node = latestRef.current.nodes.find((candidate) => candidate.id === nodeId)
-      if (!node) return
-
-      const normalizedName = String(nextName || '')
-        .trim()
-        .slice(0, 40)
-      const currentName = String((node.data as any)?.nodeName || '').trim()
-      if (normalizedName === currentName) return
-
-      commitHistory()
-      setNodes((current) =>
-        current.map((candidate) => {
-          if (candidate.id !== nodeId) return candidate
-          const data = (candidate.data || {}) as Record<string, unknown>
-          if (!normalizedName) {
-            const { nodeName: _nodeName, ...rest } = data
-            return { ...candidate, data: rest }
-          }
-          return { ...candidate, data: { ...data, nodeName: normalizedName } }
-        }),
-      )
-      setSaveStatus('dirty')
-    },
-    [commitHistory, setNodes],
-  )
-
-  useEffect(() => {
-    ;(window as any).__canvasRenameNode = renameNodeById
-    return () => {
-      delete (window as any).__canvasRenameNode
-    }
-  }, [renameNodeById])
-
-  useEffect(() => {
-    ;(window as any).__canvasOpenRenameDialog = setRenameTarget
-    return () => {
-      delete (window as any).__canvasOpenRenameDialog
-    }
-  }, [])
 
   // 键盘 Delete/Backspace 删除连线（选中连线时）：入撤销栈
   const handleEdgesDelete = useCallback(
@@ -3053,6 +2966,34 @@ function CanvasInner() {
       })
     }
 
+    /*
+     * 先用本地草稿抢一次首屏（stale-while-revalidate）。
+     *
+     * 草稿是 localStorage 同步读，几毫秒就能画出来；而云端全量拉取要一个完整往返，
+     * 大画布还要串行翻页。原先只在云端失败时才读草稿，成功路径上一律白屏干等，
+     * 于是「明明本地就有一模一样的数据」却每次都要等网络。
+     *
+     * 这里画出来的只是过渡态：不置 cloudLoadedRef（保存链路仍等云端基线），
+     * 也不建 syncRef 快照，云端回来后整体替换，不会把草稿当成已同步内容而漏传。
+     */
+    let paintedDraft = false
+    const draftForPaint = loadCanvasDraft(routeProjectId)
+    if (draftForPaint && draftForPaint.nodes.length > 0 && readDraftBoundCanvasId(routeProjectId) === canvasId) {
+      const draftNodes = (draftForPaint.nodes as Node[]).map((n) => {
+        const cleaned = String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n
+        return normalizeNodeMedia(cleaned, workspaceId)
+      })
+      setNodes(draftNodes)
+      setEdges(draftForPaint.edges as Edge[])
+      if (draftForPaint.textContents) {
+        if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+        const map = (window as any).__canvasTextContents as Map<string, string>
+        Object.entries(draftForPaint.textContents).forEach(([k, v]) => map.set(k, v))
+      }
+      paintedDraft = true
+      fitCanvasView()
+    }
+
     ;(async () => {
       try {
         // 1) 全量加载元素；只有全部分页成功后才推进 revision，避免大画布被截断。
@@ -3126,7 +3067,8 @@ function CanvasInner() {
         cloudErrorRef.current = String(error?.message || '云端画布加载失败')
         setCloudStatus(navigator.onLine ? 'error' : 'offline')
         setCloudMessage(navigator.onLine ? '云端读取失败，当前使用本机草稿' : '网络已断开，当前使用本机草稿')
-        applyLocalDraft()
+        // 首屏已经画过同一份草稿就不必重画，否则会白白再触发一次 fitView 抖动
+        if (!paintedDraft) applyLocalDraft()
       }
     })()
   }, [setNodes, setEdges, setSelectedNode, fitView, routeProjectId, navigate, workspaceId])
@@ -4779,6 +4721,48 @@ function CanvasInner() {
     [workspaceId, capturingNodeId, appendNewNode, linkCapturedFrame],
   )
 
+  /**
+   * 各视频节点登记上来的取帧能力，按节点 id 存放。
+   *
+   * 放 ref 而不是 state：登记/注销发生在节点挂载卸载时，写进 state 会触发一轮无谓的重渲染，
+   * 而这份表只在用户点「截帧」的那一刻被读一次。
+   */
+  /** 工具条点了「重命名」后要展开编辑态的节点 id；节点自行完成后清空。 */
+  const [renamingNodeId, setRenamingNodeId] = useState('')
+  const handleRenamingDone = useCallback(() => setRenamingNodeId(''), [])
+
+  const frameCaptureRef = useRef(new Map<string, (position: VideoFramePosition) => Promise<string>>())
+  const registerFrameCapture = useCallback(
+    (nodeId: string, capture: ((position: VideoFramePosition) => Promise<string>) | null) => {
+      if (capture) frameCaptureRef.current.set(nodeId, capture)
+      else frameCaptureRef.current.delete(nodeId)
+    },
+    [],
+  )
+
+  const nodeDownloadRef = useRef(new Map<string, () => void>())
+  const registerNodeDownload = useCallback((nodeId: string, download: (() => void) | null) => {
+    if (download) nodeDownloadRef.current.set(nodeId, download)
+    else nodeDownloadRef.current.delete(nodeId)
+  }, [])
+
+  /** 工具条上的「截帧」：先取帧（在节点内完成），再走既有的上传建节点链路。 */
+  const handleToolbarCapture = useCallback(
+    (nodeId: string, position: VideoFramePosition) => {
+      const capture = frameCaptureRef.current.get(nodeId)
+      if (!capture) return
+      void (async () => {
+        const frame = await capture(position)
+        if (!frame) {
+          showToast('截帧失败，请确认视频可以正常播放后重试', 'error')
+          return
+        }
+        handleCaptureFrame(nodeId, frame)
+      })()
+    },
+    [handleCaptureFrame],
+  )
+
   /** 时间线改动写回节点 data，并标记草稿待保存（同步由既有的防抖保存链路负责）。 */
   const handleTimelineChange = useCallback(
     (next: TimelineState) => {
@@ -4933,6 +4917,34 @@ function CanvasInner() {
     [setNodes],
   )
 
+  /**
+   * 节点改名：写 data.title。
+   *
+   * 清空即恢复默认名——删字段而不是存空串，和 renameGroup 同一处理：
+   * 默认名是按内容推导的，存了空串反而会把「有一个空标题」这件事持久化上云。
+   */
+  const renameNode = useCallback(
+    (nodeId: string, nextTitle: string) => {
+      const trimmed = nextTitle.trim().slice(0, CANVAS_TITLE_MAX_LENGTH)
+      const current = latestRef.current.nodes.find((node) => node.id === nodeId)
+      if (!current) return
+      if (String((current.data as Record<string, unknown> | undefined)?.title || '') === trimmed) return
+      commitHistory()
+      setNodes((items) =>
+        items.map((node) => {
+          if (node.id !== nodeId) return node
+          if (!trimmed) {
+            const { title: _title, ...rest } = (node.data || {}) as Record<string, unknown>
+            return { ...node, data: rest }
+          }
+          return { ...node, data: { ...node.data, title: trimmed } }
+        }),
+      )
+      setSaveStatus('dirty')
+    },
+    [commitHistory, setNodes, setSaveStatus],
+  )
+
   /** 改名写到全部成员上（名字是冗余存储的）；名字没变则不产生历史记录与云端 revision */
   const renameGroup = useCallback(
     (groupId: string, nextName: string) => {
@@ -4970,10 +4982,11 @@ function CanvasInner() {
       .map((node) => {
         const data = (node.data || {}) as Record<string, unknown>
         const kind = String(data.kind || node.type || 'text')
-        const nodeName = String(data.nodeName || '').trim()
+        const customTitle = String(data.title || '').trim()
         const content = String(textMap?.get(node.id) || data.text || data.prompt || '').trim()
-        const text = [nodeName, content].filter(Boolean).join(' ')
-        return { id: node.id, kind, text, kindLabel: nodeName || KIND_LABELS[kind] || kind }
+        // 自定义名也要能搜到：用户给节点起了名，多半就是打算靠这个名字找回它
+        const text = [customTitle, content].filter(Boolean).join(' ')
+        return { id: node.id, kind, text, kindLabel: customTitle || KIND_LABELS[kind] || kind }
       })
       .filter((item) => item.text.length > 0)
 
@@ -5567,6 +5580,11 @@ function CanvasInner() {
       onCaptureFrame: handleCaptureFrame,
       onImageNaturalSize: handleImageNaturalSize,
       capturingNodeId,
+      onRenameNode: renameNode,
+      registerFrameCapture,
+      registerNodeDownload,
+      renamingNodeId,
+      onRenamingDone: handleRenamingDone,
       timeline: {
         getAddableSources: getTimelineAddableSources,
         onAddClip: handleAddTimelineClip,
@@ -5581,6 +5599,11 @@ function CanvasInner() {
       handleCaptureFrame,
       handleImageNaturalSize,
       capturingNodeId,
+      renameNode,
+      registerFrameCapture,
+      registerNodeDownload,
+      renamingNodeId,
+      handleRenamingDone,
       getTimelineAddableSources,
       handleAddTimelineClip,
       handleRemoveTimelineClip,
@@ -5791,19 +5814,6 @@ function CanvasInner() {
             canvasId={canvasId}
             onClose={() => setShareOpen(false)}
             onToast={showToast}
-          />
-        )}
-
-        {renameTarget && (
-          <CanvasRenameNodeDialog
-            currentName={renameTarget.currentName}
-            defaultName={renameTarget.defaultName}
-            onClose={() => setRenameTarget(null)}
-            onConfirm={(name) => {
-              const normalizedName = name === renameTarget.defaultName ? '' : name
-              renameNodeById(renameTarget.nodeId, normalizedName)
-              setRenameTarget(null)
-            }}
           />
         )}
 
@@ -6135,18 +6145,36 @@ function CanvasInner() {
               但节点只剩色块、认不出谁是谁——「能缩出去」不等于「能定位」。
               小地图给的是俯瞰 + 点击直达，这才是大图的导航手段。
             */}
-            <MiniMap
-              className="canvas-minimap"
-              position="bottom-left"
-              pannable
-              zoomable
-              ariaLabel="画布缩略图"
-              nodeColor={miniMapNodeColor}
-              nodeStrokeWidth={0}
-              maskColor="rgba(248, 249, 250, 0.72)"
-            />
+            {minimapVisible && (
+              <MiniMap
+                className="canvas-minimap"
+                position="bottom-left"
+                pannable
+                zoomable
+                ariaLabel="画布缩略图"
+                nodeColor={miniMapNodeColor}
+                nodeStrokeWidth={0}
+                maskColor="rgba(248, 249, 250, 0.72)"
+              />
+            )}
           </ReactFlow>
         </CanvasNodeActionsContext.Provider>
+
+        {/* 单选节点操作条：贴在节点上方，收纳改名/上传/截帧/下载/删除 */}
+        {nodeToolbarAnchor && selectedNode && (
+          <CanvasNodeToolbar
+            anchor={nodeToolbarAnchor}
+            kind={selectedNodeToolbarState.kind}
+            hasContent={selectedNodeToolbarState.hasContent}
+            uploading={selectedNodeToolbarState.uploading}
+            capturing={capturingNodeId === selectedNode.id}
+            onRename={() => setRenamingNodeId(selectedNode.id)}
+            onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
+            onDownload={() => nodeDownloadRef.current.get(selectedNode.id)?.()}
+            onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
+            onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
+          />
+        )}
 
         {/* 多选批量操作条：贴在选区上方，只有选中 2 个及以上时出现 */}
         {selectionAnchor && (
@@ -6176,6 +6204,13 @@ function CanvasInner() {
           onFitView={() => fitView({ padding: 0.2, duration: 300 })}
           snapEnabled={snapEnabled}
           onSnapToggle={() => setSnapEnabled((value) => !value)}
+          minimapVisible={minimapVisible}
+          onMinimapToggle={() =>
+            setMinimapVisible((value) => {
+              saveMinimapVisible(!value)
+              return !value
+            })
+          }
           edgesHidden={edgesHidden}
           onEdgesToggle={() => setEdgesHidden((value) => !value)}
         />

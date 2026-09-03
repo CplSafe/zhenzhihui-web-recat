@@ -1,3 +1,9 @@
+/*
+ * 左侧竖排工具栏：以视口中线为中心，高度由内容撑开。
+ *
+ * 不要给它 top + bottom 双向定位——那会把工具栏拉成一条贯穿全屏的白色长条
+ * （试过，反而压住了顶部标题）。它只有六个按钮，高度本就该由内容决定。
+ */
 .toolbar {
   position: absolute;
   top: 50%;
@@ -65,9 +71,11 @@
     transform var(--canvas-dur, 180ms) var(--canvas-ease, ease-out);
 }
 
+/* 与同一文件里的菜单项、以及全局主色保持一致：这条工具栏原本是一套独立的青绿，
+ * 和 antd 主色 #5767e5 并置时像是另一个产品的控件。 */
 .toolBtn:hover {
-  background: rgba(34, 197, 160, 0.12);
-  color: #16a889;
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
 }
 
 /* 按下去要有落点。原来只有 hover，点击时按钮纹丝不动，像是没接住这一下 */
@@ -87,9 +95,9 @@
  */
 .toolBtnActive,
 .toolBtnActive:hover {
-  background: #16a889;
+  background: #5767e5;
   color: #fff;
-  box-shadow: 0 2px 8px rgb(22 168 137 / 32%);
+  box-shadow: 0 2px 8px rgb(87 103 229 / 32%);
 }
 
 .addBtnWrap:first-child .toolBtn {

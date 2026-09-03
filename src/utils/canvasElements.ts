@@ -26,8 +26,13 @@ import type { TimelineState } from '@/utils/timelineClips'
 /** 节点可序列化字段白名单：排除 ReactFlow 运行态字段（selected/measured/dragging 等）。 */
 interface SerializableNodeData {
   kind?: string
-  /** 用户自定义节点名；缺省时展示节点类型原名。 */
-  nodeName?: string
+  /**
+   * 用户手动命名的节点名；未改名时不写该字段，标题回退到「类型名 + 内容摘要」。
+   *
+   * 存空缺而不是存默认名：默认名是随内容变化的派生值（改了提示词、换了素材，
+   * 摘要就该跟着变），一旦把它固化成字段就再也跟不上内容了。
+   */
+  title?: string
   ratio?: string
   videoMode?: string
   modelVersionId?: number
@@ -75,7 +80,7 @@ interface SerializableNodeData {
  */
 export const PERSISTED_NODE_DATA_FIELDS = [
   'kind',
-  'nodeName',
+  'title',
   'ratio',
   'videoMode',
   'modelVersionId',

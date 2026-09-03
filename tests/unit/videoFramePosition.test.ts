@@ -66,12 +66,16 @@ beforeEach(() => {
 })
 
 describe('resolveFrameTimeSec', () => {
-  it('首帧取 0，尾帧从结尾回退约一帧', () => {
+  it('首帧取 0，尾帧从结尾回退一小段', () => {
     expect(resolveFrameTimeSec('first', 10)).toBe(0)
     // 直接取 duration 多数浏览器不会解码新帧，还会触发 ended
-    expect(resolveFrameTimeSec('last', 10)).toBeCloseTo(9.95, 5)
+    expect(resolveFrameTimeSec('last', 10)).toBeCloseTo(9.98, 5)
     // 比回退量还短的视频，尾帧退到 0 而不是负数
     expect(resolveFrameTimeSec('last', 0.02)).toBe(0)
+  })
+
+  it('可以指定回退量，供尾帧逐级重试使用', () => {
+    expect(resolveFrameTimeSec('last', 10, 0.2)).toBeCloseTo(9.8, 5)
   })
 
   it('当前帧不需要定位；时长未知时拒绝给出时刻', () => {
@@ -108,11 +112,42 @@ describe('captureVideoFrame', () => {
     expect(video.seeks).toEqual([0, 4])
   })
 
-  it('尾帧从结尾回退一帧，画完同样还原', async () => {
+  it('尾帧从结尾回退一小段，画完同样还原', async () => {
     const video = fakeVideo({ currentTime: 2, duration: 10 })
     expect(await captureVideoFrame(video, 'last')).toBe('data:image/jpeg;base64,FRAME')
-    expect(video.seeks[0]).toBeCloseTo(9.95, 5)
+    expect(video.seeks[0]).toBeCloseTo(9.98, 5)
     expect(video.seeks[video.seeks.length - 1]).toBe(2)
+  })
+
+  it('尾帧解不出帧时逐级往回退，而不是直接放弃', async () => {
+    /*
+     * 回归：MP4 的 duration 元数据常比实际可解码内容长几十毫秒，
+     * 贴着结尾的第一档会 seek 过去解不出帧。旧实现只试一次就返回空串，
+     * 表现为「截尾帧点了没反应」。
+     */
+    const video = fakeVideo({ currentTime: 2, duration: 10 })
+    // 只有退到 9.916（第三档 0.084）以内才认为解得出画面
+    const decodableFrom = 9.917
+    Object.defineProperty(video, 'videoWidth', {
+      configurable: true,
+      get: () => (video.currentTime < decodableFrom ? 1920 : 0),
+    })
+
+    const frame = await captureVideoFrame(video, 'last')
+    const seekedPastEnd = video.seeks.filter((time) => time >= decodableFrom).length
+
+    expect(frame).toBe('data:image/jpeg;base64,FRAME')
+    // 前两档都落在解不出的区间，第三档才成功
+    expect(seekedPastEnd).toBeGreaterThanOrEqual(2)
+    expect(video.seeks.some((time) => time < decodableFrom)).toBe(true)
+    // 无论试了几档，最后都要还原回用户原来的位置
+    expect(video.seeks[video.seeks.length - 1]).toBe(2)
+  })
+
+  it('尾帧所有档位都失败时返回空串，交由调用方提示', async () => {
+    const video = fakeVideo({ currentTime: 2, duration: 10 })
+    Object.defineProperty(video, 'videoWidth', { configurable: true, get: () => 0 })
+    expect(await captureVideoFrame(video, 'last')).toBe('')
   })
 
   it('原本在播时先暂停、截完继续播', async () => {

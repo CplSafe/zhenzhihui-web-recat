@@ -55,7 +55,7 @@ describe('fetchAllCanvasElements', () => {
     )
     expect(mocks.requestBusinessJson).toHaveBeenNthCalledWith(
       2,
-      '/api/v1/canvases/9/elements?workspace_id=7&after_revision=4&limit=500&cursor=page-2',
+      '/api/v1/canvases/9/elements?workspace_id=7&after_revision=4&limit=1000&cursor=page-2',
     )
   })
 

@@ -272,7 +272,11 @@ export async function fetchAllCanvasElements({
   workspaceId,
   canvasId,
   afterRevision = 0,
-  limit = 500,
+  /*
+   * 游标分页只能串行（下一页的 cursor 来自上一页响应），所以减少往返次数的唯一办法
+   * 是把每页取大一些。1000 让绝大多数画布一次拉完，首屏少等一个完整 RTT。
+   */
+  limit = 1000,
   maxPages = 200,
 }: {
   workspaceId: number

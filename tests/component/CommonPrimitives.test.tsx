@@ -128,6 +128,32 @@ describe('InlineEdit', () => {
     expect(onCommit).toHaveBeenCalledTimes(1)
   })
 
+  it('enters edit mode when an external openSignal flips on', async () => {
+    // 画布节点的「重命名」按钮在工具条上，输入框却在节点头部，靠这个信号接起来
+    const view = render(<InlineEdit value="图片" onCommit={vi.fn()} />)
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+
+    view.rerender(<InlineEdit value="图片" openSignal onCommit={vi.fn()} />)
+    expect(await screen.findByRole('textbox')).toHaveValue('图片')
+  })
+
+  it('reports back when editing ends so the caller can reset its signal', async () => {
+    const user = userEvent.setup()
+    const onEditingEnd = vi.fn()
+    render(<InlineEdit value="图片" openSignal onCommit={vi.fn()} onEditingEnd={onEditingEnd} />)
+
+    await user.keyboard('{Escape}')
+    expect(onEditingEnd).toHaveBeenCalled()
+  })
+
+  it('leaves the default self-controlled behaviour untouched when openSignal is absent', async () => {
+    const user = userEvent.setup()
+    render(<InlineEdit value="图片" onCommit={vi.fn()} />)
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    await user.dblClick(screen.getByRole('button', { name: '图片' }))
+    expect(screen.getByRole('textbox')).toBeInTheDocument()
+  })
+
   it('filters numeric input and cancels changes with Escape', async () => {
     const user = userEvent.setup()
     const onCommit = vi.fn()

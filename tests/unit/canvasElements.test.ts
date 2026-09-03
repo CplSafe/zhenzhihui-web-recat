@@ -140,7 +140,7 @@ describe('canvasElements', () => {
       selected: true,
       data: {
         kind: 'text',
-        nodeName: '开场文案',
+        title: '开场文案',
         prompt: 'keep this',
         resultUrl: 'https://example.com/result.png',
         runtimeOnly: 'drop this',
@@ -157,7 +157,7 @@ describe('canvasElements', () => {
         position: { x: 12, y: 24 },
         data: {
           kind: 'text',
-          nodeName: '开场文案',
+          title: '开场文案',
           prompt: 'keep this',
           resultUrl: 'https://example.com/result.png',
           text: 'canvas copy',

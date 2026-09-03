@@ -1,0 +1,186 @@
+/*
+ * 单选节点的浮动工具条。
+ *
+ * 深色是刻意的：多选那条（CanvasSelectionToolbar）是浅色，两者出现时机互斥，
+ * 用底色区分「这条作用于一个节点」还是「作用于一片选区」，比读文案快。
+ * 位置由调用方按节点包围盒算好后传入视口坐标，这里只负责以该点为水平中心。
+ */
+.bar {
+  position: fixed;
+  /*
+   * 同 CanvasSelectionToolbar：必须高过 1000。
+   * React Flow 的 elevateNodesOnSelect 会把选中节点抬到 zIndex + 1000，
+   * 而这条工具条恰恰只在有选中节点时出现，低了必然被它服务的那个节点压住。
+   */
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: #26282f;
+  box-shadow:
+    0 12px 32px rgb(9 12 22 / 34%),
+    0 2px 6px rgb(9 12 22 / 20%);
+  font-family: 'PingFang SC', sans-serif;
+  white-space: nowrap;
+  animation: node-bar-in 140ms ease-out;
+}
+
+@keyframes node-bar-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    animation: none;
+  }
+}
+
+.divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: rgb(255 255 255 / 14%);
+}
+
+/*
+ * 图标按钮：36×32 的触达面积远大于图标本身，
+ * 图标之间只留 2px 间隙也不会误点到隔壁。
+ */
+.action {
+  position: relative;
+  display: inline-flex;
+  width: 36px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgb(255 255 255 / 86%);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.action svg {
+  width: 18px;
+  height: 18px;
+}
+
+.action:hover:not(:disabled) {
+  background: rgb(255 255 255 / 12%);
+  color: #fff;
+}
+
+.action:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.danger:hover:not(:disabled) {
+  background: rgb(224 86 62 / 22%);
+  color: #ff9c86;
+}
+
+.action:focus-visible {
+  outline: 2px solid rgb(126 142 255 / 90%);
+  outline-offset: 1px;
+}
+
+/* 展开态保持高亮，说明「下面那个菜单是这个按钮开的」 */
+.action[aria-expanded='true'] {
+  background: rgb(255 255 255 / 16%);
+  color: #fff;
+}
+
+/*
+ * 悬停提示。工具条是纯图标的，没有 tooltip 就得靠猜；
+ * 用伪元素而不是 title 属性，避免系统 tooltip 那 1 秒延迟。
+ */
+.action::after {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 8px);
+  left: 50%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgb(14 16 22 / 94%);
+  color: #fff;
+  content: attr(data-tip);
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 120ms ease;
+  white-space: nowrap;
+}
+
+.action:hover:not(:disabled)::after,
+.action:focus-visible::after {
+  opacity: 1;
+}
+
+/* 菜单展开时压掉 tooltip：两者都挂在按钮下方，同时出现会叠在一起 */
+.action[aria-expanded='true']::after {
+  opacity: 0;
+}
+
+/* 截帧位置菜单：挂在按钮正下方 */
+.menu {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 8px);
+  left: 50%;
+  min-width: 132px;
+  padding: 6px;
+  border-radius: 12px;
+  background: #2f323a;
+  box-shadow: 0 14px 34px rgb(9 12 22 / 40%);
+  transform: translateX(-50%);
+}
+
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgb(255 255 255 / 88%);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  transition: background-color 140ms ease;
+}
+
+.menuItem:hover {
+  background: rgb(255 255 255 / 12%);
+  color: #fff;
+}
+
+.menuItem:focus-visible {
+  outline: 2px solid rgb(126 142 255 / 90%);
+  outline-offset: -2px;
+}
+
+/* 菜单相对按钮定位，需要一个定位上下文 */
+.menuAnchor {
+  position: relative;
+  display: inline-flex;
+}
