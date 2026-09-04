@@ -7,7 +7,9 @@
  * 不支持时应当隐藏入口而不是给一个点了没反应的按钮。
  *
  * 说明：Chrome 的实现会把音频发到 Google 的服务端做识别，
- * 这是浏览器行为、不经过我们的服务器。对隐私敏感的部署需要改用自建 ASR。
+ * 这是浏览器行为、不经过我们的服务器，国内网络下基本不可用。
+ * 创作入口（爆款成片 / 爆款复刻）已改用 `useVoiceInput`（录音上传 + 后端阿里 ASR）；
+ * 这里仅剩 AgentChatPanel 在用，属待迁移，新入口请用 useVoiceInput。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 

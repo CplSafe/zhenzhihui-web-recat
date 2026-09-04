@@ -21,6 +21,7 @@ import {
   normalizeVideoResolution,
 } from '@/utils/videoOptions'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
+import VoiceInputButton from '@/components/common/VoiceInputButton'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
 import {
   CreativeParamsDropdown,
@@ -1217,6 +1218,13 @@ export default function HotCopyEntry({
               </span>
             </div>
             <div className="hotcopy__sendArea">
+              {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
+              <VoiceInputButton
+                className="hotcopy__mic"
+                onText={insertAtCaret}
+                authRequired={authRequired}
+                onAuthRequired={onAuthRequired}
+              />
               <button
                 type="button"
                 className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ' hotcopy__send--plain'}${!resumeMode && !canSend ? ' is-disabled' : ''}`}

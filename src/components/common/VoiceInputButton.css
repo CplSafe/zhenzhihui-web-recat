@@ -1,0 +1,125 @@
+/* 语音输入:空闲态按钮的尺寸/边框由调用方 className 决定;这里只管展开后的深色胶囊 */
+.voice-input--trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 展开态:占位撑住原按钮的版位,胶囊绝对定位浮在上面、右缘对齐,向左盖住工具区而不推动布局 */
+.voice-input--anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.voice-input__placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.voice-input__panel {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 8px 0 4px;
+  border-radius: 14px;
+  background: #2c2c30;
+  color: #f4f4f5;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.voice-input__mic,
+.voice-input__close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.voice-input__mic {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #4a4a50;
+}
+
+.voice-input__mic:hover:not(:disabled) {
+  background: #5a5a61;
+}
+
+.voice-input__mic:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.voice-input__close {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: #c9c9cf;
+}
+
+.voice-input__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* 波形:每根条高度由 --level(0~1)驱动,静音时保留 3px 的底 */
+.voice-input__wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 4px;
+}
+
+.voice-input__wave span {
+  display: block;
+  width: 2px;
+  height: calc(3px + var(--level, 0) * 21px);
+  border-radius: 1px;
+  background: #e4e4e7;
+  transition: height 80ms linear;
+}
+
+.voice-input--anchor[data-state='transcribing'] .voice-input__wave span {
+  background: #8a8a92;
+  animation: voice-input-pulse 1.2s ease-in-out infinite;
+}
+
+.voice-input__label {
+  flex: none;
+  min-width: 34px;
+  font-size: 12px;
+  color: #c9c9cf;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@keyframes voice-input-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-input__wave span {
+    transition: none;
+    animation: none;
+  }
+}
