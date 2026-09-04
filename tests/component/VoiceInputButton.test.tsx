@@ -94,6 +94,46 @@ describe('VoiceInputButton', () => {
     expect(mocks.showToast).not.toHaveBeenCalled()
   })
 
+  it('drives the waveform from the microphone level while recording', async () => {
+    // jsdom 没有 Web Audio;假的 AnalyserNode 一直返回一个响亮的样本,波形条就该被顶起来。
+    const close = vi.fn(() => Promise.resolve())
+    class FakeAudioContext {
+      state = 'running'
+      resume = vi.fn(() => Promise.resolve())
+      close = close
+      createAnalyser() {
+        return {
+          fftSize: 2048,
+          getByteTimeDomainData(buffer: Uint8Array) {
+            buffer.fill(200)
+          },
+        }
+      }
+      createMediaStreamSource() {
+        return { connect: vi.fn() }
+      }
+    }
+    vi.stubGlobal('AudioContext', FakeAudioContext)
+
+    const user = userEvent.setup()
+    render(<VoiceInputButton onText={vi.fn()} />)
+    await user.click(trigger())
+    await waitFor(() => expect(state()).toBe('recording'))
+    const bars = () => [...document.querySelectorAll<HTMLElement>('.voice-input__wave span')]
+    expect(bars()).toHaveLength(28)
+    // (200-128)/128 ≈ 0.56 的峰值 ×3 后封顶为 1:最新的一根条必须是满高。
+    await waitFor(() => expect(bars().at(-1)?.style.getPropertyValue('--level')).toBe('1'))
+    // 采样是持续的,不是只跑一次:再等一会儿应该有更多条被填上。
+    await waitFor(() =>
+      expect(bars().filter((b) => b.style.getPropertyValue('--level') === '1').length).toBeGreaterThan(2),
+    )
+
+    await user.click(screen.getByRole('button', { name: '取消录音' }))
+    await waitFor(() => expect(state()).toBe('idle'))
+    // 停止后关掉 AudioContext,不留后台分析器。
+    expect(close).toHaveBeenCalled()
+  })
+
   it('reports silence as a toast when the server hears nothing', async () => {
     server.use(http.post(ENDPOINT, () => HttpResponse.json({ code: 0, data: { text: '' } })))
     const user = userEvent.setup()

@@ -62,7 +62,7 @@ function microphoneErrorMessage(error: any): string {
 
 interface LevelMeter {
   ctx: AudioContext
-  raf: number
+  timer: number
 }
 
 export function useVoiceInput({ onText, maxSeconds = 120 }: UseVoiceInputOptions) {
@@ -96,35 +96,34 @@ export function useVoiceInput({ onText, maxSeconds = 120 }: UseVoiceInputOptions
     }
   }
 
-  /** 用 AnalyserNode 每 80ms 取一次 RMS 音量,滚动进 levels;拿不到 AudioContext 就让波形保持静态。 */
+  /**
+   * 用 AnalyserNode 每 80ms 取一次峰值音量,滚动进 levels;拿不到 AudioContext 就让波形保持静态。
+   * 用 setInterval 而不是 requestAnimationFrame:页面不在前台(或被嵌在别的窗格里)时 rAF 会被暂停,
+   * 采样一停波形就是死的;计时器不受此影响。
+   */
   const startMeter = (stream: MediaStream) => {
     const Ctx: typeof AudioContext | undefined = window.AudioContext || (window as any).webkitAudioContext
     if (!Ctx) return
     try {
       const ctx = new Ctx()
+      // Safari 在 await 之后创建的 AudioContext 可能处于 suspended,主动唤醒一次。
+      void ctx.resume().catch(() => undefined)
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 512
       ctx.createMediaStreamSource(stream).connect(analyser)
       const buffer = new Uint8Array(analyser.fftSize)
-      let lastSample = 0
-      const meter: LevelMeter = { ctx, raf: 0 }
-      const tick = (now: number) => {
-        if (now - lastSample >= LEVEL_SAMPLE_MS) {
-          lastSample = now
-          analyser.getByteTimeDomainData(buffer)
-          let sum = 0
-          for (let i = 0; i < buffer.length; i += 1) {
-            const d = (buffer[i] - 128) / 128
-            sum += d * d
-          }
-          // 正常说话 RMS 大约 0.05~0.25,放大 4 倍让波形有起伏。
-          const level = Math.min(1, Math.sqrt(sum / buffer.length) * 4)
-          setLevels((prev) => [...prev.slice(1), level])
+      const sample = () => {
+        analyser.getByteTimeDomainData(buffer)
+        let peak = 0
+        for (let i = 0; i < buffer.length; i += 1) {
+          const d = Math.abs(buffer[i] - 128) / 128
+          if (d > peak) peak = d
         }
-        meter.raf = window.requestAnimationFrame(tick)
+        // 正常说话峰值大约 0.1~0.4,放大 3 倍让波形有起伏;底噪(<0.03)按静音画。
+        const level = peak < 0.03 ? 0 : Math.min(1, peak * 3)
+        setLevels((prev) => [...prev.slice(1), level])
       }
-      meter.raf = window.requestAnimationFrame(tick)
-      meterRef.current = meter
+      meterRef.current = { ctx, timer: window.setInterval(sample, LEVEL_SAMPLE_MS) }
     } catch {
       // 没有电平只是波形不动,不影响录音本身。
     }
@@ -134,7 +133,7 @@ export function useVoiceInput({ onText, maxSeconds = 120 }: UseVoiceInputOptions
   const releaseStream = () => {
     const meter = meterRef.current
     if (meter) {
-      window.cancelAnimationFrame(meter.raf)
+      window.clearInterval(meter.timer)
       void meter.ctx.close().catch(() => undefined)
       meterRef.current = null
     }
