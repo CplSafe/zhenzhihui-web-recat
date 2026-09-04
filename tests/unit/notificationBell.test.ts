@@ -86,15 +86,16 @@ describe('loadNotifications 通知推导', () => {
     ])
     expect(items[0].text).toContain('收到 小王 的接单申请')
     expect(items[0].text).toContain('国庆宣传视频')
+    expect(items[0]).toMatchObject({ title: '收到新的接单申请', href: '/demand/9', tone: 'info' })
     expect(items[1].text).toContain('已完成')
     expect(items[2].text).toContain('已被接受')
   })
 
-  it('接口失败时不抛错，返回空列表', async () => {
+  it('接口失败时明确失败，不把未拉到数据伪装成暂无通知', async () => {
     server.use(
       http.get('/api/v1/market/me/demands', () => HttpResponse.json({ code: 1, message: 'boom' }, { status: 500 })),
       http.get('/api/v1/market/me/applications', () => HttpResponse.json({ code: 1 }, { status: 500 })),
     )
-    await expect(loadNotifications()).resolves.toEqual([])
+    await expect(loadNotifications()).rejects.toThrow()
   })
 })

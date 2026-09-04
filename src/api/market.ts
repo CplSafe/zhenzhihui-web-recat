@@ -88,7 +88,7 @@ export interface DemandApplicationPage {
 
 /* ---------- description 元数据块 ---------- */
 
-const DEMAND_META_MARKER = '\n\n[ZZH-DEMAND-META]'
+const DEMAND_META_MARKER = '[ZZH-DEMAND-META]'
 
 /** 把纯文本描述与扩展字段编码为提交给后端的 description。 */
 export function encodeDemandDescription(text: string, extras: DemandExtras): string {
@@ -97,7 +97,7 @@ export function encodeDemandDescription(text: string, extras: DemandExtras): str
     Array.isArray(value) ? value.length > 0 : value !== undefined && value !== '' && value !== null,
   )
   if (!meaningful) return plain
-  return `${plain}${DEMAND_META_MARKER}${JSON.stringify(extras)}`
+  return `${plain ? `${plain}\n\n` : ''}${DEMAND_META_MARKER}${JSON.stringify(extras)}`
 }
 
 /** 从后端 description 中拆出纯文本与扩展字段；无元数据块时 extras 为空对象。 */
@@ -113,9 +113,9 @@ export function splitDemandDescription(raw: unknown): { text: string; extras: De
       return { text, extras: normalizeExtras(parsed) }
     }
   } catch {
-    /* 元数据损坏时按纯文本处理，不阻断展示 */
+    /* 元数据损坏时仍隐藏内部数据块，不阻断正文展示 */
   }
-  return { text: value.trim(), extras: {} }
+  return { text, extras: {} }
 }
 
 function normalizeExtras(raw: any): DemandExtras {

@@ -38,6 +38,17 @@ function extOf(name: string): string {
     : '文件'
 }
 
+function MaterialFileIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7.5 3.75h6.35l3.65 3.66v12.84H7.5z" />
+      <path d="M13.5 3.75V7.8h4" />
+      <rect x="9.75" y="11" width="5.5" height="4.25" rx="0.75" />
+      <path d="m10.3 14.5 1.45-1.35 1.05.9.8-.7 1.1 1.15" />
+    </svg>
+  )
+}
+
 export default function DemandDetailView() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -100,7 +111,6 @@ export default function DemandDetailView() {
 
   const isPublisher = demand ? currentUserId > 0 && demand.publisher.id === currentUserId : false
   const materials = demand?.extras.materials || []
-  const thumbnail = materials.find((item) => item.url && IMAGE_EXT.test(item.name))?.url || ''
   const deadlinePassed = isDemandApplyDeadlinePassed(demand?.extras.applyDeadline)
   const canApply = demand?.status === 'open' && !isPublisher && !deadlinePassed && !myApplication
   const applyLabel = myApplication
@@ -143,20 +153,7 @@ export default function DemandDetailView() {
           ) : (
             <section className="dmd__panel">
               <header className="dmd__head">
-                <div className="dmd__thumb">
-                  {thumbnail ? (
-                    <img
-                      src={thumbnail}
-                      alt=""
-                      onError={(event) => {
-                        event.currentTarget.style.display = 'none'
-                      }}
-                    />
-                  ) : null}
-                  <span className="dmd__thumb-ph" aria-hidden="true">
-                    🎬
-                  </span>
-                </div>
+                <div className="dmd__head-media" aria-hidden="true" />
                 <div className="dmd__head-info">
                   <h1 className="dmd__title">{demand.title}</h1>
                   <div className="dmd__meta dmd__meta--accent">
@@ -214,11 +211,14 @@ export default function DemandDetailView() {
                               }}
                             />
                           ) : null}
-                          <span className="dmd__material-ext" aria-hidden="true">
-                            {extOf(material.name)}
+                          <span className="dmd__material-file" aria-hidden="true">
+                            <MaterialFileIcon />
                           </span>
                         </div>
-                        <figcaption>{material.name}</figcaption>
+                        <figcaption>
+                          <span>{material.name}</span>
+                          <small>{extOf(material.name)}</small>
+                        </figcaption>
                       </figure>
                     ))}
                   </div>

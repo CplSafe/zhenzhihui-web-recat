@@ -220,145 +220,147 @@ export default function DemandFormModal({ open, targetIp = null, onClose, onPubl
           ×
         </button>
 
-        {targetIp && (
-          <div className={styles.target}>
-            向 <strong>{targetIp.name}</strong> 发送制作需求
-          </div>
-        )}
-
-        <label className={styles.label} htmlFor="demand-form-title">
-          需求标题
-        </label>
-        <input
-          id="demand-form-title"
-          className={styles.input}
-          type="text"
-          value={title}
-          maxLength={60}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="王老吉国庆宣传视频"
-        />
-
-        <label className={styles.label} htmlFor="demand-form-desc">
-          详细描述
-        </label>
-        <div className={styles.descBox}>
-          <textarea
-            id="demand-form-desc"
-            value={description}
-            maxLength={2000}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="请详细描述你的制作需求..."
-          />
-          <div className={styles.descChips}>
-            <label className={styles.chip}>
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
-                <path d="M10.5 19h3" strokeLinecap="round" />
-              </svg>
-              <select value={ratio} onChange={(event) => setRatio(event.target.value)} aria-label="视频比例">
-                {RATIO_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={styles.chip}>
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 7v5l3.2 1.8" strokeLinecap="round" />
-              </svg>
-              <select value={duration} onChange={(event) => setDuration(event.target.value)} aria-label="视频时长">
-                {DURATION_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <div className={styles.label}>产品素材</div>
-        <div className={styles.materials}>
-          {materials.map((item) => (
-            <div className={styles.material} key={item.previewUrl}>
-              {isImagePreview(item) ? (
-                <img src={item.previewUrl} alt={item.name} />
-              ) : (
-                <span className={styles.materialDoc}>{extOf(item.name)}</span>
-              )}
-              {item.uploading && <span className={styles.materialUploading}>上传中…</span>}
-              <button type="button" onClick={() => removeMaterial(item.previewUrl)} aria-label={`移除 ${item.name}`}>
-                ×
-              </button>
+        <div className={styles.content}>
+          {targetIp && (
+            <div className={styles.target}>
+              向 <strong>{targetIp.name}</strong> 发送制作需求
             </div>
-          ))}
-          {materials.length < MAX_MATERIALS && (
-            <label className={styles.materialAdd}>
-              <span aria-hidden="true">＋</span>
+          )}
+
+          <label className={styles.label} htmlFor="demand-form-title">
+            需求标题
+          </label>
+          <input
+            id="demand-form-title"
+            className={styles.input}
+            type="text"
+            value={title}
+            maxLength={60}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="王老吉国庆宣传视频"
+          />
+
+          <label className={styles.label} htmlFor="demand-form-desc">
+            详细描述
+          </label>
+          <div className={styles.descBox}>
+            <textarea
+              id="demand-form-desc"
+              value={description}
+              maxLength={2000}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="请详细描述你的制作需求..."
+            />
+            <div className={styles.descChips}>
+              <label className={styles.chip}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+                  <path d="M10.5 19h3" strokeLinecap="round" />
+                </svg>
+                <select value={ratio} onChange={(event) => setRatio(event.target.value)} aria-label="视频比例">
+                  {RATIO_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={styles.chip}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3.2 1.8" strokeLinecap="round" />
+                </svg>
+                <select value={duration} onChange={(event) => setDuration(event.target.value)} aria-label="视频时长">
+                  {DURATION_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div className={styles.label}>产品素材</div>
+          <div className={styles.materials}>
+            {materials.map((item) => (
+              <div className={styles.material} key={item.previewUrl}>
+                {isImagePreview(item) ? (
+                  <img src={item.previewUrl} alt={item.name} />
+                ) : (
+                  <span className={styles.materialDoc}>{extOf(item.name)}</span>
+                )}
+                {item.uploading && <span className={styles.materialUploading}>上传中…</span>}
+                <button type="button" onClick={() => removeMaterial(item.previewUrl)} aria-label={`移除 ${item.name}`}>
+                  ×
+                </button>
+              </div>
+            ))}
+            {materials.length < MAX_MATERIALS && (
+              <label className={styles.materialAdd}>
+                <span aria-hidden="true">＋</span>
+                <input
+                  type="file"
+                  accept="image/*,video/*,.doc,.docx,.pdf"
+                  multiple
+                  onChange={handleUpload}
+                  aria-label="添加产品素材"
+                />
+              </label>
+            )}
+          </div>
+
+          <div className={styles.row}>
+            <label className={styles.inlineField}>
+              <span>报名截止时间</span>
               <input
-                type="file"
-                accept="image/*,video/*,.doc,.docx,.pdf"
-                multiple
-                onChange={handleUpload}
-                aria-label="添加产品素材"
+                type="date"
+                value={applyDeadline}
+                min={todayInputValue()}
+                onChange={(event) => setApplyDeadline(event.target.value)}
               />
             </label>
-          )}
-        </div>
-
-        <div className={styles.row}>
-          <label className={styles.inlineField}>
-            <span>报名截止时间</span>
-            <input
-              type="date"
-              value={applyDeadline}
-              min={todayInputValue()}
-              onChange={(event) => setApplyDeadline(event.target.value)}
-            />
-          </label>
-          <label className={styles.inlineField}>
-            <span>交付时间</span>
-            <input
-              type="date"
-              value={deliveryDeadline}
-              min={applyDeadline || todayInputValue()}
-              onChange={(event) => setDeliveryDeadline(event.target.value)}
-            />
-          </label>
-        </div>
-
-        <div className={styles.row}>
-          <label className={styles.inlineField}>
-            <span>价格</span>
-            <span className={styles.suffixInput}>
+            <label className={styles.inlineField}>
+              <span>交付时间</span>
               <input
-                type="number"
-                min={0}
-                step={1}
-                value={price}
-                onChange={(event) => setPrice(event.target.value)}
-                placeholder="200"
+                type="date"
+                value={deliveryDeadline}
+                min={applyDeadline || todayInputValue()}
+                onChange={(event) => setDeliveryDeadline(event.target.value)}
               />
-              <em>元/条</em>
-            </span>
-          </label>
-          <label className={styles.inlineField}>
-            <span>数量</span>
-            <span className={styles.suffixInput}>
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={quantity}
-                onChange={(event) => setQuantity(event.target.value)}
-                placeholder="10"
-              />
-              <em>条</em>
-            </span>
-          </label>
+            </label>
+          </div>
+
+          <div className={styles.row}>
+            <label className={styles.inlineField}>
+              <span>价格</span>
+              <span className={styles.suffixInput}>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={price}
+                  onChange={(event) => setPrice(event.target.value)}
+                  placeholder="200"
+                />
+                <em>元/条</em>
+              </span>
+            </label>
+            <label className={styles.inlineField}>
+              <span>数量</span>
+              <span className={styles.suffixInput}>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={quantity}
+                  onChange={(event) => setQuantity(event.target.value)}
+                  placeholder="10"
+                />
+                <em>条</em>
+              </span>
+            </label>
+          </div>
         </div>
 
         <div className={styles.footer}>

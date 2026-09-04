@@ -22,10 +22,6 @@ import localLifeIcon from '@/assets/sidebar/local-life.svg'
 import localLifeActiveIcon from '@/assets/sidebar/local-life-active.svg'
 import ecommerceIcon from '@/assets/sidebar/ecommerce.svg'
 import ecommerceActiveIcon from '@/assets/sidebar/ecommerce-active.svg'
-import agentJoinIcon from '@/assets/sidebar/agent-join.svg'
-import ipJoinIcon from '@/assets/sidebar/ip-join.svg'
-import cooperationIcon from '@/assets/sidebar/cooperation.svg'
-import cooperationActiveIcon from '@/assets/sidebar/cooperation-active.svg'
 import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
 import SidebarTeamGroup from './SidebarTeamGroup'
@@ -68,22 +64,6 @@ const GROUPS: SidebarGroup[] = [
       { key: 'real-person-video', label: '真人成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
       { key: 'canvas', label: '无限画布', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
       { key: 'video-edit', label: '视频编辑', icon: videoEditIcon, iconSize: 16 },
-    ],
-  },
-  {
-    // 「社区」分组（设计稿 2.1 IP/需求市场）：我的合作已上线；
-    // 代理商入驻 / IP入驻 尚未开放，不在 SIDEBAR_ROUTE_MAP 中，点击弹「功能待开放」。
-    title: '社区',
-    items: [
-      { key: 'agent-join', label: '代理商入驻', icon: agentJoinIcon, iconSize: 14 },
-      { key: 'ip-join', label: 'IP入驻', icon: ipJoinIcon, iconSize: 14 },
-      {
-        key: 'collaborations',
-        label: '我的合作',
-        icon: cooperationIcon,
-        activeIcon: cooperationActiveIcon,
-        iconSize: 14,
-      },
     ],
   },
   {
@@ -198,6 +178,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
           </span>
           <span className="app-sidebar__brand-text">
             <span className="app-sidebar__brand-name">帧智汇</span>
+            <span className="app-sidebar__brand-en">Framora</span>
             <span className="app-sidebar__version">v{APP_VERSION}</span>
           </span>
 
@@ -231,7 +212,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
             {renderItem({ key: 'home', label: '首页', icon: homeIcon, activeIcon: homeActiveIcon, iconSize: 16 })}
           </div>
 
-          {/* 创作 / 社区 / 管理 */}
+          {/* 创作 / 管理 */}
           {GROUPS.map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>
