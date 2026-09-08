@@ -381,7 +381,9 @@ test.describe('已认证关键路由与读取链路', () => {
     const confirm = page.getByRole('alertdialog', { name: '确认生成图片' })
     await expect(confirm).toBeVisible()
     await expect(confirm).toContainText('生成 3 张图片')
-    await expect(confirm).toContainText('预计共消耗 300 积分')
+    // 费用展示已从积分改为人民币（1 积分 = 0.02 元）：300 积分 → 约6元，每张 100 积分 → 约2元
+    await expect(confirm).toContainText('预计费用共 约6元')
+    await expect(confirm).toContainText('每张约2元')
     expect(
       api.seen.filter(
         (request) =>
