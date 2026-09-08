@@ -364,7 +364,7 @@ describe('VideoStage playback loading', () => {
 
     const confirm = screen.getByRole('button', { name: '确认修改' })
     expect(confirm).toBeDisabled()
-    expect(await screen.findByText(/后端预计消耗 1500 积分/)).toBeInTheDocument()
+    expect(await screen.findByText(/预计费用 约30元/)).toBeInTheDocument()
     expect(screen.getByText(/后端可能按最低计费时长结算/)).toBeInTheDocument()
     await waitFor(() => expect(confirm).toBeEnabled())
 

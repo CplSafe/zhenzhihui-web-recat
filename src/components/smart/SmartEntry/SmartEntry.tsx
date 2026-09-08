@@ -24,6 +24,7 @@ import {
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
 } from '../GenerationModelPicker'
+import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
 import { fileToDataUrl } from '@/utils/imageFile'
 import {
   clearSmartEntryDraft,
@@ -1334,7 +1335,9 @@ export default function SmartEntry({
                     ? '预估中…'
                     : modelEstimate.failed
                       ? '预估失败'
-                      : `约 ${modelEstimate.total} 积分${modelEstimate.canAfford ? '' : ' · 余额不足'}`}
+                      : modelEstimate.canAfford
+                        ? creditsYuanLabel(modelEstimate.total)
+                        : INSUFFICIENT_CREDITS_TEXT}
                 </span>
               )}
               {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}

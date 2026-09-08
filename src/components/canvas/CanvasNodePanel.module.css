@@ -1000,6 +1000,10 @@
   align-items: center;
   justify-content: center;
 }
+/* 费用徽标内容较长（「约0.24元」/「积分不足」），保持不换行 */
+.costBadge {
+  white-space: nowrap;
+}
 
 .saveTextLabel {
   padding: 0 10px;

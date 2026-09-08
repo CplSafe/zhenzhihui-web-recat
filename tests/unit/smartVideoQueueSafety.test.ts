@@ -121,7 +121,7 @@ describe('getSmartVideoQuoteValidationError', () => {
         balance: 4500,
         canAfford: true,
       }),
-    ).toContain('已由 500 积分变为 650 积分')
+    ).toContain('已由 约10元变为 约13元')
   })
 
   it('在模型身份变化或余额不足时阻止付费任务', () => {
@@ -143,7 +143,7 @@ describe('getSmartVideoQuoteValidationError', () => {
         balance: 100,
         canAfford: false,
       }),
-    ).toContain('余额 100 积分不足')
+    ).toContain('积分不足，请充值积分')
   })
 
   it('拒绝缺失或被篡改的批次报价元数据', () => {

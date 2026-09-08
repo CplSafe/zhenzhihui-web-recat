@@ -1,3 +1,4 @@
+import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from './creditsYuan'
 import type { GenerationOperationCode } from './generationModelCatalog'
 
 /** 一条智能成片视频队列所属的不可变页面会话。 */
@@ -197,10 +198,10 @@ export function getSmartVideoQuoteValidationError(
     return '视频任务报价无效，请重新确认费用'
   }
   if (Math.abs(quotedCost - currentCost) > 1e-6) {
-    return `视频生成费用已由 ${quotedCost} 积分变为 ${currentCost} 积分，请重新确认后生成`
+    return `视频生成费用已由 ${creditsYuanLabel(quotedCost)}变为 ${creditsYuanLabel(currentCost)}，请重新确认后生成`
   }
   if (!current.canAfford || currentCost > balance) {
-    return `当前余额 ${balance} 积分不足，尚未创建付费任务`
+    return `${INSUFFICIENT_CREDITS_TEXT}，尚未创建付费任务`
   }
   return ''
 }

@@ -10,6 +10,7 @@ import VoiceInputButton from '@/components/common/VoiceInputButton'
 import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost } from '@/api/business'
+import { creditsYuanHint, creditsYuanLabel } from '@/utils/creditsYuan'
 import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
@@ -987,10 +988,11 @@ export default function CanvasNodePanel({
     const cost = Number(costEstimate.estimated_cost || 0)
     if (kind === 'video' && cost > 0) {
       const operationLabel = isEditingVideo ? '修改当前视频' : '使用新模型生成视频'
-      const confirmed = await requestConfirm(
-        `${operationLabel}预计消耗 ${cost} 积分，当前余额 ${Number(costEstimate.balance || 0)} 积分，是否继续？`,
-        { title: '确认消耗积分', confirmLabel: '继续生成', cancelLabel: '再想想' },
-      )
+      const confirmed = await requestConfirm(`${operationLabel}预计费用 ${creditsYuanLabel(cost)}，是否继续？`, {
+        title: '确认生成费用',
+        confirmLabel: '继续生成',
+        cancelLabel: '再想想',
+      })
       if (confirmed !== true) return
     }
     onGenerate?.({
@@ -1333,9 +1335,11 @@ export default function CanvasNodePanel({
             >
               {costEstimate.loading
                 ? '…'
-                : costEstimate.estimated_cost !== undefined && costEstimate.estimated_cost > 0
-                  ? costEstimate.estimated_cost
-                  : '—'}
+                : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
+                  ? '积分不足'
+                  : costEstimate.estimated_cost !== undefined && costEstimate.estimated_cost > 0
+                    ? creditsYuanHint(costEstimate.estimated_cost)
+                    : '—'}
             </span>
           )}
           {/* 右侧：发送 icon（不显示文字） */}

@@ -105,7 +105,7 @@ describe('smart image queue quote safety', () => {
         canAfford: true,
         remainingCount: 3,
       }),
-    ).toContain('每张 50 积分变为 60 积分')
+    ).toContain('每张 约1元变为 约1.2元')
     expect(
       getSmartImageQuoteValidationError(quote, {
         ...binding,
@@ -114,7 +114,7 @@ describe('smart image queue quote safety', () => {
         canAfford: true,
         remainingCount: 2,
       }),
-    ).toContain('不足以完成剩余 2 张图片')
+    ).toContain('无法完成剩余 2 张图片')
   })
 
   it('fails closed for legacy pending jobs without a quote or malformed quote metadata', () => {

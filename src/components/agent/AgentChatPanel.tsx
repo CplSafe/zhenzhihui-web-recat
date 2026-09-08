@@ -34,6 +34,7 @@ import {
 import { uploadAssetFile } from '@/api/business'
 import Markdown from '@/components/common/Markdown'
 import { useSpeechInput } from '@/composables/useSpeechInput'
+import { creditsYuanLabel } from '@/utils/creditsYuan'
 import styles from './AgentChatPanel.module.css'
 
 /** 会话内渲染的一条内容。工具轨迹与对话消息同列展示,靠样式区分权重。 */
@@ -1505,7 +1506,7 @@ function ConfirmCard({
       ))}
 
       <div className={styles.confirmCredits}>
-        预计消耗 <span className={styles.confirmCreditsValue}>{call.estimated_credits}</span> 积分
+        预计费用 <span className={styles.confirmCreditsValue}>{creditsYuanLabel(call.estimated_credits)}</span>
       </div>
 
       {settled ? (

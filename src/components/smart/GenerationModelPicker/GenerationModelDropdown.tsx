@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSPrope
 import { createPortal } from 'react-dom'
 import { CheckCircleFilled, CloseOutlined, ControlOutlined, DownOutlined, LoadingOutlined } from '@ant-design/icons'
 import { openMemberCenter } from '@/stores/ui'
+import { INSUFFICIENT_CREDITS_TEXT, creditsToYuanAmount, creditsYuanLabel } from '@/utils/creditsYuan'
 import {
   getModelConstraintConflicts,
   getModelDurationLimitLabel,
@@ -812,7 +813,7 @@ export default function GenerationModelDropdown({
                                 : estimate?.status === 'loading'
                                   ? '正在预估…'
                                   : estimate?.status === 'success'
-                                    ? `预计 ${estimate?.estimatedCost ?? 0} 积分`
+                                    ? `预计 ${creditsYuanLabel(estimate?.estimatedCost)}`
                                     : estimate?.status === 'error'
                                       ? '暂无法预估，不影响创作'
                                       : '等待预估'
@@ -848,17 +849,17 @@ export default function GenerationModelDropdown({
                       </span>
                     ) : (
                       <>
-                        <b>{estimateTotal}</b>
-                        <span>积分</span>
+                        <b>{creditsToYuanAmount(estimateTotal) || '0'}</b>
+                        <span>元</span>
                       </>
                     )}
                   </div>
                 </div>
                 <div className={styles.estimateSummaryBottom}>
                   <span>
-                    {estimateBalance == null
-                      ? '实际消耗以镜头数、生成次数及最终结算为准'
-                      : `当前余额 ${estimateBalance} 积分${estimateCanAfford ? '' : '，余额不足'}`}
+                    {estimateBalance != null && !estimateCanAfford
+                      ? INSUFFICIENT_CREDITS_TEXT
+                      : '实际消耗以镜头数、生成次数及最终结算为准'}
                   </span>
                   {estimateFailed && (
                     <button type="button" onClick={() => setEstimateVersion((value) => value + 1)}>
