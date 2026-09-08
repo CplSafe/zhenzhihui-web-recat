@@ -44,6 +44,7 @@ import quick2 from '@/assets/home/quick-2.png'
 import quick3 from '@/assets/home/quick-3.png'
 import quick4 from '@/assets/home/quick-4.png'
 import VideoPreviewModal from '@/components/common/VideoPreviewModal'
+import FilterSelect from '@/components/common/FilterSelect'
 import { LazyMediaVideo, useMediaCardActivation } from '@/components/common/LazyMediaVideo'
 import { downloadToDisk, buildDownloadName } from '@/utils/downloadToDisk'
 import './HomeView.css'
@@ -1312,40 +1313,41 @@ export default function HomeView() {
                 )
               ) : activeTab === 'ip' ? (
                 <>
-                  {/* 领域 / 平台 / 粉丝筛选（设计稿 IP Tab） */}
+                  {/* 领域 / 平台 / 粉丝筛选（设计稿 IP Tab）；原生 select 的弹层样式不可定制，改用自绘 FilterSelect */}
                   <div className="home__ip-filters">
-                    <label className="home__ip-filter">
+                    <div className="home__ip-filter">
                       <span>领域</span>
-                      <select value={ipCategoryFilter} onChange={(e) => setIpCategoryFilter(e.target.value)}>
-                        <option value="">全部领域</option>
-                        {ipCategoryOptions.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="home__ip-filter">
+                      <FilterSelect
+                        ariaLabel="按领域筛选"
+                        value={ipCategoryFilter}
+                        onChange={setIpCategoryFilter}
+                        options={[
+                          { value: '', label: '全部领域' },
+                          ...ipCategoryOptions.map((option) => ({ value: option, label: option })),
+                        ]}
+                      />
+                    </div>
+                    <div className="home__ip-filter">
                       <span>平台</span>
-                      <select value={ipPlatformFilter} onChange={(e) => setIpPlatformFilter(e.target.value)}>
-                        <option value="">全部平台</option>
-                        {ipPlatformOptions.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="home__ip-filter">
+                      <FilterSelect
+                        ariaLabel="按平台筛选"
+                        value={ipPlatformFilter}
+                        onChange={setIpPlatformFilter}
+                        options={[
+                          { value: '', label: '全部平台' },
+                          ...ipPlatformOptions.map((option) => ({ value: option, label: option })),
+                        ]}
+                      />
+                    </div>
+                    <div className="home__ip-filter">
                       <span>粉丝</span>
-                      <select value={ipFansFilter} onChange={(e) => setIpFansFilter(e.target.value)}>
-                        {IP_FANS_RANGES.map((range) => (
-                          <option key={range.key} value={range.key}>
-                            {range.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                      <FilterSelect
+                        ariaLabel="按粉丝数量筛选"
+                        value={ipFansFilter}
+                        onChange={setIpFansFilter}
+                        options={IP_FANS_RANGES.map((range) => ({ value: range.key, label: range.label }))}
+                      />
+                    </div>
                   </div>
                   {ipLoading ? (
                     <div className="home__placeholder">正在加载 IP 创作者...</div>
