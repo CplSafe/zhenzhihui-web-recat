@@ -35,7 +35,7 @@ test('公开首页在无真实后端和登录态时可访问', async ({ page }) 
 
   await expect(page).toHaveURL(/\/home$/)
   await expect(page.getByRole('heading', { name: '快捷入口' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '智能成片 输入灵感，秒出大片', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '爆款成片 输入灵感，秒出大片', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '模板库', exact: true })).toBeVisible()
 })
 

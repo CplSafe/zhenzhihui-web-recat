@@ -419,6 +419,24 @@
   color: #11a98a;
 }
 
+/* 语音输入(空闲态):与「去制作」同高的圆形麦克风按钮;展开后的胶囊样式见 common/VoiceInputButton.css */
+.hotcopy__mic {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #333;
+  cursor: pointer;
+  transition:
+    border-color 0.18s,
+    color 0.18s;
+}
+.hotcopy__mic:hover {
+  border-color: #1fcfa9;
+  color: #11a98a;
+}
+
 /* @ 素材选择:在 @ 按钮上方弹出,数据源是上传的替换素材(对齐智能成片 .atMenu) */
 .hotcopy__atAnchor {
   position: relative;

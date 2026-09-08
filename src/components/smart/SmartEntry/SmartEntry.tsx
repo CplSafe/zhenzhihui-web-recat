@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
+import VoiceInputButton from '@/components/common/VoiceInputButton'
 import { CreativeModelSlots } from '../CreativeModelSlots'
 import { CreativeParamsDropdown, type CreativeParamsOptions, type CreativeParamsValue } from '../CreativeParamsDropdown'
 import {
@@ -1336,6 +1337,13 @@ export default function SmartEntry({
                       : `约 ${modelEstimate.total} 积分${modelEstimate.canAfford ? '' : ' · 余额不足'}`}
                 </span>
               )}
+              {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
+              <VoiceInputButton
+                className={styles.micBtn}
+                onText={insertAtCaret}
+                authRequired={authRequired}
+                onAuthRequired={onAuthRequired}
+              />
               <button
                 type="button"
                 className={`${styles.send} ${styles.sendPlain}`}

@@ -6,6 +6,7 @@
  * 视频：模型 + 集合选择器(生成方式/比例/秒数/音频) + 生成
  */
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import VoiceInputButton from '@/components/common/VoiceInputButton'
 import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost } from '@/api/business'
@@ -1007,6 +1008,15 @@ export default function CanvasNodePanel({
     })
   }
 
+  /** 语音输入:识别文本接到现有提示词末尾(与已有文字之间补一个空格),并按节点类型同步写回。 */
+  const appendSpokenText = (text: string) => {
+    if (taskRunning) return
+    const next = prompt && !/\s$/.test(prompt) ? `${prompt} ${text}` : prompt + text
+    setPrompt(next)
+    if (polishError) setPolishError('')
+    if (kind !== 'text') onPromptChange?.(next)
+  }
+
   const handlePolishText = async () => {
     const value = prompt.trim()
     if (!value || !onPolishText || polishing) return
@@ -1224,16 +1234,20 @@ export default function CanvasNodePanel({
                   ? '参考图片为可选项；不添加图片时将直接按文案生成视频'
                   : '润色后只更新图片描述，不会自动开始生成')}
         </div>
-        <button
-          type="button"
-          className={styles.polishBtn}
-          onClick={handlePolishText}
-          disabled={taskRunning || !prompt.trim() || !onPolishText || polishing}
-          title={`扩写为更完整的${kind === 'video' ? '视频' : '图片'}生成提示词`}
-        >
-          <span aria-hidden="true">✦</span>
-          {polishing ? '润色中...' : 'AI 一键润色'}
-        </button>
+        <div className={styles.textPromptActions}>
+          {/* 语音输入:识别文本接到提示词末尾;生成中提示词已锁定,不给入口 */}
+          {!taskRunning && <VoiceInputButton className={styles.micBtn} onText={appendSpokenText} />}
+          <button
+            type="button"
+            className={styles.polishBtn}
+            onClick={handlePolishText}
+            disabled={taskRunning || !prompt.trim() || !onPolishText || polishing}
+            title={`扩写为更完整的${kind === 'video' ? '视频' : '图片'}生成提示词`}
+          >
+            <span aria-hidden="true">✦</span>
+            {polishing ? '润色中...' : 'AI 一键润色'}
+          </button>
+        </div>
       </div>
 
       {/* 底部操作栏 */}
