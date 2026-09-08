@@ -10,6 +10,8 @@
  * 编一个「高质量」标签出来比不显示更糟——用户会照着它做选择。
  */
 
+import { creditsYuanLabel } from './creditsYuan'
+
 /** 归一化键名：aspect_ratio / aspectRatio / aspect-ratio 视作同一个键。 */
 function normalizeKey(value: unknown): string {
   return String(value ?? '')
@@ -249,8 +251,8 @@ export function readModelPresentation(model: unknown): ModelPresentation {
     tags: readTags(pickField(record, TAG_KEYS)),
     durationLabel: readDurationLabel(pickField(record, DURATION_KEYS)),
     isNew: readBoolean(pickField(record, NEW_KEYS)),
-    // 纯数字补上单位，后端已经带单位（如「150 积分」）就原样用
-    priceLabel: price && /^\d+(\.\d+)?$/.test(price) ? `${price} 积分` : price,
+    // 纯数字按 1 积分 = 0.02 元换算成金额展示，后端已经带单位（如「150 积分」）就原样用
+    priceLabel: price && /^\d+(\.\d+)?$/.test(price) ? creditsYuanLabel(price) : price,
   }
 }
 

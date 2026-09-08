@@ -1,3 +1,4 @@
+import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from './creditsYuan'
 import type { BackendGenerationModel, GenerationOperationCode } from './generationModelCatalog'
 import { buildGenerationModelExecutionFingerprint } from './generationQueueModelGuards'
 
@@ -175,12 +176,12 @@ export function getSmartImageQuoteValidationError(
     return '图片任务报价无效，请重新确认费用'
   }
   if (Math.abs(quotedCost - currentCost) > 1e-6) {
-    return `图片生成费用已由每张 ${quotedCost} 积分变为 ${currentCost} 积分，请重新确认后生成`
+    return `图片生成费用已由每张 ${creditsYuanLabel(quotedCost)}变为 ${creditsYuanLabel(currentCost)}，请重新确认后生成`
   }
 
   const remainingTotal = currentCost * remainingCount
   if (!current.canAfford || remainingTotal > balance) {
-    return `当前余额 ${balance} 积分不足以完成剩余 ${remainingCount} 张图片（需要 ${remainingTotal} 积分），尚未创建付费任务`
+    return `${INSUFFICIENT_CREDITS_TEXT}，无法完成剩余 ${remainingCount} 张图片，尚未创建付费任务`
   }
   return ''
 }

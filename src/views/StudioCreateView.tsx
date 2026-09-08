@@ -32,6 +32,7 @@ import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useStudioCostEstimate } from '@/composables/useStudioCostEstimate'
 import { useStudioHistory } from '@/composables/useStudioHistory'
 import { useToast } from '@/composables/useToast'
+import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
 import { notifyGenerationDone } from '@/utils/studioNotify'
 import { useWorkspaceId } from '@/stores/workspaceSession'
 import { getBusinessErrorMessage, uploadAssetFile } from '@/api/business'
@@ -470,7 +471,7 @@ export default function StudioCreateView() {
     if (!selectedModel) return modelLoading ? '模型目录加载中，请稍候' : '当前工作空间暂无可用模型'
     // 预估已明确算出余额不足时先拦一道，避免白跑一次上传再被后端拒绝。
     if (estimate && !estimate.canAfford) {
-      return `预计消耗 ${estimate.total} 积分${estimate.balance === null ? '' : `，当前余额 ${estimate.balance} 积分`}，积分不足`
+      return INSUFFICIENT_CREDITS_TEXT
     }
     return ''
   }
@@ -822,16 +823,11 @@ export default function StudioCreateView() {
                 />
                 {/* 提交前的积分预估：与提交同口径，未登录/估价失败时不展示 */}
                 <span className="studio-cost" aria-live="polite">
-                  {estimating && '积分预估中…'}
+                  {estimating && '费用预估中…'}
                   {!estimating && estimate && (
-                    <>
-                      <span className={`studio-cost__value${estimate.canAfford ? '' : ' is-short'}`}>
-                        {estimate.total} 积分
-                      </span>
-                      {estimate.balance !== null && (
-                        <span className="studio-cost__balance">余额 {estimate.balance}</span>
-                      )}
-                    </>
+                    <span className={`studio-cost__value${estimate.canAfford ? '' : ' is-short'}`}>
+                      {estimate.canAfford ? creditsYuanLabel(estimate.total) : INSUFFICIENT_CREDITS_TEXT}
+                    </span>
                   )}
                 </span>
               </div>
@@ -841,9 +837,9 @@ export default function StudioCreateView() {
                   : submitting
                     ? '生成中…'
                     : pendingConfirm
-                      ? `确认生成${estimate ? ` · ${estimate.total} 积分` : ''}`
+                      ? `确认生成${estimate ? ` · ${creditsYuanLabel(estimate.total)}` : ''}`
                       : estimate
-                        ? `生成 · ${estimate.total} 积分`
+                        ? `生成 · ${creditsYuanLabel(estimate.total)}`
                         : '生成'}
               </button>
               <p className="studio-console__disclaimer">内容由 AI 生成，请遵守平台规范，禁止用于违法用途。</p>

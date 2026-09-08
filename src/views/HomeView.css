@@ -598,21 +598,7 @@ button.home__template-card {
   font-size: 13px;
   color: #4b5563;
 }
-.home__ip-filter select {
-  min-width: 116px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid #dfe3e8;
-  border-radius: 8px;
-  background: #fff;
-  color: #333;
-  font-size: 13px;
-  outline: none;
-  cursor: pointer;
-}
-.home__ip-filter select:focus {
-  border-color: #1fcfa9;
-}
+/* 下拉本体样式由 components/common/FilterSelect 自带（原生 select 弹层不可定制，已替换） */
 .home__ip-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));

@@ -57,8 +57,8 @@ describe('readModelPresentation', () => {
     expect(readModelPresentation({ eta: '5~10s' }).durationLabel).toBe('5~10s')
   })
 
-  it('纯数字的价格补上单位，已带单位的原样用', () => {
-    expect(readModelPresentation({ credits: 150 }).priceLabel).toBe('150 积分')
+  it('纯数字的价格按 1 积分 = 0.02 元换算成金额，已带单位的原样用', () => {
+    expect(readModelPresentation({ credits: 150 }).priceLabel).toBe('约3元')
     expect(readModelPresentation({ price: '150 积分' }).priceLabel).toBe('150 积分')
   })
 

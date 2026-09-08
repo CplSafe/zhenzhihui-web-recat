@@ -21,6 +21,7 @@ import {
   type VideoFrameModification,
   type VideoModificationDraft,
 } from '@/utils/videoModificationDraft'
+import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
 import { seekVideoToDecodedFrame } from '@/utils/videoFrameCapture'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
 import SeekableVideo from '@/components/common/SeekableVideo'
@@ -1397,8 +1398,9 @@ export default function VideoStage({
       {!videoGenerating && hasMods && editCost.estimate && (
         <div className={styles.vstageCost}>
           <span className={editCostInsufficient ? styles.vstageCostErr : undefined}>
-            后端预计消耗 {editCost.estimate.estimatedCost} 积分 · 余额 {editCost.estimate.balance} 积分
-            {editCostInsufficient && ' · 积分不足'}
+            {editCostInsufficient
+              ? INSUFFICIENT_CREDITS_TEXT
+              : `预计费用 ${creditsYuanLabel(editCost.estimate.estimatedCost)}`}
           </span>
           <span>最终以任务结算为准；后端可能按最低计费时长结算。</span>
           {editCostInsufficient && (
@@ -1411,7 +1413,7 @@ export default function VideoStage({
       {/* 提交前积分预估:加载中 / 出错也给出反馈(此前 costLoading/costError 被丢弃,只在估到价时才有显示) */}
       {!videoGenerating && !hasMods && costLoading && !costEstimate && (
         <div className={styles.vstageCost}>
-          <span>积分预估中…</span>
+          <span>费用预估中…</span>
         </div>
       )}
       {!videoGenerating && !hasMods && costError && !costEstimate && (
@@ -1428,14 +1430,15 @@ export default function VideoStage({
           return (
             <div className={styles.vstageCost}>
               <span className={insufficient ? styles.vstageCostErr : undefined}>
-                预计消耗 {costEstimate.estimatedCost} 积分 · 余额 {costEstimate.balance} 积分
-                {insufficient && (
+                {insufficient ? (
                   <>
-                    {' · 积分不足,'}
+                    {'积分不足,'}
                     <button type="button" className={styles.vstageCostRecharge} onClick={openMemberCenter}>
-                      请前往充值积分
+                      请充值积分
                     </button>
                   </>
+                ) : (
+                  `预计费用 ${creditsYuanLabel(costEstimate.estimatedCost)}`
                 )}
               </span>
             </div>

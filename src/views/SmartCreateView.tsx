@@ -91,6 +91,7 @@ import {
   compileFullVideoModelRequest,
 } from '@/api/smartVideo'
 import { listRealPeople } from '@/api/realPeople'
+import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
 import { readVideoDurationSec } from '@/utils/videoDuration'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import { getSmartMarketingRecoveryKey } from '@/utils/smartMarketingRecovery'
@@ -3335,13 +3336,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         })
       }
       if (!canAfford) {
-        showToast(`预计共消耗 ${estimatedCost} 积分，当前余额 ${estimateBalance} 积分，积分不足`, 'error')
+        showToast(INSUFFICIENT_CREDITS_TEXT, 'error')
         return
       }
       const modelName = String(modelSelection.displayName || `模型 ${modelSelection.modelVersionId}`).trim()
       const confirmed =
         (await requestConfirm(
-          `本次将使用「${modelName}」${opts?.edit ? '修改' : '生成'} ${total} 个视频，当前准确报价共 ${estimatedCost} 积分，当前余额 ${estimateBalance} 积分。系统会在每个付费任务提交前按相同模型与参数重新核价；价格变化时会停止任务并要求重新确认。`,
+          `本次将使用「${modelName}」${opts?.edit ? '修改' : '生成'} ${total} 个视频，当前准确报价共 ${creditsYuanLabel(estimatedCost)}。系统会在每个付费任务提交前按相同模型与参数重新核价；价格变化时会停止任务并要求重新确认。`,
           {
             title: opts?.edit ? '确认修改视频' : '确认生成视频',
             confirmLabel: '确认并生成',
@@ -6508,7 +6509,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
 
       if (!canAfford) {
         const recharge = await requestConfirm(
-          `本次生成 ${count} 张图片，预计共消耗 ${estimatedCost} 积分（每张约 ${perImageCost} 积分），当前余额 ${balance} 积分。积分不足，系统不会创建生成任务。`,
+          `本次生成 ${count} 张图片，预计费用共 ${creditsYuanLabel(estimatedCost)}。${INSUFFICIENT_CREDITS_TEXT}，系统不会创建生成任务。`,
           {
             title: '积分不足',
             confirmLabel: '前往充值',
@@ -6522,7 +6523,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       const operationLabel = args.referenceImageCount > 0 ? '参考图创作' : '文字生成图片'
       const confirmed =
         (await requestConfirm(
-          `${operationLabel}将生成 ${count} 张图片，预计共消耗 ${estimatedCost} 积分（每张约 ${perImageCost} 积分），当前余额 ${balance} 积分。图片将按顺序逐张生成，每张对应一笔独立任务。确认后才会创建付费生成任务。`,
+          `${operationLabel}将生成 ${count} 张图片，预计费用共 ${creditsYuanLabel(estimatedCost)}（每张${creditsYuanLabel(perImageCost)}）。图片将按顺序逐张生成，每张对应一笔独立任务。确认后才会创建付费生成任务。`,
           {
             title: '确认生成图片',
             confirmLabel: '确认并生成',
@@ -8563,7 +8564,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                       stepCost.loading
                         ? '费用预估中…'
                         : stepCost.estimate
-                          ? `${stepCost.count > 1 ? `共 ${stepCost.count} 张约 ` : '约 '}${stepCost.estimate.estimatedCost} 积分${stepCost.estimate.perOne != null ? ` · 每张约 ${stepCost.estimate.perOne} 积分` : ''} · 余额 ${stepCost.estimate.balance} 积分`
+                          ? // 积分不足时留空,由 ImageChat 统一渲染「积分不足,请前往充值积分」
+                            stepCost.estimate.canAfford === false ||
+                            stepCost.estimate.estimatedCost > stepCost.estimate.balance
+                            ? ''
+                            : `${stepCost.count > 1 ? `共 ${stepCost.count} 张` : ''}预计费用 ${creditsYuanLabel(stepCost.estimate.estimatedCost)}${stepCost.estimate.perOne != null ? ` · 每张${creditsYuanLabel(stepCost.estimate.perOne)}` : ''}`
                           : stepCost.error
                             ? `费用暂不可用：${stepCost.error}`
                             : ''
@@ -8738,21 +8743,27 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                         return (
                           <div className="smart__cost">
                             <span className={insufficient ? 'smart__cost--err' : undefined}>
-                              {step === STEP_SCRIPT
-                                ? '下一步生成视频 · 约 '
-                                : stepCost.count > 1
-                                  ? `共 ${stepCost.count} 张约 `
-                                  : '约 '}
-                              {stepCost.estimate.estimatedCost} 积分 · 余额 {stepCost.estimate.balance} 积分
-                              {stepCost.estimate.perOne != null && step !== STEP_SCRIPT && (
-                                <span className="smart__cost-per"> · 每加一张约 {stepCost.estimate.perOne} 积分</span>
-                              )}
-                              {insufficient && (
+                              {insufficient ? (
                                 <>
-                                  {' · 积分不足,'}
+                                  {'积分不足,'}
                                   <button type="button" className="smart__cost-recharge" onClick={openMemberCenter}>
-                                    请前往充值积分
+                                    请充值积分
                                   </button>
+                                </>
+                              ) : (
+                                <>
+                                  {step === STEP_SCRIPT
+                                    ? '下一步生成视频 · '
+                                    : stepCost.count > 1
+                                      ? `共 ${stepCost.count} 张 `
+                                      : ''}
+                                  预计费用 {creditsYuanLabel(stepCost.estimate.estimatedCost)}
+                                  {stepCost.estimate.perOne != null && step !== STEP_SCRIPT && (
+                                    <span className="smart__cost-per">
+                                      {' '}
+                                      · 每加一张{creditsYuanLabel(stepCost.estimate.perOne)}
+                                    </span>
+                                  )}
                                 </>
                               )}
                             </span>

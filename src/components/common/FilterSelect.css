@@ -1,0 +1,126 @@
+/* FilterSelect — 自绘下拉筛选器（薄荷绿主题，替代样式不可定制的原生 select 弹层） */
+
+.filter-select {
+  position: relative;
+  display: inline-flex;
+}
+
+.filter-select__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 116px;
+  height: 32px;
+  padding: 0 10px 0 12px;
+  border: 1px solid #dfe3e8;
+  border-radius: 8px;
+  background: #fff;
+  color: #333;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.filter-select__trigger:hover {
+  border-color: #b9e9dd;
+}
+
+.filter-select__trigger.is-open,
+.filter-select__trigger:focus-visible {
+  border-color: #1fcfa9;
+  box-shadow: 0 0 0 3px rgba(31, 207, 169, 0.14);
+  outline: none;
+}
+
+.filter-select__value {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.filter-select__arrow {
+  flex-shrink: 0;
+  color: #9aa3af;
+  transition: transform 0.18s ease;
+}
+
+.filter-select__trigger.is-open .filter-select__arrow {
+  transform: rotate(180deg);
+  color: #1fcfa9;
+}
+
+.filter-select__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 100%;
+  max-height: 264px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow:
+    0 12px 28px rgba(15, 23, 42, 0.12),
+    0 2px 8px rgba(15, 23, 42, 0.06);
+  animation: filter-select-in 0.14s ease-out;
+}
+
+@keyframes filter-select-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.filter-select__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* 高亮跟随鼠标/键盘（is-active），与「已选中」（is-selected）分开表达 */
+.filter-select__option.is-active {
+  background: rgba(31, 207, 169, 0.1);
+}
+
+.filter-select__option.is-selected {
+  color: #17b394;
+  font-weight: 500;
+}
+
+.filter-select__check {
+  flex-shrink: 0;
+  color: #1fcfa9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .filter-select__menu {
+    animation: none;
+  }
+
+  .filter-select__arrow {
+    transition: none;
+  }
+}

@@ -13,6 +13,7 @@ import {
   getAiTaskId,
   getAssetDownloadUrl,
 } from './business'
+import { creditsYuanLabel } from '@/utils/creditsYuan'
 import { LEGACY_DEFAULT_VIDEO_RESOLUTION, normalizeSeedanceRatio } from '@/utils/videoOptions'
 import { parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoDurationValue'
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
@@ -669,7 +670,7 @@ async function revalidateHotCopyReplicateQuoteBeforeSubmission(
   })
   if (current.estimatedCost !== confirmed.estimatedCost) {
     const error: any = new Error(
-      `本次生成费用已从 ${confirmed.estimatedCost} 积分变为 ${current.estimatedCost} 积分，已停止提交，请重新确认`,
+      `本次生成费用已从 ${creditsYuanLabel(confirmed.estimatedCost)}变为 ${creditsYuanLabel(current.estimatedCost)}，已停止提交，请重新确认`,
     )
     error.code = HOT_COPY_QUOTE_CHANGED_CODE
     error.hotCopyQuote = current

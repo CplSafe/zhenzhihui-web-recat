@@ -71,11 +71,11 @@
     transform var(--canvas-dur, 180ms) var(--canvas-ease, ease-out);
 }
 
-/* 与同一文件里的菜单项、以及全局主色保持一致：这条工具栏原本是一套独立的青绿，
- * 和 antd 主色 #5767e5 并置时像是另一个产品的控件。 */
+/* 强调色对齐 Figma 设计稿（帧智汇 2.1）：工具栏用品牌薄荷绿 #1fcfa9（与首页一致），
+ * 不用 antd 主色 #5767e5——设计稿里画布工具栏就是绿色语言。 */
 .toolBtn:hover {
-  background: rgba(87, 103, 229, 0.1);
-  color: #5767e5;
+  background: rgba(31, 207, 169, 0.12);
+  color: #1fcfa9;
 }
 
 /* 按下去要有落点。原来只有 hover，点击时按钮纹丝不动，像是没接住这一下 */
@@ -85,7 +85,7 @@
 }
 
 .toolBtn:focus-visible {
-  outline: 2px solid #5767e5;
+  outline: 2px solid #1fcfa9;
   outline-offset: 2px;
 }
 
@@ -95,11 +95,12 @@
  */
 .toolBtnActive,
 .toolBtnActive:hover {
-  background: #5767e5;
+  background: #1fcfa9;
   color: #fff;
-  box-shadow: 0 2px 8px rgb(87 103 229 / 32%);
+  box-shadow: 0 2px 8px rgb(31 207 169 / 32%);
 }
 
+/* 「新建」主按钮按 Figma 设计稿保持黑底白字；展开菜单的激活态走上面的绿色 toolBtnActive */
 .addBtnWrap:first-child .toolBtn {
   border-radius: 50%;
   background: #333;
@@ -203,21 +204,21 @@
 
 /* 0.06 的品牌色底在白卡上几乎看不出来，扫过一列时不知道自己停在哪一项 */
 .addMenuItem:hover {
-  background: rgba(87, 103, 229, 0.1);
+  background: rgba(31, 207, 169, 0.12);
 }
 
 .addMenuItem:hover .addMenuLabel,
 .addMenuItem:hover .addMenuIcon {
-  color: #5767e5;
+  color: #1fcfa9;
 }
 
 .addMenuItem:focus-visible {
-  outline: 2px solid #5767e5;
+  outline: 2px solid #1fcfa9;
   outline-offset: -2px;
 }
 
 .addMenuItem:active {
-  background: rgba(87, 103, 229, 0.16);
+  background: rgba(31, 207, 169, 0.18);
 }
 
 .addMenuText {

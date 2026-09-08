@@ -18,6 +18,13 @@ interface SeekableVideoProps extends VideoHTMLAttributes<HTMLVideoElement> {
   src: string
   /** 不显示「正在准备」浮层。给缩略预览这类不需要交代进度的场景。 */
   quiet?: boolean
+  /**
+   * 元数据就绪后是否主动检查跳转能力并整片缓存。
+   * 大图预览应关闭：先让原地址立即播放，只有用户真的拖动失败时才下载本地副本。
+   */
+  repairOnLoad?: boolean
+  /** 挂载后立即准备本地可播放副本；用于后端下载接口无法渐进播放的放大预览。 */
+  prepareImmediately?: boolean
 }
 
 /** 跳转落点与目标差这么多秒以内算落住了。 */
@@ -81,7 +88,19 @@ function isFullySeekable(video: HTMLVideoElement): boolean {
 }
 
 function SeekableVideoImpl(
-  { src, quiet = false, onSeeking, onSeeked, onLoadedMetadata, onError, ...rest }: SeekableVideoProps,
+  {
+    src,
+    quiet = false,
+    repairOnLoad = true,
+    prepareImmediately = false,
+    autoPlay = false,
+    onSeeking,
+    onSeeked,
+    onLoadedMetadata,
+    onCanPlay,
+    onError,
+    ...rest
+  }: SeekableVideoProps,
   forwardedRef: React.ForwardedRef<HTMLVideoElement>,
 ) {
   const [localSrc, setLocalSrc] = useState('')
@@ -94,11 +113,30 @@ function SeekableVideoImpl(
   const preparingRef = useRef(false)
   const handleRef = useRef<SeekableSourceHandle | null>(null)
   const aliveRef = useRef(true)
+  // autoPlay 是“用户打开预览后希望它自动开始”的意图；换成本地 blob 时也必须继续保留。
+  const autoPlayRef = useRef(Boolean(autoPlay))
+  const autoPlayAttemptedRef = useRef(false)
+  autoPlayRef.current = Boolean(autoPlay)
   /** 用户想去的位置。换源之后要回到这里，而不是失败后被抹回的那个值。 */
   const pendingSeekRef = useRef(0)
   const resumeRef = useRef(false)
   const verifyTimerRef = useRef(0)
   const seekabilityTimerRef = useRef(0)
+
+  /** 带声音自动播放被浏览器拦截时，退回静音播放，至少保证画面立即开始。 */
+  const playWithMutedFallback = useCallback(async (video: HTMLVideoElement) => {
+    try {
+      await video.play()
+    } catch {
+      if (!aliveRef.current || videoRef.current !== video) return
+      video.muted = true
+      try {
+        await video.play()
+      } catch {
+        // 浏览器仍拒绝时保留原生播放按钮，由用户手动开始，不制造未处理的 Promise。
+      }
+    }
+  }, [])
 
   const bindRef = useCallback(
     (element: HTMLVideoElement | null) => {
@@ -123,6 +161,7 @@ function SeekableVideoImpl(
     preparingRef.current = false
     pendingSeekRef.current = 0
     resumeRef.current = false
+    autoPlayAttemptedRef.current = false
     setLocalSrc('')
     setPreparing(false)
     setPercent(0)
@@ -142,7 +181,8 @@ function SeekableVideoImpl(
 
     const video = videoRef.current
     // 下载期间先暂停：这时播放位置本来就是错的，让它继续跑只会在换源时又跳一下
-    resumeRef.current = Boolean(video && !video.paused)
+    // repair 可能早于原生 autoplay 真正起播；此时 paused 仍为 true，不能因此丢掉自动播放意图。
+    resumeRef.current = Boolean(video && (!video.paused || autoPlayRef.current))
     video?.pause()
 
     preparingRef.current = true
@@ -172,6 +212,10 @@ function SeekableVideoImpl(
         if (aliveRef.current) setPreparing(false)
       })
   }, [])
+
+  useEffect(() => {
+    if (prepareImmediately) repair()
+  }, [prepareImmediately, repair, src])
 
   /** 跳转是否落住。只有「被拉回目标之前」才算失败——正常播放会往后走，不能算。 */
   const verifySeek = useCallback(() => {
@@ -228,13 +272,12 @@ function SeekableVideoImpl(
         }
         if (resumeRef.current) {
           resumeRef.current = false
-          const played = video.play()
-          if (played && typeof played.catch === 'function') played.catch(() => undefined)
+          void playWithMutedFallback(video)
         }
-      } else if (!Number.isFinite(video.duration) || video.duration <= 0) {
+      } else if (repairOnLoad && (!Number.isFinite(video.duration) || video.duration <= 0)) {
         // 元数据到手却读不出时长：进度条上没有总时长，也没法跳。这种源只能整片抓下来
         repair()
-      } else {
+      } else if (repairOnLoad) {
         /*
          * 元数据一到就先探一次能不能跳，不等用户拖了才修。
          *
@@ -250,7 +293,7 @@ function SeekableVideoImpl(
       }
       onLoadedMetadata?.(event)
     },
-    [onLoadedMetadata, repair],
+    [onLoadedMetadata, playWithMutedFallback, repair, repairOnLoad],
   )
 
   const handleError = useCallback(
@@ -262,15 +305,31 @@ function SeekableVideoImpl(
     [onError, repair],
   )
 
+  const handleCanPlay = useCallback(
+    (event: React.SyntheticEvent<HTMLVideoElement>) => {
+      const video = event.currentTarget
+      // 浏览器通常会拦截“带声音自动播放”。首次可播放时主动尝试，失败则静音重试，
+      // 避免弹窗看起来像坏掉；用户仍可通过原生音量按钮恢复声音。
+      if (autoPlayRef.current && video.paused && !autoPlayAttemptedRef.current) {
+        autoPlayAttemptedRef.current = true
+        void playWithMutedFallback(video)
+      }
+      onCanPlay?.(event)
+    },
+    [onCanPlay, playWithMutedFallback],
+  )
+
   return (
     <span style={wrapperStyle}>
       <video
         {...rest}
+        autoPlay={autoPlay}
         ref={bindRef}
         src={localSrc || src}
         onSeeking={handleSeeking}
         onSeeked={handleSeeked}
         onLoadedMetadata={handleLoadedMetadata}
+        onCanPlay={handleCanPlay}
         onError={handleError}
       />
       {preparing && !quiet && (

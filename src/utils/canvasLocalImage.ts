@@ -12,7 +12,8 @@
 export const IMAGE_NODE_RATIOS = ['2:3', '1:1', '4:3', '16:9', '9:16'] as const
 
 /** 一次导入（选择/粘贴/拖拽）最多创建的图片节点数，避免误操作触发大量上传 */
-export const LOCAL_IMAGE_IMPORT_LIMIT = 9
+/** 单次本地素材导入上限；上传阶段会限流，避免大量文件同时占满网络和内存。 */
+export const LOCAL_IMAGE_IMPORT_LIMIT = 100
 
 /** 从文件列表中挑出图片文件（忽略视频/文档等非图片文件） */
 export function pickImageFiles(files: ArrayLike<File | null> | null | undefined): File[] {

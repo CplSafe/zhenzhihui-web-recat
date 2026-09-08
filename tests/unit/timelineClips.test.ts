@@ -18,6 +18,7 @@ import {
   locateTimelineTime,
   nextClipId,
   parseTimelineState,
+  partitionTimelineSources,
   syncTimelineClipsFromSources,
   attachTimelineSource,
   buildTimelineTicks,
@@ -29,6 +30,36 @@ import {
   validateTimeline,
   type TimelineState,
 } from '@/utils/timelineClips'
+
+describe('partitionTimelineSources', () => {
+  const source = (index: number, duration = 30) => ({
+    sourceNodeId: `video-${index}`,
+    assetId: index,
+    sourceDurationSec: duration,
+  })
+
+  it('按300秒上限拆分且完整保留100个30秒视频', () => {
+    const groups = partitionTimelineSources(Array.from({ length: 100 }, (_, index) => source(index + 1)))
+
+    expect(groups).toHaveLength(10)
+    expect(groups.every((group) => group.length === 10)).toBe(true)
+    expect(groups.flat()).toHaveLength(100)
+    expect(groups.flat().reduce((total, item) => total + item.sourceDurationSec, 0)).toBe(3000)
+  })
+
+  it('同时遵守片段数与时长上限并保持原始顺序', () => {
+    const groups = partitionTimelineSources(Array.from({ length: 25 }, (_, index) => source(index + 1, 10)))
+
+    expect(groups.map((group) => group.length)).toEqual([20, 5])
+    expect(groups.flat().map((item) => item.sourceNodeId)).toEqual(
+      Array.from({ length: 25 }, (_, index) => `video-${index + 1}`),
+    )
+  })
+
+  it('单条视频超过节点总时长上限时明确失败而不是裁短', () => {
+    expect(() => partitionTimelineSources([source(1, 301)])).toThrow(/单个视频时长 301.0 秒超过/)
+  })
+})
 
 /** 三段各 5 秒、源片各 10 秒的时间线。 */
 function buildState(): TimelineState {

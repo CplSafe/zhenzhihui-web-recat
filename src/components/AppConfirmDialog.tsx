@@ -58,9 +58,30 @@ export default function AppConfirmDialog() {
     >
       <div className="confirm-backdrop" aria-hidden="true" onClick={handleCancel} />
       <div className="confirm-dialog">
-        <strong id={`confirm-title-${idSuffix}`} className="confirm-title">
-          {title}
-        </strong>
+        {/* 类型图标：危险操作（删除/解散等）与普通确认在视觉上分开，扫一眼就知道分量 */}
+        <div className="confirm-head">
+          <span className={`confirm-icon${confirmDanger ? ' is-danger' : ''}`} aria-hidden="true">
+            {confirmDanger ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+                <path d="M12 8.6v4.6" />
+                <path d="M12 16.6h.01" />
+                <path
+                  d="M10.4 4.1 3.2 16.7c-.7 1.2.2 2.8 1.6 2.8h14.4c1.4 0 2.3-1.6 1.6-2.8L13.6 4.1c-.7-1.2-2.5-1.2-3.2 0Z"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.5v.4" />
+                <path d="M12 16.8h.01" />
+              </svg>
+            )}
+          </span>
+          <strong id={`confirm-title-${idSuffix}`} className="confirm-title">
+            {title}
+          </strong>
+        </div>
         {message && (
           <p id={`confirm-desc-${idSuffix}`} className="confirm-message">
             {message}
