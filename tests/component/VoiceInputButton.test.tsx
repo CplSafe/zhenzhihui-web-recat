@@ -122,7 +122,8 @@ describe('VoiceInputButton', () => {
     const bars = () => [...document.querySelectorAll<HTMLElement>('.voice-input__wave span')]
     expect(bars()).toHaveLength(28)
     // (200-128)/128 ≈ 0.56 的峰值 ×3 后封顶为 1:最新的一根条必须是满高。
-    await waitFor(() => expect(bars().at(-1)?.style.getPropertyValue('--level')).toBe('1'))
+    // 仓库 lib 锁定 ES2021，Array.prototype.at 不可用，用 slice(-1) 取最后一根条。
+    await waitFor(() => expect(bars().slice(-1)[0]?.style.getPropertyValue('--level')).toBe('1'))
     // 采样是持续的,不是只跑一次:再等一会儿应该有更多条被填上。
     await waitFor(() =>
       expect(bars().filter((b) => b.style.getPropertyValue('--level') === '1').length).toBeGreaterThan(2),
