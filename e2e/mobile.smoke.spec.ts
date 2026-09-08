@@ -64,10 +64,10 @@ test('移动端公开首页与登录页可操作且无整页横向溢出', async
 
   await page.goto('/home')
   await expect(page.getByRole('heading', { name: '快捷入口' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '智能成片 输入灵感，秒出大片', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '爆款成片 输入灵感，秒出大片', exact: true })).toBeVisible()
   await expectNoDocumentOverflow(page)
 
-  await page.getByRole('button', { name: '智能成片 输入灵感，秒出大片', exact: true }).click()
+  await page.getByRole('button', { name: '爆款成片 输入灵感，秒出大片', exact: true }).click()
   await expect(page).toHaveURL(/\/smart$/)
   await expect(page.getByRole('heading', { name: '想打造什么样的爆款短视频？' })).toBeVisible()
   await expectNoDocumentOverflow(page)

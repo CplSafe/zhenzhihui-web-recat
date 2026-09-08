@@ -287,20 +287,20 @@ interface QuickEntry {
 /* 快捷入口（图标为 Figma 导出）：只放已上线的创作流程 */
 const QUICK_ENTRIES: QuickEntry[] = [
   {
-    key: 'creative',
-    title: '智能成片',
-    desc: '输入灵感，秒出大片',
-    icon: quick1,
-    grad: 'linear-gradient(135deg, #e6fbf4, #f4fffc)',
-  },
-  // 真人成片暂时下线（见 AppSidebar 的 HIDDEN_SIDEBAR_ITEM_KEYS：KYC 认证照会被上游拒绝），
-  // 待后端统一转码后再放回这里。
-  {
     key: 'hot-copy',
     title: '爆款复制',
     desc: '海量爆款，生成同款',
     icon: quick2,
     grad: 'linear-gradient(135deg, #e3f9f1, #f2fffb)',
+  },
+  // 真人成片暂时下线（见 AppSidebar 的 HIDDEN_SIDEBAR_ITEM_KEYS：KYC 认证照会被上游拒绝），
+  // 待后端统一转码后再放回这里。
+  {
+    key: 'creative',
+    title: '爆款成片',
+    desc: '输入灵感，秒出大片',
+    icon: quick1,
+    grad: 'linear-gradient(135deg, #e6fbf4, #f4fffc)',
   },
   {
     key: 'canvas',
