@@ -72,6 +72,47 @@ export const MAX_TIMELINE_CLIPS = 20
 /** 单条时间线的总时长上限（秒）。 */
 export const MAX_TIMELINE_DURATION_SEC = 300
 
+export interface TimelineSourceWithDuration extends TimelineClipSource {
+  sourceDurationSec: number
+}
+
+/**
+ * 按单条时间线的片段数与总时长上限分组，保持来源顺序且绝不裁短任何视频。
+ *
+ * 单条源片自身超过上限时无法靠“另开节点”解决，因此直接报错交给调用方提示用户；
+ * 其余来源一旦放不下，就完整移入下一组。
+ */
+export function partitionTimelineSources(
+  sources: readonly TimelineSourceWithDuration[],
+  limits: { maxClips?: number; maxDurationSec?: number } = {},
+): TimelineSourceWithDuration[][] {
+  const maxClips = Math.max(1, Math.floor(Number(limits.maxClips) || MAX_TIMELINE_CLIPS))
+  const maxDurationSec = Math.max(0, roundSeconds(limits.maxDurationSec ?? MAX_TIMELINE_DURATION_SEC))
+  const groups: TimelineSourceWithDuration[][] = []
+  let current: TimelineSourceWithDuration[] = []
+  let currentDuration = 0
+
+  for (const source of sources) {
+    const duration = Math.max(0, roundSeconds(source.sourceDurationSec))
+    if (!(duration > 0)) throw new Error('有视频无法读取真实时长，请稍后重试')
+    if (maxDurationSec > 0 && duration > maxDurationSec) {
+      throw new Error(`单个视频时长 ${duration.toFixed(1)} 秒超过剪辑节点上限 ${maxDurationSec} 秒`)
+    }
+
+    const exceedsClipCount = current.length >= maxClips
+    const exceedsDuration = maxDurationSec > 0 && currentDuration + duration > maxDurationSec + 1e-6
+    if (current.length > 0 && (exceedsClipCount || exceedsDuration)) {
+      groups.push(current)
+      current = []
+      currentDuration = 0
+    }
+    current.push({ ...source, sourceDurationSec: duration })
+    currentDuration = roundSeconds(currentDuration + duration)
+  }
+  if (current.length > 0) groups.push(current)
+  return groups
+}
+
 /** 统一舍入到毫秒，避免浮点误差在多次裁剪/分割后累积。 */
 export function roundSeconds(value: unknown): number {
   const seconds = Number(value)

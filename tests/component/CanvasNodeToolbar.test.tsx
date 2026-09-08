@@ -13,6 +13,7 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof CanvasNode
     onRename: vi.fn(),
     onUpload: vi.fn(),
     onDownload: vi.fn(),
+    onPreview: vi.fn(),
     onCapture: vi.fn(),
     onDelete: vi.fn(),
     ...overrides,
@@ -37,6 +38,20 @@ describe('CanvasNodeToolbar', () => {
   it('只有视频且已有素材时才给截帧入口', () => {
     renderToolbar({ kind: 'image', hasContent: true })
     expect(screen.queryByRole('button', { name: '截取画面为图片' })).not.toBeInTheDocument()
+  })
+
+  it('图片与视频有素材时都提供放大预览，文本节点不显示', async () => {
+    const user = userEvent.setup()
+    const videoProps = renderToolbar({ kind: 'video', hasContent: true })
+    await user.click(screen.getByRole('button', { name: '放大预览视频' }))
+    expect(videoProps.onPreview).toHaveBeenCalledOnce()
+
+    const imageProps = renderToolbar({ kind: 'image', hasContent: true })
+    await user.click(screen.getByRole('button', { name: '放大预览图片' }))
+    expect(imageProps.onPreview).toHaveBeenCalledOnce()
+
+    renderToolbar({ kind: 'text', hasContent: true })
+    expect(screen.getAllByRole('button', { name: /放大预览/ })).toHaveLength(2)
   })
 
   it('空视频节点给「上传」，有素材后不再给「替换」', () => {

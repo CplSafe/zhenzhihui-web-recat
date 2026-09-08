@@ -40,6 +40,17 @@ interface SerializableNodeData {
   assetSource?: CanvasAssetSource
   assetWorkspaceId?: number
   resultUrl?: string
+  /**
+   * 视频封面帧的素材 ID。
+   * preload="metadata" 的 <video> 在很多源上不会绘制首帧，没有封面的卡片就是一片空白；
+   * 首次加载时抓一帧上传到素材中心，节点只存素材 ID，展示时用同源下载地址。
+   *
+   * 【不要改回存 base64 dataURL】：画布元素 PATCH 受全局 JSON 请求体上限约束
+   * （ZZH_HTTP_MAX_JSON_BODY_BYTES，默认 1MiB），多个节点的 base64 封面合进一批
+   * 会被 CANVAS_INVALID_INPUT 整批拒掉，保存链路陷入重试风暴。会话级 dataURL
+   * 仍可放在运行态字段 data.poster 上（不在本白名单内，永不上云）。
+   */
+  posterAssetId?: number
   prompt?: string
   /** 节点选定的 operation_code（生成时写入，刷新后可直接复用） */
   operationCode?: string
@@ -88,6 +99,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'assetSource',
   'assetWorkspaceId',
   'resultUrl',
+  'posterAssetId',
   'prompt',
   'operationCode',
   'params',

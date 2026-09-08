@@ -79,6 +79,7 @@ import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
+import CanvasImagePreviewModal, { type CanvasImagePreviewItem } from '@/components/canvas/CanvasImagePreviewModal'
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
 import { saveCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId } from '@/utils/canvasDraft'
 import { humanizeCanvasTaskError } from '@/utils/canvasTaskError'
@@ -134,6 +135,7 @@ import CanvasTimelineNodeBody from '@/components/canvas/CanvasTimelineNodeBody'
 import CanvasTimelineNodeActions, { type CanvasTimelineSource } from '@/components/canvas/CanvasTimelineNodeActions'
 import {
   MAX_TIMELINE_CLIPS,
+  MAX_TIMELINE_DURATION_SEC,
   attachClipSourceDuration,
   attachTimelineSource,
   buildTimelineCutlist,
@@ -144,6 +146,7 @@ import {
   getTimelineDuration,
   isSameTimelineClips,
   parseTimelineState,
+  partitionTimelineSources,
   syncTimelineClipsFromSources,
   type TimelineClip,
   type TimelineCutlist,
@@ -386,6 +389,25 @@ async function readTimelineAssetDurationSec(assetId: number, workspaceId: number
   }
 }
 
+/** 限制同时读取的视频元数据数量，批量选择几十个视频时避免瞬间占满浏览器网络与解码资源。 */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  task: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor
+      cursor += 1
+      results[index] = await task(items[index], index)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 /**
  * 节点 → 画布的动作通道。
  *
@@ -421,6 +443,21 @@ interface CanvasNodeActions {
   registerFrameCapture?: (nodeId: string, capture: ((position: VideoFramePosition) => Promise<string>) | null) => void
   /** 同理，图片/视频节点把「下载自己的素材」登记上来供工具条调用。 */
   registerNodeDownload?: (nodeId: string, download: (() => void) | null) => void
+  /** 视频节点登记自己的放大预览入口，供不随画布缩放的悬浮工具栏调用。 */
+  registerNodePreview?: (nodeId: string, preview: (() => void) | null) => void
+  /**
+   * 图片放大预览。与视频不同，图片预览带「全部图片」画廊导航，
+   * 需要拿到整张画布的图片节点列表，因此弹窗放在视图层，节点只上报自己的 id。
+   */
+  onPreviewImage?: (nodeId: string) => void
+  /**
+   * 视频节点抓到首帧封面（dataURL）后交给视图层处理（只补空缺，不覆盖已有封面）。
+   * 生成/导入的视频没有封面，preload="metadata" 又不保证绘制首帧，卡片会是一片空白。
+   * 视图层先把 dataURL 写进运行态 data.poster（当次立即显示，不上云），
+   * 再把封面上传素材中心、只持久化 posterAssetId——base64 进云端同步批次会撞
+   * 1MiB 请求体上限（见 canvasElements 白名单注释）。
+   */
+  onVideoPosterCaptured?: (nodeId: string, poster: string) => void
   /**
    * 剪辑时间线的常用操作，直接在节点卡片上完成。
    *
@@ -748,6 +785,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const [videoScrubbing, setVideoScrubbing] = useState(false)
   // 放大查看：全屏预览弹窗开关
   const [videoPreviewOpen, setVideoPreviewOpen] = useState(false)
+  // 节点播放器已经拿到的真实尺寸，放大预览打开时直接复用，避免再次等待下载接口返回元数据。
+  const [videoNaturalSize, setVideoNaturalSize] = useState({ width: 0, height: 0 })
   const videoRef = useRef<HTMLVideoElement>(null)
   const videoTrackRef = useRef<HTMLDivElement>(null)
   // 目标进度（秒）：用户拖动/按键设定的位置。
@@ -766,6 +805,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const videoPreparingRef = useRef(false)
   const resumeAfterSwapRef = useRef(false)
   const seekCheckTimerRef = useRef(0)
+  // 首帧封面抓取只做一次（成功或因跨域失败都不再重试），换素材时在上面的重置 effect 里归零
+  const posterCaptureDoneRef = useRef(false)
   const placeholder = '双击开始编辑...'
   // 素材回显地址：blob: 临时地址或缺失但 assetId 存在时，用同源流式地址重建（刷新后不丢）
   const workspaceId = useWorkspaceId()
@@ -775,6 +816,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const mediaUrl = resolveNodeMediaUrl(data as Record<string, unknown> | undefined, workspaceId) || localPreviewUrl
   const mediaUrlRef = useRef(mediaUrl)
   mediaUrlRef.current = mediaUrl
+  // 视频封面：会话级 dataURL（本次刚抓的）优先，否则用已持久化的封面素材同源地址。
+  // base64 不上云（见 canvasElements 白名单注释），跨会话靠 posterAssetId。
+  const posterAssetId = Number((data as any)?.posterAssetId || 0)
+  const nodePosterUrl =
+    String((data as any)?.poster || '') ||
+    (Number.isSafeInteger(posterAssetId) && posterAssetId > 0 ? assetStreamUrl(posterAssetId, workspaceId) : '')
   // 视频地址变化（应用新素材）时重置播放态与时长，避免旧视频继续播放或残留旧时长角标
   const videoUrl = mediaUrl
   useEffect(() => {
@@ -783,10 +830,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     setVideoCurrentSec(0)
     setVideoScrubbing(false)
     setVideoPreviewOpen(false)
+    setVideoNaturalSize({ width: 0, height: 0 })
     setVideoPreload('metadata')
     setVideoLocalSrc('')
     pendingSeekRef.current = 0
     pendingSeekTriesRef.current = 0
+    posterCaptureDoneRef.current = false
     return () => {
       // 换素材/卸载时释放本地整片，避免 blob 常驻内存。
       // blob 归 seekableMediaSource 所有（可能还被别处共用），这里只还引用，不自己 revoke
@@ -1003,23 +1052,72 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       // auto 是「跟随输入」的占位，不是真实比例，不展示
       ratio: isAutoRatio(ratioValue) ? '' : ratioValue,
       durationLabel: videoDurationLabel,
+      mediaWidth: videoNaturalSize.width,
+      mediaHeight: videoNaturalSize.height,
       ...(audioKey ? { generateAudio: Boolean(params[audioKey]) } : {}),
       createdAt: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.toLocaleString('zh-CN') : '',
     }
-  }, [data, videoDurationLabel])
+  }, [data, videoDurationLabel, videoNaturalSize])
+
+  /**
+   * 首帧封面兜底：生成/导入的视频没有 poster，preload="metadata" 又不保证绘制首帧，
+   * 卡片会是一片空白（点播放才有画面）。元数据就绪后把播放头轻推 0.01s，
+   * 促使浏览器取回并绘制第一帧——从文件头下载，不依赖源支持 Range。
+   */
+  const primeVideoPosterFrame = (el: HTMLVideoElement) => {
+    if (nodePosterUrl || posterCaptureDoneRef.current) return
+    // 已有明确落点的 seek（片段起点/断点续看）自己就会绘出画面，不再多推一次
+    if (Math.max(0, Number((data as any).clipInSec) || 0) > 0 || pendingSeekRef.current > 0) return
+    if (el.readyState >= 2 || el.currentTime > 0) return
+    try {
+      el.currentTime = 0.01
+    } catch {
+      /* 元数据未完全就绪时浏览器稍后自行处理 */
+    }
+  }
+
+  /** 首帧数据就绪后抓一张小图交给视图层：本次会话立即显示，并上传素材中心供跨会话回显。 */
+  const captureVideoPosterFrame = (el: HTMLVideoElement) => {
+    if (posterCaptureDoneRef.current || nodePosterUrl || !onVideoPosterCaptured) return
+    if (!(el.videoWidth > 0 && el.videoHeight > 0) || el.readyState < 2) return
+    try {
+      const scale = Math.min(1, 640 / Math.max(el.videoWidth, el.videoHeight))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(el.videoWidth * scale))
+      canvas.height = Math.max(1, Math.round(el.videoHeight * scale))
+      const context = canvas.getContext('2d')
+      if (!context) return
+      context.drawImage(el, 0, 0, canvas.width, canvas.height)
+      const poster = canvas.toDataURL('image/jpeg', 0.8)
+      posterCaptureDoneRef.current = true
+      onVideoPosterCaptured(id, poster)
+    } catch {
+      // 外链源缺 CORS 时 canvas 被污染抓不了封面；画面本身已绘出首帧，保持现状即可
+      posterCaptureDoneRef.current = true
+    }
+  }
 
   /** 放大查看：先暂停节点内的视频，避免与弹窗里的播放重叠出声 */
-  const openVideoPreview = () => {
-    videoRef.current?.pause()
+  const openVideoPreview = useCallback(() => {
+    const sourceVideo = videoRef.current
+    if (sourceVideo?.videoWidth && sourceVideo.videoHeight) {
+      setVideoNaturalSize({ width: sourceVideo.videoWidth, height: sourceVideo.videoHeight })
+    }
+    sourceVideo?.pause()
     setPlaying(false)
     setVideoPreviewOpen(true)
-  }
+  }, [])
 
   const handleDoubleClick = () => {
     // 视频：双击画面直接放大查看，与右下角的放大按钮同一入口。
     // 看大图是这个节点最高频的诉求，不该要求先找到那个悬停才显眼的小图标。
     if (kind === 'video' && mediaUrl) {
       openVideoPreview()
+      return
+    }
+    // 图片：双击同样放大查看；弹窗在视图层（带全部图片的画廊导航），这里只上报节点 id。
+    if (kind === 'image' && mediaUrl && onPreviewImage) {
+      onPreviewImage(id)
       return
     }
     if (kind !== 'text') return
@@ -1053,6 +1151,9 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     onRenameNode,
     registerFrameCapture,
     registerNodeDownload,
+    registerNodePreview,
+    onPreviewImage,
+    onVideoPosterCaptured,
     renamingNodeId,
     onRenamingDone,
     timeline: timelineActions,
@@ -1194,6 +1295,20 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     registerNodeDownload(id, () => downloadMediaRef())
     return () => registerNodeDownload(id, null)
   }, [kind, id, registerNodeDownload, downloadMediaRef])
+
+  // 放大入口放在视图层的固定工具栏；节点仍持有播放器与弹窗状态，因此登记一个稳定回调即可复用。
+  useEffect(() => {
+    if (kind !== 'video' || !mediaUrl || !registerNodePreview) return
+    registerNodePreview(id, openVideoPreview)
+    return () => registerNodePreview(id, null)
+  }, [kind, id, mediaUrl, registerNodePreview, openVideoPreview])
+
+  // 图片同样登记放大入口：弹窗在视图层，这里登记的回调只负责报出自己的 id。
+  useEffect(() => {
+    if (kind !== 'image' || !mediaUrl || !registerNodePreview || !onPreviewImage) return
+    registerNodePreview(id, () => onPreviewImage(id))
+    return () => registerNodePreview(id, null)
+  }, [kind, id, mediaUrl, registerNodePreview, onPreviewImage])
 
   /**
    * 头部标题：用户改过名用改的，否则按内容推导。
@@ -1348,12 +1463,15 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               ref={videoRef}
               className="canvas-node-media"
               src={videoPlaybackSrc}
-              poster={(data as any).poster}
+              poster={nodePosterUrl || undefined}
               playsInline
               preload={videoPreload}
               onLoadedMetadata={(event) => {
                 const el = event.currentTarget
                 setVideoDurationSec(el.duration)
+                if (el.videoWidth > 0 && el.videoHeight > 0) {
+                  setVideoNaturalSize({ width: el.videoWidth, height: el.videoHeight })
+                }
                 const clipStart = Math.max(0, Number((data as any).clipInSec) || 0)
                 if (Number((data as any).clipOutSec) > clipStart) {
                   try {
@@ -1369,7 +1487,10 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                   resumeAfterSwapRef.current = false
                   el.play().catch(() => setPlaying(false))
                 }
+                // 没有封面的视频轻推一帧，让卡片显示首帧而不是一片空白
+                primeVideoPosterFrame(el)
               }}
+              onLoadedData={(event) => captureVideoPosterFrame(event.currentTarget)}
               onSeeked={(event) => {
                 // 以元素实际落点为准回填，进度条不谎报位置
                 if (!videoScrubbing) setVideoCurrentSec(event.currentTarget.currentTime)
@@ -1456,35 +1577,6 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 </div>
               </div>
             ) : null}
-            <button
-              type="button"
-              className="canvas-node-video-expand nodrag nopan"
-              title="放大查看"
-              aria-label="放大查看视频"
-              onPointerDown={(event) => event.stopPropagation()}
-              onMouseDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation()
-                openVideoPreview()
-              }}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="15"
-                height="15"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M15 3h6v6" />
-                <path d="M9 21H3v-6" />
-                <path d="M21 3l-7 7" />
-                <path d="M3 21l7-7" />
-              </svg>
-            </button>
             {!playing ? (
               <button className="canvas-node-play-btn" onClick={toggleVideoPlay} aria-label="播放视频">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
@@ -1502,7 +1594,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           </div>
         ) : kind === 'image' && mediaUrl ? (
           <img
-            className="canvas-node-media"
+            /*
+             * nopan 的用途与上方视频画面一致：让双击放大查看时 React Flow 放行，
+             * 不被 zoomOnDoubleClick 当成「放大一级画布」（详见视频区注释）。
+             */
+            className="canvas-node-media nopan"
             src={mediaUrl}
             alt={kind}
             loading="lazy"
@@ -1562,7 +1658,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         <CanvasVideoPreviewModal
           // 已抓到本地整片时预览也复用它：省一次下载，且弹窗里的原生进度条同样能任意跳转
           src={videoPlaybackSrc}
-          poster={(data as any).poster}
+          poster={nodePosterUrl || undefined}
           durationLabel={videoDurationLabel}
           startTime={videoCurrentSec}
           info={videoPreviewInfo}
@@ -2851,7 +2947,19 @@ function CanvasInner() {
             syncRetryTimerRef.current = null
           }
         } catch (error: any) {
-          const isConflict = Number(error?.status || error?.response?.status || 0) === 409
+          const errorStatus = Number(error?.status || error?.response?.status || 0)
+          const errorCode = String(error?.code ?? '')
+          const isConflict = errorStatus === 409
+          // 4xx（409/401/429 除外）与 CANVAS_INVALID_INPUT 是确定性拒绝：同一批数据重发多少次
+          // 都不会成功，指数退避只会变成请求风暴（超大 payload 被整批拒绝时曾刷出上千次请求）。
+          const isDeterministicReject =
+            errorCode === 'CANVAS_INVALID_INPUT' ||
+            errorCode === '10001' ||
+            (errorStatus >= 400 &&
+              errorStatus < 500 &&
+              errorStatus !== 409 &&
+              errorStatus !== 401 &&
+              errorStatus !== 429)
           // 只有乐观锁冲突才拉远端合并。网络/服务异常直接进入退避重试，避免制造额外请求。
           try {
             if (!isConflict) throw error
@@ -2895,18 +3003,25 @@ function CanvasInner() {
               syncRetryTimerRef.current = null
             }
           } catch {
-            // 仍失败：保留 dirty 状态并真正安排退避重试；本地草稿继续兜底。
+            // 仍失败：保留 dirty 状态；本地草稿继续兜底。
             setSaveStatus('dirty')
-            setCloudStatus(navigator.onLine ? 'error' : 'offline')
-            setCloudMessage(navigator.onLine ? '云端同步失败，将自动重试' : '网络已断开，内容已保存在本机')
-            if (!syncRetryTimerRef.current) {
-              const delay = navigator.onLine
-                ? Math.min(30000, 1500 * 2 ** Math.min(syncRetryAttemptRef.current++, 4))
-                : 3000
-              syncRetryTimerRef.current = window.setTimeout(() => {
-                syncRetryTimerRef.current = null
-                scheduleSyncRef.current(true)
-              }, delay)
+            if (isDeterministicReject) {
+              // 确定性拒绝不安排自动重试：等下一次真实变更（会产生不同的 mutation）再走保存链路
+              setCloudStatus('error')
+              setCloudMessage('云端拒绝了本次保存（数据不合法），已停止自动重试；内容已保存在本机')
+            } else {
+              // 网络/服务异常：安排退避重试
+              setCloudStatus(navigator.onLine ? 'error' : 'offline')
+              setCloudMessage(navigator.onLine ? '云端同步失败，将自动重试' : '网络已断开，内容已保存在本机')
+              if (!syncRetryTimerRef.current) {
+                const delay = navigator.onLine
+                  ? Math.min(30000, 1500 * 2 ** Math.min(syncRetryAttemptRef.current++, 4))
+                  : 3000
+                syncRetryTimerRef.current = window.setTimeout(() => {
+                  syncRetryTimerRef.current = null
+                  scheduleSyncRef.current(true)
+                }, delay)
+              }
             }
           }
         }
@@ -3721,59 +3836,55 @@ function CanvasInner() {
       const origin = anchor || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
       // 整批只记一次历史：一次撤销即可撤掉本次导入的全部节点
       commitHistory()
-      const created = await Promise.all(
-        accepted.map(async ({ file, kind }, index) => {
-          // 图片严格使用原图比例；视频统一用自适应，与生成/剪出的视频节点同一口径。
-          const ratio =
-            kind === 'video'
-              ? AUTO_RATIO
-              : ((natural) => (natural ? naturalImageRatio(natural.width, natural.height) : '1:1'))(
-                  await readImageNaturalSize(file),
-                )
-          const size = calcNodeSize(ratio, 250)
-          const previewUrl = URL.createObjectURL(file)
-          localPreviewUrlsRef.current.add(previewUrl)
-          // 多个素材沿对角线错开，避免完全重叠
-          const offset = index * 36
-          const point = screenToFlowPosition({ x: origin.x + offset, y: origin.y + offset })
-          const nodeId = appendNewNode(
-            kind,
-            { x: point.x - size.width / 2, y: point.y - size.height / 2 },
-            {
-              ratio,
-              size,
-              skipHistory: true,
-              extraData: { previewUrl, uploading: true, assetSource: 'upload', assetWorkspaceId: workspaceId },
-            },
-          )
-          return { nodeId, file, previewUrl }
-        }),
-      )
+      const created = await mapWithConcurrency(accepted, 8, async ({ file, kind }, index) => {
+        // 图片严格使用原图比例；视频统一用自适应，与生成/剪出的视频节点同一口径。
+        const ratio =
+          kind === 'video'
+            ? AUTO_RATIO
+            : ((natural) => (natural ? naturalImageRatio(natural.width, natural.height) : '1:1'))(
+                await readImageNaturalSize(file),
+              )
+        const size = calcNodeSize(ratio, 250)
+        const previewUrl = URL.createObjectURL(file)
+        localPreviewUrlsRef.current.add(previewUrl)
+        // 多个素材沿对角线错开，避免完全重叠
+        const offset = index * 36
+        const point = screenToFlowPosition({ x: origin.x + offset, y: origin.y + offset })
+        const nodeId = appendNewNode(
+          kind,
+          { x: point.x - size.width / 2, y: point.y - size.height / 2 },
+          {
+            ratio,
+            size,
+            skipHistory: true,
+            extraData: { previewUrl, uploading: true, assetSource: 'upload', assetWorkspaceId: workspaceId },
+          },
+        )
+        return { nodeId, file, previewUrl }
+      })
       const failures: string[] = []
-      await Promise.all(
-        created.map(async ({ nodeId, file, previewUrl }) => {
-          try {
-            // 上传到素材中心，取得持久 asset_id（刷新后经同源流式地址回显）
-            const out: any = await uploadAssetFile({ workspaceId, file })
-            const assetId = Number(out?.asset?.id || 0)
-            if (!assetId) throw new Error('上传素材失败，请稍后重试')
-            const nextData: Record<string, unknown> = {
-              assetId,
-              resultUrl: assetStreamUrl(assetId, workspaceId),
-              uploading: false,
-              previewUrl: '',
-            }
-            setNodes((nds) => nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...nextData } } : n)))
-            setSelectedNode((prev) => (prev && prev.id === nodeId ? { ...prev, ...nextData } : prev))
-          } catch (error: any) {
-            failures.push(String(error?.message || '上传素材失败，请稍后重试'))
-            setNodes((nds) => nds.filter((n) => n.id !== nodeId))
-            setSelectedNode((prev) => (prev && prev.id === nodeId ? null : prev))
-          } finally {
-            releasePreviewUrl(previewUrl)
+      await mapWithConcurrency(created, 4, async ({ nodeId, file, previewUrl }) => {
+        try {
+          // 上传到素材中心，取得持久 asset_id（刷新后经同源流式地址回显）
+          const out: any = await uploadAssetFile({ workspaceId, file })
+          const assetId = Number(out?.asset?.id || 0)
+          if (!assetId) throw new Error('上传素材失败，请稍后重试')
+          const nextData: Record<string, unknown> = {
+            assetId,
+            resultUrl: assetStreamUrl(assetId, workspaceId),
+            uploading: false,
+            previewUrl: '',
           }
-        }),
-      )
+          setNodes((nds) => nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...nextData } } : n)))
+          setSelectedNode((prev) => (prev && prev.id === nodeId ? { ...prev, ...nextData } : prev))
+        } catch (error: any) {
+          failures.push(String(error?.message || '上传素材失败，请稍后重试'))
+          setNodes((nds) => nds.filter((n) => n.id !== nodeId))
+          setSelectedNode((prev) => (prev && prev.id === nodeId ? null : prev))
+        } finally {
+          releasePreviewUrl(previewUrl)
+        }
+      })
       setSaveStatus('dirty')
       if (failures.length > 0) {
         showToast(failures.length > 1 ? `${failures.length} 个素材上传失败：${failures[0]}` : failures[0], 'error')
@@ -4745,6 +4856,41 @@ function CanvasInner() {
     if (download) nodeDownloadRef.current.set(nodeId, download)
     else nodeDownloadRef.current.delete(nodeId)
   }, [])
+  const nodePreviewRef = useRef(new Map<string, () => void>())
+  const registerNodePreview = useCallback((nodeId: string, preview: (() => void) | null) => {
+    if (preview) nodePreviewRef.current.set(nodeId, preview)
+    else nodePreviewRef.current.delete(nodeId)
+  }, [])
+
+  // 图片放大预览：弹窗在视图层（要拿整张画布的图片列表做画廊导航），记住当前查看的节点 id 即可。
+  const [imagePreviewNodeId, setImagePreviewNodeId] = useState('')
+  const openImagePreview = useCallback((nodeId: string) => setImagePreviewNodeId(nodeId), [])
+
+  /**
+   * 画廊项：画布上全部有素材的图片节点，按节点顺序排列。
+   * 只在预览打开时计算——nodes 在拖拽过程中高频变化，闭着的弹窗不该跟着算。
+   */
+  const imagePreviewItems = useMemo<CanvasImagePreviewItem[]>(() => {
+    if (!imagePreviewNodeId) return []
+    const items: CanvasImagePreviewItem[] = []
+    for (const node of nodes) {
+      const data = node.data as Record<string, unknown> | undefined
+      if (data?.kind !== 'image') continue
+      // 与节点自身展示同一套地址规则：正式地址缺失时用上传中的本地预览地址兜底
+      const url = resolveNodeMediaUrl(data, workspaceId) || String(data?.previewUrl || '')
+      if (!url) continue
+      const title =
+        String((data as any)?.title || '').trim() ||
+        resolveCanvasNodeTitle({
+          kind: 'image',
+          prompt: (data as any)?.prompt,
+          realPerson: (data as any)?.realPerson,
+          assetSource: (data as any)?.assetSource,
+        })
+      items.push({ id: node.id, url, title })
+    }
+    return items
+  }, [imagePreviewNodeId, nodes, workspaceId])
 
   /** 工具条上的「截帧」：先取帧（在节点内完成），再走既有的上传建节点链路。 */
   const handleToolbarCapture = useCallback(
@@ -4945,6 +5091,53 @@ function CanvasInner() {
     [commitHistory, setNodes, setSaveStatus],
   )
 
+  /** 正在上传封面的节点集合：防止 loadeddata 抖动触发同一节点重复上传。 */
+  const posterUploadNodesRef = useRef(new Set<string>())
+
+  /**
+   * 视频节点抓到首帧封面后的落地：
+   * 1) dataURL 先写进运行态 data.poster——当次会话立即有封面。该字段不在持久化白名单内，
+   *    不会产生云端 mutation（base64 进同步批次会撞 1MiB 请求体上限，见 canvasElements 注释）；
+   * 2) 封面上传素材中心拿 assetId，只把 posterAssetId（几十字节）标脏入云，跨会话回显。
+   * 两步都只补空缺不覆盖，且不进撤销历史——这是系统兜底行为，不是用户操作。
+   * 上传失败静默放弃：本次会话仍有 dataURL 封面，下次打开画布会重新抓帧再试。
+   */
+  const handleVideoPosterCaptured = useCallback(
+    (nodeId: string, poster: string) => {
+      const ws = Number(workspaceId || 0)
+      if (!poster || !ws) return
+      const current = latestRef.current.nodes.find((node) => node.id === nodeId)
+      const currentData = current?.data as Record<string, unknown> | undefined
+      if (!current || currentData?.poster || Number(currentData?.posterAssetId || 0) > 0) return
+      if (posterUploadNodesRef.current.has(nodeId)) return
+      posterUploadNodesRef.current.add(nodeId)
+      setNodes((items) =>
+        items.map((node) => (node.id === nodeId ? { ...node, data: { ...node.data, poster } } : node)),
+      )
+      void (async () => {
+        try {
+          const blob = await (await fetch(poster)).blob()
+          const file = new File([blob], `canvas-poster-${nodeId}.jpg`, { type: 'image/jpeg' })
+          const uploaded: any = await uploadAssetFile({ workspaceId: ws, file, source: 'canvas-poster' })
+          const assetId = Number(uploaded?.asset?.id || 0)
+          if (!assetId) return
+          // 节点可能在上传期间被删除；对不存在的节点写数据只会污染 diff
+          if (!latestRef.current.nodes.some((node) => node.id === nodeId)) return
+          setNodes((items) =>
+            items.map((node) =>
+              node.id === nodeId ? { ...node, data: { ...node.data, posterAssetId: assetId } } : node,
+            ),
+          )
+          setSaveStatus('dirty')
+        } catch {
+          // 封面是锦上添花，上传失败不打扰用户；清掉标记允许下次会话重试
+          posterUploadNodesRef.current.delete(nodeId)
+        }
+      })()
+    },
+    [workspaceId, setNodes, setSaveStatus],
+  )
+
   /** 改名写到全部成员上（名字是冗余存储的）；名字没变则不产生历史记录与云端 revision */
   const renameGroup = useCallback(
     (groupId: string, nextName: string) => {
@@ -5099,6 +5292,27 @@ function CanvasInner() {
   }, [selectedNodeIds, nodes])
 
   /**
+   * 创建剪辑节点后立即选中并把视口移到它。
+   *
+   * appendNewNode 与片段/连线更新都是受控状态，必须等 React Flow 完成一帧渲染后再 fitView，
+   * 否则节点已经写进 state，但内部坐标尚未注册，视口仍会停在原来的多选区域。
+   */
+  const focusCreatedTimelineNode = useCallback(
+    (nodeId: string) => {
+      if (!nodeId) return
+      setNodes((items) => items.map((item) => ({ ...item, selected: item.id === nodeId })))
+      setSelectedNodeIds([])
+      setSelectedNode({ id: nodeId, kind: 'timeline', sourceRefs: [] })
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          void fitView({ nodes: [{ id: nodeId }], padding: 0.35, duration: 400, maxZoom: 1.1 })
+        })
+      })
+    },
+    [fitView, setNodes],
+  )
+
+  /**
    * 把多选的视频一次串成一条时间线。
    *
    * 不复用 handleAddTimelineClip 逐个调用：那个函数每次都会 commitHistory 并各自
@@ -5107,62 +5321,104 @@ function CanvasInner() {
    *
    * 片段顺序取画布上的节点顺序，与用户框选时看到的从左到右一致。
    */
-  const createTimelineFromSelection = useCallback(() => {
+  const createTimelineFromSelection = useCallback(async () => {
     const sources = timelineReadySelection
     if (!sources.length) return
-    const accepted = sources.slice(0, MAX_TIMELINE_CLIPS)
-    const dropped = sources.length - accepted.length
 
-    // 时间线落在选区右侧，不压住任何被选中的节点
-    let right = -Infinity
-    let top = Infinity
-    for (const node of accepted) {
-      const style = (node.style || {}) as CSSProperties
-      const width = Number(style.width) || node.measured?.width || 250
-      right = Math.max(right, node.position.x + width)
-      top = Math.min(top, node.position.y)
+    try {
+      showToast(`正在读取 ${sources.length} 个视频的真实时长…`, 'info')
+      const measured = await mapWithConcurrency(sources, 6, async (source, index) => {
+        const assetId = Number((source.data as Record<string, unknown> | undefined)?.assetId || 0)
+        const sourceDurationSec = await readTimelineAssetDurationSec(assetId, Number(workspaceId || 0))
+        if (!(sourceDurationSec > 0)) throw new Error(`第 ${index + 1} 个视频无法读取真实时长，请稍后重试`)
+        return { sourceNodeId: source.id, assetId, sourceDurationSec }
+      })
+      const groups = partitionTimelineSources(measured)
+      const totalDuration = measured.reduce((sum, item) => sum + item.sourceDurationSec, 0)
+
+      if (groups.length > 1) {
+        const confirmed = await requestConfirm(
+          `所选 ${sources.length} 个视频合计 ${totalDuration.toFixed(1)} 秒，超过单个剪辑节点最多 ${MAX_TIMELINE_CLIPS} 段或 ${MAX_TIMELINE_DURATION_SEC} 秒的限制。是否自动创建 ${groups.length} 个剪辑节点？所有视频都会完整保留，不会压缩时长。`,
+          {
+            title: '自动拆分剪辑节点',
+            confirmLabel: `创建 ${groups.length} 个节点`,
+            cancelLabel: '取消',
+          },
+        )
+        if (!confirmed) return
+      }
+
+      // 时间线落在选区右侧并纵向排开，不压住来源节点，也不让多个新节点互相覆盖。
+      let right = -Infinity
+      let top = Infinity
+      for (const node of sources) {
+        const style = (node.style || {}) as CSSProperties
+        const width = Number(style.width) || node.measured?.width || 250
+        right = Math.max(right, node.position.x + width)
+        top = Math.min(top, node.position.y)
+      }
+      if (!Number.isFinite(right) || !Number.isFinite(top)) return
+
+      commitHistory()
+      const created = groups.map((group, groupIndex) => ({
+        group,
+        timelineId: appendNewNode(
+          'timeline',
+          { x: right + 80, y: top + groupIndex * (TIMELINE_NODE_SIZE.height + 60) },
+          { size: TIMELINE_NODE_SIZE, skipHistory: true },
+        ),
+      }))
+
+      // 片段与连线集中写入；每段在创建时就带真实时长，不再经历 0.2 秒占位状态。
+      const groupByTimelineId = new Map(created.map((item) => [item.timelineId, item.group]))
+      setNodes((items) =>
+        items.map((node) => {
+          const group = groupByTimelineId.get(node.id)
+          if (!group) return node
+          let timeline = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
+          for (const source of group) {
+            timeline = attachTimelineSource(timeline, source)
+            const clip = timeline.clips.find((item) => item.sourceNodeId === source.sourceNodeId)
+            if (clip) timeline = attachClipSourceDuration(timeline, clip.id, source.sourceDurationSec)
+          }
+          return { ...node, data: { ...node.data, timeline } }
+        }),
+      )
+      setEdges((items) => [
+        ...items,
+        ...created.flatMap(({ timelineId, group }) =>
+          group.map((source, index) => ({
+            id: buildEdgeId(source.sourceNodeId, timelineId, index),
+            source: source.sourceNodeId,
+            sourceHandle: null,
+            target: timelineId,
+            targetHandle: null,
+            data: { slotIndex: index },
+          })),
+        ),
+      ])
+      setSaveStatus('dirty')
+      // 多个节点纵向排列；先带用户进入第一段，后续节点紧邻其下，可继续逐段处理。
+      focusCreatedTimelineNode(created[0]?.timelineId || '')
+      showToast(
+        groups.length > 1
+          ? `已完整保留 ${sources.length} 个视频，并自动拆分为 ${groups.length} 个剪辑节点`
+          : `已用 ${sources.length} 个视频创建剪辑时间线`,
+        'success',
+      )
+    } catch (error: any) {
+      showToast(String(error?.message || '创建剪辑时间线失败，请稍后重试'), 'error')
     }
-    if (!Number.isFinite(right) || !Number.isFinite(top)) return
-
-    commitHistory()
-    const timelineId = appendNewNode(
-      'timeline',
-      { x: right + 80, y: top },
-      { size: TIMELINE_NODE_SIZE, skipHistory: true },
-    )
-
-    // 片段与连线一次性写入：一次状态更新，撤销也是一步
-    setNodes((items) =>
-      items.map((node) => {
-        if (node.id !== timelineId) return node
-        let timeline = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
-        for (const source of accepted) {
-          const assetId = Number((source.data as Record<string, unknown> | undefined)?.assetId || 0)
-          timeline = attachTimelineSource(timeline, { sourceNodeId: source.id, assetId })
-        }
-        return { ...node, data: { ...node.data, timeline } }
-      }),
-    )
-    setEdges((items) => [
-      ...items,
-      ...accepted.map((source, index) => ({
-        id: buildEdgeId(source.id, timelineId, index),
-        source: source.id,
-        sourceHandle: null,
-        target: timelineId,
-        targetHandle: null,
-        data: { slotIndex: index },
-      })),
-    ])
-    setSelectedNodeIds([])
-    setSaveStatus('dirty')
-    showToast(
-      dropped > 0
-        ? `已用 ${accepted.length} 个视频创建时间线，超出 ${MAX_TIMELINE_CLIPS} 段的 ${dropped} 个未加入`
-        : `已用 ${accepted.length} 个视频创建时间线`,
-      dropped > 0 ? 'info' : 'success',
-    )
-  }, [timelineReadySelection, appendNewNode, commitHistory, setNodes, setEdges, setSaveStatus])
+  }, [
+    timelineReadySelection,
+    workspaceId,
+    appendNewNode,
+    commitHistory,
+    setNodes,
+    setEdges,
+    setSaveStatus,
+    focusCreatedTimelineNode,
+  ])
 
   /** 批量删除选中的节点及其连线；生成中的视频交由既有确认流程拦截 */
   const deleteSelectedNodes = useCallback(async () => {
@@ -5206,7 +5462,7 @@ function CanvasInner() {
    * 时长留 0，交给既有的测量副作用补齐。
    */
   const handleAddTimelineClip = useCallback(
-    (targetId: string, sourceNodeId: string) => {
+    async (targetId: string, sourceNodeId: string) => {
       if (!targetId || !sourceNodeId) return
       const source = latestRef.current.nodes.find((node) => node.id === sourceNodeId)
       const assetId = Number((source?.data as Record<string, unknown> | undefined)?.assetId || 0)
@@ -5215,35 +5471,81 @@ function CanvasInner() {
         return
       }
 
-      commitHistory()
+      const target = latestRef.current.nodes.find((node) => node.id === targetId)
+      if (!target) return
+      const current = parseTimelineState((target.data as Record<string, unknown> | undefined)?.timeline)
+      if (current.clips.some((clip) => clip.sourceNodeId === sourceNodeId || clip.assetId === assetId)) return
+
+      const sourceDurationSec = await readTimelineAssetDurationSec(assetId, Number(workspaceId || 0))
+      if (!(sourceDurationSec > 0)) {
+        showToast('无法读取该视频的真实时长，请稍后重试', 'error')
+        return
+      }
+      if (sourceDurationSec > MAX_TIMELINE_DURATION_SEC) {
+        showToast(`单个视频超过 ${MAX_TIMELINE_DURATION_SEC} 秒，无法在浏览器剪辑节点中完整合成`, 'error')
+        return
+      }
+
+      const exceedsClipCount = current.clips.length >= MAX_TIMELINE_CLIPS
+      const exceedsDuration = getTimelineDuration(current) + sourceDurationSec > MAX_TIMELINE_DURATION_SEC + 1e-6
+      let destinationId = targetId
+      let historyCommitted = false
+      if (exceedsClipCount || exceedsDuration) {
+        const confirmed = await requestConfirm(
+          `当前剪辑节点加入该视频后将超过 ${MAX_TIMELINE_CLIPS} 段或 ${MAX_TIMELINE_DURATION_SEC} 秒。是否自动创建新的剪辑节点并将该视频完整放入？`,
+          {
+            title: '当前剪辑节点已满',
+            confirmLabel: '创建新节点',
+            cancelLabel: '取消',
+          },
+        )
+        if (!confirmed) return
+        commitHistory()
+        historyCommitted = true
+        const style = (target.style || {}) as CSSProperties
+        const targetHeight = Number(style.height) || target.measured?.height || TIMELINE_NODE_SIZE.height
+        destinationId = appendNewNode(
+          'timeline',
+          { x: target.position.x, y: target.position.y + targetHeight + 60 },
+          { size: TIMELINE_NODE_SIZE, skipHistory: true },
+        )
+      }
+
+      if (!historyCommitted) commitHistory()
       setNodes((items) =>
         items.map((node) => {
-          if (node.id !== targetId) return node
-          const current = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
-          if (current.clips.length >= MAX_TIMELINE_CLIPS) return node
-          return { ...node, data: { ...node.data, timeline: attachTimelineSource(current, { sourceNodeId, assetId }) } }
+          if (node.id !== destinationId) return node
+          let timeline = parseTimelineState((node.data as Record<string, unknown> | undefined)?.timeline)
+          timeline = attachTimelineSource(timeline, { sourceNodeId, assetId })
+          const clip = timeline.clips.find((item) => item.sourceNodeId === sourceNodeId)
+          if (clip) timeline = attachClipSourceDuration(timeline, clip.id, sourceDurationSec)
+          return { ...node, data: { ...node.data, timeline } }
         }),
       )
 
       // 连线可能已经存在（用户先拉了线、视频后生成完），这时只补片段不重复建边
       setEdges((items) => {
-        if (items.some((edge) => edge.source === sourceNodeId && edge.target === targetId)) return items
-        const slotIndex = items.filter((edge) => edge.target === targetId).length
+        if (items.some((edge) => edge.source === sourceNodeId && edge.target === destinationId)) return items
+        const slotIndex = items.filter((edge) => edge.target === destinationId).length
         return [
           ...items,
           {
-            id: buildEdgeId(sourceNodeId, targetId, slotIndex),
+            id: buildEdgeId(sourceNodeId, destinationId, slotIndex),
             source: sourceNodeId,
             sourceHandle: null,
-            target: targetId,
+            target: destinationId,
             targetHandle: null,
             data: { slotIndex },
           },
         ]
       })
       setSaveStatus('dirty')
+      if (destinationId !== targetId) {
+        focusCreatedTimelineNode(destinationId)
+        showToast('已创建新的剪辑节点，并完整加入该视频', 'success')
+      }
     },
-    [setNodes, setEdges, setSaveStatus, commitHistory],
+    [workspaceId, appendNewNode, setNodes, setEdges, setSaveStatus, commitHistory, focusCreatedTimelineNode],
   )
 
   /**
@@ -5583,6 +5885,9 @@ function CanvasInner() {
       onRenameNode: renameNode,
       registerFrameCapture,
       registerNodeDownload,
+      registerNodePreview,
+      onPreviewImage: openImagePreview,
+      onVideoPosterCaptured: handleVideoPosterCaptured,
       renamingNodeId,
       onRenamingDone: handleRenamingDone,
       timeline: {
@@ -5602,6 +5907,9 @@ function CanvasInner() {
       renameNode,
       registerFrameCapture,
       registerNodeDownload,
+      registerNodePreview,
+      openImagePreview,
+      handleVideoPosterCaptured,
       renamingNodeId,
       handleRenamingDone,
       getTimelineAddableSources,
@@ -6171,8 +6479,19 @@ function CanvasInner() {
             onRename={() => setRenamingNodeId(selectedNode.id)}
             onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
             onDownload={() => nodeDownloadRef.current.get(selectedNode.id)?.()}
+            onPreview={() => nodePreviewRef.current.get(selectedNode.id)?.()}
             onCapture={(position) => handleToolbarCapture(selectedNode.id, position)}
             onDelete={() => (window as any).__canvasDeleteNode?.(selectedNode.id)}
+          />
+        )}
+
+        {/* 图片放大预览：带全部图片的画廊导航（左右箭头 / 方向键 / 底部缩略图条） */}
+        {imagePreviewNodeId && imagePreviewItems.length > 0 && (
+          <CanvasImagePreviewModal
+            items={imagePreviewItems}
+            activeId={imagePreviewNodeId}
+            onSelect={setImagePreviewNodeId}
+            onClose={() => setImagePreviewNodeId('')}
           />
         )}
 

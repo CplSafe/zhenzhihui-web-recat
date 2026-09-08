@@ -88,6 +88,58 @@ describe('SeekableVideo', () => {
     expect(hits).toBe(1)
   })
 
+  it('关闭加载期修复时优先直接播放，不会因 seekable 尚未就绪而整片下载', async () => {
+    const video = renderVideo({ autoPlay: true, repairOnLoad: false }, 0)
+    fireEvent.loadedMetadata(video)
+
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(hits).toBe(0)
+    expect(video.getAttribute('src')).toBe(REMOTE)
+    expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled()
+  })
+
+  it('要求立即准备时不等待媒体元数据，直接生成本地可播放副本', async () => {
+    const video = renderVideo({ autoPlay: true, repairOnLoad: false, prepareImmediately: true }, 0)
+
+    await waitFor(() => expect(video.getAttribute('src')).toBe('blob:local-1'))
+    expect(hits).toBe(1)
+  })
+
+  it('自动播放视频换成本地副本后继续播放，不因 repair 发生在起播前而停在 0:00', async () => {
+    const play = vi.mocked(HTMLMediaElement.prototype.play)
+    const video = renderVideo({ autoPlay: true }, 0)
+    fireEvent.loadedMetadata(video)
+    await waitFor(() => expect(video.getAttribute('src')).toBe('blob:local-1'))
+
+    // blob 地址加载完成后会再次收到元数据事件，此时必须恢复最初的自动播放意图。
+    fireEvent.loadedMetadata(video)
+    await waitFor(() => expect(play).toHaveBeenCalled())
+  })
+
+  it('浏览器拦截带声音自动播放时退回静音播放', async () => {
+    const play = vi.mocked(HTMLMediaElement.prototype.play)
+    play.mockRejectedValueOnce(new DOMException('autoplay blocked', 'NotAllowedError')).mockResolvedValueOnce(undefined)
+    const video = renderVideo({ autoPlay: true }, 0)
+    fireEvent.loadedMetadata(video)
+    await waitFor(() => expect(video.getAttribute('src')).toBe('blob:local-1'))
+    fireEvent.loadedMetadata(video)
+
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(2))
+    expect(video.muted).toBe(true)
+  })
+
+  it('远程源可播放时若带声音自动播放被拦截，也会静音重试', async () => {
+    const play = vi.mocked(HTMLMediaElement.prototype.play)
+    play.mockRejectedValueOnce(new DOMException('autoplay blocked', 'NotAllowedError')).mockResolvedValueOnce(undefined)
+    const video = renderVideo({ autoPlay: true, repairOnLoad: false })
+
+    fireEvent.canPlay(video)
+
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(2))
+    expect(video.muted).toBe(true)
+    expect(hits).toBe(0)
+  })
+
   it('跳转落住时不下载——服务端支持分段请求就该零成本', async () => {
     const video = renderVideo()
     simulateSeek(video, 8, 8)

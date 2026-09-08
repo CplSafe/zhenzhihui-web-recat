@@ -38,33 +38,56 @@ export default function CanvasTimelineNodeActions({
   const canCompose = clipCount >= 2 && !composing
 
   return (
-    <>
+    <div className={styles.actions} role="toolbar" aria-label="视频剪辑操作">
       <button
         type="button"
-        className="canvas-node-upload-btn"
+        className={`${styles.action} ${styles.refine}`}
         title="打开编辑器做精细裁剪"
+        aria-label="精修"
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation()
           onOpenEditor(nodeId)
         }}
       >
-        <span className="canvas-node-upload-btn__label">精修</span>
+        <EditIcon />
+        <span className={styles.label}>精修</span>
       </button>
 
       <button
         type="button"
-        className={`canvas-node-upload-btn ${styles.compose}`}
+        className={`${styles.action} ${styles.compose}`}
         disabled={!canCompose}
         title={clipCount < 2 ? '至少需要 2 个片段才能合成' : '把各段无损拼成一条视频'}
+        aria-label={composing ? composeProgress || '合成中…' : '合成'}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation()
           onCompose(nodeId)
         }}
       >
-        <span className="canvas-node-upload-btn__label">{composing ? composeProgress || '合成中…' : '合成'}</span>
+        {composing ? <span className={styles.spinner} aria-hidden="true" /> : <MergeIcon />}
+        <span className={styles.label}>{composing ? composeProgress || '合成中…' : '合成'}</span>
       </button>
-    </>
+    </div>
+  )
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M4 20h4l10.7-10.7a2.1 2.1 0 0 0-3-3L5 17v3Z" strokeLinejoin="round" />
+      <path d="m13.8 8.2 3 3" />
+    </svg>
+  )
+}
+
+function MergeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M5 6h4a3 3 0 0 1 3 3v6a3 3 0 0 0 3 3h4" strokeLinecap="round" />
+      <path d="m16 15 3 3-3 3M5 18h4a3 3 0 0 0 3-3V9a3 3 0 0 1 3-3h4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="m16 3 3 3-3 3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   )
 }

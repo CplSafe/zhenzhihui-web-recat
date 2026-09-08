@@ -1,0 +1,258 @@
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(4px);
+  animation: canvas-image-preview-fade 0.16s ease-out;
+}
+
+.dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* 左上角标题 + 序号：贴在画面上方，不占画面本身的空间 */
+.caption {
+  align-self: stretch;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 12px;
+  min-height: 22px;
+  padding: 0 96px;
+  color: #f2f3f5;
+}
+
+.captionTitle {
+  max-width: 520px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.captionCount {
+  color: #aab0ba;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image {
+  display: block;
+  max-width: min(1100px, calc(100vw - 200px));
+  max-height: calc(100vh - 220px);
+  border-radius: 14px;
+  background: #000;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  object-fit: contain;
+}
+
+/* 左右翻图箭头：悬浮在画面两侧之外，毛玻璃圆钮与关闭按钮同一语言 */
+.nav {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  background: rgba(18, 20, 26, 0.5);
+  backdrop-filter: blur(8px);
+  color: #f2f3f5;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.nav svg {
+  width: 20px;
+  height: 20px;
+}
+
+.nav:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.42);
+  color: #ffffff;
+}
+
+.nav:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.nav:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 3px;
+}
+
+.navPrev {
+  left: -60px;
+}
+
+.navNext {
+  right: -60px;
+}
+
+/* 底部缩略图条：画布上全部图片一字排开，点击直达 */
+.thumbs {
+  display: flex;
+  gap: 8px;
+  max-width: min(1100px, calc(100vw - 120px));
+  padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.thumb {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #14161b;
+  cursor: pointer;
+  opacity: 0.62;
+  transition:
+    opacity 0.16s ease,
+    border-color 0.16s ease;
+}
+
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumb:hover {
+  opacity: 0.92;
+}
+
+.thumbActive {
+  border-color: #5767e5;
+  opacity: 1;
+}
+
+.thumb:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 2px;
+}
+
+.close {
+  position: fixed;
+  top: 24px;
+  right: 28px;
+  z-index: 3;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  background: rgba(18, 20, 26, 0.5);
+  backdrop-filter: blur(8px);
+  color: #f2f3f5;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.close:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.42);
+  color: #ffffff;
+  transform: scale(1.09);
+}
+
+.close:active {
+  transform: scale(0.94);
+  transition-duration: 0.08s;
+}
+
+.close:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 3px;
+}
+
+@keyframes canvas-image-preview-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mask {
+    animation: none;
+  }
+
+  .close:hover,
+  .close:active {
+    transform: scale(1) translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .mask {
+    padding: 16px;
+  }
+
+  .image {
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 200px);
+  }
+
+  /* 窄屏没有画面外侧的空间：箭头压到画面内侧边缘 */
+  .navPrev {
+    left: 8px;
+  }
+
+  .navNext {
+    right: 8px;
+  }
+
+  .caption {
+    padding: 0 48px;
+  }
+
+  .thumbs {
+    max-width: calc(100vw - 32px);
+  }
+}

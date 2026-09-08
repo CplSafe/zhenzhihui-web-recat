@@ -27,6 +27,8 @@ export interface CanvasNodeToolbarProps {
   onRename: () => void
   onUpload?: () => void
   onDownload?: () => void
+  /** 图片/视频放大预览；放在屏幕固定工具栏中，不随画布缩放。 */
+  onPreview?: () => void
   onCapture?: (position: CanvasCapturePosition) => void
   onDelete: () => void
 }
@@ -46,6 +48,7 @@ export default function CanvasNodeToolbar({
   onRename,
   onUpload,
   onDownload,
+  onPreview,
   onCapture,
   onDelete,
 }: CanvasNodeToolbarProps) {
@@ -79,6 +82,8 @@ export default function CanvasNodeToolbar({
   // 视频有素材后不再提供「替换」：换视频等于换一个节点，走新建更清楚
   const showUpload = Boolean(onUpload) && isMedia && !(kind === 'video' && hasContent) && !uploading
   const showDownload = Boolean(onDownload) && isMedia && hasContent && !uploading
+  // 图片与视频都支持放大预览；图片预览还带全部图片的画廊导航
+  const showPreview = Boolean(onPreview) && isMedia && hasContent && !uploading
   const showCapture = Boolean(onCapture) && kind === 'video' && hasContent
 
   return (
@@ -144,6 +149,19 @@ export default function CanvasNodeToolbar({
         </span>
       )}
 
+      {showPreview && (
+        <button
+          type="button"
+          className={`${styles.action} ${styles.preview}`}
+          data-tip="放大预览"
+          aria-label={kind === 'video' ? '放大预览视频' : '放大预览图片'}
+          onClick={onPreview}
+        >
+          <PreviewIcon />
+          <span className={styles.previewLabel}>放大预览</span>
+        </button>
+      )}
+
       {showDownload && (
         <button type="button" className={styles.action} data-tip="下载" aria-label="下载素材" onClick={onDownload}>
           <DownloadIcon />
@@ -162,6 +180,24 @@ export default function CanvasNodeToolbar({
         <DeleteIcon />
       </button>
     </div>
+  )
+}
+
+function PreviewIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="5" width="14" height="14" rx="2.5" />
+      <path d="m9 10 4 2.5L9 15v-5Z" fill="currentColor" stroke="none" />
+      <path d="M16 3h5v5M21 3l-6 6" />
+    </svg>
   )
 }
 

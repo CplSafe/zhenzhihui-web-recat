@@ -166,6 +166,26 @@ describe('canvasElements', () => {
     })
   })
 
+  it('视频封面持久化素材 ID，base64 dataURL 永不上云（会撞 1MiB 请求体上限）', () => {
+    const node = {
+      id: 'video-1',
+      type: 'video',
+      position: { x: 0, y: 0 },
+      data: {
+        kind: 'video',
+        assetId: 42,
+        resultUrl: 'https://example.com/result.mp4',
+        posterAssetId: 77,
+        // 运行态的会话级封面：进了同步批次会被 CANVAS_INVALID_INPUT 整批拒掉
+        poster: 'data:image/jpeg;base64,posterframe',
+      },
+    } as Node
+
+    const data = (nodeToMutation(node).payload as { data: Record<string, unknown> }).data
+    expect(data.posterAssetId).toBe(77)
+    expect(data.poster).toBeUndefined()
+  })
+
   it('restores active graph elements and ignores tombstones or invalid records', () => {
     const graph = elementsToGraph([
       {
