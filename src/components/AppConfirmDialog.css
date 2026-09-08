@@ -14,34 +14,69 @@
   position: absolute;
   inset: 0;
   border: 0;
-  background: rgba(17, 24, 39, 0.34);
+  background: rgba(15, 23, 42, 0.44);
+  backdrop-filter: blur(3px);
   cursor: default;
+  animation: confirm-backdrop-in 0.18s ease-out;
 }
 
 .confirm-dialog {
   position: relative;
-  width: min(380px, calc(100vw - 48px));
+  width: min(400px, calc(100vw - 48px));
   max-width: 100%;
-  border-radius: 18px;
+  border-radius: 16px;
   background: #ffffff;
-  box-shadow: 0 20px 52px rgba(16, 24, 40, 0.18);
+  box-shadow:
+    0 24px 64px rgba(16, 24, 40, 0.22),
+    0 4px 16px rgba(16, 24, 40, 0.08);
   padding: 24px;
   display: grid;
   gap: 12px;
+  animation: confirm-dialog-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 头部:类型图标 + 标题同排,一眼分清「普通确认」与「危险操作」 */
+.confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.confirm-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(87, 103, 229, 0.1);
+  color: #5767e5;
+  place-items: center;
+}
+
+.confirm-icon.is-danger {
+  background: rgba(224, 75, 75, 0.1);
+  color: #e04b4b;
+}
+
+.confirm-icon svg {
+  width: 22px;
+  height: 22px;
 }
 
 .confirm-title {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
-  color: #1f2937;
-  line-height: 26px;
+  color: #111827;
+  line-height: 24px;
 }
 
 .confirm-message {
   margin: 0;
   font-size: 14px;
   line-height: 22px;
-  color: rgba(51, 51, 51, 0.88);
+  color: #4b5563;
+  /* 与标题对齐:让正文从图标右侧的文字线开始,不顶到图标下方 */
+  padding-left: 52px;
 }
 
 .confirm-input {
@@ -55,7 +90,9 @@
   outline: none;
   color: #333333;
   background: #ffffff;
-  transition: border-color 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .confirm-input:focus {
@@ -67,37 +104,51 @@
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .confirm-btn {
-  min-width: 80px;
-  height: 36px;
+  min-width: 84px;
+  height: 38px;
   border-radius: 10px;
-  border: 1px solid rgba(51, 51, 51, 0.12);
-  padding: 0 16px;
+  border: 1px solid transparent;
+  padding: 0 18px;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition:
     background 0.15s ease,
-    border-color 0.15s ease;
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.12s ease;
+}
+
+.confirm-btn:active {
+  transform: scale(0.97);
+}
+
+.confirm-btn:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 2px;
 }
 
 .confirm-btn-cancel {
+  border-color: rgba(51, 51, 51, 0.14);
   background: #ffffff;
-  color: rgba(51, 51, 51, 0.86);
+  color: #4b5563;
 }
 
 .confirm-btn-cancel:hover {
-  border-color: rgba(91, 107, 232, 0.28);
-  color: #5b6be8;
+  border-color: rgba(51, 51, 51, 0.26);
+  background: #f7f8fa;
+  color: #1f2937;
 }
 
 .confirm-btn-submit {
   background: #5767e5;
   border-color: #5767e5;
   color: #ffffff;
+  box-shadow: 0 2px 8px rgba(87, 103, 229, 0.28);
 }
 
 .confirm-btn-submit:hover {
@@ -107,18 +158,56 @@
 .confirm-btn-submit.is-danger {
   background: #e04b4b;
   border-color: #e04b4b;
+  box-shadow: 0 2px 8px rgba(224, 75, 75, 0.28);
 }
 
 .confirm-btn-submit.is-danger:hover {
   background: #d43f3f;
 }
 
-.confirm-fade-enter-active,
-.confirm-fade-leave-active {
-  transition: opacity 0.16s ease;
+.confirm-btn-submit.is-danger:focus-visible {
+  outline-color: #e04b4b;
 }
 
-.confirm-fade-enter-from,
-.confirm-fade-leave-to {
-  opacity: 0;
+@keyframes confirm-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes confirm-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm-backdrop,
+  .confirm-dialog {
+    animation: none;
+  }
+
+  .confirm-btn:active {
+    transform: none;
+  }
+}
+
+/* 窄屏:正文不再缩进(52px 缩进在小宽度下挤压可读宽度),按钮拉通全宽更易点按 */
+@media (max-width: 480px) {
+  .confirm-message {
+    padding-left: 0;
+  }
+
+  .confirm-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
 }
