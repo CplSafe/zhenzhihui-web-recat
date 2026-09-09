@@ -1402,7 +1402,6 @@ export default function VideoStage({
               ? INSUFFICIENT_CREDITS_TEXT
               : `预计费用 ${creditsYuanLabel(editCost.estimate.estimatedCost)}`}
           </span>
-          <span>最终以任务结算为准；后端可能按最低计费时长结算。</span>
           {editCostInsufficient && (
             <button type="button" className={styles.vstageCostRecharge} onClick={openMemberCenter}>
               前往充值积分
