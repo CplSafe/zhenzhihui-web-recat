@@ -133,6 +133,21 @@ async function resolveVideoEditModel(args: {
 }
 
 /**
+ * 解析并锁定当前工作空间可用的视频修改模型版本，供智能成片「确认修改」队列在入队时锁死模型 id
+ * （后续估价、报价校验、正式提交都显式复用它，保证「预估 = 实扣」且不会中途换模型）。
+ * 工作空间/套餐无 video.edit 模型时抛 VIDEO_EDIT_MODEL_UNAVAILABLE，调用方据此把修改入口置灰并给出原因。
+ */
+export async function resolveVideoEditModelSelection(args: {
+  workspaceId: number
+  modelPlanCandidates?: string[]
+}): Promise<{ modelVersionId: number; modelVersion: any }> {
+  const model = await resolveVideoEditModel(args)
+  const modelVersionId = getBackendGenerationModelVersionId(model)
+  if (!modelVersionId) throw new Error(VIDEO_EDIT_MODEL_UNAVAILABLE)
+  return { modelVersionId, modelVersion: model }
+}
+
+/**
  * video.edit 只下发模型 schema 明确声明的参数。
  * 某些编辑模型会在服务端应用最低计费时长，但 schema 不接受 duration/source_video_duration；
  * 向 provider 强塞未声明字段反而会导致任务失败。
