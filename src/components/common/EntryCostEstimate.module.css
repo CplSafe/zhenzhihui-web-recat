@@ -1,0 +1,12 @@
+.cost {
+  align-self: center;
+  margin-right: 10px;
+  color: #7c8794;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.insufficient {
+  color: #d4380d;
+}
