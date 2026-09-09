@@ -25,7 +25,7 @@ import {
 import { createInitializedProjectFolder } from '@/utils/creativeProjectInitialization'
 import { addClassifiedVideo, countProjectVideos } from '@/api/projectVideos'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
-import { collectClassifiedKeys, videoKeyOf } from '@/utils/unclassifiedVideos'
+import { collectClassifiedKeys, videoSourceKeyCandidates } from '@/utils/unclassifiedVideos'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { enqueueCreativeProjectDraftSave } from '@/utils/creativeDraftSaveQueue'
 import {
@@ -50,6 +50,7 @@ import {
   waitForDraftSaveRetry,
 } from '@/utils/creativeDraftPersistence'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
+import { useDismissablePopover } from '@/composables/useDismissablePopover'
 import { openComingSoon } from '@/stores/ui'
 import { useWorkspaceId, useCurrentUser, useCurrentWorkspace } from '@/stores/workspaceSession'
 import { listWorkspaceMembers } from '@/api/auth'
@@ -290,6 +291,11 @@ function collectProjectVideoAssetIds(projectItems: any[]): Set<number> {
     }
     const main = Number(draft?.generatedVideoAssetId || smart?.fullVideoAssetId || 0) || 0
     if (main) ids.add(main)
+    // 爆款复制早期草稿只有 fullVideo 对象、videoVersions 尚为空:漏读它会把该成片误判成游离视频
+    for (const fullVideo of [toPlainObject(smart?.fullVideo), toPlainObject(draft?.fullVideo)]) {
+      const aid = Number(fullVideo?.assetId ?? fullVideo?.asset_id ?? 0) || 0
+      if (aid) ids.add(aid)
+    }
   }
   return ids
 }
@@ -300,23 +306,30 @@ function collectProjectVideoAssetIds(projectItems: any[]): Set<number> {
 function extract20Videos(
   projectItems: any[],
   workspaceId: number,
-): { id: number; title: string; cover: string; videoUrl: string }[] {
-  const out: { id: number; title: string; cover: string; videoUrl: string }[] = []
+): { id: number; assetId: number; title: string; cover: string; videoUrl: string }[] {
+  const out: { id: number; assetId: number; title: string; cover: string; videoUrl: string }[] = []
   for (const project of projectItems) {
     const draft = getCreativeProjectDraft(project)
     if (!draft) continue
     const smart = toPlainObject(draft.smart) || draft
     const flow = String(draft?.flow || smart?.flow || '').toLowerCase()
     if (flow === 'smart' || flow === 'real-person-video' || flow === 'hot-copy') continue // 2.1 → 跳过
+    const historyEntries = normalizeArray(draft?.videoHistoryList || draft?.video_history_list)
     const hasVid =
       !!String(draft?.generatedVideoUrl || draft?.generated_video_url || '').trim() ||
       Number(draft?.generatedVideoAssetId || draft?.generated_video_asset_id || 0) > 0 ||
-      normalizeArray(draft?.videoHistoryList || draft?.video_history_list).some(
+      historyEntries.some(
         (v: any) => String(v?.url || v?.src || '').trim() || Number(v?.assetId || v?.asset_id || 0) > 0,
       )
     if (!hasVid) continue
+    // 尽量解析出成片 assetId:归类去重与 sourceKey 都优先走资产维度(URL 可能是会漂移的签名地址)
+    const historyAssetId = historyEntries
+      .map((v: any) => Number(v?.assetId ?? v?.asset_id ?? 0) || 0)
+      .find((aid: number) => aid > 0)
+    const assetId = Number(draft?.generatedVideoAssetId || draft?.generated_video_asset_id || 0) || historyAssetId || 0
     out.push({
       id: Number(project?.id || 0),
+      assetId,
       title: String(project?.title || project?.name || '').trim() || '未命名项目',
       cover: extractCover(project, workspaceId),
       videoUrl: extractCoverVideo(project, workspaceId),
@@ -611,37 +624,48 @@ export default function ProjectManagementView() {
   // 2.1(智能成片/爆款复制)的成片不进这里。已手动归类的隐藏。
   const unclassified = useMemo(() => {
     const ws = Number(workspaceId || 0)
+    // sourceKey 优先用资产维度(assetId 稳定,URL 可能是会漂移的签名地址);
+    // 隐藏判定同时兼容旧格式 key,避免历史归类记录失配后已归类视频重新冒出。
     const projectVids = extract20Videos(accessibleProjectItems, ws)
-      .map((v) => ({
-        kind: 'project' as const,
-        id: v.id,
-        assetId: 0,
-        title: v.title,
-        cover: v.cover,
-        coverVideo: v.videoUrl,
-        videoUrl: v.videoUrl,
-        sourceKey: videoKeyOf(v.id, v.videoUrl),
-      }))
-      .filter((v) => !classifiedKeys.has(v.sourceKey))
+      .map((v) => {
+        const keys = videoSourceKeyCandidates({ projectId: v.id, assetId: v.assetId, videoUrl: v.videoUrl })
+        return {
+          item: {
+            kind: 'project' as const,
+            id: v.id,
+            assetId: v.assetId,
+            title: v.title,
+            cover: v.cover,
+            coverVideo: v.videoUrl,
+            videoUrl: v.videoUrl,
+            sourceKey: keys.primary,
+          } satisfies UnclassifiedVideoItem,
+          candidates: keys.candidates,
+        }
+      })
+      .filter((v) => !v.candidates.some((key) => classifiedKeys.has(key)))
+      .map((v) => v.item)
     const looseVids = effectiveLooseVideos
       .map((a) => {
+        // 封面用视频首帧:coverVideo 取该资产的直传地址,卡片里用 <video preload=metadata> 显示第一帧
         const streamUrl = ws ? assetStreamUrl(a.assetId, ws) : ''
+        const keys = videoSourceKeyCandidates({ projectId: a.assetId, assetId: a.assetId, videoUrl: '' })
         return {
-          kind: 'asset' as const,
-          id: 0,
-          assetId: a.assetId,
-          title: a.title,
-          cover: '',
-          coverVideo: streamUrl,
-          videoUrl: streamUrl,
-          sourceKey: videoKeyOf(a.assetId, ''),
-        } satisfies UnclassifiedVideoItem
+          item: {
+            kind: 'asset' as const,
+            id: 0,
+            assetId: a.assetId,
+            title: a.title,
+            cover: '',
+            coverVideo: streamUrl,
+            videoUrl: streamUrl,
+            sourceKey: keys.primary,
+          } satisfies UnclassifiedVideoItem,
+          candidates: keys.candidates,
+        }
       })
-      .filter((a) => !classifiedKeys.has(a.sourceKey))
-      // 封面用视频首帧:coverVideo 取该资产的直传地址,卡片里用 <video preload=metadata> 显示第一帧
-      .map((a) => ({
-        ...a,
-      }))
+      .filter((a) => !a.candidates.some((key) => classifiedKeys.has(key)))
+      .map((a) => a.item)
     return [...projectVids, ...looseVids]
   }, [accessibleProjectItems, effectiveLooseVideos, classifiedKeys, workspaceId])
 
@@ -1074,7 +1098,52 @@ export default function ProjectManagementView() {
     [currentUserId, deletingProjectId, isWsAdminOrOwner, requestConfirm, showToast],
   )
 
-  // 拖拽归类只增加目标项目的视频记录；归类操作者不会因此获得视频删除权限。
+  /**
+   * 把一条待分类视频写入目标项目的视频清单(拖拽与批量归类共用)。
+   * 成功后做乐观隐藏;失败抛错由调用方决定提示方式。归类操作者不会因此获得视频删除权限。
+   */
+  const classifyVideoIntoFolder = useCallback(
+    async (
+      video: Partial<UnclassifiedVideoItem>,
+      folder: { id: number; title: string; userId: number; workspaceId: number },
+    ) => {
+      const sourceKey = String(video?.sourceKey || '').trim()
+      const videoUrl = String(video?.videoUrl || video?.coverVideo || video?.cover || '').trim()
+      if (!sourceKey || !videoUrl) throw new Error('视频信息不完整,无法归类')
+      const wsId = Number(folder.workspaceId || 0)
+      if (!wsId || !folder.id || Number(workspaceIdRef.current || 0) !== wsId) {
+        throw new Error('workspace_id 缺失,无法归类')
+      }
+      const projectOwner = effectiveWorkspaceMembers.find(
+        (member: any) => resolveUserId(member) === Number(folder.userId || 0),
+      )
+      // 写入目标项目的视频清单(随项目草稿存云端),并带上来源 key 供「待分类」隐藏
+      await addClassifiedVideo({
+        projectId: folder.id,
+        workspaceId: wsId,
+        title: String(video.title || '').trim() || '归类视频',
+        videoUrl,
+        videoAssetId: Number(video.assetId || 0) || 0,
+        coverUrl: String(video.cover || '').trim(),
+        createdByName:
+          String(
+            projectOwner?.nickname ||
+              projectOwner?.name ||
+              projectOwner?.user?.nickname ||
+              projectOwner?.user?.name ||
+              '',
+          ).trim() || '项目创建者',
+        // 操作权限归目标项目创建者；执行归类的普通成员仍可查看/下载，但不会因此获得删除权限。
+        createdByUserId: Number(folder.userId || 0) || 0,
+        sourceKey,
+      })
+      if (Number(workspaceIdRef.current || 0) !== wsId) return
+      // 乐观隐藏(刷新前),随后由调用方拉最新项目列表使云端口径生效
+      setPendingClassified((prev) => new Set(prev).add(sourceKey))
+    },
+    [effectiveWorkspaceMembers],
+  )
+
   const handleDropToFolder = useCallback(
     async (folder: { id: number; title: string; userId: number; workspaceId: number }, payload: string) => {
       setDragOverFolderId(0)
@@ -1084,41 +1153,11 @@ export default function ProjectManagementView() {
       } catch {
         video = null
       }
-      const sourceKey = String(video?.sourceKey || '').trim()
-      const videoUrl = String(video?.videoUrl || video?.coverVideo || video?.cover || '').trim()
-      if (!sourceKey || !videoUrl) return
+      if (!video || !String(video.sourceKey || '').trim()) return
       const wsId = Number(folder.workspaceId || 0)
-      if (!wsId || !folder.id || Number(workspaceIdRef.current || 0) !== wsId) {
-        showToast('workspace_id 缺失,无法归类', 'error')
-        return
-      }
       try {
-        const projectOwner = effectiveWorkspaceMembers.find(
-          (member: any) => resolveUserId(member) === Number(folder.userId || 0),
-        )
-        // 写入目标项目的视频清单(随项目草稿存云端),并带上来源 key 供「待分类」隐藏
-        await addClassifiedVideo({
-          projectId: folder.id,
-          workspaceId: wsId,
-          title: String(video.title || '').trim() || '归类视频',
-          videoUrl,
-          videoAssetId: Number(video.assetId || 0) || 0,
-          coverUrl: String(video.cover || '').trim(),
-          createdByName:
-            String(
-              projectOwner?.nickname ||
-                projectOwner?.name ||
-                projectOwner?.user?.nickname ||
-                projectOwner?.user?.name ||
-                '',
-            ).trim() || '项目创建者',
-          // 操作权限归目标项目创建者；执行归类的普通成员仍可查看/下载，但不会因此获得删除权限。
-          createdByUserId: Number(folder.userId || 0) || 0,
-          sourceKey,
-        })
+        await classifyVideoIntoFolder(video, folder)
         if (Number(workspaceIdRef.current || 0) !== wsId) return
-        // 乐观隐藏(刷新前),随后拉最新项目列表使云端口径生效
-        setPendingClassified((prev) => new Set(prev).add(sourceKey))
         showToast(`已归类到「${folder.title}」`, 'success')
         loadProjects()
       } catch (error) {
@@ -1127,7 +1166,57 @@ export default function ProjectManagementView() {
         }
       }
     },
-    [effectiveWorkspaceMembers, showToast, loadProjects],
+    [classifyVideoIntoFolder, showToast, loadProjects],
+  )
+
+  // 批量归类:把当前待分类的全部视频一次性写入所选项目(逐条容错,单条失败不中断其余)
+  const batchMenu = useDismissablePopover<HTMLDivElement>()
+  const [batchClassifying, setBatchClassifying] = useState(false)
+  const batchClassifyTargets = useMemo(
+    // 图片项目不作为视频归类目标(卡片计数与详情页都按图片口径,视频放进去等于丢失)
+    () => folders.filter((folder) => folder.id > 0 && !folder.imageProject),
+    [folders],
+  )
+  const handleBatchClassify = useCallback(
+    async (folder: { id: number; title: string; userId: number; workspaceId: number }) => {
+      batchMenu.setOpen(false)
+      if (batchClassifying) return
+      const items = unclassified
+      if (!items.length) return
+      const confirmed = await requestConfirm(
+        `将待分类的 ${items.length} 条视频全部归类到「${folder.title}」？归类后可在该项目的视频页查看。`,
+        { title: '批量归类', confirmLabel: '全部归类', cancelLabel: '取消' },
+      )
+      if (confirmed !== true) return
+      const wsId = Number(folder.workspaceId || 0)
+      setBatchClassifying(true)
+      let done = 0
+      let failed = 0
+      try {
+        for (const video of items) {
+          if (Number(workspaceIdRef.current || 0) !== wsId) break
+          try {
+            await classifyVideoIntoFolder(video, folder)
+            done += 1
+          } catch {
+            failed += 1
+          }
+        }
+      } finally {
+        setBatchClassifying(false)
+      }
+      if (Number(workspaceIdRef.current || 0) !== wsId) return
+      if (done > 0) {
+        showToast(
+          failed > 0 ? `已归类 ${done} 条到「${folder.title}」，${failed} 条失败` : `已全部归类到「${folder.title}」`,
+          failed > 0 ? 'error' : 'success',
+        )
+        loadProjects()
+      } else if (failed > 0) {
+        showToast('归类失败,请稍后重试', 'error')
+      }
+    },
+    [batchMenu, batchClassifying, unclassified, requestConfirm, classifyVideoIntoFolder, showToast, loadProjects],
   )
 
   return (
@@ -1406,7 +1495,41 @@ export default function ProjectManagementView() {
             {/* 待分类:已出成片但还没归类到项目文件夹的视频;点击进入该视频页查看/播放,可拖入上方项目归类 */}
             {unclassified.length > 0 && (
               <section className="pm2-section">
-                <h2 className="pm2-section-title">待分类</h2>
+                <div className="pm2-section-head">
+                  <h2 className="pm2-section-title">待分类</h2>
+                  <span className="pm2-section-hint">
+                    AI 生成但尚未归入项目的视频，可拖拽到上方项目文件夹，或批量归类
+                  </span>
+                  {batchClassifyTargets.length > 0 && (
+                    <div className="pm2-batch" ref={batchMenu.wrapRef}>
+                      <button
+                        type="button"
+                        className="pm2-batch-btn"
+                        aria-haspopup="menu"
+                        aria-expanded={batchMenu.open}
+                        disabled={batchClassifying}
+                        onClick={batchMenu.toggle}
+                      >
+                        {batchClassifying ? '归类中…' : `批量归类（${unclassified.length}）`}
+                      </button>
+                      {batchMenu.open && (
+                        <div className="pm2-batch-menu" role="menu" aria-label="选择归类到的项目">
+                          {batchClassifyTargets.map((folder) => (
+                            <button
+                              key={folder.id}
+                              type="button"
+                              role="menuitem"
+                              className="pm2-batch-item"
+                              onClick={() => void handleBatchClassify(folder)}
+                            >
+                              {folder.title}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <div className="pm2-video-grid" ref={vidGridRef}>
                   {pagedUnclassified.map((video, i) => (
                     <div key={`${video.kind}-${video.id || video.assetId}-${i}`} className="pm2-vid-wrap">

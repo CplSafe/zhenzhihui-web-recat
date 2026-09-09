@@ -321,6 +321,32 @@ describe('ProjectManagementView workspace isolation', () => {
     expect(screen.queryByText('Linked hidden video')).not.toBeInTheDocument()
   })
 
+  it('batch-classifies every unclassified video into the chosen project and hides them optimistically', async () => {
+    const user = userEvent.setup()
+    mocks.listCreativeProjects.mockResolvedValue([project(9, '目标项目')])
+    mocks.listAssets.mockResolvedValue({ items: [looseAsset(501, '散视频一'), looseAsset(502, '散视频二')] })
+    mocks.requestConfirm.mockResolvedValue(true)
+    mocks.addClassifiedVideo.mockResolvedValue(undefined)
+
+    render(<ProjectManagementView />)
+
+    await user.click(await screen.findByRole('button', { name: '批量归类（2）' }))
+    await user.click(screen.getByRole('menuitem', { name: '目标项目' }))
+
+    await waitFor(() => expect(mocks.addClassifiedVideo).toHaveBeenCalledTimes(2))
+    expect(mocks.requestConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('2 条视频全部归类到「目标项目」'),
+      expect.anything(),
+    )
+    // sourceKey 走资产维度的新格式（assetId 稳定，签名 URL 会漂移）
+    expect(mocks.addClassifiedVideo).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 9, videoAssetId: 501, sourceKey: 'asset::501' }),
+    )
+    // 归类成功后乐观隐藏，待刷新用云端口径接管
+    await waitFor(() => expect(screen.queryByText('散视频一')).not.toBeInTheDocument())
+    expect(screen.queryByText('散视频二')).not.toBeInTheDocument()
+  })
+
   it('uses the latest successful generated image and opens image projects in the image workspace', async () => {
     const user = userEvent.setup()
     mocks.listCreativeProjects.mockResolvedValue([
