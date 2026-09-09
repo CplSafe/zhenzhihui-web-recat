@@ -54,11 +54,12 @@ export const getImageQueueModelLockError = (message: ImageQueueModelLock): strin
 }
 
 /**
- * 未提交的视频队列必须锁定 video.generate 的后端模型。
+ * 整片生成队列（video.generate）的作业必须锁定 video.generate 的后端模型。
  *
- * 「确认修改」改走视频生视频（video.generate + role:'video' 的源视频输入）后，
- * 生成与修改共用同一个 operation。旧草稿里锁定的 video.edit 会在这里 fail closed：
- * 提示用户重新生成，而不是拿一个对不上任务类型的模型去创建付费任务。
+ * 「确认修改」是另一条 operation（video.edit）：它在 runVideoJob 开头就分流到专用执行单元
+ * （runVideoEditJob，自带 video.edit 的模型解析与报价校验），不会走到这里。因此本闸门只服务
+ * 整片生成作业；任何进入生成车道却没锁定 video.generate 的作业（如旧草稿里的 video.edit）都
+ * fail closed：提示重新生成，而不是拿一个对不上任务类型的模型去创建付费任务。
  */
 export const getVideoQueueModelLockError = (lock: VideoQueueModelLock): string => {
   const expectedOperation: VideoGenerationOperationCode = 'video.generate'
