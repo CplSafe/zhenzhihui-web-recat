@@ -82,6 +82,14 @@ export interface FaceBlurResult {
   }
 }
 
+/** 后端在创建任务前的参数/素材校验拒绝：code 10001 INVALID_MODEL_PARAMS 或 4xx 校验类状态码。 */
+export function isInvalidModelParamsError(error: unknown): boolean {
+  const source = error as any
+  const code = String(source?.code ?? source?.response?.code_string ?? source?.response?.code ?? '')
+  if (code === 'INVALID_MODEL_PARAMS' || code === '10001') return true
+  return [400, 413, 422].includes(Number(source?.status || 0))
+}
+
 /**
  * 对单张图(asset_id)做人脸脱敏,返回脱敏后的 {url, assetId}。
  * 失败时 ok=false、url/assetId 为空(调用方回退原图),debug 带错误信息。
@@ -154,7 +162,9 @@ async function executeFaceBlur(args: {
       debug.status = 'no_face'
       return { url: '', assetId: 0, ok: false, noFace: true, debug }
     }
-    const invalidInput = /缺少工作空间|asset_id/i.test(debug.error)
+    // 后端素材校验(INVALID_MODEL_PARAMS,如「素材文件过大」)是确定性拒绝，重试同一张图必然再失败，
+    // 不能标成 retryable，否则界面会多拼一句误导的「请稍后重试」。
+    const invalidInput = /缺少工作空间|asset_id/i.test(debug.error) || isInvalidModelParamsError(e)
     return {
       url: '',
       assetId: 0,
