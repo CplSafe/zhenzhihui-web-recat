@@ -130,8 +130,8 @@ describe('PersonalPanel', () => {
 
     expect(screen.getByText('超级管理员')).toBeInTheDocument()
     expect(screen.getByText('积分已用25%')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Alpha团队/ })).toHaveAttribute('aria-current', 'true')
-    await user.click(screen.getByRole('button', { name: /Beta团队/ }))
+    expect(screen.getByRole('button', { name: 'Alpha团队' })).toHaveAttribute('aria-current', 'true')
+    await user.click(screen.getByRole('button', { name: 'Beta团队' }))
     expect(mocks.safeSwitch).toHaveBeenCalledWith(22)
     expect(onClose).toHaveBeenCalledTimes(1)
 
@@ -149,24 +149,39 @@ describe('PersonalPanel', () => {
     expect(screen.queryByRole('button', { name: '团队成员' })).not.toBeInTheDocument()
   })
 
-  it('deduplicates rename confirmation and ignores it after the active workspace changes', async () => {
+  it('only exposes rename for team workspaces and renames the selected team without switching', async () => {
+    const user = userEvent.setup()
+    mocks.state.workspaces = [
+      { id: 1, name: '个人空间', type: 'personal' },
+      { id: 21, name: 'Alpha团队', type: 'team' },
+      { id: 22, name: 'Beta团队', type: 'team' },
+    ]
+    mocks.confirm.mockResolvedValue('Beta新名称')
+    render(<PersonalPanel />)
+
+    expect(screen.queryByRole('button', { name: '重命名团队 个人空间' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '重命名团队 Beta团队' }))
+
+    await waitFor(() => expect(mocks.renameTeam).toHaveBeenCalledWith(22, 'Beta新名称'))
+    expect(mocks.safeSwitch).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenCalledWith('团队名称已更新', 'success')
+  })
+
+  it('deduplicates rename confirmation while a rename is pending', async () => {
     const user = userEvent.setup()
     const pending = deferred<string | null>()
     mocks.confirm.mockReturnValue(pending.promise)
-    const view = render(<PersonalPanel />)
+    render(<PersonalPanel />)
 
-    await user.dblClick(screen.getByRole('button', { name: '重命名团队' }))
+    await user.dblClick(screen.getByRole('button', { name: '重命名团队 Alpha团队' }))
     expect(mocks.confirm).toHaveBeenCalledTimes(1)
-    mocks.state.activeId = 22
-    mocks.state.currentWorkspace = { id: 22, name: 'Beta团队', owner_user_id: 101, type: 'team' }
-    view.rerender(<PersonalPanel />)
     await act(async () => {
-      pending.resolve('迟到的新名称')
+      pending.resolve('Alpha新名称')
       await pending.promise
     })
 
-    expect(mocks.renameTeam).not.toHaveBeenCalled()
-    expect(mocks.showToast).not.toHaveBeenCalledWith('团队名称已更新', 'success')
+    expect(mocks.renameTeam).toHaveBeenCalledTimes(1)
+    expect(mocks.renameTeam).toHaveBeenCalledWith(21, 'Alpha新名称')
   })
 
   it('recovers after a rename conflict and allows retry', async () => {
@@ -175,12 +190,12 @@ describe('PersonalPanel', () => {
     mocks.renameTeam.mockRejectedValueOnce({ status: 409 }).mockResolvedValueOnce(undefined)
     render(<PersonalPanel />)
 
-    await user.click(screen.getByRole('button', { name: '重命名团队' }))
+    await user.click(screen.getByRole('button', { name: '重命名团队 Alpha团队' }))
     expect(await screen.findByText('Alice')).toBeInTheDocument()
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('已存在同名空间,请换一个名称', 'error'))
-    expect(screen.getByRole('button', { name: '重命名团队' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '重命名团队 Alpha团队' })).toBeEnabled()
 
-    await user.click(screen.getByRole('button', { name: '重命名团队' }))
+    await user.click(screen.getByRole('button', { name: '重命名团队 Alpha团队' }))
     await waitFor(() => expect(mocks.renameTeam).toHaveBeenCalledTimes(2))
     expect(mocks.showToast).toHaveBeenCalledWith('团队名称已更新', 'success')
   })

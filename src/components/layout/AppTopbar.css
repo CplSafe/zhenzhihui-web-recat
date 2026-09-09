@@ -136,21 +136,42 @@
   position: relative;
 }
 .apptop__user-btn {
-  display: flex;
+  min-height: 38px;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 3px 6px;
-  border: none;
-  background: none;
+  gap: 8px;
+  padding: 4px 5px 4px 7px;
+  border: 1px solid transparent;
+  background: transparent;
   border-radius: 999px;
+  color: #444d5b;
   cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
 }
 .apptop__user-btn:hover {
-  background: #f3f4f6;
+  border-color: #e4ebe9;
+  background: #f7faf9;
+  box-shadow: 0 3px 12px rgba(27, 76, 63, 0.08);
+}
+.apptop__user-btn:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+.apptop__user-btn[aria-expanded='true'] {
+  border-color: #cceee5;
+  background: #effaf7;
+}
+.apptop__user-btn:focus-visible {
+  outline: 3px solid rgba(31, 207, 169, 0.22);
+  outline-offset: 2px;
 }
 .apptop__avatar {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: #1fcfa9;
   color: #fff;
@@ -167,15 +188,43 @@
   background: #eef2f6;
 }
 .apptop__user-name {
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
   line-height: 1.35;
   color: #444d5b;
-  padding-bottom: 1px;
+  font-weight: 500;
 }
 .apptop__caret {
-  color: #a0a7b4;
-  font-size: 11px;
-  transition: transform 0.15s ease;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 50%;
+  background: #f0f4f3;
+  color: #78847f;
+  transition:
+    color 0.18s ease,
+    background-color 0.18s ease,
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.apptop__caret svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.apptop__user-btn:hover .apptop__caret,
+.apptop__user-btn[aria-expanded='true'] .apptop__caret {
+  background: #dff6f0;
+  color: #149f7c;
 }
 .apptop__caret.is-open {
   transform: rotate(180deg);
@@ -236,5 +285,9 @@
   }
   .apptop__user-name {
     display: none;
+  }
+  .apptop__user-btn {
+    gap: 4px;
+    padding-left: 5px;
   }
 }

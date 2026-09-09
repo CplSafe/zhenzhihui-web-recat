@@ -107,11 +107,9 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const { isDistributor } = useDistributionAccess()
-  const [renamingTeam, setRenamingTeam] = useState(false)
+  const [renamingWorkspaceId, setRenamingWorkspaceId] = useState(0)
   const aliveRef = useRef(true)
   const renameFlowRef = useRef(false)
-  const activeIdRef = useRef(Number(activeId || 0))
-  activeIdRef.current = Number(activeId || 0)
 
   useEffect(() => {
     aliveRef.current = true
@@ -128,20 +126,21 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const isTeamWs = Boolean(currentWs?.type) && String(currentWs.type).toLowerCase() !== 'personal'
   const canRevealTeamInfo = !isTeamWs || Boolean(roleValue)
   const wsName = canRevealTeamInfo ? currentWs?.name || '个人空间' : '团队空间'
-  // 团队空间 + 所有者/管理员才可重命名(与团队管理弹窗头部的重命名权限一致)
-  const canRenameTeam = isTeamWs && ['owner', 'admin'].includes(roleValue)
-
-  // 重命名当前团队:弹输入框(预填现名)→ 前端校验/查重 → renameTeam(改后侧栏/顶栏同步)。
-  // 重命名是异步确认流程；锁与空间 ID 复核可避免连点或切换空间后改错团队。
-  const handleRenameTeam = async () => {
+  // 重命名指定团队:列表中的所有非个人空间都可发起，最终权限仍由后端校验。
+  // 全流程加锁避免重复提交；点击列表项右侧铅笔不会触发空间切换。
+  const handleRenameTeam = async (workspace: any) => {
     if (renameFlowRef.current) return
-    const wsId = Number(currentWs?.id || 0)
-    if (!wsId) return
+    const wsId = Number(workspace?.id || 0)
+    const workspaceType = String(workspace?.type || '')
+      .trim()
+      .toLowerCase()
+    const currentName = String(workspace?.name || '').trim()
+    const isPersonal = workspaceType === 'personal' || (!workspaceType && currentName === '个人空间')
+    if (!wsId || isPersonal) return
     renameFlowRef.current = true
-    setRenamingTeam(true)
-    const currentName = String(currentWs?.name || '').trim()
+    setRenamingWorkspaceId(wsId)
     try {
-      const input = await requestConfirm('修改当前团队空间的名称,改后侧栏 / 顶栏同步更新。', {
+      const input = await requestConfirm(`修改团队「${currentName || '未命名团队'}」的名称，保存后各处同步更新。`, {
         title: '重命名团队',
         inputEnabled: true,
         inputValue: currentName,
@@ -149,7 +148,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
         inputPlaceholder: '请输入团队名称',
         confirmLabel: '保存',
       })
-      if (!aliveRef.current || activeIdRef.current !== wsId || input === null) return
+      if (!aliveRef.current || input === null) return
       const next = String(input).trim()
       if (!next || next === currentName) return
       const err = validateWorkspaceName(next)
@@ -170,15 +169,15 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
         return
       }
       await useWorkspaceSessionStore.getState().renameTeam(wsId, next)
-      if (!aliveRef.current || activeIdRef.current !== wsId) return
+      if (!aliveRef.current) return
       showToast('团队名称已更新', 'success')
     } catch (error: any) {
-      if (!aliveRef.current || activeIdRef.current !== wsId) return
+      if (!aliveRef.current) return
       const status = Number(error?.status)
       showToast(status === 409 ? '已存在同名空间,请换一个名称' : error?.message || '重命名失败,请稍后重试', 'error')
     } finally {
       renameFlowRef.current = false
-      if (aliveRef.current) setRenamingTeam(false)
+      if (aliveRef.current) setRenamingWorkspaceId(0)
     }
   }
   const avatarUrl = bindAssetUrlToWorkspace(user?.avatar || user?.avatar_url || user?.avatarUrl || '', activeId)
@@ -224,33 +223,10 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
               <span className="ppl__identity-ws" title={wsName}>
                 {wsName}
               </span>
-              {canRenameTeam && (
-                <Tooltip title="重命名团队" placement="bottom" zIndex={4000}>
-                  <button
-                    type="button"
-                    className="ppl__rename"
-                    aria-label="重命名团队"
-                    disabled={renamingTeam}
-                    onClick={handleRenameTeam}
-                  >
-                    <img className="ppl__rename-img" src={editIcon} alt="" aria-hidden="true" />
-                  </button>
-                </Tooltip>
-              )}
             </div>
           </div>
         </div>
         <div className="ppl__head-actions">
-          <button
-            type="button"
-            className="ppl__head-action ppl__head-action--distribution-text"
-            onClick={() => {
-              onClose?.()
-              navigate('/my-works')
-            }}
-          >
-            我的作品
-          </button>
           {isDistributor ? (
             <button
               type="button"
@@ -317,19 +293,38 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
       <div className={`ppl__ws-list${hasMore ? ' scroll' : ''}`}>
         {workspaces.map((ws: any) => {
           const active = Number(ws.id) === Number(activeId)
+          const workspaceType = String(ws?.type || '')
+            .trim()
+            .toLowerCase()
+          const workspaceName = String(ws?.name || '').trim() || '个人空间'
+          const isPersonal = workspaceType === 'personal' || (!workspaceType && workspaceName === '个人空间')
           return (
-            <button
-              key={String(ws.id)}
-              type="button"
-              className={`ppl__ws-item${active ? ' active' : ''}`}
-              aria-current={active ? 'true' : undefined}
-              disabled={workspaceSwitchLocked}
-              title={workspaceSwitchLocked ? workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队' : ''}
-              onClick={() => pickWs(Number(ws.id))}
-            >
-              <span className="ppl__ws-item-name">{ws.name || '个人空间'}</span>
-              <span className={`ppl__radio${active ? ' on' : ''}`} aria-hidden="true" />
-            </button>
+            <div key={String(ws.id)} className={`ppl__ws-row${active ? ' active' : ''}`}>
+              <button
+                type="button"
+                className="ppl__ws-item"
+                aria-current={active ? 'true' : undefined}
+                disabled={workspaceSwitchLocked}
+                title={workspaceSwitchLocked ? workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队' : ''}
+                onClick={() => pickWs(Number(ws.id))}
+              >
+                <span className="ppl__ws-item-name">{workspaceName}</span>
+                <span className={`ppl__radio${active ? ' on' : ''}`} aria-hidden="true" />
+              </button>
+              {!isPersonal ? (
+                <Tooltip title="重命名团队" placement="left" zIndex={4000}>
+                  <button
+                    type="button"
+                    className="ppl__ws-rename"
+                    aria-label={`重命名团队 ${workspaceName}`}
+                    disabled={renamingWorkspaceId > 0}
+                    onClick={() => void handleRenameTeam(ws)}
+                  >
+                    <img src={editIcon} alt="" aria-hidden="true" />
+                  </button>
+                </Tooltip>
+              ) : null}
+            </div>
           )
         })}
       </div>
