@@ -102,3 +102,13 @@ export function getModelReferenceImageLimit(
   }
   return fallback
 }
+
+/** 该模型在指定 operation 下要求的最少参考图数量；未声明时允许纯文本生成。 */
+export function getModelReferenceImageMinimum(model: unknown, operationCode: string): number {
+  const { roles } = getModelInputConstraints(model, operationCode)
+  for (const role of REFERENCE_IMAGE_ROLES) {
+    const match = roles.find((entry) => entry.role === role)
+    if (match) return Math.max(0, match.minCount)
+  }
+  return 0
+}

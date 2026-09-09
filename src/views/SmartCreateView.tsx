@@ -173,7 +173,7 @@ import {
   scriptStreamFailureMessage,
   stableGenerationAssetKey,
 } from '@/utils/smartGenerationGuards'
-import { getModelReferenceImageLimit } from '@/utils/modelInputConstraints'
+import { getModelReferenceImageLimit, getModelReferenceImageMinimum } from '@/utils/modelInputConstraints'
 import { formatSupportedDurationLabel, validateCreativeDurationSelection } from '@/utils/creativeDurationPolicy'
 import { SMART_VIDEO_DURATIONS, parseDurationSeconds, validateVideoDurationWithin } from '@/utils/videoDurationValue'
 import {
@@ -1880,15 +1880,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
 
   // 整片视频的生成输入:参与视频的分镜(分镜图 + 时长 + 台词 + 字幕 + 音效 + 顺序)+ 风格/比例/大纲。
   // 镜头编排里改了任意分镜(图/时长/文案/顺序/勾选)后再进生成视频,签名变化 → 重新出片。
-  /**
-   * 本次会作为参考图提交的素材张数。
-   *
-   * 估价与提交必须用同一个数：compileFullVideoModelRequest 会拿它做模型兼容性判定，
-   * 两端不一致就会出现「估价说不支持、实际能提交」或反之。
-   */
-  const countReferenceImages = (meta: EntryMeta | null): number =>
-    (meta?.imageAssetIds || []).map((id) => Number(id) || 0).filter((id) => id > 0).length
-
   const videoInputSig = (list: Shot[], meta: EntryMeta | null, base: string) =>
     JSON.stringify({
       ratio: meta?.ratio || '',
@@ -2239,6 +2230,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       resolution?: string
       /** 入队时锁定的背景音开关；估价与提交共用同一个值。 */
       generateAudio?: boolean
+      /** 入队时锁定的有效参考素材 ID；校验、估价和实际提交必须共用这一份快照。 */
+      referenceImageAssetIds?: number[]
       style?: string
       durationSec: number
       thumbnailUrl?: string
@@ -2880,6 +2873,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       })
     }
 
+    let lockedReferenceAssetIds: number[] = []
     try {
       const catalogResponse = await listAiModels({
         workspaceId: ws,
@@ -2897,18 +2891,24 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         return
       }
       // 「确认修改」= 带上源视频重新生成一次，计费与提交口径都与普通整片生成一致，因此不再分叉。
+      lockedReferenceAssetIds = requireReferenceImageAssetIds(
+        context.referenceImageAssetIds ?? (entryMetaRef.current?.imageAssetIds || []),
+        getModelReferenceImageLimit(context.modelVersion, 'video.generate'),
+        getModelReferenceImageMinimum(context.modelVersion, 'video.generate'),
+      )
       compileFullVideoModelRequest(context.modelVersion, {
         shots: currentShots,
         ratio: currentRatio,
         resolution: currentResolution,
-        referenceImageCount: currentShots.filter((shot) => shot.includeInVideo !== false).length,
+        referenceImageCount: lockedReferenceAssetIds.length,
       })
       const currentEstimate = await estimateFullVideoCost({
         workspaceId: ws,
         shots: currentShots,
         ratio: currentRatio,
         resolution: currentResolution,
-        referenceImageCount: countReferenceImages(entryMetaRef.current),
+        referenceImageCount: lockedReferenceAssetIds.length,
+        imageAssetIds: lockedReferenceAssetIds,
         modelVersionId: context.modelVersionId,
         modelVersion: context.modelVersion,
         modelPlanCandidates: lockedPlans,
@@ -2979,12 +2979,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           // 中间不再有任何重画环节，所以提交的就是用户自己那几张图；后端按
           // local_asset_id 查真人库，命中的换成火山可信资产 URI 并校验授权
           //（见后端 ResolveProviderAsset），普通素材走签名 URL。
-          const referenceAssetIds = ((lockedEntryMeta as any)?.imageAssetIds || [])
-            .map((id: any) => Number(id) || 0)
-            .filter((id: number) => id > 0)
           const completeImageAssetIds = requireReferenceImageAssetIds(
-            referenceAssetIds,
+            lockedReferenceAssetIds,
             getModelReferenceImageLimit(context.modelVersion, 'video.generate'),
+            getModelReferenceImageMinimum(context.modelVersion, 'video.generate'),
           )
           if (Number(workspaceIdRef.current || 0) !== ws) {
             throw new Error('工作空间已切换，本次视频生成已安全停止')
@@ -2996,6 +2994,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             ratio: currentRatio,
             resolution: currentResolution,
             referenceImageCount: completeImageAssetIds.length,
+            imageAssetIds: completeImageAssetIds,
             modelVersionId: context.modelVersionId,
             modelVersion: context.modelVersion,
             modelPlanCandidates: lockedPlans,
@@ -3264,6 +3263,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     videoQueuePlanningRef.current = true
     setVideoQueuePlanning(true)
     try {
+      const referenceImageAssetIds = requireReferenceImageAssetIds(
+        generationMeta?.imageAssetIds || [],
+        getModelReferenceImageLimit(modelVersion, 'video.generate'),
+        getModelReferenceImageMinimum(modelVersion, 'video.generate'),
+      )
       // 显式模型版本已经锁定；视频估价/提交不得再携带全局活跃空间的 plan candidates，
       // 否则项目钉在其它空间时会把另一个空间的套餐上下文带进来。
       const plans: string[] = []
@@ -3306,7 +3310,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           ratio,
           resolution,
           ...(typeof generateAudio === 'boolean' ? { generateAudio } : {}),
-          referenceImageCount: currentShots.filter((shot) => shot.includeInVideo !== false).length,
+          referenceImageCount: referenceImageAssetIds.length,
         })
         const estimate: any = await estimateFullVideoCost({
           workspaceId: ws,
@@ -3314,7 +3318,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           ratio,
           resolution,
           ...(typeof generateAudio === 'boolean' ? { generateAudio } : {}),
-          referenceImageCount: countReferenceImages(entryMetaRef.current),
+          referenceImageCount: referenceImageAssetIds.length,
+          imageAssetIds: referenceImageAssetIds,
           modelVersionId: modelSelection.modelVersionId,
           modelVersion,
           modelPlanCandidates: plans,
@@ -3424,6 +3429,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             ratio,
             resolution,
             ...(typeof generateAudio === 'boolean' ? { generateAudio } : {}),
+            referenceImageAssetIds: [...referenceImageAssetIds],
             style,
             durationSec: durationValidation.seconds,
             thumbnailUrl: currentShots.find((shot) => shot.image)?.image || '',

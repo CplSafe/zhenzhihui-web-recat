@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 
 import {
   getModelReferenceImageLimit,
+  getModelReferenceImageMinimum,
   getModelInputConstraints,
   DEFAULT_REFERENCE_IMAGE_LIMIT,
 } from '@/utils/modelInputConstraints'
@@ -23,6 +24,7 @@ describe('getModelInputConstraints', () => {
       },
     }
     expect(getModelReferenceImageLimit(model, 'video.generate')).toBe(30)
+    expect(getModelReferenceImageMinimum(model, 'video.generate')).toBe(0)
   })
 
   test('keeps operations separate: video.edit accepts fewer images than video.generate', () => {
@@ -55,6 +57,16 @@ describe('getModelInputConstraints', () => {
       },
     }
     expect(getModelReferenceImageLimit(wan, 'video.generate')).toBe(10)
+  })
+
+  test('reads the minimum required reference-image count from the selected operation', () => {
+    const model = {
+      input_constraints: {
+        'video.generate': { roles: [{ role: 'reference_image', min_count: 2, max_count: 10 }] },
+      },
+    }
+    expect(getModelReferenceImageMinimum(model, 'video.generate')).toBe(2)
+    expect(getModelReferenceImageMinimum(model, 'video.edit')).toBe(0)
   })
 
   test('ignores malformed or non-positive limits rather than blocking all uploads', () => {

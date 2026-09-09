@@ -20,7 +20,7 @@ import { parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoD
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
 import { readAiTaskProgress } from '@/utils/taskProgress'
 import { requireReferenceImageAssetIds } from '@/utils/smartGenerationGuards'
-import { getModelReferenceImageLimit } from '@/utils/modelInputConstraints'
+import { getModelReferenceImageLimit, getModelReferenceImageMinimum } from '@/utils/modelInputConstraints'
 
 /** 整片生成与视频编辑的首选模型关键词。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
@@ -502,6 +502,7 @@ export async function generateFullVideo(args: {
   const imgIds = requireReferenceImageAssetIds(
     args.imageAssetIds || [],
     getModelReferenceImageLimit(model, 'video.generate'),
+    getModelReferenceImageMinimum(model, 'video.generate'),
   )
   const request = compileFullVideoModelRequest(model, {
     shots: args.shots,
