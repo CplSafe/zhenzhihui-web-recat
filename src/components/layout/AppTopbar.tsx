@@ -246,7 +246,11 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
                 alt={`${userName}头像`}
               />
               <span className="apptop__user-name">{userName}</span>
-              <span className={`apptop__caret${menuOpen ? ' is-open' : ''}`}>⌄</span>
+              <span className={`apptop__caret${menuOpen ? ' is-open' : ''}`} aria-hidden="true">
+                <svg viewBox="0 0 20 20" focusable="false">
+                  <path d="m6.5 8 3.5 3.5L13.5 8" />
+                </svg>
+              </span>
             </button>
           </div>
         )}

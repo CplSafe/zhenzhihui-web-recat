@@ -469,6 +469,64 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     )
   })
 
+  it('checks HappyHorse 1.1 reference images only when the user clicks create', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    const notice = 'HappyHorse 1.1 需要上传参考图；若无参考图，请改用其他模型，否则无法生成视频。'
+    const modelGroups = [
+      {
+        key: 'video',
+        label: '生成视频',
+        subgroups: [
+          {
+            key: 'video.generate',
+            label: '视频生成模型',
+            models: [{ id: 733, name: 'GPT-5.4 · HappyHorse 1.1' }],
+          },
+        ],
+      },
+    ]
+
+    const { unmount } = render(
+      <TestSmartEntry
+        onSubmit={onSubmit}
+        initial={{
+          text: '生成一条新品短视频',
+          duration: '5s',
+          generationModels: { 'video.generate': 733 },
+        }}
+        modelGroups={modelGroups}
+      />,
+    )
+
+    expect(mocks.showToast).not.toHaveBeenCalledWith(notice, 'error')
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+    expect(mocks.showToast).toHaveBeenLastCalledWith(notice, 'error')
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    unmount()
+    mocks.showToast.mockClear()
+    render(
+      <TestSmartEntry
+        onSubmit={onSubmit}
+        initial={{
+          text: '生成一条新品短视频',
+          duration: '5s',
+          images: ['data:reference-image'],
+          generationModels: { 'video.generate': 733 },
+        }}
+        modelGroups={modelGroups}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+    expect(mocks.showToast).not.toHaveBeenCalledWith(notice, 'error')
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      '生成一条新品短视频',
+      expect.objectContaining({ images: ['data:reference-image'] }),
+    )
+  })
+
   it('does not infer readiness from the remaining groups when one required operation failed to load', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()

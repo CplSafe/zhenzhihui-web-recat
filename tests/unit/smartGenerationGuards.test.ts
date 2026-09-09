@@ -42,6 +42,11 @@ describe('smartGenerationGuards', () => {
     expect(requireReferenceImageAssetIds([0, 0], 30)).toEqual([])
   })
 
+  it('rejects too few persisted references before creating a paid task', () => {
+    expect(() => requireReferenceImageAssetIds([11], 10, 2)).toThrow('至少需要 2 张参考图')
+    expect(requireReferenceImageAssetIds([11, 12], 10, 2)).toEqual([11, 12])
+  })
+
   it('persists entry images in parallel and replaces temporary URLs with durable asset URLs', async () => {
     const pending: Array<() => void> = []
     const persist = vi.fn(

@@ -132,38 +132,6 @@
   padding: 2px 8px;
   white-space: nowrap;
 }
-/* 重命名团队铅笔:紧跟角色徽标,灰色小图标,悬停变紫 */
-.ppl__rename {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #8a90a2;
-  cursor: pointer;
-  transition:
-    color 0.15s,
-    background 0.15s;
-}
-.ppl__rename-img {
-  width: 14px;
-  height: 14px;
-  object-fit: contain;
-  display: block;
-}
-.ppl__rename:hover:not(:disabled) {
-  color: #5767e5;
-  background: #eef0fb;
-}
-.ppl__rename:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
 .ppl__ws {
   display: inline-flex;
   align-items: center;
@@ -341,28 +309,41 @@
 .ppl__ws-list.scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+.ppl__ws-row {
+  position: relative;
+  border: 1px solid #eceef3;
+  border-radius: 12px;
+  background: #fff;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.ppl__ws-row:hover,
+.ppl__ws-row:focus-within {
+  border-color: #cfe8df;
+  box-shadow: 0 4px 14px rgba(34, 129, 101, 0.08);
+}
+.ppl__ws-row.active {
+  border-color: transparent;
+  background: linear-gradient(120deg, #eaf7f1, #e4f4ec);
+}
 .ppl__ws-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 14px 16px;
-  border: 1px solid #eceef3;
-  border-radius: 12px;
-  background: #fff;
+  min-height: 50px;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
   cursor: pointer;
   font-size: 16px;
   color: #8a90a0;
-  transition:
-    background 0.15s,
-    border-color 0.15s;
+  text-align: left;
 }
-.ppl__ws-item:hover {
-  border-color: #d7dbe6;
-}
-.ppl__ws-item.active {
-  background: linear-gradient(120deg, #eaf7f1, #e4f4ec);
-  border-color: transparent;
+.ppl__ws-row.active .ppl__ws-item {
   color: #1d2130;
   font-weight: 700;
 }
@@ -370,10 +351,9 @@
   cursor: not-allowed;
   opacity: 0.62;
 }
-.ppl__ws-item:disabled:hover {
-  border-color: #eceef3;
-}
 .ppl__ws-item-name {
+  min-width: 0;
+  padding-right: 34px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -389,6 +369,55 @@
 .ppl__radio.on {
   border-color: #16b98a;
   background: radial-gradient(circle at center, #16b98a 0 6px, #fff 7px 8px, #16b98a 9px);
+}
+.ppl__ws-rename {
+  position: absolute;
+  top: 50%;
+  right: 46px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.84);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.ppl__ws-row:hover .ppl__ws-rename,
+.ppl__ws-rename:focus-visible {
+  opacity: 1;
+}
+.ppl__ws-rename:hover:not(:disabled) {
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(49, 89, 77, 0.16);
+}
+.ppl__ws-rename:focus-visible {
+  outline: 2px solid #16b98a;
+  outline-offset: 2px;
+}
+.ppl__ws-rename:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.ppl__ws-rename img {
+  display: block;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+@media (hover: none) {
+  .ppl__ws-rename {
+    opacity: 1;
+  }
 }
 
 /* ── 动作 ── */

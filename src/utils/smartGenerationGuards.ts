@@ -34,9 +34,13 @@ export function stableGenerationAssetKey(url: unknown, assetId: unknown): string
  * 空集合合法（纯文生视频）；超过上限直接拦下而不是截断——静默丢掉用户挑的素材，
  * 比报错更难被发现。
  */
-export function requireReferenceImageAssetIds(assetIds: unknown[], maxCount: number): number[] {
+export function requireReferenceImageAssetIds(assetIds: unknown[], maxCount: number, minCount = 0): number[] {
   const ids = (assetIds || []).map(positiveId).filter((id) => id > 0)
+  const floor = Math.max(0, Math.floor(Number(minCount) || 0))
   const ceiling = positiveId(maxCount)
+  if (ids.length < floor) {
+    throw new Error(`当前模型至少需要 ${floor} 张参考图，请补充素材后重试（当前 ${ids.length} 张）`)
+  }
   if (ceiling && ids.length > ceiling) {
     throw new Error(`当前模型最多支持 ${ceiling} 张参考图，请先移除多余素材（当前 ${ids.length} 张）`)
   }

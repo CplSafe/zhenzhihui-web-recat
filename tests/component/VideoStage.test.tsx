@@ -30,6 +30,20 @@ function HistorySyncHarness({ onSwitch }: { onSwitch: (video: { url: string; ass
   )
 }
 
+function ControlledSegmentHarness() {
+  const [draft, setDraft] = useState(createEmptyVideoModificationDraft)
+  return (
+    <VideoStage
+      shots={[]}
+      videoUrl="https://cdn.example.com/edit-source.mp4"
+      videoAssetId={2550}
+      modificationDraft={draft}
+      onModificationDraftChange={setDraft}
+      onRegenerateVideo={vi.fn()}
+    />
+  )
+}
+
 describe('VideoStage playback loading', () => {
   beforeEach(() => {
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
@@ -339,6 +353,26 @@ describe('VideoStage playback loading', () => {
 
     await waitFor(() => expect(onPolishText).toHaveBeenCalledWith('generic', '提高整体亮度'))
     expect(input).toHaveValue('润色后的整段修改意见')
+  })
+
+  it('keeps a controlled segment field editable during Safari-style Chinese composition', async () => {
+    const user = userEvent.setup()
+    render(<ControlledSegmentHarness />)
+
+    const input = screen.getAllByPlaceholderText('输入对这一片段的视频修改描述...')[0]
+    await user.type(input, '先放大产品')
+    expect(input).toHaveValue('先放大产品')
+
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '先放大产品，苹' } })
+    expect(input).toHaveValue('先放大产品，苹')
+
+    fireEvent.change(input, { target: { value: '先放大产品，苹果保持原样' } })
+    fireEvent.compositionEnd(input, { data: '苹果保持原样' })
+    expect(input).toHaveValue('先放大产品，苹果保持原样')
+
+    fireEvent.blur(input)
+    expect(screen.getByDisplayValue('先放大产品，苹果保持原样')).toBeInTheDocument()
   })
 
   it('确认视频修改前展示后端估价，估价完成前不允许提交', async () => {

@@ -9,7 +9,7 @@
  *  - 片段框下方是「整段视频修改」框(含 AI一键润色,无提交按钮)。
  *  - 底部总按钮:上一步 / 保存视频 / 重新生成视频。重新生成把所有片段修改 + 整段修改合并成一段说明整片重生成。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { Shot } from '../ScriptStoryboardTable'
 import { polishText } from '@/api/aiPolish'
@@ -1681,12 +1681,36 @@ function ModBox({
 }) {
   const { showToast } = useToast()
   const [polishing, setPolishing] = useState(false)
+  const [draftValue, setDraftValue] = useState(value)
+  const inputId = useId()
+  const composingRef = useRef(false)
+  const focusedRef = useRef(false)
+  const lastPublishedValueRef = useRef(value)
+
+  // Safari 上的中文输入法在组词期间会多次触发 change。这时若立即把值送到上层并回填，
+  // WebKit 可能会中断未完成的 composition，表现为候选词无法落入或输入后立即消失。
+  useEffect(() => {
+    lastPublishedValueRef.current = value
+    if (!focusedRef.current && !composingRef.current) setDraftValue(value)
+  }, [value])
+
+  const publishValue = (next: string) => {
+    if (lastPublishedValueRef.current === next) return
+    lastPublishedValueRef.current = next
+    onChange(next)
+  }
+
   const doPolish = async () => {
-    if (!value.trim() || polishing) return
+    if (!draftValue.trim() || polishing) return
     setPolishing(true)
     try {
-      const out = onPolishText ? await onPolishText(polishKind, value) : await polishText(value, { kind: polishKind })
-      if (out) onChange(out)
+      const out = onPolishText
+        ? await onPolishText(polishKind, draftValue)
+        : await polishText(draftValue, { kind: polishKind })
+      if (out) {
+        setDraftValue(out)
+        publishValue(out)
+      }
     } catch (e: any) {
       showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')
     } finally {
@@ -1696,7 +1720,7 @@ function ModBox({
   return (
     <div className={styles.vstageModItem}>
       <div className={styles.vstageModTitle}>
-        <span>{title}</span>
+        <label htmlFor={inputId}>{title}</label>
         {range && <span className={styles.vstageModRange}>{range}</span>}
         {onCapture && (
           <button type="button" className={styles.vstageModCapture} onClick={onCapture}>
@@ -1711,15 +1735,39 @@ function ModBox({
       </div>
       <div className={styles.vstageModBox}>
         <textarea
+          id={inputId}
           className={styles.vstageModInput}
-          value={value}
+          value={draftValue}
           placeholder={polishKind === 'segment' ? '输入对这一片段的视频修改描述...' : '输入对整段视频的修改描述...'}
-          onChange={(e) => onChange(e.target.value)}
+          onFocus={() => {
+            focusedRef.current = true
+          }}
+          onBlur={(event) => {
+            focusedRef.current = false
+            composingRef.current = false
+            publishValue(event.currentTarget.value)
+          }}
+          onCompositionStart={() => {
+            composingRef.current = true
+          }}
+          onCompositionEnd={(event) => {
+            composingRef.current = false
+            const next = event.currentTarget.value
+            setDraftValue(next)
+            publishValue(next)
+          }}
+          onChange={(event) => {
+            const next = event.currentTarget.value
+            setDraftValue(next)
+            if (!composingRef.current && !(event.nativeEvent as InputEvent).isComposing) publishValue(next)
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
         />
         <button
           type="button"
           className={styles.vstageModPolish}
-          disabled={polishing || !value.trim()}
+          disabled={polishing || !draftValue.trim()}
           onClick={doPolish}
         >
           {polishing ? '润色中…' : 'AI一键润色'}

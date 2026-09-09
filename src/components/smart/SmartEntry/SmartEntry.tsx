@@ -164,6 +164,43 @@ interface SmartEntryProps {
  */
 const UNSET_DURATION = ''
 
+const HAPPY_HORSE_REFERENCE_NOTICE = 'HappyHorse 1.1 需要上传参考图；若无参考图，请改用其他模型，否则无法生成视频。'
+
+/** 兼容模型目录选项和后端原始模型中的不同命名字段。 */
+function isHappyHorse11VideoModel(
+  modelVersionId: unknown,
+  groups: GenerationModelGroup[],
+  resolveModel?: (operationCode: string, modelVersionId: unknown) => Record<string, unknown> | null,
+): boolean {
+  const id = Number(modelVersionId)
+  if (!Number.isSafeInteger(id) || id <= 0) return false
+  const option = groups
+    .flatMap((group) => group.subgroups || [])
+    .filter((subgroup) => subgroup.key === 'video.generate')
+    .flatMap((subgroup) => subgroup.models || [])
+    .find((model) => Number(model.id) === id)
+  const source = resolveModel?.('video.generate', id) || {}
+  const identity = [
+    option?.name,
+    ...(Array.isArray(option?.tags) ? option.tags : []),
+    source.display_name,
+    source.displayName,
+    source.name,
+    source.model_name,
+    source.modelName,
+    source.model_code,
+    source.modelCode,
+    source.version,
+    source.version_name,
+    source.versionName,
+  ]
+    .filter((value) => typeof value === 'string' || typeof value === 'number')
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+  return identity.includes('happyhorse11')
+}
+
 /**
  * 背景音默认开启，与开关上线前的实际行为一致。
  *
@@ -886,6 +923,14 @@ export default function SmartEntry({
     if (mode === 'video' && durationUnset) {
       // 模型未选的情况已由上面的 modelGatePassed 拦下并给出自己的文案，这里只谈时长
       showToast('请先选择视频时长', 'info')
+      return
+    }
+    if (
+      mode === 'video' &&
+      images.length === 0 &&
+      isHappyHorse11VideoModel(generationModels['video.generate'], visibleModelGroups, resolveModel)
+    ) {
+      showToast(HAPPY_HORSE_REFERENCE_NOTICE, 'error')
       return
     }
     submittingRef.current = true
