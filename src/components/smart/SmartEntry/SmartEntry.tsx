@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
+import EntryCostEstimate from '@/components/common/EntryCostEstimate'
 import { CreativeModelSlots } from '../CreativeModelSlots'
 import { CreativeParamsDropdown, type CreativeParamsOptions, type CreativeParamsValue } from '../CreativeParamsDropdown'
 import {
@@ -24,7 +25,6 @@ import {
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
 } from '../GenerationModelPicker'
-import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
 import { fileToDataUrl } from '@/utils/imageFile'
 import {
   clearSmartEntryDraft,
@@ -1327,18 +1327,12 @@ export default function SmartEntry({
                 </button>
               )}
               {modelEstimate && (
-                <span
-                  className={`${styles.sendCost}${modelEstimate.canAfford ? '' : ` ${styles.sendCostShort}`}`}
-                  aria-live="polite"
-                >
-                  {modelEstimate.loading
-                    ? '预估中…'
-                    : modelEstimate.failed
-                      ? '预估失败'
-                      : modelEstimate.canAfford
-                        ? creditsYuanLabel(modelEstimate.total)
-                        : INSUFFICIENT_CREDITS_TEXT}
-                </span>
+                <EntryCostEstimate
+                  loading={modelEstimate.loading}
+                  failed={modelEstimate.failed}
+                  estimatedCost={modelEstimate.total}
+                  canAfford={modelEstimate.canAfford}
+                />
               )}
               {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
               <VoiceInputButton

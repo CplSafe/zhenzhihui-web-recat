@@ -1069,7 +1069,13 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   // replicate 模型支持的比例选项(取自模型 params_schema 的 ratio 字段);供入口下拉只放模型真做得了的比例。
   const [ratioOptions, setRatioOptions] = useState<string[]>([])
   const selectedHotCopyModel = hotCopyModelCatalog.resolveModel(entryInitial?.modelVersionId)
-  const selectedReferenceImageCount = productAssetIds.filter((assetId) => Number(assetId) > 0).slice(0, 9).length
+  const selectedReferenceImageCount = Math.min(
+    9,
+    Math.max(
+      productAssetIds.filter((assetId) => Number(assetId) > 0).length,
+      (entryInitial?.products || []).filter((product) => !product?.isVideo).length,
+    ),
+  )
   // 提交前积分预估(estimate-cost)
   const [videoCost, setVideoCost] = useState<{
     loading: boolean
@@ -2760,7 +2766,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   useEffect(() => {
     const assetId = Number(sourceVideo.assetId || 0) || 0
     const url = String(sourceVideo.url || '')
-    if (!assetId || !url) return
+    if (!url) return
     if (sourceVideoDurAssetId === assetId && sourceVideoDurSec > 0) return
     let active = true
     void readSourceVideoDuration(assetId, url).then((seconds) => {
@@ -3676,12 +3682,11 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       Boolean(runningVideoPromiseRef.current) || Boolean(pid && isVideoGenRunning('hot-copy', ws, pid))
     if (
       !ws ||
-      !started ||
       vidGenRunning ||
       vidGenTaskId > 0 ||
       hasProcessing ||
       hasInflight ||
-      !sourceVideo.assetId ||
+      !sourceVideo.url ||
       !boundSourceVideoDurSec ||
       !selectedReferenceImageCount ||
       !selectedHotCopyModel
@@ -3740,12 +3745,11 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     workspaceId,
-    started,
     vidGenRunning,
     vidGenTaskId,
     videoGenerations,
     projectId,
-    sourceVideo.assetId,
+    sourceVideo.url,
     boundSourceVideoDurSec,
     selectedReferenceImageCount,
     genRatio,
@@ -5260,6 +5264,9 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                   requireModelSelection={Boolean(isAuthenticated && workspaceId)}
                   authRequired={modelEntryAuthRequired}
                   onAuthRequired={requestModelEntryLogin}
+                  costEstimate={videoCost.estimate}
+                  costLoading={videoCost.loading}
+                  costError={videoCost.error}
                 />
               </Suspense>
             </div>

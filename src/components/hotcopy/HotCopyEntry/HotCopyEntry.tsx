@@ -22,6 +22,7 @@ import {
 } from '@/utils/videoOptions'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
+import EntryCostEstimate from '@/components/common/EntryCostEstimate'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
 import {
   CreativeParamsDropdown,
@@ -152,6 +153,10 @@ interface HotCopyEntryProps {
   /** 游客态：模型入口照常展示但置灰，点击交由 onAuthRequired 引导登录。 */
   authRequired?: boolean
   onAuthRequired?: () => void
+  /** 当前参数对应的实时费用预估；金额统一按公共积分汇率展示。 */
+  costEstimate?: { estimatedCost: number; balance: number; canAfford: boolean } | null
+  costLoading?: boolean
+  costError?: string
 }
 
 /** 单次生成最多允许的替换主体数量。 */
@@ -345,6 +350,9 @@ export default function HotCopyEntry({
   requireModelSelection = false,
   authRequired = false,
   onAuthRequired,
+  costEstimate,
+  costLoading = false,
+  costError = '',
 }: HotCopyEntryProps) {
   // 比例下拉:优先用模型实际支持的 options(避免选了模型做不了的比例被悄悄回退);缺省用默认列表。
   const ratioOpts = ratioOptions && ratioOptions.length ? ratioOptions : RATIO_OPTIONS
@@ -1218,6 +1226,12 @@ export default function HotCopyEntry({
               </span>
             </div>
             <div className="hotcopy__sendArea">
+              <EntryCostEstimate
+                loading={costLoading}
+                failed={Boolean(costError)}
+                estimatedCost={costEstimate?.estimatedCost}
+                canAfford={costEstimate?.canAfford ?? true}
+              />
               {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
               <VoiceInputButton
                 className="hotcopy__mic"
