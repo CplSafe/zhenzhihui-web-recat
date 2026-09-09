@@ -31,6 +31,7 @@ import {
 } from '@/api/hotCopy'
 import { editFullVideo, estimateVideoEditCost } from '@/api/smartVideo'
 import { blurFacesOnAsset, isNoFaceDetectedError } from '@/api/smartFaceBlur'
+import { compressImageFileForFaceDetect } from '@/utils/imageFile'
 import { readVideoDurationSec } from '@/utils/videoDuration'
 import {
   saveHotCopyDraft,
@@ -1770,7 +1771,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
             showToast('视频生成已中断', 'info')
           } else {
             markGen(null, 'failed')
-            showToast(`视频生成失败:${getBusinessErrorMessage(e, '请重试')}`, 'error')
+            showToast(`视频生成失败:${getBusinessErrorMessage(e, e?.message || '请重试')}`, 'error')
           }
         }
       })
@@ -1852,7 +1853,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           return
         }
         const cancelled = isTaskCancelled(e)
-        const message = getBusinessErrorMessage(e, '请重试')
+        const message = getBusinessErrorMessage(e, e?.message || '请重试')
         const terminalPersisted = await failHotCopyJob(context, cancelled ? 'cancelled' : 'failed', message, taskId)
         keepPending = !terminalPersisted
         if (!terminalPersisted || !isJobUiActive(context)) return
@@ -3963,8 +3964,10 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     }
 
     if (!sourceAssetId && product.file) {
-      setJobPhase(context, `替换素材上传 ${index}/${total}…`)
-      sourceAssetId = await uploadHotCopyAsset(ws, product.file)
+      // 人脸检测接口限 3MB/4096px，手机原图直接传会被后端「素材文件过大」拒绝，上传前先压到限制内。
+      setJobPhase(context, `替换素材压缩上传 ${index}/${total}…`)
+      const uploadFile = await compressImageFileForFaceDetect(product.file)
+      sourceAssetId = await uploadHotCopyAsset(ws, uploadFile)
     }
     if (!sourceAssetId) {
       return {
@@ -4193,7 +4196,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       }
       if (isHotCopyModelUnavailableError(e)) void hotCopyModelCatalog.reload()
       const cancelled = isTaskCancelled(e)
-      const message = getBusinessErrorMessage(e, '请重试')
+      const message = getBusinessErrorMessage(e, e?.message || '请重试')
       const terminalPersisted = await failHotCopyJob(context, cancelled ? 'cancelled' : 'failed', message, taskId)
       aborted = !terminalPersisted
       if (terminalPersisted && isJobUiActive(context)) {
@@ -4589,7 +4592,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       }
       if (isHotCopyModelUnavailableError(e)) void hotCopyModelCatalog.reload()
       const cancelled = isTaskCancelled(e)
-      const message = withPreviousVideoHint(getBusinessErrorMessage(e, '请重试'))
+      const message = withPreviousVideoHint(getBusinessErrorMessage(e, e?.message || '请重试'))
       const terminalPersisted = await failHotCopyJob(context, cancelled ? 'cancelled' : 'failed', message, taskId)
       keepPending = !terminalPersisted
       if (terminalPersisted && isJobUiActive(context)) {

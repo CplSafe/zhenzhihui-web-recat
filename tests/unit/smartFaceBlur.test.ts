@@ -23,7 +23,12 @@ vi.mock('@/utils/taskMedia', () => ({
   extractOutputAssetId: mocks.extractOutputAssetId,
 }))
 
-import { blurFacesOnAsset, clearFaceBlurCache, isNoFaceDetectedError } from '@/api/smartFaceBlur'
+import {
+  blurFacesOnAsset,
+  clearFaceBlurCache,
+  isInvalidModelParamsError,
+  isNoFaceDetectedError,
+} from '@/api/smartFaceBlur'
 
 describe('smartFaceBlur', () => {
   beforeEach(() => {
@@ -101,6 +106,28 @@ describe('smartFaceBlur', () => {
       errorCode: 'OUTPUT_MISSING',
       retryable: true,
     })
+  })
+
+  it('后端素材校验拒绝（素材文件过大）时返回不可重试的输入错误', async () => {
+    mocks.createAiTask.mockRejectedValue(
+      Object.assign(new Error('素材文件过大，超过该操作允许的大小，请压缩后重试。'), {
+        status: 400,
+        code: 'INVALID_MODEL_PARAMS',
+      }),
+    )
+
+    const result = await blurFacesOnAsset({ workspaceId: 61, assetId: 2549 })
+
+    expect(result).toMatchObject({ ok: false, errorCode: 'INVALID_INPUT', retryable: false })
+    expect(result.debug.error).toContain('素材文件过大')
+  })
+
+  it('识别后端参数校验错误的 code 与状态码', () => {
+    expect(isInvalidModelParamsError({ code: 'INVALID_MODEL_PARAMS' })).toBe(true)
+    expect(isInvalidModelParamsError({ response: { code: 10001 } })).toBe(true)
+    expect(isInvalidModelParamsError({ status: 422 })).toBe(true)
+    expect(isInvalidModelParamsError({ status: 500, code: 'INTERNAL' })).toBe(false)
+    expect(isInvalidModelParamsError(new Error('timeout'))).toBe(false)
   })
 
   it('从嵌套后端字段识别无人脸语义', () => {
