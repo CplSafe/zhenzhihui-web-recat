@@ -33,26 +33,42 @@ describe('buildTimelinePrompt', () => {
   })
 
   /*
-   * 视频模型没有「贴字幕」的能力：提示词里出现字幕文本或「对齐字幕」的指令，
-   * 只会让模型把中文画进画面渲染成乱码（Framora 1.0 实测复现）。字幕属于后期贴片，
-   * 这里锁死：字幕文本不进提示词，旁白标注为配音，且带禁止画面文字的硬性要求。
+   * 字幕开关必须严格跟着脚本走(产品确认的行为):
+   * - 填了字幕 → 模型按镜头时间段「原样」显示指定文字,禁止改写(防乱码),
+   *   且除指定字幕外不得出现其他文字;
+   * - 全部删掉 → 完全禁止画面出现文字。模糊的「对齐字幕」指令曾让模型在
+   *   删掉字幕后仍自己编出乱码字(Framora 1.0 实测)。
    */
-  it('字幕文本不进提示词，且带禁止画面出现文字的硬性要求', () => {
+  it('填了字幕:按镜头原样显示指定文本,其余文字仍被禁止', () => {
     const prompt = buildTimelinePrompt({
       shots: [
         { no: '分镜1', desc: '人物走进店里', duration: '5s', line: '这家店我来对了', subtitle: '新店开业全场8折' },
-        { no: '分镜2', desc: '特写产品', duration: '5s', subtitle: '扫码下单立减' },
+        { no: '分镜2', desc: '特写产品', duration: '5s' },
       ],
       basePrompt: '一条奶茶店广告',
     })
 
-    // 硬性要求里允许出现「字幕」这个词(用来禁止它);镜头行的「字幕:「…」」标签必须消失
-    expect(prompt).not.toContain('字幕:')
+    expect(prompt).toContain('字幕(原样显示在画面下方):「新店开业全场8折」')
+    expect(prompt).toContain('不得改写、增减、翻译或变形')
+    expect(prompt).toContain('未指定字幕的镜头不显示任何文字')
+    expect(prompt).toContain('除各镜头指定的字幕外,画面中不得出现任何其他文字')
+    // 旧版那句诱导模型自由发挥的「对齐字幕」指令不能回来
     expect(prompt).not.toContain('对齐画面、旁白、字幕')
-    expect(prompt).not.toContain('新店开业全场8折')
-    expect(prompt).not.toContain('扫码下单立减')
+  })
+
+  it('删光字幕:字幕文本与对齐指令都不进提示词,完全禁止画面文字', () => {
+    const prompt = buildTimelinePrompt({
+      shots: [
+        { no: '分镜1', desc: '人物走进店里', duration: '5s', line: '这家店我来对了', subtitle: '' },
+        { no: '分镜2', desc: '特写产品', duration: '5s', subtitle: '   ' },
+      ],
+      basePrompt: '一条奶茶店广告',
+    })
+
+    expect(prompt).not.toContain('字幕(原样显示在画面下方)')
+    expect(prompt).not.toContain('部分镜头指定了字幕')
     // 旁白保留为配音语义,供模型把握节奏,但明确不上画面
     expect(prompt).toContain('旁白(后期配音,不上画面):「这家店我来对了」')
-    expect(prompt).toContain('不得出现任何文字')
+    expect(prompt).toContain('画面中不得出现任何文字、字幕、标题、标语、水印或字符')
   })
 })

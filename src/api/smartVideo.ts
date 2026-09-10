@@ -495,8 +495,16 @@ export function buildTimelinePrompt(args: {
   const lines: string[] = []
   const identityConstraint = String(args.identityConstraint || '').trim()
   if (identityConstraint) lines.push(identityConstraint)
-  // 旁白/字幕/音效属于后期配音与贴片，让模型「对齐字幕」只会诱导它把中文画进画面（必然乱码）。
+  // 字幕开关跟着脚本走:填了字幕的镜头要求模型「原样」显示(禁止改写,防乱码);
+  // 全部删掉时则完全禁止画面出现文字——模糊的「对齐字幕」指令只会诱导模型自己编乱码字。
+  const hasSubtitle = (args.shots || []).some((s) => String(s?.subtitle || '').trim())
   lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面内容与节奏。')
+  if (hasSubtitle) {
+    lines.push(
+      '部分镜头指定了字幕:请在对应时间段将字幕文字清晰地显示在画面下方,' +
+        '字符必须与给定文本完全一致,不得改写、增减、翻译或变形;未指定字幕的镜头不显示任何文字。',
+    )
+  }
   lines.push('旁白与音效仅用于理解各镜头的内容和节奏,由后期配音完成,不要在画面中呈现这些文字。')
   if (args.basePrompt) lines.push(`广告描述:${args.basePrompt}`)
   // 参考图是用户上传的素材(产品/真人),与镜头不是一一对应,所以镜号不能写成「图N」——
@@ -512,7 +520,7 @@ export function buildTimelinePrompt(args: {
     t = end
     const frag = [`镜头${i + 1}（${start}-${end}s）:${s?.desc || s?.no || `分镜${i + 1}`}`]
     if (s?.line) frag.push(`旁白(后期配音,不上画面):「${s.line}」`)
-    // 字幕不喂给视频模型:它属于后期贴片,写进提示词只会被当成画面元素渲染成乱码文字。
+    if (String(s?.subtitle || '').trim()) frag.push(`字幕(原样显示在画面下方):「${String(s.subtitle).trim()}」`)
     if (s?.sfx) frag.push(`音效:${s.sfx}`)
     lines.push(frag.join(';'))
   })
@@ -525,7 +533,9 @@ export function buildTimelinePrompt(args: {
       '物体的形状、数量、比例、材质在镜头内保持稳定一致,不变形、不融化、不穿模、不凭空出现或消失;' +
       '人物与动物结构正常(四肢/手指数量正确、关节弯曲合理,不扭曲、不多肢);' +
       '镜头运动与光影自然平滑,避免瞬移、抖动、鬼影、画面撕裂或不合理的速度突变;' +
-      NO_ONSCREEN_TEXT_REQUIREMENT,
+      (hasSubtitle
+        ? '除各镜头指定的字幕外,画面中不得出现任何其他文字、标题、标语、水印或字符(场景实物本身自带的文字除外)。'
+        : NO_ONSCREEN_TEXT_REQUIREMENT),
   )
   return lines.filter(Boolean).join('\n')
 }
