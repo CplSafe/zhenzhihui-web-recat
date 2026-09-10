@@ -25,6 +25,7 @@ import {
   getModelReferenceImageMinimum,
   modelAcceptsSourceVideoInput,
 } from '@/utils/modelInputConstraints'
+import { NO_ONSCREEN_TEXT_REQUIREMENT, withNoOnscreenTextGuard } from '@/utils/videoPromptGuards'
 
 /** 整片生成与视频编辑的首选模型关键词。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
@@ -281,7 +282,8 @@ export function compileVideoEditModelRequest(
   return {
     modelVersionId,
     modelVersion: model?.id === modelVersionId ? model : { ...model, id: modelVersionId },
-    prompt: String(args.prompt || '').trim() || DEFAULT_VIDEO_EDIT_PROMPT,
+    // 修改提示词同样要禁画面文字:video.edit 会重生成画面帧,用户意见里没提文字时模型也可能自己加。
+    prompt: withNoOnscreenTextGuard(String(args.prompt || '').trim() || DEFAULT_VIDEO_EDIT_PROMPT),
     params: buildVideoEditParams(model, args),
   }
 }
@@ -523,7 +525,7 @@ export function buildTimelinePrompt(args: {
       '物体的形状、数量、比例、材质在镜头内保持稳定一致,不变形、不融化、不穿模、不凭空出现或消失;' +
       '人物与动物结构正常(四肢/手指数量正确、关节弯曲合理,不扭曲、不多肢);' +
       '镜头运动与光影自然平滑,避免瞬移、抖动、鬼影、画面撕裂或不合理的速度突变;' +
-      '画面中不得出现任何文字、字幕、标题、标语、水印或字符(场景实物本身自带的文字除外)。',
+      NO_ONSCREEN_TEXT_REQUIREMENT,
   )
   return lines.filter(Boolean).join('\n')
 }

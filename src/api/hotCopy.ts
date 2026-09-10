@@ -22,6 +22,7 @@ import { getBackendGenerationModelName, getBackendGenerationModelVersionId } fro
 import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/utils/modelRestrictions'
 import { buildHotCopyReplicateModelParams } from '@/utils/hotCopyModelAdapters'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
+import { withNoOnscreenTextGuard } from '@/utils/videoPromptGuards'
 
 /** 爆款复制的模型筛选、任务超时与模型预热缓存策略。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
@@ -762,7 +763,10 @@ export async function replicateHotVideo(args: {
       modelVersion: model,
       idempotencyKey: String(args.idempotencyKey || '').trim() || undefined,
       signal: args.signal,
-      prompt: args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。',
+      // 爆款源视频普遍带字幕/贴字,模型照抄只会渲染成乱码——明确不要复刻,再叠加统一禁文字硬约束。
+      prompt: withNoOnscreenTextGuard(
+        `${args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。'}\n源视频中的字幕、贴字与水印不要复刻。`,
+      ),
       inputAssets,
       // 时长/比例按用户在入口的选择下发 —— 与智能成片 generateFullVideo 同一写法:始终走
       // buildVideoGenerationParams(其内部按模型 schema 决定字段名/取值;无 schema 时也下发标准

@@ -308,4 +308,12 @@ describe('compileVideoEditModelRequest', () => {
       ),
     ).toThrow('已选择的模型不支持视频修改(video.edit)')
   })
+
+  it('默认与用户提示词都追加禁画面文字硬约束(视频模型画中文必乱码)', () => {
+    const model = { id: 825, operation_codes: ['video.edit'], params_schema: { fields: [] } }
+    expect(compileVideoEditModelRequest(model, {}).prompt).toContain('不得出现任何文字')
+    const withNote = compileVideoEditModelRequest(model, { prompt: '把灯光调亮一点' })
+    expect(withNote.prompt).toContain('把灯光调亮一点')
+    expect(withNote.prompt).toContain('不得出现任何文字')
+  })
 })

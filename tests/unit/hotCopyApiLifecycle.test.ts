@@ -500,6 +500,9 @@ describe('replicateHotVideo lifecycle', () => {
       ratio: '9:16',
       generate_audio: true,
     })
+    // 爆款源视频普遍带字幕:提示词必须声明不复刻贴字并带统一禁文字硬约束,否则模型照抄成乱码
+    expect(String(submitted.prompt)).toContain('源视频中的字幕、贴字与水印不要复刻')
+    expect(String(submitted.prompt)).toContain('不得出现任何文字')
     expect(mocks.getModelForOperation).not.toHaveBeenCalled()
   })
 

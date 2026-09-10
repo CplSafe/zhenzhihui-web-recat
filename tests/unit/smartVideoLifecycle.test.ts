@@ -144,9 +144,11 @@ describe('smart video lifecycle', () => {
       workspaceId: 61,
       modelVersionId: 9,
       operationCode: 'video.edit',
-      prompt: '提高亮度',
+      // 用户意见之外统一追加禁画面文字硬约束(视频模型画中文必乱码)
+      prompt: expect.stringContaining('提高亮度'),
       params: { resolution: '720p' },
     })
+    expect(String(mocks.estimateAiTaskCost.mock.calls[0]![0].prompt)).toContain('不得出现任何文字')
   })
 
   it('video.edit estimate and submission use the same explicitly selected backend model', async () => {
