@@ -2787,7 +2787,17 @@ function CanvasInner() {
       const nodeW = options?.size?.width || (type === 'video' ? 444 : 250)
       const nodeH = options?.size?.height || (type === 'video' ? 250 : 250)
       const id = createNodeId(type)
-      const ratio = options?.ratio
+      // 视频「生成目标」节点默认走「全能参考」：参考图只约束主体/风格，输出比例由所选比例决定，
+      // 不再被 1:1 等参考图带偏（首尾帧模式才会让首帧图锁死输出比例）。全能参考必须配一个具体
+      // 比例，「自适应」是留给首尾帧的，继承到自适应/缺省时回落 16:9。
+      // 已带素材的「来源」节点（拖入的既有图/视频）不属于生成目标，保持原样以按素材真实比例展示。
+      const droppedMaterial = Boolean(
+        options?.extraData && ((options.extraData as any).assetId || (options.extraData as any).resultUrl),
+      )
+      const isVideoGenerationNode = type === 'video' && !droppedMaterial
+      const videoMode: CanvasVideoMode | undefined =
+        type === 'video' ? (isVideoGenerationNode ? 'full-ref' : 'auto') : undefined
+      const ratio = isVideoGenerationNode && (!options?.ratio || isAutoRatio(options.ratio)) ? '16:9' : options?.ratio
       const newNode: Node = {
         id,
         type,
@@ -2795,7 +2805,7 @@ function CanvasInner() {
         data: {
           kind: type,
           ratio,
-          videoMode: type === 'video' ? 'auto' : undefined,
+          videoMode,
           ...options?.extraData,
         },
         style: { width: nodeW, height: nodeH },
@@ -2813,7 +2823,7 @@ function CanvasInner() {
         kind: type,
         sourceRefs: [],
         ratio,
-        videoMode: type === 'video' ? 'auto' : undefined,
+        videoMode,
         modelVersionId: undefined,
       })
       setSaveStatus('dirty')
