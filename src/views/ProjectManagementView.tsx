@@ -447,6 +447,10 @@ export default function ProjectManagementView() {
   const [sortDesc, setSortDesc] = useState(true) // 时间降序/升序
   // 成员筛选(团队空间):'' = 全部成员,否则为归属人 userId 字符串。按空间记忆,子账号多时进页即定位自己的项目。
   const [ownerFilter, setOwnerFilter] = useState('')
+  // 「我的项目」id 集合:来自后端 mine=true 的权威判定;null = 未拉到(个人空间/请求失败),回退前端按归属人比对
+  const [myProjectIds, setMyProjectIds] = useState<Set<number> | null>(null)
+  const isTeamSpaceRef = useRef(false)
+  isTeamSpaceRef.current = String(currentWorkspace?.type || '').toLowerCase() !== 'personal'
   useEffect(() => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
@@ -569,23 +573,29 @@ export default function ProjectManagementView() {
   // 成员筛选只在团队空间出现;个人空间只有一个人,控件没有意义
   const isTeamSpace = String(currentWorkspace?.type || '').toLowerCase() !== 'personal'
 
-  /** 成员下拉选项:全部 / 我(置顶) / 其他有项目的成员按项目数降序;数量随当前列表实时计算。 */
+  /**
+   * 成员下拉选项:全部 / 我(置顶) / 其他有项目的成员按项目数降序;数量随当前列表实时计算。
+   * 「我」的数量与筛选一致,优先按后端 mine=true 判定的 id 集合统计。
+   */
   const ownerOptions = useMemo(() => {
     const counts = new Map<number, number>()
     folders.forEach((folder) => {
       const id = Number(folder.userId || 0)
       if (id) counts.set(id, (counts.get(id) || 0) + 1)
     })
+    const mineCount = myProjectIds
+      ? folders.reduce((total, folder) => total + (myProjectIds.has(Number(folder.id || 0)) ? 1 : 0), 0)
+      : counts.get(currentUserId) || 0
     const others = effectiveWorkspaceMembers
       .map((member: any) => ({ id: resolveUserId(member), name: memberDisplayName(member) }))
       .filter((member) => member.id > 0 && member.id !== currentUserId && (counts.get(member.id) || 0) > 0)
       .sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0))
     return [
       { value: '', label: '全部成员' },
-      { value: String(currentUserId), label: `我（${counts.get(currentUserId) || 0}）` },
+      { value: String(currentUserId), label: `我（${mineCount}）` },
       ...others.map((member) => ({ value: String(member.id), label: `${member.name}（${counts.get(member.id)}）` })),
     ]
-  }, [folders, effectiveWorkspaceMembers, currentUserId])
+  }, [folders, effectiveWorkspaceMembers, currentUserId, myProjectIds])
 
   /**
    * 生效的成员筛选:记忆值可能已失效(成员退出团队/项目清零),
@@ -600,14 +610,18 @@ export default function ProjectManagementView() {
   const shownFolders = useMemo(() => {
     const q = query.trim().toLowerCase()
     const ownerId = Number(effectiveOwnerFilter || 0)
+    // 「我」优先按后端 mine=true 的 id 集合判定(协作/归属字段差异都以后端为准);其他成员按归属人比对
+    const matchesOwner = (folder: (typeof folders)[number]) => {
+      if (!ownerId) return true
+      if (ownerId === currentUserId && myProjectIds) return myProjectIds.has(Number(folder.id || 0))
+      return Number(folder.userId || 0) === ownerId
+    }
     const list = folders.filter(
       (f) =>
-        (typeFilter === 'all' || f.type === typeFilter) &&
-        (!ownerId || Number(f.userId || 0) === ownerId) &&
-        (!q || f.title.toLowerCase().includes(q)),
+        (typeFilter === 'all' || f.type === typeFilter) && matchesOwner(f) && (!q || f.title.toLowerCase().includes(q)),
     )
     return sortDesc ? list : [...list].reverse()
-  }, [folders, query, typeFilter, effectiveOwnerFilter, sortDesc])
+  }, [folders, query, typeFilter, effectiveOwnerFilter, sortDesc, currentUserId, myProjectIds])
 
   // 每页 = 3 行 × 3 列 = 9 个(固定,不随屏幕变)
   const pageSize = 9
@@ -817,25 +831,39 @@ export default function ProjectManagementView() {
       setProjectItems([])
       setProjectItemsWorkspaceId(0)
       setProjectPermissionsLoadedWorkspaceId(0)
+      setMyProjectIds(null)
       setLoading(false)
       return
     }
     setProjectPermissionsLoadedWorkspaceId(0)
     setLoading(true)
     try {
-      const items = await listAllCreativeProjects({ workspaceId: wsId, isCurrent: isCurrentLoad })
+      // 「我的项目」以后端 mine=true 判定为准(与全量列表并行拉取,只取 id 集合);
+      // 拉取失败回退前端按归属人比对,不阻塞整页加载。个人空间不拉——mine 即全部。
+      const [items, mineItems] = await Promise.all([
+        listAllCreativeProjects({ workspaceId: wsId, isCurrent: isCurrentLoad }),
+        isTeamSpaceRef.current
+          ? listAllCreativeProjects({ workspaceId: wsId, mine: true, isCurrent: isCurrentLoad }).catch(() => null)
+          : Promise.resolve(null),
+      ])
       if (!isCurrentLoad()) return
       // 项目全部以云端列表为准(不再用 localStorage 缓存新建项目)
       projectItemsWorkspaceIdRef.current = wsId
       setProjectItems(Array.isArray(items) ? items : [])
       setProjectItemsWorkspaceId(wsId)
       setProjectPermissionsLoadedWorkspaceId(wsId)
+      setMyProjectIds(
+        Array.isArray(mineItems)
+          ? new Set(mineItems.map((item: any) => resolveCreativeProjectId(item)).filter((id: number) => id > 0))
+          : null,
+      )
     } catch {
       if (isCurrentLoad()) {
         projectItemsWorkspaceIdRef.current = wsId
         setProjectItems([])
         setProjectItemsWorkspaceId(wsId)
         setProjectPermissionsLoadedWorkspaceId(0)
+        setMyProjectIds(null)
         showToast('项目列表加载失败,请稍后重试', 'error')
       }
     } finally {

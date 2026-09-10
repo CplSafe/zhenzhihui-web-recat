@@ -2393,13 +2393,14 @@ export function updateCreativeProjectDraft({ projectId, workspaceId, draft, draf
   })
 }
 
-/** 分页列出工作空间中的创意项目。 */
-export async function listCreativeProjects({ workspaceId, offset = 0, limit = 50 }: any = {}) {
+/** 分页列出工作空间中的创意项目；mine=true 时后端只返回当前用户创建的项目。 */
+export async function listCreativeProjects({ workspaceId, offset = 0, limit = 50, mine }: any = {}) {
   const params = new URLSearchParams()
   const wsId = Number(workspaceId || 0)
   if (Number.isFinite(wsId) && wsId > 0) {
     params.set('workspace_id', String(Math.floor(wsId)))
   }
+  if (mine === true) params.set('mine', 'true')
   const off = Number(offset || 0)
   const lim = Number(limit || 0)
   if (Number.isFinite(off) && off > 0) params.set('offset', String(Math.floor(off)))

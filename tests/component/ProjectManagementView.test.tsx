@@ -329,7 +329,15 @@ describe('ProjectManagementView workspace isolation', () => {
       { id: 7, nickname: '测试用户' },
       { id: 8, nickname: '同事乙' },
     ])
-    mocks.listCreativeProjects.mockResolvedValue([project(1, '我的项目A'), { ...project(2, '乙的项目B'), user_id: 8 }])
+    const all = [
+      project(1, '我的项目A'),
+      { ...project(2, '乙的项目B'), user_id: 8 },
+      // 归属字段是同事乙,但后端 mine=true 判为「我的」(如协作创建):以后端口径为准
+      { ...project(3, '协作项目C'), user_id: 8 },
+    ]
+    mocks.listCreativeProjects.mockImplementation(({ mine }: { mine?: boolean } = {}) =>
+      Promise.resolve(mine ? [all[0], all[2]] : all),
+    )
     mocks.listAssets.mockResolvedValue({ items: [] })
 
     render(<ProjectManagementView />)
@@ -337,15 +345,35 @@ describe('ProjectManagementView workspace isolation', () => {
     expect(screen.getByRole('button', { name: '打开项目 乙的项目B' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '只看我的' }))
-    expect(screen.queryByRole('button', { name: '打开项目 乙的项目B' })).not.toBeInTheDocument()
+    // mine=true 判定优先:协作项目C 归属字段虽是乙,仍算「我的」
     expect(screen.getByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开项目 协作项目C' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 乙的项目B' })).not.toBeInTheDocument()
     // 选择按空间记忆:下次进页默认仍是自己的项目
     expect(localStorage.getItem('zzh.pm.ownerFilter.21')).toBe('7')
 
     await user.click(screen.getByRole('button', { name: '按成员筛选' }))
-    await user.click(await screen.findByRole('option', { name: '同事乙（1）' }))
+    await user.click(await screen.findByRole('option', { name: '同事乙（2）' }))
     expect(screen.getByRole('button', { name: '打开项目 乙的项目B' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '打开项目 我的项目A' })).not.toBeInTheDocument()
+  })
+
+  it('falls back to owner matching when the mine=true request fails', async () => {
+    const user = userEvent.setup()
+    mocks.listWorkspaceMembers.mockResolvedValue([{ id: 7, nickname: '测试用户' }])
+    mocks.listCreativeProjects.mockImplementation(({ mine }: { mine?: boolean } = {}) =>
+      mine
+        ? Promise.reject(new Error('mine unavailable'))
+        : Promise.resolve([project(1, '我的项目A'), { ...project(2, '乙的项目B'), user_id: 8 }]),
+    )
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    expect(screen.getByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 乙的项目B' })).not.toBeInTheDocument()
   })
 
   it('falls back to 全部成员 when the remembered member has no projects any more', async () => {
@@ -369,6 +397,8 @@ describe('ProjectManagementView workspace isolation', () => {
     expect(await screen.findByRole('button', { name: '打开项目 个人项目A' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '只看我的' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '按成员筛选' })).not.toBeInTheDocument()
+    // 个人空间不发 mine=true 请求:mine 即全部,多拉一次是浪费
+    expect(mocks.listCreativeProjects).not.toHaveBeenCalledWith(expect.objectContaining({ mine: true }))
   })
 
   it('batch-classifies every unclassified video into the chosen project and hides them optimistically', async () => {
