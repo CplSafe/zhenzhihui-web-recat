@@ -87,7 +87,7 @@ export interface ImageChatProps {
   supportedRatios?: readonly string[]
   /** 提交前积分预估文案(单张口径,如「每张约 X 积分 · 余额 Y」);空则不显示 */
   costText?: string
-  /** 预估超过余额:在 costText 后追加「积分不足,请前往充值积分」(可点击跳会员中心) */
+  /** 预估超过余额:在 costText 后追加「积分不足，请充值积分」(可点击跳会员中心;与全局不足文案一致) */
   costInsufficient?: boolean
   /** 返回 false 表示用户取消付费确认，组件会保留本轮输入。 */
   onSend: (
@@ -1054,7 +1054,7 @@ export default function ImageChat({
                   <>
                     {costText ? ' · 积分不足，' : '积分不足，'}
                     <button type="button" className={styles.costRecharge} onClick={openMemberCenter}>
-                      请前往充值积分
+                      请充值积分
                     </button>
                   </>
                 )}

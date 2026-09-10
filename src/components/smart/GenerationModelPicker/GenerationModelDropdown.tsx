@@ -849,6 +849,8 @@ export default function GenerationModelDropdown({
                       </span>
                     ) : (
                       <>
+                        {/* 「约」与全站估价口径一致:合计同样是估算值,不是准确报价 */}
+                        <span>约</span>
                         <b>{creditsToYuanAmount(estimateTotal) || '0'}</b>
                         <span>元</span>
                       </>

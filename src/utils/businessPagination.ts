@@ -29,6 +29,8 @@ interface PaginationSafetyOptions {
 /** 拉取当前工作区全部创意项目所需的参数。 */
 export interface ListAllCreativeProjectsOptions extends PaginationSafetyOptions {
   workspaceId: number
+  /** 只拉当前用户创建的项目（后端 mine=true 口径）。 */
+  mine?: boolean
 }
 
 /** 拉取当前工作区素材时可用的筛选条件。 */
@@ -171,6 +173,7 @@ export async function listAssetPage({
 /** 拉取全部创意项目页，并防护重复页、无限分页及请求中的工作区切换。 */
 export async function listAllCreativeProjects({
   workspaceId,
+  mine,
   pageSize = DEFAULT_PAGE_SIZE,
   maxPages = DEFAULT_MAX_PAGES,
   isCurrent,
@@ -186,7 +189,7 @@ export async function listAllCreativeProjects({
 
   for (let pageIndex = 0; pageIndex < pageLimit; pageIndex += 1) {
     assertCurrent(isCurrent)
-    const payload = await listCreativeProjects({ workspaceId: wsId, offset, limit })
+    const payload = await listCreativeProjects({ workspaceId: wsId, offset, limit, ...(mine ? { mine: true } : {}) })
     assertCurrent(isCurrent)
     const items = Array.isArray(payload) ? payload : []
     if (!items.length) break

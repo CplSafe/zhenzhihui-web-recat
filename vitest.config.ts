@@ -58,6 +58,7 @@ export default defineConfig({
         'src/utils/videoGenRegistry.ts',
         'src/utils/assetUrl.ts',
         'src/utils/swrCache.ts',
+        'src/utils/unclassifiedVideos.ts',
         'src/stores/taskCenter.ts',
         'src/api/market.ts',
         'src/api/projectVideos.ts',

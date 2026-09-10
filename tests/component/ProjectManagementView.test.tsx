@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   requestConfirm: vi.fn(),
   showToast: vi.fn(),
   updateCreativeProjectDraft: vi.fn(),
-  workspace: { id: 21 },
+  workspace: { id: 21, type: 'team' },
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -41,7 +41,7 @@ vi.mock('@/components/common/UserAvatar', () => ({
 
 vi.mock('@/stores/workspaceSession', () => ({
   useCurrentUser: () => ({ id: 7, nickname: '测试用户' }),
-  useCurrentWorkspace: () => ({ id: mocks.workspace.id, type: 'team' }),
+  useCurrentWorkspace: () => ({ id: mocks.workspace.id, type: mocks.workspace.type }),
   useWorkspaceId: () => mocks.workspace.id,
 }))
 
@@ -123,6 +123,8 @@ function looseVideoButton(title: string): HTMLElement {
 describe('ProjectManagementView workspace isolation', () => {
   beforeEach(() => {
     mocks.workspace.id = 21
+    mocks.workspace.type = 'team'
+    localStorage.clear()
     mocks.addClassifiedVideo.mockReset()
     mocks.createCreativeProject.mockReset()
     mocks.createInitializedProjectFolder.mockReset()
@@ -319,6 +321,110 @@ describe('ProjectManagementView workspace isolation', () => {
 
     expect(await screen.findByText('Unlinked fallback video')).toBeInTheDocument()
     expect(screen.queryByText('Linked hidden video')).not.toBeInTheDocument()
+  })
+
+  it('team space filters projects by owner via 只看我的 and the member dropdown, remembered per workspace', async () => {
+    const user = userEvent.setup()
+    mocks.listWorkspaceMembers.mockResolvedValue([
+      { id: 7, nickname: '测试用户' },
+      { id: 8, nickname: '同事乙' },
+    ])
+    const all = [
+      project(1, '我的项目A'),
+      { ...project(2, '乙的项目B'), user_id: 8 },
+      // 归属字段是同事乙,但后端 mine=true 判为「我的」(如协作创建):以后端口径为准
+      { ...project(3, '协作项目C'), user_id: 8 },
+    ]
+    mocks.listCreativeProjects.mockImplementation(({ mine }: { mine?: boolean } = {}) =>
+      Promise.resolve(mine ? [all[0], all[2]] : all),
+    )
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开项目 乙的项目B' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    // mine=true 判定优先:协作项目C 归属字段虽是乙,仍算「我的」
+    expect(screen.getByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开项目 协作项目C' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 乙的项目B' })).not.toBeInTheDocument()
+    // 选择按空间记忆:下次进页默认仍是自己的项目
+    expect(localStorage.getItem('zzh.pm.ownerFilter.21')).toBe('7')
+
+    await user.click(screen.getByRole('button', { name: '按成员筛选' }))
+    await user.click(await screen.findByRole('option', { name: '同事乙（2）' }))
+    expect(screen.getByRole('button', { name: '打开项目 乙的项目B' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 我的项目A' })).not.toBeInTheDocument()
+  })
+
+  it('falls back to owner matching when the mine=true request fails', async () => {
+    const user = userEvent.setup()
+    mocks.listWorkspaceMembers.mockResolvedValue([{ id: 7, nickname: '测试用户' }])
+    mocks.listCreativeProjects.mockImplementation(({ mine }: { mine?: boolean } = {}) =>
+      mine
+        ? Promise.reject(new Error('mine unavailable'))
+        : Promise.resolve([project(1, '我的项目A'), { ...project(2, '乙的项目B'), user_id: 8 }]),
+    )
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    expect(screen.getByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 乙的项目B' })).not.toBeInTheDocument()
+  })
+
+  it('falls back to 全部成员 when the remembered member has no projects any more', async () => {
+    localStorage.setItem('zzh.pm.ownerFilter.21', '999')
+    mocks.listWorkspaceMembers.mockResolvedValue([{ id: 7, nickname: '测试用户' }])
+    mocks.listCreativeProjects.mockResolvedValue([project(1, '我的项目A')])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    // 失效的记忆值不生效:列表不为空,下拉显示「全部成员」
+    expect(await screen.findByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('全部成员')
+  })
+
+  it('personal space hides the member filter controls', async () => {
+    mocks.workspace.type = 'personal'
+    mocks.listCreativeProjects.mockResolvedValue([project(1, '个人项目A')])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findByRole('button', { name: '打开项目 个人项目A' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '只看我的' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '按成员筛选' })).not.toBeInTheDocument()
+    // 个人空间不发 mine=true 请求:mine 即全部,多拉一次是浪费
+    expect(mocks.listCreativeProjects).not.toHaveBeenCalledWith(expect.objectContaining({ mine: true }))
+  })
+
+  it('batch-classifies every unclassified video into the chosen project and hides them optimistically', async () => {
+    const user = userEvent.setup()
+    mocks.listCreativeProjects.mockResolvedValue([project(9, '目标项目')])
+    mocks.listAssets.mockResolvedValue({ items: [looseAsset(501, '散视频一'), looseAsset(502, '散视频二')] })
+    mocks.requestConfirm.mockResolvedValue(true)
+    mocks.addClassifiedVideo.mockResolvedValue(undefined)
+
+    render(<ProjectManagementView />)
+
+    await user.click(await screen.findByRole('button', { name: '批量归类（2）' }))
+    await user.click(screen.getByRole('menuitem', { name: '目标项目' }))
+
+    await waitFor(() => expect(mocks.addClassifiedVideo).toHaveBeenCalledTimes(2))
+    expect(mocks.requestConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('2 条视频全部归类到「目标项目」'),
+      expect.anything(),
+    )
+    // sourceKey 走资产维度的新格式（assetId 稳定，签名 URL 会漂移）
+    expect(mocks.addClassifiedVideo).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 9, videoAssetId: 501, sourceKey: 'asset::501' }),
+    )
+    // 归类成功后乐观隐藏，待刷新用云端口径接管
+    await waitFor(() => expect(screen.queryByText('散视频一')).not.toBeInTheDocument())
+    expect(screen.queryByText('散视频二')).not.toBeInTheDocument()
   })
 
   it('uses the latest successful generated image and opens image projects in the image workspace', async () => {
