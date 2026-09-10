@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   requestConfirm: vi.fn(),
   showToast: vi.fn(),
   updateCreativeProjectDraft: vi.fn(),
-  workspace: { id: 21 },
+  workspace: { id: 21, type: 'team' },
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -41,7 +41,7 @@ vi.mock('@/components/common/UserAvatar', () => ({
 
 vi.mock('@/stores/workspaceSession', () => ({
   useCurrentUser: () => ({ id: 7, nickname: '测试用户' }),
-  useCurrentWorkspace: () => ({ id: mocks.workspace.id, type: 'team' }),
+  useCurrentWorkspace: () => ({ id: mocks.workspace.id, type: mocks.workspace.type }),
   useWorkspaceId: () => mocks.workspace.id,
 }))
 
@@ -123,6 +123,8 @@ function looseVideoButton(title: string): HTMLElement {
 describe('ProjectManagementView workspace isolation', () => {
   beforeEach(() => {
     mocks.workspace.id = 21
+    mocks.workspace.type = 'team'
+    localStorage.clear()
     mocks.addClassifiedVideo.mockReset()
     mocks.createCreativeProject.mockReset()
     mocks.createInitializedProjectFolder.mockReset()
@@ -319,6 +321,54 @@ describe('ProjectManagementView workspace isolation', () => {
 
     expect(await screen.findByText('Unlinked fallback video')).toBeInTheDocument()
     expect(screen.queryByText('Linked hidden video')).not.toBeInTheDocument()
+  })
+
+  it('team space filters projects by owner via 只看我的 and the member dropdown, remembered per workspace', async () => {
+    const user = userEvent.setup()
+    mocks.listWorkspaceMembers.mockResolvedValue([
+      { id: 7, nickname: '测试用户' },
+      { id: 8, nickname: '同事乙' },
+    ])
+    mocks.listCreativeProjects.mockResolvedValue([project(1, '我的项目A'), { ...project(2, '乙的项目B'), user_id: 8 }])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开项目 乙的项目B' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    expect(screen.queryByRole('button', { name: '打开项目 乙的项目B' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+    // 选择按空间记忆:下次进页默认仍是自己的项目
+    expect(localStorage.getItem('zzh.pm.ownerFilter.21')).toBe('7')
+
+    await user.click(screen.getByRole('button', { name: '按成员筛选' }))
+    await user.click(await screen.findByRole('option', { name: '同事乙（1）' }))
+    expect(screen.getByRole('button', { name: '打开项目 乙的项目B' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 我的项目A' })).not.toBeInTheDocument()
+  })
+
+  it('falls back to 全部成员 when the remembered member has no projects any more', async () => {
+    localStorage.setItem('zzh.pm.ownerFilter.21', '999')
+    mocks.listWorkspaceMembers.mockResolvedValue([{ id: 7, nickname: '测试用户' }])
+    mocks.listCreativeProjects.mockResolvedValue([project(1, '我的项目A')])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    // 失效的记忆值不生效:列表不为空,下拉显示「全部成员」
+    expect(await screen.findByRole('button', { name: '打开项目 我的项目A' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('全部成员')
+  })
+
+  it('personal space hides the member filter controls', async () => {
+    mocks.workspace.type = 'personal'
+    mocks.listCreativeProjects.mockResolvedValue([project(1, '个人项目A')])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findByRole('button', { name: '打开项目 个人项目A' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '只看我的' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '按成员筛选' })).not.toBeInTheDocument()
   })
 
   it('batch-classifies every unclassified video into the chosen project and hides them optimistically', async () => {

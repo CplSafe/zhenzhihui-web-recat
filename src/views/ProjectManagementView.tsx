@@ -51,6 +51,7 @@ import {
 } from '@/utils/creativeDraftPersistence'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useDismissablePopover } from '@/composables/useDismissablePopover'
+import FilterSelect from '@/components/common/FilterSelect'
 import { openComingSoon } from '@/stores/ui'
 import { useWorkspaceId, useCurrentUser, useCurrentWorkspace } from '@/stores/workspaceSession'
 import { listWorkspaceMembers } from '@/api/auth'
@@ -350,6 +351,20 @@ interface UnclassifiedVideoItem {
   sourceKey: string
 }
 
+/** 成员筛选的按空间记忆 key。 */
+function ownerFilterStorageKey(workspaceId: number): string {
+  return `zzh.pm.ownerFilter.${workspaceId}`
+}
+
+/** 兼容成员对象的多种命名字段,取展示名。 */
+function memberDisplayName(member: any): string {
+  return (
+    String(
+      member?.nickname || member?.name || member?.user?.nickname || member?.user?.name || member?.username || '',
+    ).trim() || `成员 ${resolveUserId(member) || ''}`.trim()
+  )
+}
+
 /** 项目卡片视频封面上的播放图标。 */
 function PlayIcon() {
   return (
@@ -430,6 +445,34 @@ export default function ProjectManagementView() {
   const [query, setQuery] = useState('') // 搜索项目名称/团队
   const [typeFilter, setTypeFilter] = useState<'all' | '个人项目' | '协作项目'>('all')
   const [sortDesc, setSortDesc] = useState(true) // 时间降序/升序
+  // 成员筛选(团队空间):'' = 全部成员,否则为归属人 userId 字符串。按空间记忆,子账号多时进页即定位自己的项目。
+  const [ownerFilter, setOwnerFilter] = useState('')
+  useEffect(() => {
+    const ws = Number(workspaceId || 0)
+    if (!ws) {
+      setOwnerFilter('')
+      return
+    }
+    try {
+      setOwnerFilter(localStorage.getItem(ownerFilterStorageKey(ws)) || '')
+    } catch {
+      setOwnerFilter('')
+    }
+  }, [workspaceId])
+  const changeOwnerFilter = useCallback(
+    (value: string) => {
+      setOwnerFilter(value)
+      const ws = Number(workspaceId || 0)
+      if (!ws) return
+      try {
+        if (value) localStorage.setItem(ownerFilterStorageKey(ws), value)
+        else localStorage.removeItem(ownerFilterStorageKey(ws))
+      } catch {
+        /* 隐私模式等场景写不进去:筛选仍生效,只是不记忆 */
+      }
+    },
+    [workspaceId],
+  )
   // 待归类分页(两行一页,列数随宽度实测)
   const vidGridRef = useRef<HTMLDivElement>(null)
   const [vidCols, setVidCols] = useState(5)
@@ -523,14 +566,48 @@ export default function ProjectManagementView() {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }, [accessibleProjectItems, workspaceId, currentWorkspace, currentUser, effectiveWorkspaceMembers])
 
-  // 搜索 + 类型过滤 + 时间排序
+  // 成员筛选只在团队空间出现;个人空间只有一个人,控件没有意义
+  const isTeamSpace = String(currentWorkspace?.type || '').toLowerCase() !== 'personal'
+
+  /** 成员下拉选项:全部 / 我(置顶) / 其他有项目的成员按项目数降序;数量随当前列表实时计算。 */
+  const ownerOptions = useMemo(() => {
+    const counts = new Map<number, number>()
+    folders.forEach((folder) => {
+      const id = Number(folder.userId || 0)
+      if (id) counts.set(id, (counts.get(id) || 0) + 1)
+    })
+    const others = effectiveWorkspaceMembers
+      .map((member: any) => ({ id: resolveUserId(member), name: memberDisplayName(member) }))
+      .filter((member) => member.id > 0 && member.id !== currentUserId && (counts.get(member.id) || 0) > 0)
+      .sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0))
+    return [
+      { value: '', label: '全部成员' },
+      { value: String(currentUserId), label: `我（${counts.get(currentUserId) || 0}）` },
+      ...others.map((member) => ({ value: String(member.id), label: `${member.name}（${counts.get(member.id)}）` })),
+    ]
+  }, [folders, effectiveWorkspaceMembers, currentUserId])
+
+  /**
+   * 生效的成员筛选:记忆值可能已失效(成员退出团队/项目清零),
+   * 失效时回退「全部」——否则下拉显示全部、列表却被过滤成空,两处对不上。
+   */
+  const effectiveOwnerFilter = useMemo(() => {
+    if (!isTeamSpace || !ownerFilter) return ''
+    return ownerOptions.some((option) => option.value === ownerFilter) ? ownerFilter : ''
+  }, [isTeamSpace, ownerFilter, ownerOptions])
+
+  // 搜索 + 类型过滤 + 成员过滤 + 时间排序
   const shownFolders = useMemo(() => {
     const q = query.trim().toLowerCase()
+    const ownerId = Number(effectiveOwnerFilter || 0)
     const list = folders.filter(
-      (f) => (typeFilter === 'all' || f.type === typeFilter) && (!q || f.title.toLowerCase().includes(q)),
+      (f) =>
+        (typeFilter === 'all' || f.type === typeFilter) &&
+        (!ownerId || Number(f.userId || 0) === ownerId) &&
+        (!q || f.title.toLowerCase().includes(q)),
     )
     return sortDesc ? list : [...list].reverse()
-  }, [folders, query, typeFilter, sortDesc])
+  }, [folders, query, typeFilter, effectiveOwnerFilter, sortDesc])
 
   // 每页 = 3 行 × 3 列 = 9 个(固定,不随屏幕变)
   const pageSize = 9
@@ -547,7 +624,7 @@ export default function ProjectManagementView() {
   // 搜索 / 过滤 / 排序变化时回到第一页
   useEffect(() => {
     setPage(1)
-  }, [query, typeFilter, sortDesc])
+  }, [query, typeFilter, sortDesc, effectiveOwnerFilter])
 
   // 已归类(拖入项目)的视频 → 从待归类隐藏。来源:各项目云端草稿(collectClassifiedKeys),
   // 不再用 localStorage。pendingClassified 仅为拖入后、列表刷新前的乐观隐藏(纯内存)。
@@ -1294,6 +1371,30 @@ export default function ProjectManagementView() {
                   <option>全部状态</option>
                 </select>
               </span>
+              {/* 团队空间:按成员筛选。子账号多、各自产出多时,先一键定位到自己的项目 */}
+              {isTeamSpace && (
+                <>
+                  <button
+                    type="button"
+                    className={`pm2-mine-chip${effectiveOwnerFilter === String(currentUserId) ? ' is-active' : ''}`}
+                    aria-pressed={effectiveOwnerFilter === String(currentUserId)}
+                    onClick={() =>
+                      changeOwnerFilter(effectiveOwnerFilter === String(currentUserId) ? '' : String(currentUserId))
+                    }
+                  >
+                    只看我的
+                  </button>
+                  <span className="pm2-filter">
+                    成员:
+                    <FilterSelect
+                      ariaLabel="按成员筛选"
+                      value={effectiveOwnerFilter}
+                      options={ownerOptions}
+                      onChange={changeOwnerFilter}
+                    />
+                  </span>
+                </>
+              )}
               <button type="button" className="pm2-sort" onClick={() => setSortDesc((v) => !v)} title="按更新时间排序">
                 <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                   <path
@@ -1315,7 +1416,9 @@ export default function ProjectManagementView() {
                 <div className="pm2-hint">正在加载项目…</div>
               ) : !shownFolders.length ? (
                 <div className="pm2-hint">
-                  {query || typeFilter !== 'all' ? '没有匹配的项目' : '还没有项目,点右上角「新建项目」开始'}
+                  {query || typeFilter !== 'all' || effectiveOwnerFilter
+                    ? '没有匹配的项目'
+                    : '还没有项目,点右上角「新建项目」开始'}
                 </div>
               ) : (
                 <div className="pm2-card-grid" ref={gridRef}>

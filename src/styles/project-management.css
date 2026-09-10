@@ -1068,6 +1068,35 @@
 .pm2-section-title--inline {
   margin: 0;
 }
+/* 「只看我的」快捷筛选:高频动作不藏进下拉,激活态绿色实心 */
+.pm2-mine-chip {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid #d5dae3;
+  border-radius: 999px;
+  background: #fff;
+  color: #4b5563;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+.pm2-mine-chip:hover {
+  border-color: #1fcfa9;
+  color: #1fcfa9;
+}
+.pm2-mine-chip.is-active {
+  border-color: #1fcfa9;
+  background: #1fcfa9;
+  color: #fff;
+}
+.pm2-mine-chip:focus-visible {
+  outline: 2px solid #1fcfa9;
+  outline-offset: 2px;
+}
+
 /* 待分类头部:标题 + 说明 + 右侧批量归类入口 */
 .pm2-section-head {
   display: flex;
