@@ -246,6 +246,19 @@ describe('buildVideoGenerationParams', () => {
     )
   })
 
+  it('turns off a declared watermark switch and never invents one', () => {
+    // 万相/HappyHorse 声明了 watermark 字段:显式关闭,口径与图片管线一致;
+    // Framora/MiniMax 未声明:不下发,避免被后端按未知参数拒绝。
+    const declares = { params_schema: { fields: [{ name: 'resolution', options: ['720P'] }, { name: 'watermark' }] } }
+    expect(buildVideoGenerationParams(declares, { resolution: '720P' })).toEqual({
+      resolution: '720P',
+      watermark: false,
+    })
+
+    const bare = { params_schema: { fields: [{ name: 'resolution', options: ['768P', '2K'] }] } }
+    expect(buildVideoGenerationParams(bare, { resolution: '768P' })).toEqual({ resolution: '768P' })
+  })
+
   it('rejects explicitly selected unsupported ratio, resolution and audio values', () => {
     const model = {
       display_name: '后端视频模型',

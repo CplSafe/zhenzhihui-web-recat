@@ -25,6 +25,7 @@ import {
   getModelReferenceImageMinimum,
   modelAcceptsSourceVideoInput,
 } from '@/utils/modelInputConstraints'
+import { NO_ONSCREEN_TEXT_REQUIREMENT, withNoOnscreenTextGuard } from '@/utils/videoPromptGuards'
 
 /** 整片生成与视频编辑的首选模型关键词。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
@@ -281,7 +282,8 @@ export function compileVideoEditModelRequest(
   return {
     modelVersionId,
     modelVersion: model?.id === modelVersionId ? model : { ...model, id: modelVersionId },
-    prompt: String(args.prompt || '').trim() || DEFAULT_VIDEO_EDIT_PROMPT,
+    // 修改提示词同样要禁画面文字:video.edit 会重生成画面帧,用户意见里没提文字时模型也可能自己加。
+    prompt: withNoOnscreenTextGuard(String(args.prompt || '').trim() || DEFAULT_VIDEO_EDIT_PROMPT),
     params: buildVideoEditParams(model, args),
   }
 }
@@ -493,7 +495,36 @@ export function buildTimelinePrompt(args: {
   const lines: string[] = []
   const identityConstraint = String(args.identityConstraint || '').trim()
   if (identityConstraint) lines.push(identityConstraint)
-  lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面、旁白、字幕、音效。')
+  // 台词/字幕开关都跟着脚本走(产品确认的行为):
+  // - 填了旁白 → 模型把它作为配音「读出来」,与镜头时间段对齐(支持配音的模型直接口播;
+  //   不支持的忽略这条,不产生副作用)。旁白文字本身不上画面——上画面的只有字幕字段。
+  // - 填了字幕 → 要求「原样」显示(禁止改写,防乱码);全部删掉 → 完全禁止画面出现文字。
+  //   模糊的「对齐字幕」指令只会诱导模型自己编乱码字。
+  const hasSubtitle = (args.shots || []).some((s) => String(s?.subtitle || '').trim())
+  const hasLine = (args.shots || []).some((s) => String(s?.line || '').trim())
+  const hasSfx = (args.shots || []).some((s) => String(s?.sfx || '').trim())
+  lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面内容与节奏。')
+  if (hasLine) {
+    lines.push(
+      '部分镜头标注了旁白/台词:请将其作为音频用自然流畅的普通话朗读出来,与该镜头时间段对齐,' +
+        '语气符合广告调性;画面中人物开口说话时口型要与台词匹配。旁白文字本身不要以文字形式出现在画面中。',
+    )
+  }
+  if (hasSubtitle) {
+    lines.push(
+      '部分镜头指定了字幕:请在对应时间段将字幕文字清晰地显示在画面下方,' +
+        '字符必须与给定文本完全一致,不得改写、增减、翻译或变形;未指定字幕的镜头不显示任何文字。',
+    )
+  }
+  // 音频语义同样跟着脚本走:标注了什么配什么,全删则明确不要任何配乐/人声/特效音。
+  // (音频总开关是入口的「背景音」;这里只约束模型别自作主张加声音内容。)
+  if (hasSfx) {
+    lines.push('音效标注用于生成对应的环境音与效果音,与画面动作同步;未标注音效的镜头不要添加额外特效音。')
+  } else if (hasLine) {
+    lines.push('除旁白人声外,不要添加背景音乐与人为特效音。')
+  } else {
+    lines.push('不要添加任何旁白、人声、背景音乐与人为特效音。')
+  }
   if (args.basePrompt) lines.push(`广告描述:${args.basePrompt}`)
   // 参考图是用户上传的素材(产品/真人),与镜头不是一一对应,所以镜号不能写成「图N」——
   // 那会让模型把第 N 张参考图理解成第 N 个镜头的画面。
@@ -507,8 +538,8 @@ export function buildTimelinePrompt(args: {
     const end = t + dur
     t = end
     const frag = [`镜头${i + 1}（${start}-${end}s）:${s?.desc || s?.no || `分镜${i + 1}`}`]
-    if (s?.line) frag.push(`旁白:「${s.line}」`)
-    if (s?.subtitle) frag.push(`字幕:「${s.subtitle}」`)
+    if (s?.line) frag.push(`旁白(用普通话配音朗读,文字不上画面):「${s.line}」`)
+    if (String(s?.subtitle || '').trim()) frag.push(`字幕(原样显示在画面下方):「${String(s.subtitle).trim()}」`)
     if (s?.sfx) frag.push(`音效:${s.sfx}`)
     lines.push(frag.join(';'))
   })
@@ -520,7 +551,10 @@ export function buildTimelinePrompt(args: {
     '硬性要求:画面必须符合真实物理规律——运动自然连贯,遵循重力、惯性与碰撞;' +
       '物体的形状、数量、比例、材质在镜头内保持稳定一致,不变形、不融化、不穿模、不凭空出现或消失;' +
       '人物与动物结构正常(四肢/手指数量正确、关节弯曲合理,不扭曲、不多肢);' +
-      '镜头运动与光影自然平滑,避免瞬移、抖动、鬼影、画面撕裂或不合理的速度突变。',
+      '镜头运动与光影自然平滑,避免瞬移、抖动、鬼影、画面撕裂或不合理的速度突变;' +
+      (hasSubtitle
+        ? '除各镜头指定的字幕外,画面中不得出现任何其他文字、标题、标语、水印或字符(场景实物本身自带的文字除外)。'
+        : NO_ONSCREEN_TEXT_REQUIREMENT),
   )
   return lines.filter(Boolean).join('\n')
 }
