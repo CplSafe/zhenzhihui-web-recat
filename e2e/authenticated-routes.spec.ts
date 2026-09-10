@@ -9,6 +9,8 @@ import {
   installStrictAuthenticatedApp,
   waitForScopedApiResponse,
 } from './fixtures/strict-authenticated-app'
+// 直接复用应用内的费用换算:文案或汇率再调整时断言自动跟随,不再手抄字符串(上次手抄在 CI 全浏览器炸过)
+import { creditsYuanLabel } from '../src/utils/creditsYuan'
 
 test.describe('已认证关键路由与读取链路', () => {
   test('模板库读取在线模板', async ({ page }) => {
@@ -381,9 +383,9 @@ test.describe('已认证关键路由与读取链路', () => {
     const confirm = page.getByRole('alertdialog', { name: '确认生成图片' })
     await expect(confirm).toBeVisible()
     await expect(confirm).toContainText('生成 3 张图片')
-    // 费用展示已从积分改为人民币（1 积分 = 0.02 元）：300 积分 → 约6元，每张 100 积分 → 约2元
-    await expect(confirm).toContainText('预计费用共 约6元')
-    await expect(confirm).toContainText('每张约2元')
+    // 费用文案由 creditsYuanLabel 换算（fixture 估价 100 积分/张 × 3 张），与应用共用同一实现
+    await expect(confirm).toContainText(`预计费用共 ${creditsYuanLabel(300)}`)
+    await expect(confirm).toContainText(`每张${creditsYuanLabel(100)}`)
     expect(
       api.seen.filter(
         (request) =>

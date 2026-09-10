@@ -55,3 +55,7 @@ nginx.conf
 
 # Claude Code 本地配置
 .claude/
+
+# 会话临时产物（文档封面 QA 图、简历脚本等，与前端工程无关）
+.tmp-doc-cover/
+tmp/

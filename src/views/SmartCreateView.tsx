@@ -8812,7 +8812,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                       stepCost.loading
                         ? '费用预估中…'
                         : stepCost.estimate
-                          ? // 积分不足时留空,由 ImageChat 统一渲染「积分不足,请前往充值积分」
+                          ? // 积分不足时留空,由 ImageChat 统一渲染「积分不足，请充值积分」
                             stepCost.estimate.canAfford === false ||
                             stepCost.estimate.estimatedCost > stepCost.estimate.balance
                             ? ''
@@ -8993,7 +8993,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                             <span className={insufficient ? 'smart__cost--err' : undefined}>
                               {insufficient ? (
                                 <>
-                                  {'积分不足,'}
+                                  {'积分不足，'}
                                   <button type="button" className="smart__cost-recharge" onClick={openMemberCenter}>
                                     请充值积分
                                   </button>

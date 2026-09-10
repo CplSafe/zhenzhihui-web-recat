@@ -280,7 +280,7 @@ describe('ImageChat', () => {
     const onNewChat = vi.fn()
     render(<ImageChat {...baseProps()} costText="约 20 积分 · 余额 5 积分" costInsufficient onNewChat={onNewChat} />)
 
-    await user.click(screen.getByRole('button', { name: '请前往充值积分' }))
+    await user.click(screen.getByRole('button', { name: '请充值积分' }))
     expect(mocks.openMemberCenter).toHaveBeenCalledOnce()
     await user.click(screen.getByRole('button', { name: '创建新对话' }))
     expect(onNewChat).toHaveBeenCalledOnce()
