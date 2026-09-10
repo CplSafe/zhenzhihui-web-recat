@@ -493,7 +493,9 @@ export function buildTimelinePrompt(args: {
   const lines: string[] = []
   const identityConstraint = String(args.identityConstraint || '').trim()
   if (identityConstraint) lines.push(identityConstraint)
-  lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面、旁白、字幕、音效。')
+  // 旁白/字幕/音效属于后期配音与贴片，让模型「对齐字幕」只会诱导它把中文画进画面（必然乱码）。
+  lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面内容与节奏。')
+  lines.push('旁白与音效仅用于理解各镜头的内容和节奏,由后期配音完成,不要在画面中呈现这些文字。')
   if (args.basePrompt) lines.push(`广告描述:${args.basePrompt}`)
   // 参考图是用户上传的素材(产品/真人),与镜头不是一一对应,所以镜号不能写成「图N」——
   // 那会让模型把第 N 张参考图理解成第 N 个镜头的画面。
@@ -507,8 +509,8 @@ export function buildTimelinePrompt(args: {
     const end = t + dur
     t = end
     const frag = [`镜头${i + 1}（${start}-${end}s）:${s?.desc || s?.no || `分镜${i + 1}`}`]
-    if (s?.line) frag.push(`旁白:「${s.line}」`)
-    if (s?.subtitle) frag.push(`字幕:「${s.subtitle}」`)
+    if (s?.line) frag.push(`旁白(后期配音,不上画面):「${s.line}」`)
+    // 字幕不喂给视频模型:它属于后期贴片,写进提示词只会被当成画面元素渲染成乱码文字。
     if (s?.sfx) frag.push(`音效:${s.sfx}`)
     lines.push(frag.join(';'))
   })
@@ -520,7 +522,8 @@ export function buildTimelinePrompt(args: {
     '硬性要求:画面必须符合真实物理规律——运动自然连贯,遵循重力、惯性与碰撞;' +
       '物体的形状、数量、比例、材质在镜头内保持稳定一致,不变形、不融化、不穿模、不凭空出现或消失;' +
       '人物与动物结构正常(四肢/手指数量正确、关节弯曲合理,不扭曲、不多肢);' +
-      '镜头运动与光影自然平滑,避免瞬移、抖动、鬼影、画面撕裂或不合理的速度突变。',
+      '镜头运动与光影自然平滑,避免瞬移、抖动、鬼影、画面撕裂或不合理的速度突变;' +
+      '画面中不得出现任何文字、字幕、标题、标语、水印或字符(场景实物本身自带的文字除外)。',
   )
   return lines.filter(Boolean).join('\n')
 }

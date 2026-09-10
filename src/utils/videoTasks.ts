@@ -88,6 +88,10 @@ export function buildVideoGenerationParams(model, params) {
     })
   }
 
+  // 与图片管线同一口径(smartShotImage/storyboardTasks):模型声明了 watermark 字段就显式关闭,未声明不下发。
+  const watermarkField = findFirstField(fields, ['watermark'])
+  if (watermarkField) payload[watermarkField.name] = false
+
   return payload
 }
 
