@@ -4,6 +4,7 @@ import {
   getModelReferenceImageLimit,
   getModelReferenceImageMinimum,
   getModelInputConstraints,
+  modelAcceptsSourceVideoInput,
   DEFAULT_REFERENCE_IMAGE_LIMIT,
 } from '@/utils/modelInputConstraints'
 
@@ -129,5 +130,38 @@ describe('buildModelRestrictionSummary + input_constraints', () => {
     }
     // schema 是模型自己声明的参数约束，比通用素材上限更贴近该模型的真实要求。
     expect(buildModelRestrictionSummary(model).constraints.referenceImages?.maximum).toBe(4)
+  })
+})
+
+/**
+ * 「确认修改·参考生视频」的门控：只有后端声明了 role:'video' 输入的模型才允许把
+ * 生成产物回喂 video.generate——盲目回喂曾被后端 ResolveProviderAsset 拒绝。
+ */
+describe('modelAcceptsSourceVideoInput', () => {
+  test('declared video role with a positive limit enables reference-to-video editing', () => {
+    const model = {
+      input_constraints: {
+        'video.generate': {
+          roles: [
+            { role: 'image', min_count: 0, max_count: 9 },
+            { role: 'video', min_count: 0, max_count: 1 },
+          ],
+        },
+      },
+    }
+    expect(modelAcceptsSourceVideoInput(model, 'video.generate')).toBe(true)
+  })
+
+  test('missing role or zero limit keeps the gate closed', () => {
+    const noVideoRole = {
+      input_constraints: { 'video.generate': { roles: [{ role: 'image', min_count: 0, max_count: 9 }] } },
+    }
+    const zeroLimit = {
+      input_constraints: { 'video.generate': { roles: [{ role: 'video', min_count: 0, max_count: 0 }] } },
+    }
+    expect(modelAcceptsSourceVideoInput(noVideoRole, 'video.generate')).toBe(false)
+    expect(modelAcceptsSourceVideoInput(zeroLimit, 'video.generate')).toBe(false)
+    expect(modelAcceptsSourceVideoInput({}, 'video.generate')).toBe(false)
+    expect(modelAcceptsSourceVideoInput(undefined, 'video.generate')).toBe(false)
   })
 })

@@ -136,6 +136,8 @@ interface VideoStageProps {
    * 估价失败时确认按钮保持禁用，避免用户在不知实际预估积分时提交。
    */
   onEstimateEditCost?: (note?: string) => Promise<VideoCostEstimate>
+  /** 「确认修改」将使用的模型与方式说明（如「修改将使用 X 以原片为参考重新生成」）；缺省不显示。 */
+  modificationPlanHint?: string
   /**
    * 本片不能用「视频修改」时的原因（如整片时长超出所选 video.edit 模型上限）。
    * 非空即隐藏修改输入、改按钮为「重新生成视频」，并把原因显示给用户；
@@ -277,6 +279,7 @@ export default function VideoStage({
   costLoading,
   costError,
   onEstimateEditCost,
+  modificationPlanHint = '',
   editDisabledReason = '',
   faceBlurDebug,
   videoVersions = [],
@@ -1381,6 +1384,12 @@ export default function VideoStage({
         </div>
       </div>
 
+      {/* 本次修改将使用的模型与方式：随编辑估价一起解析（参考生视频 / 视频编辑 / 跨模型回退） */}
+      {!videoGenerating && hasMods && modificationPlanHint && (
+        <div className={styles.vstageCost}>
+          <span>{modificationPlanHint}</span>
+        </div>
+      )}
       {/* 编辑态使用 video.edit 自身的后端 estimate-cost，不复用 video.generate 估价。 */}
       {!videoGenerating && hasMods && editCost.loading && (
         <div className={styles.vstageCost}>

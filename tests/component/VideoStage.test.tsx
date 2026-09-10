@@ -408,6 +408,39 @@ describe('VideoStage playback loading', () => {
     expect(onRegenerateVideo).toHaveBeenCalledWith('【整段视频】提高画面亮度', { edit: true })
   })
 
+  it('有修改意见时展示修改链路提示（参考生视频/编辑用哪个模型）', async () => {
+    const onEstimateEditCost = vi.fn().mockResolvedValue({ estimatedCost: 1500, balance: 297773, canAfford: true })
+    const hint = '修改将使用「Framora 1.0」以原片为参考重新生成'
+    render(
+      <VideoStage
+        shots={[]}
+        videoUrl="https://cdn.example.com/edit-source.mp4"
+        videoAssetId={2550}
+        modificationDraft={{ ...createEmptyVideoModificationDraft(), overallNote: '提高画面亮度' }}
+        modificationPlanHint={hint}
+        onEstimateEditCost={onEstimateEditCost}
+        onRegenerateVideo={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText(hint)).toBeInTheDocument()
+    expect(await screen.findByText(/预计费用 约30元/)).toBeInTheDocument()
+  })
+
+  it('没有修改意见时不显示修改链路提示', () => {
+    render(
+      <VideoStage
+        shots={[]}
+        videoUrl="https://cdn.example.com/edit-source.mp4"
+        videoAssetId={2550}
+        modificationPlanHint="修改将使用「Framora 1.0」以原片为参考重新生成"
+        onRegenerateVideo={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText(/修改将使用/)).not.toBeInTheDocument()
+  })
+
   it('视频编辑估价失败时保持提交门禁并提供重试', async () => {
     const onEstimateEditCost = vi.fn().mockRejectedValue(new Error('估价服务暂时不可用'))
     render(
