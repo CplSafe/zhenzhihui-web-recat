@@ -80,6 +80,40 @@ describe('buildTimelinePrompt', () => {
     expect(prompt).not.toContain('旁白(')
   })
 
+  /*
+   * 音频语义也跟脚本走:标注了什么配什么,全删则明确禁止模型自作主张配声音。
+   * (完全静音还需入口「背景音」开关配合;这里锁的是提示词侧不再点菜。)
+   */
+  it('台词音效字幕全删:提示词明确不要任何人声/配乐/特效音,也无任何文字内容', () => {
+    const prompt = buildTimelinePrompt({
+      shots: [
+        { no: '分镜1', desc: '人物走进店里', duration: '5s', line: '', subtitle: '', sfx: '' },
+        { no: '分镜2', desc: '特写产品', duration: '5s' },
+      ],
+      basePrompt: '一条奶茶店广告',
+    })
+
+    expect(prompt).toContain('不要添加任何旁白、人声、背景音乐与人为特效音')
+    expect(prompt).not.toContain('朗读')
+    expect(prompt).not.toContain('字幕(原样显示在画面下方)')
+    expect(prompt).not.toContain('音效:')
+    expect(prompt).toContain('画面中不得出现任何文字、字幕、标题、标语、水印或字符')
+  })
+
+  it('只有旁白没有音效:允许人声但不要配乐和特效音', () => {
+    const prompt = buildTimelinePrompt({ shots, basePrompt: '一条奶茶店广告' })
+    expect(prompt).toContain('除旁白人声外,不要添加背景音乐与人为特效音')
+  })
+
+  it('标注了音效:未标注的镜头不得加额外特效音', () => {
+    const prompt = buildTimelinePrompt({
+      shots: [{ no: '分镜1', desc: '开瓶', duration: '5s', sfx: '气泡声' }],
+    })
+    expect(prompt).toContain('音效标注用于生成对应的环境音与效果音')
+    expect(prompt).toContain('未标注音效的镜头不要添加额外特效音')
+    expect(prompt).toContain('音效:气泡声')
+  })
+
   it('删光字幕:字幕文本与对齐指令都不进提示词,完全禁止画面文字', () => {
     const prompt = buildTimelinePrompt({
       shots: [

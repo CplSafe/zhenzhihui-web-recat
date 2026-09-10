@@ -502,6 +502,7 @@ export function buildTimelinePrompt(args: {
   //   模糊的「对齐字幕」指令只会诱导模型自己编乱码字。
   const hasSubtitle = (args.shots || []).some((s) => String(s?.subtitle || '').trim())
   const hasLine = (args.shots || []).some((s) => String(s?.line || '').trim())
+  const hasSfx = (args.shots || []).some((s) => String(s?.sfx || '').trim())
   lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面内容与节奏。')
   if (hasLine) {
     lines.push(
@@ -515,7 +516,15 @@ export function buildTimelinePrompt(args: {
         '字符必须与给定文本完全一致,不得改写、增减、翻译或变形;未指定字幕的镜头不显示任何文字。',
     )
   }
-  lines.push('音效标注用于生成对应的环境音与效果音,与画面动作同步。')
+  // 音频语义同样跟着脚本走:标注了什么配什么,全删则明确不要任何配乐/人声/特效音。
+  // (音频总开关是入口的「背景音」;这里只约束模型别自作主张加声音内容。)
+  if (hasSfx) {
+    lines.push('音效标注用于生成对应的环境音与效果音,与画面动作同步;未标注音效的镜头不要添加额外特效音。')
+  } else if (hasLine) {
+    lines.push('除旁白人声外,不要添加背景音乐与人为特效音。')
+  } else {
+    lines.push('不要添加任何旁白、人声、背景音乐与人为特效音。')
+  }
   if (args.basePrompt) lines.push(`广告描述:${args.basePrompt}`)
   // 参考图是用户上传的素材(产品/真人),与镜头不是一一对应,所以镜号不能写成「图N」——
   // 那会让模型把第 N 张参考图理解成第 N 个镜头的画面。
