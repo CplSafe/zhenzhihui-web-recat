@@ -90,8 +90,9 @@ import {
   totalDurationSec,
   estimateFullVideoCost,
   estimateVideoEditCost,
-  resolveVideoEditModelSelection,
+  resolveVideoModificationPlan,
   compileFullVideoModelRequest,
+  type VideoModificationPlan,
 } from '@/api/smartVideo'
 import { listRealPeople } from '@/api/realPeople'
 import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
@@ -2183,6 +2184,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     error: string
     estimate: { estimatedCost: number; balance: number; canAfford: boolean } | null
   }>({ loading: false, error: '', estimate: null })
+  // 「确认修改」将使用的模型与方式提示（随编辑估价一起解析，展示在修改区）
+  const [videoModificationPlanHint, setVideoModificationPlanHint] = useState('')
   // 每一步调模型前的积分预估:step0 分镜脚本(文本)、step1/2 出图(单张图)。perImage=按单张口径显示。
   const [stepCost, setStepCost] = useState<{
     loading: boolean
@@ -2241,6 +2244,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       sourceVideo?: { url: string; assetId: number }
       sourceVideoDurationSec?: number
       videoEditPrompt?: string
+      /** 「确认修改」的执行方式：reference=同模型参考生视频（走 video.generate）；edit=video.edit。 */
+      modificationMode?: 'reference' | 'edit'
       /** 入队时锁定的真人身份锚点，任务执行期间不读取当前页面的可变选择。 */
       realPersonReference?: SmartRealPersonReference | null
       modelVersionId?: number
@@ -2995,16 +3000,17 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   }
 
   // 生成/重生成整片的单次执行单元;多条生成由外层队列顺序消费。
-  // 「确认修改」专走 video.edit（见 runVideoEditJob）;普通生成/重生成走 Seedance 整片模型。
+  // 「确认修改」按 resolveVideoModificationPlan 分流:video.edit 走 runVideoEditJob;
+  // 参考生视频（同模型 video.generate + 源视频 role:'video'）与普通生成共用本单元。
   const runVideoJob = async (
     job: VideoGenJob,
     sessionId = job.context?.sessionId || videoGenSessionIdRef.current,
     sessionQueue = videoGenQueueRef.current,
   ) => {
     const context = job.context
-    // 「确认修改」是另一条 operation（video.edit）：在此提前分流到专用执行单元，
-    // 绕开下面写死 video.generate 的模型锁校验与整片生成链路。
-    if (job.opts?.edit || context?.operationCode === 'video.edit') {
+    // video.edit 修改分流到专用执行单元；「参考生视频」修改的 operation 是 video.generate，
+    // 与普通生成共用下面的整片链路（只是额外带一条 role:'video' 的源视频输入）。
+    if (context?.operationCode === 'video.edit') {
       await runVideoEditJob(job, sessionId, sessionQueue)
       return
     }
@@ -3192,6 +3198,15 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             getModelReferenceImageLimit(context.modelVersion, 'video.generate'),
             getModelReferenceImageMinimum(context.modelVersion, 'video.generate'),
           )
+          // 「确认修改·参考生视频」：上一版整片以 role:'video' 一并下发，模型据此在原片基础上重新生成。
+          // 只有入队时按后端 input_constraints 判定该模型声明收 video 输入才会进入此分支
+          //（见 resolveVideoModificationPlan），不会再出现盲目回喂被后端拒绝的情况。
+          const referenceEditSourceAssetId =
+            context.modificationMode === 'reference' ? Number(context.sourceVideo?.assetId || 0) : 0
+          if (context.modificationMode === 'reference' && !referenceEditSourceAssetId) {
+            throw new Error('缺少可修改的源视频，尚未创建付费任务，请重新选择成片')
+          }
+          const referenceEditNote = referenceEditSourceAssetId > 0 ? context.videoEditPrompt || job.note : ''
           if (Number(workspaceIdRef.current || 0) !== ws) {
             throw new Error('工作空间已切换，本次视频生成已安全停止')
           }
@@ -3223,7 +3238,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             ...(realPersonIdentityName
               ? { identityConstraint: buildRealPersonVideoIdentityConstraint(realPersonIdentityName) }
               : {}),
-            note: job.note,
+            ...(referenceEditSourceAssetId > 0 ? { sourceVideoAssetId: referenceEditSourceAssetId } : {}),
+            note: referenceEditSourceAssetId > 0 ? referenceEditNote : job.note,
             variationIndex: job.variationIndex,
             variationTotal: job.variationTotal,
             modelVersionId: context?.modelVersionId,
@@ -3428,27 +3444,39 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       showToast('暂无分镜,无法生成视频', 'error')
       return
     }
-    // 「确认修改」专走 video.edit（在原成片上按修改意见微调）；普通生成走 video.generate。
-    // 两者是不同 operation：edit 的模型由后端按工作空间/套餐自动解析（不进入用户可选的模型面板），
-    // 这里入队时把它锁死成一个具体版本，后续估价、报价校验、正式提交都显式复用它。
-    const operationCode: GenerationOperationCode = opts?.edit ? 'video.edit' : 'video.generate'
+    // 「确认修改」按生成模型的后端声明分流（见 resolveVideoModificationPlan）：
+    // ① 模型声明收 role:'video' → 参考生视频（同模型走 video.generate 重新生成）；
+    // ② 模型自身声明 video.edit → 用它在原片上编辑；
+    // ③ 否则回退目录默认修改模型（跨模型编辑）。入队时锁死具体版本，估价/核价/提交显式复用。
+    let modificationPlan: VideoModificationPlan | null = null
     let modelSelection: { modelVersionId: number; source: any; displayName?: string } | null
     if (opts?.edit) {
       try {
-        const editModel = await resolveVideoEditModelSelection({ workspaceId: ws, modelPlanCandidates: [] })
+        const generationSelection = selectedGenerationModel(
+          'video.generate',
+          opts?.generationModels || entryMetaRef.current?.generationModels,
+        )
+        modificationPlan = await resolveVideoModificationPlan({
+          workspaceId: ws,
+          generationModelVersion: generationSelection?.source,
+          modelPlanCandidates: [],
+        })
         modelSelection = {
-          modelVersionId: editModel.modelVersionId,
-          source: editModel.modelVersion,
-          displayName: String(editModel.modelVersion?.name || editModel.modelVersion?.display_name || '视频修改模型'),
+          modelVersionId: modificationPlan.modelVersionId,
+          source: modificationPlan.modelVersion,
+          displayName: modificationPlan.displayName,
         }
       } catch (error: any) {
         showToast(getBusinessErrorMessage(error, error?.message || '当前工作空间暂无可用的视频修改模型'), 'error')
         return
       }
     } else {
-      modelSelection = requireGenerationModel(operationCode, opts?.generationModels)
+      modelSelection = requireGenerationModel('video.generate', opts?.generationModels)
     }
     if (!modelSelection) return
+    // 参考生视频与普通生成同为 video.generate，共用整片执行单元；只有 edit 模式走 video.edit 车道。
+    const editingViaEditOp = Boolean(opts?.edit && modificationPlan?.mode !== 'reference')
+    const operationCode: GenerationOperationCode = editingViaEditOp ? 'video.edit' : 'video.generate'
     const modelVersion = cloneGenerationSnapshot(modelSelection.source)
     const durationValidation = validateVideoDurationWithin(totalDurationSec(currentShots), supportedVideoDurations)
     if (!durationValidation.valid) {
@@ -3487,8 +3515,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     videoQueuePlanningRef.current = true
     setVideoQueuePlanning(true)
     try {
-      // 「确认修改」不带参考图（只在源视频上改），生成才需要按模型上下限校验入口素材。
-      const referenceImageAssetIds = opts?.edit
+      // video.edit 修改不带参考图（只在源视频上改）；参考生视频修改与普通生成一样带上入口素材
+      //（模型的参考图下限也要满足，源视频只是额外的 role:'video' 输入）。
+      const referenceImageAssetIds = editingViaEditOp
         ? []
         : requireReferenceImageAssetIds(
             generationMeta?.imageAssetIds || [],
@@ -3533,8 +3562,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       }
       {
         // edit 与 generate 是两个 operation，估价口径不同：edit 按源视频时长走 estimateVideoEditCost，
-        // generate 按分镜/参考图走 estimateFullVideoCost；两者都用锁定的模型版本，保证「预估 = 实扣」。
-        const estimate: any = opts?.edit
+        // generate（含参考生视频修改）按分镜/参考图走 estimateFullVideoCost；都用锁定的模型版本，保证「预估 = 实扣」。
+        const estimate: any = editingViaEditOp
           ? await estimateVideoEditCost({
               workspaceId: ws,
               ratio,
@@ -3689,6 +3718,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                     variationTotal,
                     queuedRealPersonReference?.personName || '',
                   ),
+                  modificationMode: modificationPlan?.mode || 'edit',
                 }
               : {}),
             modelVersionId: modelSelection.modelVersionId,
@@ -8520,15 +8550,55 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         onEstimateEditCost={async () => {
           const ws = Number(workspaceId || 0)
           if (!ws || !fullVideo.assetId || !fullVideo.url) throw new Error('缺少可修改的视频')
-          // 「确认修改」走专门的 video.edit 能力（在原成片上按修改意见微调），按源视频真实时长计费。
-          // 与真正提交时的 estimateVideoEditCost 完全同源，保证「预估 = 实扣」；
-          // 工作空间无视频修改模型时此处会抛错，VideoStage 据此禁用「确认修改」并显示原因。
+          // 先按生成模型的后端声明解析修改方式（与入队 resolveVideoModificationPlan 同源），
+          // 再按对应口径估价，保证「预估 = 实扣」；无可用修改链路时抛错，VideoStage 据此禁用入口。
+          const generationSelection = selectedGenerationModel('video.generate', entryMetaRef.current?.generationModels)
+          const plan = await resolveVideoModificationPlan({
+            workspaceId: ws,
+            generationModelVersion: generationSelection?.source,
+            modelPlanCandidates: [],
+          })
+          setVideoModificationPlanHint(
+            plan.mode === 'reference'
+              ? `修改将使用「${plan.displayName}」以原片为参考重新生成`
+              : plan.crossModelFallback
+                ? `当前模型不支持修改，将使用「${plan.displayName}」进行视频编辑`
+                : `修改将使用「${plan.displayName}」进行视频编辑`,
+          )
+          if (plan.mode === 'reference') {
+            // 参考生视频 = video.generate 口径：与入队/提交同参（分镜 + 入口参考图 + 锁定模型）
+            const referenceImageAssetIds = requireReferenceImageAssetIds(
+              entryMetaRef.current?.imageAssetIds || [],
+              getModelReferenceImageLimit(plan.modelVersion, 'video.generate'),
+              getModelReferenceImageMinimum(plan.modelVersion, 'video.generate'),
+            )
+            const result: any = await estimateFullVideoCost({
+              workspaceId: ws,
+              shots,
+              ratio: entryMeta?.ratio,
+              resolution: entryMeta?.resolution,
+              ...(typeof entryMeta?.generateAudio === 'boolean' ? { generateAudio: entryMeta.generateAudio } : {}),
+              referenceImageCount: referenceImageAssetIds.length,
+              imageAssetIds: referenceImageAssetIds,
+              modelVersionId: plan.modelVersionId,
+              modelVersion: plan.modelVersion,
+              modelPlanCandidates: [],
+            })
+            return {
+              estimatedCost: Number(result?.estimated_cost ?? 0),
+              balance: Number(result?.balance ?? 0),
+              canAfford: result?.can_afford === true,
+            }
+          }
+          // video.edit 口径：按源视频真实时长计费
           const sourceVideoDurationSec = (await readVideoDurationSec(fullVideo.url)) || 0
           const result: any = await estimateVideoEditCost({
             workspaceId: ws,
             ratio: entryMeta?.ratio,
             resolution: entryMeta?.resolution,
             sourceVideoDurationSec,
+            modelVersionId: plan.modelVersionId,
+            modelVersion: plan.modelVersion,
             modelPlanCandidates: [],
           })
           return {
@@ -8537,6 +8607,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             canAfford: result?.can_afford === true,
           }
         }}
+        modificationPlanHint={videoModificationPlanHint}
         videoVersions={videoVersions}
         failedGenerations={[...videoGenerations]
           .filter((g) => g.status === 'failed')

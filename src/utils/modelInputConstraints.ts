@@ -103,6 +103,20 @@ export function getModelReferenceImageLimit(
   return fallback
 }
 
+/** 「视频生视频」源视频输入的 role；与 smartVideo.SOURCE_VIDEO_INPUT_ROLE 同值（就近声明避免循环依赖）。 */
+const SOURCE_VIDEO_ROLE = 'video'
+
+/**
+ * 该模型在指定 operation 下是否声明接受 role:'video' 的源视频输入。
+ * 判定只信后端 input_constraints（提交时后端按同一份白名单强制执行）——
+ * 此前把生成产物盲目回喂 video.generate，曾因模型不收视频输入而被后端拒绝。
+ */
+export function modelAcceptsSourceVideoInput(model: unknown, operationCode = 'video.generate'): boolean {
+  const { roles } = getModelInputConstraints(model, operationCode)
+  const match = roles.find((entry) => entry.role === SOURCE_VIDEO_ROLE)
+  return Boolean(match && match.maxCount > 0)
+}
+
 /** 该模型在指定 operation 下要求的最少参考图数量；未声明时允许纯文本生成。 */
 export function getModelReferenceImageMinimum(model: unknown, operationCode: string): number {
   const { roles } = getModelInputConstraints(model, operationCode)

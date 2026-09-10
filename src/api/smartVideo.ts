@@ -20,7 +20,11 @@ import { parseDurationSeconds, validateSmartVideoDuration } from '@/utils/videoD
 import { resolveTaskVideoResult } from '@/utils/taskMedia'
 import { readAiTaskProgress } from '@/utils/taskProgress'
 import { requireReferenceImageAssetIds } from '@/utils/smartGenerationGuards'
-import { getModelReferenceImageLimit, getModelReferenceImageMinimum } from '@/utils/modelInputConstraints'
+import {
+  getModelReferenceImageLimit,
+  getModelReferenceImageMinimum,
+  modelAcceptsSourceVideoInput,
+} from '@/utils/modelInputConstraints'
 
 /** 整片生成与视频编辑的首选模型关键词。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
@@ -145,6 +149,82 @@ export async function resolveVideoEditModelSelection(args: {
   const modelVersionId = getBackendGenerationModelVersionId(model)
   if (!modelVersionId) throw new Error(VIDEO_EDIT_MODEL_UNAVAILABLE)
   return { modelVersionId, modelVersion: model }
+}
+
+/** 「确认修改」的执行方式：reference=同模型参考生视频重新生成；edit=video.edit 在原片上改。 */
+export type VideoModificationMode = 'reference' | 'edit'
+
+export interface VideoModificationPlan {
+  mode: VideoModificationMode
+  modelVersionId: number
+  modelVersion: any
+  displayName: string
+  /** true = 修改模型并非生成该视频的模型（目录回退），UI 需向用户明示。 */
+  crossModelFallback: boolean
+}
+
+/** 模型展示名（display_name/name/model 逐级回退）。 */
+function videoModelDisplayName(model: any): string {
+  return (
+    String(model?.display_name || model?.displayName || model?.name || model?.model || '')
+      .trim()
+      .replace(/\s+/g, ' ') || '视频模型'
+  )
+}
+
+/**
+ * 决定「确认修改」用哪条链路、哪个模型（优先级为产品确认的顺序）：
+ * ① 生成模型自身在 video.generate 下声明接受 role:'video' 源视频 → 参考生视频（同模型重新生成）
+ * ② 生成模型自身声明 video.edit → 用它在原片上编辑
+ * ③ 回退到目录默认修改模型（happyhorse）→ 跨模型编辑，crossModelFallback=true 供 UI 明示
+ *
+ * 判定只信后端 input_constraints / operation_codes 声明：此前把生成产物盲目回喂 video.generate
+ * 曾因模型不收视频输入被后端 ResolveProviderAsset 拒绝（"参考素材不可用"），所以门控交给后端配置——
+ * 后端给某个模型声明了 video 输入角色，即视为它可以摄取生成产物做参考生视频。
+ */
+export async function resolveVideoModificationPlan(args: {
+  workspaceId: number
+  /** 生成当前视频所用的模型记录（用户在入口选择的）；缺省时直接走目录回退。 */
+  generationModelVersion?: any
+  modelPlanCandidates?: string[]
+}): Promise<VideoModificationPlan> {
+  const generationModel = args.generationModelVersion
+  const generationModelId = generationModel ? getBackendGenerationModelVersionId(generationModel) : 0
+  if (generationModel && generationModelId) {
+    const locked =
+      generationModel?.id === generationModelId ? generationModel : { ...generationModel, id: generationModelId }
+    if (modelAcceptsSourceVideoInput(generationModel, 'video.generate')) {
+      return {
+        mode: 'reference',
+        modelVersionId: generationModelId,
+        modelVersion: locked,
+        displayName: videoModelDisplayName(generationModel),
+        crossModelFallback: false,
+      }
+    }
+    if (isVideoEditModel(generationModel)) {
+      return {
+        mode: 'edit',
+        modelVersionId: generationModelId,
+        modelVersion: locked,
+        displayName: videoModelDisplayName(generationModel),
+        crossModelFallback: false,
+      }
+    }
+  }
+  const fallback = await resolveVideoEditModel({
+    workspaceId: args.workspaceId,
+    modelPlanCandidates: args.modelPlanCandidates,
+  })
+  const fallbackId = getBackendGenerationModelVersionId(fallback)
+  if (!fallbackId) throw new Error(VIDEO_EDIT_MODEL_UNAVAILABLE)
+  return {
+    mode: 'edit',
+    modelVersionId: fallbackId,
+    modelVersion: fallback?.id === fallbackId ? fallback : { ...fallback, id: fallbackId },
+    displayName: videoModelDisplayName(fallback),
+    crossModelFallback: true,
+  }
 }
 
 /**
