@@ -495,17 +495,27 @@ export function buildTimelinePrompt(args: {
   const lines: string[] = []
   const identityConstraint = String(args.identityConstraint || '').trim()
   if (identityConstraint) lines.push(identityConstraint)
-  // 字幕开关跟着脚本走:填了字幕的镜头要求模型「原样」显示(禁止改写,防乱码);
-  // 全部删掉时则完全禁止画面出现文字——模糊的「对齐字幕」指令只会诱导模型自己编乱码字。
+  // 台词/字幕开关都跟着脚本走(产品确认的行为):
+  // - 填了旁白 → 模型把它作为配音「读出来」,与镜头时间段对齐(支持配音的模型直接口播;
+  //   不支持的忽略这条,不产生副作用)。旁白文字本身不上画面——上画面的只有字幕字段。
+  // - 填了字幕 → 要求「原样」显示(禁止改写,防乱码);全部删掉 → 完全禁止画面出现文字。
+  //   模糊的「对齐字幕」指令只会诱导模型自己编乱码字。
   const hasSubtitle = (args.shots || []).some((s) => String(s?.subtitle || '').trim())
+  const hasLine = (args.shots || []).some((s) => String(s?.line || '').trim())
   lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面内容与节奏。')
+  if (hasLine) {
+    lines.push(
+      '部分镜头标注了旁白/台词:请将其作为音频用自然流畅的普通话朗读出来,与该镜头时间段对齐,' +
+        '语气符合广告调性;画面中人物开口说话时口型要与台词匹配。旁白文字本身不要以文字形式出现在画面中。',
+    )
+  }
   if (hasSubtitle) {
     lines.push(
       '部分镜头指定了字幕:请在对应时间段将字幕文字清晰地显示在画面下方,' +
         '字符必须与给定文本完全一致,不得改写、增减、翻译或变形;未指定字幕的镜头不显示任何文字。',
     )
   }
-  lines.push('旁白与音效仅用于理解各镜头的内容和节奏,由后期配音完成,不要在画面中呈现这些文字。')
+  lines.push('音效标注用于生成对应的环境音与效果音,与画面动作同步。')
   if (args.basePrompt) lines.push(`广告描述:${args.basePrompt}`)
   // 参考图是用户上传的素材(产品/真人),与镜头不是一一对应,所以镜号不能写成「图N」——
   // 那会让模型把第 N 张参考图理解成第 N 个镜头的画面。
@@ -519,7 +529,7 @@ export function buildTimelinePrompt(args: {
     const end = t + dur
     t = end
     const frag = [`镜头${i + 1}（${start}-${end}s）:${s?.desc || s?.no || `分镜${i + 1}`}`]
-    if (s?.line) frag.push(`旁白(后期配音,不上画面):「${s.line}」`)
+    if (s?.line) frag.push(`旁白(用普通话配音朗读,文字不上画面):「${s.line}」`)
     if (String(s?.subtitle || '').trim()) frag.push(`字幕(原样显示在画面下方):「${String(s.subtitle).trim()}」`)
     if (s?.sfx) frag.push(`音效:${s.sfx}`)
     lines.push(frag.join(';'))

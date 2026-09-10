@@ -56,6 +56,30 @@ describe('buildTimelinePrompt', () => {
     expect(prompt).not.toContain('对齐画面、旁白、字幕')
   })
 
+  /*
+   * 旁白必须被「读出来」:此前提示词写「由后期配音完成」,等于告诉支持配音的模型
+   * (万相 3.0/Framora 等)不要出声,成片只剩环境音效。改为明确要求普通话朗读+对口型;
+   * 不支持配音的模型会忽略这条,无副作用。
+   */
+  it('填了旁白:要求作为音频朗读并对口型,文字仍不上画面', () => {
+    const prompt = buildTimelinePrompt({ shots, basePrompt: '一条奶茶店广告' })
+
+    expect(prompt).toContain('请将其作为音频用自然流畅的普通话朗读出来')
+    expect(prompt).toContain('口型要与台词匹配')
+    expect(prompt).toContain('旁白(用普通话配音朗读,文字不上画面):「这家店我来对了」')
+    expect(prompt).not.toContain('由后期配音完成')
+  })
+
+  it('没有任何旁白时不出现朗读指令', () => {
+    const prompt = buildTimelinePrompt({
+      shots: [{ no: '分镜1', desc: '特写产品', duration: '5s' }],
+      basePrompt: '一条奶茶店广告',
+    })
+
+    expect(prompt).not.toContain('朗读')
+    expect(prompt).not.toContain('旁白(')
+  })
+
   it('删光字幕:字幕文本与对齐指令都不进提示词,完全禁止画面文字', () => {
     const prompt = buildTimelinePrompt({
       shots: [
@@ -67,8 +91,8 @@ describe('buildTimelinePrompt', () => {
 
     expect(prompt).not.toContain('字幕(原样显示在画面下方)')
     expect(prompt).not.toContain('部分镜头指定了字幕')
-    // 旁白保留为配音语义,供模型把握节奏,但明确不上画面
-    expect(prompt).toContain('旁白(后期配音,不上画面):「这家店我来对了」')
+    // 旁白仍要求配音朗读,但文字不上画面
+    expect(prompt).toContain('旁白(用普通话配音朗读,文字不上画面):「这家店我来对了」')
     expect(prompt).toContain('画面中不得出现任何文字、字幕、标题、标语、水印或字符')
   })
 })
