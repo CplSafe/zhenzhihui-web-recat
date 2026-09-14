@@ -51,6 +51,9 @@ describe('smart script generation', () => {
     expect(result).toHaveLength(1)
     expect(mocks.streamResponseText).toHaveBeenCalledWith(
       expect.objectContaining({
+        system: expect.stringMatching(
+          /高风险物理交互.*一个主要接触动作.*标准工具名称.*直接受力对象.*旋转中心轴.*运动平面.*活动扳手.*固定钳口.*相邻镜头.*场景动作语义.*体育动作.*液体.*镜头推拉/,
+        ),
         images: images.slice(0, 6),
         imageAssetIds: imageAssetIds.slice(0, 6),
         modelVersionId: 801,
@@ -242,7 +245,12 @@ describe('single-shot generation and subject normalization', () => {
       subjects: [{ tag: '@精华液瓶', kind: '产品' }],
     })
     expect(mocks.runResponseText).toHaveBeenCalledWith(
-      expect.objectContaining({ images: images.slice(0, 6), maxTokens: 1500, modelVersionId: 802 }),
+      expect.objectContaining({
+        system: expect.stringMatching(/高风险物理交互.*建立正确接触.*旋转中心轴.*活动扳手.*固定特写.*微调手指/),
+        images: images.slice(0, 6),
+        maxTokens: 1500,
+        modelVersionId: 802,
+      }),
     )
   })
 

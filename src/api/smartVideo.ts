@@ -484,6 +484,100 @@ export function compileFullVideoModelRequest(
 }
 
 /** 时间线脚本提示词:逐段对齐 画面/旁白/字幕/音效(端口自 2.0 buildVideoPromptFromTimeline)。 */
+/**
+ * 为整片修改的 AI 润色提供权威分镜边界与画面语义。
+ * 润色模型可据此将用户的粗略时间范围收窄到真正包含目标动作的镜头。
+ */
+export function buildVideoEditPolishContext(shots: any[]): string {
+  if (!Array.isArray(shots) || shots.length === 0) return ''
+  const formatClock = (seconds: number) =>
+    `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
+  let cursor = 0
+  const timeline = shots.map((shot, index) => {
+    const duration = shotDurSec(shot)
+    const start = cursor
+    const end = cursor + duration
+    cursor = end
+    return `${formatClock(start)}–${formatClock(end)} 镜头${index + 1}：${String(shot?.desc || shot?.no || '未提供画面描述').trim()}`
+  })
+  return ['【当前视频分镜时间线（权威上下文）】', ...timeline].join('\n')
+}
+
+/** 首次生成视频时，将分镜里的精细物理动作补成视频模型可执行的空间关系。 */
+export function buildPhysicalInteractionGenerationGuidance(shots: any[]): string {
+  const descriptions = (Array.isArray(shots) ? shots : []).map((shot) => String(shot?.desc || '')).join('\n')
+  const rules: string[] = []
+  const addRule = (pattern: RegExp, ...matchedRules: string[]) => {
+    if (pattern.test(descriptions)) rules.push(...matchedRules)
+  }
+
+  addRule(
+    /(?:手持|手握|握住|抓住|拿起|放下|递给|传递|按压|推动|拉动|夹住|卡住|工具|扳手|螺丝刀|剪刀|刀具|钳子|锤子|电钻)/,
+    '手与物体操作：把手、工具和直接受力对象视为独立且结构固定的实体；明确手指或工具的有效接触部位、移动轨迹与结束位置。先建立正确接触再执行单一动作，接触期间不得滑脱、漂移、悬浮、穿模或改变工具结构。',
+  )
+
+  addRule(
+    /(?:走路|行走|跑步|奔跑|起跑|跳跃|起跳|落地|坐下|起身|站起|转身|弯腰|下蹲)/,
+    '人物运动：保持人物身份、服装、肢体数量和身体比例一致；动作必须具有明确朝向、支撑脚、重心转移、运动路径与结束姿态，脚掌与地面接触自然，避免滑步、漂浮、关节反折或身体瞬移。',
+  )
+
+  addRule(
+    /(?:篮球|足球|排球|网球|羽毛球|球拍|运球|投篮|扣篮|踢球|传球|接球|挥拍|击球|举重)/,
+    '体育动作：明确手脚或球拍与器械的接触点、发力链、释放时刻、球或器械的连续运动轨迹和目标位置；接触前后速度方向连续，人物不得多肢，球体不得粘手、穿体、瞬移或改变数量。',
+  )
+
+  addRule(
+    /(?:切菜|切片|切割|剁|搅拌|翻炒|倒入|倒水|倒出|装盘|开盖|烹饪|锅|菜刀|砧板)/,
+    '烹饪操作：保持刀刃、锅具、容器开口和食材结构正确；写实呈现工具与食材或容器的接触面、动作方向和操作结果。手指避开刀刃，食材变化与每次切割或翻炒动作一一对应。',
+  )
+
+  addRule(
+    /(?:开箱|拆封|包装|开盖|合盖|按键|按钮|挤压|挤出|涂抹|喷洒|佩戴|组装|拆卸|插入|拔出)/,
+    '产品操作：锁定产品的品牌外观、数量、尺寸和可动部件；明确操作部位、施力方向、运动路径、开始状态与结束状态，开合、挤压、插拔或组装结果必须由连续动作产生，不得凭空切换。',
+  )
+
+  addRule(
+    /(?:握手|拥抱|搀扶|牵手|击掌|递给|传递|接过|多人互动|肢体接触)/,
+    '多人互动：分别锁定每个人物的身份和肢体归属；明确动作先后、双方接触部位、遮挡关系和分离后的状态，禁止手臂归属混乱、肢体融合、多手多指或人物身份互换。',
+  )
+
+  addRule(
+    /(?:穿衣|脱衣|戴上|摘下|眼镜|手表|帽子|耳机|项链|戒指|系鞋带|整理头发)/,
+    '穿戴与配饰：明确左右侧、佩戴身体部位、配饰开合结构、移动路径和最终朝向；配饰尺寸与人物一致，穿戴后保持固定接触和遮挡，不得穿过身体、复制或中途换款。',
+  )
+
+  addRule(
+    /(?:开车|驾驶|上车|下车|车门|方向盘|骑车|骑行|自行车|摩托车|刹车|油门|踏板)/,
+    '交通动作：保持人物与座椅、车门、方向盘、车把或踏板的空间接触正确；车辆前进方向、车轮转动、人物操作和背景视差一致，禁止车轮滑移、车体变形或人物穿过车辆。',
+  )
+
+  addRule(
+    /(?:液体|水流|饮料|倒水|倒入|倒出|倾倒|滴落|喷洒|粉末|颗粒|烟雾|蒸汽|火焰)/,
+    '流体与颗粒：明确来源容器、实际出口、重力或气流方向、连续流动轨迹和落点；流量与容器倾角一致，源容器与目标容器的液面或体积连续变化，不得逆重力、断流、穿过容器或凭空增减。',
+  )
+
+  addRule(
+    /(?:运镜|推镜|拉镜|镜头推进|镜头拉远|拉远|摇镜|镜头平移|跟拍|环绕|变焦|升降镜头|相机移动|相机旋转)/,
+    '镜头运动：区分相机位移、相机旋转和光学变焦；明确运动方向、速度、起止构图和主体在画面中的相对位置。一次镜头只采用一种主要运镜，避免同时环绕、变焦和快速摇移造成主体结构漂移。',
+  )
+
+  if (/(?:旋转|拧紧|拧松|顺时针|逆时针|扳动)/.test(descriptions)) {
+    rules.push(
+      '涉及旋转时，以各镜头desc给出的观察方向为准，严格围绕指定中心轴，在与该轴垂直的指定平面内沿圆弧运动；手、手指与工具同步运动，不得把旋转误解为上下提拉、直线平移或工具自身翻滚。',
+    )
+  }
+
+  if (/活动扳手|活口扳手|活络扳手/.test(descriptions)) {
+    rules.push(
+      '活动扳手专项：画面中每把扳手只能有一个固定钳口、一个活动钳口、一个调节蜗轮和一根连续完整的手柄；两个钳口处于同一平面，形成唯一开口。禁止额外钳口、重复工具、双层轮廓、结构分叉或金属部件增生。',
+      '活动扳手夹持六角螺母或六角螺栓头时，两个钳口分别贴合紧固件相对的两个平面，不接触螺纹且不顶住棱角；旋转过程中钳口间距、蜗轮位置以及手与手柄的握持关系保持不变。',
+    )
+  }
+
+  if (!rules.length) return ''
+  return ['【场景动作生成规则（按当前分镜动态匹配，优先于普通画面描述）】', ...rules].join('\n')
+}
+
 export function buildTimelinePrompt(args: {
   shots: any[]
   basePrompt?: string
@@ -503,6 +597,12 @@ export function buildTimelinePrompt(args: {
   const hasSubtitle = (args.shots || []).some((s) => String(s?.subtitle || '').trim())
   const hasLine = (args.shots || []).some((s) => String(s?.line || '').trim())
   const hasSfx = (args.shots || []).some((s) => String(s?.sfx || '').trim())
+  const hasHighRiskPhysicalInteraction = (args.shots || []).some((shot) =>
+    /(?:手持|手握|握住|抓住|拿起|拿住|拾取|传递|递给|夹住|卡住|拧紧|旋转|开合|拆装|穿戴|手指|手掌|手腕|工具|扳手|螺丝刀|剪刀|刀具|钳子|机械部件|器械|篮球|足球|球拍|肢体接触)/.test(
+      String(shot?.desc || ''),
+    ),
+  )
+  const sceneActionGuidance = buildPhysicalInteractionGenerationGuidance(args.shots)
   lines.push('请按照下面的时间线生成一条短视频广告,逐段对齐画面内容与节奏。')
   if (hasLine) {
     lines.push(
@@ -530,6 +630,15 @@ export function buildTimelinePrompt(args: {
   // 那会让模型把第 N 张参考图理解成第 N 个镜头的画面。
   if ((args.shots || []).length) {
     lines.push('参考图提供画面中出现的产品与人物形象,请在所有镜头中保持它们的外观一致,不要替换或重新设计。')
+  }
+  if (sceneActionGuidance) lines.push(sceneActionGuidance)
+  if (hasHighRiskPhysicalInteraction) {
+    lines.push(
+      '检测到手部、工具、器械或机械部件的精细物理交互:必须优先保证物体关键结构完整、数量和尺度不变;' +
+        '明确的手指/手掌接触、夹持、遮挡、透视和受力关系必须在相关镜头的所有帧中连续稳定;' +
+        '物体跟随手部或机械运动轨迹,不得穿模、悬浮、滑脱、错位、形变、多出部件、闪烁或中途替换;' +
+        '为保证正确接触,允许在不改变动作意图的前提下微调手指、手腕、物体角度和局部位置。',
+    )
   }
   let t = 0
   ;(args.shots || []).forEach((s, i) => {
