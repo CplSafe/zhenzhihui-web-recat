@@ -63,3 +63,50 @@ export async function readVideoDurationSec(url: string, timeoutMs = 8000): Promi
   const seconds = await readVideoDurationSecExact(url, timeoutMs)
   return seconds > 0 ? Math.round(seconds) : 0
 }
+
+export interface VideoMetadata {
+  durationSec: number
+  width: number
+  height: number
+}
+
+/** 读取视频真实时长与像素尺寸；读取失败时返回全零，调用方可安全回退草稿参数。 */
+export function readVideoMetadata(url: string, timeoutMs = 8000): Promise<VideoMetadata> {
+  return new Promise((resolve) => {
+    if (!url) return resolve({ durationSec: 0, width: 0, height: 0 })
+    const video = document.createElement('video')
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      const durationSec = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
+      const width = Number.isFinite(video.videoWidth) && video.videoWidth > 0 ? video.videoWidth : 0
+      const height = Number.isFinite(video.videoHeight) && video.videoHeight > 0 ? video.videoHeight : 0
+      video.removeAttribute('src')
+      video.load()
+      resolve({ durationSec, width, height })
+    }
+    video.preload = 'metadata'
+    video.muted = true
+    video.onloadedmetadata = finish
+    video.onerror = finish
+    window.setTimeout(finish, timeoutMs)
+    video.src = url
+  })
+}
+
+/** 按视频短边推导模型常用的分辨率档位。 */
+export function videoResolutionFromDimensions(width: number, height: number): string {
+  const shortEdge = Math.min(Number(width) || 0, Number(height) || 0)
+  if (shortEdge >= 2160) return '4k'
+  if (shortEdge >= 1080) return '1080p'
+  if (shortEdge >= 768) return '768p'
+  if (shortEdge >= 720) return '720p'
+  return shortEdge > 0 ? `${Math.round(shortEdge)}p` : ''
+}
+
+/** 判断输出视频是否在任一像素维度上低于原片；缺少尺寸时不误判。 */
+export function isVideoResolutionLower(source: VideoMetadata, output: VideoMetadata): boolean {
+  if (source.width <= 0 || source.height <= 0 || output.width <= 0 || output.height <= 0) return false
+  return output.width < source.width || output.height < source.height
+}

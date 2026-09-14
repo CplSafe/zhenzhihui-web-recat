@@ -165,6 +165,8 @@ interface VideoStageProps {
   /** 未提交的修改框、范围和各历史版本说明；父级传入后会随项目草稿持久化。 */
   modificationDraft?: VideoModificationDraft
   onModificationDraftChange?: Dispatch<SetStateAction<VideoModificationDraft>>
+  /** 是否展示并启用整段视频修改；爆款复刻只允许重新生成，不开放成片编辑。 */
+  allowVideoModification?: boolean
   onSwitchVideo?: (v: { url: string; assetId: number }) => void
   /**
    * 主播放器地址失效时刷新当前视频的临时访问地址。
@@ -185,7 +187,7 @@ interface VideoStageProps {
    * 修改意见的 AI 润色入口。智能成片由父级注入已锁定模型，
    * 其他复用方未传时继续沿用组件原有的自动模型行为。
    */
-  onPolishText?: (kind: 'segment' | 'generic', text: string) => Promise<string>
+  onPolishText?: (kind: 'segment' | 'video-edit', text: string) => Promise<string>
   onPrev?: () => void
   /** 「重新生成视频/确认修改」按钮的数量选择(与智能成片底栏 split 按钮同样式) */
   regenCount?: number
@@ -282,6 +284,7 @@ export default function VideoStage({
   pendingVideoCount = 0,
   modificationDraft,
   onModificationDraftChange,
+  allowVideoModification = true,
   onSwitchVideo,
   onRefreshVideo,
   onRegenerateVideo,
@@ -810,13 +813,14 @@ export default function VideoStage({
 
   // 整段修改说明送视频编辑；片段修改入口已下线，不再读取旧草稿中的片段内容。
   const buildNote = (): string | undefined => {
+    if (!allowVideoModification) return undefined
     const ov = overallNote.trim()
     return ov ? `【整段视频】${ov}` : undefined
   }
 
   // 本片不支持视频修改时，草稿里可能还留着上一版的修改文字：一律不当作修改，
   // 否则主按钮会变成「确认修改」并去请求一个必然失败的 video.edit。
-  const editDisabled = Boolean(editDisabledReason)
+  const editDisabled = !allowVideoModification || Boolean(editDisabledReason)
   // 有整段修改时主按钮显示「确认修改」；旧草稿中的片段修改不再触发编辑任务。
   const hasMods = !editDisabled && overallNote.trim().length > 0
   const editRequestSignature = JSON.stringify({
@@ -1250,21 +1254,21 @@ export default function VideoStage({
               </div>
             </div>
           )}
-          {showTimeline && editDisabled ? (
+          {allowVideoModification && showTimeline && editDisabled ? (
             <div className={styles.vstageRightHint} role="note">
               {editDisabledReason}
             </div>
-          ) : showTimeline ? (
+          ) : allowVideoModification && showTimeline ? (
             <ModBox
               title="整段视频修改"
               value={overallNote}
-              polishKind="generic"
+              polishKind="video-edit"
               onChange={setOverallNote}
               onPolishText={onPolishText}
             />
-          ) : (
+          ) : allowVideoModification ? (
             <div className={styles.vstageRightHint}>视频生成后,可在此对整段视频提修改意见。</div>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -1567,9 +1571,9 @@ function ModBox({
   title: string
   range?: string
   value: string
-  polishKind: 'segment' | 'generic'
+  polishKind: 'segment' | 'video-edit'
   onChange: (v: string) => void
-  onPolishText?: (kind: 'segment' | 'generic', text: string) => Promise<string>
+  onPolishText?: (kind: 'segment' | 'video-edit', text: string) => Promise<string>
   onRemove?: () => void
   /** 片段框:点击把当前时间轴选区写入本框 */
   onCapture?: () => void
@@ -1633,7 +1637,11 @@ function ModBox({
           id={inputId}
           className={styles.vstageModInput}
           value={draftValue}
-          placeholder={polishKind === 'segment' ? '输入对这一片段的视频修改描述...' : '输入对整段视频的修改描述...'}
+          placeholder={
+            polishKind === 'segment'
+              ? '请说明要修改的画面、目标效果，以及需要保持不变的内容。'
+              : '用简单的话说明哪段画面有什么问题、希望怎么改，AI会自动补全专业指令。\n例如：6秒到11秒，扳手应该横着拧螺母，不要上下动。'
+          }
           onFocus={() => {
             focusedRef.current = true
           }}

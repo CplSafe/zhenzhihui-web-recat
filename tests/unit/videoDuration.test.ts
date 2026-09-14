@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { formatVideoDurationLabel, formatVideoTimeLabel, readVideoDurationSec } from '@/utils/videoDuration'
+import {
+  formatVideoDurationLabel,
+  formatVideoTimeLabel,
+  readVideoDurationSec,
+  readVideoMetadata,
+  isVideoResolutionLower,
+  videoResolutionFromDimensions,
+} from '@/utils/videoDuration'
 
 describe('formatVideoTimeLabel', () => {
   it.each([
@@ -37,6 +44,8 @@ describe('formatVideoDurationLabel', () => {
 
 interface FakeVideo {
   duration: number
+  videoWidth: number
+  videoHeight: number
   preload: string
   muted: boolean
   src: string
@@ -57,6 +66,8 @@ describe('readVideoDurationSec', () => {
       if (tagName.toLowerCase() !== 'video') return realCreateElement(tagName, options)
       const video: FakeVideo = {
         duration: 0,
+        videoWidth: 0,
+        videoHeight: 0,
         preload: '',
         muted: false,
         src: '',
@@ -129,5 +140,36 @@ describe('readVideoDurationSec', () => {
     await vi.advanceTimersByTimeAsync(1)
     await expect(result).resolves.toBe(7)
     expect(video.load).toHaveBeenCalledOnce()
+  })
+
+  it('reads duration and dimensions from source metadata', async () => {
+    const result = readVideoMetadata('/source.mp4')
+    const video = created[0]
+    video.duration = 15.2
+    video.videoWidth = 1920
+    video.videoHeight = 1080
+    video.onloadedmetadata?.()
+    await expect(result).resolves.toEqual({ durationSec: 15.2, width: 1920, height: 1080 })
+  })
+})
+
+describe('videoResolutionFromDimensions', () => {
+  it.each([
+    [1920, 1080, '1080p'],
+    [1080, 1920, '1080p'],
+    [1280, 720, '720p'],
+    [0, 0, ''],
+  ])('maps %sx%s to %s', (width, height, expected) => {
+    expect(videoResolutionFromDimensions(width, height)).toBe(expected)
+  })
+})
+
+describe('isVideoResolutionLower', () => {
+  const metadata = (width: number, height: number) => ({ durationSec: 10, width, height })
+
+  it('rejects lower output while tolerating equal or unavailable metadata', () => {
+    expect(isVideoResolutionLower(metadata(1920, 1080), metadata(1280, 720))).toBe(true)
+    expect(isVideoResolutionLower(metadata(1920, 1080), metadata(1920, 1080))).toBe(false)
+    expect(isVideoResolutionLower(metadata(0, 0), metadata(1280, 720))).toBe(false)
   })
 })

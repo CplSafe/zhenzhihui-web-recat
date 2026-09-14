@@ -3,7 +3,7 @@
  *
  * 页面包含素材上传与视频生成两个阶段。它不经过智能成片的脚本和分镜管线，
  * 而是把参考视频与替换素材提交给 video.replicate；生成结果可预览、下载、
- * 重新生成或按整片/片段意见继续修改。项目草稿、任务编号、生成进度和历史版本
+ * 重新生成。项目草稿、任务编号、生成进度和历史版本
  * 会持久化，确保刷新或切页后能够恢复正在运行的任务及已经完成的结果。
  *
  * 本文件负责流程编排、任务恢复和草稿保存，具体入口与成片界面由 hotcopy/smart 组件负责。
@@ -29,7 +29,6 @@ import {
   type HotCopyReplicateQuote,
   type HotCopyReplicateSnapshot,
 } from '@/api/hotCopy'
-import { editFullVideo, estimateVideoEditCost } from '@/api/smartVideo'
 import { blurFacesOnAsset, isNoFaceDetectedError } from '@/api/smartFaceBlur'
 import { compressImageFileForFaceDetect } from '@/utils/imageFile'
 import { readVideoDurationSec } from '@/utils/videoDuration'
@@ -86,13 +85,7 @@ import {
   getAiTaskId,
 } from '@/api/business'
 import { LEGACY_DEFAULT_VIDEO_RESOLUTION, getModelParamOptions, normalizeVideoResolution } from '@/utils/videoOptions'
-import {
-  useWorkspaceId,
-  useCurrentUser,
-  useModelPlanCandidates,
-  useWorkspaceSessionStore,
-  deriveModelPlanCandidates,
-} from '@/stores/workspaceSession'
+import { useWorkspaceId, useCurrentUser } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { useHotCopyModelCatalog } from '@/composables/useHotCopyModelCatalog'
 import { openComingSoon, useUiStore } from '@/stores/ui'
@@ -164,9 +157,6 @@ const STEPS: StepItem[] = [
 const DEFAULT_RATIO = '16:9'
 /** 源视频时长尚未读取时的默认生成秒数。 */
 const DEFAULT_DURATION_SEC = 10
-
-/** 模型套餐查询不得无限阻塞用户提交的超时时间。 */
-const HOT_COPY_PLAN_LOOKUP_TIMEOUT_MS = 6000
 
 /** 修复历史草稿中缺少流程/秒数约束的旧项目名称。 */
 function repairLegacyHotCopyProjectName(args: {
@@ -245,11 +235,6 @@ interface HotCopyJobContext {
   allowCreativeReplace?: boolean
   /** 本次生成刚创建的独立项目；素材准备期间的变化均属于同一生成事务。 */
   ownsNewProject?: boolean
-}
-
-/** 成片修改与重新生成共用入口的可选参数。 */
-interface HotCopyRegenerateOptions {
-  edit?: boolean
 }
 
 /** 后台任务进行中需要增量写入草稿的恢复字段。 */
@@ -434,21 +419,6 @@ function mergeVideoVersions(...groups: any[]): VideoVersion[] {
 /** 判断任务错误是否明确表示用户/服务端取消。 */
 function isTaskCancelled(error: any): boolean {
   return String(error?.code || '').toUpperCase() === 'TASK_CANCELLED'
-}
-
-/** 最多等待指定时长收口 Promise，超时仅停止等待而不取消后台任务。 */
-async function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promise<void> {
-  let timer = 0
-  try {
-    await Promise.race([
-      promise.catch(() => undefined),
-      new Promise<void>((resolve) => {
-        timer = window.setTimeout(resolve, timeoutMs)
-      }),
-    ])
-  } finally {
-    if (timer) window.clearTimeout(timer)
-  }
 }
 
 /** 从当前草稿和恢复来源中读取与源视频资产匹配的真实时长。 */
@@ -846,23 +816,6 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   }, [requireAuth, location.pathname, location.search])
   const workspaceIdRef = useRef(0)
   workspaceIdRef.current = Number(workspaceId || 0)
-  const modelPlanCandidates = useModelPlanCandidates() as string[]
-  const modelPlanCandidatesRef = useRef(modelPlanCandidates)
-  modelPlanCandidatesRef.current = modelPlanCandidates
-  const ensureModelPlanCandidatesLoaded = useWorkspaceSessionStore((s) => s.ensureModelPlanCandidatesLoaded)
-
-  const resolvePlanCandidates = useLatestCallback(async (): Promise<string[]> => {
-    try {
-      // 套餐仅用于模型候选，不能无限阻塞正式任务；超时后使用当前已加载候选走原模型查询。
-      await settleWithin(ensureModelPlanCandidatesLoaded(), HOT_COPY_PLAN_LOOKUP_TIMEOUT_MS)
-    } catch {
-      /* 失败用兜底候选 */
-    }
-    return (
-      (deriveModelPlanCandidates(useWorkspaceSessionStore.getState()) as string[]) || modelPlanCandidatesRef.current
-    )
-  })
-
   const [started, setStarted] = useState(false) // false=入口(上传步), true=生成视频步
   const [entryKey, setEntryKey] = useState(0) // 「创建新视频」自增 → 重挂载入口页,清空其内部输入状态
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -4221,14 +4174,11 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     }
   }
 
-  // VideoStage「重新生成 / 确认修改」:
-  //  - opts.edit=true(「确认修改」)且已有整片时:走视频编辑(video.edit,模型 happyhorse-1.0-video-edit),
-  //    在已生成的整片基础上按修改意见微调(与智能成片一致),不再用 video.replicate 从源视频重做同款。
-  //  - 否则(「重新生成」):基于已上传的源视频 + 替换素材重跑 replicate。
+  // VideoStage「重新生成」:基于已上传的源视频 + 替换素材重跑 replicate。
   const withPreviousVideoHint = (message: string) =>
     hasVideoResult(fullVideo, videoVersions) ? `${message}；当前播放的是上一版成功视频` : message
 
-  const regenerate = async (note?: string, opts?: HotCopyRegenerateOptions) => {
+  const regenerate = async (note?: string) => {
     const ws = Number(workspaceId || 0)
     if (!ws) {
       showToast('未选择工作空间,无法生成视频', 'error')
@@ -4248,113 +4198,6 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       return
     }
     terminalJobResultsRef.current.delete(lockedProjectId)
-
-    // 「确认修改」:把当前整片当 video 输入,按修改提示在原视频基础上改
-    if (opts?.edit && fullVideo.assetId) {
-      setVidGenRunning(true)
-      setHotCopyPhase('视频修改生成中…')
-      setHotCopyProviderProgress(null)
-      const generation = reserveGen('确认修改', note || '')
-      const context = createJobContext({
-        epoch,
-        workspaceId: ws,
-        projectId: lockedProjectId,
-        generation,
-        title: projectName,
-        prompt: note || basePrompt,
-        ratio: genRatio,
-        resolution: genResolution,
-        durationSec: genDurationSec,
-        operationCode: 'video.edit',
-        entryInitial,
-      })
-      upsertHotCopyTaskCenter(context, 'preparing', { taskId: 0 })
-      beginPendingUiGeneration(generation)
-      void persistTrackedHotCopyJobProgress(context, { status: 'preparing', taskId: 0, entryInitial }).catch(
-        () => undefined,
-      )
-      let keepPending = false
-      let activeEditTaskId = 0
-      try {
-        const plans = await resolvePlanCandidates()
-        const editPrompt = [
-          '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
-          note || '',
-        ]
-          .filter(Boolean)
-          .join('\n')
-        const editSrcDur = (await readVideoDurationSec(fullVideo.url)) || boundSourceVideoDurSec || 0
-        const trackedEdit = bindRunningVideoPromise(
-          editFullVideo({
-            workspaceId: ws,
-            videoAssetId: fullVideo.assetId,
-            prompt: editPrompt,
-            ratio: genRatio,
-            resolution: genResolution,
-            durationSec: genDurationSec,
-            sourceVideoDurationSec: editSrcDur,
-            modelPlanCandidates: plans,
-            idempotencyKey: context.taskCenterId,
-            onTask: (id) => {
-              activeEditTaskId = Number(id || 0) || 0
-              patchHotCopyTaskCenter(context, { status: 'processing', taskId: activeEditTaskId, error: '' })
-              void persistRecoveryCredential(context, {
-                status: 'processing',
-                taskId: activeEditTaskId,
-                sourceVideo: { assetId: fullVideo.assetId, url: fullVideo.url },
-                sourceVideoDurationSec: editSrcDur,
-              }).catch(() => undefined)
-              if (lockedProjectId && activeEditTaskId > 0) {
-                updateRunningVideoGenMeta('hot-copy', context.workspaceId, lockedProjectId, {
-                  taskId: activeEditTaskId,
-                  generationId: generation.id,
-                  status: 'processing',
-                })
-              }
-              if (activeEditTaskId > 0) {
-                activateGen(generation, activeEditTaskId, context)
-                if (isJobUiActive(context)) clearPendingUiGeneration(generation.id)
-              }
-            },
-            onProgress: (progress) => updateHotCopyProviderProgress(context, progress),
-          }),
-          { generationId: generation.id, status: 'preparing', context },
-        )
-        const { url, assetId } = await trackedEdit
-        await completeHotCopyJob(context, { url, assetId }, activeEditTaskId)
-        if (isJobUiActive(context)) markGen(generation.id, 'published')
-      } catch (e: any) {
-        if (activeEditTaskId > 0 && isTransientTaskRecoveryError(e)) {
-          keepPending = true
-          void failHotCopyJob(context, 'reconnecting', e?.message || '任务状态查询异常', activeEditTaskId)
-          if (isJobUiActive(context)) keepVideoTaskForReconnect(e, ws, activeEditTaskId)
-          return
-        }
-        const message = withPreviousVideoHint(e?.message || '请重试')
-        const cancelled = isTaskCancelled(e)
-        const terminalPersisted = await failHotCopyJob(
-          context,
-          cancelled ? 'cancelled' : 'failed',
-          message,
-          activeEditTaskId,
-        )
-        keepPending = !terminalPersisted
-        if (terminalPersisted && isJobUiActive(context)) {
-          markGen(generation.id, cancelled ? 'cancelled' : 'failed', message, generation)
-          showToast(cancelled ? '视频生成已中断' : `视频修改失败:${message}`, cancelled ? 'info' : 'error')
-        }
-      } finally {
-        if (isJobUiActive(context)) clearPendingUiGeneration(generation.id)
-        releaseGenTriggerLock(context.epoch)
-        if (!keepPending && isJobUiActive(context)) {
-          persistNow({ videoGenerating: false, vidGenTaskId: 0 }, { allowTaskClear: true })
-          setVidGenRunning(false)
-          setVidGenTaskId(0)
-          setHotCopyPhase('')
-        }
-      }
-      return
-    }
 
     // 「重新生成」:基于已上传的源视频 + 替换素材重跑 replicate(note=片段/整段修改意见)。
     // 旧草稿可能只把预览保存在 entryInitial,却没有同步 sourceVideo/productAssetIds；提交前统一恢复并回写，
@@ -5353,33 +5196,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                       costEstimate={videoCost.estimate}
                       costLoading={videoCost.loading}
                       costError={videoCost.error}
-                      onEstimateEditCost={async (note) => {
-                        const ws = Number(workspaceId || 0)
-                        if (!ws || !fullVideo.assetId || !fullVideo.url) throw new Error('缺少可编辑的视频')
-                        const plans = await resolvePlanCandidates()
-                        const editPrompt = [
-                          '请在保留原视频镜头内容、顺序与节奏的前提下,按以下修改要求调整画面(只改提到的部分,其余保持不变):',
-                          note || '',
-                        ]
-                          .filter(Boolean)
-                          .join('\n')
-                        const sourceVideoDurationSec =
-                          (await readVideoDurationSec(fullVideo.url)) || boundSourceVideoDurSec || 0
-                        const result: any = await estimateVideoEditCost({
-                          workspaceId: ws,
-                          prompt: editPrompt,
-                          ratio: genRatio,
-                          resolution: genResolution,
-                          durationSec: genDurationSec,
-                          sourceVideoDurationSec,
-                          modelPlanCandidates: plans,
-                        })
-                        return {
-                          estimatedCost: Number(result?.estimated_cost ?? 0),
-                          balance: Number(result?.balance ?? 0),
-                          canAfford: result?.can_afford === true,
-                        }
-                      }}
+                      allowVideoModification={false}
                       videoVersions={videoVersions}
                       failedGenerations={[...videoGenerations]
                         .filter((g) => g.status === 'failed')
@@ -5396,10 +5213,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                         }
                       })}
                       pendingVideoCount={visiblePendingGenerations.length}
-                      modificationDraft={videoModificationDraft}
-                      onModificationDraftChange={setVideoModificationDraft}
                       onSwitchVideo={(v) => setFullVideo({ url: v.url, assetId: v.assetId })}
-                      onRegenerateVideo={(note, opts) => regenerate(note, opts)}
+                      onRegenerateVideo={(note) => regenerate(note)}
                       onDownloadVideo={handleDownloadVideo}
                       onPrev={() => goStep(0)}
                     />

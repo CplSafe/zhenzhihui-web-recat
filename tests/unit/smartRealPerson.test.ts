@@ -5,6 +5,7 @@ import {
   buildRealPersonVideoIdentityPrompt,
   createSmartRealPersonReference,
   getFacePrivacyGenerationMessage,
+  hasExplicitSubjectIdentityChangeRequest,
   isReadyRealPersonAsset,
   isRealPersonReferenceStillAuthorized,
   isVerifiedRealPerson,
@@ -12,6 +13,7 @@ import {
   registerRealPersonReference,
   requireRealPersonPreservationForShots,
   resolveShotRealPersonPreservation,
+  shouldPreserveIdentityForVideoEdit,
 } from '@/utils/smartRealPerson'
 
 const person = { id: 13, name: '测试人物', status: 'verified', assets: [] }
@@ -59,6 +61,21 @@ describe('smartRealPerson', () => {
     const twice = buildRealPersonVideoIdentityPrompt(once, '测试人物')
     expect(twice.match(/【真人出镜身份强约束/g)).toHaveLength(1)
     expect(twice).toContain('把发型换成短发')
+  })
+
+  it('识别普通视频的显式换人或性别修改，但不误判否定约束', () => {
+    expect(hasExplicitSubjectIdentityChangeRequest('将画面中的人物改为女性人物')).toBe(true)
+    expect(hasExplicitSubjectIdentityChangeRequest('00:01–00:05，男性角色换成成年女性')).toBe(true)
+    expect(hasExplicitSubjectIdentityChangeRequest('为主角换脸，其他保持不变')).toBe(true)
+    expect(hasExplicitSubjectIdentityChangeRequest('禁止换脸，保持人物身份不变')).toBe(false)
+    expect(hasExplicitSubjectIdentityChangeRequest('将男性人物的衣服改为黑色')).toBe(false)
+  })
+
+  it('普通成片换人时解除身份锁定，真人成片仍强制保护', () => {
+    const note = '将画面中的人物改为女性人物'
+    expect(shouldPreserveIdentityForVideoEdit(note, false)).toBe(false)
+    expect(shouldPreserveIdentityForVideoEdit(note, true)).toBe(true)
+    expect(shouldPreserveIdentityForVideoEdit('将外套改为红色', false)).toBe(true)
   })
 
   it('图片与视频两套约束互不干扰（标记不同，各去重各的）', () => {

@@ -1,3 +1,49 @@
+/** 视频模型接收参考图时允许的单边像素范围。 */
+export const VIDEO_REFERENCE_IMAGE_MIN_DIMENSION = 256
+export const VIDEO_REFERENCE_IMAGE_MAX_DIMENSION = 5760
+
+export interface ImageDimensions {
+  width: number
+  height: number
+}
+
+/** 判断图片宽高是否满足视频模型的参考图输入限制。 */
+export function isSupportedVideoReferenceImageDimensions({ width, height }: ImageDimensions): boolean {
+  return (
+    Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    width >= VIDEO_REFERENCE_IMAGE_MIN_DIMENSION &&
+    height >= VIDEO_REFERENCE_IMAGE_MIN_DIMENSION &&
+    width <= VIDEO_REFERENCE_IMAGE_MAX_DIMENSION &&
+    height <= VIDEO_REFERENCE_IMAGE_MAX_DIMENSION
+  )
+}
+
+/** 将不合规的图片尺寸转换为可直接呈现给用户的提示。 */
+export function videoReferenceImageDimensionError(dimensions: ImageDimensions): string {
+  const width = Math.round(Number(dimensions.width) || 0)
+  const height = Math.round(Number(dimensions.height) || 0)
+  return `图片尺寸为 ${width}×${height}px，宽和高均需在 ${VIDEO_REFERENCE_IMAGE_MIN_DIMENSION}–${VIDEO_REFERENCE_IMAGE_MAX_DIMENSION}px 之间`
+}
+
+/** 读取可展示图片的实际像素尺寸；用于在创建付费视频任务前拦截不合规的参考图。 */
+export function readImageDimensions(source: string): Promise<ImageDimensions> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => {
+      const width = Number(image.naturalWidth || image.width)
+      const height = Number(image.naturalHeight || image.height)
+      if (!(width > 0) || !(height > 0)) {
+        reject(new Error('图片尺寸无效'))
+        return
+      }
+      resolve({ width, height })
+    }
+    image.onerror = () => reject(new Error('图片读取失败'))
+    image.src = source
+  })
+}
+
 /**
  * 把上传的图片文件转成「缩放后的 dataURL」。
  * 用 dataURL(而非 objectURL)才能随 localStorage 草稿持久化、刷新后不丢;缩放控制体积。

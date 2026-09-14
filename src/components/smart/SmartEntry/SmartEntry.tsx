@@ -25,7 +25,12 @@ import {
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
 } from '../GenerationModelPicker'
-import { fileToDataUrl } from '@/utils/imageFile'
+import {
+  fileToDataUrl,
+  isSupportedVideoReferenceImageDimensions,
+  readImageDimensions,
+  videoReferenceImageDimensionError,
+} from '@/utils/imageFile'
 import {
   clearSmartEntryDraft,
   loadSmartEntryDraft,
@@ -511,9 +516,24 @@ export default function SmartEntry({
       showToast('智能成片仅支持添加图片素材', 'info')
       return
     }
-    const picked = (await Promise.all(sel.map((f) => fileToDataUrl(f).catch(() => null)))).filter(Boolean) as string[]
-    if (picked.length < sel.length) {
-      showToast(picked.length ? '部分图片读取失败，请重试' : '图片读取失败，请重试', 'error')
+    const decoded = await Promise.all(
+      sel.map(async (file) => {
+        try {
+          const dataUrl = await fileToDataUrl(file)
+          const dimensions = await readImageDimensions(dataUrl)
+          if (mode === 'video' && !isSupportedVideoReferenceImageDimensions(dimensions)) {
+            return { dataUrl: '', error: `${file.name}：${videoReferenceImageDimensionError(dimensions)}` }
+          }
+          return { dataUrl, error: '' }
+        } catch {
+          return { dataUrl: '', error: `${file.name}：图片读取失败，请重试` }
+        }
+      }),
+    )
+    const picked = decoded.map((item) => item.dataUrl).filter(Boolean)
+    const firstError = decoded.find((item) => item.error)?.error
+    if (firstError) {
+      showToast(firstError, 'error')
     }
     if (picked.length) {
       const accepted = picked.slice(0, referenceImageLimit - images.length)
