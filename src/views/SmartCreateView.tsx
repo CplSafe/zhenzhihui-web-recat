@@ -87,6 +87,7 @@ import {
   editFullVideo,
   resumeFullVideo,
   buildTimelinePrompt,
+  buildVideoEditPolishContext,
   totalDurationSec,
   estimateFullVideoCost,
   estimateVideoEditCost,
@@ -96,7 +97,18 @@ import {
 } from '@/api/smartVideo'
 import { listRealPeople } from '@/api/realPeople'
 import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
-import { readVideoDurationSec } from '@/utils/videoDuration'
+import {
+  isSupportedVideoReferenceImageDimensions,
+  readImageDimensions,
+  videoReferenceImageDimensionError,
+} from '@/utils/imageFile'
+import {
+  isVideoResolutionLower,
+  readVideoDurationSec,
+  readVideoMetadata,
+  videoResolutionFromDimensions,
+  type VideoMetadata,
+} from '@/utils/videoDuration'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import { getSmartMarketingRecoveryKey } from '@/utils/smartMarketingRecovery'
 import {
@@ -252,7 +264,9 @@ import {
   buildRealPersonVideoIdentityConstraint,
   buildRealPersonVideoIdentityPrompt,
   getFacePrivacyGenerationMessage,
+  hasExplicitSubjectIdentityChangeRequest,
   isRealPersonReferenceStillAuthorized,
+  shouldPreserveIdentityForVideoEdit,
   type SmartRealPersonReference,
 } from '@/utils/smartRealPerson'
 import './SmartCreateView.css'
@@ -2243,6 +2257,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       thumbnailUrl?: string
       sourceVideo?: { url: string; assetId: number }
       sourceVideoDurationSec?: number
+      sourceVideoMetadata?: VideoMetadata
       videoEditPrompt?: string
       /** 「确认修改」的执行方式：reference=同模型参考生视频（走 video.generate）；edit=video.edit。 */
       modificationMode?: 'reference' | 'edit'
@@ -2805,11 +2820,15 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       context && Object.prototype.hasOwnProperty.call(context, 'resolution') ? context.resolution : undefined
     const sourceVideo = context?.sourceVideo || { url: '', assetId: 0 }
     const sourceVideoDurationSec = Number(context?.sourceVideoDurationSec || 0) || 0
+    const sourceVideoMetadata = context?.sourceVideoMetadata
     const realPersonIdentityName =
       resolveRealPersonIdentityName() || String(context?.realPersonReference?.personName || '')
+    const preservedIdentityName = shouldPreserveIdentityForVideoEdit(job.note, isRealPersonMode)
+      ? realPersonIdentityName
+      : ''
     const editPrompt =
       context?.videoEditPrompt ||
-      buildSmartVideoEditPrompt(job.note, job.variationIndex, job.variationTotal, realPersonIdentityName)
+      buildSmartVideoEditPrompt(job.note, job.variationIndex, job.variationTotal, preservedIdentityName)
     const lockedPlans: string[] = []
     const updateCurrentUi = () => isCurrentVideoSession(sessionId)
     const failBeforePaidTask = async (message: string) => {
@@ -2953,6 +2972,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           status: 'preparing',
         },
       )
+      if (sourceVideoMetadata) {
+        const outputMetadata = await readVideoMetadata(url)
+        if (isVideoResolutionLower(sourceVideoMetadata, outputMetadata)) {
+          throw new Error(
+            `修改结果分辨率降低（${outputMetadata.width}×${outputMetadata.height}），已保留原视频，请重试`,
+          )
+        }
+      }
       if (updateCurrentUi()) {
         setFullVideo({ url, assetId })
         appendVideoVersion({ url, assetId })
@@ -3290,6 +3317,14 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           status: 'preparing',
         },
       )
+      if (context.modificationMode === 'reference' && context.sourceVideoMetadata) {
+        const outputMetadata = await readVideoMetadata(url)
+        if (isVideoResolutionLower(context.sourceVideoMetadata, outputMetadata)) {
+          throw new Error(
+            `修改结果分辨率降低（${outputMetadata.width}×${outputMetadata.height}），已保留原视频，请重试`,
+          )
+        }
+      }
       if (updateCurrentUi()) {
         setFullVideo({ url, assetId })
         appendVideoVersion({ url, assetId })
@@ -3444,6 +3479,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       showToast('暂无分镜,无法生成视频', 'error')
       return
     }
+    const requestsIdentityChange = Boolean(opts?.edit && hasExplicitSubjectIdentityChangeRequest(note || ''))
+    if (requestsIdentityChange && isRealPersonMode) {
+      showToast('真人成片必须保留已授权真人的身份与性别，如需换人或改变性别，请使用普通爆款成片', 'error')
+      return
+    }
     // 「确认修改」按生成模型的后端声明分流（见 resolveVideoModificationPlan）：
     // ① 模型声明收 role:'video' → 参考生视频（同模型走 video.generate 重新生成）；
     // ② 模型自身声明 video.edit → 用它在原片上编辑；
@@ -3497,7 +3537,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         ? { ...currentEntryMeta, generationModels: opts.generationModels }
         : currentEntryMeta
     const ratio = generationMeta?.ratio
-    const resolution = generationMeta?.resolution
+    let resolution = generationMeta?.resolution
     const generateAudio = generationMeta?.generateAudio
     const style = generationMeta?.style
     const basePrompt = reqSummary || requirement
@@ -3510,6 +3550,35 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     if (isRealPersonMode && !isValidRealPersonReference(queuedRealPersonReference)) {
       showToast('当前真人素材身份引用无效，请重新选择已认证真人素材后再生成', 'error')
       return
+    }
+
+    // 本地新图会在入口处校验；这里再覆盖历史草稿、素材库和跨页面带入的图片。
+    // 只检查本次确实会被提交给 video.generate 的 asset，读不到尺寸时不阻断：
+    // 已上传资产仍可能可被后端正常读取，避免因临时签名 URL 失效误伤合法任务。
+    if (!editingViaEditOp) {
+      const checkedReferences = (generationMeta?.imageAssetIds || [])
+        .map((assetId, index) => ({
+          assetId: Number(assetId) || 0,
+          source: String(generationMeta?.images?.[index] || ''),
+          index,
+        }))
+        .filter((item) => item.assetId > 0 && item.source)
+      const dimensions = await Promise.all(
+        checkedReferences.map(async (item) => {
+          try {
+            return { ...item, dimensions: await readImageDimensions(item.source) }
+          } catch {
+            return { ...item, dimensions: null }
+          }
+        }),
+      )
+      const invalid = dimensions.find(
+        (item) => item.dimensions && !isSupportedVideoReferenceImageDimensions(item.dimensions),
+      )
+      if (invalid?.dimensions) {
+        showToast(`第 ${invalid.index + 1} 张参考图${videoReferenceImageDimensionError(invalid.dimensions)}`, 'error')
+        return
+      }
     }
 
     videoQueuePlanningRef.current = true
@@ -3536,6 +3605,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       }
 
       let sourceVideoDurationSec = 0
+      let sourceVideoMetadata: VideoMetadata | undefined
       let estimatedCost = 0
       let estimateBalance = 0
       let canAfford = true
@@ -3558,7 +3628,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         if (!Number(sourceVideo.assetId || 0) || !sourceVideo.url) {
           throw new Error('缺少可修改的视频，请重新选择成片')
         }
-        sourceVideoDurationSec = (await readVideoDurationSec(sourceVideo.url)) || 0
+        sourceVideoMetadata = await readVideoMetadata(sourceVideo.url)
+        sourceVideoDurationSec = sourceVideoMetadata.durationSec > 0 ? Math.round(sourceVideoMetadata.durationSec) : 0
+        const sourceResolution = videoResolutionFromDimensions(sourceVideoMetadata.width, sourceVideoMetadata.height)
+        // 修改任务以原片真实像素为准，避免旧草稿缺少 resolution 时回落到模型默认清晰度。
+        if (sourceResolution) resolution = sourceResolution
       }
       {
         // edit 与 generate 是两个 operation，估价口径不同：edit 按源视频时长走 estimateVideoEditCost，
@@ -3709,6 +3783,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             thumbnailUrl: currentShots.find((shot) => shot.image)?.image || '',
             sourceVideo: cloneGenerationSnapshot(sourceVideo),
             sourceVideoDurationSec,
+            sourceVideoMetadata,
             realPersonReference: queuedRealPersonReference,
             ...(opts?.edit
               ? {
@@ -3716,7 +3791,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                     note,
                     variationIndex,
                     variationTotal,
-                    queuedRealPersonReference?.personName || '',
+                    shouldPreserveIdentityForVideoEdit(note || '', isRealPersonMode)
+                      ? queuedRealPersonReference?.personName || ''
+                      : '',
                   ),
                   modificationMode: modificationPlan?.mode || 'edit',
                 }
@@ -8646,6 +8723,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           const responseModel = requireInteractiveResponseModel()
           return polishText(text, {
             kind,
+            context: kind === 'video-edit' ? buildVideoEditPolishContext(shots) : undefined,
             modelVersionId: responseModel.modelVersionId,
             requestContext: responseRequestContextFor(responseModel),
           })

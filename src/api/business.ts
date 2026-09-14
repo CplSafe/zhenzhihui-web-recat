@@ -179,6 +179,26 @@ function getContentSafetyErrorMessage(error) {
   return ''
 }
 
+/**
+ * 供应商账户/接入点/服务级错误统一兜底文案（如火山 AccountOverdueError、InvalidEndpointOrModel.NotFound、
+ * 限流等）。这类失败是平台侧的模型服务问题——账号欠费、接入点失效/未开通、配额或限流——既不是用户能自行
+ * 修复的，也不该把英文原码直接暴露给用户（还会被误解成用户自己欠费）。三条生成链路（爆款成片/爆款复刻/
+ * 无限画布）的任务错误都汇到 getBusinessErrorMessage，因此在这里统一翻译一处即可全覆盖。
+ * 必须放在内容安全判定之后：内容审核类错误各有更具体的可操作提示，不能被这条通用文案吞掉。
+ */
+function getProviderServiceErrorMessage(error) {
+  const message = collectBusinessErrorText(error)
+  if (!message) return ''
+  if (
+    /AccountOverdue|AccountForbidden|InvalidEndpointOrModel|EndpointIsInvalid|ModelNotOpen|ModelNotFound|QuotaExceeded|RateLimitExceeded|ThrottlingException|InternalServiceError|ServiceUnavailable|InvalidAccessKey|SignatureDoesNotMatch|AccessDenied/i.test(
+      message,
+    )
+  ) {
+    return 'AI 生成服务暂时不可用，请稍后重试或联系管理员'
+  }
+  return ''
+}
+
 /** 将常见业务码、权限、并发和内容安全错误转为准确的中文用户提示。 */
 export function getBusinessErrorMessage(error, fallback = '业务接口请求失败，请稍后重试') {
   if (error instanceof BusinessApiError && error.message) {
@@ -225,6 +245,10 @@ export function getBusinessErrorMessage(error, fallback = '业务接口请求失
 
     const contentSafetyMessage = getContentSafetyErrorMessage(error)
     if (contentSafetyMessage) return contentSafetyMessage
+
+    // 供应商账户/接入点/服务级错误(火山账号欠费、接入点失效、限流等):统一兜底,不暴露英文原码。
+    const providerServiceMessage = getProviderServiceErrorMessage(error)
+    if (providerServiceMessage) return providerServiceMessage
 
     return error.message
   }

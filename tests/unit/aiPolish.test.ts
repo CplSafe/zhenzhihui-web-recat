@@ -80,6 +80,25 @@ describe('polishText', () => {
     expect(args.system).not.toContain('参考图')
   })
 
+  it('uses executable time-range constraints for full-video edit polishing', async () => {
+    mocks.runResponseText.mockResolvedValue('00:02–00:05：将白色水杯改为黑色保温杯。')
+
+    await polishText('6秒到11秒，扳手横着拧，不要上下动', {
+      kind: 'video-edit',
+      context: '【当前视频分镜时间线（权威上下文）】00:06–00:09 镜头3：扳手拧紧螺母',
+    })
+
+    expect(mocks.runResponseText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system: expect.stringMatching(
+          /任意视频场景.*最高优先级.*必须同时完成.*长发.*被旋转对象.*中心轴.*运动平面.*圆弧轨迹.*扳手横着拧.*六角螺母.*不得将原动作.*当前视频分镜时间线.*收窄.*3至5项.*禁止变化/,
+        ),
+        user: expect.stringContaining('【当前视频分镜时间线（权威上下文）】00:06–00:09'),
+        maxTokens: 900,
+      }),
+    )
+  })
+
   it('grounds the polish on reference images and keeps url/assetId aligned by index', async () => {
     mocks.runResponseText.mockResolvedValue('保留主体的润色结果')
 

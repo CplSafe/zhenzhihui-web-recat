@@ -8,11 +8,18 @@ import { loadSmartEntryDraft, saveSmartEntryDraft, setSmartEntryDraftScope } fro
 
 const mocks = vi.hoisted(() => ({
   fileToDataUrl: vi.fn(),
+  readImageDimensions: vi.fn(),
+  isSupportedVideoReferenceImageDimensions: vi.fn(),
   showToast: vi.fn(),
 }))
 
 vi.mock('@/components/smart/EntryCanvasBg', () => ({ default: () => null }))
-vi.mock('@/utils/imageFile', () => ({ fileToDataUrl: mocks.fileToDataUrl }))
+vi.mock('@/utils/imageFile', () => ({
+  fileToDataUrl: mocks.fileToDataUrl,
+  readImageDimensions: mocks.readImageDimensions,
+  isSupportedVideoReferenceImageDimensions: mocks.isSupportedVideoReferenceImageDimensions,
+  videoReferenceImageDimensionError: () => '图片尺寸不符合要求',
+}))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: mocks.showToast }) }))
 
 function deferred<T>() {
@@ -104,6 +111,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   setSmartEntryDraftScope('user-4', 61)
   mocks.fileToDataUrl.mockImplementation(async (input: File) => `data:${input.name}`)
+  mocks.readImageDimensions.mockResolvedValue({ width: 1280, height: 720 })
+  mocks.isSupportedVideoReferenceImageDimensions.mockReturnValue(true)
 })
 
 describe('SmartEntry draft and session initialization', () => {
@@ -921,7 +930,7 @@ describe('SmartEntry uploads and recovery actions', () => {
     mocks.showToast.mockClear()
     mocks.fileToDataUrl.mockRejectedValueOnce(new Error('读取失败'))
     await user.upload(input, file('broken.png'))
-    expect(mocks.showToast).toHaveBeenCalledWith('图片读取失败，请重试', 'error')
+    expect(mocks.showToast).toHaveBeenCalledWith('broken.png：图片读取失败，请重试', 'error')
     expect(screen.queryByRole('button', { name: '移除' })).not.toBeInTheDocument()
   })
 

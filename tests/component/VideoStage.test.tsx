@@ -30,7 +30,7 @@ function HistorySyncHarness({ onSwitch }: { onSwitch: (video: { url: string; ass
   )
 }
 
-function ControlledSegmentHarness() {
+function ControlledModificationHarness() {
   const [draft, setDraft] = useState(createEmptyVideoModificationDraft)
   return (
     <VideoStage
@@ -268,7 +268,6 @@ describe('VideoStage playback loading', () => {
   })
 
   it('updates the playback indicator without committing a React render on timeupdate', async () => {
-    const user = userEvent.setup()
     const onRender = vi.fn()
     const { container } = render(
       <Profiler id="video-stage" onRender={onRender}>
@@ -288,7 +287,6 @@ describe('VideoStage playback loading', () => {
       </Profiler>,
     )
 
-    await user.click(screen.getAllByRole('button', { name: '框选这段' })[0])
     const player = container.querySelector('video[controls]') as HTMLVideoElement
     const commitsBeforeTimeUpdate = onRender.mock.calls.length
     Object.defineProperty(player, 'currentTime', { configurable: true, value: 3 })
@@ -327,7 +325,6 @@ describe('VideoStage playback loading', () => {
     const { rerender } = render(<VideoStage {...props} videoUrl="https://cdn.example.com/first-signature.mp4" />)
 
     expect(screen.getByDisplayValue('整体节奏加快')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('这一秒突出产品')).toBeInTheDocument()
     expect(screen.getByText('上一轮已经增强产品特写')).toBeInTheDocument()
 
     rerender(<VideoStage {...props} videoUrl="https://cdn.example.com/refreshed-signature.mp4" />)
@@ -347,19 +344,19 @@ describe('VideoStage playback loading', () => {
       />,
     )
 
-    const input = screen.getByPlaceholderText('输入对整段视频的修改描述...')
+    const input = screen.getByRole('textbox', { name: '整段视频修改' })
     await user.type(input, '提高整体亮度')
     await user.click(screen.getAllByRole('button', { name: 'AI一键润色' })[0])
 
-    await waitFor(() => expect(onPolishText).toHaveBeenCalledWith('generic', '提高整体亮度'))
+    await waitFor(() => expect(onPolishText).toHaveBeenCalledWith('video-edit', '提高整体亮度'))
     expect(input).toHaveValue('润色后的整段修改意见')
   })
 
-  it('keeps a controlled segment field editable during Safari-style Chinese composition', async () => {
+  it('keeps a controlled modification field editable during Safari-style Chinese composition', async () => {
     const user = userEvent.setup()
-    render(<ControlledSegmentHarness />)
+    render(<ControlledModificationHarness />)
 
-    const input = screen.getAllByPlaceholderText('输入对这一片段的视频修改描述...')[0]
+    const input = screen.getByRole('textbox', { name: '整段视频修改' })
     await user.type(input, '先放大产品')
     expect(input).toHaveValue('先放大产品')
 
@@ -439,6 +436,25 @@ describe('VideoStage playback loading', () => {
     )
 
     expect(screen.queryByText(/修改将使用/)).not.toBeInTheDocument()
+  })
+
+  it('关闭成片修改时隐藏整段修改入口并只允许重新生成', () => {
+    const onRegenerateVideo = vi.fn()
+    render(
+      <VideoStage
+        shots={[]}
+        videoUrl="https://cdn.example.com/hot-copy.mp4"
+        videoAssetId={2550}
+        allowVideoModification={false}
+        modificationDraft={{ ...createEmptyVideoModificationDraft(), overallNote: '历史草稿修改意见' }}
+        onRegenerateVideo={onRegenerateVideo}
+      />,
+    )
+
+    expect(screen.queryByText('整段视频修改')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'AI一键润色' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重新生成视频' }))
+    expect(onRegenerateVideo).toHaveBeenCalledWith(undefined, { edit: false })
   })
 
   it('视频编辑估价失败时保持提交门禁并提供重试', async () => {

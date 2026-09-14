@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fileToDataUrl } from '@/utils/imageFile'
+import {
+  fileToDataUrl,
+  isSupportedVideoReferenceImageDimensions,
+  readImageDimensions,
+  videoReferenceImageDimensionError,
+} from '@/utils/imageFile'
 
 class FakeImage {
   static instances: FakeImage[] = []
@@ -116,5 +121,36 @@ describe('fileToDataUrl', () => {
     image.onload?.()
 
     await expect(result).rejects.toThrow('canvas is tainted')
+  })
+})
+
+describe('video reference image dimensions', () => {
+  it('accepts only images whose two sides are in the provider-supported range', () => {
+    expect(isSupportedVideoReferenceImageDimensions({ width: 256, height: 5760 })).toBe(true)
+    expect(isSupportedVideoReferenceImageDimensions({ width: 255, height: 1080 })).toBe(false)
+    expect(isSupportedVideoReferenceImageDimensions({ width: 1080, height: 5761 })).toBe(false)
+  })
+
+  it('reports the actual invalid dimensions in the user-facing error', () => {
+    expect(videoReferenceImageDimensionError({ width: 120, height: 1080 })).toBe(
+      '图片尺寸为 120×1080px，宽和高均需在 256–5760px 之间',
+    )
+  })
+
+  it('reads dimensions from a displayable image source', async () => {
+    FakeImage.instances = []
+    vi.stubGlobal('Image', FakeImage)
+    try {
+      const result = readImageDimensions('https://example.test/reference.png')
+      const image = FakeImage.instances[FakeImage.instances.length - 1]
+      image.width = 1080
+      image.height = 1920
+      image.onload?.()
+
+      await expect(result).resolves.toEqual({ width: 1080, height: 1920 })
+      expect(image.src).toBe('https://example.test/reference.png')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

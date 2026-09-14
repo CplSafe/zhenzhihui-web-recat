@@ -10,6 +10,28 @@ export interface SmartRealPersonReference {
   assetStatus: string
 }
 
+const SUBJECT_IDENTITY_CHANGE_PATTERN =
+  /(?:换脸|换人|人物替换|角色替换|主体替换|替换人物|替换角色|替换主体|更换人物|更换角色|更换主体|改变性别|性别转换|性转|男变女|女变男|(?:人物|角色|主角|演员|模特|主体|男性|男士|男人|男生|女性|女士|女人|女生).{0,12}(?:替换为|替换成|换成|换为|改成|改为|变成|变为).{0,12}(?:人物|角色|主角|演员|模特|主体|男性|男士|男人|男生|女性|女士|女人|女生))/
+const NEGATED_IDENTITY_CHANGE_PATTERN =
+  /(?:禁止|不要|不得|不允许|无需|无须|不需要|避免).{0,12}(?:换脸|换人|替换|更换|改变性别|性转)/
+
+/**
+ * 判断用户是否明确要求改变画面主体身份。
+ * 按分句识别并排除“禁止换脸”等否定约束，避免错误解除身份保护。
+ */
+export function hasExplicitSubjectIdentityChangeRequest(note: string): boolean {
+  return String(note || '')
+    .split(/[\n；。!?！？]/)
+    .map((clause) => clause.trim())
+    .filter(Boolean)
+    .some((clause) => SUBJECT_IDENTITY_CHANGE_PATTERN.test(clause) && !NEGATED_IDENTITY_CHANGE_PATTERN.test(clause))
+}
+
+/** 真人成片始终保护身份；普通成片只在用户未明确要求换主体时保护。 */
+export function shouldPreserveIdentityForVideoEdit(note: string, isRealPersonMode: boolean): boolean {
+  return isRealPersonMode || !hasExplicitSubjectIdentityChangeRequest(note)
+}
+
 const REAL_PERSON_IDENTITY_PROMPT_MARKER = '【真人身份强约束'
 
 const REAL_PERSON_IDENTITY_INSTRUCTION = [
