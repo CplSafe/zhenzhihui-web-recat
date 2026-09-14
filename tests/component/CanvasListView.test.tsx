@@ -5,7 +5,7 @@
  * 排进队列，等于为几张缩略图对元素接口打出几十个 limit=500 的请求。这里锁死
  * 「只有进入过视口的卡片才请求封面」这一条，防止哪天又退回全量预取。
  */
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -62,9 +62,8 @@ class IntersectionObserverMock implements IntersectionObserver {
  * 让指定 canvasId 的卡片「进入视口」，并把由此引发的异步链路彻底跑完。
  *
  * 链路是：回调 → setState → 副作用 → 取封面的 async worker（内部多个 await）→ setCovers。
- * 这里刻意不使用 waitFor：它靠墙钟轮询，机器一忙就得靠调大超时续命，
- * 而超时多少算够永远说不准（这条用例已经因此挂过两次）。
- * 改成显式把微任务队列抽干——次数是确定的，与机器快慢无关，跑完直接同步断言。
+ * React 在全量并行测试的高负载下可能把 effect 调度到微任务清空之后，因此先抽干
+ * 已排队任务，再用 waitFor 等待目标请求真正发生；后续精确断言仍负责防止多请求。
  */
 async function intersect(...canvasIds: number[]) {
   const wanted = new Set(canvasIds.map(String))
@@ -79,6 +78,9 @@ async function intersect(...canvasIds: number[]) {
     })
   }
   await flushAsync()
+  await waitFor(() => {
+    expect(requestedCanvasIds()).toEqual(expect.arrayContaining(canvasIds))
+  }, WAIT)
 }
 
 /** 抽干微任务队列：足够让「setState → 副作用 → async worker 的多层 await」全部结算。 */
@@ -157,7 +159,7 @@ describe('CanvasListView 封面加载', () => {
     expect(screen.getByLabelText('打开画布 乙')).toBeInTheDocument()
     expect(requestedCanvasIds()).toEqual([])
 
-    // intersect 内部已把异步链抽干，这里直接同步断言，不再靠墙钟等待
+    // intersect 会等待目标请求发生，随后精确断言确保没有顺带预取其他卡片
     await intersect(102)
     expect(requestedCanvasIds()).toEqual([102])
 
