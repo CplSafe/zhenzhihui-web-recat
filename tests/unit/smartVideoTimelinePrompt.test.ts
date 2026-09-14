@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildTimelinePrompt } from '@/api/smartVideo'
+import {
+  buildPhysicalInteractionGenerationGuidance,
+  buildTimelinePrompt,
+  buildVideoEditPolishContext,
+} from '@/api/smartVideo'
 import { buildRealPersonVideoIdentityConstraint } from '@/utils/smartRealPerson'
 
 const shots = [
@@ -8,6 +12,19 @@ const shots = [
 ]
 
 describe('buildTimelinePrompt', () => {
+  it('为视频修改润色构建带精确边界的分镜时间线', () => {
+    const context = buildVideoEditPolishContext([
+      { desc: '扳手夹紧六角螺母', duration: '3s' },
+      { desc: '扳手水平旋转拧紧螺母', duration: '3s' },
+      { desc: '工具静置展示', duration: '3s' },
+    ])
+
+    expect(context).toContain('当前视频分镜时间线（权威上下文）')
+    expect(context).toContain('00:00–00:03 镜头1：扳手夹紧六角螺母')
+    expect(context).toContain('00:03–00:06 镜头2：扳手水平旋转拧紧螺母')
+    expect(context).toContain('00:06–00:09 镜头3：工具静置展示')
+    expect(buildVideoEditPolishContext([])).toBe('')
+  })
   it('不传身份约束时保持原样，仍以时间线说明开头', () => {
     const prompt = buildTimelinePrompt({ shots, basePrompt: '一条奶茶店广告' })
     expect(prompt.startsWith('请按照下面的时间线生成一条短视频广告')).toBe(true)
@@ -112,6 +129,63 @@ describe('buildTimelinePrompt', () => {
     expect(prompt).toContain('音效标注用于生成对应的环境音与效果音')
     expect(prompt).toContain('未标注音效的镜头不要添加额外特效音')
     expect(prompt).toContain('音效:气泡声')
+  })
+
+  it('精细物理交互镜头追加结构、接触和受力连续性约束', () => {
+    const prompt = buildTimelinePrompt({
+      shots: [{ no: '分镜1', desc: '人物手持活动扳手缓慢拧紧管件接口', duration: '3s' }],
+    })
+
+    expect(prompt).toMatch(/精细物理交互.*关键结构完整.*夹持.*受力关系.*穿模.*微调手指/)
+  })
+
+  it('活动扳手旋转镜头补齐标准结构、受力面、旋转轴和运动平面规则', () => {
+    const prompt = buildTimelinePrompt({
+      shots: [
+        {
+          no: '分镜1',
+          desc: '从俯视方向，右手使用活动扳手顺时针拧紧六角螺母',
+          duration: '3s',
+        },
+      ],
+    })
+
+    expect(prompt).toMatch(/优先于普通画面描述[\s\S]*一个固定钳口.*一个活动钳口.*唯一开口/)
+    expect(prompt).toMatch(/相对的两个平面.*不接触螺纹.*钳口间距/)
+    expect(prompt).toMatch(/指定中心轴.*指定平面.*圆弧运动.*上下提拉/)
+  })
+
+  it('普通镜头不生成物理动作专项规则', () => {
+    expect(buildPhysicalInteractionGenerationGuidance([{ desc: '城市夜景固定远景' }])).toBe('')
+  })
+
+  it.each([
+    ['人物运动', '人物从起跑线快速奔跑后停下', /支撑脚.*重心转移.*结束姿态/],
+    ['体育动作', '运动员起跳投篮，篮球飞向篮筐', /发力链.*释放时刻.*目标位置/],
+    ['烹饪操作', '厨师用菜刀在砧板上切菜', /刀刃.*接触面.*手指避开刀刃/],
+    ['产品操作', '双手拆封包装并打开瓶盖', /品牌外观.*可动部件.*开始状态.*结束状态/],
+    ['多人互动', '两个人握手后分开', /肢体归属.*动作先后.*身份互换/],
+    ['穿戴配饰', '女性戴上手表并整理头发', /左右侧.*佩戴身体部位.*最终朝向/],
+    ['交通动作', '人物骑行自行车并捏下刹车', /车把.*踏板.*背景视差/],
+    ['流体颗粒', '将饮料从瓶口倒入玻璃杯，液面上升', /实际出口.*流动轨迹.*液面/],
+    ['镜头运动', '相机环绕产品后缓慢拉远', /相机位移.*光学变焦.*起止构图/],
+  ])('%s场景仅按语义补充可执行规则', (_name, desc, expected) => {
+    expect(buildPhysicalInteractionGenerationGuidance([{ desc }])).toMatch(expected)
+  })
+
+  it('动态规则不会把无关的活动扳手约束注入其他场景', () => {
+    const guidance = buildPhysicalInteractionGenerationGuidance([{ desc: '人物起跳投篮，篮球飞向篮筐' }])
+    expect(guidance).toContain('体育动作')
+    expect(guidance).not.toContain('活动扳手专项')
+    expect(guidance).not.toContain('烹饪操作')
+  })
+
+  it('普通无接触镜头不添加精细物理交互约束', () => {
+    const prompt = buildTimelinePrompt({
+      shots: [{ no: '分镜1', desc: '远景展示安静的城市夜景', duration: '3s' }],
+    })
+
+    expect(prompt).not.toContain('精细物理交互')
   })
 
   it('删光字幕:字幕文本与对齐指令都不进提示词,完全禁止画面文字', () => {
