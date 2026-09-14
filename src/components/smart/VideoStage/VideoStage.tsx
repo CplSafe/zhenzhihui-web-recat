@@ -1,13 +1,11 @@
 /**
  * VideoStage — 第四步「生成视频」(2.1 改版,Figma 441-5139)。
  *
- * 本步仅支持对【整片视频的具体帧】做修改,不再支持改分镜(增/删/改分镜均已移除)。
- * 布局:左 = 视频播放器 + 时间轴(时间刻度按视频真实秒数 + 帧缩略条);右 = 片段/整段修改框。
+ * 本步支持对整段视频提出修改意见,不再支持改分镜(增/删/改分镜均已移除)。
+ * 布局:左 = 视频播放器 + 时间轴(时间刻度按视频真实秒数 + 帧缩略条);右 = 整段修改框。
  * 交互:
- *  - 在时间轴上拖选(或点选某分镜片段)得到一段「具体帧」;选区蓝色描边 + 居中铅笔「修改」按钮。
- *    点铅笔在右侧新增一个【片段N修改】框(标题带该段秒数),最多 5 个,含 AI一键润色。
- *  - 片段框下方是「整段视频修改」框(含 AI一键润色,无提交按钮)。
- *  - 底部总按钮:上一步 / 保存视频 / 重新生成视频。重新生成把所有片段修改 + 整段修改合并成一段说明整片重生成。
+ *  - 「整段视频修改」框支持 AI 一键润色。
+ *  - 底部总按钮:上一步 / 保存视频 / 重新生成视频或确认修改。
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
@@ -18,7 +16,6 @@ import { openMemberCenter } from '@/stores/ui'
 import {
   createEmptyVideoModificationDraft,
   normalizeVideoModificationDraft,
-  type VideoFrameModification,
   type VideoModificationDraft,
 } from '@/utils/videoModificationDraft'
 import { creditsYuanLabel } from '@/utils/creditsYuan'
@@ -251,16 +248,13 @@ const parseDur = (d: string): number => {
   const n = parseFloat(String(d || '').replace(/[^0-9.]/g, ''))
   return Number.isFinite(n) && n > 0 ? n : 5
 }
-// 秒 → "0:05" 播放时间;一位小数 → "2.5s" 片段范围
+// 秒 → "0:05" 播放时间
 const fmtClock = (s: number) => {
   const t = Math.max(0, Math.floor(s))
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`
 }
-/** 将帧选区秒数统一显示为一位小数。 */
-const fmtSec = (s: number) => `${s.toFixed(1)}s`
-
 /**
- * 播放当前成片、抓取时间轴帧、切换历史版本并收集帧区间/整段修改，提交前执行真实积分估价。
+ * 播放当前成片、抓取时间轴帧、切换历史版本并收集整段修改，提交前执行真实积分估价。
  */
 export default function VideoStage({
   shots,
@@ -317,23 +311,16 @@ export default function VideoStage({
     [onModificationDraftChange],
   )
   const overallNote = activeModificationDraft.overallNote
-  const frameSlots = activeModificationDraft.frameSlots
   const noteByVersion = activeModificationDraft.noteByVersion
   const pendingNote = activeModificationDraft.pendingNote
   const setOverallNote = useCallback(
     (value: string) => updateModificationDraft((previous) => ({ ...previous, overallNote: value })),
     [updateModificationDraft],
   )
-  const setFrameSlots = useCallback(
-    (updater: (previous: VideoFrameModification[]) => VideoFrameModification[]) =>
-      updateModificationDraft((previous) => ({ ...previous, frameSlots: updater(previous.frameSlots) })),
-    [updateModificationDraft],
-  )
   const setPendingNote = useCallback(
     (value: string) => updateModificationDraft((previous) => ({ ...previous, pendingNote: value })),
     [updateModificationDraft],
   )
-  const [sel, setSel] = useState<{ start: number; end: number } | null>(null) // 时间轴待确认选区(秒)
   const [dur, setDur] = useState(0) // 视频真实时长(秒),0=未知
   const [frameThumbs, setFrameThumbs] = useState<string[] | null>(null) // 逐秒抓取的帧缩略图(CORS 失败则 null,回退占位)
   const [videoPosterSource, setVideoPosterSource] = useState<{ ownerUrl: string; src: string }>({
@@ -377,7 +364,6 @@ export default function VideoStage({
   const playheadRef = useRef<HTMLSpanElement | null>(null)
   const playbackTimeRef = useRef<HTMLSpanElement | null>(null)
   const trackRef = useRef<HTMLDivElement | null>(null)
-  const dragRef = useRef<{ s0: number } | null>(null)
   const pendingTimelineSeekRef = useRef<number | null>(null)
   const timelineCaptureScheduleRef = useRef<(() => void) | null>(null)
   const [regenSplitOpen, setRegenSplitOpen] = useState(false)
@@ -436,7 +422,7 @@ export default function VideoStage({
     playSecRef.current = next
     if (playheadRef.current) playheadRef.current.style.left = pct(next)
     if (playbackTimeRef.current) {
-      playbackTimeRef.current.textContent = `${fmtClock(next)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧,再点右侧片段框的「框选这段」`
+      playbackTimeRef.current.textContent = `${fmtClock(next)} / ${fmtClock(total)} · 共 ${frameCount} 帧`
     }
   }
   // 每帧覆盖 1 秒:[i, i+1)(末帧裁到总时长);缩略图来自逐秒抓帧,失败则显示秒标占位
@@ -581,7 +567,6 @@ export default function VideoStage({
     timelineCaptureScheduleRef.current?.()
     timelineCaptureScheduleRef.current = null
     setDur(0)
-    setSel(videoUrl ? { start: 0, end: 1 } : null)
     playSecRef.current = 0
     if (playheadRef.current) playheadRef.current.style.left = '0%'
     setFrameThumbs(null)
@@ -819,77 +804,25 @@ export default function VideoStage({
   }
   const onTrackPointerDown = (e: React.PointerEvent) => {
     if (!videoUrl) return
-    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
     const s = secFromEvent(e)
-    dragRef.current = { s0: s }
-    setSel({ start: s, end: s })
-  }
-  const onTrackPointerMove = (e: React.PointerEvent) => {
-    if (!dragRef.current) return
-    const s = secFromEvent(e)
-    const { s0 } = dragRef.current
-    setSel({ start: Math.min(s0, s), end: Math.max(s0, s) })
-  }
-  const onTrackPointerUp = (e: React.PointerEvent) => {
-    if (!dragRef.current) return
-    const s = secFromEvent(e)
-    const { s0 } = dragRef.current
-    dragRef.current = null
-    // 几乎没拖动 → 视为「点选」:选中光标所在的那一帧(1 秒)
-    if (Math.abs(s - s0) < total * 0.012) {
-      const i = Math.min(frameCount - 1, Math.max(0, Math.floor(s)))
-      setSel({ start: i, end: Math.min(total, i + 1) })
-      seekPlayerToTimelineFrame(i)
-    } else {
-      // 拖选 → 对齐到整秒(帧)边界
-      const a = Math.max(0, Math.floor(Math.min(s0, s)))
-      const b = Math.min(total, Math.ceil(Math.max(s0, s)))
-      setSel({ start: a, end: b > a ? b : Math.min(total, a + 1) })
-      seekPlayerToTimelineFrame(Math.min(frameCount - 1, Math.floor(a)))
-    }
+    seekPlayerToTimelineFrame(Math.min(frameCount - 1, Math.max(0, Math.floor(s))))
   }
 
-  // 时间轴上当前拖选的帧范围文案(供「框选这段」按钮提示用)
-  const selRangeText = sel && sel.end > sel.start ? `${fmtSec(sel.start)} – ${fmtSec(sel.end)}` : ''
-
-  // 单个片段框的范围文案
-  const slotRangeText = (slot: { start: number | null; end: number | null }) =>
-    slot.start != null && slot.end != null ? `${fmtSec(slot.start)} – ${fmtSec(slot.end)}` : '未选帧'
-
-  // 把当前时间轴选区写入指定片段框(两个框各自独立,互不同步)
-  const captureSelToSlot = (idx: number) => {
-    if (!sel || sel.end <= sel.start) {
-      showToast('请先在时间轴上拖选要修改的帧', 'info')
-      return
-    }
-    setFrameSlots((prev) => prev.map((s, i) => (i === idx ? { ...s, start: sel.start, end: sel.end } : s)))
-    setSel(null)
-  }
-
-  // 合并所有修改为一段说明,送整片重生成
+  // 整段修改说明送视频编辑；片段修改入口已下线，不再读取旧草稿中的片段内容。
   const buildNote = (): string | undefined => {
-    const parts: string[] = []
-    frameSlots.forEach((s, i) => {
-      const x = s.text.trim()
-      if (!x) return
-      const r = s.start != null && s.end != null ? `${fmtSec(s.start)} – ${fmtSec(s.end)}` : ''
-      parts.push(r ? `【片段${i + 1} ${r}】${x}` : `【片段${i + 1}】${x}`)
-    })
     const ov = overallNote.trim()
-    if (ov) parts.push(`【整段视频】${ov}`)
-    return parts.length ? parts.join('\n') : undefined
+    return ov ? `【整段视频】${ov}` : undefined
   }
 
   // 本片不支持视频修改时，草稿里可能还留着上一版的修改文字：一律不当作修改，
   // 否则主按钮会变成「确认修改」并去请求一个必然失败的 video.edit。
   const editDisabled = Boolean(editDisabledReason)
-  // 是否存在「片段/整段」修改:有则主按钮显示「确认修改」(基于原视频改),无则「重新生成视频」
-  const hasMods = !editDisabled && (frameSlots.some((s) => s.text.trim()) || overallNote.trim().length > 0)
+  // 有整段修改时主按钮显示「确认修改」；旧草稿中的片段修改不再触发编辑任务。
+  const hasMods = !editDisabled && overallNote.trim().length > 0
   const editRequestSignature = JSON.stringify({
     videoAssetId,
     videoUrl,
     overallNote: overallNote.trim(),
-    frameSlots: frameSlots.map((slot) => ({ start: slot.start, end: slot.end, text: slot.text.trim() })),
   })
   const estimateEditCostRef = useRef(onEstimateEditCost)
   estimateEditCostRef.current = onEstimateEditCost
@@ -1196,9 +1129,7 @@ export default function VideoStage({
                 ref={trackRef}
                 className={styles.vstageTrack}
                 onPointerDown={onTrackPointerDown}
-                onPointerMove={onTrackPointerMove}
-                onPointerUp={onTrackPointerUp}
-                title="拖动框选若干帧,或点击选中某一帧(1 秒)"
+                title="点击时间轴定位播放位置"
               >
                 {frames.map((f) => (
                   <div
@@ -1222,13 +1153,6 @@ export default function VideoStage({
                     )}
                   </div>
                 ))}
-                {/* 选区:蓝色描边 + 左右把手(拖选要修改的帧;修改意见填右侧「选中帧修改」框)*/}
-                {sel && sel.end > sel.start && (
-                  <div className={styles.vstageSel} style={{ left: pct(sel.start), width: pct(sel.end - sel.start) }}>
-                    <span className={`${styles.vstageSelHandle} ${styles.vstageSelHandleL}`} />
-                    <span className={`${styles.vstageSelHandle} ${styles.vstageSelHandleR}`} />
-                  </div>
-                )}
                 {/* 播放头 */}
                 <span
                   ref={playheadRef}
@@ -1238,13 +1162,9 @@ export default function VideoStage({
                 />
               </div>
               <div className={styles.vstageTimeHint}>
-                {selRangeText ? (
-                  `已选 ${selRangeText}(${Math.round((sel as { end: number; start: number }).end - (sel as { end: number; start: number }).start)} 帧),点右侧某个片段框的「框选这段」即可应用到该片段`
-                ) : (
-                  <span ref={playbackTimeRef}>
-                    {`${fmtClock(playSecRef.current)} / ${fmtClock(total)} · 共 ${frameCount} 帧 · 拖选若干帧,再点右侧片段框的「框选这段」`}
-                  </span>
-                )}
+                <span
+                  ref={playbackTimeRef}
+                >{`${fmtClock(playSecRef.current)} / ${fmtClock(total)} · 共 ${frameCount} 帧`}</span>
               </div>
               {displayNote && (
                 <div className={styles.vstageLastNote}>
@@ -1256,7 +1176,7 @@ export default function VideoStage({
           )}
         </div>
 
-        {/* 右:历史记录 + 整段视频修改 + 选中帧修改 */}
+        {/* 右:历史记录 + 整段视频修改 */}
         <div className={styles.vstageRight}>
           {(videoVersions.length >= 1 || failedGenerations.length > 0 || pendingVideoCount > 0 || videoGenerating) && (
             <div className={styles.vstageVersions}>
@@ -1335,51 +1255,15 @@ export default function VideoStage({
               {editDisabledReason}
             </div>
           ) : showTimeline ? (
-            <>
-              <ModBox
-                title="整段视频修改"
-                value={overallNote}
-                polishKind="generic"
-                onChange={setOverallNote}
-                onPolishText={onPolishText}
-              />
-              <ModBox
-                title="片段1修改"
-                range={slotRangeText(frameSlots[0])}
-                value={frameSlots[0].text}
-                polishKind="segment"
-                onChange={(v) => setFrameSlots((prev) => prev.map((s, i) => (i === 0 ? { ...s, text: v } : s)))}
-                onPolishText={onPolishText}
-                onCapture={() => captureSelToSlot(0)}
-                onRemove={
-                  frameSlots[0].start != null
-                    ? () =>
-                        setFrameSlots((prev) => prev.map((s, i) => (i === 0 ? { ...s, start: null, end: null } : s)))
-                    : undefined
-                }
-              />
-              <ModBox
-                title="片段2修改"
-                range={slotRangeText(frameSlots[1])}
-                value={frameSlots[1].text}
-                polishKind="segment"
-                onChange={(v) => setFrameSlots((prev) => prev.map((s, i) => (i === 1 ? { ...s, text: v } : s)))}
-                onPolishText={onPolishText}
-                onCapture={() => captureSelToSlot(1)}
-                onRemove={
-                  frameSlots[1].start != null
-                    ? () =>
-                        setFrameSlots((prev) => prev.map((s, i) => (i === 1 ? { ...s, start: null, end: null } : s)))
-                    : undefined
-                }
-              />
-              <div className={styles.vstageRightHint}>
-                💡
-                在时间轴上拖选要改的帧,点对应片段框的「框选这段」,再写修改意见;两个片段可分别选不同的帧。框选的时间段会作为重点修改要求发给模型,整条视频会按修改要求重新生成,未框选的部分也可能发生变化。
-              </div>
-            </>
+            <ModBox
+              title="整段视频修改"
+              value={overallNote}
+              polishKind="generic"
+              onChange={setOverallNote}
+              onPolishText={onPolishText}
+            />
           ) : (
-            <div className={styles.vstageRightHint}>视频生成后,可在此对整段或具体片段提修改意见。</div>
+            <div className={styles.vstageRightHint}>视频生成后,可在此对整段视频提修改意见。</div>
           )}
         </div>
       </div>
