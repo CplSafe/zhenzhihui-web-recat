@@ -262,7 +262,7 @@ describe('ImageChat', () => {
   it('inserts @ directly without images and inserts a selected reference at the caret', async () => {
     const user = userEvent.setup()
     const { container } = render(<ImageChat {...baseProps()} />)
-    const composer = screen.getByRole('textbox', { name: '图片创作描述' })
+    const composer = screen.getByRole('textbox', { name: '图片创作描述' }) as HTMLTextAreaElement
     await user.type(composer, '产品')
     await user.click(screen.getByRole('button', { name: '引用参考素材' }))
     expect(composer).toHaveValue('产品@')
