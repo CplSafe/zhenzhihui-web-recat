@@ -269,7 +269,9 @@ describe('ImageChat', () => {
 
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
     await user.upload(input, new File(['x'], 'ref.png', { type: 'image/png' }))
-    fireEvent.select(composer, { target: { selectionStart: 0 } })
+    composer.focus()
+    composer.setSelectionRange(0, 0)
+    fireEvent.select(composer)
     await user.click(screen.getByRole('button', { name: '引用参考素材' }))
     await user.click(screen.getByRole('button', { name: '@图片1' }))
     expect(composer).toHaveValue('@图片1 产品@')
