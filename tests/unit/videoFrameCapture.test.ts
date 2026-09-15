@@ -99,4 +99,36 @@ describe('seekVideoToDecodedFrame', () => {
       vi.useRealTimers()
     }
   })
+
+  it('逐帧回调缺失但 seeked 已确认目标帧可绘制时仍可完成', async () => {
+    const video = document.createElement('video')
+    let currentTime = 0
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => currentTime,
+      set: (value: number) => {
+        currentTime = value
+      },
+    })
+    Object.defineProperty(video, 'seeking', { configurable: true, get: () => false })
+    Object.defineProperty(video, 'readyState', {
+      configurable: true,
+      value: HTMLMediaElement.HAVE_METADATA,
+    })
+    Object.defineProperty(video, 'videoWidth', { configurable: true, value: 1920 })
+    Object.defineProperty(video, 'videoHeight', { configurable: true, value: 1080 })
+    Object.defineProperty(video, 'requestVideoFrameCallback', {
+      configurable: true,
+      value: vi.fn(() => 1),
+    })
+    Object.defineProperty(video, 'cancelVideoFrameCallback', {
+      configurable: true,
+      value: vi.fn(),
+    })
+
+    const capture = seekVideoToDecodedFrame(video, 2.5)
+    video.dispatchEvent(new Event('seeked'))
+
+    await expect(capture).resolves.toBeUndefined()
+  })
 })
