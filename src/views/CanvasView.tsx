@@ -108,7 +108,11 @@ import { polishText } from '@/api/aiPolish'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
-import { captureVideoFrame, captureVideoFrameFromUrl, type VideoFramePosition } from '@/utils/videoFrameCapture'
+import {
+  captureVideoFrameFromUrl,
+  captureVideoFrameWithRetry,
+  type VideoFramePosition,
+} from '@/utils/videoFrameCapture'
 import { resolveGeneratedMediaUrls, resolveVerifiedResultAssetId } from '@/utils/taskMedia'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText } from '@/utils/canvasStructuredText'
@@ -230,6 +234,43 @@ export function normalizeNodeMedia(node: Node, workspaceId: number): Node {
     data: nextData,
     style: shouldExpandStoryboard ? { ...node.style, width: 420, height: 480 } : node.style,
   }
+}
+
+/**
+ * 等待已挂载的视频元素切换到指定本地来源并真正拥有可绘制画面。
+ *
+ * 截首尾帧不能只靠后台临时 video：部分 Edge/Chromium 环境会让隐藏播放器停在
+ * metadata 阶段。这里复用用户画布上已经可见的播放器，换成同源 blob 后再继续截取。
+ */
+function waitForMountedVideoSource(video: HTMLVideoElement, source: string, timeoutMs = 12000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer = 0
+    const sourceMatches = () => video.src === source || video.currentSrc === source
+    const isReady = () => sourceMatches() && video.videoWidth > 0 && video.videoHeight > 0
+    const cleanup = () => {
+      window.clearTimeout(timer)
+      video.removeEventListener('loadeddata', onReady)
+      video.removeEventListener('canplay', onReady)
+      video.removeEventListener('error', onError)
+    }
+    const finish = (ready: boolean) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(ready)
+    }
+    const onReady = () => {
+      if (isReady()) finish(true)
+    }
+    const onError = () => finish(false)
+
+    video.addEventListener('loadeddata', onReady)
+    video.addEventListener('canplay', onReady)
+    video.addEventListener('error', onError)
+    timer = window.setTimeout(() => finish(false), timeoutMs)
+    onReady()
+  })
 }
 
 function isInsufficientCreditsError(error: any): boolean {
@@ -1165,9 +1206,21 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
    */
   const captureRequestedFrame = async (position: VideoFramePosition): Promise<string> => {
     const currentVideo = videoRef.current
-    if (videoLocalSrcRef.current) return captureVideoFrame(currentVideo, position)
+    const captureOptions = { seekTimeoutMs: 8000, frameTimeoutMs: 3000, attempts: 2, retryDelayMs: 180 }
+    const localSource = videoLocalSrcRef.current
+    if (localSource) {
+      // 已切到本地 blob 仍可能恰好撞上浏览器的解码提交窗口。
+      // 先读正在显示的帧；不成功就用同一份本地数据建一个独立临时播放器再取，
+      // 不影响用户当前播放位置，也不因一次时序失败直接放弃。
+      const directFrame = await captureVideoFrameWithRetry(currentVideo, position, captureOptions)
+      if (directFrame) return directFrame
+      return captureVideoFrameFromUrl(localSource, position, {
+        ...captureOptions,
+        metadataTimeoutMs: 12000,
+      })
+    }
     if (position === 'current') {
-      const directFrame = await captureVideoFrame(currentVideo, position)
+      const directFrame = await captureVideoFrameWithRetry(currentVideo, position, captureOptions)
       if (directFrame) return directFrame
       // 外链视频能播放但 Canvas 可能因跨域而拒绝读取，继续走下面的同源素材兜底。
     }
@@ -1180,21 +1233,39 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     if (!source) return ''
 
     const handle = acquireSeekableSource(source)
+    let retainedByMountedPlayer = false
     try {
       const ready = await handle.ready
       const currentAssetId = Number((data as Record<string, unknown> | undefined)?.assetId || 0)
       if (captureAssetId > 0 ? currentAssetId !== captureAssetId : mediaUrlRef.current !== source) return ''
       if (ready.local) {
+        /*
+         * 根治隐藏临时播放器的解码不稳定：把已完整下载的同源 blob 接给节点自身的
+         * <video>，等实际渲染的元素就绪后再取帧。该元素已经在画布中可见，浏览器会
+         * 正常分配解码资源；若仍失败，最后才退到临时播放器兼容路径。
+         */
+        if (currentVideo) {
+          videoSeekableHandleRef.current?.release()
+          videoSeekableHandleRef.current = handle
+          retainedByMountedPlayer = true
+          videoLocalSrcRef.current = ready.url
+          setVideoLocalSrc(ready.url)
+          const mountedReady = await waitForMountedVideoSource(currentVideo, ready.url)
+          if (mountedReady) {
+            const mountedFrame = await captureVideoFrameWithRetry(currentVideo, position, captureOptions)
+            if (mountedFrame) return mountedFrame
+          }
+        }
         return captureVideoFrameFromUrl(ready.url, position, {
-          seekTimeoutMs: 8000,
-          frameTimeoutMs: 3000,
+          ...captureOptions,
           metadataTimeoutMs: 12000,
         })
       }
       // 下载失败时仍尝试现有播放器，支持 Range 的源无需本地副本也能正常截取。
-      return captureVideoFrame(currentVideo, position, { seekTimeoutMs: 8000, frameTimeoutMs: 3000 })
+      return captureVideoFrameWithRetry(currentVideo, position, captureOptions)
     } finally {
-      handle.release()
+      // 句柄已交给节点播放器时，由换素材/卸载 cleanup 统一释放；否则这里立即归还。
+      if (!retainedByMountedPlayer) handle.release()
     }
   }
 
@@ -4910,7 +4981,7 @@ function CanvasInner() {
       void (async () => {
         const frame = await capture(position)
         if (!frame) {
-          showToast('截帧失败，请确认视频可以正常播放后重试', 'error')
+          showToast('截帧失败：视频帧仍在加载或素材地址暂不可读取，请稍后重试', 'error')
           return
         }
         handleCaptureFrame(nodeId, frame)

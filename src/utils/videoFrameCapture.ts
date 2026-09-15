@@ -18,8 +18,21 @@ export interface SeekVideoFrameOptions {
   frameTimeToleranceSec?: number
 }
 
-export interface CaptureVideoFrameFromUrlOptions extends SeekVideoFrameOptions {
+export interface CaptureVideoFrameFromUrlOptions extends CaptureVideoFrameRetryOptions {
   metadataTimeoutMs?: number
+}
+
+/**
+ * 截帧偶发失败时的重试参数。
+ *
+ * 视频刚完成播放起播、浏览器仍在提交解码帧时，第一次 drawImage 可能拿不到画面；
+ * 这不代表素材不可播放。重试只用于截帧这类旁路操作，避免把短暂的解码时序问题暴露给用户。
+ */
+export interface CaptureVideoFrameRetryOptions extends SeekVideoFrameOptions {
+  /** 总尝试次数，包含首次；默认两次。 */
+  attempts?: number
+  /** 两次尝试之间的等待时间（毫秒）。 */
+  retryDelayMs?: number
 }
 
 const abortError = () => {
@@ -64,6 +77,25 @@ const waitForTwoAnimationFrames = (signal?: AbortSignal) =>
       secondFrame = window.requestAnimationFrame(finish)
     })
   })
+
+/**
+ * 临时播放器先静音起播一个绘制周期，再暂停。
+ *
+ * 个别 Chromium/Edge 版本对刚加载的 blob 视频只在播放态提交解码帧：直接暂停后 seek
+ * 虽会更新 currentTime，却既不触发逐帧回调也不给 Canvas 可绘制画面。这个预热只作用于
+ * 专门用于截帧的临时元素，不会影响画布中用户正在观看的播放器。
+ */
+async function primeTemporaryVideoDecoder(video: HTMLVideoElement): Promise<void> {
+  try {
+    const playback = video.play()
+    if (playback && typeof playback.then === 'function') await playback
+    await waitForTwoAnimationFrames()
+  } catch {
+    // 静音自动播放被环境阻止时，仍按原有的 seek 路径继续尝试。
+  } finally {
+    video.pause()
+  }
+}
 
 /** 在不支持逐帧回调的浏览器中等待一次 seek 完成。 */
 const seekWithoutFrameCallback = (
@@ -202,6 +234,24 @@ export async function seekVideoToDecodedFrame(
     const onSeeked = () => {
       seekCompleted = true
       window.clearTimeout(seekTimer)
+      /*
+       * Chromium/Edge 在暂停的临时 blob 播放器上偶尔不会触发
+       * requestVideoFrameCallback：视频实际已完成 seek，画面也已经可绘制，
+       * 但只等该回调会把可用的首尾帧误判为超时。
+       *
+       * seeked 表示定位操作已经完成。部分浏览器在 blob 的暂停态会短暂只报
+       * HAVE_METADATA，但此时 videoWidth/videoHeight 已有效且 Canvas 实际可以导出；
+       * 把它卡死在 HAVE_CURRENT_DATA 会让可截取的首尾帧白白超时。再核对
+       * currentTime 确实落在目标附近，便可作为逐帧回调的兼容确认，仍不会接受旧帧。
+       */
+      const landedAtTarget = Math.abs((Number(video.currentTime) || 0) - target) <= Math.max(tolerance, 0.15)
+      const hasRenderableTargetFrame =
+        video.readyState >= HTMLMediaElement.HAVE_METADATA && video.videoWidth > 0 && video.videoHeight > 0
+      if (landedAtTarget && hasRenderableTargetFrame) {
+        frameConfirmed = true
+        finishIfReady()
+        return
+      }
       if (!frameConfirmed) {
         frameTimer = window.setTimeout(() => fail(new Error('目标视频帧解码超时')), frameTimeoutMs)
       }
@@ -354,6 +404,30 @@ export async function captureVideoFrame(
 }
 
 /**
+ * 在短暂等待后重试截帧。
+ *
+ * 不把错误抛给 UI：调用方仍然只需处理「拿到了 data URL / 没拿到」两种结果，
+ * 但避免因视频帧尚未稳定而偶发失败。
+ */
+export async function captureVideoFrameWithRetry(
+  video: HTMLVideoElement | null,
+  position: VideoFramePosition = 'current',
+  options: CaptureVideoFrameRetryOptions = {},
+): Promise<string> {
+  const attempts = Math.max(1, Math.min(3, Math.floor(options.attempts ?? 2)))
+  const retryDelayMs = Math.max(0, options.retryDelayMs ?? 180)
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const frame = await captureVideoFrame(video, position, options)
+    if (frame) return frame
+    if (attempt + 1 < attempts && retryDelayMs > 0) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, retryDelayMs))
+    }
+  }
+  return ''
+}
+
+/**
  * 从一个可跳转的视频地址创建临时播放器并截帧。
  *
  * 画布的 /download 源可能不支持 Range，直接在正在展示的播放器上跳到尾部会被抹回 0。
@@ -420,7 +494,9 @@ export async function captureVideoFrameFromUrl(
       )
         finish()
     })
-    return await captureVideoFrame(video, position, options)
+    // 首尾帧必须 seek；先让临时 blob 播放器提交一帧，避免部分浏览器在暂停态下只更新时间不解码。
+    if (position !== 'current') await primeTemporaryVideoDecoder(video)
+    return await captureVideoFrameWithRetry(video, position, options)
   } catch {
     return ''
   } finally {

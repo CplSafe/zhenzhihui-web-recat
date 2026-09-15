@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { captureVideoFrame, captureVideoFrameDataUrl, resolveFrameTimeSec } from '@/utils/videoFrameCapture'
+import {
+  captureVideoFrame,
+  captureVideoFrameDataUrl,
+  captureVideoFrameWithRetry,
+  resolveFrameTimeSec,
+} from '@/utils/videoFrameCapture'
 
 /**
  * 首帧 / 当前帧 / 尾帧的截取行为。
@@ -172,5 +177,26 @@ describe('captureVideoFrame', () => {
 
   it('没有元素时返回空串', async () => {
     expect(await captureVideoFrame(null, 'first')).toBe('')
+  })
+})
+
+describe('captureVideoFrameWithRetry', () => {
+  it('首轮未拿到已解码画面时会短暂等待后重试', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+      .mockReturnValueOnce('')
+      .mockReturnValue('data:image/jpeg;base64,FRAME')
+
+    const frame = await captureVideoFrameWithRetry(fakeVideo(), 'current', {
+      attempts: 2,
+      retryDelayMs: 0,
+    })
+
+    expect(frame).toBe('data:image/jpeg;base64,FRAME')
+  })
+
+  it('达到重试次数后仍返回空串，交由调用方走素材地址回退', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('')
+
+    expect(await captureVideoFrameWithRetry(fakeVideo(), 'current', { attempts: 2, retryDelayMs: 0 })).toBe('')
   })
 })

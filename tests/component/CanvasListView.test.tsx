@@ -141,6 +141,8 @@ function requestedCanvasIds(): number[] {
  * 其余断言一律走 flushAsync + 同步断言，不依赖机器快慢。
  */
 const WAIT = { timeout: 5_000 } as const
+/** 覆盖率串行任务负载较高；总预算需覆盖首次渲染和多次可见性异步链。 */
+const TEST_TIMEOUT_MS = 30_000
 
 describe('CanvasListView 封面加载', () => {
   beforeEach(() => {
@@ -151,44 +153,56 @@ describe('CanvasListView 封面加载', () => {
     mocks.fetchAllCanvasElements.mockResolvedValue({ elements: [], sync_revision: 1 })
   })
 
-  it('列表渲染后不预取任何封面，只有进入视口的卡片才请求', async () => {
-    render(<CanvasListView />)
-    await screen.findByLabelText('打开画布 甲', undefined, WAIT)
+  it(
+    '列表渲染后不预取任何封面，只有进入视口的卡片才请求',
+    async () => {
+      render(<CanvasListView />)
+      await screen.findByLabelText('打开画布 甲', undefined, WAIT)
 
-    // 三张卡片都在 DOM 里，但一张封面都不该请求
-    expect(screen.getByLabelText('打开画布 乙')).toBeInTheDocument()
-    expect(requestedCanvasIds()).toEqual([])
+      // 三张卡片都在 DOM 里，但一张封面都不该请求
+      expect(screen.getByLabelText('打开画布 乙')).toBeInTheDocument()
+      expect(requestedCanvasIds()).toEqual([])
 
-    // intersect 会等待目标请求发生，随后精确断言确保没有顺带预取其他卡片
-    await intersect(102)
-    expect(requestedCanvasIds()).toEqual([102])
+      // intersect 会等待目标请求发生，随后精确断言确保没有顺带预取其他卡片
+      await intersect(102)
+      expect(requestedCanvasIds()).toEqual([102])
 
-    // 其余两张仍未进入视口，不该被顺带拉上
-    expect(requestedCanvasIds()).not.toContain(101)
-    expect(requestedCanvasIds()).not.toContain(103)
-  })
+      // 其余两张仍未进入视口，不该被顺带拉上
+      expect(requestedCanvasIds()).not.toContain(101)
+      expect(requestedCanvasIds()).not.toContain(103)
+    },
+    TEST_TIMEOUT_MS,
+  )
 
-  it('滚动后进入视口的卡片各自补齐，且同一张不重复请求', async () => {
-    render(<CanvasListView />)
-    await screen.findByLabelText('打开画布 甲', undefined, WAIT)
+  it(
+    '滚动后进入视口的卡片各自补齐，且同一张不重复请求',
+    async () => {
+      render(<CanvasListView />)
+      await screen.findByLabelText('打开画布 甲', undefined, WAIT)
 
-    await intersect(101)
-    expect(requestedCanvasIds()).toEqual([101])
+      await intersect(101)
+      expect(requestedCanvasIds()).toEqual([101])
 
-    await intersect(103)
-    expect(requestedCanvasIds()).toEqual([101, 103])
+      await intersect(103)
+      expect(requestedCanvasIds()).toEqual([101, 103])
 
-    // 再次「进入视口」不产生新请求（revision 未变 → 命中缓存）
-    await intersect(101, 103)
-    expect(requestedCanvasIds()).toEqual([101, 103])
-  })
+      // 再次「进入视口」不产生新请求（revision 未变 → 命中缓存）
+      await intersect(101, 103)
+      expect(requestedCanvasIds()).toEqual([101, 103])
+    },
+    TEST_TIMEOUT_MS,
+  )
 
-  it('环境不支持 IntersectionObserver 时退回全量预取，封面不至于永远不显示', async () => {
-    vi.stubGlobal('IntersectionObserver', undefined)
-    render(<CanvasListView />)
-    await screen.findByLabelText('打开画布 甲', undefined, WAIT)
+  it(
+    '环境不支持 IntersectionObserver 时退回全量预取，封面不至于永远不显示',
+    async () => {
+      vi.stubGlobal('IntersectionObserver', undefined)
+      render(<CanvasListView />)
+      await screen.findByLabelText('打开画布 甲', undefined, WAIT)
 
-    await flushAsync()
-    expect(requestedCanvasIds()).toEqual([101, 102, 103])
-  })
+      await flushAsync()
+      expect(requestedCanvasIds()).toEqual([101, 102, 103])
+    },
+    TEST_TIMEOUT_MS,
+  )
 })
