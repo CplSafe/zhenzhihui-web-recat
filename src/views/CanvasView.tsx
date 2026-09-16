@@ -158,6 +158,7 @@ import {
 } from '@/utils/timelineClips'
 import type { ConcatSource } from '@/utils/videoConcat'
 import { applyCanvasRealPersonIdentity, resolveCanvasRealPersonReference } from '@/utils/canvasRealPerson'
+import { withNoOnscreenTextGuard } from '@/utils/videoPromptGuards'
 import { isRealPersonReferenceStillAuthorized, type SmartRealPersonReference } from '@/utils/smartRealPerson'
 import { listRealPeople } from '@/api/realPeople'
 import {
@@ -4315,6 +4316,9 @@ function CanvasInner() {
         reference: realPerson.reference,
       })
       const inputAssets = identity.inputAssets
+      // 视频模型画不了字，提示词里的文字只会渲染成乱码；整片生成 / video.edit / 爆款复刻都挂了这条守卫，
+      // 画布视频节点此前漏掉，灯牌、包装、贴字一律照抄出乱码。图片模型不在此列。
+      const submitPrompt = generate.kind === 'video' ? withNoOnscreenTextGuard(identity.prompt) : identity.prompt
       const taskRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
       try {
         const taskStartedAt = new Date().toISOString()
@@ -4338,8 +4342,8 @@ function CanvasInner() {
           workspaceId,
           capability: generate.kind,
           operationCode: generate.operationCode,
-          // 已注入真人身份约束的提示词；无真人素材时与用户原文一致。
-          prompt: identity.prompt,
+          // 已注入真人身份约束的提示词；无真人素材时与用户原文一致。视频再叠加禁文字守卫。
+          prompt: submitPrompt,
           params: generate.params,
           inputAssets,
           modelVersionId: generate.modelVersionId,

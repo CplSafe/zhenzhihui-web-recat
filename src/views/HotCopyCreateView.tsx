@@ -3675,6 +3675,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         const quote = await estimateHotCopyReplicateQuote({
           workspaceId: ws,
           requestSnapshot,
+          prompt: basePrompt,
         })
         if (!alive) return
         latestReplicateEstimateRef.current = {
@@ -3727,6 +3728,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         const quote = await estimateHotCopyReplicateQuote({
           workspaceId: requestSnapshot.workspaceId,
           requestSnapshot,
+          prompt: basePrompt,
         })
         latestReplicateEstimateRef.current = { key, snapshot: requestSnapshot, quote }
         setVideoCost({ loading: false, error: '', estimate: quote })
