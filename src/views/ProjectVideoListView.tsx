@@ -653,6 +653,28 @@ export default function ProjectVideoListView() {
         <main className="pvlist-main">
           <div className="pvlist-container">
             <div className="pvlist-breadcrumb">
+              <button
+                type="button"
+                className="pvlist-back-btn"
+                onClick={() => navigate('/projects')}
+                title="返回项目管理"
+                aria-label="返回项目管理"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M19 12H5" />
+                  <path d="m12 19-7-7 7-7" />
+                </svg>
+              </button>
               <button type="button" className="pvlist-breadcrumb__link" onClick={() => navigate('/home')}>
                 首页
               </button>
@@ -683,14 +705,14 @@ export default function ProjectVideoListView() {
                     className={`pvlist-flow-tab${flowFilter === 'smart' ? ' is-active' : ''}`}
                     onClick={() => setFlowFilter('smart')}
                   >
-                    智能成片
+                    爆款成片
                   </button>
                   <button
                     type="button"
                     className={`pvlist-flow-tab${flowFilter === 'hot-copy' ? ' is-active' : ''}`}
                     onClick={() => setFlowFilter('hot-copy')}
                   >
-                    爆款复制
+                    爆款复刻
                   </button>
                 </div>
                 <label className="pvlist-search">
@@ -822,25 +844,6 @@ export default function ProjectVideoListView() {
             <div className="pvlist-nvtitle">新建视频</div>
             <div className="pvlist-nvsub">将在项目「{projectTitle || '当前项目'}」下创建,选择创作方式:</div>
             <div className="pvlist-nvopts">
-              <button type="button" className="pvlist-nvopt" onClick={() => goCreateVia('smart')}>
-                <span className="pvlist-nvopt__ic pvlist-nvopt__ic--smart" aria-hidden="true">
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="26"
-                    height="26"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4" />
-                    <circle cx="12" cy="12" r="3.2" />
-                  </svg>
-                </span>
-                <span className="pvlist-nvopt__name">智能成片</span>
-                <span className="pvlist-nvopt__desc">输入需求/素材,AI 分镜成片</span>
-              </button>
               <button type="button" className="pvlist-nvopt" onClick={() => goCreateVia('hot')}>
                 <span className="pvlist-nvopt__ic pvlist-nvopt__ic--hot" aria-hidden="true">
                   <svg
@@ -857,8 +860,27 @@ export default function ProjectVideoListView() {
                     <path d="M8 4v16M20 8l-4 2v4l4 2z" />
                   </svg>
                 </span>
-                <span className="pvlist-nvopt__name">爆款复制</span>
+                <span className="pvlist-nvopt__name">爆款复刻</span>
                 <span className="pvlist-nvopt__desc">上传爆款视频,一键做同款</span>
+              </button>
+              <button type="button" className="pvlist-nvopt" onClick={() => goCreateVia('smart')}>
+                <span className="pvlist-nvopt__ic pvlist-nvopt__ic--smart" aria-hidden="true">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="26"
+                    height="26"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4" />
+                    <circle cx="12" cy="12" r="3.2" />
+                  </svg>
+                </span>
+                <span className="pvlist-nvopt__name">爆款成片</span>
+                <span className="pvlist-nvopt__desc">输入需求/素材,AI 分镜成片</span>
               </button>
             </div>
           </div>

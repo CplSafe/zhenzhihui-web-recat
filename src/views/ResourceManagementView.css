@@ -758,23 +758,16 @@
 }
 .rm2-sort {
   display: flex;
-  height: 38px;
   align-items: center;
   gap: 8px;
-  border: 1px solid #e7e9ed;
-  border-radius: 8px;
-  padding: 0 10px;
-  background: #fff;
   color: #9098a1;
   font-size: 12px;
 }
-.rm2-sort select {
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #4c5560;
-  font-size: 13px;
-  cursor: pointer;
+/* 触发器高度对齐旁边 38px 的搜索框 */
+.rm2-sort__select .filter-select__trigger {
+  height: 38px;
+  min-width: 108px;
+  border-color: #e7e9ed;
 }
 .rm2-select-page {
   border: 0;

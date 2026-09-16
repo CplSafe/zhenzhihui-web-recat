@@ -29,6 +29,17 @@
   border-color: #b9e9dd;
 }
 
+.filter-select__trigger:disabled {
+  color: #9aa3af;
+  background: #f7f8fa;
+  border-color: #e5e8ee;
+  cursor: not-allowed;
+}
+
+.filter-select__trigger:disabled:hover {
+  border-color: #e5e8ee;
+}
+
 .filter-select__trigger.is-open,
 .filter-select__trigger:focus-visible {
   border-color: #1fcfa9;

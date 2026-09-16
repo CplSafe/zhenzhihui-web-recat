@@ -23,6 +23,7 @@ import { buildModelRestrictionSummary, getModelConstraintConflicts } from '@/uti
 import { buildHotCopyReplicateModelParams } from '@/utils/hotCopyModelAdapters'
 import { isSafeMediaUrl } from '@/utils/urlSafety'
 import { withNoOnscreenTextGuard } from '@/utils/videoPromptGuards'
+import { buildHotCopyReplicatePrompt, withNoSourceOverlayGuard } from '@/utils/hotCopyPrompt'
 
 /** 爆款复制的模型筛选、任务超时与模型预热缓存策略。 */
 const VIDEO_MODEL_KEYWORDS = ['seedance']
@@ -763,9 +764,12 @@ export async function replicateHotVideo(args: {
       modelVersion: model,
       idempotencyKey: String(args.idempotencyKey || '').trim() || undefined,
       signal: args.signal,
-      // 爆款源视频普遍带字幕/贴字,模型照抄只会渲染成乱码——明确不要复刻,再叠加统一禁文字硬约束。
+      // 提示词正文由 buildHotCopyReplicatePrompt 组装;这里只保证两条硬约束一定在:
+      // 不复刻源视频贴字(否则照抄成乱码)+ 统一禁文字。调用方没传时按同款翻拍兜底。
       prompt: withNoOnscreenTextGuard(
-        `${args.prompt || '保留源视频的镜头节奏与爆点结构,把主体替换为参考图中的产品。'}\n源视频中的字幕、贴字与水印不要复刻。`,
+        withNoSourceOverlayGuard(
+          args.prompt || buildHotCopyReplicatePrompt({ tab: 'remake', products: products.map(() => ({})) }),
+        ),
       ),
       inputAssets,
       // 时长/比例按用户在入口的选择下发 —— 与智能成片 generateFullVideo 同一写法:始终走

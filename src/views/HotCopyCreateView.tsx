@@ -30,6 +30,7 @@ import {
   type HotCopyReplicateSnapshot,
 } from '@/api/hotCopy'
 import { blurFacesOnAsset, isNoFaceDetectedError } from '@/api/smartFaceBlur'
+import { buildHotCopyReplicatePrompt } from '@/utils/hotCopyPrompt'
 import { compressImageFileForFaceDetect } from '@/utils/imageFile'
 import { readVideoDurationSec } from '@/utils/videoDuration'
 import {
@@ -433,13 +434,14 @@ function resolveStoredSourceDuration(sourceAssetId: number, ...sources: any[]): 
   return 0
 }
 
-// 据 Tab + 文案构造 replicate 提示词
-function buildBasePrompt(tab: 'remake' | 'replica', text: string): string {
-  const intent =
-    tab === 'replica'
-      ? '精准复刻:尽量 1:1 还原原视频的画面、运镜与节奏'
-      : '同款翻拍:保留原视频镜头节奏与爆点结构,把主体替换为提供的替换素材产品'
-  return [text.trim(), intent].filter(Boolean).join(';') || '做同款-爆款复制'
+// 据入口快照构造 replicate 提示词:模式、文案、参考图张数、是否换人、音频开关都会影响措辞
+function buildBasePrompt(payload: Pick<HotCopyEntryPayload, 'tab' | 'text' | 'products' | 'generateAudio'>): string {
+  return buildHotCopyReplicatePrompt({
+    tab: payload.tab,
+    text: payload.text,
+    products: payload.products,
+    generateAudio: payload.generateAudio,
+  })
 }
 
 /** 生成可持久化的入口素材快照，剥离仅当前页面需要的临时字段。 */
@@ -4495,7 +4497,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       String(nextSourceVideo.url || '') !== String(sourceVideo.url || '')
 
     setEntryInitial(nextEntry)
-    setBasePrompt(buildBasePrompt(payload.tab, payload.text))
+    setBasePrompt(buildBasePrompt(payload))
     setSourceVideo(nextSourceVideo)
     setProductAssetIds(nextProductAssetIds)
     setGenRatio(nextRatio)
@@ -4689,7 +4691,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       forceNewProject: Boolean((location.state as any)?.taskCenterNewSession),
     })
     if (targetProjectId) terminalJobResultsRef.current.delete(targetProjectId)
-    const prompt = buildBasePrompt(payload.tab, payload.text)
+    const prompt = buildBasePrompt(payload)
     const nextEntryInitial = buildEntrySnapshot(payload)
     // 先显式置为生成中,再切到视频页,避免首帧短暂落到「暂无视频」占位态。
     setVidGenRunning(true)

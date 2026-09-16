@@ -5,7 +5,7 @@
  * 排进队列，等于为几张缩略图对元素接口打出几十个 limit=500 的请求。这里锁死
  * 「只有进入过视口的卡片才请求封面」这一条，防止哪天又退回全量预取。
  */
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -202,6 +202,56 @@ describe('CanvasListView 封面加载', () => {
 
       await flushAsync()
       expect(requestedCanvasIds()).toEqual([101, 102, 103])
+    },
+    TEST_TIMEOUT_MS,
+  )
+})
+
+describe('CanvasListView 分页', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    observers.length = 0
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    mocks.fetchAllCanvasElements.mockResolvedValue({ elements: [], sync_revision: 1 })
+  })
+
+  it(
+    '拉取时循环到底，超过一页时只渲染当前页并显示分页器',
+    async () => {
+      // 第一页塞满 100 条触发继续翻页，第二页 5 条结束；总 105 条 → 每页 12 → 9 页
+      const firstPage = Array.from({ length: 100 }, (_, i) => canvas(1000 + i, `画布${i + 1}`))
+      const secondPage = Array.from({ length: 5 }, (_, i) => canvas(2000 + i, `画布${101 + i}`))
+      mocks.listCanvases.mockImplementation(async ({ offset }: { offset?: number }) =>
+        (offset || 0) === 0 ? firstPage : secondPage,
+      )
+
+      render(<CanvasListView />)
+      await screen.findByLabelText('打开画布 画布1', undefined, WAIT)
+
+      expect(mocks.listCanvases).toHaveBeenCalledTimes(2)
+      expect(mocks.listCanvases).toHaveBeenNthCalledWith(1, expect.objectContaining({ limit: 100, offset: 0 }))
+      expect(mocks.listCanvases).toHaveBeenNthCalledWith(2, expect.objectContaining({ limit: 100, offset: 100 }))
+
+      expect(screen.getByLabelText('打开画布 画布12')).toBeInTheDocument()
+      expect(screen.queryByLabelText('打开画布 画布13')).not.toBeInTheDocument()
+      expect(screen.getByRole('listitem', { name: '9' })).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('listitem', { name: '2' }))
+      expect(screen.getByLabelText('打开画布 画布13')).toBeInTheDocument()
+      expect(screen.queryByLabelText('打开画布 画布1')).not.toBeInTheDocument()
+    },
+    TEST_TIMEOUT_MS,
+  )
+
+  it(
+    '不足一页时不显示分页器',
+    async () => {
+      mocks.listCanvases.mockResolvedValue([canvas(101, '甲'), canvas(102, '乙')])
+      render(<CanvasListView />)
+      await screen.findByLabelText('打开画布 甲', undefined, WAIT)
+
+      expect(mocks.listCanvases).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('listitem', { name: '1' })).not.toBeInTheDocument()
     },
     TEST_TIMEOUT_MS,
   )

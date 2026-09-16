@@ -102,13 +102,8 @@ import {
   readImageDimensions,
   videoReferenceImageDimensionError,
 } from '@/utils/imageFile'
-import {
-  isVideoResolutionLower,
-  readVideoDurationSec,
-  readVideoMetadata,
-  videoResolutionFromDimensions,
-  type VideoMetadata,
-} from '@/utils/videoDuration'
+import { isVideoResolutionLower, readVideoMetadata, type VideoMetadata } from '@/utils/videoDuration'
+import { resolveVideoEditResolution } from '@/utils/videoEditResolution'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import { getSmartMarketingRecoveryKey } from '@/utils/smartMarketingRecovery'
 import {
@@ -3630,9 +3625,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         }
         sourceVideoMetadata = await readVideoMetadata(sourceVideo.url)
         sourceVideoDurationSec = sourceVideoMetadata.durationSec > 0 ? Math.round(sourceVideoMetadata.durationSec) : 0
-        const sourceResolution = videoResolutionFromDimensions(sourceVideoMetadata.width, sourceVideoMetadata.height)
-        // 修改任务以原片真实像素为准，避免旧草稿缺少 resolution 时回落到模型默认清晰度。
-        if (sourceResolution) resolution = sourceResolution
+        // 优先沿用原片真实像素，但必须落在目标模型的档位内；与 onEstimateEditCost 同一口径。
+        resolution = resolveVideoEditResolution({
+          model: modelVersion,
+          entryResolution: resolution,
+          sourceWidth: sourceVideoMetadata.width,
+          sourceHeight: sourceVideoMetadata.height,
+        })
       }
       {
         // edit 与 generate 是两个 operation，估价口径不同：edit 按源视频时长走 estimateVideoEditCost，
@@ -8642,6 +8641,15 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                 ? `当前模型不支持修改，将使用「${plan.displayName}」进行视频编辑`
                 : `修改将使用「${plan.displayName}」进行视频编辑`,
           )
+          // 分辨率与提交路径同一口径：原片像素对模型档位，对不上回到入口值。
+          // 估价若用入口值、提交却用像素反推，会出现「估价通过、点确认后被拒」。
+          const sourceMetadata = await readVideoMetadata(fullVideo.url)
+          const editResolution = resolveVideoEditResolution({
+            model: plan.modelVersion,
+            entryResolution: entryMeta?.resolution,
+            sourceWidth: sourceMetadata.width,
+            sourceHeight: sourceMetadata.height,
+          })
           if (plan.mode === 'reference') {
             // 参考生视频 = video.generate 口径：与入队/提交同参（分镜 + 入口参考图 + 锁定模型）
             const referenceImageAssetIds = requireReferenceImageAssetIds(
@@ -8653,7 +8661,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
               workspaceId: ws,
               shots,
               ratio: entryMeta?.ratio,
-              resolution: entryMeta?.resolution,
+              resolution: editResolution,
               ...(typeof entryMeta?.generateAudio === 'boolean' ? { generateAudio: entryMeta.generateAudio } : {}),
               referenceImageCount: referenceImageAssetIds.length,
               imageAssetIds: referenceImageAssetIds,
@@ -8668,11 +8676,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             }
           }
           // video.edit 口径：按源视频真实时长计费
-          const sourceVideoDurationSec = (await readVideoDurationSec(fullVideo.url)) || 0
+          const sourceVideoDurationSec = sourceMetadata.durationSec > 0 ? Math.round(sourceMetadata.durationSec) : 0
           const result: any = await estimateVideoEditCost({
             workspaceId: ws,
             ratio: entryMeta?.ratio,
-            resolution: entryMeta?.resolution,
+            resolution: editResolution,
             sourceVideoDurationSec,
             modelVersionId: plan.modelVersionId,
             modelVersion: plan.modelVersion,

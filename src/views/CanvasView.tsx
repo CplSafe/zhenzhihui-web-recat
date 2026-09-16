@@ -4206,7 +4206,7 @@ function CanvasInner() {
             modelVersionId: polishModel.modelVersionId,
             modelVersion: polishModel.source,
           },
-          maxTokens: kind === 'video' ? 420 : 320,
+          maxTokens: 2000,
         }),
       ).trim()
       if (!polished) throw new Error('AI 未返回可用的润色内容，请稍后重试')

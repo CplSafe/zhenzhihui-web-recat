@@ -25,6 +25,8 @@ import {
 import { createInitializedProjectFolder } from '@/utils/creativeProjectInitialization'
 import { addClassifiedVideo, countProjectVideos } from '@/api/projectVideos'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
+import { fetchAllCanvasElements, listCanvases } from '@/api/canvasApi'
+import { collectCanvasElementAssetIds } from '@/utils/canvasElements'
 import { collectClassifiedKeys, videoSourceKeyCandidates } from '@/utils/unclassifiedVideos'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { enqueueCreativeProjectDraftSave } from '@/utils/creativeDraftSaveQueue'
@@ -94,6 +96,20 @@ function getProjectTimestamp(project: any, keys: string[]): number {
 
 /** 返回项目卡片当前统一使用的视觉色调键。 */
 const toneOf = (_i: number) => 'a' as const
+
+/** 项目列表按创作流程筛选的口径：真人成片与智能成片共用同一视图，归入爆款成片。 */
+type ProjectFlowKind = 'smart' | 'hot-copy' | 'other'
+
+function resolveProjectFlowKind(project: any): ProjectFlowKind {
+  const draft = getCreativeProjectDraft(project)
+  const smart = toPlainObject(draft?.smart) || draft
+  const flow = String(draft?.flow || smart?.flow || '')
+    .trim()
+    .toLowerCase()
+  if (flow === 'hot-copy' || flow === 'hotcopy') return 'hot-copy'
+  if (flow === 'smart' || flow === 'real-person-video') return 'smart'
+  return 'other'
+}
 
 /** 爆款复制项目优先使用用户原始商品图作为项目封面。 */
 function extractHotCopyOriginalCoverAssetId(draft: any): number {
@@ -301,6 +317,32 @@ function collectProjectVideoAssetIds(projectItems: any[]): Set<number> {
   return ids
 }
 
+// 收集本工作空间所有画布(含已归档)节点引用的素材 id。画布不是 creative project,它生成的视频
+// 不会被任何项目草稿引用,不排掉就会全部冒进「待分类」。单个画布拉取失败只影响它自己,
+// 其余画布照常排除——整批失败反而会让全部画布视频一起漏出来。
+async function collectCanvasAssetIds(workspaceId: number, isCurrent: () => boolean): Promise<Set<number>> {
+  const canvases: { id: number }[] = []
+  const pageSize = 100
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await listCanvases({ workspaceId, includeArchived: true, limit: pageSize, offset })
+    if (!isCurrent()) return new Set()
+    canvases.push(...page.filter((canvas) => Number(canvas?.id || 0) > 0))
+    if (page.length < pageSize) break
+  }
+  const results = await Promise.allSettled(
+    canvases.map(async (canvas) => {
+      const page = await fetchAllCanvasElements({ workspaceId, canvasId: canvas.id })
+      return collectCanvasElementAssetIds(page.elements)
+    }),
+  )
+  const ids = new Set<number>()
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue
+    for (const id of result.value) ids.add(id)
+  }
+  return ids
+}
+
 // 提取「2.0 旧版」项目的成片视频:flow 不是 smart/hot-copy(那是 2.1 智能成片/爆款复制),
 // 且草稿里有视频(generatedVideoUrl/Asset 或 videoHistoryList 任一,url 或 assetId 都算)。
 // 这些就是 2.0 视频,进「待分类」;2.1 的不进(它们在上方项目文件夹 / 项目详情里)。
@@ -444,6 +486,7 @@ export default function ProjectManagementView() {
   const [page, setPage] = useState(1)
   const [query, setQuery] = useState('') // 搜索项目名称/团队
   const [typeFilter, setTypeFilter] = useState<'all' | '个人项目' | '协作项目'>('all')
+  const [flowFilter, setFlowFilter] = useState<'all' | 'smart' | 'hot-copy'>('all')
   const [sortDesc, setSortDesc] = useState(true) // 时间降序/升序
   // 成员筛选(团队空间):'' = 全部成员,否则为归属人 userId 字符串。按空间记忆,子账号多时进页即定位自己的项目。
   const [ownerFilter, setOwnerFilter] = useState('')
@@ -562,6 +605,7 @@ export default function ProjectManagementView() {
           works: worksCount,
           worksLabel: imageState.imageProject ? '张图片' : '作品',
           imageProject: imageState.imageProject,
+          flow: resolveProjectFlowKind(project),
           participantAvatars,
           userId,
           workspaceId: wsId,
@@ -606,7 +650,7 @@ export default function ProjectManagementView() {
     return ownerOptions.some((option) => option.value === ownerFilter) ? ownerFilter : ''
   }, [isTeamSpace, ownerFilter, ownerOptions])
 
-  // 搜索 + 类型过滤 + 成员过滤 + 时间排序
+  // 搜索 + 流程过滤 + 类型过滤 + 成员过滤 + 时间排序
   const shownFolders = useMemo(() => {
     const q = query.trim().toLowerCase()
     const ownerId = Number(effectiveOwnerFilter || 0)
@@ -618,10 +662,13 @@ export default function ProjectManagementView() {
     }
     const list = folders.filter(
       (f) =>
-        (typeFilter === 'all' || f.type === typeFilter) && matchesOwner(f) && (!q || f.title.toLowerCase().includes(q)),
+        (flowFilter === 'all' || f.flow === flowFilter) &&
+        (typeFilter === 'all' || f.type === typeFilter) &&
+        matchesOwner(f) &&
+        (!q || f.title.toLowerCase().includes(q)),
     )
     return sortDesc ? list : [...list].reverse()
-  }, [folders, query, typeFilter, effectiveOwnerFilter, sortDesc, currentUserId, myProjectIds])
+  }, [folders, query, flowFilter, typeFilter, effectiveOwnerFilter, sortDesc, currentUserId, myProjectIds])
 
   // 每页 = 3 行 × 3 列 = 9 个(固定,不随屏幕变)
   const pageSize = 9
@@ -638,7 +685,7 @@ export default function ProjectManagementView() {
   // 搜索 / 过滤 / 排序变化时回到第一页
   useEffect(() => {
     setPage(1)
-  }, [query, typeFilter, sortDesc, effectiveOwnerFilter])
+  }, [query, flowFilter, typeFilter, sortDesc, effectiveOwnerFilter])
 
   // 已归类(拖入项目)的视频 → 从待归类隐藏。来源:各项目云端草稿(collectClassifiedKeys),
   // 不再用 localStorage。pendingClassified 仅为拖入后、列表刷新前的乐观隐藏(纯内存)。
@@ -676,12 +723,12 @@ export default function ProjectManagementView() {
     }
     let alive = true
     const used = collectProjectVideoAssetIds(effectiveProjectItems)
-    listAllAssets({
-      workspaceId: ws,
-      type: 'video',
-      isCurrent: () => alive && Number(workspaceIdRef.current || 0) === ws && projectItemsWorkspaceIdRef.current === ws,
-    })
-      .then((items: any[]) => {
+    const isCurrent = () =>
+      alive && Number(workspaceIdRef.current || 0) === ws && projectItemsWorkspaceIdRef.current === ws
+    // 画布引用拉不到时按空集处理:宁可多显示几条,也不能因为画布接口故障把整个待分类清空
+    const canvasUsedPromise = collectCanvasAssetIds(ws, isCurrent).catch(() => new Set<number>())
+    Promise.all([listAllAssets({ workspaceId: ws, type: 'video', isCurrent }), canvasUsedPromise])
+      .then(([items, canvasUsed]: [any[], Set<number>]) => {
         if (!alive || Number(workspaceIdRef.current || 0) !== ws || projectItemsWorkspaceIdRef.current !== ws) {
           return
         }
@@ -690,6 +737,7 @@ export default function ProjectManagementView() {
             if (!isAssetAccessibleByProject(a, accessibleProjectIds, projectPermissionsLoaded)) return false
             const id = Number(a?.id || 0)
             if (!id || used.has(id)) return false // 被某 2.1 项目引用 → 是 2.1 视频,不进待分类
+            if (canvasUsed.has(id)) return false // 被画布节点引用 → 是画布视频,不进待分类
             if (String(a?.source || '').toLowerCase() === 'upload') return false // 上传的源视频不算成片
             return true
           })
@@ -1379,25 +1427,50 @@ export default function ProjectManagementView() {
               </div>
             </div>
 
-            {/* 筛选条:类型 / 状态(占位) / 排序 */}
+            {/* 筛选条:流程 / 类型 / 状态(占位) / 排序 */}
             <div className="pm2-filters">
+              <div className="pm2-flow-tabs" role="tablist" aria-label="按创作流程筛选">
+                {(
+                  [
+                    ['all', '全部'],
+                    ['smart', '爆款成片'],
+                    ['hot-copy', '爆款复刻'],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="tab"
+                    aria-selected={flowFilter === value}
+                    className={`pm2-flow-tab${flowFilter === value ? ' is-active' : ''}`}
+                    onClick={() => setFlowFilter(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <span className="pm2-filter">
                 项目类型:
-                <select
-                  className="pm2-filter-select"
+                <FilterSelect
+                  ariaLabel="按项目类型筛选"
                   value={typeFilter}
-                  onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
-                >
-                  <option value="all">全部类型</option>
-                  <option value="个人项目">个人项目</option>
-                  <option value="协作项目">协作项目</option>
-                </select>
+                  options={[
+                    { value: 'all', label: '全部类型' },
+                    { value: '个人项目', label: '个人项目' },
+                    { value: '协作项目', label: '协作项目' },
+                  ]}
+                  onChange={(value) => setTypeFilter(value as typeof typeFilter)}
+                />
               </span>
               <span className="pm2-filter">
                 项目状态:
-                <select className="pm2-filter-select" disabled>
-                  <option>全部状态</option>
-                </select>
+                <FilterSelect
+                  ariaLabel="按项目状态筛选"
+                  value="all"
+                  options={[{ value: 'all', label: '全部状态' }]}
+                  onChange={() => {}}
+                  disabled
+                />
               </span>
               {/* 团队空间:按成员筛选。子账号多、各自产出多时,先一键定位到自己的项目 */}
               {isTeamSpace && (
@@ -1444,7 +1517,7 @@ export default function ProjectManagementView() {
                 <div className="pm2-hint">正在加载项目…</div>
               ) : !shownFolders.length ? (
                 <div className="pm2-hint">
-                  {query || typeFilter !== 'all' || effectiveOwnerFilter
+                  {query || flowFilter !== 'all' || typeFilter !== 'all' || effectiveOwnerFilter
                     ? '没有匹配的项目'
                     : '还没有项目,点右上角「新建项目」开始'}
                 </div>
@@ -1453,7 +1526,9 @@ export default function ProjectManagementView() {
                   {pagedFolders.map((folder) => (
                     <div
                       key={folder.id}
-                      className={`pm2-pcard${dragOverFolderId === folder.id ? ' is-dropover' : ''}`}
+                      className={`pm2-pcard${dragOverFolderId === folder.id ? ' is-dropover' : ''}${
+                        openMenuId === folder.id ? ' is-menu-open' : ''
+                      }`}
                       role="button"
                       tabIndex={0}
                       aria-label={`打开项目 ${folder.title}`}

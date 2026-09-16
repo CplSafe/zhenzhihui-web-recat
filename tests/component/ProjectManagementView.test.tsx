@@ -7,9 +7,11 @@ const mocks = vi.hoisted(() => ({
   createCreativeProject: vi.fn(),
   createInitializedProjectFolder: vi.fn(),
   deleteCreativeProject: vi.fn(),
+  fetchAllCanvasElements: vi.fn(),
   getAssetDownloadUrl: vi.fn(),
   getCreativeProject: vi.fn(),
   listAssets: vi.fn(),
+  listCanvases: vi.fn(),
   listCreativeProjects: vi.fn(),
   listWorkspaceMembers: vi.fn(),
   navigate: vi.fn(),
@@ -87,6 +89,11 @@ vi.mock('@/utils/creativeProjectInitialization', () => ({
   createInitializedProjectFolder: mocks.createInitializedProjectFolder,
 }))
 
+vi.mock('@/api/canvasApi', () => ({
+  fetchAllCanvasElements: mocks.fetchAllCanvasElements,
+  listCanvases: mocks.listCanvases,
+}))
+
 import ProjectManagementView from '@/views/ProjectManagementView'
 
 function deferred<T>() {
@@ -129,9 +136,13 @@ describe('ProjectManagementView workspace isolation', () => {
     mocks.createCreativeProject.mockReset()
     mocks.createInitializedProjectFolder.mockReset()
     mocks.deleteCreativeProject.mockReset()
+    mocks.fetchAllCanvasElements.mockReset()
+    mocks.fetchAllCanvasElements.mockResolvedValue({ elements: [] })
     mocks.getAssetDownloadUrl.mockReset()
     mocks.getCreativeProject.mockReset()
     mocks.listAssets.mockReset()
+    mocks.listCanvases.mockReset()
+    mocks.listCanvases.mockResolvedValue([])
     mocks.listCreativeProjects.mockReset()
     mocks.listWorkspaceMembers.mockReset()
     mocks.listWorkspaceMembers.mockResolvedValue([])
@@ -311,6 +322,54 @@ describe('ProjectManagementView workspace isolation', () => {
     expect(screen.queryByText('Unknown linked video')).not.toBeInTheDocument()
   })
 
+  it('hides videos referenced by canvas nodes from the unclassified section', async () => {
+    mocks.listCreativeProjects.mockResolvedValue([])
+    mocks.listAssets.mockResolvedValue({
+      items: [
+        looseAsset(601, 'Canvas result video'),
+        looseAsset(602, 'Canvas poster video'),
+        looseAsset(603, 'Canvas timeline clip'),
+        looseAsset(604, 'Genuinely loose video'),
+      ],
+    })
+    mocks.listCanvases.mockResolvedValue([{ id: 5 }, { id: 6 }])
+    mocks.fetchAllCanvasElements.mockImplementation(async ({ canvasId }: { canvasId: number }) => ({
+      elements:
+        canvasId === 5
+          ? [
+              { element_id: 'n1', kind: 'node', payload: { data: { kind: 'video', assetId: 601 } } },
+              { element_id: 'n2', kind: 'node', payload: { data: { kind: 'video', posterAssetId: 602 } } },
+              { element_id: 'e1', kind: 'edge', payload: { source: 'n1', target: 'n2' } },
+            ]
+          : [
+              {
+                element_id: 't1',
+                kind: 'node',
+                payload: { data: { kind: 'timeline', timeline: { clips: [{ assetId: 603 }] } } },
+              },
+              { element_id: 'gone', kind: 'node', op: 'delete', payload: { data: { assetId: 604 } } },
+            ],
+    }))
+
+    render(<ProjectManagementView />)
+
+    expect(await screen.findByText('Genuinely loose video')).toBeInTheDocument()
+    expect(screen.queryByText('Canvas result video')).not.toBeInTheDocument()
+    expect(screen.queryByText('Canvas poster video')).not.toBeInTheDocument()
+    expect(screen.queryByText('Canvas timeline clip')).not.toBeInTheDocument()
+    expect(mocks.listCanvases).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 21, includeArchived: true }))
+  })
+
+  it('keeps every loose video visible when the canvas list request fails', async () => {
+    mocks.listCreativeProjects.mockResolvedValue([])
+    mocks.listAssets.mockResolvedValue({ items: [looseAsset(701, 'Survives canvas outage')] })
+    mocks.listCanvases.mockRejectedValue(new Error('canvas service down'))
+
+    render(<ProjectManagementView />)
+
+    expect(await screen.findByText('Survives canvas outage')).toBeInTheDocument()
+  })
+
   it('fails closed for linked assets when the project permission list fails', async () => {
     mocks.listCreativeProjects.mockRejectedValue(new Error('project list unavailable'))
     mocks.listAssets.mockResolvedValue({
@@ -399,6 +458,35 @@ describe('ProjectManagementView workspace isolation', () => {
     expect(screen.queryByRole('button', { name: '按成员筛选' })).not.toBeInTheDocument()
     // 个人空间不发 mine=true 请求:mine 即全部,多拉一次是浪费
     expect(mocks.listCreativeProjects).not.toHaveBeenCalledWith(expect.objectContaining({ mine: true }))
+  })
+
+  it('flow tabs filter projects into 爆款成片 / 爆款复刻, legacy projects only under 全部', async () => {
+    mocks.workspace.type = 'personal'
+    mocks.listCreativeProjects.mockResolvedValue([
+      project(1, '智能成片项目'),
+      { ...project(2, '真人成片项目'), draft_json: { flow: 'real-person-video', smart: {} } },
+      { ...project(3, '爆款复刻项目'), draft_json: { flow: 'hot-copy', smart: {} } },
+      { ...project(4, '旧版项目'), draft_json: { flow: 'legacy', smart: {} } },
+    ])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findByRole('button', { name: '打开项目 智能成片项目' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开项目 旧版项目' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '爆款成片' }))
+    expect(screen.getByRole('button', { name: '打开项目 智能成片项目' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开项目 真人成片项目' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 爆款复刻项目' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 旧版项目' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '爆款复刻' }))
+    expect(screen.getByRole('button', { name: '打开项目 爆款复刻项目' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 智能成片项目' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 真人成片项目' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '全部' }))
+    expect(screen.getByRole('button', { name: '打开项目 旧版项目' })).toBeInTheDocument()
   })
 
   it('batch-classifies every unclassified video into the chosen project and hides them optimistically', async () => {

@@ -31,6 +31,7 @@ import { assetStreamUrl } from '@/utils/assetUrl'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
 import resourceSearchIcon from '@/assets/resource/figma-resource-search.svg'
 import AiBadge from '@/components/common/AiBadge'
+import FilterSelect from '@/components/common/FilterSelect'
 import { useAssetPreview } from '@/composables/useAssetPreview'
 import {
   deleteAsset,
@@ -1624,13 +1625,19 @@ export default function ResourceManagementView() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </label>
-            <label className="rm2-sort">
+            <div className="rm2-sort">
               <span>排序</span>
-              <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as 'newest' | 'oldest')}>
-                <option value="newest">最近创建</option>
-                <option value="oldest">最早创建</option>
-              </select>
-            </label>
+              <FilterSelect
+                ariaLabel="按创建时间排序"
+                className="rm2-sort__select"
+                value={sortOrder}
+                options={[
+                  { value: 'newest', label: '最近创建' },
+                  { value: 'oldest', label: '最早创建' },
+                ]}
+                onChange={(value) => setSortOrder(value as 'newest' | 'oldest')}
+              />
+            </div>
           </div>
 
           {/* 子分类(全部 tab,或进入项目后的图片/视频)*/}

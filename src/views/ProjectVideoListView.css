@@ -41,6 +41,33 @@
   margin-bottom: 16px;
 }
 
+.pvlist-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 4px;
+  border: 1px solid #d5dae3;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b5563;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.pvlist-back-btn:hover {
+  border-color: #1fcfa9;
+  color: #1fcfa9;
+}
+.pvlist-back-btn:focus-visible {
+  outline: 2px solid #1fcfa9;
+  outline-offset: 2px;
+}
+
 .pvlist-breadcrumb__link {
   border: none;
   background: none;

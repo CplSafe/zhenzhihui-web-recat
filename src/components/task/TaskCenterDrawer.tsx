@@ -4,6 +4,7 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Tooltip } from 'antd'
 import { InboxOutlined, LeftOutlined, LoadingOutlined, PlayCircleOutlined, RightOutlined } from '@ant-design/icons'
 import { getAssetDownloadUrl } from '@/api/business'
 import { deriveProjectVideos } from '@/api/projectVideos'
@@ -673,15 +674,16 @@ function TaskCard({ task, onOpen, onArchive }: { task: TaskCenterTask; onOpen: (
           )}
         </span>
       </button>
-      <button
-        type="button"
-        className={styles.archiveButton}
-        onClick={onArchive}
-        aria-label={`从任务管理中隐藏${title}`}
-        title="隐藏任务"
-      >
-        <InboxOutlined aria-hidden="true" />
-      </button>
+      <Tooltip title="从任务管理中隐藏这条任务，不会删除视频" placement="left">
+        <button
+          type="button"
+          className={styles.archiveButton}
+          onClick={onArchive}
+          aria-label={`从任务管理中隐藏${title}`}
+        >
+          <InboxOutlined aria-hidden="true" />
+        </button>
+      </Tooltip>
     </article>
   )
 }

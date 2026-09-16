@@ -1276,22 +1276,47 @@
   font-size: 14px;
   color: #5b6072;
 }
+/* 创作流程分段筛选：与项目视频列表页的流程 tab 同款视觉 */
+.pm2-flow-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 8px;
+  background: #edf0f4;
+}
+.pm2-flow-tab {
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #6d7584;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.pm2-flow-tab:hover {
+  color: #354052;
+}
+.pm2-flow-tab.is-active {
+  background: #fff;
+  color: #1f2430;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.pm2-flow-tab:focus-visible {
+  outline: 2px solid #1fcfa9;
+  outline-offset: 2px;
+}
 .pm2-filter {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-}
-.pm2-filter-select {
-  border: 0;
-  background: none;
-  font-size: 14px;
-  color: #333;
-  cursor: pointer;
-  outline: none;
-}
-.pm2-filter-select:disabled {
-  color: #333;
-  cursor: default;
+  gap: 8px;
 }
 .pm2-sort {
   display: inline-flex;
@@ -1334,6 +1359,11 @@
 .pm2-pcard.is-dropover {
   outline: 2px dashed #5767e5;
   outline-offset: 2px;
+}
+/* hover 的 transform 让每张卡片各自成为层叠上下文，菜单的 z-index 出不了本卡片；
+   溢出到下一行时会被后绘制的兄弟卡片盖住。菜单打开期间把整张卡片抬到兄弟之上。 */
+.pm2-pcard.is-menu-open {
+  z-index: 10;
 }
 .pm2-pcard-cover {
   position: relative;

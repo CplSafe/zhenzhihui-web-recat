@@ -25,9 +25,18 @@ interface FilterSelectProps {
   /** 无障碍名称，例如「按领域筛选」。 */
   ariaLabel: string
   className?: string
+  /** 占位态：显示当前值但不可展开（如后端尚未提供该维度的筛选）。 */
+  disabled?: boolean
 }
 
-export default function FilterSelect({ value, options, onChange, ariaLabel, className }: FilterSelectProps) {
+export default function FilterSelect({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  className,
+  disabled = false,
+}: FilterSelectProps) {
   const { open, setOpen, toggle, wrapRef } = useDismissablePopover<HTMLDivElement>()
   const selectedIndex = Math.max(
     0,
@@ -82,6 +91,7 @@ export default function FilterSelect({ value, options, onChange, ariaLabel, clas
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={disabled}
         onClick={toggle}
         onKeyDown={onTriggerKeyDown}
       >
@@ -102,7 +112,7 @@ export default function FilterSelect({ value, options, onChange, ariaLabel, clas
         </svg>
       </button>
 
-      {open && (
+      {open && !disabled && (
         <div className="filter-select__menu" role="listbox" aria-label={ariaLabel} ref={listRef}>
           {options.map((option, index) => {
             const selected = index === selectedIndex

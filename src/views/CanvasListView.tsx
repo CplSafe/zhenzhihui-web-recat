@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { Pagination } from 'antd'
 import '@/styles/project-management.css'
 import './CanvasListView.css'
 import AppSidebar from '@/components/home/AppSidebar'
@@ -95,19 +96,38 @@ export default function CanvasListView() {
     [canvasesWorkspaceId, activeWsId, canvases],
   )
 
+  // 前端分页：每页 12 张（响应式网格下 2~4 行）。切换空间回到第一页；删到当前页为空时夹回最后一页。
+  const pageSize = 12
+  const [page, setPage] = useState(1)
+  const totalPages = Math.max(1, Math.ceil(effectiveCanvases.length / pageSize))
+  const pagedCanvases = useMemo(
+    () => effectiveCanvases.slice((page - 1) * pageSize, page * pageSize),
+    [effectiveCanvases, page, pageSize],
+  )
+  useEffect(() => {
+    setPage(1)
+  }, [activeWsId])
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
+
   /**
    * 记录哪些卡片进入过视口，供封面副作用挑选目标。
    *
-   * 列表一页最多 50 张画布，而首屏通常只看得到 6~8 张。之前不看可见性、开页就把
-   * 整页都排进封面队列，等于为了几张缩略图对元素接口打出几十个 limit=500 的请求。
+   * 每页 12 张画布，而首屏通常只看得到 6~8 张。之前不看可见性、开页就把
+   * 整页都排进封面队列，等于为了几张缩略图对元素接口打出十几个 limit=1000 的请求。
    * 只记录「曾经可见」并随即 unobserve：封面取到就不再关心它是否还在视口内。
    */
   useEffect(() => {
     const grid = gridRef.current
-    if (!grid || !effectiveCanvases.length) return
+    if (!grid || !pagedCanvases.length) return
     // 环境不支持时退回原来的全量行为，保证封面仍然会显示
     if (typeof IntersectionObserver === 'undefined') {
-      setCoverVisibleIds(new Set(effectiveCanvases.map((item) => Number(item.id || 0))))
+      setCoverVisibleIds((prev) => {
+        const next = new Set(prev)
+        for (const item of pagedCanvases) next.add(Number(item.id || 0))
+        return next.size === prev.size ? prev : next
+      })
       return
     }
 
@@ -133,7 +153,7 @@ export default function CanvasListView() {
     )
     grid.querySelectorAll('[data-canvas-id]').forEach((el) => observer.observe(el))
     return () => observer.disconnect()
-  }, [effectiveCanvases])
+  }, [pagedCanvases])
 
   /**
    * 逐张补齐封面。
@@ -143,10 +163,10 @@ export default function CanvasListView() {
    */
   useEffect(() => {
     const wsId = activeWsId
-    if (!wsId || !effectiveCanvases.length) return
+    if (!wsId || !pagedCanvases.length) return
     let disposed = false
 
-    const pending = effectiveCanvases
+    const pending = pagedCanvases
       .map((item) => ({ id: Number(item.id || 0), key: `${wsId}:${item.id}:${item.revision || 0}` }))
       .filter((item) => item.id > 0 && coverVisibleIds.has(item.id) && !coverLoadedRef.current.has(item.key))
     if (!pending.length) return
@@ -177,7 +197,7 @@ export default function CanvasListView() {
     return () => {
       disposed = true
     }
-  }, [activeWsId, effectiveCanvases, coverVisibleIds])
+  }, [activeWsId, pagedCanvases, coverVisibleIds])
 
   // 拉取画布列表；请求序号 + workspace 快照共同阻止过期响应覆盖当前页面
   const loadCanvases = useCallback(async () => {
@@ -193,10 +213,17 @@ export default function CanvasListView() {
     }
     setLoading(true)
     try {
-      const items = await listCanvases({ workspaceId: wsId })
-      if (!isCurrent()) return
+      // 后端单页上限 100；分页交给前端做，所以这里循环拉到底，与项目管理页拉全量项目的做法一致
+      const items: CanvasSummary[] = []
+      const pageSize = 100
+      for (let offset = 0; ; offset += pageSize) {
+        const page = await listCanvases({ workspaceId: wsId, limit: pageSize, offset })
+        if (!isCurrent()) return
+        items.push(...(Array.isArray(page) ? page : []))
+        if (!Array.isArray(page) || page.length < pageSize) break
+      }
       canvasesWorkspaceIdRef.current = wsId
-      setCanvases(Array.isArray(items) ? items : [])
+      setCanvases(items)
       setCanvasesWorkspaceId(wsId)
     } catch (error) {
       if (isCurrent()) {
@@ -460,10 +487,10 @@ export default function CanvasListView() {
               <div className="pm2-hint">还没有画布，点右上角「新建画布」开始</div>
             ) : (
               <div className="pm2-card-grid" ref={gridRef}>
-                {effectiveCanvases.map((item) => (
+                {pagedCanvases.map((item) => (
                   <div
                     key={item.id}
-                    className="pm2-pcard"
+                    className={`pm2-pcard${openMenuId === item.id ? ' is-menu-open' : ''}`}
                     data-canvas-id={item.id}
                     role="button"
                     tabIndex={0}
@@ -559,6 +586,17 @@ export default function CanvasListView() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+            {totalPages > 1 && (
+              <div className="pm2-pager">
+                <Pagination
+                  current={page}
+                  pageSize={pageSize}
+                  total={effectiveCanvases.length}
+                  showSizeChanger={false}
+                  onChange={setPage}
+                />
               </div>
             )}
           </section>

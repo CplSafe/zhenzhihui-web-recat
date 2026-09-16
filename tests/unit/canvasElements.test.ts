@@ -3,6 +3,7 @@ import type { Edge, Node } from '@xyflow/react'
 import {
   buildEdgeId,
   applyCanvasElementMutations,
+  collectCanvasElementAssetIds,
   comparableEdge,
   comparableNode,
   collectCanvasSourceRefs,
@@ -16,6 +17,23 @@ import {
 describe('canvasElements', () => {
   it('builds stable edge ids', () => {
     expect(buildEdgeId('source-node', 'target-node', 2)).toBe('e-source-node-target-node-2')
+  })
+
+  it('收集活节点引用的生成结果、封面帧和时间线片段素材 id，跳过 tombstone 与连线', () => {
+    const ids = collectCanvasElementAssetIds([
+      { element_id: 'n1', kind: 'node', op: 'upsert', payload: { data: { assetId: 11, posterAssetId: 12 } } },
+      { element_id: 'n2', kind: 'node', op: 'upsert', payload: { data: { assetId: '13' } } },
+      {
+        element_id: 't1',
+        kind: 'node',
+        op: 'upsert',
+        payload: { data: { kind: 'timeline', timeline: { clips: [{ assetId: 14 }, { assetId: 0 }, {}] } } },
+      },
+      { element_id: 'gone', kind: 'node', op: 'delete', payload: { data: { assetId: 99 } } },
+      { element_id: 'e1', kind: 'edge', op: 'upsert', payload: { source: 'n1', target: 'n2', data: { assetId: 98 } } },
+      { element_id: 'bad', kind: 'node', op: 'upsert', payload: { data: { assetId: -1, posterAssetId: 'x' } } },
+    ])
+    expect([...ids].sort((a, b) => a - b)).toEqual([11, 12, 13, 14])
   })
 
   it('连接前识别直接和间接循环依赖', () => {

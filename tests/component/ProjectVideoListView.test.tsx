@@ -205,7 +205,7 @@ describe('ProjectVideoListView reliability', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '+ 新建视频' }))
     const dialog = screen.getByRole('dialog', { name: '新建视频' })
-    fireEvent.click(within(dialog).getByRole('button', { name: /智能成片/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: /爆款成片/ }))
 
     await waitFor(() => {
       expect(mocks.navigate).toHaveBeenCalledWith('/smart', {
