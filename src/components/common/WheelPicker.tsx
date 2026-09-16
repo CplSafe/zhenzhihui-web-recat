@@ -74,6 +74,7 @@ export default function WheelPicker({
     startX: number
     startScrollLeft: number
     moved: boolean
+    captured: boolean
   } | null>(null)
   // pointerup 后浏览器还会派发 click；拖动过时必须吞掉，否则松手处的档位会覆盖拖拽结果。
   const suppressClickRef = useRef(false)
@@ -218,9 +219,12 @@ export default function WheelPicker({
       startX: event.clientX,
       startScrollLeft: list.scrollLeft,
       moved: false,
+      captured: false,
     }
     suppressClickRef.current = false
-    list.setPointerCapture?.(event.pointerId)
+    // 这里不能捕获指针：捕获后 pointerup 的目标变成列表，浏览器按 down/up 目标的共同祖先派发
+    // click，档位按钮的 onClick 就永远收不到——「点哪一档选哪一档」在真实浏览器里整个失效
+    //（jsdom 不做这层重定向，单测看不出来）。捕获推迟到真的拖起来之后。
   }
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -232,6 +236,11 @@ export default function WheelPicker({
     if (!drag.moved) {
       drag.moved = true
       setDragging(true)
+      // 拖动已成立，此时才捕获：指针滑出列表也能继续拖，而且不会再有 click 需要送达按钮。
+      if (!drag.captured) {
+        list.setPointerCapture?.(event.pointerId)
+        drag.captured = true
+      }
     }
     event.preventDefault()
     list.scrollLeft = drag.startScrollLeft - deltaX
@@ -245,7 +254,7 @@ export default function WheelPicker({
     const list = listRef.current
     if (!drag || !list || drag.pointerId !== event.pointerId) return
     dragRef.current = null
-    list.releasePointerCapture?.(event.pointerId)
+    if (drag.captured) list.releasePointerCapture?.(event.pointerId)
     setDragging(false)
     if (!drag.moved) return
     suppressClickRef.current = true

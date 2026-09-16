@@ -279,6 +279,35 @@ describe('WheelPicker', () => {
     expect(onChange).toHaveBeenCalledExactlyOnceWith('6s')
   })
 
+  /*
+   * 指针捕获必须推迟到拖动成立之后。pointerdown 就捕获会让 pointerup 的目标变成列表，
+   * 真实浏览器按 down/up 目标的共同祖先派发 click，档位按钮的 onClick 永远收不到——
+   * 「点 14 秒没反应」就是这么来的。jsdom 不做这层重定向，只能锁调用时机。
+   */
+  it('普通点击不捕获指针，只有拖动超过阈值后才捕获并在松手时释放', () => {
+    render(<WheelPicker options={durations} value="5s" onChange={vi.fn()} ariaLabel="视频时长" itemWidth={64} />)
+    const list = screen.getByRole('listbox', { name: '视频时长' })
+    const setPointerCapture = vi.fn()
+    const releasePointerCapture = vi.fn()
+    Object.defineProperty(list, 'setPointerCapture', { value: setPointerCapture, configurable: true })
+    Object.defineProperty(list, 'releasePointerCapture', { value: releasePointerCapture, configurable: true })
+
+    // 纯点击：按下、微动、松开，全程不能碰指针捕获
+    fireEvent.pointerDown(list, { pointerId: 3, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 100 })
+    fireEvent.pointerMove(list, { pointerId: 3, pointerType: 'mouse', isPrimary: true, clientX: 102 })
+    fireEvent.pointerUp(list, { pointerId: 3, pointerType: 'mouse', isPrimary: true, clientX: 102 })
+    expect(setPointerCapture).not.toHaveBeenCalled()
+    expect(releasePointerCapture).not.toHaveBeenCalled()
+
+    // 拖动：越过阈值那一刻捕获一次，松手释放一次
+    fireEvent.pointerDown(list, { pointerId: 4, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 200 })
+    fireEvent.pointerMove(list, { pointerId: 4, pointerType: 'mouse', isPrimary: true, clientX: 190 })
+    fireEvent.pointerMove(list, { pointerId: 4, pointerType: 'mouse', isPrimary: true, clientX: 120 })
+    expect(setPointerCapture).toHaveBeenCalledExactlyOnceWith(4)
+    fireEvent.pointerUp(list, { pointerId: 4, pointerType: 'mouse', isPrimary: true, clientX: 120 })
+    expect(releasePointerCapture).toHaveBeenCalledExactlyOnceWith(4)
+  })
+
   it('停在不可选档位时不提交，档位仍不可点击', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
