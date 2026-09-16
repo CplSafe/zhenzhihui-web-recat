@@ -35,8 +35,8 @@ const AI_TASK_POLL_RETRY_BASE_MS = 1000
 const AI_TASK_POLL_RETRY_MAX_MS = 8000
 /** 后端 poll_after_ms 能把轮询拉长到的上限，避免异常大的值把等待挂死。 */
 const AI_TASK_POLL_AFTER_MAX_MS = 60_000
-/** 非流式 AI 等长任务接口的请求超时。 */
-const LONG_RUNNING_API_REQUEST_TIMEOUT_MS = 120_000
+/** 非流式 AI 等长任务接口（含图片同步生成 POST /ai/tasks）的请求超时：给同步出图留足 10 分钟。 */
+const LONG_RUNNING_API_REQUEST_TIMEOUT_MS = 600_000
 /** 对象存储大文件上传的超时上限。 */
 const OBJECT_STORAGE_UPLOAD_TIMEOUT_MS = 15 * 60 * 1000
 /** 上传凭证在前端续传缓存中的最大复用时间。 */
