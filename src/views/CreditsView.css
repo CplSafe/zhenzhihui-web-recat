@@ -1,0 +1,304 @@
+/* 积分明细页样式：外层壳对齐其它管理页（固定全屏 + 侧栏 + 主区滚动）。 */
+.credits {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+  background: #f5f6fb;
+}
+.credits__main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.credits__content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 36px 40px;
+}
+
+/* 页头 */
+.credits__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.credits__title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #1c2030;
+}
+.credits__sub {
+  margin: 0;
+  font-size: 13px;
+  color: #8b91a8;
+}
+.credits__sub b {
+  color: #565d76;
+  font-weight: 600;
+}
+.credits__rate {
+  font-size: 12px;
+  color: #8b91a8;
+  background: #fff;
+  border: 1px dashed #d7dae8;
+  border-radius: 999px;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+/* 概览卡 */
+.credits__cards {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.credits__card {
+  position: relative;
+  background: #fff;
+  border: 1px solid #e7e9f2;
+  border-radius: 14px;
+  padding: 16px 18px;
+  box-shadow:
+    0 1px 2px rgba(28, 32, 48, 0.04),
+    0 6px 20px rgba(28, 32, 48, 0.05);
+}
+.credits__card--primary {
+  background: linear-gradient(155deg, #5767e5, #6f7cf0);
+  border-color: transparent;
+  color: #fff;
+}
+.credits__card-k {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #8b91a8;
+}
+.credits__card--primary .credits__card-k {
+  color: rgba(255, 255, 255, 0.85);
+}
+.credits__card-v {
+  margin-top: 8px;
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #1c2030;
+  font-variant-numeric: tabular-nums;
+}
+.credits__card--primary .credits__card-v {
+  color: #fff;
+}
+.credits__card-v small {
+  margin-left: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #8b91a8;
+}
+.credits__card--primary .credits__card-v small {
+  color: rgba(255, 255, 255, 0.85);
+}
+.credits__card-yuan {
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: #8b91a8;
+  font-variant-numeric: tabular-nums;
+}
+.credits__card--primary .credits__card-yuan {
+  color: rgba(255, 255, 255, 0.82);
+}
+.credits__recharge {
+  position: absolute;
+  top: 15px;
+  right: 16px;
+  height: 30px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: #fff;
+  color: #3f4bc4;
+  font-weight: 600;
+  font-size: 12.5px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.credits__info {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid #b0b6cc;
+  color: #b0b6cc;
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+  cursor: help;
+}
+
+/* 面板 + 筛选 */
+.credits__panel {
+  background: #fff;
+  border: 1px solid #e7e9f2;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 2px rgba(28, 32, 48, 0.04),
+    0 6px 20px rgba(28, 32, 48, 0.05);
+  overflow: hidden;
+}
+.credits__filters {
+  display: flex;
+  gap: 4px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e7e9f2;
+  background: #fafbff;
+}
+.credits__filter {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #565d76;
+  font-size: 13px;
+  cursor: pointer;
+}
+.credits__filter.is-on {
+  background: #eef0fe;
+  color: #3f4bc4;
+  font-weight: 600;
+}
+
+/* 表格 */
+.credits__table-scroll {
+  overflow-x: auto;
+}
+.credits__table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+.credits__table thead th {
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: #8b91a8;
+  padding: 12px 16px;
+  background: #fafbff;
+  border-bottom: 1px solid #e7e9f2;
+  white-space: nowrap;
+}
+.credits__table tbody td {
+  padding: 14px 16px;
+  border-bottom: 1px solid #eef0f5;
+  font-size: 13.5px;
+  color: #1c2030;
+  vertical-align: middle;
+}
+.credits__table tbody tr:hover {
+  background: #fafbff;
+}
+.credits__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.credits__when {
+  color: #565d76;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.credits__reason {
+  color: #1c2030;
+  max-width: 340px;
+}
+.credits__chip {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.credits__chip--out {
+  color: #e0483b;
+  background: #fdecea;
+}
+.credits__chip--in {
+  color: #1f9d63;
+  background: #e6f6ee;
+}
+.credits__delta {
+  font-weight: 700;
+  font-size: 14px;
+}
+.credits__delta--out {
+  color: #e0483b;
+}
+.credits__delta--in {
+  color: #1f9d63;
+}
+.credits__yuan-cell {
+  color: #8b91a8;
+  font-size: 12px;
+}
+.credits__bal {
+  color: #565d76;
+  font-weight: 500;
+}
+.credits__state {
+  padding: 48px 16px;
+  text-align: center;
+  color: #8b91a8;
+  font-size: 13.5px;
+}
+.credits__state--err {
+  color: #e0483b;
+}
+
+/* 分页 */
+.credits__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: #8b91a8;
+}
+.credits__pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.credits__pager button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #e7e9f2;
+  border-radius: 8px;
+  background: #fff;
+  color: #565d76;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.credits__pager button:disabled {
+  color: #c2c7d6;
+  cursor: not-allowed;
+}
+.credits__page-label {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .credits__content {
+    padding: 16px 16px 32px;
+  }
+  .credits__cards {
+    grid-template-columns: 1fr;
+  }
+}

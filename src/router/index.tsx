@@ -112,6 +112,8 @@ const CommunityWorksView = lazy(() => import('../views/CommunityWorksView'))
 const DemandDetailView = lazy(() => import('../views/DemandDetailView'))
 /** 我的合作（需求发布/接单管理）路由组件。 */
 const MyCollaborationsView = lazy(() => import('../views/MyCollaborationsView'))
+/** 积分明细路由组件。 */
+const CreditsView = lazy(() => import('../views/CreditsView'))
 
 /** 智能成片路由 state 中使用的一次性建项、重启和空间切换标记。 */
 interface SmartRouteState {
@@ -331,6 +333,7 @@ export const router = createBrowserRouter([
       { path: 'projects/:projectId/videos', element: lazyPage(<ProjectVideoListView />) },
       { path: 'projects/:projectId/videos/:videoId', element: lazyPage(<ProjectVideoDetailView />) },
       { path: 'resources', element: lazyPage(<ResourceManagementView />) },
+      { path: 'credits', element: lazyPage(<CreditsView />) },
       { path: 'team', element: lazyPage(<SpaceDashboardView />) },
       { path: 'distribution', element: <DistributionAccessRoute /> },
       { path: 'agent', element: lazyPage(<AgentChatView />) },
