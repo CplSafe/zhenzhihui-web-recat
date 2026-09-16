@@ -526,8 +526,9 @@ export function buildPhysicalInteractionGenerationGuidance(shots: any[]): string
     '体育动作：明确手脚或球拍与器械的接触点、发力链、释放时刻、球或器械的连续运动轨迹和目标位置；接触前后速度方向连续，人物不得多肢，球体不得粘手、穿体、瞬移或改变数量。',
   )
 
+  // 倒入/倒出/开盖 已由流体与产品规则覆盖，这里不再重复命中，避免倒饮料时误挂烹饪约束。
   addRule(
-    /(?:切菜|切片|切割|剁|搅拌|翻炒|倒入|倒水|倒出|装盘|开盖|烹饪|锅|菜刀|砧板)/,
+    /(?:切菜|切片|切割|剁|搅拌|翻炒|装盘|烹饪|锅|菜刀|砧板)/,
     '烹饪操作：保持刀刃、锅具、容器开口和食材结构正确；写实呈现工具与食材或容器的接触面、动作方向和操作结果。手指避开刀刃，食材变化与每次切割或翻炒动作一一对应。',
   )
 
@@ -585,6 +586,8 @@ export function buildTimelinePrompt(args: {
   style?: string
   /** 真人成片的出镜身份约束正文；置于提示词最前，优先级高于时间线与广告描述。 */
   identityConstraint?: string
+  /** 对整片的修改意见；紧跟广告描述、先于镜头列表，让模型先知道要改什么再看各镜头。 */
+  note?: string
 }): string {
   const lines: string[] = []
   const identityConstraint = String(args.identityConstraint || '').trim()
@@ -626,18 +629,20 @@ export function buildTimelinePrompt(args: {
     lines.push('不要添加任何旁白、人声、背景音乐与人为特效音。')
   }
   if (args.basePrompt) lines.push(`广告描述:${args.basePrompt}`)
+  const note = String(args.note || '').trim()
+  if (note) lines.push(`修改要求:${note}`)
   // 参考图是用户上传的素材(产品/真人),与镜头不是一一对应,所以镜号不能写成「图N」——
   // 那会让模型把第 N 张参考图理解成第 N 个镜头的画面。
   if ((args.shots || []).length) {
     lines.push('参考图提供画面中出现的产品与人物形象,请在所有镜头中保持它们的外观一致,不要替换或重新设计。')
   }
   if (sceneActionGuidance) lines.push(sceneActionGuidance)
+  // 只给总则；具体的滑脱/悬浮/多出部件等已由上面按场景匹配的专项规则约束，不再重复列举。
   if (hasHighRiskPhysicalInteraction) {
     lines.push(
-      '检测到手部、工具、器械或机械部件的精细物理交互:必须优先保证物体关键结构完整、数量和尺度不变;' +
-        '明确的手指/手掌接触、夹持、遮挡、透视和受力关系必须在相关镜头的所有帧中连续稳定;' +
-        '物体跟随手部或机械运动轨迹,不得穿模、悬浮、滑脱、错位、形变、多出部件、闪烁或中途替换;' +
-        '为保证正确接触,允许在不改变动作意图的前提下微调手指、手腕、物体角度和局部位置。',
+      '本片含手部、工具或机械部件的精细物理交互:优先保证物体关键结构完整、数量和尺度不变;' +
+        '手指与物体的接触、夹持、遮挡和受力关系在相关镜头的所有帧中连续稳定,物体始终贴合手部运动轨迹、无穿模;' +
+        '为保证正确接触,允许在不改变动作意图的前提下微调手指、手腕和物体角度。',
     )
   }
   let t = 0
@@ -655,12 +660,12 @@ export function buildTimelinePrompt(args: {
   if (t > 0) lines.push(`总时长:${t}s。`)
   if (args.ratio) lines.push(`画面比例:${args.ratio}。`)
   if (args.style) lines.push(`整体风格:${args.style}。`)
-  // 通用物理合理性约束(避免违反物理规律/形变穿模等)
+  // 通用物理合理性兜底：以肯定式描述正确状态为主，否定项只保留专项规则未覆盖的画面级缺陷。
   lines.push(
-    '硬性要求:画面必须符合真实物理规律——运动自然连贯,遵循重力、惯性与碰撞;' +
-      '物体的形状、数量、比例、材质在镜头内保持稳定一致,不变形、不融化、不穿模、不凭空出现或消失;' +
-      '人物与动物结构正常(四肢/手指数量正确、关节弯曲合理,不扭曲、不多肢);' +
-      '镜头运动与光影自然平滑,避免瞬移、抖动、鬼影、画面撕裂或不合理的速度突变;' +
+    '硬性要求:画面符合真实物理规律,运动自然连贯,遵循重力、惯性与碰撞;' +
+      '物体的形状、数量、比例、材质在镜头内始终稳定一致,不凭空增减;' +
+      '人物与动物结构正常,四肢与手指数量正确、关节弯曲合理;' +
+      '镜头运动与光影自然平滑,速度变化连续,无瞬移、鬼影或画面撕裂;' +
       (hasSubtitle
         ? '除各镜头指定的字幕外,画面中不得出现任何其他文字、标题、标语、水印或字符(场景实物本身自带的文字除外)。'
         : NO_ONSCREEN_TEXT_REQUIREMENT),
@@ -727,8 +732,8 @@ export async function generateFullVideo(args: {
       ratio: args.ratio,
       style: args.style,
       identityConstraint: args.identityConstraint,
+      note: args.note,
     }) +
-    (args.note ? `\n额外修改要求:${args.note}` : '') +
     (args.variationTotal && args.variationTotal > 1
       ? `\n变体要求:这是同一需求下的第 ${args.variationIndex || 1}/${args.variationTotal} 个不同版本。请保持脚本主线一致，但在构图、镜头运动、人物状态、细节节奏上给出明显不同的创意变体，避免与其他版本完全相同。`
       : '')

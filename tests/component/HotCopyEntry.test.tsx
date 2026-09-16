@@ -6,9 +6,21 @@ const mocks = vi.hoisted(() => ({
   listAiTasks: vi.fn(),
   listAssets: vi.fn(),
   listCreativeProjects: vi.fn(),
+  readVideoMetadata: vi.fn(),
+  detectSceneCuts: vi.fn(),
   showToast: vi.fn(),
   currentUserId: 7,
   workspaceId: 21,
+}))
+
+vi.mock('@/utils/videoDuration', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/videoDuration')>()),
+  readVideoMetadata: mocks.readVideoMetadata,
+}))
+
+vi.mock('@/utils/videoSceneCuts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/videoSceneCuts')>()),
+  detectSceneCuts: mocks.detectSceneCuts,
 }))
 
 vi.mock('@/stores/workspaceSession', () => ({
@@ -160,6 +172,12 @@ describe('HotCopyEntry project asset access', () => {
     mocks.listAiTasks.mockResolvedValue({ items: [] })
     mocks.listAssets.mockReset()
     mocks.listCreativeProjects.mockReset()
+    mocks.readVideoMetadata.mockReset()
+    // 默认读不到元数据：不阻断任何既有用例，也不触发自动对齐
+    mocks.readVideoMetadata.mockRejectedValue(new Error('no metadata in jsdom'))
+    mocks.detectSceneCuts.mockReset()
+    // 默认「无法分析」：sampled=0 不出提示
+    mocks.detectSceneCuts.mockResolvedValue({ cuts: [], sampled: 0, durationSec: 0 })
     mocks.showToast.mockReset()
     mocks.currentUserId = 7
     mocks.workspaceId = 21
@@ -712,6 +730,151 @@ describe('HotCopyEntry project asset access', () => {
     await user.click(screen.getByRole('button', { name: '去制作' }))
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ resolution: '1080p' }))
+  })
+
+  it('新选源视频后比例与时长自动跟随源视频，改动后只提示不覆盖', async () => {
+    const user = userEvent.setup()
+    mocks.readVideoMetadata.mockResolvedValue({ width: 1920, height: 1080, durationSec: 22 })
+    const createObjectURL = vi.fn(() => 'blob:mock-source')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }))
+
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        initial={{ tab: 'remake', ratio: '9:16', duration: '5s', text: '', modelVersionId: 220 }}
+        modelGroups={modelGroupsWith([
+          { id: 220, name: 'Seedance 2.0', constraints: { duration: { options: [5, 10, 15] } } },
+        ])}
+        modelReady
+        requireModelSelection
+      />,
+    )
+    // 初始 9:16 / 5s，还没有源视频，不该有提示
+    expect(openCreativeParams()).toHaveTextContent('9:16')
+    expect(screen.queryByRole('note')).not.toBeInTheDocument()
+
+    const input = document.querySelector<HTMLInputElement>('input[type="file"][accept="video/*"]')
+    if (!input) throw new Error('找不到视频文件输入')
+    fireEvent.change(input, {
+      target: { files: [new File(['x'], 'source.mp4', { type: 'video/mp4' })] },
+    })
+
+    // 1920×1080 → 16:9；22 秒 → 不超过它的最大档 15s
+    await waitFor(() => expect(openCreativeParams()).toHaveTextContent('16:9'))
+    expect(openCreativeParams()).toHaveTextContent('15s')
+    expect(mocks.readVideoMetadata).toHaveBeenCalledWith('blob:mock-source')
+    expect(screen.queryByRole('note')).not.toBeInTheDocument()
+
+    // 用户改回 9:16：不再被改写，但要看到不一致提示
+    await pickCreativeParam(user, '9:16')
+    expect(openCreativeParams()).toHaveTextContent('9:16')
+    const note = await screen.findByRole('note')
+    expect(note).toHaveTextContent('源视频接近 16:9，当前选了 9:16')
+    expect(note).not.toHaveTextContent('秒')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('源视频含多次硬切时提示只能生成单镜头，并与比例时长提示并列展示', async () => {
+    mocks.readVideoMetadata.mockResolvedValue({ width: 576, height: 1024, durationSec: 23.8 })
+    mocks.detectSceneCuts.mockResolvedValue({
+      cuts: [2.3, 5.1, 8.3, 14.4, 16.7, 20.5, 22.7],
+      sampled: 48,
+      durationSec: 23.8,
+    })
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          ratio: '16:9',
+          duration: '5s',
+          text: '',
+          modelVersionId: 220,
+        }}
+        modelGroups={modelGroupsWith([
+          { id: 220, name: 'Seedance 2.0', constraints: { duration: { options: [5, 10, 15] } } },
+        ])}
+        modelReady
+        requireModelSelection
+      />,
+    )
+
+    const note = await screen.findByRole('note')
+    await waitFor(() => expect(note).toHaveTextContent('约 7 次镜头切换（8 个镜头）'))
+    expect(note).toHaveTextContent('只能生成一个连续镜头')
+    // 两类提示各占一行，硬切提示在前
+    const lines = within(note).getAllByText(/./, { selector: 'p' })
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toHaveTextContent('镜头切换')
+    expect(lines[1]).toHaveTextContent('源视频接近 9:16')
+    expect(mocks.detectSceneCuts).toHaveBeenCalledWith(
+      '/101.mp4',
+      expect.objectContaining({ signal: expect.anything() }),
+    )
+  })
+
+  it('硬切少于阈值或无法分析时不出现镜头提示', async () => {
+    mocks.readVideoMetadata.mockResolvedValue({ width: 1080, height: 1920, durationSec: 10 })
+    mocks.detectSceneCuts.mockResolvedValue({ cuts: [4.2], sampled: 20, durationSec: 10 })
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          ratio: '9:16',
+          duration: '10s',
+          text: '',
+          modelVersionId: 220,
+        }}
+        modelGroups={modelGroupsWith([
+          { id: 220, name: 'Seedance 2.0', constraints: { duration: { options: [5, 10, 15] } } },
+        ])}
+        modelReady
+        requireModelSelection
+      />,
+    )
+    await waitFor(() => expect(mocks.detectSceneCuts).toHaveBeenCalled())
+    // 比例时长都一致、硬切只有 1 次 → 整个提示框都不出现
+    await waitFor(() => expect(screen.queryByRole('note')).not.toBeInTheDocument())
+  })
+
+  it('恢复草稿时不改写用户存下的比例与时长，只在不一致时提示', async () => {
+    mocks.readVideoMetadata.mockResolvedValue({ width: 1080, height: 1920, durationSec: 14.8 })
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          ratio: '16:9',
+          duration: '5s',
+          text: '',
+          modelVersionId: 220,
+        }}
+        modelGroups={modelGroupsWith([
+          { id: 220, name: 'Seedance 2.0', constraints: { duration: { options: [5, 10, 15] } } },
+        ])}
+        modelReady
+        requireModelSelection
+      />,
+    )
+
+    const note = await screen.findByRole('note')
+    expect(note).toHaveTextContent('源视频接近 9:16，当前选了 16:9')
+    expect(note).toHaveTextContent('源视频约 14.8 秒，当前选了 5 秒')
+    // 草稿里的选择原样保留
+    expect(openCreativeParams()).toHaveTextContent('16:9')
+    expect(openCreativeParams()).toHaveTextContent('5s')
   })
 
   it('does not silently switch to another model when the selected model disappears from the catalog', async () => {

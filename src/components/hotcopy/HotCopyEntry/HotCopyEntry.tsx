@@ -15,6 +15,14 @@ import { createMaterialFromAsset } from '@/utils/materials'
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { filterAssetsByProjectAccess, getAccessibleProjectIds } from '@/utils/projectAssetAccess'
 import { SMART_VIDEO_DURATIONS, parseDurationSeconds } from '@/utils/videoDurationValue'
+import { readVideoMetadata } from '@/utils/videoDuration'
+import {
+  closestDurationOption,
+  closestRatioOption,
+  describeSourceMismatch,
+  type SourceVideoMeta,
+} from '@/utils/hotCopySourceMatch'
+import { describeSceneCutWarning, detectSceneCuts, type SceneCutResult } from '@/utils/videoSceneCuts'
 import {
   DEFAULT_VIDEO_RESOLUTIONS,
   LEGACY_DEFAULT_VIDEO_RESOLUTION,
@@ -842,6 +850,81 @@ export default function HotCopyEntry({
   }, [resolution, resolutionOptions])
 
   /**
+   * 源视频真实尺寸与时长。比例 / 时长与源视频不一致时模型必须重新构图或裁剪，
+   * 所以选中源视频后按它自动选档；自动选档只在每个新视频上做一次，用户之后改动只提示不覆盖。
+   * 读不到元数据（跨域、损坏）时静默跳过，不阻断上传。
+   */
+  const [sourceVideoMeta, setSourceVideoMeta] = useState<SourceVideoMeta | null>(null)
+  // 恢复草稿带进来的视频视为已对齐过：草稿里的比例/时长是用户存下的选择，不能在重新挂载时被改写。
+  const sourceMatchAppliedForRef = useRef(initialDraft.videoPreview || '')
+  useEffect(() => {
+    const src = videoPreview
+    if (!src) {
+      setSourceVideoMeta(null)
+      sourceMatchAppliedForRef.current = ''
+      return
+    }
+    let alive = true
+    readVideoMetadata(src)
+      .then((meta) => {
+        if (!alive) return
+        if (meta.width > 0 && meta.height > 0 && meta.durationSec > 0) {
+          setSourceVideoMeta({ width: meta.width, height: meta.height, durationSec: meta.durationSec })
+        } else {
+          setSourceVideoMeta(null)
+        }
+      })
+      .catch(() => {
+        if (alive) setSourceVideoMeta(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [videoPreview])
+  useEffect(() => {
+    if (!sourceVideoMeta || !videoPreview) return
+    if (sourceMatchAppliedForRef.current === videoPreview) return
+    sourceMatchAppliedForRef.current = videoPreview
+    const matchedRatio = closestRatioOption(sourceVideoMeta.width, sourceVideoMeta.height, ratioOpts)
+    if (matchedRatio && matchedRatio !== ratio) setRatio(matchedRatio)
+    const matchedDuration = closestDurationOption(sourceVideoMeta.durationSec, durationOptions)
+    if (matchedDuration > 0 && `${matchedDuration}s` !== duration) setDuration(`${matchedDuration}s`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceVideoMeta, videoPreview, ratioOpts, durationOptions])
+  const sourceMismatchHint = useMemo(
+    () =>
+      describeSourceMismatch({
+        source: sourceVideoMeta,
+        ratio,
+        durationSec: parseDurationSeconds(duration) ?? 0,
+        ratioOptions: ratioOpts,
+        durationOptions,
+      }),
+    [sourceVideoMeta, ratio, duration, ratioOpts, durationOptions],
+  )
+
+  /**
+   * 源视频硬切检测。视频模型只能生成一个连续镜头，多镜头拼接片作参考必然对不上；
+   * 在这里提前说，比用户花了积分才发现好。检测在后台跑，失败或中断都当「无法分析」静默处理。
+   */
+  const [sourceSceneCuts, setSourceSceneCuts] = useState<SceneCutResult | null>(null)
+  useEffect(() => {
+    const src = videoPreview
+    setSourceSceneCuts(null)
+    if (!src) return
+    const controller = new AbortController()
+    detectSceneCuts(src, { signal: controller.signal })
+      .then((result) => {
+        if (!controller.signal.aborted) setSourceSceneCuts(result)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setSourceSceneCuts(null)
+      })
+    return () => controller.abort()
+  }, [videoPreview])
+  const sceneCutHint = useMemo(() => describeSceneCutWarning(sourceSceneCuts), [sourceSceneCuts])
+
+  /**
    * 所选模型是否支持自动生成背景音。
    *
    * 未选模型时按不支持处理：这一行的取值只有在知道是哪个模型之后才有意义，
@@ -1280,6 +1363,12 @@ export default function HotCopyEntry({
               )}
             </div>
           </div>
+          {(sceneCutHint || sourceMismatchHint) && (
+            <div className="hotcopy__sourceHint" role="note">
+              {sceneCutHint && <p className="hotcopy__sourceHintLine">{sceneCutHint}</p>}
+              {sourceMismatchHint && <p className="hotcopy__sourceHintLine">{sourceMismatchHint}</p>}
+            </div>
+          )}
         </div>
       </div>
 

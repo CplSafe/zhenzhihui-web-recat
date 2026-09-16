@@ -73,4 +73,17 @@ describe('FilterSelect', () => {
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     expect(props.onChange).not.toHaveBeenCalled()
   })
+
+  it('禁用态显示当前值但不可展开', async () => {
+    const user = userEvent.setup()
+    const props = renderSelect({ value: 'lt1w', disabled: true })
+
+    const trigger = screen.getByRole('button', { name: '按粉丝数量筛选' })
+    expect(trigger).toBeDisabled()
+    expect(trigger).toHaveTextContent('1W以下')
+
+    await user.click(trigger)
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(props.onChange).not.toHaveBeenCalled()
+  })
 })

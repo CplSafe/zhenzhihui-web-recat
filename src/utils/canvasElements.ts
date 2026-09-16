@@ -437,6 +437,28 @@ export function elementToNode(element: CanvasElementMutation): Node | null {
   }
 }
 
+/**
+ * 收集画布活节点引用的全部素材 ID（生成结果、视频封面帧、剪辑时间线片段）。
+ * 资产与任务模型都没有来源字段，项目管理页只能靠这份引用集合识别哪些视频属于画布。
+ */
+export function collectCanvasElementAssetIds(elements: CanvasElementMutation[]): Set<number> {
+  const ids = new Set<number>()
+  const add = (value: unknown) => {
+    const id = Math.floor(Number(value) || 0)
+    if (id > 0) ids.add(id)
+  }
+  for (const element of elements || []) {
+    const node = elementToNode(element)
+    if (!node) continue
+    const data = (node.data || {}) as Record<string, unknown>
+    add(data.assetId)
+    add(data.posterAssetId)
+    const timeline = data.timeline as { clips?: Array<{ assetId?: unknown }> } | undefined
+    for (const clip of timeline?.clips || []) add(clip?.assetId)
+  }
+  return ids
+}
+
 /** 由云端元素还原为连线（过滤删除 tombstone 与非法/占位元素）。 */
 export function elementToEdge(element: CanvasElementMutation): Edge | null {
   // 首次全量加载（after_revision=0）返回的活元素不带 op 字段；op=delete 为 tombstone 需跳过

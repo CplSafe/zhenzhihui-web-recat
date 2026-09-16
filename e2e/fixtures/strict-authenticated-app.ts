@@ -579,6 +579,16 @@ export async function installStrictAuthenticatedApp(
       await json(route, { items: [], total: 0, offset: 0, limit: 100 })
       return
     }
+    if (method === 'GET' && path === '/api/v1/canvases') {
+      // 项目管理页把被画布节点引用的视频从「待归类」里排除，需要先列出本空间的画布。
+      // 这里返回空列表：没有画布就不会再拉元素接口，待归类的既有断言不受影响。
+      await json(route, { items: [], total: 0, offset: 0, limit: 100 })
+      return
+    }
+    if (method === 'GET' && /^\/api\/v1\/canvases\/\d+\/elements$/.test(path)) {
+      await json(route, { items: [], sync_revision: 0, history_floor_revision: 0, has_more: false })
+      return
+    }
 
     state.unexpected.push(`${method} ${path}${url.search}`)
     await json(route, { code: 'UNEXPECTED_E2E_REQUEST', message: `${method} ${path} is not mocked` }, 500)
