@@ -61,16 +61,19 @@ describe('buildHotCopyReplicatePrompt', () => {
     expect(prompt).not.toContain('手持')
   })
 
-  it('音频开关分别映射为不出声与不复刻源音,不传则不提音频', () => {
+  it('音频开关:关则不出声,开则允许配音与配乐且不禁人声,不传则不提音频', () => {
     expect(buildHotCopyReplicatePrompt({ tab: 'remake', generateAudio: false })).toContain(
       '不要生成任何人声、旁白与背景音乐',
     )
-    expect(buildHotCopyReplicatePrompt({ tab: 'remake', generateAudio: true })).toContain(
-      '不复刻源视频中的人声与原配乐',
-    )
+    const withAudio = buildHotCopyReplicatePrompt({ tab: 'remake', generateAudio: true })
+    expect(withAudio).toContain('可生成与画面内容匹配的配音与背景音乐')
+    // 曾写「不复刻源视频中的人声」，结果模型连自己生成配音也停了；开音频时不得出现任何禁人声措辞
+    expect(withAudio).not.toContain('不复刻源视频中的人声')
+    expect(withAudio).not.toMatch(/不要生成.*人声/)
     const silent = buildHotCopyReplicatePrompt({ tab: 'remake' })
     expect(silent).not.toContain('人声')
     expect(silent).not.toContain('背景音乐')
+    expect(silent).not.toContain('配音')
   })
 
   it('禁复刻贴字约束在正文里只出现一次,guard 不会重复追加', () => {

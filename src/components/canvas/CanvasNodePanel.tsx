@@ -338,6 +338,7 @@ export interface CanvasNodeInfo {
   params?: Record<string, unknown>
   generationIntent?: 'edit' | 'new-model'
   taskId?: number
+  taskRunId?: string
   taskStatus?: string
   taskProgress?: number
   taskError?: string

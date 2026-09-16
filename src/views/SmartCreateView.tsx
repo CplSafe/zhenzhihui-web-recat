@@ -256,11 +256,13 @@ import {
 } from '@/utils/smartModelSwitchSafety'
 import { findDuplicateSubjectGroups, type DuplicateSubjectGroup } from '@/utils/subjectDuplicates'
 import {
+  buildRealPersonIdentityPrompt,
   buildRealPersonVideoIdentityConstraint,
   buildRealPersonVideoIdentityPrompt,
   getFacePrivacyGenerationMessage,
   hasExplicitSubjectIdentityChangeRequest,
   isRealPersonReferenceStillAuthorized,
+  prioritizeRealPersonReferenceAssetIds,
   shouldPreserveIdentityForVideoEdit,
   type SmartRealPersonReference,
 } from '@/utils/smartRealPerson'
@@ -6968,7 +6970,19 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       if (userImages.some((image) => !image.assetId)) {
         throw new Error('参考图上传失败，请重新选择后再试')
       }
-      const refAssetIds = userImages.map((image) => image.assetId).filter((assetId) => assetId > 0)
+      // 真人素材进入图生图时，身份约束与「真人图排第一」必须在这里注入：润色只改用户文字，
+      // 提交环节不兜底的话后端不会报错，只会悄悄生成一个不像本人的人。视频侧同样逻辑见 runVideoJob。
+      const submittedRefIds = new Set(userImages.map((image) => image.assetId).filter((assetId) => assetId > 0))
+      const realPersonRefs = (entryMetaRef.current?.realPersonReferences || []).filter(
+        (reference) => Number(reference?.realPersonId) > 0 && submittedRefIds.has(Number(reference?.localAssetId) || 0),
+      )
+      const realPersonIdentityName = Array.from(
+        new Set(realPersonRefs.map((reference) => String(reference?.personName || '').trim()).filter(Boolean)),
+      ).join('、')
+      const refAssetIds = prioritizeRealPersonReferenceAssetIds(
+        userImages.map((image) => image.assetId).filter((assetId) => assetId > 0),
+        Number(realPersonRefs[0]?.localAssetId || 0),
+      )
       const operationCode = getImageGenerationOperationCode(refAssetIds.length)
       const modelSelection = requireGenerationModel(
         operationCode,
@@ -6997,7 +7011,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       if (quoteBindingError) throw new Error(quoteBindingError)
 
       const uid = nextMsgId()
-      const prompt = text || '生成一张营销广告图片'
+      const basePrompt = text || '生成一张营销广告图片'
+      const prompt = realPersonRefs.length
+        ? buildRealPersonIdentityPrompt(basePrompt, realPersonIdentityName)
+        : basePrompt
       const idempotencyRoot = options.idempotencyKey || createImageChatIdempotencyKey()
       const batchId = count > 1 ? `batch_${idempotencyRoot}` : ''
       const request = {

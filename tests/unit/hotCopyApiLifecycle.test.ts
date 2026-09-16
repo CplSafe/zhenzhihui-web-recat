@@ -503,7 +503,42 @@ describe('replicateHotVideo lifecycle', () => {
     // 爆款源视频普遍带字幕:提示词必须声明不复刻贴字并带统一禁文字硬约束,否则模型照抄成乱码
     expect(String(submitted.prompt)).toContain('源视频中的字幕、贴字与水印不要复刻')
     expect(String(submitted.prompt)).toContain('不得出现任何文字')
+    // 提交前的复核估价必须与正式提交同一份提示词：视频计费不看它，但两个请求要同形
+    const estimateCalls = mocks.estimateAiTaskCost.mock.calls
+    const revalidated = estimateCalls[estimateCalls.length - 1]![0]
+    expect(revalidated.prompt).toBe(submitted.prompt)
     expect(mocks.getModelForOperation).not.toHaveBeenCalled()
+  })
+
+  it('estimates with the caller prompt wrapped by the same guards the submission uses', async () => {
+    mocks.estimateAiTaskCost.mockResolvedValue({ estimated_cost: 99, balance: 500, can_afford: true })
+    const requestSnapshot = createHotCopyReplicateSnapshot({
+      workspaceId: 61,
+      modelVersion: {
+        id: 29,
+        operation_codes: ['video.replicate'],
+        params_schema: {
+          fields: [
+            { name: 'seconds', options: ['5', '10', '15'] },
+            { name: 'source_video_duration' },
+            { name: 'resolution', options: ['720p'] },
+            { name: 'ratio', options: ['9:16', '16:9'] },
+            { name: 'generate_audio' },
+          ],
+        },
+      },
+      sourceVideoDurationSec: 14.8,
+      referenceImageCount: 1,
+      ratio: '9:16',
+      resolution: '720p',
+      generateAudio: true,
+      durationSec: 10,
+    })
+    await estimateReplicateCost({ workspaceId: 61, requestSnapshot, prompt: '把手里的饮料换成我的产品' })
+    const estimated = mocks.estimateAiTaskCost.mock.calls[0]![0]
+    expect(String(estimated.prompt)).toContain('把手里的饮料换成我的产品')
+    expect(String(estimated.prompt)).toContain('源视频中的字幕、贴字与水印不要复刻')
+    expect(String(estimated.prompt)).toContain('不得出现任何文字')
   })
 
   it('omits generate_audio unless the selected model schema explicitly declares an audio field', async () => {

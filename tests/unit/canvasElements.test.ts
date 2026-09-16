@@ -227,6 +227,22 @@ describe('canvasElements', () => {
     expect(graph.edges).toEqual([{ id: 'edge-1', source: 'node-1', target: 'node-2' }])
   })
 
+  it('persists generation ownership while removing the previous task association', () => {
+    const node: Node = {
+      id: 'image-retry',
+      type: 'image',
+      position: { x: 0, y: 0 },
+      data: { kind: 'image', taskId: 0, taskRunId: 'new-generation', taskStatus: 'submitting', taskError: '' },
+    }
+    const mutation = nodeToMutation(node)
+    expect(elementsToGraph([mutation]).nodes[0]?.data).toMatchObject({
+      taskId: 0,
+      taskRunId: 'new-generation',
+      taskStatus: 'submitting',
+      taskError: '',
+    })
+  })
+
   it('emits changed upserts and removed tombstones only', () => {
     const unchanged = {
       id: 'node-1',

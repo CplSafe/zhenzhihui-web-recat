@@ -77,7 +77,9 @@ export function buildHotCopyReplicatePrompt(args: HotCopyPromptArgs): string {
   if (args.generateAudio === false) {
     lines.push('不要生成任何人声、旁白与背景音乐。')
   } else if (args.generateAudio === true) {
-    lines.push('背景音乐节奏与画面剪辑点匹配;不复刻源视频中的人声与原配乐。')
+    // 只提「匹配画面」，不禁人声：此前写过「不复刻源视频中的人声」，模型把自己生成配音也一并停了，
+    // 用户失去了原本有的旁白效果。模型生成的声音本就不是源视频原声，无需再防复刻。
+    lines.push('可生成与画面内容匹配的配音与背景音乐,节奏贴合画面剪辑点。')
   }
 
   lines.push(NO_SOURCE_OVERLAY_REQUIREMENT)

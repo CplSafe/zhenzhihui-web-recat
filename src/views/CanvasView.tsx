@@ -126,7 +126,7 @@ import {
   validateCanvasVideoInputs,
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
-import { getCanvasTaskPresentation } from '@/utils/canvasTaskState'
+import { getCanvasTaskPresentation, isSameCanvasTask } from '@/utils/canvasTaskState'
 import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS, resolveInheritedNodeRatio } from '@/utils/canvasNodeDefaults'
 import {
   buildModelRestrictionSummary,
@@ -158,6 +158,7 @@ import {
 } from '@/utils/timelineClips'
 import type { ConcatSource } from '@/utils/videoConcat'
 import { applyCanvasRealPersonIdentity, resolveCanvasRealPersonReference } from '@/utils/canvasRealPerson'
+import { withNoOnscreenTextGuard } from '@/utils/videoPromptGuards'
 import { isRealPersonReferenceStillAuthorized, type SmartRealPersonReference } from '@/utils/smartRealPerson'
 import { listRealPeople } from '@/api/realPeople'
 import {
@@ -2151,6 +2152,7 @@ function CanvasInner() {
       operationCode: (node.data as any)?.operationCode,
       params: (node.data as any)?.params,
       taskId: (node.data as any)?.taskId,
+      taskRunId: (node.data as any)?.taskRunId,
       taskStatus: (node.data as any)?.taskStatus,
       taskProgress: (node.data as any)?.taskProgress,
       taskError: (node.data as any)?.taskError,
@@ -3803,6 +3805,7 @@ function CanvasInner() {
         operationCode: (node.data as any)?.operationCode,
         params: (node.data as any)?.params,
         taskId: (node.data as any)?.taskId,
+        taskRunId: (node.data as any)?.taskRunId,
         taskStatus: (node.data as any)?.taskStatus,
         taskProgress: (node.data as any)?.taskProgress,
         taskError: (node.data as any)?.taskError,
@@ -4249,6 +4252,7 @@ function CanvasInner() {
     if (shouldRecharge) openMemberCenterTab('recharge')
   }, [])
 
+  const pendingNodeSubmissionsRef = useRef(new Set<string>())
   const submitNodeGeneration = useCallback(
     async (targetNodeId: string, generate: CanvasGenerationRequest) => {
       if (!generate || !latestRef.current.nodes.some((node) => node.id === targetNodeId)) return
@@ -4256,6 +4260,15 @@ function CanvasInner() {
         if (selectedNode?.id === targetNodeId) handleSaveNodeText(generate.prompt)
         return
       }
+      const currentData = latestRef.current.nodes.find((node) => node.id === targetNodeId)?.data
+      if (
+        pendingNodeSubmissionsRef.current.has(targetNodeId) ||
+        getCanvasTaskPresentation({
+          status: currentData?.taskStatus,
+          hasResult: Boolean(currentData?.resultUrl || currentData?.assetId),
+        }).running
+      )
+        return
       const submitModel = (canvasModels[generate.kind as 'text' | 'image' | 'video'] || []).find(
         (model) => Number(model.modelVersionId || 0) === Number(generate.modelVersionId || 0),
       )
@@ -4315,7 +4328,22 @@ function CanvasInner() {
         reference: realPerson.reference,
       })
       const inputAssets = identity.inputAssets
+      // 视频模型画不了字，提示词里的文字只会渲染成乱码；整片生成 / video.edit / 爆款复刻都挂了这条守卫，
+      // 画布视频节点此前漏掉，灯牌、包装、贴字一律照抄出乱码。图片模型不在此列。
+      const submitPrompt = generate.kind === 'video' ? withNoOnscreenTextGuard(identity.prompt) : identity.prompt
       const taskRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+      // Validation can await remote authorization; acquire once before any paid submission.
+      const latestNode = latestRef.current.nodes.find((node) => node.id === targetNodeId)
+      if (
+        !latestNode ||
+        pendingNodeSubmissionsRef.current.has(targetNodeId) ||
+        getCanvasTaskPresentation({
+          status: latestNode.data?.taskStatus,
+          hasResult: Boolean(latestNode.data?.resultUrl || latestNode.data?.assetId),
+        }).running
+      )
+        return
+      pendingNodeSubmissionsRef.current.add(targetNodeId)
       try {
         const taskStartedAt = new Date().toISOString()
         // 1) 先把当前配置（operationCode + params）持久化到节点，保证刷新后配置不丢
@@ -4323,10 +4351,13 @@ function CanvasInner() {
           operationCode: generate.operationCode,
           params: generate.params || {},
           generationRequest: generate,
+          taskId: 0,
           taskRunId,
           taskStatus: 'submitting',
           taskProgress: 0,
           taskError: '',
+          taskStatusQueryFailures: 0,
+          resultSyncAttempts: 0,
           taskStartedAt,
           taskUpdatedAt: taskStartedAt,
         }
@@ -4338,8 +4369,8 @@ function CanvasInner() {
           workspaceId,
           capability: generate.kind,
           operationCode: generate.operationCode,
-          // 已注入真人身份约束的提示词；无真人素材时与用户原文一致。
-          prompt: identity.prompt,
+          // 已注入真人身份约束的提示词；无真人素材时与用户原文一致。视频再叠加禁文字守卫。
+          prompt: submitPrompt,
           params: generate.params,
           inputAssets,
           modelVersionId: generate.modelVersionId,
@@ -4352,6 +4383,7 @@ function CanvasInner() {
         // 在结果真正落到节点前保持可见的等待态，并让恢复轮询继续读取详情。
         const taskData: Record<string, unknown> = {
           taskId,
+          taskError: '',
           taskStatus: ['succeeded', 'completed', 'success'].includes(createdStatus) ? 'result_pending' : createdStatus,
           taskUpdatedAt: new Date().toISOString(),
         }
@@ -4362,7 +4394,9 @@ function CanvasInner() {
               : n,
           ),
         )
-        setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...taskData } : prev))
+        setSelectedNode((prev) =>
+          prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
+        )
         setSaveStatus('dirty')
         scheduleSyncRef.current(true)
       } catch (error: any) {
@@ -4380,7 +4414,9 @@ function CanvasInner() {
                 : node,
             ),
           )
-          setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...taskData } : prev))
+          setSelectedNode((prev) =>
+            prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
+          )
           setSaveStatus('dirty')
           await handleInsufficientCredits()
           return
@@ -4398,10 +4434,14 @@ function CanvasInner() {
               : n,
           ),
         )
-        setSelectedNode((prev) => (prev && prev.id === targetNodeId ? { ...prev, ...taskData } : prev))
+        setSelectedNode((prev) =>
+          prev?.id === targetNodeId && prev.taskRunId === taskRunId ? { ...prev, ...taskData } : prev,
+        )
         setSaveStatus('dirty')
         // 顶部提示与节点上的错误必须是同一句：两处说法不一致时，用户会以为是两个问题
         showToast(humanizeCanvasTaskError(error?.message) || '任务创建失败，请稍后重试', 'error')
+      } finally {
+        pendingNodeSubmissionsRef.current.delete(targetNodeId)
       }
     },
     [
@@ -4542,7 +4582,7 @@ function CanvasInner() {
             }
             setNodes((items) =>
               items.map((item) =>
-                item.id === node.id && Number((item.data as any)?.taskId || 0) === taskId
+                item.id === node.id && isSameCanvasTask(item.data, node.data)
                   ? {
                       ...item,
                       data: { ...item.data, ...nextData },
@@ -4554,7 +4594,9 @@ function CanvasInner() {
                   : item,
               ),
             )
-            setSelectedNode((current) => (current?.id === node.id ? { ...current, ...nextData } : current))
+            setSelectedNode((current) =>
+              current?.id === node.id && isSameCanvasTask(current, node.data) ? { ...current, ...nextData } : current,
+            )
             setSaveStatus('dirty')
           } catch (error: any) {
             // 短暂网络错误不把任务误判为失败，保留任务 ID 供下一轮继续恢复。
@@ -4565,7 +4607,7 @@ function CanvasInner() {
             if (!disposed && navigator.onLine) {
               setNodes((items) =>
                 items.map((item) => {
-                  if (item.id !== node.id || Number((item.data as any)?.taskId || 0) !== taskId) return item
+                  if (item.id !== node.id || !isSameCanvasTask(item.data, node.data)) return item
                   const failures = Number((item.data as any)?.taskStatusQueryFailures || 0) + 1
                   return {
                     ...item,

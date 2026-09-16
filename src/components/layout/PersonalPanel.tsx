@@ -227,6 +227,16 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
           </div>
         </div>
         <div className="ppl__head-actions">
+          <button
+            type="button"
+            className="ppl__head-action ppl__head-action--distribution-text"
+            onClick={() => {
+              onClose?.()
+              navigate('/credits')
+            }}
+          >
+            积分明细
+          </button>
           {isDistributor ? (
             <button
               type="button"

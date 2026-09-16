@@ -621,10 +621,24 @@ export function createHotCopyReplicateQuote(
   })
 }
 
+/**
+ * 最终下发给 video.replicate 的提示词。估价与提交都从这里拿，保证两边字节一致：
+ * 正文由调用方组装（buildHotCopyReplicatePrompt），这里只补两条硬约束——
+ * 不复刻源视频贴字（否则照抄成乱码）+ 统一禁文字。调用方没传时按同款翻拍兜底。
+ */
+export function resolveHotCopyReplicatePrompt(prompt: string | undefined, referenceImageCount: number): string {
+  const products = Array.from({ length: Math.max(0, Math.floor(Number(referenceImageCount) || 0)) }, () => ({}))
+  return withNoOnscreenTextGuard(
+    withNoSourceOverlayGuard(String(prompt || '').trim() || buildHotCopyReplicatePrompt({ tab: 'remake', products })),
+  )
+}
+
 /** 按完整不可变请求快照获取一次可确认报价。 */
 export async function estimateHotCopyReplicateQuote(args: {
   workspaceId: number
   requestSnapshot: HotCopyReplicateSnapshot
+  /** 与正式提交同一份提示词正文；视频计费不看它，但保证估价请求与提交请求同形。 */
+  prompt?: string
 }): Promise<HotCopyReplicateQuote> {
   const result = await estimateReplicateCost(args)
   return createHotCopyReplicateQuote(args.requestSnapshot, result)
@@ -664,11 +678,13 @@ function assertHotCopyReplicateQuoteMatchesSnapshot(
 async function revalidateHotCopyReplicateQuoteBeforeSubmission(
   snapshot: HotCopyReplicateSnapshot,
   confirmedQuote: HotCopyReplicateQuote | null | undefined,
+  prompt: string,
 ): Promise<HotCopyReplicateQuote> {
   const confirmed = assertHotCopyReplicateQuoteMatchesSnapshot(snapshot, confirmedQuote)
   const current = await estimateHotCopyReplicateQuote({
     workspaceId: snapshot.workspaceId,
     requestSnapshot: snapshot,
+    prompt,
   })
   if (current.estimatedCost !== confirmed.estimatedCost) {
     const error: any = new Error(
@@ -753,7 +769,8 @@ export async function replicateHotVideo(args: {
     referenceImageCount: products.length,
   })
   const model = snapshot.modelVersion
-  await revalidateHotCopyReplicateQuoteBeforeSubmission(snapshot, args.confirmedQuote)
+  const prompt = resolveHotCopyReplicatePrompt(args.prompt, products.length)
+  await revalidateHotCopyReplicateQuoteBeforeSubmission(snapshot, args.confirmedQuote, prompt)
   let task
   try {
     task = await createAiTask({
@@ -764,13 +781,7 @@ export async function replicateHotVideo(args: {
       modelVersion: model,
       idempotencyKey: String(args.idempotencyKey || '').trim() || undefined,
       signal: args.signal,
-      // 提示词正文由 buildHotCopyReplicatePrompt 组装;这里只保证两条硬约束一定在:
-      // 不复刻源视频贴字(否则照抄成乱码)+ 统一禁文字。调用方没传时按同款翻拍兜底。
-      prompt: withNoOnscreenTextGuard(
-        withNoSourceOverlayGuard(
-          args.prompt || buildHotCopyReplicatePrompt({ tab: 'remake', products: products.map(() => ({})) }),
-        ),
-      ),
+      prompt,
       inputAssets,
       // 时长/比例按用户在入口的选择下发 —— 与智能成片 generateFullVideo 同一写法:始终走
       // buildVideoGenerationParams(其内部按模型 schema 决定字段名/取值;无 schema 时也下发标准
@@ -854,6 +865,8 @@ export async function estimateReplicateCost(args: {
   modelVersion?: any
   /** 用户确认费用时冻结的模型、工作空间和规范化参数。 */
   requestSnapshot?: HotCopyReplicateSnapshot
+  /** 与正式提交同一份提示词正文；经 resolveHotCopyReplicatePrompt 补齐硬约束后下发。 */
+  prompt?: string
 }): Promise<any> {
   const snapshot = resolveHotCopyReplicateSnapshot(args)
   try {
@@ -862,6 +875,7 @@ export async function estimateReplicateCost(args: {
         workspaceId: snapshot.workspaceId,
         modelVersionId: snapshot.modelVersionId,
         operationCode: 'video.replicate',
+        prompt: resolveHotCopyReplicatePrompt(args.prompt, snapshot.referenceImageCount),
         params: snapshot.params,
       }),
       HOT_COPY_ESTIMATE_TIMEOUT_MS,

@@ -77,6 +77,50 @@ describe('AI task identifier boundaries', () => {
 })
 
 describe('paid AI task submission safety', () => {
+  it('waits for a slow image response body without aborting or creating another paid request at two minutes', async () => {
+    vi.useFakeTimers()
+    let signal: AbortSignal | null | undefined
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            const timer = setTimeout(() => {
+              controller.enqueue(new TextEncoder().encode(JSON.stringify({ data: { id: 15320, status: 'succeeded' } })))
+              controller.close()
+            }, 150_000)
+            signal?.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer)
+                controller.error(new DOMException('aborted', 'AbortError'))
+              },
+              { once: true },
+            )
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const request = createAiTask({
+      workspaceId: 7,
+      capability: 'image',
+      operationCode: 'image.text_to_image',
+      modelVersionId: 27,
+      modelVersion: { id: 27 },
+      prompt: 'Slow image',
+      inputAssets: [],
+    })
+    const completed = expect(request).resolves.toMatchObject({ id: 15320, status: 'succeeded' })
+    await vi.advanceTimersByTimeAsync(120_001)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(30_000)
+    await completed
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('keeps input_assets as an empty array when no reference image is selected', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ data: { task_id: 30, status: 'pending' } }))
     vi.stubGlobal('fetch', fetchMock)
