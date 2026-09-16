@@ -58,6 +58,7 @@ interface SerializableNodeData {
   params?: Record<string, unknown>
   /** 最近一次生成任务 ID（在途/已完成均可，用于刷新后续轮询） */
   taskId?: number
+  taskRunId?: string
   /** 最近一次任务状态 */
   taskStatus?: string
   /** 最近一次任务进度（0-100，后端未提供时可为空） */
@@ -104,6 +105,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'operationCode',
   'params',
   'taskId',
+  'taskRunId',
   'taskStatus',
   'taskProgress',
   'taskError',

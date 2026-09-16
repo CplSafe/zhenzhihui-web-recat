@@ -1,5 +1,16 @@
 import { normalizeAiTaskStatus } from '@/api/business'
 
+interface CanvasTaskIdentity {
+  taskId?: unknown
+  taskRunId?: unknown
+}
+
+/** A late poll may only update the generation that originally requested it. */
+export function isSameCanvasTask(current: CanvasTaskIdentity, snapshot: CanvasTaskIdentity): boolean {
+  const taskId = Number(snapshot.taskId || 0)
+  return taskId > 0 && Number(current.taskId || 0) === taskId && current.taskRunId === snapshot.taskRunId
+}
+
 export interface CanvasTaskPresentation {
   running: boolean
   failed: boolean

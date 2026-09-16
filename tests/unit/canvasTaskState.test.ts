@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { getCanvasTaskPresentation } from '@/utils/canvasTaskState'
+import { getCanvasTaskPresentation, isSameCanvasTask } from '@/utils/canvasTaskState'
+
+describe('canvas task response ownership', () => {
+  it('rejects an old response while a new generation has no server task ID yet', () => {
+    expect(isSameCanvasTask({ taskId: 0, taskRunId: 'new' }, { taskId: 15318, taskRunId: 'old' })).toBe(false)
+  })
+
+  it('rejects an old generation even if a restored snapshot has the same task ID', () => {
+    expect(isSameCanvasTask({ taskId: 15318, taskRunId: 'new' }, { taskId: 15318, taskRunId: 'old' })).toBe(false)
+  })
+
+  it('accepts matching current and legacy task identities', () => {
+    expect(isSameCanvasTask({ taskId: 15320, taskRunId: 'new' }, { taskId: 15320, taskRunId: 'new' })).toBe(true)
+    expect(isSameCanvasTask({ taskId: 15318 }, { taskId: 15318 })).toBe(true)
+    expect(isSameCanvasTask({}, {})).toBe(false)
+  })
+})
 
 describe('canvas task presentation', () => {
   it('does not invent a percentage when the backend has not returned one', () => {
