@@ -83,6 +83,12 @@ export function getModelInputConstraints(model: unknown, operationCode: string):
   return { roles, mutuallyExclusiveRoleGroups }
 }
 
+/** Resolve a reference role from the same operation whitelist enforced by the backend. */
+export function getModelReferenceImageRole(model: unknown, operationCode: string): string | undefined {
+  const { roles } = getModelInputConstraints(model, operationCode)
+  return REFERENCE_IMAGE_ROLES.find((role) => roles.some((entry) => entry.role === role))
+}
+
 /**
  * 该模型在指定 operation 下允许的参考图张数。
  *

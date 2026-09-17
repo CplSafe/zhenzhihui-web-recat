@@ -11,6 +11,7 @@ import {
   getModelParamOptionValues,
   normalizeModelParamName,
 } from './modelSchema'
+import { getModelReferenceImageRole } from './modelInputConstraints'
 
 /** 后端 schema 中用于声明输入素材角色的字段名。 */
 const INPUT_ASSET_ROLE_FIELD_NAMES = [
@@ -50,13 +51,16 @@ function readInputRoleText(value: unknown): string {
 
 /**
  * 只在后端 schema 明确声明输入角色时采用该声明。
- * 未声明时继续使用历史 role:'image'；多种非 image 角色且无默认值时不猜测，付费任务前拦截。
+ * 优先遵循当前操作的后端约束；缺省时图生图用 reference_image，其它操作用 image。
  */
-export function resolveModelInputAssetRole(model: unknown): string {
+export function resolveModelInputAssetRole(model: unknown, operationCode = ''): string {
+  const operationRole = getModelReferenceImageRole(model, operationCode)
+  if (operationRole) return operationRole
+  const fallback = operationCode === 'image.image_to_image' ? 'reference_image' : 'image'
   const fields = getModelParamFields(model)
   const field = (findModelParamField(fields, INPUT_ASSET_ROLE_FIELD_NAMES) ||
     readNestedInputAssetRoleField(fields)) as Record<string, unknown> | null
-  if (!field) return 'image'
+  if (!field) return fallback
 
   const options = Array.from(new Set(getModelParamOptionValues(field).map(readInputRoleText).filter(Boolean)))
   const defaultRole = readInputRoleText(field.default ?? field.default_value ?? field.defaultValue)
@@ -73,19 +77,19 @@ export function resolveModelInputAssetRole(model: unknown): string {
   if (options.length > 1 || field.required === true) {
     throw new Error('所选视频模型声明了输入素材角色，但未提供唯一可用角色，请联系管理员检查模型配置')
   }
-  return 'image'
+  return fallback
 }
 
 /**
- * 与上面同源，但配置有歧义时不抛错而是退回 'image'。
+ * 与上面同源，但配置有歧义时不抛错而是退回当前操作的默认角色。
  *
  * 供渲染期使用（画布面板的估价在 useMemo 里算）：那里抛错会直接把面板炸掉，
  * 而模型配置本身的问题应该在提交时由 resolveModelInputAssetRole 报出来。
  */
-export function resolveModelInputAssetRoleSafe(model: unknown): string {
+export function resolveModelInputAssetRoleSafe(model: unknown, operationCode = ''): string {
   try {
-    return resolveModelInputAssetRole(model)
+    return resolveModelInputAssetRole(model, operationCode)
   } catch {
-    return 'image'
+    return operationCode === 'image.image_to_image' ? 'reference_image' : 'image'
   }
 }

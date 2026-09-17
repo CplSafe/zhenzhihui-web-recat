@@ -878,10 +878,10 @@ export default function CanvasNodePanel({
   // 只在真正改片时下发：「使用新模型重新生成」是从头再生成一次，
   // 把自己那条视频当输入发出去会让 video.generate 收到一个它不接受的视频素材而被拒。
   const selfVideoAssetId = isEditingVideo ? Number(node?.assetId || 0) : 0
-  // 角色同样要与提交一致；这里在渲染期求值，模型配置有歧义时退回 image 而不是抛错炸掉面板。
+  // 按当前操作解析角色，避免通用 image 默认值覆盖图生图的 reference_image。
   const declaredImageRole = useMemo(
-    () => (selectedModel ? resolveModelInputAssetRoleSafe(selectedModel.source) : ''),
-    [selectedModel],
+    () => (selectedModel ? resolveModelInputAssetRoleSafe(selectedModel.source, operationCode) : ''),
+    [selectedModel, operationCode],
   )
   const inputAssets = useMemo(
     () => buildCanvasInputAssets(sourceRefs, operationCode, selfVideoAssetId, declaredImageRole),
