@@ -124,29 +124,6 @@ function isHiddenParamField(field: ParamsSchemaField): boolean {
   return HIDDEN_PARAM_KEYS.has(key) || REFERENCE_MODE_KEYS.has(key)
 }
 
-/** 识别 seedream 5.0 模型：displayName + 原始记录中的名称/版本字段拼接后匹配。 */
-function isSeedream50Model(model: { displayName?: string; source?: unknown } | undefined): boolean {
-  if (!model) return false
-  const source = (model.source || {}) as Readonly<Record<string, unknown>>
-  const parts = [
-    model.displayName,
-    source.display_name,
-    source.displayName,
-    source.name,
-    source.model_name,
-    source.modelName,
-    source.model,
-    source.version_name,
-    source.versionName,
-    source.version,
-  ]
-  const name = parts
-    .filter((v) => v !== undefined && v !== null)
-    .map(String)
-    .join(' ')
-  return /seedream/i.test(name) && /5(\.0)?/i.test(name)
-}
-
 /**
  * 模型 params_schema.fields 中解析出的单个参数定义。
  * 字段：name=参数名（回传 key）、display_name=菜单组标题、type=类型（select/boolean/number 等）、
@@ -1356,8 +1333,8 @@ export default function CanvasNodePanel({
             </button>
           )}
 
-          {/* 比例选择器：schema 已含比例字段时由菜单控制；seedream 5.0 模型不提供独立比例选项 */}
-          {kind === 'image' && !imageRatioInSchema && !isSeedream50Model(selectedModel) && (
+          {/* 比例选择器：schema 已含比例字段时由菜单控制，否则统一显示固定比例选择器（含 seedream 5.0） */}
+          {kind === 'image' && !imageRatioInSchema && (
             <RatioSelector value={ratio} onRatioChange={taskRunning ? undefined : onRatioChange} />
           )}
 
