@@ -126,7 +126,7 @@ import {
   validateCanvasVideoInputs,
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
-import { getCanvasTaskPresentation, isSameCanvasTask } from '@/utils/canvasTaskState'
+import { getCanvasTaskPresentation, isSameCanvasTask, restoreCanvasTaskState } from '@/utils/canvasTaskState'
 import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS, resolveInheritedNodeRatio } from '@/utils/canvasNodeDefaults'
 import {
   buildModelRestrictionSummary,
@@ -1720,8 +1720,14 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
 
       {(taskRunning || taskFailed) && (
         <div className={`canvas-node-task${taskFailed ? ' is-failed' : ''}`} role="status">
-          <span>{taskFailed ? taskError || '生成失败，请重试' : '正在生成'}</span>
-          {taskRunning && taskProgress > 0 ? <strong>{Math.round(taskProgress)}%</strong> : null}
+          <span>
+            {taskFailed
+              ? `${data.taskErrorHistorical ? '上次生成失败：' : ''}${taskError || '生成失败，请重试'}`
+              : taskStatus === 'reconnecting'
+                ? '正在核对'
+                : '正在生成'}
+          </span>
+          {taskRunning && taskPresentation.progress ? <strong>{Math.round(taskPresentation.progress)}%</strong> : null}
         </div>
       )}
 
@@ -3141,7 +3147,7 @@ function CanvasInner() {
         const restoredNodes = (draft.nodes as Node[]).map((n) => {
           const cleaned = String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n
           // 旧草稿可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址
-          return normalizeNodeMedia(cleaned, workspaceId)
+          return normalizeNodeMedia({ ...cleaned, data: restoreCanvasTaskState(cleaned.data) }, workspaceId)
         })
         setNodes(restoredNodes)
         setEdges(draft.edges as Edge[])
@@ -3179,7 +3185,7 @@ function CanvasInner() {
     if (draftForPaint && draftForPaint.nodes.length > 0 && readDraftBoundCanvasId(routeProjectId) === canvasId) {
       const draftNodes = (draftForPaint.nodes as Node[]).map((n) => {
         const cleaned = String(n.className || '').includes('is-node-entering') ? { ...n, className: undefined } : n
-        return normalizeNodeMedia(cleaned, workspaceId)
+        return normalizeNodeMedia({ ...cleaned, data: restoreCanvasTaskState(cleaned.data) }, workspaceId)
       })
       setNodes(draftNodes)
       setEdges(draftForPaint.edges as Edge[])
@@ -3199,7 +3205,9 @@ function CanvasInner() {
         syncRevisionRef.current = page.sync_revision || syncRevisionRef.current
         const { nodes: rawCloudNodes, edges: cloudEdges } = elementsToGraph(page.elements)
         // 旧数据可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址，避免刷新后破图
-        const cloudNodes = rawCloudNodes.map((n) => normalizeNodeMedia(n, workspaceId))
+        const cloudNodes = rawCloudNodes.map((n) =>
+          normalizeNodeMedia({ ...n, data: restoreCanvasTaskState(n.data) }, workspaceId),
+        )
         if (cloudNodes.length > 0 || cloudEdges.length > 0) {
           setNodes(cloudNodes)
           setEdges(cloudEdges)
@@ -3231,7 +3239,7 @@ function CanvasInner() {
                 ? { ...n, className: undefined }
                 : n
               // 旧草稿可能存了会话级 blob: 地址：有 assetId 时重建为持久同源地址
-              return normalizeNodeMedia(cleaned, workspaceId)
+              return normalizeNodeMedia({ ...cleaned, data: restoreCanvasTaskState(cleaned.data) }, workspaceId)
             })
             setNodes(restoredNodes)
             setEdges(draft.edges as Edge[])
@@ -4356,6 +4364,7 @@ function CanvasInner() {
           taskStatus: 'submitting',
           taskProgress: 0,
           taskError: '',
+          taskErrorHistorical: false,
           taskStatusQueryFailures: 0,
           resultSyncAttempts: 0,
           taskStartedAt,
@@ -4383,7 +4392,10 @@ function CanvasInner() {
         // 在结果真正落到节点前保持可见的等待态，并让恢复轮询继续读取详情。
         const taskData: Record<string, unknown> = {
           taskId,
-          taskError: '',
+          taskError: ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(createdStatus)
+            ? humanizeCanvasTaskError(task?.error_message || task?.error?.message || task?.message) ||
+              '生成失败，请重试'
+            : '',
           taskStatus: ['succeeded', 'completed', 'success'].includes(createdStatus) ? 'result_pending' : createdStatus,
           taskUpdatedAt: new Date().toISOString(),
         }
@@ -4515,8 +4527,10 @@ function CanvasInner() {
           const taskId = Number((node.data as any)?.taskId || 0)
           if (!taskId || polling.has(taskId)) return
           polling.add(taskId)
+          let taskFetched = false
           try {
             const task = await getAiTask({ workspaceId, taskId })
+            taskFetched = true
             if (disposed) return
             const status = normalizeAiTaskStatus(task?.status) || 'pending'
             const progress = taskProgressOf(task)
@@ -4599,6 +4613,26 @@ function CanvasInner() {
             )
             setSaveStatus('dirty')
           } catch (error: any) {
+            if (!disposed && !taskFetched && node.data.taskErrorHistorical && Number(error?.status) === 404) {
+              const nextData = {
+                taskStatus: 'failed',
+                taskError: '任务记录已不存在，请重新生成',
+                taskProgress: 0,
+                taskStatusQueryFailures: 0,
+              }
+              setNodes((items) =>
+                items.map((item) =>
+                  item.id === node.id && isSameCanvasTask(item.data, node.data)
+                    ? { ...item, data: { ...item.data, ...nextData } }
+                    : item,
+                ),
+              )
+              setSelectedNode((current) =>
+                current?.id === node.id && isSameCanvasTask(current, node.data) ? { ...current, ...nextData } : current,
+              )
+              setSaveStatus('dirty')
+              return
+            }
             // 短暂网络错误不把任务误判为失败，保留任务 ID 供下一轮继续恢复。
             if (!disposed && !navigator.onLine) {
               setCloudStatus('offline')

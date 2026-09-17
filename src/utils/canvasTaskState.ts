@@ -5,6 +5,34 @@ interface CanvasTaskIdentity {
   taskRunId?: unknown
 }
 
+const failedTaskStatuses = new Set([
+  'failed',
+  'error',
+  'payment_failed',
+  'cancelled',
+  'expired',
+  'submit_failed',
+  'result_sync_failed',
+])
+
+/** Saved failures are historical snapshots; verify their task before displaying them. */
+export function restoreCanvasTaskState(data: Record<string, unknown> = {}): Record<string, unknown> {
+  const status = normalizeAiTaskStatus(data.taskStatus)
+  if (!failedTaskStatuses.has(status) && status !== 'reconnecting') return data
+  const taskId = Number(data.taskId)
+  // Querying a payment_failed task can retry settlement; reopening must not initiate that.
+  if (status === 'payment_failed' || !Number.isSafeInteger(taskId) || taskId <= 0) {
+    return { ...data, taskErrorHistorical: true }
+  }
+  return {
+    ...data,
+    taskStatus: 'reconnecting',
+    taskError: '',
+    taskErrorHistorical: true,
+    taskStatusQueryFailures: 0,
+  }
+}
+
 /** A late poll may only update the generation that originally requested it. */
 export function isSameCanvasTask(current: CanvasTaskIdentity, snapshot: CanvasTaskIdentity): boolean {
   const taskId = Number(snapshot.taskId || 0)
@@ -29,15 +57,7 @@ export function getCanvasTaskPresentation(args: {
   const status = normalizeAiTaskStatus(args.status)
   const rawProgress = Number(args.progress)
   const progress = Number.isFinite(rawProgress) && rawProgress > 0 ? Math.min(100, Math.max(0, rawProgress)) : undefined
-  const failed = [
-    'failed',
-    'error',
-    'payment_failed',
-    'cancelled',
-    'expired',
-    'submit_failed',
-    'result_sync_failed',
-  ].includes(status)
+  const failed = failedTaskStatuses.has(status)
   const succeeded = ['succeeded', 'completed', 'success'].includes(status)
 
   if (failed) {
@@ -48,6 +68,9 @@ export function getCanvasTaskPresentation(args: {
   }
   if (status === 'submitting') {
     return { running: true, failed: false, title: '正在提交任务', detail: '等待服务确认任务', progress }
+  }
+  if (status === 'reconnecting') {
+    return { running: true, failed: false, title: '正在核对任务状态', detail: '正在读取上次任务的最新状态' }
   }
   if (['pending', 'queued', 'created'].includes(status)) {
     return { running: true, failed: false, title: '已进入生成队列', detail: '等待模型开始处理', progress }
