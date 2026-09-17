@@ -506,3 +506,44 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
     expect(onAdoptInheritedText).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('CanvasNodePanel 节点级生成历史', () => {
+  it('对有历史的图片节点展示缩略图，当前版本标「当前」，点旧版本回调回退', async () => {
+    const user = userEvent.setup()
+    const onRevertToHistory = vi.fn()
+    renderPanel(
+      [{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }],
+      {
+        id: 'node-image',
+        kind: 'image',
+        prompt: '一只猫',
+        assetId: 100,
+        resultUrl: 'x',
+      },
+      {
+        onRevertToHistory,
+        resultHistory: [
+          { assetId: 99, kind: 'image', createdAt: '2026-09-17T10:00:00.000Z' },
+          { assetId: 100, kind: 'image', createdAt: '2026-09-17T11:00:00.000Z' },
+        ],
+      },
+    )
+
+    // 两条历史都出缩略图；当前版本(assetId=100)带「当前」角标
+    expect(screen.getAllByAltText('历史生成结果')).toHaveLength(2)
+    expect(screen.getByText('当前')).toBeInTheDocument()
+
+    // 点旧版本(assetId=99)缩略图 → 交给调用方回退，带上那一条
+    await user.click(screen.getByTitle(/点击切回此版本/))
+    expect(onRevertToHistory).toHaveBeenCalledWith(expect.objectContaining({ assetId: 99 }))
+  })
+
+  it('没有历史时不渲染历史条', () => {
+    renderPanel([{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }], {
+      id: 'node-image',
+      kind: 'image',
+      prompt: '一只猫',
+    })
+    expect(screen.queryByAltText('历史生成结果')).not.toBeInTheDocument()
+  })
+})

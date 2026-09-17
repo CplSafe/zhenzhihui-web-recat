@@ -183,8 +183,12 @@ import {
   wouldCreateCanvasCycle,
   type ComparableNode,
   type ComparableEdge,
+  type CanvasResultHistoryEntry,
 } from '@/utils/canvasElements'
 import './CanvasView.css'
+
+/** 节点级生成历史最多保留的条数：够回看最近几版，又不至于把画布元素 payload 撑大。 */
+const CANVAS_RESULT_HISTORY_CAP = 12
 
 /** 节点素材回显地址归一化：blob:（本地上传的会话级临时地址）或缺失但 assetId 存在时，用同源流式地址重建。 */
 export function resolveNodeMediaUrl(data: Record<string, unknown> | undefined, workspaceId: number): string {
@@ -3607,6 +3611,37 @@ function CanvasInner() {
     [selectedNode, setNodes, commitHistory],
   )
 
+  // 节点级生成历史（反馈 #8）：从图上取当前选中节点的历次结果，实时反映新生成/回退。
+  const selectedNodeHistory = useMemo<CanvasResultHistoryEntry[]>(() => {
+    if (!selectedNode) return []
+    const node = nodes.find((n) => n.id === selectedNode.id)
+    const history = (node?.data as any)?.resultHistory
+    return Array.isArray(history) ? (history as CanvasResultHistoryEntry[]) : []
+  }, [nodes, selectedNode])
+
+  // 回退到某个历史版本：把该结果设为当前结果（不删其它历史，纯切换当前展示）。
+  const handleRevertToHistory = useCallback(
+    (entry: CanvasResultHistoryEntry) => {
+      if (!selectedNode || !entry?.assetId) return
+      const targetId = selectedNode.id
+      commitHistory()
+      const resultUrl = assetStreamUrl(entry.assetId, workspaceId)
+      const nextData: Record<string, unknown> = {
+        assetId: entry.assetId,
+        resultUrl,
+        generationIntent: 'edit',
+        // 切到历史版本：清掉上一版的封面帧，视频节点会按新素材首帧重新取封面
+        ...(entry.kind === 'video' ? { posterAssetId: 0, poster: '' } : {}),
+      }
+      setNodes((nds) => nds.map((n) => (n.id === targetId ? { ...n, data: { ...n.data, ...nextData } } : n)))
+      setSelectedNode((prev) =>
+        prev && prev.id === targetId ? { ...prev, assetId: entry.assetId, resultUrl, generationIntent: 'edit' } : prev,
+      )
+      setSaveStatus('dirty')
+    },
+    [selectedNode, workspaceId, commitHistory, setNodes, setSaveStatus],
+  )
+
   // 视频生成方式变更：保留兼容的参考连线，避免用户切换方式时丢失已选素材。
   const handleVideoModeChange = useCallback(
     (mode: CanvasVideoMode) => {
@@ -4684,6 +4719,24 @@ function CanvasInner() {
                 } else {
                   nextData.resultSyncAttempts = 0
                   nextData.generationIntent = 'edit'
+                  // 节点级生成历史：本次结果有耐久 assetId 时追加一条（去重 + 限长），供面板回看/回退。
+                  // 只留 assetId 走白名单持久化，签名地址/首帧留给展示层现算，避免撑大画布元素 payload。
+                  if (assetId > 0) {
+                    const prevHistory: CanvasResultHistoryEntry[] = Array.isArray((node.data as any)?.resultHistory)
+                      ? ((node.data as any).resultHistory as CanvasResultHistoryEntry[])
+                      : []
+                    if (!prevHistory.some((entry) => entry.assetId === assetId)) {
+                      nextData.resultHistory = [
+                        ...prevHistory,
+                        {
+                          assetId,
+                          kind: kind === 'video' ? 'video' : 'image',
+                          createdAt: new Date().toISOString(),
+                          prompt: String((node.data as any)?.prompt || '') || undefined,
+                        },
+                      ].slice(-CANVAS_RESULT_HISTORY_CAP)
+                    }
+                  }
                 }
               }
               if (nextData.taskStatus !== 'result_pending') nextData.taskProgress = 100
@@ -7073,6 +7126,8 @@ function CanvasInner() {
                   : undefined
               }
               onRemoveRef={handleRemoveRef}
+              resultHistory={selectedNodeHistory}
+              onRevertToHistory={handleRevertToHistory}
               onRatioChange={handleRatioChange}
               onVideoModeChange={handleVideoModeChange}
               onModelChange={handleModelChange}

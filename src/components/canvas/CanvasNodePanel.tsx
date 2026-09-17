@@ -32,6 +32,8 @@ import {
   getModelReferenceImageLimit,
 } from '@/utils/modelRestrictions'
 import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS } from '@/utils/canvasNodeDefaults'
+import type { CanvasResultHistoryEntry } from '@/utils/canvasElements'
+import { assetStreamUrl } from '@/utils/assetUrl'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import WheelPicker, { type WheelPickerOption } from '@/components/common/WheelPicker'
 import { requestConfirm } from '@/stores/ui'
@@ -41,6 +43,14 @@ function readText(value: unknown): string {
   if (typeof value === 'string') return value.trim()
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   return ''
+}
+
+/** 生成历史时间展示：MM-DD HH:mm；非法时间返回空串。 */
+function formatHistoryTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 /** 参数名归一化：aspect_ratio / aspectRatio / aspect-ratio 归一为同一键。 */
@@ -362,6 +372,10 @@ interface CanvasNodePanelProps {
   onOpenRealPersonLibrary?: () => void
   /** 点击删除引用回调 */
   onRemoveRef?: (edgeId: string) => void
+  /** 当前节点的历次生成结果（最新在后），用于节点级生成历史回看（反馈 #8）。 */
+  resultHistory?: CanvasResultHistoryEntry[]
+  /** 点击某条历史结果：把它设为当前结果（回退/切换版本）。 */
+  onRevertToHistory?: (entry: CanvasResultHistoryEntry) => void
   /** 比例变更回调，用于同步更新节点宽高 */
   onRatioChange?: (ratio: string) => void
   /** 视频生成方式变更回调 */
@@ -545,6 +559,8 @@ export default function CanvasNodePanel({
   onPickRefFromLibrary,
   onOpenRealPersonLibrary,
   onRemoveRef,
+  resultHistory,
+  onRevertToHistory,
   onRatioChange,
   onVideoModeChange,
   onModelChange,
@@ -1208,6 +1224,43 @@ export default function CanvasNodePanel({
           >
             转为本节点提示词
           </button>
+        </div>
+      )}
+
+      {/* 节点级生成历史（反馈 #8）：只对已有历史的图片/视频节点显示；点缩略图切回该版本。
+          缩略图按 assetId 现算地址，不落 dataURL，避免撑大画布 payload。 */}
+      {(kind === 'image' || kind === 'video') && (resultHistory?.length ?? 0) > 0 && (
+        <div className={styles.historyStrip}>
+          <span className={styles.historyLabel}>历史</span>
+          <div className={styles.historyItems}>
+            {resultHistory!
+              .slice()
+              .reverse()
+              .map((entry, index) => {
+                const isCurrent = entry.assetId === node?.assetId
+                const src = assetStreamUrl(entry.assetId, workspaceId)
+                const time = formatHistoryTime(entry.createdAt)
+                return (
+                  <button
+                    key={`${entry.assetId}-${index}`}
+                    type="button"
+                    className={`${styles.historyItem}${isCurrent ? ` ${styles.historyItemActive}` : ''}`}
+                    title={`${entry.kind === 'video' ? '视频' : '图片'}${time ? ` · ${time}` : ''}${isCurrent ? '（当前）' : '，点击切回此版本'}`}
+                    onClick={() => {
+                      if (!isCurrent && !taskRunning) onRevertToHistory?.(entry)
+                    }}
+                    disabled={taskRunning}
+                  >
+                    {entry.kind === 'video' ? (
+                      <video src={src} muted preload="metadata" />
+                    ) : (
+                      <img src={src} alt="历史生成结果" loading="lazy" />
+                    )}
+                    {isCurrent && <span className={styles.historyCurrentBadge}>当前</span>}
+                  </button>
+                )
+              })}
+          </div>
         </div>
       )}
 
