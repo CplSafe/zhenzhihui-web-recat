@@ -414,6 +414,67 @@
   color: #9a9a9a;
 }
 
+/* ===== #6 @参考素材：提示词高亮层 + 可点击引用缩略图 =====
+   高亮层与 textarea 必须用完全相同的字号/行高/字体/内边距，才能像素级对齐；
+   textarea 文字透明、只留光标，真正显示的是底下的高亮层。 */
+.promptWrap {
+  position: relative;
+  width: 100%;
+}
+.promptHl {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  padding: 0;
+  box-sizing: border-box;
+  font-size: 14px;
+  line-height: 22px;
+  font-family: 'PingFang SC', sans-serif;
+  color: #333;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.promptRefTag {
+  color: #1fcfa9;
+  font-weight: 600;
+}
+.textareaOverlay {
+  position: relative;
+  z-index: 1;
+  padding: 0;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: #333;
+}
+.textareaOverlay::placeholder {
+  color: #9a9a9a;
+  -webkit-text-fill-color: #9a9a9a;
+}
+/* 可点击的参考缩略图：点它把 @图片N/@视频N 插进提示词 */
+.refThumbClickable {
+  cursor: pointer;
+}
+.refThumbClickable:hover {
+  outline: 2px solid #5767e5;
+  outline-offset: 1px;
+}
+.refThumbTag {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 0 4px;
+  font-size: 9px;
+  line-height: 14px;
+  color: #fff;
+  background: rgba(87, 103, 229, 0.9);
+  border-radius: 0 6px 0 10px;
+  pointer-events: none;
+}
+
 .inheritedPrompt {
   display: flex;
   align-items: center;

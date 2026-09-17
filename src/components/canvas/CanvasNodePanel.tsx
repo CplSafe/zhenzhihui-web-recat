@@ -45,6 +45,9 @@ function readText(value: unknown): string {
   return ''
 }
 
+/** 提示词里 @参考素材的高亮匹配：@图片N / @视频N（反馈 #6）。 */
+const MENTION_RE = /@(?:图片|视频)\d+/g
+
 /** 生成历史时间展示：MM-DD HH:mm；非法时间返回空串。 */
 function formatHistoryTime(iso: string): string {
   const date = new Date(iso)
@@ -601,6 +604,99 @@ export default function CanvasNodePanel({
   }, [node?.sourceRefs])
   // 素材来源引用数量（文本来源不计入数量限制）
   const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind !== 'text').length, [sourceRefs])
+
+  // ===== #6 @参考素材：提示词里直接 @ 某条连入的参考素材（图片→@图片N / 视频→@视频N） =====
+  const taRef = useRef<HTMLTextAreaElement | null>(null)
+  const hlRef = useRef<HTMLDivElement | null>(null)
+  const caretRef = useRef(0)
+  // 每条参考素材对应的 @ 标签：按类型独立编号，且与缩略图展示顺序（sourceRefs）一致，
+  // 这样 @图片N 指向的就是第 N 张图片参考，和下发的 input_assets 顺序对齐。
+  const refMentionByEdge = useMemo(() => {
+    const map = new Map<string, string>()
+    let image = 0
+    let video = 0
+    for (const ref of sourceRefs) {
+      if (ref.kind === 'image') map.set(ref.edgeId, `@图片${++image}`)
+      else if (ref.kind === 'video') map.set(ref.edgeId, `@视频${++video}`)
+    }
+    return map
+  }, [sourceRefs])
+
+  // 在记录的光标位置插入引用文本，插入后光标落到其后并回焦（沿用 ImageChat 的口径）。
+  const insertAtCaret = useCallback(
+    (snippet: string) => {
+      if (taskRunning) return
+      const pos = Math.min(caretRef.current, prompt.length)
+      const next = prompt.slice(0, pos) + snippet + prompt.slice(pos)
+      const newPos = pos + snippet.length
+      caretRef.current = newPos
+      setPrompt(next)
+      if (polishError) setPolishError('')
+      if (kind !== 'text') onPromptChange?.(next)
+      requestAnimationFrame(() => {
+        const ta = taRef.current
+        if (ta) {
+          ta.focus()
+          ta.setSelectionRange(newPos, newPos)
+        }
+      })
+    },
+    [taskRunning, prompt, kind, onPromptChange, polishError],
+  )
+
+  const insertRefMention = useCallback(
+    (ref: CanvasSourceRef) => {
+      const mention = refMentionByEdge.get(ref.edgeId)
+      if (mention) insertAtCaret(`${mention} `)
+    },
+    [refMentionByEdge, insertAtCaret],
+  )
+
+  // 删除参考素材时同步重排提示词里的位置型引用：被删的那号去掉，同类型更大的号整体 -1，
+  // 否则删掉「图片1」后，原「@图片2」仍写着 2，却指向了现在的第 1 张图，引用就错位了。
+  const handleRemoveRefWithReindex = useCallback(
+    (ref: CanvasSourceRef) => {
+      const mention = refMentionByEdge.get(ref.edgeId)
+      const matched = mention ? /^@(图片|视频)(\d+)$/.exec(mention) : null
+      if (matched) {
+        const label = matched[1]
+        const removed = Number(matched[2])
+        const re = new RegExp(`@${label}(\\d+)`, 'g')
+        const next = prompt.replace(re, (full, digits) => {
+          const n = Number(digits)
+          if (n === removed) return ''
+          if (n > removed) return `@${label}${n - 1}`
+          return full
+        })
+        if (next !== prompt) {
+          setPrompt(next)
+          if (kind !== 'text') onPromptChange?.(next)
+        }
+      }
+      onRemoveRef?.(ref.edgeId)
+    },
+    [refMentionByEdge, prompt, kind, onPromptChange, onRemoveRef],
+  )
+
+  // 高亮层：把 @图片N / @视频N 标绿，其余为普通文本（透明 textarea 叠在此层之上）。
+  const renderPromptHighlight = useCallback((text: string): React.ReactNode => {
+    if (!text) return null
+    const out: React.ReactNode[] = []
+    let last = 0
+    let m: RegExpExecArray | null
+    MENTION_RE.lastIndex = 0
+    while ((m = MENTION_RE.exec(text))) {
+      if (m.index > last) out.push(text.slice(last, m.index))
+      out.push(
+        <span className={styles.promptRefTag} key={`${m.index}-${m[0]}`}>
+          {m[0]}
+        </span>,
+      )
+      last = m.index + m[0].length
+    }
+    out.push(text.slice(last))
+    return out
+  }, [])
   const kindModels = useMemo(() => models?.[kind as 'text' | 'image' | 'video'] || [], [models, kind])
   const stableInheritedTexts = inheritedTexts || EMPTY_INHERITED_TEXTS
   const hasInheritedTexts = stableInheritedTexts.length > 0
@@ -1107,8 +1203,24 @@ export default function CanvasNodePanel({
             {sourceRefs
               .filter((ref) => ref.kind !== 'text')
               .map((ref) => (
-                <div key={ref.edgeId} className={styles.refThumb} title={ref.kind === 'image' ? '图片' : '视频'}>
+                <div
+                  key={ref.edgeId}
+                  className={`${styles.refThumb} ${styles.refThumbClickable}`}
+                  title={`${refMentionByEdge.get(ref.edgeId) || (ref.kind === 'image' ? '图片' : '视频')}：点击在提示词中插入引用`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => insertRefMention(ref)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      insertRefMention(ref)
+                    }
+                  }}
+                >
                   <RefThumbMedia sourceRef={ref} label={ref.kind} />
+                  {refMentionByEdge.get(ref.edgeId) && (
+                    <span className={styles.refThumbTag}>{refMentionByEdge.get(ref.edgeId)}</span>
+                  )}
                   <button
                     type="button"
                     className={styles.refDelete}
@@ -1116,7 +1228,7 @@ export default function CanvasNodePanel({
                     aria-label={`删除${ref.kind === 'image' ? '图片' : '视频'}参考`}
                     onClick={(event) => {
                       event.stopPropagation()
-                      onRemoveRef?.(ref.edgeId)
+                      handleRemoveRefWithReindex(ref)
                     }}
                   >
                     &times;
@@ -1148,14 +1260,30 @@ export default function CanvasNodePanel({
             {sourceRefs
               .filter((ref) => ref.kind !== 'text')
               .map((ref) => (
-                <div key={ref.edgeId} className={styles.refThumb} title={ref.kind === 'image' ? '图片' : '视频'}>
+                <div
+                  key={ref.edgeId}
+                  className={`${styles.refThumb} ${styles.refThumbClickable}`}
+                  title={`${refMentionByEdge.get(ref.edgeId) || (ref.kind === 'image' ? '图片' : '视频')}：点击在提示词中插入引用`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => insertRefMention(ref)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      insertRefMention(ref)
+                    }
+                  }}
+                >
                   <RefThumbMedia sourceRef={ref} label={ref.kind} />
+                  {refMentionByEdge.get(ref.edgeId) && (
+                    <span className={styles.refThumbTag}>{refMentionByEdge.get(ref.edgeId)}</span>
+                  )}
                   <button
                     className={styles.refDelete}
                     disabled={taskRunning}
                     onClick={(e) => {
                       e.stopPropagation()
-                      onRemoveRef?.(ref.edgeId)
+                      handleRemoveRefWithReindex(ref)
                     }}
                   >
                     &times;
@@ -1241,22 +1369,38 @@ export default function CanvasNodePanel({
         </div>
       )}
 
-      {/* textarea */}
-      <textarea
-        className={`${styles.textarea}${promptExpanded ? ` ${styles.textareaExpanded}` : ''}`}
-        placeholder={
-          kind === 'text' ? '输入主题或完整的生图提示词...' : `描述你想要生成的${kind === 'video' ? '视频' : ''}内容...`
-        }
-        value={prompt}
-        onChange={(e) => {
-          if (taskRunning) return
-          setPrompt(e.target.value)
-          if (polishError) setPolishError('')
-          // 文本节点的内容由「保存」显式落到 text；图片/视频节点边输入边写回 prompt，
-          // 这样切到别的节点再切回来、以及刷新重进，输入框里的文案都还在。
-          if (kind !== 'text') onPromptChange?.(e.target.value)
-        }}
-      />
+      {/* 提示词输入：透明 textarea 叠在高亮层上，@图片N/@视频N 标绿（反馈 #6）。
+          点下方参考缩略图即可在光标处插入对应引用。 */}
+      <div className={styles.promptWrap}>
+        <div className={styles.promptHl} ref={hlRef} aria-hidden="true">
+          {renderPromptHighlight(prompt)}
+        </div>
+        <textarea
+          ref={taRef}
+          className={`${styles.textarea} ${styles.textareaOverlay}${promptExpanded ? ` ${styles.textareaExpanded}` : ''}`}
+          placeholder={
+            kind === 'text'
+              ? '输入主题或完整的生图提示词...'
+              : `描述你想要生成的${kind === 'video' ? '视频' : ''}内容...`
+          }
+          value={prompt}
+          onChange={(e) => {
+            if (taskRunning) return
+            setPrompt(e.target.value)
+            caretRef.current = e.target.selectionStart ?? e.target.value.length
+            if (polishError) setPolishError('')
+            // 文本节点的内容由「保存」显式落到 text；图片/视频节点边输入边写回 prompt，
+            // 这样切到别的节点再切回来、以及刷新重进，输入框里的文案都还在。
+            if (kind !== 'text') onPromptChange?.(e.target.value)
+          }}
+          onSelect={(e) => {
+            caretRef.current = e.currentTarget.selectionStart ?? 0
+          }}
+          onScroll={(e) => {
+            if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop
+          }}
+        />
+      </div>
 
       <div className={styles.textPromptTools}>
         <div className={`${styles.textPromptHint} ${polishError ? styles.textPromptError : ''}`}>

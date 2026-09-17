@@ -547,3 +547,44 @@ describe('CanvasNodePanel 节点级生成历史', () => {
     expect(screen.queryByAltText('历史生成结果')).not.toBeInTheDocument()
   })
 })
+
+describe('CanvasNodePanel @参考素材引用', () => {
+  const twoImageRefsNode = {
+    id: 'node-image',
+    kind: 'image',
+    prompt: '',
+    sourceRefs: [
+      { kind: 'image', sourceId: 'a', edgeId: 'e1', slotIndex: 0, assetId: 11 },
+      { kind: 'image', sourceId: 'b', edgeId: 'e2', slotIndex: 1, assetId: 22 },
+    ],
+  }
+
+  it('参考缩略图带 @图片N 角标，点它把引用插进提示词', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    renderPanel([{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }], twoImageRefsNode, {
+      onPromptChange,
+    })
+    // 两张参考图各按顺序编号 @图片1 / @图片2
+    expect(screen.getByText('@图片1')).toBeInTheDocument()
+    expect(screen.getByText('@图片2')).toBeInTheDocument()
+    // 点第二张 → 在提示词里插入 @图片2（光标默认在开头）
+    await user.click(screen.getByTitle(/@图片2/))
+    expect(onPromptChange).toHaveBeenCalledWith('@图片2 ')
+  })
+
+  it('删除参考时把提示词里的 @图片N 重排，避免引用错位', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    const onRemoveRef = vi.fn()
+    renderPanel(
+      [{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }],
+      { ...twoImageRefsNode, prompt: '把 @图片1 放进 @图片2 的场景' },
+      { onPromptChange, onRemoveRef },
+    )
+    // 删除第一张图（@图片1）：该号去掉，@图片2 应降为 @图片1
+    await user.click(screen.getAllByText('×')[0])
+    expect(onRemoveRef).toHaveBeenCalledWith('e1')
+    expect(onPromptChange).toHaveBeenCalledWith('把  放进 @图片1 的场景')
+  })
+})
