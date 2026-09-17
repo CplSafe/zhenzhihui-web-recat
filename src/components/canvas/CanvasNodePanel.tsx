@@ -575,6 +575,8 @@ export default function CanvasNodePanel({
   const [prompt, setPrompt] = useState(() => String((kind === 'text' ? node?.text : node?.prompt) || ''))
   const [polishing, setPolishing] = useState(false)
   const [polishError, setPolishError] = useState('')
+  // 提示词放大：多提示词短剧的文案很长，默认输入框最高 220px 不够写（反馈 #5）。
+  const [promptExpanded, setPromptExpanded] = useState(false)
 
   // 切换选中节点时回填该节点自己的文案：面板是所有节点共用的一个实例，
   // 不按 node.id 重新灌值就会把上一个节点的输入框内容留在这里。
@@ -1211,7 +1213,7 @@ export default function CanvasNodePanel({
 
       {/* textarea */}
       <textarea
-        className={styles.textarea}
+        className={`${styles.textarea}${promptExpanded ? ` ${styles.textareaExpanded}` : ''}`}
         placeholder={
           kind === 'text' ? '输入主题或完整的生图提示词...' : `描述你想要生成的${kind === 'video' ? '视频' : ''}内容...`
         }
@@ -1238,6 +1240,23 @@ export default function CanvasNodePanel({
                   : '润色后只更新图片描述，不会自动开始生成')}
         </div>
         <div className={styles.textPromptActions}>
+          {/* 放大/收起提示词框：长文案（多提示词短剧）时把输入区拉大，另外也允许纵向拖拽 */}
+          <button
+            type="button"
+            className={styles.expandBtn}
+            onClick={() => setPromptExpanded((value) => !value)}
+            title={promptExpanded ? '收起输入框' : '放大输入框'}
+            aria-pressed={promptExpanded}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8">
+              {promptExpanded ? (
+                <path d="M9 15l-5 5m0-5v5h5M15 9l5-5m0 5V4h-5" />
+              ) : (
+                <path d="M4 14v6h6m10-10V4h-6M4 20l7-7M20 4l-7 7" />
+              )}
+            </svg>
+            {promptExpanded ? '收起' : '放大'}
+          </button>
           {/* 语音输入:识别文本接到提示词末尾;生成中提示词已锁定,不给入口 */}
           {!taskRunning && <VoiceInputButton className={styles.micBtn} onText={appendSpokenText} />}
           <button

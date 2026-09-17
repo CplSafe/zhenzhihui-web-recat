@@ -321,12 +321,37 @@
   box-sizing: border-box;
   border: none;
   outline: none;
-  resize: none;
+  /* 允许用户纵向拖拽放大；配合下方「放大」按钮一键拉高（反馈 #5：提示词框放不大） */
+  resize: vertical;
   font-size: 14px;
   line-height: 22px;
   color: #333;
   background: transparent;
   font-family: 'PingFang SC', sans-serif;
+}
+
+/* 放大态：长提示词（多提示词短剧）需要更大的编辑区 */
+.textareaExpanded {
+  min-height: 340px;
+  max-height: 60vh;
+}
+
+.expandBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #e7e9f2;
+  border-radius: 8px;
+  background: #fff;
+  color: #565d76;
+  font-size: 12px;
+  cursor: pointer;
+}
+.expandBtn:hover {
+  border-color: #c7ccdf;
+  color: #333;
 }
 
 .textarea::placeholder {

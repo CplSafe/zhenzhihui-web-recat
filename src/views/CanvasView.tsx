@@ -1909,8 +1909,8 @@ function CanvasInner() {
   // 工具栏收起动画期间为 true：先播放收起动画，动画结束再挂载抽屉
   const [toolbarLeaving, setToolbarLeaving] = useState(false)
   const toolbarLeaveTimerRef = useRef<number | null>(null)
-  // 右键浮动菜单
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  // 右键浮动菜单；nodeId 存在时表示右键点在某个节点上，额外显示「生成副本」
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string } | null>(null)
   // 图片/视频节点上传：隐藏的 file input，供顶部胶囊上传按钮触发
   const uploadInputRef = useRef<HTMLInputElement>(null)
   // 本地图片导入：隐藏的多选 file input，供工具栏 / 右键菜单「本地图片」触发
@@ -2450,7 +2450,7 @@ function CanvasInner() {
     setHistoryFlags({ canUndo: true, canRedo: redoStack.length > 0 })
   }, [setNodes, setEdges])
 
-  // 键盘 Delete/Backspace 删除节点：清理关联连线 + 同步选中态 + 入撤销栈
+  // 键盘 Delete/Backspace 删除节点：清理关联连线 + 文本缓存 + 同步选中态 + 入撤销栈
   const handleNodesDelete = useCallback(
     (deleted: Node[]) => {
       if (!deleted.length) return
@@ -2458,6 +2458,9 @@ function CanvasInner() {
       commitHistory()
       const deletedIds = new Set(deleted.map((n) => n.id))
       setEdges((eds) => eds.filter((e) => !deletedIds.has(e.source) && !deletedIds.has(e.target)))
+      // 清理被删节点的文本缓存，与按钮删除（deleteNodeById）口径一致，避免残留
+      const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+      if (textMap) deletedIds.forEach((id) => textMap.delete(id))
       // 若删除的是当前选中节点，清空编辑面板
       setSelectedNode((prev) => (prev && deletedIds.has(prev.id) ? null : prev))
       setSaveStatus('dirty')
@@ -2501,6 +2504,86 @@ function CanvasInner() {
       delete (window as any).__canvasDeleteNode
     }
   }, [deleteNodeById])
+
+  /**
+   * 生成节点副本（反馈：所有节点都不能复制/建副本）。
+   * 克隆配置与内容（提示词/模型/参数/比例/已生成的图或视频），但**剥离与某次生成任务绑定的运行态**：
+   * 否则副本会与原节点共用 taskId，一起轮询、把结果互相回写污染。副本偏移摆放并选中，连线不复制。
+   */
+  const RUNTIME_NODE_DATA_KEYS = useMemo(
+    () =>
+      new Set([
+        'taskId',
+        'taskRunId',
+        'taskStatus',
+        'taskProgress',
+        'taskError',
+        'taskStartedAt',
+        'taskUpdatedAt',
+        'generationRequest',
+        'resultSyncAttempts',
+        'taskStatusQueryFailures',
+      ]),
+    [],
+  )
+  const duplicateNode = useCallback(
+    (nodeId: string) => {
+      const source = latestRef.current.nodes.find((candidate) => candidate.id === nodeId)
+      if (!source) return
+      commitHistory()
+      const type = String((source.data as any)?.kind || source.type || 'text')
+      const newId = createNodeId(type)
+      const clonedData: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries((source.data || {}) as Record<string, unknown>)) {
+        if (!RUNTIME_NODE_DATA_KEYS.has(key)) clonedData[key] = value
+      }
+      const newNode: Node = {
+        id: newId,
+        type: source.type,
+        position: { x: source.position.x + 48, y: source.position.y + 48 },
+        data: clonedData,
+        style: { ...((source.style as Record<string, unknown>) || {}) },
+        selected: true,
+        className: 'is-node-entering',
+      }
+      setNodes((items) => [...items.map((n) => (n.selected ? { ...n, selected: false } : n)), newNode])
+      // 文本节点的内容存在全局 Map（不随 data 持久化），需一并复制到新节点
+      const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+      if (textMap?.has(nodeId)) textMap.set(newId, String(textMap.get(nodeId) ?? ''))
+      setSelectedNode({
+        id: newId,
+        kind: type,
+        sourceRefs: [],
+        ratio: clonedData.ratio as string | undefined,
+        videoMode: clonedData.videoMode as CanvasVideoMode | undefined,
+        modelVersionId: clonedData.modelVersionId as number | undefined,
+      })
+      setSaveStatus('dirty')
+      setContextMenu(null)
+    },
+    [RUNTIME_NODE_DATA_KEYS, commitHistory, setNodes],
+  )
+
+  // Ctrl/Cmd+D 复制选中节点（反馈：节点不能快速复制）。输入框内不拦截，避免打断打字。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        (event.key !== 'd' && event.key !== 'D') ||
+        !(event.ctrlKey || event.metaKey) ||
+        event.shiftKey ||
+        event.altKey
+      )
+        return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('textarea, input, [contenteditable="true"]')) return
+      const ids = selectedNodeIds.length ? selectedNodeIds : selectedNode?.id ? [selectedNode.id] : []
+      if (!ids.length) return
+      event.preventDefault()
+      ids.forEach((id) => duplicateNode(id))
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [duplicateNode, selectedNode?.id, selectedNodeIds])
 
   // 键盘 Delete/Backspace 删除连线（选中连线时）：入撤销栈
   const handleEdgesDelete = useCallback(
@@ -6431,7 +6514,10 @@ function CanvasInner() {
               if (!connection.source || !connection.target) return false
               return !validateConnection(connection.source, connection.target)
             }}
-            /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步） */
+            /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步）。
+             * React Flow 默认 deleteKeyCode 只有 Backspace，用户按 Del 无反应；这里同时接受
+             * Delete 与 Backspace（输入框聚焦时 React Flow 自身会忽略，不会误删）。 */
+            deleteKeyCode={['Delete', 'Backspace']}
             onBeforeDelete={handleBeforeDelete}
             onNodesDelete={handleNodesDelete}
             onEdgesDelete={handleEdgesDelete}
@@ -6486,13 +6572,13 @@ function CanvasInner() {
               setAddMenu(null)
               setContextMenu({ x: e.clientX, y: e.clientY })
             }}
-            onNodeContextMenu={(e) => {
+            onNodeContextMenu={(e, node) => {
               // 文本编辑框内保留默认菜单（复制/粘贴）
               const target = e.target as HTMLElement
               if (target.closest('textarea, input, [contenteditable="true"]')) return
               e.preventDefault()
               setAddMenu(null)
-              setContextMenu({ x: e.clientX, y: e.clientY })
+              setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id })
             }}
             onEdgeContextMenu={(e) => {
               e.preventDefault()
@@ -6770,6 +6856,25 @@ function CanvasInner() {
               top: Math.min(contextMenu.y, window.innerHeight - CONTEXT_MENU_HEIGHT),
             }}
           >
+            {contextMenu.nodeId && (
+              <>
+                <button
+                  type="button"
+                  className="canvas-context-menu__item"
+                  onClick={() => duplicateNode(contextMenu.nodeId!)}
+                >
+                  <span className="canvas-context-menu__icon">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <rect x="9" y="9" width="11" height="11" rx="2" />
+                      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                    </svg>
+                  </span>
+                  生成副本
+                  <span className="canvas-context-menu__kbd">Ctrl+D</span>
+                </button>
+                <div className="canvas-context-menu__divider" />
+              </>
+            )}
             <div className="canvas-context-menu__label">添加节点</div>
             <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('text')}>
               <span className="canvas-context-menu__icon">{getTypeIcon('text')}</span>
