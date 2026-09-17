@@ -487,7 +487,10 @@ interface CanvasNodeActions {
    * 而按钮已经挪到了视图层的工具条上，所以由节点登记能力、视图层按 id 取用。
    * 返回空串表示这一帧没取到，由调用方提示。
    */
-  registerFrameCapture?: (nodeId: string, capture: ((position: VideoFramePosition) => Promise<string>) | null) => void
+  registerFrameCapture?: (
+    nodeId: string,
+    capture: ((position: VideoFramePosition | number) => Promise<string>) | null,
+  ) => void
   /** 同理，图片/视频节点把「下载自己的素材」登记上来供工具条调用。 */
   registerNodeDownload?: (nodeId: string, download: (() => void) | null) => void
   /** 视频节点登记自己的放大预览入口，供不随画布缩放的悬浮工具栏调用。 */
@@ -1201,6 +1204,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     registerNodePreview,
     onPreviewImage,
     onVideoPosterCaptured,
+    onCaptureFrame,
+    capturingNodeId,
     renamingNodeId,
     onRenamingDone,
     timeline: timelineActions,
@@ -1210,7 +1215,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
    * 当前帧直接从画面读取；首尾帧需要可靠跳转，优先使用已经准备好的本地源，
    * 否则通过全站共享缓存下载一次再截取，避免不支持 Range 的 /download 把 currentTime 抹回 0。
    */
-  const captureRequestedFrame = async (position: VideoFramePosition): Promise<string> => {
+  const captureRequestedFrame = async (position: VideoFramePosition | number): Promise<string> => {
     const currentVideo = videoRef.current
     const captureOptions = { seekTimeoutMs: 8000, frameTimeoutMs: 3000, attempts: 2, retryDelayMs: 180 }
     const localSource = videoLocalSrcRef.current
@@ -1308,6 +1313,20 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     registerFrameCapture(id, (position) => captureFrameRef(position))
     return () => registerFrameCapture(id, null)
   }, [kind, id, registerFrameCapture, captureFrameRef])
+
+  /*
+   * 放大预览弹窗里的「截取此帧」（反馈 #7 任意帧截帧）：弹窗把它原生进度条的当前时刻传上来，
+   * 走节点同一套（CORS 安全、含同源下载兜底的）取帧链路，在该时刻截一帧，再交给上层上传建图片节点。
+   */
+  const handlePreviewCaptureAt = useLatestCallback(async (atSec: number) => {
+    if (capturingNodeId) return
+    const frame = await captureFrameRef(Math.max(0, Number(atSec) || 0))
+    if (!frame) {
+      showToast('截帧失败：视频帧仍在加载或素材地址暂不可读取，请稍后重试', 'error')
+      return
+    }
+    onCaptureFrame?.(id, frame)
+  })
 
   /**
    * 连接点加号在鼠标滑入节点时出现（不是滑到加号上才出现）。
@@ -1745,6 +1764,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           durationLabel={videoDurationLabel}
           startTime={videoCurrentSec}
           info={videoPreviewInfo}
+          onCaptureFrame={handlePreviewCaptureAt}
+          capturing={capturingNodeId === id}
           onClose={() => setVideoPreviewOpen(false)}
         />
       ) : null}
@@ -5153,9 +5174,9 @@ function CanvasInner() {
   const [renamingNodeId, setRenamingNodeId] = useState('')
   const handleRenamingDone = useCallback(() => setRenamingNodeId(''), [])
 
-  const frameCaptureRef = useRef(new Map<string, (position: VideoFramePosition) => Promise<string>>())
+  const frameCaptureRef = useRef(new Map<string, (position: VideoFramePosition | number) => Promise<string>>())
   const registerFrameCapture = useCallback(
-    (nodeId: string, capture: ((position: VideoFramePosition) => Promise<string>) | null) => {
+    (nodeId: string, capture: ((position: VideoFramePosition | number) => Promise<string>) | null) => {
       if (capture) frameCaptureRef.current.set(nodeId, capture)
       else frameCaptureRef.current.delete(nodeId)
     },
