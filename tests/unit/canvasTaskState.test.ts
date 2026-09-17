@@ -1,5 +1,46 @@
 import { describe, expect, it } from 'vitest'
-import { getCanvasTaskPresentation, isSameCanvasTask } from '@/utils/canvasTaskState'
+import { getCanvasTaskPresentation, isSameCanvasTask, restoreCanvasTaskState } from '@/utils/canvasTaskState'
+
+describe('canvas task restoration', () => {
+  it.each(['failed', 'error', 'cancelled', 'expired', 'result_sync_failed', 'reconnecting'])(
+    'rechecks a saved %s task without showing its cached error',
+    (taskStatus) => {
+      const saved = {
+        taskId: 15318,
+        taskRunId: 'old',
+        taskStatus,
+        taskError: 'cached error',
+        taskStatusQueryFailures: 6,
+        prompt: 'image',
+        assetId: 12,
+      }
+      expect(restoreCanvasTaskState(saved)).toEqual({
+        ...saved,
+        taskStatus: 'reconnecting',
+        taskError: '',
+        taskErrorHistorical: true,
+        taskStatusQueryFailures: 0,
+      })
+      expect(saved.taskError).toBe('cached error')
+      expect(saved.taskStatus).toBe(taskStatus)
+    },
+  )
+
+  it('labels a failed submission without a server task as historical without starting polling', () => {
+    const saved = { taskId: 0, taskStatus: 'submit_failed', taskError: 'invalid inputs' }
+    expect(restoreCanvasTaskState(saved)).toEqual({ ...saved, taskErrorHistorical: true })
+  })
+
+  it('does not trigger payment settlement just by restoring a canvas', () => {
+    const saved = { taskId: 15318, taskStatus: 'payment_failed', taskError: 'insufficient credits' }
+    expect(restoreCanvasTaskState(saved)).toEqual({ ...saved, taskErrorHistorical: true })
+  })
+
+  it.each(['processing', 'succeeded', undefined])('leaves %s nodes unchanged', (taskStatus) => {
+    const saved = { taskId: 15318, taskStatus, resultUrl: '/image.png' }
+    expect(restoreCanvasTaskState(saved)).toBe(saved)
+  })
+})
 
 describe('canvas task response ownership', () => {
   it('rejects an old response while a new generation has no server task ID yet', () => {
@@ -18,6 +59,14 @@ describe('canvas task response ownership', () => {
 })
 
 describe('canvas task presentation', () => {
+  it('distinguishes restoration from a new generation and hides stale progress', () => {
+    expect(getCanvasTaskPresentation({ status: 'reconnecting', progress: 70, error: 'old error' })).toEqual({
+      running: true,
+      failed: false,
+      title: '正在核对任务状态',
+      detail: '正在读取上次任务的最新状态',
+    })
+  })
   it('does not invent a percentage when the backend has not returned one', () => {
     const state = getCanvasTaskPresentation({ status: 'processing', progress: 0 })
     expect(state.running).toBe(true)
