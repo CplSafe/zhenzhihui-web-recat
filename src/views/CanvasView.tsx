@@ -4524,8 +4524,10 @@ function CanvasInner() {
           const taskId = Number((node.data as any)?.taskId || 0)
           if (!taskId || polling.has(taskId)) return
           polling.add(taskId)
+          let taskFetched = false
           try {
             const task = await getAiTask({ workspaceId, taskId })
+            taskFetched = true
             if (disposed) return
             const status = normalizeAiTaskStatus(task?.status) || 'pending'
             const progress = taskProgressOf(task)
@@ -4608,6 +4610,26 @@ function CanvasInner() {
             )
             setSaveStatus('dirty')
           } catch (error: any) {
+            if (!disposed && !taskFetched && node.data.taskErrorHistorical && Number(error?.status) === 404) {
+              const nextData = {
+                taskStatus: 'failed',
+                taskError: '任务记录已不存在，请重新生成',
+                taskProgress: 0,
+                taskStatusQueryFailures: 0,
+              }
+              setNodes((items) =>
+                items.map((item) =>
+                  item.id === node.id && isSameCanvasTask(item.data, node.data)
+                    ? { ...item, data: { ...item.data, ...nextData } }
+                    : item,
+                ),
+              )
+              setSelectedNode((current) =>
+                current?.id === node.id && isSameCanvasTask(current, node.data) ? { ...current, ...nextData } : current,
+              )
+              setSaveStatus('dirty')
+              return
+            }
             // 短暂网络错误不把任务误判为失败，保留任务 ID 供下一轮继续恢复。
             if (!disposed && !navigator.onLine) {
               setCloudStatus('offline')

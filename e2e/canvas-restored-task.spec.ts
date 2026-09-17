@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { expectNoUnexpectedApi, installStrictAuthenticatedApp, WORKSPACE_ID } from './fixtures/strict-authenticated-app'
 
 for (const source of ['cloud', 'draft']) {
-  for (const status of ['processing', 'failed']) {
+  for (const status of ['processing', 'failed', 'missing']) {
     test(`reopening a canvas verifies ${source} failure before displaying ${status}`, async ({ page }) => {
       const api = await installStrictAuthenticatedApp(page)
       const cachedError = 'read google image response: context canceled'
@@ -64,6 +64,7 @@ for (const source of ['cloud', 'draft']) {
       await page.route('**/api/v1/ai/tasks/15318?**', async (route) => {
         taskQueries += 1
         await pending
+        if (status === 'missing') return route.fulfill({ status: 404, json: { message: 'Task not found' } })
         await route.fulfill({
           json: { id: 15318, status, error_message: status === 'failed' ? latestError : '', outputs: [] },
         })
@@ -81,7 +82,10 @@ for (const source of ['cloud', 'draft']) {
       } finally {
         release?.()
       }
-      if (status === 'failed') {
+      if (status === 'missing') {
+        await expect(page.getByText('上次生成失败：任务记录已不存在，请重新生成', { exact: true })).toBeVisible()
+        await expect(page.getByText('正在核对任务状态', { exact: true })).toHaveCount(0)
+      } else if (status === 'failed') {
         await expect(page.getByText(`上次生成失败：${latestError}`, { exact: true })).toBeVisible()
       } else {
         await expect(page.getByText('正在生成内容', { exact: true })).toBeVisible()
