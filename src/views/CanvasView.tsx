@@ -3398,11 +3398,24 @@ function CanvasInner() {
       }
       try {
         const knownRevision = syncRevisionRef.current
+        const graphAtRequest = latestRef.current
+        // Generation can finish (and save) while a remote read is in flight.
+        // Never install that older snapshot over the newer local graph/revision.
+        const localStateChanged = () =>
+          syncRevisionRef.current !== knownRevision ||
+          latestRef.current.nodes !== graphAtRequest.nodes ||
+          latestRef.current.edges !== graphAtRequest.edges ||
+          syncInFlightRef.current ||
+          syncPendingRef.current ||
+          saveStatusRef.current !== 'saved'
         const page = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: knownRevision })
         if (disposed) return
+        if (localStateChanged()) return schedule(1500)
         if (page.history_floor_revision > knownRevision && knownRevision > 0) {
           // 增量历史已被服务端清理：下一轮用全量基线恢复，避免永久停在旧 revision。
           const full = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
+          if (disposed) return
+          if (localStateChanged()) return schedule(1500)
           const graph = elementsToGraph(full.elements).nodes.map((node) => normalizeNodeMedia(node, workspaceId))
           const fullGraph = { nodes: graph, edges: elementsToGraph(full.elements).edges }
           restoreTextContents(
