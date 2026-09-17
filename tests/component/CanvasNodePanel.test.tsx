@@ -1,7 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import CanvasNodePanel from '@/components/canvas/CanvasNodePanel'
+import { estimateAiTaskCost } from '@/api/business'
 
 /**
  * 积分预估是一次真实的网络调用，这里的用例只关心面板本身的渲染与提交口径。
@@ -48,6 +49,59 @@ function modelWithFields(fields: any[]) {
 
 /** 同时支持文生图与图生图，用例只关心可用性而不是能力划分。 */
 const IMAGE_OPERATIONS = ['image.text_to_image', 'image.image_to_image']
+
+describe.each([
+  ['google', 'gemini-2.5-flash-image'],
+  ['google', 'gemini-3.1-flash-image'],
+  ['google', 'gemini-3-pro-image'],
+  ['openai', 'gpt-image-2'],
+  ['volcengine', 'doubao-seedream-5-0-260128'],
+])('CanvasNodePanel %s %s 图生图素材角色', (provider, version) => {
+  it.each([true, false])('预估和提交使用 reference_image，后端约束存在=%s', async (withConstraints) => {
+    const user = userEvent.setup()
+    const onGenerate = vi.fn()
+    vi.mocked(estimateAiTaskCost).mockClear()
+    renderPanel(
+      [
+        {
+          modelVersionId: 27,
+          displayName: version,
+          operationCodes: IMAGE_OPERATIONS,
+          source: {
+            provider,
+            version,
+            params_schema: { fields: [{ name: 'ratio', type: 'select', default: '1:1', options: ['1:1'] }] },
+            ...(withConstraints
+              ? {
+                  input_constraints: {
+                    'image.image_to_image': { roles: [{ role: 'reference_image', min_count: 1, max_count: 3 }] },
+                  },
+                }
+              : {}),
+          },
+        },
+      ],
+      imageNodeWithReference(),
+      { onGenerate },
+    )
+    const inputAssets = [{ asset_id: 77, role: 'reference_image' }]
+    await user.click(screen.getByTitle('发送生成'))
+    expect(onGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationCode: 'image.image_to_image',
+        inputAssets,
+      }),
+    )
+    await waitFor(() =>
+      expect(estimateAiTaskCost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operationCode: 'image.image_to_image',
+          inputAssets,
+        }),
+      ),
+    )
+  })
+})
 
 describe('CanvasNodePanel 模型选择器', () => {
   it('多资产汇合时展示最终输入数量，并在模型超限时阻止生成', () => {
