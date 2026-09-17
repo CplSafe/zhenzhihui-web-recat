@@ -4392,7 +4392,10 @@ function CanvasInner() {
         // 在结果真正落到节点前保持可见的等待态，并让恢复轮询继续读取详情。
         const taskData: Record<string, unknown> = {
           taskId,
-          taskError: '',
+          taskError: ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(createdStatus)
+            ? humanizeCanvasTaskError(task?.error_message || task?.error?.message || task?.message) ||
+              '生成失败，请重试'
+            : '',
           taskStatus: ['succeeded', 'completed', 'success'].includes(createdStatus) ? 'result_pending' : createdStatus,
           taskUpdatedAt: new Date().toISOString(),
         }

@@ -6,8 +6,9 @@ for (const scenario of [
   { provider: 'google', version: 'gemini-2.5-flash-image', edit: true },
   { provider: 'openai', version: 'gpt-image-2', edit: true },
   { provider: 'volcengine', version: 'doubao-seedream-5-0-260128', edit: true },
+  { provider: 'google', version: 'gemini-2.5-flash-image', edit: true, immediateFailure: true },
 ]) {
-  test(`canvas ${scenario.version} edit=${scenario.edit} sends correct inputs and isolates the previous failure`, async ({
+  test(`canvas ${scenario.version} edit=${scenario.edit} immediateFailure=${Boolean(scenario.immediateFailure)} sends correct inputs and isolates the previous failure`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 1000 })
@@ -134,7 +135,11 @@ for (const scenario of [
       }
       submissions += 1
       await pendingSubmission
-      await route.fulfill({ json: { id: 15320, status: 'pending' } })
+      await route.fulfill({
+        json: scenario.immediateFailure
+          ? { id: 15320, status: 'failed', error_message: currentError }
+          : { id: 15320, status: 'pending' },
+      })
     })
     await page.route('**/api/v1/ai/tasks/15318?**', async (route) => {
       oldTaskQueries += 1
