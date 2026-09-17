@@ -32,6 +32,7 @@ import {
   type NodeProps,
   ConnectionMode,
   PanOnScrollMode,
+  SelectionMode,
   addEdge,
   useNodesState,
   useEdgesState,
@@ -1883,8 +1884,12 @@ function CanvasInner() {
   // - dragEnabled：节点拖拽开关（nodesDraggable），关闭后节点不能拖拽
   const [moveEnabled, setMoveEnabled] = useState(true)
   const [dragEnabled, setDragEnabled] = useState(true)
+  // boxSelectEnabled：框选模式（反馈 #1）。开启后左键拖空白处框选节点（Shift 拖拽任何时候都能框选）；
+  // 平移改走中键/触控板，避免与框选抢左键。
+  const [boxSelectEnabled, setBoxSelectEnabled] = useState(false)
   const handleMoveToggle = useCallback(() => setMoveEnabled((v) => !v), [])
   const handleDragToggle = useCallback(() => setDragEnabled((v) => !v), [])
+  const handleBoxSelectToggle = useCallback(() => setBoxSelectEnabled((v) => !v), [])
   const [selectedNode, setSelectedNode] = useState<CanvasNodeInfo | null>(null)
   /**
    * 多选中的节点 id。
@@ -6462,6 +6467,8 @@ function CanvasInner() {
             onMoveToggle={handleMoveToggle}
             dragEnabled={dragEnabled}
             onDragToggle={handleDragToggle}
+            boxSelectEnabled={boxSelectEnabled}
+            onBoxSelectToggle={handleBoxSelectToggle}
             onAddLocalImage={() => openLocalImagePicker()}
             onOpenSearch={() => setSearchOpen(true)}
             onOpenAssets={() => openDrawerPanel('assets')}
@@ -6585,6 +6592,10 @@ function CanvasInner() {
              * 平移仍走左键拖空白（panOnDrag），两者靠 Shift 区分，互不打架。
              */
             selectionKeyCode="Shift"
+            /* 框选模式（工具栏「框选」开关）：开启后左键拖空白直接框选，无需按 Shift；
+             * 关闭时仍可按住 Shift 拖拽框选。partial=框到一部分就算选中，更省力。 */
+            selectionOnDrag={boxSelectEnabled}
+            selectionMode={SelectionMode.Partial}
             onSelectionChange={handleSelectionChange}
             /* 双击时间线节点打开剪辑编辑器（其余节点保持原行为） */
             onNodeDoubleClick={(_e, node) => {
@@ -6669,9 +6680,10 @@ function CanvasInner() {
               setAddMenu(null)
               setSelectedNode(null)
             }}
-            /* 工具栏开关：移动=画布平移（panOnDrag），拖拽=节点拖拽（nodesDraggable） */
+            /* 工具栏开关：移动=画布平移（panOnDrag），拖拽=节点拖拽（nodesDraggable）。
+             * 框选模式开启时把左键让给框选，平移改走中键（[1]）；触控板平移仍靠 panOnScroll。 */
             nodesDraggable={dragEnabled}
-            panOnDrag={moveEnabled}
+            panOnDrag={boxSelectEnabled ? [1] : moveEnabled}
             /*
              * Mac 触控板采用设计工具式手势：
              * - 双指滚动自由平移，不再一碰就缩放；
