@@ -588,3 +588,89 @@ describe('CanvasNodePanel @参考素材引用', () => {
     expect(onPromptChange).toHaveBeenCalledWith('把  放进 @图片1 的场景')
   })
 })
+
+describe('CanvasNodePanel @选择器与重命名引用', () => {
+  const MODEL = [{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }]
+  /** 第一张重命名为「天安门」，第二张没改名 */
+  const renamedRefsNode = {
+    id: 'node-image',
+    kind: 'image',
+    prompt: '',
+    sourceRefs: [
+      { kind: 'image', sourceId: 'a', edgeId: 'e1', slotIndex: 0, assetId: 11, title: '天安门' },
+      { kind: 'image', sourceId: 'b', edgeId: 'e2', slotIndex: 1, assetId: 22 },
+    ],
+  }
+
+  it('重命名过的参考用名字引用，没改名的仍用位置号', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    renderPanel(MODEL, renamedRefsNode, { onPromptChange })
+    expect(screen.getByText('@天安门')).toBeInTheDocument()
+    expect(screen.getByText('@图片2')).toBeInTheDocument()
+    await user.click(screen.getByTitle(/@天安门/))
+    expect(onPromptChange).toHaveBeenCalledWith('@天安门 ')
+  })
+
+  it('输入 @ 弹出参考选择器，点选即插入对应引用', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    renderPanel(MODEL, renamedRefsNode, { onPromptChange })
+    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/)
+    await user.type(textarea, '@')
+    const picker = screen.getByRole('listbox', { name: '选择要 @ 的参考素材' })
+    expect(picker).toBeInTheDocument()
+    // 选第二张（位置号）：把刚敲的 @ 整段替换成完整引用
+    await user.click(screen.getByRole('option', { name: /@图片2/ }))
+    expect(onPromptChange).toHaveBeenLastCalledWith('@图片2 ')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('输入 @ 后继续打字按名字筛选，Esc 关闭', async () => {
+    const user = userEvent.setup()
+    renderPanel(MODEL, renamedRefsNode)
+    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/)
+    await user.type(textarea, '@天')
+    expect(screen.getByRole('option', { name: /@天安门/ })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /@图片2/ })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('提交时把名字型引用翻成模型认得的位置号', async () => {
+    const user = userEvent.setup()
+    const onGenerate = vi.fn()
+    renderPanel(MODEL, { ...renamedRefsNode, prompt: '把 @天安门 放进 @图片2 的场景' }, { onGenerate })
+    await user.click(screen.getByTitle('发送生成'))
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '把 @图片1 放进 @图片2 的场景' }))
+  })
+
+  it('参考被重命名后，提示词里已有的引用自动跟着改', async () => {
+    const onPromptChange = vi.fn()
+    const props = {
+      workspaceId: 7,
+      models: { text: [], image: MODEL, video: [] } as any,
+      modelsLoading: false,
+      onGenerate: vi.fn(),
+      onModelChange: vi.fn(),
+      onPromptChange,
+    }
+    const { rerender } = render(
+      <CanvasNodePanel {...props} node={{ ...renamedRefsNode, prompt: '保留 @天安门 的主体' } as any} />,
+    )
+    // 节点在画布上改名：天安门 → 故宫（同一个节点、同一条参考）
+    rerender(
+      <CanvasNodePanel
+        {...props}
+        node={
+          {
+            ...renamedRefsNode,
+            prompt: '保留 @天安门 的主体',
+            sourceRefs: [{ ...renamedRefsNode.sourceRefs[0], title: '故宫' }, renamedRefsNode.sourceRefs[1]],
+          } as any
+        }
+      />,
+    )
+    expect(onPromptChange).toHaveBeenCalledWith('保留 @故宫 的主体')
+  })
+})

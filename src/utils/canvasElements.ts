@@ -193,6 +193,11 @@ export interface CanvasGraphSourceRef {
   inherited?: boolean
   /** 来源节点素材取自真人素材库时的身份引用；下游生成据此注入身份约束并置顶该图。 */
   realPerson?: SmartRealPersonReference
+  /**
+   * 来源节点被用户手动重命名后的名字（未改名时不带）。
+   * 提示词里 @ 引用参考时用它替代「图片N」这种位置号，多参考时才分得清谁是谁。
+   */
+  title?: string
 }
 
 /**
@@ -282,6 +287,8 @@ export function collectCanvasSourceRefs(
         ...(inherited ? { inherited: true } : {}),
         // 真人身份必须随素材一路传到下游生成节点，经文本节点继承时同样不能丢。
         ...(data.realPerson ? { realPerson: data.realPerson as SmartRealPersonReference } : {}),
+        // 用户重命名过的节点名：提示词 @ 引用时用名字替代位置号（未改名不带，仍用「图片N」）
+        ...(String(data.title || '').trim() ? { title: String(data.title).trim() } : {}),
       }
 
       if (kind === 'text') {
