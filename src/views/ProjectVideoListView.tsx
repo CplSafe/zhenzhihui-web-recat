@@ -1,7 +1,7 @@
 /**
  * 项目视频列表页
  *
- * 页面效果：按项目展示智能成片、爆款复制及归类视频，提供关键词、流程、状态、时长筛选，
+ * 页面效果：按项目展示智能成片、爆款复制及归类视频，提供关键词、流程、状态、时长、视频模型筛选，
  * 支持分页、真实时长回填、查看详情、下载，以及从项目素材继续创建新视频。
  *
  * 权限边界：项目成员均可进入详情和下载；仅视频创建者可编辑/发布；仅项目创建者或空间
@@ -15,6 +15,8 @@ import { useCurrentUser, useCurrentWorkspace, useWorkspaceId } from '@/stores/wo
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useWorkspaceMemberAccess } from '@/composables/useWorkspaceMemberAccess'
+import { useVideoModelNames } from '@/composables/useVideoModelNames'
+import { ALL_VIDEO_MODELS, buildVideoModelFilterOptions, matchesVideoModelFilter } from '@/utils/projectModelFilter'
 import {
   deleteProjectVideo,
   formatVideoDate,
@@ -380,6 +382,8 @@ export default function ProjectVideoListView() {
   const [status, setStatus] = useState<StatusFilter>('all')
   const [duration, setDuration] = useState<DurationFilter>('all')
   const [flowFilter, setFlowFilter] = useState<FlowFilter>('all')
+  // 视频模型筛选:'' = 全部,否则为 modelVersionId 字符串 / 'unknown'(老数据没记录模型)
+  const [modelFilter, setModelFilter] = useState(ALL_VIDEO_MODELS)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [openMenuId, setOpenMenuId] = useState('')
@@ -457,9 +461,20 @@ export default function ProjectVideoListView() {
     }
   }, [loadData])
 
+  // 模型名字查当前空间目录(与创作页一致);目录里没有的退回视频上的名字快照,再退回「模型 #id」。
+  const videoModelNames = useVideoModelNames(Number(workspaceId || 0))
+  const modelOptions = useMemo(
+    () => buildVideoModelFilterOptions(videos, videoModelNames.resolveName),
+    [videos, videoModelNames.resolveName],
+  )
+  // 视频列表刷新后当前选项可能已不存在(视频被删):回落「全部」,别让下拉显示全部、列表却被过滤成空。
+  const effectiveModelFilter = modelOptions.some((option) => option.value === modelFilter)
+    ? modelFilter
+    : ALL_VIDEO_MODELS
+
   useEffect(() => {
     setPage(1)
-  }, [query, sortBy, status, duration, flowFilter, pageSize])
+  }, [query, sortBy, status, duration, flowFilter, effectiveModelFilter, pageSize])
 
   useEffect(() => {
     if (!openMenuId) return
@@ -486,10 +501,11 @@ export default function ProjectVideoListView() {
       if (status !== 'all' && item.status !== status) return false
       if (!matchesDuration(item, duration)) return false
       if (flowFilter !== 'all' && item.flow !== flowFilter) return false
+      if (!matchesVideoModelFilter(item, effectiveModelFilter)) return false
       return true
     })
     return sortVideos(filtered, sortBy)
-  }, [videos, query, status, duration, flowFilter, sortBy])
+  }, [videos, query, status, duration, flowFilter, effectiveModelFilter, sortBy])
 
   const videoCount = videos.length
   const total = filteredVideos.length
@@ -755,6 +771,23 @@ export default function ProjectVideoListView() {
                       <option value="long">长视频</option>
                     </select>
                   </label>
+                  {/* 视频模型:选项来自本项目视频实际记录的生成模型(带条数);没有任何记录时不展示 */}
+                  {modelOptions.length > 0 && (
+                    <label className="pvlist-select">
+                      <span>模型:</span>
+                      <select
+                        aria-label="按视频模型筛选"
+                        value={effectiveModelFilter}
+                        onChange={(event) => setModelFilter(event.target.value)}
+                      >
+                        {modelOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                 </div>
                 <button type="button" className="pvlist-create-btn" onClick={() => setNewVideoOpen(true)}>
                   + 新建视频
