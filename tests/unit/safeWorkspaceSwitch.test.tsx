@@ -117,6 +117,25 @@ describe('safe workspace switch', () => {
     )
   })
 
+  it('treats real-person projects like smart projects (pinned across team→team, reset across the boundary)', () => {
+    const personal = { id: 1, type: 'personal' }
+    const teamA = { id: 2, type: 'team' }
+    const teamB = { id: 3, type: 'team' }
+    expect(resolveWorkspaceSwitchResetPath('/real-person-video/5', teamA, teamB)).toBeNull()
+    expect(resolveWorkspaceSwitchResetPath('/real-person-video/5', personal, teamA)).toBe('/real-person-video')
+    expect(resolveWorkspaceSwitchResetPath('/real-person-video', teamA, teamB)).toBe('/real-person-video')
+  })
+
+  it('always unmounts an open canvas and lands on the new workspace canvas list', () => {
+    const teamA = { id: 2, type: 'team' }
+    const teamB = { id: 3, type: 'team' }
+    expect(resolveWorkspaceSwitchResetPath('/canvas/42', teamA, teamB)).toBe('/canvas')
+    expect(resolveWorkspaceSwitchResetPath('/canvas/42', { id: 1, type: 'personal' }, teamA)).toBe('/canvas')
+    // 列表页本身按空间拉取,不需要桥接;分享页不属于任何空间
+    expect(resolveWorkspaceSwitchResetPath('/canvas', teamA, teamB)).toBeNull()
+    expect(resolveWorkspaceSwitchResetPath('/canvas/share/abc', teamA, teamB)).toBeNull()
+  })
+
   it('refuses every switch path while a video generation owns the global lock', () => {
     useUiStore.setState({
       workspaceSwitchLocked: true,

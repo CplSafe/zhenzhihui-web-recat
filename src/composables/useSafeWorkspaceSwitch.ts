@@ -25,25 +25,40 @@ export const isPersonalWorkspace = (workspace: any): boolean => {
   return String(workspace?.name || '').trim() === '个人空间'
 }
 
+/** 切换空间后需要重新挂载的目标入口。 */
+export type WorkspaceSwitchResetPath = '/smart' | '/real-person-video' | '/hot-copy' | '/canvas'
+
 /**
  * 根据当前路径及个人/团队边界，决定切换空间后是否要回到空白创作入口。
+ *
+ * - 智能成片 / 真人成片项目页(同一个 SmartCreateView)会钉住项目所属空间,团队↔团队切换可原地保留;
+ *   跨个人/团队边界或本就在空白入口时才重置。
+ * - 爆款复制不钉空间,一律重置。
+ * - 无限画布 /canvas/:id 的增量同步直接用全局 workspaceId,画布又按空间隔离:
+ *   留在原画布会把后续改动 PUT 到「新空间 + 旧画布 id」被后端拒绝(云端静默失联),
+ *   所以任何切换都先卸载(卸载时会用旧空间 flush 一次),再落到新空间的画布列表。
  */
 export const resolveWorkspaceSwitchResetPath = (
   pathname: string,
   currentWorkspace: any,
   targetWorkspace: any,
-): '/smart' | '/hot-copy' | null => {
+): WorkspaceSwitchResetPath | null => {
   const path = String(pathname || '')
   const inSmartProject = /^\/smart\/[^/]+/.test(path)
   const inSmartBlank = path === '/smart'
+  const inRealPersonProject = /^\/real-person-video\/[^/]+/.test(path)
+  const inRealPersonBlank = path === '/real-person-video'
   const inHotCopy = path === '/hot-copy' || path.startsWith('/hot-copy/')
+  const inCanvasDetail = /^\/canvas\/(?!share\/)[^/]+/.test(path)
   const crossesPersonalBoundary =
     Boolean(currentWorkspace) &&
     Boolean(targetWorkspace) &&
     isPersonalWorkspace(currentWorkspace) !== isPersonalWorkspace(targetWorkspace)
 
   if ((inSmartProject && crossesPersonalBoundary) || inSmartBlank) return '/smart'
+  if ((inRealPersonProject && crossesPersonalBoundary) || inRealPersonBlank) return '/real-person-video'
   if (inHotCopy) return '/hot-copy'
+  if (inCanvasDetail) return '/canvas'
   return null
 }
 
