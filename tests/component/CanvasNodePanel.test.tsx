@@ -645,6 +645,132 @@ describe('CanvasNodePanel @选择器与重命名引用', () => {
     expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '把 @图片1 放进 @图片2 的场景' }))
   })
 
+  it('还没连入任何参考时输入 @ 也弹选择器，给「从素材库选择 / 从画布选择」取图入口', async () => {
+    const user = userEvent.setup()
+    const onPickRefFromLibrary = vi.fn()
+    const onStartPickRef = vi.fn()
+    renderPanel(
+      MODEL,
+      { id: 'node-image', kind: 'image', prompt: '', sourceRefs: [] },
+      { onPickRefFromLibrary, onStartPickRef },
+    )
+    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/)
+    await user.type(textarea, '@')
+    const picker = screen.getByRole('listbox', { name: '选择要 @ 的参考素材' })
+    expect(picker).toHaveTextContent('还没有连入的参考素材')
+    expect(screen.queryByRole('option')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '从素材库选择' }))
+    // 图片节点的下一个槽位 = 已有参考数(0)
+    expect(onPickRefFromLibrary).toHaveBeenCalledWith(0)
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+
+    await user.type(textarea, '@')
+    await user.click(screen.getByRole('button', { name: '从画布选择' }))
+    expect(onStartPickRef).toHaveBeenCalledWith(0)
+  })
+
+  it('没有候选时按 Enter 直接去素材库取图，不会把换行打进提示词', async () => {
+    const user = userEvent.setup()
+    const onPickRefFromLibrary = vi.fn()
+    const onPromptChange = vi.fn()
+    renderPanel(
+      MODEL,
+      { id: 'node-image', kind: 'image', prompt: '', sourceRefs: [] },
+      { onPickRefFromLibrary, onPromptChange },
+    )
+    await user.type(screen.getByPlaceholderText(/输入 @ 可引用参考素材/), '@{Enter}')
+    expect(onPickRefFromLibrary).toHaveBeenCalledWith(0)
+    expect(onPromptChange).not.toHaveBeenCalledWith(expect.stringContaining('\n'))
+  })
+
+  it('从 @ 选择器取到的素材连入后，自动把刚敲的 @ 换成该参考的引用', async () => {
+    const user = userEvent.setup()
+    const onPickRefFromLibrary = vi.fn()
+    const onPromptChange = vi.fn()
+    const emptyNode = { id: 'node-image', kind: 'image', prompt: '主体放在 ', sourceRefs: [] as any[] }
+    const props = {
+      workspaceId: 7,
+      models: { text: [], image: MODEL, video: [] } as any,
+      modelsLoading: false,
+      onGenerate: vi.fn(),
+      onModelChange: vi.fn(),
+      onPickRefFromLibrary,
+      onPromptChange,
+    }
+    const { rerender } = render(<CanvasNodePanel {...props} node={emptyNode as any} />)
+    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/)
+    // 光标先挪到末尾，再敲 @ 与半个筛选词
+    await user.click(textarea)
+    await user.keyboard('{End}@天')
+    await user.click(screen.getByRole('button', { name: '从素材库选择' }))
+    expect(onPickRefFromLibrary).toHaveBeenCalledWith(0)
+
+    // 素材库选中 → 父组件把新参考连到本节点（重命名为「天安门」）并写回当前提示词
+    rerender(
+      <CanvasNodePanel
+        {...props}
+        node={
+          {
+            ...emptyNode,
+            prompt: '主体放在 @天',
+            sourceRefs: [{ kind: 'image', sourceId: 'a', edgeId: 'e1', slotIndex: 0, assetId: 11, title: '天安门' }],
+          } as any
+        }
+      />,
+    )
+    await waitFor(() => expect(onPromptChange).toHaveBeenLastCalledWith('主体放在 @天安门 '))
+  })
+
+  it('已有参考且未满时，选择器的候选列表后面仍保留取图入口', async () => {
+    const user = userEvent.setup()
+    const onPickRefFromLibrary = vi.fn()
+    renderPanel(MODEL, renamedRefsNode, { onPickRefFromLibrary })
+    await user.type(screen.getByPlaceholderText(/输入 @ 可引用参考素材/), '@')
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: '从素材库选择' }))
+    // 图片节点：下一个槽位 = 已有参考数
+    expect(onPickRefFromLibrary).toHaveBeenCalledWith(2)
+  })
+
+  it('退格一次就删掉整条 @引用（含其后空格），Delete 同理；普通文字仍按字符删', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    renderPanel(MODEL, { ...renamedRefsNode, prompt: '把 @天安门 放进 @图片2 的场景' }, { onPromptChange })
+    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/) as HTMLTextAreaElement
+
+    // 光标停在「@天安门 」之后（下标 7）按 Backspace → 整条引用连空格一起没了
+    await user.click(textarea)
+    textarea.setSelectionRange(7, 7)
+    await user.keyboard('{Backspace}')
+    expect(textarea.value).toBe('把 放进 @图片2 的场景')
+    expect(onPromptChange).toHaveBeenLastCalledWith('把 放进 @图片2 的场景')
+    await waitFor(() => expect(textarea.selectionStart).toBe(2))
+
+    // 光标在「@图片2」前（下标 5）按 Delete → 同样整条删掉
+    textarea.setSelectionRange(5, 5)
+    await user.keyboard('{Delete}')
+    expect(textarea.value).toBe('把 放进 的场景')
+    await waitFor(() => expect(textarea.selectionStart).toBe(5))
+
+    // 普通文字：退格仍是一次一个字
+    textarea.setSelectionRange(2, 2)
+    await user.keyboard('{Backspace}')
+    expect(textarea.value).toBe('把放进 的场景')
+  })
+
+  it('中文输入法敲出的全角 ＠ 同样弹出选择器，并按半角 @ 存储', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    renderPanel(MODEL, renamedRefsNode, { onPromptChange })
+    const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/) as HTMLTextAreaElement
+    await user.type(textarea, '＠')
+    expect(screen.getByRole('listbox', { name: '选择要 @ 的参考素材' })).toBeInTheDocument()
+    expect(textarea.value).toBe('@')
+    await user.click(screen.getByRole('option', { name: /@天安门/ }))
+    expect(onPromptChange).toHaveBeenLastCalledWith('@天安门 ')
+  })
+
   it('参考被重命名后，提示词里已有的引用自动跟着改', async () => {
     const onPromptChange = vi.fn()
     const props = {
@@ -672,5 +798,96 @@ describe('CanvasNodePanel @选择器与重命名引用', () => {
       />,
     )
     expect(onPromptChange).toHaveBeenCalledWith('保留 @故宫 的主体')
+  })
+})
+
+describe('CanvasNodePanel 提示词输入框：叠层对齐、写回防抖、清空不回填', () => {
+  const MODEL = [{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }]
+  const plainNode = { id: 'node-image', kind: 'image', prompt: '', sourceRefs: [] as any[] }
+
+  it('textarea 出现滚动条时，高亮层让出同样宽度并同步滚动位置', () => {
+    renderPanel(MODEL, { ...plainNode, prompt: '一段很长的提示词' })
+    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLTextAreaElement
+    const highlight = textarea.previousElementSibling as HTMLElement
+    expect(highlight).toHaveAttribute('aria-hidden', 'true')
+
+    // jsdom 不排版：手动模拟「出现了 17px 纵向滚动条、已滚到 40px」
+    Object.defineProperty(textarea, 'offsetWidth', { configurable: true, value: 300 })
+    Object.defineProperty(textarea, 'clientWidth', { configurable: true, value: 283 })
+    textarea.scrollTop = 40
+    textarea.dispatchEvent(new Event('scroll', { bubbles: true }))
+
+    expect(highlight.style.right).toBe('17px')
+    expect(highlight.scrollTop).toBe(40)
+
+    // 滚动条消失后归零，两层重新按全宽换行
+    Object.defineProperty(textarea, 'clientWidth', { configurable: true, value: 300 })
+    textarea.dispatchEvent(new Event('scroll', { bubbles: true }))
+    expect(highlight.style.right).toBe('0px')
+  })
+
+  it('逐字输入只在停顿后写回一次节点，本地输入框即时更新', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    renderPanel(MODEL, plainNode, { onPromptChange })
+    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLTextAreaElement
+    await user.type(textarea, '一只猫')
+    expect(textarea.value).toBe('一只猫')
+    // 逐字不写回，停顿后只写一次、且是最终文本
+    expect(onPromptChange).not.toHaveBeenCalled()
+    await waitFor(() => expect(onPromptChange).toHaveBeenCalledTimes(1))
+    expect(onPromptChange).toHaveBeenCalledWith('一只猫')
+  })
+
+  it('点「发送生成」前先把防抖中的文字写回节点', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    const onGenerate = vi.fn()
+    renderPanel(MODEL, plainNode, { onPromptChange, onGenerate })
+    await user.type(screen.getByPlaceholderText(/描述你想要生成的/), '海边')
+    expect(onPromptChange).not.toHaveBeenCalled()
+    await user.click(screen.getByTitle('发送生成'))
+    expect(onPromptChange).toHaveBeenCalledWith('海边')
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ prompt: '海边' }))
+  })
+
+  it('切到别的节点时，上一个节点未落盘的文字用它自己的回调写回，不会串到新节点', async () => {
+    const user = userEvent.setup()
+    const writes: Array<[string, string]> = []
+    const props = (nodeId: string) => ({
+      workspaceId: 7,
+      models: { text: [], image: MODEL, video: [] } as any,
+      modelsLoading: false,
+      onGenerate: vi.fn(),
+      onModelChange: vi.fn(),
+      onPromptChange: (text: string) => writes.push([nodeId, text]),
+    })
+    const { rerender } = render(<CanvasNodePanel {...props('A')} node={{ ...plainNode, id: 'A' } as any} />)
+    await user.type(screen.getByPlaceholderText(/描述你想要生成的/), '给 A 的')
+    expect(writes).toEqual([])
+    rerender(<CanvasNodePanel {...props('B')} node={{ ...plainNode, id: 'B' } as any} />)
+    // 换节点即刻 flush，用的是 A 的回调
+    expect(writes).toEqual([['A', '给 A 的']])
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(writes).toEqual([['A', '给 A 的']])
+  })
+  it('用户清空输入框后不再被上游文本回填', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    renderPanel(
+      MODEL,
+      { ...plainNode, sourceRefs: [{ kind: 'text', sourceId: 'node-text', edgeId: 'e-text', slotIndex: 0 }] },
+      { onPromptChange, inheritedTexts: [{ sourceId: 'node-text', edgeId: 'e-text', text: '一只橘猫坐在窗台上' }] },
+    )
+    const textarea = screen.getByPlaceholderText(/描述你想要生成的/) as HTMLTextAreaElement
+    // 选中节点时输入框为空 → 自动填一次
+    expect(textarea.value).toBe('一只橘猫坐在窗台上')
+    await user.clear(textarea)
+    expect(textarea.value).toBe('')
+    // 以前这里会立刻被灌回「一只橘猫坐在窗台上」，用户根本清不掉
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(textarea.value).toBe('')
+    // 清空后继承文本重新在面板里单独展示，提交时仍会拼上
+    expect(screen.getByText('一只橘猫坐在窗台上')).toBeInTheDocument()
   })
 })

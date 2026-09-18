@@ -10,8 +10,11 @@
 import { useEffect, useRef, useState } from 'react'
 import styles from './CanvasNodeToolbar.module.css'
 
-/** 截帧位置。与 utils/videoFrameCapture 的 VideoFramePosition 对应。 */
-export type CanvasCapturePosition = 'current' | 'first' | 'last'
+/**
+ * 截帧位置。current/first/last 与 utils/videoFrameCapture 的 VideoFramePosition 对应；
+ * custom = 任意帧：打开放大预览，拖进度条到想要的位置再点「截取此帧」（反馈 #7）。
+ */
+export type CanvasCapturePosition = 'current' | 'first' | 'last' | 'custom'
 
 export interface CanvasNodeToolbarProps {
   /** 视口坐标：工具条的水平中心与底边位置 */
@@ -33,10 +36,12 @@ export interface CanvasNodeToolbarProps {
   onDelete: () => void
 }
 
-const CAPTURE_ITEMS: Array<{ position: CanvasCapturePosition; label: string }> = [
+const CAPTURE_ITEMS: Array<{ position: CanvasCapturePosition; label: string; hint?: string }> = [
   { position: 'current', label: '截取当前帧' },
   { position: 'first', label: '截取首帧' },
   { position: 'last', label: '截取尾帧' },
+  // 任意帧藏在放大预览里没人找得到：这里给一个显式入口，点了直接打开预览去拖进度条
+  { position: 'custom', label: '自定义截帧…', hint: '拖动进度条选取任意一帧' },
 ]
 
 export default function CanvasNodeToolbar({
@@ -136,12 +141,14 @@ export default function CanvasNodeToolbar({
                   type="button"
                   role="menuitem"
                   className={styles.menuItem}
+                  title={item.hint}
                   onClick={() => {
                     setCaptureMenuOpen(false)
                     onCapture?.(item.position)
                   }}
                 >
                   {item.label}
+                  {item.hint && <small className={styles.menuItemHint}>{item.hint}</small>}
                 </button>
               ))}
             </div>

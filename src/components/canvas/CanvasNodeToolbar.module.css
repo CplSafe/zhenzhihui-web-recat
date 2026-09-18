@@ -202,6 +202,15 @@
   outline-offset: -2px;
 }
 
+/* 菜单项副标题：说明「自定义截帧」要到哪里去拖进度条 */
+.menuItemHint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgb(255 255 255 / 55%);
+  white-space: nowrap;
+}
+
 /* 菜单相对按钮定位，需要一个定位上下文 */
 .menuAnchor {
   position: relative;

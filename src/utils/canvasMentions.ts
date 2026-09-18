@@ -80,6 +80,32 @@ export function buildMentionRegex(labels: Iterable<string>): RegExp {
 }
 
 /**
+ * 退格 / Delete 时把 `@标签` 当成一个整体删除：光标落在引用末尾（或紧跟其后的那个空格之后）、
+ * 或引用内部时按 Backspace，整条引用连同后面的空格一起删；Delete 则看光标右侧是否紧贴引用。
+ * 返回要删除的 [start, end) 区间；光标没碰到引用返回 null（交给浏览器按字符删）。
+ */
+export function findMentionDeletionRange(
+  text: string,
+  caret: number,
+  direction: 'backward' | 'forward',
+  regex: RegExp,
+): { start: number; end: number } | null {
+  if (!text) return null
+  regex.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(text))) {
+    const start = match.index
+    const end = start + match[0].length
+    // 引用后面那个空格是插入时一并写进去的，删引用时一起带走
+    const endWithSpace = text[end] === ' ' ? end + 1 : end
+    if (direction === 'backward' && caret > start && caret <= endWithSpace) return { start, end: endWithSpace }
+    if (direction === 'forward' && caret >= start && caret < end) return { start, end: endWithSpace }
+    if (match[0].length === 0) regex.lastIndex += 1
+  }
+  return null
+}
+
+/**
  * 单趟把提示词里的 `@旧标签` 改成 `@新标签`（新标签为空串则整个删掉）。
  * 必须单趟：删掉图片1 后「图片3→图片2、图片2→图片1」若逐条替换会级联，把 3 一路改成 1。
  */

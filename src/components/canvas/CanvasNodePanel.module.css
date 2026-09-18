@@ -379,6 +379,8 @@
   outline: none;
   /* 允许用户纵向拖拽放大；配合下方「放大」按钮一键拉高（反馈 #5：提示词框放不大） */
   resize: vertical;
+  /* 滚动条常驻占位：避免文字刚超高时滚动条突然出现、整段文字换行抖一下（高亮层 right 由 JS 同步） */
+  scrollbar-gutter: stable;
   font-size: 14px;
   line-height: 22px;
   color: #333;
@@ -427,7 +429,8 @@
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  padding: 0;
+  /* 底部留出 resize 拖拽角的高度（与 textareaOverlay 一致），最后一行不被拖拽角压住 */
+  padding: 0 0 14px;
   box-sizing: border-box;
   font-size: 14px;
   line-height: 22px;
@@ -444,7 +447,7 @@
 .textareaOverlay {
   position: relative;
   z-index: 1;
-  padding: 0;
+  padding: 0 0 14px;
   background: transparent;
   color: transparent;
   -webkit-text-fill-color: transparent;
@@ -528,6 +531,39 @@
   white-space: nowrap;
   color: #1fcfa9;
   font-weight: 600;
+}
+/* 没有可 @ 的参考时的提示行 */
+.atPickerEmpty {
+  padding: 6px 8px 4px;
+  color: #8a8f9e;
+  font-size: 12px;
+}
+/* 取图入口：素材库 / 画布点选，永远排在候选列表之后 */
+.atPickerActions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #eef0f5;
+}
+.atAction {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #4b5060;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.atAction:hover {
+  background: #eef0fb;
+  color: #333;
 }
 
 .inheritedPrompt {

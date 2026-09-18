@@ -4,6 +4,7 @@ import {
   buildMentionRegex,
   buildPositionalMentionLabels,
   diffMentionLabels,
+  findMentionDeletionRange,
   rewriteMentions,
   translateMentionsToPositional,
 } from '@/utils/canvasMentions'
@@ -120,5 +121,34 @@ describe('buildMentionRegex', () => {
     const re = buildMentionRegex(['天安门 城楼', '产品(1)'])
     const text = '@天安门 城楼 和 @产品(1)，还有残留的 @图片3'
     expect(text.match(re)).toEqual(['@天安门 城楼', '@产品(1)', '@图片3'])
+  })
+})
+
+describe('findMentionDeletionRange：@引用整体删除', () => {
+  const re = buildMentionRegex(['天安门', '图片2'])
+  const text = '把 @天安门 放进 @图片2 的场景'
+  // '把 ' = 0..2，'@天安门' = 2..6，空格 6，'放进 ' 7..10，'@图片2' = 10..14，空格 14
+
+  it('Backspace 在引用末尾（含其后空格之后）或引用内部：删整条引用及后面的空格', () => {
+    expect(findMentionDeletionRange(text, 7, 'backward', re)).toEqual({ start: 2, end: 7 })
+    expect(findMentionDeletionRange(text, 6, 'backward', re)).toEqual({ start: 2, end: 7 })
+    expect(findMentionDeletionRange(text, 4, 'backward', re)).toEqual({ start: 2, end: 7 })
+    expect(findMentionDeletionRange(text, 15, 'backward', re)).toEqual({ start: 10, end: 15 })
+  })
+
+  it('Delete 在引用开头或内部同样删整条；在引用后面则不处理', () => {
+    expect(findMentionDeletionRange(text, 2, 'forward', re)).toEqual({ start: 2, end: 7 })
+    expect(findMentionDeletionRange(text, 12, 'forward', re)).toEqual({ start: 10, end: 15 })
+    expect(findMentionDeletionRange(text, 7, 'forward', re)).toBeNull()
+  })
+
+  it('光标没碰到引用：交回浏览器按字符删', () => {
+    expect(findMentionDeletionRange(text, 2, 'backward', re)).toBeNull()
+    expect(findMentionDeletionRange(text, 9, 'backward', re)).toBeNull()
+    expect(findMentionDeletionRange('', 0, 'backward', re)).toBeNull()
+  })
+
+  it('引用后面没有空格时只删引用本身', () => {
+    expect(findMentionDeletionRange('看 @天安门', 6, 'backward', re)).toEqual({ start: 2, end: 6 })
   })
 })

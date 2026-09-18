@@ -3188,10 +3188,27 @@ function CanvasInner() {
               mutations,
             })
             syncRevisionRef.current = result.sync_revision
-            setNodes(merged.nodes)
-            setEdges(merged.edges)
-            latestRef.current = merged
             const mergedTextMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+            // 冲突处理要两个往返,期间用户可能还在拖节点/连线。合并结果不能直接覆盖画面,
+            // 否则这几百毫秒里的操作会被「回滚」;把请求发出之后的本地增量再叠到合并结果上,
+            // 而已同步基线仍取 merged(本次真正落库的内容),这样增量会在下一轮循环里正常补存。
+            const latestNow = latestRef.current
+            const inFlightEdits =
+              latestNow === latest
+                ? []
+                : diffCanvasMutations(
+                    {
+                      nodes: latest.nodes.map((node) => comparableNode(node, mergedTextMap)),
+                      edges: latest.edges.map(comparableEdge),
+                    },
+                    latestNow,
+                    mergedTextMap,
+                  )
+            const displayed = inFlightEdits.length ? applyCanvasElementMutations(merged, inFlightEdits) : merged
+            setNodes(displayed.nodes)
+            setEdges(displayed.edges)
+            latestRef.current = displayed
+            if (inFlightEdits.length) syncPendingRef.current = true
             syncRef.current = {
               nodes: merged.nodes.map((node) => comparableNode(node, mergedTextMap)),
               edges: merged.edges.map(comparableEdge),
@@ -5261,9 +5278,16 @@ function CanvasInner() {
     return items
   }, [imagePreviewNodeId, nodes, workspaceId])
 
-  /** 工具条上的「截帧」：先取帧（在节点内完成），再走既有的上传建节点链路。 */
+  /**
+   * 工具条上的「截帧」：先取帧（在节点内完成），再走既有的上传建节点链路。
+   * 「自定义截帧」不在这里取帧：打开放大预览，用户在里面拖进度条到任意位置后点「截取此帧」。
+   */
   const handleToolbarCapture = useCallback(
-    (nodeId: string, position: VideoFramePosition) => {
+    (nodeId: string, position: VideoFramePosition | 'custom') => {
+      if (position === 'custom') {
+        nodePreviewRef.current.get(nodeId)?.()
+        return
+      }
       const capture = frameCaptureRef.current.get(nodeId)
       if (!capture) return
       void (async () => {
