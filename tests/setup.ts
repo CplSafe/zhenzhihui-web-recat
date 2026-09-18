@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, vi } from 'vitest'
+import { resetAllSharedRequestCaches } from '@/utils/sharedRequestCache'
 import { server } from './mocks/server'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
@@ -10,6 +11,8 @@ afterEach(() => {
   server.resetHandlers()
   window.localStorage.clear()
   window.sessionStorage.clear()
+  // 模型目录等模块级内存缓存:不清掉,上一个用例 mock 出来的目录会漏进下一个用例
+  resetAllSharedRequestCaches()
 })
 
 afterAll(() => server.close())
