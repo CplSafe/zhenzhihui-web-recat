@@ -86,6 +86,7 @@ import {
   getAiTaskId,
 } from '@/api/business'
 import { LEGACY_DEFAULT_VIDEO_RESOLUTION, getModelParamOptions, normalizeVideoResolution } from '@/utils/videoOptions'
+import { getBackendGenerationModelName } from '@/utils/generationModelCatalog'
 import { useWorkspaceId, useCurrentUser } from '@/stores/workspaceSession'
 import { useToast } from '@/composables/useToast'
 import { useHotCopyModelCatalog } from '@/composables/useHotCopyModelCatalog'
@@ -282,7 +283,11 @@ function isHotCopyBeforePaidTaskError(error: unknown): error is HotCopyBeforePai
 /** 页面内部使用的爆款复制生成记录别名。 */
 type GenRecord = HotCopyGenRecord
 /** 成片历史版本的可访问地址与资产主键。 */
-type VideoVersion = { url: string; assetId: number }
+/**
+ * 成片版本记录。除地址/素材外记下生成所用模型（版本 ID + 展示名快照）：
+ * 项目管理详情要展示"用的哪个模型"并按模型筛选；模型日后下架/改名，快照仍能显示个名字。
+ */
+type VideoVersion = { url: string; assetId: number; modelVersionId?: number; modelName?: string }
 /** 提交任务前预留的生成批次基础信息。 */
 type ReservedGen = Pick<GenRecord, 'id' | 'note' | 'modificationNote' | 'createdAt'>
 
@@ -396,10 +401,13 @@ function hasVideoResult(...items: any[]): boolean {
   })
 }
 
-/** 按 assetId 或 URL 去重合并多组视频历史版本。 */
+/**
+ * 按 assetId 或 URL 去重合并多组视频历史版本。
+ * 模型字段（modelVersionId / modelName）随版本保留；同一版本先出现的记录没带模型、后出现的带了，则回填。
+ */
 function mergeVideoVersions(...groups: any[]): VideoVersion[] {
   const out: VideoVersion[] = []
-  const seen = new Set<string>()
+  const seen = new Map<string, VideoVersion>()
   const add = (item: any) => {
     if (Array.isArray(item)) {
       item.forEach(add)
@@ -408,10 +416,23 @@ function mergeVideoVersions(...groups: any[]): VideoVersion[] {
     const url = String(item?.url || '')
     const assetId = Number(item?.assetId || 0) || 0
     if (!url && !assetId) return
+    const modelVersionId = Number(item?.modelVersionId ?? item?.model_version_id ?? 0) || 0
+    const modelName = String(item?.modelName ?? item?.model_name ?? '').trim()
     const key = assetId > 0 ? `asset:${assetId}` : `url:${url}`
-    if (seen.has(key)) return
-    seen.add(key)
-    out.push({ url, assetId })
+    const existing = seen.get(key)
+    if (existing) {
+      if (modelVersionId > 0 && !existing.modelVersionId) existing.modelVersionId = modelVersionId
+      if (modelName && !existing.modelName) existing.modelName = modelName
+      return
+    }
+    const entry: VideoVersion = {
+      url,
+      assetId,
+      ...(modelVersionId > 0 ? { modelVersionId } : {}),
+      ...(modelName ? { modelName } : {}),
+    }
+    seen.set(key, entry)
+    out.push(entry)
   }
   groups.forEach(add)
   return out
@@ -2750,9 +2771,17 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     completedGenId?: string | null,
     context?: HotCopyJobContext,
   ): { versions: VideoVersion[]; generations: GenRecord[] } => {
-    const safeVideo = {
+    // 把本次生成所用模型一并记到版本上（项目管理详情展示 + 按模型筛选）：
+    // 优先用任务上下文里确认时冻结的模型快照；没有上下文（前台直接完成）时退回入口当前选中的模型。
+    const usedModelVersionId =
+      Number(context?.replicateSnapshot?.modelVersionId || entryInitial?.modelVersionId || 0) || 0
+    const usedModelName =
+      getBackendGenerationModelName((context?.replicateSnapshot?.modelVersion as any) || selectedHotCopyModel) || ''
+    const safeVideo: VideoVersion = {
       url: String(video?.url || ''),
       assetId: Number(video?.assetId || 0) || 0,
+      ...(usedModelVersionId > 0 ? { modelVersionId: usedModelVersionId } : {}),
+      ...(usedModelName ? { modelName: usedModelName } : {}),
     }
     if (!safeVideo.url && !safeVideo.assetId) return { versions: videoVersions, generations: videoGenerations }
     // 带任务上下文的后台完成只能回填它发起时所属的页面会话；reset 后结果仅落原项目/任务中心。

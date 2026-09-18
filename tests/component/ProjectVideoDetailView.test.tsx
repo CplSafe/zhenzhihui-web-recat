@@ -63,6 +63,20 @@ vi.mock('@/utils/downloadToDisk', () => ({
   downloadToDisk: mocks.downloadToDisk,
 }))
 
+// 模型目录只在「老视频只有 modelVersionId、没名字快照」时用来翻名字；这里给一个能按 id 查到的小目录
+vi.mock('@/composables/useGenerationModelCatalog', () => ({
+  useGenerationModelCatalog: () => ({
+    groups: [],
+    pickerGroups: [],
+    loading: false,
+    error: '',
+    operationStates: {},
+    reload: () => {},
+    resolveModel: (_operation: string, modelVersionId: unknown) =>
+      Number(modelVersionId) === 9 ? { display_name: 'Seedance 1.0 Pro' } : null,
+  }),
+}))
+
 import ProjectVideoDetailView from '@/views/ProjectVideoDetailView'
 
 const validVideo = {
@@ -271,5 +285,63 @@ describe('ProjectVideoDetailView videoId 防护', () => {
     expect(mocks.showToast).toHaveBeenCalledWith('您没有权限访问该项目', 'error')
     expect(screen.queryByRole('heading', { level: 1, name: validVideo.title })).toBeNull()
     expect(screen.queryByRole('button', { name: '删除视频' })).toBeNull()
+  })
+})
+
+describe('ProjectVideoDetailView 基础信息：分辨率与生成模型', () => {
+  beforeEach(() => {
+    mocks.route.projectId = '88'
+    mocks.route.videoId = validVideo.id
+    mocks.getProjectVideo.mockReset()
+    mocks.listWorkspaceMembers.mockReset()
+    mocks.listWorkspaceMembers.mockImplementation(() => new Promise(() => undefined))
+    mocks.showToast.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('版本自带模型名快照时直接展示，并从播放器元数据读出真实分辨率', async () => {
+    mocks.getProjectVideo.mockResolvedValue({
+      project: { id: 88, title: '测试项目', user_id: 7 },
+      video: { ...validVideo, ratio: '16:9', modelVersionId: 4, modelName: 'Seedance 1.5' },
+    })
+    render(<ProjectVideoDetailView />)
+    expect(await screen.findByRole('heading', { level: 1, name: validVideo.title })).toBeTruthy()
+
+    expect(screen.getByText('生成模型')).toBeTruthy()
+    expect(screen.getByText('Seedance 1.5')).toBeTruthy()
+    expect(screen.queryByText('（推断）')).toBeNull()
+
+    // 分辨率不存草稿，直接从 <video> 的元数据读真实像素
+    expect(screen.getByText('分辨率')).toBeTruthy()
+    const video = document.querySelector('video') as HTMLVideoElement
+    Object.defineProperty(video, 'videoWidth', { configurable: true, value: 1920 })
+    Object.defineProperty(video, 'videoHeight', { configurable: true, value: 1080 })
+    fireEvent.loadedMetadata(video)
+    expect(await screen.findByText('1920 × 1080（16:9）')).toBeTruthy()
+  })
+
+  it('老视频只按项目级推断出模型时，从目录翻名字并标明「推断」', async () => {
+    mocks.getProjectVideo.mockResolvedValue({
+      project: { id: 88, title: '测试项目', user_id: 7 },
+      video: { ...validVideo, modelVersionId: 9, modelInferred: true },
+    })
+    render(<ProjectVideoDetailView />)
+    expect(await screen.findByRole('heading', { level: 1, name: validVideo.title })).toBeTruthy()
+    expect(screen.getByText('Seedance 1.0 Pro')).toBeTruthy()
+    expect(screen.getByText('（推断）')).toBeTruthy()
+  })
+
+  it('没有任何模型信息时显示占位', async () => {
+    mocks.getProjectVideo.mockResolvedValue({
+      project: { id: 88, title: '测试项目', user_id: 7 },
+      video: validVideo,
+    })
+    render(<ProjectVideoDetailView />)
+    expect(await screen.findByRole('heading', { level: 1, name: validVideo.title })).toBeTruthy()
+    const modelRow = screen.getByText('生成模型').closest('div') as HTMLElement
+    expect(modelRow.querySelector('dd')?.textContent).toBe('--')
   })
 })

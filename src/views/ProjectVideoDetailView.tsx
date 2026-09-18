@@ -7,7 +7,7 @@
  * 权限边界：有项目访问权的成员可以查看详情和下载；仅视频创建者显示编辑入口；仅项目创建者
  * 或空间 owner/admin 可以删除。错误 videoId 只会显示未找到，不会回退打开或删除第一条视频。
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AppSidebar from '@/components/home/AppSidebar'
 import AppTopbar from '@/components/layout/AppTopbar'
@@ -16,6 +16,8 @@ import { useCurrentUser, useCurrentWorkspace, useWorkspaceId } from '@/stores/wo
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useWorkspaceMemberAccess } from '@/composables/useWorkspaceMemberAccess'
+import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
+import { getBackendGenerationModelName } from '@/utils/generationModelCatalog'
 import {
   deleteProjectVideo,
   formatVideoDate,
@@ -95,10 +97,25 @@ export default function ProjectVideoDetailView() {
   // 视频缓冲完成(canplay)前显示 loading,避免"空白等半天才蹦出画面";加载失败显示错误(不再永久转圈);换视频时重置。
   const [videoReady, setVideoReady] = useState(false)
   const [videoError, setVideoError] = useState(false)
+  /** 播放器读到的真实像素分辨率（loadedmetadata 后才有；换视频时清空重读）。 */
+  const [resolution, setResolution] = useState<{ width: number; height: number } | null>(null)
   useEffect(() => {
     setVideoReady(false)
     setVideoError(false)
+    setResolution(null)
   }, [detail?.videoUrl])
+  // 生成模型：优先用版本自己记录的展示名快照（爆款复刻的模型不在这份目录里，也靠快照显示）；
+  // 只有 id 没快照（老数据按项目级推断）时再查目录取当前名字。
+  const modelCatalog = useGenerationModelCatalog(workspaceId)
+  const resolveCatalogModel = modelCatalog.resolveModel
+  const modelLabel = useMemo(() => {
+    if (!detail) return ''
+    if (detail.modelName) return detail.modelName
+    const id = Number(detail.modelVersionId || 0)
+    if (!id) return ''
+    const record = resolveCatalogModel('video.generate', id) || resolveCatalogModel('video.edit', id)
+    return getBackendGenerationModelName(record) || `模型 #${id}`
+  }, [detail, resolveCatalogModel])
 
   const handleNavigate = useSidebarNavigate()
 
@@ -332,6 +349,10 @@ export default function ProjectVideoDetailView() {
                         onLoadedMetadata={(e) => {
                           const v = e.currentTarget
                           setIsPortrait(v.videoHeight > v.videoWidth)
+                          // 真实像素分辨率直接从文件读，比生成参数里的"1080P"档位更准
+                          if (v.videoWidth > 0 && v.videoHeight > 0) {
+                            setResolution({ width: v.videoWidth, height: v.videoHeight })
+                          }
                         }}
                         onLoadedData={() => setVideoReady(true)}
                         onCanPlay={() => setVideoReady(true)}
@@ -379,6 +400,28 @@ export default function ProjectVideoDetailView() {
                       <div>
                         <dt>视频时长</dt>
                         <dd>{formatVideoDuration(detail.durationSeconds)}</dd>
+                      </div>
+                      <div>
+                        <dt>分辨率</dt>
+                        <dd>
+                          {resolution
+                            ? `${resolution.width} × ${resolution.height}${detail.ratio ? `（${detail.ratio}）` : ''}`
+                            : '--'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>生成模型</dt>
+                        <dd>
+                          {modelLabel || '--'}
+                          {modelLabel && detail.modelInferred ? (
+                            <span
+                              className="pvdetail-meta__hint"
+                              title="该版本未记录模型，按项目当前使用的视频模型推断"
+                            >
+                              （推断）
+                            </span>
+                          ) : null}
+                        </dd>
                       </div>
                       <div>
                         <dt>视频状态</dt>

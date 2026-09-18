@@ -261,6 +261,14 @@
   word-break: break-word;
 }
 
+/* 生成模型按项目级回退推断时的小字提示：不装作精确 */
+.pvdetail-meta__hint {
+  margin-left: 4px;
+  color: #a0a7b5;
+  font-size: 12px;
+  cursor: help;
+}
+
 .pvdetail-meta__block p {
   margin: 0;
   color: #5c6678;

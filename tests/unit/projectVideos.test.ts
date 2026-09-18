@@ -261,6 +261,29 @@ describe('projectVideos 派生视频', () => {
     expect(videos[0]).toMatchObject({ status: 'published', videoAssetId: 105 })
   })
 
+  it('爆款复制老版本没记模型时，回退到入口 entryInitial.modelVersionId 并标记为推断', () => {
+    const project = projectWithVersions()
+    project.draft_json.flow = 'hot-copy'
+    project.draft_json.smart = {
+      flow: 'hot-copy',
+      entryInitial: { modelVersionId: 9901 },
+      videoVersions: [
+        { id: 'legacy', assetId: 301, updatedAt: '2026-07-15T09:00:00.000Z' },
+        { id: 'recorded', assetId: 302, modelVersionId: 9902, modelName: 'Replicate X' },
+      ],
+    }
+
+    const videos = deriveProjectVideos({ project, workspaceId: 7 })
+
+    expect(videos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ videoAssetId: 301, modelVersionId: 9901, modelInferred: true }),
+        expect.objectContaining({ videoAssetId: 302, modelVersionId: 9902, modelName: 'Replicate X' }),
+      ]),
+    )
+    expect(videos.find((video) => video.videoAssetId === 302)?.modelInferred).toBeUndefined()
+  })
+
   it('新版成片签名中的模型真实变化会派生一条新草稿', () => {
     const project = projectWithVersions()
     const shots = [{ id: 'shot-1', imageAssetId: 1001, duration: '7s', line: '新品上市' }]
@@ -298,5 +321,53 @@ describe('projectVideos 派生视频', () => {
     [65, '01:05'],
   ])('将 %s 秒格式化为 %s', (seconds, expected) => {
     expect(formatVideoDuration(seconds)).toBe(expected)
+  })
+})
+
+describe('projectVideos 生成模型', () => {
+  it('版本自己记录了模型时原样带出（不标推断）', () => {
+    const project: any = {
+      id: 31,
+      title: '模型测试',
+      draft_json: {
+        flow: 'smart',
+        smart: {
+          entryMeta: { generationModels: { 'video.generate': 9 } },
+          videoVersions: [{ id: 'v1', assetId: 201, modelVersionId: 4, modelName: 'Seedance 1.5' }],
+        },
+      },
+    }
+    const [video] = deriveProjectVideos({ project, workspaceId: 7 })
+    expect(video).toMatchObject({ modelVersionId: 4, modelName: 'Seedance 1.5' })
+    expect(video.modelInferred).toBeUndefined()
+  })
+
+  it('老版本没记模型时回退项目级「最后一次用的视频模型」，并标记为推断', () => {
+    const project: any = {
+      id: 32,
+      title: '老数据',
+      draft_json: {
+        flow: 'smart',
+        smart: {
+          entryMeta: { generationModels: { 'video.generate': 9 } },
+          videoVersions: [{ id: 'v1', assetId: 202 }],
+        },
+      },
+    }
+    const [video] = deriveProjectVideos({ project, workspaceId: 7 })
+    expect(video).toMatchObject({ modelVersionId: 9, modelInferred: true })
+    expect(video.modelName).toBeUndefined()
+  })
+
+  it('既没版本记录也没项目级模型时不带任何模型字段', () => {
+    const project: any = {
+      id: 33,
+      title: '无模型',
+      draft_json: { flow: 'smart', smart: { videoVersions: [{ id: 'v1', assetId: 203 }] } },
+    }
+    const [video] = deriveProjectVideos({ project, workspaceId: 7 })
+    expect(video.modelVersionId).toBeUndefined()
+    expect(video.modelName).toBeUndefined()
+    expect(video.modelInferred).toBeUndefined()
   })
 })

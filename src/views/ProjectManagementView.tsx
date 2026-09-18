@@ -23,7 +23,9 @@ import {
   updateCreativeProjectDraft,
 } from '@/api/business'
 import { createInitializedProjectFolder } from '@/utils/creativeProjectInitialization'
-import { addClassifiedVideo, countProjectVideos } from '@/api/projectVideos'
+import { addClassifiedVideo, countProjectVideos, deriveProjectVideos } from '@/api/projectVideos'
+import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
+import { getBackendGenerationModelName } from '@/utils/generationModelCatalog'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
 import { fetchAllCanvasElements, listCanvases } from '@/api/canvasApi'
 import { collectCanvasElementAssetIds } from '@/utils/canvasElements'
@@ -487,7 +489,12 @@ export default function ProjectManagementView() {
   const [query, setQuery] = useState('') // 搜索项目名称/团队
   const [typeFilter, setTypeFilter] = useState<'all' | '个人项目' | '协作项目'>('all')
   const [flowFilter, setFlowFilter] = useState<'all' | 'smart' | 'hot-copy'>('all')
+  // 生成模型筛选:'' = 全部。按模型展示名筛(用户看到的是名字;同名不同版本自然合并),项目下任一视频用了该模型即显示。
+  const [modelFilter, setModelFilter] = useState('')
   const [sortDesc, setSortDesc] = useState(true) // 时间降序/升序
+  // 模型目录:老视频只记了 modelVersionId(按项目级推断)、没有名字快照时,靠它把 id 翻成当前展示名
+  const modelCatalog = useGenerationModelCatalog(workspaceId)
+  const resolveCatalogModel = modelCatalog.resolveModel
   // 成员筛选(团队空间):'' = 全部成员,否则为归属人 userId 字符串。按空间记忆,子账号多时进页即定位自己的项目。
   const [ownerFilter, setOwnerFilter] = useState('')
   // 「我的项目」id 集合:来自后端 mine=true 的权威判定;null = 未拉到(个人空间/请求失败),回退前端按归属人比对
@@ -579,6 +586,22 @@ export default function ProjectManagementView() {
           : countProjectVideos({ project, workspaceId: wsId })
         const cover = extractCover(project, wsId)
         const userId = resolveCreativeProjectOwnerId(project)
+        // 该项目下所有视频用过的模型名(去重),供「生成模型」筛选:优先版本自带的名字快照,只有 id 时查目录翻译
+        const modelNames = imageState.imageProject
+          ? []
+          : Array.from(
+              new Set(
+                deriveProjectVideos({ project, workspaceId: wsId })
+                  .map((video) => {
+                    if (video.modelName) return video.modelName
+                    const id = Number(video.modelVersionId || 0)
+                    if (!id) return ''
+                    const record = resolveCatalogModel('video.generate', id) || resolveCatalogModel('video.edit', id)
+                    return getBackendGenerationModelName(record) || `模型 #${id}`
+                  })
+                  .filter(Boolean),
+              ),
+            )
         const participantAvatars = resolveProjectAvatars(
           project,
           currentUser,
@@ -609,10 +632,18 @@ export default function ProjectManagementView() {
           participantAvatars,
           userId,
           workspaceId: wsId,
+          modelNames,
         }
       })
       .sort((a, b) => b.updatedAt - a.updatedAt)
-  }, [accessibleProjectItems, workspaceId, currentWorkspace, currentUser, effectiveWorkspaceMembers])
+  }, [
+    accessibleProjectItems,
+    workspaceId,
+    currentWorkspace,
+    currentUser,
+    effectiveWorkspaceMembers,
+    resolveCatalogModel,
+  ])
 
   // 成员筛选只在团队空间出现;个人空间只有一个人,控件没有意义
   const isTeamSpace = String(currentWorkspace?.type || '').toLowerCase() !== 'personal'
@@ -664,11 +695,24 @@ export default function ProjectManagementView() {
       (f) =>
         (flowFilter === 'all' || f.flow === flowFilter) &&
         (typeFilter === 'all' || f.type === typeFilter) &&
+        (!modelFilter || f.modelNames.includes(modelFilter)) &&
         matchesOwner(f) &&
         (!q || f.title.toLowerCase().includes(q)),
     )
     return sortDesc ? list : [...list].reverse()
-  }, [folders, query, flowFilter, typeFilter, effectiveOwnerFilter, sortDesc, currentUserId, myProjectIds])
+  }, [folders, query, flowFilter, typeFilter, modelFilter, effectiveOwnerFilter, sortDesc, currentUserId, myProjectIds])
+
+  /**
+   * 生成模型下拉选项:数据驱动——只列当前项目里真用过的模型(去重、按名排序),
+   * 不从模型目录硬拉一堆没人用过的;选中值若已不在列表里(项目变动)则自动清掉。
+   */
+  const modelOptions = useMemo(() => {
+    const names = Array.from(new Set(folders.flatMap((f) => f.modelNames))).sort((a, b) => a.localeCompare(b, 'zh'))
+    return [{ value: '', label: '全部模型' }, ...names.map((name) => ({ value: name, label: name }))]
+  }, [folders])
+  useEffect(() => {
+    if (modelFilter && !modelOptions.some((option) => option.value === modelFilter)) setModelFilter('')
+  }, [modelFilter, modelOptions])
 
   // 每页 = 3 行 × 3 列 = 9 个(固定,不随屏幕变)
   const pageSize = 9
@@ -685,7 +729,7 @@ export default function ProjectManagementView() {
   // 搜索 / 过滤 / 排序变化时回到第一页
   useEffect(() => {
     setPage(1)
-  }, [query, flowFilter, typeFilter, sortDesc, effectiveOwnerFilter])
+  }, [query, flowFilter, typeFilter, modelFilter, sortDesc, effectiveOwnerFilter])
 
   // 已归类(拖入项目)的视频 → 从待归类隐藏。来源:各项目云端草稿(collectClassifiedKeys),
   // 不再用 localStorage。pendingClassified 仅为拖入后、列表刷新前的乐观隐藏(纯内存)。
@@ -1472,6 +1516,17 @@ export default function ProjectManagementView() {
                   disabled
                 />
               </span>
+              {/* 生成模型:项目下任一视频用了该模型即显示;选项只列真用过的模型 */}
+              <span className="pm2-filter">
+                生成模型:
+                <FilterSelect
+                  ariaLabel="按生成模型筛选"
+                  value={modelFilter}
+                  options={modelOptions}
+                  onChange={setModelFilter}
+                  disabled={modelOptions.length <= 1}
+                />
+              </span>
               {/* 团队空间:按成员筛选。子账号多、各自产出多时,先一键定位到自己的项目 */}
               {isTeamSpace && (
                 <>
@@ -1517,7 +1572,7 @@ export default function ProjectManagementView() {
                 <div className="pm2-hint">正在加载项目…</div>
               ) : !shownFolders.length ? (
                 <div className="pm2-hint">
-                  {query || flowFilter !== 'all' || typeFilter !== 'all' || effectiveOwnerFilter
+                  {query || flowFilter !== 'all' || typeFilter !== 'all' || modelFilter || effectiveOwnerFilter
                     ? '没有匹配的项目'
                     : '还没有项目,点右上角「新建项目」开始'}
                 </div>

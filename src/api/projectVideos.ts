@@ -37,6 +37,15 @@ export interface ProjectVideo {
   videoAssetId?: number
   /** 生成时使用的画面比例，例如 16:9。 */
   ratio?: string
+  /**
+   * 生成该视频所用模型的版本 ID。每条视频版本在生成成功时落盘；老数据没存的，
+   * 回退到项目级「最后一次使用的视频模型」（entryMeta.generationModels['video.generate']），此时 modelInferred=true。
+   */
+  modelVersionId?: number
+  /** 生成时模型的展示名快照：模型日后下架/改名，老视频仍能显示个名字；展示层优先按 modelVersionId 查目录。 */
+  modelName?: string
+  /** 模型是按项目级回退推断的（而非该版本自己记录的）；展示时要标明"推断"，别装作精确。 */
+  modelInferred?: boolean
   durationSeconds: number
   status: ProjectVideoStatus
   createdByName: string
@@ -391,6 +400,27 @@ function buildDerivedVideos({
       ? currentUserName || ''
       : resolveMemberNameByUserId(createdByUserId, workspaceMembers || []))
 
+  // 生成模型：每条版本在生成成功时各自记录（modelVersionId + 展示名快照）；老数据没存的，
+  // 回退到项目级「最后一次使用的视频模型」（entryMeta.generationModels['video.generate']）并标 inferred——
+  // 多数项目一个模型用到底，回退基本准确；中途换过模型的老版本会被记成后来的那个，所以展示时要标"推断"。
+  // 爆款复制的入口模型存在 entryInitial.modelVersionId(video.replicate),同样作为项目级回退。
+  const projectVideoModelId =
+    Number(
+      toPlainObject(entryMeta?.generationModels)?.['video.generate'] ??
+        toPlainObject(draft?.generationModels)?.['video.generate'] ??
+        toPlainObject(smart?.entryInitial)?.modelVersionId ??
+        0,
+    ) || 0
+  const resolveVideoModel = (item?: any): Pick<ProjectVideo, 'modelVersionId' | 'modelName' | 'modelInferred'> => {
+    const ownId = Number(item?.modelVersionId ?? item?.model_version_id ?? 0) || 0
+    const ownName = pickString(item?.modelName, item?.model_name)
+    if (ownId > 0 || ownName) {
+      return { ...(ownId > 0 ? { modelVersionId: ownId } : {}), ...(ownName ? { modelName: ownName } : {}) }
+    }
+    if (projectVideoModelId > 0) return { modelVersionId: projectVideoModelId, modelInferred: true }
+    return {}
+  }
+
   // 每次「重新生成」的独立记录(仅生成中)→ 项目下置顶展示成「草稿」条目(成功的成片仍走 videoVersions)。
   // 失败记录不再跨页面/刷新持久展示，因此这里也不再把 failed 派生到列表里。
   // 兼容旧数据:没有 generations 但残留 vidGenTaskId>0 → 也兜底显示一条「草稿」。
@@ -416,6 +446,7 @@ function buildDerivedVideos({
     coverUrl: projectCoverUrl,
     videoUrl: '',
     ratio: videoRatio,
+    ...resolveVideoModel(g),
     durationSeconds: defaultDurationSeconds,
     status: 'draft',
     createdByName,
@@ -498,6 +529,7 @@ function buildDerivedVideos({
         videoUrl,
         videoAssetId,
         ratio: pickString(item?.ratio, item?.aspect_ratio, item?.aspectRatio, videoRatio),
+        ...resolveVideoModel(item),
         durationSeconds: durationSeconds || defaultDurationSeconds,
         status,
         // 版本级归属人优先（后端 /versions 每个版本带 creator_nickname），没有则用项目级
@@ -539,6 +571,7 @@ function buildDerivedVideos({
         coverUrl: projectCoverUrl,
         videoUrl: '',
         ratio: videoRatio,
+        ...resolveVideoModel(),
         durationSeconds: defaultDurationSeconds,
         status: 'draft',
         createdByName,
@@ -561,6 +594,7 @@ function buildDerivedVideos({
     videoUrl: generatedVideoUrl,
     videoAssetId: generatedVideoAssetId || undefined,
     ratio: videoRatio,
+    ...resolveVideoModel(),
     durationSeconds: defaultDurationSeconds,
     status: 'published',
     createdByName,

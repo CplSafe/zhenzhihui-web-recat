@@ -219,6 +219,7 @@ import { buildDownloadName, downloadToDisk, isWeChatBrowser } from '@/utils/down
 import {
   REQUIRED_GENERATION_OPERATION_CODES_BY_MODE,
   areGenerationModelOperationsReady,
+  getBackendGenerationModelName,
   getImageGenerationOperationCode,
   getUnavailableGenerationOperations,
   isGenerationOperationCode,
@@ -2147,16 +2148,29 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   useEffect(() => {
     fullVideoRef.current = fullVideo
   }, [fullVideo])
-  const [videoVersions, setVideoVersions] = useState<{ url: string; assetId: number; createdAt?: string }[]>([])
-  const videoVersionsRef = useRef<{ url: string; assetId: number; createdAt?: string }[]>([])
-  const replaceVideoVersions = (next: { url: string; assetId: number; createdAt?: string }[]) => {
+  /**
+   * 成片版本记录。除地址/素材外还记下生成所用模型（版本 ID + 展示名快照）：
+   * 项目管理详情要展示"用的哪个模型"，并按模型筛选；模型日后下架/改名，快照仍能显示个名字。
+   */
+  type VideoVersionRecord = {
+    url: string
+    assetId: number
+    createdAt?: string
+    modelVersionId?: number
+    modelName?: string
+  }
+  const [videoVersions, setVideoVersions] = useState<VideoVersionRecord[]>([])
+  const videoVersionsRef = useRef<VideoVersionRecord[]>([])
+  const replaceVideoVersions = (next: VideoVersionRecord[]) => {
     videoVersionsRef.current = next
     setVideoVersions(next)
   }
-  const appendVideoVersion = (item: { url: string; assetId: number; createdAt?: string }) => {
+  const appendVideoVersion = (item: VideoVersionRecord) => {
     const url = String(item.url || '').trim()
     const assetId = Number(item.assetId || 0) || 0
     if (!url && !assetId) return
+    const modelVersionId = Number(item.modelVersionId || 0) || 0
+    const modelName = String(item.modelName || '').trim()
     setVideoVersions((prev) => {
       const exists =
         assetId > 0
@@ -2167,7 +2181,16 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         return prev
       }
       // createdAt = 本版生成完成时间(项目管理按它展示每条视频的时间)
-      const next = [...prev, { url, assetId, createdAt: item.createdAt || new Date().toISOString() }]
+      const next = [
+        ...prev,
+        {
+          url,
+          assetId,
+          createdAt: item.createdAt || new Date().toISOString(),
+          ...(modelVersionId > 0 ? { modelVersionId } : {}),
+          ...(modelName ? { modelName } : {}),
+        },
+      ]
       videoVersionsRef.current = next
       return next
     })
@@ -2979,7 +3002,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       }
       if (updateCurrentUi()) {
         setFullVideo({ url, assetId })
-        appendVideoVersion({ url, assetId })
+        // 把本次生成所用模型一并记到版本上（项目管理详情展示 + 按模型筛选）
+        appendVideoVersion({
+          url,
+          assetId,
+          modelVersionId: Number(context.modelVersionId || 0) || undefined,
+          modelName: getBackendGenerationModelName(context.modelVersion as any) || undefined,
+        })
         bindGenerationNoteToResult(job.id, { url, assetId }, job.note || '')
         markGen(job.id, 'published')
         if (lockedSig) commitVideoSig(lockedSig)
@@ -3324,7 +3353,13 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       }
       if (updateCurrentUi()) {
         setFullVideo({ url, assetId })
-        appendVideoVersion({ url, assetId })
+        // 把本次生成所用模型一并记到版本上（项目管理详情展示 + 按模型筛选）
+        appendVideoVersion({
+          url,
+          assetId,
+          modelVersionId: Number(context.modelVersionId || 0) || undefined,
+          modelName: getBackendGenerationModelName(context.modelVersion as any) || undefined,
+        })
         bindGenerationNoteToResult(job.id, { url, assetId }, job.note || '')
         markGen(job.id, 'published')
         commitVideoSig(lockedSig) // 盖章:用发起时锁定的签名(不读完成时的当前分镜)
