@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   listCreativeProjects: vi.fn(),
   listWorkspaceMembers: vi.fn(),
   navigate: vi.fn(),
+  patchCreativeProject: vi.fn(),
   requestConfirm: vi.fn(),
   showToast: vi.fn(),
   updateCreativeProjectDraft: vi.fn(),
@@ -98,6 +99,7 @@ vi.mock('@/api/business', () => ({
   getCreativeProject: mocks.getCreativeProject,
   listAssets: mocks.listAssets,
   listCreativeProjects: mocks.listCreativeProjects,
+  patchCreativeProject: mocks.patchCreativeProject,
   updateCreativeProjectDraft: mocks.updateCreativeProjectDraft,
 }))
 
@@ -163,6 +165,7 @@ describe('ProjectManagementView workspace isolation', () => {
     mocks.listWorkspaceMembers.mockReset()
     mocks.listWorkspaceMembers.mockResolvedValue([])
     mocks.navigate.mockReset()
+    mocks.patchCreativeProject.mockReset()
     mocks.requestConfirm.mockReset()
     mocks.showToast.mockReset()
     mocks.updateCreativeProjectDraft.mockReset()
@@ -312,6 +315,71 @@ describe('ProjectManagementView workspace isolation', () => {
     await user.click(within(listbox).getByRole('option', { name: 'Seedance 1.5' }))
     await waitFor(() => expect(screen.queryAllByText('Banana project')).toHaveLength(0))
     expect(screen.queryAllByText('Seedance project')).not.toHaveLength(0)
+  })
+
+  it('⋯ 菜单「重命名」：标题就地变输入框，回车后 PATCH 标题并更新卡片，编辑过程不会把卡片点开', async () => {
+    const user = userEvent.setup()
+    mocks.listCreativeProjects.mockResolvedValue([project(1, '旧名字')])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+    mocks.patchCreativeProject.mockResolvedValue({ id: 1, title: '新名字' })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findAllByText('旧名字')).not.toHaveLength(0)
+    // 展示态就是普通文本，不挂 button 语义（否则卡片里套一个可点的标题会和"点卡片打开"打架）
+    expect(screen.queryByRole('button', { name: '双击修改' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
+    await user.click(screen.getByRole('button', { name: '重命名' }))
+
+    const input = await screen.findByDisplayValue('旧名字')
+    await user.clear(input)
+    await user.type(input, '新名字{Enter}')
+
+    await waitFor(() =>
+      expect(mocks.patchCreativeProject).toHaveBeenCalledWith({
+        projectId: 1,
+        workspaceId: 21,
+        title: '新名字',
+        name: '新名字',
+      }),
+    )
+    expect(await screen.findAllByText('新名字')).not.toHaveLength(0)
+    expect(screen.queryAllByText('旧名字')).toHaveLength(0)
+    expect(screen.queryByDisplayValue('新名字')).toBeNull()
+    expect(mocks.showToast).toHaveBeenCalledWith('项目已重命名', 'success')
+    // 点进输入框 / 回车确认都不能冒泡成"打开项目"
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+
+  it('重命名失败时回滚到原标题并提示错误；改成空白 / 原名不发请求', async () => {
+    const user = userEvent.setup()
+    mocks.listCreativeProjects.mockResolvedValue([project(1, '旧名字')])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+    mocks.patchCreativeProject.mockRejectedValue(new Error('没有权限'))
+
+    render(<ProjectManagementView />)
+    expect(await screen.findAllByText('旧名字')).not.toHaveLength(0)
+
+    // 空白：不发请求，只提示
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
+    await user.click(screen.getByRole('button', { name: '重命名' }))
+    await user.clear(await screen.findByDisplayValue('旧名字'))
+    await user.keyboard('{Enter}')
+    expect(mocks.patchCreativeProject).not.toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenCalledWith('项目名称不能为空', 'error')
+    expect(screen.getAllByText('旧名字')).not.toHaveLength(0)
+
+    // 后端拒绝：先乐观显示新名，失败后回滚并报错
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
+    await user.click(screen.getByRole('button', { name: '重命名' }))
+    const input = await screen.findByDisplayValue('旧名字')
+    await user.clear(input)
+    await user.type(input, '新名字{Enter}')
+    await waitFor(() => expect(mocks.patchCreativeProject).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryAllByText('新名字')).toHaveLength(0))
+    expect(screen.getAllByText('旧名字')).not.toHaveLength(0)
+    expect(mocks.showToast).toHaveBeenCalledWith('没有权限', 'error')
+    expect(mocks.navigate).not.toHaveBeenCalled()
   })
 
   it('does not expose a restricted legacy project video in the unclassified section', async () => {

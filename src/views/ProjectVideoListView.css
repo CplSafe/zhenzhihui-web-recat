@@ -78,10 +78,54 @@
 }
 
 .pvlist-breadcrumb__current {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: #1f2430;
   font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.01em;
+}
+/* 面包屑里的项目名内联重命名:展示态与原标题一致;编辑态输入框沿用字号字重 */
+.pvlist-breadcrumb__current .ie-display.pvlist-breadcrumb__title-edit {
+  cursor: text;
+}
+.pvlist-breadcrumb__current .ie-input.pvlist-breadcrumb__title-edit {
+  box-sizing: border-box;
+  min-width: 160px;
+  padding: 2px 8px;
+  border: 1px solid #5767e5;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2430;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  outline: none;
+}
+/* 铅笔按钮:平时淡显,悬停标题区域时高亮,提示"这里能改名" */
+.pvlist-breadcrumb__rename {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #a0a7b5;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.pvlist-breadcrumb__current:hover .pvlist-breadcrumb__rename,
+.pvlist-breadcrumb__rename:focus-visible {
+  color: #5767e5;
+}
+.pvlist-breadcrumb__rename:hover {
+  background: rgba(87, 103, 229, 0.1);
 }
 
 .pvlist-breadcrumb__meta {

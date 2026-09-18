@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   listProjectVideos: vi.fn(),
   listWorkspaceMembers: vi.fn(),
   navigate: vi.fn(),
+  patchCreativeProject: vi.fn(),
   publishProjectVideo: vi.fn(),
   requestConfirm: vi.fn(),
   route: { projectId: '1' },
@@ -67,6 +68,7 @@ vi.mock('@/api/business', () => ({
     error instanceof Error && error.message ? error.message : fallback,
   getCreativeProject: mocks.getCreativeProject,
   listAiModels: mocks.listAiModels,
+  patchCreativeProject: mocks.patchCreativeProject,
 }))
 
 vi.mock('@/utils/downloadToDisk', () => ({
@@ -124,6 +126,7 @@ describe('ProjectVideoListView reliability', () => {
     mocks.listWorkspaceMembers.mockReset()
     mocks.listWorkspaceMembers.mockImplementation(() => new Promise(() => undefined))
     mocks.navigate.mockReset()
+    mocks.patchCreativeProject.mockReset()
     mocks.publishProjectVideo.mockReset()
     mocks.requestConfirm.mockReset()
     mocks.showToast.mockReset()
@@ -163,6 +166,54 @@ describe('ProjectVideoListView reliability', () => {
     fireEvent.click(screen.getByRole('button', { name: '标记发布' }))
 
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('发布接口不可用', 'error'))
+  })
+
+  it('面包屑铅笔按钮：项目名变输入框，回车后 PATCH 标题并就地更新', async () => {
+    mocks.listProjectVideos.mockResolvedValue(payload(1, '旧名字', [ownedVideo]))
+    mocks.patchCreativeProject.mockResolvedValue({ id: 1, title: '新名字' })
+
+    render(<ProjectVideoListView />)
+    expect(await screen.findByText('旧名字')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '重命名项目' }))
+    const input = screen.getByDisplayValue('旧名字')
+    // 编辑态收起铅笔，避免和输入框挤在一行
+    expect(screen.queryByRole('button', { name: '重命名项目' })).toBeNull()
+    fireEvent.change(input, { target: { value: '新名字' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(mocks.patchCreativeProject).toHaveBeenCalledWith({
+        projectId: 1,
+        workspaceId: 21,
+        title: '新名字',
+        name: '新名字',
+      }),
+    )
+    expect(await screen.findByText('新名字')).toBeInTheDocument()
+    expect(screen.queryByText('旧名字')).toBeNull()
+    expect(screen.getByRole('button', { name: '重命名项目' })).toBeInTheDocument()
+    expect(mocks.showToast).toHaveBeenCalledWith('项目已重命名', 'success')
+    // 列表本身不需要重拉
+    expect(mocks.listProjectVideos).toHaveBeenCalledTimes(1)
+  })
+
+  it('双击项目名也能改名；后端拒绝时回滚原名并提示', async () => {
+    mocks.listProjectVideos.mockResolvedValue(payload(1, '旧名字', [ownedVideo]))
+    mocks.patchCreativeProject.mockRejectedValue(new Error('没有权限'))
+
+    render(<ProjectVideoListView />)
+    const title = await screen.findByText('旧名字')
+
+    fireEvent.doubleClick(title)
+    const input = screen.getByDisplayValue('旧名字')
+    fireEvent.change(input, { target: { value: '新名字' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(mocks.patchCreativeProject).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByText('新名字')).toBeNull())
+    expect(screen.getByText('旧名字')).toBeInTheDocument()
+    expect(mocks.showToast).toHaveBeenCalledWith('没有权限', 'error')
   })
 
   it('进入编辑时通过查询参数保留列表中点击的视频版本', async () => {
