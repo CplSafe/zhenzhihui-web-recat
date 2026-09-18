@@ -4,6 +4,7 @@ import {
   closestRatioOption,
   describeSourceMismatch,
   parseRatioValue,
+  resolveSourceMismatch,
 } from '@/utils/hotCopySourceMatch'
 
 const RATIOS = ['9:16', '3:4', '1:1', '4:3', '16:9', '21:9']
@@ -94,5 +95,45 @@ describe('hotCopySourceMatch', () => {
         durationOptions: [5, 10, 15],
       }),
     ).toBe('')
+  })
+
+  it('resolveSourceMismatch 给出推荐值与「改为 …」按钮文案，只列不一致的那一项', () => {
+    const both = resolveSourceMismatch({
+      source: { width: 1080, height: 1920, durationSec: 15.1 },
+      ratio: '16:9',
+      durationSec: 30,
+      ratioOptions: RATIOS,
+      durationOptions: [5, 10, 15, 20, 30],
+    })
+    expect(both).toMatchObject({ ratio: '9:16', durationSec: 15, actionLabel: '改为 9:16 · 15s' })
+    expect(both?.message).toContain('源视频约 15.1 秒，当前选了 30 秒')
+
+    const durationOnly = resolveSourceMismatch({
+      source: { width: 1080, height: 1920, durationSec: 15.1 },
+      ratio: '9:16',
+      durationSec: 30,
+      ratioOptions: RATIOS,
+      durationOptions: [5, 10, 15, 20, 30],
+    })
+    expect(durationOnly).toMatchObject({ ratio: '', durationSec: 15, actionLabel: '改为 15s' })
+
+    const ratioOnly = resolveSourceMismatch({
+      source: { width: 1920, height: 1080, durationSec: 15 },
+      ratio: '9:16',
+      durationSec: 15,
+      ratioOptions: RATIOS,
+      durationOptions: [5, 10, 15],
+    })
+    expect(ratioOnly).toMatchObject({ ratio: '16:9', durationSec: 0, actionLabel: '改为 16:9' })
+
+    expect(
+      resolveSourceMismatch({
+        source: { width: 1920, height: 1080, durationSec: 15 },
+        ratio: '16:9',
+        durationSec: 15,
+        ratioOptions: RATIOS,
+        durationOptions: [5, 10, 15],
+      }),
+    ).toBeNull()
   })
 })

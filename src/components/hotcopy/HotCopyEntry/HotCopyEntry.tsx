@@ -19,7 +19,7 @@ import { readVideoMetadata } from '@/utils/videoDuration'
 import {
   closestDurationOption,
   closestRatioOption,
-  describeSourceMismatch,
+  resolveSourceMismatch,
   type SourceVideoMeta,
 } from '@/utils/hotCopySourceMatch'
 import { describeSceneCutWarning, detectSceneCuts, type SceneCutResult } from '@/utils/videoSceneCuts'
@@ -857,11 +857,15 @@ export default function HotCopyEntry({
   const [sourceVideoMeta, setSourceVideoMeta] = useState<SourceVideoMeta | null>(null)
   // 恢复草稿带进来的视频视为已对齐过：草稿里的比例/时长是用户存下的选择，不能在重新挂载时被改写。
   const sourceMatchAppliedForRef = useRef(initialDraft.videoPreview || '')
+  // 草稿沿用下来、本次还没被用户碰过的比例/时长。上一次进页面没提示、刷新一下就冒出来的提示要说清
+  // 来由（"沿用了上次保存的设置"），否则用户会以为是自己刚才点错了什么。用户改过参数或换了视频就不再算沿用。
+  const [paramsCarriedFromDraft, setParamsCarriedFromDraft] = useState(Boolean(initialDraft.videoPreview))
   useEffect(() => {
     const src = videoPreview
     if (!src) {
       setSourceVideoMeta(null)
       sourceMatchAppliedForRef.current = ''
+      setParamsCarriedFromDraft(false)
       return
     }
     let alive = true
@@ -885,15 +889,16 @@ export default function HotCopyEntry({
     if (!sourceVideoMeta || !videoPreview) return
     if (sourceMatchAppliedForRef.current === videoPreview) return
     sourceMatchAppliedForRef.current = videoPreview
+    setParamsCarriedFromDraft(false)
     const matchedRatio = closestRatioOption(sourceVideoMeta.width, sourceVideoMeta.height, ratioOpts)
     if (matchedRatio && matchedRatio !== ratio) setRatio(matchedRatio)
     const matchedDuration = closestDurationOption(sourceVideoMeta.durationSec, durationOptions)
     if (matchedDuration > 0 && `${matchedDuration}s` !== duration) setDuration(`${matchedDuration}s`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceVideoMeta, videoPreview, ratioOpts, durationOptions])
-  const sourceMismatchHint = useMemo(
+  const sourceMismatch = useMemo(
     () =>
-      describeSourceMismatch({
+      resolveSourceMismatch({
         source: sourceVideoMeta,
         ratio,
         durationSec: parseDurationSeconds(duration) ?? 0,
@@ -902,6 +907,13 @@ export default function HotCopyEntry({
       }),
     [sourceVideoMeta, ratio, duration, ratioOpts, durationOptions],
   )
+  // 提示里的「改为 9:16 · 15s」：把推荐档一次填回去，省得用户再去下拉里找
+  const applySourceMatch = useCallback(() => {
+    if (!sourceMismatch) return
+    if (sourceMismatch.ratio) setRatio(sourceMismatch.ratio)
+    if (sourceMismatch.durationSec > 0) setDuration(`${sourceMismatch.durationSec}s`)
+    setParamsCarriedFromDraft(false)
+  }, [sourceMismatch])
 
   /**
    * 源视频硬切检测。视频模型只能生成一个连续镜头，多镜头拼接片作参考必然对不上；
@@ -962,9 +974,15 @@ export default function HotCopyEntry({
 
   const applyCreativeParams = useCallback(
     (next: CreativeParamsValue) => {
-      if (next.ratio !== ratio) setRatio(next.ratio)
+      if (next.ratio !== ratio) {
+        setRatio(next.ratio)
+        setParamsCarriedFromDraft(false)
+      }
       if (next.resolution !== resolution) pickResolution(next.resolution)
-      if (next.durationSec > 0 && `${next.durationSec}s` !== duration) setDuration(`${next.durationSec}s`)
+      if (next.durationSec > 0 && `${next.durationSec}s` !== duration) {
+        setDuration(`${next.durationSec}s`)
+        setParamsCarriedFromDraft(false)
+      }
       if (next.generateAudio !== generateAudio) setGenerateAudio(next.generateAudio)
     },
     [ratio, resolution, duration, generateAudio, pickResolution],
@@ -1363,10 +1381,23 @@ export default function HotCopyEntry({
               )}
             </div>
           </div>
-          {(sceneCutHint || sourceMismatchHint) && (
+          {(sceneCutHint || sourceMismatch) && (
             <div className="hotcopy__sourceHint" role="note">
               {sceneCutHint && <p className="hotcopy__sourceHintLine">{sceneCutHint}</p>}
-              {sourceMismatchHint && <p className="hotcopy__sourceHintLine">{sourceMismatchHint}</p>}
+              {sourceMismatch && (
+                <p className="hotcopy__sourceHintLine">
+                  {paramsCarriedFromDraft ? '沿用了上次保存的设置：' : ''}
+                  {sourceMismatch.message}
+                  <button
+                    type="button"
+                    className="hotcopy__sourceHintAction"
+                    disabled={submissionBusy}
+                    onClick={applySourceMatch}
+                  >
+                    {sourceMismatch.actionLabel}
+                  </button>
+                </p>
+              )}
             </div>
           )}
         </div>
