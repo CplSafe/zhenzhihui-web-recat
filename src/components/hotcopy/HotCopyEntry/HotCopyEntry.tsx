@@ -1386,7 +1386,7 @@ export default function HotCopyEntry({
               {sceneCutHint && <p className="hotcopy__sourceHintLine">{sceneCutHint}</p>}
               {sourceMismatch && (
                 <p className="hotcopy__sourceHintLine">
-                  {paramsCarriedFromDraft ? '沿用了上次保存的设置：' : ''}
+                  {paramsCarriedFromDraft ? '这还是上次保存的设置：' : ''}
                   {sourceMismatch.message}
                   <button
                     type="button"

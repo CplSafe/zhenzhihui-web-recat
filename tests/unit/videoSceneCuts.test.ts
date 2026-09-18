@@ -67,9 +67,9 @@ describe('videoSceneCuts', () => {
       sampled: 48,
       durationSec: 23.8,
     })
-    expect(hint).toContain('约 7 次镜头切换（8 个镜头）')
-    expect(hint).toContain('只能生成一个连续镜头')
-    expect(hint).toContain('拆分后逐段复刻')
+    expect(hint).toContain('爆款视频里有约 7 次镜头切换（8 个镜头）')
+    expect(hint).toContain('复刻一次只能出一个连续镜头')
+    expect(hint).toContain('拆成几段分别复刻再拼起来')
     expect(SCENE_CUT_WARN_THRESHOLD).toBe(2)
   })
 })
