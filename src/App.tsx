@@ -12,6 +12,7 @@ import { useGuideStore } from './stores/guide'
 import { useUiStore } from './stores/ui'
 import { deriveWorkspaceId, useWorkspaceSessionStore } from './stores/workspaceSession'
 import { captureInviteCode } from './utils/inviteCode'
+import { readLoginReturnTo, sanitizeLoginReturnTo } from './utils/loginReturnTo'
 import './App.css'
 
 /** 登录后按需加载的帮助中心悬浮入口。 */
@@ -151,14 +152,25 @@ export function AppShell() {
 
     // 受保护页(项目管理 / 素材市场等)未登录 → 直接去登录页(「需登录」)。
     // 不再用全屏游客遮罩(它会盖住侧边栏导致无法切换其它菜单)。
+    // 带上当前地址作为 returnTo:分享出去的项目/画布深链接,登录后要回到原页而不是落首页。
     if (requiresAuth && !isAuthenticated) {
-      navigate('/login', { replace: true })
+      const returnTo = sanitizeLoginReturnTo(`${location.pathname}${location.search}`)
+      navigate('/login', { replace: true, state: returnTo ? { returnTo } : undefined })
       return
     }
     if (!requiresAuth && isAuthenticated && (location.pathname === '/login' || location.pathname === '/welcome')) {
-      navigate('/home', { replace: true })
+      navigate(readLoginReturnTo(location.state) || '/home', { replace: true })
     }
-  }, [isAuthenticated, isCheckingSession, authCheckError, requiresAuth, location.pathname, navigate])
+  }, [
+    isAuthenticated,
+    isCheckingSession,
+    authCheckError,
+    requiresAuth,
+    location.pathname,
+    location.search,
+    location.state,
+    navigate,
+  ])
 
   return (
     <>

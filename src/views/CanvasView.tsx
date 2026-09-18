@@ -32,6 +32,7 @@ import {
   type NodeProps,
   ConnectionMode,
   PanOnScrollMode,
+  SelectionMode,
   addEdge,
   useNodesState,
   useEdgesState,
@@ -82,7 +83,7 @@ import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal
 import CanvasImagePreviewModal, { type CanvasImagePreviewItem } from '@/components/canvas/CanvasImagePreviewModal'
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
 import { saveCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId } from '@/utils/canvasDraft'
-import { humanizeCanvasTaskError } from '@/utils/canvasTaskError'
+import { humanizeCanvasTaskError, isCanvasProviderServiceError } from '@/utils/canvasTaskError'
 import {
   loadLastSelectedNodeId,
   loadMinimapVisible,
@@ -183,8 +184,12 @@ import {
   wouldCreateCanvasCycle,
   type ComparableNode,
   type ComparableEdge,
+  type CanvasResultHistoryEntry,
 } from '@/utils/canvasElements'
 import './CanvasView.css'
+
+/** 节点级生成历史最多保留的条数：够回看最近几版，又不至于把画布元素 payload 撑大。 */
+const CANVAS_RESULT_HISTORY_CAP = 12
 
 /** 节点素材回显地址归一化：blob:（本地上传的会话级临时地址）或缺失但 assetId 存在时，用同源流式地址重建。 */
 export function resolveNodeMediaUrl(data: Record<string, unknown> | undefined, workspaceId: number): string {
@@ -482,7 +487,10 @@ interface CanvasNodeActions {
    * 而按钮已经挪到了视图层的工具条上，所以由节点登记能力、视图层按 id 取用。
    * 返回空串表示这一帧没取到，由调用方提示。
    */
-  registerFrameCapture?: (nodeId: string, capture: ((position: VideoFramePosition) => Promise<string>) | null) => void
+  registerFrameCapture?: (
+    nodeId: string,
+    capture: ((position: VideoFramePosition | number) => Promise<string>) | null,
+  ) => void
   /** 同理，图片/视频节点把「下载自己的素材」登记上来供工具条调用。 */
   registerNodeDownload?: (nodeId: string, download: (() => void) | null) => void
   /** 视频节点登记自己的放大预览入口，供不随画布缩放的悬浮工具栏调用。 */
@@ -1196,6 +1204,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     registerNodePreview,
     onPreviewImage,
     onVideoPosterCaptured,
+    onCaptureFrame,
+    capturingNodeId,
     renamingNodeId,
     onRenamingDone,
     timeline: timelineActions,
@@ -1205,7 +1215,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
    * 当前帧直接从画面读取；首尾帧需要可靠跳转，优先使用已经准备好的本地源，
    * 否则通过全站共享缓存下载一次再截取，避免不支持 Range 的 /download 把 currentTime 抹回 0。
    */
-  const captureRequestedFrame = async (position: VideoFramePosition): Promise<string> => {
+  const captureRequestedFrame = async (position: VideoFramePosition | number): Promise<string> => {
     const currentVideo = videoRef.current
     const captureOptions = { seekTimeoutMs: 8000, frameTimeoutMs: 3000, attempts: 2, retryDelayMs: 180 }
     const localSource = videoLocalSrcRef.current
@@ -1303,6 +1313,20 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     registerFrameCapture(id, (position) => captureFrameRef(position))
     return () => registerFrameCapture(id, null)
   }, [kind, id, registerFrameCapture, captureFrameRef])
+
+  /*
+   * 放大预览弹窗里的「截取此帧」（反馈 #7 任意帧截帧）：弹窗把它原生进度条的当前时刻传上来，
+   * 走节点同一套（CORS 安全、含同源下载兜底的）取帧链路，在该时刻截一帧，再交给上层上传建图片节点。
+   */
+  const handlePreviewCaptureAt = useLatestCallback(async (atSec: number) => {
+    if (capturingNodeId) return
+    const frame = await captureFrameRef(Math.max(0, Number(atSec) || 0))
+    if (!frame) {
+      showToast('截帧失败：视频帧仍在加载或素材地址暂不可读取，请稍后重试', 'error')
+      return
+    }
+    onCaptureFrame?.(id, frame)
+  })
 
   /**
    * 连接点加号在鼠标滑入节点时出现（不是滑到加号上才出现）。
@@ -1740,6 +1764,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           durationLabel={videoDurationLabel}
           startTime={videoCurrentSec}
           info={videoPreviewInfo}
+          onCaptureFrame={handlePreviewCaptureAt}
+          capturing={capturingNodeId === id}
           onClose={() => setVideoPreviewOpen(false)}
         />
       ) : null}
@@ -1879,8 +1905,12 @@ function CanvasInner() {
   // - dragEnabled：节点拖拽开关（nodesDraggable），关闭后节点不能拖拽
   const [moveEnabled, setMoveEnabled] = useState(true)
   const [dragEnabled, setDragEnabled] = useState(true)
+  // boxSelectEnabled：框选模式（反馈 #1）。开启后左键拖空白处框选节点（Shift 拖拽任何时候都能框选）；
+  // 平移改走中键/触控板，避免与框选抢左键。
+  const [boxSelectEnabled, setBoxSelectEnabled] = useState(false)
   const handleMoveToggle = useCallback(() => setMoveEnabled((v) => !v), [])
   const handleDragToggle = useCallback(() => setDragEnabled((v) => !v), [])
+  const handleBoxSelectToggle = useCallback(() => setBoxSelectEnabled((v) => !v), [])
   const [selectedNode, setSelectedNode] = useState<CanvasNodeInfo | null>(null)
   /**
    * 多选中的节点 id。
@@ -1909,8 +1939,8 @@ function CanvasInner() {
   // 工具栏收起动画期间为 true：先播放收起动画，动画结束再挂载抽屉
   const [toolbarLeaving, setToolbarLeaving] = useState(false)
   const toolbarLeaveTimerRef = useRef<number | null>(null)
-  // 右键浮动菜单
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  // 右键浮动菜单；nodeId 存在时表示右键点在某个节点上，额外显示「生成副本」
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string } | null>(null)
   // 图片/视频节点上传：隐藏的 file input，供顶部胶囊上传按钮触发
   const uploadInputRef = useRef<HTMLInputElement>(null)
   // 本地图片导入：隐藏的多选 file input，供工具栏 / 右键菜单「本地图片」触发
@@ -2450,7 +2480,7 @@ function CanvasInner() {
     setHistoryFlags({ canUndo: true, canRedo: redoStack.length > 0 })
   }, [setNodes, setEdges])
 
-  // 键盘 Delete/Backspace 删除节点：清理关联连线 + 同步选中态 + 入撤销栈
+  // 键盘 Delete/Backspace 删除节点：清理关联连线 + 文本缓存 + 同步选中态 + 入撤销栈
   const handleNodesDelete = useCallback(
     (deleted: Node[]) => {
       if (!deleted.length) return
@@ -2458,6 +2488,9 @@ function CanvasInner() {
       commitHistory()
       const deletedIds = new Set(deleted.map((n) => n.id))
       setEdges((eds) => eds.filter((e) => !deletedIds.has(e.source) && !deletedIds.has(e.target)))
+      // 清理被删节点的文本缓存，与按钮删除（deleteNodeById）口径一致，避免残留
+      const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+      if (textMap) deletedIds.forEach((id) => textMap.delete(id))
       // 若删除的是当前选中节点，清空编辑面板
       setSelectedNode((prev) => (prev && deletedIds.has(prev.id) ? null : prev))
       setSaveStatus('dirty')
@@ -2501,6 +2534,86 @@ function CanvasInner() {
       delete (window as any).__canvasDeleteNode
     }
   }, [deleteNodeById])
+
+  /**
+   * 生成节点副本（反馈：所有节点都不能复制/建副本）。
+   * 克隆配置与内容（提示词/模型/参数/比例/已生成的图或视频），但**剥离与某次生成任务绑定的运行态**：
+   * 否则副本会与原节点共用 taskId，一起轮询、把结果互相回写污染。副本偏移摆放并选中，连线不复制。
+   */
+  const RUNTIME_NODE_DATA_KEYS = useMemo(
+    () =>
+      new Set([
+        'taskId',
+        'taskRunId',
+        'taskStatus',
+        'taskProgress',
+        'taskError',
+        'taskStartedAt',
+        'taskUpdatedAt',
+        'generationRequest',
+        'resultSyncAttempts',
+        'taskStatusQueryFailures',
+      ]),
+    [],
+  )
+  const duplicateNode = useCallback(
+    (nodeId: string) => {
+      const source = latestRef.current.nodes.find((candidate) => candidate.id === nodeId)
+      if (!source) return
+      commitHistory()
+      const type = String((source.data as any)?.kind || source.type || 'text')
+      const newId = createNodeId(type)
+      const clonedData: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries((source.data || {}) as Record<string, unknown>)) {
+        if (!RUNTIME_NODE_DATA_KEYS.has(key)) clonedData[key] = value
+      }
+      const newNode: Node = {
+        id: newId,
+        type: source.type,
+        position: { x: source.position.x + 48, y: source.position.y + 48 },
+        data: clonedData,
+        style: { ...((source.style as Record<string, unknown>) || {}) },
+        selected: true,
+        className: 'is-node-entering',
+      }
+      setNodes((items) => [...items.map((n) => (n.selected ? { ...n, selected: false } : n)), newNode])
+      // 文本节点的内容存在全局 Map（不随 data 持久化），需一并复制到新节点
+      const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+      if (textMap?.has(nodeId)) textMap.set(newId, String(textMap.get(nodeId) ?? ''))
+      setSelectedNode({
+        id: newId,
+        kind: type,
+        sourceRefs: [],
+        ratio: clonedData.ratio as string | undefined,
+        videoMode: clonedData.videoMode as CanvasVideoMode | undefined,
+        modelVersionId: clonedData.modelVersionId as number | undefined,
+      })
+      setSaveStatus('dirty')
+      setContextMenu(null)
+    },
+    [RUNTIME_NODE_DATA_KEYS, commitHistory, setNodes],
+  )
+
+  // Ctrl/Cmd+D 复制选中节点（反馈：节点不能快速复制）。输入框内不拦截，避免打断打字。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        (event.key !== 'd' && event.key !== 'D') ||
+        !(event.ctrlKey || event.metaKey) ||
+        event.shiftKey ||
+        event.altKey
+      )
+        return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('textarea, input, [contenteditable="true"]')) return
+      const ids = selectedNodeIds.length ? selectedNodeIds : selectedNode?.id ? [selectedNode.id] : []
+      if (!ids.length) return
+      event.preventDefault()
+      ids.forEach((id) => duplicateNode(id))
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [duplicateNode, selectedNode?.id, selectedNodeIds])
 
   // 键盘 Delete/Backspace 删除连线（选中连线时）：入撤销栈
   const handleEdgesDelete = useCallback(
@@ -3075,10 +3188,27 @@ function CanvasInner() {
               mutations,
             })
             syncRevisionRef.current = result.sync_revision
-            setNodes(merged.nodes)
-            setEdges(merged.edges)
-            latestRef.current = merged
             const mergedTextMap = (window as any).__canvasTextContents as Map<string, string> | undefined
+            // 冲突处理要两个往返,期间用户可能还在拖节点/连线。合并结果不能直接覆盖画面,
+            // 否则这几百毫秒里的操作会被「回滚」;把请求发出之后的本地增量再叠到合并结果上,
+            // 而已同步基线仍取 merged(本次真正落库的内容),这样增量会在下一轮循环里正常补存。
+            const latestNow = latestRef.current
+            const inFlightEdits =
+              latestNow === latest
+                ? []
+                : diffCanvasMutations(
+                    {
+                      nodes: latest.nodes.map((node) => comparableNode(node, mergedTextMap)),
+                      edges: latest.edges.map(comparableEdge),
+                    },
+                    latestNow,
+                    mergedTextMap,
+                  )
+            const displayed = inFlightEdits.length ? applyCanvasElementMutations(merged, inFlightEdits) : merged
+            setNodes(displayed.nodes)
+            setEdges(displayed.edges)
+            latestRef.current = displayed
+            if (inFlightEdits.length) syncPendingRef.current = true
             syncRef.current = {
               nodes: merged.nodes.map((node) => comparableNode(node, mergedTextMap)),
               edges: merged.edges.map(comparableEdge),
@@ -3522,6 +3652,37 @@ function CanvasInner() {
       setSelectedNode((prev) => (prev ? { ...prev, ratio } : prev))
     },
     [selectedNode, setNodes, commitHistory],
+  )
+
+  // 节点级生成历史（反馈 #8）：从图上取当前选中节点的历次结果，实时反映新生成/回退。
+  const selectedNodeHistory = useMemo<CanvasResultHistoryEntry[]>(() => {
+    if (!selectedNode) return []
+    const node = nodes.find((n) => n.id === selectedNode.id)
+    const history = (node?.data as any)?.resultHistory
+    return Array.isArray(history) ? (history as CanvasResultHistoryEntry[]) : []
+  }, [nodes, selectedNode])
+
+  // 回退到某个历史版本：把该结果设为当前结果（不删其它历史，纯切换当前展示）。
+  const handleRevertToHistory = useCallback(
+    (entry: CanvasResultHistoryEntry) => {
+      if (!selectedNode || !entry?.assetId) return
+      const targetId = selectedNode.id
+      commitHistory()
+      const resultUrl = assetStreamUrl(entry.assetId, workspaceId)
+      const nextData: Record<string, unknown> = {
+        assetId: entry.assetId,
+        resultUrl,
+        generationIntent: 'edit',
+        // 切到历史版本：清掉上一版的封面帧，视频节点会按新素材首帧重新取封面
+        ...(entry.kind === 'video' ? { posterAssetId: 0, poster: '' } : {}),
+      }
+      setNodes((nds) => nds.map((n) => (n.id === targetId ? { ...n, data: { ...n.data, ...nextData } } : n)))
+      setSelectedNode((prev) =>
+        prev && prev.id === targetId ? { ...prev, assetId: entry.assetId, resultUrl, generationIntent: 'edit' } : prev,
+      )
+      setSaveStatus('dirty')
+    },
+    [selectedNode, workspaceId, commitHistory, setNodes, setSaveStatus],
   )
 
   // 视频生成方式变更：保留兼容的参考连线，避免用户切换方式时丢失已选素材。
@@ -4601,6 +4762,24 @@ function CanvasInner() {
                 } else {
                   nextData.resultSyncAttempts = 0
                   nextData.generationIntent = 'edit'
+                  // 节点级生成历史：本次结果有耐久 assetId 时追加一条（去重 + 限长），供面板回看/回退。
+                  // 只留 assetId 走白名单持久化，签名地址/首帧留给展示层现算，避免撑大画布元素 payload。
+                  if (assetId > 0) {
+                    const prevHistory: CanvasResultHistoryEntry[] = Array.isArray((node.data as any)?.resultHistory)
+                      ? ((node.data as any).resultHistory as CanvasResultHistoryEntry[])
+                      : []
+                    if (!prevHistory.some((entry) => entry.assetId === assetId)) {
+                      nextData.resultHistory = [
+                        ...prevHistory,
+                        {
+                          assetId,
+                          kind: kind === 'video' ? 'video' : 'image',
+                          createdAt: new Date().toISOString(),
+                          prompt: String((node.data as any)?.prompt || '') || undefined,
+                        },
+                      ].slice(-CANVAS_RESULT_HISTORY_CAP)
+                    }
+                  }
                 }
               }
               if (nextData.taskStatus !== 'result_pending') nextData.taskProgress = 100
@@ -4642,6 +4821,43 @@ function CanvasInner() {
               )
               setSelectedNode((current) =>
                 current?.id === node.id && isSameCanvasTask(current, node.data) ? { ...current, ...nextData } : current,
+              )
+              setSaveStatus('dirty')
+              return
+            }
+            // 供应商服务级失败（PROVIDER_FAILED / 计费 / 接入 / 限流等）后端以业务错误码信封返回、
+            // requestJson 直接 throw 到这里。这是对任务的确定答复，不是网络抖动：落终态失败 + 友好文案，
+            // 别再按下面「查询失败，将继续自动重试」误导用户对着一个坏掉的模型干等。
+            const providerErrorText = [
+              error?.message,
+              error?.code,
+              error?.response?.code_string,
+              error?.response?.message,
+            ]
+              .filter(Boolean)
+              .join(' ')
+            if (!disposed && isCanvasProviderServiceError(providerErrorText)) {
+              const friendly = humanizeCanvasTaskError(providerErrorText) || '生成失败，请重试'
+              setNodes((items) =>
+                items.map((item) =>
+                  item.id === node.id && isSameCanvasTask(item.data, node.data)
+                    ? {
+                        ...item,
+                        data: {
+                          ...item.data,
+                          taskStatus: 'failed',
+                          taskProgress: 0,
+                          taskStatusQueryFailures: 0,
+                          taskError: friendly,
+                        },
+                      }
+                    : item,
+                ),
+              )
+              setSelectedNode((current) =>
+                current?.id === node.id && isSameCanvasTask(current, node.data)
+                  ? { ...current, taskStatus: 'failed', taskError: friendly }
+                  : current,
               )
               setSaveStatus('dirty')
               return
@@ -5012,9 +5228,9 @@ function CanvasInner() {
   const [renamingNodeId, setRenamingNodeId] = useState('')
   const handleRenamingDone = useCallback(() => setRenamingNodeId(''), [])
 
-  const frameCaptureRef = useRef(new Map<string, (position: VideoFramePosition) => Promise<string>>())
+  const frameCaptureRef = useRef(new Map<string, (position: VideoFramePosition | number) => Promise<string>>())
   const registerFrameCapture = useCallback(
-    (nodeId: string, capture: ((position: VideoFramePosition) => Promise<string>) | null) => {
+    (nodeId: string, capture: ((position: VideoFramePosition | number) => Promise<string>) | null) => {
       if (capture) frameCaptureRef.current.set(nodeId, capture)
       else frameCaptureRef.current.delete(nodeId)
     },
@@ -5062,9 +5278,16 @@ function CanvasInner() {
     return items
   }, [imagePreviewNodeId, nodes, workspaceId])
 
-  /** 工具条上的「截帧」：先取帧（在节点内完成），再走既有的上传建节点链路。 */
+  /**
+   * 工具条上的「截帧」：先取帧（在节点内完成），再走既有的上传建节点链路。
+   * 「自定义截帧」不在这里取帧：打开放大预览，用户在里面拖进度条到任意位置后点「截取此帧」。
+   */
   const handleToolbarCapture = useCallback(
-    (nodeId: string, position: VideoFramePosition) => {
+    (nodeId: string, position: VideoFramePosition | 'custom') => {
+      if (position === 'custom') {
+        nodePreviewRef.current.get(nodeId)?.()
+        return
+      }
       const capture = frameCaptureRef.current.get(nodeId)
       if (!capture) return
       void (async () => {
@@ -6326,6 +6549,8 @@ function CanvasInner() {
             onMoveToggle={handleMoveToggle}
             dragEnabled={dragEnabled}
             onDragToggle={handleDragToggle}
+            boxSelectEnabled={boxSelectEnabled}
+            onBoxSelectToggle={handleBoxSelectToggle}
             onAddLocalImage={() => openLocalImagePicker()}
             onOpenSearch={() => setSearchOpen(true)}
             onOpenAssets={() => openDrawerPanel('assets')}
@@ -6431,7 +6656,10 @@ function CanvasInner() {
               if (!connection.source || !connection.target) return false
               return !validateConnection(connection.source, connection.target)
             }}
-            /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步） */
+            /* 键盘删除节点/连线：统一走受控清理（关联连线 + 撤销栈 + 选中态同步）。
+             * React Flow 默认 deleteKeyCode 只有 Backspace，用户按 Del 无反应；这里同时接受
+             * Delete 与 Backspace（输入框聚焦时 React Flow 自身会忽略，不会误删）。 */
+            deleteKeyCode={['Delete', 'Backspace']}
             onBeforeDelete={handleBeforeDelete}
             onNodesDelete={handleNodesDelete}
             onEdgesDelete={handleEdgesDelete}
@@ -6446,6 +6674,10 @@ function CanvasInner() {
              * 平移仍走左键拖空白（panOnDrag），两者靠 Shift 区分，互不打架。
              */
             selectionKeyCode="Shift"
+            /* 框选模式（工具栏「框选」开关）：开启后左键拖空白直接框选，无需按 Shift；
+             * 关闭时仍可按住 Shift 拖拽框选。partial=框到一部分就算选中，更省力。 */
+            selectionOnDrag={boxSelectEnabled}
+            selectionMode={SelectionMode.Partial}
             onSelectionChange={handleSelectionChange}
             /* 双击时间线节点打开剪辑编辑器（其余节点保持原行为） */
             onNodeDoubleClick={(_e, node) => {
@@ -6486,13 +6718,13 @@ function CanvasInner() {
               setAddMenu(null)
               setContextMenu({ x: e.clientX, y: e.clientY })
             }}
-            onNodeContextMenu={(e) => {
+            onNodeContextMenu={(e, node) => {
               // 文本编辑框内保留默认菜单（复制/粘贴）
               const target = e.target as HTMLElement
               if (target.closest('textarea, input, [contenteditable="true"]')) return
               e.preventDefault()
               setAddMenu(null)
-              setContextMenu({ x: e.clientX, y: e.clientY })
+              setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id })
             }}
             onEdgeContextMenu={(e) => {
               e.preventDefault()
@@ -6530,9 +6762,10 @@ function CanvasInner() {
               setAddMenu(null)
               setSelectedNode(null)
             }}
-            /* 工具栏开关：移动=画布平移（panOnDrag），拖拽=节点拖拽（nodesDraggable） */
+            /* 工具栏开关：移动=画布平移（panOnDrag），拖拽=节点拖拽（nodesDraggable）。
+             * 框选模式开启时把左键让给框选，平移改走中键（[1]）；触控板平移仍靠 panOnScroll。 */
             nodesDraggable={dragEnabled}
-            panOnDrag={moveEnabled}
+            panOnDrag={boxSelectEnabled ? [1] : moveEnabled}
             /*
              * Mac 触控板采用设计工具式手势：
              * - 双指滚动自由平移，不再一碰就缩放；
@@ -6770,6 +7003,25 @@ function CanvasInner() {
               top: Math.min(contextMenu.y, window.innerHeight - CONTEXT_MENU_HEIGHT),
             }}
           >
+            {contextMenu.nodeId && (
+              <>
+                <button
+                  type="button"
+                  className="canvas-context-menu__item"
+                  onClick={() => duplicateNode(contextMenu.nodeId!)}
+                >
+                  <span className="canvas-context-menu__icon">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <rect x="9" y="9" width="11" height="11" rx="2" />
+                      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                    </svg>
+                  </span>
+                  生成副本
+                  <span className="canvas-context-menu__kbd">Ctrl+D</span>
+                </button>
+                <div className="canvas-context-menu__divider" />
+              </>
+            )}
             <div className="canvas-context-menu__label">添加节点</div>
             <button type="button" className="canvas-context-menu__item" onClick={() => handleContextAddNode('text')}>
               <span className="canvas-context-menu__icon">{getTypeIcon('text')}</span>
@@ -6968,6 +7220,8 @@ function CanvasInner() {
                   : undefined
               }
               onRemoveRef={handleRemoveRef}
+              resultHistory={selectedNodeHistory}
+              onRevertToHistory={handleRevertToHistory}
               onRatioChange={handleRatioChange}
               onVideoModeChange={handleVideoModeChange}
               onModelChange={handleModelChange}

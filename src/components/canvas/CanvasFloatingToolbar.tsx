@@ -17,6 +17,9 @@ interface CanvasFloatingToolbarProps {
   /** 节点拖拽开关：true=可拖拽节点 */
   dragEnabled: boolean
   onDragToggle: () => void
+  /** 框选模式开关：true=左键拖空白框选节点（关闭时仍可按住 Shift 框选） */
+  boxSelectEnabled: boolean
+  onBoxSelectToggle: () => void
   /** 打开节点搜索面板 */
   onOpenSearch: () => void
   onOpenAssets: () => void
@@ -32,6 +35,8 @@ function CanvasFloatingToolbar({
   onMoveToggle,
   dragEnabled,
   onDragToggle,
+  boxSelectEnabled,
+  onBoxSelectToggle,
   onOpenSearch,
   onOpenAssets,
   onOpenHistory,
@@ -198,7 +203,22 @@ function CanvasFloatingToolbar({
         <span className={styles.toolLabel}>拖拽</span>
       </button>
 
-      {/* 4. 节点搜索：快捷键是 Ctrl/Cmd+F，但不能只有快捷键——没人会去猜 */}
+      {/*
+        4. 框选模式（selectionOnDrag）
+        开启后左键拖空白处即可框选多个节点。标题里明确告诉用户：不开这个开关，
+        按住 Shift 拖拽同样能框选——避免用户以为只有开了开关才行。
+      */}
+      <button
+        className={`${styles.toolBtn} ${boxSelectEnabled ? styles.toolBtnActive : ''}`}
+        onClick={onBoxSelectToggle}
+        title="框选多个节点：拖拽空白处框选（按住 Shift 拖拽也可框选）"
+        aria-pressed={boxSelectEnabled}
+      >
+        <MarqueeIcon />
+        <span className={styles.toolLabel}>框选</span>
+      </button>
+
+      {/* 5. 节点搜索：快捷键是 Ctrl/Cmd+F，但不能只有快捷键——没人会去猜 */}
       <button className={styles.toolBtn} onClick={onOpenSearch} title="搜索节点（Ctrl+F）">
         <SearchIcon />
         <span className={styles.toolLabel}>搜索</span>
@@ -246,6 +266,21 @@ function DragIcon() {
       <circle cx="16" cy="6" r="1" fill="currentColor" />
       <circle cx="16" cy="12" r="1" fill="currentColor" />
       <circle cx="16" cy="18" r="1" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** 虚线框 + 光标：框选（marquee）语义 */
+function MarqueeIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path
+        d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 14v2a2 2 0 0 1-2 2h-1"
+        strokeLinecap="round"
+        strokeDasharray="0.1 3.2"
+      />
+      <path d="M4 12v4a2 2 0 0 0 2 2h2" strokeLinecap="round" strokeDasharray="0.1 3.2" />
+      <path d="M11 12l6 6-2.6.5 1.4 2.6-1.4.8-1.5-2.7L11 22z" fill="currentColor" stroke="none" />
     </svg>
   )
 }

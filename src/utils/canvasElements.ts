@@ -23,6 +23,18 @@ import {
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import type { TimelineState } from '@/utils/timelineClips'
 
+/** 单条节点生成历史：只存耐久 assetId 与轻量元数据（禁存 dataURL/签名地址，见 posterAssetId 注释的请求体上限约束）。 */
+export interface CanvasResultHistoryEntry {
+  /** 生成结果素材 ID（耐久，展示时按它现算下载地址） */
+  assetId: number
+  /** 结果类型：决定缩略图用 <img> 还是 <video> 首帧 */
+  kind: 'image' | 'video'
+  /** 生成时间（ISO），用于排序与展示 */
+  createdAt: string
+  /** 生成时所用提示词，回看时可辨识（可选） */
+  prompt?: string
+}
+
 /** 节点可序列化字段白名单：排除 ReactFlow 运行态字段（selected/measured/dragging 等）。 */
 interface SerializableNodeData {
   kind?: string
@@ -51,6 +63,12 @@ interface SerializableNodeData {
    * 仍可放在运行态字段 data.poster 上（不在本白名单内，永不上云）。
    */
   posterAssetId?: number
+  /**
+   * 节点历次生成结果（每次生成成功追加，最多保留最近若干条，供节点级生成历史回看/回退）。
+   * 只存耐久 assetId + 轻量元数据；【禁存 dataURL/签名地址】——同 posterAssetId 的请求体上限约束，
+   * 展示缩略图时按 assetId 现算下载地址。
+   */
+  resultHistory?: CanvasResultHistoryEntry[]
   prompt?: string
   /** 节点选定的 operation_code（生成时写入，刷新后可直接复用） */
   operationCode?: string
@@ -101,6 +119,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'assetWorkspaceId',
   'resultUrl',
   'posterAssetId',
+  'resultHistory',
   'prompt',
   'operationCode',
   'params',
@@ -174,6 +193,11 @@ export interface CanvasGraphSourceRef {
   inherited?: boolean
   /** 来源节点素材取自真人素材库时的身份引用；下游生成据此注入身份约束并置顶该图。 */
   realPerson?: SmartRealPersonReference
+  /**
+   * 来源节点被用户手动重命名后的名字（未改名时不带）。
+   * 提示词里 @ 引用参考时用它替代「图片N」这种位置号，多参考时才分得清谁是谁。
+   */
+  title?: string
 }
 
 /**
@@ -263,6 +287,8 @@ export function collectCanvasSourceRefs(
         ...(inherited ? { inherited: true } : {}),
         // 真人身份必须随素材一路传到下游生成节点，经文本节点继承时同样不能丢。
         ...(data.realPerson ? { realPerson: data.realPerson as SmartRealPersonReference } : {}),
+        // 用户重命名过的节点名：提示词 @ 引用时用名字替代位置号（未改名不带，仍用「图片N」）
+        ...(String(data.title || '').trim() ? { title: String(data.title).trim() } : {}),
       }
 
       if (kind === 'text') {

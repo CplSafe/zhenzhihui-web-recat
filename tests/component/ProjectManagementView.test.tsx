@@ -63,7 +63,23 @@ vi.mock('@/stores/ui', () => ({
 vi.mock('@/api/projectVideos', () => ({
   addClassifiedVideo: mocks.addClassifiedVideo,
   countProjectVideos: () => 0,
+  // 「生成模型」筛选按项目派生视频取模型名；用例通过 draft_json.__testModels 声明该项目用过哪些模型
+  deriveProjectVideos: ({ project }: any) =>
+    (project?.draft_json?.__testModels || []).map((modelName: string) => ({ modelName })),
   readProjectVideoStore: () => ({ records: [], overrides: {} }),
+}))
+
+// 模型目录只用于把老视频的 modelVersionId 翻成名字；本文件不测这条，给个不发请求的空目录
+vi.mock('@/composables/useGenerationModelCatalog', () => ({
+  useGenerationModelCatalog: () => ({
+    groups: [],
+    pickerGroups: [],
+    loading: false,
+    error: '',
+    operationStates: {},
+    reload: () => {},
+    resolveModel: () => null,
+  }),
 }))
 
 vi.mock('@/api/business', () => ({
@@ -261,6 +277,41 @@ describe('ProjectManagementView workspace isolation', () => {
 
     expect(await screen.findAllByText('Accessible project')).not.toHaveLength(0)
     expect(screen.queryAllByText('Restricted project')).toHaveLength(0)
+  })
+
+  it('按生成模型筛选：选项只列真用过的模型，选中后只留用过该模型的项目', async () => {
+    const user = userEvent.setup()
+    mocks.listCreativeProjects.mockResolvedValue([
+      {
+        ...project(1, 'Seedance project'),
+        user_id: 7,
+        draft_json: { flow: 'smart', smart: {}, __testModels: ['Seedance 1.5'] },
+      },
+      {
+        ...project(2, 'Banana project'),
+        user_id: 7,
+        draft_json: { flow: 'smart', smart: {}, __testModels: ['Nano Banana 2'] },
+      },
+    ])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findAllByText('Seedance project')).not.toHaveLength(0)
+    expect(screen.queryAllByText('Banana project')).not.toHaveLength(0)
+
+    // 下拉只列数据里真出现过的两个模型 + 全部
+    await user.click(screen.getByRole('button', { name: '按生成模型筛选' }))
+    const listbox = screen.getByRole('listbox', { name: '按生成模型筛选' })
+    expect(
+      within(listbox)
+        .getAllByRole('option')
+        .map((el) => el.textContent),
+    ).toEqual(['全部模型', 'Nano Banana 2', 'Seedance 1.5'])
+
+    // 选 Seedance → 只剩用过它的项目
+    await user.click(within(listbox).getByRole('option', { name: 'Seedance 1.5' }))
+    await waitFor(() => expect(screen.queryAllByText('Banana project')).toHaveLength(0))
+    expect(screen.queryAllByText('Seedance project')).not.toHaveLength(0)
   })
 
   it('does not expose a restricted legacy project video in the unclassified section', async () => {

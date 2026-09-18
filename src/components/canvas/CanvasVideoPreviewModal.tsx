@@ -37,6 +37,13 @@ interface CanvasVideoPreviewModalProps {
   startTime?: number
   /** 视频信息；有任一字段时在播放器右侧展示信息栏 */
   info?: CanvasVideoPreviewInfo
+  /**
+   * 「截取此帧」（反馈 #7 任意帧截帧）：把当前进度条时刻传给上层，由节点在该时刻取一帧建图片节点。
+   * 不传则不显示截帧按钮。
+   */
+  onCaptureFrame?: (atSec: number) => void
+  /** 截帧进行中：禁用按钮避免重复触发 */
+  capturing?: boolean
   onClose: () => void
 }
 
@@ -83,6 +90,8 @@ export default function CanvasVideoPreviewModal({
   durationLabel,
   startTime = 0,
   info,
+  onCaptureFrame,
+  capturing = false,
   onClose,
 }: CanvasVideoPreviewModalProps) {
   const startTimeRef = useRef(startTime)
@@ -217,6 +226,18 @@ export default function CanvasVideoPreviewModal({
               if (start > 0 && start < video.duration) video.currentTime = start
             }}
           />
+          {onCaptureFrame && (
+            <button
+              type="button"
+              className={styles.capture}
+              disabled={capturing}
+              onClick={() => onCaptureFrame(videoRef.current?.currentTime ?? 0)}
+              title="把进度条当前位置这一帧截取为图片节点（可先拖动进度条到任意位置）"
+            >
+              <CaptureIcon />
+              <span>{capturing ? '截取中…' : '截取此帧'}</span>
+            </button>
+          )}
         </div>
         {/* 信息栏放在播放器之外：有字段才出现，没有时弹窗保持原来的纯播放形态 */}
         {infoRows.length ? (
@@ -237,5 +258,24 @@ export default function CanvasVideoPreviewModal({
       </div>
     </div>,
     document.body,
+  )
+}
+
+function CaptureIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 7h3l1.5-2h7L17 7h3v12H4z" />
+      <circle cx="12" cy="13" r="3.4" />
+    </svg>
   )
 }

@@ -163,6 +163,43 @@
   outline-offset: 3px;
 }
 
+/* 「截取此帧」浮动按钮（反馈 #7）：左上角，避开右上角关闭与底部原生控件 */
+.capture {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.42);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    transform 0.1s;
+}
+.capture:hover:not(:disabled) {
+  background: rgba(87, 103, 229, 0.92);
+  border-color: rgba(87, 103, 229, 0.92);
+}
+.capture:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.capture:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.capture:focus-visible {
+  outline: 2px solid #5767e5;
+  outline-offset: 3px;
+}
+
 /* 涟漪：只在 hover 那一刻跑一次，从按钮边缘向外扩散后消失 */
 .close::after {
   content: '';

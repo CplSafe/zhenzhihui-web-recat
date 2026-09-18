@@ -118,4 +118,20 @@ describe('CanvasVideoPreviewModal', () => {
     unmount()
     expect(document.body.style.overflow).toBe('')
   })
+
+  it('不提供 onCaptureFrame 时不显示「截取此帧」', () => {
+    render(<CanvasVideoPreviewModal src="/a.mp4" onClose={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: /截取此帧/ })).toBeNull()
+  })
+
+  it('提供 onCaptureFrame 时显示「截取此帧」，点击按进度条当前时刻回调（反馈 #7）', async () => {
+    const user = userEvent.setup()
+    const onCaptureFrame = vi.fn()
+    render(<CanvasVideoPreviewModal src="/a.mp4" onCaptureFrame={onCaptureFrame} onClose={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: /截取此帧/ }))
+    // 传上去的是播放器当前进度时刻（jsdom 下具体值不稳定，这里只校验拿到的是个数字时刻）
+    expect(onCaptureFrame).toHaveBeenCalledTimes(1)
+    expect(typeof onCaptureFrame.mock.calls[0][0]).toBe('number')
+  })
 })

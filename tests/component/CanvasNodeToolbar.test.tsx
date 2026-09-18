@@ -87,6 +87,19 @@ describe('CanvasNodeToolbar', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
+  it('截帧菜单里有「自定义截帧」入口，选中后以 custom 回调（由画布打开放大预览拖进度条）', async () => {
+    const user = userEvent.setup()
+    const props = renderToolbar()
+
+    await user.click(screen.getByRole('button', { name: '截取画面为图片' }))
+    const custom = screen.getByRole('menuitem', { name: /自定义截帧/ })
+    expect(custom).toHaveTextContent('拖动进度条选取任意一帧')
+    await user.click(custom)
+
+    expect(props.onCapture).toHaveBeenCalledWith('custom')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
   it('截帧进行中禁用入口，避免重复触发', () => {
     renderToolbar({ capturing: true })
     expect(screen.getByRole('button', { name: '截取画面为图片' })).toBeDisabled()

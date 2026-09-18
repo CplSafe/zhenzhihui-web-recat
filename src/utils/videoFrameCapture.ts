@@ -353,13 +353,14 @@ export function resolveLastFrameCandidates(durationSec: number): number[] {
  */
 export async function captureVideoFrame(
   video: HTMLVideoElement | null,
-  position: VideoFramePosition = 'current',
+  position: VideoFramePosition | number = 'current',
   options: SeekVideoFrameOptions = {},
 ): Promise<string> {
   if (!video) return ''
   if (position === 'current') return captureVideoFrameDataUrl(video)
 
   /*
+   * 数字表示「精确到某一秒」的任意帧截取（反馈 #7）：只定位这一个时刻，不做首尾帧的梯度回退。
    * 尾帧按梯度依次尝试，首帧只有 0 这一个目标。
    *
    * 尾帧原先只试 duration-0.05 一次，解不出帧就返回空串——而这恰恰是最常见的情况：
@@ -367,7 +368,11 @@ export async function captureVideoFrame(
    * seek 过去等到超时，用户得到的是「点了没反应」。现在解不出来就往回退一档再试。
    */
   const targets =
-    position === 'last' ? resolveLastFrameCandidates(video.duration) : [resolveFrameTimeSec('first', video.duration)]
+    typeof position === 'number'
+      ? [Math.max(0, position)]
+      : position === 'last'
+        ? resolveLastFrameCandidates(video.duration)
+        : [resolveFrameTimeSec('first', video.duration)]
   const validTargets = targets.filter((value): value is number => value !== null)
   if (validTargets.length === 0) return ''
 
@@ -411,7 +416,7 @@ export async function captureVideoFrame(
  */
 export async function captureVideoFrameWithRetry(
   video: HTMLVideoElement | null,
-  position: VideoFramePosition = 'current',
+  position: VideoFramePosition | number = 'current',
   options: CaptureVideoFrameRetryOptions = {},
 ): Promise<string> {
   const attempts = Math.max(1, Math.min(3, Math.floor(options.attempts ?? 2)))
@@ -435,7 +440,7 @@ export async function captureVideoFrameWithRetry(
  */
 export async function captureVideoFrameFromUrl(
   sourceUrl: string,
-  position: VideoFramePosition,
+  position: VideoFramePosition | number,
   options: CaptureVideoFrameFromUrlOptions = {},
 ): Promise<string> {
   const source = String(sourceUrl || '').trim()

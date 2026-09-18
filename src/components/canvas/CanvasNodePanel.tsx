@@ -32,6 +32,16 @@ import {
   getModelReferenceImageLimit,
 } from '@/utils/modelRestrictions'
 import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS } from '@/utils/canvasNodeDefaults'
+import type { CanvasResultHistoryEntry } from '@/utils/canvasElements'
+import { assetStreamUrl } from '@/utils/assetUrl'
+import {
+  buildMentionLabels,
+  buildMentionRegex,
+  diffMentionLabels,
+  findMentionDeletionRange,
+  rewriteMentions,
+  translateMentionsToPositional,
+} from '@/utils/canvasMentions'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import WheelPicker, { type WheelPickerOption } from '@/components/common/WheelPicker'
 import { requestConfirm } from '@/stores/ui'
@@ -41,6 +51,14 @@ function readText(value: unknown): string {
   if (typeof value === 'string') return value.trim()
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   return ''
+}
+
+/** 生成历史时间展示：MM-DD HH:mm；非法时间返回空串。 */
+function formatHistoryTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 /** 参数名归一化：aspect_ratio / aspectRatio / aspect-ratio 归一为同一键。 */
@@ -112,29 +130,6 @@ function isReferenceModeField(field: ParamsSchemaField): boolean {
 function isHiddenParamField(field: ParamsSchemaField): boolean {
   const key = normalizeParamKey(field.name)
   return HIDDEN_PARAM_KEYS.has(key) || REFERENCE_MODE_KEYS.has(key)
-}
-
-/** 识别 seedream 5.0 模型：displayName + 原始记录中的名称/版本字段拼接后匹配。 */
-function isSeedream50Model(model: { displayName?: string; source?: unknown } | undefined): boolean {
-  if (!model) return false
-  const source = (model.source || {}) as Readonly<Record<string, unknown>>
-  const parts = [
-    model.displayName,
-    source.display_name,
-    source.displayName,
-    source.name,
-    source.model_name,
-    source.modelName,
-    source.model,
-    source.version_name,
-    source.versionName,
-    source.version,
-  ]
-  const name = parts
-    .filter((v) => v !== undefined && v !== null)
-    .map(String)
-    .join(' ')
-  return /seedream/i.test(name) && /5(\.0)?/i.test(name)
 }
 
 /**
@@ -305,6 +300,8 @@ export interface CanvasSourceRef {
   realPerson?: SmartRealPersonReference
   /** 该连接在目标节点中的用途，仅用于画布语义展示。 */
   role?: CanvasConnectionRole
+  /** 来源节点被用户重命名后的名字（未改名不带）；@ 引用时用它替代位置号。 */
+  title?: string
 }
 
 interface InheritedPromptText {
@@ -362,6 +359,10 @@ interface CanvasNodePanelProps {
   onOpenRealPersonLibrary?: () => void
   /** 点击删除引用回调 */
   onRemoveRef?: (edgeId: string) => void
+  /** 当前节点的历次生成结果（最新在后），用于节点级生成历史回看（反馈 #8）。 */
+  resultHistory?: CanvasResultHistoryEntry[]
+  /** 点击某条历史结果：把它设为当前结果（回退/切换版本）。 */
+  onRevertToHistory?: (entry: CanvasResultHistoryEntry) => void
   /** 比例变更回调，用于同步更新节点宽高 */
   onRatioChange?: (ratio: string) => void
   /** 视频生成方式变更回调 */
@@ -545,6 +546,8 @@ export default function CanvasNodePanel({
   onPickRefFromLibrary,
   onOpenRealPersonLibrary,
   onRemoveRef,
+  resultHistory,
+  onRevertToHistory,
   onRatioChange,
   onVideoModeChange,
   onModelChange,
@@ -575,6 +578,8 @@ export default function CanvasNodePanel({
   const [prompt, setPrompt] = useState(() => String((kind === 'text' ? node?.text : node?.prompt) || ''))
   const [polishing, setPolishing] = useState(false)
   const [polishError, setPolishError] = useState('')
+  // 提示词放大：多提示词短剧的文案很长，默认输入框最高 220px 不够写（反馈 #5）。
+  const [promptExpanded, setPromptExpanded] = useState(false)
 
   // 切换选中节点时回填该节点自己的文案：面板是所有节点共用的一个实例，
   // 不按 node.id 重新灌值就会把上一个节点的输入框内容留在这里。
@@ -606,6 +611,261 @@ export default function CanvasNodePanel({
   }, [node?.sourceRefs])
   // 素材来源引用数量（文本来源不计入数量限制）
   const mediaRefCount = useMemo(() => sourceRefs.filter((ref) => ref.kind !== 'text').length, [sourceRefs])
+
+  // ===== #6 @参考素材：提示词里直接 @ 某条连入的参考素材 =====
+  // 标签口径见 utils/canvasMentions：重命名过用名字、否则位置号（图片N/视频N）；重名自动加后缀；
+  // 提交给模型时统一翻成位置号。显示文本与存储文本逐字一致（透明 textarea 叠高亮层的前提）。
+  const taRef = useRef<HTMLTextAreaElement | null>(null)
+  const hlRef = useRef<HTMLDivElement | null>(null)
+  const caretRef = useRef(0)
+  const promptRef = useRef(prompt)
+  promptRef.current = prompt
+
+  /**
+   * 高亮层给 textarea 的滚动条让位。
+   *
+   * 「透明 textarea 叠高亮层」要逐字对齐，前提是两层排版宽度一致。文字超过 max-height 后
+   * textarea 出现纵向滚动条、可排版宽度少一条滚动条，高亮层却仍按全宽换行——每行多塞一个字，
+   * 往下累计错位，光标、选区、绿色 @ 标签全都和看到的字对不上。这里把
+   * (offsetWidth - clientWidth) 即滚动条实际宽度设成高亮层的 right，两层就重新对齐；
+   * 顺带同步 scrollTop。文字变化、放大/拖拽改高、容器尺寸变化时都重算。
+   */
+  const syncHighlightLayout = useCallback(() => {
+    const ta = taRef.current
+    const hl = hlRef.current
+    if (!ta || !hl) return
+    const gutter = Math.max(0, ta.offsetWidth - ta.clientWidth)
+    const right = `${gutter}px`
+    if (hl.style.right !== right) hl.style.right = right
+    if (hl.scrollTop !== ta.scrollTop) hl.scrollTop = ta.scrollTop
+  }, [])
+  useEffect(() => {
+    syncHighlightLayout()
+    const ta = taRef.current
+    if (!ta || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => syncHighlightLayout())
+    observer.observe(ta)
+    return () => observer.disconnect()
+  }, [syncHighlightLayout, node?.id])
+  // 每次文字变化后（滚动条可能刚出现/消失）重算一次
+  useEffect(() => {
+    syncHighlightLayout()
+  }, [prompt, promptExpanded, syncHighlightLayout])
+  /** 每条参考的 @ 标签（不含 @），与缩略图展示顺序一致。 */
+  const refLabelByEdge = useMemo(() => buildMentionLabels(sourceRefs), [sourceRefs])
+  /** 可被 @ 的参考（仅图片/视频），供选择器列出。 */
+  const mentionableRefs = useMemo(
+    () => sourceRefs.filter((ref) => ref.kind === 'image' || ref.kind === 'video'),
+    [sourceRefs],
+  )
+
+  // 用户在当前节点上动过输入框（含清空）：上游文本自动回填只在此前发生。换节点重置。
+  const userEditedPromptRef = useRef(false)
+  useEffect(() => {
+    userEditedPromptRef.current = false
+  }, [node?.id])
+
+  /**
+   * 写回节点做防抖：onPromptChange 会让 CanvasView setNodes → 整张画布重渲染 + 云同步调度，
+   * 长文案逐字触发会明显卡手。本地 state 仍即时更新（输入不受影响），只是落到节点晚 ~200ms；
+   * 切节点/卸载前 flush，保证最后几个字不丢。
+   */
+  const PROMPT_WRITE_BACK_DELAY_MS = 200
+  const promptWriteBackTimerRef = useRef<number | null>(null)
+  // 连同当时的 onPromptChange 一起存：父组件的回调按「当时选中的节点」写回，
+  // 换节点后再 flush 必须仍用旧回调，否则会把上一个节点的文字写进新节点。
+  const pendingWriteBackRef = useRef<{ text: string; write?: (text: string) => void } | null>(null)
+  const flushPromptWriteBack = useCallback(() => {
+    if (promptWriteBackTimerRef.current !== null) {
+      window.clearTimeout(promptWriteBackTimerRef.current)
+      promptWriteBackTimerRef.current = null
+    }
+    const pending = pendingWriteBackRef.current
+    pendingWriteBackRef.current = null
+    pending?.write?.(pending.text)
+  }, [])
+  const schedulePromptWriteBack = useCallback(
+    (next: string, write?: (text: string) => void) => {
+      pendingWriteBackRef.current = { text: next, write }
+      if (promptWriteBackTimerRef.current !== null) window.clearTimeout(promptWriteBackTimerRef.current)
+      promptWriteBackTimerRef.current = window.setTimeout(flushPromptWriteBack, PROMPT_WRITE_BACK_DELAY_MS)
+    },
+    [flushPromptWriteBack],
+  )
+  // 换节点 / 卸载：先把上一个节点未落盘的文字写回去（用它自己的回调）
+  useEffect(() => {
+    return () => flushPromptWriteBack()
+  }, [node?.id, flushPromptWriteBack])
+
+  // 把新文本落到提示词并持久化：图片/视频节点边输入边写回 prompt，切节点/刷新后仍在。
+  // immediate=true 用于点选/润色/语音这类一次性改动，直接写回不防抖。
+  const commitPrompt = useCallback(
+    (next: string, options: { immediate?: boolean } = {}) => {
+      setPrompt(next)
+      if (polishError) setPolishError('')
+      if (kind === 'text') return
+      if (options.immediate) {
+        pendingWriteBackRef.current = null
+        if (promptWriteBackTimerRef.current !== null) {
+          window.clearTimeout(promptWriteBackTimerRef.current)
+          promptWriteBackTimerRef.current = null
+        }
+        onPromptChange?.(next)
+      } else {
+        schedulePromptWriteBack(next, onPromptChange)
+      }
+    },
+    [kind, onPromptChange, polishError, schedulePromptWriteBack],
+  )
+
+  // 用一段文本替换提示词的 [from, to) 区间，光标落到替换文本之后并回焦。
+  const replaceRange = useCallback(
+    (from: number, to: number, snippet: string) => {
+      if (taskRunning) return
+      const start = Math.max(0, Math.min(from, prompt.length))
+      const end = Math.max(start, Math.min(to, prompt.length))
+      const next = prompt.slice(0, start) + snippet + prompt.slice(end)
+      const newPos = start + snippet.length
+      caretRef.current = newPos
+      commitPrompt(next, { immediate: true })
+      requestAnimationFrame(() => {
+        const ta = taRef.current
+        if (ta) {
+          ta.focus()
+          ta.setSelectionRange(newPos, newPos)
+        }
+      })
+    },
+    [taskRunning, prompt, commitPrompt],
+  )
+
+  // 在记录的光标位置插入引用文本（沿用 ImageChat 的口径）。
+  const insertAtCaret = useCallback(
+    (snippet: string) => replaceRange(caretRef.current, caretRef.current, snippet),
+    [replaceRange],
+  )
+
+  const insertRefMention = useCallback(
+    (ref: CanvasSourceRef) => {
+      const label = refLabelByEdge.get(ref.edgeId)
+      if (label) insertAtCaret(`@${label} `)
+    },
+    [refLabelByEdge, insertAtCaret],
+  )
+
+  // 删除参考时同步改提示词里的引用：被删那条去掉，其后同类型位置号前移，名字型的不受影响。
+  // 单趟重写，避免「3→2、2→1」级联把 3 一路改成 1。
+  const handleRemoveRefWithReindex = useCallback(
+    (ref: CanvasSourceRef) => {
+      const nextLabels = buildMentionLabels(sourceRefs.filter((item) => item.edgeId !== ref.edgeId))
+      const next = rewriteMentions(prompt, diffMentionLabels(refLabelByEdge, nextLabels))
+      if (next !== prompt) commitPrompt(next, { immediate: true })
+      onRemoveRef?.(ref.edgeId)
+    },
+    [sourceRefs, refLabelByEdge, prompt, commitPrompt, onRemoveRef],
+  )
+
+  // 参考被重命名（或在画布上直接删线/前移）时，把提示词里已有的引用跟着改——否则写着 @天安门、
+  // 节点已改叫故宫，引用就成了死链。切到别的节点时只记快照不改：那是另一个节点的提示词。
+  const prevLabelsRef = useRef<{ nodeId: string | undefined; labels: Map<string, string> }>({
+    nodeId: undefined,
+    labels: new Map(),
+  })
+  useEffect(() => {
+    const prev = prevLabelsRef.current
+    prevLabelsRef.current = { nodeId: node?.id, labels: refLabelByEdge }
+    if (prev.nodeId !== node?.id) return
+    const mapping = diffMentionLabels(prev.labels, refLabelByEdge)
+    if (!mapping.size) return
+    const next = rewriteMentions(promptRef.current, mapping)
+    if (next !== promptRef.current) commitPrompt(next, { immediate: true })
+  }, [refLabelByEdge, node?.id, commitPrompt])
+
+  // 高亮层：把 @标签（名字型与位置号都算）标绿，其余为普通文本（透明 textarea 叠在此层之上）。
+  const mentionRegex = useMemo(() => buildMentionRegex(refLabelByEdge.values()), [refLabelByEdge])
+  const renderPromptHighlight = useCallback(
+    (text: string): React.ReactNode => {
+      if (!text) return null
+      const out: React.ReactNode[] = []
+      let last = 0
+      let m: RegExpExecArray | null
+      mentionRegex.lastIndex = 0
+      while ((m = mentionRegex.exec(text))) {
+        if (m.index > last) out.push(text.slice(last, m.index))
+        out.push(
+          <span className={styles.promptRefTag} key={`${m.index}-${m[0]}`}>
+            {m[0]}
+          </span>,
+        )
+        last = m.index + m[0].length
+      }
+      out.push(text.slice(last))
+      return out
+    },
+    [mentionRegex],
+  )
+
+  // ===== 输入 @ 弹出参考选择器：敲 @ 即列出可 @ 的参考，继续输入按名字筛，↑↓ 选、Enter/Tab 确认、Esc 关 =====
+  /** 选择器锚点：提示词里那个 @ 的下标；null=未打开 */
+  const [atAnchor, setAtAnchor] = useState<number | null>(null)
+  const [atActive, setAtActive] = useState(0)
+  const closeAtPicker = useCallback(() => {
+    setAtAnchor(null)
+    setAtActive(0)
+  }, [])
+  // 切到别的节点时关掉，别把上一个节点的选择器留在屏幕上
+  useEffect(() => {
+    closeAtPicker()
+  }, [node?.id, closeAtPicker])
+  /** @ 之后、光标之前的那段是筛选词 */
+  const atQuery = useMemo(() => {
+    if (atAnchor === null) return ''
+    const caret = Math.min(caretRef.current, prompt.length)
+    if (caret <= atAnchor || prompt[atAnchor] !== '@') return ''
+    return prompt.slice(atAnchor + 1, caret)
+  }, [atAnchor, prompt])
+  const atCandidates = useMemo(() => {
+    if (atAnchor === null) return []
+    const query = atQuery.trim().toLowerCase()
+    return mentionableRefs.filter((ref) => {
+      const label = (refLabelByEdge.get(ref.edgeId) || '').toLowerCase()
+      return !query || label.includes(query)
+    })
+  }, [atAnchor, atQuery, mentionableRefs, refLabelByEdge])
+  // 选中一条：把「@ + 已输入的筛选词」整段替换成完整引用
+  const pickAtCandidate = useCallback(
+    (ref: CanvasSourceRef | undefined) => {
+      const label = ref ? refLabelByEdge.get(ref.edgeId) : ''
+      if (label && atAnchor !== null) {
+        const caret = Math.min(caretRef.current, prompt.length)
+        replaceRange(atAnchor, Math.max(caret, atAnchor + 1), `@${label} `)
+      }
+      closeAtPicker()
+    },
+    [refLabelByEdge, atAnchor, prompt.length, replaceRange, closeAtPicker],
+  )
+  // 「输入 @ 但还没有连入任何参考」以前是完全没反应——选择器只列已连线的参考,没有就不弹。
+  // 用户的心智是「@ = 引用一张图」,所以选择器里始终给两条取图入口(素材库 / 画布点选);
+  // 取到的素材连到本节点后,自动把刚才敲的「@筛选词」换成完整引用,不用再敲一次。
+  const pendingAtMentionRef = useRef<{ anchor: number; knownEdgeIds: Set<string> } | null>(null)
+  useEffect(() => {
+    pendingAtMentionRef.current = null
+  }, [node?.id])
+  useEffect(() => {
+    const pending = pendingAtMentionRef.current
+    if (!pending) return
+    const added = mentionableRefs.find((ref) => !pending.knownEdgeIds.has(ref.edgeId))
+    if (!added) return
+    pendingAtMentionRef.current = null
+    const label = refLabelByEdge.get(added.edgeId)
+    const text = promptRef.current
+    if (!label || text[pending.anchor] !== '@') return
+    // 把「@ + 已输入的筛选词」整段换成完整引用
+    let end = pending.anchor + 1
+    while (end < text.length && !/\s/.test(text[end])) end += 1
+    replaceRange(pending.anchor, end, `@${label} `)
+  }, [mentionableRefs, refLabelByEdge, replaceRange])
+
   const kindModels = useMemo(() => models?.[kind as 'text' | 'image' | 'video'] || [], [models, kind])
   const stableInheritedTexts = inheritedTexts || EMPTY_INHERITED_TEXTS
   const hasInheritedTexts = stableInheritedTexts.length > 0
@@ -713,6 +973,32 @@ export default function CanvasNodePanel({
 
   /** 视频节点顶部的参考槽位下标，数量跟随 maxRefs。 */
   const refSlots = useMemo(() => Array.from({ length: maxRefs }, (_, index) => index), [maxRefs])
+
+  /** 再加一条参考该落到哪个槽位:与各处「添加参考」按钮同口径;已满返回 undefined。 */
+  const nextRefSlot = useCallback((): number | undefined => {
+    if (mediaRefCount >= maxRefs) return undefined
+    if (kind === 'video') return refSlots.find((slot) => !findRefBySlot(sourceRefs, slot)) ?? mediaRefCount
+    return sourceRefs.length
+  }, [kind, maxRefs, mediaRefCount, refSlots, sourceRefs])
+  // @ 选择器里的取图入口:还能再加参考、且父组件接了对应回调时才给
+  const canPickRefViaAt = !taskRunning && mediaRefCount < maxRefs
+  const atPickFromLibrary = canPickRefViaAt && onPickRefFromLibrary ? onPickRefFromLibrary : undefined
+  const atPickFromCanvas = canPickRefViaAt && onStartPickRef ? onStartPickRef : undefined
+  const atPickerHasActions = Boolean(atPickFromLibrary || atPickFromCanvas)
+  const startPickRefViaAt = useCallback(
+    (source: 'library' | 'canvas') => {
+      const pick = source === 'library' ? atPickFromLibrary : atPickFromCanvas
+      const slot = nextRefSlot()
+      if (!pick || slot === undefined || atAnchor === null) return
+      pendingAtMentionRef.current = {
+        anchor: atAnchor,
+        knownEdgeIds: new Set(mentionableRefs.map((ref) => ref.edgeId)),
+      }
+      closeAtPicker()
+      pick(slot)
+    },
+    [atPickFromLibrary, atPickFromCanvas, nextRefSlot, atAnchor, mentionableRefs, closeAtPicker],
+  )
 
   // 本次生成使用的 operation_code：目标 code 有可用模型时固定使用，否则为空（按钮禁用）
   const operationCode = useMemo(() => {
@@ -848,12 +1134,12 @@ export default function CanvasNodePanel({
    * 填完仍保留连线（画布上还看得见来源关系），因此提交时必须把这段从「继承」里排除掉，
    * 否则同一段文字会拼两遍。
    */
+  // 用户主动把输入框清空后不再回填：以前只看「输入框是否为空」，全选删除想重写，一松手又被灌满。
+  // 只在「这个节点选中以来用户还没动过输入框」时自动填一次；换节点后重新允许。
   useEffect(() => {
-    if (kind === 'text' || !inheritedPromptText.length || prompt.trim()) return
-    const filled = inheritedPromptText.join('\n\n')
-    setPrompt(filled)
-    onPromptChange?.(filled)
-  }, [kind, inheritedPromptText, prompt, onPromptChange])
+    if (kind === 'text' || !inheritedPromptText.length || prompt.trim() || userEditedPromptRef.current) return
+    commitPrompt(inheritedPromptText.join('\n\n'), { immediate: true })
+  }, [kind, inheritedPromptText, prompt, commitPrompt])
 
   /**
    * 还没进输入框的继承文本。已经落进输入框的那些不再重复拼接，也不再单独展示：
@@ -867,9 +1153,14 @@ export default function CanvasNodePanel({
   const buildFullPrompt = useCallback(
     (userPrompt: string): string => {
       const userText = userPrompt.trim()
-      return [...inheritedPromptText.filter((text) => !userText.includes(text)), userText].filter(Boolean).join('\n\n')
+      const assembled = [...inheritedPromptText.filter((text) => !userText.includes(text)), userText]
+        .filter(Boolean)
+        .join('\n\n')
+      // 出门前把名字型引用（@天安门）翻成模型认得的位置号（@图片1）：模型只按附图顺序理解"第几张"，
+      // 名字只活在界面。位置号本身原样保留；匹配不到的不硬猜。
+      return translateMentionsToPositional(assembled, sourceRefs)
     },
-    [inheritedPromptText],
+    [inheritedPromptText, sourceRefs],
   )
 
   // 估价必须和提交用同一份 input_assets：改片时节点自己的那条视频也要计入，
@@ -996,6 +1287,8 @@ export default function CanvasNodePanel({
       })
       if (confirmed !== true) return
     }
+    // 先把防抖中的最后几个字写回节点，再提交：节点数据与本次发出的 prompt 一致
+    flushPromptWriteBack()
     onGenerate?.({
       kind,
       prompt: buildFullPrompt(prompt),
@@ -1015,9 +1308,8 @@ export default function CanvasNodePanel({
   const appendSpokenText = (text: string) => {
     if (taskRunning) return
     const next = prompt && !/\s$/.test(prompt) ? `${prompt} ${text}` : prompt + text
-    setPrompt(next)
-    if (polishError) setPolishError('')
-    if (kind !== 'text') onPromptChange?.(next)
+    userEditedPromptRef.current = true
+    commitPrompt(next, { immediate: true })
   }
 
   const handlePolishText = async () => {
@@ -1030,9 +1322,9 @@ export default function CanvasNodePanel({
       // 生成的长描述随后会在图生图/图生视频里压过参考图，把原主体换掉。
       const polished = String(await onPolishText({ prompt: value, kind, ...buildPolishImageRefs(sourceRefs) })).trim()
       if (!polished) throw new Error('AI 未返回可用的润色内容')
-      setPrompt(polished)
-      // 润色结果同样要落到节点，否则润色完切走再回来就变回原文
-      if (kind !== 'text') onPromptChange?.(polished)
+      // 润色结果同样要落到节点，否则润色完切走再回来就变回原文（immediate 同时作废防抖中的旧文本）
+      userEditedPromptRef.current = true
+      commitPrompt(polished, { immediate: true })
     } catch (error: any) {
       setPolishError(String(error?.message || '润色失败，请稍后重试'))
     } finally {
@@ -1043,8 +1335,8 @@ export default function CanvasNodePanel({
   const handleAdoptInheritedText = () => {
     if (!hasInheritedTexts || taskRunning) return
     const merged = [...inheritedTexts.map((item) => item.text), prompt.trim()].filter(Boolean).join('\n\n')
-    setPrompt(merged)
-    if (kind !== 'text') onPromptChange?.(merged)
+    userEditedPromptRef.current = true
+    commitPrompt(merged, { immediate: true })
     onAdoptInheritedText?.()
   }
 
@@ -1112,8 +1404,24 @@ export default function CanvasNodePanel({
             {sourceRefs
               .filter((ref) => ref.kind !== 'text')
               .map((ref) => (
-                <div key={ref.edgeId} className={styles.refThumb} title={ref.kind === 'image' ? '图片' : '视频'}>
+                <div
+                  key={ref.edgeId}
+                  className={`${styles.refThumb} ${styles.refThumbClickable}`}
+                  title={`${refLabelByEdge.get(ref.edgeId) ? `@${refLabelByEdge.get(ref.edgeId)}` : ref.kind === 'image' ? '图片' : '视频'}：点击在提示词中插入引用（输入 @ 也可选择）`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => insertRefMention(ref)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      insertRefMention(ref)
+                    }
+                  }}
+                >
                   <RefThumbMedia sourceRef={ref} label={ref.kind} />
+                  {refLabelByEdge.get(ref.edgeId) && (
+                    <span className={styles.refThumbTag}>@{refLabelByEdge.get(ref.edgeId)}</span>
+                  )}
                   <button
                     type="button"
                     className={styles.refDelete}
@@ -1121,7 +1429,7 @@ export default function CanvasNodePanel({
                     aria-label={`删除${ref.kind === 'image' ? '图片' : '视频'}参考`}
                     onClick={(event) => {
                       event.stopPropagation()
-                      onRemoveRef?.(ref.edgeId)
+                      handleRemoveRefWithReindex(ref)
                     }}
                   >
                     &times;
@@ -1153,14 +1461,30 @@ export default function CanvasNodePanel({
             {sourceRefs
               .filter((ref) => ref.kind !== 'text')
               .map((ref) => (
-                <div key={ref.edgeId} className={styles.refThumb} title={ref.kind === 'image' ? '图片' : '视频'}>
+                <div
+                  key={ref.edgeId}
+                  className={`${styles.refThumb} ${styles.refThumbClickable}`}
+                  title={`${refLabelByEdge.get(ref.edgeId) ? `@${refLabelByEdge.get(ref.edgeId)}` : ref.kind === 'image' ? '图片' : '视频'}：点击在提示词中插入引用（输入 @ 也可选择）`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => insertRefMention(ref)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      insertRefMention(ref)
+                    }
+                  }}
+                >
                   <RefThumbMedia sourceRef={ref} label={ref.kind} />
+                  {refLabelByEdge.get(ref.edgeId) && (
+                    <span className={styles.refThumbTag}>@{refLabelByEdge.get(ref.edgeId)}</span>
+                  )}
                   <button
                     className={styles.refDelete}
                     disabled={taskRunning}
                     onClick={(e) => {
                       e.stopPropagation()
-                      onRemoveRef?.(ref.edgeId)
+                      handleRemoveRefWithReindex(ref)
                     }}
                   >
                     &times;
@@ -1209,22 +1533,196 @@ export default function CanvasNodePanel({
         </div>
       )}
 
-      {/* textarea */}
-      <textarea
-        className={styles.textarea}
-        placeholder={
-          kind === 'text' ? '输入主题或完整的生图提示词...' : `描述你想要生成的${kind === 'video' ? '视频' : ''}内容...`
-        }
-        value={prompt}
-        onChange={(e) => {
-          if (taskRunning) return
-          setPrompt(e.target.value)
-          if (polishError) setPolishError('')
-          // 文本节点的内容由「保存」显式落到 text；图片/视频节点边输入边写回 prompt，
-          // 这样切到别的节点再切回来、以及刷新重进，输入框里的文案都还在。
-          if (kind !== 'text') onPromptChange?.(e.target.value)
-        }}
-      />
+      {/* 节点级生成历史（反馈 #8）：只对已有历史的图片/视频节点显示；点缩略图切回该版本。
+          缩略图按 assetId 现算地址，不落 dataURL，避免撑大画布 payload。 */}
+      {(kind === 'image' || kind === 'video') && (resultHistory?.length ?? 0) > 0 && (
+        <div className={styles.historyStrip}>
+          <span className={styles.historyLabel}>历史</span>
+          <div className={styles.historyItems}>
+            {resultHistory!
+              .slice()
+              .reverse()
+              .map((entry, index) => {
+                const isCurrent = entry.assetId === node?.assetId
+                const src = assetStreamUrl(entry.assetId, workspaceId)
+                const time = formatHistoryTime(entry.createdAt)
+                return (
+                  <button
+                    key={`${entry.assetId}-${index}`}
+                    type="button"
+                    className={`${styles.historyItem}${isCurrent ? ` ${styles.historyItemActive}` : ''}`}
+                    title={`${entry.kind === 'video' ? '视频' : '图片'}${time ? ` · ${time}` : ''}${isCurrent ? '（当前）' : '，点击切回此版本'}`}
+                    onClick={() => {
+                      if (!isCurrent && !taskRunning) onRevertToHistory?.(entry)
+                    }}
+                    disabled={taskRunning}
+                  >
+                    {entry.kind === 'video' ? (
+                      <video src={src} muted preload="metadata" />
+                    ) : (
+                      <img src={src} alt="历史生成结果" loading="lazy" />
+                    )}
+                    {isCurrent && <span className={styles.historyCurrentBadge}>当前</span>}
+                  </button>
+                )
+              })}
+          </div>
+        </div>
+      )}
+
+      {/* 提示词输入：透明 textarea 叠在高亮层上，@引用标绿（反馈 #6）。
+          点下方参考缩略图、或直接输入 @ 弹出选择器，都能在光标处插入引用。 */}
+      <div className={styles.promptWrap}>
+        <div className={styles.promptHl} ref={hlRef} aria-hidden="true">
+          {renderPromptHighlight(prompt)}
+        </div>
+        <textarea
+          ref={taRef}
+          className={`${styles.textarea} ${styles.textareaOverlay}${promptExpanded ? ` ${styles.textareaExpanded}` : ''}`}
+          placeholder={
+            kind === 'text'
+              ? '输入主题或完整的生图提示词...'
+              : `描述你想要生成的${kind === 'video' ? '视频' : ''}内容...${mentionableRefs.length || atPickerHasActions ? '（输入 @ 可引用参考素材）' : ''}`
+          }
+          value={prompt}
+          onChange={(e) => {
+            if (taskRunning) return
+            let value = e.target.value
+            const pos = e.target.selectionStart ?? value.length
+            const typedOneChar = value.length === prompt.length + 1
+            // 中文输入法下敲出来的是全角 ＠：当作半角 @ 处理（存储统一为 @，引用高亮/翻译才认得），
+            // 受控值被改写后光标会跳到末尾，下一帧拉回原位。
+            if (typedOneChar && value[pos - 1] === '＠') {
+              value = `${value.slice(0, pos - 1)}@${value.slice(pos)}`
+              requestAnimationFrame(() => taRef.current?.setSelectionRange(pos, pos))
+            }
+            // 只多了一个字符且它是 @ → 用户刚敲了 @
+            const typedAt = typedOneChar && value[pos - 1] === '@'
+            caretRef.current = pos
+            userEditedPromptRef.current = true
+            // 文本节点的内容由「保存」显式落到 text；图片/视频节点边输入边写回 prompt（防抖），
+            // 这样切到别的节点再切回来、以及刷新重进，输入框里的文案都还在。
+            commitPrompt(value)
+            // @ 选择器：刚敲 @ 且有可 @ 的参考（或能取图）→ 打开；打开中若光标退到 @ 前、@ 没了、或输入了空白 → 关
+            if (typedAt && (mentionableRefs.length || atPickerHasActions)) {
+              setAtAnchor(pos - 1)
+              setAtActive(0)
+            } else if (atAnchor !== null) {
+              const query = pos > atAnchor && value[atAnchor] === '@' ? value.slice(atAnchor + 1, pos) : null
+              if (query === null || /\s/.test(query)) closeAtPicker()
+              else setAtActive(0)
+            }
+          }}
+          onSelect={(e) => {
+            const pos = e.currentTarget.selectionStart ?? 0
+            caretRef.current = pos
+            if (atAnchor !== null && pos <= atAnchor) closeAtPicker()
+          }}
+          onKeyDown={(e) => {
+            // @引用当成一个整体删：Backspace 在引用末尾/内部、Delete 在引用前，一次删掉整条 @标签 及其后空格
+            if ((e.key === 'Backspace' || e.key === 'Delete') && !taskRunning && atAnchor === null) {
+              const ta = e.currentTarget
+              const start = ta.selectionStart ?? 0
+              if (start === (ta.selectionEnd ?? 0)) {
+                const range = findMentionDeletionRange(
+                  prompt,
+                  start,
+                  e.key === 'Backspace' ? 'backward' : 'forward',
+                  mentionRegex,
+                )
+                if (range) {
+                  e.preventDefault()
+                  replaceRange(range.start, range.end, '')
+                  return
+                }
+              }
+            }
+            if (atAnchor === null) return
+            if (!atCandidates.length) {
+              // 没有可 @ 的参考:Enter 直接去素材库取图,Esc 关掉选择器
+              if (e.key === 'Enter' && atPickFromLibrary) {
+                e.preventDefault()
+                startPickRefViaAt('library')
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                closeAtPicker()
+              }
+              return
+            }
+            if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setAtActive((index) => (index + 1) % atCandidates.length)
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setAtActive((index) => (index - 1 + atCandidates.length) % atCandidates.length)
+            } else if (e.key === 'Enter' || e.key === 'Tab') {
+              e.preventDefault()
+              pickAtCandidate(atCandidates[atActive])
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              closeAtPicker()
+            }
+          }}
+          onBlur={closeAtPicker}
+          onScroll={syncHighlightLayout}
+        />
+        {/* @ 选择器：列出可 @ 的参考（缩略图 + 标签）+ 取图入口；mousedown 阻止默认避免 textarea 失焦丢光标 */}
+        {atAnchor !== null && (atCandidates.length > 0 || atPickerHasActions) && (
+          <div className={styles.atPicker} role="listbox" aria-label="选择要 @ 的参考素材">
+            {!atCandidates.length && (
+              <div className={styles.atPickerEmpty}>
+                {mentionableRefs.length ? '没有匹配的参考素材' : '还没有连入的参考素材，先取一张图：'}
+              </div>
+            )}
+            {atCandidates.map((ref, index) => {
+              const label = refLabelByEdge.get(ref.edgeId) || ''
+              return (
+                <button
+                  key={ref.edgeId}
+                  type="button"
+                  role="option"
+                  aria-selected={index === atActive}
+                  className={`${styles.atOption}${index === atActive ? ` ${styles.atOptionActive}` : ''}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setAtActive(index)}
+                  onClick={() => pickAtCandidate(ref)}
+                >
+                  <span className={styles.atOptionThumb}>
+                    <RefThumbMedia sourceRef={ref} label={ref.kind} />
+                  </span>
+                  <span className={styles.atOptionLabel}>@{label}</span>
+                </button>
+              )
+            })}
+            {atPickerHasActions && (
+              <div className={styles.atPickerActions}>
+                {atPickFromLibrary && (
+                  <button
+                    type="button"
+                    className={styles.atAction}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => startPickRefViaAt('library')}
+                  >
+                    <PlusSmIcon />
+                    从素材库选择
+                  </button>
+                )}
+                {atPickFromCanvas && (
+                  <button
+                    type="button"
+                    className={styles.atAction}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => startPickRefViaAt('canvas')}
+                  >
+                    <PlusSmIcon />
+                    从画布选择
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className={styles.textPromptTools}>
         <div className={`${styles.textPromptHint} ${polishError ? styles.textPromptError : ''}`}>
@@ -1238,6 +1736,23 @@ export default function CanvasNodePanel({
                   : '润色后只更新图片描述，不会自动开始生成')}
         </div>
         <div className={styles.textPromptActions}>
+          {/* 放大/收起提示词框：长文案（多提示词短剧）时把输入区拉大，另外也允许纵向拖拽 */}
+          <button
+            type="button"
+            className={styles.expandBtn}
+            onClick={() => setPromptExpanded((value) => !value)}
+            title={promptExpanded ? '收起输入框' : '放大输入框'}
+            aria-pressed={promptExpanded}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8">
+              {promptExpanded ? (
+                <path d="M9 15l-5 5m0-5v5h5M15 9l5-5m0 5V4h-5" />
+              ) : (
+                <path d="M4 14v6h6m10-10V4h-6M4 20l7-7M20 4l-7 7" />
+              )}
+            </svg>
+            {promptExpanded ? '收起' : '放大'}
+          </button>
           {/* 语音输入:识别文本接到提示词末尾;生成中提示词已锁定,不给入口 */}
           {!taskRunning && <VoiceInputButton className={styles.micBtn} onText={appendSpokenText} />}
           <button
@@ -1284,8 +1799,8 @@ export default function CanvasNodePanel({
             </button>
           )}
 
-          {/* 比例选择器：schema 已含比例字段时由菜单控制；seedream 5.0 模型不提供独立比例选项 */}
-          {kind === 'image' && !imageRatioInSchema && !isSeedream50Model(selectedModel) && (
+          {/* 比例选择器：schema 已含比例字段时由菜单控制，否则统一显示固定比例选择器（含 seedream 5.0） */}
+          {kind === 'image' && !imageRatioInSchema && (
             <RatioSelector value={ratio} onRatioChange={taskRunning ? undefined : onRatioChange} />
           )}
 

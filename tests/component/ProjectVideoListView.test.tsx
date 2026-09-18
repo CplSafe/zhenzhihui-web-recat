@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   deleteProjectVideo: vi.fn(),
   downloadToDisk: vi.fn(),
   getCreativeProject: vi.fn(),
+  listAiModels: vi.fn(),
   listProjectVideos: vi.fn(),
   listWorkspaceMembers: vi.fn(),
   navigate: vi.fn(),
@@ -62,7 +63,10 @@ vi.mock('@/api/projectVideos', () => ({
 }))
 
 vi.mock('@/api/business', () => ({
+  getBusinessErrorMessage: (error: unknown, fallback: string) =>
+    error instanceof Error && error.message ? error.message : fallback,
   getCreativeProject: mocks.getCreativeProject,
+  listAiModels: mocks.listAiModels,
 }))
 
 vi.mock('@/utils/downloadToDisk', () => ({
@@ -114,6 +118,8 @@ describe('ProjectVideoListView reliability', () => {
     mocks.downloadToDisk.mockReset()
     mocks.getCreativeProject.mockReset()
     mocks.getCreativeProject.mockResolvedValue({ draft_json: {} })
+    mocks.listAiModels.mockReset()
+    mocks.listAiModels.mockResolvedValue([])
     mocks.listProjectVideos.mockReset()
     mocks.listWorkspaceMembers.mockReset()
     mocks.listWorkspaceMembers.mockImplementation(() => new Promise(() => undefined))
@@ -254,5 +260,56 @@ describe('ProjectVideoListView reliability', () => {
     fireEvent.click(screen.getByRole('button', { name: '更多操作' }))
 
     expect(await screen.findByRole('button', { name: '删除视频' })).toBeInTheDocument()
+  })
+
+  it('按视频模型筛选：选项来自视频记录的模型，名字优先查目录，老视频归入「未记录模型」', async () => {
+    // 目录只在 video.generate 查询时返回模型 12;模型 31(爆款复刻)目录里查不到 → 退回视频上的名字快照
+    mocks.listAiModels.mockImplementation(({ operationCode }: { operationCode: string }) =>
+      Promise.resolve(
+        operationCode === 'video.generate'
+          ? [{ id: 12, name: 'Seedance 1.0', enabled: true, operation_codes: ['video.generate'] }]
+          : [],
+      ),
+    )
+    mocks.listProjectVideos.mockResolvedValue(
+      payload(1, '模型筛选项目', [
+        { ...ownedVideo, id: 'v-1', title: 'Seedance 视频一', modelVersionId: 12 },
+        { ...ownedVideo, id: 'v-2', title: 'Seedance 视频二', modelVersionId: 12, modelInferred: true },
+        { ...ownedVideo, id: 'v-3', title: '复刻视频', flow: 'hot-copy', modelVersionId: 31, modelName: 'Replicate X' },
+        { ...ownedVideo, id: 'v-4', title: '老视频' },
+      ]),
+    )
+
+    render(<ProjectVideoListView />)
+    expect(await screen.findByText('老视频')).toBeInTheDocument()
+    const select = screen.getByRole('combobox', { name: '按视频模型筛选' })
+    await waitFor(() => expect(within(select).getByRole('option', { name: 'Seedance 1.0（2）' })).toBeInTheDocument())
+    expect(
+      within(select)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['全部', 'Seedance 1.0（2）', 'Replicate X（1）', '未记录模型（1）'])
+
+    fireEvent.change(select, { target: { value: '12' } })
+    expect(screen.getByText('Seedance 视频一')).toBeInTheDocument()
+    expect(screen.getByText('Seedance 视频二')).toBeInTheDocument()
+    expect(screen.queryByText('复刻视频')).not.toBeInTheDocument()
+    expect(screen.queryByText('老视频')).not.toBeInTheDocument()
+
+    fireEvent.change(select, { target: { value: 'unknown' } })
+    expect(screen.getByText('老视频')).toBeInTheDocument()
+    expect(screen.queryByText('Seedance 视频一')).not.toBeInTheDocument()
+
+    // 与流程 Tab 叠加:爆款复刻下没有「未记录模型」的视频
+    fireEvent.click(screen.getByRole('button', { name: '爆款复刻' }))
+    expect(screen.getByText('当前项目下还没有符合条件的视频')).toBeInTheDocument()
+  })
+
+  it('没有任何视频记录模型时不显示模型筛选', async () => {
+    mocks.listProjectVideos.mockResolvedValue(payload(1, '普通项目', [ownedVideo]))
+
+    render(<ProjectVideoListView />)
+    expect(await screen.findByText(ownedVideo.title)).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '按视频模型筛选' })).not.toBeInTheDocument()
   })
 })

@@ -5,7 +5,7 @@
  * 安全边界：不记录令牌、认证响应或完整跳转地址；组件卸载时终止倒计时和迟到的会话桥接回调。
  */
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import './LoginView.css'
 import loginHero from '@/assets/login-hero.webp'
 import loginHeroFallback from '@/assets/login-hero-fallback.jpg'
@@ -36,6 +36,7 @@ import { getInviteCode, getInviteType } from '@/utils/inviteCode'
 import MediaSoundToggle from '@/components/common/MediaSoundToggle'
 import { useBackgroundVideoSound } from '@/composables/useBackgroundVideoSound'
 import { useLatestCallback } from '@/composables/useLatestCallback'
+import { readLoginReturnTo } from '@/utils/loginReturnTo'
 
 /** 短信登录前的人机验证码会话状态。 */
 interface CaptchaState {
@@ -77,7 +78,10 @@ export default function LoginView() {
     navigate('/welcome', { replace: true })
   }
   const { showToast, clearToast } = useToast()
-  const { handleLoginSuccess } = useAuth()
+  const { handleLoginSuccess: finishLogin } = useAuth()
+  // 被守卫/需登录动作弹到登录页时携带的站内回跳地址;登录成功后回到原页,而不是一律落首页。
+  const returnTo = readLoginReturnTo(useLocation().state)
+  const handleLoginSuccess = (session?: any) => finishLogin(session, returnTo)
 
   const hasRemoteBackend = hasConfiguredDevBackend()
 
