@@ -57,7 +57,10 @@ vi.mock('@/utils/favoriteVideos', () => ({
 }))
 
 vi.mock('@/composables/useRequireAuth', () => ({
-  useRequireAuth: () => (action: () => void) => mocks.requireAuth(action),
+  useRequireAuth:
+    () =>
+    (...args: unknown[]) =>
+      mocks.requireAuth(...args),
 }))
 
 vi.mock('@/composables/useSidebarNavigate', () => ({
@@ -126,7 +129,11 @@ describe('TemplatesView', () => {
 
     mocks.loadFavoriteKeys.mockReturnValue(new Set())
     mocks.toggleFavorite.mockReturnValue(true)
-    mocks.requireAuth.mockImplementation((action: () => void) => action())
+    // 与真实 useRequireAuth 同形:已登录时执行动作(可缺省)并 resolve true。
+    mocks.requireAuth.mockImplementation(async (action?: () => void) => {
+      action?.()
+      return true
+    })
     mocks.downloadToDisk.mockResolvedValue(undefined)
     mocks.buildDownloadName.mockReturnValue('模板视频.mp4')
     mocks.resolveProjectPath.mockResolvedValue('/smart/1')
@@ -272,6 +279,29 @@ describe('TemplatesView', () => {
     expect(mocks.resolveProjectPath).toHaveBeenCalledTimes(1)
     await act(async () => route.resolve('/smart/13'))
     expect(mocks.navigate).toHaveBeenCalledTimes(1)
+  })
+
+  it('游客点击模板卡片先走登录引导，不解析项目也不跳转', async () => {
+    mocks.loadTemplateCatalog.mockResolvedValue(catalog([template(16, '游客案例')]))
+    mocks.requireAuth.mockResolvedValue(false)
+    mocks.resolveProjectPath.mockResolvedValue('/smart/16')
+    const user = userEvent.setup()
+
+    render(<TemplatesView />)
+    await screen.findAllByText('游客案例')
+    await user.click(templateCard('游客案例'))
+
+    expect(mocks.requireAuth).toHaveBeenCalledWith(undefined, { returnTo: '/templates' })
+    expect(mocks.resolveProjectPath).not.toHaveBeenCalled()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+
+    // 拒绝登录后锁必须释放:登录回来再点要能正常打开。
+    mocks.requireAuth.mockImplementation(async (action?: () => void) => {
+      action?.()
+      return true
+    })
+    await user.click(templateCard('游客案例'))
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/smart/16'))
   })
 
   it('快速重复下载只启动一次，完成后允许再次下载', async () => {

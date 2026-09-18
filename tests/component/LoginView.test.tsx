@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getAuthenticatedSession: vi.fn(),
   getCaptcha: vi.fn(),
   handleLoginSuccess: vi.fn(),
+  locationState: undefined as unknown,
   loginWithPassword: vi.fn(),
   loginWithSmsCode: vi.fn(),
   loggerWarn: vi.fn(),
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mocks.navigate,
+  useLocation: () => ({ pathname: '/login', search: '', state: mocks.locationState }),
 }))
 
 vi.mock('@/api/auth', () => ({
@@ -290,7 +292,7 @@ describe('LoginView behavior', () => {
     await user.type(password, 'New-Password-2!')
     await user.click(screen.getByRole('button', { name: '登录' }))
 
-    await waitFor(() => expect(mocks.handleLoginSuccess).toHaveBeenCalledWith(newSession))
+    await waitFor(() => expect(mocks.handleLoginSuccess).toHaveBeenCalledWith(newSession, ''))
     await act(async () => {
       oldSession.resolve({ user: { id: 11, nickname: '旧账号' } })
       await oldSession.promise
@@ -298,6 +300,27 @@ describe('LoginView behavior', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 350))
 
     expect(mocks.handleLoginSuccess).toHaveBeenCalledTimes(1)
-    expect(mocks.handleLoginSuccess).not.toHaveBeenCalledWith(expect.objectContaining({ user: { id: 11 } }))
+    expect(mocks.handleLoginSuccess).not.toHaveBeenCalledWith(
+      expect.objectContaining({ user: { id: 11 } }),
+      expect.anything(),
+    )
+  })
+
+  it('forwards the guarded page (returnTo) to the auth context after login', async () => {
+    const user = userEvent.setup()
+    const session = { user: { id: 22, nickname: '回跳账号' } }
+    mocks.locationState = { returnTo: '/projects/12/videos?x=1' }
+    mocks.getAuthenticatedSession.mockReset()
+    mocks.getAuthenticatedSession.mockResolvedValue(session)
+    mocks.loginWithPassword.mockResolvedValue({ attempt: 'ok' })
+    try {
+      render(<LoginView />)
+      await fillPasswordLogin(user, { password: 'Some-Password-1!' })
+      await user.click(screen.getByRole('checkbox'))
+      await user.click(screen.getByRole('button', { name: '登录' }))
+      await waitFor(() => expect(mocks.handleLoginSuccess).toHaveBeenCalledWith(session, '/projects/12/videos?x=1'))
+    } finally {
+      mocks.locationState = undefined
+    }
   })
 })

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const authMocks = vi.hoisted(() => ({
@@ -23,23 +23,28 @@ import { AuthProvider, useAuth } from '@/auth/AuthContext'
 import { releaseLogoutDraftWriteBarrier } from '@/utils/logoutBarrier'
 import { saveSmartEntryDraft, setSmartEntryDraftScope } from '@/utils/smartEntryDraft'
 
-function LoginProbe() {
+function LoginProbe({ returnTo }: { returnTo?: string } = {}) {
   const { handleLoginSuccess, isAuthenticated, loadAuthSession } = useAuth()
+  const location = useLocation()
   return (
     <>
       <button
         type="button"
         onClick={() =>
-          handleLoginSuccess({
-            user: { id: 9 },
-            workspaces: [{ id: 1, type: 'personal' }],
-            workspace: { id: 1, type: 'personal' },
-            expires_in: 120,
-          })
+          handleLoginSuccess(
+            {
+              user: { id: 9 },
+              workspaces: [{ id: 1, type: 'personal' }],
+              workspace: { id: 1, type: 'personal' },
+              expires_in: 120,
+            },
+            returnTo,
+          )
         }
       >
         finish login
       </button>
+      <output aria-label="pathname">{`${location.pathname}${location.search}`}</output>
       <button type="button" onClick={() => void loadAuthSession()}>
         reload session
       </button>
@@ -78,6 +83,29 @@ describe('AuthProvider login refresh scheduling', () => {
     fireEvent.click(screen.getByRole('button', { name: 'finish login' }))
 
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 84_000)
+  })
+
+  it('returns to the guarded page after login and falls back to /home otherwise', () => {
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <LoginProbe returnTo="/projects/12/videos?x=1" />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'finish login' }))
+    expect(screen.getByLabelText('pathname')).toHaveTextContent('/projects/12/videos?x=1')
+    unmount()
+
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <LoginProbe returnTo="//evil.example/phish" />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'finish login' }))
+    expect(screen.getByLabelText('pathname')).toHaveTextContent('/home')
   })
 
   it('clears the matching account when another tab broadcasts logout', () => {

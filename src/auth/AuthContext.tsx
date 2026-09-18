@@ -24,6 +24,7 @@ import { clearAllCache } from '../utils/swrCache'
 import { beginLogoutDraftWriteBarrier, releaseLogoutDraftWriteBarrier } from '../utils/logoutBarrier'
 import { detachRunningVideoGensForOwner } from '../utils/videoGenRegistry'
 import { hasConfiguredDevBackend } from '../utils/devBackend'
+import { sanitizeLoginReturnTo } from '../utils/loginReturnTo'
 
 /** 用于通知同浏览器其他标签页同步登出的 localStorage 事件键。 */
 const AUTH_LOGOUT_EVENT_KEY = 'zzh.auth.logout-event.v1'
@@ -112,7 +113,8 @@ export interface AuthContextValue {
   isCheckingSession: boolean
   authCheckError: string
   loadAuthSession: () => Promise<void>
-  handleLoginSuccess: (session?: any) => void
+  /** 登录成功;returnTo 为登录前被守卫拦下的站内路径(已校验),缺省落首页。 */
+  handleLoginSuccess: (session?: any, returnTo?: string) => void
   handleLogoutStart: () => void
   handleLogoutCancelled: () => void
   handleLogoutSuccess: () => void
@@ -289,8 +291,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   loadAuthSessionRef.current = loadAuthSession
 
   const handleLoginSuccess = useCallback(
-    (session?: any) => {
+    (session?: any, returnTo?: string) => {
       sessionStorage.removeItem('zzh_sso_pending')
+      const target = sanitizeLoginReturnTo(returnTo) || '/home'
       // A login result is newer than any session bootstrap already in flight.
       loadSeqRef.current += 1
       resetAuthenticatedSession()
@@ -304,7 +307,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         releaseDraftWriteBarrierForSession(session)
         markAuthSessionExpected()
         startSessionRefresh(session)
-        navigate('/home', { replace: true })
+        navigate(target, { replace: true })
         return
       }
       if (import.meta.env.DEV && !hasConfiguredDevBackend()) {
@@ -318,12 +321,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         releaseDraftWriteBarrierForSession(mock)
         markAuthSessionExpected()
         startSessionRefresh(mock)
-        navigate('/home', { replace: true })
+        navigate(target, { replace: true })
         return
       }
       loadAuthSession().then(() => {
         if (useWorkspaceSessionStore.getState().authSession) {
-          navigate('/home', { replace: true })
+          navigate(target, { replace: true })
         }
       })
     },

@@ -2112,6 +2112,13 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       if (!isAuthenticated && routeId === 0) {
         hydratedRef.current = true
         setProjectLoading(false)
+      } else if (!isAuthenticated) {
+        // 游客打开 /hot-copy/:id 深链接:没有工作空间永远拉不到项目,不能停在「正在恢复项目数据」。
+        // 给出明确错误态并引导登录,登录后凭 returnTo 回到本项目。
+        hydratedRef.current = true
+        setProjectLoading(false)
+        setProjectLoadError('请登录后查看该项目')
+        void requireAuth(undefined, { returnTo: `${location.pathname}${location.search}` })
       }
       return
     }

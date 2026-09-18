@@ -92,19 +92,26 @@ export default function TemplatesView() {
   }
 
   // 先根据项目类型解析正确的详情路由；解析期间锁住重复点击，并拒绝旧工作空间的迟到结果。
-  const openTemplate = (tpl: TemplateItem) => {
+  // 游客没有工作空间,项目详情拉不到会卡在「正在恢复项目数据」,所以先走登录引导。
+  const openTemplate = async (tpl: TemplateItem) => {
     if (openRequestRef.current) return
-    const sourceWorkspaceId = Number(workspaceId || 0)
     const request = {}
-    openRequestRef.current = request
+    openRequestRef.current = request // 先上锁再等登录守卫,连点不会绕过防重
+    const release = () => {
+      if (openRequestRef.current === request) openRequestRef.current = null
+    }
+    if (!(await requireAuth(undefined, { returnTo: `${location.pathname}${location.search}` }))) {
+      release()
+      return
+    }
+    if (openRequestRef.current !== request) return // 等待期间用户/空间已变,本次作废
+    const sourceWorkspaceId = workspaceIdRef.current
     void resolveProjectPath(tpl.id, sourceWorkspaceId)
       .then((path) => {
         if (openRequestRef.current === request && workspaceIdRef.current === sourceWorkspaceId) navigate(path)
       })
       .catch(() => undefined)
-      .finally(() => {
-        if (openRequestRef.current === request) openRequestRef.current = null
-      })
+      .finally(release)
   }
 
   // 用模板与媒体标识组成下载锁，防止用户快速连点触发多个相同下载任务。
@@ -281,9 +288,9 @@ export default function TemplatesView() {
                       className="home__proj templates-card"
                       role="button"
                       tabIndex={0}
-                      onClick={() => openTemplate(tpl)}
+                      onClick={() => void openTemplate(tpl)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') openTemplate(tpl)
+                        if (e.key === 'Enter') void openTemplate(tpl)
                       }}
                     >
                       {/* 瀑布流缩略图:按视频真实比例(无真实比例时回退 16:10) */}

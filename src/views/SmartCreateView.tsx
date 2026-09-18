@@ -5756,7 +5756,17 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     const rid = Number(routeId || 0)
     if (rid > 0) {
       const ws = Number(workspaceId || 0)
-      if (!ws) return // 等工作空间就绪
+      if (!ws) {
+        // 游客打开 /smart/:id 深链接(分享链接 / 模板库直达):没有工作空间永远拉不到项目,
+        // 不能停在「正在恢复项目数据」。给出明确错误态并引导登录,登录后凭 returnTo 回到本项目。
+        if (!isCheckingSession && !isAuthenticated) {
+          hydratedRef.current = true
+          setProjectLoading(false)
+          setLoadError('请登录后查看该项目')
+          void requireAuth(undefined, { returnTo: `${location.pathname}${location.search}` })
+        }
+        return // 等工作空间就绪
+      }
       hydratedRef.current = true
       // 已有项目页只读后端项目草稿。加载成功前不置 appliedRef,避免 localStorage 旧草稿或初始空态反写后端。
       void loadProjectById(rid, ws)
