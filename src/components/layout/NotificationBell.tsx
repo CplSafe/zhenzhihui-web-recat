@@ -190,15 +190,12 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
     [navigate, persistReadKeys, readKeys],
   )
 
+  // 副作用不能放进 setState 的 updater 里(StrictMode 下 updater 会被调用两次 → 双份请求)。
   const toggleOpen = useCallback(() => {
-    setOpen((current) => {
-      const next = !current
-      if (next) {
-        void refresh()
-      }
-      return next
-    })
-  }, [refresh])
+    const next = !open
+    setOpen(next)
+    if (next) void refresh()
+  }, [open, refresh])
 
   useEffect(() => {
     if (!open) return

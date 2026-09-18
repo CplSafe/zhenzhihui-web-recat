@@ -6,6 +6,7 @@
 import { shouldRequestAuthenticatedSession } from '../utils/workflowGuards'
 import { createKeyedSingleFlight, createSingleFlight } from '../utils/singleFlight'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
+import { runSharedSessionRefresh } from './sessionRefresh'
 
 /** 记录浏览器是否期待存在已登录会话，避免匿名页反复请求鉴权端点。 */
 const AUTH_SESSION_MARKER_KEY = 'zzh_has_auth_session'
@@ -129,9 +130,35 @@ export function getSession() {
   return requestJson(buildUrl(businessApiBaseUrl, '/api/v1/auth/session'))
 }
 
-/** 刷新当前会话，支持由调用方取消。 */
-export function refreshSession({ signal } = {}) {
-  return businessPost('/api/v1/auth/refresh', { signal })
+/**
+ * 刷新当前会话。与业务请求 401 后的静默续期共用同一个全局单飞(sessionRefresh.ts),
+ * 避免定时续期与 401 重放并发打出两个 refresh 互相作废。
+ * signal 只用于让调用方在结果返回时丢弃(抛「已取消」),不会取消共享的在途请求。
+ */
+export async function refreshSession({ signal } = {}) {
+  if (signal?.aborted) {
+    throw new AuthApiError('网络请求已取消', { cause: 'aborted' })
+  }
+  const outcome = await runSharedSessionRefresh()
+  if (signal?.aborted) {
+    throw new AuthApiError('网络请求已取消', { cause: 'aborted' })
+  }
+  if (outcome.error) {
+    if (outcome.abortCause === 'timeout') {
+      throw new AuthApiError('网络请求超时，请稍后重试', { response: outcome.error, cause: 'timeout' })
+    }
+    throw new AuthApiError('网络请求失败，请检查接口服务或本地代理配置', { response: outcome.error })
+  }
+  const payload = outcome.payload
+  if (!outcome.ok || isBusinessError(payload)) {
+    throw new AuthApiError(payload?.message || `请求失败 (${outcome.status})`, {
+      status: outcome.status,
+      code: payload?.code ?? payload?.code_string ?? null,
+      requestId: payload?.request_id || '',
+      response: payload,
+    })
+  }
+  return payload && typeof payload === 'object' && 'data' in payload ? payload.data : payload
 }
 
 /** 通知后端注销当前会话。 */

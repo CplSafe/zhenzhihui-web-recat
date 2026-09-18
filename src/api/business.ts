@@ -10,6 +10,7 @@ import { sleep } from '../utils/common'
 import { sanitizeMediaUrl } from '../utils/urlSafety'
 import { isAllowedUploadUrl as isUploadUrlAllowedByPolicy } from '../utils/uploadUrlSafety'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
+import { AUTH_REFRESH_PATH, runSharedSessionRefresh } from './sessionRefresh'
 
 /** 业务 API 固定经同源代理访问，真实后端主机不编译进浏览器代码。 */
 const businessApiBaseUrl = ''
@@ -2856,30 +2857,12 @@ async function getCachedModel(cacheKey, loader) {
   return promise
 }
 
-/** requestJson 遇到 401 时用于刷新业务会话的同源路径。 */
-const AUTH_REFRESH_PATH = '/api/v1/auth/refresh'
-/** 全局单飞会话刷新 Promise，避免多个 401 同时触发刷新风暴。 */
-let sessionRefreshPromise = null
-/** 发起或复用一次业务会话刷新，结束后只清理当次 Promise。 */
+/**
+ * 发起或复用一次业务会话刷新(与 AuthContext 的主动续期共用同一个全局单飞,
+ * 见 sessionRefresh.ts),避免多个 401 与定时续期同时打出并发 refresh。
+ */
 function refreshBusinessSession() {
-  if (!sessionRefreshPromise) {
-    sessionRefreshPromise = withRequestTimeout(
-      (signal) =>
-        fetch(buildUrl(businessApiBaseUrl, AUTH_REFRESH_PATH), {
-          method: 'POST',
-          credentials: 'include',
-          ...(signal ? { signal } : {}),
-        }),
-      { defaultTimeoutMs: DEFAULT_API_REQUEST_TIMEOUT_MS },
-    )
-      .then((res) => res.ok)
-      .catch(() => false)
-    // 结束后清空,后续再 401 可再次触发刷新
-    sessionRefreshPromise.finally(() => {
-      sessionRefreshPromise = null
-    })
-  }
-  return sessionRefreshPromise
+  return runSharedSessionRefresh().then((outcome) => outcome.ok)
 }
 
 /**
