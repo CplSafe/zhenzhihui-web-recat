@@ -83,7 +83,7 @@ import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal
 import CanvasImagePreviewModal, { type CanvasImagePreviewItem } from '@/components/canvas/CanvasImagePreviewModal'
 import { formatVideoDurationLabel, formatVideoTimeLabel } from '@/utils/videoDuration'
 import { saveCanvasDraft, loadCanvasDraft, readDraftBoundCanvasId } from '@/utils/canvasDraft'
-import { humanizeCanvasTaskError } from '@/utils/canvasTaskError'
+import { humanizeCanvasTaskError, isCanvasProviderServiceError } from '@/utils/canvasTaskError'
 import {
   loadLastSelectedNodeId,
   loadMinimapVisible,
@@ -4804,6 +4804,43 @@ function CanvasInner() {
               )
               setSelectedNode((current) =>
                 current?.id === node.id && isSameCanvasTask(current, node.data) ? { ...current, ...nextData } : current,
+              )
+              setSaveStatus('dirty')
+              return
+            }
+            // 供应商服务级失败（PROVIDER_FAILED / 计费 / 接入 / 限流等）后端以业务错误码信封返回、
+            // requestJson 直接 throw 到这里。这是对任务的确定答复，不是网络抖动：落终态失败 + 友好文案，
+            // 别再按下面「查询失败，将继续自动重试」误导用户对着一个坏掉的模型干等。
+            const providerErrorText = [
+              error?.message,
+              error?.code,
+              error?.response?.code_string,
+              error?.response?.message,
+            ]
+              .filter(Boolean)
+              .join(' ')
+            if (!disposed && isCanvasProviderServiceError(providerErrorText)) {
+              const friendly = humanizeCanvasTaskError(providerErrorText) || '生成失败，请重试'
+              setNodes((items) =>
+                items.map((item) =>
+                  item.id === node.id && isSameCanvasTask(item.data, node.data)
+                    ? {
+                        ...item,
+                        data: {
+                          ...item.data,
+                          taskStatus: 'failed',
+                          taskProgress: 0,
+                          taskStatusQueryFailures: 0,
+                          taskError: friendly,
+                        },
+                      }
+                    : item,
+                ),
+              )
+              setSelectedNode((current) =>
+                current?.id === node.id && isSameCanvasTask(current, node.data)
+                  ? { ...current, taskStatus: 'failed', taskError: friendly }
+                  : current,
               )
               setSaveStatus('dirty')
               return

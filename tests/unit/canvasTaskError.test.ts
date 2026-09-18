@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { humanizeCanvasTaskError } from '@/utils/canvasTaskError'
+import { humanizeCanvasTaskError, isCanvasProviderServiceError } from '@/utils/canvasTaskError'
 
 /**
  * 后端报错站在服务端视角写（「素材角色」这种概念用户根本看不到）。这类错误可能是素材本身不可用
@@ -7,6 +7,7 @@ import { humanizeCanvasTaskError } from '@/utils/canvasTaskError'
  * 换素材、再兜底换模型，避免把用户往「换模型」死路上引。这里只改说法，不改判断。
  */
 const ASSET_NOT_APPLICABLE = '该素材不适用于当前操作，请重新上传或更换素材后重试；也可尝试更换其他模型'
+const PROVIDER_UNAVAILABLE = '该模型的服务商暂时不可用（计费未配置或额度/接入异常），请更换其他模型后重试，或联系管理员'
 
 describe('humanizeCanvasTaskError', () => {
   it('把「素材类型不适用于当前操作」改写成可执行的说法', () => {
@@ -21,7 +22,17 @@ describe('humanizeCanvasTaskError', () => {
     expect(humanizeCanvasTaskError('素材角色不被支持')).toBe(ASSET_NOT_APPLICABLE)
   })
 
+  it('供应商账户/计费/接入类服务级失败改写成「换模型/联系管理员」，不甩英文原码', () => {
+    // Google 图片计费缺失（PROVIDER_FAILED 10502）
+    expect(humanizeCanvasTaskError('Google image billing usage is missing or inconsistent')).toBe(PROVIDER_UNAVAILABLE)
+    expect(humanizeCanvasTaskError('PROVIDER_FAILED')).toBe(PROVIDER_UNAVAILABLE)
+    // 火山账号欠费 / 接入点失效
+    expect(humanizeCanvasTaskError('AccountOverdueError: account is overdue')).toBe(PROVIDER_UNAVAILABLE)
+    expect(humanizeCanvasTaskError('InvalidEndpointOrModel.NotFound')).toBe(PROVIDER_UNAVAILABLE)
+  })
+
   it('其它错误原样返回，不掩盖真实原因', () => {
+    // 用户自己积分不足是可自行处理的，绝不能被供应商服务级文案吞掉
     expect(humanizeCanvasTaskError('积分不足')).toBe('积分不足')
     expect(humanizeCanvasTaskError('网络连接超时')).toBe('网络连接超时')
   })
@@ -30,5 +41,21 @@ describe('humanizeCanvasTaskError', () => {
     expect(humanizeCanvasTaskError('')).toBe('')
     expect(humanizeCanvasTaskError(undefined)).toBe('')
     expect(humanizeCanvasTaskError(null)).toBe('')
+  })
+})
+
+describe('isCanvasProviderServiceError', () => {
+  it('识别供应商服务级失败（供轮询侧把这类 throw 落成终态失败而非无限重试）', () => {
+    expect(isCanvasProviderServiceError('Google image billing usage is missing or inconsistent')).toBe(true)
+    expect(isCanvasProviderServiceError('PROVIDER_FAILED')).toBe(true)
+    expect(isCanvasProviderServiceError('AccountOverdueError')).toBe(true)
+    expect(isCanvasProviderServiceError('InvalidEndpointOrModel.NotFound')).toBe(true)
+  })
+
+  it('普通网络/未知错误不算，交由既有的查询重试逻辑处理', () => {
+    expect(isCanvasProviderServiceError('Failed to fetch')).toBe(false)
+    expect(isCanvasProviderServiceError('网络连接超时')).toBe(false)
+    expect(isCanvasProviderServiceError('')).toBe(false)
+    expect(isCanvasProviderServiceError(undefined)).toBe(false)
   })
 })
