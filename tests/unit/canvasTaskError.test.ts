@@ -31,6 +31,13 @@ describe('humanizeCanvasTaskError', () => {
     expect(humanizeCanvasTaskError('InvalidEndpointOrModel.NotFound')).toBe(PROVIDER_UNAVAILABLE)
   })
 
+  it('画布自己没规则的供应商原文交给全链路共用的翻译（参考图宽高比 / provider task failed）', () => {
+    expect(humanizeCanvasTaskError('content[3].image_url: media aspect ratio must be between 0.4 and 2.5')).toBe(
+      '第 4 张参考图的宽高比需要在 0.4–2.5 之间（太窄或太扁的长条图不支持），请裁剪后重试',
+    )
+    expect(humanizeCanvasTaskError('provider task failed with status failed')).not.toMatch(/provider task failed/i)
+  })
+
   it('其它错误原样返回，不掩盖真实原因', () => {
     // 用户自己积分不足是可自行处理的，绝不能被供应商服务级文案吞掉
     expect(humanizeCanvasTaskError('积分不足')).toBe('积分不足')

@@ -8,17 +8,14 @@ import { loadSmartEntryDraft, saveSmartEntryDraft, setSmartEntryDraftScope } fro
 
 const mocks = vi.hoisted(() => ({
   fileToDataUrl: vi.fn(),
-  readImageDimensions: vi.fn(),
-  isSupportedVideoReferenceImageDimensions: vi.fn(),
+  normalizeImageFileForAiInput: vi.fn(),
   showToast: vi.fn(),
 }))
 
 vi.mock('@/components/smart/EntryCanvasBg', () => ({ default: () => null }))
 vi.mock('@/utils/imageFile', () => ({
   fileToDataUrl: mocks.fileToDataUrl,
-  readImageDimensions: mocks.readImageDimensions,
-  isSupportedVideoReferenceImageDimensions: mocks.isSupportedVideoReferenceImageDimensions,
-  videoReferenceImageDimensionError: () => '图片尺寸不符合要求',
+  normalizeImageFileForAiInput: mocks.normalizeImageFileForAiInput,
 }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: mocks.showToast }) }))
 
@@ -111,8 +108,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   setSmartEntryDraftScope('user-4', 61)
   mocks.fileToDataUrl.mockImplementation(async (input: File) => `data:${input.name}`)
-  mocks.readImageDimensions.mockResolvedValue({ width: 1280, height: 720 })
-  mocks.isSupportedVideoReferenceImageDimensions.mockReturnValue(true)
+  mocks.normalizeImageFileForAiInput.mockImplementation(async (input: File) => input)
 })
 
 describe('SmartEntry draft and session initialization', () => {
@@ -931,6 +927,18 @@ describe('SmartEntry uploads and recovery actions', () => {
     mocks.fileToDataUrl.mockRejectedValueOnce(new Error('读取失败'))
     await user.upload(input, file('broken.png'))
     expect(mocks.showToast).toHaveBeenCalledWith('broken.png：图片读取失败，请重试', 'error')
+    expect(screen.queryByRole('button', { name: '移除' })).not.toBeInTheDocument()
+    mocks.showToast.mockClear()
+    // 尺寸 / 宽高比不合规：入口选图时就把原因告诉用户，而不是等生成阶段收供应商的英文报错
+    mocks.normalizeImageFileForAiInput.mockRejectedValueOnce(
+      new Error('图片宽高比为 0.20（200×1000px），需在 0.4–2.5 之间，请裁掉过长的一边后重试'),
+    )
+    await user.upload(input, file('tall.png'))
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      'tall.png：图片宽高比为 0.20（200×1000px），需在 0.4–2.5 之间，请裁掉过长的一边后重试',
+      'error',
+    )
+    expect(mocks.fileToDataUrl).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'tall.png' }))
     expect(screen.queryByRole('button', { name: '移除' })).not.toBeInTheDocument()
   })
 

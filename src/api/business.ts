@@ -188,8 +188,67 @@ function getContentSafetyErrorMessage(error) {
  * 必须放在内容安全判定之后：内容审核类错误各有更具体的可操作提示，不能被这条通用文案吞掉。
  */
 function getProviderServiceErrorMessage(error) {
-  const message = collectBusinessErrorText(error)
+  return humanizeProviderErrorText(collectBusinessErrorText(error))
+}
+
+/** 供应商原文里 content[N].image_url 的 N 从 0 起，翻成用户看到的「第 N+1 张」。 */
+function describeReferenceImageOrdinal(message) {
+  const hit = /content\[(\d+)\]\.image_url/i.exec(message)
+  if (!hit) return '参考图片'
+  return `第 ${Number(hit[1]) + 1} 张参考图`
+}
+
+/**
+ * 纯文本版的供应商错误翻译：输入一段错误原文（任务 error_message、异常 message 等），命中即返回中文提示，
+ * 没命中返回空串。getBusinessErrorMessage 走它，任务中心通知 / 历史生成卡片 / 画布这些拿到的是字符串而不是
+ * BusinessApiError 的地方也走它——群里看到的 metaso 402、media dimensions、provider task failed 原文全部
+ * 来自这些「绕过 getBusinessErrorMessage 的字符串路径」，翻译只在一处才不会再漏。
+ */
+export function humanizeProviderErrorText(text) {
+  const message = String(text ?? '').trim()
   if (!message) return ''
+
+  // 参考图尺寸超限（2046 9/10 群反馈原文：content[1].image_url: media dimensions must be between 256 and 5760 pixels）。
+  // 这是用户能自己解决的，要把范围翻成中文说清楚，而不是丢一句英文。
+  const dimensionLimit = /dimensions?\s+must\s+be\s+between\s+(\d+)\s+and\s+(\d+)/i.exec(message)
+  if (dimensionLimit) {
+    return `${describeReferenceImageOrdinal(message)}的宽和高都需要在 ${dimensionLimit[1]}–${dimensionLimit[2]} 像素之间，请调整图片尺寸后重试`
+  }
+  // 参考图宽高比超限（LTY 历史生成卡片原文：content[3].image_url: media aspect ratio must be between 0.4 and 2.5）。
+  const aspectLimit = /aspect\s*ratio\s+must\s+be\s+between\s+([\d.]+)\s+and\s+([\d.]+)/i.exec(message)
+  if (aspectLimit) {
+    return `${describeReferenceImageOrdinal(message)}的宽高比需要在 ${aspectLimit[1]}–${aspectLimit[2]} 之间（太窄或太扁的长条图不支持），请裁剪后重试`
+  }
+  if (
+    /media dimensions|image (?:size|dimensions?) (?:is|are) (?:too|invalid)|resolution (?:too|not supported)/i.test(
+      message,
+    )
+  ) {
+    return '参考图片尺寸不在模型支持范围内（宽高各需在 256–5760 像素之间），请调整图片尺寸后重试'
+  }
+  if (/media aspect ratio|aspect ratio (?:is )?(?:not supported|invalid|out of range)/i.test(message)) {
+    return '参考图片的宽高比不在模型支持范围内（0.4–2.5 之间），请裁剪成更接近方形或常规比例后重试'
+  }
+
+  // 供应商余额 / 计费（LTY 9/15 群反馈原文：metaso HTTP 402 insufficient_balance_error；
+  // Google image billing usage is missing）。是平台侧账户问题，用户看到「余额不足」会误以为是自己的积分。
+  if (
+    /insufficient[_\s-]*balance|HTTP\s*402|payment\s*required|billing\s+(?:usage|account|is\s+missing)|not\s+enough\s+balance|balance\s+is\s+insufficient/i.test(
+      message,
+    )
+  ) {
+    return 'AI 生成服务的供应商账户余额或计费配置异常，已记录，请联系管理员处理后再试'
+  }
+
+  // 供应商任务失败但没给原因（LTY 9/16 画布视频节点原文：provider task failed with status failed）。
+  if (
+    /provider\s+task\s+failed|task\s+failed\s+with\s+status|provider\s+(?:returned|responded)\s+(?:error|failure)/i.test(
+      message,
+    )
+  ) {
+    return 'AI 生成服务处理这次任务失败，请稍后重试或换一个模型；如果连续失败请联系管理员排查'
+  }
+
   if (
     /AccountOverdue|AccountForbidden|InvalidEndpointOrModel|EndpointIsInvalid|ModelNotOpen|ModelNotFound|QuotaExceeded|RateLimitExceeded|ThrottlingException|InternalServiceError|ServiceUnavailable|InvalidAccessKey|SignatureDoesNotMatch|AccessDenied/i.test(
       message,
@@ -1988,6 +2047,24 @@ function isRetryableAssetCompleteError(error) {
   return status === 0 || status === 408 || status === 425 || status === 429 || status >= 500
 }
 
+/**
+ * 把 /complete 不可重试失败的后端原因带进用户提示。
+ * 线上反馈「素材文件已上传，但素材状态确认失败」只有这一句，用户和我们都看不出是 4xx 里的哪一种
+ * （素材入库元数据处理失败、供应商账号问题、文件类型被拒……），排查只能靠抓包。这里把状态码和
+ * 后端 message 一起拼进去，群里一张截图就能定性；后端没给 message 时只带状态码。
+ */
+function describeAssetCompleteFailure(error) {
+  const status = Number(error?.status || 0)
+  const backendMessage = String(
+    error?.response?.message || error?.response?.error?.message || error?.response?.data?.message || '',
+  ).trim()
+  const parts = []
+  if (status > 0) parts.push(`HTTP ${status}`)
+  if (backendMessage && backendMessage !== error?.message) parts.push(backendMessage)
+  else if (error?.message && !/请求失败|请稍后重试/.test(String(error.message))) parts.push(String(error.message))
+  return parts.length ? `（服务端返回：${parts.join('，')}）` : ''
+}
+
 /** 将共享上传阶段的等待超时/取消转为携带资产进度的业务错误。 */
 function createAssetUploadWaitError({ cause, assetId = 0, uploadSucceeded = null }) {
   const cancelled = cause === 'aborted'
@@ -2329,16 +2406,19 @@ export async function uploadAssetFile({
     // storage or billing. Never issue an automatic DELETE for this state.
     if (!isRetryableAssetCompleteError(error)) {
       clearResumableAssetUpload(file, resumeKey, pendingUpload)
-      throw new BusinessApiError('素材文件已上传，但素材状态确认失败，请重新选择文件上传', {
-        status: error?.status,
-        code: 'ASSET_COMPLETE_FAILED',
-        response: {
-          asset_id: Number(asset.id),
-          upload_succeeded: true,
-          retryable: false,
+      throw new BusinessApiError(
+        `素材文件已上传，但素材状态确认失败${describeAssetCompleteFailure(error)}，请重新选择文件上传`,
+        {
+          status: error?.status,
+          code: 'ASSET_COMPLETE_FAILED',
+          response: {
+            asset_id: Number(asset.id),
+            upload_succeeded: true,
+            retryable: false,
+          },
+          cause: error,
         },
-        cause: error,
-      })
+      )
     }
     throw new BusinessApiError('素材文件已上传，正在确认素材状态，请重试', {
       status: error?.status,

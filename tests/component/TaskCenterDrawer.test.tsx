@@ -18,6 +18,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 
 vi.mock('@/api/business', () => ({
   getAssetDownloadUrl: mocks.getAssetDownloadUrl,
+  humanizeProviderErrorText: () => '',
 }))
 
 vi.mock('@/api/projectVideos', () => ({

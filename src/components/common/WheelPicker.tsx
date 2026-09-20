@@ -16,7 +16,11 @@ export interface WheelPickerOption {
   value: string
   label: string
   disabled?: boolean
+  /** 不可选时的原因，悬停展示；不给时用通用说明，避免用户只看到一个划掉的档位不知道为什么。 */
+  disabledReason?: string
 }
+
+const DEFAULT_DISABLED_REASON = '当前模型不支持该档位，可切换模型后再选'
 
 interface WheelPickerProps {
   options: WheelPickerOption[]
@@ -294,6 +298,7 @@ export default function WheelPicker({
             aria-selected={option.value === value}
             aria-disabled={option.disabled}
             disabled={option.disabled}
+            title={option.disabled ? option.disabledReason || DEFAULT_DISABLED_REASON : undefined}
             className={`zzh-wheel__item${index === centerIndex ? ' is-center' : ''}`}
             // 距离中心越远越淡越小，形成滚轮的纵深感
             data-offset={Math.min(3, Math.abs(index - centerIndex))}

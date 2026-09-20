@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useToast } from '@/composables/useToast'
-import { fileToDataUrl } from '@/utils/imageFile'
+import { fileToDataUrl, normalizeImageFileForAiInput } from '@/utils/imageFile'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { listAiTasks, extractAssetPageItems } from '@/api/business'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
@@ -717,11 +717,22 @@ export default function HotCopyEntry({
       return
     }
     const sel = Array.from(files).filter(isImageFile).slice(0, room)
-    const picked = (
-      await Promise.all(
-        sel.map(async (f) => ({ url: (await fileToDataUrl(f).catch(() => '')) || '', file: f, isVideo: false })),
-      )
-    ).filter((p) => p.url)
+    // 替换素材会作为 video.replicate 的参考图：像素 256–5760、宽高比 0.4–2.5 在选图时就查，
+    // 超大图自动缩到范围内；不合规的把原因告诉用户，而不是等出片时收一句英文报错。
+    const decoded = await Promise.all(
+      sel.map(async (f) => {
+        try {
+          const normalized = await normalizeImageFileForAiInput(f, { checkAspectRatio: true })
+          const url = (await fileToDataUrl(normalized).catch(() => '')) || ''
+          return { url, file: normalized, isVideo: false, error: '' }
+        } catch (error: any) {
+          return { url: '', file: f, isVideo: false, error: `${f.name}：${String(error?.message || '图片不符合要求')}` }
+        }
+      }),
+    )
+    const rejected = decoded.find((p) => p.error)
+    if (rejected) showToast(rejected.error, 'error')
+    const picked = decoded.filter((p) => p.url).map(({ url, file, isVideo }) => ({ url, file, isVideo }))
     if (picked.length) setProducts((prev) => [...prev, ...picked])
   }
 

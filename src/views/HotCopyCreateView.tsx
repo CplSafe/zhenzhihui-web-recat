@@ -1736,7 +1736,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         const terminalPersisted = await failHotCopyJob(
           context,
           cancelled ? 'cancelled' : 'failed',
-          e?.message || '请重试',
+          // 持久化的失败原因也要翻译：任务中心和历史生成卡片读的是这里存下的文本，不是 toast。
+          getBusinessErrorMessage(e, e?.message || '请重试'),
           taskId,
         )
         keepPending = !terminalPersisted
