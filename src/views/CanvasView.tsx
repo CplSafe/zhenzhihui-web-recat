@@ -78,6 +78,7 @@ import CanvasNodePanel, {
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
+import TutorialButton from '@/components/common/TutorialButton'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 import CanvasImagePreviewModal, { type CanvasImagePreviewItem } from '@/components/canvas/CanvasImagePreviewModal'
@@ -6480,6 +6481,9 @@ function CanvasInner() {
             )}
           </div>
         </div>
+
+        {/* 操作手册：画布页没有共享顶栏，单独挂在右上角、分享按钮左侧 */}
+        <TutorialButton variant="pill" className="canvas-tutorial-btn" />
 
         {/* 分享入口：只对已落库的画布开放——没有 canvasId 就没有可分享的对象 */}
         {canvasId > 0 && workspaceId > 0 && (

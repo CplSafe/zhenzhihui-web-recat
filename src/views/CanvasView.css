@@ -231,6 +231,14 @@
     transform: scale(1) translateY(0);
   }
 }
+/* 操作手册：与分享同一行，靠左一格（分享按钮宽约 84px + 12px 间距） */
+.canvas-tutorial-btn {
+  position: absolute;
+  top: 28px;
+  right: 124px;
+  z-index: 1100;
+}
+
 /* 分享入口：与品牌区同一行的右上角，chrome 档 */
 .canvas-share-btn {
   position: absolute;
