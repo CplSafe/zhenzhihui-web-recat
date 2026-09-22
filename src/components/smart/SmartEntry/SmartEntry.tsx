@@ -25,12 +25,7 @@ import {
   type GenerationModelEstimateRequest,
   type GenerationModelEstimateResult,
 } from '../GenerationModelPicker'
-import {
-  fileToDataUrl,
-  isSupportedVideoReferenceImageDimensions,
-  readImageDimensions,
-  videoReferenceImageDimensionError,
-} from '@/utils/imageFile'
+import { fileToDataUrl, normalizeImageFileForAiInput } from '@/utils/imageFile'
 import {
   clearSmartEntryDraft,
   loadSmartEntryDraft,
@@ -518,13 +513,16 @@ export default function SmartEntry({
     }
     const decoded = await Promise.all(
       sel.map(async (file) => {
+        // 先在原图上做合规检查（此前是先缩到 1280 再量尺寸，5760 上限永远量不到、256 下限也量不准）：
+        // 视频参考图额外查宽高比 0.4–2.5，超 5760 的自动缩到范围内，不合规的直接告诉用户原因。
+        let normalized: File
         try {
-          const dataUrl = await fileToDataUrl(file)
-          const dimensions = await readImageDimensions(dataUrl)
-          if (mode === 'video' && !isSupportedVideoReferenceImageDimensions(dimensions)) {
-            return { dataUrl: '', error: `${file.name}：${videoReferenceImageDimensionError(dimensions)}` }
-          }
-          return { dataUrl, error: '' }
+          normalized = await normalizeImageFileForAiInput(file, { checkAspectRatio: mode === 'video' })
+        } catch (error: any) {
+          return { dataUrl: '', error: `${file.name}：${String(error?.message || '图片不符合要求，请更换')}` }
+        }
+        try {
+          return { dataUrl: await fileToDataUrl(normalized), error: '' }
         } catch {
           return { dataUrl: '', error: `${file.name}：图片读取失败，请重试` }
         }

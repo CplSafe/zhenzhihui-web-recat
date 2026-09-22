@@ -20,8 +20,10 @@ import {
   getAssetDownloadUrl,
   getBusinessErrorMessage,
   getCreativeProject,
+  patchCreativeProject,
   updateCreativeProjectDraft,
 } from '@/api/business'
+import InlineEdit from '@/components/common/InlineEdit'
 import { createInitializedProjectFolder } from '@/utils/creativeProjectInitialization'
 import { addClassifiedVideo, countProjectVideos, deriveProjectVideos } from '@/api/projectVideos'
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
@@ -1296,6 +1298,47 @@ export default function ProjectManagementView() {
   )
 
   /**
+   * 项目重命名。口径放宽:能看到这张卡片(有访问权)的成员就能改,后端本身也是"空间成员即可"。
+   * 乐观更新本地列表、失败回滚;PATCH 只改标题不动草稿版本号,不会把别处开着的创作页顶成 409;
+   * 派生视频标题按 project.title 现算,会自动跟着变。成功后再落一次新名,防止并发的列表刷新用旧数据盖掉。
+   */
+  const [renamingProjectId, setRenamingProjectId] = useState(0)
+  const renameProject = useCallback(
+    async (folder: { id: number; title: string; workspaceId: number }, nextTitle: string) => {
+      const next = String(nextTitle || '').trim()
+      if (!next) {
+        showToast('项目名称不能为空', 'error')
+        return
+      }
+      if (next === folder.title) return
+      const wsId = Number(folder.workspaceId || 0)
+      if (!wsId || Number(workspaceIdRef.current || 0) !== wsId) {
+        showToast('workspace_id 缺失,无法重命名', 'error')
+        return
+      }
+      const applyTitle = (title: string) => {
+        if (projectItemsWorkspaceIdRef.current !== wsId) return
+        setProjectItems((prev) =>
+          prev.map((item) => (Number(item?.id || 0) === folder.id ? { ...item, title, name: title } : item)),
+        )
+      }
+      const previousTitle = folder.title
+      applyTitle(next)
+      try {
+        await patchCreativeProject({ projectId: folder.id, workspaceId: wsId, title: next, name: next })
+        if (Number(workspaceIdRef.current || 0) !== wsId) return
+        applyTitle(next)
+        showToast('项目已重命名', 'success')
+      } catch (error) {
+        if (Number(workspaceIdRef.current || 0) !== wsId) return
+        applyTitle(previousTitle)
+        showToast(getBusinessErrorMessage(error, '重命名失败,请稍后重试'), 'error')
+      }
+    },
+    [showToast],
+  )
+
+  /**
    * 把一条待分类视频写入目标项目的视频清单(拖拽与批量归类共用)。
    * 成功后做乐观隐藏;失败抛错由调用方决定提示方式。归类操作者不会因此获得视频删除权限。
    */
@@ -1629,8 +1672,25 @@ export default function ProjectManagementView() {
                       </div>
                       <div className="pm2-pcard-body">
                         <div className="pm2-pcard-head">
-                          <span className="pm2-pcard-title" title={folder.title}>
-                            {folder.title}
+                          {/* 重命名编辑态要拦住冒泡:否则点进输入框会把整张卡片点开,回车/空格也会被卡片的
+                              onKeyDown 抢走(空格甚至打不出来)。展示态放行,标题照旧可点开项目。 */}
+                          <span
+                            className="pm2-pcard-title"
+                            title={renamingProjectId === folder.id ? undefined : folder.title}
+                            onClick={(e) => renamingProjectId === folder.id && e.stopPropagation()}
+                            onDoubleClick={(e) => renamingProjectId === folder.id && e.stopPropagation()}
+                            onMouseDown={(e) => renamingProjectId === folder.id && e.stopPropagation()}
+                            onKeyDown={(e) => renamingProjectId === folder.id && e.stopPropagation()}
+                          >
+                            <InlineEdit
+                              value={folder.title}
+                              trigger="none"
+                              maxLength={60}
+                              className="pm2-pcard-title-edit"
+                              openSignal={renamingProjectId === folder.id}
+                              onEditingEnd={() => setRenamingProjectId(0)}
+                              onCommit={(next) => void renameProject(folder, next)}
+                            />
                           </span>
                           <button
                             type="button"
@@ -1648,6 +1708,18 @@ export default function ProjectManagementView() {
                             </svg>
                             {openMenuId === folder.id && (
                               <div className="pm2-folder-menu" onClick={(e) => e.stopPropagation()}>
+                                {/* 重命名不设额外门槛:能看到这张卡片就有访问权,后端也是"空间成员即可" */}
+                                <button
+                                  type="button"
+                                  className="pm2-folder-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setOpenMenuId(0)
+                                    setRenamingProjectId(folder.id)
+                                  }}
+                                >
+                                  重命名
+                                </button>
                                 {folder.userId > 0 && (folder.userId === currentUserId || isWsAdminOrOwner) && (
                                   <button
                                     type="button"

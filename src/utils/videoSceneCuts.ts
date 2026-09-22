@@ -186,5 +186,5 @@ export function describeSceneCutWarning(result: SceneCutResult | null | undefine
   if (!result || result.sampled === 0) return ''
   const cuts = result.cuts.length
   if (cuts < SCENE_CUT_WARN_THRESHOLD) return ''
-  return `源视频含约 ${cuts} 次镜头切换（${cuts + 1} 个镜头），复刻只能生成一个连续镜头，无法复现切换。建议选取其中一段单镜头片段，或拆分后逐段复刻再拼接。`
+  return `爆款视频里有约 ${cuts} 次镜头切换（${cuts + 1} 个镜头），复刻一次只能出一个连续镜头，切换复现不了。建议截取其中一段单镜头来复刻，或拆成几段分别复刻再拼起来。`
 }

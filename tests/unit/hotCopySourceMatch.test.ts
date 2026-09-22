@@ -4,6 +4,7 @@ import {
   closestRatioOption,
   describeSourceMismatch,
   parseRatioValue,
+  resolveSourceMismatch,
 } from '@/utils/hotCopySourceMatch'
 
 const RATIOS = ['9:16', '3:4', '1:1', '4:3', '16:9', '21:9']
@@ -65,12 +66,12 @@ describe('hotCopySourceMatch', () => {
       ratioOptions: RATIOS,
       durationOptions: [5, 10, 15],
     })
-    expect(hint).toContain('源视频接近 16:9')
-    expect(hint).toContain('当前选了 9:16')
+    expect(hint).toContain('爆款视频是 16:9')
+    expect(hint).toContain('你选了 9:16')
     expect(hint).not.toContain('秒')
   })
 
-  it('时长不一致时给出源时长与所选秒数，两项都不一致时合并成一句', () => {
+  it('时长选短了说会少掉多少秒，两项都不一致时合并成一句', () => {
     const hint = describeSourceMismatch({
       source: { width: 1920, height: 1080, durationSec: 22 },
       ratio: '9:16',
@@ -78,10 +79,32 @@ describe('hotCopySourceMatch', () => {
       ratioOptions: RATIOS,
       durationOptions: [5, 10, 15],
     })
-    expect(hint).toContain('源视频接近 16:9')
-    expect(hint).toContain('源视频约 22 秒，当前选了 5 秒')
+    expect(hint).toContain('爆款视频是 16:9')
+    expect(hint).toContain('爆款视频约 22 秒，你选了 5 秒，会少掉约 17 秒的内容')
     expect(hint).toContain('；')
-    expect(hint.endsWith('复刻效果更稳定。')).toBe(true)
+    expect(hint.endsWith('跟着爆款的比例和时长走，复刻最像。')).toBe(true)
+  })
+
+  it('时长选长了说多出的部分模型只能自己编；差不到 1 秒不报"约 0 秒"', () => {
+    expect(
+      describeSourceMismatch({
+        source: { width: 1080, height: 1920, durationSec: 15.1 },
+        ratio: '9:16',
+        durationSec: 30,
+        ratioOptions: RATIOS,
+        durationOptions: [5, 10, 15, 20, 30],
+      }),
+    ).toContain('爆款视频约 15.1 秒，你选了 30 秒，多出的约 15 秒模型只能自己编')
+    // 14.8 秒配 15s：推荐档不进位取 10s，但多出的只有 0.2 秒
+    expect(
+      describeSourceMismatch({
+        source: { width: 1080, height: 1920, durationSec: 14.8 },
+        ratio: '9:16',
+        durationSec: 15,
+        ratioOptions: RATIOS,
+        durationOptions: [5, 10, 15],
+      }),
+    ).toContain('爆款视频约 14.8 秒，你选了 15 秒，多出的不到 1 秒模型只能自己编')
   })
 
   it('没有源视频信息时不提示', () => {
@@ -94,5 +117,45 @@ describe('hotCopySourceMatch', () => {
         durationOptions: [5, 10, 15],
       }),
     ).toBe('')
+  })
+
+  it('resolveSourceMismatch 给出推荐值与「改为 …」按钮文案，只列不一致的那一项', () => {
+    const both = resolveSourceMismatch({
+      source: { width: 1080, height: 1920, durationSec: 15.1 },
+      ratio: '16:9',
+      durationSec: 30,
+      ratioOptions: RATIOS,
+      durationOptions: [5, 10, 15, 20, 30],
+    })
+    expect(both).toMatchObject({ ratio: '9:16', durationSec: 15, actionLabel: '改为 9:16 · 15s' })
+    expect(both?.message).toContain('爆款视频约 15.1 秒，你选了 30 秒')
+
+    const durationOnly = resolveSourceMismatch({
+      source: { width: 1080, height: 1920, durationSec: 15.1 },
+      ratio: '9:16',
+      durationSec: 30,
+      ratioOptions: RATIOS,
+      durationOptions: [5, 10, 15, 20, 30],
+    })
+    expect(durationOnly).toMatchObject({ ratio: '', durationSec: 15, actionLabel: '改为 15s' })
+
+    const ratioOnly = resolveSourceMismatch({
+      source: { width: 1920, height: 1080, durationSec: 15 },
+      ratio: '9:16',
+      durationSec: 15,
+      ratioOptions: RATIOS,
+      durationOptions: [5, 10, 15],
+    })
+    expect(ratioOnly).toMatchObject({ ratio: '16:9', durationSec: 0, actionLabel: '改为 16:9' })
+
+    expect(
+      resolveSourceMismatch({
+        source: { width: 1920, height: 1080, durationSec: 15 },
+        ratio: '16:9',
+        durationSec: 15,
+        ratioOptions: RATIOS,
+        durationOptions: [5, 10, 15],
+      }),
+    ).toBeNull()
   })
 })

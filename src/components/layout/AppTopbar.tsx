@@ -12,6 +12,7 @@ import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { useUiStore } from '@/stores/ui'
 import UserAvatar from '@/components/common/UserAvatar'
+import TutorialButton from '@/components/common/TutorialButton'
 import memberIcon from '@/assets/image.png'
 import shareIcon from '@/assets/image copy 2.png'
 import NotificationBell from './NotificationBell'
@@ -204,6 +205,8 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
         </div>
       )}
       <div className="apptop__right">
+        {/* 操作手册:按当前页面弹出对应教程视频;没有教程的页面不渲染。游客也可看 */}
+        <TutorialButton variant="topbar" />
         {/* 通知铃铛:需求市场相关动态(已完成/被接单/申请结果),仅登录后展示 */}
         {!isAnonymous && isAuthenticated && (
           <NotificationBell userKey={String(currentUser?.id || currentUser?.user_id || currentUser?.mobile || '')} />

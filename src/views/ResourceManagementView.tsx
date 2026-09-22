@@ -1474,11 +1474,12 @@ export default function ResourceManagementView() {
   }
 
   const openVideoInHotCopy = (card: any) => {
+    const assetId = Number(card.assetId || 0) || 0
     navigate('/hot-copy', {
       state: {
         carryVideo: {
-          url: String(card.mediaUrl || ''),
-          assetId: Number(card.assetId || 0) || 0,
+          url: assetStreamUrl(assetId, currentWorkspaceId) || String(card.mediaUrl || ''),
+          assetId,
         },
       },
     })
@@ -1494,7 +1495,9 @@ export default function ResourceManagementView() {
    */
   const createTargetsForCard = (card: any) => {
     const assetId = Number(card.assetId || 0) || 0
-    const url = String(card.mediaUrl || '')
+    // 素材列表返回的 preview_url / thumbnail_url 可能是短期签名地址。
+    // 跨路由传给创作页时优先使用 assetId 对应的同源下载地址，避免进入创作页后缩略图立即失效。
+    const url = assetStreamUrl(assetId, currentWorkspaceId) || String(card.mediaUrl || '')
     if (!assetId && !url) return []
     const isImage = card.mediaKind === 'image'
     const carry = { url, assetId }

@@ -2,11 +2,15 @@
  * 加载爆款复制 video.replicate 模型，并投影为首页通用模型下拉的数据。
  * 目录以后端为权威：展示当前工作空间已启用且明确支持 video.replicate 的全部模型，
  * 完整后端记录用于参数校验、费用预估和正式提交。
+ *
+ * 与 useGenerationModelCatalog 同样按工作空间做内存缓存：爆款复制页来回切不再每次重拉。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getBusinessErrorMessage, listAiModels } from '@/api/business'
+import { createSharedRequestCache } from '@/utils/sharedRequestCache'
 import type { GenerationModelGroup, GenerationModelOption } from '@/components/smart/GenerationModelPicker'
 import {
+  MODEL_CATALOG_CACHE_TTL_MS,
   getBackendGenerationModelConfigurationError,
   getBackendGenerationModelName,
   getBackendGenerationModelVersionId,
@@ -136,65 +140,113 @@ function dedupeModels(models: HotCopyCatalogModel[]): HotCopyCatalogModel[] {
   return Array.from(byId.values())
 }
 
-export function useHotCopyModelCatalog(workspaceId: number): HotCopyModelCatalogState {
-  const normalizedWorkspaceId = Math.max(0, Math.floor(Number(workspaceId) || 0))
-  const requestSequenceRef = useRef(0)
-  const [reloadToken, setReloadToken] = useState(0)
-  const [models, setModels] = useState<HotCopyCatalogModel[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+/** 一次目录加载的结果：可用模型列表 + 无可用模型时的原因。 */
+interface HotCopyCatalogSnapshot {
+  models: HotCopyCatalogModel[]
+  error: string
+}
 
-  useEffect(() => {
-    const requestSequence = ++requestSequenceRef.current
-    if (!normalizedWorkspaceId) {
-      setModels([])
-      setLoading(false)
-      setError('')
-      return
-    }
+const EMPTY_SNAPSHOT: HotCopyCatalogSnapshot = { models: [], error: '' }
 
-    setModels([])
-    setLoading(true)
-    setError('')
-    const abortController = new AbortController()
-    const isStale = () => abortController.signal.aborted || requestSequenceRef.current !== requestSequence
-    void listAiModels({
-      workspaceId: normalizedWorkspaceId,
+// 只缓存拿到了可用模型的结果：空目录 / 配置错误 / 请求失败都留给下次挂载重试
+const catalogCache = createSharedRequestCache<HotCopyCatalogSnapshot>({
+  ttlMs: MODEL_CATALOG_CACHE_TTL_MS,
+  shouldCache: (snapshot) => !snapshot.error,
+})
+
+/** 清掉所有工作空间的爆款复制目录缓存。下次挂载会重新拉取。 */
+export function invalidateHotCopyModelCatalogCache(): void {
+  catalogCache.invalidate()
+}
+
+async function loadHotCopyModelCatalog(workspaceId: number, signal: AbortSignal): Promise<HotCopyCatalogSnapshot> {
+  let response: unknown
+  try {
+    response = await listAiModels({
+      workspaceId,
       operationCode: HOT_COPY_MODEL_OPERATION_CODE,
       plan: '',
-      signal: abortController.signal,
+      signal,
     })
-      .then((response) => {
-        if (isStale()) return
-        const operationModels = unwrapGenerationModelCatalogResponse(response).filter(
-          (model): model is BackendGenerationModel =>
-            Boolean(model) &&
-            typeof model === 'object' &&
-            !Array.isArray(model) &&
-            matchesReplicateOperation(model as BackendGenerationModel),
-        )
-        const normalized = dedupeModels(
-          operationModels
-            .map((model) => normalizeCatalogModel(model))
-            .filter((model): model is HotCopyCatalogModel => Boolean(model)),
-        )
-        setModels(normalized)
-        const available = normalized.filter((model) => !model.option.disabled)
-        if (available.length) return
-        const configurationError = normalized.find((model) => model.option.unavailableReason)?.option.unavailableReason
-        setError(configurationError || '当前套餐暂无可用的爆款复制视频模型，请充值或开通会员后使用')
-      })
-      .catch((reason) => {
-        if (isStale()) return
-        setModels([])
-        setError(getBusinessErrorMessage(reason, '爆款复制模型加载失败，请重试'))
-      })
-      .finally(() => {
-        if (!isStale()) setLoading(false)
-      })
+  } catch (reason) {
+    return { models: [], error: getBusinessErrorMessage(reason, '爆款复制模型加载失败，请重试') }
+  }
+  const operationModels = unwrapGenerationModelCatalogResponse(response).filter(
+    (model): model is BackendGenerationModel =>
+      Boolean(model) &&
+      typeof model === 'object' &&
+      !Array.isArray(model) &&
+      matchesReplicateOperation(model as BackendGenerationModel),
+  )
+  const models = dedupeModels(
+    operationModels
+      .map((model) => normalizeCatalogModel(model))
+      .filter((model): model is HotCopyCatalogModel => Boolean(model)),
+  )
+  if (models.some((model) => !model.option.disabled)) return { models, error: '' }
+  const configurationError = models.find((model) => model.option.unavailableReason)?.option.unavailableReason
+  return { models, error: configurationError || '当前套餐暂无可用的爆款复制视频模型，请充值或开通会员后使用' }
+}
 
-    return () => abortController.abort()
-  }, [normalizedWorkspaceId, reloadToken])
+export function useHotCopyModelCatalog(workspaceId: number): HotCopyModelCatalogState {
+  const normalizedWorkspaceId = Math.max(0, Math.floor(Number(workspaceId) || 0))
+  const cacheKey = String(normalizedWorkspaceId)
+  const [reloadToken, setReloadToken] = useState(0)
+  const appliedReloadTokenRef = useRef(0)
+  const [snapshot, setSnapshot] = useState<HotCopyCatalogSnapshot>(
+    () => (normalizedWorkspaceId ? catalogCache.peek(cacheKey)?.value : undefined) ?? EMPTY_SNAPSHOT,
+  )
+  const [loading, setLoading] = useState(() => Boolean(normalizedWorkspaceId) && !catalogCache.peek(cacheKey))
+
+  useEffect(() => {
+    if (!normalizedWorkspaceId) {
+      setSnapshot(EMPTY_SNAPSHOT)
+      setLoading(false)
+      return
+    }
+    // reload() 才强制重拉；换工作空间只是换 key，命中缓存就直接用
+    const force = reloadToken !== appliedReloadTokenRef.current
+    appliedReloadTokenRef.current = reloadToken
+
+    let disposed = false
+    const cached = force ? null : catalogCache.peek(cacheKey)
+    if (cached) {
+      setSnapshot(cached.value)
+      setLoading(false)
+    } else {
+      setSnapshot(EMPTY_SNAPSHOT)
+      setLoading(true)
+    }
+    const unsubscribe = catalogCache.subscribe(cacheKey, (next) => {
+      if (!disposed) setSnapshot(next)
+    })
+    if (cached?.fresh) {
+      return () => {
+        disposed = true
+        unsubscribe()
+      }
+    }
+
+    // 无缓存：正常加载；缓存过期：拿着旧目录后台刷新，不亮 loading
+    const lease = catalogCache.acquire(cacheKey, (signal) => loadHotCopyModelCatalog(normalizedWorkspaceId, signal), {
+      force,
+    })
+    lease.promise
+      .then((next) => {
+        if (!disposed) setSnapshot(next)
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!disposed) setLoading(false)
+      })
+    return () => {
+      disposed = true
+      unsubscribe()
+      lease.release()
+    }
+  }, [cacheKey, normalizedWorkspaceId, reloadToken])
+
+  const { models, error } = snapshot
 
   const pickerGroups = useMemo<GenerationModelGroup[]>(
     () => [

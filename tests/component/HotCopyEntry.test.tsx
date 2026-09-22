@@ -770,8 +770,16 @@ describe('HotCopyEntry project asset access', () => {
     await pickCreativeParam(user, '9:16')
     expect(openCreativeParams()).toHaveTextContent('9:16')
     const note = await screen.findByRole('note')
-    expect(note).toHaveTextContent('源视频接近 16:9，当前选了 9:16')
+    expect(note).toHaveTextContent('爆款视频是 16:9，你选了 9:16')
     expect(note).not.toHaveTextContent('秒')
+    // 是用户刚改的，不是草稿沿用下来的
+    expect(note).not.toHaveTextContent('上次保存')
+
+    // 提示里一键改回推荐档：只把不一致的比例填回去，提示随之消失
+    await user.click(within(note).getByRole('button', { name: '改为 16:9' }))
+    expect(openCreativeParams()).toHaveTextContent('16:9')
+    expect(openCreativeParams()).toHaveTextContent('15s')
+    await waitFor(() => expect(screen.queryByRole('note')).not.toBeInTheDocument())
 
     vi.unstubAllGlobals()
   })
@@ -806,12 +814,12 @@ describe('HotCopyEntry project asset access', () => {
 
     const note = await screen.findByRole('note')
     await waitFor(() => expect(note).toHaveTextContent('约 7 次镜头切换（8 个镜头）'))
-    expect(note).toHaveTextContent('只能生成一个连续镜头')
+    expect(note).toHaveTextContent('复刻一次只能出一个连续镜头')
     // 两类提示各占一行，硬切提示在前
     const lines = within(note).getAllByText(/./, { selector: 'p' })
     expect(lines).toHaveLength(2)
     expect(lines[0]).toHaveTextContent('镜头切换')
-    expect(lines[1]).toHaveTextContent('源视频接近 9:16')
+    expect(lines[1]).toHaveTextContent('爆款视频是 9:16')
     expect(mocks.detectSceneCuts).toHaveBeenCalledWith(
       '/101.mp4',
       expect.objectContaining({ signal: expect.anything() }),
@@ -870,11 +878,51 @@ describe('HotCopyEntry project asset access', () => {
     )
 
     const note = await screen.findByRole('note')
-    expect(note).toHaveTextContent('源视频接近 9:16，当前选了 16:9')
-    expect(note).toHaveTextContent('源视频约 14.8 秒，当前选了 5 秒')
+    // 上一次进页面没提示、这次一进来就有：要说明是草稿沿用下来的，不是用户刚点错
+    expect(note).toHaveTextContent('这还是上次保存的设置：爆款视频是 9:16，你选了 16:9')
+    expect(note).toHaveTextContent('爆款视频约 14.8 秒，你选了 5 秒，会少掉约 10 秒的内容')
     // 草稿里的选择原样保留
     expect(openCreativeParams()).toHaveTextContent('16:9')
     expect(openCreativeParams()).toHaveTextContent('5s')
+
+    // 一键采纳：比例与时长一起改成推荐档（14.8 秒 → 不进位取 10s），提示消失
+    const user = userEvent.setup()
+    await user.click(within(note).getByRole('button', { name: '改为 9:16 · 10s' }))
+    expect(openCreativeParams()).toHaveTextContent('9:16')
+    expect(openCreativeParams()).toHaveTextContent('10s')
+    await waitFor(() => expect(screen.queryByRole('note')).not.toBeInTheDocument())
+  })
+
+  it('恢复草稿后用户自己改过参数，提示就不再说"沿用上次保存"', async () => {
+    const user = userEvent.setup()
+    mocks.readVideoMetadata.mockResolvedValue({ width: 1080, height: 1920, durationSec: 14.8 })
+    render(
+      <HotCopyEntry
+        onSubmit={vi.fn()}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          ratio: '9:16',
+          duration: '5s',
+          text: '',
+          modelVersionId: 220,
+        }}
+        modelGroups={modelGroupsWith([
+          { id: 220, name: 'Seedance 2.0', constraints: { duration: { options: [5, 10, 15] } } },
+        ])}
+        modelReady
+        requireModelSelection
+      />,
+    )
+    expect(await screen.findByRole('note')).toHaveTextContent('这还是上次保存的设置：爆款视频约 14.8 秒，你选了 5 秒')
+
+    await pickCreativeParam(user, '15s')
+    const note = screen.getByRole('note')
+    expect(note).toHaveTextContent('爆款视频约 14.8 秒，你选了 15 秒，多出的不到 1 秒模型只能自己编')
+    expect(note).not.toHaveTextContent('上次保存')
+    expect(within(note).getByRole('button', { name: '改为 10s' })).toBeInTheDocument()
   })
 
   it('does not silently switch to another model when the selected model disappears from the catalog', async () => {

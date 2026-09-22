@@ -2,13 +2,20 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useBackgroundVideoSound } from '@/composables/useBackgroundVideoSound'
 
-/** 造一个够用的假 <video>：play/pause 可被断言，muted 可读写。 */
+/** 造一个够用的假 <video>：play/pause/load/removeAttribute 可被断言，muted 可读写。 */
 function fakeVideo() {
   return {
     muted: false,
     play: vi.fn().mockResolvedValue(undefined),
     pause: vi.fn(),
-  } as unknown as HTMLVideoElement & { play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn> }
+    load: vi.fn(),
+    removeAttribute: vi.fn(),
+  } as unknown as HTMLVideoElement & {
+    play: ReturnType<typeof vi.fn>
+    pause: ReturnType<typeof vi.fn>
+    load: ReturnType<typeof vi.fn>
+    removeAttribute: ReturnType<typeof vi.fn>
+  }
 }
 
 afterEach(() => {
@@ -34,6 +41,37 @@ describe('useBackgroundVideoSound 卸载时停掉背景视频', () => {
 
     expect(video.pause).toHaveBeenCalledTimes(1)
     expect(video.muted).toBe(true)
+    // 光 pause 不够：卸掉 src 再 load() 才是把媒体管线整个关掉，被摘掉的元素不会再出声
+    expect(video.removeAttribute).toHaveBeenCalledWith('src')
+    expect(video.load).toHaveBeenCalledTimes(1)
+  })
+
+  it('有声自动播放被拦截后，后续 canplay 再触发 playVideo 也保持静音，不会「界面静音却突然出声」', async () => {
+    const video = fakeVideo()
+    // 第一次有声 play 被浏览器拦截；之后（页面已有用户手势）play 都会成功
+    video.play.mockRejectedValueOnce(new DOMException('blocked', 'NotAllowedError')).mockResolvedValue(undefined)
+    const { result } = renderHook(() => useBackgroundVideoSound())
+
+    await act(async () => {
+      await result.current.playVideo(video)
+    })
+    expect(video.muted).toBe(true)
+    expect(result.current.muted).toBe(true)
+    expect(result.current.needsInteraction).toBe(true)
+
+    // 换幻灯片 / 卡顿后重新缓冲：canplay 再次触发
+    await act(async () => {
+      await result.current.playVideo(video)
+    })
+    expect(video.muted).toBe(true)
+    expect(result.current.muted).toBe(true)
+
+    // 只有用户点喇叭才恢复声音
+    act(() => {
+      result.current.toggleVideoSound(video)
+    })
+    expect(video.muted).toBe(false)
+    expect(result.current.muted).toBe(false)
   })
 
   it('从未播放过视频时，卸载不报错也不误调 pause', () => {

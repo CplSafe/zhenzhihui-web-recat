@@ -418,6 +418,77 @@ describe('useGenerationModelCatalog', () => {
     expect(readVideoModelNames(other.result.current)).toEqual(['Seedance 2.0', 'Seedance 2.5', '其他视频生成模型'])
   })
 
+  it('同一工作空间第二次挂载直接用缓存：不再发请求、首帧就有数据且不亮 loading；reload 才强制重拉', async () => {
+    mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) =>
+      operationCode === 'video.generate'
+        ? [{ id: 501, model: 'seedance-2.0', display_name: 'Seedance 2.0', operation_codes: ['video.generate'] }]
+        : [],
+    )
+
+    const first = renderHook(() => useGenerationModelCatalog(21))
+    expect(first.result.current.loading).toBe(true)
+    await waitFor(() => expect(first.result.current.loading).toBe(false))
+    expect(mocks.listAiModels).toHaveBeenCalledTimes(5)
+    first.unmount()
+
+    // 另一个页面挂载：命中缓存，5 个 operation 一个都不再打
+    const second = renderHook(() => useGenerationModelCatalog(21))
+    expect(second.result.current.loading).toBe(false)
+    expect(second.result.current.resolveModel('video.generate', 501)).toMatchObject({ display_name: 'Seedance 2.0' })
+    expect(mocks.listAiModels).toHaveBeenCalledTimes(5)
+
+    // 手动重试无视缓存
+    act(() => second.result.current.reload())
+    await waitFor(() => expect(mocks.listAiModels).toHaveBeenCalledTimes(10))
+    await waitFor(() => expect(second.result.current.loading).toBe(false))
+  })
+
+  it('同一工作空间两个页面同时挂载只发一次请求，结果两边都拿到', async () => {
+    const pending: Array<{ operationCode: string; resolve: (value: unknown) => void }> = []
+    mocks.listAiModels.mockImplementation(
+      ({ operationCode }: { operationCode: string }) =>
+        new Promise((resolve) => pending.push({ operationCode, resolve })),
+    )
+
+    const a = renderHook(() => useGenerationModelCatalog(21))
+    const b = renderHook(() => useGenerationModelCatalog(21))
+    await waitFor(() => expect(pending).toHaveLength(5))
+    expect(mocks.listAiModels).toHaveBeenCalledTimes(5)
+
+    await act(async () => {
+      pending.forEach((request) =>
+        request.resolve(
+          request.operationCode === 'responses.multimodal'
+            ? [{ id: 601, display_name: '脚本模型', operation_codes: ['responses.multimodal'] }]
+            : [],
+        ),
+      )
+    })
+    await waitFor(() => expect(a.result.current.loading).toBe(false))
+    await waitFor(() => expect(b.result.current.loading).toBe(false))
+    expect(a.result.current.resolveModel('responses.multimodal', 601)).not.toBeNull()
+    expect(b.result.current.resolveModel('responses.multimodal', 601)).not.toBeNull()
+  })
+
+  it('有 operation 网络失败的结果不进缓存，下次挂载照常重试', async () => {
+    mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) => {
+      if (operationCode === 'video.generate') throw new Error('video offline')
+      if (operationCode === 'responses.multimodal') {
+        return [{ id: 701, display_name: '脚本模型', operation_codes: ['responses.multimodal'] }]
+      }
+      return []
+    })
+    const first = renderHook(() => useGenerationModelCatalog(21))
+    await waitFor(() => expect(first.result.current.loading).toBe(false))
+    expect(first.result.current.operationStates['video.generate'].status).toBe('error')
+    first.unmount()
+
+    const second = renderHook(() => useGenerationModelCatalog(21))
+    expect(second.result.current.loading).toBe(true)
+    await waitFor(() => expect(second.result.current.loading).toBe(false))
+    expect(mocks.listAiModels).toHaveBeenCalledTimes(10)
+  })
+
   it('projects backend schema restrictions into the homepage dropdown without inventing model names', () => {
     const groups = buildGenerationModelGroups([
       {

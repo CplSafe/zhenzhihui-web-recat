@@ -273,6 +273,18 @@ function durationWheelOptions(field: ParamsSchemaField): WheelPickerOption[] {
   }))
 }
 
+/**
+ * 时长档位的范围说明（群反馈：全能参考下最多 13 秒、14/15 秒「灰色」却没有任何解释）。
+ * 上限来自当前模型的 params_schema，不是页面限制，所以要把「由模型决定、换模型可以更长」说出来。
+ */
+function describeDurationRange(options: WheelPickerOption[]): string {
+  if (!options.length) return ''
+  const first = options[0].label
+  const last = options[options.length - 1].label
+  const range = options.length === 1 ? `仅支持 ${first}` : `可选 ${first}–${last}`
+  return `当前模型${range}，上限由模型决定；需要更长时长请切换其他视频模型`
+}
+
 /** 滚轮回传的是字符串，需还原成 schema 声明的原始类型（时长档位通常是数字）。 */
 function resolveDurationWheelValue(field: ParamsSchemaField, picked: string): string | number {
   const declared = (field.options || []).find((option) => String(option) === picked)
@@ -2231,16 +2243,20 @@ function SchemaFieldMenu({
                   </div>
                 ) : isDurationField(f) && durationWheelOptions(f).length ? (
                   /* 时长：横向档位条吸附选择，与智能成片、爆款复制的时长交互一致 */
-                  <WheelPicker
-                    options={durationWheelOptions(f)}
-                    value={String(current ?? '')}
-                    onChange={(picked) => onFieldChange?.(f.name, resolveDurationWheelValue(f, picked))}
-                    ariaLabel={f.displayName}
-                    // 画布参数菜单比入口浮层窄，档位相应收窄一档宽度
-                    visibleCount={5}
-                    itemWidth={56}
-                    className={styles.durationWheel}
-                  />
+                  <>
+                    <WheelPicker
+                      options={durationWheelOptions(f)}
+                      value={String(current ?? '')}
+                      onChange={(picked) => onFieldChange?.(f.name, resolveDurationWheelValue(f, picked))}
+                      ariaLabel={f.displayName}
+                      // 画布参数菜单比入口浮层窄，档位相应收窄一档宽度
+                      visibleCount={5}
+                      itemWidth={56}
+                      className={styles.durationWheel}
+                    />
+                    {/* 档位范围由模型的 params_schema 决定；不写出来用户会以为「14/15 秒是灰的、点不了」是 bug */}
+                    <div className={styles.videoMenuHint}>{describeDurationRange(durationWheelOptions(f))}</div>
+                  </>
                 ) : isNumberField(f) ? (
                   /* 数字类型：滑块，min/max 为范围，步进由 default 是否有小数点决定 */
                   <div className={styles.sliderWrap}>

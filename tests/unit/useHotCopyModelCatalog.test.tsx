@@ -257,6 +257,33 @@ describe('useHotCopyModelCatalog', () => {
     expect(mocks.listAiModels).toHaveBeenCalledOnce()
   })
 
+  it('同一工作空间再次挂载直接用缓存，不重复请求；空目录不缓存、下次照常重试', async () => {
+    mocks.listAiModels.mockResolvedValue([
+      { id: 301, display_name: 'Seedance 2.0', operation_codes: ['video.replicate'] },
+    ])
+    const first = renderHook(() => useHotCopyModelCatalog(21))
+    expect(first.result.current.loading).toBe(true)
+    await waitFor(() => expect(first.result.current.ready).toBe(true))
+    first.unmount()
+
+    const second = renderHook(() => useHotCopyModelCatalog(21))
+    expect(second.result.current.loading).toBe(false)
+    expect(second.result.current.ready).toBe(true)
+    expect(second.result.current.resolveModel(301)).not.toBeNull()
+    expect(mocks.listAiModels).toHaveBeenCalledOnce()
+    second.unmount()
+
+    // 换个空间：空目录不进缓存
+    mocks.listAiModels.mockResolvedValue([])
+    const emptyA = renderHook(() => useHotCopyModelCatalog(22))
+    await waitFor(() => expect(emptyA.result.current.loading).toBe(false))
+    expect(emptyA.result.current.ready).toBe(false)
+    emptyA.unmount()
+    const emptyB = renderHook(() => useHotCopyModelCatalog(22))
+    await waitFor(() => expect(emptyB.result.current.loading).toBe(false))
+    expect(mocks.listAiModels).toHaveBeenCalledTimes(3)
+  })
+
   it('aborts the in-flight catalog request when the workspace hook unmounts', () => {
     mocks.listAiModels.mockImplementation(() => new Promise(() => undefined))
 

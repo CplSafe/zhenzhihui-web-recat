@@ -405,6 +405,34 @@
 .hotcopy__sourceHintLine + .hotcopy__sourceHintLine {
   margin-top: 4px;
 }
+/* 提示行尾的「改为 9:16 · 15s」：同色描边小胶囊，点一下把推荐档填回去 */
+.hotcopy__sourceHintAction {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 10px;
+  border: 1px solid #e0a94a;
+  border-radius: 999px;
+  background: #fff;
+  color: #8a5a00;
+  font: inherit;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+  vertical-align: baseline;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+.hotcopy__sourceHintAction:hover:not(:disabled),
+.hotcopy__sourceHintAction:focus-visible {
+  background: #ffefd1;
+  border-color: #cf8f20;
+  outline: none;
+}
+.hotcopy__sourceHintAction:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .hotcopy__sendArea {
   display: flex;
   align-items: center;

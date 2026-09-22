@@ -28,12 +28,18 @@ export function useBackgroundVideoSound() {
   const muted = preferenceMuted || autoplayBlocked
   // 记住当前正在播放的背景视频，供组件卸载时停掉它。
   const activeVideoRef = useRef<HTMLVideoElement | null>(null)
+  // playVideo 会被 canplay 反复触发（换幻灯片、卡顿后重新缓冲都会再来一次）。
+  // 有声自动播放已被拦截过一次后，后面这些触发不能再擅自把 muted 关掉：
+  // 那时页面往往已经有过用户手势，第二次 play() 会成功，界面还显示着静音，声音却突然出来了。
+  // 恢复声音只走用户点喇叭这一条路（toggleVideoSound）。
+  const autoplayBlockedRef = useRef(false)
 
   useEffect(() => {
     const syncPreference = (event: StorageEvent) => {
       if (event.key !== BACKGROUND_VIDEO_MUTED_KEY) return
       const nextMuted = event.newValue === 'true'
       setPreferenceMuted(nextMuted)
+      autoplayBlockedRef.current = false
       setAutoplayBlocked(false)
       // 与 toggleVideoSound 一样直接同步到元素属性,不等下一次渲染:
       // 跨标签页静音是「立刻别出声」的诉求,渲染被后台节流时不能让视频多响一拍。
@@ -61,6 +67,11 @@ export function useBackgroundVideoSound() {
       try {
         video.pause()
         video.muted = true
+        // pause 只是停在当前帧，媒体管线还挂着：某些浏览器上被摘掉的元素若还有引用，
+        // 网络/解码线程会继续跑，个别版本甚至还会继续出声（用户反馈「换了页面还在响」）。
+        // 卸掉 src 再 load() 是规范里彻底重置媒体元素的办法，等价于把这条视频关掉。
+        if (typeof video.removeAttribute === 'function') video.removeAttribute('src')
+        if (typeof video.load === 'function') video.load()
       } catch {
         // 元素可能已被浏览器回收；停不了也无副作用，忽略。
       }
@@ -85,16 +96,17 @@ export function useBackgroundVideoSound() {
     async (video: HTMLVideoElement | null) => {
       if (!video) return
       activeVideoRef.current = video
-      video.muted = preferenceMuted
+      video.muted = preferenceMuted || autoplayBlockedRef.current
       try {
         await video.play()
-        setAutoplayBlocked(false)
+        if (!autoplayBlockedRef.current) setAutoplayBlocked(false)
       } catch {
         if (preferenceMuted) return
 
         // 浏览器通常会拦截首次有声自动播放。先静音保证画面继续播放，
         // 等用户点击喇叭后再在用户手势中恢复声音。
         video.muted = true
+        autoplayBlockedRef.current = true
         setAutoplayBlocked(true)
         try {
           await video.play()
@@ -109,6 +121,7 @@ export function useBackgroundVideoSound() {
   const toggleVideoSound = useCallback(
     (video: HTMLVideoElement | null) => {
       const nextMuted = !muted
+      autoplayBlockedRef.current = false
       setAutoplayBlocked(false)
       setPreferenceMuted(nextMuted)
       writeMutedPreference(nextMuted)
@@ -117,11 +130,15 @@ export function useBackgroundVideoSound() {
       activeVideoRef.current = video
       video.muted = nextMuted
       if (!nextMuted) {
+        const markBlocked = () => {
+          autoplayBlockedRef.current = true
+          setAutoplayBlocked(true)
+        }
         try {
           const playResult = video.play()
-          void playResult?.catch(() => setAutoplayBlocked(true))
+          void playResult?.catch(markBlocked)
         } catch {
-          setAutoplayBlocked(true)
+          markBlocked()
         }
       }
     },

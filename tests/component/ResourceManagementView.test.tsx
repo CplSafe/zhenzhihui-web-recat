@@ -229,20 +229,45 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     await openMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: '智能成片' }))
     expect(mocks.navigate).toHaveBeenCalledWith('/smart', {
-      state: { carryImages: [{ url: '/subject.png', assetId: 431 }] },
+      state: { carryImages: [{ url: '/api/v1/assets/431/download?workspace_id=21', assetId: 431 }] },
     })
 
     await openMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: '爆款复制' }))
     expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy', {
-      state: { carryImages: [{ url: '/subject.png', assetId: 431 }] },
+      state: { carryImages: [{ url: '/api/v1/assets/431/download?workspace_id=21', assetId: 431 }] },
     })
 
     // 无限画布走列表页：/canvas 是列表而不是编辑器，素材由列表页透传给用户选中/新建的画布。
     await openMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: '无限画布' }))
     expect(mocks.navigate).toHaveBeenCalledWith('/canvas', {
-      state: { carryMaterial: { url: '/subject.png', assetId: 431, type: 'image', name: '主体图' } },
+      state: {
+        carryMaterial: {
+          url: '/api/v1/assets/431/download?workspace_id=21',
+          assetId: 431,
+          type: 'image',
+          name: '主体图',
+        },
+      },
+    })
+  })
+
+  it('routes a video with its durable asset stream URL instead of an expiring preview URL', async () => {
+    mocks.listAssets.mockResolvedValue({ items: [asset(432, '素材视频', '/signed/video.mp4?expires=1')] })
+
+    render(<ResourceManagementView />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '把素材视频添加到创作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '爆款复制' }))
+
+    expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy', {
+      state: {
+        carryVideo: {
+          url: '/api/v1/assets/432/download?workspace_id=21',
+          assetId: 432,
+        },
+      },
     })
   })
 
@@ -397,7 +422,7 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     fireEvent.click(screen.getByRole('button', { name: '把收藏案例添加到创作' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '爆款复制' }))
     expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy', {
-      state: { carryVideo: { url: '/fresh-favorite.mp4', assetId: 701 } },
+      state: { carryVideo: { url: '/api/v1/assets/701/download?workspace_id=21', assetId: 701 } },
     })
 
     fireEvent.click(screen.getByRole('button', { name: '取消收藏收藏案例' }))

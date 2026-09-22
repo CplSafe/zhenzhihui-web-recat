@@ -6,6 +6,7 @@
  * 也不知道该去改什么，甚至会把「供应商计费问题」误解成自己欠费。这里把这类报错改写成用户能据此
  * 行动的说法——只改「说法」，不改判断逻辑（判断仍以后端返回为准）。
  */
+import { humanizeProviderErrorText } from '@/api/business'
 
 /**
  * 供应商账户/计费/接入点/限流等「服务级」失败的识别（PROVIDER_FAILED 10502、Google 图片计费缺失、
@@ -35,12 +36,16 @@ const REWRITE_RULES: { match: RegExp; text: string }[] = [
   },
 ]
 
-/** 把后端错误文案改写成用户能据此行动的说法；没有命中规则时原样返回。 */
+/**
+ * 把后端错误文案改写成用户能据此行动的说法；画布自己的规则没命中时，再走 business 里全链路共用的
+ * 供应商原文翻译（参考图尺寸/宽高比、供应商余额、provider task failed 等），仍没命中才原样返回。
+ */
 export function humanizeCanvasTaskError(message: unknown): string {
   const text = String(message ?? '').trim()
   if (!text) return ''
   const hit = REWRITE_RULES.find((rule) => rule.match.test(text))
-  return hit ? hit.text : text
+  if (hit) return hit.text
+  return humanizeProviderErrorText(text) || text
 }
 
 /**

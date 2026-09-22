@@ -18,8 +18,12 @@ interface InlineEditProps {
   className?: string
   editable?: boolean
   maxLength?: number
-  /** 进入编辑的方式:单击 / 双击(默认双击) */
-  trigger?: 'click' | 'dblclick'
+  /**
+   * 进入编辑的方式:单击 / 双击(默认双击) / none。
+   * none = 展示态就是一段普通文本,不响应点击与键盘,只能由 openSignal 打开——
+   * 用在本身可点击的容器里(如整张可点开的项目卡片),避免"双击改名"的第一下就把卡片点开了。
+   */
+  trigger?: 'click' | 'dblclick' | 'none'
   /**
    * 由外部要求进入编辑态(例如另一处的「重命名」按钮)。
    * 从 false 变 true 时展开输入框;不传则完全保持原有的自行控制行为。
@@ -70,19 +74,25 @@ export default function InlineEdit({
   })
 
   if (!editing) {
+    // trigger=none:展示态是普通文本,不挂交互;只由 openSignal 打开
+    const interactive = editable && trigger !== 'none'
     return (
       <span
         className={`ie ie-display ${className}`}
         onClick={trigger === 'click' ? start : undefined}
         onDoubleClick={trigger === 'dblclick' ? start : undefined}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' && event.key !== ' ') return
-          event.preventDefault()
-          start()
-        }}
-        title={editable ? (trigger === 'click' ? '点击修改' : '双击修改') : undefined}
-        role={editable ? 'button' : undefined}
-        tabIndex={editable ? 0 : undefined}
+        onKeyDown={
+          interactive
+            ? (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                start()
+              }
+            : undefined
+        }
+        title={interactive ? (trigger === 'click' ? '点击修改' : '双击修改') : undefined}
+        role={interactive ? 'button' : undefined}
+        tabIndex={interactive ? 0 : undefined}
       >
         {value ? value : <span className="ie-ph">{placeholder}</span>}
       </span>

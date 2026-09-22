@@ -26,7 +26,8 @@ import {
   publishProjectVideo,
   type ProjectVideo,
 } from '@/api/projectVideos'
-import { getCreativeProject } from '@/api/business'
+import { getBusinessErrorMessage, getCreativeProject, patchCreativeProject } from '@/api/business'
+import InlineEdit from '@/components/common/InlineEdit'
 import { downloadToDisk, buildDownloadName, isWeChatBrowser } from '@/utils/downloadToDisk'
 import {
   isCreativeProjectRestrictedForUser,
@@ -358,6 +359,7 @@ export default function ProjectVideoListView() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [projectTitle, setProjectTitle] = useState('')
+  const [renamingTitle, setRenamingTitle] = useState(false)
   const [projectOwnerId, setProjectOwnerId] = useState(0)
   const [editorCount, setEditorCount] = useState(0)
   const [newVideoOpen, setNewVideoOpen] = useState(false)
@@ -406,6 +408,38 @@ export default function ProjectVideoListView() {
     workspaceIdRef.current = Number(workspaceId || 0)
     projectIdRef.current = projectId
   }, [projectId, workspaceId])
+
+  // 面包屑里的项目名可就地改名(双击 / 铅笔按钮):能进到这页就有访问权,后端也是"空间成员即可"。
+  // 乐观更新、失败回滚;PATCH 只改标题不动草稿版本号。请求返回时若已切到别的项目/空间就不再碰标题。
+  const renameProjectTitle = useCallback(
+    async (nextTitle: string) => {
+      const next = String(nextTitle || '').trim()
+      if (!next) {
+        showToast('项目名称不能为空', 'error')
+        return
+      }
+      if (next === projectTitle) return
+      const wsId = Number(workspaceId || 0)
+      if (!wsId || !projectId) {
+        showToast('workspace_id 缺失,无法重命名', 'error')
+        return
+      }
+      const isSameRoute = () => workspaceIdRef.current === wsId && projectIdRef.current === projectId
+      const previousTitle = projectTitle
+      setProjectTitle(next)
+      try {
+        await patchCreativeProject({ projectId, workspaceId: wsId, title: next, name: next })
+        if (!isSameRoute()) return
+        showToast('项目已重命名', 'success')
+      } catch (error) {
+        if (!isSameRoute()) return
+        setProjectTitle(previousTitle)
+        showToast(getBusinessErrorMessage(error, '重命名失败,请稍后重试'), 'error')
+      }
+    },
+    [projectId, projectTitle, showToast, workspaceId],
+  )
+
   // 同时加载项目元信息和视频清单；请求快照确保快速切换项目/空间时只接收最后一次响应。
   const loadData = useCallback(async () => {
     const wsId = Number(workspaceId || 0)
@@ -700,7 +734,41 @@ export default function ProjectVideoListView() {
               </button>
               <span className="pvlist-breadcrumb__sep">›</span>
               <span className="pvlist-breadcrumb__current">
-                {projectTitle || '项目视频'}
+                {/* 项目名可就地改:双击、或点旁边的铅笔;回车确认、Esc 取消 */}
+                <InlineEdit
+                  value={projectTitle}
+                  placeholder="项目视频"
+                  trigger="dblclick"
+                  maxLength={60}
+                  className="pvlist-breadcrumb__title-edit"
+                  openSignal={renamingTitle}
+                  onEditingEnd={() => setRenamingTitle(false)}
+                  onCommit={(next) => void renameProjectTitle(next)}
+                />
+                {!renamingTitle && (
+                  <button
+                    type="button"
+                    className="pvlist-breadcrumb__rename"
+                    aria-label="重命名项目"
+                    title="重命名项目"
+                    onClick={() => setRenamingTitle(true)}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M4 20h16" />
+                      <path d="m14.5 4.5 5 5L9 20H4v-5z" />
+                    </svg>
+                  </button>
+                )}
                 {videoCount ? `（${videoCount}个视频）` : ''}
                 {editorCount ? <span className="pvlist-breadcrumb__meta">· {editorCount} 编辑者</span> : null}
               </span>

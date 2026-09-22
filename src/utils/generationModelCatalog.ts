@@ -8,6 +8,12 @@
  * - 不发请求、不读工作空间状态，也不参与生成任务提交，便于页面按需接入。
  */
 
+/**
+ * 模型目录内存缓存的新鲜期（智能成片目录与爆款复制目录共用）。
+ * 目录随套餐 / 后台配置变化，5 分钟内各页面直接复用，过期后先用旧目录渲染再后台刷新。
+ */
+export const MODEL_CATALOG_CACHE_TTL_MS = 5 * 60_000
+
 /** 当前智能成片需要展示和选择模型的后端操作码。 */
 export const GENERATION_OPERATION_CODES = [
   'responses.multimodal',

@@ -78,6 +78,7 @@ import CanvasNodePanel, {
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
+import TutorialButton from '@/components/common/TutorialButton'
 import CanvasHistoryPanel, { type HistoryItem } from '@/components/canvas/CanvasHistoryPanel'
 import CanvasVideoPreviewModal from '@/components/canvas/CanvasVideoPreviewModal'
 import CanvasImagePreviewModal, { type CanvasImagePreviewItem } from '@/components/canvas/CanvasImagePreviewModal'
@@ -107,6 +108,7 @@ import {
 } from '@/api/business'
 import { polishText } from '@/api/aiPolish'
 import { assetStreamUrl } from '@/utils/assetUrl'
+import { normalizeImageFileForAiInput } from '@/utils/imageFile'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
 import {
@@ -4019,8 +4021,10 @@ function CanvasInner() {
         return
       }
       try {
+        // 图片先做生成输入合规（<256px 拒绝、>5760px 自动缩），否则要到生成阶段才收供应商的英文报错
+        const uploadFile = isImage ? await normalizeImageFileForAiInput(file) : file
         // 上传到素材中心，取得持久 asset_id（刷新后可经 /download 回显，不再依赖会话级 objectURL）
-        const out: any = await uploadAssetFile({ workspaceId, file })
+        const out: any = await uploadAssetFile({ workspaceId, file: uploadFile })
         const assetId = Number(out?.asset?.id || 0)
         if (!assetId) throw new Error('上传素材失败，请稍后重试')
         const resultUrl = assetStreamUrl(assetId, workspaceId)
@@ -4078,18 +4082,30 @@ function CanvasInner() {
    */
   const importLocalMedia = useCallback(
     async (files: File[], anchor?: { x: number; y: number }) => {
-      const images = pickImageFiles(files)
+      const allImages = pickImageFiles(files)
       // 视频先按体积筛一遍：超限的不建节点，直接并入失败提示，
       // 否则用户会看着一个占位节点转很久最后失败，还不知道原因是文件太大。
       const allVideos = pickVideoFiles(files)
       const videos = allVideos.filter((file) => file.size <= LOCAL_VIDEO_MAX_BYTES)
       const oversized = allVideos.length - videos.length
-      if (images.length === 0 && allVideos.length === 0) {
+      if (allImages.length === 0 && allVideos.length === 0) {
         showToast('仅支持导入图片或视频文件', 'error')
         return
       }
+      // 图片同样先做生成输入合规：<256px 的不建节点并说明原因，>5760px 的自动缩到范围内再上传。
+      const imageChecks = await Promise.all(
+        allImages.map(async (file) => {
+          try {
+            return { file: await normalizeImageFileForAiInput(file), error: '' }
+          } catch (error: any) {
+            return { file, error: `${file.name}：${String(error?.message || '图片不符合要求')}` }
+          }
+        }),
+      )
+      const images = imageChecks.filter((item) => !item.error).map((item) => item.file)
+      const rejectedImages = imageChecks.filter((item) => item.error).map((item) => item.error)
       if (images.length === 0 && videos.length === 0) {
-        showToast('视频超过 512MB，请压缩后再导入', 'error')
+        showToast(rejectedImages[0] || '视频超过 512MB，请压缩后再导入', 'error')
         return
       }
       // 图片在前、视频在后，保证超限被裁掉的总是排在后面的那些，顺序稳定可预期
@@ -4128,7 +4144,7 @@ function CanvasInner() {
         )
         return { nodeId, file, previewUrl }
       })
-      const failures: string[] = []
+      const failures: string[] = [...rejectedImages]
       await mapWithConcurrency(created, 4, async ({ nodeId, file, previewUrl }) => {
         try {
           // 上传到素材中心，取得持久 asset_id（刷新后经同源流式地址回显）
@@ -4153,7 +4169,7 @@ function CanvasInner() {
       })
       setSaveStatus('dirty')
       if (failures.length > 0) {
-        showToast(failures.length > 1 ? `${failures.length} 个素材上传失败：${failures[0]}` : failures[0], 'error')
+        showToast(failures.length > 1 ? `${failures.length} 个素材未能导入：${failures[0]}` : failures[0], 'error')
       } else if (oversized > 0) {
         // 已成功导入的部分不受影响，这里只解释被跳过的那些为什么没进来
         showToast(`${oversized} 个视频超过 512MB 已跳过，请压缩后再导入`, 'info')
@@ -6480,6 +6496,9 @@ function CanvasInner() {
             )}
           </div>
         </div>
+
+        {/* 操作手册：画布页没有共享顶栏，单独挂在右上角、分享按钮左侧 */}
+        <TutorialButton variant="pill" className="canvas-tutorial-btn" />
 
         {/* 分享入口：只对已落库的画布开放——没有 canvasId 就没有可分享的对象 */}
         {canvasId > 0 && workspaceId > 0 && (

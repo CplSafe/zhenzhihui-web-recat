@@ -57,26 +57,71 @@ export interface SourceVideoMeta {
   durationSec: number
 }
 
-/** 当前比例 / 时长与源视频不一致时给出的提示文案；一致或缺信息时返回空串。 */
-export function describeSourceMismatch(args: {
+export interface SourceMismatchArgs {
   source: SourceVideoMeta | null | undefined
   ratio: string
   durationSec: number
   ratioOptions: readonly string[]
   durationOptions: readonly number[]
-}): string {
+}
+
+/** 比例 / 时长与源视频不一致时的说明 + 一键改回推荐档所需的值。 */
+export interface SourceMismatch {
+  /** 推荐比例；当前已一致时为空串 */
+  ratio: string
+  /** 推荐秒数；当前已一致时为 0 */
+  durationSec: number
+  /** 提示正文 */
+  message: string
+  /** 一键采纳按钮文案，如「改为 9:16 · 15s」，和参数下拉里的写法保持一致 */
+  actionLabel: string
+}
+
+/** 秒数差的口语写法：1 秒以上四舍五入成整数，不足 1 秒不报"约 0 秒"。 */
+function describeSecondsGap(seconds: number): string {
+  return seconds >= 1 ? `约 ${Math.round(seconds)} 秒` : '不到 1 秒'
+}
+
+/**
+ * 当前比例 / 时长与源视频不一致时给出提示与推荐值；一致或缺信息时返回 null。
+ * 文案用页面自己的词（"爆款视频"、"你选了"），时长按选长 / 选短分开说并算出差多少秒——
+ * 选长了是模型得自己编一段，选短了是内容被砍掉一截，两者不是一回事。
+ */
+export function resolveSourceMismatch(args: SourceMismatchArgs): SourceMismatch | null {
   const source = args.source
-  if (!source) return ''
+  if (!source) return null
   const parts: string[] = []
+  const actionParts: string[] = []
+  let ratio = ''
+  let durationSec = 0
   const matchedRatio = closestRatioOption(source.width, source.height, args.ratioOptions)
   if (matchedRatio && args.ratio && matchedRatio !== args.ratio) {
-    parts.push(`源视频接近 ${matchedRatio}，当前选了 ${args.ratio}，模型需要重新构图`)
+    ratio = matchedRatio
+    parts.push(`爆款视频是 ${matchedRatio}，你选了 ${args.ratio}，画面会被重新裁切构图`)
+    actionParts.push(matchedRatio)
   }
   const matchedDuration = closestDurationOption(source.durationSec, args.durationOptions)
   const current = Number(args.durationSec) || 0
   if (matchedDuration && current > 0 && matchedDuration !== current) {
+    durationSec = matchedDuration
     const sourceLabel = Number.isInteger(source.durationSec) ? `${source.durationSec}` : source.durationSec.toFixed(1)
-    parts.push(`源视频约 ${sourceLabel} 秒，当前选了 ${current} 秒，节奏会被裁剪或拉伸`)
+    const consequence =
+      current > source.durationSec
+        ? `多出的${describeSecondsGap(current - source.durationSec)}模型只能自己编`
+        : `会少掉${describeSecondsGap(source.durationSec - current)}的内容`
+    parts.push(`爆款视频约 ${sourceLabel} 秒，你选了 ${current} 秒，${consequence}`)
+    actionParts.push(`${matchedDuration}s`)
   }
-  return parts.length ? `${parts.join('；')}。与源视频保持一致复刻效果更稳定。` : ''
+  if (!parts.length) return null
+  return {
+    ratio,
+    durationSec,
+    message: `${parts.join('；')}。跟着爆款的比例和时长走，复刻最像。`,
+    actionLabel: `改为 ${actionParts.join(' · ')}`,
+  }
+}
+
+/** 当前比例 / 时长与源视频不一致时给出的提示文案；一致或缺信息时返回空串。 */
+export function describeSourceMismatch(args: SourceMismatchArgs): string {
+  return resolveSourceMismatch(args)?.message ?? ''
 }

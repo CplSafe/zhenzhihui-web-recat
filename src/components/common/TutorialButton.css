@@ -1,0 +1,110 @@
+/* 「操作手册」按钮：topbar 档与顶栏「分享链接」同风格；pill 档与画布页「分享」胶囊同风格 */
+.tutorial-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.tutorial-btn--topbar {
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  color: #2b3040;
+  font-size: 14px;
+  font-weight: 500;
+}
+.tutorial-btn--topbar:hover {
+  color: #11a98a;
+}
+.tutorial-btn--pill {
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid #e3e7ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #33403a;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgba(23, 33, 61, 0.1);
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease;
+}
+.tutorial-btn--pill:hover {
+  border-color: #11a98a;
+  color: #11a98a;
+}
+.tutorial-btn:focus-visible {
+  outline: 3px solid rgba(17, 169, 138, 0.35);
+  outline-offset: 2px;
+}
+
+/* 弹窗 */
+.tutorial-modal__mask {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 14, 22, 0.72);
+  backdrop-filter: blur(6px);
+}
+.tutorial-modal {
+  width: min(1080px, 100%);
+  border-radius: 16px;
+  background: #12161f;
+  color: #fff;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.tutorial-modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px 12px;
+}
+.tutorial-modal__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+.tutorial-modal__summary {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.62);
+}
+.tutorial-modal__close {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tutorial-modal__close:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+.tutorial-modal__video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+@media (max-width: 640px) {
+  .tutorial-btn--topbar span,
+  .tutorial-btn--pill span {
+    display: none;
+  }
+  .tutorial-modal__mask {
+    padding: 12px;
+  }
+}

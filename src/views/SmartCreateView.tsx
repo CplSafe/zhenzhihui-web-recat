@@ -97,11 +97,7 @@ import {
 } from '@/api/smartVideo'
 import { listRealPeople } from '@/api/realPeople'
 import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
-import {
-  isSupportedVideoReferenceImageDimensions,
-  readImageDimensions,
-  videoReferenceImageDimensionError,
-} from '@/utils/imageFile'
+import { readImageDimensions, videoReferenceImageIssue } from '@/utils/imageFile'
 import { isVideoResolutionLower, readVideoMetadata, type VideoMetadata } from '@/utils/videoDuration'
 import { resolveVideoEditResolution } from '@/utils/videoEditResolution'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
@@ -3604,11 +3600,12 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           }
         }),
       )
-      const invalid = dimensions.find(
-        (item) => item.dimensions && !isSupportedVideoReferenceImageDimensions(item.dimensions),
-      )
-      if (invalid?.dimensions) {
-        showToast(`第 ${invalid.index + 1} 张参考图${videoReferenceImageDimensionError(invalid.dimensions)}`, 'error')
+      // 像素范围 + 宽高比一起查：供应商对两条都有硬限制，漏一条用户就要等到生成阶段才被打回
+      const invalid = dimensions
+        .map((item) => ({ ...item, issue: item.dimensions ? videoReferenceImageIssue(item.dimensions) : '' }))
+        .find((item) => item.issue)
+      if (invalid) {
+        showToast(`第 ${invalid.index + 1} 张参考图${invalid.issue}`, 'error')
         return
       }
     }

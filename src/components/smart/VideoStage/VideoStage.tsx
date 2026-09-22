@@ -11,6 +11,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { Shot } from '../ScriptStoryboardTable'
 import { polishText } from '@/api/aiPolish'
+import { humanizeProviderErrorText } from '@/api/business'
 import { useToast } from '@/composables/useToast'
 import { openMemberCenter } from '@/stores/ui'
 import {
@@ -1216,11 +1217,14 @@ export default function VideoStage({
                     <div
                       key={item.id}
                       className={`${styles.vstageVer} ${styles.vstageVerFailed}`}
-                      title={item.error || '生成失败'}
+                      title={humanizeProviderErrorText(item.error) || item.error || '生成失败'}
                     >
                       <div className={styles.vstageVerFailedBody}>
                         <span className={styles.vstageVerFailedTitle}>生成失败</span>
-                        <span className={styles.vstageVerFailedReason}>{item.error || '请重试'}</span>
+                        {/* 历史失败原因是草稿里持久化的供应商原文（content[3].image_url: media aspect ratio…），展示时翻译 */}
+                        <span className={styles.vstageVerFailedReason}>
+                          {humanizeProviderErrorText(item.error) || item.error || '请重试'}
+                        </span>
                       </div>
                       <span className={styles.vstageVerNo}>{historyItems.publishedVersions.length + i + 1}</span>
                     </div>
@@ -1259,13 +1263,21 @@ export default function VideoStage({
               {editDisabledReason}
             </div>
           ) : allowVideoModification && showTimeline ? (
-            <ModBox
-              title="整段视频修改"
-              value={overallNote}
-              polishKind="video-edit"
-              onChange={setOverallNote}
-              onPolishText={onPolishText}
-            />
+            <>
+              <ModBox
+                title="整段视频修改"
+                value={overallNote}
+                polishKind="video-edit"
+                onChange={setOverallNote}
+                onPolishText={onPolishText}
+              />
+              {/* 能力边界要写在用户下笔前：视频模型没有「只改第 6–11 秒」的能力，之前的示例文案反而在教用户这么写，
+                  用户反复试「只改几秒」全都失败（群里连续三次反馈）。 */}
+              <div className={styles.vstageRightHint} role="note">
+                修改会基于当前视频整段重新生成，暂不支持只改其中几秒；想精确控制某一段，建议把该分镜控制在 3–5
+                秒后单独重做。
+              </div>
+            </>
           ) : allowVideoModification ? (
             <div className={styles.vstageRightHint}>视频生成后,可在此对整段视频提修改意见。</div>
           ) : null}
@@ -1640,7 +1652,7 @@ function ModBox({
           placeholder={
             polishKind === 'segment'
               ? '请说明要修改的画面、目标效果，以及需要保持不变的内容。'
-              : '用简单的话说明哪段画面有什么问题、希望怎么改，AI会自动补全专业指令。\n例如：6秒到11秒，扳手应该横着拧螺母，不要上下动。'
+              : '用简单的话说明画面哪里有问题、希望怎么改，AI会自动补全专业指令。\n例如：扳手应该横着拧螺母，不要上下动；人物服装和场景保持不变。'
           }
           onFocus={() => {
             focusedRef.current = true
