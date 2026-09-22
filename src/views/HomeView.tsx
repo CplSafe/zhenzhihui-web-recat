@@ -324,7 +324,7 @@ const QUICK_ENTRIES: QuickEntry[] = [
 
 import { type TemplateItem } from '@/api/templates'
 import { DEMO_TEMPLATES, DEMO_LANDSCAPE_URLS } from '@/data/demoTemplates'
-import { loadTemplateCatalog, type TemplateCatalogSource } from '@/utils/templateCatalog'
+import { loadTemplateCatalog } from '@/utils/templateCatalog'
 
 /** 首页案例区可切换的模板和历史项目标签。 */
 const TABS = [
@@ -726,8 +726,6 @@ export default function HomeView() {
   const [templateItems, setTemplateItems] = useState<TemplateItem[]>(DEMO_TEMPLATES)
   const [templateLoading, setTemplateLoading] = useState(false)
   const [templateError, setTemplateError] = useState('')
-  const [templateSource, setTemplateSource] = useState<TemplateCatalogSource>('builtin')
-  const [templateNotice, setTemplateNotice] = useState('')
 
   // 模板收藏按工作空间保存到 localStorage；切换用户或工作空间时重新读取，避免收藏状态串用。
   const [favKeys, setFavKeys] = useState<Set<string>>(new Set())
@@ -773,7 +771,7 @@ export default function HomeView() {
     [navigate, requireAuth],
   )
 
-  // 全应用共享一次远程探测；端点未开放时稳定展示并标注内置模板。
+  // 全应用共享一次远程探测；端点未开放时稳定回退内置目录（首页不再标注来源，模板库页仍有标注）。
   useEffect(() => {
     if (activeTab !== 'template') return
     let cancelled = false
@@ -782,8 +780,6 @@ export default function HomeView() {
       .then((catalog) => {
         if (cancelled) return
         setTemplateItems(catalog.items)
-        setTemplateSource(catalog.source)
-        setTemplateNotice(catalog.notice)
         setTemplateError(catalog.items.length ? '' : 'empty')
       })
       .finally(() => {
@@ -1183,11 +1179,6 @@ export default function HomeView() {
                   </button>
                 ))}
               </div>
-              {activeTab === 'template' && (
-                <span className={`home__template-source is-${templateSource}`} title={templateNotice || '来自模板服务'}>
-                  {templateSource === 'builtin' ? '内置模板' : '在线模板'}
-                </span>
-              )}
               <div className="home__search">
                 <svg
                   viewBox="0 0 24 24"

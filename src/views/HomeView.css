@@ -409,19 +409,6 @@
   padding: 4px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 }
-.home__template-source {
-  flex: none;
-  padding: 3px 8px;
-  border-radius: 999px;
-  color: #3f7b6e;
-  background: #eaf8f4;
-  font-size: 12px;
-  line-height: 1.4;
-}
-.home__template-source.is-builtin {
-  color: #80621a;
-  background: #fff6dc;
-}
 .home__tab {
   padding: 7px 18px;
   border: none;
