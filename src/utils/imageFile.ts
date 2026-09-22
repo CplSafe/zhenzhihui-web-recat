@@ -26,6 +26,39 @@ export function videoReferenceImageDimensionError(dimensions: ImageDimensions): 
   return `图片尺寸为 ${width}×${height}px，宽和高均需在 ${VIDEO_REFERENCE_IMAGE_MIN_DIMENSION}–${VIDEO_REFERENCE_IMAGE_MAX_DIMENSION}px 之间`
 }
 
+/**
+ * 视频模型接收参考图时允许的宽高比范围（宽 ÷ 高）。
+ * 供应商原文：content[3].image_url: media aspect ratio must be between 0.4 and 2.5——
+ * 太窄的竖条或太扁的横条图会在生成阶段才被打回，而且一次失败会把整批任务都打回，所以在选图时就拦。
+ */
+export const VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO = 0.4
+export const VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO = 2.5
+
+/** 判断图片宽高比是否在视频模型接受的范围内。 */
+export function isSupportedVideoReferenceImageAspectRatio({ width, height }: ImageDimensions): boolean {
+  if (!(width > 0) || !(height > 0)) return false
+  const ratio = width / height
+  return ratio >= VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO && ratio <= VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO
+}
+
+/** 将不合规的宽高比转换为可直接呈现给用户的提示。 */
+export function videoReferenceImageAspectRatioError(dimensions: ImageDimensions): string {
+  const width = Math.round(Number(dimensions.width) || 0)
+  const height = Math.round(Number(dimensions.height) || 0)
+  const ratio = height > 0 ? (width / height).toFixed(2) : '0'
+  return `图片宽高比为 ${ratio}（${width}×${height}px），需在 ${VIDEO_REFERENCE_IMAGE_MIN_ASPECT_RATIO}–${VIDEO_REFERENCE_IMAGE_MAX_ASPECT_RATIO} 之间，请裁掉过长的一边后重试`
+}
+
+/**
+ * 视频参考图的完整合规检查：先查像素范围，再查宽高比；合规返回空串，否则返回可直接展示的原因。
+ * 入口选图、爆款成片提交前复检都用它，两条规则才不会各处漏一条。
+ */
+export function videoReferenceImageIssue(dimensions: ImageDimensions): string {
+  if (!isSupportedVideoReferenceImageDimensions(dimensions)) return videoReferenceImageDimensionError(dimensions)
+  if (!isSupportedVideoReferenceImageAspectRatio(dimensions)) return videoReferenceImageAspectRatioError(dimensions)
+  return ''
+}
+
 /** 读取可展示图片的实际像素尺寸；用于在创建付费视频任务前拦截不合规的参考图。 */
 export function readImageDimensions(source: string): Promise<ImageDimensions> {
   return new Promise((resolve, reject) => {
@@ -78,6 +111,72 @@ export function fileToDataUrl(file: File, max = 1280, quality = 0.85): Promise<s
     }
     img.src = url
   })
+}
+
+export interface NormalizeImageForAiInputOptions {
+  /** 是否同时校验视频参考图的宽高比（0.4–2.5）。只给视频类入口开；图片模型对比例没有这条限制。 */
+  checkAspectRatio?: boolean
+}
+
+/**
+ * 把用户选的图片整理成 AI 生成能接受的输入：
+ * - 任一边 < 256px → 直接拒绝（放大也救不回来，让用户换图）；
+ * - 宽高比越界（可选）→ 拒绝，提示裁剪；
+ * - 任一边 > 5760px → 等比缩到 5760 以内，PNG 保持 PNG（保留透明），其它转 JPEG；
+ * - 已合规原样返回；浏览器解不开这张图时也原样返回，交给后端给明确错误。
+ *
+ * 之前这两条限制只在供应商侧校验，用户传完图、排完队、等到生成阶段才收到一句英文报错
+ * （群里 2046 的 media dimensions、LTY 的 media aspect ratio 都是这么来的），现在在选图这一刻就说清楚。
+ */
+export async function normalizeImageFileForAiInput(
+  file: File,
+  { checkAspectRatio = false }: NormalizeImageForAiInputOptions = {},
+): Promise<File> {
+  // 没有 2D canvas 的环境（老 WebView、jsdom）既缩不了图，图片也可能永远不触发 load，直接放行交给后端。
+  try {
+    if (!document.createElement('canvas').getContext('2d')) return file
+  } catch {
+    return file
+  }
+  let img: HTMLImageElement
+  try {
+    img = await loadImageElement(file)
+  } catch {
+    return file
+  }
+  const width = Number(img.naturalWidth || img.width) || 0
+  const height = Number(img.naturalHeight || img.height) || 0
+  if (!(width > 0) || !(height > 0)) return file
+  const dimensions = { width, height }
+
+  if (width < VIDEO_REFERENCE_IMAGE_MIN_DIMENSION || height < VIDEO_REFERENCE_IMAGE_MIN_DIMENSION) {
+    throw new Error(videoReferenceImageDimensionError(dimensions))
+  }
+  if (checkAspectRatio && !isSupportedVideoReferenceImageAspectRatio(dimensions)) {
+    throw new Error(videoReferenceImageAspectRatioError(dimensions))
+  }
+  const longest = Math.max(width, height)
+  if (longest <= VIDEO_REFERENCE_IMAGE_MAX_DIMENSION) return file
+
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return file
+  const scale = VIDEO_REFERENCE_IMAGE_MAX_DIMENSION / longest
+  const w = Math.max(1, Math.floor(width * scale))
+  const h = Math.max(1, Math.floor(height * scale))
+  canvas.width = w
+  canvas.height = h
+  const keepPng = file.type === 'image/png'
+  if (!keepPng) {
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(0, 0, w, h)
+  }
+  ctx.drawImage(img, 0, 0, w, h)
+  const mime = keepPng ? 'image/png' : 'image/jpeg'
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mime, keepPng ? undefined : 0.92))
+  if (!blob) return file
+  const name = file.name.replace(/\.[a-z0-9]+$/i, '') || 'image'
+  return new File([blob], `${name}.${keepPng ? 'png' : 'jpg'}`, { type: mime, lastModified: file.lastModified })
 }
 
 /** 后端人脸检测(image.face_detect)送阿里云的硬限制:≤3MB、边长 ≤4096、仅 JPEG/PNG。 */

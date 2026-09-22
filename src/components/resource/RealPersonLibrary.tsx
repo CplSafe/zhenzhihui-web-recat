@@ -28,6 +28,7 @@ import { Dropdown, Pagination } from 'antd'
 import type { MenuProps } from 'antd'
 import { renderSVG } from 'uqr'
 import { getAssetDownloadUrl, getBusinessErrorMessage, uploadAssetFile } from '@/api/business'
+import { normalizeImageFileForAiInput } from '@/utils/imageFile'
 import {
   addRealPersonAsset,
   createRealPerson,
@@ -1386,13 +1387,24 @@ export default function RealPersonLibrary({ workspaceId, userId, query = '' }: R
         return
       }
 
+      // 真人照片后续会作为生成参考图：太小的照片（<256px）认证和生成都用不了，超大图先缩到 5760 以内。
+      let uploadFile = file
+      if (isImage) {
+        try {
+          uploadFile = await normalizeImageFileForAiInput(file)
+        } catch (error: any) {
+          showToast(String(error?.message || '照片不符合要求，请更换'), 'error')
+          return
+        }
+      }
+
       const signal = flowAbortRef.current?.signal
       setUploading(true)
       setActivityText('正在上传并保存素材…')
       try {
         const result = (await uploadAssetFile({
           workspaceId,
-          file,
+          file: uploadFile,
           source: REAL_PERSON_ASSET_SOURCE,
           prompt: activePerson.name || '真人形象',
           signal,

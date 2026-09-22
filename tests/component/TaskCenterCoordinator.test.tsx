@@ -19,6 +19,8 @@ vi.mock('@/api/business', () => ({
   getAiTask: mocks.getAiTask,
   getBusinessErrorMessage: (error: { message?: string } | null | undefined, fallback: string) =>
     error?.message || fallback,
+  humanizeProviderErrorText: (text: unknown) =>
+    /insufficient_balance/i.test(String(text ?? '')) ? 'AI 生成服务的供应商账户余额或计费配置异常' : '',
 }))
 
 vi.mock('@/auth/AuthContext', () => ({

@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import EntryDropdown from '../EntryDropdown'
 import RatioIcon from '@/components/common/RatioIcon'
 import { openMemberCenter } from '@/stores/ui'
-import { fileToDataUrl } from '@/utils/imageFile'
+import { fileToDataUrl, normalizeImageFileForAiInput } from '@/utils/imageFile'
 import { ENTRY_RATIO_OPTIONS as RATIO_OPTIONS } from '@/utils/videoOptions'
 import { useToast } from '@/composables/useToast'
 import type { BackendGenerationModel, GenerationModelVersionId } from '@/utils/generationModelCatalog'
@@ -421,9 +421,22 @@ export default function ImageChat({
     if (invalidCount > 0) showToast(`已忽略 ${invalidCount} 个非图片文件`, 'info')
     if (imageFiles.length > room) showToast(`最多上传 ${MAX_IMAGES} 张图片`, 'info')
     const candidates = imageFiles.slice(0, room)
-    const decoded = await Promise.all(candidates.map((file) => fileToDataUrl(file).catch(() => null)))
-    const picked = decoded.filter(Boolean) as string[]
-    const failedCount = decoded.length - picked.length
+    // 先做尺寸合规（<256px 拒绝、>5760px 自动缩），再转成 dataURL 预览；不合规的把原因单独告诉用户
+    const decoded = await Promise.all(
+      candidates.map(async (file) => {
+        let normalized: File
+        try {
+          normalized = await normalizeImageFileForAiInput(file)
+        } catch (error: any) {
+          return { url: null as string | null, reason: `${file.name}：${String(error?.message || '图片不符合要求')}` }
+        }
+        return { url: await fileToDataUrl(normalized).catch(() => null), reason: '' }
+      }),
+    )
+    const picked = decoded.map((item) => item.url).filter(Boolean) as string[]
+    const rejected = decoded.find((item) => item.reason)
+    if (rejected) showToast(rejected.reason, 'error')
+    const failedCount = decoded.filter((item) => !item.url && !item.reason).length
     if (failedCount > 0) showToast(`${failedCount} 张图片读取失败，请重新选择`, 'error')
     if (picked.length) {
       setImages((prev) => [...prev, ...picked.map((url) => ({ url }))].slice(0, MAX_IMAGES))

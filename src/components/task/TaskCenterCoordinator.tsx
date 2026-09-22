@@ -3,7 +3,7 @@
  * 组件本身不渲染界面；它按用户和工作空间轮询活动任务，将结果写回对应草稿，并只发送一次终态通知。
  */
 import { useEffect } from 'react'
-import { getAiTask, getBusinessErrorMessage } from '@/api/business'
+import { getAiTask, getBusinessErrorMessage, humanizeProviderErrorText } from '@/api/business'
 import { useAuth } from '@/auth/AuthContext'
 import {
   getTaskCenterExpirationReason,
@@ -88,7 +88,11 @@ function readRemoteTimestamp(remote: any): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
-/** 从常见错误字段中提取可展示详情，复杂对象安全序列化失败时使用稳定回退文案。 */
+/**
+ * 从常见错误字段中提取可展示详情，复杂对象安全序列化失败时使用稳定回退文案。
+ * 这里拿到的是任务表里的供应商原文（metaso 402 / media dimensions / provider task failed…），
+ * 不经过 getBusinessErrorMessage，所以在这一步就先翻成中文，任务中心通知和抽屉才不会把英文原文喷给用户。
+ */
 function readRemoteError(remote: any, fallback: string): string {
   const value =
     remote?.error_message ??
@@ -98,7 +102,7 @@ function readRemoteError(remote: any, fallback: string): string {
     remote?.error?.message ??
     remote?.error ??
     remote?.message
-  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (typeof value === 'string' && value.trim()) return humanizeProviderErrorText(value) || value.trim()
   if (value && typeof value === 'object') {
     try {
       const serialized = JSON.stringify(value)
@@ -153,9 +157,9 @@ function notificationMessage(task: TaskCenterTask): { message: string; type: 'su
   const title = task.title.trim() || '视频'
   if (task.status === 'succeeded') return { message: `${title}生成完成`, type: 'success' }
   if (task.status === 'cancelled') return { message: `${title}已取消`, type: 'info' }
-  const detail = String(task.error || '')
-    .trim()
-    .slice(0, 80)
+  // 旧版本持久化下来的任务 error 可能还是供应商原文，通知前再翻一次，翻译后的中文一般不超过 80 字。
+  const rawDetail = String(task.error || '').trim()
+  const detail = (humanizeProviderErrorText(rawDetail) || rawDetail).slice(0, 80)
   return { message: `${title}生成失败${detail ? `：${detail}` : ''}`, type: 'error' }
 }
 

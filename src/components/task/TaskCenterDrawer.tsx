@@ -6,7 +6,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Tooltip } from 'antd'
 import { InboxOutlined, LeftOutlined, LoadingOutlined, PlayCircleOutlined, RightOutlined } from '@ant-design/icons'
-import { getAssetDownloadUrl } from '@/api/business'
+import { getAssetDownloadUrl, humanizeProviderErrorText } from '@/api/business'
 import { deriveProjectVideos } from '@/api/projectVideos'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
 import { buildTaskCenterId, type TaskCenterScope, type TaskCenterTask, useTaskCenterStore } from '@/stores/taskCenter'
@@ -602,7 +602,9 @@ function TaskCard({ task, onOpen, onArchive }: { task: TaskCenterTask; onOpen: (
   const fallbackAssetId = tone === 'completed' && resultAssetId ? resultAssetId : thumbnailAssetId
   const fallbackAssetIsVideo =
     taskScope !== 'image' && Boolean((tone === 'completed' && resultAssetId) || taskScope === 'hot-copy')
-  const errorMessage = readText(record, 'errorMessage', 'error_message', 'error', 'message')
+  const rawErrorMessage = readText(record, 'errorMessage', 'error_message', 'error', 'message')
+  // 后端任务记录里存的是供应商原文，展示前翻成中文（没命中规则时原样显示）。
+  const errorMessage = rawErrorMessage ? humanizeProviderErrorText(rawErrorMessage) || rawErrorMessage : ''
   const hasDestination = Boolean(readValue(record, 'projectId', 'project_id'))
   const canPreview = taskScope === 'smart' && tone === 'completed' && Boolean(resultVideo || resultAssetId)
   const operationCode = readText(record, 'operationCode', 'operation_code').toLowerCase()

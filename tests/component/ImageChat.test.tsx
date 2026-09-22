@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
 }))
 
-vi.mock('@/utils/imageFile', () => ({ fileToDataUrl: mocks.fileToDataUrl }))
+vi.mock('@/utils/imageFile', () => ({
+  fileToDataUrl: mocks.fileToDataUrl,
+  normalizeImageFileForAiInput: async (file: File) => file,
+}))
 vi.mock('@/stores/ui', () => ({ openMemberCenter: mocks.openMemberCenter }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: mocks.showToast }) }))
 vi.mock('@/components/smart/EntryDropdown', () => ({
