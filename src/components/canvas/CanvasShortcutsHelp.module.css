@@ -1,0 +1,139 @@
+/* 快捷键速查：居中弹层，遮罩点击即关 */
+.mask {
+  position: fixed;
+  inset: 0;
+  /* 高于右键菜单（1450），低于全局 toast */
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(4px);
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.dialog {
+  display: flex;
+  width: 720px;
+  max-width: 100%;
+  max-height: calc(100vh - 48px);
+  flex-direction: column;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #eef1f7;
+}
+
+.title {
+  margin: 0;
+  color: #1f2533;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.close {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a91a2;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.close:hover {
+  background: #f1f3fb;
+  color: #2f3646;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 8px 28px;
+  padding: 12px 20px 20px;
+  overflow-y: auto;
+}
+
+.section {
+  min-width: 0;
+}
+
+.sectionTitle {
+  margin: 10px 0 6px;
+  color: #9aa3b2;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.list {
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.keys {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 55%;
+  margin: 0;
+}
+
+.keyGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.or {
+  color: #b3bac7;
+  font-size: 11px;
+}
+
+.kbd {
+  display: inline-block;
+  padding: 2px 7px;
+  border: 1px solid #dde2ec;
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: #f7f8fc;
+  color: #3b4252;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.label {
+  min-width: 0;
+  margin: 0;
+  color: #4b5262;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.close:focus-visible {
+  outline: 3px solid rgb(87 103 229 / 26%);
+  outline-offset: 1px;
+}

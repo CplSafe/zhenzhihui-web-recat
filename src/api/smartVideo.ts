@@ -298,6 +298,34 @@ export function totalDurationSec(shots: any[]): number {
   return (shots || []).filter((shot) => shot?.includeInVideo !== false).reduce((a, s) => a + shotDurSec(s), 0)
 }
 
+/**
+ * 「分段画面修改·参考生视频」要向生成模型申请多长的片段。
+ *
+ * 待改片段按 5 秒切，但尾段可能只有 2–3 秒，而模型的时长档位往往是 5/10/15 这样的定值；
+ * 回拼时多出来的画面会被裁掉（见 replaceVideoRangePreservingOriginalAudio），所以这里向上取
+ * 模型支持的最小档位即可，绝不能向下取——生成得比片段短就拼不回去。
+ * 模型未声明时长约束时按片段整秒数申请。
+ */
+export function resolveSegmentGenerationDurationSec(model: any, segmentDurationSec: number): number {
+  const needed = Math.max(1, Math.ceil(Number(segmentDurationSec) || 0))
+  const duration = buildModelRestrictionSummary(model).constraints.duration
+  if (!duration) return needed
+  if (duration.options?.length) {
+    const candidates = duration.options
+      .map(Number)
+      .filter((seconds) => Number.isFinite(seconds) && seconds >= needed)
+      .sort((left, right) => left - right)
+    if (!candidates.length) throw new Error(`所选视频模型的时长档位不足以覆盖 ${needed} 秒的修改片段`)
+    return candidates[0]
+  }
+  const { minimum, maximum } = duration
+  const resolved = minimum !== undefined && needed < minimum ? minimum : needed
+  if (maximum !== undefined && resolved > maximum) {
+    throw new Error(`所选视频模型最长只支持 ${maximum} 秒，无法生成 ${needed} 秒的修改片段`)
+  }
+  return resolved
+}
+
 /** 解析当前工作空间可用的 Seedance 整片生成模型。 */
 async function resolveFullVideoModel(args: {
   workspaceId: number
@@ -403,6 +431,11 @@ export function compileFullVideoModelRequest(
      * 仅在模型 schema 声明了该字段时下发；省略时沿用 schema 默认值。
      */
     referenceMode?: boolean
+    /**
+     * 显式指定本次要生成的时长（秒），不再按分镜总时长推导。
+     * 「分段画面修改·参考生视频」只重生成被选中的那几秒片段时用它。
+     */
+    durationSec?: number
   },
 ): FullVideoModelRequestCompilation {
   const modelVersionId = getBackendGenerationModelVersionId(model)
@@ -413,7 +446,7 @@ export function compileFullVideoModelRequest(
   }
 
   const constraints = buildModelRestrictionSummary(model).constraints
-  const duration = totalDurationSec(args.shots)
+  const duration = args.durationSec !== undefined ? args.durationSec : totalDurationSec(args.shots)
   const durationSeconds = parseDurationSeconds(duration)
   if (durationSeconds === null) {
     throw new Error('智能成片总时长无效，请调整分镜时长后重试')
@@ -501,6 +534,43 @@ export function buildVideoEditPolishContext(shots: any[]): string {
     return `${formatClock(start)}–${formatClock(end)} 镜头${index + 1}：${String(shot?.desc || shot?.no || '未提供画面描述').trim()}`
   })
   return ['【当前视频分镜时间线（权威上下文）】', ...timeline].join('\n')
+}
+
+/** mm:ss 时钟格式；分段修改的范围与时间线统一用它标注。 */
+function formatPolishClock(seconds: number): string {
+  const whole = Math.max(0, Math.round(Number(seconds) || 0))
+  return `${String(Math.floor(whole / 60)).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}`
+}
+
+/**
+ * 「分段画面修改」润色上下文：把用户选中的秒数范围和这几秒里真正出现的镜头交给润色模型，
+ * 让润色出来的指令只针对这一段画面（而不是整片），并知道该段画面里有什么可改。
+ * 没有分镜时只给范围。
+ */
+export function buildSegmentEditPolishContext(shots: any[], segment: { start: number; end: number }): string {
+  const start = Math.max(0, Number(segment?.start) || 0)
+  const end = Math.max(start, Number(segment?.end) || 0)
+  const rangeLabel = `${formatPolishClock(start)}–${formatPolishClock(end)}`
+  const lines = [
+    `【本次修改范围】${rangeLabel}（共约 ${Math.max(1, Math.round(end - start))} 秒）：用户只修改这一段画面，范围外的画面与原音轨保持不变。`,
+  ]
+  if (Array.isArray(shots) && shots.length) {
+    let cursor = 0
+    const covered: string[] = []
+    shots.forEach((shot, index) => {
+      const duration = shotDurSec(shot)
+      const shotStart = cursor
+      const shotEnd = cursor + duration
+      cursor = shotEnd
+      // 只列与选中范围有交集的镜头；相邻镜头的边界让模型知道该段跨了几个镜头
+      if (shotEnd <= start || shotStart >= end) return
+      covered.push(
+        `${formatPolishClock(shotStart)}–${formatPolishClock(shotEnd)} 镜头${index + 1}：${String(shot?.desc || shot?.no || '未提供画面描述').trim()}`,
+      )
+    })
+    if (covered.length) lines.push('【该范围内的镜头画面】', ...covered)
+  }
+  return lines.join('\n')
 }
 
 /** 首次生成视频时，将分镜里的精细物理动作补成视频模型可执行的空间关系。 */
@@ -724,19 +794,28 @@ export async function generateFullVideo(args: {
   referenceMode?: boolean
   /** 用户选择的音频开关；省略时沿用「模型支持即开」。 */
   generateAudio?: boolean
+  /**
+   * 「分段画面修改·参考生视频」：只重生成被选中的那几秒。
+   * durationSec 是向模型申请的片段时长（不再按分镜总时长），prompt 是分段修改提示词——
+   * 时间线提示词描述的是整片，对一条 5 秒的片段输入并不适用，所以这里整体替换而不是拼接。
+   */
+  durationSec?: number
+  prompt?: string
 }): Promise<{ url: string; assetId: number }> {
-  const prompt =
-    buildTimelinePrompt({
-      shots: args.shots,
-      basePrompt: args.basePrompt,
-      ratio: args.ratio,
-      style: args.style,
-      identityConstraint: args.identityConstraint,
-      note: args.note,
-    }) +
-    (args.variationTotal && args.variationTotal > 1
-      ? `\n变体要求:这是同一需求下的第 ${args.variationIndex || 1}/${args.variationTotal} 个不同版本。请保持脚本主线一致，但在构图、镜头运动、人物状态、细节节奏上给出明显不同的创意变体，避免与其他版本完全相同。`
-      : '')
+  const explicitPrompt = String(args.prompt || '').trim()
+  const prompt = explicitPrompt
+    ? withNoOnscreenTextGuard(explicitPrompt)
+    : buildTimelinePrompt({
+        shots: args.shots,
+        basePrompt: args.basePrompt,
+        ratio: args.ratio,
+        style: args.style,
+        identityConstraint: args.identityConstraint,
+        note: args.note,
+      }) +
+      (args.variationTotal && args.variationTotal > 1
+        ? `\n变体要求:这是同一需求下的第 ${args.variationIndex || 1}/${args.variationTotal} 个不同版本。请保持脚本主线一致，但在构图、镜头运动、人物状态、细节节奏上给出明显不同的创意变体，避免与其他版本完全相同。`
+        : '')
   // 已显式选择时使用页面传入模型；旧调用未选择时仍自动解析 Seedance，保持原生成链路兼容。
   // 两种路径都会让 createAiTask 走“显式模型”分支，不会在失败后静默切换模型。
   const model = await resolveFullVideoModel(args)
@@ -754,6 +833,7 @@ export async function generateFullVideo(args: {
     referenceImageCount: imgIds.length,
     generateAudio: args.generateAudio,
     referenceMode: args.referenceMode,
+    durationSec: args.durationSec,
   })
   // schema 未声明时继续使用 role:'image'；显式声明唯一角色时按模型要求下发。
   // 传了源视频（视频生视频）时，它以 role:'video' 追加，不跟着分镜图共用同一个角色。
@@ -955,6 +1035,8 @@ export async function estimateFullVideoCost(args: {
   referenceImageCount?: number
   /** 本次会提交的参考图 asset_id；未给 referenceImageCount 时按它推导。 */
   imageAssetIds?: number[]
+  /** 分段修改时向模型申请的片段时长；必须与提交一致，否则「预估 ≠ 实扣」。 */
+  durationSec?: number
 }): Promise<any> {
   const model = await resolveFullVideoModel(args)
   const request = compileFullVideoModelRequest(model, {
@@ -965,6 +1047,7 @@ export async function estimateFullVideoCost(args: {
     referenceMode: args.referenceMode,
     referenceImageCount: args.referenceImageCount,
     imageAssetIds: args.imageAssetIds,
+    durationSec: args.durationSec,
   })
   return estimateAiTaskCost({
     workspaceId: args.workspaceId,

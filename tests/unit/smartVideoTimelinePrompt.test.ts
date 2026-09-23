@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildPhysicalInteractionGenerationGuidance,
+  buildSegmentEditPolishContext,
   buildTimelinePrompt,
   buildVideoEditPolishContext,
 } from '@/api/smartVideo'
@@ -24,6 +25,28 @@ describe('buildTimelinePrompt', () => {
     expect(context).toContain('00:03–00:06 镜头2：扳手水平旋转拧紧螺母')
     expect(context).toContain('00:06–00:09 镜头3：工具静置展示')
     expect(buildVideoEditPolishContext([])).toBe('')
+  })
+  it('分段修改润色上下文只列选中秒数范围内的镜头', () => {
+    const timeline = [
+      { desc: '扳手夹紧六角螺母', duration: '3s' },
+      { desc: '扳手水平旋转拧紧螺母', duration: '3s' },
+      { desc: '工具静置展示', duration: '3s' },
+      { desc: '收尾 logo', duration: '3s' },
+    ]
+    const context = buildSegmentEditPolishContext(timeline, { start: 5, end: 10 })
+
+    expect(context).toContain('【本次修改范围】00:05–00:10（共约 5 秒）')
+    expect(context).toContain('范围外的画面与原音轨保持不变')
+    // 00:03–00:06 与 00:06–00:09、00:09–00:12 都与 5–10 秒有交集；00:00–00:03 不在范围内
+    expect(context).not.toContain('镜头1')
+    expect(context).toContain('00:03–00:06 镜头2：扳手水平旋转拧紧螺母')
+    expect(context).toContain('00:06–00:09 镜头3：工具静置展示')
+    expect(context).toContain('00:09–00:12 镜头4：收尾 logo')
+
+    // 没有分镜（如从项目管理直接进入的老草稿）时只给范围
+    const bare = buildSegmentEditPolishContext([], { start: 0, end: 5 })
+    expect(bare).toContain('【本次修改范围】00:00–00:05')
+    expect(bare).not.toContain('该范围内的镜头画面')
   })
   it('不传身份约束时保持原样，仍以时间线说明开头', () => {
     const prompt = buildTimelinePrompt({ shots, basePrompt: '一条奶茶店广告' })

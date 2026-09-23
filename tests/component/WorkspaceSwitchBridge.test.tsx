@@ -8,7 +8,7 @@ function renderBridge(initialEntry: string | { pathname: string; state?: Record<
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/workspace-switch" element={<WorkspaceSwitchBridge />} />
-        <Route path="/home" element={<div>home-ready</div>} />
+        <Route path="/hot-copy" element={<div>home-ready</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -17,7 +17,7 @@ function renderBridge(initialEntry: string | { pathname: string; state?: Record<
 describe('WorkspaceSwitchBridge', () => {
   afterEach(() => vi.useRealTimers())
 
-  it('recovers a direct visit to Home immediately', () => {
+  it('recovers a direct visit to the default landing page immediately', () => {
     renderBridge('/workspace-switch')
     expect(screen.getByText('home-ready')).toBeInTheDocument()
   })

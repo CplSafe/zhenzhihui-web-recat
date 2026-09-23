@@ -19,9 +19,8 @@
 }
 
 .collapsed {
-  flex-basis: 20px;
-  width: 20px;
-  justify-content: center;
+  flex-basis: 0;
+  width: 0;
   border-right: 0;
   background: transparent;
   box-shadow: none;
@@ -54,46 +53,97 @@
 }
 
 .collapseButton {
-  position: absolute;
-  z-index: 3;
-  top: 50%;
-  right: -20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 60px;
+  width: 36px;
+  height: 36px;
   padding: 0;
-  border-radius: 0 7px 7px 0;
-  background: #fff;
-  box-shadow: 5px 0 12px rgba(31, 45, 61, 0.07);
-  transform: translateY(-50%);
+  border-radius: 9px;
 
   &:hover,
   &:focus-visible {
-    background: #f3f6f7;
+    background: #edf9f6;
     color: #26c8a6;
     outline: none;
+  }
+
+  &:focus-visible {
+    box-shadow: 0 0 0 3px rgba(38, 200, 166, 0.2);
   }
 }
 
 .railButton {
-  display: flex;
-  width: 100%;
-  height: 60px;
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 0;
+  display: inline-flex;
+  width: 46px;
+  min-width: 46px;
+  height: 82px;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   padding: 0;
-  border-radius: 0 7px 7px 0;
-  background: #fff;
-  box-shadow: 5px 0 12px rgba(31, 45, 61, 0.07);
+  border: 1px solid rgba(224, 232, 234, 0.92);
+  border-left: 0;
+  border-radius: 0 14px 14px 0;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 6px 0 18px rgba(31, 45, 61, 0.1);
+  flex-direction: column;
+  transform: translateY(-50%);
+  transition:
+    width 0.16s ease,
+    color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease;
 
   &:hover,
   &:focus-visible {
+    width: 50px;
     background: #f3fbf9;
     color: #20bd9d;
     outline: none;
+    box-shadow: 8px 0 22px rgba(31, 45, 61, 0.14);
   }
+
+  &:focus-visible {
+    box-shadow:
+      0 0 0 3px rgba(38, 200, 166, 0.22),
+      8px 0 22px rgba(31, 45, 61, 0.14);
+  }
+}
+
+.railIcon {
+  font-size: 17px;
+}
+
+.railLabel {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.railBadge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: inline-flex;
+  min-width: 21px;
+  height: 21px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #20bd9d;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 17px;
 }
 
 .tabs {
@@ -172,11 +222,90 @@
   padding: 14px 18px 20px;
 }
 
-.viewAllFooter {
+.footer {
   flex: 0 0 auto;
   padding: 10px 18px 14px;
   border-top: 1px solid #eef3f1;
   background: #fff;
+}
+
+// 团队空间成员筛选行：紧贴页签下方，「只看我的」chip + 成员下拉，视觉对齐项目管理页的 .pm2-mine-chip / FilterSelect
+.ownerFilterRow {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 18px;
+  border-bottom: 1px solid #f1f3f5;
+  background: #fafcfb;
+}
+
+.mineChip {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #d5dae3;
+  border-radius: 999px;
+  background: #fff;
+  color: #4b5563;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    border-color: #1fcfa9;
+    color: #1fcfa9;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #1fcfa9;
+    outline-offset: 2px;
+  }
+}
+
+.mineChipActive {
+  border-color: #1fcfa9;
+  background: #1fcfa9;
+  color: #fff;
+
+  &:hover {
+    color: #fff;
+  }
+}
+
+.ownerSelect {
+  flex: 1 1 auto;
+  min-width: 0;
+
+  // 抽屉只有 330px 宽，触发器撑满剩余宽度，弹层跟随触发器宽度
+  :global(.filter-select__trigger) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  :global(.filter-select__menu) {
+    right: 0;
+  }
+}
+
+.creator {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+  color: #6f7a87;
+}
+
+.creatorName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .viewAllButton {
@@ -460,14 +589,18 @@
 }
 
 .errorMessage {
-  display: block;
+  // 失败原因现在是完整的一句话（版权审核 / 时长范围 / 供应商欠费），单行省略会把关键动作截掉；
+  // 换行显示、最多 3 行，再长悬停看 title
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   margin-top: 4px;
   overflow: hidden;
   color: #d85966;
   font-size: 10px;
   line-height: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .archiveButton {
@@ -571,18 +704,19 @@
   }
 
   .collapsed {
+    left: 0;
     top: 50%;
     bottom: auto;
-    width: 24px;
-    height: 60px;
-    min-height: 60px;
+    width: 0;
+    height: 0;
+    min-height: 0;
     transform: translateY(-50%);
     box-shadow: none;
   }
 
   .collapsed .railButton {
-    min-width: 24px;
-    width: 24px;
+    min-width: 46px;
+    width: 46px;
   }
 }
 
@@ -591,6 +725,10 @@
   .taskCard,
   .progressValue,
   .viewAllButton {
+    transition: none;
+  }
+
+  .railButton {
     transition: none;
   }
 

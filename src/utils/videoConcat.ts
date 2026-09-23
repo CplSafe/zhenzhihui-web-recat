@@ -327,6 +327,11 @@ export interface ConcatAsyncOptions {
   onTranscodeProgress?: (done: number, total: number) => void
 }
 
+export interface ReplaceVideoRangeOptions extends ConcatAsyncOptions {
+  inSec: number
+  outSec: number
+}
+
 /**
  * 拼接入口：规格一致走无损，不一致时按需重编码。
  *
@@ -447,5 +452,93 @@ export async function concatMp4SourcesAsync(
       ...warnings,
       `片段规格不一致，已统一重编码为 ${transcoded.spec.width}×${transcoded.spec.height}（画质会有损失）`,
     ],
+  }
+}
+
+/**
+ * 用一条 AI 修改片段替换原视频中的指定区间，同时始终沿用原视频完整音轨。
+ *
+ * 画面先复用本文件的裁剪/跨规格重编码能力完成“原片前段 + 修改片段 + 原片后段”，
+ * 再把原片音轨原样封装回结果。这样第一版只修改画面，不会把模型返回的声音带进成片。
+ */
+export async function replaceVideoRangePreservingOriginalAudio(
+  originalBuffer: ArrayBuffer,
+  replacementBuffer: ArrayBuffer,
+  options: ReplaceVideoRangeOptions,
+): Promise<ConcatResult> {
+  const original = demuxMp4(originalBuffer)
+  const replacement = demuxMp4(replacementBuffer)
+  if (original.error || !original.video) throw new Error(`原视频解析失败：${original.error || '没有视频轨'}`)
+  if (replacement.error || !replacement.video) {
+    throw new Error(`修改片段解析失败：${replacement.error || '没有视频轨'}`)
+  }
+
+  const originalDuration = original.video.duration / original.video.timescale
+  const inSec = Math.max(0, Math.min(Number(options.inSec) || 0, originalDuration))
+  const outSec = Math.max(inSec, Math.min(Number(options.outSec) || 0, originalDuration))
+  const targetDuration = outSec - inSec
+  if (!(targetDuration > 0)) throw new Error('分段修改范围无效')
+  const replacementDuration = replacement.video.duration / replacement.video.timescale
+  if (replacementDuration + 0.25 < targetDuration) {
+    throw new Error('修改片段时长不足，无法与原视频保持同步，请重新生成')
+  }
+
+  const sources: ConcatSource[] = []
+  if (inSec > 0) sources.push({ buffer: originalBuffer, inSec: 0, outSec: inSec, muted: true, label: '原片前段' })
+  sources.push({
+    buffer: replacementBuffer,
+    inSec: 0,
+    outSec: Math.min(targetDuration, replacementDuration),
+    muted: true,
+    label: '修改片段',
+  })
+  if (outSec < originalDuration) {
+    sources.push({ buffer: originalBuffer, inSec: outSec, outSec: originalDuration, muted: true, label: '原片后段' })
+  }
+
+  const composed = await concatMp4SourcesAsync(sources, options)
+  if (!original.audio?.samples.length) return composed
+
+  const composedBuffer = await composed.blob.arrayBuffer()
+  const composedMedia = demuxMp4(composedBuffer)
+  if (composedMedia.error || !composedMedia.video) {
+    throw new Error(`合成视频解析失败：${composedMedia.error || '没有视频轨'}`)
+  }
+
+  const copyWholeTrack = (track: Mp4Track, buffer: ArrayBuffer, timescale: number): MuxSample[] => {
+    const bytes = new Uint8Array(buffer)
+    return buildSegmentSamples(track, 0, track.samples.length - 1, timescale, 0, (offset, size) =>
+      offset >= 0 && offset + size <= bytes.length ? bytes.subarray(offset, offset + size) : null,
+    )
+  }
+  const video = composedMedia.video
+  const audio = original.audio
+  const tracks: MuxTrack[] = [
+    {
+      kind: 'video',
+      timescale: video.timescale,
+      width: video.width,
+      height: video.height,
+      format: video.format,
+      sampleEntry: video.sampleEntryBytes!,
+      decoderConfig: video.decoderConfig,
+      samples: copyWholeTrack(video, composedBuffer, video.timescale),
+    },
+    {
+      kind: 'audio',
+      timescale: audio.timescale,
+      width: 0,
+      height: 0,
+      format: audio.format,
+      sampleEntry: audio.sampleEntryBytes!,
+      decoderConfig: audio.decoderConfig,
+      samples: copyWholeTrack(audio, originalBuffer, audio.timescale),
+    },
+  ]
+
+  return {
+    ...composed,
+    blob: muxMp4(tracks),
+    warnings: [...composed.warnings, '已保留原视频音轨，修改结果中的声音未写入成片'],
   }
 }

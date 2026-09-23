@@ -16,6 +16,10 @@ import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import type { HotCopyEntryPayload, HotCopyProduct } from '@/components/hotcopy/HotCopyEntry'
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
+import HotCopyPromoVideo from '@/components/hotcopy/HotCopyShowcase/HotCopyPromoVideo'
+import HotCopyTemplateGallery from '@/components/hotcopy/HotCopyShowcase/HotCopyTemplateGallery'
+import type { TemplateItem } from '@/api/templates'
+import { isGuideSeen, openGuide } from '@/stores/guide'
 import iconProjectEdit from '@/assets/icons/project-edit.svg'
 import {
   awaitHotVideoResult,
@@ -159,6 +163,13 @@ const STEPS: StepItem[] = [
 const DEFAULT_RATIO = '16:9'
 /** 源视频时长尚未读取时的默认生成秒数。 */
 const DEFAULT_DURATION_SEC = 10
+/**
+ * 读源视频元数据的超时。默认 8 秒对手机直出的大 MP4（moov 在文件尾、要拉到末尾才有 duration）
+ * 和走签名下载地址的素材库视频经常不够，一次超时就整单失败；放宽到 25 秒。
+ */
+const SOURCE_VIDEO_DURATION_READ_TIMEOUT_MS = 25_000
+/** 读不到源视频时长时的提示：原因多半是文件大/网络慢，不是文件本身有问题，别再让用户去"重新选择视频"。 */
+const SOURCE_VIDEO_DURATION_UNAVAILABLE_MESSAGE = '读取源视频信息超时（文件较大或网络较慢），请稍后重试'
 
 /** 修复历史草稿中缺少流程/秒数约束的旧项目名称。 */
 function repairLegacyHotCopyProjectName(args: {
@@ -958,7 +969,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   const readSourceVideoDuration = useCallback((assetId: number, url: string): Promise<number> => {
     const key = `${Number(assetId || 0) || 0}:${String(url || '')}`
     if (sourceDurationReadRef.current?.key === key) return sourceDurationReadRef.current.promise
-    const promise = readVideoDurationSec(url).finally(() => {
+    const promise = readVideoDurationSec(url, SOURCE_VIDEO_DURATION_READ_TIMEOUT_MS).finally(() => {
       if (sourceDurationReadRef.current?.promise === promise) sourceDurationReadRef.current = null
     })
     sourceDurationReadRef.current = { key, promise }
@@ -4070,10 +4081,12 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     }
     if (isJobUiActive(context)) setVidGenRunning(true)
     setJobPhase(context, '素材准备中…')
-    // 元数据读取与素材上传/人脸检测并行，避免所有前置步骤结束后再额外等待最多 8 秒。
-    const durationUrl = String(payload.videoPreview || payload.libraryVideo?.src || '')
-    const durationSeedAssetId = Number(payload.libraryVideo?.assetId || 0) || 0
-    const sourceDurationPromise = readSourceVideoDuration(durationSeedAssetId, durationUrl)
+    // 估价快照里的时长就是本单的计费依据（用户确认费用时读到的那次），提交阶段以它为准。
+    // 以前这里会对同一个文件再起一个 <video> 读第三次、读不到就整单失败——大文件/签名地址过期时
+    // 前两次成功第三次超时，用户看到的就是「无法读取源视频真实时长」。现在重读只做一致性核对，
+    // 且等拿到最新的播放地址（步骤 ① 之后）再读，不用估价阶段可能已过期的旧地址。
+    const snapshotSourceDuration = Number(context.replicateSnapshot?.sourceVideoDurationSec || 0) || 0
+    const verifyRead: { result: number | null } = { result: null }
     let aborted = false
     try {
       // ① 源视频 asset_id(素材库已有;本地现传)
@@ -4095,6 +4108,11 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       if (sourceDurationReadRef.current?.key === `0:${videoUrl}`) {
         sourceDurationReadRef.current.key = `${videoAssetId}:${videoUrl}`
       }
+      // 用最新地址在后台读一次元数据，与替换素材的上传/人脸处理并行；结果只用于核对，不阻塞提交。
+      const verifyReadPromise = readSourceVideoDuration(videoAssetId, videoUrl).then((seconds) => {
+        verifyRead.result = Number(seconds) || 0
+        return verifyRead.result
+      })
 
       // ② 替换素材图必须先完成人脸脱敏；任意一张失败都停止提交，不能回退原图绕过审核。
       const { productIds, preparedProducts } = await prepareProductsForReplicate(ws, payload.products, context)
@@ -4134,13 +4152,18 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         })
       }
 
-      // 读源视频真实时长(秒),按它计费(source_video_duration)；读不到或与估价快照不一致时停止提交。
-      const srcDur = cachedSourceDuration || (await sourceDurationPromise)
+      // 源视频真实时长(秒)按它计费(source_video_duration)：优先本项目已落库的同资产时长，其次估价快照；
+      // 两者都没有（老草稿/异常路径）才等待后台重读，读不到就停止提交。
+      let srcDur = cachedSourceDuration || snapshotSourceDuration
+      if (!(srcDur > 0)) srcDur = await verifyReadPromise
       if (!(srcDur > 0)) {
-        throw new Error('无法读取源视频真实时长，请重新选择视频后重试')
+        throw new Error(SOURCE_VIDEO_DURATION_UNAVAILABLE_MESSAGE)
       }
-      const estimatedSourceDuration = Number(context.replicateSnapshot?.sourceVideoDurationSec || 0)
-      if (!(estimatedSourceDuration > 0) || Math.abs(estimatedSourceDuration - srcDur) > 0.1) {
+      if (snapshotSourceDuration > 0 && Math.abs(snapshotSourceDuration - srcDur) > 0.1) {
+        throw new Error('源视频真实时长发生变化，已停止提交，请重新发起')
+      }
+      // 后台重读若已经有结果且与计费时长对不上，说明资产被替换过，同样不能按旧价提交；还没读完就不等它。
+      if (verifyRead.result !== null && verifyRead.result > 0 && Math.abs(verifyRead.result - srcDur) > 0.1) {
         throw new Error('源视频真实时长发生变化，已停止提交，请重新发起')
       }
       if (srcDur) {
@@ -4309,7 +4332,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
         reSrcDur = (await readSourceVideoDuration(recoveredSourceVideo.assetId, recoveredSourceVideo.url)) || 0
       }
       if (!(reSrcDur > 0)) {
-        throw new Error('无法读取源视频真实时长，请重新选择视频后重试')
+        throw new Error(SOURCE_VIDEO_DURATION_UNAVAILABLE_MESSAGE)
       }
       if (
         !aliveRef.current ||
@@ -4550,6 +4573,35 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     }
   })
 
+  // 模板库「做同款」：页面已在入口态，不再走 carryVideo 路由 state（只在首次挂载时读取），
+  // 直接把模板视频作为源爆款视频写回入口草稿，保留已上传的替换素材与文案，并重挂载入口让其按新 initial 初始化。
+  const applyTemplateToEntry = useLatestCallback((tpl: TemplateItem) => {
+    const url = String(tpl.videoUrl || '')
+    const assetId = Number(tpl.videoAssetId || 0) || 0
+    if (!url && !assetId) return
+    setEntryInitial((current) => ({
+      ...(current || {}),
+      tab: 'remake',
+      videoSource: 'library',
+      videoPreview: url,
+      libraryVideo: { assetId, src: url },
+    }))
+    setSourceVideo({ assetId, url })
+    setSourceVideoDurSec(0)
+    setSourceVideoDurAssetId(0)
+    sourceDurationReadRef.current = null
+    setEntryKey((key) => key + 1)
+    document.querySelector('.hotcopy__scroll')?.scrollTo({ top: 0, behavior: 'smooth' })
+  })
+
+  // 首页下线后爆款复刻成为默认落地页：新用户首次进入入口态时弹一次新手引导（按用户隔离的「已看」标记）。
+  useEffect(() => {
+    if (started || !isAuthenticated) return
+    if (isGuideSeen('home', currentUser?.id)) return
+    const timer = window.setTimeout(() => openGuide('home'), 600)
+    return () => window.clearTimeout(timer)
+  }, [started, isAuthenticated, currentUser?.id])
+
   // 入口提交「做同款/生成视频」→ 需登录(免登录可进页面/上传,但生成需登录)
   const handleStart = (payload: HotCopyEntryPayload) => {
     // 档位取自本次提交所选的 replicate 模型，与入口下拉同源：
@@ -4637,9 +4689,12 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           preparedPayload.videoSource === 'library' &&
           preparedLibraryAssetId > 0 &&
           preparedLibraryAssetId === Number(sourceVideo.assetId || 0)
+        // 时长来源按代价从低到高：已绑定的同资产时长 → 入口预览播放器已读到的值 → 再起一个 <video> 读元数据。
+        // 读元数据每次都有超时风险，能复用就不重读。
         let sourceDurationSec = canReuseBoundDuration ? boundSourceVideoDurSec : 0
+        if (!(sourceDurationSec > 0)) sourceDurationSec = Number(preparedPayload.sourceVideoDurationSec || 0) || 0
         if (!(sourceDurationSec > 0)) {
-          // 入口组件切到下一步后会释放自己的 blob 预览地址；本地文件需由本流程持有独立临时 URL。
+          // 本地文件由本流程持有独立的临时 URL 读元数据，不依赖入口组件的预览地址生命周期。
           const ownedDurationUrl = preparedPayload.videoFile ? URL.createObjectURL(preparedPayload.videoFile) : ''
           const durationUrl =
             ownedDurationUrl || String(preparedPayload.videoPreview || preparedPayload.libraryVideo?.src || '')
@@ -4655,7 +4710,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
           return
         }
         if (!(sourceDurationSec > 0)) {
-          throw new Error('无法读取源视频真实时长，请重新选择视频后重试')
+          throw new Error(SOURCE_VIDEO_DURATION_UNAVAILABLE_MESSAGE)
         }
         setHotCopyPhase('正在确认模型参数…')
         // 真实时长、固定输出参数与参考图数量齐全后再冻结快照，后续目录刷新不能替换用户选择。
@@ -5154,6 +5209,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                   costEstimate={videoCost.estimate}
                   costLoading={videoCost.loading}
                   costError={videoCost.error}
+                  header={<HotCopyPromoVideo />}
+                  footer={<HotCopyTemplateGallery onUseTemplate={applyTemplateToEntry} />}
                 />
               </Suspense>
             </div>

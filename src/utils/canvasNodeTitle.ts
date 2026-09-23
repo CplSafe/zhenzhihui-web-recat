@@ -21,8 +21,11 @@ export const CANVAS_KIND_LABELS: Record<string, string> = {
   timeline: '视频剪辑',
 }
 
-/** 自动摘要的最大字数：超过一行就失去「一眼扫过」的意义，反而挤占画面。 */
-export const CANVAS_TITLE_SUMMARY_MAX = 18
+/**
+ * 自动摘要的最大字数。节点头部按两行显示（CSS line-clamp），250px 宽的节点一行约 18 个汉字；
+ * 取两行的量，再长交给省略号与悬停全文。以前是 18（单行），提示词只露十几个字，用户反馈看不到后面。
+ */
+export const CANVAS_TITLE_SUMMARY_MAX = 40
 
 /** 用户自定义名的最大字数，与分组改名（40）保持一致。 */
 export const CANVAS_TITLE_MAX_LENGTH = 40
@@ -125,4 +128,18 @@ export function resolveCanvasNodeTitle(source: CanvasTitleSource): string {
   const label = getCanvasKindLabel(source.kind)
   const summary = deriveCanvasNodeSummary(source)
   return summary ? `${label} · ${summary}` : label
+}
+
+/**
+ * 节点标题的悬停提示。
+ *
+ * 自动摘要是从提示词截出来的，节点上没有别处能看到被截掉的部分——悬停要给完整提示词。
+ * 用户改过名就只给名字（提示词与名字是两回事，硬塞进去反而打扰）。末尾提示可双击改名。
+ */
+export function buildCanvasNodeHeaderTooltip(source: CanvasTitleSource): string {
+  const headerTitle = resolveCanvasNodeTitle(source)
+  const custom = asString(source.title).trim()
+  const prompt = custom ? '' : asString(source.prompt).trim()
+  const body = prompt && !headerTitle.endsWith(prompt) ? `${headerTitle}\n\n提示词：${prompt}` : headerTitle
+  return `${body}\n（双击修改名称）`
 }

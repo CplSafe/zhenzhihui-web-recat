@@ -1,0 +1,226 @@
+/* 画布设置：与快捷键速查同一套弹层骨架，宽度更窄——它是表单，不是表格 */
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(4px);
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.dialog {
+  display: flex;
+  width: 520px;
+  max-width: 100%;
+  max-height: calc(100vh - 48px);
+  flex-direction: column;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #eef1f7;
+}
+
+.title {
+  margin: 0;
+  color: #1f2533;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reset {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #e2e6ef;
+  border-radius: 7px;
+  background: #fff;
+  color: #6b7385;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.reset:hover {
+  border-color: #c9cfe0;
+  color: #2f3646;
+}
+
+.close {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a91a2;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.close:hover {
+  background: #f1f3fb;
+  color: #2f3646;
+}
+
+.body {
+  padding: 4px 20px 20px;
+  overflow-y: auto;
+}
+
+.section + .section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #eef1f7;
+}
+
+.sectionTitle {
+  margin: 12px 0 4px;
+  color: #9aa3b2;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+}
+
+.rowText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rowLabel {
+  color: #2f3646;
+  font-size: 13px;
+}
+
+.rowHint {
+  color: #8a91a2;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.rowControl {
+  flex: 0 0 auto;
+}
+
+.rowActions {
+  padding: 6px 0 2px;
+}
+
+.secondary {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #dfe3ff;
+  border-radius: 8px;
+  background: #f4f6ff;
+  color: #5767e5;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.secondary:hover {
+  background: #e9ecff;
+}
+
+/* 开关：与 antd Switch 同尺寸，但不引组件——这里的样式要和画布 chrome 一致 */
+.switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 11px;
+  background: #d5d9e4;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.switchOn {
+  background: #5767e5;
+}
+
+.switchKnob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+  transition: transform 160ms ease;
+}
+
+.switchOn .switchKnob {
+  transform: translateX(18px);
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: #eef0f6;
+}
+
+.segment {
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7385;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.segmentActive {
+  background: #fff;
+  color: #5767e5;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+.switch:focus-visible,
+.segment:focus-visible,
+.close:focus-visible,
+.reset:focus-visible,
+.secondary:focus-visible {
+  outline: 3px solid rgb(87 103 229 / 26%);
+  outline-offset: 1px;
+}

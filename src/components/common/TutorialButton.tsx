@@ -105,6 +105,20 @@ function TutorialModal({ tutorial, onClose }: { tutorial: TutorialVideo; onClose
           preload="metadata"
           data-testid="tutorial-video"
         />
+        {tutorial.docUrl ? (
+          <footer className="tutorial-modal__foot">
+            <span className="tutorial-modal__foot-hint">视频只演示主流程，每一步的参数与注意事项见图文手册。</span>
+            <a
+              className="tutorial-modal__doc-link"
+              href={tutorial.docUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="tutorial-doc-link"
+            >
+              查看完整图文手册 ↗
+            </a>
+          </footer>
+        ) : null}
       </div>
     </div>,
     document.body,

@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Pagination } from 'antd'
 import '@/styles/creative.css'
 import '@/styles/project-management.css'
@@ -57,6 +57,13 @@ import {
 } from '@/utils/creativeDraftPersistence'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useDismissablePopover } from '@/composables/useDismissablePopover'
+import { useOwnerFilter } from '@/composables/useOwnerFilter'
+import {
+  buildOwnerFilterOptions,
+  isTeamWorkspace,
+  matchesOwnerFilter,
+  resolveEffectiveOwnerFilter,
+} from '@/utils/memberOwnerFilter'
 import FilterSelect from '@/components/common/FilterSelect'
 import { openComingSoon } from '@/stores/ui'
 import { useWorkspaceId, useCurrentUser, useCurrentWorkspace } from '@/stores/workspaceSession'
@@ -207,14 +214,25 @@ function extractCover(project: any, wsId: number): string {
   return ''
 }
 
-// 没图时的视频封面:取项目已生成的整片视频(版本/历史/最终任一),用 <video> 首帧当封面。
-// 优先 assetId → 直传地址(永不过期);否则用原始 url。
+/** 失败或取消的历史记录不能覆盖项目最后一版成功成片。 */
+function isFailedVideoVersion(value: any): boolean {
+  const status = String(value?.status || '')
+    .trim()
+    .toLowerCase()
+  return /fail|error|reject|cancel|abort/.test(status)
+}
+
+// 视频项目封面:取最后一版成功生成的整片视频,用 <video> 首帧展示。
+// 版本数组按生成顺序追加，因此从末尾查找；优先 assetId → 直传地址(永不过期)，否则用原始 url。
 function extractCoverVideo(project: any, wsId: number): string {
   const draft = getCreativeProjectDraft(project)
   if (!draft) return ''
   const smart = toPlainObject(draft.smart) || draft
   for (const list of [smart?.videoVersions, draft?.videoHistoryList, draft?.video_history_list]) {
-    for (const v of normalizeArray(list)) {
+    const versions = normalizeArray(list)
+    for (let index = versions.length - 1; index >= 0; index -= 1) {
+      const v = versions[index]
+      if (isFailedVideoVersion(v)) continue
       const im = imgOf(v)
       if (im.assetId && wsId) return assetStreamUrl(im.assetId, wsId)
       if (im.url) return im.url
@@ -397,20 +415,6 @@ interface UnclassifiedVideoItem {
   sourceKey: string
 }
 
-/** 成员筛选的按空间记忆 key。 */
-function ownerFilterStorageKey(workspaceId: number): string {
-  return `zzh.pm.ownerFilter.${workspaceId}`
-}
-
-/** 兼容成员对象的多种命名字段,取展示名。 */
-function memberDisplayName(member: any): string {
-  return (
-    String(
-      member?.nickname || member?.name || member?.user?.nickname || member?.user?.name || member?.username || '',
-    ).trim() || `成员 ${resolveUserId(member) || ''}`.trim()
-  )
-}
-
 /** 项目卡片视频封面上的播放图标。 */
 function PlayIcon() {
   return (
@@ -482,8 +486,10 @@ export default function ProjectManagementView() {
   const [openMenuId, setOpenMenuId] = useState(0)
   const [deletingProjectId, setDeletingProjectId] = useState(0)
   const [dragOverFolderId, setDragOverFolderId] = useState(0)
-  // 封面图加载失败的项目 id(过期/坏图)→ 回退占位封面,保证卡片始终有图
+  // 图片封面加载失败的项目 id(过期/坏图)→ 回退占位封面,保证卡片始终有图
   const [coverError, setCoverError] = useState<Set<number>>(new Set())
+  // 最新成片加载失败时回退原素材封面，不让单个视频地址异常拖垮项目识别。
+  const [coverVideoError, setCoverVideoError] = useState<Set<number>>(new Set())
 
   // 我的项目分页:固定每行 3 个、每页 3 行(共 9 个),不随屏幕改变列数。
   const gridRef = useRef<HTMLDivElement>(null)
@@ -498,37 +504,23 @@ export default function ProjectManagementView() {
   const modelCatalog = useGenerationModelCatalog(workspaceId)
   const resolveCatalogModel = modelCatalog.resolveModel
   // 成员筛选(团队空间):'' = 全部成员,否则为归属人 userId 字符串。按空间记忆,子账号多时进页即定位自己的项目。
-  const [ownerFilter, setOwnerFilter] = useState('')
+  // 读写与选项/命中口径都走 memberOwnerFilter,与任务管理抽屉共用一份。
+  const [ownerFilter, changeOwnerFilter] = useOwnerFilter('pm', activeWorkspaceId)
   // 「我的项目」id 集合:来自后端 mine=true 的权威判定;null = 未拉到(个人空间/请求失败),回退前端按归属人比对
   const [myProjectIds, setMyProjectIds] = useState<Set<number> | null>(null)
   const isTeamSpaceRef = useRef(false)
-  isTeamSpaceRef.current = String(currentWorkspace?.type || '').toLowerCase() !== 'personal'
+  isTeamSpaceRef.current = isTeamWorkspace(currentWorkspace)
+  // 任务管理「查看全部视频」带着当前成员筛选跳过来(/projects?owner=xxx):query 覆盖记忆值并写回,然后清掉参数
+  const location = useLocation()
   useEffect(() => {
-    const ws = Number(workspaceId || 0)
-    if (!ws) {
-      setOwnerFilter('')
-      return
-    }
-    try {
-      setOwnerFilter(localStorage.getItem(ownerFilterStorageKey(ws)) || '')
-    } catch {
-      setOwnerFilter('')
-    }
-  }, [workspaceId])
-  const changeOwnerFilter = useCallback(
-    (value: string) => {
-      setOwnerFilter(value)
-      const ws = Number(workspaceId || 0)
-      if (!ws) return
-      try {
-        if (value) localStorage.setItem(ownerFilterStorageKey(ws), value)
-        else localStorage.removeItem(ownerFilterStorageKey(ws))
-      } catch {
-        /* 隐私模式等场景写不进去:筛选仍生效,只是不记忆 */
-      }
-    },
-    [workspaceId],
-  )
+    if (!activeWorkspaceId) return
+    const params = new URLSearchParams(location.search || '')
+    if (!params.has('owner')) return
+    changeOwnerFilter(String(params.get('owner') || '').trim())
+    params.delete('owner')
+    const rest = params.toString()
+    navigate(`${location.pathname}${rest ? `?${rest}` : ''}`, { replace: true })
+  }, [activeWorkspaceId, changeOwnerFilter, location.pathname, location.search, navigate])
   // 待归类分页(两行一页,列数随宽度实测)
   const vidGridRef = useRef<HTMLDivElement>(null)
   const [vidCols, setVidCols] = useState(5)
@@ -587,6 +579,8 @@ export default function ProjectManagementView() {
           ? collectGeneratedProjectImages(project).length
           : countProjectVideos({ project, workspaceId: wsId })
         const cover = extractCover(project, wsId)
+        // 图片项目仍以最后一张成功出图为封面；视频项目优先展示最后一版成功成片。
+        const coverVideo = imageState.imageProject ? '' : extractCoverVideo(project, wsId)
         const userId = resolveCreativeProjectOwnerId(project)
         // 该项目下所有视频用过的模型名(去重),供「生成模型」筛选:优先版本自带的名字快照,只有 id 时查目录翻译
         const modelNames = imageState.imageProject
@@ -622,8 +616,7 @@ export default function ProjectManagementView() {
             'createdAt',
           ]),
           cover,
-          // 没有图片封面时,退而用已出片视频的首帧当封面
-          coverVideo: cover ? '' : extractCoverVideo(project, wsId),
+          coverVideo,
           members: actualMemberCount,
           membersLabel: isTeamSpace ? '成员' : '',
           type: actualMemberCount > 1 ? '协作项目' : '个人项目',
@@ -648,51 +641,45 @@ export default function ProjectManagementView() {
   ])
 
   // 成员筛选只在团队空间出现;个人空间只有一个人,控件没有意义
-  const isTeamSpace = String(currentWorkspace?.type || '').toLowerCase() !== 'personal'
+  const isTeamSpace = isTeamWorkspace(currentWorkspace)
 
   /**
    * 成员下拉选项:全部 / 我(置顶) / 其他有项目的成员按项目数降序;数量随当前列表实时计算。
    * 「我」的数量与筛选一致,优先按后端 mine=true 判定的 id 集合统计。
    */
   const ownerOptions = useMemo(() => {
-    const counts = new Map<number, number>()
+    const countsByUserId = new Map<number, number>()
     folders.forEach((folder) => {
       const id = Number(folder.userId || 0)
-      if (id) counts.set(id, (counts.get(id) || 0) + 1)
+      if (id) countsByUserId.set(id, (countsByUserId.get(id) || 0) + 1)
     })
     const mineCount = myProjectIds
       ? folders.reduce((total, folder) => total + (myProjectIds.has(Number(folder.id || 0)) ? 1 : 0), 0)
-      : counts.get(currentUserId) || 0
-    const others = effectiveWorkspaceMembers
-      .map((member: any) => ({ id: resolveUserId(member), name: memberDisplayName(member) }))
-      .filter((member) => member.id > 0 && member.id !== currentUserId && (counts.get(member.id) || 0) > 0)
-      .sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0))
-    return [
-      { value: '', label: '全部成员' },
-      { value: String(currentUserId), label: `我（${mineCount}）` },
-      ...others.map((member) => ({ value: String(member.id), label: `${member.name}（${counts.get(member.id)}）` })),
-    ]
+      : countsByUserId.get(currentUserId) || 0
+    return buildOwnerFilterOptions({ countsByUserId, mineCount, members: effectiveWorkspaceMembers, currentUserId })
   }, [folders, effectiveWorkspaceMembers, currentUserId, myProjectIds])
 
   /**
    * 生效的成员筛选:记忆值可能已失效(成员退出团队/项目清零),
    * 失效时回退「全部」——否则下拉显示全部、列表却被过滤成空,两处对不上。
    */
-  const effectiveOwnerFilter = useMemo(() => {
-    if (!isTeamSpace || !ownerFilter) return ''
-    return ownerOptions.some((option) => option.value === ownerFilter) ? ownerFilter : ''
-  }, [isTeamSpace, ownerFilter, ownerOptions])
+  const effectiveOwnerFilter = useMemo(
+    () => resolveEffectiveOwnerFilter({ isTeamSpace, ownerFilter, options: ownerOptions }),
+    [isTeamSpace, ownerFilter, ownerOptions],
+  )
 
   // 搜索 + 流程过滤 + 类型过滤 + 成员过滤 + 时间排序
   const shownFolders = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const ownerId = Number(effectiveOwnerFilter || 0)
     // 「我」优先按后端 mine=true 的 id 集合判定(协作/归属字段差异都以后端为准);其他成员按归属人比对
-    const matchesOwner = (folder: (typeof folders)[number]) => {
-      if (!ownerId) return true
-      if (ownerId === currentUserId && myProjectIds) return myProjectIds.has(Number(folder.id || 0))
-      return Number(folder.userId || 0) === ownerId
-    }
+    const matchesOwner = (folder: (typeof folders)[number]) =>
+      matchesOwnerFilter({
+        ownerFilter: effectiveOwnerFilter,
+        currentUserId,
+        myProjectIds,
+        projectId: Number(folder.id || 0),
+        creatorUserId: Number(folder.userId || 0),
+      })
     const list = folders.filter(
       (f) =>
         (flowFilter === 'all' || f.flow === flowFilter) &&
@@ -983,6 +970,7 @@ export default function ProjectManagementView() {
     setDeletingProjectId(0)
     setDragOverFolderId(0)
     setCoverError(new Set())
+    setCoverVideoError(new Set())
     setPendingClassified(new Set())
     setMemberPermProject(null)
     setPermRestrictedIds(new Set())
@@ -1647,23 +1635,24 @@ export default function ProjectManagementView() {
                       }}
                     >
                       <div className="pm2-pcard-cover">
-                        {folder.cover && !coverError.has(folder.id) ? (
-                          // ① 真实图片封面(入口素材 / 分镜图 / 封面字段)
-                          <img
-                            className="pm2-pcard-cover-media"
-                            src={folder.cover}
-                            alt=""
-                            loading="lazy"
-                            onError={() => setCoverError((prev) => new Set(prev).add(folder.id))}
-                          />
-                        ) : folder.coverVideo ? (
-                          // ② 没图但已出片:用整片视频首帧当封面
+                        {folder.coverVideo && !coverVideoError.has(folder.id) ? (
+                          // ① 视频项目:最后一版成功成片的首帧
                           <video
                             className="pm2-pcard-cover-media"
                             src={folder.coverVideo}
                             muted
                             playsInline
                             preload="metadata"
+                            onError={() => setCoverVideoError((prev) => new Set(prev).add(folder.id))}
+                          />
+                        ) : folder.cover && !coverError.has(folder.id) ? (
+                          // ② 图片项目，或成片不可用时的原素材回退
+                          <img
+                            className="pm2-pcard-cover-media"
+                            src={folder.cover}
+                            alt=""
+                            loading="lazy"
+                            onError={() => setCoverError((prev) => new Set(prev).add(folder.id))}
                           />
                         ) : (
                           // ③ 空项目兜底:渐变 + 完整项目标题占位封面

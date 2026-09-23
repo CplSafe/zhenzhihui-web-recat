@@ -202,7 +202,7 @@ export default function CommunityWorksView({ manage = false, list = false }: { m
   return (
     <div className="cworks">
       <AppSidebar
-        activeKey="home"
+        activeKey="market"
         onNavigate={handleSidebarNavigate}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -240,7 +240,7 @@ export default function CommunityWorksView({ manage = false, list = false }: { m
               <button
                 type="button"
                 onClick={() => {
-                  if (list) navigate('/home')
+                  if (list) navigate('/market')
                   else navigate(-1)
                 }}
               >

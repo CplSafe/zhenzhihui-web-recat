@@ -122,10 +122,10 @@ export default function SidebarTeamGroup({ collapsed = false }: SidebarTeamGroup
         )}
       </div>
 
-      {/* 加入空间 */}
+      {/* 加入团队 */}
       <button type="button" className="stg-join" onClick={() => openJoinTeam()}>
         <span className="stg-join__ico">{IconPlus}</span>
-        <span className="stg-join__label">加入空间</span>
+        <span className="stg-join__label">加入团队</span>
       </button>
     </div>
   )

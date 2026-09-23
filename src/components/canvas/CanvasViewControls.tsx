@@ -25,6 +25,15 @@ export interface CanvasViewControlsProps {
   /** 小地图当前是否显示；开关就放在这条控制条上（它本就是「怎么看画布」的一部分） */
   minimapVisible: boolean
   onMinimapToggle: () => void
+  /** 打开画布设置（滚轮行为、辅助线、通知…）；不传则不显示按钮 */
+  onOpenSettings?: () => void
+  /** 打开快捷键速查；不传则不显示按钮 */
+  onOpenHelp?: () => void
+  /**
+   * 画布规模读数：节点 / 连线 / 失败数。
+   * 几百个节点的画布里「有几个生成失败了」靠肉眼扫不出来，这里给个数，失败数不为零就红。
+   */
+  stats?: { nodes: number; edges: number; failed: number }
 }
 
 export default function CanvasViewControls({
@@ -39,6 +48,9 @@ export default function CanvasViewControls({
   onEdgesToggle,
   minimapVisible,
   onMinimapToggle,
+  onOpenSettings,
+  onOpenHelp,
+  stats,
 }: CanvasViewControlsProps) {
   // 极小倍率下 1% 的精度已经没有意义，但读数不能显示成 0%——那看起来像坏了
   const percent = Math.max(1, Math.round((Number(zoom) || 1) * 100))
@@ -107,7 +119,144 @@ export default function CanvasViewControls({
       >
         <MiniMapIcon />
       </button>
+
+      {(onOpenSettings || onOpenHelp) && <span className={styles.divider} aria-hidden="true" />}
+
+      {onOpenSettings && (
+        <button type="button" className={styles.btn} onClick={onOpenSettings} title="画布设置" aria-label="画布设置">
+          <GearIcon />
+        </button>
+      )}
+
+      {onOpenHelp && (
+        <button
+          type="button"
+          className={styles.btn}
+          onClick={onOpenHelp}
+          title="快捷键速查（Shift + ?）"
+          aria-label="快捷键速查"
+        >
+          <HelpIcon />
+        </button>
+      )}
+
+      {stats && (
+        <>
+          <span className={styles.divider} aria-hidden="true" />
+          <span
+            className={styles.stats}
+            title={`节点 ${stats.nodes} · 连线 ${stats.edges}${stats.failed > 0 ? ` · ${stats.failed} 个生成失败` : ''}`}
+            aria-label={`画布共 ${stats.nodes} 个节点、${stats.edges} 条连线${stats.failed > 0 ? `，${stats.failed} 个生成失败` : ''}`}
+          >
+            <span className={styles.stat}>
+              <NodeCountIcon />
+              {stats.nodes}
+            </span>
+            <span className={styles.stat}>
+              <EdgeCountIcon />
+              {stats.edges}
+            </span>
+            {stats.failed > 0 && (
+              <span className={`${styles.stat} ${styles.statFailed}`}>
+                <WarnIcon />
+                {stats.failed}
+              </span>
+            )}
+          </span>
+        </>
+      )}
     </div>
+  )
+}
+
+function GearIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+    </svg>
+  )
+}
+
+function HelpIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7" />
+      <circle cx="12" cy="17" r="0.6" fill="currentColor" />
+    </svg>
+  )
+}
+
+function NodeCountIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+    </svg>
+  )
+}
+
+function EdgeCountIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="5" cy="6" r="2" />
+      <circle cx="19" cy="18" r="2" />
+      <path d="M7 7.5C11 10 13 14 17 16.5" />
+    </svg>
+  )
+}
+
+function WarnIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 3 2.5 20h19L12 3z" />
+      <path d="M12 10v4M12 17.5v.5" />
+    </svg>
   )
 }
 

@@ -1,23 +1,50 @@
 /**
  * TaskCenterDrawer — 首页侧栏任务中心列表。
  * 合并本地实时任务与后端历史项目，按智能成片/爆款复制筛选，并遵守当前用户的项目可见权限。
+ * 团队空间里历史结果包含同事的产出：卡片标注创作者，底栏提供与项目管理同口径的成员筛选。
  */
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Tooltip } from 'antd'
-import { InboxOutlined, LeftOutlined, LoadingOutlined, PlayCircleOutlined, RightOutlined } from '@ant-design/icons'
+import {
+  InboxOutlined,
+  LeftOutlined,
+  LoadingOutlined,
+  PlayCircleOutlined,
+  RightOutlined,
+  UnorderedListOutlined,
+  UserOutlined,
+} from '@ant-design/icons'
 import { getAssetDownloadUrl, humanizeProviderErrorText } from '@/api/business'
 import { deriveProjectVideos } from '@/api/projectVideos'
-import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
-import { buildTaskCenterId, type TaskCenterScope, type TaskCenterTask, useTaskCenterStore } from '@/stores/taskCenter'
+import { useCurrentUser, useCurrentWorkspace, useWorkspaceId } from '@/stores/workspaceSession'
+import {
+  buildTaskCenterId,
+  resolveTaskCenterCreatorId,
+  type TaskCenterScope,
+  type TaskCenterTask,
+  useTaskCenterStore,
+} from '@/stores/taskCenter'
 import { listAllCreativeProjects } from '@/utils/businessPagination'
 import {
   getCreativeProjectDraft,
   isCreativeProjectRestrictedForUser,
   normalizeArray,
+  resolveCreativeProjectOwnerId,
+  resolveUserId,
   toPlainObject,
 } from '@/utils/creativeDraftMetadata'
+import {
+  buildOwnerFilterOptions,
+  isTeamWorkspace,
+  matchesOwnerFilter,
+  memberDisplayName,
+  resolveEffectiveOwnerFilter,
+} from '@/utils/memberOwnerFilter'
+import { useOwnerFilter } from '@/composables/useOwnerFilter'
+import { useWorkspaceMemberAccess } from '@/composables/useWorkspaceMemberAccess'
 import { readAiTaskProgress } from '@/utils/taskProgress'
+import FilterSelect from '@/components/common/FilterSelect'
 import VideoPreviewModal from '@/components/common/VideoPreviewModal'
 import styles from './TaskCenterDrawer.module.less'
 
@@ -48,6 +75,13 @@ interface TaskCenterHistoryResult {
   tasks: TaskCenterTask[]
   accessibleProjectIds: Set<number>
   thumbnailSourcesByProjectId: Map<number, TaskThumbnailSource>
+  /** 后端 mine=true 判定的「我的项目」id 集合；null = 个人空间或请求失败，回退按创作者比对。 */
+  myProjectIds: Set<number> | null
+}
+
+/** 团队空间加载历史时额外需要的上下文。 */
+interface TaskCenterHistoryContext {
+  isTeamSpace: boolean
 }
 
 function stableMediaUrl(value: unknown): string {
@@ -382,6 +416,8 @@ function deriveHistoricalImageTasks(project: any, workspaceId: number, ownerUser
   const projectId = Number(project?.id ?? project?.project_id ?? project?.projectId ?? 0) || 0
   if (!projectId) return []
   const projectTitle = String(project?.title || project?.name || '历史图片').trim() || '历史图片'
+  // 图片对话没有版本级创作者，按项目归属人记
+  const creator = resolveProjectCreator(project)
   const entryRatio = String(smart?.entryMeta?.ratio || '').trim()
   const projectUpdatedAt = historyTimestamp(
     project?.updated_at || project?.updatedAt || project?.last_saved_at || project?.created_at || project?.createdAt,
@@ -429,10 +465,19 @@ function deriveHistoricalImageTasks(project: any, workspaceId: number, ownerUser
         ...(image.url ? { resultUrl: image.url } : {}),
         ...(image.assetId ? { resultAssetId: image.assetId } : {}),
         ownerUserId,
+        ...creator,
       })
     })
   })
   return tasks
+}
+
+/** 项目级创作者：归属人 ID + 后端给的展示名；名字缺失时由卡片按成员列表补。 */
+function resolveProjectCreator(project: any): Pick<TaskCenterTask, 'creatorUserId' | 'creatorName'> {
+  const creatorUserId = resolveCreativeProjectOwnerId(project)
+  if (!creatorUserId) return {}
+  const creatorName = String(project?.creator_nickname || project?.creatorNickname || '').trim()
+  return { creatorUserId, ...(creatorName ? { creatorName } : {}) }
 }
 
 /** 将当前空间已发布视频及图片项目中已保存的成功结果转换为任务中心历史卡片。 */
@@ -440,8 +485,21 @@ async function loadHistoricalTasks(
   workspaceId: number,
   ownerUserId: number,
   isCurrent: () => boolean,
+  { isTeamSpace }: TaskCenterHistoryContext,
 ): Promise<TaskCenterHistoryResult> {
-  const projects = await listAllCreativeProjects({ workspaceId, isCurrent })
+  // 「我的」以后端 mine=true 判定为准(与全量列表并行拉取,只取 id 集合),与项目管理页同口径;
+  // 拉取失败回退前端按创作者比对,不阻塞历史加载。个人空间不拉——mine 即全部。
+  const [projects, mineProjects] = await Promise.all([
+    listAllCreativeProjects({ workspaceId, isCurrent }),
+    isTeamSpace ? listAllCreativeProjects({ workspaceId, mine: true, isCurrent }).catch(() => null) : null,
+  ])
+  const myProjectIds = Array.isArray(mineProjects)
+    ? new Set(
+        mineProjects
+          .map((item: any) => Number(item?.id ?? item?.project_id ?? item?.projectId ?? item?.data?.id ?? 0) || 0)
+          .filter((id: number) => id > 0),
+      )
+    : null
   const accessibleProjectIds = getAccessibleTaskCenterProjectIds(projects, ownerUserId)
   const thumbnailSourcesByProjectId = new Map<number, TaskThumbnailSource>()
   filterTaskCenterHistoricalProjects(projects, ownerUserId).forEach((project) => {
@@ -452,13 +510,16 @@ async function loadHistoricalTasks(
   })
 
   const tasks = filterTaskCenterHistoricalProjects(projects, ownerUserId).flatMap((project) => {
-    const videoTasks = deriveProjectVideos({ project, workspaceId })
+    const videoTasks = deriveProjectVideos({ project, workspaceId, currentUserId: ownerUserId })
       .filter((video) => video.status === 'published' && Boolean(video.videoUrl) && !video.manual)
       .map((video) => {
         const scope: TaskCenterScope = String(video.flow || '').toLowerCase() === 'hot-copy' ? 'hot-copy' : 'smart'
         const projectId = Number(video.projectId || project?.id || 0) || 0
         const generationId = `history:${video.id}`
         const updatedAt = historyTimestamp(video.updatedAt || video.createdAt)
+        // 版本级创作者优先（同事在你项目里生成的视频记同事），没有则回退项目归属人
+        const creatorUserId = Number(video.createdByUserId || 0) || resolveCreativeProjectOwnerId(project)
+        const creatorName = String(video.createdByName || '').trim()
         return {
           id: buildTaskCenterId(scope, workspaceId, projectId, generationId),
           scope,
@@ -478,12 +539,14 @@ async function loadHistoricalTasks(
           resultUrl: String(video.videoUrl || ''),
           ...(video.videoAssetId ? { resultAssetId: video.videoAssetId } : {}),
           ownerUserId,
+          ...(creatorUserId ? { creatorUserId } : {}),
+          ...(creatorName ? { creatorName } : {}),
         }
       })
     return [...videoTasks, ...deriveHistoricalImageTasks(project, workspaceId, ownerUserId)]
   })
 
-  return { tasks, accessibleProjectIds, thumbnailSourcesByProjectId }
+  return { tasks, accessibleProjectIds, thumbnailSourcesByProjectId, myProjectIds }
 }
 
 /** 优先展示已有视频/封面，地址失效时按资产 ID 重新取签名地址并读取真实媒体元数据。 */
@@ -567,7 +630,18 @@ function TaskThumbnail({
 }
 
 /** 展示一条任务的真实状态、百分比、比例和秒数，并提供播放/进入项目及隐藏操作。 */
-function TaskCard({ task, onOpen, onArchive }: { task: TaskCenterTask; onOpen: () => void; onArchive: () => void }) {
+function TaskCard({
+  task,
+  creatorLabel,
+  onOpen,
+  onArchive,
+}: {
+  task: TaskCenterTask
+  /** 非本人产出时显示的创作者名；自己的卡片不标，避免列表变吵。 */
+  creatorLabel?: string
+  onOpen: () => void
+  onArchive: () => void
+}) {
   const [videoMetadata, setVideoMetadata] = useState({ duration: 0, width: 0, height: 0 })
   const record = task as TaskRecord
   const tone = getTaskTone(record)
@@ -626,7 +700,7 @@ function TaskCard({ task, onOpen, onArchive }: { task: TaskCenterTask; onOpen: (
         disabled={!hasDestination}
         aria-label={
           hasDestination
-            ? `${title}，${getStatusLabel(record, tone)}，${canPreview ? '播放视频' : '打开项目'}`
+            ? `${title}，${creatorLabel ? `${creatorLabel} 生成，` : ''}${getStatusLabel(record, tone)}，${canPreview ? '播放视频' : '打开项目'}`
             : `${title}，暂时无法打开项目`
         }
       >
@@ -650,6 +724,15 @@ function TaskCard({ task, onOpen, onArchive }: { task: TaskCenterTask; onOpen: (
             <span>{ratio}</span>
             <span className={styles.metaDivider} aria-hidden="true" />
             <span>{mediaLabel}</span>
+            {creatorLabel && (
+              <>
+                <span className={styles.metaDivider} aria-hidden="true" />
+                <span className={styles.creator} title={`创作者：${creatorLabel}`}>
+                  <UserOutlined aria-hidden="true" />
+                  <span className={styles.creatorName}>{creatorLabel}</span>
+                </span>
+              </>
+            )}
           </span>
           {(tone === 'active' || tone === 'queued') && (
             <span className={styles.progressRow}>
@@ -700,12 +783,14 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   const [playingUrl, setPlayingUrl] = useState('')
   const [historicalTasks, setHistoricalTasks] = useState<TaskCenterTask[]>([])
   const [accessibleProjectIds, setAccessibleProjectIds] = useState<Set<number>>(() => new Set())
+  const [myProjectIds, setMyProjectIds] = useState<Set<number> | null>(null)
   const [projectPermissionsLoaded, setProjectPermissionsLoaded] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [hiddenHistoryIds, setHiddenHistoryIds] = useState<Set<string>>(() => new Set())
   const [isNarrow, setIsNarrow] = useState(() => window.matchMedia('(max-width: 900px)').matches)
   const workspaceId = useWorkspaceId()
   const currentUser = useCurrentUser() as any
+  const currentWorkspace = useCurrentWorkspace()
   const currentUserId =
     Number(
       currentUser?.id ??
@@ -715,6 +800,14 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
         currentUser?.uid ??
         0,
     ) || 0
+  // 成员筛选只在团队空间出现;个人空间只有一个人,控件没有意义
+  const isTeamSpace = isTeamWorkspace(currentWorkspace)
+  const { workspaceMembers } = useWorkspaceMemberAccess({
+    workspaceId: Number(workspaceId || 0),
+    currentUserId,
+    currentWorkspace,
+  })
+  const [ownerFilter, changeOwnerFilter] = useOwnerFilter('taskCenter', Number(workspaceId || 0))
   const playbackContext = `${Number(workspaceId || 0)}:${currentUserId}`
   const playbackContextRef = useRef(playbackContext)
   const playbackRequestRef = useRef(0)
@@ -734,6 +827,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   useEffect(() => {
     setHistoricalTasks([])
     setAccessibleProjectIds(new Set())
+    setMyProjectIds(null)
     setProjectPermissionsLoaded(false)
     setHiddenHistoryIds(new Set())
     if (!expanded || !workspaceId || !currentUserId) {
@@ -742,11 +836,12 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     }
     let disposed = false
     setHistoryLoading(true)
-    void loadHistoricalTasks(Number(workspaceId), currentUserId, () => !disposed)
+    void loadHistoricalTasks(Number(workspaceId), currentUserId, () => !disposed, { isTeamSpace })
       .then((result) => {
         if (!disposed) {
           setHistoricalTasks(result.tasks)
           setAccessibleProjectIds(result.accessibleProjectIds)
+          setMyProjectIds(result.myProjectIds)
           setProjectPermissionsLoaded(true)
           const store = useTaskCenterStore.getState()
           store.tasks.forEach((task) => {
@@ -771,6 +866,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
         if (!disposed) {
           setHistoricalTasks([])
           setAccessibleProjectIds(new Set())
+          setMyProjectIds(null)
           setProjectPermissionsLoaded(false)
         }
       })
@@ -780,7 +876,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     return () => {
       disposed = true
     }
-  }, [currentUserId, expanded, workspaceId])
+  }, [currentUserId, expanded, isTeamSpace, workspaceId])
 
   useEffect(() => setActiveScope(scope), [scope])
   useEffect(() => {
@@ -866,7 +962,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [expanded, isNarrow, setDrawerExpanded])
 
-  const visibleTasks = useMemo(() => {
+  // 当前页签内、成员筛选前的候选列表：既是筛选输入，也用来算成员选项里的数量
+  const scopedTasks = useMemo(() => {
     const activeWorkspaceId = String(workspaceId ?? '')
     const liveTasks = tasks.filter((task) => {
       const record = task as TaskRecord
@@ -920,11 +1017,69 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     tasks,
     workspaceId,
   ])
+
+  // 「正在生成」全是本会话发起的任务，必然是自己的，不给成员筛选
+  const showOwnerFilter = isTeamSpace && activeScope !== 'generating'
+  /** 与项目管理同口径：「我」按后端 mine 集合；本会话刚发起、项目还没进 mine 集合的任务也算我的。 */
+  const matchesTaskOwner = useCallback(
+    (task: TaskCenterTask, filter: string) => {
+      if (filter === String(currentUserId) && task.locallyInitiated === true) return true
+      return matchesOwnerFilter({
+        ownerFilter: filter,
+        currentUserId,
+        myProjectIds,
+        projectId: Number(task.projectId || 0) || 0,
+        creatorUserId: resolveTaskCenterCreatorId(task),
+      })
+    },
+    [currentUserId, myProjectIds],
+  )
+  const ownerOptions = useMemo(() => {
+    const countsByUserId = new Map<number, number>()
+    let mineCount = 0
+    scopedTasks.forEach((task) => {
+      const creatorUserId = resolveTaskCenterCreatorId(task)
+      if (creatorUserId) countsByUserId.set(creatorUserId, (countsByUserId.get(creatorUserId) || 0) + 1)
+      if (matchesTaskOwner(task, String(currentUserId))) mineCount += 1
+    })
+    return buildOwnerFilterOptions({ countsByUserId, mineCount, members: workspaceMembers, currentUserId })
+  }, [scopedTasks, workspaceMembers, currentUserId, matchesTaskOwner])
+  const effectiveOwnerFilter = resolveEffectiveOwnerFilter({
+    isTeamSpace: showOwnerFilter,
+    ownerFilter,
+    options: ownerOptions,
+  })
+  const visibleTasks = useMemo(
+    () =>
+      effectiveOwnerFilter ? scopedTasks.filter((task) => matchesTaskOwner(task, effectiveOwnerFilter)) : scopedTasks,
+    [scopedTasks, effectiveOwnerFilter, matchesTaskOwner],
+  )
+  /** 创作者展示名：任务自带（后端 creator_nickname）优先，否则按 ID 从成员列表查。 */
+  const creatorLabelFor = (task: TaskCenterTask): string => {
+    if (!isTeamSpace) return ''
+    const creatorUserId = resolveTaskCenterCreatorId(task)
+    if (!creatorUserId || creatorUserId === currentUserId) return ''
+    const member = workspaceMembers.find((item: any) => resolveUserId(item) === creatorUserId)
+    return String(task.creatorName || '').trim() || (member ? memberDisplayName(member) : '') || `成员 ${creatorUserId}`
+  }
   const displayedTasks = activeScope === 'image' ? visibleTasks : visibleTasks.slice(0, MAX_VISIBLE_VIDEO_TASKS)
   const hiddenVideoCount =
     activeScope === 'image' || activeScope === 'generating'
       ? 0
       : Math.max(0, visibleTasks.length - displayedTasks.length)
+  const activeTaskCount = useMemo(() => {
+    const activeWorkspaceId = String(workspaceId ?? '')
+    return tasks.filter((task) => {
+      const record = task as TaskRecord
+      return (
+        String(readValue(record, 'workspaceId', 'workspace_id') ?? '') === activeWorkspaceId &&
+        Number(record.ownerUserId || 0) === currentUserId &&
+        isGeneratingTone(getTaskTone(record)) &&
+        !shouldHideFailedImageTask(record) &&
+        !isArchived(record)
+      )
+    }).length
+  }, [currentUserId, tasks, workspaceId])
 
   if (!workspaceId || !currentUserId) return null
 
@@ -938,7 +1093,13 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
           aria-label="展开任务管理"
           title="展开任务管理"
         >
-          <RightOutlined aria-hidden="true" />
+          <UnorderedListOutlined className={styles.railIcon} aria-hidden="true" />
+          <span className={styles.railLabel}>任务</span>
+          {activeTaskCount > 0 ? (
+            <span className={styles.railBadge} aria-label={`${activeTaskCount} 个任务正在生成`}>
+              {activeTaskCount > 99 ? '99+' : activeTaskCount}
+            </span>
+          ) : null}
         </button>
       </aside>
     )
@@ -1011,6 +1172,29 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
           ))}
         </div>
 
+        {/* 团队空间:页签下方按成员筛选,与项目管理页同一套控件与口径 */}
+        {showOwnerFilter && (
+          <div className={styles.ownerFilterRow} role="group" aria-label="按成员筛选任务">
+            <button
+              type="button"
+              className={cx(styles.mineChip, effectiveOwnerFilter === String(currentUserId) && styles.mineChipActive)}
+              aria-pressed={effectiveOwnerFilter === String(currentUserId)}
+              onClick={() =>
+                changeOwnerFilter(effectiveOwnerFilter === String(currentUserId) ? '' : String(currentUserId))
+              }
+            >
+              只看我的
+            </button>
+            <FilterSelect
+              ariaLabel="按成员筛选"
+              className={styles.ownerSelect}
+              value={effectiveOwnerFilter}
+              options={ownerOptions}
+              onChange={changeOwnerFilter}
+            />
+          </div>
+        )}
+
         <div
           className={styles.body}
           role="tabpanel"
@@ -1027,6 +1211,7 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                   <TaskCard
                     key={taskId}
                     task={task}
+                    creatorLabel={creatorLabelFor(task)}
                     onOpen={() => {
                       if (!projectId) return
                       const tone = getTaskTone(record)
@@ -1081,6 +1266,12 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
               <LoadingOutlined className={styles.emptySpinner} spin aria-hidden="true" />
               <span className={styles.emptyTitle}>正在加载历史{activeScope === 'image' ? '图片' : '视频'}</span>
             </div>
+          ) : effectiveOwnerFilter && scopedTasks.length ? (
+            <div className={styles.empty} role="status">
+              <InboxOutlined className={styles.emptyIcon} aria-hidden="true" />
+              <span className={styles.emptyTitle}>该成员暂无{activeScope === 'image' ? '图片' : '视频'}</span>
+              <span className={styles.emptyText}>切换到「全部成员」可查看团队其他人的产出</span>
+            </div>
           ) : (
             <div className={styles.empty} role="status">
               <InboxOutlined className={styles.emptyIcon} aria-hidden="true" />
@@ -1090,11 +1281,15 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
           )}
         </div>
         {hiddenVideoCount > 0 && (
-          <div className={styles.viewAllFooter}>
+          <div className={styles.footer}>
             <button
               type="button"
               className={styles.viewAllButton}
-              onClick={() => navigate('/projects')}
+              onClick={() =>
+                navigate(
+                  effectiveOwnerFilter ? `/projects?owner=${encodeURIComponent(effectiveOwnerFilter)}` : '/projects',
+                )
+              }
               aria-label="前往项目管理查看全部视频"
               title={`还有 ${hiddenVideoCount} 条视频，请前往项目管理查看`}
             >

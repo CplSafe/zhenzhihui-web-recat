@@ -83,6 +83,29 @@
   background: #e6e9f2;
 }
 
+/* 规模读数：纯展示，字号与倍率读数一致但不加粗，别抢了可点按钮的视觉 */
+.stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+  color: #6b7385;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.statFailed {
+  color: #d14343;
+  font-weight: 600;
+}
+
 .btn:focus-visible,
 .zoomValue:focus-visible {
   outline: 3px solid rgb(87 103 229 / 26%);

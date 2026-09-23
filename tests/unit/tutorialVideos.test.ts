@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getTutorialByKey, getTutorialForPath, TUTORIAL_BASE_URL } from '@/utils/tutorialVideos'
+import { getTutorialByKey, getTutorialForPath, MANUAL_DOC_URL, TUTORIAL_BASE_URL } from '@/utils/tutorialVideos'
 
 describe('tutorialVideos', () => {
   it('创作页按前缀映射到对应教程，含带 id 的子路由和查询串', () => {
@@ -23,5 +23,11 @@ describe('tutorialVideos', () => {
     const t = getTutorialByKey('canvas')
     expect(t.src).toBe(`${TUTORIAL_BASE_URL}canvas.mp4`)
     expect(t.title).toContain('无限画布')
+  })
+
+  it('每个教程都带上统一的图文手册地址', () => {
+    expect(getTutorialByKey('smart-create').docUrl).toBe(MANUAL_DOC_URL)
+    expect(getTutorialByKey('hot-copy').docUrl).toBe(MANUAL_DOC_URL)
+    expect(typeof MANUAL_DOC_URL).toBe('string')
   })
 })

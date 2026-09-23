@@ -1,6 +1,6 @@
 /**
  * 模块职责：集中声明应用页面路由、懒加载边界，以及创作页在项目/工作空间变化时的实例隔离规则。
- * 页面效果：游客从根路径进入开屏页，已有会话标记的用户进入首页；未知地址回退首页，异步页面加载失败时提供刷新入口。
+ * 页面效果：游客从根路径进入开屏页，已有会话标记的用户进入爆款复刻（首页已下线）；未知地址回退爆款复刻，异步页面加载失败时提供刷新入口。
  * 鉴权边界：AppShell 根据 handle.requiresAuth 统一保护项目、素材、团队等页面；首页、模板和创作浏览页允许游客进入，具体生成动作在页面内鉴权。
  * 状态边界：智能成片仅在“首次建项绑定当前会话”时保留实例，切项目、切工作空间或显式新建时重挂载，避免不同创作之间串状态。
  */
@@ -20,6 +20,7 @@ import WorkspaceSwitchBridge from './WorkspaceSwitchBridge'
 import AgentChatView from '@/views/AgentChatView'
 import { useDistributionAccess } from '../composables/useDistributionAccess'
 import { isChunkLoadError, reloadOnceForChunkFailure } from '../utils/chunkReload'
+import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 
 // 路由级错误边界：捕获 lazy chunk 加载失败（如部署后旧 chunk 失效、离线）或渲染抛错，
 // 避免整页白屏无任何恢复入口。
@@ -77,8 +78,8 @@ function RouteErrorBoundary() {
 const SplashView = lazy(() => import('../views/SplashView'))
 /** 统一登录页路由组件。 */
 const LoginView = lazy(() => import('../views/LoginView'))
-/** 产品首页路由组件。 */
-const HomeView = lazy(() => import('../views/HomeView'))
+/** 供需商单（IP / 需求市场）路由组件。 */
+const MarketView = lazy(() => import('../views/MarketView'))
 /** 模板库路由组件。 */
 const TemplatesView = lazy(() => import('../views/TemplatesView'))
 /** 智能成片创作路由组件。 */
@@ -283,13 +284,13 @@ function DistributionAccessRoute() {
   if (status === 'idle' || status === 'checking') {
     return <div className="route-loading" aria-label="正在校验邀请返利权限" />
   }
-  return <Navigate to="/home" replace />
+  return <Navigate to={APP_HOME_PATH} replace />
 }
 
-// 根路径按会话状态进入：已登录用户直接进入首页，游客进入开屏页。
+// 根路径按会话状态进入：已登录用户直接进入爆款复刻，游客进入开屏页。
 // 同步读取本地会话标记，避免登录用户刷新时短暂闪现开屏页。
 function IndexRedirect() {
-  return <Navigate to={hasAuthSessionMarker() ? '/home' : '/welcome'} replace />
+  return <Navigate to={hasAuthSessionMarker() ? APP_HOME_PATH : '/welcome'} replace />
 }
 /** 显式访问品牌欢迎页时，已登录用户也可以查看开屏内容。 */
 function WelcomeRoute() {
@@ -308,9 +309,11 @@ export const router = createBrowserRouter([
       { index: true, element: <IndexRedirect />, handle: { requiresAuth: false } },
       { path: 'welcome', element: <WelcomeRoute />, handle: { requiresAuth: false } },
       { path: 'login', element: lazyPage(<LoginView />), handle: { requiresAuth: false } },
-      { path: 'home', element: lazyPage(<HomeView />), handle: { requiresAuth: false } },
+      // 首页已下线：保留 /home 仅为旧链接 / 书签兜底，统一落到爆款复刻。
+      { path: 'home', element: <Navigate to={APP_HOME_PATH} replace />, handle: { requiresAuth: false } },
+      { path: 'market', element: lazyPage(<MarketView />), handle: { requiresAuth: false } },
       { path: 'templates', element: lazyPage(<TemplatesView />), handle: { requiresAuth: false } },
-      // IP 创作者主页与需求详情:与首页同为可浏览页,发起合作/申请接单在页面内鉴权。
+      // 供需商单、IP 创作者主页与需求详情均为可浏览页,发起合作/申请接单在页面内鉴权。
       { path: 'ip/:userId', element: lazyPage(<IpDetailView />), handle: { requiresAuth: false } },
       { path: 'works/:id', element: lazyPage(<CommunityWorksView />), handle: { requiresAuth: false } },
       { path: 'my-works', element: lazyPage(<CommunityWorksView list />) },
@@ -345,7 +348,7 @@ export const router = createBrowserRouter([
        */
       { path: 'canvas/share/:token', element: lazyPage(<CanvasShareView />), handle: { requiresAuth: false } },
       { path: 'canvas/:id', element: lazyPage(<CanvasView />) },
-      { path: '*', element: <Navigate to="/home" replace />, handle: { requiresAuth: false } },
+      { path: '*', element: <Navigate to={APP_HOME_PATH} replace />, handle: { requiresAuth: false } },
     ],
   },
 ])

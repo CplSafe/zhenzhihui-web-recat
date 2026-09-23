@@ -205,7 +205,7 @@ function assertHotCopyReplicateConstraints(
 ): { sourceVideoDurationSec: number; referenceImageCount: number } {
   const sourceVideoDurationSec = Number(args.sourceVideoDurationSec)
   if (!Number.isFinite(sourceVideoDurationSec) || sourceVideoDurationSec <= 0) {
-    throw new Error('无法读取源视频真实时长，请重新选择视频后重试')
+    throw new Error('读取源视频信息超时（文件较大或网络较慢），请稍后重试')
   }
 
   const referenceImageCount = Number(args.referenceImageCount)

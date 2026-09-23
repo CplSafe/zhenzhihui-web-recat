@@ -97,6 +97,11 @@ export interface HotCopyEntryPayload {
   generateAudio: boolean
   /** 本次爆款复制固定使用的 video.replicate 后端模型版本 ID。 */
   modelVersionId?: number
+  /**
+   * 入口预览播放器已经读到的源视频真实时长（整秒）。
+   * 提交链路优先复用它，避免对同一个文件反复起新的 <video> 读元数据——大文件每读一次都可能超时。
+   */
+  sourceVideoDurationSec?: number
 }
 
 /** 每个制作模式独立保存的入口草稿，模式键由外层映射维护。 */
@@ -132,6 +137,10 @@ interface HotCopyEntryProps {
   onDraftChange?: (payload: HotCopyEntryPayload) => void
   /** 入口右上角「创建新视频」:清空当前输入,回到全新入口态 */
   onNewVideo?: () => void
+  /** 主视觉区上方的内容(宣传视频位);与主视觉区同宽,随入口一起滚动 */
+  header?: ReactNode
+  /** 主视觉区下方的内容(模板库);与主视觉区同宽,随入口一起滚动 */
+  footer?: ReactNode
   /** 当前入口正在预检/提交；后台已有视频生成不能借此锁住新建与返回操作。 */
   submissionBusy?: boolean
   /** 从第二步返回第一页时,可直接回到已生成/生成中的视频页而不重新发起生成 */
@@ -361,6 +370,8 @@ export default function HotCopyEntry({
   costEstimate,
   costLoading = false,
   costError = '',
+  header,
+  footer,
 }: HotCopyEntryProps) {
   // 比例下拉:优先用模型实际支持的 options(避免选了模型做不了的比例被悄悄回退);缺省用默认列表。
   const ratioOpts = ratioOptions && ratioOptions.length ? ratioOptions : RATIO_OPTIONS
@@ -1027,6 +1038,10 @@ export default function HotCopyEntry({
     resolution,
     generateAudio,
     ...(modelVersionId ? { modelVersionId } : {}),
+    // 与计费用的 readVideoDurationSec 同口径（整秒），后续快照比对才不会因小数被判成"时长变化"
+    ...(sourceVideoMeta && sourceVideoMeta.durationSec > 0
+      ? { sourceVideoDurationSec: Math.round(sourceVideoMeta.durationSec) }
+      : {}),
   })
 
   useEffect(() => {
@@ -1134,146 +1149,151 @@ export default function HotCopyEntry({
         acceptLocalFiles(Array.from(event.dataTransfer.files))
       }}
     >
-      {/* 背景弥散:Canvas 实现(与智能成片同一套),配色用本页粉紫 */}
+      {/* 背景弥散:Canvas 实现(与智能成片同一套),配色用本页粉紫;铺满整页并固定在内容滚动层之下 */}
       <div className="hotcopy__bg" aria-hidden="true">
         {/* 模式只剩一种，背景恒定第 0 层（原先第 1 层是「精准复刻」的切换态） */}
         <EntryCanvasBg index={0} count={2} anim="bloom" layers={HOTCOPY_LAYERS} />
       </div>
 
-      <h1 className="hotcopy__title">爆款作业直接抄,你的产品当主角!</h1>
+      {/* 内容滚动层:宣传视频 → 主视觉 → 模板库 */}
+      <div className="hotcopy__scroll">
+        {header}
 
-      <div className="hotcopy__panel">
-        {onNewVideo && (
-          <button
-            type="button"
-            className="hotcopy__newVideoBtn"
-            disabled={submissionBusy}
-            onClick={onNewVideo}
-            title={submissionBusy ? '本次生成正在启动，请稍候' : '创建新视频'}
-          >
-            创建新视频
-          </button>
-        )}
-        {/* 主卡片:左 两个上传方块 + 右 文案输入;底部 @ + 圆形发送 */}
-        <div className="hotcopy__card">
-          <div className="hotcopy__body">
-            <div className="hotcopy__tiles">
-              {/* 上传爆款视频(必填,点选三来源) */}
-              <div className="hotcopy__tilewrap" ref={videoMenuRef}>
-                <button
-                  type="button"
-                  className={`hotcopy__tile${hasHotVideo ? ' is-done' : ''}`}
-                  onClick={() => setVideoMenuOpen((v) => !v)}
-                >
-                  <img className="hotcopy__tile-icon" src={videoIcon} alt="" />
-                  <span className="hotcopy__tile-label">上传爆款视频</span>
-                  {hasHotVideo && <span className="hotcopy__tile-badge">✓</span>}
-                </button>
-                {videoMenuOpen && (
-                  <div className="hotcopy__menu" onClick={(e) => e.stopPropagation()}>
-                    <button type="button" onClick={() => chooseSource('local')}>
-                      本地上传
+        <div className="hotcopy__hero">
+          <h1 className="hotcopy__title">爆款作业直接抄,你的产品当主角!</h1>
+
+          <div className="hotcopy__panel">
+            {onNewVideo && (
+              <button
+                type="button"
+                className="hotcopy__newVideoBtn"
+                disabled={submissionBusy}
+                onClick={onNewVideo}
+                title={submissionBusy ? '本次生成正在启动，请稍候' : '创建新视频'}
+              >
+                创建新视频
+              </button>
+            )}
+            {/* 主卡片:左 两个上传方块 + 右 文案输入;底部 @ + 圆形发送 */}
+            <div className="hotcopy__card">
+              <div className="hotcopy__body">
+                <div className="hotcopy__tiles">
+                  {/* 上传爆款视频(必填,点选三来源) */}
+                  <div className="hotcopy__tilewrap" ref={videoMenuRef}>
+                    <button
+                      type="button"
+                      className={`hotcopy__tile${hasHotVideo ? ' is-done' : ''}`}
+                      onClick={() => setVideoMenuOpen((v) => !v)}
+                    >
+                      <img className="hotcopy__tile-icon" src={videoIcon} alt="" />
+                      <span className="hotcopy__tile-label">上传爆款视频</span>
+                      {hasHotVideo && <span className="hotcopy__tile-badge">✓</span>}
                     </button>
-                    <button type="button" onClick={() => chooseSource('library')}>
-                      素材库
-                    </button>
+                    {videoMenuOpen && (
+                      <div className="hotcopy__menu" onClick={(e) => e.stopPropagation()}>
+                        <button type="button" onClick={() => chooseSource('local')}>
+                          本地上传
+                        </button>
+                        <button type="button" onClick={() => chooseSource('library')}>
+                          素材库
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              {/* 上传替换素材(仅图片,点选 本地 / 素材库) */}
-              <div className="hotcopy__tilewrap" ref={productMenuRef}>
-                <button
-                  type="button"
-                  className={`hotcopy__tile${products.length ? ' is-done' : ''}`}
-                  onClick={() => setProductMenuOpen((v) => !v)}
-                >
-                  <img className="hotcopy__tile-icon" src={materialIcon} alt="" />
-                  <span className="hotcopy__tile-label">上传替换素材</span>
-                  {products.length > 0 && <span className="hotcopy__tile-badge">{products.length}</span>}
-                </button>
-                {productMenuOpen && (
-                  <div className="hotcopy__menu" onClick={(e) => e.stopPropagation()}>
-                    <button type="button" onClick={() => chooseProductSource('local')}>
-                      本地上传
+                  {/* 上传替换素材(仅图片,点选 本地 / 素材库) */}
+                  <div className="hotcopy__tilewrap" ref={productMenuRef}>
+                    <button
+                      type="button"
+                      className={`hotcopy__tile${products.length ? ' is-done' : ''}`}
+                      onClick={() => setProductMenuOpen((v) => !v)}
+                    >
+                      <img className="hotcopy__tile-icon" src={materialIcon} alt="" />
+                      <span className="hotcopy__tile-label">上传替换素材</span>
+                      {products.length > 0 && <span className="hotcopy__tile-badge">{products.length}</span>}
                     </button>
-                    <button type="button" onClick={() => chooseProductSource('library')}>
-                      素材库
-                    </button>
+                    {productMenuOpen && (
+                      <div className="hotcopy__menu" onClick={(e) => e.stopPropagation()}>
+                        <button type="button" onClick={() => chooseProductSource('local')}>
+                          本地上传
+                        </button>
+                        <button type="button" onClick={() => chooseProductSource('library')}>
+                          素材库
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </div>
-
-            {/* 滚动只发生在 inputWrap 上；inputInner 不可滚，负责给 textarea 撑出整段文字的高度 */}
-            <div className="hotcopy__inputWrap">
-              <div className="hotcopy__inputInner">
-                {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
-                <div className="hotcopy__inputHl" aria-hidden="true">
-                  {renderHighlight(text)}
                 </div>
-                <textarea
-                  ref={taRef}
-                  className="hotcopy__text"
-                  value={text}
-                  placeholder="最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里"
-                  onChange={(e) => {
-                    setText(e.target.value)
-                    caretRef.current = e.target.selectionStart ?? e.target.value.length
-                  }}
-                  onSelect={(e) => {
-                    caretRef.current = e.currentTarget.selectionStart ?? 0
-                  }}
-                  onKeyDown={(e) => {
-                    // Ctrl/Cmd+Enter 也走 submit:缺视频/图片会弹提示(校验在 submit 内)
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
-                  }}
-                />
-              </div>
-            </div>
-          </div>
 
-          {/* 已选爆款视频 / 替换素材缩略(有内容才显示) */}
-          {(videoLabel || products.length > 0) && (
-            <div className="hotcopy__selected">
-              {/* 爆款视频:有预览(本地/素材库)用缩略图,否则用文字 chip */}
-              {videoPreview ? (
-                <div className="hotcopy__product hotcopy__product--hot" title={videoLabel}>
-                  <video src={videoPreview} muted playsInline />
-                  <span className="hotcopy__hotTag">爆款</span>
-                  <button type="button" onClick={clearVideo} aria-label="移除">
-                    ×
-                  </button>
+                {/* 滚动只发生在 inputWrap 上；inputInner 不可滚，负责给 textarea 撑出整段文字的高度 */}
+                <div className="hotcopy__inputWrap">
+                  <div className="hotcopy__inputInner">
+                    {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
+                    <div className="hotcopy__inputHl" aria-hidden="true">
+                      {renderHighlight(text)}
+                    </div>
+                    <textarea
+                      ref={taRef}
+                      className="hotcopy__text"
+                      value={text}
+                      placeholder="最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里"
+                      onChange={(e) => {
+                        setText(e.target.value)
+                        caretRef.current = e.target.selectionStart ?? e.target.value.length
+                      }}
+                      onSelect={(e) => {
+                        caretRef.current = e.currentTarget.selectionStart ?? 0
+                      }}
+                      onKeyDown={(e) => {
+                        // Ctrl/Cmd+Enter 也走 submit:缺视频/图片会弹提示(校验在 submit 内)
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
+                      }}
+                    />
+                  </div>
                 </div>
-              ) : (
-                videoLabel && (
-                  <span className="hotcopy__chip" title={videoLabel}>
-                    🎬 {videoLabel}
-                    <button type="button" onClick={clearVideo} aria-label="移除">
-                      ×
-                    </button>
-                  </span>
-                )
-              )}
-              {products.length > 0 && (
-                <div className="hotcopy__products">
-                  {products.map((p, i) => (
-                    <div className="hotcopy__product" key={i}>
-                      <img src={p.url} alt="" />
-                      <button type="button" onClick={() => removeProduct(i)} aria-label="移除">
+              </div>
+
+              {/* 已选爆款视频 / 替换素材缩略(有内容才显示) */}
+              {(videoLabel || products.length > 0) && (
+                <div className="hotcopy__selected">
+                  {/* 爆款视频:有预览(本地/素材库)用缩略图,否则用文字 chip */}
+                  {videoPreview ? (
+                    <div className="hotcopy__product hotcopy__product--hot" title={videoLabel}>
+                      <video src={videoPreview} muted playsInline />
+                      <span className="hotcopy__hotTag">爆款</span>
+                      <button type="button" onClick={clearVideo} aria-label="移除">
                         ×
                       </button>
                     </div>
-                  ))}
+                  ) : (
+                    videoLabel && (
+                      <span className="hotcopy__chip" title={videoLabel}>
+                        🎬 {videoLabel}
+                        <button type="button" onClick={clearVideo} aria-label="移除">
+                          ×
+                        </button>
+                      </span>
+                    )
+                  )}
+                  {products.length > 0 && (
+                    <div className="hotcopy__products">
+                      {products.map((p, i) => (
+                        <div className="hotcopy__product" key={i}>
+                          <img src={p.url} alt="" />
+                          <button type="button" onClick={() => removeProduct(i)} aria-label="移除">
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
 
-          {/* 底部:尺寸/时长 + @ 参考素材(左) + 圆形发送(右) */}
-          <div className="hotcopy__bottom">
-            <div className="hotcopy__tools">
-              {/*
+              {/* 底部:尺寸/时长 + @ 参考素材(左) + 圆形发送(右) */}
+              <div className="hotcopy__bottom">
+                <div className="hotcopy__tools">
+                  {/*
                 模型排在工具条第一位：时长与分辨率的档位由所选 replicate 模型的 schema 决定，
                 多数人也确实会先定模型，把它放在最左符合主路径的阅读顺序。
                 但这只是默认顺序、不是强制：时长可以先选，模型列表会反过来标出做不到的那些。
@@ -1281,137 +1301,143 @@ export default function HotCopyEntry({
                 与爆款成片共用同一枚胶囊（CreativeModelSlots），两个入口的模型选择
                 长成同一个样子；此前这里是 GenerationModelDropdown，形态与另一边不一致。
               */}
-              <CreativeModelSlots
-                groups={modelGroups}
-                selected={modelSelection}
-                loading={Boolean(modelLoading)}
-                authRequired={authRequired}
-                onAuthRequired={onAuthRequired}
-                // 提交预检开始后模型已随快照冻结，这里必须一并锁住，
-                // 否则用户改了模型却发现出片用的还是旧的。
-                locked={modelsLocked}
-                // 目录加载失败后列表是空的，展开时重拉一次，用户不必刷新整页。
-                onOpen={modelLoading ? undefined : onReloadModels}
-                onChange={(_groupKey, nextModelId, subgroupKey) => {
-                  if (subgroupKey !== 'video.replicate') return
-                  const normalizedId = Number(nextModelId)
-                  setModelVersionId(Number.isSafeInteger(normalizedId) && normalizedId > 0 ? normalizedId : undefined)
-                }}
-              />
-              {/*
+                  <CreativeModelSlots
+                    groups={modelGroups}
+                    selected={modelSelection}
+                    loading={Boolean(modelLoading)}
+                    authRequired={authRequired}
+                    onAuthRequired={onAuthRequired}
+                    // 提交预检开始后模型已随快照冻结，这里必须一并锁住，
+                    // 否则用户改了模型却发现出片用的还是旧的。
+                    locked={modelsLocked}
+                    // 目录加载失败后列表是空的，展开时重拉一次，用户不必刷新整页。
+                    onOpen={modelLoading ? undefined : onReloadModels}
+                    onChange={(_groupKey, nextModelId, subgroupKey) => {
+                      if (subgroupKey !== 'video.replicate') return
+                      const normalizedId = Number(nextModelId)
+                      setModelVersionId(
+                        Number.isSafeInteger(normalizedId) && normalizedId > 0 ? normalizedId : undefined,
+                      )
+                    }}
+                  />
+                  {/*
                 创作参数（比例 / 时长 / 分辨率 / 背景音）收进一枚弹层胶囊，与智能成片同一组件。
                 此前它们在底栏各占一个 chip，与模型 chip 等距排开——「用什么生成」和
                 「生成成什么样」是两层决策，平铺一行读不出层次，chip 一多底栏还会换行。
               */}
-              <CreativeParamsDropdown
-                value={creativeParamsValue}
-                options={creativeParamsOptions}
-                onChange={applyCreativeParams}
-                /*
+                  <CreativeParamsDropdown
+                    value={creativeParamsValue}
+                    options={creativeParamsOptions}
+                    onChange={applyCreativeParams}
+                    /*
                   先选模型再选参数：档位都由所选模型 schema 决定，没选模型时给出的只是兜底档位。
                   这里不用 disabled——点了没反应的按钮不会告诉用户为什么，照常可点、点了说明原因。
                 */
-                blockedReason={modelSelectionComplete ? undefined : '请先选择本次爆款复刻使用的模型'}
-                onBlocked={(reason) => showToast(reason, 'info')}
-              />
-              <span className="hotcopy__atAnchor">
-                <button type="button" className="hotcopy__at" onClick={handleAt} title="引用替换素材">
-                  @
-                </button>
-                {/* @ 素材选择:在 @ 按钮上方弹出,数据源是上传的替换素材 */}
-                {atOpen && (
-                  <>
-                    <div className="hotcopy__atMask" onClick={() => setAtOpen(false)} />
-                    <div className="hotcopy__atMenu">
-                      <div className="hotcopy__atMenuTitle">选择替换素材</div>
-                      <div className="hotcopy__atMenuGrid">
-                        {products.map((p, i) => (
-                          <button type="button" className="hotcopy__atItem" key={i} onClick={() => pickRef(i)}>
-                            <img src={p.url} alt="" />
-                            <span className="hotcopy__atItemName">{refLabel(i)}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </span>
-            </div>
-            <div className="hotcopy__sendArea">
-              <EntryCostEstimate
-                loading={costLoading}
-                failed={Boolean(costError)}
-                estimatedCost={costEstimate?.estimatedCost}
-                canAfford={costEstimate?.canAfford ?? true}
-              />
-              {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
-              <VoiceInputButton
-                className="hotcopy__mic"
-                onText={insertAtCaret}
-                authRequired={authRequired}
-                onAuthRequired={onAuthRequired}
-              />
-              <button
-                type="button"
-                className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ' hotcopy__send--plain'}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
-                /* 恢复态下真正返回下一步;普通态仍走首次去制作。 */
-                disabled={submissionBusy || (!resumeMode && !canSend)}
-                onClick={() => (resumeMode ? resume() : submit())}
-                aria-busy={submissionBusy}
-                aria-label={resumeMode ? '返回下一步' : '去制作'}
-                title={submissionBusy ? '正在准备视频任务…' : resumeMode ? '返回下一步' : '去制作'}
-              >
-                {resumeMode ? (
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 30 30"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                    aria-hidden="true"
+                    blockedReason={modelSelectionComplete ? undefined : '请先选择本次爆款复刻使用的模型'}
+                    onBlocked={(reason) => showToast(reason, 'info')}
+                  />
+                  <span className="hotcopy__atAnchor">
+                    <button type="button" className="hotcopy__at" onClick={handleAt} title="引用替换素材">
+                      @
+                    </button>
+                    {/* @ 素材选择:在 @ 按钮上方弹出,数据源是上传的替换素材 */}
+                    {atOpen && (
+                      <>
+                        <div className="hotcopy__atMask" onClick={() => setAtOpen(false)} />
+                        <div className="hotcopy__atMenu">
+                          <div className="hotcopy__atMenuTitle">选择替换素材</div>
+                          <div className="hotcopy__atMenuGrid">
+                            {products.map((p, i) => (
+                              <button type="button" className="hotcopy__atItem" key={i} onClick={() => pickRef(i)}>
+                                <img src={p.url} alt="" />
+                                <span className="hotcopy__atItemName">{refLabel(i)}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </span>
+                </div>
+                <div className="hotcopy__sendArea">
+                  <EntryCostEstimate
+                    loading={costLoading}
+                    failed={Boolean(costError)}
+                    estimatedCost={costEstimate?.estimatedCost}
+                    canAfford={costEstimate?.canAfford ?? true}
+                  />
+                  {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
+                  <VoiceInputButton
+                    className="hotcopy__mic"
+                    onText={insertAtCaret}
+                    authRequired={authRequired}
+                    onAuthRequired={onAuthRequired}
+                  />
+                  <button
+                    type="button"
+                    className={`hotcopy__send${resumeMode ? ' hotcopy__send--resume' : ' hotcopy__send--plain'}${!resumeMode && !canSend ? ' is-disabled' : ''}`}
+                    /* 恢复态下真正返回下一步;普通态仍走首次去制作。 */
+                    disabled={submissionBusy || (!resumeMode && !canSend)}
+                    onClick={() => (resumeMode ? resume() : submit())}
+                    aria-busy={submissionBusy}
+                    aria-label={resumeMode ? '返回下一步' : '去制作'}
+                    title={submissionBusy ? '正在准备视频任务…' : resumeMode ? '返回下一步' : '去制作'}
                   >
-                    <path
-                      d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
-                      fill="black"
-                    />
-                  </svg>
-                ) : (
-                  <span className="hotcopy__sendPlainText">{submissionBusy ? '准备中…' : '去制作'}</span>
-                )}
-              </button>
-              {resumeMode && (
-                <button
-                  type="button"
-                  className="hotcopy__regen"
-                  disabled={submissionBusy || !canSend}
-                  onClick={() => submit()}
-                  title="去制作"
-                >
-                  去制作
-                </button>
+                    {resumeMode ? (
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 30 30"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
+                          fill="black"
+                        />
+                      </svg>
+                    ) : (
+                      <span className="hotcopy__sendPlainText">{submissionBusy ? '准备中…' : '去制作'}</span>
+                    )}
+                  </button>
+                  {resumeMode && (
+                    <button
+                      type="button"
+                      className="hotcopy__regen"
+                      disabled={submissionBusy || !canSend}
+                      onClick={() => submit()}
+                      title="去制作"
+                    >
+                      去制作
+                    </button>
+                  )}
+                </div>
+              </div>
+              {(sceneCutHint || sourceMismatch) && (
+                <div className="hotcopy__sourceHint" role="note">
+                  {sceneCutHint && <p className="hotcopy__sourceHintLine">{sceneCutHint}</p>}
+                  {sourceMismatch && (
+                    <p className="hotcopy__sourceHintLine">
+                      {paramsCarriedFromDraft ? '这还是上次保存的设置：' : ''}
+                      {sourceMismatch.message}
+                      <button
+                        type="button"
+                        className="hotcopy__sourceHintAction"
+                        disabled={submissionBusy}
+                        onClick={applySourceMatch}
+                      >
+                        {sourceMismatch.actionLabel}
+                      </button>
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>
-          {(sceneCutHint || sourceMismatch) && (
-            <div className="hotcopy__sourceHint" role="note">
-              {sceneCutHint && <p className="hotcopy__sourceHintLine">{sceneCutHint}</p>}
-              {sourceMismatch && (
-                <p className="hotcopy__sourceHintLine">
-                  {paramsCarriedFromDraft ? '这还是上次保存的设置：' : ''}
-                  {sourceMismatch.message}
-                  <button
-                    type="button"
-                    className="hotcopy__sourceHintAction"
-                    disabled={submissionBusy}
-                    onClick={applySourceMatch}
-                  >
-                    {sourceMismatch.actionLabel}
-                  </button>
-                </p>
-              )}
-            </div>
-          )}
         </div>
+
+        {footer}
       </div>
 
       <input

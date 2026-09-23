@@ -38,6 +38,7 @@ export default defineConfig({
         'src/utils/downloadUrlSafety.ts',
         'src/utils/hotCopyDraft.ts',
         'src/utils/loginObservability.ts',
+        'src/utils/memberOwnerFilter.ts',
         'src/utils/observabilitySanitizer.ts',
         'src/utils/persistHotCopyResult.ts',
         'src/utils/persistVideoResult.ts',

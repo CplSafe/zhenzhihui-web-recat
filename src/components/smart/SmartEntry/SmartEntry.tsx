@@ -1074,7 +1074,7 @@ export default function SmartEntry({
           </div>
         </header>
       ) : (
-        <h1 className={styles.title}>{mode === 'image' ? '想打造什么样的营销图片？' : '打造我想要的爆款视频'}</h1>
+        <h1 className={styles.title}>{mode === 'image' ? '打造我想要的营销图片' : '打造我想要的爆款视频'}</h1>
       )}
 
       <div className={styles.panel}>

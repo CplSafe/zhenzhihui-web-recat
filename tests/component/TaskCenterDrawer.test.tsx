@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TaskCenterTask } from '@/stores/taskCenter'
 
 const mocks = vi.hoisted(() => ({
-  workspace: { id: 7, user: { id: 9 } as Record<string, unknown> },
+  workspace: { id: 7, type: 'personal', user: { id: 9 } as Record<string, unknown> },
   deriveProjectVideos: vi.fn(),
   getAssetDownloadUrl: vi.fn(),
   listAllCreativeProjects: vi.fn(),
+  listWorkspaceMembers: vi.fn(),
   navigate: vi.fn(),
 }))
 
@@ -27,7 +28,12 @@ vi.mock('@/api/projectVideos', () => ({
 
 vi.mock('@/stores/workspaceSession', () => ({
   useCurrentUser: () => mocks.workspace.user,
+  useCurrentWorkspace: () => ({ id: mocks.workspace.id, type: mocks.workspace.type }),
   useWorkspaceId: () => mocks.workspace.id,
+}))
+
+vi.mock('@/api/auth', () => ({
+  listWorkspaceMembers: mocks.listWorkspaceMembers,
 }))
 
 vi.mock('@/utils/businessPagination', () => ({
@@ -48,6 +54,7 @@ vi.mock('@/components/common/VideoPreviewModal', () => ({
 
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
 import { useTaskCenterStore } from '@/stores/taskCenter'
+import styles from '@/components/task/TaskCenterDrawer.module.less'
 
 function task(overrides: Partial<TaskCenterTask> = {}): TaskCenterTask {
   const now = Date.now()
@@ -109,7 +116,9 @@ function historyVideo(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   mocks.workspace.id = 7
+  mocks.workspace.type = 'personal'
   mocks.workspace.user = { id: 9 }
+  localStorage.clear()
   Object.entries(mocks).forEach(([, value]) => {
     if (typeof value === 'function' && 'mockReset' in value) value.mockReset()
   })
@@ -117,10 +126,30 @@ beforeEach(() => {
     Array.isArray(item.videos) ? item.videos : [],
   )
   mocks.listAllCreativeProjects.mockResolvedValue([project(11)])
+  mocks.listWorkspaceMembers.mockResolvedValue([])
   seed()
 })
 
 describe('TaskCenterDrawer isolation and reconciliation', () => {
+  it('uses a zero-width task tab with an active-task badge when collapsed', async () => {
+    const user = userEvent.setup()
+    seed(
+      task({ id: 'smart:7:11:active', generationId: 'active', status: 'processing' }),
+      task({ id: 'smart:7:11:done', generationId: 'done', status: 'succeeded' }),
+    )
+    useTaskCenterStore.setState({ drawerExpanded: false })
+
+    render(<TaskCenterDrawer scope="smart" />)
+
+    const collapsedDrawer = screen.getByLabelText('任务管理（已收起）')
+    expect(collapsedDrawer).toHaveClass(styles.collapsed)
+    expect(screen.getByRole('button', { name: '展开任务管理' })).toHaveTextContent('任务')
+    expect(screen.getByLabelText('1 个任务正在生成')).toHaveTextContent('1')
+
+    await user.click(screen.getByRole('button', { name: '展开任务管理' }))
+    expect(screen.getByRole('complementary', { name: '任务管理' })).toBeInTheDocument()
+  })
+
   it('shows active and queued work from every scope in the generating tab', async () => {
     const user = userEvent.setup()
     seed(
@@ -649,5 +678,208 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
 
     expect(screen.queryByRole('dialog', { name: '视频预览' })).not.toBeInTheDocument()
     expect(screen.queryByText('/api/v1/assets/88/download?workspace_id=7')).not.toBeInTheDocument()
+  })
+})
+
+describe('TaskCenterDrawer team-space member filter', () => {
+  /** 团队空间：我的项目 11、同事乙的项目 12（他生成的视频）、协作项目 13（归属乙，但后端 mine 判为我的） */
+  function seedTeamHistory() {
+    mocks.workspace.type = 'team'
+    mocks.listWorkspaceMembers.mockResolvedValue([
+      { id: 9, nickname: '我自己' },
+      { id: 10, nickname: '同事乙' },
+    ])
+    const all = [
+      { ...project(11, [historyVideo({ id: 501, projectId: 11, title: '我的视频', videoAssetId: 501 })]), user_id: 9 },
+      {
+        ...project(12, [
+          historyVideo({
+            id: 502,
+            projectId: 12,
+            title: '同事的视频',
+            videoAssetId: 502,
+            createdByUserId: 10,
+          }),
+        ]),
+        user_id: 10,
+      },
+      {
+        ...project(13, [
+          historyVideo({ id: 503, projectId: 13, title: '协作项目视频', videoAssetId: 503, createdByUserId: 10 }),
+        ]),
+        user_id: 10,
+      },
+    ]
+    mocks.listAllCreativeProjects.mockImplementation(({ mine }: { mine?: boolean } = {}) =>
+      Promise.resolve(mine ? [all[0], all[2]] : all),
+    )
+  }
+
+  it('shows teammates’ generated videos with a creator label and lets 只看我的 follow the backend mine set', async () => {
+    const user = userEvent.setup()
+    seedTeamHistory()
+
+    render(<TaskCenterDrawer scope="smart" />)
+
+    // 三条都展示;同事做的标注创作者,自己的不标
+    expect(await screen.findByText('我的视频')).toBeInTheDocument()
+    const teammateCard = screen.getByRole('button', { name: /同事的视频，同事乙 生成/ })
+    expect(teammateCard).toHaveTextContent('同事乙')
+    expect(screen.getByRole('button', { name: /^我的视频，已生成/ })).toBeInTheDocument()
+    expect(mocks.listAllCreativeProjects).toHaveBeenCalledWith(expect.objectContaining({ mine: true }))
+
+    // 「我（2）」按 mine 集合算:协作项目 13 归属乙,但后端判为我的
+    expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('全部成员')
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    expect(screen.getByText('我的视频')).toBeInTheDocument()
+    expect(screen.getByText('协作项目视频')).toBeInTheDocument()
+    expect(screen.queryByText('同事的视频')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('我（2）')
+    expect(localStorage.getItem('zzh.taskCenter.ownerFilter.7')).toBe('9')
+
+    // 成员下拉:选同事乙只剩他创作的两条
+    await user.click(screen.getByRole('button', { name: '按成员筛选' }))
+    await user.click(await screen.findByRole('option', { name: '同事乙（2）' }))
+    expect(screen.getByText('同事的视频')).toBeInTheDocument()
+    expect(screen.getByText('协作项目视频')).toBeInTheDocument()
+    expect(screen.queryByText('我的视频')).not.toBeInTheDocument()
+  })
+
+  it('carries the member filter over to project management when opening 查看全部视频', async () => {
+    const user = userEvent.setup()
+    seedTeamHistory()
+    seed(
+      ...Array.from({ length: 21 }, (_, index) =>
+        task({
+          id: `smart:7:11:generation-${index + 1}`,
+          generationId: `generation-${index + 1}`,
+          title: `我的任务 ${index + 1}`,
+          status: 'succeeded',
+          updatedAt: 1_000 + index,
+        }),
+      ),
+    )
+
+    render(<TaskCenterDrawer scope="smart" />)
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    // 21 条本地 + 2 条 mine 历史 = 23 条我的,截 20 条;同事的那条被筛掉不计入
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /打开项目|播放视频/ })).toHaveLength(20))
+    expect(screen.queryByText('同事的视频')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '前往项目管理查看全部视频' })).toHaveAttribute(
+      'title',
+      '还有 3 条视频，请前往项目管理查看',
+    )
+
+    await user.click(screen.getByRole('button', { name: '前往项目管理查看全部视频' }))
+    expect(mocks.navigate).toHaveBeenCalledWith('/projects?owner=9')
+  })
+
+  it('falls back to creator matching when the mine request fails and keeps the drawer usable', async () => {
+    const user = userEvent.setup()
+    seedTeamHistory()
+    mocks.listAllCreativeProjects.mockImplementation(({ mine }: { mine?: boolean } = {}) =>
+      mine
+        ? Promise.reject(new Error('mine unavailable'))
+        : Promise.resolve([
+            {
+              ...project(11, [historyVideo({ id: 501, projectId: 11, title: '我的视频', videoAssetId: 501 })]),
+              user_id: 9,
+            },
+            {
+              ...project(12, [
+                historyVideo({ id: 502, projectId: 12, title: '同事的视频', videoAssetId: 502, createdByUserId: 10 }),
+              ]),
+              user_id: 10,
+            },
+          ]),
+    )
+
+    render(<TaskCenterDrawer scope="smart" />)
+    expect(await screen.findByText('同事的视频')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    expect(screen.getByText('我的视频')).toBeInTheDocument()
+    expect(screen.queryByText('同事的视频')).not.toBeInTheDocument()
+  })
+
+  it('counts a locally initiated task as mine even before its project lands in the mine set', async () => {
+    const user = userEvent.setup()
+    seedTeamHistory()
+    seed(
+      task({
+        id: 'smart:7:99:fresh',
+        projectId: 99,
+        generationId: 'fresh',
+        status: 'succeeded',
+        title: '刚生成的新项目视频',
+        locallyInitiated: true,
+      }),
+    )
+
+    render(<TaskCenterDrawer scope="smart" />)
+    expect(await screen.findByText('刚生成的新项目视频')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    expect(screen.getByText('刚生成的新项目视频')).toBeInTheDocument()
+  })
+
+  it('hides the member filter in personal spaces and in the generating tab', async () => {
+    const user = userEvent.setup()
+    seed(task({ status: 'succeeded' }))
+    const view = render(<TaskCenterDrawer scope="smart" />)
+    await screen.findByText('当前任务')
+    expect(screen.queryByRole('button', { name: '只看我的' })).not.toBeInTheDocument()
+    expect(mocks.listAllCreativeProjects).not.toHaveBeenCalledWith(expect.objectContaining({ mine: true }))
+
+    // 同一账号切到团队空间:筛选行出现;「正在生成」页签全是自己发起的任务,不给筛选
+    seedTeamHistory()
+    mocks.workspace.id = 8
+    view.rerender(<TaskCenterDrawer scope="smart" />)
+    expect(await screen.findByRole('button', { name: '只看我的' })).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '正在生成' }))
+    expect(screen.queryByRole('button', { name: '只看我的' })).not.toBeInTheDocument()
+  })
+
+  it('remembers the filter per workspace but ignores it on tabs where that member has nothing', async () => {
+    const user = userEvent.setup()
+    seedTeamHistory()
+    localStorage.setItem('zzh.taskCenter.ownerFilter.7', '10')
+
+    render(<TaskCenterDrawer scope="hot-copy" />)
+    // 爆款复刻页签下同事没有产出:记忆值 10 在该页签选项里失效,回退全部 → 普通空态
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('暂无任务'))
+
+    await user.click(screen.getByRole('tab', { name: '爆款成片' }))
+    expect(await screen.findByText('同事的视频')).toBeInTheDocument()
+    expect(screen.queryByText('我的视频')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('同事乙（2）')
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('全部成员')
+    expect(localStorage.getItem('zzh.taskCenter.ownerFilter.7')).toBeNull()
+  })
+
+  it('shows a member-specific empty state when 只看我的 hides every video on the tab', async () => {
+    const user = userEvent.setup()
+    mocks.workspace.type = 'team'
+    mocks.listWorkspaceMembers.mockResolvedValue([{ id: 10, nickname: '同事乙' }])
+    mocks.listAllCreativeProjects.mockImplementation(({ mine }: { mine?: boolean } = {}) =>
+      Promise.resolve(
+        mine
+          ? []
+          : [
+              {
+                ...project(12, [historyVideo({ id: 502, projectId: 12, title: '同事的视频', createdByUserId: 10 })]),
+                user_id: 10,
+              },
+            ],
+      ),
+    )
+
+    render(<TaskCenterDrawer scope="smart" />)
+    expect(await screen.findByText('同事的视频')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '只看我的' }))
+    expect(screen.getByRole('status')).toHaveTextContent('该成员暂无视频')
+    expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('我（0）')
   })
 })

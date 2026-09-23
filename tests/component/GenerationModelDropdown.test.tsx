@@ -459,6 +459,32 @@ describe('video.edit duration is judged against the source video, not the target
     ).toEqual([])
   })
 
+  it('treats an unselected duration the same for every model, required or not', () => {
+    // 爆款成片入口：时长未选时，声明了 duration.required 的模型（如 Framora）与没声明的模型
+    // （如万相）必须给出同一种提示，不能一个报「参数不兼容」、一个报「请先选择视频时长」。
+    const requiredGroups: GenerationModelGroup[] = [
+      {
+        key: 'video',
+        label: '生成视频',
+        subgroups: [
+          {
+            key: 'video.generate',
+            label: '视频生成模型',
+            models: [
+              { id: 301, name: 'Framora 1.0', constraints: { duration: { required: true } } },
+              { id: 302, name: '万相 3.0', constraints: { duration: { minimum: 2, maximum: 15 } } },
+            ],
+          },
+        ],
+      },
+    ]
+    for (const id of [301, 302]) {
+      const picked = { 'video.generate': id }
+      expect(getGenerationModelSelectionConflicts(requiredGroups, picked, {})).toEqual([])
+      expect(getGenerationModelSelectionConflicts(requiredGroups, picked, { durationSec: undefined })).toEqual([])
+    }
+  })
+
   it('still validates the generation model against the target duration', () => {
     expect(getGenerationModelSelectionConflicts(mixedGroups, selection, { durationSec: 7 })).toEqual([
       '视频生成模型「生成模型 2.5」：当前 7 秒不在可选时长 5 秒、10 秒、15 秒、30 秒 内',

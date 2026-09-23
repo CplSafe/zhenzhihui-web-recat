@@ -9,6 +9,12 @@ export interface VideoFrameModification {
   text: string
 }
 
+/** 前端分段编辑使用的半开时间区间 [start, end)。 */
+export interface VideoEditSegment {
+  start: number
+  end: number
+}
+
 /** 当前项目的视频修改意见及版本绑定状态。 */
 export interface VideoModificationDraft {
   overallNote: string

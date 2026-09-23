@@ -4,6 +4,7 @@ import {
   canReuseOriginalVideoFrameAssets,
   compileFullVideoModelRequest,
   compileVideoEditModelRequest,
+  resolveSegmentGenerationDurationSec,
 } from '@/api/smartVideo'
 
 describe('buildFullVideoInputAssets', () => {
@@ -253,6 +254,63 @@ describe('compileFullVideoModelRequest', () => {
         },
       ),
     ).toThrow('所选视频模型不支持当前参考图')
+  })
+
+  it('分段修改按显式片段时长下发，不再按分镜总时长', () => {
+    // 参考生视频的分段修改：输入只是一条 5 秒片段，申请的时长必须是片段档位，而不是整片的 15 秒。
+    const model = {
+      model_version_id: 953,
+      display_name: 'Seedance 2.0',
+      operation_codes: ['video.generate'],
+      params_schema: {
+        fields: [
+          { name: 'duration', options: [5, 10, 15] },
+          { name: 'ratio', options: ['16:9'] },
+        ],
+      },
+    }
+    const shots = [{ duration: '5s' }, { duration: '5s' }, { duration: '5s' }]
+
+    expect(
+      compileFullVideoModelRequest(model, { shots, ratio: '16:9', referenceImageCount: 1, durationSec: 5 }).params,
+    ).toMatchObject({ duration: 5 })
+    expect(() =>
+      compileFullVideoModelRequest(model, { shots, ratio: '16:9', referenceImageCount: 1, durationSec: 3 }),
+    ).toThrow('所选视频模型不支持当前总时长')
+  })
+})
+
+describe('resolveSegmentGenerationDurationSec', () => {
+  const withDurationField = (field: Record<string, unknown>) => ({
+    model_version_id: 954,
+    operation_codes: ['video.generate'],
+    params_schema: { fields: [{ name: 'duration', ...field }] },
+  })
+
+  it('向上取模型支持的最小档位：尾段只有 2 秒也能按 5 秒申请，回拼时多出的画面会被裁掉', () => {
+    const model = withDurationField({ options: [5, 10, 15] })
+    expect(resolveSegmentGenerationDurationSec(model, 5)).toBe(5)
+    expect(resolveSegmentGenerationDurationSec(model, 2)).toBe(5)
+    expect(resolveSegmentGenerationDurationSec(model, 5.4)).toBe(10)
+  })
+
+  it('没有档位能覆盖片段时报错，绝不向下取（生成得比片段短就拼不回去）', () => {
+    expect(() => resolveSegmentGenerationDurationSec(withDurationField({ options: [3, 4] }), 5)).toThrow(
+      '时长档位不足以覆盖 5 秒',
+    )
+  })
+
+  it('区间型约束按下限抬高、按上限拦截；未声明约束时按片段整秒数申请', () => {
+    const ranged = withDurationField({ minimum: 4, maximum: 12 })
+    expect(resolveSegmentGenerationDurationSec(ranged, 2)).toBe(4)
+    expect(resolveSegmentGenerationDurationSec(ranged, 5)).toBe(5)
+    expect(() => resolveSegmentGenerationDurationSec(ranged, 13)).toThrow('最长只支持 12 秒')
+    expect(
+      resolveSegmentGenerationDurationSec(
+        { model_version_id: 955, operation_codes: ['video.generate'], params_schema: { fields: [] } },
+        4.2,
+      ),
+    ).toBe(5)
   })
 })
 

@@ -12,11 +12,19 @@ export interface TutorialVideo {
   summary: string
   /** 视频地址 */
   src: string
+  /** 完整图文手册（飞书文档）地址；为空时弹窗不显示「查看完整手册」入口 */
+  docUrl: string
 }
 
 export const TUTORIAL_BASE_URL = '/tutorials/'
 
-const TUTORIALS: Record<TutorialVideo['key'], Omit<TutorialVideo, 'src' | 'key'>> = {
+/**
+ * 完整图文版《帧智汇使用手册》的飞书文档地址（docs/帧智汇使用手册.md 导入飞书后得到）。
+ * 所有页面的「操作手册」弹窗和帮助中心「学习中心」都指向这一篇；换文档只改这里。
+ */
+export const MANUAL_DOC_URL = 'https://zcnyqlah2rse.feishu.cn/docx/ZSwzd6bUmosJy0xE3eycu4SVn8g'
+
+const TUTORIALS: Record<TutorialVideo['key'], Omit<TutorialVideo, 'src' | 'key' | 'docUrl'>> = {
   'smart-create': {
     title: '爆款成片 · 操作手册',
     summary: '选模型 → 写需求 → 去制作 → 分镜脚本 → 生成视频 → 查看与修改成片',
@@ -41,7 +49,7 @@ const ROUTE_RULES: Array<[RegExp, TutorialVideo['key']]> = [
 
 /** 按 key 取视频描述。 */
 export function getTutorialByKey(key: TutorialVideo['key']): TutorialVideo {
-  return { key, src: `${TUTORIAL_BASE_URL}${key}.mp4`, ...TUTORIALS[key] }
+  return { key, src: `${TUTORIAL_BASE_URL}${key}.mp4`, docUrl: MANUAL_DOC_URL, ...TUTORIALS[key] }
 }
 
 /** 按当前路径取对应教程；没有教程的页面返回 null（按钮不显示）。 */

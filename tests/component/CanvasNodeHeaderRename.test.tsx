@@ -9,7 +9,12 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import InlineEdit from '@/components/common/InlineEdit'
-import { CANVAS_TITLE_MAX_LENGTH, getCanvasKindLabel, resolveCanvasNodeTitle } from '@/utils/canvasNodeTitle'
+import {
+  CANVAS_TITLE_MAX_LENGTH,
+  buildCanvasNodeHeaderTooltip,
+  getCanvasKindLabel,
+  resolveCanvasNodeTitle,
+} from '@/utils/canvasNodeTitle'
 
 function NodeHeader({
   kind,
@@ -32,6 +37,7 @@ function NodeHeader({
           value={headerTitle}
           maxLength={CANVAS_TITLE_MAX_LENGTH}
           placeholder={getCanvasKindLabel(kind)}
+          title={buildCanvasNodeHeaderTooltip({ kind, title: customTitle, ...content })}
           onCommit={(next) => {
             onRenameNode('n1', next.trim() === derivedTitle.trim() ? '' : next)
           }}
@@ -106,9 +112,22 @@ describe('画布节点头部改名', () => {
     expect(header).toHaveClass('nopan')
   })
 
-  it('完整标题挂在 title 属性上，省略号截断后仍可悬停看全', () => {
-    const prompt = '一个少年在夜晚的教学楼走廊里缓缓回头看向镜头'
+  it('摘要被截断时，标题的悬停提示里带完整提示词，而不是只有「双击修改」', () => {
+    // 超过两行摘要量（40 字）的提示词：标题截断成「…」，但悬停要能看到全文
+    const prompt = '一个少年在夜晚的教学楼走廊里缓缓回头看向镜头，走廊尽头的灯忽明忽暗，镜头缓慢推进到他的脸部特写'
     const { container } = render(<NodeHeader kind="image" data={{ prompt }} onRenameNode={vi.fn()} />)
-    expect(container.querySelector('.canvas-node-header')?.getAttribute('title')).toContain('…')
+    const label = container.querySelector('.canvas-node-header__label')
+    expect(label?.textContent).toContain('…')
+    expect(label?.getAttribute('title')).toContain(`提示词：${prompt}`)
+    expect(label?.getAttribute('title')).toContain('双击修改')
+  })
+
+  it('用户改过名时悬停只给名字，不再附带提示词', () => {
+    const { container } = render(
+      <NodeHeader kind="image" data={{ title: '主角特写', prompt: '一个少年回头' }} onRenameNode={vi.fn()} />,
+    )
+    const title = container.querySelector('.canvas-node-header__label')?.getAttribute('title') || ''
+    expect(title).toContain('主角特写')
+    expect(title).not.toContain('提示词：')
   })
 })

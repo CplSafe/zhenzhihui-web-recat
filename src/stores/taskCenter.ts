@@ -46,6 +46,13 @@ export interface TaskCenterTask {
   /** 本地缓存所属账号；仅用于阻止同一浏览器切换账号时串任务。 */
   ownerUserId?: number
   /**
+   * 生成这条结果的成员（团队空间里历史视频可能是同事做的）。
+   * 与 ownerUserId 语义不同：ownerUserId 是本地缓存归属，creatorUserId 才是创作者。缺省时视为本账号发起。
+   */
+  creatorUserId?: number
+  /** 创作者展示名，供任务卡片标注非本人产出。 */
+  creatorName?: string
+  /**
    * 当前页面会话主动发起的任务可立即展示，不必等待新建项目出现在项目权限接口中。
    * 该字段不会持久化；刷新后仍由后端项目权限重新确认。
    */
@@ -196,6 +203,8 @@ function normalizeTask(raw: Partial<TaskCenterTask>, now = Date.now(), fallbackO
   const notifiedAt = positiveInteger(raw.notifiedAt)
   const resultUrl = optionalText(raw.resultUrl)
   const error = optionalText(raw.error)
+  const creatorUserId = positiveInteger(raw.creatorUserId)
+  const creatorName = optionalText(raw.creatorName)
 
   return {
     id,
@@ -220,8 +229,15 @@ function normalizeTask(raw: Partial<TaskCenterTask>, now = Date.now(), fallbackO
     ...(raw.archived === undefined ? {} : { archived: Boolean(raw.archived) }),
     ...(notifiedAt ? { notifiedAt } : {}),
     ownerUserId: positiveInteger(raw.ownerUserId) || positiveInteger(fallbackOwnerUserId),
+    ...(creatorUserId ? { creatorUserId } : {}),
+    ...(creatorName ? { creatorName } : {}),
     ...(raw.locallyInitiated === true ? { locallyInitiated: true } : {}),
   }
+}
+
+/** 创作者 ID；本地发起的任务没有显式记录创作者时，创作者就是缓存所属账号。 */
+export function resolveTaskCenterCreatorId(task: Pick<TaskCenterTask, 'creatorUserId' | 'ownerUserId'>): number {
+  return positiveInteger(task.creatorUserId) || positiveInteger(task.ownerUserId)
 }
 
 /** 去重、排序并裁剪过期任务，控制本地任务历史的体积。 */

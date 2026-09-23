@@ -16,9 +16,39 @@ function renderSearch(overrides: Partial<React.ComponentProps<typeof CanvasNodeS
 }
 
 describe('CanvasNodeSearch', () => {
-  it('未输入时不铺开结果区，避免一打开就糊一屏', () => {
+  it('未输入时列出全部节点：不知道该搜什么词也能翻到目标', () => {
     renderSearch()
-    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(3)
+  })
+
+  it('按类型筛选，再点一次取消筛选', async () => {
+    const user = userEvent.setup()
+    renderSearch()
+
+    const videoChip = screen.getByRole('radio', { name: /视频/ })
+    await user.click(videoChip)
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getAllByRole('option')[0]).toHaveTextContent('海边奔跑的长镜头')
+    expect(videoChip).toHaveAttribute('aria-checked', 'true')
+
+    await user.click(videoChip)
+    expect(screen.getAllByRole('option')).toHaveLength(3)
+  })
+
+  it('类型筛选与关键词叠加', async () => {
+    const user = userEvent.setup()
+    renderSearch()
+
+    await user.click(screen.getByRole('radio', { name: /文本/ }))
+    await user.type(screen.getByRole('textbox'), '海边')
+    const options = screen.getAllByRole('option')
+    expect(options).toHaveLength(1)
+    expect(options[0]).toHaveTextContent('开场白')
+  })
+
+  it('空节点也能定位，显示为（空节点）', () => {
+    renderSearch({ nodes: [{ id: 'n0', kind: 'image', text: '', kindLabel: '图片' }] })
+    expect(screen.getByRole('option')).toHaveTextContent('（空节点）')
   })
 
   it('按内容匹配并给出类型标签', async () => {

@@ -13,6 +13,7 @@ import { useUiStore } from './stores/ui'
 import { deriveWorkspaceId, useWorkspaceSessionStore } from './stores/workspaceSession'
 import { captureInviteCode } from './utils/inviteCode'
 import { readLoginReturnTo, sanitizeLoginReturnTo } from './utils/loginReturnTo'
+import { APP_HOME_PATH } from './utils/sidebarNavigation'
 import './App.css'
 
 /** 登录后按需加载的帮助中心悬浮入口。 */
@@ -159,7 +160,7 @@ export function AppShell() {
       return
     }
     if (!requiresAuth && isAuthenticated && (location.pathname === '/login' || location.pathname === '/welcome')) {
-      navigate(readLoginReturnTo(location.state) || '/home', { replace: true })
+      navigate(readLoginReturnTo(location.state) || APP_HOME_PATH, { replace: true })
     }
   }, [
     isAuthenticated,

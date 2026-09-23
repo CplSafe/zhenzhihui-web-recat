@@ -22,6 +22,11 @@ export interface CanvasSelectionToolbarProps {
   onCreateTimeline: () => void
   onDelete: () => void
   onClear: () => void
+  /** 一键整理：把选中的节点按连线方向排成整齐的分层；不传则不显示 */
+  onArrange?: () => void
+  /** 其中有素材可下载的节点数；为 0 或不传 onDownload 时隐藏该动作 */
+  downloadableCount?: number
+  onDownload?: () => void
 }
 
 export default function CanvasSelectionToolbar({
@@ -34,6 +39,9 @@ export default function CanvasSelectionToolbar({
   onCreateTimeline,
   onDelete,
   onClear,
+  onArrange,
+  downloadableCount = 0,
+  onDownload,
 }: CanvasSelectionToolbarProps) {
   return (
     <div
@@ -73,6 +81,31 @@ export default function CanvasSelectionToolbar({
           创建剪辑时间线
           {/* 选中里混着图片/文本或未生成完的视频时说清楚会带走几个，避免用户以为全都进去了 */}
           {timelineReadyCount !== count && <em className={styles.hint}>{timelineReadyCount} 个视频</em>}
+        </button>
+      )}
+
+      {onArrange && (
+        <button
+          type="button"
+          className={styles.action}
+          onClick={onArrange}
+          title="按连线方向把选中的节点排成从左到右的整齐分层"
+        >
+          <ArrangeIcon />
+          整理布局
+        </button>
+      )}
+
+      {onDownload && downloadableCount > 0 && (
+        <button
+          type="button"
+          className={styles.action}
+          onClick={onDownload}
+          title={`下载选中节点里已生成的 ${downloadableCount} 个素材`}
+        >
+          <DownloadIcon />
+          下载
+          {downloadableCount !== count && <em className={styles.hint}>{downloadableCount} 个</em>}
         </button>
       )}
 
@@ -139,6 +172,44 @@ function TimelineIcon() {
     >
       <rect x="3" y="6" width="18" height="12" rx="2" />
       <path d="M3 10h18M8 6v12M16 6v12" />
+    </svg>
+  )
+}
+
+function ArrangeIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="6" height="6" rx="1.2" />
+      <rect x="3" y="14" width="6" height="6" rx="1.2" />
+      <rect x="15" y="9" width="6" height="6" rx="1.2" />
+      <path d="M9 7h2a2 2 0 0 1 2 2v3M9 17h2a2 2 0 0 0 2-2v-3M13 12h2" />
+    </svg>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 4v11M7 10l5 5 5-5M4 20h16" />
     </svg>
   )
 }

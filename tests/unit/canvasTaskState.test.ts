@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { getCanvasTaskPresentation, isSameCanvasTask, restoreCanvasTaskState } from '@/utils/canvasTaskState'
+import {
+  formatCanvasElapsed,
+  getCanvasGenerationDuration,
+  getCanvasTaskPresentation,
+  isCanvasGeneratedResult,
+  isSameCanvasTask,
+  restoreCanvasTaskState,
+} from '@/utils/canvasTaskState'
 
 describe('canvas task restoration', () => {
   it.each(['failed', 'error', 'cancelled', 'expired', 'result_sync_failed', 'reconnecting'])(
@@ -96,5 +103,55 @@ describe('canvas task presentation', () => {
       title: '任务状态查询异常',
       detail: '任务状态暂时无法查询，将继续自动重试',
     })
+  })
+})
+
+describe('canvas generation elapsed label', () => {
+  it.each([
+    [0, '0 秒'],
+    [59, '59 秒'],
+    [60, '1 分 00 秒'],
+    [65, '1 分 05 秒'],
+    [3599, '59 分 59 秒'],
+    [3720, '1 小时 02 分'],
+  ])('formats %s seconds as %s', (seconds, label) => {
+    expect(formatCanvasElapsed(seconds)).toBe(label)
+  })
+
+  it.each([-1, Number.NaN, 'abc', undefined])('returns an empty label for %s', (value) => {
+    expect(formatCanvasElapsed(value)).toBe('')
+  })
+})
+
+describe('canvas generated result marker', () => {
+  const history = [
+    { assetId: 11, kind: 'image' },
+    { assetId: 12, kind: 'image' },
+  ]
+
+  it('marks the node when the displayed asset is a recorded generation result', () => {
+    expect(isCanvasGeneratedResult({ assetId: 12, resultHistory: history })).toBe(true)
+    // 回退到更早的一版仍然是生成结果
+    expect(isCanvasGeneratedResult({ assetId: 11, resultHistory: history })).toBe(true)
+  })
+
+  it('does not mark an asset that replaced the generated result', () => {
+    expect(isCanvasGeneratedResult({ assetId: 99, taskStatus: 'succeeded', resultHistory: history })).toBe(false)
+    expect(isCanvasGeneratedResult({ assetId: 12 })).toBe(false)
+    expect(isCanvasGeneratedResult({ resultHistory: history })).toBe(false)
+  })
+
+  it('reports the duration of the last successful generation only', () => {
+    const base = { taskStartedAt: '2026-09-23T10:00:00.000Z', taskUpdatedAt: '2026-09-23T10:01:05.000Z' }
+    expect(getCanvasGenerationDuration({ ...base, taskStatus: 'succeeded' })).toBe(65)
+    expect(getCanvasGenerationDuration({ ...base, taskStatus: 'processing' })).toBeNull()
+    expect(getCanvasGenerationDuration({ taskStatus: 'succeeded', taskStartedAt: base.taskStartedAt })).toBeNull()
+    expect(
+      getCanvasGenerationDuration({
+        taskStatus: 'succeeded',
+        taskStartedAt: base.taskUpdatedAt,
+        taskUpdatedAt: base.taskStartedAt,
+      }),
+    ).toBeNull()
   })
 })

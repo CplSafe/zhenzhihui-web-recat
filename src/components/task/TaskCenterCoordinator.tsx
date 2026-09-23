@@ -152,9 +152,25 @@ function patchLatestEligibleTask(snapshot: TaskCenterTask, patch: Partial<TaskCe
   return useTaskCenterStore.getState().tasks.find((task) => task.id === current.id) || null
 }
 
+/** 通知里项目标题最多露出的字数;爆款复刻等流程会把整句提示词当项目名,不截会把提示词原样喷进 toast。 */
+const NOTIFICATION_TITLE_MAX_CHARS = 18
+
+/**
+ * 通知里的项目名:用「」括起来并截断。
+ * 以前是 `${title}生成失败：…` 直接拼接,标题若是一句提示词(「…并且女主要」)就读成
+ * 「…并且女主要生成失败」,用户分不清哪段是项目名、哪段是结论。
+ */
+function formatNotificationTitle(raw: string): string {
+  const title = String(raw || '').trim() || '视频'
+  const chars = Array.from(title)
+  const shown =
+    chars.length > NOTIFICATION_TITLE_MAX_CHARS ? `${chars.slice(0, NOTIFICATION_TITLE_MAX_CHARS).join('')}…` : title
+  return `「${shown}」`
+}
+
 /** 为任务终态生成长度受控的全局通知。 */
 function notificationMessage(task: TaskCenterTask): { message: string; type: 'success' | 'error' | 'info' } {
-  const title = task.title.trim() || '视频'
+  const title = formatNotificationTitle(task.title)
   if (task.status === 'succeeded') return { message: `${title}生成完成`, type: 'success' }
   if (task.status === 'cancelled') return { message: `${title}已取消`, type: 'info' }
   // 旧版本持久化下来的任务 error 可能还是供应商原文，通知前再翻一次，翻译后的中文一般不超过 80 字。

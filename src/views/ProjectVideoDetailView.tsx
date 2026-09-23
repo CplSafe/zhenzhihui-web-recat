@@ -282,10 +282,6 @@ export default function ProjectVideoDetailView() {
         <AppTopbar onMenu={() => setSidebarOpen(true)} />
         <main className="pvdetail-main">
           <div className="pvdetail-breadcrumb">
-            <button type="button" className="pvdetail-breadcrumb__link" onClick={() => navigate('/home')}>
-              首页
-            </button>
-            <span>/</span>
             <button type="button" className="pvdetail-breadcrumb__link" onClick={() => navigate('/projects')}>
               项目管理
             </button>
