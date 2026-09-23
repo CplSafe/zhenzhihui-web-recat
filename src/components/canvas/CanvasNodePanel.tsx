@@ -11,6 +11,7 @@ import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost } from '@/api/business'
 import { creditsYuanHint, creditsYuanLabel } from '@/utils/creditsYuan'
+import { pickRememberedCanvasModel } from '@/utils/canvasLastModel'
 import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
@@ -959,14 +960,22 @@ export default function CanvasNodePanel({
     })
   }, [kindModels, targetOperationCode, needsVideoInputAsset])
 
-  // 选中模型（按 modelVersionId 匹配，无匹配时取第一个可用；优先保留用户已选）
+  // 选中模型：优先节点自己选过的；没选过时用同类节点上次生成用的模型（见 canvasLastModel）；再不行取第一个可用
   const selectedModel: GenerationModelOption | undefined = useMemo(() => {
-    if (!node?.modelVersionId) return availableModels.find((m) => !m.unavailableReason)
-    return (
-      availableModels.find((m) => m.modelVersionId === node.modelVersionId && !m.unavailableReason) ||
-      availableModels.find((m) => !m.unavailableReason)
-    )
-  }, [availableModels, node?.modelVersionId])
+    const usable = availableModels.filter((m) => !m.unavailableReason)
+    const explicit = node?.modelVersionId ? usable.find((m) => m.modelVersionId === node.modelVersionId) : undefined
+    if (explicit) return explicit
+    if (!node?.modelVersionId) {
+      const rememberedId = pickRememberedCanvasModel(
+        kind,
+        targetOperationCode,
+        usable.map((m) => m.modelVersionId),
+      )
+      const remembered = rememberedId ? usable.find((m) => m.modelVersionId === rememberedId) : undefined
+      if (remembered) return remembered
+    }
+    return usable[0]
+  }, [availableModels, node?.modelVersionId, kind, targetOperationCode])
 
   /**
    * 素材来源数量上限：跟随所选模型在 params schema 里声明的参考图上限。
@@ -1806,7 +1815,8 @@ export default function CanvasNodePanel({
           {kind !== 'text' && (
             <ModelSelector
               models={availableModels}
-              value={node?.modelVersionId}
+              // 与实际提交用的 selectedModel 同源，默认模型（含「上次使用」）才不会显示一个、提交另一个
+              value={selectedModel?.modelVersionId}
               loading={modelsLoading}
               disabled={taskRunning}
               // 缺模型时要说清缺的是哪一种能力：接了参考图走图生图、没接走文生图，

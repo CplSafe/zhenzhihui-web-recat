@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatCanvasElapsed,
+  getCanvasEstimatedVideoProgress,
   getCanvasGenerationDuration,
   getCanvasTaskPresentation,
   isCanvasGeneratedResult,
@@ -120,6 +121,30 @@ describe('canvas generation elapsed label', () => {
 
   it.each([-1, Number.NaN, 'abc', undefined])('returns an empty label for %s', (value) => {
     expect(formatCanvasElapsed(value)).toBe('')
+  })
+})
+
+describe('canvas video estimated progress', () => {
+  it.each([
+    [null, 0],
+    [0, 0],
+    [1, 1.57],
+    [2, 2.91],
+  ])('maps %s elapsed seconds to %s percent', (seconds, progress) => {
+    expect(getCanvasEstimatedVideoProgress(seconds)).toBe(progress)
+  })
+
+  it('advances by varying amounts without reaching 100% before the task completes', () => {
+    const values = Array.from({ length: 180 }, (_, index) => getCanvasEstimatedVideoProgress(index + 1))
+    expect(values[1] - values[0]).not.toBeCloseTo(values[2] - values[1])
+    expect(values.every((value, index) => index === 0 || value >= values[index - 1])).toBe(true)
+    expect(values[179]).toBeGreaterThan(values[90])
+    expect(getCanvasEstimatedVideoProgress(86_400)).toBeLessThan(100)
+  })
+
+  it('ignores invalid and negative elapsed times', () => {
+    expect(getCanvasEstimatedVideoProgress(Number.NaN)).toBe(0)
+    expect(getCanvasEstimatedVideoProgress(-1)).toBe(0)
   })
 })
 
