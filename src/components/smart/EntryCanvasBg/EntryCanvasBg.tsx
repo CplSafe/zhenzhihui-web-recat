@@ -8,7 +8,7 @@
  *   ③ 中央核:光晕中心更大更扁的一抹亮色。
  * 渐变本身柔和,无需 blur;仅在挂载/尺寸/配色变化时绘制一次,零每帧开销。
  * 切换 Tab 时按 `anim` 性格播放一次动画(Web Animations,纯 transform/opacity,GPU 合成):
- *   - 'glide'(智能成片):随所选 Tab 方向横向滑入 + 视差,精准克制;
+ *   - 'glide'(智能成片):只淡入,不做位移(位移会在边缘露出白边);
  *   - 'bloom'(爆款复制):从被点击的 Tab 处放射绽放 + 轻微回弹,有张力。
  */
 import { useEffect, useRef } from 'react'
@@ -47,13 +47,13 @@ export const SMART_LAYERS: BgLayerStops = {
 
 /** 背景当前页签、动画性格与可替换配色配置。 */
 interface EntryCanvasBgProps {
-  /** 当前 Tab 序号(变化即触发一次切换动画;用于方向判断) */
+  /** 当前 Tab 序号(变化即触发一次切换动画) */
   index: number
   /** Tab 总数(bloom 放射原点 = 第 index 个 Tab 的水平中心);默认 2 */
   count?: number
   /**
    * 切换动画性格:
-   * - 'glide'(默认,智能成片):背景随所选 Tab 横向滑入 + 轻微视差,精准克制;
+   * - 'glide'(默认,智能成片):只淡入,不做位移;
    * - 'bloom'(爆款复制):从被点击的 Tab 处放射绽放 + 轻微回弹,有张力。
    */
   anim?: 'glide' | 'bloom'
@@ -66,7 +66,6 @@ export default function EntryCanvasBg({ index, count = 2, anim = 'glide', layers
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const sizeRef = useRef({ w: 1, h: 1 })
   const firstRef = useRef(true)
-  const prevIndexRef = useRef(index)
   const layersRef = useRef(layers)
   layersRef.current = layers
   const redrawRef = useRef<() => void>(() => {})
@@ -133,8 +132,6 @@ export default function EntryCanvasBg({ index, count = 2, anim = 'glide', layers
 
   // 切换 Tab:按 anim 性格播放一次切换动画(首次挂载不放)
   useEffect(() => {
-    const prev = prevIndexRef.current
-    prevIndexRef.current = index
     if (firstRef.current) {
       firstRef.current = false
       return
@@ -157,17 +154,12 @@ export default function EntryCanvasBg({ index, count = 2, anim = 'glide', layers
         { duration: 560, easing: 'cubic-bezier(0.22, 0.9, 0.3, 1)' },
       )
     } else {
-      // 智能成片:随所选 Tab 方向横向滑入 + 轻微视差,精准克制
-      const dir = Math.sign(index - prev) || 1
-      canvas.style.transformOrigin = 'center bottom'
-      running = canvas.animate(
-        [
-          { transform: `translateX(${dir * -4}%) translateY(1.6%)`, opacity: 0.78, offset: 0 },
-          { opacity: 1, offset: 0.5 },
-          { transform: 'translateX(0) translateY(0)', opacity: 1, offset: 1 },
-        ],
-        { duration: 720, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
-      )
+      // 智能成片:只做淡入。背景铺满容器,任何平移/位移都会在边缘露出一条没有背景的白边
+      // (飞书 BUG「切换视频/图片 tab,背景跳跃」);两个 Tab 的背景本来就一样,不需要方向感。
+      running = canvas.animate([{ opacity: 0.78 }, { opacity: 1 }], {
+        duration: 480,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      })
     }
     return () => running.cancel()
   }, [index, anim, count])
