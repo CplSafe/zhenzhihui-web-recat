@@ -1,8 +1,7 @@
 /**
  * VideoStage — 第四步「生成视频」(2.1 改版,Figma 441-5139)。
  *
- * 本步支持对整段视频提出修改意见,不再支持改分镜(增/删/改分镜均已移除)。
- * 布局:左 = 视频播放器 + 时间轴(时间刻度按视频真实秒数 + 帧缩略条);右 = 整段修改框。
+ * 本步支持对整段视频或任一 5 秒画面片段提出修改意见。
  * 交互:
  *  - 「整段视频修改」框支持 AI 一键润色。
  *  - 底部总按钮:上一步 / 保存视频 / 重新生成视频或确认修改。
@@ -17,6 +16,7 @@ import { openMemberCenter } from '@/stores/ui'
 import {
   createEmptyVideoModificationDraft,
   normalizeVideoModificationDraft,
+  type VideoEditSegment,
   type VideoModificationDraft,
 } from '@/utils/videoModificationDraft'
 import { creditsYuanLabel } from '@/utils/creditsYuan'
@@ -133,7 +133,7 @@ interface VideoStageProps {
    * video.edit 的真实后端估价。编辑态不复用 video.generate 估价；
    * 估价失败时确认按钮保持禁用，避免用户在不知实际预估积分时提交。
    */
-  onEstimateEditCost?: (note?: string) => Promise<VideoCostEstimate>
+  onEstimateEditCost?: (note?: string, segment?: VideoEditSegment) => Promise<VideoCostEstimate>
   /** 「确认修改」将使用的模型与方式说明（如「修改将使用 X 以原片为参考重新生成」）；缺省不显示。 */
   modificationPlanHint?: string
   /**
@@ -179,16 +179,21 @@ interface VideoStageProps {
    * note=对整片/各片段的修改意见(合并成一段);opts.edit=true 表示「确认修改」——
    * 父级应基于原视频做修改(而非从分镜图重出整片)。
    */
-  onRegenerateVideo: (note?: string, opts?: { edit?: boolean }) => void
+  onRegenerateVideo: (note?: string, opts?: { edit?: boolean; segment?: VideoEditSegment }) => void
   /** 生成多个视频:允许在当前仍有视频生成时继续追加到历史记录队列 */
-  onGenerateMultipleVideos?: (note?: string, opts?: { edit?: boolean }, count?: number) => void
+  onGenerateMultipleVideos?: (
+    note?: string,
+    opts?: { edit?: boolean; segment?: VideoEditSegment },
+    count?: number,
+  ) => void
   /** 下载当前整片视频(由父级弹本地保存位置后下载) */
   onDownloadVideo?: () => void
   /**
    * 修改意见的 AI 润色入口。智能成片由父级注入已锁定模型，
    * 其他复用方未传时继续沿用组件原有的自动模型行为。
+   * kind='segment' 时带上用户当前选中的秒数范围，润色指令只针对这一段画面。
    */
-  onPolishText?: (kind: 'segment' | 'video-edit', text: string) => Promise<string>
+  onPolishText?: (kind: 'segment' | 'video-edit', text: string, segment?: VideoEditSegment) => Promise<string>
   onPrev?: () => void
   /** 「重新生成视频/确认修改」按钮的数量选择(与智能成片底栏 split 按钮同样式) */
   regenCount?: number
@@ -315,10 +320,18 @@ export default function VideoStage({
     [onModificationDraftChange],
   )
   const overallNote = activeModificationDraft.overallNote
+  const segmentDraft = activeModificationDraft.frameSlots[0]
   const noteByVersion = activeModificationDraft.noteByVersion
   const pendingNote = activeModificationDraft.pendingNote
   const setOverallNote = useCallback(
-    (value: string) => updateModificationDraft((previous) => ({ ...previous, overallNote: value })),
+    (value: string) =>
+      updateModificationDraft((previous) => ({
+        ...previous,
+        overallNote: value,
+        frameSlots: value.trim()
+          ? previous.frameSlots.map((slot, index) => (index === 0 ? { ...slot, text: '' } : slot))
+          : previous.frameSlots,
+      })),
     [updateModificationDraft],
   )
   const setPendingNote = useCallback(
@@ -418,6 +431,39 @@ export default function VideoStage({
     [shots],
   )
   const total = dur || shotsTotal || 10
+  const canSegmentEdit = total > 5
+  const segmentOptions = useMemo(
+    () =>
+      Array.from({ length: Math.max(1, Math.ceil(total / 5)) }, (_, index) => ({
+        start: index * 5,
+        end: Math.min(total, (index + 1) * 5),
+      })),
+    [total],
+  )
+  const activeSegment =
+    canSegmentEdit && segmentDraft.start != null && segmentDraft.end != null && segmentDraft.end > segmentDraft.start
+      ? { start: segmentDraft.start, end: segmentDraft.end }
+      : undefined
+  const setSegment = useCallback(
+    (segment: VideoEditSegment) =>
+      updateModificationDraft((previous) => ({
+        ...previous,
+        overallNote: '',
+        frameSlots: previous.frameSlots.map((slot, index) =>
+          index === 0 ? { ...slot, start: segment.start, end: segment.end } : slot,
+        ),
+      })),
+    [updateModificationDraft],
+  )
+  const setSegmentNote = useCallback(
+    (text: string) =>
+      updateModificationDraft((previous) => ({
+        ...previous,
+        overallNote: text.trim() ? '' : previous.overallNote,
+        frameSlots: previous.frameSlots.map((slot, index) => (index === 0 ? { ...slot, text } : slot)),
+      })),
+    [updateModificationDraft],
+  )
   // 帧条:按视频真实时长「1 帧/秒」切分(15s 视频 = 15 帧),封顶 60 帧
   const frameCount = Math.max(1, Math.min(60, Math.round(total)))
   const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
@@ -812,9 +858,12 @@ export default function VideoStage({
     seekPlayerToTimelineFrame(Math.min(frameCount - 1, Math.max(0, Math.floor(s))))
   }
 
-  // 整段修改说明送视频编辑；片段修改入口已下线，不再读取旧草稿中的片段内容。
   const buildNote = (): string | undefined => {
     if (!allowVideoModification) return undefined
+    const segmentText = segmentDraft.text.trim()
+    if (activeSegment && segmentText) {
+      return `【分段画面修改 ${fmtClock(activeSegment.start)}-${fmtClock(activeSegment.end)}】\n${segmentText}\n仅修改该时间段的画面，保持前后镜头人物、场景、构图、光线和动作连续；不改动原音轨。`
+    }
     const ov = overallNote.trim()
     return ov ? `【整段视频】${ov}` : undefined
   }
@@ -822,12 +871,14 @@ export default function VideoStage({
   // 本片不支持视频修改时，草稿里可能还留着上一版的修改文字：一律不当作修改，
   // 否则主按钮会变成「确认修改」并去请求一个必然失败的 video.edit。
   const editDisabled = !allowVideoModification || Boolean(editDisabledReason)
-  // 有整段修改时主按钮显示「确认修改」；旧草稿中的片段修改不再触发编辑任务。
-  const hasMods = !editDisabled && overallNote.trim().length > 0
+  const hasMods =
+    !editDisabled && (overallNote.trim().length > 0 || Boolean(activeSegment && segmentDraft.text.trim().length > 0))
   const editRequestSignature = JSON.stringify({
     videoAssetId,
     videoUrl,
     overallNote: overallNote.trim(),
+    segment: activeSegment,
+    segmentNote: segmentDraft.text.trim(),
   })
   const estimateEditCostRef = useRef(onEstimateEditCost)
   estimateEditCostRef.current = onEstimateEditCost
@@ -852,7 +903,7 @@ export default function VideoStage({
     let alive = true
     setEditCost({ loading: true, error: '', estimate: null })
     const timer = window.setTimeout(() => {
-      request(buildNote())
+      ;(activeSegment ? request(buildNote(), activeSegment) : request(buildNote()))
         .then((estimate) => {
           if (!alive) return
           const estimatedCost = Number(estimate?.estimatedCost)
@@ -994,7 +1045,7 @@ export default function VideoStage({
     const note = buildNote()
     setPendingNote(hasMods ? note || '' : '')
     setPendingFocusArmed(true)
-    onRegenerateVideo(note, { edit: hasMods })
+    onRegenerateVideo(note, activeSegment && hasMods ? { edit: true, segment: activeSegment } : { edit: hasMods })
   }
   const triggerMultiGenerate = () => {
     if (!onGenerateMultipleVideos) return
@@ -1011,7 +1062,11 @@ export default function VideoStage({
     const note = buildNote()
     setPendingNote(hasMods ? note || '' : '')
     setPendingFocusArmed(true)
-    onGenerateMultipleVideos(note, { edit: hasMods }, regenCount ?? 1)
+    onGenerateMultipleVideos(
+      note,
+      activeSegment && hasMods ? { edit: true, segment: activeSegment } : { edit: hasMods },
+      regenCount ?? 1,
+    )
   }
 
   return (
@@ -1264,6 +1319,49 @@ export default function VideoStage({
             </div>
           ) : allowVideoModification && showTimeline ? (
             <>
+              {canSegmentEdit ? (
+                <section className={styles.vstageSegmentEditor} aria-label="分段画面修改">
+                  <div className={styles.vstageSegmentHeader}>
+                    <span>分段画面修改</span>
+                    <small>仅替换选中画面，原声音和其他片段保持不变</small>
+                  </div>
+                  <div className={styles.vstageSegmentOptions} role="group" aria-label="选择五秒片段">
+                    {segmentOptions.map((segment) => {
+                      const selected = activeSegment?.start === segment.start && activeSegment?.end === segment.end
+                      return (
+                        <button
+                          key={`${segment.start}-${segment.end}`}
+                          type="button"
+                          aria-pressed={selected}
+                          className={`${styles.vstageSegmentOption}${selected ? ` ${styles.active}` : ''}`}
+                          onClick={() => {
+                            setSegment(segment)
+                            seekPlayerToTimelineFrame(Math.floor(segment.start))
+                          }}
+                        >
+                          {fmtClock(segment.start)}–{fmtClock(segment.end)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <ModBox
+                    title="选中片段修改"
+                    range={
+                      activeSegment ? `${fmtClock(activeSegment.start)}–${fmtClock(activeSegment.end)}` : '请先选择片段'
+                    }
+                    value={segmentDraft.text}
+                    polishKind="segment"
+                    polishSegment={activeSegment}
+                    onChange={setSegmentNote}
+                    onPolishText={onPolishText}
+                  />
+                </section>
+              ) : (
+                <div className={styles.vstageShortVideoHint} role="note">
+                  当前视频不超过 5 秒，将直接修改完整视频，无需裁剪和回拼。
+                </div>
+              )}
+              {canSegmentEdit && <div className={styles.vstageEditDivider}>或</div>}
               <ModBox
                 title="整段视频修改"
                 value={overallNote}
@@ -1272,11 +1370,13 @@ export default function VideoStage({
                 onPolishText={onPolishText}
               />
               {/* 能力边界要写在用户下笔前：视频模型没有「只改第 6–11 秒」的能力，之前的示例文案反而在教用户这么写，
-                  用户反复试「只改几秒」全都失败（群里连续三次反馈）。 */}
-              <div className={styles.vstageRightHint} role="note">
-                修改会基于当前视频整段重新生成，暂不支持只改其中几秒；想精确控制某一段，建议把该分镜控制在 3–5
-                秒后单独重做。
-              </div>
+                  用户反复试「只改几秒」全都失败（群里连续三次反馈）。有分段编辑器时把用户引到上面去；
+                  不足 5 秒的短片上面已经说明「直接修改完整视频」，不再重复。 */}
+              {canSegmentEdit && (
+                <div className={styles.vstageRightHint} role="note">
+                  整段修改会基于当前视频整段重新生成；只想改其中几秒，请用上方「分段画面修改」。
+                </div>
+              )}
             </>
           ) : allowVideoModification ? (
             <div className={styles.vstageRightHint}>视频生成后,可在此对整段视频提修改意见。</div>
@@ -1575,6 +1675,7 @@ function ModBox({
   range,
   value,
   polishKind,
+  polishSegment,
   onChange,
   onPolishText,
   onRemove,
@@ -1584,8 +1685,10 @@ function ModBox({
   range?: string
   value: string
   polishKind: 'segment' | 'video-edit'
+  /** 片段框：润色时随文本一起交给父级的选中秒数范围，让润色只针对这几秒。 */
+  polishSegment?: VideoEditSegment
   onChange: (v: string) => void
-  onPolishText?: (kind: 'segment' | 'video-edit', text: string) => Promise<string>
+  onPolishText?: (kind: 'segment' | 'video-edit', text: string, segment?: VideoEditSegment) => Promise<string>
   onRemove?: () => void
   /** 片段框:点击把当前时间轴选区写入本框 */
   onCapture?: () => void
@@ -1616,7 +1719,7 @@ function ModBox({
     setPolishing(true)
     try {
       const out = onPolishText
-        ? await onPolishText(polishKind, draftValue)
+        ? await onPolishText(polishKind, draftValue, polishKind === 'segment' ? polishSegment : undefined)
         : await polishText(draftValue, { kind: polishKind })
       if (out) {
         setDraftValue(out)

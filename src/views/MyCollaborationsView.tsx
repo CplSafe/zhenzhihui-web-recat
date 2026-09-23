@@ -467,7 +467,7 @@ export default function MyCollaborationsView() {
                   <button
                     type="button"
                     className="collab__empty-btn"
-                    onClick={() => navigate('/home', { state: { homeTab: 'market' } })}
+                    onClick={() => navigate('/market', { state: { marketTab: 'market' } })}
                   >
                     去需求市场发布
                   </button>
@@ -533,7 +533,7 @@ export default function MyCollaborationsView() {
                   <button
                     type="button"
                     className="collab__empty-btn"
-                    onClick={() => navigate('/home', { state: { homeTab: 'market' } })}
+                    onClick={() => navigate('/market', { state: { marketTab: 'market' } })}
                   >
                     去需求市场看看
                   </button>

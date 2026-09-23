@@ -1,0 +1,175 @@
+/* 爆款复刻入口页:顶部宣传视频位 + 底部模板库。
+   宽度统一跟随 .hotcopy__main 上的 --hotcopy-col(最大 1440px),与中间主视觉区左右对齐。 */
+
+/* ── 宣传视频位 ── */
+.hotcopy-promo {
+  position: relative;
+  width: var(--hotcopy-col, 100%);
+  aspect-ratio: 32 / 9;
+  /* 按视口高度封顶:720~1080 高的笔记本全屏时,首屏都能完整露出下方输入卡 */
+  max-height: clamp(130px, 26vh, 400px);
+  border-radius: 20px;
+  overflow: hidden;
+  background: #eef0f3;
+}
+.hotcopy-promo__video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.hotcopy-promo__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border: 1px dashed #d5d9df;
+  border-radius: inherit;
+  box-sizing: border-box;
+  color: #9aa1ab;
+  font-size: clamp(18px, 2vw, 28px);
+  font-weight: 600;
+  letter-spacing: 0.2em;
+}
+
+/* ── 模板库 ── */
+.hotcopy-tpl {
+  position: relative;
+  z-index: 1;
+  width: var(--hotcopy-col, 100%);
+  container-type: inline-size;
+}
+.hotcopy-tpl__title {
+  margin: 0 0 14px 4px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #333;
+}
+/*
+ * 瀑布流(与原首页模板库一致):分栏而非网格。每张卡按视频自身比例(卡片上的内联 aspect-ratio)
+ * 展示,各列独立往下排,竖屏卡与横屏卡混排时不会被同一行最高的那张撑出空白。
+ * 列数按模板库自身宽度而非视口决定:侧栏展开/收起、各种笔记本分辨率下都保持卡片比例。
+ */
+.hotcopy-tpl__grid {
+  --hotcopy-tpl-gap: clamp(10px, 1.2vw, 16px);
+  column-count: 4;
+  column-gap: var(--hotcopy-tpl-gap);
+}
+@container (max-width: 880px) {
+  .hotcopy-tpl__grid {
+    column-count: 3;
+  }
+}
+@container (max-width: 600px) {
+  .hotcopy-tpl__grid {
+    column-count: 2;
+  }
+}
+
+.hotcopy-tpl__card {
+  min-width: 0;
+  /* 分栏里卡片不能被拆到两列;行距与列距同值 */
+  break-inside: avoid;
+  margin-bottom: var(--hotcopy-tpl-gap);
+}
+.hotcopy-tpl__thumb {
+  position: relative;
+  width: 100%;
+  /* 目录没给比例时的兜底(竖屏短视频最常见);有比例时被卡片的内联样式覆盖 */
+  aspect-ratio: 9 / 16;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #e9ecef;
+  outline: none;
+}
+.hotcopy-tpl__thumb:focus-visible {
+  box-shadow: 0 0 0 2px #1fcfa9;
+}
+.hotcopy-tpl__media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.hotcopy-tpl__fav {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+.hotcopy-tpl__fav svg {
+  fill: rgba(255, 255, 255, 0.9);
+}
+.hotcopy-tpl__fav.is-on svg {
+  fill: #ffc53d;
+}
+
+/* hover / 键盘聚焦时浮出「做同款」 */
+.hotcopy-tpl__mask {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  padding: 36px 12px 14px;
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.45));
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+}
+.hotcopy-tpl__thumb:hover .hotcopy-tpl__mask,
+.hotcopy-tpl__thumb:focus-within .hotcopy-tpl__mask {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .hotcopy-tpl__mask {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.hotcopy-tpl__action {
+  padding: 8px 26px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(34, 34, 38, 0.82);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.hotcopy-tpl__action:hover {
+  background: rgba(34, 34, 38, 0.95);
+}
+
+.hotcopy-tpl__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: #909090;
+  font-size: 15px;
+}
+
+@media (max-width: 640px) {
+  .hotcopy-promo {
+    border-radius: 14px;
+  }
+  .hotcopy-tpl__title {
+    font-size: 17px;
+  }
+}

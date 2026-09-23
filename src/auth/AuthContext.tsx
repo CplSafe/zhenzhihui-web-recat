@@ -25,6 +25,7 @@ import { beginLogoutDraftWriteBarrier, releaseLogoutDraftWriteBarrier } from '..
 import { detachRunningVideoGensForOwner } from '../utils/videoGenRegistry'
 import { hasConfiguredDevBackend } from '../utils/devBackend'
 import { sanitizeLoginReturnTo } from '../utils/loginReturnTo'
+import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 
 /** 用于通知同浏览器其他标签页同步登出的 localStorage 事件键。 */
 const AUTH_LOGOUT_EVENT_KEY = 'zzh.auth.logout-event.v1'
@@ -293,7 +294,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const handleLoginSuccess = useCallback(
     (session?: any, returnTo?: string) => {
       sessionStorage.removeItem('zzh_sso_pending')
-      const target = sanitizeLoginReturnTo(returnTo) || '/home'
+      const target = sanitizeLoginReturnTo(returnTo) || APP_HOME_PATH
       // A login result is newer than any session bootstrap already in flight.
       loadSeqRef.current += 1
       resetAuthenticatedSession()

@@ -613,8 +613,21 @@ function buildDerivedVideos({
 /**
  * 用项目列表接口已经返回的项目对象同步派生视频，避免任务中心为了历史成片再逐项目请求详情。
  */
-export function deriveProjectVideos({ project, workspaceId }: { project: any; workspaceId: number }): ProjectVideo[] {
-  const derived = buildDerivedVideos({ project, workspaceId })
+export function deriveProjectVideos({
+  project,
+  workspaceId,
+  currentUserName,
+  currentUserId,
+  workspaceMembers,
+}: {
+  project: any
+  workspaceId: number
+  currentUserName?: string
+  currentUserId?: number
+  /** 传入成员列表时，后端没给 creator_nickname 的视频可按 user_id 从成员里解析出创作者名。 */
+  workspaceMembers?: any[]
+}): ProjectVideo[] {
+  const derived = buildDerivedVideos({ project, workspaceId, currentUserName, currentUserId, workspaceMembers })
   const canonicalIds = new Set(derived.map((item) => item.id))
   const store = readProjectVideoStore(project)
   return sortByUpdatedAt([

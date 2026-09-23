@@ -64,6 +64,8 @@ export interface CanvasSummary {
   updated_at?: string
   /** 当前元素 revision，未同步过时为 0。 */
   revision?: number
+  /** 画布创建者（后端 user_id）；团队空间里用来区分自己和其他成员的画布。 */
+  userId?: number
 }
 
 /**
@@ -80,6 +82,7 @@ function normalizeCanvas(raw: unknown): CanvasSummary {
   const created_at = String(o.created_at ?? o.createdAt ?? o.create_time ?? inner?.created_at ?? '') || undefined
   const updated_at = String(o.updated_at ?? o.updatedAt ?? o.update_time ?? inner?.updated_at ?? '') || undefined
   const revision = Number(o.revision ?? o.sync_revision ?? inner?.revision ?? 0) || 0
+  const userId = Number(o.user_id ?? o.userId ?? o.created_by ?? inner?.user_id ?? 0) || 0
   return {
     id,
     ...(title ? { title } : {}),
@@ -87,6 +90,7 @@ function normalizeCanvas(raw: unknown): CanvasSummary {
     ...(created_at ? { created_at } : {}),
     ...(updated_at ? { updated_at } : {}),
     ...(revision ? { revision } : {}),
+    ...(userId ? { userId } : {}),
   }
 }
 
@@ -415,6 +419,52 @@ export async function saveCanvasElementsBatched({
     currentRevision = result.sync_revision
   }
   return { sync_revision: currentRevision }
+}
+
+/**
+ * 创建画布副本。后端没有复制接口，由前端组合完成：
+ * 新建画布 → 全量拉取源画布元素（after_revision=0，只含活元素）→ 原 element_id 批量写入新画布。
+ * element_id 原样保留，连线对节点的引用才不会断；全局 state（视图变换等）一并复制。
+ * 元素写入失败时尽力删掉刚建的空画布，避免列表里留下一个残缺副本。
+ */
+export async function duplicateCanvas({
+  workspaceId,
+  sourceCanvasId,
+  title,
+}: {
+  workspaceId: number
+  sourceCanvasId: number
+  title: string
+}): Promise<CanvasSummary> {
+  const wsId = requirePositiveInteger(workspaceId, '工作空间 ID 无效')
+  const sourceId = requirePositiveInteger(sourceCanvasId, '画布 ID 无效')
+  // 先读源画布再建新画布：读失败时不会凭空多出一张空画布
+  const source = await fetchAllCanvasElements({ workspaceId: wsId, canvasId: sourceId, afterRevision: 0 })
+  const created = await createCanvas({ workspaceId: wsId, title })
+  const newId = requirePositiveInteger(created?.id, '创建画布副本失败')
+  const mutations: CanvasElementMutation[] = source.elements
+    .filter((element) => element?.op !== 'delete' && element?.element_id)
+    .map((element) => ({
+      element_id: element.element_id,
+      kind: element.kind,
+      op: 'upsert',
+      payload: element.payload || {},
+    }))
+  if (!mutations.length && !source.state) return created
+  try {
+    await saveCanvasElementsBatched({
+      workspaceId: wsId,
+      canvasId: newId,
+      baseRevision: 0,
+      mutations,
+      state: source.state,
+      schemaVersion: source.schema_version ?? 1,
+    })
+  } catch (error) {
+    await deleteCanvas({ workspaceId: wsId, canvasId: newId }).catch(() => {})
+    throw error
+  }
+  return created
 }
 
 /**

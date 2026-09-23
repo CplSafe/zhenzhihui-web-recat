@@ -59,3 +59,6 @@ nginx.conf
 # 会话临时产物（文档封面 QA 图、简历脚本等，与前端工程无关）
 .tmp-doc-cover/
 tmp/
+
+# 手册截图脚本的持久化浏览器 profile
+.pw-manual-profile/

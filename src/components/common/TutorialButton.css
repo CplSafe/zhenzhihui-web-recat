@@ -99,7 +99,42 @@
   background: #000;
 }
 
+.tutorial-modal__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 22px 16px;
+}
+.tutorial-modal__foot-hint {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.62);
+}
+.tutorial-modal__doc-link {
+  flex: none;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: #11a98a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.18s ease;
+}
+.tutorial-modal__doc-link:hover {
+  background: #0e9078;
+}
+.tutorial-modal__doc-link:focus-visible {
+  outline: 3px solid rgba(17, 169, 138, 0.35);
+  outline-offset: 2px;
+}
+
 @media (max-width: 640px) {
+  .tutorial-modal__foot {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
   .tutorial-btn--topbar span,
   .tutorial-btn--pill span {
     display: none;

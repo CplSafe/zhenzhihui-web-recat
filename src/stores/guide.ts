@@ -1,7 +1,7 @@
 /**
  * Zustand Store: 新手引导(聚光挖洞式蒙层)。
  * 两种引导形态:
- *  - 扁平(首页 home):固定 steps,靠「下一步」推进。
+ *  - 扁平(入门 home,展示在爆款复刻入口页):固定 steps,靠「下一步」推进。
  *  - 分阶段(智能成片 smart):stages 跟随创作流程——支付成功后触发,用户【自己操作】进到下一阶段时,
  *    自动展示该阶段的引导(入口 → 营销拆解 …);每阶段内若有多步用「下一步」推进,阶段末隐藏等待下一阶段。
  * 覆盖层渲染见 components/guide/GuideOverlay.tsx。
@@ -87,12 +87,12 @@ export const GUIDES: Record<string, GuideDef> = {
         placement: 'right',
       },
       {
-        target: '[data-guide="home-cases"]',
+        target: '[data-guide="hotcopy-templates"] .hotcopy-tpl__title',
         icon: iconSpark,
         title: '没有灵感?',
-        body: ['可以直接选择热门案例,一键生成同款视频。'],
+        body: ['可以直接从模板库选择热门案例,一键生成同款视频。'],
         placement: 'top',
-        spanTo: '.home__masonry .home__tpl',
+        spanTo: '.hotcopy-tpl__grid .hotcopy-tpl__card',
       },
       {
         target: '[data-guide="nav-projects"]',
@@ -250,7 +250,8 @@ export const GUIDES: Record<string, GuideDef> = {
 // 路由 → 引导 key
 export const guideKeyForPath = (pathname: string): string | null => {
   const p = String(pathname || '')
-  if (p.startsWith('/home')) return 'home'
+  // 首页已下线,入门引导随默认落地页迁到爆款复刻入口(/hot-copy/:id 为具体项目,不弹入门引导)
+  if (p === '/hot-copy' || p.startsWith('/home')) return 'home'
   if (p.startsWith('/smart')) return 'smart'
   return null
 }
@@ -259,7 +260,7 @@ export const guideKeyForPath = (pathname: string): string | null => {
 export const guideLabelForPath = (pathname: string): string => {
   switch (guideKeyForPath(pathname)) {
     case 'home':
-      return '首页新手引导'
+      return '入门新手引导'
     case 'smart':
       return '智能成片新手引导'
     default:

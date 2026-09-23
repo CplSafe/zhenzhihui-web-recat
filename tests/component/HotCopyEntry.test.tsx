@@ -432,6 +432,37 @@ describe('HotCopyEntry project asset access', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 220, duration: '7s' }))
   })
 
+  it('提交时把预览已读到的源视频时长（整秒）带给外层，外层不必再起 <video> 重读', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    mocks.readVideoMetadata.mockResolvedValue({ width: 1080, height: 1920, durationSec: 29.6 })
+    render(
+      <HotCopyEntry
+        onSubmit={onSubmit}
+        initial={{
+          tab: 'remake',
+          videoSource: 'library',
+          libraryVideo: { assetId: 101, src: '/101.mp4' },
+          videoPreview: '/101.mp4',
+          products: [{ assetId: 201, url: '/201.png', file: null, isVideo: false }],
+          ratio: '9:16',
+          duration: '15s',
+          text: '',
+          modelVersionId: 220,
+        }}
+        modelGroups={modelGroupsWith([
+          { id: 220, name: 'Seedance 2.0', constraints: { duration: { options: [5, 10, 15] } } },
+        ])}
+        modelReady
+        requireModelSelection
+      />,
+    )
+    await waitFor(() => expect(mocks.readVideoMetadata).toHaveBeenCalledWith('/101.mp4'))
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+    // 29.6 → 30：与计费用的整秒口径一致
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ sourceVideoDurationSec: 30 })))
+  })
+
   /**
    * 换用 CreativeModelSlots 后，卡片列表展示后端下发的 restrictions 文案，
    * 不再由前端按 constraints 计算「最长 N 秒」的括注（那是 GenerationModelDropdown 的能力）。

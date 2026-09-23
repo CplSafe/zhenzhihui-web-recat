@@ -59,22 +59,23 @@ test.afterEach(async ({ page }) => {
   expect(apiStateByPage.get(page)?.unexpectedRequests ?? [], '移动端页面发出了未声明或非 GET API 请求').toEqual([])
 })
 
-test('移动端公开首页与登录页可操作且无整页横向溢出', async ({ page }) => {
+test('移动端公开落地页与登录页可操作且无整页横向溢出', async ({ page }) => {
   test.slow()
 
+  // 首页已下线：旧 /home 链接落到爆款复刻入口
   await page.goto('/home')
-  await expect(page.getByRole('heading', { name: '快捷入口' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '爆款成片 输入灵感，秒出大片', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/hot-copy$/)
+  await expect(page.getByRole('heading', { name: '爆款作业直接抄,你的产品当主角!' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '模板库' })).toBeVisible()
   await expectNoDocumentOverflow(page)
 
-  await page.getByRole('button', { name: '爆款成片 输入灵感，秒出大片', exact: true }).click()
-  await expect(page).toHaveURL(/\/smart$/)
-  await expect(page.getByRole('heading', { name: '想打造什么样的爆款短视频？' })).toBeVisible()
+  await page.goto('/smart')
+  await expect(page.getByRole('heading', { name: '打造我想要的爆款视频' })).toBeVisible()
   await expectNoDocumentOverflow(page)
 
   await page.goBack()
-  await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByRole('heading', { name: '快捷入口' })).toBeVisible()
+  await expect(page).toHaveURL(/\/hot-copy$/)
+  await expect(page.getByRole('heading', { name: '爆款作业直接抄,你的产品当主角!' })).toBeVisible()
   await expectNoDocumentOverflow(page)
 
   await page.goto('/login')
@@ -87,30 +88,7 @@ test('移动端公开首页与登录页可操作且无整页横向溢出', async
   await expectNoDocumentOverflow(page)
 
   await page.getByRole('button', { name: '开始创作' }).click()
-  await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByRole('heading', { name: '快捷入口' })).toBeVisible()
-  await expectNoDocumentOverflow(page)
-})
-
-test('移动端智能成片与爆款复制入口可访问且无整页横向溢出', async ({ page }) => {
-  test.slow()
-
-  await page.goto('/smart')
-  await expect(page.getByRole('heading', { name: '想打造什么样的爆款短视频？' })).toBeVisible()
-  await expectNoDocumentOverflow(page)
-
-  await page.getByRole('button', { name: '打开菜单' }).click()
-  await expect(page.getByRole('button', { name: '爆款复刻', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '爆款复刻', exact: true }).click()
   await expect(page).toHaveURL(/\/hot-copy$/)
-  // SPA 菜单跳转不会等待爆款复制的大型懒加载 chunk；WebKit 冷启动时给页面级加载留出预算。
-  await expect(page.getByRole('heading', { name: '爆款作业直接抄,你的产品当主角!' })).toBeVisible({ timeout: 30_000 })
-  await expectNoDocumentOverflow(page)
-
-  await page.getByRole('button', { name: '打开菜单' }).click()
-  await expect(page.getByRole('button', { name: '首页', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '首页', exact: true }).click()
-  await expect(page).toHaveURL(/\/home$/)
-  await expect(page.getByRole('heading', { name: '快捷入口' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '爆款作业直接抄,你的产品当主角!' })).toBeVisible()
   await expectNoDocumentOverflow(page)
 })

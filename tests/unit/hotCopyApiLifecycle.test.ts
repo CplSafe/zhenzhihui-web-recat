@@ -333,7 +333,7 @@ describe('replicateHotVideo lifecycle', () => {
           sourceVideoDurationSec,
           referenceImageCount: 1,
         }),
-      ).toThrow('无法读取源视频真实时长，请重新选择视频后重试')
+      ).toThrow('读取源视频信息超时（文件较大或网络较慢），请稍后重试')
       await expect(
         estimateReplicateCost({
           workspaceId: 7,
@@ -341,7 +341,7 @@ describe('replicateHotVideo lifecycle', () => {
           sourceVideoDurationSec,
           referenceImageCount: 1,
         }),
-      ).rejects.toThrow('无法读取源视频真实时长，请重新选择视频后重试')
+      ).rejects.toThrow('读取源视频信息超时（文件较大或网络较慢），请稍后重试')
 
       expect(mocks.estimateAiTaskCost).not.toHaveBeenCalled()
       expect(mocks.createAiTask).not.toHaveBeenCalled()

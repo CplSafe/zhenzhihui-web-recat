@@ -53,7 +53,7 @@ test.describe('游客访问边界', () => {
 
     await page.goto('/smart')
     await expect(page).toHaveURL(/\/smart$/)
-    await expect(page.getByRole('heading', { name: '想打造什么样的爆款短视频？' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '打造我想要的爆款视频' })).toBeVisible()
 
     await page.goto('/hot-copy')
     await expect(page).toHaveURL(/\/hot-copy$/)

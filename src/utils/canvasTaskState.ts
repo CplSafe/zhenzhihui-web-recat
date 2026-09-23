@@ -39,6 +39,40 @@ export function isSameCanvasTask(current: CanvasTaskIdentity, snapshot: CanvasTa
   return taskId > 0 && Number(current.taskId || 0) === taskId && current.taskRunId === snapshot.taskRunId
 }
 
+/** 生成耗时读数：「12 秒」「1 分 05 秒」「1 小时 02 分」。非法值返回空串。 */
+export function formatCanvasElapsed(seconds: unknown): string {
+  const total = Math.floor(Number(seconds))
+  if (!Number.isFinite(total) || total < 0) return ''
+  if (total < 60) return `${total} 秒`
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  if (hours > 0) return `${hours} 小时 ${String(minutes).padStart(2, '0')} 分`
+  return `${minutes} 分 ${String(total % 60).padStart(2, '0')} 秒`
+}
+
+/**
+ * 节点当前显示的素材是否就是 AI 生成的结果（标题旁的「已生成」对勾据此显示）。
+ *
+ * 不能只看 taskStatus === succeeded：生成成功后再从素材库/本地替换画面，
+ * 状态字段不会被清掉，那张图已经不是生成的了。生成历史只登记验证过的结果 assetId，
+ * 当前 assetId 在历史里（含回退到更早的一版）才算。
+ */
+export function isCanvasGeneratedResult(data: Record<string, unknown> = {}): boolean {
+  const assetId = Number(data.assetId || 0)
+  if (!Number.isSafeInteger(assetId) || assetId <= 0) return false
+  const history = Array.isArray(data.resultHistory) ? data.resultHistory : []
+  return history.some((entry: any) => Number(entry?.assetId || 0) === assetId)
+}
+
+/** 最近一次成功生成的耗时（秒）；时间戳缺失或状态不是成功时返回 null。 */
+export function getCanvasGenerationDuration(data: Record<string, unknown> = {}): number | null {
+  if (!['succeeded', 'completed', 'success'].includes(normalizeAiTaskStatus(data.taskStatus))) return null
+  const started = Date.parse(String(data.taskStartedAt || ''))
+  const finished = Date.parse(String(data.taskUpdatedAt || ''))
+  if (!Number.isFinite(started) || !Number.isFinite(finished) || finished < started) return null
+  return Math.floor((finished - started) / 1000)
+}
+
 export interface CanvasTaskPresentation {
   running: boolean
   failed: boolean

@@ -332,16 +332,16 @@ export function getGenerationModelSelectionConflicts(
     if (!model) return []
     const operationIsVideo = slot.key.startsWith('video.')
     const usesSourceVideoDuration = SOURCE_VIDEO_DURATION_OPERATIONS.has(slot.key)
-    // 源视频时长未知时整个 durationSec 字段都不能下传：模型若声明 duration.required，
-    // 传 undefined 会被判成「要求提供时长」，同样把流程堵死。
-    const operationUsesDuration =
-      operationIsVideo && (!usesSourceVideoDuration || values.sourceVideoDurationSec !== undefined)
+    // 时长还没有值（用户未选、或源视频尚不存在）时，整个 durationSec 字段都不能下传：
+    // 约束引擎用 hasOwn 判断「是否提供」，传 undefined 也算提供，声明了 duration.required
+    // 的模型就会报「要求提供时长」，而没声明的模型不报——同样是没选时长，
+    // 换个模型提示就不一样。「没选时长」统一交给入口提交时的「请先选择视频时长」。
+    const durationValue = usesSourceVideoDuration ? values.sourceVideoDurationSec : values.durationSec
+    const operationUsesDuration = operationIsVideo && durationValue !== undefined
     const operationUsesRatio = operationIsVideo || slot.key.startsWith('image.')
     const operationUsesReferenceImages = operationIsVideo || slot.key.startsWith('image.')
     return getModelConstraintConflicts(model.constraints, {
-      ...(operationUsesDuration
-        ? { durationSec: usesSourceVideoDuration ? values.sourceVideoDurationSec : values.durationSec }
-        : {}),
+      ...(operationUsesDuration ? { durationSec: durationValue } : {}),
       ...(operationUsesRatio ? { ratio: values.ratio } : {}),
       ...(operationUsesReferenceImages && Object.prototype.hasOwnProperty.call(values, 'referenceImageCount')
         ? { referenceImageCount: values.referenceImageCount }

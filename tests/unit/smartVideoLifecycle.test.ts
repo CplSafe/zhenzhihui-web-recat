@@ -370,6 +370,57 @@ describe('smart video lifecycle', () => {
     expect(mocks.createAiTask.mock.calls[0]![0].inputAssets).toEqual([{ asset_id: 101, role: 'image' }])
   })
 
+  it('分段修改·参考生视频：用生成模型按片段时长申请，源片段以 role:video 下发，提示词换成修改提示', async () => {
+    // 分段修改不再强制切到目录里的 video.edit 模型：生成模型自己能视频生视频，就用它改那几秒。
+    const selectedModel = {
+      id: 31,
+      display_name: 'Seedance 2.0',
+      operation_codes: ['video.generate'],
+      params_schema: {
+        fields: [
+          { name: 'duration', options: [5, 10, 15] },
+          { name: 'ratio', options: ['16:9', '9:16'] },
+        ],
+      },
+    }
+    mocks.buildVideoGenerationParams.mockReturnValue({ duration: 5, ratio: '16:9' })
+    mocks.resolveTaskVideoResult.mockResolvedValue({ url: '/segment.mp4', assetId: 734 })
+
+    await generateFullVideo({
+      workspaceId: 61,
+      shots: [
+        { duration: '5s', desc: '镜头一' },
+        { duration: '5s', desc: '镜头二' },
+        { duration: '5s', desc: '镜头三' },
+      ],
+      basePrompt: '整片广告描述',
+      imageAssetIds: [101],
+      ratio: '16:9',
+      modelVersionId: selectedModel.id,
+      modelVersion: selectedModel,
+      sourceVideoAssetId: 5001,
+      durationSec: 5,
+      prompt: '把第二镜的灯光调亮',
+    })
+
+    const submitted = mocks.createAiTask.mock.calls[0]![0]
+    expect(submitted).toMatchObject({ modelVersionId: 31, operationCode: 'video.generate' })
+    // 时长按片段档位申请，而不是分镜总时长 15 秒
+    expect(mocks.buildVideoGenerationParams).toHaveBeenCalledWith(
+      selectedModel,
+      expect.objectContaining({ duration: 5, durationMode: 'exact', validateExactDuration: true }),
+    )
+    expect(submitted.inputAssets).toEqual([
+      { asset_id: 101, role: 'image' },
+      { asset_id: 5001, role: 'video' },
+    ])
+    // 整片时间线提示词对一条 5 秒片段不适用：整体替换成修改提示，并保留禁画面文字硬约束
+    expect(submitted.prompt).toContain('把第二镜的灯光调亮')
+    expect(submitted.prompt).toContain('不得出现任何文字')
+    expect(submitted.prompt).not.toContain('镜头一')
+    expect(submitted.prompt).not.toContain('整片广告描述')
+  })
+
   it.each(['model_version_id', 'modelVersionId', 'id'])(
     'preserves the full explicit video model schema and canonicalizes the %s alias',
     async (idField) => {

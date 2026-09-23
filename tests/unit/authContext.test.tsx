@@ -85,7 +85,7 @@ describe('AuthProvider login refresh scheduling', () => {
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 84_000)
   })
 
-  it('returns to the guarded page after login and falls back to /home otherwise', () => {
+  it('returns to the guarded page after login and falls back to /hot-copy otherwise', () => {
     const { unmount } = render(
       <MemoryRouter initialEntries={['/login']}>
         <AuthProvider>
@@ -105,7 +105,7 @@ describe('AuthProvider login refresh scheduling', () => {
       </MemoryRouter>,
     )
     fireEvent.click(screen.getByRole('button', { name: 'finish login' }))
-    expect(screen.getByLabelText('pathname')).toHaveTextContent('/home')
+    expect(screen.getByLabelText('pathname')).toHaveTextContent('/hot-copy')
   })
 
   it('clears the matching account when another tab broadcasts logout', () => {

@@ -63,10 +63,61 @@
   color: #2f3646;
 }
 
+/* 类型筛选：一行 chip，点选即筛、再点取消 */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid #e2e6ef;
+  border-radius: 12px;
+  background: #fff;
+  color: #4b5262;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.chip em {
+  color: #a8aebd;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip:hover {
+  border-color: #c9cfe0;
+}
+
+.chipActive {
+  border-color: #dfe3ff;
+  background: #eef0ff;
+  color: #5767e5;
+}
+
+.chipActive em {
+  color: #8b96ee;
+}
+
 .results {
   max-height: 320px;
   border-top: 1px solid #eef1f7;
   overflow-y: auto;
+}
+
+.itemTextEmpty {
+  color: #a8aebd;
 }
 
 .item {

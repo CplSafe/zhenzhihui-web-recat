@@ -31,6 +31,7 @@ import {
   getModelDurationLimitLabel,
   getModelReferenceImageLimit,
 } from '@/utils/modelRestrictions'
+import { getModelReferenceImageMinimum } from '@/utils/modelInputConstraints'
 import { DEFAULT_MAX_REFS, FIRST_LAST_REF_SLOTS } from '@/utils/canvasNodeDefaults'
 import type { CanvasResultHistoryEntry } from '@/utils/canvasElements'
 import { assetStreamUrl } from '@/utils/assetUrl'
@@ -983,6 +984,16 @@ export default function CanvasNodePanel({
     return getModelReferenceImageLimit(constraints) ?? DEFAULT_MAX_REFS
   }, [kind, videoMode, selectedModel])
 
+  /**
+   * 素材来源数量下限：后端 input_constraints 的 min_count。
+   * 参考生视频类模型（HappyHorse r2v 等）声明 min_count=1，没图就不能提交；
+   * 纯文生视频模型未声明即为 0。只对视频节点的 video.generate 有意义。
+   */
+  const minRefs = useMemo(() => {
+    if (kind !== 'video' || !selectedModel) return 0
+    return getModelReferenceImageMinimum(selectedModel.source, 'video.generate')
+  }, [kind, selectedModel])
+
   /** 视频节点顶部的参考槽位下标，数量跟随 maxRefs。 */
   const refSlots = useMemo(() => Array.from({ length: maxRefs }, (_, index) => index), [maxRefs])
 
@@ -1198,10 +1209,17 @@ export default function CanvasNodePanel({
       return validateCanvasImageInputs({ operationCode, sourceRefs, workspaceId, maxImageRefs: maxRefs })
     }
     if (kind === 'video') {
-      return validateCanvasVideoInputs({ operationCode, videoMode, sourceRefs, maxImageRefs: maxRefs })
+      return validateCanvasVideoInputs({
+        operationCode,
+        videoMode,
+        sourceRefs,
+        maxImageRefs: maxRefs,
+        minImageRefs: minRefs,
+        modelLabel: selectedModel?.displayName,
+      })
     }
     return null
-  }, [kind, maxRefs, operationCode, sourceRefs, videoMode, workspaceId])
+  }, [kind, maxRefs, minRefs, operationCode, sourceRefs, videoMode, workspaceId, selectedModel?.displayName])
 
   const inputSummary = useMemo(() => {
     let images = 0
@@ -1744,7 +1762,9 @@ export default function CanvasNodePanel({
               (kind === 'text'
                 ? '保存后将原文直接作为下游图片、视频的生成提示词'
                 : kind === 'video'
-                  ? '参考图片为可选项；不添加图片时将直接按文案生成视频'
+                  ? minRefs > 0
+                    ? `${selectedModel?.displayName || '当前模型'} 是参考生视频模型，至少需要 ${minRefs} 张参考图片`
+                    : '参考图片为可选项；不添加图片时将直接按文案生成视频'
                   : '润色后只更新图片描述，不会自动开始生成')}
         </div>
         <div className={styles.textPromptActions}>

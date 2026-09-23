@@ -1,8 +1,11 @@
 /**
  * 左侧浮动工具图标列
  *
- * 六个图标：添加(弹出节点菜单) / 平移(画布平移开关) / 拖拽(节点拖拽开关) / 搜索 / 素材库 / 历史记录
- * 平移与拖拽是两个独立开关，初始均开启（高亮），互不影响。
+ * 五个图标：添加(弹出节点菜单) / 锁定(节点拖拽开关) / 搜索 / 素材库 / 历史记录
+ *
+ * 这里以前还有「平移」「框选」两个模式开关。它们让用户替程序管状态：想框选先去点一下按钮，
+ * 框完再点回来才能拖画布。现在平移与框选靠手势区分（空白处左键拖=框选，空格/中键/右键拖=平移，
+ * 滚轮平移），不再需要切模式；只留下「锁定节点」——那是个明确的意图，不是模式。
  */
 import { memo, useState, useRef, useEffect } from 'react'
 import styles from './CanvasFloatingToolbar.module.css'
@@ -11,15 +14,12 @@ interface CanvasFloatingToolbarProps {
   onAddNode: (type: string) => void
   /** 添加本地素材：打开文件选择框，选中的图片/视频上传后各自落成图片或视频节点 */
   onAddLocalImage: () => void
-  /** 画布平移开关：true=可移动画布 */
-  moveEnabled: boolean
-  onMoveToggle: () => void
+  /** 抓手模式：true=左键拖空白处平移画布（框选改为按住 Shift 拖）；false=左键拖空白处框选 */
+  panModeEnabled: boolean
+  onPanModeToggle: () => void
   /** 节点拖拽开关：true=可拖拽节点 */
   dragEnabled: boolean
   onDragToggle: () => void
-  /** 框选模式开关：true=左键拖空白框选节点（关闭时仍可按住 Shift 框选） */
-  boxSelectEnabled: boolean
-  onBoxSelectToggle: () => void
   /** 打开节点搜索面板 */
   onOpenSearch: () => void
   onOpenAssets: () => void
@@ -31,12 +31,10 @@ interface CanvasFloatingToolbarProps {
 function CanvasFloatingToolbar({
   onAddNode,
   onAddLocalImage,
-  moveEnabled,
-  onMoveToggle,
+  panModeEnabled,
+  onPanModeToggle,
   dragEnabled,
   onDragToggle,
-  boxSelectEnabled,
-  onBoxSelectToggle,
   onOpenSearch,
   onOpenAssets,
   onOpenHistory,
@@ -178,48 +176,40 @@ function CanvasFloatingToolbar({
       </div>
 
       {/*
-        2. 画布平移（panOnDrag）
-        文案要说的是这个按钮控制什么。它以前标「选择」，实际管的却是拖空白处平移画布——
-        和隔壁管节点拖拽的按钮标「移动」正好互相串味，两个词都指不对自己的功能。
+        2. 抓手（平移模式）。默认左键拖空白是框选，平移走空格/中键/右键/滚轮；
+        习惯「左键就是拖画布」的用户点亮这个，左键拖空白改为平移，框选改为按住 Shift 拖。
       */}
       <button
-        className={`${styles.toolBtn} ${moveEnabled ? styles.toolBtnActive : ''}`}
-        onClick={onMoveToggle}
-        title="拖拽空白处平移画布"
-        aria-pressed={moveEnabled}
+        className={`${styles.toolBtn} ${panModeEnabled ? styles.toolBtnActive : ''}`}
+        onClick={onPanModeToggle}
+        title={
+          panModeEnabled
+            ? '抓手模式：左键拖空白处平移画布（按住 Shift 拖可框选）。点击切回框选'
+            : '切到抓手模式：左键拖空白处平移画布。当前左键拖空白是框选，平移用空格/中键/右键拖或滚轮'
+        }
+        aria-pressed={panModeEnabled}
       >
-        <MoveIcon />
-        <span className={styles.toolLabel}>平移</span>
-      </button>
-
-      {/* 3. 节点拖拽（nodesDraggable） */}
-      <button
-        className={`${styles.toolBtn} ${dragEnabled ? styles.toolBtnActive : ''}`}
-        onClick={onDragToggle}
-        title="允许拖动节点"
-        aria-pressed={dragEnabled}
-      >
-        <DragIcon />
-        <span className={styles.toolLabel}>拖拽</span>
+        <HandIcon />
+        <span className={styles.toolLabel}>拖动</span>
       </button>
 
       {/*
-        4. 框选模式（selectionOnDrag）
-        开启后左键拖空白处即可框选多个节点。标题里明确告诉用户：不开这个开关，
-        按住 Shift 拖拽同样能框选——避免用户以为只有开了开关才行。
+        3. 锁定节点（nodesDraggable 取反）。
+        高亮表示「锁着」：这是一个偏离默认的状态，亮着才提醒用户为什么拖不动。
+        以前这颗按钮默认高亮表示「可拖拽」，和隔壁默认不亮的框选开关放一起，两种语义打架。
       */}
       <button
-        className={`${styles.toolBtn} ${boxSelectEnabled ? styles.toolBtnActive : ''}`}
-        onClick={onBoxSelectToggle}
-        title="框选多个节点：拖拽空白处框选（按住 Shift 拖拽也可框选）"
-        aria-pressed={boxSelectEnabled}
+        className={`${styles.toolBtn} ${dragEnabled ? '' : styles.toolBtnActive}`}
+        onClick={onDragToggle}
+        title={dragEnabled ? '锁定节点位置：锁定后节点不可拖动，只能平移画布' : '解除锁定，恢复节点拖动'}
+        aria-pressed={!dragEnabled}
       >
-        <MarqueeIcon />
-        <span className={styles.toolLabel}>框选</span>
+        {dragEnabled ? <UnlockIcon /> : <LockIcon />}
+        <span className={styles.toolLabel}>{dragEnabled ? '锁定' : '已锁'}</span>
       </button>
 
-      {/* 5. 节点搜索：快捷键是 Ctrl/Cmd+F，但不能只有快捷键——没人会去猜 */}
-      <button className={styles.toolBtn} onClick={onOpenSearch} title="搜索节点（Ctrl+F）">
+      {/* 4. 节点搜索/定位：快捷键是 Ctrl/Cmd+F，但不能只有快捷键——没人会去猜 */}
+      <button className={styles.toolBtn} onClick={onOpenSearch} title="搜索 / 定位节点（Ctrl+F）">
         <SearchIcon />
         <span className={styles.toolLabel}>搜索</span>
       </button>
@@ -248,39 +238,59 @@ function PlusIcon() {
   )
 }
 
-function MoveIcon() {
+/** 抓手：设计工具里「平移画布」的通用图标 */
+function HandIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M12 2v20M2 12h20" strokeLinecap="round" />
-      <path d="M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12" />
+      <path d="M11 11.5V4.5a1.5 1.5 0 0 1 3 0V12" />
+      <path d="M14 12V6.5a1.5 1.5 0 0 1 3 0V13" />
+      <path d="M17 13v-1.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1.5a6 6 0 0 1-4.8-2.4L4.6 14.7a1.5 1.5 0 0 1 2.4-1.8L8 14.5" />
     </svg>
   )
 }
 
-function DragIcon() {
+function UnlockIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <circle cx="8" cy="6" r="1" fill="currentColor" />
-      <circle cx="8" cy="12" r="1" fill="currentColor" />
-      <circle cx="8" cy="18" r="1" fill="currentColor" />
-      <circle cx="16" cy="6" r="1" fill="currentColor" />
-      <circle cx="16" cy="12" r="1" fill="currentColor" />
-      <circle cx="16" cy="18" r="1" fill="currentColor" />
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 7.5-2" />
     </svg>
   )
 }
 
-/** 虚线框 + 光标：框选（marquee）语义 */
-function MarqueeIcon() {
+function LockIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path
-        d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 14v2a2 2 0 0 1-2 2h-1"
-        strokeLinecap="round"
-        strokeDasharray="0.1 3.2"
-      />
-      <path d="M4 12v4a2 2 0 0 0 2 2h2" strokeLinecap="round" strokeDasharray="0.1 3.2" />
-      <path d="M11 12l6 6-2.6.5 1.4 2.6-1.4.8-1.5-2.7L11 22z" fill="currentColor" stroke="none" />
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
     </svg>
   )
 }

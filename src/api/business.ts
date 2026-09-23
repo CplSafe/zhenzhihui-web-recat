@@ -150,7 +150,16 @@ function collectBusinessErrorText(error) {
  * 文案只描述“可能触发审核”，不把模型拒绝误判成用户已经侵权。
  */
 function getContentSafetyErrorMessage(error) {
-  const message = collectBusinessErrorText(error)
+  return humanizeContentSafetyText(collectBusinessErrorText(error))
+}
+
+/**
+ * 纯文本版的内容审核翻译。任务轮询拿到的 error_message 是字符串、不是 BusinessApiError，
+ * 以前只有异常路径能翻出「版权审核」这类提示，轮询到的「output video may be related to copyright
+ * restrictions」原文就直接摆到了节点/任务卡片上。
+ */
+function humanizeContentSafetyText(text) {
+  const message = String(text ?? '').trim()
   if (!message) return ''
 
   if (
@@ -198,6 +207,13 @@ function describeReferenceImageOrdinal(message) {
   return `第 ${Number(hit[1]) + 1} 张参考图`
 }
 
+/** 同上，视频素材：content[N].video_url → 「第 N+1 个参考视频」。 */
+function describeReferenceVideoOrdinal(message) {
+  const hit = /content\[(\d+)\]\.video_url/i.exec(message)
+  if (!hit) return '参考视频'
+  return `第 ${Number(hit[1]) + 1} 个参考视频`
+}
+
 /**
  * 纯文本版的供应商错误翻译：输入一段错误原文（任务 error_message、异常 message 等），命中即返回中文提示，
  * 没命中返回空串。getBusinessErrorMessage 走它，任务中心通知 / 历史生成卡片 / 画布这些拿到的是字符串而不是
@@ -207,6 +223,30 @@ function describeReferenceImageOrdinal(message) {
 export function humanizeProviderErrorText(text) {
   const message = String(text ?? '').trim()
   if (!message) return ''
+
+  // 内容安全 / 版权 / 肖像审核优先：它们有更具体的可操作提示，不能被后面的服务级兜底吞掉。
+  // （2026-09 任务记录里 video.replicate 失败的第一大原因就是版权审核：
+  //  「The request failed because the output video may be related to copyright restrictions」）
+  const contentSafety = humanizeContentSafetyText(message)
+  if (contentSafety) return contentSafety
+
+  // 参考视频时长超限（video.generate 失败第二大原因：
+  // 「content[1].video_url: media duration must be between 2 and 15 seconds」
+  // 「<url> duration should be at most 15s, got 23.8s」）。用户能自己裁剪解决，要把范围说清楚。
+  const durationRange = /duration\s+must\s+be\s+between\s+([\d.]+)\s+and\s+([\d.]+)\s*(?:seconds?|s)\b/i.exec(message)
+  if (durationRange) {
+    return `${describeReferenceVideoOrdinal(message)}的时长需要在 ${durationRange[1]}–${durationRange[2]} 秒之间，请先裁剪或更换视频后重试`
+  }
+  const durationMax = /duration\s+should\s+be\s+at\s+most\s+([\d.]+)\s*s\b(?:,\s*got\s+([\d.]+)\s*s)?/i.exec(message)
+  if (durationMax) {
+    const got = durationMax[2] ? `（当前 ${durationMax[2]} 秒）` : ''
+    return `参考视频最长 ${durationMax[1]} 秒${got}，请先裁剪到范围内后重试`
+  }
+  const durationMin = /duration\s+should\s+be\s+at\s+least\s+([\d.]+)\s*s\b(?:,\s*got\s+([\d.]+)\s*s)?/i.exec(message)
+  if (durationMin) {
+    const got = durationMin[2] ? `（当前 ${durationMin[2]} 秒）` : ''
+    return `参考视频至少 ${durationMin[1]} 秒${got}，请更换更长的视频后重试`
+  }
 
   // 参考图尺寸超限（2046 9/10 群反馈原文：content[1].image_url: media dimensions must be between 256 and 5760 pixels）。
   // 这是用户能自己解决的，要把范围翻成中文说清楚，而不是丢一句英文。
@@ -249,12 +289,34 @@ export function humanizeProviderErrorText(text) {
     return 'AI 生成服务处理这次任务失败，请稍后重试或换一个模型；如果连续失败请联系管理员排查'
   }
 
+  // 供应商账户 / 接入点 / 配额 / 鉴权：以前全部翻成一句「AI 生成服务暂时不可用」，
+  // 用户和管理员都分不清是欠费、模型没开通还是限流，只能一遍遍重试。
+  // 现在按原因分开说，仍不把英文原码摆出来，但每一句都指向一个明确的处理动作。
+  // （2026-09 任务记录：volcengine 403 AccountOverdueError ×5、404 InvalidEndpointOrModel.NotFound ×2）
   if (
-    /AccountOverdue|AccountForbidden|InvalidEndpointOrModel|EndpointIsInvalid|ModelNotOpen|ModelNotFound|QuotaExceeded|RateLimitExceeded|ThrottlingException|InternalServiceError|ServiceUnavailable|InvalidAccessKey|SignatureDoesNotMatch|AccessDenied/i.test(
+    /AccountOverdue|AccountForbidden|AccountSuspended|account\s+(?:is\s+)?(?:overdue|suspended|frozen)/i.test(message)
+  ) {
+    return '模型服务商账户已欠费或被停用，平台侧充值/恢复前无法生成；已记录，请联系管理员处理'
+  }
+  if (
+    /InvalidEndpointOrModel|EndpointIsInvalid|ModelNotOpen|ModelNotFound|model\s+(?:not\s+found|does\s+not\s+exist|is\s+not\s+(?:available|enabled))|endpoint\s+(?:not\s+found|is\s+invalid)/i.test(
       message,
     )
   ) {
-    return 'AI 生成服务暂时不可用，请稍后重试或联系管理员'
+    return '该模型在服务商侧未开通或接入配置有误，暂时无法使用；请换一个模型重试，或联系管理员检查模型配置'
+  }
+  if (
+    /QuotaExceeded|RateLimitExceeded|ThrottlingException|too\s+many\s+requests|HTTP\s*429|rate\s*limit/i.test(message)
+  ) {
+    return '模型服务商当前限流或配额已用完，请稍等一两分钟再试；持续出现请联系管理员'
+  }
+  if (/InvalidAccessKey|SignatureDoesNotMatch|AccessDenied/i.test(message)) {
+    return '平台与模型服务商之间的鉴权配置异常，请联系管理员检查接入密钥'
+  }
+  if (
+    /InternalServiceError|ServiceUnavailable|HTTP\s*5\d\d|upstream\s+(?:error|timeout)|gateway\s+timeout/i.test(message)
+  ) {
+    return '模型服务商服务暂时不可用（服务端错误），请稍后重试或换一个模型'
   }
   return ''
 }

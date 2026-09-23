@@ -16,13 +16,49 @@
   position: relative;
   flex: 1;
   min-height: 0;
+  /* 外层只做画框:弥散背景铺满且不随滚动移动,内容在 .hotcopy__scroll 里滚动 */
+  overflow: hidden;
+  display: flex;
+  background: #f8f9fa;
+}
+
+/* 内容滚动层:宣传视频 → 主视觉(标题 + 输入卡) → 模板库,三块共用同一列宽 */
+.hotcopy__scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: clamp(48px, 18vh, 220px) 24px 56px;
+  --hotcopy-col: min(1440px, 100%);
+  padding: clamp(16px, 2.6vh, 28px) clamp(16px, 2.4vw, 40px) 56px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: #f8f9fa;
+  gap: clamp(20px, 3vh, 32px);
+}
+/* 滚动容器里的纵向 flex 子项不能被压缩,否则内容高于视口时会互相挤压 */
+.hotcopy__scroll > * {
+  flex-shrink: 0;
+}
+
+/* 主视觉区:透明,直接落在整页弥散背景上;上下留白随视口高度收放,笔记本全屏时首屏能同时看到视频位与输入卡 */
+.hotcopy__hero {
+  position: relative;
+  /*
+   * 必须高于下方模板库(.hotcopy-tpl 是 z-index:1)。输入卡里的模型选择、创作参数、@ 素材、
+   * 上传来源等弹层都向下展开,会伸进模板库区域；弹层自己的 z-index 出不了 .hotcopy__panel
+   * 的层叠上下文,而 panel 与模板库同为 1、模板库在 DOM 里更靠后,于是弹层被卡片整片盖住。
+   * 这里把整个主视觉区抬一层,所有下拉一并浮到模板库之上。
+   */
+  z-index: 2;
+  width: var(--hotcopy-col);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(20px, 4vh, 64px) clamp(16px, 2.5vw, 36px) clamp(20px, 3.5vh, 44px);
 }
 .hotcopy__main.is-file-dragging::after {
   position: fixed;
@@ -53,17 +89,17 @@
 .hotcopy__title {
   position: relative;
   z-index: 1;
-  font-size: clamp(28px, 3.6vw, 46px);
+  font-size: clamp(26px, 3vw, 44px);
   font-weight: 500;
   color: #333;
   letter-spacing: 0.5px;
-  margin: 0 0 36px;
+  margin: 0 0 clamp(20px, 3.5vh, 36px);
   text-align: center;
 }
 .hotcopy__panel {
   position: relative;
   z-index: 1;
-  width: min(1180px, 94%);
+  width: min(1180px, 100%);
 }
 
 /* 原先靠 absolute + top:30px 卡在分段 Tab 那一行的右侧；Tab 整块移除后那个坐标
@@ -765,8 +801,12 @@
 }
 
 @media (max-width: 900px) {
-  .hotcopy__main {
-    padding: 48px 20px 88px;
+  .hotcopy__scroll {
+    padding: 16px 16px 88px;
+  }
+
+  .hotcopy__hero {
+    padding: 32px 14px 24px;
   }
 
   .hotcopy__title {
@@ -812,8 +852,12 @@
 }
 
 @media (max-width: 640px) {
-  .hotcopy__main {
-    padding: 36px 14px 96px;
+  .hotcopy__scroll {
+    padding: 12px 12px 96px;
+  }
+
+  .hotcopy__hero {
+    padding: 24px 10px 20px;
   }
 
   .hotcopy__title {

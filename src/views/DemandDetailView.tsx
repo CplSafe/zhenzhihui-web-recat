@@ -102,7 +102,7 @@ export default function DemandDetailView() {
   }, [demandId])
 
   const backToMarket = useCallback(() => {
-    navigate('/home', { state: { homeTab: 'market' } })
+    navigate('/market', { state: { marketTab: 'market' } })
   }, [navigate])
 
   const openApply = useCallback(() => {
@@ -133,7 +133,7 @@ export default function DemandDetailView() {
   return (
     <div className="dmd">
       <AppSidebar
-        activeKey="home"
+        activeKey="market"
         onNavigate={handleNavigate}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}

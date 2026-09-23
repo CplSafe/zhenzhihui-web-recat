@@ -28,9 +28,11 @@ describe('guide store', () => {
 
   it('maps supported routes and labels without matching unrelated pages', () => {
     expect(guideKeyForPath('/home')).toBe('home')
+    expect(guideKeyForPath('/hot-copy')).toBe('home')
+    expect(guideKeyForPath('/hot-copy/12')).toBeNull()
     expect(guideKeyForPath('/smart/101')).toBe('smart')
     expect(guideKeyForPath('/projects')).toBeNull()
-    expect(guideLabelForPath('/home')).toBe('首页新手引导')
+    expect(guideLabelForPath('/hot-copy')).toBe('入门新手引导')
     expect(guideLabelForPath('/smart')).toBe('智能成片新手引导')
     expect(guideLabelForPath('/projects')).toBe('新手引导')
   })

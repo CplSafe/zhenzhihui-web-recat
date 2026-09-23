@@ -186,7 +186,7 @@ describe('TaskCenterCoordinator recovery polling', () => {
       genId: 'generation-1',
     })
     expect(mocks.showToast).toHaveBeenCalledOnce()
-    expect(mocks.showToast).toHaveBeenCalledWith('测试视频生成完成', 'success')
+    expect(mocks.showToast).toHaveBeenCalledWith('「测试视频」生成完成', 'success')
 
     window.dispatchEvent(new Event('focus'))
     await act(async () => {
@@ -194,6 +194,34 @@ describe('TaskCenterCoordinator recovery polling', () => {
       await Promise.resolve()
     })
     expect(mocks.getAiTask).toHaveBeenCalledOnce()
+  })
+
+  it('quotes and truncates a prompt-like project title in the failure toast', async () => {
+    // 爆款复刻把整句提示词当项目名；以前直接拼成「…并且女主要生成失败：…」，标题和结论混在一起
+    seed(
+      task({
+        id: 'hot-copy:7:11:generation-1',
+        scope: 'hot-copy',
+        operationCode: 'video.replicate',
+        title: '把素材图片@图片1 的女主替换到视频中的穿内裤的男主，并且女主要',
+      }),
+    )
+    mocks.getAiTask.mockResolvedValue({
+      task: {
+        id: 101,
+        operationCode: 'video.replicate',
+        status: 'failed',
+        error_message: '请求参数有误或所选模型不可用，请检查后重试。',
+      },
+    })
+
+    render(<TaskCenterCoordinator />)
+
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledOnce())
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      '「把素材图片@图片1 的女主替换到视频…」生成失败：请求参数有误或所选模型不可用，请检查后重试。',
+      'error',
+    )
   })
 
   it('does not duplicate an in-flight request when focus fires during polling', async () => {

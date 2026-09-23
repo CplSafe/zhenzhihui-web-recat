@@ -1,0 +1,13 @@
+/* 供需商单（/market）：卡片 / 筛选 / 排序样式复用 HomeView.css，这里只补页面骨架。 */
+.market__inner {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+/* 「我要发单」标签下方的排序 + 发布需求行，与「我要接单」的筛选行同位置 */
+.market__tools {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 0 6px 16px;
+}

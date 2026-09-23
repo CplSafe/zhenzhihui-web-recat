@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { BusinessApiError, getBusinessErrorMessage } from '@/api/business'
+import { BusinessApiError, getBusinessErrorMessage, humanizeProviderErrorText } from '@/api/business'
 
 describe('getBusinessErrorMessage', () => {
   it('reads nested copyright review details and returns an actionable, non-accusatory message', () => {
@@ -55,19 +55,43 @@ describe('getBusinessErrorMessage', () => {
     expect(getBusinessErrorMessage(error)).toBe('上游服务暂时不可用')
   })
 
-  it('将火山账户/接入点/服务级错误统一兜底,不把英文原码暴露给用户', () => {
-    const expected = 'AI 生成服务暂时不可用，请稍后重试或联系管理员'
+  it('火山账户/接入点/限流错误分别说明原因,不把英文原码暴露给用户', () => {
+    // 以前这几种全翻成一句「AI 生成服务暂时不可用」，欠费和模型没开通分不清，用户只能一遍遍重试
     const overdue = new BusinessApiError('replicate analyze video: volcengine HTTP 403: AccountOverdueError', {
       response: { error_message: 'replicate analyze video: volcengine HTTP 403: AccountOverdueError' },
     })
     const endpoint = new BusinessApiError('volcengine HTTP 404: InvalidEndpointOrModel.NotFound', {
       response: { error_message: 'volcengine HTTP 404: InvalidEndpointOrModel.NotFound' },
     })
-    expect(getBusinessErrorMessage(overdue)).toBe(expected)
-    expect(getBusinessErrorMessage(endpoint)).toBe(expected)
+    const throttled = new BusinessApiError('volcengine HTTP 429: RateLimitExceeded', {
+      response: { error_message: 'volcengine HTTP 429: RateLimitExceeded' },
+    })
+    expect(getBusinessErrorMessage(overdue)).toContain('账户已欠费或被停用')
+    expect(getBusinessErrorMessage(endpoint)).toContain('未开通或接入配置有误')
+    expect(getBusinessErrorMessage(throttled)).toContain('限流或配额已用完')
     // 英文原码/供应商名不得出现在给用户的文案里
     expect(getBusinessErrorMessage(overdue)).not.toMatch(/volcengine|AccountOverdue/i)
     expect(getBusinessErrorMessage(endpoint)).not.toMatch(/volcengine|InvalidEndpoint/i)
+  })
+
+  it('字符串路径也能翻出版权审核：任务轮询拿到的 error_message 不是 BusinessApiError', () => {
+    const message = humanizeProviderErrorText(
+      'The request failed because the output video may be related to copyright restrictions. Request id: 0217895',
+    )
+    expect(message).toContain('版权审核')
+    expect(message).not.toMatch(/copyright|Request id/i)
+  })
+
+  it('参考视频时长超限：翻成中文范围并指出是第几个', () => {
+    expect(humanizeProviderErrorText('content[1].video_url: media duration must be between 2 and 15 seconds')).toBe(
+      '第 2 个参考视频的时长需要在 2–15 秒之间，请先裁剪或更换视频后重试',
+    )
+    expect(
+      humanizeProviderErrorText('content[2].video_url: media duration must be between 2 and 15.5 seconds'),
+    ).toContain('2–15.5 秒')
+    expect(humanizeProviderErrorText('https://x.example/a.mp4?X=1 duration should be at most 15s, got 23.8s')).toBe(
+      '参考视频最长 15 秒（当前 23.8 秒），请先裁剪到范围内后重试',
+    )
   })
 
   it('参考图尺寸超限：把供应商英文范围翻成中文，并保留具体数值', () => {

@@ -234,7 +234,7 @@ export default function SplashView() {
           className="splash-btn-register"
           onPointerEnter={() => signalNextRouteIntent('home')}
           onFocus={() => signalNextRouteIntent('home')}
-          onClick={() => openNextRoute('home', '/home')}
+          onClick={() => openNextRoute('home', '/hot-copy')}
         >
           开始创作
         </button>

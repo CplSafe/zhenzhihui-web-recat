@@ -19,6 +19,7 @@ import { useWorkspaceId } from '@/stores/workspaceSession'
 import { guideKeyForPath, guideLabelForPath, openGuide } from '@/stores/guide'
 import kefuQr from '@/assets/kefu-qr.png'
 import helpBallIcon from '@/assets/1f7fa9801ef8d3ffb61b903b44f58fc3.png'
+import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
 import './HelpCenter.css'
 
 // 使用教程:跳转外部飞书文档(「2分钟学会使用帧智汇」「3分钟上手智能成片」共用)
@@ -127,6 +128,8 @@ const FAQ: { q: string; a: string }[] = [
 // 学习中心条目;有 url 的可点开飞书文档,无 url 显示「即将上线」。
 // 「爆款复制实操指南」(带新链接)已移到第 2 位。
 const TUTORIALS: { title: string; url?: string }[] = [
+  // 完整图文手册排第一；地址统一维护在 utils/tutorialVideos.ts，未配置时显示「即将上线」。
+  { title: '帧智汇使用手册（完整图文版）', url: MANUAL_DOC_URL || undefined },
   { title: '3 分钟上手智能成片', url: FEISHU_GUIDE_URL },
   { title: '爆款复制实操指南', url: HOTCOPY_GUIDE_URL },
   { title: '如何编排镜头与时间线' },

@@ -31,6 +31,11 @@ interface InlineEditProps {
   openSignal?: boolean
   /** 退出编辑态时通知外部,便于对方复位 openSignal。 */
   onEditingEnd?: () => void
+  /**
+   * 展示态的悬停提示。默认是「双击修改」这类操作提示;
+   * 文本被省略号截断的场合(画布节点标题)传全文,否则用户悬停只能看到怎么改、看不到被截掉的内容。
+   */
+  title?: string
 }
 
 /** 在展示态与输入态之间切换，并把确认后的新值一次性交给父组件持久化。 */
@@ -46,6 +51,7 @@ export default function InlineEdit({
   trigger = 'dblclick',
   openSignal,
   onEditingEnd,
+  title,
 }: InlineEditProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -90,7 +96,7 @@ export default function InlineEdit({
               }
             : undefined
         }
-        title={interactive ? (trigger === 'click' ? '点击修改' : '双击修改') : undefined}
+        title={title ?? (interactive ? (trigger === 'click' ? '点击修改' : '双击修改') : undefined)}
         role={interactive ? 'button' : undefined}
         tabIndex={interactive ? 0 : undefined}
       >

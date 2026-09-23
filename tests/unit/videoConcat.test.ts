@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { demuxMp4 } from '@/utils/mp4Demux'
-import { concatMp4Sources } from '@/utils/videoConcat'
+import { concatMp4Sources, replaceVideoRangePreservingOriginalAudio } from '@/utils/videoConcat'
 import { ASC_AAC_LC_44K_STEREO, ASC_AAC_LC_48K_STEREO, AVCC_ALT, esdsBox, fixtureMp4 } from '../helpers/mp4Fixture'
 
 /** 与 fixture 默认音轨一致，用例里只改 esds。 */
@@ -16,6 +16,24 @@ const clip = (tag: number, options: Parameters<typeof fixtureMp4>[0] = {}) =>
   fixtureMp4({ tag, frames: 30, keyframes: [1, 11, 21], ...options })
 
 describe('concatMp4Sources', () => {
+  it('替换画面区间后仍完整保留原视频音轨', async () => {
+    const original = fixtureMp4({ tag: 1, frames: 90, keyframes: [1, 31, 61] })
+    const replacement = fixtureMp4({ tag: 9, frames: 30, keyframes: [1], audio: null })
+    const originalMedia = demuxMp4(original.buffer)
+
+    const out = await replaceVideoRangePreservingOriginalAudio(original.buffer, replacement.buffer, {
+      inSec: 1,
+      outSec: 2,
+      allowTranscode: false,
+    })
+    const { result } = await reparse(out.blob)
+
+    expect(result.error).toBeUndefined()
+    expect(result.video?.samples).toHaveLength(90)
+    expect(result.audio?.samples).toHaveLength(originalMedia.audio?.samples.length)
+    expect(out.warnings.join()).toContain('保留原视频音轨')
+  })
+
   it('两段整片拼接后可被重新解析，样本按顺序保留且字节未被改动', async () => {
     const a = clip(1)
     const b = clip(2)

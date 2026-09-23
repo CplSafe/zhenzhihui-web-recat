@@ -1,7 +1,7 @@
 /**
  * 无限画布列表页
  *
- * 页面效果：展示当前工作空间的无限画布列表，支持新建、删除画布，
+ * 页面效果：展示当前工作空间的无限画布列表，支持新建、重命名（仅限自己的画布）、创建副本、删除画布，
  * 点击画布卡片进入 /canvas/:id 编辑器。
  * 数据源：/api/v1/canvases 的 list / create / delete 接口（canvasApi）。
  */
@@ -16,15 +16,18 @@ import { getBusinessErrorMessage } from '@/api/business'
 import {
   createCanvas,
   deleteCanvas,
+  duplicateCanvas,
   fetchAllCanvasElements,
   listCanvases,
   patchCanvas,
   type CanvasSummary,
 } from '@/api/canvasApi'
 import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
+import { buildCanvasCopyTitle } from '@/utils/canvasCopyTitle'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
-import { useWorkspaceId } from '@/stores/workspaceSession'
+import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
+import { resolveUserId } from '@/utils/creativeDraftMetadata'
 
 /** 时间字段 → 可读格式（yyyy-MM-dd HH:mm），非法/缺失返回空串。 */
 function formatTime(value?: string): string {
@@ -34,6 +37,9 @@ function formatTime(value?: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`
 }
+
+/** 团队成员对他人画布点「重命名」时的提示。 */
+const OTHERS_CANVAS_RENAME_TIP = '这是其他人的画布，无法重命名'
 
 /** 无限画布列表页主组件。 */
 export default function CanvasListView() {
@@ -55,6 +61,12 @@ export default function CanvasListView() {
   const { showToast } = useToast()
   const { requestConfirm } = useConfirmDialog()
   const workspaceId = useWorkspaceId()
+  const currentUserId = Number(resolveUserId(useCurrentUser()) || 0)
+  // 团队空间里只能改自己画布的名称；后端没给创建者（旧数据）或当前用户未知时不拦，交给后端裁决
+  const isOthersCanvas = useCallback(
+    (item: CanvasSummary | null) => Boolean(item?.userId && currentUserId && item.userId !== currentUserId),
+    [currentUserId],
+  )
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -70,12 +82,11 @@ export default function CanvasListView() {
   // 新建画布弹窗：可输入画布名称
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
-  // 编辑画布弹窗：重命名 + 状态（活动/归档）
-  const [editOpen, setEditOpen] = useState(false)
-  const [editTarget, setEditTarget] = useState<CanvasSummary | null>(null)
-  const [editName, setEditName] = useState('')
-  const [editStatus, setEditStatus] = useState<'active' | 'archived'>('active')
-  const [editing, setEditing] = useState(false)
+  // 重命名弹窗：renameTarget 非空即打开
+  const [renameTarget, setRenameTarget] = useState<CanvasSummary | null>(null)
+  const [renameName, setRenameName] = useState('')
+  const [renaming, setRenaming] = useState(false)
+  const [duplicatingId, setDuplicatingId] = useState(0)
 
   // 封面：后端列表不返回封面，按画布 id 缓存「最后生成的图/视频」；
   // 值为 null 表示这张画布确实没有可用媒体，避免反复拉同一张画布的元素。
@@ -311,71 +322,62 @@ export default function CanvasListView() {
     }
   }, [closeCreateModal, createOpen, creating])
 
-  // 打开编辑弹窗：预填当前画布名称与状态
-  const openEditModal = useCallback((item: CanvasSummary) => {
-    setOpenMenuId(0)
-    setEditTarget(item)
-    setEditName(item.title || '')
-    setEditStatus(item.status === 'archived' ? 'archived' : 'active')
-    setEditOpen(true)
-  }, [])
+  // 打开重命名弹窗：他人画布只提示不打开
+  const openRenameModal = useCallback(
+    (item: CanvasSummary) => {
+      setOpenMenuId(0)
+      if (isOthersCanvas(item)) {
+        showToast(OTHERS_CANVAS_RENAME_TIP, 'info')
+        return
+      }
+      setRenameTarget(item)
+      setRenameName(item.title || '')
+    },
+    [isOthersCanvas, showToast],
+  )
 
-  // 关闭编辑弹窗：清空状态
-  const closeEditModal = useCallback(() => {
-    if (editing) return
-    setEditOpen(false)
-    setEditTarget(null)
-    setEditName('')
-    setEditStatus('active')
-  }, [editing])
+  // 关闭重命名弹窗：清空状态
+  const closeRenameModal = useCallback(() => {
+    if (renaming) return
+    setRenameTarget(null)
+    setRenameName('')
+  }, [renaming])
 
-  // 保存编辑：调用 PATCH /canvases/{id} 更新画布标题与状态
-  const handleEdit = useCallback(async () => {
+  // 保存重命名：调用 PATCH /canvases/{id} 更新画布标题
+  const handleRename = useCallback(async () => {
     const wsId = Number(workspaceIdRef.current || 0)
-    if (!wsId || !editTarget?.id) {
-      showToast('workspace_id 缺失,无法编辑', 'error')
+    if (!wsId || !renameTarget?.id) {
+      showToast('workspace_id 缺失,无法重命名', 'error')
       return
     }
-    if (editing) return
-    // 名称与状态都未变化时直接关闭，不发无意义请求
-    const title = editName.trim()
-    const statusChanged = editStatus !== (editTarget.status === 'archived' ? 'archived' : 'active')
-    const titleChanged = !!title && title !== (editTarget.title || '')
-    if (!titleChanged && !statusChanged) {
-      closeEditModal()
+    if (renaming) return
+    const title = renameName.trim()
+    if (!title) {
+      showToast('请输入画布名称', 'info')
       return
     }
-    setEditing(true)
+    // 名称未变化时直接关闭，不发无意义请求
+    if (title === (renameTarget.title || '')) {
+      closeRenameModal()
+      return
+    }
+    setRenaming(true)
     try {
-      await patchCanvas({
-        workspaceId: wsId,
-        canvasId: editTarget.id,
-        ...(titleChanged ? { title } : {}),
-        ...(statusChanged ? { status: editStatus } : {}),
-      })
+      await patchCanvas({ workspaceId: wsId, canvasId: renameTarget.id, title })
       if (Number(workspaceIdRef.current || 0) !== wsId) return
-      // 更新列表中的画布标题与状态
-      setCanvases((prev) =>
-        prev.map((c) =>
-          Number(c?.id || 0) === editTarget.id
-            ? { ...c, ...(titleChanged ? { title } : {}), ...(statusChanged ? { status: editStatus } : {}) }
-            : c,
-        ),
-      )
-      showToast('画布已更新', 'success')
-      // 直接清状态关闭（此处 editing 仍为 true，不走 closeEditModal 的守卫）
-      setEditOpen(false)
-      setEditTarget(null)
-      setEditName('')
-      setEditStatus('active')
+      setCanvases((prev) => prev.map((c) => (Number(c?.id || 0) === renameTarget.id ? { ...c, title } : c)))
+      showToast('画布已重命名', 'success')
+      // 直接清状态关闭（此处 renaming 仍为 true，不走 closeRenameModal 的守卫）
+      setRenameTarget(null)
+      setRenameName('')
     } catch (error) {
       if (Number(workspaceIdRef.current || 0) === wsId) {
-        showToast(getBusinessErrorMessage(error, '更新失败,请稍后重试'), 'error')
+        showToast(getBusinessErrorMessage(error, '重命名失败,请稍后重试'), 'error')
       }
     } finally {
-      setEditing(false)
+      setRenaming(false)
     }
-  }, [editTarget, editName, editStatus, editing, closeEditModal, showToast])
+  }, [renameTarget, renameName, renaming, closeRenameModal, showToast])
 
   // 删除画布：二次确认后调用接口
   const handleDelete = useCallback(
@@ -416,6 +418,48 @@ export default function CanvasListView() {
       }
     },
     [deletingId, requestConfirm, showToast],
+  )
+
+  // 创建副本：复制画布全部节点 / 连线到一张新画布，名称追加「-副本」后缀；成功后放到列表最前
+  const handleDuplicate = useCallback(
+    async (item: CanvasSummary) => {
+      const wsId = Number(workspaceIdRef.current || 0)
+      if (!item?.id || !wsId) {
+        showToast('workspace_id 缺失,无法创建副本', 'error')
+        return
+      }
+      if (duplicatingId) return
+      setOpenMenuId(0)
+      setDuplicatingId(item.id)
+      try {
+        const title = buildCanvasCopyTitle(
+          item.title,
+          canvases.map((c) => c.title),
+        )
+        const created = await duplicateCanvas({ workspaceId: wsId, sourceCanvasId: item.id, title })
+        if (Number(workspaceIdRef.current || 0) !== wsId) return
+        const now = new Date().toISOString()
+        setCanvases((prev) => [
+          {
+            ...created,
+            title: created.title || title,
+            status: 'active',
+            updated_at: created.updated_at || now,
+            userId: created.userId || currentUserId || undefined,
+          },
+          ...prev,
+        ])
+        setPage(1)
+        showToast(`已创建副本「${title}」`, 'success')
+      } catch (error) {
+        if (Number(workspaceIdRef.current || 0) === wsId) {
+          showToast(getBusinessErrorMessage(error, '创建副本失败,请稍后重试'), 'error')
+        }
+      } finally {
+        setDuplicatingId(0)
+      }
+    },
+    [canvases, currentUserId, duplicatingId, showToast],
   )
 
   // 打开画布编辑器
@@ -558,10 +602,21 @@ export default function CanvasListView() {
                                 className="pm2-folder-menu-item"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  openEditModal(item)
+                                  openRenameModal(item)
                                 }}
                               >
-                                编辑画布
+                                重命名
+                              </button>
+                              <button
+                                type="button"
+                                className="pm2-folder-menu-item"
+                                disabled={duplicatingId === item.id}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void handleDuplicate(item)
+                                }}
+                              >
+                                {duplicatingId === item.id ? '创建中…' : '创建副本'}
                               </button>
                               <button
                                 type="button"
@@ -658,13 +713,13 @@ export default function CanvasListView() {
           </section>
         </div>
       )}
-      {/* 编辑画布弹窗：重命名画布 */}
-      {editOpen && editTarget && (
-        <div className="pm2-modal-mask" onClick={() => !editing && closeEditModal()}>
-          <div className="pm2-modal" role="dialog" aria-label="编辑画布" onClick={(e) => e.stopPropagation()}>
+      {/* 重命名画布弹窗 */}
+      {renameTarget && (
+        <div className="pm2-modal-mask" onClick={() => !renaming && closeRenameModal()}>
+          <div className="pm2-modal" role="dialog" aria-label="重命名画布" onClick={(e) => e.stopPropagation()}>
             <div className="pm2-modal-head">
-              编辑画布
-              <button type="button" className="pm2-modal-close" aria-label="关闭" onClick={closeEditModal}>
+              重命名画布
+              <button type="button" className="pm2-modal-close" aria-label="关闭" onClick={closeRenameModal}>
                 ×
               </button>
             </div>
@@ -672,44 +727,25 @@ export default function CanvasListView() {
               <label className="pm2-modal-label">画布名称</label>
               <input
                 className="pm2-modal-input"
-                value={editName}
+                value={renameName}
                 placeholder="输入画布名称"
                 autoFocus
                 maxLength={60}
-                onChange={(e) => setEditName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !editing && handleEdit()}
+                onChange={(e) => setRenameName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && !renaming && handleRename()}
               />
-              <label className="pm2-modal-label cl-edit-status-label">画布状态</label>
-              <div className="cl-edit-status">
-                <button
-                  type="button"
-                  className={`cl-edit-status__item${editStatus === 'active' ? ' is-active' : ''}`}
-                  onClick={() => setEditStatus('active')}
-                >
-                  <span className="cl-edit-status__dot is-active-dot" aria-hidden="true" />
-                  活动
-                </button>
-                <button
-                  type="button"
-                  className={`cl-edit-status__item${editStatus === 'archived' ? ' is-active' : ''}`}
-                  onClick={() => setEditStatus('archived')}
-                >
-                  <span className="cl-edit-status__dot is-archive-dot" aria-hidden="true" />
-                  归档
-                </button>
-              </div>
             </div>
             <div className="pm2-modal-foot">
-              <button type="button" className="pm2-modal-btn" disabled={editing} onClick={closeEditModal}>
+              <button type="button" className="pm2-modal-btn" disabled={renaming} onClick={closeRenameModal}>
                 取消
               </button>
               <button
                 type="button"
                 className="pm2-modal-btn pm2-modal-btn--primary"
-                disabled={editing}
-                onClick={handleEdit}
+                disabled={renaming || !renameName.trim()}
+                onClick={handleRename}
               >
-                {editing ? '保存中…' : '保存'}
+                {renaming ? '保存中…' : '保存'}
               </button>
             </div>
           </div>

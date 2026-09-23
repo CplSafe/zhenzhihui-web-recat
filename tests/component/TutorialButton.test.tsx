@@ -1,7 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import TutorialButton from '@/components/common/TutorialButton'
+import * as tutorialVideos from '@/utils/tutorialVideos'
 
 function renderAt(path: string) {
   return render(
@@ -40,5 +41,23 @@ describe('TutorialButton', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('tutorial-modal-mask'))
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('配置了图文手册地址时，弹窗底部给出新窗口打开的链接；未配置则不显示', () => {
+    const spy = vi.spyOn(tutorialVideos, 'getTutorialForPath')
+    spy.mockReturnValue({ ...tutorialVideos.getTutorialByKey('canvas'), docUrl: 'https://example.feishu.cn/wiki/abc' })
+    const { unmount } = renderAt('/canvas/1')
+    fireEvent.click(screen.getByRole('button', { name: /操作手册/ }))
+    const link = screen.getByTestId('tutorial-doc-link')
+    expect(link).toHaveAttribute('href', 'https://example.feishu.cn/wiki/abc')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link.getAttribute('rel')).toContain('noopener')
+    unmount()
+
+    spy.mockReturnValue({ ...tutorialVideos.getTutorialByKey('canvas'), docUrl: '' })
+    renderAt('/canvas/1')
+    fireEvent.click(screen.getByRole('button', { name: /操作手册/ }))
+    expect(screen.queryByTestId('tutorial-doc-link')).toBeNull()
+    spy.mockRestore()
   })
 })

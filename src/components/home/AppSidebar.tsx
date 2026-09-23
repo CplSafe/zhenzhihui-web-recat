@@ -1,12 +1,12 @@
 /**
  * 2.1 左侧导航栏（自包含静态实现）。
- * 浅色窄侧栏：品牌 + 首页 + 分组（创作/社区/管理/团队）+ 底部设置。
+ * 浅色窄侧栏：品牌 + 分组（创作/管理/市场/团队）+ 底部设置。
  * props: activeKey 当前选中项；onNavigate(key) 点击回调（跳转由父级接线）。
  * 菜单图标直接使用 Figma 导出的默认态/选中态 SVG，保持造型、尺寸和颜色一致。
  */
 import brandLogo from '@/img/image copy 7.png'
-import homeIcon from '@/assets/sidebar/home.svg'
-import homeActiveIcon from '@/assets/sidebar/home-active.svg'
+import marketIcon from '@/assets/sidebar/cooperation.svg'
+import marketActiveIcon from '@/assets/sidebar/cooperation-active.svg'
 import smartIcon from '@/assets/sidebar/smart.svg'
 import smartActiveIcon from '@/assets/sidebar/smart-active.svg'
 import hotCopyIcon from '@/assets/sidebar/hotcopy.svg'
@@ -73,6 +73,13 @@ const GROUPS: SidebarGroup[] = [
       { key: 'resources', label: '我的素材', icon: resourcesIcon, activeIcon: resourcesActiveIcon, iconSize: 14 },
     ],
   },
+  {
+    title: '市场',
+    items: [
+      // 原首页的「IP / 需求市场」两个标签，收进独立页面 /market
+      { key: 'market', label: '供需商单', icon: marketIcon, activeIcon: marketActiveIcon, iconSize: 16 },
+    ],
+  },
 ]
 
 const TEMPLATE_GROUP: SidebarGroup = {
@@ -103,7 +110,7 @@ const SHOW_TEMPLATE_GROUP = false
 const HIDDEN_SIDEBAR_ITEM_KEYS = new Set(['studio', 'real-person-video', 'video-edit'])
 
 /** 渲染全站主导航，并把实际路由跳转交由页面侧栏 Hook 统一处理。 */
-export default function AppSidebar({ activeKey = 'home', onNavigate, open = false, onClose }: AppSidebarProps) {
+export default function AppSidebar({ activeKey = '', onNavigate, open = false, onClose }: AppSidebarProps) {
   // 桌面端收起态:跨页面保持,放全局 ui store。
   const collapsed = useUiStore((s) => s.sidebarCollapsed)
   const toggleCollapsed = useUiStore((s) => s.toggleSidebarCollapsed)
@@ -207,12 +214,7 @@ export default function AppSidebar({ activeKey = 'home', onNavigate, open = fals
         </div>
 
         <nav className="app-sidebar__nav">
-          {/* 首页 单独一项 */}
-          <div className="app-sidebar__group">
-            {renderItem({ key: 'home', label: '首页', icon: homeIcon, activeIcon: homeActiveIcon, iconSize: 16 })}
-          </div>
-
-          {/* 创作 / 管理 */}
+          {/* 创作 / 管理 / 市场 */}
           {GROUPS.map((group) => (
             <div className="app-sidebar__group" key={group.title}>
               <div className="app-sidebar__group-title">{group.title}</div>

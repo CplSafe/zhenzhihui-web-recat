@@ -96,7 +96,7 @@ export default function IpDetailView() {
   return (
     <div className="ipd">
       <AppSidebar
-        activeKey="home"
+        activeKey="market"
         onNavigate={handleNavigate}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -107,8 +107,8 @@ export default function IpDetailView() {
           {profileError ? (
             <div className="ipd__placeholder">
               {profileError}
-              <button type="button" className="ipd__back-btn" onClick={() => navigate('/home')}>
-                返回首页
+              <button type="button" className="ipd__back-btn" onClick={() => navigate('/market')}>
+                返回供需商单
               </button>
             </div>
           ) : !profile ? (

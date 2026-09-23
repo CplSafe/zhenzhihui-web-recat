@@ -5,6 +5,7 @@
  */
 import { useEffect, useState } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
+import { APP_HOME_PATH } from '../utils/sidebarNavigation'
 
 /** 路由状态丢失时中转页自动回首页的最长等待时间。 */
 const BRIDGE_RECOVERY_TIMEOUT_MS = 500
@@ -25,6 +26,6 @@ export default function WorkspaceSwitchBridge() {
   }, [switchInProgress])
 
   // 没有合法切换上下文也视为直接访问，用 replace 清掉无意义的桥接历史记录。
-  if (!switchInProgress || timedOut) return <Navigate to="/home" replace />
+  if (!switchInProgress || timedOut) return <Navigate to={APP_HOME_PATH} replace />
   return <div className="route-loading" aria-label="正在切换空间" />
 }

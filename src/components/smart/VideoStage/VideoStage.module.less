@@ -539,6 +539,87 @@
 }
 
 /* ── 修改框:片段N修改 / 整段视频修改(标题在上,框内输入 + 右侧 AI一键润色)── */
+.vstageSegmentEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(31, 207, 169, 0.24);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(243, 255, 251, 0.95), #fff 72%);
+}
+
+.vstageSegmentHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #26332f;
+
+  small {
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    color: #7b8985;
+  }
+}
+
+.vstageSegmentOptions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.vstageSegmentOption {
+  min-width: 0;
+  height: 32px;
+  border: 1px solid rgba(51, 51, 51, 0.14);
+  border-radius: 8px;
+  background: #fff;
+  color: #58645f;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover,
+  &.active {
+    border-color: #1fcfa9;
+    background: #e8faf5;
+    color: #0b9b7e;
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgba(31, 207, 169, 0.4);
+    outline-offset: 2px;
+  }
+}
+
+.vstageEditDivider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #a0aaa6;
+  font-size: 12px;
+
+  &::before,
+  &::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(51, 51, 51, 0.1);
+  }
+}
+
+.vstageShortVideoHint {
+  padding: 11px 13px;
+  border: 1px solid rgba(31, 207, 169, 0.22);
+  border-radius: 10px;
+  background: #f3fffb;
+  color: #4e6961;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .vstageModItem {
   display: flex;
   flex-direction: column;

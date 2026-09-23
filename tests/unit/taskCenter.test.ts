@@ -11,6 +11,7 @@ const {
   getTaskCenterExpirationReason,
   isTaskCenterActiveStatus,
   isTaskCenterTerminalStatus,
+  resolveTaskCenterCreatorId,
   useTaskCenterStore,
 } = await import('../../src/stores/taskCenter')
 
@@ -276,6 +277,24 @@ describe('task-center store normalization and terminal transitions', () => {
 
     useTaskCenterStore.getState().upsertTask(task({ ownerUserId: undefined }))
     expect(useTaskCenterStore.getState().tasks[0]?.ownerUserId).toBe(20)
+  })
+
+  it('keeps the creator separate from the cache owner and falls back to the owner when unset', () => {
+    useTaskCenterStore.getState().setOwnerUserId(9)
+    useTaskCenterStore.getState().upsertTask(task({ creatorUserId: 10, creatorName: ' 同事乙 ' }))
+    useTaskCenterStore
+      .getState()
+      .upsertTask(task({ generationId: 'generation-2', taskId: 102, creatorUserId: 0, creatorName: '' }))
+
+    const [teammate, own] = useTaskCenterStore
+      .getState()
+      .tasks.slice()
+      .sort((a, b) => a.generationId.localeCompare(b.generationId))
+    expect(teammate).toMatchObject({ ownerUserId: 9, creatorUserId: 10, creatorName: '同事乙' })
+    expect(resolveTaskCenterCreatorId(teammate)).toBe(10)
+    expect(own.creatorUserId).toBeUndefined()
+    expect(own.creatorName).toBeUndefined()
+    expect(resolveTaskCenterCreatorId(own)).toBe(9)
   })
 })
 

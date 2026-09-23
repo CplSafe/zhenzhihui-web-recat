@@ -20,9 +20,11 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
   updateCreativeProjectDraft: vi.fn(),
   workspace: { id: 21, type: 'team' },
+  location: { pathname: '/projects', search: '' },
 }))
 
 vi.mock('react-router-dom', () => ({
+  useLocation: () => mocks.location,
   useNavigate: () => mocks.navigate,
 }))
 
@@ -149,6 +151,7 @@ describe('ProjectManagementView workspace isolation', () => {
   beforeEach(() => {
     mocks.workspace.id = 21
     mocks.workspace.type = 'team'
+    mocks.location = { pathname: '/projects', search: '' }
     localStorage.clear()
     mocks.addClassifiedVideo.mockReset()
     mocks.createCreativeProject.mockReset()
@@ -566,6 +569,29 @@ describe('ProjectManagementView workspace isolation', () => {
     expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('全部成员')
   })
 
+  it('applies ?owner= from the task drawer over the remembered filter and cleans the query', async () => {
+    localStorage.setItem('zzh.pm.ownerFilter.21', '7')
+    mocks.location = { pathname: '/projects', search: '?owner=8&tab=x' }
+    mocks.listWorkspaceMembers.mockResolvedValue([
+      { id: 7, nickname: '测试用户' },
+      { id: 8, nickname: '同事乙' },
+    ])
+    mocks.listCreativeProjects.mockImplementation(({ mine }: { mine?: boolean } = {}) =>
+      Promise.resolve(
+        mine ? [project(1, '我的项目A')] : [project(1, '我的项目A'), { ...project(2, '乙的项目B'), user_id: 8 }],
+      ),
+    )
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+    expect(await screen.findByRole('button', { name: '打开项目 乙的项目B' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开项目 我的项目A' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '按成员筛选' })).toHaveTextContent('同事乙（1）')
+    // query 覆盖后写回记忆,并把 owner 参数从地址里清掉(其余参数保留)
+    expect(localStorage.getItem('zzh.pm.ownerFilter.21')).toBe('8')
+    expect(mocks.navigate).toHaveBeenCalledWith('/projects?tab=x', { replace: true })
+  })
+
   it('personal space hides the member filter controls', async () => {
     mocks.workspace.type = 'personal'
     mocks.listCreativeProjects.mockResolvedValue([project(1, '个人项目A')])
@@ -666,6 +692,41 @@ describe('ProjectManagementView workspace isolation', () => {
 
     await user.click(card)
     expect(mocks.navigate).toHaveBeenCalledWith('/smart/31')
+  })
+
+  it('uses the latest successful video as a video project cover and falls back to the entry image', async () => {
+    mocks.listCreativeProjects.mockResolvedValue([
+      {
+        ...project(32, '视频项目'),
+        draft_json: {
+          flow: 'smart',
+          smart: {
+            entryMeta: { mode: 'video', images: ['ignored-signed-url'], imageAssetIds: [701] },
+            videoVersions: [
+              { assetId: 801, status: 'published', createdAt: '2026-09-20T08:00:00.000Z' },
+              { assetId: 802, status: 'published', createdAt: '2026-09-20T09:00:00.000Z' },
+              { assetId: 803, status: 'failed', createdAt: '2026-09-20T10:00:00.000Z' },
+            ],
+          },
+        },
+      },
+    ])
+    mocks.listAssets.mockResolvedValue({ items: [] })
+
+    render(<ProjectManagementView />)
+
+    const card = await screen.findByRole('button', { name: '打开项目 视频项目' })
+    const video = card.querySelector('video.pm2-pcard-cover-media')
+    expect(video).toHaveAttribute('src', '/api/v1/assets/802/download?workspace_id=21')
+    expect(card.querySelector('img.pm2-pcard-cover-media')).not.toBeInTheDocument()
+
+    fireEvent.error(video!)
+
+    expect(card.querySelector('video.pm2-pcard-cover-media')).not.toBeInTheDocument()
+    expect(card.querySelector('img.pm2-pcard-cover-media')).toHaveAttribute(
+      'src',
+      '/api/v1/assets/701/download?workspace_id=21',
+    )
   })
 
   it('keeps an initialized project after remount without duplicating it', async () => {

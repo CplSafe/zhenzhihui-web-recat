@@ -93,6 +93,51 @@ describe('canvas video generation inputs', () => {
     ).toBeNull()
   })
 
+  it('blocks reference-to-video models when fewer images than the declared minimum are attached', () => {
+    // HappyHorse 1.1（r2v）后端 input_constraints 声明 image min_count=1：
+    // 以前这里放行、提交后被后端以「上传的素材数量不足」打回，用户只看到一次莫名其妙的失败
+    const noRefs = validateCanvasVideoInputs({
+      operationCode: 'video.generate',
+      videoMode: 'auto',
+      sourceRefs: [],
+      minImageRefs: 1,
+      modelLabel: 'HappyHorse 1.1',
+    })
+    expect(noRefs).toContain('HappyHorse 1.1 至少需要 1 张参考图片')
+    expect(noRefs).toContain('已添加 0 张')
+
+    // 只有文本来源同样不算参考图
+    expect(
+      validateCanvasVideoInputs({
+        operationCode: 'video.generate',
+        videoMode: 'auto',
+        sourceRefs: [{ kind: 'text', slotIndex: 0 }],
+        minImageRefs: 1,
+      }),
+    ).toContain('至少需要 1 张参考图片')
+
+    // 满足下限即放行
+    expect(
+      validateCanvasVideoInputs({
+        operationCode: 'video.generate',
+        videoMode: 'auto',
+        sourceRefs: [{ kind: 'image', assetId: 1, slotIndex: 0 }],
+        minImageRefs: 1,
+      }),
+    ).toBeNull()
+
+    // 视频生视频（有源视频）不受参考图下限约束；video.edit 也不受
+    expect(
+      validateCanvasVideoInputs({
+        operationCode: 'video.generate',
+        videoMode: 'auto',
+        sourceRefs: [{ kind: 'video', assetId: 2, slotIndex: 0 }],
+        minImageRefs: 1,
+      }),
+    ).toBeNull()
+    expect(validateCanvasVideoInputs({ operationCode: 'video.edit', sourceRefs: [], minImageRefs: 1 })).toBeNull()
+  })
+
   it('allows zero to five optional references in free generation mode', () => {
     const refs = Array.from({ length: 5 }, (_, index) => ({ kind: 'image', assetId: index + 1, slotIndex: index }))
     expect(

@@ -107,7 +107,10 @@ vi.mock('@/composables/useToast', () => ({
   useConfirmDialog: () => ({ requestConfirm: mocks.requestConfirm }),
 }))
 
-vi.mock('@/stores/workspaceSession', () => ({ useWorkspaceId: () => mocks.workspaceId }))
+vi.mock('@/stores/workspaceSession', () => ({
+  useWorkspaceId: () => mocks.workspaceId,
+  useCurrentUser: () => ({ id: 7 }),
+}))
 
 vi.mock('@/api/business', () => ({
   getBusinessErrorMessage: (error: unknown, fallback: string) =>

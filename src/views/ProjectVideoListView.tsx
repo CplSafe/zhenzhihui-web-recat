@@ -725,10 +725,6 @@ export default function ProjectVideoListView() {
                   <path d="m12 19-7-7 7-7" />
                 </svg>
               </button>
-              <button type="button" className="pvlist-breadcrumb__link" onClick={() => navigate('/home')}>
-                首页
-              </button>
-              <span className="pvlist-breadcrumb__sep">›</span>
               <button type="button" className="pvlist-breadcrumb__link" onClick={() => navigate('/projects')}>
                 项目管理
               </button>

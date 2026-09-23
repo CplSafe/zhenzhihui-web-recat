@@ -346,9 +346,9 @@ describe('VideoStage playback loading', () => {
 
     const input = screen.getByRole('textbox', { name: '整段视频修改' })
     await user.type(input, '提高整体亮度')
-    await user.click(screen.getAllByRole('button', { name: 'AI一键润色' })[0])
+    await user.click(screen.getAllByRole('button', { name: 'AI一键润色' })[1])
 
-    await waitFor(() => expect(onPolishText).toHaveBeenCalledWith('video-edit', '提高整体亮度'))
+    await waitFor(() => expect(onPolishText).toHaveBeenCalledWith('video-edit', '提高整体亮度', undefined))
     expect(input).toHaveValue('润色后的整段修改意见')
   })
 
@@ -401,6 +401,91 @@ describe('VideoStage playback loading', () => {
     await waitFor(() => expect(confirm).toBeEnabled())
 
     fireEvent.click(confirm)
+    expect(onEstimateEditCost).toHaveBeenCalledWith('【整段视频】提高画面亮度')
+    expect(onRegenerateVideo).toHaveBeenCalledWith('【整段视频】提高画面亮度', { edit: true })
+  })
+
+  it('可选择五秒画面片段并仅以该区间提交修改', async () => {
+    const onEstimateEditCost = vi.fn().mockResolvedValue({ estimatedCost: 500, balance: 5000, canAfford: true })
+    const onRegenerateVideo = vi.fn()
+    render(
+      <VideoStage
+        shots={[]}
+        videoUrl="https://cdn.example.com/segment-source.mp4"
+        videoAssetId={2600}
+        onEstimateEditCost={onEstimateEditCost}
+        onRegenerateVideo={onRegenerateVideo}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '0:05–0:10' }))
+    await userEvent.type(screen.getByLabelText('选中片段修改'), '把产品改成红色')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认修改' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '确认修改' }))
+
+    const segment = { start: 5, end: 10 }
+    expect(onEstimateEditCost).toHaveBeenCalledWith(expect.stringContaining('把产品改成红色'), segment)
+    expect(onRegenerateVideo).toHaveBeenCalledWith(expect.stringContaining('不改动原音轨'), {
+      edit: true,
+      segment,
+    })
+  })
+
+  it('分段修改的 AI 润色随文本带上选中的秒数范围，整段修改不带', async () => {
+    const onPolishText = vi.fn().mockResolvedValue('润色后的片段指令')
+    render(
+      <VideoStage
+        shots={[]}
+        videoUrl="https://cdn.example.com/segment-polish-source.mp4"
+        videoAssetId={2602}
+        onEstimateEditCost={vi.fn().mockResolvedValue({ estimatedCost: 500, balance: 5000, canAfford: true })}
+        onRegenerateVideo={vi.fn()}
+        onPolishText={onPolishText}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '0:05–0:10' }))
+    const segmentInput = screen.getByLabelText('选中片段修改')
+    await userEvent.type(segmentInput, '把产品改成红色')
+    const [segmentPolish] = screen.getAllByRole('button', { name: 'AI一键润色' })
+    fireEvent.click(segmentPolish)
+    await waitFor(() => expect(segmentInput).toHaveValue('润色后的片段指令'))
+    expect(onPolishText).toHaveBeenCalledWith('segment', '把产品改成红色', { start: 5, end: 10 })
+
+    // 整段修改框不带片段范围
+    onPolishText.mockResolvedValue('润色后的整段指令')
+    const overallInput = screen.getByRole('textbox', { name: '整段视频修改' })
+    await userEvent.type(overallInput, '提高画面亮度')
+    const [, overallPolish] = screen.getAllByRole('button', { name: 'AI一键润色' })
+    fireEvent.click(overallPolish)
+    await waitFor(() => expect(overallInput).toHaveValue('润色后的整段指令'))
+    expect(onPolishText).toHaveBeenLastCalledWith('video-edit', '提高画面亮度', undefined)
+  })
+
+  it('五秒视频直接整段修改，不显示分段裁剪入口', async () => {
+    const user = userEvent.setup()
+    const onEstimateEditCost = vi.fn().mockResolvedValue({ estimatedCost: 500, balance: 5000, canAfford: true })
+    const onRegenerateVideo = vi.fn()
+    const { container } = render(
+      <VideoStage
+        shots={[]}
+        videoUrl="https://cdn.example.com/five-second-source.mp4"
+        videoAssetId={2601}
+        onEstimateEditCost={onEstimateEditCost}
+        onRegenerateVideo={onRegenerateVideo}
+      />,
+    )
+    const player = container.querySelector('video[controls]') as HTMLVideoElement
+    Object.defineProperty(player, 'duration', { value: 5, configurable: true })
+    fireEvent.loadedMetadata(player)
+
+    expect(screen.queryByRole('group', { name: '选择五秒片段' })).not.toBeInTheDocument()
+    expect(screen.getByRole('note')).toHaveTextContent('无需裁剪和回拼')
+    await user.type(screen.getByRole('textbox', { name: '整段视频修改' }), '提高画面亮度')
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认修改' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '确认修改' }))
+
     expect(onEstimateEditCost).toHaveBeenCalledWith('【整段视频】提高画面亮度')
     expect(onRegenerateVideo).toHaveBeenCalledWith('【整段视频】提高画面亮度', { edit: true })
   })

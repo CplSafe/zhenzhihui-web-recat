@@ -184,13 +184,24 @@ export function validateCanvasVideoInputs(args: {
   sourceRefs: CanvasGenerationSourceRef[]
   /** 当前模型声明的参考图上限；未声明时沿用画布默认的 5 张。 */
   maxImageRefs?: number
+  /**
+   * 当前模型声明的参考图下限（后端 input_constraints 的 min_count）。
+   * 参考生视频类模型（如 HappyHorse r2v）没有图就不能跑：以前这里把「没有素材」一律放行，
+   * 提交后才被后端以「上传的素材数量不足」打回，用户看到的只是一个莫名其妙的失败。
+   */
+  minImageRefs?: number
+  /** 模型展示名，用于把「谁要求的」说清楚 */
+  modelLabel?: string
 }): string | null {
   const isGenerate = args.operationCode === 'video.generate'
   const isEdit = args.operationCode === 'video.edit'
   if (!isGenerate && !isEdit) return null
 
   const mediaRefs = (args.sourceRefs || []).filter((ref) => ref.kind !== 'text')
-  if (mediaRefs.length === 0) return null
+  const minImageRefs = Math.max(0, Math.floor(Number(args.minImageRefs) || 0))
+  const belowMinimum = (imageCount: number) =>
+    `${args.modelLabel ? `${args.modelLabel} ` : '当前模型'}至少需要 ${minImageRefs} 张参考图片（已添加 ${imageCount} 张），请连接图片节点或从素材库添加`
+  if (mediaRefs.length === 0) return minImageRefs > 0 && isGenerate ? belowMinimum(0) : null
 
   const hasUsableAsset = (ref: CanvasGenerationSourceRef) =>
     Number.isSafeInteger(Number(ref.assetId)) && Number(ref.assetId) > 0
@@ -215,6 +226,9 @@ export function validateCanvasVideoInputs(args: {
   if (videoRefs.length === 1 || isEdit) {
     return imageRefs.length > maxImageRefs ? `视频生视频最多再附带 ${maxImageRefs} 张参考图片` : null
   }
+
+  // 只有图片（无源视频）的纯生成：先查下限，再查上限
+  if (imageRefs.length < minImageRefs) return belowMinimum(imageRefs.length)
 
   if (args.videoMode === 'full-ref' || args.videoMode === 'auto') {
     return imageRefs.length > maxImageRefs ? `当前模型最多支持 ${maxImageRefs} 张参考图片` : null
