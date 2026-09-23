@@ -89,7 +89,7 @@ test.describe('创作页空间切换隔离', () => {
       await switchWorkspaceThroughUi(page, scenario.targetWorkspaceName)
 
       await expect(page).toHaveURL(/\/smart$/)
-      await expect(page.getByRole('heading', { name: '想打造什么样的爆款短视频？' })).toBeVisible({
+      await expect(page.getByRole('heading', { name: '打造我想要的爆款视频' })).toBeVisible({
         timeout: 30_000,
       })
       await expect(page.getByText(scenario.oldDescription, { exact: true })).toHaveCount(0)

@@ -69,7 +69,7 @@ test('移动端公开首页与登录页可操作且无整页横向溢出', async
 
   await page.getByRole('button', { name: '爆款成片 输入灵感，秒出大片', exact: true }).click()
   await expect(page).toHaveURL(/\/smart$/)
-  await expect(page.getByRole('heading', { name: '想打造什么样的爆款短视频？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '打造我想要的爆款视频' })).toBeVisible()
   await expectNoDocumentOverflow(page)
 
   await page.goBack()
@@ -96,7 +96,7 @@ test('移动端智能成片与爆款复制入口可访问且无整页横向溢�
   test.slow()
 
   await page.goto('/smart')
-  await expect(page.getByRole('heading', { name: '想打造什么样的爆款短视频？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '打造我想要的爆款视频' })).toBeVisible()
   await expectNoDocumentOverflow(page)
 
   await page.getByRole('button', { name: '打开菜单' }).click()
