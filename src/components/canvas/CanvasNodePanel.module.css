@@ -1106,8 +1106,15 @@
 }
 
 /* 按钮组：铺满宽度，连接式分段控件 */
+/*
+ * 选项平均分布（飞书「所有节点平均分布选择项」）：等宽网格而不是一行挤满。
+ * 选项少时（开/关、三种生成方式）照样一行等分铺满；选项多时（14 种画面比例）自动换行，
+ * 每格等宽，不再被压到文字叠在一起。
+ */
 .videoBtnGroup {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  gap: 6px;
   width: 100%;
 }
 
@@ -1138,9 +1145,10 @@
 }
 
 .videoBtnGroupItem {
-  flex: 1;
-  padding: 7px 0;
+  min-width: 0;
+  padding: 7px 4px;
   border: 1px solid #e0e0e0;
+  border-radius: 8px;
   background: #fff;
   font-size: 13px;
   color: #666;
@@ -1148,26 +1156,10 @@
   font-family: 'PingFang SC', sans-serif;
   text-align: center;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: all 0.15s;
 }
-
-/* 相邻按钮共享边框，形成连接式按钮组 */
-.videoBtnGroupItem + .videoBtnGroupItem {
-  margin-left: -1px;
-}
-
-.videoBtnGroupItem:first-child {
-  border-radius: 8px 0 0 8px;
-}
-
-.videoBtnGroupItem:last-child {
-  border-radius: 0 8px 8px 0;
-}
-
-.videoBtnGroupItem:only-child {
-  border-radius: 8px;
-}
-
 .videoBtnGroupItem:hover {
   border-color: var(--panel-pick-border);
   color: var(--panel-pick);

@@ -69,6 +69,7 @@ import {
 } from '@/utils/canvasPreferences'
 import { computeAlignment, type AlignRect, type AlignmentGuide } from '@/utils/canvasAlignment'
 import { computeLayeredLayout } from '@/utils/canvasLayout'
+import { rememberCanvasModel } from '@/utils/canvasLastModel'
 import { copyCanvasNodes, materializeCanvasClipboard, type CanvasClipboardPayload } from '@/utils/canvasClipboard'
 import { isPageInBackground, playNotificationSound, showGenerationNotification } from '@/utils/generationNotifier'
 import {
@@ -150,6 +151,7 @@ import {
 } from '@/utils/canvasGeneration'
 import {
   formatCanvasElapsed,
+  getCanvasEstimatedVideoProgress,
   getCanvasGenerationDuration,
   getCanvasTaskPresentation,
   isCanvasGeneratedResult,
@@ -905,9 +907,16 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const [textContent, setTextContent] = useState(
     () => ((window as any).__canvasTextContents?.get(id) as string) || String((data as any)?.text || ''),
   )
+  // 只在 data.text 真正变化时（下方面板保存、协同同步）才覆盖正文。
+  // 以前是「和当前正文不一致就覆盖」：在节点框里直接编辑只写全局 Map、不写 data.text，
+  // 失焦后这里发现两者不一致，就把用户刚输入的内容换回了面板上次保存的旧文本（飞书「文本节点保存失效」）。
+  const lastRemoteTextRef = useRef(String((data as any)?.text || ''))
   useEffect(() => {
+    if (editing) return
     const remoteText = String((data as any)?.text || '')
-    if (!editing && remoteText && remoteText !== textContent) {
+    if (remoteText === lastRemoteTextRef.current) return
+    lastRemoteTextRef.current = remoteText
+    if (remoteText && remoteText !== textContent) {
       setTextContent(remoteText)
       if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
       ;(window as any).__canvasTextContents.set(id, remoteText)
@@ -1441,9 +1450,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   })
   const taskRunning = taskPresentation.running
   const taskFailed = taskPresentation.failed
-  // 已用时：从持久化的提交时刻算起，刷新后接着走；上传中那层遮罩不是生成任务，不计时
+  // 从持久化的提交时刻算起，刷新后接着走；视频节点用于预计进度，其他节点仍显示已用时
   const taskElapsedSec = useElapsedSince((data as any)?.taskStartedAt, taskRunning && !uploadingLocalFile)
-  const taskElapsedLabel = taskElapsedSec === null ? '' : formatCanvasElapsed(taskElapsedSec)
+  const taskElapsedLabel = kind === 'video' || taskElapsedSec === null ? '' : formatCanvasElapsed(taskElapsedSec)
+  const videoEstimatedProgress =
+    kind === 'video' && taskRunning ? getCanvasEstimatedVideoProgress(taskElapsedSec) : null
   // 标题旁的「已生成」对勾：只认当前画面确实是生成结果（替换成素材库/本地文件后不显示）
   const generatedResult =
     (kind === 'image' || kind === 'video') &&
@@ -1869,23 +1880,45 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       )}
 
       {taskRunning && !uploadingLocalFile && (
-        <div className="canvas-node-generation-mask" role="status" aria-live="polite">
-          <span className="canvas-node-generation-spinner" aria-hidden="true" />
+        <div
+          className={`canvas-node-generation-mask${videoEstimatedProgress !== null ? ' is-video' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
+          {videoEstimatedProgress === null ? (
+            <span className="canvas-node-generation-spinner" aria-hidden="true" />
+          ) : null}
           <strong>{taskPresentation.title}</strong>
-          {/*
-           * 进度条：后端给了进度就按实值走，没给就是来回流动的不定态——
-           * 百分比常常几十秒才跳一次，条上的流光让「还在跑」一直看得见，但不伪造数字。
-           */}
           <span
-            className={`canvas-node-generation-progress${taskPresentation.progress ? '' : ' is-indeterminate'}`}
-            aria-hidden="true"
+            className={`canvas-node-generation-progress${videoEstimatedProgress !== null ? ' is-timed' : taskPresentation.progress ? '' : ' is-indeterminate'}`}
+            role={videoEstimatedProgress !== null ? 'progressbar' : undefined}
+            aria-label={videoEstimatedProgress !== null ? '视频生成预计进度' : undefined}
+            aria-valuemin={videoEstimatedProgress !== null ? 0 : undefined}
+            aria-valuemax={videoEstimatedProgress !== null ? 100 : undefined}
+            aria-valuenow={videoEstimatedProgress ?? undefined}
+            aria-hidden={videoEstimatedProgress === null ? 'true' : undefined}
           >
             <span
               className="canvas-node-generation-progress__fill"
-              style={taskPresentation.progress ? { width: `${Math.round(taskPresentation.progress)}%` } : undefined}
+              style={
+                videoEstimatedProgress !== null
+                  ? { width: `${videoEstimatedProgress}%` }
+                  : taskPresentation.progress
+                    ? { width: `${Math.round(taskPresentation.progress)}%` }
+                    : undefined
+              }
             />
           </span>
-          <span className="canvas-node-generation-detail">{taskPresentation.detail}</span>
+          {videoEstimatedProgress !== null ? (
+            <span className="canvas-node-generation-estimate" aria-hidden="true">
+              预计进度 {videoEstimatedProgress.toFixed(2)}%
+            </span>
+          ) : null}
+          <span className="canvas-node-generation-detail">
+            {videoEstimatedProgress !== null && taskPresentation.detail.endsWith('%')
+              ? '模型处理中'
+              : taskPresentation.detail}
+          </span>
           {taskElapsedLabel ? (
             // 读屏只在状态文案变化时播报，每秒跳动的计时不进 live region
             <span className="canvas-node-generation-elapsed" aria-hidden="true">
@@ -1909,7 +1942,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 ? '正在核对'
                 : '正在生成'}
           </span>
-          {taskRunning && taskPresentation.progress ? <strong>{Math.round(taskPresentation.progress)}%</strong> : null}
+          {taskRunning && videoEstimatedProgress !== null ? (
+            <strong aria-hidden="true">{videoEstimatedProgress.toFixed(2)}%</strong>
+          ) : taskRunning && taskPresentation.progress ? (
+            <strong>{Math.round(taskPresentation.progress)}%</strong>
+          ) : null}
         </div>
       )}
 
@@ -4800,6 +4837,8 @@ function CanvasInner() {
         })
         const taskId = getAiTaskId(task)
         if (!taskId) throw new Error('任务创建后未返回任务 ID')
+        // 任务真正建起来才记「上次使用的模型」，下次新建同类节点默认选它
+        rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
         // 3) 回写 task_id/task_status 到节点
         const createdStatus = normalizeAiTaskStatus(task?.status) || 'pending'
         // 创建接口可能直接返回 succeeded，但完整 outputs 通常仍需从任务详情读取。

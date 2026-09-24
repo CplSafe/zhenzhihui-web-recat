@@ -11,10 +11,12 @@ import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost } from '@/api/business'
 import { creditsYuanHint, creditsYuanLabel } from '@/utils/creditsYuan'
+import { pickRememberedCanvasModel } from '@/utils/canvasLastModel'
 import {
   buildCanvasInputAssets,
   buildPolishImageRefs,
   canvasVideoReferenceMode,
+  isCanvasVideoSourceKind,
   validateCanvasImageInputs,
   validateCanvasVideoInputs,
   type CanvasInputAsset,
@@ -23,6 +25,13 @@ import {
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
 import { filterInputDerivedRatioOptions, resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
+import {
+  applyVideoTaskModeParams,
+  formatVideoTaskModeLabel,
+  isFollowSourceVideoMode,
+  isVideoTaskModeField,
+} from '@/utils/canvasVideoTaskMode'
+import { readVideoDurationSecExact } from '@/utils/videoDuration'
 import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
 import { resolveModelVideoInputSupport, VIDEO_INPUT_UNSUPPORTED_REASON } from '@/utils/modelVideoInputSupport'
 import { readModelAccentHue, readModelInitial, readModelPresentation } from '@/utils/modelPresentation'
@@ -248,6 +257,7 @@ function normalizeFieldValue(field: ParamsSchemaField, value: unknown): unknown 
 /** 字段当前值 → 菜单按钮上显示的文本。 */
 function formatFieldValue(field: ParamsSchemaField, value: unknown): string {
   if (isBooleanField(field)) return value ? '开' : '关'
+  if (isVideoTaskModeField(field)) return formatVideoTaskModeLabel(value)
   if (isDurationField(field)) return `${String(value ?? '')}秒`
   return String(value ?? '')
 }
@@ -959,14 +969,22 @@ export default function CanvasNodePanel({
     })
   }, [kindModels, targetOperationCode, needsVideoInputAsset])
 
-  // 选中模型（按 modelVersionId 匹配，无匹配时取第一个可用；优先保留用户已选）
+  // 选中模型：优先节点自己选过的；没选过时用同类节点上次生成用的模型（见 canvasLastModel）；再不行取第一个可用
   const selectedModel: GenerationModelOption | undefined = useMemo(() => {
-    if (!node?.modelVersionId) return availableModels.find((m) => !m.unavailableReason)
-    return (
-      availableModels.find((m) => m.modelVersionId === node.modelVersionId && !m.unavailableReason) ||
-      availableModels.find((m) => !m.unavailableReason)
-    )
-  }, [availableModels, node?.modelVersionId])
+    const usable = availableModels.filter((m) => !m.unavailableReason)
+    const explicit = node?.modelVersionId ? usable.find((m) => m.modelVersionId === node.modelVersionId) : undefined
+    if (explicit) return explicit
+    if (!node?.modelVersionId) {
+      const rememberedId = pickRememberedCanvasModel(
+        kind,
+        targetOperationCode,
+        usable.map((m) => m.modelVersionId),
+      )
+      const remembered = rememberedId ? usable.find((m) => m.modelVersionId === rememberedId) : undefined
+      if (remembered) return remembered
+    }
+    return usable[0]
+  }, [availableModels, node?.modelVersionId, kind, targetOperationCode])
 
   /**
    * 素材来源数量上限：跟随所选模型在 params schema 里声明的参考图上限。
@@ -1048,6 +1066,38 @@ export default function CanvasNodePanel({
   /** 是否有素材输入（图片/视频连线）；纯文本来源不算，它只会拼进 prompt。 */
   const hasMediaInput = useMemo(() => sourceRefs.some((ref) => ref.kind !== 'text'), [sourceRefs])
 
+  // 视频输入：连进来的视频 / 时间线，或改片时节点自己那条视频（与 inputAssets 同口径）。
+  // 编辑 / 延长只在有视频时可选；含视频任务按「原视频 + 出片」秒数计费，需上报原视频时长。
+  const hasVideoInput =
+    kind === 'video' &&
+    (sourceRefs.some((ref) => isCanvasVideoSourceKind(ref.kind)) || (isEditingVideo && Number(node?.assetId || 0) > 0))
+  const sourceVideoUrls = useMemo(() => {
+    if (kind !== 'video') return []
+    const urls = sourceRefs
+      .filter((ref) => isCanvasVideoSourceKind(ref.kind))
+      .map(
+        (ref) => ref.thumbnailUrl || (ref.assetId ? assetStreamUrl(ref.assetId, ref.workspaceId || workspaceId) : ''),
+      )
+    if (isEditingVideo && Number(node?.assetId || 0) > 0) urls.push(node?.resultUrl || '')
+    return urls
+  }, [kind, sourceRefs, isEditingVideo, node?.assetId, node?.resultUrl, workspaceId])
+  const sourceVideoKey = sourceVideoUrls.join('|')
+  const [sourceVideoSeconds, setSourceVideoSeconds] = useState(0)
+  useEffect(() => {
+    setSourceVideoSeconds(0)
+    const urls = sourceVideoKey ? sourceVideoKey.split('|') : []
+    // 任一段地址缺失或读不到都按「未知」处理：不上报时长，后端按上限预冻，宁可多冻不少收。
+    if (!urls.length || urls.some((url) => !url)) return
+    let cancelled = false
+    Promise.all(urls.map((url) => readVideoDurationSecExact(url))).then((seconds) => {
+      if (cancelled || seconds.some((value) => !(value > 0))) return
+      setSourceVideoSeconds(seconds.reduce((sum, value) => sum + value, 0))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [sourceVideoKey])
+
   // 选中模型的 params_schema.fields（视频菜单动态渲染来源）。
   // 没有素材输入时剔除「跟随素材」的比例档位（adaptive/auto）：模型无从推断画幅，官方 API 直接 400。
   // 在这里一次性剔除，下拉菜单、默认值收敛和最终 params 三处就都拿不到这个档位。
@@ -1056,12 +1106,15 @@ export default function CanvasNodePanel({
   // 只是白占一格参数位。从 schemaFields 源头去掉，菜单不再渲染它，params 里也不会带上，
   // 后端未传时按其自身默认处理。
   const schemaFields = useMemo(() => {
-    const fields = parseParamsSchema(selectedModel).filter((field) => !isHiddenParamField(field))
+    // 任务类型（编辑 / 延长）离不开视频：没接视频时不展示，也不下发。
+    const fields = parseParamsSchema(selectedModel).filter(
+      (field) => !isHiddenParamField(field) && (hasVideoInput || !isVideoTaskModeField(field)),
+    )
     if (hasMediaInput) return fields
     return fields.map((field) =>
       isRatioField(field) ? { ...field, options: filterInputDerivedRatioOptions(field.options, false) } : field,
     )
-  }, [selectedModel, hasMediaInput])
+  }, [selectedModel, hasMediaInput, hasVideoInput])
 
   // 字段值状态：模型/schema 变化时重置为 default；优先读取节点已持久化的 params（刷新后回显用户选择）
   const [fieldValues, setFieldValues] = useState<Record<string, unknown>>({})
@@ -1126,16 +1179,36 @@ export default function CanvasNodePanel({
   // （避免与分段控件重复、也避免被 schema Default 顶成 false），只能在这里按模型声明的
   // 真实字段名注入，与智能成片 buildSmartVideoParams 同口径。未声明该字段的模型
   // （kling / minimax 各有自己的模式开关）不下发，免得塞入上游不认识的参数。
+  //
+  // 任务类型字段名同样从未过滤的 schema 取：没接视频时它不在 schemaFields 里，但仍要据此
+  // 判断该模型是否支持编辑 / 延长、要不要上报原视频时长（别的按秒计费模型不能收到这个字段）。
+  const taskModeFieldName = useMemo(
+    () => (kind === 'video' ? parseParamsSchema(selectedModel).find(isVideoTaskModeField)?.name : undefined),
+    [kind, selectedModel],
+  )
+  const followSourceVideo = Boolean(
+    taskModeFieldName && hasVideoInput && isFollowSourceVideoMode(fieldValues[taskModeFieldName]),
+  )
   const schemaParams = useMemo<Record<string, unknown>>(() => {
     const params = buildSchemaParams(fieldValues)
     if (kind !== 'video') return params
     const referenceMode = canvasVideoReferenceMode(videoMode)
-    if (referenceMode === undefined) return params
-    // 从未过滤的 schema 里找（schemaFields 已把它剔除），按模型声明的真实字段名下发。
-    const field = parseParamsSchema(selectedModel).find(isReferenceModeField)
-    if (field?.name) params[field.name] = referenceMode
-    return params
-  }, [buildSchemaParams, fieldValues, kind, videoMode, selectedModel])
+    if (referenceMode !== undefined) {
+      // 从未过滤的 schema 里找（schemaFields 已把它剔除），按模型声明的真实字段名下发。
+      const field = parseParamsSchema(selectedModel).find(isReferenceModeField)
+      if (field?.name) params[field.name] = referenceMode
+    }
+    return applyVideoTaskModeParams(params, { modeFieldName: taskModeFieldName, hasVideoInput, sourceVideoSeconds })
+  }, [
+    buildSchemaParams,
+    fieldValues,
+    kind,
+    videoMode,
+    selectedModel,
+    taskModeFieldName,
+    hasVideoInput,
+    sourceVideoSeconds,
+  ])
 
   /**
    * 拼接最终 prompt：继承来的文本在前（按连线顺序），用户自己的提示词在后；
@@ -1806,7 +1879,8 @@ export default function CanvasNodePanel({
           {kind !== 'text' && (
             <ModelSelector
               models={availableModels}
-              value={node?.modelVersionId}
+              // 与实际提交用的 selectedModel 同源，默认模型（含「上次使用」）才不会显示一个、提交另一个
+              value={selectedModel?.modelVersionId}
               loading={modelsLoading}
               disabled={taskRunning}
               // 缺模型时要说清缺的是哪一种能力：接了参考图走图生图、没接走文生图，
@@ -1841,6 +1915,7 @@ export default function CanvasNodePanel({
             <SchemaFieldMenu
               kind={kind}
               mode={kind === 'video' ? videoMode : undefined}
+              followSourceVideo={followSourceVideo}
               fields={schemaFields}
               values={fieldValues}
               onModeChange={taskRunning ? undefined : onVideoModeChange}
@@ -2163,6 +2238,7 @@ function RatioSelector({ value, onRatioChange }: { value: string; onRatioChange?
 function SchemaFieldMenu({
   kind,
   mode,
+  followSourceVideo,
   fields,
   values,
   onModeChange,
@@ -2170,6 +2246,8 @@ function SchemaFieldMenu({
 }: {
   kind: string
   mode?: VideoMode
+  /** 编辑 / 延长：比例与时长跟随原视频，这两项只展示说明、不可选。 */
+  followSourceVideo?: boolean
   fields: ParamsSchemaField[]
   values: Record<string, unknown>
   onModeChange?: (m: VideoMode) => void
@@ -2180,11 +2258,14 @@ function SchemaFieldMenu({
   // 按钮摘要：视频先显示生成方式，再拼接各字段当前值
   const modeLabel = mode === 'first-last' ? '首尾帧' : mode === 'full-ref' ? '全能参考' : '自由生成'
   const displayParts = kind === 'video' ? [modeLabel] : []
+  const followsSource = (f: ParamsSchemaField) => Boolean(followSourceVideo) && (isRatioField(f) || isDurationField(f))
   for (const f of fields) {
+    if (followsSource(f)) continue
     const v = values[f.name]
     if (v === undefined || v === null || v === '') continue
     displayParts.push(formatFieldValue(f, v))
   }
+  if (followSourceVideo) displayParts.push('比例时长跟随原视频')
   const display = displayParts.join(' · ')
 
   /** number 滑块步进：default 带小数点则按小数位数（0.5→0.1，0.05→0.01），否则按 1 */
@@ -2246,7 +2327,9 @@ function SchemaFieldMenu({
                     </span>
                   )}
                 </div>
-                {isBooleanField(f) ? (
+                {followsSource(f) ? (
+                  <div className={styles.videoMenuHint}>编辑 / 延长时跟随原视频，无需选择。</div>
+                ) : isBooleanField(f) ? (
                   <div className={styles.videoBtnGroup}>
                     <button
                       className={`${styles.videoBtnGroupItem} ${current ? styles.videoBtnGroupItemActive : ''}`}

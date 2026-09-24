@@ -789,6 +789,34 @@
   line-height: 1.4;
 }
 
+.canvas-node-generation-estimate {
+  color: #177e68;
+  font-size: calc(12px * var(--canvas-readable-text-scale));
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.canvas-node-generation-mask.is-video {
+  gap: 12px;
+}
+
+.canvas-node-generation-mask.is-video strong {
+  font-size: calc(18px * var(--canvas-readable-text-scale));
+}
+
+.canvas-node-generation-mask.is-video .canvas-node-generation-detail {
+  font-size: calc(14px * var(--canvas-readable-text-scale));
+}
+
+.canvas-node-generation-mask.is-video .canvas-node-generation-estimate {
+  font-size: calc(16px * var(--canvas-readable-text-scale));
+}
+
+.canvas-node-generation-mask.is-video .canvas-node-generation-progress {
+  width: min(80%, 260px);
+  height: calc(6px * var(--canvas-readable-text-scale));
+}
+
 /* 已用时：等宽数字，每秒跳动时整行不左右晃 */
 .canvas-node-generation-elapsed {
   color: #177e68;
@@ -815,6 +843,15 @@
   background: #22c5a0;
   overflow: hidden;
   transition: width 400ms var(--canvas-ease);
+}
+
+/* 视频任务每秒刷新数值，填充宽度用线性过渡补齐两次更新之间的画面。 */
+.canvas-node-generation-progress.is-timed .canvas-node-generation-progress__fill {
+  transition: width 1s linear;
+}
+
+.canvas-node-generation-progress.is-timed .canvas-node-generation-progress__fill::after {
+  display: none;
 }
 
 /* 有实值进度：填充段上叠一道流光，两次跳变之间也在动 */
@@ -890,6 +927,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .canvas-node-generation-progress.is-timed .canvas-node-generation-progress__fill {
+    transition: none;
+  }
+
   .canvas-node-generation-progress__fill::after,
   .react-flow__edge.is-feeding .react-flow__edge-path {
     animation: none;
