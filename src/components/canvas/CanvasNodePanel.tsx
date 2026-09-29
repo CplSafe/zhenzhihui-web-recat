@@ -34,6 +34,7 @@ import {
   formatVideoTaskModeLabel,
   isFollowSourceVideoMode,
   isVideoTaskModeField,
+  resolveSelfVideoAssetId,
 } from '@/utils/canvasVideoTaskMode'
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
 import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
@@ -1101,37 +1102,13 @@ export default function CanvasNodePanel({
   /** 是否有素材输入（图片/视频连线）；纯文本来源不算，它只会拼进 prompt。 */
   const hasMediaInput = useMemo(() => sourceRefs.some((ref) => ref.kind !== 'text'), [sourceRefs])
 
-  // 视频输入：连进来的视频 / 时间线，或改片时节点自己那条视频（与 inputAssets 同口径）。
-  // 编辑 / 延长只在有视频时可选；含视频任务按「原视频 + 出片」秒数计费，需上报原视频时长。
-  const hasVideoInput =
-    kind === 'video' &&
-    (sourceRefs.some((ref) => isCanvasVideoSourceKind(ref.kind)) || (isEditingVideo && Number(node?.assetId || 0) > 0))
-  const sourceVideoUrls = useMemo(() => {
-    if (kind !== 'video') return []
-    const urls = sourceRefs
-      .filter((ref) => isCanvasVideoSourceKind(ref.kind))
-      .map(
-        (ref) => ref.thumbnailUrl || (ref.assetId ? assetStreamUrl(ref.assetId, ref.workspaceId || workspaceId) : ''),
-      )
-    if (isEditingVideo && Number(node?.assetId || 0) > 0) urls.push(node?.resultUrl || '')
-    return urls
-  }, [kind, sourceRefs, isEditingVideo, node?.assetId, node?.resultUrl, workspaceId])
-  const sourceVideoKey = sourceVideoUrls.join('|')
-  const [sourceVideoSeconds, setSourceVideoSeconds] = useState(0)
-  useEffect(() => {
-    setSourceVideoSeconds(0)
-    const urls = sourceVideoKey ? sourceVideoKey.split('|') : []
-    // 任一段地址缺失或读不到都按「未知」处理：不上报时长，后端按上限预冻，宁可多冻不少收。
-    if (!urls.length || urls.some((url) => !url)) return
-    let cancelled = false
-    Promise.all(urls.map((url) => readVideoDurationSecExact(url))).then((seconds) => {
-      if (cancelled || seconds.some((value) => !(value > 0))) return
-      setSourceVideoSeconds(seconds.reduce((sum, value) => sum + value, 0))
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [sourceVideoKey])
+  // 节点自己已有的视频（上传或生成的）可作为编辑 / 延长的源视频。
+  const hasSelfVideo = kind === 'video' && Boolean(node?.resultUrl) && Number(node?.assetId || 0) > 0
+  // 任务类型（编辑 / 延长）是否可选：连了视频，或节点自己有视频。
+  // 换过模型的节点会进入「用新模型重新生成」（isEditingVideo=false），自身视频默认不下发；
+  // 但用户选了编辑 / 延长就是要改这条视频 —— 下方 selfVideoAssetId 会据此把它带上。
+  const taskModeVideoAvailable =
+    kind === 'video' && (sourceRefs.some((ref) => isCanvasVideoSourceKind(ref.kind)) || hasSelfVideo)
 
   // 选中模型的 params_schema.fields（视频菜单动态渲染来源）。
   // 没有素材输入时剔除「跟随素材」的比例档位（adaptive/auto）：模型无从推断画幅，官方 API 直接 400。
@@ -1143,13 +1120,13 @@ export default function CanvasNodePanel({
   const schemaFields = useMemo(() => {
     // 任务类型（编辑 / 延长）离不开视频：没接视频时不展示，也不下发。
     const fields = parseParamsSchema(selectedModel).filter(
-      (field) => !isHiddenParamField(field) && (hasVideoInput || !isVideoTaskModeField(field)),
+      (field) => !isHiddenParamField(field) && (taskModeVideoAvailable || !isVideoTaskModeField(field)),
     )
     if (hasMediaInput) return fields
     return fields.map((field) =>
       isRatioField(field) ? { ...field, options: filterInputDerivedRatioOptions(field.options, false) } : field,
     )
-  }, [selectedModel, hasMediaInput, hasVideoInput])
+  }, [selectedModel, hasMediaInput, taskModeVideoAvailable])
 
   // 字段值状态：模型/schema 变化时重置为 default；优先读取节点已持久化的 params（刷新后回显用户选择）
   const [fieldValues, setFieldValues] = useState<Record<string, unknown>>({})
@@ -1227,8 +1204,46 @@ export default function CanvasNodePanel({
     [kind, selectedModel],
   )
   const followSourceVideo = Boolean(
-    taskModeFieldName && hasVideoInput && isFollowSourceVideoMode(fieldValues[taskModeFieldName]),
+    taskModeFieldName && taskModeVideoAvailable && isFollowSourceVideoMode(fieldValues[taskModeFieldName]),
   )
+  // 节点自己那条视频是否作为输入下发：改片时下发；「使用新模型重新生成」是从头再生成，
+  // 默认不带（否则 video.generate 会收到它不接受的视频素材而被拒）——除非选了编辑 / 延长。
+  // 估价、提交、时长上报、确认文案都以它为准，保证预估 = 实扣。
+  const selfVideoAssetId = resolveSelfVideoAssetId({
+    isEditingVideo,
+    followSourceVideo,
+    assetId: hasSelfVideo ? Number(node?.assetId || 0) : 0,
+  })
+  // 实际下发的视频输入（与 inputAssets 同口径）：连进来的视频 / 时间线，或上面的自身视频。
+  const hasVideoInput =
+    kind === 'video' && (sourceRefs.some((ref) => isCanvasVideoSourceKind(ref.kind)) || selfVideoAssetId > 0)
+  // 含视频任务按「原视频 + 出片」秒数计费，需上报原视频时长。
+  const sourceVideoUrls = useMemo(() => {
+    if (kind !== 'video') return []
+    const urls = sourceRefs
+      .filter((ref) => isCanvasVideoSourceKind(ref.kind))
+      .map(
+        (ref) => ref.thumbnailUrl || (ref.assetId ? assetStreamUrl(ref.assetId, ref.workspaceId || workspaceId) : ''),
+      )
+    if (selfVideoAssetId > 0) urls.push(node?.resultUrl || '')
+    return urls
+  }, [kind, sourceRefs, selfVideoAssetId, node?.resultUrl, workspaceId])
+  const sourceVideoKey = sourceVideoUrls.join('|')
+  const [sourceVideoSeconds, setSourceVideoSeconds] = useState(0)
+  useEffect(() => {
+    setSourceVideoSeconds(0)
+    const urls = sourceVideoKey ? sourceVideoKey.split('|') : []
+    // 任一段地址缺失或读不到都按「未知」处理：不上报时长，后端按上限预冻，宁可多冻不少收。
+    if (!urls.length || urls.some((url) => !url)) return
+    let cancelled = false
+    Promise.all(urls.map((url) => readVideoDurationSecExact(url))).then((seconds) => {
+      if (cancelled || seconds.some((value) => !(value > 0))) return
+      setSourceVideoSeconds(seconds.reduce((sum, value) => sum + value, 0))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [sourceVideoKey])
   const schemaParams = useMemo<Record<string, unknown>>(() => {
     const params = buildSchemaParams(fieldValues)
     if (kind !== 'video') return params
@@ -1299,12 +1314,8 @@ export default function CanvasNodePanel({
     [inheritedPromptText, sourceRefs],
   )
 
-  // 估价必须和提交用同一份 input_assets：改片时节点自己的那条视频也要计入，
+  // 估价必须和提交用同一份 input_assets：节点自己的视频是否计入见上方 selfVideoAssetId，
   // 否则源视频只在提交时下发，预估按「没有源视频」算，出现预估 ≠ 实扣。
-  //
-  // 只在真正改片时下发：「使用新模型重新生成」是从头再生成一次，
-  // 把自己那条视频当输入发出去会让 video.generate 收到一个它不接受的视频素材而被拒。
-  const selfVideoAssetId = isEditingVideo ? Number(node?.assetId || 0) : 0
   // 按当前操作解析角色，避免通用 image 默认值覆盖图生图的 reference_image。
   const declaredImageRole = useMemo(
     () => (selectedModel ? resolveModelInputAssetRoleSafe(selectedModel.source, operationCode) : ''),
@@ -1323,9 +1334,9 @@ export default function CanvasNodePanel({
     const urls = sourceRefs
       .filter((ref) => ref.kind === 'video' || ref.kind === 'timeline')
       .map((ref) => String((ref as any).thumbnailUrl || ''))
-    if (isEditingVideo && node?.resultUrl) urls.push(String(node.resultUrl))
+    if (selfVideoAssetId > 0 && node?.resultUrl) urls.push(String(node.resultUrl))
     return urls.filter(Boolean)
-  }, [kind, sourceRefs, isEditingVideo, node?.resultUrl])
+  }, [kind, sourceRefs, selfVideoAssetId, node?.resultUrl])
   const [videoDurations, setVideoDurations] = useState<Record<string, number>>({})
   useEffect(() => {
     const pending = videoRefUrls.filter((url) => videoDurations[url] === undefined)
@@ -1478,8 +1489,9 @@ export default function CanvasNodePanel({
     if (taskRunning) return
     const cost = Number(costEstimate.estimated_cost || 0)
     if (kind === 'video' && cost > 0) {
-      const operationLabel = isEditingVideo ? '修改当前视频' : '使用新模型生成视频'
-      const ratioNote = videoRatioValue ? `，画面比例 ${videoRatioValue}` : ''
+      const operationLabel = selfVideoAssetId > 0 ? '修改当前视频' : '使用新模型生成视频'
+      // 编辑 / 延长时比例跟随原视频，所选比例不生效，不在确认框里误导用户
+      const ratioNote = videoRatioValue && !followSourceVideo ? `，画面比例 ${videoRatioValue}` : ''
       const confirmed = await requestConfirm(
         `${operationLabel}${ratioNote}，预计费用 ${creditsYuanLabel(cost)}，是否继续？`,
         {
@@ -1503,7 +1515,7 @@ export default function CanvasNodePanel({
       ratio,
       videoMode: kind === 'video' ? videoMode : undefined,
       // 视频生视频：节点自己已有的那条视频作为源视频下发；新模型重生成则不带，等于从头生成
-      selfVideoAssetId: isEditingVideo ? Number(node?.assetId || 0) || 0 : 0,
+      selfVideoAssetId,
     })
   }
 

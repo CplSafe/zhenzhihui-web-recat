@@ -4,6 +4,7 @@ import {
   formatVideoTaskModeLabel,
   isFollowSourceVideoMode,
   isVideoTaskModeField,
+  resolveSelfVideoAssetId,
 } from '@/utils/canvasVideoTaskMode'
 
 const modeField = { name: 'mode', options: ['generate', 'edit', 'extend'] }
@@ -69,5 +70,24 @@ describe('applyVideoTaskModeParams', () => {
     expect(
       applyVideoTaskModeParams(params, { modeFieldName: undefined, hasVideoInput: true, sourceVideoSeconds: 9 }),
     ).toBe(params)
+  })
+})
+
+describe('resolveSelfVideoAssetId', () => {
+  it('sends the node video while editing it', () => {
+    expect(resolveSelfVideoAssetId({ isEditingVideo: true, followSourceVideo: false, assetId: 7 })).toBe(7)
+  })
+
+  it('sends the node video for edit/extend even after switching models', () => {
+    // 上传视频 → 换 Seedance → 选编辑：isEditingVideo 为 false，但必须带上自身视频
+    expect(resolveSelfVideoAssetId({ isEditingVideo: false, followSourceVideo: true, assetId: 7 })).toBe(7)
+  })
+
+  it('regenerates from scratch with a new model in generate mode', () => {
+    expect(resolveSelfVideoAssetId({ isEditingVideo: false, followSourceVideo: false, assetId: 7 })).toBe(0)
+  })
+
+  it('never sends a video that has no asset id', () => {
+    expect(resolveSelfVideoAssetId({ isEditingVideo: true, followSourceVideo: true, assetId: 0 })).toBe(0)
   })
 })
