@@ -11,33 +11,54 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  border: none;
+  border: 1px solid #f4dfe2;
   border-radius: 50%;
-  background: transparent;
+  background: #fff;
   color: #ff4d4f;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .notify__bell:hover {
-  background: #f3f4f6;
+  border-color: #f2c9d0;
+  background: #fff5f6;
+}
+
+.notify__bell:focus-visible {
+  outline: 2px solid #18b995;
+  outline-offset: 2px;
 }
 
 .notify__badge {
   position: absolute;
-  top: 1px;
-  right: -2px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
-  border-radius: 9px;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border-radius: 50%;
   background: #ff4d4f;
   border: 2px solid #fff;
   color: #fff;
   font-size: 9px;
   font-weight: 700;
-  line-height: 13px;
+  line-height: 1;
   text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 4px rgba(255, 77, 79, 0.24);
+}
+
+.notify__badge--overflow {
+  width: auto;
+  min-width: 25px;
+  padding: 0 3px;
+  border-radius: 999px;
 }
 
 .notify__panel {
@@ -49,7 +70,7 @@
   overflow: hidden;
   background: #fff;
   border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: 16px;
+  border-radius: 20px;
   box-shadow: 0 18px 52px rgba(15, 23, 42, 0.16);
   padding: 0;
   z-index: 1100;
@@ -114,7 +135,7 @@
   width: 100%;
   padding: 12px 28px 12px 12px;
   border: none;
-  border-radius: 10px;
+  border-radius: 12px;
   background: transparent;
   text-align: left;
   cursor: pointer;

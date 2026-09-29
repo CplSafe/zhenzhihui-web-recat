@@ -103,8 +103,10 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
       <div className={styles.dialog} onClick={(event) => event.stopPropagation()}>
         <div className={styles.head}>
           <span className={styles.title}>分享画布</span>
-          <button type="button" className={styles.close} aria-label="关闭" onClick={onClose}>
-            ×
+          <button type="button" className={styles.close} aria-label="关闭分享弹窗" onClick={onClose}>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+              <path d="M5 5L19 19M19 5L5 19" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            </svg>
           </button>
         </div>
         <p className={styles.hint}>
@@ -132,9 +134,6 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
         <div className={styles.actions}>
           <button type="button" className={styles.primary} onClick={handleCreate} disabled={busy || loading}>
             {share?.token ? '重新生成链接' : '生成链接'}
-          </button>
-          <button type="button" className={styles.ghost} onClick={onClose} disabled={busy}>
-            完成
           </button>
           {share?.token && (
             <button type="button" className={styles.danger} onClick={handleClose} disabled={busy}>

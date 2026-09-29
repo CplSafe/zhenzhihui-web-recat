@@ -37,12 +37,26 @@
 }
 
 .close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
   border: 0;
+  border-radius: 10px;
   background: transparent;
-  color: #98a1b0;
-  font-size: 18px;
-  line-height: 1;
+  color: #1f2937;
   cursor: pointer;
+}
+
+.close:hover {
+  background: #f1f5f9;
+  color: #111827;
+}
+
+.close:focus-visible {
+  outline: 2px solid #11a98a;
+  outline-offset: 2px;
 }
 
 .hint {
@@ -130,17 +144,6 @@
   cursor: not-allowed;
 }
 
-.ghost {
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid #e3e7ee;
-  border-radius: 999px;
-  background: #fff;
-  color: #55606f;
-  font-size: 13px;
-  cursor: pointer;
-}
-
 /* 关闭分享是不可逆动作（原链接立即失效），配色上与其它按钮区分开 */
 .danger {
   margin-left: auto;
@@ -154,8 +157,7 @@
   cursor: pointer;
 }
 
-.danger:disabled,
-.ghost:disabled {
+.danger:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

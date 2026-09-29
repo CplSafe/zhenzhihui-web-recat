@@ -29,13 +29,13 @@ function renderEdge(props: Record<string, unknown>) {
 }
 
 describe('CanvasArrowEdge', () => {
-  it('把连线用途转换为用户能理解的标签', () => {
+  it('仅展示仍有必要的连线用途标签', () => {
     expect(canvasConnectionRoleLabel('prompt')).toBe('提示词')
     expect(canvasConnectionRoleLabel('visual_context')).toBe('视觉理解')
-    expect(canvasConnectionRoleLabel('reference_image')).toBe('参考图')
+    expect(canvasConnectionRoleLabel('reference_image')).toBe('')
     expect(canvasConnectionRoleLabel('first_frame')).toBe('首帧')
     expect(canvasConnectionRoleLabel('last_frame')).toBe('尾帧')
-    expect(canvasConnectionRoleLabel('source_video')).toBe('源视频')
+    expect(canvasConnectionRoleLabel('source_video')).toBe('')
     expect(canvasConnectionRoleLabel('unknown')).toBe('')
   })
 

@@ -35,13 +35,13 @@ const ARROW_ROTATION: Record<Position, number> = {
 const ARROW_POINTS = '0,0 -9,-4.5 -9,4.5'
 
 export function canvasConnectionRoleLabel(role: unknown): string {
+  // 参考素材已经在来源节点中可见，不再在线上重复显示「参考图」「源视频」。
+  if (role === 'reference_image' || role === 'source_video') return ''
   const labels: Partial<Record<CanvasConnectionRole, string>> = {
     prompt: '提示词',
     visual_context: '视觉理解',
-    reference_image: '参考图',
     first_frame: '首帧',
     last_frame: '尾帧',
-    source_video: '源视频',
   }
   return labels[String(role || '') as CanvasConnectionRole] || ''
 }
