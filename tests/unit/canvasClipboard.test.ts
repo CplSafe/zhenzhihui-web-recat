@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { copyCanvasNodes, materializeCanvasClipboard } from '@/utils/canvasClipboard'
+import {
+  boundsOrigin,
+  collectUpstreamNodeIds,
+  copyCanvasNodes,
+  materializeCanvasClipboard,
+} from '@/utils/canvasClipboard'
 
 const runtimeKeys = new Set(['taskId', 'taskStatus'])
 
@@ -93,5 +98,46 @@ describe('materializeCanvasClipboard', () => {
       buildEdgeId: () => 'e',
     })
     expect(result.textContents).toEqual({ 'text-new': '正文' })
+  })
+})
+
+describe('collectUpstreamNodeIds', () => {
+  const chain = [
+    { source: 'text-1', target: 'img-1' },
+    { source: 'img-1', target: 'video-1' },
+    { source: 'img-2', target: 'video-1' },
+    { source: 'video-1', target: 'video-2' },
+  ]
+
+  it('collects every ancestor of the node, including itself', () => {
+    expect(collectUpstreamNodeIds(['video-1'], chain).sort()).toEqual(['img-1', 'img-2', 'text-1', 'video-1'])
+  })
+
+  it('does not include downstream nodes', () => {
+    expect(collectUpstreamNodeIds(['img-1'], chain).sort()).toEqual(['img-1', 'text-1'])
+  })
+
+  it('returns only the node itself when it has no upstream', () => {
+    expect(collectUpstreamNodeIds(['text-1'], chain)).toEqual(['text-1'])
+  })
+
+  it('terminates on cyclic data', () => {
+    const cyclic = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'a' },
+    ]
+    expect(collectUpstreamNodeIds(['a'], cyclic).sort()).toEqual(['a', 'b'])
+  })
+})
+
+describe('boundsOrigin', () => {
+  it('returns the top-left corner of the picked nodes', () => {
+    const picked = [
+      { id: 'a', position: { x: 100, y: 40 } },
+      { id: 'b', position: { x: 20, y: 300 } },
+      { id: 'c', position: { x: -500, y: -500 } },
+    ]
+    expect(boundsOrigin(picked, ['a', 'b'])).toEqual({ x: 20, y: 40 })
+    expect(boundsOrigin(picked, ['missing'])).toBeNull()
   })
 })

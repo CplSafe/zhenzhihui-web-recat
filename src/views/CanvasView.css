@@ -335,6 +335,39 @@
   transition: opacity 160ms ease;
 }
 
+/* 默认连线：React Flow 自带的 #b1b1b7 / 1px 在浅色画布上隔远了几乎看不见 */
+.canvas-view .react-flow__edge-path {
+  stroke: #8f97a6;
+  stroke-width: 1.6;
+}
+
+/* 重复连线被拦下时，闪烁已存在的那条线，告诉用户它在哪 */
+.react-flow__edge.is-duplicate-flash .react-flow__edge-path {
+  stroke: #f5a623 !important;
+  stroke-width: 3.5 !important;
+  animation: canvas-edge-duplicate-flash 0.4s ease-in-out 4 alternate;
+}
+
+.react-flow__edge.is-duplicate-flash .canvas-edge-arrow {
+  fill: #f5a623;
+  stroke: #f5a623;
+}
+
+@keyframes canvas-edge-duplicate-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge.is-duplicate-flash .react-flow__edge-path {
+    animation: none;
+  }
+}
+
 /* 与选中节点相连的线：加粗并换成主题色，一眼看出「这个节点在喂谁、被谁喂」 */
 .react-flow__edge.is-focused .react-flow__edge-path {
   stroke: #5767e5 !important;
@@ -395,6 +428,39 @@
   &:hover {
     transform: scale(1.2);
   }
+}
+
+.canvas-edge-role-label {
+  position: absolute;
+  z-index: 2;
+  padding: 2px 6px;
+  border: 1px solid rgb(102 113 127 / 18%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 92%);
+  color: #66717f;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 8%);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.canvas-node-connect-error {
+  position: absolute;
+  z-index: 8;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  overflow: hidden;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgb(45 49 58 / 88%);
+  color: #fff;
+  font-size: calc(10px * var(--canvas-readable-text-scale));
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* 左下角复位按钮 */
@@ -654,17 +720,18 @@
   user-select: none;
 }
 
-/* 类型头部：浮在节点上方
+/*
+ * 类型头部保持在节点外部，媒体区域因此始终使用完整节点尺寸。
  *
- * 用 right:4px 约束右边界，而不是 width:100%——后者叠在 left:4px 上会让盒子
- * 比节点宽 4px，标题稍长就顶出节点右缘并折行，把图标挤成上下两行。
+ * 为避免缩小画布时两行反向补偿文字钻进上一张卡片，常态只展示一行省略；完整名称由 title
+ * 提示和双击编辑承接。这样既不遮媒体，也不改变图片/视频的可见比例。
  */
 .canvas-node-header {
   position: absolute;
   z-index: 1;
+  top: 0;
   left: 4px;
   right: 4px;
-  top: 0;
   transform: translateY(-100%);
   padding-bottom: 6px;
   color: rgba(51, 51, 51, 0.45);
@@ -703,17 +770,14 @@
   align-items: center;
 }
 
-/* 标题带提示词摘要，长度不可控：最多两行、超出省略；头部向上生长，不会顶宽节点。
- * 以前是单行——提示词只能看到十几个字，用户反馈「剩下的提示词呢」。 */
+/* 常态固定单行，避免标题侵入相邻节点；完整内容由 title 提示与双击编辑承接。 */
 .canvas-node-header__label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  white-space: normal;
-  word-break: break-word;
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   cursor: text;
   border-radius: 4px;
   padding: 0 2px;
@@ -789,6 +853,34 @@
   line-height: 1.4;
 }
 
+.canvas-node-generation-estimate {
+  color: #177e68;
+  font-size: calc(12px * var(--canvas-readable-text-scale));
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.canvas-node-generation-mask.is-video {
+  gap: 12px;
+}
+
+.canvas-node-generation-mask.is-video strong {
+  font-size: calc(18px * var(--canvas-readable-text-scale));
+}
+
+.canvas-node-generation-mask.is-video .canvas-node-generation-detail {
+  font-size: calc(14px * var(--canvas-readable-text-scale));
+}
+
+.canvas-node-generation-mask.is-video .canvas-node-generation-estimate {
+  font-size: calc(16px * var(--canvas-readable-text-scale));
+}
+
+.canvas-node-generation-mask.is-video .canvas-node-generation-progress {
+  width: min(80%, 260px);
+  height: calc(6px * var(--canvas-readable-text-scale));
+}
+
 /* 已用时：等宽数字，每秒跳动时整行不左右晃 */
 .canvas-node-generation-elapsed {
   color: #177e68;
@@ -815,6 +907,15 @@
   background: #22c5a0;
   overflow: hidden;
   transition: width 400ms var(--canvas-ease);
+}
+
+/* 视频任务每秒刷新数值，填充宽度用线性过渡补齐两次更新之间的画面。 */
+.canvas-node-generation-progress.is-timed .canvas-node-generation-progress__fill {
+  transition: width 1s linear;
+}
+
+.canvas-node-generation-progress.is-timed .canvas-node-generation-progress__fill::after {
+  display: none;
 }
 
 /* 有实值进度：填充段上叠一道流光，两次跳变之间也在动 */
@@ -890,6 +991,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .canvas-node-generation-progress.is-timed .canvas-node-generation-progress__fill {
+    transition: none;
+  }
+
   .canvas-node-generation-progress__fill::after,
   .react-flow__edge.is-feeding .react-flow__edge-path {
     animation: none;
@@ -1584,6 +1689,19 @@
   padding-left: 12px;
   font-size: 11px;
   color: #b3bac7;
+}
+
+/* 粘贴二选一：点外面任意处关闭 */
+.canvas-paste-choice__mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1449;
+}
+
+.canvas-paste-choice__title {
+  padding: 6px 10px 4px;
+  font-size: 12px;
+  color: #8a93a3;
 }
 
 .canvas-context-menu__divider {

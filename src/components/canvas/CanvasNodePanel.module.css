@@ -743,10 +743,6 @@
   color: #bbb;
 }
 
-.ratioLabel {
-  font-family: monospace;
-}
-
 .popover {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -956,12 +952,6 @@
   line-height: 1.4;
 }
 
-.popoverItemActive {
-  background: rgba(87, 103, 229, 0.1);
-  color: #5767e5;
-  font-weight: 500;
-}
-
 /* ── 视频集合菜单 ── */
 .videoMenu {
   min-width: 260px;
@@ -1106,8 +1096,15 @@
 }
 
 /* 按钮组：铺满宽度，连接式分段控件 */
+/*
+ * 选项平均分布（飞书「所有节点平均分布选择项」）：等宽网格而不是一行挤满。
+ * 选项少时（开/关、三种生成方式）照样一行等分铺满；选项多时（14 种画面比例）自动换行，
+ * 每格等宽，不再被压到文字叠在一起。
+ */
 .videoBtnGroup {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  gap: 6px;
   width: 100%;
 }
 
@@ -1138,9 +1135,10 @@
 }
 
 .videoBtnGroupItem {
-  flex: 1;
-  padding: 7px 0;
+  min-width: 0;
+  padding: 7px 4px;
   border: 1px solid #e0e0e0;
+  border-radius: 8px;
   background: #fff;
   font-size: 13px;
   color: #666;
@@ -1148,26 +1146,10 @@
   font-family: 'PingFang SC', sans-serif;
   text-align: center;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: all 0.15s;
 }
-
-/* 相邻按钮共享边框，形成连接式按钮组 */
-.videoBtnGroupItem + .videoBtnGroupItem {
-  margin-left: -1px;
-}
-
-.videoBtnGroupItem:first-child {
-  border-radius: 8px 0 0 8px;
-}
-
-.videoBtnGroupItem:last-child {
-  border-radius: 0 8px 8px 0;
-}
-
-.videoBtnGroupItem:only-child {
-  border-radius: 8px;
-}
-
 .videoBtnGroupItem:hover {
   border-color: var(--panel-pick-border);
   color: var(--panel-pick);
@@ -1195,57 +1177,43 @@
 }
 
 .generateBtn {
-  padding: 0;
+  min-width: 88px;
+  height: 40px;
+  padding: 0 18px;
   background: var(--panel-pick);
   color: #fff;
   border: none;
   border-radius: 999px;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   font-family: 'PingFang SC', sans-serif;
   white-space: nowrap;
   transition: background 0.15s;
   display: inline-flex;
   align-items: center;
-}
-
-/* 胶囊按钮：左侧积分数字 + 右侧发送 icon，整体圆角胶囊 */
-.generatePill {
-  height: 36px;
-  padding: 0 6px 0 4px;
-  gap: 6px;
-  overflow: hidden;
-}
-
-/* 左侧积分徽标：白底圆角小块，数字居中 */
-.costBadge {
-  min-width: 44px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  display: inline-flex;
-  align-items: center;
   justify-content: center;
 }
-/* 费用徽标内容较长（「约0.24元」/「积分不足」），保持不换行 */
-.costBadge {
+
+.generateActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* 原费用位置保留，但只显示浅灰文字，不再像可点击的徽标。 */
+.costText {
+  color: #9aa3af;
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.saveTextLabel {
-  padding: 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
 /* 预估中：数字淡出 */
-.costBadgeLoading {
+.costTextLoading {
   opacity: 0.75;
   animation: costPulse 1s ease-in-out infinite;
 }
@@ -1260,30 +1228,12 @@
   }
 }
 
-/* 余额不足：徽标底色变警示色 */
-.costBadgeInsufficient {
-  background: rgba(230, 84, 84, 0.85);
-}
-
-/* 右侧发送 icon */
-.sendIcon {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.25);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  transition: background 0.15s;
+.costTextInsufficient {
+  color: #d95757;
 }
 
 .generateBtn:hover:not(:disabled) {
   background: var(--panel-pick-hover);
-}
-
-.generateBtn:hover:not(:disabled) .sendIcon {
-  background: rgba(255, 255, 255, 0.38);
 }
 
 .generateBtn:disabled {

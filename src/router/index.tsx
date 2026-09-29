@@ -5,6 +5,7 @@
  * 状态边界：智能成片仅在“首次建项绑定当前会话”时保留实例，切项目、切工作空间或显式新建时重挂载，避免不同创作之间串状态。
  */
 import { lazy, Suspense, useState } from 'react'
+import { routeImporters } from './routePrefetch'
 import type { ReactNode } from 'react'
 import { createBrowserRouter, Navigate, useLocation, useParams, useRouteError } from 'react-router-dom'
 import App from '../App'
@@ -79,31 +80,31 @@ const SplashView = lazy(() => import('../views/SplashView'))
 /** 统一登录页路由组件。 */
 const LoginView = lazy(() => import('../views/LoginView'))
 /** 供需商单（IP / 需求市场）路由组件。 */
-const MarketView = lazy(() => import('../views/MarketView'))
+const MarketView = lazy(routeImporters.market)
 /** 模板库路由组件。 */
-const TemplatesView = lazy(() => import('../views/TemplatesView'))
+const TemplatesView = lazy(routeImporters.templates)
 /** 智能成片创作路由组件。 */
-const SmartCreateView = lazy(() => import('../views/SmartCreateView'))
+const SmartCreateView = lazy(routeImporters.smart)
 /** 爆款复制创作路由组件。 */
-const HotCopyCreateView = lazy(() => import('../views/HotCopyCreateView'))
+const HotCopyCreateView = lazy(routeImporters.hotCopy)
 /** 项目管理路由组件。 */
-const ProjectManagementView = lazy(() => import('../views/ProjectManagementView'))
+const ProjectManagementView = lazy(routeImporters.projects)
 /** 项目视频列表路由组件。 */
-const ProjectVideoListView = lazy(() => import('../views/ProjectVideoListView'))
+const ProjectVideoListView = lazy(routeImporters.projectVideos)
 /** 项目视频详情路由组件。 */
 const ProjectVideoDetailView = lazy(() => import('../views/ProjectVideoDetailView'))
 /** 我的素材路由组件。 */
-const ResourceManagementView = lazy(() => import('../views/ResourceManagementView'))
+const ResourceManagementView = lazy(routeImporters.resources)
 /** 团队数据看板路由组件。 */
-const SpaceDashboardView = lazy(() => import('../views/SpaceDashboardView'))
+const SpaceDashboardView = lazy(routeImporters.team)
 /** 营销人员邀请收益明细页。 */
 const DistributionView = lazy(() => import('../views/DistributionView'))
 /** AI 创作台（图片 / 视频生成 + 智能分镜）路由组件。 */
-const StudioCreateView = lazy(() => import('../views/StudioCreateView'))
+const StudioCreateView = lazy(routeImporters.studio)
 /** 创意画布路由组件。 */
-const CanvasView = lazy(() => import('../views/CanvasView'))
+const CanvasView = lazy(routeImporters.canvas)
 /** 无限画布列表路由组件。 */
-const CanvasListView = lazy(() => import('../views/CanvasListView'))
+const CanvasListView = lazy(routeImporters.canvasList)
 const CanvasShareView = lazy(() => import('../views/CanvasShareView'))
 /** IP 创作者详情路由组件。 */
 const IpDetailView = lazy(() => import('../views/IpDetailView'))
@@ -112,7 +113,7 @@ const CommunityWorksView = lazy(() => import('../views/CommunityWorksView'))
 /** 需求市场需求详情路由组件。 */
 const DemandDetailView = lazy(() => import('../views/DemandDetailView'))
 /** 我的合作（需求发布/接单管理）路由组件。 */
-const MyCollaborationsView = lazy(() => import('../views/MyCollaborationsView'))
+const MyCollaborationsView = lazy(routeImporters.collaborations)
 /** 积分明细路由组件。 */
 const CreditsView = lazy(() => import('../views/CreditsView'))
 

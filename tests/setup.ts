@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, vi } from 'vitest'
 import { resetAllSharedRequestCaches } from '@/utils/sharedRequestCache'
+import { clearPageCache } from '@/utils/pageDataCache'
 import { server } from './mocks/server'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
@@ -13,6 +14,8 @@ afterEach(() => {
   window.sessionStorage.clear()
   // 模型目录等模块级内存缓存:不清掉,上一个用例 mock 出来的目录会漏进下一个用例
   resetAllSharedRequestCaches()
+  // 列表页内存缓存同理：上一个用例的列表不能让下一个用例「先显示缓存、跳过加载态」
+  clearPageCache()
 })
 
 afterAll(() => server.close())

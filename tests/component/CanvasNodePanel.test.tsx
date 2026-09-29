@@ -104,6 +104,50 @@ describe.each([
 })
 
 describe('CanvasNodePanel 模型选择器', () => {
+  it('图片模型未声明比例参数时不再显示独立的比例按钮', () => {
+    renderPanel([{ modelVersionId: 21, displayName: 'Seedream 5.0', operationCodes: IMAGE_OPERATIONS }])
+
+    expect(screen.queryByRole('button', { name: '1:1' })).not.toBeInTheDocument()
+  })
+
+  it('图片模型声明比例参数时仍可在模型参数菜单中选择', async () => {
+    const user = userEvent.setup()
+    renderPanel([
+      {
+        modelVersionId: 22,
+        displayName: '带比例的模型',
+        operationCodes: IMAGE_OPERATIONS,
+        source: {
+          params_schema: {
+            fields: [
+              { name: 'aspect_ratio', display_name: '比例', type: 'select', default: '1:1', options: ['1:1', '9:16'] },
+            ],
+          },
+        },
+      },
+    ])
+
+    await user.click(screen.getByRole('button', { name: '1:1' }))
+    expect(screen.getByText('比例')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '9:16' })).toBeInTheDocument()
+  })
+
+  it('把预估费用显示为独立文字，右侧使用文字生成按钮', async () => {
+    renderPanel([{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }])
+
+    const cost = await screen.findByText('约0.2元')
+    expect(cost.closest('button')).toBeNull()
+    expect(screen.getByRole('button', { name: '生成' })).toBeEnabled()
+    expect(screen.getByTitle('发送生成')).toHaveTextContent('生成')
+  })
+
+  it('文本节点保留保存提示词按钮，不显示费用或飞机图标', () => {
+    renderPanel([], { id: 'node-text', kind: 'text', text: '一段提示词' })
+
+    expect(screen.getByRole('button', { name: '保存提示词' })).toBeEnabled()
+    expect(screen.queryByText('约0.2元')).not.toBeInTheDocument()
+  })
+
   it('多资产汇合时展示最终输入数量，并在模型超限时阻止生成', () => {
     renderPanel(
       [
@@ -503,7 +547,7 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
     })
 
     await user.click(screen.getByRole('button', { name: '转为本节点提示词' }))
-    expect(onAdoptInheritedText).toHaveBeenCalledTimes(1)
+    expect(onAdoptInheritedText).toHaveBeenCalledWith('一只橘猫坐在窗台上\n\n再加一点暖光')
   })
 })
 

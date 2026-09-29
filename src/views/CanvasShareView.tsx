@@ -8,11 +8,21 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { ReactFlow, Background, Controls, type Node, type NodeProps, type NodeTypes } from '@xyflow/react'
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  Handle,
+  Position,
+  type Node,
+  type NodeProps,
+  type NodeTypes,
+} from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './CanvasShareView.css'
 import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
 import { elementsToGraph } from '@/utils/canvasElements'
+import { resolveCanvasShareMediaUrl } from '@/utils/canvasShareMedia'
 import type { CanvasElementMutation } from '@/api/canvasApi'
 import { fetchAllPublicCanvasElements, fetchPublicCanvas, type PublicCanvasShare } from '@/api/canvasShare'
 
@@ -27,29 +37,69 @@ const KIND_LABELS: Record<string, string> = {
   timeline: '视频剪辑',
 }
 
-/** 只读节点：有结果就展示结果，没有就展示提示词，两者都没有则只留一个空卡片。 */
-function ShareNode({ data }: NodeProps<Node>) {
+/** 只读节点保留原连接点位置，历史连线才能在分享页找到起止坐标。 */
+function ShareNode({ id, data }: NodeProps<Node>) {
   const info = (data || {}) as Record<string, unknown>
   const kind = String(info.kind || '')
-  const resultUrl = String(info.resultUrl || '')
+  const resultUrl = resolveCanvasShareMediaUrl(info)
+  const posterUrl = resolveCanvasShareMediaUrl(info, 'poster')
   const text = String(info.text || info.prompt || '')
+  const title = String(info.title || KIND_LABELS[kind] || kind || '节点')
+  const [failedUrl, setFailedUrl] = useState('')
+  const mediaFailed = Boolean(resultUrl && failedUrl === resultUrl)
+  const isVideo = kind === 'video' || kind === 'timeline'
+  const hasMedia = Boolean(info.assetId || resultUrl)
 
   return (
     <div className="share-node">
-      <div className="share-node-kind">{KIND_LABELS[kind] || kind || '节点'}</div>
-      {resultUrl && kind === 'video' ? (
+      <div className="share-node-kind" title={title}>
+        {title}
+      </div>
+      {resultUrl && !mediaFailed && isVideo ? (
         // 访客可能只想确认成片效果，给原生控件即可，不再搬运画布那套自定义播放器
-        <video className="share-node-media" src={resultUrl} controls preload="metadata" />
-      ) : resultUrl ? (
-        <img className="share-node-media" src={resultUrl} alt="" loading="lazy" />
+        <video
+          className="share-node-media"
+          src={resultUrl}
+          poster={posterUrl || undefined}
+          controls
+          preload="metadata"
+          aria-label={`${title}预览`}
+          onError={() => setFailedUrl(resultUrl)}
+        />
+      ) : resultUrl && !mediaFailed ? (
+        <img
+          className="share-node-media"
+          src={resultUrl}
+          alt={`${title}预览`}
+          loading="lazy"
+          onError={() => setFailedUrl(resultUrl)}
+        />
       ) : (
-        <div className="share-node-text">{text}</div>
+        <div className={hasMedia ? 'share-node-unavailable' : 'share-node-text'}>
+          {hasMedia ? '素材暂时无法加载，请联系分享者检查访问权限' : text}
+        </div>
       )}
+      <Handle
+        id={`${id}-left-target`}
+        type="target"
+        position={Position.Left}
+        isConnectable={false}
+        className="share-node-handle"
+        aria-hidden="true"
+      />
+      <Handle
+        id={`${id}-right-source`}
+        type="source"
+        position={Position.Right}
+        isConnectable={false}
+        className="share-node-handle"
+        aria-hidden="true"
+      />
     </div>
   )
 }
 
-const nodeTypes: NodeTypes = { default: ShareNode }
+const nodeTypes: NodeTypes = { share: ShareNode }
 
 type LoadState = 'loading' | 'ready' | 'missing' | 'error'
 
@@ -93,8 +143,8 @@ export default function CanvasShareView() {
   const graph = useMemo(() => {
     const { nodes, edges } = elementsToGraph(elements)
     return {
-      // 只读：节点一律 default 类型走 ShareNode，并关掉拖拽与选中
-      nodes: nodes.map((node) => ({ ...node, type: 'default', draggable: false, selectable: false })),
+      // 自定义只读节点不套 React Flow 默认卡片的边框/内边距；保留原尺寸与连接点。
+      nodes: nodes.map((node) => ({ ...node, type: 'share', draggable: false, selectable: false })),
       edges: edges.map(({ markerEnd: _markerEnd, ...rest }) => ({ ...rest, type: CANVAS_ARROW_EDGE_TYPE })),
     }
   }, [elements])

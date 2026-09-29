@@ -6,6 +6,7 @@ import type { TaskCenterTask } from '@/stores/taskCenter'
 const mocks = vi.hoisted(() => ({
   workspace: { id: 7, type: 'personal', user: { id: 9 } as Record<string, unknown> },
   deriveProjectVideos: vi.fn(),
+  deleteProjectVideo: vi.fn(),
   getAssetDownloadUrl: vi.fn(),
   listAllCreativeProjects: vi.fn(),
   listWorkspaceMembers: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('@/api/business', () => ({
 
 vi.mock('@/api/projectVideos', () => ({
   deriveProjectVideos: mocks.deriveProjectVideos,
+  deleteProjectVideo: mocks.deleteProjectVideo,
 }))
 
 vi.mock('@/stores/workspaceSession', () => ({
@@ -54,6 +56,7 @@ vi.mock('@/components/common/VideoPreviewModal', () => ({
 
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
 import { useTaskCenterStore } from '@/stores/taskCenter'
+import { useUiStore } from '@/stores/ui'
 import styles from '@/components/task/TaskCenterDrawer.module.less'
 
 function task(overrides: Partial<TaskCenterTask> = {}): TaskCenterTask {
@@ -507,14 +510,18 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
     expect(useTaskCenterStore.getState().tasks.map((item) => item.id)).toEqual(originalIds)
   })
 
-  it('archives a generated task immediately without mutating historical data', async () => {
+  it('removes a session task after confirmation without touching project videos', async () => {
     const user = userEvent.setup()
+    const requestConfirm = vi.fn().mockResolvedValue(true)
+    useUiStore.setState({ requestConfirm })
     seed(task({ status: 'succeeded' }))
     render(<TaskCenterDrawer scope="smart" />)
 
     await screen.findByText('当前任务')
-    await user.click(screen.getByRole('button', { name: '从任务管理中隐藏当前任务' }))
+    await user.click(screen.getByRole('button', { name: '删除当前任务' }))
 
+    expect(requestConfirm).toHaveBeenCalled()
+    expect(mocks.deleteProjectVideo).not.toHaveBeenCalled()
     expect(useTaskCenterStore.getState().tasks[0]?.archived).toBe(true)
     expect(screen.queryByText('当前任务')).not.toBeInTheDocument()
   })
@@ -714,6 +721,26 @@ describe('TaskCenterDrawer team-space member filter', () => {
       Promise.resolve(mine ? [all[0], all[2]] : all),
     )
   }
+
+  it('only lets the creator delete a task, and deletes history videos through the project video API', async () => {
+    const user = userEvent.setup()
+    useUiStore.setState({ requestConfirm: vi.fn().mockResolvedValue(true) })
+    mocks.deleteProjectVideo.mockResolvedValue(undefined)
+    seedTeamHistory()
+
+    render(<TaskCenterDrawer scope="smart" />)
+
+    expect(await screen.findByText('我的视频')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '同事的视频由其他成员生成，不能删除' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: '删除我的视频' }))
+
+    await waitFor(() =>
+      expect(mocks.deleteProjectVideo).toHaveBeenCalledWith({ projectId: 11, workspaceId: 7, videoId: '501' }),
+    )
+    await waitFor(() => expect(screen.queryByText('我的视频')).not.toBeInTheDocument())
+    expect(screen.getByText('同事的视频')).toBeInTheDocument()
+  })
 
   it('shows teammates’ generated videos with a creator label and lets 只看我的 follow the backend mine set', async () => {
     const user = userEvent.setup()

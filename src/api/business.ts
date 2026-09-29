@@ -9,6 +9,7 @@ import { DEFAULT_MODEL_PLAN_CANDIDATES, normalizePlanCandidates } from '../utils
 import { sleep } from '../utils/common'
 import { sanitizeMediaUrl } from '../utils/urlSafety'
 import { isAllowedUploadUrl as isUploadUrlAllowedByPolicy } from '../utils/uploadUrlSafety'
+import { resolveUploadMimeType } from '../utils/fileSignature'
 import { DEFAULT_API_REQUEST_TIMEOUT_MS, RequestAbortError, withRequestTimeout } from './requestTimeout'
 import { AUTH_REFRESH_PATH, runSharedSessionRefresh } from './sessionRefresh'
 
@@ -246,6 +247,12 @@ export function humanizeProviderErrorText(text) {
   if (durationMin) {
     const got = durationMin[2] ? `（当前 ${durationMin[2]} 秒）` : ''
     return `参考视频至少 ${durationMin[1]} 秒${got}，请更换更长的视频后重试`
+  }
+
+  // 参考视频总时长超限（需求池 9/23 截图原文：reference video total duration must not exceed 15 seconds）。
+  const videoTotalMax = /video\s+total\s+duration\s+must\s+not\s+exceed\s+([\d.]+)\s*s/i.exec(message)
+  if (videoTotalMax) {
+    return `当前模型最多读取 ${videoTotalMax[1]} 秒的参考视频，请上传或裁切不超过 ${videoTotalMax[1]} 秒的视频后重试`
   }
 
   // 参考图尺寸超限（2046 9/10 群反馈原文：content[1].image_url: media dimensions must be between 256 and 5760 pixels）。
@@ -2253,6 +2260,7 @@ export async function uploadAssetFile({
       completeStage: null,
       completed: null,
       uploaded: false,
+      mimeType: '',
     }
     setResumableAssetUpload(file, resumeKey, pendingUpload)
   }
@@ -2261,22 +2269,28 @@ export async function uploadAssetFile({
     if (!pendingUpload.createStage || pendingUpload.createStage.controller.signal.aborted) {
       const createStage = createSharedAssetUploadStage(
         (stageSignal) =>
-          requestJson('/api/v1/assets', {
-            method: 'POST',
-            signal: stageSignal,
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              workspace_id: workspaceId,
-              type: inferAssetType(file),
-              source,
-              name: file.name || '未命名素材',
-              mime_type: file.type || 'application/octet-stream',
-              size_bytes: file.size || 0,
-              prompt,
-            }),
-          })
+          // 用文件头识别的真实类型声明 mime_type，而不是照抄按扩展名猜的 File.type：
+          // 改过扩展名的 JPEG/HEIC/MOV 会让 /complete 的服务端校验 400，而文件此时已经传上去了。
+          resolveUploadMimeType(file)
+            .then((mimeType) => {
+              pendingUpload.mimeType = mimeType
+              return requestJson('/api/v1/assets', {
+                method: 'POST',
+                signal: stageSignal,
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  workspace_id: workspaceId,
+                  type: inferAssetType({ type: mimeType }),
+                  source,
+                  name: file.name || '未命名素材',
+                  mime_type: mimeType,
+                  size_bytes: file.size || 0,
+                  prompt,
+                }),
+              })
+            })
             .then((createdAsset) => {
               if (pendingUpload.createStage === createStage) {
                 pendingUpload.created = createdAsset
@@ -2335,7 +2349,14 @@ export async function uploadAssetFile({
           Object.entries(upload.form_fields || {}).forEach(([key, value]) => {
             formData.append(key, value)
           })
-          formData.append('file', file)
+          // 文件分片的 Content-Type 也换成真实类型，和 PostPolicy 里绑定的保持一致。
+          const uploadMimeType = pendingUpload.mimeType
+          formData.append(
+            'file',
+            uploadMimeType && uploadMimeType !== file.type
+              ? new File([file], file.name || 'upload', { type: uploadMimeType })
+              : file,
+          )
 
           let uploadResponse
 

@@ -41,6 +41,7 @@ import {
   listAiTasks,
 } from '@/api/business'
 import { listAllCreativeProjects, listAssetPage } from '@/utils/businessPagination'
+import { pageCacheKey, readPageCache, writePageCache } from '@/utils/pageDataCache'
 import {
   isCreativeProjectRestrictedForUser,
   resolveUserId,
@@ -894,7 +895,14 @@ export default function ResourceManagementView() {
       setLoading(false)
       return
     }
-    setLoading(true)
+    // 有上次的第一页素材就先显示（不转圈），下面照常拉最新的覆盖；只缓存第一页，翻页状态以最新请求为准
+    const cacheKey = pageCacheKey('resources', wsId, userId, scope)
+    const cached = readPageCache<ResourceAssetState>(cacheKey)
+    if (cached) {
+      assetStateRef.current = cached
+      setAssetState(cached)
+    }
+    setLoading(!cached)
     // 并行:① 素材列表;② image.face_detect(人脸脱敏/抠脸)任务列表 —— 用其 task_id 集合精确剔除
     // 脱敏中间产物。asset 对象带 task_id,凡命中脱敏任务的一律不展示(比关键词判定可靠,漏不掉)。
     // 任务列表拉取失败不阻塞素材展示,退回仅用 isFaceBlurAsset() 关键词兜底。
@@ -933,11 +941,15 @@ export default function ResourceManagementView() {
         }
         assetStateRef.current = nextState
         setAssetState(nextState)
+        writePageCache(cacheKey, nextState)
       })
       .catch((error) => {
         if (cancelled) return
-        assetStateRef.current = emptyState
-        setAssetState(emptyState)
+        // 刷新失败时保留已显示的上次数据，只提示错误
+        if (!cached) {
+          assetStateRef.current = emptyState
+          setAssetState(emptyState)
+        }
         showToast(getBusinessErrorMessage(error, '素材加载失败'), 'error')
       })
       .finally(() => !cancelled && setLoading(false))

@@ -65,6 +65,36 @@ function sizeOf(node: SourceNode): { width: number; height: number } {
   }
 }
 
+/**
+ * 这些节点连同它们「之前所有节点」（沿连线往上游一路追到根）的 id 集合，包含自身。
+ * 用于「创建副本 · 包含之前所有节点」：复制一个视频节点时，把喂它的图片/文本整条链 1:1 带走。
+ */
+export function collectUpstreamNodeIds(nodeIds: Iterable<string>, edges: SourceEdge[]): string[] {
+  const result = new Set<string>(nodeIds)
+  const queue = [...result]
+  while (queue.length) {
+    const current = queue.pop()!
+    for (const edge of edges) {
+      if (edge.target === current && !result.has(edge.source)) {
+        result.add(edge.source)
+        queue.push(edge.source)
+      }
+    }
+  }
+  return [...result]
+}
+
+/** 包围盒左上角（画布坐标），副本要落在原链旁边时用它算落点 */
+export function boundsOrigin(nodes: SourceNode[], ids: Iterable<string>): { x: number; y: number } | null {
+  const wanted = new Set(ids)
+  const picked = nodes.filter((node) => wanted.has(node.id))
+  if (!picked.length) return null
+  return {
+    x: Math.min(...picked.map((node) => node.position.x)),
+    y: Math.min(...picked.map((node) => node.position.y)),
+  }
+}
+
 /** 把选中的节点（含它们之间的连线）打包成剪贴板内容；没有可复制的节点时返回 null */
 export function copyCanvasNodes(options: {
   nodes: SourceNode[]

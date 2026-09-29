@@ -21,6 +21,7 @@ import { clearHotCopyDraftsForUser } from '../utils/hotCopyDraft'
 import { clearSmartEntryDraftsForUser } from '../utils/smartEntryDraft'
 import { clearSmartDraftsForUser } from '../utils/smartDraft'
 import { clearAllCache } from '../utils/swrCache'
+import { clearPageCache } from '@/utils/pageDataCache'
 import { beginLogoutDraftWriteBarrier, releaseLogoutDraftWriteBarrier } from '../utils/logoutBarrier'
 import { detachRunningVideoGensForOwner } from '../utils/videoGenRegistry'
 import { hasConfiguredDevBackend } from '../utils/devBackend'
@@ -356,6 +357,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       detachRunningVideoGensForOwner(draftUserScope)
       setAuthSession(null)
       clearAuthSessionMarker()
+      clearPageCache() // 清列表页内存缓存，换账号不闪出上个账号的列表
       clearAllCache() // 清 SWR sessionStorage 缓存,避免换账号沿用上个会话的缓存数据
       if (broadcast) {
         try {

@@ -598,4 +598,38 @@ describe('object-storage upload lifecycle', () => {
     ).toHaveLength(1)
     expect(completeAttempts).toBe(4)
   })
+
+  it('declares the sniffed MIME type when the file extension lies about the content', async () => {
+    // 线上 400「素材上传参数不合法」：JPEG 改名成 .png，File.type 按扩展名给了 image/png。
+    const jpegBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
+    const file = new File([jpegBytes], 'renamed.png', { type: 'image/png' })
+    let createBody: any = null
+    let uploadedPart: File | null = null
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/v1/assets') {
+        createBody = JSON.parse(String(init?.body))
+        return Promise.resolve(
+          jsonResponse({
+            asset: { id: 91, name: 'renamed.png' },
+            upload: { url: 'https://storage.example.com/upload/91', form_fields: {} },
+          }),
+        )
+      }
+      if (url === 'https://storage.example.com/upload/91') {
+        uploadedPart = (init?.body as FormData).get('file') as File
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
+      if (url === '/api/v1/assets/91/complete?workspace_id=7') {
+        return Promise.resolve(jsonResponse({ id: 91, status: 'active' }))
+      }
+      return Promise.reject(new Error(`Unexpected request: ${url}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(uploadAssetFile({ workspaceId: 7, file })).resolves.toMatchObject({ asset: { id: 91 } })
+    expect(createBody).toMatchObject({ type: 'image', mime_type: 'image/jpeg', name: 'renamed.png' })
+    expect(uploadedPart?.type).toBe('image/jpeg')
+    expect(uploadedPart?.name).toBe('renamed.png')
+  })
 })

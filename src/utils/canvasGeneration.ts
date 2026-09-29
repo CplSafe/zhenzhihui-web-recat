@@ -69,7 +69,13 @@ export function canvasVideoReferenceMode(mode?: CanvasVideoMode | string): boole
   return undefined
 }
 
-export type CanvasConnectionRole = 'prompt' | 'reference_image' | 'first_frame' | 'last_frame' | 'source_video'
+export type CanvasConnectionRole =
+  | 'prompt'
+  | 'visual_context'
+  | 'reference_image'
+  | 'first_frame'
+  | 'last_frame'
+  | 'source_video'
 
 /** 连接语义只用于画布展示和持久化；提交时仍映射为后端已支持的 input_assets role。 */
 export function inferCanvasConnectionRole(args: {
@@ -79,6 +85,8 @@ export function inferCanvasConnectionRole(args: {
   slotIndex?: number
 }): CanvasConnectionRole {
   if (args.sourceKind === 'text') return 'prompt'
+  // 图片/视频接到文本节点时表达的是“让多模态文本模型理解素材”，不是生成素材引用。
+  if (args.targetKind === 'text') return 'visual_context'
   if (isCanvasVideoSourceKind(args.sourceKind)) return 'source_video'
   if (args.targetKind === 'video' && args.videoMode === 'first-last') {
     return Number(args.slotIndex || 0) === 1 ? 'last_frame' : 'first_frame'
@@ -192,10 +200,23 @@ export function validateCanvasVideoInputs(args: {
   minImageRefs?: number
   /** 模型展示名，用于把「谁要求的」说清楚 */
   modelLabel?: string
+  /**
+   * 参考视频总时长上限（秒）与已读到的总时长。上游模型读不了超长视频
+   * （原文：reference video total duration must not exceed 15 seconds），
+   * 不在提交前拦住，就是一个必失败的付费任务。时长未读到（0）时不拦。
+   */
+  maxVideoRefSec?: number
+  videoRefTotalSec?: number
 }): string | null {
   const isGenerate = args.operationCode === 'video.generate'
   const isEdit = args.operationCode === 'video.edit'
   if (!isGenerate && !isEdit) return null
+
+  const maxVideoSec = Number(args.maxVideoRefSec) || 0
+  const totalVideoSec = Number(args.videoRefTotalSec) || 0
+  if (maxVideoSec > 0 && totalVideoSec > maxVideoSec + 0.05) {
+    return `当前模型最多读取 ${maxVideoSec} 秒的参考视频（已连接约 ${Math.round(totalVideoSec)} 秒），请上传或裁切不超过 ${maxVideoSec} 秒的视频`
+  }
 
   const mediaRefs = (args.sourceRefs || []).filter((ref) => ref.kind !== 'text')
   const minImageRefs = Math.max(0, Math.floor(Number(args.minImageRefs) || 0))

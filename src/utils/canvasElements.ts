@@ -254,7 +254,11 @@ export function collectCanvasSourceRefs(
       const target = nodeById.get(nodeId)
       const data = (source.data || {}) as Record<string, unknown>
       const kind = String(data.kind || source.type || 'text')
-      const targetData = (target?.data || {}) as Record<string, unknown>
+      // 经过文本节点透传的媒体，最终要按“当前生成目标”的输入角色提交。
+      // image → text 这条边本身可显示为“视觉理解”，但继续到下游图片时仍是参考图，
+      // 不能把仅供界面解释的 visual_context 当成后端素材角色。
+      const roleTarget = inherited ? nodeById.get(targetNodeId) : target
+      const roleTargetData = (roleTarget?.data || {}) as Record<string, unknown>
       const slotIndex = Number(edge.data?.slotIndex || 0)
       const assetId = Number(data.assetId || 0)
       const ref: CanvasGraphSourceRef = {
@@ -263,11 +267,11 @@ export function collectCanvasSourceRefs(
         edgeId: edge.id,
         slotIndex,
         role: String(
-          edge.data?.role ||
+          (!inherited ? edge.data?.role : '') ||
             inferCanvasConnectionRole({
-              targetKind: String(targetData.kind || target?.type || 'text'),
+              targetKind: String(roleTargetData.kind || roleTarget?.type || 'text'),
               sourceKind: kind,
-              videoMode: String(targetData.videoMode || ''),
+              videoMode: String(roleTargetData.videoMode || ''),
               slotIndex,
             }),
         ) as CanvasConnectionRole,

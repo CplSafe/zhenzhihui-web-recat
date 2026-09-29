@@ -102,9 +102,7 @@
   width: min(1180px, 100%);
 }
 
-/* 原先靠 absolute + top:30px 卡在分段 Tab 那一行的右侧；Tab 整块移除后那个坐标
-   落进了卡片内部、压住占位文案。改为正常流里的独立一行，右对齐即可，
-   不再依赖任何被删元素的高度。 */
+/* 与输入卡右边缘对齐，保持原来的入口位置。 */
 .hotcopy__newVideoBtn {
   display: block;
   margin: 0 4px 12px auto;
@@ -257,6 +255,13 @@
 .hotcopy__inputInner {
   position: relative;
   min-height: 110px;
+}
+
+.hotcopy__mentionCaretAnchor {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: text-bottom;
 }
 
 .hotcopy__inputHl,
@@ -481,9 +486,14 @@
   align-items: center;
   gap: 8px;
 }
+/* 模型、创作参数与 @ 按钮统一为 40px 高。 */
+.hotcopy__tools > div > button {
+  box-sizing: border-box;
+  height: 40px;
+}
 .hotcopy__at {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   background: #fff;

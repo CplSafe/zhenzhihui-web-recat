@@ -154,6 +154,9 @@ describe('canvas video generation inputs', () => {
 
   it('assigns semantic roles without changing the backend input-assets contract', () => {
     expect(inferCanvasConnectionRole({ targetKind: 'video', sourceKind: 'text' })).toBe('prompt')
+    expect(inferCanvasConnectionRole({ targetKind: 'text', sourceKind: 'text' })).toBe('prompt')
+    expect(inferCanvasConnectionRole({ targetKind: 'text', sourceKind: 'image' })).toBe('visual_context')
+    expect(inferCanvasConnectionRole({ targetKind: 'text', sourceKind: 'video' })).toBe('visual_context')
     expect(
       inferCanvasConnectionRole({ targetKind: 'video', sourceKind: 'image', videoMode: 'first-last', slotIndex: 0 }),
     ).toBe('first_frame')
@@ -401,5 +404,27 @@ describe('canvasVideoReferenceMode', () => {
   it('自由生成不下发 reference_mode，交给后端启发式', () => {
     expect(canvasVideoReferenceMode('auto')).toBeUndefined()
     expect(canvasVideoReferenceMode(undefined)).toBeUndefined()
+  })
+})
+
+describe('canvas video reference duration limit', () => {
+  const videoRef = { kind: 'video', assetId: 9, slotIndex: 0 }
+
+  it('blocks submission when the connected videos exceed the model limit', () => {
+    const error = validateCanvasVideoInputs({
+      operationCode: 'video.generate',
+      videoMode: 'full-ref',
+      sourceRefs: [videoRef],
+      maxVideoRefSec: 15,
+      videoRefTotalSec: 22.4,
+    })
+    expect(error).toContain('最多读取 15 秒')
+    expect(error).toContain('裁切不超过 15 秒')
+  })
+
+  it('allows videos within the limit and unknown durations', () => {
+    const base = { operationCode: 'video.generate', videoMode: 'full-ref' as const, sourceRefs: [videoRef] }
+    expect(validateCanvasVideoInputs({ ...base, maxVideoRefSec: 15, videoRefTotalSec: 15 })).toBeNull()
+    expect(validateCanvasVideoInputs({ ...base, maxVideoRefSec: 15, videoRefTotalSec: 0 })).toBeNull()
   })
 })

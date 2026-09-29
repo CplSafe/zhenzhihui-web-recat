@@ -6,12 +6,11 @@
  * 所以外层收成一枚摘要胶囊，展开后才铺开——胶囊形态与「创作参数」一致，
  * 内部的选择器则与创作台一致。
  */
-import StudioModelPicker from '@/components/studio/StudioModelPicker/StudioModelPicker'
+import { useEffect, useRef, useState } from 'react'
 import { useDismissablePopover } from '@/composables/useDismissablePopover'
-import type { StudioModelChoice } from '@/utils/studioModelPresentation'
+import { modelInitial } from '@/utils/studioModelPresentation'
 import type {
   GenerationModelGroup,
-  GenerationModelOption,
   GenerationModelSelection,
 } from '@/components/smart/GenerationModelPicker/GenerationModelPicker'
 import barStyles from '@/components/studio/StudioParamsBar/StudioParamsBar.module.less'
@@ -43,26 +42,10 @@ export interface CreativeModelSlotsProps {
    * 没有这个回调的话，只能刷新整页。
    */
   onOpen?: () => void
-}
-
-/**
- * 把入口的模型选项适配成创作台胶囊需要的形状。
- *
- * 入口这层选项已经是展示态（名称/描述/logo/限制都算好了），不带后端原始记录；
- * provider / version 只用于卡片上的小标签，取不到就留空，不去猜。
- */
-function toChoice(option: GenerationModelOption): StudioModelChoice {
-  return {
-    id: Number(option.id),
-    name: option.name,
-    description: option.description || '',
-    logo: option.logo || '',
-    provider: '',
-    version: '',
-    constraints: option.constraints || {},
-    restrictions: option.restrictions || [],
-    source: undefined,
-  }
+  /** 模型选定且收拢动画结束后触发，用于顺接该模型支持的生成参数。 */
+  onModelSelected?: () => void
+  /** 尚未选择过模型时的明确提示。 */
+  emptyLabel?: string
 }
 
 /** 渲染模型摘要胶囊及其槽位弹层。 */
@@ -76,8 +59,33 @@ export default function CreativeModelSlots({
   locked = false,
   lockedReason = '处理中不可切换',
   onOpen,
+  onModelSelected,
+  emptyLabel = '请选择视频模型',
 }: CreativeModelSlotsProps) {
-  const { open, toggle, wrapRef } = useDismissablePopover<HTMLDivElement>()
+  const { open, setOpen, wrapRef } = useDismissablePopover<HTMLDivElement>()
+  const [closing, setClosing] = useState(false)
+  const closeTimerRef = useRef<number | null>(null)
+  const hoverCloseTimerRef = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current)
+      if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    },
+    [],
+  )
+
+  /** 保留退出帧再卸载浮层；选中反馈不会再像被瞬间切掉。 */
+  const closeAfterSelection = () => {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current)
+    setClosing(true)
+    closeTimerRef.current = window.setTimeout(() => {
+      setOpen(false)
+      setClosing(false)
+      closeTimerRef.current = null
+      onModelSelected?.()
+    }, 180)
+  }
 
   // 一个 operation 一个槽位；无子分组的分组本身就是槽位。
   const slots = groups.flatMap((group) => {
@@ -115,10 +123,30 @@ export default function CreativeModelSlots({
         : '暂无可用模型'
       : chosenCount === slots.length
         ? chosenNames.filter(Boolean).join(' · ')
-        : `选择模型 ${chosenCount}/${slots.length}`
+        : chosenCount > 0
+          ? `${chosenNames.filter(Boolean).join(' · ')} (${chosenCount}/${slots.length})`
+          : emptyLabel
+
+  const openPopover = () => {
+    if (hoverCloseTimerRef.current !== null) {
+      window.clearTimeout(hoverCloseTimerRef.current)
+      hoverCloseTimerRef.current = null
+    }
+    if (authRequired || !slots.length || locked || open) return
+    onOpen?.()
+    setOpen(true)
+  }
+
+  const scheduleHoverClose = () => {
+    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      setOpen(false)
+      hoverCloseTimerRef.current = null
+    }, 80)
+  }
 
   return (
-    <div className={barStyles.wrap} ref={wrapRef}>
+    <div className={barStyles.wrap} ref={wrapRef} onMouseEnter={openPopover} onMouseLeave={scheduleHoverClose}>
       <button
         type="button"
         className={`${barStyles.trigger}${open ? ` ${barStyles.isOpen}` : ''}`}
@@ -127,15 +155,14 @@ export default function CreativeModelSlots({
             onAuthRequired?.()
             return
           }
-          // 只在「即将展开」时回调：收起也触发会让每次关闭都白拉一次目录。
-          if (!open) onOpen?.()
-          toggle()
+          // 点击仍作为触屏与键盘的后备操作；鼠标场景由容器悬停展开。
+          openPopover()
         }}
-        disabled={!authRequired && !slots.length}
+        disabled={!authRequired && (!slots.length || locked)}
         title={locked ? lockedReason : undefined}
         aria-expanded={open}
         aria-haspopup="dialog"
-        aria-label={`生成模型，${summary}${locked ? `，${lockedReason}` : ''}`}
+        aria-label={`${summary ? `生成模型，${summary}` : '选择生成模型'}${locked ? `，${lockedReason}` : ''}`}
       >
         <span aria-hidden="true">◇</span>
         <span className={`${barStyles.summary} ${styles.summaryText}`}>{summary}</span>
@@ -145,19 +172,65 @@ export default function CreativeModelSlots({
       </button>
 
       {open && slots.length > 0 && (
-        <div className={`${barStyles.popover} ${styles.popover}`} role="dialog" aria-label="生成模型">
+        <div
+          className={`${barStyles.popover} ${styles.popover}${closing ? ` ${styles.popoverClosing}` : ''}`}
+          role="dialog"
+          aria-label="生成模型"
+        >
           {slots.map((slot) => (
-            <div className={barStyles.field} key={slot.key}>
-              <span className={barStyles.label}>{slot.label}</span>
-              <StudioModelPicker
-                models={slot.models.filter((model) => !model.disabled).map(toChoice)}
-                value={Number(selected[slot.key] || 0)}
-                onChange={(modelVersionId) => onChange(slot.groupKey, modelVersionId, slot.subgroupKey)}
-                loading={loading}
-                disabled={locked}
-                placeholderDescription="选择本次创作使用的模型"
-                compact
-              />
+            <div className={`${barStyles.field} ${styles.slotSection}`} key={slot.key}>
+              <span className={`${barStyles.label} ${styles.slotLabel}`}>{slot.label}</span>
+              <div
+                className={`${styles.optionList}${slot.models.filter((model) => !model.disabled).length === 1 ? ` ${styles.optionListSingle}` : ''}`}
+                role="listbox"
+                aria-label={`${slot.label}可用模型`}
+              >
+                {slot.models
+                  .filter((model) => !model.disabled)
+                  .map((model) => {
+                    const active = String(model.id) === String(selected[slot.key])
+                    return (
+                      <button
+                        key={model.id}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        className={`${styles.option}${active ? ` ${styles.optionActive}` : ''}`}
+                        onClick={() => {
+                          onChange(slot.groupKey, Number(model.id), slot.subgroupKey)
+                          // 任意一次选定都收起，让下一次操作回到稳定、明确的工具条。
+                          closeAfterSelection()
+                        }}
+                      >
+                        <span className={styles.optionLogo} aria-hidden="true">
+                          {model.logo ? (
+                            <img className={styles.logoImg} src={model.logo} alt="" />
+                          ) : (
+                            modelInitial(model.name)
+                          )}
+                        </span>
+                        <span className={styles.optionBody}>
+                          <span className={styles.optionName}>{model.name}</span>
+                          {model.description ? <span className={styles.optionDesc}>{model.description}</span> : null}
+                          {model.restrictions?.length ? (
+                            <span className={styles.tags}>
+                              {model.restrictions.slice(0, 2).map((text) => (
+                                <span className={styles.tag} key={text}>
+                                  {text}
+                                </span>
+                              ))}
+                            </span>
+                          ) : null}
+                        </span>
+                        {active ? (
+                          <span className={styles.check} aria-hidden="true">
+                            ✓
+                          </span>
+                        ) : null}
+                      </button>
+                    )
+                  })}
+              </div>
             </div>
           ))}
         </div>

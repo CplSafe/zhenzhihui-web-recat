@@ -7,6 +7,19 @@ import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
 import { useWorkspaceSessionStore } from '@/stores/workspaceSession'
 
 describe('preview modal keyboard behavior', () => {
+  it('portals the video overlay to body so page drawers cannot cover it', () => {
+    const { container } = render(
+      <div className="local-stacking-context">
+        <VideoPreviewModal src="/video.mp4" onClose={vi.fn()} />
+      </div>,
+    )
+
+    const dialog = screen.getByRole('dialog', { name: '视频预览' })
+    const mask = dialog.closest('.home__video-modal-mask')
+    expect(mask?.parentElement).toBe(document.body)
+    expect(container.querySelector('.home__video-modal-mask')).toBeNull()
+  })
+
   it('focuses the video dialog, closes with Escape, and restores trigger focus', async () => {
     const trigger = document.createElement('button')
     trigger.textContent = '打开视频'

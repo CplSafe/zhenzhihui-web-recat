@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 无限画布（/canvas/:id）
  *
  * 页面职责：提供无限画布，通过节点+连线方式组织 AI 生成管线。
@@ -53,6 +53,10 @@ import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
  * 那条路上新建的第一条线要刷新才有箭头。
  */
 const CANVAS_ARROW_EDGE_TYPE = 'canvasArrow'
+/** 新建视频节点的默认比例：投放场景基本是竖屏 */
+const VIDEO_DEFAULT_RATIO = '9:16'
+/** 重复连线的提示；同时作为「要不要闪一下已有连线」的判断依据 */
+const DUPLICATE_EDGE_MESSAGE = '这两个节点已经连过了，已高亮那条连线'
 
 const edgeTypes = { [CANVAS_ARROW_EDGE_TYPE]: CanvasArrowEdge }
 import CanvasFloatingToolbar from '@/components/canvas/CanvasFloatingToolbar'
@@ -69,7 +73,14 @@ import {
 } from '@/utils/canvasPreferences'
 import { computeAlignment, type AlignRect, type AlignmentGuide } from '@/utils/canvasAlignment'
 import { computeLayeredLayout } from '@/utils/canvasLayout'
-import { copyCanvasNodes, materializeCanvasClipboard, type CanvasClipboardPayload } from '@/utils/canvasClipboard'
+import { rememberCanvasModel } from '@/utils/canvasLastModel'
+import {
+  boundsOrigin,
+  collectUpstreamNodeIds,
+  copyCanvasNodes,
+  materializeCanvasClipboard,
+  type CanvasClipboardPayload,
+} from '@/utils/canvasClipboard'
 import { isPageInBackground, playNotificationSound, showGenerationNotification } from '@/utils/generationNotifier'
 import {
   createGroupId,
@@ -150,6 +161,7 @@ import {
 } from '@/utils/canvasGeneration'
 import {
   formatCanvasElapsed,
+  getCanvasEstimatedVideoProgress,
   getCanvasGenerationDuration,
   getCanvasTaskPresentation,
   isCanvasGeneratedResult,
@@ -679,6 +691,11 @@ const KIND_LABELS: Record<string, string> = { text: '文本', image: '图片', v
  * 组件级状态会随画布切换一起丢掉。只活在内存里，刷新即清。
  */
 let canvasClipboard: CanvasClipboardPayload | null = null
+/**
+ * 同一次复制的「包含之前所有节点」版本（被复制节点 + 上游整条链）。
+ * 只有上游确实多出节点时才有值；有值时粘贴会先让用户二选一。
+ */
+let canvasClipboardWithUpstream: CanvasClipboardPayload | null = null
 
 /** 对齐吸附的屏幕像素阈值；换算成画布坐标时要除以缩放 */
 const ALIGNMENT_SNAP_PX = 8
@@ -723,7 +740,8 @@ function miniMapNodeColor(node: Node): string {
  */
 const allowedSourceKinds: Record<string, string[]> = {
   // 合成后的时间线节点自身就是一条视频素材，可以继续作为下游节点的输入
-  video: ['image', 'video', 'timeline'],
+  // 文本连到视频后作为提示词拼接；图片/视频/时间线作为生成素材。
+  video: ['text', 'image', 'video', 'timeline'],
   image: ['text', 'image'],
   text: ['text', 'image', 'video', 'timeline'],
   // 剪辑时间线只接视频：连进来的每条视频自动成为一个片段
@@ -905,9 +923,16 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const [textContent, setTextContent] = useState(
     () => ((window as any).__canvasTextContents?.get(id) as string) || String((data as any)?.text || ''),
   )
+  // 只在 data.text 真正变化时（下方面板保存、协同同步）才覆盖正文。
+  // 以前是「和当前正文不一致就覆盖」：在节点框里直接编辑只写全局 Map、不写 data.text，
+  // 失焦后这里发现两者不一致，就把用户刚输入的内容换回了面板上次保存的旧文本（飞书「文本节点保存失效」）。
+  const lastRemoteTextRef = useRef(String((data as any)?.text || ''))
   useEffect(() => {
+    if (editing) return
     const remoteText = String((data as any)?.text || '')
-    if (!editing && remoteText && remoteText !== textContent) {
+    if (remoteText === lastRemoteTextRef.current) return
+    lastRemoteTextRef.current = remoteText
+    if (remoteText && remoteText !== textContent) {
       setTextContent(remoteText)
       if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
       ;(window as any).__canvasTextContents.set(id, remoteText)
@@ -1432,6 +1457,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   const taskStatus = normalizeAiTaskStatus((data as any)?.taskStatus)
   const taskProgress = Math.max(0, Math.min(100, Number((data as any)?.taskProgress || 0)))
   const taskError = String((data as any)?.taskError || '')
+  const connectionError = String((data as any)?.connectionError || '')
   const taskHasResult = kind === 'text' ? Boolean(textContent.trim()) : Boolean(mediaUrl)
   const taskPresentation = getCanvasTaskPresentation({
     status: taskStatus,
@@ -1441,9 +1467,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   })
   const taskRunning = taskPresentation.running
   const taskFailed = taskPresentation.failed
-  // 已用时：从持久化的提交时刻算起，刷新后接着走；上传中那层遮罩不是生成任务，不计时
+  // 从持久化的提交时刻算起，刷新后接着走；视频节点用于预计进度，其他节点仍显示已用时
   const taskElapsedSec = useElapsedSince((data as any)?.taskStartedAt, taskRunning && !uploadingLocalFile)
-  const taskElapsedLabel = taskElapsedSec === null ? '' : formatCanvasElapsed(taskElapsedSec)
+  const taskElapsedLabel = kind === 'video' || taskElapsedSec === null ? '' : formatCanvasElapsed(taskElapsedSec)
+  const videoEstimatedProgress =
+    kind === 'video' && taskRunning ? getCanvasEstimatedVideoProgress(taskElapsedSec) : null
   // 标题旁的「已生成」对勾：只认当前画面确实是生成结果（替换成素材库/本地文件后不显示）
   const generatedResult =
     (kind === 'image' || kind === 'video') &&
@@ -1561,7 +1589,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       onMouseLeave={() => setNodeHovered(false)}
     >
       {/*
-       * 头部：类型图标 + 名称（双击改名），浮在节点上方。
+       * 头部：类型图标 + 名称（双击改名），节点外单行展示，完整名称通过悬停提示查看。
        *
        * nodrag nopan 缺一不可：没有 nodrag，在标题上按下拖选文字会变成拖动整个节点；
        * 没有 nopan，双击会穿到 React Flow 的 onNodeDoubleClick——时间线节点因此
@@ -1860,6 +1888,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         )}
       </div>
 
+      {connectionError ? (
+        <div className="canvas-node-connect-error" title={connectionError} aria-hidden="true">
+          {connectionError}
+        </div>
+      ) : null}
+
       {uploadingLocalFile && (
         <div className="canvas-node-generation-mask" role="status" aria-live="polite">
           <span className="canvas-node-generation-spinner" aria-hidden="true" />
@@ -1869,23 +1903,45 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       )}
 
       {taskRunning && !uploadingLocalFile && (
-        <div className="canvas-node-generation-mask" role="status" aria-live="polite">
-          <span className="canvas-node-generation-spinner" aria-hidden="true" />
+        <div
+          className={`canvas-node-generation-mask${videoEstimatedProgress !== null ? ' is-video' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
+          {videoEstimatedProgress === null ? (
+            <span className="canvas-node-generation-spinner" aria-hidden="true" />
+          ) : null}
           <strong>{taskPresentation.title}</strong>
-          {/*
-           * 进度条：后端给了进度就按实值走，没给就是来回流动的不定态——
-           * 百分比常常几十秒才跳一次，条上的流光让「还在跑」一直看得见，但不伪造数字。
-           */}
           <span
-            className={`canvas-node-generation-progress${taskPresentation.progress ? '' : ' is-indeterminate'}`}
-            aria-hidden="true"
+            className={`canvas-node-generation-progress${videoEstimatedProgress !== null ? ' is-timed' : taskPresentation.progress ? '' : ' is-indeterminate'}`}
+            role={videoEstimatedProgress !== null ? 'progressbar' : undefined}
+            aria-label={videoEstimatedProgress !== null ? '视频生成预计进度' : undefined}
+            aria-valuemin={videoEstimatedProgress !== null ? 0 : undefined}
+            aria-valuemax={videoEstimatedProgress !== null ? 100 : undefined}
+            aria-valuenow={videoEstimatedProgress ?? undefined}
+            aria-hidden={videoEstimatedProgress === null ? 'true' : undefined}
           >
             <span
               className="canvas-node-generation-progress__fill"
-              style={taskPresentation.progress ? { width: `${Math.round(taskPresentation.progress)}%` } : undefined}
+              style={
+                videoEstimatedProgress !== null
+                  ? { width: `${videoEstimatedProgress}%` }
+                  : taskPresentation.progress
+                    ? { width: `${Math.round(taskPresentation.progress)}%` }
+                    : undefined
+              }
             />
           </span>
-          <span className="canvas-node-generation-detail">{taskPresentation.detail}</span>
+          {videoEstimatedProgress !== null ? (
+            <span className="canvas-node-generation-estimate" aria-hidden="true">
+              预计进度 {videoEstimatedProgress.toFixed(2)}%
+            </span>
+          ) : null}
+          <span className="canvas-node-generation-detail">
+            {videoEstimatedProgress !== null && taskPresentation.detail.endsWith('%')
+              ? '模型处理中'
+              : taskPresentation.detail}
+          </span>
           {taskElapsedLabel ? (
             // 读屏只在状态文案变化时播报，每秒跳动的计时不进 live region
             <span className="canvas-node-generation-elapsed" aria-hidden="true">
@@ -1909,7 +1965,11 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 ? '正在核对'
                 : '正在生成'}
           </span>
-          {taskRunning && taskPresentation.progress ? <strong>{Math.round(taskPresentation.progress)}%</strong> : null}
+          {taskRunning && videoEstimatedProgress !== null ? (
+            <strong aria-hidden="true">{videoEstimatedProgress.toFixed(2)}%</strong>
+          ) : taskRunning && taskPresentation.progress ? (
+            <strong>{Math.round(taskPresentation.progress)}%</strong>
+          ) : null}
         </div>
       )}
 
@@ -1989,6 +2049,15 @@ function CanvasInner() {
   const [snapEnabled, setSnapEnabled] = useState(false)
   /** 隐藏连线：节点密集时连线会糊成一片，这是一个纯展示层的降噪开关，不改任何数据 */
   const [edgesHidden, setEdgesHidden] = useState(false)
+  /** 重复连线被拦下时闪一下已有的那条线：线细且可能横跨半个画布，光一句提示用户找不到它在哪 */
+  const [flashEdgeId, setFlashEdgeId] = useState('')
+  const flashEdgeTimerRef = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (flashEdgeTimerRef.current !== null) window.clearTimeout(flashEdgeTimerRef.current)
+    },
+    [],
+  )
   /** 小地图显示与否；偏好记在本机，开关在左下角的视图控制条上 */
   const [minimapVisible, setMinimapVisible] = useState(loadMinimapVisible)
   // 正在编辑剪辑时间线的节点 id；空串表示编辑器关闭
@@ -2093,6 +2162,18 @@ function CanvasInner() {
   /** 粘贴节点的实现在后面才定义，paste 监听（定义在前）通过 ref 调它 */
   const pasteClipboardNodesRef = useRef<(anchor?: { x: number; y: number }) => boolean>(() => false)
   const [selectedNode, setSelectedNode] = useState<CanvasNodeInfo | null>(null)
+  /**
+   * 编辑面板的字段以 nodes 中的持久化 data 为真相源。
+   * selectedNode 主要保存选择态和 sourceRefs；两份状态同一批更新时，边变化的同步 effect
+   * 可能先带回旧的 text/prompt。直接把 selectedNode 交给面板就会出现正文已写入节点、
+   * 面板却仍回灌旧值的竞态。
+   */
+  const selectedNodeForPanel = useMemo<CanvasNodeInfo | null>(() => {
+    if (!selectedNode) return null
+    const graphNode = nodes.find((node) => node.id === selectedNode.id)
+    const data = graphNode?.data as Record<string, unknown> | undefined
+    return data ? ({ ...selectedNode, ...data, sourceRefs: selectedNode.sourceRefs } as CanvasNodeInfo) : selectedNode
+  }, [selectedNode, nodes])
   /**
    * 多选中的节点 id。
    *
@@ -2292,6 +2373,19 @@ function CanvasInner() {
     )
   }, [])
 
+  /** 校验失败原因是「重复连线」时，高亮已存在的那条线约 1.6 秒 */
+  const flashDuplicateEdge = useCallback((reason: string | null, sourceId: string, targetId: string) => {
+    if (reason !== DUPLICATE_EDGE_MESSAGE) return
+    const existing = latestRef.current.edges.find((e) => e.source === sourceId && e.target === targetId)
+    if (!existing) return
+    if (flashEdgeTimerRef.current !== null) window.clearTimeout(flashEdgeTimerRef.current)
+    setFlashEdgeId(existing.id)
+    flashEdgeTimerRef.current = window.setTimeout(() => {
+      flashEdgeTimerRef.current = null
+      setFlashEdgeId('')
+    }, 1600)
+  }, [])
+
   /** 从 edges 派生 sourceRefs，按 edgeId 去重兜底（防止历史重复边造成重复缩略图） */
   const deriveSourceRefs = useCallback(
     (nodeId: string): CanvasSourceRef[] => {
@@ -2402,7 +2496,7 @@ function CanvasInner() {
   /** 校验连线是否合法：重复（基于最新状态）、类型匹配、数量上限。返回错误信息，合法返回 null */
   const validateConnection = useCallback(
     (sourceId: string, targetId: string): string | null => {
-      if (hasEdgeBetween(sourceId, targetId)) return '已存在相同连线'
+      if (hasEdgeBetween(sourceId, targetId)) return DUPLICATE_EDGE_MESSAGE
       if (wouldCreateCanvasCycle(sourceId, targetId, latestRef.current.edges)) return '不能创建循环依赖连线'
       const targetNode = latestRef.current.nodes.find((n) => n.id === targetId)
       const targetKind = (targetNode?.data?.kind as string) || 'text'
@@ -2893,34 +2987,51 @@ function CanvasInner() {
    * 而且之后改文本节点，用户会困惑于「为什么改了没生效」。所以这里是一次性的转移动作。
    * 全程只提交一次历史，撤销能一步回到继承状态。
    */
-  const handleAdoptInheritedText = useCallback(() => {
-    const targetNodeId = selectedNode?.id
-    if (!targetNodeId) return
-    const inherited = inheritedPromptTexts
-    if (!inherited.length) return
-    const droppedEdgeIds = new Set(inherited.map((item) => item.edgeId))
-    const currentPrompt = String(
-      (latestRef.current.nodes.find((node) => node.id === targetNodeId)?.data as Record<string, unknown> | undefined)
-        ?.prompt || '',
-    )
-    const merged = [...inherited.map((item) => item.text), currentPrompt.trim()].filter(Boolean).join('\n\n')
+  const handleAdoptInheritedText = useCallback(
+    (mergedText: string) => {
+      const targetNodeId = selectedNode?.id
+      if (!targetNodeId) return
+      const inherited = inheritedPromptTexts
+      if (!inherited.length) return
+      const droppedEdgeIds = new Set(inherited.map((item) => item.edgeId))
+      const merged = String(mergedText || '').trim()
+      if (!merged) return
+      // 旧画布的 selectedNode 选择态可能没有 kind；真实类型以 React Flow 节点 data 为准。
+      // 与面板的默认行为保持一致：缺失 kind 的旧节点按文本节点处理，避免误写到 prompt（标题摘要）。
+      const targetKind = String(
+        latestRef.current.nodes.find((item) => item.id === targetNodeId)?.data?.kind || selectedNode.kind || 'text',
+      )
 
-    commitHistory()
-    setEdges((items) => items.filter((edge) => !droppedEdgeIds.has(edge.id)))
-    setNodes((items) =>
-      items.map((item) => (item.id === targetNodeId ? { ...item, data: { ...item.data, prompt: merged } } : item)),
-    )
-    setSelectedNode((current) =>
-      current?.id === targetNodeId
-        ? {
-            ...current,
-            prompt: merged,
-            sourceRefs: (current.sourceRefs || []).filter((ref) => !droppedEdgeIds.has(ref.edgeId)),
-          }
-        : current,
-    )
-    setSaveStatus('dirty')
-  }, [selectedNode?.id, inheritedPromptTexts, commitHistory, setEdges, setNodes, setSaveStatus])
+      commitHistory()
+      setEdges((items) => items.filter((edge) => !droppedEdgeIds.has(edge.id)))
+      if (targetKind === 'text') {
+        if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map<string, string>()
+        ;((window as any).__canvasTextContents as Map<string, string>).set(targetNodeId, merged)
+      }
+      setNodes((items) =>
+        items.map((item) =>
+          item.id === targetNodeId
+            ? {
+                ...item,
+                data: { ...item.data, ...(targetKind === 'text' ? { text: merged } : { prompt: merged }) },
+              }
+            : item,
+        ),
+      )
+      setSelectedNode((current) =>
+        current?.id === targetNodeId
+          ? {
+              ...current,
+              ...(targetKind === 'text' ? { text: merged } : { prompt: merged }),
+              sourceRefs: (current.sourceRefs || []).filter((ref) => !droppedEdgeIds.has(ref.edgeId)),
+            }
+          : current,
+      )
+      setSaveStatus('dirty')
+      scheduleSyncRef.current(true)
+    },
+    [selectedNode?.id, selectedNode?.kind, inheritedPromptTexts, commitHistory, setEdges, setNodes, setSaveStatus],
+  )
 
   const handlePickRefNode = useCallback(
     (sourceNode: Node) => {
@@ -2938,6 +3049,7 @@ function CanvasInner() {
       const validationError = validateConnection(sourceNode.id, pickingTargetId)
       if (validationError) {
         failWith(validationError)
+        flashDuplicateEdge(validationError, sourceNode.id, pickingTargetId)
         return
       }
       const sourceKind = (sourceNode.data?.kind as string) || 'text'
@@ -3000,7 +3112,7 @@ function CanvasInner() {
         return { ...prev, sourceRefs: next }
       })
     },
-    [pickingTargetId, pickingSlotIndex, setEdges, commitHistory, validateConnection],
+    [pickingTargetId, pickingSlotIndex, setEdges, commitHistory, validateConnection, flashDuplicateEdge],
   )
 
   /**
@@ -3065,6 +3177,9 @@ function CanvasInner() {
       // 添加连线前记录历史，供撤销使用
       commitHistory()
       setEdges((eds) => created.reduce((acc, edge) => addEdge(edge, acc), eds))
+      if ((target.data?.resultUrl || target.data?.assetId) && (targetKind === 'image' || targetKind === 'video')) {
+        showToast(`已添加新的输入，当前结果保持不变；点击“重新生成”后应用`, 'success')
+      }
       return created.length
     },
     [setEdges, commitHistory, validateConnection],
@@ -3145,6 +3260,7 @@ function CanvasInner() {
         if (count === 0) {
           const reason = sources.length === 1 ? validateConnection(sources[0], hit.nodeId) : null
           showToast(reason || '这些节点无法连到该目标', 'error')
+          if (sources.length === 1) flashDuplicateEdge(reason, sources[0], hit.nodeId)
         } else if (sources.length > 1) {
           showToast(`已把 ${count} 个节点连到目标`, 'success')
         }
@@ -3154,7 +3270,7 @@ function CanvasInner() {
       // 未命中任何节点 → 弹出创建菜单
       setAddMenu({ x: mx, y: my, sourceId })
     },
-    [nodes, transform, resolveConnectSources, connectSourcesToTarget, validateConnection],
+    [nodes, transform, resolveConnectSources, connectSourcesToTarget, validateConnection, flashDuplicateEdge],
   )
 
   /**
@@ -3199,7 +3315,8 @@ function CanvasInner() {
       const isVideoGenerationNode = type === 'video' && !droppedMaterial
       const videoMode: CanvasVideoMode | undefined =
         type === 'video' ? (isVideoGenerationNode ? 'full-ref' : 'auto') : undefined
-      const ratio = isVideoGenerationNode && (!options?.ratio || isAutoRatio(options.ratio)) ? '16:9' : options?.ratio
+      const ratio =
+        isVideoGenerationNode && (!options?.ratio || isAutoRatio(options.ratio)) ? VIDEO_DEFAULT_RATIO : options?.ratio
       const newNode: Node = {
         id,
         type,
@@ -3935,24 +4052,24 @@ function CanvasInner() {
             data.ratio = AUTO_RATIO
             return { ...n, data, style: { ...(n.style as Record<string, unknown>), width: 444, height: 250 } }
           }
-          // 全能参考：无比例或自适应时默认 16:9
+          // 全能参考：无比例或自适应时默认竖屏 9:16（投放以竖屏为主）
           if (!data.ratio || isAutoRatio(data.ratio as string)) {
-            data.ratio = '16:9'
-            const { width, height } = calcNodeSize('16:9', baseSize)
+            data.ratio = VIDEO_DEFAULT_RATIO
+            const { width, height } = calcNodeSize(VIDEO_DEFAULT_RATIO, baseSize)
             return { ...n, data, style: { ...(n.style as Record<string, unknown>), width, height } }
           }
           return { ...n, data }
         }),
       )
       // 同步选中态回显（与 setNodes 同一套归一化逻辑）：
-      // 首尾帧 → auto；全能参考下原为无比例/自适应 → 默认 16:9；参考连线已清除
+      // 首尾帧 → auto；全能参考下原为无比例/自适应 → 默认 9:16；参考连线已清除
       setSelectedNode((prev) => {
         if (!prev) return null
         let ratio = prev.ratio
         if (mode === 'first-last') {
           ratio = AUTO_RATIO
         } else if (!ratio || isAutoRatio(ratio)) {
-          ratio = '16:9'
+          ratio = VIDEO_DEFAULT_RATIO
         }
         return { ...prev, videoMode: mode, ratio }
       })
@@ -4519,10 +4636,14 @@ function CanvasInner() {
   /** 文本节点只保存用户原文，不创建 AI 任务；下游图片/视频会直接读取这段文本。 */
   const handleSaveNodeText = useCallback(
     (text: string) => {
-      if (!selectedNode || selectedNode.kind !== 'text') return
+      if (!selectedNode) return
+      const targetNodeId = selectedNode.id
+      const targetKind = String(
+        latestRef.current.nodes.find((item) => item.id === targetNodeId)?.data?.kind || selectedNode.kind || 'text',
+      )
+      if (targetKind !== 'text') return
       const value = String(text || '').trim()
       if (!value) return
-      const targetNodeId = selectedNode.id
       commitHistory()
       if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map<string, string>()
       ;((window as any).__canvasTextContents as Map<string, string>).set(targetNodeId, value)
@@ -4800,6 +4921,8 @@ function CanvasInner() {
         })
         const taskId = getAiTaskId(task)
         if (!taskId) throw new Error('任务创建后未返回任务 ID')
+        // 任务真正建起来才记「上次使用的模型」，下次新建同类节点默认选它
+        rememberCanvasModel(generate.kind, generate.operationCode, Number(generate.modelVersionId || 0))
         // 3) 回写 task_id/task_status 到节点
         const createdStatus = normalizeAiTaskStatus(task?.status) || 'pending'
         // 创建接口可能直接返回 succeeded，但完整 outputs 通常仍需从任务详情读取。
@@ -6223,25 +6346,36 @@ function CanvasInner() {
     return selectedNode?.id ? [selectedNode.id] : []
   }, [selectedNodeIds, selectedNode?.id])
 
-  /** 把指定节点（含它们之间的连线）放进内存剪贴板 */
-  const copyNodes = useCallback(
+  /** 指定节点（含它们之间的连线）的快照：配置与内容 1:1，只剥运行态 */
+  const snapshotNodes = useCallback(
     (ids: string[]) => {
-      if (!ids.length) return false
       const textMap = (window as any).__canvasTextContents as Map<string, string> | undefined
-      const payload = copyCanvasNodes({
+      return copyCanvasNodes({
         nodes: latestRef.current.nodes as any,
         edges: latestRef.current.edges as any,
         selectedIds: ids,
         runtimeKeys: RUNTIME_NODE_DATA_KEYS,
         readText: (nodeId) => textMap?.get(nodeId),
       })
+    },
+    [RUNTIME_NODE_DATA_KEYS],
+  )
+
+  /** 把指定节点（含它们之间的连线）放进内存剪贴板 */
+  const copyNodes = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return false
+      const payload = snapshotNodes(ids)
       if (!payload) return false
       canvasClipboard = payload
+      // 上游多出节点时同时备一份「含之前所有节点」的，粘贴时让用户二选一
+      const upstreamIds = collectUpstreamNodeIds(ids, latestRef.current.edges as any)
+      canvasClipboardWithUpstream = upstreamIds.length > payload.nodes.length ? snapshotNodes(upstreamIds) : null
       setContextMenu(null)
       showToast(`已复制 ${payload.nodes.length} 个节点`, 'success')
       return true
     },
-    [RUNTIME_NODE_DATA_KEYS],
+    [snapshotNodes],
   )
 
   /** Ctrl+C：复制当前选中集 */
@@ -6251,18 +6385,15 @@ function CanvasInner() {
    * Ctrl+V：把剪贴板里的节点落到指针位置（居中），没有指针位置就落视口中央。
    * 新节点成为选中集，连线跟着换上新 id。
    */
-  const pasteClipboardNodes = useCallback(
-    (anchor?: { x: number; y: number }) => {
-      const payload = canvasClipboard
-      if (!payload || !payload.nodes.length) return false
-      const screen = anchor || pointerRef.current || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-      const center = screenToFlowPosition(screen)
+  /** 把一份快照落到画布：origin 是包围盒左上角的画布坐标；新节点成为选中集 */
+  const insertSnapshot = useCallback(
+    (payload: CanvasClipboardPayload, origin: { x: number; y: number }) => {
       const {
         nodes: created,
         edges: createdEdges,
         textContents,
       } = materializeCanvasClipboard(payload, {
-        origin: { x: center.x - payload.width / 2, y: center.y - payload.height / 2 },
+        origin,
         createNodeId,
         buildEdgeId,
       })
@@ -6294,9 +6425,47 @@ function CanvasInner() {
       setContextMenu(null)
       return true
     },
-    [commitHistory, setNodes, setEdges, screenToFlowPosition],
+    [commitHistory, setNodes, setEdges],
+  )
+
+  /** 粘贴时「只含当前节点 / 包含之前所有节点」二选一的小框；null 表示没打开 */
+  const [pasteChoice, setPasteChoice] = useState<{ x: number; y: number } | null>(null)
+
+  const pasteClipboardNodes = useCallback(
+    (anchor?: { x: number; y: number }, variant?: 'only' | 'upstream') => {
+      const screen = anchor || pointerRef.current || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+      // 复制的节点有上游、又没指定粘哪种：先弹二选一，由用户决定
+      if (!variant && canvasClipboardWithUpstream && canvasClipboard) {
+        setContextMenu(null)
+        setPasteChoice({ x: screen.x, y: screen.y })
+        return true
+      }
+      const payload =
+        variant === 'upstream' && canvasClipboardWithUpstream ? canvasClipboardWithUpstream : canvasClipboard
+      if (!payload || !payload.nodes.length) return false
+      setPasteChoice(null)
+      const center = screenToFlowPosition(screen)
+      return insertSnapshot(payload, { x: center.x - payload.width / 2, y: center.y - payload.height / 2 })
+    },
+    [insertSnapshot, screenToFlowPosition],
   )
   pasteClipboardNodesRef.current = pasteClipboardNodes
+
+  /**
+   * 创建副本 · 包含之前所有节点：把该节点连同上游整条链（节点与连线）1:1 复制，
+   * 放在原链正下方，副本之间自动连好线。
+   */
+  const duplicateWithUpstream = useCallback(
+    (nodeId: string) => {
+      const ids = collectUpstreamNodeIds([nodeId], latestRef.current.edges as any)
+      const payload = snapshotNodes(ids)
+      const origin = boundsOrigin(latestRef.current.nodes as any, ids)
+      if (!payload || !origin) return
+      insertSnapshot(payload, { x: origin.x, y: origin.y + payload.height + 80 })
+      showToast(`已复制 ${payload.nodes.length} 个节点及其连线`, 'success')
+    },
+    [snapshotNodes, insertSnapshot],
+  )
 
   /**
    * 键盘快捷键总入口（撤销/重做与 Ctrl+F 在各自的 effect 里，这里是其余的）。
@@ -6979,9 +7148,13 @@ function CanvasInner() {
         // 源节点自身保持正常
         if (n.id === connectSourceId) return n
         // 校验：类型不匹配 / 已存在同源连线 / 目标参考数达上限 → 不可连接
-        const invalid = validateConnection(connectSourceId, n.id) !== null
-        return invalid
-          ? { ...n, className: n.className ? `${n.className} is-connect-disabled` : 'is-connect-disabled' }
+        const reason = validateConnection(connectSourceId, n.id)
+        return reason
+          ? {
+              ...n,
+              data: { ...n.data, connectionError: reason },
+              className: n.className ? `${n.className} is-connect-disabled` : 'is-connect-disabled',
+            }
           : n
       })
     }
@@ -7077,6 +7250,7 @@ function CanvasInner() {
     () => new Set(generatingNodeKey ? generatingNodeKey.split('\n') : []),
     [generatingNodeKey],
   )
+  const displayNodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
 
   // 为所有来源的连线换上带箭头的边型：包含历史恢复、协作增量同步和本次新建的连线。
   // 历史数据里可能残留 markerEnd（旧的 marker 引用方案），一并去掉，避免两套箭头叠加。
@@ -7084,6 +7258,24 @@ function CanvasInner() {
     () =>
       edges.map((edge) => {
         const { markerEnd: _markerEnd, ...rest } = edge
+        // 旧画布的边没有保存 role。展示时按两端节点补算，既不改持久化数据，
+        // 又能让历史连线与新连线使用同一套语义标签。
+        const sourceNode = displayNodeById.get(edge.source)
+        const targetNode = displayNodeById.get(edge.target)
+        const sourceKind = String(sourceNode?.data?.kind || 'text')
+        const targetKind = String(targetNode?.data?.kind || 'text')
+        const edgeData = (edge.data || {}) as Record<string, unknown>
+        const data = edgeData.role
+          ? edgeData
+          : {
+              ...edgeData,
+              role: inferCanvasConnectionRole({
+                sourceKind,
+                targetKind,
+                videoMode: targetNode?.data?.videoMode as CanvasVideoMode | undefined,
+                slotIndex: Number(edgeData.slotIndex || 0),
+              }),
+            }
         // 隐藏连线走 hidden 而不是把边从数组里抽掉：抽掉会让 React Flow 认为连线被删除，
         // 连带影响选中态与后续的增量 diff——这只是一个看不看得见的开关，不该动数据。
         const focused = focusedNodeIds.size > 0 && (focusedNodeIds.has(edge.source) || focusedNodeIds.has(edge.target))
@@ -7094,12 +7286,22 @@ function CanvasInner() {
           preferences.focusEdgesOnly && focusedNodeIds.size > 0 && !focused ? 'is-dimmed' : '',
           // 供料给生成中节点的线在流动：输入正在被使用，也就不该在这时去改它
           generatingNodeIds.has(edge.target) ? 'is-feeding' : '',
+          edge.id === flashEdgeId ? 'is-duplicate-flash' : '',
         ]
           .filter(Boolean)
           .join(' ')
-        return { ...rest, type: CANVAS_ARROW_EDGE_TYPE, hidden: edgesHidden, className: className || undefined }
+        return { ...rest, data, type: CANVAS_ARROW_EDGE_TYPE, hidden: edgesHidden, className: className || undefined }
       }),
-    [edges, edgesHidden, focusedNodeIds, generatingNodeIds, preferences.edgeHoverHighlight, preferences.focusEdgesOnly],
+    [
+      edges,
+      edgesHidden,
+      flashEdgeId,
+      focusedNodeIds,
+      generatingNodeIds,
+      displayNodeById,
+      preferences.edgeHoverHighlight,
+      preferences.focusEdgesOnly,
+    ],
   )
 
   /** 底部读数：节点 / 连线 / 生成失败数 */
@@ -7711,6 +7913,38 @@ function CanvasInner() {
             })}
         </EdgeLabelRenderer>
 
+        {/* 粘贴二选一：复制的节点带有上游时，粘贴前让用户选粘哪种 */}
+        {pasteChoice && (
+          <>
+            <div className="canvas-paste-choice__mask" onMouseDown={() => setPasteChoice(null)} />
+            <div
+              className="canvas-context-menu canvas-paste-choice"
+              style={{
+                left: Math.min(pasteChoice.x, window.innerWidth - CONTEXT_MENU_WIDTH),
+                top: Math.min(pasteChoice.y, window.innerHeight - 120),
+              }}
+            >
+              <div className="canvas-paste-choice__title">粘贴哪些节点？</div>
+              <button
+                type="button"
+                className="canvas-context-menu__item"
+                onClick={() => pasteClipboardNodes(pasteChoice, 'only')}
+              >
+                只含当前节点
+                <span className="canvas-context-menu__kbd">{canvasClipboard?.nodes.length ?? 0} 个</span>
+              </button>
+              <button
+                type="button"
+                className="canvas-context-menu__item"
+                onClick={() => pasteClipboardNodes(pasteChoice, 'upstream')}
+              >
+                包含之前所有节点
+                <span className="canvas-context-menu__kbd">{canvasClipboardWithUpstream?.nodes.length ?? 0} 个</span>
+              </button>
+            </div>
+          </>
+        )}
+
         {/* 右键浮动菜单：添加节点 / 撤销 / 重做 */}
         {contextMenu && (
           <div
@@ -7733,9 +7967,35 @@ function CanvasInner() {
                       <path d="M5 15V5a2 2 0 0 1 2-2h10" />
                     </svg>
                   </span>
-                  生成副本
+                  创建副本 · 只含当前节点
                   <span className="canvas-context-menu__kbd">Ctrl+D</span>
                 </button>
+                {edges.some((edge) => edge.target === contextMenu.nodeId) && (
+                  <button
+                    type="button"
+                    className="canvas-context-menu__item"
+                    onClick={() => {
+                      setContextMenu(null)
+                      duplicateWithUpstream(contextMenu.nodeId!)
+                    }}
+                  >
+                    <span className="canvas-context-menu__icon">
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                      >
+                        <rect x="12" y="12" width="9" height="9" rx="2" />
+                        <rect x="3" y="3" width="7" height="7" rx="2" />
+                        <path d="M10 6.5h3.5a2 2 0 0 1 2 2V12" strokeLinecap="round" />
+                      </svg>
+                    </span>
+                    创建副本 · 包含之前所有节点
+                  </button>
+                )}
                 <button
                   type="button"
                   className="canvas-context-menu__item"
@@ -8036,7 +8296,7 @@ function CanvasInner() {
             style={panelAnchor ? { left: panelAnchor.left, top: panelAnchor.top } : undefined}
           >
             <CanvasNodePanel
-              node={selectedNode}
+              node={selectedNodeForPanel}
               workspaceId={workspaceId}
               onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
               onPickRefFromLibrary={(slotIndex) => {

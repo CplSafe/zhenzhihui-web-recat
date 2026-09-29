@@ -79,6 +79,9 @@
   padding: 6px 10px 0;
   color: #98a1b0;
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .share-node-media {
@@ -96,4 +99,26 @@
   line-height: 1.6;
   white-space: pre-wrap;
   overflow: hidden;
+}
+
+.share-node-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(100% - 22px);
+  padding: 12px;
+  color: #66717f;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  background: #f1f3f6;
+}
+
+/* 连接点只供 React Flow 计算分享页的历史连线路径，不接受访客交互。 */
+.share-node-handle {
+  width: 1px;
+  height: 1px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }

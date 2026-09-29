@@ -24,6 +24,7 @@ import {
 } from '@/api/canvasApi'
 import { pickCanvasCover, type CanvasCover } from '@/utils/canvasCover'
 import { buildCanvasCopyTitle } from '@/utils/canvasCopyTitle'
+import { pageCacheKey, readPageCache, writePageCache } from '@/utils/pageDataCache'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
@@ -99,6 +100,14 @@ export default function CanvasListView() {
   useEffect(() => {
     workspaceIdRef.current = Number(workspaceId || 0)
   }, [workspaceId])
+  const currentUserIdRef = useRef(currentUserId)
+  currentUserIdRef.current = currentUserId
+
+  // 列表（含本页新建 / 删除 / 重命名后的本地更新）同步进缓存，下次进页面先显示它
+  useEffect(() => {
+    if (!canvasesWorkspaceId) return
+    writePageCache(pageCacheKey('canvas-list', canvasesWorkspaceId, currentUserId), canvases)
+  }, [canvases, canvasesWorkspaceId, currentUserId])
 
   const activeWsId = Number(workspaceId || 0)
   // memo 化：它是下面封面副作用的依赖，每次渲染新建数组会让副作用反复触发。
@@ -222,7 +231,14 @@ export default function CanvasListView() {
       setLoading(false)
       return
     }
-    setLoading(true)
+    // 有上次的列表就先画出来，不转圈；下面照常拉最新数据覆盖
+    const cached = readPageCache<CanvasSummary[]>(pageCacheKey('canvas-list', wsId, currentUserIdRef.current))
+    if (cached) {
+      canvasesWorkspaceIdRef.current = wsId
+      setCanvases(cached)
+      setCanvasesWorkspaceId(wsId)
+    }
+    setLoading(!cached)
     try {
       // 后端单页上限 100；分页交给前端做，所以这里循环拉到底，与项目管理页拉全量项目的做法一致
       const items: CanvasSummary[] = []
@@ -239,7 +255,8 @@ export default function CanvasListView() {
     } catch (error) {
       if (isCurrent()) {
         canvasesWorkspaceIdRef.current = wsId
-        setCanvases([])
+        // 刷新失败时保留已显示的上次数据，只提示错误
+        if (!cached) setCanvases([])
         setCanvasesWorkspaceId(wsId)
         showToast(getBusinessErrorMessage(error, '画布列表加载失败,请稍后重试'), 'error')
       }

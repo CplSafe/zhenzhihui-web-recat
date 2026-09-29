@@ -50,6 +50,25 @@ export function formatCanvasElapsed(seconds: unknown): string {
   return `${minutes} 分 ${String(total % 60).padStart(2, '0')} 秒`
 }
 
+/** 视频生成的预计进度：前段每秒变化 1.x%，后段逐渐放慢，任务完成前不会显示 100%。 */
+export function getCanvasEstimatedVideoProgress(seconds: number | null): number {
+  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) return 0
+  const elapsed = Math.floor(seconds)
+  let progress = 0
+  let fastSeconds = 0
+
+  // 用秒数生成稳定的变化量，同一任务刷新或重渲染后不会随机回退。
+  while (fastSeconds < elapsed && progress < 90) {
+    fastSeconds += 1
+    progress += 1.1 + ((fastSeconds * 47) % 70) / 100
+  }
+
+  if (elapsed > fastSeconds) {
+    progress = 99 - (99 - progress) * Math.exp(-(elapsed - fastSeconds) / 180)
+  }
+  return Math.min(99, Number(progress.toFixed(2)))
+}
+
 /**
  * 节点当前显示的素材是否就是 AI 生成的结果（标题旁的「已生成」对勾据此显示）。
  *

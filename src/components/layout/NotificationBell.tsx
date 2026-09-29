@@ -227,7 +227,7 @@ export default function NotificationBell({ userKey }: NotificationBellProps) {
           <path d="M12 22a2.3 2.3 0 0 0 2.3-2.3H9.7A2.3 2.3 0 0 0 12 22Zm7-5.3v-1l-1.5-1.6v-4.3c0-3-1.9-5.5-4.7-6.2V3a.8.8 0 1 0-1.6 0v.6C8.4 4.3 6.5 6.8 6.5 9.8v4.3L5 15.7v1Z" />
         </svg>
         {unreadCount > 0 && (
-          <span className="notify__badge" aria-hidden="true">
+          <span className={`notify__badge${unreadCount > 99 ? ' notify__badge--overflow' : ''}`} aria-hidden="true">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}

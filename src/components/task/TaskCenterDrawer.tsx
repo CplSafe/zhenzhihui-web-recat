@@ -7,6 +7,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useNavigate } from 'react-router-dom'
 import { Tooltip } from 'antd'
 import {
+  DeleteOutlined,
   InboxOutlined,
   LeftOutlined,
   LoadingOutlined,
@@ -16,7 +17,8 @@ import {
   UserOutlined,
 } from '@ant-design/icons'
 import { getAssetDownloadUrl, humanizeProviderErrorText } from '@/api/business'
-import { deriveProjectVideos } from '@/api/projectVideos'
+import { deleteProjectVideo, deriveProjectVideos } from '@/api/projectVideos'
+import { useConfirmDialog, useToast } from '@/composables/useToast'
 import { useCurrentUser, useCurrentWorkspace, useWorkspaceId } from '@/stores/workspaceSession'
 import {
   buildTaskCenterId,
@@ -26,6 +28,7 @@ import {
   useTaskCenterStore,
 } from '@/stores/taskCenter'
 import { listAllCreativeProjects } from '@/utils/businessPagination'
+import { pageCacheKey, readPageCache, writePageCache } from '@/utils/pageDataCache'
 import {
   getCreativeProjectDraft,
   isCreativeProjectRestrictedForUser,
@@ -634,13 +637,16 @@ function TaskCard({
   task,
   creatorLabel,
   onOpen,
-  onArchive,
+  canDelete,
+  onDelete,
 }: {
   task: TaskCenterTask
   /** 非本人产出时显示的创作者名；自己的卡片不标，避免列表变吵。 */
   creatorLabel?: string
   onOpen: () => void
-  onArchive: () => void
+  /** 团队空间里只能删自己生成的任务；为 false 时删除按钮置灰并说明原因 */
+  canDelete: boolean
+  onDelete: () => void
 }) {
   const [videoMetadata, setVideoMetadata] = useState({ duration: 0, width: 0, height: 0 })
   const record = task as TaskRecord
@@ -759,15 +765,28 @@ function TaskCard({
           )}
         </span>
       </button>
-      <Tooltip title="从任务管理中隐藏这条任务，不会删除视频" placement="left">
-        <button
-          type="button"
-          className={styles.archiveButton}
-          onClick={onArchive}
-          aria-label={`从任务管理中隐藏${title}`}
-        >
-          <InboxOutlined aria-hidden="true" />
-        </button>
+      <Tooltip
+        title={
+          !canDelete
+            ? '只能删除自己生成的任务'
+            : tone === 'completed'
+              ? '删除这条视频（项目中也将不再显示）'
+              : '从任务管理中移除这条任务'
+        }
+        placement="left"
+      >
+        {/* disabled 的按钮不触发悬停，套一层 span 让提示仍能出现 */}
+        <span className={styles.archiveButtonWrap}>
+          <button
+            type="button"
+            className={styles.archiveButton}
+            onClick={onDelete}
+            disabled={!canDelete}
+            aria-label={canDelete ? `删除${title}` : `${title}由其他成员生成，不能删除`}
+          >
+            <DeleteOutlined aria-hidden="true" />
+          </button>
+        </span>
       </Tooltip>
     </article>
   )
@@ -818,6 +837,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
   const expanded = useTaskCenterStore((state) => state.drawerExpanded)
   const setDrawerExpanded = useTaskCenterStore((state) => state.setDrawerExpanded)
   const archiveTask = useTaskCenterStore((state) => state.archiveTask)
+  const { showToast } = useToast()
+  const { requestConfirm } = useConfirmDialog()
 
   useEffect(() => {
     playbackRequestRef.current += 1
@@ -835,10 +856,20 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
       return
     }
     let disposed = false
-    setHistoryLoading(true)
+    // 再次展开时先显示上次的历史（不转圈），下面照常拉最新的覆盖
+    const cacheKey = pageCacheKey('task-history', workspaceId, currentUserId)
+    const cached = readPageCache<TaskCenterHistoryResult>(cacheKey)
+    if (cached) {
+      setHistoricalTasks(cached.tasks)
+      setAccessibleProjectIds(cached.accessibleProjectIds)
+      setMyProjectIds(cached.myProjectIds)
+      setProjectPermissionsLoaded(true)
+    }
+    setHistoryLoading(!cached)
     void loadHistoricalTasks(Number(workspaceId), currentUserId, () => !disposed, { isTeamSpace })
       .then((result) => {
         if (!disposed) {
+          writePageCache(cacheKey, result)
           setHistoricalTasks(result.tasks)
           setAccessibleProjectIds(result.accessibleProjectIds)
           setMyProjectIds(result.myProjectIds)
@@ -863,7 +894,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
         }
       })
       .catch(() => {
-        if (!disposed) {
+        // 刷新失败时保留已显示的上次历史
+        if (!disposed && !cached) {
           setHistoricalTasks([])
           setAccessibleProjectIds(new Set())
           setMyProjectIds(null)
@@ -1062,6 +1094,65 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     const member = workspaceMembers.find((item: any) => resolveUserId(item) === creatorUserId)
     return String(task.creatorName || '').trim() || (member ? memberDisplayName(member) : '') || `成员 ${creatorUserId}`
   }
+  /**
+   * 团队空间里只能删除自己生成的任务：按任务的创作者判断，本会话自己发起的也算自己的。
+   * 创作者未知时在团队里一律不给删——宁可多一次「找本人删」，也不能误删同事的视频。
+   * 个人空间里所有任务都是自己的。
+   */
+  const canDeleteTask = (task: TaskCenterTask): boolean => {
+    if (!isTeamSpace) return true
+    const creatorUserId = resolveTaskCenterCreatorId(task)
+    if (creatorUserId) return creatorUserId === currentUserId
+    return task.locallyInitiated === true && Number(task.ownerUserId || 0) === currentUserId
+  }
+
+  /**
+   * 删除任务：
+   * - 已生成的历史视频 → 走项目视频的删除（与项目管理页「删除视频」同一个接口），项目里也随之不再显示；
+   * - 生成失败 / 生成中 / 图片 / 本会话记录 → 服务端没有对应的项目视频，只从任务管理移除。
+   * 两种情况都会先弹确认，把影响范围说清楚。
+   */
+  const deleteTask = async (task: TaskCenterTask) => {
+    if (!canDeleteTask(task)) {
+      showToast('只能删除自己生成的任务', 'info')
+      return
+    }
+    const record = task as TaskRecord
+    const taskId = String(readValue(record, 'id', 'taskId', 'task_id') ?? '')
+    const generationId = String(task.generationId || '')
+    const projectId = Number(task.projectId || 0) || 0
+    const videoId =
+      generationId.startsWith('history:') && !generationId.startsWith('history:image:')
+        ? generationId.slice('history:'.length)
+        : ''
+    const deletesVideo = Boolean(videoId && projectId)
+    const tone = getTaskTone(record)
+    const message = deletesVideo
+      ? '删除后，这条视频在任务管理和项目中都将不再显示，确定删除吗？'
+      : tone === 'failed'
+        ? '这条生成失败的任务将从任务管理中移除，确定删除吗？'
+        : '这条任务将从任务管理中移除，确定删除吗？'
+    const confirmed = await requestConfirm(message, { title: '删除任务', confirmLabel: '删除', cancelLabel: '取消' })
+    if (confirmed !== true) return
+    if (deletesVideo) {
+      try {
+        await deleteProjectVideo({ projectId, workspaceId: Number(workspaceId || 0), videoId })
+      } catch (error: any) {
+        showToast(`删除失败：${String(error?.message || '请稍后重试')}`, 'error')
+        return
+      }
+    }
+    // 缓存里的历史同步去掉这条，下次展开不会先闪出已删除的视频
+    const historyKey = pageCacheKey('task-history', workspaceId, currentUserId)
+    const cachedHistory = readPageCache<TaskCenterHistoryResult>(historyKey)
+    if (cachedHistory) {
+      writePageCache(historyKey, { ...cachedHistory, tasks: cachedHistory.tasks.filter((item) => item.id !== taskId) })
+    }
+    if (tasks.some((storedTask) => storedTask.id === taskId)) archiveTask(taskId)
+    else setHiddenHistoryIds((previous) => new Set(previous).add(taskId))
+    showToast(deletesVideo ? '视频已删除' : '已从任务管理中移除', 'success')
+  }
+
   const displayedTasks = activeScope === 'image' ? visibleTasks : visibleTasks.slice(0, MAX_VISIBLE_VIDEO_TASKS)
   const hiddenVideoCount =
     activeScope === 'image' || activeScope === 'generating'
@@ -1253,10 +1344,8 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
                       }
                       navigate(taskScope === 'hot-copy' ? `/hot-copy/${projectId}` : `/smart/${projectId}`)
                     }}
-                    onArchive={() => {
-                      if (tasks.some((storedTask) => storedTask.id === taskId)) archiveTask(taskId)
-                      else setHiddenHistoryIds((previous) => new Set(previous).add(taskId))
-                    }}
+                    canDelete={canDeleteTask(task)}
+                    onDelete={() => void deleteTask(task)}
                   />
                 )
               })}

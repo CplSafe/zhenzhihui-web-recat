@@ -9,6 +9,7 @@ import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
 import EntryCostEstimate from '@/components/common/EntryCostEstimate'
+import MaterialMentionPopover from '@/components/common/MaterialMentionPopover'
 import { CreativeModelSlots } from '../CreativeModelSlots'
 import { CreativeParamsDropdown, type CreativeParamsOptions, type CreativeParamsValue } from '../CreativeParamsDropdown'
 import {
@@ -52,7 +53,7 @@ import {
 import { parseDurationSeconds } from '@/utils/videoDurationValue'
 import { DEFAULT_REFERENCE_IMAGE_LIMIT } from '@/utils/modelInputConstraints'
 import { useDismissablePopover } from '@/composables/useDismissablePopover'
-import { useToast } from '@/composables/useToast'
+import { useConfirmDialog, useToast } from '@/composables/useToast'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import RealPersonMaterialPicker from './RealPersonMaterialPicker'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
@@ -98,6 +99,8 @@ interface SmartEntryProps {
   variant?: 'smart' | 'real-person'
   workspaceId?: number
   onSubmit: (requirement: string, meta: EntryMeta) => void | boolean | Promise<void | boolean>
+  /** 已绑定项目时，把入口模型和参数的每次变更同步给父级项目草稿。 */
+  onDraftChange?: (requirement: string, meta: EntryMeta) => void
   /**
    * 是否允许恢复当前标签页尚未提交的入口草稿。
    * 显式“新建视频”会在首次渲染就设为 false，早于布局副作用清理 sessionStorage，避免旧输入闪回。
@@ -219,7 +222,8 @@ interface CreationCostEstimate {
 }
 
 /** 可选的智能成片脚本。 */
-const SCRIPT_OPTIONS = [...SMART_SCRIPT_OPTIONS]
+const NO_SCRIPT_OPTION = '不使用脚本'
+const SCRIPT_OPTIONS = [NO_SCRIPT_OPTION, ...SMART_SCRIPT_OPTIONS]
 
 /**
  * 图片模式单轮出图数量的上限（与参考图上限无关，后者跟随所选模型）。
@@ -279,6 +283,7 @@ export default function SmartEntry({
   variant = 'smart',
   workspaceId = 0,
   onSubmit,
+  onDraftChange,
   onNewVideo,
   canResume,
   onResume,
@@ -296,6 +301,7 @@ export default function SmartEntry({
 }: SmartEntryProps) {
   const isRealPersonVariant = variant === 'real-person'
   const { showToast } = useToast()
+  const { requestConfirm } = useConfirmDialog()
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
   const draftPersistenceEnabledRef = useRef(true)
@@ -311,12 +317,48 @@ export default function SmartEntry({
     isRealPersonVariant ? 'video' : (initial?.mode ?? stored?.mode ?? 'video'),
   )
   // 切换 Tab:背景弥散位移 + 涟漪动画由 <EntryCanvasBg mode> 监听 mode 变化驱动(Canvas 实现,不卡)
-  const switchMode = (m: 'video' | 'image') => {
+  const switchMode = async (m: 'video' | 'image') => {
     if (m === mode) return
     if (m === 'image' && realPersonReferences.length > 0) {
       showToast('已选择真人素材，真人素材仅支持生成视频', 'info')
       return
     }
+
+    const hasDraftInput = Boolean(
+      stripSkillLine(text).trim() ||
+      skill ||
+      images.length ||
+      realPersonReferences.length ||
+      Object.keys(generationModels).length ||
+      ratio !== '16:9' ||
+      duration !== UNSET_DURATION ||
+      resolution !== LEGACY_DEFAULT_VIDEO_RESOLUTION ||
+      generateAudio !== DEFAULT_GENERATE_AUDIO ||
+      outputCount !== 1,
+    )
+    if (hasDraftInput) {
+      const confirmed = await requestConfirm('切换后当前输入和素材将不会保留，是否确认离开？', {
+        title: '切换创作类型',
+        cancelLabel: '取消',
+        confirmLabel: '确认离开',
+      })
+      if (!confirmed) return
+    }
+
+    // 两个创作类型不能共用入口草稿。确认离开后同步清空内存状态与 sessionStorage，
+    // 防止切换回来时又从防抖持久化里恢复刚刚明确放弃的内容。
+    setText('')
+    setSkill('')
+    setImages([])
+    setImageAssetIds([])
+    setRealPersonReferences([])
+    setRatio('16:9')
+    setDuration(UNSET_DURATION)
+    setResolution(LEGACY_DEFAULT_VIDEO_RESOLUTION)
+    setGenerateAudio(DEFAULT_GENERATE_AUDIO)
+    setOutputCount(1)
+    setGenerationModels({})
+    clearSmartEntryDraft()
     setMode(m)
   }
   // 回填:正文 + (若已选 skill)插入提示语,使其在输入框内带色展示
@@ -449,6 +491,7 @@ export default function SmartEntry({
   const [generationModels, setGenerationModels] = useState<GenerationModelSelectionMap>(
     () => initial?.generationModels ?? stored?.generationModels ?? {},
   )
+  const [paramsOpenSignal, setParamsOpenSignal] = useState(0)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const dragDepthRef = useRef(0)
@@ -461,8 +504,12 @@ export default function SmartEntry({
 
   // ── @ 引用素材:点击 @ 在光标处弹出已上传素材;选中插入「@图片N」;无素材则直接插入「@」──
   const taRef = useRef<HTMLTextAreaElement | null>(null)
+  const atButtonRef = useRef<HTMLButtonElement | null>(null)
+  const mentionAnchorRef = useRef<HTMLSpanElement | null>(null)
   const caretRef = useRef(0) // 最近一次光标位置(点 @ 按钮会失焦,需提前记下)
   const [atOpen, setAtOpen] = useState(false)
+  const [atSource, setAtSource] = useState<'typed' | 'button'>('button')
+  const atTriggerRangeRef = useRef<{ start: number; end: number } | null>(null)
 
   // 实时把当前输入写进 sessionStorage(防抖 300ms),切走再回来可回填。text 存「剥离 skill 提示语」的干净正文。
   useEffect(() => {
@@ -482,6 +529,21 @@ export default function SmartEntry({
         outputCount,
         generationModels,
       })
+      onDraftChange?.(stripSkillLine(text).trim(), {
+        mode,
+        style: '',
+        ratio,
+        duration,
+        resolution,
+        generateAudio,
+        imageCount: images.length,
+        images,
+        imageAssetIds,
+        realPersonReferences,
+        outputCount,
+        skill,
+        generationModels,
+      })
     }, 300)
     return () => window.clearTimeout(t)
   }, [
@@ -497,6 +559,7 @@ export default function SmartEntry({
     realPersonReferences,
     outputCount,
     generationModels,
+    onDraftChange,
   ])
   // 本地图片先转成受控 data URL；过滤非图片并限制数量，避免无效文件进入后续资产上传流程。
   const pickImages = async (files: FileList | File[] | null) => {
@@ -576,18 +639,33 @@ export default function SmartEntry({
       insertAtCaret('@') // 无上传素材 → 直接在光标处插入 @
       return
     }
+    atTriggerRangeRef.current = null
+    setAtSource('button')
     setAtOpen(true) // 有素材 → 在 @ 按钮附近弹出素材选择
   }
 
   // 选中某张已上传素材 → 在光标处插入「@图片N 」(高亮渲染由 hl 层处理)
   const pickRef = (index: number) => {
-    insertAtCaret(`@图片${index + 1} `)
+    const trigger = atTriggerRangeRef.current
+    if (trigger) {
+      const snippet = `@图片${index + 1} `
+      const next = text.slice(0, trigger.start) + snippet + text.slice(trigger.end)
+      const nextCaret = trigger.start + snippet.length
+      setText(next)
+      caretRef.current = nextCaret
+      requestAnimationFrame(() => {
+        taRef.current?.focus()
+        taRef.current?.setSelectionRange(nextCaret, nextCaret)
+      })
+    } else {
+      insertAtCaret(`@图片${index + 1} `)
+    }
+    atTriggerRangeRef.current = null
     setAtOpen(false)
   }
 
   // 高亮渲染:@图片N 标绿 + 「使用×××skills帮我优化」着色,其余为普通文本(textarea 文字透明,叠在此层上)
-  const renderHighlight = (t: string) => {
-    if (!t) return null
+  const renderHighlightTokens = (t: string, keyPrefix: string) => {
     const out: ReactNode[] = []
     let last = 0
     let m: RegExpExecArray | null
@@ -596,7 +674,7 @@ export default function SmartEntry({
       if (m.index > last) out.push(t.slice(last, m.index))
       const isRef = m[0].startsWith('@图片')
       out.push(
-        <span className={isRef ? styles.refTag : styles.skillTag} key={m.index}>
+        <span className={isRef ? styles.refTag : styles.skillTag} key={`${keyPrefix}-${m.index}`}>
           {m[0]}
         </span>,
       )
@@ -605,6 +683,21 @@ export default function SmartEntry({
     out.push(t.slice(last))
     return out
   }
+  const renderHighlight = (t: string) => {
+    if (!t) return null
+    const anchorIndex = atOpen && atSource === 'typed' ? atTriggerRangeRef.current?.start : undefined
+    if (anchorIndex === undefined) return renderHighlightTokens(t, 'all')
+    return [
+      ...renderHighlightTokens(t.slice(0, anchorIndex), 'before'),
+      <span className={styles.mentionCaretAnchor} ref={mentionAnchorRef} key="mention-anchor" aria-hidden="true" />,
+      ...renderHighlightTokens(t.slice(anchorIndex), 'after'),
+    ]
+  }
+  const closeAtMenu = useCallback(() => setAtOpen(false), [])
+  const getAtAnchorRect = useCallback(
+    () => (atSource === 'typed' ? mentionAnchorRef.current : atButtonRef.current)?.getBoundingClientRect() || null,
+    [atSource],
+  )
 
   // 正文(剥离 skill 提示语后)用于提交/校验,保证需求干净
   const cleanText = stripSkillLine(text).trim()
@@ -630,6 +723,26 @@ export default function SmartEntry({
     () => filterGenerationModelGroupsByOperations(modelGroups, requiredModelOperations),
     [modelGroups, requiredModelOperations],
   )
+  const soleScriptModel = useMemo(() => {
+    const models = visibleModelGroups
+      .flatMap((group) => group.subgroups || [])
+      .find((subgroup) => subgroup.key === 'responses.multimodal')
+      ?.models.filter((model) => !model.disabled)
+    return models?.length === 1 ? models[0] : null
+  }, [visibleModelGroups])
+  const displayedModelGroups = useMemo(() => {
+    if (!soleScriptModel) return visibleModelGroups
+    return visibleModelGroups
+      .map((group) => ({
+        ...group,
+        subgroups: (group.subgroups || []).filter((subgroup) => subgroup.key !== 'responses.multimodal'),
+      }))
+      .filter((group) => (group.models?.length || 0) > 0 || (group.subgroups?.length || 0) > 0)
+  }, [soleScriptModel, visibleModelGroups])
+  useEffect(() => {
+    if (!soleScriptModel || String(generationModels['responses.multimodal']) === String(soleScriptModel.id)) return
+    setGenerationModels((previous) => ({ ...previous, 'responses.multimodal': soleScriptModel.id }))
+  }, [generationModels, soleScriptModel])
   const conflictModelGroups = visibleModelGroups
   const modelSelectionComplete = isGenerationModelSelectionComplete(visibleModelGroups, generationModels)
   // 视频模式也要报参考图数量冲突：上传的素材现在直接作为参考图提交给视频模型，
@@ -992,8 +1105,9 @@ export default function SmartEntry({
 
   // 选中/切换 SKILL:把提示语插入输入框(替换旧的);未选则移除
   const pickSkill = (s: string) => {
-    setText((cur) => composeWithSkill(stripSkillLine(cur), s))
-    setSkill(s)
+    const nextSkill = s === NO_SCRIPT_OPTION ? '' : s
+    setText((cur) => composeWithSkill(stripSkillLine(cur), nextSkill))
+    setSkill(nextSkill)
   }
 
   /*
@@ -1240,8 +1354,15 @@ export default function SmartEntry({
                         : PLACEHOLDER_VIDEO
                   }
                   onChange={(e) => {
-                    setText(e.target.value)
-                    caretRef.current = e.target.selectionStart ?? e.target.value.length
+                    const next = e.target.value
+                    const caret = e.target.selectionStart ?? next.length
+                    setText(next)
+                    caretRef.current = caret
+                    if (images.length > 0 && caret > 0 && next[caret - 1] === '@') {
+                      atTriggerRangeRef.current = { start: caret - 1, end: caret }
+                      setAtSource('typed')
+                      setAtOpen(true)
+                    }
                   }}
                   onSelect={(e) => {
                     caretRef.current = e.currentTarget.selectionStart ?? 0
@@ -1284,12 +1405,13 @@ export default function SmartEntry({
                 用户根本不知道创作前可以选模型。
               */}
               <CreativeModelSlots
-                groups={visibleModelGroups}
+                groups={displayedModelGroups}
                 selected={generationModels}
                 onChange={updateGenerationModel}
                 loading={Boolean(modelLoading)}
                 authRequired={authRequired}
                 onAuthRequired={onAuthRequired}
+                onModelSelected={() => setParamsOpenSignal((signal) => signal + 1)}
               />
               {/*
                 创作参数（比例 / 时长 / 分辨率 / 出图数量）收进一个弹窗，形式与「本次创作使用的模型」一致。
@@ -1309,30 +1431,29 @@ export default function SmartEntry({
                 */
                 blockedReason={modelSelectionComplete ? undefined : '请先选择本次创作使用的模型'}
                 onBlocked={(reason) => showToast(reason, 'info')}
+                openSignal={paramsOpenSignal}
               />
 
               <span className={styles.atAnchor} data-guide="smart-at">
-                <button type="button" className={styles.pillBtn} onClick={handleAt} title="引用参考素材">
+                <button
+                  ref={atButtonRef}
+                  type="button"
+                  className={styles.pillBtn}
+                  onClick={handleAt}
+                  title="引用参考素材"
+                >
                   @
                 </button>
-                {/* @ 素材选择:在 @ 按钮附近(上方)弹出,展示历史上传素材 */}
-                {atOpen && (
-                  <>
-                    <div className={styles.atMask} onClick={() => setAtOpen(false)} />
-                    <div className={styles.atMenu}>
-                      <div className={styles.atMenuTitle}>选择参考素材</div>
-                      <div className={styles.atMenuGrid}>
-                        {images.map((url, i) => (
-                          <button type="button" className={styles.atItem} key={url} onClick={() => pickRef(i)}>
-                            <img src={url} alt="" />
-                            <span className={styles.atItemName}>@图片{i + 1}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
               </span>
+              <MaterialMentionPopover
+                open={atOpen}
+                title="选择参考素材"
+                layout="grid"
+                items={images.map((url, index) => ({ key: `${url}-${index}`, url, label: `@图片${index + 1}` }))}
+                getAnchorRect={getAtAnchorRect}
+                onSelect={pickRef}
+                onClose={closeAtMenu}
+              />
 
               {/* 智能成片脚本(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
               {mode === 'video' && !isRealPersonVariant && (
@@ -1341,6 +1462,7 @@ export default function SmartEntry({
                     clearable
                     placeholder="爆款脚本自动生成"
                     value={skill}
+                    selectedOption={skill || NO_SCRIPT_OPTION}
                     options={SCRIPT_OPTIONS}
                     onChange={pickSkill}
                     icon={
