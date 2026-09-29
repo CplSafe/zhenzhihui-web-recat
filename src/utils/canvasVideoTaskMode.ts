@@ -50,3 +50,19 @@ export function applyVideoTaskModeParams(
   if (args.sourceVideoSeconds > 0) next.source_video_duration = Math.ceil(args.sourceVideoSeconds)
   return next
 }
+
+/**
+ * 节点自己那条视频是否作为输入下发，返回其 asset_id（0 = 不下发）。
+ *
+ * - 改片（isEditingVideo）：下发。
+ * - 换过模型的节点是「用新模型重新生成」，从头生成，默认不带自身视频；
+ *   但选了编辑 / 延长就是要改这条视频，必须带上，否则任务类型可选却没有源视频。
+ */
+export function resolveSelfVideoAssetId(args: {
+  isEditingVideo: boolean
+  followSourceVideo: boolean
+  assetId: number
+}): number {
+  if (!(args.assetId > 0)) return 0
+  return args.isEditingVideo || args.followSourceVideo ? args.assetId : 0
+}
