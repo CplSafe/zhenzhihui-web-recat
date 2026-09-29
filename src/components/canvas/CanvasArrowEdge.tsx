@@ -12,7 +12,8 @@
  * 「引用时定义在不在」这个时序问题——无论边是新建、历史恢复还是增量同步进来的，
  * 它渲染出来的那一刻箭头就在。
  */
-import { BaseEdge, getBezierPath, Position, type EdgeProps } from '@xyflow/react'
+import { BaseEdge, EdgeLabelRenderer, getBezierPath, Position, type EdgeProps } from '@xyflow/react'
+import type { CanvasConnectionRole } from '@/utils/canvasGeneration'
 
 /** 箭头配色，与画布连线同色系；边自带 stroke 时以边为准。 */
 const CANVAS_EDGE_ARROW_COLOR = '#66717f'
@@ -33,6 +34,18 @@ const ARROW_ROTATION: Record<Position, number> = {
 /** 尖端落在 (0,0)，尾部向后张开；尺寸与 React Flow 的 ArrowClosed 观感一致。 */
 const ARROW_POINTS = '0,0 -9,-4.5 -9,4.5'
 
+export function canvasConnectionRoleLabel(role: unknown): string {
+  const labels: Partial<Record<CanvasConnectionRole, string>> = {
+    prompt: '提示词',
+    visual_context: '视觉理解',
+    reference_image: '参考图',
+    first_frame: '首帧',
+    last_frame: '尾帧',
+    source_video: '源视频',
+  }
+  return labels[String(role || '') as CanvasConnectionRole] || ''
+}
+
 export default function CanvasArrowEdge({
   id,
   sourceX,
@@ -44,8 +57,9 @@ export default function CanvasArrowEdge({
   style,
   markerStart,
   interactionWidth,
+  data,
 }: EdgeProps) {
-  const [path] = getBezierPath({
+  const [path, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -55,6 +69,7 @@ export default function CanvasArrowEdge({
   })
   const color = (style?.stroke as string) || CANVAS_EDGE_ARROW_COLOR
   const rotation = ARROW_ROTATION[targetPosition] ?? 0
+  const roleLabel = canvasConnectionRoleLabel(data?.role)
 
   return (
     <>
@@ -69,6 +84,17 @@ export default function CanvasArrowEdge({
         strokeLinejoin="round"
         transform={`translate(${targetX} ${targetY}) rotate(${rotation})`}
       />
+      {roleLabel ? (
+        <EdgeLabelRenderer>
+          <div
+            className="canvas-edge-role-label nodrag nopan"
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            aria-hidden="true"
+          >
+            {roleLabel}
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
     </>
   )
 }

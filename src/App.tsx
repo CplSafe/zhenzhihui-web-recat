@@ -14,6 +14,7 @@ import { deriveWorkspaceId, useWorkspaceSessionStore } from './stores/workspaceS
 import { captureInviteCode } from './utils/inviteCode'
 import { readLoginReturnTo, sanitizeLoginReturnTo } from './utils/loginReturnTo'
 import { APP_HOME_PATH } from './utils/sidebarNavigation'
+import { prefetchCommonRoutesWhenIdle } from './router/routePrefetch'
 import './App.css'
 
 /** 登录后按需加载的帮助中心悬浮入口。 */
@@ -141,6 +142,12 @@ export function AppShell() {
     // 仅在「检查结束且无错误」(即首次成功渲染过页面)后置位;首次失败保持 false 以便展示错误卡 + 重试。
     if (!isCheckingSession && !authCheckError) setHasChecked(true)
   }, [isCheckingSession, authCheckError])
+
+  // 登录态确认后，趁浏览器空闲把常用页面的代码先下载好（只下载不执行，不发业务请求）
+  useEffect(() => {
+    if (!isAuthenticated || !hasChecked) return
+    return prefetchCommonRoutesWhenIdle()
+  }, [isAuthenticated, hasChecked])
 
   // 进站即捕获分享链接里的推广邀请码(/login?invite_code=…),存起来供后续注册使用,避免路由跳转丢 query。
   useEffect(() => {

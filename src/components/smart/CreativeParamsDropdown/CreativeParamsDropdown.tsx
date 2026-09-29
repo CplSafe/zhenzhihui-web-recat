@@ -11,7 +11,10 @@
 import RatioIcon from '@/components/common/RatioIcon'
 import StudioDurationPicker from '@/components/studio/StudioDurationPicker/StudioDurationPicker'
 import { useDismissablePopover } from '@/composables/useDismissablePopover'
-import styles from '@/components/studio/StudioParamsBar/StudioParamsBar.module.less'
+import { isInputDerivedRatioValue } from '@/utils/canvasModelParams'
+import { useEffect, useId, useRef } from 'react'
+import barStyles from '@/components/studio/StudioParamsBar/StudioParamsBar.module.less'
+import styles from './CreativeParamsDropdown.module.less'
 
 export interface CreativeParamsValue {
   ratio: string
@@ -55,15 +58,18 @@ export interface CreativeParamsDropdownProps {
   blockedReason?: string
   /** 前置条件未满足时点击的回调，通常用来 toast 出 blockedReason。 */
   onBlocked?: (reason: string) => void
+  /** 变化时自动展开当前模型支持的规格选项。 */
+  openSignal?: number
 }
 
 /** 时长未选时摘要里的占位。 */
 const DURATION_PLACEHOLDER = '选择时长'
+const ratioLabel = (ratio: string) => (isInputDerivedRatioValue(ratio) ? '自适应' : ratio)
 
 /** 折叠态摘要：只列当前模式真正在用的几项。 */
 function formatSummary(value: CreativeParamsValue, options: CreativeParamsOptions): string {
   const parts: string[] = []
-  if (options.ratios.length) parts.push(value.ratio)
+  if (options.ratios.length) parts.push(ratioLabel(value.ratio))
   if (options.durations.length) parts.push(value.durationSec > 0 ? `${value.durationSec}s` : DURATION_PLACEHOLDER)
   if (options.resolutions.length) parts.push(value.resolution)
   if (options.counts.length) parts.push(`${value.count}张`)
@@ -81,21 +87,55 @@ export default function CreativeParamsDropdown({
   disabled = false,
   blockedReason,
   onBlocked,
+  openSignal = 0,
 }: CreativeParamsDropdownProps) {
-  const { open, toggle, wrapRef } = useDismissablePopover<HTMLDivElement>()
+  const { open, setOpen, wrapRef } = useDismissablePopover<HTMLDivElement>()
+  const adaptiveHintId = useId()
+  const previousOpenSignalRef = useRef(openSignal)
+  const hoverCloseTimerRef = useRef<number | null>(null)
   const patch = (next: Partial<CreativeParamsValue>) => onChange({ ...value, ...next })
 
+  const openOnHover = () => {
+    if (hoverCloseTimerRef.current !== null) {
+      window.clearTimeout(hoverCloseTimerRef.current)
+      hoverCloseTimerRef.current = null
+    }
+    if (!blockedReason && !disabled) setOpen(true)
+  }
+
+  const scheduleHoverClose = () => {
+    if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      setOpen(false)
+      hoverCloseTimerRef.current = null
+    }, 80)
+  }
+
+  useEffect(
+    () => () => {
+      if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current)
+    },
+    [],
+  )
+
+  useEffect(() => {
+    if (openSignal === previousOpenSignalRef.current) return
+    previousOpenSignalRef.current = openSignal
+    if (!blockedReason && !disabled) setOpen(true)
+  }, [openSignal, blockedReason, disabled, setOpen])
+
   return (
-    <div className={styles.wrap} ref={wrapRef}>
+    <div className={barStyles.wrap} ref={wrapRef} onMouseEnter={openOnHover} onMouseLeave={scheduleHoverClose}>
       <button
         type="button"
-        className={`${styles.trigger}${open ? ` ${styles.isOpen}` : ''}`}
+        className={`${barStyles.trigger}${open ? ` ${barStyles.isOpen}` : ''}`}
         onClick={() => {
           if (blockedReason) {
             onBlocked?.(blockedReason)
             return
           }
-          toggle()
+          // 点击仍作为触屏与键盘的后备操作；鼠标场景由容器悬停展开。
+          setOpen(true)
         }}
         disabled={disabled && !blockedReason}
         title={blockedReason || undefined}
@@ -104,43 +144,50 @@ export default function CreativeParamsDropdown({
         aria-label={`创作参数，当前 ${formatSummary(value, options)}`}
       >
         <span aria-hidden="true">⚙</span>
-        <span className={styles.summary}>{formatSummary(value, options)}</span>
-        <span className={styles.caret} aria-hidden="true">
+        <span className={barStyles.summary}>{formatSummary(value, options)}</span>
+        <span className={barStyles.caret} aria-hidden="true">
           {open ? '▲' : '▼'}
         </span>
       </button>
 
       {open && (
-        <div className={styles.popover} role="dialog" aria-label="创作参数">
+        <div className={`${barStyles.popover} ${styles.popover}`} role="dialog" aria-label="创作参数">
           {options.ratios.length > 0 && (
-            <div className={styles.field}>
-              <span className={styles.label}>画面比例</span>
+            <div className={`${barStyles.field} ${styles.field}`}>
+              <span className={barStyles.label}>画面比例</span>
               <div className={styles.ratios}>
                 {options.ratios.map((item) => (
                   <button
                     key={item}
                     type="button"
-                    className={`${styles.ratio}${value.ratio === item ? ` ${styles.isActive}` : ''}`}
+                    className={`${barStyles.ratio}${value.ratio === item ? ` ${barStyles.isActive}` : ''}`}
                     onClick={() => patch({ ratio: item })}
+                    aria-pressed={value.ratio === item}
+                    aria-describedby={isInputDerivedRatioValue(item) ? adaptiveHintId : undefined}
                   >
                     {/* 与全站其他入口共用同一枚比例图标，保证视觉一致 */}
                     <RatioIcon ratio={item} />
-                    {item}
+                    {ratioLabel(item)}
                   </button>
                 ))}
               </div>
+              {options.ratios.some(isInputDerivedRatioValue) && (
+                <p className={styles.ratioHint} id={adaptiveHintId}>
+                  自适应会根据上传的参考素材确定画面比例；未上传素材时请选择固定比例。
+                </p>
+              )}
             </div>
           )}
 
           {options.resolutions.length > 0 && (
-            <div className={styles.field}>
-              <span className={styles.label}>分辨率</span>
-              <div className={styles.segments}>
+            <div className={`${barStyles.field} ${styles.field}`}>
+              <span className={barStyles.label}>分辨率</span>
+              <div className={barStyles.segments}>
                 {options.resolutions.map((item) => (
                   <button
                     key={item}
                     type="button"
-                    className={`${styles.segment}${value.resolution === item ? ` ${styles.isActive}` : ''}`}
+                    className={`${barStyles.segment}${value.resolution === item ? ` ${barStyles.isActive}` : ''}`}
                     onClick={() => patch({ resolution: item })}
                   >
                     {item}
@@ -151,10 +198,12 @@ export default function CreativeParamsDropdown({
           )}
 
           {options.durations.length > 0 && (
-            <div className={styles.field}>
-              <span className={styles.label}>
+            <div
+              className={`${barStyles.field} ${styles.field}${value.durationSec <= 0 ? ` ${styles.fieldAttention}` : ''}`}
+            >
+              <span className={barStyles.label}>
                 视频时长{' '}
-                <span className={styles.labelValue}>
+                <span className={barStyles.labelValue}>
                   {value.durationSec > 0 ? `${value.durationSec}s` : DURATION_PLACEHOLDER}
                 </span>
               </span>
@@ -168,13 +217,13 @@ export default function CreativeParamsDropdown({
           )}
 
           {options.supportsAudio && (
-            <div className={styles.field}>
-              <span className={styles.label}>背景音</span>
-              <div className={styles.segments}>
+            <div className={`${barStyles.field} ${styles.field}`}>
+              <span className={barStyles.label}>背景音</span>
+              <div className={barStyles.segments}>
                 {/* 两档而非勾选框：与同弹层里的分辨率/数量档位条同构，读起来是同一类选择 */}
                 <button
                   type="button"
-                  className={`${styles.segment}${value.generateAudio ? ` ${styles.isActive}` : ''}`}
+                  className={`${barStyles.segment}${value.generateAudio ? ` ${barStyles.isActive}` : ''}`}
                   onClick={() => patch({ generateAudio: true })}
                   aria-pressed={value.generateAudio}
                 >
@@ -182,7 +231,7 @@ export default function CreativeParamsDropdown({
                 </button>
                 <button
                   type="button"
-                  className={`${styles.segment}${!value.generateAudio ? ` ${styles.isActive}` : ''}`}
+                  className={`${barStyles.segment}${!value.generateAudio ? ` ${barStyles.isActive}` : ''}`}
                   onClick={() => patch({ generateAudio: false })}
                   aria-pressed={!value.generateAudio}
                 >
@@ -193,14 +242,14 @@ export default function CreativeParamsDropdown({
           )}
 
           {options.counts.length > 0 && (
-            <div className={styles.field}>
-              <span className={styles.label}>生成数量</span>
-              <div className={styles.segments}>
+            <div className={`${barStyles.field} ${styles.field}`}>
+              <span className={barStyles.label}>生成数量</span>
+              <div className={barStyles.segments}>
                 {options.counts.map((item) => (
                   <button
                     key={item}
                     type="button"
-                    className={`${styles.segment}${value.count === item ? ` ${styles.isActive}` : ''}`}
+                    className={`${barStyles.segment}${value.count === item ? ` ${barStyles.isActive}` : ''}`}
                     onClick={() => patch({ count: item })}
                   >
                     {item}

@@ -15,6 +15,8 @@ interface EntryDropdownProps {
   options: string[]
   value: string | string[]
   onChange: (v: any) => void
+  /** 仅覆盖列表中的选中项；按钮仍按 value/placeholder 展示。 */
+  selectedOption?: string
   /** 下拉触发器的可访问名称；同一工具栏存在多个下拉时用于消除歧义。 */
   ariaLabel?: string
   /** 靠近视口底部的工具栏可让菜单向上展开。 */
@@ -48,6 +50,7 @@ export default function EntryDropdown({
   value,
   options,
   onChange,
+  selectedOption,
   ariaLabel,
   placement = 'bottom',
   multiple = false,
@@ -81,7 +84,7 @@ export default function EntryDropdown({
 
   // 多选时把 value 规整成数组;单选时按字符串处理
   const selected = multiple ? (Array.isArray(value) ? value : value ? [String(value)] : []) : []
-  const isSel = (o: string) => (multiple ? selected.includes(o) : o === value)
+  const isSel = (o: string) => (multiple ? selected.includes(o) : o === (selectedOption ?? value))
   // 单选未选中时,按钮文字回退到 placeholder(如「SKILLS」)
   const label = multiple ? (selected.length ? selected.join(' ') : placeholder) : String(value || placeholder)
 

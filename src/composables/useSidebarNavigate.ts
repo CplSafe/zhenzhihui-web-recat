@@ -14,7 +14,10 @@ export function useSidebarNavigate() {
   return useCallback(
     (key: string) => {
       const path = getSidebarRoute(key)
-      if (path) navigate(path)
+      // 从侧边栏进入创作入口表示开始一条新创作，而不是继续上一次已经完成的入口草稿。
+      // 路由包装会用该标记重挂载 SmartCreateView，并由页面统一清理项目草稿和入口暂存。
+      if (key === 'creative' && path) navigate(path, { state: { taskCenterNewSession: true } })
+      else if (path) navigate(path)
       else openComingSoon()
     },
     [navigate],

@@ -634,6 +634,22 @@
   }
 }
 
+/* 删除是破坏性操作：悬停转红；别人的任务置灰不可点（外层 span 只为让 Tooltip 在 disabled 时仍能出现） */
+.archiveButtonWrap {
+  display: contents;
+}
+
+.archiveButton:not(:disabled):hover,
+.archiveButton:not(:disabled):focus-visible {
+  background: #fdf0f0;
+  color: #e5484d;
+}
+
+.archiveButton:disabled {
+  color: #d3d8de;
+  cursor: not-allowed;
+}
+
 .taskCard:hover .archiveButton,
 .taskCard:focus-within .archiveButton {
   opacity: 1;

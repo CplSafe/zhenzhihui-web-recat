@@ -123,19 +123,8 @@ function modelGroupsWith(models: Array<{ id: number; name: string; constraints?:
  * 创作台选择器，在卡片列表里按名称点选，选完自动收起。
  */
 async function pickModel(user: ReturnType<typeof userEvent.setup>, modelName: string) {
-  await user.click(screen.getByRole('button', { name: /生成模型/ }))
-  const triggers = screen.getAllByRole('button', { name: '选择生成模型' })
-  for (const trigger of triggers) {
-    await user.click(trigger)
-    const option = screen.queryByRole('option', { name: new RegExp(modelName) })
-    if (option) {
-      await user.click(option)
-      await user.keyboard('{Escape}')
-      return
-    }
-    await user.click(trigger)
-  }
-  throw new Error(`未找到模型选项：${modelName}`)
+  await user.hover(screen.getByRole('button', { name: /选择生成模型|生成模型，/ }))
+  await user.click(screen.getByRole('option', { name: new RegExp(modelName) }))
 }
 
 /**
@@ -381,7 +370,7 @@ describe('HotCopyEntry project asset access', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ duration: '7s' }))
   })
 
-  it('blocks submission until a video model is selected, then submits its backend id', async () => {
+  it('does not render the temporary model placeholder and submits the explicitly selected model', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
     render(
@@ -419,16 +408,9 @@ describe('HotCopyEntry project asset access', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: '去制作' }))
-
-    expect(onSubmit).not.toHaveBeenCalled()
-    expect(mocks.showToast).toHaveBeenLastCalledWith('请先选择本次爆款复制使用的视频模型', 'info')
-    // 未选模型时胶囊自己就写着还差几个，不再依赖弹层自动展开与抖动提示。
-    expect(screen.getByRole('button', { name: /生成模型，选择模型 0\/1/ })).toBeInTheDocument()
-
+    expect(screen.queryByText('生成模型', { selector: 'span' })).not.toBeInTheDocument()
     await pickModel(user, 'Seedance 2.0')
     await user.click(screen.getByRole('button', { name: '去制作' }))
-
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ modelVersionId: 220, duration: '7s' }))
   })
 
@@ -468,11 +450,13 @@ describe('HotCopyEntry project asset access', () => {
    * 不再由前端按 constraints 计算「最长 N 秒」的括注（那是 GenerationModelDropdown 的能力）。
    * 这里改为验证限制文案照常出现在卡片上，用户仍能在选之前看到差异。
    */
-  it('在模型卡片上展示后端下发的限制文案，便于选之前比较', async () => {
+  it('悬停后直接展示模型卡片且不闪现“生成模型”占位文字', async () => {
     const user = userEvent.setup()
+    const onReloadModels = vi.fn()
     render(
       <HotCopyEntry
         onSubmit={vi.fn()}
+        onReloadModels={onReloadModels}
         modelGroups={[
           {
             key: 'hotCopyVideo',
@@ -496,15 +480,12 @@ describe('HotCopyEntry project asset access', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: /生成模型/ }))
-    await user.click(screen.getByRole('button', { name: '选择生成模型' }))
-
+    const trigger = screen.getByRole('button', { name: '生成模型，请选择视频模型' })
+    expect(trigger).toHaveTextContent('请选择视频模型')
+    await user.hover(trigger)
     const options = screen.getAllByRole('option')
-    expect(options.map((option) => option.textContent)).toEqual([
-      expect.stringContaining('帧智汇 1.0'),
-      expect.stringContaining('Seedance 2.0 Fast'),
-      expect.stringContaining('未声明时长的模型'),
-    ])
+    expect(onReloadModels).not.toHaveBeenCalled()
+    expect(options).toHaveLength(3)
     expect(options[0]).toHaveTextContent('最长 15 秒')
     expect(options[1]).toHaveTextContent('最长 10 秒')
     expect(options[2]).not.toHaveTextContent('最长')
@@ -550,7 +531,7 @@ describe('HotCopyEntry project asset access', () => {
     )
 
     expect(screen.getByRole('button', { name: '创建新视频' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: /生成模型/ })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /生成模型，Seedance 2.0/ })).toBeEnabled()
     expect(screen.getByRole('button', { name: '返回下一步' })).toBeEnabled()
 
     await user.click(screen.getByRole('button', { name: '返回下一步' }))
@@ -607,9 +588,7 @@ describe('HotCopyEntry project asset access', () => {
     await user.click(createButton)
     expect(onNewVideo).not.toHaveBeenCalled()
 
-    const modelTrigger = screen.getByRole('button', { name: /生成模型，.*处理中不可切换/ })
-    await user.click(modelTrigger)
-    expect(screen.getByRole('button', { name: '选择生成模型' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /生成模型，Seedance 2.0，处理中不可切换/ })).toBeDisabled()
   })
 
   it('lets a resumable draft view its previous step without depending on the current model catalog', async () => {
@@ -1009,8 +988,6 @@ describe('HotCopyEntry project asset access', () => {
     await user.click(screen.getByRole('button', { name: '去制作' }))
 
     expect(onSubmit).not.toHaveBeenCalled()
-    expect(mocks.showToast).toHaveBeenLastCalledWith('请先选择本次爆款复制使用的视频模型', 'info')
-    // 目录里那条被下架后不会静默改选剩下的那个：胶囊退回「未选」，由用户自己重新挑。
-    expect(screen.getByRole('button', { name: /生成模型，选择模型 0\/1/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '生成模型，请选择视频模型' })).toHaveTextContent('请选择视频模型')
   })
 })

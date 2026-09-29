@@ -1,7 +1,7 @@
 import { render } from '@testing-library/react'
 import { Position } from '@xyflow/react'
 import { describe, expect, it } from 'vitest'
-import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
+import CanvasArrowEdge, { canvasConnectionRoleLabel } from '@/components/canvas/CanvasArrowEdge'
 
 /**
  * 这个边型存在的理由，是箭头必须「随边一起画出来」而不是去引用别处的 marker 定义。
@@ -29,6 +29,16 @@ function renderEdge(props: Record<string, unknown>) {
 }
 
 describe('CanvasArrowEdge', () => {
+  it('把连线用途转换为用户能理解的标签', () => {
+    expect(canvasConnectionRoleLabel('prompt')).toBe('提示词')
+    expect(canvasConnectionRoleLabel('visual_context')).toBe('视觉理解')
+    expect(canvasConnectionRoleLabel('reference_image')).toBe('参考图')
+    expect(canvasConnectionRoleLabel('first_frame')).toBe('首帧')
+    expect(canvasConnectionRoleLabel('last_frame')).toBe('尾帧')
+    expect(canvasConnectionRoleLabel('source_video')).toBe('源视频')
+    expect(canvasConnectionRoleLabel('unknown')).toBe('')
+  })
+
   it('箭头与连线同批渲染，且不引用任何外部 marker', () => {
     const { container } = renderEdge({})
     const arrow = container.querySelector('polygon.canvas-edge-arrow')

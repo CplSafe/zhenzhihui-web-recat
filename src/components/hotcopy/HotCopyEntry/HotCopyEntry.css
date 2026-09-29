@@ -259,6 +259,13 @@
   min-height: 110px;
 }
 
+.hotcopy__mentionCaretAnchor {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: text-bottom;
+}
+
 .hotcopy__inputHl,
 .hotcopy__text {
   font-size: 18px;

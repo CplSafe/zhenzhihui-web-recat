@@ -1121,6 +1121,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   // 流程内切换模型后，紧接着发起的重生成必须读取这次不可变选择，不能等下一次 render 再读旧闭包。
   const entryMetaRef = useRef<EntryMeta | null>(null)
   entryMetaRef.current = entryMeta
+  const entryDraftSaveTimerRef = useRef<number | null>(null)
   /**
    * 取本次已选真人的名字；普通智能成片选中真人素材时也必须保留身份约束。
    * 支持多人同框：每个出镜人都要写进约束，只写第一个会让其余人的长相失去保护。
@@ -5347,158 +5348,161 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     allowCreativeReplace: boolean
   }
 
-  const putSmartDraftToBackend = useLatestCallback((workspaceIdOverride?: number): Promise<DraftWriteResult> => {
-    const id = projectIdRef.current
-    const ws = Number(workspaceIdOverride || workspaceId || 0)
-    const draft = currentDraft()
-    if (
-      !canPersistSmartProjectDraft({
-        applied: appliedRef.current,
-        started: Boolean(draft.started),
+  const putSmartDraftToBackend = useLatestCallback(
+    (workspaceIdOverride?: number, allowEntryOnly = false): Promise<DraftWriteResult> => {
+      const id = projectIdRef.current
+      const ws = Number(workspaceIdOverride || workspaceId || 0)
+      const draft = currentDraft()
+      const canPersist = allowEntryOnly
+        ? appliedRef.current && Number(id || 0) > 0 && ws > 0
+        : canPersistSmartProjectDraft({
+            applied: appliedRef.current,
+            started: Boolean(draft.started),
+            projectId: id,
+            workspaceId: ws,
+          })
+      if (!canPersist) {
+        return Promise.resolve('error')
+      }
+      if (draftSaveStatusRef.current === 'conflict') return Promise.resolve('conflict')
+      // 保存请求入队时就锁定项目与快照。队列可能晚到 reset / 新项目创建之后才执行，届时绝不能再读可变 ref。
+      const snapshot = buildSmartSnapshot(draft, ws)
+      if (projectVideoStoreRef.current) {
+        snapshot.projectVideoStore = sanitizePersistentProjectVideoStore(projectVideoStoreRef.current, ws)
+      }
+      const latestGeneratedImageAssetId = [...((draft.imageMessages as ChatMessage[]) || [])]
+        .reverse()
+        .flatMap((message) => [...(message.images || [])].reverse())
+        .map((image) => Number(image.assetId || 0) || 0)
+        .find((assetId) => assetId > 0)
+      const entryImageAssetId = Number(
+        ((draft.entryMeta as any)?.imageAssetIds || []).find((value: any) => Number(value) > 0) || 0,
+      )
+      const shotCoverAssetId = Number(
+        shotsRef.current.find((shot) => Number(shot.imageAssetId || 0) > 0)?.imageAssetId || 0,
+      )
+      // 图片项目优先采用最新生成结果作封面；视频项目继续使用首个分镜，避免两种模式互相串封面。
+      const coverAssetId =
+        draft.entryMeta?.mode === 'image'
+          ? Number(latestGeneratedImageAssetId || entryImageAssetId || 0)
+          : Number(shotCoverAssetId || entryImageAssetId || 0)
+      const fingerprint = createDraftFingerprint(snapshot, coverAssetId)
+      const contentFingerprint = createCreativeDraftContentFingerprint(snapshot)
+      const queuedSave =
+        queuedDraftSaveRef.current?.projectId === id && queuedDraftSaveRef.current?.workspaceId === ws
+          ? queuedDraftSaveRef.current
+          : null
+      if (fingerprint && queuedSave?.fingerprint === fingerprint) {
+        const adoptedSequence = ++draftSaveSequenceRef.current
+        updateDraftSaveStatus('saving')
+        return queuedSave.promise.then((result) => {
+          if (
+            viewAliveRef.current &&
+            projectIdRef.current === id &&
+            Number(workspaceIdRef.current || 0) === ws &&
+            draftSaveSequenceRef.current === adoptedSequence
+          ) {
+            if (result === 'saved') lastSavedDraftFingerprintRef.current = fingerprint
+            const nextStatus: DraftSaveStatus =
+              result === 'saved'
+                ? titleSaveFailedRef.current
+                  ? 'error'
+                  : pendingTitleSaveRef.current
+                    ? 'saving'
+                    : 'saved'
+                : result
+            updateDraftSaveStatus(nextStatus)
+            if (result === 'conflict' && !draftContentConflictNotifiedRef.current) {
+              draftContentConflictNotifiedRef.current = true
+              showToast('检测到其他页面修改了项目，已停止云端保存，当前页面内容不会覆盖对方修改', 'error')
+            }
+          }
+          return result
+        })
+      }
+      const saveSequence = ++draftSaveSequenceRef.current
+      updateDraftSaveStatus('saving')
+      // 同一标签页连续产生不同快照时，后一个快照以“前一个已排队快照”作为预期云端内容。
+      // 只有首个明确的新建/重启写入可整版替换；后续快照仍必须经过内容指纹校验。
+      const allowCreativeReplace = !queuedSave && allowCreativeReplaceProjectIdRef.current === id
+      const request: SmartDraftSaveRequest = {
         projectId: id,
         workspaceId: ws,
-      })
-    ) {
-      return Promise.resolve('error')
-    }
-    if (draftSaveStatusRef.current === 'conflict') return Promise.resolve('conflict')
-    // 保存请求入队时就锁定项目与快照。队列可能晚到 reset / 新项目创建之后才执行，届时绝不能再读可变 ref。
-    const snapshot = buildSmartSnapshot(draft, ws)
-    if (projectVideoStoreRef.current) {
-      snapshot.projectVideoStore = sanitizePersistentProjectVideoStore(projectVideoStoreRef.current, ws)
-    }
-    const latestGeneratedImageAssetId = [...((draft.imageMessages as ChatMessage[]) || [])]
-      .reverse()
-      .flatMap((message) => [...(message.images || [])].reverse())
-      .map((image) => Number(image.assetId || 0) || 0)
-      .find((assetId) => assetId > 0)
-    const entryImageAssetId = Number(
-      ((draft.entryMeta as any)?.imageAssetIds || []).find((value: any) => Number(value) > 0) || 0,
-    )
-    const shotCoverAssetId = Number(
-      shotsRef.current.find((shot) => Number(shot.imageAssetId || 0) > 0)?.imageAssetId || 0,
-    )
-    // 图片项目优先采用最新生成结果作封面；视频项目继续使用首个分镜，避免两种模式互相串封面。
-    const coverAssetId =
-      draft.entryMeta?.mode === 'image'
-        ? Number(latestGeneratedImageAssetId || entryImageAssetId || 0)
-        : Number(shotCoverAssetId || entryImageAssetId || 0)
-    const fingerprint = createDraftFingerprint(snapshot, coverAssetId)
-    const contentFingerprint = createCreativeDraftContentFingerprint(snapshot)
-    const queuedSave =
-      queuedDraftSaveRef.current?.projectId === id && queuedDraftSaveRef.current?.workspaceId === ws
-        ? queuedDraftSaveRef.current
-        : null
-    if (fingerprint && queuedSave?.fingerprint === fingerprint) {
-      const adoptedSequence = ++draftSaveSequenceRef.current
-      updateDraftSaveStatus('saving')
-      return queuedSave.promise.then((result) => {
-        if (
-          viewAliveRef.current &&
-          projectIdRef.current === id &&
-          Number(workspaceIdRef.current || 0) === ws &&
-          draftSaveSequenceRef.current === adoptedSequence
-        ) {
-          if (result === 'saved') lastSavedDraftFingerprintRef.current = fingerprint
-          const nextStatus: DraftSaveStatus =
-            result === 'saved'
-              ? titleSaveFailedRef.current
-                ? 'error'
-                : pendingTitleSaveRef.current
-                  ? 'saving'
-                  : 'saved'
-              : result
-          updateDraftSaveStatus(nextStatus)
-          if (result === 'conflict' && !draftContentConflictNotifiedRef.current) {
-            draftContentConflictNotifiedRef.current = true
-            showToast('检测到其他页面修改了项目，已停止云端保存，当前页面内容不会覆盖对方修改', 'error')
+        snapshot,
+        coverAssetId,
+        preserveUpstreamContent: !allowCreativeReplace && !shotsExplicitlyClearedRef.current,
+        initialRevision: Number(draftRevisionRef.current || 0) || 0,
+        baseContentFingerprint: queuedSave?.contentFingerprint || baseDraftContentFingerprintRef.current,
+        allowCreativeReplace,
+      }
+      const savePromise: Promise<DraftWriteResult> = enqueueCreativeProjectDraftSave({
+        projectId: id,
+        workspaceId: ws,
+        task: async (): Promise<DraftWriteResult> => {
+          // 若前一份快照没有真正落库，后一份的预期基线就不可能成立；直接传播其精确结果，
+          // 避免把 conflict 降级成普通 error，也避免越过失败快照继续覆盖云端。
+          if (queuedSave) {
+            const previousResult = await queuedSave.promise
+            if (previousResult !== 'saved') return previousResult
+            // 前一份快照在真正落库前还会合并后端的视频历史/权限元数据，最终内容指纹可能与
+            // “刚入队时”的指纹不同。当前项目必须以它实际落库后的指纹继续 CAS；否则图片
+            // 批次最后一张完成并紧接着合并多图消息时，会把同一标签页的串行保存误判成外部修改。
+            if (projectIdRef.current === id && Number(workspaceIdRef.current || 0) === ws) {
+              request.baseContentFingerprint = baseDraftContentFingerprintRef.current || request.baseContentFingerprint
+            }
           }
-        }
-        return result
-      })
-    }
-    const saveSequence = ++draftSaveSequenceRef.current
-    updateDraftSaveStatus('saving')
-    // 同一标签页连续产生不同快照时，后一个快照以“前一个已排队快照”作为预期云端内容。
-    // 只有首个明确的新建/重启写入可整版替换；后续快照仍必须经过内容指纹校验。
-    const allowCreativeReplace = !queuedSave && allowCreativeReplaceProjectIdRef.current === id
-    const request: SmartDraftSaveRequest = {
-      projectId: id,
-      workspaceId: ws,
-      snapshot,
-      coverAssetId,
-      preserveUpstreamContent: !allowCreativeReplace && !shotsExplicitlyClearedRef.current,
-      initialRevision: Number(draftRevisionRef.current || 0) || 0,
-      baseContentFingerprint: queuedSave?.contentFingerprint || baseDraftContentFingerprintRef.current,
-      allowCreativeReplace,
-    }
-    const savePromise: Promise<DraftWriteResult> = enqueueCreativeProjectDraftSave({
-      projectId: id,
-      workspaceId: ws,
-      task: async (): Promise<DraftWriteResult> => {
-        // 若前一份快照没有真正落库，后一份的预期基线就不可能成立；直接传播其精确结果，
-        // 避免把 conflict 降级成普通 error，也避免越过失败快照继续覆盖云端。
-        if (queuedSave) {
-          const previousResult = await queuedSave.promise
-          if (previousResult !== 'saved') return previousResult
-          // 前一份快照在真正落库前还会合并后端的视频历史/权限元数据，最终内容指纹可能与
-          // “刚入队时”的指纹不同。当前项目必须以它实际落库后的指纹继续 CAS；否则图片
-          // 批次最后一张完成并紧接着合并多图消息时，会把同一标签页的串行保存误判成外部修改。
-          if (projectIdRef.current === id && Number(workspaceIdRef.current || 0) === ws) {
-            request.baseContentFingerprint = baseDraftContentFingerprintRef.current || request.baseContentFingerprint
+          try {
+            return (await doPutDraft(request)) ? 'saved' : 'error'
+          } catch (error) {
+            return isCreativeDraftContentConflictError(error) ? 'conflict' : 'error'
           }
-        }
-        try {
-          return (await doPutDraft(request)) ? 'saved' : 'error'
-        } catch (error) {
-          return isCreativeDraftContentConflictError(error) ? 'conflict' : 'error'
-        }
-      },
-    })
-      .then((result) => {
-        if (
-          result === 'saved' &&
-          fingerprint &&
-          projectIdRef.current === id &&
-          Number(workspaceIdRef.current || 0) === ws &&
-          draftSaveSequenceRef.current === saveSequence
-        ) {
-          lastSavedDraftFingerprintRef.current = fingerprint
-        }
-        if (
-          viewAliveRef.current &&
-          projectIdRef.current === id &&
-          Number(workspaceIdRef.current || 0) === ws &&
-          draftSaveSequenceRef.current === saveSequence
-        ) {
-          const nextStatus: DraftSaveStatus =
-            result === 'saved'
-              ? titleSaveFailedRef.current
-                ? 'error'
-                : pendingTitleSaveRef.current
-                  ? 'saving'
-                  : 'saved'
-              : result
-          updateDraftSaveStatus(nextStatus)
-          if (result === 'conflict' && !draftContentConflictNotifiedRef.current) {
-            draftContentConflictNotifiedRef.current = true
-            showToast('检测到其他页面修改了项目，已停止云端保存，当前页面内容不会覆盖对方修改', 'error')
+        },
+      })
+        .then((result) => {
+          if (
+            result === 'saved' &&
+            fingerprint &&
+            projectIdRef.current === id &&
+            Number(workspaceIdRef.current || 0) === ws &&
+            draftSaveSequenceRef.current === saveSequence
+          ) {
+            lastSavedDraftFingerprintRef.current = fingerprint
           }
-        }
-        return result
-      })
-      .finally(() => {
-        if (queuedDraftSaveRef.current?.promise === savePromise) queuedDraftSaveRef.current = null
-      })
-    queuedDraftSaveRef.current = {
-      projectId: id,
-      workspaceId: ws,
-      fingerprint,
-      contentFingerprint,
-      promise: savePromise,
-    }
-    return savePromise
-  })
+          if (
+            viewAliveRef.current &&
+            projectIdRef.current === id &&
+            Number(workspaceIdRef.current || 0) === ws &&
+            draftSaveSequenceRef.current === saveSequence
+          ) {
+            const nextStatus: DraftSaveStatus =
+              result === 'saved'
+                ? titleSaveFailedRef.current
+                  ? 'error'
+                  : pendingTitleSaveRef.current
+                    ? 'saving'
+                    : 'saved'
+                : result
+            updateDraftSaveStatus(nextStatus)
+            if (result === 'conflict' && !draftContentConflictNotifiedRef.current) {
+              draftContentConflictNotifiedRef.current = true
+              showToast('检测到其他页面修改了项目，已停止云端保存，当前页面内容不会覆盖对方修改', 'error')
+            }
+          }
+          return result
+        })
+        .finally(() => {
+          if (queuedDraftSaveRef.current?.promise === savePromise) queuedDraftSaveRef.current = null
+        })
+      queuedDraftSaveRef.current = {
+        projectId: id,
+        workspaceId: ws,
+        fingerprint,
+        contentFingerprint,
+        promise: savePromise,
+      }
+      return savePromise
+    },
+  )
 
   // 把当前草稿写到后端。对齐 2.0 putDraftSnapshot:保存前先确保有当前 revision,
   // 保存后用返回的 revision 同步;返回体没带 revision 则重新拉一次;409 冲突→拉新 revision 重试。
@@ -6394,7 +6398,10 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       return
     }
     const path = getSidebarRoute(key)
-    if (path) navigate(path)
+    // 已在创作页内再次点击「爆款成片」也必须开启新会话，否则同一路由不会重挂载，
+    // 已完成项目的原素材和文案会继续留在入口。
+    if (key === 'creative' && path) navigate(path, { state: { taskCenterNewSession: true } })
+    else if (path) navigate(path)
     else openComingSoon() // 设置/视频编辑/投前预审/数据看板等未上线项:弹全局「功能待开放」弹窗
   }
 
@@ -7691,6 +7698,38 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     }
     return startCreation(req, durableMeta)
   }
+
+  /**
+   * 已有项目返回入口后，模型和规格一经选择就写回该项目；不再等“去制作”。
+   * 空白新会话还没有 projectId，继续由入口 session 草稿承接，避免把偏好串到别的项目。
+   */
+  const persistEntryDraftRef = useRef<() => void>(() => {})
+  persistEntryDraftRef.current = () => {
+    const ws = Number(workspaceIdRef.current || workspaceId || 0) || 0
+    if (!ws || !projectIdRef.current || !appliedRef.current) return
+    saveSmartDraft(currentDraft(), ws)
+    void putSmartDraftToBackend(ws, true)
+  }
+  const handleEntryDraftChange = useLatestCallback((nextRequirement: string, nextMeta: EntryMeta) => {
+    const ws = Number(workspaceIdRef.current || workspaceId || 0) || 0
+    const pid = Number(projectIdRef.current || projectId || 0) || 0
+    if (!ws || !pid || !appliedRef.current) return
+    entryMetaRef.current = nextMeta
+    setEntryMeta(nextMeta)
+    setRequirement(nextRequirement)
+    if (entryDraftSaveTimerRef.current !== null) window.clearTimeout(entryDraftSaveTimerRef.current)
+    entryDraftSaveTimerRef.current = window.setTimeout(() => {
+      entryDraftSaveTimerRef.current = null
+      persistEntryDraftRef.current()
+    }, 500)
+  })
+
+  useEffect(
+    () => () => {
+      if (entryDraftSaveTimerRef.current !== null) window.clearTimeout(entryDraftSaveTimerRef.current)
+    },
+    [],
+  )
   const startCreation = async (req: string, meta: EntryMeta): Promise<boolean> => {
     if (creationStartingRef.current) return false
     creationStartingRef.current = true
@@ -9124,6 +9163,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                 variant={isRealPersonMode ? 'real-person' : 'smart'}
                 workspaceId={Number(workspaceId || 0)}
                 onSubmit={handleStart}
+                onDraftChange={handleEntryDraftChange}
                 restoreSessionDraft={!explicitFreshEntrySession}
                 onNewVideo={resetToNewVideo}
                 canResume={canResumeFlow}

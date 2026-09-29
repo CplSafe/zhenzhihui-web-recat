@@ -52,6 +52,16 @@
   border-radius: var(--radius-2xl);
   background: var(--color-bg-surface);
   box-shadow: var(--shadow-modal);
+
+  /* 弹层与胶囊间的 8px 视觉间距仍属于悬停热区，避免鼠标上移时弹层闪退。 */
+  &::after {
+    position: absolute;
+    right: 0;
+    bottom: -8px;
+    left: 0;
+    height: 8px;
+    content: '';
+  }
 }
 
 .field {

@@ -24,6 +24,8 @@ import ecommerceIcon from '@/assets/sidebar/ecommerce.svg'
 import ecommerceActiveIcon from '@/assets/sidebar/ecommerce-active.svg'
 import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
+import { prefetchRoute } from '@/router/routePrefetch'
+import { getSidebarRoute } from '@/utils/sidebarNavigation'
 import SidebarTeamGroup from './SidebarTeamGroup'
 import SettingsMenu from './SettingsMenu'
 import './AppSidebar.css'
@@ -130,6 +132,9 @@ export default function AppSidebar({ activeKey = '', onNavigate, open = false, o
         className={`app-sidebar__item${active ? ' is-active' : ''}`}
         data-guide={item.key === 'creative' ? 'nav-smart' : item.key === 'projects' ? 'nav-projects' : undefined}
         onClick={() => go(item.key)}
+        // 悬停 / 聚焦时先把目标页的代码下载下来，点下去就不用再等 chunk
+        onMouseEnter={() => prefetchRoute(getSidebarRoute(item.key))}
+        onFocus={() => prefetchRoute(getSidebarRoute(item.key))}
       >
         <span className="app-sidebar__icon" aria-hidden="true">
           <img

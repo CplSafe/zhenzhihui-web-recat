@@ -743,10 +743,6 @@
   color: #bbb;
 }
 
-.ratioLabel {
-  font-family: monospace;
-}
-
 .popover {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -954,12 +950,6 @@
   font-size: 11px;
   font-style: normal;
   line-height: 1.4;
-}
-
-.popoverItemActive {
-  background: rgba(87, 103, 229, 0.1);
-  color: #5767e5;
-  font-weight: 500;
 }
 
 /* ── 视频集合菜单 ── */
@@ -1187,57 +1177,43 @@
 }
 
 .generateBtn {
-  padding: 0;
+  min-width: 88px;
+  height: 40px;
+  padding: 0 18px;
   background: var(--panel-pick);
   color: #fff;
   border: none;
   border-radius: 999px;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   font-family: 'PingFang SC', sans-serif;
   white-space: nowrap;
   transition: background 0.15s;
   display: inline-flex;
   align-items: center;
-}
-
-/* 胶囊按钮：左侧积分数字 + 右侧发送 icon，整体圆角胶囊 */
-.generatePill {
-  height: 36px;
-  padding: 0 6px 0 4px;
-  gap: 6px;
-  overflow: hidden;
-}
-
-/* 左侧积分徽标：白底圆角小块，数字居中 */
-.costBadge {
-  min-width: 44px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  display: inline-flex;
-  align-items: center;
   justify-content: center;
 }
-/* 费用徽标内容较长（「约0.24元」/「积分不足」），保持不换行 */
-.costBadge {
+
+.generateActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* 原费用位置保留，但只显示浅灰文字，不再像可点击的徽标。 */
+.costText {
+  color: #9aa3af;
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.saveTextLabel {
-  padding: 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
 /* 预估中：数字淡出 */
-.costBadgeLoading {
+.costTextLoading {
   opacity: 0.75;
   animation: costPulse 1s ease-in-out infinite;
 }
@@ -1252,30 +1228,12 @@
   }
 }
 
-/* 余额不足：徽标底色变警示色 */
-.costBadgeInsufficient {
-  background: rgba(230, 84, 84, 0.85);
-}
-
-/* 右侧发送 icon */
-.sendIcon {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.25);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  transition: background 0.15s;
+.costTextInsufficient {
+  color: #d95757;
 }
 
 .generateBtn:hover:not(:disabled) {
   background: var(--panel-pick-hover);
-}
-
-.generateBtn:hover:not(:disabled) .sendIcon {
-  background: rgba(255, 255, 255, 0.38);
 }
 
 .generateBtn:disabled {

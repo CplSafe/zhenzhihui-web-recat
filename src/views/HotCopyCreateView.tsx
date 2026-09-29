@@ -2684,7 +2684,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       Boolean(entryInitial?.videoPreview) ||
       Boolean(entryInitial?.text?.trim?.()) ||
       Boolean(entryInitial?.libraryVideo?.assetId || entryInitial?.libraryVideo?.src) ||
-      Boolean(entryInitial?.products?.length)
+      Boolean(entryInitial?.products?.length) ||
+      Number(entryInitial?.modelVersionId || 0) > 0
     if (!started && !hasEntry) return
     const pid = Number(projectIdRef.current || projectId || 0) || 0
     const hasInflight =
@@ -3475,7 +3476,8 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
       Boolean(entryInitial?.videoPreview) ||
       Boolean(entryInitial?.text?.trim?.()) ||
       Boolean(entryInitial?.libraryVideo?.assetId || entryInitial?.libraryVideo?.src) ||
-      Boolean(entryInitial?.products?.length)
+      Boolean(entryInitial?.products?.length) ||
+      Number(entryInitial?.modelVersionId || 0) > 0
     if (!started && !hasEntry) return
     const localDraft = loadCurrentHotCopyDraft(ws)
     const pid = Number(projectIdRef.current || projectId || 0) || 0

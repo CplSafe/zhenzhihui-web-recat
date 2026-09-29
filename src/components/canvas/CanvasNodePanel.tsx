@@ -24,7 +24,11 @@ import {
   type CanvasConnectionRole,
   type CanvasVideoMode,
 } from '@/utils/canvasGeneration'
-import { filterInputDerivedRatioOptions, resolveCanvasModelParamOption } from '@/utils/canvasModelParams'
+import {
+  filterInputDerivedRatioOptions,
+  isInputDerivedRatioValue,
+  resolveCanvasModelParamOption,
+} from '@/utils/canvasModelParams'
 import {
   applyVideoTaskModeParams,
   formatVideoTaskModeLabel,
@@ -254,6 +258,34 @@ function normalizeFieldValue(field: ParamsSchemaField, value: unknown): unknown 
   return String(canonicalValue ?? '')
 }
 
+/** 比例值展示：「跟随素材」类档位（adaptive/auto）显示成中文 */
+function formatRatioValue(value: unknown): string {
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  if (isAutoRatio(text) || isInputDerivedRatioValue(text)) return AUTO_RATIO_LABEL
+  return text
+}
+
+/** 上游视频模型读取参考视频的总时长上限（秒），模型 schema 没声明时用它 */
+const DEFAULT_MAX_VIDEO_REF_SEC = 15
+
+/** 投放场景基本是竖屏，视频节点默认 9:16 */
+const VIDEO_DEFAULT_RATIO = '9:16'
+
+/**
+ * 视频比例字段的初始值：节点上已选的具体比例 > 9:16 > 模型声明的默认值。
+ * 以前直接用模型默认值（常见是「自适应」或 16:9），用户不展开参数菜单就发现不了，
+ * 接了 1:1 参考图出来的视频就不是竖屏。
+ */
+function pickVideoDefaultRatio(field: ParamsSchemaField, nodeRatio: string | undefined): unknown {
+  const options = (field.options || []).map(String)
+  if (!options.length) return field.default ?? VIDEO_DEFAULT_RATIO
+  const nodeValue = String(nodeRatio || '').trim()
+  if (nodeValue && !isAutoRatio(nodeValue) && options.includes(nodeValue)) return nodeValue
+  if (options.includes(VIDEO_DEFAULT_RATIO)) return VIDEO_DEFAULT_RATIO
+  return field.default
+}
+
 /** 字段当前值 → 菜单按钮上显示的文本。 */
 function formatFieldValue(field: ParamsSchemaField, value: unknown): string {
   if (isBooleanField(field)) return value ? '开' : '关'
@@ -431,7 +463,8 @@ interface CanvasNodePanelProps {
    */
   inheritedTexts?: InheritedPromptText[]
   /** 将继承文本转为本节点自己的 prompt，并由页面断开对应文本连线。 */
-  onAdoptInheritedText?: () => void
+  /** 把继承文本复制为当前节点自己的正文/提示词，并断开对应文本连线。 */
+  onAdoptInheritedText?: (mergedText: string) => void
   onPolishText?: (params: {
     prompt: string
     kind: string
@@ -595,6 +628,8 @@ export default function CanvasNodePanel({
     'reconnecting',
     'result_pending',
   ].includes(String(node?.taskStatus || '').toLowerCase())
+  const hasExistingResult = kind !== 'text' && Boolean(node?.resultUrl || Number(node?.assetId || 0) > 0)
+  const generateActionLabel = hasExistingResult ? '重新生成' : '生成'
   const isNewModelGeneration = kind === 'video' && node?.generationIntent === 'new-model'
   const isEditingVideo = kind === 'video' && Boolean(node?.resultUrl) && !isNewModelGeneration
   // 文本节点的内容存在 text，图片/视频节点的输入框存在 prompt；两者都随节点持久化。
@@ -1118,6 +1153,9 @@ export default function CanvasNodePanel({
 
   // 字段值状态：模型/schema 变化时重置为 default；优先读取节点已持久化的 params（刷新后回显用户选择）
   const [fieldValues, setFieldValues] = useState<Record<string, unknown>>({})
+  // 只在初始化字段时读一次节点比例；不进依赖，免得改比例（会回写 node.ratio）把其他字段也重置掉
+  const nodeRatioRef = useRef(node?.ratio)
+  nodeRatioRef.current = node?.ratio
   useEffect(() => {
     const persisted = (node?.params || {}) as Record<string, unknown>
     const next: Record<string, unknown> = {}
@@ -1127,7 +1165,9 @@ export default function CanvasNodePanel({
         ? persisted[f.name]
         : kind === 'video' && isAudioField(f)
           ? true
-          : f.default
+          : kind === 'video' && isRatioField(f)
+            ? pickVideoDefaultRatio(f, nodeRatioRef.current)
+            : f.default
       next[f.name] = normalizeFieldValue(f, initialValue)
     }
     setFieldValues(next)
@@ -1170,8 +1210,8 @@ export default function CanvasNodePanel({
     [schemaFields, onRatioChange, onParamsChange, buildSchemaParams, fieldValues],
   )
 
-  // 图片节点的 schema 里若已含比例字段（ratio/aspect_ratio/aspectRatio），则由 schema 菜单控制比例，隐藏固定 RatioSelector
-  const imageRatioInSchema = kind === 'image' && schemaFields.some(isRatioField)
+  const videoRatioField = kind === 'video' ? schemaFields.find(isRatioField) : undefined
+  const videoRatioValue = videoRatioField ? formatRatioValue(fieldValues[videoRatioField.name]) : ''
 
   // 参数 params：由所选模型的 schema fields 动态构建（所有节点类型通用，不再写死 resolution/duration）
   //
@@ -1274,6 +1314,49 @@ export default function CanvasNodePanel({
     () => buildCanvasInputAssets(sourceRefs, operationCode, selfVideoAssetId, declaredImageRole),
     [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole],
   )
+  /**
+   * 参考视频总时长：画布节点不存视频时长，这里按视频地址读一次元数据（preload=metadata，只拉文件头）。
+   * 改片时节点自己那条视频也算进去——它同样会作为参考视频下发。
+   */
+  const videoRefUrls = useMemo(() => {
+    if (kind !== 'video') return [] as string[]
+    const urls = sourceRefs
+      .filter((ref) => ref.kind === 'video' || ref.kind === 'timeline')
+      .map((ref) => String((ref as any).thumbnailUrl || ''))
+    if (isEditingVideo && node?.resultUrl) urls.push(String(node.resultUrl))
+    return urls.filter(Boolean)
+  }, [kind, sourceRefs, isEditingVideo, node?.resultUrl])
+  const [videoDurations, setVideoDurations] = useState<Record<string, number>>({})
+  useEffect(() => {
+    const pending = videoRefUrls.filter((url) => videoDurations[url] === undefined)
+    if (!pending.length) return
+    const cleanups = pending.map((url) => {
+      const video = document.createElement('video')
+      video.preload = 'metadata'
+      video.muted = true
+      const done = (seconds: number) => setVideoDurations((prev) => ({ ...prev, [url]: seconds }))
+      video.onloadedmetadata = () => done(Number.isFinite(video.duration) ? video.duration : 0)
+      video.onerror = () => done(0)
+      video.src = url
+      return () => {
+        video.onloadedmetadata = null
+        video.onerror = null
+        video.removeAttribute('src')
+        video.load()
+      }
+    })
+    return () => cleanups.forEach((cleanup) => cleanup())
+  }, [videoRefUrls, videoDurations])
+  const videoRefTotalSec = videoRefUrls.reduce((sum, url) => sum + (videoDurations[url] || 0), 0)
+  // 模型 schema 声明了 source_video_duration 上限就用它；否则按上游 15 秒的硬限制
+  // （原文：reference video total duration must not exceed 15 seconds）
+  const maxVideoRefSec = useMemo(() => {
+    const field = parseParamsSchema(selectedModel).find(
+      (f) => normalizeParamKey(f.name) === 'sourcevideoduration' && Number.isFinite(Number(f.max)),
+    )
+    return field ? Number(field.max) : DEFAULT_MAX_VIDEO_REF_SEC
+  }, [selectedModel])
+
   const inputValidationError = useMemo(() => {
     if (kind === 'image' && sourceRefs.some((ref) => ref.source === 'real_person')) {
       return '真人素材图片节点仅用于素材展示/中转，不能直接生成图片；请连接到视频节点生成视频'
@@ -1289,10 +1372,23 @@ export default function CanvasNodePanel({
         maxImageRefs: maxRefs,
         minImageRefs: minRefs,
         modelLabel: selectedModel?.displayName,
+        maxVideoRefSec,
+        videoRefTotalSec,
       })
     }
     return null
-  }, [kind, maxRefs, minRefs, operationCode, sourceRefs, videoMode, workspaceId, selectedModel?.displayName])
+  }, [
+    kind,
+    maxRefs,
+    minRefs,
+    operationCode,
+    sourceRefs,
+    videoMode,
+    workspaceId,
+    selectedModel?.displayName,
+    maxVideoRefSec,
+    videoRefTotalSec,
+  ])
 
   const inputSummary = useMemo(() => {
     let images = 0
@@ -1383,11 +1479,15 @@ export default function CanvasNodePanel({
     const cost = Number(costEstimate.estimated_cost || 0)
     if (kind === 'video' && cost > 0) {
       const operationLabel = isEditingVideo ? '修改当前视频' : '使用新模型生成视频'
-      const confirmed = await requestConfirm(`${operationLabel}预计费用 ${creditsYuanLabel(cost)}，是否继续？`, {
-        title: '确认生成费用',
-        confirmLabel: '继续生成',
-        cancelLabel: '再想想',
-      })
+      const ratioNote = videoRatioValue ? `，画面比例 ${videoRatioValue}` : ''
+      const confirmed = await requestConfirm(
+        `${operationLabel}${ratioNote}，预计费用 ${creditsYuanLabel(cost)}，是否继续？`,
+        {
+          title: '确认生成费用',
+          confirmLabel: '继续生成',
+          cancelLabel: '再想想',
+        },
+      )
       if (confirmed !== true) return
     }
     // 先把防抖中的最后几个字写回节点，再提交：节点数据与本次发出的 prompt 一致
@@ -1439,8 +1539,14 @@ export default function CanvasNodePanel({
     if (!hasInheritedTexts || taskRunning) return
     const merged = [...inheritedTexts.map((item) => item.text), prompt.trim()].filter(Boolean).join('\n\n')
     userEditedPromptRef.current = true
-    commitPrompt(merged, { immediate: true })
-    onAdoptInheritedText?.()
+    if (kind === 'text') {
+      // 先即时回显；持久化与断线必须由页面在同一次状态事务中完成，
+      // 否则两个父级回调连续更新会让边同步 effect 把旧正文灌回来。
+      setPrompt(merged)
+    } else {
+      commitPrompt(merged, { immediate: true })
+    }
+    onAdoptInheritedText?.(merged)
   }
 
   return (
@@ -1628,6 +1734,8 @@ export default function CanvasNodePanel({
           <button
             type="button"
             className={styles.inheritedPromptBtn}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
             onClick={handleAdoptInheritedText}
             disabled={taskRunning || !onAdoptInheritedText}
           >
@@ -1905,11 +2013,6 @@ export default function CanvasNodePanel({
             </button>
           )}
 
-          {/* 比例选择器：schema 已含比例字段时由菜单控制，否则统一显示固定比例选择器（含 seedream 5.0） */}
-          {kind === 'image' && !imageRatioInSchema && (
-            <RatioSelector value={ratio} onRatioChange={taskRunning ? undefined : onRatioChange} />
-          )}
-
           {/* 模型 params_schema 参数菜单：所有节点类型通用；视频额外含生成方式组 */}
           {kind !== 'text' && schemaFields.length > 0 && (
             <SchemaFieldMenu
@@ -1924,35 +2027,15 @@ export default function CanvasNodePanel({
           )}
         </div>
 
-        <button
-          className={`${styles.generateBtn} ${styles.generatePill}`}
-          onClick={handleGenerate}
-          disabled={
-            taskRunning ||
-            (kind === 'text' ? !prompt.trim() : !selectedModel || !operationCode || Boolean(inputValidationError))
-          }
-          // 按钮灰着时必须说明是被什么挡住的：缺模型和缺提示词是两回事，
-          // 只写「发送生成」等于让用户对着一个点不动的按钮自己猜
-          title={
-            taskRunning
-              ? '生成过程中不能修改，请添加新的节点使用其他模型'
-              : kind === 'text'
-                ? '保存提示词'
-                : !selectedModel
-                  ? emptyModelLabel || '暂无可用模型，请先在上方选择模型'
-                  : inputValidationError || '发送生成'
-          }
-        >
-          {/* 左侧：预估积分数字 */}
-          {kind === 'text' ? (
-            <span className={styles.saveTextLabel}>保存提示词</span>
-          ) : (
+        <div className={styles.generateActions}>
+          {/* 预估费用是说明文字，不与右侧生成按钮共用点击区域。 */}
+          {kind !== 'text' && (
             <span
-              className={`${styles.costBadge} ${
+              className={`${styles.costText} ${
                 costEstimate.loading
-                  ? styles.costBadgeLoading
+                  ? styles.costTextLoading
                   : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
-                    ? styles.costBadgeInsufficient
+                    ? styles.costTextInsufficient
                     : ''
               }`}
             >
@@ -1965,13 +2048,28 @@ export default function CanvasNodePanel({
                     : '—'}
             </span>
           )}
-          {/* 右侧：发送 icon（不显示文字） */}
-          <span className={styles.sendIcon}>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-              <path d="M3.4 20.4l17.45-7.48a1 1 0 0 0 0-1.84L3.4 3.6a.993.993 0 0 0-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87.99l.01 4.61c0 .71.73 1.2 1.39.92z" />
-            </svg>
-          </span>
-        </button>
+          <button
+            type="button"
+            className={styles.generateBtn}
+            onClick={handleGenerate}
+            disabled={
+              taskRunning ||
+              (kind === 'text' ? !prompt.trim() : !selectedModel || !operationCode || Boolean(inputValidationError))
+            }
+            // 按钮灰着时必须说明是被什么挡住的：缺模型和缺提示词是两回事。
+            title={
+              taskRunning
+                ? '生成过程中不能修改，请添加新的节点使用其他模型'
+                : kind === 'text'
+                  ? '保存提示词'
+                  : !selectedModel
+                    ? emptyModelLabel || '暂无可用模型，请先在上方选择模型'
+                    : inputValidationError || (hasExistingResult ? '重新生成' : '发送生成')
+            }
+          >
+            {kind === 'text' ? '保存提示词' : generateActionLabel}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -2208,32 +2306,6 @@ function LockIcon() {
   )
 }
 
-/* ── 比例选择器（图片，受控） ── */
-function RatioSelector({ value, onRatioChange }: { value: string; onRatioChange?: (r: string) => void }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className={styles.selectorWrap}>
-      <button className={styles.selector} onClick={() => setOpen((v) => !v)}>
-        <span className={styles.ratioLabel}>{value}</span>
-      </button>
-      <SelectorPopover open={open} onClose={() => setOpen(false)}>
-        {aspectRatios.map((r) => (
-          <button
-            key={r}
-            className={`${styles.popoverItem} ${r === value ? styles.popoverItemActive : ''}`}
-            onClick={() => {
-              onRatioChange?.(r)
-              setOpen(false)
-            }}
-          >
-            {r}
-          </button>
-        ))}
-      </SelectorPopover>
-    </div>
-  )
-}
-
 /* ── 模型参数菜单（生成方式[视频] + params_schema 动态参数，所有节点类型通用） ── */
 function SchemaFieldMenu({
   kind,
@@ -2395,9 +2467,6 @@ function SchemaFieldMenu({
     </div>
   )
 }
-
-/* ── 常量 ── */
-const aspectRatios = ['2:3', '1:1', '4:3', '16:9', '9:16']
 
 /* ── 小图标 ── */
 function PlusSmIcon() {

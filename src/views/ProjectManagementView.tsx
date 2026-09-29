@@ -29,6 +29,7 @@ import { addClassifiedVideo, countProjectVideos, deriveProjectVideos } from '@/a
 import { useGenerationModelCatalog } from '@/composables/useGenerationModelCatalog'
 import { getBackendGenerationModelName } from '@/utils/generationModelCatalog'
 import { listAllAssets, listAllCreativeProjects } from '@/utils/businessPagination'
+import { pageCacheKey, readPageCache, writePageCache } from '@/utils/pageDataCache'
 import { fetchAllCanvasElements, listCanvases } from '@/api/canvasApi'
 import { collectCanvasElementAssetIds } from '@/utils/canvasElements'
 import { collectClassifiedKeys, videoSourceKeyCandidates } from '@/utils/unclassifiedVideos'
@@ -917,7 +918,17 @@ export default function ProjectManagementView() {
       return
     }
     setProjectPermissionsLoadedWorkspaceId(0)
-    setLoading(true)
+    // 有上次的项目列表就先画出来（不转圈），下面照常拉最新的覆盖。
+    // 项目可见性（restrictedMemberIds）就在项目数据里，缓存的是同一个人同一空间上次看到的内容，不会越权。
+    const cacheKey = pageCacheKey('projects', wsId, userId)
+    const cached = readPageCache<{ items: any[]; mineIds: number[] | null }>(cacheKey)
+    if (cached) {
+      projectItemsWorkspaceIdRef.current = wsId
+      setProjectItems(cached.items)
+      setProjectItemsWorkspaceId(wsId)
+      setMyProjectIds(cached.mineIds ? new Set(cached.mineIds) : null)
+    }
+    setLoading(!cached)
     try {
       // 「我的项目」以后端 mine=true 判定为准(与全量列表并行拉取,只取 id 集合);
       // 拉取失败回退前端按归属人比对,不阻塞整页加载。个人空间不拉——mine 即全部。
@@ -933,24 +944,36 @@ export default function ProjectManagementView() {
       setProjectItems(Array.isArray(items) ? items : [])
       setProjectItemsWorkspaceId(wsId)
       setProjectPermissionsLoadedWorkspaceId(wsId)
-      setMyProjectIds(
-        Array.isArray(mineItems)
-          ? new Set(mineItems.map((item: any) => resolveCreativeProjectId(item)).filter((id: number) => id > 0))
-          : null,
-      )
+      const mineIds = Array.isArray(mineItems)
+        ? mineItems.map((item: any) => resolveCreativeProjectId(item)).filter((id: number) => id > 0)
+        : null
+      setMyProjectIds(mineIds ? new Set(mineIds) : null)
+      writePageCache(cacheKey, { items: Array.isArray(items) ? items : [], mineIds })
     } catch {
       if (isCurrentLoad()) {
         projectItemsWorkspaceIdRef.current = wsId
-        setProjectItems([])
+        // 刷新失败时保留已显示的上次数据，只提示错误
+        if (!cached) {
+          setProjectItems([])
+          setMyProjectIds(null)
+        }
         setProjectItemsWorkspaceId(wsId)
         setProjectPermissionsLoadedWorkspaceId(0)
-        setMyProjectIds(null)
         showToast('项目列表加载失败,请稍后重试', 'error')
       }
     } finally {
       if (isCurrentLoad()) setLoading(false)
     }
   }, [showToast])
+
+  // 本页的新建 / 删除 / 重命名等本地更新同步进缓存：下次进页面先显示的就是改过之后的列表
+  useEffect(() => {
+    if (!projectItemsWorkspaceId || !currentUserId) return
+    writePageCache(pageCacheKey('projects', projectItemsWorkspaceId, currentUserId), {
+      items: projectItems,
+      mineIds: myProjectIds ? [...myProjectIds] : null,
+    })
+  }, [projectItems, projectItemsWorkspaceId, myProjectIds, currentUserId])
 
   useEffect(() => {
     projectLoadSequenceRef.current += 1

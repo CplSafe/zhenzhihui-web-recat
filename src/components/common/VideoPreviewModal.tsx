@@ -5,6 +5,7 @@
  * 弹窗会裸奔成流内元素,把页面挤乱。
  */
 import { useEffect, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
+import { createPortal } from 'react-dom'
 import './VideoPreviewModal.css'
 import SeekableVideo from './SeekableVideo'
 
@@ -83,7 +84,7 @@ export default function VideoPreviewModal({ src, poster, crossOrigin, onClose }:
       return false
     }
   })()
-  return (
+  const modal = (
     <div className="home__video-modal-mask" onClick={onClose}>
       <div
         ref={modalRef}
@@ -131,4 +132,7 @@ export default function VideoPreviewModal({ src, poster, crossOrigin, onClose }:
       </div>
     </div>
   )
+  // 预览可能从模板区或任务抽屉内部打开。直接留在调用方 DOM 中会被父级 stacking context
+  // 限制，导致任务抽屉浮在遮罩之上；Portal 到 body 后它才是真正覆盖整页的模态层。
+  return createPortal(modal, document.body)
 }

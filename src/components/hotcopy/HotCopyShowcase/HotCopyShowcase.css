@@ -11,12 +11,58 @@
   border-radius: 20px;
   overflow: hidden;
   background: #eef0f3;
+  cursor: pointer;
+  outline: none;
+  box-shadow: 0 10px 30px rgba(37, 31, 61, 0.08);
+  transition:
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+.hotcopy-promo:hover,
+.hotcopy-promo:focus-visible {
+  box-shadow: 0 14px 38px rgba(37, 31, 61, 0.16);
+  transform: translateY(-1px);
+}
+.hotcopy-promo:focus-visible {
+  outline: 3px solid rgba(87, 103, 229, 0.55);
+  outline-offset: 3px;
 }
 .hotcopy-promo__video {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  pointer-events: none;
+}
+.hotcopy-promo__openHint {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(12, 14, 20, 0.62);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+  backdrop-filter: blur(8px);
+}
+.hotcopy-promo:hover .hotcopy-promo__openHint,
+.hotcopy-promo:focus-visible .hotcopy-promo__openHint {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.hotcopy-promo__playIcon {
+  font-size: 11px;
 }
 .hotcopy-promo__placeholder {
   display: flex;

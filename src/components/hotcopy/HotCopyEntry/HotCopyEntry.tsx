@@ -31,13 +31,14 @@ import {
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
 import EntryCostEstimate from '@/components/common/EntryCostEstimate'
+import MaterialMentionPopover from '@/components/common/MaterialMentionPopover'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
+import { CreativeModelSlots } from '@/components/smart/CreativeModelSlots'
 import {
   CreativeParamsDropdown,
   type CreativeParamsOptions,
   type CreativeParamsValue,
 } from '@/components/smart/CreativeParamsDropdown'
-import { CreativeModelSlots } from '@/components/smart/CreativeModelSlots'
 import {
   getGenerationModelDurationOptions,
   getGenerationModelResolutionOptions,
@@ -478,14 +479,19 @@ export default function HotCopyEntry({
   const [resolution, setResolution] = useState(initialDraft.resolution)
   const [generateAudio, setGenerateAudio] = useState(initialDraft.generateAudio)
   const [modelVersionId, setModelVersionId] = useState<number | undefined>(initialDraft.modelVersionId)
+  const [paramsOpenSignal, setParamsOpenSignal] = useState(0)
   // 模型 options 到位后,若当前比例不在其中 → 收敛到第一个支持项(防止显示/提交一个模型做不了的比例)
   useEffect(() => {
     if (ratioOpts.length && !ratioOpts.includes(ratio)) setRatio(ratioOpts[0])
   }, [ratioOpts, ratio])
   // @ 引用替换素材(交互对齐智能成片;数据源是上传的替换素材 products)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
+  const atButtonRef = useRef<HTMLButtonElement | null>(null)
+  const mentionAnchorRef = useRef<HTMLSpanElement | null>(null)
   const caretRef = useRef(0) // 最近一次光标位置(点 @ 会失焦,需提前记下)
   const [atOpen, setAtOpen] = useState(false)
+  const [atSource, setAtSource] = useState<'typed' | 'button'>('button')
+  const atTriggerRangeRef = useRef<{ start: number; end: number } | null>(null)
 
   useEffect(() => {
     if (!videoMenuOpen && !productMenuOpen) return
@@ -782,6 +788,8 @@ export default function HotCopyEntry({
       insertAtCaret('@')
       return
     }
+    atTriggerRangeRef.current = null
+    setAtSource('button')
     setAtOpen(true)
   }
   // 某条替换素材的引用标签:图片→@图片N、视频→@视频N(各自按同类型顺序独立编号)
@@ -792,12 +800,25 @@ export default function HotCopyEntry({
     return `@${kind}${n}`
   }
   const pickRef = (index: number) => {
-    insertAtCaret(`${refLabel(index)} `)
+    const trigger = atTriggerRangeRef.current
+    if (trigger) {
+      const snippet = `${refLabel(index)} `
+      const next = text.slice(0, trigger.start) + snippet + text.slice(trigger.end)
+      const nextCaret = trigger.start + snippet.length
+      setText(next)
+      caretRef.current = nextCaret
+      requestAnimationFrame(() => {
+        taRef.current?.focus()
+        taRef.current?.setSelectionRange(nextCaret, nextCaret)
+      })
+    } else {
+      insertAtCaret(`${refLabel(index)} `)
+    }
+    atTriggerRangeRef.current = null
     setAtOpen(false)
   }
   // 高亮渲染:把「@图片N / @视频N」标绿,其余为普通文本(textarea 文字透明叠在此层上)
-  const renderHighlight = (t: string): ReactNode[] | null => {
-    if (!t) return null
+  const renderHighlightTokens = (t: string, keyPrefix: string): ReactNode[] => {
     const out: ReactNode[] = []
     const re = /@(?:图片|视频)\d+/g
     let last = 0
@@ -805,7 +826,7 @@ export default function HotCopyEntry({
     while ((m = re.exec(t))) {
       if (m.index > last) out.push(t.slice(last, m.index))
       out.push(
-        <span className="hotcopy__refTag" key={m.index}>
+        <span className="hotcopy__refTag" key={`${keyPrefix}-${m.index}`}>
           {m[0]}
         </span>,
       )
@@ -814,6 +835,21 @@ export default function HotCopyEntry({
     out.push(t.slice(last))
     return out
   }
+  const renderHighlight = (t: string): ReactNode[] | null => {
+    if (!t) return null
+    const anchorIndex = atOpen && atSource === 'typed' ? atTriggerRangeRef.current?.start : undefined
+    if (anchorIndex === undefined) return renderHighlightTokens(t, 'all')
+    return [
+      ...renderHighlightTokens(t.slice(0, anchorIndex), 'before'),
+      <span className="hotcopy__mentionCaretAnchor" ref={mentionAnchorRef} key="mention-anchor" aria-hidden="true" />,
+      ...renderHighlightTokens(t.slice(anchorIndex), 'after'),
+    ]
+  }
+  const closeAtMenu = useCallback(() => setAtOpen(false), [])
+  const getAtAnchorRect = useCallback(
+    () => (atSource === 'typed' ? mentionAnchorRef.current : atButtonRef.current)?.getBoundingClientRect() || null,
+    [atSource],
+  )
 
   const videoLabel =
     videoSource === 'local' ? videoFileName : videoSource === 'library' ? videoFileName || '素材库视频' : ''
@@ -1238,8 +1274,15 @@ export default function HotCopyEntry({
                       value={text}
                       placeholder="最多上传或粘贴9张图片，输入文字或@参考素材，生成精彩广告视频。例如：把 @图片1 中的产品放到 @图片2 中的场景里"
                       onChange={(e) => {
-                        setText(e.target.value)
-                        caretRef.current = e.target.selectionStart ?? e.target.value.length
+                        const next = e.target.value
+                        const caret = e.target.selectionStart ?? next.length
+                        setText(next)
+                        caretRef.current = caret
+                        if (products.length > 0 && caret > 0 && next[caret - 1] === '@') {
+                          atTriggerRangeRef.current = { start: caret - 1, end: caret }
+                          setAtSource('typed')
+                          setAtOpen(true)
+                        }
                       }}
                       onSelect={(e) => {
                         caretRef.current = e.currentTarget.selectionStart ?? 0
@@ -1293,25 +1336,18 @@ export default function HotCopyEntry({
               {/* 底部:尺寸/时长 + @ 参考素材(左) + 圆形发送(右) */}
               <div className="hotcopy__bottom">
                 <div className="hotcopy__tools">
-                  {/*
-                模型排在工具条第一位：时长与分辨率的档位由所选 replicate 模型的 schema 决定，
-                多数人也确实会先定模型，把它放在最左符合主路径的阅读顺序。
-                但这只是默认顺序、不是强制：时长可以先选，模型列表会反过来标出做不到的那些。
-
-                与爆款成片共用同一枚胶囊（CreativeModelSlots），两个入口的模型选择
-                长成同一个样子；此前这里是 GenerationModelDropdown，形态与另一边不一致。
-              */}
                   <CreativeModelSlots
                     groups={modelGroups}
                     selected={modelSelection}
                     loading={Boolean(modelLoading)}
                     authRequired={authRequired}
                     onAuthRequired={onAuthRequired}
-                    // 提交预检开始后模型已随快照冻结，这里必须一并锁住，
-                    // 否则用户改了模型却发现出片用的还是旧的。
                     locked={modelsLocked}
-                    // 目录加载失败后列表是空的，展开时重拉一次，用户不必刷新整页。
-                    onOpen={modelLoading ? undefined : onReloadModels}
+                    // 录屏中的闪空来自这里：每次悬停都重拉目录，加载态会让已选名称和卡片短暂消失。
+                    // 已有可用目录时只展开；仅首次为空或上次失败时才把悬停作为重试入口。
+                    onOpen={
+                      !modelLoading && (modelGroups.length === 0 || Boolean(modelError)) ? onReloadModels : undefined
+                    }
                     onChange={(_groupKey, nextModelId, subgroupKey) => {
                       if (subgroupKey !== 'video.replicate') return
                       const normalizedId = Number(nextModelId)
@@ -1319,6 +1355,7 @@ export default function HotCopyEntry({
                         Number.isSafeInteger(normalizedId) && normalizedId > 0 ? normalizedId : undefined,
                       )
                     }}
+                    onModelSelected={() => setParamsOpenSignal((signal) => signal + 1)}
                   />
                   {/*
                 创作参数（比例 / 时长 / 分辨率 / 背景音）收进一枚弹层胶囊，与智能成片同一组件。
@@ -1335,29 +1372,32 @@ export default function HotCopyEntry({
                 */
                     blockedReason={modelSelectionComplete ? undefined : '请先选择本次爆款复刻使用的模型'}
                     onBlocked={(reason) => showToast(reason, 'info')}
+                    openSignal={paramsOpenSignal}
                   />
                   <span className="hotcopy__atAnchor">
-                    <button type="button" className="hotcopy__at" onClick={handleAt} title="引用替换素材">
+                    <button
+                      ref={atButtonRef}
+                      type="button"
+                      className="hotcopy__at"
+                      onClick={handleAt}
+                      title="引用替换素材"
+                    >
                       @
                     </button>
-                    {/* @ 素材选择:在 @ 按钮上方弹出,数据源是上传的替换素材 */}
-                    {atOpen && (
-                      <>
-                        <div className="hotcopy__atMask" onClick={() => setAtOpen(false)} />
-                        <div className="hotcopy__atMenu">
-                          <div className="hotcopy__atMenuTitle">选择替换素材</div>
-                          <div className="hotcopy__atMenuGrid">
-                            {products.map((p, i) => (
-                              <button type="button" className="hotcopy__atItem" key={i} onClick={() => pickRef(i)}>
-                                <img src={p.url} alt="" />
-                                <span className="hotcopy__atItemName">{refLabel(i)}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </>
-                    )}
                   </span>
+                  <MaterialMentionPopover
+                    open={atOpen}
+                    title="选择替换素材"
+                    items={products.map((product, index) => ({
+                      key: `${product.url}-${index}`,
+                      url: product.url,
+                      label: refLabel(index),
+                      kind: product.isVideo ? 'video' : 'image',
+                    }))}
+                    getAnchorRect={getAtAnchorRect}
+                    onSelect={pickRef}
+                    onClose={closeAtMenu}
+                  />
                 </div>
                 <div className="hotcopy__sendArea">
                   <EntryCostEstimate

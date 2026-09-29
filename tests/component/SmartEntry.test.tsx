@@ -1,5 +1,6 @@
 ﻿import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SmartEntry from '@/components/smart/SmartEntry/SmartEntry'
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   fileToDataUrl: vi.fn(),
   normalizeImageFileForAiInput: vi.fn(),
   showToast: vi.fn(),
+  requestConfirm: vi.fn(),
 }))
 
 vi.mock('@/components/smart/EntryCanvasBg', () => ({ default: () => null }))
@@ -17,7 +19,10 @@ vi.mock('@/utils/imageFile', () => ({
   fileToDataUrl: mocks.fileToDataUrl,
   normalizeImageFileForAiInput: mocks.normalizeImageFileForAiInput,
 }))
-vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: mocks.showToast }) }))
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ showToast: mocks.showToast }),
+  useConfirmDialog: () => ({ requestConfirm: mocks.requestConfirm }),
+}))
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -38,20 +43,12 @@ function file(name = 'reference.png', type = 'image/png') {
  * 选完列表自动收起，不需要再点「关闭」。
  */
 async function pickModel(user: ReturnType<typeof userEvent.setup>, modelName: string) {
-  // 外层是一枚收窄的摘要胶囊，展开后每个槽位一个创作台选择器。
+  // 点击摘要胶囊后直接出现模型卡片，不再经过“请选择模型”的二次触发器。
   await user.click(screen.getByRole('button', { name: /生成模型/ }))
-  const triggers = screen.getAllByRole('button', { name: '选择生成模型' })
-  for (const trigger of triggers) {
-    await user.click(trigger)
-    const option = screen.queryByRole('option', { name: new RegExp(modelName) })
-    if (option) {
-      await user.click(option)
-      await user.keyboard('{Escape}')
-      return
-    }
-    await user.click(trigger)
-  }
-  throw new Error(`未找到模型选项：${modelName}`)
+  await user.click(screen.getByRole('option', { name: new RegExp(modelName) }))
+  // 模型卡片有收拢动画；等自动串联的参数面板真正打开后再继续操作，
+  // 避免测试在动画结束回调与手动点击参数按钮之间产生竞态。
+  await screen.findByRole('dialog', { name: '创作参数' })
 }
 
 /** 统一挂载入口组件，便于各用例按需覆盖回调与初始值。 */
@@ -72,8 +69,8 @@ function openCreativeParams() {
  * 比例/分辨率/数量是 button，时长档位是 radiogroup 里的 radio。
  */
 async function pickCreativeParam(user: ReturnType<typeof userEvent.setup>, value: string) {
-  await user.click(openCreativeParams())
-  const panel = within(screen.getByRole('dialog', { name: '创作参数' }))
+  if (!screen.queryByRole('dialog', { name: '创作参数' })) await user.click(openCreativeParams())
+  const panel = within(await screen.findByRole('dialog', { name: '创作参数' }))
   const target = panel.queryByRole('button', { name: value }) || panel.getByRole('radio', { name: value })
   await user.click(target)
   await user.keyboard('{Escape}')
@@ -81,7 +78,7 @@ async function pickCreativeParam(user: ReturnType<typeof userEvent.setup>, value
 
 /** 读取时长档位条当前列出的秒数。 */
 async function readDurationOptions(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(openCreativeParams())
+  if (!screen.queryByRole('dialog', { name: '创作参数' })) await user.click(openCreativeParams())
   const group = screen.getByRole('radiogroup', { name: '视频时长' })
   const options = within(group)
     .getAllByRole('radio')
@@ -92,7 +89,7 @@ async function readDurationOptions(user: ReturnType<typeof userEvent.setup>) {
 
 /** 读取某一行分段按钮（比例 / 分辨率 / 数量）当前列出的档位。 */
 async function readSegmentOptions(user: ReturnType<typeof userEvent.setup>, rowLabel: string) {
-  await user.click(openCreativeParams())
+  if (!screen.queryByRole('dialog', { name: '创作参数' })) await user.click(openCreativeParams())
   const dialog = screen.getByRole('dialog', { name: '创作参数' })
   const row = within(dialog)
     .getByText(new RegExp(`^${rowLabel}$`))
@@ -109,6 +106,7 @@ beforeEach(() => {
   setSmartEntryDraftScope('user-4', 61)
   mocks.fileToDataUrl.mockImplementation(async (input: File) => `data:${input.name}`)
   mocks.normalizeImageFileForAiInput.mockImplementation(async (input: File) => input)
+  mocks.requestConfirm.mockResolvedValue(true)
 })
 
 describe('SmartEntry draft and session initialization', () => {
@@ -157,6 +155,38 @@ describe('SmartEntry draft and session initialization', () => {
 })
 
 describe('SmartEntry mode, options, validation, and submission', () => {
+  it('opens model and creative parameter panels on hover and closes them when the pointer leaves', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        modelGroups={[
+          {
+            key: 'video',
+            label: '生成视频',
+            subgroups: [{ key: 'video.generate', label: '视频生成模型', models: [{ id: 701, name: '悬停测试模型' }] }],
+          },
+        ]}
+      />,
+    )
+
+    const modelTrigger = screen.getByRole('button', { name: /生成模型/ })
+    await user.hover(modelTrigger)
+    expect(screen.getByRole('dialog', { name: '生成模型' })).toBeInTheDocument()
+    await user.unhover(modelTrigger)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '生成模型' })).not.toBeInTheDocument())
+
+    await user.hover(modelTrigger)
+    await user.click(screen.getByRole('option', { name: /悬停测试模型/ }))
+    await screen.findByRole('dialog', { name: '创作参数' })
+    await user.keyboard('{Escape}')
+    const paramsTrigger = openCreativeParams()
+    await user.hover(paramsTrigger)
+    expect(screen.getByRole('dialog', { name: '创作参数' })).toBeInTheDocument()
+    await user.unhover(paramsTrigger)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '创作参数' })).not.toBeInTheDocument())
+  })
+
   it('renders the real-person studio as a video-only entry with independent copy', () => {
     render(<TestSmartEntry variant="real-person" onSubmit={vi.fn()} initial={{ mode: 'image' }} />)
 
@@ -369,6 +399,40 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     )
   })
 
+  it('asks before switching modes and keeps the current draft when cancelled', async () => {
+    const user = userEvent.setup()
+    mocks.requestConfirm.mockResolvedValueOnce(false)
+    render(<TestSmartEntry onSubmit={vi.fn()} initial={{ text: '不能丢失的文案' }} />)
+
+    await user.click(screen.getByRole('tab', { name: '制作图片' }))
+
+    expect(mocks.requestConfirm).toHaveBeenCalledWith('切换后当前输入和素材将不会保留，是否确认离开？', {
+      title: '切换创作类型',
+      cancelLabel: '取消',
+      confirmLabel: '确认离开',
+    })
+    expect(screen.getByRole('tab', { name: '制作视频' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('不能丢失的文案')
+  })
+
+  it('clears the abandoned input and session draft after confirming a mode switch', async () => {
+    const user = userEvent.setup()
+    saveSmartEntryDraft({ mode: 'video', text: '缓存文案', images: ['data:old-image'] })
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        initial={{ text: '当前文案', images: ['data:current-image'], imageAssetIds: [731] }}
+      />,
+    )
+
+    await user.click(screen.getByRole('tab', { name: '制作图片' }))
+
+    expect(screen.getByRole('tab', { name: '制作图片' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('')
+    expect(screen.queryByRole('button', { name: '移除' })).not.toBeInTheDocument()
+    expect(loadSmartEntryDraft()).toBeNull()
+  })
+
   it('keeps multiple carried image asset ids aligned before and after removing the first image', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
@@ -457,9 +521,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     // 模型胶囊就在工具条最左，不再自动展开面板，只说明原因
     expect(mocks.showToast).toHaveBeenCalledWith('请先选择本次创作使用的全部模型', 'info')
 
-    await pickModel(user, '后端返回的脚本模型')
-    await user.click(submit)
-    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.queryByRole('option', { name: /后端返回的脚本模型/ })).not.toBeInTheDocument()
     await pickModel(user, '后端返回的视频模型')
 
     await user.click(submit)
@@ -607,11 +669,12 @@ describe('SmartEntry mode, options, validation, and submission', () => {
 
     // 模型卡片上就标出它做不了什么，不必等档位变少或提交被拒才发现（创作台同款标签）
     await user.click(screen.getByRole('button', { name: /生成模型/ }))
-    await user.click(screen.getByRole('button', { name: '选择生成模型' }))
     const restrictedOption = screen.getByRole('option', { name: /后端受限视频模型/ })
     expect(within(restrictedOption).getByText('时长仅支持：5 秒、10 秒')).toBeInTheDocument()
     expect(within(restrictedOption).getByText('画面比例支持：16:9')).toBeInTheDocument()
     await user.click(restrictedOption)
+    await screen.findByRole('dialog', { name: '创作参数' })
+    await user.keyboard('{Escape}')
 
     // 不兼容提示常驻在工具条上方
     expect(screen.getByText(/当前 6 秒不在可选时长/)).toBeInTheDocument()
@@ -665,7 +728,7 @@ describe('SmartEntry mode, options, validation, and submission', () => {
 
     // 只出现当前参考图模式对应的那一个槽位
     await user.click(screen.getByRole('button', { name: /生成模型/ }))
-    expect(screen.getAllByRole('button', { name: '选择生成模型' })).toHaveLength(1)
+    expect(screen.getAllByRole('listbox', { name: /可用模型/ })).toHaveLength(1)
     expect(screen.getByText('文生图模型')).toBeInTheDocument()
     expect(screen.queryByText('图生图模型')).not.toBeInTheDocument()
     await user.keyboard('{Escape}')
@@ -730,6 +793,33 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(mocks.showToast).toHaveBeenCalledWith('当前创作参数与所选模型不兼容，请调整模型或创作参数', 'info')
   })
 
+  it('defaults to no script while keeping the original trigger label and option order', async () => {
+    const user = userEvent.setup()
+    render(<TestSmartEntry onSubmit={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
+    const options = screen.getAllByRole('option')
+    expect(options.map((option) => option.textContent)).toEqual(['不使用脚本', '电商广告', '本地生活广告'])
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('shows a selected skill by name and restores the original label when no script is chosen', async () => {
+    const user = userEvent.setup()
+    render(<TestSmartEntry onSubmit={vi.fn()} initial={{ text: '推广新品咖啡' }} />)
+
+    await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
+    await user.click(screen.getByRole('option', { name: '电商广告' }))
+    expect(screen.getByRole('button', { name: /电商广告/ })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('推广新品咖啡\n\n使用电商广告帮我优化')
+
+    await user.click(screen.getByRole('button', { name: /电商广告/ }))
+    await user.click(screen.getByRole('option', { name: '不使用脚本' }))
+    expect(screen.getByRole('button', { name: '爆款脚本自动生成' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('推广新品咖啡')
+    await user.click(screen.getByRole('button', { name: '爆款脚本自动生成' }))
+    expect(screen.getByRole('option', { name: '不使用脚本' })).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('submits the selected ratio, duration, and skill while stripping the skill helper line', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
@@ -770,6 +860,11 @@ describe('SmartEntry mode, options, validation, and submission', () => {
         skill: '电商广告',
       }),
     )
+
+    await user.click(screen.getByRole('button', { name: /电商广告/ }))
+    await user.click(screen.getByRole('option', { name: '不使用脚本' }))
+    await user.click(screen.getByRole('button', { name: '去制作' }))
+    expect(onSubmit).toHaveBeenLastCalledWith('推广新品咖啡', expect.objectContaining({ skill: undefined }))
   })
 
   it('按所选视频模型收敛分辨率档位，并提交用户选择的分辨率', async () => {
@@ -949,9 +1044,28 @@ describe('SmartEntry uploads and recovery actions', () => {
     textbox.focus()
     await user.keyboard('{Home}')
     await user.click(screen.getByRole('button', { name: '@' }))
-    await user.click(screen.getByRole('button', { name: '@图片1' }))
+    await user.click(screen.getByRole('option', { name: '@图片1' }))
 
     expect(textbox).toHaveValue('@图片1 放到场景中')
+  })
+
+  it('opens the material strip for a manually typed @ and replaces that trigger in place', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestSmartEntry onSubmit={vi.fn()} initial={{ text: '把素材放到这里', images: ['data:first', 'data:second'] }} />,
+    )
+    const textbox = screen.getByRole('textbox', { name: '创作需求' })
+
+    await user.click(textbox)
+    await user.keyboard('{Home}')
+    await user.keyboard('@')
+
+    const materialStrip = await screen.findByRole('listbox', { name: '选择参考素材' })
+    expect(within(materialStrip).getAllByRole('option')).toHaveLength(2)
+    await user.click(within(materialStrip).getByRole('option', { name: '@图片2' }))
+
+    expect(textbox).toHaveValue('@图片2 把素材放到这里')
+    expect(screen.queryByRole('listbox', { name: '选择参考素材' })).not.toBeInTheDocument()
   })
 
   it('allows an old resumable draft to complete and persist its missing homepage models', async () => {
@@ -982,11 +1096,6 @@ describe('SmartEntry uploads and recovery actions', () => {
 
     const resumeButton = screen.getByRole('button', { name: '返回下一步' })
     expect(resumeButton).toBeEnabled()
-    await user.click(resumeButton)
-    expect(onResume).not.toHaveBeenCalled()
-    expect(mocks.showToast).toHaveBeenLastCalledWith('请先选择本次创作使用的全部模型', 'info')
-    await pickModel(user, '后端脚本模型')
-
     await user.click(resumeButton)
     expect(onResume).toHaveBeenCalledWith({ 'responses.multimodal': 951 })
   })

@@ -22,7 +22,12 @@ const MAX_SINGLE_JS_BYTES = 460 * 1024
 // 创作台历史结果流与 Agent 对话（含 Markdown 渲染、语音输入和生成卡片）继续作为
 // 独立路由/按需功能加载。它们扩展了完整产品面，但没有增加首屏或单路由上限；为当前
 // 956 KiB 的完整产品面保留约 24 KiB 回归余量，后续异常增长仍会被 CI 拦截。
-const MAX_TOTAL_JS_GZIP_BYTES = 980 * 1024
+// 2026-09-24：8/26 以来一个月的功能迭代把完整产品面推到约 1002 KiB（逐提交测过：
+// 没有单次异常膨胀，最大一次是 798ce45「完善画布、视频编辑与项目工作流」+12 KiB，
+// 其余都在 0～2 KiB；sourcemap 归因也确认无模块被重复打进多个 chunk）。
+// 这里按实测值重新留约 22 KiB 余量。可回收的大头只有 antd DatePicker（rc-picker，约 25 KiB，
+// 仅团队看板的月份选择与邀请返利的日期区间在用），替换后应把本上限一并收回。
+const MAX_TOTAL_JS_GZIP_BYTES = 1024 * 1024
 const MAX_IMAGE_BYTES = 450 * 1024
 const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.webp'])
 const FORBIDDEN_CLIENT_ENV_KEY =
