@@ -30,6 +30,18 @@ export function formatVideoTaskModeLabel(mode: unknown): string {
   return TASK_MODE_LABELS[key] ?? key
 }
 
+/** 仅拦截明确要求修改源片的描述，避免把编辑意图按普通生成计费提交。 */
+export function getVideoEditModeConflict(args: {
+  prompt: string
+  mode: unknown
+  hasVideoInput: boolean
+  supportsTaskMode: boolean
+}): string | null {
+  if (!args.hasVideoInput || !args.supportsTaskMode || String(args.mode) !== 'generate') return null
+  if (!/(?:替换(?:成|为|掉)?|换成|改成|更换|修改|移除|删除|去掉)/.test(args.prompt)) return null
+  return '当前描述是在修改原视频，请将任务类型切换为「编辑」后再生成'
+}
+
 /**
  * 按是否接入视频收口 params：
  * - 没有视频：去掉 mode，后端按「生成」处理；

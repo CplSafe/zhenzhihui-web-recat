@@ -1,4 +1,4 @@
-/* SettingsMenu — 侧栏「设置」弹出菜单(个人中心 / 修改密码 / 退出登录)。
+/* SettingsMenu — 侧栏「设置」弹出菜单(个人中心 / 修改密码 / 使用手册 / 退出登录)。
    菜单经 portal 渲染到 body,fixed 定位并向上展开(translateY(-100%))。 */
 .settings-menu {
   position: fixed;
@@ -15,6 +15,7 @@
   gap: 2px;
 }
 .settings-menu__item {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -26,6 +27,7 @@
   color: #2b3040;
   font-size: 14px;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -51,6 +53,7 @@
 /* 图标圆底背景色已去掉,仅保留图标本身 */
 .settings-menu__ico--blue,
 .settings-menu__ico--green,
+.settings-menu__ico--manual,
 .settings-menu__ico--red {
   color: #2b3040;
 }

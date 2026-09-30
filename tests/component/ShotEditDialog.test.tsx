@@ -53,7 +53,7 @@ describe('ShotEditDialog', () => {
     render(<ShotEditDialog {...props} onPolish={vi.fn()} />)
 
     const input = screen.getByRole('textbox', { name: '分镜描述' })
-    expect(screen.getByRole('button', { name: 'AI一键润色' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '我帮你写' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '生成分镜' })).toBeDisabled()
 
     await user.type(input, '  产品特写  ')
@@ -87,16 +87,19 @@ describe('ShotEditDialog', () => {
 
     const input = screen.getByRole('textbox', { name: '分镜描述' })
     await user.type(input, '原始描述')
-    await user.click(screen.getByRole('button', { name: 'AI一键润色' }))
+    await user.click(screen.getByRole('button', { name: '我帮你写' }))
     expect(screen.getByRole('button', { name: '润色中…' })).toBeDisabled()
     expect(onPolish).toHaveBeenCalledOnce()
 
     await act(async () => first.reject(new Error('服务繁忙')))
     expect(mocks.showToast).toHaveBeenCalledWith('AI 润色失败:服务繁忙', 'error')
 
-    await user.click(screen.getByRole('button', { name: 'AI一键润色' }))
+    await user.click(screen.getByRole('button', { name: '我帮你写' }))
     await waitFor(() => expect(input).toHaveValue('润色结果'))
     expect(onPolish).toHaveBeenCalledTimes(2)
+    await user.click(screen.getByRole('button', { name: '复原' }))
+    expect(input).toHaveValue('原始描述')
+    expect(screen.getByRole('button', { name: '我帮你写' })).toBeEnabled()
   })
 
   it('uploads references and recovers after one failure', async () => {
@@ -130,7 +133,7 @@ describe('ShotEditDialog', () => {
     const { rerender } = render(<ShotEditDialog {...props} onPolish={onPolish} />)
 
     await user.type(screen.getByRole('textbox', { name: '分镜描述' }), '旧会话')
-    await user.click(screen.getByRole('button', { name: 'AI一键润色' }))
+    await user.click(screen.getByRole('button', { name: '我帮你写' }))
     rerender(<ShotEditDialog {...props} open={false} onPolish={onPolish} />)
     rerender(<ShotEditDialog {...props} onPolish={onPolish} />)
     const currentInput = screen.getByRole('textbox', { name: '分镜描述' })
@@ -148,13 +151,13 @@ describe('ShotEditDialog', () => {
     const { rerender } = render(<ShotEditDialog {...props} onPolish={onPolish} />)
 
     await user.type(screen.getByRole('textbox', { name: '分镜描述' }), '旧会话')
-    await user.click(screen.getByRole('button', { name: 'AI一键润色' }))
+    await user.click(screen.getByRole('button', { name: '我帮你写' }))
     rerender(<ShotEditDialog {...props} open={false} onPolish={onPolish} />)
     rerender(<ShotEditDialog {...props} onPolish={onPolish} />)
 
     await act(async () => oldRequest.reject(new Error('旧会话失败')))
     expect(mocks.showToast).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: 'AI一键润色' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '我帮你写' })).toBeDisabled()
   })
 
   it('ignores a late upload success after close and reopen', async () => {

@@ -16,7 +16,6 @@ import DraftSaveIndicator from '@/components/common/DraftSaveIndicator'
 import StepProgress, { type StepItem } from '@/components/smart/StepProgress'
 import type { HotCopyEntryPayload, HotCopyProduct } from '@/components/hotcopy/HotCopyEntry'
 import TaskCenterDrawer from '@/components/task/TaskCenterDrawer'
-import HotCopyPromoVideo from '@/components/hotcopy/HotCopyShowcase/HotCopyPromoVideo'
 import HotCopyTemplateGallery from '@/components/hotcopy/HotCopyShowcase/HotCopyTemplateGallery'
 import type { TemplateItem } from '@/api/templates'
 import { isGuideSeen, openGuide } from '@/stores/guide'
@@ -5211,7 +5210,6 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
                   costEstimate={videoCost.estimate}
                   costLoading={videoCost.loading}
                   costError={videoCost.error}
-                  header={<HotCopyPromoVideo />}
                   footer={<HotCopyTemplateGallery onUseTemplate={applyTemplateToEntry} />}
                 />
               </Suspense>

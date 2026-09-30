@@ -92,6 +92,13 @@ type TrendPoint = {
 
 /** 成员贡献表支持的排序指标。 */
 type SortKey = 'videos' | 'credits' | 'projects'
+type DashboardTab = 'personal' | 'team'
+type PersonalDayRow = {
+  date: string
+  projects: number
+  videos: number
+  credits: number
+}
 /** 指标卡及环比计算支持的指标键。 */
 type MetricKey = keyof OverviewMetrics | 'avg'
 
@@ -247,6 +254,53 @@ function projectCountByCreator(projects: any[]): Map<number, number> {
     counts.set(id, (counts.get(id) || 0) + 1)
   })
   return counts
+}
+
+/** 从项目、任务或积分流水的常见字段中读取归属用户。 */
+function recordUserId(record: any): number {
+  const value = Number(
+    record?.user_id ??
+      record?.userId ??
+      record?.creator_user_id ??
+      record?.creatorUserId ??
+      record?.created_by ??
+      record?.createdBy ??
+      record?.owner_user_id ??
+      record?.ownerUserId ??
+      record?.creator?.user_id ??
+      record?.creator?.id ??
+      record?.user?.id ??
+      0,
+  )
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+/** 从任务或流水中读取关联项目，供归属用户字段缺失时做安全回退。 */
+function recordProjectId(record: any): string {
+  return pickText(
+    record?.project_id,
+    record?.projectId,
+    record?.creative_project_id,
+    record?.creativeProjectId,
+    record?.metadata?.project_id,
+    record?.metadata?.projectId,
+  )
+}
+
+function belongsToUser(record: any, userId: number, ownedProjectIds: Set<string>, personalWorkspace: boolean): boolean {
+  if (personalWorkspace) return true
+  const ownerId = recordUserId(record)
+  if (ownerId) return ownerId === userId
+  const projectId = recordProjectId(record)
+  return Boolean(projectId && ownedProjectIds.has(projectId))
+}
+
+function recordDate(record: any): any {
+  return record?.updated_at ?? record?.updatedAt ?? record?.created_at ?? record?.createdAt
+}
+
+function recordsInMonth(records: any[], selectedMonth: string): any[] {
+  return records.filter((record) => shanghaiDateKey(recordDate(record)).startsWith(`${selectedMonth}-`))
 }
 
 /** 从数组或分页返回体中提取当前页记录。 */
@@ -820,7 +874,11 @@ export default function SpaceDashboardView() {
   const [videoTrendError, setVideoTrendError] = useState('')
   const [creditTrendError, setCreditTrendError] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('videos')
+  const [personalDaySort, setPersonalDaySort] = useState<'desc' | 'asc'>('desc')
   const [selectedMonth, setSelectedMonth] = useState(currentMonthValue)
+  const [personalProjects, setPersonalProjects] = useState<any[]>([])
+  const [personalTasks, setPersonalTasks] = useState<any[]>([])
+  const [personalLedgers, setPersonalLedgers] = useState<any[]>([])
   const dashboardRequestIdRef = useRef(0)
   const trendRequestIdRef = useRef(0)
 
@@ -839,16 +897,24 @@ export default function SpaceDashboardView() {
   )
     .trim()
     .toLowerCase()
+  const isTeamManager =
+    ['owner', 'creator', 'admin'].includes(currentRole) || (ownerUserId > 0 && currentUserId === ownerUserId)
+  const defaultDashboardTab: DashboardTab = isTeamManager ? 'team' : 'personal'
+  const [activeTab, setActiveTab] = useState<DashboardTab>(defaultDashboardTab)
+  const isPersonalTab = activeTab === 'personal'
   // 看板包含成员账号与消耗明细，查看权限严格限制为空间 owner/admin。
-  const canViewDashboard =
-    !isPersonalWorkspace && (currentRole === 'admin' || (ownerUserId > 0 && currentUserId === ownerUserId))
+  const canViewDashboard = !isPersonalWorkspace && isTeamManager
+
+  useEffect(() => {
+    setActiveTab(defaultDashboardTab)
+  }, [defaultDashboardTab, workspaceId])
 
   const resolvedOverview = overview ?? EMPTY_OVERVIEW
   const taskBasedOverview = useMemo(
     () => ({ ...resolvedOverview, videos: videoTaskCount ?? 0 }),
     [resolvedOverview, videoTaskCount],
   )
-  const metricCards = useMemo(() => {
+  const teamMetricCards = useMemo(() => {
     const projectOverview = { ...taskBasedOverview, projects: projectCount ?? 0 }
     return [
       {
@@ -894,6 +960,79 @@ export default function SpaceDashboardView() {
     ]
   }, [overview, previousOverview, projectCount, resolvedOverview, taskBasedOverview, videoTaskCount])
 
+  const personalMonthData = useMemo(() => {
+    const projects = recordsInMonth(personalProjects, selectedMonth)
+    const tasks = recordsInMonth(personalTasks, selectedMonth)
+    const ledgers = recordsInMonth(personalLedgers, selectedMonth)
+    const videos = tasks.reduce((sum, task) => sum + videoOutputCount(task), 0)
+    const credits = ledgers.reduce((sum, ledger) => sum + Math.abs(Number(ledger?.amount || 0)), 0)
+    const dayCount = dayjs(`${selectedMonth}-01`).daysInMonth()
+    const rows: PersonalDayRow[] = Array.from({ length: dayCount }, (_, index) => ({
+      date: `${selectedMonth}-${String(index + 1).padStart(2, '0')}`,
+      projects: 0,
+      videos: 0,
+      credits: 0,
+    }))
+    const rowByDate = new Map(rows.map((row) => [row.date, row]))
+    projects.forEach((project) => {
+      const row = rowByDate.get(shanghaiDateKey(recordDate(project)))
+      if (row) row.projects += 1
+    })
+    tasks.forEach((task) => {
+      const row = rowByDate.get(shanghaiDateKey(recordDate(task)))
+      if (row) row.videos += videoOutputCount(task)
+    })
+    ledgers.forEach((ledger) => {
+      const row = rowByDate.get(shanghaiDateKey(recordDate(ledger)))
+      if (row) row.credits += Math.abs(Number(ledger?.amount || 0))
+    })
+    return { projects: projects.length, videos, credits, rows }
+  }, [personalLedgers, personalProjects, personalTasks, selectedMonth])
+
+  const personalMetricCards = useMemo(
+    () => [
+      {
+        key: 'videos' as const,
+        label: '总生成视频数',
+        unit: '个',
+        value: personalMonthData.videos,
+        trend: UNAVAILABLE_TREND,
+      },
+      {
+        key: 'projects' as const,
+        label: '项目个数',
+        unit: '个',
+        value: personalMonthData.projects,
+        trend: UNAVAILABLE_TREND,
+      },
+      {
+        key: 'avg' as const,
+        label: '平均消耗积分',
+        unit: '积分/个',
+        value: avgPerVideo(personalMonthData.credits, personalMonthData.videos),
+        trend: UNAVAILABLE_TREND,
+      },
+      {
+        key: 'credits' as const,
+        label: '总消耗积分',
+        unit: '积分',
+        value: personalMonthData.credits,
+        trend: UNAVAILABLE_TREND,
+      },
+    ],
+    [personalMonthData],
+  )
+
+  const sortedPersonalDays = useMemo(
+    () =>
+      personalMonthData.rows
+        .filter((item) => item.credits > 0)
+        .sort((left, right) =>
+          personalDaySort === 'desc' ? right.date.localeCompare(left.date) : left.date.localeCompare(right.date),
+        ),
+    [personalDaySort, personalMonthData.rows],
+  )
+
   const sortedMembers = useMemo(
     () =>
       [...memberStats].sort((left, right) => {
@@ -917,7 +1056,60 @@ export default function SpaceDashboardView() {
     setLoading(true)
     setError('')
 
-    if (!wsId || isPersonalWorkspace || !canViewDashboard) {
+    if (!wsId) {
+      setOverview(null)
+      setVideoTaskCount(null)
+      setProjectCount(null)
+      setPreviousOverview(null)
+      setMemberStats([])
+      setVideoTrend([])
+      setCreditTrend([])
+      setLoading(false)
+      return
+    }
+
+    if (isPersonalTab) {
+      const [projectsResult, tasksResult, ledgersResult] = await Promise.allSettled([
+        listAllWorkspaceProjects(wsId),
+        loadCachedTrendHistory(videoTaskHistoryCache, wsId, listAllSucceededVideoTasks),
+        loadCachedTrendHistory(creditLedgerHistoryCache, wsId, listAllSettledCreditLedgers),
+      ])
+      if (
+        dashboardRequestIdRef.current !== requestId ||
+        deriveWorkspaceId(useWorkspaceSessionStore.getState()) !== wsId
+      ) {
+        return
+      }
+      const projects = projectsResult.status === 'fulfilled' ? projectsResult.value : []
+      const ownedProjects = projects.filter((project) => isPersonalWorkspace || recordUserId(project) === currentUserId)
+      const ownedProjectIds = new Set(
+        ownedProjects.map((project) => pickText(project?.id, project?.project_id, project?.projectId)).filter(Boolean),
+      )
+      const tasks = tasksResult.status === 'fulfilled' ? tasksResult.value : []
+      const ledgers = ledgersResult.status === 'fulfilled' ? ledgersResult.value : []
+      setPersonalProjects(ownedProjects)
+      setPersonalTasks(tasks.filter((task) => belongsToUser(task, currentUserId, ownedProjectIds, isPersonalWorkspace)))
+      setPersonalLedgers(
+        ledgers.filter((ledger) => belongsToUser(ledger, currentUserId, ownedProjectIds, isPersonalWorkspace)),
+      )
+      if (
+        projectsResult.status === 'rejected' &&
+        tasksResult.status === 'rejected' &&
+        ledgersResult.status === 'rejected'
+      ) {
+        setError(getBusinessErrorMessage(projectsResult.reason, '个人数据加载失败'))
+      } else if (
+        projectsResult.status === 'rejected' ||
+        tasksResult.status === 'rejected' ||
+        ledgersResult.status === 'rejected'
+      ) {
+        setError('部分个人数据加载失败，当前已展示可返回的真实数据')
+      }
+      setLoading(false)
+      return
+    }
+
+    if (isPersonalWorkspace || !canViewDashboard) {
       setOverview(null)
       setVideoTaskCount(null)
       setProjectCount(null)
@@ -1026,7 +1218,7 @@ export default function SpaceDashboardView() {
     }
 
     setLoading(false)
-  }, [workspaceId, isPersonalWorkspace, canViewDashboard])
+  }, [workspaceId, isPersonalWorkspace, isPersonalTab, canViewDashboard, currentUserId])
 
   useEffect(() => {
     void loadDashboard()
@@ -1041,7 +1233,27 @@ export default function SpaceDashboardView() {
     trendRequestIdRef.current = requestId
     const wsId = Number(workspaceId || 0)
 
-    if (!wsId || isPersonalWorkspace || !canViewDashboard) {
+    if (!wsId) {
+      setVideoTrend([])
+      setCreditTrend([])
+      setVideoTrendError('')
+      setCreditTrendError('')
+      setTrendLoading(false)
+      return
+    }
+
+    if (isPersonalTab) {
+      setVideoTrend(buildDailyTrend(personalTasks, selectedMonth, recordDate, (task) => videoOutputCount(task)))
+      setCreditTrend(
+        buildDailyTrend(personalLedgers, selectedMonth, recordDate, (ledger) => Math.abs(Number(ledger?.amount || 0))),
+      )
+      setVideoTrendError('')
+      setCreditTrendError('')
+      setTrendLoading(false)
+      return
+    }
+
+    if (isPersonalWorkspace || !canViewDashboard) {
       setVideoTrend([])
       setCreditTrend([])
       setVideoTrendError('')
@@ -1094,7 +1306,7 @@ export default function SpaceDashboardView() {
     }
 
     setTrendLoading(false)
-  }, [workspaceId, isPersonalWorkspace, canViewDashboard, selectedMonth])
+  }, [workspaceId, isPersonalWorkspace, isPersonalTab, canViewDashboard, selectedMonth, personalTasks, personalLedgers])
 
   useEffect(() => {
     void loadMonthlyTrends()
@@ -1105,22 +1317,32 @@ export default function SpaceDashboardView() {
 
   // 加 BOM 保证 Excel 正确识别中文，并对含逗号/引号/换行的字段做标准 CSV 转义。
   const handleExport = () => {
-    const headers = ['排名', '成员', '成员账号', '项目个数', '总生成视频数', '消耗积分数', '平均每个视频消耗积分数']
-    const rows = sortedMembers.map((item, index) => [
-      index + 1,
-      item.name,
-      item.phone || '-',
-      item.projects,
-      item.videos,
-      item.credits,
-      avgPerVideo(item.credits, item.videos),
-    ])
+    const headers = isPersonalTab
+      ? ['日期', '项目个数', '总生成视频数', '消耗积分数', '平均每个视频消耗积分数']
+      : ['排名', '成员', '成员账号', '项目个数', '总生成视频数', '消耗积分数', '平均每个视频消耗积分数']
+    const rows = isPersonalTab
+      ? sortedPersonalDays.map((item) => [
+          item.date,
+          item.projects,
+          item.videos,
+          item.credits,
+          avgPerVideo(item.credits, item.videos),
+        ])
+      : sortedMembers.map((item, index) => [
+          index + 1,
+          item.name,
+          item.phone || '-',
+          item.projects,
+          item.videos,
+          item.credits,
+          avgPerVideo(item.credits, item.videos),
+        ])
     const csv = `\ufeff${[headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n')}`
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `${pickText(currentWorkspace?.name, '空间')}-${selectedMonth}-数据统计.csv`
+    anchor.download = `${pickText(currentWorkspace?.name, '空间')}-${selectedMonth}-${isPersonalTab ? '个人' : '团队'}数据统计.csv`
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()
@@ -1142,14 +1364,36 @@ export default function SpaceDashboardView() {
         <main className="space-dashboard-main" aria-label="空间数据看板">
           <div className="space-dashboard-content">
             <header className="space-dashboard-header">
-              <div className="space-dashboard-heading">
-                <button type="button" className="space-dashboard-back" onClick={() => navigate(-1)} aria-label="返回">
-                  <svg viewBox="0 0 28 28" aria-hidden="true">
-                    <path d="M18 6 10 14l8 8" />
-                    <path d="M10.5 14H23" />
-                  </svg>
-                </button>
-                <h1>数据统计</h1>
+              <div className="space-dashboard-header__left">
+                <div className="space-dashboard-heading">
+                  <button type="button" className="space-dashboard-back" onClick={() => navigate(-1)} aria-label="返回">
+                    <svg viewBox="0 0 28 28" aria-hidden="true">
+                      <path d="M18 6 10 14l8 8" />
+                      <path d="M10.5 14H23" />
+                    </svg>
+                  </button>
+                  <h1>数据统计</h1>
+                </div>
+                <div className="space-dashboard-tabs" role="tablist" aria-label="统计范围">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={isPersonalTab}
+                    className={isPersonalTab ? 'is-active' : ''}
+                    onClick={() => setActiveTab('personal')}
+                  >
+                    个人
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={!isPersonalTab}
+                    className={!isPersonalTab ? 'is-active' : ''}
+                    onClick={() => setActiveTab('team')}
+                  >
+                    团队
+                  </button>
+                </div>
               </div>
               <DatePicker
                 className="space-dashboard-month-picker"
@@ -1182,12 +1426,12 @@ export default function SpaceDashboardView() {
               <span>统计日期：{monthDateRange(selectedMonth)}</span>
             </div>
 
-            {isPersonalWorkspace ? (
+            {!isPersonalTab && isPersonalWorkspace ? (
               <div className="space-dashboard-empty">
                 <h2>个人空间暂不展示团队统计</h2>
                 <p>请先切换到团队空间，再查看空间级成员、项目和视频消耗数据。</p>
               </div>
-            ) : !canViewDashboard ? (
+            ) : !isPersonalTab && !canViewDashboard ? (
               <div className="space-dashboard-empty">
                 <h2>暂无查看权限</h2>
                 <p>当前账号尚未加入该团队或无团队管理权限，无法查看空间统计与成员信息。</p>
@@ -1207,9 +1451,20 @@ export default function SpaceDashboardView() {
               <>
                 {error ? <div className="space-dashboard-error">{error}</div> : null}
 
-                <section className="space-dashboard-metrics" aria-label="核心指标">
-                  {metricCards.map(({ key, ...card }, index) => (
-                    <MetricCard key={key} {...card} metricKey={key} primary={index === 0} />
+                <section
+                  className={`space-dashboard-metrics${isPersonalTab ? ' is-personal' : ''}`}
+                  aria-label="核心指标"
+                >
+                  {(isPersonalTab ? personalMetricCards : teamMetricCards).map((card, index) => (
+                    <MetricCard
+                      key={card.key}
+                      metricKey={card.key}
+                      label={card.label}
+                      unit={card.unit}
+                      value={card.value}
+                      trend={card.trend}
+                      primary={index === 0}
+                    />
                   ))}
                 </section>
 
@@ -1237,79 +1492,139 @@ export default function SpaceDashboardView() {
                   />
                 </section>
 
-                <section className="space-dashboard-ranking" aria-labelledby="space-dashboard-ranking-title">
-                  <div className="space-dashboard-ranking__toolbar">
-                    <div className="space-dashboard-ranking__title">
-                      <h2 id="space-dashboard-ranking-title">成员贡献排行榜</h2>
-                      <span className="space-dashboard-ranking__info" title="按所选指标从高到低排列成员">
-                        i
-                      </span>
-                    </div>
-                    <div className="space-dashboard-ranking__actions">
-                      <label className="space-dashboard-sort">
-                        <span className="sr-only">排行榜排序方式</span>
-                        <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)}>
-                          <option value="videos">按生成视频数排序</option>
-                          <option value="credits">按消耗积分数排序</option>
-                          <option value="projects">按项目个数排序</option>
-                        </select>
-                        <svg viewBox="0 0 20 20" aria-hidden="true">
-                          <path d="m6 8 4 4 4-4" />
-                        </svg>
-                      </label>
-                      <button
-                        type="button"
-                        className="space-dashboard-export"
-                        onClick={handleExport}
-                        disabled={!sortedMembers.length}
-                      >
-                        <svg viewBox="0 0 20 20" aria-hidden="true">
-                          <path d="M10 2.5v10" />
-                          <path d="m6.5 9 3.5 3.5L13.5 9" />
-                          <path d="M3 14.5v2.5h14v-2.5" />
-                        </svg>
-                        导出数据
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-dashboard-table-wrap">
-                    <div className="space-dashboard-table">
-                      <div className="space-dashboard-table__head space-dashboard-table__grid">
-                        <span>排名</span>
-                        <span>成员</span>
-                        <span>成员账号</span>
-                        <span>项目个数</span>
-                        <span>总生成视频数</span>
-                        <span>消耗积分数</span>
-                        <span>平均每个视频消耗积分数</span>
+                {isPersonalTab ? (
+                  <section className="space-dashboard-ranking" aria-labelledby="space-dashboard-personal-title">
+                    <div className="space-dashboard-ranking__toolbar">
+                      <div className="space-dashboard-ranking__title">
+                        <h2 id="space-dashboard-personal-title">每日消耗积分</h2>
                       </div>
-                      {sortedMembers.length ? (
-                        sortedMembers.map((item, index) => (
-                          <div
-                            key={String(item.id || index)}
-                            className="space-dashboard-table__row space-dashboard-table__grid"
+                      <div className="space-dashboard-ranking__actions">
+                        <label className="space-dashboard-sort">
+                          <span className="sr-only">日期排序方式</span>
+                          <select
+                            value={personalDaySort}
+                            onChange={(event) => setPersonalDaySort(event.target.value as 'desc' | 'asc')}
                           >
-                            <span className="space-dashboard-table__rank">
-                              <RankBadge rank={index + 1} />
-                            </span>
-                            <span className="space-dashboard-table__member">
-                              <MemberAvatar src={item.avatar} name={item.name} />
-                              <span>{item.name}</span>
-                            </span>
-                            <span>{item.phone || '-'}</span>
+                            <option value="desc">按日期降序（最新在前）</option>
+                            <option value="asc">按日期升序（最早在前）</option>
+                          </select>
+                          <svg viewBox="0 0 20 20" aria-hidden="true">
+                            <path d="m6 8 4 4 4-4" />
+                          </svg>
+                        </label>
+                        <button type="button" className="space-dashboard-export" onClick={handleExport}>
+                          <svg viewBox="0 0 20 20" aria-hidden="true">
+                            <path d="M10 2.5v10" />
+                            <path d="m6.5 9 3.5 3.5L13.5 9" />
+                            <path d="M3 14.5v2.5h14v-2.5" />
+                          </svg>
+                          导出数据
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-dashboard-table-wrap">
+                      <div className="space-dashboard-table is-personal">
+                        <div className="space-dashboard-table__head space-dashboard-table__grid is-personal">
+                          <span>日期</span>
+                          <span>项目个数</span>
+                          <span>总生成视频数</span>
+                          <span>消耗积分数</span>
+                          <span>平均每个视频消耗积分数</span>
+                        </div>
+                        {sortedPersonalDays.map((item) => (
+                          <div
+                            key={item.date}
+                            className="space-dashboard-table__row space-dashboard-table__grid is-personal"
+                          >
+                            <span>{item.date}</span>
                             <span>{formatNumber(item.projects)}</span>
                             <span>{formatNumber(item.videos)}</span>
                             <span>{formatNumber(item.credits)}</span>
                             <span>{formatNumber(avgPerVideo(item.credits, item.videos))}</span>
                           </div>
-                        ))
-                      ) : (
-                        <div className="space-dashboard-table__empty">当前空间暂无可展示的成员统计数据</div>
-                      )}
+                        ))}
+                        {!sortedPersonalDays.length ? (
+                          <div className="space-dashboard-table__empty">当前月份暂无积分消耗记录</div>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                </section>
+                  </section>
+                ) : (
+                  <section className="space-dashboard-ranking" aria-labelledby="space-dashboard-ranking-title">
+                    <div className="space-dashboard-ranking__toolbar">
+                      <div className="space-dashboard-ranking__title">
+                        <h2 id="space-dashboard-ranking-title">成员贡献排行榜</h2>
+                        <span className="space-dashboard-ranking__info" title="按所选指标从高到低排列成员">
+                          i
+                        </span>
+                      </div>
+                      <div className="space-dashboard-ranking__actions">
+                        <label className="space-dashboard-sort">
+                          <span className="sr-only">排行榜排序方式</span>
+                          <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)}>
+                            <option value="videos">按生成视频数排序</option>
+                            <option value="credits">按消耗积分数排序</option>
+                            <option value="projects">按项目个数排序</option>
+                          </select>
+                          <svg viewBox="0 0 20 20" aria-hidden="true">
+                            <path d="m6 8 4 4 4-4" />
+                          </svg>
+                        </label>
+                        <button
+                          type="button"
+                          className="space-dashboard-export"
+                          onClick={handleExport}
+                          disabled={!sortedMembers.length}
+                        >
+                          <svg viewBox="0 0 20 20" aria-hidden="true">
+                            <path d="M10 2.5v10" />
+                            <path d="m6.5 9 3.5 3.5L13.5 9" />
+                            <path d="M3 14.5v2.5h14v-2.5" />
+                          </svg>
+                          导出数据
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-dashboard-table-wrap">
+                      <div className="space-dashboard-table">
+                        <div className="space-dashboard-table__head space-dashboard-table__grid">
+                          <span>排名</span>
+                          <span>成员</span>
+                          <span>成员账号</span>
+                          <span>项目个数</span>
+                          <span>总生成视频数</span>
+                          <span>消耗积分数</span>
+                          <span>平均每个视频消耗积分数</span>
+                        </div>
+                        {sortedMembers.length ? (
+                          sortedMembers.map((item, index) => (
+                            <div
+                              key={String(item.id || index)}
+                              className="space-dashboard-table__row space-dashboard-table__grid"
+                            >
+                              <span className="space-dashboard-table__rank">
+                                <RankBadge rank={index + 1} />
+                              </span>
+                              <span className="space-dashboard-table__member">
+                                <MemberAvatar src={item.avatar} name={item.name} />
+                                <span>{item.name}</span>
+                              </span>
+                              <span>{item.phone || '-'}</span>
+                              <span>{formatNumber(item.projects)}</span>
+                              <span>{formatNumber(item.videos)}</span>
+                              <span>{formatNumber(item.credits)}</span>
+                              <span>{formatNumber(avgPerVideo(item.credits, item.videos))}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="space-dashboard-table__empty">当前空间暂无可展示的成员统计数据</div>
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                )}
               </>
             )}
           </div>

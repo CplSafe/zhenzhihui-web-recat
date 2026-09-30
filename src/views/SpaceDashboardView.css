@@ -54,6 +54,13 @@
   gap: 24px;
 }
 
+.space-dashboard-header__left {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 32px;
+}
+
 .space-dashboard-heading {
   display: flex;
   align-items: center;
@@ -66,6 +73,45 @@
   font-size: 20px;
   font-weight: 500;
   line-height: 28px;
+}
+
+.space-dashboard-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.space-dashboard-tabs button {
+  min-width: 136px;
+  height: 36px;
+  padding: 0 24px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #fff;
+  color: #64748b;
+  font-family: inherit;
+  font-size: 15px;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.space-dashboard-tabs button:hover {
+  border-color: #1fcfa9;
+  color: #169d83;
+}
+
+.space-dashboard-tabs button.is-active {
+  border-color: #1fcfa9;
+  background: #1fcfa9;
+  color: #fff;
+}
+
+.space-dashboard-tabs button:focus-visible {
+  outline: 3px solid rgb(31 207 169 / 20%);
+  outline-offset: 2px;
 }
 
 .space-dashboard-back {
@@ -236,6 +282,10 @@
   grid-template-columns: 16fr repeat(4, 7fr);
   gap: 20px;
   margin-top: 10px;
+}
+
+.space-dashboard-metrics.is-personal {
+  grid-template-columns: 16fr repeat(3, 7fr);
 }
 
 .space-dashboard-metric {
@@ -650,6 +700,19 @@
   box-sizing: border-box;
 }
 
+.space-dashboard-table.is-personal,
+.space-dashboard-table__grid.is-personal {
+  min-width: 1160px;
+}
+
+.space-dashboard-table__grid.is-personal {
+  grid-template-columns: 220px repeat(4, minmax(190px, 1fr));
+}
+
+.space-dashboard-table__grid.is-personal > span {
+  text-align: center;
+}
+
 .space-dashboard-table__head {
   height: 60px;
   background: rgba(31, 207, 169, 0.06);
@@ -863,6 +926,21 @@
     height: auto;
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .space-dashboard-header__left {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .space-dashboard-tabs {
+    width: 100%;
+  }
+
+  .space-dashboard-tabs button {
+    min-width: 0;
+    flex: 1;
   }
 
   .space-dashboard-month-picker.ant-picker {

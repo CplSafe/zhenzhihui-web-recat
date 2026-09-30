@@ -320,6 +320,16 @@ describe('canvas video generation inputs', () => {
     ).toMatch(/尚未上传完成/)
   })
 
+  it('rejects a connected video from another workspace', () => {
+    expect(
+      validateCanvasVideoInputs({
+        operationCode: 'video.generate',
+        sourceRefs: [{ kind: 'video', assetId: 21, workspaceId: 9 }],
+        workspaceId: 2,
+      }),
+    ).toContain('不属于当前工作空间')
+  })
+
   // 视频生视频实际提交的是 video.edit（后端的 video.generate 不接受视频素材）。
   // 这些校验必须跟着一起生效，否则那条链路等于完全没有前置检查。
   it('applies the same input checks to video.edit', () => {
@@ -420,6 +430,14 @@ describe('canvas video reference duration limit', () => {
     })
     expect(error).toContain('最多读取 15 秒')
     expect(error).toContain('裁切不超过 15 秒')
+    expect(
+      validateCanvasVideoInputs({
+        operationCode: 'video.generate',
+        sourceRefs: [videoRef],
+        maxVideoRefSec: 30,
+        videoRefTotalSec: 30.2,
+      }),
+    ).toContain('已连接约 31 秒')
   })
 
   it('allows videos within the limit and unknown durations', () => {

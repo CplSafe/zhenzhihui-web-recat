@@ -27,6 +27,7 @@ vi.mock('@/composables/useRequireAuth', () => ({
 }))
 
 import SettingsMenu from '@/components/home/SettingsMenu'
+import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
 
 describe('SettingsMenu', () => {
   beforeEach(() => {
@@ -78,6 +79,23 @@ describe('SettingsMenu', () => {
     await user.click(screen.getByRole('button', { name: '设置' }))
     await user.click(screen.getByRole('menuitem', { name: '个人中心' }))
     expect(screen.getByRole('button', { name: '个人中心弹窗' })).toBeInTheDocument()
+    expect(onAfterAction).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the user manual in a new browser tab and closes the mobile drawer', async () => {
+    const user = userEvent.setup()
+    const onAfterAction = vi.fn()
+    render(<SettingsMenu onAfterAction={onAfterAction} />)
+
+    await user.click(screen.getByRole('button', { name: '设置' }))
+    const manualLink = screen.getByRole('menuitem', { name: '使用手册' })
+
+    expect(manualLink).toHaveAttribute('href', MANUAL_DOC_URL)
+    expect(manualLink).toHaveAttribute('target', '_blank')
+    expect(manualLink).toHaveAttribute('rel', 'noopener noreferrer')
+
+    await user.click(manualLink)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(onAfterAction).toHaveBeenCalledTimes(1)
   })
 

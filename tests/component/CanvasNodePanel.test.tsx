@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -49,6 +50,25 @@ function modelWithFields(fields: any[]) {
 
 /** 同时支持文生图与图生图，用例只关心可用性而不是能力划分。 */
 const IMAGE_OPERATIONS = ['image.text_to_image', 'image.image_to_image']
+
+describe('CanvasNodePanel 素材预检', () => {
+  it('参考素材不可用时不提交生成，并给出具体素材提示', async () => {
+    const user = userEvent.setup()
+    const onGenerate = vi.fn()
+    const onPreflightAssets = vi.fn().mockResolvedValue('参考图片（素材 ID 77）在当前团队不可用')
+    renderPanel(
+      [{ modelVersionId: 31, displayName: '图片模型', operationCodes: IMAGE_OPERATIONS }],
+      imageNodeWithReference(),
+      { onGenerate, onPreflightAssets },
+    )
+
+    await user.click(screen.getByTitle('发送生成'))
+    expect(onPreflightAssets).toHaveBeenCalledWith(imageNodeWithReference().sourceRefs, [
+      { asset_id: 77, role: 'reference_image' },
+    ])
+    expect(onGenerate).not.toHaveBeenCalled()
+  })
+})
 
 describe.each([
   ['google', 'gemini-2.5-flash-image'],
@@ -548,6 +568,52 @@ describe('CanvasNodePanel 继承自文本节点的提示词', () => {
 
     await user.click(screen.getByRole('button', { name: '转为本节点提示词' }))
     expect(onAdoptInheritedText).toHaveBeenCalledWith('一只橘猫坐在窗台上\n\n再加一点暖光')
+  })
+})
+
+describe('CanvasNodePanel 提示词改写', () => {
+  it('可连续改写，并逐次复原到上一个提示词版本', async () => {
+    const user = userEvent.setup()
+    const onPromptChange = vi.fn()
+    const onPolishText = vi
+      .fn()
+      .mockResolvedValueOnce('暖光下的年轻男性产品特写')
+      .mockResolvedValueOnce('电影感暖光下的年轻男性产品特写')
+    const model = { modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }
+    function ControlledPanel() {
+      const [node, setNode] = useState(imageNodeWithReference())
+      return (
+        <CanvasNodePanel
+          node={node as any}
+          workspaceId={7}
+          models={{ text: [], image: [model], video: [] } as any}
+          modelsLoading={false}
+          onGenerate={vi.fn()}
+          onModelChange={vi.fn()}
+          onPolishText={onPolishText}
+          onPromptChange={(prompt) => {
+            onPromptChange(prompt)
+            setNode((current) => ({ ...current, prompt }))
+          }}
+        />
+      )
+    }
+    render(<ControlledPanel />)
+
+    await user.click(screen.getByRole('button', { name: '我帮你写' }))
+    expect(await screen.findByDisplayValue('暖光下的年轻男性产品特写')).toBeInTheDocument()
+    expect(onPromptChange).toHaveBeenLastCalledWith('暖光下的年轻男性产品特写')
+    expect(screen.getByRole('button', { name: '我帮你写' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: '我帮你写' }))
+    expect(await screen.findByDisplayValue('电影感暖光下的年轻男性产品特写')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '复原' }))
+    expect(screen.getByDisplayValue('暖光下的年轻男性产品特写')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '复原' }))
+    expect(screen.getByDisplayValue('保留参考图中的年轻男性主体')).toBeInTheDocument()
+    expect(onPromptChange).toHaveBeenLastCalledWith('保留参考图中的年轻男性主体')
+    expect(screen.getByRole('button', { name: '我帮你写' })).toBeEnabled()
   })
 })
 

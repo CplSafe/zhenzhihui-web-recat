@@ -30,6 +30,7 @@ import {
 } from '@/utils/videoOptions'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
+import TutorialButton from '@/components/common/TutorialButton'
 import EntryCostEstimate from '@/components/common/EntryCostEstimate'
 import MaterialMentionPopover from '@/components/common/MaterialMentionPopover'
 import EntryCanvasBg, { type BgLayerStops } from '@/components/smart/EntryCanvasBg'
@@ -1406,6 +1407,8 @@ export default function HotCopyEntry({
                     estimatedCost={costEstimate?.estimatedCost}
                     canAfford={costEstimate?.canAfford ?? true}
                   />
+                  {/* 教程入口靠近主要操作；复用共享按钮以保持弹窗与视频逻辑不变。 */}
+                  <TutorialButton variant="entry" tutorialKey="hot-copy" />
                   {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
                   <VoiceInputButton
                     className="hotcopy__mic"

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyVideoTaskModeParams,
   formatVideoTaskModeLabel,
+  getVideoEditModeConflict,
   isFollowSourceVideoMode,
   isVideoTaskModeField,
   resolveSelfVideoAssetId,
@@ -89,5 +90,33 @@ describe('resolveSelfVideoAssetId', () => {
 
   it('never sends a video that has no asset id', () => {
     expect(resolveSelfVideoAssetId({ isEditingVideo: true, followSourceVideo: true, assetId: 0 })).toBe(0)
+  })
+})
+
+describe('getVideoEditModeConflict', () => {
+  const editPrompt = '将篮球替换成足球'
+  it('blocks edit intent submitted as generation with source video', () => {
+    expect(
+      getVideoEditModeConflict({ prompt: editPrompt, mode: 'generate', hasVideoInput: true, supportsTaskMode: true }),
+    ).toContain('切换为「编辑」')
+  })
+  it('allows selected edit mode, plain generation and models without mode', () => {
+    expect(
+      getVideoEditModeConflict({ prompt: editPrompt, mode: 'edit', hasVideoInput: true, supportsTaskMode: true }),
+    ).toBeNull()
+    expect(
+      getVideoEditModeConflict({
+        prompt: '参考这个视频生成广告',
+        mode: 'generate',
+        hasVideoInput: true,
+        supportsTaskMode: true,
+      }),
+    ).toBeNull()
+    expect(
+      getVideoEditModeConflict({ prompt: editPrompt, mode: 'generate', hasVideoInput: false, supportsTaskMode: true }),
+    ).toBeNull()
+    expect(
+      getVideoEditModeConflict({ prompt: editPrompt, mode: 'generate', hasVideoInput: true, supportsTaskMode: false }),
+    ).toBeNull()
   })
 })

@@ -5,7 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useCurrentUser, useCurrentPlanName, useWorkspaceId, useWorkspaceSessionStore } from '@/stores/workspaceSession'
 import { getReferralMyCode } from '@/api/business'
 import { useAuth } from '@/auth/AuthContext'
@@ -38,6 +38,9 @@ interface AppTopbarProps {
 
 /** 汇总会话用户、会员信息、分享链接和个人面板入口，供所有主页面复用。 */
 export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
+  const { pathname } = useLocation()
+  const tutorialLivesInPage =
+    pathname.startsWith('/hot-copy') || pathname.startsWith('/smart') || pathname.startsWith('/real-person-video')
   const navigate = useNavigate()
   const currentUser = useCurrentUser() as any
   const planName = useCurrentPlanName() as any
@@ -205,8 +208,8 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
         </div>
       )}
       <div className="apptop__right">
-        {/* 操作手册:按当前页面弹出对应教程视频;没有教程的页面不渲染。游客也可看 */}
-        <TutorialButton variant="topbar" />
+        {/* 创作入口页的教程靠近主要操作；其他页面仍由顶栏承载。游客也可看。 */}
+        {!tutorialLivesInPage && <TutorialButton variant="topbar" />}
         {/* 通知铃铛:需求市场相关动态(已完成/被接单/申请结果),仅登录后展示 */}
         {!isAnonymous && isAuthenticated && (
           <NotificationBell userKey={String(currentUser?.id || currentUser?.user_id || currentUser?.mobile || '')} />

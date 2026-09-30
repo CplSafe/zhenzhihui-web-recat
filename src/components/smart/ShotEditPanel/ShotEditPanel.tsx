@@ -50,7 +50,7 @@ interface ShotEditPanelProps {
   compact?: boolean
   /** 即时保存字段(台词/字幕/音效/切换分镜图版本) */
   onPatch: (patch: Partial<Shot>) => void
-  /** 台词/字幕/音效 的「AI一键润色」:传入类型与原文,返回润色后的文本 */
+  /** 台词/字幕/音效 的「我帮你写」:传入类型与原文,返回润色后的文本 */
   onPolishText?: (kind: 'line' | 'subtitle' | 'sound', text: string) => Promise<string>
 }
 
@@ -93,22 +93,24 @@ export default function ShotEditPanel({
   const versions = (shot.imageVersions || []).map((v: any) => (typeof v === 'string' ? { url: v, assetId: 0 } : v))
   const [bigImg, setBigImg] = useState('') // 放大查看分镜图(视频生成页)
 
-  // 台词/字幕/音效 的「AI一键润色」:用本地模型按类型润色当前文本,写回。compact(视频页)不提供。
+  // 台词/字幕/音效 的「我帮你写」:用本地模型按类型润色当前文本,写回。compact(视频页)不提供。
   const makePolish = (kind: 'line' | 'subtitle' | 'sound', value: string, key: 'line' | 'subtitle' | 'sfx') =>
     !compact && onPolishText
       ? async () => {
-          if (!value.trim()) return
+          if (!value.trim()) return false
           const requestedShotId = shot.id
           try {
             const out = await onPolishText(kind, value)
             if (out && mountedRef.current && activeShotIdRef.current === requestedShotId) {
               onPatch({ [key]: out })
+              return true
             }
           } catch (e: any) {
             if (mountedRef.current && activeShotIdRef.current === requestedShotId) {
               showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')
             }
           }
+          return false
         }
       : undefined
 
@@ -355,9 +357,10 @@ function TextField({
   value: string
   placeholder?: string
   onChange: (v: string) => void
-  onPolish?: () => Promise<void>
+  onPolish?: () => Promise<boolean>
 }) {
   const [polishing, setPolishing] = useState(false)
+  const [valueHistory, setValueHistory] = useState<string[]>([])
   return (
     <div className={styles.seditTf}>
       <div className={styles.seditTfMain}>
@@ -374,6 +377,20 @@ function TextField({
       </div>
       {onPolish && (
         <div className={styles.seditTfAside}>
+          {valueHistory.length > 0 && (
+            <button
+              type="button"
+              className={styles.seditPolish}
+              disabled={polishing}
+              onClick={() => {
+                const previous = valueHistory[valueHistory.length - 1]
+                onChange(previous)
+                setValueHistory((history) => history.slice(0, -1))
+              }}
+            >
+              复原
+            </button>
+          )}
           <button
             type="button"
             className={styles.seditPolish}
@@ -381,13 +398,13 @@ function TextField({
             onClick={async () => {
               setPolishing(true)
               try {
-                await onPolish()
+                if (await onPolish()) setValueHistory((history) => [...history, value])
               } finally {
                 setPolishing(false)
               }
             }}
           >
-            {polishing ? '润色中…' : 'AI一键润色'}
+            {polishing ? '润色中…' : '我帮你写'}
           </button>
         </div>
       )}

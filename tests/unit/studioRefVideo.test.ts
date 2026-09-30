@@ -35,6 +35,18 @@ describe('resolveRefVideoLimits', () => {
     expect(resolveRefVideoLimits(undefined).maxDurationSec).toBeNull()
   })
 
+  it('Seedance 2.5 未声明时按服务商 30 秒参考视频上限兜底', () => {
+    expect(resolveRefVideoLimits({ model: 'doubao-seedance-2-5-250628' }).maxDurationSec).toBe(30)
+    expect(resolveRefVideoLimits({ display_name: 'Seedance 2.5' }).maxDurationSec).toBe(30)
+    expect(resolveRefVideoLimits({ model: 'seedance-2.0' }).maxDurationSec).toBeNull()
+    expect(resolveRefVideoLimits({ model: 'seedance-2.5', ...modelWithSourceDuration(2, 15) }).maxDurationSec).toBe(15)
+  })
+
+  it('30 秒多一点的参考视频不能按显示的 00:30 放行', () => {
+    const reason = getRefVideoRejectReason([], 30.2, resolveRefVideoLimits({ model: 'seedance-2.5' }))
+    expect(reason).toContain('当前约 31s')
+  })
+
   it('条数上限与模型无关，由 provider 侧硬约束决定', () => {
     expect(resolveRefVideoLimits({}).maxCount).toBe(MAX_REF_VIDEOS)
   })

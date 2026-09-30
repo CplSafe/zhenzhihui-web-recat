@@ -1,6 +1,6 @@
 /**
  * ShotEditDialog — 分镜「编辑 / 新增 / 插入」统一弹框(按 Figma 还原)。
- * 内容:标题 + 分镜图修改描述输入 + 上传素材 + AI一键润色 + 生成分镜。
+ * 内容:标题 + 分镜图修改描述输入 + 上传素材 +「我帮你写」+ 生成分镜。
  *
  * 关键交互(对齐产品逻辑):
  *  - 编辑/新增/插入都把「描述 + 上传素材」交给后端,后端只更新当前这一个分镜;
@@ -21,7 +21,7 @@ export interface ShotEditDialogProps {
   styleReferenceUrl?: string
   /** 上传素材:直传后端取 http url + asset_id(失败回退本地 dataURL 由父级处理) */
   onUpload?: (file: File) => Promise<{ url: string; assetId?: number }>
-  /** AI一键润色:润色当前描述文本,返回润色后的文本 */
+  /** 「我帮你写」:润色当前描述文本,返回润色后的文本 */
   onPolish?: (text: string, uploadRefUrls: string[]) => Promise<string>
   /** 生成分镜:把描述 + 上传素材 url 交给父级出图;返回 true=成功(随后关闭弹框) */
   onGenerate: (text: string, uploadRefUrls: string[]) => Promise<boolean>
@@ -44,6 +44,7 @@ export default function ShotEditDialog({
   const [text, setText] = useState('')
   const [uploads, setUploads] = useState<{ url: string; assetId?: number }[]>([])
   const [polishing, setPolishing] = useState(false)
+  const [textHistory, setTextHistory] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const lifecycleRef = useRef(0)
@@ -71,6 +72,7 @@ export default function ShotEditDialog({
       setText('')
       setUploads([])
       setPolishing(false)
+      setTextHistory([])
       setUploading(false)
     }
     return () => {
@@ -128,7 +130,10 @@ export default function ShotEditDialog({
         text,
         Array.from(new Set([...(styleReferenceUrl ? [styleReferenceUrl] : []), ...uploads.map((u) => u.url)])),
       )
-      if (out && isCurrentSession(scope)) setText(out)
+      if (out && isCurrentSession(scope)) {
+        setTextHistory((history) => [...history, text])
+        setText(out)
+      }
     } catch (e: any) {
       if (isCurrentSession(scope)) showToast(`AI 润色失败:${e?.message || '请稍后重试'}`, 'error')
     } finally {
@@ -241,11 +246,24 @@ export default function ShotEditDialog({
             />
           </div>
 
-          {/* 右下:AI一键润色 + 生成分镜 */}
+          {/* 右下:「我帮你写」/复原 + 生成分镜 */}
           <div className={styles.actions}>
+            {onPolish && textHistory.length > 0 && (
+              <button
+                type="button"
+                className={styles.polish}
+                disabled={polishing}
+                onClick={() => {
+                  setText(textHistory[textHistory.length - 1])
+                  setTextHistory((history) => history.slice(0, -1))
+                }}
+              >
+                复原
+              </button>
+            )}
             {onPolish && (
               <button type="button" className={styles.polish} onClick={doPolish} disabled={polishing || !text.trim()}>
-                {polishing ? '润色中…' : 'AI一键润色'}
+                {polishing ? '润色中…' : '我帮你写'}
               </button>
             )}
             <button type="button" className={styles.gen} onClick={doGenerate} disabled={!canGenerate}>

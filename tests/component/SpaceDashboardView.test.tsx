@@ -188,4 +188,80 @@ describe('SpaceDashboardView request isolation', () => {
     expect(card).not.toHaveTextContent('99个')
     expect(mocks.listAiTasks).toHaveBeenCalledTimes(3)
   })
+
+  it('普通成员默认进入个人页，并按月份展示个人数据与每日消耗积分', async () => {
+    mocks.workspace.member = { user_id: 7, workspace_id: 21, role: 'member' }
+    mocks.listCreativeProjects.mockResolvedValue([
+      { id: 101, user_id: 7, created_at: '2026-06-03T02:00:00Z' },
+      { id: 102, user_id: 8, created_at: '2026-06-03T02:00:00Z' },
+    ])
+    mocks.listAiTasks.mockImplementation(({ operationCode }: { operationCode: string }) =>
+      operationCode === 'video.generate'
+        ? Promise.resolve([
+            {
+              id: 201,
+              user_id: 7,
+              project_id: 101,
+              updated_at: '2026-06-04T02:00:00Z',
+              outputs: [{ type: 'video' }, { type: 'video' }],
+            },
+            {
+              id: 202,
+              user_id: 8,
+              project_id: 102,
+              updated_at: '2026-06-04T02:00:00Z',
+              outputs: [{ type: 'video' }],
+            },
+          ])
+        : Promise.resolve([]),
+    )
+    mocks.listCreditLedgers.mockResolvedValue([
+      { id: 301, user_id: 7, amount: -80, created_at: '2026-06-04T03:00:00Z' },
+      { id: 302, user_id: 8, amount: -900, created_at: '2026-06-04T03:00:00Z' },
+    ])
+
+    render(
+      <MemoryRouter>
+        <SpaceDashboardView />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('tab', { name: '个人' })).toHaveAttribute('aria-selected', 'true')
+    await act(async () => {
+      screen.getByRole('button', { name: '月份选择器' }).click()
+    })
+
+    expect(await screen.findByRole('heading', { name: '每日消耗积分' })).toBeInTheDocument()
+    expect(screen.queryByText('成员人数')).not.toBeInTheDocument()
+    expect(screen.queryByText('成员贡献排行榜')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.querySelector('[data-metric="videos"]')).toHaveTextContent('2个')
+      expect(document.querySelector('[data-metric="credits"]')).toHaveTextContent('80积分')
+    })
+    expect(screen.getByRole('combobox', { name: '日期排序方式' })).toHaveValue('desc')
+    const rows = Array.from(document.querySelectorAll('.space-dashboard-table__row.is-personal'))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toHaveTextContent('2026-06-04')
+    expect(rows[0]).toHaveTextContent('80')
+    expect(screen.queryByText('2026-06-30')).not.toBeInTheDocument()
+  })
+
+  it('管理员默认进入团队页且可以切换到个人页', async () => {
+    mocks.getWorkspaceOverview.mockResolvedValue({ total: { member_count: 1, total_credits: 0 } })
+    mocks.getWorkspaceMemberStatistics.mockResolvedValue([])
+    mocks.listCreativeProjects.mockResolvedValue([])
+
+    render(
+      <MemoryRouter>
+        <SpaceDashboardView />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('tab', { name: '团队' })).toHaveAttribute('aria-selected', 'true')
+    screen.getByRole('tab', { name: '个人' }).click()
+    await waitFor(() => expect(screen.getByRole('tab', { name: '个人' })).toHaveAttribute('aria-selected', 'true'))
+    expect(await screen.findByRole('heading', { name: '每日消耗积分' })).toBeInTheDocument()
+    expect(await screen.findByText('当前月份暂无积分消耗记录')).toBeInTheDocument()
+    expect(document.querySelectorAll('.space-dashboard-table__row.is-personal')).toHaveLength(0)
+  })
 })

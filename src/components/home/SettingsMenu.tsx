@@ -1,16 +1,17 @@
 /**
- * SettingsMenu — 侧栏底部「设置」项。点击弹出菜单:个人中心 / 修改密码 / 退出登录
+ * SettingsMenu — 侧栏底部「设置」项。点击弹出菜单:个人中心 / 修改密码 / 使用手册 / 退出登录
  * (对齐 Figma「我的-详情」1378:8885)。个人中心打开资料弹窗;修改密码/退出登录
  * 复用顶栏右上角同一套逻辑(ChangePasswordModal + useLogout)。
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { LockOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
+import { BookOutlined, LockOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
 import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import PersonalCenterModal from '@/components/layout/PersonalCenterModal'
 import { useLogout } from '@/composables/useLogout'
 import { useConfirmDialog } from '@/composables/useToast'
 import { useRequireAuth } from '@/composables/useRequireAuth'
+import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
 import settingsIcon from '@/assets/sidebar/settings.svg'
 import './SettingsMenu.css'
 
@@ -23,6 +24,9 @@ const IconProfile = <UserOutlined className="settings-menu__ico-vector" aria-hid
 
 /** 修改密码菜单图标。 */
 const IconLock = <LockOutlined className="settings-menu__ico-vector" aria-hidden="true" />
+
+/** 使用手册菜单图标。 */
+const IconManual = <BookOutlined className="settings-menu__ico-vector" aria-hidden="true" />
 
 /** 退出登录菜单图标。 */
 const IconLogout = <LogoutOutlined className="settings-menu__ico-vector" aria-hidden="true" />
@@ -98,6 +102,10 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
     setPwdOpen(true)
     onAfterAction?.()
   }
+  const openManual = () => {
+    setOpen(false)
+    onAfterAction?.()
+  }
   const doLogout = async () => {
     if (logoutConfirmRef.current || isLoggingOut) return
     logoutConfirmRef.current = true
@@ -150,6 +158,17 @@ export default function SettingsMenu({ onAfterAction }: SettingsMenuProps) {
               <span className="settings-menu__ico settings-menu__ico--green">{IconLock}</span>
               <span className="settings-menu__label">修改密码</span>
             </button>
+            <a
+              className="settings-menu__item"
+              role="menuitem"
+              href={MANUAL_DOC_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={openManual}
+            >
+              <span className="settings-menu__ico settings-menu__ico--manual">{IconManual}</span>
+              <span className="settings-menu__label">使用手册</span>
+            </a>
             <button
               type="button"
               className="settings-menu__item"

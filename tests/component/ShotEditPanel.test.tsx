@@ -109,7 +109,7 @@ describe('ShotEditPanel', () => {
     const onPolishText = vi.fn(() => request.promise)
     render(<ShotEditPanel shot={makeShot()} onPatch={onPatch} onPolishText={onPolishText} />)
 
-    const button = textField('台词修改').getByRole('button', { name: 'AI一键润色' })
+    const button = textField('台词修改').getByRole('button', { name: '我帮你写' })
     await user.click(button)
     expect(onPolishText).toHaveBeenCalledOnce()
     expect(onPolishText).toHaveBeenCalledWith('line', '原台词')
@@ -120,7 +120,11 @@ describe('ShotEditPanel', () => {
 
     request.resolve('润色后的台词')
     await waitFor(() => expect(onPatch).toHaveBeenCalledWith({ line: '润色后的台词' }))
-    expect(textField('台词修改').getByRole('button', { name: 'AI一键润色' })).toBeEnabled()
+    const restore = textField('台词修改').getByRole('button', { name: '复原' })
+    expect(restore).toBeEnabled()
+    await user.click(restore)
+    expect(onPatch).toHaveBeenLastCalledWith({ line: '原台词' })
+    expect(textField('台词修改').getByRole('button', { name: '我帮你写' })).toBeEnabled()
   })
 
   it('keeps empty fields disabled and recovers after a polishing error', async () => {
@@ -129,8 +133,8 @@ describe('ShotEditPanel', () => {
     const onPatch = vi.fn()
     render(<ShotEditPanel shot={makeShot({ subtitle: '' })} onPatch={onPatch} onPolishText={onPolishText} />)
 
-    expect(textField('字幕修改').getByRole('button', { name: 'AI一键润色' })).toBeDisabled()
-    const lineButton = textField('台词修改').getByRole('button', { name: 'AI一键润色' })
+    expect(textField('字幕修改').getByRole('button', { name: '我帮你写' })).toBeDisabled()
+    const lineButton = textField('台词修改').getByRole('button', { name: '我帮你写' })
     await user.click(lineButton)
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('AI 润色失败:服务繁忙', 'error'))
     expect(lineButton).toBeEnabled()
@@ -150,7 +154,7 @@ describe('ShotEditPanel', () => {
     const onPatch = vi.fn()
     const { rerender } = render(<ShotEditPanel shot={makeShot()} onPatch={onPatch} onPolishText={onPolishText} />)
 
-    await user.click(textField('台词修改').getByRole('button', { name: 'AI一键润色' }))
+    await user.click(textField('台词修改').getByRole('button', { name: '我帮你写' }))
     rerender(
       <ShotEditPanel
         shot={makeShot({ id: 'shot-2', no: '镜头2', line: '镜头2台词' })}
@@ -159,7 +163,7 @@ describe('ShotEditPanel', () => {
       />,
     )
 
-    const newShotButton = textField('台词修改').getByRole('button', { name: 'AI一键润色' })
+    const newShotButton = textField('台词修改').getByRole('button', { name: '我帮你写' })
     expect(newShotButton).toBeEnabled()
     oldRequest.resolve('迟到的镜头1结果')
     await waitFor(() => expect(onPolishText).toHaveBeenCalledOnce())
@@ -176,7 +180,7 @@ describe('ShotEditPanel', () => {
     const onPolishText = vi.fn(() => oldRequest.promise)
     const { rerender } = render(<ShotEditPanel shot={makeShot()} onPatch={vi.fn()} onPolishText={onPolishText} />)
 
-    await user.click(textField('台词修改').getByRole('button', { name: 'AI一键润色' }))
+    await user.click(textField('台词修改').getByRole('button', { name: '我帮你写' }))
     rerender(
       <ShotEditPanel
         shot={makeShot({ id: 'shot-2', no: '镜头2', line: '镜头2台词' })}
@@ -187,7 +191,7 @@ describe('ShotEditPanel', () => {
     await act(async () => oldRequest.reject(new Error('镜头1请求失败')))
 
     expect(mocks.showToast).not.toHaveBeenCalled()
-    expect(textField('台词修改').getByRole('button', { name: 'AI一键润色' })).toBeEnabled()
+    expect(textField('台词修改').getByRole('button', { name: '我帮你写' })).toBeEnabled()
   })
 
   it('switches history versions and exposes independent keyboard-accessible zoom actions', async () => {
@@ -246,7 +250,7 @@ describe('ShotEditPanel', () => {
     const user = userEvent.setup()
     render(<ShotEditPanel shot={makeShot()} compact onPatch={vi.fn()} onPolishText={vi.fn()} />)
 
-    expect(screen.queryByRole('button', { name: 'AI一键润色' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '我帮你写' })).not.toBeInTheDocument()
     const imageButton = screen.getByRole('button', { name: '放大当前分镜图' })
     imageButton.focus()
     await user.keyboard('{Enter}')

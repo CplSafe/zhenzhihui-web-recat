@@ -32,11 +32,13 @@ import {
 import {
   applyVideoTaskModeParams,
   formatVideoTaskModeLabel,
+  getVideoEditModeConflict,
   isFollowSourceVideoMode,
   isVideoTaskModeField,
   resolveSelfVideoAssetId,
 } from '@/utils/canvasVideoTaskMode'
 import { readVideoDurationSecExact } from '@/utils/videoDuration'
+import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
 import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
 import { resolveModelVideoInputSupport, VIDEO_INPUT_UNSUPPORTED_REASON } from '@/utils/modelVideoInputSupport'
 import { readModelAccentHue, readModelInitial, readModelPresentation } from '@/utils/modelPresentation'
@@ -59,7 +61,7 @@ import {
 } from '@/utils/canvasMentions'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import WheelPicker, { type WheelPickerOption } from '@/components/common/WheelPicker'
-import { requestConfirm } from '@/stores/ui'
+import { requestConfirm, showToast } from '@/stores/ui'
 
 /** 读取可能为字符串/数字/布尔的值，返回字符串文本；非法输入返回空串。 */
 function readText(value: unknown): string {
@@ -267,9 +269,6 @@ function formatRatioValue(value: unknown): string {
   return text
 }
 
-/** 上游视频模型读取参考视频的总时长上限（秒），模型 schema 没声明时用它 */
-const DEFAULT_MAX_VIDEO_REF_SEC = 15
-
 /** 投放场景基本是竖屏，视频节点默认 9:16 */
 const VIDEO_DEFAULT_RATIO = '9:16'
 
@@ -445,6 +444,8 @@ interface CanvasNodePanelProps {
     /** 视频生视频的源视频（节点自己已有的那条）；为 0 表示从头生成。 */
     selfVideoAssetId?: number
   }) => void
+  /** 扣费确认前检查引用素材的团队归属和入库状态。 */
+  onPreflightAssets?: (sourceRefs: CanvasSourceRef[], inputAssets: CanvasInputAsset[]) => Promise<string | null>
   /** 费用预估判定积分不足时，由页面展示充值引导。 */
   onInsufficientCredits?: () => void
   onSaveText?: (text: string) => void
@@ -611,6 +612,7 @@ export default function CanvasNodePanel({
   models,
   modelsLoading,
   onGenerate,
+  onPreflightAssets,
   onInsufficientCredits,
   onSaveText,
   onPromptChange,
@@ -636,22 +638,27 @@ export default function CanvasNodePanel({
   // 文本节点的内容存在 text，图片/视频节点的输入框存在 prompt；两者都随节点持久化。
   const [prompt, setPrompt] = useState(() => String((kind === 'text' ? node?.text : node?.prompt) || ''))
   const [polishing, setPolishing] = useState(false)
+  const [promptHistory, setPromptHistory] = useState<string[]>([])
   const [polishError, setPolishError] = useState('')
   // 提示词放大：多提示词短剧的文案很长，默认输入框最高 220px 不够写（反馈 #5）。
   const [promptExpanded, setPromptExpanded] = useState(false)
+  const [checkingAssets, setCheckingAssets] = useState(false)
 
   // 切换选中节点时回填该节点自己的文案：面板是所有节点共用的一个实例，
   // 不按 node.id 重新灌值就会把上一个节点的输入框内容留在这里。
   const restoredNodeIdRef = useRef<string | undefined>(node?.id)
   useEffect(() => {
+    const switchedNode = restoredNodeIdRef.current !== node?.id
     if (kind === 'text') {
+      if (switchedNode) setPromptHistory([])
       setPrompt(String(node?.text || ''))
       setPolishError('')
       restoredNodeIdRef.current = node?.id
       return
     }
     // 同一节点内不跟随 node.prompt 回灌，否则用户正在输入时会被持久化回来的值打断。
-    if (restoredNodeIdRef.current === node?.id) return
+    if (!switchedNode) return
+    setPromptHistory([])
     restoredNodeIdRef.current = node?.id
     setPrompt(String(node?.prompt || ''))
     setPolishError('')
@@ -1333,10 +1340,10 @@ export default function CanvasNodePanel({
     if (kind !== 'video') return [] as string[]
     const urls = sourceRefs
       .filter((ref) => ref.kind === 'video' || ref.kind === 'timeline')
-      .map((ref) => String((ref as any).thumbnailUrl || ''))
+      .map((ref) => String((ref as any).thumbnailUrl || assetStreamUrl(Number(ref.assetId || 0), workspaceId)))
     if (selfVideoAssetId > 0 && node?.resultUrl) urls.push(String(node.resultUrl))
     return urls.filter(Boolean)
-  }, [kind, sourceRefs, selfVideoAssetId, node?.resultUrl])
+  }, [kind, sourceRefs, selfVideoAssetId, node?.resultUrl, workspaceId])
   const [videoDurations, setVideoDurations] = useState<Record<string, number>>({})
   useEffect(() => {
     const pending = videoRefUrls.filter((url) => videoDurations[url] === undefined)
@@ -1359,14 +1366,8 @@ export default function CanvasNodePanel({
     return () => cleanups.forEach((cleanup) => cleanup())
   }, [videoRefUrls, videoDurations])
   const videoRefTotalSec = videoRefUrls.reduce((sum, url) => sum + (videoDurations[url] || 0), 0)
-  // 模型 schema 声明了 source_video_duration 上限就用它；否则按上游 15 秒的硬限制
-  // （原文：reference video total duration must not exceed 15 seconds）
-  const maxVideoRefSec = useMemo(() => {
-    const field = parseParamsSchema(selectedModel).find(
-      (f) => normalizeParamKey(f.name) === 'sourcevideoduration' && Number.isFinite(Number(f.max)),
-    )
-    return field ? Number(field.max) : DEFAULT_MAX_VIDEO_REF_SEC
-  }, [selectedModel])
+  // 未声明参考视频输入时长上限的模型不在前端臆造 15 秒限制。
+  const maxVideoRefSec = useMemo(() => resolveRefVideoLimits(selectedModel?.source).maxDurationSec, [selectedModel])
 
   const inputValidationError = useMemo(() => {
     if (kind === 'image' && sourceRefs.some((ref) => ref.source === 'real_person')) {
@@ -1376,16 +1377,25 @@ export default function CanvasNodePanel({
       return validateCanvasImageInputs({ operationCode, sourceRefs, workspaceId, maxImageRefs: maxRefs })
     }
     if (kind === 'video') {
-      return validateCanvasVideoInputs({
-        operationCode,
-        videoMode,
-        sourceRefs,
-        maxImageRefs: maxRefs,
-        minImageRefs: minRefs,
-        modelLabel: selectedModel?.displayName,
-        maxVideoRefSec,
-        videoRefTotalSec,
-      })
+      return (
+        getVideoEditModeConflict({
+          prompt: buildFullPrompt(prompt),
+          mode: taskModeFieldName ? fieldValues[taskModeFieldName] : undefined,
+          hasVideoInput,
+          supportsTaskMode: Boolean(taskModeFieldName),
+        }) ||
+        validateCanvasVideoInputs({
+          operationCode,
+          videoMode,
+          sourceRefs,
+          workspaceId,
+          maxImageRefs: maxRefs,
+          minImageRefs: minRefs,
+          modelLabel: selectedModel?.displayName,
+          maxVideoRefSec,
+          videoRefTotalSec,
+        })
+      )
     }
     return null
   }, [
@@ -1399,6 +1409,11 @@ export default function CanvasNodePanel({
     selectedModel?.displayName,
     maxVideoRefSec,
     videoRefTotalSec,
+    buildFullPrompt,
+    prompt,
+    taskModeFieldName,
+    fieldValues,
+    hasVideoInput,
   ])
 
   const inputSummary = useMemo(() => {
@@ -1486,7 +1501,22 @@ export default function CanvasNodePanel({
       onInsufficientCredits?.()
       return
     }
-    if (taskRunning) return
+    if (taskRunning || checkingAssets) return
+    if (onPreflightAssets && inputAssets.length) {
+      setCheckingAssets(true)
+      try {
+        const assetError = await onPreflightAssets(sourceRefs, inputAssets)
+        if (assetError) {
+          showToast(assetError, 'error')
+          return
+        }
+      } catch {
+        showToast('暂时无法核验当前团队的参考素材，请稍后重试', 'error')
+        return
+      } finally {
+        setCheckingAssets(false)
+      }
+    }
     const cost = Number(costEstimate.estimated_cost || 0)
     if (kind === 'video' && cost > 0) {
       const operationLabel = selfVideoAssetId > 0 ? '修改当前视频' : '使用新模型生成视频'
@@ -1539,6 +1569,7 @@ export default function CanvasNodePanel({
       if (!polished) throw new Error('AI 未返回可用的润色内容')
       // 润色结果同样要落到节点，否则润色完切走再回来就变回原文（immediate 同时作废防抖中的旧文本）
       userEditedPromptRef.current = true
+      setPromptHistory((history) => [...history, prompt])
       commitPrompt(polished, { immediate: true })
     } catch (error: any) {
       setPolishError(String(error?.message || '润色失败，请稍后重试'))
@@ -1980,6 +2011,22 @@ export default function CanvasNodePanel({
           </button>
           {/* 语音输入:识别文本接到提示词末尾;生成中提示词已锁定,不给入口 */}
           {!taskRunning && <VoiceInputButton className={styles.micBtn} onText={appendSpokenText} />}
+          {promptHistory.length > 0 && (
+            <button
+              type="button"
+              className={styles.polishBtn}
+              disabled={taskRunning || polishing}
+              title="恢复到上一个提示词版本"
+              onClick={() => {
+                const previous = promptHistory[promptHistory.length - 1]
+                userEditedPromptRef.current = true
+                commitPrompt(previous, { immediate: true })
+                setPromptHistory((history) => history.slice(0, -1))
+              }}
+            >
+              复原
+            </button>
+          )}
           <button
             type="button"
             className={styles.polishBtn}
@@ -1988,7 +2035,7 @@ export default function CanvasNodePanel({
             title={`扩写为更完整的${kind === 'video' ? '视频' : '图片'}生成提示词`}
           >
             <span aria-hidden="true">✦</span>
-            {polishing ? '润色中...' : 'AI 一键润色'}
+            {polishing ? '润色中...' : '我帮你写'}
           </button>
         </div>
       </div>
@@ -2066,20 +2113,23 @@ export default function CanvasNodePanel({
             onClick={handleGenerate}
             disabled={
               taskRunning ||
+              checkingAssets ||
               (kind === 'text' ? !prompt.trim() : !selectedModel || !operationCode || Boolean(inputValidationError))
             }
             // 按钮灰着时必须说明是被什么挡住的：缺模型和缺提示词是两回事。
             title={
-              taskRunning
-                ? '生成过程中不能修改，请添加新的节点使用其他模型'
-                : kind === 'text'
-                  ? '保存提示词'
-                  : !selectedModel
-                    ? emptyModelLabel || '暂无可用模型，请先在上方选择模型'
-                    : inputValidationError || (hasExistingResult ? '重新生成' : '发送生成')
+              checkingAssets
+                ? '正在检查参考素材…'
+                : taskRunning
+                  ? '生成过程中不能修改，请添加新的节点使用其他模型'
+                  : kind === 'text'
+                    ? '保存提示词'
+                    : !selectedModel
+                      ? emptyModelLabel || '暂无可用模型，请先在上方选择模型'
+                      : inputValidationError || (hasExistingResult ? '重新生成' : '发送生成')
             }
           >
-            {kind === 'text' ? '保存提示词' : generateActionLabel}
+            {checkingAssets ? '检查素材中…' : kind === 'text' ? '保存提示词' : generateActionLabel}
           </button>
         </div>
       </div>

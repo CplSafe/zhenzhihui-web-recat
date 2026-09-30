@@ -66,6 +66,37 @@ const extractResultAssetIds = (task: any): number[] => {
   return [...new Set(ids)]
 }
 
+/** 只认当前工作空间素材列表中已激活的资产；拼出下载地址并不能证明资产存在。 */
+export async function findActiveWorkspaceAssetIds(
+  workspaceId: number,
+  assetIds: readonly number[],
+  type: 'video' | 'image',
+): Promise<Set<number>> {
+  const wanted = new Set(assetIds.filter((id) => Number.isSafeInteger(id) && id > 0))
+  const found = new Set<number>()
+  if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0 || !wanted.size) return found
+
+  let offset = 0
+  const seenPages = new Set<string>()
+  for (let pageIndex = 0; pageIndex < TASK_ASSET_MAX_PAGES && found.size < wanted.size; pageIndex += 1) {
+    const payload = await listAssets({ workspaceId, type, status: 'active', limit: TASK_ASSET_PAGE_SIZE, offset })
+    const page = extractAssetPage(payload)
+    const items = Array.isArray(page.items) ? page.items : []
+    for (const asset of items) {
+      const id = Number(asset?.id)
+      if (wanted.has(id)) found.add(id)
+    }
+    const signature = items.map((asset: any) => String(asset?.id ?? '')).join(',')
+    if (!items.length || seenPages.has(signature)) break
+    seenPages.add(signature)
+    const nextOffset = offset + items.length
+    const rawTotal = (payload as any)?.total ?? (payload as any)?.data?.total
+    if (rawTotal !== undefined && Number.isFinite(Number(rawTotal)) && nextOffset >= Number(rawTotal)) break
+    offset = nextOffset
+  }
+  return found
+}
+
 /** 分页查找绑定到指定任务的素材，并防止重复页造成死循环。 */
 async function findAssetsByTaskId({
   workspaceId,
@@ -179,8 +210,7 @@ export function extractOutputAssetId(task: any): number {
  * outputs 里的 id 只是任务回执，未必是可用素材：可能还没入库，也可能压根不是资产 ID。
  * 把它直接存成节点素材，等下次拿它当生成输入时，后端只会回一句
  * 「参考素材不可用，请确认素材已上传完成且属于当前工作空间」，而且此时早已看不出是哪一步写坏的。
- * 因此这里逐个用 getAssetDownloadUrl 验证，全都取不到再按 task_id 反查兜底 ——
- * 与 resolveTaskVideoResult 同一套口径。
+ * 先查当前工作空间的 active 素材列表；URL 构造函数不发请求，不能用于验证。
  */
 export async function resolveVerifiedResultAssetId({
   workspaceId,
@@ -196,12 +226,13 @@ export async function resolveVerifiedResultAssetId({
   const wsId = Math.floor(Number(workspaceId) || 0)
   if (!wsId) return 0
 
-  for (const assetId of extractResultAssetIds(task)) {
-    try {
-      if (await getAssetDownloadUrl({ workspaceId: wsId, assetId })) return assetId
-    } catch {
-      // 单个 id 取不到签名地址不代表其他 id 也不行；继续验证剩下的，最后再走 task_id 反查。
-    }
+  try {
+    const candidates = extractResultAssetIds(task)
+    const active = await findActiveWorkspaceAssetIds(wsId, candidates, type)
+    const verified = candidates.find((assetId) => active.has(assetId))
+    if (verified) return verified
+  } catch {
+    // 列表暂不可用时按 task_id 有限重试，不把未经验证的回执 ID 写进节点。
   }
 
   return findAssetIdByTaskId(wsId, task?.id ?? fallbackTaskId, type)
