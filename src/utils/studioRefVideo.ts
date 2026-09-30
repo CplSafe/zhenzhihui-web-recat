@@ -3,9 +3,8 @@
  *
  * 约束全部来自后端：
  * - 条数：后端 provider 对参考视频的上限是 3 段（见 minimaxMaxVideos / 火山 video[] 约定）；
- * - 单条时长：模型 schema 的 `source_video_duration` 字段（Min/Max）声明，
- *   例如 kling / minimax 都声明了它；未声明的模型（如 seedance）不做前端时长校验，
- *   交由后端最终判定，避免前端编一个上限冒充模型能力。
+ * - 单条时长优先读取模型 schema 的 `source_video_duration` 字段；
+ *   Seedance 2.5 缺失该字段时按服务商公开的 30 秒输入上限兜底。
  */
 import { getModelParamFields, findModelParamField } from './modelSchema'
 
@@ -27,21 +26,39 @@ export interface StudioRefVideoLimits {
 
 /** 读取数值型 schema 约束，非法值返回 null。 */
 function readNumber(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null
   const num = Number(value)
   return Number.isFinite(num) ? num : null
+}
+
+function isSeedance25(model: unknown): boolean {
+  if (!model || typeof model !== 'object') return false
+  const record = model as Record<string, unknown>
+  const identity = [
+    record.model,
+    record.model_code,
+    record.modelCode,
+    record.model_name,
+    record.modelName,
+    record.display_name,
+    record.displayName,
+    record.name,
+  ]
+  return identity.some((value) => typeof value === 'string' && /seedance[\s._-]*(?:v[\s._-]*)?2[\s._-]*5/i.test(value))
 }
 
 /**
  * 依据选中模型解析参考视频的数量与单条时长上限。
  *
- * 时长以模型 schema 的 `source_video_duration` 为准；模型没声明就返回 null，
- * 由后端在创建任务时最终校验——前端不替模型编造上限。
+ * 时长以模型 schema 的 `source_video_duration` 为准；Seedance 2.5 的模型
+ * schema 目前未声明输入视频时长，但服务商文档明确上限为 30 秒。
+ * https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh&redirect=1
  */
 export function resolveRefVideoLimits(model: unknown): StudioRefVideoLimits {
   const field = findModelParamField(getModelParamFields(model), ['source_video_duration', 'sourceVideoDuration'])
   return {
     maxCount: MAX_REF_VIDEOS,
-    maxDurationSec: readNumber((field as any)?.max ?? (field as any)?.maximum),
+    maxDurationSec: readNumber((field as any)?.max ?? (field as any)?.maximum) ?? (isSeedance25(model) ? 30 : null),
     minDurationSec: readNumber((field as any)?.min ?? (field as any)?.minimum),
   }
 }
@@ -74,7 +91,7 @@ function checkDuration(durationSec: number, limits: StudioRefVideoLimits): strin
   // 时长元数据没读出来（为 0）时不拦截，交由后端最终校验。
   if (!durationSec) return ''
   if (limits.maxDurationSec !== null && durationSec > limits.maxDurationSec) {
-    return `单条参考视频最长 ${limits.maxDurationSec}s，当前 ${Math.round(durationSec)}s`
+    return `单条参考视频最长 ${limits.maxDurationSec}s，当前约 ${Math.ceil(durationSec)}s`
   }
   if (limits.minDurationSec !== null && durationSec < limits.minDurationSec) {
     return `单条参考视频最短 ${limits.minDurationSec}s，当前 ${Math.round(durationSec)}s`

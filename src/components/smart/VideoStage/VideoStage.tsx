@@ -3,7 +3,7 @@
  *
  * 本步支持对整段视频或任一 5 秒画面片段提出修改意见。
  * 交互:
- *  - 「整段视频修改」框支持 AI 一键润色。
+ *  - 「整段视频修改」框支持「我帮你写」与复原。
  *  - 底部总按钮:上一步 / 保存视频 / 重新生成视频或确认修改。
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -1668,7 +1668,7 @@ export default function VideoStage({
   )
 }
 
-/** 单个修改框:标题在上(片段框带秒数范围 + 移除);框内 自然语言输入 + 右侧 AI一键润色 */
+/** 单个修改框:标题在上(片段框带秒数范围 + 移除);框内自然语言输入 + 右侧「我帮你写」/复原 */
 /** 单个片段或整段视频的修改意见框，支持 AI 润色和可选删除。 */
 function ModBox({
   title,
@@ -1695,6 +1695,7 @@ function ModBox({
 }) {
   const { showToast } = useToast()
   const [polishing, setPolishing] = useState(false)
+  const [valueHistory, setValueHistory] = useState<string[]>([])
   const [draftValue, setDraftValue] = useState(value)
   const inputId = useId()
   const composingRef = useRef(false)
@@ -1716,12 +1717,14 @@ function ModBox({
 
   const doPolish = async () => {
     if (!draftValue.trim() || polishing) return
+    const valueBeforePolish = draftValue
     setPolishing(true)
     try {
       const out = onPolishText
         ? await onPolishText(polishKind, draftValue, polishKind === 'segment' ? polishSegment : undefined)
         : await polishText(draftValue, { kind: polishKind })
       if (out) {
+        setValueHistory((history) => [...history, valueBeforePolish])
         setDraftValue(out)
         publishValue(out)
       }
@@ -1782,14 +1785,31 @@ function ModBox({
           onPointerDown={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
         />
-        <button
-          type="button"
-          className={styles.vstageModPolish}
-          disabled={polishing || !draftValue.trim()}
-          onClick={doPolish}
-        >
-          {polishing ? '润色中…' : 'AI一键润色'}
-        </button>
+        <div className={styles.vstageModPolishActions}>
+          {valueHistory.length > 0 && (
+            <button
+              type="button"
+              className={styles.vstageModPolish}
+              disabled={polishing}
+              onClick={() => {
+                const previous = valueHistory[valueHistory.length - 1]
+                setDraftValue(previous)
+                publishValue(previous)
+                setValueHistory((history) => history.slice(0, -1))
+              }}
+            >
+              复原
+            </button>
+          )}
+          <button
+            type="button"
+            className={styles.vstageModPolish}
+            disabled={polishing || !draftValue.trim()}
+            onClick={doPolish}
+          >
+            {polishing ? '润色中…' : '我帮你写'}
+          </button>
+        </div>
       </div>
     </div>
   )

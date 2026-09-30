@@ -415,6 +415,66 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     expect(screen.getByRole('textbox', { name: '创作需求' })).toHaveValue('不能丢失的文案')
   })
 
+  it('switches between untouched modes without confirming an auto-selected script model or legacy zero duration', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        restoreSessionDraft={false}
+        initial={{ duration: '0s' }}
+        modelGroups={[
+          {
+            key: 'script',
+            label: '生成脚本',
+            subgroups: [
+              {
+                key: 'responses.multimodal',
+                label: '脚本生成模型',
+                models: [{ id: 731, name: '自动选中的脚本模型' }],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    await waitFor(() => expect(loadSmartEntryDraft()?.generationModels?.['responses.multimodal']).toBe(731))
+    await user.click(screen.getByRole('tab', { name: '制作图片' }))
+    expect(screen.getByRole('tab', { name: '制作图片' })).toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('tab', { name: '制作视频' }))
+    expect(screen.getByRole('tab', { name: '制作视频' })).toHaveAttribute('aria-selected', 'true')
+    expect(mocks.requestConfirm).not.toHaveBeenCalled()
+  })
+
+  it('still asks before discarding a model explicitly selected by the user', async () => {
+    const user = userEvent.setup()
+    mocks.requestConfirm.mockResolvedValueOnce(false)
+    render(
+      <TestSmartEntry
+        onSubmit={vi.fn()}
+        restoreSessionDraft={false}
+        modelGroups={[
+          {
+            key: 'video',
+            label: '生成视频',
+            subgroups: [
+              {
+                key: 'video.generate',
+                label: '视频生成模型',
+                models: [{ id: 732, name: '手动选择的视频模型' }],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    await pickModel(user, '手动选择的视频模型')
+    await user.click(screen.getByRole('tab', { name: '制作图片' }))
+    expect(mocks.requestConfirm).toHaveBeenCalledOnce()
+    expect(screen.getByRole('tab', { name: '制作视频' })).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('clears the abandoned input and session draft after confirming a mode switch', async () => {
     const user = userEvent.setup()
     saveSmartEntryDraft({ mode: 'video', text: '缓存文案', images: ['data:old-image'] })

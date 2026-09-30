@@ -1,24 +1,42 @@
 /**
- * 「操作手册」按钮 + 视频弹窗（对标 CineArt 右上角操作手册）。
+ * 「操作教程」按钮 + 视频弹窗。
  * 按当前路由取教程（utils/tutorialVideos），没有教程的页面不渲染。
  * 弹窗用 portal 渲染到 body：遮罩点击 / Esc / 关闭按钮均可关闭，打开时自动播放（视频本身静音）。
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
-import { getTutorialForPath, type TutorialVideo } from '@/utils/tutorialVideos'
+import { getTutorialByKey, getTutorialForPath, type TutorialVideo } from '@/utils/tutorialVideos'
 import './TutorialButton.css'
 
-/** 按钮外观：顶栏文字按钮 / 画布页的圆角胶囊。 */
+/** 按钮外观：顶栏文字按钮 / 画布页的圆角胶囊 / 创作入口文字按钮。 */
 interface TutorialButtonProps {
   className?: string
-  variant?: 'topbar' | 'pill'
+  variant?: 'topbar' | 'pill' | 'entry'
+  /** 独立页面组件可直接指定教程，避免依赖外层路由上下文。 */
+  tutorialKey?: TutorialVideo['key']
 }
 
 /** 有教程的页面显示按钮，点击弹出该页面的操作手册视频。 */
-export default function TutorialButton({ className = '', variant = 'topbar' }: TutorialButtonProps) {
+export default function TutorialButton(props: TutorialButtonProps) {
+  if (props.tutorialKey) {
+    return <TutorialButtonView {...props} tutorial={getTutorialByKey(props.tutorialKey)} />
+  }
+  return <RoutedTutorialButton {...props} />
+}
+
+/** 顶栏等共享壳层仍可按当前路由自动选择教程。 */
+function RoutedTutorialButton(props: TutorialButtonProps) {
   const { pathname } = useLocation()
-  const tutorial = getTutorialForPath(pathname)
+  return <TutorialButtonView {...props} tutorial={getTutorialForPath(pathname)} />
+}
+
+/** 纯展示与交互层：无论教程来源如何，按钮和弹窗行为完全一致。 */
+function TutorialButtonView({
+  className = '',
+  variant = 'topbar',
+  tutorial,
+}: TutorialButtonProps & { tutorial: TutorialVideo | null }) {
   const [open, setOpen] = useState(false)
 
   // 切换到没有教程的页面时收起弹窗
@@ -36,24 +54,9 @@ export default function TutorialButton({ className = '', variant = 'topbar' }: T
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="查看本页面的操作手册"
+        title="查看本页面的操作教程"
       >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z" />
-          <path d="M4 20.5V5.5M20 18v3H6.5" />
-          <path d="m10.5 8 4 3-4 3z" fill="currentColor" stroke="none" />
-        </svg>
-        <span>操作手册</span>
+        <span>操作教程</span>
       </button>
       {open && <TutorialModal tutorial={tutorial} onClose={() => setOpen(false)} />}
     </>

@@ -346,10 +346,12 @@ describe('VideoStage playback loading', () => {
 
     const input = screen.getByRole('textbox', { name: '整段视频修改' })
     await user.type(input, '提高整体亮度')
-    await user.click(screen.getAllByRole('button', { name: 'AI一键润色' })[1])
+    await user.click(screen.getAllByRole('button', { name: '我帮你写' })[1])
 
     await waitFor(() => expect(onPolishText).toHaveBeenCalledWith('video-edit', '提高整体亮度', undefined))
     expect(input).toHaveValue('润色后的整段修改意见')
+    await user.click(screen.getByRole('button', { name: '复原' }))
+    expect(input).toHaveValue('提高整体亮度')
   })
 
   it('keeps a controlled modification field editable during Safari-style Chinese composition', async () => {
@@ -448,7 +450,7 @@ describe('VideoStage playback loading', () => {
     fireEvent.click(screen.getByRole('button', { name: '0:05–0:10' }))
     const segmentInput = screen.getByLabelText('选中片段修改')
     await userEvent.type(segmentInput, '把产品改成红色')
-    const [segmentPolish] = screen.getAllByRole('button', { name: 'AI一键润色' })
+    const [segmentPolish] = screen.getAllByRole('button', { name: '我帮你写' })
     fireEvent.click(segmentPolish)
     await waitFor(() => expect(segmentInput).toHaveValue('润色后的片段指令'))
     expect(onPolishText).toHaveBeenCalledWith('segment', '把产品改成红色', { start: 5, end: 10 })
@@ -457,7 +459,7 @@ describe('VideoStage playback loading', () => {
     onPolishText.mockResolvedValue('润色后的整段指令')
     const overallInput = screen.getByRole('textbox', { name: '整段视频修改' })
     await userEvent.type(overallInput, '提高画面亮度')
-    const [, overallPolish] = screen.getAllByRole('button', { name: 'AI一键润色' })
+    const [, overallPolish] = screen.getAllByRole('button', { name: '我帮你写' })
     fireEvent.click(overallPolish)
     await waitFor(() => expect(overallInput).toHaveValue('润色后的整段指令'))
     expect(onPolishText).toHaveBeenLastCalledWith('video-edit', '提高画面亮度', undefined)
@@ -537,7 +539,7 @@ describe('VideoStage playback loading', () => {
     )
 
     expect(screen.queryByText('整段视频修改')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'AI一键润色' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '我帮你写' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '重新生成视频' }))
     expect(onRegenerateVideo).toHaveBeenCalledWith(undefined, { edit: false })
   })

@@ -19,7 +19,7 @@ import {
   useWorkspaceId,
   useWorkspaceSessionStore,
 } from '@/stores/workspaceSession'
-import { openTeamManage, useUiStore } from '@/stores/ui'
+import { openJoinTeam, openTeamManage, useUiStore } from '@/stores/ui'
 import { useToast, useConfirmDialog } from '@/composables/useToast'
 import { useSafeWorkspaceSwitch } from '@/composables/useSafeWorkspaceSwitch'
 import { useDistributionAccess } from '@/composables/useDistributionAccess'
@@ -80,6 +80,14 @@ const IconMembers = <img className="ppl__ws-ico-img" src={teamIcon} alt="" aria-
 
 /** 会员套餐卡片的皇冠图标。 */
 const IconCrown = <img className="ppl__crown-img" src={crownImg} alt="" aria-hidden="true" />
+/** 团队数据看板图标。 */
+const IconDashboard = (
+  <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true">
+    <path d="M3 10.5a7 7 0 1 1 14 0" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    <path d="m10 10.5 3.1-3.1M6 16h8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    <circle cx="10" cy="10.5" r="1.35" fill="currentColor" />
+  </svg>
+)
 // 切换空间列表默认露出约 3 个,超出则固定高度可滚动(不撑高面板)
 const MAX_VISIBLE_WS = 3
 
@@ -125,8 +133,11 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const role = roleLabelOf(roleValue)
   const isTeamWs = Boolean(currentWs?.type) && String(currentWs.type).toLowerCase() !== 'personal'
   const canRevealTeamInfo = !isTeamWs || Boolean(roleValue)
+  const canInviteMembers = isTeamWs && roleValue === 'owner'
+  const canManageMembers = isTeamWs && (roleValue === 'owner' || roleValue === 'admin')
+  const teamActionLabel = canInviteMembers ? '邀请成员' : canManageMembers ? '成员管理' : '团队成员'
   const wsName = canRevealTeamInfo ? currentWs?.name || '个人空间' : '团队空间'
-  // 重命名指定团队:列表中的所有非个人空间都可发起，最终权限仍由后端校验。
+  // 重命名当前团队:只向已确认的所有者展示，最终权限仍由后端校验。
   // 全流程加锁避免重复提交；点击列表项右侧铅笔不会触发空间切换。
   const handleRenameTeam = async (workspace: any) => {
     if (renameFlowRef.current) return
@@ -196,7 +207,19 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
     if (id && Number(id) !== Number(activeId)) {
       switchWorkspaceSafely(id)
     }
+  }
+
+  const openTeamDashboard = (workspace: any) => {
+    const targetId = Number(workspace?.id || 0)
+    if (!targetId) return
+    if (workspaceSwitchLocked) {
+      showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
+      return
+    }
+    // 双击会先产生两次 click；第二次切换可能因空间已经切好而返回 false，仍应进入看板。
+    if (targetId !== Number(activeId)) switchWorkspaceSafely(targetId)
     onClose?.()
+    navigate('/team')
   }
 
   return (
@@ -250,21 +273,18 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
             </button>
           ) : null}
 
-          {/* 当前空间:团队空间只显示图标,悬停弹出「团队成员」黑色圆角浮层,点击打开团队管理查看成员 */}
+          {/* 团队操作随当前角色展示：所有者邀请成员、管理员管理成员、普通成员查看成员。 */}
           {isTeamWs && canRevealTeamInfo ? (
-            <Tooltip title="团队成员" placement="bottom" zIndex={4000}>
-              <button
-                type="button"
-                className="ppl__ws ppl__ws--btn ppl__ws--icononly"
-                aria-label="团队成员"
-                onClick={() => {
-                  onClose?.()
-                  openTeamManage()
-                }}
-              >
-                <span className="ppl__ws-ico">{IconMembers}</span>
-              </button>
-            </Tooltip>
+            <button
+              type="button"
+              className="ppl__head-action ppl__head-action--distribution-text"
+              onClick={() => {
+                onClose?.()
+                openTeamManage('members')
+              }}
+            >
+              {teamActionLabel}
+            </button>
           ) : (
             <div className="ppl__ws" title={wsName}>
               <span className="ppl__ws-ico">{IconMembers}</span>
@@ -317,11 +337,27 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
                 disabled={workspaceSwitchLocked}
                 title={workspaceSwitchLocked ? workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队' : ''}
                 onClick={() => pickWs(Number(ws.id))}
+                onDoubleClick={() => {
+                  if (!isPersonal) openTeamDashboard(ws)
+                }}
               >
                 <span className="ppl__ws-item-name">{workspaceName}</span>
                 <span className={`ppl__radio${active ? ' on' : ''}`} aria-hidden="true" />
               </button>
               {!isPersonal ? (
+                <Tooltip title="团队数据" placement="left" zIndex={4000}>
+                  <button
+                    type="button"
+                    className="ppl__ws-dashboard"
+                    aria-label={`查看团队数据 ${workspaceName}`}
+                    disabled={workspaceSwitchLocked}
+                    onClick={() => openTeamDashboard(ws)}
+                  >
+                    {IconDashboard}
+                  </button>
+                </Tooltip>
+              ) : null}
+              {!isPersonal && active && roleValue === 'owner' ? (
                 <Tooltip title="重命名团队" placement="left" zIndex={4000}>
                   <button
                     type="button"
@@ -337,6 +373,33 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
             </div>
           )
         })}
+      </div>
+      <div className={`ppl__team-actions${canInviteMembers ? ' has-invite' : ''}`}>
+        <button
+          type="button"
+          className="ppl__join-team"
+          onClick={() => {
+            onClose?.()
+            openJoinTeam()
+          }}
+        >
+          <span aria-hidden="true">＋</span>
+          加入团队
+        </button>
+        {canInviteMembers ? (
+          <button
+            type="button"
+            className="ppl__join-team ppl__invite-team"
+            aria-label="邀请成员（当前团队）"
+            onClick={() => {
+              onClose?.()
+              openTeamManage('members')
+            }}
+          >
+            <span aria-hidden="true">＋</span>
+            邀请成员
+          </button>
+        ) : null}
       </div>
     </div>
   )

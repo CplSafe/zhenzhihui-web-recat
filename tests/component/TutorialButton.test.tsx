@@ -15,12 +15,13 @@ function renderAt(path: string) {
 describe('TutorialButton', () => {
   it('没有教程的页面不渲染按钮', () => {
     renderAt('/home')
-    expect(screen.queryByRole('button', { name: /操作手册/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /操作教程/ })).toBeNull()
   })
 
   it('创作页显示按钮，点击弹出该页面的视频，Esc 关闭', () => {
     renderAt('/hot-copy/1200')
-    const btn = screen.getByRole('button', { name: /操作手册/ })
+    const btn = screen.getByRole('button', { name: /操作教程/ })
+    expect(btn.querySelector('svg')).toBeNull()
     expect(btn).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(btn)
 
@@ -36,7 +37,7 @@ describe('TutorialButton', () => {
 
   it('点击遮罩关闭，点击弹窗内部不关闭', () => {
     renderAt('/canvas/1')
-    fireEvent.click(screen.getByRole('button', { name: /操作手册/ }))
+    fireEvent.click(screen.getByRole('button', { name: /操作教程/ }))
     fireEvent.click(screen.getByRole('dialog'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('tutorial-modal-mask'))
@@ -47,7 +48,7 @@ describe('TutorialButton', () => {
     const spy = vi.spyOn(tutorialVideos, 'getTutorialForPath')
     spy.mockReturnValue({ ...tutorialVideos.getTutorialByKey('canvas'), docUrl: 'https://example.feishu.cn/wiki/abc' })
     const { unmount } = renderAt('/canvas/1')
-    fireEvent.click(screen.getByRole('button', { name: /操作手册/ }))
+    fireEvent.click(screen.getByRole('button', { name: /操作教程/ }))
     const link = screen.getByTestId('tutorial-doc-link')
     expect(link).toHaveAttribute('href', 'https://example.feishu.cn/wiki/abc')
     expect(link).toHaveAttribute('target', '_blank')
@@ -56,7 +57,7 @@ describe('TutorialButton', () => {
 
     spy.mockReturnValue({ ...tutorialVideos.getTutorialByKey('canvas'), docUrl: '' })
     renderAt('/canvas/1')
-    fireEvent.click(screen.getByRole('button', { name: /操作手册/ }))
+    fireEvent.click(screen.getByRole('button', { name: /操作教程/ }))
     expect(screen.queryByTestId('tutorial-doc-link')).toBeNull()
     spy.mockRestore()
   })

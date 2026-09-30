@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
+import TutorialButton from '@/components/common/TutorialButton'
 import EntryCostEstimate from '@/components/common/EntryCostEstimate'
 import MaterialMentionPopover from '@/components/common/MaterialMentionPopover'
 import { CreativeModelSlots } from '../CreativeModelSlots'
@@ -324,14 +325,19 @@ export default function SmartEntry({
       return
     }
 
+    // 唯一脚本模型会由目录自动填入，并非用户选择；空白入口不能因此弹出丢弃草稿确认。
+    const hasUserSelectedModel = Object.entries(generationModels).some(
+      ([operationCode, modelId]) =>
+        operationCode !== 'responses.multimodal' || !soleScriptModel || String(modelId) !== String(soleScriptModel.id),
+    )
     const hasDraftInput = Boolean(
       stripSkillLine(text).trim() ||
       skill ||
       images.length ||
       realPersonReferences.length ||
-      Object.keys(generationModels).length ||
+      hasUserSelectedModel ||
       ratio !== '16:9' ||
-      duration !== UNSET_DURATION ||
+      parseDurationSeconds(duration) !== null ||
       resolution !== LEGACY_DEFAULT_VIDEO_RESOLUTION ||
       generateAudio !== DEFAULT_GENERATE_AUDIO ||
       outputCount !== 1,
@@ -1519,6 +1525,8 @@ export default function SmartEntry({
                   canAfford={modelEstimate.canAfford}
                 />
               )}
+              {/* 与主要创作操作放在一起；弹窗和教程内容仍由共享组件统一维护。 */}
+              <TutorialButton variant="entry" tutorialKey="smart-create" />
               {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
               <VoiceInputButton
                 className={styles.micBtn}

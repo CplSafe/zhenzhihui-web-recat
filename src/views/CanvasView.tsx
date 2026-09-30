@@ -98,6 +98,7 @@ import CanvasNodePanel, {
   AUTO_RATIO,
   calcNodeSize,
   isAutoRatio,
+  parseParamsSchema,
 } from '@/components/canvas/CanvasNodePanel'
 import CanvasMaterialPicker from '@/components/canvas/CanvasMaterialPicker'
 import CanvasShareDialog from '@/components/canvas/CanvasShareDialog'
@@ -141,6 +142,9 @@ import {
   type VideoFramePosition,
 } from '@/utils/videoFrameCapture'
 import { resolveGeneratedMediaUrls, resolveVerifiedResultAssetId } from '@/utils/taskMedia'
+import { preflightCanvasAssets } from '@/utils/canvasAssetPreflight'
+import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
+import { getVideoEditModeConflict, isVideoTaskModeField } from '@/utils/canvasVideoTaskMode'
 import { buildDownloadName, downloadToDisk } from '@/utils/downloadToDisk'
 import { isCanvasStoryboardText, parseCanvasStructuredText } from '@/utils/canvasStructuredText'
 import InlineEdit from '@/components/common/InlineEdit'
@@ -2519,6 +2523,11 @@ function CanvasInner() {
           data: { slotIndex: prospectiveSlot },
         },
       ])
+      const foreignRef = prospectiveRefs.find(
+        (ref) =>
+          ref.kind !== 'text' && Number(ref.workspaceId || 0) > 0 && Number(ref.workspaceId) !== Number(workspaceId),
+      )
+      if (foreignRef) return '参考素材属于其他团队，请从当前团队素材库重新选择'
       const imageRefCount = prospectiveRefs.filter((ref) => ref.kind === 'image').length
       const videoRefCount = prospectiveRefs.filter((ref) => ref.kind === 'video' || ref.kind === 'timeline').length
       // 上限跟随目标节点所选模型声明的参考图数量，与 CanvasNodePanel 的槽位数保持同一来源——
@@ -2542,7 +2551,7 @@ function CanvasInner() {
       return null
     },
     // allowedSourceKinds 现在真的是模块常量，不必再进依赖数组，也不再需要 exhaustive-deps 豁免
-    [hasEdgeBetween],
+    [hasEdgeBetween, workspaceId],
   )
 
   const startPickRef = useCallback((targetId: string, slotIndex?: number) => {
@@ -4815,14 +4824,49 @@ function CanvasInner() {
       const submitMaxImageRefs =
         getModelReferenceImageLimit(buildModelRestrictionSummary(submitModel?.source).constraints) ?? DEFAULT_MAX_REFS
       if (generate.kind === 'video') {
-        const validationError = validateCanvasVideoInputs({
+        const videoValidationArgs = {
           operationCode: generate.operationCode,
           videoMode: generate.videoMode,
           sourceRefs: generate.sourceRefs || [],
+          workspaceId,
           maxImageRefs: submitMaxImageRefs,
-          // 参考生视频模型（如 HappyHorse r2v）声明了最少参考图数，没图提交后端只会回「素材数量不足」
           minImageRefs: getModelReferenceImageMinimum(submitModel?.source, 'video.generate'),
           modelLabel: submitModel?.displayName,
+        }
+        const inputError = validateCanvasVideoInputs(videoValidationArgs)
+        if (inputError) {
+          showToast(inputError, 'error')
+          return
+        }
+        const editModeError = getVideoEditModeConflict({
+          prompt: generate.prompt,
+          mode: generate.params?.mode,
+          hasVideoInput: generate.inputAssets.some((asset) => asset.role === 'video'),
+          supportsTaskMode: parseParamsSchema(submitModel).some(isVideoTaskModeField),
+        })
+        if (editModeError) {
+          showToast(editModeError, 'error')
+          return
+        }
+        const videoAssetIds = generate.inputAssets
+          .filter((asset) => asset.role === 'video')
+          .map((asset) => Number(asset.asset_id))
+        const maxVideoRefSec = resolveRefVideoLimits(submitModel?.source).maxDurationSec
+        let videoRefTotalSec = 0
+        if (maxVideoRefSec !== null && videoAssetIds.length) {
+          const durations = await Promise.all(
+            videoAssetIds.map((assetId) => readTimelineAssetDurationSec(assetId, Number(workspaceId || 0))),
+          )
+          if (durations.some((seconds) => seconds <= 0)) {
+            showToast('无法读取参考视频时长，请确认素材可播放后重试', 'error')
+            return
+          }
+          videoRefTotalSec = durations.reduce((sum, seconds) => sum + seconds, 0)
+        }
+        const validationError = validateCanvasVideoInputs({
+          ...videoValidationArgs,
+          maxVideoRefSec: maxVideoRefSec ?? undefined,
+          videoRefTotalSec,
         })
         if (validationError) {
           showToast(validationError, 'error')
@@ -4859,6 +4903,15 @@ function CanvasInner() {
           showToast(imageValidationError, 'error')
           return
         }
+      }
+      const assetError = await preflightCanvasAssets({
+        workspaceId: Number(workspaceId || 0),
+        sourceRefs: generate.sourceRefs || [],
+        inputAssets: generate.inputAssets || [],
+      })
+      if (assetError) {
+        showToast(assetError, 'error')
+        return
       }
       // 素材角色以模型 schema 为准，与智能成片同口径；模型查不到时退回历史默认值。
       // 身份约束必须在这里注入：润色只改用户提示词，约束由提交环节兜底，避免被润色覆盖。
@@ -7349,36 +7402,38 @@ function CanvasInner() {
           </div>
         </div>
 
-        {/* 操作手册：画布页没有共享顶栏，单独挂在右上角、分享按钮左侧 */}
-        <TutorialButton variant="pill" className="canvas-tutorial-btn" />
+        {/* 画布级帮助与分享属于全局操作，组成一个自适应操作组，避免写死按钮间偏移。 */}
+        <div className="canvas-global-actions">
+          <TutorialButton variant="pill" tutorialKey="canvas" />
 
-        {/* 分享入口：只对已落库的画布开放——没有 canvasId 就没有可分享的对象 */}
-        {canvasId > 0 && workspaceId > 0 && (
-          <button
-            className="canvas-share-btn"
-            onClick={() => setShareOpen(true)}
-            title="分享这块画布"
-            aria-label="分享这块画布"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+          {/* 分享入口：只对已落库的画布开放——没有 canvasId 就没有可分享的对象 */}
+          {canvasId > 0 && workspaceId > 0 && (
+            <button
+              className="canvas-share-btn"
+              onClick={() => setShareOpen(true)}
+              title="分享这块画布"
+              aria-label="分享这块画布"
             >
-              <circle cx="18" cy="5" r="3" />
-              <circle cx="6" cy="12" r="3" />
-              <circle cx="18" cy="19" r="3" />
-              <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" />
-            </svg>
-            <span>分享</span>
-          </button>
-        )}
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="18" cy="5" r="3" />
+                <circle cx="6" cy="12" r="3" />
+                <circle cx="18" cy="19" r="3" />
+                <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" />
+              </svg>
+              <span>分享</span>
+            </button>
+          )}
+        </div>
 
         {shareOpen && canvasId > 0 && workspaceId > 0 && (
           <CanvasShareDialog
@@ -8323,6 +8378,9 @@ function CanvasInner() {
               onVideoModeChange={handleVideoModeChange}
               onModelChange={handleModelChange}
               onGenerate={handleNodeGenerate}
+              onPreflightAssets={(sourceRefs, inputAssets) =>
+                preflightCanvasAssets({ workspaceId: Number(workspaceId || 0), sourceRefs, inputAssets })
+              }
               onInsufficientCredits={handleInsufficientCredits}
               onSaveText={handleSaveNodeText}
               onPromptChange={handleNodePromptChange}

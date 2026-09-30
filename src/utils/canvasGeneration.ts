@@ -190,6 +190,7 @@ export function validateCanvasVideoInputs(args: {
   operationCode: string
   videoMode?: CanvasVideoMode
   sourceRefs: CanvasGenerationSourceRef[]
+  workspaceId?: number
   /** 当前模型声明的参考图上限；未声明时沿用画布默认的 5 张。 */
   maxImageRefs?: number
   /**
@@ -214,8 +215,8 @@ export function validateCanvasVideoInputs(args: {
 
   const maxVideoSec = Number(args.maxVideoRefSec) || 0
   const totalVideoSec = Number(args.videoRefTotalSec) || 0
-  if (maxVideoSec > 0 && totalVideoSec > maxVideoSec + 0.05) {
-    return `当前模型最多读取 ${maxVideoSec} 秒的参考视频（已连接约 ${Math.round(totalVideoSec)} 秒），请上传或裁切不超过 ${maxVideoSec} 秒的视频`
+  if (maxVideoSec > 0 && totalVideoSec > maxVideoSec) {
+    return `当前模型最多读取 ${maxVideoSec} 秒的参考视频（已连接约 ${Math.ceil(totalVideoSec)} 秒），请上传或裁切不超过 ${maxVideoSec} 秒的视频`
   }
 
   const mediaRefs = (args.sourceRefs || []).filter((ref) => ref.kind !== 'text')
@@ -230,6 +231,12 @@ export function validateCanvasVideoInputs(args: {
   // 素材必须已落库：本地还没上传完的连线没有 assetId，提交上去就是一个拿不到输入的付费任务
   if (mediaRefs.some((ref) => !hasUsableAsset(ref))) {
     return '参考素材尚未上传完成，请稍候或重新选择素材后重试'
+  }
+  if (
+    Number(args.workspaceId) > 0 &&
+    mediaRefs.some((ref) => Number(ref.workspaceId || 0) > 0 && Number(ref.workspaceId) !== Number(args.workspaceId))
+  ) {
+    return '参考素材不属于当前工作空间，请重新选择素材后重试'
   }
   // 图片和视频之外的来源不能作为视频输入
   if (mediaRefs.some((ref) => ref.kind !== 'image' && !isCanvasVideoSourceKind(ref.kind))) {

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   distributionAccess: { isDistributor: true },
+  openJoinTeam: vi.fn(),
   openTeamManage: vi.fn(),
   navigate: vi.fn(),
   renameTeam: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ showToast: mocks.showToast }),
 }))
 vi.mock('@/stores/ui', () => ({
+  openJoinTeam: mocks.openJoinTeam,
   openTeamManage: mocks.openTeamManage,
   useUiStore: (selector: (state: any) => unknown) =>
     selector({
@@ -122,7 +124,7 @@ describe('PersonalPanel', () => {
     expect(screen.queryByRole('button', { name: /邀请返利/ })).not.toBeInTheDocument()
   })
 
-  it('shows role, membership usage, and switches one non-active workspace before closing', async () => {
+  it('shows role, membership usage, and switches one non-active workspace without closing the panel', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
     const onMember = vi.fn()
@@ -133,7 +135,7 @@ describe('PersonalPanel', () => {
     expect(screen.getByRole('button', { name: 'Alpha团队' })).toHaveAttribute('aria-current', 'true')
     await user.click(screen.getByRole('button', { name: 'Beta团队' }))
     expect(mocks.safeSwitch).toHaveBeenCalledWith(22)
-    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
 
     await user.click(screen.getByRole('button', { name: /团队版/ }))
     expect(onMember).toHaveBeenCalledTimes(1)
@@ -146,7 +148,7 @@ describe('PersonalPanel', () => {
 
     expect(screen.queryByText('机密团队名称')).not.toBeInTheDocument()
     expect(screen.getAllByText('团队空间')).toHaveLength(2)
-    expect(screen.queryByRole('button', { name: '团队成员' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '邀请成员' })).not.toBeInTheDocument()
   })
 
   it('only exposes rename for team workspaces and renames the selected team without switching', async () => {
@@ -160,11 +162,56 @@ describe('PersonalPanel', () => {
     render(<PersonalPanel />)
 
     expect(screen.queryByRole('button', { name: '重命名团队 个人空间' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '重命名团队 Beta团队' }))
+    expect(screen.queryByRole('button', { name: '重命名团队 Beta团队' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '重命名团队 Alpha团队' }))
 
-    await waitFor(() => expect(mocks.renameTeam).toHaveBeenCalledWith(22, 'Beta新名称'))
+    await waitFor(() => expect(mocks.renameTeam).toHaveBeenCalledWith(21, 'Beta新名称'))
     expect(mocks.safeSwitch).not.toHaveBeenCalled()
     expect(mocks.showToast).toHaveBeenCalledWith('团队名称已更新', 'success')
+  })
+
+  it('moves team actions into the personal panel', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<PersonalPanel onClose={onClose} />)
+
+    await user.click(screen.getByRole('button', { name: '邀请成员' }))
+    expect(mocks.openTeamManage).toHaveBeenCalledWith('members')
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: '加入团队' }))
+    expect(mocks.openJoinTeam).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledTimes(2)
+
+    await user.click(screen.getByRole('button', { name: '邀请成员（当前团队）' }))
+    expect(mocks.openTeamManage).toHaveBeenCalledTimes(2)
+    expect(mocks.openTeamManage).toHaveBeenLastCalledWith('members')
+    expect(onClose).toHaveBeenCalledTimes(3)
+  })
+
+  it('opens team data from the explicit action and supports double-click as a shortcut', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<PersonalPanel onClose={onClose} />)
+
+    await user.click(screen.getByRole('button', { name: '查看团队数据 Beta团队' }))
+    expect(mocks.safeSwitch).toHaveBeenCalledWith(22)
+    expect(mocks.navigate).toHaveBeenLastCalledWith('/team')
+
+    vi.clearAllMocks()
+    await user.dblClick(screen.getByRole('button', { name: 'Alpha团队' }))
+    expect(mocks.navigate).toHaveBeenLastCalledWith('/team')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses member management wording for a team administrator', () => {
+    mocks.state.currentMember = { role: 'admin', workspace_id: 21 }
+    mocks.state.currentWorkspace = { id: 21, name: 'Alpha团队', owner_user_id: 999, type: 'team' }
+    render(<PersonalPanel />)
+
+    expect(screen.getByRole('button', { name: '成员管理' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '邀请成员' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '邀请成员（当前团队）' })).not.toBeInTheDocument()
   })
 
   it('deduplicates rename confirmation while a rename is pending', async () => {

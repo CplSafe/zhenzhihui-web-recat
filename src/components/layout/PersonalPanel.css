@@ -39,6 +39,13 @@
   background: #eef8f5;
   transform: translateY(-1px);
 }
+.ppl__head-action:focus-visible,
+.ppl__card:focus-visible,
+.ppl__ws-item:focus-visible,
+.ppl__join-team:focus-visible {
+  outline: 2px solid #16b98a;
+  outline-offset: 2px;
+}
 .ppl__head-action img {
   display: block;
   width: 18px;
@@ -353,7 +360,7 @@
 }
 .ppl__ws-item-name {
   min-width: 0;
-  padding-right: 34px;
+  padding-right: 72px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -370,7 +377,8 @@
   border-color: #16b98a;
   background: radial-gradient(circle at center, #16b98a 0 6px, #fff 7px 8px, #16b98a 9px);
 }
-.ppl__ws-rename {
+.ppl__ws-rename,
+.ppl__ws-dashboard {
   position: absolute;
   top: 50%;
   right: 46px;
@@ -392,19 +400,35 @@
     background 0.15s ease,
     box-shadow 0.15s ease;
 }
+.ppl__ws-dashboard {
+  right: 46px;
+  color: #647084;
+}
+.ppl__ws-row:has(.ppl__ws-rename) .ppl__ws-dashboard {
+  right: 80px;
+}
+.ppl__ws-rename {
+  right: 46px;
+}
 .ppl__ws-row:hover .ppl__ws-rename,
-.ppl__ws-rename:focus-visible {
+.ppl__ws-rename:focus-visible,
+.ppl__ws-row:hover .ppl__ws-dashboard,
+.ppl__ws-dashboard:focus-visible {
   opacity: 1;
 }
-.ppl__ws-rename:hover:not(:disabled) {
+.ppl__ws-rename:hover:not(:disabled),
+.ppl__ws-dashboard:hover:not(:disabled) {
   background: #fff;
+  color: #16a77d;
   box-shadow: 0 3px 10px rgba(49, 89, 77, 0.16);
 }
-.ppl__ws-rename:focus-visible {
+.ppl__ws-rename:focus-visible,
+.ppl__ws-dashboard:focus-visible {
   outline: 2px solid #16b98a;
   outline-offset: 2px;
 }
-.ppl__ws-rename:disabled {
+.ppl__ws-rename:disabled,
+.ppl__ws-dashboard:disabled {
   cursor: wait;
   opacity: 0.55;
 }
@@ -415,8 +439,63 @@
   object-fit: contain;
 }
 @media (hover: none) {
-  .ppl__ws-rename {
+  .ppl__ws-rename,
+  .ppl__ws-dashboard {
     opacity: 1;
+  }
+}
+
+.ppl__team-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+.ppl__team-actions.has-invite {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.ppl__join-team {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid #e2e6ed;
+  border-radius: 12px;
+  background: #fff;
+  color: #70798b;
+  font-size: 15px;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.ppl__join-team:hover {
+  color: #16a77d;
+  border-color: #bfe5d8;
+  background: #f6fcfa;
+}
+.ppl__invite-team {
+  color: #0fa579;
+  border-color: #bfe5d8;
+  background: #f0faf7;
+}
+.ppl__invite-team:hover {
+  color: #087f5b;
+  border-color: #8fd3bd;
+  background: #e5f7f1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ppl__head-action,
+  .ppl__bar-fill,
+  .ppl__ws-row,
+  .ppl__ws-rename,
+  .ppl__ws-dashboard,
+  .ppl__join-team {
+    transition: none;
   }
 }
 

@@ -26,7 +26,6 @@ import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
 import { prefetchRoute } from '@/router/routePrefetch'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
-import SidebarTeamGroup from './SidebarTeamGroup'
 import SettingsMenu from './SettingsMenu'
 import './AppSidebar.css'
 
@@ -226,9 +225,6 @@ export default function AppSidebar({ activeKey = '', onNavigate, open = false, o
               {group.items.filter((item) => !HIDDEN_SIDEBAR_ITEM_KEYS.has(item.key)).map(renderItem)}
             </div>
           ))}
-
-          {/* 团队：当前空间下拉 + 空间切换浮层 + 数据统计/团队管理(团队空间) */}
-          <SidebarTeamGroup collapsed={collapsed} />
 
           {SHOW_TEMPLATE_GROUP ? (
             <div className="app-sidebar__group app-sidebar__template-group">

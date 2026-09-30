@@ -1,4 +1,4 @@
-/* 「操作手册」按钮：topbar 档与顶栏「分享链接」同风格；pill 档与画布页「分享」胶囊同风格 */
+/* 「操作教程」按钮：topbar 档与顶栏文字入口同风格；pill 档与画布页「分享」胶囊同风格 */
 .tutorial-btn {
   display: inline-flex;
   align-items: center;
@@ -33,6 +33,20 @@
 }
 .tutorial-btn--pill:hover {
   border-color: #11a98a;
+  color: #11a98a;
+}
+.tutorial-btn--entry {
+  flex: none;
+  padding: 6px 2px;
+  border: none;
+  background: transparent;
+  color: #555d69;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 0.18s ease;
+}
+.tutorial-btn--entry:hover {
   color: #11a98a;
 }
 .tutorial-btn:focus-visible {
@@ -134,10 +148,6 @@
     flex-direction: column;
     align-items: stretch;
     text-align: center;
-  }
-  .tutorial-btn--topbar span,
-  .tutorial-btn--pill span {
-    display: none;
   }
   .tutorial-modal__mask {
     padding: 12px;

@@ -198,9 +198,7 @@ export default function CreativeParamsDropdown({
           )}
 
           {options.durations.length > 0 && (
-            <div
-              className={`${barStyles.field} ${styles.field}${value.durationSec <= 0 ? ` ${styles.fieldAttention}` : ''}`}
-            >
+            <div className={`${barStyles.field} ${styles.field}`}>
               <span className={barStyles.label}>
                 视频时长{' '}
                 <span className={barStyles.labelValue}>
