@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveCanvasShareMediaUrl } from '@/utils/canvasShareMedia'
+import { resolveCanvasShareMediaUrl, resolvePublicCanvasNodeMedia } from '@/utils/canvasShareMedia'
 
 describe('resolveCanvasShareMediaUrl', () => {
   it('prefers anonymous share media over the editor-only asset URL', () => {
@@ -23,5 +23,36 @@ describe('resolveCanvasShareMediaUrl', () => {
     expect(
       resolveCanvasShareMediaUrl({ publicPosterUrl: '/shared/poster.png', posterUrl: '/private/poster.png' }, 'poster'),
     ).toBe('/shared/poster.png')
+  })
+})
+
+describe('resolvePublicCanvasNodeMedia', () => {
+  it('routes node assets through the anonymous share endpoint instead of the login-only download URL', () => {
+    expect(
+      resolvePublicCanvasNodeMedia('tok/en', {
+        assetId: 42,
+        posterAssetId: 43,
+        resultUrl: '/api/v1/assets/42/download?workspace_id=7',
+      }),
+    ).toEqual({
+      url: '/api/v1/canvas-shares/tok%2Fen/assets/42',
+      posterUrl: '/api/v1/canvas-shares/tok%2Fen/assets/43',
+    })
+  })
+
+  it('leaves nodes without a usable asset id to the existing URL fallback', () => {
+    expect(resolvePublicCanvasNodeMedia('t', { resultUrl: 'https://cdn.example.com/a.png' })).toEqual({
+      url: '',
+      posterUrl: '',
+    })
+    expect(resolvePublicCanvasNodeMedia('t', { assetId: 0, posterAssetId: 'abc' })).toEqual({ url: '', posterUrl: '' })
+    expect(resolvePublicCanvasNodeMedia('', { assetId: 42 })).toEqual({ url: '', posterUrl: '' })
+    expect(resolvePublicCanvasNodeMedia('t', undefined)).toEqual({ url: '', posterUrl: '' })
+  })
+
+  it('feeds resolveCanvasShareMediaUrl ahead of the editor-only resultUrl', () => {
+    const media = resolvePublicCanvasNodeMedia('t', { assetId: 42 })
+    const data = { resultUrl: '/api/v1/assets/42/download?workspace_id=7', shareMediaUrl: media.url }
+    expect(resolveCanvasShareMediaUrl(data)).toBe('/api/v1/canvas-shares/t/assets/42')
   })
 })

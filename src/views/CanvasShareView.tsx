@@ -22,7 +22,7 @@ import '@xyflow/react/dist/style.css'
 import './CanvasShareView.css'
 import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
 import { elementsToGraph } from '@/utils/canvasElements'
-import { resolveCanvasShareMediaUrl } from '@/utils/canvasShareMedia'
+import { resolveCanvasShareMediaUrl, resolvePublicCanvasNodeMedia } from '@/utils/canvasShareMedia'
 import type { CanvasElementMutation } from '@/api/canvasApi'
 import { fetchAllPublicCanvasElements, fetchPublicCanvas, type PublicCanvasShare } from '@/api/canvasShare'
 
@@ -144,10 +144,20 @@ export default function CanvasShareView() {
     const { nodes, edges } = elementsToGraph(elements)
     return {
       // 自定义只读节点不套 React Flow 默认卡片的边框/内边距；保留原尺寸与连接点。
-      nodes: nodes.map((node) => ({ ...node, type: 'share', draggable: false, selectable: false })),
+      nodes: nodes.map((node) => {
+        // 节点自带的 resultUrl 要登录才能取，这里换算成分享口令下的匿名地址交给 ShareNode
+        const media = resolvePublicCanvasNodeMedia(token, node.data)
+        return {
+          ...node,
+          data: { ...node.data, shareMediaUrl: media.url, sharePosterUrl: media.posterUrl },
+          type: 'share',
+          draggable: false,
+          selectable: false,
+        }
+      }),
       edges: edges.map(({ markerEnd: _markerEnd, ...rest }) => ({ ...rest, type: CANVAS_ARROW_EDGE_TYPE })),
     }
-  }, [elements])
+  }, [elements, token])
 
   return (
     <div className="share-view">
