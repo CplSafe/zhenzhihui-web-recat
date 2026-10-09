@@ -101,6 +101,7 @@ const SpaceDashboardView = lazy(routeImporters.team)
 const DistributionView = lazy(() => import('../views/DistributionView'))
 /** AI 创作台（图片 / 视频生成 + 智能分镜）路由组件。 */
 const StudioCreateView = lazy(routeImporters.studio)
+const AudioCreateView = lazy(routeImporters.audio)
 /** 创意画布路由组件。 */
 const CanvasView = lazy(routeImporters.canvas)
 /** 无限画布列表路由组件。 */
@@ -328,6 +329,7 @@ export const router = createBrowserRouter([
         element: lazyPage(<WorkspaceScopedSmartCreateRoute flowMode="real-person" />),
       },
       // AI 创作台：与智能成片同为浏览型创作页，游客可进入并配置，生成动作在页面内鉴权。
+      { path: 'audio', element: lazyPage(<AudioCreateView />) },
       { path: 'studio', element: lazyPage(<StudioCreateView />), handle: { requiresAuth: false } },
       { path: 'hot-copy', element: lazyPage(<WorkspaceScopedHotCopyRoute />), handle: { requiresAuth: false } },
       { path: 'hot-copy/:id', element: lazyPage(<WorkspaceScopedHotCopyRoute />), handle: { requiresAuth: false } },

@@ -63,6 +63,7 @@ const GROUPS: SidebarGroup[] = [
       { key: 'creative', label: '爆款成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
       { key: 'studio', label: 'AI 创作台', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
       { key: 'real-person-video', label: '真人成片', icon: smartIcon, activeIcon: smartActiveIcon, iconSize: 16 },
+      { key: 'audio', label: '音频创作', icon: resourcesIcon, activeIcon: resourcesActiveIcon, iconSize: 16 },
       { key: 'canvas', label: '无限画布', icon: canvasIcon, activeIcon: canvasActiveIcon, iconSize: 16 },
       { key: 'video-edit', label: '视频编辑', icon: videoEditIcon, iconSize: 16 },
     ],

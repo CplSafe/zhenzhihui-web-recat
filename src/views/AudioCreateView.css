@@ -1,0 +1,226 @@
+.audio-view {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg-app, #f7f8fa);
+  color: var(--color-text-primary, #252a31);
+}
+.audio-view__main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+.audio-view__body {
+  overflow: auto;
+  padding: 28px;
+  min-height: 0;
+}
+.audio-view__heading,
+.audio-results > header,
+.audio-result > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.audio-view h1 {
+  font-size: 24px;
+  margin: 0 0 8px;
+}
+.audio-view h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.audio-view p {
+  line-height: 1.7;
+}
+.audio-view__heading p,
+.audio-hint,
+.audio-empty p,
+.audio-view small {
+  color: #6c7380;
+}
+.audio-view__columns {
+  display: grid;
+  grid-template-columns: minmax(320px, 460px) minmax(0, 1fr);
+  gap: 24px;
+  margin-top: 24px;
+  align-items: start;
+}
+.audio-console,
+.audio-results {
+  background: var(--color-bg-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  padding: 22px;
+  min-width: 0;
+}
+.audio-view button,
+.audio-view select,
+.audio-view input,
+.audio-view textarea {
+  font: inherit;
+  border: 1px solid #d8dce2;
+  border-radius: 6px;
+  padding: 9px 12px;
+  background: #fff;
+  color: inherit;
+}
+.audio-view button {
+  cursor: pointer;
+}
+.audio-view button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.audio-view :focus-visible {
+  outline: 2px solid #159f88;
+  outline-offset: 2px;
+}
+.audio-tabs {
+  display: flex;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 20px;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+.audio-tabs button {
+  flex: 1;
+  border: 0;
+}
+.audio-tabs button[aria-selected='true'] {
+  background: #e6f5f0;
+  color: #08705e;
+  font-weight: 600;
+}
+.audio-console label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  min-width: 0;
+}
+.audio-console textarea {
+  resize: vertical;
+  min-height: 150px;
+}
+.audio-console input,
+.audio-console select,
+.audio-console textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.audio-console input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: #159f88;
+}
+.audio-params {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+  margin-top: 20px;
+}
+.audio-hint {
+  font-size: 12px;
+  background: #f5f8f7;
+  padding: 12px;
+  border-radius: 6px;
+}
+.audio-submit {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  margin-top: 16px;
+}
+.audio-view .audio-primary {
+  background: #138c77;
+  color: #fff;
+  border-color: #138c77;
+  font-weight: 600;
+  min-height: 42px;
+}
+.audio-view .audio-error {
+  color: #ba3434;
+  overflow-wrap: anywhere;
+}
+.audio-empty {
+  padding: 70px 12px;
+  text-align: center;
+}
+.audio-empty h3 {
+  font-size: 16px;
+}
+.audio-result {
+  padding: 20px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+.audio-result p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  max-height: 160px;
+  overflow: auto;
+}
+.audio-result > div:first-child span {
+  font-size: 12px;
+  color: #6c7380;
+}
+.audio-output {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.audio-output audio {
+  width: min(100%, 420px);
+  height: 42px;
+}
+.audio-output a {
+  color: #08705e;
+  font-size: 13px;
+}
+@media (max-width: 1000px) {
+  .audio-view__columns {
+    grid-template-columns: 1fr;
+  }
+  .audio-empty {
+    padding: 30px 12px;
+  }
+}
+@media (max-width: 600px) {
+  .audio-view__body {
+    padding: 16px;
+  }
+  .audio-console,
+  .audio-results {
+    padding: 16px;
+  }
+  .audio-view__heading {
+    align-items: flex-start;
+  }
+  .audio-view__heading p {
+    font-size: 13px;
+  }
+  .audio-view__heading > button {
+    white-space: nowrap;
+  }
+  .audio-view h1 {
+    font-size: 21px;
+  }
+}
+
+.audio-advanced {
+  margin: 8px 0 16px;
+  font-size: 13px;
+}
+.audio-advanced summary {
+  cursor: pointer;
+  color: #526079;
+  padding: 8px 0;
+}

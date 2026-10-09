@@ -1001,3 +1001,59 @@ describe('CanvasNodePanel 提示词输入框：叠层对齐、写回防抖、清
     expect(screen.getByText('一只橘猫坐在窗台上')).toBeInTheDocument()
   })
 })
+
+describe('GPT Image editing controls', () => {
+  const fields = [
+    { name: 'quality', type: 'select', default: 'auto', options: ['auto', 'low', 'medium', 'high'] },
+    { name: 'size', type: 'string', default: '' },
+    { name: 'conversation', type: 'bool', default: false },
+  ]
+  it('submits a persisted mask separately and continues the previous successful image conversation', async () => {
+    const user = userEvent.setup()
+    const onGenerate = vi.fn()
+    const model = modelWithFields(fields)
+    model.source = { ...model.source, provider: 'openai' } as typeof model.source
+    renderPanel(
+      [model],
+      {
+        ...imageNodeWithReference(),
+        params: { mask_asset_id: 88, quality: 'hd', size: '2048x1152', conversation: true },
+        taskId: 45,
+        taskStatus: 'succeeded',
+        generationRequest: { params: { conversation: true } },
+      },
+      { onGenerate },
+    )
+    expect(screen.getByLabelText('上传编辑蒙版')).toBeInTheDocument()
+    await user.click(screen.getByTitle('发送生成'))
+    expect(onGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ quality: 'high', size: '2048x1152', previous_task_id: 45 }),
+        inputAssets: [
+          { asset_id: 77, role: 'reference_image' },
+          { asset_id: 88, role: 'mask' },
+        ],
+      }),
+    )
+  })
+  it('does not send an old mask to a different provider or reuse a non-conversation task', async () => {
+    const user = userEvent.setup()
+    const onGenerate = vi.fn()
+    renderPanel(
+      [modelWithFields(fields)],
+      {
+        ...imageNodeWithReference(),
+        params: { mask_asset_id: 88, conversation: true },
+        taskId: 45,
+        taskStatus: 'succeeded',
+      },
+      { onGenerate },
+    )
+    expect(screen.queryByLabelText('上传编辑蒙版')).not.toBeInTheDocument()
+    await user.click(screen.getByTitle('发送生成'))
+    const submitted = onGenerate.mock.calls[0]![0]
+    expect(submitted.inputAssets).toEqual([{ asset_id: 77, role: 'reference_image' }])
+    expect(submitted.params).not.toHaveProperty('previous_task_id')
+    expect(submitted.params).not.toHaveProperty('mask_asset_id')
+  })
+})

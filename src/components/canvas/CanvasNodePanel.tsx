@@ -9,7 +9,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
 import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
-import { estimateAiTaskCost } from '@/api/business'
+import { estimateAiTaskCost, uploadAssetFile } from '@/api/business'
 import { creditsYuanHint, creditsYuanLabel } from '@/utils/creditsYuan'
 import { pickRememberedCanvasModel } from '@/utils/canvasLastModel'
 import {
@@ -238,6 +238,10 @@ export function parseParamsSchema(model: { source?: unknown } | undefined): Para
 
 /** 按字段类型归一化参数值（default 或用户选择），保证回传类型正确。 */
 function normalizeFieldValue(field: ParamsSchemaField, value: unknown): unknown {
+  if (field.name === 'quality' && field.options?.includes('medium')) {
+    if (value === 'standard') value = 'medium'
+    if (value === 'hd') value = 'high'
+  }
   const canonicalValue = resolveCanvasModelParamOption(field.options, value, field.default)
   if (isBooleanField(field)) {
     return (
@@ -388,6 +392,7 @@ export interface CanvasNodeInfo {
   operationCode?: string
   /** 节点持久化的 params（生成时写入，刷新后回显/复用） */
   params?: Record<string, unknown>
+  generationRequest?: { params?: Record<string, unknown> }
   generationIntent?: 'edit' | 'new-model'
   taskId?: number
   taskRunId?: string
@@ -1166,9 +1171,16 @@ export default function CanvasNodePanel({
    * 必须定义在 handleFieldChange 之前：useCallback 的依赖数组在渲染期就求值，
    * 定义在后面会直接撞上 const 的暂时性死区，整块面板崩掉。
    */
+  const supportsMask =
+    kind === 'image' && selectedModel?.source?.provider === 'openai' && operationCode === 'image.image_to_image'
+  const maskAssetId = supportsMask ? Number(node?.params?.mask_asset_id || 0) : 0
+  const [maskUploading, setMaskUploading] = useState(false)
+  const activeNodeId = useRef(node?.id)
+  activeNodeId.current = node?.id
   const buildSchemaParams = useCallback(
     (values: Record<string, unknown>): Record<string, unknown> => {
       const params: Record<string, unknown> = {}
+      if (maskAssetId > 0) params.mask_asset_id = maskAssetId
       for (const f of schemaFields) {
         if (kind === 'text' && ['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'maxTokens'].includes(f.name)) {
           continue
@@ -1177,7 +1189,7 @@ export default function CanvasNodePanel({
       }
       return params
     },
-    [schemaFields, kind],
+    [schemaFields, kind, maskAssetId],
   )
 
   // 字段值变更：回写状态；比例字段（ratio/aspect_ratio/aspectRatio）同步节点比例（保持节点尺寸联动）
@@ -1253,7 +1265,17 @@ export default function CanvasNodePanel({
   }, [sourceVideoKey])
   const schemaParams = useMemo<Record<string, unknown>>(() => {
     const params = buildSchemaParams(fieldValues)
-    if (kind !== 'video') return params
+    if (kind !== 'video') {
+      if (
+        params.conversation === true &&
+        node?.generationRequest?.params?.conversation === true &&
+        Number(node.taskId) > 0 &&
+        ['succeeded', 'completed', 'success'].includes(String(node.taskStatus))
+      ) {
+        params.previous_task_id = node.taskId
+      }
+      return params
+    }
     const referenceMode = canvasVideoReferenceMode(videoMode)
     if (referenceMode !== undefined) {
       // 从未过滤的 schema 里找（schemaFields 已把它剔除），按模型声明的真实字段名下发。
@@ -1270,6 +1292,9 @@ export default function CanvasNodePanel({
     taskModeFieldName,
     hasVideoInput,
     sourceVideoSeconds,
+    node?.generationRequest,
+    node?.taskId,
+    node?.taskStatus,
   ])
 
   /**
@@ -1328,10 +1353,11 @@ export default function CanvasNodePanel({
     () => (selectedModel ? resolveModelInputAssetRoleSafe(selectedModel.source, operationCode) : ''),
     [selectedModel, operationCode],
   )
-  const inputAssets = useMemo(
-    () => buildCanvasInputAssets(sourceRefs, operationCode, selfVideoAssetId, declaredImageRole),
-    [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole],
-  )
+  const inputAssets = useMemo(() => {
+    const assets = buildCanvasInputAssets(sourceRefs, operationCode, selfVideoAssetId, declaredImageRole)
+    if (maskAssetId > 0) assets.push({ asset_id: maskAssetId, role: 'mask' })
+    return assets
+  }, [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole, maskAssetId])
   /**
    * 参考视频总时长：画布节点不存视频时长，这里按视频地址读一次元数据（preload=metadata，只拉文件头）。
    * 改片时节点自己那条视频也算进去——它同样会作为参考视频下发。
@@ -1501,7 +1527,7 @@ export default function CanvasNodePanel({
       onInsufficientCredits?.()
       return
     }
-    if (taskRunning || checkingAssets) return
+    if (taskRunning || checkingAssets || maskUploading) return
     if (onPreflightAssets && inputAssets.length) {
       setCheckingAssets(true)
       try {
@@ -1761,6 +1787,58 @@ export default function CanvasNodePanel({
           />
         )}
       </div>
+
+      {supportsMask && (
+        <div>
+          <label>
+            编辑蒙版（可选）
+            <input
+              type="file"
+              accept="image/png"
+              aria-label="上传编辑蒙版"
+              disabled={taskRunning || maskUploading}
+              onChange={async (event) => {
+                const file = event.target.files?.[0]
+                event.target.value = ''
+                if (!file) return
+                if (file.type !== 'image/png' || file.size >= 4 * 1024 * 1024) {
+                  showToast('请使用小于 4 MB 的 PNG 蒙版', 'error')
+                  return
+                }
+                const targetNode = node?.id
+                setMaskUploading(true)
+                try {
+                  const uploaded = await uploadAssetFile({ workspaceId, file })
+                  if (activeNodeId.current === targetNode)
+                    onParamsChange?.({ ...buildSchemaParams(fieldValues), mask_asset_id: uploaded.asset.id })
+                } catch {
+                  showToast('蒙版上传失败，请重试', 'error')
+                } finally {
+                  setMaskUploading(false)
+                }
+              }}
+            />
+          </label>
+          <small>透明区域将被修改；尺寸须与第一张参考图一致。</small>
+          {maskUploading && <span role="status">蒙版上传中…</span>}
+          {maskAssetId > 0 && (
+            <div>
+              <img
+                src={assetStreamUrl(maskAssetId, workspaceId)}
+                alt="编辑蒙版"
+                style={{ width: 48, height: 48, objectFit: 'contain' }}
+              />
+              <button
+                type="button"
+                disabled={taskRunning || maskUploading}
+                onClick={() => onParamsChange?.({ ...buildSchemaParams(fieldValues), mask_asset_id: 0 })}
+              >
+                移除蒙版
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/*
         继承自上游文本节点、但还没落进输入框的那部分。
@@ -2508,6 +2586,14 @@ function SchemaFieldMenu({
                     />
                     <span className={styles.sliderValue}>{formatFieldValue(f, current)}</span>
                   </div>
+                ) : f.type === 'string' && !f.options?.length ? (
+                  <input
+                    type="text"
+                    aria-label={f.displayName}
+                    value={String(current ?? '')}
+                    placeholder={f.help || f.displayName}
+                    onChange={(e) => onFieldChange?.(f.name, e.target.value)}
+                  />
                 ) : (
                   <div className={styles.videoBtnGroup}>
                     {(f.options || []).map((o) => (

@@ -33,8 +33,10 @@ export function buildStoryboardImageParams(model, ratio) {
     params[ratioField.name] = pickClosestRatioOption(requestedRatio, options)
   }
 
-  if (hasParam(fields, 'quality')) {
-    params.quality = 'low'
+  const qualityField = fields.find((field) => field?.name === 'quality')
+  if (qualityField) {
+    const options = Array.isArray(qualityField.options) ? qualityField.options : []
+    params.quality = options.includes('low') ? 'low' : (qualityField.default ?? options[0] ?? 'low')
   }
 
   if (hasParam(fields, 'size')) {
@@ -63,7 +65,7 @@ function getPreferredSize(fields, ratio) {
   const options = Array.isArray(sizeField?.options) ? sizeField.options.map(String) : []
 
   if (!options.length) {
-    return '2K'
+    return sizeField?.default ?? '2K'
   }
 
   if (options.includes('2K')) {

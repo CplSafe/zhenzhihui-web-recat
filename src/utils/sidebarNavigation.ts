@@ -8,6 +8,7 @@ export const SIDEBAR_ROUTE_MAP: Readonly<Record<string, string>> = Object.freeze
   market: '/market',
   canvas: '/canvas',
   studio: '/studio',
+  audio: '/audio',
   creative: '/smart',
   'real-person-video': '/real-person-video',
   'hot-copy': '/hot-copy',

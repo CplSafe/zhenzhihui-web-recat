@@ -821,3 +821,56 @@ describe('AI task polling terminal states and recovery', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+describe('image generation streaming', () => {
+  it('forwards previews and returns the settled task using the image task endpoint', async () => {
+    const preview = { b64_json: 'cHJldmlldw==', output_format: 'png', partial_image_index: 0 }
+    const fetchMock = vi.fn(
+      async (_url: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          `event: image.partial\ndata: ${JSON.stringify(preview)}\n\nevent: image.completed\ndata: {"id":321,"status":"succeeded"}\n\n`,
+          { headers: { 'Content-Type': 'text/event-stream' } },
+        ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const onImagePartial = vi.fn()
+    const result = await createAiTask({
+      workspaceId: 7,
+      capability: 'image',
+      operationCode: 'image.text_to_image',
+      modelVersionId: 92,
+      prompt: 'draw',
+      params: { stream: true },
+      onImagePartial,
+    })
+    expect(result).toMatchObject({ id: 321, status: 'succeeded' })
+    expect(onImagePartial).toHaveBeenCalledWith(preview)
+    const imageRequest = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/v1/ai/tasks?stream=true'))!
+    expect(imageRequest).toBeDefined()
+    expect(JSON.parse(String(imageRequest[1]?.body))).toMatchObject({
+      model_version_id: 92,
+      workspace_id: 7,
+      params: { stream: true },
+    })
+  })
+
+  it.each([
+    'event: image.partial\ndata: {"b64_json":"preview"}\n\n',
+    'event: image.error\ndata: {"message":"生成失败","code_string":"INVALID_PARAMS"}\n\n',
+  ])('rejects failed or truncated image streams', async (events) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(events, { headers: { 'Content-Type': 'text/event-stream' } })),
+    )
+    await expect(
+      createAiTask({
+        workspaceId: 7,
+        capability: 'image',
+        operationCode: 'image.text_to_image',
+        modelVersionId: 92,
+        prompt: 'draw',
+        params: { stream: true },
+      }),
+    ).rejects.toThrow()
+  })
+})
