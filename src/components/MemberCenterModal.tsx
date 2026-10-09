@@ -65,6 +65,7 @@ import {
   tryTrackMemberCenterOrder,
 } from '@/utils/memberCenterPayment'
 import EntryCanvasBg from '@/components/smart/EntryCanvasBg'
+import { formatCredits } from '@/utils/creditsFormat'
 import './MemberCenterModal.css'
 
 /** 套餐能力清单中的一项及其是否包含状态。 */
@@ -366,7 +367,7 @@ function toVM(p: ApiPlan): PlanVM {
     unit,
     origin,
     discount,
-    credits: String(credits),
+    credits: formatCredits(credits),
     creditUnit,
     rate,
     quota,
@@ -481,7 +482,7 @@ function toPkgVM(p: ApiPackage): PackageVM {
     id: Number(p.id),
     name: p.name || '积分包',
     subtitle: '一次性充值,积分永久有效',
-    credits: String(credits),
+    credits: formatCredits(credits),
     price: yuan(p.amount_cents),
     rate,
   }
@@ -1557,7 +1558,7 @@ export default function MemberCenterModal({
       )}
       <>
         <h2 className="mcm-title">会员中心</h2>
-        {balance !== null && <div className="mcm-balance">当前积分余额:{balance}</div>}
+        {balance !== null && <div className="mcm-balance">当前积分余额:{formatCredits(balance)}</div>}
         {expiredBanner && <div className="mcm-expired">会员已到期，请续费后继续使用</div>}
 
         {/* 兜底:同步开窗仍被拦截时,给用户一个可点击的手动支付入口(a 标签由用户点击触发,不会被拦截) */}
@@ -1599,7 +1600,7 @@ export default function MemberCenterModal({
               <span className="mcm-sub-item">并发 {Number(subscription.concurrency)}</span>
             )}
             {Number(subscription.base_credits) > 0 && (
-              <span className="mcm-sub-item">赠 {Number(subscription.base_credits)} 积分</span>
+              <span className="mcm-sub-item">赠 {formatCredits(subscription.base_credits)} 积分</span>
             )}
             {(() => {
               const exp = formatExpiry(subscription)

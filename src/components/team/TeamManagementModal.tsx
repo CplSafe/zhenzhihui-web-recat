@@ -521,16 +521,24 @@ export default function TeamManagementModal({
         onToast?.(`已对 ${name} 设置成员`, 'success')
         await loadMembers()
       } else if (action === 'quota') {
-        const input = await requestConfirm(`为 ${name} 设置单任务积分上限 max_task_credits（非负整数，0 表示不限制）`, {
-          title: '设置配额',
-          inputEnabled: true,
-          inputValue: '',
-          inputLabel: '任务积分上限',
-          inputPlaceholder: '0 表示不限制',
-          confirmLabel: '保存',
-        })
+        const input = await requestConfirm(
+          `为 ${name} 设置单任务积分上限 max_task_credits（非负数，最多 2 位小数，0 表示不限制）`,
+          {
+            title: '设置配额',
+            inputEnabled: true,
+            inputValue: '',
+            inputLabel: '任务积分上限',
+            inputPlaceholder: '0 表示不限制',
+            confirmLabel: '保存',
+          },
+        )
         if (input === null) return
-        const maxTaskCredits = Number(String(input).trim())
+        const trimmed = String(input).trim()
+        if (!/^(\d+(\.\d{1,2})?)?$/.test(trimmed)) {
+          onToast?.('任务积分上限须为非负数，最多 2 位小数', 'error')
+          return
+        }
+        const maxTaskCredits = Number(trimmed)
         await updateWorkspaceMemberQuota({ workspaceId: wsId, userId, maxTaskCredits })
         onToast?.(`已更新 ${name} 的配额`, 'success')
       } else if (action === 'transfer') {

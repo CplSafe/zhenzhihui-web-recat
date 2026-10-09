@@ -46,3 +46,19 @@ describe('creditsYuan', () => {
     expect(INSUFFICIENT_CREDITS_TEXT).toBe('积分不足，请充值积分')
   })
 })
+
+describe('不足 1 分钱的金额', () => {
+  it('非零且不足 ¥0.005 显示 <¥0.01，而不是约0元', () => {
+    expect(creditsToYuanAmount(0.2)).toBe('<0.01')
+    expect(creditsYuanHint(0.2)).toBe('<¥0.01')
+    expect(creditsYuanLabel(0.001)).toBe('<¥0.01')
+    expect(creditsYuanSuffix(0.2)).toBe('（<¥0.01）')
+  })
+
+  it('小数积分换算保留 2 位并去尾零', () => {
+    expect(creditsToYuanAmount(0.25)).toBe('0.01')
+    expect(creditsToYuanAmount(12.5)).toBe('0.25')
+    expect(creditsToYuanAmount(25)).toBe('0.5')
+    expect(creditsYuanLabel(0)).toBe('约0元')
+  })
+})

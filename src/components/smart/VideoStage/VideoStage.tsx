@@ -24,6 +24,7 @@ import { seekVideoToDecodedFrame } from '@/utils/videoFrameCapture'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
 import SeekableVideo from '@/components/common/SeekableVideo'
 import VideoLoading from './VideoLoading'
+import { multiplyCredits, toMilli } from '@/utils/creditsFormat'
 import styles from './VideoStage.module.less'
 
 /** 一次视频生成或编辑的积分预估与余额可支付状态。 */
@@ -1027,7 +1028,8 @@ export default function VideoStage({
   const lockRegenerateAction = lockSingleActions || (isHotCopyMode && videoGenerating)
   const editCostInsufficient =
     !!editCost.estimate &&
-    (editCost.estimate.canAfford === false || editCost.estimate.estimatedCost > editCost.estimate.balance)
+    (editCost.estimate.canAfford === false ||
+      toMilli(editCost.estimate.estimatedCost) > toMilli(editCost.estimate.balance))
   const editCostUnavailable = hasMods && (editCost.loading || !!editCost.error || !editCost.estimate)
   const inlinePrevWithActions = !!onPrev && shots.length === 0
   const canChooseMultiRegen =
@@ -1050,10 +1052,15 @@ export default function VideoStage({
   const triggerMultiGenerate = () => {
     if (!onGenerateMultipleVideos) return
     if (genCooldown) return // 10s 防抖:防连点重复追加多批
-    const multiEstimatedCost = Number(editCost.estimate?.estimatedCost || 0) * Math.max(1, Number(regenCount || 1))
+    const multiEstimatedCost = multiplyCredits(
+      editCost.estimate?.estimatedCost || 0,
+      Math.max(1, Number(regenCount || 1)),
+    )
     if (
       hasMods &&
-      (editCostUnavailable || editCostInsufficient || multiEstimatedCost > Number(editCost.estimate?.balance || 0))
+      (editCostUnavailable ||
+        editCostInsufficient ||
+        toMilli(multiEstimatedCost) > toMilli(editCost.estimate?.balance || 0))
     ) {
       showToast('请先确认视频编辑估价及积分余额', 'info')
       return
@@ -1437,7 +1444,8 @@ export default function VideoStage({
         !hasMods &&
         costEstimate &&
         (() => {
-          const insufficient = costEstimate.canAfford === false || costEstimate.estimatedCost > costEstimate.balance
+          const insufficient =
+            costEstimate.canAfford === false || toMilli(costEstimate.estimatedCost) > toMilli(costEstimate.balance)
           return (
             <div className={styles.vstageCost}>
               <span className={insufficient ? styles.vstageCostErr : undefined}>

@@ -18,6 +18,7 @@ import {
   type GenerationModelPickerProps,
   type GenerationModelSelection,
 } from './GenerationModelPicker'
+import { sumCredits, toMilli } from '@/utils/creditsFormat'
 import styles from './GenerationModelDropdown.module.less'
 
 interface ModelSelectionSlot {
@@ -480,16 +481,15 @@ export default function GenerationModelDropdown({
   const estimateItems = Object.values(estimates)
   const estimateLoading = estimateItems.some((item) => item.status === 'loading')
   const estimateFailed = estimateItems.some((item) => item.status === 'error')
-  const estimateTotal = estimateItems.reduce(
-    (total, item) => total + (item.status === 'success' ? Number(item.estimatedCost) || 0 : 0),
-    0,
+  const estimateTotal = sumCredits(
+    estimateItems.map((item) => (item.status === 'success' ? Number(item.estimatedCost) || 0 : 0)),
   )
   const estimateBalance = estimateItems.find(
     (item) => item.status === 'success' && Number.isFinite(item.balance),
   )?.balance
   const estimateCanAfford =
     !estimateItems.some((item) => item.status === 'success' && item.canAfford === false) &&
-    (estimateBalance == null || estimateTotal <= estimateBalance)
+    (estimateBalance == null || toMilli(estimateTotal) <= toMilli(estimateBalance))
 
   /** 将面板挂到 body 并限制在可视区域内，彻底绕开任务栏和入口滚动容器的 overflow 裁切。 */
   const updatePanelPosition = useCallback(() => {

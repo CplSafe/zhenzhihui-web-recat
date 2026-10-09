@@ -65,6 +65,7 @@ import { filterAssetsByProjectAccess, getAccessibleProjectIds } from '@/utils/pr
 import { resolveUserId } from '@/utils/creativeDraftMetadata'
 import { useCurrentUser } from '@/stores/workspaceSession'
 import { estimateAiTaskCost } from '@/api/business'
+import { sumCredits, toMilli } from '@/utils/creditsFormat'
 import styles from './SmartEntry.module.less'
 
 /** 入口提交给智能成片编排器的制作模式、画幅、时长和参考素材元数据。 */
@@ -1024,12 +1025,14 @@ export default function SmartEntry({
       ).then((results) => {
         if (!alive) return
         const succeeded = results.filter((item) => item.ok).map((item) => item.result!)
-        const total = succeeded.reduce((sum, item) => sum + (Number(item.estimatedCost) || 0), 0)
+        const total = sumCredits(succeeded.map((item) => Number(item.estimatedCost) || 0))
         const balance = succeeded.find((item) => Number.isFinite(Number(item.balance)))?.balance
         setModelEstimate({
           total,
           balance,
-          canAfford: !succeeded.some((item) => item.canAfford === false) && (balance == null || total <= balance),
+          canAfford:
+            !succeeded.some((item) => item.canAfford === false) &&
+            (balance == null || toMilli(total) <= toMilli(balance)),
           loading: false,
           failed: results.some((item) => !item.ok),
         })

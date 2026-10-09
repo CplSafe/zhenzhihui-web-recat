@@ -35,6 +35,7 @@ import { uploadAssetFile } from '@/api/business'
 import Markdown from '@/components/common/Markdown'
 import { useSpeechInput } from '@/composables/useSpeechInput'
 import { creditsYuanLabel } from '@/utils/creditsYuan'
+import { formatCredits } from '@/utils/creditsFormat'
 import styles from './AgentChatPanel.module.css'
 
 /** 会话内渲染的一条内容。工具轨迹与对话消息同列展示,靠样式区分权重。 */
@@ -782,7 +783,7 @@ export default function AgentChatPanel({
                   <span className={styles.historyItemTitle}>{sess.title || `会话 #${sess.id}`}</span>
                   <span className={styles.historyItemMeta}>
                     {STATUS_LABELS[sess.status] ?? sess.status}
-                    {sess.spent_credits > 0 ? ` · ${sess.spent_credits} 积分` : ''}
+                    {sess.spent_credits > 0 ? ` · ${formatCredits(sess.spent_credits)} 积分` : ''}
                   </span>
                 </button>
               ))
