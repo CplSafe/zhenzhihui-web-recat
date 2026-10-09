@@ -9,6 +9,8 @@
  * 充值/赠送等入账走各自的 kind（recharge/grant/topup…）。未知 kind 按金额方向兜底展示。
  */
 
+import { formatCredits } from './creditsFormat'
+
 /** 判定为「支出/占用」的 kind（余额减少）。 */
 const OUT_KINDS = new Set(['settle', 'freeze', 'consume', 'deduct', 'debit', 'expire'])
 /** 判定为「入账/退回」的 kind（余额增加）。 */
@@ -104,7 +106,7 @@ export function normalizeCreditLedgerRecord(raw: any, fallbackId = ''): CreditLe
 /** 展示用的带符号积分变动文本，如「-800」「+10000」。 */
 export function formatCreditDelta(record: Pick<CreditLedgerRecord, 'amount' | 'direction'>): string {
   const sign = record.direction === 'out' ? '-' : '+'
-  return `${sign}${record.amount.toLocaleString('en-US')}`
+  return `${sign}${formatCredits(record.amount)}`
 }
 
 /** 从数组或分页信封里取当前页记录（兼容 items/list/records/data）。 */

@@ -36,6 +36,7 @@ import dashboardHero from '@/assets/space-dashboard-hero.webp'
 import dashboardHeroFallback from '@/assets/space-dashboard-hero-fallback.png'
 import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
+import { formatCredits, fromMilli, sumCredits, toMilli } from '@/utils/creditsFormat'
 import './SpaceDashboardView.css'
 
 /** 后端成员总数字段的兼容候选。 */
@@ -520,12 +521,12 @@ function normalizeMemberAvatar(member: any): string {
 
 /** 计算每条成功视频的平均积分消耗。 */
 function avgPerVideo(credits: number, videos: number): number {
-  return videos > 0 ? Math.round((credits / videos) * 10) / 10 : 0
+  return videos > 0 ? Math.round((credits / videos) * 100) / 100 : 0
 }
 
 /** 按中文千分位格式展示统计数值。 */
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat('zh-CN').format(Number.isFinite(value) ? value : 0)
+  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(Number.isFinite(value) ? value : 0)
 }
 
 /** 返回月份选择器使用的当前 YYYY-MM。 */
@@ -554,7 +555,7 @@ function buildTrendMeta(key: MetricKey, current: OverviewMetrics, previous: Over
   if (!previous) return { summary: '较上月持平', direction: 'flat', percentage: '较上月持平' }
   const currentValue = metricValue(current, key)
   const previousValue = metricValue(previous, key)
-  const delta = Math.round((currentValue - previousValue) * 10) / 10
+  const delta = Math.round((currentValue - previousValue) * 100) / 100
   if (delta === 0) return { summary: '较上月持平', direction: 'flat', percentage: '较上月持平' }
 
   const direction = delta > 0 ? 'up' : 'down'
@@ -965,7 +966,7 @@ export default function SpaceDashboardView() {
     const tasks = recordsInMonth(personalTasks, selectedMonth)
     const ledgers = recordsInMonth(personalLedgers, selectedMonth)
     const videos = tasks.reduce((sum, task) => sum + videoOutputCount(task), 0)
-    const credits = ledgers.reduce((sum, ledger) => sum + Math.abs(Number(ledger?.amount || 0)), 0)
+    const credits = sumCredits(ledgers.map((ledger) => Math.abs(Number(ledger?.amount || 0))))
     const dayCount = dayjs(`${selectedMonth}-01`).daysInMonth()
     const rows: PersonalDayRow[] = Array.from({ length: dayCount }, (_, index) => ({
       date: `${selectedMonth}-${String(index + 1).padStart(2, '0')}`,
@@ -984,7 +985,7 @@ export default function SpaceDashboardView() {
     })
     ledgers.forEach((ledger) => {
       const row = rowByDate.get(shanghaiDateKey(recordDate(ledger)))
-      if (row) row.credits += Math.abs(Number(ledger?.amount || 0))
+      if (row) row.credits = fromMilli(toMilli(row.credits) + toMilli(Math.abs(Number(ledger?.amount || 0))))
     })
     return { projects: projects.length, videos, credits, rows }
   }, [personalLedgers, personalProjects, personalTasks, selectedMonth])
@@ -1540,8 +1541,8 @@ export default function SpaceDashboardView() {
                             <span>{item.date}</span>
                             <span>{formatNumber(item.projects)}</span>
                             <span>{formatNumber(item.videos)}</span>
-                            <span>{formatNumber(item.credits)}</span>
-                            <span>{formatNumber(avgPerVideo(item.credits, item.videos))}</span>
+                            <span>{formatCredits(item.credits)}</span>
+                            <span>{formatCredits(avgPerVideo(item.credits, item.videos))}</span>
                           </div>
                         ))}
                         {!sortedPersonalDays.length ? (
@@ -1614,8 +1615,8 @@ export default function SpaceDashboardView() {
                               <span>{item.phone || '-'}</span>
                               <span>{formatNumber(item.projects)}</span>
                               <span>{formatNumber(item.videos)}</span>
-                              <span>{formatNumber(item.credits)}</span>
-                              <span>{formatNumber(avgPerVideo(item.credits, item.videos))}</span>
+                              <span>{formatCredits(item.credits)}</span>
+                              <span>{formatCredits(avgPerVideo(item.credits, item.videos))}</span>
                             </div>
                           ))
                         ) : (

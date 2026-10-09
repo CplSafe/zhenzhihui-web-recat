@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { estimateShotImageCost } from '@/api/smartShotImage'
 import { estimateFullVideoCost } from '@/api/smartVideo'
 import type { StudioMode } from '@/utils/studioParams'
+import { multiplyCredits, toMilli } from '@/utils/creditsFormat'
 
 /** 一次预估的结果。 */
 export interface StudioCostEstimate {
@@ -125,12 +126,12 @@ export function useStudioCostEstimate(input: StudioCostEstimateInput): StudioCos
           }
           const rawBalance = Number(response?.balance)
           const balance = Number.isFinite(rawBalance) ? rawBalance : null
-          const total = perItem * Math.max(1, count)
+          const total = multiplyCredits(perItem, Math.max(1, count))
           setEstimate({
             perItem,
             total,
             balance,
-            canAfford: balance === null ? response?.can_afford !== false : total <= balance,
+            canAfford: balance === null ? response?.can_afford !== false : toMilli(total) <= toMilli(balance),
           })
         } catch {
           // 估价失败不打断创作：按钮回退为不显示价格，余额校验交给提交时的后端。

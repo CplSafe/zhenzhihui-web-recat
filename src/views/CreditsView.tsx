@@ -19,6 +19,7 @@ import {
   type CreditLedgerRecord,
 } from '@/utils/creditLedger'
 import { creditsToYuanAmount } from '@/utils/creditsYuan'
+import { formatCredits } from '@/utils/creditsFormat'
 import { useSidebarNavigate } from '@/composables/useSidebarNavigate'
 import { openMemberCenterTab } from '@/stores/ui'
 import {
@@ -43,6 +44,7 @@ function formatDateTime(iso: string): string {
 /** 积分 → 「¥12.34」；算不出显示 ¥0。 */
 function yuanLabel(credits: number): string {
   const amount = creditsToYuanAmount(credits)
+  if (amount === '<0.01') return '<¥0.01'
   return amount ? `¥${amount}` : '¥0'
 }
 
@@ -143,7 +145,7 @@ export default function CreditsView() {
               </button>
               <div className="credits__card-k">可用余额</div>
               <div className="credits__card-v">
-                {Number(available || 0).toLocaleString('en-US')}
+                {formatCredits(available)}
                 <small>积分</small>
               </div>
               <div className="credits__card-yuan">≈ {yuanLabel(Number(available || 0))} 可用</div>
@@ -159,7 +161,7 @@ export default function CreditsView() {
                 </span>
               </div>
               <div className="credits__card-v">
-                {frozen.toLocaleString('en-US')}
+                {formatCredits(frozen)}
                 <small>积分</small>
               </div>
               <div className="credits__card-yuan">≈ {yuanLabel(frozen)} 生成中占用</div>
@@ -228,7 +230,7 @@ export default function CreditsView() {
                         </td>
                         <td className="credits__num credits__yuan-cell">{yuanLabel(record.amount)}</td>
                         <td className="credits__num credits__bal">
-                          {record.balanceAfter == null ? '—' : record.balanceAfter.toLocaleString('en-US')}
+                          {record.balanceAfter == null ? '—' : formatCredits(record.balanceAfter)}
                         </td>
                       </tr>
                     ))

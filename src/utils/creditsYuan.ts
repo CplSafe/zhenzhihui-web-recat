@@ -7,16 +7,19 @@
 /** 1 积分对应的人民币元数。 */
 export const YUAN_PER_CREDIT = 0.02
 
-/** 将积分换算为元的展示数字（去掉多余尾零：12 → "0.24"，100 → "2"）。非正数或非法值返回空串。 */
+/** 将积分换算为元的展示数字（去掉多余尾零：12 → "0.24"，100 → "2"）。非正数或非法值返回空串；不足 0.005 元时返回 "<0.01"。 */
 export function creditsToYuanAmount(credits: unknown): string {
   const n = Number(credits)
   if (!Number.isFinite(n) || n <= 0) return ''
-  return (n * YUAN_PER_CREDIT).toFixed(2).replace(/\.?0+$/, '')
+  const yuan = n * YUAN_PER_CREDIT
+  if (yuan < 0.005) return '<0.01'
+  return yuan.toFixed(2).replace(/\.0+$|(\.\d*[1-9])0+$/, '$1')
 }
 
-/** 生成「约0.24元」提示文案；算不出金额时返回空串。 */
+/** 生成「约0.24元」提示文案；不足 0.005 元时为「<¥0.01」；算不出金额时返回空串。 */
 export function creditsYuanHint(credits: unknown): string {
   const amount = creditsToYuanAmount(credits)
+  if (amount === '<0.01') return '<¥0.01'
   return amount ? `约${amount}元` : ''
 }
 

@@ -2,6 +2,9 @@
  * 会员中心支付状态工具：提供提交互斥、订单轮询去重以及支付后团队空间识别。
  * 所有判断均绑定用户和工作区作用域，避免切换账号或团队后旧请求更新当前界面。
  */
+
+import { toMilli } from './creditsFormat'
+
 /** 防止用户重复发起支付提交的内存锁。 */
 export interface MemberCenterPaymentLock {
   current: boolean
@@ -78,7 +81,7 @@ export function hasMemberCenterSubscriptionChanged(before: any, after: any): boo
 export function hasMemberCenterWalletIncreased(before: unknown, after: any): boolean {
   const beforeValue = Number(before)
   const afterValue = Number(after?.available ?? after?.balance)
-  return Number.isFinite(beforeValue) && Number.isFinite(afterValue) && afterValue > beforeValue
+  return Number.isFinite(beforeValue) && Number.isFinite(afterValue) && toMilli(afterValue) > toMilli(beforeValue)
 }
 
 function memberCenterSubscriptionExpiry(subscription: any): number {

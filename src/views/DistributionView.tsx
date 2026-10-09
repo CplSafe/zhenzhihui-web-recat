@@ -24,6 +24,7 @@ import pendingBackground from '@/assets/distribution/pending-bg.svg?no-inline'
 import searchIcon from '@/assets/distribution/search.svg?no-inline'
 import totalRebateIcon from '@/assets/distribution/total-rebate.svg?no-inline'
 import withdrawableIcon from '@/assets/distribution/withdrawable.svg?no-inline'
+import { formatCredits } from '@/utils/creditsFormat'
 import './DistributionView.css'
 
 interface DistributionFilters {
@@ -675,7 +676,7 @@ export default function DistributionView() {
     if (totalConsumed !== null) {
       items.push({
         label: '累计消耗积分',
-        value: String(totalConsumed),
+        value: formatCredits(totalConsumed),
         hint: '受邀用户实际使用的积分',
         explanation: '您邀请关系内的用户在使用平台功能时，已经实际扣除的积分总数。',
         source: '系统汇总受邀用户的积分实际扣减记录',
@@ -1236,7 +1237,7 @@ export default function DistributionView() {
                       <td>{formatOptionalMoneyFromCents(row.totalRechargeCents)}</td>
                     ) : null}
                     {inviteeFields.totalConsumedCredits ? (
-                      <td>{row.totalConsumedCredits === null ? '---' : row.totalConsumedCredits}</td>
+                      <td>{row.totalConsumedCredits === null ? '---' : formatCredits(row.totalConsumedCredits)}</td>
                     ) : null}
                     {inviteeFields.totalRebate ? <td>{formatOptionalMoneyFromCents(row.totalRebateCents)}</td> : null}
                     {inviteeFields.lastPaymentAt ? (

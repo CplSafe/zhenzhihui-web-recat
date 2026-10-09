@@ -99,6 +99,7 @@ import {
 } from '@/api/smartVideo'
 import { listRealPeople } from '@/api/realPeople'
 import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
+import { multiplyCredits, toMilli } from '@/utils/creditsFormat'
 import { readImageDimensions, videoReferenceImageIssue } from '@/utils/imageFile'
 import { isVideoResolutionLower, readVideoMetadata, type VideoMetadata } from '@/utils/videoDuration'
 import { resolveVideoEditResolution } from '@/utils/videoEditResolution'
@@ -2965,7 +2966,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           estimate?.can_afford !== false &&
           Number.isFinite(estimatedCost) &&
           Number.isFinite(balance) &&
-          estimatedCost <= balance,
+          toMilli(estimatedCost) <= toMilli(balance),
       })
     }
     // 创建付费任务前按锁定的修改模型重新核价，避免使用准备阶段的旧余额/旧价格。
@@ -3250,7 +3251,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           estimate?.can_afford !== false &&
           Number.isFinite(estimatedCost) &&
           Number.isFinite(balance) &&
-          estimatedCost <= balance,
+          toMilli(estimatedCost) <= toMilli(balance),
       })
     }
 
@@ -3789,7 +3790,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         return {
           cost,
           balance,
-          canAfford: estimate?.can_afford !== false && cost <= balance,
+          canAfford: estimate?.can_afford !== false && toMilli(cost) <= toMilli(balance),
         }
       }
       // 「分段画面修改·参考生视频」向生成模型申请的片段时长；按模型档位向上取定后锁进队列上下文。
@@ -3861,9 +3862,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         const normalizedEstimate = readValidVideoEstimate(estimate)
         const perVideoCost = normalizedEstimate.cost
         perJobQuotedCosts = Array.from({ length: total }, () => perVideoCost)
-        estimatedCost = perVideoCost * total
+        estimatedCost = multiplyCredits(perVideoCost, total)
         estimateBalance = normalizedEstimate.balance
-        canAfford = normalizedEstimate.canAfford && estimatedCost <= estimateBalance
+        canAfford = normalizedEstimate.canAfford && toMilli(estimatedCost) <= toMilli(estimateBalance)
         setVideoCost({
           loading: false,
           error: '',
@@ -4562,9 +4563,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
           })
           if (!alive) return
           const perImageCost = Math.max(0, Number(res?.estimated_cost ?? 0) || 0)
-          const estimatedCost = perImageCost * count
+          const estimatedCost = multiplyCredits(perImageCost, count)
           const balance = Number(res?.balance ?? 0)
-          const canAfford = res?.can_afford !== false && estimatedCost <= balance
+          const canAfford = res?.can_afford !== false && toMilli(estimatedCost) <= toMilli(balance)
           setStepCost({
             loading: false,
             error: '',
@@ -4600,7 +4601,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             error: '',
             perImage,
             count: 0,
-            estimate: { estimatedCost: per, balance, canAfford: per <= balance },
+            estimate: { estimatedCost: per, balance, canAfford: toMilli(per) <= toMilli(balance) },
           })
           return
         }
@@ -6140,7 +6141,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                 currentEstimate?.can_afford !== false &&
                 Number.isFinite(estimatedCost) &&
                 Number.isFinite(balance) &&
-                estimatedCost <= balance,
+                toMilli(estimatedCost) <= toMilli(balance),
               remainingCount,
             })
             if (quoteError) throw new Error(quoteError)
@@ -7063,8 +7064,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       if (!Number.isFinite(perImageCost) || perImageCost < 0 || !Number.isFinite(balance) || balance < 0) {
         throw new Error('图片费用预估结果无效')
       }
-      const estimatedCost = perImageCost * count
-      const canAfford = estimate?.can_afford !== false && estimatedCost <= balance
+      const estimatedCost = multiplyCredits(perImageCost, count)
+      const canAfford = estimate?.can_afford !== false && toMilli(estimatedCost) <= toMilli(balance)
       setStepCost({
         loading: false,
         error: '',
@@ -9255,7 +9256,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                         : stepCost.estimate
                           ? // 积分不足时留空,由 ImageChat 统一渲染「积分不足，请充值积分」
                             stepCost.estimate.canAfford === false ||
-                            stepCost.estimate.estimatedCost > stepCost.estimate.balance
+                            toMilli(stepCost.estimate.estimatedCost) > toMilli(stepCost.estimate.balance)
                             ? ''
                             : `${stepCost.count > 1 ? `共 ${stepCost.count} 张` : ''}预计费用 ${creditsYuanLabel(stepCost.estimate.estimatedCost)}${stepCost.estimate.perOne != null ? ` · 每张${creditsYuanLabel(stepCost.estimate.perOne)}` : ''}`
                           : stepCost.error
@@ -9265,7 +9266,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                     costInsufficient={
                       !!stepCost.estimate &&
                       (stepCost.estimate.canAfford === false ||
-                        stepCost.estimate.estimatedCost > stepCost.estimate.balance)
+                        toMilli(stepCost.estimate.estimatedCost) > toMilli(stepCost.estimate.balance))
                     }
                     onSend={(text, images, ratio, assetIds, outputCount) =>
                       sendImageChat(text, images, ratio, assetIds, outputCount)
@@ -9428,7 +9429,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
                       (() => {
                         const insufficient =
                           stepCost.estimate.canAfford === false ||
-                          stepCost.estimate.estimatedCost > stepCost.estimate.balance
+                          toMilli(stepCost.estimate.estimatedCost) > toMilli(stepCost.estimate.balance)
                         return (
                           <div className="smart__cost">
                             <span className={insufficient ? 'smart__cost--err' : undefined}>

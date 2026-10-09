@@ -29,6 +29,7 @@ import { bindAssetUrlToWorkspace } from '@/utils/workspaceScopedUrl'
 import crownImg from '@/assets/vip/5dc4125fc31865adb710a7f65ad2df60.png'
 import teamIcon from '@/assets/5d214dea973d5d1dd62b8be882e775c2.png'
 import editIcon from '@/assets/81926ea1670cd86f6fc1adec90042f08.png'
+import { formatCredits, subtractCredits } from '@/utils/creditsFormat'
 import './PersonalPanel.css'
 
 /** 把后端成员角色转换为面板展示文案。 */
@@ -195,7 +196,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const accountName = name
   // 积分进度按【已消耗】算(用得越多条越满)。有任何消耗就至少显示 1%(从 1% 起,让进度立刻可见);
   // 完全没消耗则 0%。credits 为剩余积分,baseCredits 为套餐基础积分。
-  const usedCredits = Math.max(0, baseCredits - Number(credits))
+  const usedCredits = Math.max(0, subtractCredits(baseCredits, credits))
   const usedPct =
     baseCredits > 0 && usedCredits > 0 ? Math.min(100, Math.max(1, Math.round((usedCredits / baseCredits) * 100))) : 0
 
@@ -309,7 +310,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
         <div className="ppl__credits-row">
           <span className="ppl__credits-label">积分已用{usedPct}%</span>
           <span className="ppl__credits-num">
-            <b>{Number(credits) || 0}</b> /{baseCredits || 0}
+            <b>{formatCredits(credits)}</b> /{formatCredits(baseCredits)}
           </span>
         </div>
         <div className="ppl__bar">

@@ -1,4 +1,5 @@
 import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from './creditsYuan'
+import { multiplyCredits, toMilli } from './creditsFormat'
 import type { BackendGenerationModel, GenerationOperationCode } from './generationModelCatalog'
 import { buildGenerationModelExecutionFingerprint } from './generationQueueModelGuards'
 
@@ -76,7 +77,7 @@ export function createLockedSmartImageQuote(
   const perImageCost = Number(binding.perImageCost)
   const balance = Number(binding.balance)
   const quotedAt = Number(binding.quotedAt ?? Date.now())
-  const batchTotalCost = perImageCost * batchSize
+  const batchTotalCost = multiplyCredits(perImageCost, batchSize)
   if (
     !workspaceId ||
     !modelVersionId ||
@@ -86,7 +87,7 @@ export function createLockedSmartImageQuote(
     !Number.isFinite(batchTotalCost) ||
     batchTotalCost < 0 ||
     !Number.isFinite(balance) ||
-    balance < batchTotalCost ||
+    toMilli(balance) < toMilli(batchTotalCost) ||
     !Number.isFinite(quotedAt) ||
     quotedAt <= 0
   ) {
@@ -161,9 +162,9 @@ export function getSmartImageQuoteValidationError(
     !Number.isFinite(quotedCost) ||
     quotedCost < 0 ||
     !Number.isFinite(quotedBatchTotal) ||
-    quotedBatchTotal !== quotedCost * positiveInteger(quote.batchSize) ||
+    toMilli(quotedBatchTotal) !== toMilli(quotedCost) * positiveInteger(quote.batchSize) ||
     !Number.isFinite(quotedBalance) ||
-    quotedBalance < quotedBatchTotal ||
+    toMilli(quotedBalance) < toMilli(quotedBatchTotal) ||
     !Number.isFinite(quotedAt) ||
     quotedAt <= 0 ||
     !Number.isFinite(currentCost) ||
@@ -175,12 +176,12 @@ export function getSmartImageQuoteValidationError(
   ) {
     return '图片任务报价无效，请重新确认费用'
   }
-  if (Math.abs(quotedCost - currentCost) > 1e-6) {
+  if (toMilli(quotedCost) !== toMilli(currentCost)) {
     return `图片生成费用已由每张 ${creditsYuanLabel(quotedCost)}变为 ${creditsYuanLabel(currentCost)}，请重新确认后生成`
   }
 
-  const remainingTotal = currentCost * remainingCount
-  if (!current.canAfford || remainingTotal > balance) {
+  const remainingTotal = toMilli(currentCost) * remainingCount
+  if (!current.canAfford || remainingTotal > toMilli(balance)) {
     return `${INSUFFICIENT_CREDITS_TEXT}，无法完成剩余 ${remainingCount} 张图片，尚未创建付费任务`
   }
   return ''
