@@ -141,7 +141,19 @@ import {
   captureVideoFrameWithRetry,
   type VideoFramePosition,
 } from '@/utils/videoFrameCapture'
-import { resolveGeneratedMediaUrls, resolveVerifiedResultAssetId } from '@/utils/taskMedia'
+import {
+  resolveGeneratedMediaUrls,
+  resolveVerifiedResultAssetId,
+  resolveVerifiedImageResultAssetIds,
+} from '@/utils/taskMedia'
+import CanvasImageResults from '@/components/canvas/CanvasImageResults'
+import {
+  canvasImageResultIds,
+  canvasImageResultSize,
+  updateCanvasImageResultNode,
+  selectCanvasImageResult,
+  splitCanvasImageResults,
+} from '@/utils/canvasImageResults'
 import { preflightCanvasAssets } from '@/utils/canvasAssetPreflight'
 import { resolveRefVideoLimits } from '@/utils/studioRefVideo'
 import { getVideoEditModeConflict, isVideoTaskModeField } from '@/utils/canvasVideoTaskMode'
@@ -522,6 +534,9 @@ async function mapWithConcurrency<T, R>(
  * 而不是把回调塞进节点 data（data 会被持久化，放不了函数）。
  */
 interface CanvasNodeActions {
+  onToggleImageResults?: (nodeId: string) => void
+  onSelectImageResult?: (nodeId: string, assetId: number) => void
+  onSplitImageResults?: (nodeId: string) => void
   imagePreviews?: Record<string, string>
   /** 把视频节点当前画面截成一张图，交给画布上传并落成图片节点。 */
   onCaptureFrame?: (nodeId: string, frameDataUrl: string) => void
@@ -559,7 +574,7 @@ interface CanvasNodeActions {
    * 图片放大预览。与视频不同，图片预览带「全部图片」画廊导航，
    * 需要拿到整张画布的图片节点列表，因此弹窗放在视图层，节点只上报自己的 id。
    */
-  onPreviewImage?: (nodeId: string) => void
+  onPreviewImage?: (nodeId: string, assetId?: number) => void
   /**
    * 视频节点抓到首帧封面（dataURL）后交给视图层处理（只补空缺，不覆盖已有封面）。
    * 生成/导入的视频没有封面，preload="metadata" 又不保证绘制首帧，卡片会是一片空白。
@@ -1315,6 +1330,9 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   // 截帧动作由画布提供：节点只负责取出画面，上传与建节点在上层做
   const {
     onImageNaturalSize,
+    onToggleImageResults,
+    onSelectImageResult,
+    onSplitImageResults,
     onRenameNode,
     registerFrameCapture,
     registerNodeDownload,
@@ -1484,6 +1502,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     !taskRunning &&
     !taskFailed &&
     isCanvasGeneratedResult(data as Record<string, unknown>)
+  const imageResultIds = kind === 'image' ? canvasImageResultIds(data) : []
   const generatedTooltip = useMemo(() => {
     if (!generatedResult) return ''
     const record = data as Record<string, unknown>
@@ -1497,8 +1516,8 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
   // 由 selectedNodeToolbarState 在视图层统一算。
 
   /** 下载节点素材：优先按 assetId 走素材下载接口（/api/v1/assets/{id}/download），无 assetId 时退回 resultUrl。 */
-  const handleDownloadMedia = () => {
-    const assetId = Number((data as any)?.assetId || 0) || 0
+  const handleDownloadMedia = (resultAssetId?: number) => {
+    const assetId = resultAssetId || Number((data as any)?.assetId || 0) || 0
     const fileName = buildDownloadName(
       kind === 'image' ? '画布图片' : '画布视频',
       new Date(),
@@ -1589,7 +1608,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
 
   return (
     <div
-      className="canvas-default-node"
+      className={`canvas-default-node${imageResultIds.length > 1 ? ' is-image-results' : ''}`}
       style={{ '--canvas-readable-text-scale': readableTextScale } as CSSProperties}
       onMouseEnter={() => setNodeHovered(true)}
       onMouseLeave={() => setNodeHovered(false)}
@@ -1856,6 +1875,20 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               </button>
             )}
           </div>
+        ) : kind === 'image' && imageResultIds.length > 1 ? (
+          <CanvasImageResults
+            assetIds={imageResultIds}
+            primaryAssetId={Number(data.assetId)}
+            expanded={Boolean(data.imageResultsExpanded)}
+            resolveUrl={(assetId) => assetStreamUrl(assetId, nodeWorkspaceId)}
+            disabled={taskRunning}
+            onToggle={() => onToggleImageResults?.(id)}
+            onSelectPrimary={(assetId) => onSelectImageResult?.(id, assetId)}
+            onSplit={() => onSplitImageResults?.(id)}
+            onDownload={handleDownloadMedia}
+            onPreview={(assetId) => onPreviewImage?.(id, assetId)}
+            onPrimaryLoad={(width, height) => onImageNaturalSize?.(id, width, height)}
+          />
         ) : kind === 'image' && mediaUrl ? (
           <img
             /*
@@ -3997,7 +4030,10 @@ function CanvasInner() {
             ? {
                 ...n,
                 data: { ...(n.data as Record<string, unknown>), ratio },
-                style: { ...(n.style as Record<string, unknown>), width, height },
+                style: {
+                  ...(n.style as Record<string, unknown>),
+                  ...(n.data.kind === 'image' ? canvasImageResultSize({ ...n.data, ratio }) : { width, height }),
+                },
               }
             : n,
         ),
@@ -4026,11 +4062,20 @@ function CanvasInner() {
       const nextData: Record<string, unknown> = {
         assetId: entry.assetId,
         resultUrl,
+        imageResultsExpanded: false,
         generationIntent: 'edit',
         // 切到历史版本：清掉上一版的封面帧，视频节点会按新素材首帧重新取封面
         ...(entry.kind === 'video' ? { posterAssetId: 0, poster: '' } : {}),
       }
-      setNodes((nds) => nds.map((n) => (n.id === targetId ? { ...n, data: { ...n.data, ...nextData } } : n)))
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === targetId
+            ? entry.kind === 'image'
+              ? updateCanvasImageResultNode(n, nextData)
+              : { ...n, data: { ...n.data, ...nextData } }
+            : n,
+        ),
+      )
       setSelectedNode((prev) =>
         prev && prev.id === targetId ? { ...prev, assetId: entry.assetId, resultUrl, generationIntent: 'edit' } : prev,
       )
@@ -5157,7 +5202,8 @@ function CanvasInner() {
           kind === 'text'
             ? Boolean(String((node.data as any)?.text || '').trim())
             : Boolean((node.data as any)?.resultUrl || Number((node.data as any)?.assetId || 0) > 0)
-        return !hasResult
+        // 旧画布只保存首张结果：首次打开补齐当前任务的整批结果。
+        return !hasResult || (kind === 'image' && !Array.isArray(node.data.imageResultAssetIds))
       })
       await Promise.all(
         candidates.map(async (node) => {
@@ -5202,13 +5248,23 @@ function CanvasInner() {
                 // 只把「验证过确实存在」的资产写进节点：这个 assetId 会被下一次生成当作
                 // input_assets 提交（视频生视频尤其依赖它），存一个未经确认的 id 进去，
                 // 后端到时候只会回「参考素材不可用」，而且已经追不回是哪一步写坏的。
-                const assetId = await resolveVerifiedResultAssetId({
-                  workspaceId,
-                  task,
-                  type: kind === 'video' ? 'video' : 'image',
-                  fallbackTaskId: taskId,
-                })
-                const urls = await resolveGeneratedMediaUrls({ workspaceId, task, type: kind })
+                const imageIds =
+                  kind === 'image' ? await resolveVerifiedImageResultAssetIds(workspaceId, task, taskId) : []
+                const restoringImageBatch =
+                  kind === 'image' &&
+                  successStatuses.has(normalizeAiTaskStatus(node.data.taskStatus)) &&
+                  Number(node.data.assetId) > 0
+                const assetId =
+                  kind === 'image'
+                    ? restoringImageBatch
+                      ? Number(node.data.assetId)
+                      : imageIds[0] || 0
+                    : await resolveVerifiedResultAssetId({ workspaceId, task, type: 'video', fallbackTaskId: taskId })
+                const urls = kind === 'image' ? [] : await resolveGeneratedMediaUrls({ workspaceId, task, type: kind })
+                if (kind === 'image' && (imageIds.length || restoringImageBatch)) {
+                  nextData.imageResultAssetIds = imageIds
+                  nextData.imageResultsExpanded = false
+                }
                 if (assetId > 0) nextData.assetId = assetId
                 if (assetId > 0 || urls[0])
                   nextData.resultUrl = assetId > 0 ? assetStreamUrl(assetId, workspaceId) : urls[0]
@@ -5231,17 +5287,18 @@ function CanvasInner() {
                     const prevHistory: CanvasResultHistoryEntry[] = Array.isArray((node.data as any)?.resultHistory)
                       ? ((node.data as any).resultHistory as CanvasResultHistoryEntry[])
                       : []
-                    if (!prevHistory.some((entry) => entry.assetId === assetId)) {
-                      nextData.resultHistory = [
-                        ...prevHistory,
-                        {
-                          assetId,
+                    const resultIds = kind === 'image' ? imageIds : [assetId]
+                    nextData.resultHistory = [
+                      ...prevHistory,
+                      ...resultIds
+                        .filter((id) => !prevHistory.some((entry) => entry.assetId === id))
+                        .map((id) => ({
+                          assetId: id,
                           kind: kind === 'video' ? 'video' : 'image',
                           createdAt: new Date().toISOString(),
-                          prompt: String((node.data as any)?.prompt || '') || undefined,
-                        },
-                      ].slice(-CANVAS_RESULT_HISTORY_CAP)
-                    }
+                          prompt: String(node.data.prompt || '') || undefined,
+                        })),
+                    ].slice(-CANVAS_RESULT_HISTORY_CAP)
                   }
                 }
               }
@@ -5251,7 +5308,7 @@ function CanvasInner() {
                 nextData.taskStatus !== 'result_pending' &&
                 nextData.taskStatus !== 'failed' &&
                 (kind === 'text' ? Boolean(nextData.text) : Boolean(nextData.resultUrl))
-              if (settled) {
+              if (settled && !successStatuses.has(normalizeAiTaskStatus(node.data.taskStatus))) {
                 announceOutcome(
                   node,
                   'success',
@@ -5276,7 +5333,9 @@ function CanvasInner() {
                       style:
                         typeof nextData.text === 'string' && isCanvasStoryboardText(nextData.text)
                           ? { ...item.style, width: 420, height: 480 }
-                          : item.style,
+                          : nextData.imageResultAssetIds
+                            ? { ...item.style, ...canvasImageResultSize({ ...item.data, ...nextData }) }
+                            : item.style,
                     }
                   : item,
               ),
@@ -5623,13 +5682,65 @@ function CanvasInner() {
     [setEdges],
   )
 
+  const changeImageResults = useCallback(
+    (nodeId: string, assetId?: number) => {
+      const node = latestRef.current.nodes.find((item) => item.id === nodeId)
+      if (
+        !node ||
+        canvasImageResultIds(node.data).length < 2 ||
+        getCanvasTaskPresentation({ status: node.data.taskStatus, hasResult: true }).running
+      )
+        return
+      commitHistory()
+      const next =
+        assetId === undefined
+          ? updateCanvasImageResultNode(node, { imageResultsExpanded: !node.data.imageResultsExpanded })
+          : selectCanvasImageResult(node, assetId, workspaceId)
+      setNodes((items) => items.map((item) => (item.id === nodeId ? next : item)))
+      setSelectedNode((current) => (current?.id === nodeId ? { ...current, ...next.data } : current))
+      setSaveStatus('dirty')
+    },
+    [commitHistory, setNodes, workspaceId, setSaveStatus],
+  )
+
+  const handleSplitImageResults = useCallback(
+    (nodeId: string) => {
+      const node = latestRef.current.nodes.find((item) => item.id === nodeId)
+      if (
+        !node ||
+        canvasImageResultIds(node.data).length < 2 ||
+        getCanvasTaskPresentation({ status: node.data.taskStatus, hasResult: true }).running
+      )
+        return
+      commitHistory()
+      const split = splitCanvasImageResults(node, workspaceId, () => crypto.randomUUID())
+      setNodes((items) => [...items.map((item) => (item.id === nodeId ? split[0]! : item)), ...split.slice(1)])
+      const incoming = latestRef.current.edges.filter((edge) => edge.target === nodeId)
+      setEdges((items) => [
+        ...items,
+        ...split.slice(1).flatMap((item) =>
+          incoming.map((edge) => ({
+            ...edge,
+            id: buildEdgeId(edge.source, item.id, Number(edge.data?.slotIndex || 0)),
+            target: item.id,
+            targetHandle: null,
+          })),
+        ),
+      ])
+      setSelectedNode((current) => (current?.id === nodeId ? { ...current, ...split[0]!.data } : current))
+      setSaveStatus('dirty')
+      showToast(`已拆分为 ${split.length} 个图片节点`, 'success')
+    },
+    [commitHistory, setNodes, setEdges, workspaceId, setSaveStatus],
+  )
+
   /** 图片节点统一按已解码图片的真实比例校准；短边固定，避免原始像素尺寸直接撑大画布。 */
   const handleImageNaturalSize = useCallback(
     (nodeId: string, naturalWidth: number, naturalHeight: number) => {
       const ratio = naturalImageRatio(naturalWidth, naturalHeight)
-      const size = calcNodeSize(ratio, 250)
       const current = latestRef.current.nodes.find((node) => node.id === nodeId)
       if (!current || (current.data as Record<string, unknown> | undefined)?.kind !== 'image') return
+      const size = canvasImageResultSize({ ...current.data, ratio })
       const style = (current.style || {}) as CSSProperties
       const unchanged =
         String((current.data as Record<string, unknown> | undefined)?.ratio || '') === ratio &&
@@ -5732,7 +5843,10 @@ function CanvasInner() {
 
   // 图片放大预览：弹窗在视图层（要拿整张画布的图片列表做画廊导航），记住当前查看的节点 id 即可。
   const [imagePreviewNodeId, setImagePreviewNodeId] = useState('')
-  const openImagePreview = useCallback((nodeId: string) => setImagePreviewNodeId(nodeId), [])
+  const openImagePreview = useCallback((nodeId: string, assetId?: number) => {
+    const node = latestRef.current.nodes.find((item) => item.id === nodeId)
+    setImagePreviewNodeId(assetId && assetId !== Number(node?.data.assetId) ? `${nodeId}:image:${assetId}` : nodeId)
+  }, [])
 
   /**
    * 画廊项：画布上全部有素材的图片节点，按节点顺序排列。
@@ -5756,6 +5870,13 @@ function CanvasInner() {
           assetSource: (data as any)?.assetSource,
         })
       items.push({ id: node.id, url, title })
+      for (const assetId of canvasImageResultIds(data).filter((id) => id !== Number(data.assetId))) {
+        items.push({
+          id: `${node.id}:image:${assetId}`,
+          url: assetStreamUrl(assetId, workspaceId),
+          title: `${title} · 第 ${canvasImageResultIds(data).indexOf(assetId) + 1} 张`,
+        })
+      }
     }
     return items
   }, [imagePreviewNodeId, nodes, workspaceId])
@@ -7078,6 +7199,9 @@ function CanvasInner() {
       imagePreviews,
       onCaptureFrame: handleCaptureFrame,
       onImageNaturalSize: handleImageNaturalSize,
+      onToggleImageResults: (nodeId) => changeImageResults(nodeId),
+      onSelectImageResult: changeImageResults,
+      onSplitImageResults: handleSplitImageResults,
       capturingNodeId,
       onRenameNode: renameNode,
       registerFrameCapture,
@@ -7101,6 +7225,8 @@ function CanvasInner() {
       imagePreviews,
       handleCaptureFrame,
       handleImageNaturalSize,
+      changeImageResults,
+      handleSplitImageResults,
       capturingNodeId,
       renameNode,
       registerFrameCapture,

@@ -72,3 +72,20 @@ describe('CanvasShareView', () => {
     expect(video).toHaveAttribute('poster', '/shared/poster.png')
   })
 })
+
+it('lets visitors expand every image through share-scoped URLs without changing the primary', async () => {
+  vi.mocked(fetchPublicCanvas).mockResolvedValue({ title: '组图', status: 'active' } as any)
+  vi.mocked(fetchAllPublicCanvasElements).mockResolvedValue([
+    node('group', { kind: 'image', assetId: 2, imageResultAssetIds: [1, 2, 3, 4], imageResultsExpanded: false }),
+  ])
+  render(<CanvasShareView />)
+  fireEvent.click(await screen.findByRole('button', { name: '展开 4 张图片' }))
+  expect(screen.getAllByRole('img')).toHaveLength(4)
+  expect(screen.getByRole('img', { name: '生成图片 3' })).toHaveAttribute(
+    'src',
+    '/api/v1/canvas-shares/shared-token/assets/3',
+  )
+  expect(screen.queryByRole('button', { name: /设为主图/ })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '收起组图' }))
+  expect(screen.getByRole('img', { name: '生成图片 2（主图）' })).toBeInTheDocument()
+})

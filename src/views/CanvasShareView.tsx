@@ -20,6 +20,9 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './CanvasShareView.css'
+import CanvasImageResults from '@/components/canvas/CanvasImageResults'
+import { canvasImageResultIds, canvasImageResultSize } from '@/utils/canvasImageResults'
+import { shareAssetUrl } from '@/utils/canvasShareMedia'
 import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
 import { elementsToGraph } from '@/utils/canvasElements'
 import { resolveCanvasShareMediaUrl, resolvePublicCanvasNodeMedia } from '@/utils/canvasShareMedia'
@@ -55,7 +58,17 @@ function ShareNode({ id, data }: NodeProps<Node>) {
       <div className="share-node-kind" title={title}>
         {title}
       </div>
-      {resultUrl && !mediaFailed && isVideo ? (
+      {kind === 'image' && canvasImageResultIds(info).length > 1 ? (
+        <div style={{ height: 'calc(100% - 22px)' }}>
+          <CanvasImageResults
+            assetIds={canvasImageResultIds(info)}
+            primaryAssetId={Number(info.assetId)}
+            expanded={Boolean(info.imageResultsExpanded)}
+            resolveUrl={(assetId) => shareAssetUrl(String(info.shareToken), assetId)}
+            onToggle={() => (info.onToggleImages as () => void)?.()}
+          />
+        </div>
+      ) : resultUrl && !mediaFailed && isVideo ? (
         // 访客可能只想确认成片效果，给原生控件即可，不再搬运画布那套自定义播放器
         <video
           className="share-node-media"
@@ -109,6 +122,7 @@ export default function CanvasShareView() {
   const [message, setMessage] = useState('')
   const [share, setShare] = useState<PublicCanvasShare | null>(null)
   const [elements, setElements] = useState<CanvasElementMutation[]>([])
+  const [expandedImages, setExpandedImages] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -147,9 +161,18 @@ export default function CanvasShareView() {
       nodes: nodes.map((node) => {
         // 节点自带的 resultUrl 要登录才能取，这里换算成分享口令下的匿名地址交给 ShareNode
         const media = resolvePublicCanvasNodeMedia(token, node.data)
+        const expanded = expandedImages[node.id] ?? Boolean(node.data.imageResultsExpanded)
+        const data = { ...node.data, imageResultsExpanded: expanded }
         return {
           ...node,
-          data: { ...node.data, shareMediaUrl: media.url, sharePosterUrl: media.posterUrl },
+          style: canvasImageResultIds(data).length > 1 ? { ...node.style, ...canvasImageResultSize(data) } : node.style,
+          data: {
+            ...data,
+            shareMediaUrl: media.url,
+            sharePosterUrl: media.posterUrl,
+            shareToken: token,
+            onToggleImages: () => setExpandedImages((current) => ({ ...current, [node.id]: !expanded })),
+          },
           type: 'share',
           draggable: false,
           selectable: false,
@@ -157,7 +180,7 @@ export default function CanvasShareView() {
       }),
       edges: edges.map(({ markerEnd: _markerEnd, ...rest }) => ({ ...rest, type: CANVAS_ARROW_EDGE_TYPE })),
     }
-  }, [elements, token])
+  }, [elements, token, expandedImages])
 
   return (
     <div className="share-view">

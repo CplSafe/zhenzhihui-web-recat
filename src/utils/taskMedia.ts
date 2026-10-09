@@ -103,16 +103,19 @@ async function findAssetsByTaskId({
   taskId,
   type,
   maxPages = TASK_ASSET_MAX_PAGES,
+  collectAll = false,
 }: {
   workspaceId: number
   taskId: unknown
   type: 'video' | 'image' | ''
   maxPages?: number
+  collectAll?: boolean
 }): Promise<any[]> {
   const wsId = Math.floor(Number(workspaceId) || 0)
   const normalizedTaskId = Number(taskId || 0)
   if (!wsId || !normalizedTaskId) return []
 
+  const allMatches: any[] = []
   let offset = 0
   const seenPageSignatures = new Set<string>()
   for (let pageIndex = 0; pageIndex < Math.max(1, maxPages); pageIndex += 1) {
@@ -135,7 +138,8 @@ async function findAssetsByTaskId({
         normalizedTaskId,
       ),
     )
-    if (matches.length) return matches
+    if (matches.length && !collectAll) return matches
+    allMatches.push(...matches)
 
     const pageIds = items.map((asset: any) => String(asset?.id ?? '').trim())
     const pageSignature = items.length > 0 && pageIds.every(Boolean) ? `${items.length}:${pageIds.join(',')}` : ''
@@ -155,7 +159,7 @@ async function findAssetsByTaskId({
     offset = nextOffset
   }
 
-  return []
+  return allMatches
 }
 
 // 解析已完成任务的可播放地址：优先 output.asset_id，其次按 task.id 反查素材，最后使用供应商临时直链。
@@ -195,6 +199,29 @@ export async function resolveGeneratedMediaUrls({ workspaceId, task, type }) {
   }
 
   return extractTaskMediaUrls(task)
+}
+
+/** 画布组图必须等回执中的整批素材可见，不能把暂时只有一张的列表当成完成。 */
+export async function resolveVerifiedImageResultAssetIds(
+  workspaceId: number,
+  task: any,
+  fallbackTaskId?: number,
+): Promise<number[]> {
+  if (!workspaceId) return []
+  const candidates = extractResultAssetIds(task)
+  if (candidates.length) {
+    const active = await findActiveWorkspaceAssetIds(workspaceId, candidates, 'image')
+    return candidates.every((id) => active.has(id)) ? candidates : []
+  }
+  const assets = await findAssetsByTaskId({
+    workspaceId,
+    taskId: task?.id ?? fallbackTaskId,
+    type: 'image',
+    collectAll: true,
+  })
+  const ids = [...new Set(assets.map((asset) => Number(asset.id)).filter((id) => Number.isSafeInteger(id) && id > 0))]
+  const active = await findActiveWorkspaceAssetIds(workspaceId, ids, 'image')
+  return ids.filter((id) => active.has(id))
 }
 
 // 从已完成任务的 outputs 里取第一个 asset_id(0 = 没有)。

@@ -1,0 +1,91 @@
+.results {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  color: #fff;
+}
+.expanded {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 12px;
+}
+.item {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 10px;
+  background: #edf0f3;
+  overflow: hidden;
+}
+.collapsed .item {
+  width: 100%;
+  height: 100%;
+}
+.image,
+.stack {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 10px;
+  display: block;
+}
+.stack {
+  position: absolute;
+  inset: 0;
+  object-fit: cover;
+  background: #fff;
+  transform: translate(calc(var(--layer) * 5px), calc(var(--layer) * 7px)) rotate(calc(var(--layer) * 1.5deg));
+  pointer-events: none;
+  box-shadow: 0 2px 8px #0003;
+}
+.actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: calc(100% - 16px);
+}
+.actions button,
+.split {
+  border: 1px solid #ffffff26;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: #181b21cc;
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.actions button:hover,
+.split:hover {
+  background: #181b21;
+}
+.actions button:disabled,
+.split:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.actions button:focus-visible,
+.split:focus-visible {
+  outline: 2px solid #11a98a;
+  outline-offset: 2px;
+}
+.badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: #181b21a6;
+}
+.split {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+}

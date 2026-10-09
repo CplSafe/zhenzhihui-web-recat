@@ -69,6 +69,9 @@ interface SerializableNodeData {
    * 展示缩略图时按 assetId 现算下载地址。
    */
   resultHistory?: CanvasResultHistoryEntry[]
+  /** 最近一批图片结果；assetId 表示主图。只存耐久 ID。 */
+  imageResultAssetIds?: number[]
+  imageResultsExpanded?: boolean
   prompt?: string
   /** 节点选定的 operation_code（生成时写入，刷新后可直接复用） */
   operationCode?: string
@@ -120,6 +123,8 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'resultUrl',
   'posterAssetId',
   'resultHistory',
+  'imageResultAssetIds',
+  'imageResultsExpanded',
   'prompt',
   'operationCode',
   'params',
@@ -485,6 +490,7 @@ export function collectCanvasElementAssetIds(elements: CanvasElementMutation[]):
     const data = (node.data || {}) as Record<string, unknown>
     add(data.assetId)
     add(data.posterAssetId)
+    if (Array.isArray(data.imageResultAssetIds)) data.imageResultAssetIds.forEach(add)
     const timeline = data.timeline as { clips?: Array<{ assetId?: unknown }> } | undefined
     for (const clip of timeline?.clips || []) add(clip?.assetId)
   }

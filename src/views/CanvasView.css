@@ -1793,3 +1793,12 @@
   pointer-events: auto;
   transform: translateX(-50%) translateY(0);
 }
+
+/* 组图在自己的节点范围内展开；折叠纸叠允许露出，拖拽和连线仍由父节点负责。 */
+.canvas-default-node.is-image-results .canvas-node-body {
+  overflow: visible;
+  padding: 0;
+}
+.canvas-default-node.is-image-results {
+  background: transparent;
+}

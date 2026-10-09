@@ -15,7 +15,7 @@ export function resolveCanvasShareMediaUrl(
   return ''
 }
 
-function shareAssetUrl(token: string, assetId: unknown): string {
+export function shareAssetUrl(token: string, assetId: unknown): string {
   const id = Number(assetId)
   if (!token || !Number.isSafeInteger(id) || id <= 0) return ''
   return `/api/v1/canvas-shares/${encodeURIComponent(token)}/assets/${id}`

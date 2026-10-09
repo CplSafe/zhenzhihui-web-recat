@@ -7,6 +7,8 @@
  */
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { Popover, Tooltip } from 'antd'
+import { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio } from '@/utils/canvasNodeSize'
+export { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio, formatRatio, calcNodeSize } from '@/utils/canvasNodeSize'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
 import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
@@ -512,30 +514,6 @@ type VideoMode = CanvasVideoMode
 
 /** 稳定的默认值：内联 [] 会让依赖它的 memo/effect 每次渲染都失效，反复触发积分预估。 */
 const EMPTY_INHERITED_TEXTS: InheritedPromptText[] = []
-
-/** 视频「自适应」比例的存储值（英文，避免中文写入节点数据/接口参数）。 */
-export const AUTO_RATIO = 'auto'
-/** 「自适应」比例的界面显示文案（中文）。 */
-export const AUTO_RATIO_LABEL = '自适应'
-
-/** 判断比例是否为自适应（兼容旧数据中的中文「自适应」存储值）。 */
-export function isAutoRatio(ratio: string | undefined | null): boolean {
-  return ratio === AUTO_RATIO || ratio === AUTO_RATIO_LABEL
-}
-
-/** 比例显示文案：自适应显示中文，其余（2:3 等）原样显示。 */
-export function formatRatio(ratio: string): string {
-  return isAutoRatio(ratio) ? AUTO_RATIO_LABEL : ratio
-}
-
-/** 根据比例字符串计算节点尺寸，baseSize 为短边基准 */
-export function calcNodeSize(ratio: string, baseSize: number): { width: number; height: number } {
-  if (isAutoRatio(ratio)) return { width: 444, height: 250 }
-  const [w, h] = ratio.split(':').map(Number)
-  if (!w || !h) return { width: baseSize, height: baseSize }
-  if (w > h) return { width: (baseSize * w) / h, height: baseSize }
-  return { width: baseSize, height: (baseSize * h) / w }
-}
 
 /** 从 sourceRefs 中找到指定 slotIndex 的引用 */
 function findRefBySlot(refs: CanvasSourceRef[] | undefined, slot: number): CanvasSourceRef | undefined {

@@ -278,3 +278,23 @@ describe('task media durable asset resolution', () => {
     )
   })
 })
+
+describe('complete canvas image batches', () => {
+  beforeEach(() => mocks.listAssets.mockReset())
+  it('preserves output order and waits when any result is not active yet', async () => {
+    const { resolveVerifiedImageResultAssetIds } = await import('@/utils/taskMedia')
+    const task = { id: 10, outputs: [{ asset_id: 4 }, { asset_id: 2 }, { asset_id: 3 }, { asset_id: 1 }] }
+    mocks.listAssets.mockResolvedValue({ items: [{ id: 1 }, { id: 2 }, { id: 3 }], total: 3 })
+    expect(await resolveVerifiedImageResultAssetIds(1, task)).toEqual([])
+    mocks.listAssets.mockResolvedValue({ items: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }], total: 4 })
+    expect(await resolveVerifiedImageResultAssetIds(1, task)).toEqual([4, 2, 3, 1])
+  })
+  it('collects a legacy batch across page boundaries instead of stopping at its first result', async () => {
+    const { resolveVerifiedImageResultAssetIds } = await import('@/utils/taskMedia')
+    mocks.listAssets
+      .mockResolvedValueOnce({ items: [{ id: 4, task_id: 10 }], total: 2 })
+      .mockResolvedValueOnce({ items: [{ id: 5, task_id: 10 }], total: 2 })
+      .mockResolvedValueOnce({ items: [{ id: 4 }, { id: 5 }], total: 2 })
+    expect(await resolveVerifiedImageResultAssetIds(1, { id: 10 })).toEqual([4, 5])
+  })
+})
