@@ -6,6 +6,7 @@
  * 视频：模型 + 集合选择器(生成方式/比例/秒数/音频) + 生成
  */
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { Popover, Tooltip } from 'antd'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
 import styles from './CanvasNodePanel.module.css'
 import type { GenerationModelOption } from '@/utils/generationModelCatalog'
@@ -144,9 +145,15 @@ function isReferenceModeField(field: ParamsSchemaField): boolean {
   return REFERENCE_MODE_KEYS.has(normalizeParamKey(field.name))
 }
 
-function isHiddenParamField(field: ParamsSchemaField): boolean {
+function isHiddenParamField(field: ParamsSchemaField, kind: string): boolean {
   const key = normalizeParamKey(field.name)
-  return HIDDEN_PARAM_KEYS.has(key) || REFERENCE_MODE_KEYS.has(key)
+  // 图片高级选项交给后端默认处理，包括忽略旧画布保存的值。
+  // size 的枚举仍是 Seedream 等模型的分辨率档位，只隐藏自由输入尺寸。
+  const isImageDefault =
+    kind === 'image' &&
+    (['moderation', 'stream', 'partialimages', 'outputcompression', 'conversation', 'previoustaskid'].includes(key) ||
+      (key === 'size' && field.type === 'string' && !field.options?.length))
+  return isImageDefault || HIDDEN_PARAM_KEYS.has(key) || REFERENCE_MODE_KEYS.has(key)
 }
 
 /**
@@ -295,7 +302,26 @@ function formatFieldValue(field: ParamsSchemaField, value: unknown): string {
   if (isBooleanField(field)) return value ? '开' : '关'
   if (isVideoTaskModeField(field)) return formatVideoTaskModeLabel(value)
   if (isDurationField(field)) return `${String(value ?? '')}秒`
-  return String(value ?? '')
+  const text = String(value ?? '')
+  const key = normalizeParamKey(field.name)
+  // 仅翻译展示文案；选项的原始值仍用于选中判断、预估和提交。
+  const labels: Record<string, Record<string, string>> = {
+    quality: {
+      auto: '自动',
+      low: '低画质',
+      medium: '标准画质',
+      high: '高画质',
+      standard: '标准画质',
+      hd: '高清',
+      xhigh: '超高画质',
+      max: '最高画质',
+    },
+    background: { auto: '自动', opaque: '不透明', transparent: '透明' },
+    moderation: { auto: '标准过滤', low: '宽松过滤' },
+    outputformat: { jpeg: 'JPEG', jpg: 'JPG', png: 'PNG', webp: 'WebP' },
+    responseformat: { url: '图片链接', b64_json: 'Base64 编码' },
+  }
+  return labels[key]?.[text] ?? (text === 'auto' ? '自动' : text)
 }
 
 /**
@@ -1132,13 +1158,13 @@ export default function CanvasNodePanel({
   const schemaFields = useMemo(() => {
     // 任务类型（编辑 / 延长）离不开视频：没接视频时不展示，也不下发。
     const fields = parseParamsSchema(selectedModel).filter(
-      (field) => !isHiddenParamField(field) && (taskModeVideoAvailable || !isVideoTaskModeField(field)),
+      (field) => !isHiddenParamField(field, kind) && (taskModeVideoAvailable || !isVideoTaskModeField(field)),
     )
     if (hasMediaInput) return fields
     return fields.map((field) =>
       isRatioField(field) ? { ...field, options: filterInputDerivedRatioOptions(field.options, false) } : field,
     )
-  }, [selectedModel, hasMediaInput, taskModeVideoAvailable])
+  }, [selectedModel, hasMediaInput, taskModeVideoAvailable, kind])
 
   // 字段值状态：模型/schema 变化时重置为 default；优先读取节点已持久化的 params（刷新后回显用户选择）
   const [fieldValues, setFieldValues] = useState<Record<string, unknown>>({})
@@ -1265,17 +1291,7 @@ export default function CanvasNodePanel({
   }, [sourceVideoKey])
   const schemaParams = useMemo<Record<string, unknown>>(() => {
     const params = buildSchemaParams(fieldValues)
-    if (kind !== 'video') {
-      if (
-        params.conversation === true &&
-        node?.generationRequest?.params?.conversation === true &&
-        Number(node.taskId) > 0 &&
-        ['succeeded', 'completed', 'success'].includes(String(node.taskStatus))
-      ) {
-        params.previous_task_id = node.taskId
-      }
-      return params
-    }
+    if (kind !== 'video') return params
     const referenceMode = canvasVideoReferenceMode(videoMode)
     if (referenceMode !== undefined) {
       // 从未过滤的 schema 里找（schemaFields 已把它剔除），按模型声明的真实字段名下发。
@@ -1292,9 +1308,6 @@ export default function CanvasNodePanel({
     taskModeFieldName,
     hasVideoInput,
     sourceVideoSeconds,
-    node?.generationRequest,
-    node?.taskId,
-    node?.taskStatus,
   ])
 
   /**
@@ -2493,125 +2506,159 @@ function SchemaFieldMenu({
 
   return (
     <div className={styles.selectorWrap}>
-      <button className={styles.selector} onClick={() => setOpen((v) => !v)}>
-        {display}
-      </button>
-      <SelectorPopover open={open} onClose={() => setOpen(false)}>
-        <div className={styles.videoMenu}>
-          {/* 生成方式（仅视频；保留首尾帧/全能参考切换，不由 schema 驱动） */}
-          {kind === 'video' && (
-            <div className={styles.videoMenuGroup}>
-              <div className={styles.videoMenuTitle}>生成方式</div>
-              <div className={styles.videoBtnGroup}>
-                {(['auto', 'first-last', 'full-ref'] as VideoMode[]).map((m) => (
-                  <button
-                    key={m}
-                    className={`${styles.videoBtnGroupItem} ${mode === m ? styles.videoBtnGroupItemActive : ''}`}
-                    onClick={() => onModeChange?.(m)}
-                  >
-                    {m === 'auto' ? '自由生成' : m === 'first-last' ? '首尾帧' : '全能参考'}
-                  </button>
-                ))}
-              </div>
-              {mode === 'auto' && (
-                <div className={styles.videoMenuHint}>不添加图片即文生视频，也可添加 1–5 张参考图。</div>
-              )}
+      <Popover
+        open={open}
+        onOpenChange={setOpen}
+        trigger="click"
+        placement="top"
+        arrow={false}
+        autoAdjustOverflow
+        destroyOnHidden
+        overlayClassName={styles.schemaPopover}
+        content={
+          <div
+            className={`${styles.videoMenu} ${fields.length >= 8 ? styles.schemaMenuWide : fields.length >= 5 ? styles.schemaMenuMedium : ''}`}
+            role="region"
+            aria-label="生成参数"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setOpen(false)
+            }}
+          >
+            <div className={styles.schemaMenuHeader}>
+              <span>生成参数</span>
+              <button type="button" aria-label="关闭生成参数" onClick={() => setOpen(false)}>
+                ×
+              </button>
             </div>
-          )}
-
-          {/* 模型 params_schema.fields 动态参数 */}
-          {fields.map((f) => {
-            const current = values[f.name]
-            const isActive = (v: unknown) => String(current) === String(v)
-            return (
-              <div key={f.name} className={styles.videoMenuGroup}>
-                <div className={styles.videoMenuTitle}>
-                  {f.displayName}
-                  {/* help 字段：标题后显示 ? 图标，hover 展示说明气泡 */}
-                  {f.help && (
-                    <span className={styles.helpIconWrap}>
-                      <span className={styles.helpIcon} aria-hidden="true">
-                        ?
-                      </span>
-                      <span className={styles.helpTooltip} role="tooltip">
-                        {f.help}
-                      </span>
-                    </span>
-                  )}
-                </div>
-                {followsSource(f) ? (
-                  <div className={styles.videoMenuHint}>编辑 / 延长时跟随原视频，无需选择。</div>
-                ) : isBooleanField(f) ? (
+            <div className={styles.schemaMenuGrid}>
+              {/* 生成方式（仅视频；保留首尾帧/全能参考切换，不由 schema 驱动） */}
+              {kind === 'video' && (
+                <div className={styles.videoMenuGroup}>
+                  <div className={styles.videoMenuTitle}>生成方式</div>
                   <div className={styles.videoBtnGroup}>
-                    <button
-                      className={`${styles.videoBtnGroupItem} ${current ? styles.videoBtnGroupItemActive : ''}`}
-                      onClick={() => onFieldChange?.(f.name, true)}
-                    >
-                      开
-                    </button>
-                    <button
-                      className={`${styles.videoBtnGroupItem} ${!current ? styles.videoBtnGroupItemActive : ''}`}
-                      onClick={() => onFieldChange?.(f.name, false)}
-                    >
-                      关
-                    </button>
-                  </div>
-                ) : isDurationField(f) && durationWheelOptions(f).length ? (
-                  /* 时长：横向档位条吸附选择，与智能成片、爆款复制的时长交互一致 */
-                  <>
-                    <WheelPicker
-                      options={durationWheelOptions(f)}
-                      value={String(current ?? '')}
-                      onChange={(picked) => onFieldChange?.(f.name, resolveDurationWheelValue(f, picked))}
-                      ariaLabel={f.displayName}
-                      // 画布参数菜单比入口浮层窄，档位相应收窄一档宽度
-                      visibleCount={5}
-                      itemWidth={56}
-                      className={styles.durationWheel}
-                    />
-                    {/* 档位范围由模型的 params_schema 决定；不写出来用户会以为「14/15 秒是灰的、点不了」是 bug */}
-                    <div className={styles.videoMenuHint}>{describeDurationRange(durationWheelOptions(f))}</div>
-                  </>
-                ) : isNumberField(f) ? (
-                  /* 数字类型：滑块，min/max 为范围，步进由 default 是否有小数点决定 */
-                  <div className={styles.sliderWrap}>
-                    <input
-                      type="range"
-                      className={styles.slider}
-                      min={f.min ?? 0}
-                      max={f.max ?? 100}
-                      step={sliderStep(f)}
-                      value={Number(current) || 0}
-                      onChange={(e) => onFieldChange?.(f.name, Number(e.target.value))}
-                    />
-                    <span className={styles.sliderValue}>{formatFieldValue(f, current)}</span>
-                  </div>
-                ) : f.type === 'string' && !f.options?.length ? (
-                  <input
-                    type="text"
-                    aria-label={f.displayName}
-                    value={String(current ?? '')}
-                    placeholder={f.help || f.displayName}
-                    onChange={(e) => onFieldChange?.(f.name, e.target.value)}
-                  />
-                ) : (
-                  <div className={styles.videoBtnGroup}>
-                    {(f.options || []).map((o) => (
+                    {(['auto', 'first-last', 'full-ref'] as VideoMode[]).map((m) => (
                       <button
-                        key={o}
-                        className={`${styles.videoBtnGroupItem} ${isActive(o) ? styles.videoBtnGroupItemActive : ''}`}
-                        onClick={() => onFieldChange?.(f.name, o)}
+                        key={m}
+                        className={`${styles.videoBtnGroupItem} ${mode === m ? styles.videoBtnGroupItemActive : ''}`}
+                        onClick={() => onModeChange?.(m)}
                       >
-                        {formatFieldValue(f, o)}
+                        {m === 'auto' ? '自由生成' : m === 'first-last' ? '首尾帧' : '全能参考'}
                       </button>
                     ))}
                   </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </SelectorPopover>
+                  {mode === 'auto' && (
+                    <div className={styles.videoMenuHint}>不添加图片即文生视频，也可添加 1–5 张参考图。</div>
+                  )}
+                </div>
+              )}
+
+              {/* 模型 params_schema.fields 动态参数 */}
+              {fields.map((f) => {
+                const current = values[f.name]
+                const isActive = (v: unknown) => String(current) === String(v)
+                return (
+                  <div key={f.name} className={styles.videoMenuGroup}>
+                    <div className={styles.videoMenuTitle}>
+                      {f.displayName}
+                      {/* help 字段：标题后显示 ? 图标，hover 展示说明气泡 */}
+                      {f.help && (
+                        <Tooltip title={f.help}>
+                          <span className={styles.helpIconWrap} tabIndex={0} aria-label={f.help}>
+                            <span className={styles.helpIcon} aria-hidden="true">
+                              ?
+                            </span>
+                          </span>
+                        </Tooltip>
+                      )}
+                    </div>
+                    {followsSource(f) ? (
+                      <div className={styles.videoMenuHint}>编辑 / 延长时跟随原视频，无需选择。</div>
+                    ) : isBooleanField(f) ? (
+                      <div className={styles.videoBtnGroup}>
+                        <button
+                          className={`${styles.videoBtnGroupItem} ${current ? styles.videoBtnGroupItemActive : ''}`}
+                          onClick={() => onFieldChange?.(f.name, true)}
+                        >
+                          开
+                        </button>
+                        <button
+                          className={`${styles.videoBtnGroupItem} ${!current ? styles.videoBtnGroupItemActive : ''}`}
+                          onClick={() => onFieldChange?.(f.name, false)}
+                        >
+                          关
+                        </button>
+                      </div>
+                    ) : isDurationField(f) && durationWheelOptions(f).length ? (
+                      /* 时长：横向档位条吸附选择，与智能成片、爆款复制的时长交互一致 */
+                      <>
+                        <WheelPicker
+                          options={durationWheelOptions(f)}
+                          value={String(current ?? '')}
+                          onChange={(picked) => onFieldChange?.(f.name, resolveDurationWheelValue(f, picked))}
+                          ariaLabel={f.displayName}
+                          // 画布参数菜单比入口浮层窄，档位相应收窄一档宽度
+                          visibleCount={5}
+                          itemWidth={56}
+                          className={styles.durationWheel}
+                        />
+                        {/* 档位范围由模型的 params_schema 决定；不写出来用户会以为「14/15 秒是灰的、点不了」是 bug */}
+                        <div className={styles.videoMenuHint}>{describeDurationRange(durationWheelOptions(f))}</div>
+                      </>
+                    ) : isNumberField(f) ? (
+                      /* 数字类型：滑块，min/max 为范围，步进由 default 是否有小数点决定 */
+                      <div className={styles.sliderWrap}>
+                        <input
+                          type="range"
+                          className={styles.slider}
+                          aria-label={f.displayName}
+                          min={f.min ?? 0}
+                          max={f.max ?? 100}
+                          step={sliderStep(f)}
+                          value={Number(current) || 0}
+                          onChange={(e) => onFieldChange?.(f.name, Number(e.target.value))}
+                        />
+                        <span className={styles.sliderValue}>{formatFieldValue(f, current)}</span>
+                      </div>
+                    ) : f.type === 'string' && !f.options?.length ? (
+                      <input
+                        type="text"
+                        className={styles.schemaTextInput}
+                        aria-label={f.displayName}
+                        value={String(current ?? '')}
+                        placeholder={f.help || f.displayName}
+                        onChange={(e) => onFieldChange?.(f.name, e.target.value)}
+                      />
+                    ) : (
+                      <div className={styles.videoBtnGroup}>
+                        {(f.options || []).map((o) => (
+                          <button
+                            key={o}
+                            className={`${styles.videoBtnGroupItem} ${isActive(o) ? styles.videoBtnGroupItemActive : ''}`}
+                            onClick={() => onFieldChange?.(f.name, o)}
+                          >
+                            {formatFieldValue(f, o)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        }
+      >
+        <button
+          className={styles.selector}
+          title={display}
+          aria-expanded={open}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setOpen(false)
+          }}
+        >
+          {display || '生成参数'}
+        </button>
+      </Popover>
     </div>
   )
 }

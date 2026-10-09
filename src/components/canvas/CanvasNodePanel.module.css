@@ -953,22 +953,99 @@
 }
 
 /* ── 视频集合菜单 ── */
+.schemaPopover {
+  max-width: calc(100vw - 24px);
+}
+
+.schemaPopover :global(.ant-popover-inner) {
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
 .videoMenu {
-  min-width: 260px;
-  padding: 8px;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  font-family: 'PingFang SC', sans-serif;
+}
+
+.schemaMenuMedium {
+  width: 540px;
+}
+.schemaMenuWide {
+  width: 760px;
+}
+
+.schemaMenuHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid #eee;
+  color: #333;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.schemaMenuHeader button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #777;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.schemaMenuHeader button:hover {
+  background: #f4f5f7;
+}
+
+.schemaMenuGrid {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 16px 20px;
+  padding: 16px;
+  max-height: min(480px, calc(100vh - 160px));
+  max-height: min(480px, calc(100dvh - 160px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .videoMenuGroup {
-  padding: 8px 0;
+  min-width: 0;
+  align-self: start;
 }
 
-.videoMenuGroup + .videoMenuGroup {
-  border-top: 1px solid #eee;
+.schemaTextInput {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  color: #555;
+  background: #fff;
+}
+
+.schemaTextInput::placeholder {
+  color: #999;
+}
+
+.schemaTextInput:focus-visible,
+.schemaMenuHeader button:focus-visible,
+.videoBtnGroupItem:focus-visible {
+  outline: 2px solid #11a98a;
+  outline-offset: 2px;
 }
 
 .videoMenuTitle {
-  font-size: 11px;
-  color: #999;
+  font-size: 12px;
+  color: #777;
   padding: 0 4px 8px;
   font-family: 'PingFang SC', sans-serif;
   display: flex;
@@ -996,51 +1073,6 @@
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
-}
-
-.helpTooltip {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%) translateY(2px);
-  min-width: 180px;
-  max-width: 260px;
-  padding: 7px 10px;
-  background: #2f3440;
-  color: #f0f1f5;
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.5;
-  border-radius: 8px;
-  white-space: normal;
-  word-break: break-word;
-  text-align: left;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition:
-    opacity 0.18s,
-    transform 0.18s,
-    visibility 0.18s;
-  z-index: 5;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-}
-
-/* 小三角箭头 */
-.helpTooltip::after {
-  content: '';
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 5px solid transparent;
-  border-top-color: #2f3440;
-}
-
-.helpIconWrap:hover .helpTooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) translateY(0);
 }
 
 /* 数字字段滑块 */

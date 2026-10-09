@@ -1008,7 +1008,7 @@ describe('GPT Image editing controls', () => {
     { name: 'size', type: 'string', default: '' },
     { name: 'conversation', type: 'bool', default: false },
   ]
-  it('submits a persisted mask separately and continues the previous successful image conversation', async () => {
+  it('submits a persisted mask without resuming a previous image conversation', async () => {
     const user = userEvent.setup()
     const onGenerate = vi.fn()
     const model = modelWithFields(fields)
@@ -1028,7 +1028,7 @@ describe('GPT Image editing controls', () => {
     await user.click(screen.getByTitle('发送生成'))
     expect(onGenerate).toHaveBeenCalledWith(
       expect.objectContaining({
-        params: expect.objectContaining({ quality: 'high', size: '2048x1152', previous_task_id: 45 }),
+        params: { mask_asset_id: 88, quality: 'high' },
         inputAssets: [
           { asset_id: 77, role: 'reference_image' },
           { asset_id: 88, role: 'mask' },
@@ -1056,4 +1056,114 @@ describe('GPT Image editing controls', () => {
     expect(submitted.params).not.toHaveProperty('previous_task_id')
     expect(submitted.params).not.toHaveProperty('mask_asset_id')
   })
+})
+
+it('参数菜单及摘要使用中文，提交保留官方英文枚举值', async () => {
+  const user = userEvent.setup()
+  const onGenerate = vi.fn()
+  renderPanel(
+    [
+      modelWithFields([
+        {
+          name: 'quality',
+          display_name: '画质',
+          type: 'select',
+          default: 'low',
+          options: ['auto', 'low', 'medium', 'high'],
+        },
+        {
+          name: 'background',
+          display_name: '背景',
+          type: 'select',
+          default: 'auto',
+          options: ['auto', 'opaque', 'transparent'],
+        },
+        { name: 'moderation', display_name: '内容过滤', type: 'select', default: 'auto', options: ['auto', 'low'] },
+        {
+          name: 'output_format',
+          display_name: '输出格式',
+          type: 'select',
+          default: 'png',
+          options: ['jpeg', 'png', 'webp'],
+        },
+      ]),
+    ],
+    imageNodeWithReference(),
+    { onGenerate },
+  )
+  await user.click(screen.getByRole('button', { name: '低画质 · 自动 · PNG' }))
+  expect(screen.getByRole('region', { name: '生成参数' })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '高画质' }))
+  await user.click(screen.getByRole('button', { name: '透明' }))
+  expect(screen.queryByRole('button', { name: '宽松过滤' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  expect(screen.getByRole('button', { name: '高画质 · 透明 · PNG' })).toBeInTheDocument()
+  await user.click(screen.getByTitle('发送生成'))
+  expect(onGenerate).toHaveBeenCalledWith(
+    expect.objectContaining({
+      params: expect.objectContaining({
+        quality: 'high',
+        background: 'transparent',
+        output_format: 'png',
+      }),
+    }),
+  )
+})
+
+it('隐藏图片高级参数并忽略旧画布值，保留分辨率选项和生成数量', async () => {
+  const user = userEvent.setup()
+  const onGenerate = vi.fn()
+  const fields = [
+    { name: 'size', display_name: '自定义尺寸', type: 'string', default: '' },
+    { name: 'moderation', display_name: '内容过滤', type: 'select', default: 'auto', options: ['auto', 'low'] },
+    { name: 'stream', display_name: '渐进预览', type: 'bool', default: false },
+    { name: 'partial_images', display_name: '预览帧数', type: 'number', default: 2, min: 0, max: 3 },
+    { name: 'output_compression', display_name: '压缩质量', type: 'number', default: 20, min: 0, max: 100 },
+    { name: 'conversation', display_name: '连续编辑', type: 'bool', default: false },
+    { name: 'count', display_name: '生成数量', type: 'number', default: 1, min: 1, max: 10 },
+  ]
+  renderPanel(
+    [modelWithFields(fields)],
+    {
+      ...imageNodeWithReference(),
+      params: {
+        size: '2048x1152',
+        moderation: 'low',
+        stream: true,
+        partial_images: 3,
+        output_compression: 99,
+        conversation: true,
+        previous_task_id: 45,
+        count: 4,
+      },
+    },
+    { onGenerate },
+  )
+  await user.click(screen.getByRole('button', { name: '4' }))
+  for (const label of ['自定义尺寸', '内容过滤', '渐进预览', '预览帧数', '压缩质量', '连续编辑']) {
+    expect(screen.queryByText(label)).not.toBeInTheDocument()
+  }
+  expect(screen.getByRole('slider', { name: '生成数量' })).toHaveValue('4')
+  await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  await user.click(screen.getByTitle('发送生成'))
+  expect(onGenerate.mock.calls[0]![0].params).toEqual({ count: 4 })
+})
+
+it('保留 Seedream 的 size 分辨率档位', async () => {
+  const user = userEvent.setup()
+  const onGenerate = vi.fn()
+  renderPanel(
+    [
+      modelWithFields([
+        { name: 'size', display_name: '分辨率', type: 'select', default: '2K', options: ['2K', '3K', '4K'] },
+      ]),
+    ],
+    imageNodeWithReference(),
+    { onGenerate },
+  )
+  await user.click(screen.getByRole('button', { name: '2K' }))
+  await user.click(screen.getByRole('button', { name: '4K' }))
+  await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  await user.click(screen.getByTitle('发送生成'))
+  expect(onGenerate.mock.calls[0]![0].params).toEqual({ size: '4K' })
 })
