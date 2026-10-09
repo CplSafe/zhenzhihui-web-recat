@@ -5,7 +5,7 @@
  * 图片：模型 + 比例 + 生成
  * 视频：模型 + 集合选择器(生成方式/比例/秒数/音频) + 生成
  */
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
 import { Popover, Tooltip } from 'antd'
 import { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio } from '@/utils/canvasNodeSize'
 export { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio, formatRatio, calcNodeSize } from '@/utils/canvasNodeSize'
@@ -1610,7 +1610,7 @@ export default function CanvasNodePanel({
   }
 
   return (
-    <div className={styles.panel}>
+    <div className={styles.panel} data-canvas-node-panel>
       {/* tags / 缩略图 */}
       <div className={styles.tags}>
         {inputSummary.total > 1 && (
@@ -2457,6 +2457,8 @@ function SchemaFieldMenu({
   onFieldChange?: (name: string, value: unknown) => void
 }) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [centerOffset, setCenterOffset] = useState(0)
 
   // 按钮摘要：视频先显示生成方式，再拼接各字段当前值
   const modeLabel = mode === 'first-last' ? '首尾帧' : mode === 'full-ref' ? '全能参考' : '自由生成'
@@ -2470,6 +2472,29 @@ function SchemaFieldMenu({
   }
   if (followSourceVideo) displayParts.push('比例时长跟随原视频')
   const display = displayParts.join(' · ')
+
+  // 弹层归属于输入面板，以面板中心对齐；参数摘要按钮长短不应改变弹层位置。
+  // 留在面板 DOM 内，画布平移/拖动隐藏时自然跟随，不依赖 body portal 重新测量。
+  useLayoutEffect(() => {
+    if (!open) return
+    const trigger = triggerRef.current
+    const panel = trigger?.closest<HTMLElement>('[data-canvas-node-panel]')
+    if (!trigger || !panel) return
+    const alignToPanel = () => {
+      const target = trigger.getBoundingClientRect()
+      const bounds = panel.getBoundingClientRect()
+      setCenterOffset(bounds.left + bounds.width / 2 - target.left - target.width / 2)
+    }
+    alignToPanel()
+    const observer = new ResizeObserver(alignToPanel)
+    observer.observe(panel)
+    observer.observe(trigger)
+    window.addEventListener('resize', alignToPanel)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', alignToPanel)
+    }
+  }, [open, display])
 
   /** number 滑块步进：default 带小数点则按小数位数（0.5→0.1，0.05→0.01），否则按 1 */
   const sliderStep = (f: ParamsSchemaField): number => {
@@ -2489,10 +2514,15 @@ function SchemaFieldMenu({
         onOpenChange={setOpen}
         trigger="click"
         placement="top"
+        align={{ offset: [centerOffset, 0] }}
         arrow={false}
         autoAdjustOverflow
         destroyOnHidden
         overlayClassName={styles.schemaPopover}
+        zIndex={1400}
+        getPopupContainer={(trigger) =>
+          trigger.closest<HTMLElement>('[data-canvas-node-panel]') || trigger.parentElement!
+        }
         content={
           <div
             className={`${styles.videoMenu} ${fields.length >= 8 ? styles.schemaMenuWide : fields.length >= 5 ? styles.schemaMenuMedium : ''}`}
@@ -2540,7 +2570,7 @@ function SchemaFieldMenu({
                       {f.displayName}
                       {/* help 字段：标题后显示 ? 图标，hover 展示说明气泡 */}
                       {f.help && (
-                        <Tooltip title={f.help}>
+                        <Tooltip title={f.help} zIndex={1450}>
                           <span className={styles.helpIconWrap} tabIndex={0} aria-label={f.help}>
                             <span className={styles.helpIcon} aria-hidden="true">
                               ?
@@ -2627,6 +2657,7 @@ function SchemaFieldMenu({
         }
       >
         <button
+          ref={triggerRef}
           className={styles.selector}
           title={display}
           aria-expanded={open}

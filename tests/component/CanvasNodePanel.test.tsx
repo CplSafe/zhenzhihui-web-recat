@@ -1167,3 +1167,16 @@ it('保留 Seedream 的 size 分辨率档位', async () => {
   await user.click(screen.getByTitle('发送生成'))
   expect(onGenerate.mock.calls[0]![0].params).toEqual({ size: '4K' })
 })
+
+it('参数浮层挂在输入面板内部，层级高于真实画布的 1200 编辑面板', async () => {
+  const user = userEvent.setup()
+  renderPanel([modelWithFields([{ name: 'quality', type: 'select', default: 'low', options: ['low', 'high'] }])])
+  const trigger = screen.getByRole('button', { name: '低画质' })
+  const panel = trigger.closest('[data-canvas-node-panel]')
+  await user.click(trigger)
+  const menu = screen.getByRole('region', { name: '生成参数' })
+  expect(panel).toContainElement(menu)
+  expect(menu.closest('.ant-popover')).toHaveStyle({ zIndex: 1400 })
+  await user.click(screen.getByRole('button', { name: '高画质' }))
+  expect(screen.getByRole('button', { name: '高画质', expanded: true })).toBeInTheDocument()
+})
