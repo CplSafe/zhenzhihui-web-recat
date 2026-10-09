@@ -689,33 +689,38 @@ async function openAiResponseStream({
   inputAssets,
   params,
   onDelta,
+  onImagePartial,
+  imageTask = false,
   signal,
 }: any) {
   let response
   const normalizedMessages = normalizeResponseMessages(messages)
 
   try {
-    response = await fetch(buildUrl(businessApiBaseUrl, '/api/v1/ai/responses?stream=true'), {
-      method: 'POST',
-      credentials: 'include',
-      signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
+    response = await fetch(
+      buildUrl(businessApiBaseUrl, imageTask ? '/api/v1/ai/tasks?stream=true' : '/api/v1/ai/responses?stream=true'),
+      {
+        method: 'POST',
+        credentials: 'include',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify(
+          removeEmptyFields({
+            workspace_id: workspaceId,
+            model_version_id: modelId,
+            operation_code: operationCode,
+            idempotency_key: idempotencyKey,
+            prompt,
+            messages: normalizedMessages,
+            input_assets: inputAssets,
+            params,
+          }),
+        ),
       },
-      body: JSON.stringify(
-        removeEmptyFields({
-          workspace_id: workspaceId,
-          model_version_id: modelId,
-          operation_code: operationCode,
-          idempotency_key: idempotencyKey,
-          prompt,
-          messages: normalizedMessages,
-          input_assets: inputAssets,
-          params,
-        }),
-      ),
-    })
+    )
   } catch (error) {
     throw new BusinessApiError('网络请求失败，请检查接口服务或本地代理配置', {
       response: error,
@@ -791,13 +796,18 @@ async function openAiResponseStream({
       return
     }
 
-    if (eventName === 'response.error' || eventName === 'error' || payload?.error) {
+    if (eventName === 'image.partial') {
+      onImagePartial?.(payload)
+      return
+    }
+    if (eventName === 'image.error' || eventName === 'response.error' || eventName === 'error' || payload?.error) {
       throw new BusinessApiError(payload?.error?.message || payload?.message || 'AI 流式响应失败', {
         response: payload,
+        code: payload?.code_string || payload?.code,
       })
     }
 
-    if (eventName === 'response.completed') {
+    if (eventName === 'image.completed' || eventName === 'response.completed') {
       const completedText = collectResponseText(payload?.response || payload)
 
       if (completedText) {
@@ -897,6 +907,9 @@ async function openAiResponseStream({
     throw streamError
   }
 
+  if (imageTask && !getAiTaskId(finalTask)) {
+    throw new BusinessApiError('图片流中断，未收到最终任务，请从任务记录查看结果')
+  }
   if (!aggregated) {
     aggregated = extractTaskText(finalTask) || ''
   }
@@ -1005,6 +1018,7 @@ export async function createAiTask({
   modelPlanCandidates = DEFAULT_MODEL_PLAN_CANDIDATES,
   idempotencyKey: providedIdempotencyKey,
   signal,
+  onImagePartial,
 }: any) {
   const submitTask = ({ idempotencyKey, modelId, resolvedParams, resolvedInputAssets }) =>
     submitAiTask({
@@ -1016,6 +1030,7 @@ export async function createAiTask({
       params: resolvedParams,
       inputAssets: resolvedInputAssets,
       signal,
+      onImagePartial,
     })
 
   // 幂等键:同一次 createAiTask 操作全程复用一个 key。后端按 (workspace, idempotency_key) 去重——
@@ -1377,7 +1392,23 @@ async function submitAiTask({
   params,
   inputAssets,
   signal,
+  onImagePartial,
 }) {
+  if (params?.stream === true && operationCode?.startsWith('image.')) {
+    const result = await openAiResponseStream({
+      workspaceId,
+      modelId,
+      operationCode,
+      idempotencyKey,
+      prompt,
+      params,
+      inputAssets,
+      signal,
+      onImagePartial,
+      imageTask: true,
+    })
+    return normalizeAiTask(result.task)
+  }
   const requestBody = removeEmptyFields({
     workspace_id: workspaceId,
     model_version_id: modelId,

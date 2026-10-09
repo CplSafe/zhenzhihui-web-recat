@@ -135,6 +135,22 @@ describe('storyboard image parameters', () => {
     expect(buildStoryboardImageParams({}, 'unsupported')).toEqual({ ratio: '9:16', quality: 'low', count: 1 })
   })
 
+  it('respects provider quality options and an explicitly empty custom size', () => {
+    expect(
+      buildStoryboardImageParams(
+        {
+          params_schema: {
+            fields: [
+              { name: 'quality', options: ['medium', 'high'], default: 'high' },
+              { name: 'size', type: 'string', default: '' },
+            ],
+          },
+        },
+        '9:16',
+      ),
+    ).toEqual({ quality: 'high', size: '' })
+  })
+
   it('only sends fields declared by the model', () => {
     const model = {
       params_schema: {

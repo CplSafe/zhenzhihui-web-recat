@@ -522,6 +522,7 @@ async function mapWithConcurrency<T, R>(
  * 而不是把回调塞进节点 data（data 会被持久化，放不了函数）。
  */
 interface CanvasNodeActions {
+  imagePreviews?: Record<string, string>
   /** 把视频节点当前画面截成一张图，交给画布上传并落成图片节点。 */
   onCaptureFrame?: (nodeId: string, frameDataUrl: string) => void
   /** 图片解码后按真实宽高调整节点外框，避免统一方形节点裁掉横图/竖图。 */
@@ -1324,6 +1325,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     capturingNodeId,
     renamingNodeId,
     onRenamingDone,
+    imagePreviews,
     timeline: timelineActions,
   } = useContext(CanvasNodeActionsContext)
 
@@ -1912,6 +1914,13 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           role="status"
           aria-live="polite"
         >
+          {imagePreviews?.[id] && (
+            <img
+              src={imagePreviews[id]}
+              alt="生成预览"
+              style={{ maxWidth: '100%', maxHeight: '60%', objectFit: 'contain' }}
+            />
+          )}
           {videoEstimatedProgress === null ? (
             <span className="canvas-node-generation-spinner" aria-hidden="true" />
           ) : null}
@@ -2041,6 +2050,7 @@ export default function CanvasView() {
 
 /** 画布主体逻辑 */
 function CanvasInner() {
+  const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({})
   // 路由参数中的项目 id：画布 ID 的唯一真相源（只接受合法数字 id）
   const { id: routeProjectId } = useParams()
   const navigate = useNavigate()
@@ -4971,6 +4981,14 @@ function CanvasInner() {
           params: generate.params,
           inputAssets,
           modelVersionId: generate.modelVersionId,
+          onImagePartial: (event: Record<string, unknown>) => {
+            const b64 = event.b64_json || event.partial_image_b64
+            if (typeof b64 !== 'string' || !b64) return
+            const format = ['png', 'jpeg', 'webp'].includes(String(event.output_format))
+              ? String(event.output_format)
+              : 'png'
+            setImagePreviews((prev) => ({ ...prev, [targetNodeId]: `data:image/${format};base64,${b64}` }))
+          },
         })
         const taskId = getAiTaskId(task)
         if (!taskId) throw new Error('任务创建后未返回任务 ID')
@@ -5044,6 +5062,11 @@ function CanvasInner() {
         showToast(humanizeCanvasTaskError(error?.message) || '任务创建失败，请稍后重试', 'error')
       } finally {
         pendingNodeSubmissionsRef.current.delete(targetNodeId)
+        setImagePreviews((prev) => {
+          const next = { ...prev }
+          delete next[targetNodeId]
+          return next
+        })
       }
     },
     [
@@ -7052,6 +7075,7 @@ function CanvasInner() {
    */
   const nodeActions = useMemo<CanvasNodeActions>(
     () => ({
+      imagePreviews,
       onCaptureFrame: handleCaptureFrame,
       onImageNaturalSize: handleImageNaturalSize,
       capturingNodeId,
@@ -7074,6 +7098,7 @@ function CanvasInner() {
       },
     }),
     [
+      imagePreviews,
       handleCaptureFrame,
       handleImageNaturalSize,
       capturingNodeId,
