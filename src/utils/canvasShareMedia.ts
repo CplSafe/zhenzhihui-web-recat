@@ -14,3 +14,24 @@ export function resolveCanvasShareMediaUrl(
   }
   return ''
 }
+
+function shareAssetUrl(token: string, assetId: unknown): string {
+  const id = Number(assetId)
+  if (!token || !Number.isSafeInteger(id) || id <= 0) return ''
+  return `/api/v1/canvas-shares/${encodeURIComponent(token)}/assets/${id}`
+}
+
+/**
+ * 节点素材在分享页的匿名地址，结果写进 shareMediaUrl / sharePosterUrl 供 resolveCanvasShareMediaUrl 读取。
+ *
+ * 节点存的 resultUrl 多是 /api/v1/assets/{id}/download：要登录且是工作空间成员，匿名访客取必然失败。
+ * 有素材 ID 就改走分享口令下的素材接口（后端只放行画布里确实引用的素材）；
+ * 没有时返回空串，由 resolveCanvasShareMediaUrl 回退到节点原有地址。
+ */
+export function resolvePublicCanvasNodeMedia(
+  token: string,
+  data: Record<string, unknown> | undefined,
+): { url: string; posterUrl: string } {
+  const record = data || {}
+  return { url: shareAssetUrl(token, record.assetId), posterUrl: shareAssetUrl(token, record.posterAssetId) }
+}

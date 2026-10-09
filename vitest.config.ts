@@ -32,6 +32,7 @@ export default defineConfig({
         'src/utils/businessPagination.ts',
         'src/utils/canvasLocalImage.ts',
         'src/utils/canvasNodeTitle.ts',
+        'src/utils/canvasShareMedia.ts',
         'src/utils/chunkReload.ts',
         'src/utils/canvasRealPerson.ts',
         'src/utils/creativeDraftSaveQueue.ts',
