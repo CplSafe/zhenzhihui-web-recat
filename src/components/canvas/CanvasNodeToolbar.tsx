@@ -156,19 +156,6 @@ export default function CanvasNodeToolbar({
         </span>
       )}
 
-      {showPreview && (
-        <button
-          type="button"
-          className={`${styles.action} ${styles.preview}`}
-          data-tip="放大预览"
-          aria-label={kind === 'video' ? '放大预览视频' : '放大预览图片'}
-          onClick={onPreview}
-        >
-          <PreviewIcon />
-          <span className={styles.previewLabel}>放大预览</span>
-        </button>
-      )}
-
       {showDownload && (
         <button type="button" className={styles.action} data-tip="下载" aria-label="下载素材" onClick={onDownload}>
           <DownloadIcon />
@@ -186,6 +173,18 @@ export default function CanvasNodeToolbar({
       >
         <DeleteIcon />
       </button>
+
+      {showPreview && (
+        <button
+          type="button"
+          className={`${styles.action} ${styles.preview}`}
+          data-tip="放大"
+          aria-label={kind === 'video' ? '放大预览视频' : '放大预览图片'}
+          onClick={onPreview}
+        >
+          <PreviewIcon />
+        </button>
+      )}
     </div>
   )
 }
@@ -201,9 +200,7 @@ function PreviewIcon() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <rect x="3" y="5" width="14" height="14" rx="2.5" />
-      <path d="m9 10 4 2.5L9 15v-5Z" fill="currentColor" stroke="none" />
-      <path d="M16 3h5v5M21 3l-6 6" />
+      <path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" />
     </svg>
   )
 }

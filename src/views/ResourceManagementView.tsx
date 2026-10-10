@@ -60,6 +60,7 @@ const MAIN_TABS = [
       { k: 'all', l: '全部' },
       { k: 'image', l: '图片' },
       { k: 'video', l: '视频' },
+      { k: 'audio', l: '音频' },
     ],
   },
   {
@@ -69,6 +70,7 @@ const MAIN_TABS = [
       { k: 'all', l: '全部' },
       { k: 'image', l: '图片' },
       { k: 'video', l: '视频' },
+      { k: 'audio', l: '音频' },
     ],
   },
   {
@@ -78,6 +80,7 @@ const MAIN_TABS = [
       { k: 'all', l: '全部' },
       { k: 'image', l: '图片' },
       { k: 'video', l: '视频' },
+      { k: 'audio', l: '音频' },
     ],
   },
   {
@@ -259,6 +262,7 @@ function resolveAssetPreview(asset: any) {
   const mimeType = asset?.mime_type || ''
   const type = (asset?.type || '').toLowerCase()
   const imageUrl = assetInlineUrl(asset) || ''
+  if (assetCategory === '音频') return { mediaKind: 'audio', mediaUrl: asset?.url || '', posterUrl: '' }
   if (imageUrl && (assetCategory === '图片' || type === 'image' || mimeType.startsWith('image/'))) {
     return { mediaKind: 'image', mediaUrl: imageUrl, posterUrl: '' }
   }
@@ -570,6 +574,14 @@ function AssetThumb({
       </div>
     )
   }
+  if (card.mediaKind === 'audio') {
+    return (
+      <div ref={rootRef} className="resource-asset-cover-placeholder">
+        <span>♫ 音频</span>
+        <audio src={src} controls preload="metadata" onClick={(e) => e.stopPropagation()} onError={handleError} />
+      </div>
+    )
+  }
   if (card.mediaKind === 'video') {
     return (
       <video
@@ -652,18 +664,20 @@ function ResourceCard({
         {card.isAi && card.mediaKind === 'image' && <AiBadge />}
         <span className="resource-asset-type">{card.type}</span>
       </button>
-      <button
-        type="button"
-        className={`resource-asset-favorite${favorite ? ' is-on' : ''}`}
-        aria-label={`${favorite ? '取消收藏' : '收藏'}${card.title}`}
-        aria-pressed={favorite}
-        title={favorite ? '取消收藏' : '收藏'}
-        onClick={onToggleFavorite}
-      >
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-        </svg>
-      </button>
+      {card.mediaKind !== 'audio' && (
+        <button
+          type="button"
+          className={`resource-asset-favorite${favorite ? ' is-on' : ''}`}
+          aria-label={`${favorite ? '取消收藏' : '收藏'}${card.title}`}
+          aria-pressed={favorite}
+          title={favorite ? '取消收藏' : '收藏'}
+          onClick={onToggleFavorite}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+          </svg>
+        </button>
+      )}
       {favoriteActions ? (
         <div className="resource-favorite-actions" aria-label={`${card.title}操作`}>
           <button
@@ -1215,15 +1229,18 @@ export default function ResourceManagementView() {
       base = cards.slice()
       if (subTab === 'image') base = base.filter((c) => c.kind === 'image')
       else if (subTab === 'video') base = base.filter((c) => c.kind === 'video')
+      else if (subTab === 'audio') base = base.filter((c) => c.kind === 'audio')
     } else if (mainTab === 'upload') {
       base = cards.filter((c) => c.source === 'upload')
       if (subTab === 'image') base = base.filter((c) => c.kind === 'image')
       else if (subTab === 'video') base = base.filter((c) => c.kind === 'video')
+      else if (subTab === 'audio') base = base.filter((c) => c.kind === 'audio')
     } else if (mainTab === 'generated') {
       // AI 生成素材 source 可能是 'generated'/'ai'/空，排除明确标记 'upload' 的即可
       base = cards.filter((c) => c.source !== 'upload')
       if (subTab === 'image') base = base.filter((c) => c.kind === 'image')
       else if (subTab === 'video') base = base.filter((c) => c.kind === 'video')
+      else if (subTab === 'audio') base = base.filter((c) => c.kind === 'audio')
     } else if (mainTab === 'collected') {
       base = favoriteCards
     }
@@ -1277,6 +1294,7 @@ export default function ResourceManagementView() {
     let m = selectedProject.media as any[]
     if (subTab === 'image') m = m.filter((c) => c.kind === 'image')
     else if (subTab === 'video') m = m.filter((c) => c.kind === 'video')
+    else if (subTab === 'audio') m = m.filter((c) => c.kind === 'audio')
     const keyword = searchQuery.trim().toLowerCase()
     if (keyword) {
       m = m.filter((card) => [card.title, ...(card.tags || [])].join(' ').toLowerCase().includes(keyword))
@@ -1285,10 +1303,12 @@ export default function ResourceManagementView() {
   }, [searchQuery, selectedProject, subTab])
 
   // 项目列表态:upload/生成 且未选中项目;此时不显示图片/视频子tab
-  const showProjectList = (mainTab === 'upload' || mainTab === 'generated') && !selectedProjectId
-  const gridCards = selectedProjectId ? projectMedia : visibleCards
-  const showSubs = mainTab === 'all' || (!!selectedProjectId && (mainTab === 'upload' || mainTab === 'generated'))
-  const subs = MAIN_TABS.find((t) => t.key === mainTab)?.subs || []
+  const showProjectList = (mainTab === 'upload' || mainTab === 'generated') && !selectedProjectId && subTab !== 'audio'
+  const gridCards = selectedProjectId && subTab !== 'audio' ? projectMedia : visibleCards
+  const showSubs = ['all', 'upload', 'generated'].includes(mainTab)
+  const subs = (MAIN_TABS.find((t) => t.key === mainTab)?.subs || []).filter(
+    (sub) => mainTab === 'all' || selectedProjectId || sub.k === 'all' || sub.k === 'audio',
+  )
   // 项目列表和素材网格共用分页状态；“全部”标签可在进入后续页时继续向服务端增量取数。
   const paginatedItems = showProjectList ? projectsForMode : gridCards
   const usesIncrementalAssetPages = mainTab === 'all' && !selectedProjectId
@@ -1416,14 +1436,15 @@ export default function ResourceManagementView() {
   const downloadResourceCard = (card: any) => {
     const assetId = Number(card.assetId || 0) || 0
     const isImage = card.mediaKind === 'image'
+    const isAudio = card.mediaKind === 'audio'
     void downloadToDisk({
       fileName: buildDownloadName(
         String(card.title || (isImage ? '收藏图片' : '收藏视频')),
         new Date(),
-        isImage ? 'png' : 'mp4',
+        isImage ? 'png' : isAudio ? 'm4a' : 'mp4',
       ),
-      mimeType: isImage ? 'image/png' : 'video/mp4',
-      preserveResponseMediaType: isImage,
+      mimeType: isImage ? 'image/png' : isAudio ? 'audio/mp4' : 'video/mp4',
+      preserveResponseMediaType: isImage || isAudio,
       resolveUrl: async () => {
         if (assetId && currentWorkspaceId) {
           const freshUrl = await getAssetDownloadUrl({
@@ -1512,7 +1533,7 @@ export default function ResourceManagementView() {
     const url = assetStreamUrl(assetId, currentWorkspaceId) || String(card.mediaUrl || '')
     if (!assetId && !url) return []
     const isImage = card.mediaKind === 'image'
-    const carry = { url, assetId }
+    const carry = { url, assetId, source: String(card.source || '') }
     const targets: Array<{ key: string; label: string; onSelect: () => void }> = []
     if (isImage) {
       targets.push({
@@ -1525,7 +1546,7 @@ export default function ResourceManagementView() {
         label: '爆款复制',
         onSelect: () => navigate('/hot-copy', { state: { carryImages: [carry] } }),
       })
-    } else {
+    } else if (card.mediaKind === 'video') {
       // 视频进爆款复制即原来的「做同款」：作为源爆款视频，而不是替换素材。
       targets.push({ key: 'hot-copy', label: '爆款复制', onSelect: () => openVideoInHotCopy(card) })
     }
@@ -1534,7 +1555,7 @@ export default function ResourceManagementView() {
       label: '无限画布',
       onSelect: () =>
         navigate('/canvas', {
-          state: { carryMaterial: { ...carry, type: isImage ? 'image' : 'video', name: String(card.title || '') } },
+          state: { carryMaterial: { ...carry, type: card.mediaKind, name: String(card.title || '') } },
         }),
     })
     return targets
@@ -1784,7 +1805,7 @@ export default function ResourceManagementView() {
                         favoriteActions={{
                           onDownload: () => downloadResourceCard(card),
                           onPublish:
-                            Number(card.assetId || 0) > 0
+                            Number(card.assetId || 0) > 0 && card.mediaKind !== 'audio'
                               ? () =>
                                   navigate('/my-works', {
                                     state: {

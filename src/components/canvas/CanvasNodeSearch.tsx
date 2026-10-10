@@ -9,6 +9,7 @@
  * 画布本身不做任何过滤，避免用户搜完之后面对一张「东西都不见了」的画布。
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { isCanvasAudioEntryVisible } from '@/utils/canvasFeatureFlags'
 import styles from './CanvasNodeSearch.module.css'
 
 /** 参与搜索的最小节点信息，由调用方从画布状态里摘出来。 */
@@ -45,6 +46,7 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
   const [kindFilter, setKindFilter] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const visibleNodes = useMemo(() => nodes.filter((node) => isCanvasAudioEntryVisible(node.kind)), [nodes])
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -53,7 +55,7 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
   /** 有哪些类型可筛、各有几个；只列画布上实际存在的类型 */
   const kindChips = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const node of nodes) counts.set(node.kind, (counts.get(node.kind) || 0) + 1)
+    for (const node of visibleNodes) counts.set(node.kind, (counts.get(node.kind) || 0) + 1)
     const known = KIND_ORDER.filter((item) => counts.has(item.kind)).map((item) => ({
       ...item,
       count: counts.get(item.kind) || 0,
@@ -62,15 +64,15 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
       .filter((kind) => !KIND_ORDER.some((item) => item.kind === kind))
       .map((kind) => ({ kind, label: kind, count: counts.get(kind) || 0 }))
     return [...known, ...unknown]
-  }, [nodes])
+  }, [visibleNodes])
 
   const results = useMemo(() => {
     const needle = keyword.trim().toLowerCase()
-    return nodes
+    return visibleNodes
       .filter((node) => !kindFilter || node.kind === kindFilter)
       .filter((node) => !needle || node.text.toLowerCase().includes(needle))
       .slice(0, MAX_RESULTS)
-  }, [keyword, kindFilter, nodes])
+  }, [keyword, kindFilter, visibleNodes])
 
   // 结果集变化后把高亮拉回首条，否则会停在一个已经不存在的下标上
   useEffect(() => {
@@ -127,7 +129,7 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
             className={`${styles.chip} ${kindFilter === '' ? styles.chipActive : ''}`}
             onClick={() => setKindFilter('')}
           >
-            全部 <em>{nodes.length}</em>
+            全部 <em>{visibleNodes.length}</em>
           </button>
           {kindChips.map((chip) => (
             <button
@@ -146,7 +148,7 @@ export default function CanvasNodeSearch({ nodes, onPick, onClose }: CanvasNodeS
 
       <div className={styles.results} role="listbox" aria-label="搜索结果">
         {results.length === 0 ? (
-          <p className={styles.empty}>{nodes.length === 0 ? '画布上还没有节点' : '没有匹配的节点'}</p>
+          <p className={styles.empty}>{visibleNodes.length === 0 ? '画布上还没有节点' : '没有匹配的节点'}</p>
         ) : (
           results.map((node, index) => (
             <button

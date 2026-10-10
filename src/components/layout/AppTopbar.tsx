@@ -124,11 +124,14 @@ export default function AppTopbar({ onMenu, onMember }: AppTopbarProps) {
     wasMenuOpenRef.current = true
     menuRef.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus()
     function onDown(e: PointerEvent) {
+      // 重命名确认框渲染在面板外；保留发起操作的组件，才能在确认后提交接口。
+      if (useUiStore.getState().confirm.visible) return
       const t = e.target as Node
       if (boxRef.current?.contains(t) || menuRef.current?.contains(t)) return
       setMenuOpen(false)
     }
     function onKeyDown(e: KeyboardEvent) {
+      if (useUiStore.getState().confirm.visible) return
       if (e.key === 'Escape') setMenuOpen(false)
     }
     window.addEventListener('pointerdown', onDown, true)

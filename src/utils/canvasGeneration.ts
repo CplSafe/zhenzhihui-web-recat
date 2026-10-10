@@ -76,6 +76,7 @@ export type CanvasConnectionRole =
   | 'first_frame'
   | 'last_frame'
   | 'source_video'
+  | 'reference_audio'
 
 /** 连接语义只用于画布展示和持久化；提交时仍映射为后端已支持的 input_assets role。 */
 export function inferCanvasConnectionRole(args: {
@@ -85,6 +86,7 @@ export function inferCanvasConnectionRole(args: {
   slotIndex?: number
 }): CanvasConnectionRole {
   if (args.sourceKind === 'text') return 'prompt'
+  if (args.sourceKind === 'audio') return 'reference_audio'
   // 图片/视频接到文本节点时表达的是“让多模态文本模型理解素材”，不是生成素材引用。
   if (args.targetKind === 'text') return 'visual_context'
   if (isCanvasVideoSourceKind(args.sourceKind)) return 'source_video'
@@ -156,6 +158,7 @@ export function buildCanvasInputAssets(
   operationCode: string,
   selfVideoAssetId = 0,
   declaredImageRole = '',
+  declaredAudioRole = 'audio',
 ): CanvasInputAsset[] {
   const imageRole =
     String(declaredImageRole || '').trim() || (operationCode === 'image.image_to_image' ? 'reference_image' : 'image')
@@ -171,7 +174,14 @@ export function buildCanvasInputAssets(
 
   for (const ref of sourceRefs || []) {
     if (ref.kind === 'text') continue
-    push(ref.assetId, isCanvasVideoSourceKind(ref.kind) ? CANVAS_SOURCE_VIDEO_ROLE : imageRole)
+    push(
+      ref.assetId,
+      ref.kind === 'audio'
+        ? declaredAudioRole
+        : isCanvasVideoSourceKind(ref.kind)
+          ? CANVAS_SOURCE_VIDEO_ROLE
+          : imageRole,
+    )
   }
   // 节点自身的视频排在最后：它是「被改的那条」，前面的连线素材才是参考
   push(selfVideoAssetId, CANVAS_SOURCE_VIDEO_ROLE)
@@ -199,6 +209,7 @@ export function validateCanvasVideoInputs(args: {
    * 提交后才被后端以「上传的素材数量不足」打回，用户看到的只是一个莫名其妙的失败。
    */
   minImageRefs?: number
+  maxAudioRefs?: number
   /** 模型展示名，用于把「谁要求的」说清楚 */
   modelLabel?: string
   /**
@@ -239,7 +250,10 @@ export function validateCanvasVideoInputs(args: {
     return '参考素材不属于当前工作空间，请重新选择素材后重试'
   }
   // 图片和视频之外的来源不能作为视频输入
-  if (mediaRefs.some((ref) => ref.kind !== 'image' && !isCanvasVideoSourceKind(ref.kind))) {
+  const audioRefs = mediaRefs.filter((ref) => ref.kind === 'audio')
+  if (audioRefs.length > Number(args.maxAudioRefs || 0))
+    return '当前模型不支持这些音频参考，请切换支持音频参考的模型或移除连线'
+  if (mediaRefs.some((ref) => ref.kind !== 'image' && ref.kind !== 'audio' && !isCanvasVideoSourceKind(ref.kind))) {
     return '视频生成仅支持图片或视频作为参考素材，请检查连线后重试'
   }
 
@@ -261,6 +275,7 @@ export function validateCanvasVideoInputs(args: {
   if (args.videoMode === 'full-ref' || args.videoMode === 'auto') {
     return imageRefs.length > maxImageRefs ? `当前模型最多支持 ${maxImageRefs} 张参考图片` : null
   }
+  if (imageRefs.length === 0 && audioRefs.length > 0 && args.videoMode !== 'first-last') return null
 
   if (imageRefs.length > 2) return '首尾帧模式最多支持首帧和尾帧两张参考图片'
   const slots = new Set(imageRefs.map((ref) => Number(ref.slotIndex)))

@@ -11,6 +11,12 @@ export function isVideoMaterial(material) {
   const mimeType = String(material?.mimeType || material?.serverAsset?.mime_type || '')
   return material?.type === 'video' || mimeType.startsWith('video/')
 }
+export function isAudioMaterial(material) {
+  return (
+    ['audio', '音频'].includes(material?.type) ||
+    String(material?.mimeType || material?.serverAsset?.mime_type || '').startsWith('audio/')
+  )
+}
 
 /** 将后端素材记录转换为素材选择器使用的统一结构。 */
 export function createMaterialFromAsset(asset, src = '') {

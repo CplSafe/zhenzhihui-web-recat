@@ -10,6 +10,19 @@ import {
 } from '@/utils/canvasGeneration'
 
 describe('canvas image generation source validation', () => {
+  it('音频参考只用于声明支持的模型，按实际 role 下发', () => {
+    const sourceRefs = [{ kind: 'audio', assetId: 91, workspaceId: 21 }]
+    expect(buildCanvasInputAssets(sourceRefs, 'video.text_to_video', undefined, 'image', 'reference_audio')).toEqual([
+      { asset_id: 91, role: 'reference_audio' },
+    ])
+    expect(
+      validateCanvasVideoInputs({ operationCode: 'video.generate', sourceRefs, workspaceId: 21, maxAudioRefs: 1 }),
+    ).toBeNull()
+    expect(validateCanvasVideoInputs({ operationCode: 'video.generate', sourceRefs, workspaceId: 21 })).toContain(
+      '音频',
+    )
+    expect(validateCanvasImageInputs({ operationCode: 'image.image_to_image', sourceRefs })).toContain('仅支持图片')
+  })
   it('normalizes real-person source aliases without classifying ordinary uploads', () => {
     expect(normalizeCanvasAssetSource('real-person')).toBe('real_person')
     expect(normalizeCanvasAssetSource('upload')).toBe('upload')

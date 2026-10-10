@@ -38,6 +38,7 @@ const KIND_LABELS: Record<string, string> = {
   image: '图片',
   video: '视频',
   timeline: '视频剪辑',
+  audio: '音频',
 }
 
 /** 只读节点保留原连接点位置，历史连线才能在分享页找到起止坐标。 */
@@ -68,6 +69,14 @@ function ShareNode({ id, data }: NodeProps<Node>) {
             onToggle={() => (info.onToggleImages as () => void)?.()}
           />
         </div>
+      ) : resultUrl && !mediaFailed && kind === 'audio' ? (
+        <audio
+          src={resultUrl}
+          controls
+          preload="metadata"
+          aria-label={`${title}试听`}
+          onError={() => setFailedUrl(resultUrl)}
+        />
       ) : resultUrl && !mediaFailed && isVideo ? (
         // 访客可能只想确认成片效果，给原生控件即可，不再搬运画布那套自定义播放器
         <video

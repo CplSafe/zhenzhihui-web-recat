@@ -156,6 +156,82 @@
   cursor: pointer;
 }
 
+/* 多选模式：选中的卡片描边加深 */
+.modalCardSelected {
+  border-color: #5b6be8;
+  box-shadow: 0 0 0 2px rgba(91, 107, 232, 0.35);
+}
+
+/* 多选勾选标记：右上角圆形，选中时填色并显示勾选序号 */
+.modalCheck {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.25);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.modalCheckOn {
+  border-color: #5b6be8;
+  background: #5b6be8;
+}
+
+/* 多选确认栏：固定在弹窗底部 */
+.modalPickBar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid rgba(91, 107, 232, 0.1);
+}
+
+.modalPickText {
+  flex: 1;
+  color: #666;
+  font-size: 13px;
+}
+
+.modalPickHint {
+  color: #d4380d;
+}
+
+.modalPickCancel,
+.modalPickConfirm {
+  height: 34px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.modalPickCancel {
+  border: 1px solid rgba(51, 51, 51, 0.15);
+  background: #fff;
+  color: #333;
+}
+
+.modalPickConfirm {
+  border: none;
+  background: #5b6be8;
+  color: #fff;
+}
+
+.modalPickConfirm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* 类型标签：左上角 40×20，rgba(51,51,51,0.4) 圆角 6px 白字 */
 .modalType {
   position: absolute;

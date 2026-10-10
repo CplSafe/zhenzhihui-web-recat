@@ -275,29 +275,10 @@
   background: #f2f5f4;
   cursor: zoom-in;
 }
-.previewHint {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  padding: 6px 10px;
-  border-radius: 15px;
-  background: rgba(20, 32, 29, 0.72);
-  color: #fff;
-  font-size: 12px;
-  opacity: 0;
-  transform: translateY(4px);
-  transition:
-    opacity 0.15s ease,
-    transform 0.15s ease;
-}
-.resultPreview:hover .previewHint,
-.resultPreview:focus-visible .previewHint {
-  opacity: 1;
-  transform: translateY(0);
-}
 .resultActions {
   display: grid;
-  grid-template-columns: 0.9fr 0.9fr 1.25fr;
+  // 预览 / 下载 / 修改 三个按钮平均分宽
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   min-height: 46px;
   border-top: 1px solid #edf2f0;
 
@@ -968,8 +949,7 @@
   .pillBtn,
   .send,
   .resultActions button,
-  .previewToolbarActions button,
-  .previewHint {
+  .previewToolbarActions button {
     transition: none;
   }
 }

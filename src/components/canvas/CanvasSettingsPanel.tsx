@@ -9,6 +9,14 @@ import { useEffect, useState } from 'react'
 import styles from './CanvasSettingsPanel.module.css'
 import type { CanvasPreferences } from '@/utils/canvasPreferences'
 import {
+  CANVAS_SHORTCUT_LABELS,
+  CANVAS_RESERVED_SHORTCUTS,
+  DEFAULT_CANVAS_SHORTCUTS,
+  formatCanvasShortcut,
+  shortcutFromKeyboardEvent,
+  type CanvasShortcutAction,
+} from '@/utils/canvasKeyboard'
+import {
   ensureNotificationPermission,
   getNotificationPermission,
   playNotificationSound,
@@ -24,6 +32,8 @@ export interface CanvasSettingsPanelProps {
 
 export default function CanvasSettingsPanel({ preferences, onChange, onReset, onClose }: CanvasSettingsPanelProps) {
   const [permission, setPermission] = useState(getNotificationPermission)
+  const [recordingAction, setRecordingAction] = useState<CanvasShortcutAction | null>(null)
+  const [shortcutError, setShortcutError] = useState('')
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -62,6 +72,36 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
         : permission === 'default'
           ? '开启后浏览器会请求一次通知权限'
           : ''
+
+  const shortcutActions = Object.keys(DEFAULT_CANVAS_SHORTCUTS) as CanvasShortcutAction[]
+  const recordShortcut = (action: CanvasShortcutAction, event: React.KeyboardEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      setRecordingAction(null)
+      setShortcutError('')
+      return
+    }
+    const binding = shortcutFromKeyboardEvent(event.nativeEvent)
+    if (!binding) {
+      setShortcutError('请按一个非 Tab / Esc 的完整快捷键')
+      return
+    }
+    if (CANVAS_RESERVED_SHORTCUTS.has(binding)) {
+      setShortcutError('该快捷键已被浏览器或画布固定操作占用，请换一个组合')
+      return
+    }
+    const duplicate = shortcutActions.find(
+      (candidate) => candidate !== action && preferences.shortcuts[candidate] === binding,
+    )
+    if (duplicate) {
+      setShortcutError(`该快捷键已用于“${CANVAS_SHORTCUT_LABELS[duplicate]}”`)
+      return
+    }
+    onChange({ shortcuts: { ...preferences.shortcuts, [action]: binding } })
+    setRecordingAction(null)
+    setShortcutError('')
+  }
 
   return (
     <div className={styles.mask} role="dialog" aria-modal="true" aria-label="画布设置" onClick={onClose}>
@@ -129,6 +169,36 @@ export default function CanvasSettingsPanel({ preferences, onChange, onReset, on
                 ariaLabel="仅突出焦点连线"
               />
             </Row>
+          </section>
+
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>自定义快捷键</h3>
+            <p className={styles.sectionHint}>点击快捷键后直接按下新的按键组合；设置保存在当前浏览器。</p>
+            <div className={styles.shortcutList}>
+              {shortcutActions.map((action) => (
+                <div key={action} className={styles.shortcutRow}>
+                  <span className={styles.rowLabel}>{CANVAS_SHORTCUT_LABELS[action]}</span>
+                  <button
+                    type="button"
+                    className={`${styles.shortcutButton} ${recordingAction === action ? styles.shortcutRecording : ''}`}
+                    aria-label={`修改${CANVAS_SHORTCUT_LABELS[action]}快捷键`}
+                    aria-pressed={recordingAction === action}
+                    onClick={() => {
+                      setRecordingAction(action)
+                      setShortcutError('')
+                    }}
+                    onKeyDown={(event) => recordingAction === action && recordShortcut(action, event)}
+                  >
+                    {recordingAction === action ? '请按新快捷键…' : formatCanvasShortcut(preferences.shortcuts[action])}
+                  </button>
+                </div>
+              ))}
+            </div>
+            {shortcutError ? (
+              <p className={styles.shortcutError} role="alert">
+                {shortcutError}
+              </p>
+            ) : null}
           </section>
 
           <section className={styles.section}>

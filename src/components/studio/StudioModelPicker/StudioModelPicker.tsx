@@ -53,7 +53,7 @@ export default function StudioModelPicker({
         aria-label="选择生成模型"
         onClick={toggle}
       >
-        <span className={styles.logo} aria-hidden="true">
+        <span className={`${styles.logo}${selected?.logo ? '' : ` ${styles.logoInitial}`}`} aria-hidden="true">
           {selected?.logo ? (
             <img className={styles.logoImg} src={selected.logo} alt="" loading="lazy" />
           ) : (
@@ -89,7 +89,10 @@ export default function StudioModelPicker({
                     setOpen(false)
                   }}
                 >
-                  <span className={styles.optionLogo} aria-hidden="true">
+                  <span
+                    className={`${styles.optionLogo}${model.logo ? '' : ` ${styles.logoInitial}`}`}
+                    aria-hidden="true"
+                  >
                     {model.logo ? (
                       <img className={styles.logoImg} src={model.logo} alt="" loading="lazy" />
                     ) : (

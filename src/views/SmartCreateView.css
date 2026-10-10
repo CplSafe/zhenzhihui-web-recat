@@ -2,8 +2,9 @@
 .smart {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   /* 视口锁高,内部 body 区滚动(body overflow:hidden 下) */
-  min-height: 100vh;
+  min-height: 0;
   background: #f8f9fa;
 }
 
@@ -13,8 +14,8 @@
   min-width: 0;
   min-height: 0;
   /* 允许 flex 子项收缩,使 body 获得有界高度可滚动 */
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 /* 入口页任务管理：桌面按 Figma 从侧栏旁展开并重新分配内容宽度；窄屏由抽屉自身切换为覆盖层。 */

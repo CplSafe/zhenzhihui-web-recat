@@ -4,7 +4,20 @@
 .screate {
   position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 0;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 58%, rgba(90, 92, 224, 0.12), transparent 65%),
+    linear-gradient(180deg, #f8f9fa 20%, #edf4fb 55%, #dff7f0 100%);
+}
+
+/* 背景留在工作区，只有内容层滚动，内容变长也不会露出背景边界。 */
+.contentScroll {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   overflow-y: auto;
   overflow-x: hidden;
   /* 隐藏滚动条但保留滚动(滚轮/触控板/键盘照常):滚动条不占宽度,
@@ -14,13 +27,17 @@
   &::-webkit-scrollbar {
     display: none; /* Chrome/Safari/新 Edge */
   }
+}
+
+.contentInner {
+  box-sizing: border-box;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   /* 黄金分割:内容居上约 38.2%(1 - 0.618),比居中略上,符合常见落地页视觉重心 */
   justify-content: flex-start;
-  padding: clamp(56px, 18vh, 220px) 24px 48px;
-  background: #f8f9fa;
+  padding: clamp(32px, 12vh, 144px) clamp(14px, 3vw, 40px) 48px;
 }
 
 .dragging::after {
@@ -84,11 +101,14 @@
 
 /* 真人成片：共用生成能力，但以“已授权人物工作室”建立独立页面识别。 */
 .realPerson {
-  padding-top: clamp(42px, 9vh, 108px);
   background:
     radial-gradient(circle at 18% 18%, rgba(38, 198, 163, 0.14), transparent 32%),
     radial-gradient(circle at 82% 72%, rgba(255, 190, 92, 0.13), transparent 34%),
     linear-gradient(145deg, #f5fbf8 0%, #fbfaf6 52%, #f6f8f7 100%);
+}
+
+.realPerson .contentInner {
+  padding-top: clamp(32px, 9vh, 108px);
 }
 
 .realPerson .bg {
@@ -236,19 +256,14 @@
 }
 
 /*
- * 输入卡片随视口伸缩。
- *
- * 原来是 min(920px, 94%)：屏幕再宽，卡片也停在 920px，多出来的宽度全变成两侧空白——
- * 1920 的屏上内容区有 1680px，卡片却只占 920px，看起来就是「没铺开」。
- *
- * 现在的算式：不低于原来的 920px（窄屏与设计稿宽度下表现完全不变），
- * 宽屏按 60% 视口宽增长，并封顶 1400px——再宽下去单行文字会长到读着费劲。
- * 94% 仍是最外层兜底，保证小屏留有边距。
+ * 卡片使用工作区可用宽度，而不是整个视口宽度；工具栏据此响应侧栏和任务面板。
  */
 .panel {
   position: relative;
   z-index: 1;
-  width: min(94%, 1400px, max(920px, 60vw));
+  width: min(100%, 1280px);
+  min-width: 0;
+  container: smart-entry / inline-size;
 }
 
 /* Tab(浅灰标签栏:左边缘与卡片齐边、底边接卡片;选中态为白色药丸) */
@@ -656,16 +671,215 @@
 /* 工具栏 */
 .toolbar {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px 10px;
 }
 
 .tools {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.toolbarEstimate {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settingsGroup,
+.moreGroup {
+  position: relative;
+  min-width: 0;
+}
+
+.settingsContent,
+.moreContent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settingsContent > div {
+  min-width: 0;
+}
+
+.settingsContent > div > button {
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.settingsContent > div > button > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settingsTrigger,
+.moreTrigger {
+  display: none;
+  height: 40px;
+  padding: 0 12px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #f8fafb;
+  color: #475569;
+  cursor: pointer;
+
+  &:hover,
+  &[aria-expanded='true'] {
+    border-color: #1fcfa9;
+    background: #effcf8;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #1fcfa9;
+    outline-offset: 2px;
+  }
+}
+
+.moreTrigger {
+  width: 40px;
+  padding: 0;
+  font-size: 24px;
+}
+
+@container smart-entry (max-width: 1100px) {
+  .moreTrigger {
+    display: inline-flex;
+  }
+  .moreContent {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 10px);
+    right: 0;
+    z-index: 35;
+    flex-direction: column;
+    align-items: flex-start;
+    width: max-content;
+    max-width: calc(100vw - 48px);
+    padding: 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 12px 36px rgba(31, 41, 55, 0.14);
+  }
+  .moreContent.groupOpen {
+    display: flex;
+  }
+}
+
+@container smart-entry (max-width: 700px) {
+  .tutorialButton {
+    position: relative;
+    width: 24px;
+    height: 40px;
+    padding: 0;
+    justify-content: center;
+
+    > span {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    &::before {
+      content: '';
+      width: 20px;
+      height: 20px;
+      background: currentColor;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4M12 16h.01'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+    }
+  }
+  .settingsTrigger {
+    display: inline-flex;
+  }
+  .settingsContent {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 0;
+    z-index: 35;
+    flex-direction: column;
+    align-items: stretch;
+    width: 220px;
+    max-width: calc(100vw - 64px);
+    padding: 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 12px 36px rgba(31, 41, 55, 0.14);
+  }
+  .settingsContent.groupOpen {
+    display: flex;
+  }
+  .moreContent {
+    left: 0;
+    right: auto;
+  }
+  .toolbar {
+    gap: 8px;
+  }
+  .toolbar .sendArea {
+    gap: 8px;
+  }
+  .toolbar .sendPlain {
+    min-width: 88px;
+    padding: 0 14px;
+  }
+  .toolbar .sendResume {
+    width: 32px;
+    min-width: 32px;
+  }
+  .settingsContent > div > div[role='dialog'] {
+    max-width: calc(100cqw - 64px);
+  }
+}
+
+@container smart-entry (max-width: 400px) {
+  .settingsLabel {
+    display: none;
+  }
+  .settingsTrigger,
+  .moreTrigger {
+    width: 32px;
+    padding: 0;
+  }
+  .tools,
+  .toolbar,
+  .toolbar .sendArea {
+    gap: 6px;
+  }
+  .toolbar .sendArea {
+    gap: 4px;
+  }
+  .toolbar .sendPlain {
+    min-width: 80px;
+    padding: 0 12px;
+  }
+  .toolbar .micBtn {
+    width: 32px;
+  }
+}
+
+.tools > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* 提示行里的行内操作（如「重新加载」模型目录） */
@@ -721,9 +935,10 @@
 /* 发送区:恢复态下「重新生成」+「下一步」并排,右对齐 */
 .sendArea {
   flex: 0 0 auto;
+  margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 /* 重新生成(恢复态显示):刷新图标 + 文字,无边框(对齐设计) */
@@ -803,7 +1018,7 @@
  * 放在按钮左侧，与「花钱的那一下」同屏；余额不足转红，但不拦提交（拦截由校验负责）。
  */
 .sendPlain {
-  min-width: 130px;
+  min-width: 116px;
   width: auto;
   height: 40px;
   padding: 0 24px;
@@ -841,19 +1056,53 @@
   line-height: 1;
 }
 
+@media (max-height: 640px) {
+  .contentInner {
+    padding-top: 24px;
+  }
+  .title {
+    margin-bottom: 20px;
+  }
+}
+
 @media (max-width: 560px) {
-  .screate {
+  .contentInner {
     padding: 36px 14px 40px;
   }
+}
 
+@container smart-entry (max-width: 560px) {
   .card {
     border-radius: 18px;
     padding: 14px;
   }
 
-  .toolbar {
+  .tools {
+    min-width: 0;
+  }
+  .cardBody {
     flex-direction: column;
     align-items: stretch;
+  }
+  .inputWrap {
+    flex-basis: auto;
+  }
+  .tabs {
+    gap: 4px;
+    max-width: 100%;
+  }
+  .tab {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+  .newVideoBtn {
+    position: static;
+    display: block;
+    margin: 0 0 4px auto;
+    font-size: 14px;
+  }
+  .sendArea {
+    justify-content: flex-end;
   }
 
   .send {

@@ -9,12 +9,49 @@
  * 可用于参考图、首尾帧与 video.edit 输入。
  */
 import type { CanvasInputAsset } from './canvasGeneration'
+import type { RealPerson } from '@/api/realPeople'
 import {
   buildRealPersonIdentityPrompt,
   buildRealPersonVideoIdentityPrompt,
   prioritizeRealPersonReferenceAssetIds,
+  createSmartRealPersonReference,
+  isVerifiedRealPerson,
+  isReadyRealPersonAsset,
   type SmartRealPersonReference,
 } from './smartRealPerson'
+
+/** 只按后台真人档案中的素材 ID 关联身份，不按人脸、文件名或 URL 猜测。 */
+export function resolveCanvasAssetRealPerson(
+  assetId: number,
+  people: readonly RealPerson[],
+  workspaceId: number,
+): SmartRealPersonReference | null {
+  if (!Number.isSafeInteger(assetId) || assetId <= 0) return null
+  const matches = people.flatMap((person) =>
+    (person.assets || [])
+      .filter((asset) => Number(asset.local_asset_id) === assetId)
+      .map((asset) => ({ person, asset })),
+  )
+  if (!matches.length) return null
+  if (matches.length > 1) throw new Error('该素材关联了多个真人身份，请从真人素材分类重新选择')
+  const { person, asset } = matches[0]
+  if (
+    (person.workspace_id && Number(person.workspace_id) !== workspaceId) ||
+    (asset.workspace_id && Number(asset.workspace_id) !== workspaceId)
+  ) {
+    throw new Error('该真人素材不属于当前团队，请重新选择')
+  }
+  const expiresAt = person.verification_expires_at ? Date.parse(person.verification_expires_at) : undefined
+  if (
+    ['revoked', 'rejected', 'failed', 'deleted', 'expired'].includes(String(person.status || '').toLowerCase()) ||
+    !isVerifiedRealPerson(person) ||
+    !isReadyRealPersonAsset(asset) ||
+    (expiresAt !== undefined && (!Number.isFinite(expiresAt) || expiresAt <= Date.now()))
+  ) {
+    throw new Error('该真人素材已失效或未通过认证，请重新选择真人素材')
+  }
+  return createSmartRealPersonReference(person, asset)
+}
 
 /** 连线来源中与真人素材相关的最小信息。 */
 export interface CanvasRealPersonSourceRef {

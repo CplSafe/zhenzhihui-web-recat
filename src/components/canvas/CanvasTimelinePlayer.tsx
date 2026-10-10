@@ -30,6 +30,7 @@ interface CanvasTimelinePlayerProps {
   /** 受控播放头；不传则由播放器自己维护（节点内嵌就是这种）。 */
   playheadSec?: number
   onPlayheadChange?: (seconds: number) => void
+  onPlayingChange?: (playing: boolean) => void
   /** 提供后片段块上出现移除按钮；不提供则轨道是只读的。 */
   onRemoveClip?: (clipId: string) => void
   /** 提供后轨道末尾出现「+」，空时间线也显示居中的添加入口。 */
@@ -77,6 +78,7 @@ export default function CanvasTimelinePlayer({
   compact = false,
   playheadSec: controlledPlayheadSec,
   onPlayheadChange,
+  onPlayingChange,
   onRemoveClip,
   onAddClip,
   hideTimeline = false,
@@ -86,6 +88,9 @@ export default function CanvasTimelinePlayer({
   const [activeSlot, setActiveSlot] = useState(0)
   const [innerPlayheadSec, setInnerPlayheadSec] = useState(0)
   const [playing, setPlaying] = useState(false)
+  useEffect(() => {
+    onPlayingChange?.(playing)
+  }, [playing, onPlayingChange])
 
   const controlled = controlledPlayheadSec !== undefined
   const playheadSec = controlled ? controlledPlayheadSec : innerPlayheadSec

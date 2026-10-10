@@ -5,7 +5,16 @@
  * 一张表把「怎么平移、怎么框选、怎么复制」全列出来，用户第一次进画布看一眼就够了。
  * 内容是静态的：这里列的必须与 CanvasView 里真实绑定的按键一致，改一处要同步另一处。
  */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import {
+  CANVAS_MOD as MOD,
+  CANVAS_ALT as ALT,
+  CANVAS_IS_MAC,
+  DEFAULT_CANVAS_SHORTCUTS,
+  formatCanvasShortcut,
+  type CanvasShortcutAction,
+  type CanvasShortcutBindings,
+} from '@/utils/canvasKeyboard'
 import styles from './CanvasShortcutsHelp.module.css'
 
 interface ShortcutRow {
@@ -17,9 +26,6 @@ interface ShortcutSection {
   title: string
   rows: ShortcutRow[]
 }
-
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '')
-const MOD = IS_MAC ? '⌘' : 'Ctrl'
 
 export const CANVAS_SHORTCUT_SECTIONS: ShortcutSection[] = [
   {
@@ -43,16 +49,23 @@ export const CANVAS_SHORTCUT_SECTIONS: ShortcutSection[] = [
       { keys: [`${MOD} + A`], label: '全选节点' },
       { keys: ['Esc'], label: '取消选择 / 关闭面板' },
       { keys: ['方向键'], label: '微移选中的节点（按住 Shift 大步移动）' },
-      { keys: ['Alt + 点击'], label: '只选中分组里的这一个节点' },
+      { keys: [`${ALT} + 点击`], label: '只选中分组里的这一个节点' },
     ],
   },
   {
     title: '节点操作',
     rows: [
-      { keys: ['右键空白处', 'Tab'], label: '添加节点' },
+      { keys: [`${MOD} + G`], label: '成组（至少选中两个节点）' },
+      { keys: [`${MOD} + Shift + G`], label: '解组' },
+      { keys: [`${MOD} + ${ALT} + G`], label: '合并为视频剪辑（可用的视频节点）' },
+      { keys: ['L'], label: '连线：选中两个节点，按选择顺序连接' },
+      { keys: [`${MOD} + Enter`], label: '生成：发送当前节点面板（输入框外）' },
+      { keys: ['V', 'H'], label: '选择工具 / 抓手工具' },
+      { keys: [`${ALT} + Shift + F`], label: '整理选中节点，未多选时整理整个画布' },
+      { keys: ['右键空白处', 'N'], label: '添加节点' },
       { keys: [`${MOD} + C`, `${MOD} + V`], label: '复制 / 粘贴节点（含它们之间的连线）' },
-      { keys: [`${MOD} + D`], label: '生成副本' },
-      { keys: ['Alt + 拖拽节点'], label: '拖出一份副本，原节点留在原地' },
+      { keys: ['Shift + D'], label: '生成副本' },
+      { keys: [`${ALT} + 拖拽节点`], label: '拖出一份副本，原节点留在原地' },
       { keys: ['F2', '双击标题'], label: '重命名节点' },
       { keys: ['Delete', 'Backspace'], label: '删除选中的节点或连线' },
       { keys: [`${MOD} + Z`, `${MOD} + Shift + Z`], label: '撤销 / 重做' },
@@ -66,29 +79,64 @@ export const CANVAS_SHORTCUT_SECTIONS: ShortcutSection[] = [
 
 export interface CanvasShortcutsHelpProps {
   onClose: () => void
+  shortcuts?: CanvasShortcutBindings
 }
 
-export default function CanvasShortcutsHelp({ onClose }: CanvasShortcutsHelpProps) {
+function displayedKeys(row: ShortcutRow, shortcuts: CanvasShortcutBindings): string[] {
+  if (row.label === '放大 / 缩小')
+    return [formatCanvasShortcut(shortcuts.zoomIn), formatCanvasShortcut(shortcuts.zoomOut)]
+  if (row.label === '选择工具 / 抓手工具')
+    return [formatCanvasShortcut(shortcuts.selectTool), formatCanvasShortcut(shortcuts.panTool)]
+  if (row.label === '添加节点') return ['右键空白处', formatCanvasShortcut(shortcuts.add)]
+  const actionByLabel: Partial<Record<string, CanvasShortcutAction>> = {
+    '回到 100%': 'resetZoom',
+    '适应视图：缩放到刚好装下全部节点': 'fitView',
+    '连线：选中两个节点，按选择顺序连接': 'connect',
+    '整理选中节点，未多选时整理整个画布': 'arrange',
+    生成副本: 'duplicate',
+  }
+  const action = actionByLabel[row.label]
+  return action ? [formatCanvasShortcut(shortcuts[action])] : row.keys
+}
+
+export default function CanvasShortcutsHelp({
+  onClose,
+  shortcuts = DEFAULT_CANVAS_SHORTCUTS,
+}: CanvasShortcutsHelpProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    dialogRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        dialogRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+      }
       if (event.key === 'Escape') {
         event.stopPropagation()
         onClose()
       }
     }
     window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      previous?.focus()
+    }
   }, [onClose])
 
   return (
     <div className={styles.mask} role="dialog" aria-modal="true" aria-label="画布快捷键" onClick={onClose}>
-      <div className={styles.dialog} onClick={(event) => event.stopPropagation()}>
+      <div ref={dialogRef} className={styles.dialog} onClick={(event) => event.stopPropagation()}>
         <header className={styles.header}>
-          <h2 className={styles.title}>画布快捷键</h2>
+          <h2 className={styles.title}>画布快捷键 · {CANVAS_IS_MAC ? 'Mac' : 'Windows / Linux'}</h2>
           <button type="button" className={styles.close} onClick={onClose} aria-label="关闭">
             ✕
           </button>
         </header>
+        <p className={styles.notice}>
+          点击画布后快捷键生效；输入框、按钮和弹窗保留自己的键盘操作。Tab
+          用于切换焦点，浏览器页面缩放与收藏快捷键保持原行为。
+        </p>
         <div className={styles.body}>
           {CANVAS_SHORTCUT_SECTIONS.map((section) => (
             <section key={section.title} className={styles.section}>
@@ -97,7 +145,7 @@ export default function CanvasShortcutsHelp({ onClose }: CanvasShortcutsHelpProp
                 {section.rows.map((row) => (
                   <div key={row.label} className={styles.row}>
                     <dt className={styles.keys}>
-                      {row.keys.map((key, index) => (
+                      {displayedKeys(row, shortcuts).map((key, index) => (
                         <span key={key} className={styles.keyGroup}>
                           {index > 0 && <span className={styles.or}>或</span>}
                           <kbd className={styles.kbd}>{key}</kbd>

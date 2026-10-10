@@ -16,10 +16,14 @@ export default {
     await page.goto(`${BASE}/smart`, { waitUntil: 'domcontentloaded' })
     await page.waitForSelector('textarea', { timeout: 15000 })
     if (/\/smart\/\d+/.test(page.url())) {
-      await page.locator('button.smart__newvideo').click().catch(() => {})
+      await page
+        .locator('button.smart__newvideo')
+        .click()
+        .catch(() => {})
       await page.waitForSelector('textarea', { timeout: 15000 })
     }
-    await clean(); await t.wait(500)
+    await clean()
+    await t.wait(500)
 
     // 1 入口
     await t.clip('进入爆款成片')
@@ -43,7 +47,8 @@ export default {
     await t.wait(500)
     await t.click('button[class*="_option"]:has-text("Seedance 2.0") >> nth=0', { after: 700 })
     await t.zoom(null, 1, 0)
-    await page.keyboard.press('Escape'); await t.wait(300)
+    await page.keyboard.press('Escape')
+    await t.wait(300)
 
     // 4 参数
     await t.clip('设置比例时长和分辨率')
@@ -55,7 +60,8 @@ export default {
     if (await dur.count()) await t.click(dur, { after: 500 })
     else await t.wait(900)
     await t.zoom(null, 1, 0)
-    await page.keyboard.press('Escape'); await t.wait(300)
+    await page.keyboard.press('Escape')
+    await t.wait(300)
 
     // 5 输入需求
     await t.clip('输入需求')
@@ -72,7 +78,11 @@ export default {
     await t.cut()
 
     // —— 等脚本生成完（不录进任何 clip）——
-    await page.locator('text=分镜脚本生成完成').first().waitFor({ timeout: 150000 }).catch(() => {})
+    await page
+      .locator('text=分镜脚本生成完成')
+      .first()
+      .waitFor({ timeout: 150000 })
+      .catch(() => {})
     await t.wait(500)
 
     // 7 编辑分镜
@@ -80,7 +90,8 @@ export default {
     await t.say('分镜表里的内容都能直接改')
     const cell = page.locator('span.ie-display').nth(1)
     await t.click(cell, { after: 900 })
-    await page.keyboard.press('Escape'); await t.wait(300)
+    await page.keyboard.press('Escape')
+    await t.wait(300)
 
     // 8 生成视频
     await t.clip('生成视频')
@@ -88,15 +99,21 @@ export default {
     await t.click('button.smart__btn-split--main:has-text("生成视频")', { after: 600 })
     await t.zoom('button:has-text("确认并生成")', 1.4, 100)
     await t.say('确认积分后点「确认并生成」')
-    await t.moveTo('button:has-text("确认并生成")'); await t.wait(900)
+    await t.moveTo('button:has-text("确认并生成")')
+    await t.wait(900)
     await t.cut()
     await t.zoom(null, 1, 0)
 
     // —— 不真花积分：取消，切到已出片项目（不录）——
-    await page.locator('button:has-text("取消")').first().click().catch(() => {})
+    await page
+      .locator('button:has-text("取消")')
+      .first()
+      .click()
+      .catch(() => {})
     await page.goto(`${BASE}/smart/${FINISHED_PROJECT}`, { waitUntil: 'domcontentloaded' })
     await page.waitForSelector('button[class*="vstageVer"]', { timeout: 20000 })
-    await clean(); await t.wait(500)
+    await clean()
+    await t.wait(500)
 
     // 9 查看成片
     await t.clip('查看成片')
@@ -118,7 +135,8 @@ export default {
     await t.zoom(mod, 1.3, 0)
     await t.say('在「整段视频修改」里写要求')
     await t.click(mod, { after: 150 })
-    await page.keyboard.press('Control+A'); await page.keyboard.press('Delete')
+    await page.keyboard.press('Control+A')
+    await page.keyboard.press('Delete')
     await page.keyboard.type('把篮球换成足球', { delay: 70 })
     await t.wait(400)
     await t.say('点「AI一键润色」')
@@ -126,7 +144,10 @@ export default {
     await t.cut()
 
     // —— 等润色完成（不录）——
-    await page.locator('button:has-text("润色中")').waitFor({ state: 'detached', timeout: 60000 }).catch(() => {})
+    await page
+      .locator('button:has-text("润色中")')
+      .waitFor({ state: 'detached', timeout: 60000 })
+      .catch(() => {})
     await t.wait(400)
 
     // 12 确认修改
@@ -135,7 +156,8 @@ export default {
     await t.wait(900)
     await t.zoom(null, 1, 0)
     await t.zoom('button:has-text("确认修改")', 1.4, 100)
-    await t.moveTo('button:has-text("确认修改")'); await t.wait(900)
+    await t.moveTo('button:has-text("确认修改")')
+    await t.wait(900)
     await t.zoom(null, 1, 0)
 
     // 13 创建新视频

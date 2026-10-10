@@ -255,8 +255,10 @@
   border-radius: 12px;
   overflow: hidden;
   background: rgba(51, 51, 51, 0.04);
-  cursor: crosshair;
+  // 可按住拖动播放线：用左右拖拽光标提示「能拖」
+  cursor: ew-resize;
   touch-action: none;
+  user-select: none;
 }
 
 .vstageFrame {
@@ -362,11 +364,13 @@
 
 .vstagePlayhead {
   position: absolute;
+  z-index: 2;
   top: 0;
   bottom: 0;
-  width: 2px;
-  margin-left: -1px;
+  width: 3px;
+  transform: translateX(-50%);
   background: #5767e5;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7);
   pointer-events: none;
 
   &::before {

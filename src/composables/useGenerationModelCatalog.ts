@@ -181,6 +181,42 @@ const EMPTY_SNAPSHOT: GenerationModelCatalogSnapshot = {
   error: '',
 }
 
+function isTransientCatalogError(error: any): boolean {
+  const status = Number(error?.status || 0)
+  if (error?.name === 'AbortError' || error?.cause === 'aborted') return false
+  if (status) return status === 408 || status === 429 || status >= 500
+  return (
+    error?.name === 'TypeError' ||
+    error?.cause === 'timeout' ||
+    /network|failed to fetch|timeout|网络|超时/i.test(String(error?.message || ''))
+  )
+}
+
+async function queryModelsWithRetry(workspaceId: number, operationCode: GenerationOperationCode, signal: AbortSignal) {
+  for (let attempt = 0; ; attempt += 1) {
+    signal.throwIfAborted()
+    try {
+      return await listAiModels({ workspaceId, operationCode, plan: '', signal })
+    } catch (error) {
+      if (signal.aborted || attempt >= 2 || !isTransientCatalogError(error)) throw error
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          window.clearTimeout(timer)
+          reject(signal.reason || new DOMException('Aborted', 'AbortError'))
+        }
+        const timer = window.setTimeout(
+          () => {
+            signal.removeEventListener('abort', onAbort)
+            resolve()
+          },
+          150 * (attempt + 1),
+        )
+        signal.addEventListener('abort', onAbort, { once: true })
+      })
+    }
+  }
+}
+
 /**
  * 按工作空间缓存目录。只有每个 operation 都拿到了明确答复（有模型 / 空 / 配置错误）才缓存；
  * 任一 operation 是网络层失败就不缓存，下次挂载照常重试，不把一次抖动钉死 5 分钟。
@@ -188,7 +224,7 @@ const EMPTY_SNAPSHOT: GenerationModelCatalogSnapshot = {
 const catalogCache = createSharedRequestCache<GenerationModelCatalogSnapshot>({
   ttlMs: MODEL_CATALOG_CACHE_TTL_MS,
   shouldCache: (snapshot) =>
-    !snapshot.error && !GENERATION_OPERATION_CODES.some((code) => snapshot.operationStates[code].status === 'error'),
+    !GENERATION_OPERATION_CODES.some((code) => snapshot.operationStates[code].status === 'error'),
 })
 
 /** 清掉所有工作空间的目录缓存（例如套餐变更后）。下次挂载会重新拉取。 */
@@ -205,15 +241,11 @@ export function invalidateGenerationModelCatalogCache(): void {
 async function loadGenerationModelCatalog(
   workspaceId: number,
   signal: AbortSignal,
+  previous?: GenerationModelCatalogSnapshot,
 ): Promise<GenerationModelCatalogSnapshot> {
   const results = await Promise.allSettled(
     GENERATION_OPERATION_CODES.map(async (operationCode) => {
-      const response = await listAiModels({
-        workspaceId,
-        operationCode,
-        plan: '',
-        signal,
-      })
+      const response = await queryModelsWithRetry(workspaceId, operationCode, signal)
       const list = unwrapGenerationModelCatalogResponse(response)
       // 目录以后端为权威：后端新增/开通的模型无需改前端即可展示。
       // 只保留一条屏蔽规则：全流程屏蔽 HappyHorse 图生视频 / 文生视频。
@@ -222,18 +254,39 @@ async function loadGenerationModelCatalog(
         .filter((model): model is BackendGenerationModel => Boolean(model) && !isHiddenCreativeVideoModel(model))
     }),
   )
-  const models = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+  const models = results.flatMap((result, index) => {
+    if (result.status === 'fulfilled') return result.value
+    if (!isTransientCatalogError(result.reason)) return []
+    const code = GENERATION_OPERATION_CODES[index]
+    return (
+      previous?.groups
+        .flatMap((group) => group.operationGroups)
+        .find((group) => group.operationCode === code)
+        ?.models.map((model) => model.source) || []
+    )
+  })
+  if (results.some((result) => result.status === 'rejected' && [401, 403].includes(Number(result.reason?.status)))) {
+    catalogCache.invalidate(String(workspaceId))
+  }
   const groups = buildGenerationModelGroups(models)
   const operationStates = createGenerationModelOperationStateMap()
 
   results.forEach((result, index) => {
     const operationCode = GENERATION_OPERATION_CODES[index]
     if (result.status === 'rejected') {
+      const availableModelCount =
+        groups
+          .flatMap((group) => group.operationGroups)
+          .find((group) => group.operationCode === operationCode)
+          ?.models.filter((model) => !model.unavailableReason).length || 0
       operationStates[operationCode] = {
         operationCode,
         status: 'error',
-        availableModelCount: 0,
+        availableModelCount,
         message: getBusinessErrorMessage(result.reason, `${OPERATION_LABELS[operationCode]}加载失败，请重试`),
+        ...(availableModelCount ? { usingCachedModels: true } : {}),
+        ...(result.reason?.requestId ? { requestId: String(result.reason.requestId) } : {}),
+        ...(Number(result.reason?.status) > 0 ? { httpStatus: Number(result.reason.status) } : {}),
       }
       return
     }
@@ -301,10 +354,10 @@ export function useGenerationModelCatalog(
     appliedReloadTokenRef.current = reloadToken
 
     let disposed = false
-    const cached = force ? null : catalogCache.peek(cacheKey)
+    const cached = catalogCache.peek(cacheKey)
     if (cached) {
       setSnapshot(cached.value)
-      setLoading(false)
+      setLoading(force || !cached.fresh)
     } else {
       setSnapshot({ ...EMPTY_SNAPSHOT, operationStates: createGenerationModelOperationStateMap('loading') })
       setLoading(true)
@@ -313,7 +366,7 @@ export function useGenerationModelCatalog(
     const unsubscribe = catalogCache.subscribe(cacheKey, (next) => {
       if (!disposed) setSnapshot(next)
     })
-    if (cached?.fresh) {
+    if (cached?.fresh && !force) {
       return () => {
         disposed = true
         unsubscribe()
@@ -323,7 +376,7 @@ export function useGenerationModelCatalog(
     // 无缓存：正常加载；缓存过期：拿着旧目录后台刷新，不亮 loading
     const lease = catalogCache.acquire(
       cacheKey,
-      (signal) => loadGenerationModelCatalog(normalizedWorkspaceId, signal),
+      (signal) => loadGenerationModelCatalog(normalizedWorkspaceId, signal, cached?.value),
       {
         force,
       },

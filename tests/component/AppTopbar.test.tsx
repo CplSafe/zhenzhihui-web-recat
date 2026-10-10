@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   auth: { isAuthenticated: false },
   confirm: vi.fn(),
+  confirmState: { visible: false },
   getDistributionOverview: vi.fn(),
   getReferralMyCode: vi.fn(),
   loadSubscriptionLabel: vi.fn(),
@@ -40,12 +41,15 @@ vi.mock('@/composables/useToast', () => ({
 }))
 vi.mock('@/stores/ui', () => ({
   openTeamManage: vi.fn(),
-  useUiStore: (selector: (state: any) => unknown) =>
-    selector({
-      openMemberCenter: mocks.openMemberCenter,
-      workspaceSwitchLocked: mocks.state.switchLocked,
-      workspaceSwitchLockReason: mocks.state.switchReason,
-    }),
+  useUiStore: Object.assign(
+    (selector: (state: any) => unknown) =>
+      selector({
+        openMemberCenter: mocks.openMemberCenter,
+        workspaceSwitchLocked: mocks.state.switchLocked,
+        workspaceSwitchLockReason: mocks.state.switchReason,
+      }),
+    { getState: () => ({ confirm: mocks.confirmState }) },
+  ),
 }))
 vi.mock('@/stores/workspaceSession', () => ({
   useAllWorkspaces: () => mocks.state.workspaces,
@@ -100,6 +104,7 @@ function renderTopbar(props: React.ComponentProps<typeof AppTopbar> = {}) {
 describe('AppTopbar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.confirmState.visible = false
     mocks.getDistributionOverview.mockResolvedValue({ is_distributor: false })
     mocks.auth.isAuthenticated = false
     Object.assign(mocks.state, {
@@ -162,6 +167,39 @@ describe('AppTopbar', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: '用户面板' })).not.toBeInTheDocument()
     expect(userButton).toHaveFocus()
+  })
+
+  it('keeps the personal panel mounted while confirming a team rename outside it', async () => {
+    const user = userEvent.setup()
+    const confirmation = deferred<string>()
+    mocks.confirm.mockImplementationOnce(() => {
+      mocks.confirmState.visible = true
+      return confirmation.promise
+    })
+    mocks.renameTeam.mockResolvedValueOnce(undefined)
+    mocks.auth.isAuthenticated = true
+    Object.assign(mocks.state, {
+      activeId: 21,
+      currentUser: { id: 101, nickname: 'Alice' },
+      currentMember: { role: 'owner', workspace_id: 21 },
+      currentWorkspace: { id: 21, name: 'Alice团队', owner_user_id: 101, type: 'team' },
+      workspaces: [{ id: 21, name: 'Alice团队', type: 'team' }],
+    })
+    renderTopbar()
+    await user.click(screen.getByRole('button', { name: /Alice/ }))
+    await user.click(screen.getByRole('button', { name: '重命名团队 Alice团队' }))
+    // 全局确认框位于 portal 面板之外，输入、保存及 Escape 不能卸载发起重命名的组件。
+    fireEvent.pointerDown(document.body)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByRole('dialog', { name: '用户面板' })).toBeInTheDocument()
+    await act(async () => {
+      mocks.confirmState.visible = false
+      confirmation.resolve('技术部')
+    })
+    await waitFor(() => expect(mocks.renameTeam).toHaveBeenCalledWith(21, '技术部'))
+    expect(mocks.showToast).toHaveBeenCalledWith('团队名称已更新', 'success')
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('dialog', { name: '用户面板' })).not.toBeInTheDocument()
   })
 
   it('copies one cached referral link and deduplicates rapid share clicks', async () => {

@@ -85,6 +85,16 @@ describe('workspace session isolation', () => {
     seedActiveWorkspace(1, personalMember)
   })
 
+  it('updates the team through the API and reloads the name for workspace consumers', async () => {
+    const renamed = { ...teamWorkspace, name: '技术部' }
+    mocks.updateWorkspace.mockResolvedValueOnce(renamed)
+    mocks.listWorkspaces.mockResolvedValueOnce([personalWorkspace, renamed])
+    await useWorkspaceSessionStore.getState().renameTeam(2, ' 技术部 ')
+    expect(mocks.updateWorkspace).toHaveBeenCalledWith({ workspaceId: 2, name: '技术部' })
+    expect(mocks.listWorkspaces).toHaveBeenCalledTimes(1)
+    expect(useWorkspaceSessionStore.getState().userWorkspaces.find((ws) => ws.id === 2)?.name).toBe('技术部')
+  })
+
   it('clears the previous role immediately and rejects a stale member response', async () => {
     const oldMemberRequest = deferred<any[]>()
     const newMemberRequest = deferred<any[]>()

@@ -11,8 +11,13 @@ import { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio } from '@/utils/canvasNodeSiz
 export { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio, formatRatio, calcNodeSize } from '@/utils/canvasNodeSize'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
 import styles from './CanvasNodePanel.module.css'
-import type { GenerationModelOption } from '@/utils/generationModelCatalog'
+import type {
+  GenerationModelOption,
+  GenerationModelOperationStateMap,
+  GenerationOperationCode,
+} from '@/utils/generationModelCatalog'
 import { estimateAiTaskCost, uploadAssetFile } from '@/api/business'
+import { getModelInputConstraints } from '@/utils/modelInputConstraints'
 import { creditsYuanHint, creditsYuanLabel } from '@/utils/creditsYuan'
 import { pickRememberedCanvasModel } from '@/utils/canvasLastModel'
 import {
@@ -300,10 +305,73 @@ function pickVideoDefaultRatio(field: ParamsSchemaField, nodeRatio: string | und
 }
 
 /** 字段当前值 → 菜单按钮上显示的文本。 */
-function formatFieldValue(field: ParamsSchemaField, value: unknown): string {
-  if (isBooleanField(field)) return value ? '开' : '关'
+/** 生成张数字段名兼容：n / num_images / max_images / image_count / output_count / count 等，或显示名带「数量」。 */
+const COUNT_PARAM_KEYS = new Set([
+  'n',
+  'num',
+  'count',
+  'numimages',
+  'maximages',
+  'imagecount',
+  'outputcount',
+  'samplecount',
+])
+function isImageCountField(field: ParamsSchemaField): boolean {
+  return COUNT_PARAM_KEYS.has(normalizeParamKey(field.name)) || /数量|张数/.test(String(field.displayName || ''))
+}
+
+/** 图片节点对用户开放的生成数量档位；预估与提交共用这三个数值。 */
+const IMAGE_COUNT_OPTIONS = [1, 2, 4] as const
+
+/** 旧画布可能留有 3、5 等滑块值，收敛到 1 张避免面板出现无选中项。 */
+function normalizeImageCountValue(value: unknown): (typeof IMAGE_COUNT_OPTIONS)[number] {
+  const count = Number(value)
+  return IMAGE_COUNT_OPTIONS.includes(count as (typeof IMAGE_COUNT_OPTIONS)[number])
+    ? (count as (typeof IMAGE_COUNT_OPTIONS)[number])
+    : 1
+}
+
+/** 水印开关：按钮与摘要写「有水印 / 无水印」，比单独一个「开 / 关」看得懂 */
+function isWatermarkField(field: ParamsSchemaField): boolean {
+  return normalizeParamKey(field.name).includes('watermark') || /水印/.test(String(field.displayName || ''))
+}
+
+/** 分辨率 / 尺寸字段：resolution / size / image_size / quality 等，或显示名带「分辨率」「尺寸」 */
+function isResolutionField(field: ParamsSchemaField): boolean {
+  const key = normalizeParamKey(field.name)
+  return (
+    key === 'resolution' ||
+    key === 'size' ||
+    key === 'imagesize' ||
+    key === 'outputresolution' ||
+    /分辨率|尺寸/.test(String(field.displayName || ''))
+  )
+}
+
+/**
+ * 分辨率补单位：纯数字（512 / 720 / 1080）补「P」，720p → 720P，2k → 2K；
+ * 其余写法（1024x1024、auto 等）原样显示，不硬套单位。
+ */
+function formatResolutionValue(value: unknown): string {
+  const text = String(value ?? '').trim()
+  if (/^\d+$/.test(text)) return `${text}P`
+  if (/^\d+p$/i.test(text)) return text.toUpperCase()
+  if (/^\d+(\.\d+)?k$/i.test(text)) return text.toUpperCase()
+  return text
+}
+
+function formatBooleanValue(field: ParamsSchemaField, value: unknown): string {
+  if (isWatermarkField(field)) return value ? '有水印' : '无水印'
+  return value ? '开' : '关'
+}
+
+function formatFieldValue(field: ParamsSchemaField, value: unknown, kind?: string): string {
+  if (isBooleanField(field)) return formatBooleanValue(field, value)
+  if (isResolutionField(field)) return formatResolutionValue(value)
   if (isVideoTaskModeField(field)) return formatVideoTaskModeLabel(value)
   if (isDurationField(field)) return `${String(value ?? '')}秒`
+  // 图片生成数量需要带单位，避免参数摘要中的裸数字无法理解。
+  if (kind === 'image' && isImageCountField(field)) return `${String(value ?? '')}张`
   const text = String(value ?? '')
   const key = normalizeParamKey(field.name)
   // 仅翻译展示文案；选项的原始值仍用于选中判断、预估和提交。
@@ -443,8 +511,6 @@ interface CanvasNodePanelProps {
    * 以前只有前者，导致「素材在库里但画布上没有」时只能先手动加节点再连线。
    */
   onPickRefFromLibrary?: (slotIndex?: number) => void
-  /** 打开真人素材库，真人素材只能作为视频生成的输入。 */
-  onOpenRealPersonLibrary?: () => void
   /** 点击删除引用回调 */
   onRemoveRef?: (edgeId: string) => void
   /** 当前节点的历次生成结果（最新在后），用于节点级生成历史回看（反馈 #8）。 */
@@ -461,6 +527,8 @@ interface CanvasNodePanelProps {
   models?: Partial<Record<'text' | 'image' | 'video', GenerationModelOption[]>>
   /** 模型列表加载中 */
   modelsLoading?: boolean
+  modelOperationStates?: GenerationModelOperationStateMap
+  onReloadModels?: () => void
   /** 点击生成按钮回调（面板内部先预估费用，调用方提交实际任务） */
   onGenerate?: (params: {
     kind: string
@@ -606,12 +674,20 @@ function RefAddButton({
   )
 }
 
+/**
+ * 「复原」用的提示词历史，按节点 id 存在面板之外。
+ * 面板是所有节点共用的一个实例，没选中节点、多选、打开添加菜单时还会整个卸载；
+ * 历史若只放在组件 state 里，润色后点一下别的节点再回来，「复原」按钮就没了。
+ * 只保留在本次会话：刷新后润色结果仍在节点上，但不再提供回退。
+ */
+const promptHistoryByNode = new Map<string, string[]>()
+const readPromptHistory = (nodeId?: string): string[] => (nodeId && promptHistoryByNode.get(nodeId)) || []
+
 export default function CanvasNodePanel({
   node,
   workspaceId,
   onStartPickRef,
   onPickRefFromLibrary,
-  onOpenRealPersonLibrary,
   onRemoveRef,
   resultHistory,
   onRevertToHistory,
@@ -620,6 +696,8 @@ export default function CanvasNodePanel({
   onModelChange,
   models,
   modelsLoading,
+  modelOperationStates,
+  onReloadModels,
   onGenerate,
   onPreflightAssets,
   onInsufficientCredits,
@@ -640,14 +718,29 @@ export default function CanvasNodePanel({
     'reconnecting',
     'result_pending',
   ].includes(String(node?.taskStatus || '').toLowerCase())
-  const hasExistingResult = kind !== 'text' && Boolean(node?.resultUrl || Number(node?.assetId || 0) > 0)
+  // 「重新生成」只给真生成过的节点：有素材不等于生成过——上传/拖入/截帧的图也带 resultUrl、assetId，
+  // 按素材判断会让从没跑过生成的节点也显示「重新生成」，用户以为已经有产物了。
+  // 生成过的标志是提交过任务（taskId）或留有生成历史。
+  const hasExistingResult =
+    kind !== 'text' &&
+    Boolean(node?.resultUrl || Number(node?.assetId || 0) > 0) &&
+    (Number(node?.taskId || 0) > 0 || (resultHistory?.length ?? 0) > 0)
   const generateActionLabel = hasExistingResult ? '重新生成' : '生成'
   const isNewModelGeneration = kind === 'video' && node?.generationIntent === 'new-model'
   const isEditingVideo = kind === 'video' && Boolean(node?.resultUrl) && !isNewModelGeneration
   // 文本节点的内容存在 text，图片/视频节点的输入框存在 prompt；两者都随节点持久化。
   const [prompt, setPrompt] = useState(() => String((kind === 'text' ? node?.text : node?.prompt) || ''))
   const [polishing, setPolishing] = useState(false)
-  const [promptHistory, setPromptHistory] = useState<string[]>([])
+  const [promptHistory, setPromptHistory] = useState<string[]>(() => readPromptHistory(node?.id))
+  const nodeIdRef = useRef(node?.id)
+  nodeIdRef.current = node?.id
+  /** 写某个节点的复原历史；只有它仍是当前节点时才刷新面板上的按钮。 */
+  const writePromptHistory = useCallback((nodeId: string | undefined, next: string[]) => {
+    if (!nodeId) return
+    if (next.length) promptHistoryByNode.set(nodeId, next)
+    else promptHistoryByNode.delete(nodeId)
+    if (nodeIdRef.current === nodeId) setPromptHistory(next)
+  }, [])
   const [polishError, setPolishError] = useState('')
   // 提示词放大：多提示词短剧的文案很长，默认输入框最高 220px 不够写（反馈 #5）。
   const [promptExpanded, setPromptExpanded] = useState(false)
@@ -659,7 +752,7 @@ export default function CanvasNodePanel({
   useEffect(() => {
     const switchedNode = restoredNodeIdRef.current !== node?.id
     if (kind === 'text') {
-      if (switchedNode) setPromptHistory([])
+      if (switchedNode) setPromptHistory(readPromptHistory(node?.id))
       setPrompt(String(node?.text || ''))
       setPolishError('')
       restoredNodeIdRef.current = node?.id
@@ -667,7 +760,7 @@ export default function CanvasNodePanel({
     }
     // 同一节点内不跟随 node.prompt 回灌，否则用户正在输入时会被持久化回来的值打断。
     if (!switchedNode) return
-    setPromptHistory([])
+    setPromptHistory(readPromptHistory(node?.id))
     restoredNodeIdRef.current = node?.id
     setPrompt(String(node?.prompt || ''))
     setPolishError('')
@@ -1100,7 +1193,11 @@ export default function CanvasNodePanel({
   }, [availableModels, targetOperationCode])
 
   /** 缺模型时的说明文案：按目标 operation 指名道姓，不要笼统说「暂无可用模型」。 */
+  const catalogOperationState = modelOperationStates?.[targetOperationCode as GenerationOperationCode]
   const emptyModelLabel = useMemo(() => {
+    if (modelsLoading) return '正在加载模型…'
+    if (catalogOperationState?.status === 'error') return '模型加载失败，请重新加载'
+    if (catalogOperationState?.status === 'configuration-error') return '模型配置异常，请联系管理员'
     const labels: Record<string, string> = {
       'image.image_to_image': '暂无可用的图生图模型',
       'image.text_to_image': '暂无可用的文生图模型',
@@ -1113,7 +1210,7 @@ export default function CanvasNodePanel({
       return '暂无支持视频输入的视频生成模型'
     }
     return labels[targetOperationCode] || ''
-  }, [targetOperationCode, needsVideoInputAsset])
+  }, [targetOperationCode, needsVideoInputAsset, modelsLoading, catalogOperationState])
 
   /** 是否有素材输入（图片/视频连线）；纯文本来源不算，它只会拼进 prompt。 */
   const hasMediaInput = useMemo(() => sourceRefs.some((ref) => ref.kind !== 'text'), [sourceRefs])
@@ -1161,7 +1258,10 @@ export default function CanvasNodePanel({
           : kind === 'video' && isRatioField(f)
             ? pickVideoDefaultRatio(f, nodeRatioRef.current)
             : f.default
-      next[f.name] = normalizeFieldValue(f, initialValue)
+      next[f.name] =
+        kind === 'image' && isImageCountField(f)
+          ? normalizeImageCountValue(initialValue)
+          : normalizeFieldValue(f, initialValue)
     }
     setFieldValues(next)
   }, [kind, schemaFields, node?.params])
@@ -1189,7 +1289,9 @@ export default function CanvasNodePanel({
         if (kind === 'text' && ['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'maxTokens'].includes(f.name)) {
           continue
         }
-        params[f.name] = normalizeFieldValue(f, values[f.name] !== undefined ? values[f.name] : f.default)
+        const value = values[f.name] !== undefined ? values[f.name] : f.default
+        params[f.name] =
+          kind === 'image' && isImageCountField(f) ? normalizeImageCountValue(value) : normalizeFieldValue(f, value)
       }
       return params
     },
@@ -1345,10 +1447,17 @@ export default function CanvasNodePanel({
     [selectedModel, operationCode],
   )
   const inputAssets = useMemo(() => {
-    const assets = buildCanvasInputAssets(sourceRefs, operationCode, selfVideoAssetId, declaredImageRole)
+    const assets = buildCanvasInputAssets(
+      sourceRefs,
+      operationCode,
+      selfVideoAssetId,
+      declaredImageRole,
+      getModelInputConstraints(selectedModel?.source, operationCode).roles.find((role) => /audio/i.test(role.role))
+        ?.role || 'audio',
+    )
     if (maskAssetId > 0) assets.push({ asset_id: maskAssetId, role: 'mask' })
     return assets
-  }, [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole, maskAssetId])
+  }, [sourceRefs, operationCode, selfVideoAssetId, declaredImageRole, maskAssetId, selectedModel])
   /**
    * 参考视频总时长：画布节点不存视频时长，这里按视频地址读一次元数据（preload=metadata，只拉文件头）。
    * 改片时节点自己那条视频也算进去——它同样会作为参考视频下发。
@@ -1408,6 +1517,10 @@ export default function CanvasNodePanel({
           workspaceId,
           maxImageRefs: maxRefs,
           minImageRefs: minRefs,
+          maxAudioRefs:
+            getModelInputConstraints(selectedModel?.source, operationCode).roles.find((role) =>
+              /audio/i.test(role.role),
+            )?.maxCount || 0,
           modelLabel: selectedModel?.displayName,
           maxVideoRefSec,
           videoRefTotalSec,
@@ -1424,6 +1537,7 @@ export default function CanvasNodePanel({
     videoMode,
     workspaceId,
     selectedModel?.displayName,
+    selectedModel?.source,
     maxVideoRefSec,
     videoRefTotalSec,
     buildFullPrompt,
@@ -1577,6 +1691,9 @@ export default function CanvasNodePanel({
   const handlePolishText = async () => {
     const value = prompt.trim()
     if (!value || !onPolishText || polishing) return
+    // 润色要等几秒，期间用户可能已切到别的节点：结果与复原历史都要记回发起润色的节点
+    const nodeId = node?.id
+    const original = prompt
     setPolishing(true)
     setPolishError('')
     try {
@@ -1584,9 +1701,19 @@ export default function CanvasNodePanel({
       // 生成的长描述随后会在图生图/图生视频里压过参考图，把原主体换掉。
       const polished = String(await onPolishText({ prompt: value, kind, ...buildPolishImageRefs(sourceRefs) })).trim()
       if (!polished) throw new Error('AI 未返回可用的润色内容')
+      if (nodeIdRef.current !== nodeId) {
+        // 已切走：面板现在显示的是别的节点，不能把结果灌进当前输入框。
+        // 图片/视频节点直接写回原节点（onPromptChange 是发起时那一帧的回调，指向原节点）；
+        // 文本节点要手动保存才生效，切走即放弃这次润色。
+        if (kind !== 'text') {
+          writePromptHistory(nodeId, [...readPromptHistory(nodeId), original])
+          onPromptChange?.(polished)
+        }
+        return
+      }
       // 润色结果同样要落到节点，否则润色完切走再回来就变回原文（immediate 同时作废防抖中的旧文本）
       userEditedPromptRef.current = true
-      setPromptHistory((history) => [...history, prompt])
+      writePromptHistory(nodeId, [...readPromptHistory(nodeId), original])
       commitPrompt(polished, { immediate: true })
     } catch (error: any) {
       setPolishError(String(error?.message || '润色失败，请稍后重试'))
@@ -1613,6 +1740,27 @@ export default function CanvasNodePanel({
     <div className={styles.panel} data-canvas-node-panel>
       {/* tags / 缩略图 */}
       <div className={styles.tags}>
+        {kind !== 'text' &&
+          catalogOperationState &&
+          (modelsLoading || ['error', 'empty', 'configuration-error'].includes(catalogOperationState.status)) && (
+            <div className={styles.catalogNotice} role={catalogOperationState.status === 'error' ? 'alert' : 'status'}>
+              <span>
+                {modelsLoading
+                  ? '正在加载模型目录…'
+                  : catalogOperationState.usingCachedModels
+                    ? `模型目录刷新失败，暂时显示上次成功的模型。${catalogOperationState.message}`
+                    : catalogOperationState.message}
+                {!modelsLoading && catalogOperationState.requestId && (
+                  <small>请求 ID：{catalogOperationState.requestId}</small>
+                )}
+              </span>
+              {onReloadModels && (
+                <button type="button" onClick={onReloadModels} disabled={modelsLoading}>
+                  {modelsLoading ? '加载中…' : '重新加载'}
+                </button>
+              )}
+            </div>
+          )}
         {inputSummary.total > 1 && (
           <div className={styles.inputSummary} role="status" aria-live="polite">
             <span className={styles.inputSummaryTitle}>多资产汇合</span>
@@ -2090,7 +2238,7 @@ export default function CanvasNodePanel({
                 const previous = promptHistory[promptHistory.length - 1]
                 userEditedPromptRef.current = true
                 commitPrompt(previous, { immediate: true })
-                setPromptHistory((history) => history.slice(0, -1))
+                writePromptHistory(node?.id, promptHistory.slice(0, -1))
               }}
             >
               复原
@@ -2127,18 +2275,6 @@ export default function CanvasNodePanel({
                 if (!taskRunning) onModelChange?.(value)
               }}
             />
-          )}
-
-          {kind === 'video' && onOpenRealPersonLibrary && (
-            <button
-              type="button"
-              className={styles.polishBtn}
-              onClick={onOpenRealPersonLibrary}
-              disabled={taskRunning}
-              title="打开真人素材库并选择真人素材"
-            >
-              真人素材库
-            </button>
           )}
 
           {/* 模型 params_schema 参数菜单：所有节点类型通用；视频额外含生成方式组 */}
@@ -2179,6 +2315,7 @@ export default function CanvasNodePanel({
           <button
             type="button"
             className={styles.generateBtn}
+            data-canvas-generate
             onClick={handleGenerate}
             disabled={
               taskRunning ||
@@ -2468,7 +2605,7 @@ function SchemaFieldMenu({
     if (followsSource(f)) continue
     const v = values[f.name]
     if (v === undefined || v === null || v === '') continue
-    displayParts.push(formatFieldValue(f, v))
+    displayParts.push(formatFieldValue(f, v, kind))
   }
   if (followSourceVideo) displayParts.push('比例时长跟随原视频')
   const display = displayParts.join(' · ')
@@ -2587,14 +2724,28 @@ function SchemaFieldMenu({
                           className={`${styles.videoBtnGroupItem} ${current ? styles.videoBtnGroupItemActive : ''}`}
                           onClick={() => onFieldChange?.(f.name, true)}
                         >
-                          开
+                          {formatBooleanValue(f, true)}
                         </button>
                         <button
                           className={`${styles.videoBtnGroupItem} ${!current ? styles.videoBtnGroupItemActive : ''}`}
                           onClick={() => onFieldChange?.(f.name, false)}
                         >
-                          关
+                          {formatBooleanValue(f, false)}
                         </button>
+                      </div>
+                    ) : kind === 'image' && isImageCountField(f) ? (
+                      <div className={styles.videoBtnGroup} role="group" aria-label={f.displayName}>
+                        {IMAGE_COUNT_OPTIONS.map((count) => (
+                          <button
+                            type="button"
+                            key={count}
+                            className={`${styles.videoBtnGroupItem} ${Number(current) === count ? styles.videoBtnGroupItemActive : ''}`}
+                            aria-pressed={Number(current) === count}
+                            onClick={() => onFieldChange?.(f.name, count)}
+                          >
+                            {count}张
+                          </button>
+                        ))}
                       </div>
                     ) : isDurationField(f) && durationWheelOptions(f).length ? (
                       /* 时长：横向档位条吸附选择，与智能成片、爆款复制的时长交互一致 */
@@ -2700,6 +2851,20 @@ function TextRefIcon() {
  * （#t=0.1 让浏览器 seek 到该位置并渲染出画面，否则可能只是一块黑底）；都没有才回落图标。
  */
 function RefThumbMedia({ sourceRef, label }: { sourceRef: CanvasSourceRef; label: string }) {
+  return (
+    <>
+      <RefThumbContent sourceRef={sourceRef} label={label} />
+      {sourceRef.source === 'real_person' && sourceRef.realPerson && (
+        <span className={styles.realPersonBadge} title={`已认证真人：${sourceRef.realPerson.personName}`}>
+          真人
+        </span>
+      )}
+    </>
+  )
+}
+
+function RefThumbContent({ sourceRef, label }: { sourceRef: CanvasSourceRef; label: string }) {
+  if (sourceRef.kind === 'audio') return <span aria-label={label}>♫</span>
   const isVideo = sourceRef.kind === 'video'
 
   if (sourceRef.posterUrl) {

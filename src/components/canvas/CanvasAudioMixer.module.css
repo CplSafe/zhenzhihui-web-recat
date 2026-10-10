@@ -1,0 +1,149 @@
+.mixer {
+  padding: 18px 22px;
+  border-top: 1px solid #dee7e4;
+  background: #f7faf9;
+  color: #34443e;
+  font-size: 12px;
+  max-height: 260px;
+  overflow: auto;
+  flex: none;
+  border-radius: 10px;
+}
+.heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+.heading strong {
+  font-size: 15px;
+}
+.heading p,
+.note {
+  color: #71817a;
+  margin: 5px 0 12px;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+}
+.actions button {
+  border: 1px solid #c9dbd3;
+  background: white;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.lane {
+  display: flex;
+  gap: 16px;
+  padding: 10px 0;
+  border-top: 1px solid #e2eae6;
+}
+.laneTitle {
+  width: 60px;
+  flex: none;
+  font-weight: 600;
+  padding-top: 10px;
+}
+.laneTitle i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  margin-right: 6px;
+}
+.clips {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.clip {
+  padding: 12px;
+  background: white;
+  border: 1px solid #dce7e2;
+  border-radius: 9px;
+}
+.clipHeader {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.clipHeader span {
+  color: #71817a;
+}
+.clipHeader a {
+  margin-left: auto;
+  color: #258a6f;
+}
+.track {
+  height: 32px;
+  border-radius: 5px;
+  margin: 10px 0;
+  background: #edf2ef;
+  position: relative;
+  overflow: hidden;
+}
+.track div {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  color: white;
+  font-size: 11px;
+  padding: 5px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  min-width: 2px;
+}
+.track > span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #5767e5;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+.controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.controls input[type='number'] {
+  width: 76px;
+}
+.controls input,
+.controls select {
+  accent-color: #2d9e82;
+}
+.controls input[type='number'],
+.controls select {
+  padding: 5px;
+  border: 1px solid #dce7e2;
+  border-radius: 5px;
+}
+.controls .check {
+  flex-direction: row;
+  align-items: center;
+  padding-bottom: 6px;
+}
+.empty {
+  color: #85948d;
+  padding: 12px;
+  border: 1px dashed #cadbd2;
+  border-radius: 8px;
+}
+.warning {
+  color: #a77724;
+  margin: 10px 0 0;
+}

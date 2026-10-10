@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CANVAS_SUBMIT_STALE_MS,
+  classifyOrphanSubmission,
   formatCanvasElapsed,
   getCanvasEstimatedVideoProgress,
   getCanvasGenerationDuration,
@@ -7,6 +9,7 @@ import {
   isCanvasGeneratedResult,
   isSameCanvasTask,
   restoreCanvasTaskState,
+  reusableInterruptedIdempotencyKey,
 } from '@/utils/canvasTaskState'
 
 describe('canvas task restoration', () => {
@@ -178,5 +181,53 @@ describe('canvas generated result marker', () => {
         taskUpdatedAt: base.taskStartedAt,
       }),
     ).toBeNull()
+  })
+})
+
+describe('orphan canvas submissions (stuck in submitting without a task id)', () => {
+  const now = Date.parse('2026-10-09T10:00:00Z')
+  const request = { kind: 'image', prompt: '一只狗', operationCode: 'image.text_to_image' }
+  const orphan = (minutesAgo: number, extra: Record<string, unknown> = {}) => ({
+    taskStatus: 'submitting',
+    taskId: 0,
+    taskStartedAt: new Date(now - minutesAgo * 60_000).toISOString(),
+    taskIdempotencyKey: 'canvas-task-abc',
+    generationRequest: request,
+    ...extra,
+  })
+
+  it('resumes a recent interrupted submission with its stored idempotency key', () => {
+    expect(classifyOrphanSubmission(orphan(2), { now, submittingInThisPage: false })).toBe('resume')
+  })
+
+  it('leaves submissions this page is still sending alone', () => {
+    expect(classifyOrphanSubmission(orphan(2), { now, submittingInThisPage: true })).toBe('none')
+  })
+
+  it('marks submissions past the request timeout window as interrupted', () => {
+    const minutes = CANVAS_SUBMIT_STALE_MS / 60_000 + 1
+    expect(classifyOrphanSubmission(orphan(minutes), { now, submittingInThisPage: false })).toBe('interrupted')
+    // 线上那条卡了 20 多小时的节点
+    expect(classifyOrphanSubmission(orphan(20 * 60), { now, submittingInThisPage: false })).toBe('interrupted')
+  })
+
+  it('cannot resume legacy nodes saved before idempotency keys were stored', () => {
+    expect(
+      classifyOrphanSubmission(orphan(1, { taskIdempotencyKey: undefined }), { now, submittingInThisPage: false }),
+    ).toBe('interrupted')
+  })
+
+  it('ignores nodes that already have a task id or are not submitting', () => {
+    expect(classifyOrphanSubmission(orphan(30, { taskId: 88 }), { now, submittingInThisPage: false })).toBe('none')
+    expect(classifyOrphanSubmission(orphan(30, { taskStatus: 'running' }), { now, submittingInThisPage: false })).toBe(
+      'none',
+    )
+  })
+
+  it('reuses the interrupted key only for an unchanged retry', () => {
+    const interrupted = { taskSubmitInterrupted: true, taskIdempotencyKey: 'k1', generationRequest: request }
+    expect(reusableInterruptedIdempotencyKey(interrupted, { ...request })).toBe('k1')
+    expect(reusableInterruptedIdempotencyKey(interrupted, { ...request, prompt: '一只猫' })).toBe('')
+    expect(reusableInterruptedIdempotencyKey({ ...interrupted, taskSubmitInterrupted: false }, request)).toBe('')
   })
 })

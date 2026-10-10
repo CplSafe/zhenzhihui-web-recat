@@ -12,7 +12,10 @@ const base = process.env.TUTORIAL_BASE_URL || 'http://localhost:5173'
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   mkdirSync(PROFILE, { recursive: true })
-  const ctx = await chromium.launchPersistentContext(PROFILE, { headless: false, viewport: { width: 1600, height: 900 } })
+  const ctx = await chromium.launchPersistentContext(PROFILE, {
+    headless: false,
+    viewport: { width: 1600, height: 900 },
+  })
   const page = ctx.pages()[0] || (await ctx.newPage())
   await page.goto(`${base}/login`)
   console.log('请在弹出的浏览器里完成登录，登录成功看到首页后【直接关闭浏览器窗口】即可。')

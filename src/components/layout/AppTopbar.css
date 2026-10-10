@@ -242,6 +242,8 @@
 }
 /* 装个人面板时:由 PersonalPanel 自控尺寸/内边距,菜单只当卡片外壳 */
 .apptop__menu--panel {
+  /* 个人面板低于全局确认框(2150)，重命名输入及保存按钮不能被遮挡。 */
+  z-index: 2140;
   min-width: 0;
   padding: 0;
   border-radius: 16px;

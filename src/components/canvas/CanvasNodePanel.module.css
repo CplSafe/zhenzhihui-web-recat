@@ -52,6 +52,41 @@
   line-height: 1.45;
 }
 
+.catalogNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #ead9b5;
+  border-radius: 8px;
+  background: #fffbf3;
+  color: #866124;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.catalogNotice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.catalogNotice small {
+  display: block;
+}
+.catalogNotice button {
+  flex: none;
+  padding: 4px 8px;
+  border: 1px solid #dbc493;
+  border-radius: 6px;
+  background: #fff;
+  color: #866124;
+  cursor: pointer;
+}
+.catalogNotice button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .refImages {
   display: flex;
   gap: 6px;
@@ -481,6 +516,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
+}
+
+.realPersonBadge {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(8, 139, 111, 0.9);
+  color: #fff;
+  font-size: 9px;
+  line-height: 14px;
 }
 
 /* 输入 @ 弹出的参考选择器：浮在提示词框上方（面板贴底，往下弹会被裁掉） */

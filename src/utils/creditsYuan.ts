@@ -13,7 +13,10 @@ export function creditsToYuanAmount(credits: unknown): string {
   if (!Number.isFinite(n) || n <= 0) return ''
   const yuan = n * YUAN_PER_CREDIT
   if (yuan < 0.005) return '<0.01'
-  return yuan.toFixed(2).replace(/\.0+$|(\.\d*[1-9])0+$/, '$1')
+  // 向上取到分，不四舍五入：展示给用户的费用只能高于或等于实扣，不能出现「标 0.1 实扣 0.104」。
+  // 先按 1e-9 收掉浮点误差（0.1 * 100 = 10.000000000000002），避免整分被多进一分。
+  const cents = Math.ceil(Math.round(n * YUAN_PER_CREDIT * 100 * 1e6) / 1e6)
+  return (cents / 100).toFixed(2).replace(/\.?0+$/, '')
 }
 
 /** 生成「约0.24元」提示文案；不足 0.005 元时为「<¥0.01」；算不出金额时返回空串。 */

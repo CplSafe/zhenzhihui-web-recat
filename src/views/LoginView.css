@@ -31,6 +31,23 @@
   object-fit: cover;
 }
 
+/* 切幻灯片时定格的上一帧：盖住静态底图，等新媒体出画面后撤掉（见 LoginView 的 freezeCurrentFrame） */
+.zlogin-hero-hold {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.zlogin-hero-hold.is-holding {
+  opacity: 1;
+}
+
 /* 大图媒体层(banner 图/视频):铺满 hero,置于导航与顶部渐变之下 */
 .zlogin-hero-media {
   position: absolute;

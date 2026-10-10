@@ -91,6 +91,14 @@
   transition: opacity 0.12s ease;
 }
 
+/* 指针落在面板下方的「添加下一步」加号上：面板淡出并放行指针，移开即恢复（见 CanvasView panelYielding）。
+   留一点不透明度，用户能看出面板只是让开、没有消失。 */
+.canvas-panel-area.is-yielding {
+  opacity: 0.12;
+  pointer-events: none;
+  transition: opacity var(--canvas-dur-fast) var(--canvas-ease);
+}
+
 /* 从下向上渐入动画（胶囊组水平居中，动画仅在垂直方向滑移） */
 @keyframes canvas-upload-btn-rise {
   from {
@@ -282,6 +290,28 @@
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/*
+ * 左上角的柔和白色渐隐：没有底色时，平移到这里的节点会从 logo 和保存状态背后透出来，
+ * 两层内容搅在一起。实底卡片又太重，这里用一块无边缘的径向渐隐托住品牌区和返回按钮，
+ * 节点滑进来时自然淡出，不出现生硬的框。不拦截指针，下面的节点仍可操作。
+ */
+.canvas-view::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1050;
+  width: 240px;
+  height: 160px;
+  background: radial-gradient(
+    ellipse at top left,
+    rgba(248, 249, 250, 0.94) 0%,
+    rgba(248, 249, 250, 0.8) 45%,
+    rgba(248, 249, 250, 0) 100%
+  );
+  content: '';
+  pointer-events: none;
 }
 
 .canvas-brand-logo {
@@ -566,7 +596,8 @@
   position: absolute;
   top: 104px;
   left: 47px;
-  z-index: 10;
+  /* 与品牌区同档：选中节点会被 React Flow 抬到 1000 以上，停在 10 会被节点盖住 */
+  z-index: 1100;
   width: 44px;
   height: 44px;
   border: none;
@@ -1043,7 +1074,7 @@
   pointer-events: none;
 }
 
-.canvas-node-task span {
+.canvas-node-task > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1062,7 +1093,7 @@
 }
 
 /* 失败原因换行显示、最多 4 行；「正在生成」仍是单行 */
-.canvas-node-task.is-failed span {
+.canvas-node-task.is-failed > span:first-child {
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
@@ -1688,6 +1719,50 @@
   padding-left: 12px;
   font-size: 11px;
   color: #b3bac7;
+}
+
+/* 右键「创建副本」的子选项列表：悬停 / 键盘聚焦时展开在右侧，靠屏幕右缘时翻到左侧 */
+.canvas-context-menu__submenu-host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-context-menu__submenu-host > .canvas-context-menu__item {
+  width: 100%;
+}
+
+.canvas-context-menu.canvas-context-menu__submenu {
+  position: absolute;
+  top: -6px;
+  left: calc(100% + 4px);
+  display: none;
+  min-width: 168px;
+}
+
+.canvas-context-menu__submenu-host.is-flipped > .canvas-context-menu__submenu {
+  left: auto;
+  right: calc(100% + 4px);
+}
+
+/* 悬停时与父项之间的 4px 空隙会让指针「掉出」菜单：用一条透明桥接住 */
+.canvas-context-menu__submenu::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -8px;
+  width: 8px;
+}
+
+.canvas-context-menu__submenu-host.is-flipped > .canvas-context-menu__submenu::before {
+  left: auto;
+  right: -8px;
+}
+
+.canvas-context-menu__submenu-host:hover > .canvas-context-menu__submenu,
+.canvas-context-menu__submenu-host:focus-within > .canvas-context-menu__submenu {
+  display: flex;
 }
 
 /* 粘贴二选一：点外面任意处关闭 */

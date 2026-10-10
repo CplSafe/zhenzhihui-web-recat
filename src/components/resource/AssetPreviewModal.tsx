@@ -75,6 +75,19 @@ function PreviewMedia({ item, workspaceId, videoKey }: { item: any; workspaceId:
   if (item?.mediaKind === 'image' && src) {
     return <img src={src} alt={item.title} className="asset-preview-image" onError={handleError} />
   }
+  if ((item?.mediaKind === 'audio' || item?.kind === 'audio') && src) {
+    return (
+      <audio
+        key={'a' + videoKey}
+        src={src}
+        controls
+        autoPlay
+        preload="metadata"
+        onError={handleError}
+        aria-label="音频预览"
+      />
+    )
+  }
   if (item?.mediaKind === 'video' && src) {
     // SeekableVideo：/download 不支持 Range，原生播放器拖不动进度条
     return (
@@ -83,6 +96,8 @@ function PreviewMedia({ item, workspaceId, videoKey }: { item: any; workspaceId:
         src={src}
         poster={item.posterUrl || undefined}
         controls
+        // 用户点「播放」打开预览，就是想看：直接开始播，暂停/继续仍用控制条手动操作
+        autoPlay
         playsInline
         preload="metadata"
         className="asset-preview-video"

@@ -42,7 +42,7 @@ const FRAME_THUMB_CACHE = new Map<string, string[]>()
 const FRAME_THUMB_CACHE_MAX = 16
 
 /** 抓帧实现版本；算法变化时递增以使旧缓存键自动失效。 */
-const FRAME_THUMB_CAPTURE_VERSION = 3
+const FRAME_THUMB_CAPTURE_VERSION = 4
 
 /** 一次交给浏览器绘制的帧缩略图数量，避免长任务阻塞主线程。 */
 const FRAME_THUMB_RENDER_BATCH_SIZE = 5
@@ -468,10 +468,12 @@ export default function VideoStage({
   // 帧条:按视频真实时长「1 帧/秒」切分(15s 视频 = 15 帧),封顶 60 帧
   const frameCount = Math.max(1, Math.min(60, Math.round(total)))
   const pct = (s: number) => `${Math.min(100, Math.max(0, (s / total) * 100))}%`
+  // 留出圆角内侧的空间，首尾播放头也完整可见。
+  const playheadLeft = (s: number) => `clamp(6px, ${pct(s)}, calc(100% - 6px))`
   const syncPlaybackProgress = (seconds: number) => {
     const next = Number.isFinite(seconds) ? Math.max(0, seconds) : 0
     playSecRef.current = next
-    if (playheadRef.current) playheadRef.current.style.left = pct(next)
+    if (playheadRef.current) playheadRef.current.style.left = playheadLeft(next)
     if (playbackTimeRef.current) {
       playbackTimeRef.current.textContent = `${fmtClock(next)} / ${fmtClock(total)} · 共 ${frameCount} 帧`
     }
@@ -619,7 +621,7 @@ export default function VideoStage({
     timelineCaptureScheduleRef.current = null
     setDur(0)
     playSecRef.current = 0
-    if (playheadRef.current) playheadRef.current.style.left = '0%'
+    if (playheadRef.current) playheadRef.current.style.left = '6px'
     setFrameThumbs(null)
     setTimelineCaptureReadyUrl('')
     pendingTimelineSeekRef.current = null
@@ -745,8 +747,8 @@ export default function VideoStage({
       thumbs.length = 0
       await loadCaptureVideo(src)
       if (cancelled) return
-      // 帧条缩略图无需高清:96px 宽 + 较低 jpeg 质量,抓取更快、内存与 dataURL 更省
-      const W = 96
+      // 96px 高的帧条在高 DPI 屏幕上需要更大的原图，避免放大低质量 JPEG。
+      const W = Math.min(v.videoWidth || 384, 384)
       const H = Math.max(1, Math.round((v.videoHeight / (v.videoWidth || 1)) * W)) || 54
       canvas.width = W
       canvas.height = H
@@ -759,7 +761,7 @@ export default function VideoStage({
         await seekTo(t)
         if (cancelled) return
         ctx.drawImage(v, 0, 0, W, H)
-        thumbs.push(canvas.toDataURL('image/jpeg', 0.5)) // canvas 被污染会抛错 → 触发 Blob 降级
+        thumbs.push(canvas.toDataURL('image/jpeg', 0.85)) // canvas 被污染会抛错 → 触发 Blob 降级
         // UI 每帧提交会让整块 VideoStage 最多重渲染 60 次。按批渐进展示，
         // 保留反馈的同时减少 React commit 与图片布局次数。
         if (!cancelled && thumbs.length % FRAME_THUMB_RENDER_BATCH_SIZE === 0) {
@@ -827,7 +829,8 @@ export default function VideoStage({
     return Math.min(Math.max(0, mediaDuration - 0.01), Math.max(0, seconds))
   }
   const applyPlayerSeek = (video: HTMLVideoElement, seconds: number) => {
-    if (video.readyState < 1) return false
+    // 不打断正在解码的定位：完成后由 seeked 处理最新目标，持续拖动也能出画面。
+    if (video.readyState < 1 || video.seeking) return false
     const target = clampPlayerTime(video, seconds)
     try {
       video.currentTime = target
@@ -853,10 +856,42 @@ export default function VideoStage({
     if (pending == null) return
     if (applyPlayerSeek(video, pending)) pendingTimelineSeekRef.current = null
   }
+  /** 拖动中按精确秒数跟手定位（单击仍吸附到该格的帧中点，见 seekPlayerToTimelineFrame） */
+  const seekPlayerToSeconds = (seconds: number) => {
+    const video = videoRef.current
+    const clamped = clampPlayerTime(video, seconds)
+    pendingTimelineSeekRef.current = clamped
+    syncPlaybackProgress(clamped)
+    if (!video) return
+    if (!video.paused) video.pause()
+    if (applyPlayerSeek(video, clamped)) pendingTimelineSeekRef.current = null
+  }
+  const trackDraggingRef = useRef(false)
   const onTrackPointerDown = (e: React.PointerEvent) => {
-    if (!videoUrl) return
+    if (!videoUrl || e.button !== 0) return
     const s = secFromEvent(e)
     seekPlayerToTimelineFrame(Math.min(frameCount - 1, Math.max(0, Math.floor(s))))
+    // 按住后拖动：蓝色时间线跟着指针走，快速定位到想要的那一帧
+    trackDraggingRef.current = true
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      /* 个别环境不支持指针捕获：拖出轨道外时停止跟随即可 */
+    }
+  }
+  const onTrackPointerMove = (e: React.PointerEvent) => {
+    if (!trackDraggingRef.current) return
+    e.preventDefault()
+    seekPlayerToSeconds(secFromEvent(e))
+  }
+  const endTrackDrag = (e: React.PointerEvent) => {
+    if (!trackDraggingRef.current) return
+    trackDraggingRef.current = false
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* 已释放 */
+    }
   }
 
   const buildNote = (): string | undefined => {
@@ -1171,7 +1206,13 @@ export default function VideoStage({
                   const upperBound = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : total
                   if (!Number.isFinite(v.currentTime) || v.currentTime > upperBound + 1) v.currentTime = 0
                 }}
-                onTimeUpdate={(e) => syncPlaybackProgress(e.currentTarget.currentTime || 0)}
+                onSeeked={(e) => flushPendingTimelineSeek(e.currentTarget)}
+                onTimeUpdate={(e) => {
+                  // 旧定位的 timeupdate 不能把用户正在拖动的蓝线拉回去。
+                  if (!trackDraggingRef.current && pendingTimelineSeekRef.current == null) {
+                    syncPlaybackProgress(e.currentTarget.currentTime || 0)
+                  }
+                }}
               />
             ) : videoUrl ? (
               <div className={styles.vstagePlayerPh}>视频加载中...</div>
@@ -1196,7 +1237,13 @@ export default function VideoStage({
                 ref={trackRef}
                 className={styles.vstageTrack}
                 onPointerDown={onTrackPointerDown}
-                title="点击时间轴定位播放位置"
+                onPointerMove={onTrackPointerMove}
+                onPointerUp={endTrackDrag}
+                onPointerCancel={endTrackDrag}
+                onLostPointerCapture={() => {
+                  trackDraggingRef.current = false
+                }}
+                title="点击或拖动时间轴定位播放位置"
               >
                 {frames.map((f) => (
                   <div
@@ -1224,7 +1271,7 @@ export default function VideoStage({
                 <span
                   ref={playheadRef}
                   className={styles.vstagePlayhead}
-                  style={{ left: pct(playSecRef.current) }}
+                  style={{ left: playheadLeft(playSecRef.current) }}
                   aria-hidden="true"
                 />
               </div>

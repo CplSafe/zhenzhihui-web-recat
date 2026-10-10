@@ -31,7 +31,8 @@ test('右键菜单能建出视频剪辑节点，且按时间线尺寸落位', as
   await pane.click({ button: 'right', position: { x: 700, y: 420 } })
   const menu = page.locator('.canvas-context-menu')
   await expect(menu).toBeVisible()
-  // 四种类型齐全，且与左侧工具栏同名同序
+  // 音频节点暂停开放；其余类型与左侧工具栏同名同序
+  await expect(menu.getByRole('button', { name: '音频节点' })).toHaveCount(0)
   await expect(menu.getByRole('button', { name: '文本节点' })).toBeVisible()
   await expect(menu.getByRole('button', { name: '图片节点' })).toBeVisible()
   await expect(menu.getByRole('button', { name: '视频节点' })).toBeVisible()
@@ -46,6 +47,29 @@ test('右键菜单能建出视频剪辑节点，且按时间线尺寸落位', as
   await expect(node).toHaveAttribute('style', /width:\s*460px/)
   await expect(node).toHaveAttribute('style', /height:\s*400px/)
 
+  expectNoUnexpectedApi(api)
+})
+
+test('左侧添加菜单不展示音频节点', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const api = await installStrictAuthenticatedApp(page)
+  await page.route('**/api/v1/canvases/115**', async (route) => {
+    const url = new URL(route.request().url())
+    if (route.request().method() === 'PATCH') return route.fulfill({ json: { sync_revision: 2 } })
+    await route.fulfill({
+      json: url.pathname.endsWith('/elements')
+        ? { elements: [], sync_revision: 1, history_floor_revision: 0, has_more: false }
+        : { id: 115, title: 'Audio canvas', status: 'active', revision: 1 },
+    })
+  })
+  await page.goto('/canvas/115')
+  const pane = page.locator('.react-flow__pane')
+  await expect(pane).toBeVisible()
+  await page.getByTitle('添加节点').click()
+  await expect(page.getByRole('button', { name: '音频节点' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '文本节点' })).toBeVisible()
+  await expect(page.locator('.react-flow__node')).toHaveCount(0)
+  expect(api.paidTaskSubmissions).toBe(0)
   expectNoUnexpectedApi(api)
 })
 

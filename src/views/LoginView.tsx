@@ -496,13 +496,53 @@ export default function LoginView() {
     query.addEventListener('change', sync)
     return () => query.removeEventListener('change', sync)
   }, [])
+  /**
+   * 切幻灯片时把当前画面「定格」到一张画布上，直到新媒体出第一帧再撤掉。
+   *
+   * 媒体层就绪前是透明的（见 LoginView.css），以前一切 tab 就露出底下那张静态品牌大图，
+   * 用户看到的是「先闪一下别的画面、再切到要看的」。定格的是用户正在看的这一帧，
+   * 切换就变成上一张直接换成下一张。跨域视频画进 canvas 只是不能再读像素，显示不受影响。
+   */
+  const heroImgRef = useRef<HTMLImageElement | null>(null)
+  const holdCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [holdingFrame, setHoldingFrame] = useState(false)
+  const freezeCurrentFrame = () => {
+    const canvas = holdCanvasRef.current
+    if (!canvas || !mediaReady) return
+    const source: HTMLVideoElement | HTMLImageElement | null =
+      activeBanner?.mediaType === 'video' ? heroVideoRef.current : heroImgRef.current
+    const width = source instanceof HTMLVideoElement ? source.videoWidth : source?.naturalWidth || 0
+    const height = source instanceof HTMLVideoElement ? source.videoHeight : source?.naturalHeight || 0
+    if (!source || !width || !height) return
+    if (source instanceof HTMLVideoElement && source.readyState < 2) return
+    try {
+      canvas.width = width
+      canvas.height = height
+      canvas.getContext('2d')?.drawImage(source, 0, 0, width, height)
+      setHoldingFrame(true)
+    } catch {
+      // 画不出来就退回原来的表现（短暂露出底图），不影响切换本身
+    }
+  }
+  // 新媒体出画面（或大图区被隐藏）后撤掉定格帧
+  useEffect(() => {
+    if (mediaReady || heroHidden) setHoldingFrame(false)
+  }, [mediaReady, heroHidden])
+  const selectHero = (index: number) => {
+    if (index === safeIndex) return
+    freezeCurrentFrame()
+    setHeroIndex(index)
+  }
+
   // 切下一张:基于「钳位后的当前索引」推进,避免列表长度变化后 heroIndex 越界导致跳/重。
-  const goNextHero = () =>
+  const goNextHero = () => {
+    freezeCurrentFrame()
     setHeroIndex((i) => {
       const len = navTitles.length
       if (!len) return 0
       return (Math.min(i, len - 1) + 1) % len
     })
+  }
   // 媒体加载失败:多张则切下一张(单张则保持,透出静态底图)。
   const handleMediaError = () => {
     if (navTitles.length > 1) goNextHero()
@@ -551,6 +591,13 @@ export default function LoginView() {
         </picture>
         {/* 大图媒体:有 banner 数据时按当前幻灯片展示(图=图层,视频=播放并播完切下一张);
             加载失败时:多张→切下一张,单张→隐藏(透出静态底图)。 */}
+        {hasBanners && !heroHidden && (
+          <canvas
+            ref={holdCanvasRef}
+            className={`zlogin-hero-hold${holdingFrame ? ' is-holding' : ''}`}
+            aria-hidden="true"
+          />
+        )}
         {hasBanners && activeBanner && !heroHidden && (
           <div className={`zlogin-hero-media${mediaReady ? ' is-ready' : ''}`} aria-hidden="true">
             {activeBanner.mediaType === 'video' ? (
@@ -577,6 +624,7 @@ export default function LoginView() {
               />
             ) : (
               <img
+                ref={heroImgRef}
                 className="zlogin-hero-img"
                 src={activeBanner.mediaUrl}
                 alt=""
@@ -600,7 +648,7 @@ export default function LoginView() {
               type="button"
               key={`${title}-${i}`}
               className={`zlogin-nav-item${i === safeIndex ? ' is-active' : ''}`}
-              onClick={() => setHeroIndex(i)}
+              onClick={() => selectHero(i)}
             >
               {title}
             </button>

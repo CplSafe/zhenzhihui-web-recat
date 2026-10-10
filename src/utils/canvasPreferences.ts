@@ -5,6 +5,11 @@
  * 用户把滚轮改成缩放，是对所有画布说的，逐画布记会让他每开一张都得再改一次。
  * 小地图开关先于这份偏好存在（见 canvasSelection 的 MINIMAP_KEY），沿用旧键不迁移。
  */
+import {
+  DEFAULT_CANVAS_SHORTCUTS,
+  type CanvasShortcutAction,
+  type CanvasShortcutBindings,
+} from '@/utils/canvasKeyboard'
 
 export type CanvasWheelMode = 'pan' | 'zoom'
 export type CanvasPaneMenuTrigger = 'contextmenu' | 'dblclick'
@@ -26,6 +31,8 @@ export interface CanvasPreferences {
   notifyOnFail: boolean
   /** 通知时播放提示音 */
   notifySound: boolean
+  /** 可由用户自定义的画布高频快捷键 */
+  shortcuts: CanvasShortcutBindings
 }
 
 export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
@@ -37,6 +44,7 @@ export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
   notifyOnComplete: false,
   notifyOnFail: true,
   notifySound: true,
+  shortcuts: { ...DEFAULT_CANVAS_SHORTCUTS },
 }
 
 const STORAGE_KEY = 'zzh_canvas_preferences'
@@ -52,6 +60,13 @@ export function normalizeCanvasPreferences(raw: unknown): CanvasPreferences {
   const source = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const bool = (key: keyof CanvasPreferences): boolean =>
     typeof source[key] === 'boolean' ? (source[key] as boolean) : (DEFAULT_CANVAS_PREFERENCES[key] as boolean)
+  const rawShortcuts = source.shortcuts && typeof source.shortcuts === 'object' ? source.shortcuts : {}
+  const shortcuts = Object.fromEntries(
+    (Object.keys(DEFAULT_CANVAS_SHORTCUTS) as CanvasShortcutAction[]).map((action) => {
+      const value = String((rawShortcuts as Record<string, unknown>)[action] || '')
+      return [action, value || DEFAULT_CANVAS_SHORTCUTS[action]]
+    }),
+  ) as CanvasShortcutBindings
   return {
     wheelMode: WHEEL_MODES.includes(source.wheelMode as CanvasWheelMode)
       ? (source.wheelMode as CanvasWheelMode)
@@ -65,6 +80,7 @@ export function normalizeCanvasPreferences(raw: unknown): CanvasPreferences {
     notifyOnComplete: bool('notifyOnComplete'),
     notifyOnFail: bool('notifyOnFail'),
     notifySound: bool('notifySound'),
+    shortcuts,
   }
 }
 

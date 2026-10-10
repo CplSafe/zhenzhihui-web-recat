@@ -229,13 +229,17 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
     await openMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: '智能成片' }))
     expect(mocks.navigate).toHaveBeenCalledWith('/smart', {
-      state: { carryImages: [{ url: '/api/v1/assets/431/download?workspace_id=21', assetId: 431 }] },
+      state: {
+        carryImages: [{ url: '/api/v1/assets/431/download?workspace_id=21', assetId: 431, source: 'upload' }],
+      },
     })
 
     await openMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: '爆款复制' }))
     expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy', {
-      state: { carryImages: [{ url: '/api/v1/assets/431/download?workspace_id=21', assetId: 431 }] },
+      state: {
+        carryImages: [{ url: '/api/v1/assets/431/download?workspace_id=21', assetId: 431, source: 'upload' }],
+      },
     })
 
     // 无限画布走列表页：/canvas 是列表而不是编辑器，素材由列表页透传给用户选中/新建的画布。
@@ -248,6 +252,7 @@ describe('ResourceManagementView workspace and favorite isolation', () => {
           assetId: 431,
           type: 'image',
           name: '主体图',
+          source: 'upload',
         },
       },
     })

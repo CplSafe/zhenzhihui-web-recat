@@ -138,6 +138,10 @@ export interface GenerationModelOperationState {
   status: GenerationModelOperationStatus
   availableModelCount: number
   message: string
+  /** 当前展示的是同一团队上次成功加载的目录，最新请求仍失败。 */
+  usingCachedModels?: boolean
+  requestId?: string
+  httpStatus?: number
 }
 
 export type GenerationModelOperationStateMap = Record<GenerationOperationCode, GenerationModelOperationState>
@@ -563,7 +567,7 @@ export function normalizeGenerationModels(
     })
   })
 
-  return Array.from(
+  const normalized = Array.from(
     normalizedByOperation.values(),
     ({
       namePriority: _namePriority,
@@ -572,6 +576,16 @@ export function normalizeGenerationModels(
       ...model
     }) => model,
   )
+  return pinBrandModelsFirst(normalized)
+}
+
+/** 自家品牌模型（Framora）在所有模型列表里排最前；其余保持后端给的顺序 */
+const PINNED_MODEL_NAME = /framora/i
+
+function pinBrandModelsFirst<T extends { displayName?: string }>(models: T[]): T[] {
+  const pinned = models.filter((model) => PINNED_MODEL_NAME.test(String(model.displayName || '')))
+  if (!pinned.length) return models
+  return [...pinned, ...models.filter((model) => !pinned.includes(model))]
 }
 
 /**

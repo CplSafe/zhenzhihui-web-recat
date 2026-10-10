@@ -1,0 +1,68 @@
+.node {
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  background: #f5faf8;
+  color: #33443e;
+  border-radius: 12px;
+  font-size: 12px;
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+.header span:last-child {
+  color: #71817a;
+  font-weight: 400;
+}
+.node audio {
+  width: 100%;
+  height: 36px;
+}
+.node label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.node input,
+.node select {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  accent-color: #2d9e82;
+}
+.node input[type='number'],
+.node select {
+  padding: 6px;
+  border: 1px solid #dce7e2;
+  border-radius: 6px;
+  background: white;
+}
+.upload {
+  padding: 10px;
+  border: 1px dashed #76baa6;
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+}
+.upload input {
+  display: none;
+}
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.node small {
+  color: #71817a;
+}
+.node a {
+  color: #208e74;
+}

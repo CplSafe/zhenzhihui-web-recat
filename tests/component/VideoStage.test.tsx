@@ -51,6 +51,37 @@ describe('VideoStage playback loading', () => {
   })
   afterEach(() => vi.useRealTimers())
 
+  it('连续拖动时等待当前定位完成再跳到最新目标，不被旧播放进度拉回', () => {
+    const { container } = render(
+      <VideoStage shots={[]} videoUrl="https://cdn.example.com/scrub.mp4" onRegenerateVideo={vi.fn()} />,
+    )
+    const player = container.querySelector('video[controls]') as HTMLVideoElement
+    Object.defineProperty(player, 'duration', { configurable: true, value: 5 })
+    Object.defineProperty(player, 'readyState', { configurable: true, value: 2 })
+    Object.defineProperty(player, 'seekable', {
+      configurable: true,
+      value: { length: 1, start: () => 0, end: () => 5 },
+    })
+    fireEvent.durationChange(player)
+    const track = screen.getByTitle('点击或拖动时间轴定位播放位置')
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 500 } as DOMRect)
+    fireEvent.pointerDown(track, { clientX: 100, button: 0, pointerId: 1 })
+    expect(player.currentTime).toBe(1.5)
+    Object.defineProperty(player, 'seeking', { configurable: true, value: true })
+    fireEvent.pointerMove(track, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerMove(track, { clientX: 400, pointerId: 1 })
+    expect(player.currentTime).toBe(1.5)
+    fireEvent.timeUpdate(player)
+    expect(screen.getByText('0:04 / 0:05 · 共 5 帧')).toBeInTheDocument()
+    Object.defineProperty(player, 'seeking', { configurable: true, value: false })
+    fireEvent.seeked(player)
+    // 仍按住鼠标时就更新画面位置，无需松手。
+    expect(player.currentTime).toBe(4)
+    fireEvent.pointerMove(track, { clientX: 300, pointerId: 1 })
+    expect(player.currentTime).toBe(3)
+    fireEvent.pointerUp(track, { pointerId: 1 })
+  })
+
   it('streams the original media URL without fetching the complete Blob first', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     const videoUrl = 'https://cdn.example.com/generated-video.mp4'

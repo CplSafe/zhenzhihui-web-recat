@@ -1,0 +1,67 @@
+.wrapper {
+  flex-shrink: 0;
+}
+.trigger {
+  border: 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgb(255 100 100 / 10%);
+  color: #e75454;
+  cursor: pointer;
+  white-space: nowrap;
+  font: inherit;
+}
+.trigger:focus-visible {
+  outline: 2px solid #5767e5;
+}
+.details {
+  user-select: text;
+}
+.reason {
+  padding: 12px;
+  border-radius: 8px;
+  background: #fff4f3;
+  color: #a63838;
+  overflow-wrap: anywhere;
+}
+.details dl {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 12px;
+}
+.details dt {
+  color: #838a98;
+}
+.details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.details small {
+  display: block;
+  margin-top: 4px;
+  color: #838a98;
+}
+.details button {
+  border: 1px solid #d9def3;
+  background: #f7f8ff;
+  color: #5767e5;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.details dd button {
+  margin-left: 8px;
+}
+.history {
+  margin-top: 20px;
+  border-top: 1px solid #eef0f3;
+  padding-top: 12px;
+}
+.history summary {
+  cursor: pointer;
+  color: #737c8c;
+}
+.history section {
+  border-bottom: 1px solid #eef0f3;
+  padding: 8px 0 16px;
+}

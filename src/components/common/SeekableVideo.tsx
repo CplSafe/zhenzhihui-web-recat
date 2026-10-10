@@ -111,6 +111,8 @@ function SeekableVideoImpl(
   const srcRef = useRef(src)
   const localSrcRef = useRef('')
   const preparingRef = useRef(false)
+  /** 当前这次下载是否是后台模式（边下边播，不暂停不出浮层） */
+  const backgroundRef = useRef(false)
   const handleRef = useRef<SeekableSourceHandle | null>(null)
   const aliveRef = useRef(true)
   // autoPlay 是“用户打开预览后希望它自动开始”的意图；换成本地 blob 时也必须继续保留。
@@ -159,6 +161,7 @@ function SeekableVideoImpl(
     srcRef.current = src
     localSrcRef.current = ''
     preparingRef.current = false
+    backgroundRef.current = false
     pendingSeekRef.current = 0
     resumeRef.current = false
     autoPlayAttemptedRef.current = false
@@ -173,20 +176,43 @@ function SeekableVideoImpl(
     }
   }, [src])
 
-  /** 抓整片换本地源。已在抓或已经有本地副本时直接返回，不会重复下载。 */
-  const repair = useCallback(() => {
+  /**
+   * 抓整片换本地源。已有本地副本时直接返回，不会重复下载。
+   *
+   * 两种模式：
+   * - 后台（background）：只是「探到这个源跳不了」，播放本身没问题——边下边播，不暂停、不出浮层，
+   *   下完在当前播放位置无缝换成本地副本。以前这里一律先暂停，用户点开预览要干等整片下完（实测 4～5 秒）。
+   * - 前台：用户的跳转已经失败，或源压根播不了——这时播放位置本来就是错的，先暂停、显示进度，
+   *   换源后回到用户要去的位置。
+   * 后台下载途中用户拖了进度条，就地升级成前台模式，不重新下载。
+   */
+  const repair = useCallback((mode: 'foreground' | 'background' = 'foreground') => {
     const source = srcRef.current
-    if (!source || preparingRef.current || localSrcRef.current) return
+    if (!source || localSrcRef.current) return
     if (source.startsWith('blob:') || source.startsWith('data:')) return
 
     const video = videoRef.current
-    // 下载期间先暂停：这时播放位置本来就是错的，让它继续跑只会在换源时又跳一下
-    // repair 可能早于原生 autoplay 真正起播；此时 paused 仍为 true，不能因此丢掉自动播放意图。
-    resumeRef.current = Boolean(video && (!video.paused || autoPlayRef.current))
-    video?.pause()
+    if (preparingRef.current) {
+      // 已在后台下载：前台请求只需改成「暂停 + 显示进度」，下载继续用同一份
+      if (mode === 'foreground' && backgroundRef.current) {
+        backgroundRef.current = false
+        resumeRef.current = Boolean(video && (!video.paused || autoPlayRef.current))
+        video?.pause()
+        setPreparing(true)
+      }
+      return
+    }
+
+    backgroundRef.current = mode === 'background'
+    if (mode === 'foreground') {
+      // 下载期间先暂停：这时播放位置本来就是错的，让它继续跑只会在换源时又跳一下
+      // repair 可能早于原生 autoplay 真正起播；此时 paused 仍为 true，不能因此丢掉自动播放意图。
+      resumeRef.current = Boolean(video && (!video.paused || autoPlayRef.current))
+      video?.pause()
+      setPreparing(true)
+    }
 
     preparingRef.current = true
-    setPreparing(true)
     setPercent(0)
 
     const handle = acquireSeekableSource(source, {
@@ -203,18 +229,26 @@ function SeekableVideoImpl(
         if (!aliveRef.current || srcRef.current !== source) return
         // local 为 false 表示没抓下来（鉴权/网络/跨域）：保持原地址，别把 src 换成同一个值触发重载
         if (local && url) {
+          if (backgroundRef.current) {
+            // 边下边播：在此刻的播放位置换源，原来在播就接着播
+            const current = videoRef.current
+            pendingSeekRef.current = current ? current.currentTime : 0
+            resumeRef.current = Boolean(current && (!current.paused || (autoPlayRef.current && !current.ended)))
+          }
           localSrcRef.current = url
           setLocalSrc(url)
         }
       })
       .finally(() => {
         preparingRef.current = false
+        backgroundRef.current = false
         if (aliveRef.current) setPreparing(false)
       })
   }, [])
 
   useEffect(() => {
-    if (prepareImmediately) repair()
+    // prepareImmediately 用于原地址根本无法渐进播放的场景：边下边播只会是一片黑，保持前台模式（暂停 + 进度）
+    if (prepareImmediately) repair('foreground')
   }, [prepareImmediately, repair, src])
 
   /** 跳转是否落住。只有「被拉回目标之前」才算失败——正常播放会往后走，不能算。 */
@@ -275,8 +309,9 @@ function SeekableVideoImpl(
           void playWithMutedFallback(video)
         }
       } else if (repairOnLoad && (!Number.isFinite(video.duration) || video.duration <= 0)) {
-        // 元数据到手却读不出时长：进度条上没有总时长，也没法跳。这种源只能整片抓下来
-        repair()
+        // 元数据到手却读不出时长：进度条上没有总时长，也没法跳。这种源只能整片抓下来；
+        // 但它能播，所以边下边播，不让用户干等
+        repair('background')
       } else if (repairOnLoad) {
         /*
          * 元数据一到就先探一次能不能跳，不等用户拖了才修。
@@ -288,7 +323,7 @@ function SeekableVideoImpl(
         window.clearTimeout(seekabilityTimerRef.current)
         seekabilityTimerRef.current = window.setTimeout(() => {
           const current = videoRef.current
-          if (current && !localSrcRef.current && !isFullySeekable(current)) repair()
+          if (current && !localSrcRef.current && !isFullySeekable(current)) repair('background')
         }, SEEKABILITY_CHECK_DELAY_MS)
       }
       onLoadedMetadata?.(event)

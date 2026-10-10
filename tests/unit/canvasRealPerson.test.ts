@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { applyCanvasRealPersonIdentity, resolveCanvasRealPersonReference } from '@/utils/canvasRealPerson'
+import {
+  applyCanvasRealPersonIdentity,
+  resolveCanvasRealPersonReference,
+  resolveCanvasAssetRealPerson,
+} from '@/utils/canvasRealPerson'
+import type { RealPerson } from '@/api/realPeople'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 
 function reference(overrides: Partial<SmartRealPersonReference> = {}): SmartRealPersonReference {
@@ -13,6 +18,56 @@ function reference(overrides: Partial<SmartRealPersonReference> = {}): SmartReal
     ...overrides,
   }
 }
+
+describe('canvas asset identity routing', () => {
+  const person: RealPerson = {
+    id: 9,
+    workspace_id: 7,
+    name: '测试真人',
+    status: 'verified',
+    assets: [{ id: 21, local_asset_id: 501, workspace_id: 7, status: 'ready' }],
+  }
+
+  it('routes only an exact registered asset ID to the verified identity', () => {
+    expect(resolveCanvasAssetRealPerson(501, [person], 7)).toMatchObject({
+      realPersonId: 9,
+      mappingId: 21,
+      localAssetId: 501,
+      personName: '测试真人',
+    })
+    expect(resolveCanvasAssetRealPerson(502, [person], 7)).toBeNull()
+    expect(resolveCanvasAssetRealPerson(0, [person], 7)).toBeNull()
+    expect(resolveCanvasAssetRealPerson(501, [], 7)).toBeNull()
+  })
+
+  it('rejects revoked, expired and unavailable mappings instead of treating them as ordinary photos', () => {
+    expect(() =>
+      resolveCanvasAssetRealPerson(501, [{ ...person, status: 'revoked', verified_at: '2026-01-01' }], 7),
+    ).toThrow('已失效')
+    expect(() => resolveCanvasAssetRealPerson(501, [{ ...person, status: 'revoked' }], 7)).toThrow('已失效')
+    expect(() => resolveCanvasAssetRealPerson(501, [{ ...person, verification_expires_at: '2000-01-01' }], 7)).toThrow(
+      '已失效',
+    )
+    expect(() => resolveCanvasAssetRealPerson(501, [{ ...person, verification_expires_at: 'invalid' }], 7)).toThrow(
+      '已失效',
+    )
+    expect(() =>
+      resolveCanvasAssetRealPerson(501, [{ ...person, assets: [{ ...person.assets![0], status: 'failed' }] }], 7),
+    ).toThrow('已失效')
+  })
+
+  it('rejects ambiguous identities and mappings from another workspace', () => {
+    expect(() => resolveCanvasAssetRealPerson(501, [person, { ...person, id: 10 }], 7)).toThrow('多个真人身份')
+    expect(() => resolveCanvasAssetRealPerson(501, [person], 8)).toThrow('不属于当前团队')
+    expect(() =>
+      resolveCanvasAssetRealPerson(
+        501,
+        [{ ...person, workspace_id: undefined, assets: [{ ...person.assets![0], workspace_id: 8 }] }],
+        7,
+      ),
+    ).toThrow('不属于当前团队')
+  })
+})
 
 describe('canvas real-person reference resolution', () => {
   it('returns nothing when no real-person material is connected', () => {

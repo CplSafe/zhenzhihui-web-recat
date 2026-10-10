@@ -5,7 +5,7 @@
  * 输入框工具栏只保留「比例(16:9)」与「@ 引用素材」两项(不含时长/SKILLS)。
  * 每次发送 → 调父级 onSend(文本, 参考图, 比例),由父级出图并把结果追加到 messages。
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import EntryDropdown from '../EntryDropdown'
 import RatioIcon from '@/components/common/RatioIcon'
 import { openMemberCenter } from '@/stores/ui'
@@ -15,6 +15,7 @@ import { useToast } from '@/composables/useToast'
 import type { BackendGenerationModel, GenerationModelVersionId } from '@/utils/generationModelCatalog'
 import type { LockedSmartImageQuotedCost } from '@/utils/smartImageQueueSafety'
 import styles from './ImageChat.module.less'
+import { findMentionDeletionRange } from '@/utils/canvasMentions'
 
 /** 对话消息中的图片地址及可选后端资产 ID。 */
 export interface ChatImg {
@@ -56,6 +57,29 @@ export interface ChatMessage {
     quotedCost?: LockedSmartImageQuotedCost
   }
   startedAt?: number
+}
+
+/** 生成中占位卡与成图卡同宽（320），最高与成图一致（420） */
+const PENDING_CARD_WIDTH = 320
+const PENDING_CARD_MAX_HEIGHT = 420
+
+/**
+ * 生成中占位卡按本轮选的比例变形：选 16:9 就是横的、9:16 就是竖的，出图时卡片不再跳变。
+ * 比例读不出来（如「自适应」）时退回原来的正方形。
+ */
+function pendingCardSize(ratio: unknown): CSSProperties | undefined {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*[:：/]\s*(\d+(?:\.\d+)?)\s*$/.exec(String(ratio ?? ''))
+  if (!match) return undefined
+  const w = Number(match[1])
+  const h = Number(match[2])
+  if (!(w > 0) || !(h > 0)) return undefined
+  let width = PENDING_CARD_WIDTH
+  let height = (PENDING_CARD_WIDTH * h) / w
+  if (height > PENDING_CARD_MAX_HEIGHT) {
+    height = PENDING_CARD_MAX_HEIGHT
+    width = (PENDING_CARD_MAX_HEIGHT * w) / h
+  }
+  return { width: Math.round(width), height: Math.round(height), maxWidth: '100%' }
 }
 
 /** 返回入口或恢复页面时需要保留的未发送图片创作内容。 */
@@ -621,7 +645,13 @@ export default function ImageChat({
   const renderGenerationStateCard = (message: ChatMessage): ReactNode | null => {
     if (message.status === 'pending') {
       return (
-        <div className={styles.pending} role="status" aria-live="polite" key={`pending:${message.id}`}>
+        <div
+          className={styles.pending}
+          style={pendingCardSize(message.request?.ratio)}
+          role="status"
+          aria-live="polite"
+          key={`pending:${message.id}`}
+        >
           <span className={styles.spin} aria-hidden="true" />
           {Number(message.batchTotal || 0) > 1
             ? `正在生成第 ${Number(message.batchIndex || 0) + 1}/${message.batchTotal} 张图片…`
@@ -689,9 +719,6 @@ export default function ImageChat({
         aria-label={`预览生成图片 ${displayIndex}`}
       >
         <img className={styles.aiImg} src={image.url} alt={`AI 生成图片 ${displayIndex}`} />
-        <span className={styles.previewHint} aria-hidden="true">
-          查看原图
-        </span>
       </button>
       <figcaption className={styles.resultActions}>
         <button
@@ -977,6 +1004,24 @@ export default function ImageChat({
                   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault()
                     void submit()
+                    return
+                  }
+                  // @图片N 当成一个整体删：第一下 Backspace 删它后面的空格，第二下整条删掉
+                  if ((e.key === 'Backspace' || e.key === 'Delete') && !e.nativeEvent.isComposing) {
+                    const ta = e.currentTarget
+                    const caret = ta.selectionStart ?? 0
+                    if (caret !== (ta.selectionEnd ?? 0)) return
+                    const range = findMentionDeletionRange(
+                      text,
+                      caret,
+                      e.key === 'Backspace' ? 'backward' : 'forward',
+                      /@图片\d+/g,
+                    )
+                    if (!range) return
+                    e.preventDefault()
+                    setText(text.slice(0, range.start) + text.slice(range.end))
+                    caretRef.current = range.start
+                    requestAnimationFrame(() => ta.setSelectionRange(range.start, range.start))
                   }
                 }}
               />

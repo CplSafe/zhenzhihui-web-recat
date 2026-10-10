@@ -688,6 +688,32 @@ describe('TaskCenterDrawer isolation and reconciliation', () => {
   })
 })
 
+describe('TaskCenterDrawer delete with live + history duplicates', () => {
+  it('删除本会话生成、同时出现在历史里的视频：删项目视频并把两份记录一起隐藏', async () => {
+    const user = userEvent.setup()
+    useUiStore.setState({ requestConfirm: vi.fn().mockResolvedValue(true) })
+    mocks.deleteProjectVideo.mockResolvedValue(undefined)
+    mocks.getAssetDownloadUrl.mockResolvedValue('/result.mp4')
+    // 同一条视频：实时任务（resultAssetId 88）与后端历史（videoAssetId 88）各一份，id 不同
+    seed(task({ status: 'succeeded', resultAssetId: 88, title: '当前任务' }))
+    mocks.listAllCreativeProjects.mockResolvedValue([project(11, [historyVideo()])])
+
+    render(<TaskCenterDrawer scope="smart" />)
+    await waitFor(() => expect(mocks.listAllCreativeProjects).toHaveBeenCalled())
+    // 去重后只显示实时那份
+    expect(await screen.findByText('当前任务')).toBeInTheDocument()
+    expect(screen.queryByText('历史任务')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '删除当前任务' }))
+
+    await waitFor(() =>
+      expect(mocks.deleteProjectVideo).toHaveBeenCalledWith({ projectId: 11, workspaceId: 7, videoId: '501' }),
+    )
+    await waitFor(() => expect(screen.queryByText('当前任务')).not.toBeInTheDocument())
+    expect(screen.queryByText('历史任务')).not.toBeInTheDocument()
+  })
+})
+
 describe('TaskCenterDrawer team-space member filter', () => {
   /** 团队空间：我的项目 11、同事乙的项目 12（他生成的视频）、协作项目 13（归属乙，但后端 mine 判为我的） */
   function seedTeamHistory() {

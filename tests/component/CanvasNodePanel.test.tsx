@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import CanvasNodePanel from '@/components/canvas/CanvasNodePanel'
 import { estimateAiTaskCost } from '@/api/business'
+import { createGenerationModelOperationStateMap } from '@/utils/generationModelCatalog'
 
 /**
  * 积分预估是一次真实的网络调用，这里的用例只关心面板本身的渲染与提交口径。
@@ -37,6 +38,80 @@ function renderPanel(imageModels: any[], node: any = imageNodeWithReference(), e
     />,
   )
 }
+
+describe('CanvasNodePanel unified real-person material entry', () => {
+  it('keeps the plus material entry and marks a connected real-person reference without a separate library button', () => {
+    renderPanel(
+      [],
+      {
+        id: 'video-node',
+        kind: 'video',
+        prompt: '',
+        videoMode: 'auto',
+        sourceRefs: [
+          {
+            kind: 'image',
+            sourceId: 'person-node',
+            edgeId: 'person-edge',
+            slotIndex: 0,
+            assetId: 77,
+            source: 'real_person',
+            realPerson: {
+              realPersonId: 9,
+              mappingId: 21,
+              localAssetId: 77,
+              personName: '测试真人',
+              verificationStatus: 'verified',
+              assetStatus: 'ready',
+            },
+          },
+        ],
+      },
+      { onPickRefFromLibrary: vi.fn() },
+    )
+    expect(screen.queryByRole('button', { name: '真人素材库' })).not.toBeInTheDocument()
+    expect(screen.getByTitle('已认证真人：测试真人')).toBeInTheDocument()
+    expect(screen.getByTitle('添加参考')).toBeInTheDocument()
+  })
+})
+
+describe('CanvasNodePanel model catalog recovery', () => {
+  it('shows the failed operation reason and lets the user reload instead of claiming no models exist', async () => {
+    const states = createGenerationModelOperationStateMap()
+    states['video.generate'] = {
+      operationCode: 'video.generate',
+      status: 'error',
+      availableModelCount: 0,
+      message: '视频模型请求超时，请重试',
+      requestId: 'req-123',
+    }
+    const onReloadModels = vi.fn()
+    renderPanel(
+      [],
+      { id: 'v', kind: 'video', prompt: '测试', sourceRefs: [] },
+      { modelOperationStates: states, onReloadModels },
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('视频模型请求超时')
+    expect(screen.getByRole('alert')).toHaveTextContent('req-123')
+    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '生成' })).toHaveAttribute('title', '模型加载失败，请重新加载')
+    await userEvent.setup().click(screen.getByRole('button', { name: '重新加载' }))
+    expect(onReloadModels).toHaveBeenCalledOnce()
+  })
+
+  it('shows loading separately and disables repeated reload clicks', () => {
+    const states = createGenerationModelOperationStateMap('loading')
+    renderPanel(
+      [],
+      { id: 'v', kind: 'video', prompt: '测试', sourceRefs: [] },
+      { modelOperationStates: states, modelsLoading: true, onReloadModels: vi.fn() },
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('正在加载模型目录')
+    expect(screen.getByRole('button', { name: '加载中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '生成' })).toHaveAttribute('title', '正在加载模型…')
+  })
+})
 
 /** 带 params_schema 的模型：面板据此渲染参数菜单。 */
 function modelWithFields(fields: any[]) {
@@ -615,6 +690,113 @@ describe('CanvasNodePanel 提示词改写', () => {
     expect(onPromptChange).toHaveBeenLastCalledWith('保留参考图中的年轻男性主体')
     expect(screen.getByRole('button', { name: '我帮你写' })).toBeEnabled()
   })
+
+  // 复原历史存在面板之外、按节点 id 区分，各用例用各自的节点 id，互不串历史。
+  const polishModels = {
+    text: [],
+    image: [{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }],
+    video: [],
+  } as any
+  function polishPanel(node: any, extraProps: Record<string, any> = {}) {
+    return (
+      <CanvasNodePanel
+        node={node}
+        workspaceId={7}
+        models={polishModels}
+        modelsLoading={false}
+        onGenerate={vi.fn()}
+        onModelChange={vi.fn()}
+        {...extraProps}
+      />
+    )
+  }
+
+  it('润色后切到别的节点再切回来，复原按钮仍在且能回到原文', async () => {
+    const user = userEvent.setup()
+    const onPolishText = vi.fn().mockResolvedValue('润色后的面部特写')
+    const nodeA = { ...imageNodeWithReference(), id: 'node-polish-switch-a', prompt: '面部特写' }
+    const nodeB = { ...imageNodeWithReference(), id: 'node-polish-switch-b', prompt: '另一个节点' }
+    const { rerender } = render(polishPanel(nodeA, { onPolishText }))
+
+    await user.click(screen.getByRole('button', { name: '我帮你写' }))
+    expect(await screen.findByDisplayValue('润色后的面部特写')).toBeInTheDocument()
+
+    rerender(polishPanel(nodeB, { onPolishText }))
+    expect(screen.getByDisplayValue('另一个节点')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '复原' })).not.toBeInTheDocument()
+
+    const onPromptChangeA = vi.fn()
+    rerender(polishPanel({ ...nodeA, prompt: '润色后的面部特写' }, { onPolishText, onPromptChange: onPromptChangeA }))
+    await user.click(screen.getByRole('button', { name: '复原' }))
+    expect(screen.getByDisplayValue('面部特写')).toBeInTheDocument()
+    expect(onPromptChangeA).toHaveBeenLastCalledWith('面部特写')
+    expect(screen.queryByRole('button', { name: '复原' })).not.toBeInTheDocument()
+  })
+
+  it('面板卸载（取消选中）后重新选中该节点，复原按钮仍在', async () => {
+    const user = userEvent.setup()
+    const onPolishText = vi.fn().mockResolvedValue('润色后的产品镜头')
+    const node = { ...imageNodeWithReference(), id: 'node-polish-remount', prompt: '产品镜头' }
+    const { unmount } = render(polishPanel(node, { onPolishText }))
+
+    await user.click(screen.getByRole('button', { name: '我帮你写' }))
+    expect(await screen.findByDisplayValue('润色后的产品镜头')).toBeInTheDocument()
+    unmount()
+
+    render(polishPanel({ ...node, prompt: '润色后的产品镜头' }, { onPolishText }))
+    await user.click(screen.getByRole('button', { name: '复原' }))
+    expect(screen.getByDisplayValue('产品镜头')).toBeInTheDocument()
+  })
+
+  it('润色进行中切走：结果只写回发起润色的节点，不灌进当前节点的输入框', async () => {
+    const user = userEvent.setup()
+    let resolvePolish: (text: string) => void = () => {}
+    const onPolishText = vi.fn(() => new Promise<string>((resolve) => (resolvePolish = resolve)))
+    const onPromptChangeA = vi.fn()
+    const onPromptChangeB = vi.fn()
+    const nodeA = { ...imageNodeWithReference(), id: 'node-polish-inflight-a', prompt: '水感肌肤' }
+    const nodeB = { ...imageNodeWithReference(), id: 'node-polish-inflight-b', prompt: '另一个节点' }
+    const { rerender } = render(polishPanel(nodeA, { onPolishText, onPromptChange: onPromptChangeA }))
+
+    await user.click(screen.getByRole('button', { name: '我帮你写' }))
+    rerender(polishPanel(nodeB, { onPolishText, onPromptChange: onPromptChangeB }))
+    resolvePolish('润色后的水感肌肤')
+
+    await waitFor(() => expect(onPromptChangeA).toHaveBeenCalledWith('润色后的水感肌肤'))
+    expect(onPromptChangeB).not.toHaveBeenCalled()
+    expect(screen.getByDisplayValue('另一个节点')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '复原' })).not.toBeInTheDocument()
+
+    rerender(polishPanel({ ...nodeA, prompt: '润色后的水感肌肤' }, { onPolishText, onPromptChange: onPromptChangeA }))
+    await user.click(screen.getByRole('button', { name: '复原' }))
+    expect(screen.getByDisplayValue('水感肌肤')).toBeInTheDocument()
+  })
+})
+
+describe('CanvasNodePanel 生成 / 重新生成文案', () => {
+  const imageModels = [{ modelVersionId: 21, displayName: '可用模型', operationCodes: IMAGE_OPERATIONS }]
+
+  it('只有素材、从没生成过的节点（上传/拖入的图）显示「生成」', () => {
+    renderPanel(imageModels, { id: 'node-uploaded', kind: 'image', prompt: '', resultUrl: '/u.png', assetId: 5 })
+    expect(screen.getByTitle('发送生成')).toHaveTextContent('生成')
+    expect(screen.queryByText('重新生成')).not.toBeInTheDocument()
+  })
+
+  it('生成过的节点（有 taskId）显示「重新生成」', () => {
+    renderPanel(imageModels, { id: 'node-generated', kind: 'image', prompt: '猫', resultUrl: '/g.png', taskId: 88 })
+    expect(screen.getByText('重新生成')).toBeInTheDocument()
+  })
+
+  it('有生成历史的节点显示「重新生成」', () => {
+    renderPanel(
+      imageModels,
+      { id: 'node-history', kind: 'image', prompt: '猫', resultUrl: '/g.png' },
+      {
+        resultHistory: [{ url: '/g.png', createdAt: 1 }],
+      },
+    )
+    expect(screen.getByText('重新生成')).toBeInTheDocument()
+  })
 })
 
 describe('CanvasNodePanel 节点级生成历史', () => {
@@ -843,15 +1025,19 @@ describe('CanvasNodePanel @选择器与重命名引用', () => {
     expect(onPickRefFromLibrary).toHaveBeenCalledWith(2)
   })
 
-  it('退格一次就删掉整条 @引用（含其后空格），Delete 同理；普通文字仍按字符删', async () => {
+  it('退格两步删 @引用：第一下删后面的空格，第二下整条删掉；Delete 一次整条；普通文字仍按字符删', async () => {
     const user = userEvent.setup()
     const onPromptChange = vi.fn()
     renderPanel(MODEL, { ...renamedRefsNode, prompt: '把 @天安门 放进 @图片2 的场景' }, { onPromptChange })
     const textarea = screen.getByPlaceholderText(/输入 @ 可引用参考素材/) as HTMLTextAreaElement
 
-    // 光标停在「@天安门 」之后（下标 7）按 Backspace → 整条引用连空格一起没了
+    // 光标停在「@天安门 」之后（下标 7）按 Backspace → 只删掉空格
     await user.click(textarea)
     textarea.setSelectionRange(7, 7)
+    await user.keyboard('{Backspace}')
+    expect(textarea.value).toBe('把 @天安门放进 @图片2 的场景')
+
+    // 再按一次：光标紧贴引用末尾 → 整条引用一次删掉
     await user.keyboard('{Backspace}')
     expect(textarea.value).toBe('把 放进 @图片2 的场景')
     expect(onPromptChange).toHaveBeenLastCalledWith('把 放进 @图片2 的场景')
@@ -1110,7 +1296,7 @@ it('参数菜单及摘要使用中文，提交保留官方英文枚举值', asyn
   )
 })
 
-it('隐藏图片高级参数并忽略旧画布值，保留分辨率选项和生成数量', async () => {
+it('隐藏图片高级参数，生成数量只提供 1、2、4 张按钮', async () => {
   const user = userEvent.setup()
   const onGenerate = vi.fn()
   const fields = [
@@ -1139,14 +1325,38 @@ it('隐藏图片高级参数并忽略旧画布值，保留分辨率选项和生�
     },
     { onGenerate },
   )
-  await user.click(screen.getByRole('button', { name: '4' }))
+  await user.click(screen.getByRole('button', { name: '4张' }))
   for (const label of ['自定义尺寸', '内容过滤', '渐进预览', '预览帧数', '压缩质量', '连续编辑']) {
     expect(screen.queryByText(label)).not.toBeInTheDocument()
   }
-  expect(screen.getByRole('slider', { name: '生成数量' })).toHaveValue('4')
+  expect(screen.queryByRole('slider', { name: '生成数量' })).not.toBeInTheDocument()
+  const countGroup = screen.getByRole('group', { name: '生成数量' })
+  expect(
+    within(countGroup)
+      .getAllByRole('button')
+      .map((button) => button.textContent),
+  ).toEqual(['1张', '2张', '4张'])
+  expect(within(countGroup).getByRole('button', { name: '4张' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(within(countGroup).getByRole('button', { name: '2张' }))
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
   await user.click(screen.getByTitle('发送生成'))
-  expect(onGenerate.mock.calls[0]![0].params).toEqual({ count: 4 })
+  expect(onGenerate.mock.calls[0]![0].params).toEqual({ count: 2 })
+})
+
+it('旧画布中不再支持的生成数量自动回落为 1 张', async () => {
+  const user = userEvent.setup()
+  const onGenerate = vi.fn()
+  renderPanel(
+    [modelWithFields([{ name: 'count', display_name: '生成数量', type: 'number', default: 1, min: 1, max: 10 }])],
+    { ...imageNodeWithReference(), params: { count: 3 } },
+    { onGenerate },
+  )
+  await user.click(screen.getByRole('button', { name: '1张' }))
+  const countGroup = screen.getByRole('group', { name: '生成数量' })
+  expect(within(countGroup).getByRole('button', { name: '1张' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  await user.click(screen.getByTitle('发送生成'))
+  expect(onGenerate.mock.calls[0]![0].params).toEqual({ count: 1 })
 })
 
 it('保留 Seedream 的 size 分辨率档位', async () => {

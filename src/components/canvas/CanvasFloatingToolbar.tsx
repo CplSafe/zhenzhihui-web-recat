@@ -8,6 +8,8 @@
  * 滚轮平移），不再需要切模式；只留下「锁定节点」——那是个明确的意图，不是模式。
  */
 import { memo, useState, useRef, useEffect } from 'react'
+import { CANVAS_MOD } from '@/utils/canvasKeyboard'
+import { CANVAS_AUDIO_NODES_ENABLED } from '@/utils/canvasFeatureFlags'
 import styles from './CanvasFloatingToolbar.module.css'
 
 interface CanvasFloatingToolbarProps {
@@ -23,6 +25,7 @@ interface CanvasFloatingToolbarProps {
   /** 打开节点搜索面板 */
   onOpenSearch: () => void
   onOpenAssets: () => void
+  onOpenHelp: () => void
   onOpenHistory: () => void
   /** 打开抽屉前播放的收起动画标记 */
   leaving?: boolean
@@ -38,6 +41,7 @@ function CanvasFloatingToolbar({
   onOpenSearch,
   onOpenAssets,
   onOpenHistory,
+  onOpenHelp,
   leaving = false,
 }: CanvasFloatingToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -80,6 +84,21 @@ function CanvasFloatingToolbar({
               于是想加一张已有的图时只剩「本地上传」一条路——哪怕这张图就在素材库里。
             */}
             <span className={styles.addMenuGroup}>新建节点</span>
+            {CANVAS_AUDIO_NODES_ENABLED && (
+              <button
+                className={styles.addMenuItem}
+                onClick={() => {
+                  onAddNode('audio')
+                  setMenuOpen(false)
+                }}
+              >
+                <span className={styles.addMenuIcon}>♫</span>
+                <div className={styles.addMenuText}>
+                  <span className={styles.addMenuLabel}>音频节点</span>
+                  <span className={styles.addMenuDesc}>配音、背景音乐、音效</span>
+                </div>
+              </button>
+            )}
             <button
               className={styles.addMenuItem}
               onClick={() => {
@@ -168,7 +187,7 @@ function CanvasFloatingToolbar({
               </span>
               <div className={styles.addMenuText}>
                 <span className={styles.addMenuLabel}>本地上传</span>
-                <span className={styles.addMenuDesc}>图片或视频，也可直接拖拽或 Ctrl+V 粘贴</span>
+                <span className={styles.addMenuDesc}>图片或视频，也可直接拖拽或 {CANVAS_MOD} + V 粘贴</span>
               </div>
             </button>
           </div>
@@ -209,7 +228,7 @@ function CanvasFloatingToolbar({
       </button>
 
       {/* 4. 节点搜索/定位：快捷键是 Ctrl/Cmd+F，但不能只有快捷键——没人会去猜 */}
-      <button className={styles.toolBtn} onClick={onOpenSearch} title="搜索 / 定位节点（Ctrl+F）">
+      <button className={styles.toolBtn} onClick={onOpenSearch} title={`搜索 / 定位节点（${CANVAS_MOD} + F）`}>
         <SearchIcon />
         <span className={styles.toolLabel}>搜索</span>
       </button>
@@ -219,6 +238,16 @@ function CanvasFloatingToolbar({
         <span className={styles.toolLabel}>素材</span>
       </button>
 
+      <button
+        type="button"
+        className={styles.toolBtn}
+        onClick={onOpenHelp}
+        title="快捷键说明（?）"
+        aria-label="打开快捷键说明"
+      >
+        <span aria-hidden="true">⌨</span>
+        <span className={styles.toolLabel}>快捷键</span>
+      </button>
       <button className={styles.toolBtn} onClick={onOpenHistory} title="历史记录">
         <HistoryIcon />
         <span className={styles.toolLabel}>历史</span>

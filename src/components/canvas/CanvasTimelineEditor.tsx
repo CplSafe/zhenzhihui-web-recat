@@ -43,6 +43,9 @@ import {
   type TimelineState,
 } from '@/utils/timelineClips'
 import CanvasTimelinePlayer from './CanvasTimelinePlayer'
+import CanvasAudioMixer from './CanvasAudioMixer'
+import { parseTimelineAudio } from '@/utils/canvasAudio'
+import { CANVAS_AUDIO_NODES_ENABLED } from '@/utils/canvasFeatureFlags'
 import styles from './CanvasTimelineEditor.module.css'
 
 interface CanvasTimelineEditorProps {
@@ -144,6 +147,8 @@ export default function CanvasTimelineEditor({
   onAddClipToCanvas,
 }: CanvasTimelineEditorProps) {
   const [playheadSec, setPlayheadSec] = useState(0)
+  const [previewPlaying, setPreviewPlaying] = useState(false)
+  const audioClips = useMemo(() => parseTimelineAudio(state.audioClips), [state.audioClips])
   const [selectedClipId, setSelectedClipId] = useState('')
   const [addOpen, setAddOpen] = useState(false)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -761,6 +766,7 @@ export default function CanvasTimelineEditor({
               workspaceId={workspaceId}
               hideTimeline
               playheadSec={previewPlayheadSec}
+              onPlayingChange={setPreviewPlaying}
               onPlayheadChange={(next) => {
                 // 裁剪拖动期间播放器收到的是预演位置，别让它把播放头写回来
                 if (drag && drag.mode !== 'move') return
@@ -1183,6 +1189,16 @@ export default function CanvasTimelineEditor({
           </div>
         </div>
 
+        {CANVAS_AUDIO_NODES_ENABLED && (
+          <CanvasAudioMixer
+            clips={audioClips}
+            duration={draftTotalSec}
+            workspaceId={workspaceId}
+            playheadSec={previewPlayheadSec}
+            playing={previewPlaying}
+            onChange={(next) => update({ ...state, audioClips: next })}
+          />
+        )}
         <footer className={styles.footer}>
           <div className={styles.notes}>
             <div className={styles.time}>

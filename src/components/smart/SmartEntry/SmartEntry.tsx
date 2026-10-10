@@ -10,7 +10,9 @@ import EntryDropdown from '../EntryDropdown'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
 import TutorialButton from '@/components/common/TutorialButton'
 import EntryCostEstimate from '@/components/common/EntryCostEstimate'
+import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
 import MaterialMentionPopover from '@/components/common/MaterialMentionPopover'
+import { findMentionDeletionRange } from '@/utils/canvasMentions'
 import { CreativeModelSlots } from '../CreativeModelSlots'
 import { CreativeParamsDropdown, type CreativeParamsOptions, type CreativeParamsValue } from '../CreativeParamsDropdown'
 import {
@@ -268,6 +270,8 @@ const stripSkillLine = (t: string) =>
 // 把智能脚本提示语拼到正文后面(正文非空时空一行)
 const composeWithSkill = (base: string, s: string) => (s ? (base ? `${base}\n\n${skillLine(s)}` : skillLine(s)) : base)
 
+/** 输入框里的素材引用 @图片N（整体删除用） */
+const PROMPT_IMAGE_MENTION_RE = /@图片\d+/g
 // 高亮渲染匹配:@图片N(绿) + 使用××智能脚本帮我优化(智能脚本提示语,着色)
 const HL_RE = new RegExp(`@图片\\d+|${ALL_SMART_SCRIPT_NAMES.map((name) => `使用${name}帮我优化`).join('|')}`, 'g')
 
@@ -329,19 +333,18 @@ export default function SmartEntry({
     // 唯一脚本模型会由目录自动填入，并非用户选择；空白入口不能因此弹出丢弃草稿确认。
     const hasUserSelectedModel = Object.entries(generationModels).some(
       ([operationCode, modelId]) =>
-        operationCode !== 'responses.multimodal' || !soleScriptModel || String(modelId) !== String(soleScriptModel.id),
+        // 空槽位（0 / 空串）不算选过
+        Number(modelId) > 0 &&
+        (operationCode !== 'responses.multimodal' ||
+          !soleScriptModel ||
+          String(modelId) !== String(soleScriptModel.id)),
     )
+    // 只按「用户真正填过的东西」判断要不要确认：文案、技能、素材、亲手选的模型。
+    // 比例 / 时长 / 分辨率 / 音频 / 张数不参与——它们会被页面自动改写（如分辨率按模型档位
+    // 归一成 720P），空白入口也会因此「不等于默认值」而误弹丢弃确认；而且切走丢掉的
+    // 只是几个参数，不值得拦一次。
     const hasDraftInput = Boolean(
-      stripSkillLine(text).trim() ||
-      skill ||
-      images.length ||
-      realPersonReferences.length ||
-      hasUserSelectedModel ||
-      ratio !== '16:9' ||
-      parseDurationSeconds(duration) !== null ||
-      resolution !== LEGACY_DEFAULT_VIDEO_RESOLUTION ||
-      generateAudio !== DEFAULT_GENERATE_AUDIO ||
-      outputCount !== 1,
+      stripSkillLine(text).trim() || skill || images.length || realPersonReferences.length || hasUserSelectedModel,
     )
     if (hasDraftInput) {
       const confirmed = await requestConfirm('切换后当前输入和素材将不会保留，是否确认离开？', {
@@ -405,6 +408,8 @@ export default function SmartEntry({
     toggle: toggleSourceMenu,
     wrapRef: sourceMenuRef,
   } = useDismissablePopover<HTMLDivElement>()
+  const toolbarSettings = useDismissablePopover<HTMLDivElement>()
+  const toolbarMore = useDismissablePopover<HTMLDivElement>()
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryMaterials, setLibraryMaterials] = useState<any[]>([])
@@ -969,7 +974,12 @@ export default function SmartEntry({
         operationCode,
         prompt: cleanText,
         params,
-        inputAssets: imageAssetIds.filter((assetId) => assetId > 0),
+        // 后端 input_assets 是 { asset_id, role } 对象数组，与正式提交同构；传裸数字会被整体判为
+        // 「请求体格式不合法」。本地上传的图在入口阶段 id 还是 0 会被过滤掉，所以只有带素材库/
+        // 真人库/上次创作的图时才失败——这就是预估「偶发」失败的来源。
+        inputAssets: imageAssetIds
+          .filter((assetId) => assetId > 0)
+          .map((assetId) => ({ asset_id: assetId, role: resolveModelInputAssetRoleSafe(undefined, operationCode) })),
       })
       return {
         estimatedCost: Number(result?.estimated_cost ?? 0),
@@ -1186,374 +1196,434 @@ export default function SmartEntry({
         <EntryCanvasBg index={mode === 'image' ? 1 : 0} count={2} anim="glide" />
       </div>
 
-      {isRealPersonVariant ? (
-        <header className={styles.realPersonHero}>
-          <h1 className={styles.title}>让真实人物，成为视频主角</h1>
-          <p>使用已认证真人素材保持人物特征，完成脚本、镜头与成片的一站式创作。</p>
-          <div className={styles.realPersonTrust} aria-label="真人成片能力">
-            <span>身份已授权</span>
-            <span>人物特征保留</span>
-            <span>全流程可追踪</span>
-          </div>
-        </header>
-      ) : (
-        <h1 className={styles.title}>{mode === 'image' ? '打造我想要的营销图片' : '打造我想要的爆款视频'}</h1>
-      )}
-
-      <div className={styles.panel}>
-        {/* 右上角:与 Tab 同一行、右对齐卡片;点击初始化为全新空白页(等同切换路由再回来) */}
-        {onNewVideo && (
-          <button type="button" className={styles.newVideoBtn} onClick={() => onNewVideo(mode)}>
-            {isRealPersonVariant ? '新建真人成片' : mode === 'image' ? '创建新对话' : '制作新视频'}
-          </button>
-        )}
-        {/* Tab:制作视频 / 制作图片 */}
-        {!isRealPersonVariant && (
-          <div className={styles.tabs} role="tablist" aria-label="创作类型">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'video'}
-              className={`${styles.tab}${mode === 'video' ? ' ' + styles.active : ''}`}
-              onClick={() => switchMode('video')}
-            >
-              制作视频
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'image'}
-              className={`${styles.tab}${mode === 'image' ? ' ' + styles.active : ''}`}
-              onClick={() => switchMode('image')}
-            >
-              制作图片
-            </button>
-          </div>
-        )}
-        {isRealPersonVariant && (
-          <div className={styles.realPersonPanelTitle}>
-            <span className={styles.realPersonPanelIcon} aria-hidden="true">
-              人
-            </span>
-            <div>
-              <strong>真人成片工作台</strong>
-              <small>先从已认证真人素材库选择出镜人物，未选择不能进入下一步</small>
-            </div>
-          </div>
-        )}
-
-        <div className={styles.card} data-guide="smart-input">
-          {/* 已选图片:独立成一行(可换行),不挤压文本框;参考主流 AI 输入框做法 */}
-          {images.length > 0 && (
-            <div className={styles.attachments}>
-              {images.map((url, index) => (
-                <div className={styles.thumb} key={`${url}-${index}`}>
-                  <img src={url} alt="" />
-                  <button type="button" className={styles.thumbX} onClick={() => removeImage(index)} aria-label="移除">
-                    ×
-                  </button>
-                </div>
-              ))}
-              {/* 继续添加：真人变体只从真人库选，普通变体点开来源菜单（本地 / 素材库 / 真人） */}
-              {images.length < referenceImageLimit && (
-                <div className={styles.uploadWrap} ref={sourceMenuRef}>
-                  <button
-                    type="button"
-                    className={styles.add}
-                    onClick={() => (isRealPersonVariant ? setRealPersonPickerOpen(true) : toggleSourceMenu())}
-                    aria-label={isRealPersonVariant ? '继续添加真人素材' : '继续添加素材'}
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="20"
-                      height="20"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                    >
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                  </button>
-                  {sourceMenu}
-                </div>
-              )}
-              {/* 上限跟着所选模型变，必须一直显示当前用量，否则用户不知道还能传几张、
-                  也不知道为什么上传按钮消失了。 */}
-              <span className={styles.attachmentCount} aria-live="polite">
-                {images.length}/{referenceImageLimit} 张参考图
-              </span>
-            </div>
+      <div className={styles.contentScroll}>
+        <div className={styles.contentInner}>
+          {isRealPersonVariant ? (
+            <header className={styles.realPersonHero}>
+              <h1 className={styles.title}>让真实人物，成为视频主角</h1>
+              <p>使用已认证真人素材保持人物特征，完成脚本、镜头与成片的一站式创作。</p>
+              <div className={styles.realPersonTrust} aria-label="真人成片能力">
+                <span>身份已授权</span>
+                <span>人物特征保留</span>
+                <span>全流程可追踪</span>
+              </div>
+            </header>
+          ) : (
+            <h1 className={styles.title}>{mode === 'image' ? '打造我想要的营销图片' : '打造我想要的爆款视频'}</h1>
           )}
 
-          <div className={styles.cardBody}>
-            {/* 无图时:左侧上传框(Figma 初始态);有图时上传入口在上方缩略图行 */}
-            {images.length === 0 && (
-              <div className={styles.uploadWrap} ref={sourceMenuRef}>
+          <div className={styles.panel}>
+            {/* 右上角:与 Tab 同一行、右对齐卡片;点击初始化为全新空白页(等同切换路由再回来) */}
+            {onNewVideo && (
+              <button type="button" className={styles.newVideoBtn} onClick={() => onNewVideo(mode)}>
+                {isRealPersonVariant ? '新建真人成片' : mode === 'image' ? '创建新对话' : '制作新视频'}
+              </button>
+            )}
+            {/* Tab:制作视频 / 制作图片 */}
+            {!isRealPersonVariant && (
+              <div className={styles.tabs} role="tablist" aria-label="创作类型">
                 <button
                   type="button"
-                  className={styles.upload}
-                  onClick={() => (isRealPersonVariant ? setRealPersonPickerOpen(true) : toggleSourceMenu())}
-                  aria-label={isRealPersonVariant ? '从真人素材库选择' : '添加素材'}
+                  role="tab"
+                  aria-selected={mode === 'video'}
+                  className={`${styles.tab}${mode === 'video' ? ' ' + styles.active : ''}`}
+                  onClick={() => switchMode('video')}
                 >
-                  {/* 倾斜浅灰卡片 + 加号(还原 Figma Group 388,无虚线边) */}
-                  <svg
-                    className={styles.uploadCard}
-                    width="96"
-                    height="117"
-                    viewBox="0 0 109 133"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <rect
-                      x="-0.635504"
-                      y="15.0473"
-                      width="90.3131"
-                      height="120.417"
-                      rx="4"
-                      transform="rotate(-10 -0.635504 15.0473)"
-                      fill="#F8F8F8"
-                    />
-                    <path
-                      d="M52.5478 56.6177C52.839 56.5663 53.1387 56.6327 53.381 56.8024C53.6232 56.972 53.7881 57.2309 53.8395 57.5221L55.1948 65.2083L62.881 63.853C63.1722 63.8017 63.4719 63.8681 63.7142 64.0377C63.9564 64.2074 64.1213 64.4663 64.1727 64.7575C64.224 65.0487 64.1576 65.3484 63.988 65.5906C63.8184 65.8328 63.5595 65.9978 63.2683 66.0491L55.582 67.4044L56.9373 75.0907C56.9886 75.3819 56.9222 75.6816 56.7526 75.9238C56.583 76.166 56.3241 76.331 56.0329 76.3823C55.7416 76.4337 55.442 76.3672 55.1997 76.1976C54.9575 76.028 54.7926 75.7691 54.7412 75.4779L53.3859 67.7916L45.6997 69.1469C45.4084 69.1983 45.1087 69.1318 44.8665 68.9622C44.6243 68.7926 44.4594 68.5337 44.408 68.2425C44.3567 67.9513 44.4231 67.6516 44.5927 67.4094C44.7623 67.1671 45.0212 67.0022 45.3124 66.9509L52.9987 65.5956L51.6434 57.9093C51.592 57.6181 51.6585 57.3184 51.8281 57.0762C51.9977 56.8339 52.2566 56.669 52.5478 56.6177Z"
-                      fill="#909090"
-                    />
-                  </svg>
+                  制作视频
                 </button>
-                {sourceMenu}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === 'image'}
+                  className={`${styles.tab}${mode === 'image' ? ' ' + styles.active : ''}`}
+                  onClick={() => switchMode('image')}
+                >
+                  制作图片
+                </button>
               </div>
             )}
-            {!isRealPersonVariant && (
-              <input
-                ref={fileRef}
-                type="file"
-                aria-label="选择上传图片"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={(e) => {
-                  pickImages(e.target.files)
-                  e.target.value = ''
-                }}
-              />
-            )}
-            {isRealPersonVariant && images.length === 0 && (
-              <div className={styles.realPersonRequired}>
-                <strong>选择已认证真人素材</strong>
-                <span>必选项 · 未选择无法开始制作</span>
-              </div>
-            )}
-            {/* 滚动只发生在 inputWrap 上；inputInner 不可滚，负责给 textarea 撑出整段文字的高度 */}
-            <div className={styles.inputWrap}>
-              <div className={styles.inputInner}>
-                {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
-                <div className={styles.inputHl} aria-hidden="true">
-                  {renderHighlight(text)}
+            {isRealPersonVariant && (
+              <div className={styles.realPersonPanelTitle}>
+                <span className={styles.realPersonPanelIcon} aria-hidden="true">
+                  人
+                </span>
+                <div>
+                  <strong>真人成片工作台</strong>
+                  <small>先从已认证真人素材库选择出镜人物，未选择不能进入下一步</small>
                 </div>
-                <textarea
-                  ref={taRef}
-                  className={styles.input}
-                  aria-label="创作需求"
-                  value={text}
-                  placeholder={
-                    isRealPersonVariant
-                      ? '描述真人出镜的场景、动作、台词与产品信息。真人素材必须从认证素材库选择。'
-                      : mode === 'image'
-                        ? PLACEHOLDER_IMAGE
-                        : PLACEHOLDER_VIDEO
-                  }
-                  onChange={(e) => {
-                    const next = e.target.value
-                    const caret = e.target.selectionStart ?? next.length
-                    setText(next)
-                    caretRef.current = caret
-                    if (images.length > 0 && caret > 0 && next[caret - 1] === '@') {
-                      atTriggerRangeRef.current = { start: caret - 1, end: caret }
-                      setAtSource('typed')
-                      setAtOpen(true)
-                    }
-                  }}
-                  onSelect={(e) => {
-                    caretRef.current = e.currentTarget.selectionStart ?? 0
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
-                  }}
-                />
               </div>
-            </div>
-          </div>
+            )}
 
-          {/*
+            <div className={styles.card} data-guide="smart-input">
+              {/* 已选图片:独立成一行(可换行),不挤压文本框;参考主流 AI 输入框做法 */}
+              {images.length > 0 && (
+                <div className={styles.attachments}>
+                  {images.map((url, index) => (
+                    <div className={styles.thumb} key={`${url}-${index}`}>
+                      <img src={url} alt="" />
+                      <button
+                        type="button"
+                        className={styles.thumbX}
+                        onClick={() => removeImage(index)}
+                        aria-label="移除"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  {/* 继续添加：真人变体只从真人库选，普通变体点开来源菜单（本地 / 素材库 / 真人） */}
+                  {images.length < referenceImageLimit && (
+                    <div className={styles.uploadWrap} ref={sourceMenuRef}>
+                      <button
+                        type="button"
+                        className={styles.add}
+                        onClick={() => (isRealPersonVariant ? setRealPersonPickerOpen(true) : toggleSourceMenu())}
+                        aria-label={isRealPersonVariant ? '继续添加真人素材' : '继续添加素材'}
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="20"
+                          height="20"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                        >
+                          <path d="M12 5v14M5 12h14" />
+                        </svg>
+                      </button>
+                      {sourceMenu}
+                    </div>
+                  )}
+                  {/* 上限跟着所选模型变，必须一直显示当前用量，否则用户不知道还能传几张、
+                  也不知道为什么上传按钮消失了。 */}
+                  <span className={styles.attachmentCount} aria-live="polite">
+                    {images.length}/{referenceImageLimit} 张参考图
+                  </span>
+                </div>
+              )}
+
+              <div className={styles.cardBody}>
+                {/* 无图时:左侧上传框(Figma 初始态);有图时上传入口在上方缩略图行 */}
+                {images.length === 0 && (
+                  <div className={styles.uploadWrap} ref={sourceMenuRef}>
+                    <button
+                      type="button"
+                      className={styles.upload}
+                      onClick={() => (isRealPersonVariant ? setRealPersonPickerOpen(true) : toggleSourceMenu())}
+                      aria-label={isRealPersonVariant ? '从真人素材库选择' : '添加素材'}
+                    >
+                      {/* 倾斜浅灰卡片 + 加号(还原 Figma Group 388,无虚线边) */}
+                      <svg
+                        className={styles.uploadCard}
+                        width="96"
+                        height="117"
+                        viewBox="0 0 109 133"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <rect
+                          x="-0.635504"
+                          y="15.0473"
+                          width="90.3131"
+                          height="120.417"
+                          rx="4"
+                          transform="rotate(-10 -0.635504 15.0473)"
+                          fill="#F8F8F8"
+                        />
+                        <path
+                          d="M52.5478 56.6177C52.839 56.5663 53.1387 56.6327 53.381 56.8024C53.6232 56.972 53.7881 57.2309 53.8395 57.5221L55.1948 65.2083L62.881 63.853C63.1722 63.8017 63.4719 63.8681 63.7142 64.0377C63.9564 64.2074 64.1213 64.4663 64.1727 64.7575C64.224 65.0487 64.1576 65.3484 63.988 65.5906C63.8184 65.8328 63.5595 65.9978 63.2683 66.0491L55.582 67.4044L56.9373 75.0907C56.9886 75.3819 56.9222 75.6816 56.7526 75.9238C56.583 76.166 56.3241 76.331 56.0329 76.3823C55.7416 76.4337 55.442 76.3672 55.1997 76.1976C54.9575 76.028 54.7926 75.7691 54.7412 75.4779L53.3859 67.7916L45.6997 69.1469C45.4084 69.1983 45.1087 69.1318 44.8665 68.9622C44.6243 68.7926 44.4594 68.5337 44.408 68.2425C44.3567 67.9513 44.4231 67.6516 44.5927 67.4094C44.7623 67.1671 45.0212 67.0022 45.3124 66.9509L52.9987 65.5956L51.6434 57.9093C51.592 57.6181 51.6585 57.3184 51.8281 57.0762C51.9977 56.8339 52.2566 56.669 52.5478 56.6177Z"
+                          fill="#909090"
+                        />
+                      </svg>
+                    </button>
+                    {sourceMenu}
+                  </div>
+                )}
+                {!isRealPersonVariant && (
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    aria-label="选择上传图片"
+                    accept="image/*"
+                    multiple
+                    hidden
+                    onChange={(e) => {
+                      pickImages(e.target.files)
+                      e.target.value = ''
+                    }}
+                  />
+                )}
+                {isRealPersonVariant && images.length === 0 && (
+                  <div className={styles.realPersonRequired}>
+                    <strong>选择已认证真人素材</strong>
+                    <span>必选项 · 未选择无法开始制作</span>
+                  </div>
+                )}
+                {/* 滚动只发生在 inputWrap 上；inputInner 不可滚，负责给 textarea 撑出整段文字的高度 */}
+                <div className={styles.inputWrap}>
+                  <div className={styles.inputInner}>
+                    {/* 高亮层:渲染文本并把 @图片N 标绿;textarea 文字透明叠在其上 */}
+                    <div className={styles.inputHl} aria-hidden="true">
+                      {renderHighlight(text)}
+                    </div>
+                    <textarea
+                      ref={taRef}
+                      className={styles.input}
+                      aria-label="创作需求"
+                      value={text}
+                      placeholder={
+                        isRealPersonVariant
+                          ? '描述真人出镜的场景、动作、台词与产品信息。真人素材必须从认证素材库选择。'
+                          : mode === 'image'
+                            ? PLACEHOLDER_IMAGE
+                            : PLACEHOLDER_VIDEO
+                      }
+                      onChange={(e) => {
+                        const next = e.target.value
+                        const caret = e.target.selectionStart ?? next.length
+                        setText(next)
+                        caretRef.current = caret
+                        if (images.length > 0 && caret > 0 && next[caret - 1] === '@') {
+                          atTriggerRangeRef.current = { start: caret - 1, end: caret }
+                          setAtSource('typed')
+                          setAtOpen(true)
+                        }
+                      }}
+                      onSelect={(e) => {
+                        caretRef.current = e.currentTarget.selectionStart ?? 0
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
+                        // @图片N 当成一个整体删：第一下 Backspace 删它后面的空格，第二下整条删掉
+                        if ((e.key === 'Backspace' || e.key === 'Delete') && !e.nativeEvent.isComposing) {
+                          const ta = e.currentTarget
+                          const caret = ta.selectionStart ?? 0
+                          if (caret !== (ta.selectionEnd ?? 0)) return
+                          const range = findMentionDeletionRange(
+                            text,
+                            caret,
+                            e.key === 'Backspace' ? 'backward' : 'forward',
+                            PROMPT_IMAGE_MENTION_RE,
+                          )
+                          if (!range) return
+                          e.preventDefault()
+                          setText(text.slice(0, range.start) + text.slice(range.end))
+                          caretRef.current = range.start
+                          requestAnimationFrame(() => ta.setSelectionRange(range.start, range.start))
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/*
             模型不可用与参数不兼容的提示。原本长在模型弹窗内部，换成创作台样式的胶囊后
             那里没有落脚点；放在工具条上方常驻，比藏进一个要点开才看得见的面板更早被看到。
           */}
-          {(modelError || modelSelectionConflicts.length > 0) && (
-            <div className={styles.capabilityNotice} role="status">
-              {modelError ? (
-                <>
-                  {modelError}
-                  {onReloadModels && (
-                    <button type="button" className={styles.noticeAction} onClick={() => onReloadModels()}>
-                      重新加载
-                    </button>
+              {(modelError || modelSelectionConflicts.length > 0) && (
+                <div className={styles.capabilityNotice} role="status">
+                  {modelError ? (
+                    <>
+                      {modelError}
+                      {onReloadModels && (
+                        <button type="button" className={styles.noticeAction} onClick={() => onReloadModels()}>
+                          重新加载
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    modelSelectionConflicts[0]
                   )}
-                </>
-              ) : (
-                modelSelectionConflicts[0]
+                </div>
               )}
-            </div>
-          )}
 
-          <div className={styles.toolbar}>
-            <div className={styles.tools}>
-              {/*
+              {modelEstimate && (
+                <div className={styles.toolbarEstimate}>
+                  <EntryCostEstimate
+                    loading={modelEstimate.loading}
+                    failed={modelEstimate.failed}
+                    estimatedCost={modelEstimate.total}
+                    canAfford={modelEstimate.canAfford}
+                  />
+                </div>
+              )}
+              <div className={styles.toolbar}>
+                <div className={styles.tools}>
+                  <div className={styles.settingsGroup} ref={toolbarSettings.wrapRef}>
+                    <button
+                      type="button"
+                      className={styles.settingsTrigger}
+                      aria-label="生成设置"
+                      aria-expanded={toolbarSettings.open}
+                      onClick={toolbarSettings.toggle}
+                    >
+                      <span aria-hidden="true">⚙</span>
+                      <span className={styles.settingsLabel}>生成设置</span>
+                    </button>
+                    <div className={`${styles.settingsContent} ${toolbarSettings.open ? styles.groupOpen : ''}`}>
+                      {/*
                 模型排在工具条最前：参数档位由所选模型的 schema 决定，先定模型才有档位可选。
                 每个槽位一枚胶囊，与 AI 创作台同一套 UI。
                 游客态也保留入口（置灰 + 点击引导登录），否则未登录时这一格直接消失，
                 用户根本不知道创作前可以选模型。
               */}
-              <CreativeModelSlots
-                groups={displayedModelGroups}
-                selected={generationModels}
-                onChange={updateGenerationModel}
-                loading={Boolean(modelLoading)}
-                authRequired={authRequired}
-                onAuthRequired={onAuthRequired}
-                onModelSelected={() => setParamsOpenSignal((signal) => signal + 1)}
-              />
-              {/*
+                      <CreativeModelSlots
+                        groups={displayedModelGroups}
+                        selected={generationModels}
+                        onChange={updateGenerationModel}
+                        loading={Boolean(modelLoading)}
+                        authRequired={authRequired}
+                        onAuthRequired={onAuthRequired}
+                        onModelSelected={() => setParamsOpenSignal((signal) => signal + 1)}
+                        // 默认文案是「请选择视频模型」；制作图片 Tab 下弹层里全是图片模型，文案要跟着 Tab 走
+                        emptyLabel={mode === 'image' ? '请选择图片模型' : '请选择视频模型'}
+                      />
+                      {/*
                 创作参数（比例 / 时长 / 分辨率 / 出图数量）收进一个弹窗，形式与「本次创作使用的模型」一致。
                 此前它们在底栏各占一个 chip，与模型 chip 等距排开——「用什么生成」和「生成成什么样」
                 是两层决策，平铺在一行读不出层次，chip 一多底栏也开始换行。
               */}
-              <CreativeParamsDropdown
-                value={creativeParamsValue}
-                options={creativeParamsOptions}
-                onChange={applyCreativeParams}
-                /*
+                      <CreativeParamsDropdown
+                        value={creativeParamsValue}
+                        options={creativeParamsOptions}
+                        onChange={applyCreativeParams}
+                        /*
                   先选模型再选参数：比例/时长/分辨率的可选档位都由所选模型的 schema 决定，
                   没选模型时给出的只是兜底档位——用户可能选中一个该模型根本做不到的秒数，
                   然后在提交时才被告知不兼容。
                   这里不用 disabled：点上去没反应的按钮不会告诉用户为什么，
                   照常可点、点了说明原因，用户才知道下一步该做什么。
                 */
-                blockedReason={modelSelectionComplete ? undefined : '请先选择本次创作使用的模型'}
-                onBlocked={(reason) => showToast(reason, 'info')}
-                openSignal={paramsOpenSignal}
-              />
+                        blockedReason={modelSelectionComplete ? undefined : '请先选择本次创作使用的模型'}
+                        onBlocked={(reason) => showToast(reason, 'info')}
+                        openSignal={paramsOpenSignal}
+                      />
+                    </div>
+                  </div>
+                  <div className={styles.moreGroup} ref={toolbarMore.wrapRef}>
+                    <button
+                      type="button"
+                      className={styles.moreTrigger}
+                      aria-label="更多创作选项"
+                      aria-expanded={toolbarMore.open}
+                      onClick={toolbarMore.toggle}
+                      title="更多创作选项"
+                    >
+                      ⋯
+                    </button>
+                    <div className={`${styles.moreContent} ${toolbarMore.open ? styles.groupOpen : ''}`}>
+                      <span className={styles.atAnchor} data-guide="smart-at">
+                        <button
+                          ref={atButtonRef}
+                          type="button"
+                          className={styles.pillBtn}
+                          onClick={handleAt}
+                          title="引用参考素材"
+                        >
+                          @
+                        </button>
+                      </span>
+                      <MaterialMentionPopover
+                        open={atOpen}
+                        title="选择参考素材"
+                        layout="grid"
+                        items={images.map((url, index) => ({
+                          key: `${url}-${index}`,
+                          url,
+                          label: `@图片${index + 1}`,
+                        }))}
+                        getAnchorRect={getAtAnchorRect}
+                        onSelect={pickRef}
+                        onClose={closeAtMenu}
+                      />
 
-              <span className={styles.atAnchor} data-guide="smart-at">
-                <button
-                  ref={atButtonRef}
-                  type="button"
-                  className={styles.pillBtn}
-                  onClick={handleAt}
-                  title="引用参考素材"
-                >
-                  @
-                </button>
-              </span>
-              <MaterialMentionPopover
-                open={atOpen}
-                title="选择参考素材"
-                layout="grid"
-                items={images.map((url, index) => ({ key: `${url}-${index}`, url, label: `@图片${index + 1}` }))}
-                getAnchorRect={getAtAnchorRect}
-                onSelect={pickRef}
-                onClose={closeAtMenu}
-              />
+                      {/* 智能成片脚本(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
+                      {mode === 'video' && !isRealPersonVariant && (
+                        <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
+                          <EntryDropdown
+                            clearable
+                            placeholder="爆款脚本自动生成"
+                            value={skill}
+                            selectedOption={skill || NO_SCRIPT_OPTION}
+                            options={SCRIPT_OPTIONS}
+                            onChange={pickSkill}
+                            icon={
+                              <svg
+                                viewBox="0 0 24 24"
+                                width="20"
+                                height="20"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.7"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
+                                <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                              </svg>
+                            }
+                          />
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-              {/* 智能成片脚本(仅「制作视频」展示;「制作图片」隐藏,对齐设计) */}
-              {mode === 'video' && !isRealPersonVariant && (
-                <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
-                  <EntryDropdown
-                    clearable
-                    placeholder="爆款脚本自动生成"
-                    value={skill}
-                    selectedOption={skill || NO_SCRIPT_OPTION}
-                    options={SCRIPT_OPTIONS}
-                    onChange={pickSkill}
-                    icon={
+                <div className={styles.sendArea}>
+                  {resumeMode && (
+                    <button
+                      type="button"
+                      className={`${styles.send} ${styles.sendResume}`}
+                      data-guide="smart-next"
+                      disabled={submitting}
+                      onClick={resume}
+                      aria-label={mode === 'image' ? '返回图片对话' : '返回下一步'}
+                      title={mode === 'image' ? '返回图片对话' : '返回下一步'}
+                    >
                       <svg
-                        viewBox="0 0 24 24"
-                        width="20"
-                        height="20"
+                        width="18"
+                        height="18"
+                        viewBox="0 0 30 30"
                         fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.7"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                        xmlns="http://www.w3.org/2000/svg"
+                        aria-hidden="true"
                       >
-                        <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" />
-                        <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+                        <path
+                          d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
+                          fill="black"
+                        />
                       </svg>
-                    }
+                    </button>
+                  )}
+                  {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
+                  <TutorialButton className={styles.tutorialButton} variant="entry" tutorialKey="smart-create" />
+                  <VoiceInputButton
+                    className={styles.micBtn}
+                    onText={insertAtCaret}
+                    authRequired={authRequired}
+                    onAuthRequired={onAuthRequired}
                   />
-                </span>
-              )}
-            </div>
-
-            <div className={styles.sendArea}>
-              {resumeMode && (
-                <button
-                  type="button"
-                  className={`${styles.send} ${styles.sendResume}`}
-                  data-guide="smart-next"
-                  disabled={submitting}
-                  onClick={resume}
-                  aria-label={mode === 'image' ? '返回图片对话' : '返回下一步'}
-                  title={mode === 'image' ? '返回图片对话' : '返回下一步'}
-                >
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 30 30"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                    aria-hidden="true"
+                  <button
+                    type="button"
+                    className={`${styles.send} ${styles.sendPlain}`}
+                    data-guide={resumeMode ? 'smart-regen' : 'smart-next'}
+                    disabled={!canSubmit || submitting}
+                    onClick={() => void submit()}
+                    aria-label={submitting ? '正在准备创作' : '去制作'}
+                    title={
+                      submitting
+                        ? '正在准备创作'
+                        : isRealPersonVariant && !hasRequiredRealPerson
+                          ? '请先从真人素材库选择一张已认证真人图片'
+                          : '去制作'
+                    }
                   >
-                    <path
-                      d="M2.11194 25.7576L1.88126 25.5588C1.63745 25.3525 1.49117 25.2249 2.4664 21.1664C4.14869 14.141 10.8384 9.60425 18.3272 8.92721V3.74719L30 12.8132L18.3272 21.8791V16.6972C13.4753 16.3296 9.21243 16.7535 6.35423 19.818C4.94576 21.3352 3.24847 24.3322 2.8415 25.2156C2.78336 25.3412 2.67833 25.5719 2.42139 25.6582L2.11194 25.7576Z"
-                      fill="black"
-                    />
-                  </svg>
-                </button>
-              )}
-              {modelEstimate && (
-                <EntryCostEstimate
-                  loading={modelEstimate.loading}
-                  failed={modelEstimate.failed}
-                  estimatedCost={modelEstimate.total}
-                  canAfford={modelEstimate.canAfford}
-                />
-              )}
-              {/* 与主要创作操作放在一起；弹窗和教程内容仍由共享组件统一维护。 */}
-              <TutorialButton variant="entry" tutorialKey="smart-create" />
-              {/* 语音输入:紧挨「去制作」;说完一段插到光标处,游客态点击走登录引导 */}
-              <VoiceInputButton
-                className={styles.micBtn}
-                onText={insertAtCaret}
-                authRequired={authRequired}
-                onAuthRequired={onAuthRequired}
-              />
-              <button
-                type="button"
-                className={`${styles.send} ${styles.sendPlain}`}
-                data-guide={resumeMode ? 'smart-regen' : 'smart-next'}
-                disabled={!canSubmit || submitting}
-                onClick={() => void submit()}
-                aria-label={submitting ? '正在准备创作' : '去制作'}
-                title={
-                  submitting
-                    ? '正在准备创作'
-                    : isRealPersonVariant && !hasRequiredRealPerson
-                      ? '请先从真人素材库选择一张已认证真人图片'
-                      : '去制作'
-                }
-              >
-                <span className={styles.sendPlainText}>{submitting ? '准备中…' : '去制作'}</span>
-              </button>
+                    <span className={styles.sendPlainText}>{submitting ? '准备中…' : '去制作'}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

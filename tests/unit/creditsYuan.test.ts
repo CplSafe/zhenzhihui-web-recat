@@ -62,3 +62,13 @@ describe('不足 1 分钱的金额', () => {
     expect(creditsYuanLabel(0)).toBe('约0元')
   })
 })
+
+describe('金额向上取到分，不四舍五入', () => {
+  it('不足一分的部分进位，展示金额永不低于实扣', () => {
+    // 5.2 积分 × 0.02 = 0.104 元：四舍五入会显示 0.1，实扣却更多
+    expect(creditsToYuanAmount(5.2)).toBe('0.11')
+    // 正好整分的不多进一分（浮点 0.1 * 100 = 10.000000000000002）
+    expect(creditsToYuanAmount(5)).toBe('0.1')
+    expect(creditsToYuanAmount(9)).toBe('0.18')
+  })
+})
