@@ -1450,15 +1450,12 @@ export default function CanvasNodePanel({
     estimated_cost?: number
     balance?: number
     can_afford?: boolean
-    estimate_kind?: string
-    estimate_note?: string
     loading: boolean
     error?: string
   }>({ loading: false })
   const costTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
-    let cancelled = false
     if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
     if (kind === 'text') {
       setCostEstimate({ loading: false })
@@ -1469,53 +1466,34 @@ export default function CanvasNodePanel({
       setCostEstimate({ loading: false })
       return
     }
-    setCostEstimate({ loading: true })
+    setCostEstimate((prev) => ({ ...prev, loading: true }))
     costTimerRef.current = window.setTimeout(() => {
       estimateAiTaskCost({
         workspaceId,
         modelVersionId,
         operationCode,
-        // 预估和提交使用相同输入；最终费用按上游实际用量结算。
+        // 预估口径与实扣一致：同样使用拼接文本来源后的完整 prompt
         prompt: buildFullPrompt(prompt),
         params: schemaParams,
         inputAssets,
       })
         .then((result: any) => {
-          if (cancelled) return
-          // Older API versions do not expose quote semantics. Keep auto GPT
-          // image reservations clearly labeled during rolling deployments.
-          const source = selectedModel?.source
-          const autoImage =
-            kind === 'image' &&
-            source?.provider === 'openai' &&
-            String(source.version ?? source.model ?? '').startsWith('gpt-image-2') &&
-            (!schemaParams.quality || schemaParams.quality === 'auto' || schemaParams.size === 'auto')
-          const estimateKind = result?.estimate_kind || (autoImage ? 'reservation' : 'estimate')
           setCostEstimate({
             estimated_cost: Number(result?.estimated_cost) || 0,
             balance: Number(result?.balance) || 0,
             can_afford: Boolean(result?.can_afford),
-            estimate_kind: estimateKind,
-            estimate_note:
-              result?.estimate_note ||
-              (estimateKind === 'reservation'
-                ? '自动画质或尺寸由模型决定，当前金额按最高支持档位预冻结；完成后按实际用量多退少补。选择明确画质和比例可获得更接近实际的预估。'
-                : undefined),
             loading: false,
           })
         })
         .catch((err: any) => {
-          if (cancelled) return
           setCostEstimate({ loading: false, error: String(err?.message || '预估失败') })
         })
     }, 600)
     return () => {
-      cancelled = true
       if (costTimerRef.current) window.clearTimeout(costTimerRef.current)
     }
   }, [
     selectedModel?.modelVersionId,
-    selectedModel?.source,
     operationCode,
     prompt,
     kind,
@@ -2180,26 +2158,23 @@ export default function CanvasNodePanel({
         <div className={styles.generateActions}>
           {/* 预估费用是说明文字，不与右侧生成按钮共用点击区域。 */}
           {kind !== 'text' && (
-            <Tooltip title={costEstimate.estimate_note} trigger={['hover', 'focus', 'click']}>
-              <span
-                tabIndex={costEstimate.estimate_note ? 0 : undefined}
-                className={`${styles.costText} ${
-                  costEstimate.loading
-                    ? styles.costTextLoading
-                    : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
-                      ? styles.costTextInsufficient
-                      : ''
-                }`}
-              >
-                {costEstimate.loading
-                  ? '…'
+            <span
+              className={`${styles.costText} ${
+                costEstimate.loading
+                  ? styles.costTextLoading
                   : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
-                    ? '积分不足'
-                    : costEstimate.estimated_cost !== undefined && costEstimate.estimated_cost > 0
-                      ? `${costEstimate.estimate_kind === 'reservation' ? '预冻结' : ''}${creditsYuanHint(costEstimate.estimated_cost)}`
-                      : '—'}
-              </span>
-            </Tooltip>
+                    ? styles.costTextInsufficient
+                    : ''
+              }`}
+            >
+              {costEstimate.loading
+                ? '…'
+                : costEstimate.estimated_cost !== undefined && !costEstimate.can_afford
+                  ? '积分不足'
+                  : costEstimate.estimated_cost !== undefined && costEstimate.estimated_cost > 0
+                    ? creditsYuanHint(costEstimate.estimated_cost)
+                    : '—'}
+            </span>
           )}
           <button
             type="button"

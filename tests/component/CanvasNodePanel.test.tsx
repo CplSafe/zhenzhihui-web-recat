@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import CanvasNodePanel from '@/components/canvas/CanvasNodePanel'
@@ -124,44 +124,6 @@ describe.each([
 })
 
 describe('CanvasNodePanel 模型选择器', () => {
-  it('自动画质的保守冻结额明确显示为预冻结，而不是普通预计费用', async () => {
-    vi.mocked(estimateAiTaskCost).mockResolvedValueOnce({
-      estimated_cost: 76.922,
-      balance: 1000,
-      can_afford: true,
-      estimate_kind: 'reservation',
-      estimate_note: '自动画质由模型决定，完成后按实际用量多退少补。',
-    })
-    renderPanel([modelWithFields([{ name: 'quality', type: 'select', default: 'auto', options: ['auto', 'high'] }])])
-    const cost = await screen.findByText('预冻结约1.54元')
-    expect(cost.closest('button')).toBeNull()
-    expect(screen.queryByText('约1.54元')).not.toBeInTheDocument()
-  })
-
-  it('切换画质后忽略旧预估的迟到响应', async () => {
-    const user = userEvent.setup()
-    let resolveOld!: (result: any) => void
-    vi.mocked(estimateAiTaskCost).mockClear()
-    vi.mocked(estimateAiTaskCost)
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveOld = resolve
-          }),
-      )
-      .mockResolvedValueOnce({ estimated_cost: 5, balance: 100, can_afford: true, estimate_kind: 'estimate' })
-    renderPanel([modelWithFields([{ name: 'quality', type: 'select', default: 'auto', options: ['auto', 'high'] }])])
-    await waitFor(() => expect(estimateAiTaskCost).toHaveBeenCalledTimes(1))
-    await user.click(screen.getByRole('button', { name: '自动', exact: true }))
-    await user.click(screen.getByRole('button', { name: '高画质', exact: true }))
-    await screen.findByText('约0.1元')
-    await act(async () => {
-      resolveOld({ estimated_cost: 76.922, balance: 0, can_afford: false, estimate_kind: 'reservation' })
-    })
-    await waitFor(() => expect(screen.queryByText('积分不足')).not.toBeInTheDocument())
-    expect(screen.getByText('约0.1元')).toBeInTheDocument()
-  })
-
   it('图片模型未声明比例参数时不再显示独立的比例按钮', () => {
     renderPanel([{ modelVersionId: 21, displayName: 'Seedream 5.0', operationCodes: IMAGE_OPERATIONS }])
 
