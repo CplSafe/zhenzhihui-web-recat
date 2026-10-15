@@ -260,7 +260,7 @@ describe('TemplatesView', () => {
     await user.click(screen.getByRole('button', { name: '做同款' }))
     expect(mocks.requireAuth).toHaveBeenCalledOnce()
     expect(mocks.navigate).toHaveBeenCalledWith('/hot-copy', {
-      state: { carryVideo: { url: item.videoUrl, assetId: item.videoAssetId } },
+      state: { carryVideo: { url: item.videoUrl, assetId: item.videoAssetId }, carryPrompt: item.prompt || '' },
     })
     expect(mocks.resolveProjectPath).not.toHaveBeenCalled()
   })

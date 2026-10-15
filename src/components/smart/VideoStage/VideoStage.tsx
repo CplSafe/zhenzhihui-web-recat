@@ -473,6 +473,10 @@ export default function VideoStage({
   const syncPlaybackProgress = (seconds: number) => {
     const next = Number.isFinite(seconds) ? Math.max(0, seconds) : 0
     playSecRef.current = next
+    if (trackRef.current) {
+      trackRef.current.setAttribute('aria-valuenow', String(next))
+      trackRef.current.setAttribute('aria-valuetext', `${fmtClock(next)} / ${fmtClock(total)}`)
+    }
     if (playheadRef.current) playheadRef.current.style.left = playheadLeft(next)
     if (playbackTimeRef.current) {
       playbackTimeRef.current.textContent = `${fmtClock(next)} / ${fmtClock(total)} · 共 ${frameCount} 帧`
@@ -867,12 +871,34 @@ export default function VideoStage({
     if (applyPlayerSeek(video, clamped)) pendingTimelineSeekRef.current = null
   }
   const trackDraggingRef = useRef(false)
+  const stopWindowTrackDragRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => stopWindowTrackDragRef.current?.(), [])
   const onTrackPointerDown = (e: React.PointerEvent) => {
     if (!videoUrl || e.button !== 0) return
     const s = secFromEvent(e)
     seekPlayerToTimelineFrame(Math.min(frameCount - 1, Math.max(0, Math.floor(s))))
     // 按住后拖动：蓝色时间线跟着指针走，快速定位到想要的那一帧
     trackDraggingRef.current = true
+    stopWindowTrackDragRef.current?.()
+    const pointerId = e.pointerId
+    const onMove = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId || !trackDraggingRef.current) return
+      seekPlayerToSeconds(secFromEvent(event))
+    }
+    const onEnd = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return
+      trackDraggingRef.current = false
+      stopWindowTrackDragRef.current?.()
+    }
+    window.addEventListener('pointermove', onMove, true)
+    window.addEventListener('pointerup', onEnd, true)
+    window.addEventListener('pointercancel', onEnd, true)
+    stopWindowTrackDragRef.current = () => {
+      window.removeEventListener('pointermove', onMove, true)
+      window.removeEventListener('pointerup', onEnd, true)
+      window.removeEventListener('pointercancel', onEnd, true)
+      stopWindowTrackDragRef.current = null
+    }
     try {
       e.currentTarget.setPointerCapture(e.pointerId)
     } catch {
@@ -887,6 +913,7 @@ export default function VideoStage({
   const endTrackDrag = (e: React.PointerEvent) => {
     if (!trackDraggingRef.current) return
     trackDraggingRef.current = false
+    stopWindowTrackDragRef.current?.()
     try {
       e.currentTarget.releasePointerCapture(e.pointerId)
     } catch {
@@ -1236,6 +1263,30 @@ export default function VideoStage({
               <div
                 ref={trackRef}
                 className={styles.vstageTrack}
+                role="slider"
+                tabIndex={0}
+                aria-label="视频帧时间线"
+                aria-orientation="horizontal"
+                aria-valuemin={0}
+                aria-valuemax={total}
+                aria-valuenow={playSecRef.current}
+                aria-valuetext={`${fmtClock(playSecRef.current)} / ${fmtClock(total)}`}
+                onKeyDown={(event) => {
+                  const current = playSecRef.current
+                  const targets: Record<string, number> = {
+                    ArrowLeft: current - 1,
+                    ArrowDown: current - 1,
+                    ArrowRight: current + 1,
+                    ArrowUp: current + 1,
+                    PageDown: current - 5,
+                    PageUp: current + 5,
+                    Home: 0,
+                    End: total,
+                  }
+                  if (!(event.key in targets)) return
+                  event.preventDefault()
+                  seekPlayerToSeconds(targets[event.key])
+                }}
                 onPointerDown={onTrackPointerDown}
                 onPointerMove={onTrackPointerMove}
                 onPointerUp={endTrackDrag}

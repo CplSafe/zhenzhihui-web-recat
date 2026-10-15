@@ -1,8 +1,9 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  banners: [] as any[],
   clearExistingSession: vi.fn(),
   clearToast: vi.fn(),
   getAuthenticatedSession: vi.fn(),
@@ -49,7 +50,7 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('@/api/banners', () => ({ listBanners: vi.fn() }))
 
 vi.mock('@/composables/useSwr', () => ({
-  useSwr: () => ({ data: [] }),
+  useSwr: () => ({ data: mocks.banners }),
 }))
 
 vi.mock('@/utils/mediaPreload', () => ({ isPreloaded: () => false }))
@@ -104,6 +105,7 @@ async function fillPasswordLogin(
 describe('LoginView behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.banners = []
     window.history.replaceState({}, '', '/login')
     mocks.clearExistingSession.mockResolvedValue(undefined)
     mocks.getAuthenticatedSession.mockResolvedValue({ user: { id: 7 } })
@@ -112,6 +114,33 @@ describe('LoginView behavior', () => {
     mocks.loginWithSmsCode.mockResolvedValue({ ok: true })
     mocks.sendAuthSms.mockResolvedValue(undefined)
     mocks.startOAuth.mockResolvedValue({ authorize_url: '/auth/continue', state: 'oauth-state' })
+  })
+
+  it('keeps the current banner visible until the selected video has decoded its first frame', async () => {
+    const user = userEvent.setup()
+    mocks.banners = [
+      { id: 1, title: '食品饮料', mediaType: 'video', mediaUrl: '/food.mp4' },
+      { id: 2, title: '生活服务', mediaType: 'video', mediaUrl: '/life.mp4' },
+    ]
+
+    const { container } = render(<LoginView />)
+    const lifeVideo = container.querySelector<HTMLVideoElement>('video[src="/life.mp4"]')!
+    fireEvent.loadedData(lifeVideo)
+    await waitFor(() => expect(lifeVideo.closest('.zlogin-hero-media')).toHaveClass('is-ready'))
+
+    await user.click(screen.getByRole('button', { name: '食品饮料' }))
+    const foodVideo = container.querySelector<HTMLVideoElement>('video[src="/food.mp4"]')!
+
+    expect(lifeVideo).toBeInTheDocument()
+    expect(lifeVideo.closest('.zlogin-hero-media')).toHaveClass('is-ready')
+    expect(foodVideo.closest('.zlogin-hero-media')).not.toHaveClass('is-ready')
+
+    // 旧视频的迟到事件不能让目标视频提前显示。
+    fireEvent.playing(lifeVideo)
+    expect(foodVideo.closest('.zlogin-hero-media')).not.toHaveClass('is-ready')
+
+    fireEvent.loadedData(foodVideo)
+    await waitFor(() => expect(foodVideo.closest('.zlogin-hero-media')).toHaveClass('is-ready'))
   })
 
   it('switches between SMS and password modes and validates required fields including whitespace-only mobile', async () => {

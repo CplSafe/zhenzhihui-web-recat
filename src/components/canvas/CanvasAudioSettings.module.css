@@ -1,0 +1,187 @@
+.panel {
+  position: fixed;
+  z-index: 1510;
+  display: flex;
+  flex-direction: column;
+  width: min(380px, calc(100vw - 24px));
+  box-sizing: border-box;
+  overflow: hidden;
+  color: #344054;
+  background: #fff;
+  border: 1px solid #e5eaf0;
+  border-radius: 16px;
+  box-shadow: 0 18px 55px #183d3926;
+  font:
+    13px/1.5 'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+}
+.panel header,
+.panel footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #f9fbfc;
+}
+.panel header {
+  border-bottom: 1px solid #edf1f4;
+}
+.panel header div {
+  display: grid;
+  gap: 2px;
+}
+.panel header strong {
+  font-size: 16px;
+  color: #243b37;
+}
+.panel header span,
+.panel footer span,
+.field small {
+  color: #84918f;
+  font-size: 11px;
+}
+.panel button {
+  font: inherit;
+  border: 0;
+  background: transparent;
+  color: #168b74;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.panel header > button {
+  font-size: 24px;
+  color: #778783;
+  line-height: 1;
+}
+.panel button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.panel footer {
+  border-top: 1px solid #edf1f4;
+  font-size: 11px;
+}
+.body {
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  padding: 4px 18px 16px;
+}
+.body section + section {
+  border-top: 1px solid #edf1f4;
+  margin-top: 12px;
+}
+.body h4 {
+  margin: 14px 0 0;
+  color: #7a8986;
+  font-size: 11px;
+  font-weight: 500;
+}
+.field {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+.fieldHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fieldHeading label {
+  font-weight: 600;
+}
+.fieldHeading button {
+  font-size: 11px;
+}
+.field input:not([type='range']):not([type='checkbox']),
+.field select,
+.field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #dfe7e5;
+  border-radius: 8px;
+  color: #344054;
+  background: #fbfdfc;
+  font: inherit;
+}
+.field textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+.field input[type='range'] {
+  width: 100%;
+  min-width: 0;
+  accent-color: #12a889;
+  cursor: pointer;
+}
+.adjustment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 12px;
+  align-items: center;
+}
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.toggle input {
+  appearance: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 20px;
+  background: #d8e2df;
+  position: relative;
+  margin: 0;
+  cursor: pointer;
+}
+.toggle input::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 3px;
+  top: 3px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.15s;
+}
+.toggle input:checked {
+  background: #13aa8a;
+}
+.toggle input:checked::after {
+  transform: translateX(14px);
+}
+.advanced {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #edf1f4;
+}
+.advanced summary {
+  cursor: pointer;
+  color: #455a55;
+  font-weight: 600;
+}
+.advanced summary span {
+  font-size: 11px;
+  font-weight: 400;
+  color: #8a9794;
+  margin-left: 6px;
+}
+.panel :is(button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid #13aa8a;
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .toggle input::after {
+    transition: none;
+  }
+}

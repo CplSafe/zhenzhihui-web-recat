@@ -333,6 +333,38 @@ describe('CanvasNodePanel 视频生视频用的是视频生成模型', () => {
   const VIDEO_GENERATE = ['video.generate']
   const VIDEO_EDIT = ['video.edit']
 
+  it('只有图片和音频而没有视频描述时阻止生成，显示具体原因', () => {
+    const onGenerate = vi.fn()
+    renderVideoPanel(
+      [
+        {
+          modelVersionId: 25,
+          displayName: '音视频参考模型',
+          operationCodes: VIDEO_GENERATE,
+          source: {
+            input_constraints: {
+              'video.generate': { roles: [{ role: 'audio', min_count: 0, max_count: 1 }] },
+            },
+          },
+        },
+      ],
+      {
+        id: 'video-node',
+        kind: 'video',
+        prompt: '',
+        videoMode: 'auto',
+        sourceRefs: [
+          { kind: 'image', sourceId: 'image', edgeId: 'image-edge', slotIndex: 0, assetId: 77 },
+          { kind: 'audio', sourceId: 'audio', edgeId: 'audio-edge', slotIndex: 1, assetId: 88 },
+        ],
+      },
+      { onGenerate },
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('请输入视频描述后再生成')
+    expect(screen.getByRole('button', { name: '生成' })).toBeDisabled()
+    expect(onGenerate).not.toHaveBeenCalled()
+  })
+
   /** 一个接了源视频的视频节点：视频生视频。 */
   const videoToVideoNode = {
     id: 'node-video',
@@ -1357,6 +1389,90 @@ it('旧画布中不再支持的生成数量自动回落为 1 张', async () => {
   await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
   await user.click(screen.getByTitle('发送生成'))
   expect(onGenerate.mock.calls[0]![0].params).toEqual({ count: 1 })
+})
+
+it('图片参数摘要和弹层统一显示张数及完整水印文案', async () => {
+  const user = userEvent.setup()
+  renderPanel([
+    modelWithFields([
+      { name: 'count', display_name: '生成数量', type: 'number', default: 1 },
+      { name: 'watermark', display_name: '水印', type: 'bool', default: false },
+    ]),
+  ])
+  await user.click(screen.getByRole('button', { name: '1张 · 无水印' }))
+  expect(screen.getByRole('button', { name: '有水印' })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '有水印' }))
+  await user.click(screen.getByRole('button', { name: '2张' }))
+  await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  expect(screen.getByRole('button', { name: '2张 · 有水印' })).toBeInTheDocument()
+})
+
+it('视频参数摘要及水印选项也显示有水印和无水印', async () => {
+  const user = userEvent.setup()
+  const model = {
+    ...modelWithFields([{ name: 'watermark', display_name: '水印', type: 'bool', default: false }]),
+    operationCodes: ['video.generate'],
+  }
+  renderPanel(
+    [],
+    { id: 'video-watermark', kind: 'video', prompt: '测试视频', videoMode: 'auto', sourceRefs: [] },
+    {
+      models: { text: [], image: [], video: [model] },
+    },
+  )
+  await user.click(screen.getByRole('button', { name: /无水印/ }))
+  expect(screen.getByRole('button', { name: '有水印' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '无水印' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '关' })).not.toBeInTheDocument()
+})
+
+it.each([
+  { name: 'add_mark', displayName: '水印', type: 'bool', default: true },
+  { name: 'enable_mark', label: '水印', type: 'select', options: ['true', 'false'], default: 'true' },
+  { name: '水印', type: 'bool', default: true },
+  { name: 'add_watermark', display_name: '添加水印', type: 'boolean', default: true },
+])('视频水印兼容不同字段定义：$name', async (field) => {
+  const user = userEvent.setup()
+  const onGenerate = vi.fn()
+  const model = { ...modelWithFields([field]), operationCodes: ['video.generate'] }
+  renderPanel(
+    [],
+    { id: 'video-mark', kind: 'video', prompt: '测试视频', videoMode: 'auto', sourceRefs: [] },
+    {
+      models: { text: [], image: [], video: [model] },
+      onGenerate,
+    },
+  )
+  await user.click(screen.getByRole('button', { name: /有水印/ }))
+  await user.click(screen.getByRole('button', { name: '无水印' }))
+  await user.click(screen.getByRole('button', { name: '关闭生成参数' }))
+  expect(screen.getByRole('button', { name: '自由生成 · 无水印' })).toBeInTheDocument()
+  await user.click(screen.getByTitle('发送生成'))
+  expect(onGenerate.mock.calls[0]![0].params[field.name]).toBe(false)
+})
+
+it('视频数量带条单位且背景音不会混成水印开关', async () => {
+  const user = userEvent.setup()
+  const model = {
+    ...modelWithFields([
+      { name: 'count', display_name: '生成数量', type: 'number', default: 2, min: 1, max: 4 },
+      { name: 'generate_audio', display_name: '生成音频', type: 'bool', default: true },
+      { name: 'watermark', display_name: '水印', type: 'bool', default: false },
+    ]),
+    operationCodes: ['video.generate'],
+  }
+  renderPanel(
+    [],
+    { id: 'video-count', kind: 'video', prompt: '测试视频', videoMode: 'auto', sourceRefs: [] },
+    {
+      models: { text: [], image: [], video: [model] },
+    },
+  )
+  await user.click(screen.getByRole('button', { name: /2条 · 有背景音 · 无水印/ }))
+  expect(screen.getByText('2条')).toBeInTheDocument()
+  expect(screen.getByRole('slider', { name: '生成数量' })).toHaveValue('2')
+  expect(screen.getByRole('button', { name: '有背景音' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '无水印' })).toBeInTheDocument()
 })
 
 it('保留 Seedream 的 size 分辨率档位', async () => {

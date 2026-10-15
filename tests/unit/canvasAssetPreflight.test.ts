@@ -41,6 +41,48 @@ describe('canvas asset preflight', () => {
     expect(findActive).toHaveBeenCalledWith(11, [43], 'image')
   })
 
+  it('checks audio and image references against their own asset catalogs', async () => {
+    findActive.mockImplementation(async (_workspaceId, ids) => new Set(ids))
+    expect(
+      await preflightCanvasAssets({
+        workspaceId: 11,
+        sourceRefs: [
+          { kind: 'audio', assetId: 13270, workspaceId: 11 },
+          { kind: 'image', assetId: 43, workspaceId: 11 },
+        ],
+        inputAssets: [
+          { asset_id: 13270, role: 'reference_audio' },
+          { asset_id: 43, role: 'reference_image' },
+        ],
+      }),
+    ).toBeNull()
+    expect(findActive).toHaveBeenCalledWith(11, [43], 'image')
+    expect(findActive).toHaveBeenCalledWith(11, [13270], 'audio')
+    expect(findActive).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses source kind when the model declares a custom audio role', async () => {
+    findActive.mockResolvedValue(new Set([13270]))
+    expect(
+      await preflightCanvasAssets({
+        workspaceId: 11,
+        sourceRefs: [{ kind: 'audio', assetId: 13270, workspaceId: 11 }],
+        inputAssets: [{ asset_id: 13270, role: 'voice_input' }],
+      }),
+    ).toBeNull()
+    expect(findActive).toHaveBeenCalledWith(11, [13270], 'audio')
+  })
+
+  it('reports an unavailable audio reference as audio', async () => {
+    findActive.mockResolvedValue(new Set())
+    const error = await preflightCanvasAssets({
+      workspaceId: 11,
+      sourceRefs: [{ kind: 'audio', assetId: 13270, workspaceId: 11 }],
+      inputAssets: [{ asset_id: 13270, role: 'audio' }],
+    })
+    expect(error).toContain('参考音频（素材 ID 13270）')
+  })
+
   it('identifies an unavailable asset without claiming its exact cause', async () => {
     findActive.mockResolvedValue(new Set())
     const error = await preflightCanvasAssets({

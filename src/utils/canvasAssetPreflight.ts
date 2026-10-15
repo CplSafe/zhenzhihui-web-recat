@@ -26,20 +26,30 @@ export async function preflightCanvasAssets({
     sourceRefs.filter((ref) => ref.source === 'real_person').map((ref) => Number(ref.assetId)),
   )
   const ordinaryAssets = inputAssets.filter((asset) => !realPersonIds.has(Number(asset.asset_id)))
+  // 模型可以自定义 input_assets.role；优先按连线来源的真实类型核验素材。
+  const sourceKinds = new Map(
+    sourceRefs
+      .filter((ref) => Number.isSafeInteger(Number(ref.assetId)) && Number(ref.assetId) > 0)
+      .map((ref) => [Number(ref.assetId), ref.kind] as const),
+  )
+  const assetType = (asset: CanvasInputAsset): 'video' | 'image' | 'audio' => {
+    const kind = sourceKinds.get(Number(asset.asset_id))
+    if (kind === 'audio' || kind === 'image') return kind
+    if (kind === 'video' || kind === 'timeline') return 'video'
+    if (asset.role === 'video') return 'video'
+    if (asset.role === 'audio' || asset.role === 'reference_audio') return 'audio'
+    return 'image'
+  }
   try {
-    for (const type of ['video', 'image'] as const) {
+    for (const type of ['video', 'image', 'audio'] as const) {
       const ids = [
-        ...new Set(
-          ordinaryAssets
-            .filter((asset) => (asset.role === 'video') === (type === 'video'))
-            .map((asset) => Number(asset.asset_id)),
-        ),
+        ...new Set(ordinaryAssets.filter((asset) => assetType(asset) === type).map((asset) => Number(asset.asset_id))),
       ]
       if (!ids.length) continue
       const active = await findActiveWorkspaceAssetIds(workspaceId, ids, type)
       const missing = ids.find((id) => !active.has(id))
       if (missing) {
-        return `参考${type === 'video' ? '视频' : '图片'}（素材 ID ${missing}）在当前团队不可用，可能未上传完成、已失效或属于其他团队，请重新选择素材`
+        return `参考${type === 'video' ? '视频' : type === 'audio' ? '音频' : '图片'}（素材 ID ${missing}）在当前团队不可用，可能未上传完成、已失效或属于其他团队，请重新选择素材`
       }
     }
   } catch {

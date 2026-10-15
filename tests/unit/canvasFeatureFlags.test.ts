@@ -9,10 +9,10 @@ describe('canvasFeatureFlags', () => {
     expect(isCanvasAudioKind('video')).toBe(false)
   })
 
-  it('暂停开放时只隐藏音频入口，不影响其他节点', () => {
-    expect(CANVAS_AUDIO_NODES_ENABLED).toBe(false)
-    expect(isCanvasAudioEntryVisible('audio')).toBe(false)
-    expect(isCanvasAudioEntryVisible('audio/wav')).toBe(false)
+  it('开放后展示音频入口且不影响其他节点', () => {
+    expect(CANVAS_AUDIO_NODES_ENABLED).toBe(true)
+    expect(isCanvasAudioEntryVisible('audio')).toBe(true)
+    expect(isCanvasAudioEntryVisible('audio/wav')).toBe(true)
     expect(isCanvasAudioEntryVisible('image')).toBe(true)
     expect(isCanvasAudioEntryVisible('video')).toBe(true)
     expect(isCanvasAudioEntryVisible('text')).toBe(true)

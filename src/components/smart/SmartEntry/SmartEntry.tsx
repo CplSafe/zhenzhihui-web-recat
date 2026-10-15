@@ -56,6 +56,7 @@ import {
 import { parseDurationSeconds } from '@/utils/videoDurationValue'
 import { DEFAULT_REFERENCE_IMAGE_LIMIT } from '@/utils/modelInputConstraints'
 import { useDismissablePopover } from '@/composables/useDismissablePopover'
+import { useUnsavedEntryLeaveGuard } from '@/composables/useHotCopyLeaveGuard'
 import { useConfirmDialog, useToast } from '@/composables/useToast'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import RealPersonMaterialPicker from './RealPersonMaterialPicker'
@@ -330,22 +331,6 @@ export default function SmartEntry({
       return
     }
 
-    // 唯一脚本模型会由目录自动填入，并非用户选择；空白入口不能因此弹出丢弃草稿确认。
-    const hasUserSelectedModel = Object.entries(generationModels).some(
-      ([operationCode, modelId]) =>
-        // 空槽位（0 / 空串）不算选过
-        Number(modelId) > 0 &&
-        (operationCode !== 'responses.multimodal' ||
-          !soleScriptModel ||
-          String(modelId) !== String(soleScriptModel.id)),
-    )
-    // 只按「用户真正填过的东西」判断要不要确认：文案、技能、素材、亲手选的模型。
-    // 比例 / 时长 / 分辨率 / 音频 / 张数不参与——它们会被页面自动改写（如分辨率按模型档位
-    // 归一成 720P），空白入口也会因此「不等于默认值」而误弹丢弃确认；而且切走丢掉的
-    // 只是几个参数，不值得拦一次。
-    const hasDraftInput = Boolean(
-      stripSkillLine(text).trim() || skill || images.length || realPersonReferences.length || hasUserSelectedModel,
-    )
     if (hasDraftInput) {
       const confirmed = await requestConfirm('切换后当前输入和素材将不会保留，是否确认离开？', {
         title: '切换创作类型',
@@ -742,6 +727,23 @@ export default function SmartEntry({
       ?.models.filter((model) => !model.disabled)
     return models?.length === 1 ? models[0] : null
   }, [visibleModelGroups])
+  // 唯一脚本模型会由目录自动填入，并非用户选择；空白入口不能因此弹出丢弃草稿确认。
+  const hasUserSelectedModel = useMemo(
+    () =>
+      Object.entries(generationModels).some(
+        ([operationCode, modelId]) =>
+          Number(modelId) > 0 &&
+          (operationCode !== 'responses.multimodal' ||
+            !soleScriptModel ||
+            String(modelId) !== String(soleScriptModel.id)),
+      ),
+    [generationModels, soleScriptModel],
+  )
+  // 视频和图片入口共用同一判断：只拦截用户实际输入的文案、技能、素材或手动模型选择。
+  const hasDraftInput = Boolean(
+    stripSkillLine(text).trim() || skill || images.length || realPersonReferences.length || hasUserSelectedModel,
+  )
+  useUnsavedEntryLeaveGuard(hasDraftInput, clearSmartEntryDraft)
   const displayedModelGroups = useMemo(() => {
     if (!soleScriptModel) return visibleModelGroups
     return visibleModelGroups
@@ -1544,7 +1546,7 @@ export default function SmartEntry({
                         <span data-guide="smart-skills" style={{ display: 'inline-flex' }}>
                           <EntryDropdown
                             clearable
-                            placeholder="爆款脚本自动生成"
+                            placeholder="选择爆款脚本"
                             value={skill}
                             selectedOption={skill || NO_SCRIPT_OPTION}
                             options={SCRIPT_OPTIONS}

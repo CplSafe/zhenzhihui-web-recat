@@ -75,6 +75,7 @@ import {
 } from '@/utils/creativeProjectTitlePersistence'
 import { resolveCreativeProjectId as resolveProjectId } from '@/utils/projectAssetAccess'
 import { useLatestCallback } from '@/composables/useLatestCallback'
+import { useHotCopyLeaveGuard } from '@/composables/useHotCopyLeaveGuard'
 import { refreshAssetUrl } from '@/api/smartShotImage'
 import { createProjectNameFallback, generateProjectName, validateProjectName } from '@/api/aiPolish'
 import {
@@ -865,6 +866,7 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     if (!imgs.length && !vid) return undefined
     return {
       tab: 'remake',
+      text: String(st.carryPrompt || ''),
       products: imgs.map((m: any) => ({
         url: m.url,
         file: null,
@@ -882,6 +884,19 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
     } as any
   })
   const [basePrompt, setBasePrompt] = useState('')
+  useHotCopyLeaveGuard(
+    !started &&
+      Boolean(
+        entryInitial?.text?.trim() ||
+        entryInitial?.videoPreview ||
+        entryInitial?.libraryVideo?.assetId ||
+        entryInitial?.products?.length,
+      ),
+    () => {
+      const ws = Number(workspaceId || 0)
+      if (ws && !loadHotCopyDraft(ws)) clearHotCopyDraft(ws)
+    },
+  )
 
   // replicate 输入:源视频 + 替换素材(asset_id)
   const [sourceVideo, setSourceVideo] = useState<{ assetId: number; url: string }>({ assetId: 0, url: '' })
@@ -4575,18 +4590,20 @@ export default function HotCopyCreateView({ routeSessionToken = '' }: HotCopyCre
   })
 
   // 模板库「做同款」：页面已在入口态，不再走 carryVideo 路由 state（只在首次挂载时读取），
-  // 直接把模板视频作为源爆款视频写回入口草稿，保留已上传的替换素材与文案，并重挂载入口让其按新 initial 初始化。
+  // 模板提示词必须替换旧文案，缺少提示词时也清空，不能把历史文案带入新任务。
   const applyTemplateToEntry = useLatestCallback((tpl: TemplateItem) => {
     const url = String(tpl.videoUrl || '')
     const assetId = Number(tpl.videoAssetId || 0) || 0
     if (!url && !assetId) return
     setEntryInitial((current) => ({
       ...(current || {}),
+      text: tpl.prompt || '',
       tab: 'remake',
       videoSource: 'library',
       videoPreview: url,
       libraryVideo: { assetId, src: url },
     }))
+    setBasePrompt(tpl.prompt || '')
     setSourceVideo({ assetId, url })
     setSourceVideoDurSec(0)
     setSourceVideoDurAssetId(0)

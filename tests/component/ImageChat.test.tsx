@@ -412,6 +412,10 @@ describe('ImageChat', () => {
     )
 
     expect(screen.getByRole('img', { name: 'AI 生成图片 1' })).toBeInTheDocument()
+    expect(screen.queryByText('查看原图')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '预览图片 1' }).closest('figcaption')?.querySelectorAll('button'),
+    ).toHaveLength(3)
     await user.click(screen.getByRole('button', { name: '预览图片 1' }))
     await user.click(screen.getByRole('button', { name: '下载图片 1' }))
     const editButton = screen.getByRole('button', { name: '修改图片 1' })

@@ -274,6 +274,12 @@ describe('时间线校验与 cutlist', () => {
     expect(parseTimelineState(null)).toEqual({ clips: [] })
   })
 
+  it('原视频音量随时间线持久化并限制在有效范围', () => {
+    expect(parseTimelineState({ clips: [], originalAudioVolume: 0 }).originalAudioVolume).toBe(0)
+    expect(parseTimelineState({ clips: [], originalAudioVolume: 2 }).originalAudioVolume).toBe(1)
+    expect(parseTimelineState({ clips: [], originalAudioVolume: 'invalid' }).originalAudioVolume).toBeUndefined()
+  })
+
   it('按连线同步片段：新增追加、断开移除、已有编辑保留', () => {
     let state = createTimelineState()
     state = syncTimelineClipsFromSources(state, [

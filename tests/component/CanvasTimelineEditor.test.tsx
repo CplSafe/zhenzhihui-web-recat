@@ -112,7 +112,7 @@ describe('CanvasTimelineEditor', () => {
     render(<ControlledEditor onState={onState} />)
 
     await user.click(screen.getByRole('button', { name: '片段 1' }))
-    const mute = screen.getByRole('button', { name: /静音/ })
+    const mute = screen.getByRole('button', { name: '🔊 静音' })
     expect(mute).toHaveAttribute('aria-pressed', 'false')
 
     await user.click(mute)

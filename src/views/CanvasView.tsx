@@ -49,7 +49,7 @@ import {
   getBezierPath,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import CanvasArrowEdge from '@/components/canvas/CanvasArrowEdge'
+import CanvasArrowEdge, { canvasConnectionDisplayRole } from '@/components/canvas/CanvasArrowEdge'
 
 /**
  * 连线箭头仅属于画布展示层，不写入元素持久化数据。
@@ -84,6 +84,7 @@ import {
   boundsOrigin,
   collectUpstreamNodeIds,
   copyCanvasNodes,
+  setCopiedCanvasAudioReference,
   materializeCanvasClipboard,
   type CanvasClipboardPayload,
 } from '@/utils/canvasClipboard'
@@ -506,7 +507,7 @@ const TIMELINE_NODE_SIZE = { width: 460, height: 400 }
  */
 function newNodeFootprint(type: string): { width: number; height: number } {
   if (type === 'timeline') return TIMELINE_NODE_SIZE
-  if (type === 'audio') return { width: 360, height: 410 }
+  if (type === 'audio') return { width: 320, height: 116 }
   if (type === 'video') return { width: 444, height: 250 }
   return { width: 250, height: 250 }
 }
@@ -560,6 +561,7 @@ async function mapWithConcurrency<T, R>(
  * 而不是把回调塞进节点 data（data 会被持久化，放不了函数）。
  */
 interface CanvasNodeActions {
+  onAudioGenerated?: (nodeId: string, assetId: number, durationSec: number) => void
   onToggleImageResults?: (nodeId: string) => void
   onSelectImageResult?: (nodeId: string, assetId: number) => void
   onSplitImageResults?: (nodeId: string) => void
@@ -722,6 +724,7 @@ function createNodeId(type: string): string {
  * 拖线菜单另按来源限制（allowedSourceKinds）过滤可用性。
  */
 const ADD_MENU_ITEMS: ReadonlyArray<{ type: string; label: string; desc: string }> = [
+  ...(CANVAS_AUDIO_NODES_ENABLED ? [{ type: 'audio', label: '音频节点', desc: '配音、背景音乐、音效' }] : []),
   { type: 'text', label: '文本节点', desc: '脚本、广告词、品牌文案' },
   { type: 'image', label: '图片节点', desc: '宣传图、海报、封面' },
   { type: 'video', label: '视频节点', desc: '宣传视频、动画、电影' },
@@ -800,7 +803,7 @@ const allowedSourceKinds: Record<string, string[]> = {
   text: ['text', 'image', 'video', 'timeline'],
   // 剪辑时间线只接视频：连进来的每条视频自动成为一个片段
   timeline: ['video', 'timeline', 'audio'],
-  audio: ['text'],
+  audio: ['text', 'audio'],
 }
 
 /** 历史快照保留的最大步数，防止无界增长 */
@@ -1387,6 +1390,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
     capturingNodeId,
     renamingNodeId,
     onRenamingDone,
+    onAudioGenerated,
     imagePreviews,
     timeline: timelineActions,
   } = useContext(CanvasNodeActionsContext)
@@ -1652,7 +1656,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
 
   return (
     <div
-      className={`canvas-default-node${imageResultIds.length > 1 ? ' is-image-results' : ''}`}
+      className={`canvas-default-node${kind === 'audio' ? ' is-audio' : ''}${imageResultIds.length > 1 ? ' is-image-results' : ''}`}
       style={{ '--canvas-readable-text-scale': readableTextScale } as CSSProperties}
       onMouseEnter={() => setNodeHovered(true)}
       onMouseLeave={() => setNodeHovered(false)}
@@ -1664,7 +1668,13 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
        * 没有 nopan，双击会穿到 React Flow 的 onNodeDoubleClick——时间线节点因此
        * 在改名的同时弹出剪辑弹窗。React Flow 的手势过滤只认这两个类名（见下方视频区注释）。
        */}
-      <div className="canvas-node-header nodrag nopan" title={headerTitle}>
+      <div
+        className={`canvas-node-header nopan${kind === 'audio' ? '' : ' nodrag'}`}
+        title={headerTitle}
+        onPointerDown={(event) => {
+          if (kind === 'audio' && event.target instanceof HTMLInputElement) event.stopPropagation()
+        }}
+      >
         <span className="canvas-node-header__icon">{getTypeIcon(kind)}</span>
         <span className="canvas-node-header__label-wrap" onDoubleClick={(event) => event.stopPropagation()}>
           <InlineEdit
@@ -1950,10 +1960,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           />
         ) : kind === 'audio' ? (
           <CanvasAudioNode
+            selected={selected}
             nodeId={id}
             data={data as Record<string, any>}
             workspaceId={nodeWorkspaceId}
             src={mediaUrl}
+            onGenerated={onAudioGenerated}
           />
         ) : kind === 'timeline' ? (
           // 卡片本身就是编辑面：预览 + 片段条 + 添加/合成，常用操作不必先双击进弹窗
@@ -3635,6 +3647,86 @@ function CanvasInner() {
     [setNodes, commitHistory],
   )
 
+  const handleAudioGenerated = useCallback(
+    (sourceId: string, assetId: number, durationSec: number) => {
+      const source = latestRef.current.nodes.find((node) => node.id === sourceId)
+      if (!source || !(assetId > 0)) return
+      const audio = normalizeAudioSettings({
+        durationSec,
+        inSec: 0,
+        outSec: durationSec,
+        origin: 'generated',
+      })
+      const existing = latestRef.current.nodes.find((node) => node.data?.sourceAudioNodeId === sourceId)
+      if (existing) {
+        setNodes((nodes) =>
+          nodes.map((node) =>
+            node.id === existing.id
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    assetId,
+                    assetWorkspaceId: workspaceId,
+                    resultUrl: assetStreamUrl(assetId, workspaceId),
+                    audio,
+                  },
+                }
+              : node,
+          ),
+        )
+        setSaveStatus('dirty')
+        return
+      }
+      const width = Number((source.style as CSSProperties | undefined)?.width) || newNodeFootprint('audio').width
+      const editorSize = newNodeFootprint('audio')
+      const position = findFreeNodePosition({
+        anchor: { x: source.position.x + width + 72, y: source.position.y },
+        size: editorSize,
+        occupied: latestRef.current.nodes.map((node) => ({
+          x: node.position.x,
+          y: node.position.y,
+          width: Number((node.style as CSSProperties | undefined)?.width) || node.measured?.width || 250,
+          height: Number((node.style as CSSProperties | undefined)?.height) || node.measured?.height || 150,
+        })),
+      })
+      const editorId = appendNewNode('audio', position, {
+        extraData: {
+          title: '音频编辑',
+          audioRole: 'editor',
+          sourceAudioNodeId: sourceId,
+          assetId,
+          assetWorkspaceId: workspaceId,
+          assetSource: 'generated',
+          resultUrl: assetStreamUrl(assetId, workspaceId),
+          audio,
+        },
+      })
+      setEdges((edges) =>
+        addEdge(
+          {
+            id: buildEdgeId(sourceId, editorId, 0),
+            source: sourceId,
+            sourceHandle: `${sourceId}-right-source`,
+            target: editorId,
+            targetHandle: `${editorId}-left-target`,
+            data: {
+              slotIndex: 0,
+              role: inferCanvasConnectionRole({
+                targetKind: 'audio',
+                sourceKind: 'audio',
+                videoMode: 'auto',
+                slotIndex: 0,
+              }),
+            },
+          },
+          edges,
+        ),
+      )
+    },
+    [appendNewNode, setNodes, setEdges, workspaceId],
+  )
+
   const handleMenuSelect = useCallback(
     (type: string) => {
       if (!addMenu) return
@@ -5256,6 +5348,10 @@ function CanvasInner() {
       const submitMaxImageRefs =
         getModelReferenceImageLimit(buildModelRestrictionSummary(submitModel?.source).constraints) ?? DEFAULT_MAX_REFS
       if (generate.kind === 'video') {
+        if (!String(generate.prompt || '').trim()) {
+          showToast('请输入视频描述后再生成；仅连接图片或音频仍需要文字描述', 'error')
+          return
+        }
         const videoValidationArgs = {
           operationCode: generate.operationCode,
           videoMode: generate.videoMode,
@@ -6102,6 +6198,17 @@ function CanvasInner() {
         }
       })
   }, [timelineEditorNodeId, timelineEditorState, nodes, workspaceId])
+
+  const editorAddableAudioSources = useMemo(() => {
+    if (!timelineEditorNodeId) return []
+    const used = new Set(parseTimelineAudio(timelineEditorState.audioClips).map((clip) => clip.sourceNodeId))
+    return nodes.flatMap((node) => {
+      const data = node.data as Record<string, unknown> | undefined
+      if (data?.kind !== 'audio' || used.has(node.id) || !(Number(data.assetId) > 0)) return []
+      if (Number(data.assetWorkspaceId || workspaceId) !== Number(workspaceId)) return []
+      return [{ nodeId: node.id, label: String(data.title || '画布音频') }]
+    })
+  }, [timelineEditorNodeId, timelineEditorState.audioClips, nodes, workspaceId])
 
   /**
    * 连线 → 片段：视频节点连到时间线节点即成为一个片段，断开连线即移除对应片段。
@@ -7208,6 +7315,7 @@ function CanvasInner() {
       const payload = snapshotNodes(ids)
       if (!payload) return false
       canvasClipboard = payload
+      setCopiedCanvasAudioReference(payload, workspaceId)
       // 同时备一份「含之前所有节点」的，粘贴到画布时始终让用户二选一（需求：两项都要给；没有上游时两者相同）
       const upstreamIds = collectUpstreamNodeIds(ids, latestRef.current.edges as any)
       canvasClipboardWithUpstream = snapshotNodes(upstreamIds)
@@ -7215,7 +7323,7 @@ function CanvasInner() {
       showToast(`已复制 ${payload.nodes.length} 个节点`, 'success')
       return true
     },
-    [snapshotNodes],
+    [snapshotNodes, workspaceId],
   )
 
   /** Ctrl+C：复制当前选中集 */
@@ -7739,10 +7847,16 @@ function CanvasInner() {
         setComposeProgress('正在保存成片…')
         let outputBlob = composed.blob
         const audioClips = parseTimelineAudio(calibratedTimeline.audioClips)
-        if (audioClips.length) {
+        if (audioClips.length || (calibratedTimeline.originalAudioVolume ?? 1) !== 1) {
           setComposeProgress('正在混合音轨…')
           const { mixAudioIntoMp4 } = await import('@/utils/audioMix')
-          outputBlob = await mixAudioIntoMp4(outputBlob, audioClips, getTimelineDuration(calibratedTimeline), wsId)
+          outputBlob = await mixAudioIntoMp4(
+            outputBlob,
+            audioClips,
+            getTimelineDuration(calibratedTimeline),
+            wsId,
+            calibratedTimeline.originalAudioVolume ?? 1,
+          )
         }
         const file = new File([outputBlob], `时间线成片-${Date.now()}.mp4`, { type: 'video/mp4' })
         const uploaded: any = await uploadAssetFile({ workspaceId: wsId, file })
@@ -7901,6 +8015,7 @@ function CanvasInner() {
    */
   const nodeActions = useMemo<CanvasNodeActions>(
     () => ({
+      onAudioGenerated: handleAudioGenerated,
       imagePreviews,
       onCaptureFrame: handleCaptureFrame,
       onImageNaturalSize: handleImageNaturalSize,
@@ -7927,6 +8042,7 @@ function CanvasInner() {
       },
     }),
     [
+      handleAudioGenerated,
       imagePreviews,
       handleCaptureFrame,
       handleImageNaturalSize,
@@ -8193,6 +8309,7 @@ function CanvasInner() {
                 slotIndex: Number(edgeData.slotIndex || 0),
               }),
             }
+        const displayRole = canvasConnectionDisplayRole(sourceKind, targetKind)
         // 隐藏连线走 hidden 而不是把边从数组里抽掉：抽掉会让 React Flow 认为连线被删除，
         // 连带影响选中态与后续的增量 diff——这只是一个看不看得见的开关，不该动数据。
         const focused = focusedNodeIds.size > 0 && (focusedNodeIds.has(edge.source) || focusedNodeIds.has(edge.target))
@@ -8211,7 +8328,7 @@ function CanvasInner() {
           !CANVAS_AUDIO_NODES_ENABLED && (isCanvasAudioKind(sourceKind) || isCanvasAudioKind(targetKind))
         return {
           ...rest,
-          data,
+          data: displayRole ? { ...data, displayRole } : data,
           type: CANVAS_ARROW_EDGE_TYPE,
           hidden: edgesHidden || touchesHiddenAudioNode,
           className: className || undefined,
@@ -8389,6 +8506,8 @@ function CanvasInner() {
             onCompose={() => void handleTimelineCompose(timelineEditorNodeId)}
             onAddClip={(sourceNodeId) => handleAddTimelineClip(timelineEditorNodeId, sourceNodeId)}
             addableSources={editorAddableSources}
+            addableAudioSources={editorAddableAudioSources}
+            onAddAudio={(sourceNodeId) => connectSourcesToTarget([sourceNodeId], timelineEditorNodeId)}
             pendingSourceCount={timelineEditorPendingCount}
             composing={timelineComposing}
             composeProgress={composeProgress}
@@ -9295,9 +9414,27 @@ function CanvasInner() {
                 onVideoModeChange={handleVideoModeChange}
                 onModelChange={handleModelChange}
                 onGenerate={handleNodeGenerate}
-                onPreflightAssets={(sourceRefs, inputAssets) =>
-                  preflightCanvasAssets({ workspaceId: Number(workspaceId || 0), sourceRefs, inputAssets })
-                }
+                onPreflightAssets={(sourceRefs, inputAssets) => {
+                  const unsavedAudio = sourceRefs.find((ref) => {
+                    if (ref.kind !== 'audio' || !inputAssets.some((asset) => asset.asset_id === ref.assetId))
+                      return false
+                    const source = nodes.find((node) => node.id === ref.sourceId)
+                    if (source?.data?.audioRole !== 'editor') return false
+                    const audio = normalizeAudioSettings(source.data.audio)
+                    return (
+                      audio.inSec > 0.01 ||
+                      audio.outSec < audio.durationSec - 0.01 ||
+                      audio.volume < 0.99 ||
+                      audio.fadeInSec > 0 ||
+                      audio.fadeOutSec > 0
+                    )
+                  })
+                  if (unsavedAudio)
+                    return Promise.resolve(
+                      '音频编辑节点还有未保存的裁剪或音量设置。请先点“保存为新素材并用于下游”，再生成视频。',
+                    )
+                  return preflightCanvasAssets({ workspaceId: Number(workspaceId || 0), sourceRefs, inputAssets })
+                }}
                 onInsufficientCredits={handleInsufficientCredits}
                 onSaveText={handleSaveNodeText}
                 onPromptChange={handleNodePromptChange}

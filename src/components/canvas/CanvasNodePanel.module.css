@@ -673,6 +673,16 @@
   cursor: not-allowed;
 }
 
+.audioReferenceHint {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #eff8f6;
+  color: #356b60;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .textPromptTools {
   display: flex;
   align-items: center;

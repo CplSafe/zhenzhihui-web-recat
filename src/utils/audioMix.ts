@@ -9,6 +9,7 @@ export async function renderAudioMix(
   duration: number,
   workspaceId: number,
   original?: ArrayBuffer,
+  originalVolume = 1,
 ): Promise<AudioBuffer> {
   if (!(duration > 0 && duration <= 300)) throw new Error('混音时长须在 0–300 秒以内')
   const context = new OfflineAudioContext(2, Math.ceil(duration * 48000), 48000)
@@ -37,11 +38,15 @@ export async function renderAudioMix(
     source.start(start, from, length)
   }
   if (original && demuxMp4(original).audio) {
-    const buffer = await context.decodeAudioData(original.slice(0))
-    const source = context.createBufferSource()
-    source.buffer = buffer
-    source.connect(context.destination)
-    source.start(0)
+    if (originalVolume > 0) {
+      const buffer = await context.decodeAudioData(original.slice(0))
+      const source = context.createBufferSource()
+      const gain = context.createGain()
+      source.buffer = buffer
+      gain.gain.value = Math.max(0, Math.min(1, originalVolume))
+      source.connect(gain).connect(context.destination)
+      source.start(0)
+    }
   }
   // 顺序读取，防止同时解码多条大音频造成内存峰值。
   for (const clip of clips) {
@@ -100,6 +105,7 @@ export async function mixAudioIntoMp4(
   clips: TimelineAudioClip[],
   duration: number,
   workspaceId: number,
+  originalVolume = 1,
 ): Promise<Blob> {
   const AudioEncoderCtor = (globalThis as any).AudioEncoder
   const AudioDataCtor = (globalThis as any).AudioData
@@ -110,7 +116,7 @@ export async function mixAudioIntoMp4(
   const original = await video.arrayBuffer()
   const demuxed = demuxMp4(original)
   if (!demuxed.video) throw new Error('成片没有可用的视频轨道')
-  const pcm = await renderAudioMix(clips, duration, workspaceId, original)
+  const pcm = await renderAudioMix(clips, duration, workspaceId, original, originalVolume)
   const samples: MuxSample[] = []
   let description: Uint8Array | null = null
   let failure: Error | null = null

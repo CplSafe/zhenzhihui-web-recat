@@ -58,6 +58,9 @@ interface CanvasTimelineEditorProps {
   addableSources?: ReadonlyArray<{ nodeId: string; assetId: number; label: string; thumbnailUrl: string }>
   /** 把画布上的某个视频节点加成片段；不依赖手动拉线，空时间线也能起步。 */
   onAddClip?: (sourceNodeId: string) => void
+  /** 将画布中的已就绪音频接入当前剪辑节点。 */
+  addableAudioSources?: ReadonlyArray<{ nodeId: string; label: string }>
+  onAddAudio?: (sourceNodeId: string) => void
   /** 已连线但来源视频还没生成出素材的数量，这类连线暂时产生不了片段。 */
   pendingSourceCount?: number
   /** 合成入口；未提供时按钮禁用并说明原因。cutlist 由上层按节点自行组装。 */
@@ -137,6 +140,8 @@ export default function CanvasTimelineEditor({
   onChange,
   onClose,
   onAddClip,
+  addableAudioSources = [],
+  onAddAudio,
   addableSources = [],
   pendingSourceCount = 0,
   onCompose,
@@ -765,6 +770,7 @@ export default function CanvasTimelineEditor({
               clips={draftClips}
               workspaceId={workspaceId}
               hideTimeline
+              originalAudioVolume={state.originalAudioVolume ?? 1}
               playheadSec={previewPlayheadSec}
               onPlayingChange={setPreviewPlaying}
               onPlayheadChange={(next) => {
@@ -1146,6 +1152,43 @@ export default function CanvasTimelineEditor({
               )}
             </ol>
 
+            {CANVAS_AUDIO_NODES_ENABLED && (
+              <div className={styles.audioTracks} aria-label="同步音轨">
+                {(['voice', 'bgm'] as const).map((lane) => (
+                  <div
+                    key={lane}
+                    className={`${styles.audioTrack} ${lane === 'voice' ? styles.voiceTrack : styles.bgmTrack}`}
+                    aria-label={lane === 'voice' ? '人声轨' : 'BGM 轨'}
+                  >
+                    <span className={styles.audioTrackName}>{lane === 'voice' ? '人声' : 'BGM'}</span>
+                    {audioClips
+                      .filter((clip) => clip.lane === lane)
+                      .map((clip) => {
+                        const remaining = Math.max(0, draftTotalSec - clip.startSec)
+                        const length = clip.loop ? remaining : Math.min(remaining, clip.outSec - clip.inSec)
+                        return (
+                          <span
+                            key={clip.sourceNodeId}
+                            className={styles.audioTrackClip}
+                            style={{
+                              left: `${clip.startSec * pxPerSec}px`,
+                              width: `${Math.max(2, length * pxPerSec)}px`,
+                              opacity: clip.muted ? 0.38 : 1,
+                            }}
+                            title={`${clip.title} · ${length.toFixed(1)} 秒${clip.loop ? ' · 循环' : ''}`}
+                          >
+                            {clip.title}{' '}
+                            <small>
+                              {length.toFixed(1)}s{clip.loop ? ' ↻' : ''}
+                            </small>
+                          </span>
+                        )
+                      })}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* 吸附命中时亮一条参考线，让「贴上去了」这件事看得见 */}
             {drag && drag.mode !== 'move' && drag.snappedSec !== null && (
               <span
@@ -1197,6 +1240,10 @@ export default function CanvasTimelineEditor({
             playheadSec={previewPlayheadSec}
             playing={previewPlaying}
             onChange={(next) => update({ ...state, audioClips: next })}
+            originalAudioVolume={state.originalAudioVolume ?? 1}
+            onOriginalAudioVolumeChange={(volume) => update({ ...state, originalAudioVolume: volume })}
+            addableSources={addableAudioSources}
+            onAddAudio={onAddAudio}
           />
         )}
         <footer className={styles.footer}>

@@ -8,6 +8,8 @@ import { assetStreamUrl } from '@/utils/assetUrl'
 
 /** 模板库页面使用的归一化创意项目数据。 */
 export interface TemplateItem {
+  /** 做同款的入口提示词；缺省时清空旧输入。 */
+  prompt?: string
   id: number
   title: string
   /** 首帧缩略图 */
@@ -310,6 +312,7 @@ function normalizeProject(raw: any, index: number): TemplateItem {
   return {
     id: toNumber(raw?.id || raw?.project_id || raw?.projectId),
     title: pickFirstText(raw?.title, raw?.name, raw?.project_name) || '未命名项目',
+    prompt: pickFirstText(raw?.prompt, raw?.prompt_text),
     thumbnailUrl,
     thumbnailAssetId: extractCoverAssetId(raw) || undefined,
     videoUrl,
@@ -372,6 +375,7 @@ export async function listBackendTemplates(): Promise<TemplateItem[]> {
       return {
         id: Number(t?.id || 0),
         title: String(t?.title || '').trim(),
+        prompt: pickFirstText(t?.prompt, t?.prompt_text),
         thumbnailUrl: isSafeMediaUrl(thumbnailUrl) ? thumbnailUrl : '',
         videoUrl: String(t?.video_url || '').trim(),
         videoAssetId: videoAssetId || undefined,

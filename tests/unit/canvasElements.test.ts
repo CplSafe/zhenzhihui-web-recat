@@ -15,6 +15,30 @@ import {
 } from '@/utils/canvasElements'
 
 describe('canvasElements', () => {
+  it('音频编辑节点与源节点关系在画布保存后仍可恢复', () => {
+    const mutation = nodeToMutation({
+      id: 'audio-editor',
+      type: 'audio',
+      position: { x: 360, y: 0 },
+      data: { kind: 'audio', audioRole: 'editor', sourceAudioNodeId: 'audio-source', assetId: 82 },
+    } as Node)
+    expect(elementsToGraph([mutation]).nodes[0].data).toMatchObject({
+      audioRole: 'editor',
+      sourceAudioNodeId: 'audio-source',
+      assetId: 82,
+    })
+  })
+  it('音频参考素材随节点保存并参与素材引用收集', () => {
+    const mutation = nodeToMutation({
+      id: 'audio',
+      type: 'audio',
+      position: { x: 0, y: 0 },
+      data: { kind: 'audio', audioReferences: [{ assetId: 88, workspaceId: 21, title: '样音.wav' }] },
+    } as Node)
+    const graph = elementsToGraph([mutation])
+    expect(graph.nodes[0].data.audioReferences).toEqual([{ assetId: 88, workspaceId: 21, title: '样音.wav' }])
+    expect([...collectCanvasElementAssetIds([mutation])]).toEqual([88])
+  })
   it('builds stable edge ids', () => {
     expect(buildEdgeId('source-node', 'target-node', 2)).toBe('e-source-node-target-node-2')
   })

@@ -101,7 +101,7 @@ const AUDIO_FIELD_KEYS = new Set(['generateaudio', 'audio', 'withaudio', 'enable
 function isBooleanField(field: ParamsSchemaField): boolean {
   if (BOOLEAN_TYPES.has(normalizeParamKey(field.type))) return true
   // 水印等常见开关字段兜底：无论 type 都渲染成开关
-  if (normalizeParamKey(field.name).includes('watermark')) return true
+  if (isWatermarkField(field)) return true
   // options 为布尔语义（<=2 项且均为 true/false 等）也按开关渲染
   const opts = (field.options || []).map((o) => normalizeParamKey(o))
   return opts.length > 0 && opts.length <= 2 && opts.every((o) => BOOLEAN_OPTION_KEYS.has(o))
@@ -191,7 +191,7 @@ function parseFieldRecord(raw: unknown): ParamsSchemaField | null {
     : undefined
   return {
     name,
-    displayName: readText(record.display_name) || name,
+    displayName: readText(record.display_name) || readText(record.displayName) || readText(record.label) || name,
     type: readText(record.type) || 'select',
     ...(options && options.length ? { options } : {}),
     ...(record.default !== undefined ? { default: record.default } : {}),
@@ -317,7 +317,10 @@ const COUNT_PARAM_KEYS = new Set([
   'samplecount',
 ])
 function isImageCountField(field: ParamsSchemaField): boolean {
-  return COUNT_PARAM_KEYS.has(normalizeParamKey(field.name)) || /数量|张数/.test(String(field.displayName || ''))
+  return (
+    COUNT_PARAM_KEYS.has(normalizeParamKey(field.name)) ||
+    /数量|张数|条数/.test(`${field.name} ${field.displayName || ''}`)
+  )
 }
 
 /** 图片节点对用户开放的生成数量档位；预估与提交共用这三个数值。 */
@@ -333,7 +336,7 @@ function normalizeImageCountValue(value: unknown): (typeof IMAGE_COUNT_OPTIONS)[
 
 /** 水印开关：按钮与摘要写「有水印 / 无水印」，比单独一个「开 / 关」看得懂 */
 function isWatermarkField(field: ParamsSchemaField): boolean {
-  return normalizeParamKey(field.name).includes('watermark') || /水印/.test(String(field.displayName || ''))
+  return normalizeParamKey(field.name).includes('watermark') || /水印/.test(`${field.name} ${field.displayName || ''}`)
 }
 
 /** 分辨率 / 尺寸字段：resolution / size / image_size / quality 等，或显示名带「分辨率」「尺寸」 */
@@ -362,6 +365,7 @@ function formatResolutionValue(value: unknown): string {
 
 function formatBooleanValue(field: ParamsSchemaField, value: unknown): string {
   if (isWatermarkField(field)) return value ? '有水印' : '无水印'
+  if (isAudioField(field) || /背景音|生成音频/.test(field.displayName)) return value ? '有背景音' : '无背景音'
   return value ? '开' : '关'
 }
 
@@ -371,7 +375,9 @@ function formatFieldValue(field: ParamsSchemaField, value: unknown, kind?: strin
   if (isVideoTaskModeField(field)) return formatVideoTaskModeLabel(value)
   if (isDurationField(field)) return `${String(value ?? '')}秒`
   // 图片生成数量需要带单位，避免参数摘要中的裸数字无法理解。
-  if (kind === 'image' && isImageCountField(field)) return `${String(value ?? '')}张`
+  if ((kind === 'image' || kind === 'video') && isImageCountField(field)) {
+    return `${String(value ?? '')}${kind === 'image' ? '张' : '条'}`
+  }
   const text = String(value ?? '')
   const key = normalizeParamKey(field.name)
   // 仅翻译展示文案；选项的原始值仍用于选中判断、预估和提交。
@@ -1503,6 +1509,7 @@ export default function CanvasNodePanel({
       return validateCanvasImageInputs({ operationCode, sourceRefs, workspaceId, maxImageRefs: maxRefs })
     }
     if (kind === 'video') {
+      if (!buildFullPrompt(prompt).trim()) return '请输入视频描述后再生成；仅连接图片或音频仍需要文字描述'
       return (
         getVideoEditModeConflict({
           prompt: buildFullPrompt(prompt),
@@ -2002,6 +2009,12 @@ export default function CanvasNodePanel({
             转为本节点提示词
           </button>
         </div>
+      )}
+
+      {kind === 'video' && sourceRefs.some((ref) => ref.kind === 'audio') && (
+        <p className={styles.audioReferenceHint}>
+          已连接的音频作为视频生成参考；是否能使用取决于所选模型的音频输入能力。若要把配音或音乐直接加入成片，请连接到视频剪辑节点的音轨。
+        </p>
       )}
 
       {/* 节点级生成历史（反馈 #8）：只对已有历史的图片/视频节点显示；点缩略图切回该版本。
@@ -2605,7 +2618,9 @@ function SchemaFieldMenu({
     if (followsSource(f)) continue
     const v = values[f.name]
     if (v === undefined || v === null || v === '') continue
-    displayParts.push(formatFieldValue(f, v, kind))
+    const label = formatFieldValue(f, v, kind)
+    // 其他开关也不能只显示「开/关」，否则无法识别到底是哪项参数。
+    displayParts.push(isBooleanField(f) && (label === '开' || label === '关') ? `${f.displayName}：${label}` : label)
   }
   if (followSourceVideo) displayParts.push('比例时长跟随原视频')
   const display = displayParts.join(' · ')
@@ -2776,7 +2791,7 @@ function SchemaFieldMenu({
                           value={Number(current) || 0}
                           onChange={(e) => onFieldChange?.(f.name, Number(e.target.value))}
                         />
-                        <span className={styles.sliderValue}>{formatFieldValue(f, current)}</span>
+                        <span className={styles.sliderValue}>{formatFieldValue(f, current, kind)}</span>
                       </div>
                     ) : f.type === 'string' && !f.options?.length ? (
                       <input
@@ -2795,7 +2810,7 @@ function SchemaFieldMenu({
                             className={`${styles.videoBtnGroupItem} ${isActive(o) ? styles.videoBtnGroupItemActive : ''}`}
                             onClick={() => onFieldChange?.(f.name, o)}
                           >
-                            {formatFieldValue(f, o)}
+                            {formatFieldValue(f, o, kind)}
                           </button>
                         ))}
                       </div>

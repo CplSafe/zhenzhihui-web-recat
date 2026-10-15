@@ -40,6 +40,24 @@ export interface CanvasClipboardPayload {
   height: number
 }
 
+/** 画布节点剪贴板中的音频素材可直接粘贴到音频生成节点的参考区。 */
+let copiedAudioReference: { assetId: number; workspaceId: number; title: string } | null = null
+
+export function setCopiedCanvasAudioReference(payload: CanvasClipboardPayload | null, workspaceId: number) {
+  const audio = payload?.nodes.find((node) => node.kind === 'audio' && Number(node.data.assetId) > 0)
+  copiedAudioReference = audio
+    ? {
+        assetId: Number(audio.data.assetId),
+        workspaceId: Number(audio.data.assetWorkspaceId || workspaceId),
+        title: String(audio.data.title || '画布音频'),
+      }
+    : null
+}
+
+export function getCopiedCanvasAudioReference() {
+  return copiedAudioReference
+}
+
 interface SourceNode {
   id: string
   type?: string

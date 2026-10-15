@@ -927,13 +927,6 @@ export default function SpaceDashboardView() {
         trend: UNAVAILABLE_TREND,
       },
       {
-        key: 'members' as const,
-        label: '成员人数',
-        unit: '人',
-        value: overview ? resolvedOverview.members : null,
-        trend: overview ? buildTrendMeta('members', resolvedOverview, previousOverview) : UNAVAILABLE_TREND,
-      },
-      {
         key: 'projects' as const,
         label: '项目个数',
         unit: '个',

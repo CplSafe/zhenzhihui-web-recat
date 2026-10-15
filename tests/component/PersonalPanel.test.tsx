@@ -231,6 +231,23 @@ describe('PersonalPanel', () => {
     expect(mocks.renameTeam).toHaveBeenCalledWith(21, 'Alpha新名称')
   })
 
+  it('submits a confirmed rename even if the account menu closes before saving', async () => {
+    const user = userEvent.setup()
+    const pending = deferred<string | null>()
+    mocks.confirm.mockReturnValue(pending.promise)
+    const view = render(<PersonalPanel />)
+
+    await user.click(screen.getByRole('button', { name: '重命名团队 Alpha团队' }))
+    view.unmount()
+    await act(async () => {
+      pending.resolve('研发')
+      await pending.promise
+    })
+
+    await waitFor(() => expect(mocks.renameTeam).toHaveBeenCalledWith(21, '研发'))
+    expect(mocks.showToast).toHaveBeenCalledWith('团队名称已更新', 'success')
+  })
+
   it('recovers after a rename conflict and allows retry', async () => {
     const user = userEvent.setup()
     mocks.confirm.mockResolvedValueOnce('新团队名').mockResolvedValueOnce('最终团队名')

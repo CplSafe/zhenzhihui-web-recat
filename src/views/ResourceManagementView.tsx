@@ -28,6 +28,7 @@ import {
   type FavoriteVideo,
 } from '@/utils/favoriteVideos'
 import { assetStreamUrl } from '@/utils/assetUrl'
+import { loadAudioWaveform } from '@/utils/audioWaveform'
 import AssetPreviewModal from '@/components/resource/AssetPreviewModal'
 import resourceSearchIcon from '@/assets/resource/figma-resource-search.svg'
 import AiBadge from '@/components/common/AiBadge'
@@ -518,6 +519,7 @@ function AssetThumb({
   }, [inView])
 
   const [src, setSrc] = useState<string>('')
+  const [audioPeaks, setAudioPeaks] = useState<number[]>([])
   const triedRef = useRef(false)
   const assetId = Number(card?.assetId ?? card?.id ?? 0) || 0
   const requestScope = `${Number(workspaceId || 0)}:${assetId}:${String(card?.mediaUrl || '')}`
@@ -544,6 +546,17 @@ function AssetThumb({
       cancelled = true
     }
   }, [assetId, card.mediaUrl, inView, requestScope, workspaceId])
+  useEffect(() => {
+    if (!inView || card.mediaKind !== 'audio' || !src) return
+    const controller = new AbortController()
+    setAudioPeaks([])
+    void loadAudioWaveform(src, controller.signal)
+      .then((peaks) => {
+        if (!controller.signal.aborted) setAudioPeaks(peaks)
+      })
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [card.mediaKind, inView, src])
   const handleError = useCallback(async () => {
     if (triedRef.current) {
       setSrc('')
@@ -576,8 +589,13 @@ function AssetThumb({
   }
   if (card.mediaKind === 'audio') {
     return (
-      <div ref={rootRef} className="resource-asset-cover-placeholder">
-        <span>♫ 音频</span>
+      <div ref={rootRef} className="resource-audio-cover">
+        <span className="resource-audio-label">♫ 音频素材</span>
+        <div className="resource-audio-waveform" aria-hidden="true">
+          {(audioPeaks.length ? audioPeaks : Array.from({ length: 48 }, () => 0.18)).map((height, index) => (
+            <i key={index} style={{ height: `${Math.max(12, height * 100)}%` }} />
+          ))}
+        </div>
         <audio src={src} controls preload="metadata" onClick={(e) => e.stopPropagation()} onError={handleError} />
       </div>
     )
@@ -659,11 +677,18 @@ function ResourceCard({
       >
         <span aria-hidden="true">{selected ? '✓' : ''}</span>
       </button>
-      <button type="button" className="resource-asset-cover" aria-label={`打开${card.title}`} onClick={onPreview}>
-        <AssetThumb card={card} workspaceId={workspaceId} onRatio={setRatio} />
-        {card.isAi && card.mediaKind === 'image' && <AiBadge />}
-        <span className="resource-asset-type">{card.type}</span>
-      </button>
+      {card.mediaKind === 'audio' ? (
+        <div className="resource-asset-cover resource-asset-audio-cover">
+          <AssetThumb card={card} workspaceId={workspaceId} onRatio={setRatio} />
+          <span className="resource-asset-type">{card.type}</span>
+        </div>
+      ) : (
+        <button type="button" className="resource-asset-cover" aria-label={`打开${card.title}`} onClick={onPreview}>
+          <AssetThumb card={card} workspaceId={workspaceId} onRatio={setRatio} />
+          {card.isAi && card.mediaKind === 'image' && <AiBadge />}
+          <span className="resource-asset-type">{card.type}</span>
+        </button>
+      )}
       {card.mediaKind !== 'audio' && (
         <button
           type="button"

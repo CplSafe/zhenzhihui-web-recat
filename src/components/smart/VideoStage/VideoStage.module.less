@@ -250,6 +250,10 @@
 }
 
 .vstageTrack {
+  &:focus-visible {
+    outline: 2px solid #5767e5;
+    outline-offset: 3px;
+  }
   position: relative;
   height: 96px;
   border-radius: 12px;
@@ -367,20 +371,32 @@
   z-index: 2;
   top: 0;
   bottom: 0;
-  width: 3px;
+  // 扩大实际命中范围，拖顶端把手或蓝线都能由轨道接收 pointerdown。
+  width: 16px;
   transform: translateX(-50%);
-  background: #5767e5;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7);
-  pointer-events: none;
+  cursor: ew-resize;
+  touch-action: none;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 3px;
+    transform: translateX(-50%);
+    background: #5767e5;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7);
+  }
 
   &::before {
     content: '';
     position: absolute;
-    top: -2px;
+    top: 0;
     left: 50%;
     transform: translateX(-50%);
-    width: 8px;
-    height: 8px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     background: #5767e5;
   }

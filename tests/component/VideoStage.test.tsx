@@ -51,6 +51,27 @@ describe('VideoStage playback loading', () => {
   })
   afterEach(() => vi.useRealTimers())
 
+  it('蓝色帧时间线可由键盘定位并同步无障碍秒数', async () => {
+    const user = userEvent.setup()
+    const { container } = render(
+      <VideoStage shots={[]} videoUrl="https://cdn.example.com/keyboard-scrub.mp4" onRegenerateVideo={vi.fn()} />,
+    )
+    const player = container.querySelector('video[controls]') as HTMLVideoElement
+    Object.defineProperty(player, 'duration', { configurable: true, value: 15 })
+    Object.defineProperty(player, 'readyState', { configurable: true, value: 2 })
+    fireEvent.durationChange(player)
+    const track = screen.getByRole('slider', { name: '视频帧时间线' })
+    track.focus()
+    await user.keyboard('{ArrowRight}{PageUp}')
+    expect(player.currentTime).toBe(6)
+    expect(track).toHaveAttribute('aria-valuenow', '6')
+    await user.keyboard('{End}')
+    expect(player.currentTime).toBeCloseTo(14.99)
+    await user.keyboard('{Home}{ArrowLeft}')
+    expect(player.currentTime).toBe(0)
+    expect(track).toHaveAttribute('aria-valuenow', '0')
+  })
+
   it('连续拖动时等待当前定位完成再跳到最新目标，不被旧播放进度拉回', () => {
     const { container } = render(
       <VideoStage shots={[]} videoUrl="https://cdn.example.com/scrub.mp4" onRegenerateVideo={vi.fn()} />,
@@ -80,6 +101,23 @@ describe('VideoStage playback loading', () => {
     fireEvent.pointerMove(track, { clientX: 300, pointerId: 1 })
     expect(player.currentTime).toBe(3)
     fireEvent.pointerUp(track, { pointerId: 1 })
+  })
+
+  it('从蓝色播放头按下也能拖动定位', () => {
+    const { container } = render(
+      <VideoStage shots={[]} videoUrl="https://cdn.example.com/scrub-handle.mp4" onRegenerateVideo={vi.fn()} />,
+    )
+    const player = container.querySelector('video[controls]') as HTMLVideoElement
+    Object.defineProperty(player, 'duration', { configurable: true, value: 5 })
+    Object.defineProperty(player, 'readyState', { configurable: true, value: 2 })
+    fireEvent.durationChange(player)
+    const track = screen.getByTitle('点击或拖动时间轴定位播放位置')
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 500 } as DOMRect)
+    const handle = track.querySelector('[aria-hidden="true"]:last-child') as HTMLElement
+    fireEvent.pointerDown(handle, { clientX: 6, button: 0, pointerId: 2 })
+    fireEvent.pointerMove(track, { clientX: 350, pointerId: 2 })
+    expect(screen.getByText('0:03 / 0:05 · 共 5 帧')).toBeInTheDocument()
+    fireEvent.pointerUp(track, { pointerId: 2 })
   })
 
   it('streams the original media URL without fetching the complete Blob first', () => {

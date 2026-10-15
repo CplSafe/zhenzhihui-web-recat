@@ -1399,6 +1399,9 @@ async function submitAiTask({
   signal,
   onImagePartial,
 }) {
+  if (String(operationCode || '').startsWith('video.') && !String(prompt || '').trim()) {
+    throw new Error('请输入视频描述后再生成；仅连接图片或音频仍需要文字描述')
+  }
   if (params?.stream === true && operationCode?.startsWith('image.')) {
     const result = await openAiResponseStream({
       workspaceId,
@@ -1422,6 +1425,10 @@ async function submitAiTask({
     prompt,
     params,
   })
+
+  // createTask 要求 prompt 字段存在。纯素材生成允许留空，但通用空值清理会把它删掉，
+  // 导致后端在解析请求体阶段返回 BAD_REQUEST，而不是进入模型参数校验。
+  requestBody.prompt = typeof prompt === 'string' ? prompt : ''
 
   // Keep the task contract stable for text-to-media requests: when the user does
   // not select a reference image, send an explicit empty collection instead of
