@@ -91,6 +91,14 @@
   transition: opacity 0.12s ease;
 }
 
+/* 指针落在面板下方的「添加下一步」加号上：面板淡出并放行指针，移开即恢复（见 CanvasView panelYielding）。
+   留一点不透明度，用户能看出面板只是让开、没有消失。 */
+.canvas-panel-area.is-yielding {
+  opacity: 0.12;
+  pointer-events: none;
+  transition: opacity var(--canvas-dur-fast) var(--canvas-ease);
+}
+
 /* 从下向上渐入动画（胶囊组水平居中，动画仅在垂直方向滑移） */
 @keyframes canvas-upload-btn-rise {
   from {
@@ -282,6 +290,28 @@
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/*
+ * 左上角的柔和白色渐隐：没有底色时，平移到这里的节点会从 logo 和保存状态背后透出来，
+ * 两层内容搅在一起。实底卡片又太重，这里用一块无边缘的径向渐隐托住品牌区和返回按钮，
+ * 节点滑进来时自然淡出，不出现生硬的框。不拦截指针，下面的节点仍可操作。
+ */
+.canvas-view::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1050;
+  width: 240px;
+  height: 160px;
+  background: radial-gradient(
+    ellipse at top left,
+    rgba(248, 249, 250, 0.94) 0%,
+    rgba(248, 249, 250, 0.8) 45%,
+    rgba(248, 249, 250, 0) 100%
+  );
+  content: '';
+  pointer-events: none;
 }
 
 .canvas-brand-logo {
@@ -566,7 +596,8 @@
   position: absolute;
   top: 104px;
   left: 47px;
-  z-index: 10;
+  /* 与品牌区同档：选中节点会被 React Flow 抬到 1000 以上，停在 10 会被节点盖住 */
+  z-index: 1100;
   width: 44px;
   height: 44px;
   border: none;
@@ -1043,7 +1074,7 @@
   pointer-events: none;
 }
 
-.canvas-node-task span {
+.canvas-node-task > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1062,7 +1093,7 @@
 }
 
 /* 失败原因换行显示、最多 4 行；「正在生成」仍是单行 */
-.canvas-node-task.is-failed span {
+.canvas-node-task.is-failed > span:first-child {
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
@@ -1690,6 +1721,50 @@
   color: #b3bac7;
 }
 
+/* 右键「创建副本」的子选项列表：悬停 / 键盘聚焦时展开在右侧，靠屏幕右缘时翻到左侧 */
+.canvas-context-menu__submenu-host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-context-menu__submenu-host > .canvas-context-menu__item {
+  width: 100%;
+}
+
+.canvas-context-menu.canvas-context-menu__submenu {
+  position: absolute;
+  top: -6px;
+  left: calc(100% + 4px);
+  display: none;
+  min-width: 168px;
+}
+
+.canvas-context-menu__submenu-host.is-flipped > .canvas-context-menu__submenu {
+  left: auto;
+  right: calc(100% + 4px);
+}
+
+/* 悬停时与父项之间的 4px 空隙会让指针「掉出」菜单：用一条透明桥接住 */
+.canvas-context-menu__submenu::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -8px;
+  width: 8px;
+}
+
+.canvas-context-menu__submenu-host.is-flipped > .canvas-context-menu__submenu::before {
+  left: auto;
+  right: -8px;
+}
+
+.canvas-context-menu__submenu-host:hover > .canvas-context-menu__submenu,
+.canvas-context-menu__submenu-host:focus-within > .canvas-context-menu__submenu {
+  display: flex;
+}
+
 /* 粘贴二选一：点外面任意处关闭 */
 .canvas-paste-choice__mask {
   position: fixed;
@@ -1801,4 +1876,368 @@
 }
 .canvas-default-node.is-image-results {
   background: transparent;
+}
+
+.canvas-default-node.is-audio .canvas-node-body {
+  overflow: visible;
+}
+.canvas-default-node.is-audio .canvas-node-header,
+.canvas-default-node.is-audio .canvas-node-body {
+  cursor: grab;
+  user-select: none;
+}
+.react-flow__node.dragging .canvas-default-node.is-audio .canvas-node-header,
+.react-flow__node.dragging .canvas-default-node.is-audio .canvas-node-body {
+  cursor: grabbing;
+}
+.canvas-default-node.is-audio .canvas-node-header__label {
+  cursor: grab;
+}
+
+/* Audio composer matches the light cards used by the other canvas nodes. */
+.canvas-default-node.is-audio .canvas-audio-panel {
+  width: 680px;
+  max-width: min(90vw, 680px);
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #30343b;
+  box-shadow: 0 0 30px rgb(0 0 0 / 10%);
+  overflow: visible;
+}
+.canvas-default-node.is-audio .canvas-audio-panel > div:first-child {
+  display: none;
+}
+/* A generated clip opens a separate editor card; editing controls live on that card only. */
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] {
+  width: 560px;
+  max-width: min(92vw, 560px);
+  max-height: min(78vh, 720px);
+  padding: 0;
+  border-color: #e5ebf0;
+  background: #fff;
+  color: #344054;
+  overflow-y: auto;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] > div:first-child {
+  display: flex;
+  padding: 16px 18px;
+  border-color: #e9eef2;
+  background: #fbfcfe;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] strong {
+  color: #25303b;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] p,
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] small {
+  color: #738191;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] > p {
+  margin: 16px 18px 0;
+  background: #eff7f5;
+  color: #347866;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] > div:last-child {
+  margin: 0;
+  padding: 16px 18px 18px;
+  border-top: 0;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] label {
+  color: #596778;
+  font-size: 12px;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] input[type='number'],
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] select {
+  background: #fff;
+  color: #344054;
+  border-color: #dfe6ed;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] button {
+  background: #f5f8fa;
+  border-color: #dfe6ed;
+  color: #536272;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] button:hover:not(:disabled) {
+  background: #eaf8f4;
+  border-color: #a9d9cb;
+  color: #138d74;
+}
+.canvas-default-node.is-audio
+  .canvas-audio-panel[aria-label='音频编辑']
+  .canvas-audio-editor-actions
+  button:last-of-type {
+  background: #13aa8a;
+  border-color: #13aa8a;
+  color: #fff;
+}
+.canvas-default-node.is-audio
+  .canvas-audio-panel[aria-label='音频编辑']
+  .canvas-audio-editor-actions
+  button:last-of-type:hover:not(:disabled) {
+  background: #0d9276;
+  border-color: #0d9276;
+  color: #fff;
+}
+.canvas-default-node.is-audio .canvas-audio-panel[aria-label='音频编辑'] :is(button, input, select, a):focus-visible {
+  outline: 2px solid #13aa8a;
+  outline-offset: 2px;
+}
+.canvas-default-node.is-audio .canvas-audio-generator {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(100px, 130px) auto;
+  grid-template-rows: 34px minmax(118px, auto) minmax(40px, auto) minmax(40px, auto);
+  align-items: center;
+  gap: 8px 10px;
+  padding: 14px 18px 16px;
+  border-radius: inherit;
+  background: #fff;
+  color: #30343b;
+  font-size: 13px;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='references'] {
+  grid-area: 1 / 1 / 2 / 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='references'] > button {
+  flex: none;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: #f3f6f5;
+  color: #53645f;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt-actions'] {
+  grid-area: 1 / 3 / 2 / 4;
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt-actions'] button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #687383;
+  font-size: 0;
+  cursor: pointer;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt-actions'] button:hover {
+  background: #eef4f2;
+  color: #138d74;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt-actions'] button:first-child::after {
+  content: '⤢';
+  font-size: 20px;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt-actions'] button:last-child::after {
+  content: '↻';
+  font-size: 19px;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt-container'] {
+  grid-area: 2 / 1 / 3 / -1;
+  position: relative;
+  min-width: 0;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt'] {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 118px;
+  max-height: 300px;
+  padding: 10px 12px 32px;
+  border: 1px solid #e7e9f2;
+  border-radius: 10px;
+  outline-offset: 2px;
+  background: #fff;
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.8;
+  resize: vertical;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='prompt']::placeholder {
+  color: #9a9a9a;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='model'] {
+  grid-area: 3 / 1 / 4 / 2;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  font-size: 0;
+}
+.canvas-default-node.is-audio
+  .canvas-audio-generator:not(:has([data-audio-section='mode']))
+  [data-audio-section='model'] {
+  grid-column: 1 / 3;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='mode'] {
+  grid-area: 3 / 2 / 4 / 3;
+  min-width: 0;
+  margin: 0;
+  font-size: 0;
+}
+.canvas-default-node.is-audio .canvas-audio-generator select {
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 22px 0 0;
+  border: 0;
+  border-radius: 4px;
+  background: #fff;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.canvas-default-node.is-audio .canvas-audio-generator select option {
+  background: #fff;
+  color: #344054;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] {
+  grid-area: 3 / 3 / 4 / 4;
+  margin: 0;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] summary {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #687383;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] summary:hover {
+  background: #eef4f2;
+  color: #138d74;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] > div {
+  background: #fff;
+  border-color: #e4e9ef;
+  color: #344054;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='cost-actions'] {
+  grid-area: 4 / 2 / 5 / 3;
+  justify-content: flex-end;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: #687383;
+  font-size: 11px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='cost-actions'][hidden] {
+  display: none;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='cost-actions'] button {
+  padding: 6px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #687383;
+  font-size: 11px;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='hint'] {
+  grid-area: 4 / 2 / 5 / 3;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: #7d8794;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='hint'] span:first-child {
+  display: none;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-action='generate'] {
+  grid-area: 4 / 3 / 5 / 4;
+  width: auto;
+  height: 40px;
+  min-width: 88px;
+  margin: 0;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: #11a98a;
+  color: #fff;
+  font-family: 'PingFang SC', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-action='generate']:hover:not(:disabled) {
+  background: #0e8f75;
+}
+.canvas-default-node.is-audio .canvas-audio-generator [data-audio-action='generate']:disabled {
+  background: #c0c4d0;
+  color: #fff;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.canvas-default-node.is-audio .canvas-audio-generator > p {
+  grid-column: 1 / -1;
+  margin: 6px 0;
+  color: #c7a99a;
+  font-size: 11px;
+}
+.canvas-default-node.is-audio .canvas-audio-panel .canvas-audio-history {
+  margin: 12px 18px 0;
+  color: #aaa;
+  font-size: 11px;
+}
+.canvas-default-node.is-audio .canvas-audio-panel .canvas-audio-history summary {
+  cursor: pointer;
+}
+.canvas-default-node.is-audio .canvas-audio-panel .canvas-audio-history select {
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px;
+  border: 1px solid #454545;
+  border-radius: 7px;
+  background: #333;
+  color: #eee;
+}
+.canvas-default-node.is-audio .canvas-audio-panel > p,
+.canvas-default-node.is-audio .canvas-audio-panel > details:last-child {
+  margin: 0 18px 12px;
+  color: #aaa;
+  font-size: 11px;
+}
+@media (max-width: 620px) {
+  .canvas-default-node.is-audio .canvas-audio-generator {
+    grid-template-columns: minmax(0, 1fr) minmax(80px, 100px) auto;
+    column-gap: 6px;
+  }
+  .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='mode'] {
+    grid-column: 2;
+  }
+  .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='parameters'] {
+    grid-column: 3;
+  }
+  .canvas-default-node.is-audio .canvas-audio-generator [data-audio-section='cost-actions'] {
+    font-size: 10px;
+  }
+  .canvas-default-node.is-audio .canvas-audio-generator [data-audio-action='generate'] {
+    grid-column: 3;
+  }
 }

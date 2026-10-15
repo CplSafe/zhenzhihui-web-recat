@@ -129,11 +129,18 @@ describe('findMentionDeletionRange：@引用整体删除', () => {
   const text = '把 @天安门 放进 @图片2 的场景'
   // '把 ' = 0..2，'@天安门' = 2..6，空格 6，'放进 ' 7..10，'@图片2' = 10..14，空格 14
 
-  it('Backspace 在引用末尾（含其后空格之后）或引用内部：删整条引用及后面的空格', () => {
-    expect(findMentionDeletionRange(text, 7, 'backward', re)).toEqual({ start: 2, end: 7 })
-    expect(findMentionDeletionRange(text, 6, 'backward', re)).toEqual({ start: 2, end: 7 })
+  it('Backspace 两步走：在引用后的空格之后先只删空格，紧贴引用末尾再整条删', () => {
+    // 第一下：光标在空格之后 → 交给浏览器删空格
+    expect(findMentionDeletionRange(text, 7, 'backward', re)).toBeNull()
+    expect(findMentionDeletionRange(text, 15, 'backward', re)).toBeNull()
+    // 第二下：空格没了，光标紧贴引用末尾 → 整条引用一次删掉
+    expect(findMentionDeletionRange('把 @天安门放进', 6, 'backward', re)).toEqual({ start: 2, end: 6 })
+    expect(findMentionDeletionRange(text, 6, 'backward', re)).toEqual({ start: 2, end: 6 })
+    expect(findMentionDeletionRange(text, 14, 'backward', re)).toEqual({ start: 10, end: 14 })
+  })
+
+  it('Backspace 在引用内部：整条连同后面的空格删掉，不留双空格', () => {
     expect(findMentionDeletionRange(text, 4, 'backward', re)).toEqual({ start: 2, end: 7 })
-    expect(findMentionDeletionRange(text, 15, 'backward', re)).toEqual({ start: 10, end: 15 })
   })
 
   it('Delete 在引用开头或内部同样删整条；在引用后面则不处理', () => {

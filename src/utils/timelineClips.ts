@@ -9,6 +9,8 @@
  */
 
 /** 单个片段：引用一条视频素材，并截取它的 [inSec, outSec) 区间。 */
+import { parseTimelineAudio, type TimelineAudioClip } from './canvasAudio'
+
 export interface TimelineClip {
   id: string
   /** 素材 ID：唯一的持久化引用。绝不存签名 URL，播放地址运行时解析。 */
@@ -36,6 +38,9 @@ export interface TimelineClipSource {
 /** 一条时间线的完整状态，直接存进画布节点的 data。 */
 export interface TimelineState {
   clips: TimelineClip[]
+  audioClips?: TimelineAudioClip[]
+  /** 原视频自带声音的混音音量，默认保持 100%。 */
+  originalAudioVolume?: number
   /**
    * 用户主动移出时间线、但连线仍然存在的来源节点。
    *
@@ -806,7 +811,11 @@ export function parseTimelineState(value: unknown): TimelineState {
 
   return {
     clips,
+    ...(record.originalAudioVolume !== undefined && Number.isFinite(Number(record.originalAudioVolume))
+      ? { originalAudioVolume: Math.max(0, Math.min(1, Number(record.originalAudioVolume))) }
+      : {}),
     ...(detached.length ? { detachedSourceNodeIds: detached } : {}),
+    ...(Array.isArray(record.audioClips) ? { audioClips: parseTimelineAudio(record.audioClips) } : {}),
     ...(ratio || resolution ? { output: { ...(ratio ? { ratio } : {}), ...(resolution ? { resolution } : {}) } } : {}),
   }
 }

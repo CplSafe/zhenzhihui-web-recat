@@ -70,7 +70,7 @@ const extractResultAssetIds = (task: any): number[] => {
 export async function findActiveWorkspaceAssetIds(
   workspaceId: number,
   assetIds: readonly number[],
-  type: 'video' | 'image',
+  type: 'video' | 'image' | 'audio',
 ): Promise<Set<number>> {
   const wanted = new Set(assetIds.filter((id) => Number.isSafeInteger(id) && id > 0))
   const found = new Set<number>()
@@ -107,7 +107,7 @@ async function findAssetsByTaskId({
 }: {
   workspaceId: number
   taskId: unknown
-  type: 'video' | 'image' | ''
+  type: 'video' | 'image' | 'audio' | ''
   maxPages?: number
   collectAll?: boolean
 }): Promise<any[]> {
@@ -247,7 +247,7 @@ export async function resolveVerifiedResultAssetId({
 }: {
   workspaceId: number
   task: any
-  type?: 'video' | 'image'
+  type?: 'video' | 'image' | 'audio'
   fallbackTaskId?: unknown
 }): Promise<number> {
   const wsId = Math.floor(Number(workspaceId) || 0)
@@ -263,6 +263,39 @@ export async function resolveVerifiedResultAssetId({
   }
 
   return findAssetIdByTaskId(wsId, task?.id ?? fallbackTaskId, type)
+}
+
+/**
+ * 同上，但返回全部验证通过的结果资产（保持输出顺序）。
+ *
+ * 一次出多张图的任务（「生成数量」> 1）outputs 里有多个 asset_id；只取第一个会让其余几张
+ * 生成了、扣了费，却在画布上悄无声息地丢掉。回执 ID 一个都验证不过时，退回按 task_id 反查的
+ * 单个结果，与 resolveVerifiedResultAssetId 的兜底一致。
+ */
+export async function resolveVerifiedResultAssetIds({
+  workspaceId,
+  task,
+  type = 'video',
+  fallbackTaskId,
+}: {
+  workspaceId: number
+  task: any
+  type?: 'video' | 'image' | 'audio'
+  fallbackTaskId?: unknown
+}): Promise<number[]> {
+  const wsId = Math.floor(Number(workspaceId) || 0)
+  if (!wsId) return []
+
+  try {
+    const candidates = extractResultAssetIds(task)
+    const active = await findActiveWorkspaceAssetIds(wsId, candidates, type)
+    const verified = candidates.filter((assetId) => active.has(assetId))
+    if (verified.length) return verified
+  } catch {
+    // 列表暂不可用时按 task_id 有限重试，不把未经验证的回执 ID 写进节点。
+  }
+
+  return findAssetIdsByTaskId(wsId, task?.id ?? fallbackTaskId, type)
 }
 
 const VIDEO_TYPE_HINT_PATTERN = /(^|[^a-z0-9])(?:video|mp4|m4v|mov|webm|avi|mkv|mpeg|mpg|ogv)(?:$|[^a-z0-9])/i
@@ -355,28 +388,37 @@ export function extractVideoOutputAssetId(task: any): number {
 export async function findAssetIdByTaskId(
   workspaceId: number,
   taskId: any,
-  type: 'video' | 'image' = 'video',
+  type: 'video' | 'image' | 'audio' = 'video',
 ): Promise<number> {
+  return (await findAssetIdsByTaskId(workspaceId, taskId, type))[0] || 0
+}
+
+/** 同上，返回该任务名下的全部素材 ID（一次出多张图时 outputs 常不带 asset_id，只能按 task_id 反查）。 */
+export async function findAssetIdsByTaskId(
+  workspaceId: number,
+  taskId: any,
+  type: 'video' | 'image' | 'audio' = 'video',
+): Promise<number[]> {
   const tId = Number(taskId || 0)
-  if (!workspaceId || !tId) return 0
+  if (!workspaceId || !tId) return []
   for (const [attempt, delayMs] of TASK_ASSET_RETRY_DELAYS_MS.entries()) {
     await wait(delayMs)
     try {
       // 第一次完整翻页，兼顾恢复较旧任务；后续属于“刚完成但资产尚未落库”的短重试，
       // 新资产通常位于列表头部，只查前两页可避免最坏情况下反复发出上百个请求。
-      const [hit] = await findAssetsByTaskId({
+      const hits = await findAssetsByTaskId({
         workspaceId,
         taskId: tId,
         type,
         maxPages: attempt === 0 ? TASK_ASSET_MAX_PAGES : 2,
       })
-      const assetId = Number(hit?.id || 0) || 0
-      if (assetId) return assetId
+      const ids = [...new Set(hits.map((hit: any) => Number(hit?.id || 0)).filter((id) => id > 0))]
+      if (ids.length) return ids
     } catch {
       // 任务已成功但资产落库/列表查询可能短暂失败，继续有限次数重试。
     }
   }
-  return 0
+  return []
 }
 
 // 已完成【视频】任务 → { url, assetId } 的统一解析尾巴:

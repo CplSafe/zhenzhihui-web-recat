@@ -30,6 +30,63 @@ describe('useGenerationModelCatalog', () => {
     mocks.getBusinessErrorMessage.mockImplementation((_reason, fallback) => fallback)
   })
 
+  it('retries a transient video request and recovers without losing successful operations', async () => {
+    let attempts = 0
+    mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) => {
+      if (operationCode !== 'video.generate') return []
+      if (++attempts < 3) throw new TypeError('Failed to fetch')
+      return [{ id: 901, display_name: '恢复后视频模型' }]
+    })
+    const { result } = renderHook(() => useGenerationModelCatalog(91))
+    await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 3000 })
+    expect(attempts).toBe(3)
+    expect(result.current.operationStates['video.generate'].status).toBe('ready')
+  })
+
+  it('keeps only the same workspace successful catalog on transient refresh failure and supports manual recovery', async () => {
+    mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) =>
+      operationCode === 'video.generate' ? [{ id: 902, display_name: '已加载视频模型' }] : [],
+    )
+    const { result } = renderHook(() => useGenerationModelCatalog(92))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) => {
+      if (operationCode === 'video.generate')
+        throw Object.assign(new Error('暂时不可用'), { status: 503, requestId: 'req-video-92' })
+      return []
+    })
+    act(() => result.current.reload())
+    expect(result.current.groups.find((group) => group.key === 'video')?.models[0]?.modelVersionId).toBe(902)
+    await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 3000 })
+    expect(result.current.operationStates['video.generate']).toMatchObject({
+      status: 'error',
+      usingCachedModels: true,
+      availableModelCount: 1,
+      requestId: 'req-video-92',
+      httpStatus: 503,
+    })
+    expect(result.current.groups.find((group) => group.key === 'video')?.models[0]?.modelVersionId).toBe(902)
+    mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) =>
+      operationCode === 'video.generate' ? [{ id: 903, display_name: '最新视频模型' }] : [],
+    )
+    act(() => result.current.reload())
+    await waitFor(() => expect(result.current.operationStates['video.generate'].status).toBe('ready'))
+    expect(result.current.groups.find((group) => group.key === 'video')?.models[0]?.modelVersionId).toBe(903)
+  })
+
+  it('does not retry permission failures or retain cached video models after access is denied', async () => {
+    mocks.listAiModels.mockImplementation(async ({ operationCode }: { operationCode: string }) =>
+      operationCode === 'video.generate' ? [{ id: 904, display_name: '原视频模型' }] : [],
+    )
+    const { result } = renderHook(() => useGenerationModelCatalog(94))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    mocks.listAiModels.mockClear().mockRejectedValue(Object.assign(new Error('禁止访问'), { status: 403 }))
+    act(() => result.current.reload())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(mocks.listAiModels).toHaveBeenCalledTimes(5)
+    expect(result.current.groups.find((group) => group.key === 'video')?.models).toHaveLength(0)
+    expect(result.current.operationStates['video.generate'].usingCachedModels).toBeUndefined()
+  })
+
   it('unwraps direct and commonly wrapped catalog responses', () => {
     const models = [{ id: 1 }]
     expect(unwrapGenerationModelCatalogResponse(models)).toBe(models)

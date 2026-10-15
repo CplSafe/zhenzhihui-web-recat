@@ -305,6 +305,21 @@ describe('generation model catalog', () => {
     expect(imageGroup?.models.map((model) => model.modelVersionId)).toEqual([2, 3, 3])
   })
 
+  it('将目录中真实提供的 Framora 视频模型置顶，不补造未返回的模型', () => {
+    const backendModels = [
+      { id: 1, enabled: true, display_name: 'HappyHorse 1.1', operation_codes: ['video.generate'] },
+      { id: 2, enabled: true, display_name: 'Framora 1.0', operation_codes: ['video.generate'] },
+      { id: 3, enabled: true, display_name: '万相 3.0', operation_codes: ['video.generate'] },
+    ]
+    const video = (models: typeof backendModels) =>
+      buildGenerationModelGroups(models)
+        .find((group) => group.key === 'video')
+        ?.models.map((model) => model.displayName)
+
+    expect(video(backendModels)).toEqual(['Framora 1.0', 'HappyHorse 1.1', '万相 3.0'])
+    expect(video(backendModels.filter((model) => model.id !== 2))).toEqual(['HappyHorse 1.1', '万相 3.0'])
+  })
+
   it('preserves every fixed operation subgroup when one operation has no model', () => {
     const groups = buildGenerationModelGroups([
       {

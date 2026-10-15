@@ -14,14 +14,20 @@ describe('canvasPreferences', () => {
   })
 
   it('保存后能原样读回', () => {
-    saveCanvasPreferences({ ...DEFAULT_CANVAS_PREFERENCES, wheelMode: 'zoom', focusEdgesOnly: true })
-    expect(loadCanvasPreferences()).toMatchObject({ wheelMode: 'zoom', focusEdgesOnly: true })
+    saveCanvasPreferences({
+      ...DEFAULT_CANVAS_PREFERENCES,
+      wheelMode: 'zoom',
+      focusEdgesOnly: true,
+      shortcuts: { ...DEFAULT_CANVAS_PREFERENCES.shortcuts, add: 'K' },
+    })
+    expect(loadCanvasPreferences()).toMatchObject({ wheelMode: 'zoom', focusEdgesOnly: true, shortcuts: { add: 'K' } })
   })
 
   it('非法值回落默认，未知字段丢弃', () => {
     const prefs = normalizeCanvasPreferences({ wheelMode: 'fly', alignmentGuides: 'yes', extra: 1 })
     expect(prefs.wheelMode).toBe('pan')
     expect(prefs.alignmentGuides).toBe(true)
+    expect(prefs.shortcuts).toEqual(DEFAULT_CANVAS_PREFERENCES.shortcuts)
     expect('extra' in prefs).toBe(false)
   })
 

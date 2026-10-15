@@ -47,6 +47,7 @@ describe('backend template catalog', () => {
             {
               id: 1,
               title: '竖屏案例',
+              prompt: '突出模板中的产品主体',
               thumbnail_url: 'javascript:alert(1)',
               video_url: 'https://cdn.example.com/vertical.mp4',
               video_asset_id: 88,
@@ -76,6 +77,7 @@ describe('backend template catalog', () => {
     expect(result[0]).toMatchObject({
       id: 1,
       title: '竖屏案例',
+      prompt: '突出模板中的产品主体',
       thumbnailUrl: '',
       videoUrl: 'https://cdn.example.com/vertical.mp4',
       videoAssetId: 88,

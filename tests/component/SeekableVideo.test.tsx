@@ -98,6 +98,52 @@ describe('SeekableVideo', () => {
     expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled()
   })
 
+  it('探到源不可跳转时边下边播：不暂停、不出浮层，下完在当前播放位置换源并接着播', async () => {
+    const play = vi.mocked(HTMLMediaElement.prototype.play)
+    const video = renderVideo({ autoPlay: true }, 0)
+    Object.defineProperty(video, 'paused', { value: false, configurable: true })
+    setMediaState(video, { currentTime: 3.2 })
+    fireEvent.loadedMetadata(video)
+
+    await waitFor(() => expect(video.getAttribute('src')).toBe('blob:local-1'), { timeout: 2000 })
+    expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+
+    // 本地副本的元数据到达：回到换源那一刻的位置，并继续播放
+    play.mockClear()
+    setMediaState(video, { currentTime: 0 })
+    fireEvent.loadedMetadata(video)
+    expect(video.currentTime).toBe(3.2)
+    await waitFor(() => expect(play).toHaveBeenCalled())
+  })
+
+  it('后台下载途中用户拖进度条：就地升级为暂停 + 进度提示，不重复下载', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    server.use(
+      http.get('/api/v1/assets/55/download', async () => {
+        hits += 1
+        await gate
+        return HttpResponse.arrayBuffer(new Uint8Array(8).buffer, { headers: { 'Content-Type': 'video/mp4' } })
+      }),
+    )
+    const video = renderVideo({}, 0)
+    Object.defineProperty(video, 'paused', { value: false, configurable: true })
+    fireEvent.loadedMetadata(video)
+    await waitFor(() => expect(hits).toBe(1), { timeout: 2000 })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+
+    simulateSeek(video, 14, 1)
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled()
+    expect(screen.getByRole('status')).toHaveTextContent('正在准备可跳转的视频')
+
+    release()
+    await waitFor(() => expect(video.getAttribute('src')).toBe('blob:local-1'))
+    expect(hits).toBe(1)
+  })
+
   it('要求立即准备时不等待媒体元数据，直接生成本地可播放副本', async () => {
     const video = renderVideo({ autoPlay: true, repairOnLoad: false, prepareImmediately: true }, 0)
 

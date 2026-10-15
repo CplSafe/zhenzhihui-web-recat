@@ -161,17 +161,24 @@
   justify-content: center;
   overflow: hidden;
   border-radius: var(--radius-md);
-  background: var(--color-brand);
-  color: #fff;
   font-size: 12px;
   font-weight: 700;
+}
+
+/*
+ * 品牌色底只给没有 logo 的首字母占位。厂商 logo 多是透明底 PNG，
+ * 垫一层品牌蓝会让每家 logo 都被染成蓝色方块，和自带底色的 logo 混排时很突兀。
+ */
+.optionLogoInitial {
+  background: var(--color-brand);
+  color: #fff;
 }
 
 .logoImg {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .optionBody {

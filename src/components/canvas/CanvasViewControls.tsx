@@ -133,7 +133,7 @@ export default function CanvasViewControls({
           type="button"
           className={styles.btn}
           onClick={onOpenHelp}
-          title="快捷键速查（Shift + ?）"
+          title="快捷键速查（? / Shift + /）"
           aria-label="快捷键速查"
         >
           <HelpIcon />

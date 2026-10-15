@@ -18,8 +18,14 @@ const here = dirname(fileURLToPath(import.meta.url))
 const BASE = process.env.TUTORIAL_BASE_URL || 'http://localhost:5173'
 const PROFILE = resolve(here, '.auth/profile')
 const OUT_ROOT = process.env.TUTORIAL_OUT || resolve(here, 'out')
-const FFMPEG = process.env.FFMPEG || resolve(process.env.LOCALAPPDATA, 'Programs/Python/Python313/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe')
-const W = 1920, H = 1080
+const FFMPEG =
+  process.env.FFMPEG ||
+  resolve(
+    process.env.LOCALAPPDATA,
+    'Programs/Python/Python313/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe',
+  )
+const W = 1920,
+  H = 1080
 
 const OVERLAY_CSS = `
 #__tut_cursor{position:fixed;left:0;top:0;width:22px;height:22px;margin:-4px 0 0 -4px;pointer-events:none;z-index:2147483646;
@@ -98,24 +104,28 @@ export async function runTour(tourPath) {
   const ensure = () => page.evaluate(OVERLAY_JS)
 
   const api = {
-    page, BASE,
+    page,
+    BASE,
     /** 开始一条新短片（切片边界） */
     async clip(title) {
       if (cur && cur.end == null) cur.end = now()
       cur = { title, start: now() + 0.3, end: null }
       clips.push(cur)
-      await ensure(); await page.evaluate(() => window.__tut.caption(''))
+      await ensure()
+      await page.evaluate(() => window.__tut.caption(''))
       await page.waitForTimeout(400)
     },
     /** 立即结束当前短片（后面的等待不进成片） */
     async cut() {
       if (cur && cur.end == null) cur.end = now() + 0.3
       await page.waitForTimeout(350)
-      await ensure(); await page.evaluate(() => window.__tut.caption(''))
+      await ensure()
+      await page.evaluate(() => window.__tut.caption(''))
     },
     /** 显示字幕（不自动消失） */
     async say(text, hold = 800) {
-      await ensure(); await page.evaluate((t) => window.__tut.caption(t), text)
+      await ensure()
+      await page.evaluate((t) => window.__tut.caption(t), text)
       await page.waitForTimeout(hold)
     },
     /** 光标平滑移动到元素中心 */
@@ -124,12 +134,14 @@ export async function runTour(tourPath) {
       await el.scrollIntoViewIfNeeded().catch(() => {})
       const b = await el.boundingBox()
       if (!b) throw new Error('元素不可见: ' + locator)
-      const tx = b.x + b.width / 2 + dx, ty = b.y + b.height / 2 + dy
+      const tx = b.x + b.width / 2 + dx,
+        ty = b.y + b.height / 2 + dy
       await ensure()
       const steps = Math.max(8, Math.round(ms / 25))
       for (let i = 1; i <= steps; i++) {
         const k = 1 - Math.pow(1 - i / steps, 3)
-        const x = mouse.x + (tx - mouse.x) * k, y = mouse.y + (ty - mouse.y) * k
+        const x = mouse.x + (tx - mouse.x) * k,
+          y = mouse.y + (ty - mouse.y) * k
         await page.mouse.move(x, y)
         await page.evaluate(([x, y]) => window.__tut.move(x, y), [x, y])
         await page.waitForTimeout(25)
@@ -145,9 +157,12 @@ export async function runTour(tourPath) {
       const el = typeof locator === 'string' ? page.locator(locator).first() : locator
       const b2 = await el.boundingBox().catch(() => null)
       if (b2) {
-        const nx = b2.x + b2.width / 2 + (opts.dx ?? 0), ny = b2.y + b2.height / 2 + (opts.dy ?? 0)
+        const nx = b2.x + b2.width / 2 + (opts.dx ?? 0),
+          ny = b2.y + b2.height / 2 + (opts.dy ?? 0)
         if (Math.abs(nx - x) > 3 || Math.abs(ny - y) > 3) {
-          x = nx; y = ny; mouse = { x, y }
+          x = nx
+          y = ny
+          mouse = { x, y }
           await page.mouse.move(x, y)
           await page.evaluate(([x, y]) => window.__tut.move(x, y), [x, y])
           await page.waitForTimeout(80)
@@ -205,8 +220,26 @@ export async function runTour(tourPath) {
   const list = []
   clips.forEach((c, i) => {
     const file = resolve(outDir, `${String(i + 1).padStart(2, '0')}-${c.title.replace(/[\\/:*?"<>|\s]/g, '')}.mp4`)
-    ff(['-ss', c.start.toFixed(2), '-to', c.end.toFixed(2), '-i', raw,
-      '-vf', 'fps=30,format=yuv420p', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-an', '-movflags', '+faststart', file])
+    ff([
+      '-ss',
+      c.start.toFixed(2),
+      '-to',
+      c.end.toFixed(2),
+      '-i',
+      raw,
+      '-vf',
+      'fps=30,format=yuv420p',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'medium',
+      '-crf',
+      '18',
+      '-an',
+      '-movflags',
+      '+faststart',
+      file,
+    ])
     list.push(file)
     console.log('✔', basename(file), `${(c.end - c.start).toFixed(1)}s`)
   })
@@ -218,7 +251,10 @@ export async function runTour(tourPath) {
     const total = clips.reduce((s, c) => s + (c.end - c.start), 0)
     console.log('★', basename(full), `${total.toFixed(1)}s`)
     // 单条主流程视频：把切片和完整版合一，删掉中间切片
-    if (tour.single) { for (const f of list) rmSync(f, { force: true }); rmSync(concat, { force: true }) }
+    if (tour.single) {
+      for (const f of list) rmSync(f, { force: true })
+      rmSync(concat, { force: true })
+    }
   }
   if (failed) process.exitCode = 1
   console.log('输出目录:', outDir)
@@ -226,7 +262,9 @@ export async function runTour(tourPath) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const tourPath = process.argv[2]
-  if (!tourPath) { console.error('用法: node.exe tools/tutorial/recorder.mjs <tour.mjs>'); process.exit(2) }
+  if (!tourPath) {
+    console.error('用法: node.exe tools/tutorial/recorder.mjs <tour.mjs>')
+    process.exit(2)
+  }
   await runTour(tourPath)
 }
-

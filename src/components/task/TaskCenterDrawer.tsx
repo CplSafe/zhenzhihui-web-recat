@@ -1119,8 +1119,18 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     }
     const record = task as TaskRecord
     const taskId = String(readValue(record, 'id', 'taskId', 'task_id') ?? '')
-    const generationId = String(task.generationId || '')
-    const projectId = Number(task.projectId || 0) || 0
+    // 同一条视频可能同时有「本会话实时任务」和「后端历史」两份记录（id 不同），列表去重后只显示一份。
+    // 只处理被点的那份，另一份会在去重后顶上来，看起来像没删掉——按身份键把所有重复记录一起处理。
+    const deletedKeys = new Set(taskIdentityKeys(task))
+    const isSameTask = (item: TaskCenterTask) =>
+      item.id === taskId || taskIdentityKeys(item).some((key) => deletedKeys.has(key))
+    // 显示出来的常是实时那份，它不带项目视频 id；要删项目视频得取历史那份的 generationId
+    const videoRecord =
+      [task, ...historicalTasks.filter(isSameTask)].find((item) =>
+        String(item.generationId || '').startsWith('history:'),
+      ) || task
+    const generationId = String(videoRecord.generationId || '')
+    const projectId = Number(videoRecord.projectId || task.projectId || 0) || 0
     const videoId =
       generationId.startsWith('history:') && !generationId.startsWith('history:image:')
         ? generationId.slice('history:'.length)
@@ -1146,10 +1156,11 @@ export default function TaskCenterDrawer({ scope, onScopeChange, className }: Ta
     const historyKey = pageCacheKey('task-history', workspaceId, currentUserId)
     const cachedHistory = readPageCache<TaskCenterHistoryResult>(historyKey)
     if (cachedHistory) {
-      writePageCache(historyKey, { ...cachedHistory, tasks: cachedHistory.tasks.filter((item) => item.id !== taskId) })
+      writePageCache(historyKey, { ...cachedHistory, tasks: cachedHistory.tasks.filter((item) => !isSameTask(item)) })
     }
-    if (tasks.some((storedTask) => storedTask.id === taskId)) archiveTask(taskId)
-    else setHiddenHistoryIds((previous) => new Set(previous).add(taskId))
+    tasks.filter(isSameTask).forEach((storedTask) => archiveTask(storedTask.id))
+    const hiddenIds = historicalTasks.filter(isSameTask).map((item) => item.id)
+    setHiddenHistoryIds((previous) => new Set([...previous, taskId, ...hiddenIds]))
     showToast(deletesVideo ? '视频已删除' : '已从任务管理中移除', 'success')
   }
 

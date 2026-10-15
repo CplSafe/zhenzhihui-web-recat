@@ -519,6 +519,49 @@
   font-size: 12px;
 }
 
+.audioTracks {
+  border-top: 1px solid #313947;
+}
+.audioTrack {
+  position: relative;
+  height: 43px;
+  border-bottom: 1px solid #2b3340;
+  background: #101720;
+  overflow: hidden;
+}
+.audioTrackName {
+  position: absolute;
+  right: 10px;
+  top: 4px;
+  z-index: 1;
+  color: #a4b0bf;
+  font-size: 10px;
+  pointer-events: none;
+}
+.audioTrackClip {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  min-width: 2px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #eaf7ff;
+  font-size: 11px;
+  background: #476eae;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%);
+}
+.audioTrackClip small {
+  opacity: 0.75;
+  margin-left: 6px;
+}
+.bgmTrack .audioTrackClip {
+  background: #2d8068;
+}
+
 .clip {
   position: absolute;
   top: 6px;

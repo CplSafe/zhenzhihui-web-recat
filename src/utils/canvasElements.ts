@@ -22,13 +22,14 @@ import {
 } from '@/utils/canvasGeneration'
 import type { SmartRealPersonReference } from '@/utils/smartRealPerson'
 import type { TimelineState } from '@/utils/timelineClips'
+import type { AudioSettings } from '@/utils/canvasAudio'
 
 /** 单条节点生成历史：只存耐久 assetId 与轻量元数据（禁存 dataURL/签名地址，见 posterAssetId 注释的请求体上限约束）。 */
 export interface CanvasResultHistoryEntry {
   /** 生成结果素材 ID（耐久，展示时按它现算下载地址） */
   assetId: number
   /** 结果类型：决定缩略图用 <img> 还是 <video> 首帧 */
-  kind: 'image' | 'video'
+  kind: 'image' | 'video' | 'audio'
   /** 生成时间（ISO），用于排序与展示 */
   createdAt: string
   /** 生成时所用提示词，回看时可辨识（可选） */
@@ -77,8 +78,14 @@ interface SerializableNodeData {
   operationCode?: string
   /** 节点 params_schema 参数（生成时写入，刷新后回显/复用） */
   params?: Record<string, unknown>
+  audioReferences?: Array<{ assetId: number; workspaceId: number; title: string }>
   /** 最近一次生成任务 ID（在途/已完成均可，用于刷新后续轮询） */
   taskId?: number
+  taskFailure?: import('./generationFailure').GenerationFailure
+  taskFailureHistory?: import('./generationFailure').GenerationFailure[]
+  taskIdempotencyKey?: string
+  taskSubmissionFingerprint?: string
+  taskSubmitInterrupted?: boolean
   taskRunId?: string
   /** 最近一次任务状态 */
   taskStatus?: string
@@ -93,6 +100,10 @@ interface SerializableNodeData {
   realPerson?: SmartRealPersonReference
   /** 剪辑时间线节点的片段表（顺序/裁剪/静音），是该节点唯一的业务内容 */
   timeline?: TimelineState
+  audio?: AudioSettings
+  /** 生成结果旁的独立编辑节点，以及它所引用的源音频。 */
+  audioRole?: 'editor'
+  sourceAudioNodeId?: string
   /**
    * 所属分组的 id；未分组时不写该字段。
    *
@@ -128,7 +139,13 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'prompt',
   'operationCode',
   'params',
+  'audioReferences',
   'taskId',
+  'taskFailure',
+  'taskFailureHistory',
+  'taskIdempotencyKey',
+  'taskSubmissionFingerprint',
+  'taskSubmitInterrupted',
   'taskRunId',
   'taskStatus',
   'taskProgress',
@@ -137,6 +154,9 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'taskUpdatedAt',
   'realPerson',
   'timeline',
+  'audio',
+  'audioRole',
+  'sourceAudioNodeId',
   'groupId',
   'groupName',
 ] as const satisfies readonly (keyof SerializableNodeData)[]
@@ -490,9 +510,13 @@ export function collectCanvasElementAssetIds(elements: CanvasElementMutation[]):
     const data = (node.data || {}) as Record<string, unknown>
     add(data.assetId)
     add(data.posterAssetId)
+    if (Array.isArray(data.audioReferences)) data.audioReferences.forEach((reference) => add(reference?.assetId))
     if (Array.isArray(data.imageResultAssetIds)) data.imageResultAssetIds.forEach(add)
-    const timeline = data.timeline as { clips?: Array<{ assetId?: unknown }> } | undefined
+    const timeline = data.timeline as
+      | { clips?: Array<{ assetId?: unknown }>; audioClips?: Array<{ assetId?: unknown }> }
+      | undefined
     for (const clip of timeline?.clips || []) add(clip?.assetId)
+    for (const clip of timeline?.audioClips || []) add(clip?.assetId)
   }
   return ids
 }

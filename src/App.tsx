@@ -15,6 +15,7 @@ import { captureInviteCode } from './utils/inviteCode'
 import { readLoginReturnTo, sanitizeLoginReturnTo } from './utils/loginReturnTo'
 import { APP_HOME_PATH } from './utils/sidebarNavigation'
 import { prefetchCommonRoutesWhenIdle } from './router/routePrefetch'
+import { installFullscreenVideoSpaceToggle } from './utils/fullscreenVideoSpace'
 import './App.css'
 
 /** 登录后按需加载的帮助中心悬浮入口。 */
@@ -148,6 +149,9 @@ export function AppShell() {
     if (!isAuthenticated || !hasChecked) return
     return prefetchCommonRoutesWhenIdle()
   }, [isAuthenticated, hasChecked])
+
+  // 全屏看视频时空格只做播放/暂停（否则可能误触弹窗的关闭按钮，或干脆没反应）
+  useEffect(() => installFullscreenVideoSpaceToggle(), [])
 
   // 进站即捕获分享链接里的推广邀请码(/login?invite_code=…),存起来供后续注册使用,避免路由跳转丢 query。
   useEffect(() => {

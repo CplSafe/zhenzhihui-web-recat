@@ -1,7 +1,10 @@
 import { render } from '@testing-library/react'
 import { Position } from '@xyflow/react'
 import { describe, expect, it } from 'vitest'
-import CanvasArrowEdge, { canvasConnectionRoleLabel } from '@/components/canvas/CanvasArrowEdge'
+import CanvasArrowEdge, {
+  canvasConnectionDisplayRole,
+  canvasConnectionRoleLabel,
+} from '@/components/canvas/CanvasArrowEdge'
 
 /**
  * 这个边型存在的理由，是箭头必须「随边一起画出来」而不是去引用别处的 marker 定义。
@@ -36,7 +39,19 @@ describe('CanvasArrowEdge', () => {
     expect(canvasConnectionRoleLabel('first_frame')).toBe('首帧')
     expect(canvasConnectionRoleLabel('last_frame')).toBe('尾帧')
     expect(canvasConnectionRoleLabel('source_video')).toBe('')
+    expect(canvasConnectionRoleLabel('audio_track')).toBe('音轨')
+    expect(canvasConnectionRoleLabel('video_clip')).toBe('画面片段')
+    expect(canvasConnectionRoleLabel('audio_reference')).toBe('声音参考')
+    expect(canvasConnectionRoleLabel('audio_model_reference')).toBe('模型参考音频')
     expect(canvasConnectionRoleLabel('unknown')).toBe('')
+  })
+
+  it('按源和目标节点区分音频连线用途', () => {
+    expect(canvasConnectionDisplayRole('audio', 'audio')).toBe('audio_reference')
+    expect(canvasConnectionDisplayRole('audio', 'video')).toBe('audio_model_reference')
+    expect(canvasConnectionDisplayRole('audio', 'timeline')).toBe('audio_track')
+    expect(canvasConnectionDisplayRole('video', 'timeline')).toBe('video_clip')
+    expect(canvasConnectionDisplayRole('image', 'video')).toBeUndefined()
   })
 
   it('箭头与连线同批渲染，且不引用任何外部 marker', () => {

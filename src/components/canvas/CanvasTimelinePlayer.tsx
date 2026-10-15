@@ -25,11 +25,14 @@ import styles from './CanvasTimelinePlayer.module.css'
 interface CanvasTimelinePlayerProps {
   clips: readonly TimelineClip[]
   workspaceId: number
+  /** 原视频声音的试听音量；逐片段静音仍优先。 */
+  originalAudioVolume?: number
   /** 紧凑模式：画布节点内嵌使用，控件更小、不显示片段序号。 */
   compact?: boolean
   /** 受控播放头；不传则由播放器自己维护（节点内嵌就是这种）。 */
   playheadSec?: number
   onPlayheadChange?: (seconds: number) => void
+  onPlayingChange?: (playing: boolean) => void
   /** 提供后片段块上出现移除按钮；不提供则轨道是只读的。 */
   onRemoveClip?: (clipId: string) => void
   /** 提供后轨道末尾出现「+」，空时间线也显示居中的添加入口。 */
@@ -74,9 +77,11 @@ const roundedPlayhead = (seconds: number) => Math.round(seconds * 1000) / 1000
 export default function CanvasTimelinePlayer({
   clips,
   workspaceId,
+  originalAudioVolume = 1,
   compact = false,
   playheadSec: controlledPlayheadSec,
   onPlayheadChange,
+  onPlayingChange,
   onRemoveClip,
   onAddClip,
   hideTimeline = false,
@@ -86,6 +91,9 @@ export default function CanvasTimelinePlayer({
   const [activeSlot, setActiveSlot] = useState(0)
   const [innerPlayheadSec, setInnerPlayheadSec] = useState(0)
   const [playing, setPlaying] = useState(false)
+  useEffect(() => {
+    onPlayingChange?.(playing)
+  }, [playing, onPlayingChange])
 
   const controlled = controlledPlayheadSec !== undefined
   const playheadSec = controlled ? controlledPlayheadSec : innerPlayheadSec
@@ -239,12 +247,13 @@ export default function CanvasTimelinePlayer({
         // 后备槽位复用时同样保证元数据事件必然触发。
         video.load()
       }
-      video.muted = clip.muted === true
+      video.muted = clip.muted === true || originalAudioVolume === 0
+      video.volume = originalAudioVolume
       seekSlot(video, sourceTimeSec)
     },
     // slotRefs 是两个稳定的 ref 容器，逐个列出会让依赖数组每次渲染都变化
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [urlOf, seekSlot],
+    [urlOf, seekSlot, originalAudioVolume],
   )
 
   // 当前段绑定到活动槽位，下一段预加载到备用槽位——切换时才不会黑一帧

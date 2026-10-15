@@ -838,6 +838,11 @@ export async function estimateShotImageCost(args: {
   /** 与 modelVersionId 对应的后端模型详情，用于保持估价与提交参数一致。 */
   modelVersion?: any
   modelPlanCandidates?: string[]
+  /**
+   * 本次要提交的提示词。GPT Image 这类按输入 token 计费的模型，不带提示词估出来偏低——
+   * 入口按钮带着提示词估「约0.18元」、确认框不带估成「约0.1元」，同一次生成前后两个价。
+   */
+  prompt?: string
 }): Promise<any> {
   const fallbackReferenceCount = args.hasRefs ? 1 : 0
   const referenceImageCount =
@@ -872,6 +877,7 @@ export async function estimateShotImageCost(args: {
     workspaceId: args.workspaceId,
     modelVersionId: explicitModel?.id || model.id,
     operationCode,
+    ...(args.prompt ? { prompt: args.prompt } : {}),
     params,
   })
 }

@@ -250,13 +250,19 @@
 }
 
 .vstageTrack {
+  &:focus-visible {
+    outline: 2px solid #5767e5;
+    outline-offset: 3px;
+  }
   position: relative;
   height: 96px;
   border-radius: 12px;
   overflow: hidden;
   background: rgba(51, 51, 51, 0.04);
-  cursor: crosshair;
+  // 可按住拖动播放线：用左右拖拽光标提示「能拖」
+  cursor: ew-resize;
   touch-action: none;
+  user-select: none;
 }
 
 .vstageFrame {
@@ -362,21 +368,35 @@
 
 .vstagePlayhead {
   position: absolute;
+  z-index: 2;
   top: 0;
   bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: #5767e5;
-  pointer-events: none;
+  // 扩大实际命中范围，拖顶端把手或蓝线都能由轨道接收 pointerdown。
+  width: 16px;
+  transform: translateX(-50%);
+  cursor: ew-resize;
+  touch-action: none;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 3px;
+    transform: translateX(-50%);
+    background: #5767e5;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7);
+  }
 
   &::before {
     content: '';
     position: absolute;
-    top: -2px;
+    top: 0;
     left: 50%;
     transform: translateX(-50%);
-    width: 8px;
-    height: 8px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     background: #5767e5;
   }

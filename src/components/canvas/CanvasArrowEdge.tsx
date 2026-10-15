@@ -43,7 +43,23 @@ export function canvasConnectionRoleLabel(role: unknown): string {
     first_frame: '首帧',
     last_frame: '尾帧',
   }
+  const audioLabels: Record<string, string> = {
+    audio_track: '音轨',
+    video_clip: '画面片段',
+    audio_reference: '声音参考',
+    audio_model_reference: '模型参考音频',
+  }
+  if (audioLabels[String(role || '')]) return audioLabels[String(role || '')]
   return labels[String(role || '') as CanvasConnectionRole] || ''
+}
+
+/** 连线标签说明实际用途；不改变提交给模型的 input_assets role。 */
+export function canvasConnectionDisplayRole(sourceKind: string, targetKind: string): string | undefined {
+  if (targetKind === 'timeline' && sourceKind === 'audio') return 'audio_track'
+  if (targetKind === 'timeline' && (sourceKind === 'video' || sourceKind === 'timeline')) return 'video_clip'
+  if (sourceKind === 'audio' && targetKind === 'audio') return 'audio_reference'
+  if (sourceKind === 'audio' && targetKind === 'video') return 'audio_model_reference'
+  return undefined
 }
 
 export default function CanvasArrowEdge({
@@ -69,7 +85,7 @@ export default function CanvasArrowEdge({
   })
   const color = (style?.stroke as string) || CANVAS_EDGE_ARROW_COLOR
   const rotation = ARROW_ROTATION[targetPosition] ?? 0
-  const roleLabel = canvasConnectionRoleLabel(data?.role)
+  const roleLabel = canvasConnectionRoleLabel(data?.displayRole || data?.role)
 
   return (
     <>

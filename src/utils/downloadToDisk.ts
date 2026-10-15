@@ -32,6 +32,13 @@ const MEDIA_EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
   'video/mp4': 'mp4',
   'video/webm': 'webm',
   'video/quicktime': 'mov',
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/aac': 'aac',
 }
 
 /** 微信内置 WebView 不可靠支持 blob URL 与 a[download]，需要改走原始 HTTP 媒体地址。 */
@@ -75,8 +82,11 @@ async function sniffMediaMime(blob: Blob): Promise<string> {
     if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
     if (asciiAt(bytes, 0, 'GIF87a') || asciiAt(bytes, 0, 'GIF89a')) return 'image/gif'
     if (asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'WEBP')) return 'image/webp'
+    if (asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'WAVE')) return 'audio/wav'
+    if (asciiAt(bytes, 0, 'ID3')) return 'audio/mpeg'
     if (asciiAt(bytes, 4, 'ftyp')) {
       if (asciiAt(bytes, 8, 'avif') || asciiAt(bytes, 8, 'avis')) return 'image/avif'
+      if (asciiAt(bytes, 8, 'M4A ') || asciiAt(bytes, 8, 'M4B ')) return 'audio/mp4'
       return 'video/mp4'
     }
     if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
@@ -94,10 +104,11 @@ export async function detectDownloadedMediaType(
   responseContentType = '',
   fallbackMimeType = '',
 ): Promise<DownloadedMediaType> {
+  const sniffed = await sniffMediaMime(blob)
+  const declared = normalizeMediaMime(responseContentType) || normalizeMediaMime(blob.type)
   const mimeType =
-    (await sniffMediaMime(blob)) ||
-    normalizeMediaMime(responseContentType) ||
-    normalizeMediaMime(blob.type) ||
+    (sniffed === 'video/mp4' && declared === 'audio/mp4' ? declared : sniffed) ||
+    declared ||
     normalizeMediaMime(fallbackMimeType) ||
     'application/octet-stream'
   return {

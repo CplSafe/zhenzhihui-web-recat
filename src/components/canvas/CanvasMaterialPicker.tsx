@@ -16,7 +16,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { listAssets, getAssetDownloadUrl } from '@/api/business'
 import { listRealPeople } from '@/api/realPeople'
-import { createMaterialFromAsset, isVideoMaterial } from '@/utils/materials'
+import { resolveCanvasAssetRealPerson } from '@/utils/canvasRealPerson'
+import { useToast } from '@/composables/useToast'
+import { createMaterialFromAsset, isVideoMaterial, isAudioMaterial } from '@/utils/materials'
+import { isCanvasAudioEntryVisible } from '@/utils/canvasFeatureFlags'
 import {
   createSmartRealPersonReference,
   isReadyRealPersonAsset,
@@ -67,6 +70,13 @@ interface CanvasMaterialPickerProps {
   onClose: () => void
   /** 点击「应用」时回调（解析好同源流式地址后传入） */
   onApply: (material: MaterialItem) => void
+  /**
+   * 多选上限：给了它（「选参考」模式）弹窗改为勾选模式，卡片点选切换、底部确认一次性添加。
+   * 值是目标节点还能接的参考数量，超出的勾选会被拦下并提示。
+   */
+  selectionLimit?: number
+  /** 多选确认时回调（每项都已解析好同源流式地址）。 */
+  onApplyMany?: (materials: MaterialItem[]) => void
 }
 
 const PAGE_SIZE = 30
@@ -239,7 +249,7 @@ function MaterialThumb({
   if (!src) {
     return (
       <div ref={rootRef} className={styles.itemMediaPlaceholder}>
-        <span>{isVideoMaterial(item) ? '视频' : '图片'}</span>
+        <span>{isAudioMaterial(item) ? '音频' : isVideoMaterial(item) ? '视频' : '图片'}</span>
         <b>加载中</b>
       </div>
     )
@@ -248,7 +258,16 @@ function MaterialThumb({
   // 数据返回后才渲染媒体节点，并回传真实宽高比例
   return (
     <div ref={rootRef} className={styles.itemMedia}>
-      {isVideo ? (
+      {isAudioMaterial(item) ? (
+        <audio
+          src={src}
+          controls
+          preload="metadata"
+          onClick={(e) => e.stopPropagation()}
+          onError={handleError}
+          aria-label={`${item.name}试听`}
+        />
+      ) : isVideo ? (
         <video
           src={src}
           muted
@@ -286,26 +305,63 @@ function ModalCard({
   item,
   workspaceId,
   onApply,
+  selectable = false,
+  selected = false,
+  selectionIndex = 0,
+  onToggle,
 }: {
   item: MaterialItem
   workspaceId: number
   onApply: (item: MaterialItem) => void
+  /** 多选模式：整张卡片点击切换勾选，不再浮出「应用」。 */
+  selectable?: boolean
+  selected?: boolean
+  /** 勾选顺序（从 1 起），即落到目标节点上的参考顺序。 */
+  selectionIndex?: number
+  onToggle?: (item: MaterialItem) => void
 }) {
   const [ratio, setRatio] = useState(item.ratio || '')
   const sizeText = formatBytes(item.sizeBytes)
   return (
-    <div className={styles.modalCard}>
+    <div
+      className={`${styles.modalCard}${selected ? ` ${styles.modalCardSelected}` : ''}`}
+      onClick={selectable ? () => onToggle?.(item) : undefined}
+      role={selectable ? 'checkbox' : undefined}
+      aria-checked={selectable ? selected : undefined}
+      aria-label={selectable ? item.name || '素材' : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      onKeyDown={
+        selectable
+          ? (event) => {
+              if (event.key === ' ' || event.key === 'Enter') {
+                event.preventDefault()
+                onToggle?.(item)
+              }
+            }
+          : undefined
+      }
+    >
       {/* 类型标签（左上角） */}
-      <span className={styles.modalType}>{isVideoMaterial(item) ? '视频' : '图片'}</span>
+      <span className={styles.modalType}>
+        {isAudioMaterial(item) ? '音频' : isVideoMaterial(item) ? '视频' : '图片'}
+      </span>
+      {/* 多选勾选标记（右上角）：选中时显示序号，即连到节点上的参考顺序 */}
+      {selectable && (
+        <span className={`${styles.modalCheck}${selected ? ` ${styles.modalCheckOn}` : ''}`} aria-hidden="true">
+          {selected ? selectionIndex : ''}
+        </span>
+      )}
       {/* 封面区域：hover 时「应用」按钮浮现在图片上 */}
       <div className={styles.modalCover}>
         <MaterialThumb item={item} workspaceId={workspaceId} onRatio={setRatio} />
-        {/* 悬浮操作栏：图片上垂直居中浮现「应用」 */}
-        <div className={styles.materialActions}>
-          <button className={styles.materialActionBtn} onClick={() => onApply(item)}>
-            应用
-          </button>
-        </div>
+        {/* 悬浮操作栏：图片上垂直居中浮现「应用」；多选模式下点整张卡片即可，不再需要 */}
+        {!selectable && (
+          <div className={styles.materialActions}>
+            <button className={styles.materialActionBtn} onClick={() => onApply(item)}>
+              应用
+            </button>
+          </div>
+        )}
       </div>
       {/* 底部信息区：比例 + 大小（不被应用按钮遮挡） */}
       <div className={styles.modalInfo}>
@@ -339,8 +395,35 @@ export default function CanvasMaterialPicker({
   initialTab = 'all',
   onClose,
   onApply,
+  selectionLimit,
+  onApplyMany,
 }: CanvasMaterialPickerProps) {
   const [tab, setTab] = useState<TabKey>('all')
+  const multiSelect = typeof selectionLimit === 'number' && Boolean(onApplyMany)
+  // 勾选顺序即参考顺序；跨 tab 保留，切 tab 继续挑
+  const [picked, setPicked] = useState<MaterialItem[]>([])
+  const [pickHint, setPickHint] = useState('')
+  const [applying, setApplying] = useState(false)
+  useEffect(() => {
+    if (!visible) {
+      setPicked([])
+      setPickHint('')
+    }
+  }, [visible])
+  const togglePicked = useCallback(
+    (item: MaterialItem) => {
+      setPickHint('')
+      setPicked((current) => {
+        if (current.some((entry) => entry.id === item.id)) return current.filter((entry) => entry.id !== item.id)
+        if (current.length >= (selectionLimit ?? 0)) {
+          setPickHint(`当前最多还能添加 ${selectionLimit} 个参考`)
+          return current
+        }
+        return [...current, item]
+      })
+    },
+    [selectionLimit],
+  )
   const [items, setItems] = useState<MaterialItem[]>([])
   const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(0)
@@ -426,7 +509,7 @@ export default function CanvasMaterialPicker({
             }
           })
           // 真人素材与普通素材隔离：「全部」不混入真人素材（参考 ResourceManagementView）
-          .filter((item) => type !== 'all' || item.source !== 'real_person')
+          .filter((item) => (type !== 'all' || item.source !== 'real_person') && isCanvasAudioEntryVisible(item.type))
         // 请求期间 tab 已切换：丢弃结果，不更新界面
         if (tabRef.current !== type || requestSeqRef.current !== seq) return
         setItems((prev) => (reset ? mapped : [...prev, ...mapped]))
@@ -458,7 +541,11 @@ export default function CanvasMaterialPicker({
     let cancelled = false
     if (userId) setFavoriteVideoUserScope(userId)
     const favorites = loadFavorites(workspaceId)
-    setItems(favorites.map((f) => favoriteToMaterial(f, favoriteMediaUrlOf(f))))
+    setItems(
+      favorites
+        .map((f) => favoriteToMaterial(f, favoriteMediaUrlOf(f)))
+        .filter((item) => isCanvasAudioEntryVisible(item.type)),
+    )
     setPage(0)
     setHasMore(false)
     Promise.all(
@@ -474,7 +561,7 @@ export default function CanvasMaterialPicker({
         }
       }),
     ).then((cards) => {
-      if (!cancelled) setItems(cards)
+      if (!cancelled) setItems(cards.filter((item) => isCanvasAudioEntryVisible(item.type)))
     })
     return () => {
       cancelled = true
@@ -508,18 +595,69 @@ export default function CanvasMaterialPicker({
     return () => io.disconnect()
   }, [hasMore, loading, loadMore])
 
-  /** 点击「应用」：解析同源流式地址后回调（面板保持打开，可连续应用） */
+  const { showToast } = useToast()
+  const resolveMaterialIdentities = useCallback(
+    async (materials: MaterialItem[]): Promise<MaterialItem[]> => {
+      if (!materials.some((item) => item.type === 'image')) return materials
+      let people: Awaited<ReturnType<typeof listRealPeople>>
+      try {
+        people = await listRealPeople({ workspaceId })
+      } catch {
+        throw new Error('真人身份查询失败，请稍后重试添加素材')
+      }
+      return materials.map((item) => {
+        if (item.type !== 'image') return item
+        const realPerson = resolveCanvasAssetRealPerson(item.assetId, people, workspaceId)
+        if (!realPerson && (item.realPerson || item.source === 'real_person')) {
+          throw new Error('该真人素材已失效，请重新选择真人素材')
+        }
+        return { ...item, realPerson: realPerson ?? undefined, source: realPerson ? 'real_person' : item.source }
+      })
+    },
+    [workspaceId],
+  )
+
+  /** 点击「应用」：先确认素材身份，再解析同源流式地址（面板保持打开）。 */
   const handleApply = useCallback(
     async (item: MaterialItem) => {
       try {
-        const url = await getAssetDownloadUrl({ workspaceId, assetId: item.assetId })
-        onApply({ ...item, src: url })
-      } catch {
-        onApply({ ...item, src: '' })
+        const [resolved] = await resolveMaterialIdentities([item])
+        let src = ''
+        try {
+          src = await getAssetDownloadUrl({ workspaceId, assetId: item.assetId })
+        } catch {
+          // 地址获取失败仍可由画布按 assetId 重建；身份查询失败不能降级为普通素材。
+        }
+        onApply({ ...resolved, src })
+      } catch (error) {
+        showToast(String((error as Error)?.message || '添加素材失败，请稍后重试'), 'error')
       }
     },
-    [workspaceId, onApply],
+    [workspaceId, onApply, resolveMaterialIdentities, showToast],
   )
+
+  /** 多选确认：逐个解析同源地址后一次性交回，由画布按顺序连成参考。 */
+  const handleApplyPicked = useCallback(async () => {
+    if (!picked.length || applying || !onApplyMany) return
+    setApplying(true)
+    try {
+      const identified = await resolveMaterialIdentities(picked)
+      const resolved = await Promise.all(
+        identified.map(async (item) => {
+          try {
+            return { ...item, src: (await getAssetDownloadUrl({ workspaceId, assetId: item.assetId })) || '' }
+          } catch {
+            return { ...item, src: '' }
+          }
+        }),
+      )
+      onApplyMany(resolved)
+    } catch (error) {
+      setPickHint(String((error as Error)?.message || '添加素材失败，请稍后重试'))
+    } finally {
+      setApplying(false)
+    }
+  }, [picked, applying, onApplyMany, workspaceId, resolveMaterialIdentities])
 
   // 模糊匹配过滤：按素材名称（不区分大小写）
   const visibleItems = useMemo(() => {
@@ -597,9 +735,21 @@ export default function CanvasMaterialPicker({
               <div className={styles.empty}>{searchQuery.trim() ? '未找到匹配素材' : '暂无素材'}</div>
             )}
             <div className={styles.modalGridInner}>
-              {visibleItems.map((item) => (
-                <ModalCard key={item.id} item={item} workspaceId={workspaceId} onApply={handleApply} />
-              ))}
+              {visibleItems.map((item) => {
+                const pickedIndex = picked.findIndex((entry) => entry.id === item.id)
+                return (
+                  <ModalCard
+                    key={item.id}
+                    item={item}
+                    workspaceId={workspaceId}
+                    onApply={handleApply}
+                    selectable={multiSelect}
+                    selected={pickedIndex >= 0}
+                    selectionIndex={pickedIndex + 1}
+                    onToggle={togglePicked}
+                  />
+                )
+              })}
             </div>
             {/* 底部状态：加载中 / 哨兵 / 已加载全部 */}
             {loading ? (
@@ -610,6 +760,26 @@ export default function CanvasMaterialPicker({
               visibleItems.length > 0 && <div className={styles.loading}>已加载全部</div>
             )}
           </div>
+          {/* 多选确认栏：已选数量 / 还可选数量 + 一次性添加 */}
+          {multiSelect && (
+            <div className={styles.modalPickBar}>
+              <span className={`${styles.modalPickText}${pickHint ? ` ${styles.modalPickHint}` : ''}`}>
+                {pickHint ||
+                  `已选 ${picked.length} 个，还可选 ${Math.max(0, (selectionLimit ?? 0) - picked.length)} 个`}
+              </span>
+              <button type="button" className={styles.modalPickCancel} onClick={onClose}>
+                取消
+              </button>
+              <button
+                type="button"
+                className={styles.modalPickConfirm}
+                disabled={!picked.length || applying}
+                onClick={() => void handleApplyPicked()}
+              >
+                {applying ? '添加中…' : picked.length ? `添加 ${picked.length} 个参考` : '添加参考'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -712,7 +882,9 @@ export default function CanvasMaterialPicker({
         <div className={styles.gridInner}>
           {visibleItems.map((item) => (
             <div key={item.id} className={styles.materialCard}>
-              <span className={styles.materialType}>{isVideoMaterial(item) ? '视频' : '图片'}</span>
+              <span className={styles.materialType}>
+                {isAudioMaterial(item) ? '音频' : isVideoMaterial(item) ? '视频' : '图片'}
+              </span>
               <div className={styles.materialCover}>
                 <MaterialThumb item={item} workspaceId={workspaceId} />
               </div>

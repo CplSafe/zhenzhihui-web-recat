@@ -100,6 +100,7 @@ import {
 import { listRealPeople } from '@/api/realPeople'
 import { INSUFFICIENT_CREDITS_TEXT, creditsYuanLabel } from '@/utils/creditsYuan'
 import { multiplyCredits, toMilli } from '@/utils/creditsFormat'
+import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
 import { readImageDimensions, videoReferenceImageIssue } from '@/utils/imageFile'
 import { isVideoResolutionLower, readVideoMetadata, type VideoMetadata } from '@/utils/videoDuration'
 import { resolveVideoEditResolution } from '@/utils/videoEditResolution'
@@ -1292,11 +1293,6 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
     if (Number(message.taskId || 0) > 0 && message.terminalFailure !== true) return ''
     if (draftSaveStatusRef.current === 'conflict') {
       return '项目已在其他页面更新，请刷新页面载入最新项目后再重新生成'
-    }
-    // checkpoint 失败的未提交任务使用消息自身锁定的模型与幂等键恢复；
-    // 当前入口的模型选择可能在刷新/迁移草稿后丢失，不能据此错误禁用安全恢复。
-    if (isUnsubmittedImagePreparationFailure(message)) {
-      return getImageQueueModelLockError(message)
     }
     const operationCode = message.operationCode
     if (operationCode !== 'image.text_to_image' && operationCode !== 'image.image_to_image') {
@@ -6113,6 +6109,9 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
             const currentEstimate: any = await estimateShotImageCost({
               workspaceId: ws,
               referenceImageCount: request.refAssetIds.length,
+              // 必须与用户确认报价时使用同一提示词。部分图生图模型会按输入内容计费；
+              // 此处漏传会导致提交前复核得到另一价格，即使人民币展示四舍五入后看起来相同。
+              prompt: request.text,
               ratio: request.ratio,
               modelVersionId,
               modelVersion: request.modelVersion,
@@ -6193,7 +6192,22 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         } catch (error: any) {
           const hasSubmittedTask = activeTaskId > 0
           const terminalFailure = hasSubmittedTask && isTerminalShotImageTaskError(error)
-          const errorMessage = `${hasSubmittedTask ? (terminalFailure ? '图片任务失败' : '图片任务连接中断') : '图片生成失败'}：${getBusinessErrorMessage(error, '请重试')}${hasSubmittedTask && !terminalFailure ? '。点击重试将继续查询原任务，不会重复计费' : ''}`
+          // 队列中的模型锁、报价绑定等前置校验会抛普通 Error；getBusinessErrorMessage 只翻译
+          // BusinessApiError，不能用非空 fallback 把这些可操作的本地错误覆盖成笼统的「请重试」。
+          const failureReason =
+            getBusinessErrorMessage(error, '') ||
+            (error instanceof Error ? String(error.message || '').trim() : '') ||
+            (typeof error === 'string' ? error.trim() : '') ||
+            '请重试'
+          const errorMessage = `${hasSubmittedTask ? (terminalFailure ? '图片任务失败' : '图片任务连接中断') : '图片生成失败'}：${failureReason}${hasSubmittedTask && !terminalFailure ? '。点击重试将继续查询原任务，不会重复计费' : ''}`
+          if (import.meta.env.DEV) {
+            console.error('[SmartCreateView] 图片生成队列处理失败', {
+              taskId: activeTaskId,
+              submitted: hasSubmittedTask,
+              reason: failureReason,
+              error,
+            })
+          }
           patchMessage({ taskId: activeTaskId, status: 'error', terminalFailure, error: errorMessage })
           if (!hasSubmittedTask && viewAliveRef.current) showToast(errorMessage, 'error')
           syncImageTask(
@@ -7027,6 +7041,8 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
   const confirmImageGenerationCost = async (args: {
     workspaceId: number
     referenceImageCount: number
+    /** 估价必须带上提示词，与入口按钮旁的预估同口径（按输入计费的模型否则估低） */
+    prompt?: string
     ratio: string
     count?: number
     modelSelection?: SelectedGenerationModel
@@ -7043,6 +7059,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       const estimate: any = await estimateShotImageCost({
         workspaceId: args.workspaceId,
         referenceImageCount: args.referenceImageCount,
+        prompt: args.prompt,
         ratio: args.ratio,
         modelVersionId: modelSelection.modelVersionId,
         modelVersion: modelSelection.source,
@@ -7202,6 +7219,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         (await confirmImageGenerationCost({
           workspaceId: ws,
           referenceImageCount: refAssetIds.length,
+          prompt: text,
           ratio,
           count,
           modelSelection,
@@ -7270,6 +7288,12 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         getBusinessErrorMessage(error, '') ||
         (error instanceof Error ? String(error.message || '').trim() : '') ||
         '图片生成准备失败，请重试'
+      if (import.meta.env.DEV) {
+        console.error('[SmartCreateView] 图片生成准备失败', {
+          preparedCount: preparedMessages.length,
+          reason: errorMessage,
+        })
+      }
       if (preparedMessages.length) {
         const preparedIds = new Set(preparedMessages.map((message) => message.id))
         const safeError = `${errorMessage}，未提交任何付费任务`
@@ -7330,86 +7354,17 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       return true
     }
 
-    if (isUnsubmittedImagePreparationFailure(message)) {
-      if (imageGenerationLockRef.current || imageQueueCheckpointBlockedRef.current) {
-        showToast('已有图片任务正在处理，请稍后再试', 'info')
-        return false
-      }
-      const context = {
-        workspaceId: Number(workspaceIdRef.current || workspaceId || 0) || 0,
-        projectId: Number(projectIdRef.current || projectId || 0) || 0,
-      }
-      let queued = false
-      imageGenerationLockRef.current = true
-      imageQueueCheckpointBlockedRef.current = true
-      setImagePreparing(true)
-      commitImageMessages((messages) =>
-        messages.map((item) =>
-          item.id === message.id
-            ? {
-                ...item,
-                status: 'pending',
-                terminalFailure: false,
-                preparationFailure: false,
-                error: undefined,
-              }
-            : item,
-        ),
-      )
-      syncImageTask(message, 'preparing', { taskId: 0, error: '' }, context)
-      try {
-        const checkpointResult = await persistImageQueueBeforePaidTask(context.workspaceId)
-        if (checkpointResult !== 'saved') {
-          throw new Error(
-            checkpointResult === 'conflict'
-              ? '项目已在其他页面更新，请刷新页面载入最新项目后再重新生成'
-              : '生成队列保存失败，请稍后重试',
-          )
-        }
-        queued = true
-        return true
-      } catch (error) {
-        const errorMessage =
-          getBusinessErrorMessage(error, '') ||
-          (error instanceof Error ? String(error.message || '').trim() : '') ||
-          '图片生成准备失败，请重试'
-        const safeError = `${errorMessage}，未提交任何付费任务`
-        commitImageMessages((messages) =>
-          messages.map((item) =>
-            item.id === message.id
-              ? {
-                  ...item,
-                  status: 'error',
-                  terminalFailure: true,
-                  preparationFailure: true,
-                  error: safeError,
-                }
-              : item,
-          ),
-        )
-        syncImageTask(message, 'failed', { taskId: 0, error: safeError }, context)
-        saveCurrentImageDraftLocally(context.workspaceId)
-        showToast(safeError, 'error')
-        return false
-      } finally {
-        imageQueueCheckpointBlockedRef.current = false
-        imageGenerationLockRef.current = false
-        setImagePreparing(false)
-        if (queued) {
-          window.setTimeout(() => void processPendingImageQueue(context.workspaceId), 0)
-        }
-      }
-    }
-
     const storedRequest = message.request
     if (storedRequest) {
+      // taskId=0 说明后端从未创建任务。重试应按输入框当前比例重新报价、生成新的幂等任务，
+      // 不能继续复用失败消息中冻结的旧比例和旧报价；否则用户切换比例后看似重试，实际仍提交旧参数。
+      const retryRatio = imageComposerRatio || entryMetaRef.current?.ratio || storedRequest.ratio || '16:9'
       return sendImageChat(
         storedRequest.text,
         (storedRequest.refImages || []).map((image) => image.url),
-        storedRequest.ratio || entryMeta?.ratio || '16:9',
+        retryRatio,
         storedRequest.refAssetIds || [],
         1,
-        { idempotencyKey: existingTaskId > 0 ? undefined : message.idempotencyKey },
       )
     }
     const index = imageMessagesRef.current.findIndex((item) => item.id === message.id)
@@ -7746,6 +7701,7 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
       const confirmedQuote = await confirmImageGenerationCost({
         workspaceId: wsId,
         referenceImageCount: (meta.images || []).length,
+        prompt: req,
         ratio: meta.ratio || '16:9',
         count: meta.outputCount || 1,
         generationModels: meta.generationModels,
@@ -8208,7 +8164,11 @@ export default function SmartCreateView({ routeSessionToken = '', flowMode = 'sm
         },
         inputAssets:
           operationCode === 'image.image_to_image'
-            ? imageComposerDraft.images.map((reference) => Number(reference.assetId || 0)).filter((id) => id > 0)
+            ? imageComposerDraft.images
+                .map((reference) => Number(reference.assetId || 0))
+                .filter((id) => id > 0)
+                // 与正式提交同构的 { asset_id, role }；裸数字会被后端判为请求体格式不合法
+                .map((id) => ({ asset_id: id, role: resolveModelInputAssetRoleSafe(undefined, operationCode) }))
             : [],
       })
       return {

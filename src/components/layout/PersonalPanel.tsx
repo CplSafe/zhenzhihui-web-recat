@@ -160,7 +160,8 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
         inputPlaceholder: '请输入团队名称',
         confirmLabel: '保存',
       })
-      if (!aliveRef.current || input === null) return
+      // 确认框独立挂在应用根节点；即使菜单在确认期间关闭，保存也应继续提交。
+      if (input === null) return
       const next = String(input).trim()
       if (!next || next === currentName) return
       const err = validateWorkspaceName(next)
@@ -181,10 +182,8 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
         return
       }
       await useWorkspaceSessionStore.getState().renameTeam(wsId, next)
-      if (!aliveRef.current) return
       showToast('团队名称已更新', 'success')
     } catch (error: any) {
-      if (!aliveRef.current) return
       const status = Number(error?.status)
       showToast(status === 409 ? '已存在同名空间,请换一个名称' : error?.message || '重命名失败,请稍后重试', 'error')
     } finally {
@@ -200,14 +199,16 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
   const usedPct =
     baseCredits > 0 && usedCredits > 0 ? Math.min(100, Math.max(1, Math.round((usedCredits / baseCredits) * 100))) : 0
 
-  const pickWs = (id: number) => {
+  const pickWs = (id: number, personal: boolean) => {
     if (workspaceSwitchLocked) {
       showToast(workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队', 'error')
       return
     }
-    if (id && Number(id) !== Number(activeId)) {
-      switchWorkspaceSafely(id)
-    }
+    if (!id || Number(id) === Number(activeId)) return
+    if (!switchWorkspaceSafely(id)) return
+    showToast('切换成功', 'success')
+    onClose?.()
+    if (!personal) navigate('/team')
   }
 
   const openTeamDashboard = (workspace: any) => {
@@ -319,7 +320,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
       </button>
 
       {/* 切换空间 */}
-      <div className="ppl__switch-title">切换空间</div>
+      <div className="ppl__switch-title">切换团队/个人</div>
       {/* 列表固定高度(约 3 个)+ 可滚动:空间再多面板也不被撑长,滚动查看其余 */}
       <div className={`ppl__ws-list${hasMore ? ' scroll' : ''}`}>
         {workspaces.map((ws: any) => {
@@ -337,7 +338,7 @@ export default function PersonalPanel({ onMember, onClose }: PersonalPanelProps)
                 aria-current={active ? 'true' : undefined}
                 disabled={workspaceSwitchLocked}
                 title={workspaceSwitchLocked ? workspaceSwitchLockReason || '当前视频处理中，暂不支持切换团队' : ''}
-                onClick={() => pickWs(Number(ws.id))}
+                onClick={() => pickWs(Number(ws.id), isPersonal)}
                 onDoubleClick={() => {
                   if (!isPersonal) openTeamDashboard(ws)
                 }}

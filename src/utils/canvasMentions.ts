@@ -80,8 +80,12 @@ export function buildMentionRegex(labels: Iterable<string>): RegExp {
 }
 
 /**
- * 退格 / Delete 时把 `@标签` 当成一个整体删除：光标落在引用末尾（或紧跟其后的那个空格之后）、
- * 或引用内部时按 Backspace，整条引用连同后面的空格一起删；Delete 则看光标右侧是否紧贴引用。
+ * 退格 / Delete 时把 `@标签` 当成一个整体删除。
+ *
+ * Backspace 分两步（产品约定）：光标在引用后面那个空格之后时，先只删空格（返回 null 交给浏览器）；
+ * 再按一次，光标已紧贴引用末尾，整条引用一次删掉——不会一个字一个字地退。
+ * 光标在引用内部时同样整条删（连同后面的空格，免得留下双空格）。
+ * Delete 看光标右侧是否紧贴引用。
  * 返回要删除的 [start, end) 区间；光标没碰到引用返回 null（交给浏览器按字符删）。
  */
 export function findMentionDeletionRange(
@@ -98,7 +102,8 @@ export function findMentionDeletionRange(
     const end = start + match[0].length
     // 引用后面那个空格是插入时一并写进去的，删引用时一起带走
     const endWithSpace = text[end] === ' ' ? end + 1 : end
-    if (direction === 'backward' && caret > start && caret <= endWithSpace) return { start, end: endWithSpace }
+    if (direction === 'backward' && caret === end) return { start, end }
+    if (direction === 'backward' && caret > start && caret < end) return { start, end: endWithSpace }
     if (direction === 'forward' && caret >= start && caret < end) return { start, end: endWithSpace }
     if (match[0].length === 0) regex.lastIndex += 1
   }

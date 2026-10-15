@@ -40,6 +40,36 @@ beforeEach(() => {
 })
 
 describe('hot-copy 本地草稿隔离', () => {
+  it('未提交入口文案及素材不写入持久缓存', () => {
+    saveHotCopyDraft(
+      21,
+      draft({
+        started: false,
+        vidGenTaskId: 0,
+        videoGenerating: false,
+        videoGenerations: [],
+        entryInitial: { text: '旧文案', products: [{ assetId: 12 }] },
+      }),
+    )
+    expect(loadHotCopyDraft(21)).toBeNull()
+  })
+
+  it('读取时淘汰旧版本留下的未提交缓存', () => {
+    localStorage.setItem(
+      'zzh_hotcopy_draft_v1_uanon_ws21',
+      JSON.stringify(
+        draft({
+          started: false,
+          vidGenTaskId: 0,
+          videoGenerating: false,
+          videoGenerations: [],
+          entryInitial: { text: '历史缓存' },
+        }),
+      ),
+    )
+    expect(loadHotCopyDraft(21)).toBeNull()
+    expect(localStorage.getItem('zzh_hotcopy_draft_v1_uanon_ws21')).toBeNull()
+  })
   it('只在相同用户和工作空间中恢复完整生成凭据', () => {
     const saved = draft()
     setHotCopyDraftUserScope('user-7')

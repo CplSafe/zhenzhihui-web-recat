@@ -28,7 +28,6 @@ import { useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/composables/useToast'
 import { listBanners } from '@/api/banners'
 import { useSwr } from '@/composables/useSwr' // 复用首页同一套 SWR 缓存(先返缓存秒出、后台刷新)
-import { isPreloaded } from '@/utils/mediaPreload'
 import { logger } from '@/observability/openobserve-logger'
 import { createLoginBridgeDiagnostic, type LoginBridgeWarningReason } from '@/utils/loginObservability'
 import { hasConfiguredDevBackend } from '@/utils/devBackend'
@@ -89,8 +88,9 @@ export default function LoginView() {
   const { data: loginBanners } = useSwr(LOGIN_BANNERS_CACHE_KEY, () => listBanners('login'), { fallback: [] })
   // 当前高亮/展示的幻灯片下标(标题与媒体联动);默认第 2 项(对齐原「生活服务」高亮)。
   const [heroIndex, setHeroIndex] = useState(1)
-  // 当前幻灯片媒体是否可显示(视频 canplay / 图 onload):未就绪时显示浅绿骨架屏,就绪后淡入。
-  const [mediaReady, setMediaReady] = useState(false)
+  // 已经稳定显示的媒体与正在淡入的目标媒体分开维护，切换时旧媒体不会被兜底图替换。
+  const [displayedMediaUrl, setDisplayedMediaUrl] = useState('')
+  const [readyMediaUrl, setReadyMediaUrl] = useState('')
   const [loginMode, setLoginMode] = useState<'password' | 'sms'>('sms')
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
@@ -475,7 +475,9 @@ export default function LoginView() {
   const safeIndex = navTitles.length ? Math.min(heroIndex, navTitles.length - 1) : 0
   const activeBanner = hasBanners ? loginBanners![safeIndex] : null
 
-  const heroVideoRef = useRef<HTMLVideoElement | null>(null)
+  const heroVideoRefs = useRef(new Map<string, HTMLVideoElement>())
+  const targetMediaUrlRef = useRef('')
+  const mediaTransitionTimerRef = useRef<number | null>(null)
   const { muted, needsInteraction, playVideo, toggleVideoSound } = useBackgroundVideoSound()
 
   /**
@@ -496,13 +498,21 @@ export default function LoginView() {
     query.addEventListener('change', sync)
     return () => query.removeEventListener('change', sync)
   }, [])
+  const selectHero = (index: number) => {
+    if (index === safeIndex) return
+    // 手动切换时定格当前视频，等待目标媒体首帧在它上方淡入。
+    heroVideoRefs.current.get(activeBanner?.mediaUrl || '')?.pause()
+    setHeroIndex(index)
+  }
+
   // 切下一张:基于「钳位后的当前索引」推进,避免列表长度变化后 heroIndex 越界导致跳/重。
-  const goNextHero = () =>
+  const goNextHero = () => {
     setHeroIndex((i) => {
       const len = navTitles.length
       if (!len) return 0
       return (Math.min(i, len - 1) + 1) % len
     })
+  }
   // 媒体加载失败:多张则切下一张(单张则保持,透出静态底图)。
   const handleMediaError = () => {
     if (navTitles.length > 1) goNextHero()
@@ -517,29 +527,53 @@ export default function LoginView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasBanners, navTitles.length, safeIndex, activeBanner?.mediaType])
 
-  /**
-   * 切到新幻灯片时重置就绪态并起播。
-   *
-   * 必须以「媒体地址真的换了」为条件，不能只靠依赖数组：
-   * playVideo 来自 useBackgroundVideoSound，其引用随静音偏好变化（点喇叭就换一个），
-   * activeBanner 也会在 SWR 后台刷新时换成内容相同的新对象。这两种情况下 effect 都会重跑，
-   * 而重跑意味着 setMediaReady(false) —— 对图片幻灯片是**永久卡死**：
-   * src 没变，浏览器不会重新加载，onLoad 按规范绝不二次触发，骨架屏就一直转下去。
-   * 视频那边则表现为进度被倒回 0、骨架闪一下。
-   */
+  /** 切换目标媒体时保留当前图层；目标首帧准备好后再交叉淡入。 */
   const lastMediaUrlRef = useRef('')
   const playVideoLatest = useLatestCallback(playVideo)
+  const activeMediaUrl = activeBanner?.mediaUrl || ''
+  targetMediaUrlRef.current = activeMediaUrl
+
+  const displayedBanner = hasBanners
+    ? loginBanners!.find((banner) => banner.mediaUrl === displayedMediaUrl) || null
+    : null
+  const mediaLayers = [displayedBanner, activeBanner].filter(
+    (banner, index, items): banner is NonNullable<typeof banner> =>
+      Boolean(banner?.mediaUrl) && items.findIndex((item) => item?.mediaUrl === banner?.mediaUrl) === index,
+  )
+
+  const markTargetMediaReady = (url: string) => {
+    // 迟到的 loadeddata/canplay/onload 只能影响它自己的旧请求，不能提前放出当前目标媒体。
+    if (!url || targetMediaUrlRef.current !== url) return
+    setReadyMediaUrl(url)
+    // 首屏没有旧媒体可保留，首个成功解码的媒体立即成为稳定展示层；
+    // 否则用户在淡入的 380ms 内切换 Tab，会因为 displayedMediaUrl 仍为空而误删当前画面。
+    setDisplayedMediaUrl((current) => current || url)
+    if (mediaTransitionTimerRef.current !== null) window.clearTimeout(mediaTransitionTimerRef.current)
+    mediaTransitionTimerRef.current = window.setTimeout(() => {
+      if (targetMediaUrlRef.current === url) setDisplayedMediaUrl(url)
+      mediaTransitionTimerRef.current = null
+    }, 380)
+  }
+
   useEffect(() => {
-    const url = activeBanner?.mediaUrl || ''
+    const url = activeMediaUrl
     if (url === lastMediaUrlRef.current) return
     lastMediaUrlRef.current = url
-    // 预热只取元数据，不代表能立刻出画面，isPreloaded 现在只在真正预取完成时才为真
-    setMediaReady(activeBanner ? isPreloaded(url) : false)
-    const v = heroVideoRef.current
-    // 不再写 currentTime = 0：换了 src 浏览器本来就从头开始，
-    // 而在同一条视频上写它会触发一次 seek，白白丢掉已缓冲的播放进度。
+    setReadyMediaUrl('')
+    if (mediaTransitionTimerRef.current !== null) {
+      window.clearTimeout(mediaTransitionTimerRef.current)
+      mediaTransitionTimerRef.current = null
+    }
+    const v = heroVideoRefs.current.get(url)
     if (v && activeBanner?.mediaType === 'video') void playVideoLatest(v)
-  }, [activeBanner, playVideoLatest])
+  }, [activeBanner?.mediaType, activeMediaUrl, playVideoLatest])
+
+  useEffect(
+    () => () => {
+      if (mediaTransitionTimerRef.current !== null) window.clearTimeout(mediaTransitionTimerRef.current)
+    },
+    [],
+  )
 
   return (
     <main className="zlogin">
@@ -551,47 +585,62 @@ export default function LoginView() {
         </picture>
         {/* 大图媒体:有 banner 数据时按当前幻灯片展示(图=图层,视频=播放并播完切下一张);
             加载失败时:多张→切下一张,单张→隐藏(透出静态底图)。 */}
-        {hasBanners && activeBanner && !heroHidden && (
-          <div className={`zlogin-hero-media${mediaReady ? ' is-ready' : ''}`} aria-hidden="true">
-            {activeBanner.mediaType === 'video' ? (
-              <video
-                ref={heroVideoRef}
-                className="zlogin-hero-video"
-                src={activeBanner.mediaUrl}
-                muted={muted}
-                playsInline
-                autoPlay
-                // 不用 auto：auto 会让浏览器尽力缓冲整片，而首屏那条 banner 实测 69.6MB，
-                // 用户只是想登录，却在后台跑一个几十兆的下载，把登录接口的带宽也挤掉。
-                preload="metadata"
-                // 多个幂等的就绪入口：canplay 之外补 loadeddata / playing，
-                // 任一先到就撤占位，避免个别浏览器某个事件不触发时一直显示不出来
-                onLoadedData={() => setMediaReady(true)}
-                onPlaying={() => setMediaReady(true)}
-                onCanPlay={(event) => {
-                  setMediaReady(true)
-                  void playVideo(event.currentTarget)
-                }}
-                onEnded={goNextHero}
-                onError={handleMediaError}
-              />
-            ) : (
-              <img
-                className="zlogin-hero-img"
-                src={activeBanner.mediaUrl}
-                alt=""
-                onLoad={() => setMediaReady(true)}
-                onError={handleMediaError}
-              />
-            )}
-          </div>
-        )}
+        {hasBanners &&
+          !heroHidden &&
+          mediaLayers.map((banner) => {
+            const url = banner.mediaUrl
+            const isReady = url === displayedMediaUrl || url === readyMediaUrl
+            return (
+              <div key={url} className={`zlogin-hero-media${isReady ? ' is-ready' : ''}`} aria-hidden="true">
+                {banner.mediaType === 'video' ? (
+                  <video
+                    ref={(node) => {
+                      if (node) heroVideoRefs.current.set(url, node)
+                      else heroVideoRefs.current.delete(url)
+                    }}
+                    className="zlogin-hero-video"
+                    src={url}
+                    muted={muted}
+                    playsInline
+                    autoPlay
+                    // 不用 auto：auto 会让浏览器尽力缓冲整片，而首屏那条 banner 实测 69.6MB，
+                    // 用户只是想登录，却在后台跑一个几十兆的下载，把登录接口的带宽也挤掉。
+                    preload="metadata"
+                    // 多个幂等的就绪入口：canplay 之外补 loadeddata / playing，
+                    // 任一先到就撤占位，避免个别浏览器某个事件不触发时一直显示不出来
+                    onLoadedData={() => markTargetMediaReady(url)}
+                    onPlaying={() => markTargetMediaReady(url)}
+                    onCanPlay={(event) => {
+                      markTargetMediaReady(url)
+                      if (targetMediaUrlRef.current === url) void playVideo(event.currentTarget)
+                    }}
+                    onEnded={() => {
+                      if (targetMediaUrlRef.current === url) goNextHero()
+                    }}
+                    onError={() => {
+                      if (targetMediaUrlRef.current === url) handleMediaError()
+                    }}
+                  />
+                ) : (
+                  <img
+                    className="zlogin-hero-img"
+                    src={url}
+                    alt=""
+                    onLoad={() => markTargetMediaReady(url)}
+                    onError={() => {
+                      if (targetMediaUrlRef.current === url) handleMediaError()
+                    }}
+                  />
+                )}
+              </div>
+            )
+          })}
         {activeBanner?.mediaType === 'video' && !heroHidden && (
           <MediaSoundToggle
             className="zlogin-sound-toggle"
             muted={muted}
             needsInteraction={needsInteraction}
-            onToggle={() => toggleVideoSound(heroVideoRef.current)}
+            onToggle={() => toggleVideoSound(heroVideoRefs.current.get(activeMediaUrl) || null)}
           />
         )}
         <nav className="zlogin-nav">
@@ -600,7 +649,7 @@ export default function LoginView() {
               type="button"
               key={`${title}-${i}`}
               className={`zlogin-nav-item${i === safeIndex ? ' is-active' : ''}`}
-              onClick={() => setHeroIndex(i)}
+              onClick={() => selectHero(i)}
             >
               {title}
             </button>

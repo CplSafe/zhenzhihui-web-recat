@@ -8,6 +8,16 @@ import {
 } from '@/utils/downloadToDisk'
 
 describe('buildDownloadName', () => {
+  it('音频下载保留 WAV、MP3 和 M4A 类型及扩展名', async () => {
+    for (const [bytes, header, expected] of [
+      ['RIFF0000WAVE', 'application/octet-stream', { mimeType: 'audio/wav', extension: 'wav' }],
+      ['ID3sample', 'application/octet-stream', { mimeType: 'audio/mpeg', extension: 'mp3' }],
+      ['0000ftypisom', 'audio/mp4', { mimeType: 'audio/mp4', extension: 'm4a' }],
+    ] as const) {
+      const blob = await new Response(new TextEncoder().encode(bytes)).blob()
+      expect(await detectDownloadedMediaType(blob, header)).toEqual(expected)
+    }
+  })
   it('文件名精确到秒，同一天多次导出不会互相撞名', () => {
     const first = buildDownloadName('宣传片', new Date(2026, 7, 19, 9, 5, 3))
     const second = buildDownloadName('宣传片', new Date(2026, 7, 19, 20, 45, 12))

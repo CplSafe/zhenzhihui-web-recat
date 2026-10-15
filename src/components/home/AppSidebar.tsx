@@ -26,6 +26,8 @@ import { APP_VERSION } from '@/version'
 import { useUiStore } from '@/stores/ui'
 import { prefetchRoute } from '@/router/routePrefetch'
 import { getSidebarRoute } from '@/utils/sidebarNavigation'
+import { MANUAL_DOC_URL } from '@/utils/tutorialVideos'
+import { BookOutlined } from '@ant-design/icons'
 import SettingsMenu from './SettingsMenu'
 import './AppSidebar.css'
 
@@ -236,6 +238,20 @@ export default function AppSidebar({ activeKey = '', onNavigate, open = false, o
 
         {/* 底部：设置 —— 点击弹出菜单(个人中心 / 修改密码 / 退出登录) */}
         <div className="app-sidebar__footer">
+          <a
+            className="app-sidebar__item"
+            href={MANUAL_DOC_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="使用手册"
+            title="使用手册"
+            onClick={onClose}
+          >
+            <span className="app-sidebar__icon" aria-hidden="true">
+              <BookOutlined />
+            </span>
+            <span className="app-sidebar__label">使用手册</span>
+          </a>
           <SettingsMenu onAfterAction={onClose} />
         </div>
       </aside>

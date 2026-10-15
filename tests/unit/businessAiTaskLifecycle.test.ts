@@ -145,6 +145,28 @@ describe('paid AI task submission safety', () => {
     expect(body.input_assets).toEqual([])
   })
 
+  it('rejects a video request with no description before any paid task submission', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      createAiTask({
+        workspaceId: 11,
+        capability: 'video',
+        operationCode: 'video.generate',
+        modelVersionId: 25,
+        modelVersion: { id: 25 },
+        prompt: '',
+        params: { duration: 5, resolution: '768P', ratio: '16:9' },
+        inputAssets: [
+          { asset_id: 13303, role: 'audio' },
+          { asset_id: 13203, role: 'image' },
+        ],
+      }),
+    ).rejects.toThrow('请输入视频描述后再生成')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('reuses one idempotency key when retrying a non-streaming explicit script model', async () => {
     vi.useFakeTimers()
     vi.spyOn(Math, 'random').mockReturnValue(0)
@@ -648,6 +670,7 @@ describe('paid AI task submission safety', () => {
         operationCode: 'video.generate',
         modelVersionId: 91,
         modelVersion: { id: 91 },
+        prompt: '生成一段视频',
         params: {},
         inputAssets: [],
       }),

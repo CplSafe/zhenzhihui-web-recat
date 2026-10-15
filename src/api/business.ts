@@ -7,6 +7,7 @@
 import { MODEL_NOT_FOUND_CODE, chooseModelCandidate, isRetryableModelSelectionError } from '../utils/modelSelection'
 import { DEFAULT_MODEL_PLAN_CANDIDATES, normalizePlanCandidates } from '../utils/modelPlans'
 import { sleep } from '../utils/common'
+import { failureIdentifiers } from '../utils/generationFailure'
 import { sanitizeMediaUrl } from '../utils/urlSafety'
 import { isAllowedUploadUrl as isUploadUrlAllowedByPolicy } from '../utils/uploadUrlSafety'
 import { resolveUploadMimeType } from '../utils/fileSignature'
@@ -75,13 +76,16 @@ function isAllowedUploadUrl(url) {
 
 /** 携带 HTTP 状态、业务码、原始响应和中断原因的统一业务异常。 */
 export class BusinessApiError extends Error {
-  constructor(message, { status = 0, code = null, response = null, cause = null }: any = {}) {
+  constructor(message, { status = 0, code = null, response = null, cause = null, requestId = '' }: any = {}) {
     super(message)
     this.name = 'BusinessApiError'
     this.status = status
     this.code = code
     this.response = response
     this.cause = cause
+    const ids = failureIdentifiers({ response })
+    this.requestId = requestId || ids.requestId || ''
+    this.taskId = ids.taskId || ''
   }
 }
 
@@ -733,6 +737,7 @@ async function openAiResponseStream({
       status: response.status,
       code: payload?.code ?? payload?.code_string ?? null,
       response: payload,
+      requestId: response.headers.get('x-request-id') || response.headers.get('x-trace-id') || '',
     })
   }
 
@@ -1394,6 +1399,9 @@ async function submitAiTask({
   signal,
   onImagePartial,
 }) {
+  if (String(operationCode || '').startsWith('video.') && !String(prompt || '').trim()) {
+    throw new Error('请输入视频描述后再生成；仅连接图片或音频仍需要文字描述')
+  }
   if (params?.stream === true && operationCode?.startsWith('image.')) {
     const result = await openAiResponseStream({
       workspaceId,
@@ -1417,6 +1425,10 @@ async function submitAiTask({
     prompt,
     params,
   })
+
+  // createTask 要求 prompt 字段存在。纯素材生成允许留空，但通用空值清理会把它删掉，
+  // 导致后端在解析请求体阶段返回 BAD_REQUEST，而不是进入模型参数校验。
+  requestBody.prompt = typeof prompt === 'string' ? prompt : ''
 
   // Keep the task contract stable for text-to-media requests: when the user does
   // not select a reference image, send an explicit empty collection instead of
@@ -1595,7 +1607,9 @@ export async function waitForAiTask({
     ensureNotAborted()
 
     if (Date.now() - startedAt > timeoutMs) {
-      throw new BusinessApiError('AI 任务生成超时，请稍后在历史记录中查看')
+      throw new BusinessApiError('AI 任务生成超时，请稍后在历史记录中查看', {
+        response: { task_id: getAiTaskId(currentTask) },
+      })
     }
 
     await sleepWithSignal(getAiTaskPollDelay(currentTask, intervalMs), signal)
@@ -1606,15 +1620,22 @@ export async function waitForAiTask({
       pollErrorCount = 0
     } catch (error) {
       if (!isRetryableAiTaskPollError(error)) {
-        throw error
+        throw new BusinessApiError(error?.message || 'AI 任务状态查询失败', {
+          status: error?.status,
+          code: error?.code,
+          cause: error?.cause,
+          requestId: error?.requestId,
+          response: { ...error?.response, task_id: getAiTaskId(currentTask) },
+        })
       }
       pollErrorCount += 1
       if (pollErrorCount > AI_TASK_POLL_RETRY_LIMIT) {
         throw new BusinessApiError('AI 任务状态查询连续失败，请稍后重试', {
           status: error?.status,
           code: error?.code,
-          response: error?.response,
           cause: error,
+          requestId: error?.requestId,
+          response: { ...error?.response, task_id: getAiTaskId(currentTask) },
         })
       }
       if (import.meta.env.DEV) {
@@ -3232,6 +3253,7 @@ async function requestJson(path, options: any = {}, _retried = false) {
       status: response.status,
       code: payload?.code ?? payload?.code_string ?? null,
       response: payload,
+      requestId: response.headers.get('x-request-id') || response.headers.get('x-trace-id') || '',
     })
   }
 

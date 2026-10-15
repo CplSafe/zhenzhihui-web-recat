@@ -37,6 +37,11 @@
   inset: 0;
   z-index: 0;
   overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.zlogin-hero-media.is-ready {
+  opacity: 1;
 }
 .zlogin-hero-img,
 .zlogin-hero-video {
@@ -51,12 +56,6 @@
    * 加载要好几秒，而这几秒里用户看到的是一块绿色流光——底下明明已经躺着一张
    * 加载完毕的品牌大图。占位本就该用那张图，而不是把它盖掉再放个动画。
    */
-  opacity: 0;
-  transition: opacity 0.35s ease;
-}
-.zlogin-hero-media.is-ready .zlogin-hero-img,
-.zlogin-hero-media.is-ready .zlogin-hero-video {
-  opacity: 1;
 }
 
 /*

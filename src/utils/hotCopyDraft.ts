@@ -69,6 +69,19 @@ export interface SaveHotCopyDraftOptions {
   allowTaskClear?: boolean
 }
 
+/** 输入态不跨页面持久化；生成中凭据和已提交项目仍保持原有恢复能力。 */
+function isTransientEntryDraft(draft: HotCopyDraft): boolean {
+  return (
+    !draft.started &&
+    !draft.videoGenerating &&
+    !(Number(draft.vidGenTaskId) > 0) &&
+    !draft.videoGenerations?.length &&
+    !draft.fullVideo?.assetId &&
+    !draft.fullVideo?.url &&
+    !draft.videoVersions?.length
+  )
+}
+
 /** 当前登录用户的草稿作用域，防止同浏览器账号间串稿。 */
 let draftUserScope = ''
 /** 更新爆款复制草稿所属用户，后续读写据此选择隔离键。 */
@@ -245,6 +258,11 @@ export function saveHotCopyDraft(
     }
     const current = currentValue && typeof currentValue === 'object' ? (currentValue as HotCopyDraft) : null
     const protectedDraft = options.allowTaskClear ? draft : preserveActiveTaskCredential(current, draft)
+    if (isTransientEntryDraft(protectedDraft)) {
+      // 不删除其他项目的活动任务快照。
+      if (!current || isTransientEntryDraft(current)) localStorage.removeItem(storageKey)
+      return
+    }
     localStorage.setItem(storageKey, JSON.stringify(sanitizeHotCopyDraft(protectedDraft, ws)))
   } catch {
     /* 配额满 / 隐私模式:忽略 */
@@ -268,6 +286,10 @@ export function loadHotCopyDraft(workspaceId: number): HotCopyDraft | null {
     }
     const d = JSON.parse(raw)
     const sanitized = d && typeof d === 'object' ? sanitizeHotCopyDraft(d as HotCopyDraft, ws) : null
+    if (sanitized && isTransientEntryDraft(sanitized)) {
+      localStorage.removeItem(keyOf(ws))
+      return null
+    }
     return sanitized
   } catch {
     return null

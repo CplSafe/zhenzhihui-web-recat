@@ -62,3 +62,7 @@ tmp/
 
 # 手册截图脚本的持久化浏览器 profile
 .pw-manual-profile/
+
+# TestSprite：失败包（截图 / DOM）与测试账号密码文件不入库
+.testsprite/
+pw.txt

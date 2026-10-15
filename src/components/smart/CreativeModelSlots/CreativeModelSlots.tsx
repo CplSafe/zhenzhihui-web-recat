@@ -202,7 +202,10 @@ export default function CreativeModelSlots({
                           closeAfterSelection()
                         }}
                       >
-                        <span className={styles.optionLogo} aria-hidden="true">
+                        <span
+                          className={`${styles.optionLogo}${model.logo ? '' : ` ${styles.optionLogoInitial}`}`}
+                          aria-hidden="true"
+                        >
                           {model.logo ? (
                             <img className={styles.logoImg} src={model.logo} alt="" />
                           ) : (

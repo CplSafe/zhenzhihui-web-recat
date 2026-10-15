@@ -26,6 +26,7 @@ import {
   resolveGeneratedMediaUrls,
   resolveTaskVideoResult,
   resolveVerifiedResultAssetId,
+  resolveVerifiedResultAssetIds,
 } from '@/utils/taskMedia'
 
 describe('verified result asset selection', () => {
@@ -44,6 +45,35 @@ describe('verified result asset selection', () => {
       expect.objectContaining({ workspaceId: 2, type: 'video', status: 'active' }),
     )
     expect(mocks.getAssetDownloadUrl).not.toHaveBeenCalled()
+  })
+
+  it('returns every verified output of a multi-image task, in output order', async () => {
+    // 「生成数量」> 1：只取第一个会让其余几张生成了、扣了费，却在画布上丢掉
+    mocks.listAssets.mockResolvedValue({ items: [{ id: 703 }, { id: 701 }, { id: 702 }], total: 3 })
+
+    await expect(
+      resolveVerifiedResultAssetIds({
+        workspaceId: 2,
+        type: 'image',
+        task: { id: 11, outputs: [{ asset_id: 701 }, { asset_id: 702 }, { asset_id: 999 }, { asset_id: 703 }] },
+      }),
+    ).resolves.toEqual([701, 702, 703])
+  })
+
+  it('returns every asset bound to the task when outputs carry no asset_id', async () => {
+    mocks.listAssets.mockResolvedValue({
+      items: [
+        { id: 811, ai_task_id: 11 },
+        { id: 812, ai_task_id: 11 },
+        { id: 900, ai_task_id: 99 },
+        { id: 813, ai_task_id: 11 },
+      ],
+      total: 4,
+    })
+
+    await expect(
+      resolveVerifiedResultAssetIds({ workspaceId: 2, type: 'image', task: { id: 11, outputs: [{ url: '/x.png' }] } }),
+    ).resolves.toEqual([811, 812, 813])
   })
 
   it('falls back to the task-id lookup when the output id is not a usable asset', async () => {

@@ -381,7 +381,10 @@ export default function TemplatesView() {
                                 e.stopPropagation()
                                 requireAuth(() =>
                                   navigate('/hot-copy', {
-                                    state: { carryVideo: { url: tpl.videoUrl || '', assetId: tpl.videoAssetId || 0 } },
+                                    state: {
+                                      carryVideo: { url: tpl.videoUrl || '', assetId: tpl.videoAssetId || 0 },
+                                      carryPrompt: tpl.prompt || '',
+                                    },
                                   }),
                                 )
                               }}
