@@ -220,6 +220,7 @@
   color: #555;
   font-size: 14px;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
   transition:
     background 0.15s ease,
@@ -228,6 +229,7 @@
 .app-sidebar__item:hover {
   background: #f4f6f8;
   color: #333;
+  text-decoration: none;
 }
 .app-sidebar__item.is-active {
   background: #ebfffb;
