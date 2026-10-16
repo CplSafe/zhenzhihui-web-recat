@@ -17,7 +17,11 @@
  * 面板自己会按当前 operation_code 再过滤一次，所以这里必须给出「该节点类型可能用到的全部模型」，
  * 而不是某一个 operation 的子集。
  */
-import type { GenerationModelGroup, GenerationModelOption } from './generationModelCatalog'
+import {
+  sortCreativeVideoModels,
+  type GenerationModelGroup,
+  type GenerationModelOption,
+} from './generationModelCatalog'
 
 /** 画布节点类型 → 该类型可选的模型列表。 */
 export interface CanvasModelBuckets {
@@ -55,30 +59,6 @@ function dedupeByVersionId(models: readonly GenerationModelOption[]): Generation
   return Array.from(byVersion.values())
 }
 
-/** 仅调整画布视频展示顺序，不修改模型 ID、可用性或全站默认排序。 */
-function sortCanvasVideoModels(models: GenerationModelOption[]): GenerationModelOption[] {
-  const order = [
-    /happy\s*horse/i,
-    /(?:万相|wan)[\s-]*3[.\s]*0(?!.*(?:高速|fast|turbo))/i,
-    /(?:万相|wan)[\s-]*3[.\s]*0.*(?:高速|fast|turbo)/i,
-    /(?:kling|可灵).*3[.\s]*0.*omni/i,
-    /(?:minimax|海螺).*?(?:秘塔|metaso)/i,
-    /(?:minimax|海螺)/i,
-    /seedance\s*2[.]0(?!.*(?:fast|mini))/i,
-    /seedance\s*2[.]0.*fast/i,
-    /seedance\s*2[.]0.*mini/i,
-    /seedance\s*2[.]5/i,
-    /grok/i,
-    /framora/i,
-  ]
-  const rank = (name: string) => {
-    const index = order.findIndex((pattern) => pattern.test(name))
-    return index < 0 ? order.length : index
-  }
-  // JS 稳定排序：未识别模型、同系列不同渠道仍沿用后端顺序。
-  return [...models].sort((a, b) => rank(a.displayName || '') - rank(b.displayName || ''))
-}
-
 /** 把目录分组投影为画布面板需要的三份模型列表。 */
 export function buildCanvasModelBuckets(
   groups: readonly GenerationModelGroup[] | null | undefined,
@@ -90,6 +70,6 @@ export function buildCanvasModelBuckets(
   return {
     text: collect(GROUP_KEYS_BY_NODE_KIND.text),
     image: collect(GROUP_KEYS_BY_NODE_KIND.image),
-    video: sortCanvasVideoModels(collect(GROUP_KEYS_BY_NODE_KIND.video)),
+    video: sortCreativeVideoModels(collect(GROUP_KEYS_BY_NODE_KIND.video)),
   }
 }
