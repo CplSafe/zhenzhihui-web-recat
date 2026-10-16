@@ -514,6 +514,7 @@ export function normalizeGenerationModels(
 
   models.forEach((model) => {
     if (!model || !isBackendGenerationModelEnabled(model)) return
+    if (isRetiredCreativeVideoRelayModel(model)) return
 
     const modelVersionId = getBackendGenerationModelVersionId(model)
     const nameCandidate = readModelNameCandidate(model)
@@ -576,16 +577,55 @@ export function normalizeGenerationModels(
       ...model
     }) => model,
   )
-  return pinBrandModelsFirst(normalized)
+  return normalized
 }
 
-/** 自家品牌模型（Framora）在所有模型列表里排最前；其余保持后端给的顺序 */
-const PINNED_MODEL_NAME = /framora/i
+/**
+ * 秘塔中转的 MiniMax H3 已停止在创作入口提供。规则限制为视频 operation，
+ * 不影响其他名称中偶然含有“秘塔”的普通模型，也不在前端补造任何后端未下发的模型。
+ */
+function isRetiredCreativeVideoRelayModel(model: BackendGenerationModel): boolean {
+  const operationCodes = getBackendGenerationModelOperationCodes(model)
+  if (!operationCodes.some((operationCode) => operationCode === 'video.generate' || operationCode === 'video.edit')) {
+    return false
+  }
+  const identity = [
+    model.display_name,
+    model.displayName,
+    model.model_name,
+    model.modelName,
+    model.model_code,
+    model.modelCode,
+    model.name,
+    model.version_name,
+    model.versionName,
+    model.provider,
+    model.provider_name,
+    model.providerName,
+  ]
+    .map((value) => String(value || ''))
+    .join(' ')
+  return /minimax|海螺/i.test(identity) && /秘塔|metaso/i.test(identity)
+}
 
-function pinBrandModelsFirst<T extends { displayName?: string }>(models: T[]): T[] {
-  const pinned = models.filter((model) => PINNED_MODEL_NAME.test(String(model.displayName || '')))
-  if (!pinned.length) return models
-  return [...pinned, ...models.filter((model) => !pinned.includes(model))]
+/** 视频模型按创作入口验收顺序展示；未知模型保持在已知模型之后且沿用后端相对顺序。 */
+export function sortCreativeVideoModels<T extends { displayName?: string }>(models: readonly T[]): T[] {
+  const order = [
+    /framora/i,
+    /happy\s*horse/i,
+    /(?:万相|wan)[\s-]*3[.\s]*0(?!.*(?:高速|fast|turbo))/i,
+    /(?:万相|wan)[\s-]*3[.\s]*0.*(?:高速|fast|turbo)/i,
+    /(?:minimax|海螺)/i,
+    /seedance\s*2[.]0(?!.*(?:fast|mini))/i,
+    /seedance\s*2[.]0.*fast/i,
+    /seedance\s*2[.]0.*mini/i,
+    /seedance\s*2[.]5/i,
+  ]
+  const rank = (name: string) => {
+    const index = order.findIndex((pattern) => pattern.test(name))
+    return index < 0 ? order.length : index
+  }
+  return [...models].sort((a, b) => rank(String(a.displayName || '')) - rank(String(b.displayName || '')))
 }
 
 /**
@@ -603,7 +643,10 @@ export function buildGenerationModelGroups(
   return GENERATION_MODEL_GROUP_DEFINITIONS.map((definition) => {
     const operationGroups = definition.operationCodes.map<GenerationModelOperationGroup>((operationCode) => ({
       operationCode,
-      models: normalizedModels.filter((model) => model.operationCodes.includes(operationCode)),
+      models:
+        operationCode === 'video.generate'
+          ? sortCreativeVideoModels(normalizedModels.filter((model) => model.operationCodes.includes(operationCode)))
+          : normalizedModels.filter((model) => model.operationCodes.includes(operationCode)),
     }))
 
     return {

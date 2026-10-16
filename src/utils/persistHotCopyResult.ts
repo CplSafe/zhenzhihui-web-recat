@@ -16,6 +16,31 @@ import { sanitizeTelemetryText } from '@/utils/observabilitySanitizer'
 import { bindVideoModificationNote } from '@/utils/videoModificationDraft'
 import { findVideoGeneration, updateVideoGeneration } from '@/utils/videoGenerationRecords'
 
+function hasHotCopyVideoResult(draft: any, smartSource: any): boolean {
+  return Boolean(
+    Number(draft?.generatedVideoAssetId || 0) ||
+    String(draft?.generatedVideoUrl || '').trim() ||
+    Number(smartSource?.fullVideoAssetId || 0) ||
+    String(smartSource?.fullVideoUrl || '').trim() ||
+    (Array.isArray(draft?.videoHistoryList) && draft.videoHistoryList.length > 0) ||
+    (Array.isArray(smartSource?.videoVersions) && smartSource.videoVersions.length > 0),
+  )
+}
+
+function hasHotCopyActiveGeneration(smartSource: any): boolean {
+  return Boolean(
+    Number(smartSource?.vidGenTaskId || 0) ||
+    smartSource?.videoGenerating ||
+    (Array.isArray(smartSource?.videoGenerations) &&
+      smartSource.videoGenerations.some((generation: any) => String(generation?.status || '') === 'processing')),
+  )
+}
+
+function dropProcessingVideoGenerations(generations: any): any[] {
+  if (!Array.isArray(generations)) return []
+  return generations.filter((generation: any) => String(generation?.status || '') !== 'processing')
+}
+
 /**
  * 将爆款复制生成结果合并到服务端最新草稿，并串行保存以避免版本冲突。
  * 仅更新视频相关字段，保留 hot-copy 流程标记、源素材及其他页面写入的元数据。
@@ -130,12 +155,19 @@ export async function persistHotCopyResultToBackend(args: {
     }
     if (generationId && !preserveNewerCurrentResult) smart.lastCompletedVideoGenerationId = generationId
     if (Array.isArray(smart.videoGenerations)) {
-      smart.videoGenerations = updateVideoGeneration(
+      const nextGenerations = updateVideoGeneration(
         smart.videoGenerations,
         expectedGenerationId,
         expectedTaskId,
-        (generation: any) => ({ ...generation, status: 'published', taskId: 0 }),
+        (generation: any) => ({
+          ...generation,
+          status: 'published',
+          taskId: 0,
+        }),
       )
+      smart.videoGenerations = preserveNewerCurrentResult
+        ? nextGenerations
+        : dropProcessingVideoGenerations(nextGenerations)
     }
     const modificationNote = String(
       args.modificationNote ?? matchingGeneration?.modificationNote ?? matchingGeneration?.note ?? '',
@@ -163,6 +195,80 @@ export async function persistHotCopyResultToBackend(args: {
         return await doSave()
       } catch (e: any) {
         if (e?.status === 409) return doSave() // 版本冲突:重拉最新 revision 再存一遍
+        throw e
+      }
+    },
+  })
+}
+
+/**
+ * 成功项目离开编辑页后，清理用于下一次创作的入口草稿字段。
+ * 仅在项目已经有成片且不存在在途任务时执行，保留视频结果、历史版本和项目元数据。
+ */
+export async function persistHotCopyCompletedEntryCleanupToBackend(args: {
+  projectId: number
+  workspaceId: number
+}): Promise<boolean> {
+  const { projectId, workspaceId } = args
+  if (!projectId || !workspaceId) return false
+
+  const doSave = async () => {
+    const proj: any = await getCreativeProject({ projectId, workspaceId })
+    const rev = Number(proj?.draft_revision ?? proj?.data?.draft_revision ?? 0) || 0
+    let draft: any = proj?.draft_json ?? proj?.data?.draft_json ?? proj?.draft
+    if (typeof draft === 'string') {
+      try {
+        draft = JSON.parse(draft)
+      } catch {
+        return false
+      }
+    }
+    if (!draft || typeof draft !== 'object') return false
+    draft = sanitizeHotCopyPersistentDraft(draft, workspaceId)
+    const flow = String(draft?.flow || draft?.smart?.flow || '').toLowerCase()
+    if (flow !== 'hot-copy') return false
+
+    const smartSource = draft.smart && typeof draft.smart === 'object' ? draft.smart : null
+    if (!smartSource) return false
+    if (!hasHotCopyVideoResult(draft, smartSource) || hasHotCopyActiveGeneration(smartSource)) return false
+
+    const alreadyClean =
+      !String(draft.description || '').trim() &&
+      !String(smartSource.basePrompt || '').trim() &&
+      !smartSource.entryInitial &&
+      !(Number(smartSource.sourceVideo?.assetId || 0) || String(smartSource.sourceVideo?.url || '').trim()) &&
+      !(Number(smartSource.sourceVideoDurationSec || 0) || Number(smartSource.sourceVideoDurationAssetId || 0)) &&
+      !(Array.isArray(smartSource.originalProductAssetIds) && smartSource.originalProductAssetIds.length > 0) &&
+      !(Array.isArray(smartSource.productAssetIds) && smartSource.productAssetIds.length > 0)
+    if (alreadyClean) return true
+
+    const smart = { ...smartSource }
+    delete smart.entryInitial
+    draft = {
+      ...draft,
+      description: '',
+      smart: {
+        ...smart,
+        basePrompt: '',
+        sourceVideo: { assetId: 0, url: '' },
+        sourceVideoDurationSec: 0,
+        sourceVideoDurationAssetId: 0,
+        originalProductAssetIds: [],
+        productAssetIds: [],
+      },
+    }
+    await updateCreativeProjectDraft({ projectId, workspaceId, draft, draftRevision: rev })
+    return true
+  }
+
+  return enqueueCreativeProjectDraftSave({
+    projectId,
+    workspaceId,
+    task: async () => {
+      try {
+        return await doSave()
+      } catch (e: any) {
+        if (e?.status === 409) return doSave()
         throw e
       }
     },

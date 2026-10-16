@@ -22,7 +22,7 @@ function model(id: number, displayName: string, operationCodes: string[]) {
 }
 
 describe('buildCanvasModelBuckets', () => {
-  it('视频按验收顺序展示，保留 Framora 和未知模型且不改变全站目录', () => {
+  it('视频按创作入口验收顺序展示，隐藏已下线中转项并保留未知模型', () => {
     const names = [
       'Framora 1.0',
       'Grok',
@@ -42,22 +42,23 @@ describe('buildCanvasModelBuckets', () => {
     const groups = buildGenerationModelGroups(names.map((name, index) => model(index + 1, name, ['video.generate'])))
     const original = groups.find((group) => group.key === 'video')!.models.map((model) => model.displayName)
     expect(buildCanvasModelBuckets(groups).video.map((model) => model.displayName)).toEqual([
+      'Framora 1.0',
       'HappyHorse 1.1',
       '万相 3.0 视频生成',
       '万相 3.0(高速版)',
-      'Kling 3.0 Omni',
-      'MiniMax H3(秘塔)',
       'MiniMax H3(海螺03)',
       'Seedance 2.0',
       'Seedance 2.0 Fast',
       'Seedance 2.0 Mini',
       'Seedance 2.5',
       'Grok',
-      'Framora 1.0',
+      'Kling 3.0 Omni',
       '新模型A',
       '新模型B',
     ])
-    expect(groups.find((group) => group.key === 'video')!.models.map((model) => model.displayName)).toEqual(original)
+    expect(groups.find((group) => group.key === 'video')!.models.map((model) => model.displayName)).toEqual(
+      original.filter((name) => name !== 'MiniMax H3(秘塔)'),
+    )
   })
 
   it('缺失的模型不伪造，下架的模型不补回', () => {
@@ -68,9 +69,9 @@ describe('buildCanvasModelBuckets', () => {
       { ...model(4, 'Grok', ['video.generate']), enabled: false },
     ])
     expect(buildCanvasModelBuckets(groups).video.map((model) => model.displayName)).toEqual([
+      'Framora 1.0',
       'HappyHorse 1.1',
       'Seedance 2.5',
-      'Framora 1.0',
     ])
   })
   it('把 video.generate 与 video.edit 一起装进 video 桶', () => {

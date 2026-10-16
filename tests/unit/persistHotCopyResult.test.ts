@@ -10,7 +10,11 @@ vi.mock('@/api/business', () => ({
   updateCreativeProjectDraft: mocks.updateCreativeProjectDraft,
 }))
 
-import { persistHotCopyResultToBackend, persistHotCopyTerminalStateToBackend } from '@/utils/persistHotCopyResult'
+import {
+  persistHotCopyCompletedEntryCleanupToBackend,
+  persistHotCopyResultToBackend,
+  persistHotCopyTerminalStateToBackend,
+} from '@/utils/persistHotCopyResult'
 import { parseVideoModificationDraft } from '@/utils/videoModificationDraft'
 
 function hotCopyDraft(overrides: Record<string, unknown> = {}): any {
@@ -132,7 +136,6 @@ describe('persistHotCopyResultToBackend', () => {
     ])
     expect(saved.smart.videoGenerations).toEqual([
       expect.objectContaining({ id: 'generation-target', status: 'published', taskId: 0 }),
-      expect.objectContaining({ id: 'generation-other', status: 'processing', taskId: 202 }),
     ])
     expect(parseVideoModificationDraft(saved.smart.videoModificationDraft)).toMatchObject({
       pendingNote: '',
@@ -209,7 +212,6 @@ describe('persistHotCopyResultToBackend', () => {
     ])
     expect(saved.smart.videoGenerations).toEqual([
       expect.objectContaining({ id: 'generation-target', status: 'published', taskId: 0 }),
-      expect.objectContaining({ id: 'generation-other', status: 'processing', taskId: 202 }),
     ])
   })
 
@@ -372,6 +374,60 @@ describe('persistHotCopyResultToBackend', () => {
       url: '/result.mp4',
       assetId: 501,
       taskId: 101,
+    })
+
+    expect(persisted).toBe(false)
+    expect(mocks.updateCreativeProjectDraft).not.toHaveBeenCalled()
+  })
+})
+
+describe('persistHotCopyCompletedEntryCleanupToBackend', () => {
+  it('清理已完成项目的入口文案与原素材，但保留成片结果和历史版本', async () => {
+    const persisted = await persistHotCopyCompletedEntryCleanupToBackend({
+      projectId: 88,
+      workspaceId: 21,
+    })
+
+    expect(persisted).toBe(true)
+    expect(mocks.updateCreativeProjectDraft).toHaveBeenCalledTimes(1)
+    expect(savedDraft()).toMatchObject({
+      flow: 'hot-copy',
+      description: '',
+      generatedVideoAssetId: 10,
+      generatedVideoUrl: '/api/v1/assets/10/download?workspace_id=21',
+      videoHistoryList: [{ assetId: 10, url: '/api/v1/assets/10/download?workspace_id=21' }],
+      smart: {
+        flow: 'hot-copy',
+        basePrompt: '',
+        sourceVideo: { assetId: 0, url: '' },
+        sourceVideoDurationSec: 0,
+        sourceVideoDurationAssetId: 0,
+        originalProductAssetIds: [],
+        productAssetIds: [],
+        fullVideoAssetId: 10,
+        fullVideoUrl: '/api/v1/assets/10/download?workspace_id=21',
+      },
+    })
+    expect(savedDraft().smart.entryInitial).toBeUndefined()
+  })
+
+  it('存在在途任务时不清理入口草稿', async () => {
+    const processing = hotCopyDraft({
+      generatedVideoAssetId: 501,
+      generatedVideoUrl: '/result.mp4',
+    })
+    processing.smart.fullVideoAssetId = 501
+    processing.smart.fullVideoUrl = '/result.mp4'
+    processing.smart.vidGenTaskId = 101
+    processing.smart.videoGenerating = true
+    processing.smart.videoGenerations = [
+      { id: 'generation-target', status: 'processing', taskId: 101, note: '生成中', createdAt: 1_800_000_000_000 },
+    ]
+    mocks.getCreativeProject.mockResolvedValue({ draft_revision: 5, draft_json: processing })
+
+    const persisted = await persistHotCopyCompletedEntryCleanupToBackend({
+      projectId: 88,
+      workspaceId: 21,
     })
 
     expect(persisted).toBe(false)
