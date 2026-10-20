@@ -744,15 +744,8 @@ export default function SmartEntry({
     stripSkillLine(text).trim() || skill || images.length || realPersonReferences.length || hasUserSelectedModel,
   )
   useUnsavedEntryLeaveGuard(hasDraftInput, clearSmartEntryDraft)
-  const displayedModelGroups = useMemo(() => {
-    if (!soleScriptModel) return visibleModelGroups
-    return visibleModelGroups
-      .map((group) => ({
-        ...group,
-        subgroups: (group.subgroups || []).filter((subgroup) => subgroup.key !== 'responses.multimodal'),
-      }))
-      .filter((group) => (group.models?.length || 0) > 0 || (group.subgroups?.length || 0) > 0)
-  }, [soleScriptModel, visibleModelGroups])
+  // 唯一脚本模型仍展示在目录中，自动选择只省去操作，不隐藏实际使用的模型。
+  const displayedModelGroups = visibleModelGroups
   useEffect(() => {
     if (!soleScriptModel || String(generationModels['responses.multimodal']) === String(soleScriptModel.id)) return
     setGenerationModels((previous) => ({ ...previous, 'responses.multimodal': soleScriptModel.id }))

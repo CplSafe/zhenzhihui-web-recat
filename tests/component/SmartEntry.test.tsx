@@ -581,7 +581,8 @@ describe('SmartEntry mode, options, validation, and submission', () => {
     // 模型胶囊就在工具条最左，不再自动展开面板，只说明原因
     expect(mocks.showToast).toHaveBeenCalledWith('请先选择本次创作使用的全部模型', 'info')
 
-    expect(screen.queryByRole('option', { name: /后端返回的脚本模型/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /生成模型/ }))
+    expect(screen.getByRole('option', { name: /后端返回的脚本模型/ })).toHaveAttribute('aria-selected', 'true')
     await pickModel(user, '后端返回的视频模型')
 
     await user.click(submit)
