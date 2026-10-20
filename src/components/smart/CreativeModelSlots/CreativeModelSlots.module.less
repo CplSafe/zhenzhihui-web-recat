@@ -13,12 +13,13 @@
 
 /* 比参数弹层略宽即可容纳两行模型卡片，不必铺到 400px */
 .popover {
+  bottom: calc(100% + 8px);
   width: 560px;
   /*
    * 模型目录可能有十几项。弹层固定向上展开时，如果任由内容撑高，顶部选项会越出视口，
    * 看起来像“有的模型被挡住”。限制整层高度后由内部滚动承载完整目录。
    */
-  max-height: min(440px, calc(100dvh - 96px));
+  max-height: min(360px, calc(100dvh - 180px));
   gap: 16px;
   padding: 16px;
   overflow-x: hidden;
