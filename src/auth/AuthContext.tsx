@@ -69,6 +69,7 @@ const REFRESH_SAFETY_RATIO = 0.7 // 在 TTL 的 70% 处续期,留出余量(到�
 const REFRESH_MIN_MS = 60 * 1000 // 续期最短间隔 1 分钟(防止极短 TTL 触发刷新风暴)
 const REFRESH_MAX_MS = 10 * 60 * 1000 // 续期最长间隔 10 分钟
 const VISIBILITY_REFRESH_GAP_MS = 2 * 60 * 1000 // 回到页面时:距上次续期超过 2 分钟才再续,避免频繁刷新
+const SESSION_CHECK_RETRY_MS = 30_000
 
 /**
  * 从 session/refresh 响应中解析 access-token 剩余有效期（毫秒）。
@@ -263,6 +264,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       startSessionRefresh(session) // 用初次会话的 TTL(若有)决定首次续期时机
     } catch (error: any) {
       if (isStale()) return
+      if (!isUnauthorizedAuthError(error)) {
+        // 网络错误、超时和服务端异常不证明会话失效，不能清理账号及其草稿。
+        setAuthCheckError(getAuthErrorMessage(error, '登录状态检查失败，请检查代理或接口服务'))
+        stopSessionRefresh()
+        const retryEpoch = refreshEpochRef.current
+        refreshTimer.current = setTimeout(() => {
+          if (refreshEpochRef.current === retryEpoch) void loadAuthSessionRef.current()
+        }, SESSION_CHECK_RETRY_MS)
+        return
+      }
       const existingDraftUserScope = getCurrentDraftUserScope()
       if (existingDraftUserScope) {
         // 已登录会话自动过期/被服务端撤销时，与显式登出使用同一条清理链。
