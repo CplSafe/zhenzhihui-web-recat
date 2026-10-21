@@ -15,7 +15,7 @@ export default function ImageViewport({ src, alt, onError }: { src: string; alt:
     const box = viewport.current
     if (!box || !size.width || !size.height) return
     setPercent(null)
-    setView({ scale: clamp(Math.min(1, box.clientWidth / size.width, box.clientHeight / size.height)), x: 0, y: 0 })
+    setView({ scale: clamp(Math.min(box.clientWidth / size.width, box.clientHeight / size.height)), x: 0, y: 0 })
   }, [size])
 
   useEffect(() => {
@@ -86,6 +86,11 @@ export default function ImageViewport({ src, alt, onError }: { src: string; alt:
             event.stopPropagation()
             zoom(1 / 1.2)
           }
+        }}
+        onDoubleClick={() => {
+          setPercent(null)
+          if (Math.abs(view.scale - 1) < 0.001) fit()
+          else setView({ scale: 1, x: 0, y: 0 })
         }}
         onPointerDown={(event) => {
           if (event.button !== 0 || !size.width) return
@@ -160,14 +165,20 @@ export default function ImageViewport({ src, alt, onError }: { src: string; alt:
         <button type="button" aria-label="放大图片" disabled={view.scale >= 8} onClick={() => zoom(1.2)}>
           +
         </button>
-        <button type="button" onClick={() => setView({ scale: 1, x: 0, y: 0 })}>
+        <button
+          type="button"
+          onClick={() => {
+            setPercent(null)
+            setView({ scale: 1, x: 0, y: 0 })
+          }}
+        >
           100%
         </button>
         <button type="button" onClick={fit}>
           适应窗口
         </button>
       </div>
-      <span className={styles.hint}>滚轮缩放 · 按住拖拽</span>
+      <span className={styles.hint}>滚轮缩放 · 拖拽移动 · 双击切换原图</span>
     </div>
   )
 }

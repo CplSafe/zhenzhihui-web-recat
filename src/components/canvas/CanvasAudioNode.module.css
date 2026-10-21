@@ -190,21 +190,6 @@
 .settings[hidden] {
   display: none;
 }
-.settings[data-placement='right'] {
-  top: 0;
-  left: calc(100% + 12px);
-  transform: none;
-}
-.settings[data-placement='left'] {
-  top: 0;
-  right: calc(100% + 12px);
-  left: auto;
-  transform: none;
-}
-.settings[data-placement='above'] {
-  top: auto;
-  bottom: calc(100% + 12px);
-}
 .playButton:focus-visible {
   outline: 2px solid #42d4b0;
   outline-offset: 3px;

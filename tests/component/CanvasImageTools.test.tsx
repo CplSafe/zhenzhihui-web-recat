@@ -72,6 +72,39 @@ beforeEach(() => {
   mocks.estimateAiTaskCost.mockResolvedValue({ estimated_cost: 10, balance: 100, can_afford: true })
 })
 describe('CanvasImageTools', () => {
+  it.each(['image.multi_angle', 'image.relight', 'image.panorama'])(
+    '单模型自动选用，打光保留模型展示：%s',
+    async (code) => {
+      mocks.listCanvasTools.mockResolvedValue([{ ...angle, code }])
+      const props = mount(code)
+      const button = await screen.findByRole('button', { name: '生成新图片' })
+      await waitFor(() => expect(button).toBeEnabled())
+      if (code === 'image.relight') {
+        expect(screen.getByRole('combobox', { name: '生成模型' })).toBeInTheDocument()
+      } else {
+        expect(screen.queryByRole('combobox', { name: '生成模型' })).not.toBeInTheDocument()
+        expect(screen.queryByText('模型', { exact: true })).not.toBeInTheDocument()
+      }
+      await userEvent.click(button)
+      expect(props.onGenerate.mock.calls[0][0].request.modelVersionId).toBe(42)
+    },
+  )
+
+  it('多个可用模型时展示选择，并按所选模型更新报价和提交', async () => {
+    mocks.listCanvasTools.mockResolvedValue([{ ...angle, model_version_ids: [42, 43] }])
+    mocks.listAiModels.mockResolvedValue([
+      { id: 42, display_name: '模型一', operation_codes: ['image.image_to_image'] },
+      { id: 43, display_name: '模型二', operation_codes: ['image.image_to_image'] },
+    ])
+    const props = mount()
+    const selector = await screen.findByRole('combobox', { name: '生成模型' })
+    await userEvent.click(selector)
+    await userEvent.click(await screen.findByText('模型二', { selector: '.ant-select-item-option-content' }))
+    const button = screen.getByRole('button', { name: '生成新图片' })
+    await waitFor(() => expect(button).toBeEnabled())
+    await userEvent.click(button)
+    expect(props.onGenerate.mock.calls[0][0].request.modelVersionId).toBe(43)
+  })
   it('uses the same versioned parameters and assets for estimation and one paid submission', async () => {
     const props = mount()
     const button = await screen.findByRole('button', { name: '生成新图片' })

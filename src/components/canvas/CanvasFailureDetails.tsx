@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Modal } from 'antd'
+import CanvasPortalBoundary from './CanvasPortalBoundary'
 import { useToast } from '@/composables/useToast'
 import { FAILURE_STAGE_LABELS, formatGenerationFailure, nodeGenerationFailure } from '@/utils/generationFailure'
 import type { GenerationFailure } from '@/utils/generationFailure'
@@ -21,7 +22,34 @@ export default function CanvasFailureDetails({ data }: { data: Record<string, an
   const renderDetails = (details: GenerationFailure) => (
     <div className={styles.details}>
       <p className={styles.reason}>{details.message}</p>
+      {/CONCURRENCY|并发|任务正在生成/i.test(details.message) && (
+        <p>这是上次请求的返回记录，不表示当前仍有任务运行。可复制排查信息，按 RequestID 核对服务端任务及并发占用。</p>
+      )}
       <dl>
+        {details.operationCode && (
+          <>
+            <dt>操作类型</dt>
+            <dd>{details.operationCode}</dd>
+          </>
+        )}
+        {details.modelVersionId && (
+          <>
+            <dt>模型 ID</dt>
+            <dd>{details.modelVersionId}</dd>
+          </>
+        )}
+        {details.workspaceId && (
+          <>
+            <dt>空间 ID</dt>
+            <dd>{details.workspaceId}</dd>
+          </>
+        )}
+        {details.canvasId && (
+          <>
+            <dt>画布 ID</dt>
+            <dd>{details.canvasId}</dd>
+          </>
+        )}
         <dt>任务状态</dt>
         <dd>{FAILURE_STAGE_LABELS[details.stage]}</dd>
         <dt>TaskID</dt>
@@ -61,7 +89,9 @@ export default function CanvasFailureDetails({ data }: { data: Record<string, an
           </>
         )}
         <dt>失败时间</dt>
-        <dd>{new Date(details.failedAt).toLocaleString()}</dd>
+        <dd>
+          {Number.isFinite(Date.parse(details.failedAt)) ? new Date(details.failedAt).toLocaleString() : '未记录'}
+        </dd>
       </dl>
       <button type="button" onClick={() => void copy(formatGenerationFailure(details))}>
         复制排查信息
@@ -77,7 +107,14 @@ export default function CanvasFailureDetails({ data }: { data: Record<string, an
       <button className={styles.trigger} type="button" onClick={() => setOpen(true)}>
         查看详情
       </button>
-      <Modal title="生成失败详情" open={open} onCancel={() => setOpen(false)} footer={null} zIndex={3200}>
+      <Modal
+        title="生成失败详情"
+        open={open}
+        onCancel={() => setOpen(false)}
+        footer={null}
+        zIndex={3200}
+        modalRender={(modal) => <CanvasPortalBoundary>{modal}</CanvasPortalBoundary>}
+      >
         {renderDetails(current)}
         {history.length > 0 && (
           <details className={styles.history}>

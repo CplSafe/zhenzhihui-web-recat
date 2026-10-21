@@ -44,6 +44,7 @@ export default function CanvasImagePreviewModal({
   hdDisabled = false,
   onPanorama,
 }: CanvasImagePreviewModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const activeThumbRef = useRef<HTMLButtonElement>(null)
   const onCloseRef = useRef(onClose)
@@ -78,6 +79,24 @@ export default function CanvasImagePreviewModal({
         event.target.matches('input, select, textarea')
       )
         return
+      if (event.key === 'Tab') {
+        const buttons = Array.from(
+          dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input, [tabindex="0"]') || [],
+        )
+        const first = buttons[0]
+        const last = buttons[buttons.length - 1]
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last?.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first?.focus()
+        }
+      }
+      if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault()
+        goTo(event.key === 'Home' ? 0 : itemsRef.current.length - 1)
+      }
       if (event.key === 'Escape') {
         event.preventDefault()
         onCloseRef.current()
@@ -114,6 +133,7 @@ export default function CanvasImagePreviewModal({
   return createPortal(
     <div className={styles.mask} onClick={() => onCloseRef.current()} role="presentation">
       <div
+        ref={dialogRef}
         className={styles.dialog}
         role="dialog"
         aria-modal="true"
@@ -137,7 +157,7 @@ export default function CanvasImagePreviewModal({
         )}
 
         {(title || items.length > 1) && (
-          <div className={styles.caption}>
+          <div className={styles.caption} aria-live="polite" aria-atomic="true">
             {title ? <span className={styles.captionTitle}>{title}</span> : null}
             {items.length > 1 ? (
               <span className={styles.captionCount} aria-label={`第 ${index + 1} 张，共 ${items.length} 张`}>
@@ -192,11 +212,13 @@ export default function CanvasImagePreviewModal({
                 type="button"
                 role="option"
                 aria-selected={itemIndex === index}
+                aria-label={String(item.title || '').trim() || `第 ${itemIndex + 1} 张`}
                 className={`${styles.thumb}${itemIndex === index ? ` ${styles.thumbActive}` : ''}`}
                 onClick={() => onSelectRef.current(item.id)}
                 title={String(item.title || '').trim() || `第 ${itemIndex + 1} 张`}
               >
                 <img src={item.url} alt="" aria-hidden="true" loading="lazy" />
+                <span className={styles.thumbNumber}>{itemIndex + 1}</span>
               </button>
             ))}
           </div>

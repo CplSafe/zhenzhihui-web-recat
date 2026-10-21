@@ -1402,6 +1402,12 @@ async function submitAiTask({
   onImagePartial,
 }) {
   prompt = normalizeCanvasToolPrompt(prompt, params)
+  if (['image.upscale', 'video.upscale'].includes(operationCode) && !String(prompt || '').trim()) {
+    prompt =
+      operationCode === 'video.upscale'
+        ? '请按超分参数提升参考视频的清晰度，保持原视频内容、时长和主体不变。'
+        : '请按超分参数提升参考图片的清晰度，保持原图内容、构图和主体不变。'
+  }
   if (String(operationCode || '').startsWith('video.') && !String(prompt || '').trim()) {
     throw new Error('请输入视频描述后再生成；仅连接图片或音频仍需要文字描述')
   }
@@ -1735,6 +1741,12 @@ export function estimateAiTaskCost({
   }
   if (!op) {
     throw new BusinessApiError('操作类型不能为空')
+  }
+  if (['image.upscale', 'video.upscale'].includes(op) && !String(prompt || '').trim()) {
+    prompt =
+      op === 'video.upscale'
+        ? '请按超分参数提升参考视频的清晰度，保持原视频内容、时长和主体不变。'
+        : '请按超分参数提升参考图片的清晰度，保持原图内容、构图和主体不变。'
   }
   return requestJson('/api/v1/ai/tasks/estimate-cost', {
     method: 'POST',

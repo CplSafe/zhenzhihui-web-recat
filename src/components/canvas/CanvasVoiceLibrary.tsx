@@ -3,6 +3,7 @@ import { Modal } from 'antd'
 import type { ModelParamField } from '@/utils/modelSchema'
 import { getModelVoiceOptions, type ModelVoiceValue } from '@/utils/modelVoices'
 import VoiceSamplePanel from './VoiceSamplePanel'
+import CanvasPortalBoundary from './CanvasPortalBoundary'
 import type { Voice } from '@/api/voices'
 import styles from './CanvasVoiceLibrary.module.css'
 
@@ -40,7 +41,7 @@ export default function CanvasVoiceLibrary({
   onReference,
   onClose,
 }: Props) {
-  const [tab, setTab] = useState<'model' | 'samples' | 'custom'>('custom')
+  const [tab] = useState<'model' | 'samples' | 'custom'>('custom')
   const [search, setSearch] = useState('')
   const [serverBusy, setServerBusy] = useState(false)
   const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...values }))
@@ -67,6 +68,7 @@ export default function CanvasVoiceLibrary({
   }
   return (
     <Modal
+      zIndex={2200}
       open
       centered
       title="音色库"
@@ -78,8 +80,15 @@ export default function CanvasVoiceLibrary({
       maskClosable={!serverBusy}
       keyboard={!serverBusy}
       footer={null}
-      className="nodrag nopan"
-      styles={{ body: { display: 'flex', maxHeight: 'calc(100dvh - 160px)', overflow: 'hidden' } }}
+      className="nodrag nopan nowheel canvas-ui-dialog"
+      modalRender={(modal) => <CanvasPortalBoundary>{modal}</CanvasPortalBoundary>}
+      styles={{
+        body: {
+          display: 'flex',
+          maxHeight: 'calc(100dvh / var(--canvas-ui-scale, 1) - 160px)',
+          overflow: 'hidden',
+        },
+      }}
     >
       <div
         className={styles.library}
@@ -90,28 +99,6 @@ export default function CanvasVoiceLibrary({
         }}
       >
         <p className={styles.intro}>浏览公共音色，为当前配音模型选择合适的声音。</p>
-        <nav className={styles.tabs} aria-label="音色库分类">
-          {(
-            [
-              ['model', '模型音色'],
-              ['samples', '声音样本'],
-              ['custom', '公共音色'],
-            ] as const
-          )
-            .filter(([key]) => key === 'custom')
-            .map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={tab === key}
-                aria-controls={`${id}-content`}
-                disabled={serverBusy}
-                onClick={() => setTab(key)}
-              >
-                {label}
-              </button>
-            ))}
-        </nav>
         <div id={`${id}-content`} className={styles.content}>
           {tab === 'model' && (
             <>
@@ -206,11 +193,6 @@ export default function CanvasVoiceLibrary({
             ))}
           {tab === 'custom' && (
             <Suspense fallback={<p role="status">正在加载公共音色库…</p>}>
-              {!onSelectVoice && (
-                <p className={styles.note} role="status">
-                  可浏览公共音色；选用音色前，请先选择支持音色库的配音模型。
-                </p>
-              )}
               <ServerVoiceLibrary
                 key={`${userId}:${workspaceId}:${modelVersionId || 0}`}
                 userId={userId}

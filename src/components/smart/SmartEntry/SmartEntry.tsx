@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import EntryCanvasBg from '../EntryCanvasBg'
 import EntryDropdown from '../EntryDropdown'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
+import PromptPolishActions from '@/components/common/PromptPolishActions'
 import TutorialButton from '@/components/common/TutorialButton'
 import EntryCostEstimate from '@/components/common/EntryCostEstimate'
 import { resolveModelInputAssetRoleSafe } from '@/utils/modelInputAssetRole'
@@ -727,7 +728,10 @@ export default function SmartEntry({
       .flatMap((group) => group.subgroups || [])
       .find((subgroup) => subgroup.key === 'responses.multimodal')
       ?.models.filter((model) => !model.disabled)
-    return models?.length === 1 ? models[0] : null
+    return (
+      models?.find((model) => /(?:通义千问|qwen).*3[.]8.*max/i.test(model.name)) ||
+      (models?.length === 1 ? models[0] : null)
+    )
   }, [visibleModelGroups])
   // 唯一脚本模型会由目录自动填入，并非用户选择；空白入口不能因此弹出丢弃草稿确认。
   const hasUserSelectedModel = useMemo(
@@ -746,8 +750,19 @@ export default function SmartEntry({
     stripSkillLine(text).trim() || skill || images.length || realPersonReferences.length || hasUserSelectedModel,
   )
   useUnsavedEntryLeaveGuard(hasDraftInput, clearSmartEntryDraft)
-  // 唯一脚本模型仍展示在目录中，自动选择只省去操作，不隐藏实际使用的模型。
-  const displayedModelGroups = visibleModelGroups
+  // 爆款成片的脚本模型自动选择，只向用户展示视频模型；校验与提交仍包含脚本模型。
+  const displayedModelGroups = useMemo(
+    () =>
+      soleScriptModel
+        ? visibleModelGroups
+            .map((group) => ({
+              ...group,
+              subgroups: group.subgroups?.filter((subgroup) => subgroup.key !== 'responses.multimodal'),
+            }))
+            .filter((group) => group.models?.length || group.subgroups?.length)
+        : visibleModelGroups,
+    [visibleModelGroups, soleScriptModel],
+  )
   useEffect(() => {
     if (!soleScriptModel || String(generationModels['responses.multimodal']) === String(soleScriptModel.id)) return
     setGenerationModels((previous) => ({ ...previous, 'responses.multimodal': soleScriptModel.id }))
@@ -1613,6 +1628,20 @@ export default function SmartEntry({
                   <VoiceInputButton
                     className={styles.micBtn}
                     onText={insertAtCaret}
+                    authRequired={authRequired}
+                    onAuthRequired={onAuthRequired}
+                  />
+                  <PromptPolishActions
+                    key={`${workspaceId}:${currentUserId}:${mode}`}
+                    scopeKey={`${workspaceId}:${currentUserId}:${mode}`}
+                    workspaceId={workspaceId}
+                    value={text}
+                    inputText={cleanText}
+                    onChange={(value) => setText(composeWithSkill(stripSkillLine(value), skill))}
+                    kind={mode}
+                    images={images}
+                    imageAssetIds={imageAssetIds}
+                    disabled={submitting}
                     authRequired={authRequired}
                     onAuthRequired={onAuthRequired}
                   />

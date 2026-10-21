@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import { uploadAssetFile } from '@/api/business'
 import { assetStreamUrl } from '@/utils/assetUrl'
@@ -41,68 +41,11 @@ export default function CanvasAudioNode({
   const [waveformVisible, setWaveformVisible] = useState(false)
   const [savingEdited, setSavingEdited] = useState(false)
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null)
-  const [panelPlacement, setPanelPlacement] = useState<'below' | 'right' | 'left' | 'above'>('below')
   const volumeDraftRef = useRef<number | null>(null)
   const nodeElement = useRef<HTMLDivElement>(null)
   const panelElement = useRef<HTMLElement>(null)
   const player = useRef<HTMLAudioElement>(null)
   const active = useRef(0)
-  useLayoutEffect(() => {
-    if (!selected) return
-    const node = nodeElement.current
-    const panel = panelElement.current
-    const flowNode = node?.closest('.react-flow__node')
-    const flow = node?.closest('.react-flow')
-    if (!node || !panel || !flowNode || !flow) return
-
-    let frame = 0
-    const placePanel = () => {
-      frame = 0
-      const anchor = node.getBoundingClientRect()
-      const { width, height } = panel.getBoundingClientRect()
-      if (!width || !height) return
-      const zoom = anchor.width / (node.offsetWidth || anchor.width)
-      const gap = 12 * zoom
-      const siblings = Array.from(flow.querySelectorAll<HTMLElement>('.react-flow__node'))
-        .filter((item) => item !== flowNode)
-        .map((item) => item.getBoundingClientRect())
-      const viewport = flow.getBoundingClientRect()
-      const overlap = (a: DOMRect, b: DOMRect) =>
-        Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) *
-        Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))
-      const candidates = [
-        { placement: 'below' as const, x: anchor.left + (anchor.width - width) / 2, y: anchor.bottom + gap },
-        { placement: 'right' as const, x: anchor.right + gap, y: anchor.top },
-        { placement: 'left' as const, x: anchor.left - width - gap, y: anchor.top },
-        { placement: 'above' as const, x: anchor.left + (anchor.width - width) / 2, y: anchor.top - height - gap },
-      ]
-      const ranked = candidates.map((candidate, index) => {
-        const rect = new DOMRect(candidate.x, candidate.y, width, height)
-        const visible = overlap(rect, viewport)
-        const clipped = width * height - visible
-        const coveredNodes = siblings.reduce((sum, sibling) => sum + overlap(rect, sibling), 0)
-        return { placement: candidate.placement, score: coveredNodes * 10 + clipped * 3 + index }
-      })
-      ranked.sort((a, b) => a.score - b.score)
-      setPanelPlacement((current) => (current === ranked[0].placement ? current : ranked[0].placement))
-    }
-    const schedulePlacement = () => {
-      if (frame) cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(placePanel)
-    }
-    schedulePlacement()
-    const observer = new ResizeObserver(schedulePlacement)
-    observer.observe(node)
-    observer.observe(panel)
-    flow.addEventListener('pointerup', schedulePlacement)
-    window.addEventListener('resize', schedulePlacement)
-    return () => {
-      if (frame) cancelAnimationFrame(frame)
-      observer.disconnect()
-      flow.removeEventListener('pointerup', schedulePlacement)
-      window.removeEventListener('resize', schedulePlacement)
-    }
-  }, [selected, isEditor])
   useEffect(() => {
     if (selected) setWaveformVisible(true)
   }, [selected])
@@ -412,7 +355,6 @@ export default function CanvasAudioNode({
         ref={panelElement}
         className={`${styles.settings} canvas-audio-panel nodrag nopan nowheel ${isEditor ? styles.editorPanel : ''}`}
         hidden={!selected}
-        data-placement={panelPlacement}
         aria-label={isEditor ? '音频编辑' : '音频参数'}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}

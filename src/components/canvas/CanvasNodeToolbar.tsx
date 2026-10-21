@@ -7,7 +7,7 @@
  *
  * 位置由调用方按节点包围盒算好后传入（视口坐标），组件本身不关心画布变换。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import styles from './CanvasNodeToolbar.module.css'
 
 /**
@@ -67,6 +67,18 @@ export default function CanvasNodeToolbar({
 }: CanvasNodeToolbarProps) {
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const captureWrapRef = useRef<HTMLSpanElement | null>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+  const [barWidth, setBarWidth] = useState(0)
+  useLayoutEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+    const update = () => setBarWidth(bar.getBoundingClientRect().width)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(bar)
+    return () => observer.disconnect()
+  }, [])
+  const centerX = Math.max(12 + barWidth / 2, Math.min(anchor.centerX, window.innerWidth - 12 - barWidth / 2))
 
   // 点到别处收起菜单，避免它一直盖在画面上
   useEffect(() => {
@@ -101,8 +113,9 @@ export default function CanvasNodeToolbar({
 
   return (
     <div
+      ref={barRef}
       className={`${styles.bar} ${kind === 'image' ? styles.imageBar : ''} nodrag nopan`}
-      style={{ left: anchor.centerX, bottom: anchor.bottom }}
+      style={{ left: centerX, bottom: anchor.bottom }}
       role="toolbar"
       aria-label="节点操作"
       // 画布在捕获阶段处理指针事件，不拦住会连带触发框选与取消选中

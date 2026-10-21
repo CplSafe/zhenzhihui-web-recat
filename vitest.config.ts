@@ -22,9 +22,17 @@ export default defineConfig({
       // First gate the shared modules that protect the bugs fixed in this batch.
       // Expand this list as each additional business flow receives regression tests.
       include: [
+        'src/utils/canvasModal.ts',
+        'src/composables/useCanvasModalOpen.ts',
+        'src/components/canvas/CanvasPortalBoundary.tsx',
+        'src/components/canvas/CanvasVideoUpscaleResultPanel.tsx',
+        'src/components/canvas/CanvasStoryboard.tsx',
+        'src/components/canvas/CanvasStoryboardShot.tsx',
+        'src/components/canvas/CanvasStoryboardModal.tsx',
         'src/utils/canvasLayout.ts',
         'src/components/hotcopy/HotCopyEntry/HotCopyEntry.tsx',
         'src/utils/canvasTools.ts',
+        'src/utils/canvasUpscale.ts',
         'src/utils/canvasStudioControls.ts',
         'src/api/canvasTools.ts',
         'src/build/authCallbackProxy.ts',
@@ -34,6 +42,7 @@ export default defineConfig({
         'src/api/voices.ts',
         'src/components/common/ImageViewport.tsx',
         'src/api/aiPolish.ts',
+        'src/api/entryPromptPolish.ts',
         'src/api/aiResponses.ts',
         'src/api/banners.ts',
         'src/api/feedback.ts',
@@ -89,7 +98,6 @@ export default defineConfig({
         'src/api/smartScript.ts',
         'src/api/templates.ts',
         'src/components/auth/AgreementModal.tsx',
-        'src/components/hotcopy/HotCopyCaseModal/HotCopyCaseModal.tsx',
         'src/components/smart/MarketingBreakdown/MarketingBreakdown.tsx',
         'src/components/task/TaskCenterCoordinator.tsx',
         'src/components/task/TaskCenterDrawer.tsx',

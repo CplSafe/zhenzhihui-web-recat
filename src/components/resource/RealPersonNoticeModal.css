@@ -68,8 +68,10 @@
   height: 44px;
   font-size: 16px;
 }
-.real-person-notice-privacy .agreement-overlay {
-  z-index: 1100;
+.real-person-notice-privacy-body {
+  padding: 22px 32px 26px;
+  color: #4b5563;
+  line-height: 1.9;
 }
 @media (max-width: 600px) {
   .real-person-notice .ant-modal-header {

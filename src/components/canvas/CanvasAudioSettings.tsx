@@ -20,7 +20,7 @@ export default function CanvasAudioSettings({ anchor, fields, values, disabled, 
   useLayoutEffect(() => {
     const update = () => {
       const bounds = anchor.getBoundingClientRect()
-      const width = Math.min(380, window.innerWidth - 24)
+      const width = Math.min(panel.current?.getBoundingClientRect().width || 380, window.innerWidth - 24)
       const height = Math.min(panel.current?.offsetHeight || 500, window.innerHeight - 24)
       const above = bounds.top - 12
       const below = window.innerHeight - bounds.bottom - 12
@@ -250,6 +250,9 @@ export default function CanvasAudioSettings({ anchor, fields, values, disabled, 
       role="dialog"
       aria-label="声音设置"
       onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
     >
       <header>

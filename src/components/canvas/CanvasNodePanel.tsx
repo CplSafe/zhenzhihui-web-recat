@@ -7,6 +7,7 @@
  */
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
 import { Popover, Tooltip } from 'antd'
+import ViewportFloatingPanel from './ViewportFloatingPanel'
 import RatioLabel from '@/components/common/RatioLabel'
 import { claimCanvasRealPersonHint } from '@/utils/canvasRealPersonHint'
 import { AUTO_RATIO, AUTO_RATIO_LABEL, isAutoRatio } from '@/utils/canvasNodeSize'
@@ -562,7 +563,7 @@ interface CanvasNodePanelProps {
   /** 费用预估判定积分不足时，由页面展示充值引导。 */
   onInsufficientCredits?: () => void
   onSaveText?: (text: string) => void
-  onCreateVideoFromText?: () => void
+  onCreateVideoFromText?: (prompt: string) => void
   /** 图片/视频节点输入框内容变更：由页面写回节点并持久化，切换节点/刷新后可回显。 */
   onPromptChange?: (prompt: string) => void
   /**
@@ -637,23 +638,21 @@ function RefAddButton({
 
   useEffect(() => {
     if (!open) return
-    const close = (event: MouseEvent) => {
-      if (wrapRef.current?.contains(event.target as Node)) return
-      setOpen(false)
-    }
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        setOpen(false)
+        wrapRef.current?.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.focus()
+      }
     }
-    document.addEventListener('mousedown', close)
     document.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', close)
       document.removeEventListener('keydown', onKey)
     }
   }, [open])
 
   // 没接素材库回调时退回原来的单一行为，不平白给一个只有一项的菜单
-  if (!onPickFromLibrary) {
+  if (!onPickFromLibrary && !onPickRealPerson) {
     return (
       <button className={styles.refAddBtn} disabled={disabled} title={title} onClick={onPickFromCanvas}>
         <PlusSmIcon />
@@ -676,43 +675,78 @@ function RefAddButton({
           使用已认证真人素材
         </button>
       )}
-      <button
-        className={styles.refAddBtn}
-        disabled={disabled}
-        title={title}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => {
+      <Popover
+        open={open && !disabled}
+        trigger="click"
+        placement="topLeft"
+        arrow={false}
+        autoAdjustOverflow
+        destroyOnHidden
+        fresh
+        zIndex={1450}
+        getPopupContainer={() => document.body}
+        rootClassName="nodrag nopan nowheel"
+        styles={{ body: { padding: 0 } }}
+        onOpenChange={(next) => {
           setHintOwner('')
-          setOpen((value) => !value)
+          setOpen(next)
         }}
+        content={
+          <div
+            className={styles.refAddMenu}
+            role="menu"
+            aria-hidden={!open || disabled}
+            onWheel={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false)
+                onPickFromCanvas()
+              }}
+            >
+              从画布选择
+            </button>
+            {onPickFromLibrary && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false)
+                  onPickFromLibrary()
+                }}
+              >
+                从素材库选择
+              </button>
+            )}
+            {onPickRealPerson && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setHintOwner('')
+                  setOpen(false)
+                  onPickRealPerson()
+                }}
+              >
+                从真人库选择
+              </button>
+            )}
+          </div>
+        }
       >
-        <PlusSmIcon />
-      </button>
-      {open && (
-        <div className={styles.refAddMenu} role="menu">
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false)
-              onPickFromCanvas()
-            }}
-          >
-            从画布选择
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false)
-              onPickFromLibrary()
-            }}
-          >
-            从素材库选择
-          </button>
-        </div>
-      )}
+        <button
+          type="button"
+          className={styles.refAddBtn}
+          disabled={disabled}
+          title={title}
+          aria-haspopup="menu"
+          aria-expanded={open && !disabled}
+        >
+          <PlusSmIcon />
+        </button>
+      </Popover>
     </span>
   )
 }
@@ -1350,20 +1384,13 @@ export default function CanvasNodePanel({
       const params: Record<string, unknown> = {}
       if (maskAssetId > 0) params.mask_asset_id = maskAssetId
       for (const f of schemaFields) {
-        if (kind === 'text' && ['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'maxTokens'].includes(f.name)) {
-          continue
-        }
         const value = values[f.name] !== undefined ? values[f.name] : f.default
         params[f.name] =
-          hasAudioInput && isAudioField(f)
-            ? false
-            : kind === 'image' && isImageCountField(f)
-              ? normalizeImageCountValue(value)
-              : normalizeFieldValue(f, value)
+          kind === 'image' && isImageCountField(f) ? normalizeImageCountValue(value) : normalizeFieldValue(f, value)
       }
       return params
     },
-    [schemaFields, kind, maskAssetId, hasAudioInput],
+    [schemaFields, kind, maskAssetId],
   )
 
   // 字段值变更：回写状态；比例字段（ratio/aspect_ratio/aspectRatio）同步节点比例（保持节点尺寸联动）
@@ -1379,6 +1406,19 @@ export default function CanvasNodePanel({
     },
     [schemaFields, onRatioChange, onParamsChange, buildSchemaParams, fieldValues],
   )
+
+  const previousAudioConnection = useRef({ nodeId: node?.id, connected: hasAudioInput })
+  useEffect(() => {
+    const previous = previousAudioConnection.current
+    previousAudioConnection.current = { nodeId: node?.id, connected: hasAudioInput }
+    // 仅新接入音频时默认开启；恢复已有节点、手动关闭及断开连线均保留已存选择。
+    if (previous.nodeId !== node?.id || previous.connected || !hasAudioInput) return
+    const audioFields = schemaFields.filter(isAudioField)
+    if (!audioFields.length) return
+    const next = { ...fieldValues, ...Object.fromEntries(audioFields.map((field) => [field.name, true])) }
+    setFieldValues(next)
+    onParamsChange?.(buildSchemaParams(next))
+  }, [node?.id, hasAudioInput, schemaFields, fieldValues, onParamsChange, buildSchemaParams])
 
   const videoRatioField = kind === 'video' ? schemaFields.find(isRatioField) : undefined
   const videoRatioValue = videoRatioField ? formatRatioValue(fieldValues[videoRatioField.name]) : ''
@@ -2221,15 +2261,19 @@ export default function CanvasNodePanel({
               return
             }
             if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+              e.stopPropagation()
               e.preventDefault()
               setAtActive((index) => (index + 1) % atCandidates.length)
             } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+              e.stopPropagation()
               e.preventDefault()
               setAtActive((index) => (index - 1 + atCandidates.length) % atCandidates.length)
             } else if (e.key === 'Enter' || e.key === 'Tab') {
+              e.stopPropagation()
               e.preventDefault()
               pickAtCandidate(atCandidates[atActive])
             } else if (e.key === 'Escape') {
+              e.stopPropagation()
               e.preventDefault()
               closeAtPicker()
             }
@@ -2239,32 +2283,34 @@ export default function CanvasNodePanel({
         />
         {/* @ 选择器：列出可 @ 的参考（缩略图 + 标签）+ 取图入口；mousedown 阻止默认避免 textarea 失焦丢光标 */}
         {atAnchor !== null && (atCandidates.length > 0 || atPickerHasActions) && (
-          <div className={styles.atPicker} role="listbox" aria-label="选择要 @ 的参考素材">
+          <ViewportFloatingPanel className={styles.atPicker} role="listbox" aria-label="选择要 @ 的参考素材">
             {!atCandidates.length && (
               <div className={styles.atPickerEmpty}>
                 {mentionableRefs.length ? '没有匹配的参考素材' : '还没有连入的参考素材，先取一张图：'}
               </div>
             )}
-            {atCandidates.map((ref, index) => {
-              const label = refLabelByEdge.get(ref.edgeId) || ''
-              return (
-                <button
-                  key={ref.edgeId}
-                  type="button"
-                  role="option"
-                  aria-selected={index === atActive}
-                  className={`${styles.atOption}${index === atActive ? ` ${styles.atOptionActive}` : ''}`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setAtActive(index)}
-                  onClick={() => pickAtCandidate(ref)}
-                >
-                  <span className={styles.atOptionThumb}>
-                    <RefThumbMedia sourceRef={ref} label={ref.kind} />
-                  </span>
-                  <span className={styles.atOptionLabel}>@{label}</span>
-                </button>
-              )
-            })}
+            <div className={styles.atCandidates}>
+              {atCandidates.map((ref, index) => {
+                const label = refLabelByEdge.get(ref.edgeId) || ''
+                return (
+                  <button
+                    key={ref.edgeId}
+                    type="button"
+                    role="option"
+                    aria-selected={index === atActive}
+                    className={`${styles.atOption}${index === atActive ? ` ${styles.atOptionActive}` : ''}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setAtActive(index)}
+                    onClick={() => pickAtCandidate(ref)}
+                  >
+                    <span className={styles.atOptionThumb}>
+                      <RefThumbMedia sourceRef={ref} label={ref.kind} />
+                    </span>
+                    <span className={styles.atOptionLabel}>@{label}</span>
+                  </button>
+                )
+              })}
+            </div>
             {atPickerHasActions && (
               <div className={styles.atPickerActions}>
                 {atPickFromLibrary && (
@@ -2291,7 +2337,7 @@ export default function CanvasNodePanel({
                 )}
               </div>
             )}
-          </div>
+          </ViewportFloatingPanel>
         )}
       </div>
 
@@ -2373,14 +2419,15 @@ export default function CanvasNodePanel({
               <button
                 className={styles.selector}
                 type="button"
-                disabled={taskRunning || !node?.text?.trim()}
-                onClick={onCreateVideoFromText}
+                disabled={taskRunning || (!node?.text?.trim() && !prompt.trim()) || !onCreateVideoFromText}
+                title={taskRunning ? '分镜正在生成，请完成后创建视频节点' : '使用已有分镜或当前文字创建视频节点'}
+                onClick={() => onCreateVideoFromText?.(prompt.trim())}
               >
                 创建视频节点
               </button>
             </>
           )}
-          {
+          {kind !== 'text' && (
             <ModelSelector
               models={availableModels}
               // 与实际提交用的 selectedModel 同源，默认模型（含「上次使用」）才不会显示一个、提交另一个
@@ -2395,7 +2442,7 @@ export default function CanvasNodePanel({
                 if (!taskRunning) onModelChange?.(value)
               }}
             />
-          }
+          )}
 
           {/* 模型 params_schema 参数菜单：所有节点类型通用；视频额外含生成方式组 */}
           {schemaFields.length > 0 && (
@@ -2404,15 +2451,7 @@ export default function CanvasNodePanel({
               mode={kind === 'video' ? videoMode : undefined}
               followSourceVideo={followSourceVideo}
               fields={schemaFields}
-              values={
-                hasAudioInput
-                  ? {
-                      ...fieldValues,
-                      ...Object.fromEntries(schemaFields.filter(isAudioField).map((field) => [field.name, false])),
-                    }
-                  : fieldValues
-              }
-              hasAudioInput={hasAudioInput}
+              values={fieldValues}
               onModeChange={taskRunning ? undefined : onVideoModeChange}
               onFieldChange={taskRunning ? () => undefined : handleFieldChange}
             />
@@ -2485,12 +2524,23 @@ function SelectorPopover({
     const close = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose()
     }
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      ref.current?.parentElement?.querySelector<HTMLButtonElement>('button')?.focus()
+      onClose()
+    }
     document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
+    document.addEventListener('keydown', keyboard, true)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', keyboard, true)
+    }
   }, [open, onClose])
   return open ? (
-    <div className={styles.popover} ref={ref}>
-      {children}
+    <div ref={ref}>
+      <ViewportFloatingPanel className={styles.popover}>{children}</ViewportFloatingPanel>
     </div>
   ) : null
 }
@@ -2724,7 +2774,6 @@ function LockIcon() {
 /* ── 模型参数菜单（生成方式[视频] + params_schema 动态参数，所有节点类型通用） ── */
 function SchemaFieldMenu({
   kind,
-  hasAudioInput,
   mode,
   followSourceVideo,
   fields,
@@ -2733,7 +2782,6 @@ function SchemaFieldMenu({
   onFieldChange,
 }: {
   kind: string
-  hasAudioInput?: boolean
   mode?: VideoMode
   /** 编辑 / 延长：比例与时长跟随原视频，这两项只展示说明、不可选。 */
   followSourceVideo?: boolean
@@ -2875,15 +2923,14 @@ function SchemaFieldMenu({
                       <div className={styles.videoBtnGroup}>
                         <button
                           className={`${styles.videoBtnGroupItem} ${current ? styles.videoBtnGroupItemActive : ''}`}
-                          disabled={hasAudioInput && isAudioField(f)}
-                          title={hasAudioInput && isAudioField(f) ? '已接入音频，自动生成背景音已关闭' : undefined}
+                          aria-pressed={Boolean(current)}
                           onClick={() => onFieldChange?.(f.name, true)}
                         >
                           {formatBooleanValue(f, true)}
                         </button>
                         <button
                           className={`${styles.videoBtnGroupItem} ${!current ? styles.videoBtnGroupItemActive : ''}`}
-                          disabled={hasAudioInput && isAudioField(f)}
+                          aria-pressed={!current}
                           onClick={() => onFieldChange?.(f.name, false)}
                         >
                           {formatBooleanValue(f, false)}

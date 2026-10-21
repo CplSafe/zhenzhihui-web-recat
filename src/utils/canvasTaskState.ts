@@ -45,7 +45,8 @@ export function classifyOrphanSubmission(
   const startedAt = Date.parse(String(data.taskStartedAt || ''))
   const age = Number.isFinite(startedAt) ? options.now - startedAt : Number.POSITIVE_INFINITY
   const key = String(data.taskIdempotencyKey || '').trim()
-  const hasRequest = Boolean(data.generationRequest && typeof data.generationRequest === 'object')
+  const request = data.generationRequest || data.videoUpscaleRequest
+  const hasRequest = Boolean(request && typeof request === 'object')
   if (age < CANVAS_SUBMIT_STALE_MS && key && hasRequest) return 'resume'
   // 时间戳在未来（设备时钟不准）也按窗口内处理，但没存幂等键的仍只能标中断
   if (age < 0 && key && hasRequest) return 'resume'
@@ -58,7 +59,7 @@ export function reusableInterruptedIdempotencyKey(data: Record<string, unknown> 
   const key = String(data.taskIdempotencyKey || '').trim()
   if (!key) return ''
   try {
-    return JSON.stringify(data.generationRequest) === JSON.stringify(nextRequest) ? key : ''
+    return JSON.stringify(data.generationRequest || data.videoUpscaleRequest) === JSON.stringify(nextRequest) ? key : ''
   } catch {
     return ''
   }
@@ -169,13 +170,13 @@ export function getCanvasTaskPresentation(args: {
     return { running: false, failed: false, title: '', detail: '', progress }
   }
   if (status === 'submitting') {
-    return { running: true, failed: false, title: '正在提交任务', detail: '等待服务确认任务', progress }
+    return { running: true, failed: false, title: '提交中', detail: '等待服务确认任务', progress }
   }
   if (status === 'reconnecting') {
-    return { running: true, failed: false, title: '正在核对任务状态', detail: '正在读取上次任务的最新状态' }
+    return { running: true, failed: false, title: '正在恢复任务', detail: '获取最新进度…' }
   }
   if (['pending', 'queued', 'created'].includes(status)) {
-    return { running: true, failed: false, title: '已进入生成队列', detail: '等待模型开始处理', progress }
+    return { running: true, failed: false, title: '排队中', detail: '等待模型开始处理', progress }
   }
   if (status === 'result_pending' || succeeded) {
     return { running: true, failed: false, title: '正在同步生成结果', detail: '任务已完成，正在读取结果', progress }
@@ -192,7 +193,7 @@ export function getCanvasTaskPresentation(args: {
   return {
     running: true,
     failed: false,
-    title: '正在生成内容',
+    title: '生成中',
     detail: progress ? `${Math.round(progress)}%` : '模型处理中',
     progress,
   }

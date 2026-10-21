@@ -5,7 +5,24 @@ import { fieldOptions, fieldVisible } from '@/utils/canvasTools'
 import styles from './CanvasImageTools.module.css'
 
 const OPTION_LABELS: Record<string, Record<string, string>> = {
-  mode: { manual: '手动布光', smart: '智能布光', reference: '参考图布光' },
+  mode: { manual: '手动布光', smart: '智能补光', reference: '参考图布光' },
+  preset: {
+    none: '无预设',
+    overexposed_film: '过曝胶片',
+    blue_backlight: '蓝色背光',
+    rembrandt: '伦勃朗光',
+    cyberpunk: '赛博朋克',
+    low_key: '低调光',
+    high_key: '高调光',
+    golden_hour: '黄金时刻',
+    sunset: '落日暖光',
+    studio: '影棚光',
+    natural: '自然光',
+    cinematic: '电影光',
+    soft_light: '柔光',
+    dramatic: '戏剧光',
+    neon: '霓虹光',
+  },
   key_light: { front: '正面', back: '背面', left: '左侧', right: '右侧', top: '顶部', bottom: '底部' },
 }
 
@@ -29,7 +46,7 @@ export default function CanvasToolFields({
           const options = fieldOptions(field).map((option) => ({
             ...option,
             label:
-              option.label === String(option.value)
+              option.label === String(option.value) || (field.name === 'preset' && /^[\x20-\x7e]+$/.test(option.label))
                 ? OPTION_LABELS[field.name]?.[String(option.value)] ||
                   ({ balanced: '均衡细节', rich: '丰富细节' } as Record<string, string>)[String(option.value)] ||
                   option.label

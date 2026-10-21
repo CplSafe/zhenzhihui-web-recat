@@ -32,6 +32,7 @@ import {
 } from '@/utils/videoOptions'
 import MaterialLibraryPicker from '@/components/material/MaterialLibraryPicker'
 import VoiceInputButton from '@/components/common/VoiceInputButton'
+import PromptPolishActions from '@/components/common/PromptPolishActions'
 import TutorialButton from '@/components/common/TutorialButton'
 import EntryCostEstimate from '@/components/common/EntryCostEstimate'
 import MaterialMentionPopover from '@/components/common/MaterialMentionPopover'
@@ -1354,7 +1355,7 @@ export default function HotCopyEntry({
                       }}
                       onKeyDown={(e) => {
                         if (e.nativeEvent.isComposing || e.keyCode === 229) return
-                        if (['Home', 'End', 'ArrowUp', 'ArrowDown'].includes(e.key)) closeAtMenu()
+                        if (['Home', 'End'].includes(e.key)) closeAtMenu()
                         if ((e.key === 'Backspace' || e.key === 'Delete') && !(atOpen && atSource === 'typed')) {
                           const ta = e.currentTarget
                           if (ta.selectionStart !== ta.selectionEnd) return
@@ -1517,6 +1518,19 @@ export default function HotCopyEntry({
                   <VoiceInputButton
                     className="hotcopy__mic"
                     onText={insertAtCaret}
+                    authRequired={authRequired}
+                    onAuthRequired={onAuthRequired}
+                  />
+                  <PromptPolishActions
+                    key={`${workspaceId}:${currentUserId}:${tab}`}
+                    scopeKey={`${workspaceId}:${currentUserId}:${tab}`}
+                    workspaceId={workspaceId}
+                    value={text}
+                    onChange={setText}
+                    kind="video"
+                    images={products.filter((item) => !item.isVideo).map((item) => item.url)}
+                    imageAssetIds={products.filter((item) => !item.isVideo).map((item) => item.assetId || 0)}
+                    disabled={submissionBusy}
                     authRequired={authRequired}
                     onAuthRequired={onAuthRequired}
                   />

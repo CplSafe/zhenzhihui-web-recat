@@ -1,0 +1,174 @@
+.status {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  overflow: hidden;
+  /* Local reset: never change the reading scale on the node itself. */
+  --canvas-readable-text-scale: 1;
+}
+
+.failure {
+  background: #fff;
+  color: #e75454;
+}
+
+.failure .content {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.failureReason {
+  margin: 0;
+  max-width: 100%;
+  color: #7b6262;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.requestId {
+  position: relative;
+  z-index: 1;
+  max-width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #7a8190;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.requestId:hover {
+  color: #5767e5;
+}
+
+.running {
+  z-index: 4;
+  background: rgb(248 255 252 / 94%);
+  color: #177e68;
+  pointer-events: none;
+}
+
+.content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: var(--status-width);
+  max-width: 300px;
+  min-width: 0;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.4;
+  transform: scale(var(--status-scale));
+}
+
+.content > strong {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.content > svg {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.content > img {
+  max-height: 48px !important;
+}
+
+.content > span {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.status[data-layout='compact'] .content {
+  flex-direction: row;
+  gap: 8px;
+}
+
+.status[data-layout='compact'] .content > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.status[data-layout='compact'] .content > strong {
+  min-width: 0;
+  font-size: 14px;
+}
+
+.status[data-size='small'] .content {
+  font-size: 10px;
+}
+
+.status[data-size='small'] .content > strong {
+  font-size: 12px;
+}
+
+.status[data-layout='compact']
+  .content
+  > :not(strong):not(svg):not(:global(.canvas-node-generation-spinner)):not([data-status-details]):not(
+    [data-failure-info]
+  ),
+.status[data-layout='overview']
+  .content
+  > :not(svg):not(:global(.canvas-node-generation-spinner)):not([data-status-details]) {
+  display: none;
+}
+
+.failure[data-layout='compact'] .content {
+  flex-direction: column;
+}
+
+.status[data-layout='overview'] .content {
+  width: 20px;
+  height: 20px;
+}
+
+.status[data-layout='overview'] .content > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.status:not([data-layout='full']) [data-status-details] {
+  position: absolute;
+  inset: 0;
+}
+
+.status:not([data-layout='full']) [data-status-details] button {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  opacity: 0;
+}
+
+.content:focus-within {
+  outline: 2px solid #5767e5;
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.running .content > :global(.canvas-node-generation-spinner) {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}

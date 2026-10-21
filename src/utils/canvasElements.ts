@@ -50,6 +50,10 @@ interface SerializableNodeData {
   ratio?: string
   videoMode?: string
   modelVersionId?: number
+  /** 视频超分的可恢复请求，仅保存素材 ID，不保存签名媒体地址。 */
+  videoUpscaleRequest?: Record<string, unknown>
+  upscaleModelName?: string
+  upscaleParamLabels?: Record<string, string>
   assetId?: number
   assetSource?: CanvasAssetSource
   assetWorkspaceId?: number
@@ -79,6 +83,8 @@ interface SerializableNodeData {
   operationCode?: string
   /** 节点 params_schema 参数（生成时写入，刷新后回显/复用） */
   params?: Record<string, unknown>
+  /** 公共音色的展示信息；生成参数仍只使用 params.voice_id。 */
+  selectedPublicVoice?: { id: number; name: string }
   panoramaView?: Record<string, unknown>
   audioReferences?: Array<{ assetId: number; workspaceId: number; title: string }>
   croppedInputAssets?: Record<string, { originalAssetId: number; assetId: number; workspaceId: number }>
@@ -141,6 +147,9 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'ratio',
   'videoMode',
   'modelVersionId',
+  'videoUpscaleRequest',
+  'upscaleModelName',
+  'upscaleParamLabels',
   'assetId',
   'assetSource',
   'assetWorkspaceId',
@@ -152,6 +161,7 @@ export const PERSISTED_NODE_DATA_FIELDS = [
   'prompt',
   'operationCode',
   'params',
+  'selectedPublicVoice',
   'panoramaView',
   'audioReferences',
   'croppedInputAssets',
@@ -610,7 +620,11 @@ export function applyCanvasElementMutations(
         }
       } else {
         const node = elementToNode(mutation)
-        if (node) nodes.set(id, node)
+        if (node) {
+          const previous = nodes.get(id)
+          // 远端只包含业务数据；保留本页选中态和测量尺寸，避免同步时收起正在编辑的面板。
+          nodes.set(id, previous ? { ...node, selected: previous.selected, measured: previous.measured } : node)
+        }
       }
     } else if (mutation.kind === 'edge') {
       if (mutation.op === 'delete') edges.delete(id)

@@ -39,12 +39,17 @@ export default function MaterialMentionPopover({
   onSelect,
   onClose,
 }: MaterialMentionPopoverProps) {
+  useEffect(() => {
+    // 工具栏按钮打开时焦点仍在按钮上，需交回编辑器才能接收素材导航按键。
+    if (open) inputRef.current?.focus({ preventScroll: true })
+  }, [open, inputRef])
   const { activeIndex, setActiveIndex } = useMentionNavigation(
     open,
     items.map((item) => item.key),
     inputRef,
     onSelect,
     onClose,
+    layout === 'grid' ? 3 : 1,
   )
   useEffect(() => {
     if (open)

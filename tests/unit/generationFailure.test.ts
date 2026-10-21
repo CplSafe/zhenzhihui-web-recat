@@ -7,12 +7,62 @@ import {
   formatGenerationFailure,
   generationSubmissionFingerprint,
   unknownSubmissionKey,
+  nodeGenerationFailure,
 } from '@/utils/generationFailure'
 import { elementsToGraph, nodeToMutation } from '@/utils/canvasElements'
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe('generation failure diagnostics', () => {
+  it('超分请求和模型信息经过云端序列化后仍能恢复，源视频仅记录素材ID', () => {
+    const request = {
+      kind: 'video',
+      operationCode: 'video.upscale',
+      modelVersionId: 8,
+      prompt: '保持内容不变',
+      params: { scale: 2 },
+      inputAssets: [{ asset_id: 99, role: 'video' }],
+      sourceRefs: [
+        { kind: 'video', sourceId: 'source', edgeId: 'upscale-result', slotIndex: 0, assetId: 99, workspaceId: 21 },
+      ],
+    }
+    const mutation = nodeToMutation({
+      id: 'result',
+      type: 'video',
+      position: { x: 0, y: 0 },
+      data: {
+        kind: 'video',
+        videoUpscaleRequest: request,
+        upscaleModelName: '视频高清修复',
+        upscaleParamLabels: { scale: '倍率' },
+      },
+    })
+    const restored = elementsToGraph([{ ...mutation, kind: 'node' }])
+    expect(restored.nodes[0].data).toMatchObject({
+      videoUpscaleRequest: request,
+      upscaleModelName: '视频高清修复',
+      upscaleParamLabels: { scale: '倍率' },
+    })
+  })
+  it('并发拒绝记录保留真实请求上下文，旧错误不伪造当前失败时间', () => {
+    const failure = buildGenerationFailure(
+      { message: '当前模型有任务正在生成中', status: 429, requestId: 'req-busy' },
+      { submitted: true, operationCode: 'video.upscale', modelVersionId: 8, workspaceId: 21, canvasId: 7 },
+    )
+    const restored = nodeGenerationFailure({
+      taskFailure: failure,
+      operationCode: 'video.generate',
+      modelVersionId: 10,
+    })
+    expect(restored).toMatchObject({ stage: 'rejected', operationCode: 'video.upscale', modelVersionId: 8 })
+    const text = formatGenerationFailure(restored)
+    expect(text).toContain('RequestID：req-busy')
+    expect(text).toContain('操作类型：video.upscale')
+    expect(text).toContain('模型 ID：8')
+    expect(text).toContain('空间 ID：21')
+    expect(text).toContain('画布 ID：7')
+    expect(nodeGenerationFailure({ taskError: '旧错误' }).failedAt).toBe('')
+  })
   it('reuses an uncertain submission after refresh only when its request stays unchanged', async () => {
     const fingerprint = await generationSubmissionFingerprint({ prompt: '篮球', params: { count: 4, size: '2K' } })
     const reordered = await generationSubmissionFingerprint({ params: { size: '2K', count: 4 }, prompt: '篮球' })

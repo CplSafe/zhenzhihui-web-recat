@@ -1,12 +1,19 @@
 import CanvasNodeFailure from '@/components/canvas/CanvasNodeFailure'
+import { hasActiveVideoUpscale } from '@/utils/canvasUpscale'
+import CanvasVideoUpscaleResultPanel from '@/components/canvas/CanvasVideoUpscaleResultPanel'
+import CanvasNodeStatus from '@/components/canvas/CanvasNodeStatus'
+import CanvasStoryboard from '@/components/canvas/CanvasStoryboard'
+import { useCanvasModalOpen } from '@/composables/useCanvasModalOpen'
 import type { ToolImage, CanvasToolSubmission } from '@/components/canvas/CanvasImageTools'
+import type { VideoUpscaleSubmission } from '@/components/canvas/CanvasUpscale'
 import { normalizeCanvasAssetSource } from '@/utils/canvasGeneration'
-import CanvasImageCropModal, { type InvalidCanvasImage } from '@/components/canvas/CanvasImageCropModal'
+import type { InvalidCanvasImage } from '@/components/canvas/CanvasImageCropModal'
 import { readImageDimensions, videoReferenceImageIssue } from '@/utils/imageFile'
 import {
   canUseCanvasShortcuts,
   isCanvasShortcutTarget,
   matchesCanvasShortcut,
+  resolveCanvasZoomShortcut,
   resolveCanvasCreationShortcut,
 } from '@/utils/canvasKeyboard'
 /**
@@ -68,7 +75,7 @@ import CanvasArrowEdge, { canvasConnectionDisplayRole } from '@/components/canva
 const CANVAS_ARROW_EDGE_TYPE = 'canvasArrow'
 /** 新建视频节点的默认比例：投放场景基本是竖屏 */
 const VIDEO_DEFAULT_RATIO = '9:16'
-const STORYBOARD_NODE_WIDTH = 500
+const STORYBOARD_NODE_WIDTH = 680
 const STORYBOARD_NODE_HEIGHT = 480
 /** 重复连线的提示；同时作为「要不要闪一下已有连线」的判断依据 */
 const DUPLICATE_EDGE_MESSAGE = '这两个节点已经连过了，已高亮那条连线'
@@ -151,6 +158,7 @@ import {
   uploadAssetFile,
 } from '@/api/business'
 import { polishText } from '@/api/aiPolish'
+import { generationPolishContext } from '@/api/entryPromptPolish'
 import { assetStreamUrl } from '@/utils/assetUrl'
 import { normalizeImageFileForAiInput } from '@/utils/imageFile'
 import { acquireSeekableSource, type SeekableSourceHandle } from '@/utils/seekableMediaSource'
@@ -291,6 +299,7 @@ import {
 import './CanvasView.css'
 
 const CanvasImageTools = lazy(() => import('@/components/canvas/CanvasImageTools'))
+const CanvasImageCropModal = lazy(() => import('@/components/canvas/CanvasImageCropModal'))
 const CanvasHdWorkspace = lazy(() => import('@/components/canvas/CanvasUpscale'))
 
 /** 节点级生成历史最多保留的条数：够回看最近几版，又不至于把画布元素 payload 撑大。 */
@@ -1774,54 +1783,17 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               autoFocus
             />
           ) : structuredText.kind === 'storyboard' ? (
-            <div className="canvas-storyboard" aria-label={`分镜脚本，共 ${structuredText.items.length} 个镜头`}>
-              <div className="canvas-storyboard__summary">
-                <div>
-                  <span className="canvas-storyboard__eyebrow">分镜脚本</span>
-                  <strong>{structuredText.items.length} 个镜头</strong>
-                </div>
-                <span className="canvas-storyboard__edit-hint">双击编辑</span>
-              </div>
-              <div className="canvas-storyboard__list">
-                {structuredText.items.map((item, index) => (
-                  <article className="canvas-storyboard__item" key={`${item.title}-${index}`}>
-                    <span className="canvas-storyboard__index">{String(index + 1).padStart(2, '0')}</span>
-                    <div className="canvas-storyboard__content">
-                      <div className="canvas-storyboard__title-row">
-                        <strong>{item.title}</strong>
-                        {(item.duration || item.shot) && (
-                          <span className="canvas-storyboard__meta">
-                            {[
-                              item.shot,
-                              item.duration && `${item.duration}${/^\d+(\.\d+)?$/.test(item.duration) ? 's' : ''}`,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </span>
-                        )}
-                      </div>
-                      <textarea
-                        className="nodrag"
-                        aria-label={`镜头 ${index + 1} 提示词`}
-                        value={item.prompt}
-                        disabled={taskRunning}
-                        onDoubleClick={(event) => event.stopPropagation()}
-                        onChange={(event) => {
-                          const items = structuredText.items.map((shot, shotIndex) =>
-                            shotIndex === index ? { ...shot, prompt: event.target.value } : shot,
-                          )
-                          const value = JSON.stringify(items)
-                          setTextContent(value)
-                          if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
-                          ;(window as any).__canvasTextContents.set(id, value)
-                          ;(window as any).__canvasMarkDirty?.()
-                        }}
-                      />
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
+            <CanvasStoryboard
+              items={structuredText.items}
+              disabled={taskRunning}
+              onChange={(items) => {
+                const value = JSON.stringify(items)
+                setTextContent(value)
+                if (!(window as any).__canvasTextContents) (window as any).__canvasTextContents = new Map()
+                ;(window as any).__canvasTextContents.set(id, value)
+                ;(window as any).__canvasMarkDirty?.()
+              }}
+            />
           ) : (
             <div className={`canvas-node-prompt${textContent.trim() ? '' : ' is-placeholder'}`}>
               {structuredText.text || placeholder}
@@ -2018,6 +1990,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
           <div className="canvas-node-timeline">
             {timelineActions ? (
               <CanvasTimelineNodeBody
+                canvasZoom={canvasZoom}
                 nodeId={id}
                 clips={timelineSummary.clips}
                 workspaceId={nodeWorkspaceId}
@@ -2028,7 +2001,12 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
                 onAddSource={timelineActions.onAddClip}
               />
             ) : (
-              <CanvasTimelinePlayer clips={timelineSummary.clips} workspaceId={nodeWorkspaceId} compact />
+              <CanvasTimelinePlayer
+                canvasZoom={canvasZoom}
+                clips={timelineSummary.clips}
+                workspaceId={nodeWorkspaceId}
+                compact
+              />
             )}
           </div>
         ) : (
@@ -2037,7 +2015,17 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
       </div>
 
       {(taskFailed || connectionError) && (
-        <CanvasNodeFailure reason={connectionError || taskError}>
+        <CanvasNodeFailure
+          zoom={canvasZoom}
+          title={
+            connectionError ? '连接异常' : data.operationCode === 'video.upscale' ? '上次超分失败' : '上次生成失败'
+          }
+          failedAt={
+            connectionError ? undefined : String((data as any)?.taskFailure?.failedAt || data.taskUpdatedAt || '')
+          }
+          reason={connectionError || (data as any)?.taskFailure?.message || taskError}
+          requestId={connectionError ? undefined : (data as any)?.taskFailure?.requestId}
+        >
           {taskFailed && <CanvasFailureDetails data={data} />}
         </CanvasNodeFailure>
       )}
@@ -2049,26 +2037,23 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
         </div>
       )}
       {data.hdProcessing && (
-        <div className="canvas-node-generation-mask" role="status">
-          <span className="canvas-node-generation-spinner" />
-          正在处理中 · {String(data.hdProcessing)}
-        </div>
+        <CanvasNodeStatus zoom={canvasZoom} label={`正在处理中 · ${String(data.hdProcessing)}`}>
+          <span className="canvas-node-generation-spinner" aria-hidden="true" />
+          <strong>正在处理中</strong>
+          <span>{String(data.hdProcessing)}</span>
+        </CanvasNodeStatus>
       )}
 
       {uploadingLocalFile && (
-        <div className="canvas-node-generation-mask" role="status" aria-live="polite">
+        <CanvasNodeStatus zoom={canvasZoom} label="正在上传">
           <span className="canvas-node-generation-spinner" aria-hidden="true" />
           <strong>正在上传</strong>
           <span>本地素材上传中，请稍候</span>
-        </div>
+        </CanvasNodeStatus>
       )}
 
       {taskRunning && !uploadingLocalFile && (
-        <div
-          className={`canvas-node-generation-mask${videoEstimatedProgress !== null ? ' is-video' : ''}`}
-          role="status"
-          aria-live="polite"
-        >
+        <CanvasNodeStatus zoom={canvasZoom} label={taskPresentation.title}>
           {imagePreviews?.[id] && (
             <img
               src={imagePreviews[id]}
@@ -2076,9 +2061,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               style={{ maxWidth: '100%', maxHeight: '60%', objectFit: 'contain' }}
             />
           )}
-          {videoEstimatedProgress === null ? (
-            <span className="canvas-node-generation-spinner" aria-hidden="true" />
-          ) : null}
+          <span className="canvas-node-generation-spinner" aria-hidden="true" />
           <strong>{taskPresentation.title}</strong>
           <span
             className={`canvas-node-generation-progress${videoEstimatedProgress !== null ? ' is-timed' : taskPresentation.progress ? '' : ' is-indeterminate'}`}
@@ -2116,18 +2099,7 @@ function CanvasDefaultNode({ id, data, selected }: NodeProps<Node>) {
               已用时 {taskElapsedLabel}
             </span>
           ) : null}
-        </div>
-      )}
-
-      {taskRunning && (
-        <div className="canvas-node-task" role="status">
-          <span>{taskStatus === 'reconnecting' ? '正在核对' : '正在生成'}</span>
-          {taskRunning && videoEstimatedProgress !== null ? (
-            <strong aria-hidden="true">{videoEstimatedProgress.toFixed(2)}%</strong>
-          ) : taskRunning && taskPresentation.progress ? (
-            <strong>{Math.round(taskPresentation.progress)}%</strong>
-          ) : null}
-        </div>
+        </CanvasNodeStatus>
       )}
 
       {/* 放大查看弹窗：portal 到 body，不受画布 transform 影响 */}
@@ -2316,6 +2288,22 @@ function CanvasInner() {
    * 用 ref 镜像一份给轮询等长生命周期闭包读，免得为一个开关把整个 effect 重建。
    */
   const [preferences, setPreferences] = useState<CanvasPreferences>(loadCanvasPreferences)
+  useEffect(() => {
+    const body = document.body
+    const previous = body.style.getPropertyValue('--canvas-ui-scale')
+    const previousActive = body.getAttribute('data-canvas-ui')
+    body.style.setProperty(
+      '--canvas-ui-scale',
+      String({ standard: 1, large: 1.5, 'extra-large': 2 }[preferences.uiSize]),
+    )
+    body.setAttribute('data-canvas-ui', 'true')
+    return () => {
+      if (previous) body.style.setProperty('--canvas-ui-scale', previous)
+      else body.style.removeProperty('--canvas-ui-scale')
+      if (previousActive === null) body.removeAttribute('data-canvas-ui')
+      else body.setAttribute('data-canvas-ui', previousActive)
+    }
+  }, [preferences.uiSize])
   const preferencesRef = useRef(preferences)
   preferencesRef.current = preferences
   const updatePreferences = useCallback((patch: Partial<CanvasPreferences>) => {
@@ -2334,6 +2322,7 @@ function CanvasInner() {
   const canvasRootRef = useRef<HTMLDivElement>(null)
   const shortcutsBlockedRef = useRef(false)
   const [canvasKeyboardActive, setCanvasKeyboardActive] = useState(false)
+  const canvasModalOpen = useCanvasModalOpen()
   const acceptsCanvasShortcut = useCallback(
     (target: EventTarget | null) => canUseCanvasShortcuts(canvasRootRef.current, target, shortcutsBlockedRef.current),
     [],
@@ -2439,6 +2428,7 @@ function CanvasInner() {
     }
   }, [])
   const transform = useStore((s) => s.transform)
+  const viewportZoom = transform[2]
 
   // 图片工具属于打开它的节点；切换选择时关闭，避免失去锚点后回落到左侧。
   useEffect(() => {
@@ -2446,17 +2436,27 @@ function CanvasInner() {
   }, [selectedNode?.id])
 
   // 编辑面板尺寸与锚点位置
+  const canvasViewportWidth = useStore((state) => state.width)
+  const canvasViewportHeight = useStore((state) => state.height)
   const panelRef = useRef<HTMLDivElement>(null)
   const [panelSize, setPanelSize] = useState({ width: 0, height: 0 })
   useEffect(() => {
-    const el = panelRef.current
+    const el =
+      selectedNode?.kind === 'audio'
+        ? canvasRootRef.current?.querySelector<HTMLElement>(
+            `.react-flow__node[data-id="${CSS.escape(selectedNode.id)}"] .canvas-audio-panel`,
+          )
+        : panelRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(([entry]) => {
-      setPanelSize({ width: entry.contentRect.width, height: entry.contentRect.height })
-    })
+    const measure = () => {
+      const rect = el.getBoundingClientRect()
+      setPanelSize({ width: rect.width, height: rect.height })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [selectedNode?.id, imageTool])
+  }, [selectedNode?.id, selectedNode?.kind, imageTool, preferences.uiSize, viewportZoom])
 
   /**
    * 选中节点在屏幕上的矩形：由画布坐标 × 当前 transform 换算，不读节点 DOM。
@@ -2480,70 +2480,6 @@ function CanvasInner() {
     const top = (paneRect?.top ?? 0) + node.position.y * tz + ty
     return { left, top, width: width * tz, height: height * tz, bottom: top + height * tz }
   }, [selectedNode, nodes, transform])
-
-  /**
-   * 面板给「添加下一步」加号让路。
-   *
-   * 面板锚在选中节点下方，高缩放 / 低视口时常压在别的节点（或节点自身被拉高后）的加号上：
-   * 点击被面板吃掉，毫无反馈。这里不改面板位置，而是在指针落到「面板下方恰好有加号」的位置时
-   * 让面板临时淡出并放行指针，移开即恢复。只做透明度切换、不卸载，输入框内容与估价都保留。
-   * 用几何判断而不是 elementsFromPoint：加号被面板盖着，命中测试根本摸不到它。
-   */
-  const [panelYielding, setPanelYielding] = useState(false)
-  const panelYieldingRef = useRef(false)
-  useEffect(() => {
-    if (!selectedNode) {
-      if (panelYieldingRef.current) {
-        panelYieldingRef.current = false
-        setPanelYielding(false)
-      }
-      return
-    }
-    const HANDLE_MARGIN = 16
-    let frame = 0
-    let lastX = 0
-    let lastY = 0
-    const evaluate = () => {
-      frame = 0
-      const panelRect = panelRef.current?.getBoundingClientRect()
-      let next = false
-      if (
-        panelRect &&
-        lastX >= panelRect.left &&
-        lastX <= panelRect.right &&
-        lastY >= panelRect.top &&
-        lastY <= panelRect.bottom
-      ) {
-        // 只认当前显示着的加号：隐藏的加号只是透明、仍占位，按它们判断会让面板在空处莫名淡出
-        next = Array.from(document.querySelectorAll<HTMLElement>('.canvas-handle-icon[data-visible="true"]')).some(
-          (icon) => {
-            const rect = icon.getBoundingClientRect()
-            if (!rect.width && !rect.height) return false
-            return (
-              lastX >= rect.left - HANDLE_MARGIN &&
-              lastX <= rect.right + HANDLE_MARGIN &&
-              lastY >= rect.top - HANDLE_MARGIN &&
-              lastY <= rect.bottom + HANDLE_MARGIN
-            )
-          },
-        )
-      }
-      if (next !== panelYieldingRef.current) {
-        panelYieldingRef.current = next
-        setPanelYielding(next)
-      }
-    }
-    const onPointerMove = (event: PointerEvent) => {
-      lastX = event.clientX
-      lastY = event.clientY
-      if (!frame) frame = window.requestAnimationFrame(evaluate)
-    }
-    window.addEventListener('pointermove', onPointerMove, { passive: true })
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove)
-      if (frame) window.cancelAnimationFrame(frame)
-    }
-  }, [selectedNode])
 
   const imageToolAnchor =
     imageTool && selectedNode?.id === imageTool.source.nodeId && selectedNodeScreenRect
@@ -2592,13 +2528,13 @@ function CanvasInner() {
     // 不再翻到节点上方，避免遮挡节点本身。
     const top = below
     const minCenterX = halfWidth + NODE_PANEL_LEFT_SAFE
-    const maxCenterX = window.innerWidth - halfWidth - NODE_PANEL_GAP
+    const maxCenterX = (canvasViewportWidth || window.innerWidth) - halfWidth - NODE_PANEL_GAP
     return {
       left: Math.min(Math.max(centerX, minCenterX), Math.max(minCenterX, maxCenterX)),
       top,
     }
     // 面板不再上翻，高度已不参与定位计算，因此不依赖 panelSize.height
-  }, [selectedNodeScreenRect, panelSize.width])
+  }, [selectedNodeScreenRect, panelSize.width, canvasViewportWidth])
 
   /**
    * 单选工具条的位置：贴在节点上方。
@@ -2613,11 +2549,13 @@ function CanvasInner() {
     const topY = selectedNodeScreenRect.top
     // 让开节点上方的标题行，否则工具条会压住刚做好的名称
     const gap = 42
+    const viewportWidth = canvasViewportWidth || window.innerWidth
+    const viewportHeight = canvasViewportHeight || window.innerHeight
     return {
-      centerX: Math.min(Math.max(centerX, 150), Math.max(150, window.innerWidth - 150)),
-      bottom: Math.min(Math.max(window.innerHeight - topY + gap, 16), Math.max(16, window.innerHeight - 72)),
+      centerX: Math.min(Math.max(centerX, 150), Math.max(150, viewportWidth - 150)),
+      bottom: Math.min(Math.max(viewportHeight - topY + gap, 16), Math.max(16, viewportHeight - 72)),
     }
-  }, [selectedNodeScreenRect, selectedNodeIds.length])
+  }, [selectedNodeScreenRect, selectedNodeIds.length, canvasViewportWidth, canvasViewportHeight])
 
   /**
    * 工具条要用的节点状态：决定「上传」还是「替换」、能否下载/截帧。
@@ -2635,7 +2573,7 @@ function CanvasInner() {
   useEffect(() => {
     const height = panelSize.height
     if (imageTool || !selectedNode || !(height > 0)) return
-    const key = `${selectedNode.id}:${Math.round(height)}`
+    const key = `${selectedNode.id}:${Math.round(height)}:${Math.round(panelSize.width)}:${canvasViewportWidth}:${canvasViewportHeight}`
     if (panelPanRef.current === key) return
     panelPanRef.current = key
     const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
@@ -2645,18 +2583,39 @@ function CanvasInner() {
     const nodeHeight = Number(node.measured?.height ?? style.height ?? 250) || 250
     const bottomY = (node.position.y + nodeHeight) * tz + ty
     const topY = node.position.y * tz + ty
+    // 音频面板在节点内渲染，始终居中；空间不足时移动画布而不是把面板翻到左右。
+    let nextX = tx
+    if (selectedNode.kind === 'audio') {
+      const nodeWidth = Number(node.measured?.width ?? style.width ?? 250) || 250
+      const center = (node.position.x + nodeWidth / 2) * tz + tx
+      const halfWidth = panelSize.width / 2
+      const safeCenter = Math.max(halfWidth + 24, Math.min(window.innerWidth - halfWidth - 24, center))
+      nextX += safeCenter - center
+    }
     // 靠近屏幕顶部的节点下移，保留操作条和标题的完整空间，避免夹取后贴住图片。
     const topSafe = 144
     if (topY < topSafe) {
-      setViewport({ x: tx, y: ty + topSafe - topY, zoom: tz }, { duration: 200 })
+      setViewport({ x: nextX, y: ty + topSafe - topY, zoom: tz }, { duration: 200 })
       return
     }
     const deficit = bottomY + NODE_PANEL_GAP * 2 + height - window.innerHeight
-    if (deficit <= 0) return
+    if (deficit <= 0) {
+      if (Math.abs(nextX - tx) > 1) setViewport({ x: nextX, y: ty, zoom: tz }, { duration: 200 })
+      return
+    }
     const shift = Math.min(deficit, Math.max(0, topY - topSafe))
-    if (shift <= 1) return
-    setViewport({ x: tx, y: ty - shift, zoom: tz }, { duration: 200 })
-  }, [selectedNode, panelSize.height, transform, setViewport, imageTool])
+    if (shift <= 1 && Math.abs(nextX - tx) <= 1) return
+    setViewport({ x: nextX, y: ty - shift, zoom: tz }, { duration: 200 })
+  }, [
+    selectedNode,
+    panelSize.height,
+    panelSize.width,
+    transform,
+    setViewport,
+    imageTool,
+    canvasViewportHeight,
+    canvasViewportWidth,
+  ])
   // 记住最后选中的节点：退出画布再进来时恢复选中态与编辑面板（含输入框内容）。
   useEffect(() => {
     saveLastSelectedNodeId(routeProjectId, selectedNode?.id || '')
@@ -4311,7 +4270,14 @@ function CanvasInner() {
           const full = await fetchAllCanvasElements({ workspaceId, canvasId, afterRevision: 0 })
           if (disposed) return
           if (localStateChanged()) return schedule(1500)
-          const graph = elementsToGraph(full.elements).nodes.map((node) => normalizeNodeMedia(node, workspaceId))
+          const localNodes = new Map(latestRef.current.nodes.map((node) => [node.id, node]))
+          const graph = elementsToGraph(full.elements).nodes.map((node) => {
+            const previous = localNodes.get(node.id)
+            return normalizeNodeMedia(
+              previous ? { ...node, selected: previous.selected, measured: previous.measured } : node,
+              workspaceId,
+            )
+          })
           const fullGraph = { nodes: graph, edges: elementsToGraph(full.elements).edges }
           restoreTextContents(
             Object.fromEntries(
@@ -5334,15 +5300,7 @@ function CanvasInner() {
       if (!theme) throw new Error('请先输入一个主题或提示词')
       const polishModel = canvasModels.text.find((model) => model.operationCodes.includes('responses.multimodal'))
       if (!polishModel) throw new Error('暂无可用的 AI 润色模型，请稍后重试')
-      const targetLabel = kind === 'video' ? '视频' : '图片'
-      const hasReferenceImages = Boolean(images?.length || imageAssetIds?.length)
-      const polishContext = hasReferenceImages
-        ? kind === 'video'
-          ? `目标是 AI ${targetLabel}生成提示词，且已连接参考图。请保持参考图中的主体不变，只补充镜头运动、光线、节奏和画面风格，不要替换主体或增加无关主体。`
-          : `目标是 AI ${targetLabel}生成提示词，且已连接参考图。请保持参考图中的主体不变，只补充构图、视角、光线、材质和画面风格，不要替换主体或增加无关主体。`
-        : kind === 'video'
-          ? `目标是 AI ${targetLabel}生成提示词。请补充场景、构图、镜头运动、主体动作、光线、节奏和画面风格，不要增加无关主体。`
-          : `目标是 AI ${targetLabel}生成提示词。请补充场景、构图、视角、光线、材质和画面风格，不要增加无关主体。`
+      const polishContext = generationPolishContext(kind, Boolean(images?.length || imageAssetIds?.length))
       const polished = String(
         await polishText(theme, {
           kind: 'generic',
@@ -5405,6 +5363,7 @@ function CanvasInner() {
     null,
   )
   const pendingNodeSubmissionsRef = useRef(new Set<string>())
+  const pendingVideoUpscaleModelsRef = useRef(new Set<number>())
   const submitNodeGeneration = useCallback(
     async (
       targetNodeId: string,
@@ -5414,12 +5373,27 @@ function CanvasInner() {
     ) => {
       if (!generate || !latestRef.current.nodes.some((node) => node.id === targetNodeId)) return
       // 工具指令由后端生成，用户可以不填写补充描述。
-      const promptError = generate.params?.tool ? null : validateCanvasGenerationPrompt(generate.kind, generate.prompt)
+      const promptError =
+        generate.params?.tool || generate.operationCode === 'video.upscale'
+          ? null
+          : validateCanvasGenerationPrompt(generate.kind, generate.prompt)
       if (promptError) {
         showToast(promptError, 'error')
         return
       }
       const currentData = latestRef.current.nodes.find((node) => node.id === targetNodeId)?.data
+      if (
+        generate.operationCode === 'video.upscale' &&
+        hasActiveVideoUpscale(
+          latestRef.current.nodes,
+          generate.modelVersionId,
+          targetNodeId,
+          pendingNodeSubmissionsRef.current,
+        )
+      ) {
+        showToast('当前画布有同模型的视频超分任务正在处理，请完成后再试', 'info')
+        return
+      }
       // 续提时节点本来就停在 submitting（被算作「运行中」），不能被下面的防重复提交拦掉
       const isResumableOrphan = (data: Record<string, unknown> | undefined) =>
         Boolean(resume) && normalizeAiTaskStatus(data?.taskStatus) === 'submitting' && Number(data?.taskId || 0) <= 0
@@ -5437,7 +5411,7 @@ function CanvasInner() {
       )
       const submitMaxImageRefs =
         getModelReferenceImageLimit(buildModelRestrictionSummary(submitModel?.source).constraints) ?? DEFAULT_MAX_REFS
-      if (generate.kind === 'video') {
+      if (generate.kind === 'video' && generate.operationCode !== 'video.upscale') {
         const videoValidationArgs = {
           operationCode: generate.operationCode,
           videoMode: generate.videoMode,
@@ -5572,7 +5546,10 @@ function CanvasInner() {
       const inputAssets = identity.inputAssets
       // 视频模型画不了字，提示词里的文字只会渲染成乱码；整片生成 / video.edit / 爆款复刻都挂了这条守卫，
       // 画布视频节点此前漏掉，灯牌、包装、贴字一律照抄出乱码。图片模型不在此列。
-      const submitPrompt = generate.kind === 'video' ? withNoOnscreenTextGuard(identity.prompt) : identity.prompt
+      const submitPrompt =
+        generate.kind === 'video' && generate.operationCode !== 'video.upscale'
+          ? withNoOnscreenTextGuard(identity.prompt)
+          : identity.prompt
       const taskRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
       // Validation can await remote authorization; acquire once before any paid submission.
       const latestNode = latestRef.current.nodes.find((node) => node.id === targetNodeId)
@@ -5610,6 +5587,18 @@ function CanvasInner() {
         uncertainSubmissionKey ||
         reusableInterruptedIdempotencyKey((latestNode.data || {}) as Record<string, unknown>, generate) ||
         createCanvasTaskIdempotencyKey()
+      if (
+        generate.operationCode === 'video.upscale' &&
+        hasActiveVideoUpscale(
+          latestRef.current.nodes,
+          generate.modelVersionId,
+          targetNodeId,
+          pendingNodeSubmissionsRef.current,
+        )
+      ) {
+        showToast('当前画布有同模型的视频超分任务正在处理，请完成后再试', 'info')
+        return
+      }
       pendingNodeSubmissionsRef.current.add(targetNodeId)
       try {
         const taskStartedAt = new Date().toISOString()
@@ -5726,7 +5715,15 @@ function CanvasInner() {
           taskFailure: ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(createdStatus)
             ? buildGenerationFailure(
                 { ...task, message: task?.error_message || task?.error?.message || task?.message },
-                { taskId, submissionId: taskIdempotencyKey, submitted: true },
+                {
+                  taskId,
+                  submissionId: taskIdempotencyKey,
+                  submitted: true,
+                  operationCode: generate.operationCode,
+                  modelVersionId: generate.modelVersionId,
+                  workspaceId: Number(workspaceId),
+                  canvasId: Number(canvasId),
+                },
               )
             : undefined,
           taskError: ['failed', 'error', 'payment_failed', 'cancelled', 'expired'].includes(createdStatus)
@@ -5752,7 +5749,14 @@ function CanvasInner() {
         if (isInsufficientCreditsError(error)) {
           const taskData = {
             taskStatus: 'submit_failed',
-            taskFailure: buildGenerationFailure(error, { submissionId: taskIdempotencyKey, submitted: true }),
+            taskFailure: buildGenerationFailure(error, {
+              submissionId: taskIdempotencyKey,
+              submitted: true,
+              operationCode: generate.operationCode,
+              modelVersionId: generate.modelVersionId,
+              workspaceId: Number(workspaceId),
+              canvasId: Number(canvasId),
+            }),
             taskProgress: 0,
             taskError: '积分不足',
             taskUpdatedAt: new Date().toISOString(),
@@ -5771,7 +5775,14 @@ function CanvasInner() {
           await handleInsufficientCredits()
           return
         }
-        const taskFailure = buildGenerationFailure(error, { submissionId: taskIdempotencyKey, submitted: true })
+        const taskFailure = buildGenerationFailure(error, {
+          submissionId: taskIdempotencyKey,
+          submitted: true,
+          operationCode: generate.operationCode,
+          modelVersionId: generate.modelVersionId,
+          workspaceId: Number(workspaceId),
+          canvasId: Number(canvasId),
+        })
         const taskData = {
           taskStatus: 'submit_failed',
           taskFailure,
@@ -5802,7 +5813,15 @@ function CanvasInner() {
         })
       }
     },
-    [canvasModels, handleInsufficientCredits, isRealPersonReferenceAuthorizedNow, workspaceId, setNodes, setSaveStatus],
+    [
+      canvasModels,
+      handleInsufficientCredits,
+      isRealPersonReferenceAuthorizedNow,
+      workspaceId,
+      canvasId,
+      setNodes,
+      setSaveStatus,
+    ],
   )
 
   restartGenerationRef.current = (nodeId, request) => {
@@ -5866,7 +5885,7 @@ function CanvasInner() {
         const resumeToken = `${node.id}:${key}`
         if (verdict === 'resume' && !resumedOrphanKeysRef.current.has(resumeToken)) {
           resumedOrphanKeysRef.current.add(resumeToken)
-          const request = data.generationRequest as CanvasGenerationRequest
+          const request = (data.generationRequest || data.videoUpscaleRequest) as CanvasGenerationRequest
           void submitNodeGenerationRef.current(node.id, request, { idempotencyKey: key }).finally(() => {
             // 续提在校验阶段就退出（素材失效、授权过期等）时节点仍会停在 submitting，这里兜底结束它
             const after = latestRef.current.nodes.find((item) => item.id === node.id)
@@ -5969,6 +5988,113 @@ function CanvasInner() {
     setSaveStatus('dirty')
     await submitNodeGeneration(id, generate)
     scheduleSyncRef.current(true)
+  }
+
+  const handleVideoUpscaleGenerate = async ({
+    source: input,
+    request,
+    modelName,
+    paramLabels,
+  }: VideoUpscaleSubmission) => {
+    if (
+      pendingVideoUpscaleModelsRef.current.has(request.modelVersionId) ||
+      hasActiveVideoUpscale(
+        latestRef.current.nodes,
+        request.modelVersionId,
+        undefined,
+        pendingNodeSubmissionsRef.current,
+      )
+    ) {
+      throw new Error('当前画布有同模型的视频超分任务正在处理，请完成后再试')
+    }
+    const source = latestRef.current.nodes.find((node) => node.id === input.node_id)
+    if (
+      !source ||
+      Number(source.data.assetId) !== input.asset_id ||
+      (Number(source.data.assetWorkspaceId) > 0 && Number(source.data.assetWorkspaceId) !== Number(workspaceId))
+    ) {
+      throw new Error('原视频已更换或移除，请重新打开超分')
+    }
+    pendingVideoUpscaleModelsRef.current.add(request.modelVersionId)
+    try {
+      const id = createNodeId('video')
+      const size = { width: Number(source.style?.width) || 320, height: Number(source.style?.height) || 260 }
+      const position = findFreeNodePosition({
+        anchor: { x: source.position.x + size.width + 80, y: source.position.y },
+        size,
+        occupied: latestRef.current.nodes.map((node) => ({
+          ...node.position,
+          width: Number(node.style?.width) || 320,
+          height: Number(node.style?.height) || 260,
+        })),
+      })
+      const edgeId = `upscale-${id}`
+      const sourceRefs: CanvasSourceRef[] = [
+        {
+          kind: 'video',
+          sourceId: source.id,
+          edgeId,
+          slotIndex: 0,
+          assetId: input.asset_id,
+          workspaceId: Number(workspaceId),
+          source: normalizeCanvasAssetSource(source.data.assetSource),
+          title: input.name,
+        },
+      ]
+      const generate: CanvasGenerationRequest = { ...request, sourceRefs }
+      const node: Node = {
+        id,
+        type: 'video',
+        selected: true,
+        position,
+        style: size,
+        data: {
+          kind: 'video',
+          title: `${input.name}超分结果`,
+          upscaleModelName: modelName,
+          upscaleParamLabels: paramLabels,
+          videoUpscaleRequest: generate,
+          ratio: source.data.ratio,
+          prompt: request.prompt,
+          modelVersionId: request.modelVersionId,
+          operationCode: request.operationCode,
+          params: request.params,
+          generationRequest: generate,
+        },
+      }
+      commitHistory()
+      const next = {
+        nodes: [...latestRef.current.nodes.map((item) => (item.selected ? { ...item, selected: false } : item)), node],
+        edges: [
+          ...latestRef.current.edges,
+          {
+            id: edgeId,
+            source: source.id,
+            target: id,
+            type: CANVAS_ARROW_EDGE_TYPE,
+            data: { role: 'source_video', slotIndex: 0 },
+          },
+        ],
+      }
+      latestRef.current = next
+      setNodes(next.nodes)
+      setEdges(next.edges)
+      setSaveStatus('dirty')
+      closeHdRequest()
+      setSelectedNode({
+        id,
+        kind: 'video',
+        sourceRefs,
+        ratio: source.data.ratio as string,
+        prompt: request.prompt,
+        modelVersionId: request.modelVersionId,
+      })
+      void fitView({ nodes: [node], padding: 0.5, duration: 300, maxZoom: 1.2 })
+      await submitNodeGeneration(id, generate)
+      scheduleSyncRef.current(true)
+    } finally {
+      pendingVideoUpscaleModelsRef.current.delete(request.modelVersionId)
+    }
   }
 
   const handlePanoramaViewChange = (values: Record<string, unknown>) => {
@@ -6306,6 +6432,10 @@ function CanvasInner() {
                 {
                   taskId,
                   submissionId: node.data.taskIdempotencyKey,
+                  operationCode: String(node.data.operationCode || ''),
+                  modelVersionId: Number(node.data.modelVersionId) || undefined,
+                  workspaceId: Number(workspaceId),
+                  canvasId: Number(canvasId),
                   failedAt: nextData.taskUpdatedAt,
                   submitted: true,
                 },
@@ -6440,7 +6570,7 @@ function CanvasInner() {
       window.clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [setNodes, workspaceId, fitView])
+  }, [setNodes, workspaceId, canvasId, fitView])
 
   // 当前被编辑的时间线节点及其状态；节点被删除时编辑器自然关闭
   const timelineEditorNode = timelineEditorNodeId
@@ -7726,8 +7856,16 @@ function CanvasInner() {
       if (!acceptsCanvasShortcut(event.target)) return
       const target = event.target as HTMLElement | null
       if (target?.closest('textarea, input, [contenteditable="true"]')) return
-      if (event.defaultPrevented || event.isComposing || event.repeat || target?.closest('[role="dialog"]')) return
+      if (event.defaultPrevented || event.isComposing || target?.closest('[role="dialog"]')) return
       if (settingsOpen || shortcutsOpen || searchOpen || timelineEditorNodeId) return
+      const zoomShortcut = resolveCanvasZoomShortcut(event)
+      if (zoomShortcut) {
+        event.preventDefault()
+        if (zoomShortcut === 'in') void zoomIn({ duration: 120 })
+        else void zoomOut({ duration: 120 })
+        return
+      }
+      if (event.repeat) return
       const mod = event.ctrlKey || event.metaKey
       const key = event.key
 
@@ -8319,7 +8457,10 @@ function CanvasInner() {
       onNodeWheel: (event) => {
         if (preferencesRef.current.wheelMode !== 'pan') return
         const target = event.target as HTMLElement
-        if (target.closest('video, audio, input, textarea, select, button, [contenteditable="true"], .nopan')) return
+        // Portal 弹窗/下拉菜单仍会沿 React 树冒泡，不能把弹层滚动当作节点平移。
+        if (!event.currentTarget.contains(target)) return
+        if (target.closest('video, audio, input, textarea, select, button, [contenteditable="true"], .nopan, .nowheel'))
+          return
         event.preventDefault()
         const [x, y, zoom] = transform
         setViewport({ x: x - event.deltaX, y: y - event.deltaY, zoom }, { duration: 0 })
@@ -8686,6 +8827,7 @@ function CanvasInner() {
   )
 
   const canvasShortcutsBlocked = Boolean(
+    canvasModalOpen ||
     imageTool ||
     imageCropRequest ||
     settingsOpen ||
@@ -8699,6 +8841,9 @@ function CanvasInner() {
   )
   shortcutsBlockedRef.current = canvasShortcutsBlocked
 
+  useEffect(() => {
+    if (hdRequest && (!selectedNode || !hdRequest.ids.includes(selectedNode.id))) setHdRequest(null)
+  }, [hdRequest, selectedNode])
   const closeHdRequest = useCallback(() => setHdRequest(null), [])
   const handleHdModalChange = useCallback(
     (open: boolean) => {
@@ -8743,66 +8888,77 @@ function CanvasInner() {
           canvasId={canvasId}
           nodes={nodes}
           request={hdRequest}
+          anchor={
+            hdRequest && selectedNodeScreenRect
+              ? {
+                  centerX: selectedNodeScreenRect.left + selectedNodeScreenRect.width / 2,
+                  bottom: selectedNodeScreenRect.bottom,
+                }
+              : null
+          }
           onCloseRequest={closeHdRequest}
           onTasks={receiveHdTasks}
+          onVideoGenerate={handleVideoUpscaleGenerate}
           onModalChange={handleHdModalChange}
         />
       </Suspense>
       {imageCropRequest ? (
-        <CanvasImageCropModal
-          images={imageCropRequest.images}
-          onClose={() => setImageCropRequest(null)}
-          onSave={async (image, file, width, height) => {
-            const targetId = imageCropRequest.targetId
-            const source = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
-            if (!source || !latestRef.current.nodes.some((node) => node.id === targetId))
-              throw new Error('素材节点已删除，请重新生成')
-            const uploaded = await uploadAssetFile({ workspaceId, file })
-            const assetId = Number(uploaded?.asset?.id)
-            if (!(assetId > 0)) throw new Error('裁切图片上传失败')
-            const latestSource = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
-            if (!latestSource || Number(latestSource.data.assetId) !== Number(source.data.assetId))
-              throw new Error('原素材已更换，请重新生成后裁切')
-            if (!latestRef.current.nodes.some((node) => node.id === targetId)) throw new Error('生成节点已删除')
-            const ratio = naturalImageRatio(width, height)
-            const resultUrl = assetStreamUrl(assetId, Number(workspaceId))
-            commitHistory()
-            const local = source.data.assetSource === 'upload'
-            setNodes((items) =>
-              items.map((node) => {
-                if (local && node.id === targetId)
-                  return {
-                    ...node,
-                    data: {
-                      ...node.data,
-                      croppedInputAssets: {
-                        ...((node.data.croppedInputAssets as Record<string, unknown>) || {}),
-                        [image.ref.edgeId]: {
-                          originalAssetId: Number(source.data.assetId),
-                          assetId,
-                          workspaceId: Number(workspaceId),
+        <Suspense fallback={null}>
+          <CanvasImageCropModal
+            images={imageCropRequest.images}
+            onClose={() => setImageCropRequest(null)}
+            onSave={async (image, file, width, height) => {
+              const targetId = imageCropRequest.targetId
+              const source = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
+              if (!source || !latestRef.current.nodes.some((node) => node.id === targetId))
+                throw new Error('素材节点已删除，请重新生成')
+              const uploaded = await uploadAssetFile({ workspaceId, file })
+              const assetId = Number(uploaded?.asset?.id)
+              if (!(assetId > 0)) throw new Error('裁切图片上传失败')
+              const latestSource = latestRef.current.nodes.find((node) => node.id === image.ref.sourceId)
+              if (!latestSource || Number(latestSource.data.assetId) !== Number(source.data.assetId))
+                throw new Error('原素材已更换，请重新生成后裁切')
+              if (!latestRef.current.nodes.some((node) => node.id === targetId)) throw new Error('生成节点已删除')
+              const ratio = naturalImageRatio(width, height)
+              const resultUrl = assetStreamUrl(assetId, Number(workspaceId))
+              commitHistory()
+              const local = source.data.assetSource === 'upload'
+              setNodes((items) =>
+                items.map((node) => {
+                  if (local && node.id === targetId)
+                    return {
+                      ...node,
+                      data: {
+                        ...node.data,
+                        croppedInputAssets: {
+                          ...((node.data.croppedInputAssets as Record<string, unknown>) || {}),
+                          [image.ref.edgeId]: {
+                            originalAssetId: Number(source.data.assetId),
+                            assetId,
+                            workspaceId: Number(workspaceId),
+                          },
                         },
                       },
-                    },
-                  }
-                if (!local && node.id === source.id)
-                  return {
-                    ...node,
-                    data: { ...node.data, assetId, resultUrl, ratio },
-                    style: { ...node.style, ...canvasImageResultSize({ ...node.data, ratio }) },
-                  }
-                return node
-              }),
-            )
-            setSaveStatus('dirty')
-            setImageCropRequest((current) => {
-              if (!current || current.targetId !== targetId) return current
-              const images = current.images.filter((item) => item.ref.edgeId !== image.ref.edgeId)
-              return images.length ? { ...current, images } : null
-            })
-            showToast('裁切已保存，请在全部处理后重新点击生成', 'success')
-          }}
-        />
+                    }
+                  if (!local && node.id === source.id)
+                    return {
+                      ...node,
+                      data: { ...node.data, assetId, resultUrl, ratio },
+                      style: { ...node.style, ...canvasImageResultSize({ ...node.data, ratio }) },
+                    }
+                  return node
+                }),
+              )
+              setSaveStatus('dirty')
+              setImageCropRequest((current) => {
+                if (!current || current.targetId !== targetId) return current
+                const images = current.images.filter((item) => item.ref.edgeId !== image.ref.edgeId)
+                return images.length ? { ...current, images } : null
+              })
+              showToast('裁切已保存，请在全部处理后重新点击生成', 'success')
+            }}
+          />
+        </Suspense>
       ) : null}
       <div
         /*
@@ -8821,7 +8977,7 @@ function CanvasInner() {
         onBlurCapture={(event) =>
           setCanvasKeyboardActive(isCanvasShortcutTarget(canvasRootRef.current, event.relatedTarget))
         }
-        className={`canvas-view${selectedNodeIds.length > 1 ? ' is-multi-selecting' : ''}`}
+        className={`canvas-view${selectedNodeIds.length > 1 ? ' is-multi-selecting' : ''}${canvasModalOpen ? ' has-modal' : ''}`}
         onDragEnter={handleFileDragEnter}
         onDragOver={handleFileDragOver}
         onDragLeave={handleFileDragLeave}
@@ -8835,16 +8991,39 @@ function CanvasInner() {
           setContextMenu({ x: event.clientX, y: event.clientY })
         }}
       >
-        <div className="canvas-brand">
-          <img src={brandLogo} alt="帧智汇" className="canvas-brand-logo" />
-          <div className="canvas-brand-text">
-            <span className="canvas-brand-name">帧智汇</span>
-            <DraftSaveIndicator status={saveStatus} />
-            {cloudStatus !== 'online' && (
-              <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
-                {cloudMessage}
-              </span>
-            )}
+        <div className="canvas-navigation nodrag nopan nowheel" aria-label="画布导航">
+          <button
+            type="button"
+            className="canvas-back-btn"
+            onClick={() => navigate('/canvas')}
+            title="返回画布列表"
+            aria-label="返回画布列表"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M19 12H5m7 7-7-7 7-7" />
+            </svg>
+          </button>
+          <div className="canvas-brand">
+            <img src={brandLogo} alt="帧智汇" className="canvas-brand-logo" />
+            <div className="canvas-brand-text">
+              <span className="canvas-brand-name">帧智汇</span>
+              <DraftSaveIndicator status={saveStatus} />
+              {cloudStatus !== 'online' && (
+                <span className={`canvas-cloud-status is-${cloudStatus}`} title={cloudMessage}>
+                  {cloudMessage}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -8889,28 +9068,6 @@ function CanvasInner() {
             onToast={showToast}
           />
         )}
-
-        {/* 独立返回按钮：始终显示，不随工具栏/抽屉隐藏或消失 */}
-        <button
-          className="canvas-back-btn"
-          onClick={() => navigate('/canvas')}
-          title="返回画布列表"
-          aria-label="返回画布列表"
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M19 12H5" />
-            <path d="m12 19-7-7 7-7" />
-          </svg>
-        </button>
 
         {/* 抽屉未打开（或正在播放收起动画）时渲染工具栏 */}
         {!drawerPanel && (
@@ -9286,7 +9443,7 @@ function CanvasInner() {
         </CanvasNodeActionsContext.Provider>
 
         {/* 单选节点操作条：贴在节点上方，收纳改名/上传/截帧/下载/删除 */}
-        {nodeToolbarAnchor && selectedNode && (
+        {nodeToolbarAnchor && selectedNode && !hdRequest && !hdModalOpen && !canvasModalOpen && (
           <CanvasNodeToolbar
             anchor={nodeToolbarAnchor}
             kind={selectedNodeToolbarState.kind}
@@ -9297,7 +9454,10 @@ function CanvasInner() {
             onUpload={() => (window as any).__canvasRequestUpload?.(selectedNode.id)}
             onHd={
               ['image', 'video', 'timeline'].includes(selectedNodeToolbarState.kind)
-                ? () => setHdRequest({ ids: [selectedNode.id], key: Date.now() })
+                ? () => {
+                    setImageTool(null)
+                    setHdRequest({ ids: [selectedNode.id], key: Date.now() })
+                  }
                 : undefined
             }
             hdDisabledReason={
@@ -9381,7 +9541,7 @@ function CanvasInner() {
         )}
 
         {/* 多选批量操作条：贴在选区上方，只有选中 2 个及以上时出现 */}
-        {selectionAnchor && (
+        {selectionAnchor && !canvasModalOpen && (
           <CanvasSelectionToolbar
             count={selectedNodeIds.length}
             timelineReadyCount={timelineReadySelection.length}
@@ -9417,6 +9577,8 @@ function CanvasInner() {
         )}
 
         <CanvasViewControls
+          uiSize={preferences.uiSize}
+          onUiSizeChange={(uiSize) => updatePreferences({ uiSize })}
           zoom={transform[2]}
           onZoomIn={() => zoomIn({ duration: 160 })}
           onZoomOut={() => zoomOut({ duration: 160 })}
@@ -9895,99 +10057,124 @@ function CanvasInner() {
           selectedNode.kind !== 'audio' &&
           selectedNodeIds.length < 2 &&
           !addMenu &&
-          !imageTool && (
+          !imageTool &&
+          !hdRequest &&
+          !hdModalOpen && (
             <div
               ref={panelRef}
-              className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}${panelYielding ? ' is-yielding' : ''}`}
+              className={`canvas-panel-area${panelAnchor ? ' is-anchored' : ''}${draggingNode ? ' is-drag-hidden' : ''}`}
               style={panelAnchor ? { left: panelAnchor.left, top: panelAnchor.top } : undefined}
             >
-              <CanvasNodePanel
-                node={selectedNodeForPanel}
-                currentUserId={currentUserId}
-                workspaceId={workspaceId}
-                onPickRealPerson={(slotIndex) => {
-                  if (!selectedNode || remainingRefCapacity(selectedNode.id) <= 0) return
-                  setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
-                  setLibraryInitialTab('real_person')
-                  openDrawerPanel('assets')
-                }}
-                onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
-                onPickRefFromLibrary={(slotIndex) => {
-                  if (!selectedNode) return
-                  if (remainingRefCapacity(selectedNode.id) <= 0) {
-                    showToast('当前模型的参考已达上限', 'info')
-                    return
-                  }
-                  setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
-                  setLibraryInitialTab('all')
-                  openDrawerPanel('assets')
-                }}
-                onRemoveRef={handleRemoveRef}
-                resultHistory={selectedNodeHistory}
-                onRevertToHistory={handleRevertToHistory}
-                onRatioChange={handleRatioChange}
-                onVideoModeChange={handleVideoModeChange}
-                onModelChange={handleModelChange}
-                onGenerate={handleNodeGenerate}
-                onPreflightAssets={(sourceRefs, inputAssets) => {
-                  const unsavedAudio = sourceRefs.find((ref) => {
-                    if (ref.kind !== 'audio' || !inputAssets.some((asset) => asset.asset_id === ref.assetId))
-                      return false
-                    const source = nodes.find((node) => node.id === ref.sourceId)
-                    if (source?.data?.audioRole !== 'editor') return false
-                    const audio = normalizeAudioSettings(source.data.audio)
-                    return (
-                      audio.inSec > 0.01 ||
-                      audio.outSec < audio.durationSec - 0.01 ||
-                      audio.volume < 0.99 ||
-                      audio.fadeInSec > 0 ||
-                      audio.fadeOutSec > 0
+              {selectedNodeForPanel?.operationCode === 'video.upscale' ? (
+                <CanvasVideoUpscaleResultPanel
+                  data={nodes.find((node) => node.id === selectedNode.id)?.data || {}}
+                  onRetry={async () => {
+                    const node = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                    const request = (node?.data.generationRequest || node?.data.videoUpscaleRequest) as
+                      | CanvasGenerationRequest
+                      | undefined
+                    if (!request || request.kind !== 'video' || request.operationCode !== 'video.upscale') {
+                      showToast('缺少原始超分请求，请从原视频重新打开超分', 'error')
+                      return
+                    }
+                    await submitNodeGeneration(node.id, request)
+                  }}
+                />
+              ) : (
+                <CanvasNodePanel
+                  node={selectedNodeForPanel}
+                  currentUserId={currentUserId}
+                  workspaceId={workspaceId}
+                  onPickRealPerson={(slotIndex) => {
+                    if (!selectedNode || remainingRefCapacity(selectedNode.id) <= 0) return
+                    setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
+                    setLibraryInitialTab('real_person')
+                    openDrawerPanel('assets')
+                  }}
+                  onStartPickRef={(slotIndex) => selectedNode && startPickRef(selectedNode.id, slotIndex)}
+                  onPickRefFromLibrary={(slotIndex) => {
+                    if (!selectedNode) return
+                    if (remainingRefCapacity(selectedNode.id) <= 0) {
+                      showToast('当前模型的参考已达上限', 'info')
+                      return
+                    }
+                    setLibraryRefTarget({ targetId: selectedNode.id, slotIndex: slotIndex ?? 0 })
+                    setLibraryInitialTab('all')
+                    openDrawerPanel('assets')
+                  }}
+                  onRemoveRef={handleRemoveRef}
+                  resultHistory={selectedNodeHistory}
+                  onRevertToHistory={handleRevertToHistory}
+                  onRatioChange={handleRatioChange}
+                  onVideoModeChange={handleVideoModeChange}
+                  onModelChange={handleModelChange}
+                  onGenerate={handleNodeGenerate}
+                  onPreflightAssets={(sourceRefs, inputAssets) => {
+                    const unsavedAudio = sourceRefs.find((ref) => {
+                      if (ref.kind !== 'audio' || !inputAssets.some((asset) => asset.asset_id === ref.assetId))
+                        return false
+                      const source = nodes.find((node) => node.id === ref.sourceId)
+                      if (source?.data?.audioRole !== 'editor') return false
+                      const audio = normalizeAudioSettings(source.data.audio)
+                      return (
+                        audio.inSec > 0.01 ||
+                        audio.outSec < audio.durationSec - 0.01 ||
+                        audio.volume < 0.99 ||
+                        audio.fadeInSec > 0 ||
+                        audio.fadeOutSec > 0
+                      )
+                    })
+                    if (unsavedAudio)
+                      return Promise.resolve(
+                        '音频编辑节点还有未保存的裁剪或音量设置。请先点“保存为新素材并用于下游”，再生成视频。',
+                      )
+                    return preflightCanvasAssets({ workspaceId: Number(workspaceId || 0), sourceRefs, inputAssets })
+                  }}
+                  onInsufficientCredits={handleInsufficientCredits}
+                  onSaveText={handleSaveNodeText}
+                  onCreateVideoFromText={(currentPrompt) => {
+                    const source = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
+                    if (!source) {
+                      showToast('原文本节点已不存在，请重新选择节点', 'info')
+                      return
+                    }
+                    const text = (window as any).__canvasTextContents?.get(source.id) ?? source.data.text ?? ''
+                    const prompt = toCanvasPromptContext(text).trim() || currentPrompt.trim()
+                    if (!prompt) {
+                      showToast('请先输入文字或生成分镜，再创建视频节点', 'info')
+                      return
+                    }
+                    const id = appendNewNode(
+                      'video',
+                      {
+                        x: source.position.x + Number(source.measured?.width || source.style?.width || 420) + 80,
+                        y: source.position.y,
+                      },
+                      { extraData: { prompt }, ratio: '16:9' },
                     )
-                  })
-                  if (unsavedAudio)
-                    return Promise.resolve(
-                      '音频编辑节点还有未保存的裁剪或音量设置。请先点“保存为新素材并用于下游”，再生成视频。',
-                    )
-                  return preflightCanvasAssets({ workspaceId: Number(workspaceId || 0), sourceRefs, inputAssets })
-                }}
-                onInsufficientCredits={handleInsufficientCredits}
-                onSaveText={handleSaveNodeText}
-                onCreateVideoFromText={() => {
-                  const source = latestRef.current.nodes.find((item) => item.id === selectedNode.id)
-                  if (!source) return
-                  const text = (window as any).__canvasTextContents?.get(source.id) || source.data.text || ''
-                  const prompt = toCanvasPromptContext(text)
-                  if (!prompt.trim()) return
-                  const id = appendNewNode(
-                    'video',
-                    {
-                      x: source.position.x + Number(source.measured?.width || source.style?.width || 420) + 80,
-                      y: source.position.y,
-                    },
-                    { extraData: { prompt }, ratio: '16:9' },
-                  )
-                  if (!id) return
-                  setEdges((items) => [
-                    ...items,
-                    {
-                      id: buildEdgeId(source.id, id, 0),
-                      source: source.id,
-                      target: id,
-                      data: { slotIndex: 0 },
-                    },
-                  ])
-                  setSaveStatus('dirty')
-                }}
-                onPromptChange={handleNodePromptChange}
-                onParamsChange={handleNodeParamsChange}
-                inheritedTexts={inheritedPromptTexts}
-                onAdoptInheritedText={handleAdoptInheritedText}
-                onPolishText={handlePolishNodeText}
-                models={canvasModels}
-                modelOperationStates={modelOperationStates}
-                onReloadModels={reloadModels}
-                modelsLoading={modelsLoading}
-              />
+                    if (!id) return
+                    setEdges((items) => [
+                      ...items,
+                      {
+                        id: buildEdgeId(source.id, id, 0),
+                        source: source.id,
+                        target: id,
+                        data: { slotIndex: 0 },
+                      },
+                    ])
+                    setSaveStatus('dirty')
+                  }}
+                  onPromptChange={handleNodePromptChange}
+                  onParamsChange={handleNodeParamsChange}
+                  inheritedTexts={inheritedPromptTexts}
+                  onAdoptInheritedText={handleAdoptInheritedText}
+                  onPolishText={handlePolishNodeText}
+                  models={canvasModels}
+                  modelOperationStates={modelOperationStates}
+                  onReloadModels={reloadModels}
+                  modelsLoading={modelsLoading}
+                />
+              )}
             </div>
           )}
 

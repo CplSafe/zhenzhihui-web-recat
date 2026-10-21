@@ -42,6 +42,14 @@
   overscroll-behavior: contain;
   padding: 20px 2px;
 }
+.languagePopup :global(.rc-virtual-list-holder) {
+  overscroll-behavior: contain;
+}
+.languagePopup :global(.ant-select-item) {
+  font-size: calc(14px * var(--canvas-ui-scale, 1));
+  line-height: 1.6;
+  padding: calc(5px * var(--canvas-ui-scale, 1)) calc(12px * var(--canvas-ui-scale, 1));
+}
 .heading {
   display: flex;
   align-items: flex-start;
@@ -224,8 +232,10 @@
   color: inherit;
   font: inherit;
 }
-.filters input:last-child {
-  width: 110px;
+.languageFilter {
+  width: 200px;
+  min-height: 40px;
+  max-width: 100%;
 }
 .serverCard {
   min-width: 0;

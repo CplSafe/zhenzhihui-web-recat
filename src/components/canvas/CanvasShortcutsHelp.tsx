@@ -38,6 +38,7 @@ export const CANVAS_SHORTCUT_SECTIONS: ShortcutSection[] = [
       { keys: ['工具栏「拖动」'], label: '抓手模式：左键拖空白处也平移（框选改为 Shift + 拖拽）' },
       { keys: ['W / A / S / D'], label: '键盘平移（按住 Shift 加速）' },
       { keys: ['E', 'Q'], label: '放大 / 缩小' },
+      { keys: [`${MOD} + 加号`, `${MOD} + 减号`], label: '放大 / 缩小画布（也支持小键盘）' },
       { keys: ['0'], label: '回到 100%' },
       { keys: ['1'], label: '适应视图：缩放到刚好装下全部节点' },
     ],
@@ -138,8 +139,8 @@ export default function CanvasShortcutsHelp({
           </button>
         </header>
         <p className={styles.notice}>
-          点击画布后快捷键生效；输入框、按钮和弹窗保留自己的键盘操作。Tab
-          用于切换焦点，浏览器页面缩放与收藏快捷键保持原行为。
+          点击画布后快捷键生效；输入框、按钮和弹窗保留自己的键盘操作。Tab 用于切换焦点；画布内 Ctrl / ⌘ +
+          加减号缩放画布，其他页面保留浏览器原行为。
         </p>
         <div className={styles.body}>
           {CANVAS_SHORTCUT_SECTIONS.map((section) => (

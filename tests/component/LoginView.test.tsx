@@ -103,6 +103,15 @@ async function fillPasswordLogin(
 }
 
 describe('LoginView behavior', () => {
+  it('隐私政策入口不会打开用户服务协议或自动同意', async () => {
+    render(<LoginView />)
+    fireEvent.click(screen.getByText('《隐私政策》'))
+    expect(await screen.findByRole('dialog', { name: '帧智汇隐私政策' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '用户协议确认' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /关\s*闭/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByRole('checkbox', { name: /已经阅读并同意/ })).not.toBeChecked()
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.banners = []

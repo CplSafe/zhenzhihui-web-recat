@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ServerVoiceLibrary from '@/components/canvas/ServerVoiceLibrary'
 
@@ -47,6 +47,64 @@ beforeEach(() => {
 })
 
 describe('公共音色库业务交互', () => {
+  it('跨页汇总语种，选择后提交原始编码', async () => {
+    mocks.list.mockImplementation(async (options) => {
+      if (options.limit === 100) {
+        return options.offset === 0
+          ? { items: [{ ...voice, language: 'it' }], total: 2 }
+          : { items: [{ ...voice, language: 'vi' }], total: 2 }
+      }
+      return { items: [voice], total: 1 }
+    })
+    render(<ServerVoiceLibrary {...props()} />)
+    const select = screen.getByRole('combobox', { name: '音色语种' })
+    await waitFor(() => expect(select).toBeEnabled())
+    fireEvent.mouseDown(select)
+    fireEvent.click(await screen.findByText('越南语（vi）'))
+    await waitFor(() =>
+      expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ limit: 20, offset: 0, language: 'vi' })),
+    )
+    expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ limit: 100, offset: 1 }))
+  })
+  it('公共音色不显示手动同步，试听失败也不提示同步', async () => {
+    mocks.list.mockResolvedValue({
+      items: [{ ...voice, source: 'public', preview_url: 'https://example.com/preview.mp3' }],
+      total: 1,
+    })
+    render(<ServerVoiceLibrary {...props()} publicOnly />)
+    const preview = await screen.findByLabelText('试听 角色旁白')
+    expect(screen.queryByRole('button', { name: '同步' })).not.toBeInTheDocument()
+    fireEvent.error(preview)
+    expect(screen.getByRole('alert')).toHaveTextContent('试听暂时不可用，请稍后重试')
+    expect(screen.queryByText(/同步/)).not.toBeInTheDocument()
+  })
+  it('公共音色没有试听时只显示暂无试听', async () => {
+    mocks.list.mockResolvedValue({ items: [{ ...voice, source: 'public' }], total: 1 })
+    render(<ServerVoiceLibrary {...props()} publicOnly />)
+    expect(await screen.findByText('暂无试听。')).toBeInTheDocument()
+    expect(screen.queryByText(/同步/)).not.toBeInTheDocument()
+  })
+  it('训练中音色仍自动同步并更新为可用', async () => {
+    vi.useFakeTimers()
+    const visibility = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    mocks.list.mockResolvedValue({ items: [{ ...voice, status: 'training' }], total: 1 })
+    const view = render(<ServerVoiceLibrary {...props()} />)
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+      expect(screen.getByRole('button', { name: '选用' })).toBeDisabled()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(9700)
+      })
+      expect(mocks.sync).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 21 }), 5)
+      expect(screen.getByRole('button', { name: '选用' })).toBeEnabled()
+    } finally {
+      view.unmount()
+      visibility.mockRestore()
+      vi.useRealTimers()
+    }
+  })
   it('按模型读取并在选用时重新获取详情', async () => {
     const p = props()
     render(<ServerVoiceLibrary {...p} />)
@@ -64,12 +122,11 @@ describe('公共音色库业务交互', () => {
     expect(await screen.findByRole('button', { name: '选用' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument()
   })
-  it('收藏、详情和同步分别调用真实客户端', async () => {
+  it('移除收藏入口，详情和同步仍调用真实客户端', async () => {
     render(<ServerVoiceLibrary {...props()} />)
-    fireEvent.click(await screen.findByRole('button', { name: '收藏 角色旁白' }))
-    await waitFor(() =>
-      expect(mocks.favorite).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 21 }), 5, true),
-    )
+    await screen.findByRole('button', { name: '选用' })
+    expect(screen.queryByRole('button', { name: /收藏/ })).not.toBeInTheDocument()
+    expect(mocks.favorite).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.getByRole('button', { name: '详情' })).toBeEnabled())
     fireEvent.click(await screen.findByRole('button', { name: '详情' }))
     expect(await screen.findByLabelText('音色详情')).toHaveTextContent('角色旁白')
@@ -110,7 +167,7 @@ describe('公共音色库业务交互', () => {
         expect.objectContaining({ name: '新旁白' }),
       ),
     )
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mocks.list.mock.calls.filter(([options]) => options.limit === 20)).toHaveLength(2))
     fireEvent.click(await screen.findByRole('button', { name: '删除' }))
     await waitFor(() => expect(mocks.confirm).toHaveBeenCalled())
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 21 }), 5))

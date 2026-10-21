@@ -346,4 +346,34 @@ describe('canvasElements', () => {
     expect(result.nodes.map((node) => node.id)).toEqual(['keep', 'new'])
     expect(result.edges).toEqual([])
   })
+
+  it('keeps the local selection and measured size when a selected node receives a remote update', () => {
+    const current = {
+      nodes: [
+        {
+          id: 'audio',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          data: { kind: 'audio', prompt: '旧内容' },
+          selected: true,
+          measured: { width: 320, height: 120 },
+        } as Node,
+      ],
+      edges: [],
+    }
+    const result = applyCanvasElementMutations(current, [
+      {
+        element_id: 'audio',
+        kind: 'node',
+        op: 'upsert',
+        payload: { type: 'audio', position: { x: 20, y: 30 }, data: { kind: 'audio', prompt: '远端更新' } },
+      },
+    ])
+    expect(result.nodes[0]).toMatchObject({
+      selected: true,
+      measured: { width: 320, height: 120 },
+      position: { x: 20, y: 30 },
+      data: { prompt: '远端更新' },
+    })
+  })
 })

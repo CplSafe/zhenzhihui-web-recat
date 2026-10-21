@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import CanvasArrowEdge, {
   canvasConnectionDisplayRole,
   canvasConnectionRoleLabel,
+  findCanvasEdgeLabelPosition,
 } from '@/components/canvas/CanvasArrowEdge'
 
 /**
@@ -32,6 +33,53 @@ function renderEdge(props: Record<string, unknown>) {
 }
 
 describe('CanvasArrowEdge', () => {
+  it('普通浏览时不展示音轨标签', () => {
+    const { container } = renderEdge({ data: { displayRole: 'audio_track' } })
+    expect(container.querySelector('.canvas-edge-role-label')).toBeNull()
+    expect(container.querySelector('path')).not.toBeNull()
+  })
+
+  it('标签中点被节点遮挡时沿线选择空白位置', () => {
+    expect(
+      findCanvasEdgeLabelPosition(
+        [
+          { x: 100, y: 100 },
+          { x: 50, y: 30 },
+        ],
+        [{ x: 80, y: 80, width: 60, height: 60 }],
+        40,
+        22,
+      ),
+    ).toEqual({ x: 50, y: 30 })
+  })
+
+  it('所有位置被节点占用时隐藏标签，包括标签边缘的安全距离', () => {
+    expect(
+      findCanvasEdgeLabelPosition(
+        [
+          { x: 100, y: 100 },
+          { x: 59, y: 100 },
+        ],
+        [{ x: 80, y: 80, width: 60, height: 60 }],
+        40,
+        22,
+      ),
+    ).toBeUndefined()
+  })
+
+  it('空白连线优先使用中点', () => {
+    expect(
+      findCanvasEdgeLabelPosition(
+        [
+          { x: 50, y: 20 },
+          { x: 30, y: 10 },
+        ],
+        [],
+        40,
+        22,
+      ),
+    ).toEqual({ x: 50, y: 20 })
+  })
   it('仅展示仍有必要的连线用途标签', () => {
     expect(canvasConnectionRoleLabel('prompt')).toBe('提示词')
     expect(canvasConnectionRoleLabel('visual_context')).toBe('视觉理解')

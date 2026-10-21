@@ -534,6 +534,7 @@ export default function ImageChat({
     taRef,
     pickRef,
     () => setAtOpen(false),
+    3,
   )
   useEffect(() => {
     if (atOpen)

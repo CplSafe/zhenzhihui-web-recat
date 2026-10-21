@@ -24,6 +24,7 @@ import {
 import styles from './CanvasTimelinePlayer.module.css'
 
 interface CanvasTimelinePlayerProps {
+  canvasZoom?: number
   clips: readonly TimelineClip[]
   workspaceId: number
   /** 原视频声音的试听音量；逐片段静音仍优先。 */
@@ -78,6 +79,7 @@ function describeMediaError(video: HTMLVideoElement): string {
 const roundedPlayhead = (seconds: number) => Math.round(seconds * 1000) / 1000
 
 export default function CanvasTimelinePlayer({
+  canvasZoom,
   clips,
   workspaceId,
   originalAudioVolume = 1,
@@ -614,7 +616,7 @@ export default function CanvasTimelinePlayer({
         {/* 故障说明盖在画面上：黑屏本身不传达任何信息，必须说出到底怎么了 */}
         {mediaError ? (
           compact ? (
-            <CanvasNodeFailure reason={mediaError} />
+            <CanvasNodeFailure zoom={canvasZoom} reason={mediaError} />
           ) : (
             <div className={styles.mediaError} role="alert">
               {mediaError}

@@ -5,7 +5,7 @@
  * 同一个画布可能在别的设备上已经被关掉分享了，前端记住的旧 token 会让用户
  * 把一条打不开的链接发出去。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './CanvasShareDialog.module.css'
 import {
   buildCanvasShareUrl,
@@ -32,6 +32,40 @@ function formatExpiry(expiresAt: string): string {
 }
 
 export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onToast }: CanvasShareDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    dialogRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closeRef.current()
+      }
+      if (event.key !== 'Tab') return
+      const controls = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]',
+        ) || [],
+      )
+      const first = controls[0]
+      const last = controls[controls.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last?.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first?.focus()
+      }
+    }
+    document.addEventListener('keydown', keyboard, true)
+    return () => {
+      document.removeEventListener('keydown', keyboard, true)
+      previous?.focus()
+    }
+  }, [])
   const [share, setShare] = useState<CanvasShareState | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -100,7 +134,7 @@ export default function CanvasShareDialog({ workspaceId, canvasId, onClose, onTo
 
   return (
     <div className={styles.mask} role="dialog" aria-modal="true" aria-label="分享画布" onClick={onClose}>
-      <div className={styles.dialog} onClick={(event) => event.stopPropagation()}>
+      <div ref={dialogRef} className={styles.dialog} onClick={(event) => event.stopPropagation()}>
         <div className={styles.head}>
           <span className={styles.title}>分享画布</span>
           <button type="button" className={styles.close} aria-label="关闭分享弹窗" onClick={onClose}>

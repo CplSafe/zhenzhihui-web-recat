@@ -539,33 +539,6 @@
     transition: none;
   }
 }
-.relightStage {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #edf1ef;
-  min-height: 180px;
-}
-.relightPhoto {
-  position: relative;
-  max-width: 100%;
-  overflow: hidden;
-  isolation: isolate;
-  line-height: 0;
-}
-.relightPhoto img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  object-fit: contain;
-}
-.relightOverlay,
-.relightOverlay > div {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
 .relightCompare {
   margin-left: auto;
   flex-shrink: 0;
@@ -580,14 +553,6 @@
 .relightCompare:focus-visible {
   outline: 2px solid #119c80;
   outline-offset: 2px;
-}
-.relightNote {
-  margin: 0;
-  padding: 0 14px 10px;
-  background: #fff;
-  color: #72847b;
-  font-size: 11px;
-  line-height: 1.6;
 }
 .angleEditor {
   padding: 16px;
@@ -643,35 +608,6 @@
   font-size: 12px;
   line-height: 1.7;
   color: #526b5d;
-}
-.anglePhotoStage {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: clamp(180px, 26vh, 260px);
-  overflow: hidden;
-  background: #edf1ef;
-}
-.anglePhotoStage img {
-  display: block;
-  width: 88%;
-  height: 88%;
-  max-width: 88%;
-  max-height: 88%;
-  object-fit: contain;
-  transform-origin: center;
-}
-.anglePreviewBadge {
-  position: absolute;
-  left: 10px;
-  bottom: 8px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #ffffffdf;
-  color: #326e5a;
-  font-size: 11px;
-  pointer-events: none;
 }
 
 /* Compact canvas tools keep the source node visible behind the editor. */
@@ -856,7 +792,19 @@
   gap: 14px 20px;
   padding-top: 48px;
 }
-.studioPresets,
+.studioPresets {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 14px 20px;
+  align-items: start;
+}
+.compactStudio:has(> .studioPresets) {
+  padding-top: 0;
+}
+.studioPresets .presets button {
+  white-space: nowrap;
+}
 .topPresets {
   position: absolute;
   top: 0;

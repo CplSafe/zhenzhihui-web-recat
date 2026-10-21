@@ -15,6 +15,8 @@ export type CanvasWheelMode = 'pan' | 'zoom'
 export type CanvasPaneMenuTrigger = 'contextmenu' | 'dblclick'
 
 export interface CanvasPreferences {
+  /** 操作界面尺寸，与画布内容缩放独立。 */
+  uiSize: 'standard' | 'large' | 'extra-large'
   /** 滚轮默认动作：平移画布（设计工具习惯）还是缩放（图编辑器习惯） */
   wheelMode: CanvasWheelMode
   /** 空白处弹「添加节点」菜单的手势 */
@@ -36,6 +38,7 @@ export interface CanvasPreferences {
 }
 
 export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
+  uiSize: 'standard',
   wheelMode: 'pan',
   paneMenuTrigger: 'contextmenu',
   alignmentGuides: true,
@@ -68,6 +71,7 @@ export function normalizeCanvasPreferences(raw: unknown): CanvasPreferences {
     }),
   ) as CanvasShortcutBindings
   return {
+    uiSize: source.uiSize === 'large' || source.uiSize === 'extra-large' ? source.uiSize : 'standard',
     wheelMode: WHEEL_MODES.includes(source.wheelMode as CanvasWheelMode)
       ? (source.wheelMode as CanvasWheelMode)
       : DEFAULT_CANVAS_PREFERENCES.wheelMode,

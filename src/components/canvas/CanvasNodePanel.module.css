@@ -253,15 +253,14 @@
 }
 
 .refAddMenu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  z-index: 30;
   display: flex;
-  min-width: 132px;
+  min-width: calc(132px * var(--canvas-ui-scale, 1));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  overscroll-behavior: contain;
   flex-direction: column;
   padding: 4px;
-  transform: translateX(-50%);
   border: 1px solid #e2e6ef;
   border-radius: 10px;
   background: #fff;
@@ -269,13 +268,13 @@
 }
 
 .refAddMenu button {
-  padding: 8px 10px;
+  padding: calc(8px * var(--canvas-ui-scale, 1)) calc(10px * var(--canvas-ui-scale, 1));
   border: none;
   border-radius: 6px;
   background: transparent;
   color: #2f3646;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--canvas-ui-scale, 1));
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
@@ -557,6 +556,9 @@
 
 /* 输入 @ 弹出的参考选择器：浮在提示词框上方（面板贴底，往下弹会被裁掉） */
 .atPicker {
+  --floating-max-height: 240px;
+  display: flex;
+  flex-direction: column;
   position: absolute;
   left: 0;
   bottom: calc(100% + 6px);
@@ -564,12 +566,17 @@
   min-width: 220px;
   max-width: 100%;
   max-height: 240px;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 6px;
   border: 1px solid #e7e9f2;
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 8px 24px rgba(20, 24, 40, 0.14);
+}
+.atCandidates {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .atOption {
   display: flex;
@@ -613,6 +620,7 @@
 }
 /* 取图入口：素材库 / 画布点选，永远排在候选列表之后 */
 .atPickerActions {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -830,6 +838,9 @@
 }
 
 .popover {
+  max-height: calc(100dvh - 24px);
+  max-width: calc(100vw - 24px);
+  overflow: auto;
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
