@@ -15,6 +15,7 @@ interface MaterialMentionPopoverProps {
   open: boolean
   title: string
   items: MaterialMentionItem[]
+  emptyMessage?: string
   layout?: 'strip' | 'grid'
   getAnchorRect: () => DOMRect | null
   onSelect: (index: number) => void
@@ -32,6 +33,7 @@ export default function MaterialMentionPopover({
   open,
   title,
   items,
+  emptyMessage,
   layout = 'strip',
   getAnchorRect,
   onSelect,
@@ -104,9 +106,11 @@ export default function MaterialMentionPopover({
     }
   }, [onClose, open, place])
 
-  if (!open || !items.length) return null
+  if (!open || (!items.length && !emptyMessage)) return null
   const desiredWidth =
-    layout === 'grid' ? GRID_PANEL_WIDTH : Math.min(MAX_PANEL_WIDTH, Math.max(96, items.length * 80 + 20))
+    layout === 'grid'
+      ? GRID_PANEL_WIDTH
+      : Math.min(MAX_PANEL_WIDTH, Math.max(emptyMessage ? 200 : 96, items.length * 80 + 20))
 
   return createPortal(
     <div
@@ -117,6 +121,11 @@ export default function MaterialMentionPopover({
       aria-label={title}
     >
       <div className={styles.title}>{title}</div>
+      {!items.length && (
+        <div role="status" className={styles.title}>
+          {emptyMessage}
+        </div>
+      )}
       <div
         className={`${styles.scroller}${layout === 'grid' ? ` ${styles.grid}` : ''}`}
         onWheel={(event) => {

@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useToast } from '@/composables/useToast'
+import { findMentionDeletionRange } from '@/utils/canvasMentions'
 import ImageDetailModal from '@/components/common/ImageDetailModal'
 import { fileToDataUrl, normalizeImageFileForAiInput } from '@/utils/imageFile'
 import { useCurrentUser, useWorkspaceId } from '@/stores/workspaceSession'
@@ -767,12 +768,30 @@ export default function HotCopyEntry({
     if (images.length) void pickProducts(images)
   }
 
-  const removeProduct = (i: number) => setProducts((arr) => arr.filter((_, j) => j !== i))
+  const removeProduct = (index: number) => {
+    const removed = products[index]
+    if (!removed) return
+    const kind = removed.isVideo ? '视频' : '图片'
+    const number = products.slice(0, index + 1).filter((item) => !!item.isVideo === !!removed.isVideo).length
+    const count = products.filter((item) => !!item.isVideo === !!removed.isVideo).length
+    // 一次替换避免编号级联；完整匹配数字，不能把 @图片10 当作 @图片1。
+    setText((current) =>
+      current.replace(/@(图片|视频)(\d+)/g, (token, type, value) => {
+        if (type !== kind) return token
+        const n = Number(value)
+        if (n === number) return ''
+        return n > number && n <= count ? `@${type}${n - 1}` : token
+      }),
+    )
+    setProducts((arr) => arr.filter((_, j) => j !== index))
+    closeAtMenu()
+  }
 
   // ── @ 引用替换素材(对齐智能成片)──
   const insertAtCaret = (snippet: string) => {
     const pos = Math.min(caretRef.current, text.length)
-    const next = text.slice(0, pos) + snippet + text.slice(pos)
+    const end = taRef.current?.selectionEnd ?? pos
+    const next = text.slice(0, pos) + snippet + text.slice(end)
     setText(next)
     const newPos = pos + snippet.length
     caretRef.current = newPos
@@ -794,6 +813,7 @@ export default function HotCopyEntry({
     atTriggerRangeRef.current = null
     setAtSource('button')
     setAtOpen(true)
+    ta?.focus()
   }
   // 某条替换素材的引用标签:图片→@图片N、视频→@视频N(各自按同类型顺序独立编号)
   const refLabel = (index: number) => {
@@ -802,6 +822,14 @@ export default function HotCopyEntry({
     const n = products.slice(0, index + 1).filter((q) => !!q.isVideo === !!p?.isVideo).length
     return `@${kind}${n}`
   }
+  const validMentionLabels = new Set(products.map((_, index) => refLabel(index)))
+  const atQuery =
+    atOpen && atSource === 'typed' && atTriggerRangeRef.current
+      ? text.slice(atTriggerRangeRef.current.start + 1, atTriggerRangeRef.current.end).toLowerCase()
+      : ''
+  const atCandidates = products
+    .map((product, index) => ({ product, index }))
+    .filter(({ index }) => refLabel(index).slice(1).toLowerCase().includes(atQuery))
   const pickRef = (index: number) => {
     const trigger = atTriggerRangeRef.current
     if (trigger) {
@@ -828,6 +856,11 @@ export default function HotCopyEntry({
     let m: RegExpExecArray | null
     while ((m = re.exec(t))) {
       if (m.index > last) out.push(t.slice(last, m.index))
+      if (!validMentionLabels.has(m[0])) {
+        out.push(m[0])
+        last = m.index + m[0].length
+        continue
+      }
       out.push(
         <span className="hotcopy__refTag" key={`${keyPrefix}-${m.index}`}>
           {m[0]}
@@ -848,7 +881,10 @@ export default function HotCopyEntry({
       ...renderHighlightTokens(t.slice(anchorIndex), 'after'),
     ]
   }
-  const closeAtMenu = useCallback(() => setAtOpen(false), [])
+  const closeAtMenu = useCallback(() => {
+    atTriggerRangeRef.current = null
+    setAtOpen(false)
+  }, [])
   const getAtAnchorRect = useCallback(
     () => (atSource === 'typed' ? mentionAnchorRef.current : atButtonRef.current)?.getBoundingClientRect() || null,
     [atSource],
@@ -1122,6 +1158,11 @@ export default function HotCopyEntry({
 
   // 提交前同时要求原视频和至少一张替换图片，防止创建后端无法执行的空任务。
   const validateBeforeSubmit = () => {
+    const invalid = text.match(/@(?:图片|视频)\d+/g)?.find((label) => !validMentionLabels.has(label))
+    if (invalid) {
+      showToast(`${invalid} 对应的素材不存在，请重新选择引用素材`, 'error')
+      return false
+    }
     if (!hasHotVideo) {
       showToast('请先上传爆款视频(本地上传 / 素材库)', 'error')
       return false
@@ -1281,16 +1322,56 @@ export default function HotCopyEntry({
                         const caret = e.target.selectionStart ?? next.length
                         setText(next)
                         caretRef.current = caret
+                        if ((e.nativeEvent as InputEvent).isComposing) {
+                          closeAtMenu()
+                          return
+                        }
                         if (products.length > 0 && caret > 0 && next[caret - 1] === '@') {
                           atTriggerRangeRef.current = { start: caret - 1, end: caret }
                           setAtSource('typed')
                           setAtOpen(true)
+                        } else if (atOpen && atSource === 'typed') {
+                          const trigger = atTriggerRangeRef.current
+                          if (
+                            trigger &&
+                            next[trigger.start] === '@' &&
+                            caret > trigger.start &&
+                            !/\s|@/.test(next.slice(trigger.start + 1, caret))
+                          ) {
+                            atTriggerRangeRef.current = { start: trigger.start, end: caret }
+                          } else closeAtMenu()
                         }
                       }}
                       onSelect={(e) => {
                         caretRef.current = e.currentTarget.selectionStart ?? 0
+                        const trigger = atTriggerRangeRef.current
+                        if (
+                          trigger &&
+                          (caretRef.current <= trigger.start ||
+                            e.currentTarget.selectionStart !== e.currentTarget.selectionEnd)
+                        )
+                          closeAtMenu()
                       }}
                       onKeyDown={(e) => {
+                        if (e.nativeEvent.isComposing || e.keyCode === 229) return
+                        if (['Home', 'End', 'ArrowUp', 'ArrowDown'].includes(e.key)) closeAtMenu()
+                        if ((e.key === 'Backspace' || e.key === 'Delete') && !(atOpen && atSource === 'typed')) {
+                          const ta = e.currentTarget
+                          if (ta.selectionStart !== ta.selectionEnd) return
+                          const range = findMentionDeletionRange(
+                            text,
+                            ta.selectionStart,
+                            e.key === 'Backspace' ? 'backward' : 'forward',
+                            /@(?:图片|视频)\d+/g,
+                          )
+                          if (range) {
+                            e.preventDefault()
+                            closeAtMenu()
+                            setText(text.slice(0, range.start) + text.slice(range.end))
+                            caretRef.current = range.start
+                            requestAnimationFrame(() => ta.setSelectionRange(range.start, range.start))
+                          }
+                        }
                         // Ctrl/Cmd+Enter 也走 submit:缺视频/图片会弹提示(校验在 submit 内)
                         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
                       }}
@@ -1395,6 +1476,9 @@ export default function HotCopyEntry({
                       ref={atButtonRef}
                       type="button"
                       className="hotcopy__at"
+                      aria-label="引用替换素材"
+                      aria-haspopup="listbox"
+                      aria-expanded={atOpen}
                       onClick={handleAt}
                       title="引用替换素材"
                     >
@@ -1405,14 +1489,18 @@ export default function HotCopyEntry({
                     inputRef={taRef}
                     open={atOpen}
                     title="选择替换素材"
-                    items={products.map((product, index) => ({
+                    emptyMessage="没有匹配的替换素材"
+                    items={atCandidates.map(({ product, index }) => ({
                       key: `${product.url}-${index}`,
                       url: product.url,
                       label: refLabel(index),
                       kind: product.isVideo ? 'video' : 'image',
                     }))}
                     getAnchorRect={getAtAnchorRect}
-                    onSelect={pickRef}
+                    onSelect={(index) => {
+                      const candidate = atCandidates[index]
+                      if (candidate) pickRef(candidate.index)
+                    }}
                     onClose={closeAtMenu}
                   />
                 </div>

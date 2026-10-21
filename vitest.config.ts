@@ -22,6 +22,7 @@ export default defineConfig({
       // First gate the shared modules that protect the bugs fixed in this batch.
       // Expand this list as each additional business flow receives regression tests.
       include: [
+        'src/components/hotcopy/HotCopyEntry/HotCopyEntry.tsx',
         'src/utils/canvasTools.ts',
         'src/utils/canvasStudioControls.ts',
         'src/api/canvasTools.ts',
